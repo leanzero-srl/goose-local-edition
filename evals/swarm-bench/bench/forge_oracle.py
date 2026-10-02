@@ -533,7 +533,7 @@ def synthetic_pack(seed: str = '00000000000000aa') -> Dict:
                ('changelogBulkFields', 10), ('changelogBulkPageMax', 10000), ('issueBulkNamedFields', 1000),
                ('agileSprintPage', 50))}
     return {'seed': seed, 'now': '2026-10-01T12:00:00.000Z', 'cloudId': 'cloud-synthetic',
-            'siteUrl': 'https://synthetic.atlassian.net', 'appAccountId': 'u-app', 'viewer': 'u-viewer',
+            'siteUrl': 'https://synthetic.atlassian.net', 'appAccountId': 'u-app', 'viewer': 'u-viewer', 'peer': 'u-bob',
             'users': users, 'fields': fields, 'sprintFieldId': sf, 'projects': projects, 'boards': boards,
             'sprints': sprints, 'issues': issues, 'history': history, 'live': live, 'faults': faults,
             'limits': limits}

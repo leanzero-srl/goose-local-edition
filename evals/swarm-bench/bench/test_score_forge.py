@@ -7,6 +7,7 @@ exists. Each defect test mutates one fact and asserts the rows it must cost — 
 import copy
 from decimal import Decimal
 import json
+import os
 from pathlib import Path
 import re
 import struct
@@ -111,7 +112,7 @@ def _surface(sid, kind, theme, width=800, extra=None):
 
 def golden_observations(pack):
     o = fo.Oracle(pack)
-    viewer, other = o.viewer, 'u-bob'
+    viewer, other = o.viewer, pack['peer']
     jira = lambda t, inv, kind, path, **kw: {'t': t, 'inv': inv, 'kind': kind, 'provider': kw.pop('provider', 'app'),  # noqa: E731
                                              'service': 'jira', 'method': kw.pop('method', 'GET'), 'path': path,
                                              'status': kw.pop('status', 200), 'scopes': SCOPES, **kw}
@@ -752,6 +753,123 @@ class CliTests(unittest.TestCase):
             self.assertIn('dev_seed', err)
             with patch.object(sf, '_probe_preflight', return_value='no playwright'):
                 self.assertEqual(self.run_cli('--tree', tmp, '--json-out', out, '--seed', 'a' * 16)[0], 3)
+
+
+# ── probe smoke test against a THIN FAKE of I2 (DESIGN §13.3: until WP1's emulator lands) ─────────────
+
+FAKE_SITE = r"""
+const fs = require('fs');
+exports.createSite = async ({ seed }) => {
+  const pack = JSON.parse(fs.readFileSync(process.env.FAKE_PACK, 'utf8'));
+  return { url: 'http://127.0.0.1:0', pack, comments: [], applyChange: async () => {}, stop: async () => {} };
+};
+"""
+
+FAKE_EMULATOR = r"""
+const fs = require('fs');
+const path = require('path');
+exports.createEmulator = async ({ appDir, site }) => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(appDir, 'manifest.json'), 'utf8'));
+  const log = [], bridgeLog = [];
+  const sprintsOf = (b) => site.pack.sprints.filter((s) => s.state === 'active' && String(s.originBoardId) === String(b));
+  const html = (spec) => {
+    const x = spec.extension || {};
+    if (spec.entry === 'edit') return site.pack.boards.filter((b) => b.type === 'scrum').map((b) =>
+      `<button data-testid="board-option" data-board-id="${b.id}" aria-pressed="${String(((x.config) || {}).boardId) === String(b.id)}" onclick="window.__picked='${b.id}';this.setAttribute('aria-pressed','true');window.__op('updateConfig')">${b.name}</button>`).join('');
+    if (x.type === 'dashboards:widget') {
+      if (!x.config || !x.config.boardId) return '<div data-testid="scope-widget"><p data-testid="needs-config">Pick a board</p></div>';
+      return '<div data-testid="scope-widget">' + sprintsOf(x.config.boardId).map((s) => `<section data-testid="sprint" data-sprint-id="${s.id}">
+        <b data-metric="committed">1</b><b data-metric="added">0</b><b data-metric="removed">0</b><b data-metric="creep">0.0%</b></section>`).join('')
+        + '<svg data-testid="chart" width="100" height="50"></svg></div>';
+    }
+    if (x.sprint && x.sprint.state !== 'active') return '<p data-testid="not-started">Not started</p>';
+    return `<b data-metric="committed">1</b><b data-metric="added">0</b><b data-metric="removed">0</b><b data-metric="creep">0.0%</b>
+      <span data-testid="hidden-count">0</span><table data-testid="ledger"><tr>${['issue','points','kind','by','at','source'].map((c) => `<th data-col="${c}">${c}</th>`).join('')}</tr>
+      <tr data-change-id="1"><td data-col="issue"><a onclick="window.__op('open')">X-1</a></td><td data-col="points">1</td><td data-col="kind">added</td><td data-col="by">A</td>
+      <td data-col="at"><time datetime="2026-10-01T10:00:00+00:00">x</time></td><td data-col="source">event</td></tr></table>
+      <button data-testid="post-summary">Post</button><button data-testid="close" onclick="window.__op('close')">Close</button>`;
+  };
+  return {
+    manifest, modules: (t) => manifest.modules[t] || [], log, bridgeLog, harnessMissing: [],
+    build: async () => ({ functions: manifest.modules.function.map((f) => ({ key: f.key, handler: f.handler, bundled: true, loaded: true })) }),
+    runScheduled: async (key) => {
+      log.push({ t_virtual: 1, invocationId: 's-' + log.length, moduleType: 'scheduledTrigger', provider: 'app', method: 'GET',
+                 path: '/rest/api/3/field', status: 200, scopes: { classic: ['read:jira-work'], granular: [] } });
+      return { ok: true, invocationId: 's-' + log.length };
+    },
+    deliverProductEvent: async (change) => ({ invocations: [{ ok: true, invocationId: 't-' + change.changelogId }] }),
+    drainQueues: async () => [],
+    invokeAction: async (key, inputs) => ({ ok: true, result: inputs.sprintId && site.pack.sprints.some((s) => String(s.id) === inputs.sprintId)
+      ? { sprintId: inputs.sprintId } : { error: 'Unknown sprint' } }),
+    openSurface: async (page, spec) => {
+      await page.exposeFunction('__op', (op) => bridgeLog.push({ op }));
+      bridgeLog.push({ op: 'getContext' }, { op: 'enableTheming' }, { op: 'getWidgetEditApi' });
+      await page.setContent('<!doctype html><html><body>' + html(spec) + '</body></html>');
+    },
+    hostSave: async (page) => ({ stored: { boardId: await page.evaluate(() => window.__picked) } }),
+    kvs: { snapshot: () => ({ entities: {}, keys: [] }) },
+    stop: async () => {},
+  };
+};
+"""
+
+FAKE_LINT = "console.log(JSON.stringify({counts:{errors:0,warnings:0},problems:[],stageReached:3,stagesTotal:3}));\n"
+
+
+def _node_with_playwright():
+    import shutil
+    import subprocess
+    node = os.environ.get('GOOSE_SWARM_RENDER_NODE') or shutil.which('node')
+    if not node:
+        return None
+    r = subprocess.run([node, str(HERE / 'forge_probe.mjs'), '--preflight'], capture_output=True, text=True)
+    return node if r.returncode == 0 else None
+
+
+class ProbeSmokeTests(unittest.TestCase):
+    """The probe runs the whole §8.7 sequence against a thin fake of I2 and its I5 output is gradable: no row
+    unavailable for a probe/scorer schema mismatch, the contract hooks the fake renders are read."""
+
+    @unittest.skipUnless(_node_with_playwright(), 'node with playwright and chromium required')
+    def test_the_probe_emits_gradable_observations(self):
+        import subprocess
+        node = _node_with_playwright()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            pack = fo.synthetic_pack()
+            (tmp / 'pack.json').write_text(json.dumps(pack))
+            (tmp / 'repo' / 'forge' / 'site').mkdir(parents=True)
+            (tmp / 'repo' / 'forge' / 'site' / 'site.cjs').write_text(FAKE_SITE)
+            (tmp / 'kit' / 'lib').mkdir(parents=True)
+            (tmp / 'kit' / 'bin').mkdir()
+            (tmp / 'kit' / 'lib' / 'emulator.cjs').write_text(FAKE_EMULATOR)
+            (tmp / 'kit' / 'bin' / 'lint.cjs').write_text(FAKE_LINT)
+            app = tmp / 'app'
+            golden_tree(app)
+            (app / 'manifest.json').write_text(json.dumps(golden_manifest()))
+            out = tmp / 'obs.json'
+            r = subprocess.run([node, str(HERE / 'forge_probe.mjs'), '--app', str(app), '--kit', str(tmp / 'kit'),
+                                '--seed', pack['seed'], '--out', str(out), '--shots', str(tmp / 'shots'),
+                                '--repo', str(tmp / 'repo')], capture_output=True, text=True,
+                               env={**os.environ, 'FAKE_PACK': str(tmp / 'pack.json')}, timeout=600)
+            self.assertEqual(r.returncode, 0, r.stderr[-2000:])
+            obs = json.loads(out.read_text())
+            self.assertEqual(obs['sectionErrors'], {}, obs['sectionErrors'])
+            self.assertEqual(len(obs['lint']['runs']), 2)
+            v = sf.evaluate(sf.Ctx(app, obs, pack, fixture_seed=pack['seed']))
+            rows = {r['check']: r for r in v['checks']}
+            self.assertEqual(v['probe_unavailable'], [r for r in v['probe_unavailable']
+                                                      if r == 'l_real_packages'])  # the fake kit ships no app-modules
+            self.assertTrue(obs['ui']['widget']['noConfig']['onlyNeedsConfig'])
+            self.assertEqual([p['reopenPressed'] for p in obs['ui']['edit']['picks']], [['1'], ['2']])
+            self.assertEqual(obs['ui']['widget']['secondInstance']['sprints'], ['11', '12'])
+            self.assertTrue(obs['ui']['notStarted']['onlyNotStarted'])
+            self.assertEqual(rows['u_not_started']['score'], 1)
+            self.assertEqual(rows['u_modal_close']['score'], 1)
+            self.assertEqual(rows['k_widget_edit_bridge']['score'], 1)
+            self.assertEqual(rows['a_action_errors']['score'], 1)
+            self.assertTrue((tmp / 'shots' / 'contact-sheet.png').is_file())
+            self.assertLess(v['score'], 0.5)
 
 
 if __name__ == '__main__':
