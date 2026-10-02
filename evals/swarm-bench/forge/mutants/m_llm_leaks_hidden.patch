@@ -1,0 +1,66 @@
+diff --git a/src/explain.js b/src/explain.js
+index ec3a2cc..f76da40 100644
+--- a/src/explain.js
++++ b/src/explain.js
+@@ -84,12 +84,12 @@ export async function explainSprint(view) {
+   if (!valid) return { ok: false, error: 'The model answered in an unexpected shape.' };
+ 
+   const visible = new Map(view.changes.map((c) => [c.changeId, c]));
+-  const ids = [...new Set(args.changeIds)].filter((id) => visible.has(id));
++  const ids = [...new Set(args.changeIds)];
+   const summary = /\d/.test(args.summary) || !args.summary.trim() ? ledgerSentence(view) : args.summary.trim();
+   return {
+     ok: true,
+     model,
+     summary,
+-    changes: ids.map((id) => ({ changeId: id, issueKey: visible.get(id).issueKey, kind: visible.get(id).kind })),
++    changes: ids.map((id) => ({ changeId: id, issueKey: visible.get(id)?.issueKey ?? id, kind: visible.get(id)?.kind ?? 'added' })),
+   };
+ }
+diff --git a/src/index.js b/src/index.js
+index 4125bdb..7b4ceff 100644
+--- a/src/index.js
++++ b/src/index.js
+@@ -118,7 +118,7 @@ resolver.define(
+     const sprintId = contextSprintId(context);
+     const sprint = sprintId && (await getSprint(sprintId, UI_POLICY));
+     if (!sprint) return { ok: false, error: 'This action was opened without a known sprint.' };
+-    return explainSprint(await personView(sprint, UI_POLICY));
++    return explainSprint(await personView(sprint, UI_POLICY, 'app'));
+   }),
+ );
+ 
+diff --git a/src/ledger.js b/src/ledger.js
+index 800a816..f2d4a2f 100644
+--- a/src/ledger.js
++++ b/src/ledger.js
+@@ -99,11 +99,11 @@ export async function sprintTotals(sprintId) {
+ 
+ // Which of these issues can the invoking person browse? Read as them: issue bulkfetch leaves out issues
+ // that "aren't found or that the user doesn't have permission to view". Returns issueId -> current key.
+-export async function visibleIssues(issueIds, policy) {
++export async function visibleIssues(issueIds, policy, who = 'user') {
+   const visible = new Map();
+   const ids = [...new Set(issueIds)];
+   for (let i = 0; i < ids.length; i += 100) {
+-    const page = await jiraJson('user', route`/rest/api/3/issue/bulkfetch`, postJson({ issueIdsOrKeys: ids.slice(i, i + 100), fields: ['key'] }), policy);
++    const page = await jiraJson(who, route`/rest/api/3/issue/bulkfetch`, postJson({ issueIdsOrKeys: ids.slice(i, i + 100), fields: ['key'] }), policy);
+     for (const issue of page.issues ?? []) visible.set(String(issue.id), issue.key);
+   }
+   return visible;
+diff --git a/src/views.js b/src/views.js
+index 92c66f2..7e5ff2c 100644
+--- a/src/views.js
++++ b/src/views.js
+@@ -53,9 +53,9 @@ export async function getSprint(sprintId, policy) {
+ 
+ // What one person sees of a sprint: team totals, and only the changes to issues they can browse
+ // (read as them) plus how many are hidden. Rows in table order: at ascending, then changelog id.
+-export async function personView(sprint, policy) {
++export async function personView(sprint, policy, who = 'user') {
+   const { changes, members, totals } = await sprintTotals(sprint.id);
+-  const visible = changes.length ? await visibleIssues(changes.map((c) => c.issueId), policy) : new Map();
++  const visible = changes.length ? await visibleIssues(changes.map((c) => c.issueId), policy, who) : new Map();
+   const estimate = new Map(members.map((m) => [memberKey(m.sprintId, m.issueId), m.estimate]));
+   const rows = changes
+     .filter((c) => visible.has(c.issueId))

@@ -319,7 +319,7 @@ async function main() {
     await w.page.locator('[data-testid="chart"]').waitFor();
     await w.page.waitForTimeout(300);
     const sub0 = w.log.subscriptions[0];
-    ok(w.log.subscriptions.length === 1 && sub0.isGlobal && sub0.token, `widget subscribes once to a global realtime channel with a token (${JSON.stringify(sub0 && { ...sub0, token: Boolean(sub0.token) })})`);
+    ok(w.log.subscriptions.length === 1 && sub0.isGlobal, `widget subscribes once to a global realtime channel (${JSON.stringify(sub0)})`);
     eq(w.log.invokes.map((i) => i.key), ['widget'], 'the widget renders and subscribes in one resolver round trip');
     const before = await w.page.textContent('[data-sprint-id="11"] [data-metric="added"]');
     const navs = await w.page.evaluate(() => performance.getEntriesByType('navigation').length);

@@ -160,6 +160,7 @@ function createPlatform({ site, manifest = loadManifest() }) {
     if (target.type === 'realtime') {
       const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
       if (/signRealtimeToken/.test(body.query)) {
+        if (['consumer', 'scheduledTrigger', 'trigger'].includes(store?.moduleType)) return toResponse({ status: 200, json: { errors: [{ message: 'signRealtimeToken is available in resolvers only' }] } });
         const { channelName, claims, permissions } = body.variables;
         const exp = Math.floor(Date.now() / 1000) + 3600;
         const jwt = `${b64({ alg: 'none' })}.${b64({ channel: { name: channelName }, claims, permissions, exp })}.sig`;

@@ -1,8 +1,8 @@
 diff --git a/manifest.yml b/manifest.yml
-index c8c0bff..b6c6bbd 100644
+index 5115137..8b2dbeb 100644
 --- a/manifest.yml
 +++ b/manifest.yml
-@@ -96,7 +96,7 @@ permissions:
+@@ -105,7 +105,7 @@ permissions:
  app:
    id: ari:cloud:ecosystem::app/00000000-0000-0000-0000-000000000000
    runtime:

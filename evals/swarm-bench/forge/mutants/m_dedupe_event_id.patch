@@ -1,16 +1,16 @@
 diff --git a/src/index.js b/src/index.js
-index 5356195..956a904 100644
+index 4125bdb..5737930 100644
 --- a/src/index.js
 +++ b/src/index.js
-@@ -33,7 +33,7 @@ export async function consumeChange(event) {
+@@ -35,7 +35,7 @@ export async function consumeChange(event) {
    try {
      const previous = await loadConfig();
      const cfg = previous ? structuredClone(previous) : await discoverConfig(policy);
 -    const result = await applyIssueEvent(cfg, event.body, policy);
 +    const result = await applyIssueEvent(cfg, { ...event.body, eventId: event.eventId }, policy);
      await saveConfig(cfg, previous);
+     await announce(result.sprintIds);
      return result;
-   } catch (e) {
 diff --git a/src/ledger.js b/src/ledger.js
 index 800a816..1e1b52d 100644
 --- a/src/ledger.js
@@ -26,7 +26,7 @@ index 800a816..1e1b52d 100644
    try {
      await kvs.entity(CHANGES).set(key, row, { keyPolicy: 'FAIL_IF_EXISTS' });
 diff --git a/src/sync.js b/src/sync.js
-index e4289d4..4e34ff2 100644
+index e315bc0..75b42ae 100644
 --- a/src/sync.js
 +++ b/src/sync.js
 @@ -95,7 +95,7 @@ export function memberRow(cfg, sprintId, issue, currentSprintIds) {
@@ -38,12 +38,12 @@ index e4289d4..4e34ff2 100644
    const negative = new Set();
    const resolve = async (sprintId) => {
      if (negative.has(sprintId)) return null;
-@@ -127,7 +127,7 @@ export async function applyIssueEvent(cfg, { issueId, changelogId, sprintChange
- 
-   const rows = await rowsOf(cfg, issue, histories, 'event', resolve);
+@@ -129,7 +129,7 @@ export async function applyIssueEvent(cfg, { issueId, changelogId, sprintChange
+   const changed = new Set();
    let written = 0;
--  for (const row of rows) if (await recordChange(row)) written += 1;
-+  for (const row of rows) if (await recordChange(row, false, `${eventId}:${row.sprintId}`)) written += 1;
- 
-   const currentIds = new Set(current.map((s) => s.id));
-   const stored = new Map((await membersOfIssue(issue.id)).map((m) => [m.sprintId, m]));
+   for (const row of rows) {
+-    if (await recordChange(row)) {
++    if (await recordChange(row, false, `${eventId}:${row.sprintId}`)) {
+       written += 1;
+       changed.add(row.sprintId);
+     }

@@ -4,7 +4,7 @@ import { RateLimited } from './jira';
 import { loadConfig, saveConfig, discoverConfig } from './config';
 import { applyIssueEvent, estimateFieldIds, reconcileAll } from './sync';
 import { boardsView, widgetView, getSprint, personView, postSummary } from './views';
-import { announce, subscribeToken } from './realtime';
+import { announce, CHANNEL } from './realtime';
 import { explainSprint } from './explain';
 
 const QUEUE_KEY = 'scope-ledger';
@@ -96,7 +96,7 @@ resolver.define(
     const boardId = payload?.boardId ?? context?.extension?.config?.boardId;
     if (boardId === undefined || boardId === null || boardId === '') return { needsConfig: true };
     const view = await widgetView(String(boardId), UI_POLICY);
-    return payload?.withRealtime ? { ...view, realtime: await subscribeToken() } : view;
+    return { ...view, realtime: { channel: CHANNEL } };
   }),
 );
 
@@ -111,8 +111,6 @@ resolver.define(
     return personView(sprint, UI_POLICY);
   }),
 );
-
-resolver.define('realtimeToken', async () => subscribeToken());
 
 resolver.define(
   'explain',

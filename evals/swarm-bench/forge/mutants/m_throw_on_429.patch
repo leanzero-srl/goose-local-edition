@@ -1,9 +1,9 @@
 diff --git a/src/index.js b/src/index.js
-index 5356195..cc999aa 100644
+index 4125bdb..b12404d 100644
 --- a/src/index.js
 +++ b/src/index.js
-@@ -37,16 +37,6 @@ export async function consumeChange(event) {
-     await saveConfig(cfg, previous);
+@@ -40,16 +40,6 @@ export async function consumeChange(event) {
+     await announce(result.sprintIds);
      return result;
    } catch (e) {
 -    if (e instanceof RateLimited) {

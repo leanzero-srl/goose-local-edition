@@ -11,7 +11,7 @@ The expectations come from DESIGN §13.5's table (and the public score bands for
 scorer output. Where §13.5 names a class ("the runtime T/R/S rows") the ids are taken from §14's map.
 `why` records the reasoning; forge_controls.py reads only loses / critical / max_final.
 
-Usage: python3 forge/mutants/build_mutants.py        (writes the 18 patches + expectations)
+Usage: python3 forge/mutants/build_mutants.py [ids...]   (writes the 25 patches + expectations)
 """
 import json
 import shutil
@@ -100,7 +100,7 @@ MUTANTS = {
         'edits': [
             ('src/index.js', '    const result = await applyIssueEvent(cfg, event.body, policy);', '    const result = await applyIssueEvent(cfg, { ...event.body, eventId: event.eventId }, policy);'),
             ('src/sync.js', 'export async function applyIssueEvent(cfg, { issueId, changelogId, sprintChange }, policy) {', 'export async function applyIssueEvent(cfg, { issueId, changelogId, sprintChange, eventId }, policy) {'),
-            ('src/sync.js', '  for (const row of rows) if (await recordChange(row)) written += 1;', '  for (const row of rows) if (await recordChange(row, false, `${eventId}:${row.sprintId}`)) written += 1;'),
+            ('src/sync.js', '    if (await recordChange(row)) {', '    if (await recordChange(row, false, `${eventId}:${row.sprintId}`)) {'),
             ('src/ledger.js', 'export async function recordChange(row, known = false) {\n  const key = changeKey(row.changeId, row.sprintId);', 'export async function recordChange(row, known = false, key = changeKey(row.changeId, row.sprintId)) {'),
         ],
         'expect': {'loses': ['t_no_double_count'], 'critical': True, 'max_final': DEFECT_CAP},
@@ -228,7 +228,7 @@ resolver.define('widgetBoard', async ({ context }) => ({ boardId: (await kvs.get
     },
     'm_skill_name': {
         'edits': [('skills/sprint-scope-analyst/SKILL.md', 'name: sprint-scope-analyst\n', 'name: scope-analyst\n')],
-        'expect': {'loses': ['l_deployable', 'k_rovo_skill'], 'critical': False, 'max_final': LINT_CAP},
+        'expect': {'loses': ['l_deployable', 'k_rovo_skill'], 'critical': True, 'max_final': LINT_CAP},
         'why': 'SKILL.md name differs from its directory: the Rovo skill is invalid. DESIGN §13.5 predicts k_rovo_skill '
                'and the 0.799 surface cap, but MEASURED 2026-10-02 the client-side lint (@forge/lint via the spike '
                'harness) reports an ERROR "Skill sprint-scope-analyst frontmatter field \'name\' must match the '
@@ -279,6 +279,80 @@ resolver.define('saveWidgetBoard', async ({ payload }) => {
         'why': 'The consumer throws on a 429 instead of returning a retry request: the platform redelivers on its own '
                'schedule (1, 2, 4, 8 min), which can come back before Retry-After; the rows still land. Rate-limit '
                'defect band 0.899.',
+    },
+    'm_llm_trusts_numbers': {
+        'edits': [('src/explain.js', "  const summary = /\\d/.test(args.summary) || !args.summary.trim() ? ledgerSentence(view) : args.summary.trim();",
+                   "  const summary = args.summary.trim();")],
+        'expect': {'loses': ['u_llm_explain'], 'critical': False, 'max_final': DEFECT_CAP},
+        'why': 'The model\'s summary is shown verbatim even when it holds digits, so a model-invented number reaches '
+               'the coach next to the ledger\'s. LLM defect band 0.899.',
+    },
+    'm_llm_leaks_hidden': {
+        'edits': [
+            ('src/index.js', '    return explainSprint(await personView(sprint, UI_POLICY));', "    return explainSprint(await personView(sprint, UI_POLICY, 'app'));"),
+            ('src/views.js', 'export async function personView(sprint, policy) {', "export async function personView(sprint, policy, who = 'user') {"),
+            ('src/views.js', '  const visible = changes.length ? await visibleIssues(changes.map((c) => c.issueId), policy) : new Map();',
+             '  const visible = changes.length ? await visibleIssues(changes.map((c) => c.issueId), policy, who) : new Map();'),
+            ('src/ledger.js', 'export async function visibleIssues(issueIds, policy) {', "export async function visibleIssues(issueIds, policy, who = 'user') {"),
+            ('src/ledger.js', "    const page = await jiraJson('user', route`/rest/api/3/issue/bulkfetch`,", "    const page = await jiraJson(who, route`/rest/api/3/issue/bulkfetch`,"),
+            ('src/explain.js', '  const ids = [...new Set(args.changeIds)].filter((id) => visible.has(id));', '  const ids = [...new Set(args.changeIds)];'),
+            ('src/explain.js', '    changes: ids.map((id) => ({ changeId: id, issueKey: visible.get(id).issueKey, kind: visible.get(id).kind })),',
+             "    changes: ids.map((id) => ({ changeId: id, issueKey: visible.get(id)?.issueKey ?? id, kind: visible.get(id)?.kind ?? 'added' })),"),
+        ],
+        'expect': {'loses': ['b_no_permission_leak', 'u_llm_explain'], 'critical': True, 'max_final': DEFECT_CAP},
+        'why': 'The explain prompt is built from every ledger row read as the app, and the ids the model returns are '
+               'rendered unfiltered: changes to issues the viewer cannot browse reach the model and the screen '
+               '(critical leak).',
+    },
+    'm_llm_deprecated_model': {
+        'edits': [(
+            'src/explain.js',
+            """  const { models } = await list();
+  const active = (models ?? []).filter((m) => m.status === 'active').map((m) => m.model);
+  return active.find((m) => /sonnet/i.test(m)) ?? active[0] ?? null;""",
+            """  return 'claude-opus-4-6';""",
+        )],
+        'expect': {'loses': ['k_llm_model_current'], 'critical': False, 'max_final': DEFECT_CAP},
+        'why': 'A hard-coded model name copied from the docs\' example, which the site lists as deprecated, instead of '
+               'a model list() reports active. LLM defect band 0.899.',
+    },
+    'm_llm_no_refusal_path': {
+        'edits': [("src/explain.js", "  if (!call) return { ok: false, error: 'The model declined to explain this sprint.' };\n", '')],
+        'expect': {'loses': ['u_llm_explain', 'b_invoke_contract'], 'critical': False, 'max_final': DEFECT_CAP},
+        'why': 'The code assumes the model always calls report_scope: a refusal (no tool call) makes the resolver '
+               'throw a TypeError instead of answering with an error. LLM defect band 0.899.',
+    },
+    'm_rt_publish_in_consumer': {
+        'edits': [
+            ('src/realtime.js', "import { publishGlobal } from '@forge/realtime';", "import { publish } from '@forge/realtime';"),
+            ('src/realtime.js', '    const res = await publishGlobal(CHANNEL, { sprintIds: ids });', '    const res = await publish(CHANNEL, { sprintIds: ids });'),
+        ],
+        'expect': {'loses': ['u_widget_live'], 'critical': False, 'max_final': DEFECT_CAP},
+        'why': 'The consumer (and the scheduled run) announce with publish(), which the realtime docs say is not '
+               'available for async events: nothing reaches the widget\'s global subscription, so an open widget never '
+               'updates. Realtime defect band 0.899.',
+    },
+    'm_rt_payload_leak': {
+        'edits': [
+            ('src/sync.js', '  return { rows: written, members, sprintIds: [...changed] };', '  return { rows: written, members, sprintIds: [...changed], changedRows: rows };'),
+            ('src/index.js', '    await announce(result.sprintIds);\n    return result;', '    await announce(result.sprintIds, result.changedRows);\n    return result;'),
+            ('src/realtime.js', 'export async function announce(sprintIds) {', 'export async function announce(sprintIds, rows = []) {'),
+            ('src/realtime.js', '    const res = await publishGlobal(CHANNEL, { sprintIds: ids });',
+             '    const changes = rows.map((r) => ({ changeId: r.changeId, issueKey: r.issueKey, kind: r.kind, by: r.authorName }));\n    const res = await publishGlobal(CHANNEL, { sprintIds: ids, changes });'),
+        ],
+        'expect': {'loses': ['b_realtime_payload_clean'], 'critical': False, 'max_final': DEFECT_CAP},
+        'why': 'The realtime payload carries the changed rows (issue keys, authors) to every subscriber of a global '
+               'channel, regardless of what each viewer may browse. The widget still updates. Realtime defect band 0.899.',
+    },
+    'm_rt_poll_instead': {
+        'edits': [
+            ('static/widget/src/index.jsx', '      if (data.realtime && !subscription.current) subscribe(data.realtime);\n', ''),
+            ('static/widget/src/index.jsx', '  useEffect(() => {\n    load();\n  }, [load]);\n',
+             '  useEffect(() => {\n    load();\n    const timer = setInterval(() => reload.current(), 5000);\n    return () => clearInterval(timer);\n  }, [load]);\n'),
+        ],
+        'expect': {'loses': ['u_widget_live'], 'critical': False, 'max_final': DEFECT_CAP},
+        'why': 'The widget polls its resolver every five seconds instead of subscribing to Forge Realtime (the contract '
+               'says no polling). Realtime defect band 0.899.',
     },
 }
 

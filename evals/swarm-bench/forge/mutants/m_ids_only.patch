@@ -1,8 +1,8 @@
 diff --git a/src/sync.js b/src/sync.js
-index e4289d4..8f224e3 100644
+index e315bc0..9573617 100644
 --- a/src/sync.js
 +++ b/src/sync.js
-@@ -158,7 +158,7 @@ export async function searchCandidates(cfg, policy) {
+@@ -167,7 +167,7 @@ export async function searchCandidates(cfg, policy) {
    const issues = [];
    let nextPageToken;
    do {

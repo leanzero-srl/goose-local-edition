@@ -1,0 +1,9 @@
+{
+  "loses": [
+    "u_llm_explain",
+    "b_invoke_contract"
+  ],
+  "critical": false,
+  "max_final": 0.899,
+  "why": "The code assumes the model always calls report_scope: a refusal (no tool call) makes the resolver throw a TypeError instead of answering with an error. LLM defect band 0.899."
+}

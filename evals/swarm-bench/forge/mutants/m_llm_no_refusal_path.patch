@@ -1,0 +1,12 @@
+diff --git a/src/explain.js b/src/explain.js
+index ec3a2cc..cbbf927 100644
+--- a/src/explain.js
++++ b/src/explain.js
+@@ -73,7 +73,6 @@ export async function explainSprint(view) {
+   }
+ 
+   const call = (response?.choices ?? []).flatMap((c) => c.message?.tool_calls ?? []).find((t) => t.function?.name === 'report_scope');
+-  if (!call) return { ok: false, error: 'The model declined to explain this sprint.' };
+   const args = call.function.arguments;
+   const valid =
+     args !== null &&

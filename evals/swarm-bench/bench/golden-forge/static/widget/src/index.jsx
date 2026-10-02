@@ -97,8 +97,8 @@ function Widget({ initialContext }) {
     if (boardId === undefined || boardId === null || boardId === '') return setState({ phase: 'needs-config' });
     setState((s) => (s.phase === 'ready' ? s : { phase: 'loading' }));
     try {
-      // The first load also brings a realtime subscribe token, so the widget renders in one round trip.
-      const data = await call('widget', { boardId: String(boardId), withRealtime: !subscription.current });
+      // The answer names the realtime channel, so the widget renders and subscribes in one round trip.
+      const data = await call('widget', { boardId: String(boardId) });
       if (data.needsConfig) return setState({ phase: 'needs-config' });
       shownSprints.current = new Set(data.sprints.map((s) => s.id));
       setState({ phase: 'ready', data });
@@ -110,7 +110,7 @@ function Widget({ initialContext }) {
   reload.current = load;
 
   // Forge Realtime: the backend announces the sprint ids whose ledger changed; the widget re-reads its
-  // numbers when one of its sprints is named. No polling. The token is renewed shortly before it expires.
+  // numbers when one of its sprints is named. No polling.
   async function subscribe(rt) {
     subscription.current = { pending: true };
     try {
@@ -121,27 +121,11 @@ function Widget({ initialContext }) {
           const ids = Array.isArray(body?.sprintIds) ? body.sprintIds.map(String) : [];
           if (ids.some((id) => shownSprints.current.has(id))) reload.current();
         },
-        { token: rt.token },
       );
       subscription.current = sub;
       setLive(true);
-      const renewIn = Math.max(10_000, Number(rt.expiresAt) * 1000 - Date.now() - 60_000);
-      if (Number.isFinite(renewIn)) setTimeout(renew, renewIn);
     } catch (e) {
       subscription.current = null;
-      setLive(false);
-      setLiveError(e?.message ?? String(e));
-    }
-  }
-
-  async function renew() {
-    const previous = subscription.current;
-    try {
-      const rt = await call('realtimeToken');
-      subscription.current = null;
-      await previous?.unsubscribe?.();
-      await subscribe(rt);
-    } catch (e) {
       setLive(false);
       setLiveError(e?.message ?? String(e));
     }

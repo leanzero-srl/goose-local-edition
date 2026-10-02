@@ -1,0 +1,9 @@
+{
+  "loses": [
+    "b_no_permission_leak",
+    "u_llm_explain"
+  ],
+  "critical": true,
+  "max_final": 0.899,
+  "why": "The explain prompt is built from every ledger row read as the app, and the ids the model returns are rendered unfiltered: changes to issues the viewer cannot browse reach the model and the screen (critical leak)."
+}

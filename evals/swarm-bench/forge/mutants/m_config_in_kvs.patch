@@ -1,5 +1,5 @@
 diff --git a/src/index.js b/src/index.js
-index 5356195..c3018dc 100644
+index 4125bdb..192490e 100644
 --- a/src/index.js
 +++ b/src/index.js
 @@ -1,5 +1,6 @@
@@ -9,7 +9,7 @@ index 5356195..c3018dc 100644
  import { RateLimited } from './jira';
  import { loadConfig, saveConfig, discoverConfig } from './config';
  import { applyIssueEvent, estimateFieldIds, reconcileAll } from './sync';
-@@ -86,10 +87,15 @@ const contextSprintId = (context) => {
+@@ -90,10 +91,15 @@ const contextSprintId = (context) => {
  
  resolver.define('boards', rateLimitedAware(async () => ({ boards: await boardsView(UI_POLICY) })));
  
@@ -24,8 +24,8 @@ index 5356195..c3018dc 100644
 -    const boardId = payload?.boardId ?? context?.extension?.config?.boardId;
 +    const boardId = await kvs.get('widget-board');
      if (boardId === undefined || boardId === null || boardId === '') return { needsConfig: true };
-     return widgetView(String(boardId), UI_POLICY);
-   }),
+     const view = await widgetView(String(boardId), UI_POLICY);
+     return { ...view, realtime: { channel: CHANNEL } };
 diff --git a/static/widget-edit/src/index.jsx b/static/widget-edit/src/index.jsx
 index c8c48d1..eb638a5 100644
 --- a/static/widget-edit/src/index.jsx
@@ -39,15 +39,15 @@ index c8c48d1..eb638a5 100644
  
    return (
 diff --git a/static/widget/src/index.jsx b/static/widget/src/index.jsx
-index 0d4f763..7b32622 100644
+index ee675b2..e1be302 100644
 --- a/static/widget/src/index.jsx
 +++ b/static/widget/src/index.jsx
-@@ -83,7 +83,7 @@ function Widget({ initialContext }) {
-     if (boardId === undefined || boardId === null || boardId === '') return setState({ phase: 'needs-config' });
+@@ -98,7 +98,7 @@ function Widget({ initialContext }) {
      setState((s) => (s.phase === 'ready' ? s : { phase: 'loading' }));
      try {
+       // The answer names the realtime channel, so the widget renders and subscribes in one round trip.
 -      const data = await call('widget', { boardId: String(boardId) });
 +      const data = await call('widget', {});
        if (data.needsConfig) return setState({ phase: 'needs-config' });
+       shownSprints.current = new Set(data.sprints.map((s) => s.id));
        setState({ phase: 'ready', data });
-     } catch (e) {

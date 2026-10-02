@@ -1,0 +1,45 @@
+diff --git a/src/index.js b/src/index.js
+index 4125bdb..548645f 100644
+--- a/src/index.js
++++ b/src/index.js
+@@ -37,7 +37,7 @@ export async function consumeChange(event) {
+     const cfg = previous ? structuredClone(previous) : await discoverConfig(policy);
+     const result = await applyIssueEvent(cfg, event.body, policy);
+     await saveConfig(cfg, previous);
+-    await announce(result.sprintIds);
++    await announce(result.sprintIds, result.changedRows);
+     return result;
+   } catch (e) {
+     if (e instanceof RateLimited) {
+diff --git a/src/realtime.js b/src/realtime.js
+index e3bd570..0a99a6c 100644
+--- a/src/realtime.js
++++ b/src/realtime.js
+@@ -9,11 +9,12 @@ export const CHANNEL = 'scope-ledger-updates';
+ 
+ // A failed announcement must not undo or retry the ledger write it follows: it is logged loudly and the
+ // widget catches up on its next load.
+-export async function announce(sprintIds) {
++export async function announce(sprintIds, rows = []) {
+   const ids = [...new Set(sprintIds.map(String))].sort();
+   if (!ids.length) return;
+   try {
+-    const res = await publishGlobal(CHANNEL, { sprintIds: ids });
++    const changes = rows.map((r) => ({ changeId: r.changeId, issueKey: r.issueKey, kind: r.kind, by: r.authorName }));
++    const res = await publishGlobal(CHANNEL, { sprintIds: ids, changes });
+     if (res.errors) console.error(`realtime: publish failed for sprints ${ids.join(',')}: ${JSON.stringify(res.errors)}`);
+   } catch (e) {
+     console.error(`realtime: publish threw for sprints ${ids.join(',')}: ${e.message}`);
+diff --git a/src/sync.js b/src/sync.js
+index e315bc0..2988845 100644
+--- a/src/sync.js
++++ b/src/sync.js
+@@ -146,7 +146,7 @@ export async function applyIssueEvent(cfg, { issueId, changelogId, sprintChange
+       changed.add(sprintId);
+     }
+   }
+-  return { rows: written, members, sprintIds: [...changed] };
++  return { rows: written, members, sprintIds: [...changed], changedRows: rows };
+ }
+ 
+ // ---- scheduled path --------------------------------------------------------------------------

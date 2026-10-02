@@ -1,0 +1,21 @@
+diff --git a/static/widget/src/index.jsx b/static/widget/src/index.jsx
+index ee675b2..5047c67 100644
+--- a/static/widget/src/index.jsx
++++ b/static/widget/src/index.jsx
+@@ -102,7 +102,6 @@ function Widget({ initialContext }) {
+       if (data.needsConfig) return setState({ phase: 'needs-config' });
+       shownSprints.current = new Set(data.sprints.map((s) => s.id));
+       setState({ phase: 'ready', data });
+-      if (data.realtime && !subscription.current) subscribe(data.realtime);
+     } catch (e) {
+       setState({ phase: 'error', message: e?.message ?? String(e) });
+     }
+@@ -133,6 +132,8 @@ function Widget({ initialContext }) {
+ 
+   useEffect(() => {
+     load();
++    const timer = setInterval(() => reload.current(), 5000);
++    return () => clearInterval(timer);
+   }, [load]);
+ 
+   useEffect(

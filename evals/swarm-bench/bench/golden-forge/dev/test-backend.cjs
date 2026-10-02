@@ -122,10 +122,10 @@ async function main() {
 
   const evPubs = platform.realtime.published.filter((pb) => pb.moduleType === 'consumer');
   const evSprints = new Set(evPubs.flatMap((pb) => pb.payload.sprintIds));
-  ok(evPubs.length > 0 && evPubs.every((pb) => pb.isGlobal && pb.token), `consumer announced ledger changes with publishGlobal + token (${evPubs.length} publications)`);
+  ok(evPubs.length > 0 && evPubs.every((pb) => pb.isGlobal), `consumer announced ledger changes with publishGlobal (${evPubs.length} publications)`);
   ok(['11', '12'].every((sid) => evSprints.has(sid)), `the announced sprint ids cover the sprints the events changed (${[...evSprints].join(',')})`);
   ok(platform.realtime.published.every((pb) => JSON.stringify(Object.keys(pb.payload)) === '["sprintIds"]' && pb.payload.sprintIds.every((x) => /^\d+$/.test(x))), 'every realtime payload carries sprint ids only');
-  ok(platform.realtime.signed.every((t) => JSON.stringify(t.claims) === JSON.stringify(platform.realtime.signed[0].claims)), 'publisher and subscriber tokens are signed with the same claims');
+  ok(platform.realtime.signed.length === 0, 'no realtime token is signed outside a resolver');
 
   // ---------- 3. heal: the next scheduled run records what the stream missed, then a rerun writes nothing ----------
   await platform.invoke('reconcile', {}, { moduleKey: 'scope-reconcile' });

@@ -1,0 +1,19 @@
+diff --git a/src/realtime.js b/src/realtime.js
+index e3bd570..b9304ca 100644
+--- a/src/realtime.js
++++ b/src/realtime.js
+@@ -1,4 +1,4 @@
+-import { publishGlobal } from '@forge/realtime';
++import { publish } from '@forge/realtime';
+ 
+ // One global channel. The realtime docs: "The publish API is only supported for functions invoked from
+ // the app frontend. This is not currently available for async events and web triggers. Use publishGlobal
+@@ -13,7 +13,7 @@ export async function announce(sprintIds) {
+   const ids = [...new Set(sprintIds.map(String))].sort();
+   if (!ids.length) return;
+   try {
+-    const res = await publishGlobal(CHANNEL, { sprintIds: ids });
++    const res = await publish(CHANNEL, { sprintIds: ids });
+     if (res.errors) console.error(`realtime: publish failed for sprints ${ids.join(',')}: ${JSON.stringify(res.errors)}`);
+   } catch (e) {
+     console.error(`realtime: publish threw for sprints ${ids.join(',')}: ${e.message}`);

@@ -1,0 +1,8 @@
+{
+  "loses": [
+    "u_widget_live"
+  ],
+  "critical": false,
+  "max_final": 0.899,
+  "why": "The widget polls its resolver every five seconds instead of subscribing to Forge Realtime (the contract says no polling). Realtime defect band 0.899."
+}
