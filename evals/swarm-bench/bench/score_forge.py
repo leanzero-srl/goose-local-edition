@@ -1353,10 +1353,15 @@ def deploy_findings(c: Ctx) -> List[Dict]:
          "This is not currently available for async events' (publishGlobal instead)", 'realtime',
          '; '.join([f"{len(rejected)} publish(es) rejected: {rejected[0].get('rejected')}"] if rejected else []) + '; '.join(bg_publish),
          graded_by=_charged(c, 'u_widget_live'))
-    stale = sorted({str(e.get('model')) for e in _llm_calls(c) if e.get('modelStatus') != 'active'})
-    rule('R11 LLM calls name a model list() reports active', 'runtime', bool(_llm_calls(c)), not stale, 'would_fail',
-         'a deprecated model is retired by the platform; the docs example (claude-opus-4-6) is deprecated on the site',
-         'llm', ', '.join(stale), graded_by=_charged(c, 'k_llm_model_current'))
+    stale = _unlisted_models(c)
+    rule('R11 LLM calls name a model id list() returns', 'runtime', bool(_llm_calls(c)), not stale, 'would_fail',
+         'a model id the platform does not offer is refused (400)', 'llm', ', '.join(stale),
+         graded_by=_charged(c, 'k_llm_model_current'))
+    sampling = [e for e in _llm_calls(c) if isinstance(e.get('request'), dict)
+                and ({'temperature', 'top_p'} & set(e['request'])) and e.get('status') == 400]
+    rule('R12 LLM requests follow the documented sampling rules', 'runtime', bool(_llm_calls(c)), not sampling, 'would_fail',
+         "LLM API reference 'Validation rules': temperature and top_p never together; neither on claude-opus-4-7/-4-8/-5 "
+         'and claude-sonnet-5', 'llm', f'{len(sampling)} request(s) refused', graded_by=_charged(c, 'u_llm_explain'))
     kvs_err = [x for x in c.all_calls('kvs') if x.get('limitError') or x.get('status') in (400, 413)]
     rule('R9 KVS writes fit the documented types and limits', 'runtime', bool(c.all_calls('kvs')), not kvs_err, 'would_fail',
          'a value, key or integer past the KVS limits is refused', 'kvs',
@@ -2237,6 +2242,22 @@ def _llm_calls(c: Ctx) -> List[Dict]:
     return [e for e in _llm_entries(c) if e.get('op') in ('chat', 'stream')]
 
 
+def _listed_models(c: Ctx) -> Optional[set]:
+    """The model ids the site's list() returns (DESIGN §17.4: the public models page, all active), or None when the
+    probe did not record them (then the log entry's own modelStatus decides)."""
+    models = (c.obs.get('llm') or {}).get('models')
+    if not models:
+        return None
+    return {str(m.get('model') if isinstance(m, dict) else m) for m in models}
+
+
+def _unlisted_models(c: Ctx) -> List[str]:
+    listed = _listed_models(c)
+    if listed is None:
+        return sorted({str(e.get('model')) for e in _llm_calls(c) if e.get('modelStatus') != 'active'})
+    return sorted({str(e.get('model')) for e in _llm_calls(c) if str(e.get('model')) not in listed})
+
+
 def _realtime_events(c: Ctx) -> List[Dict]:
     return [e for e in (c.obs.get('realtime') or {}).get('events') or [] if isinstance(e, dict)]
 
@@ -2262,11 +2283,11 @@ def _(c):
     llm = c.modules('llm')
     claude = any('claude' in [str(x) for x in (m.get('model') or [])] for m in llm)
     calls = _llm_calls(c)
-    stale = sorted({str(e.get('model')) for e in calls if e.get('modelStatus') != 'active'})
-    conds = {'llm_module_with_claude': claude, 'every_call_names_an_active_model': not stale}
+    stale = _unlisted_models(c)
+    conds = {'llm_module_with_claude': claude, 'every_call_names_a_listed_model': not stale}
     met = sum(conds.values())
-    return g(met / 2, f'{len(calls)} LLM call(s); models not active: {stale}; llm module with claude: {claude}',
-             'a deprecated or unknown model (the docs example is deprecated on the site)', parts=conds)
+    return g(met / 2, f'{len(calls)} LLM call(s); model ids list() does not return: {stale}; llm module with claude: {claude}',
+             'a hard-coded model id the platform does not offer (DESIGN §17.4)', parts=conds)
 
 
 def _payload_tokens(payload) -> Tuple[List[str], List[str]]:

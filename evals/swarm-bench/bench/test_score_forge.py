@@ -762,15 +762,26 @@ class LlmRealtimeMcpTests(Golden):
         self.assertEqual(rows['k_rovo_mcp']['score'], 0)
 
     def test_llm_model_current(self):
-        def deprecated(o):
+        def unknown(o):
+            o['llm']['models'] = [{'model': 'claude-sonnet-5', 'status': 'active'}, {'model': 'claude-opus-5', 'status': 'active'}]
             for e in o['llm']['entries']:
                 if e.get('op') == 'chat':
-                    e.update(model='claude-opus-4-6', modelStatus='deprecated')
-        rows, v = self.mutate(deprecated)
+                    e.update(model='claude-3-opus', modelStatus='unknown', status=400)
+        rows, v = self.mutate(unknown)
         self.assertEqual(rows['k_llm_model_current']['score'], 0.5)
         self.assertEqual(v['admission']['ceiling'], 1.0)     # points only, never a band (DESIGN 17.2)
         rule = [f for f in v['deploy_readiness']['rules'] if f['rule'].startswith('R11 ')][0]
         self.assertEqual((rule['status'], rule['graded_by']), ('fail', 'k_llm_model_current'))
+
+    def test_sampling_parameters_are_a_predicted_failure(self):
+        def sampling(o):
+            for e in o['llm']['entries']:
+                if e.get('op') == 'chat':
+                    e.update(request={**e['request'], 'temperature': 0.7, 'top_p': 0.9}, status=400)
+        _rows, v = self.mutate(sampling)
+        rule = [f for f in v['deploy_readiness']['rules'] if f['rule'].startswith('R12 ')][0]
+        self.assertEqual(rule['status'], 'fail')
+        self.assertEqual([f for f in self.score()['deploy_readiness']['rules'] if f['rule'].startswith('R12 ')][0]['status'], 'pass')
 
     def test_realtime_payload_clean(self):
         def leak(o):
