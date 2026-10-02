@@ -1788,9 +1788,11 @@ mod tests {
             with_block.messages(),
             &tools,
             &[],
+            true,
         )
         .await
-        .unwrap();
+        .unwrap()
+        .stream;
         while stream.next().await.is_some() {}
 
         // The turn ended on the model's answer and the person's next message arrived; the

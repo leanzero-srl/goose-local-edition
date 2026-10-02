@@ -80,6 +80,26 @@ impl RetryConfig {
 
         Duration::from_millis(jitter_delay_ms)
     }
+
+    /// The wait before resend `attempt` (1-based) of a request that failed with `error`: the
+    /// provider's own delay when a rate limit named one, else this policy's backoff.
+    pub fn delay_before_retry(&self, error: &ProviderError, attempt: usize) -> Duration {
+        match error {
+            ProviderError::RateLimitExceeded {
+                retry_delay: Some(provider_delay),
+                ..
+            } => *provider_delay,
+            _ => self.delay_for_attempt(attempt),
+        }
+    }
+}
+
+/// `GOOSE_PROVIDER_SKIP_BACKOFF=true` resends without waiting out the backoff.
+pub fn backoff_skipped() -> bool {
+    std::env::var("GOOSE_PROVIDER_SKIP_BACKOFF")
+        .unwrap_or_default()
+        .parse::<bool>()
+        .unwrap_or(false)
 }
 
 /// Substrings marking a `RequestFailed` (4xx) as deterministically permanent:
@@ -147,15 +167,7 @@ where
                         error
                     );
 
-                    let delay = match &error {
-                        ProviderError::RateLimitExceeded {
-                            retry_delay: Some(d),
-                            ..
-                        } => *d,
-                        _ => config.delay_for_attempt(attempts),
-                    };
-
-                    sleep(delay).await;
+                    sleep(config.delay_before_retry(&error, attempts)).await;
                     continue;
                 }
                 return Err(error);
@@ -251,20 +263,8 @@ impl<P: Provider> ProviderRetry for P {
                             error
                         );
 
-                        let delay = match &error {
-                            ProviderError::RateLimitExceeded {
-                                retry_delay: Some(provider_delay),
-                                ..
-                            } => *provider_delay,
-                            _ => config.delay_for_attempt(attempts),
-                        };
-
-                        let skip_backoff = std::env::var("GOOSE_PROVIDER_SKIP_BACKOFF")
-                            .unwrap_or_default()
-                            .parse::<bool>()
-                            .unwrap_or(false);
-
-                        if skip_backoff {
+                        let delay = config.delay_before_retry(&error, attempts);
+                        if backoff_skipped() {
                             tracing::info!("Skipping backoff due to GOOSE_PROVIDER_SKIP_BACKOFF");
                         } else {
                             tracing::info!("Backing off for {:?} before retry", delay);
