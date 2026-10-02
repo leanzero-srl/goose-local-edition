@@ -41,8 +41,8 @@ Tests earn the score. Conditions also cap it:
 - Any duplicate, ordering, rate-limit, pagination, permission, policy or console defect:
   maximum 0.899.
 
-Lint warnings cost points but never cap. A small excellence share rewards reaching Jira in few
-calls and rendering each surface in few round trips. The harness keeps screenshots of every surface.
+Lint warnings cost points but never cap. A small excellence share rewards few Jira requests and
+rendering each surface in few round trips. The harness keeps screenshots of every surface.
 
 ## Completion handoff
 

@@ -13,14 +13,17 @@ For each **active** sprint S, with `startDate` from the Jira Software sprint API
 
 - A **change** is a Sprint-field changelog entry created after `startDate` that puts an issue
   into S (`added`) or takes it out of S (`removed`). Its id is the changelog id, its time the
-  changelog `created`, its author the changelog author.
+  changelog `created`, its author the changelog author. A change is keyed by changelog id +
+  sprint: one entry moving an issue between two sprints is a `removed` in one and an `added` in
+  the other.
 - **committed** = sum of current estimates of issues that were in S at `startDate`.
 - **added** = sum of current estimates of issues in S now that were not in S at `startDate`.
 - **removed** = sum of current estimates of issues in S at some time after `startDate` and not in
   S now.
-- **creep** = `100 × added / committed`, one decimal; `—` when committed is 0.
+- **creep** = `100 × added / committed`, rounded half away from zero to one decimal and always
+  written with that decimal and `%` (`20.0%`); `—` when committed is 0.
 - An issue's **estimate** is the value of its board's estimation field; no value counts as 0.
-- Numbers are written as plain decimals (`34.5`, `0`, `12.5%`), no thousands separators.
+- Points are written as plain decimals (`34.5`, `0`), no thousands separators.
 
 Background work (triggers, consumer, scheduled job) sees every issue. What a **person** sees in
 the sprint action and the Rovo action lists only changes to issues that person can browse, plus
@@ -56,17 +59,21 @@ Request only the scopes your calls need. Custom UI only; UI Kit (`render: native
   event stream missed; a run with nothing new writes nothing.
 - Jira may answer `429` with `Retry-After`: wait at least that long before the next attempt.
 - Background work uses `asApp()`. Whatever shows a person issue data (keys, authors, change
-  lists, comments) reads and writes Jira as that person (`asUser()`); team totals come from the
-  ledger.
+  lists) shows only what that person can browse — read as them (`asUser()`), or as the app with
+  an explicit permission check for them. Comments are posted as the person. Team totals come
+  from the ledger.
 
 ## 4. Dashboard widget
 
 **Edit** (`edit.resource`): one element per scrum board, `[data-testid="board-option"]` with
 `data-board-id`, clickable; the selected one carries `aria-pressed="true"`. The choice reaches the
-dashboard through the dashboards widget edit API, and the dashboard's own Save stores it as the
-widget configuration. Reopening edit shows the stored board selected.
+dashboard through the dashboards widget edit API (`@forge/dashboards-bridge`). The dashboard's
+own Save stores what your `onProductSave` handler returns (`null` stores nothing); with no
+handler registered the harness stores the last `updateConfig` value. Reopening edit shows the
+stored board selected.
 
-**View** (`resource`), root `[data-testid="scope-widget"]`:
+**View** (`resource`), root `[data-testid="scope-widget"]`. It takes its board from the widget
+configuration in its context, so two widgets on one dashboard can show different boards:
 - No stored board: `[data-testid="needs-config"]`, nothing else.
 - Otherwise one `[data-testid="sprint"][data-sprint-id="<id>"]` per active sprint of that board,
   ordered by `startDate`, each holding `[data-metric="committed"]`, `[data-metric="added"]`,
@@ -86,16 +93,17 @@ The sprint comes from the module context. A sprint that has not started shows
 - `table[data-testid="ledger"]`, headers `th[data-col]` for `issue`, `points`, `kind`, `by`,
   `at`, `source`; one `tr[data-change-id="<changelog id>"]` per visible change with
   `td[data-col=…]` cells: issue key, current estimate, `added`/`removed`, author display name, a
-  `<time datetime="<ISO-8601 UTC>">`, `event`/`reconcile`.
-- Default order: `at` ascending. Clicking `th[data-col="at"]` toggles descending/ascending;
+  `<time datetime>` holding an ISO-8601 instant with offset (compared as instants),
+  `event`/`reconcile`.
+- Default order: `at` ascending, equal times by changelog id ascending. Clicking `th[data-col="at"]` toggles descending/ascending;
   clicking `th[data-col="points"]` sorts by points descending, ties by `at` ascending; the active
   header carries `aria-sort`.
 - The issue key opens the issue (`/browse/<KEY>`) through the Forge router.
 - Clicking a row selects it (`aria-selected="true"`). `[data-testid="post-summary"]` posts one
   comment on the selected change's issue, authored by the viewer, in Atlassian Document Format,
-  naming the issue key, the sprint name and the sprint's creep; then a success flag. A failure
-  shows an error flag and leaves the modal working. One click, or a double click, posts at most
-  one comment.
+  naming the issue key, the sprint name and the sprint's creep; then a success flag. On `429`,
+  retry after `Retry-After`: each click (or double click) ends with exactly one comment and one
+  success flag. Any other failure shows an error flag and leaves the modal working.
 - `[data-testid="close"]` closes the modal.
 
 ## 6. Rovo
@@ -110,8 +118,9 @@ the invoking person it returns a JSON object:
                  "at": "<ISO-8601 UTC>", "by": "<display name>" } ] }
 ```
 
-`creepPercent` is `null` when committed is 0; `changes` are the visible ones, `at` ascending. An
-unknown or missing `sprintId` returns `{ "error": "<message>" }` and does not throw.
+`creepPercent` is rounded as creep (§1) and `null` when committed is 0; `changeId` is the
+changelog id; `changes` are the visible ones in table order (§5); `at` is compared as an instant.
+An unknown or missing `sprintId` returns `{ "error": "<message>" }` and does not throw.
 
 `skills/sprint-scope-analyst/SKILL.md`: YAML frontmatter `name` equal to the directory name
 (1–64 characters: lowercase letters, digits, single hyphens, no leading or trailing hyphen),
@@ -123,9 +132,13 @@ with an error.
 ## 7. Custom UI
 
 Every surface calls `view.theme.enable()` and is styled with Atlassian design tokens
-(`var(--ds-…)`), so it is legible in light and in dark (text contrast at least 4.5:1). The browser
-console stays free of errors. Surfaces render inside the default Forge Custom UI content security
-policy: no inline scripts, no external scripts, styles or fonts, assets referenced relatively.
+(`var(--ds-…)`): text with `--ds-text*` (links may use `--ds-link*`), contrast at least 4.5:1 in
+light and in dark. The page behind your surface is unpainted: paint your own background with a
+`--ds-surface*` token. The browser console stays free of errors. Surfaces render inside the
+default Forge Custom UI content security policy: no inline `<script>`, no `<style>` elements or
+`style` attributes in markup, no external scripts, styles or fonts, assets referenced relatively.
+Declaring `unsafe-inline` in `permissions.content.styles` is allowed; script relaxations count as
+unneeded permissions.
 
 ## 8. What the harness does differently from production
 
@@ -133,6 +146,9 @@ policy: no inline scripts, no external scripts, styles or fonts, assets referenc
   from `src/` the way `forge deploy` does. Every function invocation runs in a fresh Node process
   of the Forge runtime, with the platform's timeouts.
 - Trigger `filter.expression` is not evaluated: the handler receives every issue-updated event.
+- A consumer that throws or times out is redelivered after 1, 2, 4 and 8 minutes, then every 15,
+  for 24 hours; a retry request (`InvocationError`) is redelivered after its `retryAfter`. Waits
+  are on the harness's virtual clock.
 - The scoring site uses a different seed than the dev site: ids, keys, custom field ids, users,
   sprint names and dates all differ.
 - The widget runs at the dashboard layout the harness chooses; the sprint action in a modal.

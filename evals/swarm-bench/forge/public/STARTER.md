@@ -25,11 +25,11 @@ never call it directly; your app reaches it through the Forge runtime.
 | command | does |
 |---|---|
 | `npm run lint` | Forge's own client-side linter, offline. It is staged: fix and rerun until it reports no errors. |
-| `invoke <functionKey> [--module <key>] [--payload <file>] [--as <accountId>]` | runs a manifest function in the Forge runtime against the dev site with the event shape of the module that references it; prints the result, logs and every Jira, KVS and queue call. `--as` makes the invocation user-led. |
+| `invoke <functionKey> [--module <key>] [--resolver <key>] [--payload <file>] [--as <accountId>]` | runs a manifest function in the Forge runtime against the dev site with the event shape of the module that references it (`--resolver` calls that resolver key with `--payload`); prints the result, logs and every Jira, KVS and queue call. `--as` makes the invocation user-led. |
 | `events [--limit N]` | delivers the dev site's next N issue updates to your trigger and drains the queues |
 | `scheduled <moduleKey>` | runs a scheduled trigger once, then drains the queues |
-| `serve <moduleKey> [--edit] [--theme light\|dark] [--as <accountId>]` | serves a Custom UI module with the Forge bridge and the dashboard host emulated; prints its URL |
-| `kvs` / `users` / `reset` | dump stored keys and entities / list dev users / clear dev storage and queues |
+| `serve <moduleKey> [--edit] [--sprint <id>] [--config <json>] [--theme light\|dark] [--as <accountId>]` | serves a Custom UI module with the Forge bridge and the dashboard host emulated, prints its URL and runs until stopped (start it in the background). In a served edit surface, `window.__forgeHost.save()` performs the dashboard's Save. |
+| `kvs` / `users` / `reset` | dump stored keys and entities / list dev users / clear dev storage and queues and rewind the dev site's update stream |
 
 Screenshot a served surface with the bundled browser (`BROWSER-TESTING.md`). Build Custom UI into
 `static/<name>/build/` (an `index.html` plus assets) with the installed esbuild; the harness never
