@@ -110,7 +110,7 @@ function pageBridge(cfg) {
             lastUpdate = strip(c);
             hasUpdate = true;
             await call('updateConfig', lastUpdate);
-            emitLocal('FORGE_DASHBOARDS_WIDGET_EDIT_CONFIG_CHANGED', { widgetId: cfg.widgetId });
+            void ('FORGE_DASHBOARDS_WIDGET_EDIT_CONFIG_CHANGED', { widgetId: cfg.widgetId });
           },
           onSave: (fn) => { editHandlers.onSave.push(fn); call('onSave', null); },
           onProductSave: (fn) => { editHandlers.onProductSave = fn; call('onProductSave', null); },
