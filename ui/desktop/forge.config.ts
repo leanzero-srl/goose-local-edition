@@ -40,11 +40,12 @@ function mirrorSwarmBenchPayload() {
         .split(/[\\/]/)
         .some((part) => part === '__pycache__' || part === '.DS_Store' || part.endsWith('.pyc')),
   };
-  // The isolated payments tiers' public inputs: the starter and the visual contract run_build hands the
-  // entrant. SB7.1's are REQUIRED (SB7.2 shares SB7.1's starter path, and a missing one dies loudly
-  // here). SB7.2's own copies ship when the bench payload has them; whether it must have them is the
-  // stable release manifest's call — copy-bench-release-manifest.cjs below hashes every file that
-  // manifest lists, so a listed file this mirror did not ship refuses the package by name.
+  // The isolated payments tiers' public inputs: the starter and the contracts run_build hands the
+  // entrant (bench/isolated_tiers.py `public`). SB7.1's are REQUIRED (SB7.2 shares SB7.1's starter
+  // path, and a missing one dies loudly here). SB7.2's own copies (its visual contract, its trimmed
+  // SB7-CONTRACT.md and STARTER.md) ship when the bench payload has them; whether it must have them
+  // is the stable release manifest's call — copy-bench-release-manifest.cjs below hashes every file
+  // that manifest lists, so a listed file this mirror did not ship refuses the package by name.
   for (const tierDir of ['sb7.1', 'sb7.2']) {
     const required = tierDir === 'sb7.1';
     fs.mkdirSync(join(dest, tierDir), { recursive: true });
@@ -55,6 +56,9 @@ function mirrorSwarmBenchPayload() {
         join(src, tierDir, 'VISUAL-CONTRACT.md'),
         join(dest, tierDir, 'VISUAL-CONTRACT.md')
       );
+    for (const name of ['SB7-CONTRACT.md', 'STARTER.md'])
+      if (fs.existsSync(join(src, tierDir, name)))
+        fs.copyFileSync(join(src, tierDir, name), join(dest, tierDir, name));
   }
   fs.cpSync(join(src, 'sb8'), join(dest, 'sb8'), sourceOnly);
   const benchSrc = join(src, 'bench');

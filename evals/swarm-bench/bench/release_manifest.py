@@ -3,7 +3,7 @@
     python3 release_manifest.py sb7.1/release-manifest.json [--source-commit SHA] [--check]
 
 The payload is what ui/desktop/forge.config.ts mirrorSwarmBenchPayload() ships: the specs, the
-SB7.1 starter, each tier's VISUAL-CONTRACT.md, sb8/, and bench/ through the same name filter. Only
+SB7.1 starter, each tier's VISUAL-CONTRACT.md, SB7.2's own SB7-CONTRACT.md and STARTER.md, sb8/, and bench/ through the same name filter. Only
 `files` (and `sourceCommit` when given) change; every hand-written field survives. `--check` verifies
 the pins without writing. ui/desktop/scripts/copy-bench-release-manifest.cjs refuses a package whose
 bytes differ from the pins, so a bench edit without a refreeze fails packaging, never ships silently.
@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SPECS = ('spec-build.md', 'spec-build-v2.md', 'spec-build-v3.md', 'spec-build-sb7.md',
          'spec-build-sb71.md', 'spec-build-sb72.md', 'spec-build-sb8.md')
 TREES = ('sb7.1/starter', 'sb8')
-CONTRACTS = ('sb7.1/VISUAL-CONTRACT.md', 'sb7.2/VISUAL-CONTRACT.md')
+CONTRACTS = ('sb7.1/VISUAL-CONTRACT.md', 'sb7.2/VISUAL-CONTRACT.md', 'sb7.2/SB7-CONTRACT.md', 'sb7.2/STARTER.md')
 
 
 def _shipped(path: Path) -> bool:

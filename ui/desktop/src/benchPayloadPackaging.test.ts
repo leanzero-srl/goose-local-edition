@@ -68,12 +68,15 @@ it('ships every tier spec, and both payments tiers starters and visual contracts
   expect(trees).toEqual([`${SRC}/sb7.1/starter`, `${SRC}/sb7.2/starter`, `${SRC}/sb8`]);
   expect(files).toContain(`${SRC}/sb7.1/VISUAL-CONTRACT.md`);
   expect(files).toContain(`${SRC}/sb7.2/VISUAL-CONTRACT.md`);
+  expect(files).toContain(`${SRC}/sb7.2/SB7-CONTRACT.md`);
+  expect(files).toContain(`${SRC}/sb7.2/STARTER.md`);
 });
 
 it('leaves SB7.2 starter inputs to the release manifest when the bench payload shares SB7.1s', () => {
   const { trees, files, copyManifest } = runMirror((file) => !file.includes('/sb7.2/'));
   expect(trees).toEqual([`${SRC}/sb7.1/starter`, `${SRC}/sb8`]);
   expect(files).not.toContain(`${SRC}/sb7.2/VISUAL-CONTRACT.md`);
+  expect(files).not.toContain(`${SRC}/sb7.2/SB7-CONTRACT.md`);
   // The manifest check still runs: a file it lists that was not shipped refuses the package.
   expect(copyManifest).toHaveBeenCalledOnce();
 });

@@ -145,6 +145,29 @@ class PublicContractTests(unittest.TestCase):
         evidence = self.contract[self.contract.index('## Evidence and grading'):]
         self.assertLessEqual(len(evidence.encode()), 1100)
 
+    def test_sb72_hands_out_its_own_trimmed_contract_and_sb71_inputs_stay_frozen(self):
+        # SB7.1 receipts hash exactly these three files; its entrant still receives spec-build-sb7.md.
+        self.assertEqual(isolated_tiers.SB71.contracts,
+                         ('spec-build-sb71.md', 'spec-build-sb7.md', 'sb7.1/VISUAL-CONTRACT.md'))
+        public = dict(isolated_tiers.SB72.public)
+        self.assertEqual(public, {'SB7-CONTRACT.md': 'sb7.2/SB7-CONTRACT.md',
+                                  'VISUAL-CONTRACT.md': 'sb7.2/VISUAL-CONTRACT.md',
+                                  'STARTER.md': 'sb7.2/STARTER.md'})
+        import release_manifest
+        self.assertLessEqual(set(public.values()), set(release_manifest.payload()))
+
+        def size(*names):
+            return sum(len((ROOT / name).read_bytes()) for name in names)
+        before = size('spec-build-sb71.md', 'spec-build-sb7.md', 'sb7.1/VISUAL-CONTRACT.md', 'sb7.1/starter/STARTER.md')
+        after = size(*isolated_tiers.SB72.contracts)
+        self.assertLessEqual(after, 0.6 * before)
+
+    def test_prompt_carries_the_definition_of_done_and_the_call_budget(self):
+        prompt = (ROOT / 'spec-build-sb72.md').read_text()
+        self.assertIn('## Definition of done', prompt)
+        self.assertIn('You have a budget of 150 model calls.', prompt)
+        self.assertIn('polishing beyond the\nscored behaviours earns nothing', prompt)
+
 
 class WiringTests(unittest.TestCase):
     def test_sb72_flag_selects_its_scorer_spec_and_contract(self):

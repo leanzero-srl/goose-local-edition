@@ -18,6 +18,7 @@ import hashlib
 import json
 from pathlib import Path
 
+import isolated_tiers
 import score_sb71 as sb71
 
 base = sb71.base
@@ -198,7 +199,7 @@ def evaluate(ctx):
     result['scorer_files_sha256'] = {name: hashlib.sha256((HERE / name).read_bytes()).hexdigest() for name in files}
     result['spec_sha256'] = hashlib.sha256((HERE.parent / SPEC).read_bytes()).hexdigest()
     result['contract_sha256'] = {name: hashlib.sha256((HERE.parent / name).read_bytes()).hexdigest()
-                                 for name in ('spec-build-sb7.md', VISUAL_CONTRACT)}
+                                 for name in isolated_tiers.SB72.contracts[1:]}
     return result
 
 

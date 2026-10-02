@@ -843,10 +843,8 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
         starter = ROOT / tier.starter
         shutil.copytree(starter, workdir, dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '.DS_Store'))
-        public = {"SB7-CONTRACT.md": ROOT / "spec-build-sb7.md",
-                  "VISUAL-CONTRACT.md": ROOT / tier.visual_contract}
-        for name, source in public.items():
-            text = render_public_contract(source.read_text(), port, _regime()[1])
+        for name, source in tier.public:
+            text = render_public_contract((ROOT / source).read_text(), port, _regime()[1])
             (workdir / name).write_text(text)
         (workdir / "benchmark-prompt.md").write_text(build_prompt(port))
         shutil.copy2(HERE / 'browser-self-test.mjs', workdir / 'browser-self-test.mjs')
