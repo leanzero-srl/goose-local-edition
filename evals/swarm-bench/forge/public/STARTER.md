@@ -12,8 +12,8 @@ installed packages; `node_modules/` already contains them and nothing else can b
 0.28.2.
 
 **Reference material** under `$FORGE_KIT` (read-only): `schema/manifest-schema.json` (the Forge
-manifest schema), `openapi/jira.json` and `openapi/jira-software.json` (Jira Cloud REST and
-Jira Software REST). These are single-line JSON files of several MB: query them with `node` or
+manifest schema), `openapi/jira.json` and `openapi/jsw.json` (Jira Cloud REST and
+Jira Software REST; the other files in `openapi/` are the linter's offline copies). These are single-line JSON files of several MB: query them with `node` or
 `grep -o`, never print them whole.
 
 **Dev site.** A seeded Jira Cloud site answers at `$FORGE_SITE_URL` for the dev tools below. It
