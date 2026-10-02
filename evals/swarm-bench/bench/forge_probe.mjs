@@ -85,11 +85,12 @@ const gap = (what, ...sections) => {
 
 function kitPins() {
   const pins = {};
-  const modules = join(kitDir, 'app-modules', 'node_modules');
-  for (const pkg of ['@forge/api', '@forge/kvs', '@forge/events', '@forge/resolver', '@forge/bridge',
-    '@forge/dashboards-bridge', '@forge/hooks', 'react', 'react-dom', 'esbuild']) {
-    const p = join(modules, pkg, 'package.json');
-    if (existsSync(p)) pins[pkg] = JSON.parse(readFileSync(p, 'utf8')).version;
+  const kitJson = join(kitDir, 'KIT.json');
+  if (existsSync(kitJson)) Object.assign(pins, JSON.parse(readFileSync(kitJson, 'utf8')).app_modules || {});
+  const forge = join(kitDir, 'app-modules', 'node_modules', '@forge');
+  for (const name of existsSync(forge) ? readdirSync(forge) : []) {
+    const p = join(forge, name, 'package.json');
+    if (existsSync(p) && !(`@forge/${name}` in pins)) pins[`@forge/${name}`] = JSON.parse(readFileSync(p, 'utf8')).version;
   }
   return pins;
 }
@@ -149,24 +150,32 @@ const NODE_BUILTINS = new Set(require('module').builtinModules);
 const KIND = { trigger: 'trigger', consumer: 'consumer', scheduledTrigger: 'scheduled', action: 'action',
   'dashboards:widget': 'resolver', 'jira:sprintAction': 'resolver' };
 
+// Virtual time as epoch seconds (WP1 logs ISO strings).
+const vt = (t) => (typeof t === 'string' ? Date.parse(t) / 1000 : t ?? null);
+
 function normCall(e) {
   const path = e.path ?? e.target ?? '';
-  const route = String(e.route ?? '');
-  const service = e.service ?? (route.includes('/kvs') || String(path).startsWith('/api/v1/') ? 'kvs'
-    : String(path).includes('/queue/publish') ? 'queue' : route === '/egress' ? 'egress' : 'jira');
+  const service = e.service === 'kvs' || e.service === 'queue' || e.service === 'egress' ? e.service
+    : e.service === 'jira' || e.service === undefined ? 'jira' : e.service;
+  // WP1's site reports the OAuth2 alternative a call was satisfied by ({state, scopes}); a scope mismatch is a 401
+  // with no alternative.
+  const alt = e.scopes && !Array.isArray(e.scopes) && Array.isArray(e.scopes.scopes) ? e.scopes : null;
   return {
-    t: e.t_virtual ?? e.t ?? null, inv: e.invocationId ?? e.inv ?? null,
+    t: vt(e.t_virtual ?? e.t), inv: e.invocationId ?? e.inv ?? null,
     kind: KIND[e.moduleType] ?? e.kind ?? (e.invocationId ? null : 'ui'), moduleKey: e.moduleKey ?? null,
-    provider: e.provider ?? null, service, method: e.method, path, body: e.body ?? null, status: e.status,
-    response: e.response ?? e.responseBody ?? undefined, scopes: e.scopes ?? undefined, fault: e.fault ?? null,
-    earlyRetry: e.earlyRetry ?? e.early_retry ?? null, limitError: e.limitError ?? null,
+    provider: e.provider ?? null, service, method: e.method, path, op: e.op ?? null, body: e.body ?? null, status: e.status,
+    response: e.response ?? e.responseBody ?? undefined,
+    scopes: alt ? { chosen: alt.scopes, state: alt.state } : (e.scopes ?? undefined),
+    scopeMismatch: service === 'jira' && e.status === 401 && !alt && !e.needsAuthentication ? (e.op ?? path) : undefined,
+    needsAuthentication: Boolean(e.needsAuthentication), missingScope: e.missingScope ?? null,
+    fault: e.fault ?? null, earlyRetry: e.earlyRetry === true ? e.fault : (e.earlyRetry || null), limitError: e.limitError ?? null,
   };
 }
 
 function normInvocation(r, kind, moduleKey) {
   return {
-    inv: r?.invocationId ?? r?.inv ?? null, kind, moduleKey, functionKey: r?.functionKey ?? null,
-    t0: r?.t0 ?? null, t1: r?.t1 ?? null, ok: Boolean(r?.ok), threw: r?.ok === false && !r?.timedOut,
+    inv: r?.invocationId ?? r?.inv ?? null, kind, moduleKey: moduleKey ?? r?.moduleKey ?? null, functionKey: r?.functionKey ?? null,
+    t0: vt(r?.t0), t1: vt(r?.t1), ok: Boolean(r?.ok), threw: r?.ok === false && !r?.timedOut,
     error: r?.error ? String(r.error.message ?? r.error) : null, errorName: r?.error?.name ?? r?.errorName ?? null,
     timedOut: Boolean(r?.timedOut), retryAfter: r?.result?._retry ? (r.result.retryOptions?.retryAfter ?? null)
       : (r?.retryAfter ?? null),
@@ -209,25 +218,38 @@ async function main() {
   const { createEmulator } = require(join(kitDir, 'lib', 'emulator.cjs'));
   site = await createSite({ seed, port: 0, trace: null });
   const pack = site.pack;
-  try {
-    emu = await createEmulator({ appDir, kitDir, site, runtime });
-  } catch (e) {
-    obs.manifestError = String(e?.message || e);
-    for (const s of ['build', 'backfill', 'live', 'heal', 'rerun', 'rovo', 'ui']) {
-      obs.phases[s] = { calls: [], invocations: [], deliveries: [], kvsAfter: { entities: {}, keys: [] } };
-    }
-    return;
-  }
+  // A refusal here (no sandbox, wrapper sha mismatch) is the harness's: main()'s catch marks every section.
+  emu = await createEmulator({ appDir, kitDir, site, runtime });
   obs.manifest = emu.manifest;
+  obs.manifestError = emu.manifestError ?? null;
+  obs.runtimePublishable = emu.publishable ?? null;
 
   await section('build', async () => {
     const built = await emu.build();
     const pins = obs.kit.pins;
+    // esbuild's metafile names every bundled input; a package input outside the kit's app-modules tree is an
+    // import the kit does not provide. Without a metafile the static import walk stands in.
+    const fromMetafile = (f) => {
+      const mod = String(f.handler || '').split('.').slice(0, -1).join('.');
+      const inputs = Object.keys(built.files?.[mod]?.metafile?.inputs || {});
+      if (!inputs.length) return null;
+      const pkgOf = (i) => i.match(/node_modules\/((?:@[^/]+\/)?[^/]+)\/(?!.*node_modules\/)/)?.[1];
+      const inKit = (i) => /app-modules\/node_modules\//.test(i);
+      const pkgs = inputs.filter((i) => i.includes('node_modules/'));
+      return { forge: [...new Set(pkgs.filter(inKit).map(pkgOf).filter((p) => p?.startsWith('@forge/')))],
+        outside: [...new Set(pkgs.filter((i) => !inKit(i)).map(pkgOf).filter(Boolean))] };
+    };
+    const versionOf = (pkg) => {
+      const pj = join(kitDir, 'app-modules', 'node_modules', pkg, 'package.json');
+      return existsSync(pj) ? JSON.parse(readFileSync(pj, 'utf8')).version : null;
+    };
     obs.build.functions = (built.functions || []).map((f) => {
       const entry = handlerEntry(f.handler);
-      const bare = entry ? importClosure(entry) : [];
-      const forgePackages = Object.fromEntries(bare.filter((s) => s.startsWith('@forge/')).map((s) => [s, pins[s] ?? null]));
-      const outsideKit = bare.filter((s) => !s.startsWith('@forge/') && !NODE_BUILTINS.has(s) && !(s in pins));
+      const meta = fromMetafile(f);
+      const bare = meta ? meta.forge : (entry ? importClosure(entry) : []);
+      const forgePackages = Object.fromEntries(bare.filter((s) => s.startsWith('@forge/')).map((s) => [s, versionOf(s)]));
+      const outsideKit = meta ? meta.outside
+        : bare.filter((s) => !s.startsWith('@forge/') && !NODE_BUILTINS.has(s) && !versionOf(s));
       return { key: f.key, handler: f.handler, bundled: Boolean(f.bundled), loaded: Boolean(f.loaded),
         exported: f.exported ?? Boolean(f.loaded && !f.error), error: f.error ? String(f.error) : null,
         forgePackages, outsideKit };
@@ -235,15 +257,27 @@ async function main() {
   });
 
   const modules = (t) => (emu.modules ? emu.modules(t) : (emu.manifest?.modules?.[t] || [])) || [];
-  const snapshot = (phase) => (emu.kvs?.snapshot ? emu.kvs.snapshot() : (gap('emu.kvs.snapshot', phase), { entities: {}, keys: [] }));
+  const snapshot = (phase) => {
+    if (!emu.kvs?.snapshot) { gap('emu.kvs.snapshot', phase); return { entities: {}, keys: [] }; }
+    const s = emu.kvs.snapshot();
+    const pairs = (o) => (Array.isArray(o) ? o : Object.entries(o || {}).map(([key, value]) => ({ key, value })));
+    return { entities: Object.fromEntries(Object.entries(s.entities || {}).map(([n, items]) => [n, pairs(items)])),
+      keys: pairs(s.kvs ?? s.keys) };
+  };
+  const normDelivery = (d) => ({ eventId: d.eventId, inv: d.invocationId ?? d.inv ?? null, attempt: d.attempt,
+    result: d.result?._retry ? 'retry' : (d.outcome ?? (d.ok === false ? 'throw' : 'ok')),
+    retryAfter: d.retryAfter ?? d.result?.retryOptions?.retryAfter ?? null, t: vt(d.t) });
   takeCalls(emu);
 
   const runSchedules = async (phase) => {
     const ph = obs.phases[phase] = { calls: [], invocations: [], deliveries: [] };
     for (const m of modules('scheduledTrigger')) {
       const r = await emu.runScheduled(m.key);
-      ph.invocations.push(normInvocation(r, 'scheduled', m.key));
-      for (const d of r?.deliveries || []) ph.deliveries.push(d);
+      ph.invocations.push(normInvocation(r?.invocation ?? r, 'scheduled', m.key));
+      for (const d of r?.deliveries || []) {
+        ph.deliveries.push(normDelivery(d));
+        ph.invocations.push(normInvocation({ ...d, ok: d.ok ?? !d.error }, 'consumer', d.moduleKey));
+      }
     }
     ph.calls = takeCalls(emu);
     ph.kvsAfter = snapshot(phase);
@@ -253,38 +287,23 @@ async function main() {
 
   await section('live', async () => {
     const ph = obs.phases.live = { calls: [], invocations: [], deliveries: [], events: [] };
-    const slots = [];
-    for (const e of pack.live) {
-      const d = e.delivery || {};
-      if (d.dropped) slots.push({ slot: null, entry: e, dropped: true });
-      else slots.push({ slot: d.slot, entry: e, duplicate: false });
-      for (const s of Array.isArray(d.duplicates) ? d.duplicates : []) slots.push({ slot: s, entry: e, duplicate: true });
-    }
-    // A dropped change still happens in Jira at its creation order; deliveries follow the slot order.
-    const order = slots.filter((s) => !s.dropped).sort((a, b) => a.slot - b.slot);
-    const dropped = slots.filter((s) => s.dropped);
-    for (const s of order) {
-      for (const d of dropped.filter((x) => x.entry.created <= s.entry.created && !x.applied)) {
-        if (typeof site.applyChange === 'function') await site.applyChange(d.entry);
-        else gap('site.applyChange (a dropped change applied without its event)', 'live', 'heal');
-        d.applied = true;
-      }
-      const r = await emu.deliverProductEvent(s.entry, { duplicate: s.duplicate, slot: s.slot });
+    const record = async (r, fallback) => {
       const trig = (r?.invocations || (Array.isArray(r) ? r : [])).map((x) => normInvocation(x, 'trigger', x?.moduleKey));
       ph.invocations.push(...trig);
-      ph.events.push({ changelogId: s.entry.changelogId, slot: s.slot, duplicate: s.duplicate,
-        triggerInvocations: trig.map((x) => x.inv).filter(Boolean) });
-      const deliveries = (await emu.drainQueues()) || [];
-      for (const d of deliveries) {
-        ph.deliveries.push({ eventId: d.eventId, inv: d.invocationId ?? d.inv ?? null, attempt: d.attempt,
-          result: d.result?._retry ? 'retry' : (d.status ?? d.outcome ?? (d.ok === false ? 'throw' : 'ok')),
-          retryAfter: d.retryAfter ?? d.result?.retryOptions?.retryAfter ?? null, t: d.t ?? null });
+      ph.events.push({ changelogId: r?.changelogId ?? fallback.changelogId, slot: r?.slot ?? fallback.slot,
+        duplicate: Boolean(r?.duplicate ?? fallback.duplicate), triggerInvocations: trig.map((x) => x.inv).filter(Boolean) });
+      for (const d of (await emu.drainQueues()) || []) {
+        ph.deliveries.push(normDelivery(d));
         ph.invocations.push(normInvocation({ ...d, ok: d.ok ?? !d.error }, 'consumer', d.moduleKey));
       }
-    }
-    for (const d of dropped.filter((x) => !x.applied)) {
-      if (typeof site.applyChange === 'function') await site.applyChange(d.entry);
-      else gap('site.applyChange (a dropped change applied without its event)', 'live', 'heal');
+    };
+    if (typeof emu.deliverNext === 'function') {
+      // The site owns the delivery plan (slot order, duplicate slots, drops): exactly what production would do.
+      for (let r = await emu.deliverNext(); r; r = await emu.deliverNext()) await record(r, {});
+      if (typeof site.flushLive === 'function') site.flushLive();
+      else gap('site.flushLive (dropped changes after the last delivery)', 'live', 'heal');
+    } else {
+      gap('emu.deliverNext (the site-owned delivery plan)', 'live', 'heal');
     }
     ph.calls = takeCalls(emu);
     ph.kvsAfter = snapshot('live');
@@ -299,7 +318,7 @@ async function main() {
     const active = pack.sprints.filter((s) => s.state === 'active').map((s) => String(s.id));
     const ask = async (who, label, inputs, sprintId) => {
       const r = await emu.invokeAction('get-sprint-scope', inputs, { asUser: who });
-      obs.rovo.calls.push({ as: who, label, sprintId, threw: r?.ok === false, result: r?.result ?? null,
+      obs.rovo.calls.push({ as: who, label, sprintId, threw: r?.ok === false, result: r?.ok === false ? null : (r?.result ?? null),
         error: r?.error ? String(r.error.message ?? r.error) : null, calls: takeCalls(emu) });
     };
     for (const who of [pack.viewer, pack.peer]) for (const sid of active) await ask(who, 'sprint', { sprintId: sid }, sid);

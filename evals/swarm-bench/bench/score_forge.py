@@ -706,12 +706,23 @@ def _(c):
 
 
 def _scope_evidence(c: Ctx) -> Tuple[Optional[Dict], Optional[str]]:
+    """Per call, the OAuth2 alternative it is satisfied by. WP1's site reports the CHOSEN alternative (classic where
+    one exists, else the full granular set); a call no declared alternative satisfies is a 401 scope mismatch and
+    counts one missing scope per operation."""
     declared = set(((c.manifest or {}).get('permissions') or {}).get('scopes') or [])
     used, missing = set(), set()
     for call in c.all_calls('jira'):
+        if call.get('scopeMismatch'):
+            missing.add(f"(a scope for {call['scopeMismatch']})")
+            continue
+        if call.get('needsAuthentication') or call.get('status') in (404,) and not call.get('scopes'):
+            continue
         alt = call.get('scopes')
         if not isinstance(alt, dict):
-            return None, f"jira call {call.get('method')} {call.get('path')} carries no OAuth2 scope alternatives"
+            return None, f"jira call {call.get('method')} {call.get('path')} carries no OAuth2 scope alternative"
+        if 'chosen' in alt:
+            used |= set(alt.get('chosen') or [])
+            continue
         classic, granular = set(alt.get('classic') or []), set(alt.get('granular') or [])
         if classic and classic <= declared:
             used |= classic
@@ -720,6 +731,8 @@ def _scope_evidence(c: Ctx) -> Tuple[Optional[Dict], Optional[str]]:
         else:
             missing |= (classic or granular) - declared
             used |= (classic or granular) & declared
+    if any(x.get('missingScope') == 'storage:app' for x in c.all_calls('kvs')):
+        missing.add('storage:app')
     if c.all_calls('kvs'):
         if 'storage:app' in declared:
             used.add('storage:app')
@@ -2349,7 +2362,10 @@ def _kit() -> Tuple[Optional[Dict], Optional[str]]:
         info = forge_kit.ensure()
     except Exception as error:
         return None, f'forge_kit.ensure() refused: {error}'
-    return (info if isinstance(info, dict) else {'dir': str(info)}), None
+    # forge_kit.ensure() -> {kit_dir, modules_dir, kit_lock_sha256, kit_code_sha256, wrapper_sha256}
+    return {**info, 'dir': info['kit_dir'], 'lock_sha256': info['kit_lock_sha256'],
+            'wrapper_sha256': info.get('wrapper_sha256'),
+            'app_modules': str(Path(info['modules_dir']) / 'app-modules' / 'node_modules')}, None
 
 
 def _trace_header(tree: Path) -> Dict:

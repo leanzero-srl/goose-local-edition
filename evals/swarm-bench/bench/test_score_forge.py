@@ -845,7 +845,7 @@ FAKE_SITE = r"""
 const fs = require('fs');
 exports.createSite = async ({ seed }) => {
   const pack = JSON.parse(fs.readFileSync(process.env.FAKE_PACK, 'utf8'));
-  return { url: 'http://127.0.0.1:0', pack, comments: [], applyChange: async () => {}, stop: async () => {} };
+  return { url: 'http://127.0.0.1:0', pack, comments: [], applyChange: async () => {}, flushLive: () => [], stop: async () => {} };
 };
 """
 
@@ -882,6 +882,15 @@ exports.createEmulator = async ({ appDir, site }) => {
       return { ok: true, invocationId: 's-' + log.length };
     },
     deliverProductEvent: async (change) => ({ invocations: [{ ok: true, invocationId: 't-' + change.changelogId }] }),
+    deliverNext: (() => {
+      let plan = null;
+      return async () => {
+        plan = plan ?? site.pack.live.filter((c) => !c.delivery.dropped).sort((a, b) => a.delivery.slot - b.delivery.slot);
+        const c = plan.shift();
+        return c ? { changelogId: c.changelogId, slot: c.delivery.slot, duplicate: false,
+                     invocations: [{ ok: true, invocationId: 't-' + c.changelogId }] } : null;
+      };
+    })(),
     drainQueues: async () => [],
     invokeAction: async (key, inputs) => ({ ok: true, result: inputs.sprintId && site.pack.sprints.some((s) => String(s.id) === inputs.sprintId)
       ? { sprintId: inputs.sprintId } : { error: 'Unknown sprint' } }),
