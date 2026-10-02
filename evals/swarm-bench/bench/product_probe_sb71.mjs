@@ -3151,8 +3151,12 @@ async function sb71VisualScenario(page,model,H,pack) {
     rootFacts.registrationTolerancePixels=1;
     rootFacts.screenshotSize={width:screenshot.width,height:screenshot.height};
     rootFacts.ids=[...new Set(points.map(p=>model.items[p.n].id))];
-    if(PROBE_TIER==='sb-7.2')legibility=overviewLegibility(ctx,screenshot,rect,underLabel,pack.seed,
-      new Set([...(pack.sb71_reserved_payment_ids||[]),...((pack.stream||{}).mutateIds||[])]));
+    if(PROBE_TIER==='sb-7.2'){
+      const started=performance.now();
+      legibility=overviewLegibility(ctx,screenshot,rect,underLabel,pack.seed,
+        new Set([...(pack.sb71_reserved_payment_ids||[]),...((pack.stream||{}).mutateIds||[])]));
+      legibility.probeMs=Math.round(performance.now()-started);
+    }
   }
   const admitted=dom.visible&&dom.exposed/Math.max(1,dom.total)>=.9&&!dom.failures.length&&rootFacts.total>=12&&rootFacts.ids.length>=8&&rootFacts.matched/rootFacts.total>=.95;
   add('s_visible_surface','S',Number(admitted),'Visible canvas, unobscured samples and independently predicted seeded-payment pixels from this browser',rootFacts);
@@ -4152,11 +4156,16 @@ async function vizScenario(page, pack, H) {
         if (scanned++ > 3000 && !a) break;
         const it = model.items[n];
         if (it.id === d1TargetId || model.brush.has(it.id)) continue;
-        const pt = findDecisivePointFor(ctxB, model, n);
+        let pt = findDecisivePointFor(ctxB, model, n);
         if (!pt) continue;
-        // SB7.2's framed default pose yields decisive targets ~3.5 px wide, so the colour read at
-        // the clicked pixel must come from one homogeneous face (not a 0.14 px collar ledge).
-        if (PROBE_TIER === 'sb-7.2' && !pixelWitnessAt(ctxB, n, pt.sx, pt.sy)) continue;
+        if (PROBE_TIER === 'sb-7.2') {
+          // The pixel read back is round(sx) (centre +0.5), not the decisive ray's sub-pixel point:
+          // on the reference that ray met a JPY collar ledge (factor 0.82) while the read pixel showed
+          // the shaft side (0.55). SB7.2 clicks and reads one homogeneous 3x3 face patch instead.
+          const witness = pixelWitnessAt(ctxB, n, pt.sx, pt.sy);
+          if (!witness) continue;
+          pt = { ...pt, sx: witness.sx, sy: witness.sy, factor: witness.factor, top: witness.top };
+        }
         if (!a) a = { n, id: it.id, pt };
         else if (!b2) { b2 = { n, id: it.id, pt }; break; }
       }
@@ -4208,9 +4217,12 @@ async function vizScenario(page, pack, H) {
       brush.counts.push({ step: 'after-3d-click', text: await countText() });
       const memberPx = await samplePt(T1);
       const nonMemberPx = await samplePt(T3);
+      const targetFacts = (T) => ({ id: T.id, pt: T.pt, pose: brushCtxPose,
+        hits: castPixel(ctx, T.pt.sx, T.pt.sy).slice(0, 3).map((h) => ({ id: model.items[h.n].id, factor: h.factor, hitY: +h.hitY.toFixed(4), h: +model.items[h.n].h.toFixed(4) })) });
       merge({ brushHighlight: { memberPx, nonMemberPx,
                                 brushSize: model.brush.size,
-                                dimFactor: V7.dimF, graded: memberPx.got != null } });
+                                dimFactor: V7.dimF, graded: memberPx.got != null,
+                                targets: { member: targetFacts(T1), nonMember: targetFacts(T3) } } });
       // table door: first visible row's payment id toggles in
       const t2id = await page.evaluate(() => {
         const r = document.querySelector('tbody tr[data-id], tbody tr[data-payment-id], [role="row"][data-id]');
@@ -4265,8 +4277,28 @@ async function vizScenario(page, pack, H) {
     const ctx0 = poseCtx(model, V7.yaw0, V7.pitch0, V7.dist0, Wc, Hcs);
     // Harness fix: motion evidence needs stable non-background pixels, not full
     // decisiveness (unreachable at the default distance) — loose points suffice.
-    const basePts = findLoosePoints(ctx0, model, (pack.seed || 'sb7') + ':coastpx', 5)
+    let basePts = findLoosePoints(ctx0, model, (pack.seed || 'sb7') + ':coastpx', 5)
       .map((t) => ({ cx: t.sx, cy: t.sy }));
+    if (PROBE_TIER === 'sb-7.2') {
+      // The framed field fills the canvas, so after the flick a spot often lands on another tower
+      // of the same colour (reference run: 4/5 moved). SB7.2 picks spots whose read pixel and its
+      // neighbours show a different colour at every yaw the flick and its coast can reach
+      // (release = default - 57.6 deg, then up to 40 deg of coast), so a correct app always moves them.
+      const release = V7.yaw0 - 8 * 24 * V7.dragDegPerPx, reach = [];
+      for (let yaw = release - 40; yaw <= release + 1e-9; yaw += 2) reach.push(poseCtx(model, yaw, V7.pitch0, V7.dist0, Wc, Hcs));
+      const colourAt = (ctx, x, y) => { const h = castPixel(ctx, x, y)[0]; return h ? surfColor(ctx, h) : V7.bg; };
+      const differs = (a, b) => a.some((v, k) => Math.abs(v - b[k]) > 2 * V7.tol);
+      basePts = findLoosePoints(ctx0, model, (pack.seed || 'sb7') + ':coastpx', 200).flatMap((t) => {
+        const w = { sx: Math.round(t.sx), sy: Math.round(t.sy) }, hit = castPixel(ctx0, w.sx + .5, w.sy + .5)[0];
+        if (!hit || ![[-.45, 0], [.45, 0], [0, -.45], [0, .45]].every(([dx, dy]) => {
+          const near = castPixel(ctx0, w.sx + .5 + dx, w.sy + .5 + dy)[0];
+          return near && near.n === hit.n && near.factor === hit.factor;
+        })) return [];
+        const initial = colourAt(ctx0, w.sx + .5, w.sy + .5);
+        const moves = reach.every((ctx) => O9.every(([dx, dy]) => differs(colourAt(ctx, w.sx + .5 + dx, w.sy + .5 + dy), initial)));
+        return moves ? [{ cx: w.sx, cy: w.sy }] : [];
+      }).slice(0, 5);
+    }
     const s0 = await page.evaluate(pageSamplePixels, { points: basePts }).catch(() => null);
     const got0 = s0 && s0.samples ? s0.samples.map((s) => s.got) : [];
 

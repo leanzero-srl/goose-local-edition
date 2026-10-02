@@ -316,6 +316,11 @@
             cont.getBoundingClientRect().top - 26;
         }
         row.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        // 'nearest' lands on whole-pixel scroll offsets; with the taller SB7.2 field above the
+        // table the row could stay 0.4 px below the fold. Finish the reveal explicitly.
+        var box = row.getBoundingClientRect();
+        if (box.bottom > window.innerHeight) window.scrollBy(0, Math.ceil(box.bottom - window.innerHeight));
+        else if (box.top < 0) window.scrollBy(0, Math.floor(box.top));
       }
       return true;
     });

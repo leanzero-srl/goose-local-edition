@@ -1,4 +1,10 @@
 {
-  "note": "SB7.2 overlay on sb7-thresholds.json: only the stream-apply excellence rung moves. PROVISIONAL until the reference receipt is measured.",
-  "e_stream_apply_ms_rungs": [[1.0, 175], [0.75, 200], [0.5, 400], [0.25, 800]]
+  "note": "SB7.2 overlay on sb7-thresholds.json: only the stream-apply excellence rung moves; every other rung is SB7's. SB7.1's 100 ms top rung was unpassable: the reference measured 131-135 ms on the grading host (2026-09-20) and 141-156 ms under shared load on 2026-10-02.",
+  "e_stream_apply_ms_rungs": [[1.0, 180], [0.75, 200], [0.5, 400], [0.25, 800]],
+  "receipt": {
+    "measured": "golden-sb72 through score_sb72.py --reference, seed 5a05d7631d9276e3, bundled runtime (Python 3.12, node 24, chrome-headless-shell 153), this Mac Studio, 2026-10-02",
+    "stream_apply_ms": [156.1, 141.2, 144.9, 141.9],
+    "load_average_1m_at_start": [31.0, 7.96, 7.19, 10.36],
+    "rule": "top rung = 180 ms: 15% above the worst observed reference (156.1 ms at load 31), 27% above its median (143.4 ms); strictly below the 0.75 rung (200 ms) and the public 250 ms P budget"
+  }
 }

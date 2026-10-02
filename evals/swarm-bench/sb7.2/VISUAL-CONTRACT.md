@@ -62,7 +62,7 @@ At the default camera in a 1280 × 800 desktop viewport the overview must read a
 
 ## Excellence rungs
 
-0.12 × gate fraction × mean credit (1/.75/.5/.25): drag frames over 40 moves ≥40/32/24/12; stream visible ≤175/200/400/800 ms; burst p95 ≤150/300/600/1200 ms; optimistic note .5 painted while held, +.25 by ≤100/250/800 ms, +.25 saved; T+X+R mean ≥.90. Gate: 16 conditions (four journeys, clean console, 375 px, dates, scene binding, residual, no row loss, six P rungs).
+0.12 × gate fraction × mean credit (1/.75/.5/.25): drag frames over 40 moves ≥40/32/24/12; stream visible ≤180/200/400/800 ms; burst p95 ≤150/300/600/1200 ms; optimistic note .5 painted while held, +.25×(1/.6/.3) by ≤100/250/800 ms, +.25 saved; T+X+R mean ≥.90 (else half, pro rata). Gate: 16 conditions (four journeys, clean console, 375 px, dates, scene binding, residual, no row loss, six P rungs).
 
 ## Evidence and grading
 
