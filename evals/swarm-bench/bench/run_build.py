@@ -38,8 +38,7 @@ def _regime():
     tier = isolated_tiers.active()
     if tier:
         import importlib
-        import vendor_service_v3
-        return importlib.import_module(tier.scorer), vendor_service_v3, tier.spec
+        return importlib.import_module(tier.scorer), importlib.import_module(tier.vendor), tier.spec
     if os.environ.get("BENCH_SB8"):
         import score_sb8
         import vendor_service_v4
@@ -136,9 +135,16 @@ def build_prompt(port: int) -> str:
 
 def render_public_contract(spec: str, port: int, vendor_module) -> str:
     docs_path = getattr(vendor_module, "DOCS_PATH", "/v1/docs")
-    return (spec.replace("{DOCS_URL}", f"http://127.0.0.1:{port}{docs_path}")
-                .replace("{BASE_URL}", f"http://127.0.0.1:{port}")
-                .replace("{API_KEY}", getattr(vendor_module, "API_KEY", vendor_service.API_KEY)))
+    api_key = getattr(vendor_module, "API_KEY", vendor_service.API_KEY)
+    # forge_site serves no docs and needs no key (forge/DESIGN.md §12): its public text names no placeholder,
+    # and one that appears anyway is refused rather than rendered as "None".
+    for placeholder, value in (("{DOCS_URL}", docs_path), ("{API_KEY}", api_key)):
+        if value is None and placeholder in spec:
+            raise RuntimeError(f"REFUSED: the public contract asks for {placeholder}, which this vendor does not serve")
+    if docs_path is not None:
+        spec = spec.replace("{DOCS_URL}", f"http://127.0.0.1:{port}{docs_path}")
+    spec = spec.replace("{BASE_URL}", f"http://127.0.0.1:{port}")
+    return spec.replace("{API_KEY}", api_key) if api_key is not None else spec
 
 
 def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout: int,
@@ -252,7 +258,16 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
     child_env = {**os.environ, **env}
     if isolated_tiers.active():
         import bench_isolation
-        prefix, isolated_env = bench_isolation.prepare(workdir, GOOSE, workdir.parent, snapshot=snapshot)
+        tier = isolated_tiers.active()
+        if tier.network == "open":
+            prefix, isolated_env = bench_isolation.prepare(workdir, GOOSE, workdir.parent, snapshot=snapshot)
+        else:
+            try:
+                prefix, isolated_env = bench_isolation.prepare(workdir, GOOSE, workdir.parent, snapshot=snapshot,
+                                                               network=tier.network, extra_read=[env["FORGE_KIT"]])
+            except TypeError as error:
+                raise RuntimeError(f"REFUSED: {tier.version} needs a {tier.network} network and the kit read grant, "
+                                   f"which bench_isolation.prepare does not offer: {error}") from None
         cmd = prefix + cmd
         child_env = {key: value for key, value in os.environ.items()
                      if key in {"PATH", "LANG", "LC_ALL", "LC_CTYPE", "USER", "LOGNAME", "SHELL",
@@ -771,9 +786,52 @@ def provider_model_limits(provider: str, model: str, credentials: Dict[str, str]
 
 
 BUILD_VENDOR_TRACE = "vendor-build-trace.jsonl"
+# What a kit tier never hashes, archives or scores in place: the cloned kit modules and the dev kit's state.
+KIT_TREE_EXCLUDES = ("node_modules", ".forge-dev")
+# goose's GOOSE_THINKING_EFFORT values (crates/goose-provider-types/src/thinking.rs ThinkingEffort::from_str).
+THINKING_EFFORTS = ("off", "low", "medium", "high", "max")
+
+
+def tree_files(root: Path, skip: tuple):
+    for directory, dirs, files in os.walk(root):
+        if Path(directory) == root:
+            dirs[:] = [d for d in dirs if d not in skip]
+        for name in files:
+            yield Path(directory) / name
+
+
+def kit_identity(kit: dict) -> dict:
+    return {"lock_sha256": kit.get("lock_sha256"), "wrapper_sha256": kit.get("wrapper_sha256"), "dir": str(kit.get("dir"))}
+
+
+def clone_kit_modules(kit: dict, workdir: Path) -> None:
+    """The workdir's node_modules is an APFS clone of the kit's pristine app modules (zero bytes copied)."""
+    source = Path(kit.get("app_modules") or Path(kit["dir"]) / "app-modules" / "node_modules")
+    if not source.is_dir():
+        raise RuntimeError(f"REFUSED: the kit's app modules are not at {source}")
+    subprocess.run(["cp", "-cR", str(source), str(workdir / "node_modules")], check=True)
+
+
+def pinned_reasoning_effort(tier, credentials: Dict[str, str]) -> dict:
+    """The provider reasoning effort every entrant of the tier runs with (forge/DESIGN.md §11), recorded with
+    where it came from. BENCH_REASONING_EFFORT overrides the tier's pin; anything goose cannot parse refuses."""
+    override = os.environ.get("BENCH_REASONING_EFFORT", "").strip().lower()
+    value = override or tier.reasoning_effort
+    if value not in THINKING_EFFORTS:
+        raise RuntimeError(f"REFUSED: reasoning effort {value!r} is not one of {', '.join(THINKING_EFFORTS)}")
+    record = {"value": value, "source": "BENCH_REASONING_EFFORT" if override else f"{tier.version} pin",
+              "env": "GOOSE_THINKING_EFFORT"}
+    if credentials.get("GOOSE_THINKING_EFFORT") not in (None, value):
+        record["replaced_goose_config"] = credentials["GOOSE_THINKING_EFFORT"]
+    return record
 
 
 def stop_vendor(server) -> None:
+    if server is None:
+        return
+    if not hasattr(server, "shutdown") and hasattr(server, "stop"):
+        server.stop()
+        return
     server.shutdown()
     server.server_close()
 
@@ -805,11 +863,24 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
     if workdir.exists():
         raise FileExistsError(f"Benchmark tree already exists; preserve it and choose a new entrant: {workdir}")
     tier = isolated_tiers.active()
+    if tier and tier.wallet_usd and not os.environ.get(bench_budget.WALLET_ENV, "").strip():
+        os.environ[bench_budget.WALLET_ENV] = tier.wallet_usd
+        print(f"WALLET GUARD DEFAULT: {tier.version} arms {bench_budget.WALLET_ENV}=${tier.wallet_usd} "
+              "(set it to override)", flush=True)
     # A malformed wallet limit refuses here, before a tree, a vendor or a model call exists.
     bench_budget.wallet_limit()
+    kit = None
+    if tier and tier.kit:
+        kit, why = _regime()[0]._kit()  # noqa: SLF001 — the scorer owns kit discovery (one path for both)
+        if kit is None:
+            raise RuntimeError(f"REFUSED: {why}")
     snapshot = entrant_config(provider) if provider or tier else None
     credentials = (cloud_env(provider, snapshot) if provider else
                    snapshot_environment(snapshot) if snapshot else load_env())
+    effort = None
+    if tier and tier.reasoning_effort:
+        effort = pinned_reasoning_effort(tier, credentials)
+        credentials = {**credentials, "GOOSE_THINKING_EFFORT": effort["value"]}
     # A MODELS entrant is a Bedrock cloud model launched without --provider (invoke()'s second arm),
     # and fable-5.1-r0, the receipt for provider_model_limits, ran on exactly that arm.
     limits_provider = provider or ("aws_bedrock" if entrant in MODELS else None)
@@ -886,6 +957,8 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
         starter = ROOT / tier.starter
         shutil.copytree(starter, workdir, dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '.DS_Store'))
+        if tier.kit:
+            clone_kit_modules(kit, workdir)
         for name, source in tier.public:
             text = render_public_contract((ROOT / source).read_text(), port, _regime()[1])
             (workdir / name).write_text(text)
@@ -901,8 +974,14 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
             'Load Playwright with `require(process.env.BENCH_BROWSER_MODULE)` and launch Chromium '
             'with `executablePath: process.env.BENCH_BROWSER_EXECUTABLE`. '
             'These paths work inside the same isolation boundary as your app.\n')
-        manifest = {str(path.relative_to(workdir)): hashlib.sha256(path.read_bytes()).hexdigest()
-                    for path in workdir.rglob('*') if path.is_file()}
+        if tier.kit:
+            # 15k kit files are one fact: the kit's lock hash (forge/DESIGN.md §10).
+            manifest = {str(path.relative_to(workdir)): hashlib.sha256(path.read_bytes()).hexdigest()
+                        for path in tree_files(workdir, skip=KIT_TREE_EXCLUDES)}
+            manifest["node_modules"] = "kit:" + str(kit.get("lock_sha256"))
+        else:
+            manifest = {str(path.relative_to(workdir)): hashlib.sha256(path.read_bytes()).hexdigest()
+                        for path in workdir.rglob('*') if path.is_file()}
         (workdir / "input-manifest.json").write_text(json.dumps(manifest, indent=2))
     trace = out_root / f"trace-{entrant}-r{rep}.jsonl"
 
@@ -939,6 +1018,9 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
         server = vendor.serve(port, trace, seed=seed)
     else:
         server = vendor.serve(port, trace)
+    if tier and tier.kit:
+        credentials = {**credentials, "FORGE_KIT": str(kit["dir"]),
+                       "FORGE_SITE_URL": getattr(server, "url", None) or f"http://127.0.0.1:{port}"}
     # THE TRACE LIVES WITH THE RUN. trace-<entrant>-r<rep>.jsonl is keyed by the run DIR name, which
     # the Benchmark view reuses across runs — so serve()'s truncate makes every run overwrite the
     # previous run's trace (r2's overwrote r0's; the fixture seed survived only in its ledger row).
@@ -985,14 +1067,22 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
                     run_id = json.loads((workdir / ".swarm/current-run.json").read_text())["run_id"]
                 write_completion(workdir, Path(completion_path), agent, run_id=run_id,
                                  started_at=os.environ.get("BENCH_STARTED_AT"), seed=seed,
-                                 port=port, provider=provider, model=model, tier=tier)
+                                 port=port, provider=provider, model=model, tier=tier,
+                                 **({"kit": kit_identity(kit)} if tier.kit else {}))
             except (ValueError, OSError, KeyError) as error:
                 print(f"Scoring retry unavailable: {error}", file=sys.stderr, flush=True)
         db = workdir / ("graded-sb8-db" if sb8 else "graded-sb7-db" if sb7 else "graded.db")
         scoring_started = time.monotonic()
         print('BENCH_PHASE ' + json.dumps({'phase': 'score'}), flush=True)
         graded_trace = trace
-        if seeded:
+        if seeded and tier and tier.own_scoring_site:
+            # The scorer starts its own seeded site (score_forge.gather); the dev site stops here and its
+            # traffic stays beside the run, exactly as the SB build vendor's does.
+            stop_vendor(server)
+            server = None
+            shutil.copy2(trace, run_trace.parent / BUILD_VENDOR_TRACE)
+            graded_trace = run_trace
+        elif seeded:
             server = serve_scoring_vendor(server, scorer, vendor, port, seed, trace, run_trace)
             scoring_vendor = True
             graded_trace = run_trace
@@ -1020,6 +1110,10 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
     if tier:
         verdict["starter_assisted"] = True
         verdict["input_manifest"] = manifest
+    if kit is not None:
+        verdict["kit"] = kit_identity(kit)
+    if effort is not None:
+        verdict["reasoning_effort"] = effort
     if provider:
         verdict["provider"] = provider
         verdict["model"] = model
@@ -1037,7 +1131,7 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
         dest = workdir.parent / "_sb4trees" / f"{workdir.name}-{int(time.time())}"
         dest.parent.mkdir(exist_ok=True)
         shutil.copytree(workdir, dest, ignore=shutil.ignore_patterns(
-            ".swarm", "__pycache__", ".pytest_cache", "*.pyc"))
+            ".swarm", "__pycache__", ".pytest_cache", "*.pyc", *(KIT_TREE_EXCLUDES if tier and tier.kit else ())))
         # The verdict rides WITH its tree — nodeloop-result.json is written to the workdir
         # AFTER this block and dies in the next wipe; the first archive proved it (F771's
         # ledger gap). The archive is only a forensic object if it carries its own scoring.
@@ -1089,6 +1183,8 @@ def main() -> int:
     ap.add_argument("--sb71", action="store_true", help="SB7.1 payments landscape with isolated public starter")
     ap.add_argument("--sb72", action="store_true",
                     help="SB7.2: SB7.1's product and starter, 3D-weighted scorer, framed and legible overview")
+    ap.add_argument("--forge", action="store_true",
+                    help="forge-1.0: the Scope Ledger Forge app, fenced network, pinned Forge kit (forge/DESIGN.md)")
     args = ap.parse_args()
     if bool(args.provider) != bool(args.model):
         ap.error("--provider and --model must be supplied together")
@@ -1105,6 +1201,8 @@ def main() -> int:
         os.environ["BENCH_SB71"] = "1"
     if args.sb72:
         os.environ["BENCH_SB72"] = "1"
+    if args.forge:
+        os.environ[isolated_tiers.FORGE10.flag] = "1"
     isolated_tiers.active()
 
     verdicts = []

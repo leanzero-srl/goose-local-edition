@@ -57,7 +57,7 @@ def completion_evidence(agent):
 
 
 def write_completion(tree, destination, agent, *, run_id, started_at, seed, port, provider, model,
-                     tier=isolated_tiers.SB71):
+                     tier=isolated_tiers.SB71, kit=None):
     if destination.resolve().is_relative_to(tree.resolve()):
         raise ValueError('Completion receipt must be outside the candidate tree')
     evidence = completion_evidence(agent)
@@ -72,6 +72,11 @@ def write_completion(tree, destination, agent, *, run_id, started_at, seed, port
                'agent': agent, 'sourceInventory': inventory(tree),
                'contracts': {name: sha(ROOT / name) for name in tier.contracts},
                'scorerFiles': {name: sha(ROOT / 'bench' / name) for name in tier.scorer_files}}
+    if tier.kit:
+        # forge/DESIGN.md §12: the kit and the Forge runtime wrapper are graded inputs like the scorer files.
+        if not kit or not kit.get('lock_sha256'):
+            raise ValueError('No completion receipt: the kit identity is missing')
+        receipt.update(tier=tier.version, kit_lock_sha256=kit['lock_sha256'], wrapper_sha256=kit.get('wrapper_sha256'))
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_suffix('.tmp')
     temporary.write_text(json.dumps(receipt, indent=2))
@@ -136,8 +141,16 @@ def main():
         validate_receipt(receipt, args.tree, args.run_id)
         result = json.loads(report.read_text())
         score = result.get('score')
-        if type(score) not in (int, float) or not math.isfinite(score) or not 0 <= score <= 1 or result.get('scorerVersion') != tier.version:
+        # A tier scorer is `<version>-rc` until its thresholds freeze (forge-1.0-rc); the receipt names the tier.
+        version = str(result.get('scorerVersion'))
+        if type(score) not in (int, float) or not math.isfinite(score) or not 0 <= score <= 1 \
+                or version.removesuffix('-rc') != tier.version:
             raise ValueError(f'Scorer did not produce a valid {tier.version} verdict')
+        if result.get('status') == 'held':
+            raise ValueError('Still held: the emulator does not yet model ' + '; '.join(result.get('harness_missing') or [])
+                             + ' — model the gap, then retry; candidate and evidence preserved')
+        if tier.kit and result.get('kit_lock_sha256') != receipt.get('kit_lock_sha256'):
+            raise ValueError('The installed Forge kit differs from the original build; retry refused')
         if result.get('fixture_seed') != receipt['fixture_seed'] or result.get('probe_unavailable') or result.get('harness_missing') or result.get('status') == 'unavailable':
             raise ValueError('Scorer evidence is unavailable or belongs to another fixture')
         result.update({'agent': receipt['agent'], 'provider': receipt['provider'], 'model': receipt['model'],

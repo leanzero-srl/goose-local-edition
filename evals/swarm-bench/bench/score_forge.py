@@ -1976,6 +1976,14 @@ def evaluate_rows(c: Ctx) -> List[Dict]:
 def evaluate(c: Ctx) -> Dict:
     result = compose_from_rows(evaluate_rows(c), c)
     result['recall_trace'] = recall_trace(c.root)
+    kit = getattr(c, 'kit', None) or {}
+    result.update({'kit_lock_sha256': kit.get('lock_sha256') or (c.obs.get('kit') or {}).get('lockSha256'),
+                   'wrapper_sha256': kit.get('wrapper_sha256') or (c.obs.get('kit') or {}).get('wrapperSha256'),
+                   'scorer_seconds': getattr(c, 'scorer_seconds', None), 'shots': list(c.obs.get('shots') or []),
+                   'scorer_files_sha256': {n: hashlib.sha256((HERE / n).read_bytes()).hexdigest()
+                                           for n in ('score_forge.py', 'forge_oracle.py', 'forge_probe.mjs',
+                                                     THRESHOLDS_FILE.name)},
+                   'spec_sha256': hashlib.sha256((ROOT / SPEC).read_bytes()).hexdigest()})
     return result
 
 
@@ -2304,8 +2312,14 @@ def _draw_seed() -> str:
     return os.urandom(8).hex()
 
 
-def _port_holder(_port: int) -> Optional[str]:
-    """Forge binds ephemeral ports chosen at scoring time; there is no advertised port to hold (DESIGN §9)."""
+def _port_holder(port: int) -> Optional[str]:
+    """run_build's dev site binds the run's port; the scoring site binds an ephemeral one (DESIGN §9)."""
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        try:
+            sock.bind(('127.0.0.1', port))
+        except OSError as error:
+            return f'127.0.0.1:{port} is held ({error.strerror})'
     return None
 
 
@@ -2398,20 +2412,6 @@ def gather(root: Path, _port, _db_dir, trace_path: Optional[Path] = None, mark_p
     return ctx
 
 
-def evaluate_with_identity(ctx: Ctx) -> Dict:
-    result = evaluate(ctx)
-    kit = getattr(ctx, 'kit', {}) or {}
-    result.update({'kit_lock_sha256': kit.get('lock_sha256') or (ctx.obs.get('kit') or {}).get('lockSha256'),
-                   'wrapper_sha256': kit.get('wrapper_sha256') or (ctx.obs.get('kit') or {}).get('wrapperSha256'),
-                   'scorer_seconds': getattr(ctx, 'scorer_seconds', None),
-                   'shots': list(ctx.obs.get('shots') or []),
-                   'scorer_files_sha256': {n: hashlib.sha256((HERE / n).read_bytes()).hexdigest()
-                                           for n in ('score_forge.py', 'forge_oracle.py', 'forge_probe.mjs',
-                                                     THRESHOLDS_FILE.name) if (HERE / n).is_file()},
-                   'spec_sha256': hashlib.sha256((ROOT / SPEC).read_bytes()).hexdigest()})
-    return result
-
-
 LOCK_FILE = Path(tempfile.gettempdir()) / 'goose-forge-score.lock'
 
 
@@ -2456,7 +2456,7 @@ def main(argv=None) -> int:
     with LOCK_FILE.open('w') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)   # serial: one forge scoring per host
         ctx = gather(tree, None, None, seed=seed, runtime=a.runtime)
-        result = evaluate_with_identity(ctx)
+        result = evaluate(ctx)
     a.json_out.write_text(json.dumps(result, indent=2, default=str))
     print(format_report(result, tree.name))
     if a.reference:

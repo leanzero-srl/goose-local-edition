@@ -755,6 +755,90 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(self.run_cli('--tree', tmp, '--json-out', out, '--seed', 'a' * 16)[0], 3)
 
 
+class TierWiringTests(unittest.TestCase):
+    """forge-1.0 through run_build / isolated_tiers / bench_rescore / release_manifest (DESIGN §12)."""
+
+    def test_the_forge_flag_selects_its_scorer_vendor_and_spec(self):
+        import isolated_tiers
+        import run_build
+        import types
+        fake_site = types.ModuleType('forge_site')
+        fake_site.DOCS_PATH, fake_site.API_KEY = None, None
+        with patch.dict(os.environ, {'BENCH_FORGE10': '1'}, clear=True), patch.dict(sys.modules, {'forge_site': fake_site}):
+            scorer, vendor, spec = run_build._regime()
+            self.assertIs(scorer, sf)
+            self.assertIs(vendor, fake_site)
+            self.assertEqual(spec, 'forge/public/spec-build-forge.md')
+            tier = isolated_tiers.active()
+            self.assertEqual((tier.family, tier.network, tier.kit, tier.wallet_usd, tier.reasoning_effort),
+                             ('forge', 'fenced', True, '50', 'medium'))
+            text = run_build.render_public_contract((ROOT / spec).read_text(), 8850, fake_site)
+            self.assertEqual(text, (ROOT / spec).read_text())
+            with self.assertRaisesRegex(RuntimeError, 'DOCS_URL'):
+                run_build.render_public_contract('see {DOCS_URL}', 8850, fake_site)
+        with patch.dict(os.environ, {'BENCH_FORGE10': '1', 'BENCH_SB72': '1'}, clear=True), \
+                self.assertRaisesRegex(RuntimeError, 'more than one isolated tier'):
+            isolated_tiers.active()
+
+    def test_sb_tiers_keep_their_defaults(self):
+        import isolated_tiers
+        for tier in (isolated_tiers.SB71, isolated_tiers.SB72):
+            self.assertEqual((tier.family, tier.vendor, tier.network, tier.kit, tier.wallet_usd, tier.reasoning_effort,
+                              tier.own_scoring_site), ('payments', 'vendor_service_v3', 'open', False, None, None, False))
+
+    def test_the_reasoning_effort_is_pinned_and_recorded(self):
+        import isolated_tiers
+        import run_build
+        tier = isolated_tiers.FORGE10
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(run_build.pinned_reasoning_effort(tier, {'GOOSE_THINKING_EFFORT': 'high'}),
+                             {'value': 'medium', 'source': 'forge-1.0 pin', 'env': 'GOOSE_THINKING_EFFORT',
+                              'replaced_goose_config': 'high'})
+        with patch.dict(os.environ, {'BENCH_REASONING_EFFORT': 'LOW'}, clear=True):
+            self.assertEqual(run_build.pinned_reasoning_effort(tier, {})['value'], 'low')
+        with patch.dict(os.environ, {'BENCH_REASONING_EFFORT': 'extreme'}, clear=True), \
+                self.assertRaisesRegex(RuntimeError, 'REFUSED'):
+            run_build.pinned_reasoning_effort(tier, {})
+
+    def test_score_forge_has_every_attribute_its_callers_use(self):
+        used = set()
+        for name in ('run_build.py', 'bench_rescore.py'):
+            used |= set(re.findall(r'\bscorer\.([A-Za-z_][A-Za-z0-9_]*)', (HERE / name).read_text()))
+        self.assertEqual(sorted(a for a in used if not hasattr(sf, a)), [])
+        self.assertTrue(hasattr(sf, '_kit'))
+
+    def test_a_forge_receipt_carries_the_kit_and_replays_score_forge(self):
+        import bench_rescore
+        import dataclasses
+        import isolated_tiers
+        tier = dataclasses.replace(isolated_tiers.FORGE10, scorer_files=('score_forge.py', 'forge_oracle.py'))
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(isolated_tiers.BY_VERSION, {'forge-1.0': tier}):
+            tree = Path(tmp) / 'tree'
+            tree.mkdir()
+            (tree / 'manifest.yml').write_text('app: {}\n')
+            (tree / 'trace.jsonl').write_text(json.dumps({'fixture_seed': '0123456789abcdef', 'dev_seed': 'f' * 16}) + '\n')
+            agent = {'exit': 0, 'secs': 3.0, 'timed_out': False, 'tail': ''}
+            args = dict(run_id='r', started_at='t', seed='0123456789abcdef', port=8850, provider='p', model='m', tier=tier)
+            with self.assertRaisesRegex(ValueError, 'kit identity'):
+                bench_rescore.write_completion(tree, Path(tmp) / 'r0.json', agent, **args)
+            receipt = bench_rescore.write_completion(tree, Path(tmp) / 'r.json', agent, kit={'lock_sha256': 'k' * 64,
+                                                                                               'wrapper_sha256': 'w' * 64}, **args)
+            self.assertEqual((receipt['scorerVersion'], receipt['tier'], receipt['kit_lock_sha256']), ('forge-1.0', 'forge-1.0', 'k' * 64))
+            self.assertIn('forge/public/FORGE-CONTRACT.md', receipt['contracts'])
+            self.assertIs(bench_rescore.validate_receipt(receipt, tree, 'r'), receipt)
+
+    def test_release_payload_is_per_family(self):
+        import release_manifest
+        payments, forge = set(release_manifest.payload()), set(release_manifest.payload(family='forge'))
+        self.assertFalse({f for f in payments if 'forge' in f}, 'SB7.x pins must not move when forge does')
+        self.assertLessEqual({'forge/public/spec-build-forge.md', 'forge/public/FORGE-CONTRACT.md', 'bench/score_forge.py',
+                              'bench/forge_oracle.py', 'bench/run_build.py', 'bench/isolated_tiers.py'}, forge)
+        self.assertFalse({'bench/score_sb7.py', 'bench/score_sb71.py', 'spec-build-sb72.md'} & forge)
+        self.assertFalse([f for f in forge if 'node_modules' in f])
+        manifest = json.loads((ROOT / 'forge' / 'release-manifest.json').read_text())
+        self.assertEqual((manifest['family'], manifest['scorerVersion']), ('forge', 'forge-1.0'))
+
+
 # ── probe smoke test against a THIN FAKE of I2 (DESIGN §13.3: until WP1's emulator lands) ─────────────
 
 FAKE_SITE = r"""
