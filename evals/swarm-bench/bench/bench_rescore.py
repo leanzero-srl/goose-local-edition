@@ -42,17 +42,32 @@ def inventory(tree):
     return result
 
 
+def completion_evidence(agent):
+    """How the build ended, when it ended as a finished build: engine exit 0 (the model finished or the
+    call budget ended the session) or the harness's own wallet-guard stop. Anything else is None."""
+    if type(agent.get('exit')) is not int or agent.get('timed_out') is not False:
+        return None
+    if agent['exit'] == 0:
+        return 'runner observed engine exit 0'
+    budget = agent.get('budget') if isinstance(agent.get('budget'), dict) else {}
+    wallet = budget.get('wallet') if isinstance(budget.get('wallet'), dict) else {}
+    if budget.get('stopped_by') == 'wallet_guard' and wallet.get('status') == 'tripped' and agent['exit'] < 0:
+        return 'runner stopped the engine at the operator wallet limit'
+    return None
+
+
 def write_completion(tree, destination, agent, *, run_id, started_at, seed, port, provider, model,
                      tier=isolated_tiers.SB71):
     if destination.resolve().is_relative_to(tree.resolve()):
         raise ValueError('Completion receipt must be outside the candidate tree')
-    if type(agent.get('exit')) is not int or agent['exit'] != 0 or agent.get('timed_out') is not False:
+    evidence = completion_evidence(agent)
+    if evidence is None:
         raise ValueError('No completion receipt: model process did not exit successfully')
     if not run_id or not started_at:
         raise ValueError('No completion receipt: launch identity is missing')
     receipt = {'schemaVersion': 1, 'scorerVersion': tier.version, 'runId': run_id,
                'startedAt': started_at, 'completedAt': time.time(),
-               'completionEvidence': 'runner observed engine exit 0',
+               'completionEvidence': evidence,
                'fixture_seed': seed, 'vendor_port': port, 'provider': provider, 'model': model,
                'agent': agent, 'sourceInventory': inventory(tree),
                'contracts': {name: sha(ROOT / name) for name in tier.contracts},
@@ -76,7 +91,7 @@ def validate_receipt(receipt, tree, run_id):
     if receipt.get('runId') != run_id:
         raise ValueError('Completion receipt identity does not match this session')
     agent = receipt.get('agent', {})
-    if type(agent.get('exit')) is not int or agent['exit'] != 0 or agent.get('timed_out') is not False:
+    if completion_evidence(agent) is None:
         raise ValueError('Completed model build is not proven')
     if type(agent.get('secs')) not in (int, float) or not math.isfinite(agent['secs']) or agent['secs'] < 0:
         raise ValueError('Original model duration is missing')
