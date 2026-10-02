@@ -161,7 +161,9 @@ def admit(raw):
         reasons.append(f'{label}: {cause} (maximum {limit:.3f})')
     result.update(scorer_version=VERSION, scorerVersion=VERSION, rawScore=raw['score'],
                   score=min(raw['score'], ceiling),
-                  admission={'visible': visible, 'matching': matching, 'interactive': interactive,
+                  # `good` keeps SB7.1's verdict shape (the desktop's Admission reads it): it is the
+                  # same 0.799 band, now 3D interaction and overview legibility.
+                  admission={'visible': visible, 'matching': matching, 'interactive': interactive, 'good': interactive,
                              'excellence': {'visual': visual_excellent, 'backend': backend_excellent},
                              'ceiling': ceiling, 'reasons': reasons, 'failedChecksByBand': failures_by_band})
     result['excellent'] = visual_excellent and backend_excellent and result['score'] >= .9
