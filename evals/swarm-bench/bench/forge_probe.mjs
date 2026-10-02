@@ -361,13 +361,19 @@ async function openSurface(spec) {
   page.on('popup', () => { ev.popups += 1; });
   await page.addInitScript(PAGE_HELPERS);
   const bridgeStart = (emu.bridgeLog || []).length;
+  const cspStart = typeof emu.cspReports === 'function' ? emu.cspReports().length : 0;
   const t0 = Date.now();
-  await emu.openSurface(page, { moduleKey: spec.moduleKey, entry: spec.entry, theme: spec.theme,
+  const opened = await emu.openSurface(page, { moduleKey: spec.moduleKey, entry: spec.entry, theme: spec.theme,
     layout: { width: spec.width, height: spec.height }, asUser: spec.asUser, extension: spec.extension });
-  return { page, ev, bridgeStart, t0, startUrl: page.url() };
+  return { page, ev, bridgeStart, cspStart, surfaceId: opened?.surfaceId ?? null, t0, startUrl: page.url() };
 }
 
-const bridgeOps = (s) => (emu.bridgeLog || []).slice(s.bridgeStart);
+// The bridge log is shared by every surface; a surface's ops are the ones it made (surfaceId) since it opened.
+const bridgeOps = (s) => (emu.bridgeLog || []).slice(s.bridgeStart).filter((b) => !s.surfaceId || !b.surfaceId || b.surfaceId === s.surfaceId);
+const cspReportsOf = (s) => (typeof emu.cspReports === 'function' ? emu.cspReports().slice(s.cspStart) : [])
+  .map((r) => { const b = r['csp-report'] ?? r; return `${b['violated-directive'] ?? b.effectiveDirective ?? '?'} ${b['blocked-uri'] ?? b.blockedURL ?? ''}`; });
+// Where a router op points: a URL string, {url}, or a Forge location ({target: 'issue', issueKey}).
+const routeOf = (p) => (typeof p === 'string' ? p : p?.url ?? (p?.target === 'issue' && p.issueKey ? `/browse/${p.issueKey}` : null));
 const opName = (b) => b.op ?? b.name ?? b.type;
 
 // The first meaningful paint: the moment a contract root shows content. Returns how many bridge ops had been
@@ -452,7 +458,7 @@ async function finishSurface(s, meta, meaningfulSelector) {
   obs.shots.push(shot);
   const surface = { ...meta, ...dom, tokens, shot, enableTheming: ops.some((b) => opName(b) === 'enableTheming'),
     bridgeOps: ops.map((b) => ({ op: opName(b) })), consoleErrors: s.ev.consoleErrors, pageErrors: s.ev.pageErrors,
-    cspViolations: [...dom.csp, ...s.ev.consoleErrors.filter((m) => /Content Security Policy/i.test(m))],
+    cspViolations: [...new Set([...dom.csp, ...cspReportsOf(s), ...s.ev.consoleErrors.filter((m) => /Content Security Policy/i.test(m))])],
     failedRequests: s.ev.failedRequests, nominal: meta.nominal !== false,
     invokesBeforePaint: paintOps !== null ? before.filter((b) => ['invoke', 'fetchProduct'].includes(opName(b))).length : null };
   delete surface.csp;
@@ -514,7 +520,7 @@ async function probeUi(pack) {
         const ops = bridgeOps(e);
         pick.updateConfigCalls = ops.filter((b) => opName(b) === 'updateConfig').length;
         pick.onProductSave = ops.some((b) => opName(b) === 'onProductSave');
-        pick.savedConfig = saved?.stored ?? saved?.config ?? saved ?? null;
+        pick.savedConfig = saved && typeof saved === 'object' && 'stored' in saved ? saved.stored : (saved ?? null);
         stored = pick.savedConfig;
         configs[board] = stored;
       }
@@ -626,8 +632,8 @@ async function exerciseModal(s, sid, forbidden, reopen) {
   const url0 = page.url();
   await page.locator(`tr[data-change-id="${first.changeId}"] td[data-col="issue"] a, tr[data-change-id="${first.changeId}"] td[data-col="issue"]`).first().click().catch(() => {});
   await sleep(400);
-  out.router = [{ issueKey: first.cells.issue, ops: (emu.bridgeLog || []).slice(s.bridgeStart + before).filter((b) => ['open', 'navigate'].includes(opName(b)))
-    .map((b) => ({ op: opName(b), url: b.payload?.url ?? b.payload?.target ?? b.url ?? b.target ?? (typeof b.payload === 'string' ? b.payload : null) })),
+  out.router = [{ issueKey: first.cells.issue, ops: bridgeOps(s).slice(before).filter((b) => ['open', 'navigate'].includes(opName(b)))
+    .map((b) => ({ op: opName(b), url: routeOf(b.payload) })),
     popup: s.ev.popups > 0, topNavigation: page.url() !== url0 }];
   // post flows on a fresh surface so sorting and routing leave no state behind
   const post = await reopen();
@@ -639,7 +645,10 @@ async function exerciseModal(s, sid, forbidden, reopen) {
     await row.locator('td[data-col="kind"]').click().catch(() => row.click().catch(() => {}));
     await sleep(200);
     out.select = { changeId: target.changeId, ariaSelected: (await tableRows(post.page)).find((r) => r.changeId === target.changeId)?.selected ?? false };
-    for (const [name, act] of [['post', (l) => l.click()], ['doubleClick', (l) => l.dblclick()]]) {
+    // Gap #24: the double click is two clicks on the SAME element handle (a moving label cannot dodge the second);
+    // force skips actionability waits but a disabled button still swallows the click, as a browser does.
+    const twice = async (l) => { const h = await l.elementHandle(); await h.click(); await h.click({ force: true }); };
+    for (const [name, act] of [['post', (l) => l.click()], ['doubleClick', twice]]) {
       const c0 = commentsNow();
       const o0 = bridgeOps(post).length;
       await act(post.page.locator('[data-testid="post-summary"]').first()).catch(() => {});

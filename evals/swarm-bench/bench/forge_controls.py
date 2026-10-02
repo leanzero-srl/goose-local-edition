@@ -95,9 +95,14 @@ def _rebuild(tree: Path, app_modules: Optional[str]) -> Optional[str]:
     return None if proc.returncode == 0 else f'npm run build failed: {proc.stderr.strip()[-400:]}'
 
 
+def empty_starter(dest: Path) -> None:
+    """The starter exactly as run_build hands it out: its .gitkeep placeholders stripped (STARTER.md: empty)."""
+    shutil.copytree(STARTER, dest, ignore=shutil.ignore_patterns('.gitkeep', '__pycache__', '.DS_Store'))
+
+
 def one_function_app(dest: Path) -> None:
     """The starter plus one trigger whose handler does nothing (DESIGN §8.6 (6))."""
-    _materialise(STARTER, dest)
+    empty_starter(dest)
     manifest = (STARTER / 'manifest.yml').read_text()
     app_id = re.search(r'^\s*id:\s*(\S+)', manifest, re.M)
     runtime = re.search(r'^\s*name:\s*(nodejs\S+)', manifest, re.M)
@@ -170,7 +175,7 @@ def main(argv=None) -> int:
         if not patches:
             report['mutants_missing'] = f'no *.patch under {MUTANTS} (WP3 deliverable)'
             failed = True
-        for label, build in (('empty_starter', lambda d: _materialise(STARTER, d)), ('one_function', one_function_app)):
+        for label, build in (('empty_starter', empty_starter), ('one_function', one_function_app)):
             try:
                 tree = tmp / label
                 build(tree)

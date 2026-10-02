@@ -1664,8 +1664,9 @@ def _(c):
         first = sort_at[0] if len(sort_at) > 0 else {}
         second = sort_at[1] if len(sort_at) > 1 else {}
         pts = r.get('sortPoints') or {}
+        # Contract §5 (e7000c527): the `at` toggle flips between the default order and its EXACT reverse.
         subs = [
-            _sorted_ok(first.get('rows') or [], expected, lambda ch: -ch.at.timestamp())
+            list(first.get('rows') or []) == [ch.change_id for ch in reversed(expected)]
             and (first.get('ariaSort') or {}).get('at') == 'descending',
             [x for x in second.get('rows') or []] == [ch.change_id for ch in expected]
             and (second.get('ariaSort') or {}).get('at') == 'ascending',

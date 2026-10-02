@@ -216,7 +216,7 @@ def golden_observations(pack):
                   'rows': [{'changeId': c.change_id, 'cells': {'issue': c.issue_key, 'points': fo.format_points(c.points),
                                                                'kind': c.kind, 'by': c.by_name, 'at': _iso(c.at),
                                                                'source': c.sources[0]}} for c in vis],
-                  'sortAt': [{'rows': [c.change_id for c in sorted(vis, key=lambda c: (-c.at.timestamp(), fo.changelog_order(c.change_id)))],
+                  'sortAt': [{'rows': [c.change_id for c in reversed(vis)],
                               'ariaSort': {'at': 'descending'}},
                              {'rows': [c.change_id for c in vis], 'ariaSort': {'at': 'ascending'}}],
                   'sortPoints': {'rows': [c.change_id for c in sorted(vis, key=lambda c: (-c.points, c.at, fo.changelog_order(c.change_id)))],

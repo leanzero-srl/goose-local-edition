@@ -955,8 +955,11 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
         if resume_from or seed:
             raise RuntimeError(f"REFUSED: {tier.version} starts from its public starter only")
         starter = ROOT / tier.starter
+        # A kit tier's starter keeps its empty static/ and skills/ in git with .gitkeep; STARTER.md says they
+        # are empty, so the placeholders never reach the entrant.
         shutil.copytree(starter, workdir, dirs_exist_ok=True,
-                        ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '.DS_Store'))
+                        ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '.DS_Store',
+                                                      *(('.gitkeep',) if tier.kit else ())))
         if tier.kit:
             clone_kit_modules(kit, workdir)
         for name, source in tier.public:
