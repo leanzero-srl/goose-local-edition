@@ -114,7 +114,11 @@ function facts(seed) {
   const peer = users[peerIdx].accountId;
 
   // ---- statuses, issue types, projects ----------------------------------------------------------
-  const statusIds = r.distinctInts(4, 3, 10199);
+  // Numeric id classes are DISJOINT BY CONSTRUCTION (a changelog id never equals an issue, sprint or board id —
+  // seed 5eed0123456789ab once collided): boards 1-400, sprints 401-1399, issue types 10000-10099, statuses
+  // 10100-10199, projects 10200-11999, the security level 12000-12999, issues from 13000 (span <= 4 x issues,
+  // so below 41000), changelogs from 50000. fixtures.test.cjs asserts the disjointness on 300 seeds.
+  const statusIds = r.distinctInts(4, 10100, 10199);
   const statuses = [
     { id: String(statusIds[1]), name: 'To Do', statusCategory: { id: 2, key: 'new', colorName: 'blue-gray', name: 'To Do' } },
     { id: String(statusIds[0]), name: 'In Progress', statusCategory: { id: 4, key: 'indeterminate', colorName: 'yellow', name: 'In Progress' } },
@@ -128,7 +132,7 @@ function facts(seed) {
     { id: String(typeIds[2]), name: 'Bug', subtask: false, hierarchyLevel: 0 },
   ];
   const projectPicks = r.sample(PROJECTS, 2);
-  const projectIds = r.distinctInts(2, 10000, 11999);
+  const projectIds = r.distinctInts(2, 10200, 11999);
   const projects = projectPicks.map(([key, name], i) => ({ id: String(projectIds[i]), key, name }));
   const [PA, PB] = projects; // PA carries the two parallel active sprints
 
@@ -199,7 +203,7 @@ function facts(seed) {
     mk('fA', `${PA.key} Sprint ${sprintNoA + 1}`, 'future', boards[0], null, null),
     mk('fB', `${PB.key} Sprint ${sprintNoB + 1}`, 'future', boards[1], null, null),
   ];
-  const sprintIds = r.distinctInts(sprintDefs.length, 1, 999);
+  const sprintIds = r.distinctInts(sprintDefs.length, 401, 1399);
   sprintDefs.forEach((s, i) => { s.id = sprintIds[i]; });
   const S = Object.fromEntries(sprintDefs.map((s) => [s.key, s]));
   const sprintById = new Map(sprintDefs.map((s) => [s.id, s]));
@@ -210,10 +214,10 @@ function facts(seed) {
   const issueCreated = [];
   for (let i = 0; i < total; i++) issueCreated.push({ project: i < nA ? PA : PB, created: now - r.int(2 * DAY, 150 * DAY) });
   issueCreated.sort((x, y) => x.created - y.created);
-  const issueIdBase = r.int(10000, 40000);
+  const issueIdBase = r.int(13000, 40000);
   const issueIds = r.distinctInts(total, issueIdBase, issueIdBase + total * 4);
   const keyNo = { [PA.key]: r.int(1, 400), [PB.key]: r.int(1, 400) };
-  const securityLevel = { id: String(r.int(10000, 10999)), name: r.pick(['Restricted', 'Confidential', 'Leadership only', 'Security team']) };
+  const securityLevel = { id: String(r.int(12000, 12999)), name: r.pick(['Restricted', 'Confidential', 'Leadership only', 'Security team']) };
   const priorities = ['Highest', 'High', 'Medium', 'Low'];
   const usedSummaries = new Set();
   const summary = () => {
@@ -243,7 +247,7 @@ function facts(seed) {
   const byId = new Map(issues.map((s) => [s.id, s]));
 
   // ---- history & live: one simulation, one changelog id stream ----------------------------------
-  let changelogNo = r.int(20000, 90000);
+  let changelogNo = r.int(50000, 90000);
   const nextChangelogId = () => String((changelogNo += r.int(1, 37)));
   const humans = users.map((u) => u.accountId);
   const sprintStr = (ids) => ids.join(', ');
@@ -472,6 +476,23 @@ function facts(seed) {
       step(tick(), r.pick(['sprint', 'irrelevant']), 'live');
     }
   }
+  // The live-UI slot (DESIGN §5.2, §8.7 step 8): two changes held back from the delivery script (slot null, no
+  // duplicates, never dropped, `delivery.liveUi: true`), created after every scripted change, which the scorer
+  // delivers while the widget shows the FIRST scrum board (forge_probe.mjs probeUi: the first `type: scrum` board in
+  // pack order, its light 380 px view). Both move that board's first active sprint for the viewer: a visible
+  // backlog issue with points joins it after its start (added), and a visible member's estimate changes on the
+  // board's estimation field.
+  const uiBoard = boards.find((b) => b.type === 'scrum');
+  const uiSprint = actives.find((s) => s.originBoardId === uiBoard.id);
+  const uiField = uiBoard.estimationFieldId;
+  const visibleIn = (pred) => issues.filter((s) => s.projectKey === uiBoard.projectKey && !s.hiddenFrom.includes(viewer) && s.created < now && pred(s));
+  const joiner = r.pick(visibleIn((s) => !openSprintOf(s) && s.est[uiField] !== null && s.est[uiField] !== undefined));
+  const liveUi = [addTo(joiner, uiSprint, tick(), 'live')];
+  // The widget shows every active sprint of its board, so the re-estimated member may sit in either of them.
+  const uiActive = new Set(actives.filter((a) => a.originBoardId === uiBoard.id).map((a) => a.id));
+  const member = r.pick(visibleIn((s) => uiActive.has(openSprintOf(s)) && s !== joiner));
+  liveUi.push(setEstimate(member, uiField, r.pick(ESTIMATES.filter((v) => v !== member.est[uiField])), tick(), 'live'));
+  for (const e of liveUi) e._liveUi = true;
   // "Strictly after startDate" never meets a tie (DESIGN §17.1 20): a pre-history change that landed on
   // another sprint's start instant moves one second earlier (plan events for a sprint are already
   // strictly before its own start; post-start events are nudged later above).
@@ -487,18 +508,19 @@ function facts(seed) {
   for (const pair of pairs) pair.forEach((x, k) => { pair[k] = tmpToReal.get(x); });
   const byCreated = (a, b) => a.created - b.created || Number(a.changelogId) - Number(b.changelogId);
   const liveEvents = events.slice(liveStart).sort(byCreated);
+  const scripted = liveEvents.filter((e) => !e._liveUi);
 
   // ---- delivery schedule: 4 duplicates, 2 permuted pairs, 3 dropped, one fault target ----------
   const isSprint = (e) => e.items[0].field === 'Sprint';
   const paired = new Set(pairs.flat());
-  const sprintLive = liveEvents.filter((e) => isSprint(e) && !paired.has(e.changelogId));
+  const sprintLive = scripted.filter((e) => isSprint(e) && !paired.has(e.changelogId));
   const dropped = new Set(r.sample(sprintLive, 3).map((e) => e.changelogId));
-  const relevantLeft = liveEvents.filter((e) => (isSprint(e) || e.items[0].fieldId === boardOf[byId.get(e.issueId).projectKey].estimationFieldId)
+  const relevantLeft = scripted.filter((e) => (isSprint(e) || e.items[0].fieldId === boardOf[byId.get(e.issueId).projectKey].estimationFieldId)
     && !paired.has(e.changelogId) && !dropped.has(e.changelogId));
   const middle = relevantLeft.filter((e, i) => i > 2 && i < relevantLeft.length - 2 && isSprint(e) && !byId.get(e.issueId).hiddenFrom.length);
   const faultChange = r.pick(middle.length ? middle : relevantLeft.filter(isSprint));
   const duplicated = new Set(r.sample(relevantLeft.filter((e) => e !== faultChange), 4).map((e) => e.changelogId));
-  let order = liveEvents.map((e) => e.changelogId);
+  let order = scripted.map((e) => e.changelogId);
   for (const [a, b] of pairs) {
     const i = order.indexOf(a);
     order[i] = b;
@@ -510,7 +532,7 @@ function facts(seed) {
     const at = seq.findIndex((x) => x.id === id && !x.dup);
     seq.splice(Math.min(seq.length, at + 1 + r.int(1, 3)), 0, { id, dup: true });
   }
-  const delivery = Object.fromEntries(liveEvents.map((e) => [e.changelogId, { slot: null, duplicates: [], dropped: dropped.has(e.changelogId) }]));
+  const delivery = Object.fromEntries(liveEvents.map((e) => [e.changelogId, { slot: null, duplicates: [], dropped: dropped.has(e.changelogId), ...(e._liveUi ? { liveUi: true } : {}) }]));
   seq.forEach((x, slot) => {
     if (x.dup) delivery[x.id].duplicates.push(slot);
     else delivery[x.id].slot = slot;
@@ -567,10 +589,10 @@ function facts(seed) {
     issues: packIssues,
     history: events.slice(0, historyCount).sort(byCreated).map(strip),
     live: liveEvents.map((e) => ({ ...strip(e), delivery: delivery[e.changelogId] })),
+    // DESIGN §5.2 faults; the comment-path 429 was dropped in §17.2 E (the per-issue write limit still applies).
     faults: [
       { id: faultId(1), match: { scope: 'consumer-of-change', changelogId: faultChange.changelogId, nth: 1 }, status: 429, retryAfter: 30, reason: 'jira-quota-tenant-based' },
       { id: faultId(2), match: { scope: 'scheduled-run', run: 1, nth: 2 }, status: 429, retryAfter: 2, reason: 'jira-burst-based' },
-      { id: faultId(3), match: { scope: 'comment-post', nth: 1 }, status: 429, retryAfter: 1, reason: 'jira-per-issue-on-write' },
     ],
     limits: LIMITS,
     stats: { issues: total, history: historyCount, carryOverAtStart: carriedA.length + carriedB.length, live: liveEvents.length },

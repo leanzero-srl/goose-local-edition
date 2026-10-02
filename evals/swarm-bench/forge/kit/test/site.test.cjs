@@ -101,13 +101,7 @@ test('refusals: legacy v2 is harness_missing, unknown paths 404, scope mismatch 
   const noScope = await call('GET', `/rest/api/3/issue/${iss.id}`, undefined, ['storage:app']);
   assert.strictEqual(noScope.status, 401);
   assert.strictEqual(noScope.body.message, 'Unauthorized; scope does not match');
-  // The pack's comment-post fault answers the first comment POST with 429 + Retry-After (DESIGN §5.2).
-  const first = await call('POST', `/rest/api/3/issue/${iss.id}/comment`, { body: 'plain text' });
-  assert.strictEqual(first.status, 429);
-  const wait = Number(first.headers.get('retry-after'));
-  assert.ok(wait >= 1);
-  assert.strictEqual((await call('POST', `/rest/api/3/issue/${iss.id}/comment`, { body: 'plain text' })).status, 429, 'a retry inside Retry-After is refused again');
-  site.clock.advance(wait * 1000);
+  // No scripted comment-path 429 since DESIGN §17.2 E: a plain-text body is refused at once.
   const plain = await call('POST', `/rest/api/3/issue/${iss.id}/comment`, { body: 'plain text' });
   assert.strictEqual(plain.status, 400);
   assert.deepStrictEqual(plain.body, { errorMessages: [], errors: { comment: 'Comment body is not valid!' } });
@@ -207,9 +201,7 @@ test('every modelled operation answers the shape the shipped OpenAPI documents f
     const op = spec.paths[template]?.[method.toLowerCase()];
     if (!op) { problems.push(`${key}: modelled but absent from the shipped OpenAPI`); continue; }
     const url = template.replace(/\{(\w+)\}/g, (_, n) => encodeURIComponent(fill[n])) + (query[key] ? `?${query[key]}` : (op.parameters ?? []).some((p) => p.name === 'maxResults') ? '?maxResults=1' : '');
-    const r = key === 'POST /rest/api/3/issue/{issueIdOrKey}/comment'
-      ? await (async () => { let x; for (let i = 0; i < 3; i++) { x = await call(method, url, body[key]); if (x.status !== 429) break; site.clock.advance(Number(x.headers.get('retry-after')) * 1000); } return x; })()
-      : await call(method, url, body[key]);
+    const r = await call(method, url, body[key]);
     if (r.status !== 200 && r.status !== 201) { problems.push(`${key}: ${r.status} ${JSON.stringify(r.body).slice(0, 160)}`); continue; }
     const resp = op.responses[String(r.status)]?.content?.['application/json'];
     const schema = deref(spec, resp?.schema);

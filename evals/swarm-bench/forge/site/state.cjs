@@ -86,7 +86,11 @@ function createState(pack, { realNow = () => Date.now() } = {}) {
     }
     return appliedNow;
   };
-  const flush = () => (liveOrder.length ? applyThrough(liveOrder[liveOrder.length - 1]) : []);
+  // Every scripted live change (dropped ones included) — never the live-UI changes, which stay held back until the
+  // scorer delivers them with the widget open (DESIGN §8.7 step 8); they are created last, so nothing scripted
+  // waits behind them.
+  const scriptedOrder = pack.live.filter((c) => !c.delivery.liveUi).map((c) => c.changelogId);
+  const flush = () => (scriptedOrder.length ? applyThrough(scriptedOrder[scriptedOrder.length - 1]) : []);
   const nextDelivery = () => {
     if (st.cursor >= plan.length) return null;
     const d = plan[st.cursor++];

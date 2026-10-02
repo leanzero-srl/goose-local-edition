@@ -58,6 +58,27 @@ function shapeProblems(p) {
   const touches = (e) => e.items[0].field === 'Sprint' && actives.some((a) => Date.parse(e.created) > Date.parse(a.startDate)
     && (ids(e.items[0].from).includes(String(a.id)) || ids(e.items[0].to).includes(String(a.id))));
   if (p.issues.length < 229 || p.issues.length > 245) out.push(`issues ${p.issues.length}`);
+  // Numeric id classes are disjoint (seed 5eed0123456789ab once had changelog ids equal to issue ids).
+  const classes = { board: p.boards.map((b) => b.id), sprint: p.sprints.map((x) => x.id), issue: p.issues.map((i) => i.id),
+    changelog: [...p.history, ...p.live].map((e) => e.changelogId), project: p.projects.map((x) => x.id), status: p.statuses.map((x) => x.id),
+    issueType: p.issueTypes.map((x) => x.id), securityLevel: [p.securityLevel.id] };
+  const owner = new Map();
+  for (const [cls, ids] of Object.entries(classes)) for (const id of ids.map(String)) {
+    if (owner.has(id) && owner.get(id) !== cls) out.push(`id ${id} is both a ${owner.get(id)} and a ${cls}`);
+    owner.set(id, cls);
+  }
+  // The live-UI slot (DESIGN §5.2, §8.7 step 8): two held-back changes for the first scrum board's active sprint.
+  const ui = p.live.filter((e) => e.delivery.liveUi);
+  const uiBoard = p.boards.find((b) => b.type === 'scrum');
+  const uiSprints = new Set(p.sprints.filter((x) => x.state === 'active' && x.originBoardId === uiBoard.id).map((x) => String(x.id)));
+  const issueOf = (e) => p.issues.find((i) => i.id === e.issueId);
+  if (ui.length !== 2) out.push(`live-UI changes ${ui.length}`);
+  if (ui.some((e) => e.delivery.slot !== null || e.delivery.duplicates.length || e.delivery.dropped)) out.push('a live-UI change is scheduled, duplicated or dropped');
+  const lastScripted = Math.max(...p.live.filter((e) => !e.delivery.liveUi).map((e) => Date.parse(e.created)));
+  if (ui.some((e) => Date.parse(e.created) <= lastScripted)) out.push('a live-UI change is not created after the scripted live changes');
+  if (ui.some((e) => issueOf(e).hiddenFrom.includes(p.viewer) || issueOf(e).projectKey !== uiBoard.projectKey)) out.push("a live-UI change is not on the widget board's visible issues");
+  if (!ui.some((e) => e.items[0].field === 'Sprint' && ids(e.items[0].to).some((x) => uiSprints.has(x)))) out.push('no live-UI change adds to the widget board\'s active sprint');
+  if (!ui.some((e) => e.items[0].fieldId === uiBoard.estimationFieldId)) out.push('no live-UI estimate change on the widget board');
   // DESIGN §17.1 19/20: sprint start dates are distinct, and no change lands exactly on a sprint start.
   const starts = p.sprints.filter((s) => s.startDate).map((s) => Date.parse(s.startDate));
   if (new Set(starts).size !== starts.length) out.push('tied sprint startDates');
