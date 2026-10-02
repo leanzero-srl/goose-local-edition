@@ -551,6 +551,171 @@ class DefectTests(Golden):
         self.assertEqual(self.rows(self.mutate(scripts))['l_scopes']['score'], 0.75)
 
 
+class DeployReadinessTests(Golden):
+    """Every deploy-readiness rule, each with a passing and a failing case (owner 2026-10-03)."""
+
+    def status(self, rule, obs=None, files=None):
+        for rel, text in (files or {}).items():
+            path = self.root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        v = self.score(obs)
+        found = [f for f in v['deploy_readiness']['rules'] if f['rule'].startswith(rule + ' ')]
+        self.assertEqual(len(found), 1, rule)
+        for rel in (files or {}):
+            (self.root / rel).unlink()
+        return found[0]
+
+    def mobs(self, fn):
+        obs = copy.deepcopy(self.obs)
+        fn(obs['manifest'])
+        return obs
+
+    def test_the_golden_fixture_passes_every_rule(self):
+        v = self.score()
+        self.assertEqual([f['rule'] for f in v['deploy_readiness']['rules'] if f['status'] == 'fail'], [])
+        self.assertEqual(v['deploy_readiness']['verdict'], 'would deploy and run')
+        self.assertIn('Deploy readiness: would deploy and run', sf.format_report(v))
+
+    def test_m1_trigger_event(self):
+        self.assertEqual(self.status('M1')['status'], 'pass')
+        bad = self.mobs(lambda m: m['modules']['trigger'][0].update(events=['avi:jira:created:issue']))
+        self.assertEqual(self.status('M1', bad)['status'], 'fail')
+
+    def test_m2_m3_queue_pairing(self):
+        ok = {'src/q.js': "const QUEUE = 'ledger';\nexport const push = () => new Queue({ key: QUEUE });\n"}
+        self.assertEqual(self.status('M2', files=ok)['status'], 'pass')
+        self.assertEqual(self.status('M2', files={'src/q.js': "new Queue({ key: 'other' })"})['status'], 'fail')
+        spare = self.mobs(lambda m: m['modules']['consumer'].append({'key': 'c2', 'queue': 'unused', 'function': 'consume'}))
+        self.assertEqual(self.status('M3', spare, files=ok)['status'], 'fail')
+        self.assertEqual(self.status('M3', files=ok)['status'], 'pass')
+
+    def test_m4_interval(self):
+        self.assertEqual(self.status('M4')['status'], 'pass')
+        self.assertEqual(self.status('M4', self.mobs(lambda m: m['modules']['scheduledTrigger'][0].update(interval='hourly')))['status'], 'fail')
+
+    def test_m5_rovo_references(self):
+        self.assertEqual(self.status('M5')['status'], 'pass')
+        self.assertEqual(self.status('M5', self.mobs(lambda m: m['modules']['rovo:agent'][0].update(skills=['nope'])))['status'], 'fail')
+
+    def test_m6_relative_resources(self):
+        self.assertEqual(self.status('M6')['status'], 'pass')
+        self.assertEqual(self.status('M6', self.mobs(lambda m: m['resources'][0].update(path='/static/widget/build')))['status'], 'fail')
+
+    def test_m7_entity_indexes(self):
+        self.assertEqual(self.status('M7')['status'], 'pass')
+        bad = self.mobs(lambda m: m['app']['storage']['entities'][0]['indexes'][0].update(range=['changedAt']))
+        self.assertEqual(self.status('M7', bad)['status'], 'fail')
+
+    def test_m8_custom_ui_only(self):
+        self.assertEqual(self.status('M8')['status'], 'pass')
+        self.assertEqual(self.status('M8', self.mobs(lambda m: m['modules']['jira:sprintAction'][0].update(render='native')))['status'], 'fail')
+
+    def test_m9_legacy_gadget_is_priced_by_its_row(self):
+        self.assertEqual(self.status('M9')['status'], 'pass')
+        f = self.status('M9', self.mobs(lambda m: m['modules'].update({'jira:dashboardGadget': [{'key': 'g', 'resource': 'widget'}]})))
+        self.assertEqual((f['status'], f['graded_by']), ('fail', 'k_dashboard_widget'))
+
+    def test_m10_runtime(self):
+        self.assertEqual(self.status('M10')['status'], 'pass')
+        f = self.status('M10', self.mobs(lambda m: m['app']['runtime'].update(name='nodejs18.x')))
+        self.assertEqual((f['status'], f['graded_by']), ('fail', 'k_current_apis'))
+
+    def test_m11_function_references(self):
+        self.assertEqual(self.status('M11')['status'], 'pass')
+        self.assertEqual(self.status('M11', self.mobs(lambda m: m['modules']['trigger'][0].update(function='nope')))['status'], 'fail')
+
+    def test_m12_timeout(self):
+        self.assertEqual(self.status('M12')['status'], 'pass')
+        self.assertEqual(self.status('M12', self.mobs(lambda m: m['modules']['function'][1].update(timeoutSeconds=1000)))['status'], 'fail')
+
+    def test_p1_documented_routes(self):
+        self.assertEqual(self.status('P1', files={'src/r.js': 'route`/rest/api/3/issue/${id}/comment`'})['status'], 'pass')
+        self.assertEqual(self.status('P1', files={'src/r.js': 'route`/rest/api/3/no/such/thing`'})['status'], 'fail')
+
+    def test_p2_scopes_cover_the_code(self):
+        self.assertEqual(self.status('P2', files={'src/r.js': 'route`/rest/api/3/issue/${id}/comment`'})['status'], 'pass')
+        bad = self.mobs(lambda m: m['permissions'].update(scopes=['storage:app']))
+        self.assertEqual(self.status('P2', bad, files={'src/r.js': 'route`/rest/agile/1.0/board/${b}/sprint`'})['status'], 'fail')
+
+    def test_p3_least_privilege(self):
+        self.assertEqual(self.status('P3')['status'], 'pass')
+        f = self.status('P3', self.mobs(lambda m: m['permissions']['scopes'].append('manage:jira-configuration')))
+        self.assertEqual((f['status'], f['graded_by']), ('fail', 'l_scopes'))
+
+    def test_p4_egress(self):
+        call = {'src/e.js': "await fetch('https://api.example.com/v1/x')"}
+        self.assertEqual(self.status('P4', files=call)['status'], 'fail')
+        ok = self.mobs(lambda m: m['permissions'].update(external={'fetch': {'backend': [{'address': 'https://api.example.com'}]}}))
+        self.assertEqual(self.status('P4', ok, files=call)['status'], 'pass')
+
+    def test_p5_csp_and_prefix(self):
+        self.assertEqual(self.status('P5')['status'], 'pass')
+        page = self.root / 'static' / 'widget' / 'build' / 'index.html'
+        good = page.read_text()
+        for bad in ('<button onclick="go()">x</button>', '<script src="/assets/main.js"></script>',
+                    '<link href="https://fonts.example.com/a.css" rel="stylesheet">', '<div style="color:red">x</div>'):
+            page.write_text(good + bad)
+            self.assertEqual(self.status('P5')['status'], 'fail', bad)
+        page.write_text(good + '<script>window.x = 1</script>')   # static inline script: hashed by Forge (971cf2b8d)
+        self.assertEqual(self.status('P5')['status'], 'pass')
+        page.write_text(good)
+
+    def test_r1_route_tag(self):
+        self.assertEqual(self.status('R1', files={'src/r.js': 'api.asApp().requestJira(route`/rest/api/3/myself`)'})['status'], 'pass')
+        self.assertEqual(self.status('R1', files={'src/r.js': "api.asApp().requestJira('/rest/api/3/myself')"})['status'], 'fail')
+
+    def test_r2_no_as_user_in_background(self):
+        body = "export async function consume(e) {{ await api.{}().requestJira(route`/rest/api/3/myself`); }}\n"
+        resolver = "export const resolver = async () => { return api.asUser(); };\n"
+        self.assertEqual(self.status('R2', files={'src/index.js': body.format('asApp') + resolver})['status'], 'pass')
+        self.assertEqual(self.status('R2', files={'src/index.js': body.format('asUser') + resolver})['status'], 'fail')
+
+    def test_r3_r4_removed_apis(self):
+        self.assertEqual(self.status('R3')['status'], 'pass')
+        self.assertEqual(self.status('R3', files={'src/s.js': "import { storage } from '@forge/api';"})['status'], 'fail')
+        self.assertEqual(self.status('R4')['status'], 'pass')
+        self.assertEqual(self.status('R4', files={'src/s.js': 'route`/rest/api/3/search?jql=x`'})['status'], 'fail')
+
+    def test_r5_search_pagination(self):
+        walk = 'route`/rest/api/3/search/jql`; let nextPageToken;'
+        self.assertEqual(self.status('R5', files={'src/s.js': walk})['status'], 'pass')
+        self.assertEqual(self.status('R5', files={'src/s.js': 'route`/rest/api/3/search/jql`'})['status'], 'fail')
+
+    def test_r6_retry_after(self):
+        self.assertEqual(self.status('R6', files={'src/s.js': "route`/rest/api/3/myself`; h.get('retry-after')"})['status'], 'pass')
+        self.assertEqual(self.status('R6', files={'src/s.js': 'route`/rest/api/3/myself`'})['status'], 'fail')
+        early = copy.deepcopy(self.obs)
+        early['phases']['backfill']['calls'].append({**early['phases']['backfill']['calls'][1], 'earlyRetry': 'f-reconcile'})
+        self.assertEqual(self.status('R6', early, files={'src/s.js': "route`/rest/api/3/myself`; h.get('retry-after')"})['status'], 'fail')
+
+    def test_r7_hard_coded_field(self):
+        self.assertEqual(self.status('R7')['status'], 'pass')
+        self.assertEqual(self.status('R7', files={'src/f.js': "const EST = 'customfield_10016';"})['status'], 'fail')
+
+    def test_r8_bounded_jql(self):
+        self.assertEqual(self.status('R8')['status'], 'pass')
+        bad = copy.deepcopy(self.obs)
+        bad['phases']['backfill']['calls'][3]['status'] = 400
+        self.assertEqual(self.status('R8', bad)['status'], 'fail')
+
+    def test_r9_kvs_limits(self):
+        self.assertEqual(self.status('R9')['status'], 'pass')
+        bad = copy.deepcopy(self.obs)
+        bad['phases']['backfill']['calls'][-1]['limitError'] = 'VALUE_TOO_LARGE'
+        f = self.status('R9', bad)
+        self.assertEqual((f['status'], f['graded_by']), ('fail', 's_limits'))
+
+    def test_a_priced_finding_costs_its_row_and_a_graded_one_costs_nothing_here(self):
+        bad = copy.deepcopy(self.obs)
+        bad['manifest']['modules']['jira:sprintAction'][0]['render'] = 'native'
+        rows = self.rows(self.score(bad))
+        self.assertLess(rows['k_manifest_semantics']['score'], 1)
+        gadget = copy.deepcopy(self.obs)
+        gadget['manifest']['modules']['jira:dashboardGadget'] = [{'key': 'g', 'resource': 'widget'}]
+        self.assertEqual(self.rows(self.score(gadget))['k_manifest_semantics']['score'], 1)
+
+
 class ControlTests(unittest.TestCase):
     def test_empty_starter_and_one_function_app_are_scored_at_most_005(self):
         pack = fo.synthetic_pack()
@@ -566,12 +731,14 @@ class ControlTests(unittest.TestCase):
 
     def test_single_defect_cost_table_is_pinned(self):
         # DESIGN §8.6 (10): computed once from the composition; a change here is a scoring change.
-        pinned = {'l_deployable': 0.499, 'l_bundles_load': 0.499, 'b_no_permission_leak': 0.5873,
-                  'b_comment_exactly_once': 0.5873, 't_no_double_count': 0.5894, 'r_backfill_complete': 0.5894,
-                  'u_widget_loads': 0.6, 't_event_rows': 0.699, 'k_dashboard_widget': 0.799, 'r_pagination': 0.899,
-                  'e_reconcile_economy': 0.97, 'b_comment_adf_as_user': 0.9703, 'u_widget_numbers': 0.9758,
-                  'l_lint_warnings': 0.9797, 't_reestimate_followed': 0.9824, 'u_widget_chart': 0.9844,
-                  'v_widget_sizes': 0.9859, 'l_scopes': 0.9883}
+        pinned = {
+            'l_deployable': 0.499, 'l_bundles_load': 0.499, 'b_no_permission_leak': 0.5873,
+            'b_comment_exactly_once': 0.5873, 't_no_double_count': 0.5894, 'r_backfill_complete':
+            0.5894, 'u_widget_loads': 0.6, 't_event_rows': 0.699, 'k_dashboard_widget': 0.799,
+            'r_pagination': 0.899, 'e_reconcile_economy': 0.97, 'b_comment_adf_as_user': 0.9714,
+            'u_widget_numbers': 0.9769, 'l_lint_warnings': 0.9808, 't_reestimate_followed': 0.9824,
+            'u_widget_chart': 0.9844, 'v_widget_sizes': 0.9859, 'l_scopes': 0.9883,
+            'k_manifest_semantics': 0.9815, 'k_runtime_risks': 0.9815}
         costs = sf.single_defect_costs()
         self.assertEqual({k: costs[k] for k in pinned}, pinned)
 
@@ -706,6 +873,9 @@ class RegistryAndContractTests(unittest.TestCase):
         'v_dark_mode': '§7', 'v_csp_clean': '§7', 'v_console_clean': '§7', 'v_widget_sizes': '§4',
         'a_action_result': '§6', 'a_action_errors': '§6', 'e_reconcile_economy': 'P', 'e_event_economy': 'P',
         'e_ui_round_trips': 'P',
+        # deploy readiness (owner 2026-10-03; DESIGN §8.2/§14 rows to be added by the orchestrator): the platform
+        # rules are discoverable, not restated (DESIGN §3 rule 3); the module and permission duties are §2's.
+        'k_manifest_semantics': '§2', 'k_runtime_risks': '§2',
     }
     # Every hook the contract names, and the check that probes it.
     HOOKS = {
@@ -725,12 +895,12 @@ class RegistryAndContractTests(unittest.TestCase):
     }
 
     def test_registry_shape(self):
-        self.assertEqual(len(sf.CHECKS), 59)
+        self.assertEqual(len(sf.CHECKS), 61)
         self.assertEqual(len(sf.CRITICAL_CHECKS), 7)
         counts = {}
         for _n, t, *_ in sf.CHECKS:
             counts[t] = counts.get(t, 0) + 1
-        self.assertEqual(counts, {'L': 6, 'K': 6, 'T': 8, 'R': 7, 'S': 4, 'B': 5, 'U': 10, 'V': 5, 'A': 4, 'E': 4})
+        self.assertEqual(counts, {'L': 6, 'K': 8, 'T': 8, 'R': 7, 'S': 4, 'B': 5, 'U': 10, 'V': 5, 'A': 4, 'E': 4})
         self.assertEqual(sf.TIER_WEIGHT, {'L': .08, 'K': .10, 'T': .16, 'R': .14, 'S': .08, 'B': .12, 'U': .16,
                                           'V': .08, 'A': .08})
 

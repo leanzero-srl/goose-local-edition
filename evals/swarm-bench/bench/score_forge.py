@@ -739,6 +739,13 @@ def _scope_evidence(c: Ctx) -> Tuple[Optional[Dict], Optional[str]]:
             used |= (classic or granular) & declared
     if any(x.get('missingScope') == 'storage:app' for x in c.all_calls('kvs')):
         missing.add('storage:app')
+    # Least privilege is judged on the CODE, not on what this run happened to exercise: a scope some
+    # alternative of a route the sources build names is not extra.
+    for _rel, path in static_routes(_src_texts(c)):
+        for op in ops_for(path):
+            for alt in op['alts']:
+                tolerated |= alt
+            tolerated |= op['named']
     if c.all_calls('kvs'):
         if 'storage:app' in declared:
             used.add('storage:app')
@@ -943,6 +950,421 @@ def _(c):
     found = _sprint_indexes(c)
     return g(1 if found else 0, f'entities with a sprint-partitioned, ranged index: {sorted(found)}',
              'the ledger has no sprint index')
+
+
+# ══ Deploy readiness: the manifest, the module wiring, the scopes and the predicted runtime failures ════════
+# Owner, 2026-10-03: "make sure the scorer is extra judicious and has the capability to judge the manifest, judge
+# the module usage, understand where it would fail or not". Deterministic, from the manifest, the app's sources, the
+# built resources, the shipped OpenAPI and the run's own call log. Every rule cites the platform page it encodes.
+# Each finding is labelled `would fail` (on real Forge: deploy refused, a call refused, a surface blocked, data
+# missed) or `poor practice` (works, but against the documented guidance), and is PRICED ONCE: a finding another
+# row already grades names that row in `graded_by` and costs nothing here (one defect, not N).
+
+DOCS = {
+    'trigger': 'https://developer.atlassian.com/platform/forge/manifest-reference/modules/trigger/',
+    'consumer': 'https://developer.atlassian.com/platform/forge/runtime-reference/async-events-api/',
+    'scheduled': 'https://developer.atlassian.com/platform/forge/limits-scheduled-trigger/',
+    'rovo': 'https://developer.atlassian.com/platform/forge/manifest-reference/modules/rovo-agent/',
+    'resources': 'https://developer.atlassian.com/platform/forge/manifest-reference/resources/',
+    'entities': 'https://developer.atlassian.com/platform/forge/limits-kvs-ce/',
+    'uikit': 'https://developer.atlassian.com/platform/forge/ui-kit/upgrade-to-ui-kit-latest/',
+    'route': 'https://developer.atlassian.com/platform/forge/apis-reference/fetch-api-product.requestjira/',
+    'asuser': 'https://developer.atlassian.com/platform/forge/runtime-reference/forge-resolver/',
+    'search': 'https://developer.atlassian.com/changelog/#CHANGE-2046',
+    'ratelimit': 'https://developer.atlassian.com/cloud/jira/platform/rate-limiting/',
+    'permissions': 'https://developer.atlassian.com/platform/forge/manifest-reference/permissions/',
+    'csp': 'https://developer.atlassian.com/platform/forge/extend-ui-with-custom-options/',
+    'invocation': 'https://developer.atlassian.com/platform/forge/limits-invocation/',
+    'kvs': 'https://developer.atlassian.com/platform/forge/limits-kvs-ce/',
+    'storage': 'https://developer.atlassian.com/platform/forge/storage-reference/kvs-migration-from-legacy/',
+    'fields': 'https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/',
+}
+SCHEDULE_INTERVALS = ('fiveMinute', 'hour', 'day', 'week')          # limits-scheduled-trigger / manifest schema
+ENTITY_ATTRIBUTE_TYPES = ('string', 'integer', 'float', 'boolean', 'any')
+ENTITY_LIMITS = {'entities': 20, 'indexes': 7, 'attributes': 50}   # limits-kvs-ce (RESEARCH §2, quoted)
+TIMEOUT_MAX_S = 900                                                  # limits-invocation (RESEARCH §2)
+ROUTE_TEMPLATE = re.compile(r'route\s*`((?:[^`\\]|\\.)*)`')
+PLAIN_PRODUCT_CALL = re.compile(r"""\.request(?:Jira|Confluence)\(\s*['"]""")
+QUEUE_NEW = re.compile(r"""new\s+Queue\(\s*\{\s*key\s*:\s*(['"]([^'"]+)['"]|([A-Za-z_$][\w$]*))""")
+CONST_STRING = r"""(?:const|let|var)\s+{name}\s*=\s*['"]([^'"]+)['"]"""
+EXTERNAL_FETCH = re.compile(r"""(?<![\w.])fetch\(\s*['"`](https?://[^/'"`$]+)""")
+CUSTOMFIELD_LITERAL = re.compile(r"""['"`]customfield_\d+['"`]""")
+RETRY_AFTER_HANDLING = re.compile(r'retry-after|retryAfter|Retry-After', re.I)
+CSP_INLINE_HANDLER = re.compile(r'<[^>]+\son[a-z]+\s*=', re.I)
+CSP_STYLE_MARKUP = re.compile(r'<style[\s>]|<[^>]+\sstyle\s*=', re.I)
+CSP_EXTERNAL = re.compile(r"""(?:src|href)\s*=\s*['"](?:https?:)?//""", re.I)
+CSP_ABSOLUTE_ASSET = re.compile(r"""(?:src|href)\s*=\s*['"]/(?!/)""", re.I)
+BACKGROUND_TYPES = ('trigger', 'consumer', 'scheduledTrigger')
+
+_OPENAPI_OPS: Optional[List[Dict]] = None
+
+
+def openapi_ops() -> List[Dict]:
+    """The shipped Jira OpenAPI operations (forge/kit/openapi, the same blobs the site checks scopes against):
+    method, path regex, OAuth2 alternatives (x-atlassian-oauth2-scopes, else the OAuth2 security entry) and the
+    scopes the description names (POST /permissions/check lists Classic read:jira-work under an empty alternative)."""
+    global _OPENAPI_OPS
+    if _OPENAPI_OPS is None:
+        ops = []
+        for name in ('jira.json', 'jsw.json'):
+            spec = json.loads((ROOT / 'forge' / 'kit' / 'openapi' / name).read_text())
+            for template, item in spec['paths'].items():
+                regex = re.compile('^' + '/'.join('[^/]+' if re.fullmatch(r'\{.+\}', seg) else re.escape(seg)
+                                                  for seg in template.split('/')) + '/?$')
+                for method, op in item.items():
+                    if method not in ('get', 'put', 'post', 'delete', 'patch'):
+                        continue
+                    alts = [set(a.get('scopes') or []) for a in op.get('x-atlassian-oauth2-scopes') or []
+                            if a.get('scheme') == 'OAuth2']
+                    if not alts:
+                        alts = [set(s['OAuth2']) for s in op.get('security') or [] if isinstance(s, dict) and 'OAuth2' in s]
+                    named = set(re.findall(r'`([a-z]+:[a-z0-9:.\-]+)`', ' '.join(
+                        re.findall(r'\*\*(?:Classic|Granular)\*\*:\s*([^\n]+)', op.get('description') or ''))))
+                    ops.append({'method': method.upper(), 'template': template, 'regex': regex, 'alts': alts,
+                                'named': named, 'literal': sum(1 for s in template.split('/') if s and '{' not in s)})
+        ops.sort(key=lambda o: -o['literal'])
+        _OPENAPI_OPS = ops
+    return _OPENAPI_OPS
+
+
+def static_routes(texts: Dict[str, str]) -> List[Tuple[str, str]]:
+    """(file, path) for every route`…` template in backend or UI sources; ${…} becomes one path segment."""
+    out = []
+    for rel, text in texts.items():
+        for m in ROUTE_TEMPLATE.finditer(text):
+            path = re.sub(r'\$\{[^}]*\}', 'X', m.group(1)).split('?')[0]
+            if path.startswith('/'):
+                out.append((rel, path))
+    return out
+
+
+def ops_for(path: str) -> List[Dict]:
+    return [op for op in openapi_ops() if op['regex'].match(path)]
+
+
+def _function_body(text: str, name: str) -> Optional[str]:
+    """The source of an exported handler (`export [async] function name` or `export const name = …`), by brace
+    matching that skips strings, template literals and comments."""
+    m = re.search(r'export\s+(?:async\s+)?function\s+' + re.escape(name) + r'\b|export\s+const\s+' + re.escape(name) + r'\s*=', text)
+    if not m:
+        return None
+    i = text.find('{', m.end())
+    if i < 0:
+        return None
+    depth, j, quote = 0, i, None
+    while j < len(text):
+        ch = text[j]
+        if quote:
+            if ch == '\\':
+                j += 2
+                continue
+            if ch == quote:
+                quote = None
+        elif ch in '\'"`':
+            quote = ch
+        elif text.startswith('//', j):
+            j = text.find('\n', j)
+            if j < 0:
+                break
+        elif text.startswith('/*', j):
+            j = text.find('*/', j) + 1
+            if j <= 0:
+                break
+        elif ch == '{':
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0:
+                return text[i:j + 1]
+        j += 1
+    return None
+
+
+def _ui_html(c: Ctx) -> Dict[str, str]:
+    out = {}
+    for r in c.resources():
+        rel = str(r.get('path') or '')
+        if not rel or rel.startswith('/') or '..' in Path(rel).parts:
+            continue
+        html = c.read_tree(os.path.join(rel, 'index.html'))
+        if html is not None:
+            out[rel] = html
+    return out
+
+
+def _row_score(c: Ctx, name: str) -> Optional[float]:
+    r = c._row_cache.get(name)
+    return None if r is None or r.get('unavailable') or (r.get('parts') or {}).get('vacuous_root') else r['score']
+
+
+def _charged(c: Ctx, *names: str) -> Optional[str]:
+    """The first of `names` whose row already charged a shortfall (it then prices the finding), else None."""
+    for name in names:
+        score = _row_score(c, name)
+        if score is not None and score < 1.0 - 1e-9:
+            return name
+    return None
+
+
+def _lint_mentions(c: Ctx, *words: str) -> bool:
+    runs = (c.obs.get('lint') or {}).get('runs') or []
+    text = ' '.join(str(p.get('message') or '') for p in (runs[0].get('problems') if runs else []) or [])
+    return any(w.lower() in text.lower() for w in words)
+
+
+def deploy_findings(c: Ctx) -> List[Dict]:
+    """Every rule's outcome: {rule, area, status pass|fail|n/a, kind would_fail|poor_practice, where, why, doc,
+    graded_by}. Pure over the manifest, the tree and the observations."""
+    out: List[Dict] = []
+
+    def rule(rid, area, applicable, ok, kind, why, doc, where='', graded_by=None):
+        out.append({'rule': rid, 'area': area, 'status': 'n/a' if not applicable else ('pass' if ok else 'fail'),
+                    'kind': kind, 'why': why, 'doc': DOCS[doc], 'where': where,
+                    **({'graded_by': graded_by} if graded_by and applicable and not ok else {})})
+
+    texts = _src_texts(c)
+    backend = '\n'.join(texts.values())
+    mods = {t: c.modules(t) for t in c.module_types()}
+    fn_keys = {f.get('key') for f in c.functions()}
+    handler_of = {f.get('key'): str(f.get('handler') or '') for f in c.functions()}
+
+    # ── manifest ────────────────────────────────────────────────────────────────────────────
+    triggers = c.modules('trigger')
+    events = [e if isinstance(e, str) else (e or {}).get('eventType') for t in triggers for e in (t.get('events') or [])]
+    rule('M1 trigger subscribes avi:jira:updated:issue', 'manifest', bool(triggers), 'avi:jira:updated:issue' in events,
+         'would_fail', 'the ledger never hears about issue updates (contract §2)', 'trigger', ', '.join(map(str, events)))
+    consumer_queues = {str(cm.get('queue')) for cm in c.modules('consumer') if cm.get('queue')}
+    pushed = set()
+    for text in texts.values():
+        for m in QUEUE_NEW.finditer(text):
+            if m.group(2):
+                pushed.add(m.group(2))
+            else:
+                const = re.search(CONST_STRING.format(name=re.escape(m.group(3))), backend)
+                if const:
+                    pushed.add(const.group(1))
+    pushed |= {str((x.get('body') or {}).get('queueName')) for x in c.calls(service='queue')
+               if isinstance(x.get('body'), dict) and x['body'].get('queueName')}
+    rule('M2 every pushed queue has a consumer', 'manifest', bool(pushed), pushed <= consumer_queues, 'would_fail',
+         'events pushed to a queue no consumer listens on are never delivered', 'consumer',
+         f'pushed {sorted(pushed)}, consumers {sorted(consumer_queues)}')
+    rule('M3 every consumer queue is pushed to', 'manifest', bool(consumer_queues) and bool(pushed),
+         consumer_queues <= pushed, 'poor_practice', 'a consumer whose queue nothing pushes to never runs', 'consumer',
+         f'consumers {sorted(consumer_queues - pushed)}')
+    intervals = [str(s.get('interval')) for s in c.modules('scheduledTrigger')]
+    bad_interval = [i for i in intervals if i not in SCHEDULE_INTERVALS]
+    rule('M4 scheduledTrigger interval is fiveMinute|hour|day|week', 'manifest', bool(intervals), not bad_interval,
+         'would_fail', 'the manifest schema refuses any other interval (deploy blocked)', 'scheduled', ', '.join(bad_interval),
+         graded_by='l_deployable' if _lint_mentions(c, 'interval') else None)
+    action_keys = {a.get('key') for a in c.modules('action')}
+    skill_keys = {s.get('key') for s in c.modules('rovo:skill')}
+    dangling = [f"agent {a.get('key')} action {x}" for a in c.modules('rovo:agent') for x in a.get('actions') or [] if x not in action_keys]
+    dangling += [f"agent {a.get('key')} skill {x}" for a in c.modules('rovo:agent') for x in a.get('skills') or [] if x not in skill_keys]
+    dangling += [f"skill {s.get('key')} tool {x}" for s in c.modules('rovo:skill')
+                 for x in ((s.get('dependencies') or {}).get('tools') or []) if x not in action_keys]
+    rule('M5 Rovo agent, skill and action references resolve', 'manifest',
+         bool(c.modules('rovo:agent') or c.modules('rovo:skill')), not dangling, 'would_fail',
+         'a reference to an undeclared module key fails validation', 'rovo', '; '.join(dangling),
+         graded_by='l_deployable' if dangling and _lint_mentions(c, *dangling) else None)
+    bad_paths = [str(r.get('path')) for r in c.resources()
+                 if not r.get('path') or str(r['path']).startswith('/') or '..' in Path(str(r['path'])).parts]
+    rule('M6 resource paths are relative and inside the app', 'manifest', bool(c.resources()), not bad_paths, 'would_fail',
+         'resources are packaged from the app directory; an absolute or escaping path is not deployable', 'resources',
+         ', '.join(bad_paths))
+    ent_problems = []
+    entities = _entities(c)
+    if len(entities) > ENTITY_LIMITS['entities']:
+        ent_problems.append(f'{len(entities)} entities > {ENTITY_LIMITS["entities"]}')
+    for e in entities:
+        attrs = e.get('attributes') if isinstance(e.get('attributes'), dict) else {}
+        if len(attrs) > ENTITY_LIMITS['attributes']:
+            ent_problems.append(f"{e.get('name')}: {len(attrs)} attributes")
+        for an, spec in attrs.items():
+            if (spec or {}).get('type') not in ENTITY_ATTRIBUTE_TYPES:
+                ent_problems.append(f"{e.get('name')}.{an}: type {(spec or {}).get('type')!r}")
+        idx = [i for i in e.get('indexes') or [] if isinstance(i, dict)]
+        if len(idx) > ENTITY_LIMITS['indexes']:
+            ent_problems.append(f"{e.get('name')}: {len(idx)} indexes")
+        for i in idx:
+            for an in (i.get('partition') or []) + (i.get('range') or []):
+                if an not in attrs:
+                    ent_problems.append(f"{e.get('name')}.{i.get('name')}: {an} is not a declared attribute")
+    rule('M7 KVS entity indexes name declared attributes within the documented limits', 'manifest', bool(entities),
+         not ent_problems, 'would_fail', 'an index over an undeclared attribute or past the limits is refused', 'entities',
+         '; '.join(ent_problems[:4]))
+    native = [f'{t}:{m.get("key")}' for t, ms in mods.items() for m in ms
+              if m.get('render') == 'native' or (isinstance(m.get('edit'), dict) and m['edit'].get('render') == 'native')]
+    rule('M8 Custom UI only (no render: native)', 'manifest', bool(mods), not native, 'would_fail',
+         'UI Kit surfaces earn nothing in this task (contract §2) and need @forge/react, which is not installed',
+         'uikit', ', '.join(native))
+    gadget = bool(c.modules('jira:dashboardGadget'))
+    rule('M9 no legacy jira:dashboardGadget', 'manifest', bool(mods), not gadget, 'poor_practice',
+         'dashboards:widget replaces it ("will be deprecated by 17 May 2027", CDAC 102826)', 'uikit',
+         graded_by='k_dashboard_widget')
+    runtime = (((c.manifest or {}).get('app') or {}).get('runtime') or {}).get('name')
+    rule('M10 runtime is a current Node.js runtime', 'manifest', c.manifest is not None, runtime in CURRENT_RUNTIMES,
+         'would_fail', f'runtime {runtime!r} is outside the manifest runtime enum', 'invocation', str(runtime),
+         graded_by='k_current_apis')
+    unresolved = [f'{t}:{m.get("key")} -> {ref}' for t, ms in mods.items() for m in ms
+                  for ref in (m.get('function'), (m.get('resolver') or {}).get('function') if isinstance(m.get('resolver'), dict) else None)
+                  if isinstance(ref, str) and ref not in fn_keys]
+    built = {f.get('key'): f for f in (c.obs.get('build') or {}).get('functions') or []}
+    unexported = [k for k in fn_keys if k in built and not (built[k].get('loaded') and built[k].get('exported'))]
+    rule('M11 every function reference resolves to an exported handler in the built bundle', 'manifest',
+         bool(fn_keys), not unresolved and not unexported, 'would_fail',
+         'a module bound to a missing function or handler fails at deploy or on its first invocation', 'invocation',
+         '; '.join(unresolved + unexported), graded_by='l_bundles_load' if unexported else 'l_manifest_rules')
+    long_t = [f.get('key') for f in c.functions() if isinstance(f.get('timeoutSeconds'), (int, float)) and f['timeoutSeconds'] > TIMEOUT_MAX_S]
+    rule('M12 timeoutSeconds within the documented 900 s', 'manifest', bool(fn_keys), not long_t, 'would_fail',
+         'async functions run at most 900 s', 'invocation', ', '.join(map(str, long_t)),
+         graded_by='l_deployable' if _lint_mentions(c, 'timeoutSeconds') else None)
+
+    # ── permissions ─────────────────────────────────────────────────────────────────────────
+    declared = set(((c.manifest or {}).get('permissions') or {}).get('scopes') or [])
+    routes = static_routes(texts)
+    unknown, needs_missing = [], []
+    for rel, path in routes:
+        ops = ops_for(path)
+        if not ops:
+            unknown.append(f'{rel}: {path}')
+            continue
+        if not any(not alt or alt <= declared for op in ops for alt in op['alts']):
+            needs_missing.append(f"{rel}: {path} needs one of {[sorted(a) for a in ops[0]['alts']][:2]}")
+    rule('P1 every route the code builds is a documented Jira operation', 'permissions', bool(routes), not unknown,
+         'would_fail', 'a path outside the shipped OpenAPI answers 404 on Jira Cloud', 'fields', '; '.join(unknown[:3]))
+    rule('P2 declared scopes cover every route in the code (OAuth2 rule)', 'permissions', bool(routes),
+         not needs_missing, 'would_fail', 'a call whose scopes are not declared answers 401 at runtime', 'permissions',
+         '; '.join(needs_missing[:3]), graded_by=_charged(c, 'l_scopes'))
+    ev, _why = _scope_evidence(c)
+    extra = sorted(set((ev or {}).get('extra') or []))
+    rule('P3 no scope beyond what the calls need (least privilege)', 'permissions', bool(declared) and ev is not None,
+         not extra, 'poor_practice', 'every declared scope is shown to the admin who installs the app', 'permissions',
+         ', '.join(extra), graded_by='l_scopes')
+    hosts = sorted({m.group(1) for t in texts.values() for m in EXTERNAL_FETCH.finditer(t)})
+    allowed = ' '.join(str(x if isinstance(x, str) else (x or {}).get('address'))
+                       for x in ((((c.manifest or {}).get('permissions') or {}).get('external') or {}).get('fetch') or {}).get('backend') or [])
+    missing_egress = [h for h in hosts if h.split('://', 1)[-1] not in allowed]
+    rule('P4 every external fetch host is declared under permissions.external.fetch', 'permissions', bool(hosts),
+         not missing_egress, 'would_fail', 'Forge refuses egress to an undeclared host', 'permissions', ', '.join(missing_egress),
+         graded_by='l_deployable' if _lint_mentions(c, 'egress') else None)
+    html = _ui_html(c)
+    content = (((c.manifest or {}).get('permissions') or {}).get('content') or {})
+    styles_ok = 'unsafe-inline' in (content.get('styles') or [])
+    csp = []
+    for rel, page in html.items():
+        if CSP_INLINE_HANDLER.search(page):
+            csp.append(f'{rel}: inline event handler')
+        if CSP_STYLE_MARKUP.search(page) and not styles_ok:
+            csp.append(f'{rel}: <style>/style= without content.styles unsafe-inline')
+        if CSP_EXTERNAL.search(page):
+            csp.append(f'{rel}: external script/style/font')
+        if CSP_ABSOLUTE_ASSET.search(page):
+            csp.append(f'{rel}: absolute asset path (404 under the resource prefix)')
+    rule('P5 built Custom UI fits the default Forge CSP and resource prefix', 'permissions', bool(html), not csp, 'would_fail',
+         'blocked inline handlers/styles, external assets and absolute paths leave a broken or blank surface', 'csp',
+         '; '.join(csp[:4]), graded_by=_charged(c, 'v_csp_clean'))
+
+    # ── predicted runtime failures ──────────────────────────────────────────────────────────
+    plain = [rel for rel, t in texts.items() if PLAIN_PRODUCT_CALL.search(t)]
+    rule('R1 product calls are built with the route tag', 'runtime', bool(texts), not plain, 'would_fail',
+         'requestJira with a plain string throws "You must create your route using the \'route\' export"', 'route',
+         ', '.join(plain), graded_by=_charged(c, 'k_current_apis'))
+    bg_user = []
+    for t in BACKGROUND_TYPES:
+        for m in c.modules(t):
+            handler = handler_of.get(m.get('function'), '')
+            if '.' not in handler:
+                continue
+            file, fn = handler.rsplit('.', 1)
+            src = next((txt for rel, txt in texts.items() if Path(rel).with_suffix('').as_posix() == f'src/{file}'), '')
+            body = _function_body(src, fn) or ''
+            if re.search(r'\basUser\s*\(', body):
+                bg_user.append(f'{t}:{m.get("key")} ({handler})')
+    runtime_user = _charged(c, 't_no_user_in_async') is not None
+    rule('R2 no asUser() in trigger, consumer or scheduled work', 'runtime', bool(texts) and any(c.modules(t) for t in BACKGROUND_TYPES),
+         not bg_user and not runtime_user, 'would_fail',
+         'asUser needs a user in the invocation; product and async events have none (NeedsAuthenticationError)', 'asuser',
+         ', '.join(bg_user), graded_by='t_no_user_in_async' if runtime_user else None)
+    rule('R3 no storage from @forge/api (removed in 8.x)', 'runtime', bool(texts),
+         not any(STORAGE_IMPORT.search(t) for t in texts.values()), 'would_fail',
+         '@forge/api 8.x has no storage export: the first storage call throws', 'storage', graded_by='k_current_apis')
+    old = [rel for rel, t in texts.items() if OLD_SEARCH.search(t)]
+    rule('R4 no /rest/api/3/search (removed, 410)', 'runtime', bool(texts), not old, 'would_fail',
+         'the old search endpoint answers 410 Gone; /search/jql replaces it', 'search', ', '.join(old), graded_by='k_current_apis')
+    jql = [rel for rel, path in routes if path.rstrip('/').endswith('/search/jql')]
+    rule('R5 /search/jql is walked by nextPageToken', 'runtime', bool(jql), 'nextPageToken' in backend, 'would_fail',
+         'a search that stops at the first page misses every issue past it', 'search', ', '.join(jql),
+         graded_by=_charged(c, 'r_pagination'))
+    # Static: the code reads Retry-After at all. Runtime: no retry landed inside a 429's window (the site answers an
+    # early retry with another 429, as Jira does). Either failing is the finding.
+    early = [x for x in c.all_calls('jira') if x.get('earlyRetry')]
+    rule('R6 Jira calls honour Retry-After', 'runtime', bool(routes),
+         bool(RETRY_AFTER_HANDLING.search(backend)) and not early, 'would_fail',
+         'Jira answers 429 with Retry-After; a retry inside the window is refused again', 'ratelimit',
+         f'{len(early)} early retr(ies) observed' if early else '',
+         graded_by=_charged(c, 't_retry_after_honoured', 'r_rate_limit', 'u_comment_flow'))
+    cf = [rel for rel, t in texts.items() if CUSTOMFIELD_LITERAL.search(t)]
+    rule('R7 no hard-coded custom field id', 'runtime', bool(texts), not cf, 'would_fail',
+         'custom field ids differ per site; discover them (contract §8: the scoring site has other ids)', 'fields', ', '.join(cf))
+    unbounded = [x for x in c.all_calls('jira') if str(x.get('path', '')).split('?')[0].endswith('/search/jql') and x.get('status') == 400]
+    rule('R8 JQL is bounded (no 400 from /search/jql)', 'runtime', any(str(x.get('path', '')).split('?')[0].endswith('/search/jql')
+                                                                       for x in c.all_calls('jira')),
+         not unbounded, 'would_fail', 'Jira refuses unbounded JQL with 400', 'search', f'{len(unbounded)} refused search(es)')
+    kvs_err = [x for x in c.all_calls('kvs') if x.get('limitError') or x.get('status') in (400, 413)]
+    rule('R9 KVS writes fit the documented types and limits', 'runtime', bool(c.all_calls('kvs')), not kvs_err, 'would_fail',
+         'a value, key or integer past the KVS limits is refused', 'kvs',
+         ', '.join(str(x.get('limitError') or x.get('status')) for x in kvs_err[:3]),
+         graded_by=_charged(c, 's_limits'))
+    return out
+
+
+def deploy_readiness(c: Ctx) -> Dict:
+    """The human-readable judgment the run card and the published result show (report-only; the two rows price it)."""
+    findings = deploy_findings(c) if c.oracle is not None or c.manifest is not None else []
+    fails = [f for f in findings if f['status'] == 'fail']
+    lint_run, _ = _lint(c)
+    lint_errors = (lint_run or {}).get('counts', {}).get('errors') if lint_run else None
+    deploy_blocked = bool(lint_errors) or bool(c.obs.get('manifestError')) or any(
+        f['rule'].startswith(('M4', 'M6', 'M7', 'M12')) for f in fails)
+    would_fail = [f for f in fails if f['kind'] == 'would_fail']
+    if deploy_blocked:
+        verdict = 'would not deploy'
+    elif would_fail:
+        verdict = f'would deploy; {len(would_fail)} runtime failure(s) predicted'
+    else:
+        verdict = 'would deploy and run'
+    return {'verdict': verdict, 'lint_errors': lint_errors, 'checked': len([f for f in findings if f['status'] != 'n/a']),
+            'would_fail': would_fail, 'poor_practice': [f for f in fails if f['kind'] == 'poor_practice'],
+            'rules': findings}
+
+
+def _priced(c: Ctx, area_prefixes: Tuple[str, ...]) -> Tuple[float, List[Dict], int]:
+    rows = [f for f in deploy_findings(c) if f['rule'].startswith(area_prefixes) and f['status'] != 'n/a']
+    priced = [f for f in rows if not f.get('graded_by')]
+    failed = [f for f in priced if f['status'] == 'fail']
+    return (1 - len(failed) / len(priced) if priced else 1.0), failed, len(rows)
+
+
+def pre_judgeable(c):
+    return (bool(c.functions()) and bool(c.all_calls('jira')), '>= 1 function and >= 1 product call observed')
+
+
+@check('k_manifest_semantics', 'K', pre=pre_judgeable, needs=('build',))
+def _(c):
+    score, failed, n = _priced(c, ('M', 'P'))
+    return g(score, f'deploy readiness, manifest + permissions: {n} rules checked; failing (priced here): '
+             + '; '.join(f"{f['rule']} [{f['where']}]" for f in failed) if failed else
+             f'deploy readiness, manifest + permissions: {n} rules checked, none failing here',
+             'the manifest or its permissions would fail on real Forge', parts={'failed': [f['rule'] for f in failed]})
+
+
+@check('k_runtime_risks', 'K', pre=pre_judgeable, needs=('build',))
+def _(c):
+    score, failed, n = _priced(c, ('R',))
+    return g(score, f'deploy readiness, predicted runtime failures: {n} rules checked; failing (priced here): '
+             + '; '.join(f"{f['rule']} [{f['where']}]" for f in failed) if failed else
+             f'deploy readiness, predicted runtime failures: {n} rules checked, none failing here',
+             'code that would fail on real Forge', parts={'failed': [f['rule'] for f in failed]})
 
 
 # ══ T: event pipeline ════════════════════════════════════════════════════════════════════════
@@ -1773,10 +2195,6 @@ def _(c):
     for s in surfaces:
         fam = [v for k, v in (s.get('tokens') or {}).items() if k.startswith(('--ds-surface', '--ds-elevation-surface'))]
         dom = s.get('dominant')
-        if dom is None and s.get('shot') and c.root:
-            measured = png_dominant(Path(s['shot']))
-            dom = list(measured[0]) if measured else None
-            s['blank'] = bool(measured and measured[1] >= float(TH.get('blank_share', 0.995)))
         good = dom is not None and not s.get('blank') and any(rgb_close(dom, v, tol) for v in fam)
         ok += good
         if not good:
@@ -1941,7 +2359,7 @@ assert set(TIER_OF.values()) == set(TIER_WEIGHT) | {'E'}
 assert DIAGNOSTIC <= REGISTERED and set(CRITICAL_CHECKS) <= REGISTERED and CALIBRATION_OWNED <= REGISTERED
 assert {n for _c, _l, names in ADMISSION_BANDS for n in names} <= REGISTERED
 assert set(EXCELLENCE_VALUED) | set(EXCELLENCE_BINARY) <= REGISTERED
-assert sum(1 for t in TIER_OF.values() if t != 'E') == 55 and sum(1 for t in TIER_OF.values() if t == 'E') == 4
+assert sum(1 for t in TIER_OF.values() if t != 'E') == 57 and sum(1 for t in TIER_OF.values() if t == 'E') == 4
 
 # Rows that compare a person's change LIST with the oracle: one wrong row in the ledger or one change shown that
 # should be hidden makes each of them wrong, and that is one defect, not N (DESIGN §13.4 item 5, gap #23).
@@ -2008,9 +2426,14 @@ def _run_check(c: Ctx, name: str, tier: str, fn, pre, needs) -> Dict:
     return {'check': name, 'tier': tier, **outcome}
 
 
+# The deploy-readiness rows price only what no other row already graded, so they run after every other row.
+DEFERRED = ('k_manifest_semantics', 'k_runtime_risks')
+
+
 def evaluate_rows(c: Ctx) -> List[Dict]:
     rows = []
-    for name, tier, fn, pre, needs in CHECKS:
+    order = [x for x in CHECKS if x[0] not in DEFERRED] + [x for x in CHECKS if x[0] in DEFERRED]
+    for name, tier, fn, pre, needs in order:
         if tier == 'E':
             continue
         row = _run_check(c, name, tier, fn, pre, needs)
@@ -2026,6 +2449,7 @@ def evaluate(c: Ctx) -> Dict:
     result = compose_from_rows(evaluate_rows(c), c)
     result['recall_trace'] = recall_trace(c.root)
     result['media'] = media_block(c)
+    result['deploy_readiness'] = deploy_readiness(c)
     kit = getattr(c, 'kit', None) or {}
     result.update({'kit_lock_sha256': kit.get('lock_sha256') or (c.obs.get('kit') or {}).get('lockSha256'),
                    'wrapper_sha256': kit.get('wrapper_sha256') or (c.obs.get('kit') or {}).get('wrapperSha256'),
@@ -2352,6 +2776,13 @@ def format_report(result: Dict, title: str = '') -> str:
         lines.append(UNCALIBRATED_BANNER)
     if result.get('harness_missing'):
         lines.append(f"HELD for rescore — unmodelled: {result['harness_missing'][:6]}")
+    dr = result.get('deploy_readiness') or {}
+    if dr:
+        lines.append(f"Deploy readiness: {dr['verdict']} ({dr['checked']} rules checked)")
+        for f in dr.get('would_fail', []) + dr.get('poor_practice', []):
+            label = 'would fail on real Forge' if f['kind'] == 'would_fail' else 'works but poor practice'
+            lines.append(f"  - {label}: {f['rule']}: {f['why']}" + (f" [{f['where']}]" if f['where'] else '')
+                         + (f" (graded by {f['graded_by']})" if f.get('graded_by') else '') + f" — {f['doc']}")
     for root, blocked in (result.get('root_causes') or {}).items():
         lines.append(f'{len(blocked)} check(s) downstream of `{root}`: {", ".join(blocked)}')
     for row in sorted(result['checks'], key=lambda r: (TIER_ORDER.index(r['tier']), r['check'])):
@@ -2477,6 +2908,16 @@ def gather(root: Path, _port, _db_dir, trace_path: Optional[Path] = None, mark_p
         if not obs_path.is_file():
             raise RuntimeError(f'REFUSED: forge_probe.mjs exited {code} without observations')
         obs = json.loads(obs_path.read_text())
+        # Pixels are read once, here, into the observations, so evaluate() stays pure over (tree, observations,
+        # pack) and a kept observation file rescored later grades v_dark_mode the same way.
+        for surface in (obs.get('ui') or {}).get('surfaces') or []:
+            shot = surface.get('shot')
+            measured = png_dominant(Path(shot)) if shot and Path(shot).is_file() else None
+            if measured:
+                surface['dominant'] = list(measured[0])
+                surface['dominantShare'] = round(measured[1], 4)
+                surface['blank'] = measured[1] >= float(TH['blank_share'])
+        obs_path.write_text(json.dumps(obs))
         shutil.copy2(obs_path, Path(root) / 'forge-observations.json')
     ctx = Ctx(Path(root), obs, pack, fixture_seed=seed, dev_seed=header.get('dev_seed'), runtime=runtime)
     ctx.scorer_seconds = round(time.monotonic() - started, 3)
