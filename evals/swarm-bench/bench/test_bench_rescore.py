@@ -47,6 +47,7 @@ class RetryTests(unittest.TestCase):
                 if extra.exists() or extra.is_symlink(): extra.unlink()
         source.write_text('print("candidate")\n')
         (self.tree / 'scoring-unavailable.json').write_text('{}')
+        (self.tree / 'model-cost.json').write_text('{}')
         retry.validate_receipt(self.receipt, self.tree, 'cloud-test')
 
     def test_refuses_seed_identity_and_contract_mismatch(self):

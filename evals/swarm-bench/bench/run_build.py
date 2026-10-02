@@ -312,6 +312,9 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
     if os.environ.get("BENCH_SB71"):
         result["usage"] = bench_isolation.usage(Path(child_env["BENCH_SB71_RUNTIME"]))
         (workdir / "model-usage.json").write_text(json.dumps(result["usage"], indent=2))
+        import bench_cost
+        result["billed_cost"] = bench_cost.record(provider, model, env, Path(child_env["BENCH_SB71_RUNTIME"]),
+                                                  workdir, result["usage"])
     return result
 
 
