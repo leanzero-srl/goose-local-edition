@@ -103,7 +103,9 @@ class BilledCostTests(unittest.TestCase):
         self.assertEqual(result['missing'], [])
         self.assertEqual(result['late'], [])
         self.assertEqual(result['reconciliation']['status'], 'matched')
-        self.assertEqual(result['generation_id_sources'], {'sessions_db_message_ids': 2, 'request_logs': 3})
+        self.assertEqual(result['generation_id_sources'],
+                         {'telemetry': 0, 'sessions_db_message_ids': 2, 'request_logs': 3})
+        self.assertEqual(result['telemetry']['status'], 'absent')
         self.assertEqual(result['source'], 'https://openrouter.ai/api/v1/generation (usage per generation id)')
         self.assertEqual(sleeps, [])
 
@@ -136,6 +138,60 @@ class BilledCostTests(unittest.TestCase):
         self.assertEqual(result['reconciliation']['unattributed_tokens'],
                          {'prompt': 28219, 'cached': 0, 'completion': 400})
         self.assertTrue(any('goose counted tokens' in reason for reason in result['incomplete_reasons']))
+
+    def write_telemetry(self, root: Path, lines):
+        swarm = root / '.swarm'
+        swarm.mkdir(exist_ok=True)
+        (swarm / 'telemetry.jsonl').write_text(''.join(json.dumps(line) + '\n' for line in lines))
+
+    def test_a_fresh_runs_telemetry_makes_the_bill_complete(self):
+        """The data shape of a run on the engine that writes response_id: every call has a line, the
+        session DB kept only the text-led reply ids, and one stream was dropped (billed, uncounted)."""
+        completed, dropped = IDS[:3], IDS[3]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = runtime_with(Path(tmp), IDS[:1], [], extra_messages=['msg_a', 'msg_b'])
+            self.write_telemetry(root, [
+                {'model': 'deepseek/deepseek-v4.1-flash', 'usage': True, 'response_id': gen,
+                 'ended': 'completed'} for gen in completed] + [
+                {'model': 'deepseek/deepseek-v4.1-flash', 'usage': False, 'response_id': dropped,
+                 'ended': 'incomplete', 'approx_completion_chunks': 3}])
+            result, _ = self.record(root, FakeOpenRouter(), counters(completed))
+        self.assertEqual(result['status'], 'complete', result['incomplete_reasons'])
+        self.assertEqual(result['billed_usd'], 0.301437156)
+        self.assertEqual(result['request_count'], 4)
+        self.assertEqual(result['incomplete_calls'], {'count': 1, 'billed_usd': 0.2, 'ids': [dropped]})
+        self.assertEqual(result['reconciliation']['status'], 'matched')
+        self.assertEqual(result['generation_id_sources'],
+                         {'telemetry': 4, 'sessions_db_message_ids': 1, 'request_logs': 0})
+        self.assertEqual(result['telemetry']['calls'], 4)
+        self.assertNotIn('ids_outside_telemetry', result['telemetry'])
+
+    def test_a_telemetry_call_without_a_response_id_keeps_the_bill_incomplete(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = runtime_with(Path(tmp), [], [])
+            self.write_telemetry(root, [{'response_id': gen, 'ended': 'completed'} for gen in IDS]
+                                 + [{'response_id': None, 'ended': 'incomplete'}])
+            result, _ = self.record(root, FakeOpenRouter(), counters(IDS))
+        self.assertEqual(result['status'], 'incomplete')
+        self.assertIn('1 telemetry call(s) carried no response id to bill', result['incomplete_reasons'])
+        self.assertEqual(result['reconciliation']['status'], 'matched')
+
+    def test_an_id_the_telemetry_missed_is_billed_and_named(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = runtime_with(Path(tmp), IDS[3:], [])
+            self.write_telemetry(root, [{'response_id': gen, 'ended': 'completed'} for gen in IDS[:3]])
+            result, _ = self.record(root, FakeOpenRouter(), counters(IDS))
+        self.assertEqual(result['status'], 'complete')
+        self.assertEqual(result['telemetry']['ids_outside_telemetry'], [IDS[3]])
+
+    def test_telemetry_from_an_engine_before_response_id_is_named_and_not_trusted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = runtime_with(Path(tmp), IDS[:2], [])
+            self.write_telemetry(root, [{'model': 'm', 'usage': True, 'prompt_tokens': 1}])
+            result, _ = self.record(root, FakeOpenRouter(), counters(IDS))
+        self.assertEqual(result['telemetry']['status'], 'predates_response_id')
+        self.assertEqual(result['generation_id_sources']['telemetry'], 0)
+        self.assertEqual(result['status'], 'incomplete')
 
     def test_without_goose_counters_completeness_is_unproven(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -199,10 +255,14 @@ c.execute("CREATE TABLE sessions (id TEXT, accumulated_input_tokens INTEGER, acc
           "accumulated_cache_read_tokens INTEGER, accumulated_cache_write_tokens INTEGER, accumulated_cost REAL)")
 c.execute("INSERT INTO sessions VALUES ('20261002_1', %d, %d, %d, 0, 0.0001)")
 c.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, message_id TEXT, role TEXT)")
-c.execute("INSERT INTO messages (message_id, role) VALUES ('%s', 'assistant'), ('msg_x', 'assistant')")
+c.execute("INSERT INTO messages (message_id, role) VALUES ('msg_x', 'assistant')")
 c.commit()
+# The engine's telemetry sink, at the path the harness hands it (GOOSE_SWARM_TELEMETRY_FILE).
+with open(os.environ['GOOSE_SWARM_TELEMETRY_FILE'], 'a') as t:
+    t.write('{"model": "m", "usage": true, "response_id": "%s", "ended": "completed"}\\n')
+    t.write('{"model": "m", "usage": false, "response_id": "%s", "ended": "incomplete"}\\n')
 print('session written')
-''' % (2527, 89, 2304, IDS[0]))
+''' % (2527, 89, 2304, IDS[0], IDS[1]))
             engine.chmod(0o700)
             work = root / 'candidate'
             work.mkdir()
@@ -215,9 +275,14 @@ print('session written')
                                           'openrouter', 'deepseek/deepseek-v4.1-flash')
             self.assertEqual(result['exit'], 0, result['tail'])
             self.assertEqual(result['billed_cost']['status'], 'complete', result['billed_cost'])
-            self.assertEqual(result['billed_cost']['billed_usd'], 0.000187524)
+            # Both calls billed; the dropped one is outside goose's counters and listed as such.
+            self.assertEqual(result['billed_cost']['billed_usd'], 0.001437156)
+            self.assertEqual(result['billed_cost']['incomplete_calls']['ids'], [IDS[1]])
+            self.assertEqual(result['billed_cost']['generation_id_sources'],
+                             {'telemetry': 2, 'sessions_db_message_ids': 0, 'request_logs': 0})
             self.assertEqual(json.loads((work / 'model-cost.json').read_text()), result['billed_cost'])
-            self.assertEqual(fake.urls, ['https://openrouter.ai/api/v1/generation?id=' + IDS[0]])
+            self.assertEqual(sorted(fake.urls), ['https://openrouter.ai/api/v1/generation?id=' + gen
+                                                 for gen in sorted(IDS[:2])])
 
 
 if __name__ == '__main__':
