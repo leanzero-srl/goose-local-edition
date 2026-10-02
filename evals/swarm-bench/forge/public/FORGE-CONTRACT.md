@@ -93,7 +93,8 @@ configuration in its context, so two widgets on one dashboard can show different
   names may end in an ellipsis).
 - Live: after ledger rows are written, an open widget shows the new numbers without a reload,
   through Forge Realtime (`@forge/realtime` in the backend, the bridge's realtime subscribe in the
-  widget) — no polling. Realtime payloads carry sprint ids only.
+  widget) — no polling. Channel names are yours to choose. Realtime payloads carry sprint ids
+  only.
 
 ## 5. Sprint action (modal)
 
@@ -118,7 +119,7 @@ Otherwise:
   or a double click, posts exactly one comment. A failure shows an error flag and leaves the
   modal working.
 - `[data-testid="explain"]` asks Forge LLM (`@forge/llm`) to explain the sprint's creep, using a
-  model that `list()` reports `active`. The model must answer through one tool, `report_scope`,
+  any model that `list()` reports `active` (`chat()` or `stream()`). The model must answer through one tool, `report_scope`,
   arguments `{ "summary": string, "changeIds": string[] }` (force it with `tool_choice`); send it
   only what the viewer may see. `[data-testid="explanation"]` shows the summary only if it holds
   no digits (otherwise your own sentence with the ledger's numbers), plus one `[data-change-id]`

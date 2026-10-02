@@ -26,7 +26,7 @@ hard-coded absolutes without receipts.
 | D7 | Score-time runtime = Atlassian's runtime wrapper fetched from its public CDN, pinned by sha256; the in-repo shim runs ONLY behind an explicit `--runtime shim` flag and the verdict is then unpublishable | licence (wrapper not committed, spike .gitignore); gate 1 forbids a silent fallback (§6.1) |
 | D8 | Custom UI only. UI Kit, Forge SQL, webtrigger, apiRoute, global:fullPage, objectStore, app-managed permissions: not in v1 | @forge/react closure is 1,246 MB (measured); SQL needs a MySQL engine; the others have unmeasured handler contracts (RESEARCH §5) |
 | D9 | Composition = SB's: `final = min(earned, ceilings)`, `earned = (0.88·inner + 0.12·gate·e_mean) × critical multiplier` (floor 0.6) | one severity model across families; selftest machinery reused (score_sb7.py `compose_from_rows`) |
-| D10 | Public input 18,166 bytes (prompt 3,106 + contract 11,661 + starter 3,399) + BROWSER-TESTING 537 | target ≤ 25 KB; SB7.2's 45.7 KB still produced desk audits |
+| D10 | Public input 18,232 bytes (prompt 3,106 + contract 11,727 + starter 3,399) + BROWSER-TESTING 537 | target ≤ 25 KB; SB7.2's 45.7 KB still produced desk audits |
 | D11 | Its own benchmark family on leanzero.net (`family: forge`), scorer version `forge-1.0` (`forge-1.0-rc` until thresholds freeze) | not an SB era: different product, different scale |
 
 ## 1. Requirement → where it lands
@@ -72,7 +72,7 @@ totals plus per-person-visible change lists. The exact definitions are FORGE-CON
 | `rovo:agent` | lists the skill | GA | wiring |
 | `rovo:mcp` | exposes `get-sprint-scope` | Preview 2026-10-01 | `tools` are action-key STRINGS in schema 13.6.0 (RESEARCH §1 wrote `{action}`), `name` ≤ 30, at most one per app |
 | `llm` + `@forge/llm` 1.0.7 | sprint action's explanation | docs page has no Preview/EAP banner; GA 2026-07-30 per RESEARCH's changelog | `list()` statuses `active`/`deprecated` (pick an active model); `tools` + forcing `tool_choice`; refusal / malformed tool arguments / `ForgeLlmAPIError{status}`; digits in the model's summary must not reach the screen; the prompt must hold only viewer-visible data |
-| Realtime (`@forge/realtime` 1.0.1, bridge `realtime.subscribeGlobal`) | live widget | docs page has no Preview/EAP banner ("Last updated Jun 25, 2026") | "The publish API is only supported for functions invoked from the app frontend. This is not currently available for async events" → the consumer must `publishGlobal`; global channels "do not enforce full permission scopes" → payloads carry sprint ids only |
+| Realtime (`@forge/realtime` 1.0.1, bridge `realtime.subscribeGlobal`) | live widget | docs page has no Preview/EAP banner ("Last updated Jun 25, 2026") | "The publish API is only supported for functions invoked from the app frontend. This is not currently available for async events" → INFERENCE (ALT-NOTES.md, 9bf49184a): the docs never state outright that `publishGlobal` works from async events, and `signRealtimeToken` is documented for resolvers only — so no check requires `publishGlobal`, a token or a channel name; `u_widget_live` grades only the outcome; global channels "do not enforce full permission scopes" → payloads carry sprint ids only |
 
 Storage: KVS custom entity declared under `app.storage.entities` with an index partitioned by sprint and ranged
 by change time (RESEARCH §1, §2 @forge/kvs). Scopes the golden needs (from the shipped OpenAPI `security`
@@ -483,8 +483,8 @@ call log; "ev" = probe evidence; "oracle" = forge_oracle.py on the pack.
 | `u_issue_router` | U | issue key click → bridge `open` or `navigate` (any `type`) to `/browse/<KEY>`; no popup or top navigation | ev | table rows rendered |  |
 | `u_comment_flow` | U | select + post → success flag; forbidden issue → error flag, modal still sorts | ev | — |  |
 | `u_modal_close` | U | close → bridge `close` | ev | modal rendered |  |
-| `u_llm_explain` | U | the scripted explain answers in order: the request carries tool `report_scope` (`summary` string, `changeIds` string array) and a forcing `tool_choice` (`required` or the named function); clean answer → summary shown, cited visible ids shown; digits answer → no model digit on screen (ledger numbers instead), hidden and unknown ids dropped; refusal, malformed, `ForgeLlmAPIError` → error flag and the modal still sorts | ev + llm log | explain control rendered |  |
-| `u_widget_live` | U | the widget subscribed to a realtime channel; the two live-UI changes are published from the event path and the open widget shows the oracle's new numbers without a reload; 0 invokes from the widget while idle before the publish (polling scores 0) | ev bridge + realtime log | widget rendered sprints |  |
+| `u_llm_explain` | U | via `chat()` or `stream()` (stream tool-call delivery is undocumented, both accepted), any `active` model, the scripted explain answers in order: the request carries tool `report_scope` (`summary` string, `changeIds` string array) and a forcing `tool_choice` (`required` or the named function); clean answer → summary shown, cited visible ids shown; digits answer → no model digit on screen (ledger numbers instead), hidden and unknown ids dropped; refusal, malformed, `ForgeLlmAPIError` → error flag and the modal still sorts | ev + llm log | explain control rendered |  |
+| `u_widget_live` | U | the widget subscribed to a realtime channel (any name, token optional); the two live-UI changes are published from the event path and the open widget shows the oracle's new numbers without a reload; 0 invokes from the widget while idle before the publish (polling scores 0) | ev bridge + realtime log | widget rendered sprints |  |
 | `u_not_started` | U | future sprint context → `not-started` and no ledger, metrics or post button (a close button is allowed) | ev | — |  |
 | `v_theme_tokens` | V | `enableTheming` called on every surface; metric and table text colours equal the mode's `--ds-text*` values (`--ds-link*` accepted on links); contrast ≥ 4.5:1 in both modes; disabled controls exempt | ev computed styles | a surface rendered app content |  |
 | `v_dark_mode` | V | the host page is unpainted, so the app paints its own surface: dark screenshots' dominant colour is in the dark `--ds-surface*` family, light in the light family; no surface blank | ev pixels + tokens | a surface rendered app content |  |
@@ -955,4 +955,13 @@ scorer must be "extra judicious" (WP2's deploy-readiness layer, §7). Each fact 
 
 Registry: 60 rows + 4 E rows (K 8, U 12, B 6). Not banded: `k_rovo_mcp`, `k_llm_model_current` (points only — a
 deprecated model name is a defect, not a broken surface). Public input after the amendment: 18,166 bytes.
+
+### 17.3 The independent alt app's undocumented points (ALT-NOTES.md, 9bf49184a)
+
+| point | resolution |
+|---|---|
+| `publishGlobal` from async events not stated outright; `signRealtimeToken` resolver-only | §2.2 marks "the consumer must `publishGlobal`" an INFERENCE; no check requires `publishGlobal` or a token; `u_widget_live` grades the outcome only (contract unchanged in substance) |
+| channel-name syntax undocumented | contract §4: "Channel names are yours to choose"; grading accepts any name |
+| `stream()` tool-call delivery undocumented | contract §5: `chat()` or `stream()`; `u_llm_explain` accepts both, the emulator's scripted responder answers both |
+| which active model | contract §5: "any model that `list()` reports `active`"; `k_llm_model_current` accepts any active model |
 
