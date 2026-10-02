@@ -69,6 +69,17 @@ function createProxy({ siteUrl, manifest, kvs, queue, invocations, clock, log = 
     if (r.headers.get('x-forge-site-scopes')) entry.scopes = JSON.parse(r.headers.get('x-forge-site-scopes'));
     if (r.headers.get('x-forge-site-op')) entry.op = r.headers.get('x-forge-site-op');
     if (r.status === 501) missing(`product ${method} ${path}`, inv);
+    // The response as the app saw it (graders judge pagination and leaks from it) and a page summary.
+    const parsed = parseMaybe(text);
+    entry.response = parsed;
+    if (parsed && typeof parsed === 'object') {
+      const issues = Array.isArray(parsed.issues) ? parsed.issues : Array.isArray(parsed.values) ? parsed.values : null;
+      entry.page = { nextPageToken: parsed.nextPageToken ?? null, isLast: parsed.isLast ?? null, startAt: parsed.startAt ?? null,
+        maxResults: parsed.maxResults ?? null, total: parsed.total ?? null,
+        ids: issues ? issues.map((x) => String(x.id ?? x.key ?? '')) : Array.isArray(parsed.issueChangeLogs) ? parsed.issueChangeLogs.map((x) => String(x.issueId)) : null,
+        histories: Array.isArray(parsed.issueChangeLogs) ? parsed.issueChangeLogs.reduce((n, x) => n + (x.changeHistories?.length ?? 0), 0)
+          : Array.isArray(parsed.histories) ? parsed.histories.length : null };
+    }
     const out = {};
     for (const h of ['content-type', 'retry-after', 'ratelimit-reason']) if (r.headers.get(h)) out[h] = r.headers.get(h);
     return { status: r.status, headers: out, body: text };

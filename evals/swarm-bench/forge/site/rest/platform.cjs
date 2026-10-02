@@ -106,6 +106,16 @@ const handlers = {
     return { status: 200, body: { self: `${base}?maxResults=${maxResults}&startAt=${startAt}`, ...(isLast ? {} : { nextPage: `${base}?maxResults=${maxResults}&startAt=${startAt + maxResults}` }), maxResults, startAt, total: all.length, isLast, values } };
   },
 
+  'POST /rest/api/3/issue/{issueIdOrKey}/changelog/list': (c) => {
+    const iss = c.state.issueByIdOrKey(c.params.issueIdOrKey);
+    if (!iss || !c.canBrowse(iss)) return err(404, NOT_FOUND_ISSUE);
+    const ids = c.req.body?.changelogIds;
+    if (!Array.isArray(ids)) return err(400, 'changelogIds must not be null.');
+    const wanted = new Set(ids.map(String));
+    const histories = c.state.st.histories.get(iss.id).filter((h) => wanted.has(String(h.changelogId))).map((h) => c.render.history(h));
+    return { status: 200, body: { startAt: 0, maxResults: histories.length, total: histories.length, histories } };
+  },
+
   'POST /rest/api/3/issue/bulkfetch': (c) => {
     const b = c.req.body ?? {};
     const ids = Array.isArray(b.issueIdsOrKeys) ? b.issueIdsOrKeys : null;

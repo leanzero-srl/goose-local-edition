@@ -38,6 +38,17 @@ function issuesFor(c, base, jql) {
   return { hits: c.state.allIssues().filter((i) => c.canBrowse(i) && base(i) && filter(i)).sort((a, b) => Number(a.id) - Number(b.id)) };
 }
 
+// Agile issue representations add `sprint` (the open sprint) and `closedSprints` to the platform fields.
+function agileIssue(c, iss, sel, expand) {
+  const out = c.render.issue(iss, sel, { expand, apiBase: '/rest/agile/1.0' });
+  if (!out.fields) return out;
+  const all = iss.fields[c.state.pack.sprintFieldId] ?? [];
+  const wantAll = sel.size > 3;
+  if (wantAll || sel.has('sprint')) out.fields.sprint = all.find((s) => s.state !== 'closed') ?? null;
+  if (wantAll || sel.has('closedSprints')) out.fields.closedSprints = all.filter((s) => s.state === 'closed');
+  return out;
+}
+
 function issuePage(c, hits) {
   const q = c.req.query;
   const startAt = intParam(q.get('startAt'), 0);
@@ -45,7 +56,7 @@ function issuePage(c, hits) {
   const maxResults = Math.min(intParam(q.get('maxResults'), c.limits.agileIssueDefault.value), cap);
   const sel = c.render.selectFields(listParam(q, 'fields'), true);
   sel.add('key');
-  const issues = hits.slice(startAt, startAt + maxResults).map((i) => c.render.issue(i, sel, { expand: listParam(q, 'expand'), apiBase: '/rest/agile/1.0' }));
+  const issues = hits.slice(startAt, startAt + maxResults).map((i) => agileIssue(c, i, sel, listParam(q, 'expand')));
   return { status: 200, body: { expand: 'names,schema', startAt, maxResults, total: hits.length, issues } };
 }
 
@@ -110,5 +121,44 @@ const handlers = {
     return r.error ?? issuePage(c, r.hits);
   },
 };
+
+const NOT_FOUND_ISSUE = 'Issue does not exist or you do not have permission to see it.';
+Object.assign(handlers, {
+  'GET /rest/agile/1.0/issue/{issueIdOrKey}': (c) => {
+    const iss = c.state.issueByIdOrKey(c.params.issueIdOrKey);
+    if (!iss || !c.canBrowse(iss)) return err(404, NOT_FOUND_ISSUE);
+    const sel = c.render.selectFields(listParam(c.req.query, 'fields'), true);
+    sel.add('key');
+    return { status: 200, body: agileIssue(c, iss, sel, listParam(c.req.query, 'expand')) };
+  },
+  'GET /rest/agile/1.0/issue/{issueIdOrKey}/estimation': (c) => {
+    const iss = c.state.issueByIdOrKey(c.params.issueIdOrKey);
+    if (!iss || !c.canBrowse(iss)) return err(404, NOT_FOUND_ISSUE);
+    const b = board(c, c.req.query.get('boardId'));
+    if (!b) return err(400, 'The boardId parameter is required and must name an existing board.');
+    if (!b.estimationFieldId) return err(400, 'The board does not have estimation configured.');
+    return { status: 200, body: { fieldId: b.estimationFieldId, value: iss.fields[b.estimationFieldId] ?? null } };
+  },
+  'GET /rest/agile/1.0/board/{boardId}/sprint/{sprintId}/issue': (c) => {
+    const b = board(c, c.params.boardId);
+    if (!b) return err(404, `Board does not exist or you do not have permission to see it.`);
+    const s = c.state.pack.sprints.find((x) => String(x.id) === c.params.sprintId);
+    if (!s) return err(404, 'We could not find the sprint');
+    const fid = c.state.pack.sprintFieldId;
+    const r = issuesFor(c, (i) => i.projectKey === b.projectKey && (i.fields[fid] ?? []).some((x) => x.id === s.id), c.req.query.get('jql'));
+    return r.error ?? issuePage(c, r.hits);
+  },
+  'GET /rest/agile/1.0/board/{boardId}/backlog': (c) => {
+    const b = board(c, c.params.boardId);
+    if (!b) return err(404, `Board does not exist or you do not have permission to see it.`);
+    const fid = c.state.pack.sprintFieldId;
+    const r = issuesFor(c, (i) => i.projectKey === b.projectKey && !(i.fields[fid] ?? []).some((x) => x.state !== 'closed') && i.fields.status.statusCategory.key !== 'done', c.req.query.get('jql'));
+    return r.error ?? issuePage(c, r.hits);
+  },
+});
+// The /rest/software/1.0 paths in the shipped OpenAPI serve the same resources as /rest/agile/1.0.
+for (const [key, fn] of Object.entries({ ...handlers })) {
+  if (key.startsWith('GET /rest/agile/1.0/board/') || key.startsWith('GET /rest/agile/1.0/sprint/{sprintId}/issue')) handlers[key.replace('/rest/agile/1.0/', '/rest/software/1.0/')] = fn;
+}
 
 module.exports = { handlers };
