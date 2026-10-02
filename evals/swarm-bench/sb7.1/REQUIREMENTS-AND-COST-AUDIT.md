@@ -128,3 +128,14 @@ Astra figure — a reasoning-heavy frontier trajectory moves it most.
 - 3D observation: the overview field (12,288 towers, prescribed day × rank layout) renders as an unreadable
   colour carpet in the golden reference AND both entrants; the presentation band is tripped by a 4.49:1 button
   contrast instead. The structured inspector spire is where 3D quality is visible.
+- Run 5 (`cloud-01dae737`, 3.0.85, pinned DeepSeek host): billed **$0.3398**, 87 requests, 12.6M prompt (98%
+  cached); repriced Astra $23.8 / Fable $15.2. The session ENDED at request 87 on "Network error: Stream decode
+  error … connection reset … Please resend your message to try again." — goose's single-agent loop did not
+  retry a transient mid-stream failure (the swarm engine did). Fixed on main (5a94a14be + 1b45a24e7): a
+  transient failure is resent per the provider's own RetryConfig with a visible notice and a PartialDiscarded
+  event; run_build refuses to grade a session that still ended on a provider error (50a31be9b).
+  Both scorers then REFUSED the tree ("fire_d1_mutation:failed"): the candidate's pick buffer wrote shaded
+  colours, so the D1 stream witness could not be brushed. Fixed (03101a984): with same-session pixel proof the
+  witness is armed unbrushed and the stream is still measured; hermetic score **0.699** (inner 0.9125,
+  crit ×0.867). Also fixed: idle SSE head lost its content type; vendor crash on a duplicate of an undelivered
+  event. Golden reference unchanged at 0.994.
