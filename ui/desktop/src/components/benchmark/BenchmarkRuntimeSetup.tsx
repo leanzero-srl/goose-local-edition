@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { BenchmarkRuntimeProgress, BenchmarkRuntimeStatus } from '../../benchRuntimeTypes';
 import { Button, Panel, TYPE } from '../lz';
+import { DEFAULT_BENCHMARK_NAME } from '../../benchTierPayload';
 
 const size = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
 export function BenchmarkRuntimeSetup({
@@ -51,8 +52,8 @@ export function BenchmarkRuntimeSetup({
   return (
     <Panel title="Benchmark tools">
       <p className={TYPE.bodyMuted}>
-        Python, Node and video tools are optional downloads required to run SB7.1. The app checks its
-        browser before each launch.
+        Python, Node and video tools are optional downloads required to run {DEFAULT_BENCHMARK_NAME}.
+        The app checks its browser before each launch.
       </p>
       {status?.state === 'ready' ? (
         <p className="mt-2 text-lz-ok">Benchmark tools ready</p>

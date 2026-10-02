@@ -10,7 +10,7 @@ export async function resolveBenchmarkRuntime(
   installParent: string
 ): Promise<{ python: string; node: string; env: Record<string, string> }> {
   if (process.platform !== 'darwin' || process.arch !== 'arm64')
-    throw new Error('SB7.1 isolation currently requires macOS on Apple Silicon.');
+    throw new Error('Benchmark isolation currently requires macOS on Apple Silicon.');
   const root = path.join(installParent, 'runtime');
   let manifest: Record<string, unknown>;
   try {

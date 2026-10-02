@@ -1,6 +1,12 @@
 import { ScoreAdmission, type Admission } from './ScoreAdmission';
 import { useMemo, useState } from 'react';
-import { SB8_TIERS, isSb8 } from './baselines';
+import {
+  SB8_TIERS,
+  VERDICT_TIER_INFO as TIER_INFO,
+  VERDICT_TIER_ORDER as TIER_ORDER,
+  isSb8,
+  isolatedPaymentsTier,
+} from './baselines';
 import { sb8CompositionSchema } from '../../sb8ScoreSchema';
 import { Check, ChevronDown, ChevronRight, X, XCircle } from 'lucide-react';
 import {
@@ -51,7 +57,7 @@ interface LegacyVerdictDetail {
   rawScore?: number;
   admission?: Admission;
   checks: VerdictCheck[];
-  tiers: Record<string, { mean: number; checks: number; weight: number }>;
+  tiers: Record<string, { mean: number; checks: number; weight: number; admission_only?: boolean }>;
   core?: number;
   hard?: number;
   excellent?: boolean;
@@ -73,44 +79,6 @@ export interface Sb8VerdictDetail {
 }
 
 export type VerdictDetail = LegacyVerdictDetail | Sb8VerdictDetail;
-
-const TIER_ORDER = [
-  'A',
-  'B',
-  'C',
-  'D',
-  'E',
-  'F',
-  'J',
-  'V',
-  'P',
-  'T',
-  'X',
-  'R',
-  'S',
-  'Q',
-  'M',
-] as const;
-
-const TIER_INFO: Record<string, { name: string; desc: string }> = {
-  A: { name: 'Structure', desc: 'The files and structure the spec names' },
-  B: { name: 'Behaviour', desc: 'Does the app DO what the spec says — probed by running it' },
-  C: {
-    name: 'Vendor contract',
-    desc: 'The vendor API contract — sync, idempotency, conditional fetch',
-  },
-  D: { name: 'Finesse', desc: 'Formats, edge cases, polish' },
-  J: { name: 'Journey', desc: 'The user journey in a real browser' },
-  V: { name: 'Visual', desc: 'Visual/design quality of the served page' },
-  P: { name: 'Performance', desc: 'Measured performance budgets' },
-  T: { name: 'Transactions', desc: 'Cross-service transaction correctness' },
-  X: { name: 'Concurrency', desc: 'Concurrent requests and consistent reads' },
-  R: { name: 'Recovery', desc: 'Restart and failure recovery' },
-  E: { name: 'Excellence', desc: 'Scorer-recorded excellence checks' },
-  S: { name: '3D structure', desc: 'Required payment scene geometry and mapping' },
-  Q: { name: 'Presentation', desc: 'Readable hierarchy and interaction' },
-  M: { name: 'Animation', desc: 'Motion grounded in payment state transitions' },
-};
 
 // The six checks scored OUTSIDE their home tier as the standalone 10% hard block — mirrors the
 // scorer's HARD_BLOCK so their rows can say so instead of silently not moving the tier mean.
@@ -216,6 +184,7 @@ function TierGroup({
   checks,
   mean,
   weight,
+  admissionOnly = false,
   open,
   onToggle,
   sb8 = false,
@@ -224,6 +193,7 @@ function TierGroup({
   checks: VerdictCheck[];
   mean: number | null;
   weight: number | null;
+  admissionOnly?: boolean;
   open: boolean;
   onToggle: () => void;
   sb8?: boolean;
@@ -260,7 +230,8 @@ function TierGroup({
           </Chip>
         )}
         <span className={cx('shrink-0', TYPE.meta, TNUM)}>
-          {checks.length} checks{weight != null ? ` · ${pct(weight)}` : ''}
+          {checks.length} checks
+          {admissionOnly ? ' · admission gate' : weight != null ? ` · weight ${pct(weight)}` : ''}
         </span>
         {mean != null && <ScoreChip score={mean} />}
       </button>
@@ -393,6 +364,69 @@ function CompositionBar({ verdict, score }: { verdict: LegacyVerdictDetail; scor
   );
 }
 
+/**
+ * The isolated payments family's tier weights, read from the verdict itself — never from a table
+ * baked here, because the family's weights move between releases: SB7.1 scored S/Q/M as admission
+ * gates (weight 0, `admission_only`), SB7.2 weights them into the behavioral score. A tier the
+ * scorer weighted is a row with its points; a gate is named as a gate, so a 0% row never reads as
+ * a tier that earned nothing.
+ */
+function PaymentsTierWeights({ tiers }: { tiers: LegacyVerdictDetail['tiers'] }) {
+  const recorded = TIER_ORDER.flatMap((tier) => {
+    const entry = tiers[tier];
+    return entry && typeof entry.mean === 'number' && Number.isFinite(entry.weight)
+      ? [{ tier, ...entry }]
+      : [];
+  });
+  const weighted = recorded.filter((row) => !row.admission_only && row.weight > 0);
+  const gates = recorded.filter((row) => row.admission_only || row.weight === 0);
+  if (weighted.length === 0)
+    return <p className={TYPE.bodyMuted}>This result recorded no weighted tiers.</p>;
+  const cell = cx('border px-2 py-1', SURFACE.hairline);
+  const sum = weighted.reduce((acc, row) => acc + row.mean * row.weight, 0);
+  return (
+    <section className="overflow-x-auto" aria-label="Weighted tiers">
+      <table className={cx('w-full border-collapse text-lz-body text-lz-ink', TNUM)}>
+        <thead>
+          <tr className="text-left">
+            <th className={cell}>Tier</th>
+            <th className={cell}>Earned</th>
+            <th className={cell}>Weight</th>
+            <th className={cell}>Points of 100</th>
+          </tr>
+        </thead>
+        <tbody>
+          {weighted.map((row) => (
+            <tr key={row.tier}>
+              <td className={cell}>
+                {row.tier} {TIER_INFO[row.tier]?.name ?? ''}
+              </td>
+              <td className={cell}>{pct(row.mean, 1)}</td>
+              <td className={cell}>{pct(row.weight)}</td>
+              <td className={cell}>{(row.mean * row.weight * 100).toFixed(1)}</td>
+            </tr>
+          ))}
+          <tr>
+            <td className={cell} colSpan={3}>
+              Weighted tier sum
+            </td>
+            <td className={cx(cell, WEIGHT.semibold)}>{(sum * 100).toFixed(1)}</td>
+          </tr>
+        </tbody>
+      </table>
+      {gates.length > 0 && (
+        <p className={cx('mt-2', TYPE.bodyMuted)}>
+          Admission gates, no weight — they set the ceiling and add no points:{' '}
+          {gates
+            .map((row) => `${row.tier} ${TIER_INFO[row.tier]?.name ?? ''} ${pct(row.mean, 0)}`)
+            .join(' · ')}
+          .
+        </p>
+      )}
+    </section>
+  );
+}
+
 function Sb8Composition({ verdict, score }: { verdict: Sb8VerdictDetail; score: number }) {
   const composition = sb8CompositionSchema(verdict);
   if (
@@ -507,6 +541,9 @@ export function ScoringDetail({
     scorerVersion ?? ('scorerVersion' in rawVerdict ? rawVerdict.scorerVersion : '')
   );
   const sb8Verdict = sb8 ? (rawVerdict as Sb8VerdictDetail) : null;
+  const paymentsTier =
+    isolatedPaymentsTier(scorerVersion) ??
+    isolatedPaymentsTier('scorerVersion' in rawVerdict ? rawVerdict.scorerVersion : undefined);
   const verdict: LegacyVerdictDetail = useMemo(
     () =>
       sb8Verdict
@@ -538,6 +575,7 @@ export function ScoringDetail({
       checks: byTier.get(t) ?? [],
       mean: typeof verdict.tiers[t]?.mean === 'number' ? verdict.tiers[t].mean : null,
       weight: Number.isFinite(verdict.tiers[t]?.weight) ? verdict.tiers[t].weight : null,
+      admissionOnly: verdict.tiers[t]?.admission_only === true,
     }));
   }, [verdict]);
 
@@ -557,22 +595,34 @@ export function ScoringDetail({
       <>
         {sb8Verdict ? (
           <Sb8Composition verdict={sb8Verdict} score={score} />
-        ) : scorerVersion?.startsWith('sb-7.1') ||
-          ('scorerVersion' in rawVerdict && rawVerdict.scorerVersion.startsWith('sb-7.1')) ? (
+        ) : paymentsTier ? (
           <>
             <ScoreAdmission
               admission={verdict.admission}
               rawScore={verdict.rawScore}
               score={score}
             />
+            <PaymentsTierWeights tiers={verdict.tiers} />
             {typeof verdict.inner === 'number' && verdict.critical && verdict.excellence ? (
               <section className="flex flex-col gap-2" aria-label="Earned score composition">
-                <p className={TYPE.body}>
-                  Earned credit: (0.88 × behavioral score {verdict.inner.toFixed(4)} + 0.12 ×
-                  excellence admission {verdict.excellence.fraction.toFixed(4)} × excellence mean{' '}
-                  {verdict.excellence.e_mean.toFixed(4)}) × critical multiplier{' '}
-                  {verdict.critical.multiplier.toFixed(4)}.
-                </p>
+                {paymentsTier === 'sb-7.1' ? (
+                  <p className={TYPE.body}>
+                    Earned credit: (0.88 × behavioral score {verdict.inner.toFixed(4)} + 0.12 ×
+                    excellence admission {verdict.excellence.fraction.toFixed(4)} × excellence mean{' '}
+                    {verdict.excellence.e_mean.toFixed(4)}) × critical multiplier{' '}
+                    {verdict.critical.multiplier.toFixed(4)}.
+                  </p>
+                ) : (
+                  // Later payments tiers record their inputs, not their constants: the numbers
+                  // below are the scorer's own, and no formula from an earlier release is
+                  // re-stated around them.
+                  <p className={TYPE.body}>
+                    Recorded composition inputs: behavioral score {verdict.inner.toFixed(4)} ·
+                    excellence admission {verdict.excellence.fraction.toFixed(4)} · excellence mean{' '}
+                    {verdict.excellence.e_mean.toFixed(4)} · critical multiplier{' '}
+                    {verdict.critical.multiplier.toFixed(4)}.
+                  </p>
+                )}
                 {verdict.critical.rows.map((row) => (
                   <p key={row.check} className={TYPE.bodyMuted}>
                     {row.check}: factor {row.factor ?? 'unavailable'} · {row.why}
@@ -660,6 +710,7 @@ export function ScoringDetail({
             checks={g.checks}
             mean={g.mean}
             weight={g.weight}
+            admissionOnly={g.admissionOnly}
             open={!!open[g.tier]}
             onToggle={() => setOpen((o) => ({ ...o, [g.tier]: !o[g.tier] }))}
           />

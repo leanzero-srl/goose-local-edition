@@ -103,12 +103,14 @@ import {
 import {
   BENCH_SPEC_FILE,
   BENCH_RENDER_PROBE,
+  BENCH_RUN_FLAG,
   defaultBenchmarkTier,
   benchmarkLaunchTier,
   benchmarkLaunchProblem,
   benchmarkScorer,
   type CloudBenchmarkTier,
 } from './benchTierPayload';
+import { isolatedPaymentsTier, ISOLATED_PAYMENTS_TIERS } from './components/benchmark/baselines';
 import {
   outcomeFromSlot,
   findLaunchRow,
@@ -4111,13 +4113,11 @@ ipcMain.handle(
       const tier = benchmarkLaunchTier(cloud);
       const launchProblem = benchmarkLaunchProblem((await fetchBenchCatalog()).benchmarks);
       if (launchProblem) throw new Error(launchProblem);
-      const sb6 = tier === 'sb-6';
-      const sb7 = tier === 'sb-7';
-      const sb71 = tier === 'sb-7.1';
-      const sb8 = tier === 'sb-8';
+      const regimeFlag = BENCH_RUN_FLAG[tier];
+      const isolated = (ISOLATED_PAYMENTS_TIERS as readonly string[]).includes(tier);
       const payloadDir = resolveBenchPayloadDir();
       const runner = path.join(payloadDir, 'bench', 'run_build.py');
-      const runtime = sb71
+      const runtime = isolated
         ? await resolveBenchmarkRuntime(benchWorkRoot())
         : { python: 'python3', node: undefined, env: {} };
       const benchNode = await resolveBenchNode(tier, runtime.node);
@@ -4194,10 +4194,7 @@ ipcMain.handle(
               '--out',
               outRoot,
               ...(cloud ? ['--provider', cloud.provider, '--model', cloud.model] : []),
-              ...(sb6 ? ['--sb6'] : []),
-              ...(sb7 ? ['--sb7'] : []),
-              ...(sb71 ? ['--sb71'] : []),
-              ...(sb8 ? ['--sb8'] : []),
+              ...(regimeFlag ? [regimeFlag] : []),
             ],
             {
               cwd: workRoot,
@@ -4479,8 +4476,13 @@ ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string) => {
     if (!eligible.ready || !receipt || !session.completionReceipt) throw new Error(eligible.reason);
     const workdir =
       session.slot && session.slotDir ? session.slotDir : path.join(benchSessionsRoot(), runId);
+    // The receipt-proven session names its own tier: an SB7.1 row is re-graded by SB7.1's probe,
+    // never by whatever tier this app defaults to (retryScoringEligibility already refused any
+    // scorer outside the isolated family, so a null here is unreachable — and refused, not guessed).
+    const sessionTier = isolatedPaymentsTier(session.scorerVersion);
+    if (!sessionTier) throw new Error(`No isolated benchmark tier records ${session.scorerVersion}.`);
     const runtime = await resolveBenchmarkRuntime(benchWorkRoot());
-    const node = await resolveBenchNode('sb-7.1', runtime.node);
+    const node = await resolveBenchNode(sessionTier, runtime.node);
     const browser = await bundledBrowserEnv();
     const attemptRoot = path.join(benchWorkRoot(), 'scoring-attempts', crypto.randomUUID());
     await fs.mkdir(attemptRoot, { recursive: true });
@@ -4840,14 +4842,14 @@ ipcMain.handle('benchmark-publish', async (_event, args?: { title?: string }) =>
       ? { telemetry: stored.telemetry }
       : {}),
   };
-  if (typeof stored.scorerVersion === 'string' && stored.scorerVersion.startsWith('sb-7.1')) {
+  if (typeof stored.scorerVersion === 'string' && isolatedPaymentsTier(stored.scorerVersion)) {
     if (typeof stored.workdir !== 'string')
-      return { ok: false, error: 'SB7.1 recording has no run directory' };
+      return { ok: false, error: `${stored.scorerVersion} recording has no run directory` };
     const media = await readBenchMedia(stored.workdir);
     if (media.error || media.videos.length !== 1)
       return {
         ok: false,
-        error: `SB7.1 publication requires one verified graded browser clip: ${media.error ?? 'clip count mismatch'}`,
+        error: `${stored.scorerVersion} publication requires one verified graded browser clip: ${media.error ?? 'clip count mismatch'}`,
       };
     try {
       payload.videoReceipt = await uploadBenchmarkVideo(

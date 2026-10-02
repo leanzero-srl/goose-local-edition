@@ -1,8 +1,16 @@
 import type { BenchSessionRow } from './benchSessions';
+import { ISOLATED_PAYMENTS_TIERS, TIER_SCORER } from './components/benchmark/baselines';
+
+/** Exactly the scorer identities a completed-build receipt can carry — never an rc or a sibling. */
+const RESCORABLE: readonly string[] = ISOLATED_PAYMENTS_TIERS.map((tier) => TIER_SCORER[tier]);
+const RESCORABLE_WORDS = ISOLATED_PAYMENTS_TIERS.map((tier) =>
+  tier.toUpperCase().replace('SB-', 'SB')
+).join(' and ');
 
 export interface BuildCompletionReceipt {
   schemaVersion: 1;
-  scorerVersion: 'sb-7.1';
+  /** One of RESCORABLE, equal to the session row's own scorer. */
+  scorerVersion: string;
   runId: string;
   startedAt: string;
   fixture_seed: string;
@@ -18,10 +26,10 @@ export function retryScoringEligibility(
   row: BenchSessionRow,
   value: unknown
 ): { ready: boolean; reason?: string } {
-  if (row.scorerVersion !== 'sb-7.1')
+  if (!RESCORABLE.includes(row.scorerVersion))
     return {
       ready: false,
-      reason: `Only SB7.1 runs can be rescored; this run is ${row.scorerVersion}.`,
+      reason: `Only ${RESCORABLE_WORDS} runs can be rescored; this run is ${row.scorerVersion}.`,
     };
   if (row.outcome !== 'did_not_finish')
     return { ready: false, reason: 'This session is not awaiting a scoring retry.' };

@@ -1,4 +1,4 @@
-import { act, render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { IntlTestWrapper } from '../../i18n/test-utils';
 
@@ -42,9 +42,16 @@ const CATALOG = {
   stale: false,
   benchmarks: [
     {
-      scorerVersion: 'sb-7.1',
-      title: 'SB7.1 payments',
+      scorerVersion: 'sb-7.2',
+      title: 'SB7.2 payments',
       current: true,
+      frozen: false,
+      baselines: [],
+    },
+    {
+      scorerVersion: 'sb-7.1',
+      title: 'SB7.1 payments · pilot',
+      current: false,
       frozen: false,
       baselines: [],
     },
@@ -131,7 +138,7 @@ describe('the benchmark sections and their sessions', () => {
   it('retries only scoring for a receipt-backed build and keeps technical failures expandable', async () => {
     const session = {
       runId: 'cloud-retry',
-      scorerVersion: 'sb-7.1',
+      scorerVersion: 'sb-7.2',
       startedAt: '2026-09-20T10:00:00Z',
       outcome: 'did_not_finish',
       publishable: false,
@@ -166,7 +173,7 @@ describe('the benchmark sections and their sessions', () => {
       sessions: [
         {
           runId: 'legacy',
-          scorerVersion: 'sb-7.1',
+          scorerVersion: 'sb-7.2',
           startedAt: '2026-09-20T10:00:00Z',
           outcome: 'did_not_finish',
           publishable: false,
@@ -213,7 +220,7 @@ describe('the benchmark sections and their sessions', () => {
       target: { value: 'gemini-3.8-flash' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Run benchmark' }));
-    await waitFor(() => expect(cloud).toHaveBeenCalledWith('google', 'gemini-3.8-flash', 'sb-7.1'));
+    await waitFor(() => expect(cloud).toHaveBeenCalledWith('google', 'gemini-3.8-flash', 'sb-7.2'));
     expect(swarm).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: 'SB7 · legacy' })).toBeNull();
     expect(cloud).toHaveBeenCalledTimes(1);
@@ -240,16 +247,18 @@ describe('the benchmark sections and their sessions', () => {
     expect(screen.queryByText('Did not start')).toBeNull();
     // The benchmark is a dropdown at run setup, its value the current benchmark.
     const chooser = screen.getByRole('combobox', { name: 'Benchmark' });
-    expect(chooser.textContent).toContain('sb-7.1');
+    expect(chooser.textContent).toContain('sb-7.2');
     fireEvent.click(chooser);
     const options = screen.getAllByRole('option');
     expect(options.map((o) => o.textContent)).toEqual([
-      'sb-7.1 — SB7.1 payments',
+      'sb-7.2 — SB7.2 payments',
+      'sb-7.1 — SB7.1 payments · pilot (history)',
       'sb-7.0-rc — Meridian Payments Console (history)',
       'sb-6.0 — VendorSync Pro (frozen)',
     ]);
     expect(options[1].getAttribute('aria-disabled')).toBe('true');
     expect(options[2].getAttribute('aria-disabled')).toBe('true');
+    expect(options[3].getAttribute('aria-disabled')).toBe('true');
   });
 
   it("a finished session's detail compares against the catalog's retrieved baselines for ITS era", async () => {
@@ -650,7 +659,7 @@ describe('the benchmark view says what it shows (UX audit B1)', () => {
     publishable: false,
     retryScoring: {
       ready: false,
-      reason: 'Only SB7.1 runs can be rescored; this run is sb-7.0-rc.',
+      reason: 'Only SB7.1 and SB7.2 runs can be rescored; this run is sb-7.0-rc.',
     },
   };
 
@@ -665,7 +674,7 @@ describe('the benchmark view says what it shows (UX audit B1)', () => {
     expect(screen.getByText('history')).toBeInTheDocument();
     expect(screen.queryByText('CURRENT')).toBeNull();
     expect(screen.getByTestId('era-note')).toHaveTextContent(
-      'This run is from an earlier benchmark (sb-7.0-rc). The current benchmark, SB7.1 payments (sb-7.1), has no runs on this machine yet.'
+      'This run is from an earlier benchmark (sb-7.0-rc). The current benchmark, SB7.2 payments (sb-7.2), has no runs on this machine yet.'
     );
   });
 
@@ -681,7 +690,7 @@ describe('the benchmark view says what it shows (UX audit B1)', () => {
     expect(screen.queryByTestId('tone-band')).toBeNull();
     expect(
       screen.getByText(
-        'Retry scoring is not available: Only SB7.1 runs can be rescored; this run is sb-7.0-rc.'
+        'Retry scoring is not available: Only SB7.1 and SB7.2 runs can be rescored; this run is sb-7.0-rc.'
       )
     ).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Retry scoring' })).toBeNull();
@@ -746,4 +755,109 @@ describe('the benchmark view says what it shows (UX audit B1)', () => {
     );
     expect(await screen.findByText('VendorSync Pro')).toBeInTheDocument();
   });
+});
+
+/**
+ * The 2026-10-02 screenshot: at ~900 px the history row "SB7.1 payments · pilot · sb-7.1-rc ·
+ * history · Sep 20, 07:54 PM · Did not finish" squeezed every text item into a narrow vertical
+ * stack. jsdom cannot measure, so the layout CONTRACT is asserted: one truncating title line with
+ * the outcome and delete beside it, every metadata item on its own wrapping line, nowrap each.
+ */
+it('lays the session headline out as a truncating title line over a wrapping metadata line', async () => {
+  const pilot = {
+    runId: 'pilot-dnf',
+    scorerVersion: 'sb-7.1-rc',
+    startedAt: '2026-09-20T19:54:00.000Z',
+    endedAt: '2026-09-20T20:30:00.000Z',
+    outcome: 'did_not_finish',
+    publishable: false,
+  };
+  mockElectron({
+    sessions: [pilot],
+    catalog: vi.fn(async () => ({
+      ...CATALOG,
+      benchmarks: [
+        ...CATALOG.benchmarks,
+        {
+          scorerVersion: 'sb-7.1-rc',
+          title: 'SB7.1 payments · pilot',
+          current: false,
+          frozen: false,
+          baselines: [],
+        },
+      ],
+    })),
+  });
+  render(
+    <IntlTestWrapper>
+      <BenchmarkView />
+    </IntlTestWrapper>
+  );
+  const title = await screen.findByRole('heading', { name: 'SB7.1 payments · pilot' });
+  const header = screen.getByTestId('session-header');
+  const meta = within(header).getByTestId('session-header-meta');
+  expect(title.className).toMatch(/\btruncate\b/);
+  expect(title.className).toMatch(/\bmin-w-0\b/);
+  expect(title).toHaveAttribute('title', 'SB7.1 payments · pilot');
+  // The title line holds only the title, the outcome and the delete action.
+  const titleLine = title.parentElement!;
+  expect(within(titleLine).getByText('Did not finish')).toBeInTheDocument();
+  expect(
+    within(titleLine).getByRole('button', { name: 'Delete session pilot-dnf' })
+  ).toBeInTheDocument();
+  expect(within(titleLine).queryByText('sb-7.1-rc')).toBeNull();
+  // Scorer code, era chip and date live on the wrapping metadata line, each kept on one line.
+  expect(meta.className).toMatch(/\bflex-wrap\b/);
+  const code = within(meta).getByText('sb-7.1-rc');
+  expect(code.className).toMatch(/whitespace-nowrap/);
+  expect(within(meta).getByText('history')).toBeInTheDocument();
+  const when = within(meta).getByText(/Sep 20/);
+  expect(when.className).toMatch(/whitespace-nowrap/);
+  // The header is NOT squeezed into the panel's fixed-height single-line slot.
+  expect(header.closest('[data-testid="lz-panel"]')?.querySelector('.h-10')).toBeNull();
+  cleanup();
+});
+
+it("shows an SB7.2 result's visual tiers S/Q/M as weighted tiers in Where the points went", async () => {
+  const session = {
+    runId: 'sb72-run',
+    scorerVersion: 'sb-7.2',
+    startedAt: '2026-10-02T10:00:00Z',
+    endedAt: '2026-10-02T11:00:00Z',
+    outcome: 'finished',
+    score: 0.61,
+    tiers: { A: 1, X: 0.5, S: 0.8, Q: 0.6, M: 0.25 },
+    publishable: false,
+  };
+  mockElectron({ sessions: [session] });
+  electron().benchmarkRead = vi.fn(async () => ({
+    ...session,
+    label: 'Your fleet · 3 nodes',
+    verdict: {
+      scorerVersion: 'sb-7.2',
+      checks: [],
+      tiers: {
+        A: { mean: 1, checks: 1, weight: 0.3 },
+        X: { mean: 0.5, checks: 1, weight: 0.4 },
+        S: { mean: 0.8, checks: 3, weight: 0.15 },
+        Q: { mean: 0.6, checks: 2, weight: 0.1 },
+        M: { mean: 0.25, checks: 1, weight: 0.05 },
+      },
+    },
+  }));
+  render(
+    <IntlTestWrapper>
+      <BenchmarkView />
+    </IntlTestWrapper>
+  );
+  const cell = await screen.findByTestId('tier-cell-S');
+  expect(cell).toHaveTextContent('3D structureS 80%weight 15%');
+  expect(screen.getByTestId('tier-cell-M')).toHaveTextContent('AnimationM 25%weight 5%');
+  expect(screen.getByTestId('tier-cell-X')).toHaveTextContent('ConcurrencyX 50%weight 40%');
+  // The header names what the body shows — not the four classic A–D labels.
+  expect(
+    screen.getByText('A Structure · X Concurrency · S 3D structure · Q Presentation · M Animation.')
+  ).toBeInTheDocument();
+  expect(screen.queryByText(/B behaviour · C vendor contract/)).toBeNull();
+  cleanup();
 });

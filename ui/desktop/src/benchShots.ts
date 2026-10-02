@@ -18,15 +18,27 @@ const SB8_CAPTIONS: Record<string, string> = {
   final: 'Final app view',
 };
 
-const SB71_CAPTIONS: Record<string, string> = {
-  'sb71-field': 'Payment towers overview',
-  'sb71-inspect-usd': 'USD payment inspection',
-  'sb71-inspect-jpy': 'JPY payment inspection',
-  'sb71-inspect-kwd': 'KWD payment inspection',
-  'sb71-inspect-eur': 'EUR payment inspection',
-  'sb71-live-update': 'Committed payment update',
-  'sb71-final-inspector': 'Final payment inspector',
+/**
+ * The isolated payments probes' named captures. SB7.2's probe shares SB7.1's capture path, so the
+ * same scenes are read under either probe's prefix (`sb71-field`, `sb72-field`, …) — a prefix the
+ * reader does not know would drop the run's evidence without a word.
+ */
+const PAYMENTS_SHOT_PREFIXES = ['sb71', 'sb72'] as const;
+const PAYMENTS_SCENES: Record<string, string> = {
+  field: 'Payment towers overview',
+  'inspect-usd': 'USD payment inspection',
+  'inspect-jpy': 'JPY payment inspection',
+  'inspect-kwd': 'KWD payment inspection',
+  'inspect-eur': 'EUR payment inspection',
+  'live-update': 'Committed payment update',
+  'final-inspector': 'Final payment inspector',
 };
+const PAYMENTS_CAPTIONS: Record<string, string> = Object.fromEntries(
+  PAYMENTS_SHOT_PREFIXES.flatMap((prefix) =>
+    Object.entries(PAYMENTS_SCENES).map(([scene, caption]) => [`${prefix}-${scene}`, caption])
+  )
+);
+const PAYMENTS_INSPECT = new RegExp(`^(?:${PAYMENTS_SHOT_PREFIXES.join('|')})-inspect-([a-z]+)$`);
 
 /** Read probe evidence for local viewing; upload constraints must not hide local captures. */
 export async function pickBenchShots(workdir: string): Promise<BenchShot[]> {
@@ -46,7 +58,7 @@ export async function pickBenchShots(workdir: string): Promise<BenchShot[]> {
   const captures: Capture[] = [];
   for (const file of files) {
     const modern = file.match(
-      /^(\d+)-(loaded|synced|error|empty|mobile|boot|flow|viz|sb71-(?:field|inspect-[a-z]+|live-update|final-inspector)|sb8-(?:initial|front|top|iso|kinematics|lift|rotation|final))\.png$/
+      /^(\d+)-(loaded|synced|error|empty|mobile|boot|flow|viz|sb7[12]-(?:field|inspect-[a-z]+|live-update|final-inspector)|sb8-(?:initial|front|top|iso|kinematics|lift|rotation|final))\.png$/
     );
     const oldCamera = file.match(/^sb8-(front|top|iso)\.png$/);
     const oldGate = file.match(/^sb8-gate-(\d+)\.png$/);
@@ -72,14 +84,12 @@ export async function pickBenchShots(workdir: string): Promise<BenchShot[]> {
     boot: 'Initial app view',
     flow: 'Payment workflow',
     viz: '3D visualization',
-    ...SB71_CAPTIONS,
+    ...PAYMENTS_CAPTIONS,
     ...Object.fromEntries(
-      captures
-        .filter((capture) => capture.scenario.startsWith('sb71-inspect-'))
-        .map((capture) => [
-          capture.scenario,
-          `${capture.scenario.slice('sb71-inspect-'.length).toUpperCase()} payment inspection`,
-        ])
+      captures.flatMap((capture) => {
+        const currency = PAYMENTS_INSPECT.exec(capture.scenario)?.[1];
+        return currency ? [[capture.scenario, `${currency.toUpperCase()} payment inspection`]] : [];
+      })
     ),
     ...Object.fromEntries(
       Object.entries(SB8_CAPTIONS).map(([key, label]) => [`sb8-${key}`, label])

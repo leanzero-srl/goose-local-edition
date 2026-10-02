@@ -108,3 +108,17 @@ it('reads standalone retry captures from the attempt evidence directory without 
   expect((await pickBenchShots(attempt)).map((shot) => shot.name)).toEqual(['sb71-field']);
   expect((await pickBenchShots(original)).map((shot) => shot.name)).toEqual(['loaded']);
 });
+
+it('keeps SB7.2 payments evidence under the SB7.2 probe prefix, captioned like SB7.1', async () => {
+  const names = ['sb72-field', 'sb72-inspect-kwd', 'sb72-inspect-chf', 'sb72-final-inspector'];
+  const dir = await fixture(names.map((name, i) => `${300 + i}-${name}.png`));
+  const shots = await pickBenchShots(dir);
+  expect(new Map(shots.map((shot) => [shot.name, shot.caption]))).toEqual(
+    new Map([
+      ['sb72-field', 'Payment towers overview'],
+      ['sb72-inspect-kwd', 'KWD payment inspection'],
+      ['sb72-inspect-chf', 'CHF payment inspection'],
+      ['sb72-final-inspector', 'Final payment inspector'],
+    ])
+  );
+});

@@ -215,3 +215,90 @@ it('does not apply the historical formula to F when the recorded metadata is mis
   expect(queryByText('Weighted subtotal')).toBeNull();
   expect(getAllByText('route absent').length).toBeGreaterThan(0);
 });
+
+/** The payments family: SB7.1 scored S/Q/M as admission gates, SB7.2 weights them into the score. */
+const paymentsVerdict = (sqm: { weight: number; admission_only?: boolean }) =>
+  ({
+    checks: [
+      { check: 'a_files', tier: 'A', score: 1 },
+      { check: 'x_concurrent', tier: 'X', score: 0.5 },
+      { check: 's_tower_geometry', tier: 'S', score: 1 },
+      { check: 'q_legible_presentation', tier: 'Q', score: 0.5 },
+      { check: 'm_committed_event_replay', tier: 'M', score: 0 },
+    ],
+    tiers: {
+      A: { mean: 1, checks: 1, weight: 0.5 },
+      X: { mean: 0.5, checks: 1, weight: 0.5 - (sqm.admission_only ? 0 : 3 * sqm.weight) },
+      S: { mean: 1, checks: 1, ...sqm },
+      Q: { mean: 0.5, checks: 1, ...sqm },
+      M: { mean: 0, checks: 1, ...sqm },
+    },
+    inner: 0.75,
+    rawScore: 0.7,
+    critical: { multiplier: 0.9, rows: [] },
+    excellence: { fraction: 0.5, e_mean: 0.4, conditions: {} },
+    admission: {
+      visible: true,
+      matching: true,
+      good: false,
+      excellence: { visual: false, backend: true },
+      ceiling: 0.699,
+      reasons: ['Readable presentation and field interaction: q_legible_presentation'],
+    },
+  }) as VerdictDetail;
+
+it('shows SB7.2 visual tiers S/Q/M as weighted rows of the score, with their points', () => {
+  const view = render(
+    <ScoringDetail
+      verdict={paymentsVerdict({ weight: 0.1 })}
+      score={0.699}
+      scorerVersion="sb-7.2"
+    />
+  );
+  const table = view.getByRole('region', { name: 'Weighted tiers' });
+  for (const [label, earned, weight, points] of [
+    ['S 3D structure', '100.0%', '10%', '10.0'],
+    ['Q Presentation', '50.0%', '10%', '5.0'],
+    ['M Animation', '0.0%', '10%', '0.0'],
+  ]) {
+    const row = Array.from(table.querySelectorAll('tr')).find(
+      (tr) => tr.querySelector('td')?.textContent === label
+    );
+    expect(row, label).toBeTruthy();
+    expect(Array.from(row!.querySelectorAll('td')).map((td) => td.textContent)).toEqual([
+      label,
+      earned,
+      weight,
+      points,
+    ]);
+  }
+  // 0.5·1 + 0.2·0.5 + 0.1·1 + 0.1·0.5 + 0.1·0 = 0.75
+  view.getByText('75.0');
+  expect(view.queryByText(/Admission gates/)).toBeNull();
+  expect(view.queryAllByText(/admission gate$/)).toHaveLength(0);
+  expect(view.getAllByText(/1 checks · weight 10%/, { selector: 'span' })).toHaveLength(3);
+  // No earlier release's constants restated around SB7.2's recorded inputs.
+  expect(view.queryByText(/0\.88 ×/)).toBeNull();
+  view.getByText(/Recorded composition inputs: behavioral score 0\.7500/);
+  view.getByText('Admission ceiling');
+  // Ceiling and final score both 0.699: the admission ceiling still caps SB7.2.
+  expect(view.getAllByText('0.699', { selector: 'dd' })).toHaveLength(2);
+});
+
+it('keeps SB7.1 S/Q/M as admission gates — no weight row, no 0% tier — and its own formula', () => {
+  const view = render(
+    <ScoringDetail
+      verdict={paymentsVerdict({ weight: 0, admission_only: true })}
+      score={0.699}
+      scorerVersion="sb-7.1"
+    />
+  );
+  const table = view.getByRole('region', { name: 'Weighted tiers' });
+  expect(table.querySelector('table')?.textContent).not.toMatch(/3D structure/);
+  view.getByText(
+    'Admission gates, no weight — they set the ceiling and add no points: S 3D structure 100% · Q Presentation 50% · M Animation 0%.',
+    { exact: false }
+  );
+  expect(view.getAllByText(/admission gate$/)).toHaveLength(3);
+  view.getByText(/Earned credit: \(0\.88 × behavioral score 0\.7500/);
+});

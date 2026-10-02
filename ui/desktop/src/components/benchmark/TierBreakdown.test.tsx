@@ -48,3 +48,41 @@ it('shows F only when the result actually recorded route planning', () => {
   rerender(<TierBreakdown rows={[rows[0]]} />);
   expect(queryByText('F 0%')).toBeNull();
 });
+
+it('shows every recorded sb-7 family tier with its weight — SB7.2 S/Q/M as weighted tiers, SB7.1 as gates', async () => {
+  const row: BenchmarkRow = {
+    label: 'Your run',
+    score: 0.7,
+    tiers: { A: 1, X: 0.5, S: 0.8, Q: 0.6, M: 0 },
+    mine: true,
+    scorerVersion: 'sb-7.2',
+  };
+  const { container, getByTestId, getByText, rerender } = render(
+    <TierBreakdown
+      rows={[row]}
+      tiers={[
+        { tier: 'A', name: 'Structure', weight: 0.04 },
+        { tier: 'X', name: 'Concurrency', weight: 0.16 },
+        { tier: 'S', name: '3D structure', weight: 0.15 },
+        { tier: 'Q', name: 'Presentation', weight: 0.1 },
+        { tier: 'M', name: 'Animation', weight: 0.05 },
+        { tier: 'R', name: 'Recovery', weight: 0.16 },
+      ]}
+    />
+  );
+  expect(getByTestId('tier-cell-S')).toHaveTextContent('3D structureS 80%weight 15%');
+  expect(getByTestId('tier-cell-M')).toHaveTextContent('AnimationM 0%weight 5%');
+  getByText('X 50%');
+  // A tier the result did not record gets no cell.
+  expect(container.querySelector('[data-testid="tier-cell-R"]')).toBeNull();
+  assertStudioClean(container);
+  expect(await missingUtilities(allClasses(container))).toEqual([]);
+
+  rerender(
+    <TierBreakdown
+      rows={[{ ...row, scorerVersion: 'sb-7.1' }]}
+      tiers={[{ tier: 'S', name: '3D structure', admissionOnly: true }]}
+    />
+  );
+  expect(getByTestId('tier-cell-S')).toHaveTextContent('3D structureS 80%admission gate');
+}, 30_000);
