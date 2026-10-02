@@ -193,6 +193,13 @@ fn project_instructions(session: &Session) -> Option<String> {
     Some(parts.join("\n\n"))
 }
 
+/// A provider call's answer. `opened` is false when the provider refused to open the stream: its
+/// own request retries (`with_retry`) already ran, and the stream holds only that refusal.
+pub(crate) struct ProviderCall {
+    pub(crate) stream: MessageStream,
+    pub(crate) opened: bool,
+}
+
 impl Agent {
     /// Q-346: the ONE builder of a reply's tools and system prompt — the reply's first call, every
     /// mid-turn refresh (tools updated, a folder's hints loaded), the compaction that extends the
@@ -343,7 +350,8 @@ impl Agent {
         messages: &[Message],
         tools: &[Tool],
         toolshim_tools: &[Tool],
-    ) -> Result<MessageStream, ProviderError> {
+        resend_before_first_item: bool,
+    ) -> Result<ProviderCall, ProviderError> {
         let config = model_config.clone();
 
         let messages_for_provider = messages_for_provider(messages, config.toolshim);
@@ -378,18 +386,22 @@ impl Agent {
                 let enhanced_error = enhance_model_error(e, &provider, config.toolshim).await;
                 // Return a stream that immediately yields the error
                 // This allows the error to be caught by existing error handling in agent.rs
-                return Ok(Box::pin(try_stream! {
-                    yield Err(enhanced_error)?;
-                }));
+                return Ok(ProviderCall {
+                    stream: Box::pin(try_stream! {
+                        yield Err(enhanced_error)?;
+                    }),
+                    opened: false,
+                });
             }
         };
 
-        Ok(Box::pin(try_stream! {
+        let stream: MessageStream = Box::pin(try_stream! {
             // Adapted from upstream b7ddf933c. Some providers establish the HTTP response but then
             // fail before yielding the first stream item. Retrying that exact request here preserves
             // the agent session; once any item has arrived, replay would be unsafe because the model
-            // may already have produced state the caller observed.
-            if !provider.manages_own_context() {
+            // may already have produced state the caller observed. A chat reply resends the whole
+            // call itself (`transient_resend`), before or after the first item, so it opts out here.
+            if resend_before_first_item && !provider.manages_own_context() {
                 let retry_config = provider.retry_config().transient_only();
                 let mut attempts = 0;
 
@@ -407,24 +419,14 @@ impl Agent {
                                 && attempts < retry_config.max_retries =>
                         {
                             attempts += 1;
-                            let delay = match &error {
-                                ProviderError::RateLimitExceeded {
-                                    retry_delay: Some(provider_delay),
-                                    ..
-                                } => *provider_delay,
-                                _ => retry_config.delay_for_attempt(attempts),
-                            };
                             warn!(
                                 "Provider stream failed before its first item, retrying ({}/{}): {:?}",
                                 attempts, retry_config.max_retries, error
                             );
 
-                            let skip_backoff = std::env::var("GOOSE_PROVIDER_SKIP_BACKOFF")
-                                .unwrap_or_default()
-                                .parse::<bool>()
-                                .unwrap_or(false);
-                            if !skip_backoff {
-                                tokio::time::sleep(delay).await;
+                            if !goose_providers::retry::backoff_skipped() {
+                                tokio::time::sleep(retry_config.delay_before_retry(&error, attempts))
+                                    .await;
                             }
 
                             stream = match crate::session_context::with_session_id(
@@ -503,7 +505,11 @@ impl Agent {
                     yield (message, usage);
                 }
             }
-        }))
+        });
+        Ok(ProviderCall {
+            stream,
+            opened: true,
+        })
     }
 
     /// Categorize tool requests from the response into different types
@@ -877,9 +883,11 @@ mod tests {
             &[Message::user().with_text("hi")],
             &[],
             &[],
+            true,
         )
         .await
         .unwrap()
+        .stream
     }
 
     #[tokio::test]

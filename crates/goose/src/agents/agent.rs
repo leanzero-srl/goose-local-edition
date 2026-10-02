@@ -2112,6 +2112,12 @@ impl Agent {
                 resolved_model: Some(resolved_model),
             });
         let session_manager = self.config.session_manager.clone();
+        // A swarm worker is left byte-identical (the golden engine): its orchestrator re-dispatches a
+        // task whose stream dropped. A provider that keeps its own conversation cannot be resent to.
+        let mut resend = super::transient_resend::TransientResend::new(
+            (!self.is_swarm_worker() && !provider.manages_own_context())
+                .then(|| provider.retry_config()),
+        );
         self.spawn_session_naming(
             session_config.id.clone(),
             provider.clone(),
@@ -2158,6 +2164,7 @@ impl Agent {
             let mut compaction_attempts = 0;
             let mut empty_turn_retries = 0u32;
             let mut retrying_after_empty_turn = false;
+            let mut retrying_after_transient_error = false;
             let mut last_assistant_text = String::new();
             let mut goal_check_pending = false;
             let mut tool_pair_summarization_done = false;
@@ -2241,6 +2248,8 @@ impl Agent {
                     retrying_after_stop_hook_denial = false;
                 } else if retrying_after_empty_turn {
                     retrying_after_empty_turn = false;
+                } else if retrying_after_transient_error {
+                    retrying_after_transient_error = false;
                 } else {
                     turns_taken += 1;
                 }
@@ -2325,7 +2334,8 @@ impl Agent {
                     );
                 }
                 let provider_call_started_ms = chrono::Utc::now().timestamp_millis();
-                let mut stream = Self::stream_response_from_provider(
+                let usage_before_call = last_call_usage;
+                let super::reply_parts::ProviderCall { mut stream, opened } = Self::stream_response_from_provider(
                     self.provider().await?,
                     model_config.clone(),
                     &session_config.id,
@@ -2333,6 +2343,7 @@ impl Agent {
                     conversation_with_moim.messages(),
                     &disclosed_tools,
                     &toolshim_tools,
+                    !resend.enabled(),
                 ).await?;
                 last_assistant_text.clear();
 
@@ -2365,6 +2376,8 @@ impl Agent {
                 let mut did_recovery_compact_this_iteration = false;
                 let mut exit_chat = false;
                 let mut provider_errored = false;
+                let mut resend_after: Option<ProviderError> = None;
+                let mut answer_had_started = false;
                 let mut pending_final_output: Option<String> = None;
 
                 // Track whether this provider turn has already emitted visible
@@ -2400,6 +2413,7 @@ impl Agent {
                         }
                     };
                     let Some(next) = next else {
+                        resend.call_completed();
                         break;
                     };
 
@@ -2411,6 +2425,7 @@ impl Agent {
 
                     match next {
                         Ok((response, usage)) => {
+                            answer_had_started = true;
                             turn_failure = None;
                             compaction_attempts = 0;
                             last_call_usage = if usage
@@ -2844,6 +2859,12 @@ impl Agent {
                                 goal_check_pending = false;
                             }
                         }
+                        // A turn a tool already ended (`ask_user`) is not reopened by a resend, and a
+                        // stream the provider refused to open already spent its request retries.
+                        Err(ref provider_err) if opened && !exit_chat && resend.allows(provider_err) => {
+                            resend_after = Some(provider_err.clone());
+                            break;
+                        }
                         #[allow(unused_variables)]
                         Err(ref provider_err @ ProviderError::ContextLengthExceeded(_)) => {
                             provider_errored = true;
@@ -2979,6 +3000,50 @@ impl Agent {
                         }
                     }
                 }
+                let resending = resend_after.is_some();
+                if let Some(provider_err) = resend_after {
+                    let (attempt, attempts, delay) = resend.spend(&provider_err);
+                    let kept = super::transient_resend::completed_tool_exchanges(
+                        std::mem::take(&mut messages_to_add),
+                    );
+                    let kept_tool_calls = kept.iter().filter(|m| m.is_tool_call()).count();
+                    messages_to_add = Conversation::new_unvalidated(kept);
+                    last_assistant_text.clear();
+                    // The failed call never completed, so its usage-less chunks say nothing about
+                    // the context: the resend's turn context reads as the failed call's did.
+                    last_call_usage = usage_before_call;
+                    // Nothing kept: the same request goes again and is not a new turn.
+                    retrying_after_transient_error = no_tools_called;
+                    warn!(
+                        "Provider call failed ({}), resending ({}/{}) after {:?}; kept {} completed tool calls",
+                        provider_err, attempt, attempts, delay, kept_tool_calls
+                    );
+                    // Every client holding a running copy of the reply drops the unfinished answer.
+                    let mut without_partial = conversation.clone();
+                    without_partial.extend(messages_to_add.clone());
+                    yield AgentEvent::HistoryReplaced(without_partial);
+                    yield AgentEvent::Message(Message::assistant().with_system_notification(
+                        SystemNotificationType::InlineMessage,
+                        super::transient_resend::resend_notice(
+                            &provider_err,
+                            attempt,
+                            attempts,
+                            answer_had_started,
+                            kept_tool_calls,
+                        ),
+                    ));
+                    if !goose_providers::retry::backoff_skipped() {
+                        match &cancel_token {
+                            Some(token) => {
+                                tokio::select! {
+                                    _ = token.cancelled() => {}
+                                    _ = tokio::time::sleep(delay) => {}
+                                }
+                            }
+                            None => tokio::time::sleep(delay).await,
+                        }
+                    }
+                }
                 can_drain_pending_steers = true;
                 if provider_errored && !did_recovery_compact_this_iteration {
                     turn_failure = Some(crate::turn_outcome::Failure {
@@ -3011,6 +3076,7 @@ impl Agent {
                 let empty_response = no_tools_called
                     && !exit_chat
                     && !provider_errored
+                    && !resending
                     && !did_recovery_compact_this_iteration
                     && last_assistant_text.is_empty();
 
@@ -3021,7 +3087,7 @@ impl Agent {
                 }
 
                 let mut terminal_structured_provider_error = false;
-                if no_tools_called && !exit_chat {
+                if no_tools_called && !exit_chat && !resending {
                     // Lock, extract state, drop guard before branching — handle_retry_logic
                     // also locks final_output_tool and tokio::sync::Mutex is not reentrant.
                     let final_output = {
