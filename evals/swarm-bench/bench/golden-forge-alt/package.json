@@ -1,0 +1,23 @@
+{
+  "name": "forge-app",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "lint": "node \"$FORGE_KIT/bin/lint.cjs\"",
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "@forge/api": "8.2.0",
+    "@forge/bridge": "7.1.0",
+    "@forge/dashboards-bridge": "2.0.0",
+    "@forge/events": "3.0.7",
+    "@forge/hooks": "2.0.0",
+    "@forge/kvs": "2.0.7",
+    "@forge/resolver": "2.0.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

@@ -1,0 +1,158 @@
+modules:
+  trigger:
+    - key: scope-issue-updated
+      function: issue-updated
+      events:
+        - avi:jira:updated:issue
+  consumer:
+    - key: scope-ledger-consumer
+      queue: scope-ledger-work
+      function: ledger-consume
+  scheduledTrigger:
+    - key: scope-hourly
+      function: ledger-hourly
+      interval: hour
+  dashboards:widget:
+    - key: scope-widget
+      title: Sprint scope creep
+      description: Committed, added and removed story points and scope creep for the active sprints of one scrum board.
+      thumbnail: https://developer.atlassian.com/platform/forge/images/icons/issue-panel-icon.svg
+      resource: widget-view
+      edit:
+        resource: widget-edit
+      resolver:
+        function: ui-resolver
+  jira:sprintAction:
+    - key: scope-sprint-ledger
+      title: Scope ledger
+      resource: sprint-ledger
+      resolver:
+        function: ui-resolver
+      viewportSize: large
+  action:
+    - key: get-sprint-scope
+      name: Get sprint scope
+      function: rovo-sprint-scope
+      actionVerb: GET
+      description: Returns a Jira sprint's scope ledger for the person asking - committed, added and removed points, scope creep, the visible changes and how many are hidden.
+      inputs:
+        sprintId:
+          title: Sprint ID
+          type: string
+          required: true
+          description: The numeric id of the Jira sprint, for example "41".
+  rovo:skill:
+    - key: sprint-scope-analyst
+      name: Sprint scope analyst
+      source:
+        dir: skills/sprint-scope-analyst
+      dependencies:
+        tools:
+          - get-sprint-scope
+  rovo:agent:
+    - key: scope-coach
+      name: Scope coach
+      prompt: >-
+        You help agile coaches understand scope change in Jira sprints. Use the
+        sprint-scope-analyst skill to read a sprint's scope ledger and explain what entered or left
+        the sprint after it started, who changed it and how many story points moved. Only report
+        numbers the ledger returns.
+      conversationStarters:
+        - How much scope creep does sprint 41 have?
+        - What was added to this sprint after it started?
+      skills:
+        - sprint-scope-analyst
+  function:
+    - key: issue-updated
+      handler: backend.onIssueUpdated
+    - key: ledger-consume
+      handler: backend.consume
+    - key: ledger-hourly
+      handler: backend.hourly
+      timeoutSeconds: 900
+    - key: ui-resolver
+      handler: ui.handler
+    - key: rovo-sprint-scope
+      handler: rovo.getSprintScope
+resources:
+  - key: widget-view
+    path: static/widget-view/build
+  - key: widget-edit
+    path: static/widget-edit/build
+  - key: sprint-ledger
+    path: static/sprint-ledger/build
+app:
+  id: ari:cloud:ecosystem::app/00000000-0000-0000-0000-000000000000
+  runtime:
+    name: nodejs22.x
+  storage:
+    entities:
+      - name: scope-change
+        attributes:
+          sprintId:
+            type: string
+          changeId:
+            type: string
+          changeNum:
+            type: float
+          atMs:
+            type: float
+          at:
+            type: string
+          issueId:
+            type: string
+          issueKey:
+            type: string
+          projectId:
+            type: string
+          kind:
+            type: string
+          authorId:
+            type: string
+          authorName:
+            type: string
+          source:
+            type: string
+        indexes:
+          - name: sprint-time
+            partition:
+              - sprintId
+            range:
+              - atMs
+      - name: scope-member
+        attributes:
+          sprintId:
+            type: string
+          issueId:
+            type: string
+          issueNum:
+            type: integer
+          issueKey:
+            type: string
+          projectId:
+            type: string
+          points:
+            type: float
+          atStart:
+            type: boolean
+          inNow:
+            type: boolean
+          everIn:
+            type: boolean
+        indexes:
+          - name: sprint-issue
+            partition:
+              - sprintId
+            range:
+              - issueNum
+permissions:
+  scopes:
+    - read:jira-work
+    - write:jira-work
+    - storage:app
+    - read:board-scope:jira-software
+    - read:project:jira
+    - read:board-scope.admin:jira-software
+    - read:sprint:jira-software
+    - read:issue-details:jira
+    - read:jql:jira
