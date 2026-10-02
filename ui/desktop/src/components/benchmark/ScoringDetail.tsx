@@ -1,9 +1,12 @@
 import { ScoreAdmission, type Admission } from './ScoreAdmission';
 import { useMemo, useState } from 'react';
 import {
+  FORGE_TIERS,
+  FORGE_TIER_ORDER,
   SB8_TIERS,
   VERDICT_TIER_INFO as TIER_INFO,
   VERDICT_TIER_ORDER as TIER_ORDER,
+  isForge,
   isSb8,
   isolatedPaymentsTier,
 } from './baselines';
@@ -48,14 +51,25 @@ export interface VerdictCheck {
 
 interface LegacyVerdictDetail {
   inner?: number;
-  critical?: { multiplier: number; rows: Array<{ check: string; factor?: number; why?: string }> };
+  critical?: {
+    multiplier: number;
+    floor?: number;
+    pre_severity_score?: number;
+    rows: Array<{ check: string; factor?: number; why?: string; suppressed?: string }>;
+  };
   excellence?: { fraction: number; e_mean: number; conditions: Record<string, unknown> };
+  /** Forge (score_forge.py): the verdict's own publishability, runtime and calibration identity. */
+  status?: string;
+  publishable?: boolean;
+  unpublishable_reasons?: string[];
+  runtime?: string;
+  calibration?: string;
   probe_unavailable?: unknown[];
   vacuous?: unknown[];
   harness_missing?: unknown[];
   sched_unreached?: unknown[];
   rawScore?: number;
-  admission?: Admission;
+  admission?: Admission | ForgeAdmissionRecord;
   checks: VerdictCheck[];
   tiers: Record<string, { mean: number; checks: number; weight: number; admission_only?: boolean }>;
   core?: number;
@@ -188,6 +202,7 @@ function TierGroup({
   open,
   onToggle,
   sb8 = false,
+  forge = false,
 }: {
   tier: string;
   checks: VerdictCheck[];
@@ -197,8 +212,12 @@ function TierGroup({
   open: boolean;
   onToggle: () => void;
   sb8?: boolean;
+  forge?: boolean;
 }) {
-  const info = (sb8 ? SB8_TIERS[tier] : TIER_INFO[tier]) ?? { name: tier, desc: '' };
+  const info = (sb8 ? SB8_TIERS[tier] : forge ? FORGE_TIERS[tier] : TIER_INFO[tier]) ?? {
+    name: tier,
+    desc: '',
+  };
   const lost = checks.filter((c) => c.score < 1).length;
   return (
     <div className={cx(SURFACE.card, 'overflow-hidden')}>
@@ -436,8 +455,8 @@ function Sb8Composition({ verdict, score }: { verdict: Sb8VerdictDetail; score: 
   ) {
     return (
       <p className={TYPE.bodyMuted}>
-        This stored SB8 result is missing its composition inputs. The check evidence and tier scores
-        remain available.
+        This stored Gauntlet 8 result is missing its composition inputs. The check evidence and tier
+        scores remain available.
       </p>
     );
   }
@@ -505,6 +524,197 @@ function Sb8Composition({ verdict, score }: { verdict: Sb8VerdictDetail; score: 
   );
 }
 
+/** score_forge.py's admission record: the ceiling, its reasons, and every band that failed. */
+export interface ForgeAdmissionRecord {
+  ceiling: number;
+  reasons: string[];
+  failedChecksByBand: Array<{ ceiling: number; band: string; checks: string[] }>;
+}
+
+const isForgeAdmission = (value: unknown): value is ForgeAdmissionRecord =>
+  !!value &&
+  typeof value === 'object' &&
+  typeof (value as ForgeAdmissionRecord).ceiling === 'number' &&
+  Array.isArray((value as ForgeAdmissionRecord).failedChecksByBand);
+
+/** The facts a Forge verdict states about itself before any number: held, unpublishable, rc, shim. */
+function ForgeVerdictFacts({
+  verdict,
+  scorerVersion,
+}: {
+  verdict: LegacyVerdictDetail;
+  scorerVersion?: string;
+}) {
+  const facts: Array<{ tone: Tone; text: string }> = [];
+  if (verdict.status === 'held')
+    facts.push({
+      tone: 'warn',
+      text: `Held for rescore — the emulator met ${verdict.harness_missing?.length ?? 0} call(s) it does not model. Never zeroed, never published as is.`,
+    });
+  if (verdict.publishable === false)
+    facts.push({
+      tone: 'err',
+      text: `Not publishable: ${(verdict.unpublishable_reasons ?? []).join('; ') || 'the scorer gave no reason'}.`,
+    });
+  if (verdict.runtime && verdict.runtime !== 'wrapper')
+    facts.push({
+      tone: 'err',
+      text: `Scored on the ${verdict.runtime} runtime, not Atlassian's pinned wrapper.`,
+    });
+  if (/-rc$/.test(scorerVersion ?? '') || /uncalibrated/i.test(verdict.calibration ?? ''))
+    facts.push({
+      tone: 'warn',
+      text: `${scorerVersion ?? 'This scorer'} is uncalibrated (rc thresholds): a measurement, not a board result.`,
+    });
+  if (facts.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-2" data-testid="forge-verdict-facts">
+      {facts.map((fact) => (
+        <p
+          key={fact.text}
+          role="status"
+          className={cx(
+            'px-3 py-2 text-lz-body',
+            WEIGHT.medium,
+            RADIUS.control,
+            TONE_FILL[fact.tone]
+          )}
+        >
+          {fact.text}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Forge's admission ladder as the verdict recorded it: the earned score, the ceiling the failed bands set,
+ * and each failed band with the checks that held it there. The band limits are the scorer's (read from
+ * the record, never restated here); passing admission adds no points.
+ */
+function ForgeAdmission({
+  admission,
+  rawScore,
+  score,
+}: {
+  admission: unknown;
+  rawScore?: number;
+  score: number;
+}) {
+  if (!isForgeAdmission(admission) || typeof rawScore !== 'number')
+    return (
+      <p role="status" className={TYPE.bodyMuted}>
+        This result is missing its admission evidence.
+      </p>
+    );
+  return (
+    <section className="flex flex-col gap-3" aria-label="Admission bands">
+      <dl className={cx('grid grid-cols-3 gap-3', TNUM)}>
+        <div>
+          <dt className={TYPE.meta}>Earned before the ceiling</dt>
+          <dd className={TYPE.h2}>{rawScore.toFixed(3)}</dd>
+        </div>
+        <div>
+          <dt className={TYPE.meta}>Admission ceiling</dt>
+          <dd className={TYPE.h2}>{admission.ceiling.toFixed(3)}</dd>
+        </div>
+        <div>
+          <dt className={TYPE.meta}>Final score</dt>
+          <dd className={cx(TYPE.h2, TONE_TEXT.accent)}>{score.toFixed(3)}</dd>
+        </div>
+      </dl>
+      {admission.failedChecksByBand.length === 0 ? (
+        <Chip tone="ok" icon={<Check />}>
+          Every admission band passed — no ceiling
+        </Chip>
+      ) : (
+        admission.failedChecksByBand.map((band) => (
+          <div
+            key={band.band}
+            data-testid="forge-failed-band"
+            className={cx('flex flex-col gap-2', SURFACE.card, SPACE.card)}
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <Chip tone="err" icon={<X />}>
+                Capped at {band.ceiling.toFixed(3)}
+              </Chip>
+              <span className={cx(TYPE.body, WEIGHT.semibold)}>{band.band}</span>
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {band.checks.map((check) => (
+                <Chip key={check}>{check}</Chip>
+              ))}
+            </div>
+          </div>
+        ))
+      )}
+      <p className={TYPE.bodyMuted}>
+        The final score is the lower of earned credit and the ceiling of the lowest band a required
+        check failed. Passing a band adds no points.
+      </p>
+    </section>
+  );
+}
+
+/** Forge's weighted tiers (L…A) and the E slice, from the verdict — weights read, never restated. */
+function ForgeComposition({ verdict }: { verdict: LegacyVerdictDetail }) {
+  const rows = FORGE_TIER_ORDER.flatMap((tier) => {
+    const entry = verdict.tiers[tier];
+    return entry && typeof entry.mean === 'number' && Number.isFinite(entry.weight)
+      ? [{ tier, ...entry }]
+      : [];
+  });
+  const cell = cx('border px-2 py-1', SURFACE.hairline);
+  const critical = verdict.critical;
+  return (
+    <section className="flex flex-col gap-2" aria-label="Earned score composition">
+      <div className="overflow-x-auto">
+        <table className={cx('w-full border-collapse text-lz-body text-lz-ink', TNUM)}>
+          <thead>
+            <tr className="text-left">
+              <th className={cell}>Tier</th>
+              <th className={cell}>Earned</th>
+              <th className={cell}>Weight</th>
+              <th className={cell}>Points of 100</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.tier}>
+                <td className={cell}>
+                  {row.tier} {FORGE_TIERS[row.tier]?.name ?? ''}
+                </td>
+                <td className={cell}>{pct(row.mean, 1)}</td>
+                <td className={cell}>{pct(row.weight)}</td>
+                <td className={cell}>{(row.mean * row.weight * 100).toFixed(1)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {typeof verdict.inner === 'number' && critical && verdict.excellence ? (
+        <p className={TYPE.body}>
+          Recorded composition inputs: inner score {verdict.inner.toFixed(4)} · excellence admission{' '}
+          {verdict.excellence.fraction.toFixed(4)} · excellence mean{' '}
+          {verdict.excellence.e_mean.toFixed(4)}
+          {typeof critical.pre_severity_score === 'number'
+            ? ` · before criticals ${critical.pre_severity_score.toFixed(4)}`
+            : ''}{' '}
+          · critical multiplier {critical.multiplier.toFixed(4)}.
+        </p>
+      ) : (
+        <p className={TYPE.bodyMuted}>Earned-score composition evidence is unavailable.</p>
+      )}
+      {(critical?.rows ?? []).map((row) => (
+        <p key={row.check} className={TYPE.bodyMuted}>
+          {row.check}: factor {row.factor ?? 'unavailable'}
+          {row.suppressed ? ` (suppressed — ${row.suppressed})` : ''} · {row.why}
+        </p>
+      ))}
+    </section>
+  );
+}
+
 function RepairStrip({ rounds }: { rounds: Array<{ round: number; findings: number }> }) {
   if (rounds.length === 0) return null;
   return (
@@ -544,6 +754,9 @@ export function ScoringDetail({
   const paymentsTier =
     isolatedPaymentsTier(scorerVersion) ??
     isolatedPaymentsTier('scorerVersion' in rawVerdict ? rawVerdict.scorerVersion : undefined);
+  const forge = isForge(
+    scorerVersion ?? ('scorerVersion' in rawVerdict ? rawVerdict.scorerVersion : undefined)
+  );
   const verdict: LegacyVerdictDetail = useMemo(
     () =>
       sb8Verdict
@@ -570,14 +783,17 @@ export function ScoringDetail({
       list.push(c);
       byTier.set(c.tier, list);
     }
-    return TIER_ORDER.filter((t) => (byTier.get(t) ?? []).length > 0).map((t) => ({
-      tier: t as string,
-      checks: byTier.get(t) ?? [],
-      mean: typeof verdict.tiers[t]?.mean === 'number' ? verdict.tiers[t].mean : null,
-      weight: Number.isFinite(verdict.tiers[t]?.weight) ? verdict.tiers[t].weight : null,
-      admissionOnly: verdict.tiers[t]?.admission_only === true,
-    }));
-  }, [verdict]);
+    const order: readonly string[] = forge ? FORGE_TIER_ORDER : TIER_ORDER;
+    return order
+      .filter((t) => (byTier.get(t) ?? []).length > 0)
+      .map((t) => ({
+        tier: t as string,
+        checks: byTier.get(t) ?? [],
+        mean: typeof verdict.tiers[t]?.mean === 'number' ? verdict.tiers[t].mean : null,
+        weight: Number.isFinite(verdict.tiers[t]?.weight) ? verdict.tiers[t].weight : null,
+        admissionOnly: verdict.tiers[t]?.admission_only === true,
+      }));
+  }, [verdict, forge]);
 
   // Open the WORST imperfect tier by default — the click the user was going to make anyway.
   const [open, setOpen] = useState<Record<string, boolean>>(() => {
@@ -595,10 +811,20 @@ export function ScoringDetail({
       <>
         {sb8Verdict ? (
           <Sb8Composition verdict={sb8Verdict} score={score} />
+        ) : forge ? (
+          <>
+            <ForgeVerdictFacts verdict={verdict} scorerVersion={scorerVersion} />
+            <ForgeAdmission
+              admission={verdict.admission}
+              rawScore={verdict.rawScore}
+              score={score}
+            />
+            <ForgeComposition verdict={verdict} />
+          </>
         ) : paymentsTier ? (
           <>
             <ScoreAdmission
-              admission={verdict.admission}
+              admission={verdict.admission as Admission | undefined}
               rawScore={verdict.rawScore}
               score={score}
             />
@@ -707,6 +933,7 @@ export function ScoringDetail({
             key={g.tier}
             tier={g.tier}
             sb8={sb8}
+            forge={forge}
             checks={g.checks}
             mean={g.mean}
             weight={g.weight}

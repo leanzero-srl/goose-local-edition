@@ -4,14 +4,19 @@ import { benchmarkModelIdProblem } from '../../benchModelIdentity';
 import { billedCostLine } from '../../benchBilledCost';
 import { budgetLines } from '../../benchBudget';
 import { BenchmarkRuntimeSetup } from './BenchmarkRuntimeSetup';
+import { BenchmarkFamilyToggle } from './BenchmarkFamilyToggle';
+import { ForgeKitSetup } from './ForgeKitSetup';
 import { CloudEntrant } from './CloudEntrant';
 import { WalletLimit } from './WalletLimit';
 import {
-  DEFAULT_BENCHMARK_NAME,
+  BENCH_FAMILY_NAME,
+  FORGE_BENCHMARK_TIER,
   DEFAULT_BENCHMARK_TIER,
   benchmarkLaunchProblem,
   defaultBenchmarkScorer,
 } from '../../benchTierPayload';
+import { forgePublishProblem } from '../../benchForgePublish';
+import type { ForgeKitStatus } from '../../benchForgeKitTypes';
 import { RunVideoEvidence } from './RunVideoEvidence';
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
@@ -31,12 +36,21 @@ import { useHashQuery } from '../Layout/useHashQuery';
 import { StudioSelect, type StudioSelectOption } from '../leanzero-swarm/studio';
 import { MainPanelLayout } from '../Layout/MainPanelLayout';
 import {
+  FORGE_TIERS,
+  FORGE_TIER_ORDER,
   SB8_TIERS,
   VERDICT_TIER_INFO,
   VERDICT_TIER_ORDER,
+  catalogFamily,
+  eraDisplayName,
+  eraLabel,
+  familyOfScorer,
+  isBenchFamily,
+  isForge,
   isIsolatedPaymentsScorer,
   isSb8,
   TIER_LABELS,
+  type BenchFamily,
   type BenchmarkRow,
   type Tier,
 } from './baselines';
@@ -361,7 +375,7 @@ function boardColumns(own: {
     {
       key: 'tier',
       header: 'Tier',
-      cell: (r) => <span className="text-lz-ink-2">{r.scorerVersion}</span>,
+      cell: (r) => <span className="text-lz-ink-2">{eraDisplayName(r.scorerVersion)}</span>,
     },
     {
       key: 'nodes',
@@ -478,11 +492,14 @@ const LEGACY_TIER_LETTERS = new Set<string>(['A', 'B', 'C', 'D', 'E', 'F']);
  */
 function recordedTierColumns(
   tiers: Partial<Record<string, number>> | undefined,
-  verdict: VerdictDetail | undefined
+  verdict: VerdictDetail | undefined,
+  forge = false
 ): TierColumn[] | null {
   if (!tiers) return null;
-  const recorded = VERDICT_TIER_ORDER.filter((tier) => tiers[tier] !== undefined);
-  if (recorded.every((tier) => LEGACY_TIER_LETTERS.has(tier))) return null;
+  const order: readonly string[] = forge ? FORGE_TIER_ORDER : VERDICT_TIER_ORDER;
+  const info = forge ? FORGE_TIERS : VERDICT_TIER_INFO;
+  const recorded = order.filter((tier) => tiers[tier] !== undefined);
+  if (!forge && recorded.every((tier) => LEGACY_TIER_LETTERS.has(tier))) return null;
   const detail = (verdict as { tiers?: Record<string, unknown> } | undefined)?.tiers;
   return recorded.map((tier) => {
     const entry = detail?.[tier];
@@ -492,7 +509,7 @@ function recordedTierColumns(
         : null;
     return {
       tier,
-      name: VERDICT_TIER_INFO[tier]?.name,
+      name: info[tier]?.name,
       ...(rich && typeof rich.weight === 'number' && Number.isFinite(rich.weight)
         ? { weight: rich.weight }
         : {}),
@@ -518,7 +535,7 @@ function SessionHeader({
 }: {
   title: string;
   scorerVersion: string;
-  era: 'current' | 'frozen' | 'history';
+  era: 'current' | 'frozen' | 'history' | 'rc';
   when: string;
   session: BenchSession;
   onDelete: () => void;
@@ -561,6 +578,14 @@ function SessionHeader({
           <Chip tone="ok">CURRENT</Chip>
         ) : era === 'frozen' ? (
           <Chip tone="warn">FROZEN</Chip>
+        ) : era === 'rc' ? (
+          // The current era's own uncalibrated scorer — not an earlier benchmark.
+          <Chip
+            tone="warn"
+            title="Scored before the thresholds froze — a measurement, not a board result"
+          >
+            uncalibrated
+          </Chip>
         ) : (
           // Not the benchmark a run enters today — said on the headline itself, so an older era's
           // run never reads as the current one.
@@ -674,7 +699,11 @@ function SessionDetail({
     mineMatched && mine ? billedCostLine(mine.billedCost, mine.provider ?? null) : null;
   const tierColumns = isSb8(session.scorerVersion)
     ? null
-    : recordedTierColumns(ownRow?.tiers, mineMatched ? mine?.verdict : undefined);
+    : recordedTierColumns(
+        ownRow?.tiers,
+        mineMatched ? mine?.verdict : undefined,
+        isForge(session.scorerVersion)
+      );
   const rows: BenchmarkRow[] = [
     ...baselines.map((b) => ({
       label: b.label || b.model,
@@ -691,7 +720,7 @@ function SessionDetail({
     ? 'Catalog unreachable — no comparison rows.'
     : fromCatalog
       ? 'The catalog publishes no baselines for this benchmark yet — your score stands alone.'
-      : `The catalog carries no comparison rows for ${session.scorerVersion}.`;
+      : `The catalog carries no comparison rows for ${eraDisplayName(session.scorerVersion)}.`;
 
   return (
     <div className={cx('flex flex-col', SPACE.section)}>
@@ -740,11 +769,12 @@ function SessionDetail({
         </Panel>
       )}
 
-      {mineMatched && isIsolatedPaymentsScorer(session.scorerVersion) && (
-        <Panel title="Graded browser recording">
-          <RunVideoEvidence workdir={mine?.workdir} />
-        </Panel>
-      )}
+      {mineMatched &&
+        (isIsolatedPaymentsScorer(session.scorerVersion) || isForge(session.scorerVersion)) && (
+          <Panel title="Graded browser recording">
+            <RunVideoEvidence workdir={mine?.workdir} />
+          </Panel>
+        )}
 
       <Panel
         title="Board"
@@ -822,6 +852,27 @@ function SessionDetail({
   );
 }
 
+/**
+ * The Forge tier's run policy, read from the payload (bench_budget.CALL_BUDGET, isolated_tiers.FORGE10):
+ * one model, the call budget, the spend limit armed when none is set, the pinned reasoning effort. A
+ * number the kit status could not read is left out, never restated from memory.
+ */
+function ForgeRunPolicy({ kit }: { kit: ForgeKitStatus | null }) {
+  const parts = [
+    'One model',
+    ...(kit?.callBudget != null ? [`${kit.callBudget}-call budget`] : []),
+    ...(kit?.walletDefaultUsd
+      ? [`stops at $${kit.walletDefaultUsd} unless you set a limit below`]
+      : []),
+    ...(kit?.reasoningEffort ? [`reasoning effort ${kit.reasoningEffort}`] : []),
+  ];
+  return (
+    <p data-testid="forge-run-policy" className={cx(TYPE.body, WEIGHT.semibold, TNUM)}>
+      {parts.join(' · ')}
+    </p>
+  );
+}
+
 type CatalogState =
   | { kind: 'loading' }
   | { kind: 'ok'; benchmarks: CatalogBenchmark[]; fetchedAt?: string; stale: boolean }
@@ -830,6 +881,8 @@ type CatalogState =
 interface EraSection {
   scorerVersion: string;
   title: string;
+  /** The catalog's family for the era (absent ⇒ SB), or the scorer's for an era only sessions name. */
+  family: BenchFamily;
   current: boolean;
   frozen: boolean;
   baselines: CatalogBaseline[];
@@ -902,10 +955,7 @@ export default function BenchmarkView() {
   const [scored, setScored] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [catalog, setCatalog] = useState<CatalogState>({ kind: 'loading' });
-  const launchProblem = benchmarkLaunchProblem(
-    catalog.kind === 'ok' ? catalog.benchmarks : undefined,
-    catalog.kind === 'ok' && catalog.stale
-  );
+  const [forgeKit, setForgeKit] = useState<ForgeKitStatus | null>(null);
   const [sessions, setSessions] = useState<BenchSession[]>([]);
   // Sessions this view WATCHED end: a running row that the next read shows finished otherwise.
   // Only these earn the full-width failure band — an old failure is a chip and one line.
@@ -1153,7 +1203,12 @@ export default function BenchmarkView() {
     const map = new Map<string, EraSection>();
     if (catalog.kind === 'ok') {
       for (const b of catalog.benchmarks) {
-        map.set(b.scorerVersion, { ...b, fromCatalog: true, sessions: [] });
+        map.set(b.scorerVersion, {
+          ...b,
+          family: catalogFamily(b),
+          fromCatalog: true,
+          sessions: [],
+        });
       }
     }
     for (const s of sessions) {
@@ -1161,6 +1216,7 @@ export default function BenchmarkView() {
         map.set(s.scorerVersion, {
           scorerVersion: s.scorerVersion,
           title: s.scorerVersion,
+          family: familyOfScorer(s.scorerVersion),
           current: false,
           frozen: false,
           baselines: [],
@@ -1186,8 +1242,41 @@ export default function BenchmarkView() {
   const query = useHashQuery();
   const queryRun = query.get('run');
   const queryEra = query.get('era');
+  const queryFamily = query.get('family');
   const wantsNew = query.get('new') === '1';
-  const currentEra = sections.find((sec) => sec.current) ?? null;
+
+  // THE FAMILY the view is scoped to (SB | Forge): the switch writes `?family=` into the URL; a URL that
+  // names a run or an era (the sidebar's links) implies that run's family; else a live run's; else SB.
+  const eraFamily = useCallback(
+    (scorerVersion: string): BenchFamily =>
+      sections.find((sec) => sec.scorerVersion === scorerVersion)?.family ??
+      familyOfScorer(scorerVersion),
+    [sections]
+  );
+  const family: BenchFamily = useMemo(() => {
+    if (isBenchFamily(queryFamily)) return queryFamily;
+    const named = queryRun ? sessions.find((s) => sessionKey(s) === queryRun) : undefined;
+    if (named) return eraFamily(named.scorerVersion);
+    if (queryEra) return eraFamily(queryEra);
+    const live = sessions.find((s) => s.outcome === 'running');
+    return live ? eraFamily(live.scorerVersion) : 'sb';
+  }, [queryFamily, queryRun, queryEra, sessions, eraFamily]);
+  const forge = family === 'forge';
+  const chooseFamily = useCallback((next: BenchFamily) => {
+    // A new hash, so the family, its eras and its sessions all follow the URL (the sidebar reads it too).
+    window.location.hash = `#/benchmark?family=${next}`;
+  }, []);
+  const familySections = useMemo(
+    () => sections.filter((sec) => sec.family === family),
+    [sections, family]
+  );
+  const launchProblem = benchmarkLaunchProblem(
+    catalog.kind === 'ok' ? catalog.benchmarks : undefined,
+    catalog.kind === 'ok' && catalog.stale,
+    undefined,
+    family
+  );
+  const currentEra = familySections.find((sec) => sec.current) ?? null;
 
   // The session the page shows, DERIVED from the URL and the sessions (never an effect racing
   // them): the run the URL names; else the live run (its truth is the page's point — and its key
@@ -1200,12 +1289,17 @@ export default function BenchmarkView() {
       const named = sessions.find((s) => sessionKey(s) === queryRun);
       if (named) return named;
     }
-    const live = sessions.find((s) => s.outcome === 'running');
+    const inFamily = sessions.filter((s) => eraFamily(s.scorerVersion) === family);
+    const live = inFamily.find((s) => s.outcome === 'running');
     if (live) return live;
     if (wantsNew) return null;
-    const pool = queryEra ? sessions.filter((s) => s.scorerVersion === queryEra) : sessions;
+    const pool = queryEra ? inFamily.filter((s) => s.scorerVersion === queryEra) : inFamily;
     return pool.slice().sort((a, b) => startMs(b) - startMs(a))[0] ?? null;
-  }, [sessions, queryRun, queryEra, wantsNew]);
+  }, [sessions, queryRun, queryEra, wantsNew, family, eraFamily]);
+  const familySessions = useMemo(
+    () => sessions.filter((s) => eraFamily(s.scorerVersion) === family),
+    [sessions, family, eraFamily]
+  );
   const currentEraRuns = currentEra?.sessions.length ?? 0;
 
   // "+ New benchmark run" must visibly land somewhere: scroll the setup to the top of the view and
@@ -1223,16 +1317,16 @@ export default function BenchmarkView() {
   // know, the runnable one enabled; the others are history and say so.
   const tierOptions = useMemo<(StudioSelectOption & { current: boolean })[]>(
     () =>
-      sections.map((sec) => ({
+      familySections.map((sec) => ({
         value: sec.scorerVersion,
-        label: `${sec.scorerVersion} — ${sec.title}${sec.current ? '' : sec.frozen ? ' (frozen)' : ' (history)'}`,
+        label: `${eraLabel(sec.scorerVersion, sec.title)}${sec.current ? '' : sec.frozen ? ' (frozen)' : ' (history)'}`,
         disabled: !sec.current,
         current: sec.current,
       })),
-    [sections]
+    [familySections]
   );
   const tierOption =
-    tierOptions.find((o) => o.value === defaultBenchmarkScorer()) ??
+    tierOptions.find((o) => o.value === defaultBenchmarkScorer(family)) ??
     tierOptions.find((o) => o.current) ??
     null;
 
@@ -1262,9 +1356,14 @@ export default function BenchmarkView() {
     setFailureDetails(null);
     setLaunchedSampling(sampling);
     try {
-      // Both entrant modes use the same bundled stable benchmark.
-      const result =
-        entrant === 'cloud'
+      // Both SB entrant modes use the same bundled stable benchmark; Forge runs one model on its own era.
+      const result = forge
+        ? await window.electron.benchmarkRunCloud(
+            cloudProvider,
+            cloudModel.trim(),
+            FORGE_BENCHMARK_TIER
+          )
+        : entrant === 'cloud'
           ? await window.electron.benchmarkRunCloud(
               cloudProvider,
               cloudModel.trim(),
@@ -1289,7 +1388,7 @@ export default function BenchmarkView() {
       setLaunchedSampling(null);
       void loadSessions();
     }
-  }, [nodes, sampling, entrant, cloudProvider, cloudModel, loadShots, loadSessions]);
+  }, [nodes, sampling, entrant, forge, cloudProvider, cloudModel, loadShots, loadSessions]);
 
   const retryScoring = useCallback(
     async (session: BenchSession) => {
@@ -1401,6 +1500,17 @@ export default function BenchmarkView() {
     ? sections.find((sec) => sec.scorerVersion === selectedSession.scorerVersion)
     : undefined;
   const selectedFrozen = selectedEra?.frozen === true;
+  // An rc scorer of the family's CURRENT era (forge-1.0-rc beside forge-1.0) is that benchmark before
+  // its thresholds froze — never "an earlier benchmark".
+  const selectedIsCurrentRc =
+    selectedEra != null &&
+    currentEra != null &&
+    selectedEra.scorerVersion === `${currentEra.scorerVersion}-rc`;
+  // The scorer's own refusal for a Forge result (held, unpublishable, rc) — main refuses the same way.
+  const forgeProblem =
+    mine && isForge(mine.scorerVersion)
+      ? forgePublishProblem({ scorerVersion: mine.scorerVersion, verdict: mine.verdict })
+      : null;
   const publishWhy = !publishable
     ? 'Run the benchmark (v2) first'
     : running
@@ -1409,11 +1519,13 @@ export default function BenchmarkView() {
         ? 'Benchmark frozen — submissions closed'
         : selectedSession && selectedSession.publishable === false
           ? 'This session is not publishable — its stored result predates the v2 publisher'
-          : modelProblem
-            ? modelProblem
-            : publishTitleProblem
-              ? publishTitleProblem
-              : null;
+          : forgeProblem
+            ? forgeProblem
+            : modelProblem
+              ? modelProblem
+              : publishTitleProblem
+                ? publishTitleProblem
+                : null;
 
   // Publish belongs to the selected session's detail, and ONLY when that session is the one the
   // stored result describes — publishing posts mine/result.json, nothing else.
@@ -1494,6 +1606,14 @@ export default function BenchmarkView() {
             Benchmark frozen — submissions closed.
           </p>
         )}
+        {forgeProblem && (
+          <p
+            data-testid="forge-publish-refusal"
+            className={cx('mt-3', TYPE.body, WEIGHT.semibold, TONE_TEXT.warn)}
+          >
+            {forgeProblem}
+          </p>
+        )}
         {!publishable && (
           <p className={cx('mt-3', TYPE.meta)}>
             This result predates the v2 publisher — run the benchmark again to publish.
@@ -1543,48 +1663,57 @@ export default function BenchmarkView() {
             title="Benchmark"
             subtitle="Your fleet against frontier models on the same frozen build task, graded by running what it produces — not by asking a model what it thinks."
             actions={
-              running ? (
-                <Button
-                  key="cancel-benchmark"
-                  onClick={() => setConfirmCancel(true)}
-                  disabled={cancelling}
-                  title={
-                    cancelling
-                      ? 'Cancelling — the engine, the vendor sim and the scorer are being stopped'
-                      : 'Stop this run'
-                  }
-                  icon={
-                    cancelling ? (
-                      <Loader2 className="animate-spin" />
-                    ) : (
-                      <XCircle className={TONE_TEXT.err} />
-                    )
-                  }
-                >
-                  {cancelling ? 'Cancelling…' : 'Cancel run'}
-                </Button>
-              ) : (
-                <Button
-                  key="start-benchmark"
-                  variant="primary"
-                  onClick={run}
-                  title={launchProblem ?? undefined}
-                  icon={<Play />}
-                  disabled={
-                    !runtimeReady ||
-                    !!launchProblem ||
-                    (entrant === 'cloud' && (!cloudProvider || !cloudModel.trim()))
-                  }
-                >
-                  Run benchmark
-                </Button>
-              )
+              <div className="flex flex-col items-end gap-3">
+                <BenchmarkFamilyToggle
+                  value={family}
+                  onChange={chooseFamily}
+                  names={BENCH_FAMILY_NAME}
+                />
+                {running ? (
+                  <Button
+                    key="cancel-benchmark"
+                    onClick={() => setConfirmCancel(true)}
+                    disabled={cancelling}
+                    title={
+                      cancelling
+                        ? 'Cancelling — the engine, the vendor sim and the scorer are being stopped'
+                        : 'Stop this run'
+                    }
+                    icon={
+                      cancelling ? (
+                        <Loader2 className="animate-spin" />
+                      ) : (
+                        <XCircle className={TONE_TEXT.err} />
+                      )
+                    }
+                  >
+                    {cancelling ? 'Cancelling…' : 'Cancel run'}
+                  </Button>
+                ) : (
+                  <Button
+                    key="start-benchmark"
+                    variant="primary"
+                    onClick={run}
+                    title={launchProblem ?? undefined}
+                    icon={<Play />}
+                    disabled={
+                      !runtimeReady ||
+                      !!launchProblem ||
+                      (forge && forgeKit?.state !== 'ready') ||
+                      ((forge || entrant === 'cloud') && (!cloudProvider || !cloudModel.trim()))
+                    }
+                  >
+                    Run benchmark
+                  </Button>
+                )}
+              </div>
             }
           />
 
-          <p className={TYPE.bodyMuted}>
-            {DEFAULT_BENCHMARK_NAME} runs with Swarm or a single model. Swarm nodes can mix local
-            and cloud providers. Earlier benchmarks remain separate in your session history.
+          <p className={TYPE.bodyMuted} data-testid="family-intro">
+            {forge
+              ? `${BENCH_FAMILY_NAME.forge} runs one model in goose: it builds an Atlassian Forge app on eight module types, graded offline by running it against a seeded Jira site — no deploy, no internet for the entrant. Forge sessions stay separate from SB.`
+              : `${BENCH_FAMILY_NAME.sb} runs with Swarm or a single model. Swarm nodes can mix local and cloud providers. Earlier benchmarks remain separate in your session history.`}
           </p>
 
           {/* Run setup — the fleet size and the sampling knobs the next run will use, editable until
@@ -1593,7 +1722,14 @@ export default function BenchmarkView() {
               benchmark pin was deleted in main.ts ("NO HARDCODED TEMPERATURE" — it overrode the
               per-model value Mihai sets in LM Studio), and a card still saying "0.2 (pinned)" claimed
               a pin the run no longer sends (caught live on r4-relaunch, 2026-08-30). Both entrant modes use only the latest stable benchmark. */}
-          <BenchmarkRuntimeSetup onReady={setRuntimeReady} disabled={running} />
+          <BenchmarkRuntimeSetup
+            onReady={setRuntimeReady}
+            disabled={running}
+            benchmarkName={BENCH_FAMILY_NAME[family]}
+          />
+          {forge && (
+            <ForgeKitSetup toolsReady={runtimeReady} disabled={running} onStatus={setForgeKit} />
+          )}
           {launchProblem && !running && (
             <div
               aria-label="Benchmark availability"
@@ -1621,7 +1757,7 @@ export default function BenchmarkView() {
               title="New run"
               right={
                 <span className={TYPE.meta}>
-                  {DEFAULT_BENCHMARK_NAME} ·{' '}
+                  {BENCH_FAMILY_NAME[family]} ·{' '}
                   {launchProblem ? 'Bundled benchmark' : 'Latest stable benchmark'}
                 </span>
               }
@@ -1644,18 +1780,22 @@ export default function BenchmarkView() {
                 loading={catalog.kind === 'loading'}
               />
             </div>
-            <Segmented
-              as="buttons"
-              aria-label="Benchmark entrant"
-              value={entrant}
-              options={[
-                { value: 'swarm', label: 'Swarm' },
-                { value: 'cloud', label: 'Single model' },
-              ]}
-              onChange={(value) => setEntrant(value as 'swarm' | 'cloud')}
-              disabled={running}
-            />
-            {entrant === 'cloud' ? (
+            {forge ? (
+              <ForgeRunPolicy kit={forgeKit} />
+            ) : (
+              <Segmented
+                as="buttons"
+                aria-label="Benchmark entrant"
+                value={entrant}
+                options={[
+                  { value: 'swarm', label: 'Swarm' },
+                  { value: 'cloud', label: 'Single model' },
+                ]}
+                onChange={(value) => setEntrant(value as 'swarm' | 'cloud')}
+                disabled={running}
+              />
+            )}
+            {forge || entrant === 'cloud' ? (
               <>
                 <CloudEntrant
                   provider={cloudProvider}
@@ -1720,9 +1860,9 @@ export default function BenchmarkView() {
           )}
           {catalogMismatch && (
             <ToneBand tone="warn">
-              The site&rsquo;s current benchmark is {catalogMismatch.siteCurrent}, but this app
-              bundles {catalogMismatch.bundled}. Update Goose before starting another run. Older
-              results remain available as history.
+              The site&rsquo;s current benchmark is {eraDisplayName(catalogMismatch.siteCurrent)},
+              but this app bundles {eraDisplayName(catalogMismatch.bundled)}. Update Goose before
+              starting another run. Older results remain available as history.
             </ToneBand>
           )}
 
@@ -1745,9 +1885,17 @@ export default function BenchmarkView() {
           {selectedSession && selectedEra ? (
             <Panel key={sessionKey(selectedSession)} padded={false}>
               <SessionHeader
-                title={selectedEra.title}
+                title={eraLabel(selectedEra.scorerVersion, selectedEra.title)}
                 scorerVersion={selectedEra.scorerVersion}
-                era={selectedEra.current ? 'current' : selectedEra.frozen ? 'frozen' : 'history'}
+                era={
+                  selectedEra.current
+                    ? 'current'
+                    : selectedEra.frozen
+                      ? 'frozen'
+                      : selectedIsCurrentRc
+                        ? 'rc'
+                        : 'history'
+                }
                 when={fmtWhen(selectedSession.startedAt) ?? selectedSession.startedAt}
                 session={selectedSession}
                 onDelete={() => setDeleteTarget(selectedSession)}
@@ -1758,12 +1906,21 @@ export default function BenchmarkView() {
                     Frozen on the site — sessions stay viewable; submissions are closed.
                   </p>
                 )}
-                {!selectedEra.current && currentEra && (
+                {selectedIsCurrentRc && currentEra && (
+                  <p data-testid="era-note" className={TYPE.bodyMuted}>
+                    Scored by {eraDisplayName(selectedEra.scorerVersion)}, the uncalibrated scorer
+                    of {eraLabel(currentEra.scorerVersion, currentEra.title)}: a measurement of this
+                    benchmark, not a board result.
+                  </p>
+                )}
+                {!selectedEra.current && !selectedIsCurrentRc && currentEra && (
                   // The sidebar counts runs per era; this line makes the headline agree with it
                   // when the run shown belongs to an earlier benchmark.
                   <p data-testid="era-note" className={TYPE.bodyMuted}>
-                    This run is from an earlier benchmark ({selectedEra.scorerVersion}). The current
-                    benchmark, {currentEra.title} ({currentEra.scorerVersion}), has{' '}
+                    This run is from an earlier benchmark (
+                    {eraDisplayName(selectedEra.scorerVersion)}
+                    ). The current benchmark, {eraLabel(currentEra.scorerVersion, currentEra.title)}
+                    , has{' '}
                     {currentEraRuns === 0
                       ? 'no runs on this machine yet'
                       : `${currentEraRuns} run${currentEraRuns === 1 ? '' : 's'} in the sidebar`}
@@ -1785,12 +1942,12 @@ export default function BenchmarkView() {
                     running ||
                     !runtimeReady ||
                     !!launchProblem ||
-                    selectedSession.scorerVersion !== defaultBenchmarkScorer()
+                    selectedSession.scorerVersion !== defaultBenchmarkScorer(family)
                   }
                 />
               </div>
             </Panel>
-          ) : !wantsNew && sessions.length > 0 ? (
+          ) : !wantsNew && familySessions.length > 0 ? (
             <Panel>
               <EmptyState
                 icon={<Gauge />}
@@ -1798,8 +1955,16 @@ export default function BenchmarkView() {
                 body="Every benchmark run on this machine is listed under its benchmark in the sidebar's Benchmark tree."
               />
             </Panel>
+          ) : !wantsNew && forge && familySessions.length === 0 ? (
+            <Panel>
+              <EmptyState
+                icon={<Gauge />}
+                title="No Forge runs on this machine yet"
+                body="Prepare the Forge kit, choose a provider and model, and run — the result lands here with its tier letters, admission bands and screenshots."
+              />
+            </Panel>
           ) : null}
-          {sections.length === 0 && catalog.kind !== 'absent' && (
+          {familySections.length === 0 && !forge && catalog.kind !== 'absent' && (
             <Panel>
               <EmptyState
                 title={

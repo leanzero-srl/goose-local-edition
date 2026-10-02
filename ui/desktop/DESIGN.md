@@ -84,6 +84,15 @@ contrast, distinctness and the tray hex.
 A load draws a bar only from a figure the backend measured; otherwise the indeterminate track
 (`animate-lz-indeterminate`, a travelling solid segment — position, never a fade).
 
+**Benchmark families** — the Benchmark view's SB | Forge switch and every mark that names a family
+(`FAMILY_FILL` / `FAMILY_HEX` in `lz/tokens.ts`). Same solid fills in both themes, white ink;
+`studioTokens.test.ts` pins contrast, distinctness and the hex. Family hue is FAMILY IDENTITY ONLY.
+
+| family | fill      | ink       |
+| ------ | --------- | --------- |
+| sb     | `#1d4ed8` | `#ffffff` |
+| forge  | `#c2410c` | `#ffffff` |
+
 **Node ramp** — `bg-lz-node-1…6` with `text-lz-node-N-ink` (the ink was measured per hue: white on
 blue/violet/pink, near-black on cyan/orange/green in light; near-black on all six in dark). Node
 hue is NODE IDENTITY ONLY — never chrome, never a zone, never a status.

@@ -302,3 +302,55 @@ it('keeps SB7.1 S/Q/M as admission gates — no weight row, no 0% tier — and i
   expect(view.getAllByText(/admission gate$/)).toHaveLength(3);
   view.getByText(/Earned credit: \(0\.88 × behavioral score 0\.7500/);
 });
+
+import forgeVerdict from './forge-alt.fixture.json';
+describe('a Forge verdict reads its own tiers, bands and publishability (score_forge.py)', () => {
+  const projected = projectBenchScore(forgeVerdict as never).verdict as unknown as VerdictDetail;
+
+  it('groups checks under the Forge tier names, never the Gauntlet letters they share', async () => {
+    const view = render(
+      <ScoringDetail verdict={projected} score={0.799} scorerVersion="forge-1.0-rc" />
+    );
+    for (const name of [
+      'Lint',
+      'Platform currency',
+      'Event pipeline',
+      'Reconcile',
+      'Storage',
+      'Resolvers',
+      'UI function',
+      'Visual',
+      'Rovo',
+      'Excellence',
+    ])
+      expect(view.getAllByText(name).length).toBeGreaterThan(0);
+    // B is Resolvers here, not Gauntlet's Behaviour; A is Rovo, not Structure.
+    expect(view.queryByText('Behaviour')).toBeNull();
+    expect(view.queryByText('Structure')).toBeNull();
+    view.getByText(
+      /Recorded composition inputs: inner score 0\.9833 .* before criticals 0\.9768 · critical multiplier 1\.0000/
+    );
+    assertStudioClean(view.container);
+    expect(await missingUtilities(utilitiesOf(allClasses(view.container)))).toEqual([]);
+  });
+
+  it('a verdict with no failed band says no ceiling applied; an unpublishable one says why', () => {
+    const passing = {
+      ...projected,
+      admission: { ceiling: 1, reasons: [], failedChecksByBand: [] },
+      publishable: false,
+      unpublishable_reasons: ['runtime shim (the in-repo shim, not the pinned Forge wrapper)'],
+      runtime: 'shim',
+    } as unknown as VerdictDetail;
+    const view = render(
+      <ScoringDetail verdict={passing} score={0.9925} scorerVersion="forge-1.0" />
+    );
+    view.getByText('Every admission band passed — no ceiling');
+    expect(view.queryByTestId('forge-failed-band')).toBeNull();
+    const facts = view.getByTestId('forge-verdict-facts');
+    expect(facts).toHaveTextContent(
+      'Not publishable: runtime shim (the in-repo shim, not the pinned Forge wrapper).'
+    );
+    expect(facts).toHaveTextContent("Scored on the shim runtime, not Atlassian's pinned wrapper.");
+  });
+});

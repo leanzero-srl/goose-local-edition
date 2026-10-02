@@ -48,7 +48,14 @@ function sourceFiles(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name !== 'node_modules' && entry.name !== '__tests__') sourceFiles(path, out);
+      // src/swarm-bench is the benchmark payload `pnpm run package` mirrors in (gitignored evals code —
+      // three.js among it), not host UI source.
+      if (
+        entry.name !== 'node_modules' &&
+        entry.name !== '__tests__' &&
+        entry.name !== 'swarm-bench'
+      )
+        sourceFiles(path, out);
     } else if (/\.(tsx?|jsx?)$/.test(entry.name) && !/\.(test|spec)\.[jt]sx?$/.test(entry.name)) {
       out.push(path);
     }

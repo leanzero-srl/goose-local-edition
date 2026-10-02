@@ -2,8 +2,17 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { ChevronDown, ChevronRight, Gauge, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'react-toastify';
-import { Button, Chip, SectionHeader, TNUM, TYPE, WEIGHT, cx } from '../lz';
+import { Button, Chip, FAMILY_FILL, RADIUS, SectionHeader, TNUM, TYPE, WEIGHT, cx } from '../lz';
 import type { BenchSession, CatalogBenchmark } from '../benchmark/bridge';
+import {
+  BENCH_FAMILIES,
+  FAMILY_WORD,
+  catalogFamily,
+  eraDisplayName,
+  eraLabel,
+  familyOfScorer,
+  type BenchFamily,
+} from '../benchmark/baselines';
 import { fmtWhen, OutcomeChip } from '../benchmark/outcome';
 import {
   SectionTitleLink,
@@ -69,6 +78,8 @@ export function benchRunHref(era: string, key?: string): string {
 export interface BenchEra {
   scorerVersion: string;
   title: string;
+  /** The catalog's family (absent ⇒ SB), or the scorer's for an era only runs name. */
+  family: BenchFamily;
   current: boolean;
   frozen: boolean;
   fromCatalog: boolean;
@@ -80,8 +91,9 @@ const startMs = (s: BenchSession): number => {
   return Number.isNaN(t) ? 0 : t;
 };
 
-/** One era per benchmark the catalog names plus every era the runs on this machine reference,
- *  the current one first, runs newest first — the same fold the Benchmark view uses. */
+/** One era per benchmark the catalog names plus every era the runs on this machine reference, grouped by
+ *  family (Gauntlet, then Forge), the current one first within a family, runs newest first — the same
+ *  fold the Benchmark view uses. */
 export function deriveEras(
   sessions: readonly BenchSession[],
   catalog: readonly CatalogBenchmark[] | null
@@ -91,6 +103,7 @@ export function deriveEras(
     map.set(b.scorerVersion, {
       scorerVersion: b.scorerVersion,
       title: b.title,
+      family: catalogFamily(b),
       current: b.current,
       frozen: b.frozen,
       fromCatalog: true,
@@ -102,6 +115,7 @@ export function deriveEras(
       map.set(s.scorerVersion, {
         scorerVersion: s.scorerVersion,
         title: s.scorerVersion,
+        family: familyOfScorer(s.scorerVersion),
         current: false,
         frozen: false,
         fromCatalog: false,
@@ -114,6 +128,7 @@ export function deriveEras(
   for (const era of list) era.sessions.sort((a, b) => startMs(b) - startMs(a));
   list.sort(
     (a, b) =>
+      BENCH_FAMILIES.indexOf(a.family) - BENCH_FAMILIES.indexOf(b.family) ||
       Number(b.current) - Number(a.current) ||
       b.scorerVersion.localeCompare(a.scorerVersion, undefined, { numeric: true })
   );
@@ -138,7 +153,7 @@ export function askAboutRunPrompt(era: BenchEra, run: BenchSession): string {
         .join(', ')
     : null;
   return [
-    `I want to look at my benchmark run ${run.runId ?? run.startedAt} on ${era.scorerVersion} (${era.title}), ${facts}.`,
+    `I want to look at my benchmark run ${run.runId ?? run.startedAt} on ${era.scorerVersion} (${eraLabel(era.scorerVersion, era.title)}), ${facts}.`,
     ...(tiers ? [`Tier scores: ${tiers}.`] : []),
     ...(run.scoringError ? [`Scoring failed: ${run.scoringError}`] : []),
     run.dataDir
@@ -174,7 +189,7 @@ const RunLeafRow: React.FC<{
     >
       <button
         onClick={onOpen}
-        title={`${era.scorerVersion} · ${when}`}
+        title={`${eraDisplayName(era.scorerVersion)} · ${when}`}
         aria-current={active ? 'true' : undefined}
         data-testid={`bench-run-${benchRunKey(run)}`}
         className={cx(
@@ -339,7 +354,8 @@ export const BenchmarkSection: React.FC<{ className?: string }> = ({ className }
           {loaded && eras.length === 0 ? (
             <div className={cx('px-2 py-2', TYPE.bodyMuted)}>{intl.formatMessage(i18n.empty)}</div>
           ) : (
-            eras.map((era) => {
+            eras.map((era, index) => {
+              const familyStart = index === 0 || eras[index - 1].family !== era.family;
               const defaultOpen =
                 era.current ||
                 (activeRun != null && era.sessions.some((r) => benchRunKey(r) === activeRun));
@@ -348,6 +364,28 @@ export const BenchmarkSection: React.FC<{ className?: string }> = ({ className }
               const shown = all ? era.sessions : era.sessions.slice(0, TREE_PREVIEW_COUNT);
               return (
                 <div key={era.scorerVersion} data-testid={`bench-era-${era.scorerVersion}`}>
+                  {familyStart && (
+                    <div
+                      data-testid={`bench-family-group-${era.family}`}
+                      className={cx('flex items-center gap-2 px-2 pb-1', index > 0 && 'pt-2')}
+                    >
+                      <span
+                        className={cx(
+                          'px-1.5 py-0.5 text-lz-meta',
+                          WEIGHT.semibold,
+                          RADIUS.control,
+                          FAMILY_FILL[era.family]
+                        )}
+                      >
+                        {FAMILY_WORD[era.family]}
+                      </span>
+                      <span className={cx('ml-auto', TYPE.meta, TNUM)}>
+                        {eras
+                          .filter((e) => e.family === era.family)
+                          .reduce((sum, e) => sum + e.sessions.length, 0)}
+                      </span>
+                    </div>
+                  )}
                   <button
                     onClick={() =>
                       setToggled((prev) => {
@@ -358,7 +396,7 @@ export const BenchmarkSection: React.FC<{ className?: string }> = ({ className }
                       })
                     }
                     aria-expanded={expanded}
-                    title={era.title}
+                    title={eraLabel(era.scorerVersion, era.title)}
                     className={treeParentClass}
                   >
                     {expanded ? (
@@ -368,7 +406,7 @@ export const BenchmarkSection: React.FC<{ className?: string }> = ({ className }
                     )}
                     <Gauge className="size-4 shrink-0 text-lz-ink-2" />
                     <span className={cx('truncate text-lz-body text-lz-ink', WEIGHT.medium)}>
-                      {era.scorerVersion}
+                      {eraDisplayName(era.scorerVersion)}
                     </span>
                     {era.current ? (
                       <Chip tone="ok">{intl.formatMessage(i18n.current)}</Chip>

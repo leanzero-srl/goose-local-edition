@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { acpReadConfig, acpRemoveConfig, acpUpsertConfig } from '../../acp/config';
 import { BENCH_MAX_USD_KEY, parseMaxUsd } from '../../benchBudget';
-import { TYPE } from '../lz';
+import { FOCUS, TYPE, cx } from '../lz';
 
 /**
  * The operator's spend limit for a single-model run: once OpenRouter has billed this much, the harness
@@ -72,7 +72,7 @@ export function WalletLimit({ disabled }: { disabled: boolean }) {
             value={text}
             onChange={(event) => save(event.target.value)}
             disabled={disabled || !loaded}
-            className="w-24 bg-transparent text-lz-ink outline-none"
+            className={cx('w-24 bg-transparent text-lz-ink', FOCUS)}
           />
         </span>
         <span className={TYPE.meta}>(OpenRouter)</span>

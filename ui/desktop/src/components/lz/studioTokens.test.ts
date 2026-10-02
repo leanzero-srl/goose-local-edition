@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ENGINE_PHASES, PHASE_HEX } from './tokens';
+import { ENGINE_PHASES, FAMILY_HEX, PHASE_HEX } from './tokens';
 
 /**
  * The LeanZero Studio token contract (ui/desktop/DESIGN.md), refused mechanically: every surface
@@ -48,6 +48,10 @@ const SURFACE_TOKENS = [
   '--color-lz-syntax-bool',
   ...ENGINE_PHASES.flatMap((p) => [`--color-lz-phase-${p}`, `--color-lz-phase-${p}-ink`]),
   '--color-lz-phase-unloaded-line',
+  '--color-lz-family-sb',
+  '--color-lz-family-sb-ink',
+  '--color-lz-family-forge',
+  '--color-lz-family-forge-ink',
   // Q-337: the cached part of a prompt read, on a surface and on a phase fill.
   '--color-lz-cache',
   '--color-lz-cache-on-fill',
@@ -170,6 +174,19 @@ describe('LeanZero Studio surfaces — the token contract in main.css', () => {
     expect(new Set(Object.values(PHASE_HEX)).size).toBe(ENGINE_PHASES.length);
     // grey idle must not read as the dark not-loaded tile
     expect(contrast(PHASE_HEX.idle, PHASE_HEX.unloaded)).toBeGreaterThan(2);
+  });
+
+  it('the benchmark families: two distinct solid fills, white ink at AA, the hex in sync', () => {
+    for (const theme of [light, dark]) {
+      for (const family of ['sb', 'forge'] as const) {
+        const fill = theme[`--color-lz-family-${family}`];
+        expect(fill, family).toBe(FAMILY_HEX[family]);
+        expect(contrast(theme[`--color-lz-family-${family}-ink`], fill), family).toBeGreaterThan(
+          4.5
+        );
+      }
+    }
+    expect(FAMILY_HEX.sb).not.toBe(FAMILY_HEX.forge);
   });
 
   it('the type scale carries weight and tracking inside the utility, and the family is Inter', () => {

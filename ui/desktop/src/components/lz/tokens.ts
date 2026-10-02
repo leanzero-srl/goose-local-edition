@@ -145,6 +145,18 @@ export const PHASE_HEX: Record<EnginePhase, string> = {
   failed: '#dc2626',
 };
 
+/**
+ * BENCHMARK FAMILIES — the SB | Forge switch on the Benchmark view and every mark that names a family.
+ * Same solid fills in both themes, each carrying white ink (studioTokens.test.ts pins contrast and
+ * distinctness, and the hex here against main.css).
+ */
+export type FamilyKey = 'sb' | 'forge';
+export const FAMILY_FILL: Record<FamilyKey, string> = {
+  sb: 'bg-lz-family-sb text-lz-family-sb-ink',
+  forge: 'bg-lz-family-forge text-lz-family-forge-ink',
+};
+export const FAMILY_HEX: Record<FamilyKey, string> = { sb: '#1d4ed8', forge: '#c2410c' };
+
 /** Node identity — the 6-hue ramp with the ink each hue was measured to carry. IDENTITY ONLY. */
 export const NODE_FILL: Record<NodeIndex, string> = {
   1: 'bg-lz-node-1 text-lz-node-1-ink',

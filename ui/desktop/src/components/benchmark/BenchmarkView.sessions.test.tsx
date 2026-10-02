@@ -240,21 +240,21 @@ describe('the benchmark sections and their sessions', () => {
     // The live mark scales on the motion token (DESIGN.md) — never the fading pulse.
     expect(runningChip.querySelector('.animate-lz-live')).not.toBeNull();
     expect(runningChip.querySelector('.animate-pulse')).toBeNull();
-    expect(screen.getByText('Meridian Payments Console')).toBeInTheDocument();
+    expect(screen.getByText('Gauntlet 7.0 rc · Meridian Payments Console')).toBeInTheDocument();
     expect(screen.getByText(/result lands here when the run finishes/i)).toBeInTheDocument();
     // No second list of runs in the main view (one list, in the sidebar).
     expect(screen.queryByText('Did not finish')).toBeNull();
     expect(screen.queryByText('Did not start')).toBeNull();
     // The benchmark is a dropdown at run setup, its value the current benchmark.
     const chooser = screen.getByRole('combobox', { name: 'Benchmark' });
-    expect(chooser.textContent).toContain('sb-7.2');
+    expect(chooser.textContent).toContain('Gauntlet 7.2');
     fireEvent.click(chooser);
     const options = screen.getAllByRole('option');
     expect(options.map((o) => o.textContent)).toEqual([
-      'sb-7.2 — SB7.2 payments',
-      'sb-7.1 — SB7.1 payments · pilot (history)',
-      'sb-7.0-rc — Meridian Payments Console (history)',
-      'sb-6.0 — VendorSync Pro (frozen)',
+      'Gauntlet 7.2 · payments',
+      'Gauntlet 7.1 · payments · pilot (history)',
+      'Gauntlet 7.0 rc · Meridian Payments Console (history)',
+      'Gauntlet 6.0 · VendorSync Pro (frozen)',
     ]);
     expect(options[1].getAttribute('aria-disabled')).toBe('true');
     expect(options[2].getAttribute('aria-disabled')).toBe('true');
@@ -367,7 +367,7 @@ describe('the benchmark sections and their sessions', () => {
         <BenchmarkView />
       </IntlTestWrapper>
     );
-    await screen.findByText('Meridian Payments Console');
+    await screen.findByText('Gauntlet 7.0 rc · Meridian Payments Console');
 
     handlers.get('benchmark-started')?.(null, {
       workdir: '/tmp/bench',
@@ -378,8 +378,8 @@ describe('the benchmark sections and their sessions', () => {
       catalogMismatch: { siteCurrent: 'sb-8.0', bundled: 'sb-7.0-rc' },
     });
     const notice = await screen.findByText(/Update Goose before starting another run/);
-    expect(notice.textContent).toContain('sb-8.0');
-    expect(notice.textContent).toContain('sb-7.0-rc');
+    expect(notice.textContent).toContain('Gauntlet 8.0');
+    expect(notice.textContent).toContain('Gauntlet 7.0 rc');
 
     // A later launch with NO mismatch clears the notice — the event stream updates the claim.
     handlers.get('benchmark-started')?.(null, {
@@ -796,11 +796,13 @@ describe('the benchmark view says what it shows (UX audit B1)', () => {
         <BenchmarkView />
       </IntlTestWrapper>
     );
-    expect(await screen.findByText('Meridian Payments Console')).toBeInTheDocument();
+    expect(
+      await screen.findByText('Gauntlet 7.0 rc · Meridian Payments Console')
+    ).toBeInTheDocument();
     expect(screen.getByText('history')).toBeInTheDocument();
     expect(screen.queryByText('CURRENT')).toBeNull();
     expect(screen.getByTestId('era-note')).toHaveTextContent(
-      'This run is from an earlier benchmark (sb-7.0-rc). The current benchmark, SB7.2 payments (sb-7.2), has no runs on this machine yet.'
+      'This run is from an earlier benchmark (Gauntlet 7.0 rc). The current benchmark, Gauntlet 7.2 · payments, has no runs on this machine yet.'
     );
   });
 
@@ -867,7 +869,7 @@ describe('the benchmark view says what it shows (UX audit B1)', () => {
     expect(screen.getByRole('heading', { name: 'New run' })).toBeInTheDocument();
     await waitFor(() => expect(electron().benchmarkSessions).toHaveBeenCalled());
     expect(screen.queryByTestId('dnf-line')).toBeNull();
-    expect(screen.queryByText('Meridian Payments Console')).toBeNull();
+    expect(screen.queryByText('Gauntlet 7.0 rc · Meridian Payments Console')).toBeNull();
   });
 
   it("?era= without a run opens that era's newest run", async () => {
@@ -879,7 +881,7 @@ describe('the benchmark view says what it shows (UX audit B1)', () => {
         <BenchmarkView />
       </IntlTestWrapper>
     );
-    expect(await screen.findByText('VendorSync Pro')).toBeInTheDocument();
+    expect(await screen.findByText('Gauntlet 6.0 · VendorSync Pro')).toBeInTheDocument();
   });
 });
 
@@ -919,12 +921,12 @@ it('lays the session headline out as a truncating title line over a wrapping met
       <BenchmarkView />
     </IntlTestWrapper>
   );
-  const title = await screen.findByRole('heading', { name: 'SB7.1 payments · pilot' });
+  const title = await screen.findByRole('heading', { name: 'Gauntlet 7.1 rc · payments · pilot' });
   const header = screen.getByTestId('session-header');
   const meta = within(header).getByTestId('session-header-meta');
   expect(title.className).toMatch(/\btruncate\b/);
   expect(title.className).toMatch(/\bmin-w-0\b/);
-  expect(title).toHaveAttribute('title', 'SB7.1 payments · pilot');
+  expect(title).toHaveAttribute('title', 'Gauntlet 7.1 rc · payments · pilot');
   // The title line holds only the title, the outcome and the delete action.
   const titleLine = title.parentElement!;
   expect(within(titleLine).getByText('Did not finish')).toBeInTheDocument();

@@ -318,6 +318,6 @@ describe('BenchmarkView — LeanZero Studio', () => {
     expect(
       await screen.findByText('No app screenshots were recorded or could be read for this result.')
     ).toBeInTheDocument();
-    expect(screen.getByText(/SB7.2 payments runs with Swarm/)).toBeInTheDocument();
+    expect(screen.getByText(/Gauntlet 7.2 · payments runs with Swarm/)).toBeInTheDocument();
   });
 });

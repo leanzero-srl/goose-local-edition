@@ -133,6 +133,59 @@ describe('BenchmarkSection', () => {
     }
   }, 30_000);
 
+  it('groups the history by family then era: Gauntlet first, then Forge, each era named for people', async () => {
+    const forgeSession: BenchSession = {
+      runId: 'cloud-forge',
+      scorerVersion: 'forge-1.0-rc',
+      startedAt: '2026-10-02T20:00:00.000Z',
+      outcome: 'finished',
+      score: 0.799,
+      publishable: true,
+    };
+    const m = mocks();
+    m.benchmarkSessions.mockResolvedValue({ sessions: [...SESSIONS, forgeSession] });
+    m.benchmarkCatalog.mockResolvedValue({
+      ok: true,
+      benchmarks: [
+        ...CATALOG,
+        {
+          scorerVersion: 'forge-1.0',
+          title: 'Forge 1.0 — Scope Ledger',
+          family: 'forge',
+          current: true,
+          frozen: false,
+          baselines: [],
+        },
+      ],
+    });
+    renderSection();
+    const forgeGroup = await screen.findByTestId('bench-family-group-forge');
+    const gauntletGroup = screen.getByTestId('bench-family-group-sb');
+    expect(gauntletGroup).toHaveTextContent('Gauntlet');
+    expect(gauntletGroup).toHaveTextContent('5');
+    expect(forgeGroup).toHaveTextContent('Forge');
+    expect(forgeGroup).toHaveTextContent('1');
+    expect(within(forgeGroup).getByText('Forge').className).toContain('bg-lz-family-forge');
+    // Gauntlet's eras, then Forge's — the current one first within each family.
+    const eras = screen.getAllByTestId(/^bench-era-/).map((e) => e.getAttribute('data-testid'));
+    expect(eras).toEqual([
+      'bench-era-sb-7.1',
+      'bench-era-sb-6.0',
+      'bench-era-forge-1.0',
+      'bench-era-forge-1.0-rc',
+    ]);
+    expect(
+      within(screen.getByTestId('bench-era-sb-7.1')).getByText('Gauntlet 7.1')
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('bench-era-forge-1.0-rc')).getByText('Forge 1.0 rc')
+    ).toBeInTheDocument();
+    // The link still names the run by its id.
+    fireEvent.click(screen.getByText('Forge 1.0 rc'));
+    fireEvent.click(await screen.findByTestId('bench-run-cloud-forge'));
+    expect(nav.navigate).toHaveBeenCalledWith(benchRunHref('forge-1.0-rc', 'cloud-forge'));
+  });
+
   it('deriveEras: the current era first, runs newest first, unknown eras from runs alone', () => {
     const eras = deriveEras(SESSIONS, CATALOG);
     expect(eras.map((e) => [e.scorerVersion, e.current, e.sessions.length])).toEqual([

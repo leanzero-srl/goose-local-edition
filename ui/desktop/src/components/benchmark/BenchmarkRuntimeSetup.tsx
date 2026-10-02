@@ -7,9 +7,12 @@ const size = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
 export function BenchmarkRuntimeSetup({
   onReady,
   disabled,
+  benchmarkName = DEFAULT_BENCHMARK_NAME,
 }: {
   onReady: (ready: boolean) => void;
   disabled: boolean;
+  /** The selected family's bundled benchmark, as copy names it. */
+  benchmarkName?: string;
 }) {
   const [status, setStatus] = useState<BenchmarkRuntimeStatus | null>(null);
   const [progress, setProgress] = useState<BenchmarkRuntimeProgress | null>(null);
@@ -52,8 +55,8 @@ export function BenchmarkRuntimeSetup({
   return (
     <Panel title="Benchmark tools">
       <p className={TYPE.bodyMuted}>
-        Python, Node and video tools are optional downloads required to run {DEFAULT_BENCHMARK_NAME}.
-        The app checks its browser before each launch.
+        Python, Node and video tools are optional downloads required to run {benchmarkName}. The app
+        checks its browser before each launch.
       </p>
       {status?.state === 'ready' ? (
         <p className="mt-2 text-lz-ok">Benchmark tools ready</p>
