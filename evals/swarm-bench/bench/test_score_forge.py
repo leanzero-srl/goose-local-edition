@@ -6,6 +6,8 @@ exists. Each defect test mutates one fact and asserts the rows it must cost — 
 """
 import copy
 from decimal import Decimal
+import hashlib
+import shutil
 import json
 import os
 from pathlib import Path
@@ -497,6 +499,29 @@ class DefectTests(Golden):
         self.assertFalse(v['publishable'])
         self.assertNotIn('a_action_result', v['probe_unavailable'])
 
+    def test_a_run_without_ui_still_scores_and_names_the_missing_recording(self):
+        obs = copy.deepcopy(self.obs)
+        obs['ui']['surfaces'] = []
+        v = self.score(obs)
+        self.assertEqual(v['status'], 'scored')
+        self.assertEqual(v['media']['videos'], [])
+        self.assertIn('graded browser recording absent', v['media']['absent'])
+        obs['sectionErrors'] = {'ui': 'chromium failed to launch'}
+        self.assertIn('chromium failed to launch', self.score(obs)['media']['absent'])
+
+    def test_the_recording_rides_in_the_verdict(self):
+        obs = copy.deepcopy(self.obs)
+        clip = {'file': 'bench-media/forge-ui.webm', 'mimeType': 'video/webm', 'caption': 'c', 'sha256': 'a' * 64, 'bytes': 9}
+        obs['media'] = {'manifest': 'bench-media/media-manifest.json', 'schemaVersion': 1, 'recording': 'graded-browser',
+                        'videos': [clip], 'errors': []}
+        (self.root / 'bench-media').mkdir()
+        (self.root / 'bench-media' / 'media-manifest.json').write_text('{}')
+        v = self.score(obs)
+        self.assertEqual(v['media']['videos'], [clip])
+        self.assertEqual(v['score'], 1.0)
+        written = json.loads((self.root / 'bench-media' / 'media-manifest.json').read_text())
+        self.assertEqual((written['scorerVersion'], written['recording'], written['videos']), (sf.VERSION, 'graded-browser', [clip]))
+
     def test_the_shim_runtime_is_unpublishable(self):
         v = self.score(runtime='shim')
         self.assertFalse(v['publishable'])
@@ -952,7 +977,8 @@ class ProbeSmokeTests(unittest.TestCase):
             out = tmp / 'obs.json'
             r = subprocess.run([node, str(HERE / 'forge_probe.mjs'), '--app', str(app), '--kit', str(tmp / 'kit'),
                                 '--seed', pack['seed'], '--out', str(out), '--shots', str(tmp / 'shots'),
-                                '--repo', str(tmp / 'repo')], capture_output=True, text=True,
+                                '--repo', str(tmp / 'repo'), '--media', str(app / 'bench-media')],
+                               capture_output=True, text=True,
                                env={**os.environ, 'FAKE_PACK': str(tmp / 'pack.json')}, timeout=600)
             self.assertEqual(r.returncode, 0, r.stderr[-2000:])
             obs = json.loads(out.read_text())
@@ -971,6 +997,17 @@ class ProbeSmokeTests(unittest.TestCase):
             self.assertEqual(rows['k_widget_edit_bridge']['score'], 1)
             self.assertEqual(rows['a_action_errors']['score'], 1)
             self.assertTrue((tmp / 'shots' / 'contact-sheet.png').is_file())
+            media = v['media']
+            self.assertEqual(media['recording'], 'graded-browser', media)
+            if shutil.which(os.environ.get('BENCH_FFMPEG', 'ffmpeg')):
+                self.assertEqual(media['errors'], [])
+                (clip,) = media['videos']
+                self.assertEqual(clip['file'], 'bench-media/forge-ui.webm')
+                data = (app / clip['file']).read_bytes()
+                self.assertEqual(data[:4], bytes.fromhex('1a45dfa3'))
+                self.assertEqual(hashlib.sha256(data).hexdigest(), clip['sha256'])
+                self.assertTrue(clip['publishable'])
+                self.assertGreater(len(clip['segments']), 10)
             self.assertLess(v['score'], 0.5)
 
 

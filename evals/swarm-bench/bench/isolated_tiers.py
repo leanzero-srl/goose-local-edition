@@ -62,7 +62,7 @@ SB72 = IsolatedTier('BENCH_SB72', 'sb-7.2', 'score_sb72', 'spec-build-sb72.md', 
 FORGE10 = IsolatedTier('BENCH_FORGE10', 'forge-1.0', 'score_forge', 'forge/public/spec-build-forge.md', '',
                        'forge/starter',
                        ('score_forge.py', 'forge_oracle.py', 'forge_probe.mjs', 'forge-thresholds.json',
-                        'forge_site.py', 'forge_kit.py'),
+                        'forge_site.py', 'forge_kit.py', 'media_sb71.mjs'),
                        (('FORGE-CONTRACT.md', 'forge/public/FORGE-CONTRACT.md'), ('STARTER.md', 'forge/public/STARTER.md')),
                        family='forge', vendor='forge_site', network='fenced', kit=True, wallet_usd='50',
                        reasoning_effort='medium', own_scoring_site=True)

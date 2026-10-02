@@ -2025,6 +2025,7 @@ def evaluate_rows(c: Ctx) -> List[Dict]:
 def evaluate(c: Ctx) -> Dict:
     result = compose_from_rows(evaluate_rows(c), c)
     result['recall_trace'] = recall_trace(c.root)
+    result['media'] = media_block(c)
     kit = getattr(c, 'kit', None) or {}
     result.update({'kit_lock_sha256': kit.get('lock_sha256') or (c.obs.get('kit') or {}).get('lockSha256'),
                    'wrapper_sha256': kit.get('wrapper_sha256') or (c.obs.get('kit') or {}).get('wrapperSha256'),
@@ -2034,6 +2035,22 @@ def evaluate(c: Ctx) -> Dict:
                                                      THRESHOLDS_FILE.name)},
                    'spec_sha256': hashlib.sha256((ROOT / SPEC).read_bytes()).hexdigest()})
     return result
+
+
+def media_block(c: Ctx) -> Dict:
+    """The graded browser recording (bench-media/media-manifest.json, SB7.x's shape the desktop publishes through
+    /api/benchmark-media). Report-only: a run with no recording scores the same and says why (a named absence)."""
+    media = c.obs.get('media')
+    if not isinstance(media, dict):
+        why = c.section_error('ui') or ('no Custom UI surface was opened' if not c.surfaces() else
+                                        'the probe recorded no graded browser session')
+        return {'videos': [], 'absent': f'graded browser recording absent: {why}'}
+    media = {**media, 'scorerVersion': VERSION}
+    if c.root and media.get('manifest'):
+        path = c.root / media['manifest']
+        if path.is_file():
+            path.write_text(json.dumps({k: v for k, v in media.items() if k != 'manifest'}, indent=2) + '\n')
+    return media
 
 
 def recall_trace(root) -> Dict:
@@ -2427,7 +2444,7 @@ def build_pack(seed: str, out: Path) -> Dict:
 
 def clone_tree(src: Path, dest: Path) -> None:
     shutil.copytree(src, dest, symlinks=False, ignore=shutil.ignore_patterns(
-        'node_modules', '.forge-dev', 'forge-shots', '.swarm', '__pycache__', 'trace.jsonl', 'verdict.json',
+        'node_modules', '.forge-dev', 'forge-shots', 'bench-media', '.swarm', '__pycache__', 'trace.jsonl', 'verdict.json',
         'engine-console.log', 'forge-observations.json'))
 
 
@@ -2449,8 +2466,11 @@ def gather(root: Path, _port, _db_dir, trace_path: Optional[Path] = None, mark_p
         obs_path = tmp / 'forge-observations.json'
         shots = Path(root) / 'forge-shots'
         shutil.rmtree(shots, ignore_errors=True)
+        media_dir = Path(root).resolve() / 'bench-media'
+        shutil.rmtree(media_dir, ignore_errors=True)
         cmd = [_render_node(), str(PROBE_SCRIPT), '--app', str(app), '--kit', str(kit.get('dir')), '--seed', seed,
-               '--out', str(obs_path), '--shots', str(shots), '--runtime', runtime, '--repo', str(ROOT)]
+               '--out', str(obs_path), '--shots', str(shots), '--runtime', runtime, '--repo', str(ROOT),
+               '--media', str(media_dir)]
         proc = subprocess.Popen(cmd, cwd=tmp)
         _CHILDREN.append(proc)
         code = proc.wait()

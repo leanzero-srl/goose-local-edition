@@ -67,6 +67,11 @@ const seed = opt('seed');
 const outPath = resolve(opt('out'));
 const shotsDir = resolve(opt('shots'));
 const runtime = opt('runtime', 'wrapper');
+// The graded browser recording (owner, 2026-10-03: Forge results carry video like SB7.2): every graded surface page
+// is recorded and the pages are joined, in the order they were graded, into one clip under <tree>/bench-media.
+const mediaDir = opt('media') ? resolve(opt('media')) : null;
+const RECORD_SIZE = { width: 1280, height: 800 };   // SB7.1's recording frame (product_probe_sb71.mjs)
+let recording = null;                               // { context, pages: [{page, label, openedAt}] }
 mkdirSync(shotsDir, { recursive: true });
 
 const obs = {
@@ -351,8 +356,14 @@ async function main() {
 
   await section('ui', async () => {
     browser = await launch();
+    if (mediaDir) {
+      mkdirSync(join(mediaDir, 'raw'), { recursive: true });
+      recording = { context: await browser.newContext({ recordVideo: { dir: join(mediaDir, 'raw'), size: RECORD_SIZE } }), pages: [] };
+    }
     await probeUi(pack);
   });
+  // After every timed measurement: serialising the clip never overlaps grading.
+  if (recording) obs.media = await assembleRecording();
   obs.comments = commentAttempts(pack);
   obs.harnessMissing = [...new Set([...(emu.harnessMissing || []).map((x) => (typeof x === 'string' ? x : JSON.stringify(x)))])];
 }
@@ -375,7 +386,8 @@ const PAGE_HELPERS = () => {
 };
 
 async function openSurface(spec) {
-  const page = await browser.newPage({ viewport: { width: spec.width, height: spec.height } });
+  const page = await (recording ? recording.context : browser).newPage({ viewport: { width: spec.width, height: spec.height } });
+  if (recording) recording.pages.push({ page, label: `${spec.moduleKey} ${spec.entry} ${spec.theme} ${spec.width}px`, openedAt: Date.now() });
   const ev = { consoleErrors: [], pageErrors: [], failedRequests: [], popups: 0 };
   // A failed resource load also prints a console error; it is the failed request v_csp_clean already grades,
   // so it is kept apart (networkConsole) and v_console_clean grades the app's own errors (m_abs_assets).
@@ -731,6 +743,59 @@ async function exerciseModal(s, sid, forbidden, reopen) {
   out.close = { closeCalled: bridgeOps(post).slice(o1).some((b) => opName(b) === 'close') };
   await post.page.close();
   return out;
+}
+
+// One clip from the per-page recordings: Playwright writes one VP8 WebM per page at RECORD_SIZE, so the concat
+// demuxer joins them without re-encoding; SB's encoder (media_sb71.mjs encodeFullRecording: VP9, 4 MiB limit,
+// ffmpeg/ffprobe from BENCH_FFMPEG/BENCH_FFPROBE or PATH) makes the publishable copy. Any failure is recorded in
+// media.errors and the graded evidence is untouched.
+async function assembleRecording() {
+  const root = dirname(mediaDir);
+  const media = { schemaVersion: 1, scorerVersion: 'forge-1.0', recording: 'graded-browser', videos: [], errors: [] };
+  try {
+    const segments = [];
+    for (const { page, label } of recording.pages) {
+      if (!page.isClosed()) await page.close();
+      const raw = await page.video()?.path();
+      if (raw && existsSync(raw)) segments.push({ raw, label });
+    }
+    await recording.context.close();
+    if (!segments.length) throw new Error('no graded surface was recorded');
+    const { encodeFullRecording, videoDuration } = await import('./media_sb71.mjs');
+    const list = join(mediaDir, 'raw', 'segments.txt');
+    writeFileSync(list, segments.map((x) => `file '${x.raw.replace(/'/g, "'\\''")}'`).join('\n') + '\n');
+    const session = join(mediaDir, 'raw', 'forge-session.webm');
+    execSync(`${JSON.stringify(process.env.BENCH_FFMPEG || 'ffmpeg')} -hide_banner -loglevel error -f concat -safe 0 -i ${JSON.stringify(list)} -c copy -y ${JSON.stringify(session)}`);
+    let at = 0;
+    const timeline = segments.map(({ raw, label }) => {
+      const d = videoDuration(raw);
+      const seg = { surface: label, startSeconds: Math.round(at * 100) / 100, endSeconds: Math.round((at + d) * 100) / 100 };
+      at += d;
+      return seg;
+    });
+    const sourceFile = relative(root, session);
+    const video = { file: sourceFile, caption: 'Original graded browser recording; publication encoding pending', mimeType: 'video/webm',
+      scenario: 'ui', sourceFile, segments: timeline, selection: 'Every graded Custom UI surface, in grading order, at original speed' };
+    const output = join(mediaDir, 'forge-ui.webm');
+    try {
+      const sourceInterval = encodeFullRecording(session, output);
+      Object.assign(video, { file: relative(root, output), sourceInterval,
+        caption: 'Full graded browser recording: dashboard widget (no config, edit + Save, light and dark, 380 and 1180 px, a second '
+          + 'instance), sprint action modal (sort, router, select, comment post through the 429 retry, double click, forbidden post, close) and the not-started sprint' });
+    } catch (error) {
+      media.errors.push('Publication encoding failed; original retained: ' + String(error.message).slice(0, 180));
+    }
+    const bytes = readFileSync(join(root, video.file));
+    video.sha256 = (await import('node:crypto')).createHash('sha256').update(bytes).digest('hex');
+    video.bytes = bytes.length;
+    video.publishable = bytes.length <= 4 * 1024 * 1024 && video.file !== sourceFile;
+    media.videos.push(video);
+  } catch (error) {
+    media.errors.push('Recording unavailable: ' + String(error?.message || error).slice(0, 240));
+  }
+  const manifest = join(mediaDir, 'media-manifest.json');
+  writeFileSync(manifest, JSON.stringify(media, null, 2) + '\n');
+  return { manifest: relative(dirname(mediaDir), manifest), ...media };
 }
 
 async function contactSheet() {
