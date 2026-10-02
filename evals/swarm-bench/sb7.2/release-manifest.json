@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "scorerVersion": "sb-7.2",
-  "sourceCommit": "7d6230a095e6989d4d7260c89e27ec13f1ae5ad3",
-  "sourceCommitScope": "Benchmark implementation snapshot for SB7.2 (scorer sb-7.2): SB7.1's Meridian product, SB7 contract, starter (sb7.1/starter), fixtures and vendor with a 3D-weighted scorer (score_sb72.py wraps score_sb71.py), the framed default camera and overview legibility (product_probe_sb72.mjs = product_probe_sb71.mjs under the SB7.2 profile), public excellence rungs and a 180 ms stream-apply rung (sb72-thresholds.json), and run_build.py --sb72 through isolated_tiers.py. Release metadata and the validation receipt are added by the manifest commit. SB7.2 public contract trim (2026-10-02, 7d6230a09): isolated_tiers.py gains a per-tier `public` table that run_build.py renders into the workdir; SB7.1 still renders spec-build-sb7.md and sb7.1/VISUAL-CONTRACT.md (receipt contract tuple unchanged, test-pinned); SB7.2 renders its own sb7.2/SB7-CONTRACT.md, sb7.2/VISUAL-CONTRACT.md and sb7.2/STARTER.md (72,107 -> 35,714 bytes) and its prompt gains a definition of done and the 150-call budget; score_sb72.py hashes the SB7.2 contract files; release_manifest.py pins the two new files. Scoring bytes (probes, thresholds, check logic) unchanged.",
+  "sourceCommit": "34b466ea4c5e33f9a8fa309abc0a8f3110ac4627",
+  "sourceCommitScope": "Benchmark implementation snapshot for SB7.2 (scorer sb-7.2): SB7.1's Meridian product, SB7 contract, starter (sb7.1/starter), fixtures and vendor with a 3D-weighted scorer (score_sb72.py wraps score_sb71.py), the framed default camera and overview legibility (product_probe_sb72.mjs = product_probe_sb71.mjs under the SB7.2 profile), public excellence rungs and a 180 ms stream-apply rung (sb72-thresholds.json), and run_build.py --sb72 through isolated_tiers.py. Release metadata and the validation receipt are added by the manifest commit. SB7.2 public contract trim (2026-10-02, 34b466ea4): isolated_tiers.py gains a per-tier `public` table that run_build.py renders into the workdir; SB7.1 still renders spec-build-sb7.md and sb7.1/VISUAL-CONTRACT.md (receipt contract tuple unchanged, test-pinned); SB7.2 renders its own sb7.2/SB7-CONTRACT.md, sb7.2/VISUAL-CONTRACT.md and sb7.2/STARTER.md (72,107 -> 35,746 bytes) and its prompt gains a definition of done and the 150-call budget; score_sb72.py hashes the SB7.2 contract files; release_manifest.py pins the two new files. Scoring bytes (probes, thresholds, check logic) unchanged.",
   "validation": {
     "status": "passed",
     "scope": "Golden reference through the full SB7.2 scorer with --reference (freeze gate + severity selftest), six one-defect visual controls, SB7.1 reference control, and calibration-only re-scores of archived SB7.1 entrant trees. No model call.",
@@ -129,7 +129,7 @@
     "sb7.1/starter/web/viz.js": "c0b0a773299ea31a0ce272197df15bc2b17d412637ee658667b7d5c4250f358a",
     "sb7.2/SB7-CONTRACT.md": "a434aeafe4bb2f871f9641a87f071aeca87b5e9093bffd9e70ce68e79634cb8d",
     "sb7.2/STARTER.md": "58796eb672826509ee391a8883fcc0a2050c51099a81292cb83aeb26d244a7a9",
-    "sb7.2/VISUAL-CONTRACT.md": "e9096f784ac6039c5dd75b97ab062cf87213d3d2cf9dddbb66422a0520707faf",
+    "sb7.2/VISUAL-CONTRACT.md": "d9f37411e2307f5adcef1a4e07a45d0209c2f47695732216a0abd64017ea5bb4",
     "sb8/THREE-LICENSE.txt": "852e0e8699169bf9f6fdc6bda3e682d078dcbc738b5d33e74df594721bff271d",
     "sb8/VALIDATION.md": "744bc3f848decf4eb75438a57d4a81ac5d6aa05c5c262bd08c22c200d673cd99",
     "spec-build-sb7.md": "56f66c21c3557e9cbf6bccc4d4d01059ad88e4ee610e71f4cf67a8a34c330129",
