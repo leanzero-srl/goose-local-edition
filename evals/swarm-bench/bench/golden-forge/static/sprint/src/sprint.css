@@ -1,0 +1,120 @@
+.sprint-action {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.hidden-line {
+  margin: 0;
+  color: var(--ds-text-subtle);
+}
+
+.hidden-count {
+  color: var(--ds-text);
+  font-weight: 700;
+}
+
+.metric-creep dd {
+  color: var(--ds-text-warning);
+}
+
+.table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.ledger {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.ledger th,
+.ledger td {
+  padding: 6px 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--ds-border);
+  white-space: nowrap;
+}
+
+.ledger th {
+  color: var(--ds-text-subtle);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ledger th.sortable {
+  cursor: pointer;
+}
+
+.sort-button {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.ledger td.num {
+  text-align: right;
+}
+
+.ledger tbody tr {
+  cursor: pointer;
+}
+
+.ledger tbody tr:hover {
+  background-color: var(--ds-background-neutral-subtle-hovered);
+}
+
+.ledger tbody tr.selected {
+  background-color: var(--ds-background-selected);
+  color: var(--ds-text-selected);
+}
+
+.ledger td.empty {
+  color: var(--ds-text-subtle);
+  cursor: default;
+}
+
+.kind {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.kind-added {
+  background-color: var(--ds-background-warning-bold);
+  color: var(--ds-text-warning-inverse);
+}
+
+.kind-removed {
+  background-color: var(--ds-background-neutral-bold);
+  color: var(--ds-text-inverse);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.selection {
+  margin-right: auto;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
