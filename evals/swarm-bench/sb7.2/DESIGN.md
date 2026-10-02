@@ -165,6 +165,7 @@ instead of restating them (generation rule, faults, If-Match, Idempotency-Key, s
 | b_buckets_dst | timezone, every (day,status) cell incl. 0, Berlin instant days | S §2, §3 Buckets |
 | b_viz_records | 7 columns, equal lengths, server Berlin day | S §8 Data |
 | b_events_log, x_l2, x_ooo dup, r_no_dupe_effect events | contiguous seq from 1, type/source vocab, seq/type/at keys, no duplicate/stale events | S §3 Event ledger |
+| b_events_log, r_no_dupe_effect (critical), x_* via `_fetch_events` | the grader pages `/api/events` with `after=max(seq)`: an endpoint that ignores `after` or is not ascending repeats or skips events (contiguity, duplicate-effect count) | S §3 API table "events with `seq > after`, ascending by `seq`" (restored after independent review) |
 | b_error_envelope, b_json_shapes, d_validation | 400 + field_errors (path, code) for bad limit/offset/sort/status and invalid draft; 404 envelope; 401/403/404/200 auth matrix | S §3 Payments + Errors, §5 roles + validation |
 | c_paged_walk | 192 pages, no undocumented params, no duplicate pages | S §3 Sync "documented parameters only — no limit" + docs |
 | c_b1_drop_resume, c_b2_retry_after | resume same cursor; one retry after Retry-After, continue | S §3 Sync |
@@ -175,11 +176,13 @@ instead of restating them (generation rule, faults, If-Match, Idempotency-Key, s
 | d_client_timeouts | served while vendor down, or `timeout=` in source | S preamble "timeout of at most 10 s", §1 last bullet |
 | d_peer_absence | proxy 502 + notifier_unreachable; each service survives the other's death | S §3 API table, §1 "Neither crashes" |
 | d_decisions_doc | ## D1/D2/D3, ≥15 chars, stance matches observed | S §9 |
+| d_decisions_doc D2 observation | gather reads `GET /api/drafts?state=rejected` and resubmits the first non-F3 row; an unfiltered list resubmits the wrong draft | S §5 table "filtered by state" (restored after independent review) |
 | j_loads_data, j_first_use | rows render; DOM states the total ("of N"); first rows ≤2 s; console | S §7 Table ("showing X–Y of TOTAL", "within 2 s") |
 | j_console_clean, gate console | zero console errors | S §7 States |
 | j_sync_journey | #sync-now / disabled or data-state=syncing / POST /api/sync / table rows = latest page with money, status word, note / .cur-total count + total / last_sync advanced | S §7 Summary + Table, §3 API `/api/sync`, Summary `last_sync` |
 | j_workflow_journey, r_workflow_durability | #role-token, #draft-form fields, #draft-list data-draft-id/data-state, submit/approve buttons, feed shows approval, sent payment found via #prev/#next (+ Date header sort) on a ≤50-row page with correct cells | S §5, §7 Drafts panel + Table |
 | j_workflow_reject | reject reaches `rejected`, feed shows it | S §5, §7 Drafts panel |
+| j_workflow_journey (critical), j_workflow_reject | pageNotificationsState reads only the first 6 `#notifications` entries and tests /approv/, /reject/ on them: an oldest-first feed hides the new rows (journey 6/7 → ×0.943, reject ≤ 2/3) | S §6 `/notify/notifications` "newest first", §7 feed "entries newest first" (restored after independent review) |
 | j_notifications_feed, r_b7 ui_* | data-state degraded → live within 5 s, no reload | S §7 Notifications feed |
 | j_error_state | visible, actionable error when /api is blocked | S §7 States |
 | j_empty_state | no phantom rows; empty state with progress or blocked (D3) | S §7 States, §9 D3 |
@@ -242,11 +245,13 @@ instead of restating them (generation rule, faults, If-Match, Idempotency-Key, s
   needs only the POST and an advancing `last_sync` (kept).
 - Note conflict path (second 412 → `409 conflict`, row unchanged; UI revert + `#notice`): no check makes a note
   conflict. The If-Match write-through itself is kept (the optimistic and animation note edits need it).
-- Event `txn` field and `latest_seq`; which `source` each kind of change uses (only the vocabulary is checked).
+- Event `txn` field and `latest_seq` (`_fetch_events` stops on an empty page without it; the `seq > after` paging
+  rule itself is KEPT); which `source` each kind of change uses (only the vocabulary is checked).
 - Outbox relay batch size ≤50: the relay talks to the candidate's own notifier; no check can observe it.
   `/notify/events` request/response shape (`accepted`/`duplicate`): internal to the candidate, never called by the
   grader. Notifier `/health` `received`/`applied`/`notifications`, `/notify/processed` `latest_seq`, notifications
-  "newest first" and "human sentence" (only `kind`, `event_seq` and `duplicate` are read).
+  "human sentence". ("Newest first" was cut here at first and RESTORED: the browser feed is read through its
+  first 6 entries, see the Kept map.)
 - Error-envelope frozen vocabularies (the six field-error codes, the envelope code list beyond the codes kept): the
   check requires string `code`/`message` and string `path`/`code` per field error; "naming the parameter" likewise.
 - Four-eyes (`approval_forbidden`, submitter cannot approve/reject): no check uses the submitter's token to approve.

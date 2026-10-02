@@ -74,7 +74,7 @@ payment created mid-walk ends as exactly one row. The full first walk finishes w
 | `POST` | `/api/sync` | runs a sync; `last_sync` advances on success |
 | `POST` | `/api/payments/<id>/note` | body `{"note": <str>}` → `{"id", "note", "version"}` |
 | `POST` | `/api/webhooks/meridian` | the vendor's delivery endpoint, §4 |
-| `GET` | `/api/events?after=<seq>&limit=<int>` | `{"events": [...]}`, bearer token required (any role) |
+| `GET` | `/api/events?after=<seq>&limit=<int>` | `{"events": [...]}` — events with `seq > after`, ascending by `seq`; bearer token required (any role) |
 | `GET` | `/api/outbox/status` | `{"pending": <int>, "notifier": "up" \| "down", ...}` |
 | `GET` | `/api/notifications?limit=&offset=` | proxied to notifierd; notifier down → `502`, code `"notifier_unreachable"` |
 | `POST/GET` | `/api/drafts...` | §5 |
@@ -146,7 +146,7 @@ Missing or unknown token → `401` (`"unauthorized"`); known token, wrong role �
 | `POST` | `/api/drafts/<id>/submit` | maker, checker | `submitted` → `draft.submitted` |
 | `POST` | `/api/drafts/<id>/approve` | checker | `approved` → `draft.approved`, then SEND |
 | `POST` | `/api/drafts/<id>/reject` | checker | `rejected` → `draft.rejected` |
-| `GET` | `/api/drafts?state=` | any | `{"data": [...], "total": <int>}` |
+| `GET` | `/api/drafts?state=` | any | `{"data": [...], "total": <int>}`, filtered by state |
 
 - States `draft → submitted → approved | rejected`, `approved → sent`. A draft object carries
   at least `id`, `state`, `amount_minor`, `currency`, `counterparty`, `note`, `created_at`. An
@@ -167,7 +167,7 @@ Missing or unknown token → `401` (`"unauthorized"`); known token, wrong role �
 | `POST` | `/notify/events` | batch of ledger events from the relay |
 | `GET` | `/health` | `{"status": "ok", "duplicate": <int>, ...}` |
 | `GET` | `/notify/processed?after=<seq>` | `{"processed": [{"seq": <int>, "type": <str>}...]}` |
-| `GET` | `/notify/notifications?limit=&offset=` | `{"data": [{"id", "event_seq", "kind", "message", "at"}...], "total": <int>}` |
+| `GET` | `/notify/notifications?limit=&offset=` | `{"data": [{"id", "event_seq", "kind", "message", "at"}...], "total": <int>}`, newest first |
 
 Idempotent by ledger `seq`: a seq already in the processed set changes nothing (counted in
 `duplicate`), and a mixed batch still applies its new events. The processed set and the
@@ -199,7 +199,7 @@ header, table and controls, and a branded header bar `#app-header` with the prod
   immediately, before the network answers, with the row at `data-state="saving"`, then
   `data-state="saved"` after the 200.
 - **Notifications feed `#notifications`:** reads only `/api/notifications`, polling at least
-  every **5 s**; each entry carries `data-event-seq` and shows its kind and message. `data-state="live"`; `"degraded"`
+  every **5 s**; entries newest first, each carrying `data-event-seq` and showing its kind and message. `data-state="live"`; `"degraded"`
   while the proxy answers 502; back to `"live"` without a reload within **5 s** of the notifier
   returning.
 - **Drafts panel:** a token input `#role-token` (the bearer for drafts calls); `#draft-form`
