@@ -544,9 +544,7 @@ def synthetic_pack(seed: str = '00000000000000aa') -> Dict:
     faults = [{'id': 'f-consumer', 'match': {'scope': 'consumer-of-change', 'changelogId': '9201', 'nth': 1},
                'status': 429, 'retryAfter': 30, 'reason': 'jira-quota-tenant-based'},
               {'id': 'f-reconcile', 'match': {'scope': 'scheduled-run', 'nth': 2},
-               'status': 429, 'retryAfter': 2, 'reason': 'jira-burst-based'},
-              {'id': 'f-comment', 'match': {'scope': 'comment-post', 'nth': 1},
-               'status': 429, 'retryAfter': 1, 'reason': 'jira-per-issue-on-write'}]
+               'status': 429, 'retryAfter': 2, 'reason': 'jira-burst-based'}]   # the comment-path 429 was dropped (DESIGN §17.2 E)
     limits = {name: {'value': value, 'receipt': 'synthetic (WP1 names, forge/site/limits.cjs)'} for name, value in
               (('searchJqlIdsOnlyMax', 5000), ('searchJqlFieldsMax', 100), ('changelogBulkIssues', 1000),
                ('changelogBulkFields', 10), ('changelogBulkPageMax', 10000), ('issueBulkNamedFields', 1000),
