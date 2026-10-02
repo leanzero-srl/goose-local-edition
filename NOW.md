@@ -32,6 +32,9 @@
 > OPENROUTER_PARAMETERS pinning xiaomi — REMOVE it before the Sol/Sonnet runs (backup scratchpad config.yaml.bak).
 > Site page data (sb72-page.json + prompt resync) delegated, local commit only → refuter → push → `register-sb72.mjs flip
 > --promote-run brun-2cbdb9f5-… --live` → relaunch app without the proxy env.
+> **19:3x DONE:** site page (refuter killed 4 claims, fixed efb500a) pushed; catalog FLIPPED — sb-7.2 current, rendered verified.
+> NOW: mimo-v2.6-flash run (pinned Xiaomi, $1 stop) in flight; then mimo-pro, then remove the pin → gpt-6.1-sol, sonnet-5.5.
+> Relaunch the app WITHOUT LEANZERO_BENCH_PUBLISH_URL only between runs (killing the app mid-run kills the run).
 
 > **DESKTOP UX QUEUE (Mihai 2026-09-22, in order; each lands as its own commit, verified in the running app).**
 > 0. LANDED (7927b903f + the proof commit) — Cloud Providers: no hard-coded "connection test model"; key → the provider's own model list → a chosen
