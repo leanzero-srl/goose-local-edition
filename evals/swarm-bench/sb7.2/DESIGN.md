@@ -103,7 +103,7 @@ public 250 ms P budget). No other threshold moved.
 | SB7.2 | 3,322 | 12,229 | 54,146 | 69,697 |
 
 −4,334 bytes (−5.9%) per resident copy. "Evidence and grading" 6,610 → 925 bytes: what is checked, not how.
-Superseded by the trim below (SB7.2 now 35,714 bytes of its own public text).
+Superseded by the trim below (SB7.2 now 35,746 bytes of its own public text).
 
 ## Public contract trim (2026-10-02, owner-approved)
 
@@ -136,13 +136,13 @@ earns nothing." (enforcement: run_build `goose --max-turns`, another change; kee
 |---|---:|---:|---:|
 | benchmark-prompt.md (spec-build-sb72.md) | 3,322 | 3,267 | −1.7% |
 | SB7-CONTRACT.md | 54,146 | 24,488 | −54.8% |
-| VISUAL-CONTRACT.md | 12,229 | 6,931 | −43.3% |
+| VISUAL-CONTRACT.md | 12,229 | 6,963 | −43.1% |
 | STARTER.md | 2,410 | 1,028 | −57.3% |
-| **SB7.2-owned subtotal** | **72,107** | **35,714** | **−50.5%** |
+| **SB7.2-owned subtotal** | **72,107** | **35,746** | **−50.4%** |
 | BROWSER-TESTING.md (run_build, shared with SB7.1) | 537 | 537 | 0 |
 | prompt browser line (run_build, shared) | 153 | 153 | 0 |
 | vendor docs at /v3/docs (vendor_docs_v3.md, shared with SB7.1's vendor) | 9,150 | 9,150 | 0 |
-| **everything the entrant receives** | **81,947** | **45,554** | **−44.4%** |
+| **everything the entrant receives** | **81,947** | **45,586** | **−44.4%** |
 
 Raw repository bytes (`SB7-CONTRACT.md` renders `{DOCS_URL}`/`{BASE_URL}`/`{API_KEY}`, ±tens of bytes). The
 vendor docs are untouched: they are SB7.1's vendor's bytes, and the trimmed contract now points at them
@@ -286,8 +286,10 @@ instead of restating them (generation rule, faults, If-Match, Idempotency-Key, s
   legend explains the encoding".
 - "labeled" input; no native select or browser dialog; "selecting a payment in the field can populate the ID input"
   (permissive).
-- Hide the top-12 labels while inspecting (not read while inspecting); inspection usable at 375 px and the 320 px
-  mobile minimum (the inspector is only probed at 1280 × 800).
+- Inspection usable at 375 px and the 320 px mobile minimum (the inspector is only probed at 1280 × 800).
+  KEPT after review: "hide the full-field labels while inspecting" — no row reads labels during inspection, but an
+  inspected payment that is a label candidate keeps an eligible `.viz-label` over its cap callout, which
+  v_presentation_text (uncovered) and q_inspector_framing (callout overlap) would charge.
 - Replay disabled until an update exists (only "enabled after an update" is read); `#replay-status` text; "reloaded
   pages need not retain replay history".
 - The EUR frame may touch the ribs (implied by the numbers); prose on dimensional contrast, showcases, "one finished
