@@ -59,7 +59,7 @@ The proxy forwards both; without an `llm` module an LLM call is refused 403.
 
 - `site/llm.cjs`: `list()` = 2 active + 2 deprecated (incl. the docs' `claude-opus-4-6`), seeded order;
   each chat takes the next scripted answer — clean tool call, digits + a hidden and an unknown change id,
-  refusal, malformed arguments, 429 `ForgeLlmAPIError` — then clean; `emu.llm.phase(name)` restarts it;
+  refusal, malformed arguments, 500 `ForgeLlmAPIError` — then clean; `emu.llm.phase(name)` restarts it;
   `emu.llm.log()` holds every prompt and answer. stream() returns the answer as one ChatResponse chunk.
 - `site/realtime.cjs`: channels, module/product-context scoping, signed tokens (claims must match),
   `replaySeconds`. A resolver call carries a frontend context token, so its `publish()` reaches that

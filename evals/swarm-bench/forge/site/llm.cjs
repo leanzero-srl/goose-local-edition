@@ -18,7 +18,7 @@
 //   digits    tool call: a summary WITH digits, ids = one from the prompt + one hidden from the caller + one unknown
 //   refusal   finish_reason 'refusal', text, no tool call
 //   malformed tool call whose arguments do not match the tool's schema (summary not a string, changeIds not an array)
-//   error     429 + Retry-After, {code: 'RATE_LIMIT_EXCEEDED'} -> ForgeLlmAPIError{status: 429}
+//   error     500, {code: 'INTERNAL_SERVER_ERROR'} -> ForgeLlmAPIError{status: 500} (DESIGN §5.2)
 // then `clean` for every later call. stream() gets the same answer as ONE chunk: @forge/llm reads the response body as
 // newline-separated JSON and yields each line as a whole ChatResponse (out/streaming/llm-stream-parser.js:5,17,53;
 // out/streaming/stream-response-wrapper.js:41-48; stream-response-wrapper.d.ts:10 `AsyncIterable<ChatResponse>`),
@@ -33,7 +33,6 @@ const SCRIPT = ['clean', 'digits', 'refusal', 'malformed', 'error'];
 // harness's choice: the docs' own example is deprecated, so copying it is the trap (DESIGN §2.4).
 const MODELS = { active: ['claude-opus-5', 'claude-sonnet-5'], deprecated: ['claude-opus-4-6', 'claude-opus-4-7'] };
 const NO_SAMPLING = new Set(['claude-opus-4-7', 'claude-opus-4-8', 'claude-opus-5', 'claude-sonnet-5']);
-const RETRY_AFTER_S = 2; // ratio: the scripted 429's wait, the same as the site's scheduled-run fault (limits/faults)
 
 function createLlm({ pack, now }) {
   const r = createRng(crypto.createHash('sha256').update(`llm:${pack.seed}`).digest('hex').slice(0, 16));
@@ -101,7 +100,7 @@ function createLlm({ pack, now }) {
     const kind = SCRIPT[step] ?? 'clean';
     step += 1;
     entry.step = kind;
-    if (kind === 'error') return done(429, { code: 'RATE_LIMIT_EXCEEDED', message: 'Rate limit exceeded for Forge LLMs.' }, { 'Retry-After': String(RETRY_AFTER_S) });
+    if (kind === 'error') return done(500, { code: 'INTERNAL_SERVER_ERROR', message: 'The Forge LLM service failed to process the request.' });
     const out = answer(kind, body, caller.asUser ?? pack.viewer);
     out.usage = usage(body, out);
     return { ...done(200, out), stream: Boolean(body.stream) };

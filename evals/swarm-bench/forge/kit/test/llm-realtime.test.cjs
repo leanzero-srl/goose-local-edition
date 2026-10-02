@@ -1,7 +1,7 @@
 'use strict';
 // Forge LLM and Realtime through Atlassian's pinned runtime wrapper (DESIGN §17.2 A/B):
 //   LLM       list() (2 active, 2 deprecated incl. the docs' claude-opus-4-6), the scripted answers in order
-//             (clean, digits + hidden + unknown ids, refusal, malformed, 429 ForgeLlmAPIError, then clean),
+//             (clean, digits + hidden + unknown ids, refusal, malformed, 500 ForgeLlmAPIError, then clean),
 //             phase() restarts it, every prompt logged, the docs' validation rule, stream(), no llm module -> refused.
 //   Realtime  a widget's bridge subscriptions receive: publishGlobal from a consumer (async event); NOT publish()
 //             from a consumer (rejected, logged); publish() from a frontend-invoked resolver; the page's own
@@ -96,7 +96,7 @@ test('Forge LLM: list, the scripted answers in order, logged prompts, validation
     assert.strictEqual(refusal.choices[0].message.tool_calls, undefined);
     assert.notStrictEqual(typeof args(malformed).summary, 'string');
     assert.ok(!Array.isArray(args(malformed).changeIds));
-    assert.deepStrictEqual([error.threw, error.status, error.code], ['ForgeLlmAPIError', 429, 'RATE_LIMIT_EXCEEDED']);
+    assert.deepStrictEqual([error.threw, error.status, error.code], ['ForgeLlmAPIError', 500, 'INTERNAL_SERVER_ERROR']);
     assert.deepStrictEqual(args(after).changeIds, visible, 'then clean again');
     assert.deepStrictEqual([r.result.invalid.threw, r.result.invalid.status], ['ForgeLlmAPIError', 400]);
     assert.strictEqual(r.result.stream.length, 1);
