@@ -35,7 +35,7 @@ function createKvs(manifest) {
   const entities = new Map(); // name -> Map(key -> value)
   const defs = Object.fromEntries((manifest.app.storage?.entities ?? []).map((e) => [e.name, e]));
   const ops = [];
-  const typeOk = (t, v) => (t === 'any' ? true : t === 'string' ? typeof v === 'string' : t === 'boolean' ? typeof v === 'boolean' : t === 'integer' ? Number.isInteger(v) : t === 'float' ? typeof v === 'number' : false);
+  const typeOk = (t, v) => (t === 'any' ? true : t === 'string' ? typeof v === 'string' : t === 'boolean' ? typeof v === 'boolean' : t === 'integer' ? Number.isInteger(v) && v >= -2147483648 && v <= 2147483647 : t === 'float' ? typeof v === 'number' : false);
   const err = (status, code, message) => ({ status, json: { code, message } });
   function handle(op, body) {
     ops.push({ op, body });

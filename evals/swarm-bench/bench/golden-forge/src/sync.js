@@ -36,8 +36,16 @@ function estimateOf(fields, fieldId) {
   return Number.isFinite(n) ? n : 0;
 }
 
+// Jira types changelog `created` as an ISO-8601 date-time; an epoch-millisecond number is accepted too.
+// Anything else is logged and the entry skipped, never silently dropped.
+export function instantOf(created) {
+  if (typeof created === 'number' && Number.isFinite(created)) return created;
+  if (typeof created === 'string') return Date.parse(created);
+  return NaN;
+}
+
 export function changeRow(sprint, history, issue, kind, source) {
-  const at = Date.parse(history.created);
+  const at = instantOf(history.created);
   return {
     sprintId: sprint.id,
     changeId: String(history.id),
@@ -56,10 +64,15 @@ export function changeRow(sprint, history, issue, kind, source) {
 async function rowsOf(cfg, issue, histories, source, resolve) {
   const rows = [];
   for (const history of histories) {
+    const at = instantOf(history.created);
     for (const move of sprintMoves(history, cfg.sprintFieldId)) {
       const sprint = await resolve(move.sprintId);
       if (!sprint) continue;
-      if (!(Date.parse(history.created) > sprint.startMs)) continue;
+      if (Number.isNaN(at)) {
+        console.error(`changelog ${history.id} of issue ${issue.key ?? issue.id}: unreadable created ${JSON.stringify(history.created)}; change not recorded`);
+        continue;
+      }
+      if (!(at > sprint.startMs)) continue;
       rows.push(changeRow(sprint, history, issue, move.kind, source));
     }
   }
@@ -91,10 +104,12 @@ export async function applyIssueEvent(cfg, { issueId, changelogId, sprintChange 
     return s;
   };
 
+  // The event names its changelog entry; its `created` and author come from Jira (the product event
+  // carries neither). Only that entry is recorded: lost siblings are the scheduled run's to heal.
   let histories = [];
   if (sprintChange && changelogId) {
-    const res = await jiraJson('app', route`/rest/api/3/issue/${issueId}/changelog/list`, postJson({ changelogIds: [Number(changelogId)] }), policy);
-    histories = res.histories ?? [];
+    const all = (await sprintHistories([String(issueId)], cfg.sprintFieldId, policy)).get(String(issueId)) ?? [];
+    histories = all.filter((h) => String(h.id) === String(changelogId));
     for (const history of histories) for (const move of sprintMoves(history, cfg.sprintFieldId)) await resolve(move.sprintId);
   }
 
