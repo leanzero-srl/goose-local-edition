@@ -10,6 +10,8 @@
     "@forge/events": "3.0.7",
     "@forge/hooks": "2.0.0",
     "@forge/kvs": "2.0.7",
+    "@forge/llm": "1.0.7",
+    "@forge/realtime": "1.0.1",
     "@forge/resolver": "2.0.0",
     "esbuild": "0.28.2",
     "react": "18.3.1",

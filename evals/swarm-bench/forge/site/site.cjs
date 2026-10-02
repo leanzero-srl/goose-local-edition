@@ -19,6 +19,8 @@ const { createRenderer } = require('./rest/render.cjs');
 const platform = require('./rest/platform.cjs');
 const agile = require('./rest/agile.cjs');
 const { NotModelledError } = require('./jql.cjs');
+const { createLlm } = require('./llm.cjs');
+const { createRealtime } = require('./realtime.cjs');
 
 const HANDLERS = { ...platform.handlers, ...agile.handlers };
 const COMMENT_POST = 'POST /rest/api/3/issue/{issueIdOrKey}/comment';
@@ -203,7 +205,21 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
     change: { id: d.change.changelogId, created: d.change.created, authorId: d.change.authorId,
       items: d.change.items.map(({ field, fieldId, from, fromString, to, toString }) => ({ field, fieldId, from: from === '' ? null : from, fromString: fromString === '' ? null : fromString, to: to === '' ? null : to, toString: toString === '' ? null : toString })) },
     issue: eventSnapshot(d.issue) });
+  // Platform services the site hosts for every emulator attached to it: Forge LLM (llm.cjs) and Realtime
+  // (realtime.cjs). The realtime token key derives from the control token, so only this site's emulators can sign.
+  const llm = createLlm({ pack, now: () => state.now() });
+  const realtime = createRealtime({ now: () => state.now(), secret: crypto.createHash('sha256').update(`realtime:${token}`).digest() });
   const control = {
+    llm: (req) => llm.handle(req),
+    llmphase: ({ phase }) => llm.phase(phase),
+    llmlog: ({ since = 0 }) => ({ entries: llm.log.slice(Number(since)), next: llm.log.length, state: llm.state(), models: llm.models() }),
+    rtsign: (a) => realtime.signToken(a),
+    rtcontext: (ctx) => ({ contextToken: realtime.mintContext(ctx) }),
+    rtsubscribe: (a) => realtime.subscribe(a),
+    rtunsubscribe: ({ subscriptionId }) => ({ removed: realtime.unsubscribe(subscriptionId) }),
+    rtpublish: (a) => realtime.publish(a),
+    rtdeliveries: ({ since = 0, origin = null }) => ({ deliveries: realtime.deliveriesSince(Number(since), origin) }),
+    rtlog: ({ since = 0 }) => ({ ...realtime.eventsSince(Number(since)), subscriptions: realtime.subscriptions() }),
     info: () => ({ cloudId: pack.cloudId, siteUrl: pack.siteUrl, appAccountId: pack.appAccountId, now: new Date(state.now()).toISOString(),
       users: pack.users.map(({ accountId, displayName }) => ({ accountId, displayName })), viewer: pack.viewer,
       // What the Agile REST API discloses anyway; the dev kit builds sprint-action contexts from it.
@@ -229,7 +245,7 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
       }
       return { ok: true };
     },
-    reset: () => { state.reset(); resetFaults(); log.length = 0; faultLog.length = 0; signals.length = 0; return { ok: true }; },
+    reset: () => { state.reset(); resetFaults(); log.length = 0; faultLog.length = 0; signals.length = 0; llm.reset(); realtime.reset(); return { ok: true }; },
     log: ({ since = 0 }) => ({ entries: log.slice(Number(since)), next: log.length }),
     comments: () => ({ comments: state.st.comments }),
     users: () => control.info().users,
@@ -272,6 +288,8 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
     signals,
     harnessMissing,
     control,
+    llm,
+    realtime,
     // A live change that happens in Jira without its event reaching the app (a dropped delivery).
     applyChange: (change) => state.applyThrough(typeof change === 'string' ? change : change.changelogId),
     flushLive: () => state.flush(),

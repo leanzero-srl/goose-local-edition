@@ -28,6 +28,12 @@ const USAGE = `forge-dev <command>   (run from the app directory; $FORGE_SITE_UR
         processes may run side by side. In an edit surface window.__forgeHost.save()
         performs the dashboard's Save. A saved widget config persists like a dashboard's: later
         serve runs of the widget open with it; --config '<json>' overrides it for one run, reset clears it.
+  llm [--phase <name>]        the dev site's Forge LLM: the model list, the scripted answer the next chat call
+                              gets, every call so far (full prompts and answers in .forge-dev/llm-log.json);
+                              --phase restarts the script (clean, digits, refusal, malformed, error, then clean)
+  realtime [--follow]         every Realtime publish on the dev site (channel, payload, delivered / no
+                              subscriber / rejected) and the open subscriptions; --follow keeps watching.
+                              A served surface's log also prints each event delivered to its page.
   kvs                         dump stored keys and entities
   users                       list the dev site's users (the first line is the default viewer)
   reset                       clear dev storage, queues and saved widget configs, and rewind the dev site's update stream
@@ -37,7 +43,7 @@ const argv = process.argv.slice(2);
 const cmd = argv[0];
 const flag = (name) => argv.includes(`--${name}`);
 const opt = (name) => { const i = argv.indexOf(`--${name}`); return i >= 0 ? argv[i + 1] : undefined; };
-const BOOLEAN_FLAGS = new Set(['--edit', '--help']);
+const BOOLEAN_FLAGS = new Set(['--edit', '--help', '--follow']);
 const positional = [];
 for (let i = 1; i < argv.length; i++) {
   if (argv[i].startsWith('--')) { if (!BOOLEAN_FLAGS.has(argv[i])) i++; continue; }
@@ -142,7 +148,25 @@ function printCalls(calls) {
     const who = c.service === 'jira' ? c.provider : '';
     const extra = [c.retryAfter ? `Retry-After ${c.retryAfter}` : '', c.needsAuthentication ? 'NeedsAuthenticationError (asUser with no user)' : '', c.limitError ? c.limitError : '', c.missingScope ? `missing ${c.missingScope}` : ''].filter(Boolean).join(' ');
     console.log(`  ${String(c.service).padEnd(6)} ${who.padEnd(4)} ${c.method} ${c.path} -> ${c.status}${extra ? `  ${extra}` : ''}`);
+    if (c.service === 'llm') console.log(`         ${llmSummary(c)}`);
+    if (c.service === 'realtime') console.log(`         ${realtimeSummary(c)}`);
   }
+}
+// What the scripted Forge LLM answered (the full prompts and answers: `forge-dev llm`).
+function llmSummary(c) {
+  if (c.refused) return `REFUSED: ${c.refused}`;
+  const r = c.response ?? {};
+  if (c.op === 'list') return `models: ${(r.models ?? []).map((m) => `${m.model} (${m.status})`).join(', ')}`;
+  if (c.status !== 200) return `error ${c.status} ${r.code ?? ''}: ${r.message ?? ''}`;
+  const ch = r.choices?.[0];
+  const tc = ch?.message?.tool_calls?.[0];
+  return `model ${c.model}: finish_reason ${ch?.finish_reason}${tc ? `, tool ${tc.function.name}(${JSON.stringify(tc.function.arguments)})` : `, text ${JSON.stringify(ch?.message?.content ?? '')}`}`;
+}
+function realtimeSummary(c) {
+  if (c.op === 'signRealtimeToken') return `signed a token for '${c.body?.channelName}' (expiresAt ${c.response?.expiresAt})`;
+  const r = c.response ?? {};
+  const outcome = r.errors ? `NOT PUBLISHED: ${r.errors.map((e) => e.message).join('; ')}` : r.eventId ? `delivered (event ${r.eventId})` : 'no subscriber on that channel/context: eventId null';
+  return `${c.op} '${c.body?.channel}' payload ${c.body?.payload} -> ${outcome}`;
 }
 function printInvocation(r, label) {
   console.log(`== ${label}: ${r.functionKey ?? '?'} (${r.moduleType ?? '?'} ${r.moduleKey ?? ''})${r.asUser ? ` as ${r.asUser}` : ' as app'} -> ${r.ok ? 'ok' : r.timedOut ? 'TIMED OUT' : 'FAILED'} ${r.ms ?? 0} ms`);
@@ -191,6 +215,35 @@ async function main() {
     if (st.kvs) kvs.load(st.kvs);
     console.log(JSON.stringify({ ...kvs.snapshot(), pendingQueueEvents: (st.queue ?? []).length, widgetConfigs: st.widgetConfigs ?? {} }, null, 2));
     return 0;
+  }
+  if (cmd === 'llm') {
+    const site = siteFromEnv();
+    const post = async (op, args) => (await fetch(`${site.adminUrl}/${op}`, { method: 'POST', body: JSON.stringify(args), headers: { 'content-type': 'application/json' } })).json();
+    if (opt('phase') !== undefined) console.log(`script restarted: ${JSON.stringify(await post('llmphase', { phase: opt('phase') }))}`);
+    const r = await post('llmlog', { since: 0 });
+    console.log(`models (list()): ${r.models.map((m) => `${m.model} ${m.status}`).join(', ')}`);
+    console.log(`script: ${r.state.script.join(' -> ')}, then clean; next chat call gets: ${r.state.next}`);
+    fs.mkdirSync(stateDir, { recursive: true });
+    const file = path.join(stateDir, 'llm-log.json');
+    fs.writeFileSync(file, JSON.stringify(r.entries, null, 2) + '\n');
+    for (const e of r.entries) console.log(`${e.t} ${e.op} ${e.model ?? ''} -> ${e.status}${e.step ? ` [${e.step}]` : ''}${e.asUser ? ` as ${e.asUser}` : ''} (${e.moduleKey ?? '?'})`);
+    console.log(`${r.entries.length} call(s); every prompt and answer in full: ${path.relative(process.cwd(), file)}`);
+    return 0;
+  }
+  if (cmd === 'realtime') {
+    const site = siteFromEnv();
+    const post = async (op, args) => (await fetch(`${site.adminUrl}/${op}`, { method: 'POST', body: JSON.stringify(args), headers: { 'content-type': 'application/json' } })).json();
+    let since = 0;
+    const show = (e) => console.log(`${e.at} ${e.isGlobal ? 'publishGlobal' : 'publish'} '${e.channel}' from ${e.origin?.source ?? '?'} ${e.origin?.moduleKey ?? ''}${e.origin?.moduleType ? ` (${e.origin.moduleType})` : ''} payload ${e.payload} -> `
+      + (e.rejected ? `REJECTED ${e.rejected}` : e.delivered.length ? `delivered to ${e.delivered.length} subscription(s)` : 'no matching subscription'));
+    for (;;) {
+      const r = await post('rtlog', { since });
+      if (since === 0) console.log(`${r.subscriptions.length} subscription(s): ${r.subscriptions.map((x) => `${x.isGlobal ? 'global ' : ''}'${x.channelName}'`).join(', ') || 'none'}`);
+      for (const e of r.events) show(e);
+      since = r.next;
+      if (!flag('follow')) return 0;
+      await sleep(500);
+    }
   }
   if (cmd === 'users') {
     const site = siteFromEnv();
@@ -307,7 +360,9 @@ async function main() {
       let savedConfigs = '{}';
       const tick = setInterval(async () => {
         for (const b of emu.bridgeLog.slice(lastLog)) {
-          const detail = b.payload?.functionKey ? ` ${b.payload.functionKey}` : ['navigate', 'open'].includes(b.op) ? ` ${JSON.stringify(b.payload)}${b.url ? ` -> ${b.url}` : ''}` : '';
+          const detail = b.payload?.functionKey ? ` ${b.payload.functionKey}` : ['navigate', 'open'].includes(b.op) ? ` ${JSON.stringify(b.payload)}${b.url ? ` -> ${b.url}` : ''}`
+            : b.op === 'realtimeEvent' ? ` '${b.payload.channel}' delivered to the page: ${b.payload.payload}`
+              : b.op === 'subscribeRealtimeChannel' ? ` ${b.payload?.isGlobal ? 'global ' : ''}'${b.payload?.channelName}'` : '';
           console.log(`bridge ${b.op}${detail}${b.error ? ` ERROR ${b.error}` : ''}`);
         }
         lastLog = emu.bridgeLog.length;

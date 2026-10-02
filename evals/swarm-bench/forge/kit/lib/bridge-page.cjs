@@ -8,6 +8,7 @@
 
 function pageBridge(cfg) {
   const subs = new Map();
+  const rtSubs = new Map();
   const editHandlers = { onSave: [], onProductSave: null, onSaveError: [] };
   let lastUpdate = null;
   let hasUpdate = false;
@@ -22,6 +23,11 @@ function pageBridge(cfg) {
     return r.value;
   };
   const emitLocal = (event, payload) => {
+    if (event === '__forge_realtime_event__') {
+      const cb = rtSubs.get(payload.subscriptionId);
+      if (cb) { try { cb(payload.payload); } catch (e) { console.error(e); } }
+      return;
+    }
     for (const cb of subs.get(event) ?? []) {
       try { cb(payload); } catch (e) { console.error(e); }
     }
@@ -116,6 +122,11 @@ function pageBridge(cfg) {
           onProductSave: (fn) => { editHandlers.onProductSave = fn; call('onProductSave', null); },
           onSaveError: (fn) => { editHandlers.onSaveError.push(fn); call('onSaveError', null); },
         };
+      case 'subscribeRealtimeChannel': {
+        const r = await call('subscribeRealtimeChannel', { channelName: payload.channelName, options: payload.options ?? null, isGlobal: Boolean(payload.isGlobal) });
+        rtSubs.set(r.subscriptionId, payload.onEvent);
+        return { unsubscribe: async () => { rtSubs.delete(r.subscriptionId); await call('unsubscribeRealtimeChannel', { subscriptionId: r.subscriptionId }); } };
+      }
       case 'createHistory':
         await call('createHistory', null);
         return memoryHistory();

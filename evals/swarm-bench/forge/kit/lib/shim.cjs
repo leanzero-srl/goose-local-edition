@@ -16,6 +16,7 @@ function proxyRoute(meta) {
     }
     case 'kvs': case 'sql': case 'os': case 'realtime': return `${cap}/${meta.type}`;
     case 'egress': return '/egress';
+    case 'llm': return meta.model ? `/llm/${meta.model}` : '/llm/'; // the wrapper's route, measured 2026-10-03
     default: throw new Error(`shim: no proxy route for __forge_fetch__ type ${meta.type}`);
   }
 }
@@ -26,7 +27,7 @@ async function run(lambdaEvent, deadline) {
   global.__forge_fetch__ = async (m, p, init = {}) => {
     const headers = new Headers(init.headers);
     headers.set('forge-proxy-authorization', `Bearer ${meta.proxy.token}`);
-    headers.set('forge-proxy-target', p.toString());
+    if (m.type !== 'llm' && m.type !== 'realtime') headers.set('forge-proxy-target', p.toString());
     return nativeFetch(new URL(proxyRoute(m), meta.proxy.url), { ...init, headers });
   };
   globalThis.fetch = (url, init) => global.__forge_fetch__({ type: 'egress' }, new URL(url.toString()).toString(), init);
@@ -35,6 +36,7 @@ async function run(lambdaEvent, deadline) {
     lambdaContext: { getRemainingTimeInMillis: () => deadline - Date.now() },
     metrics: { counter: () => ({ incr() {}, incrBy() {}, decr() {}, decrBy() {} }), timing: () => ({ measure: () => ({ stop() {} }) }), gauge: () => ({ set() {} }) },
     featureFlags: () => false,
+    realtime: { contextToken: lambdaEvent.body?.contextToken }, // the wrapper: realtime:{contextToken: body?.contextToken}
   };
   const [file, fn] = lambdaEvent.handler.split('.');
   try {

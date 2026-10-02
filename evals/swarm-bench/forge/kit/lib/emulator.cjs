@@ -12,6 +12,8 @@
 //   await emu.openSurface(page, { moduleKey, entry, theme, layout, asUser, extension })   (bridge-host.cjs)
 //   await emu.hostSave(page)
 //   emu.kvs.snapshot(); emu.log; emu.bridgeLog; emu.harnessMissing; emu.close()
+//   await emu.llm.log(since) / emu.llm.phase(name)        Forge LLM: every prompt and answer; restart the script
+//   await emu.realtime.log(since); emu.realtime.deliveries()   every publish (delivered/rejected); page deliveries
 //
 // `site` is the object createSite() returns (scoring, in-process) or {url, adminUrl} of a running site
 // (the dev kit). Either way the emulator reaches the site only through its control surface and the proxy.
@@ -41,7 +43,7 @@ const LONG_RUNNING_PAYLOAD_BYTES = 100 * 1024;
 function siteClient(site) {
   if (site.control) {
     const c = site.control;
-    return { url: site.url, call: async (op, args = {}) => c[op](args) };
+    return { url: site.url, call: async (op, args = {}) => c[op](args), onRealtime: site.realtime ? (fn) => site.realtime.onDeliver(fn) : null };
   }
   const admin = site.adminUrl;
   return {
@@ -154,7 +156,7 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     },
   };
 
-  const proxy = createProxy({ siteUrl: client.url, manifest, kvs, queue, invocations, clock, log, harnessMissing });
+  const proxy = createProxy({ siteUrl: client.url, siteCall: client.call, manifest, kvs, queue, invocations, clock, log, harnessMissing });
   const proxyAddr = await proxy.listen();
   const ownWorkDir = !workDir;
   const work = workDir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'forge-emu-'));
@@ -371,7 +373,11 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     const found = moduleByKey(moduleKey);
     const fnKey = found?.module?.resolver?.function ?? found?.module?.edit?.resolver?.function;
     if (!fnKey) return { ok: false, error: errorOf({ errorType: 'EmulatorError', errorMessage: `module '${moduleKey}' has no resolver function` }), calls: [] };
-    return invokeFunction(fnKey, { moduleKey, moduleType: found.type, asUser, event: { call: { functionKey, payload: payload ?? {} }, context }, source: 'resolver' });
+    // A resolver is invoked from the app frontend: its body carries the frontend's contextToken, which the wrapper
+    // hands @forge/realtime (wrapper: `realtime:{contextToken: body?.contextToken}`), so `publish()` reaches that
+    // module's subscribers in that product context.
+    const { contextToken } = await client.call('rtcontext', { moduleKey, extension: context?.extension ?? null });
+    return invokeFunction(fnKey, { moduleKey, moduleType: found.type, asUser, event: { call: { functionKey, payload: payload ?? {} }, context, contextToken }, source: 'resolver' });
   }
 
   const emu = {
@@ -415,6 +421,15 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
   emu.serveDev = (opts) => host.serveDev(emu, opts);
   emu.cspReports = () => host.cspReports(emu);
   emu.widgetConfigs = () => host.widgetConfigs(emu);
+  // Forge LLM and Realtime live on the site (site/llm.cjs, site/realtime.cjs); these read them through it.
+  emu.llm = {
+    log: (since = 0) => client.call('llmlog', { since }),
+    phase: (phase) => client.call('llmphase', { phase }),
+  };
+  emu.realtime = {
+    log: (since = 0) => client.call('rtlog', { since }),
+    deliveries: () => host.realtimeDeliveries(emu),
+  };
   return emu;
 }
 

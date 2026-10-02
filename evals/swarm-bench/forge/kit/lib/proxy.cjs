@@ -7,6 +7,10 @@
 // Routes: /fpp/provider/{app|user|none}/remote/{jira|confluence|bitbucket|stargate}  (product + queue)
 //         /fpp/as/app/provider/atlassian/capability/kvs                          (KVS, kvs.cjs)
 //         /egress (permissions.external.fetch.backend) and /logs.
+//         /llm/ and /llm/<model>                                                 (Forge LLM -> the site's llm.cjs)
+//         /fpp/as/app/provider/atlassian/capability/realtime                     (Realtime GraphQL -> realtime.cjs)
+// The last two routes are what the pinned wrapper was MEASURED to call (2026-10-03, see site/llm.cjs and
+// site/realtime.cjs for the recorded requests).
 // Anything else answers 501 EMULATOR_NOT_MODELLED and is recorded as harness_missing, never a silent 200.
 const http = require('http');
 
@@ -20,7 +24,8 @@ function decodeToken(header) {
   try { return JSON.parse(Buffer.from(m[1].split('.')[1], 'base64url').toString()); } catch { return null; }
 }
 
-function createProxy({ siteUrl, manifest, kvs, queue, invocations, clock, log = [], harnessMissing = [] }) {
+function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clock, log = [], harnessMissing = [] }) {
+  const llmModules = manifest?.modules?.llm ?? [];
   const scopes = manifest?.permissions?.scopes ?? [];
   const egressAllow = (manifest?.permissions?.external?.fetch?.backend ?? []).map((e) => (typeof e === 'string' ? e : e?.address)).filter(Boolean);
   const vnow = () => new Date(clock.now()).toISOString();
@@ -147,6 +152,53 @@ function createProxy({ siteUrl, manifest, kvs, queue, invocations, clock, log = 
           const r = kvsCall(inv, target, parseMaybe(raw));
           return send(r.status, r.body);
         }
+        if (route === '/llm/' || route.startsWith('/llm/')) {
+          const model = route === '/llm/' ? null : decodeURIComponent(route.slice('/llm/'.length));
+          const body = parseMaybe(raw);
+          const entry = record({ invocationId: inv.id, moduleType: inv.moduleType, moduleKey: inv.moduleKey, functionKey: inv.functionKey, asUser: inv.aaid ?? null,
+            service: 'llm', provider: 'app', method: req.method, path: route, op: req.method === 'GET' ? 'list' : body?.stream ? 'stream' : 'chat', model, body });
+          if (!llmModules.length) {
+            // The docs: "If the SDK is used without declaring this module, linting will fail with an error like:
+            // Error: LLM package is used but 'llm' module is not defined in the manifest". What the runtime answers is
+            // not documented; the harness refuses the call loudly (DESIGN §6.2).
+            entry.status = 403;
+            entry.refused = 'no llm module';
+            return send(403, { code: 'LLM_MODULE_NOT_DEFINED', message: "LLM package is used but 'llm' module is not defined in the manifest" });
+          }
+          const r = await siteCall('llm', { method: req.method, model, body, caller: { invocationId: inv.id, moduleType: inv.moduleType, moduleKey: inv.moduleKey, functionKey: inv.functionKey, asUser: inv.aaid ?? null } });
+          Object.assign(entry, { status: r.status, response: r.body });
+          if (r.stream && r.status === 200) {
+            res.writeHead(200, { 'content-type': 'application/x-ndjson' });
+            return res.end(`${JSON.stringify(r.body)}\n`);
+          }
+          return send(r.status, r.body, r.headers ?? {});
+        }
+        if (route === '/fpp/as/app/provider/atlassian/capability/realtime') {
+          const gql = parseMaybe(raw) ?? {};
+          const v = gql.variables ?? {};
+          const origin = { source: 'function', invocationId: inv.id, moduleType: inv.moduleType, moduleKey: inv.moduleKey, functionKey: inv.functionKey };
+          const query = String(gql.query ?? '');
+          if (/\bpublishRealtimeChannel\b/.test(query)) {
+            let overrides = null;
+            try { overrides = v.context ? JSON.parse(v.context).contextOverrides ?? null : null; } catch { overrides = null; }
+            const contextToken = req.headers['x-forge-context-token'];
+            const r = await siteCall('rtpublish', { channelName: v.name, payload: v.payload, isGlobal: Boolean(v.isGlobal), token: v.token ?? null,
+              contextToken, contextOverrides: overrides, origin });
+            record({ ...origin, service: 'realtime', provider: 'app', method: 'POST', path: route, op: v.isGlobal ? 'publishGlobal' : 'publish',
+              body: { channel: v.name, payload: v.payload, isGlobal: Boolean(v.isGlobal), token: Boolean(v.token), contextToken: contextToken ?? null, contextOverrides: overrides },
+              status: 200, response: r });
+            if (r.errors) return send(200, { data: null, errors: r.errors });
+            return send(200, { data: { ecosystem: { publishRealtimeChannel: { eventId: r.eventId, eventTimestamp: r.eventTimestamp } } } });
+          }
+          if (/\bsignRealtimeToken\b/.test(query)) {
+            const r = await siteCall('rtsign', { channelName: v.channelName, claims: v.claims, permissions: v.permissions ?? null });
+            record({ ...origin, service: 'realtime', provider: 'app', method: 'POST', path: route, op: 'signRealtimeToken', body: v, status: 200, response: { expiresAt: r.expiresAt } });
+            return send(200, { data: { ecosystem: { signRealtimeToken: { errors: null, forgeRealtimeToken: { jwt: r.jwt, expiresAt: r.expiresAt }, success: true } } } });
+          }
+          missing(`realtime operation ${query.slice(0, 60)}`, inv);
+          record({ ...origin, service: 'realtime', provider: 'app', method: 'POST', path: route, body: gql, status: 400 });
+          return send(400, { errors: [{ message: 'EMULATOR_NOT_MODELLED: unknown realtime operation' }] });
+        }
         if (route === '/egress') {
           let host = null;
           try { host = new URL(target).host; } catch { host = null; }
@@ -156,7 +208,9 @@ function createProxy({ siteUrl, manifest, kvs, queue, invocations, clock, log = 
           return send(502, { message: 'The benchmark harness has no internet: declared egress cannot be reached.' });
         }
         missing(`proxy route ${route}`, inv);
-        record({ invocationId: inv.id, moduleType: inv.moduleType, moduleKey: inv.moduleKey, service: 'unknown', provider: 'app', method: req.method, path: route, status: 501 });
+        // The whole request is kept so an unmodelled platform capability can be read off the log exactly.
+        record({ invocationId: inv.id, moduleType: inv.moduleType, moduleKey: inv.moduleKey, service: 'unknown', provider: 'app', method: req.method, path: route,
+          headers: Object.fromEntries(Object.entries(req.headers).filter(([k]) => k !== 'forge-proxy-authorization')), body: parseMaybe(raw), status: 501 });
         return send(501, { code: 'EMULATOR_NOT_MODELLED', message: `proxy route ${route}` });
       } catch (e) {
         send(500, { code: 'PROXY_CRASH', message: String(e.message) });

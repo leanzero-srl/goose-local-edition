@@ -48,6 +48,27 @@ Async events retry at 1, 2, 4, 8 then every 15 minutes inside 24 h; `InvocationE
 clamped to 1..900 s. The real wrapper throws on an `InvocationError` without `retryData` when
 `timeoutSeconds > 55` — kept (platform fidelity).
 
+## Forge LLM and Realtime
+
+Both live on the site, so every emulator attached to it (the scorer's; the dev kit's `serve` and CLI
+processes) shares them. MEASURED on the pinned wrapper: `@forge/llm` calls GET `${proxy}/llm/` (list) and
+POST `${proxy}/llm/<model>` (chat/stream, body + `stream`); `@forge/realtime` POSTs GraphQL
+(`publishRealtimeChannel`, `signRealtimeToken`) to `${proxy}/fpp/as/app/provider/atlassian/capability/realtime`
+with `x-forge-context-token` = the invocation body's `contextToken` (the string "undefined" for a consumer).
+The proxy forwards both; without an `llm` module an LLM call is refused 403.
+
+- `site/llm.cjs`: `list()` = 2 active + 2 deprecated (incl. the docs' `claude-opus-4-6`), seeded order;
+  each chat takes the next scripted answer — clean tool call, digits + a hidden and an unknown change id,
+  refusal, malformed arguments, 429 `ForgeLlmAPIError` — then clean; `emu.llm.phase(name)` restarts it;
+  `emu.llm.log()` holds every prompt and answer. stream() returns the answer as one ChatResponse chunk.
+- `site/realtime.cjs`: channels, module/product-context scoping, signed tokens (claims must match),
+  `replaySeconds`. A resolver call carries a frontend context token, so its `publish()` reaches that
+  surface's `subscribe`; `publish()` without one (consumer, scheduled, trigger) is REJECTED with an error
+  result and logged; `publishGlobal` works anywhere. `emu.realtime.log()` lists every publish
+  (delivered / no subscriber / rejected); `emu.realtime.deliveries()` what reached a page.
+- forge-dev: `llm [--phase]`, `realtime [--follow]`; invoke prints each LLM answer and publish outcome,
+  `serve` prints each realtime event delivered to its page.
+
 ## Site — `../site/`
 
 `createSite({seed, port})` serves REST v3 + Jira Software REST for the ops in the shipped OpenAPI that
@@ -81,12 +102,16 @@ Every `invoke` writes the full result to `.forge-dev/last-result.json` (the term
 3. Keys Jira Cloud answers beyond the OpenAPI text stay where measured (sprint `createdDate`, issue
    bulkfetch `expand`); the deprecated agile sprint-issue list answers the agile page although its doc
    example is a single issue. Paging follows each operation's documented parameters (token vs offset).
-4. Rovo actions get the user in both documented places: `payload.context.accountId` (rovo-action page) and
+4. Realtime: what the platform answers to `publish()` without a frontend context, the token lifetime, the
+   payload type a subscriber receives (here: the published string) and Forge LLM's finish_reason values and
+   error codes are not documented; they are the harness's choices, recorded in site/realtime.cjs and llm.cjs.
+5. Rovo actions get the user in both documented places: `payload.context.accountId` (rovo-action page) and
    the second argument's `principal.accountId` (function arguments page). Not measured on a live Rovo call.
-5. KVS codes no docs page names (409 `CONDITIONAL_CHECK_FAILED`, `MAX_BATCH_SIZE`, `TOO_MANY_OPERATIONS`,
+6. KVS codes no docs page names (409 `CONDITIONAL_CHECK_FAILED`, `MAX_BATCH_SIZE`, `TOO_MANY_OPERATIONS`,
    `DUPLICATE_KEY`, ...) are listed in `lib/kvs.cjs`.
 
 ## Tests
 
-`node --test forge/kit/test/*.test.cjs` (fixtures, site, kit, widget, forge-dev, smoke-spike) and
+`node --test forge/kit/test/*.test.cjs` (fixtures, site, kit, widget, forge-dev, forge-dev-live, llm-realtime,
+smoke-spike) and
 `python3 -m unittest forge/kit/test/test_entrant_fence.py`.

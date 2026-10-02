@@ -28,7 +28,8 @@ const INERT = new Set(['close', 'submit', 'refresh', 'changeWindowTitle', 'emitR
 const pages = new WeakMap();
 
 function hostState(emu) {
-  if (!emu._host) emu._host = { server: null, url: null, prefix: `${crypto.randomBytes(6).toString('hex')}/${crypto.randomBytes(6).toString('hex')}`, surfaces: new Map(), widgetConfigs: new Map(), cspReports: [], seq: 0 };
+  if (!emu._host) emu._host = { server: null, url: null, prefix: `${crypto.randomBytes(6).toString('hex')}/${crypto.randomBytes(6).toString('hex')}`, surfaces: new Map(), widgetConfigs: new Map(), cspReports: [], seq: 0,
+    rt: { origin: `host-${crypto.randomBytes(6).toString('hex')}`, subs: new Map(), since: 0, timer: null, unlisten: null, deliveries: [] } };
   return emu._host;
 }
 
@@ -165,6 +166,38 @@ function urlFor(emu, location) {
   return null;
 }
 
+// Realtime (bridge 7.1.0 out/realtime/realtime.js): `realtime.subscribe/subscribeGlobal` call
+// `subscribeRealtimeChannel {channelName, onEvent, options, isGlobal?}`, `publish/publishGlobal` call
+// `publishRealtimeChannel {channelName, eventPayload, options, isGlobal?}`. The broker is the site's (site/realtime.cjs):
+// subscriptions carry this host's origin id, and the site's deliveries for it are pushed (in-process site) or
+// polled (a site in another process: the dev kit) and emitted into the subscribing page.
+const RT_EVENT = '__forge_realtime_event__';
+const RT_POLL_MS = 200; // transport poll of a site in another process; the in-process site pushes
+function realtimeDeliver(emu, d) {
+  const h = hostState(emu);
+  const owner = h.rt.subs.get(d.subscriptionId);
+  if (!owner) return;
+  const s = h.surfaces.get(owner);
+  if (!s) return;
+  const t = new Date(emu.clock.now()).toISOString();
+  h.rt.deliveries.push({ ...d, surfaceId: s.id, moduleKey: s.moduleKey, deliveredAt: t });
+  emu.bridgeLog.push({ surfaceId: s.id, moduleKey: s.moduleKey, entry: s.entry, op: 'realtimeEvent', payload: { subscriptionId: d.subscriptionId, channel: d.channel, eventId: d.eventId, payload: d.payload }, t, initiator: 'host' });
+  return emit(s, RT_EVENT, { subscriptionId: d.subscriptionId, payload: d.payload });
+}
+function realtimeListen(emu) {
+  const h = hostState(emu);
+  if (h.rt.unlisten || h.rt.timer) return;
+  if (emu.site.onRealtime) { h.rt.unlisten = emu.site.onRealtime((d) => { if (d.origin === h.rt.origin) realtimeDeliver(emu, d); }); return; }
+  h.rt.timer = setInterval(async () => {
+    try {
+      const { deliveries } = await emu.site.call('rtdeliveries', { since: h.rt.since, origin: h.rt.origin });
+      for (const d of deliveries) { h.rt.since = Math.max(h.rt.since, d.seq); await realtimeDeliver(emu, d); }
+    } catch { /* the dev site went away: the serve process reports it on its next command */ }
+  }, RT_POLL_MS);
+  h.rt.timer.unref?.();
+}
+const realtimePayload = (p) => (typeof p === 'string' ? p : JSON.stringify(p ?? null));
+
 async function answer(emu, s, op, payload) {
   const h = hostState(emu);
   const entry = { surfaceId: s.id, moduleKey: s.moduleKey, entry: s.entry, op, payload, t: new Date(emu.clock.now()).toISOString(), initiator: s.dev ? 'dev' : 'page' };
@@ -205,6 +238,32 @@ async function answer(emu, s, op, payload) {
         break;
       }
       case 'getUrl': value = urlFor(emu, payload); break;
+      case 'subscribeRealtimeChannel': {
+        const o = payload?.options ?? {};
+        const r = await emu.site.call('rtsubscribe', { channelName: payload?.channelName, isGlobal: Boolean(payload?.isGlobal), token: o.token ?? null,
+          contextOverrides: o.contextOverrides ?? null, replaySeconds: Number(o.replaySeconds ?? 0), origin: h.rt.origin,
+          frontend: { moduleKey: s.moduleKey, extension: contextFor(emu, s).extension } });
+        if (r.errors) throw new Error(r.errors.map((e) => e.message).join('; '));
+        h.rt.subs.set(r.subscriptionId, s.id);
+        entry.subscriptionId = r.subscriptionId;
+        realtimeListen(emu);
+        value = { subscriptionId: r.subscriptionId };
+        break;
+      }
+      case 'unsubscribeRealtimeChannel':
+        h.rt.subs.delete(payload?.subscriptionId);
+        await emu.site.call('rtunsubscribe', { subscriptionId: payload?.subscriptionId });
+        value = null;
+        break;
+      case 'publishRealtimeChannel': {
+        s.rtContextToken ??= (await emu.site.call('rtcontext', { moduleKey: s.moduleKey, extension: contextFor(emu, s).extension })).contextToken;
+        const o = payload?.options ?? {};
+        value = await emu.site.call('rtpublish', { channelName: payload?.channelName, payload: realtimePayload(payload?.eventPayload), isGlobal: Boolean(payload?.isGlobal),
+          token: o.token ?? null, contextToken: s.rtContextToken, contextOverrides: o.contextOverrides ?? null,
+          origin: { source: 'frontend', surfaceId: s.id, moduleKey: s.moduleKey } });
+        entry.result = value;
+        break;
+      }
       case 'currentConfig': value = s.config ?? null; break;
       case 'updateConfig':
         s.config = payload;
@@ -300,6 +359,13 @@ async function serveDev(emu, opts) {
 
 function cspReports(emu) { return hostState(emu).cspReports; }
 function widgetConfigs(emu) { return Object.fromEntries(hostState(emu).widgetConfigs); }
-async function closeHost(emu) { const h = emu._host; if (h?.server) await new Promise((ok) => h.server.close(() => ok())); }
+async function closeHost(emu) {
+  const h = emu._host;
+  if (!h) return;
+  if (h.rt.timer) clearInterval(h.rt.timer);
+  h.rt.unlisten?.();
+  if (h.server) await new Promise((ok) => h.server.close(() => ok()));
+}
+function realtimeDeliveries(emu) { return hostState(emu).rt.deliveries; }
 
-module.exports = { openSurface, hostSave, resize, serveDev, cspReports, widgetConfigs, closeHost, contextFor };
+module.exports = { openSurface, hostSave, resize, serveDev, cspReports, widgetConfigs, closeHost, contextFor, realtimeDeliveries, RT_EVENT };
