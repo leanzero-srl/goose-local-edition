@@ -22,6 +22,16 @@
 > (also the validation run), xiaomi/mimo-v2.6-flash, xiaomi/mimo-v2.6-pro (pin host xiaomi), openai/gpt-6.1-sol,
 > anthropic/claude-sonnet-5.5 only if ≥ $12 left. Web-verified newest releases Sep 21–29 (llmgateway.io/timeline). Publish via
 > the app's Publish; promote one to flip the catalog.
+> **2026-10-02 19:1x STATUS:** trim merged (8cc978d73, refuter restored 3 measured cuts), 3.0.87 notarized + released
+> (v3.0.87 GitHub, installed), e2e empty-entrant PASS (0.0171). Luna on 3.0.87: **0.4711, 150 calls, $0.23 billed, 99%
+> cached** (was 0.699 / 309 calls / $9 pre-trim); the drop is Luna's own bug — `e.currentTarget.reset()` after an await
+> (null) throws, the draft list never reloads, critical j_workflow_journey 0 → ×0.6; the probe's F1 draft (125000 EUR) is in
+> its ledger as `draft`. PUBLISHED brun-2cbdb9f5-48c9-4845-ac7a-9d025c1cc0d0 via scratchpad catalog_proxy.py (GET → sb-7.2
+> current, POST forwarded; sibling /api/* paths forwarded to leanzero.net). Archive ~/goose-builds/sb72-runs/20261002-gpt-6-luna-b36032ee-trimmed.
+> Cache probes PASS: mimo flash/pro (pinned Xiaomi), gpt-6.1-sol, sonnet-5.5. goose config now carries
+> OPENROUTER_PARAMETERS pinning xiaomi — REMOVE it before the Sol/Sonnet runs (backup scratchpad config.yaml.bak).
+> Site page data (sb72-page.json + prompt resync) delegated, local commit only → refuter → push → `register-sb72.mjs flip
+> --promote-run brun-2cbdb9f5-… --live` → relaunch app without the proxy env.
 
 > **DESKTOP UX QUEUE (Mihai 2026-09-22, in order; each lands as its own commit, verified in the running app).**
 > 0. LANDED (7927b903f + the proof commit) — Cloud Providers: no hard-coded "connection test model"; key → the provider's own model list → a chosen
