@@ -443,3 +443,78 @@ subprocess.Popen([sys.executable, '-c', {stubborn_code!r}], cwd={str(self.workdi
         self.assertEqual([(row['pid'], row['signal']) for row in record['reaped_processes']],
                          [(stubborn, 'SIGKILL')])
         self.assertFalse(_alive(stubborn))
+
+
+# The last bytes of openrouter-cloud-01dae737-...-r0's engine-console.log (2026-10-02), verbatim: a
+# shell tool's output, then the reply loop's failure text glued to it.
+MEASURED_TAIL = (
+    '0\n107:    box(0.45, 0, 0.12, 0.82);        // pedestal\n== 1 box ==\n{\n'
+    ' "visibleOnly": 253.81999999284744,\n "withPick": 247.37000000476837,\n'
+    ' "visibleOnly2": 250.6\n}\nrestoredNetwork error: Stream decode error: error decoding response '
+    'body: error reading a body from connection: connection reset\n\n'
+    'Please resend your message to try again.\n'
+)
+MEASURED_ERROR = ('Network error: Stream decode error: error decoding response body: error reading a '
+                  'body from connection: connection reset\n\nPlease resend your message to try again.')
+GOOSE_AGENT_SOURCES = Path(run_build.ROOT).parents[1] / 'crates' / 'goose' / 'src' / 'agents'
+
+
+class ProviderErrorEndingTests(unittest.TestCase):
+    def test_the_measured_connection_reset_ending_is_read_from_its_own_head(self):
+        self.assertEqual(run_build.provider_error_ending(MEASURED_TAIL), MEASURED_ERROR)
+
+    def test_a_session_that_ended_on_the_model_is_not_a_provider_error(self):
+        for tail in ('Done. The app serves on http://127.0.0.1:8080 and every test passes.\n',
+                     'timed out', '',
+                     # A resend notice mid-run is not an ending: the run went on after it.
+                     'The provider failed mid-answer (Network error: x). Resending — attempt 1 of 3.\n'
+                     'Built web/viz.js and checked it in the browser.\n'):
+            self.assertIsNone(run_build.provider_error_ending(tail), tail)
+
+    def test_every_provider_failure_closer_is_read(self):
+        server = ('Ran into this error: Server error: 502 Bad Gateway.\n\n'
+                  'Please retry if you think this is a transient or recoverable error.')
+        auth = ('Ran into this error: Authentication error: bad key.\n\n'
+                'Sending the same request again will fail the same way until its cause is fixed.')
+        refusal = ('The provider refused this request.\n\nThis request was declined.\n\nPlease start a '
+                   'new session to continue — resending this conversation is likely to be refused '
+                   'again.')
+        credits = ('earlier output\n\nPlease add credits to your account, then resend your message to '
+                   'continue.\nVisit this URL to top up credits: https://example.test/top-up')
+        for tail, recorded in ((server, server), ('output\n' + auth + '\n', auth),
+                               (refusal, refusal), (credits + '\n', credits)):
+            self.assertEqual(run_build.provider_error_ending(tail), recorded, tail)
+
+    @unittest.skipUnless(GOOSE_AGENT_SOURCES.is_dir(), 'the goose sources ship only with the checkout')
+    def test_the_closers_are_the_ones_goose_writes(self):
+        source = ''.join((GOOSE_AGENT_SOURCES / name).read_text()
+                         for name in ('agent.rs', 'split_record.rs'))
+        for marker in run_build.PROVIDER_ERROR_CLOSERS + run_build.PROVIDER_ERROR_HEADS:
+            self.assertIn(marker.removesuffix(':'), source, marker)
+
+    def test_run_refuses_to_grade_a_session_the_provider_ended(self):
+        def invoke(entrant, workdir, *args):
+            return {'exit': 0, 'secs': 3600.0, 'tail': MEASURED_TAIL, 'timed_out': False}
+        scorer = SimpleNamespace(_port_holder=lambda port: None,
+                                 gather=lambda *a, **k: self.fail('a provider-ended session was graded'))
+        vendor = SimpleNamespace(serve=lambda port, trace: trace.write_text('') or
+                                 SimpleNamespace(shutdown=lambda: None, server_close=lambda: None),
+                                 mark_phase=lambda *a: None)
+        snapshot = {'version': 1, 'providers': ['omlx'], 'config': {}, 'secrets': {'OMLX_KEY': 'k'},
+                    'custom_providers': {}}
+        regime_flags = ('BENCH_SB7', 'BENCH_SB71', 'BENCH_SB8', 'BENCH_COMPLETION_RECEIPT')
+        environ = {name: value for name, value in os.environ.items() if name not in regime_flags}
+        stdout = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.dict(os.environ, environ, clear=True), \
+                patch.object(run_build, '_regime', return_value=(scorer, vendor, None)), \
+                patch.object(run_build, 'entrant_config', return_value=snapshot), \
+                patch.object(run_build, 'invoke', side_effect=invoke), \
+                contextlib.redirect_stdout(stdout):
+            with self.assertRaisesRegex(RuntimeError, 'REFUSED: the session ended on a provider error'):
+                run_build.run('omlx-fixture', 0, Path(tmp), 0, 8850, 'omlx', 'local-27b')
+            tree = Path(tmp) / 'omlx-fixture-r0'
+            record = json.loads((tree / 'incomplete-agent.json').read_text())
+            self.assertFalse((tree / 'verdict.json').exists())
+        self.assertEqual(record['ended_on_provider_error'], MEASURED_ERROR)
+        self.assertIn(f'ENDED ON PROVIDER ERROR (not scored): {MEASURED_ERROR}', stdout.getvalue())

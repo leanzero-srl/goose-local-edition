@@ -68,6 +68,41 @@ MODELS = {
 }
 
 
+# The closing sentence goose's reply loop writes when a provider call ends the turn
+# (crates/goose/src/agents/agent.rs, split_record.rs; test_run_build_cloud pins them to the source).
+# MEASURED 2026-10-02 (openrouter-cloud-01dae737): turn 87 of a live build ended on "Network error:
+# Stream decode error: ... connection reset ... Please resend your message to try again.", goose run
+# exited, and the half-built tree was graded as the model's result.
+PROVIDER_ERROR_CLOSERS = (
+    "Please resend your message to try again.",
+    "Please retry if you think this is a transient or recoverable error.",
+    "Sending the same request again will fail the same way until its cause is fixed.",
+    "then resend your message to continue.",
+    "resending this conversation is likely to be refused again.",
+)
+PROVIDER_ERROR_HEADS = ("Network error:", "Ran into this error:", "The provider refused this request.")
+CREDITS_TOP_UP_LINE = "Visit this URL to top up credits:"
+
+
+def provider_error_ending(tail: str) -> str | None:
+    """The provider failure the session's console ended on, or None when it ended on anything else.
+
+    The text runs from the failure's own head ("Network error: ...") to its closing sentence; the
+    console may glue the head to the last tool output (the measured run printed "restoredNetwork
+    error: ..."). A failure with no known head is recorded as its last two paragraphs, as printed.
+    """
+    text = tail.rstrip()
+    lines = text.splitlines()
+    if lines and lines[-1].startswith(CREDITS_TOP_UP_LINE):
+        text = "\n".join(lines[:-1]).rstrip()
+    if not text.endswith(PROVIDER_ERROR_CLOSERS):
+        return None
+    start = max(text.rfind(head) for head in PROVIDER_ERROR_HEADS)
+    if start >= 0:
+        return tail.rstrip()[start:]
+    return "\n\n".join(re.split(r"\n\s*\n", tail.rstrip())[-2:]).strip()
+
+
 def load_env(path: str = "~/.config/agent-board/bedrock.env") -> Dict[str, str]:
     env: Dict[str, str] = {}
     resolved = Path(path).expanduser()
@@ -830,6 +865,17 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
         if provider and "The model returned an empty response. Please resend your message to continue." in agent["tail"]:
             (workdir / "incomplete-agent.json").write_text(json.dumps(agent, indent=2))
             raise RuntimeError("REFUSED: provider ended on empty responses; no completed benchmark artifact")
+        # Same treatment as the empty-response ending above: a session the PROVIDER ended is no
+        # completed artifact, and grading its half-built tree would publish an infrastructure fault
+        # as the model's score. goose resends a transient failure under the provider's retry policy
+        # first, so this fires only once that policy is spent or the failure is permanent.
+        ended_on = provider_error_ending(agent["tail"]) if provider else None
+        if ended_on:
+            agent["ended_on_provider_error"] = ended_on
+            (workdir / "incomplete-agent.json").write_text(json.dumps(agent, indent=2))
+            print(f"ENDED ON PROVIDER ERROR (not scored): {ended_on}", flush=True)
+            raise RuntimeError("REFUSED: the session ended on a provider error, not on the model's "
+                               f"finished work: {ended_on.splitlines()[0]}")
         completion_path = os.environ.get("BENCH_COMPLETION_RECEIPT")
         if os.environ.get("BENCH_SB71") and completion_path and agent.get("exit") == 0:
             from bench_rescore import write_completion
