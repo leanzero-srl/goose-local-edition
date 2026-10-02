@@ -172,7 +172,9 @@ function facts(seed) {
   const team = r.pick(TEAMS);
   const a1Start = now - r.int(4, 9) * DAY - r.int(0, 8) * HOUR;
   const a2Start = a1Start + r.int(1, 3) * DAY + r.int(0, 6) * HOUR;
-  const b1Start = now - r.int(2, 8) * DAY - r.int(0, 8) * HOUR;
+  // Sprint start dates are all distinct (DESIGN §17.1 19: ties are by sprint id, fixtures avoid them).
+  let b1Start = now - r.int(2, 8) * DAY - r.int(0, 8) * HOUR;
+  if (b1Start === a1Start || b1Start === a2Start) b1Start -= 17 * MIN;
   const mk = (key, name, state, board, start, complete) => ({
     key, name, state, originBoardId: board.id,
     startDate: start === null ? null : iso(start),
@@ -185,7 +187,8 @@ function facts(seed) {
   const firstActiveStart = Math.min(a1Start, a2Start, b1Start);
   const c2AComplete = firstActiveStart - r.int(2, 20) * HOUR;
   const c1AComplete = c2AComplete - 14 * DAY - r.int(1, 20) * HOUR;
-  const c1BComplete = firstActiveStart - r.int(2, 30) * HOUR;
+  let c1BComplete = firstActiveStart - r.int(2, 30) * HOUR;
+  if (c1BComplete === c2AComplete) c1BComplete -= 23 * MIN; // distinct closed-sprint starts too
   const sprintDefs = [
     mk('c1A', `${PA.key} Sprint ${sprintNoA - 2}`, 'closed', boards[0], c1AComplete - 14 * DAY, c1AComplete),
     mk('c1B', `${PB.key} Sprint ${sprintNoB - 1}`, 'closed', boards[1], c1BComplete - 14 * DAY, c1BComplete),
@@ -389,7 +392,9 @@ function facts(seed) {
   const gap = () => Math.max(MIN, Math.floor((span / (target * 2.2)) * (0.4 + r.float() * 1.2)));
   while (postStart < target && cursorT < now - HOUR) {
     cursorT += gap();
-    const at = Math.min(cursorT, now - HOUR);
+    let at = Math.min(cursorT, now - HOUR);
+    // "Strictly after startDate" (DESIGN §17.1 20): no change lands exactly on a sprint start.
+    while (actives.some((a) => a._start === at)) at += 1000;
     const roll = r.float();
     const kind = roll < 0.7 ? 'sprint' : roll < 0.85 ? 'estimate' : 'irrelevant';
     let e;
@@ -467,6 +472,11 @@ function facts(seed) {
       step(tick(), r.pick(['sprint', 'irrelevant']), 'live');
     }
   }
+  // "Strictly after startDate" never meets a tie (DESIGN §17.1 20): a pre-history change that landed on
+  // another sprint's start instant moves one second earlier (plan events for a sprint are already
+  // strictly before its own start; post-start events are nudged later above).
+  const startInstants = new Set(sprintDefs.filter((s) => s._start !== null).map((s) => s._start));
+  for (const e of events) while (startInstants.has(e.created)) e.created -= 1000;
   // Changelog ids are one global sequence in creation order, as on Jira.
   const tmpToReal = new Map();
   events.map((e, i) => [e, i]).sort((a, b) => a[0].created - b[0].created || a[1] - b[1]).forEach(([e]) => {

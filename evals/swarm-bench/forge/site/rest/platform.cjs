@@ -163,7 +163,7 @@ const handlers = {
     for (const r of page) {
       let g = grouped.find((x) => x.issueId === r.issueId);
       if (!g) grouped.push((g = { issueId: r.issueId, changeHistories: [] }));
-      g.changeHistories.push(c.render.history(r.h, { epoch: true }));
+      g.changeHistories.push(c.render.history(r.h));
     }
     const more = offset + page.length < rows.length;
     return { status: 200, body: { issueChangeLogs: grouped, ...(more ? { nextPageToken: token(offset + page.length, bind) } : {}) } };

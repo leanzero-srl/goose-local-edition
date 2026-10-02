@@ -1,7 +1,9 @@
 'use strict';
 // Jira Cloud response shapes (measured on a Jira Cloud site 2026-10-02: issue, field, changelog,
-// bulk changelog, Agile sprint/board). Dates in REST bodies use Jira's `yyyy-MM-dd'T'HH:mm:ss.SSSZ`
-// form; `/changelog/bulkfetch` returns `created` as epoch milliseconds (measured).
+// bulk changelog, Agile sprint/board). Every date in a REST body is an ISO-8601 string in Jira's
+// `yyyy-MM-dd'T'HH:mm:ss.SSSZ` form, as the OpenAPI types it (`format: date-time`) and STARTER states.
+// Deliberate deviation (DESIGN §17.1 0a): Jira Cloud measured 2026-10-02 returns `/changelog/bulkfetch`
+// `created` as epoch milliseconds, contradicting its own OpenAPI; the site follows the documented type.
 
 function jiraDate(isoOrMs) {
   const d = new Date(typeof isoOrMs === 'number' ? isoOrMs : Date.parse(isoOrMs));
@@ -67,9 +69,7 @@ function createRenderer(state) {
     const f = pack.fields.find((x) => x.id.toLowerCase() === lower || x.key.toLowerCase() === lower) ?? pack.fields.find((x) => x.name.toLowerCase() === lower);
     return f ? f.id : name;
   };
-  const history = (h, { epoch = false } = {}) => ({
-    id: h.changelogId, author: user(h.authorId), created: epoch ? Date.parse(h.created) : jiraDate(h.created), items: h.items,
-  });
+  const history = (h) => ({ id: h.changelogId, author: user(h.authorId), created: jiraDate(h.created), items: h.items });
   // One issue as GET /issue and search return it. `apiBase` is `/rest/api/3` or `/rest/agile/1.0`.
   const issue = (iss, selected, { expand = [], apiBase = '/rest/api/3', changelogCap = 100 } = {}) => {
     const onlyId = selected.size === 1 && selected.has('id');

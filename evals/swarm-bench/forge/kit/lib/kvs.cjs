@@ -61,7 +61,13 @@ function createKvs({ entities: declared = [], now = () => Date.now() } = {}) {
     for (const [attr, spec] of Object.entries(def.attributes ?? {})) {
       if (value[attr] === undefined || value[attr] === null) continue;
       const ok = TYPE_OK[spec.type];
-      if (ok && !ok(value[attr])) throw new KvsError(400, 'INVALID_ENTITY_VALUE', `Attribute '${attr}' must be of type ${spec.type}.`);
+      if (ok && !ok(value[attr])) {
+        // The documented integer range (storage-reference/storage-api-custom-entities: "Must be a 32-bit signed
+        // integer") is named in the error so an out-of-range value is diagnosable (DESIGN §17.1 0b).
+        const why = spec.type === 'integer' ? 'a 32-bit signed integer (-2,147,483,648 to 2,147,483,647)'
+          : spec.type === 'float' ? 'a finite number' : `of type ${spec.type}`;
+        throw new KvsError(400, 'INVALID_ENTITY_VALUE', `Attribute '${attr}' must be ${why}; got ${JSON.stringify(value[attr])}.`);
+      }
     }
   };
   const alive = (rec) => rec && !(rec.expireAt && rec.expireAt <= now());

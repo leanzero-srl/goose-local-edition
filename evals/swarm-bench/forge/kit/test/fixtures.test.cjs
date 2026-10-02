@@ -58,6 +58,11 @@ function shapeProblems(p) {
   const touches = (e) => e.items[0].field === 'Sprint' && actives.some((a) => Date.parse(e.created) > Date.parse(a.startDate)
     && (ids(e.items[0].from).includes(String(a.id)) || ids(e.items[0].to).includes(String(a.id))));
   if (p.issues.length < 229 || p.issues.length > 245) out.push(`issues ${p.issues.length}`);
+  // DESIGN §17.1 19/20: sprint start dates are distinct, and no change lands exactly on a sprint start.
+  const starts = p.sprints.filter((s) => s.startDate).map((s) => Date.parse(s.startDate));
+  if (new Set(starts).size !== starts.length) out.push('tied sprint startDates');
+  const onStart = [...p.history, ...p.live].filter((e) => starts.includes(Date.parse(e.created)));
+  if (onStart.length) out.push(`changes on a sprint start: ${onStart.map((e) => e.changelogId).join(',')}`);
   const post = p.history.filter(touches);
   if (post.length < 50 || post.length > 70) out.push(`post-start sprint changes ${post.length}`);
   const multi = p.issues.filter((i) => (i.fields[p.sprintFieldId] ?? []).length > 1 && (i.fields[p.sprintFieldId] ?? []).some((s) => s.state === 'active'));
