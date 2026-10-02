@@ -181,9 +181,11 @@ function facts(seed) {
     createdDate: iso((start ?? now) - r.int(2, 6) * DAY),
     _start: start, _project: board.projectKey,
   });
-  const c2AComplete = a1Start - r.int(1, 20) * HOUR;
+  // Every earlier sprint completes before the first active sprint starts.
+  const firstActiveStart = Math.min(a1Start, a2Start, b1Start);
+  const c2AComplete = firstActiveStart - r.int(2, 20) * HOUR;
   const c1AComplete = c2AComplete - 14 * DAY - r.int(1, 20) * HOUR;
-  const c1BComplete = b1Start - r.int(1, 30) * HOUR;
+  const c1BComplete = firstActiveStart - r.int(2, 30) * HOUR;
   const sprintDefs = [
     mk('c1A', `${PA.key} Sprint ${sprintNoA - 2}`, 'closed', boards[0], c1AComplete - 14 * DAY, c1AComplete),
     mk('c1B', `${PB.key} Sprint ${sprintNoB - 1}`, 'closed', boards[1], c1BComplete - 14 * DAY, c1BComplete),
@@ -243,10 +245,11 @@ function facts(seed) {
   const humans = users.map((u) => u.accountId);
   const sprintStr = (ids) => ids.join(', ');
   const sprintNames = (ids) => ids.map((id) => sprintById.get(id).name).join(', ');
-  const openSprintOf = (st) => st.sprints.find((id) => sprintById.get(id).state !== 'closed');
+  // A sprint is open until the simulation completes it (closed sprints complete in the pre-history).
+  const openSprintOf = (st) => st.sprints.find((id) => !sprintById.get(id)._done);
   const events = [];
   const record = (st, at, items, phase) => {
-    const e = { changelogId: nextChangelogId(), issueId: st.id, created: at, authorId: r.pick(humans), items, _phase: phase, _key: st.key };
+    const e = { changelogId: `tmp-${events.length}`, issueId: st.id, created: at, authorId: r.pick(humans), items, _phase: phase, _key: st.key };
     events.push(e);
     st.updated = Math.max(st.updated, at);
     return e;
@@ -298,34 +301,37 @@ function facts(seed) {
   };
   const projectIssues = (p, before) => issues.filter((s) => s.projectKey === p.key && s.created < before);
 
-  // Closed-sprint era (before install, before the active sprints started).
-  const plan = (sprint, pool, n, at) => {
+  // The pre-history, in time order: plan c1A/c1B, complete c1A into c2A, plan c2A, complete c1B and c2A
+  // into the coming active sprints (carry-over: multi-id Sprint values), plan the open sprints.
+  const plan = (sprint, pool, n, from, to) => {
     const chosen = r.sample(pool.filter((s) => !openSprintOf(s)), n);
-    chosen.forEach((st) => addTo(st, sprint, at - r.int(1, 40) * HOUR, 'history'));
+    const span = Math.max(1, Math.floor((to - from) / MIN) - 1);
+    chosen.map((st) => [st, from + r.int(1, span) * MIN]).sort((x, y) => x[1] - y[1]).forEach(([st, at]) => addTo(st, sprint, at, 'history'));
     return chosen;
   };
-  const complete = (sprint, members, next, carryShare) => {
+  const complete = (sprint, next, carryShare) => {
     const at = Date.parse(sprint.completeDate);
     const carried = [];
-    for (const st of members.filter((s) => s.sprints.includes(sprint.id))) {
+    for (const st of issues.filter((s) => openSprintOf(s) === sprint.id)) {
       if (r.chance(0.55)) { st.status = statuses[3]; continue; }
       if (next && r.chance(carryShare)) { setSprints(st, at, [...st.sprints, next.id], 'history'); carried.push(st); }
     }
+    sprint._done = true;
     return carried;
   };
-  const c1aMembers = plan(S.c1A, projectIssues(PA, S.c1A._start), r.int(18, 24), S.c1A._start);
-  const c2aMembers = [...plan(S.c2A, projectIssues(PA, S.c2A._start), r.int(10, 14), S.c2A._start)];
-  // c1A completes into c2A (the next sprint was future then: carry-over is a multi-id value).
-  c2aMembers.push(...complete(S.c1A, c1aMembers, S.c2A, 0.7));
-  const c1bMembers = plan(S.c1B, projectIssues(PB, S.c1B._start), r.int(14, 20), S.c1B._start);
-  // Completing into the not-yet-started active sprints: committed carry-over issues listing several ids.
-  const carriedA = complete(S.c2A, c2aMembers, S.a1A, 0.85);
-  const carriedB = complete(S.c1B, c1bMembers, S.a1B, 0.85);
-  plan(S.a1A, projectIssues(PA, S.a1A._start), r.int(12, 18), S.a1A._start);
-  plan(S.a2A, projectIssues(PA, S.a2A._start), r.int(8, 12), S.a2A._start);
-  plan(S.a1B, projectIssues(PB, S.a1B._start), r.int(12, 18), S.a1B._start);
-  plan(S.fA, projectIssues(PA, now), r.int(5, 9), now - r.int(1, 3) * DAY);
-  plan(S.fB, projectIssues(PB, now), r.int(4, 7), now - r.int(1, 3) * DAY);
+  plan(S.c1A, projectIssues(PA, S.c1A._start), r.int(18, 24), S.c1A._start - 40 * HOUR, S.c1A._start);
+  plan(S.c1B, projectIssues(PB, S.c1B._start), r.int(14, 20), S.c1B._start - 40 * HOUR, S.c1B._start);
+  complete(S.c1A, S.c2A, 0.7);
+  plan(S.c2A, projectIssues(PA, S.c2A._start), r.int(10, 14), c1AComplete, S.c2A._start);
+  const carriedB = complete(S.c1B, S.a1B, 0.85);
+  const carriedA = complete(S.c2A, S.a1A, 0.85);
+  const planFrom = Math.max(c2AComplete, c1BComplete);
+  const planAt = firstActiveStart;
+  plan(S.a1A, projectIssues(PA, planFrom), r.int(12, 18), planFrom, planAt);
+  plan(S.a2A, projectIssues(PA, planFrom), r.int(8, 12), planFrom, planAt);
+  plan(S.a1B, projectIssues(PB, planFrom), r.int(12, 18), planFrom, planAt);
+  plan(S.fA, projectIssues(PA, planFrom), r.int(5, 9), planFrom, planAt);
+  plan(S.fB, projectIssues(PB, planFrom), r.int(4, 7), planFrom, planAt);
 
   const actives = [S.a1A, S.a2A, S.a1B];
   const futureOf = { [PA.key]: S.fA, [PB.key]: S.fB };
@@ -370,18 +376,22 @@ function facts(seed) {
   // Post-start history: 50–70 sprint changes after the active sprints' starts, plus estimate and
   // irrelevant updates, with the shapes the checks need guaranteed (removals to backlog, multi-id adds).
   const firstStart = Math.min(...actives.map((s) => s._start));
-  const isPostStartSprint = (e) => e.items[0].field === 'Sprint' && e.created > firstStart;
+  // A post-start change: a Sprint changelog entry that puts an issue into, or takes it out of, an active
+  // sprint after THAT sprint's start (the changes the ledger records).
+  const touchesStarted = (e) => e.items[0].field === 'Sprint' && actives.some((a) => e.created > a._start
+    && (e.items[0].from.split(', ').includes(String(a.id)) || e.items[0].to.split(', ').includes(String(a.id))));
   const MULTI_ID_ADDS = 3;
-  const target = r.int(50, 70) - events.filter(isPostStartSprint).length - MULTI_ID_ADDS;
-  const times = [];
-  const span = now - HOUR - firstStart;
-  for (let i = 0; i < Math.round(target * 1.45); i++) times.push(firstStart + MIN + Math.floor(r.float() * span));
-  times.sort((x, y) => x - y);
-  let sprintChanges = 0;
+  const target = r.int(50, 70) - MULTI_ID_ADDS;
+  let postStart = events.filter(touchesStarted).length;
   let removals = 0;
-  for (const at of times) {
+  let cursorT = firstStart + MIN;
+  const span = now - HOUR - firstStart;
+  const gap = () => Math.max(MIN, Math.floor((span / (target * 2.2)) * (0.4 + r.float() * 1.2)));
+  while (postStart < target && cursorT < now - HOUR) {
+    cursorT += gap();
+    const at = Math.min(cursorT, now - HOUR);
     const roll = r.float();
-    const kind = sprintChanges < target && roll < 0.7 ? 'sprint' : roll < 0.85 ? 'estimate' : 'irrelevant';
+    const kind = roll < 0.7 ? 'sprint' : roll < 0.85 ? 'estimate' : 'irrelevant';
     let e;
     if (kind === 'sprint' && removals < 5 && r.chance(0.3)) {
       const sprint = r.pick(actives.filter((s) => s._start < at));
@@ -389,11 +399,15 @@ function facts(seed) {
       if (inSprint?.length) { e = removeOpen(r.pick(inSprint), at, 'history'); removals++; }
     }
     if (!e) e = step(at, kind, 'history');
-    if (e && e.items[0].field === 'Sprint') sprintChanges++;
+    if (e && touchesStarted(e)) postStart++;
   }
   // A post-start multi-id add: an issue still carrying a closed sprint joins an active sprint.
   const withClosedOnly = issues.filter((s) => s.sprints.length && !openSprintOf(s) && s.projectKey === PA.key);
-  for (const st of r.sample(withClosedOnly, Math.min(MULTI_ID_ADDS, withClosedOnly.length))) addTo(st, r.pick([S.a1A, S.a2A]), now - r.int(2, 30) * HOUR, 'history');
+  let tEnd = Math.max(events[events.length - 1].created, now - 12 * HOUR);
+  for (const st of r.sample(withClosedOnly, Math.min(MULTI_ID_ADDS, withClosedOnly.length))) {
+    tEnd = Math.min(tEnd + r.int(5, 50) * MIN, now - MIN);
+    addTo(st, r.pick([S.a1A, S.a2A]), tEnd, 'history');
+  }
 
   // ---- visibility: hidden from the viewer / the peer, one comment-forbidden issue --------------
   const changedInActive = (phaseFilter) => [...new Set(events.filter((e) => phaseFilter(e) && e.items[0].field === 'Sprint'
@@ -416,7 +430,7 @@ function facts(seed) {
 
   // Snapshot install-time state before the live script mutates the simulation.
   const installState = new Map(issues.map((s) => [s.id, JSON.parse(JSON.stringify({ est: s.est, decoy: s.decoy, sprints: s.sprints, status: s.status, labels: s.labels, summary: s.summary, priority: s.priority, updated: s.updated }))]));
-  const historyEvents = events.slice();
+  const historyCount = events.length;
 
   // ---- live script -----------------------------------------------------------------------------
   const liveN = r.int(36, 44);
@@ -453,7 +467,16 @@ function facts(seed) {
       step(tick(), r.pick(['sprint', 'irrelevant']), 'live');
     }
   }
-  const liveEvents = events.slice(liveStart);
+  // Changelog ids are one global sequence in creation order, as on Jira.
+  const tmpToReal = new Map();
+  events.map((e, i) => [e, i]).sort((a, b) => a[0].created - b[0].created || a[1] - b[1]).forEach(([e]) => {
+    const id = nextChangelogId();
+    tmpToReal.set(e.changelogId, id);
+    e.changelogId = id;
+  });
+  for (const pair of pairs) pair.forEach((x, k) => { pair[k] = tmpToReal.get(x); });
+  const byCreated = (a, b) => a.created - b.created || Number(a.changelogId) - Number(b.changelogId);
+  const liveEvents = events.slice(liveStart).sort(byCreated);
 
   // ---- delivery schedule: 4 duplicates, 2 permuted pairs, 3 dropped, one fault target ----------
   const isSprint = (e) => e.items[0].field === 'Sprint';
@@ -532,7 +555,7 @@ function facts(seed) {
     issueTypes,
     securityLevel,
     issues: packIssues,
-    history: historyEvents.map(strip),
+    history: events.slice(0, historyCount).sort(byCreated).map(strip),
     live: liveEvents.map((e) => ({ ...strip(e), delivery: delivery[e.changelogId] })),
     faults: [
       { id: faultId(1), match: { scope: 'consumer-of-change', changelogId: faultChange.changelogId, nth: 1 }, status: 429, retryAfter: 30, reason: 'jira-quota-tenant-based' },
@@ -540,7 +563,7 @@ function facts(seed) {
       { id: faultId(3), match: { scope: 'comment-post', nth: 1 }, status: 429, retryAfter: 1, reason: 'jira-per-issue-on-write' },
     ],
     limits: LIMITS,
-    _counts: { issues: total, history: historyEvents.length, carryOver: carriedA.length + carriedB.length, live: liveEvents.length },
+    stats: { issues: total, history: historyCount, carryOverAtStart: carriedA.length + carriedB.length, live: liveEvents.length },
   };
 }
 

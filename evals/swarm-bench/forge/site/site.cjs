@@ -206,6 +206,10 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
   const control = {
     info: () => ({ cloudId: pack.cloudId, siteUrl: pack.siteUrl, appAccountId: pack.appAccountId, now: new Date(state.now()).toISOString(),
       users: pack.users.map(({ accountId, displayName }) => ({ accountId, displayName })), viewer: pack.viewer,
+      // What the Agile REST API discloses anyway; the dev kit builds sprint-action contexts from it.
+      projects: pack.projects.map(({ id, key }) => ({ id, key })),
+      boards: pack.boards.map(({ id, type, projectKey }) => ({ id, type, projectKey })),
+      sprints: pack.sprints.map(({ id, state, originBoardId }) => ({ id, state, originBoardId })),
       liveRemaining: state.plan.length - state.st.cursor }),
     clock: () => ({ now: state.now(), skippedMs: state.st.skipped }),
     advance: ({ ms }) => ({ now: state.advance(Number(ms)) }),
