@@ -354,7 +354,13 @@ const PAGE_HELPERS = () => {
 async function openSurface(spec) {
   const page = await browser.newPage({ viewport: { width: spec.width, height: spec.height } });
   const ev = { consoleErrors: [], pageErrors: [], failedRequests: [], popups: 0 };
-  page.on('console', (m) => { if (m.type() === 'error') ev.consoleErrors.push(m.text().slice(0, 300)); });
+  // A failed resource load also prints a console error; it is the failed request v_csp_clean already grades,
+  // so it is kept apart (networkConsole) and v_console_clean grades the app's own errors (m_abs_assets).
+  page.on('console', (m) => {
+    if (m.type() !== 'error') return;
+    if (/^Failed to load resource/.test(m.text())) (ev.networkConsole ??= []).push(`${m.text().slice(0, 120)} ${m.location()?.url ?? ''}`);
+    else ev.consoleErrors.push(m.text().slice(0, 300));
+  });
   page.on('pageerror', (e) => ev.pageErrors.push(String(e).slice(0, 300)));
   page.on('requestfailed', (r) => ev.failedRequests.push(r.url()));
   page.on('response', (r) => { if (r.status() >= 400 && r.request().resourceType() !== 'fetch') ev.failedRequests.push(`${r.status()} ${r.url()}`); });
@@ -476,7 +482,8 @@ async function finishSurface(s, meta, meaningfulSelector) {
   const surface = { ...meta, ...dom, tokens, shot, enableTheming: ops.some((b) => opName(b) === 'enableTheming'),
     bridgeOps: ops.map((b) => ({ op: opName(b) })), consoleErrors: s.ev.consoleErrors, pageErrors: s.ev.pageErrors,
     cspViolations: [...new Set([...dom.csp, ...cspReportsOf(s), ...s.ev.consoleErrors.filter((m) => /Content Security Policy/i.test(m))])],
-    failedRequests: s.ev.failedRequests, nominal: meta.nominal !== false,
+    failedRequests: [...new Set([...s.ev.failedRequests, ...(s.ev.networkConsole || []).map((x) => x.split(' ').pop()).filter(Boolean)])],
+    networkConsole: s.ev.networkConsole || [], nominal: meta.nominal !== false,
     invokesBeforePaint: paintOps !== null ? before.filter((b) => ['invoke', 'fetchProduct'].includes(opName(b))).length : null };
   delete surface.csp;
   obs.ui.surfaces.push(surface);

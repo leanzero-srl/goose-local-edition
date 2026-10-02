@@ -4,6 +4,7 @@
 // scorer uses, pointed at the dev site ($FORGE_SITE_URL, seeded differently from the scoring site), with
 // dev storage and queues persisted under .forge-dev/ in the workspace. It contains no fixtures, oracle,
 // fault schedule or checks.
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
@@ -59,17 +60,34 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 async function withLock(fn) {
   fs.mkdirSync(stateDir, { recursive: true });
+  const mine = `${process.pid}:${crypto.randomBytes(6).toString('hex')}`;
+  const holderOf = (file) => { try { return fs.readFileSync(file, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } };
   for (;;) {
-    try { fs.writeFileSync(lockFile, String(process.pid), { flag: 'wx' }); break; } catch (e) {
+    try { fs.writeFileSync(lockFile, mine, { flag: 'wx' }); break; } catch (e) {
       if (e.code !== 'EEXIST') throw e;
-      const holder = Number(fs.readFileSync(lockFile, 'utf8') || 0);
-      if (holder && holder !== process.pid && !alive(holder)) { fs.rmSync(lockFile, { force: true }); continue; }
-      await sleep(25);
     }
+    // The holder released between our create and our read (ENOENT, the race ALT-NOTES 1.7 hit), or the file
+    // is mid-write (empty): retry. A dead holder's lock is taken over by an atomic rename, so of several
+    // processes that saw it dead exactly one removes it; a lock that turns out to be live is put back.
+    const holder = holderOf(lockFile);
+    const pid = Number(String(holder ?? '').split(':')[0]);
+    if (holder && pid && pid !== process.pid && !alive(pid)) {
+      const stolen = `${lockFile}.${mine.replace(':', '-')}.stale`;
+      try { fs.renameSync(lockFile, stolen); } catch (e) { if (e.code !== 'ENOENT') throw e; continue; }
+      if (holderOf(stolen) !== holder) { try { fs.linkSync(stolen, lockFile); } catch (e) { if (e.code !== 'EEXIST') throw e; } }
+      fs.rmSync(stolen, { force: true });
+      continue;
+    }
+    await sleep(25);
   }
-  try { return await fn(); } finally { fs.rmSync(lockFile, { force: true }); }
+  try { return await fn(); } finally { if (holderOf(lockFile) === mine) fs.rmSync(lockFile, { force: true }); }
 }
-const loadState = () => { try { return JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch { return {}; } };
+// Absent state is an empty workspace; unreadable or corrupt state is an error, never an empty substitute.
+const loadState = () => {
+  let text;
+  try { text = fs.readFileSync(stateFile, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return {}; throw e; }
+  try { return JSON.parse(text); } catch (e) { throw new Error(`${stateFile} is not valid JSON (${e.message}); \`forge-dev reset\` clears it`); }
+};
 const writeState = (state) => {
   const tmp = `${stateFile}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(state));
@@ -200,7 +218,7 @@ async function main() {
         if (!payload) throw new Error('a consumer needs --payload <file> (the pushed event body)');
         r = await emu.invoke(fnKey, { moduleKey: use.key, event: { body: payload, queueName: use.module.queue, jobId: 'dev-job', eventId: 'dev-job#0' }, asUser: opt('as') });
       } else if (use.type === 'action') {
-        r = await emu.invokeAction(use.key, payload ?? {}, { asUser: opt('as') });
+        r = await emu.invokeAction(use.key, payload ?? {}, { asUser: opt('as') ?? info.viewer }); // Rovo actions are user-led
       } else {
         if (!payload) throw new Error(`a ${use.type} function needs --payload <file> (its event); for live issue updates use \`events\``);
         r = await emu.invoke(fnKey, { moduleKey: use.key, event: payload, asUser: opt('as') });

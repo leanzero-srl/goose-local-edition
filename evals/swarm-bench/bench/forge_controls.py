@@ -65,7 +65,7 @@ def _rows(verdict: Dict) -> Dict[str, Dict]:
     return {r['check']: r for r in verdict['checks']}
 
 
-def judge(golden: Dict, mutant: Dict, expect: Dict, root_blocks: Dict[str, tuple]) -> List[str]:
+def judge(golden: Dict, mutant: Dict, expect: Dict, root_blocks: Dict[str, tuple], calibration_owned=()) -> List[str]:
     """Failures (empty = the mutant behaves as declared)."""
     fails: List[str] = []
     g, m = _rows(golden), _rows(mutant)
@@ -86,7 +86,8 @@ def judge(golden: Dict, mutant: Dict, expect: Dict, root_blocks: Dict[str, tuple
         attributed |= nxt
         frontier = nxt & lost
     missing = sorted(declared - lost)
-    extra = sorted(lost - declared - attributed)
+    # Calibration-owned economy rows are ratios any code change moves; they are reported, never a mutant's defect.
+    extra = sorted(lost - declared - attributed - set(calibration_owned))
     if missing:
         fails.append(f'declared losses that did not happen: {missing}')
     if extra:
@@ -203,7 +204,7 @@ def main(argv=None) -> int:
                 entry = {'score': verdict['score'], 'lost': sorted(
                     n for n, r in _rows(verdict).items() if r['score'] < _rows(golden)[n]['score'] - 1e-9),
                     'criticals': verdict['critical'].get('unsuppressed'),
-                    'fails': judge(golden, verdict, expect, score_forge.ROOT_BLOCKS)}
+                    'fails': judge(golden, verdict, expect, score_forge.ROOT_BLOCKS, score_forge.CALIBRATION_OWNED)}
             except Exception as error:
                 entry = {'fails': [f'{type(error).__name__}: {error}']}
             failed |= bool(entry['fails'])

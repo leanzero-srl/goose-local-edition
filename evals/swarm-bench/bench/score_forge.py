@@ -1935,10 +1935,20 @@ assert {n for _c, _l, names in ADMISSION_BANDS for n in names} <= REGISTERED
 assert set(EXCELLENCE_VALUED) | set(EXCELLENCE_BINARY) <= REGISTERED
 assert sum(1 for t in TIER_OF.values() if t != 'E') == 55 and sum(1 for t in TIER_OF.values() if t == 'E') == 4
 
+# Rows that compare a person's change LIST with the oracle: one wrong row in the ledger or one change shown that
+# should be hidden makes each of them wrong, and that is one defect, not N (DESIGN §13.4 item 5, gap #23).
+CHANGE_LIST_ROWS = ('u_ledger_table', 'u_ledger_sort', 's_index_order', 'u_comment_flow', 'u_issue_router',
+                    'a_action_result', 'a_action_permissions', 'b_hidden_count')
 ROOT_BLOCKS = {
     'l_bundles_load': tuple(n for n, t in TIER_OF.items() if t in ('T', 'R', 'S', 'B', 'U', 'A')),
     'r_backfill_complete': ('u_widget_numbers', 'a_action_result', 'u_ledger_table', 'r_removals_found'),
     'u_widget_loads': ('u_widget_numbers', 'u_widget_chart', 'u_widget_edit_config', 'v_widget_sizes'),
+    # measured on m_dedupe_event_id (seed 0123456789abcdef): one duplicated row -> a duplicate table row, the
+    # sort and index-order rows, one comment-flow step, the action's change list and the event-row exactness.
+    't_no_double_count': (*CHANGE_LIST_ROWS, 't_event_rows', 't_out_of_order', 't_multi_sprint_parse', 'r_heal_dropped',
+                          'u_widget_numbers', 'u_widget_chart', 't_reestimate_followed'),
+    # measured on m_asapp_ui: hidden changes listed -> the table, its sort and the action's list are wrong too.
+    'b_no_permission_leak': CHANGE_LIST_ROWS,
 }
 for _root, _deps in ROOT_BLOCKS.items():
     assert {_root, *_deps} <= REGISTERED
