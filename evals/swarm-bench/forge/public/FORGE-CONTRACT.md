@@ -144,8 +144,8 @@ Every surface calls `view.theme.enable()` and is styled with Atlassian design to
 (`var(--ds-…)`): text with `--ds-text*` (links may use `--ds-link*`), contrast at least 4.5:1 in
 light and in dark (disabled controls exempt). The page behind your surface is unpainted: paint your own background with a
 `--ds-surface*` token. The browser console stays free of errors. Surfaces render inside the
-default Forge Custom UI content security policy: no inline `<script>`, no `<style>` elements or
-`style` attributes in markup, no external scripts, styles or fonts, assets referenced relatively.
+default Forge Custom UI content security policy: inline `<script>` in `index.html` only as static content (the
+platform hashes it), no inline event handlers or `eval`, no `<style>` elements or `style` attributes in markup, no external scripts, styles or fonts, assets referenced relatively.
 Declaring `unsafe-inline` in `permissions.content.styles` is allowed; script relaxations count as
 unneeded permissions.
 
