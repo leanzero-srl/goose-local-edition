@@ -21,17 +21,23 @@ EXCLUDED = {'engine-console.log', 'harness-console.log', 'trace.jsonl', 'vendor-
 # SB7.1's task files; each isolated tier names its own (isolated_tiers.py), and a receipt carries
 # its tier's version, so a retry always replays the scorer and contract the build actually had.
 CONTRACTS = list(isolated_tiers.SB71.contracts)
+# A kit tier's tree (forge-1.0) also holds the pinned kit's module clone — npm's .bin symlinks, identity
+# already pinned by the receipt's kit_lock_sha256 — the entrant's dev-kit state, and the scorer's own
+# evidence written into the tree it grades (forge-shots/, forge-observations.json). None is candidate
+# source; counting them made every Forge receipt refuse on a symlink and every retry on its own shots.
+KIT_EXCLUDED = {'node_modules', '.forge-dev', 'forge-shots', 'forge-observations.json'}
 
 
 def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def inventory(tree):
+def inventory(tree, tier=None):
+    excluded = EXCLUDED | KIT_EXCLUDED if tier is not None and tier.kit else EXCLUDED
     result = {}
     for path in sorted(tree.rglob('*')):
         relative = path.relative_to(tree)
-        if relative.parts[0] in EXCLUDED or '__pycache__' in relative.parts or path.name == '.DS_Store':
+        if relative.parts[0] in excluded or '__pycache__' in relative.parts or path.name == '.DS_Store':
             continue
         if path.is_symlink():
             raise ValueError('Retry scoring requires a source tree without symlinks: ' + str(relative))
@@ -69,7 +75,7 @@ def write_completion(tree, destination, agent, *, run_id, started_at, seed, port
                'startedAt': started_at, 'completedAt': time.time(),
                'completionEvidence': evidence,
                'fixture_seed': seed, 'vendor_port': port, 'provider': provider, 'model': model,
-               'agent': agent, 'sourceInventory': inventory(tree),
+               'agent': agent, 'sourceInventory': inventory(tree, tier),
                'contracts': {name: sha(ROOT / name) for name in tier.contracts},
                'scorerFiles': {name: sha(ROOT / 'bench' / name) for name in tier.scorer_files}}
     if tier.kit:
@@ -105,7 +111,7 @@ def validate_receipt(receipt, tree, run_id):
         raise ValueError('Original fixture seed is missing')
     if type(port) is not int or not 1 <= port <= 65535:
         raise ValueError('Original vendor port is missing')
-    if receipt.get('sourceInventory') != inventory(tree):
+    if receipt.get('sourceInventory') != inventory(tree, tier):
         raise ValueError('Candidate files changed after the completed model build; retry refused')
     if receipt.get('contracts') != {name: sha(ROOT / name) for name in tier.contracts}:
         raise ValueError('The installed benchmark task differs from the original build; retry refused')

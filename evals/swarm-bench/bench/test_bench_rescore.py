@@ -50,6 +50,35 @@ class RetryTests(unittest.TestCase):
         (self.tree / 'model-cost.json').write_text('{}')
         retry.validate_receipt(self.receipt, self.tree, 'cloud-test')
 
+    def test_a_forge_tree_counts_its_sources_never_the_kit_clone_dev_state_or_the_scorer_evidence(self):
+        tree = self.root / 'forge-candidate'
+        (tree / 'src').mkdir(parents=True)
+        (tree / 'src' / 'index.js').write_text('export const run = () => 1;\n')
+        (tree / 'trace.jsonl').write_text(json.dumps({'fixture_seed': '0123456789abcdef'}) + '\n')
+        # The kit's module clone carries npm's .bin symlinks; the dev kit keeps state beside the app.
+        (tree / 'node_modules' / '.bin').mkdir(parents=True)
+        (tree / 'node_modules' / 'pkg.js').write_text('module.exports = 1;\n')
+        (tree / 'node_modules' / '.bin' / 'pkg').symlink_to(tree / 'node_modules' / 'pkg.js')
+        (tree / '.forge-dev').mkdir()
+        (tree / '.forge-dev' / 'state.json').write_text('{}')
+        with self.assertRaises(ValueError):  # Gauntlet's inventory still refuses any symlink.
+            retry.inventory(tree)
+        receipt = retry.write_completion(tree, self.root / 'private' / 'forge.json', self.agent,
+            run_id='cloud-forge', started_at='2026-10-03T00:00:00Z', seed='0123456789abcdef', port=8850,
+            provider='openrouter', model='m', tier=retry.isolated_tiers.FORGE10,
+            kit={'lock_sha256': 'a' * 64, 'wrapper_sha256': 'b' * 64})
+        self.assertEqual(list(receipt['sourceInventory']), ['src/index.js'])
+        # score_forge writes its evidence into the tree it grades; the receipt still holds.
+        (tree / 'forge-shots').mkdir()
+        (tree / 'forge-shots' / 'contact-sheet.png').write_bytes(b'png')
+        (tree / 'forge-observations.json').write_text('{}')
+        (tree / '.forge-dev' / 'state.json').write_text('{"later": true}')
+        retry.validate_receipt(receipt, tree, 'cloud-forge')
+        # A source change is still a refusal.
+        (tree / 'src' / 'index.js').write_text('export const run = () => 2;\n')
+        with self.assertRaises(ValueError):
+            retry.validate_receipt(receipt, tree, 'cloud-forge')
+
     def test_refuses_seed_identity_and_contract_mismatch(self):
         for field, value in [('runId', 'other'), ('fixture_seed', 'ffffffffffffffff'), ('contracts', {})]:
             with self.subTest(field=field), self.assertRaises(ValueError):
