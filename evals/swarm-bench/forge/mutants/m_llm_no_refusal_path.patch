@@ -1,8 +1,8 @@
 diff --git a/src/explain.js b/src/explain.js
-index ec3a2cc..cbbf927 100644
+index 8671170..96f51ab 100644
 --- a/src/explain.js
 +++ b/src/explain.js
-@@ -73,7 +73,6 @@ export async function explainSprint(view) {
+@@ -74,7 +74,6 @@ export async function explainSprint(view) {
    }
  
    const call = (response?.choices ?? []).flatMap((c) => c.message?.tool_calls ?? []).find((t) => t.function?.name === 'report_scope');

@@ -90,9 +90,11 @@ function Ledger({ data, context }) {
     setExplaining(true);
     try {
       const res = await call('explain');
-      if (res?.ok) setExplanation(res);
-      else flag('error', 'No explanation', res?.error ?? 'Forge LLM did not answer.');
+      // A failed attempt clears the previous answer, so nothing on screen claims to explain it.
+      setExplanation(res?.ok ? res : null);
+      if (!res?.ok) flag('error', 'No explanation', res?.error ?? 'Forge LLM did not answer.');
     } catch (e) {
+      setExplanation(null);
       flag('error', 'No explanation', e?.message ?? String(e));
     } finally {
       explainInFlight.current = false;

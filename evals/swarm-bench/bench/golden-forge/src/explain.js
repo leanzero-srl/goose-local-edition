@@ -64,8 +64,9 @@ export async function explainSprint(view) {
       ],
       tools: [TOOL],
       tool_choice: { type: 'function', function: { name: 'report_scope' } },
+      // No temperature/top_p: current Claude models refuse sampling parameters (measured on forge-dev:
+      // 400 "does not support the temperature and top_p sampling parameters").
       max_completion_tokens: 600,
-      temperature: 0.2,
     });
   } catch (e) {
     console.error(`explain: Forge LLM call failed (${model ?? 'no model'}): ${e.message}`);

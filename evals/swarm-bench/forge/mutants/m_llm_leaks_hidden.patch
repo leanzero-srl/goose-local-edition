@@ -1,8 +1,8 @@
 diff --git a/src/explain.js b/src/explain.js
-index ec3a2cc..f76da40 100644
+index 8671170..727d7a5 100644
 --- a/src/explain.js
 +++ b/src/explain.js
-@@ -84,12 +84,12 @@ export async function explainSprint(view) {
+@@ -85,12 +85,12 @@ export async function explainSprint(view) {
    if (!valid) return { ok: false, error: 'The model answered in an unexpected shape.' };
  
    const visible = new Map(view.changes.map((c) => [c.changeId, c]));

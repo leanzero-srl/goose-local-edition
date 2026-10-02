@@ -148,3 +148,36 @@ sprint action render with the bridge host; a double click on post-summary = one 
 24. `m_double_post` only bites if the post button stays under the pointer: a label that changes width while
     posting ("Posting…") moved the button so the second click of a double click landed on the container
     (measured on WP3's bed). The golden keeps the label fixed; the in-flight guard is what makes it pass.
+
+## D. Forge LLM, Realtime and rovo:mcp (contract 2006de559, verified on forge-dev kit-db300f0d5da47478)
+
+25. **Realtime tokens from async functions: the public docs disagree.** "Authorizing Realtime channels" says
+    async functions (queue consumers, triggers) must sign a token with the same claims as the subscriber and
+    publish with it; the Realtime events API page says "import the `signRealtimeToken` function into your
+    resolver" and calls `publishGlobal`'s token optional. Per the coordinator's correction the golden signs
+    nothing: consumer and scheduled run `publishGlobal({sprintIds})` with no token; the widget
+    `subscribeGlobal`s with no token. Settle in the contract: "async publishers use `publishGlobal` without a
+    token" (or the opposite), since an entrant following the authorizing page writes the other design.
+26. **Sampling parameters.** MEASURED on forge-dev: `chat` with `temperature` answers 400 "claude-sonnet-5 does
+    not support the temperature and top_p sampling parameters". The @forge/llm README's own example sends
+    `temperature` and `top_p`, so an entrant copying it fails every explain. If this mirrors the real
+    platform it is a fair trap; if it is the emulator's choice, the contract should say so.
+27. **`tool_calls[].function.arguments` type.** @forge/llm types it as `object`; the golden treats anything else
+    (including a JSON string) as malformed. Settle whether a string-encoded object counts as malformed.
+28. **Which active model.** The contract says "a model that list() reports active"; with several active the
+    golden prefers a Sonnet, else the first active one.
+29. **Explanation after a failed attempt.** The contract says a refusal/malformed/error shows an error flag
+    and leaves the modal working; the golden also clears a previous explanation so nothing on screen claims
+    to answer the failed request.
+30. **Global channel exposure.** A token-less global channel can be subscribed by any user of the app
+    installation who knows its name (authorizing page). The payload is sprint ids only, which is why the
+    golden accepts it; say in §4 that this is the intended trade-off.
+31. **Points sort** is no longer required; the golden keeps clicking `points` (descending, ties by `at`) and the
+    `at` toggle starts ascending from it, as §5 now states.
+
+Verified on forge-dev (dev seed c420dda4e034a3db): backfill 65 rows; events publish `{sprintIds}` with
+publishGlobal from the consumer; an open widget (board 151) moved sprint 689 from 43/97.7% to 56/127.3%
+added/creep with 0 reloads after one realtime delivery, subscribed once, clean console; explain through the
+scripted sequence: clean -> summary + 3 visible ids; digits -> the ledger's own sentence, unknown/hidden ids
+dropped (1 kept); refusal, malformed, error -> 3 error flags, no explanation; clean again -> summary.
+`npm run lint`: No issues found.

@@ -1,8 +1,8 @@
 diff --git a/src/explain.js b/src/explain.js
-index ec3a2cc..3db2ac5 100644
+index 8671170..16a9c9f 100644
 --- a/src/explain.js
 +++ b/src/explain.js
-@@ -85,7 +85,7 @@ export async function explainSprint(view) {
+@@ -86,7 +86,7 @@ export async function explainSprint(view) {
  
    const visible = new Map(view.changes.map((c) => [c.changeId, c]));
    const ids = [...new Set(args.changeIds)].filter((id) => visible.has(id));
