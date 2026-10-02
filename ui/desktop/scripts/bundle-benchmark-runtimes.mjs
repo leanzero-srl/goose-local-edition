@@ -18,7 +18,7 @@ if (!selected) {
     path.join(output, 'manifest.json'),
     JSON.stringify({ platform, arch, supported: false })
   );
-  console.log(`SB7.1 runtime is not supported on ${platform}-${arch}`);
+  console.log(`Benchmark runtime is not supported on ${platform}-${arch}`);
   process.exit(0);
 }
 const manifest = { platform, arch };

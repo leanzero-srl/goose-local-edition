@@ -21,7 +21,7 @@ export function ScoreAdmission({
   if (!admission || typeof rawScore !== 'number')
     return (
       <p role="status" className={TYPE.bodyMuted}>
-        This SB7.1 result is missing its score admission evidence.
+        This result is missing its score admission evidence.
       </p>
     );
   const gates = [

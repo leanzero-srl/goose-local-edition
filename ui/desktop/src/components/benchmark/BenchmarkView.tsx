@@ -1,9 +1,15 @@
 import { appendBenchmarkActivity, emptyBenchmarkActivity } from '../../benchActivity';
 import { BenchmarkActivityPanel } from './BenchmarkActivityPanel';
 import { benchmarkModelIdProblem } from '../../benchModelIdentity';
+import { billedCostLine } from '../../benchBilledCost';
 import { BenchmarkRuntimeSetup } from './BenchmarkRuntimeSetup';
 import { CloudEntrant } from './CloudEntrant';
-import { DEFAULT_BENCHMARK_TIER, benchmarkLaunchProblem } from '../../benchTierPayload';
+import {
+  DEFAULT_BENCHMARK_NAME,
+  DEFAULT_BENCHMARK_TIER,
+  benchmarkLaunchProblem,
+  defaultBenchmarkScorer,
+} from '../../benchTierPayload';
 import { RunVideoEvidence } from './RunVideoEvidence';
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
@@ -22,10 +28,19 @@ import { fmtWhen, OutcomeChip, OUTCOME_WORDS } from './outcome';
 import { useHashQuery } from '../Layout/useHashQuery';
 import { StudioSelect, type StudioSelectOption } from '../leanzero-swarm/studio';
 import { MainPanelLayout } from '../Layout/MainPanelLayout';
-import { SB8_TIERS, isSb8, TIER_LABELS, type BenchmarkRow, type Tier } from './baselines';
+import {
+  SB8_TIERS,
+  VERDICT_TIER_INFO,
+  VERDICT_TIER_ORDER,
+  isIsolatedPaymentsScorer,
+  isSb8,
+  TIER_LABELS,
+  type BenchmarkRow,
+  type Tier,
+} from './baselines';
 import type { BenchSession, CatalogBaseline, CatalogBenchmark, CatalogMismatch } from './bridge';
 import { ScoreBars } from './ScoreBars';
-import { TierBreakdown } from './TierBreakdown';
+import { TierBreakdown, type TierColumn } from './TierBreakdown';
 import { ScoringDetail, type VerdictDetail } from './ScoringDetail';
 import { SwarmRunPanel } from '../swarm/SwarmRunPanel';
 import { useSwarmRun } from '../swarm/useSwarmRun';
@@ -104,6 +119,8 @@ type PublishState =
 interface MineRow extends BenchmarkRow {
   provider?: string;
   scoringSecs?: number;
+  /** The harness's `agent.billed_cost` record, verbatim (benchBilledCost.ts reads it). */
+  billedCost?: unknown;
   runMeta?: { startedAt: string; finishedAt: string; engineEvents: number; repairRounds: number };
   workdir?: string;
   /** Full scoring detail (every check + evidence + repair story) — absent on pre-detail results. */
@@ -379,6 +396,30 @@ function boardColumns(own: {
  * only within its own era. Every outcome renders its own truth: a run that died before scoring
  * says so in words; it never borrows the look of a finished one.
  */
+/**
+ * The run's bill as the provider recorded it — the one cost figure the view shows. A swarm without a
+ * record says nothing (local nodes bill nothing); a single-model run without one says so.
+ */
+function BilledCostNote({ value, provider }: { value: unknown; provider: string | null }) {
+  const line = billedCostLine(value, provider);
+  if (!line) return null;
+  return (
+    <div data-testid="billed-cost" className="flex flex-col gap-0.5">
+      <p
+        className={cx(
+          'text-lz-body',
+          WEIGHT.semibold,
+          TNUM,
+          line.tone ? TONE_TEXT[line.tone] : 'text-lz-ink'
+        )}
+      >
+        {line.sentence}
+      </p>
+      {line.detail && <p className={cx(TYPE.meta, TNUM)}>{line.detail}</p>}
+    </div>
+  );
+}
+
 function FailureDetails({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   return (
@@ -391,6 +432,112 @@ function FailureDetails({ text }: { text: string }) {
           {text}
         </pre>
       )}
+    </div>
+  );
+}
+
+const LEGACY_TIER_LETTERS = new Set<string>(['A', 'B', 'C', 'D', 'E', 'F']);
+
+/**
+ * The tier columns a non-SB8 result shows, when it recorded tiers beyond A–F (the sb-7 family's
+ * J…R and the payments S/Q/M). Weights and gates come from the stored verdict when this view holds
+ * it; a session without one still shows every recorded tier, unlabelled rather than guessed. A result
+ * with only A–F returns null and keeps the classic four columns.
+ */
+function recordedTierColumns(
+  tiers: Partial<Record<string, number>> | undefined,
+  verdict: VerdictDetail | undefined
+): TierColumn[] | null {
+  if (!tiers) return null;
+  const recorded = VERDICT_TIER_ORDER.filter((tier) => tiers[tier] !== undefined);
+  if (recorded.every((tier) => LEGACY_TIER_LETTERS.has(tier))) return null;
+  const detail = (verdict as { tiers?: Record<string, unknown> } | undefined)?.tiers;
+  return recorded.map((tier) => {
+    const entry = detail?.[tier];
+    const rich =
+      entry && typeof entry === 'object'
+        ? (entry as { weight?: unknown; admission_only?: unknown })
+        : null;
+    return {
+      tier,
+      name: VERDICT_TIER_INFO[tier]?.name,
+      ...(rich && typeof rich.weight === 'number' && Number.isFinite(rich.weight)
+        ? { weight: rich.weight }
+        : {}),
+      ...(rich?.admission_only === true ? { admissionOnly: true } : {}),
+    };
+  });
+}
+
+/**
+ * The selected session's headline. Two lines, never one squeezed row: the benchmark title owns the
+ * first line (truncating, never wrapping into a column) beside the outcome and the delete action; the
+ * scorer code, the era chip and the start stamp sit on a wrapping metadata line beneath. At ~900 px
+ * the single-row version broke every text item into a narrow vertical stack (SB7.1 payments · pilot,
+ * 2026-10-02).
+ */
+function SessionHeader({
+  title,
+  scorerVersion,
+  era,
+  when,
+  session,
+  onDelete,
+}: {
+  title: string;
+  scorerVersion: string;
+  era: 'current' | 'frozen' | 'history';
+  when: string;
+  session: BenchSession;
+  onDelete: () => void;
+}) {
+  return (
+    <div
+      data-testid="session-header"
+      className={cx('flex flex-col gap-1 border-b px-4 py-2.5', SURFACE.hairline)}
+    >
+      <div className="flex min-w-0 items-center gap-3">
+        <h2 className={cx('min-w-0 flex-1 truncate', TYPE.h2)} title={title}>
+          {title}
+        </h2>
+        <OutcomeChip session={session} />
+        <Button
+          variant="ghost"
+          size="sm"
+          iconOnly
+          onClick={onDelete}
+          disabled={session.outcome === 'running' || session.runId == null}
+          aria-label={`Delete session ${session.runId ?? session.startedAt}`}
+          title={
+            session.outcome === 'running'
+              ? 'A running session cannot be deleted — cancel the run first'
+              : session.runId == null
+                ? 'This session has no run id yet — it appears moments after launch'
+                : 'Delete this session'
+          }
+          icon={<Trash2 />}
+        />
+      </div>
+      <div
+        data-testid="session-header-meta"
+        className="flex flex-wrap items-center gap-x-3 gap-y-1"
+      >
+        <span className="whitespace-nowrap font-mono text-lz-mono text-lz-ink-3">
+          {scorerVersion}
+        </span>
+        {era === 'current' ? (
+          <Chip tone="ok">CURRENT</Chip>
+        ) : era === 'frozen' ? (
+          <Chip tone="warn">FROZEN</Chip>
+        ) : (
+          // Not the benchmark a run enters today — said on the headline itself, so an older era's
+          // run never reads as the current one.
+          <Chip title="An earlier benchmark — its runs stay viewable as history">history</Chip>
+        )}
+        <span className={cx('whitespace-nowrap text-lz-body text-lz-ink', WEIGHT.semibold, TNUM)}>
+          {when}
+        </span>
+      </div>
     </div>
   );
 }
@@ -491,6 +638,11 @@ function SessionDetail({
           mine: true,
           scorerVersion: session.scorerVersion,
         };
+  const billed =
+    mineMatched && mine ? billedCostLine(mine.billedCost, mine.provider ?? null) : null;
+  const tierColumns = isSb8(session.scorerVersion)
+    ? null
+    : recordedTierColumns(ownRow?.tiers, mineMatched ? mine?.verdict : undefined);
   const rows: BenchmarkRow[] = [
     ...baselines.map((b) => ({
       label: b.label || b.model,
@@ -531,7 +683,13 @@ function SessionDetail({
         {mineMatched && mine?.runMeta && !mine.provider && (
           <StatCell label="Engine events" value={mine.runMeta.engineEvents.toLocaleString()} />
         )}
+        {mineMatched && billed?.amount && (
+          <StatCell label="Billed" value={billed.amount} tone={billed.tone ?? undefined} />
+        )}
       </div>
+      {mineMatched && mine && (
+        <BilledCostNote value={mine.billedCost} provider={mine.provider ?? null} />
+      )}
 
       {mineMatched && (
         <Panel
@@ -549,7 +707,7 @@ function SessionDetail({
         </Panel>
       )}
 
-      {mineMatched && session.scorerVersion.startsWith('sb-7.1') && (
+      {mineMatched && isIsolatedPaymentsScorer(session.scorerVersion) && (
         <Panel title="Graded browser recording">
           <RunVideoEvidence workdir={mine?.workdir} />
         </Panel>
@@ -585,11 +743,15 @@ function SessionDetail({
                 .filter(([tier]) => ownRow?.tiers?.[tier as Tier] !== undefined)
                 .map(([tier, info]) => `${tier} ${info.name}`)
                 .join(' · ')
-            : `${TIER_LABELS.A} · ${TIER_LABELS.B} · ${TIER_LABELS.C} · ${TIER_LABELS.D}`}
+            : tierColumns
+              ? tierColumns
+                  .map((column) => `${column.tier} ${column.name ?? ''}`.trim())
+                  .join(' · ')
+              : `${TIER_LABELS.A} · ${TIER_LABELS.B} · ${TIER_LABELS.C} · ${TIER_LABELS.D}`}
           .
         </p>
         {ownRow?.tiers ? (
-          <TierBreakdown rows={[ownRow]} />
+          <TierBreakdown rows={[ownRow]} {...(tierColumns ? { tiers: tierColumns } : {})} />
         ) : (
           <p className={TYPE.bodyMuted}>This session recorded no per-tier split.</p>
         )}
@@ -1037,7 +1199,7 @@ export default function BenchmarkView() {
     [sections]
   );
   const tierOption =
-    tierOptions.find((o) => o.value === DEFAULT_BENCHMARK_TIER) ??
+    tierOptions.find((o) => o.value === defaultBenchmarkScorer()) ??
     tierOptions.find((o) => o.current) ??
     null;
 
@@ -1388,8 +1550,8 @@ export default function BenchmarkView() {
           />
 
           <p className={TYPE.bodyMuted}>
-            SB7.1 payments runs with Swarm or a single model. Swarm nodes can mix local and cloud
-            providers. Earlier experiments remain separate in your session history.
+            {DEFAULT_BENCHMARK_NAME} runs with Swarm or a single model. Swarm nodes can mix local
+            and cloud providers. Earlier benchmarks remain separate in your session history.
           </p>
 
           {/* Run setup — the fleet size and the sampling knobs the next run will use, editable until
@@ -1426,7 +1588,7 @@ export default function BenchmarkView() {
               title="New run"
               right={
                 <span className={TYPE.meta}>
-                  {DEFAULT_BENCHMARK_TIER.toUpperCase().replace('SB-', 'SB')} payments ·{' '}
+                  {DEFAULT_BENCHMARK_NAME} ·{' '}
                   {launchProblem ? 'Bundled benchmark' : 'Latest stable benchmark'}
                 </span>
               }
@@ -1547,51 +1709,15 @@ export default function BenchmarkView() {
           {failureDetails && <FailureDetails text={failureDetails} />}
 
           {selectedSession && selectedEra ? (
-            <Panel
-              key={sessionKey(selectedSession)}
-              padded={false}
-              header={
-                <div className="flex h-full w-full items-center gap-3">
-                  <span className={TYPE.h2}>{selectedEra.title}</span>
-                  <span className="font-mono text-lz-mono text-lz-ink-3">
-                    {selectedEra.scorerVersion}
-                  </span>
-                  {selectedEra.current ? (
-                    <Chip tone="ok">CURRENT</Chip>
-                  ) : selectedEra.frozen ? (
-                    <Chip tone="warn">FROZEN</Chip>
-                  ) : (
-                    // Not the benchmark a run enters today — said on the headline itself, so an
-                    // older era's run never reads as the current one.
-                    <Chip title="An earlier benchmark — its runs stay viewable as history">
-                      history
-                    </Chip>
-                  )}
-                  <span className={cx('ml-auto text-lz-body text-lz-ink', WEIGHT.semibold, TNUM)}>
-                    {fmtWhen(selectedSession.startedAt) ?? selectedSession.startedAt}
-                  </span>
-                  <OutcomeChip session={selectedSession} />
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    iconOnly
-                    onClick={() => setDeleteTarget(selectedSession)}
-                    disabled={
-                      selectedSession.outcome === 'running' || selectedSession.runId == null
-                    }
-                    aria-label={`Delete session ${selectedSession.runId ?? selectedSession.startedAt}`}
-                    title={
-                      selectedSession.outcome === 'running'
-                        ? 'A running session cannot be deleted — cancel the run first'
-                        : selectedSession.runId == null
-                          ? 'This session has no run id yet — it appears moments after launch'
-                          : 'Delete this session'
-                    }
-                    icon={<Trash2 />}
-                  />
-                </div>
-              }
-            >
+            <Panel key={sessionKey(selectedSession)} padded={false}>
+              <SessionHeader
+                title={selectedEra.title}
+                scorerVersion={selectedEra.scorerVersion}
+                era={selectedEra.current ? 'current' : selectedEra.frozen ? 'frozen' : 'history'}
+                when={fmtWhen(selectedSession.startedAt) ?? selectedSession.startedAt}
+                session={selectedSession}
+                onDelete={() => setDeleteTarget(selectedSession)}
+              />
               <div className={cx('flex flex-col gap-3', SPACE.card)}>
                 {selectedEra.frozen && (
                   <p className={cx(TYPE.meta, WEIGHT.semibold, TONE_TEXT.warn)}>
@@ -1625,7 +1751,7 @@ export default function BenchmarkView() {
                     running ||
                     !runtimeReady ||
                     !!launchProblem ||
-                    selectedSession.scorerVersion !== DEFAULT_BENCHMARK_TIER
+                    selectedSession.scorerVersion !== defaultBenchmarkScorer()
                   }
                 />
               </div>

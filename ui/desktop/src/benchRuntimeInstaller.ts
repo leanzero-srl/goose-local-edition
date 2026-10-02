@@ -30,7 +30,7 @@ export async function inspectBenchmarkRuntime(
     return {
       state: 'unsupported',
       downloadBytes: 0,
-      error: 'SB7.1 currently requires macOS on Apple Silicon.',
+      error: 'Benchmark tools currently require macOS on Apple Silicon.',
     };
   const downloadBytes = Object.values(selected).reduce((sum, pin) => sum + pin.downloadBytes, 0);
   const root = path.join(installParent, 'runtime');
@@ -83,7 +83,7 @@ async function performInstall(
   onProgress: (progress: BenchmarkRuntimeProgress) => void
 ) {
   const selected = selectedPins();
-  if (!selected) throw new Error('SB7.1 currently requires macOS on Apple Silicon.');
+  if (!selected) throw new Error('Benchmark tools currently require macOS on Apple Silicon.');
   const totalBytes = Object.values(selected).reduce((sum, pin) => sum + pin.downloadBytes, 0);
   let receivedBytes = 0;
   await fs.mkdir(installParent, { recursive: true });
