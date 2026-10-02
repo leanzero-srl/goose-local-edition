@@ -2,6 +2,7 @@ import './utils/userDataPath';
 import { benchmarkResultTransaction } from './benchResultTransaction';
 import { retryScoringEligibility, type BuildCompletionReceipt } from './benchRescore';
 import { billedCostRowField } from './benchBilledCost';
+import { budgetRowField, maxUsdLaunchEnv } from './benchBudget';
 import {
   appendBenchmarkActivity,
   emptyBenchmarkActivity,
@@ -94,6 +95,7 @@ import { acpWebSocketUrlFromHttpBase, normalizeAcpHttpBaseUrl } from './acp/url'
 import { expandTilde } from './utils/pathUtils';
 import {
   agentWorkRegistryPath,
+  gooseConfigYamlPath,
   gooseDirs,
   gooseGlobalMemoryDir,
   gooseGlobalSkillsDir,
@@ -3080,6 +3082,18 @@ const BENCH_DIR = benchmarkProfileDirectory(os.homedir(), resolveGoosePathRoot()
 const BENCH_PUBLISH_URL =
   process.env.LEANZERO_BENCH_PUBLISH_URL || 'https://leanzero.net/api/benchmark-runs';
 const BENCH_RESULT = path.join(BENCH_DIR, 'result.json');
+
+/** BENCH_MAX_USD from goose's config.yaml (the Benchmark view's "Stop a run at $" setting). */
+async function benchMaxUsdEnv(): Promise<{ BENCH_MAX_USD?: string }> {
+  let text: string;
+  try {
+    text = await fs.readFile(gooseConfigYamlPath(), 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return {};
+    throw err;
+  }
+  return maxUsdLaunchEnv(yaml.parse(text));
+}
 const BENCH_IDENTITY = path.join(BENCH_DIR, 'identity.json');
 // Session index + site-catalog cache. The session DATA lives under userData (benchSessionsRoot);
 // only the small index and the cached catalog sit beside result.json in the config dir.
@@ -4015,6 +4029,9 @@ const persistBenchmarkResult = async ({
     // verbatim — status and all — so the view can say complete / at-least / unavailable. goose's
     // `accumulated_cost` inside modelUsage is a local price-table estimate and is never the bill.
     ...billedCostRowField(v.agent),
+    // How the run ended against the harness budget (bench_budget.py): the call budget, the operator's
+    // wallet guard, or the model finishing on its own — verbatim, for the session view's stop line.
+    ...budgetRowField(v.agent),
     // The run's own measured token rates (scorer's telemetry_summary) — published
     // with the post so the public entry shows prefill/decode tok/s per node.
     ...(v.telemetry && typeof v.telemetry === 'object' ? { telemetry: v.telemetry } : {}),
@@ -4127,6 +4144,9 @@ ipcMain.handle(
         : { python: 'python3', node: undefined, env: {} };
       const benchNode = await resolveBenchNode(tier, runtime.node);
       const browserEnv = await bundledBrowserEnv();
+      // The operator's OpenRouter spend limit (Benchmark view → goose config BENCH_MAX_USD). run_build's
+      // wallet guard stops a single-model run at it and scores what exists; a swarm run is not guarded.
+      const walletEnv = cloud ? await benchMaxUsdEnv() : {};
       // The engine the run measures: the exact binary this app ships (or the dev build), never a PATH
       // lookup. run_build.py honors BENCH_GOOSE for the engine path.
       const engineBinary = findGooseBinaryPath({
@@ -4218,6 +4238,7 @@ ipcMain.handle(
                 BENCH_MEDIA_DIR: path.join(workdir, 'bench-media'),
                 GOOSE_SWARM_RENDER_NODE: benchNode,
                 ...browserEnv,
+                ...walletEnv,
                 // NOT pinned any more (VA-048/051): GOOSE_SWARM_TAIL_REVIEW, GOOSE_SWARM_PREREVIEW,
                 // GOOSE_SWARM_PREREVIEW_DIMS and GOOSE_SWARM_JUDGE. The r3 supervision-off arm (P1-10)
                 // switched four env-only, default-ON layers off here. Every one of those layers is DELETED

@@ -249,8 +249,12 @@ def summarize(ids: list[str], found: dict, late: list[str], failures: dict, usag
 
 
 def record(provider: str | None, model: str | None, credentials: dict, runtime: Path, workdir: Path,
-           usage: dict | None, urlopen=None, sleep=None) -> dict:
-    """The run's billed cost, written to model-cost.json; a failure is a named record, never a zero."""
+           usage: dict | None, urlopen=None, sleep=None, budget: dict | None = None) -> dict:
+    """The run's billed cost, written to model-cost.json; a failure is a named record, never a zero.
+
+    `budget` is the harness's call-budget / wallet-guard record (bench_budget), kept beside the bill so
+    the cost file says how the run ended.
+    """
     try:
         if provider != 'openrouter':
             result = unavailable(provider)
@@ -285,5 +289,7 @@ def record(provider: str | None, model: str | None, credentials: dict, runtime: 
         if credentials.get('OPENROUTER_API_KEY'):
             reason = reason.replace(credentials['OPENROUTER_API_KEY'], '[REDACTED]')
         result = {'status': 'error', 'provider': provider, 'model': model, 'reason': reason}
+    if budget is not None:
+        result['budget'] = budget
     (workdir / 'model-cost.json').write_text(json.dumps(result, indent=2))
     return result

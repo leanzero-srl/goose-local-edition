@@ -24,6 +24,8 @@ from typing import Dict
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import bench_budget  # noqa: E402
+import bench_cost  # noqa: E402
 import isolated_tiers  # noqa: E402
 import score_build  # noqa: E402
 import vendor_service  # noqa: E402
@@ -238,6 +240,14 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
                "--log-file", str(workdir / "run.jsonl")]
     else:
         raise SystemExit(f"unknown entrant {entrant!r}")
+    # THE CALL BUDGET (bench_budget.py): every single-model entrant of an isolated tier gets the same
+    # published number of model calls, then goose ends the session and the harness scores what exists.
+    # A swarm entrant (`goose swarm run`) is not budgeted: the engine's NO CAPS invariant stands.
+    budgeted = bool(isolated_tiers.active()) and cmd[1] == "run"
+    if budgeted:
+        prompt_at = cmd.index("-t")
+        cmd[prompt_at:prompt_at] = bench_budget.call_budget_args()
+    wallet_limit = bench_budget.wallet_limit()
 
     child_env = {**os.environ, **env}
     if isolated_tiers.active():
@@ -276,6 +286,19 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
     console = workdir / "engine-console.log"
     session_leader = None
     console_missing = None
+    guard = None
+    wallet = None
+    if wallet_limit is not None:
+        if entrant.startswith("swarm") and not provider:
+            wallet = bench_budget.wallet_unavailable(
+                wallet_limit, None, "the swarm entrant is not guarded: it runs without a harness budget")
+        elif provider != "openrouter":
+            billing = provider or ("aws_bedrock" if entrant in MODELS else None)
+            wallet = bench_budget.wallet_unavailable(wallet_limit, billing,
+                                                     bench_cost.unavailable(billing)["reason"])
+        elif not env.get("OPENROUTER_API_KEY"):
+            wallet = bench_budget.wallet_unavailable(wallet_limit, provider,
+                                                     "OPENROUTER_API_KEY is absent from the run's credentials")
     try:
         with console.open("w+", buffering=1, errors="replace") as fh:
             if provider or snapshot is not None:
@@ -284,13 +307,23 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
                                         env={**child_env, "GOOSE_MODE": "auto"},
                                         start_new_session=True)
                 session_leader = proc.pid
-                for line in proc.stdout:
-                    for value in credential_values:
-                        line = line.replace(value, "[REDACTED]")
-                    fh.write(line)
-                    print(line, end="", flush=True)
-                proc.stdout.close()
-                code = proc.wait()
+                if wallet_limit is not None and wallet is None:
+                    guard = bench_budget.WalletGuard(
+                        proc, Path(child_env["GOOSE_SWARM_TELEMETRY_FILE"]), wallet_limit,
+                        env["OPENROUTER_API_KEY"], env.get("OPENROUTER_HOST") or "https://openrouter.ai")
+                    guard.start()
+                try:
+                    for line in proc.stdout:
+                        for value in credential_values:
+                            line = line.replace(value, "[REDACTED]")
+                        fh.write(line)
+                        print(line, end="", flush=True)
+                    proc.stdout.close()
+                    code = proc.wait()
+                finally:
+                    if guard is not None:
+                        guard.stop()
+                        wallet = guard.record()
             else:
                 # Popen + wait is subprocess.run's own timeout semantics (kill, reap, re-raise), kept
                 # so the session leader's pid is known to the teardown below.
@@ -331,6 +364,15 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
     (workdir / "reaped-processes.json").write_text(json.dumps(teardown, indent=2))
     if isolated_tiers.active():
         result["telemetry_landing"] = land_telemetry(runtime_telemetry, tpath)
+    if budgeted or wallet is not None:
+        budget = {"max_calls": bench_budget.CALL_BUDGET} if budgeted else {}
+        entrant_model = cmd[cmd.index("--model") + 1] if "--model" in cmd else None
+        budget.update(bench_budget.entrant_calls(tpath, entrant_model))
+        budget["stopped_by"] = bench_budget.stopped_by(result, wallet)
+        if wallet is not None:
+            budget["wallet"] = wallet
+        result["budget"] = budget
+        print("BENCH_BUDGET " + json.dumps(budget), flush=True)
     knowledge_after = knowledge_store_snapshot(workdir)
     if knowledge_after != knowledge_before:
         changed = sorted(set(knowledge_before.items()) ^ set(knowledge_after.items()))
@@ -340,9 +382,8 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
     if isolated_tiers.active():
         result["usage"] = bench_isolation.usage(Path(child_env["BENCH_SB71_RUNTIME"]))
         (workdir / "model-usage.json").write_text(json.dumps(result["usage"], indent=2))
-        import bench_cost
         result["billed_cost"] = bench_cost.record(provider, model, env, Path(child_env["BENCH_SB71_RUNTIME"]),
-                                                  workdir, result["usage"])
+                                                  workdir, result["usage"], budget=result.get("budget"))
     return result
 
 
@@ -764,6 +805,8 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
     if workdir.exists():
         raise FileExistsError(f"Benchmark tree already exists; preserve it and choose a new entrant: {workdir}")
     tier = isolated_tiers.active()
+    # A malformed wallet limit refuses here, before a tree, a vendor or a model call exists.
+    bench_budget.wallet_limit()
     snapshot = entrant_config(provider) if provider or tier else None
     credentials = (cloud_env(provider, snapshot) if provider else
                    snapshot_environment(snapshot) if snapshot else load_env())
@@ -914,14 +957,18 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
     try:
         print('BENCH_PHASE ' + json.dumps({'phase': 'build'}), flush=True)
         agent = invoke(entrant, workdir, port, credentials, timeout, provider, model, snapshot)
-        if provider and "The model returned an empty response. Please resend your message to continue." in agent["tail"]:
+        # A budget stop (the call budget or the operator's wallet guard) is the run's SCORED end: the
+        # harness ended it, so neither refusal below may read its console as a provider failure.
+        harness_stop = bench_budget.is_harness_stop(agent)
+        if provider and not harness_stop and \
+                "The model returned an empty response. Please resend your message to continue." in agent["tail"]:
             (workdir / "incomplete-agent.json").write_text(json.dumps(agent, indent=2))
             raise RuntimeError("REFUSED: provider ended on empty responses; no completed benchmark artifact")
         # Same treatment as the empty-response ending above: a session the PROVIDER ended is no
         # completed artifact, and grading its half-built tree would publish an infrastructure fault
         # as the model's score. goose resends a transient failure under the provider's retry policy
         # first, so this fires only once that policy is spent or the failure is permanent.
-        ended_on = provider_error_ending(agent["tail"]) if provider else None
+        ended_on = provider_error_ending(agent["tail"]) if provider and not harness_stop else None
         if ended_on:
             agent["ended_on_provider_error"] = ended_on
             (workdir / "incomplete-agent.json").write_text(json.dumps(agent, indent=2))
@@ -929,7 +976,8 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
             raise RuntimeError("REFUSED: the session ended on a provider error, not on the model's "
                                f"finished work: {ended_on.splitlines()[0]}")
         completion_path = os.environ.get("BENCH_COMPLETION_RECEIPT")
-        if tier and completion_path and agent.get("exit") == 0:
+        if tier and completion_path and (agent.get("exit") == 0 or
+                                         (agent.get("budget") or {}).get("stopped_by") == "wallet_guard"):
             from bench_rescore import write_completion
             try:
                 run_id = os.environ.get("BENCH_RUN_ID")
@@ -979,6 +1027,8 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
         verdict["model_limits"] = model_limits
     if "reaped_processes" in agent:
         verdict["reaped_processes"] = agent["reaped_processes"]
+    if "budget" in agent:
+        verdict["budget"] = agent["budget"]
     # BENCH2/F769: ARCHIVE THE TREE at score time — the sweep wipes the workdir within seconds
     # of [done] (dir reuse), which has already cost the campaign the 0.996 tree and the first
     # two dual-score windows. A tree copy is ~100KB and makes every scored artifact a permanent
