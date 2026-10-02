@@ -27,7 +27,7 @@ SB7.2 numbers below are calibration only and must never be published as SB7.2 re
 
 ## What stays identical
 
-Product, SB7 behavioural contract (`SB7-CONTRACT.md` = spec-build-sb7.md), starter (`sb7.1/starter`, reused),
+Product, SB7 behaviour (SB7.2 hands out its own trimmed `SB7-CONTRACT.md`, see "Public contract trim"), starter (`sb7.1/starter`, reused),
 seeded fixtures, vendor v3, gather, every SB7 check and every SB7.1 visual check, the 0.12 excellence term and
 its 16 gate conditions, the critical registry and multiplier floor 0.6, the severity selftest, isolation,
 completion receipts, fresh scoring vendor, provider-error refusal, reaping and cost recording. The token cost
@@ -103,6 +103,214 @@ public 250 ms P budget). No other threshold moved.
 | SB7.2 | 3,322 | 12,229 | 54,146 | 69,697 |
 
 −4,334 bytes (−5.9%) per resident copy. "Evidence and grading" 6,610 → 925 bytes: what is checked, not how.
+Superseded by the trim below (SB7.2 now 35,714 bytes of its own public text).
+
+## Public contract trim (2026-10-02, owner-approved)
+
+Why: a GPT-6 Luna SB7.2 run spent 3 h, 309 calls and $9 desk-auditing the contract. Its reasoning at minute
+169: "the absolute value of x should be less than or equal to .45, and both x and z combined should not exceed
+.80"; at minute 183: "pedestal has 96, core has 36, ribs total 144, cap is 96, and rails are 144, which sums
+to 516" — 189 one-line edits, 16 browser tests, and nothing told it when it was done. The owner approved a
+trim on one condition: "the only hope is that the benchmark doesn't water down completely".
+
+Rule applied: nothing a check measures is removed or weakened; a kept requirement stays exactly as strict
+(restated shorter); text no check measures is cut. Method: every check in score_sb7.py (91), score_sb71.py /
+score_sb72.py (8 visual rows), the gather battery that feeds them and the browser probe
+(product_probe_sb71.mjs under the sb-7.2 profile, sb72-thresholds.json) was read and mapped to the sentence a
+candidate needs to pass it (map below); every unmapped sentence was cut (list below). No scorer, probe,
+threshold, vendor, fixture or starter byte changed; the golden reference proves scoring does not depend on
+the removed text.
+
+Mechanics: SB7.1 keeps handing out `spec-build-sb7.md` (frozen). SB7.2 renders its own files into the
+workdir — `bench/isolated_tiers.py` `IsolatedTier.public`:
+`SB7-CONTRACT.md` ← `sb7.2/SB7-CONTRACT.md`, `VISUAL-CONTRACT.md` ← `sb7.2/VISUAL-CONTRACT.md`,
+`STARTER.md` ← `sb7.2/STARTER.md` (overrides the shared starter's copy in the workdir only). The prompt
+`spec-build-sb72.md` gains a Definition of done (11 scored behaviours, each pointing at its section) and the
+call budget: "You have a budget of 150 model calls. The harness stops the session at the budget and scores
+whatever exists; plan to implement, test, and finish well inside it — polishing beyond the scored behaviours
+earns nothing." (enforcement: run_build `goose --max-turns`, another change; keep the number 150 in sync).
+
+### Bytes the SB7.2 entrant receives
+
+| file | before (main 8c20adc96) | after | change |
+|---|---:|---:|---:|
+| benchmark-prompt.md (spec-build-sb72.md) | 3,322 | 3,267 | −1.7% |
+| SB7-CONTRACT.md | 54,146 | 24,488 | −54.8% |
+| VISUAL-CONTRACT.md | 12,229 | 6,931 | −43.3% |
+| STARTER.md | 2,410 | 1,028 | −57.3% |
+| **SB7.2-owned subtotal** | **72,107** | **35,714** | **−50.5%** |
+| BROWSER-TESTING.md (run_build, shared with SB7.1) | 537 | 537 | 0 |
+| prompt browser line (run_build, shared) | 153 | 153 | 0 |
+| vendor docs at /v3/docs (vendor_docs_v3.md, shared with SB7.1's vendor) | 9,150 | 9,150 | 0 |
+| **everything the entrant receives** | **81,947** | **45,554** | **−44.4%** |
+
+Raw repository bytes (`SB7-CONTRACT.md` renders `{DOCS_URL}`/`{BASE_URL}`/`{API_KEY}`, ±tens of bytes). The
+vendor docs are untouched: they are SB7.1's vendor's bytes, and the trimmed contract now points at them
+instead of restating them (generation rule, faults, If-Match, Idempotency-Key, signatures, groups).
+
+### Kept: check → the sentence a candidate needs (S = sb7.2/SB7-CONTRACT.md, V = VISUAL-CONTRACT.md)
+
+| check(s) | measured | kept in |
+|---|---|---|
+| a_package_layout | app/__main__.py, app.ledgerd, app.notifierd, DECISIONS.md, four web files | S §1 table, §7 file list, §9 |
+| server_runs, r_b4 bound_in_10s | GET / 200 + notifier /health within 10 s | S §1 "listens within 10 s" |
+| a_combined_entrypoint | `python -m app …` boots both | S §1 table |
+| serves_page, d_content_types | / and three assets, css/javascript types; JSON + text/event-stream | S §3 API table, "Every response is JSON except…" |
+| a_asset_budget | ≤150 KB, no external refs | S §7 "at most 150 KB", preamble "zero external code" |
+| a_db_ownership | ledger.db, notifier.db, no extra *.db | S §1 ownership bullet |
+| sync_completeness, b_total_field, x_l4 count | 12,288 (+creates) rows and total | S §2, §3 Sync, §3 Payments |
+| b_row_shape | exactly ten row keys | S §3 Payments |
+| b_chronological_order, b_viz_records order | default sort by instant; (instant, id) | S §3 Payments, §8 Data |
+| b_summary_shape, x_m3, x_m4, b_money_rendered cross-sum | by_currency/reversals keys, sorted, no cross-currency total | S §3 Summary |
+| b_buckets_dst | timezone, every (day,status) cell incl. 0, Berlin instant days | S §2, §3 Buckets |
+| b_viz_records | 7 columns, equal lengths, server Berlin day | S §8 Data |
+| b_events_log, x_l2, x_ooo dup, r_no_dupe_effect events | contiguous seq from 1, type/source vocab, seq/type/at keys, no duplicate/stale events | S §3 Event ledger |
+| b_error_envelope, b_json_shapes, d_validation | 400 + field_errors (path, code) for bad limit/offset/sort/status and invalid draft; 404 envelope; 401/403/404/200 auth matrix | S §3 Payments + Errors, §5 roles + validation |
+| c_paged_walk | 192 pages, no undocumented params, no duplicate pages | S §3 Sync "documented parameters only — no limit" + docs |
+| c_b1_drop_resume, c_b2_retry_after | resume same cursor; one retry after Retry-After, continue | S §3 Sync |
+| c_b5_generation_304, r_cache_truth | one unconditional refetch, ≤3 identical conditionals, no stale-as-fresh | S §3 Sync |
+| c_conditional_resync | later syncs carry validators | S §3 Sync "Later syncs are conditional"; §1 "every boot … starts a sync" |
+| c_webhook_discipline, x_ooo forged | deliveries 2xx-acked; forged → 401 | S §4 |
+| c_send_idempotency, r_no_dupe_effect vendor leg | Idempotency-Key on every send, reused on retry | S §5 SEND |
+| d_client_timeouts | served while vendor down, or `timeout=` in source | S preamble "timeout of at most 10 s", §1 last bullet |
+| d_peer_absence | proxy 502 + notifier_unreachable; each service survives the other's death | S §3 API table, §1 "Neither crashes" |
+| d_decisions_doc | ## D1/D2/D3, ≥15 chars, stance matches observed | S §9 |
+| j_loads_data, j_first_use | rows render; DOM states the total ("of N"); first rows ≤2 s; console | S §7 Table ("showing X–Y of TOTAL", "within 2 s") |
+| j_console_clean, gate console | zero console errors | S §7 States |
+| j_sync_journey | #sync-now / disabled or data-state=syncing / POST /api/sync / table rows = latest page with money, status word, note / .cur-total count + total / last_sync advanced | S §7 Summary + Table, §3 API `/api/sync`, Summary `last_sync` |
+| j_workflow_journey, r_workflow_durability | #role-token, #draft-form fields, #draft-list data-draft-id/data-state, submit/approve buttons, feed shows approval, sent payment found via #prev/#next (+ Date header sort) on a ≤50-row page with correct cells | S §5, §7 Drafts panel + Table |
+| j_workflow_reject | reject reaches `rejected`, feed shows it | S §5, §7 Drafts panel |
+| j_notifications_feed, r_b7 ui_* | data-state degraded → live within 5 s, no reload | S §7 Notifications feed |
+| j_error_state | visible, actionable error when /api is blocked | S §7 States |
+| j_empty_state | no phantom rows; empty state with progress or blocked (D3) | S §7 States, §9 D3 |
+| v_dates_readable | Date column human, no raw ISO | S §7 Dates |
+| v_money_presentation, b_money_rendered | currency token; decimals = exponent; JPY/KWD | S §7 Money, §2 exponents |
+| v_status_badges | four hex values, distinct computed colours | S §7 Table |
+| v_responsive_375 | no horizontal scroll at 375 px, rows rendered | S §7 "375 px" |
+| v_styling | stylesheet, ≥3 distinct backgrounds, non-default font, #app-header | S §7 opening paragraph |
+| p_drag_frames, e_frames_under_drag | frames over the 40-move drag | S §8 Rendering "0.8 frames per move"; V Excellence rungs |
+| p_idle_flatness | 0 default draws per 500 ms at rest | S §8 Demand rendering |
+| p_stream_apply, e_stream_apply_latency | SSE receipt → visible ≤250 ms (E: 180 ms rung) | S §8 Streaming; V Excellence rungs + Evidence |
+| p_under_stream, e_under_load_latency, p_api_latency | /api/payments?limit=50 and /api/summary p95 ≤150 ms, incl. under a webhook burst | S §3 "Reads during a sync" |
+| p_sync_wall | first walk ≤120 s | S §3 Sync |
+| e_optimistic_paint | note painted while held, saving → saved | S §7 Notes; V Excellence rungs |
+| e_mastery, excellence gate | T+X+R mean, 16 conditions | V Excellence rungs (verbatim, test-pinned) |
+| t_context_real | webgl on #viz3d, antialias/alpha false, backing store × DPR, draws, coverage | S §8 Rendering |
+| t_layout_basis | d0/D0/R0, unmoved after creates | S §8 Data |
+| t_scene_binding | digest moments within tolerance | S §8 Scene digest |
+| t_height_pixels | tops ±3 px, JPY+KWD | S §8 transform + "±3 px" |
+| t_draw_budget | ≤8·frames and ≤8·(M+8) default draws, drew at all, ended slow | S §8 Draw budget |
+| t_pick_buffer | pick == pickPixel == analytic, four occlusion constructions | S §8 Pick buffer |
+| t_pick_real_pass | ≥1 offscreen draw + readPixels after invalidation, ≤4 offscreen draws, 0 default draws | S §8 Pick buffer |
+| t_click_semantics | instance click toggles on/off; background clears | S §8 click rule |
+| t_camera_math | defaults, drag law, wheel law + no page scroll, pitch/distance clamps, dblclick reset + zero velocity, projection | S §8 Camera; V default camera |
+| t_coast_identity, t_coast_reality | remaining-coast identity, slow release, settle budget, ≥3° flick in drag direction, pixels move | S §8 Inertia |
+| t_labels_culling | exact shown set, 110×18, offset ±2, data-id, no overlap, pick-occlusion | S §8 Labels |
+| t_brush_link | row toggle, dim/member pixels, #brush-count, instance toggle, row navigated + in viewport + data-brushed, background clear + full hex | S §8 Linked brush, §7 Table rows |
+| t_stream_diff | bytes ≤ \|S\|·stride+4096, no realloc, digest delta, changed pixel | S §8 Streaming |
+| t_vs7dbg_truth | camera vs pixels, digest, frames vs wrapper, pick triplet | S §8 vs7dbg |
+| x_l1, x_l3, x_m1, x_m2/x_l5, x_l4, x_m3, x_conservation_residual, x_no_lost_write | invented states, monotonic reads, amount immutability, group atomicity, convergence, terminal conservation, residual, acked writes | S §10 second paragraph; §4 groups; §3 Sync "never regress" |
+| x_ooo_dup_forged | v+2 kept, forged untouched, duplicate applied once | S §4 |
+| r_b3_sigkill_resync | restart mid-sync, converge, no dupes | S §1 restart bullet, §10 |
+| r_b4_vendor_down_boot | bound ≤10 s, served while down, no crash, recovered unattended | S §1 last bullet |
+| r_b6_outbox_atomic, r_notifier_exactly_once | pending before kill, resumed, exactly once, none lost; `duplicate` counter | S §3 Outbox, §6 |
+| r_b7_partition | writes fast, status down + pending, UI degraded, catch-up in order, live ≤5 s | S §3 Outbox, §7 feed |
+| r_notification_multiset | four notifying types, payment.sent none | S §6 |
+| r_no_row_loss | no committed row lost across kills | S §1 restart bullet, §10 |
+| s_visible_surface | visible ≥300×240 canvas, unobscured, seeded tower pixels in published colours at the default camera | V Overview + shading + default camera; S §8 colours/background |
+| s_tower_geometry, s_currency_collar | per currency at yaw 35/125: every part and gap colour, picks incl. background through gaps | V Inspection geometry + materials + "both passes"; V Evidence |
+| q_payment_context | #inspect-id/currency/amount/status/version equal the backend | V Controls and cameras |
+| q_inspector_framing | canvas ≥600×460; 40–90% height, unclipped; four callouts named with width, at part height, not covering tower or each other | V Controls and cameras |
+| q_overview_legibility | framing 60%/4 px, contrast 2.0:1 over ≤200 px, ≥64 of ≤96 caps 2×2, ≥90% at RGB 40 | V A legible overview (verbatim, test-pinned) |
+| m_committed_event_replay | live note edit animates the frame on the published trajectory, camera fixed; replay without writes; newer restarts, stale/duplicate change nothing; Full field → default camera, idle, callouts hidden | V Animate |
+| v_presentation_text | legend, details, callouts, controls: ≥12 px, ≥4.5:1, unclipped, uncovered, inked | V Controls and cameras last sentence (legend kept as a visible element for this) |
+
+### Cut — no check measures it (from SB7-CONTRACT.md = spec-build-sb7.md)
+
+- `GET /api/health` and its four webhook counters (received/applied/ignored/rejected), and every "+1" bookkeeping
+  sentence in §4: nothing in gather reads /api/health (perf_probe measures it only in its own CLI, never called by
+  gather).
+- `bind 127.0.0.1 only`; "shows the degraded state in the UI" while the vendor is down at boot (UI probes run after
+  sync #1).
+- Fixture statistics: per-day ≤180 / mean 128, every day ≥1 payment, each status ≥8%, amounts span 3 decades, the
+  four candidate DST dates and the ≥7-day margin — they describe the seeded data, nothing checks the app against them.
+- `/api/payments` `currency` filter (no check sends one; `status=bogus` and `sort=bogus` are the only filter probes —
+  both kept).
+- Summary `count`, `oldest`, `newest` (RFC3339 UTC); buckets `days` and `statuses` arrays and day-major ordering
+  (b_buckets_dst keys cells by (day, status) and counts them).
+- `POST /api/sync` response body and its `502 vendor_unavailable`: the scorer never POSTs /api/sync; the UI journey
+  needs only the POST and an advancing `last_sync` (kept).
+- Note conflict path (second 412 → `409 conflict`, row unchanged; UI revert + `#notice`): no check makes a note
+  conflict. The If-Match write-through itself is kept (the optimistic and animation note edits need it).
+- Event `txn` field and `latest_seq`; which `source` each kind of change uses (only the vocabulary is checked).
+- Outbox relay batch size ≤50: the relay talks to the candidate's own notifier; no check can observe it.
+  `/notify/events` request/response shape (`accepted`/`duplicate`): internal to the candidate, never called by the
+  grader. Notifier `/health` `received`/`applied`/`notifications`, `/notify/processed` `latest_seq`, notifications
+  "newest first" and "human sentence" (only `kind`, `event_seq` and `duplicate` are read).
+- Error-envelope frozen vocabularies (the six field-error codes, the envelope code list beyond the codes kept): the
+  check requires string `code`/`message` and string `path`/`code` per field error; "naming the parameter" likewise.
+- Four-eyes (`approval_forbidden`, submitter cannot approve/reject): no check uses the submitter's token to approve.
+- Draft validation bounds (name 1–80, country `^[A-Z]{2}$`, note 0–280, currency one of four) and
+  `?state=<unknown>` → 400: the only validation probe is a non-integer amount with missing fields (kept).
+- Frontend: page section order and side-by-side layout; each web file's content purity ("structure only", "nothing
+  else"); `rev-total`; `#last-sync` human text and "Never synced" (the sync journey computes lastSyncText then
+  overwrites the verdict with `syncRequested && refreshedTruth`); the failed-sync `#notice`; the status/currency
+  custom-dropdown filters with `data-value` (the probe never operates a filter); the Amount header sort and
+  `aria-sort` (only the Date header click is driven, and only its `sort` query is read); notification
+  `data-kind`, the human time and the "visible degraded treatment"; drafts `data-selected`, "buttons enabled only
+  when legal", auth errors in `#notice`; the loading state, `#viz-empty`, `#viz-error` and the no-WebGL fallback
+  (never induced); canvas full width / 240 px minimum at 375 px; the design bans (no pastel, no left rail, no
+  native `<select>`/`alert`/`confirm`) — v_styling reads stylesheet, backgrounds, font and `#app-header` (kept).
+  `prompt()` stays banned for notes: the probe needs a real input in the Note cell.
+- Brush toggle upload cost (≤ stride+4096 bytes, no realloc): t_brush_link has no byte leg (the stream's byte budget
+  is kept). The "matches the active filters / filtered out just toggles" clause went with the filters.
+- Performance budgets nothing measures: first non-background 3D frame ≤3 s; camera change visible ≤250 ms;
+  `/api/buckets` ≤200 ms and `/api/viz/records` ≤400 ms p95 (p_api_latency measures payments and summary only).
+  "8 concurrent readers while a sync runs" restated as the measured shape (concurrent readers during webhook bursts).
+- "Harness guarantees you can rely on" (pinned move counts, ≥30 ms between release moves): grader method.
+  Pick clear-colour alternatives and the decode formula (implied by the encoding); label "single line,
+  ellipsized" (only the box is measured); "fixture guarantees distinct amounts and ≥6 days" among label
+  candidates (fixture statistic).
+- README.md "with the exact commands" (no check reads README).
+- Rationale and duplicates: every "because"/"the graded failure is"/"scores as broken, not as clever" sentence; the
+  vendor-docs restatements (delivery JSON, signature formula, challenge body, fault mechanics, value-dating); the
+  "What WILL happen" schedule's grader detail (3–8 s, 8 events, kill choreography) — compressed to the list of
+  faults in §10; the Performance budgets and Rules sections (every measured number stays at its requirement);
+  the standard-library module list; the side-face `round(0.55·top)` (superseded in SB7.2 by VISUAL-CONTRACT's
+  directional factors, which S §8 points to).
+
+### Cut — VISUAL-CONTRACT.md
+
+- The legend's CONTENT (axes, height, status colour, collar encoding, four parts, four widths, the 0.06 ribs):
+  only `#tower-legend`'s existence and text readability are measured (v_presentation_text) — kept as "a visible
+  legend explains the encoding".
+- "labeled" input; no native select or browser dialog; "selecting a payment in the field can populate the ID input"
+  (permissive).
+- Hide the top-12 labels while inspecting (not read while inspecting); inspection usable at 375 px and the 320 px
+  mobile minimum (the inspector is only probed at 1280 × 800).
+- Replay disabled until an update exists (only "enabled after an update" is read); `#replay-status` text; "reloaded
+  pages need not retain replay history".
+- The EUR frame may touch the ribs (implied by the numbers); prose on dimensional contrast, showcases, "one finished
+  product", "not a claim that money moved"; "No amount, height, position or status may be invented" (the stream
+  pixel check and the animation's fixed-part check keep measuring it; S §8 "pixels show the change", V "never move").
+- Evidence and grading: the method and the duplicated readability/animation clauses; kept: what is compared, the two
+  inspection yaws, gaps in their published colour, the stream-latency clock, the real note edit (≤1,100 bytes, test).
+
+### Cut — prompt and STARTER.md
+
+- Prompt: the 3D descriptive paragraph (all of it is in V and S §8), "Use the documented runtime vendor flag" (S),
+  "HTTP 501 … unfinished work" (STARTER.md), "Private scorers, golden applications, previous entrants and operator
+  logs are outside the workspace" and "Test your own application" (replaced by the Definition of done).
+- STARTER.md: "Credit and comparison" (a reporting policy for whoever publishes a result — no entrant behaviour),
+  and restatements of the contract (grader kills services independently; "build every state").
+
+### Measured but never stated — flagged, not changed
+
+`j_workflow_journey`'s payment witness compares the vendor-created payment's `amount_minor` with the value the probe
+typed into the draft form's amount field, so that field takes MINOR units; and the form is filled through native
+`input`/`textarea`/`select` elements found by name/id/placeholder/aria-label. Neither contract (before or after) says
+so. Adding it would make SB7.2 easier than SB7.1 on the same scorer, so it is left for the owner.
+
 
 ## Probe and harness changes (SB7.1 behaviour unchanged)
 

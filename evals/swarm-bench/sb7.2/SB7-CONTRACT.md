@@ -199,7 +199,7 @@ header, table and controls, and a branded header bar `#app-header` with the prod
   immediately, before the network answers, with the row at `data-state="saving"`, then
   `data-state="saved"` after the 200.
 - **Notifications feed `#notifications`:** reads only `/api/notifications`, polling at least
-  every **5 s**; each entry shows its kind and message. `data-state="live"`; `"degraded"`
+  every **5 s**; each entry carries `data-event-seq` and shows its kind and message. `data-state="live"`; `"degraded"`
   while the proxy answers 502; back to `"live"` without a reload within **5 s** of the notifier
   returning.
 - **Drafts panel:** a token input `#role-token` (the bearer for drafts calls); `#draft-form`
