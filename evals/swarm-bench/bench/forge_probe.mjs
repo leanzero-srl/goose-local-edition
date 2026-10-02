@@ -420,13 +420,25 @@ async function readTokens(page) {
 async function readSurface(s, kind) {
   return s.page.evaluate((k) => {
     const rgb = (c) => (c.match(/\d+(\.\d+)?/g) || []).map(Number);
+    const over = (top, under) => {   // source-over of an [r,g,b,a?] colour on an opaque [r,g,b]
+      const a = top.length >= 4 ? top[3] : 1;
+      return [0, 1, 2].map((i) => top[i] * a + under[i] * (1 - a));
+    };
+    // The effective background: every translucent ancestor background composited (Atlassian's neutral
+    // backgrounds are translucent, e.g. rgba(9,30,66,0.06)) down to the first opaque one, else the
+    // browser's white canvas (the host page is unpainted).
     const bgOf = (el) => {
+      const layers = [];
       for (let e = el; e; e = e.parentElement) {
-        const c = getComputedStyle(e).backgroundColor;
-        const v = rgb(c);
-        if (v.length >= 3 && (v.length < 4 || v[3] > 0)) return v.slice(0, 3);
+        const v = rgb(getComputedStyle(e).backgroundColor);
+        if (v.length >= 3 && (v.length < 4 || v[3] > 0)) {
+          layers.push(v);
+          if (v.length < 4 || v[3] >= 1) break;
+        }
       }
-      return [255, 255, 255];
+      let base = [255, 255, 255];
+      for (const layer of layers.reverse()) base = over(layer, base);
+      return base.map((x) => Math.round(x));
     };
     // Every visible element that owns a text node: links may use --ds-link*, disabled controls are exempt (§7).
     const styles = [];
@@ -436,7 +448,8 @@ async function readSurface(s, kind) {
       if (!own || r.width === 0 || r.height === 0 || getComputedStyle(el).visibility === 'hidden') continue;
       const role = el.closest('[disabled], [aria-disabled="true"]') ? 'disabled'
         : el.closest('a, [role="link"]') ? 'link' : el.closest('[data-metric]') ? 'metric' : 'text';
-      styles.push({ role, color: rgb(getComputedStyle(el).color).slice(0, 3), background: bgOf(el),
+      const bg = bgOf(el);
+      styles.push({ role, color: over(rgb(getComputedStyle(el).color), bg).map((x) => Math.round(x)), background: bg,
         text: el.textContent.trim().slice(0, 40) });
     }
     const se = document.scrollingElement || document.documentElement;
