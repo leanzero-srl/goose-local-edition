@@ -28,12 +28,23 @@ class PrematureResyncTests(unittest.TestCase):
         self.assertEqual(self.ctx.sb71_resync['phase'], 'combined')
         self.assertFalse(self.ctx.sb71_resync['armed'])
     def test_absent_or_contradictory_witness(self):
+        # The gate's receipt and the vendor trace disagree, or the gate never armed: a harness fault.
         mutations = {
             'no_gate': lambda c: setattr(c, 'sb71_resync', {}),
             'target_mismatch': lambda c: c.sb71_resync.update(target=3),
             'held_without_kill': lambda c: c.sb71_resync.update(held=[{}]),
             'failed_transport': lambda c: c.trace[3].update(status=500),
             'unauthenticated': lambda c: c.trace[3].update(authorized=False),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                ctx = copy.deepcopy(self.ctx)
+                mutate(ctx)
+                self.assertTrue(self.result(ctx)['unavailable'])
+    def test_short_walk_without_the_premature_proof_is_still_charged(self):
+        # These break only the premature-completion narrative; the gate still proves the candidate made
+        # fewer list requests than the kill waits for, every one answered — the candidate's, charged.
+        mutations = {
             'no_cached_page': lambda c: c.trace.pop(0),
             'terminal_page': lambda c: c.trace[0].update(last=True),
             'different_generation': lambda c: c.trace[0].update(generation=-1),
@@ -48,7 +59,11 @@ class PrematureResyncTests(unittest.TestCase):
             with self.subTest(name=name):
                 ctx = copy.deepcopy(self.ctx)
                 mutate(ctx)
-                self.assertTrue(self.result(ctx)['unavailable'])
+                result = self.result(ctx)
+                self.assertNotIn('unavailable', result)
+                self.assertEqual(result['score'], 0)
+                self.assertIn('b3_walk_short', result['parts'])
+                self.assertNotIn('premature_resync', result['parts'])
     def test_executed_kill_keeps_original(self):
         self.ctx.b3_result.update(kill_fired=True, restarted=True, converged=False, no_duplicates=True)
         self.assertEqual(self.result(self.ctx), self.original(self.ctx))

@@ -1,0 +1,148 @@
+{
+ "source": "xiaomi/mimo-v2.6-flash SB7.2 run openrouter-cloud-1b72fc45 (2026-10-02), hermetic rescore seed feede0d7f2950157: vendor trace sync2 segment and the B3 gate receipt",
+ "trace": [
+  {
+   "method": "-",
+   "path": "-",
+   "status": 0,
+   "query": {},
+   "__phase__": "sync2",
+   "seq": 270,
+   "t": 1790965910.8416
+  },
+  {
+   "method": "GET",
+   "path": "/v3/reversals",
+   "query": {},
+   "status": 200,
+   "if_none_match": null,
+   "idempotency_key": null,
+   "authorized": true,
+   "ua": "Python-urllib/3.12",
+   "returned": 4517,
+   "seq": 271,
+   "t": 1790965910.9209
+  },
+  {
+   "method": "POST",
+   "path": "/v3/webhooks",
+   "query": {},
+   "status": 200,
+   "if_none_match": null,
+   "idempotency_key": null,
+   "authorized": true,
+   "ua": "Python-urllib/3.12",
+   "webhook_url": "http://127.0.0.1:63394/api/webhooks/meridian",
+   "webhook_id": "wh_37d21ce41bc4",
+   "handshake": "ok",
+   "seq": 272,
+   "t": 1790965910.9255
+  },
+  {
+   "method": "-",
+   "path": "-",
+   "status": 0,
+   "query": {},
+   "sync_start": 2,
+   "walk_total": 12289,
+   "seq": 273,
+   "t": 1790965910.9343
+  },
+  {
+   "method": "GET",
+   "path": "/v3/payments",
+   "query": {},
+   "status": 200,
+   "if_none_match": "\"de4329fe7d34fa3b\"",
+   "idempotency_key": null,
+   "authorized": true,
+   "ua": "Python-urllib/3.12",
+   "offset": 0,
+   "returned": 64,
+   "page": 1,
+   "sync": 2,
+   "last": false,
+   "generation": 23,
+   "seq": 274,
+   "t": 1790965910.9346
+  },
+  {
+   "method": "GET",
+   "path": "/v3/reversals",
+   "query": {},
+   "status": 200,
+   "if_none_match": null,
+   "idempotency_key": null,
+   "authorized": true,
+   "ua": "Python-urllib/3.12",
+   "returned": 4517,
+   "seq": 275,
+   "t": 1790965910.9413
+  },
+  {
+   "method": "GET",
+   "path": "/v3/reversals",
+   "query": {},
+   "status": 200,
+   "if_none_match": null,
+   "idempotency_key": null,
+   "authorized": true,
+   "ua": "Python-urllib/3.12",
+   "returned": 4517,
+   "seq": 276,
+   "t": 1790965955.9854
+  },
+  {
+   "method": "GET",
+   "path": "/v3/payments",
+   "query": {},
+   "status": 304,
+   "if_none_match": "\"7beee3c240a70990\"",
+   "idempotency_key": null,
+   "authorized": true,
+   "ua": "Python-urllib/3.12",
+   "offset": 0,
+   "sync": 2,
+   "generation": 23,
+   "seq": 277,
+   "t": 1790965955.9991
+  },
+  {
+   "method": "-",
+   "path": "-",
+   "status": 0,
+   "query": {},
+   "__phase__": "partition",
+   "seq": 278,
+   "t": 1790966000.8814
+  }
+ ],
+ "sb71_resync": {
+  "phase": "combined",
+  "armed": false,
+  "completed": [
+   {
+    "status": 200,
+    "path": "/v3/payments",
+    "response_sent_at": 831111.86671125
+   },
+   {
+    "status": 304,
+    "path": "/v3/payments",
+    "response_sent_at": 831156.930761125
+   }
+  ],
+  "held": [],
+  "kill": null,
+  "target": 3
+ },
+ "b3_result": {
+  "kill_fired": false,
+  "n": 3,
+  "reason": "sync2 produced only 2 list responses (sched-unreached, R1)"
+ },
+ "payments": {
+  "total": 12289
+ },
+ "target": 3
+}

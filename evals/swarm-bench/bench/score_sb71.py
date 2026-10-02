@@ -295,7 +295,7 @@ def committed_payment_channel(directory):
 
 
 @contextmanager
-def probe_runtime():
+def probe_runtime(notifier_reads=None):
     old_probe, old_kill = base.PROBE_SCRIPT, base._kill
     old_read_stream = base._ReadStream
     old_pack = base._write_expect_pack
@@ -325,6 +325,10 @@ def probe_runtime():
         response = old_get(url, *args, **kwargs)
         if response[0] == 501:
             endpoint_absences.append({'url': url, 'status': response[0], 'body': response[1]})
+        if notifier_reads is not None and urlsplit(url).path == '/notify/notifications':
+            body = response[1]
+            notifier_reads.append({'url': url, 'status': response[0],
+                                   'data_list': isinstance(body, dict) and isinstance(body.get('data'), list)})
         return response
     def sse_head(url, timeout=5):
         try:
@@ -540,7 +544,8 @@ def gather(root, vendor_port, db_dir, trace_path, mark_phase=None, seed=None):
     old_media = os.environ.get('BENCH_MEDIA_DIR')
     os.environ['BENCH_MEDIA_DIR'] = str(media_dir)
     try:
-        with probe_runtime() as absences:
+        notifier_reads = []
+        with probe_runtime(notifier_reads) as absences:
             with partition_runtime(mark_phase) as (partition_mark, partition):
                 with resync_runtime(partition_mark) as (mark, resync):
                     ctx = base.gather(root, vendor_port, db_dir, trace_path, mark, seed)
@@ -549,9 +554,11 @@ def gather(root, vendor_port, db_dir, trace_path, mark_phase=None, seed=None):
         ctx.sb71_partition = partition['evidence']
         ctx.sb71_resync = resync
         ctx.sb71_endpoint_absences = absences
+        ctx.sb71_notifier_reads = notifier_reads
         (Path(root) / 'api-observations.json').write_text(json.dumps({
             'initial_api': initial_api_evidence(ctx),
-            'endpoint_absences': absences, 'stream_head': ctx.stream_head,
+            'endpoint_absences': absences, 'notifier_notification_reads': notifier_reads,
+            'stream_head': ctx.stream_head,
             'workflow': ctx.workflow, 'api_lat': ctx.api_lat,
             'resync_interruption': resync, 'partition_status': ctx.sb71_partition,
             'partition_immediate_status': ctx.outbox_during_partition,
@@ -768,6 +775,18 @@ def scene_measured_absent(viz):
 
 
 def observed_absence_result(name, original, ctx):
+    """The inherited row, with every unavailability the gather itself traced to the candidate CHARGED.
+
+    The law: an entrant's defect is scored low, only a harness fault refuses. A row stays unavailable
+    (and refuses the run) only when no candidate cause was observed for it."""
+    outcome = inherited_observation_result(name, original, ctx)
+    if not outcome.get('unavailable'):
+        return outcome
+    charged = candidate_charge(name, original, ctx, outcome)
+    return outcome if charged is None else charged
+
+
+def inherited_observation_result(name, original, ctx):
     if name in STREAM_WITNESS_ROWS:
         witness = stream_witness(ctx.probes.get('viz', {}))
         if witness and 'refuse' not in witness:
@@ -836,6 +855,150 @@ def observed_absence_result(name, original, ctx):
                                          and o.get('present') is False for o in observations):
             return base._absent('window.vs7dbg: repeated successful page evaluations found no required surface')
     return outcome
+
+
+# ── candidate-caused unavailability: charged, never refused ─────────────────────────────────────
+# Each cause below is read from what the gather OBSERVED of the candidate on the same path the
+# reference passes. A row whose absence has no such observation keeps refusing: probe crashes and
+# caps, a missing fixture pack or vendor surface, the oracle's own coverage, and an unproven B3 hold
+# are the harness's.
+
+def unbound_ledgerd(ctx):
+    """gather() stops right after boot when ledgerd never binds its port; every later phase is
+    then unreached because the candidate never served, not because the harness failed."""
+    return getattr(ctx, 'port_bound', None) is False
+
+
+def b3_walk_short(ctx):
+    """The B3 vendor gate armed for this run's schedule, answered every list request the restarted
+    ledgerd made with 200/304, held none and killed nothing: the candidate's walk ended or stalled
+    before the n-th list response the kill waits for."""
+    receipt = getattr(ctx, 'sb71_resync', None) or {}
+    target = getattr(getattr(ctx, 'schedule', None), 'sigkill_after_list', None)
+    completed = receipt.get('completed')
+    if (not isinstance(target, int) or target < 1 or receipt.get('target') != target
+            or not isinstance(completed, list) or len(completed) >= target
+            or receipt.get('held') or receipt.get('kill') is not None
+            or (getattr(ctx, 'b3_result', None) or {}).get('kill_fired')
+            or any(r.get('status') not in (200, 304) for r in completed)):
+        return None
+    # The vendor's own trace must tell the same story as the gate's receipt, request for request.
+    trace = getattr(ctx, 'trace', None) or []
+    starts = [i for i, e in enumerate(trace) if e.get('__phase__') == 'sync2']
+    if len(starts) != 1:
+        return None
+    end = next((i for i in range(starts[0] + 1, len(trace)) if '__phase__' in trace[i]), len(trace))
+    lists = [e for e in trace[starts[0] + 1:end] if e.get('method') == 'GET' and e.get('path') == base._list_path()
+             and e.get('authorized') is not False]
+    if (any(e.get('authorized') is not True for e in lists) or len(lists) != len(completed)
+            or any(e.get('status') != r.get('status') for e, r in zip(lists, completed))):
+        return None
+    return {'target': target, 'completed': completed,
+            'sync2_list_requests': [{k: e.get(k) for k in ('t', 'status', 'offset', 'last', 'generation', 'if_none_match')}
+                                    for e in lists],
+            'reason': (getattr(ctx, 'b3_result', None) or {}).get('reason')}
+
+
+def b5_unpresented(ctx):
+    """The lying 304 arms on the (s-2)-th sync that presents a STALE validator (vendor_service_v3);
+    a candidate that presented fewer never gave the generation rule anything to answer."""
+    s = getattr(getattr(ctx, 'schedule', None), 'stale_304_sync', None)
+    trace = getattr(ctx, 'trace', None)
+    if not isinstance(s, int) or not trace or (getattr(ctx, 'b5_result', None) or {}).get('armed'):
+        return None
+    lists = [e for e in trace if e.get('method') == 'GET' and e.get('path') == base._list_path()]
+    stale = sorted({e['sync'] for e in lists if e.get('if_none_match') and e.get('status') == 200
+                    and isinstance(e.get('sync'), int)})
+    wanted = max(1, s - 2)
+    if len(stale) >= wanted:
+        return None
+    return {'stale_presenting_syncs': stale, 'arms_on': wanted,
+            'conditional_list_requests': sum(1 for e in lists if e.get('if_none_match'))}
+
+
+def candidate_charge(name, original, ctx, outcome):
+    if unbound_ledgerd(ctx):
+        return base.g(0.0, 'not exercised: ledgerd never bound its port at boot, so grading stopped before this phase',
+                      'the candidate never served; the behaviour this row grades is unproven',
+                      parts={'vacuous_root': 'server_runs', 'unexercised': outcome.get('detail')})
+    if name == 'r_b3_sigkill_resync':
+        evidence = b3_walk_short(ctx)
+        if evidence is None:
+            return None
+        statuses = [r['status'] for r in evidence['completed']]
+        return base.g(0.0, f"sync #2 after the restart made {len(statuses)} of the {evidence['target']} list requests "
+                      f"the B3 kill waits for (vendor answered all: {statuses}); the walk ended or stalled before "
+                      'the interruption checkpoint',
+                      'B3 recovery remains unproven: no kill or restart was executed',
+                      parts={'b3_walk_short': evidence, 'kill_fired': False})
+    if name in ('c_b5_generation_304', 'r_cache_truth'):
+        evidence = b5_unpresented(ctx)
+        if evidence is None:
+            return None
+        why = (f"the lying 304 arms on the {evidence['arms_on']}th sync that presents a stale validator; the candidate "
+               f"presented one in {len(evidence['stale_presenting_syncs'])} sync(s) "
+               f"({evidence['conditional_list_requests']} conditional list requests in all)")
+        if name == 'r_cache_truth':
+            charged = base._absent('conditional revalidation of a stale page (the B5 generation rule)')
+            charged['detail'] += '; ' + why
+            charged['parts']['b5_unpresented'] = evidence
+            return charged
+        return base.g(0.0, why, 'the generation rule was never exercised because the candidate never revalidated '
+                      'a stale page', parts={'b5_unpresented': evidence})
+    if name == 'r_b7_partition':
+        evidence = getattr(ctx, 'sb71_partition', None) or {}
+        samples = evidence.get('samples') or []
+        if evidence.get('successful_reads') or len(samples) < 2:
+            return None
+        statuses = sorted({str(sample['status']) for sample in samples})
+        return base.g(0.0, f'ledgerd answered none of {len(samples)} outbox-status reads during the partition '
+                      f'with a JSON object (statuses: {", ".join(statuses)})',
+                      'the partition behaviour is unobservable because the candidate status endpoint never answered',
+                      parts={'status_observations': evidence})
+    if name == 'r_workflow_durability':
+        wf = getattr(ctx, 'workflow', None) or {}
+        draft = (getattr(ctx, 'draft_ids', None) or {}).get('F3')
+        if 'create_status' in wf and draft is None:
+            return base._absent(f"drafts create: exercised POST /api/drafts answered HTTP {wf['create_status']} "
+                                'and no draft the A1/A2 kills could follow')
+        if draft is not None and wf.get('a1_state_after_restart') is None and wf.get('a2_state_after_restart') is None:
+            return base.g(0.0, f'draft {draft} was created and submitted, but GET /api/drafts listed it after neither '
+                          'SIGKILL restart (A1, A2)', 'an acknowledged workflow state is not shown durable after SIGKILL',
+                          parts={'draft_id': draft, 'a1': None, 'a2': None})
+        return None
+    if name == 'r_notification_multiset':
+        reads = getattr(ctx, 'sb71_notifier_reads', None) or []
+        if not reads or any(read['data_list'] for read in reads):
+            return None
+        return base._absent('notifier notifications: GET /notify/notifications answered '
+                            + ', '.join(str(read['status']) for read in reads) + ' and never a data list')
+    if name == 'p_api_latency':
+        measured = list((getattr(ctx, 'api_lat', None) or {}).values())
+        if not measured or not all(isinstance(m, dict) and m.get('errors') and m.get('n_ok', 0) < len(m['errors'])
+                                   and all(str(e).startswith('status ') for e in m['errors']) for m in measured):
+            return None
+        errors = sorted({e for m in measured for e in m['errors']})
+        return base.g(0.0, 'API latency unmeasurable: most requests were answered with an HTTP error ('
+                      + ', '.join(errors) + ')', 'a latency over error responses is not a latency',
+                      parts=getattr(ctx, 'api_lat', None))
+    if name in ('x_l3_monotonic_reads', 'x_l5_group_atomicity', 'x_m2_pair_conservation'):
+        if (getattr(ctx, 'read_stream', None) or getattr(ctx, 'pack', None) is None
+                or not getattr(ctx, 'port_bound', None) or not getattr(ctx, 'read_targets', None)):
+            return None
+        return base.g(0.0, 'the scorer read stream ran from sync #1 to the end of grading and GET /api/summary never '
+                      'answered a JSON object', 'reads cannot be checked for monotonicity or conservation',
+                      parts={'read_stream_samples': 0})
+    if name == 'j_workflow_journey':
+        witness = (getattr(ctx, 'probes', None) or {}).get('flow', {}).get('paymentWitness') or {}
+        if not str(witness.get('unavailable', '')).startswith('ambiguous vendor-created F1 identity'):
+            return None
+        charged = original(ctx)
+        charged['detail'] += ('; the candidate created the approved F1 payment more than once at the vendor ('
+                              + witness['unavailable'] + '), so no single committed payment could be followed '
+                              'into the table')
+        charged.setdefault('parts', {})['payment_witness'] = witness
+        return charged
+    return None
 
 
 STATUS_PIXEL_TOLERANCE = 8          # product_probe_sb71.mjs V7.tol, the contract's pixel tolerance
