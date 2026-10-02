@@ -300,10 +300,36 @@ def _leaf_text(value) -> Optional[str]:
     return str(value)
 
 
-def _tokens(item: Dict) -> set:
-    leaves = {t for t in (_leaf_text(v) for v in fo.iter_leaves(item.get('value'))) if t is not None}
-    leaves |= {t for t in re.split(r'[^A-Za-z0-9]+', str(item.get('key') or '')) if t}
-    return leaves
+class Tokens(set):
+    """A ledger row's scalar leaves (and its key's alphanumeric runs) for exact-leaf matching. `sprint` holds
+    the leaves stored under a sprint-named field: when a row has one, the sprint is matched THERE, so a stored
+    estimate of 8 never reads as sprint 8."""
+    sprint: set
+
+
+def _walk(value, under_sprint: bool, out: Tokens, depth: int = 0) -> None:
+    if depth > 31:
+        return
+    if isinstance(value, dict):
+        for k, v in value.items():
+            _walk(v, under_sprint or 'sprint' in str(k).lower(), out, depth + 1)
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            _walk(v, under_sprint, out, depth + 1)
+    else:
+        t = _leaf_text(value)
+        if t is not None:
+            out.add(t)
+            if under_sprint:
+                out.sprint.add(t)
+
+
+def _tokens(item: Dict) -> Tokens:
+    out = Tokens()
+    out.sprint = set()
+    _walk(item.get('value'), False, out)
+    out |= {t for t in re.split(r'[^A-Za-z0-9]+', str(item.get('key') or '')) if t}
+    return out
 
 
 def _instants(tokens: set) -> set:
@@ -319,7 +345,8 @@ def _instants(tokens: set) -> set:
 
 
 def rows_for(rows: List[Tuple[set, Dict]], change: fo.Change) -> List[Tuple[set, Dict]]:
-    return [(tok, item) for tok, item in rows if change.change_id in tok and change.sprint_id in tok]
+    return [(tok, item) for tok, item in rows if change.change_id in tok
+            and change.sprint_id in (getattr(tok, 'sprint', None) or tok)]
 
 
 def row_correct(tokens: set, change: fo.Change, sources: Iterable[str]) -> bool:

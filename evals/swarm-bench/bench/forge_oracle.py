@@ -179,6 +179,13 @@ class Oracle:
                 raise PackDefect(f"changelog {entry.get('changelogId')} names unknown issue {entry.get('issueId')}")
             if instant(entry.get('created')) is None:
                 raise PackDefect(f"changelog {entry.get('changelogId')} has no ISO-8601 created instant")
+        cids = {str(e.get('changelogId')) for e in history + live}
+        if len(cids) != len(history) + len(live):
+            raise PackDefect('changelog ids repeat across history and live')
+        clash = cids & (set(self.issues) | set(self.sprints) | set(self.boards))
+        if clash:
+            # Ledger rows are matched by exact leaves; an id shared across classes would make them ambiguous.
+            raise PackDefect(f'changelog ids collide with issue/sprint/board ids: {sorted(clash)[:5]}')
         for sid, sprint in self.sprints.items():
             if sprint.get('state') == 'active' and instant(sprint.get('startDate')) is None:
                 raise PackDefect(f'active sprint {sid} has no startDate instant')
