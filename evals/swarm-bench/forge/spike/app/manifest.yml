@@ -1,0 +1,40 @@
+modules:
+  jira:issuePanel:
+    - key: spike-issue-panel
+      resource: panel
+      resolver:
+        function: resolver
+      title: Spike panel
+      icon: https://developer.atlassian.com/platform/forge/images/icons/issue-panel-icon.svg
+  scheduledTrigger:
+    - key: spike-hourly
+      function: hourly
+      interval: hour
+  webtrigger:
+    - key: spike-hook
+      function: hook
+  consumer:
+    - key: spike-consumer
+      queue: spike-queue
+      function: consume
+  function:
+    - key: resolver
+      handler: index.handler
+    - key: hourly
+      handler: index.hourly
+    - key: hook
+      handler: index.hook
+    - key: consume
+      handler: index.consume
+resources:
+  - key: panel
+    path: static/panel/build
+permissions:
+  scopes:
+    - read:jira-work
+    - write:jira-work
+    - storage:app
+app:
+  runtime:
+    name: nodejs22.x
+  id: ari:cloud:ecosystem::app/00000000-0000-0000-0000-000000000000

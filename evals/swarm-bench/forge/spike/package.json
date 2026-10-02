@@ -1,0 +1,25 @@
+{
+  "name": "spike",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@forge/api": "^8.2.0",
+    "@forge/bridge": "^7.1.0",
+    "@forge/events": "^3.0.7",
+    "@forge/kvs": "^2.0.7",
+    "@forge/manifest": "^13.6.0",
+    "@forge/react": "^12.3.0",
+    "@forge/resolver": "^2.0.0"
+  },
+  "devDependencies": {
+    "@forge/cli": "^14.1.0",
+    "esbuild": "^0.28.2"
+  }
+}
