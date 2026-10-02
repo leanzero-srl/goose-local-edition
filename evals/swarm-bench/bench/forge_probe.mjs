@@ -150,6 +150,28 @@ const NODE_BUILTINS = new Set(require('module').builtinModules);
 const KIND = { trigger: 'trigger', consumer: 'consumer', scheduledTrigger: 'scheduled', action: 'action',
   'dashboards:widget': 'resolver', 'jira:sprintAction': 'resolver' };
 
+// Scopes an operation whose CHOSEN OAuth2 alternative is empty (e.g. POST /rest/api/3/permissions/check: Current
+// [] while its description names Classic read:jira-work, Granular read:permission:jira) still tolerates: every
+// scope its other alternatives or its description name. l_scopes charges neither reading.
+const toleratedCache = new Map();
+let openapiSpecs = null;
+function toleratedFor(op) {
+  if (!op) return [];
+  if (toleratedCache.has(op)) return toleratedCache.get(op);
+  const [method, template] = op.split(' ');
+  openapiSpecs ??= ['jira.json', 'jsw.json'].map((f) => join(kitDir, 'openapi', f)).filter(existsSync)
+    .map((f) => JSON.parse(readFileSync(f, 'utf8')));
+  const found = openapiSpecs.map((sp) => sp.paths?.[template]?.[method.toLowerCase()]).find(Boolean);
+  const out = new Set();
+  for (const a of found?.['x-atlassian-oauth2-scopes'] || []) for (const sc of a.scopes || []) out.add(sc);
+  for (const m of String(found?.description || '').matchAll(/\*\*(?:Classic|Granular)\*\*:\s*([^\n]+)/g)) {
+    for (const sc of m[1].matchAll(/`([a-z]+:[a-z0-9:.\-]+)`/g)) out.add(sc[1]);
+  }
+  const list = [...out];
+  toleratedCache.set(op, list);
+  return list;
+}
+
 // Virtual time as epoch seconds (WP1 logs ISO strings).
 const vt = (t) => (typeof t === 'string' ? Date.parse(t) / 1000 : t ?? null);
 
@@ -165,7 +187,8 @@ function normCall(e) {
     kind: KIND[e.moduleType] ?? e.kind ?? (e.invocationId ? null : 'ui'), moduleKey: e.moduleKey ?? null,
     provider: e.provider ?? null, service, method: e.method, path, op: e.op ?? null, body: e.body ?? null, status: e.status,
     response: e.response ?? e.responseBody ?? undefined,
-    scopes: alt ? { chosen: alt.scopes, state: alt.state } : (e.scopes ?? undefined),
+    scopes: alt ? { chosen: alt.scopes, state: alt.state, ...(alt.scopes.length ? {} : { tolerated: toleratedFor(e.op) }) }
+      : (e.scopes ?? undefined),
     scopeMismatch: service === 'jira' && e.status === 401 && !alt && !e.needsAuthentication ? (e.op ?? path) : undefined,
     needsAuthentication: Boolean(e.needsAuthentication), missingScope: e.missingScope ?? null,
     fault: e.fault ?? null, earlyRetry: e.earlyRetry === true ? e.fault : (e.earlyRetry || null), limitError: e.limitError ?? null,
@@ -354,7 +377,13 @@ const PAGE_HELPERS = () => {
 async function openSurface(spec) {
   const page = await browser.newPage({ viewport: { width: spec.width, height: spec.height } });
   const ev = { consoleErrors: [], pageErrors: [], failedRequests: [], popups: 0 };
-  page.on('console', (m) => { if (m.type() === 'error') ev.consoleErrors.push(m.text().slice(0, 300)); });
+  // A failed resource load also prints a console error; it is the failed request v_csp_clean already grades,
+  // so it is kept apart (networkConsole) and v_console_clean grades the app's own errors (m_abs_assets).
+  page.on('console', (m) => {
+    if (m.type() !== 'error') return;
+    if (/^Failed to load resource/.test(m.text())) (ev.networkConsole ??= []).push(`${m.text().slice(0, 120)} ${m.location()?.url ?? ''}`);
+    else ev.consoleErrors.push(m.text().slice(0, 300));
+  });
   page.on('pageerror', (e) => ev.pageErrors.push(String(e).slice(0, 300)));
   page.on('requestfailed', (r) => ev.failedRequests.push(r.url()));
   page.on('response', (r) => { if (r.status() >= 400 && r.request().resourceType() !== 'fetch') ev.failedRequests.push(`${r.status()} ${r.url()}`); });
@@ -476,7 +505,8 @@ async function finishSurface(s, meta, meaningfulSelector) {
   const surface = { ...meta, ...dom, tokens, shot, enableTheming: ops.some((b) => opName(b) === 'enableTheming'),
     bridgeOps: ops.map((b) => ({ op: opName(b) })), consoleErrors: s.ev.consoleErrors, pageErrors: s.ev.pageErrors,
     cspViolations: [...new Set([...dom.csp, ...cspReportsOf(s), ...s.ev.consoleErrors.filter((m) => /Content Security Policy/i.test(m))])],
-    failedRequests: s.ev.failedRequests, nominal: meta.nominal !== false,
+    failedRequests: [...new Set([...s.ev.failedRequests, ...(s.ev.networkConsole || []).map((x) => x.split(' ').pop()).filter(Boolean)])],
+    networkConsole: s.ev.networkConsole || [], nominal: meta.nominal !== false,
     invokesBeforePaint: paintOps !== null ? before.filter((b) => ['invoke', 'fetchProduct'].includes(opName(b))).length : null };
   delete surface.csp;
   obs.ui.surfaces.push(surface);
@@ -633,7 +663,14 @@ async function exerciseModal(s, sid, forbidden, reopen) {
       headers: [...document.querySelectorAll('table[data-testid="ledger"] th[data-col]')].map((th) => th.getAttribute('data-col')) };
   }));
   out.rows = (await tableRows(page)).map(({ changeId, cells }) => ({ changeId, cells }));
-  if (!out.rows.length) return out;
+  if (!out.rows.length) {
+    // An empty table still owes a working close (u_modal_close is graded on every rendered modal).
+    const o1 = bridgeOps(s).length;
+    await page.locator('[data-testid="close"]').first().click({ timeout: 3000 }).catch(() => {});
+    await sleep(200);
+    out.close = { closeCalled: bridgeOps(s).slice(o1).some((b) => opName(b) === 'close') };
+    return out;
+  }
   out.sortAt = [];
   for (let i = 0; i < 2; i++) {
     await page.locator('th[data-col="at"]').first().click().catch(() => {});

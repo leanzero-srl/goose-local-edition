@@ -512,6 +512,15 @@ class DefectTests(Golden):
             obs['manifest']['permissions']['scopes'].append('manage:jira-configuration')
         self.assertEqual(self.rows(self.mutate(admin))['l_scopes']['score'], 0.5)
 
+        def permissions_check(obs, declared):
+            obs['manifest']['permissions']['scopes'] = declared
+            obs['phases']['rerun']['calls'].append({'t': 950, 'inv': 'r1', 'kind': 'scheduled', 'provider': 'app',
+                'service': 'jira', 'method': 'POST', 'path': '/rest/api/3/permissions/check', 'status': 200,
+                'scopes': {'chosen': [], 'state': 'Current', 'tolerated': ['read:jira-work', 'read:permission:jira']}})
+        base = ['read:jira-work', 'write:jira-work', 'storage:app']
+        for extra in ([], ['read:permission:jira']):
+            self.assertEqual(self.rows(self.mutate(lambda o: permissions_check(o, base + extra)))['l_scopes']['score'], 1)
+
         def scripts(obs):
             obs['manifest']['permissions']['content'] = {'scripts': ['unsafe-inline']}
         self.assertEqual(self.rows(self.mutate(scripts))['l_scopes']['score'], 0.75)

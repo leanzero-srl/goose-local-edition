@@ -712,8 +712,12 @@ def _scope_evidence(c: Ctx) -> Tuple[Optional[Dict], Optional[str]]:
     one exists, else the full granular set); a call no declared alternative satisfies is a 401 scope mismatch and
     counts one missing scope per operation."""
     declared = set(((c.manifest or {}).get('permissions') or {}).get('scopes') or [])
-    used, missing = set(), set()
+    used, missing, tolerated = set(), set(), set()
     for call in c.all_calls('jira'):
+        if isinstance(call.get('scopes'), dict):
+            # An operation satisfied by an EMPTY alternative (POST /permissions/check: classic [] while its
+            # description names read:jira-work) charges neither reading: the scopes it names are tolerated.
+            tolerated |= set(call['scopes'].get('tolerated') or [])
         if call.get('scopeMismatch'):
             missing.add(f"(a scope for {call['scopeMismatch']})")
             continue
@@ -740,8 +744,9 @@ def _scope_evidence(c: Ctx) -> Tuple[Optional[Dict], Optional[str]]:
             used.add('storage:app')
         else:
             missing.add('storage:app')
-    extra = declared - used
-    return {'declared': sorted(declared), 'used': sorted(used), 'missing': sorted(missing), 'extra': sorted(extra)}, None
+    extra = declared - used - tolerated
+    return {'declared': sorted(declared), 'used': sorted(used), 'missing': sorted(missing), 'extra': sorted(extra),
+            'tolerated': sorted(tolerated & declared)}, None
 
 
 @check('l_scopes', 'L', pre=pre_product_or_kvs, needs=('backfill', 'live', 'heal', 'rerun', 'ui', 'rovo'))
@@ -1935,10 +1940,31 @@ assert {n for _c, _l, names in ADMISSION_BANDS for n in names} <= REGISTERED
 assert set(EXCELLENCE_VALUED) | set(EXCELLENCE_BINARY) <= REGISTERED
 assert sum(1 for t in TIER_OF.values() if t != 'E') == 55 and sum(1 for t in TIER_OF.values() if t == 'E') == 4
 
+# Rows that compare a person's change LIST with the oracle: one wrong row in the ledger or one change shown that
+# should be hidden makes each of them wrong, and that is one defect, not N (DESIGN §13.4 item 5, gap #23).
+CHANGE_LIST_ROWS = ('u_ledger_table', 'u_ledger_sort', 's_index_order', 'u_comment_flow', 'u_issue_router',
+                    'a_action_result', 'a_action_permissions', 'b_hidden_count')
+# Rows that compare the four §1 numbers (or a value printed from them, like the comment's creep and the points
+# cell) with the oracle: wrong numbers are one defect wherever they show.
+NUMBER_ROWS = ('u_widget_chart', 'a_action_result', 'u_ledger_table', 'u_ledger_sort', 'b_comment_adf_as_user',
+               't_out_of_order', 't_reestimate_followed')
 ROOT_BLOCKS = {
     'l_bundles_load': tuple(n for n, t in TIER_OF.items() if t in ('T', 'R', 'S', 'B', 'U', 'A')),
-    'r_backfill_complete': ('u_widget_numbers', 'a_action_result', 'u_ledger_table', 'r_removals_found'),
+    # measured on m_old_search / m_open_sprints_only / m_storage_api: a backfill that never lands leaves every
+    # ledger-derived row wrong, the same scheduled run's heal and rate-limit rows unfinished, and the scopes
+    # its calls would have used unexercised (l_scopes reads observed calls).
+    'r_backfill_complete': ('u_widget_numbers', 'r_removals_found', *CHANGE_LIST_ROWS, *NUMBER_ROWS, 'r_heal_dropped',
+                            'r_rate_limit', 't_multi_sprint_parse', 'l_scopes'),
+    # measured on m_ids_only / m_one_estimate_field: wrong numbers show in the chart, the action, the table's
+    # points cell and sort, and the comment's creep.
+    'u_widget_numbers': NUMBER_ROWS,
     'u_widget_loads': ('u_widget_numbers', 'u_widget_chart', 'u_widget_edit_config', 'v_widget_sizes'),
+    # measured on m_dedupe_event_id (seed 0123456789abcdef): one duplicated row -> a duplicate table row, the
+    # sort and index-order rows, one comment-flow step, the action's change list and the event-row exactness.
+    't_no_double_count': (*CHANGE_LIST_ROWS, 't_event_rows', 't_out_of_order', 't_multi_sprint_parse', 'r_heal_dropped',
+                          'u_widget_numbers', 'u_widget_chart', 't_reestimate_followed'),
+    # measured on m_asapp_ui: hidden changes listed -> the table, its sort and the action's list are wrong too.
+    'b_no_permission_leak': CHANGE_LIST_ROWS,
 }
 for _root, _deps in ROOT_BLOCKS.items():
     assert {_root, *_deps} <= REGISTERED

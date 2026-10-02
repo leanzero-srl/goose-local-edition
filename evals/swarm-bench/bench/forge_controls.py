@@ -58,6 +58,8 @@ def score(tree: Path, seed: str, out: Path) -> Dict:
         raise RuntimeError(f'score_forge.py exited {proc.returncode} on {tree.name}: {proc.stderr.strip()[-600:]}')
     if KEEP:
         shutil.copy2(out, KEEP / out.name)
+        if (tree / 'forge-observations.json').is_file():
+            shutil.copy2(tree / 'forge-observations.json', KEEP / (out.stem + '-obs.json'))
     return json.loads(out.read_text())
 
 
@@ -65,7 +67,7 @@ def _rows(verdict: Dict) -> Dict[str, Dict]:
     return {r['check']: r for r in verdict['checks']}
 
 
-def judge(golden: Dict, mutant: Dict, expect: Dict, root_blocks: Dict[str, tuple]) -> List[str]:
+def judge(golden: Dict, mutant: Dict, expect: Dict, root_blocks: Dict[str, tuple], calibration_owned=()) -> List[str]:
     """Failures (empty = the mutant behaves as declared)."""
     fails: List[str] = []
     g, m = _rows(golden), _rows(mutant)
@@ -85,8 +87,13 @@ def judge(golden: Dict, mutant: Dict, expect: Dict, root_blocks: Dict[str, tuple
         nxt = {d for root in frontier for d in root_blocks.get(root, ())} - attributed
         attributed |= nxt
         frontier = nxt & lost
+    # A row the mutant left VACUOUS (its precondition unmet: the surface was never exercised) is the shadow of the
+    # declared defect, priced 0 with no multiplier of its own — attributed whenever a declared row was lost.
+    if declared & lost:
+        attributed |= {n for n, row in m.items() if (row.get('parts') or {}).get('vacuous_root', '').startswith('precondition')}
     missing = sorted(declared - lost)
-    extra = sorted(lost - declared - attributed)
+    # Calibration-owned economy rows are ratios any code change moves; they are reported, never a mutant's defect.
+    extra = sorted(lost - declared - attributed - set(calibration_owned))
     if missing:
         fails.append(f'declared losses that did not happen: {missing}')
     if extra:
@@ -203,7 +210,7 @@ def main(argv=None) -> int:
                 entry = {'score': verdict['score'], 'lost': sorted(
                     n for n, r in _rows(verdict).items() if r['score'] < _rows(golden)[n]['score'] - 1e-9),
                     'criticals': verdict['critical'].get('unsuppressed'),
-                    'fails': judge(golden, verdict, expect, score_forge.ROOT_BLOCKS)}
+                    'fails': judge(golden, verdict, expect, score_forge.ROOT_BLOCKS, score_forge.CALIBRATION_OWNED)}
             except Exception as error:
                 entry = {'fails': [f'{type(error).__name__}: {error}']}
             failed |= bool(entry['fails'])
