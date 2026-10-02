@@ -1,0 +1,47 @@
+.edit {
+  padding: 12px;
+}
+.edit-title {
+  margin: 0;
+  font-size: 16px;
+  color: var(--ds-text, #172b4d);
+}
+.edit-help {
+  margin: 4px 0 12px;
+  color: var(--ds-text-subtle, #44546f);
+}
+.board-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+}
+.board-option {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 2px solid var(--ds-border-bold, #758195);
+  background: var(--ds-surface-raised, #ffffff);
+  color: var(--ds-text, #172b4d);
+  text-align: left;
+  min-width: 0;
+}
+.board-option:hover {
+  background: var(--ds-surface-raised-hovered, #f1f2f4);
+}
+.board-option[aria-pressed='true'] {
+  background: var(--ds-background-selected-bold, #0c66e4);
+  border-color: var(--ds-background-selected-bold, #0c66e4);
+  color: var(--ds-text-inverse, #ffffff);
+}
+.board-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.board-id {
+  font-variant-numeric: tabular-nums;
+}
