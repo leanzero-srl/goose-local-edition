@@ -1,0 +1,18 @@
+{
+  "name": "forge-kit-app-modules",
+  "version": "1.0.0",
+  "private": true,
+  "description": "forge-1.0 kit: the exact packages an entrant's workspace gets as node_modules (app-modules tree).",
+  "dependencies": {
+    "@forge/api": "8.2.0",
+    "@forge/bridge": "7.1.0",
+    "@forge/dashboards-bridge": "2.0.0",
+    "@forge/events": "3.0.7",
+    "@forge/hooks": "2.0.0",
+    "@forge/kvs": "2.0.7",
+    "@forge/resolver": "2.0.0",
+    "esbuild": "0.28.2",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  }
+}

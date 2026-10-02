@@ -1,0 +1,11 @@
+{
+  "url": "https://forge-node-runtime.prod-east.frontend.public.atl-paas.net/assets/wrapper.2026-09-29T01%3A54%3A45.921Z--18362--39c2e991c98cce5947fb2eaed89c1ad5bcbb91f3.js",
+  "sha256": "4f8170e0fb4adb6deb28e3daf2035d42438984a71a76e1a7d5f93ea419e6c45a",
+  "bytes": 1635392,
+  "loader_url": "https://forge-node-runtime.prod-east.frontend.public.atl-paas.net/assets/loader.2026-09-29T01%3A54%3A45.921Z--18362--39c2e991c98cce5947fb2eaed89c1ad5bcbb91f3.js",
+  "loader_sha256": "9ef8881f61deb7738aa13efd2ec4fed6aefab4251123331f42f4eeda000319db",
+  "loader_bytes": 1873,
+  "fetched": "2026-10-02",
+  "discovered_from": "https://forge-node-runtime.prod-east.frontend.public.atl-paas.net/ (the index @forge/bundler 7.2.3 NetworkWrapperProvider parses: the first <script src> containing 'wrapper' / 'loader')",
+  "repin": "python3 evals/swarm-bench/bench/forge_kit.py repin"
+}
