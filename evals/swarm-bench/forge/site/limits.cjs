@@ -19,7 +19,7 @@ const LIMITS = {
   agileBoardPage: { value: 50, receipt: { measured: 'GET /rest/agile/1.0/board?maxResults=1000 echoed maxResults 50' } },
   agileSprintPage: { value: 50, receipt: { measured: 'GET /rest/agile/1.0/board/{id}/sprint?maxResults=1000 echoed maxResults 50' } },
   agileIssuePage: { value: 1000, receipt: { measured: 'GET /rest/agile/1.0/sprint/{id}/issue?maxResults=1000 echoed maxResults 1000; the OpenAPI ties the cap to jira.search.views.default.max' } },
-  agileIssueDefault: { value: 50, receipt: { openapi: 'jsw.json GET /rest/agile/1.0/board/{boardId}/issue', quote: 'Default: 50' } },
+  agileIssueDefault: { value: 50, receipt: { openapi: 'jsw.json GET /rest/agile/1.0/board/{boardId}/backlog (also epic issue lists; board/sprint issue lists state no default)', quote: 'The maximum number of issues to return per page. Default: 50.' } },
   issueWritesPer2s: { value: 20, receipt: { doc: 'https://developer.atlassian.com/cloud/jira/platform/rate-limiting/', quote: '20 write operations per 2 seconds' } },
   issueWritesPer30s: { value: 100, receipt: { doc: 'https://developer.atlassian.com/cloud/jira/platform/rate-limiting/', quote: '100 write operations per 30 seconds' } },
 };

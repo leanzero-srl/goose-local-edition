@@ -125,3 +125,13 @@ test('refusals: legacy v2 is harness_missing, unknown paths 404, scope mismatch 
   assert.strictEqual(missingIssue.status, 404);
   assert.deepStrictEqual(missingIssue.body.errorMessages, ['Issue does not exist or you do not have permission to see it.']);
 }));
+
+test('every OpenAPI receipt in site/limits.cjs is quoted verbatim from the shipped OpenAPI', () => {
+  const { LIMITS } = require(path.join(__dirname, '..', '..', 'site', 'limits.cjs'));
+  const fs = require('fs');
+  const dir = path.join(__dirname, '..', 'openapi');
+  const text = fs.readdirSync(dir).map((f) => fs.readFileSync(path.join(dir, f), 'utf8')).join('\n');
+  const missing = Object.entries(LIMITS).filter(([, v]) => v.receipt?.openapi && !text.includes(v.receipt.quote)).map(([k]) => k);
+  assert.deepStrictEqual(missing, []);
+  assert.ok(Object.values(LIMITS).every((v) => v.receipt && (v.receipt.openapi || v.receipt.measured || v.receipt.doc)), 'every limit carries a receipt');
+});
