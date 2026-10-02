@@ -64,6 +64,15 @@ modules:
       conversationStarters:
         - What entered sprint 41 after it started?
         - How much scope creep does my sprint have?
+  rovo:mcp:
+    - key: scope-ledger-mcp
+      name: Scope Ledger
+      tools:
+        - get-sprint-scope
+  llm:
+    - key: scope-ledger-llm
+      model:
+        - claude
   function:
     - key: on-issue-updated
       handler: index.onIssueUpdated

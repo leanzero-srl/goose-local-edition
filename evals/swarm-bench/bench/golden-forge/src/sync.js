@@ -119,15 +119,21 @@ export async function applyIssueEvent(cfg, { issueId, changelogId, sprintChange 
       throw e;
     });
   let issue = await getIssue();
-  if (!issue) return { rows: 0, members: 0 };
+  if (!issue) return { rows: 0, members: 0, sprintIds: [] };
   const current = sprintsOfField(issue.fields?.[cfg.sprintFieldId]);
   const knownFields = issueFields(cfg).join(',');
   for (const s of current) if (s.state === undefined || s.state === 'active') await resolve(s.id);
   if (issueFields(cfg).join(',') !== knownFields) issue = (await getIssue()) ?? issue;
 
   const rows = await rowsOf(cfg, issue, histories, 'event', resolve);
+  const changed = new Set();
   let written = 0;
-  for (const row of rows) if (await recordChange(row)) written += 1;
+  for (const row of rows) {
+    if (await recordChange(row)) {
+      written += 1;
+      changed.add(row.sprintId);
+    }
+  }
 
   const currentIds = new Set(current.map((s) => s.id));
   const stored = new Map((await membersOfIssue(issue.id)).map((m) => [m.sprintId, m]));
@@ -135,9 +141,12 @@ export async function applyIssueEvent(cfg, { issueId, changelogId, sprintChange 
   let members = 0;
   for (const sprintId of touched) {
     if (!cfg.sprints[sprintId]) continue;
-    if (await writeMember(memberRow(cfg, sprintId, issue, currentIds), stored.get(sprintId))) members += 1;
+    if (await writeMember(memberRow(cfg, sprintId, issue, currentIds), stored.get(sprintId))) {
+      members += 1;
+      changed.add(sprintId);
+    }
   }
-  return { rows: written, members };
+  return { rows: written, members, sprintIds: [...changed] };
 }
 
 // ---- scheduled path --------------------------------------------------------------------------
@@ -190,7 +199,7 @@ export async function sprintHistories(issueIds, sprintFieldId, policy) {
 // only what the ledger does not hold yet. A run with nothing new writes nothing.
 export async function reconcileAll(cfg, policy) {
   const sprintIds = Object.keys(cfg.sprints);
-  if (!sprintIds.length) return { issues: 0, rows: 0, members: 0 };
+  if (!sprintIds.length) return { issues: 0, rows: 0, members: 0, sprintIds: [] };
   const issues = await searchCandidates(cfg, policy);
   const histories = await sprintHistories(issues.map((i) => String(i.id)), cfg.sprintFieldId, policy);
 
@@ -202,21 +211,28 @@ export async function reconcileAll(cfg, policy) {
   }
 
   const resolve = async (sprintId) => cfg.sprints[sprintId] ?? null;
+  const changed = new Set();
   let rows = 0;
   let members = 0;
   for (const issue of issues) {
     const issueRows = await rowsOf(cfg, issue, histories.get(String(issue.id)) ?? [], 'reconcile', resolve);
     for (const row of issueRows) {
       if (storedRows.has(changeKey(row.changeId, row.sprintId))) continue;
-      if (await recordChange(row, true)) rows += 1;
+      if (await recordChange(row, true)) {
+        rows += 1;
+        changed.add(row.sprintId);
+      }
     }
     const currentIds = new Set(sprintsOfField(issue.fields?.[cfg.sprintFieldId]).map((s) => s.id));
     const touched = new Set([...currentIds, ...issueRows.map((r) => r.sprintId)]);
     for (const sprintId of sprintIds) if (storedMembers.has(`${sprintId}:${issue.id}`)) touched.add(sprintId);
     for (const sprintId of touched) {
       if (!cfg.sprints[sprintId]) continue;
-      if (await writeMember(memberRow(cfg, sprintId, issue, currentIds), storedMembers.get(`${sprintId}:${issue.id}`))) members += 1;
+      if (await writeMember(memberRow(cfg, sprintId, issue, currentIds), storedMembers.get(`${sprintId}:${issue.id}`))) {
+        members += 1;
+        changed.add(sprintId);
+      }
     }
   }
-  return { issues: issues.length, rows, members };
+  return { issues: issues.length, rows, members, sprintIds: [...changed] };
 }
