@@ -41,6 +41,10 @@
 > ~/goose-builds/loop-state/sb72-openrouter-queue.json (≈$100 at Luna profile, owner will top up; credit $9.5);
 > (5) FORGE benchmark (forge-1.0, Atlassian Forge, offline-graded): spike f3b71f9a2, RESEARCH e4d6adcfd, DESIGN
 > 04f76a807 after 3 red-teams (25 findings applied); WP1 emulator/site/kit, WP2 scorer, WP3 golden building in parallel.
+> **23:5x:** 3.0.88 released+installed (charge-not-refuse scorer); MiMo Flash PUBLISHED 0.7424 (brun-029b6e80, Cloud baseline;
+> hermetic 0.7894). MiMo Pro DROPPED (owner: taking the piss — Xiaomi host 22 tok/s). Chain resumed (Qwen Omni Flash live).
+> Owner: after GPT-6.1 Sol run FORGE with Luna/MiMo Flash/Qwen Omni Flash/Sol; app SB|Forge selector (panel-surgeon) and
+> site Forge family + big top-right SB|Forge toggle (website agent) in flight; contract forge/INTEGRATION.md.
 > MiMo-flash SB7.2 run REFUSED at scoring (r_b3_sigkill_resync unavailable) — tree kept; a sweep converts every
 > entrant-caused unavailable path to charged; then 3.0.88 + Retry scoring → publish. Paid runs HELD until that lands.
 
