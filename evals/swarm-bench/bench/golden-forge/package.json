@@ -5,7 +5,7 @@
   "description": "Scope Ledger — forge-1.0 golden reference app",
   "scripts": {
     "build": "node build.mjs",
-    "lint": "node $FORGE_KIT/bin/lint.cjs"
+    "lint": "node \"$FORGE_KIT/bin/lint.cjs\""
   },
   "dependencies": {
     "@forge/api": "8.2.0",
