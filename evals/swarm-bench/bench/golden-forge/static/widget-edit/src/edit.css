@@ -1,0 +1,65 @@
+.edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.edit p {
+  margin: 0;
+}
+
+.board-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
+  gap: 8px;
+}
+
+.board-option {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 2px solid var(--ds-border);
+  background-color: var(--ds-surface-raised);
+  color: var(--ds-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.board-option:hover {
+  background-color: var(--ds-surface-raised-hovered);
+}
+
+.board-option.selected {
+  border-color: var(--ds-border-selected);
+  background-color: var(--ds-background-selected);
+  color: var(--ds-text-selected);
+}
+
+.board-option:focus-visible {
+  outline: 2px solid var(--ds-border-focused);
+  outline-offset: 2px;
+}
+
+.board-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-id {
+  color: var(--ds-text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.board-option.selected .board-id {
+  color: var(--ds-text-selected);
+}
