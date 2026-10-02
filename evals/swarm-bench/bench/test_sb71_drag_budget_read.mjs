@@ -23,6 +23,7 @@ function probeHelpers(file){
 const PROBES=['product_probe_sb71.mjs','product_probe_v3.mjs'].map(file=>({file,...probeHelpers(file)}));
 assert.deepEqual(PROBES[0].VIZ_LAUNCH_ARGS,PROBES[1].VIZ_LAUNCH_ARGS);
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+const RACE_ATTEMPTS=6;
 
 const page_html=`<!doctype html><body style="margin:0"><canvas id="c" width="1280" height="800"></canvas><script>
 const gl=document.getElementById('c').getContext('webgl2');
@@ -69,15 +70,24 @@ try{
   assert.ok(frameMs>=900,'could not make a frame outlast the fixed read on this machine');
 
   for(const probe of PROBES){
-    await page.goto(base+'/?iterations='+iterations);await page.evaluate(()=>window.__frameMs());
-    await drag(page,probe);
-    const fixedDelayRead=await page.evaluate(probe.pageReadBudgetWatch);
-    assert.ok(fixedDelayRead.c0&&fixedDelayRead.cUp,JSON.stringify(fixedDelayRead));
-    assert.equal(fixedDelayRead.c1,null,'the fixed-delay read did not reproduce the race: '+JSON.stringify(fixedDelayRead));
-    const waited=await probe.readBudgetWatchAfterRelease(page);
-    assert.ok(waited.c1,'the probe read returned without c1: '+JSON.stringify(waited));
-    assert.equal(waited.c1Wait.landed,true,JSON.stringify(waited.c1Wait));
-    console.log(JSON.stringify({probe:probe.file,raced:fixedDelayRead.c1,c1:waited.c1,c1Wait:waited.c1Wait}));
+    // Whether pointerup lands while a frame is still in the GPU process depends on Chrome's frame
+    // scheduling, so the race is retried; every attempt must end with c1 in hand.
+    let reproduced=0;
+    for(let attempt=1;attempt<=RACE_ATTEMPTS&&!reproduced;attempt++){
+      await page.goto(base+'/?iterations='+iterations);await page.evaluate(()=>window.__frameMs());
+      await drag(page,probe);
+      const fixedDelayRead=await page.evaluate(probe.pageReadBudgetWatch);
+      assert.ok(fixedDelayRead.c0&&fixedDelayRead.cUp,JSON.stringify(fixedDelayRead));
+      const waited=await probe.readBudgetWatchAfterRelease(page);
+      assert.ok(waited.c1,'the probe read returned without c1: '+JSON.stringify(waited));
+      if(fixedDelayRead.c1===null){
+        reproduced=attempt;
+        assert.equal(waited.c1Wait.landed,true,JSON.stringify(waited.c1Wait));
+        assert.ok(waited.c1.t-waited.cUp.t>300,'the late sample was not late: '+JSON.stringify(waited));
+      }
+      console.log(JSON.stringify({probe:probe.file,attempt,fixedDelayReadC1:fixedDelayRead.c1,c1:waited.c1,c1Wait:waited.c1Wait??null}));
+    }
+    assert.ok(reproduced,'the fixed-delay race did not reproduce in '+RACE_ATTEMPTS+' attempts');
 
     await page.goto(base+'/?iterations=1');
     await drag(page,probe);
