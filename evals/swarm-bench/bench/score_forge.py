@@ -1031,7 +1031,8 @@ def _sprint_numbers_right(c: Ctx, sid: str) -> bool:
 
 @check('t_out_of_order', 'T', needs=('live', 'ui', 'rovo'))
 def _(c):
-    live = sorted(c.oracle.live, key=lambda e: (e.get('delivery') or {}).get('slot', 0))
+    live = sorted((e for e in c.oracle.live if isinstance((e.get('delivery') or {}).get('slot'), int)),
+                  key=lambda e: e['delivery']['slot'])
     permuted = set()
     for a, b in zip(live, live[1:]):
         if fo.instant(a['created']) > fo.instant(b['created']):

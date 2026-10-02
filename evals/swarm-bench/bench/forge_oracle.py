@@ -31,6 +31,15 @@ ONE_DECIMAL = Decimal('0.1')
 PHASES = ('backfill', 'live', 'final')
 
 
+def duplicate_count(delivery: Dict) -> int:
+    """I1 `delivery.duplicates` is the list of extra slots the change is redelivered at (WP1's generator); an
+    integer count is accepted too."""
+    dup = (delivery or {}).get('duplicates')
+    if isinstance(dup, list):
+        return len(dup)
+    return int(dup) if isinstance(dup, int) and not isinstance(dup, bool) else 0
+
+
 class PackDefect(ValueError):
     """The pack breaks an I1 invariant the oracle needs: a harness defect, never app evidence."""
 
@@ -286,7 +295,7 @@ class Oracle:
                         kind=kind, at=created, at_text=str(entry['created']), by=str(entry.get('authorId')),
                         by_name=self.users.get(str(entry.get('authorId')), ''),
                         points=self.estimate_of(str(issue['id']), field_id, final_entries),
-                        phase=phase, dropped=dropped, duplicates=int(delivery.get('duplicates') or 0),
+                        phase=phase, dropped=dropped, duplicates=duplicate_count(delivery),
                         sources=sources))
         for sid in by_sprint:
             by_sprint[sid].sort(key=Change.sort_key)
@@ -408,9 +417,8 @@ class Oracle:
         sprint page per scrum board + the ids-only search pages + changelog bulkfetch pages + issue
         bulkfetch pages, over the issues touched since the earliest active start (plus every issue
         currently in an active sprint). Returns (calls, missing limit names)."""
-        need = {'searchJqlIdsPageSize': self.limit('searchJqlIdsPageSize'),
-                'changelogBulkfetchPageSize': self.limit('changelogBulkfetchPageSize'),
-                'issueBulkfetchCap': self.limit('issueBulkfetchCap')}
+        need = {name: self.limit(name) for name in
+                ('searchJqlIdsOnlyMax', 'changelogBulkIssues', 'changelogBulkPageMax', 'issueBulkNamedFields')}
         missing = [name for name, value in need.items() if value is None]
         if missing:
             return None, missing
@@ -420,10 +428,12 @@ class Oracle:
         touched |= {iid for iid in self.issues
                     if self.member_now(iid, install_entries) & set(self._numbers)}
         n = len(touched)
+        entries = sum(1 for e in self.history if str(e['issueId']) in touched)
         boards = len(self.scrum_boards())
         pages = lambda total, size: max(1, math.ceil(total / size))  # noqa: E731
-        calls = (1 + 1 + boards + boards + pages(n, need['searchJqlIdsPageSize'])
-                 + pages(n, need['changelogBulkfetchPageSize']) + pages(n, need['issueBulkfetchCap']))
+        changelog_pages = max(pages(n, need['changelogBulkIssues']), pages(entries, need['changelogBulkPageMax']))
+        calls = (1 + 1 + boards + boards + pages(n, need['searchJqlIdsOnlyMax']) + changelog_pages
+                 + pages(n, need['issueBulkNamedFields']))
         return calls, []
 
 
@@ -496,21 +506,21 @@ def synthetic_pack(seed: str = '00000000000000aa') -> Dict:
     ]
     live = [
         {**change('9201', '203', '2026-10-01T10:00:00.000Z', 'u-bob', '', '21'),
-         'delivery': {'slot': 1, 'duplicates': 1, 'dropped': False}},
+         'delivery': {'slot': 1, 'duplicates': [7], 'dropped': False}},
         {**change('9202', '102', '2026-10-01T10:05:00.000Z', 'u-ana', '11', '12'),
-         'delivery': {'slot': 3, 'duplicates': 0, 'dropped': False}},
+         'delivery': {'slot': 3, 'duplicates': [], 'dropped': False}},
         {**change('9203', '105', '2026-10-01T10:06:00.000Z', 'u-ana', '12', ''),
-         'delivery': {'slot': 2, 'duplicates': 0, 'dropped': False}},                      # permuted pair
+         'delivery': {'slot': 2, 'duplicates': [], 'dropped': False}},                      # permuted pair
         {**change('9204', '100', '2026-10-01T10:10:00.000Z', 'u-bob', '11', '11, 12'),
-         'delivery': {'slot': 4, 'duplicates': 0, 'dropped': True}},
+         'delivery': {'slot': None, 'duplicates': [], 'dropped': True}},
         {'changelogId': '9205', 'issueId': '201', 'created': '2026-10-01T10:20:00.000Z', 'authorId': 'u-ana',
          'items': [{'field': 'Story Points', 'fieldtype': 'custom', 'fieldId': pay_est,
                     'from': '3', 'fromString': '3', 'to': '5', 'toString': '5'}],
-         'delivery': {'slot': 5, 'duplicates': 0, 'dropped': False}},
+         'delivery': {'slot': 5, 'duplicates': [], 'dropped': False}},
         {'changelogId': '9206', 'issueId': '100', 'created': '2026-10-01T10:30:00.000Z', 'authorId': 'u-ana',
          'items': [{'field': 'summary', 'fieldtype': 'jira', 'fieldId': 'summary',
                     'from': None, 'fromString': 'Rotate the pager', 'to': None, 'toString': 'Rotate the pager schedule'}],
-         'delivery': {'slot': 6, 'duplicates': 0, 'dropped': False}},
+         'delivery': {'slot': 6, 'duplicates': [], 'dropped': False}},
     ]
     faults = [{'id': 'f-consumer', 'match': {'scope': 'consumer-of-change', 'changelogId': '9201', 'nth': 1},
                'status': 429, 'retryAfter': 30, 'reason': 'jira-quota-tenant-based'},
@@ -518,12 +528,10 @@ def synthetic_pack(seed: str = '00000000000000aa') -> Dict:
                'status': 429, 'retryAfter': 2, 'reason': 'jira-burst-based'},
               {'id': 'f-comment', 'match': {'scope': 'comment-post', 'nth': 1},
                'status': 429, 'retryAfter': 1, 'reason': 'jira-per-issue-on-write'}]
-    limits = {'searchJqlIdsPageSize': {'value': 5000, 'receipt': 'synthetic'},
-              'searchJqlFieldsPageSize': {'value': 100, 'receipt': 'synthetic'},
-              'changelogBulkfetchPageSize': {'value': 1000, 'receipt': 'synthetic'},
-              'changelogBulkfetchFieldCap': {'value': 10, 'receipt': 'synthetic'},
-              'issueBulkfetchCap': {'value': 100, 'receipt': 'synthetic'},
-              'agileMaxResults': {'value': 50, 'receipt': 'synthetic'}}
+    limits = {name: {'value': value, 'receipt': 'synthetic (WP1 names, forge/site/limits.cjs)'} for name, value in
+              (('searchJqlIdsOnlyMax', 5000), ('searchJqlFieldsMax', 100), ('changelogBulkIssues', 1000),
+               ('changelogBulkFields', 10), ('changelogBulkPageMax', 10000), ('issueBulkNamedFields', 1000),
+               ('agileSprintPage', 50))}
     return {'seed': seed, 'now': '2026-10-01T12:00:00.000Z', 'cloudId': 'cloud-synthetic',
             'siteUrl': 'https://synthetic.atlassian.net', 'appAccountId': 'u-app', 'viewer': 'u-viewer',
             'users': users, 'fields': fields, 'sprintFieldId': sf, 'projects': projects, 'boards': boards,

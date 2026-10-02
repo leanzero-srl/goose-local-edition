@@ -138,10 +138,8 @@ def golden_observations(pack):
     relevant = {str(e['changelogId']) for e in o.relevant_live()}
     events, lcalls, linvs, deliveries = [], [], [], []
     t = 100.0
-    for e in sorted(pack['live'], key=lambda e: e['delivery']['slot']):
-        if e['delivery']['dropped']:
-            continue
-        for dup in range(1 + e['delivery']['duplicates']):
+    for e in sorted((e for e in pack['live'] if not e['delivery']['dropped']), key=lambda e: e['delivery']['slot']):
+        for dup in range(1 + fo.duplicate_count(e['delivery'])):
             inv = f"trig-{e['changelogId']}-{dup}"
             events.append({'changelogId': e['changelogId'], 'slot': e['delivery']['slot'], 'duplicate': bool(dup),
                            'triggerInvocations': [inv]})
