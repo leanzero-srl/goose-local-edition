@@ -140,11 +140,17 @@
     }
   }
 
+  // The newest table request wins: an approval's auto-navigation and a user's page click can be in
+  // flight together, and a slower stale page must not overwrite the page the user now asked for
+  // (measured on the reference: offset 400 landed after offset 3500 and hid the sent payment).
+  var tableRequest = 0;
   function loadTable() {
+    var request = ++tableRequest;
     return api('/api/payments?' + query()).then(function (r) {
       if (!r.ok) throw new Error('payments ' + r.status);
       return r.json();
     }).then(function (body) {
+      if (request !== tableRequest) return;
       state.rows = body.data || [];
       state.total = body.total || 0;
       state.loaded = true;
