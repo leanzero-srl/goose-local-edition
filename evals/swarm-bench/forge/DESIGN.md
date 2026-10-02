@@ -26,7 +26,7 @@ hard-coded absolutes without receipts.
 | D7 | Score-time runtime = Atlassian's runtime wrapper fetched from its public CDN, pinned by sha256; the in-repo shim runs ONLY behind an explicit `--runtime shim` flag and the verdict is then unpublishable | licence (wrapper not committed, spike .gitignore); gate 1 forbids a silent fallback (§6.1) |
 | D8 | Custom UI only. UI Kit, Forge SQL, webtrigger, apiRoute, global:fullPage, objectStore, app-managed permissions: not in v1 | @forge/react closure is 1,246 MB (measured); SQL needs a MySQL engine; the others have unmeasured handler contracts (RESEARCH §5) |
 | D9 | Composition = SB's: `final = min(earned, ceilings)`, `earned = (0.88·inner + 0.12·gate·e_mean) × critical multiplier` (floor 0.6) | one severity model across families; selftest machinery reused (score_sb7.py `compose_from_rows`) |
-| D10 | Public input 18,232 bytes (prompt 3,106 + contract 11,727 + starter 3,399) + BROWSER-TESTING 537 | target ≤ 25 KB; SB7.2's 45.7 KB still produced desk audits |
+| D10 | Public input 18,501 bytes (prompt 3,106 + contract 11,996 + starter 3,399) + BROWSER-TESTING 537 | target ≤ 25 KB; SB7.2's 45.7 KB still produced desk audits |
 | D11 | Its own benchmark family on leanzero.net (`family: forge`), scorer version `forge-1.0` (`forge-1.0-rc` until thresholds freeze) | not an SB era: different product, different scale |
 
 ## 1. Requirement → where it lands
@@ -71,7 +71,7 @@ totals plus per-person-visible change lists. The exact definitions are FORGE-CON
 | `rovo:skill` | `skills/sprint-scope-analyst/SKILL.md` | Preview 2026-10-02 | frontmatter rules are NOT in any local package (schema only has `source.dir` and `dependencies.tools`), so the contract states them |
 | `rovo:agent` | lists the skill | GA | wiring |
 | `rovo:mcp` | exposes `get-sprint-scope` | Preview 2026-10-01 | `tools` are action-key STRINGS in schema 13.6.0 (RESEARCH §1 wrote `{action}`), `name` ≤ 30, at most one per app |
-| `llm` + `@forge/llm` 1.0.7 | sprint action's explanation | docs page has no Preview/EAP banner; GA 2026-07-30 per RESEARCH's changelog | `list()` statuses `active`/`deprecated` (pick an active model); `tools` + forcing `tool_choice`; refusal / malformed tool arguments / `ForgeLlmAPIError{status}`; digits in the model's summary must not reach the screen; the prompt must hold only viewer-visible data |
+| `llm` + `@forge/llm` 1.0.7 | sprint action's explanation | docs page has no Preview/EAP banner; GA 2026-07-30 per RESEARCH's changelog | `list()` returns the model ids (the public models page, Aug 3 2026, lists 8, ALL active — so the trap is a hard-coded id `list()` does not return, not a deprecated one); the documented sampling rules (a deliberate trap, §17.4); `tools` + forcing `tool_choice`; refusal / malformed tool arguments / `ForgeLlmAPIError{status}`; digits in the model's summary must not reach the screen; the prompt must hold only viewer-visible data |
 | Realtime (`@forge/realtime` 1.0.1, bridge `realtime.subscribeGlobal`) | live widget | docs page has no Preview/EAP banner ("Last updated Jun 25, 2026") | "The publish API is only supported for functions invoked from the app frontend. This is not currently available for async events" → INFERENCE (ALT-NOTES.md, 9bf49184a): the docs never state outright that `publishGlobal` works from async events, and `signRealtimeToken` is documented for resolvers only — so no check requires `publishGlobal`, a token or a channel name; `u_widget_live` grades only the outcome; global channels "do not enforce full permission scopes" → payloads carry sprint ids only |
 
 Storage: KVS custom entity declared under `app.storage.entities` with an index partitioned by sprint and ranged
@@ -101,7 +101,8 @@ selection, comment post with flags, hidden count, close, not-started state). Eac
 | `/rest/api/3/search` (410), ids-only `/search/jql`, `startAt` | wrong or empty pages | `r_pagination`, `k_current_apis` |
 | 429 `Retry-After` 30 in the consumer, 2 in reconcile | immediate retry; the RESEARCH `continue`-in-do-while bug | `t_retry_after_honoured`, `r_rate_limit` |
 | LLM output trusted | model-written numbers shown, hidden/unknown change ids shown, no refusal path | `u_llm_explain`, crit `b_no_permission_leak` |
-| deprecated LLM model | the docs' example model name hard-coded (the dev and scoring sites list it `deprecated`) | `k_llm_model_current` |
+| unknown LLM model id | a hard-coded model id `list()` does not return (e.g. a legacy or invented name) | `k_llm_model_current`, `u_llm_explain` |
+| `temperature` / `top_p` copied from the @forge/llm README | 400 on every explain: both together are rejected for all models; either one for claude-opus-4-7, claude-opus-4-8, claude-opus-5, claude-sonnet-5 (LLM API reference, "Validation rules") | `u_llm_explain` |
 | `publish()` from the consumer | not delivered (async events unsupported); polling instead of Realtime | `u_widget_live` |
 | issue data in a global channel | keys/summaries broadcast across permission boundaries | `b_realtime_payload_clean` |
 | asApp for person-facing data | hidden issue keys/summaries reach the viewer | crit `b_no_permission_leak` |
@@ -209,7 +210,7 @@ seeds:
 | people | 6 users; `viewer` (the probe's identity); the app's own account |
 | visibility | 4–6 issues under a security level the viewer cannot browse, ≥ 2 with changes in active sprints; 1 visible issue on which the viewer may not comment |
 | faults | matched by WHO is calling, never by path (an efficient app may never touch a given endpoint): the first Jira request of the consumer invocation processing one scripted live change → 429 `Retry-After: 30` (if that invocation makes none, the first Jira request of the next consumer invocation that makes one); the second Jira request of the first scheduled run → 429 `Retry-After: 2`; every 429 carries `RateLimit-Reason` (the comment-path 429 was dropped, §17.2 E) |
-| LLM | `list()` models: two `active`, two `deprecated` (one is the docs' example `claude-opus-4-6`); a scripted responder answers explain calls in order: clean `report_scope` call; summary WITH digits + one hidden and one unknown change id; refusal (text, no tool call); malformed arguments; `ForgeLlmAPIError` 500 |
+| LLM | `list()` returns the 8 ids of the public models page, all `active` (no seeded deprecated model — none exists in the docs); the site enforces the documented validation rules (`temperature` + `top_p` together → 400 on every model; either one → 400 on claude-opus-4-7/4-8/5 and claude-sonnet-5); an id `list()` does not return → 400; a scripted responder answers explain calls in order: clean `report_scope` call; summary WITH digits + one hidden and one unknown change id; refusal (text, no tool call); malformed arguments (an object missing `changeIds` and with a non-string `summary`, malformed under every reading — a JSON-string `arguments` is NOT used as the malformed case, since the types say `object` and an app may parse a string); `ForgeLlmAPIError` 500 |
 | live-UI slot | 2 live changes held back from the script and delivered while the widget is open (§8.7 step 8) |
 | limits | from the OpenAPI/docs with the quoted sentence as receipt: search/jql page size, ids-only page size, `/changelog/bulkfetch` issue cap (1000) and field cap (10), `/issue/bulkfetch` caps, Agile `maxResults` |
 
@@ -447,7 +448,7 @@ call log; "ev" = probe evidence; "oracle" = forge_oracle.py on the pack.
 | `k_current_apis` | K | no `storage` from @forge/api, no `@forge/ui`, no `/rest/api/3/search` (static and runtime), every product call through `route` (no "You must create your route" throw), runtime `nodejs22.x`/`nodejs24.x` | AST + log | ≥ 1 product call observed |  |
 | `k_consumer_shape` | K | consumer uses `function:`; its function serves no resolver; `timeoutSeconds` only on consumer/scheduled | manifest | a consumer exists |  |
 | `k_rovo_mcp` | K | exactly one `rovo:mcp`, `name` 1–30 characters, `tools` include `get-sprint-scope` | manifest | — |  |
-| `k_llm_model_current` | K | an `llm` module with `claude`; every `chat`/`stream` call names a model the site's `list()` reports `active` | manifest + llm log | ≥ 1 LLM call |  |
+| `k_llm_model_current` | K | an `llm` module with `claude`; every `chat`/`stream` call names a model id that `list()` returns | manifest + llm log | ≥ 1 LLM call |  |
 | `k_entity_declared` | K | `app.storage.entities` declares the ledger entity with an index partitioned by sprint and ranged by time | manifest | — |  |
 | `t_trigger_handoff` | T | irrelevant updates: 0 Jira calls, 0 pushes; relevant: ≥ 1 push, and the event path's ledger writes happen in consumer invocations (the scheduled job may write directly) | log by invocation module type | a trigger exists and ≥ 1 push observed |  |
 | `t_event_rows` | T | rows for delivered live changes = oracle, keyed changelog id + sprint (issue, kind, at as instant, by, source=`event`); F1 | resolver/entity read + oracle | — |  |
@@ -797,7 +798,8 @@ pointer double click can land on the container).
 | `m_abs_assets` | `/assets/…` absolute paths | `u_widget_loads` (crit), `v_csp_clean` |
 | `m_llm_trusts_numbers` | the model's summary shown verbatim, digits included | `u_llm_explain`, band 4 |
 | `m_llm_leaks_hidden` | explain prompt built from all ledger rows (asApp) and returned ids shown unfiltered | `b_no_permission_leak` (crit), `u_llm_explain` |
-| `m_llm_deprecated_model` | hard-coded `claude-opus-4-6` (the docs' example, `deprecated` on the site) | `k_llm_model_current` |
+| `m_llm_unknown_model` | a hard-coded model id `list()` does not return → every explain call errors | `k_llm_model_current`, `u_llm_explain` |
+| `m_llm_sampling_params` | sends the README's `temperature: 0.7, top_p: 0.9` | `u_llm_explain` |
 | `m_llm_no_refusal_path` | assumes a tool call is always present; a refusal throws in the resolver | `u_llm_explain`, `b_invoke_contract` |
 | `m_rt_publish_in_consumer` | consumer calls `publish()` instead of `publishGlobal()` | `u_widget_live` |
 | `m_rt_payload_leak` | realtime payload carries the changed rows (keys, points, authors) | `b_realtime_payload_clean` |
@@ -964,4 +966,24 @@ deprecated model name is a defect, not a broken surface). Public input after the
 | channel-name syntax undocumented | contract §4: "Channel names are yours to choose"; grading accepts any name |
 | `stream()` tool-call delivery undocumented | contract §5: `chat()` or `stream()`; `u_llm_explain` accepts both, the emulator's scripted responder answers both |
 | which active model | contract §5: "any model that `list()` reports `active`"; `k_llm_model_current` accepts any active model |
+
+### 17.4 Gaps 25–31 (WP3 CONTRACT-GAPS.md), ALT-NOTES.md (9210c44ad) and WP1 3aff375c3
+
+Rule, as in §17.3: an undocumented or contradictory detail is never graded — grade the outcome and accept every
+documented reading; an emulator choice the docs do not support is either stated in the contract or removed.
+Pages re-fetched 2026-10-03.
+
+| point | evidence | resolution |
+|---|---|---|
+| 25 realtime tokens from async functions | "Authorizing Realtime channels": global channels suit "functions that isn't associated with a UI context"; tokens are "encouraged", and "the @forge/realtime package can only be used in a resolver"; the events page calls `publishGlobal`'s token optional — contradictory | contract §4: tokens optional, delivery rule stated (global publish reaches every subscription on its channel unless both carry tokens with different claims); contract §8: `@forge/realtime` works in every backend function; `u_widget_live` grades the outcome |
+| 26 + ALT `temperature` / `top_p` | the @forge/llm 1.0.7 README examples send `temperature: 0.7, top_p: 0.9`; the LLM API reference "Validation rules": "temperature and top_p cannot be specified together" (all models) and "Omit both parameters from requests to these models: claude-opus-4-7 claude-opus-4-8 claude-opus-5 claude-sonnet-5" | DOCUMENTED → kept as a deliberate knowledge trap, not stated in the contract (the docs state it); the site enforces exactly those rules; mutant `m_llm_sampling_params` |
+| 27 `tool_calls[].function.arguments` type | @forge/llm types it `object` | the scripted answers send objects; the malformed case is malformed under every reading; an app that also parses a JSON string is not penalised |
+| 28 which active model | contract §5 "any model that `list()` reports `active`" (§17.3) | already resolved |
+| 29 explanation after a failed attempt | not stated | judgement: clearing or keeping the previous explanation both pass; `u_llm_explain` checks the error flag and a working modal |
+| 30 global channel exposure | authorizing page: "any user with access to the app installation can subscribe … if they know the channel name" | contract §4 states it as the reason payloads carry sprint ids only |
+| 31 points sort | removed in §17.2 E | not graded; a points sort the app keeps is harmless |
+| ALT model list differs from the page | models page (Aug 3, 2026): 8 ids, all ACTIVE | WP1 (3aff375c3): the site's `list()` returns the page's ids, all active |
+| ALT kit README "429" vs site 500 for the error answer | — | both are errors to the app; `u_llm_explain` accepts any `ForgeLlmAPIError` status |
+| ALT emulated `stream()` returns one chunk | real chunking undocumented (§17.3) | `chat()` or `stream()` accepted; risk R6 covers stream fidelity |
+| WP1 a: deprecated-model trap invented | models page: no deprecated model exists | dropped `m_llm_deprecated_model` and the "deprecated model" wording (§2.2, §2.4, §5.2); `k_llm_model_current` = "the id the app sends is one `list()` returns"; replaced by `m_llm_unknown_model` (plus `m_llm_sampling_params`). §17.2's mentions are history, superseded here |
 

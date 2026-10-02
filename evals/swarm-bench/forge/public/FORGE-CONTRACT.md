@@ -93,8 +93,9 @@ configuration in its context, so two widgets on one dashboard can show different
   names may end in an ellipsis).
 - Live: after ledger rows are written, an open widget shows the new numbers without a reload,
   through Forge Realtime (`@forge/realtime` in the backend, the bridge's realtime subscribe in the
-  widget) — no polling. Channel names are yours to choose. Realtime payloads carry sprint ids
-  only.
+  widget) — no polling. Channel names are yours to choose; realtime tokens are optional (a global
+  publish reaches every subscription on its channel unless both carry tokens with different
+  claims). Global channels reach every user of the app, so payloads carry sprint ids only.
 
 ## 5. Sprint action (modal)
 
@@ -167,6 +168,7 @@ unneeded permissions.
   from `src/` the way `forge deploy` does. Every function invocation runs in a fresh Node process
   of the Forge runtime, with the platform's timeouts.
 - Trigger `filter.expression` is not evaluated: the handler receives every issue-updated event.
+- `@forge/realtime` works in every backend function, resolvers and async functions alike.
 - A consumer that throws or times out is redelivered after 1, 2, 4 and 8 minutes, then every 15,
   for 24 hours; a retry request (`InvocationError`) is redelivered after its `retryAfter`. The
   harness clock runs with real time and jumps over these redelivery waits; a wait inside an
