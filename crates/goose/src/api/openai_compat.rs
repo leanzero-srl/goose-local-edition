@@ -524,6 +524,10 @@ enum TurnEvent {
         id: Option<String>,
         text: String,
     },
+    /// Texts already sent as `Text` that belonged to a provider call goose resent
+    /// (`AgentEvent::PartialDiscarded`): a body still being built drops them; a stream that already
+    /// sent them cannot, and ends on an error as it did before goose resent.
+    Retract(Vec<(Option<String>, String)>),
     Error(String),
     Done(TokenState),
 }
@@ -531,25 +535,50 @@ enum TurnEvent {
 /// Folds streamed assistant texts into one completion body.
 #[derive(Default)]
 pub struct TextAccumulator {
-    text: String,
-    last_id: Option<String>,
+    deltas: Vec<(Option<String>, String)>,
 }
 
 impl TextAccumulator {
     pub fn push(&mut self, id: Option<String>, delta: &str) {
-        let same_message = self.last_id.is_none() || id.is_none() || self.last_id == id;
-        if !same_message && !self.text.is_empty() {
-            self.text.push_str("\n\n");
-        }
-        self.text.push_str(delta);
-        if id.is_some() {
-            self.last_id = id;
+        self.deltas.push((id, delta.to_string()));
+    }
+
+    /// Drops the last delta equal to this one — a text of a partial goose discarded.
+    pub fn retract(&mut self, id: Option<String>, delta: &str) {
+        if let Some(at) = self
+            .deltas
+            .iter()
+            .rposition(|(seen_id, seen)| *seen_id == id && seen == delta)
+        {
+            self.deltas.remove(at);
         }
     }
 
     pub fn finish(self) -> String {
-        self.text.trim().to_string()
+        let mut text = String::new();
+        let mut last_id: Option<String> = None;
+        for (id, delta) in self.deltas {
+            let same_message = last_id.is_none() || id.is_none() || last_id == id;
+            if !same_message && !text.is_empty() {
+                text.push_str("\n\n");
+            }
+            text.push_str(&delta);
+            if id.is_some() {
+                last_id = id;
+            }
+        }
+        text.trim().to_string()
     }
+}
+
+/// The `Text` events `run_turn` sent for these messages, in order — what a `PartialDiscarded` retracts.
+pub fn texts_sent_for(messages: &[Message]) -> Vec<(Option<String>, String)> {
+    messages
+        .iter()
+        .filter(|message| message.role == Role::Assistant)
+        .map(|message| (message.id.clone(), message.as_concat_text()))
+        .filter(|(_, text)| !text.is_empty() && !is_provider_error_message(text))
+        .collect()
 }
 
 /// The agent turns a provider failure into an assistant message and ends the turn normally
@@ -657,6 +686,13 @@ async fn run_turn(
                         cancel.cancel();
                         return;
                     }
+                }
+            }
+            Ok(AgentEvent::PartialDiscarded(discarded)) => {
+                let sent = texts_sent_for(&discarded);
+                if !sent.is_empty() && tx.send(TurnEvent::Retract(sent)).await.is_err() {
+                    cancel.cancel();
+                    return;
                 }
             }
             Ok(AgentEvent::Usage(_))
@@ -769,6 +805,14 @@ async fn chat_completions(
                                 break;
                             }
                         }
+                        Some(TurnEvent::Retract(_)) => {
+                            let err = OpenAiError::internal(
+                                crate::agents::transient_resend::PARTIAL_ALREADY_STREAMED.to_string(),
+                            ).body();
+                            let _ = sse_tx.send(format!("data: {}\n\n", err)).await;
+                            let _ = sse_tx.send("data: [DONE]\n\n".to_string()).await;
+                            break;
+                        }
                         Some(TurnEvent::Error(message)) => {
                             let err = OpenAiError::internal(message).body();
                             let _ = sse_tx.send(format!("data: {}\n\n", err)).await;
@@ -807,6 +851,11 @@ async fn chat_completions(
     while let Some(event) = rx.recv().await {
         match event {
             TurnEvent::Text { id, text: delta } => text.push(id, &delta),
+            TurnEvent::Retract(retracted) => {
+                for (id, delta) in retracted {
+                    text.retract(id, &delta);
+                }
+            }
             TurnEvent::Error(message) => {
                 outcome = Err(OpenAiError::internal(message));
                 break;
@@ -991,6 +1040,31 @@ mod tests {
         acc.push(None, "\n\nP");
         acc.push(None, "ong");
         assert_eq!(acc.finish(), "Pong");
+    }
+
+    /// The refuter's case: a reset mid-answer and a resend used to fold into
+    /// "Now I will wri\n\nNow I will write the file." under a 200.
+    #[test]
+    fn a_retracted_partial_leaves_only_the_resent_answer() {
+        let partial = [
+            Message::assistant()
+                .with_id("gen-1")
+                .with_text("Now I will "),
+            Message::assistant().with_id("gen-1").with_text("wri"),
+        ];
+        let mut acc = TextAccumulator::default();
+        acc.push(Some("gen-0".into()), "Checked the tests.");
+        for message in &partial {
+            acc.push(message.id.clone(), &message.as_concat_text());
+        }
+        for (id, delta) in texts_sent_for(&partial) {
+            acc.retract(id, &delta);
+        }
+        acc.push(Some("gen-2".into()), "Now I will write the file.");
+        assert_eq!(
+            acc.finish(),
+            "Checked the tests.\n\nNow I will write the file."
+        );
     }
 
     #[test]

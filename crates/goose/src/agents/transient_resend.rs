@@ -13,6 +13,7 @@
 use std::time::Duration;
 
 use goose_providers::conversation::message::{Message, MessageContent};
+use goose_providers::conversation::Conversation;
 use goose_providers::errors::ProviderError;
 use goose_providers::retry::{should_retry, RetryConfig};
 
@@ -80,6 +81,42 @@ pub(crate) fn completed_tool_exchanges(
         .collect()
 }
 
+/// Drops from a running copy of the reply the messages an [`AgentEvent::PartialDiscarded`] retracts:
+/// for each, the last message equal to it.
+///
+/// [`AgentEvent::PartialDiscarded`]: crate::agents::AgentEvent::PartialDiscarded
+pub fn drop_discarded(messages: &mut Vec<Message>, discarded: &[Message]) {
+    for gone in discarded.iter().rev() {
+        if let Some(at) = messages.iter().rposition(|message| message == gone) {
+            messages.remove(at);
+        }
+    }
+}
+
+/// [`drop_discarded`] for a consumer that holds the reply as a [`Conversation`].
+pub fn conversation_without(conversation: &Conversation, discarded: &[Message]) -> Conversation {
+    let mut messages = conversation.messages().to_vec();
+    drop_discarded(&mut messages, discarded);
+    Conversation::new_unvalidated(messages)
+}
+
+/// What a consumer that already streamed a resent call's text onward (and cannot take it back)
+/// ends on, instead of gluing the resent answer to the abandoned one.
+pub const PARTIAL_ALREADY_STREAMED: &str = "The provider failed mid-answer after part of the \
+     answer was streamed; goose resent the request, but streamed text cannot be withdrawn. Send \
+     the request again.";
+
+/// Whether a retracted partial had shown any text — what a consumer that streamed it onward (and
+/// cannot take it back) has to answer for.
+pub fn shown_text(discarded: &[Message]) -> bool {
+    discarded.iter().any(|message| {
+        message
+            .content
+            .iter()
+            .any(|content| matches!(content, MessageContent::Text(text) if !text.text.is_empty()))
+    })
+}
+
 pub(crate) fn resend_notice(
     error: &ProviderError,
     attempt: usize,
@@ -90,7 +127,7 @@ pub(crate) fn resend_notice(
     let when = if answer_had_started {
         "mid-answer"
     } else {
-        "before answering"
+        "before any answer arrived"
     };
     let discarded = if answer_had_started {
         " The unfinished answer was discarded."
@@ -179,6 +216,21 @@ mod tests {
     }
 
     #[test]
+    fn a_discarded_partial_leaves_the_rest_of_a_running_copy() {
+        let earlier = Message::assistant()
+            .with_id("a")
+            .with_text("I will check the file.");
+        let call = Message::assistant()
+            .with_id("b")
+            .with_tool_request("call-1", Ok(CallToolRequestParams::new("shell")));
+        let first = Message::assistant().with_id("b").with_text("Now I will ");
+        let second = Message::assistant().with_id("b").with_text("wri");
+        let mut copy = vec![earlier.clone(), first.clone(), call.clone(), second.clone()];
+        drop_discarded(&mut copy, &[first, second]);
+        assert_eq!(copy, vec![earlier, call]);
+    }
+
+    #[test]
     fn the_notice_names_the_error_and_the_attempt() {
         let reset = ProviderError::stream_decode_error("connection reset");
         assert_eq!(
@@ -188,7 +240,7 @@ mod tests {
         );
         assert_eq!(
             resend_notice(&reset, 2, 3, false, 2),
-            "The provider failed before answering (Network error: Stream decode error: connection reset). \
+            "The provider failed before any answer arrived (Network error: Stream decode error: connection reset). \
              Resending — attempt 2 of 3. The 2 tool calls it already ran are kept with their results."
         );
     }

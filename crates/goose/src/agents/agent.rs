@@ -364,6 +364,11 @@ pub enum AgentEvent {
     Usage(crate::providers::base::ProviderUsage),
     McpNotification((String, ServerNotification)),
     HistoryReplaced(Conversation),
+    /// The answer a provider call had streamed before it failed and was resent
+    /// (`transient_resend`): each message was yielded as a `Message` and none is in the history. A
+    /// consumer holding them drops them (`transient_resend::drop_discarded`); one that already
+    /// delivered them cannot take them back and must not present the resent answer as continuous.
+    PartialDiscarded(Vec<Message>),
 }
 
 impl Default for Agent {
@@ -2377,6 +2382,7 @@ impl Agent {
                 let mut exit_chat = false;
                 let mut provider_errored = false;
                 let mut resend_after: Option<ProviderError> = None;
+                let mut attempt_partial: Vec<Message> = Vec::new();
                 let mut answer_had_started = false;
                 let mut pending_final_output: Option<String> = None;
 
@@ -2425,7 +2431,6 @@ impl Agent {
 
                     match next {
                         Ok((response, usage)) => {
-                            answer_had_started = true;
                             turn_failure = None;
                             compaction_attempts = 0;
                             last_call_usage = if usage
@@ -2448,6 +2453,7 @@ impl Agent {
                             }
 
                             if let Some(response) = response {
+                                answer_had_started |= !response.content.is_empty();
                                 let ToolCategorizeResult {
                                     frontend_requests,
                                     remaining_requests,
@@ -2495,6 +2501,9 @@ impl Agent {
                                     let text = filtered_response.as_concat_text();
                                     if !text.is_empty() {
                                         last_assistant_text.push_str(&text);
+                                    }
+                                    if resend.enabled() {
+                                        attempt_partial.push(filtered_response);
                                     }
                                     messages_to_add.push(response);
                                     continue;
@@ -3007,7 +3016,15 @@ impl Agent {
                         std::mem::take(&mut messages_to_add),
                     );
                     let kept_tool_calls = kept.iter().filter(|m| m.is_tool_call()).count();
-                    messages_to_add = Conversation::new_unvalidated(kept);
+                    // Stored before the wait, so a reply stopped during it keeps the calls that ran.
+                    for message in kept {
+                        let message = match &inference {
+                            Some(inference) => message.with_inference_if_assistant(inference.clone()),
+                            None => message,
+                        };
+                        session_manager.add_message(&session_config.id, &message).await?;
+                        conversation.push(message);
+                    }
                     last_assistant_text.clear();
                     // The failed call never completed, so its usage-less chunks say nothing about
                     // the context: the resend's turn context reads as the failed call's did.
@@ -3018,10 +3035,7 @@ impl Agent {
                         "Provider call failed ({}), resending ({}/{}) after {:?}; kept {} completed tool calls",
                         provider_err, attempt, attempts, delay, kept_tool_calls
                     );
-                    // Every client holding a running copy of the reply drops the unfinished answer.
-                    let mut without_partial = conversation.clone();
-                    without_partial.extend(messages_to_add.clone());
-                    yield AgentEvent::HistoryReplaced(without_partial);
+                    yield AgentEvent::PartialDiscarded(std::mem::take(&mut attempt_partial));
                     yield AgentEvent::Message(Message::assistant().with_system_notification(
                         SystemNotificationType::InlineMessage,
                         super::transient_resend::resend_notice(
@@ -3082,7 +3096,10 @@ impl Agent {
 
                 if empty_response {
                     messages_to_add = Conversation::default();
-                } else {
+                } else if !resending {
+                    // A resend is no answer: an empty completion between two failed calls must keep
+                    // counting toward MAX_EMPTY_TURN_RETRIES, or the pair alternates forever (each
+                    // completion also resets the resend count, and neither counts a turn).
                     empty_turn_retries = 0;
                 }
 
@@ -4569,6 +4586,9 @@ echo start >> "$PLUGIN_ROOT/hook.log"
         while let Some(event) = reply_stream.next().await {
             match event? {
                 AgentEvent::Message(message) => messages.push(message),
+                AgentEvent::PartialDiscarded(discarded) => {
+                    crate::agents::transient_resend::drop_discarded(&mut messages, &discarded)
+                }
                 AgentEvent::McpNotification(_)
                 | AgentEvent::HistoryReplaced(_)
                 | AgentEvent::Usage(_) => {}

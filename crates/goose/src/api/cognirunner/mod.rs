@@ -422,6 +422,16 @@ impl TaskRun {
                         }
                     }
                 }
+                // Task text is streamed to the client as it arrives and cannot be withdrawn: a
+                // resent call whose partial had shown text fails the task, as the failure did
+                // before goose resent; one that had shown none (reasoning only) carries on.
+                Ok(AgentEvent::PartialDiscarded(discarded)) => {
+                    if crate::agents::transient_resend::shown_text(&discarded) {
+                        return failed(
+                            crate::agents::transient_resend::PARTIAL_ALREADY_STREAMED.to_string(),
+                        );
+                    }
+                }
                 Ok(AgentEvent::Usage(_))
                 | Ok(AgentEvent::HistoryReplaced(_))
                 | Ok(AgentEvent::McpNotification(_)) => {}

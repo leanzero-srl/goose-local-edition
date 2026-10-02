@@ -1094,6 +1094,12 @@ async fn execute_job(
                 Ok(AgentEvent::HistoryReplaced(updated)) => {
                     conversation = updated;
                 }
+                Ok(AgentEvent::PartialDiscarded(discarded)) => {
+                    conversation = crate::agents::transient_resend::conversation_without(
+                        &conversation,
+                        &discarded,
+                    );
+                }
                 Ok(_) => {}
                 Err(e) => {
                     tracing::error!("Error in agent stream: {}", e);

@@ -673,6 +673,9 @@ mod tests {
                     Ok(AgentEvent::HistoryReplaced(_updated_conversation)) => {
                         // We should update the conversation here, but we're not reading it
                     }
+                    Ok(AgentEvent::PartialDiscarded(discarded)) => {
+                        goose::agents::transient_resend::drop_discarded(&mut responses, &discarded)
+                    }
                     Err(e) => {
                         return Err(e);
                     }
@@ -4681,6 +4684,16 @@ mod tests {
                 .collect()
         }
 
+        /// The stored assistant texts; rows stored in the same second may read back in either
+        /// order, so a turn's single answer is found by role, never as the last row.
+        fn assistant_texts(history: &[Message]) -> Vec<String> {
+            history
+                .iter()
+                .filter(|m| m.role == Role::Assistant)
+                .map(Message::as_concat_text)
+                .collect()
+        }
+
         fn all_text(messages: &[Message]) -> String {
             messages
                 .iter()
@@ -4812,12 +4825,15 @@ mod tests {
             let notices = resend_notices(&yielded);
             assert_eq!(notices.len(), 1, "{notices:?}");
             assert!(
-                notices[0].contains("before answering")
+                notices[0].contains("before any answer arrived")
                     && notices[0].contains("502 Bad Gateway")
                     && notices[0].contains("attempt 1 of 3"),
                 "{notices:?}"
             );
-            assert_eq!(all_text(&history), "build the app\nAnswer.");
+            // Rows stored in the same second may read back in either order.
+            let mut stored: Vec<String> = history.iter().map(Message::as_concat_text).collect();
+            stored.sort();
+            assert_eq!(stored, ["Answer.", "build the app"]);
             Ok(())
         }
 
@@ -4844,6 +4860,100 @@ mod tests {
             Ok(())
         }
 
+        async fn run_turn_events(agent: &Agent, session_id: &str) -> Result<Vec<AgentEvent>> {
+            let reply_stream = agent
+                .reply(
+                    Message::user().with_text("build the app"),
+                    SessionConfig {
+                        id: session_id.to_string(),
+                        schedule_id: None,
+                        max_turns: Some(10),
+                        retry_config: None,
+                    },
+                    None,
+                )
+                .await?;
+            tokio::pin!(reply_stream);
+            let mut events = Vec::new();
+            while let Some(event) = reply_stream.next().await {
+                events.push(event?);
+            }
+            Ok(events)
+        }
+
+        /// The refuter's case: a non-streaming OpenAI completion folds every yielded text, and on
+        /// main a reset mid-answer was an error. Folded the way `openai_compat::run_turn` and its
+        /// non-streaming body do, the resend must produce the resent answer alone — not
+        /// "Now I will wri\n\nNow I will write the file." under a 200.
+        #[tokio::test]
+        async fn a_non_streaming_completion_carries_only_the_resent_answer() -> Result<()> {
+            use goose::api::openai_compat::{
+                is_provider_error_message, texts_sent_for, TextAccumulator,
+            };
+            let provider = Arc::new(ScriptedProvider::new(vec![
+                vec![
+                    delta("gen-1", "Now I will "),
+                    delta("gen-1", "wri"),
+                    Err(reset()),
+                ],
+                vec![delta("gen-2", "Now I will write the file.")],
+            ]));
+            let (agent, session_id, _temp_dir) = agent_with_provider(provider.clone()).await?;
+
+            let events = run_turn_events(&agent, &session_id).await?;
+
+            let mut body = TextAccumulator::default();
+            let mut discards = 0;
+            for event in &events {
+                match event {
+                    AgentEvent::Message(message) if message.role == Role::Assistant => {
+                        let text = message.as_concat_text();
+                        assert!(!is_provider_error_message(&text), "{text:?}");
+                        if !text.is_empty() {
+                            body.push(message.id.clone(), &text);
+                        }
+                    }
+                    AgentEvent::PartialDiscarded(discarded) => {
+                        discards += 1;
+                        for (id, text) in texts_sent_for(discarded) {
+                            body.retract(id, &text);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            assert_eq!(discards, 1);
+            assert_eq!(body.finish(), "Now I will write the file.");
+            Ok(())
+        }
+
+        /// A failed call and an empty completion, alternating: each completion resets the resend
+        /// count and neither counts a turn, so before the fix the empty-turn count was reset by
+        /// every resend and the pair alternated until the provider ran out of answers.
+        #[tokio::test]
+        async fn alternating_resets_and_empty_completions_end_the_turn() -> Result<()> {
+            let provider = Arc::new(ScriptedProvider::new(
+                (0..20)
+                    .flat_map(|_| [vec![Err(reset())], Vec::new()])
+                    .collect(),
+            ));
+            let (agent, session_id, _temp_dir) = agent_with_provider(provider.clone()).await?;
+
+            let (_, history) = run_turn(&agent, &session_id).await?;
+
+            assert_eq!(
+                provider.calls(),
+                8,
+                "four resets and four empty completions: the fourth empty one is past \
+                 MAX_EMPTY_TURN_RETRIES (3)"
+            );
+            assert_eq!(
+                assistant_texts(&history),
+                ["The model returned an empty response. Please resend your message to continue."]
+            );
+            Ok(())
+        }
+
         #[tokio::test]
         async fn exhausted_resends_end_the_turn_as_before() -> Result<()> {
             let provider = Arc::new(ScriptedProvider::new(
@@ -4866,11 +4976,15 @@ mod tests {
                 notices[DEFAULT_MAX_RETRIES - 1].contains("attempt 3 of 3"),
                 "{notices:?}"
             );
-            let last = history.last().expect("the turn left its failure");
+            // Exactly as before the resend existed: the last attempt's partial and the failure
+            // text; the three resent attempts' partials are gone.
+            let mut ending = assistant_texts(&history);
+            ending.sort();
+            assert_eq!(ending.len(), 2, "{ending:?}");
             assert!(
-                last.as_concat_text()
-                    .ends_with("Please resend your message to try again."),
-                "the exhausted turn ends exactly as before: {last:?}"
+                ending[0].ends_with("Please resend your message to try again.")
+                    && ending[1] == "par",
+                "the exhausted turn ends exactly as before: {ending:?}"
             );
             Ok(())
         }
@@ -4890,12 +5004,8 @@ mod tests {
 
             assert_eq!(provider.calls(), 1);
             assert!(resend_notices(&yielded).is_empty());
-            assert!(
-                history
-                    .last()
-                    .is_some_and(|m| m.as_concat_text().contains(RESET)),
-                "{history:?}"
-            );
+            let ending = assistant_texts(&history);
+            assert!(ending.iter().any(|text| text.contains(RESET)), "{ending:?}");
             Ok(())
         }
     }
