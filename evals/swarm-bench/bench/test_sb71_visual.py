@@ -234,6 +234,9 @@ try{
 
 @unittest.skipUnless(os.environ.get('SB71_BROWSER_TESTS') == '1', 'opt-in real-browser reference controls')
 class VisualControls(unittest.TestCase):
+    golden = 'golden-sb71'
+    probe = 'product_probe_sb71.mjs'
+
     def collect(self, mutation=None, seed='123456789abcdef0', scenario='sb71-visual', restore_control=False, candidate_tree=None):
         bench = Path(__file__).resolve().parent
         with tempfile.TemporaryDirectory(prefix='sb71-visual-control-') as temporary:
@@ -241,7 +244,7 @@ class VisualControls(unittest.TestCase):
             tree = root / 'candidate'
             tree.mkdir()
             for directory in ('app', 'web'):
-                shutil.copytree((Path(candidate_tree) if candidate_tree else bench / 'golden-sb71') / directory, tree / directory,
+                shutil.copytree((Path(candidate_tree) if candidate_tree else bench / self.golden) / directory, tree / directory,
                                 ignore=shutil.ignore_patterns('__pycache__'))
             if mutation:
                 file, old, new = mutation
@@ -296,7 +299,7 @@ class VisualControls(unittest.TestCase):
                                 time.sleep(.02)
                         threading.Thread(target=deliver, daemon=True).start()
                     result = subprocess.run(
-                        [os.environ.get('GOOSE_SWARM_RENDER_NODE', 'node'), str(bench / 'product_probe_sb71.mjs'),
+                        [os.environ.get('GOOSE_SWARM_RENDER_NODE', 'node'), str(bench / self.probe),
                          scenario, base], env=env, capture_output=True, text=True, timeout=100)
                     self.assertEqual(result.returncode, 0, result.stderr[-1500:])
                     data = json.loads(result.stdout)
