@@ -10,6 +10,14 @@ defect the oracle names, never an app zero):
     (a dropped change happened in Jira; only its product event never arrives).
   * Sprint changelog `from`/`to` are comma-separated sprint id lists (`"12, 15"`), possibly empty.
   * An estimate item names the field by `fieldId`; its `to` is the new value as a string, or empty/null.
+  * The live-UI slot (DESIGN §5.2, what forge_probe.mjs's live step needs): exactly two `live` entries carry
+    `delivery: {liveUi: true, slot: null, duplicates: [], dropped: false}`. They are the two LATEST-created live
+    entries (the site applies live changes in creation order, so nothing may follow them), each a relevant change
+    (a Sprint-field or estimation-field item) that moves the numbers of at least one ACTIVE sprint of the FIRST scrum
+    board in `pack.boards` order (the probe opens the live step on that board's widget). They are left out of the
+    site's delivery plan (`deliverNext`) and out of `flushLive`; the probe delivers them in the UI phase through
+    `emu.deliverProductEvent(change)`, which must apply exactly that change. Before the slot, KVS snapshots and the
+    Rovo action grade against `Oracle(pack)`; every surface opened after it against `Oracle(pack, True)`.
 
 The rules are FORGE-CONTRACT.md §1 verbatim:
   * a change is a Sprint-field changelog entry created strictly after the sprint's `startDate` that puts the
