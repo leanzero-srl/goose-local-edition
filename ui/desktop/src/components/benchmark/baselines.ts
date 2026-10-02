@@ -25,8 +25,8 @@ export interface BenchmarkRow {
  * The runnable-tier vocabulary main.ts's spec/probe mapping is keyed by (benchTierPayload.ts).
  * The stable default is shared with the launcher; historical scorer identities stay distinct.
  */
-export type BenchTier = 'sb-5.3' | 'sb-6' | 'sb-7' | 'sb-7.1' | 'sb-7.2' | 'sb-8';
-export const TIERS: BenchTier[] = ['sb-5.3', 'sb-6', 'sb-7', 'sb-7.1', 'sb-7.2', 'sb-8'];
+export type BenchTier = 'sb-5.3' | 'sb-6' | 'sb-7' | 'sb-7.1' | 'sb-7.2' | 'sb-8' | 'forge-1.0';
+export const TIERS: BenchTier[] = ['sb-5.3', 'sb-6', 'sb-7', 'sb-7.1', 'sb-7.2', 'sb-8', 'forge-1.0'];
 export const TIER_SCORER: Record<BenchTier, string> = {
   'sb-5.3': 'sb-5.3',
   'sb-6': 'sb-6.0',
@@ -37,6 +37,51 @@ export const TIER_SCORER: Record<BenchTier, string> = {
   'sb-7.1': 'sb-7.1',
   'sb-7.2': 'sb-7.2',
   'sb-8': 'sb-8.0-rc',
+  // The era this app bundles (forge/release-manifest.json `scorerVersion`). Until the freeze pins
+  // forge-thresholds.json, score_forge.py reports its verdicts as forge-1.0-rc — that identity is
+  // recorded on the result and refused at publish, never rewritten to the era's.
+  'forge-1.0': 'forge-1.0',
+};
+
+/**
+ * The benchmark FAMILIES (evals/swarm-bench/forge/INTEGRATION.md): SB (the payments/VendorSync eras)
+ * and Forge (forge-1.0 first). Each family has its own current era on leanzero.net; nothing in one
+ * changes the other's current/frozen state.
+ */
+export type BenchFamily = 'sb' | 'forge';
+export const BENCH_FAMILIES: readonly BenchFamily[] = ['sb', 'forge'];
+
+export const isBenchFamily = (value: unknown): value is BenchFamily =>
+  value === 'sb' || value === 'forge';
+
+/** The family a recorded scorer version belongs to: Forge's scorers are `forge-*`, every other era is SB. */
+export const familyOfScorer = (scorerVersion: string | undefined): BenchFamily =>
+  /^forge-/.test(scorerVersion ?? '') ? 'forge' : 'sb';
+
+/**
+ * A catalog entry's family. The site states it (`family`); an entry without one is SB by the contract
+ * (apps ≤ 3.0.88 read no family) — unless its scorer version is a Forge scorer, which no SB era can be.
+ */
+export const catalogFamily = (entry: { family?: unknown; scorerVersion?: string }): BenchFamily =>
+  isBenchFamily(entry.family) ? entry.family : familyOfScorer(entry.scorerVersion);
+
+export const isForge = (scorerVersion: string | undefined) => familyOfScorer(scorerVersion) === 'forge';
+
+/** score_forge.py's TIER_ORDER: nine weighted tiers and the E excellence slice. */
+export const FORGE_TIER_ORDER = ['L', 'K', 'T', 'R', 'S', 'B', 'U', 'V', 'A', 'E'] as const;
+
+/** The Forge tiers (forge/DESIGN.md §8.1–§8.2). The letters overlap SB's; the meanings do not. */
+export const FORGE_TIERS: Record<string, { name: string; desc: string }> = {
+  L: { name: 'Lint', desc: 'Forge lint clean, every function bundles and loads' },
+  K: { name: 'Platform currency', desc: 'The newest modules and APIs: dashboards widget, Rovo skill' },
+  T: { name: 'Event pipeline', desc: 'Trigger → queue → consumer: duplicates, order, retries' },
+  R: { name: 'Reconcile', desc: 'Scheduled backfill and heal: pagination, rate limits' },
+  S: { name: 'Storage', desc: 'KVS custom entities, indexes and scope' },
+  B: { name: 'Resolvers', desc: 'Backend resolvers: permissions and exactly-once side effects' },
+  U: { name: 'UI function', desc: 'The widget, its edit view and the sprint action, driven in a browser' },
+  V: { name: 'Visual', desc: 'Theme tokens, dark mode, CSP and console' },
+  A: { name: 'Rovo', desc: 'The Rovo action and agent answer with the right numbers' },
+  E: { name: 'Excellence', desc: 'Economy and polish, gated by the core' },
 };
 
 /**

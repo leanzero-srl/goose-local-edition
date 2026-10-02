@@ -122,6 +122,8 @@ export interface BenchCatalogBaseline {
 export interface BenchCatalogBenchmark {
   scorerVersion: string;
   title: string;
+  /** The benchmark family (forge/INTEGRATION.md): absent ⇒ SB, the shape apps ≤ 3.0.88 read. */
+  family?: string;
   current: boolean;
   frozen: boolean;
   baselines: BenchCatalogBaseline[];

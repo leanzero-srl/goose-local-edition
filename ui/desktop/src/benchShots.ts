@@ -40,8 +40,48 @@ const PAYMENTS_CAPTIONS: Record<string, string> = Object.fromEntries(
 );
 const PAYMENTS_INSPECT = new RegExp(`^(?:${PAYMENTS_SHOT_PREFIXES.join('|')})-inspect-([a-z]+)$`);
 
+/**
+ * forge_probe.mjs's captures (forge/DESIGN.md §6.6): `<surface>-<board|sprint>-<theme>-<w>x<h>.png` in
+ * `forge-shots/`, plus the contact sheet of every surface. The card leads with the full-width widget and
+ * the sprint action in both themes; the contact sheet closes the set (it is the largest, so the upload
+ * limit drops it first). Within a kind the lowest name wins, so the pick is deterministic.
+ */
+const FORGE_PICKS: Array<{ name: string; caption: string; match: RegExp }> = [
+  { name: 'forge-widget-light', caption: 'Dashboard widget · light', match: /^widget-view-\d+-light-1180x\d+\.png$/ },
+  { name: 'forge-widget-dark', caption: 'Dashboard widget · dark', match: /^widget-view-\d+-dark-1180x\d+\.png$/ },
+  { name: 'forge-sprint-light', caption: 'Sprint action · light', match: /^sprint-action-\d+-light-\d+x\d+\.png$/ },
+  { name: 'forge-sprint-dark', caption: 'Sprint action · dark', match: /^sprint-action-\d+-dark-\d+x\d+\.png$/ },
+  { name: 'forge-edit', caption: 'Widget edit view', match: /^widget-edit-\d+-light\.png$/ },
+  { name: 'forge-widget-narrow', caption: 'Dashboard widget · 380 px', match: /^widget-view-\d+-light-380x\d+\.png$/ },
+  { name: 'forge-noconfig', caption: 'Widget before configuration', match: /^widget-view-noconfig\.png$/ },
+  { name: 'forge-not-started', caption: 'Sprint not started', match: /^not-started-\d+\.png$/ },
+  { name: 'forge-contact-sheet', caption: 'Every captured surface', match: /^contact-sheet\.png$/ },
+];
+
+async function pickForgeShots(dir: string, files: string[]): Promise<BenchShot[]> {
+  const sorted = files.slice().sort();
+  const result: BenchShot[] = [];
+  for (const pick of FORGE_PICKS) {
+    const file = sorted.find((name) => pick.match.test(name));
+    if (!file) continue;
+    try {
+      const bytes = await fs.readFile(path.join(dir, file));
+      result.push({ name: pick.name, caption: pick.caption, b64: bytes.toString('base64') });
+    } catch {
+      // A capture still being written or removed cannot be displayed yet.
+    }
+  }
+  return result;
+}
+
 /** Read probe evidence for local viewing; upload constraints must not hide local captures. */
 export async function pickBenchShots(workdir: string): Promise<BenchShot[]> {
+  const forgeDir = path.join(workdir, 'forge-shots');
+  const forgeFiles = await fs.readdir(forgeDir).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  });
+  if (forgeFiles) return pickForgeShots(forgeDir, forgeFiles);
   let dir = path.join(workdir, 'bench-shots');
   let files: string[];
   try {

@@ -79,7 +79,29 @@ function mirrorSwarmBenchPayload() {
       fs.copyFileSync(join(benchSrc, 'probes', name), join(dest, 'bench', 'probes', name));
     }
   }
-  require('./scripts/copy-bench-release-manifest.cjs')(src, dest);
+  // The Forge family (forge/DESIGN.md §10): the public task files, the starter, the kit's SOURCES and the
+  // mock site. The kit's module trees (npm ci) and Atlassian's runtime wrapper are never shipped — the
+  // payload's forge_kit.py materialises them on the user's machine — so no node_modules may ride along.
+  const forgeSource = {
+    recursive: true,
+    filter: (source) =>
+      !source
+        .split(/[\\/]/)
+        .some(
+          (part) =>
+            part === '__pycache__' ||
+            part === '.DS_Store' ||
+            part.endsWith('.pyc') ||
+            part === 'node_modules' ||
+            part === 'app-modules' ||
+            part === 'lint-modules'
+        ),
+  };
+  for (const tree of ['public', 'starter', 'kit', 'site'])
+    fs.cpSync(join(src, 'forge', tree), join(dest, 'forge', tree), forgeSource);
+  const copyManifest = require('./scripts/copy-bench-release-manifest.cjs');
+  copyManifest(src, dest);
+  copyManifest(src, dest, copyManifest.FORGE_RELEASE);
 }
 
 let cfg = {

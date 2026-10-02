@@ -60,7 +60,8 @@ describe('every benchmark tier carries its OWN spec and probe', () => {
     expect(BENCH_RUN_FLAG['sb-5.3']).toBeNull();
     const named = flags.filter((f): f is string => f !== null);
     expect(new Set(named).size).toBe(named.length);
-    for (const flag of named) expect(flag).toMatch(/^--sb\d+$/);
+    for (const flag of named) expect(flag).toMatch(/^--(?:sb\d+|forge)$/);
+    expect(BENCH_RUN_FLAG['forge-1.0']).toBe('--forge');
     expect(BENCH_RUN_FLAG['sb-7.1']).toBe('--sb71');
   });
 
@@ -125,4 +126,54 @@ it('allows only one fresh available current stable release matching the bundled 
   expect(benchmarkLaunchProblem([{ ...stable, scorerVersion: 'sb-7.1' }])).toBe(
     'Update Goose to run the latest stable benchmark (sb-7.1). This app bundles sb-7.2.'
   );
+});
+
+import { BENCH_FAMILY_DEFAULT } from './benchTierPayload';
+describe('the Forge family has its own bundled era and its own launch gate (forge/INTEGRATION.md)', () => {
+  const forge = {
+    scorerVersion: 'forge-1.0',
+    title: 'Forge 1.0 — Scope Ledger',
+    family: 'forge',
+    current: true,
+    frozen: false,
+    baselines: [],
+  };
+  it('launches forge-1.0 through run_build --forge with its own spec and probe', () => {
+    expect(BENCH_FAMILY_DEFAULT).toEqual({ sb: 'sb-7.2', forge: 'forge-1.0' });
+    expect(defaultBenchmarkTier('forge')).toBe('forge-1.0');
+    expect(defaultBenchmarkScorer('forge')).toBe('forge-1.0');
+    expect(BENCH_SPEC_FILE['forge-1.0']).toBe('forge/public/spec-build-forge.md');
+    expect(BENCH_RENDER_PROBE['forge-1.0']).toBe('forge_probe.mjs');
+    expect(benchmarkLaunchTier({ tier: 'forge-1.0' })).toBe('forge-1.0');
+  });
+  it('checks the current era OF THE SELECTED FAMILY against that family’s bundled default', () => {
+    // Two families, one current each: both launch, neither disturbs the other.
+    expect(benchmarkLaunchProblem([stable, forge])).toBeNull();
+    expect(benchmarkLaunchProblem([stable, forge], false, undefined, 'forge')).toBeNull();
+    // A site that has not opened Forge yet: SB unchanged, Forge refused in words.
+    expect(benchmarkLaunchProblem([stable])).toBeNull();
+    expect(benchmarkLaunchProblem([stable], false, undefined, 'forge')).toMatch(
+      /no current Forge benchmark/
+    );
+    // A newer Forge era on the site: update, naming the family's bundle.
+    expect(
+      benchmarkLaunchProblem([stable, { ...forge, scorerVersion: 'forge-1.1' }], false, undefined, 'forge')
+    ).toBe('Update Goose to run the latest stable benchmark (forge-1.1). This app bundles forge-1.0.');
+    // An rc identity is never a runnable era; a frozen one is closed; two currents are ambiguous.
+    for (const rows of [
+      [stable, { ...forge, scorerVersion: 'forge-1.0-rc' }],
+      [stable, { ...forge, frozen: true }],
+      [stable, forge, { ...forge, scorerVersion: 'forge-1.1' }],
+    ])
+      expect(benchmarkLaunchProblem(rows, false, undefined, 'forge')).toMatch(/no single available Forge/);
+    expect(benchmarkLaunchProblem([stable, forge], true, undefined, 'forge')).toMatch(/Connect/);
+  });
+  it('keeps the SB rule when the catalog carries no family at all (apps ≤ 3.0.88 shape)', () => {
+    const { family: _ignored, ...unlabelled } = forge;
+    // No family + a forge scorer is still Forge — never a second SB current.
+    expect(benchmarkLaunchProblem([stable, unlabelled])).toBeNull();
+    expect(benchmarkLaunchProblem([stable, unlabelled], false, undefined, 'forge')).toBeNull();
+    // An explicit sb family on an SB row reads exactly as an unlabelled one.
+    expect(benchmarkLaunchProblem([{ ...stable, family: 'sb' }])).toBeNull();
+  });
 });

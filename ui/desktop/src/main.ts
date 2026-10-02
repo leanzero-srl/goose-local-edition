@@ -113,7 +113,18 @@ import {
   benchmarkScorer,
   type CloudBenchmarkTier,
 } from './benchTierPayload';
-import { isolatedPaymentsTier, ISOLATED_PAYMENTS_TIERS } from './components/benchmark/baselines';
+import {
+  familyOfScorer,
+  isolatedPaymentsTier,
+  ISOLATED_PAYMENTS_TIERS,
+} from './components/benchmark/baselines';
+import {
+  forgeKitCache,
+  prepareForgeKit,
+  readForgeKitStatus,
+  type ForgeKitStatus,
+} from './benchForgeKit';
+import { forgePublishProblem, forgePublishTiers } from './benchForgePublish';
 import {
   outcomeFromSlot,
   findLaunchRow,
@@ -3234,6 +3245,13 @@ const resolveBenchPayloadDir = (): string => {
   throw new Error(`benchmark harness not found (looked in ${candidates.join(', ')})`);
 };
 
+/** forge_probe.mjs (and the Forge scorer's preflight) read the bundled browser under the names the
+ *  entrant's BROWSER-TESTING.md uses; the same two paths, aliased — SB launches never carry them. */
+const forgeBrowserEnv = (browser: Record<string, string>): Record<string, string> => ({
+  BENCH_BROWSER_MODULE: browser.GOOSE_SWARM_PLAYWRIGHT_MODULE,
+  BENCH_BROWSER_EXECUTABLE: browser.GOOSE_SWARM_CHROMIUM_EXECUTABLE,
+});
+
 // Benchmark probes share the exact browser and Playwright shipped for the LeanZero MCPs.
 const bundledBrowserEnv = async (): Promise<Record<string, string>> => {
   const root = path.join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'bundled-mcps');
@@ -3268,7 +3286,12 @@ const resolveBenchNode = async (
       shimName
     );
   const probe = path.join(resolveBenchPayloadDir(), 'bench', BENCH_RENDER_PROBE[tier]);
-  const env = { ...process.env, ...(await bundledBrowserEnv()) };
+  const browser = await bundledBrowserEnv();
+  const env = {
+    ...process.env,
+    ...browser,
+    ...(familyOfScorer(benchmarkScorer(tier)) === 'forge' ? forgeBrowserEnv(browser) : {}),
+  };
   await new Promise<void>((resolve, reject) => {
     const child = spawn(node, [probe, '--preflight'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
@@ -3320,6 +3343,38 @@ ipcMain.handle('benchmark-runtime-install', async () => {
     });
   }
   return benchmarkRuntimeInstallation;
+});
+
+// ── The Forge kit (forge/DESIGN.md §10) ─────────────────────────────────────────────────────────
+// The pinned Forge module trees and Atlassian's runtime wrapper are never shipped in the app: the
+// payload's own forge_kit.py materialises them into <benchmark>/forge-kit (npm ci from the committed
+// lockfiles, the wrapper by sha256) and reports readiness without the network. A Forge run launches only
+// against a ready kit; run_build re-verifies it through the same ensure().
+let forgeKitPreparation: Promise<ForgeKitStatus> | null = null;
+const forgeKitStatus = async (): Promise<ForgeKitStatus> => {
+  let runtime: Awaited<ReturnType<typeof resolveBenchmarkRuntime>>;
+  try {
+    runtime = await resolveBenchmarkRuntime(benchWorkRoot());
+  } catch (error) {
+    return { state: 'needs-tools', error: error instanceof Error ? error.message : String(error) };
+  }
+  return readForgeKitStatus(resolveBenchPayloadDir(), runtime, forgeKitCache(benchWorkRoot()));
+};
+ipcMain.handle('benchmark-forge-kit-status', () => forgeKitStatus());
+ipcMain.handle('benchmark-forge-kit-prepare', async () => {
+  if (activeBenchRun || benchmarkLaunchPending)
+    throw new Error('Wait for the active benchmark to finish before preparing the Forge kit.');
+  if (benchmarkRuntimeInstallation) throw new Error('Wait for Benchmark tools installation to finish.');
+  if (!forgeKitPreparation) {
+    forgeKitPreparation = (async () => {
+      const runtime = await resolveBenchmarkRuntime(benchWorkRoot());
+      await prepareForgeKit(resolveBenchPayloadDir(), runtime, forgeKitCache(benchWorkRoot()));
+      return forgeKitStatus();
+    })().finally(() => {
+      forgeKitPreparation = null;
+    });
+  }
+  return forgeKitPreparation;
 });
 
 interface RunSampling {
@@ -4133,15 +4188,39 @@ ipcMain.handle(
       const cloudRunId = cloud ? `cloud-${crypto.randomUUID()}` : null;
       const runSampling = cleanSampling(cloud ? undefined : sampling);
       const tier = benchmarkLaunchTier(cloud);
-      const launchProblem = benchmarkLaunchProblem((await fetchBenchCatalog()).benchmarks);
+      // The SELECTED family's current era against this app's bundled one (forge/INTEGRATION.md).
+      const family = familyOfScorer(benchmarkScorer(tier));
+      const launchProblem = benchmarkLaunchProblem(
+        (await fetchBenchCatalog()).benchmarks,
+        false,
+        undefined,
+        family
+      );
       if (launchProblem) throw new Error(launchProblem);
+      // Forge is a single-model benchmark (forge/DESIGN.md: one model in goose, 150-call budget).
+      if (family === 'forge' && !cloud)
+        throw new Error('Forge runs one model: choose a provider and model ID.');
       const regimeFlag = BENCH_RUN_FLAG[tier];
-      const isolated = (ISOLATED_PAYMENTS_TIERS as readonly string[]).includes(tier);
+      const isolated =
+        (ISOLATED_PAYMENTS_TIERS as readonly string[]).includes(tier) || family === 'forge';
       const payloadDir = resolveBenchPayloadDir();
       const runner = path.join(payloadDir, 'bench', 'run_build.py');
       const runtime = isolated
         ? await resolveBenchmarkRuntime(benchWorkRoot())
         : { python: 'python3', node: undefined, env: {} };
+      if (family === 'forge' && runtime.node) {
+        const kit = await readForgeKitStatus(
+          payloadDir,
+          { python: runtime.python, node: runtime.node, env: runtime.env },
+          forgeKitCache(benchWorkRoot())
+        );
+        if (kit.state !== 'ready')
+          throw new Error(
+            kit.state === 'missing'
+              ? `Prepare the Forge kit before running (missing: ${(kit.missing ?? []).join(', ')}).`
+              : `The Forge kit could not be checked: ${kit.error ?? kit.state}`
+          );
+      }
       const benchNode = await resolveBenchNode(tier, runtime.node);
       const browserEnv = await bundledBrowserEnv();
       // The operator's OpenRouter spend limit (Benchmark view → goose config BENCH_MAX_USD). run_build's
@@ -4239,6 +4318,11 @@ ipcMain.handle(
                 GOOSE_SWARM_RENDER_NODE: benchNode,
                 ...browserEnv,
                 ...walletEnv,
+                // Forge: the kit run_build verifies (same cache the view prepared) and the browser
+                // aliases its probe reads.
+                ...(family === 'forge'
+                  ? { FORGE_KIT_CACHE: forgeKitCache(workRoot), ...forgeBrowserEnv(browserEnv) }
+                  : {}),
                 // NOT pinned any more (VA-048/051): GOOSE_SWARM_TAIL_REVIEW, GOOSE_SWARM_PREREVIEW,
                 // GOOSE_SWARM_PREREVIEW_DIMS and GOOSE_SWARM_JUDGE. The r3 supervision-off arm (P1-10)
                 // switched four env-only, default-ON layers off here. Every one of those layers is DELETED
@@ -4353,6 +4437,7 @@ ipcMain.handle(
           scored: false,
           lastLine: null,
           tier,
+          family,
           scorerVersion: benchmarkScorer(tier),
         });
 
@@ -4802,6 +4887,14 @@ ipcMain.handle('benchmark-publish', async (_event, args?: { title?: string }) =>
         'this result carries no usable model id from the engine — run the benchmark again to publish',
     };
   }
+  // Forge (forge/INTEGRATION.md): the same route and envelope, refused here when score_forge.py itself
+  // marked the verdict not board-grade (held, unpublishable, or an rc scorer).
+  const forgeResult =
+    typeof stored.scorerVersion === 'string' && familyOfScorer(stored.scorerVersion) === 'forge';
+  if (forgeResult) {
+    const problem = forgePublishProblem(stored);
+    if (problem) return { ok: false, error: problem };
+  }
   const identity = await ensureBenchIdentity();
   // The title is the USER'S name for the run (v2.4, Mihai 2026-08-30: the auto-generated
   // handle is not a title) — required, refused here with the reason, never defaulted.
@@ -4852,7 +4945,9 @@ ipcMain.handle('benchmark-publish', async (_event, args?: { title?: string }) =>
         ? `${nodeCount}-node Swarm`
         : 'Swarm',
     score: stored.score,
-    tiers: { A: tiers.A ?? 0, B: tiers.B ?? 0, C: tiers.C ?? 0, D: tiers.D ?? 0 },
+    tiers: forgeResult
+      ? forgePublishTiers(tiers)
+      : { A: tiers.A ?? 0, B: tiers.B ?? 0, C: tiers.C ?? 0, D: tiers.D ?? 0 },
     ...(nodeCount != null ? { nodes: nodeCount } : {}),
     ...(typeof stored.hard === 'number' ? { hard: stored.hard } : {}),
     ...(typeof stored.excellent === 'boolean' ? { excellent: stored.excellent } : {}),
