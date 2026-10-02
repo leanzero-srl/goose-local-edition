@@ -11,6 +11,11 @@
 > billed cost; (4) website catalog/page prep on a branch (NOT flipped). THEN: merge → refuter → validation run (local catalog
 > stub via LEANZERO_BENCH_PUBLISH_URL) → version bump + `just release-notarized <ver>` → tag/push → `just publish-release` →
 > install → flip leanzero.net catalog sb-7.2 current → verify rendered.
+> THEN (Mihai 2026-10-02: "run the benchmark on those … latest! … use web search … use openrouter … publish some scores"):
+> SB7.2 on 3.0.87 via OpenRouter, cheapest-first, credit checked between runs ($20.18 at 2026-10-02): openai/gpt-6-luna
+> (also the validation run), xiaomi/mimo-v2.6-flash, xiaomi/mimo-v2.6-pro (pin host xiaomi), openai/gpt-6.1-sol,
+> anthropic/claude-sonnet-5.5 only if ≥ $12 left. Web-verified newest releases Sep 21–29 (llmgateway.io/timeline). Publish via
+> the app's Publish; promote one to flip the catalog.
 
 > **DESKTOP UX QUEUE (Mihai 2026-09-22, in order; each lands as its own commit, verified in the running app).**
 > 0. LANDED (7927b903f + the proof commit) — Cloud Providers: no hard-coded "connection test model"; key → the provider's own model list → a chosen
