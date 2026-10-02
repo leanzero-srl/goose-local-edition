@@ -34,13 +34,30 @@ STARTER = ROOT / 'forge' / 'starter'
 IDLE_MAX = 0.05  # DESIGN §8.6 (6) / §13.4 item 6
 
 
+KEEP = None  # a directory where every verdict is kept (--keep)
+
+
+QUIET_LOAD = None  # --quiet-load N: wait before each scoring until the 1-minute load average is below N
+
+
+def _wait_quiet() -> None:
+    """A loaded host turns real-time rows (module timeouts, in-invocation waits) into host noise: wait it out."""
+    import time
+    while QUIET_LOAD is not None and os.getloadavg()[0] >= QUIET_LOAD:
+        print(f'load {os.getloadavg()[0]:.1f} >= {QUIET_LOAD}: waiting before the next scoring', file=sys.stderr, flush=True)
+        time.sleep(30)
+
+
 def score(tree: Path, seed: str, out: Path) -> Dict:
     """One serial scoring through the real CLI (it takes the host lock itself)."""
+    _wait_quiet()
     cmd = [sys.executable, '-B', str(HERE / 'score_forge.py'), '--tree', str(tree), '--seed', seed,
            '--json-out', str(out)]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0 or not out.is_file():
         raise RuntimeError(f'score_forge.py exited {proc.returncode} on {tree.name}: {proc.stderr.strip()[-600:]}')
+    if KEEP:
+        shutil.copy2(out, KEEP / out.name)
     return json.loads(out.read_text())
 
 
@@ -61,7 +78,13 @@ def judge(golden: Dict, mutant: Dict, expect: Dict, root_blocks: Dict[str, tuple
     unknown = declared - set(g)
     if unknown:
         fails.append(f'expect.json names unregistered checks {sorted(unknown)}')
-    attributed = {d for root in declared & lost for d in root_blocks.get(root, ())}
+    # ROOT_BLOCKS attribution is transitive: a declared root that lost attributes its dependents, and a dependent
+    # that is itself a root (r_backfill_complete under l_bundles_load) attributes its own.
+    attributed, frontier = set(), declared & lost
+    while frontier:
+        nxt = {d for root in frontier for d in root_blocks.get(root, ())} - attributed
+        attributed |= nxt
+        frontier = nxt & lost
     missing = sorted(declared - lost)
     extra = sorted(lost - declared - attributed)
     if missing:
@@ -121,7 +144,14 @@ def main(argv=None) -> int:
     ap.add_argument('--seed', required=True)
     ap.add_argument('--only', action='append', default=[])
     ap.add_argument('--out', type=Path)
+    ap.add_argument('--keep', type=Path, help='keep every verdict JSON here')
+    ap.add_argument('--quiet-load', type=float, help='wait before each scoring until the 1-min load is below this')
     a = ap.parse_args(argv)
+    global KEEP, QUIET_LOAD
+    QUIET_LOAD = a.quiet_load
+    if a.keep:
+        a.keep.mkdir(parents=True, exist_ok=True)
+        KEEP = a.keep
     if len(a.seed) != 16 or any(c not in '0123456789abcdefABCDEF' for c in a.seed):
         ap.error('--seed must be 16 hex characters')
     if not GOLDEN.is_dir():
@@ -132,12 +162,18 @@ def main(argv=None) -> int:
     if kit is None:
         print(f'REFUSED: {why}', file=sys.stderr)
         return 3
-    app_modules = str(Path(kit['dir']) / 'app-modules')
+    app_modules = kit['app_modules']
     report: Dict = {'seed': a.seed, 'mutants': {}, 'controls': {}}
     failed = False
     with tempfile.TemporaryDirectory(prefix='forge-controls-') as tmp:
         tmp = Path(tmp)
-        golden = score(GOLDEN, a.seed, tmp / 'golden.json')
+        # The golden is materialised and rebuilt exactly as every mutant is, so the comparison is like for like.
+        _materialise(GOLDEN, tmp / 'golden')
+        why = _rebuild(tmp / 'golden', app_modules)
+        if why:
+            print(f'REFUSED: the golden does not rebuild: {why}', file=sys.stderr)
+            return 3
+        golden = score(tmp / 'golden', a.seed, tmp / 'golden.json')
         report['golden'] = {'score': golden['score'], 'status': golden['status']}
         gfails = score_forge.reference_failures(golden)
         if gfails:
@@ -172,6 +208,10 @@ def main(argv=None) -> int:
                 entry = {'fails': [f'{type(error).__name__}: {error}']}
             failed |= bool(entry['fails'])
             report['mutants'][mid] = entry
+            if a.out:
+                a.out.write_text(json.dumps(report, indent=2))
+            print(f"{mid}: {entry.get('score')} {'PASS' if not entry['fails'] else 'FAIL ' + '; '.join(entry['fails'])}",
+                  file=sys.stderr, flush=True)
         if not patches:
             report['mutants_missing'] = f'no *.patch under {MUTANTS} (WP3 deliverable)'
             failed = True

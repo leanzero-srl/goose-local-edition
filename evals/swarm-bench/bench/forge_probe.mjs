@@ -428,19 +428,23 @@ async function readSurface(s, kind) {
       }
       return [255, 255, 255];
     };
+    // Every visible element that owns a text node: links may use --ds-link*, disabled controls are exempt (§7).
     const styles = [];
-    const pick = (sel, role) => document.querySelectorAll(sel).forEach((el) => {
-      if (el.textContent.trim()) styles.push({ role, color: rgb(getComputedStyle(el).color).slice(0, 3), background: bgOf(el) });
-    });
-    pick('[data-metric]', 'metric');
-    pick('table[data-testid="ledger"] td', 'cell');
-    pick('table[data-testid="ledger"] td a, [data-testid="scope-widget"] a', 'link');
+    for (const el of document.body ? document.body.querySelectorAll('*') : []) {
+      const own = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
+      const r = el.getBoundingClientRect();
+      if (!own || r.width === 0 || r.height === 0 || getComputedStyle(el).visibility === 'hidden') continue;
+      const role = el.closest('[disabled], [aria-disabled="true"]') ? 'disabled'
+        : el.closest('a, [role="link"]') ? 'link' : el.closest('[data-metric]') ? 'metric' : 'text';
+      styles.push({ role, color: rgb(getComputedStyle(el).color).slice(0, 3), background: bgOf(el),
+        text: el.textContent.trim().slice(0, 40) });
+    }
     const se = document.scrollingElement || document.documentElement;
     return {
       kind: k, rendered: Boolean(document.querySelector('[data-testid="scope-widget"], table[data-testid="ledger"], [data-metric], [data-testid="board-option"], [data-testid="not-started"], [data-testid="needs-config"]')),
       texts: [document.body ? document.body.innerText : ''],
       changeIdAttrs: [...document.querySelectorAll('[data-change-id]')].map((e) => e.getAttribute('data-change-id')),
-      textStyles: styles.slice(0, 60), overflow: { scrollWidth: se.scrollWidth, clientWidth: se.clientWidth },
+      textStyles: styles.slice(0, 200), overflow: { scrollWidth: se.scrollWidth, clientWidth: se.clientWidth },
       csp: window.__forgeProbe ? window.__forgeProbe.csp : [],
     };
   }, kind);

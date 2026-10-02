@@ -636,7 +636,9 @@ def _(c):
     if run is None:
         return unavail(why)
     errors = (run.get('counts') or {}).get('errors', 0)
-    staged = run.get('stageReached') is not None and run.get('stageReached') == run.get('stagesTotal')
+    # WP1's lint.cjs reports stageReached 'complete' once every stage ran (or the stage number it stopped at).
+    staged = run.get('stageReached') == 'complete' or (
+        run.get('stageReached') is not None and run.get('stageReached') == run.get('stagesTotal'))
     msgs = [p.get('message') for p in run.get('problems') or [] if p.get('sev') == 'error'][:3]
     if errors == 0 and staged:
         return g(1, 'lint: 0 errors, every stage reached')
@@ -1342,7 +1344,8 @@ def _ledger_reads(c: Ctx) -> List[Dict]:
     for call in c.all_calls('kvs'):
         op = _kvs_op(call)
         body = call.get('body') if isinstance(call.get('body'), dict) else {}
-        if op in ('entity/query', 'entity/get') and body.get('entityName') in ledger:
+        # A list read of the ledger; a get by key (an idempotency check) is not a scan and not graded here.
+        if op == 'entity/query' and body.get('entityName') in ledger:
             out.append(call)
     return out
 
@@ -1493,9 +1496,11 @@ def _(c):
         return g(0, 'every comment POST was rate-limited or forbidden; none landed', 'no comment')
     ok, notes = 0, []
     for x in attempts:
-        issue = c.oracle.issue_by_key.get(x.get('issueKey'))
+        # The comment path names the issue by key or by id (both are Jira's issueIdOrKey).
+        issue = c.oracle.issue_by_key.get(x.get('issueKey')) or c.oracle.issues.get(str(x.get('issueKey')))
+        key = issue['key'] if issue else None
         sprint_ids = [sid for sid in c.oracle.all_numbers()
-                      if any(ch.issue_key == x.get('issueKey') for ch in c.oracle.numbers(sid).changes)]
+                      if any(ch.issue_key == key for ch in c.oracle.numbers(sid).changes)]
         text = adf_text(x.get('body')) if x.get('status') in (200, 201) else None
         good = text is not None and x.get('provider') == 'user' and x.get('accountId') == c.oracle.viewer \
             and issue is not None and issue['key'] in text and any(
@@ -1736,7 +1741,8 @@ def _(c):
         tokens = s.get('tokens') or {}
         text_vals = [v for k, v in tokens.items() if k.startswith('--ds-text')]
         link_vals = [v for k, v in tokens.items() if k.startswith('--ds-link')]
-        styles = s.get('textStyles') or []
+        # Contract §7: disabled controls are exempt from the colour and contrast rule.
+        styles = [st for st in s.get('textStyles') or [] if st.get('role') != 'disabled']
         good = bool(s.get('enableTheming')) and bool(styles) and bool(text_vals)
         for st in styles:
             pool = text_vals + (link_vals if st.get('role') == 'link' else [])
