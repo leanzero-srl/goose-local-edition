@@ -357,7 +357,16 @@ def probe_runtime():
         ready_dir.cleanup()
 
 
+BUNDLED_BROWSER_ENV = ('GOOSE_SWARM_PLAYWRIGHT_MODULE', 'GOOSE_SWARM_CHROMIUM_EXECUTABLE')
+
+
 def _probe_preflight():
+    # Without both, the probe silently grades in whatever Chromium Playwright resolves from its
+    # own cache — a different browser from the one the installed app and the hermetic CLI use.
+    missing = [name for name in BUNDLED_BROWSER_ENV if not os.environ.get(name)]
+    if missing:
+        return ('SB7.1 grades with the bundled browser; ' + ' and '.join(missing) +
+                ' unset, so the probe would launch an unpinned Playwright Chromium')
     with probe_runtime():
         return base._probe_preflight()
 

@@ -288,7 +288,8 @@ class ProviderModelLimitsTests(unittest.TestCase):
             raise RuntimeError('controlled stop after dispatch')
         scorer = SimpleNamespace(_port_holder=lambda port: None)
         vendor = SimpleNamespace(serve=lambda port, trace: trace.write_text('') or
-                                 SimpleNamespace(shutdown=lambda: None), mark_phase=lambda *a: None)
+                                 SimpleNamespace(shutdown=lambda: None, server_close=lambda: None),
+                                 mark_phase=lambda *a: None)
         snapshot = {'version': 1, 'providers': ['omlx'], 'config': {}, 'secrets': {'OMLX_KEY': 'k'},
                     'custom_providers': {}}
         stdout = io.StringIO()

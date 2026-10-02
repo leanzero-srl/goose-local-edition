@@ -52,7 +52,7 @@ DEBRIS_PART_PREFIXES = ("graded", "sb7-shots", "sb7-empty-db", "sb7-combined-db"
 DEBRIS_SUFFIXES = (".log", ".pyc")
 DEBRIS_PREFIXES = ("verdict", "harness-grade", "sb7-expect", "sb7-tokens", "graded", "score-",
                    "fix-waves-delta")
-DEBRIS_FILES = {"trace.jsonl", "vendor-trace-sb7.jsonl", ".DS_Store"}
+DEBRIS_FILES = {"trace.jsonl", "vendor-build-trace.jsonl", "vendor-trace-sb7.jsonl", ".DS_Store"}
 
 PREFIX_TREE = Path(".swarm/prefix-tree")
 BEST_TREE = Path(".swarm/best-tree")

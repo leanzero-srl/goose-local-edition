@@ -1537,6 +1537,23 @@ function pageArmBudgetWatch() {
 function pageReadBudgetWatch() {
   return window.__p7budget || null;
 }
+// c1 is taken INSIDE the first rAF after pointerup, so its value never depends on when it is
+// read; only the read can race it. A read at a fixed delay after release missed it whenever one
+// frame outlasted the delay: run 43896353 scored in-app drew 437.7 ms per drag move, c1 was still
+// null when read, and four rows read "not measurable" that the same tree passed hermetically at
+// 133.8 ms per move. Wait for the sample, bounded by the drag's own measured move interval.
+const BUDGET_C1_WAIT_MOVES = 4; // ratio: of the drag's measured per-move interval
+async function readBudgetWatchAfterRelease(page) {
+  const w = await page.evaluate(pageReadBudgetWatch).catch(() => null);
+  if (!w || !w.c0 || !w.cUp || w.c1) return w;
+  const boundMs = BUDGET_C1_WAIT_MOVES * (w.cUp.t - w.c0.t) / Math.max(w.moves, 1);
+  if (!(boundMs > 0)) return { ...w, c1Wait: { boundMs, landed: false } };
+  const started = Date.now();
+  const landed = await page.waitForFunction(() => !!(window.__p7budget && window.__p7budget.c1),
+    null, { timeout: boundMs, polling: 'raf' }).then(() => true, () => false);
+  const after = await page.evaluate(pageReadBudgetWatch).catch(() => null);
+  return { ...(after || w), c1Wait: { boundMs: +boundMs.toFixed(1), waitedMs: Date.now() - started, landed } };
+}
 
 // §3.4 coast sampler: on pointerup, sample vs7dbg.camera() every rAF until the stop threshold
 // holds (|vyaw|<2 AND |vpitch|<2) twice in a row, or 4 s. Page-side stamps, never RPC polling.
@@ -1769,6 +1786,9 @@ async function main() {
     ...(process.env.GOOSE_SWARM_CHROMIUM_EXECUTABLE?{executablePath:process.env.GOOSE_SWARM_CHROMIUM_EXECUTABLE}:{}),
     args: isViz ? VIZ_LAUNCH_ARGS : [],
   });
+  // Which browser graded: a null executablePath means Playwright resolved its own cached build.
+  merge({ browser: { version: browser.version(),
+                     executablePath: process.env.GOOSE_SWARM_CHROMIUM_EXECUTABLE || null } });
   const mediaDir=isViz?resolve(process.env.BENCH_MEDIA_DIR||join(dirname(process.env.BENCH_SHOTS_DIR||'.'),'bench-media')):null;
   if(mediaDir) mkdirSync(mediaDir,{recursive:true});
   const context = await browser.newContext({
@@ -3592,7 +3612,7 @@ async function vizScenario(page, pack, H) {
     await page.mouse.move(cx + dx, cy, { steps: 1 });
     await page.mouse.up();
     await sleep(300);
-    const w = await page.evaluate(pageReadBudgetWatch).catch(() => null);
+    const w = await readBudgetWatchAfterRelease(page);
     const camAfter = (await vs7({ want: ['camera'] })).camera || null;
     const expYaw = camBefore && camBefore.yaw != null ? camBefore.yaw - V7.dragDegPerPx * dx : null;
     dragBudget = {

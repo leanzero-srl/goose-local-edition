@@ -641,6 +641,35 @@ def provider_model_limits(provider: str, model: str, credentials: Dict[str, str]
     return {**limits, "provenance": provenance}
 
 
+BUILD_VENDOR_TRACE = "vendor-build-trace.jsonl"
+
+
+def stop_vendor(server) -> None:
+    server.shutdown()
+    server.server_close()
+
+
+def serve_scoring_vendor(build_server, scorer, vendor, port: int, seed: str, build_trace: Path,
+                         run_trace: Path):
+    """Grade against a FRESH vendor, exactly as the hermetic scorer CLIs do.
+
+    The build vendor served the entrant's own session: its walks, test sends, webhook registrations
+    and the scheduled faults they armed. Graded in place (run 43896353 in-app 0.699 against 0.799
+    hermetic on the same tree and seed), its trace counted 253 build-session sync-1 pages into
+    c_paged_walk ("445/192 pages served ... 192 duplicate pages"), the session's own drop and 500
+    into c_b1/c_b2, 28 of its sends into c_send_idempotency, and its last registered webhook — a
+    test server already gone — took 18 of the graded deliveries ("57/75 deliveries 2xx-acked").
+    The build traffic is kept beside the run as vendor-build-trace.jsonl; the run's trace.jsonl
+    becomes the graded trace, header and seed included.
+    """
+    stop_vendor(build_server)
+    shutil.copy2(build_trace, run_trace.parent / BUILD_VENDOR_TRACE)
+    held = scorer._port_holder(port) if hasattr(scorer, "_port_holder") else None  # noqa: SLF001
+    if held:
+        raise RuntimeError(f"REFUSED: the scoring vendor cannot bind: {held}")
+    return vendor.serve(port, run_trace, seed=seed)
+
+
 def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
         provider: str | None = None, model: str | None = None) -> Dict:
     workdir = out_root / f"{entrant}-r{rep}"
@@ -794,6 +823,7 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
     # scoring — the repair-progression evidence the published post carries. Set in our own
     # environ too so score_build's in-process probe runs inherit it.
     os.environ["BENCH_SHOTS_DIR"] = str(workdir / "bench-shots")
+    scoring_vendor = False
     try:
         print('BENCH_PHASE ' + json.dumps({'phase': 'build'}), flush=True)
         agent = invoke(entrant, workdir, port, credentials, timeout, provider, model, snapshot)
@@ -815,17 +845,26 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
         db = workdir / ("graded-sb8-db" if sb8 else "graded-sb7-db" if sb7 else "graded.db")
         scoring_started = time.monotonic()
         print('BENCH_PHASE ' + json.dumps({'phase': 'score'}), flush=True)
-        ctx = scorer.gather(workdir, port, db, trace,
+        graded_trace = trace
+        if seeded:
+            server = serve_scoring_vendor(server, scorer, vendor, port, seed, trace, run_trace)
+            scoring_vendor = True
+            graded_trace = run_trace
+        ctx = scorer.gather(workdir, port, db, graded_trace,
                             mark_phase=vendor.mark_phase,
                             **({"seed": seed} if seeded else {}))
         scoring_seconds = round(time.monotonic() - scoring_started, 3)
     finally:
-        server.shutdown()
+        stop_vendor(server)
         # Refresh the run's copy now the vendor has stopped appending (record() is write-through,
-        # so the out_root file is whole by the time shutdown returns) — the _sb4trees archive below
-        # then carries the complete request log, not just the header.
+        # so the file is whole by the time shutdown returns) — the _sb4trees archive below then
+        # carries the complete request log, not just the header. Once a scoring vendor served,
+        # the run's copy IS the graded trace and the shared out_root name receives it.
         try:
-            shutil.copy2(trace, run_trace)
+            if scoring_vendor:
+                shutil.copy2(run_trace, trace)
+            else:
+                shutil.copy2(trace, run_trace)
         except OSError:
             pass
 

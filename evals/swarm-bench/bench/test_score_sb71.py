@@ -10,6 +10,24 @@ import sys
 import score_sb71 as score
 
 
+class BundledBrowserPreflightTests(unittest.TestCase):
+    def test_an_unpinned_browser_is_refused_before_any_probe_runs(self):
+        for missing in score.BUNDLED_BROWSER_ENV:
+            pinned = {name: '/bundled/' + name for name in score.BUNDLED_BROWSER_ENV if name != missing}
+            with self.subTest(missing=missing), patch.dict(score.os.environ, pinned, clear=True), \
+                    patch.object(score.base, '_probe_preflight', side_effect=AssertionError('probe launched')):
+                why = score._probe_preflight()
+                self.assertIn(missing, why)
+                self.assertIn('unpinned Playwright Chromium', why)
+
+    def test_a_pinned_browser_reaches_the_probe_preflight(self):
+        pinned = {name: '/bundled/' + name for name in score.BUNDLED_BROWSER_ENV}
+        with patch.dict(score.os.environ, pinned, clear=True), \
+                patch.object(score.base, '_probe_preflight', return_value=None) as probe:
+            self.assertIsNone(score._probe_preflight())
+        probe.assert_called_once()
+
+
 class ReadStreamTests(unittest.TestCase):
     def test_real_thread_samples_summary_first_and_joins(self):
         import threading
