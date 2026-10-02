@@ -152,6 +152,59 @@ class AdmissionTests(unittest.TestCase):
             self.assertNotIn('score', diagnostic)
             self.assertEqual(diagnostic['partial_checks'], self.raw['checks'])
 
+    def evaluate_viz(self, viz):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(score.base, 'evaluate', return_value=self.raw):
+            return score.evaluate(SimpleNamespace(probes={'viz': {'sb71': {'checks': self.rows}, **viz}},
+                                                  root=Path(tmp), fixture_seed='a435e8242e758c46'))
+
+    def test_run_01dae737_unbrushed_witness_is_scored_with_a_loud_record(self):
+        import fixtures_sb71_witness
+        result = self.evaluate_viz(copy.deepcopy(fixtures_sb71_witness.VIZ))
+        witness = result['stream_witness']
+        self.assertEqual(witness['status'], 'candidate_unreachable')
+        self.assertTrue(witness['stream_measured'])
+        self.assertEqual(witness['witness'], 'unbrushed')
+        self.assertEqual(witness['charged'], ['d_decisions_doc:D1'])
+        self.assertEqual(witness['target'], 'pay_06301')
+        self.assertIsNone(witness['evidence']['appPick'])
+        self.assertIn('STREAM WITNESS candidate_unreachable (stream measured: True; charged: d_decisions_doc:D1)',
+                      score.format_report(result, 'fixture'))
+
+    def test_contradicted_candidate_attribution_still_refuses(self):
+        import fixtures_sb71_witness
+        def edits(viz):
+            failure = viz['sb71StreamHandshake']['signal']['candidateFailure']
+            return [
+                ('pick names the target', lambda: failure.update(appPick={'id': 'pay_06301', 'index': 6301})),
+                ('pick not read', lambda: failure.update(appPick={'__err': 'TypeError'})),
+                ('colour not drawn', lambda: failure.update(got=[16, 24, 40])),
+                ('click brushed it', lambda: failure.update(brushAfterClick=['pay_06301'])),
+                ('early arm brushed it in 3D', lambda: viz['d1Arm'].update(via='3d-click-posed:decisive')),
+                ('observation disagrees', lambda: viz['streamPixelArm'].update(mode='candidate_unreachable')),
+            ]
+        for index in range(6):
+            viz = copy.deepcopy(fixtures_sb71_witness.VIZ)
+            name, apply = edits(viz)[index]
+            apply()
+            with self.subTest(name), self.assertRaisesRegex(RuntimeError, 'contradictory SB7.1 D1 stream witness'):
+                self.evaluate_viz(viz)
+
+    def test_harness_failures_still_refuse(self):
+        import fixtures_sb71_witness
+        self.raw['harness_missing'] = ['fire_d1_mutation:failed']
+        with self.assertRaisesRegex(RuntimeError, 'missing benchmark infrastructure: fire_d1_mutation:failed'):
+            self.evaluate_viz({'sb71StreamHandshake': {'error': "SB7.1 stream witness unavailable: {'state': 'witness_unavailable'}"}})
+        self.raw['harness_missing'] = []
+        viz = copy.deepcopy(fixtures_sb71_witness.VIZ)
+        viz['timedOut'] = True
+        with tempfile.TemporaryDirectory() as tmp, patch.object(score.base, 'evaluate', return_value=self.raw):
+            with self.assertRaisesRegex(RuntimeError, 'viz probe hit its hard cap'):
+                score.evaluate(SimpleNamespace(probes={'viz': viz}, root=Path(tmp), fixture_seed='a435e8242e758c46'))
+
+    def test_brushed_witness_leaves_the_verdict_shape_unchanged(self):
+        result = self.evaluate_viz({'sb71StreamHandshake': {'signal': {'state': 'armed', 'id': 'pay_1'}, 'delivery': {}}})
+        self.assertNotIn('stream_witness', result)
+
     def test_visual_mutation_avoids_actual_backend_schedule_targets(self):
         import fixtures_v3
         from dataclasses import asdict
@@ -226,6 +279,44 @@ class ScorerRuntimeTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join()
+
+    def test_candidate_attributed_witness_states_fire_the_mutation(self):
+        for state in score.CANDIDATE_WITNESS_STATES:
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / 'ready.json'
+                path.write_text(json.dumps({'state': state, 'id': 'pay_06301'}))
+                calls = []
+                handshake = score.StreamHandshake(path, lambda: calls.append(state) or {'version': 2})
+                handshake.start()
+                self.assertTrue(handshake.done.wait(2))
+                handshake.finish()
+                self.assertEqual(handshake.result(), {'version': 2})
+                self.assertEqual(calls, [state])
+
+    def test_charges_follow_the_witness_record(self):
+        import fixtures_sb71_witness
+        decisions = {'score': 2 / 3, 'detail': 'D1=0.5, D2=1.0, D3=0.5', 'parts': {
+            'D1': {'documented': True, 'doc_stance': True, 'observed': None, 'score': 0.5},
+            'D2': {'documented': True, 'doc_stance': True, 'observed': True, 'score': 1.0},
+            'D3': {'documented': True, 'doc_stance': None, 'observed': True, 'score': 0.5}}}
+        latency = {'score': 0.75, 'detail': 'batch visible in 171.9 ms', 'parts': {'ms': 171.9}}
+        unmeasured = {'score': 0, 'detail': 'no stream batch applied', 'consequence': 'the live stream never landed'}
+        ctx = SimpleNamespace(probes={'viz': copy.deepcopy(fixtures_sb71_witness.VIZ)})
+        charged = score.observed_absence_result('d_decisions_doc', lambda _: copy.deepcopy(decisions), ctx)
+        self.assertEqual(charged['parts']['D1']['score'], 0.0)
+        self.assertIn("candidate's documented selection surfaces", charged['parts']['D1']['unobservable'])
+        self.assertAlmostEqual(charged['score'], 0.5)
+        self.assertEqual(score.observed_absence_result('p_stream_apply', lambda _: latency, ctx), latency)
+        self.assertEqual(score.observed_absence_result('e_stream_apply_latency', lambda _: unmeasured, ctx), unmeasured)
+        signal = ctx.probes['viz']['sb71StreamHandshake']['signal']
+        signal['state'] = ctx.probes['viz']['streamPixelArm']['mode'] = 'candidate_unreachable'
+        for name in score.PIXEL_WITNESS_ROWS:
+            row = score.observed_absence_result(name, lambda _: unmeasured, ctx)
+            self.assertEqual(row['score'], 0)
+            self.assertIn('apply latency unmeasurable', row['detail'])
+            self.assertEqual(row['parts'], {'stream_witness': 'candidate_unreachable'})
+        signal['state'] = 'armed'
+        self.assertEqual(score.observed_absence_result('d_decisions_doc', lambda _: decisions, ctx), decisions)
 
     def test_idle_sse_stream_keeps_its_observed_content_type(self):
         import threading

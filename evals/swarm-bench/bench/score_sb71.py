@@ -132,6 +132,13 @@ def _kill_owned(proc):
                 pass
 
 
+# armed: brushed D1 witness. app_surface_absent: measured missing scene. The candidate_* states
+# carry the probe's proof that the candidate's own click/pick could not brush a target its canvas
+# draws; stream_witness() re-checks that proof before any row is charged.
+CANDIDATE_WITNESS_STATES = ('armed_unbrushed', 'candidate_unreachable')
+FIRING_WITNESS_STATES = ('armed', 'app_surface_absent', *CANDIDATE_WITNESS_STATES)
+
+
 class StreamHandshake:
     def __init__(self, path, fire):
         self.path, self.fire = path, fire
@@ -150,7 +157,7 @@ class StreamHandshake:
                             raise RuntimeError('SB7.1 stream probe ended without a readiness signal')
                         continue
                     signal = json.loads(self.path.read_text())
-                    if signal.get('state') not in {'armed', 'app_surface_absent'}:
+                    if signal.get('state') not in FIRING_WITNESS_STATES:
                         raise RuntimeError('SB7.1 stream witness unavailable: ' + str(signal))
                     self.receipt = {'signal': signal, 'delivery': self.fire()}
                     return
@@ -694,7 +701,59 @@ def premature_resync_evidence(ctx):
             'kill_fired': False, 'checkpoint_unreached': True}
 
 
+def stream_witness(viz):
+    """The D1 stream-witness record when the brushed arm was unreachable through the candidate.
+
+    None for a brushed witness, a measured missing scene, or a harness-side failure (those keep
+    their existing paths, and a harness failure still refuses). {'refuse': why} when the probe's
+    candidate attribution does not hold on its own evidence."""
+    signal = (viz.get('sb71StreamHandshake') or {}).get('signal') or {}
+    state = signal.get('state')
+    if state not in CANDIDATE_WITNESS_STATES:
+        return None
+    arm = viz.get('streamPixelArm') or {}
+    failure = signal.get('candidateFailure') or {}
+    target = signal.get('id')
+    problems = []
+    if arm.get('mode') != state or arm.get('candidateFailure') != failure:
+        problems.append('the handshake and the viz observation disagree')
+    if not target or failure.get('targetId') != target:
+        problems.append('the evidence names a different target')
+    got, expected = failure.get('got'), failure.get('expected')
+    if not (failure.get('drawn') is True and isinstance(got, list) and isinstance(expected, list)
+            and len(got) == len(expected) == 3
+            and all(isinstance(a, int) and isinstance(b, int) and abs(a - b) <= STATUS_PIXEL_TOLERANCE
+                    for a, b in zip(got, expected))):
+        problems.append('the target colour was not shown drawn at the clicked pixel')
+    pick = failure.get('appPick', {'__err': 'absent'})
+    if not (pick is None or (isinstance(pick, dict) and '__err' not in pick and pick.get('id') != target)):
+        problems.append("the candidate's own vs7dbg.pick there was not read or named the target")
+    if not isinstance(failure.get('brushAfterClick'), list) or target in failure['brushAfterClick']:
+        problems.append('the click is not shown to have left the target unbrushed')
+    early = (viz.get('d1Arm') or {}).get('via')
+    if isinstance(early, str) and early.startswith('3d-click'):
+        problems.append('the early D1 arm brushed the target through a 3D click (' + early + ')')
+    if state == 'armed_unbrushed' and not all(k in arm for k in ('before', 'point', 'pose')):
+        problems.append('the unbrushed pixel witness was not recorded')
+    if problems:
+        return {'refuse': 'contradictory SB7.1 D1 stream witness: ' + '; '.join(problems)}
+    measured = state == 'armed_unbrushed'
+    clicks = (arm.get('rejected') or {}).get('click at the target pixel did not brush it')
+    return {
+        'status': 'candidate_unreachable', 'target': target, 'stream_measured': measured,
+        'witness': 'unbrushed' if measured else 'none', 'reason': signal.get('reason'),
+        'via_tried': [f"3D click through the candidate's pick at {clicks} pose(s) with an independently decisive target pixel",
+                      f"early D1 arm (3D click at seeded poses, then the table row on the rendered page): {early}"],
+        'evidence': failure, 'rejected': arm.get('rejected'),
+        'charged': ['d_decisions_doc:D1'] + ([] if measured else list(PIXEL_WITNESS_ROWS)),
+    }
+
+
 def observed_absence_result(name, original, ctx):
+    if name in STREAM_WITNESS_ROWS:
+        witness = stream_witness(ctx.probes.get('viz', {}))
+        if witness and 'refuse' not in witness:
+            return stream_witness_result(name, original(ctx), witness)
     if name == 'j_workflow_journey' and ctx.probes.get('flow', {}).get('paymentWitness', {}).get('unavailable'):
         return base.unavail(ctx.probes['flow']['paymentWitness']['unavailable'])
     if name == 'x_m2_pair_conservation':
@@ -755,6 +814,32 @@ def observed_absence_result(name, original, ctx):
     return outcome
 
 
+STATUS_PIXEL_TOLERANCE = 8          # product_probe_sb71.mjs V7.tol, the contract's pixel tolerance
+PIXEL_WITNESS_ROWS = ('p_stream_apply', 'e_stream_apply_latency')
+STREAM_WITNESS_ROWS = (*PIXEL_WITNESS_ROWS, 'd_decisions_doc')
+
+
+def stream_witness_result(name, outcome, witness):
+    reason = ("stream witness unreachable through the candidate's documented selection surfaces: "
+              + '; '.join(witness['via_tried']))
+    if name in PIXEL_WITNESS_ROWS:
+        if witness['stream_measured'] or outcome.get('unavailable') or 'ms' in (outcome.get('parts') or {}):
+            return outcome
+        return base.g(0.0, 'apply latency unmeasurable: ' + reason,
+                      'the candidate could not select the D1 record, so no pixel witness could time its stream batch',
+                      parts={'stream_witness': witness['status']})
+    corner = (outcome.get('parts') or {}).get('D1')
+    if outcome.get('unavailable') or not corner or not corner.get('documented') or corner.get('observed') is not None:
+        return outcome
+    charged = copy.deepcopy(outcome)
+    charged['parts']['D1'] = {**corner, 'score': 0.0, 'unobservable': reason}
+    scores = [charged['parts'][key]['score'] for key in ('D1', 'D2', 'D3')]
+    charged['score'] = sum(scores) / len(scores)
+    charged['detail'] = (', '.join(f"{key}={charged['parts'][key]['score']}" for key in ('D1', 'D2', 'D3'))
+                         + '; D1 charged: the brushed-record mutation could not be staged through the candidate')
+    return charged
+
+
 def evaluate(ctx):
     original_checks = base.SB7_CHECKS
     base.SB7_CHECKS = [(name, tier, lambda c, name=name, original=fn:
@@ -772,6 +857,14 @@ def evaluate(ctx):
         if (not resync['held'] or receipt.get('returncode') is None
                 or not receipt.get('response_still_held')):
             raise UnavailableEvidence(ctx, raw, 'B3 mid-resync interruption was not proven')
+    viz = ctx.probes.get('viz', {})
+    witness = stream_witness(viz)
+    if witness and 'refuse' in witness:
+        raise UnavailableEvidence(ctx, raw, witness['refuse'])
+    if viz.get('timedOut') is True and 'sb71' not in viz:
+        # The cap is the harness's own budget; the visual rows would otherwise be zeroed as
+        # 'not reached' and hold the run at the visible-surface band.
+        raise UnavailableEvidence(ctx, raw, 'viz probe hit its hard cap before the SB7.1 visual observations')
     if raw.get('harness_missing'):
         raise UnavailableEvidence(ctx, raw, 'missing benchmark infrastructure: ' + ', '.join(raw['harness_missing']))
     if raw.get('probe_unavailable'):
@@ -804,6 +897,8 @@ def evaluate(ctx):
     result['threshold_policy'] = threshold_policy()
     result['calibration'] = 'SB7.1 uses fixed specification budgets; empirical worst-of-five calibration not performed'
     result['media'] = observation.get('media')
+    if witness:
+        result['stream_witness'] = witness
     files = ['score_sb71.py', 'score_sb7.py', 'product_probe_sb71.mjs', 'product_probe_v3.mjs', 'media_sb71.mjs']
     result['scorer_files_sha256'] = {name: hashlib.sha256((HERE / name).read_bytes()).hexdigest()
                                     for name in files}
@@ -825,7 +920,11 @@ def format_report(result, title=''):
              result.get('calibration', 'Threshold policy not recorded'),
              f"Earned behavioral score {result['rawScore']:.4f}; admission ceiling {result['admission']['ceiling']:.3f}",
              'Admission does not award points. Final score = min(earned score, applicable ceilings).',
-             *result['admission']['reasons'], '', behavioral,
+             *result['admission']['reasons'],
+             *([f"STREAM WITNESS {result['stream_witness']['status']} (stream measured: "
+                f"{result['stream_witness']['stream_measured']}; charged: {', '.join(result['stream_witness']['charged'])}): "
+                f"{result['stream_witness']['reason']}"] if result.get('stream_witness') else []),
+             '', behavioral,
              '', 'SB7.1 same-session visual evidence:']
     for row in result['checks']:
         if row['check'] in VISUAL_CHECKS:

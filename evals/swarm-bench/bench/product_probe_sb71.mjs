@@ -3235,13 +3235,62 @@ async function withRestoredOverview(page, action) {
     merge({streamCameraRestoration:{expected:{yaw:V7.yaw0,pitch:V7.pitch0,distance:V7.dist0},actual}});
   }
 }
+// The arm's selection surface is the candidate's own 3D click (§3.6 "click on an instance toggles
+// it"). When that click never brushes a target the canvas visibly draws at the clicked pixel while
+// the candidate's own vs7dbg.pick names something else, the brushed D1 state is unreachable through
+// the candidate — not the harness — and the stream is still measured through an UNBRUSHED witness
+// (empty brush: exact status hex, dim:false) instead of being refused or zeroed.
+async function observeClickFailure(page,ctx,n,it,point,pose,brushAfterClick,d1TargetId) {
+  const raster=await page.evaluate(pageSamplePixels,{points:[{cx:point.sx,cy:point.sy}]});
+  const sample=raster.samples&&raster.samples[0];
+  if(!sample)return {drawn:false,reason:'canvas sample unavailable'};
+  const hit=castPixel(ctx,sample.rayX,sample.rayY)[0];
+  if(!hit||hit.n!==n)return {drawn:false,reason:'sampled ray misses the target'};
+  let base=V7.status[it.status];
+  if(!base)return {drawn:false,reason:'unknown target status '+it.status};
+  if(brushAfterClick.length&&!brushAfterClick.includes(d1TargetId))base=dimColor(base);
+  const expected=base.map(v=>Math.round(v*hit.factor));
+  const drawn=sample.got.every((v,i)=>Math.abs(v-expected[i])<=V7.tol);
+  const read=await page.evaluate(pageVs7,{want:['brush'],picks:[[point.sx,point.sy]]});
+  const appPick=read.picks?read.picks[0]:undefined;
+  return {targetId:d1TargetId,pose,point:{sx:point.sx,sy:point.sy},targetStatus:it.status,factor:hit.factor,
+          expected,got:sample.got,drawn,appPick:appPick===undefined?{__err:'vs7dbg.pick not evaluated'}:appPick,
+          brushAfterClick,brushAfterRead:read.brush};
+}
+const pickNamesOther=(evidence,id)=>evidence.appPick===null||
+  (!!evidence.appPick&&!evidence.appPick.__err&&evidence.appPick.id!==id);
 async function armStreamWitness(page,model,d1TargetId,seed) {
   const vs7=arg=>page.evaluate(pageVs7,arg);
   const setCam=async(...pose)=>{await vs7({setCamera:pose});await sleep(80);};
   await page.evaluate(pageScrollCanvasIntoView);
   let rect=await page.evaluate(pageCanvasRect);const Wc=rect.w,Hcs=rect.h;
       const n=model.byId.get(d1TargetId),it=model.items[n];
-      let witness=null;
+      let witness=null,candidateFailure=null;
+      const rejected={};const reject=reason=>{rejected[reason]=(rejected[reason]||0)+1;};
+      const clearBrush=async(ctx,brush)=>{
+        let background=null;
+        for(const y of [8,Hcs/4,Hcs/2,Hcs*3/4,Hcs-8])for(const x of [8,Wc/4,Wc/2,Wc*3/4,Wc-8]) {
+          if(!castPixel(ctx,x,y).length)background={x,y};
+        }
+        if(!background){reject('no background pixel to clear the brush');return null;}
+        await page.mouse.click(rect.left+background.x,rect.top+background.y);await sleep(100);
+        brush=(await vs7({want:['brush']})).brush;
+        if(!Array.isArray(brush)||brush.length){reject('background click left the brush non-empty');return null;}
+        return brush;
+      };
+      const armAt=async(ctx,point,pose,brush)=>{
+        model.brush=new Set(brush);
+        await page.evaluate(pageScrollCanvasIntoView);rect=await page.evaluate(pageCanvasRect);
+        if(rect.top<-.5||rect.left<-.5||rect.bottom>rect.viewportH+.5||rect.right>rect.viewportW+.5){reject('canvas outside the viewport');return null;}
+        const raster=await page.evaluate(pageSamplePixels,{points:[{cx:point.sx,cy:point.sy}]});
+        const sample=raster.samples[0],hit=castPixel(ctx,sample.rayX,sample.rayY)[0];
+        if(!hit||hit.n!==n){reject('sampled ray misses the target');return null;}
+        const neighbors=[[-1,-1],[0,-1],[1,-1],[-1,0],[0,0],[1,0],[-1,1],[0,1],[1,1]];
+        if(!neighbors.every(([dx,dy])=>{const h=castPixel(ctx,sample.rayX+dx,sample.rayY+dy)[0];return h&&h.n===n&&h.factor===hit.factor;})){reject('sampled 3x3 neighbourhood not homogeneous');return null;}
+        const armed=await page.evaluate(pageArmStreamPixels,{id:d1TargetId,cx:point.sx,cy:point.sy,factor:hit.factor,dim:false,status:V7.status,beforeStatus:it.status,pose});
+        armed.pose=pose;
+        return armed;
+      };
       if(it) {
         const rng=seedRng(seed||'sb71','latency-pose'),az=Math.atan2(it.x,it.z)*180/Math.PI;
         const radius=Math.hypot(it.x,it.z);
@@ -3249,37 +3298,53 @@ async function armStreamWitness(page,model,d1TargetId,seed) {
         for(let k=0;k<100;k++){const pitch=16+rng()*32;poses.push([az+(rng()-.5)*50,pitch,clamp((radius+15+rng()*65)/Math.cos(deg(pitch)),16,340)]);}
         for(const pose of poses) {
           const ctx=poseCtx(model,...pose,Wc,Hcs),point=findPixelWitnessFor(ctx,model,n);
-          if(!point)continue;
+          if(!point){reject('no independent pixel point at this pose');continue;}
           await setCam(...pose);await page.evaluate(pageScrollCanvasIntoView);rect=await page.evaluate(pageCanvasRect);
           let brush=(await vs7({want:['brush']})).brush;
-          if(!Array.isArray(brush))break;
+          if(!Array.isArray(brush)){reject('vs7dbg.brush unavailable');break;}
           if(brush.some(id=>id!==d1TargetId)) {
-            let background=null;
-            for(const y of [8,Hcs/4,Hcs/2,Hcs*3/4,Hcs-8])for(const x of [8,Wc/4,Wc/2,Wc*3/4,Wc-8]) {
-              if(!castPixel(ctx,x,y).length)background={x,y};
-            }
-            if(!background)continue;
-            await page.mouse.click(rect.left+background.x,rect.top+background.y);await sleep(100);
-            brush=(await vs7({want:['brush']})).brush;
-            if(!Array.isArray(brush)||brush.length)continue;
+            brush=await clearBrush(ctx,brush);
+            if(!brush)continue;
           }
           if(!brush.includes(d1TargetId)){await page.mouse.click(rect.left+point.sx,rect.top+point.sy);await sleep(100);brush=(await vs7({want:['brush']})).brush;}
-          if(!Array.isArray(brush)||!brush.includes(d1TargetId))continue;
-          model.brush=new Set(brush);
-          await page.evaluate(pageScrollCanvasIntoView);rect=await page.evaluate(pageCanvasRect);
-          if(rect.top<-.5||rect.left<-.5||rect.bottom>rect.viewportH+.5||rect.right>rect.viewportW+.5)continue;
-          const raster=await page.evaluate(pageSamplePixels,{points:[{cx:point.sx,cy:point.sy}]});
-          const sample=raster.samples[0],hit=castPixel(ctx,sample.rayX,sample.rayY)[0];
-          if(!hit||hit.n!==n)continue;
-          const neighbors=[[-1,-1],[0,-1],[1,-1],[-1,0],[0,0],[1,0],[-1,1],[0,1],[1,1]];
-          if(!neighbors.every(([dx,dy])=>{const h=castPixel(ctx,sample.rayX+dx,sample.rayY+dy)[0];return h&&h.n===n&&h.factor===hit.factor;}))continue;
-          witness=await page.evaluate(pageArmStreamPixels,{id:d1TargetId,cx:point.sx,cy:point.sy,factor:hit.factor,dim:false,status:V7.status,beforeStatus:it.status,pose});
-          witness.pose=pose;break;
+          if(!Array.isArray(brush)||!brush.includes(d1TargetId)) {
+            reject('click at the target pixel did not brush it');
+            if(!candidateFailure&&Array.isArray(brush)) {
+              const evidence=await observeClickFailure(page,ctx,n,it,point,pose,brush,d1TargetId);
+              if(evidence.drawn&&pickNamesOther(evidence,d1TargetId))candidateFailure=evidence;
+              else reject('unbrushing click not attributable: '+(evidence.reason||(evidence.drawn?'vs7dbg.pick names the target':'target colour not drawn at the clicked pixel')));
+            }
+            continue;
+          }
+          witness=await armAt(ctx,point,pose,brush);
+          if(witness)break;
+        }
+        if(!witness&&candidateFailure) {
+          const pose=candidateFailure.pose,ctx=poseCtx(model,...pose,Wc,Hcs),point=findPixelWitnessFor(ctx,model,n);
+          await setCam(...pose);await page.evaluate(pageScrollCanvasIntoView);rect=await page.evaluate(pageCanvasRect);
+          let brush=(await vs7({want:['brush']})).brush;
+          if(Array.isArray(brush)&&brush.length)brush=await clearBrush(ctx,brush);
+          if(point&&Array.isArray(brush)&&!brush.length) {
+            witness=await armAt(ctx,point,pose,brush);
+            if(witness)witness.unbrushed=true;
+          }
         }
       }
-      merge({streamPixelArm:witness||{error:'No independently decisive D1 pixel witness'}});
-      streamReady(witness?{state:'armed',id:d1TargetId}:{state:'witness_unavailable',reason:'No independently decisive D1 pixel witness'});
-      return witness;
+      if(witness&&!witness.unbrushed) {
+        merge({streamPixelArm:witness});
+        streamReady({state:'armed',id:d1TargetId});
+        return {mode:'armed',witness};
+      }
+      if(candidateFailure) {
+        const reason='brushed D1 state unreachable through the candidate selection surface: its click at a pixel drawing '+d1TargetId+' left the brush '+JSON.stringify(candidateFailure.brushAfterClick)+' and vs7dbg.pick there returned '+JSON.stringify(candidateFailure.appPick);
+        const state=witness?'armed_unbrushed':'candidate_unreachable';
+        merge({streamPixelArm:{...(witness||{error:'No unbrushed D1 pixel witness at the attributed pose'}),mode:state,candidateFailure,rejected}});
+        streamReady({state,id:d1TargetId,reason,candidateFailure});
+        return {mode:state,witness};
+      }
+      merge({streamPixelArm:{error:'No independently decisive D1 pixel witness',rejected}});
+      streamReady({state:'witness_unavailable',reason:'No independently decisive D1 pixel witness'});
+      return {mode:'witness_unavailable',witness:null};
 }
 
 async function vizScenario(page, pack, H) {
@@ -4250,8 +4315,9 @@ async function vizScenario(page, pack, H) {
   // stream (§3.7): every observed SSE batch replayed against a fresh model — digest deltas,
   // per-batch upload-byte accounting from the wrapper, apply latency, changed-instance pixel,
   // and the D1 brushed-mutation observation. The driver pokes the vendor while this waits.
+  let streamArm=null;
   await withRestoredOverview(page,async()=>{
-    if(process.env.BENCH_SB71_STREAM_READY)await armStreamWitness(page,model,d1TargetId,pack.seed);
+    if(process.env.BENCH_SB71_STREAM_READY)streamArm=await armStreamWitness(page,model,d1TargetId,pack.seed);
     // Harness fix: 30 s closed the stream window before the driver's alive-gated 110 s
     // D1 fire could land on a fast app; the wait must outlast the fire (budget-capped).
     const waitCap = Math.max(5000, Math.min(90000, budgetLeft() - 25000));
@@ -4367,7 +4433,8 @@ async function vizScenario(page, pack, H) {
       survivedInBrush: !!(d1TargetId != null && brushAfter && brushAfter.includes(d1TargetId)),
       // survived is the D1-corner OBSERVATION: null unless the target was brushed when a
       // mutation for it was actually seen — the only case documented-vs-observed can grade.
-      survived: (d1TargetId != null && d1.brushed && mutationSeen && brushAfter)
+      // An unbrushed stream witness means the target was not brushed when it mutated.
+      survived: (d1TargetId != null && d1.brushed && mutationSeen && brushAfter && !(streamArm && streamArm.mode !== 'armed'))
         ? brushAfter.includes(d1TargetId) : null,
       rowBrushedAfter: d1Row.found ? d1Row.dataBrushed === 'true' : null,
     } });

@@ -290,7 +290,7 @@ class VisualControls(unittest.TestCase):
                             until = time.monotonic() + 50
                             while time.monotonic() < until:
                                 if ready_path.exists():
-                                    if json.loads(ready_path.read_text()).get('state') == 'armed':
+                                    if json.loads(ready_path.read_text()).get('state') in ('armed', 'armed_unbrushed', 'candidate_unreachable'):
                                         vendor_service_v3.fire_d1_mutation()
                                     return
                                 time.sleep(.02)
@@ -375,6 +375,30 @@ class VisualControls(unittest.TestCase):
         self.assertTrue(entry['pixelWitness']['applied'], entry)
         self.assertGreaterEqual(entry['applyMs'], 1100, entry)
         self.assertTrue(any(not sample['matched'] for sample in entry['pixelWitness']['samples']), entry)
+
+    def test_stream_witness_arms_unbrushed_when_the_candidate_click_never_picks(self):
+        # The 01dae737 shape: the scene draws the target, but the candidate's pick never names
+        # an instance, so its click cannot brush it. The stream is still measured.
+        data = self.collect(('web/viz.js', 'if (!idNum || idNum > store.items.length) return null;', 'return null;'),
+            scenario='sb71-stream', seed='5a05d7631d9276e3')
+        arm = data['streamPixelArm']
+        self.assertEqual(arm['mode'], 'armed_unbrushed', arm)
+        failure = arm['candidateFailure']
+        self.assertTrue(failure['drawn'], failure)
+        self.assertIsNone(failure['appPick'], failure)
+        self.assertNotIn(failure['targetId'], failure['brushAfterClick'])
+        self.assertEqual(data['streamBrushAfterArm'], [])
+        entry = next(e for e in data['stream']['entries'] if e.get('pixelWitness'))
+        self.assertEqual(entry['pixelWitness']['id'], failure['targetId'])
+        self.assertTrue(entry['pixelWitness']['discriminating'], entry)
+        self.assertTrue(entry['pixelWitness']['applied'], entry)
+        self.assertLess(entry['applyMs'], 250, entry)
+
+    def test_stream_witness_on_the_reference_stays_brushed(self):
+        data = self.collect(scenario='sb71-stream', seed='5a05d7631d9276e3')
+        self.assertNotIn('mode', data['streamPixelArm'])
+        entry = next(e for e in data['stream']['entries'] if e.get('pixelWitness'))
+        self.assertEqual(data['streamBrushAfterArm'], [entry['pixelWitness']['id']])
 
     def test_stream_missing_gpu_application_has_no_latency_credit(self):
         data = self.collect(('web/viz.js', 'patchInstance(it);', '/* mutant: CPU status changes, GPU stays stale */'),
