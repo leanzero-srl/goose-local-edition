@@ -550,6 +550,32 @@ class ControlTests(unittest.TestCase):
         self.assertLessEqual(v['score'], 0.30)
 
 
+class MutantJudgeTests(unittest.TestCase):
+    def verdict(self, overrides, crit=()):
+        rows = sf._scenario(overrides)
+        v = sf.compose_from_rows(rows)
+        return v
+
+    def test_a_mutant_must_lose_exactly_its_declared_rows(self):
+        import forge_controls as fc
+        golden = self.verdict({})
+        mutant = self.verdict({'r_backfill_complete': 0.8, 'r_removals_found': 0.0, 'u_widget_numbers': 0.5})
+        expect = {'loses': ['r_removals_found', 'r_backfill_complete'], 'critical': True, 'max_final': 0.85}
+        self.assertEqual(fc.judge(golden, mutant, expect, sf.ROOT_BLOCKS), [])   # u_widget_numbers: attributed
+        fails = fc.judge(golden, mutant, {**expect, 'loses': ['r_removals_found']}, sf.ROOT_BLOCKS)
+        self.assertTrue(any('undeclared losses' in f for f in fails))
+        fails = fc.judge(golden, mutant, {**expect, 'critical': False, 'max_final': 0.1}, sf.ROOT_BLOCKS)
+        self.assertEqual(len(fails), 2)
+        self.assertTrue(any('declared losses that did not happen' in f for f in
+                            fc.judge(golden, golden, expect, sf.ROOT_BLOCKS)))
+
+    def test_an_unavailable_or_held_mutant_never_passes(self):
+        import forge_controls as fc
+        golden = self.verdict({})
+        held = {**self.verdict({}), 'harness_missing': ['GET /x'], 'probe_unavailable': ['l_deployable']}
+        self.assertEqual(len(fc.judge(golden, held, {'loses': []}, sf.ROOT_BLOCKS)), 2)
+
+
 class OracleTests(unittest.TestCase):
     def setUp(self):
         self.o = fo.Oracle(fo.synthetic_pack())
