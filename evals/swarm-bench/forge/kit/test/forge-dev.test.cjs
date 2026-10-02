@@ -52,6 +52,18 @@ export const onUpdate = async (event) => {
     assert.strictEqual(inv.code, 0, inv.stdout + inv.stderr);
     assert.match(inv.stdout, new RegExp(`as ${pack.viewer}`));
     assert.match(inv.stdout, /jira {3}app  GET \/rest\/api\/3\/issue\//);
+    // The whole result is written to a file every time.
+    const last = JSON.parse(fs.readFileSync(path.join(app, '.forge-dev', 'last-result.json'), 'utf8'));
+    assert.strictEqual(last.summary, visible.fields.summary);
+
+    // A stale lock left by a dead process is taken over; a malformed --config is an error that exits.
+    fs.writeFileSync(path.join(app, '.forge-dev', 'state.lock'), '999999:dead');
+    const afterStale = await run([devBin, 'invoke', 'resolver', '--resolver', 'summarise', '--payload', path.join(dir, 'p.json')], { cwd: app, env });
+    assert.strictEqual(afterStale.code, 0, afterStale.stdout + afterStale.stderr);
+    assert.ok(!fs.existsSync(path.join(app, '.forge-dev', 'state.lock')));
+    const bad = await run([devBin, 'serve', 'spike-issue-panel', '--config', '{bad'], { cwd: app, env, timeout: 60_000 });
+    assert.notStrictEqual(bad.code, 0);
+    assert.match(bad.stderr + bad.stdout, /--config is not valid JSON/);
 
     // events, then reset rewinds the dev site's update stream and clears dev storage.
     const ev1 = await run([devBin, 'events', '--limit', '3'], { cwd: app, env });
@@ -60,15 +72,25 @@ export const onUpdate = async (event) => {
     assert.strictEqual(ids1.length, 3);
     const kvs1 = JSON.parse((await run([devBin, 'kvs'], { cwd: app, env })).stdout);
     assert.deepStrictEqual(kvs1.kvs.seen, ids1);
+    const st = JSON.parse(fs.readFileSync(path.join(app, '.forge-dev', 'state.json'), 'utf8'));
+    fs.writeFileSync(path.join(app, '.forge-dev', 'state.json'), JSON.stringify({ ...st, widgetConfigs: { 'dev-widget': { boardId: 1 } } }));
+    assert.deepStrictEqual(JSON.parse((await run([devBin, 'kvs'], { cwd: app, env })).stdout).widgetConfigs, { 'dev-widget': { boardId: 1 } });
     assert.strictEqual((await run([devBin, 'reset'], { cwd: app, env })).code, 0);
-    assert.deepStrictEqual(JSON.parse((await run([devBin, 'kvs'], { cwd: app, env })).stdout).kvs, {});
+    const cleared = JSON.parse((await run([devBin, 'kvs'], { cwd: app, env })).stdout);
+    assert.deepStrictEqual(cleared.kvs, {});
+    assert.deepStrictEqual(cleared.widgetConfigs, {}, 'reset clears saved widget configs');
     const ev2 = await run([devBin, 'events', '--limit', '3'], { cwd: app, env });
     assert.deepStrictEqual([...ev2.stdout.matchAll(/changelog (\d+)/g)].map((m) => m[1]), ids1);
 
-    // Two backgrounded serve processes and the CLI hitting the same storage at once.
-    for (let i = 0; i < 2; i++) {
+    // Four backgrounded serve processes started 0-300 ms apart (ALT-NOTES 1.7 lost one to a lock ENOENT) and the
+    // CLI hitting the same storage at once.
+    const serveErr = [];
+    for (let i = 0; i < 4; i++) {
       const p = spawn(process.execPath, [devBin, 'serve', 'spike-issue-panel'], { cwd: app, env, stdio: ['ignore', 'pipe', 'pipe'] });
+      p.stderr.on('data', (d) => serveErr.push(String(d)));
+      p.on('exit', (code) => { if (code) serveErr.push(`serve ${p.pid} exited ${code}`); });
       serves.push(p);
+      await sleep(100);
     }
     const urls = [];
     for (const p of serves) {
@@ -84,14 +106,18 @@ export const onUpdate = async (event) => {
       return r.json();
     };
     const jobs = [];
-    for (let i = 0; i < 5; i++) for (const url of urls) jobs.push(invokeVia(url));
+    for (let i = 0; i < 3; i++) for (const url of urls) jobs.push(invokeVia(url));
     for (let i = 0; i < 2; i++) jobs.push(run([devBin, 'invoke', 'resolver', '--resolver', 'summarise', '--payload', path.join(dir, 'p.json')], { cwd: app, env }));
     const results = await Promise.all(jobs);
-    for (const r of results.slice(0, 10)) assert.ok(r.ok, JSON.stringify(r));
-    for (const r of results.slice(10)) assert.strictEqual(r.code, 0, r.stdout + r.stderr);
+    for (const r of results.slice(0, 12)) assert.ok(r.ok, JSON.stringify(r));
+    for (const r of results.slice(12)) assert.strictEqual(r.code, 0, r.stdout + r.stderr);
     const state = JSON.parse(fs.readFileSync(path.join(app, '.forge-dev', 'state.json'), 'utf8'));
     const views = new Map(state.kvs.kv).get(`views:${visible.key}`).value;
-    assert.strictEqual(views, 12, 'every one of the 12 concurrent invocations incremented the shared counter exactly once');
+    assert.strictEqual(views, 14, 'every one of the 14 concurrent invocations incremented the shared counter exactly once');
+    assert.deepStrictEqual(serveErr, [], 'no serve process failed');
+    // The top-level dev page's favicon request answers 204, not a console-error 404.
+    const fav = await fetch(new URL('/favicon.ico', urls[0]));
+    assert.strictEqual(fav.status, 204);
   } finally {
     for (const p of serves) { try { process.kill(p.pid, 'SIGTERM'); } catch { /* gone */ } }
     process.kill(site.pid, 'SIGTERM');

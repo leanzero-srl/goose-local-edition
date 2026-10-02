@@ -4,10 +4,14 @@
 // scorer uses, pointed at the dev site ($FORGE_SITE_URL, seeded differently from the scoring site), with
 // dev storage and queues persisted under .forge-dev/ in the workspace. It contains no fixtures, oracle,
 // fault schedule or checks.
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
 const USAGE = `forge-dev <command>   (run from the app directory; $FORGE_SITE_URL names the dev site)
+
+  $FORGE_SITE_URL is set for you: http://admin:<control token>@127.0.0.1:<port> — the token is the URL's
+  password. Each invoke writes the function's full result to .forge-dev/last-result.json.
 
   invoke <functionKey> [--module <key>] [--resolver <key>] [--payload <file>] [--as <accountId>] [--sprint <id>] [--config <json>]
         Run a manifest function once in the Forge runtime with the event shape of the module that
@@ -22,10 +26,11 @@ const USAGE = `forge-dev <command>   (run from the app directory; $FORGE_SITE_UR
         Start it in the background (e.g. \`node $FORGE_KIT/bin/forge-dev.cjs serve <key> > .forge-dev/serve.log 2>&1 &\`);
         the URL is also written to .forge-dev/serve.json (the latest) and .forge-dev/serve.<pid>.json; several serve
         processes may run side by side. In an edit surface window.__forgeHost.save()
-        performs the dashboard's Save.
+        performs the dashboard's Save. A saved widget config persists like a dashboard's: later
+        serve runs of the widget open with it; --config '<json>' overrides it for one run, reset clears it.
   kvs                         dump stored keys and entities
   users                       list the dev site's users (the first line is the default viewer)
-  reset                       clear dev storage and queues and rewind the dev site's update stream
+  reset                       clear dev storage, queues and saved widget configs, and rewind the dev site's update stream
 `;
 
 const argv = process.argv.slice(2);
@@ -59,17 +64,34 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 async function withLock(fn) {
   fs.mkdirSync(stateDir, { recursive: true });
+  const mine = `${process.pid}:${crypto.randomBytes(6).toString('hex')}`;
+  const holderOf = (file) => { try { return fs.readFileSync(file, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } };
   for (;;) {
-    try { fs.writeFileSync(lockFile, String(process.pid), { flag: 'wx' }); break; } catch (e) {
+    try { fs.writeFileSync(lockFile, mine, { flag: 'wx' }); break; } catch (e) {
       if (e.code !== 'EEXIST') throw e;
-      const holder = Number(fs.readFileSync(lockFile, 'utf8') || 0);
-      if (holder && holder !== process.pid && !alive(holder)) { fs.rmSync(lockFile, { force: true }); continue; }
-      await sleep(25);
     }
+    // The holder released between our create and our read (ENOENT, the race ALT-NOTES 1.7 hit), or the file
+    // is mid-write (empty): retry. A dead holder's lock is taken over by an atomic rename, so of several
+    // processes that saw it dead exactly one removes it; a lock that turns out to be live is put back.
+    const holder = holderOf(lockFile);
+    const pid = Number(String(holder ?? '').split(':')[0]);
+    if (holder && pid && pid !== process.pid && !alive(pid)) {
+      const stolen = `${lockFile}.${mine.replace(':', '-')}.stale`;
+      try { fs.renameSync(lockFile, stolen); } catch (e) { if (e.code !== 'ENOENT') throw e; continue; }
+      if (holderOf(stolen) !== holder) { try { fs.linkSync(stolen, lockFile); } catch (e) { if (e.code !== 'EEXIST') throw e; } }
+      fs.rmSync(stolen, { force: true });
+      continue;
+    }
+    await sleep(25);
   }
-  try { return await fn(); } finally { fs.rmSync(lockFile, { force: true }); }
+  try { return await fn(); } finally { if (holderOf(lockFile) === mine) fs.rmSync(lockFile, { force: true }); }
 }
-const loadState = () => { try { return JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch { return {}; } };
+// Absent state is an empty workspace; unreadable or corrupt state is an error, never an empty substitute.
+const loadState = () => {
+  let text;
+  try { text = fs.readFileSync(stateFile, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return {}; throw e; }
+  try { return JSON.parse(text); } catch (e) { throw new Error(`${stateFile} is not valid JSON (${e.message}); \`forge-dev reset\` clears it`); }
+};
 const writeState = (state) => {
   const tmp = `${stateFile}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(state));
@@ -113,7 +135,8 @@ async function emulator() {
   return emu;
 }
 
-const short = (v, n = 4000) => { const s = typeof v === 'string' ? v : JSON.stringify(v, null, 2); return s && s.length > n ? `${s.slice(0, n)}… (${s.length} chars)` : s; };
+const SHORT_CHARS = 4000; // ratio: a terminal screen of JSON; the whole value is always in .forge-dev/last-result.json
+const short = (v, n = SHORT_CHARS) => { const s = typeof v === 'string' ? v : JSON.stringify(v, null, 2); return s && s.length > n ? `${s.slice(0, n)}… (${s.length} chars)` : s; };
 function printCalls(calls) {
   for (const c of calls) {
     const who = c.service === 'jira' ? c.provider : '';
@@ -123,7 +146,15 @@ function printCalls(calls) {
 }
 function printInvocation(r, label) {
   console.log(`== ${label}: ${r.functionKey ?? '?'} (${r.moduleType ?? '?'} ${r.moduleKey ?? ''})${r.asUser ? ` as ${r.asUser}` : ' as app'} -> ${r.ok ? 'ok' : r.timedOut ? 'TIMED OUT' : 'FAILED'} ${r.ms ?? 0} ms`);
-  if (r.ok) console.log(`result: ${short(r.result === undefined ? null : r.result)}`);
+  if (r.ok) {
+    // The full result is always written; the terminal shows it whole up to the print budget.
+    const full = JSON.stringify(r.result === undefined ? null : r.result, null, 2);
+    fs.mkdirSync(stateDir, { recursive: true });
+    const file = path.join(stateDir, 'last-result.json');
+    fs.writeFileSync(file, full + '\n');
+    console.log(`result: ${short(r.result === undefined ? null : r.result)}`);
+    if (full.length > SHORT_CHARS) console.log(`(full result, ${full.length} chars: ${path.relative(process.cwd(), file)})`);
+  }
   else console.log(`error: ${r.error?.name}: ${r.error?.message}`);
   for (const l of r.logs ?? []) console.log(`  [${l.logLevel ?? 'log'}] ${(l.logArguments ?? [l.raw]).join(' ')}`);
   if (r.calls?.length) { console.log('calls:'); printCalls(r.calls); }
@@ -178,6 +209,7 @@ async function main() {
   const emu = await emulator();
   const info = emu.siteInfo;
   const consumed = new Set();
+  let serving = false;
   try {
     if (cmd === 'invoke') {
       const fnKey = positional[0];
@@ -200,7 +232,7 @@ async function main() {
         if (!payload) throw new Error('a consumer needs --payload <file> (the pushed event body)');
         r = await emu.invoke(fnKey, { moduleKey: use.key, event: { body: payload, queueName: use.module.queue, jobId: 'dev-job', eventId: 'dev-job#0' }, asUser: opt('as') });
       } else if (use.type === 'action') {
-        r = await emu.invokeAction(use.key, payload ?? {}, { asUser: opt('as') });
+        r = await emu.invokeAction(use.key, payload ?? {}, { asUser: opt('as') ?? info.viewer }); // Rovo actions are user-led
       } else {
         if (!payload) throw new Error(`a ${use.type} function needs --payload <file> (its event); for live issue updates use \`events\``);
         r = await emu.invoke(fnKey, { moduleKey: use.key, event: payload, asUser: opt('as') });
@@ -250,8 +282,13 @@ async function main() {
       const found = key && emu.moduleByKey(key);
       if (!found) throw new Error(`serve <moduleKey>: no module '${key}'`);
       const edit = flag('edit');
+      // Widget config persists like a dashboard's: a Save in an edit surface is stored in .forge-dev/state.json and
+      // later `serve` runs of the widget open with it. --config overrides it for this run; `reset` clears it.
       const stored = (await withLock(async () => loadState())).widgetConfigs?.['dev-widget'];
-      const config = opt('config') ? JSON.parse(opt('config')) : stored ?? null;
+      let config = stored ?? null;
+      if (opt('config') !== undefined) {
+        try { config = JSON.parse(opt('config')); } catch (e) { throw new Error(`--config is not valid JSON: ${e.message}`); }
+      }
       const extension = devExtension(info, found.type, { sprint: opt('sprint'), config, edit });
       const { url } = await emu.serveDev({ moduleKey: key, entry: edit ? 'edit' : 'view', theme: opt('theme') ?? 'light', asUser: opt('as') ?? info.viewer, extension,
         widgetId: 'dev-widget', layout: { width: Number(opt('width') ?? 800), height: Number(opt('height') ?? 600) } });
@@ -261,10 +298,18 @@ async function main() {
       fs.writeFileSync(path.join(stateDir, `serve.${process.pid}.json`), record);
       console.log(url);
       console.log(`serving ${key} (${edit ? 'edit' : 'view'}) as ${opt('as') ?? info.viewer}; stop with: kill ${process.pid}`);
+      if (found.type === 'dashboards:widget') {
+        const source = opt('config') !== undefined ? '--config' : stored !== undefined ? 'stored by an earlier Save (.forge-dev/state.json; --config overrides, `reset` clears)' : 'none stored';
+        console.log(`widget config: ${JSON.stringify(config)} (${source})`);
+      }
+      serving = true;
       let lastLog = 0;
       let savedConfigs = '{}';
       const tick = setInterval(async () => {
-        for (const b of emu.bridgeLog.slice(lastLog)) console.log(`bridge ${b.op}${b.payload?.functionKey ? ` ${b.payload.functionKey}` : ''}${b.error ? ` ERROR ${b.error}` : ''}`);
+        for (const b of emu.bridgeLog.slice(lastLog)) {
+          const detail = b.payload?.functionKey ? ` ${b.payload.functionKey}` : ['navigate', 'open'].includes(b.op) ? ` ${JSON.stringify(b.payload)}${b.url ? ` -> ${b.url}` : ''}` : '';
+          console.log(`bridge ${b.op}${detail}${b.error ? ` ERROR ${b.error}` : ''}`);
+        }
         lastLog = emu.bridgeLog.length;
         const configs = JSON.stringify(emu.widgetConfigs());
         if (configs !== savedConfigs) {
@@ -284,7 +329,7 @@ async function main() {
     }
     throw new Error(`unknown command '${cmd}'\n${USAGE}`);
   } finally {
-    if (cmd !== 'serve') await emu.close();
+    if (!serving) await emu.close();
   }
 }
 

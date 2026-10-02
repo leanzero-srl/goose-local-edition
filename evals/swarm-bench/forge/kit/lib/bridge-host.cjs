@@ -124,6 +124,10 @@ function serve(emu, req, res) {
     });
     return;
   }
+  // A surface opened as a top-level page (the dev URL, the scorer's browser) makes the browser ask for the
+  // origin's /favicon.ico; a 404 there is a console error that is not the app's. In production the surface is
+  // an iframe and asks for none. 204: no icon, no error.
+  if (p === '/favicon.ico') { res.writeHead(204, { 'cache-control': 'max-age=86400' }); return res.end(); }
   if (p === '/' || p === '') {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     return res.end(`<!doctype html><title>forge-dev host</title><ul>${[...h.surfaces.values()].filter((s) => s.dev).map((s) => `<li><a href="${s.url}">${s.moduleKey} ${s.entry}</a></li>`).join('')}</ul>`);
@@ -164,6 +168,10 @@ function urlFor(emu, location) {
 async function answer(emu, s, op, payload) {
   const h = hostState(emu);
   const entry = { surfaceId: s.id, moduleKey: s.moduleKey, entry: s.entry, op, payload, t: new Date(emu.clock.now()).toISOString(), initiator: s.dev ? 'dev' : 'page' };
+  if (op === 'navigate' || op === 'open') {
+    const loc = payload?.location ?? payload?.url ?? payload;
+    entry.url = typeof loc === 'string' ? new URL(loc, emu.siteInfo.siteUrl).toString() : urlFor(emu, loc);
+  }
   emu.bridgeLog.push(entry);
   try {
     let value;

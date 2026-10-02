@@ -148,3 +148,46 @@ test('lint: staged like forge lint — runtime stage, handler rule, clean app co
   assert.strictEqual(rh.stageReached, 'ModulesValidator');
   assert.ok(rh.problems.some((p) => p.sev === 'error' && /'src\/index.probe' cannot find associated file/.test(p.message)), JSON.stringify(rh.problems));
 });
+
+test('Rovo action: the user arrives in both documented places, through the real wrapper', { timeout: 120_000 }, async () => {
+  ensureKit();
+  const { createSite } = require(path.join(FORGE, 'site', 'site.cjs'));
+  const { createEmulator } = require(path.join(FORGE, 'kit', 'lib', 'emulator.cjs'));
+  const appDir = path.join(scratch('rovo'), 'app');
+  fs.mkdirSync(path.join(appDir, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(appDir, 'src', 'index.js'), 'export const act = async (payload, context) => ({ payload, principal: context.principal ?? null, keys: Object.keys(context).sort() });\n');
+  fs.writeFileSync(path.join(appDir, 'manifest.yml'), `modules:
+  action:
+    - key: get-thing
+      name: Get thing
+      function: act
+      actionVerb: GET
+      description: Returns a thing.
+      inputs:
+        thingId:
+          title: Thing id
+          type: string
+          required: true
+          description: The id.
+  function:
+    - key: act
+      handler: index.act
+app:
+  id: ${APP_ID}
+  runtime:
+    name: nodejs22.x
+`);
+  const site = await createSite({ seed: '0123456789abcdef' });
+  const emu = await createEmulator({ appDir, site, runtime: 'wrapper' });
+  try {
+    const viewer = site.pack.viewer;
+    const r = await emu.invokeAction('get-thing', { thingId: '7' }, { asUser: viewer });
+    assert.ok(r.ok, JSON.stringify(r.error));
+    assert.deepStrictEqual(r.result.payload, { thingId: '7', context: { cloudId: site.pack.cloudId, moduleKey: 'get-thing', accountId: viewer } });
+    assert.deepStrictEqual(r.result.principal, { accountId: viewer });
+    assert.ok(r.result.keys.includes('installContext'), JSON.stringify(r.result.keys));
+  } finally {
+    await emu.close();
+    await site.stop();
+  }
+});

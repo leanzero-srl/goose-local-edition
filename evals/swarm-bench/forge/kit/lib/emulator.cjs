@@ -357,7 +357,14 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     const m = modules('action').find((x) => x.key === actionKey);
     if (!m) return { ok: false, error: errorOf({ errorType: 'EmulatorError', errorMessage: `no action '${actionKey}' in the manifest` }), calls: [] };
     if (!m.function) return { ok: false, error: errorOf({ errorType: 'EmulatorError', errorMessage: `action '${actionKey}' has no function` }), calls: [] };
-    return invokeFunction(m.function, { moduleKey: actionKey, moduleType: 'action', asUser, event: { ...inputs, context: { cloudId: info.cloudId, moduleKey: actionKey } } });
+    // developer.atlassian.com/platform/forge/manifest-reference/modules/rovo-action (fetched 2026-10-02): "the payload
+    // will also include a context object with relevant Atlassian app identifiers ... The context contains the user's
+    // accountId", with examples carrying {cloudId, moduleKey, jira|confluence}. function-reference/arguments: the
+    // second argument's `principal.accountId` is "the Atlassian ID of the user that interacted with the component"
+    // (the wrapper builds it from the invocation's aaid). Both documented places carry the user; neither was
+    // measured on a live Rovo invocation.
+    const context = { cloudId: info.cloudId, moduleKey: actionKey, ...(asUser ? { accountId: asUser } : {}) };
+    return invokeFunction(m.function, { moduleKey: actionKey, moduleType: 'action', asUser, event: { ...inputs, context } });
   }
 
   async function invokeResolver(moduleKey, functionKey, payload, context, asUser) {

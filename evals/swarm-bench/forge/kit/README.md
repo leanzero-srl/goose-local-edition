@@ -58,8 +58,17 @@ Scopes are checked per operation (OAuth2 scopes; a mismatch is the measured 401)
 ## Dev tools
 
 `bin/lint.cjs [--json] [appDir]` runs `@forge/lint` + the manifest's FullValidationProcessor offline and
-reports the stage it reached. `bin/forge-dev.cjs` is the entrant's CLI (STARTER.md); its state lives in
-`.forge-dev/` under a lock so several processes can share a workspace.
+reports the stage it reached. It needs all six files in `openapi/` (`@forge/lint`'s LOCAL_*_SWAGGER
+copies); the site models `jira.json` and `jsw.json` (Jira Software).
+
+`bin/forge-dev.cjs` is the entrant's CLI (STARTER.md, `--help`). `FORGE_SITE_URL` is
+`http://admin:<control token>@127.0.0.1:<port>`: the token is the URL password (`forge_site.serve()` and
+`createSite()` print/return it as `url` with credentials and `adminUrl`). Its state lives in
+`.forge-dev/state.json`, shared by every forge-dev process in the workspace under a pid lock (a dead
+holder's lock is taken over by atomic rename; a corrupt state file is an error, never an empty
+substitute). It holds dev KVS, pending queue events and saved widget configs: a widget Save persists
+across `serve` runs as on a dashboard, `--config` overrides it for one run, `reset` clears all of it.
+Every `invoke` writes the full result to `.forge-dev/last-result.json` (the terminal shows 4,000 chars).
 
 ## Deliberate deviations from Jira Cloud
 
@@ -69,7 +78,12 @@ reports the stage it reached. `bin/forge-dev.cjs` is the entrant's CLI (STARTER.
    to `node --permission` (file reads to the bundle, no child processes, network NOT fenced) and says so.
    Only `fence: 'dev-auto'` (forge-dev) allows that; the default fence REFUSES when sandbox-exec cannot
    apply, so scoring never runs app code unfenced.
-3. KVS codes no docs page names (409 `CONDITIONAL_CHECK_FAILED`, `MAX_BATCH_SIZE`, `TOO_MANY_OPERATIONS`,
+3. Keys Jira Cloud answers beyond the OpenAPI text stay where measured (sprint `createdDate`, issue
+   bulkfetch `expand`); the deprecated agile sprint-issue list answers the agile page although its doc
+   example is a single issue. Paging follows each operation's documented parameters (token vs offset).
+4. Rovo actions get the user in both documented places: `payload.context.accountId` (rovo-action page) and
+   the second argument's `principal.accountId` (function arguments page). Not measured on a live Rovo call.
+5. KVS codes no docs page names (409 `CONDITIONAL_CHECK_FAILED`, `MAX_BATCH_SIZE`, `TOO_MANY_OPERATIONS`,
    `DUPLICATE_KEY`, ...) are listed in `lib/kvs.cjs`.
 
 ## Tests

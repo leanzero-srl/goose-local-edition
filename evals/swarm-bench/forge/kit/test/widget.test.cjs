@@ -138,6 +138,9 @@ test('dashboards host: hooks events, Save semantics, independent instances, live
     const view1b = await open({ moduleKey: 'widget-a', entry: 'view', widgetId: 'w1' });
     await text(view1b, '#cfg', '{"n":2}');
 
+    // Top-level surface pages ask their origin for /favicon.ico in a headed browser: 204, never a console 404.
+    const fav = await fetch(new URL('/favicon.ico', view1.url()));
+    assert.strictEqual(fav.status, 204);
     assert.deepStrictEqual(errors, []);
     assert.deepStrictEqual(emu.cspReports(), []);
     assert.deepStrictEqual(emu.harnessMissing, []);
