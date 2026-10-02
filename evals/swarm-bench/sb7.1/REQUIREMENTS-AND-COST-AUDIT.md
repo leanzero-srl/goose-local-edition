@@ -139,3 +139,16 @@ Astra figure — a reasoning-heavy frontier trajectory moves it most.
   witness is armed unbrushed and the stream is still measured; hermetic score **0.699** (inner 0.9125,
   crit ×0.867). Also fixed: idle SSE head lost its content type; vendor crash on a duplicate of an undelivered
   event. Golden reference unchanged at 0.994.
+- Run 6 (`cloud-c605215d`, **3.0.86** — every fix above installed; pinned DeepSeek host): billed **$0.6241**
+  (the DeepSeek host doubles its price 01:00–04:00 UTC; launched 03:24), 140 requests, 28.8M prompt (99% cached),
+  clean handoff with its own test processes stopped, 0 resends needed, 0 processes reaped. Repriced Astra
+  $46.4 / Fable $26.0. **In-app 0.4993 vs hermetic 0.5051** — parity within timing noise (only the stream-
+  latency rungs differ, 157 ms hermetic). Low score is earned: the overview field renders nearly black
+  (s_visible_surface 0 → ceiling 0.599, t_height_pixels 0/6) and the approval flow is dead (critical ×0.6).
+- **Variance:** the same model on the same host scored 0.799 (run 4) and 0.505 (run 6). One run per model is a
+  noisy sample; budget for it.
+
+### Cost summary for the frontier campaign (OpenRouter, fixed goose)
+Five measured DeepSeek trajectories repriced at list prices: GPT-6 Astra **$24–53**, Fable 5.1 **$15–27** per
+SB7.1 build (scoring costs no tokens). Astra's $1/M cache-read price makes it the one that can cross $50 on a
+long, chatty trajectory; a deliberate compaction point (128k–262k) would cut that shape to ~$39–45.
