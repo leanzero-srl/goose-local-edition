@@ -365,6 +365,13 @@ async function main() {
   // After every timed measurement: serialising the clip never overlaps grading.
   if (recording) obs.media = await assembleRecording();
   obs.comments = commentAttempts(pack);
+  // Forge LLM and Realtime logs live on the site (kit README): every prompt/answer, every publish and subscription.
+  await section('logs', async () => {
+    const llm = await emu.llm?.log(0);
+    obs.llm = { entries: llm?.entries ?? [], models: llm?.models ?? [] };
+    const rt = await emu.realtime?.log(0);
+    obs.realtime = { events: rt?.events ?? [], subscriptions: rt?.subscriptions ?? [] };
+  });
   obs.harnessMissing = [...new Set([...(emu.harnessMissing || []).map((x) => (typeof x === 'string' ? x : JSON.stringify(x)))])];
 }
 
@@ -564,6 +571,7 @@ async function probeUi(pack) {
     await s.page.close();
     let stored = null;
     const configs = {};
+    let liveDone = false;
     for (const board of scrum) {
       const e = await openSurface({ moduleKey: widget.key, entry: 'edit', theme: 'light', width: 600, height: 420, asUser: viewer, extension: { ...ctx('w1', stored), entryPoint: 'edit' } });
       await finishSurface(e, { id: `widget-edit-${board}-light`, kind: 'widget-edit', theme: 'light', width: 600 }, '[data-testid="board-option"]');
@@ -585,14 +593,18 @@ async function probeUi(pack) {
       }
       await e.page.close();
       for (const theme of ['light', 'dark']) {
-        for (const width of [380, 1180]) {
+        for (const width of [380]) {   // DESIGN 2006de559 §17.2 E: the widget is graded at 380 px only
           const v = await openSurface({ moduleKey: widget.key, entry: 'view', theme, width, height: 480, asUser: viewer, extension: ctx('w1', stored) });
           await finishSurface(v, { id: `widget-view-${board}-${theme}-${width}x480`, kind: 'widget-view', theme, width }, '[data-testid="sprint"], [data-testid="needs-config"]');
           const sprints = await widgetMetrics(v.page);
           const surf = obs.ui.surfaces[obs.ui.surfaces.length - 1];
-          obs.ui.widget.views.push({ board, theme, width, sprints: sprints.map(({ id, metrics }) => ({ id, metrics })),
+          obs.ui.widget.views.push({ board, theme, width, afterLive: liveDone, sprints: sprints.map(({ id, metrics }) => ({ id, metrics })),
             chart: await chartOf(v.page), overflow: surf.overflow, sprintsVisible: sprints.length > 0 && sprints.every((x) => x.visible) });
           if (theme === 'light' && width === 380) pick.viewSprints = sprints.map((x) => x.id);
+          if (theme === 'light' && !liveDone) {
+            obs.ui.live = await liveStep(v, board, pack);   // the live-UI slot, with this view open (§8.7 step 8)
+            liveDone = true;
+          }
           await v.page.close();
         }
       }
@@ -689,9 +701,9 @@ async function exerciseModal(s, sid, forbidden, reopen) {
     await sleep(200);
     out.sortAt.push({ rows: (await tableRows(page)).map((r) => r.changeId), ariaSort: await ariaSort(page) });
   }
-  await page.locator('th[data-col="points"]').first().click().catch(() => {});
+
   await sleep(200);
-  out.sortPoints = { rows: (await tableRows(page)).map((r) => r.changeId), ariaSort: await ariaSort(page) };
+
   // router: the first row's issue key
   const first = out.rows[0];
   const before = bridgeOps(s).length;
@@ -737,6 +749,7 @@ async function exerciseModal(s, sid, forbidden, reopen) {
         sortWorksAfter: orderAfter.length === orderBefore.length && orderAfter.join() !== orderBefore.join() };
     }
   }
+  if (!obs.ui.explain && rows.length) obs.ui.explain = await explainSteps(post, sid);
   const o1 = bridgeOps(post).length;
   await post.page.locator('[data-testid="close"]').first().click().catch(() => {});
   await sleep(200);
@@ -796,6 +809,72 @@ async function assembleRecording() {
   const manifest = join(mediaDir, 'media-manifest.json');
   writeFileSync(manifest, JSON.stringify(media, null, 2) + '\n');
   return { manifest: relative(dirname(mediaDir), manifest), ...media };
+}
+
+
+// The live-UI slot (DESIGN §5.2/§8.7 step 8): with the widget open, watch it idle (polling would invoke), then deliver
+// the two held-back live changes and drain, then read whether the open widget shows the new numbers without a reload.
+// policy: an idle window longer than the "every few seconds" polling the m_rt_poll_instead mutant does (DESIGN §13.5).
+const LIVE_IDLE_MS = 8000;
+// policy: how long the open widget has to show the new numbers after the drain (one realtime round trip).
+const LIVE_SETTLE_MS = 15000;
+async function liveStep(s, board, pack) {
+  const changes = pack.live.filter((e) => e.delivery?.liveUi);
+  if (!changes.length) return { absent: 'the pack carries no live-UI changes (delivery.liveUi, DESIGN §5.2)' };
+  let navigations = 0;
+  s.page.on('framenavigated', (f) => { if (f === s.page.mainFrame()) navigations += 1; });
+  const ops0 = bridgeOps(s).length;
+  await sleep(LIVE_IDLE_MS);
+  const idle = bridgeOps(s).slice(ops0);
+  const before = await widgetMetrics(s.page);
+  for (const change of changes) {
+    await emu.deliverProductEvent(change);
+    await emu.drainQueues();
+  }
+  const want = JSON.stringify(before.map((x) => x.metrics));
+  const deadline = Date.now() + LIVE_SETTLE_MS;
+  let after = before;
+  while (Date.now() < deadline) {
+    after = await widgetMetrics(s.page);
+    if (JSON.stringify(after.map((x) => x.metrics)) !== want) break;
+    await sleep(250);
+  }
+  await sleep(500);
+  after = await widgetMetrics(s.page);
+  const ops = bridgeOps(s);
+  return { board, subscribed: ops.some((b) => opName(b) === 'subscribeRealtimeChannel'),
+    idleInvokes: idle.filter((b) => ['invoke', 'fetchProduct'].includes(opName(b))).length, idleMs: LIVE_IDLE_MS,
+    reloaded: navigations > 0, delivered: changes.map((c) => c.changelogId),
+    sprintsBefore: before.map(({ id, metrics }) => ({ id, metrics })), sprintsAfter: after.map(({ id, metrics }) => ({ id, metrics })) };
+}
+
+// The five scripted explain answers (site/llm.cjs SCRIPT: clean, digits, refusal, malformed, error), in order.
+async function explainSteps(s, sid) {
+  const button = s.page.locator('[data-testid="explain"]').first();
+  if (!(await button.count())) return { sprintId: sid, steps: [], absent: 'no [data-testid="explain"] control' };
+  await emu.llm.phase(`explain-${sid}`);
+  const steps = [];
+  for (let i = 0; i < 5; i += 1) {
+    const since = (await emu.llm.log(0)).next;
+    const o0 = bridgeOps(s).length;
+    await button.click().catch(() => {});
+    await settle(s);
+    const fresh = ((await emu.llm.log(since)).entries || []).filter((e) => e.op === 'chat' || e.op === 'stream');
+    const shown = await s.page.evaluate(() => {
+      const box = document.querySelector('[data-testid="explanation"]');
+      return { text: box ? box.textContent.trim() : '', ids: box ? [...box.querySelectorAll('[data-change-id]')].map((e) => e.getAttribute('data-change-id')) : [] };
+    });
+    const orderBefore = (await tableRows(s.page)).map((r) => r.changeId);
+    await s.page.locator('th[data-col="at"]').first().click().catch(() => {});
+    await sleep(200);
+    const orderAfter = (await tableRows(s.page)).map((r) => r.changeId);
+    await s.page.locator('th[data-col="at"]').first().click().catch(() => {});   // back to the default order
+    await sleep(200);
+    steps.push({ step: fresh[0]?.step ?? null, llmCalls: fresh.length, llm: fresh[0] ?? null, explanation: shown.text,
+      idsShown: shown.ids, ...flagCounts(bridgeOps(s).slice(o0)),
+      sortWorksAfter: orderAfter.length === orderBefore.length && orderAfter.length > 1 ? orderAfter.join() !== orderBefore.join() : orderAfter.length > 0 });
+  }
+  return { sprintId: sid, steps };
 }
 
 async function contactSheet() {
