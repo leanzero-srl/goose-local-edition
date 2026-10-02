@@ -8,7 +8,8 @@ installed packages; `node_modules/` already contains them and nothing else can b
 
 **Installed packages** (their typings and sources are your API reference): `@forge/api` 8.2.0,
 `@forge/kvs` 2.0.7, `@forge/events` 3.0.7, `@forge/resolver` 2.0.0, `@forge/bridge` 7.1.0,
-`@forge/dashboards-bridge` 2.0.0, `@forge/hooks` 2.0.0, `react` and `react-dom` 18.3.1, `esbuild`
+`@forge/dashboards-bridge` 2.0.0, `@forge/hooks` 2.0.0, `@forge/llm` 1.0.7, `@forge/realtime`
+1.0.1, `react` and `react-dom` 18.3.1, `esbuild`
 0.28.2.
 
 **Reference material** under `$FORGE_KIT` (read-only): `schema/manifest-schema.json` (the Forge
@@ -22,7 +23,8 @@ pagination, errors and rate limits; dates are ISO-8601 strings as the OpenAPI ty
 fields `project`, `key`, `sprint`, `updated`, `created`, `status`, `statusCategory`, `issuetype`,
 `labels`, `assignee`, `reporter`, `cf[id]`; operators `= != in not in > >= < <= is is not ~`,
 `AND OR NOT`, parentheses, `ORDER BY`; functions `openSprints()`, `closedSprints()`,
-`futureSprints()`, `currentUser()`, `now()`, `startOfDay()`; relative dates like `-14d`. You
+`futureSprints()`, `currentUser()`, `now()`, `startOfDay()`; relative dates like `-14d`. Forge LLM answers with a
+scripted model on the dev site. You
 never call the site directly; your app reaches it through the Forge runtime.
 
 **Tools** (`npm run lint` and `node $FORGE_KIT/bin/forge-dev.cjs <command>`):

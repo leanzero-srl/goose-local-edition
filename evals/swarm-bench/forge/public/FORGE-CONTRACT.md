@@ -43,6 +43,8 @@ everyone.
 | `action` | Rovo action `get-sprint-scope` (§6) |
 | `rovo:skill` | `skills/sprint-scope-analyst/`, depends on `get-sprint-scope` (§6) |
 | `rovo:agent` | lists the skill |
+| `rovo:mcp` | one module, `name` at most 30 characters, exposing `get-sprint-scope` |
+| `llm` | Forge LLM (`model: [claude]`), for the sprint action's explanation (§5) |
 
 Resolvers use `@forge/resolver`. Storage is Forge KVS: ledger changes live in a **custom entity
 indexed by sprint (partition) and change time (range)**, and are read back through that index.
@@ -87,8 +89,11 @@ configuration in its context, so two widgets on one dashboard can show different
 - A bar chart: one `<svg data-testid="chart">`; per sprint and per series one
   `<rect data-sprint-id data-series="committed|added|removed">`; every bar on one linear scale
   from 0 (rendered height proportional to its number within 1 px).
-- Uses the widget's width: from 380 to 1180 px nothing scrolls horizontally and no number is
-  clipped or truncated (long names may end in an ellipsis).
+- At 380 px wide nothing scrolls horizontally and no number is clipped or truncated (long
+  names may end in an ellipsis).
+- Live: after ledger rows are written, an open widget shows the new numbers without a reload,
+  through Forge Realtime (`@forge/realtime` in the backend, the bridge's realtime subscribe in the
+  widget) — no polling. Realtime payloads carry sprint ids only.
 
 ## 5. Sprint action (modal)
 
@@ -105,14 +110,20 @@ Otherwise:
   `event`/`reconcile`.
 - Default order: `at` ascending, equal times by changelog id ascending (ids compare as numbers).
   Clicking `th[data-col="at"]` toggles between that order and its exact reverse, starting with
-  ascending when another sort was active. Clicking `th[data-col="points"]` sorts by points
-  descending, ties in default order. The active header carries `aria-sort`.
+  ascending when another sort was active. The active header carries `aria-sort`.
 - The issue key opens the issue (`/browse/<KEY>`) through the Forge router.
 - Clicking a row selects it (`aria-selected="true"`). `[data-testid="post-summary"]` posts one
   comment on the selected change's issue, authored by the viewer, in Atlassian Document Format,
-  naming the issue key, the sprint name and the sprint's creep; then a success flag. On `429`
-  (`Retry-After` at most 5 s on this path), retry after it: each click (or double click) ends
-  with exactly one comment and one success flag. Any other failure shows an error flag and leaves the modal working.
+  naming the issue key, the sprint name and the sprint's creep; then a success flag. One click,
+  or a double click, posts exactly one comment. A failure shows an error flag and leaves the
+  modal working.
+- `[data-testid="explain"]` asks Forge LLM (`@forge/llm`) to explain the sprint's creep, using a
+  model that `list()` reports `active`. The model must answer through one tool, `report_scope`,
+  arguments `{ "summary": string, "changeIds": string[] }` (force it with `tool_choice`); send it
+  only what the viewer may see. `[data-testid="explanation"]` shows the summary only if it holds
+  no digits (otherwise your own sentence with the ledger's numbers), plus one `[data-change-id]`
+  element per returned id that is a visible change of this sprint (others dropped). A refusal (no
+  tool call), malformed arguments or an LLM error shows an error flag and leaves the modal working.
 - `[data-testid="close"]` closes the modal.
 
 ## 6. Rovo

@@ -21,11 +21,12 @@ else is scored:
 4. Issue updates flow trigger → queue → consumer into the KVS entity: exactly one row per change
    under duplicates, reordering and loss; estimate changes move the numbers (§3).
 5. Later scheduled runs heal what the event stream missed and change nothing otherwise (§3).
-6. The widget: board choice through the dashboards edit API, correct numbers, chart (§4).
+6. The widget: board choice through the dashboards edit API, correct numbers, chart, live
+   updates through Forge Realtime (§4).
 7. The sprint action: ledger table, sorting, router links, hidden count, one ADF comment per
-   click as the viewer, flags, close (§5).
+   click as the viewer, flags, close, and the Forge LLM explanation (§5).
 8. Nobody sees changes to issues they cannot browse (§1, §5, §6).
-9. The Rovo action answers exactly; the skill and agent are wired and valid (§6).
+9. The Rovo action answers exactly; the skill, agent and MCP server are wired and valid (§2, §6).
 10. Every surface works in light and dark, inside the Custom UI security policy, with a clean
     console (§7).
 
@@ -38,8 +39,8 @@ Tests earn the score. Conditions also cap it:
   maximum 0.699.
 - Missing current-platform surfaces (dashboards widget and its edit API, Rovo skill, sprint
   action table, Rovo action) or a surface broken in light or dark: maximum 0.799.
-- Any duplicate, ordering, rate-limit, pagination, permission, policy or console defect:
-  maximum 0.899.
+- Any duplicate, ordering, rate-limit, pagination, permission, policy, console, LLM or realtime
+  defect: maximum 0.899, minus 0.03 for each further such defect (never below 0.799).
 
 Lint warnings cost points but never cap. A small excellence share rewards few Jira requests and
 rendering each surface in few round trips. The harness keeps screenshots of every surface.
