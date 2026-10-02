@@ -329,6 +329,20 @@ def _deliver(st: State, ev: Dict) -> Dict:
         st.record(_base_rec({"sched-partial": sched, "event": ev.get("event_id"),
                              "reason": "no_webhook_registered"}))
         return out
+    if ev["kind"] == "duplicate":
+        with st.lock:
+            original_sent = ev["event_id"] in st.sent_events
+        if not original_sent:
+            # The original reached no webhook (registered later, or cleared by a reset), so there
+            # are no recorded bytes to repeat. This was a KeyError that killed the list request it
+            # rode on — a dropped connection the schedule never declared.
+            out = {"event_id": ev.get("event_id"), "kind": ev.get("kind"), "status": None,
+                   "error": "duplicate_of_undelivered_original", "ms": 0.0, "sched": sched}
+            with st.lock:
+                st.deliveries.append(out)
+            st.record(_base_rec({"sched-partial": sched, "event": ev.get("event_id"),
+                                 "reason": "duplicate_of_undelivered_original"}))
+            return out
     raw, sig = _build_delivery(st, ev)
     status, err = None, None
     t0 = time.time()

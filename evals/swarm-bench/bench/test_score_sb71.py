@@ -396,5 +396,46 @@ class ConservationEvidenceTests(unittest.TestCase):
             if reader.is_alive(): reader.finish()
             server.shutdown(); serving.join(); server.server_close()
 
+
+class VendorDuplicateTests(unittest.TestCase):
+    def deliver(self, sent_events):
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        bodies = []
+        class Hook(BaseHTTPRequestHandler):
+            def do_POST(self):
+                bodies.append(self.rfile.read(int(self.headers['Content-Length'])))
+                self.send_response(200)
+                self.end_headers()
+            def log_message(self, *_):
+                pass
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Hook)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        records = []
+        st = SimpleNamespace(lock=threading.Lock(), deliveries=[], sent_events=sent_events, record=records.append,
+                             webhook={'url': f'http://127.0.0.1:{server.server_port}/hook', 'secret': 'whsec'})
+        try:
+            out = score.vendor._deliver(st, {'kind': 'duplicate', 'event_id': 'evt_0001', 'sched': 'dup_event', 'page': 109})
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+        return out, records, bodies
+
+    def test_duplicate_of_an_undelivered_original_is_a_named_partial_not_a_crash(self):
+        # Run 01dae737: evt_0001 met no webhook at page 41; its scheduled duplicate at page 109
+        # raised KeyError inside the list request it rode on.
+        out, records, bodies = self.deliver({})
+        self.assertEqual(out['error'], 'duplicate_of_undelivered_original')
+        self.assertEqual(bodies, [])
+        self.assertEqual(records, [{'method': '-', 'path': '-', 'status': 0, 'query': {}, 'sched-partial': 'dup_event',
+                                    'event': 'evt_0001', 'reason': 'duplicate_of_undelivered_original'}])
+
+    def test_duplicate_of_a_delivered_original_repeats_its_exact_bytes(self):
+        out, records, bodies = self.deliver({'evt_0001': {'raw': b'{"id": "evt_0001"}', 'sig': 't=1,v1=ab'}})
+        self.assertEqual(out['status'], 200)
+        self.assertEqual(bodies, [b'{"id": "evt_0001"}'])
+
 if __name__ == '__main__':
     unittest.main()
