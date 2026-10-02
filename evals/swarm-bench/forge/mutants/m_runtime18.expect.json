@@ -1,0 +1,8 @@
+{
+  "loses": [
+    "l_deployable"
+  ],
+  "critical": false,
+  "max_final": 0.499,
+  "why": "nodejs18.x is outside the manifest runtime enum: a lint ERROR (measured, RESEARCH \u00a71), so the lint band caps the run at 0.499."
+}

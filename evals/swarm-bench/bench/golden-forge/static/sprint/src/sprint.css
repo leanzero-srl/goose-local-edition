@@ -118,3 +118,7 @@
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
+
+.button.busy {
+  cursor: progress;
+}

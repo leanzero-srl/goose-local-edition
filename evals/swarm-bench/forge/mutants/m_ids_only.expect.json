@@ -1,0 +1,10 @@
+{
+  "loses": [
+    "r_backfill_complete",
+    "u_widget_numbers",
+    "a_action_result"
+  ],
+  "critical": true,
+  "max_final": 0.699,
+  "why": "/search/jql without `fields` returns ids only: the backfill still finds every changelog (bulkfetch by id) but sees no current sprint and no estimate, so membership and every committed/added/removed number after the backfill is wrong (\"backfill rows/numbers\")."
+}

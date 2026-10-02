@@ -1,0 +1,13 @@
+diff --git a/src/ledger.js b/src/ledger.js
+index 800a816..df15b6d 100644
+--- a/src/ledger.js
++++ b/src/ledger.js
+@@ -103,7 +103,7 @@ export async function visibleIssues(issueIds, policy) {
+   const visible = new Map();
+   const ids = [...new Set(issueIds)];
+   for (let i = 0; i < ids.length; i += 100) {
+-    const page = await jiraJson('user', route`/rest/api/3/issue/bulkfetch`, postJson({ issueIdsOrKeys: ids.slice(i, i + 100), fields: ['key'] }), policy);
++    const page = await jiraJson('app', route`/rest/api/3/issue/bulkfetch`, postJson({ issueIdsOrKeys: ids.slice(i, i + 100), fields: ['key'] }), policy);
+     for (const issue of page.issues ?? []) visible.set(String(issue.id), issue.key);
+   }
+   return visible;

@@ -23,6 +23,6 @@ for (const name of ['widget', 'widget-edit', 'sprint']) {
     define: { 'process.env.NODE_ENV': '"production"' },
     logLevel: 'warning',
   });
-  copyFileSync(join(root, 'static', 'shared', 'index.html'), join(out, 'index.html'));
+  copyFileSync(join(root, 'static', name, 'index.html'), join(out, 'index.html'));
 }
 console.log('built static/{widget,widget-edit,sprint}/build');

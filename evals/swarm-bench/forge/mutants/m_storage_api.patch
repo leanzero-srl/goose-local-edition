@@ -1,0 +1,24 @@
+diff --git a/src/config.js b/src/config.js
+index 8893648..71c83e5 100644
+--- a/src/config.js
++++ b/src/config.js
+@@ -1,4 +1,4 @@
+-import { kvs } from '@forge/kvs';
++import { storage } from '@forge/api';
+ import { jiraJson, route } from './jira';
+ 
+ const CONFIG_KEY = 'config';
+@@ -7,11 +7,11 @@ const SPRINT_FIELD_TYPE = 'com.pyxis.greenhopper.jira:gh-sprint';
+ // config = { sprintFieldId, sprints: { [sprintId]: { id, name, startDate, startMs, boardId, estimateFieldId } } }
+ // holding the ACTIVE sprints only. Written by the scheduled run, extended by the consumer when an event
+ // names an active sprint it has not seen yet.
+-export const loadConfig = () => kvs.get(CONFIG_KEY);
++export const loadConfig = () => storage.get(CONFIG_KEY);
+ 
+ export async function saveConfig(next, previous) {
+   if (previous && JSON.stringify(previous) === JSON.stringify(next)) return false;
+-  await kvs.set(CONFIG_KEY, next);
++  await storage.set(CONFIG_KEY, next);
+   return true;
+ }
+ 

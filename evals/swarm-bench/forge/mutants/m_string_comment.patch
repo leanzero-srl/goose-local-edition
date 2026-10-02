@@ -1,0 +1,12 @@
+diff --git a/src/views.js b/src/views.js
+index 92c66f2..da1da22 100644
+--- a/src/views.js
++++ b/src/views.js
+@@ -103,6 +103,6 @@ export async function postSummary(sprint, changeId, policy) {
+   if (!visible.has(change.issueId)) return { ok: false, error: 'You cannot browse this issue.' };
+   const issueKey = visible.get(change.issueId);
+   const view = totalsView(totals);
+-  await jiraJson('user', route`/rest/api/3/issue/${change.issueId}/comment`, postJson({ body: summaryDoc(issueKey, sprint.name, view.text.creep, view.text) }), policy);
++  await jiraJson('user', route`/rest/api/3/issue/${change.issueId}/comment`, postJson({ body: `Scope Ledger: ${issueKey} in sprint ${sprint.name}, scope creep ${view.text.creep}` }), policy);
+   return { ok: true, issueKey };
+ }

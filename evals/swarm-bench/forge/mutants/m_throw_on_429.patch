@@ -1,0 +1,17 @@
+diff --git a/src/index.js b/src/index.js
+index af640c2..cc999aa 100644
+--- a/src/index.js
++++ b/src/index.js
+@@ -37,12 +37,6 @@ export async function consumeChange(event) {
+     await saveConfig(cfg, previous);
+     return result;
+   } catch (e) {
+-    if (e instanceof RateLimited) {
+-      return new InvocationError({
+-        retryAfter: Math.min(Math.max(e.retryAfterSeconds, 1), MAX_RETRY_AFTER),
+-        retryReason: InvocationErrorCode.FUNCTION_UPSTREAM_RATE_LIMITED,
+-      });
+-    }
+     throw e;
+   }
+ }

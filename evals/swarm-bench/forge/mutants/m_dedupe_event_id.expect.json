@@ -1,0 +1,8 @@
+{
+  "loses": [
+    "t_no_double_count"
+  ],
+  "critical": true,
+  "max_final": 0.899,
+  "why": "Event rows are deduplicated on the queue eventId, which is new for every delivery of a duplicated product event: the same change lands twice (critical). Duplicate defect band 0.899."
+}

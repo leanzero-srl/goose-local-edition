@@ -1,0 +1,53 @@
+diff --git a/src/index.js b/src/index.js
+index af640c2..1f5f5f0 100644
+--- a/src/index.js
++++ b/src/index.js
+@@ -1,5 +1,6 @@
+ import Resolver from '@forge/resolver';
+ import { Queue, InvocationError, InvocationErrorCode } from '@forge/events';
++import { kvs } from '@forge/kvs';
+ import { RateLimited } from './jira';
+ import { loadConfig, saveConfig, discoverConfig } from './config';
+ import { applyIssueEvent, estimateFieldIds, reconcileAll } from './sync';
+@@ -82,10 +83,15 @@ const contextSprintId = (context) => {
+ 
+ resolver.define('boards', rateLimitedAware(async () => ({ boards: await boardsView(UI_POLICY) })));
+ 
++resolver.define('saveWidgetBoard', async ({ payload }) => {
++  await kvs.set('widget-board', String(payload.boardId));
++  return { ok: true };
++});
++
+ resolver.define(
+   'widget',
+   rateLimitedAware(async ({ payload, context }) => {
+-    const boardId = payload?.boardId ?? context?.extension?.config?.boardId;
++    const boardId = await kvs.get('widget-board');
+     if (boardId === undefined || boardId === null || boardId === '') return { needsConfig: true };
+     return widgetView(String(boardId), UI_POLICY);
+   }),
+diff --git a/static/widget-edit/src/index.jsx b/static/widget-edit/src/index.jsx
+index c8c48d1..eb638a5 100644
+--- a/static/widget-edit/src/index.jsx
++++ b/static/widget-edit/src/index.jsx
+@@ -26,6 +26,7 @@ function Edit({ context }) {
+     selectedRef.current = board.id;
+     setSelected(board.id);
+     widgetEdit.updateConfig({ ...stored, boardId: board.id }).catch((e) => setError(e.message));
++    call('saveWidgetBoard', { boardId: board.id }).catch((e) => setError(e.message));
+   };
+ 
+   return (
+diff --git a/static/widget/src/index.jsx b/static/widget/src/index.jsx
+index 0d4f763..7b32622 100644
+--- a/static/widget/src/index.jsx
++++ b/static/widget/src/index.jsx
+@@ -83,7 +83,7 @@ function Widget({ initialContext }) {
+     if (boardId === undefined || boardId === null || boardId === '') return setState({ phase: 'needs-config' });
+     setState((s) => (s.phase === 'ready' ? s : { phase: 'loading' }));
+     try {
+-      const data = await call('widget', { boardId: String(boardId) });
++      const data = await call('widget', {});
+       if (data.needsConfig) return setState({ phase: 'needs-config' });
+       setState({ phase: 'ready', data });
+     } catch (e) {

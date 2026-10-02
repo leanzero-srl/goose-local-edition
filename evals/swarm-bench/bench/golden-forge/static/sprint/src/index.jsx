@@ -169,8 +169,8 @@ function Ledger({ data, context }) {
       </div>
       <div className="actions">
         <span className="subtle selection">{selectedRow ? `Selected: ${selectedRow.issueKey} (${selectedRow.kind})` : 'Select a change to comment on its issue.'}</span>
-        <button type="button" data-testid="post-summary" className="button primary" aria-busy={posting ? 'true' : 'false'} onClick={post}>
-          {posting ? 'Posting…' : 'Post summary comment'}
+        <button type="button" data-testid="post-summary" className={`button primary${posting ? ' busy' : ''}`} aria-busy={posting ? 'true' : 'false'} onClick={post}>
+          Post summary comment
         </button>
         <button type="button" data-testid="close" className="button" onClick={() => view.close()}>
           Close

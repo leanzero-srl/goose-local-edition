@@ -1,0 +1,10 @@
+{
+  "loses": [
+    "b_no_permission_leak",
+    "b_hidden_count",
+    "a_action_permissions"
+  ],
+  "critical": true,
+  "max_final": 0.899,
+  "why": "The sprint-action resolver and the Rovo action decide visibility as the app: every change is listed to everyone (critical leak) and the hidden count is 0 for people who cannot browse some issues. Permission defect band 0.899."
+}

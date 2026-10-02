@@ -5,7 +5,7 @@
 //   emu.manifest; emu.functions; emu.modules(type);
 //   await emu.build();                       -> { functions: [{key, handler, bundled, loaded, error}], files }
 //   await emu.invoke(fnKey, { moduleKey, event, asUser })   -> {ok, result, error, logs, ms, calls, ...}
-//   await emu.deliverProductEvent(change)    -> the site applies it, every subscribed trigger runs, queues drain
+//   await emu.deliverProductEvent(change)    -> the site applies it, every subscribed trigger runs (no drain)
 //   await emu.drainQueues()                  -> [{eventId, attempt, result, retryAfter, ...}]
 //   await emu.runScheduled(moduleKey)        -> invoke + drain
 //   await emu.invokeAction(actionKey, inputs, { asUser })
@@ -53,6 +53,9 @@ function siteClient(site) {
     },
   };
 }
+
+// Errors carry both the wrapper's {errorType, errorMessage} and the JS {name, message}.
+const errorOf = (e) => (e ? { name: e.name ?? e.errorType ?? 'Error', message: e.message ?? e.errorMessage ?? String(e), errorType: e.errorType ?? e.name ?? 'Error', errorMessage: e.errorMessage ?? e.message ?? String(e) } : null);
 
 function functionUsers(manifest) {
   const users = {};
@@ -210,7 +213,7 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
   async function invokeFunction(fnKey, { moduleKey, moduleType, event, asUser, lineage = {}, source = 'function' } = {}) {
     if (!built) await build();
     const fnDef = functions.find((f) => f.key === fnKey);
-    if (!fnDef) return { ok: false, error: { errorType: 'EmulatorError', errorMessage: `no function '${fnKey}' in the manifest` }, logs: [], ms: 0, calls: [] };
+    if (!fnDef) return { ok: false, error: errorOf({ errorType: 'EmulatorError', errorMessage: `no function '${fnKey}' in the manifest` }), logs: [], ms: 0, calls: [] };
     const status = built.functions.find((f) => f.key === fnKey);
     const user = users[fnKey]?.find((u) => !moduleKey || u.key === moduleKey);
     const mType = moduleType ?? user?.type ?? null;
@@ -221,7 +224,9 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     invocations.set(id, record);
     const timeoutSec = timeoutFor(fnDef, mType);
     if (!status?.loaded) {
-      const out = { ok: false, invocationId: id, error: { errorType: 'FunctionNotLoaded', errorMessage: status?.error ?? 'function did not bundle' }, logs: [], ms: 0, calls: [], timedOut: false };
+      const t = new Date(clock.now()).toISOString();
+      const out = { ok: false, invocationId: id, functionKey: fnKey, moduleType: mType, moduleKey: mKey, t0: t, t1: t,
+        error: errorOf({ errorType: 'FunctionNotLoaded', errorMessage: status?.error ?? 'function did not bundle' }), logs: [], ms: 0, calls: [], timedOut: false };
       onInvocation?.(record, out);
       return out;
     }
@@ -234,15 +239,18 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
         ...(asUser ? { aaid: asUser } : {}), timeout: timeoutSec, featureFlags: [],
       },
     };
+    const t0 = new Date(clock.now()).toISOString();
     const r = await rt.runInvocation({ bundleDir, lambdaEvent, timeoutSec, clockOffsetMs: clockOffset, runtime, fence: fenceMode, proxyPort: proxyAddr.port });
     await syncClock();
+    const t1 = new Date(clock.now()).toISOString();
     const calls = log.filter((c) => c.invocationId === id);
     let out;
-    if (r.timedOut) out = { ok: false, timedOut: true, error: { errorType: 'TimeoutError', errorMessage: `invocation exceeded the ${timeoutSec} s platform timeout` } };
-    else if (r.crash) out = { ok: false, error: { errorType: r.crash.name ?? 'RunnerError', errorMessage: r.crash.message } };
+    if (r.timedOut) out = { ok: false, timedOut: true, error: errorOf({ errorType: 'TimeoutError', errorMessage: `invocation exceeded the ${timeoutSec} s platform timeout` }) };
+    else if (r.crash) out = { ok: false, error: errorOf({ errorType: r.crash.name ?? 'RunnerError', errorMessage: r.crash.message }) };
     else if (r.result?.success) out = { ok: true, result: r.result.body };
-    else out = { ok: false, error: r.result?.error ?? { errorType: 'Unknown', errorMessage: 'no result' } };
-    Object.assign(out, { invocationId: id, functionKey: fnKey, moduleType: mType, moduleKey: mKey, timeoutSec, logs: r.logs, stderr: r.stderr, ms: r.ms, calls, timedOut: Boolean(r.timedOut) });
+    else out = { ok: false, error: errorOf(r.result?.error ?? { errorType: 'Unknown', errorMessage: 'no result' }) };
+    Object.assign(out, { invocationId: id, functionKey: fnKey, moduleType: mType, moduleKey: mKey, asUser: asUser ?? null, t0, t1, timeoutSec,
+      logs: r.logs, stderr: r.stderr, ms: r.ms, calls, timedOut: Boolean(r.timedOut) });
     onInvocation?.(record, out);
     return out;
   }
@@ -257,7 +265,7 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
       const job = queueState.jobs.get(ev.jobId);
       const consumer = consumerFor(ev.queueName);
       if (!consumer) {
-        deliveries.push({ eventId: ev.eventId, queueName: ev.queueName, attempt: ev.attempt, result: 'no_consumer' });
+        deliveries.push({ eventId: ev.eventId, queueName: ev.queueName, attempt: ev.attempt, outcome: 'no_consumer', ok: false, result: null, t: new Date(clock.now()).toISOString() });
         if (job) { job.inProgress -= 1; job.failed += 1; }
         continue;
       }
@@ -269,10 +277,11 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
           retentionWindow: { startTime: new Date(ev.enqueuedAt).toISOString(), remainingTimeMs: Math.max(0, ev.enqueuedAt + RETENTION_MS - clock.now()) } } } : {}),
       };
       const r = await invokeFunction(consumer.function, { moduleKey: consumer.key, moduleType: 'consumer', event: asyncEvent, lineage: ev.lineage });
-      const base = { eventId: ev.eventId, queueName: ev.queueName, attempt: ev.attempt, invocationId: r.invocationId, at: new Date(clock.now()).toISOString(), lineage: ev.lineage };
+      const base = { eventId: ev.eventId, queueName: ev.queueName, attempt: ev.attempt, invocationId: r.invocationId, functionKey: r.functionKey, moduleKey: consumer.key,
+        t: r.t0, t1: r.t1, lineage: ev.lineage, ok: r.ok, result: r.result ?? null, error: r.error ?? null, timedOut: r.timedOut, logs: r.logs };
       const retry = r.ok && r.result && r.result._retry === true;
       if (r.ok && !retry) {
-        deliveries.push({ ...base, result: 'ok' });
+        deliveries.push({ ...base, outcome: 'ok' });
         if (job) { job.inProgress -= 1; job.success += 1; }
         continue;
       }
@@ -288,15 +297,15 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
         waitS = (REDELIVERY_MINUTES[ev.attempt] ?? REDELIVERY_CAP_MINUTES) * 60;
         ev.retryReason = r.timedOut ? 'FUNCTION_TIMEOUT' : 'FUNCTION_ERROR';
         ev.retryData = null;
-        kind = r.timedOut ? 'timeout' : 'error';
+        kind = r.timedOut ? 'timeout' : 'throw';
       }
       const next = clock.now() + waitS * 1000;
       if (next > ev.enqueuedAt + RETENTION_MS) {
-        deliveries.push({ ...base, result: kind, retryAfter: waitS, dropped: 'retention window exceeded' });
+        deliveries.push({ ...base, outcome: kind, retryAfter: waitS, dropped: 'retention window exceeded' });
         if (job) { job.inProgress -= 1; job.failed += 1; }
         continue;
       }
-      deliveries.push({ ...base, result: kind, retryAfter: waitS, error: r.error ?? null });
+      deliveries.push({ ...base, outcome: kind, retryAfter: waitS, redeliverAt: new Date(next).toISOString() });
       queueState.pending.push({ ...ev, attempt: ev.attempt + 1, readyAt: next, seq: queueState.seq++ });
     }
     return deliveries;
@@ -316,8 +325,7 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
       if (t.filter?.ignoreSelf && event.selfGenerated) continue;
       results.push(await invokeFunction(t.function, { moduleKey: t.key, moduleType: 'trigger', event, lineage: { originChange: change.id } }));
     }
-    const deliveries = await drainQueues();
-    return { changelogId: change.id, duplicate: Boolean(delivery.duplicate), triggers: results, deliveries };
+    return { changelogId: change.id, duplicate: Boolean(delivery.duplicate), slot: delivery.slot, event, triggers: results, invocations: results };
   }
 
   async function deliverProductEvent(change) {
@@ -345,15 +353,15 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
 
   async function invokeAction(actionKey, inputs = {}, { asUser } = {}) {
     const m = modules('action').find((x) => x.key === actionKey);
-    if (!m) return { ok: false, error: { errorType: 'EmulatorError', errorMessage: `no action '${actionKey}' in the manifest` }, calls: [] };
-    if (!m.function) return { ok: false, error: { errorType: 'EmulatorError', errorMessage: `action '${actionKey}' has no function` }, calls: [] };
+    if (!m) return { ok: false, error: errorOf({ errorType: 'EmulatorError', errorMessage: `no action '${actionKey}' in the manifest` }), calls: [] };
+    if (!m.function) return { ok: false, error: errorOf({ errorType: 'EmulatorError', errorMessage: `action '${actionKey}' has no function` }), calls: [] };
     return invokeFunction(m.function, { moduleKey: actionKey, moduleType: 'action', asUser, event: { ...inputs, context: { cloudId: info.cloudId, moduleKey: actionKey } } });
   }
 
   async function invokeResolver(moduleKey, functionKey, payload, context, asUser) {
     const found = moduleByKey(moduleKey);
     const fnKey = found?.module?.resolver?.function ?? found?.module?.edit?.resolver?.function;
-    if (!fnKey) return { ok: false, error: { errorType: 'EmulatorError', errorMessage: `module '${moduleKey}' has no resolver function` }, calls: [] };
+    if (!fnKey) return { ok: false, error: errorOf({ errorType: 'EmulatorError', errorMessage: `module '${moduleKey}' has no resolver function` }), calls: [] };
     return invokeFunction(fnKey, { moduleKey, moduleType: found.type, asUser, event: { call: { functionKey, payload: payload ?? {} }, context }, source: 'resolver' });
   }
 
@@ -391,6 +399,7 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     dumpState: () => ({ kvs: kvs.dump(), queue: queueState.pending }),
     close: async () => { await proxy.close(); if (ownWorkDir) fs.rmSync(work, { recursive: true, force: true }); },
   };
+  emu.stop = emu.close;
   const host = require('./bridge-host.cjs');
   emu.openSurface = (page, opts) => host.openSurface(emu, page, opts);
   emu.hostSave = (page) => host.hostSave(emu, page);

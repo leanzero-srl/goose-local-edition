@@ -1,0 +1,23 @@
+{
+  "loses": [
+    "l_lint_warnings",
+    "k_current_apis",
+    "t_trigger_handoff",
+    "t_event_rows",
+    "t_no_double_count",
+    "t_out_of_order",
+    "t_multi_sprint_parse",
+    "t_reestimate_followed",
+    "t_retry_after_honoured",
+    "r_backfill_complete",
+    "r_removals_found",
+    "r_heal_dropped",
+    "r_pagination",
+    "r_rate_limit",
+    "s_entity_index_used",
+    "s_index_order"
+  ],
+  "critical": true,
+  "max_final": 0.699,
+  "why": "Config load/save on the removed @forge/api storage export (storage:app is declared, so lint only WARNS deprecated-api-storage). In 8.2.0 `storage` is undefined: trigger, consumer and scheduled run throw on their first config read, so no row and no membership is ever written (T/R/S rows; r_backfill_complete is critical). No lint cap; no working ledger caps at 0.699. Downstream U/B/A rows that read an empty ledger are expected to be ROOT_BLOCKS-attributed to r_backfill_complete."
+}

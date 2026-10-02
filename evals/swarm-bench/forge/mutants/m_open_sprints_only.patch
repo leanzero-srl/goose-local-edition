@@ -1,0 +1,14 @@
+diff --git a/src/sync.js b/src/sync.js
+index f0c67db..a219629 100644
+--- a/src/sync.js
++++ b/src/sync.js
+@@ -138,8 +138,7 @@ function jqlDate(ms) {
+ // left every sprint since). The date is one day early so the site's JQL time zone cannot cut it.
+ export async function searchCandidates(cfg, policy) {
+   const sprints = Object.values(cfg.sprints);
+-  const since = Math.min(...sprints.map((s) => s.startMs)) - 24 * 3600 * 1000;
+-  const jql = `sprint in (${sprints.map((s) => s.id).join(', ')}) OR updated >= "${jqlDate(since)}"`;
++  const jql = 'sprint in openSprints()';
+   const issues = [];
+   let nextPageToken;
+   do {

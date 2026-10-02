@@ -1,0 +1,9 @@
+{
+  "loses": [
+    "t_retry_after_honoured",
+    "r_rate_limit"
+  ],
+  "critical": false,
+  "max_final": 0.899,
+  "why": "A 429 is retried at once (up to four attempts) instead of after Retry-After, in every path. Rate-limit defect band 0.899."
+}

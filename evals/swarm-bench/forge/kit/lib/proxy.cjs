@@ -30,7 +30,7 @@ function createProxy({ siteUrl, manifest, kvs, queue, invocations, clock, log = 
   // One product request (Jira), shared by the wrapper route and the Custom UI host's fetchProduct.
   async function productFetch({ inv, provider, product, method, path, headers = {}, body }) {
     const entry = record({ invocationId: inv?.id ?? null, moduleType: inv?.moduleType ?? null, moduleKey: inv?.moduleKey ?? null,
-      functionKey: inv?.functionKey ?? null, source: inv?.source ?? 'function', provider, product, method, path, body: parseMaybe(body) });
+      functionKey: inv?.functionKey ?? null, source: inv?.source ?? 'function', service: product, provider, method, path, body: parseMaybe(body) });
     if (product !== 'jira') {
       entry.status = 404;
       return { status: 404, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: `This site has no ${product} product installed.` }) };
@@ -62,6 +62,12 @@ function createProxy({ siteUrl, manifest, kvs, queue, invocations, clock, log = 
     entry.status = r.status;
     entry.ms = Date.now() - started;
     if (r.status === 429) entry.retryAfter = Number(r.headers.get('retry-after'));
+    if (r.headers.get('x-forge-site-fault')) {
+      entry.fault = r.headers.get('x-forge-site-fault');
+      entry.earlyRetry = r.headers.get('x-forge-site-fault-kind') === 'early_retry';
+    }
+    if (r.headers.get('x-forge-site-scopes')) entry.scopes = JSON.parse(r.headers.get('x-forge-site-scopes'));
+    if (r.headers.get('x-forge-site-op')) entry.op = r.headers.get('x-forge-site-op');
     if (r.status === 501) missing(`product ${method} ${path}`, inv);
     const out = {};
     for (const h of ['content-type', 'retry-after', 'ratelimit-reason']) if (r.headers.get(h)) out[h] = r.headers.get(h);
@@ -71,23 +77,23 @@ function createProxy({ siteUrl, manifest, kvs, queue, invocations, clock, log = 
   function stargate(inv, target, body) {
     if (REQUEST_PUSH.test(target)) {
       const res = queue.push(inv, body);
-      record({ invocationId: inv.id, moduleType: inv.moduleType, moduleKey: inv.moduleKey, functionKey: inv.functionKey, provider: 'queue',
+      record({ invocationId: inv.id, moduleType: inv.moduleType, moduleKey: inv.moduleKey, functionKey: inv.functionKey, service: 'queue', provider: 'app',
         method: 'POST', path: target, body: { queueName: body.queueName, jobId: body.jobId, payload: body.payload }, status: res.status });
       return res;
     }
     if (REQUEST_STATS.test(target) || REQUEST_CANCEL.test(target)) {
       const res = REQUEST_STATS.test(target) ? queue.stats(body) : queue.cancel(body);
-      record({ invocationId: inv.id, moduleType: inv.moduleType, provider: 'queue', method: 'POST', path: target, body, status: res.status });
+      record({ invocationId: inv.id, moduleType: inv.moduleType, moduleKey: inv.moduleKey, service: 'queue', provider: 'app', method: 'POST', path: target, body, status: res.status });
       return res;
     }
     missing(`stargate ${target}`, inv);
-    record({ invocationId: inv.id, moduleType: inv.moduleType, provider: 'stargate', method: 'POST', path: target, body, status: 501 });
+    record({ invocationId: inv.id, moduleType: inv.moduleType, moduleKey: inv.moduleKey, service: 'stargate', provider: 'app', method: 'POST', path: target, body, status: 501 });
     return { status: 501, body: { code: 'EMULATOR_NOT_MODELLED', message: `stargate ${target}` } };
   }
 
   function kvsCall(inv, op, body) {
     const entry = record({ invocationId: inv?.id ?? null, moduleType: inv?.moduleType ?? null, moduleKey: inv?.moduleKey ?? null,
-      functionKey: inv?.functionKey ?? null, provider: 'kvs', method: 'POST', path: op, body });
+      functionKey: inv?.functionKey ?? null, service: 'kvs', provider: 'app', method: 'POST', path: op, body });
     if (!scopes.includes('storage:app')) {
       entry.status = 403;
       entry.missingScope = 'storage:app';
@@ -95,7 +101,7 @@ function createProxy({ siteUrl, manifest, kvs, queue, invocations, clock, log = 
     }
     const res = kvs.handle(op, body);
     entry.status = res.status;
-    if (res.error) entry.kvsError = res.error;
+    if (res.error) { entry.kvsError = res.error; if (res.error.limit) entry.limitError = res.error.code; }
     if (res.notModelled) missing(`kvs ${op}`, inv);
     return res;
   }
@@ -134,12 +140,12 @@ function createProxy({ siteUrl, manifest, kvs, queue, invocations, clock, log = 
           let host = null;
           try { host = new URL(target).host; } catch { host = null; }
           const allowed = host && egressAllow.some((a) => a === '*' || safeHost(a) === host || (a.startsWith('*.') && host.endsWith(a.slice(1))));
-          record({ invocationId: inv.id, moduleType: inv.moduleType, provider: 'egress', method: req.method, path: target, status: allowed ? 502 : 403 });
+          record({ invocationId: inv.id, moduleType: inv.moduleType, moduleKey: inv.moduleKey, service: 'egress', provider: 'app', method: req.method, path: target, status: allowed ? 502 : 403 });
           if (!allowed) return send(403, '', { 'forge-proxy-error': 'REQUEST_EGRESS_ALLOWLIST_ERR' });
           return send(502, { message: 'The benchmark harness has no internet: declared egress cannot be reached.' });
         }
         missing(`proxy route ${route}`, inv);
-        record({ invocationId: inv.id, moduleType: inv.moduleType, provider: 'unknown', method: req.method, path: route, status: 501 });
+        record({ invocationId: inv.id, moduleType: inv.moduleType, moduleKey: inv.moduleKey, service: 'unknown', provider: 'app', method: req.method, path: route, status: 501 });
         return send(501, { code: 'EMULATOR_NOT_MODELLED', message: `proxy route ${route}` });
       } catch (e) {
         send(500, { code: 'PROXY_CRASH', message: String(e.message) });

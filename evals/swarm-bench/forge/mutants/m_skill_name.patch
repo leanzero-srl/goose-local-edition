@@ -1,0 +1,11 @@
+diff --git a/skills/sprint-scope-analyst/SKILL.md b/skills/sprint-scope-analyst/SKILL.md
+index 8c00d4f..07a24a5 100644
+--- a/skills/sprint-scope-analyst/SKILL.md
++++ b/skills/sprint-scope-analyst/SKILL.md
+@@ -1,5 +1,5 @@
+ ---
+-name: sprint-scope-analyst
++name: scope-analyst
+ description: Explains scope creep in one Jira sprint - what entered or left it after it started, who changed it, how many story points that moved and the sprint's creep percentage. Use when someone asks what was added to or removed from a sprint, why a sprint grew, or how much scope changed since the sprint began.
+ allowed-tools: get-sprint-scope
+ ---

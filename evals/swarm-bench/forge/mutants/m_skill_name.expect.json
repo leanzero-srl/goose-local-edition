@@ -1,0 +1,9 @@
+{
+  "loses": [
+    "l_deployable",
+    "k_rovo_skill"
+  ],
+  "critical": false,
+  "max_final": 0.499,
+  "why": "SKILL.md name differs from its directory: the Rovo skill is invalid. DESIGN \u00a713.5 predicts k_rovo_skill and the 0.799 surface cap, but MEASURED 2026-10-02 the client-side lint (@forge/lint via the spike harness) reports an ERROR \"Skill sprint-scope-analyst frontmatter field 'name' must match the parent directory name\", so the lint band applies: l_deployable lost, capped at 0.499. Reported in bench/golden-forge/CONTRACT-GAPS.md for the design table."
+}
