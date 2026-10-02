@@ -253,7 +253,7 @@ instead of restating them (generation rule, faults, If-Match, Idempotency-Key, s
 - Draft validation bounds (name 1–80, country `^[A-Z]{2}$`, note 0–280, currency one of four) and
   `?state=<unknown>` → 400: the only validation probe is a non-integer amount with missing fields (kept).
 - Frontend: page section order and side-by-side layout; each web file's content purity ("structure only", "nothing
-  else"); `rev-total`; `#last-sync` human text and "Never synced" (the sync journey computes lastSyncText then
+  else"); the `#summary` container id (the probe reads `.cur-total[data-currency]` directly); `rev-total`; `#last-sync` human text and "Never synced" (the sync journey computes lastSyncText then
   overwrites the verdict with `syncRequested && refreshedTruth`); the failed-sync `#notice`; the status/currency
   custom-dropdown filters with `data-value` (the probe never operates a filter); the Amount header sort and
   `aria-sort` (only the Date header click is driven, and only its `sort` query is read); notification
@@ -303,6 +303,17 @@ instead of restating them (generation rule, faults, If-Match, Idempotency-Key, s
   logs are outside the workspace" and "Test your own application" (replaced by the Definition of done).
 - STARTER.md: "Credit and comparison" (a reporting policy for whoever publishes a result — no entrant behaviour),
   and restatements of the contract (grader kills services independently; "build every state").
+
+### Proof that scoring does not depend on the removed text
+
+`golden-sb72` (disposable copy) through `score_sb72.py --reference` after the trim and the merge of main's
+362fe0f35, seed 5a05d7631d9276e3, port 8899, bundled runtime (Python 3.12, node 24, chrome-headless-shell 153),
+MacBook, load 4.57 → 6.11 (the bench unit suite ran ~30 s concurrently): **1.000**, earned 1.0000, inner 1.0000,
+excellence 1.0 (16/16 gate conditions), critical multiplier 1.0, no unsuppressed criticals, ceiling 1.0, every
+band open, freeze gate and severity selftest passed (exit 0). Every one of the 99 rows is 1.0 (b_buckets_dst
+prints 0.9999999999999999, float rounding of 0.7+0.2+0.1). Stream apply 140.9 ms (rung 180); legibility
+0.6812 × 0.7172, 2.743:1, 96/96 — identical to the pre-trim reference. `contract_sha256` now names
+sb7.2/SB7-CONTRACT.md, sb7.2/VISUAL-CONTRACT.md and sb7.2/STARTER.md.
 
 ### Measured but never stated — flagged, not changed
 
