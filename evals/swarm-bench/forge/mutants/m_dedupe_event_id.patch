@@ -1,5 +1,5 @@
 diff --git a/src/index.js b/src/index.js
-index af640c2..c481375 100644
+index 5356195..956a904 100644
 --- a/src/index.js
 +++ b/src/index.js
 @@ -33,7 +33,7 @@ export async function consumeChange(event) {
@@ -26,10 +26,10 @@ index 800a816..1e1b52d 100644
    try {
      await kvs.entity(CHANGES).set(key, row, { keyPolicy: 'FAIL_IF_EXISTS' });
 diff --git a/src/sync.js b/src/sync.js
-index f0c67db..f34ea97 100644
+index e4289d4..4e34ff2 100644
 --- a/src/sync.js
 +++ b/src/sync.js
-@@ -82,7 +82,7 @@ export function memberRow(cfg, sprintId, issue, currentSprintIds) {
+@@ -95,7 +95,7 @@ export function memberRow(cfg, sprintId, issue, currentSprintIds) {
  // One delivered issue update: record the rows of exactly this changelog entry (first writer keeps
  // `source`), and refresh the issue's membership and estimate in every active sprint it touches.
  // Reads current Jira state, so duplicates and reordering converge on the same result.
@@ -38,7 +38,7 @@ index f0c67db..f34ea97 100644
    const negative = new Set();
    const resolve = async (sprintId) => {
      if (negative.has(sprintId)) return null;
-@@ -112,7 +112,7 @@ export async function applyIssueEvent(cfg, { issueId, changelogId, sprintChange
+@@ -127,7 +127,7 @@ export async function applyIssueEvent(cfg, { issueId, changelogId, sprintChange
  
    const rows = await rowsOf(cfg, issue, histories, 'event', resolve);
    let written = 0;

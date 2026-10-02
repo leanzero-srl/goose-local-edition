@@ -5,12 +5,51 @@ The golden was built from `forge/public/{spec-build-forge.md, FORGE-CONTRACT.md,
 behaviour is listed here: the exact sentence, what the golden does, and what the orchestrator should settle.
 Ranked by how likely the gap makes a correct entrant lose points.
 
+## 0. Why WP2 saw zero ledger rows (2026-10-02, reproduced on forge-dev, dev seed 74949e931b820fc4)
+
+Three defects, two on the site/kit side and one in the golden; all three would hit an entrant too.
+
+- **SITE: changelog `created` is an epoch-millisecond NUMBER** (`"created":1791271684753` in
+  `POST /rest/api/3/changelog/bulkfetch`). The Jira OpenAPI types `Changelog.created` as
+  `string, format: date-time`, and real Jira returns ISO-8601 strings. `Date.parse(number)` is NaN, so an app
+  written to the OpenAPI drops every change. This was the zero-rows cause. FIX IN WP1's site (serve ISO
+  strings); a correct entrant must not need to guess the encoding. The golden now parses both encodings and
+  logs an unreadable `created` loudly instead of skipping it silently (`instantOf` in src/sync.js).
+- **GOLDEN (fixed): KVS `integer` attributes are 32-bit** (developer.atlassian.com, "Defining Custom
+  Entities": integers from -2,147,483,648 to 2,147,483,647). The golden stored the epoch-ms change time in an
+  `integer` range attribute; the emulator refused it ("Attribute 'at' must be of type integer"). `at` is now
+  `float` (epoch ms are exact up to 2^53). The contract asks for "change time (range)" without a type, which
+  is fine — but the emulator's message names the type, not the range, which misleads (suggest echoing the
+  range).
+- **SITE: `POST /rest/api/3/issue/{id}/changelog/list` was not modelled** (501 EMULATOR_NOT_MODELLED → 2,190
+  redeliveries). The golden no longer depends on it: the event path reads the issue's sprint history through
+  `changelog/bulkfetch` and keeps the entry the event names.
+
+Also found on forge-dev:
+
+- **PLATFORM TRAP (real Atlassian wrapper, kit `wrapper.js`)**: for a function with `timeoutSeconds > 55`
+  the wrapper validates a returned retry request with `Buffer.byteLength(JSON.stringify(retryData))`, which
+  THROWS when `retryData` is absent, turning `new InvocationError({retryAfter, retryReason})` into a function
+  error (redelivered on the 1-minute schedule instead of after Retry-After). The golden now always passes
+  `retryData`. This is real platform behaviour, so it stays a trap — but nothing public mentions it; decide
+  whether the contract should.
+- **KIT: concurrent `forge-dev serve` processes in one workspace corrupt `.forge-dev/state.json`**
+  (`SyntaxError: Unexpected end of JSON input` in `loadState`, from the periodic `saveState`; the served page
+  then fails with ERR_INCOMPLETE_CHUNKED_ENCODING). STARTER tells entrants to start serve in the background,
+  so two at once is a natural move. Fix: atomic write (temp file + rename) or one state file per serve.
+
+Verified on forge-dev after the fixes: backfill 52 rows (all `reconcile`) and 87 memberships; 60 site updates
+delivered → +25 rows `event`, one 429 on the consumer answered with a retry request and redelivered after
+exactly its Retry-After (30 s); heal +4 rows `reconcile`; rerun 0 KVS writes, 0 queue pushes; Rovo action
+for four users: same team totals (62 / 18.5 / 15 / 29.8), hidden counts 1/0/1/0; widget (dark), edit and
+sprint action render with the bridge host; a double click on post-summary = one invoke, one flag.
+
 ## A. Gaps that can cost a correct entrant points
 
 1. **Which JQL and endpoints the site serves.** STARTER: "It behaves like Jira Cloud for the calls this app
    needs". The golden needs, and therefore the site must model:
    `POST /rest/api/3/search/jql` with `sprint in (11, 12) OR updated >= "2026-09-20"` (OR, `sprint in (ids)`,
-   `updated >=` a date), `POST /rest/api/3/changelog/bulkfetch` with `fieldIds`, `POST /rest/api/3/issue/{id}/changelog/list`,
+   `updated >=` a date), `POST /rest/api/3/changelog/bulkfetch` with `fieldIds` (backfill AND event path),
    `POST /rest/api/3/issue/bulkfetch` as the user (Jira leaves out issues the user cannot browse),
    `GET /rest/api/3/issue/{id}?fields=…`, `GET /rest/api/3/field` (the Sprint field found by
    `schema.custom = com.pyxis.greenhopper.jira:gh-sprint`), `GET /rest/agile/1.0/board?type=scrum`,

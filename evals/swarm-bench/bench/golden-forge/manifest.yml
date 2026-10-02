@@ -106,7 +106,7 @@ app:
           changeId:
             type: string
           at:
-            type: integer
+            type: float
           created:
             type: string
           issueId:

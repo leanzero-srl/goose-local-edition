@@ -1,8 +1,8 @@
 diff --git a/src/sync.js b/src/sync.js
-index f0c67db..0a5c04e 100644
+index e4289d4..27ffba8 100644
 --- a/src/sync.js
 +++ b/src/sync.js
-@@ -141,15 +141,12 @@ export async function searchCandidates(cfg, policy) {
+@@ -156,15 +156,12 @@ export async function searchCandidates(cfg, policy) {
    const since = Math.min(...sprints.map((s) => s.startMs)) - 24 * 3600 * 1000;
    const jql = `sprint in (${sprints.map((s) => s.id).join(', ')}) OR updated >= "${jqlDate(since)}"`;
    const issues = [];

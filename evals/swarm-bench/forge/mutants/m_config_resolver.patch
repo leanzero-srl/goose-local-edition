@@ -1,5 +1,5 @@
 diff --git a/src/index.js b/src/index.js
-index af640c2..3d85d34 100644
+index 5356195..2d2f0f4 100644
 --- a/src/index.js
 +++ b/src/index.js
 @@ -1,5 +1,6 @@
@@ -9,7 +9,7 @@ index af640c2..3d85d34 100644
  import { RateLimited } from './jira';
  import { loadConfig, saveConfig, discoverConfig } from './config';
  import { applyIssueEvent, estimateFieldIds, reconcileAll } from './sync';
-@@ -82,10 +83,17 @@ const contextSprintId = (context) => {
+@@ -86,10 +87,17 @@ const contextSprintId = (context) => {
  
  resolver.define('boards', rateLimitedAware(async () => ({ boards: await boardsView(UI_POLICY) })));
  

@@ -260,9 +260,13 @@ resolver.define('saveWidgetBoard', async ({ payload }) => {
             'src/index.js',
             """  } catch (e) {
     if (e instanceof RateLimited) {
+      // retryData is not optional in practice: for a function with timeoutSeconds > 55 the Forge runtime
+      // wrapper measures Buffer.byteLength(JSON.stringify(retryData)), which throws on undefined and turns
+      // the retry request into a function error (measured on the real wrapper, 2026-10-02).
       return new InvocationError({
         retryAfter: Math.min(Math.max(e.retryAfterSeconds, 1), MAX_RETRY_AFTER),
         retryReason: InvocationErrorCode.FUNCTION_UPSTREAM_RATE_LIMITED,
+        retryData: { retryAfterSeconds: e.retryAfterSeconds },
       });
     }
     throw e;
