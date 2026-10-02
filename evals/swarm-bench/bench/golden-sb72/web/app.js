@@ -556,9 +556,11 @@
     setTimeout(tick, 800);
   }
 
+  // Announce, do not move the table: the user may already be paging, and a table that jumps to
+  // another page under their click is the race the SB7.2 reference measured (the approval's
+  // navigation to offset 3500 turned the user's next-page click into offset 3550).
   function waitForRecordThenNavigate(paymentId, t0) {
     if (window.Viz.store.byId.has(paymentId)) {
-      navigateToPayment(paymentId);
       showNotice('Payment ' + paymentId + ' was created at the vendor and is now in '
                  + 'the table.', 'ok');
       return;
