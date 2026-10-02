@@ -49,6 +49,15 @@ modules:
       dependencies:
         tools:
           - get-sprint-scope
+  rovo:mcp:
+    - key: scope-ledger-mcp
+      name: Scope ledger
+      tools:
+        - get-sprint-scope
+  llm:
+    - key: scope-explainer
+      model:
+        - claude
   rovo:agent:
     - key: scope-coach
       name: Scope coach

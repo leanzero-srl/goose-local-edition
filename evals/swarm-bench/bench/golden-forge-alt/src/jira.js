@@ -102,26 +102,18 @@ export async function issueWithChangelog(jira, issueIdOrKey, fields) {
   return issue ? completeChangelog(jira, issue) : null;
 }
 
-// Documented as nextPageToken/isLast; the dev site answers with startAt/total. Both are followed.
+// Documented paging: nextPageToken + isLast (no startAt on the software 1.0 path).
 export async function sprintIssues(jira, sprintId, fields) {
   const issues = [];
-  let startAt = 0;
   let token;
-  for (;;) {
+  do {
     const page = token
       ? await jira.json(route`/rest/software/1.0/sprint/${sprintId}/issue?fields=${fields.join(',')}&expand=changelog&maxResults=100&nextPageToken=${token}`)
-      : await jira.json(route`/rest/software/1.0/sprint/${sprintId}/issue?fields=${fields.join(',')}&expand=changelog&maxResults=100&startAt=${startAt}`);
+      : await jira.json(route`/rest/software/1.0/sprint/${sprintId}/issue?fields=${fields.join(',')}&expand=changelog&maxResults=100`);
     if (!page) break;
-    const batch = page.issues || [];
-    for (const i of batch) issues.push(await completeChangelog(jira, i));
-    if (!batch.length || page.isLast === true) break;
-    if (page.nextPageToken) {
-      token = page.nextPageToken;
-      continue;
-    }
-    if (typeof page.total !== 'number' || startAt + batch.length >= page.total) break;
-    startAt += batch.length;
-  }
+    for (const i of page.issues || []) issues.push(await completeChangelog(jira, i));
+    token = page.isLast !== true && page.nextPageToken ? page.nextPageToken : undefined;
+  } while (token);
   return issues;
 }
 

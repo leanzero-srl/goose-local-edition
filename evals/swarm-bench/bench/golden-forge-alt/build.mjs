@@ -18,7 +18,6 @@ for (const [name, css] of Object.entries(surfaces)) {
     legalComments: 'none',
     define: { 'process.env.NODE_ENV': '"production"' },
   });
-  writeFileSync(`${out}/icon.svg`, '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect width="16" height="16" rx="3" fill="#0c66e4"/></svg>\n');
   writeFileSync(`${out}/app.css`, base + '\n' + readFileSync(`static/${name}/src/${css}`, 'utf8'));
   writeFileSync(
     `${out}/index.html`,
@@ -28,7 +27,6 @@ for (const [name, css] of Object.entries(surfaces)) {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Scope ledger</title>
-    <link rel="icon" href="./icon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="./app.css" />
   </head>
   <body>

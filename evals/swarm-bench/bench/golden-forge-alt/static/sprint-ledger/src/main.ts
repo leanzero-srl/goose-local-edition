@@ -19,7 +19,19 @@ interface Report {
   changes: Change[];
 }
 
-type Sort = { col: 'at' | 'points'; dir: 'ascending' | 'descending' };
+interface Explanation {
+  error?: 'refused' | 'malformed' | 'error';
+  message?: string;
+  summary: string;
+  changes: Array<{ changeId: string; issueKey: string; kind: 'added' | 'removed' }>;
+}
+const EXPLAIN_ERRORS: Record<string, string> = {
+  refused: 'The model did not give an explanation',
+  malformed: 'The model’s explanation was unusable',
+  error: 'Could not explain this sprint',
+};
+
+type Sort = { col: 'at'; dir: 'ascending' | 'descending' };
 const COLUMNS: Array<[string, string]> = [
   ['issue', 'Issue'],
   ['points', 'Points'],
@@ -34,7 +46,6 @@ const defaultOrder = (a: Change, b: Change) => Date.parse(a.at) - Date.parse(b.a
 
 function ordered(changes: Change[], sort: Sort): Change[] {
   const base = [...changes].sort(defaultOrder);
-  if (sort.col === 'points') return base.sort((a, b) => b.points - a.points || defaultOrder(a, b));
   return sort.dir === 'ascending' ? base : base.reverse();
 }
 
@@ -88,11 +99,11 @@ function renderLedger(report: Report) {
   let posting = false;
 
   const headers = COLUMNS.map(([col, label]) => {
-    const sortable = col === 'at' || col === 'points';
+    const sortable = col === 'at';
     const th = h('th', { 'data-col': col, scope: 'col', class: sortable ? 'sortable' : null, tabindex: sortable ? 0 : null }, label);
     if (sortable) {
       const activate = () => {
-        sort = col === 'at' ? { col: 'at', dir: sort.col === 'at' && sort.dir === 'ascending' ? 'descending' : 'ascending' } : { col: 'points', dir: 'descending' };
+        sort = { col: 'at', dir: sort.dir === 'ascending' ? 'descending' : 'ascending' };
         renderBody();
       };
       th.addEventListener('click', activate);
@@ -155,6 +166,35 @@ function renderLedger(report: Report) {
     }
   });
 
+  const explanation = h('section', { 'data-testid': 'explanation', class: 'explanation', 'aria-live': 'polite', hidden: true });
+  const explain = h('button', { type: 'button', class: 'btn btn-subtle', 'data-testid': 'explain' }, 'Explain the creep');
+  let explaining = false;
+  explain.addEventListener('click', async () => {
+    if (explaining) return;
+    explaining = true;
+    explain.disabled = true;
+    try {
+      const r = (await invoke('explain', { sprintId: report.sprint.id })) as Explanation;
+      if (r.error) {
+        showFlag({ id: `explain-${Date.now()}`, type: 'error', title: EXPLAIN_ERRORS[r.error] || 'Could not explain this sprint', description: r.message, isAutoDismiss: true });
+        return;
+      }
+      explanation.replaceChildren(
+        h('h3', { class: 'explanation-title' }, 'Why the scope moved'),
+        h('p', { class: 'explanation-text' }, r.summary),
+        r.changes.length
+          ? h('ul', { class: 'explanation-changes' }, ...r.changes.map((c) => h('li', { 'data-change-id': c.changeId }, h('span', { class: `kind kind-${c.kind}` }, c.kind), ' ', c.issueKey)))
+          : h('p', { class: 'explanation-none' }, 'No single change stood out.'),
+      );
+      explanation.hidden = false;
+    } catch (err) {
+      showFlag({ id: `explain-${Date.now()}`, type: 'error', title: 'Could not explain this sprint', description: (err as Error).message, isAutoDismiss: true });
+    } finally {
+      explaining = false;
+      explain.disabled = false;
+    }
+  });
+
   renderBody();
   mount(
     h(
@@ -164,7 +204,8 @@ function renderLedger(report: Report) {
       metricList(report.summary),
       h('p', { class: 'hidden-note' }, 'Changes hidden from you: ', h('strong', { 'data-testid': 'hidden-count' }, String(report.hiddenChanges))),
       h('div', { class: 'table-wrap' }, table),
-      h('footer', { class: 'ledger-foot' }, post, closeButton()),
+      explanation,
+      h('footer', { class: 'ledger-foot' }, explain, post, closeButton()),
     ),
   );
 }
