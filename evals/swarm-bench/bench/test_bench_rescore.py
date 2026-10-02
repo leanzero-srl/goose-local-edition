@@ -101,7 +101,7 @@ Path(a.json_out).write_text(json.dumps({'score':.4,'scorerVersion':'sb-7.1','fix
         receipt = self.root / 'runner-private' / 'completion.json'
         def serve(port, trace, seed):
             trace.write_text(json.dumps({'fixture_seed': seed})+'\n')
-            return SimpleNamespace(shutdown=lambda: None)
+            return SimpleNamespace(shutdown=lambda: None, server_close=lambda: None)
         def gather(*args, **kwargs):
             self.assertTrue(receipt.is_file())
             raise RuntimeError('controlled scoring crash')
