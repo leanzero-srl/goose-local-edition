@@ -630,6 +630,52 @@ describe("a cloud run's bill is the provider's billed cost, never goose's estima
   });
 });
 
+describe('a single-model run says how it ended against the harness budget', () => {
+  const session = {
+    runId: 'cloud-budget',
+    scorerVersion: 'sb-7.2',
+    startedAt: '2026-10-02T11:00:00Z',
+    endedAt: '2026-10-02T11:40:00Z',
+    outcome: 'finished',
+    score: 0.42,
+    publishable: false,
+  };
+  const renderWith = async (budget: unknown) => {
+    mockElectron({ sessions: [session] });
+    electron().benchmarkRead = vi.fn(async () => ({
+      ...session,
+      label: 'model · single agent',
+      provider: 'openrouter',
+      wallSecs: 2400,
+      budget,
+    }));
+    render(
+      <IntlTestWrapper>
+        <BenchmarkView />
+      </IntlTestWrapper>
+    );
+    return screen.findByTestId('budget-stop');
+  };
+  afterEach(() => cleanup());
+
+  it('stopped at the call budget', async () => {
+    const note = await renderWith({ max_calls: 150, calls_used: 150, stopped_by: 'call_budget' });
+    expect(note).toHaveTextContent('Stopped at the 150-call budget');
+    expect(note.querySelector('p')).toHaveClass('text-lz-stopped');
+  });
+
+  it("stopped by the user's spend limit", async () => {
+    const note = await renderWith({
+      max_calls: 150,
+      calls_used: 61,
+      stopped_by: 'wallet_guard',
+      wallet: { status: 'tripped', max_usd: 5, tripped: { spent_usd: 5.12 } },
+    });
+    expect(note).toHaveTextContent('Stopped by your $5.00 limit');
+    expect(note).toHaveTextContent('OpenRouter had billed $5.12 when it stopped');
+  });
+});
+
 it('updates cloud pipeline stages from harness events, not model prose', async () => {
   mockElectron({ sessions: [] });
   const handlers = new Map<string, (event: unknown, payload: unknown) => void>();

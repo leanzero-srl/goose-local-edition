@@ -2,8 +2,10 @@ import { appendBenchmarkActivity, emptyBenchmarkActivity } from '../../benchActi
 import { BenchmarkActivityPanel } from './BenchmarkActivityPanel';
 import { benchmarkModelIdProblem } from '../../benchModelIdentity';
 import { billedCostLine } from '../../benchBilledCost';
+import { budgetLines } from '../../benchBudget';
 import { BenchmarkRuntimeSetup } from './BenchmarkRuntimeSetup';
 import { CloudEntrant } from './CloudEntrant';
+import { WalletLimit } from './WalletLimit';
 import {
   DEFAULT_BENCHMARK_NAME,
   DEFAULT_BENCHMARK_TIER,
@@ -121,6 +123,8 @@ interface MineRow extends BenchmarkRow {
   scoringSecs?: number;
   /** The harness's `agent.billed_cost` record, verbatim (benchBilledCost.ts reads it). */
   billedCost?: unknown;
+  /** The harness's `agent.budget` record, verbatim (benchBudget.ts reads it). */
+  budget?: unknown;
   runMeta?: { startedAt: string; finishedAt: string; engineEvents: number; repairRounds: number };
   workdir?: string;
   /** Full scoring detail (every check + evidence + repair story) — absent on pre-detail results. */
@@ -420,6 +424,34 @@ function BilledCostNote({ value, provider }: { value: unknown; provider: string 
   );
 }
 
+/**
+ * How the run ended against the harness budget: stopped at the call budget, stopped by the user's
+ * spend limit, or finished on its own — and a limit that could not be enforced. Silent without a record.
+ */
+function BudgetNote({ value }: { value: unknown }) {
+  const lines = budgetLines(value);
+  if (lines.length === 0) return null;
+  return (
+    <div data-testid="budget-stop" className="flex flex-col gap-1">
+      {lines.map((line) => (
+        <div key={line.sentence} className="flex flex-col gap-0.5">
+          <p
+            className={cx(
+              'text-lz-body',
+              WEIGHT.semibold,
+              TNUM,
+              line.tone ? TONE_TEXT[line.tone] : 'text-lz-ink'
+            )}
+          >
+            {line.sentence}
+          </p>
+          {line.detail && <p className={cx(TYPE.meta, TNUM)}>{line.detail}</p>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function FailureDetails({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   return (
@@ -687,6 +719,7 @@ function SessionDetail({
           <StatCell label="Billed" value={billed.amount} tone={billed.tone ?? undefined} />
         )}
       </div>
+      {mineMatched && mine && <BudgetNote value={mine.budget} />}
       {mineMatched && mine && (
         <BilledCostNote value={mine.billedCost} provider={mine.provider ?? null} />
       )}
@@ -1633,6 +1666,7 @@ export default function BenchmarkView() {
                     setCloudModel(model);
                   }}
                 />
+                <WalletLimit disabled={running} />
               </>
             ) : (
               <>
