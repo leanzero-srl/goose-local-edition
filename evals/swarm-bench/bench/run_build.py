@@ -252,6 +252,13 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
                                 "GOOSE_SWARM_TOP_K", "GOOSE_SWARM_MIN_P", "GOOSE_SWARM_REPEAT_PENALTY"}}
         child_env.update(env)
         child_env.update(isolated_env)
+        # The sink lives outside the candidate's tree, which the entrant may clean (2026-10-02,
+        # openrouter-cloud-73d233da ran `rm -rf` over harness files in its workdir); a lost sink is an
+        # incomplete bill. land_telemetry copies it into .swarm/ after the entrant exits.
+        runtime_telemetry = Path(isolated_env["BENCH_SB71_RUNTIME"]) / "telemetry.jsonl"
+        runtime_telemetry.write_text("")
+        tpath.unlink()
+        child_env["GOOSE_SWARM_TELEMETRY_FILE"] = str(runtime_telemetry)
         if not provider:
             child_env['GOOSE_SWARM_RENDER_PROBE'] = str(workdir / 'browser-self-test.mjs')
             child_env['GOOSE_SWARM_RENDER_NODE'] = str(bench_isolation.node_runtime())
@@ -268,8 +275,9 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
     # the judge had even fired. The console now lands next to the tree while the run is going.
     console = workdir / "engine-console.log"
     session_leader = None
+    console_missing = None
     try:
-        with console.open("w", buffering=1) as fh:
+        with console.open("w+", buffering=1, errors="replace") as fh:
             if provider or snapshot is not None:
                 proc = subprocess.Popen(cmd, cwd=workdir, stdout=subprocess.PIPE,
                                         stderr=subprocess.STDOUT, text=True,
@@ -295,16 +303,34 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
                     proc.kill()
                     proc.wait()
                     raise
-        tail = console.read_text(errors="replace")[-1500:]
+            # Read through the harness's own handle: it survives an unlink of the path.
+            fh.seek(0)
+            text = fh.read()
+            held = os.fstat(fh.fileno()).st_ino
+        try:
+            replaced = console.stat().st_ino != held
+            reason = "replaced"
+        except FileNotFoundError:
+            replaced, reason = True, "unlinked"
+        if replaced:
+            console.write_text(text)
+            console_missing = {"path": str(console), "reason": reason,
+                               "restored_from_open_handle_bytes": len(text.encode())}
+            print(f"harness_console_missing: {json.dumps(console_missing)}", file=sys.stderr, flush=True)
+        tail = text[-1500:]
     except subprocess.TimeoutExpired:
         code, tail = None, "timed out"
     result = {"exit": code, "secs": round(time.time() - started, 1), "tail": tail,
               "timed_out": code is None}
+    if console_missing:
+        result["harness_console_missing"] = console_missing
     # The entrant's own test instance must not outlive it: one left running (2026-10-01,
     # openrouter-cloud-c003209f) kept syncing against the scorer's vendor and was graded alongside.
     teardown = reap_entrant_survivors(workdir, session_leader, credential_values)
     result["reaped_processes"] = teardown["reaped_processes"]
     (workdir / "reaped-processes.json").write_text(json.dumps(teardown, indent=2))
+    if isolated_tiers.active():
+        result["telemetry_landing"] = land_telemetry(runtime_telemetry, tpath)
     knowledge_after = knowledge_store_snapshot(workdir)
     if knowledge_after != knowledge_before:
         changed = sorted(set(knowledge_before.items()) ^ set(knowledge_after.items()))
@@ -318,6 +344,28 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
         result["billed_cost"] = bench_cost.record(provider, model, env, Path(child_env["BENCH_SB71_RUNTIME"]),
                                                   workdir, result["usage"])
     return result
+
+
+def land_telemetry(source: Path, destination: Path) -> dict:
+    """Copy the runtime telemetry sink to <workdir>/.swarm/telemetry.jsonl, where every reader looks.
+
+    A missing source is the named absence harness_telemetry_missing, and any file the entrant left at
+    the destination is removed rather than read as the run's calls. A planted symlink at the
+    destination (or its directory) is replaced, never written through.
+    """
+    if destination.parent.is_symlink():
+        destination.parent.unlink()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.is_symlink() or destination.exists():
+        destination.unlink()
+    if not source.is_file():
+        absence = {"status": "harness_telemetry_missing", "source": str(source),
+                   "reason": "the runtime telemetry sink was absent after the entrant exited"}
+        print(f"harness_telemetry_missing: {json.dumps(absence)}", file=sys.stderr, flush=True)
+        return absence
+    shutil.copyfile(source, destination)
+    return {"status": "copied", "source": str(source), "destination": str(destination),
+            "bytes": destination.stat().st_size}
 
 
 KNOWLEDGE_DIRS = ("memory", "proposals")

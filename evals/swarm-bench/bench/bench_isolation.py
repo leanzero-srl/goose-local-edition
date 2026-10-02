@@ -59,6 +59,12 @@ def profile(workdir: Path, engine: Path, runtime: Path, node: Path | None = None
         '(allow file-map-executable ' + read_rules + ' (literal ' + quote(engine) + '))',
         '(deny file-read-data (literal ' + quote(workdir / 'engine-console.log') + ') (subpath ' + quote(runtime / 'goose/state/logs') + '))',
         '(allow file-write* (subpath ' + quote(workdir) + ') (subpath ' + quote(runtime) + ') (subpath "/dev"))',
+        # After the allow, so it wins. Measured 2026-10-02 (openrouter-cloud-73d233da): the entrant's
+        # cleanup `rm -rf ... engine-console.log` unlinked the harness's console mid-run. The harness
+        # writes it outside the sandbox; an inherited stdout fd stays writable (no path check).
+        '(deny file-write* (literal ' + quote(workdir / 'engine-console.log') + '))',
+        # The runtime telemetry sink: goose appends to it, nothing in the sandbox may remove it.
+        '(deny file-write-unlink (literal ' + quote(runtime / 'telemetry.jsonl') + '))',
     ])
 
 

@@ -92,6 +92,52 @@ print('revision 1, endpoint 127.0.0.1')
                 self.assertIn('[REDACTED]', text)
                 self.assertIn('revision 1, endpoint 127.0.0.1', text)
 
+    def test_an_unlinked_console_is_recorded_and_restored_not_a_crash(self):
+        # 73d233da's cleanup unlinked engine-console.log while the harness held it open.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            engine = root / 'engine'
+            engine.write_text('#!' + sys.executable + """
+import os
+print('before cleanup', flush=True)
+os.unlink('engine-console.log')
+print('after cleanup', flush=True)
+""")
+            engine.chmod(0o700)
+            work = root / 'tree'
+            work.mkdir()
+            with patch.object(run_build, 'GOOSE', engine), patch.dict(os.environ, {'BENCH_SB8': '1'}, clear=True), \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as err:
+                result = run_build.invoke('google-fixture', work, 8850, {'GOOGLE_API_KEY': 'k'}, 0,
+                                          'google', 'gemini-3.8-flash')
+            self.assertEqual(result['exit'], 0)
+            self.assertEqual(result['harness_console_missing']['reason'], 'unlinked')
+            self.assertIn('harness_console_missing', err.getvalue())
+            self.assertEqual(result['tail'], 'before cleanup\nafter cleanup\n')
+            self.assertEqual((work / 'engine-console.log').read_text(), result['tail'])
+
+    def test_missing_telemetry_sink_is_a_named_absence_and_no_entrant_file_is_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            destination = root / 'tree' / '.swarm' / 'telemetry.jsonl'
+            destination.parent.mkdir(parents=True)
+            destination.write_text('{"response_id": "gen-forged", "ended": "completed"}\n')
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                landing = run_build.land_telemetry(root / 'runtime' / 'telemetry.jsonl', destination)
+            self.assertEqual(landing['status'], 'harness_telemetry_missing')
+            self.assertIn('harness_telemetry_missing', err.getvalue())
+            self.assertFalse(destination.exists())
+            # A planted symlink is replaced, never written through to its target.
+            outside = root / 'outside.txt'
+            outside.write_text('harness file')
+            destination.symlink_to(outside)
+            source = root / 'telemetry.jsonl'
+            source.write_text('{"ended": "completed"}\n')
+            self.assertEqual(run_build.land_telemetry(source, destination)['status'], 'copied')
+            self.assertFalse(destination.is_symlink())
+            self.assertEqual(outside.read_text(), 'harness file')
+            self.assertEqual(destination.read_text(), source.read_text())
+
     def test_existing_tree_is_preserved_before_any_vendor_or_model_start(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

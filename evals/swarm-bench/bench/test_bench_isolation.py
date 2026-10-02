@@ -45,6 +45,35 @@ print('real isolation passed')
             self.assertEqual(process.returncode, 0, process.stderr + process.stdout)
             self.assertIn('real isolation passed', process.stdout)
 
+    def test_real_rm_cannot_remove_the_harness_console_or_the_telemetry_sink(self):
+        # The measured 73d233da cleanup: `rm -rf ... engine-console.log` from the entrant's workdir.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work = root / 'candidate'
+            work.mkdir()
+            prefix, env = bench_isolation.prepare(work, Path(sys.executable), root)
+            runtime = Path(env['BENCH_SB71_RUNTIME'])
+            telemetry = runtime / 'telemetry.jsonl'
+            telemetry.write_text('')
+            console = work / 'engine-console.log'
+            (work / 'finaltest.png').write_text('candidate artifact')
+            with console.open('w+') as handle:
+                # The harness's own handle is the entrant's stdout: writes through it still land.
+                cleanup = subprocess.run(prefix + ['/bin/sh', '-c',
+                                                   'echo engine-line; rm -rf .testdb finaltest.png engine-console.log; '
+                                                   'echo overwrite > engine-console.log; rm -f "$1"; '
+                                                   'echo "{}" >> "$1"; echo after-cleanup', 'sh', str(telemetry)],
+                                         cwd=work, env={**os.environ, **env}, stdout=handle,
+                                         stderr=subprocess.PIPE, text=True)
+                handle.seek(0)
+                streamed = handle.read()
+            self.assertIn('Operation not permitted', cleanup.stderr)
+            self.assertTrue(console.is_file(), 'sandboxed rm unlinked the harness console')
+            self.assertEqual(console.read_text(), streamed)
+            self.assertEqual(streamed, 'engine-line\nafter-cleanup\n')
+            self.assertFalse((work / 'finaltest.png').exists(), 'positive control: candidate files stay removable')
+            self.assertEqual(telemetry.read_text(), '{}\n')
+
     def test_packaged_node_cannot_expose_packaged_private_scorer(self):
         wrapper = Path('/Applications/Goose.app/Contents/Resources/bin/node')
         scorer = wrapper.parent.parent / 'swarm-bench/bench/score_sb7.py'

@@ -258,6 +258,7 @@ c.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, message_
 c.execute("INSERT INTO messages (message_id, role) VALUES ('msg_x', 'assistant')")
 c.commit()
 # The engine's telemetry sink, at the path the harness hands it (GOOSE_SWARM_TELEMETRY_FILE).
+pathlib.Path('telemetry-path.txt').write_text(os.environ['GOOSE_SWARM_TELEMETRY_FILE'])
 with open(os.environ['GOOSE_SWARM_TELEMETRY_FILE'], 'a') as t:
     t.write('{"model": "m", "usage": true, "response_id": "%s", "ended": "completed"}\\n')
     t.write('{"model": "m", "usage": false, "response_id": "%s", "ended": "incomplete"}\\n')
@@ -281,6 +282,11 @@ print('session written')
             self.assertEqual(result['billed_cost']['generation_id_sources'],
                              {'telemetry': 2, 'sessions_db_message_ids': 0, 'request_logs': 0})
             self.assertEqual(json.loads((work / 'model-cost.json').read_text()), result['billed_cost'])
+            # The sink was in the runtime, outside the tree, and landed in the tree for every reader.
+            sink = Path((work / 'telemetry-path.txt').read_text())
+            self.assertEqual(sink, work.resolve().parent / '.candidate-runtime' / 'telemetry.jsonl')
+            self.assertEqual((work / '.swarm' / 'telemetry.jsonl').read_text(), sink.read_text())
+            self.assertEqual(result['telemetry_landing']['status'], 'copied')
             self.assertEqual(sorted(fake.urls), ['https://openrouter.ai/api/v1/generation?id=' + gen
                                                  for gen in sorted(IDS[:2])])
 
