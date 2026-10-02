@@ -130,8 +130,8 @@ export async function explainSprint(sprintId, accountId) {
       messages: promptFor(report),
       tools: [REPORT_TOOL],
       tool_choice: { type: 'function', function: { name: TOOL_NAME } },
+      // No temperature/top_p: the models page says some models reject both.
       max_completion_tokens: 600,
-      temperature: 0.2,
     });
     const { summary, changeIds } = readReport(await streamedToolCalls(response));
     const visible = new Set(report.changes.map((c) => c.changeId));

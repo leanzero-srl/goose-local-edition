@@ -176,6 +176,8 @@ function renderLedger(report: Report) {
     try {
       const r = (await invoke('explain', { sprintId: report.sprint.id })) as Explanation;
       if (r.error) {
+        explanation.hidden = true;
+        explanation.replaceChildren();
         showFlag({ id: `explain-${Date.now()}`, type: 'error', title: EXPLAIN_ERRORS[r.error] || 'Could not explain this sprint', description: r.message, isAutoDismiss: true });
         return;
       }
@@ -188,6 +190,8 @@ function renderLedger(report: Report) {
       );
       explanation.hidden = false;
     } catch (err) {
+      explanation.hidden = true;
+      explanation.replaceChildren();
       showFlag({ id: `explain-${Date.now()}`, type: 'error', title: 'Could not explain this sprint', description: (err as Error).message, isAutoDismiss: true });
     } finally {
       explaining = false;

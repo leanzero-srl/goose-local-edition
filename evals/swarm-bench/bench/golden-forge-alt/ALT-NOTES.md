@@ -11,7 +11,7 @@ Its purpose is to show whether the mock Jira and the emulator accept a *differen
 implementation. Section 1 lists the places where they did not, or where the contract or kit made
 the choice ambiguous. Section 2 lists the alternatives they did accept.
 
-**Revision 2 (contract 2006de559).** Section 4 covers Forge LLM, Realtime and `rovo:mcp`.
+**Revision 3 (contract 2006de559 + kit d7f244d78, LLM and Realtime emulated).** Section 4 covers Forge LLM, Realtime and `rovo:mcp`.
 Earlier findings were re-checked against the fixed kit and are marked **FIXED**. The kit used was
 `825be630e817fabf/kit-9c8a0fbf6acb97c6`, from WP1's uncommitted working tree, which adds `@forge/llm`
 and `@forge/realtime`.
@@ -186,34 +186,64 @@ The following were confirmed, with measured results.
 
 ## 4. Forge LLM, Realtime and `rovo:mcp` (contract 2006de559)
 
-### 4.1 What could be run on forge-dev, and what could not
+### 4.1 End to end on forge-dev (kit `825be630e817fabf/kit-db300f0d5da47478`, d7f244d78)
 
-The kit in WP1's working tree installs `@forge/llm` 1.0.7 and `@forge/realtime` 1.0.1, and the
-functions bundle and load. Neither capability is emulated yet:
+**Explain**, run 6 times through the scripted sequence in the served modal (light), then 2 more in
+dark, as Elif on sprint 365:
 
-- `@forge/llm` answers `GET /llm/ -> 501`. The resolver returns `{error:"error", message:"Forge LLM
-  failed: proxy route /llm/"}`, the modal shows an error flag (serve log: `bridge invoke explain`,
-  `bridge showFlag`), and the modal keeps working: sorting still reverses, and the button is
-  re-enabled.
-- `publishGlobal` answers `POST …/capability/realtime -> 501`. The consumer logs
-  `realtime publish failed for 3 channel(s): …` and does **not** throw, because the rows are already
-  written and a redelivery would only republish nothing. The backend results are unchanged from
-  revision 1: 88 changes and 95 members, 0 diffs against the brute-force recompute, and the idle run
-  makes 0 writes, 0 queue pushes and 0 publishes.
-- Bridge `subscribeGlobal` gives `bridge op 'subscribeRealtimeChannel' is not modelled`. The first
-  build let that rejection destroy the rendered widget (no `[data-metric]`). It now uses
-  `Promise.allSettled`, keeps the numbers on screen, and logs one console error.
-- The `report_scope` parsing was tested offline. `explain.js` was bundled with `@forge/llm` stubbed,
-  across 9 cases: object arguments, delta strings, cumulative strings, digits in the summary (the
-  ledger sentence is used instead), refusal (no tool call), invalid JSON, `changeIds` as numbers,
-  the wrong tool, and a thrown LLM error. Unknown ids were dropped, `tool_choice` was
-  `{type:'function', function:{name:'report_scope'}}`, the active model was picked over a deprecated
-  one, and the prompt held no hidden-change data.
+| phase | answer (from `.forge-dev/llm-log.json`) | what the app showed |
+|---|---|---|
+| clean | `report_scope` with no digits, 3 ids | the model's summary, 3 `[data-change-id]` elements, all visible changes |
+| digits | "Scope grew by 13 points…", 3 ids including a hidden one and an unknown one | the ledger sentence ("…117.5 points were committed… scope creep is 23.4%.") and 1 id (`29816`); the hidden and unknown ids were dropped |
+| refusal | `finish_reason: "refusal"`, text content, no tool call | error flag, explanation hidden |
+| malformed | `summary: ["Scope grew"]`, `changeIds: "see the ledger"` | error flag ("report_scope.summary is not a non-empty string.") |
+| error | 500 `INTERNAL_SERVER_ERROR` | error flag |
+| clean | as the first | the explanation again |
 
-**Unverified until WP1 emulates them:** a real explanation rendered in `[data-testid="explanation"]`
-(light and dark contrast included), and a widget that updates live after `fd events`.
+After every click the `at` header still toggled, so the modal stayed working. Explanation text
+cleared 4.5:1 in light and dark. The prompts held 0 of the viewer's 4 hidden change ids or keys,
+and every request carried `tool_choice: {type:'function', function:{name:'report_scope'}}`. The
+console had only the host's sandbox warning.
+
+**Live widget**: board 138 was served dark at 380 px with numbers `365 117.5/27.5/55/23.4%`. Then
+`fd events --limit 400` ran while the page stayed open. The page received
+`realtimeEvent 'scope-ledger-sprint-365' … {"sprintId":"365"}` 6 times and showed
+`127.5/30.5/67/23.9%` without a reload. Bars rescaled (140.0 / 33.5 / 73.6 px). There were
+**0** bridge ops in a 4 s idle window (no polling) and 7 during the stream. `fd realtime`: every
+publish was `publishGlobal` from the consumer, each was "delivered" or "no matching subscription",
+and none was rejected. The next scheduled run healed 2 changes with 2 publishes. The run after
+that made 0 writes, 0 queue pushes and 0 publishes. Lint reports 0 errors and 0 warnings.
+
+**Fixed during this run:**
+- The first clean phase failed with `400 INVALID_REQUEST: claude-sonnet-5 does not support the
+  temperature and top_p sampling parameters.` The app now omits both (see 4.2).
+- On a failure after a success, the old explanation stayed on screen. It is now cleared, so a
+  refusal never shows a stale answer.
 
 ### 4.2 Ambiguities, and places where the docs and the contract pull apart
+
+- **`temperature` / `top_p`.** The `@forge/llm` 1.0.7 README's chat **and** stream examples both set
+  `temperature: 0.7` and `top_p: 0.9`. The Forge LLMs models page says *"Some models do not support
+  the `temperature` and `top_p` sampling parameters. Omit both parameters from requests to any
+  affected model."* That page refers to a validation-rules section but does not name the models.
+  The dev site's active `claude-sonnet-5` rejects both with 400. An entrant who copies the package
+  README fails every explain call. The only safe reading is "never send them", and nothing an
+  entrant can see says which models are affected.
+- **The model list differs from the public page.** `list()` reports `claude-opus-4-6` and
+  `claude-opus-4-7` as `deprecated`, while the models page lists both as ACTIVE. This is harmless
+  because the contract says to trust `list()`.
+- **The error phase differs from the kit README.** The README says the script's error answer is
+  *"429 `ForgeLlmAPIError`"*; the dev site answered `500 INTERNAL_SERVER_ERROR`. Both are errors
+  to the app.
+- **The stream shape is untested here.** The emulated `stream()` returns the whole answer as one
+  chunk (kit README, item 4 of the deviations). The chunk folding of delta or cumulative argument
+  strings was only exercised offline (9 stubbed cases). How a real stream splits a tool call
+  remains undocumented.
+- **The Realtime payload type.** The subscriber received the published object as the string
+  `{"sprintId":"365"}`, which the kit README calls its own choice. The widget accepts a string or an
+  object. A widget that assumed an object would ignore every message.
+- **A failed explanation after a successful one.** The contract does not say whether the earlier
+  explanation may stay. This app hides it.
 
 - **Realtime from the consumer.** Contract §4: live updates *"after ledger rows are written"*.
   Contract §2: the consumer *"performs the ledger writes"*. The Realtime events API page says
@@ -228,8 +258,7 @@ functions bundle and load. Neither capability is emulated yet:
   channels, and safety rests on the contract's "sprint ids only" payload rule. That is exactly the
   risk the docs name for `publishGlobal`: *"any users with access to your app may receive events
   from a private Jira issue"*. If the grader expects a token, the contract does not say so.
-- **Channel name syntax** (allowed characters, length) is documented nowhere an entrant can see.
-  `scope-ledger-sprint-<id>` is a guess.
+- **RESOLVED** by the contract ("Channel names are yours to choose"; the emulator accepts any name): channel name syntax. Production limits remain undocumented.
 - **A sprint that starts while the widget is open.** It has no channel subscription, so it appears
   only on reload. The contract's "after ledger rows are written, an open widget shows the new
   numbers" does not say whether a newly active sprint must appear.
@@ -239,7 +268,7 @@ functions bundle and load. Neither capability is emulated yet:
   shows an object. Whether a stream sends tool arguments whole, as delta strings or as cumulative
   strings, and whether `index` is stable, is not stated. A stream with neither a stable `index` nor
   a stable `id` would be split into two calls here and graded `malformed`.
-- **"A model that `list()` reports `active`"**: which active model is not specified, and the
+- **RESOLVED** by the contract ("any model that `list()` reports `active` (`chat()` or `stream()`)"): which active model was not specified, and the
   manifest only names the family (`model: [claude]`). This app takes the last active name in
   sorted order.
 - **"Refusal (no tool call)" with a forced `tool_choice`.** A compliant backend always calls the
@@ -257,4 +286,5 @@ functions bundle and load. Neither capability is emulated yet:
   were compared.
 - Changelog paging beyond one embedded page: no dev issue had more histories than one page.
 - Behaviour on the scoring seed.
-- A live Forge LLM explanation, and a live Realtime update end to end (4.1): both wait on WP1's emulation.
+- Real streamed tool-call chunking (4.2): the emulator sends one chunk.
+- A sprint that becomes active while the widget is open has no subscription until reload.
