@@ -863,10 +863,6 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
     if workdir.exists():
         raise FileExistsError(f"Benchmark tree already exists; preserve it and choose a new entrant: {workdir}")
     tier = isolated_tiers.active()
-    if tier and tier.wallet_usd and not os.environ.get(bench_budget.WALLET_ENV, "").strip():
-        os.environ[bench_budget.WALLET_ENV] = tier.wallet_usd
-        print(f"WALLET GUARD DEFAULT: {tier.version} arms {bench_budget.WALLET_ENV}=${tier.wallet_usd} "
-              "(set it to override)", flush=True)
     # A malformed wallet limit refuses here, before a tree, a vendor or a model call exists.
     bench_budget.wallet_limit()
     kit = None

@@ -11,9 +11,10 @@ of the behavioural contract and starter note (sb7.2/DESIGN.md "Public contract t
 bytes never move when SB7.2's text does.
 
 forge-1.0 (forge/DESIGN.md §12) is its own family: a different vendor module (`forge_site`, the dev Jira
-site), a fenced network (localhost plus the provider relay), the pinned Forge kit cloned into the workdir, a
-$50 default wallet guard and a pinned reasoning effort. The defaults below keep SB7.1/SB7.2 identical in
-behaviour: payments family, vendor_service_v3, open network, no kit, no wallet default, no effort pin.
+site), a fenced network (localhost plus the provider relay), the pinned Forge kit cloned into the workdir and a
+pinned reasoning effort. No tier arms a dollar stop: BENCH_MAX_USD applies only when the operator sets it (owner,
+2026-10-02: "Let it run until the credits go away as long as the model is not stuck"). The defaults below keep SB7.1/SB7.2 identical in
+behaviour: payments family, vendor_service_v3, open network, no kit, no effort pin.
 """
 from __future__ import annotations
 
@@ -35,9 +36,6 @@ class IsolatedTier:
     vendor: str = 'vendor_service_v3'
     network: str = 'open'
     kit: bool = False
-    # policy: the operator wallet guard a tier arms when BENCH_MAX_USD is unset (forge/DESIGN.md §11: $50 for
-    # Astra-class runs, whose uncached worst case is ~$150). None = unarmed unless the operator sets it.
-    wallet_usd: str | None = None
     # policy: the provider reasoning effort pinned for every entrant (DESIGN §11: "medium unless the owner sets
     # otherwise"; BENCH_REASONING_EFFORT overrides). None = the model's own default, as SB7.x always ran.
     reasoning_effort: str | None = None
@@ -64,7 +62,7 @@ FORGE10 = IsolatedTier('BENCH_FORGE10', 'forge-1.0', 'score_forge', 'forge/publi
                        ('score_forge.py', 'forge_oracle.py', 'forge_probe.mjs', 'forge-thresholds.json',
                         'forge_site.py', 'forge_kit.py', 'media_sb71.mjs'),
                        (('FORGE-CONTRACT.md', 'forge/public/FORGE-CONTRACT.md'), ('STARTER.md', 'forge/public/STARTER.md')),
-                       family='forge', vendor='forge_site', network='fenced', kit=True, wallet_usd='50',
+                       family='forge', vendor='forge_site', network='fenced', kit=True,
                        reasoning_effort='medium', own_scoring_site=True)
 TIERS = (SB71, SB72, FORGE10)
 BY_VERSION = {tier.version: tier for tier in TIERS}

@@ -167,7 +167,10 @@ class SprintNumbers:
 class Oracle:
     """All graded expectations for one pack. Construction validates the pack's I1 invariants."""
 
-    def __init__(self, pack: Dict):
+    def __init__(self, pack: Dict, include_live_ui: bool = False):
+        """`include_live_ui`: the state after the live-UI slot (DESIGN §5.2: two live changes held back from the
+        script and delivered while the widget is open, `delivery.liveUi: true`). Without it the oracle is the site
+        before the UI phase: what the KVS snapshots, the Rovo action and the widget views opened first must show."""
         self.pack = pack
         try:
             self.viewer = str(pack['viewer'])
@@ -182,7 +185,9 @@ class Oracle:
             raise PackDefect(f'pack lacks an I1 field: {error}') from None
         self.issue_by_key = {i['key']: i for i in self.issues.values()}
         self.history = history
-        self.live = live
+        self.live_ui = [e for e in live if (e.get('delivery') or {}).get('liveUi')]
+        self.live = live if include_live_ui else [e for e in live if not (e.get('delivery') or {}).get('liveUi')]
+        self.include_live_ui = include_live_ui
         for entry in history + live:
             if str(entry.get('issueId')) not in self.issues:
                 raise PackDefect(f"changelog {entry.get('changelogId')} names unknown issue {entry.get('issueId')}")
@@ -517,6 +522,12 @@ def synthetic_pack(seed: str = '00000000000000aa') -> Dict:
          'items': [{'field': 'Story Points', 'fieldtype': 'custom', 'fieldId': pay_est,
                     'from': '3', 'fromString': '3', 'to': '5', 'toString': '5'}],
          'delivery': {'slot': 5, 'duplicates': [], 'dropped': False}},
+        {**change('9207', '106', '2026-10-01T10:40:00.000Z', 'u-bob', '11', '11, 12'),
+         'delivery': {'slot': 7, 'duplicates': [], 'dropped': False, 'liveUi': True}},
+        {'changelogId': '9208', 'issueId': '200', 'created': '2026-10-01T10:45:00.000Z', 'authorId': 'u-ana',
+         'items': [{'field': 'Story Points', 'fieldtype': 'custom', 'fieldId': pay_est,
+                    'from': '5', 'fromString': '5', 'to': '8', 'toString': '8'}],
+         'delivery': {'slot': 8, 'duplicates': [], 'dropped': False, 'liveUi': True}},
         {'changelogId': '9206', 'issueId': '100', 'created': '2026-10-01T10:30:00.000Z', 'authorId': 'u-ana',
          'items': [{'field': 'summary', 'fieldtype': 'jira', 'fieldId': 'summary',
                     'from': None, 'fromString': 'Rotate the pager', 'to': None, 'toString': 'Rotate the pager schedule'}],

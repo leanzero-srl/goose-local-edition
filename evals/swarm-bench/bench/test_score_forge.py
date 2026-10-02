@@ -89,6 +89,8 @@ def golden_manifest():
             'rovo:skill': [{'key': 'sprint-scope-analyst', 'source': {'dir': 'skills/sprint-scope-analyst'},
                             'dependencies': {'tools': ['get-sprint-scope']}}],
             'rovo:agent': [{'key': 'scope-agent', 'name': 'Scope', 'prompt': 'x', 'skills': ['sprint-scope-analyst']}],
+            'rovo:mcp': [{'key': 'scope-mcp', 'name': 'Scope ledger', 'tools': ['get-sprint-scope']}],
+            'llm': [{'key': 'scope-llm', 'model': ['claude']}],
             'function': [{'key': 'on-update', 'handler': 'index.onUpdate'}, {'key': 'consume', 'handler': 'index.consume'},
                          {'key': 'reconcile-fn', 'handler': 'index.reconcile', 'timeoutSeconds': 300},
                          {'key': 'resolver', 'handler': 'index.resolver'}, {'key': 'rovo-action', 'handler': 'index.action'}],
@@ -185,19 +187,26 @@ def golden_observations(pack):
              {'as': viewer, 'label': 'missing', 'sprintId': None, 'threw': False, 'result': {'error': 'sprintId is required'}}]
 
     surfaces, views = [], []
-    for board in o.scrum_boards():
-        sprints = o.sprints_of_board(board)
+    ou = fo.Oracle(pack, include_live_ui=True)   # every surface after the live-UI slot
+    for bi, board in enumerate(o.scrum_boards()):
+        after = bi > 0
+        oo = ou if after else o
+        sprints = oo.sprints_of_board(board)
         for theme in ('light', 'dark'):
-            for width in (380, 1180):
-                vid = f'widget-view:{board}:{theme}:{width}'
-                surfaces.append(_surface(vid, 'widget-view', theme, width,
-                                         {'texts': [o.numbers(s).name for s in sprints]}))
-                views.append({'board': board, 'theme': theme, 'width': width,
-                              'sprints': [{'id': s, 'metrics': _metrics(o.numbers(s))} for s in sprints],
-                              'chart': {'present': True, 'count': 1, 'rects': [
-                                  {'sprintId': s, 'series': ser, 'height': float(getattr(o.numbers(s), ser)) * 4}
-                                  for s in sprints for ser in ('committed', 'added', 'removed')]},
-                              'overflow': {'scrollWidth': width, 'clientWidth': width}, 'sprintsVisible': True})
+            width = 380
+            vid = f'widget-view:{board}:{theme}:{width}'
+            surfaces.append(_surface(vid, 'widget-view', theme, width, {'texts': [oo.numbers(s).name for s in sprints]}))
+            views.append({'board': board, 'theme': theme, 'width': width, 'afterLive': after,
+                          'sprints': [{'id': s, 'metrics': _metrics(oo.numbers(s))} for s in sprints],
+                          'chart': {'present': True, 'count': 1, 'rects': [
+                              {'sprintId': s, 'series': ser, 'height': float(getattr(oo.numbers(s), ser)) * 4}
+                              for s in sprints for ser in ('committed', 'added', 'removed')]},
+                          'overflow': {'scrollWidth': width, 'clientWidth': width}, 'sprintsVisible': True})
+    live_board = o.scrum_boards()[0]
+    live_ui = {'board': live_board, 'subscribed': True, 'idleInvokes': 0, 'reloaded': False,
+            'sprintsAfter': [{'id': s, 'metrics': _metrics(ou.numbers(s))} for s in ou.sprints_of_board(live_board)]}
+    realtime = {'events': [{'channel': 'scope-ledger', 'isGlobal': True, 'payload': json.dumps({'sprintIds': [s]}),
+                            'delivered': ['sub-1']} for s in ou.sprints_of_board(live_board)], 'subscriptions': []}
     for theme in ('light', 'dark'):
         surfaces.append(_surface(f'widget-edit:{theme}', 'widget-edit', theme,
                                  extra={'bridgeOps': [{'op': 'getContext'}, {'op': 'enableTheming'},
@@ -205,15 +214,14 @@ def golden_observations(pack):
     picks = [{'board': b, 'updateConfigCalls': 1, 'onProductSave': False, 'savedConfig': {'boardId': b},
               'viewSprints': o.sprints_of_board(b), 'reopenPressed': [b]} for b in o.scrum_boards()]
     renders, comments, invokes = [], [], []
-    first = True
-    for sid in o.active_sprints():
-        vis = o.visible_changes(sid, viewer)
-        n = o.numbers(sid)
+    for sid in ou.active_sprints():
+        vis = ou.visible_changes(sid, viewer)
+        n = ou.numbers(sid)
         for theme in ('light', 'dark'):
             surfaces.append(_surface(f'sprint-action:{sid}:{theme}', 'sprint-action', theme,
                                      extra={'texts': [c.issue_key for c in vis] + [c.by_name for c in vis],
                                             'changeIdAttrs': [c.change_id for c in vis]}))
-        render = {'sprintId': sid, 'metrics': _metrics(n), 'hiddenCount': str(o.hidden_count(sid, viewer)),
+        render = {'sprintId': sid, 'afterLive': True, 'metrics': _metrics(n), 'hiddenCount': str(ou.hidden_count(sid, viewer)),
                   'headers': list(sf.TABLE_COLS),
                   'rows': [{'changeId': c.change_id, 'cells': {'issue': c.issue_key, 'points': fo.format_points(c.points),
                                                                'kind': c.kind, 'by': c.by_name, 'at': _iso(c.at),
@@ -221,17 +229,12 @@ def golden_observations(pack):
                   'sortAt': [{'rows': [c.change_id for c in reversed(vis)],
                               'ariaSort': {'at': 'descending'}},
                              {'rows': [c.change_id for c in vis], 'ariaSort': {'at': 'ascending'}}],
-                  'sortPoints': {'rows': [c.change_id for c in sorted(vis, key=lambda c: (-c.points, c.at, fo.changelog_order(c.change_id)))],
-                                 'ariaSort': {'points': 'descending'}},
                   'router': [{'issueKey': c.issue_key, 'ops': [{'op': 'open', 'url': f'/browse/{c.issue_key}'}]} for c in vis[:1]],
                   'close': {'closeCalled': True}}
         if vis:
             target = vis[0]
             body = {'type': 'doc', 'version': 1, 'content': [{'type': 'paragraph', 'content': [
                 {'type': 'text', 'text': f'{target.issue_key} entered {n.name}; creep {fo.format_creep(n.creep)}'}]}]}
-            if first:
-                comments.append({'t': 1000, 'issueKey': target.issue_key, 'provider': 'user', 'accountId': viewer,
-                                 'status': 429, 'body': body, 'fault': 'f-comment'})
             comments.append({'t': 1002, 'issueKey': target.issue_key, 'provider': 'user', 'accountId': viewer,
                              'status': 201, 'body': body})
             comments.append({'t': 1010, 'issueKey': target.issue_key, 'provider': 'user', 'accountId': viewer,
@@ -242,10 +245,37 @@ def golden_observations(pack):
                            'doubleClick': {'commentsAdded': 1, 'successFlags': 1, 'errorFlags': 0},
                            'forbidden': {'issueKey': 'OPS-9', 'commentsAdded': 0, 'errorFlags': 1, 'successFlags': 0,
                                          'sortWorksAfter': True}})
-            first = False
         renders.append(render)
         invokes.append({'surface': f'sprint-action:{sid}', 'functionKey': 'ledger',
                         'response': {'rows': [c.change_id for c in vis]}})
+    # the five scripted explain answers on the first sprint with visible changes (DESIGN §5.2 llm script)
+    ex_sid = next(sid for sid in ou.active_sprints() if ou.visible_changes(sid, viewer))
+    ex_vis = [c.change_id for c in ou.visible_changes(ex_sid, viewer)]
+    hidden_id = ou.leak_terms(viewer)['changeIds'][0]
+    tool = {'type': 'function', 'function': {'name': 'report_scope', 'parameters': {'type': 'object', 'properties': {
+        'summary': {'type': 'string'}, 'changeIds': {'type': 'array', 'items': {'type': 'string'}}}}}}
+    request = {'messages': [{'role': 'user', 'content': f'Explain sprint {ou.numbers(ex_sid).name}: ' + ', '.join(ex_vis)}],
+               'tools': [tool], 'tool_choice': {'type': 'function', 'function': {'name': 'report_scope'}}}
+
+    def answer(args):
+        return {'choices': [{'finish_reason': 'tool_use', 'message': {'role': 'assistant', 'content': '',
+                'tool_calls': [{'type': 'function', 'function': {'name': 'report_scope', 'arguments': args}}]}}]}
+    clean = {'summary': 'Scope grew after the sprint started.', 'changeIds': ex_vis[:2]}
+    digits = {'summary': 'Scope grew by 13 points: 5 issues were added.', 'changeIds': [ex_vis[0], hidden_id, '99999999']}
+    llm_entries = [{'op': 'list', 'models': []}]
+    steps = []
+    for kind, args in (('clean', clean), ('digits', digits), ('refusal', None), ('malformed', None), ('error', None)):
+        entry = {'op': 'chat', 'phase': f'explain-{ex_sid}', 'step': kind, 'model': 'claude-sonnet-5', 'modelStatus': 'active',
+                 'moduleType': 'jira:sprintAction', 'moduleKey': 'scope-action', 'asUser': viewer, 'request': request,
+                 'response': answer(args) if args else {'choices': [{'finish_reason': 'refusal', 'message': {'content': 'no'}}]}}
+        llm_entries.append(entry)
+        if kind == 'clean':
+            st = {'explanation': clean['summary'], 'idsShown': clean['changeIds'], 'errorFlags': 0}
+        elif kind == 'digits':
+            st = {'explanation': f"Committed {fo.format_points(ou.numbers(ex_sid).committed)} points.", 'idsShown': ex_vis[:1], 'errorFlags': 0}
+        else:
+            st = {'explanation': '', 'idsShown': [], 'errorFlags': 1, 'sortWorksAfter': True}
+        steps.append({'step': kind, 'llmCalls': 1, 'llm': entry, **st})
     future = o.future_sprints()[0]
     surfaces.append(_surface(f'not-started:{future}', 'sprint-action', 'light', extra={'texts': ['Not started']}))
     ui_calls = [{'t': 2000, 'inv': 'ui1', 'kind': 'resolver', 'provider': 'app', 'service': 'kvs', 'method': 'POST',
@@ -264,12 +294,13 @@ def golden_observations(pack):
                                  'forgePackages': {'@forge/api': '8.2.0'}, 'outsideKit': []}
                                 for f in golden_manifest()['modules']['function']]},
         'phases': {'backfill': backfill, 'live': live, 'heal': heal, 'rerun': rerun},
-        'rovo': {'calls': rovo}, 'comments': comments,
+        'rovo': {'calls': rovo}, 'comments': comments, 'realtime': realtime, 'llm': {'entries': llm_entries},
         'ui': {'surfaces': surfaces, 'calls': ui_calls,
                'widget': {'noConfig': {'needsConfig': True, 'onlyNeedsConfig': True}, 'views': views,
                           'secondInstance': {'configBoard': second_board, 'sprints': o.sprints_of_board(second_board)}},
                'edit': {'options': [{'boardId': b, 'pressed': False} for b in o.scrum_boards()], 'picks': picks},
-               'sprintAction': renders,
+               'sprintAction': renders, 'live': live_ui,
+               'explain': {'sprintId': ex_sid, 'steps': steps},
                'notStarted': {'sprintId': future, 'onlyNotStarted': True},
                'invokeResponses': invokes},
         'harnessMissing': [], 'sectionErrors': {}, 'shots': [],
@@ -716,6 +747,97 @@ class DeployReadinessTests(Golden):
         self.assertEqual(self.rows(self.score(gadget))['k_manifest_semantics']['score'], 1)
 
 
+class LlmRealtimeMcpTests(Golden):
+    """2006de559's rows: each passes on the golden fixture and fails on its one defect."""
+
+    def mutate(self, fn):
+        obs = copy.deepcopy(self.obs)
+        fn(obs)
+        return {r['check']: r for r in self.score(obs)['checks']}, self.score(obs)
+
+    def test_rovo_mcp(self):
+        rows, _ = self.mutate(lambda o: o['manifest']['modules']['rovo:mcp'][0].update(name='x' * 31))
+        self.assertLess(rows['k_rovo_mcp']['score'], 1)
+        rows, _ = self.mutate(lambda o: o['manifest']['modules'].pop('rovo:mcp'))
+        self.assertEqual(rows['k_rovo_mcp']['score'], 0)
+
+    def test_llm_model_current(self):
+        def deprecated(o):
+            for e in o['llm']['entries']:
+                if e.get('op') == 'chat':
+                    e.update(model='claude-opus-4-6', modelStatus='deprecated')
+        rows, v = self.mutate(deprecated)
+        self.assertEqual(rows['k_llm_model_current']['score'], 0.5)
+        self.assertEqual(v['admission']['ceiling'], 1.0)     # points only, never a band (DESIGN 17.2)
+        rule = [f for f in v['deploy_readiness']['rules'] if f['rule'].startswith('R11 ')][0]
+        self.assertEqual((rule['status'], rule['graded_by']), ('fail', 'k_llm_model_current'))
+
+    def test_realtime_payload_clean(self):
+        def leak(o):
+            o['realtime']['events'][0]['payload'] = json.dumps({'sprintId': '11', 'issueKey': 'OPS-12', 'points': 5})
+        rows, v = self.mutate(leak)
+        self.assertLess(rows['b_realtime_payload_clean']['score'], 1)
+        self.assertEqual(v['admission']['ceiling'], 0.899)
+
+    def test_widget_live(self):
+        rows, _ = self.mutate(lambda o: o['ui']['live'].update(idleInvokes=3))
+        self.assertLess(rows['u_widget_live']['score'], 1)        # polling
+        rows, _ = self.mutate(lambda o: o['ui']['live'].update(sprintsAfter=[]))
+        self.assertLess(rows['u_widget_live']['score'], 1)        # never showed the new numbers
+        rows, _ = self.mutate(lambda o: o['ui'].update(live={'absent': 'the pack has no live-UI changes'}))
+        self.assertTrue(rows['u_widget_live'].get('unavailable'))
+
+    def test_llm_explain(self):
+        def trusts(o):
+            st = o['ui']['explain']['steps'][1]
+            st['explanation'] = 'Scope grew by 13 points: 5 issues were added.'
+        rows, v = self.mutate(trusts)
+        self.assertLess(rows['u_llm_explain']['score'], 1)
+        self.assertEqual(v['admission']['ceiling'], 0.899)
+
+        def unfiltered(o):
+            o['ui']['explain']['steps'][1]['idsShown'] = o['ui']['explain']['steps'][1]['llm']['response']['choices'][0][
+                'message']['tool_calls'][0]['function']['arguments']['changeIds']
+        self.assertLess(self.mutate(unfiltered)[0]['u_llm_explain']['score'], 1)
+
+        def unforced(o):
+            for st in o['ui']['explain']['steps']:
+                st['llm'] = {**st['llm'], 'request': {**st['llm']['request'], 'tool_choice': 'auto'}}
+        self.assertLess(self.mutate(unforced)[0]['u_llm_explain']['score'], 1)
+
+        def no_refusal_path(o):
+            o['ui']['explain']['steps'][2].update(errorFlags=0, sortWorksAfter=False)
+        self.assertLess(self.mutate(no_refusal_path)[0]['u_llm_explain']['score'], 1)
+
+    def test_an_llm_prompt_with_hidden_data_is_the_critical_leak(self):
+        def prompt(o):
+            hidden = fo.Oracle(self.pack, include_live_ui=True).leak_terms('u-viewer')['keys'][0]
+            for e in o['llm']['entries']:
+                if e.get('op') == 'chat':
+                    e['request'] = {**e['request'], 'messages': [{'role': 'user', 'content': f'all rows incl. {hidden}'}]}
+        rows, v = self.mutate(prompt)
+        self.assertEqual(rows['b_no_permission_leak']['score'], 0)
+        self.assertIn('b_no_permission_leak', v['critical']['unsuppressed'])
+
+    def test_band_four_is_graded(self):
+        rows = sf._scenario({'u_llm_explain': 0.0, 'u_widget_live': 0.0, 'v_console_clean': 0.0})
+        self.assertEqual(sf.admit(rows)['ceiling'], 0.839)
+        self.assertEqual(sf.GRADED_BAND, ('production robustness', 0.899, 0.03, 0.799))
+
+    def test_deploy_rules_for_llm_and_realtime(self):
+        status = lambda v, rid: [f for f in v['deploy_readiness']['rules'] if f['rule'].startswith(rid + ' ')][0]['status']  # noqa: E731
+        (self.root / 'src' / 'llm.js').write_text("import { chat } from '@forge/llm';\\n")
+        self.assertEqual(status(self.score(), 'M13'), 'pass')
+        bare = copy.deepcopy(self.obs)
+        bare['manifest']['modules'].pop('llm')
+        self.assertEqual(status(self.score(bare), 'M13'), 'fail')
+        (self.root / 'src' / 'llm.js').unlink()
+        self.assertEqual(status(self.score(), 'R10'), 'pass')
+        rejected = copy.deepcopy(self.obs)
+        rejected['realtime']['events'][0]['rejected'] = 'PUBLISH_WITHOUT_FRONTEND_CONTEXT'
+        self.assertEqual(status(self.score(rejected), 'R10'), 'fail')
+
+
 class ControlTests(unittest.TestCase):
     def test_empty_starter_and_one_function_app_are_scored_at_most_005(self):
         pack = fo.synthetic_pack()
@@ -732,13 +854,14 @@ class ControlTests(unittest.TestCase):
     def test_single_defect_cost_table_is_pinned(self):
         # DESIGN §8.6 (10): computed once from the composition; a change here is a scoring change.
         pinned = {
-            'l_deployable': 0.499, 'l_bundles_load': 0.499, 'b_no_permission_leak': 0.5873,
-            'b_comment_exactly_once': 0.5873, 't_no_double_count': 0.5894, 'r_backfill_complete':
+            'l_deployable': 0.499, 'l_bundles_load': 0.499, 'b_no_permission_leak': 0.5894,
+            'b_comment_exactly_once': 0.5894, 't_no_double_count': 0.5894, 'r_backfill_complete':
             0.5894, 'u_widget_loads': 0.6, 't_event_rows': 0.699, 'k_dashboard_widget': 0.799,
-            'r_pagination': 0.899, 'e_reconcile_economy': 0.97, 'b_comment_adf_as_user': 0.9714,
-            'u_widget_numbers': 0.9769, 'l_lint_warnings': 0.9808, 't_reestimate_followed': 0.9824,
-            'u_widget_chart': 0.9844, 'v_widget_sizes': 0.9859, 'l_scopes': 0.9883,
-            'k_manifest_semantics': 0.9815, 'k_runtime_risks': 0.9815}
+            'r_pagination': 0.899, 'u_llm_explain': 0.899, 'u_widget_live': 0.899, 'k_rovo_mcp': 0.9845,
+            'k_llm_model_current': 0.9845, 'e_reconcile_economy': 0.97, 'b_comment_adf_as_user': 0.9757,
+            'u_widget_numbers': 0.9805, 'l_lint_warnings': 0.9816, 't_reestimate_followed': 0.9824,
+            'u_widget_chart': 0.9872, 'v_widget_sizes': 0.9859, 'l_scopes': 0.9883,
+            'k_manifest_semantics': 0.9845, 'k_runtime_risks': 0.9845}
         costs = sf.single_defect_costs()
         self.assertEqual({k: costs[k] for k in pinned}, pinned)
 
@@ -876,6 +999,9 @@ class RegistryAndContractTests(unittest.TestCase):
         # deploy readiness (owner 2026-10-03; DESIGN §8.2/§14 rows to be added by the orchestrator): the platform
         # rules are discoverable, not restated (DESIGN §3 rule 3); the module and permission duties are §2's.
         'k_manifest_semantics': '§2', 'k_runtime_risks': '§2',
+        # 2006de559: Forge LLM, Realtime and rovo:mcp
+        'k_rovo_mcp': '§2', 'k_llm_model_current': '§2', 'u_llm_explain': '§5', 'u_widget_live': '§4',
+        'b_realtime_payload_clean': '§4',
     }
     # Every hook the contract names, and the check that probes it.
     HOOKS = {
@@ -884,7 +1010,7 @@ class RegistryAndContractTests(unittest.TestCase):
         'hidden-count': 'b_hidden_count', 'ledger': 'u_ledger_table', 'post-summary': 'b_comment_exactly_once',
         'close': 'u_modal_close', 'committed': 'u_widget_numbers', 'added': 'u_widget_numbers',
         'removed': 'u_widget_numbers', 'creep': 'u_widget_numbers', 'issue': 'u_ledger_table',
-        'points': 'u_ledger_sort', 'kind': 'u_ledger_table', 'by': 'u_ledger_table', 'at': 'u_ledger_sort',
+        'points': 'u_ledger_table', 'explain': 'u_llm_explain', 'explanation': 'u_llm_explain', 'kind': 'u_ledger_table', 'by': 'u_ledger_table', 'at': 'u_ledger_sort',
         'source': 'u_ledger_table', 'data-board-id': 'u_widget_edit_config', 'aria-pressed': 'u_widget_edit_config',
         'data-sprint-id': 'u_widget_numbers', 'data-series': 'u_widget_chart', 'data-change-id': 'u_ledger_table',
         'aria-sort': 'u_ledger_sort', 'aria-selected': 'u_comment_flow', 'get-sprint-scope': 'a_action_result',
@@ -895,12 +1021,12 @@ class RegistryAndContractTests(unittest.TestCase):
     }
 
     def test_registry_shape(self):
-        self.assertEqual(len(sf.CHECKS), 61)
+        self.assertEqual(len(sf.CHECKS), 66)
         self.assertEqual(len(sf.CRITICAL_CHECKS), 7)
         counts = {}
         for _n, t, *_ in sf.CHECKS:
             counts[t] = counts.get(t, 0) + 1
-        self.assertEqual(counts, {'L': 6, 'K': 8, 'T': 8, 'R': 7, 'S': 4, 'B': 5, 'U': 10, 'V': 5, 'A': 4, 'E': 4})
+        self.assertEqual(counts, {'L': 6, 'K': 10, 'T': 8, 'R': 7, 'S': 4, 'B': 6, 'U': 12, 'V': 5, 'A': 4, 'E': 4})
         self.assertEqual(sf.TIER_WEIGHT, {'L': .08, 'K': .10, 'T': .16, 'R': .14, 'S': .08, 'B': .12, 'U': .16,
                                           'V': .08, 'A': .08})
 
@@ -974,8 +1100,8 @@ class TierWiringTests(unittest.TestCase):
             self.assertIs(vendor, fake_site)
             self.assertEqual(spec, 'forge/public/spec-build-forge.md')
             tier = isolated_tiers.active()
-            self.assertEqual((tier.family, tier.network, tier.kit, tier.wallet_usd, tier.reasoning_effort),
-                             ('forge', 'fenced', True, '50', 'medium'))
+            self.assertEqual((tier.family, tier.network, tier.kit, tier.reasoning_effort), ('forge', 'fenced', True, 'medium'))
+            self.assertFalse(hasattr(tier, 'wallet_usd'))   # owner 2026-10-02: no default dollar stop on any tier
             text = run_build.render_public_contract((ROOT / spec).read_text(), 8850, fake_site)
             self.assertEqual(text, (ROOT / spec).read_text())
             with self.assertRaisesRegex(RuntimeError, 'DOCS_URL'):
@@ -987,8 +1113,8 @@ class TierWiringTests(unittest.TestCase):
     def test_sb_tiers_keep_their_defaults(self):
         import isolated_tiers
         for tier in (isolated_tiers.SB71, isolated_tiers.SB72):
-            self.assertEqual((tier.family, tier.vendor, tier.network, tier.kit, tier.wallet_usd, tier.reasoning_effort,
-                              tier.own_scoring_site), ('payments', 'vendor_service_v3', 'open', False, None, None, False))
+            self.assertEqual((tier.family, tier.vendor, tier.network, tier.kit, tier.reasoning_effort,
+                              tier.own_scoring_site), ('payments', 'vendor_service_v3', 'open', False, None, False))
 
     def test_the_reasoning_effort_is_pinned_and_recorded(self):
         import isolated_tiers

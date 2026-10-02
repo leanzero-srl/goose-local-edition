@@ -129,8 +129,21 @@ ADMISSION_BANDS = (
                                                     'v_theme_tokens', 'v_dark_mode')),
     (0.899, 'production robustness', ('t_no_double_count', 't_out_of_order', 't_retry_after_honoured',
                                       'r_heal_dropped', 'r_rate_limit', 'r_pagination', 'b_no_permission_leak',
-                                      'b_comment_exactly_once', 'v_csp_clean', 'v_console_clean')),
+                                      'b_comment_exactly_once', 'b_realtime_payload_clean', 'u_llm_explain',
+                                      'u_widget_live', 'v_csp_clean', 'v_console_clean')),
 )
+# The graded band (DESIGN §8.5, 2006de559): with n of its rows failing the ceiling is max(floor, top - step·(n-1)).
+# Single source: admit() reads it, and leanzero.net's sync (scripts/sync-forge-public.py) re-derives the caps from it.
+GRADED_BAND = ('production robustness', 0.899, 0.03, 0.799)
+assert GRADED_BAND[0] == ADMISSION_BANDS[-1][1] and GRADED_BAND[1] == ADMISSION_BANDS[-1][0]
+assert GRADED_BAND[3] == ADMISSION_BANDS[-2][0]   # never undercuts the band above it
+
+
+def band_ceiling(limit: float, label: str, failed: int) -> float:
+    if label == GRADED_BAND[0]:
+        _l, top, step, floor = GRADED_BAND
+        return round(max(floor, top - step * (failed - 1)), 4)
+    return limit
 
 EXCELLENCE_VALUED = ('t_event_rows', 'r_heal_dropped', 'u_widget_numbers', 'u_ledger_table', 'b_comment_adf_as_user')
 EXCELLENCE_BINARY = ('v_console_clean', 'v_csp_clean', 'l_lint_warnings')
@@ -193,11 +206,16 @@ class Ctx:
         self.oracle_error = None
         try:
             self.oracle = fo.Oracle(pack)
+            # The site after the live-UI slot (DESIGN §8.7 step 8): what every surface opened after the live step shows.
+            self.oracle_ui = fo.Oracle(pack, include_live_ui=True)
         except fo.PackDefect as error:
-            self.oracle, self.oracle_error = None, str(error)
+            self.oracle, self.oracle_ui, self.oracle_error = None, None, str(error)
         self.manifest = self.obs.get('manifest') if isinstance(self.obs.get('manifest'), dict) else None
         self.harness_missing = list(self.obs.get('harnessMissing') or [])
         self._row_cache: Dict = {}
+
+    def oracle_for(self, after_live: bool):
+        return self.oracle_ui if after_live else self.oracle
 
     # manifest
     def modules(self, mtype: str) -> List[Dict]:
@@ -584,7 +602,7 @@ def pre_invoke(c):
 
 
 def pre_person_list(c):
-    listed = any(r.get('rows') for r in c.sprint_renders()) or any(
+    listed = any(r.get('rows') for r in c.sprint_renders()) or bool(_llm_calls(c)) or any(
         isinstance(r.get('result'), dict) and r['result'].get('changes') for r in c.rovo_calls())
     return (listed, '>= 1 person-facing change list returned or rendered')
 
@@ -978,6 +996,8 @@ DOCS = {
     'kvs': 'https://developer.atlassian.com/platform/forge/limits-kvs-ce/',
     'storage': 'https://developer.atlassian.com/platform/forge/storage-reference/kvs-migration-from-legacy/',
     'fields': 'https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/',
+    'llm': 'https://developer.atlassian.com/platform/forge/runtime-reference/forge-llms-api-reference/',
+    'realtime': 'https://developer.atlassian.com/platform/forge/runtime-reference/realtime-events-api/',
 }
 SCHEDULE_INTERVALS = ('fiveMinute', 'hour', 'day', 'week')          # limits-scheduled-trigger / manifest schema
 ENTITY_ATTRIBUTE_TYPES = ('string', 'integer', 'float', 'boolean', 'any')
@@ -1162,8 +1182,10 @@ def deploy_findings(c: Ctx) -> List[Dict]:
     dangling += [f"agent {a.get('key')} skill {x}" for a in c.modules('rovo:agent') for x in a.get('skills') or [] if x not in skill_keys]
     dangling += [f"skill {s.get('key')} tool {x}" for s in c.modules('rovo:skill')
                  for x in ((s.get('dependencies') or {}).get('tools') or []) if x not in action_keys]
-    rule('M5 Rovo agent, skill and action references resolve', 'manifest',
-         bool(c.modules('rovo:agent') or c.modules('rovo:skill')), not dangling, 'would_fail',
+    dangling += [f"mcp {m.get('key')} tool {x}" for m in c.modules('rovo:mcp')
+                 for x in (m.get('tools') or []) if isinstance(x, str) and x not in action_keys]
+    rule('M5 Rovo agent, skill, MCP and action references resolve', 'manifest',
+         bool(c.modules('rovo:agent') or c.modules('rovo:skill') or c.modules('rovo:mcp')), not dangling, 'would_fail',
          'a reference to an undeclared module key fails validation', 'rovo', '; '.join(dangling),
          graded_by='l_deployable' if dangling and _lint_mentions(c, *dangling) else None)
     bad_paths = [str(r.get('path')) for r in c.resources()
@@ -1218,6 +1240,11 @@ def deploy_findings(c: Ctx) -> List[Dict]:
     rule('M12 timeoutSeconds within the documented 900 s', 'manifest', bool(fn_keys), not long_t, 'would_fail',
          'async functions run at most 900 s', 'invocation', ', '.join(map(str, long_t)),
          graded_by='l_deployable' if _lint_mentions(c, 'timeoutSeconds') else None)
+
+    uses_llm = any(re.search(r"""['"]@forge/llm['"]""", t) for t in texts.values())
+    rule('M13 @forge/llm is used only with an llm module', 'manifest', uses_llm, bool(c.modules('llm')), 'would_fail',
+         "the docs: lint 'will fail with an error like: Error: LLM package is used but 'llm' module is not defined' "
+         '(lint 6.3.0 only warns); the emulator refuses the call', 'llm', '', graded_by=_charged(c, 'k_llm_model_current'))
 
     # ── permissions ─────────────────────────────────────────────────────────────────────────
     declared = set(((c.manifest or {}).get('permissions') or {}).get('scopes') or [])
@@ -1310,6 +1337,26 @@ def deploy_findings(c: Ctx) -> List[Dict]:
     rule('R8 JQL is bounded (no 400 from /search/jql)', 'runtime', any(str(x.get('path', '')).split('?')[0].endswith('/search/jql')
                                                                        for x in c.all_calls('jira')),
          not unbounded, 'would_fail', 'Jira refuses unbounded JQL with 400', 'search', f'{len(unbounded)} refused search(es)')
+    rejected = [e for e in _realtime_events(c) if e.get('rejected')]
+    bg_publish = []
+    for t in BACKGROUND_TYPES:
+        for m in c.modules(t):
+            handler = handler_of.get(m.get('function'), '')
+            if '.' in handler:
+                file, fn = handler.rsplit('.', 1)
+                src = next((txt for rel, txt in texts.items() if Path(rel).with_suffix('').as_posix() == f'src/{file}'), '')
+                if re.search(r'(?<![\w.])(?:realtime\.)?publish\s*\(', _function_body(src, fn) or ''):
+                    bg_publish.append(f'{t}:{m.get("key")}')
+    rule('R10 Realtime publish() only from frontend-invoked functions', 'runtime',
+         bool(_realtime_events(c)) or any('@forge/realtime' in t for t in texts.values()), not rejected and not bg_publish,
+         'would_fail', "the docs: 'The publish API is only supported for functions invoked from the app frontend. "
+         "This is not currently available for async events' (publishGlobal instead)", 'realtime',
+         '; '.join([f"{len(rejected)} publish(es) rejected: {rejected[0].get('rejected')}"] if rejected else []) + '; '.join(bg_publish),
+         graded_by=_charged(c, 'u_widget_live'))
+    stale = sorted({str(e.get('model')) for e in _llm_calls(c) if e.get('modelStatus') != 'active'})
+    rule('R11 LLM calls name a model list() reports active', 'runtime', bool(_llm_calls(c)), not stale, 'would_fail',
+         'a deprecated model is retired by the platform; the docs example (claude-opus-4-6) is deprecated on the site',
+         'llm', ', '.join(stale), graded_by=_charged(c, 'k_llm_model_current'))
     kvs_err = [x for x in c.all_calls('kvs') if x.get('limitError') or x.get('status') in (400, 413)]
     rule('R9 KVS writes fit the documented types and limits', 'runtime', bool(c.all_calls('kvs')), not kvs_err, 'would_fail',
          'a value, key or integer past the KVS limits is refused', 'kvs',
@@ -1443,24 +1490,25 @@ def _(c):
     return g(1, 'every change holds at most one ledger row in every phase (duplicated deliveries included)')
 
 
-def _person_numbers(c: Ctx, sid: str) -> List[Dict]:
-    """Every person-facing reading of a sprint's four numbers (as text) across the surfaces."""
+def _person_numbers(c: Ctx, sid: str) -> List[Tuple[Dict, object]]:
+    """Every person-facing reading of a sprint's four numbers (as text) across the surfaces, each with the oracle of
+    the moment it was read (surfaces after the live-UI slot see its changes; the Rovo action runs before it)."""
     out = []
     for r in c.sprint_renders():
         if str(r.get('sprintId')) == sid and r.get('metrics'):
-            out.append(r['metrics'])
+            out.append((r['metrics'], c.oracle_for(r.get('afterLive', True))))
     for v in (c.ui().get('widget') or {}).get('views') or []:
         for s in v.get('sprints') or []:
             if str(s.get('id')) == sid and s.get('metrics'):
-                out.append(s['metrics'])
+                out.append((s['metrics'], c.oracle_for(v.get('afterLive', False))))
     for call in c.rovo_calls('sprint'):
         res = call.get('result')
         if str(call.get('sprintId')) == sid and isinstance(res, dict):
-            out.append({'committed': _json_text(res.get('committed')), 'added': _json_text(res.get('added')),
+            out.append(({'committed': _json_text(res.get('committed')), 'added': _json_text(res.get('added')),
                         'removed': _json_text(res.get('removed')),
                         'creep': '—' if res.get('creepPercent') is None else
                         (f"{Decimal(str(res['creepPercent'])):.1f}%" if isinstance(res.get('creepPercent'), (int, float))
-                         else str(res.get('creepPercent')))})
+                         else str(res.get('creepPercent')))}, c.oracle))
     return out
 
 
@@ -1469,9 +1517,8 @@ def _json_text(v):
 
 
 def _sprint_numbers_right(c: Ctx, sid: str) -> bool:
-    n = c.oracle.numbers(sid)
     readings = _person_numbers(c, sid)
-    return bool(readings) and any(metrics_ok(m, n) == 4 for m in readings)
+    return bool(readings) and any(metrics_ok(m, o.numbers(sid)) == 4 for m, o in readings)
 
 
 @check('t_out_of_order', 'T', needs=('live', 'ui', 'rovo'))
@@ -1811,7 +1858,8 @@ def _(c):
     renders = [r for r in c.sprint_renders() if r.get('rows')]
     ok = 0
     for r in renders:
-        expected = [ch.change_id for ch in c.oracle.visible_changes(str(r.get('sprintId')), c.oracle.viewer)]
+        o = c.oracle_for(r.get('afterLive', True))
+        expected = [ch.change_id for ch in o.visible_changes(str(r.get('sprintId')), o.viewer)]
         shown = [row.get('changeId') for row in r['rows'] if row.get('changeId') in expected]
         ok += shown == [cid for cid in expected if cid in shown]
     return g(ok / len(renders), f'{ok}/{len(renders)} tables list changes in change-time order',
@@ -1859,6 +1907,17 @@ def _(c):
     for r in _invokes(c):
         dump = json.dumps(r.get('response'), default=str)
         found += [f"invoke {r.get('functionKey')}: {h}" for h in _leak_hits(dump, viewer_terms)]
+    # LLM prompts sent from a person-facing invocation hold only what that person may browse (DESIGN 2006de559:
+    # b_llm_prompt_no_leak folded in).
+    for e in _llm_calls(c):
+        if e.get('moduleType') in BACKGROUND_TYPES:
+            continue
+        person = str(e.get('asUser') or c.oracle.viewer)
+        prompt = ' '.join(str(m.get('content') if isinstance(m.get('content'), str) else json.dumps(m.get('content')))
+                          for m in ((e.get('request') or {}).get('messages') or []) if isinstance(m, dict))
+        terms = c.oracle.leak_terms(person)
+        found += [f"LLM prompt ({e.get('moduleKey')}): {h}" for h in _leak_hits(prompt, terms)]
+        found += [f'LLM prompt: change {x}' for x in terms['changeIds'] if re.search(r'(?<!\d)' + x + r'(?!\d)', prompt)]
     for call in c.rovo_calls():
         terms = c.oracle.leak_terms(str(call.get('as')))
         res = call.get('result')
@@ -1876,9 +1935,10 @@ def _(c):
     checks, ok = 0, 0
     for r in c.sprint_renders():
         sid = str(r.get('sprintId'))
-        if sid in c.oracle.all_numbers():
+        o = c.oracle_for(r.get('afterLive', True))
+        if sid in o.all_numbers():
             checks += 1
-            ok += _num(r.get('hiddenCount')) == c.oracle.hidden_count(sid, c.oracle.viewer)
+            ok += _num(r.get('hiddenCount')) == o.hidden_count(sid, o.viewer)
     for call in c.rovo_calls('sprint'):
         sid = str(call.get('sprintId'))
         if sid in c.oracle.all_numbers():
@@ -1929,14 +1989,15 @@ def _(c):
     ok, notes = 0, []
     for x in attempts:
         # The comment path names the issue by key or by id (both are Jira's issueIdOrKey).
-        issue = c.oracle.issue_by_key.get(x.get('issueKey')) or c.oracle.issues.get(str(x.get('issueKey')))
+        o = c.oracle_ui   # comments are posted from the sprint action, after the live-UI slot
+        issue = o.issue_by_key.get(x.get('issueKey')) or o.issues.get(str(x.get('issueKey')))
         key = issue['key'] if issue else None
-        sprint_ids = [sid for sid in c.oracle.all_numbers()
-                      if any(ch.issue_key == key for ch in c.oracle.numbers(sid).changes)]
+        sprint_ids = [sid for sid in o.all_numbers()
+                      if any(ch.issue_key == key for ch in o.numbers(sid).changes)]
         text = adf_text(x.get('body')) if x.get('status') in (200, 201) else None
-        good = text is not None and x.get('provider') == 'user' and x.get('accountId') == c.oracle.viewer \
+        good = text is not None and x.get('provider') == 'user' and x.get('accountId') == o.viewer \
             and issue is not None and issue['key'] in text and any(
-                c.oracle.numbers(sid).name in text and fo.format_creep(c.oracle.numbers(sid).creep).rstrip('%') in text
+                o.numbers(sid).name in text and fo.format_creep(o.numbers(sid).creep).rstrip('%') in text
                 for sid in sprint_ids)
         ok += good
         if not good:
@@ -1991,10 +2052,11 @@ def _(c):
         return absent('configured widget view')
     total = 0.0
     for v in views:
-        expected = c.oracle.sprints_of_board(str(v.get('board')))
+        o = c.oracle_for(v.get('afterLive', False))
+        expected = o.sprints_of_board(str(v.get('board')))
         shown = v.get('sprints') or []
         right = sum(1 for i, sid in enumerate(expected) if i < len(shown) and str(shown[i].get('id')) == sid
-                    and metrics_ok(shown[i].get('metrics'), c.oracle.numbers(sid)) == 4)
+                    and metrics_ok(shown[i].get('metrics'), o.numbers(sid)) == 4)
         total += right / max(len(expected), len(shown)) if (expected or shown) else 1.0
     return g(total / len(views), f'widget numbers: {total:.2f}/{len(views)} views exact (sprints by startDate, '
              'four §1 numbers each)', 'wrong numbers on the dashboard')
@@ -2024,8 +2086,9 @@ def _(c):
     tol = float(TH['chart_tolerance_px'])
     ok, notes = 0, []
     for v in views:
-        expected = c.oracle.sprints_of_board(str(v.get('board')))
-        good, why = chart_ok(v.get('chart') or {}, expected, c.oracle.all_numbers(), tol)
+        o = c.oracle_for(v.get('afterLive', False))
+        expected = o.sprints_of_board(str(v.get('board')))
+        good, why = chart_ok(v.get('chart') or {}, expected, o.all_numbers(), tol)
         ok += good
         if not good:
             notes.append(why)
@@ -2067,12 +2130,13 @@ TABLE_COLS = ('issue', 'points', 'kind', 'by', 'at', 'source')
 def _(c):
     if not c.modules('jira:sprintAction'):
         return absent('jira:sprintAction')
-    renders = [r for r in c.sprint_renders() if str(r.get('sprintId')) in c.oracle.all_numbers()]
+    renders = [r for r in c.sprint_renders() if str(r.get('sprintId')) in c.oracle_ui.all_numbers()]
     if not renders:
         return absent('sprint action table')
     total = 0.0
     for r in renders:
-        expected = c.oracle.visible_changes(str(r['sprintId']), c.oracle.viewer)
+        o = c.oracle_for(r.get('afterLive', True))
+        expected = o.visible_changes(str(r['sprintId']), o.viewer)
         rows = r.get('rows') or []
         right = sum(1 for i, ch in enumerate(expected) if i < len(rows) and rows[i].get('changeId') == ch.change_id
                     and cells_ok(rows[i], ch))
@@ -2096,24 +2160,22 @@ def _(c):
     for r in c.sprint_renders():
         if not r.get('rows'):
             continue
-        expected = c.oracle.visible_changes(str(r.get('sprintId')), c.oracle.viewer)
+        o = c.oracle_for(r.get('afterLive', True))
+        expected = o.visible_changes(str(r.get('sprintId')), o.viewer)
         sort_at = r.get('sortAt') or []
         first = sort_at[0] if len(sort_at) > 0 else {}
         second = sort_at[1] if len(sort_at) > 1 else {}
-        pts = r.get('sortPoints') or {}
-        # Contract §5 (e7000c527): the `at` toggle flips between the default order and its EXACT reverse.
+        # Contract §5: the `at` toggle flips between the default order and its EXACT reverse (the points sort was
+        # removed from the contract in 2006de559).
         subs = [
             list(first.get('rows') or []) == [ch.change_id for ch in reversed(expected)]
             and (first.get('ariaSort') or {}).get('at') == 'descending',
             [x for x in second.get('rows') or []] == [ch.change_id for ch in expected]
             and (second.get('ariaSort') or {}).get('at') == 'ascending',
-            _sorted_ok(pts.get('rows') or [], expected,
-                       lambda ch: (-ch.points, ch.at, fo.changelog_order(ch.change_id)))
-            and (pts.get('ariaSort') or {}).get('points') in ('descending', 'ascending'),
         ]
         total += len(subs)
         ok += sum(subs)
-    return g(ok / total if total else 0, f'{ok}/{total} sort toggles ordered with aria-sort', 'sorting broken')
+    return g(ok / total if total else 0, f'{ok}/{total} at-toggle states ordered with aria-sort', 'sorting broken')
 
 
 @check('u_issue_router', 'U', pre=pre_table_rows, needs=('ui',))
@@ -2160,6 +2222,172 @@ def _(c):
     ns = c.ui().get('notStarted') or {}
     return g(1 if ns.get('onlyNotStarted') else 0, 'future sprint shows not-started only' if ns.get('onlyNotStarted')
              else f'future sprint context: {ns.get("detail") or "not-started not shown alone"}', 'not-started state wrong')
+
+
+# ══ Forge LLM, Realtime and rovo:mcp (DESIGN 2006de559 / 90ca7eb72) ══════════════════════════════════
+
+REPORT_TOOL = 'report_scope'
+
+
+def _llm_entries(c: Ctx, op: Optional[str] = None) -> List[Dict]:
+    return [e for e in (c.obs.get('llm') or {}).get('entries') or [] if op is None or e.get('op') == op]
+
+
+def _llm_calls(c: Ctx) -> List[Dict]:
+    return [e for e in _llm_entries(c) if e.get('op') in ('chat', 'stream')]
+
+
+def _realtime_events(c: Ctx) -> List[Dict]:
+    return [e for e in (c.obs.get('realtime') or {}).get('events') or [] if isinstance(e, dict)]
+
+
+@check('k_rovo_mcp', 'K')
+def _(c):
+    mcps = c.modules('rovo:mcp')
+    if not mcps:
+        return absent('rovo:mcp module')
+    m = mcps[0]
+    tools = [t if isinstance(t, str) else (t or {}).get('action') for t in m.get('tools') or []]
+    # docs /manifest-reference/modules/rovo-mcp/: "An app can have at most one rovo:mcp module"; schema 13.6.0:
+    # name 1-30 characters, tools are action-key strings.
+    conds = {'exactly_one': len(mcps) == 1, 'name_1_30': 1 <= len(str(m.get('name') or '')) <= 30,
+             'exposes_action': ACTION_KEY in tools, 'tools_are_action_keys': all(isinstance(t, str) for t in m.get('tools') or [])}
+    met = sum(conds.values())
+    return g(met / len(conds), f'rovo:mcp {met}/{len(conds)}: ' + ', '.join(k for k, v in conds.items() if not v),
+             'the MCP server is not valid or does not expose the action', parts=conds)
+
+
+@check('k_llm_model_current', 'K', pre=lambda c: (bool(_llm_calls(c)), '>= 1 LLM call'), needs=('ui',))
+def _(c):
+    llm = c.modules('llm')
+    claude = any('claude' in [str(x) for x in (m.get('model') or [])] for m in llm)
+    calls = _llm_calls(c)
+    stale = sorted({str(e.get('model')) for e in calls if e.get('modelStatus') != 'active'})
+    conds = {'llm_module_with_claude': claude, 'every_call_names_an_active_model': not stale}
+    met = sum(conds.values())
+    return g(met / 2, f'{len(calls)} LLM call(s); models not active: {stale}; llm module with claude: {claude}',
+             'a deprecated or unknown model (the docs example is deprecated on the site)', parts=conds)
+
+
+def _payload_tokens(payload) -> Tuple[List[str], List[str]]:
+    """(numeric tokens, string tokens) of a realtime payload: parsed as JSON when it is JSON, else the raw string."""
+    value = payload
+    if isinstance(payload, str):
+        try:
+            value = json.loads(payload)
+        except ValueError:
+            value = payload
+    nums, strs = [], []
+    for leaf in fo.iter_leaves(value) if isinstance(value, (dict, list)) else [value]:
+        if isinstance(leaf, (int, float)) and not isinstance(leaf, bool):
+            nums.append(_leaf_text(leaf))
+        elif isinstance(leaf, str):
+            (nums if re.fullmatch(r'\d+(\.\d+)?', leaf) else strs).append(leaf)
+    return nums, strs
+
+
+@check('b_realtime_payload_clean', 'B', pre=lambda c: (bool(_realtime_events(c)), '>= 1 realtime publish'), needs=('ui',))
+def _(c):
+    o = c.oracle_ui
+    sprints = set(o.sprints)
+    keys = [i['key'] for i in o.issues.values()]
+    summaries = [i.get('summary') for i in o.issues.values() if i.get('summary')]
+    accounts = set(o.users)
+    change_ids = {str(e['changelogId']) for e in o.history + o.live}
+    bad = []
+    for e in _realtime_events(c):
+        nums, strs = _payload_tokens(e.get('payload'))
+        text = ' '.join(strs)
+        why = [f'number {n}' for n in nums if n not in sprints]
+        why += [k for k in keys if re.search(r'(?<![A-Za-z0-9])' + re.escape(k) + r'(?![0-9])', text)]
+        why += ['a summary' for x in summaries if x in text][:1]
+        why += [f'account {a}' for a in accounts if a in text]
+        why += [f'change {x}' for x in change_ids if re.search(r'(?<!\d)' + x + r'(?!\d)', text)]
+        if why:
+            bad.append(f"{e.get('channel')}: {why[:3]}")
+    n = len(_realtime_events(c))
+    return g(1 - len(bad) / n, f'{n - len(bad)}/{n} realtime payloads hold sprint ids only' + (f'; {bad[:3]}' if bad else ''),
+             'issue data broadcast on a channel that does not enforce permissions')
+
+
+@check('u_widget_live', 'U', pre=pre_widget_sprints, needs=('ui',))
+def _(c):
+    live = c.ui().get('live') or {}
+    if live.get('absent'):
+        return unavail(live['absent'])
+    if not live:
+        return g(0, 'the live widget step did not run', 'the widget never updates live')
+    want = c.oracle_ui.sprints_of_board(str(live.get('board')))
+    after = {str(x.get('id')): x.get('metrics') for x in live.get('sprintsAfter') or []}
+    right = [sid for sid in want if metrics_ok(after.get(sid) or {}, c.oracle_ui.numbers(sid)) == 4]
+    moved = [sid for sid in want if c.oracle.numbers(sid).metrics_text() != c.oracle_ui.numbers(sid).metrics_text()]
+    conds = {'subscribed': bool(live.get('subscribed')), 'no_polling_while_idle': live.get('idleInvokes') == 0,
+             'no_reload': not live.get('reloaded'), 'shows_new_numbers': bool(moved) and set(moved) <= set(right)
+             and len(right) == len(want)}
+    met = sum(conds.values())
+    return g(met / len(conds), f"live widget {met}/{len(conds)}: " + ', '.join(k for k, v in conds.items() if not v)
+             + f"; {live.get('idleInvokes')} idle invoke(s), sprints right after the live changes {len(right)}/{len(want)}",
+             'the dashboard does not update live', parts=conds)
+
+
+def _explain_request_ok(entry: Dict) -> bool:
+    req = entry.get('request') or {}
+    tools = [t.get('function') or {} for t in req.get('tools') or [] if isinstance(t, dict)]
+    tool = next((t for t in tools if t.get('name') == REPORT_TOOL), None)
+    props = ((tool or {}).get('parameters') or {}).get('properties') or {}
+    shape = (props.get('summary') or {}).get('type') == 'string' and (props.get('changeIds') or {}).get('type') == 'array' \
+        and ((props.get('changeIds') or {}).get('items') or {}).get('type') == 'string'
+    choice = req.get('tool_choice')
+    forced = choice == 'required' or (isinstance(choice, dict) and (choice.get('function') or {}).get('name') == REPORT_TOOL)
+    return bool(tool) and shape and forced
+
+
+def _model_args(entry: Dict) -> Dict:
+    msg = (((entry.get('response') or {}).get('choices') or [{}])[0] or {}).get('message') or {}
+    calls = msg.get('tool_calls') or []
+    args = ((calls[0] or {}).get('function') or {}).get('arguments') if calls else None
+    return args if isinstance(args, dict) else {}
+
+
+@check('u_llm_explain', 'U', pre=lambda c: (bool((c.ui().get('explain') or {}).get('steps')), 'explain control rendered'),
+       needs=('ui',))
+def _(c):
+    ex = c.ui()['explain']
+    sid = str(ex.get('sprintId'))
+    o = c.oracle_ui
+    n = o.numbers(sid) if sid in o.all_numbers() else None
+    visible = {ch.change_id for ch in o.visible_changes(sid, o.viewer)} if n else set()
+    ledger_digits = set(re.findall(r'\d+(?:\.\d+)?', ' '.join([*n.metrics_text().values(), n.name,
+                                                                  str(o.hidden_count(sid, o.viewer))]))) if n else set()
+    subs: Dict[str, bool] = {}
+    for i, st in enumerate(ex['steps']):
+        kind = st.get('step')
+        entry = st.get('llm') or {}
+        label = f'{i}:{kind}'
+        if st.get('llmCalls', 0) != 1:
+            subs[f'{label}:one_llm_call'] = False
+            continue
+        subs[f'{label}:report_scope_forced'] = _explain_request_ok(entry)
+        shown_ids = {str(x) for x in st.get('idsShown') or []}
+        text = str(st.get('explanation') or '')
+        if kind in ('clean', 'digits'):
+            args = _model_args(entry)
+            cited = {str(x) for x in args.get('changeIds') or []}
+            summary = str(args.get('summary') or '')
+            subs[f'{label}:ids_are_cited_visible_ones'] = shown_ids == (cited & visible)
+            if kind == 'clean':
+                subs[f'{label}:summary_shown'] = bool(summary) and summary in text
+            else:
+                model_digits = set(re.findall(r'\d+(?:\.\d+)?', summary)) - ledger_digits
+                own = set(re.findall(r'\d+(?:\.\d+)?', text))
+                subs[f'{label}:no_model_digits'] = summary not in text and not (own & model_digits)
+            subs[f'{label}:no_error_flag'] = not st.get('errorFlags')
+        else:
+            subs[f'{label}:error_flag'] = (st.get('errorFlags') or 0) >= 1 and not shown_ids
+            subs[f'{label}:modal_still_sorts'] = bool(st.get('sortWorksAfter'))
+    met = sum(subs.values())
+    return g(met / len(subs) if subs else 0, f"explain {met}/{len(subs)} over {len(ex['steps'])} scripted answers: "
+             + ', '.join(k for k, v in subs.items() if not v), 'the explanation trusts or mishandles the model', parts=subs)
 
 
 # ══ V: visual ════════════════════════════════════════════════════════════════════════════════
@@ -2361,7 +2589,7 @@ assert set(TIER_OF.values()) == set(TIER_WEIGHT) | {'E'}
 assert DIAGNOSTIC <= REGISTERED and set(CRITICAL_CHECKS) <= REGISTERED and CALIBRATION_OWNED <= REGISTERED
 assert {n for _c, _l, names in ADMISSION_BANDS for n in names} <= REGISTERED
 assert set(EXCELLENCE_VALUED) | set(EXCELLENCE_BINARY) <= REGISTERED
-assert sum(1 for t in TIER_OF.values() if t != 'E') == 57 and sum(1 for t in TIER_OF.values() if t == 'E') == 4
+assert sum(1 for t in TIER_OF.values() if t != 'E') == 62 and sum(1 for t in TIER_OF.values() if t == 'E') == 4
 
 # Rows that compare a person's change LIST with the oracle: one wrong row in the ledger or one change shown that
 # should be hidden makes each of them wrong, and that is one defect, not N (DESIGN §13.4 item 5, gap #23).
@@ -2381,7 +2609,7 @@ ROOT_BLOCKS = {
     # measured on m_ids_only / m_one_estimate_field: wrong numbers show in the chart, the action, the table's
     # points cell and sort, and the comment's creep.
     'u_widget_numbers': NUMBER_ROWS,
-    'u_widget_loads': ('u_widget_numbers', 'u_widget_chart', 'u_widget_edit_config', 'v_widget_sizes'),
+    'u_widget_loads': ('u_widget_numbers', 'u_widget_chart', 'u_widget_edit_config', 'v_widget_sizes', 'u_widget_live'),
     # measured on m_dedupe_event_id (seed 0123456789abcdef): one duplicated row -> a duplicate table row, the
     # sort and index-order rows, one comment-flow step, the action's change list and the event-row exactness.
     't_no_double_count': (*CHANGE_LIST_ROWS, 't_event_rows', 't_out_of_order', 't_multi_sprint_parse', 'r_heal_dropped',
@@ -2531,9 +2759,10 @@ def admit(rows: List[Dict]) -> Dict:
     for limit, label, names in ADMISSION_BANDS:
         failed = [n for n in names if not passed(by.get(n))]
         if failed:
-            ceiling = min(ceiling, limit)
-            failed_by_band.append({'ceiling': limit, 'band': label, 'checks': failed})
-            reasons.append(f'{label}: {", ".join(failed)} (maximum {limit:.3f})')
+            cap = band_ceiling(limit, label, len(failed))
+            ceiling = min(ceiling, cap)
+            failed_by_band.append({'ceiling': cap, 'band': label, 'checks': failed})
+            reasons.append(f'{label}: {", ".join(failed)} (maximum {cap:.3f})')
     return {'ceiling': ceiling, 'reasons': reasons, 'failedChecksByBand': failed_by_band}
 
 
@@ -2724,6 +2953,11 @@ def severity_selftest() -> List[str]:
         for n in names:
             v = score(_scenario({n: 0.0}))
             expect(v['score'] <= limit + 1e-9, f'(9) {n} failing must hold {label} at {limit} (got {v["score"]})')
+    # (11) band 4's graded ceiling at n = 1, 2, 3, 4, 5 and 13 failed rows (DESIGN §8.5)
+    band4 = ADMISSION_BANDS[-1][2]
+    for k, want in ((1, 0.899), (2, 0.869), (3, 0.839), (4, 0.809), (5, 0.799), (13, 0.799)):
+        got = admit(_scenario({n: 0.0 for n in band4[:k]}))['ceiling']
+        expect(abs(got - want) < 1e-9, f'(11) band 4 with {k} failed row(s) must cap at {want} (got {got})')
     # severity ordering: every critical costs more than any single non-critical defect
     costs = single_defect_costs()
     worst_plain = min(v for n, v in costs.items() if n not in CRITICAL_CHECKS and n not in DIAGNOSTIC
