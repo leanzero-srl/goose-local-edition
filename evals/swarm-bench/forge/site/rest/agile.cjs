@@ -49,15 +49,31 @@ function agileIssue(c, iss, sel, expand) {
   return out;
 }
 
+// Two pagination shapes, exactly as the shipped OpenAPI and Jira Cloud (measured 2026-10-02) serve them:
+//   /rest/agile/1.0  (deprecated)  startAt/maxResults -> {expand, startAt, maxResults, total, issues}
+//   /rest/software/1.0             nextPageToken/maxResults -> {expand, issues, nextPageToken?, isLast};
+//                                  startAt is not a parameter there and is ignored (measured), the token is opaque.
+const encodeToken = (offset) => Buffer.from(JSON.stringify({ o: offset })).toString('base64url');
+const decodeToken = (t) => {
+  try { const o = JSON.parse(Buffer.from(String(t), 'base64url').toString()).o; return Number.isInteger(o) && o >= 0 ? o : null; } catch { return null; }
+};
 function issuePage(c, hits) {
   const q = c.req.query;
-  const startAt = intParam(q.get('startAt'), 0);
-  const cap = c.limits.agileIssuePage.value;
-  const maxResults = Math.min(intParam(q.get('maxResults'), c.limits.agileIssueDefault.value), cap);
   const sel = c.render.selectFields(listParam(q, 'fields'), true);
   sel.add('key');
-  const issues = hits.slice(startAt, startAt + maxResults).map((i) => agileIssue(c, i, sel, listParam(q, 'expand')));
-  return { status: 200, body: { expand: 'names,schema', startAt, maxResults, total: hits.length, issues } };
+  const render = (list) => list.map((i) => agileIssue(c, i, sel, listParam(q, 'expand')));
+  if (c.req.pathname.startsWith('/rest/software/1.0/')) {
+    const token = q.get('nextPageToken');
+    const offset = token ? decodeToken(token) : 0;
+    if (offset === null) return err(400, 'The nextPageToken is invalid.');
+    const maxResults = Math.min(intParam(q.get('maxResults'), c.limits.softwareIssueDefault.value), c.limits.softwareIssuePage.value);
+    const page = hits.slice(offset, offset + maxResults);
+    const isLast = offset + page.length >= hits.length;
+    return { status: 200, body: { expand: 'names,schema', issues: render(page), ...(isLast ? {} : { nextPageToken: encodeToken(offset + page.length) }), isLast } };
+  }
+  const startAt = intParam(q.get('startAt'), 0);
+  const maxResults = Math.min(intParam(q.get('maxResults'), c.limits.agileIssueDefault.value), c.limits.agileIssuePage.value);
+  return { status: 200, body: { expand: 'names,schema', startAt, maxResults, total: hits.length, issues: render(hits.slice(startAt, startAt + maxResults)) } };
 }
 
 const handlers = {
@@ -156,9 +172,20 @@ Object.assign(handlers, {
     return r.error ?? issuePage(c, r.hits);
   },
 });
-// The /rest/software/1.0 paths in the shipped OpenAPI serve the same resources as /rest/agile/1.0.
-for (const [key, fn] of Object.entries({ ...handlers })) {
-  if (key.startsWith('GET /rest/agile/1.0/board/') || key.startsWith('GET /rest/agile/1.0/sprint/{sprintId}/issue')) handlers[key.replace('/rest/agile/1.0/', '/rest/software/1.0/')] = fn;
+// The /rest/software/1.0 issue lists the shipped OpenAPI documents serve the same resources as their agile 1.0
+// twins, in the token shape (issuePage branches on the path).
+for (const key of ['GET /rest/agile/1.0/board/{boardId}/issue', 'GET /rest/agile/1.0/sprint/{sprintId}/issue',
+  'GET /rest/agile/1.0/board/{boardId}/sprint/{sprintId}/issue', 'GET /rest/agile/1.0/board/{boardId}/backlog']) {
+  handlers[key.replace('/rest/agile/1.0/', '/rest/software/1.0/')] = handlers[key];
+}
+for (const [path, base] of [['board/{boardId}/issue', (c, b) => (i) => i.projectKey === b.projectKey],
+  ['board/{boardId}/backlog', (c, b) => { const fid = c.state.pack.sprintFieldId; return (i) => i.projectKey === b.projectKey && !(i.fields[fid] ?? []).some((x) => x.state !== 'closed') && i.fields.status.statusCategory.key !== 'done'; }]]) {
+  handlers[`GET /rest/software/1.0/${path}/approximate-count`] = (c) => {
+    const b = board(c, c.params.boardId);
+    if (!b) return err(404, `Board does not exist or you do not have permission to see it.`);
+    const r = issuesFor(c, base(c, b), c.req.query.get('jql'));
+    return r.error ?? { status: 200, body: { count: r.hits.length } };
+  };
 }
 
 module.exports = { handlers };

@@ -239,7 +239,10 @@ function compile(src, model) {
   const sprintSet = (state) => new Set(model.sprints.filter((s) => s.state === state).map((s) => s.id));
   const fnValue = (v, kind) => {
     const name = v.name.toLowerCase();
-    if (name === 'opensprints') return [...sprintSet('active'), ...sprintSet('future')];
+    // openSprints(): "assigned to a sprint that was started, but has not yet been completed" (support.atlassian.com,
+    // JQL functions) — ACTIVE only. Measured on Jira Cloud 2026-10-02: nine issues whose only sprints are future
+    // are returned by futureSprints() and by `sprint not in openSprints()`, never by `sprint in openSprints()`.
+    if (name === 'opensprints') return [...sprintSet('active')];
     if (name === 'closedsprints') return [...sprintSet('closed')];
     if (name === 'futuresprints') return [...sprintSet('future')];
     if (name === 'currentuser') {
@@ -341,17 +344,21 @@ function compile(src, model) {
     return null;
   };
   const eq = (kind, a, b) => (typeof a === 'string' && typeof b === 'string' ? a.toLowerCase() === b.toLowerCase() : a === b);
+  // Three-valued, as Jira evaluates it: a comparison against an EMPTY field is UNKNOWN (null), NOT keeps
+  // UNKNOWN, and only TRUE matches. Measured on Jira Cloud 2026-10-02: issues with no sprint are returned by
+  // neither `sprint not in openSprints()` nor `NOT sprint in openSprints()`.
   const evalNode = (n, issue) => {
     switch (n.op) {
-      case 'and': return evalNode(n.a, issue) && evalNode(n.b, issue);
-      case 'or': return evalNode(n.a, issue) || evalNode(n.b, issue);
-      case 'not': return !evalNode(n.e, issue);
+      case 'and': { const a = evalNode(n.a, issue); if (a === false) return false; const b = evalNode(n.b, issue); return b === false ? false : (a === null || b === null ? null : true); }
+      case 'or': { const a = evalNode(n.a, issue); if (a === true) return true; const b = evalNode(n.b, issue); return b === true ? true : (a === null || b === null ? null : false); }
+      case 'not': { const e = evalNode(n.e, issue); return e === null ? null : !e; }
       default: break;
     }
     const { kind, field } = n.r;
     const cur = current(kind, field, issue);
     if (n.op === 'isempty') return cur.length === 0;
     if (n.op === 'isnotempty') return cur.length > 0;
+    if (cur.length === 0 && !((n.op === '=' || n.op === 'in') && n.vals.flat().includes(null))) return null;
     if (n.op === '~' || n.op === '!~') {
       const words = String(n.vals[0][0]).toLowerCase().split(/\s+/).filter(Boolean);
       const hit = cur.some((c) => words.every((w) => String(c).toLowerCase().includes(w.replace(/[*?]/g, ''))));
@@ -414,7 +421,7 @@ function compile(src, model) {
   };
   return {
     bounded: ast.where !== null,
-    matches: (issue) => (ast.where ? evalNode(ast.where, issue) : true),
+    matches: (issue) => (ast.where ? evalNode(ast.where, issue) === true : true),
     compare,
   };
 }

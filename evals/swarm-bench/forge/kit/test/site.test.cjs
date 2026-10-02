@@ -135,3 +135,123 @@ test('every OpenAPI receipt in site/limits.cjs is quoted verbatim from the shipp
   assert.deepStrictEqual(missing, []);
   assert.ok(Object.values(LIMITS).every((v) => v.receipt && (v.receipt.openapi || v.receipt.measured || v.receipt.doc)), 'every limit carries a receipt');
 });
+
+test('sprint functions follow Jira Cloud: openSprints() is active only; EMPTY is unknown under NOT', () => withSite(async (site, call) => {
+  const fid = site.pack.sprintFieldId;
+  const states = (i) => (i.fields[fid] ?? []).map((s) => s.state);
+  const visible = site.pack.issues.filter((i) => !i.hiddenFrom?.includes(site.pack.appAccountId));
+  const futureOnly = visible.filter((i) => states(i).length && states(i).every((s) => s === 'future'));
+  const active = visible.filter((i) => states(i).includes('active'));
+  const closedOnly = visible.filter((i) => states(i).length && states(i).every((s) => s === 'closed'));
+  const empty = visible.filter((i) => !states(i).length);
+  assert.ok(futureOnly.length && active.length && closedOnly.length && empty.length, 'the pack has every sprint shape');
+  const pick = [...futureOnly.slice(0, 3), ...active.slice(0, 3), ...closedOnly.slice(0, 3), ...empty.slice(0, 3)];
+  const keys = pick.map((i) => i.key).join(', ');
+  const run = async (clause) => {
+    const r = await call('POST', '/rest/api/3/search/jql', { jql: `key in (${keys}) AND ${clause}`, fields: ['id'], maxResults: 100 });
+    assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+    return new Set(r.body.issues.map((i) => i.id));
+  };
+  const ids = (list) => new Set(list.filter((i) => pick.includes(i)).map((i) => i.id));
+  const has = (i, s) => states(i).includes(s);
+  assert.deepStrictEqual(await run('sprint in openSprints()'), ids(pick.filter((i) => has(i, 'active'))));
+  assert.deepStrictEqual(await run('sprint in futureSprints()'), ids(pick.filter((i) => has(i, 'future'))));
+  assert.deepStrictEqual(await run('sprint in closedSprints()'), ids(pick.filter((i) => has(i, 'closed'))));
+  // Measured on Jira Cloud: future-only issues ARE in `not in openSprints()`; issues with no sprint are in neither.
+  const notOpen = ids(pick.filter((i) => states(i).length && !has(i, 'active')));
+  assert.deepStrictEqual(await run('sprint not in openSprints()'), notOpen);
+  assert.deepStrictEqual(await run('NOT sprint in openSprints()'), notOpen);
+  assert.deepStrictEqual(await run('(sprint not in openSprints() OR sprint is EMPTY)'), ids(pick.filter((i) => !has(i, 'active'))));
+}));
+
+// Walk the shipped OpenAPI for every operation the site models: each answers 200/201 with only the top-level
+// keys its documented response carries (schema properties, else the documented example), and serves the
+// pagination shape its OWN parameters declare — token-paged operations answer isLast (+ nextPageToken while
+// more remain) and never startAt/total; offset-paged ones carry isLast exactly when their schema has it.
+test('every modelled operation answers the shape the shipped OpenAPI documents for it', () => withSite(async (site, call) => {
+  const fs = require('fs');
+  const { handlers: P } = require(path.join(__dirname, '..', '..', 'site', 'rest', 'platform.cjs'));
+  const { handlers: A } = require(path.join(__dirname, '..', '..', 'site', 'rest', 'agile.cjs'));
+  const specs = { jira: JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'openapi', 'jira.json'), 'utf8')),
+    jsw: JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'openapi', 'jsw.json'), 'utf8')) };
+  const deref = (spec, s) => { while (s && s.$ref) s = s.$ref.split('/').slice(1).reduce((o, k) => o[k], spec); return s; };
+  const pack = site.pack;
+  const scrum = pack.boards.find((b) => b.type === 'scrum');
+  const sprint = pack.sprints.find((s) => s.state === 'active' && s.originBoardId === scrum.id);
+  const issue = pack.issues.find((i) => !i.hiddenFrom?.length && i.projectKey === scrum.projectKey);
+  const fill = { boardId: scrum.id, sprintId: sprint.id, issueIdOrKey: issue.key, projectIdOrKey: issue.projectKey };
+  const query = { 'GET /rest/api/3/user': `accountId=${pack.users[0].accountId}`, 'GET /rest/api/3/user/bulk': `accountId=${pack.users[0].accountId}`,
+    'GET /rest/api/3/search/jql': `jql=${encodeURIComponent(`project = ${issue.projectKey}`)}&maxResults=2`,
+    'GET /rest/agile/1.0/issue/{issueIdOrKey}/estimation': `boardId=${scrum.id}`, 'GET /rest/api/3/mypermissions': 'permissions=BROWSE_PROJECTS' };
+  const body = { 'POST /rest/api/3/issue/{issueIdOrKey}/changelog/list': { changelogIds: [1] },
+    'POST /rest/api/3/issue/bulkfetch': { issueIdsOrKeys: [issue.key], fields: ['summary'] },
+    'POST /rest/api/3/changelog/bulkfetch': { issueIdsOrKeys: [issue.key], maxResults: 1 },
+    'POST /rest/api/3/search/jql': { jql: `project = ${issue.projectKey}`, maxResults: 2, fields: ['summary'] },
+    'POST /rest/api/3/search/approximate-count': { jql: `project = ${issue.projectKey}` },
+    'POST /rest/api/3/issue/{issueIdOrKey}/comment': { body: { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: 'x' }] }] } },
+    'POST /rest/api/3/permissions/check': { accountId: pack.users[0].accountId, projectPermissions: [{ issues: [Number(issue.id)], permissions: ['BROWSE_PROJECTS'] }] } };
+  // Keys Jira Cloud answers beyond the OpenAPI text, each measured on a Jira Cloud site 2026-10-02 (kept: an app
+  // written to the docs ignores them; the paging shape is what the docs decide).
+  const MEASURED_EXTRA = {
+    'GET /rest/agile/1.0/sprint/{sprintId}': ['createdDate'],
+    'POST /rest/api/3/issue/bulkfetch': ['expand'],
+    // The OpenAPI's 200 example for this deprecated operation is a single issue; Jira Cloud answers the agile page.
+    'GET /rest/agile/1.0/sprint/{sprintId}/issue': ['startAt', 'maxResults', 'total', 'issues'],
+  };
+  const problems = [];
+  let checked = 0;
+  for (const key of Object.keys({ ...P, ...A }).sort()) {
+    const [method, template] = key.split(' ');
+    if (template === '/rest/api/3/search') continue; // removed from Jira Cloud: 410 (tested above)
+    const spec = template.includes('/agile/') || template.includes('/software/') ? specs.jsw : specs.jira;
+    const op = spec.paths[template]?.[method.toLowerCase()];
+    if (!op) { problems.push(`${key}: modelled but absent from the shipped OpenAPI`); continue; }
+    const url = template.replace(/\{(\w+)\}/g, (_, n) => encodeURIComponent(fill[n])) + (query[key] ? `?${query[key]}` : (op.parameters ?? []).some((p) => p.name === 'maxResults') ? '?maxResults=1' : '');
+    const r = key === 'POST /rest/api/3/issue/{issueIdOrKey}/comment'
+      ? await (async () => { let x; for (let i = 0; i < 3; i++) { x = await call(method, url, body[key]); if (x.status !== 429) break; site.clock.advance(Number(x.headers.get('retry-after')) * 1000); } return x; })()
+      : await call(method, url, body[key]);
+    if (r.status !== 200 && r.status !== 201) { problems.push(`${key}: ${r.status} ${JSON.stringify(r.body).slice(0, 160)}`); continue; }
+    const resp = op.responses[String(r.status)]?.content?.['application/json'];
+    const schema = deref(spec, resp?.schema);
+    let documented = schema?.properties ? Object.keys(schema.properties) : null;
+    if (!documented && resp?.example) { try { const ex = JSON.parse(resp.example); if (ex && !Array.isArray(ex) && typeof ex === 'object') documented = Object.keys(ex); } catch { /* not JSON */ } }
+    if (documented && r.body && typeof r.body === 'object' && !Array.isArray(r.body)) {
+      const extra = Object.keys(r.body).filter((k) => !documented.includes(k) && !(MEASURED_EXTRA[key] ?? []).includes(k));
+      if (extra.length) problems.push(`${key}: undocumented keys ${extra.join(',')}`);
+    }
+    const params = [...(op.parameters ?? []).map((p) => p.name), ...Object.keys(deref(spec, op.requestBody?.content?.['application/json']?.schema)?.properties ?? {})];
+    if (params.includes('nextPageToken')) {
+      if (typeof r.body.isLast !== 'boolean' && documented?.includes('isLast')) problems.push(`${key}: token-paged but no isLast`);
+      if (r.body.isLast === false && !r.body.nextPageToken) problems.push(`${key}: isLast false without nextPageToken`);
+      for (const k of ['startAt', 'total']) if (k in r.body && !documented?.includes(k)) problems.push(`${key}: token-paged but answers ${k}`);
+    } else if (params.includes('startAt') && documented?.includes('isLast') && typeof r.body.isLast !== 'boolean') {
+      problems.push(`${key}: schema documents isLast, response has none`);
+    }
+    checked++;
+  }
+  assert.deepStrictEqual(problems, []);
+  assert.ok(checked >= 30, `checked ${checked} operations`);
+}));
+
+test('software 1.0 issue lists page by token exactly as Jira Cloud does', () => withSite(async (site, call) => {
+  const scrum = site.pack.boards.find((b) => b.type === 'scrum');
+  const all = await call('GET', `/rest/software/1.0/board/${scrum.id}/issue?maxResults=5000&fields=summary`);
+  assert.deepStrictEqual(Object.keys(all.body), ['expand', 'issues', 'isLast']);
+  const seen = [];
+  let token = null;
+  for (;;) {
+    const r = await call('GET', `/rest/software/1.0/board/${scrum.id}/issue?maxResults=7&startAt=99${token ? `&nextPageToken=${encodeURIComponent(token)}` : ''}`);
+    assert.strictEqual(r.status, 200);
+    assert.ok(!('startAt' in r.body) && !('total' in r.body));
+    seen.push(...r.body.issues.map((i) => i.id));
+    if (r.body.isLast) { assert.ok(!('nextPageToken' in r.body)); break; }
+    token = r.body.nextPageToken;
+  }
+  assert.deepStrictEqual(seen, all.body.issues.map((i) => i.id), 'startAt is ignored; the token walks every issue once');
+  const first = await call('GET', `/rest/software/1.0/board/${scrum.id}/issue`);
+  assert.strictEqual(first.body.issues.length, Math.min(50, all.body.issues.length));
+  const count = await call('GET', `/rest/software/1.0/board/${scrum.id}/issue/approximate-count`);
+  assert.deepStrictEqual(count.body, { count: all.body.issues.length });
+  const agile = await call('GET', `/rest/agile/1.0/board/${scrum.id}/issue?maxResults=3`);
+  assert.deepStrictEqual(Object.keys(agile.body), ['expand', 'startAt', 'maxResults', 'total', 'issues']);
+}));
