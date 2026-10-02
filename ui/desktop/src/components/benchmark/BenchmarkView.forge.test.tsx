@@ -259,6 +259,36 @@ describe('Benchmark view — the Gauntlet | Forge switch', () => {
     expect(screen.getByRole('button', { name: 'Run benchmark' })).toBeDisabled();
   });
 
+  it('offers Retry scoring for a Forge build whose scoring did not finish — the saved build, no model run', async () => {
+    window.location.hash = '#/benchmark?era=forge-1.0&run=cloud-forge-retry';
+    mockElectron({
+      mine: null,
+      sessions: [
+        {
+          runId: 'cloud-forge-retry',
+          scorerVersion: 'forge-1.0',
+          startedAt: '2026-10-03T08:00:00.000Z',
+          outcome: 'did_not_finish',
+          publishable: false,
+          retryScoring: { ready: true },
+          scoringError: 'REFUSED: forge_probe.mjs exited 1 without observations',
+        },
+      ],
+    });
+    const retry = vi.fn(() => new Promise(() => {}));
+    const cloud = vi.fn();
+    electron().benchmarkRetryScoring = retry;
+    electron().benchmarkRunCloud = cloud;
+    mount();
+    expect(await screen.findByText('Model build completed. Scoring did not finish.')).toBeVisible();
+    await screen.findByTestId('forge-kit-ready');
+    const button = screen.getByRole('button', { name: 'Retry scoring' });
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
+    expect(retry).toHaveBeenCalledWith('cloud-forge-retry');
+    expect(cloud).not.toHaveBeenCalled();
+  });
+
   it('launches Forge as one model on forge-1.0, never as a swarm', async () => {
     mockElectron({ sessions: [], mine: null });
     const cloud = vi.fn(async () => null);

@@ -45,12 +45,26 @@ it('offers the same retry to an SB7.2 session with its own SB7.2 receipt, never 
     ['sb-8.0-rc', 'Gauntlet 8.0 rc'],
   ])
     expect(retryScoringEligibility({ ...row, scorerVersion }, receipt).reason).toBe(
-      `Only Gauntlet 7.1 and Gauntlet 7.2 runs can be rescored; this run is ${shown}.`
+      `Only Gauntlet 7.1, Gauntlet 7.2 and Forge 1.0 runs can be rescored; this run is ${shown}.`
     );
 });
 it('keeps legacy missing completion evidence explicit rather than using usage or transcript prose', () => {
   expect(retryScoringEligibility(row, null).reason).toContain('No completed-build receipt');
   expect(retryScoringEligibility({ ...row, scorerVersion: 'sb-7.1-rc' }, receipt).ready).toBe(
     false
+  );
+});
+
+it('offers the same retry to a Forge session with its own forge-1.0 receipt — never an rc identity', () => {
+  const forgeRow = { ...row, scorerVersion: 'forge-1.0' };
+  const forgeReceipt = { ...receipt, scorerVersion: 'forge-1.0' };
+  expect(retryScoringEligibility(forgeRow, forgeReceipt)).toEqual({ ready: true });
+  // A Gauntlet receipt proves nothing about a Forge session, and the reverse.
+  expect(retryScoringEligibility(forgeRow, receipt).ready).toBe(false);
+  expect(retryScoringEligibility(row, forgeReceipt).ready).toBe(false);
+  expect(
+    retryScoringEligibility({ ...row, scorerVersion: 'forge-1.0-rc' }, forgeReceipt).reason
+  ).toBe(
+    'Only Gauntlet 7.1, Gauntlet 7.2 and Forge 1.0 runs can be rescored; this run is Forge 1.0 rc.'
   );
 });

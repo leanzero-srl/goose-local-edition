@@ -198,7 +198,9 @@ const RunLeafRow: React.FC<{
           active ? 'ring-2 ring-inset ring-lz-accent' : 'hover:bg-lz-surface-2'
         )}
       >
-        <span className={cx('shrink-0 text-lz-body text-lz-ink', TNUM)}>{when}</span>
+        {/* The date yields, never the outcome: a "Finished · 42.1%" chip beside a full stamp was wider
+            than the sidebar and scrolled the whole tree sideways. The row's title keeps the full stamp. */}
+        <span className={cx('min-w-0 truncate text-lz-body text-lz-ink', TNUM)}>{when}</span>
         <span className="ml-auto shrink-0">
           <OutcomeChip session={run} />
         </span>

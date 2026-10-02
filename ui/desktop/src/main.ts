@@ -111,6 +111,7 @@ import {
   benchmarkLaunchTier,
   benchmarkLaunchProblem,
   benchmarkScorer,
+  FORGE_BENCHMARK_TIER,
   type CloudBenchmarkTier,
 } from './benchTierPayload';
 import {
@@ -4577,10 +4578,15 @@ ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string) => {
       throw new Error('Wait for Benchmark tools installation to finish.');
     const session = (await readBenchSessionRows()).find((row) => row.runId === runId);
     if (!session) throw new Error('Benchmark session not found.');
+    // The session's own family decides the gate and the scorer: a Forge build is re-graded by
+    // score_forge on the kit it was built against, never by a Gauntlet tier.
+    const family = familyOfScorer(session.scorerVersion);
+    const forge = family === 'forge';
     const launchProblem = benchmarkLaunchProblem(
       (await fetchBenchCatalog()).benchmarks,
       false,
-      session.scorerVersion
+      session.scorerVersion,
+      family
     );
     if (launchProblem) throw new Error(launchProblem);
     const receipt = await readBuildCompletion(session);
@@ -4591,9 +4597,22 @@ ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string) => {
     // The receipt-proven session names its own tier: an SB7.1 row is re-graded by SB7.1's probe,
     // never by whatever tier this app defaults to (retryScoringEligibility already refused any
     // scorer outside the isolated family, so a null here is unreachable — and refused, not guessed).
-    const sessionTier = isolatedPaymentsTier(session.scorerVersion);
+    const sessionTier = forge ? FORGE_BENCHMARK_TIER : isolatedPaymentsTier(session.scorerVersion);
     if (!sessionTier) throw new Error(`No isolated benchmark tier records ${session.scorerVersion}.`);
     const runtime = await resolveBenchmarkRuntime(benchWorkRoot());
+    if (forge) {
+      const kit = await readForgeKitStatus(
+        resolveBenchPayloadDir(),
+        runtime,
+        forgeKitCache(benchWorkRoot())
+      );
+      if (kit.state !== 'ready')
+        throw new Error(
+          kit.state === 'missing'
+            ? `Prepare the Forge kit before scoring (missing: ${(kit.missing ?? []).join(', ')}).`
+            : `The Forge kit could not be checked: ${kit.error ?? kit.state}`
+        );
+    }
     const node = await resolveBenchNode(sessionTier, runtime.node);
     const browser = await bundledBrowserEnv();
     const attemptRoot = path.join(benchWorkRoot(), 'scoring-attempts', crypto.randomUUID());
@@ -4632,7 +4651,15 @@ ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string) => {
         '--out',
         output,
       ],
-      { ...process.env, ...runtime.env, ...browser, GOOSE_SWARM_RENDER_NODE: node }
+      {
+        ...process.env,
+        ...runtime.env,
+        ...browser,
+        GOOSE_SWARM_RENDER_NODE: node,
+        ...(forge
+          ? { FORGE_KIT_CACHE: forgeKitCache(benchWorkRoot()), ...forgeBrowserEnv(browser) }
+          : {}),
+      }
     );
     await stamp('scoring');
     await stampBenchLaunchRow(launchKey, { outcome: 'running' });
@@ -4705,14 +4732,17 @@ ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string) => {
           if (code !== 0) throw new Error(`Scoring failed (exit ${code}). ${tail}`);
           const reportPath = path.join(output, 'verdict.json');
           const v = JSON.parse(await fs.readFile(reportPath, 'utf8'));
-          if (
-            !hasScoredVerdict(v) ||
-            v.scorerVersion !== session.scorerVersion ||
-            typeof v.evidence_dir !== 'string'
-          )
+          // score_forge writes its evidence (forge-shots, the graded clip) into the tree it grades and
+          // reports `forge-1.0-rc` until its thresholds freeze — bench_rescore accepts exactly that
+          // identity for the receipt's tier, and so does this.
+          const sameScorer = forge
+            ? v.scorerVersion === session.scorerVersion ||
+              v.scorerVersion === `${session.scorerVersion}-rc`
+            : v.scorerVersion === session.scorerVersion;
+          if (!hasScoredVerdict(v) || !sameScorer || (!forge && typeof v.evidence_dir !== 'string'))
             throw new Error('Scorer produced no valid result or evidence directory.');
-          const evidenceWorkdir = path.join(output, 'verdict-evidence');
-          if (path.resolve(v.evidence_dir) !== path.resolve(evidenceWorkdir))
+          const evidenceWorkdir = forge ? workdir : path.join(output, 'verdict-evidence');
+          if (!forge && path.resolve(v.evidence_dir) !== path.resolve(evidenceWorkdir))
             throw new Error('Scorer evidence directory does not belong to this attempt.');
           const finishedAt = new Date().toISOString();
           benchmarkResultCommitInProgress = true;

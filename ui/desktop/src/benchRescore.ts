@@ -5,11 +5,17 @@ import {
   eraDisplayName,
 } from './components/benchmark/baselines';
 
-/** Exactly the scorer identities a completed-build receipt can carry — never an rc or a sibling. */
-const RESCORABLE: readonly string[] = ISOLATED_PAYMENTS_TIERS.map((tier) => TIER_SCORER[tier]);
-const RESCORABLE_WORDS = ISOLATED_PAYMENTS_TIERS.map((tier) =>
-  eraDisplayName(TIER_SCORER[tier])
-).join(' and ');
+/** Exactly the scorer identities a completed-build receipt can carry — never an rc or a sibling. The
+ *  isolated payments tiers and Forge (bench_rescore.py replays score_forge from the receipt's own seed). */
+const RESCORABLE: readonly string[] = [
+  ...ISOLATED_PAYMENTS_TIERS.map((tier) => TIER_SCORER[tier]),
+  TIER_SCORER['forge-1.0'],
+];
+const RESCORABLE_WORDS = RESCORABLE.map(eraDisplayName).reduce(
+  (words, name, i, all) =>
+    i === 0 ? name : `${words}${i === all.length - 1 ? ' and ' : ', '}${name}`,
+  ''
+);
 
 export interface BuildCompletionReceipt {
   schemaVersion: 1;
