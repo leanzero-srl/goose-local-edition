@@ -103,7 +103,7 @@ public 250 ms P budget). No other threshold moved.
 | SB7.2 | 3,322 | 12,229 | 54,146 | 69,697 |
 
 −4,334 bytes (−5.9%) per resident copy. "Evidence and grading" 6,610 → 925 bytes: what is checked, not how.
-Superseded by the trim below (SB7.2 now 35,746 bytes of its own public text).
+Superseded by the trim below (SB7.2 now 35,848 bytes of its own public text).
 
 ## Public contract trim (2026-10-02, owner-approved)
 
@@ -135,14 +135,14 @@ earns nothing." (enforcement: run_build `goose --max-turns`, another change; kee
 | file | before (main 8c20adc96) | after | change |
 |---|---:|---:|---:|
 | benchmark-prompt.md (spec-build-sb72.md) | 3,322 | 3,267 | −1.7% |
-| SB7-CONTRACT.md | 54,146 | 24,488 | −54.8% |
+| SB7-CONTRACT.md | 54,146 | 24,590 | −54.6% |
 | VISUAL-CONTRACT.md | 12,229 | 6,963 | −43.1% |
 | STARTER.md | 2,410 | 1,028 | −57.3% |
-| **SB7.2-owned subtotal** | **72,107** | **35,746** | **−50.4%** |
+| **SB7.2-owned subtotal** | **72,107** | **35,848** | **−50.3%** |
 | BROWSER-TESTING.md (run_build, shared with SB7.1) | 537 | 537 | 0 |
 | prompt browser line (run_build, shared) | 153 | 153 | 0 |
 | vendor docs at /v3/docs (vendor_docs_v3.md, shared with SB7.1's vendor) | 9,150 | 9,150 | 0 |
-| **everything the entrant receives** | **81,947** | **45,586** | **−44.4%** |
+| **everything the entrant receives** | **81,947** | **45,688** | **−44.2%** |
 
 Raw repository bytes (`SB7-CONTRACT.md` renders `{DOCS_URL}`/`{BASE_URL}`/`{API_KEY}`, ±tens of bytes). The
 vendor docs are untouched: they are SB7.1's vendor's bytes, and the trimmed contract now points at them
@@ -326,6 +326,16 @@ Repeat on the FINAL bytes (34b466ea4, after the label-hiding restore), quiet oth
 **1.000**, identical breakdown (inner 1.0, excellence 1.0, ×1.0, no unsuppressed criticals, ceiling 1.0, reference
 gate passed, exit 0); stream apply 134.6 ms; legibility 0.6812 × 0.7172, 2.743:1, 96/96; `contract_sha256` equals
 the sb7.2/release-manifest.json pins (VISUAL-CONTRACT d9f37411…, SB7-CONTRACT a434aeaf…, STARTER 58796eb6…).
+
+Independent refuter (2026-10-02, FIX-THEN-MERGE) found three cuts the scorer measures and the golden could
+not reveal (it implements the cut behaviour anyway): newest-first notifications, `/api/events` `seq > after`
+ascending, `/api/drafts?state=` filtering — all restored (Kept map). Lesson: a golden at 1.000 proves the scorer
+does not read the TEXT; it cannot prove a cut sentence is unmeasured. Final golden on the merged code
+(f202fcaab: trim + restores + main's call budget 5ae66cd5e..9aa6f6ba8), quiet host (load 11.4 → 4.8; one earlier
+attempt at load 55 from a concurrent rustc was REFUSED by the probe's hard cap, not scored): **1.000**, inner 1.0,
+excellence 1.0, ×1.0, no unsuppressed criticals, reference gate passed; b_events_log 12,346 events contiguous,
+d_decisions_doc D1/D2/D3 1.0, j_workflow_journey and j_workflow_reject 1.0; stream apply 136.1 ms; legibility
+0.6812 × 0.7172, 2.743:1, 96/96; `contract_sha256` SB7-CONTRACT fc3234bf… = the manifest pin.
 
 ### Measured but never stated — flagged, not changed
 
