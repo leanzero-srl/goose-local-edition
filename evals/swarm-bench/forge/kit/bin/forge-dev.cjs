@@ -20,7 +20,8 @@ const USAGE = `forge-dev <command>   (run from the app directory; $FORGE_SITE_UR
   serve <moduleKey> [--edit] [--sprint <id>] [--config <json>] [--theme light|dark] [--as <accountId>]
         serve a Custom UI module with the bridge and dashboard host; prints its URL and runs until stopped.
         Start it in the background (e.g. \`node $FORGE_KIT/bin/forge-dev.cjs serve <key> > .forge-dev/serve.log 2>&1 &\`);
-        the URL is also written to .forge-dev/serve.json. In an edit surface window.__forgeHost.save()
+        the URL is also written to .forge-dev/serve.json (the latest) and .forge-dev/serve.<pid>.json; several serve
+        processes may run side by side. In an edit surface window.__forgeHost.save()
         performs the dashboard's Save.
   kvs                         dump stored keys and entities
   users                       list the dev site's users (the first line is the default viewer)
@@ -51,19 +52,57 @@ function siteFromEnv() {
   if (!u.password) throw new Error('FORGE_SITE_URL carries no dev-site control token');
   return { url: `${u.protocol}//${u.host}`, adminUrl: `${u.protocol}//${u.host}/__site/${u.password}` };
 }
-const loadState = () => (fs.existsSync(stateFile) ? JSON.parse(fs.readFileSync(stateFile, 'utf8')) : {});
-function saveState(emu, extra = {}) {
+// .forge-dev/state.json is shared by every forge-dev process in the workspace (a backgrounded `serve` and the
+// commands run beside it): reads and writes happen under a pid lock file and writes are atomic renames.
+const lockFile = path.join(stateDir, 'state.lock');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+async function withLock(fn) {
   fs.mkdirSync(stateDir, { recursive: true });
-  const prev = loadState();
-  fs.writeFileSync(stateFile, JSON.stringify({ ...prev, ...emu.dumpState(), widgetConfigs: { ...(prev.widgetConfigs ?? {}), ...emu.widgetConfigs() }, ...extra }));
+  for (;;) {
+    try { fs.writeFileSync(lockFile, String(process.pid), { flag: 'wx' }); break; } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+      const holder = Number(fs.readFileSync(lockFile, 'utf8') || 0);
+      if (holder && holder !== process.pid && !alive(holder)) { fs.rmSync(lockFile, { force: true }); continue; }
+      await sleep(25);
+    }
+  }
+  try { return await fn(); } finally { fs.rmSync(lockFile, { force: true }); }
+}
+const loadState = () => { try { return JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch { return {}; } };
+const writeState = (state) => {
+  const tmp = `${stateFile}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(state));
+  fs.renameSync(tmp, stateFile);
+};
+// Merge this process' queue into the shared one: keep others' events, drop what this process consumed.
+async function saveState(emu, consumed = new Set()) {
+  await withLock(async () => {
+    const prev = loadState();
+    const mine = emu.queueState.pending;
+    const mineIds = new Set(mine.map((e) => e.eventId));
+    const theirs = (prev.queue ?? []).filter((e) => !mineIds.has(e.eventId) && !consumed.has(e.eventId));
+    // KVS is persisted by each invocation (aroundInvocation); only the queue and widget configs land here.
+    writeState({ ...prev, queue: [...theirs, ...mine], widgetConfigs: { ...(prev.widgetConfigs ?? {}), ...emu.widgetConfigs() } });
+  });
 }
 
 async function emulator() {
   const site = siteFromEnv();
   const { createEmulator } = lib('emulator.cjs');
-  const state = loadState();
-  const emu = await createEmulator({ appDir, kitDir, site, runtime: 'wrapper', fence: 'dev-auto', workDir: path.join(stateDir, 'work'),
-    devState: state.kvs ? { kvs: state.kvs, queue: state.queue } : null });
+  const state = await withLock(async () => loadState());
+  let emu = null;
+  // Each invocation sees the KVS other forge-dev processes wrote, and leaves its writes for them.
+  const aroundInvocation = (run) => withLock(async () => {
+    const disk = loadState();
+    if (emu && disk.kvs) emu.kvs.load(disk.kvs);
+    const r = await run();
+    if (emu) writeState({ ...loadState(), kvs: emu.kvs.dump() });
+    return r;
+  });
+  // A separate work dir per process: two concurrent forge-dev commands never rebuild each other's bundle.
+  emu = await createEmulator({ appDir, kitDir, site, runtime: 'wrapper', fence: 'dev-auto', workDir: path.join(stateDir, 'work', String(process.pid)),
+    devState: state.kvs ? { kvs: state.kvs, queue: state.queue } : null, aroundInvocation });
   if (emu.fence !== 'sandbox') {
     console.log('fence: node --permission (macOS refuses a nested sandbox inside this workspace). The scorer runs every invocation under a deny-default\n'
       + '       sandbox: no file reads outside the bundle, no child processes, network only to the Forge proxy.');
@@ -132,12 +171,13 @@ async function main() {
   if (cmd === 'reset') {
     const site = siteFromEnv();
     await fetch(`${site.adminUrl}/reset`, { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } });
-    fs.rmSync(stateDir, { recursive: true, force: true });
+    await withLock(async () => fs.rmSync(stateFile, { force: true }));
     console.log('dev storage and queues cleared; the dev site rewound to its first update');
     return 0;
   }
   const emu = await emulator();
   const info = emu.siteInfo;
+  const consumed = new Set();
   try {
     if (cmd === 'invoke') {
       const fnKey = positional[0];
@@ -168,7 +208,7 @@ async function main() {
       printInvocation(r, 'invoke');
       const pending = emu.queueState.pending.length;
       if (pending) console.log(`${pending} queued event(s) pending: delivered by the next \`events\` or \`scheduled\``);
-      saveState(emu);
+      await saveState(emu, consumed);
       return r.ok ? 0 : 1;
     }
     if (cmd === 'events') {
@@ -181,26 +221,28 @@ async function main() {
         if (!d.triggers.length) console.log('   no trigger subscribes to avi:jira:updated:issue');
         for (const t of d.triggers) printInvocation(t, 'trigger');
         const ds = await emu.drainQueues();
+        for (const x of ds) consumed.add(x.eventId);
         printDeliveries(ds);
         for (const id of [...new Set(ds.map((x) => x.invocationId).filter(Boolean))]) {
           const calls = emu.log.filter((c) => c.invocationId === id);
           if (calls.length) { console.log(`   calls of ${id}:`); printCalls(calls); }
         }
       }
-      saveState(emu);
+      await saveState(emu, consumed);
       return 0;
     }
     if (cmd === 'scheduled') {
       const key = positional[0];
       if (!key) throw new Error('scheduled <moduleKey>');
       const r = await emu.runScheduled(key);
+      for (const x of r.deliveries) consumed.add(x.eventId);
       printInvocation(r.invocation, `scheduled run`);
       printDeliveries(r.deliveries);
       for (const id of [...new Set(r.deliveries.map((x) => x.invocationId).filter(Boolean))]) {
         const calls = emu.log.filter((c) => c.invocationId === id);
         if (calls.length) { console.log(`   calls of ${id}:`); printCalls(calls); }
       }
-      saveState(emu);
+      await saveState(emu, consumed);
       return r.invocation.ok ? 0 : 1;
     }
     if (cmd === 'serve') {
@@ -208,22 +250,34 @@ async function main() {
       const found = key && emu.moduleByKey(key);
       if (!found) throw new Error(`serve <moduleKey>: no module '${key}'`);
       const edit = flag('edit');
-      const stored = loadState().widgetConfigs?.['dev-widget'];
+      const stored = (await withLock(async () => loadState())).widgetConfigs?.['dev-widget'];
       const config = opt('config') ? JSON.parse(opt('config')) : stored ?? null;
       const extension = devExtension(info, found.type, { sprint: opt('sprint'), config, edit });
       const { url } = await emu.serveDev({ moduleKey: key, entry: edit ? 'edit' : 'view', theme: opt('theme') ?? 'light', asUser: opt('as') ?? info.viewer, extension,
         widgetId: 'dev-widget', layout: { width: Number(opt('width') ?? 800), height: Number(opt('height') ?? 600) } });
       fs.mkdirSync(stateDir, { recursive: true });
-      fs.writeFileSync(path.join(stateDir, 'serve.json'), JSON.stringify({ url, pid: process.pid, moduleKey: key, entry: edit ? 'edit' : 'view' }));
+      const record = JSON.stringify({ url, pid: process.pid, moduleKey: key, entry: edit ? 'edit' : 'view' });
+      fs.writeFileSync(path.join(stateDir, 'serve.json'), record);
+      fs.writeFileSync(path.join(stateDir, `serve.${process.pid}.json`), record);
       console.log(url);
       console.log(`serving ${key} (${edit ? 'edit' : 'view'}) as ${opt('as') ?? info.viewer}; stop with: kill ${process.pid}`);
       let lastLog = 0;
-      const tick = setInterval(() => {
-        saveState(emu);
+      let savedConfigs = '{}';
+      const tick = setInterval(async () => {
         for (const b of emu.bridgeLog.slice(lastLog)) console.log(`bridge ${b.op}${b.payload?.functionKey ? ` ${b.payload.functionKey}` : ''}${b.error ? ` ERROR ${b.error}` : ''}`);
         lastLog = emu.bridgeLog.length;
+        const configs = JSON.stringify(emu.widgetConfigs());
+        if (configs !== savedConfigs) {
+          savedConfigs = configs;
+          await withLock(async () => { const prev = loadState(); writeState({ ...prev, widgetConfigs: { ...(prev.widgetConfigs ?? {}), ...emu.widgetConfigs() } }); });
+        }
       }, 1000);
-      const stop = async () => { clearInterval(tick); saveState(emu); fs.rmSync(path.join(stateDir, 'serve.json'), { force: true }); await emu.close(); process.exit(0); };
+      const stop = async () => {
+        clearInterval(tick);
+        fs.rmSync(path.join(stateDir, `serve.${process.pid}.json`), { force: true });
+        await emu.close();
+        process.exit(0);
+      };
       process.on('SIGTERM', stop);
       process.on('SIGINT', stop);
       return new Promise(() => {});

@@ -20,6 +20,7 @@ CLI: forge_kit.py ensure | repin | lock-sha | install-modules <workdir>
 from __future__ import annotations
 
 import hashlib
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -114,7 +115,19 @@ def _ensure_wrapper(pin: dict, dest: Path) -> str:
 
 
 def ensure(root: Path | None = None) -> dict:
+    """Serialised across processes: two concurrent ensures (parallel test files, a scorer beside a dev run)
+    once raced — the second replaced kit-<code> under the first one's running invocation."""
     root = root or cache_root()
+    root.mkdir(parents=True, exist_ok=True)
+    with open(root / '.ensure.lock', 'a') as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            return _ensure_locked(root)
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def _ensure_locked(root: Path) -> dict:
     lock = lock_sha256()
     code = code_sha256()
     modules = root / lock[:16]
@@ -127,7 +140,9 @@ def ensure(root: Path | None = None) -> dict:
     if not schema_src.is_file():
         raise RuntimeError(f'REFUSED: {schema_src} is missing from the lint-modules tree')
     (modules / 'schema').mkdir(exist_ok=True)
-    shutil.copy2(schema_src, modules / 'schema' / 'manifest-schema.json')
+    schema = modules / 'schema' / 'manifest-schema.json'
+    if not schema.is_file() or schema.read_bytes() != schema_src.read_bytes():
+        shutil.copy2(schema_src, schema)
     kit = modules / ('kit-' + code[:16])
     if not (kit / 'KIT.json').is_file():
         staging = Path(tempfile.mkdtemp(prefix='kit-', dir=modules))

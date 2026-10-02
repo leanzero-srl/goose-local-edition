@@ -70,7 +70,7 @@ function functionUsers(manifest) {
   return users;
 }
 
-async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence, workDir, devState = null, onInvocation = null } = {}) {
+async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence, workDir, devState = null, onInvocation = null, aroundInvocation = null } = {}) {
   if (!['wrapper', 'shim'].includes(runtime)) throw new Error(`REFUSED: runtime must be 'wrapper' or 'shim', got ${runtime}`);
   const paths = kitPaths(kitDir);
   const wrapper = runtime === 'wrapper' ? rt.verifyWrapper(paths) : null;
@@ -241,7 +241,8 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
       },
     };
     const t0 = new Date(clock.now()).toISOString();
-    const r = await rt.runInvocation({ bundleDir, lambdaEvent, timeoutSec, clockOffsetMs: clockOffset, runtime, fence: fenceMode, proxyPort: proxyAddr.port });
+    const exec = () => rt.runInvocation({ bundleDir, lambdaEvent, timeoutSec, clockOffsetMs: clockOffset, runtime, fence: fenceMode, proxyPort: proxyAddr.port });
+    const r = aroundInvocation ? await aroundInvocation(exec) : await exec();
     await syncClock();
     const t1 = new Date(clock.now()).toISOString();
     const calls = log.filter((c) => c.invocationId === id);
