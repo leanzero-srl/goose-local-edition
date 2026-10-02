@@ -18,7 +18,9 @@ const path = require('path');
 
 const args = process.argv.slice(2);
 const json = args.includes('--json');
-const appDir = path.resolve(args.find((a) => !a.startsWith('--')) ?? process.cwd());
+// Real path: after chdir, process.cwd() is the resolved path (/var -> /private/var on macOS), and every file
+// path the linter reports is relative to it — a symlinked appDir made those paths climb out ('../../private/...').
+const appDir = fs.realpathSync(path.resolve(args.find((a) => !a.startsWith('--')) ?? process.cwd()));
 const kitDir = process.env.FORGE_KIT || path.resolve(__dirname, '..');
 
 // @forge/cli-shared constructs a `conf` store under the home directory; keep it inside the temp dir so the

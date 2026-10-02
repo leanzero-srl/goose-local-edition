@@ -11,7 +11,9 @@
 //   EMPTY_FILTER_OPERATOR INVALID_FILTER_OPERATORS_COMBINATION INSUFFICIENT_FILTER_VALUES.
 // UNCONFIRMED (no docs page names them; chosen so an app's catch sees a ForgeKvsAPIError):
 //   a failed FAIL_IF_EXISTS set and a failed transaction condition answer 409 CONDITIONAL_CHECK_FAILED;
-//   a batch over 25 keys answers 400 MAX_BATCH_SIZE; an undeclared entity answers 400 INVALID_ENTITY_TYPE.
+//   a batch over 25 keys answers 400 MAX_BATCH_SIZE; an undeclared entity answers 400 INVALID_ENTITY_TYPE;
+//   also TOO_MANY_OPERATIONS (transaction over 25), DUPLICATE_KEY (a key twice in one transaction), INVALID_TTL,
+//   INVALID_REQUEST, INVALID_CONDITION and KEY_NOT_FOUND (404) are harness names for documented refusals.
 
 const KEY_RE = /^(?!\s+$)[a-zA-Z0-9:._\s\-#]+$/;
 const LIMITS = { keyLength: 500, valueBytes: 240 * 1024, depth: 31, transactionOps: 25, batchKeys: 25, pageDefault: 10, pageMax: 100 };
