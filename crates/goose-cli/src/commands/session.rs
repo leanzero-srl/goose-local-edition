@@ -372,6 +372,10 @@ fn export_session_to_markdown(
     messages: Vec<goose::conversation::message::Message>,
     session_name: &String,
 ) -> String {
+    let messages: Vec<_> = messages
+        .into_iter()
+        .filter(|m| !goose::conversation::is_turn_context_message(m))
+        .collect();
     let mut markdown_output = String::new();
 
     markdown_output.push_str(&format!("# Session Export: {}\n\n", session_name));

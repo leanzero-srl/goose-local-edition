@@ -2275,15 +2275,30 @@ impl Agent {
                     super::moim::ContextReport::Chat(last_call_usage)
                 };
                 let turn_context_started = std::time::Instant::now();
-                let conversation_with_moim = super::moim::inject_moim(
-                    &session_config.id,
-                    conversation.clone(),
-                    &self.extension_manager,
-                    turns_taken,
-                    max_turns,
-                    context_report,
-                    !self.is_swarm_worker(),
-                ).await;
+                let conversation_with_moim = if self.is_swarm_worker() {
+                    super::moim::inject_moim(
+                        &session_config.id,
+                        conversation.clone(),
+                        &self.extension_manager,
+                        turns_taken,
+                        max_turns,
+                        context_report,
+                    ).await
+                } else {
+                    if let Some(block) = super::moim::turn_context_message(
+                        &session_config.id,
+                        &conversation,
+                        &self.extension_manager,
+                        turns_taken,
+                        max_turns,
+                        context_report,
+                    ).await {
+                        session_manager.add_message(&session_config.id, &block).await?;
+                        conversation.push(block);
+                    }
+                    super::moim::fixed_for_request(conversation.clone())
+                        .unwrap_or_else(|| conversation.clone())
+                };
                 // VA-107: the not-reported arm is LOUD to the caller — the swarm turns this notice
                 // into one `usage_unavailable{task, attempt, turn}` event per lane.
                 if context_report

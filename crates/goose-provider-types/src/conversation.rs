@@ -523,6 +523,16 @@ pub fn is_turn_context_text(text: &str) -> bool {
         && text.trim_end().ends_with(&format!("</{TURN_CONTEXT_TAG}>"))
 }
 
+/// A turn-context block a chat keeps in its history: a user message hidden from the person that
+/// holds the block and nothing else. Kept so each request extends the previous one byte for byte
+/// (an exact-prefix cache reads nothing once a block it saw is gone); it is goose's, not the
+/// person's, so anything that looks for what the person said skips it.
+pub fn is_turn_context_message(message: &Message) -> bool {
+    message.role == Role::User
+        && !message.is_user_visible()
+        && matches!(message.content.as_slice(), [MessageContent::Text(text)] if is_turn_context_text(&text.text))
+}
+
 pub fn effective_role(message: &Message) -> String {
     if message.role == Role::User && has_tool_response(message) {
         "tool".to_string()

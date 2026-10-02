@@ -179,11 +179,11 @@ pub fn to_bedrock_message(message: &Message) -> Result<bedrock::Message> {
 /// checkpoint that is three of the four Bedrock accepts per request.
 const MESSAGE_CACHE_POINTS: usize = 2;
 
-/// Converts the agent-visible conversation. The turn-context block (current time, context
-/// usage) changes on every request and is never stored in history, so a checkpoint placed
-/// after it caches a prefix no later request can match: it is moved to the tail of the last
-/// message and each cache point goes on the last block before it, as in the native
-/// Anthropic formatter.
+/// Converts the agent-visible conversation. The newest turn-context block (current time, context
+/// usage) changes on every request, so a checkpoint placed after it caches a prefix no later
+/// request can match: it is moved to the tail of the last message and each cache point goes on
+/// the last block before it, as in the native Anthropic formatter. A chat's earlier blocks stay
+/// where they were sent, at the end of the message they rode.
 pub fn to_bedrock_messages(
     messages: &[&Message],
     enable_caching: bool,
@@ -235,7 +235,7 @@ fn relocate_turn_context_to_tail(messages: &mut [bedrock::Message]) {
     let source = messages.iter().enumerate().rev().find_map(|(mi, m)| {
         m.content
             .iter()
-            .position(is_turn_context_block)
+            .rposition(is_turn_context_block)
             .map(|bi| (mi, bi))
     });
     let Some((mi, bi)) = source else {

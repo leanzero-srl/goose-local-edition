@@ -345,6 +345,13 @@ fn assert_conversation_compacted(conversation: &Conversation) {
             assert!(msg.is_user_visible() && !msg.is_agent_visible());
             continue;
         }
+        if goose::conversation::is_turn_context_message(msg) {
+            assert!(
+                idx < continuation_end || msg.is_agent_visible(),
+                "a turn-context block the next request was sent with stays the agent's"
+            );
+            continue;
+        }
         if idx >= continuation_end {
             assert!(
                 msg.is_agent_visible() && msg.is_user_visible(),

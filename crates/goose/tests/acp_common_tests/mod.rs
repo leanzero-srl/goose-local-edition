@@ -92,9 +92,10 @@ pub async fn run_list_sessions<C: Connection>() {
         }
     }
     let mut expected_meta = serde_json::Map::new();
+    // The prompt, the request's kept turn-context block, the answer.
     expected_meta.insert(
         "messageCount".to_string(),
-        serde_json::Value::Number(2.into()),
+        serde_json::Value::Number(3.into()),
     );
     expected_meta.insert("userSetName".to_string(), serde_json::Value::Bool(false));
     expected_meta.insert(

@@ -1598,7 +1598,11 @@ impl CliSession {
         );
 
         // Render each message
-        for message in self.messages.iter() {
+        for message in self
+            .messages
+            .iter()
+            .filter(|m| !goose::conversation::is_turn_context_message(m))
+        {
             output::render_message(message, self.debug);
         }
 

@@ -1,9 +1,9 @@
 use crate::agents::extension_manager::ExtensionManager;
 use crate::context_mgmt::context_line::{context_line, LastCallUsage};
-use crate::conversation::message::MessageContent;
+use crate::conversation::message::{Message, MessageContent};
 use crate::conversation::{
-    effective_role, fix_conversation, Conversation, CURRENT_TIME_TAG, TURN_CONTEXT_TAG,
-    WORKING_DIRECTORY_TAG,
+    effective_role, fix_conversation, is_turn_context_message, is_turn_context_text, Conversation,
+    CURRENT_TIME_TAG, TURN_CONTEXT_TAG, WORKING_DIRECTORY_TAG,
 };
 
 const MIN_CONTEXT_FOR_MOIM: usize = 32_000;
@@ -56,23 +56,20 @@ pub fn system_prompt_block() -> Option<String> {
     }
 }
 
-pub async fn inject_moim(
-    session_id: &str,
-    conversation: Conversation,
-    extension_manager: &ExtensionManager,
-    turns_taken: u32,
-    max_turns: u32,
-    report: ContextReport,
-    // Q-94: true = when the request ends on tool results, the block rides in that tool-result
-    // message, so a formatter that can join it to the results never renders it as a user turn of
-    // its own. false = the swarm's workers, whose golden run was measured with the block in the
-    // human message.
-    host_on_tool_results: bool,
-) -> Conversation {
-    if SKIP.with(|f| f.get()) {
-        return conversation;
-    }
+/// What a turn-context block is composed from, read once per request.
+struct TurnContextInputs {
+    working_dir: String,
+    total_tokens: Option<i32>,
+    context_limit: Option<usize>,
+    compaction_threshold: f64,
+    extension_parts: Vec<String>,
+}
 
+/// `None` where no block is sent: a window under [`MIN_CONTEXT_FOR_MOIM`].
+async fn turn_context_inputs(
+    session_id: &str,
+    extension_manager: &ExtensionManager,
+) -> Option<TurnContextInputs> {
     let session = extension_manager
         .get_context()
         .session_manager
@@ -99,7 +96,7 @@ pub async fn inject_moim(
         None
     };
     if should_skip_moim(context_limit) {
-        return conversation;
+        return None;
     }
 
     // Q-266 audit: an unreadable session told the model its folder was "." — goosed's cwd, which
@@ -121,42 +118,66 @@ pub async fn inject_moim(
         .get_param::<f64>("GOOSE_AUTO_COMPACT_THRESHOLD")
         .unwrap_or(crate::context_mgmt::DEFAULT_COMPACTION_THRESHOLD);
     let extension_parts = extension_manager.collect_moim_parts(session_id).await;
-    let moim = compose_moim(
-        &working_dir,
+    Some(TurnContextInputs {
+        working_dir,
         total_tokens,
         context_limit,
         compaction_threshold,
+        extension_parts,
+    })
+}
+
+/// A swarm worker's block: composed for this request only and placed in the human message (the
+/// formatters move it to the request tail), which is what the golden benchmark (393a99351) was
+/// measured with. A chat keeps its blocks in its history instead ([`turn_context_message`]).
+pub async fn inject_moim(
+    session_id: &str,
+    conversation: Conversation,
+    extension_manager: &ExtensionManager,
+    turns_taken: u32,
+    max_turns: u32,
+    report: ContextReport,
+) -> Conversation {
+    if SKIP.with(|f| f.get()) {
+        return conversation;
+    }
+    let Some(inputs) = turn_context_inputs(session_id, extension_manager).await else {
+        return conversation;
+    };
+    let moim = compose_moim(
+        &inputs.working_dir,
+        inputs.total_tokens,
+        inputs.context_limit,
+        inputs.compaction_threshold,
         turns_taken,
         max_turns,
-        extension_parts,
+        inputs.extension_parts,
         report,
     );
 
     let mut messages = conversation.messages().clone();
-    let tool_results_tail = messages
+    let Some(idx) = messages
         .iter()
-        .rposition(|m| m.is_agent_visible())
-        .filter(|&last| host_on_tool_results && effective_role(&messages[last]) == "tool");
-    if let Some(last) = tool_results_tail {
-        messages[last].content.push(MessageContent::text(moim));
-    } else {
-        let Some(idx) = messages
-            .iter()
-            .rposition(|m| m.is_agent_visible() && effective_role(m) == "user")
-        else {
-            return conversation;
-        };
-        let insert_idx = messages[idx]
-            .content
-            .iter()
-            .take_while(|content| matches!(content, MessageContent::ToolResponse(_)))
-            .count();
-        messages[idx]
-            .content
-            .insert(insert_idx, MessageContent::text(moim));
-    }
+        .rposition(|m| m.is_agent_visible() && effective_role(m) == "user")
+    else {
+        return conversation;
+    };
+    let insert_idx = messages[idx]
+        .content
+        .iter()
+        .take_while(|content| matches!(content, MessageContent::ToolResponse(_)))
+        .count();
+    messages[idx]
+        .content
+        .insert(insert_idx, MessageContent::text(moim));
 
-    let (fixed, issues) = fix_conversation(Conversation::new_unvalidated(messages));
+    fixed_for_request(Conversation::new_unvalidated(messages)).unwrap_or(conversation)
+}
+
+/// The conversation a request is sent with: `fix_conversation`'s output, or `None` when fixing it
+/// would change more than the merges and trims a request is expected to need.
+pub fn fixed_for_request(conversation: Conversation) -> Option<Conversation> {
+    let (fixed, issues) = fix_conversation(conversation);
 
     let has_unexpected_issues = issues.iter().any(|issue| {
         !issue.contains("Merged consecutive user messages")
@@ -169,10 +190,94 @@ pub async fn inject_moim(
 
     if has_unexpected_issues {
         tracing::warn!("MOIM injection caused unexpected issues: {:?}", issues);
-        return conversation;
+        return None;
     }
 
-    fixed
+    Some(fixed)
+}
+
+/// What a block that repeats no extension context carries in its place.
+const EXTENSION_CONTEXT_UNCHANGED: &str = "<extension-context>unchanged: the most recent earlier \
+     turn-context block that lists it still holds</extension-context>";
+
+/// A chat's block for the request about to be sent, as an agent-only message the caller appends to
+/// the history and stores — so the next request carries it unchanged and extends this one byte for
+/// byte. An exact-prefix cache (OpenAI's, through OpenRouter) reads nothing otherwise: measured
+/// 2026-10-02 on openai/gpt-6-luna, a block dropped from the next request left every call of a
+/// six-call tool loop at 0 cached tokens, and keeping each block in place read 1,153 → 1,938.
+///
+/// `None` when no block is sent, and when the history already ends on one (a retried request: the
+/// block it was sent with still stands). Extension context (scratchpad, ledger, memories) is
+/// listed only when it differs from what the most recent block that listed it carried; the history
+/// keeps every block, so repeating it would only grow the conversation.
+pub async fn turn_context_message(
+    session_id: &str,
+    conversation: &Conversation,
+    extension_manager: &ExtensionManager,
+    turns_taken: u32,
+    max_turns: u32,
+    report: ContextReport,
+) -> Option<Message> {
+    if SKIP.with(|f| f.get()) {
+        return None;
+    }
+    let messages = conversation.messages();
+    if messages
+        .iter()
+        .rev()
+        .find(|m| m.is_agent_visible())
+        .is_some_and(is_turn_context_message)
+    {
+        return None;
+    }
+    let inputs = turn_context_inputs(session_id, extension_manager).await?;
+    let listed = extension_section(&inputs.extension_parts);
+    let unchanged = !listed.is_empty() && last_listed_extension_section(messages) == Some(listed);
+    let extension_parts = if unchanged {
+        vec![EXTENSION_CONTEXT_UNCHANGED.to_string()]
+    } else {
+        inputs.extension_parts
+    };
+    let block = compose_moim(
+        &inputs.working_dir,
+        inputs.total_tokens,
+        inputs.context_limit,
+        inputs.compaction_threshold,
+        turns_taken,
+        max_turns,
+        extension_parts,
+        report,
+    );
+    Some(Message::user().with_text(block).agent_only())
+}
+
+/// The extension parts as [`compose_moim`] lays them out between the block's head and its close.
+fn extension_section(parts: &[String]) -> String {
+    parts
+        .iter()
+        .filter(|part| !part.trim().is_empty())
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+/// The extension section of the most recent agent-visible block that listed one, read back from
+/// the block text [`compose_moim`] wrote. A block that listed none is a section of its own (empty).
+fn last_listed_extension_section(messages: &[Message]) -> Option<String> {
+    let close = format!("\n{}", close_tag(TURN_CONTEXT_TAG));
+    messages
+        .iter()
+        .rev()
+        .filter(|m| m.is_agent_visible())
+        .flat_map(|m| m.content.iter().rev())
+        .filter_map(MessageContent::as_text)
+        .filter(|text| is_turn_context_text(text))
+        .map(|block| {
+            let body = block.strip_suffix(&close).unwrap_or(block);
+            body.split_once("\n\n")
+                .map_or(String::new(), |(_, section)| section.to_string())
+        })
+        .find(|section| section != EXTENSION_CONTEXT_UNCHANGED)
 }
 
 fn should_skip_moim(context_limit: Option<usize>) -> bool {
@@ -394,7 +499,6 @@ mod chat_context_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conversation::message::Message;
     use rmcp::model::CallToolRequestParams;
     use std::path::PathBuf;
 
@@ -431,7 +535,7 @@ mod tests {
             Message::assistant().with_text("Hi"),
             Message::user().with_text("Bye"),
         ]);
-        let result = inject_moim(&session.id, conv, &em, 0, 100, CHAT, false).await;
+        let result = inject_moim(&session.id, conv, &em, 0, 100, CHAT).await;
         let msgs = result.messages();
 
         assert_eq!(msgs.len(), 3);
@@ -458,7 +562,7 @@ mod tests {
             .unwrap();
 
         let conv = Conversation::new_unvalidated(vec![Message::user().with_text("Hello")]);
-        let result = inject_moim(&session.id, conv, &em, 0, 100, CHAT, false).await;
+        let result = inject_moim(&session.id, conv, &em, 0, 100, CHAT).await;
 
         assert_eq!(result.messages().len(), 1);
         assert!(is_moim(&result.messages()[0].content[0]));
@@ -486,7 +590,7 @@ mod tests {
             Message::assistant().with_text("reply"),
             Message::user().with_text("user only").user_only(),
         ]);
-        let result = inject_moim(&session.id, conv, &em, 0, 100, CHAT, false).await;
+        let result = inject_moim(&session.id, conv, &em, 0, 100, CHAT).await;
         let msgs = result.messages();
 
         assert_eq!(msgs.len(), 2);
@@ -521,7 +625,7 @@ mod tests {
                 .with_tool_response("search_1", Ok(rmcp::model::CallToolResult::success(vec![]))),
         ]);
 
-        let result = inject_moim(&session.id, conv, &em, 0, 100, CHAT, false).await;
+        let result = inject_moim(&session.id, conv, &em, 0, 100, CHAT).await;
         let msgs = result.messages();
 
         assert_eq!(msgs.len(), 3);
@@ -534,11 +638,11 @@ mod tests {
         assert_eq!(msgs[2].content.len(), 1);
     }
 
-    /// Q-94: a chat agent whose request ends on tool results hosts the block in that tool-result
-    /// message (the formatter joins it to the results); a request ending on the user's own words,
-    /// and every swarm worker, keep it in the human message.
+    /// A chat's block is a message of its own, hidden from the person and kept by the caller; a
+    /// history that already ends on one (a retried request) gets no second block. A swarm worker's
+    /// block still rides the human message for this request only.
     #[tokio::test]
-    async fn chat_hosts_the_block_on_a_tool_results_tail() {
+    async fn a_chat_block_is_an_agent_only_message_and_a_retry_reuses_it() {
         let temp_dir = tempfile::tempdir().unwrap();
         let em = ExtensionManager::new_without_provider(temp_dir.path().to_path_buf());
         let session = em
@@ -563,15 +667,20 @@ mod tests {
             ])
         };
 
-        let chat = inject_moim(&session.id, tool_tail(), &em, 0, 100, CHAT, true).await;
-        let msgs = chat.messages();
-        assert_eq!(msgs.len(), 3);
-        assert_eq!(msgs[0].content.len(), 1, "the question stays as asked");
-        assert!(matches!(
-            msgs[2].content[0],
-            MessageContent::ToolResponse(_)
-        ));
-        assert!(is_moim(msgs[2].content.last().unwrap()));
+        let block = turn_context_message(&session.id, &tool_tail(), &em, 0, 100, CHAT)
+            .await
+            .expect("a chat request gets a block");
+        assert!(is_turn_context_message(&block), "{block:?}");
+        assert!(block.is_agent_visible() && !block.is_user_visible());
+
+        let mut retried = tool_tail();
+        retried.push(block);
+        assert!(
+            turn_context_message(&session.id, &retried, &em, 0, 100, CHAT)
+                .await
+                .is_none(),
+            "the block the failed request was sent with still stands"
+        );
 
         let swarm = inject_moim(
             &session.id,
@@ -580,15 +689,58 @@ mod tests {
             0,
             100,
             ContextReport::CompactionCountdown,
-            false,
         )
         .await;
         assert!(is_moim(&swarm.messages()[0].content[0]));
         assert_eq!(swarm.messages()[2].content.len(), 1);
+    }
 
-        let asked = Conversation::new_unvalidated(vec![Message::user().with_text("Bye")]);
-        let asked = inject_moim(&session.id, asked, &em, 0, 100, CHAT, true).await;
-        assert!(is_moim(&asked.messages()[0].content[0]));
+    /// The history keeps every block, so a block repeats the extension context (scratchpad,
+    /// ledger, memories) only when it differs from what the last block that listed it carried.
+    #[test]
+    fn extension_context_is_listed_again_only_when_it_changed() {
+        let parts = || {
+            vec![
+                "<scratchpad>\nGoal: x\n</scratchpad>\n".to_string(),
+                "<ledger>\nnone yet\n</ledger>\n".to_string(),
+            ]
+        };
+        let block = |parts: Vec<String>| {
+            Message::user()
+                .with_text(compose_moim("/w", None, None, 0.8, 0, 0, parts, CHAT))
+                .agent_only()
+        };
+        let listed = extension_section(&parts());
+
+        let history = vec![Message::user().with_text("go"), block(parts())];
+        assert_eq!(
+            last_listed_extension_section(&history),
+            Some(listed.clone())
+        );
+
+        let mut light = history.clone();
+        light.push(block(vec![EXTENSION_CONTEXT_UNCHANGED.to_string()]));
+        assert_eq!(
+            last_listed_extension_section(&light),
+            Some(listed),
+            "a block that repeated nothing points back to the one that listed it"
+        );
+        assert!(is_turn_context_text(
+            light.last().unwrap().as_concat_text().as_str()
+        ));
+
+        let mut compacted = light.clone();
+        for message in &mut compacted {
+            message.metadata.agent_visible = false;
+        }
+        assert_eq!(
+            last_listed_extension_section(&compacted),
+            None,
+            "after a compaction the next block lists everything again"
+        );
+
+        let none = vec![block(Vec::new())];
+        assert_eq!(last_listed_extension_section(&none), Some(String::new()));
     }
 
     /// The turn-context block is produced here (`compose_moim`, in goose) but
@@ -600,7 +752,6 @@ mod tests {
     /// collapse prompt caching. These tests fail loudly if they drift apart.
     mod turn_context_detector_coupling {
         use super::*;
-        use crate::conversation::is_turn_context_text;
 
         fn moim(
             total_tokens: Option<i32>,

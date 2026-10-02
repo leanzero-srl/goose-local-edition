@@ -1715,7 +1715,10 @@ mod tests {
                 .conversation
                 .expect("should have conversation")
                 .messages()
-                .to_vec();
+                .iter()
+                .filter(|m| !goose::conversation::is_turn_context_message(m))
+                .cloned()
+                .collect::<Vec<_>>();
 
             let user_count = messages.iter().filter(|m| m.role == Role::User).count();
             let asst_count = messages
@@ -1764,7 +1767,10 @@ mod tests {
                 .conversation
                 .expect("should have conversation")
                 .messages()
-                .to_vec();
+                .iter()
+                .filter(|m| !goose::conversation::is_turn_context_message(m))
+                .cloned()
+                .collect::<Vec<_>>();
 
             let user_count2 = messages2.iter().filter(|m| m.role == Role::User).count();
             let asst_count2 = messages2
@@ -4657,15 +4663,27 @@ mod tests {
                     yielded.push(message);
                 }
             }
-            let history = agent
+            Ok((yielded, said(&stored(agent, session_id).await?)))
+        }
+
+        async fn stored(agent: &Agent, session_id: &str) -> Result<Vec<Message>> {
+            Ok(agent
                 .config
                 .session_manager
                 .get_session(session_id, true)
                 .await?
                 .conversation
                 .map(|c| c.messages().to_vec())
-                .unwrap_or_default();
-            Ok((yielded, history))
+                .unwrap_or_default())
+        }
+
+        /// The history less the turn-context blocks the chat keeps for its requests.
+        fn said(history: &[Message]) -> Vec<Message> {
+            history
+                .iter()
+                .filter(|m| !goose::conversation::is_turn_context_message(m))
+                .cloned()
+                .collect()
         }
 
         fn resend_notices(yielded: &[Message]) -> Vec<String> {
@@ -4831,9 +4849,18 @@ mod tests {
                 "{notices:?}"
             );
             // Rows stored in the same second may read back in either order.
-            let mut stored: Vec<String> = history.iter().map(Message::as_concat_text).collect();
-            stored.sort();
-            assert_eq!(stored, ["Answer.", "build the app"]);
+            let mut texts: Vec<String> = history.iter().map(Message::as_concat_text).collect();
+            texts.sort();
+            assert_eq!(texts, ["Answer.", "build the app"]);
+            let blocks = stored(&agent, &session_id)
+                .await?
+                .iter()
+                .filter(|m| goose::conversation::is_turn_context_message(m))
+                .count();
+            assert_eq!(
+                blocks, 1,
+                "the resend is sent with the block the failed request carried"
+            );
             Ok(())
         }
 

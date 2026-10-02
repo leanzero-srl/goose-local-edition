@@ -148,12 +148,25 @@ async fn toolshim_postprocess(
 /// converted to text when the model runs through the toolshim. One definition for the chat's calls
 /// and the compaction request that extends them (Q-342), so the two cannot render the same
 /// conversation differently.
+///
+/// A chat's kept turn-context block ([`crate::conversation::is_turn_context_message`]) rides the end
+/// of the user or tool-result message before it — where the newest block sits when it is sent —
+/// so every formatter renders an earlier block exactly as it rendered it at that request's tail.
 pub(crate) fn messages_for_provider(messages: &[Message], toolshim: bool) -> Conversation {
-    let filtered_messages: Vec<Message> = messages
-        .iter()
-        .filter(|m| m.is_agent_visible())
-        .map(|m| m.agent_visible_content())
-        .collect();
+    let mut filtered_messages: Vec<Message> = Vec::new();
+    for message in messages.iter().filter(|m| m.is_agent_visible()) {
+        let message = message.agent_visible_content();
+        if crate::conversation::is_turn_context_message(&message) {
+            if let Some(host) = filtered_messages
+                .last_mut()
+                .filter(|host| host.role == rmcp::model::Role::User)
+            {
+                host.content.extend(message.content);
+                continue;
+            }
+        }
+        filtered_messages.push(message);
+    }
     if toolshim {
         convert_tool_messages_to_text(&filtered_messages)
     } else {

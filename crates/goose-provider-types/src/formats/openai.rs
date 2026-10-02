@@ -234,8 +234,8 @@ fn is_reserved_request_param_key(key: &str) -> bool {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OpenAiFormatOptions {
     pub preserve_thinking_context: bool,
-    /// Q-94: when the turn-context block was hosted in the tool-result message the request ends on
-    /// (`inject_moim`'s chat placement), append it to the last `role: tool` message instead of a
+    /// Q-94: when the turn-context block was hosted in a tool-result message (a chat's kept block
+    /// rides the results it follows), append it to that `role: tool` message instead of a
     /// trailing `role: user` message of its own — which chat templates render as a new user turn
     /// with nothing in it but goose's context ("The user hasn't sent a new message — this is just a
     /// turn-context update"). Off for an engine that snapshots its cache before a transient tail on
@@ -461,9 +461,24 @@ pub fn format_messages_reporting_images(
         let mut content_array = Vec::new();
         let mut has_non_text_content = false;
         let mut reasoning_text = String::new();
+        // A turn-context block an earlier request carried on these tool results (a chat keeps its
+        // blocks in history): it follows the results here exactly as it followed them at that
+        // request's tail, so this request extends that one byte for byte.
+        let carries_tool_results = message.role == Role::User
+            && message
+                .content
+                .iter()
+                .any(|c| matches!(c, MessageContent::ToolResponse(_)));
+        let mut kept_turn_context = Vec::new();
 
         for content in &message.content {
             match content {
+                MessageContent::Text(text)
+                    if carries_tool_results
+                        && crate::conversation::is_turn_context_text(&text.text) =>
+                {
+                    kept_turn_context.push(text.text.as_str());
+                }
                 MessageContent::Text(text) => {
                     if !text.text.is_empty() {
                         if message.role == Role::User {
@@ -746,19 +761,33 @@ pub fn format_messages_reporting_images(
         }
 
         messages_spec.extend(output);
+        for text in kept_turn_context {
+            attach_turn_context(
+                &mut messages_spec,
+                text,
+                options.turn_context_joins_tool_results,
+            );
+        }
     }
 
     merge_split_tool_call_messages(&mut messages_spec);
     if let Some(text) = turn_context {
-        let joined = options.turn_context_joins_tool_results
-            && hosted_on_tool_results
-            && join_last_tool_result(&mut messages_spec, text);
-        if !joined {
-            append_turn_context_tail(&mut messages_spec, text);
-        }
+        attach_turn_context(
+            &mut messages_spec,
+            text,
+            options.turn_context_joins_tool_results && hosted_on_tool_results,
+        );
     }
 
     messages_spec
+}
+
+/// Where a turn-context block lands after what precedes it: joined to the tool results it rode on
+/// when the formatter joins them (Q-94), else the tail append.
+fn attach_turn_context(messages_spec: &mut Vec<Value>, text: &str, join_tool_results: bool) {
+    if !(join_tool_results && join_last_tool_result(messages_spec, text)) {
+        append_turn_context_tail(messages_spec, text);
+    }
 }
 
 /// Record an image part the text-only engine is not sent, returning the placeholder it reads.
@@ -794,7 +823,7 @@ fn locate_turn_context(messages: &[Message]) -> Option<(usize, usize)> {
         }
         m.content
             .iter()
-            .position(|block| {
+            .rposition(|block| {
                 matches!(block, MessageContent::Text(t)
                     if crate::conversation::is_turn_context_text(&t.text))
             })
@@ -6208,6 +6237,79 @@ mod cache_prefix_stability_tests {
             Some(format!("\n{tc}")),
             "the joined block is named as the tool message's suffix"
         );
+    }
+
+    /// A chat keeps every block in its history, each riding the end of the message it followed
+    /// (the question, then each step's tool results). Whether the formatter joins a block to the
+    /// tool results (native OpenAI, Q-94) or follows them with a user message (OpenRouter), an
+    /// earlier block renders exactly where the request that carried it put it, so each request is
+    /// the previous one plus what came after — and no block ever lands between an assistant's tool
+    /// calls and their results.
+    #[test]
+    fn kept_blocks_render_where_their_request_put_them() {
+        let steps = 4;
+        let history =
+            |upto: usize| -> Vec<Message> {
+                let mut messages = vec![Message::user()
+                    .with_text("build the thing")
+                    .with_text(turn_context("10:00:00"))];
+                for step in 1..=upto {
+                    let id = format!("call_{step}");
+                    messages.push(Message::assistant().with_tool_request(
+                        &id,
+                        Ok(rmcp::model::CallToolRequestParams::new("shell")),
+                    ));
+                    messages.push(
+                        Message::user()
+                            .with_tool_response(
+                                &id,
+                                Ok(rmcp::model::CallToolResult::success(vec![
+                                    rmcp::model::Content::text(format!("out {step}")),
+                                ])),
+                            )
+                            .with_text(turn_context(&format!("10:0{step}:00"))),
+                    );
+                }
+                messages
+            };
+        for joins in [false, true] {
+            let options = OpenAiFormatOptions {
+                preserve_thinking_context: true,
+                turn_context_joins_tool_results: joins,
+                ..Default::default()
+            };
+            let requests: Vec<Vec<Value>> = (0..=steps)
+                .map(|upto| {
+                    format_messages_with_options(&history(upto), &ImageFormat::OpenAi, options)
+                })
+                .collect();
+            for pair in requests.windows(2) {
+                assert!(
+                    pair[1].len() > pair[0].len() && pair[1][..pair[0].len()] == pair[0][..],
+                    "joins={joins}: {:#?}\nis not a prefix of\n{:#?}",
+                    pair[0],
+                    pair[1]
+                );
+            }
+            let last = requests.last().unwrap();
+            for (i, m) in last.iter().enumerate() {
+                if m["role"] == json!("tool") {
+                    assert!(
+                        matches!(last[i - 1]["role"].as_str(), Some("assistant" | "tool")),
+                        "joins={joins}: a tool result follows its call: {last:#?}"
+                    );
+                }
+            }
+            let blocks = last
+                .iter()
+                .filter(|m| {
+                    m["content"]
+                        .as_str()
+                        .is_some_and(|c| c.contains("<turn-context>"))
+                })
+                .count();
+            assert_eq!(blocks, steps + 1, "joins={joins}");
+        }
     }
 
     #[test]

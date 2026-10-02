@@ -232,7 +232,11 @@ impl AdversaryInspector {
                     .content
                     .iter()
                     .filter_map(|c| match c {
-                        MessageContent::Text(t) => Some(t.text.clone()),
+                        MessageContent::Text(t)
+                            if !crate::conversation::is_turn_context_text(&t.text) =>
+                        {
+                            Some(t.text.clone())
+                        }
                         _ => None,
                     })
                     .collect::<Vec<_>>()
@@ -257,7 +261,11 @@ impl AdversaryInspector {
                     .content
                     .iter()
                     .filter_map(|c| match c {
-                        MessageContent::Text(t) => Some(t.text.clone()),
+                        MessageContent::Text(t)
+                            if !crate::conversation::is_turn_context_text(&t.text) =>
+                        {
+                            Some(t.text.clone())
+                        }
                         _ => None,
                     })
                     .collect::<Vec<_>>()

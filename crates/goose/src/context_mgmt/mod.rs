@@ -345,11 +345,14 @@ async fn compact_core(
 
     let messages = conversation.messages();
 
+    // A chat's kept turn-context blocks are goose's, not the person's words: they are never the
+    // request a compaction preserves.
+    let persons_text = |c: &MessageContent| match c {
+        MessageContent::Text(text) => !crate::conversation::is_turn_context_text(&text.text),
+        _ => false,
+    };
     let has_text_only = |msg: &Message| {
-        let has_text = msg
-            .content
-            .iter()
-            .any(|c| matches!(c, MessageContent::Text(_)));
+        let has_text = msg.content.iter().any(persons_text);
         let has_tool_content = msg.content.iter().any(|c| {
             matches!(
                 c,
@@ -363,13 +366,8 @@ async fn compact_core(
         let text_parts: Vec<String> = msg
             .content
             .iter()
-            .filter_map(|c| {
-                if let MessageContent::Text(text) = c {
-                    Some(text.text.clone())
-                } else {
-                    None
-                }
-            })
+            .filter(|c| persons_text(c))
+            .filter_map(|c| c.as_text().map(str::to_string))
             .collect();
 
         if text_parts.is_empty() {
@@ -380,7 +378,7 @@ async fn compact_core(
     };
 
     // Find and preserve the most recent user message for non-manual compacts
-    let (preserved_user_message, is_most_recent) = if !manual_compact {
+    let (preserved_user_message, preserved_idx, is_most_recent) = if !manual_compact {
         let found_msg = messages.iter().enumerate().rev().find(|(_, msg)| {
             msg.is_agent_visible()
                 && matches!(msg.role, rmcp::model::Role::User)
@@ -388,13 +386,15 @@ async fn compact_core(
         });
 
         if let Some((idx, msg)) = found_msg {
-            let is_last = idx == messages.len() - 1;
-            (Some(msg.clone()), is_last)
+            let is_last = messages[idx + 1..]
+                .iter()
+                .all(crate::conversation::is_turn_context_message);
+            (Some(msg.clone()), Some(idx), is_last)
         } else {
-            (None, false)
+            (None, None, false)
         }
     } else {
-        (None, false)
+        (None, None, false)
     };
 
     // K4 KEEP-TAIL: summarize everything EXCEPT the last `keep_tail` messages, which survive
@@ -483,7 +483,7 @@ async fn compact_core(
 
     for (idx, msg) in messages.iter().enumerate() {
         let updated_metadata = if is_most_recent
-            && idx == messages.len() - 1
+            && preserved_idx == Some(idx)
             && preserved_user_message.is_some()
             && keep_tail == 0
         {
@@ -856,8 +856,8 @@ fn chat_instruction(
 }
 
 /// [`SummaryRequest::ExtendsChat`]: the conversation as the chat's next call would send it, then
-/// the instruction. The chat's messages are `fix_conversation`'s output (`inject_moim` fixes the
-/// conversation it extends), so these are too — which is also what places the instruction: it
+/// the instruction. The chat's messages are `fix_conversation`'s output (`moim::fixed_for_request`
+/// fixes every request, its kept turn-context blocks included), so these are too — which is also what places the instruction: it
 /// joins a trailing user message, as the turn-context block does, and follows tool results as a
 /// user message of its own (a strict chat template refuses two user turns in a row). The call is
 /// the chat's, not a helper's (`complete_as_the_chat`: the thinking switch can change the system

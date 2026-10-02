@@ -632,6 +632,187 @@ mod tests {
         assert_eq!(last["content"], json!(turn_context));
     }
 
+    fn block_at(minute: u32) -> String {
+        format!(
+            "<turn-context>\n<current-time>2026-10-02 14:{minute:02}:00</current-time>\n\
+             <working-directory>/w</working-directory>\n\
+             context: {} of 1,050,000 tokens used (0%)\n</turn-context>",
+            1_000 + 100 * minute
+        )
+    }
+
+    fn shell_step(id: &str, output: &str) -> [Message; 2] {
+        [
+            Message::assistant().with_tool_request(
+                id,
+                Ok(rmcp::model::CallToolRequestParams::new("developer__shell")),
+            ),
+            Message::user().with_tool_response(
+                id,
+                Ok(rmcp::model::CallToolResult::success(vec![
+                    rmcp::model::Content::text(output),
+                ])),
+            ),
+        ]
+    }
+
+    /// The bodies OpenRouter is sent for a question and six shell steps — the measured probe —
+    /// with each request's block kept in the history the way the chat keeps it (`keep`), or only
+    /// on the newest request (the request shape before the blocks were kept).
+    fn tool_loop_requests(model: &str, keep: bool) -> Vec<Value> {
+        let mut stored = vec![Message::user().with_text("Run six shell commands, then say DONE.")];
+        let mut requests = Vec::new();
+        for step in 0..=6u32 {
+            if step > 0 {
+                stored.extend(shell_step(&format!("c{step}"), &format!("output {step}")));
+            }
+            let block = Message::user().with_text(block_at(step)).agent_only();
+            let sent = if keep {
+                stored.push(block);
+                stored.clone()
+            } else {
+                let mut sent = stored.clone();
+                sent.push(block);
+                sent
+            };
+            let fixed = crate::agents::moim::fixed_for_request(
+                crate::conversation::Conversation::new_unvalidated(sent),
+            )
+            .expect("a tool loop needs no unexpected fixes");
+            let messages =
+                crate::agents::reply_parts::messages_for_provider(fixed.messages(), false);
+            let mut payload = create_request(
+                &model_config(model),
+                "system prompt",
+                messages.messages(),
+                &[],
+                &ImageFormat::OpenAi,
+                true,
+            )
+            .unwrap();
+            if supports_cache_control(&model_config(model)) {
+                apply_anthropic_cache_breakpoints(&mut payload);
+            }
+            requests.push(payload);
+        }
+        requests
+    }
+
+    /// The messages as the upstream caches them: a string content is one text part, and the
+    /// breakpoints are request markers, not content.
+    fn cached_form(payload: &Value) -> Vec<Value> {
+        payload["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| {
+                let mut m = m.clone();
+                let parts = match m["content"].take() {
+                    Value::String(text) => vec![json!({"type": "text", "text": text})],
+                    Value::Array(parts) => parts
+                        .into_iter()
+                        .map(|mut p| {
+                            if let Some(p) = p.as_object_mut() {
+                                p.remove("cache_control");
+                            }
+                            p
+                        })
+                        .collect(),
+                    other => vec![other],
+                };
+                m["content"] = json!(parts);
+                m
+            })
+            .collect()
+    }
+
+    fn extends_previous(requests: &[Value], form: impl Fn(&Value) -> Vec<Value>) -> Vec<bool> {
+        requests
+            .windows(2)
+            .map(|pair| {
+                let (before, after) = (form(&pair[0]), form(&pair[1]));
+                after.len() > before.len() && after[..before.len()] == before[..]
+            })
+            .collect()
+    }
+
+    /// The defect measured 2026-10-02 (openai/gpt-6-luna through OpenRouter, 0 cached tokens on
+    /// every call): each request must contain the previous one unchanged as its prefix, because
+    /// OpenAI's cache reads only an exact earlier prompt. NEGATIVE CONTROL: with the block on the
+    /// newest request only, no request extends the one before it.
+    #[test]
+    fn every_tool_loop_request_extends_the_previous_one_byte_for_byte() {
+        let exact = |p: &Value| p["messages"].as_array().unwrap().clone();
+        let kept = tool_loop_requests("openai/gpt-6-luna", true);
+        assert_eq!(extends_previous(&kept, exact), vec![true; 6]);
+        assert_eq!(kept[0]["messages"][1]["role"], json!("user"));
+        assert_eq!(
+            kept[0]["messages"][1]["content"],
+            json!(format!(
+                "Run six shell commands, then say DONE.\n{}",
+                block_at(0)
+            ))
+        );
+        let last = kept[6]["messages"].as_array().unwrap();
+        assert_eq!(
+            last.iter()
+                .filter(|m| m["content"]
+                    .as_str()
+                    .is_some_and(|c| c.contains("<turn-context>")))
+                .count(),
+            7,
+            "every block the loop was sent is still in the newest request"
+        );
+
+        let dropped = tool_loop_requests("openai/gpt-6-luna", false);
+        assert_eq!(extends_previous(&dropped, exact), vec![false; 6]);
+    }
+
+    /// The Anthropic breakpoints keep working over the kept blocks: every request extends the
+    /// previous one as the upstream caches it, and its second breakpoint sits where the previous
+    /// request put its moving one, so the history is read back from that entry.
+    #[test]
+    fn claude_requests_extend_the_previous_one_and_read_back_its_breakpoint() {
+        let requests = tool_loop_requests("anthropic/claude-haiku-4.5", true);
+        assert_eq!(extends_previous(&requests, cached_form), vec![true; 6]);
+
+        let marked = |payload: &Value| -> Vec<usize> {
+            payload["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .enumerate()
+                .filter(|(_, m)| {
+                    m["role"] != json!("system")
+                        && m["content"].as_array().is_some_and(|parts| {
+                            parts.iter().any(|p| p.get("cache_control").is_some())
+                        })
+                })
+                .map(|(i, _)| i)
+                .collect()
+        };
+        for pair in requests.windows(2) {
+            let moving = *marked(&pair[0]).last().unwrap();
+            assert!(
+                marked(&pair[1]).contains(&moving),
+                "{:?} vs {:?}",
+                marked(&pair[0]),
+                marked(&pair[1])
+            );
+        }
+        for payload in &requests {
+            for m in payload["messages"].as_array().unwrap() {
+                for part in m["content"].as_array().into_iter().flatten() {
+                    let text = part["text"].as_str().unwrap_or_default();
+                    assert!(
+                        part.get("cache_control").is_none() || !text.contains("<turn-context>"),
+                        "a breakpoint never sits on a block: {part}"
+                    );
+                }
+            }
+        }
+    }
+
     /// The bench harness bills an OpenRouter run per generation id (bench_cost.py); that id reaches
     /// it only through this line, for completed and dropped streams alike.
     #[tokio::test]

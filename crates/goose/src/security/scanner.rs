@@ -352,13 +352,18 @@ impl PromptInjectionScanner {
         messages
             .iter()
             .rev()
-            .filter(|m| crate::conversation::effective_role(m) == "user")
+            .filter(|m| {
+                crate::conversation::effective_role(m) == "user"
+                    && !crate::conversation::is_turn_context_message(m)
+            })
             .take(limit)
             .map(|m| {
                 m.content
                     .iter()
                     .filter_map(|c| match c {
-                        crate::conversation::message::MessageContent::Text(t) => {
+                        crate::conversation::message::MessageContent::Text(t)
+                            if !crate::conversation::is_turn_context_text(&t.text) =>
+                        {
                             Some(t.text.clone())
                         }
                         _ => None,

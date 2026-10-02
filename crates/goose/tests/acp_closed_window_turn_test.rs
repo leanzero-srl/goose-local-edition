@@ -72,7 +72,15 @@ async fn a_turn_ended_by_closing_its_window_keeps_its_words_and_the_stopped_line
     })
     .await;
 
-    let messages = stored(&session_id).await;
+    let all = stored(&session_id).await;
+    assert!(
+        goose::conversation::is_turn_context_message(&all[1]),
+        "the request's turn-context block is kept, hidden, after the prompt: {all:#?}"
+    );
+    let messages: Vec<Message> = all
+        .into_iter()
+        .filter(|m| !goose::conversation::is_turn_context_message(m))
+        .collect();
     let texts: Vec<_> = messages
         .iter()
         .map(|m| (m.role.clone(), m.as_concat_text()))

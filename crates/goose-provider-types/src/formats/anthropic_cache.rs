@@ -36,9 +36,12 @@ pub fn apply_anthropic_cache_breakpoints(payload: &mut Value) {
     }
 }
 
+/// Every user/tool message carrying a block is isolated, not only the tail: a chat keeps its
+/// earlier blocks in history, and the message a block rode must keep the part layout it was sent
+/// with, or this request's prefix stops matching the entry the previous request wrote there.
 fn mark_history(messages: &mut [Value]) {
-    if let Some(tail) = messages.iter().rposition(is_user_or_tool) {
-        isolate_turn_context(&mut messages[tail]);
+    for message in messages.iter_mut().filter(|m| is_user_or_tool(m)) {
+        isolate_turn_context(message);
     }
 
     let Some(moving) = mark_latest_before(messages, messages.len()) else {

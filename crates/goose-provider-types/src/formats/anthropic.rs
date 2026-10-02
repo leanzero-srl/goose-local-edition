@@ -390,7 +390,7 @@ fn relocate_turn_context_to_tail(messages: &mut [Value]) {
     let source = messages.iter().enumerate().rev().find_map(|(mi, m)| {
         m.get(CONTENT_FIELD)
             .and_then(|c| c.as_array())
-            .and_then(|a| a.iter().position(is_turn_context_block))
+            .and_then(|a| a.iter().rposition(is_turn_context_block))
             .map(|bi| (mi, bi))
     });
     let Some((mi, bi)) = source else {
@@ -2615,6 +2615,75 @@ mod tests {
                 "turn-context at {turn_context:?} was not relocated across messages to after the \
                  last breakpoint at {breakpoint:?}"
             );
+        }
+
+        fn without_breakpoints(messages: &[Value]) -> Vec<Value> {
+            messages
+                .iter()
+                .map(|m| {
+                    let mut m = m.clone();
+                    for block in m["content"].as_array_mut().unwrap() {
+                        block.as_object_mut().unwrap().remove(CACHE_CONTROL_FIELD);
+                    }
+                    m
+                })
+                .collect()
+        }
+
+        /// A chat keeps every block in its history, each at the end of the message it rode (the
+        /// question, then each step's tool results). Every request extends the previous one, the
+        /// newest block stays after every breakpoint, and the previous request's furthest cached
+        /// prefix is carried unchanged with a breakpoint on the same block, so it is read back.
+        #[test]
+        fn kept_blocks_leave_every_request_a_prefix_of_the_next() {
+            let history = |upto: usize| -> Vec<Message> {
+                let mut messages = vec![Message::user()
+                    .with_text("What does the main entrypoint do?")
+                    .with_text(turn_context("2026-06-25 12:00:00", "0/40"))];
+                for step in 1..=upto {
+                    let id = format!("tool_{step}");
+                    messages.push(
+                        Message::assistant().with_tool_request(
+                            &id,
+                            Ok(CallToolRequestParams::new("read_file")
+                                .with_arguments(object!({"path": "src/main.rs"}))),
+                        ),
+                    );
+                    messages.push(
+                        Message::user()
+                            .with_tool_response(
+                                &id,
+                                Ok(CallToolResult::success(vec![rmcp::model::Content::text(
+                                    format!("fn main() {{ step_{step}(); }}"),
+                                )])),
+                            )
+                            .with_text(turn_context(
+                                &format!("2026-06-25 12:0{step}:00"),
+                                &format!("{step}/40"),
+                            )),
+                    );
+                }
+                messages
+            };
+            let requests: Vec<Value> = (0..=4).map(|upto| request_with(&history(upto))).collect();
+            for pair in requests.windows(2) {
+                let (a, b) = (
+                    pair[0]["messages"].as_array().unwrap(),
+                    pair[1]["messages"].as_array().unwrap(),
+                );
+                assert_eq!(
+                    without_breakpoints(&b[..a.len()]),
+                    without_breakpoints(a),
+                    "a request no longer extends the previous one"
+                );
+                let (mi, bi) = last_breakpoint(a).unwrap();
+                assert!(
+                    b[mi]["content"][bi].get(CACHE_CONTROL_FIELD).is_some(),
+                    "the previous request's furthest entry is not read back"
+                );
+                let newest = find_turn_context(&b[b.len() - 1..]).map(|(_, bi)| (b.len() - 1, bi));
+                assert!(newest.unwrap() > last_breakpoint(b).unwrap());
+            }
         }
     }
 }
