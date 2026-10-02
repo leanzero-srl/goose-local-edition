@@ -267,8 +267,11 @@ def golden_observations(pack):
     for kind, args in (('clean', clean), ('digits', digits), ('refusal', None), ('malformed', None), ('error', None)):
         entry = {'op': 'chat', 'phase': f'explain-{ex_sid}', 'step': kind, 'model': 'claude-sonnet-5', 'modelStatus': 'active',
                  'moduleType': 'jira:sprintAction', 'moduleKey': 'scope-action', 'asUser': viewer, 'request': request,
-                 'response': answer(args) if args else {'choices': [{'finish_reason': 'refusal', 'message': {'content': 'no'}}]}}
+                 'response': answer(args) if args else {'choices': [{'finish_reason': 'refusal', 'message': {'content': 'no'}}]},
+                 'invocationId': f'inv-explain-{kind}'}
         llm_entries.append(entry)
+        invokes.append({'surface': f'sprint-action:{ex_sid}', 'functionKey': 'explain', 'invocationId': entry['invocationId'],
+                        'response': {'ok': args is not None}, 'threw': False})
         if kind == 'clean':
             st = {'explanation': clean['summary'], 'idsShown': clean['changeIds'], 'errorFlags': 0}
         elif kind == 'digits':
@@ -819,6 +822,22 @@ class LlmRealtimeMcpTests(Golden):
         def no_refusal_path(o):
             o['ui']['explain']['steps'][2].update(errorFlags=0, sortWorksAfter=False)
         self.assertLess(self.mutate(no_refusal_path)[0]['u_llm_explain']['score'], 1)
+
+    def test_a_resolver_that_throws_on_the_refusal_has_no_refusal_path(self):
+        def throws(o):   # m_llm_no_refusal_path: the page shows the same error flag, the resolver threw instead of answering
+            for r in o['ui']['invokeResponses']:
+                if r.get('invocationId') == 'inv-explain-refusal':
+                    r.update(threw=True, response=None, error="Cannot read properties of undefined (reading 'function')")
+        rows, _ = self.mutate(throws)
+        self.assertLess(rows['u_llm_explain']['score'], 1)
+        self.assertIn('2:refusal:resolver_answered_refusal', rows['u_llm_explain']['detail'])
+        self.assertLess(rows['b_invoke_contract']['score'], 1)
+
+        def predates(o):   # observations without invocation links grade the page outcome only — silent, not charged
+            for r in o['ui']['invokeResponses']:
+                r.pop('invocationId', None)
+                r['threw'] = False
+        self.assertEqual(self.mutate(predates)[0]['u_llm_explain']['score'], 1.0)
 
     def test_explain_is_graded_by_position_when_the_platform_refuses_the_call(self):
         def refused(o):   # an unknown model id: every call is a 400 before the script answers (m_llm_unknown_model)

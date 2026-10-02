@@ -643,7 +643,7 @@ async function probeUi(pack) {
   // Every resolver invoke of the whole UI phase, including those after first paint (explain, post, sort): an invoke
   // that throws is the defect b_invoke_contract grades (m_llm_no_refusal_path's refusal throws on a click).
   obs.ui.invokeResponses = (emu.bridgeLog || []).filter((b) => opName(b) === 'invoke').map((b) => ({
-    surface: b.surfaceId ?? null, functionKey: b.payload?.functionKey ?? b.functionKey ?? null,
+    surface: b.surfaceId ?? null, functionKey: b.payload?.functionKey ?? b.functionKey ?? null, invocationId: b.invocationId ?? null,
     response: b.result ?? b.response ?? null, threw: Boolean(b.error) || b.ok === false, error: b.error ? String(b.error) : null }));
   await contactSheet();
 }

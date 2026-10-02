@@ -2408,6 +2408,12 @@ def _(c):
                 subs[f'{label}:no_model_digits'] = summary not in text and not (own & model_digits)
             subs[f'{label}:no_error_flag'] = not st.get('errorFlags')
         else:
+            # The refusal path (DESIGN 103/803): the error flag must come from a resolver that ANSWERED the bad model
+            # turn, not from the bridge rejecting an invoke that threw — the page looks the same either way. Judged
+            # only when the probe linked invokes to their invocation (observations that predate it stay silent).
+            inv = next((r for r in _invokes(c) if r.get('invocationId') and r.get('invocationId') == entry.get('invocationId')), None)
+            if inv is not None:
+                subs[f'{label}:resolver_answered_{kind}'] = not inv.get('threw')
             subs[f'{label}:error_flag'] = (st.get('errorFlags') or 0) >= 1 and not shown_ids
             subs[f'{label}:modal_still_sorts'] = bool(st.get('sortWorksAfter'))
     met = sum(subs.values())
