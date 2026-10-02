@@ -196,7 +196,8 @@ function realtimeListen(emu) {
   }, RT_POLL_MS);
   h.rt.timer.unref?.();
 }
-const realtimePayload = (p) => (typeof p === 'string' ? p : JSON.stringify(p ?? null));
+// The wire form @forge/realtime uses for every payload (publish.js: `payload: JSON.stringify(eventPayload)`).
+const realtimePayload = (p) => JSON.stringify(p ?? null);
 
 async function answer(emu, s, op, payload) {
   const h = hostState(emu);
@@ -258,9 +259,11 @@ async function answer(emu, s, op, payload) {
       case 'publishRealtimeChannel': {
         s.rtContextToken ??= (await emu.site.call('rtcontext', { moduleKey: s.moduleKey, extension: contextFor(emu, s).extension })).contextToken;
         const o = payload?.options ?? {};
-        value = await emu.site.call('rtpublish', { channelName: payload?.channelName, payload: realtimePayload(payload?.eventPayload), isGlobal: Boolean(payload?.isGlobal),
+        const r = await emu.site.call('rtpublish', { channelName: payload?.channelName, payload: realtimePayload(payload?.eventPayload), isGlobal: Boolean(payload?.isGlobal),
           token: o.token ?? null, contextToken: s.rtContextToken, contextOverrides: o.contextOverrides ?? null,
           origin: { source: 'frontend', surfaceId: s.id, moduleKey: s.moduleKey } });
+        // The docs' PublishResult always carries `errors` (their example reads result.errors.length).
+        value = { eventId: r.eventId, eventTimestamp: r.eventTimestamp, errors: r.errors ?? [] };
         entry.result = value;
         break;
       }

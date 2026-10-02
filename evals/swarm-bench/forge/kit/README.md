@@ -57,14 +57,23 @@ POST `${proxy}/llm/<model>` (chat/stream, body + `stream`); `@forge/realtime` PO
 with `x-forge-context-token` = the invocation body's `contextToken` (the string "undefined" for a consumer).
 The proxy forwards both; without an `llm` module an LLM call is refused 403.
 
-- `site/llm.cjs`: `list()` = 2 active + 2 deprecated (incl. the docs' `claude-opus-4-6`), seeded order;
-  each chat takes the next scripted answer — clean tool call, digits + a hidden and an unknown change id,
-  refusal, malformed arguments, 500 `ForgeLlmAPIError` — then clean; `emu.llm.phase(name)` restarts it;
-  `emu.llm.log()` holds every prompt and answer. stream() returns the answer as one ChatResponse chunk.
+- `site/llm.cjs`: `list()` = exactly the public models page (Aug 3, 2026): 8 Claude models, all `active`,
+  none deprecated. The docs' validation rules apply: never `temperature` with `top_p`, and neither for
+  claude-opus-4-7, claude-opus-4-8, claude-opus-5, claude-sonnet-5 (400 `{code, message}`, which @forge/llm
+  throws as `ForgeLlmAPIError`). Each chat/stream takes the next scripted answer — clean tool call, digits +
+  a hidden and an unknown change id, refusal, malformed arguments, 500 `ForgeLlmAPIError` — then clean;
+  `emu.llm.phase(name)` restarts it; `emu.llm.log()` holds every prompt and answer (streams: every chunk).
+  Answers carry text parts beside `tool_calls`, as the package README shows. `stream()` sends newline-
+  delimited ChatResponse chunks: text deltas, one tool-call delta per argument key (same `id` and `index`,
+  partial `arguments` objects to merge), then a chunk with `finish_reason` and `usage`; one line is cut across
+  two reads. How the real service splits tool arguments is undocumented.
 - `site/realtime.cjs`: channels, module/product-context scoping, signed tokens (claims must match),
   `replaySeconds`. A resolver call carries a frontend context token, so its `publish()` reaches that
   surface's `subscribe`; `publish()` without one (consumer, scheduled, trigger) is REJECTED with an error
-  result and logged; `publishGlobal` works anywhere. `emu.realtime.log()` lists every publish
+  result (the documented "Error publishing event to channel") and logged `rejected`; `publishGlobal`
+  works anywhere. A subscriber receives the payload as published: an object as an object, a string as a
+  string (the SDK sends JSON text on the wire; the docs' string-payload examples imply the platform parses it).
+  `emu.realtime.log()` lists every publish
   (delivered / no subscriber / rejected); `emu.realtime.deliveries()` what reached a page.
 - forge-dev: `llm [--phase]`, `realtime [--follow]`; invoke prints each LLM answer and publish outcome,
   `serve` prints each realtime event delivered to its page.
@@ -102,9 +111,10 @@ Every `invoke` writes the full result to `.forge-dev/last-result.json` (the term
 3. Keys Jira Cloud answers beyond the OpenAPI text stay where measured (sprint `createdDate`, issue
    bulkfetch `expand`); the deprecated agile sprint-issue list answers the agile page although its doc
    example is a single issue. Paging follows each operation's documented parameters (token vs offset).
-4. Realtime: what the platform answers to `publish()` without a frontend context, the token lifetime, the
-   payload type a subscriber receives (here: the published string) and Forge LLM's finish_reason values and
-   error codes are not documented; they are the harness's choices, recorded in site/realtime.cjs and llm.cjs.
+4. Not documented, so the harness chose (recorded in site/realtime.cjs and llm.cjs): which publish error a
+   non-frontend `publish()` gets, the realtime token lifetime, that the platform JSON-parses realtime payloads
+   for subscribers, Forge LLM's `refusal`/`end_turn` finish_reason values, the status and `code` of its
+   validation and error answers, and how a stream splits a tool call.
 5. Rovo actions get the user in both documented places: `payload.context.accountId` (rovo-action page) and
    the second argument's `principal.accountId` (function arguments page). Not measured on a live Rovo call.
 6. KVS codes no docs page names (409 `CONDITIONAL_CHECK_FAILED`, `MAX_BATCH_SIZE`, `TOO_MANY_OPERATIONS`,

@@ -7,36 +7,53 @@
 // Shapes are @forge/llm 1.0.7's (out/interfaces/internal.d.ts; docs /runtime-reference/forge-llms-api-reference/,
 // "Last updated Aug 3, 2026"): ModelListResponse {models:[{model, status: 'active'|'deprecated'}]}, LlmResponse
 // {choices:[{finish_reason, index, message:{role:'assistant', content, tool_calls?}}], usage?}, ToolCall
-// {id, type:'function', index, function:{name, arguments: object}}. An error answers {code, message}, which
-// @forge/llm turns into ForgeLlmAPIError{code, status, statusText, traceId} (out/utils/error-handling.js).
-// Validation rules from the docs page: temperature and top_p never together; claude-opus-4-7, claude-opus-4-8,
-// claude-opus-5 and claude-sonnet-5 accept neither.
+// {id, type:'function', index, function:{name, arguments: object}} (internal.d.ts:57-63). Assistant `content` is a
+// TextPart array and a tool answer carries text beside its tool_calls with finish_reason "tool_use", as in the
+// package README's chat response example (README.md:95-127).
+//
+// ERRORS: @forge/llm reads a JSON body with `code` and `message` as a Forge error (out/utils/error-handling.js:11-13,
+// 22) and throws ForgeLlmAPIError{code, message, status, statusText, traceId}; that is the shape answered here.
+// VALIDATION, quoted from the reference page's "Validation rules": "temperature and top_p cannot be specified
+// together. Provide only one, not both."; "The following models do not support the temperature and top_p sampling
+// parameters. Omit both parameters from requests to these models: claude-opus-4-7 claude-opus-4-8 claude-opus-5
+// claude-sonnet-5". The status code and `code` strings of these refusals are not documented (harness choice: 400).
 //
 // The model is a SCRIPTED fake (DESIGN §5.2, R6): it grades how an app handles answers, never model quality.
-// Each chat call takes the next step of the script; `phase(name)` restarts it (the scorer calls it per phase):
+// Each chat/stream call takes the next step of the script; `phase(name)` restarts it (the scorer calls it per phase):
 //   clean     tool call: digit-free summary, changeIds = the change ids the prompt itself carries
 //   digits    tool call: a summary WITH digits, ids = one from the prompt + one hidden from the caller + one unknown
 //   refusal   finish_reason 'refusal', text, no tool call
 //   malformed tool call whose arguments do not match the tool's schema (summary not a string, changeIds not an array)
 //   error     500, {code: 'INTERNAL_SERVER_ERROR'} -> ForgeLlmAPIError{status: 500} (DESIGN §5.2)
-// then `clean` for every later call. stream() gets the same answer as ONE chunk: @forge/llm reads the response body as
-// newline-separated JSON and yields each line as a whole ChatResponse (out/streaming/llm-stream-parser.js:5,17,53;
-// out/streaming/stream-response-wrapper.js:41-48; stream-response-wrapper.d.ts:10 `AsyncIterable<ChatResponse>`),
-// and a ToolCall's `arguments` is an object (interfaces/internal.d.ts), so a tool call cannot arrive split; how
-// the real service chunks text is undocumented, so the harness does not split it either. INFERRED, not measured: finish_reason values ('tool_use', 'end_turn',
-// 'refusal' as Anthropic models name them), the error code strings, and the model names' statuses.
+// then `clean` for every later call.
+//
+// STREAMING (stream()): the body is newline-delimited JSON, each line one ChatResponse — @forge/llm splits on '\n'
+// (llm-stream-parser.js:5, 15-21), parses each line (53-55), keeps a line cut across network reads as a fragment and
+// joins it with the next read (25-32, 45-50), and flushes a last line without a newline (36-41); each parsed line is
+// yielded as a ChatResponse (stream-response-wrapper.js:41-48, .d.ts:10). The README's stream chunk (README.md:174-
+// 195) is a TEXT DELTA (`content: [{type:'text', text:'The sun rises in the east, '}]`) with no finish_reason, and the
+// errors page (/runtime-reference/forge-llms-api-errors/, Jul 23, 2026) detects a complete stream by a chunk whose
+// choice has a finish_reason. So the harness streams: text deltas; then, for a tool answer, one delta per argument
+// key — a ToolCall with the same `id` and `index` (internal.d.ts:57-63 types `arguments` as an object and gives each
+// call an `index`, so deltas are partial argument OBJECTS to be merged by index); then a final chunk with
+// finish_reason and usage. The proxy writes one line cut in two network writes, so the parser's fragment path runs.
+// How the real service splits tool arguments is NOT documented (R6): an app that merges by index/id and also accepts
+// a whole call in one chunk handles both readings.
 const crypto = require('crypto');
 const { createRng } = require('./rng.cjs');
 
 const SCRIPT = ['clean', 'digits', 'refusal', 'malformed', 'error'];
-// Names from the docs page (its example `claude-opus-4-6`, its validation-rule list); which are deprecated is the
-// harness's choice: the docs' own example is deprecated, so copying it is the trap (DESIGN §2.4).
-const MODELS = { active: ['claude-opus-5', 'claude-sonnet-5'], deprecated: ['claude-opus-4-6', 'claude-opus-4-7'] };
+// /runtime-reference/forge-llms-models/ ("Last updated Aug 3, 2026"), "Supported models", in the page's order, every
+// one "ACTIVE": claude-haiku-4-5-20251001, claude-sonnet-4-5-20250929, claude-sonnet-4-6, claude-sonnet-5,
+// claude-opus-4-6, claude-opus-4-7, claude-opus-4-8, claude-opus-5. The page marks NO model deprecated, so list()
+// reports none (the SDK's status values are 'active' | 'deprecated', internal.d.ts).
+const MODELS = ['claude-haiku-4-5-20251001', 'claude-sonnet-4-5-20250929', 'claude-sonnet-4-6', 'claude-sonnet-5',
+  'claude-opus-4-6', 'claude-opus-4-7', 'claude-opus-4-8', 'claude-opus-5'];
 const NO_SAMPLING = new Set(['claude-opus-4-7', 'claude-opus-4-8', 'claude-opus-5', 'claude-sonnet-5']);
 
 function createLlm({ pack, now }) {
   const r = createRng(crypto.createHash('sha256').update(`llm:${pack.seed}`).digest('hex').slice(0, 16));
-  const models = r.shuffle([...MODELS.active.map((m) => ({ model: m, status: 'active' })), ...MODELS.deprecated.map((m) => ({ model: m, status: 'deprecated' }))]);
+  const models = MODELS.map((m) => ({ model: m, status: 'active' }));
   const changes = [...pack.history, ...pack.live];
   const changeById = new Map(changes.map((c) => [String(c.changelogId), c]));
   const issueById = new Map(pack.issues.map((i) => [i.id, i]));
@@ -65,22 +82,35 @@ function createLlm({ pack, now }) {
   const toolCall = (tool, args) => ({ id: `toolu_${crypto.createHash('sha256').update(`${pack.seed}:${log.length}`).digest('hex').slice(0, 24)}`,
     type: 'function', index: 0, function: { name: tool, arguments: args } });
 
+  const parts = (t) => [{ type: 'text', text: t }];
+  // -> {final: LlmResponse (chat), chunks: LlmResponse[] (stream)}
   function answer(kind, body, viewer) {
     const tools = (body.tools ?? []).filter((t) => t?.type === 'function' && t.function?.name);
     const choice = body.tool_choice;
     const forced = choice && typeof choice === 'object' ? choice.function?.name : null;
     const tool = forced ?? (choice === 'none' ? null : tools[0]?.function?.name ?? null);
     const cited = idsIn(promptText(body));
-    const clean = { summary: 'Scope grew after the sprint started: work was added while some planned items moved out.', changeIds: cited.slice(0, 3) };
-    const message = (m, finish) => ({ choices: [{ finish_reason: finish, index: 0, message: { role: 'assistant', ...m } }] });
-    if (kind === 'refusal') return message({ content: "I can't help with that request." }, 'refusal');
-    if (!tool) return message({ content: clean.summary }, 'end_turn');
-    if (kind === 'clean') return message({ content: '', tool_calls: [toolCall(tool, clean)] }, 'tool_use');
-    if (kind === 'digits') {
-      const ids = [cited[0], hiddenFor(viewer, cited), unknownId].filter(Boolean);
-      return message({ content: '', tool_calls: [toolCall(tool, { summary: 'Scope grew by 13 points: 5 issues were added and 2 removed after day 3.', changeIds: ids })] }, 'tool_use');
+    let text;
+    let args = null;
+    let finish;
+    if (kind === 'refusal') { text = "I can't help with that request."; finish = 'refusal'; }
+    else if (!tool) { text = 'Scope grew after the sprint started: work was added while some planned items moved out.'; finish = 'end_turn'; }
+    else {
+      text = `I'll report the sprint's scope change with ${tool}.`;
+      finish = 'tool_use';
+      args = kind === 'clean' ? { summary: 'Scope grew after the sprint started: work was added while some planned items moved out.', changeIds: cited.slice(0, 3) }
+        : kind === 'digits' ? { summary: 'Scope grew by 13 points: 5 issues were added and 2 removed after day 3.', changeIds: [cited[0], hiddenFor(viewer, cited), unknownId].filter(Boolean) }
+          : { summary: ['Scope grew'], changeIds: 'see the ledger' };
     }
-    return message({ content: '', tool_calls: [toolCall(tool, { summary: ['Scope grew'], changeIds: 'see the ledger' })] }, 'tool_use');
+    const call = args && toolCall(tool, args);
+    const final = { choices: [{ index: 0, finish_reason: finish, message: { role: 'assistant', content: parts(text), ...(call ? { tool_calls: [call] } : {}) } }] };
+    const words = text.split(/(?<= )/);
+    const half = Math.ceil(words.length / 2);
+    const delta = (m) => ({ choices: [{ index: 0, message: { role: 'assistant', content: [], ...m } }] });
+    const chunks = [delta({ content: parts(words.slice(0, half).join('')) }), delta({ content: parts(words.slice(half).join('')) })];
+    if (call) for (const [k, v] of Object.entries(args)) chunks.push(delta({ tool_calls: [{ ...call, function: { name: call.function.name, arguments: { [k]: v } } }] }));
+    chunks.push({ choices: [{ index: 0, finish_reason: finish, message: { role: 'assistant', content: [] } }] });
+    return { final, chunks };
   }
 
   // -> {status, body, headers?, stream?}
@@ -95,15 +125,22 @@ function createLlm({ pack, now }) {
     const listed = models.find((m) => m.model === model);
     entry.modelStatus = listed?.status ?? 'unknown';
     if (!listed) return done(404, { code: 'MODEL_NOT_FOUND', message: `Model '${model}' is not available to Forge LLMs.` });
-    if (body.temperature !== undefined && body.top_p !== undefined) return done(400, { code: 'INVALID_REQUEST', message: 'temperature and top_p cannot be specified together. Provide only one, not both.' });
-    if (NO_SAMPLING.has(model) && (body.temperature !== undefined || body.top_p !== undefined)) return done(400, { code: 'INVALID_REQUEST', message: `${model} does not support the temperature and top_p sampling parameters.` });
+    if (body.temperature !== undefined && body.top_p !== undefined) {
+      return done(400, { code: 'INVALID_REQUEST', message: 'Invalid request: temperature and top_p cannot be specified together. Provide only one, not both.' });
+    }
+    if (NO_SAMPLING.has(model) && (body.temperature !== undefined || body.top_p !== undefined)) {
+      return done(400, { code: 'INVALID_REQUEST', message: `Invalid request: ${model} does not support the temperature and top_p sampling parameters. Omit both parameters from requests to this model.` });
+    }
     const kind = SCRIPT[step] ?? 'clean';
     step += 1;
     entry.step = kind;
     if (kind === 'error') return done(500, { code: 'INTERNAL_SERVER_ERROR', message: 'The Forge LLM service failed to process the request.' });
-    const out = answer(kind, body, caller.asUser ?? pack.viewer);
-    out.usage = usage(body, out);
-    return { ...done(200, out), stream: Boolean(body.stream) };
+    const { final, chunks } = answer(kind, body, caller.asUser ?? pack.viewer);
+    final.usage = usage(body, final);
+    if (!body.stream) return done(200, final);
+    chunks[chunks.length - 1].usage = final.usage;
+    entry.chunks = chunks;
+    return { ...done(200, final), stream: chunks };
   }
 
   return {
@@ -116,4 +153,4 @@ function createLlm({ pack, now }) {
   };
 }
 
-module.exports = { createLlm, SCRIPT, MODELS };
+module.exports = { createLlm, SCRIPT, MODELS, NO_SAMPLING };

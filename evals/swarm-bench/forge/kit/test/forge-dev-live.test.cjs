@@ -65,7 +65,7 @@ app:
   const view = path.join(app, 'static', 'view');
   fs.mkdirSync(view, { recursive: true });
   fs.writeFileSync(path.join(app, 'page.js'), `import { realtime } from '@forge/bridge';
-realtime.subscribeGlobal('scope', (p) => { const li = document.createElement('li'); li.textContent = String(p); document.getElementById('g').appendChild(li); })
+realtime.subscribeGlobal('scope', (p) => { const li = document.createElement('li'); li.textContent = typeof p === 'string' ? 'STRING:' + p : JSON.stringify(p); document.getElementById('g').appendChild(li); })
   .then(() => { document.getElementById('ready').textContent = 'ready'; });`);
   await paths.require('esbuild').build({ entryPoints: [path.join(app, 'page.js')], bundle: true, format: 'iife', platform: 'browser', outfile: path.join(view, 'main.js'), nodePaths: [paths.appModules], logLevel: 'silent' });
   fs.writeFileSync(path.join(view, 'index.html'), '<!doctype html><html><body><span id="ready"></span><ul id="g"></ul><script src="./main.js"></script></body></html>');
@@ -101,7 +101,7 @@ realtime.subscribeGlobal('scope', (p) => { const li = document.createElement('li
 
     const ask = await run([dev, 'invoke', 'resolver', '--module', 'live', '--resolver', 'ask'], { cwd: app, env });
     assert.strictEqual(ask.code, 0, ask.stdout + ask.stderr);
-    assert.match(ask.stdout, /models: .*claude-opus-4-6 \(deprecated\)/);
+    assert.match(ask.stdout, /models: claude-haiku-4-5-20251001 \(active\), .*claude-opus-5 \(active\)/);
     assert.match(ask.stdout, /finish_reason tool_use, tool report_scope\(/);
     const llm = await run([dev, 'llm'], { cwd: app, env });
     assert.match(llm.stdout, /next chat call gets: digits/);

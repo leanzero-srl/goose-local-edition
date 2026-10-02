@@ -361,7 +361,7 @@ async function main() {
       const tick = setInterval(async () => {
         for (const b of emu.bridgeLog.slice(lastLog)) {
           const detail = b.payload?.functionKey ? ` ${b.payload.functionKey}` : ['navigate', 'open'].includes(b.op) ? ` ${JSON.stringify(b.payload)}${b.url ? ` -> ${b.url}` : ''}`
-            : b.op === 'realtimeEvent' ? ` '${b.payload.channel}' delivered to the page: ${b.payload.payload}`
+            : b.op === 'realtimeEvent' ? ` '${b.payload.channel}' delivered to the page: ${JSON.stringify(b.payload.payload)}`
               : b.op === 'subscribeRealtimeChannel' ? ` ${b.payload?.isGlobal ? 'global ' : ''}'${b.payload?.channelName}'` : '';
           console.log(`bridge ${b.op}${detail}${b.error ? ` ERROR ${b.error}` : ''}`);
         }

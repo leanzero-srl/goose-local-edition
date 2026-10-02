@@ -14,6 +14,7 @@
 // Anything else answers 501 EMULATOR_NOT_MODELLED and is recorded as harness_missing, never a silent 200.
 const http = require('http');
 
+const STREAM_READ_GAP_MS = 20; // transport: a pause long enough for two writes to arrive as two socket reads
 const REQUEST_STATS = /^\/webhook\/queue\/stats\//;
 const REQUEST_CANCEL = /^\/webhook\/queue\/cancel\//;
 const REQUEST_PUSH = /^\/webhook\/queue\/publish\//;
@@ -167,9 +168,22 @@ function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clo
           }
           const r = await siteCall('llm', { method: req.method, model, body, caller: { invocationId: inv.id, moduleType: inv.moduleType, moduleKey: inv.moduleKey, functionKey: inv.functionKey, asUser: inv.aaid ?? null } });
           Object.assign(entry, { status: r.status, response: r.body });
-          if (r.stream && r.status === 200) {
+          if (Array.isArray(r.stream) && r.status === 200) {
+            // Newline-delimited ChatResponse chunks (site/llm.cjs STREAMING). The tool-call line is cut in two writes,
+            // with a pause so they arrive as two reads, which drives @forge/llm's fragment path (llm-stream-parser.js:25-32).
+            entry.streamedChunks = r.stream.length;
             res.writeHead(200, { 'content-type': 'application/x-ndjson' });
-            return res.end(`${JSON.stringify(r.body)}\n`);
+            const cut = Math.max(0, r.stream.findIndex((c) => c.choices?.[0]?.message?.tool_calls));
+            for (const [i, c] of r.stream.entries()) {
+              const line = `${JSON.stringify(c)}\n`;
+              if (i === cut) {
+                res.write(line.slice(0, Math.floor(line.length / 2)));
+                await new Promise((ok) => setTimeout(ok, STREAM_READ_GAP_MS));
+                res.write(line.slice(Math.floor(line.length / 2)));
+              } else res.write(line);
+              await new Promise((ok) => setTimeout(ok, STREAM_READ_GAP_MS));
+            }
+            return res.end();
           }
           return send(r.status, r.body, r.headers ?? {});
         }

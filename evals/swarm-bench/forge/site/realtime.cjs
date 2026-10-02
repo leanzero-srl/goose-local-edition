@@ -27,14 +27,29 @@
 //   signRealtimeToken is answered wherever it is called (the wrapper sends it with no frontend context); every
 //   publish and sign is logged with its invoking module type, so the scorer sees which path an app used.
 // - Channel names: no syntax is documented; any non-empty name is accepted, matched exactly.
-// INFERRED (R6, not measured): what the platform answers to a non-global publish without a frontend context —
-// here an error result (GraphQL `errors`, nothing delivered) and a log row `rejected`; the token lifetime; that a
-// subscriber receives the published payload string as sent (the GraphQL `payload` is a String).
+// - /realtime/authorizing-realtime-channels/ (Jun 25, 2026): contextOverrides "must match exactly in the subscribe()
+//   and publish() calls"; "If it's provided as an empty array, then the channel will not be secured by any Atlassian
+//   app context values"; global channels suit "publishing messages from a Forge function that isn't associated with a
+//   UI context, for example functions for Atlassian app events"; "publishing to non-global channels is only supported
+//   for functions invoked from the app frontend".
+// - /realtime/error-handling-for-realtime-methods/ (Jun 25, 2026): publish returns PublishResult with `errors`;
+//   token pre-validation messages "Realtime token validation failed: INVALID_TOKEN|TOKEN_EXPIRED|
+//   CHANNEL_NAME_MISMATCH|MISSING_PERMISSION"; a rejected publish: "Error publishing event to channel".
+// PAYLOAD a subscriber receives: @forge/realtime always sends `payload: JSON.stringify(eventPayload)` (publish.js),
+// strings included, so the wire value of publish('c', 'hi') is '"hi"'. The bridge docs type the callback
+// `(payload: string | Record<string, unknown>)` and say it "takes a string or JSON payload", and the docs' own
+// examples publish plain strings ('Here is an event payload!') to such callbacks. A subscriber can only receive a
+// plain string for a string publish if the platform JSON-parses the wire payload — which also turns an object
+// publish back into an object. So deliveries carry the PARSED payload (object in, object out; string in, string
+// out). The parse happens in Atlassian's host, which is not public (R6: inferred from the SDK and the docs).
+// INFERRED (R6, not measured): that a non-global publish without a frontend context fails with the documented
+// publish error (logged `rejected: PUBLISH_WITHOUT_FRONTEND_CONTEXT`), and the token lifetime.
 const crypto = require('crypto');
 
 const TOKEN_TTL_S = 3600; // harness policy: no doc states a realtime token's lifetime; one hour outlives any graded session
 const PRODUCT_CONTEXT = ['board', 'issue', 'project', 'content', 'space', 'repository', 'pullRequest'];
 
+const parsePayload = (wire) => { try { return JSON.parse(wire); } catch { return wire; } };
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
 const stable = (v) => (v === null || typeof v !== 'object' ? JSON.stringify(v ?? null)
   : Array.isArray(v) ? `[${v.map(stable).join(',')}]` : `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${stable(v[k])}`).join(',')}}`);
@@ -69,7 +84,7 @@ function createRealtime({ now, secret }) {
   const idOf = (v) => (v && typeof v === 'object' ? String(v.id ?? v.key ?? stable(v)) : v === undefined ? null : String(v));
   const contextKey = (ctx, overrides) => {
     const ext = ctx?.extension ?? {};
-    if (Array.isArray(overrides) && overrides.length) return stable({ installation: true, ...Object.fromEntries(overrides.map((p) => [p, idOf(ext[p])])) });
+    if (Array.isArray(overrides)) return stable({ installation: true, overrides: [...overrides].sort(), ...Object.fromEntries(overrides.map((p) => [p, idOf(ext[p])])) });
     return stable({ moduleKey: ctx?.moduleKey ?? null, ...Object.fromEntries(PRODUCT_CONTEXT.map((p) => [p, idOf(ext[p])]).filter(([, v]) => v !== null)),
       dashboard: ext.context?.dashboardId ?? null });
   };
@@ -107,7 +122,7 @@ function createRealtime({ now, secret }) {
   const matches = (sub, e) => sub.channelName === e.channel && sub.isGlobal === e.isGlobal && sub.claims === e.claims
     && sub.hasToken === e.hasToken && (sub.isGlobal || sub.context === e.context);
   const deliver = (sub, e) => {
-    const d = { seq: ++seq, subscriptionId: sub.id, origin: sub.origin, eventId: e.eventId, channel: e.channel, payload: e.payload, at: new Date(now()).toISOString() };
+    const d = { seq: ++seq, subscriptionId: sub.id, origin: sub.origin, eventId: e.eventId, channel: e.channel, payload: parsePayload(e.payload), wire: e.payload, at: new Date(now()).toISOString() };
     deliveries.push(d);
     for (const fn of listeners) fn(d);
     return d;
@@ -129,8 +144,7 @@ function createRealtime({ now, secret }) {
     if (!isGlobal) {
       const ctx = contexts.get(contextToken);
       if (!ctx) {
-        return fail('PUBLISH_WITHOUT_FRONTEND_CONTEXT', 'The publish API is only supported for functions invoked from the app frontend. '
-          + 'This is not currently available for async events and web triggers. Use publishGlobal instead.');
+        return fail('PUBLISH_WITHOUT_FRONTEND_CONTEXT', 'Error publishing event to channel');
       }
       e.context = contextKey(ctx, contextOverrides);
     }
