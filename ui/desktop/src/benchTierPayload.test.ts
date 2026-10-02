@@ -131,11 +131,14 @@ it('allows only one fresh available current stable release matching the bundled 
 
 import { BENCH_FAMILY_DEFAULT } from './benchTierPayload';
 describe('the Forge family has its own bundled era and its own launch gate (forge/INTEGRATION.md)', () => {
+  // The site's corrected shape (INTEGRATION.md 2026-10-03): `familyCurrent` per family, the legacy
+  // `current` only on the SB entry so shipped apps still find exactly one sb- current.
   const forge = {
     scorerVersion: 'forge-1.0',
     title: 'Forge 1.0 — Scope Ledger',
     family: 'forge',
-    current: true,
+    familyCurrent: true,
+    current: false,
     frozen: false,
     baselines: [],
   };
@@ -185,6 +188,30 @@ describe('the Forge family has its own bundled era and its own launch gate (forg
     expect(benchmarkLaunchProblem([stable, unlabelled], false, undefined, 'forge')).toBeNull();
     // An explicit sb family on an SB row reads exactly as an unlabelled one.
     expect(benchmarkLaunchProblem([{ ...stable, family: 'sb' }])).toBeNull();
+    // The site's full shape for SB (family + familyCurrent beside the legacy current) reads the same.
+    expect(
+      benchmarkLaunchProblem([{ ...stable, family: 'sb', familyCurrent: true }, forge])
+    ).toBeNull();
+  });
+  it('reads familyCurrent per family — never the legacy current for Forge', () => {
+    // A Forge entry that only carries the legacy flag is not a Forge current era.
+    const legacyOnly = { ...forge, familyCurrent: undefined, current: true };
+    expect(benchmarkLaunchProblem([stable, legacyOnly], false, undefined, 'forge')).toMatch(
+      /no current Forge benchmark/
+    );
+    // familyCurrent false wins over a stray current: true.
+    expect(
+      benchmarkLaunchProblem(
+        [stable, { ...forge, familyCurrent: false, current: true }],
+        false,
+        undefined,
+        'forge'
+      )
+    ).toMatch(/no current Forge benchmark/);
+    // SB's familyCurrent decides for SB when the site states it.
+    expect(
+      benchmarkLaunchProblem([{ ...stable, family: 'sb', familyCurrent: false }, forge])
+    ).toMatch(/no single available stable benchmark/);
   });
 });
 

@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { pickBenchShots, limitBenchShotsForPublish } from './benchShots';
-import { forgePublishProblem, forgePublishTiers } from './benchForgePublish';
+import { forgePublishBody, forgePublishProblem, forgePublishTiers } from './benchForgePublish';
 import { FORGE_KIT_STATUS_SCRIPT, parseForgeKitStatus } from './benchForgeKit';
 import { projectBenchScore } from './benchScoreProjection';
 import forgeVerdict from './components/benchmark/forge-alt.fixture.json';
@@ -126,6 +126,86 @@ describe('forge publishing', () => {
       E: 0.9286,
     });
     expect(forgePublishTiers({ L: 0.5 })).toMatchObject({ L: 0.5, K: 0, E: 0 });
+  });
+});
+
+describe('the forge publish body (INTEGRATION.md, as implemented on the site)', () => {
+  it('builds tiers, checksSummary, admission + rawScore and share-valued gateConditions from the REAL verdict, no composition', () => {
+    const projected = projectBenchScore(forgeVerdict as never);
+    const stored = {
+      scorerVersion: 'forge-1.0',
+      tiers: projected.tiers,
+      verdict: projected.verdict,
+    };
+    const body = forgePublishBody(stored);
+    // Exactly the ten Forge letters, per-tier means, E the excellence slice (fraction × e_mean).
+    expect(Object.keys(body.tiers as object)).toEqual([
+      'L',
+      'K',
+      'T',
+      'R',
+      'S',
+      'B',
+      'U',
+      'V',
+      'A',
+      'E',
+    ]);
+    expect((body.tiers as Record<string, number>).E).toBe(forgeVerdict.tiers.E.mean);
+    // Every scorer row, each a forge check under its own tier letter, numbers verbatim.
+    const rows = body.checksSummary as Array<{ check: string; tier: string; score: number }>;
+    expect(rows).toHaveLength(forgeVerdict.checks.length);
+    expect(rows.map((r) => [r.check, r.tier, r.score])).toEqual(
+      forgeVerdict.checks.map((c) => [c.check, c.tier, c.score])
+    );
+    expect(rows.find((r) => r.check === 'k_widget_edit_bridge')).toMatchObject({
+      tier: 'K',
+      score: 0,
+    });
+    // The admission record and the earned score exactly as score_forge.py recorded them.
+    expect(body.admission).toEqual({
+      ceiling: 0.799,
+      reasons: ['current platform, complete surfaces: k_widget_edit_bridge (maximum 0.799)'],
+      failedChecksByBand: [
+        {
+          ceiling: 0.799,
+          band: 'current platform, complete surfaces',
+          checks: ['k_widget_edit_bridge'],
+        },
+      ],
+    });
+    expect(body.rawScore).toBe(forgeVerdict.rawScore);
+    // Excellence conditions publish their share as the value.
+    const gates = body.gateConditions as Array<{ name: string; ok: boolean; value: number }>;
+    expect(gates).toHaveLength(forgeVerdict.excellence.conditions.length);
+    expect(gates.find((g) => g.name === 'k_widget_edit_bridge')).toEqual({
+      name: 'k_widget_edit_bridge',
+      ok: false,
+      value: 0,
+    });
+    expect(gates.find((g) => g.name === 't_event_rows')).toEqual({
+      name: 't_event_rows',
+      ok: true,
+      value: 1,
+    });
+    expect(body.scoreInner).toBe(forgeVerdict.inner);
+    expect(body.criticalMultiplier).toBe(forgeVerdict.critical.multiplier);
+    expect(body).not.toHaveProperty('composition');
+    expect(body).not.toHaveProperty('repairRounds');
+    // The same stored row passes the local refusals once its identity is the frozen era's.
+    expect(forgePublishProblem(stored)).toBeNull();
+  });
+
+  it('refuses a body the site would refuse: no admission, no rawScore or no rows', () => {
+    const projected = projectBenchScore(forgeVerdict as never);
+    const base = { scorerVersion: 'forge-1.0', verdict: projected.verdict };
+    for (const drop of ['admission', 'rawScore', 'checks'])
+      expect(
+        forgePublishProblem({
+          ...base,
+          verdict: { ...projected.verdict, [drop]: drop === 'checks' ? [] : undefined },
+        })
+      ).toMatch(/lacks its admission record, earned score or check rows/);
   });
 });
 

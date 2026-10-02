@@ -46,6 +46,7 @@ import {
   eraLabel,
   familyOfScorer,
   isBenchFamily,
+  isFamilyCurrent,
   isForge,
   isIsolatedPaymentsScorer,
   isSb8,
@@ -1206,6 +1207,7 @@ export default function BenchmarkView() {
         map.set(b.scorerVersion, {
           ...b,
           family: catalogFamily(b),
+          current: isFamilyCurrent(b),
           fromCatalog: true,
           sessions: [],
         });
@@ -1663,56 +1665,53 @@ export default function BenchmarkView() {
             title="Benchmark"
             subtitle="Your fleet against frontier models on the same frozen build task, graded by running what it produces — not by asking a model what it thinks."
             actions={
-              <div className="flex flex-col items-end gap-3">
-                <BenchmarkFamilyToggle
-                  value={family}
-                  onChange={chooseFamily}
-                  names={BENCH_FAMILY_NAME}
-                />
-                {running ? (
-                  <Button
-                    key="cancel-benchmark"
-                    onClick={() => setConfirmCancel(true)}
-                    disabled={cancelling}
-                    title={
-                      cancelling
-                        ? 'Cancelling — the engine, the vendor sim and the scorer are being stopped'
-                        : 'Stop this run'
-                    }
-                    icon={
-                      cancelling ? (
-                        <Loader2 className="animate-spin" />
-                      ) : (
-                        <XCircle className={TONE_TEXT.err} />
-                      )
-                    }
-                  >
-                    {cancelling ? 'Cancelling…' : 'Cancel run'}
-                  </Button>
-                ) : (
-                  <Button
-                    key="start-benchmark"
-                    variant="primary"
-                    onClick={run}
-                    title={launchProblem ?? undefined}
-                    icon={<Play />}
-                    disabled={
-                      !runtimeReady ||
-                      !!launchProblem ||
-                      (forge && forgeKit?.state !== 'ready') ||
-                      ((forge || entrant === 'cloud') && (!cloudProvider || !cloudModel.trim()))
-                    }
-                  >
-                    Run benchmark
-                  </Button>
-                )}
-              </div>
+              running ? (
+                <Button
+                  key="cancel-benchmark"
+                  onClick={() => setConfirmCancel(true)}
+                  disabled={cancelling}
+                  title={
+                    cancelling
+                      ? 'Cancelling — the engine, the vendor sim and the scorer are being stopped'
+                      : 'Stop this run'
+                  }
+                  icon={
+                    cancelling ? (
+                      <Loader2 className="animate-spin" />
+                    ) : (
+                      <XCircle className={TONE_TEXT.err} />
+                    )
+                  }
+                >
+                  {cancelling ? 'Cancelling…' : 'Cancel run'}
+                </Button>
+              ) : (
+                <Button
+                  key="start-benchmark"
+                  variant="primary"
+                  onClick={run}
+                  title={launchProblem ?? undefined}
+                  icon={<Play />}
+                  disabled={
+                    !runtimeReady ||
+                    !!launchProblem ||
+                    (forge && forgeKit?.state !== 'ready') ||
+                    ((forge || entrant === 'cloud') && (!cloudProvider || !cloudModel.trim()))
+                  }
+                >
+                  Run benchmark
+                </Button>
+              )
             }
           />
 
+          {/* THE benchmark-type switch, full width under the title so it never squeezes the header
+              (measured at 940 px: beside the title it folded the subtitle into a narrow column). */}
+          <BenchmarkFamilyToggle value={family} onChange={chooseFamily} names={BENCH_FAMILY_NAME} />
+
           <p className={TYPE.bodyMuted} data-testid="family-intro">
             {forge
-              ? `${BENCH_FAMILY_NAME.forge} runs one model in goose: it builds an Atlassian Forge app on eight module types, graded offline by running it against a seeded Jira site — no deploy, no internet for the entrant. Forge sessions stay separate from SB.`
+              ? `${BENCH_FAMILY_NAME.forge} runs one model in goose: it builds an Atlassian Forge app on eight module types, graded offline by running it against a seeded Jira site — no deploy, no internet for the entrant. Forge sessions stay separate from Gauntlet.`
               : `${BENCH_FAMILY_NAME.sb} runs with Swarm or a single model. Swarm nodes can mix local and cloud providers. Earlier benchmarks remain separate in your session history.`}
           </p>
 

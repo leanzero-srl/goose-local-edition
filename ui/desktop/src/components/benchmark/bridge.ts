@@ -20,6 +20,8 @@ export interface CatalogBenchmark {
   title: string;
   /** `sb` | `forge` (forge/INTEGRATION.md); absent ⇒ SB. Read through `catalogFamily`. */
   family?: string;
+  /** This entry is its family's current era (one per family); `current` stays SB-only for shipped apps. */
+  familyCurrent?: boolean;
   /** The one benchmark the app can run right now. */
   current: boolean;
   /** Frozen on the site — still viewable, no longer accepting submissions. */

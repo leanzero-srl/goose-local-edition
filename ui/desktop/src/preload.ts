@@ -226,6 +226,7 @@ type ElectronAPI = {
       scorerVersion: string;
       title: string;
       family?: string;
+      familyCurrent?: boolean;
       current: boolean;
       frozen: boolean;
       baselines: Array<{

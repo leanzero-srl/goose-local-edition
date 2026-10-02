@@ -50,7 +50,10 @@ export function BenchmarkFamilyToggle({
       role="radiogroup"
       aria-label="Benchmark type"
       data-testid="bench-family-toggle"
-      className={cx('flex gap-1 border-2 border-lz-border-strong bg-lz-surface p-1', RADIUS.card)}
+      className={cx(
+        'flex w-full gap-1 border-2 border-lz-border-strong bg-lz-surface p-1',
+        RADIUS.card
+      )}
     >
       {BENCH_FAMILIES.map((family, index) => {
         const active = family === value;
@@ -70,7 +73,7 @@ export function BenchmarkFamilyToggle({
             onClick={() => onChange(family)}
             onKeyDown={(event) => onKeyDown(event, index)}
             className={cx(
-              'flex h-16 min-w-[176px] items-center gap-3 px-4 text-left [&>svg]:size-6 [&>svg]:shrink-0',
+              'flex h-16 min-w-0 flex-1 items-center gap-3 px-5 text-left [&>svg]:size-7 [&>svg]:shrink-0',
               RADIUS.control,
               FOCUS,
               MOTION,
@@ -82,7 +85,7 @@ export function BenchmarkFamilyToggle({
               <span className={cx('text-lz-h1 leading-none', WEIGHT.semibold)}>
                 {FAMILY_WORD[family]}
               </span>
-              <span className={cx('mt-1 whitespace-nowrap text-lz-meta', WEIGHT.medium)}>
+              <span className={cx('mt-1 truncate text-lz-meta', WEIGHT.medium)}>
                 {names[family]}
               </span>
             </span>

@@ -124,6 +124,8 @@ export interface BenchCatalogBenchmark {
   title: string;
   /** The benchmark family (forge/INTEGRATION.md): absent ⇒ SB, the shape apps ≤ 3.0.88 read. */
   family?: string;
+  /** This entry is its family's current era (one per family); `current` stays SB-only for shipped apps. */
+  familyCurrent?: boolean;
   current: boolean;
   frozen: boolean;
   baselines: BenchCatalogBaseline[];

@@ -124,7 +124,7 @@ import {
   readForgeKitStatus,
   type ForgeKitStatus,
 } from './benchForgeKit';
-import { forgePublishProblem, forgePublishTiers } from './benchForgePublish';
+import { forgePublishBody, forgePublishProblem } from './benchForgePublish';
 import {
   outcomeFromSlot,
   findLaunchRow,
@@ -4946,9 +4946,8 @@ ipcMain.handle('benchmark-publish', async (_event, args?: { title?: string }) =>
         ? `${nodeCount}-node Swarm`
         : 'Swarm',
     score: stored.score,
-    tiers: forgeResult
-      ? forgePublishTiers(tiers)
-      : { A: tiers.A ?? 0, B: tiers.B ?? 0, C: tiers.C ?? 0, D: tiers.D ?? 0 },
+    // Forge's tiers (L…E) come with forgePublishBody below; this is Gauntlet's A–D envelope.
+    tiers: { A: tiers.A ?? 0, B: tiers.B ?? 0, C: tiers.C ?? 0, D: tiers.D ?? 0 },
     ...(nodeCount != null ? { nodes: nodeCount } : {}),
     ...(typeof stored.hard === 'number' ? { hard: stored.hard } : {}),
     ...(typeof stored.excellent === 'boolean' ? { excellent: stored.excellent } : {}),
@@ -5038,7 +5037,8 @@ ipcMain.handle('benchmark-publish', async (_event, args?: { title?: string }) =>
         repairRounds?: Array<{ round?: unknown; findings?: unknown }>;
       }
     | undefined;
-  if (verdict) {
+  if (forgeResult) Object.assign(payload, forgePublishBody(stored));
+  else if (verdict) {
     Object.assign(payload, publicScoreDetails(verdict));
     if (verdict.admission) payload.admission = verdict.admission;
     if (typeof verdict.rawScore === 'number') payload.rawScore = verdict.rawScore;

@@ -11,6 +11,7 @@ import {
   eraDisplayName,
   eraLabel,
   familyOfScorer,
+  isFamilyCurrent,
   type BenchFamily,
 } from '../benchmark/baselines';
 import { fmtWhen, OutcomeChip } from '../benchmark/outcome';
@@ -104,7 +105,7 @@ export function deriveEras(
       scorerVersion: b.scorerVersion,
       title: b.title,
       family: catalogFamily(b),
-      current: b.current,
+      current: isFamilyCurrent(b),
       frozen: b.frozen,
       fromCatalog: true,
       sessions: [],

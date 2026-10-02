@@ -81,6 +81,8 @@ const SB_SESSION = {
 const SB_CURRENT = {
   scorerVersion: 'sb-7.2',
   title: 'SB7.2 payments',
+  family: 'sb',
+  familyCurrent: true,
   current: true,
   frozen: false,
   baselines: [],
@@ -89,7 +91,8 @@ const FORGE_CURRENT = {
   scorerVersion: 'forge-1.0',
   title: 'Forge 1.0 — Scope Ledger',
   family: 'forge',
-  current: true,
+  familyCurrent: true,
+  current: false,
   frozen: false,
   baselines: [{ label: 'GPT-6 Luna', score: 0.31, model: 'openai/gpt-6-luna' }],
 };

@@ -26,6 +26,7 @@ import {
   catalogFamily,
   eraDisplayName,
   eraLabel,
+  isFamilyCurrent,
 } from './components/benchmark/baselines';
 import type { BenchCatalogBenchmark } from './benchSessions';
 import type { BenchFamily, BenchTier } from './components/benchmark/baselines';
@@ -114,8 +115,9 @@ export function benchmarkLaunchTier(cloud?: { tier: CloudBenchmarkTier }): Bench
 
 /**
  * Why the SELECTED family cannot launch (or re-score) right now, or null. The catalog is filtered to the
- * family first, so SB reads exactly what it always read when the site lists no Forge era, and a Forge era
- * never disturbs SB's single-current rule.
+ * family first and its current era read from `familyCurrent` (isFamilyCurrent: the legacy `current` only
+ * for SB on a pre-family catalog), so SB reads exactly what it always read and Forge never leans on the
+ * flag shipped apps reserve for SB.
  */
 export function benchmarkLaunchProblem(
   benchmarks: BenchCatalogBenchmark[] | null | undefined,
@@ -128,7 +130,7 @@ export function benchmarkLaunchProblem(
   if (!benchmarks || stale)
     return 'Connect to leanzero.net to verify the latest stable benchmark before running.';
   const current = benchmarks.filter(
-    (entry) => entry?.current === true && catalogFamily(entry) === family
+    (entry) => entry != null && catalogFamily(entry) === family && isFamilyCurrent(entry)
   );
   if (family === 'forge' && current.length === 0)
     return 'leanzero.net lists no current Forge benchmark yet, so a Forge run cannot be verified. Refresh once the Forge board opens.';

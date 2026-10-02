@@ -239,7 +239,7 @@ function TierGroup({
           <ChevronRight className="size-4 shrink-0 text-lz-ink-3" />
         )}
         <Chip className="w-7 justify-center">{tier}</Chip>
-        <span className="min-w-0 flex-1">
+        <span className="min-w-0 flex-1 truncate" title={info.desc || undefined}>
           <span className={cx(TYPE.body, WEIGHT.semibold)}>{info.name}</span>
           <span className={cx('ml-2 hidden sm:inline', TYPE.meta)}>{info.desc}</span>
         </span>

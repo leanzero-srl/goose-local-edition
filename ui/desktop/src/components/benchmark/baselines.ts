@@ -76,6 +76,22 @@ export const catalogFamily = (entry: { family?: unknown; scorerVersion?: string 
 export const isForge = (scorerVersion: string | undefined) =>
   familyOfScorer(scorerVersion) === 'forge';
 
+/**
+ * Whether a catalog entry is its FAMILY's current era (forge/INTEGRATION.md, corrected 2026-10-03): the
+ * site states `familyCurrent` (one per family) and keeps the legacy `current` only on the SB current entry,
+ * because shipped apps require exactly one `current` with an sb- scorer. A catalog without
+ * `familyCurrent` is the pre-family shape: `current` still names SB's era, and never a Forge one.
+ */
+export const isFamilyCurrent = (entry: {
+  familyCurrent?: unknown;
+  current?: unknown;
+  family?: unknown;
+  scorerVersion?: string;
+}): boolean =>
+  typeof entry.familyCurrent === 'boolean'
+    ? entry.familyCurrent
+    : catalogFamily(entry) === 'sb' && entry.current === true;
+
 /** The families as people read them (owner 2026-10-03: the SB family is "Gauntlet"). Visible text only —
  *  scorer versions, run flags and catalog keys keep their `sb-*` ids. */
 export const FAMILY_WORD: Record<BenchFamily, string> = { sb: 'Gauntlet', forge: 'Forge' };

@@ -152,7 +152,8 @@ describe('BenchmarkSection', () => {
           scorerVersion: 'forge-1.0',
           title: 'Forge 1.0 — Scope Ledger',
           family: 'forge',
-          current: true,
+          familyCurrent: true,
+          current: false,
           frozen: false,
           baselines: [],
         },
@@ -166,6 +167,10 @@ describe('BenchmarkSection', () => {
     expect(forgeGroup).toHaveTextContent('Forge');
     expect(forgeGroup).toHaveTextContent('1');
     expect(within(forgeGroup).getByText('Forge').className).toContain('bg-lz-family-forge');
+    // familyCurrent marks Forge's current era; the legacy current stays SB's.
+    expect(
+      within(screen.getByTestId('bench-era-forge-1.0')).getByText('CURRENT')
+    ).toBeInTheDocument();
     // Gauntlet's eras, then Forge's — the current one first within each family.
     const eras = screen.getAllByTestId(/^bench-era-/).map((e) => e.getAttribute('data-testid'));
     expect(eras).toEqual([
