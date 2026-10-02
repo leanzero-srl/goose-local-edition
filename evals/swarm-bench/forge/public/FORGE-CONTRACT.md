@@ -22,7 +22,8 @@ For each **active** sprint S, with `startDate` from the Jira Software sprint API
   S now.
 - **creep** = `100 × added / committed`, rounded half away from zero to one decimal and always
   written with that decimal and `%` (`20.0%`); `—` when committed is 0.
-- An issue's **estimate** is the value of its board's estimation field; no value counts as 0.
+- An issue's **estimate** for S is the value of the estimation field of S's board (the sprint's
+  `originBoardId`); no value counts as 0. "After `startDate`" is strictly after.
 - Points are written as plain decimals (`34.5`, `0`), no thousands separators.
 
 Background work (triggers, consumer, scheduled job) sees every issue. What a **person** sees in
@@ -45,18 +46,22 @@ everyone.
 
 Resolvers use `@forge/resolver`. Storage is Forge KVS: ledger changes live in a **custom entity
 indexed by sprint (partition) and change time (range)**, and are read back through that index.
-Request only the scopes your calls need. Custom UI only; UI Kit (`render: native`) earns nothing.
+Request only the scopes your calls need: per call, the OAuth2 scopes the shipped OpenAPI lists for
+it (the classic scope where one exists, else the whole granular set). The linter does not see every
+call. Custom UI only; UI Kit (`render: native`) earns nothing.
 
 ## 3. Backend behaviour
 
 - The site existed before the app was installed. The scheduled job's first run backfills every
   change since each active sprint started, including issues that have since left every sprint.
 - Issue updates keep the ledger current: sprint changes add ledger rows; estimate changes move
-  the numbers. Updates that touch neither do no Jira or queue work.
+  the numbers. Updates that touch neither do no Jira or queue work (KVS reads are fine). The
+  harness runs the scheduled job once before it delivers any update.
 - Product events can arrive more than once and out of order, and some never arrive. The ledger
   holds **exactly one row per change**, whatever the delivery history. Each row records `source`:
-  `event` or `reconcile`, the path that recorded it first. Later scheduled runs record what the
-  event stream missed; a run with nothing new writes nothing.
+  `event` or `reconcile`, the path that recorded it first (event work may also record other
+  changes of the issue it reads). Later scheduled runs record what the event stream missed; a run
+  with nothing new writes nothing.
 - Jira may answer `429` with `Retry-After`: wait at least that long before the next attempt.
 - Background work uses `asApp()`. Whatever shows a person issue data (keys, authors, change
   lists) shows only what that person can browse — read as them (`asUser()`), or as the app with
@@ -68,25 +73,28 @@ Request only the scopes your calls need. Custom UI only; UI Kit (`render: native
 **Edit** (`edit.resource`): one element per scrum board, `[data-testid="board-option"]` with
 `data-board-id`, clickable; the selected one carries `aria-pressed="true"`. The choice reaches the
 dashboard through the dashboards widget edit API (`@forge/dashboards-bridge`). The dashboard's
-own Save stores what your `onProductSave` handler returns (`null` stores nothing); with no
-handler registered the harness stores the last `updateConfig` value. Reopening edit shows the
+own Save calls your `onProductSave` handler with the last `updateConfig` value (the stored config
+if none was sent) and stores what it returns (`null` stores nothing); with no handler registered
+it stores the last `updateConfig` value. Reopening edit shows the
 stored board selected.
 
 **View** (`resource`), root `[data-testid="scope-widget"]`. It takes its board from the widget
 configuration in its context, so two widgets on one dashboard can show different boards:
 - No stored board: `[data-testid="needs-config"]`, nothing else.
 - Otherwise one `[data-testid="sprint"][data-sprint-id="<id>"]` per active sprint of that board,
-  ordered by `startDate`, each holding `[data-metric="committed"]`, `[data-metric="added"]`,
+  ordered by `startDate` (ties by sprint id), each holding `[data-metric="committed"]`, `[data-metric="added"]`,
   `[data-metric="removed"]` and `[data-metric="creep"]` whose text is the §1 number.
 - A bar chart: one `<svg data-testid="chart">`; per sprint and per series one
   `<rect data-sprint-id data-series="committed|added|removed">`; every bar on one linear scale
   from 0 (rendered height proportional to its number within 1 px).
-- Uses the widget's width: nothing clips or scrolls horizontally from 380 to 1180 px.
+- Uses the widget's width: from 380 to 1180 px nothing scrolls horizontally and no number is
+  clipped or truncated (long names may end in an ellipsis).
 
 ## 5. Sprint action (modal)
 
-The sprint comes from the module context. A sprint that has not started shows
-`[data-testid="not-started"]` and nothing else. Otherwise:
+The sprint comes from the module context; the harness opens active and future sprints. A sprint
+that has not started shows `[data-testid="not-started"]` (and optionally close) and nothing else.
+Otherwise:
 
 - Team totals as in §4 (`[data-metric]`, same four), and `[data-testid="hidden-count"]` = number
   of this sprint's changes hidden from the viewer.
@@ -95,15 +103,16 @@ The sprint comes from the module context. A sprint that has not started shows
   `td[data-col=…]` cells: issue key, current estimate, `added`/`removed`, author display name, a
   `<time datetime>` holding an ISO-8601 instant with offset (compared as instants),
   `event`/`reconcile`.
-- Default order: `at` ascending, equal times by changelog id ascending. Clicking `th[data-col="at"]` toggles descending/ascending;
-  clicking `th[data-col="points"]` sorts by points descending, ties by `at` ascending; the active
-  header carries `aria-sort`.
+- Default order: `at` ascending, equal times by changelog id ascending (ids compare as numbers).
+  Clicking `th[data-col="at"]` toggles between that order and its exact reverse, starting with
+  ascending when another sort was active. Clicking `th[data-col="points"]` sorts by points
+  descending, ties in default order. The active header carries `aria-sort`.
 - The issue key opens the issue (`/browse/<KEY>`) through the Forge router.
 - Clicking a row selects it (`aria-selected="true"`). `[data-testid="post-summary"]` posts one
   comment on the selected change's issue, authored by the viewer, in Atlassian Document Format,
-  naming the issue key, the sprint name and the sprint's creep; then a success flag. On `429`,
-  retry after `Retry-After`: each click (or double click) ends with exactly one comment and one
-  success flag. Any other failure shows an error flag and leaves the modal working.
+  naming the issue key, the sprint name and the sprint's creep; then a success flag. On `429`
+  (`Retry-After` at most 5 s on this path), retry after it: each click (or double click) ends
+  with exactly one comment and one success flag. Any other failure shows an error flag and leaves the modal working.
 - `[data-testid="close"]` closes the modal.
 
 ## 6. Rovo
@@ -133,7 +142,7 @@ with an error.
 
 Every surface calls `view.theme.enable()` and is styled with Atlassian design tokens
 (`var(--ds-…)`): text with `--ds-text*` (links may use `--ds-link*`), contrast at least 4.5:1 in
-light and in dark. The page behind your surface is unpainted: paint your own background with a
+light and in dark (disabled controls exempt). The page behind your surface is unpainted: paint your own background with a
 `--ds-surface*` token. The browser console stays free of errors. Surfaces render inside the
 default Forge Custom UI content security policy: no inline `<script>`, no `<style>` elements or
 `style` attributes in markup, no external scripts, styles or fonts, assets referenced relatively.
@@ -147,8 +156,9 @@ unneeded permissions.
   of the Forge runtime, with the platform's timeouts.
 - Trigger `filter.expression` is not evaluated: the handler receives every issue-updated event.
 - A consumer that throws or times out is redelivered after 1, 2, 4 and 8 minutes, then every 15,
-  for 24 hours; a retry request (`InvocationError`) is redelivered after its `retryAfter`. Waits
-  are on the harness's virtual clock.
+  for 24 hours; a retry request (`InvocationError`) is redelivered after its `retryAfter`. The
+  harness clock runs with real time and jumps over these redelivery waits; a wait inside an
+  invocation is real time.
 - The scoring site uses a different seed than the dev site: ids, keys, custom field ids, users,
   sprint names and dates all differ.
 - The widget runs at the dashboard layout the harness chooses; the sprint action in a modal.

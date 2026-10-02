@@ -17,8 +17,13 @@ Jira Software REST). These are single-line JSON files of several MB: query them 
 `grep -o`, never print them whole.
 
 **Dev site.** A seeded Jira Cloud site answers at `$FORGE_SITE_URL` for the dev tools below. It
-behaves like Jira Cloud for the calls this app needs, including its errors and rate limits. You
-never call it directly; your app reaches it through the Forge runtime.
+behaves like Jira Cloud — REST v3 and Jira Software REST, including the bulk endpoints, their
+pagination, errors and rate limits; dates are ISO-8601 strings as the OpenAPI types them. JQL:
+fields `project`, `key`, `sprint`, `updated`, `created`, `status`, `statusCategory`, `issuetype`,
+`labels`, `assignee`, `reporter`, `cf[id]`; operators `= != in not in > >= < <= is is not ~`,
+`AND OR NOT`, parentheses, `ORDER BY`; functions `openSprints()`, `closedSprints()`,
+`futureSprints()`, `currentUser()`, `now()`, `startOfDay()`; relative dates like `-14d`. You
+never call the site directly; your app reaches it through the Forge runtime.
 
 **Tools** (`npm run lint` and `node $FORGE_KIT/bin/forge-dev.cjs <command>`):
 

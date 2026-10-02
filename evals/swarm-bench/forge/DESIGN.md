@@ -26,7 +26,7 @@ hard-coded absolutes without receipts.
 | D7 | Score-time runtime = Atlassian's runtime wrapper fetched from its public CDN, pinned by sha256; the in-repo shim runs ONLY behind an explicit `--runtime shim` flag and the verdict is then unpublishable | licence (wrapper not committed, spike .gitignore); gate 1 forbids a silent fallback (§6.1) |
 | D8 | Custom UI only. UI Kit, Forge SQL, webtrigger, apiRoute, global:fullPage, objectStore, app-managed permissions: not in v1 | @forge/react closure is 1,246 MB (measured); SQL needs a MySQL engine; the others have unmeasured handler contracts (RESEARCH §5) |
 | D9 | Composition = SB's: `final = min(earned, ceilings)`, `earned = (0.88·inner + 0.12·gate·e_mean) × critical multiplier` (floor 0.6) | one severity model across families; selftest machinery reused (score_sb7.py `compose_from_rows`) |
-| D10 | Public input 15,504 bytes (prompt 2,942 + contract 9,789 + starter 2,773) + BROWSER-TESTING 537 | target ≤ 25 KB; SB7.2's 45.7 KB still produced desk audits |
+| D10 | Public input 16,850 bytes (prompt 2,942 + contract 10,664 + starter 3,244) + BROWSER-TESTING 537 | target ≤ 25 KB; SB7.2's 45.7 KB still produced desk audits |
 | D11 | Its own benchmark family on leanzero.net (`family: forge`), scorer version `forge-1.0` (`forge-1.0-rc` until thresholds freeze) | not an SB era: different product, different scale |
 
 ## 1. Requirement → where it lands
@@ -34,7 +34,7 @@ hard-coded absolutes without receipts.
 | owner requirement | where |
 |---|---|
 | tough, tests today's models | 8 module types, async pipeline with duplicates/reorder/loss, permissions, rate limits, newest APIs (§2); bands (§8.5) |
-| cheap, economically viable | 15.5 KB public input; one model, 150 calls; local scoring, no model in the scorer; ~$0.3 (Luna) to ~$40 (Astra) per run (§11) |
+| cheap, economically viable | 16.9 KB public input; one model, 150 calls; local scoring, no model in the scorer; ~$0.3 (Luna) to ~$40 (Astra) per run (§11) |
 | no `forge deploy` | everything runs offline through the spike's proven seam (RESEARCH §0.1, §3) |
 | a capable forge lint in the scorer | Forge's own client-side linter (16 linters, RESEARCH §3) plus the scorer's blind-spot rules (§7) |
 | a good screenshot taker | every surface × light/dark × widget widths, PNGs + a contact sheet, DOM is the grade, pixels only for blank/dark checks (§6.6) |
@@ -197,6 +197,7 @@ seeds:
 | sprints | OPS: 2 active (parallel), 1 future, 2 closed; PAY: 1 active, 1 future, 1 closed; names, ids and dates seeded |
 | issues | 229–245 across both projects ("237-ish"); estimates from {0.5,1,2,3,5,8,13} or none |
 | history (before install) | 50–70 sprint changes after the active sprints' starts; ≥ 8 carry-over issues whose Sprint values list several ids; ≥ 4 issues removed to the backlog |
+| sprint/change timing | no two sprints of a board share a `startDate`; no change is created exactly at a `startDate`; the scheduled job runs before the first live update |
 | live script | 36–44 updates: ~60% sprint, ~15% estimate, ~25% irrelevant (summary, labels, status); 4 duplicated deliveries, 2 permuted pairs, 3 dropped |
 | people | 6 users; `viewer` (the probe's identity); the app's own account |
 | visibility | 4–6 issues under a security level the viewer cannot browse, ≥ 2 with changes in active sprints; 1 visible issue on which the viewer may not comment |
@@ -243,6 +244,10 @@ Pack JSON (the interface WP2 consumes; `node forge/site/fixtures.cjs --seed S --
   `POST /rest/api/3/permissions/check` (with `accountId`) is modelled, so an app may read as itself and check
   the person's permission explicitly (contract §3; the Rovo action docs give the user's `accountId` in the
   context but never mention `asUser`).
+- Types as the OpenAPI declares them: every date-time (changelog `created`, sprint dates, issue `updated`) is an
+  ISO-8601 string, never epoch milliseconds (WP3 found the site serving numbers — the zero-rows defect).
+  `POST /rest/api/3/issue/{id}/changelog/list` is modelled. The emulator enforces KVS attribute types as
+  documented (`integer` is 32-bit) and its error names the value range, not only the type.
 - ADF: comment `body` must be an ADF doc; a string → 400 "Operation value must be an Atlassian Document".
 - Pagination styles as Jira: `nextPageToken` (search/jql, changelog/bulkfetch), `startAt`/`maxResults`/`isLast`
   (issue changelog, Agile).
@@ -454,16 +459,16 @@ call log; "ev" = probe evidence; "oracle" = forge_oracle.py on the pack.
 | `u_widget_chart` | U | one rect per sprint × series; heights on one linear scale within 1 px | ev rects | — |  |
 | `u_widget_edit_config` | U | pick board B → host Save → view shows B's sprints; reopening edit shows B pressed; no config → `needs-config` only; a SECOND widget instance (different `widgetId`, host-injected `extension.config` naming the other board) shows its own board | ev | — |  |
 | `u_ledger_table` | U | rows = oracle visible changes for the context sprint, cells correct (`datetime` as instants), default order `at` then changelog id | ev DOM | — |  |
-| `u_ledger_sort` | U | `at` toggle and `points` sort orders and `aria-sort` | ev | table rows rendered |  |
-| `u_issue_router` | U | issue key click → bridge `open`/`navigate` to `/browse/<KEY>`; no popup or top navigation | ev | table rows rendered |  |
+| `u_ledger_sort` | U | `at` toggles between default order and its exact reverse (ascending first after another sort); `points` descending, ties in default order; changelog ids compared numerically; `aria-sort` on the active header | ev | table rows rendered |  |
+| `u_issue_router` | U | issue key click → bridge `open` or `navigate` (any `type`) to `/browse/<KEY>`; no popup or top navigation | ev | table rows rendered |  |
 | `u_comment_flow` | U | select + post → success flag; forbidden issue → error flag, modal still sorts | ev | — |  |
 | `u_modal_close` | U | close → bridge `close` | ev | modal rendered |  |
-| `u_not_started` | U | future sprint context → `not-started` only | ev | — |  |
-| `v_theme_tokens` | V | `enableTheming` called on every surface; metric and table text colours equal the mode's `--ds-text*` values (`--ds-link*` accepted on links); contrast ≥ 4.5:1 in both modes | ev computed styles | a surface rendered app content |  |
+| `u_not_started` | U | future sprint context → `not-started` and no ledger, metrics or post button (a close button is allowed) | ev | — |  |
+| `v_theme_tokens` | V | `enableTheming` called on every surface; metric and table text colours equal the mode's `--ds-text*` values (`--ds-link*` accepted on links); contrast ≥ 4.5:1 in both modes; disabled controls exempt | ev computed styles | a surface rendered app content |  |
 | `v_dark_mode` | V | the host page is unpainted, so the app paints its own surface: dark screenshots' dominant colour is in the dark `--ds-surface*` family, light in the light family; no surface blank | ev pixels + tokens | a surface rendered app content |  |
 | `v_csp_clean` | V | 0 `securitypolicyviolation`, 0 failed asset requests | ev | a surface rendered app content |  |
 | `v_console_clean` | V | 0 console errors/page errors on nominal scenarios | ev | a surface rendered app content |  |
-| `v_widget_sizes` | V | at 380 and 1180 px: no horizontal overflow, every sprint visible | ev | widget rendered sprints |  |
+| `v_widget_sizes` | V | at 380 and 1180 px: no horizontal overflow, every sprint visible, no `data-metric` text clipped or ellipsized (names may ellipsize) | ev | widget rendered sprints |  |
 | `a_action_result` | A | action JSON = oracle for each active sprint (numbers rounded as creep, visible changes in table order, `at` as instants) | emulator | — |  |
 | `a_action_errors` | A | unknown and missing `sprintId` → `{error}`, no throw | emulator | the action exists |  |
 | `a_action_permissions` | A | the per-person OUTCOME: `hiddenChanges` and the visible list are right for two users, whether read `asUser` or `asApp` + an explicit permission check (`asUser` in actions is undocumented) | emulator | — |  |
@@ -619,7 +624,7 @@ Token model, anchored on the measured Luna SB7.2 run on 3.0.87 (~/goose-builds/s
 b36032ee-trimmed/telemetry.jsonl: 150 calls, 12,910,157 prompt tokens, 171,324 completion tokens, final context
 142,487; $0.23 billed, 99% cached): a strong model spends the full 150 calls; ~13.0 M cached prompt tokens, ~0.5 M
 written to cache (context growth plus compactions), 0.25–0.45 M output (reasoning models write more than Luna).
-Forge's public input is 15.5 KB vs SB7.2's 45.7 KB; reading typings and the OpenAPI adds back, so the prompt total
+Forge's public input is 16.9 KB vs SB7.2's 45.7 KB; reading typings and the OpenAPI adds back, so the prompt total
 is kept at Luna's measured level.
 
 | model | cached | cache writes | output | per run |
@@ -742,6 +747,12 @@ harness until WP1's `forge-dev` lands — WP3 must NOT read `forge/site`, `bench
 
 ### 13.5 One-defect mutants (WP3)
 
+Phase-stopping mutants (`m_storage_api`, `m_old_search`, `m_abs_assets`, `m_gadget`) list the rows this table
+names; WP2's ROOT_BLOCKS must attribute every downstream row of the broken phase, and `forge_controls.py` accepts
+exactly those attributions. The probe's double click (`m_double_post`) is two clicks dispatched to the same
+element handle, so a button whose label changes width while posting cannot dodge it (WP3 measured that a
+pointer double click can land on the container).
+
 | id | defect | expected loss |
 |---|---|---|
 | `m_storage_api` | `import { storage } from '@forge/api'` (storage:app declared) | measured 2026-10-02: lint gives a WARNING only (`deprecated-api-storage`) — so `l_lint_warnings`, `k_current_apis`, and the runtime T/R/S rows (8.2.0 has no `storage`, the call throws); no lint cap |
@@ -752,14 +763,14 @@ harness until WP1's `forge-dev` lands — WP3 must NOT read `forge/site`, `bench
 | `m_dedupe_event_id` | idempotency on queue `eventId` | `t_no_double_count` (crit) |
 | `m_one_estimate_field` | one hard-coded estimate field | `t_reestimate_followed`, `u_widget_numbers`, `a_action_result` |
 | `m_retry_now` | immediate retry on 429 | `t_retry_after_honoured`, `r_rate_limit` |
-| `m_asapp_ui` | ledger resolver and action read Jira `asApp` | `b_no_permission_leak` (crit) |
+| `m_asapp_ui` | ledger resolver and action read Jira `asApp` | `b_no_permission_leak` (crit), `b_hidden_count`, `a_action_permissions` |
 | `m_double_post` | no double-click guard | `b_comment_exactly_once` (crit) |
-| `m_string_comment` | plain-string comment body | `b_comment_adf_as_user`, `u_comment_flow` |
+| `m_string_comment` | plain-string comment body | `b_comment_adf_as_user`, `u_comment_flow`, `b_comment_exactly_once` (no comment lands) |
 | `m_gadget` | `jira:dashboardGadget` instead of `dashboards:widget` | K, U widget rows, ≤ 0.799 |
 | `m_config_resolver` | edit saves config through a resolver | `k_widget_edit_bridge`, `u_widget_edit_config`, ≤ 0.799 |
 | `m_no_theme` | no `theme.enable()`, hard-coded white | `v_theme_tokens`, `v_dark_mode`, ≤ 0.799 |
 | `m_abs_assets` | `/assets/…` absolute paths | `u_widget_loads` (crit), `v_csp_clean` |
-| `m_skill_name` | SKILL.md `name` ≠ directory | `k_rovo_skill`, ≤ 0.799 |
+| `m_skill_name` | SKILL.md `name` ≠ directory | MEASURED by WP3 with the client-side lint: ERROR "Skill sprint-scope-analyst frontmatter field 'name' must match the parent directory name" → `l_deployable` (crit) + `k_rovo_skill`, ≤ 0.499 |
 | `m_config_in_kvs` | widget board stored in KVS by a resolver, view ignores `extension.config` | `u_widget_edit_config` (second instance), `k_widget_edit_bridge` |
 | `m_throw_on_429` | consumer throws on 429 instead of a retry request | `t_retry_after_honoured` (rows still land) |
 
@@ -772,28 +783,28 @@ check. Anchors are FORGE-CONTRACT.md sections unless marked P (prompt) or S (STA
 |---|---|
 | `l_deployable`, `l_lint_warnings` | P done 1, S `npm run lint` |
 | `l_bundles_load`, `l_real_packages`, `l_manifest_rules` | P done 1, §8 bundled from `src/`, S packages |
-| `l_scopes` | §2 "Request only the scopes your calls need", P done 2 |
+| `l_scopes` | §2 "Request only the scopes your calls need: per call, the OAuth2 scopes the shipped OpenAPI lists…", P done 2 |
 | `k_dashboard_widget`, `k_widget_edit_bridge` | §2 table, §4 "dashboards widget edit API" |
 | `k_rovo_skill`, `a_skill_instructions` | §2, §6 SKILL.md paragraph |
 | `k_current_apis`, `k_consumer_shape` | §2 table (consumer, Custom UI only), P done 2; platform facts discoverable (§3 rule 3) |
 | `k_entity_declared`, `s_entity_index_used`, `s_index_order` | §2 storage paragraph |
-| `t_trigger_handoff` | §2 trigger/consumer rows, §3 "Updates that touch neither…" |
+| `t_trigger_handoff` | §2 trigger/consumer rows, §3 "Updates that touch neither… (KVS reads are fine)" and "runs the scheduled job once before" |
 | `t_event_rows`, `t_no_double_count`, `t_out_of_order`, `t_multi_sprint_parse` | §1 change, §3 exactly-once bullet |
-| `t_reestimate_followed` | §1 estimate, §3 "estimate changes move the numbers" |
-| `t_retry_after_honoured`, `r_rate_limit` | §3 429 bullet, §8 redelivery schedule |
+| `t_reestimate_followed` | §1 estimate (sprint's `originBoardId` board field), §3 "estimate changes move the numbers" |
+| `t_retry_after_honoured`, `r_rate_limit` | §3 429 bullet, §8 redelivery schedule and "a wait inside an invocation is real time" |
 | `t_no_user_in_async`, `r_as_app` | §3 asApp bullet |
 | `r_backfill_complete`, `r_removals_found` | §3 first bullet |
-| `r_heal_dropped`, `e_idempotent_rerun` | §3 "Later scheduled runs…" |
-| `r_pagination` | P done 3 (platform behaviour discoverable on the dev site) |
+| `r_heal_dropped`, `e_idempotent_rerun` | §3 `source` bullet ("event work may also record other changes of the issue it reads"), "Later scheduled runs…" |
+| `r_pagination` | P done 3; S dev-site paragraph (bulk endpoints, pagination, JQL subset, ISO dates) |
 | `r_completes_in_timeout` | §8 "with the platform's timeouts" |
 | `s_storage_scope`, `s_limits` | §2 storage, platform limits discoverable |
 | `b_invoke_contract` | §6 errors, P done 7 |
 | `b_no_permission_leak`, `b_hidden_count`, `a_action_permissions` | §1 last paragraph, §5 hidden-count, §6 |
-| `b_comment_adf_as_user`, `b_comment_exactly_once`, `u_comment_flow` | §5 post-summary bullet |
-| `u_widget_loads`, `u_widget_numbers`, `u_widget_chart`, `u_widget_edit_config` | §4 |
-| `u_ledger_table`, `u_ledger_sort`, `u_issue_router`, `u_modal_close`, `u_not_started` | §5 |
-| `v_theme_tokens`, `v_dark_mode`, `v_csp_clean`, `v_console_clean` | §7 |
-| `v_widget_sizes` | §4 last bullet |
+| `b_comment_adf_as_user`, `b_comment_exactly_once`, `u_comment_flow` | §5 post-summary bullet (`Retry-After` ≤ 5 s on this path) |
+| `u_widget_loads`, `u_widget_numbers`, `u_widget_chart`, `u_widget_edit_config` | §4 (`onProductSave` receives the last `updateConfig` value; ties by sprint id) |
+| `u_ledger_table`, `u_ledger_sort`, `u_issue_router`, `u_modal_close`, `u_not_started` | §5 (order, numeric ids, reverse toggle, "active and future sprints", optional close) |
+| `v_theme_tokens`, `v_dark_mode`, `v_csp_clean`, `v_console_clean` | §7 (disabled controls exempt) |
+| `v_widget_sizes` | §4 last bullet (numbers never clipped; names may ellipsize) |
 | `a_action_result`, `a_action_errors` | §6 |
 | `e_reconcile_economy`, `e_event_economy`, `e_ui_round_trips` | P "Score bands": "A small excellence share rewards reaching Jira in few calls and rendering each surface in few round trips." (the ratios themselves are not published: they are calibration-owned) |
 | bands | P "Score bands" (parity test pins the four maxima) |
@@ -852,4 +863,42 @@ Every finding was checked against the primary source it cites before applying. 2
 | E7 wording, guard $50, pinned reasoning effort, Astra an assumption | prompt, §11 | applied |
 
 Public input after the pass: 15,504 bytes (prompt 2,942 + contract 9,789 + starter 2,773), under the 25 KB target.
+
+### 17.1 WP3's contract gaps (bench/golden-forge/CONTRACT-GAPS.md, 2026-10-02)
+
+The golden was built from the public files only; each gap is resolved by STATING the rule (S), by declaring it
+the entrant's judgement with grading that accepts every reasonable reading (J), or by routing a harness defect to
+its package (R). Public input after this pass: 16,850 bytes.
+
+| # | gap | resolution |
+|---|---|---|
+| 0a | site serves changelog `created` as epoch ms | R WP1: types as the OpenAPI declares (ISO-8601), §5.3; S STARTER "dates are ISO-8601 strings" |
+| 0b | KVS `integer` is 32-bit; error names only the type | R WP1: error names the range, §5.3 (the documented rule stays a real-platform fact) |
+| 0c | `/issue/{id}/changelog/list` unmodelled | R WP1: modelled, §5.3 |
+| 0d | real wrapper throws on `InvocationError` without `retryData` when `timeoutSeconds` > 55 | J: real platform behaviour, reproduced by forge-dev (same wrapper); not stated |
+| 0e | concurrent `forge-dev serve` corrupts `.forge-dev/state.json` | R WP1: atomic state writes (temp + rename) |
+| 1 | JQL subset and endpoints | S STARTER: JQL fields/operators/functions named; REST v3 + Jira Software incl. bulk endpoints |
+| 2 | what `onProductSave` receives | S §4: the last `updateConfig` value (stored config if none) |
+| 3 | Retry-After longer than a resolver can wait | S §5: at most 5 s on the comment path |
+| 4 | how a wait inside an invocation is measured | S §8: clock runs with real time, jumps only over redelivery waits |
+| 5 | trigger work before config exists | S §3: KVS reads allowed; the scheduled job runs before any update |
+| 6 | event path recording sibling changes | S §3 + J: allowed, `source` = `event`; oracle accepts either for those rows |
+| 7 | which board's estimation field | S §1: the sprint's `originBoardId` board |
+| 8 | sorting edge cases | S §5: reverse toggle, ascending after another sort, numeric ids, points ties in default order |
+| 9 | ellipsis vs clipping | S §4: numbers never clipped or truncated; names may ellipsize |
+| 10 | disabled-control contrast | S §7: exempt |
+| 11 | scopes lint cannot check | S §2: OpenAPI OAuth2 scopes per call (classic else full granular set) |
+| 12 | sprint action on a closed sprint | S §5: the harness opens active and future sprints only |
+| 13 | close on the not-started screen | S §5: optional; `u_not_started` accepts it |
+| 14 | Rovo action on a future sprint / non-numeric id | J: not graded beyond §6's unknown/missing rule (a non-numeric id is "unknown") |
+| 15 | router `open` vs `navigate` | J: both accepted, any `type` (`u_issue_router`) |
+| 16 | post-summary with nothing selected | J: not graded (the probe always selects first) |
+| 17 | rerun after a sprint rename | J: the script renames nothing; `e_idempotent_rerun` measures only unchanged reruns |
+| 18 | `selfGenerated` updates | J: the app writes no issue fields, so the harness generates none |
+| 19 | equal sprint `startDate` | S §4 ties by sprint id; fixtures avoid equal dates (§5.2) |
+| 20 | change exactly at `startDate` | S §1 "strictly after"; fixtures avoid it (§5.2) |
+| 21 | `npm run lint` script in the starter | R WP1: `forge/starter/package.json` `"lint": "node $FORGE_KIT/bin/lint.cjs ."` |
+| 22 | `m_skill_name` is a lint ERROR | applied §13.5: `l_deployable`, ≤ 0.499 |
+| 23 | phase-stopping mutants need ROOT_BLOCKS attribution; extra rows for two mutants | applied §13.5 note + rows (R WP2: attribution) |
+| 24 | double click dodged by a label that moves the button | R WP2: the probe clicks the same element handle twice (§13.5 note) |
 
