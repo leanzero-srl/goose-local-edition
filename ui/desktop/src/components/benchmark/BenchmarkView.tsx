@@ -1,6 +1,7 @@
 import { appendBenchmarkActivity, emptyBenchmarkActivity } from '../../benchActivity';
 import { BenchmarkActivityPanel } from './BenchmarkActivityPanel';
 import { benchmarkModelIdProblem } from '../../benchModelIdentity';
+import { billedCostLine } from '../../benchBilledCost';
 import { BenchmarkRuntimeSetup } from './BenchmarkRuntimeSetup';
 import { CloudEntrant } from './CloudEntrant';
 import {
@@ -118,6 +119,8 @@ type PublishState =
 interface MineRow extends BenchmarkRow {
   provider?: string;
   scoringSecs?: number;
+  /** The harness's `agent.billed_cost` record, verbatim (benchBilledCost.ts reads it). */
+  billedCost?: unknown;
   runMeta?: { startedAt: string; finishedAt: string; engineEvents: number; repairRounds: number };
   workdir?: string;
   /** Full scoring detail (every check + evidence + repair story) — absent on pre-detail results. */
@@ -393,6 +396,30 @@ function boardColumns(own: {
  * only within its own era. Every outcome renders its own truth: a run that died before scoring
  * says so in words; it never borrows the look of a finished one.
  */
+/**
+ * The run's bill as the provider recorded it — the one cost figure the view shows. A swarm without a
+ * record says nothing (local nodes bill nothing); a single-model run without one says so.
+ */
+function BilledCostNote({ value, provider }: { value: unknown; provider: string | null }) {
+  const line = billedCostLine(value, provider);
+  if (!line) return null;
+  return (
+    <div data-testid="billed-cost" className="flex flex-col gap-0.5">
+      <p
+        className={cx(
+          'text-lz-body',
+          WEIGHT.semibold,
+          TNUM,
+          line.tone ? TONE_TEXT[line.tone] : 'text-lz-ink'
+        )}
+      >
+        {line.sentence}
+      </p>
+      {line.detail && <p className={cx(TYPE.meta, TNUM)}>{line.detail}</p>}
+    </div>
+  );
+}
+
 function FailureDetails({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   return (
@@ -611,6 +638,8 @@ function SessionDetail({
           mine: true,
           scorerVersion: session.scorerVersion,
         };
+  const billed =
+    mineMatched && mine ? billedCostLine(mine.billedCost, mine.provider ?? null) : null;
   const tierColumns = isSb8(session.scorerVersion)
     ? null
     : recordedTierColumns(ownRow?.tiers, mineMatched ? mine?.verdict : undefined);
@@ -654,7 +683,13 @@ function SessionDetail({
         {mineMatched && mine?.runMeta && !mine.provider && (
           <StatCell label="Engine events" value={mine.runMeta.engineEvents.toLocaleString()} />
         )}
+        {mineMatched && billed?.amount && (
+          <StatCell label="Billed" value={billed.amount} tone={billed.tone ?? undefined} />
+        )}
       </div>
+      {mineMatched && mine && (
+        <BilledCostNote value={mine.billedCost} provider={mine.provider ?? null} />
+      )}
 
       {mineMatched && (
         <Panel

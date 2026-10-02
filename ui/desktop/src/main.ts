@@ -1,6 +1,7 @@
 import './utils/userDataPath';
 import { benchmarkResultTransaction } from './benchResultTransaction';
 import { retryScoringEligibility, type BuildCompletionReceipt } from './benchRescore';
+import { billedCostRowField } from './benchBilledCost';
 import {
   appendBenchmarkActivity,
   emptyBenchmarkActivity,
@@ -4010,6 +4011,10 @@ const persistBenchmarkResult = async ({
     ...(typeof v.agent?.secs === 'number' ? { wallSecs: v.agent.secs } : {}),
     ...(typeof v.scoring?.secs === 'number' ? { scoringSecs: v.scoring.secs } : {}),
     ...(v.agent?.usage ? { modelUsage: v.agent.usage } : {}),
+    // The provider's own bill for the entrant's requests (OpenRouter generation records), kept
+    // verbatim — status and all — so the view can say complete / at-least / unavailable. goose's
+    // `accumulated_cost` inside modelUsage is a local price-table estimate and is never the bill.
+    ...billedCostRowField(v.agent),
     // The run's own measured token rates (scorer's telemetry_summary) — published
     // with the post so the public entry shows prefill/decode tok/s per node.
     ...(v.telemetry && typeof v.telemetry === 'object' ? { telemetry: v.telemetry } : {}),

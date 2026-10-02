@@ -547,7 +547,87 @@ it('shows measured cloud build and scoring independently without invented swarm 
   expect(screen.getByText('3m 46s')).toBeInTheDocument();
   expect(screen.queryByText('Engine events')).toBeNull();
   expect(screen.queryByText('Repair rounds')).toBeNull();
+  // An older result carries no billing record: said once, never an estimate in its place.
+  expect(screen.getByTestId('billed-cost')).toHaveTextContent(
+    'No billing record was saved with this result.'
+  );
   cleanup();
+});
+
+describe("a cloud run's bill is the provider's billed cost, never goose's estimate", () => {
+  const session = {
+    runId: 'cloud-billed',
+    scorerVersion: 'sb-7.2',
+    startedAt: '2026-10-02T10:00:00Z',
+    endedAt: '2026-10-02T10:20:00Z',
+    outcome: 'finished',
+    score: 0.61,
+    publishable: false,
+  };
+  const renderWith = async (billedCost: unknown, provider = 'openrouter') => {
+    mockElectron({ sessions: [session] });
+    electron().benchmarkRead = vi.fn(async () => ({
+      ...session,
+      label: 'model · single agent',
+      provider,
+      wallSecs: 600,
+      // goose's own session counters, with its price-table estimate: never shown as the bill.
+      modelUsage: {
+        status: 'recorded',
+        sessions: [{ accumulated_input_tokens: 10, accumulated_cost: 9.8765 }],
+      },
+      ...(billedCost === undefined ? {} : { billedCost }),
+    }));
+    render(
+      <IntlTestWrapper>
+        <BenchmarkView />
+      </IntlTestWrapper>
+    );
+    return screen.findByTestId('billed-cost');
+  };
+  afterEach(() => cleanup());
+
+  it('complete: the billed amount, its source and request count', async () => {
+    const note = await renderWith({
+      status: 'complete',
+      billed_usd: 0.6243,
+      requests: 143,
+      tokens: { prompt: 1000, cached: 400, completion: 200, reasoning: 50 },
+      hosts: { DeepInfra: 143 },
+      missing: [],
+    });
+    expect(note).toHaveTextContent('Billed $0.6243 (OpenRouter, 143 requests)');
+    expect(note).toHaveTextContent(
+      'prompt 1,000 (cached 400) · completion 200 · reasoning 50 · served by DeepInfra ×143'
+    );
+    expect(screen.getByText('Billed', { selector: 'div' }).previousSibling).toHaveTextContent(
+      '$0.6243'
+    );
+    expect(screen.queryByText(/9\.8765/)).toBeNull();
+  });
+
+  it('incomplete: a floor, with the calls the harness could not find', async () => {
+    const note = await renderWith({
+      status: 'incomplete',
+      billed_usd: 0.5,
+      requests: 12,
+      missing: ['gen-a', 'gen-b', 'gen-c'],
+    });
+    expect(note).toHaveTextContent('At least $0.5000 — 3 calls not found');
+    expect(note.querySelector('p')).toHaveClass('text-lz-warn');
+    expect(screen.queryByText(/9\.8765/)).toBeNull();
+  });
+
+  it('unavailable: says so for the provider, and states no amount', async () => {
+    const note = await renderWith(
+      { status: 'unavailable', reason: 'google publishes no per-generation billing' },
+      'google'
+    );
+    expect(note).toHaveTextContent('Billing not available for google.');
+    expect(note).toHaveTextContent('google publishes no per-generation billing');
+    expect(screen.queryByText('Billed', { selector: 'div' })).toBeNull();
+    expect(screen.queryByText(/\$/)).toBeNull();
+  });
 });
 
 it('updates cloud pipeline stages from harness events, not model prose', async () => {
