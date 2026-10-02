@@ -1,0 +1,895 @@
+{
+  "schemaVersion": 1,
+  "scorerVersion": "sb-7.2",
+  "status": "passed",
+  "scope": "Golden reference through the full SB7.2 scorer with --reference (freeze gate + severity selftest), six one-defect visual controls, SB7.1 reference control, and calibration-only re-scores of archived SB7.1 entrant trees. No model call.",
+  "evaluatedSourceCommit": "ffe8bf118",
+  "runtime": {
+    "python": "Python 3.12.14",
+    "node": "v24.18.0",
+    "browser": "chrome-headless-shell 153.0.8010.36 (Goose Swarm.app bundled-mcps)"
+  },
+  "hostConditions": "Shared Mac Studio; other agents active; load averages recorded per run.",
+  "newModelCallsForValidation": 0,
+  "reference": {
+    "report": "sb7.2/release-validation/golden-sb72-ref-a.json",
+    "reportSha256": "808fc561edbcddedbd0a21bb984da314142ac366ade624076a04df86b9757601",
+    "scorerVersion": "sb-7.2",
+    "seed": "5a05d7631d9276e3",
+    "score": 1.0,
+    "rawScore": 1.0,
+    "inner": 1.0,
+    "excellence": 1.0,
+    "criticalMultiplier": 1.0,
+    "unsuppressedCriticals": [],
+    "ceiling": 1.0,
+    "failedChecksByBand": [],
+    "belowOne": {},
+    "uptime": {
+      "before": "11:27  up 9 days,  4:47, 1 user, load averages: 9.60 10.21 9.08",
+      "after": "11:33  up 9 days,  4:54, 1 user, load averages: 7.86 9.75 9.45",
+      "exit": "exit: 0"
+    }
+  },
+  "referenceRepeats": [],
+  "controls": {
+    "unlit-field": {
+      "report": "runs/sb72-validation/20261002/mutant2-unlit-field.json",
+      "reportSha256": "171e16ed5704d4981e2055000b055304fc01b82d1077fb72ae2bcbfa193bf1f9",
+      "scorerVersion": "sb-7.2",
+      "seed": "5a05d7631d9276e3",
+      "score": 0.599,
+      "rawScore": 0.8887,
+      "inner": 0.9076,
+      "excellence": 0.75,
+      "criticalMultiplier": 1.0,
+      "unsuppressedCriticals": [],
+      "ceiling": 0.599,
+      "failedChecksByBand": [
+        {
+          "ceiling": 0.599,
+          "checks": [
+            "s_visible_surface"
+          ]
+        },
+        {
+          "ceiling": 0.699,
+          "checks": [
+            "s_visible_surface",
+            "t_height_pixels",
+            "t_vs7dbg_truth"
+          ]
+        },
+        {
+          "ceiling": 0.799,
+          "checks": [
+            "t_camera_math",
+            "t_brush_link",
+            "t_stream_diff",
+            "q_overview_legibility"
+          ]
+        },
+        {
+          "ceiling": 0.899,
+          "checks": []
+        }
+      ],
+      "belowOne": {
+        "p_stream_apply": 0.0,
+        "t_context_real": 0.75,
+        "t_height_pixels": 0.0,
+        "t_camera_math": 0.8571,
+        "t_brush_link": 0.6667,
+        "t_stream_diff": 0.8,
+        "t_vs7dbg_truth": 0.7,
+        "e_stream_apply_latency": 0.0,
+        "s_visible_surface": 0,
+        "q_overview_legibility": 0.0497
+      },
+      "uptime": {
+        "before": "11:33  up 9 days,  4:54, 1 user, load averages: 7.86 9.75 9.45",
+        "after": "11:40  up 9 days, 5 hrs, 1 user, load averages: 7.02 8.37 9.00",
+        "exit": "exit: 0"
+      },
+      "expected": "0.599: visible-surface admission and colour witnesses fail; legibility lit/framing/status legs fail"
+    },
+    "misframed-canvas": {
+      "report": "runs/sb72-validation/20261002/mutant2-misframed-canvas.json",
+      "reportSha256": "157f24f6203bdf21164feeea64bbb25cefd7f61822eddd811a38be2fc1872ff5",
+      "scorerVersion": "sb-7.2",
+      "seed": "5a05d7631d9276e3",
+      "score": 0.799,
+      "rawScore": 0.9915,
+      "inner": 0.9903,
+      "excellence": 1.0,
+      "criticalMultiplier": 1.0,
+      "unsuppressedCriticals": [],
+      "ceiling": 0.799,
+      "failedChecksByBand": [
+        {
+          "ceiling": 0.799,
+          "checks": [
+            "q_overview_legibility"
+          ]
+        },
+        {
+          "ceiling": 0.899,
+          "checks": []
+        }
+      ],
+      "belowOne": {
+        "q_overview_legibility": 0.6371
+      },
+      "uptime": {
+        "before": "11:40  up 9 days, 5 hrs, 1 user, load averages: 7.02 8.37 9.00",
+        "after": "11:46  up 9 days,  5:06, 1 user, load averages: 4.22 6.91 8.25",
+        "exit": "exit: 0"
+      },
+      "expected": "0.799: q_overview_legibility only"
+    },
+    "status-swapped": {
+      "report": "runs/sb72-validation/20261002/mutant2-status-swapped.json",
+      "reportSha256": "ce13b20bfcbb8bfb160686d556966d0d36f7a29aba568ba5d0e7dc739d65bad5",
+      "scorerVersion": "sb-7.2",
+      "seed": "5a05d7631d9276e3",
+      "score": 0.599,
+      "rawScore": 0.8329,
+      "inner": 0.8443,
+      "excellence": 0.75,
+      "criticalMultiplier": 1.0,
+      "unsuppressedCriticals": [],
+      "ceiling": 0.599,
+      "failedChecksByBand": [
+        {
+          "ceiling": 0.599,
+          "checks": [
+            "s_visible_surface"
+          ]
+        },
+        {
+          "ceiling": 0.699,
+          "checks": [
+            "s_visible_surface",
+            "s_tower_geometry",
+            "t_height_pixels",
+            "t_vs7dbg_truth"
+          ]
+        },
+        {
+          "ceiling": 0.799,
+          "checks": [
+            "t_brush_link",
+            "q_overview_legibility",
+            "q_inspector_framing"
+          ]
+        },
+        {
+          "ceiling": 0.899,
+          "checks": [
+            "m_committed_event_replay"
+          ]
+        }
+      ],
+      "belowOne": {
+        "p_stream_apply": 0.0,
+        "t_height_pixels": 0.3333,
+        "t_brush_link": 0.7778,
+        "t_vs7dbg_truth": 0.7,
+        "e_stream_apply_latency": 0.0,
+        "s_visible_surface": 0,
+        "s_tower_geometry": 0.7971,
+        "q_overview_legibility": 0.7639,
+        "m_committed_event_replay": 0,
+        "q_inspector_framing": 0.0
+      },
+      "uptime": {
+        "before": "11:46  up 9 days,  5:06, 1 user, load averages: 4.22 6.91 8.25",
+        "after": "11:52  up 9 days,  5:13, 1 user, load averages: 4.34 6.36 7.63",
+        "exit": "exit: 0"
+      },
+      "expected": "0.599: published status colours are data; legibility status leg fails"
+    },
+    "cuboid-towers": {
+      "report": "runs/sb72-validation/20261002/mutant2-cuboid-towers.json",
+      "reportSha256": "0bdb10c120ec41c0197eedc320c1ca5db7ba546a43b12e9dba2d4794f41bd74a",
+      "scorerVersion": "sb-7.2",
+      "seed": "5a05d7631d9276e3",
+      "score": 0.699,
+      "rawScore": 0.8872,
+      "inner": 0.8718,
+      "excellence": 1.0,
+      "criticalMultiplier": 1.0,
+      "unsuppressedCriticals": [],
+      "ceiling": 0.699,
+      "failedChecksByBand": [
+        {
+          "ceiling": 0.699,
+          "checks": [
+            "s_tower_geometry",
+            "s_currency_collar"
+          ]
+        },
+        {
+          "ceiling": 0.799,
+          "checks": [
+            "q_inspector_framing"
+          ]
+        },
+        {
+          "ceiling": 0.899,
+          "checks": [
+            "m_committed_event_replay"
+          ]
+        }
+      ],
+      "belowOne": {
+        "s_tower_geometry": 0.7545,
+        "s_currency_collar": 0,
+        "m_committed_event_replay": 0,
+        "q_inspector_framing": 0.0
+      },
+      "uptime": {
+        "before": "11:52  up 9 days,  5:13, 1 user, load averages: 4.34 6.36 7.63",
+        "after": "11:58  up 9 days,  5:19, 1 user, load averages: 5.29 7.53 8.06",
+        "exit": "exit: 0"
+      },
+      "expected": "0.699: tower structure and collar"
+    },
+    "frozen-animation": {
+      "report": "runs/sb72-validation/20261002/mutant2-frozen-animation.json",
+      "reportSha256": "3912d376d76b0ec477e511b412ea00d4c5cbc5f0ed2b7fa1afb5f5fe5c677da2",
+      "scorerVersion": "sb-7.2",
+      "seed": "5a05d7631d9276e3",
+      "score": 0.899,
+      "rawScore": 0.9472,
+      "inner": 0.94,
+      "excellence": 1.0,
+      "criticalMultiplier": 1.0,
+      "unsuppressedCriticals": [],
+      "ceiling": 0.899,
+      "failedChecksByBand": [
+        {
+          "ceiling": 0.899,
+          "checks": [
+            "m_committed_event_replay"
+          ]
+        }
+      ],
+      "belowOne": {
+        "m_committed_event_replay": 0
+      },
+      "uptime": {
+        "before": "11:58  up 9 days,  5:19, 1 user, load averages: 5.29 7.53 8.06",
+        "after": "12:04  up 9 days,  5:25, 1 user, load averages: 4.97 7.03 7.79",
+        "exit": "exit: 0"
+      },
+      "expected": "0.899: m_committed_event_replay only"
+    },
+    "low-contrast-button": {
+      "report": "runs/sb72-validation/20261002/mutant2-low-contrast-button.json",
+      "reportSha256": "5f02302a52c78c30a6bdcaa2742ef95d4e5b993e0b600c27c164c6592895ccfa",
+      "scorerVersion": "sb-7.2",
+      "seed": "5a05d7631d9276e3",
+      "score": 0.9985,
+      "rawScore": 0.9985,
+      "inner": 0.9983,
+      "excellence": 1.0,
+      "criticalMultiplier": 1.0,
+      "unsuppressedCriticals": [],
+      "ceiling": 1.0,
+      "failedChecksByBand": [],
+      "belowOne": {
+        "v_presentation_text": 0.75
+      },
+      "uptime": {
+        "before": "12:04  up 9 days,  5:25, 1 user, load averages: 4.67 6.90 7.74",
+        "after": "12:11  up 9 days,  5:31, 1 user, load averages: 5.21 6.97 7.71",
+        "exit": "exit: 0"
+      },
+      "expected": "V points only, no band"
+    }
+  },
+  "sb71ReferenceControl": {
+    "golden-sb71-under-sb71": {
+      "report": "runs/sb72-validation/20261002/golden-sb71-under-sb71.json",
+      "reportSha256": "10be690b3ea3911b55025e70fa214c719b9c7115523bc12ee0572332d1c88a01",
+      "scorerVersion": "sb-7.1",
+      "seed": "5a05d7631d9276e3",
+      "score": 0.994,
+      "rawScore": 0.994,
+      "inner": 1.0,
+      "excellence": 0.95,
+      "criticalMultiplier": 1.0,
+      "unsuppressedCriticals": [],
+      "ceiling": 1.0,
+      "failedChecksByBand": [],
+      "belowOne": {
+        "e_stream_apply_latency": 0.75
+      },
+      "uptime": {
+        "before": "9:59  up 9 days,  3:20, 1 user, load averages: 7.60 14.29 14.54",
+        "after": "10:05  up 9 days,  3:26, 1 user, load averages: 9.20 13.08 14.04",
+        "exit": "exit: 0"
+      }
+    },
+    "golden-sb71-under-sb72": {
+      "report": "runs/sb72-validation/20261002/golden-sb71-under-sb72.json",
+      "reportSha256": "352c9b8ec627c5ce0949d82bc16d2803baf338c7a0e8e08ec828362cad57b27a",
+      "scorerVersion": "sb-7.2",
+      "seed": "5a05d7631d9276e3",
+      "score": 0.799,
+      "rawScore": 0.9691,
+      "inner": 0.9649,
+      "excellence": 1.0,
+      "criticalMultiplier": 1.0,
+      "unsuppressedCriticals": [],
+      "ceiling": 0.799,
+      "failedChecksByBand": [
+        {
+          "ceiling": 0.799,
+          "checks": [
+            "t_camera_math",
+            "t_coast_reality",
+            "t_brush_link",
+            "q_overview_legibility"
+          ]
+        },
+        {
+          "ceiling": 0.899,
+          "checks": [
+            "m_committed_event_replay"
+          ]
+        }
+      ],
+      "belowOne": {
+        "t_camera_math": 0.8571,
+        "t_coast_reality": 0.7467,
+        "t_brush_link": 0.8889,
+        "q_overview_legibility": 0.6371,
+        "m_committed_event_replay": 0.6667
+      },
+      "uptime": {
+        "before": "10:05  up 9 days,  3:26, 1 user, load averages: 9.20 13.08 14.04",
+        "after": "10:11  up 9 days,  3:32, 1 user, load averages: 6.96 9.88 12.24",
+        "exit": "exit: 0"
+      }
+    }
+  },
+  "calibrationOnly": {
+    "gemini-20940258": {
+      "sb71": {
+        "report": "runs/sb72-validation/20261002/calib-gemini-20940258-sb71.json",
+        "reportSha256": "fd20668b9225c6805eba01e63c64ebac13852be9f9176d11705dc3aa4a8efb61",
+        "scorerVersion": "sb-7.1",
+        "seed": "4aaad9cc95c55bd7",
+        "score": 0.799,
+        "rawScore": 0.9683,
+        "inner": 0.9764,
+        "excellence": 0.9084,
+        "criticalMultiplier": 1.0,
+        "unsuppressedCriticals": [],
+        "ceiling": 0.799,
+        "failedChecksByBand": [
+          {
+            "ceiling": 0.799,
+            "checks": [
+              "q_legible_presentation",
+              "t_camera_math",
+              "t_brush_link"
+            ]
+          },
+          {
+            "ceiling": 0.899,
+            "checks": []
+          }
+        ],
+        "belowOne": {
+          "b_error_envelope": 0.9333,
+          "c_b2_retry_after": 0.6667,
+          "c_conditional_resync": 0.9114,
+          "d_validation": 0.9286,
+          "j_error_state": 0.3,
+          "t_camera_math": 0.7143,
+          "t_brush_link": 0.7778,
+          "e_stream_apply_latency": 0.75,
+          "q_legible_presentation": 0.75
+        },
+        "uptime": {
+          "before": "11:22  up 9 days,  4:42, 1 user, load averages: 8.23 9.09 8.29",
+          "after": "11:27  up 9 days,  4:47, 1 user, load averages: 9.91 10.28 9.10",
+          "exit": "exit: 0"
+        }
+      },
+      "sb72": {
+        "report": "runs/sb72-validation/20261002/calib-gemini-20940258-sb72.json",
+        "reportSha256": "c23720fb08cfc32b74e6bd9bbc56e5fe7e78cb7ecc15ec233525e20e25093b7b",
+        "scorerVersion": "sb-7.2",
+        "seed": "4aaad9cc95c55bd7",
+        "score": 0.699,
+        "rawScore": 0.9466,
+        "inner": 0.9453,
+        "excellence": 0.9563,
+        "criticalMultiplier": 1.0,
+        "unsuppressedCriticals": [],
+        "ceiling": 0.699,
+        "failedChecksByBand": [
+          {
+            "ceiling": 0.699,
+            "checks": [
+              "t_height_pixels",
+              "t_vs7dbg_truth"
+            ]
+          },
+          {
+            "ceiling": 0.799,
+            "checks": [
+              "t_camera_math",
+              "t_coast_reality",
+              "t_brush_link",
+              "q_overview_legibility"
+            ]
+          },
+          {
+            "ceiling": 0.899,
+            "checks": []
+          }
+        ],
+        "belowOne": {
+          "b_error_envelope": 0.9333,
+          "c_b2_retry_after": 0.6667,
+          "c_conditional_resync": 0.9114,
+          "d_validation": 0.9286,
+          "j_error_state": 0.3,
+          "t_height_pixels": 0.0,
+          "t_camera_math": 0.4286,
+          "t_coast_reality": 0.2,
+          "t_brush_link": 0.7778,
+          "t_vs7dbg_truth": 0.7,
+          "q_overview_legibility": 0.6874,
+          "v_presentation_text": 0.75
+        },
+        "uptime": {
+          "before": "11:15  up 9 days,  4:35, 1 user, load averages: 5.50 6.70 6.91",
+          "after": "11:22  up 9 days,  4:42, 1 user, load averages: 8.23 9.09 8.29",
+          "exit": "exit: 0"
+        }
+      }
+    },
+    "deepseek-pinned-43896353": {
+      "sb71": {
+        "report": "runs/sb72-validation/20261002/calib-ds-43896353-sb71.json",
+        "reportSha256": "a975a8c0b7a7916649eccac39ac3e60c3d0dfeed58a7e36261f7de1e352063ff",
+        "scorerVersion": "sb-7.1",
+        "seed": "75d22700da6b7264",
+        "score": 0.799,
+        "rawScore": 0.8715,
+        "inner": 0.9055,
+        "excellence": 0.6221,
+        "criticalMultiplier": 1.0,
+        "unsuppressedCriticals": [],
+        "ceiling": 0.799,
+        "failedChecksByBand": [
+          {
+            "ceiling": 0.799,
+            "checks": [
+              "q_legible_presentation",
+              "t_click_semantics",
+              "t_coast_identity",
+              "t_coast_reality",
+              "t_brush_link",
+              "t_stream_diff"
+            ]
+          },
+          {
+            "ceiling": 0.899,
+            "checks": [
+              "m_committed_event_replay",
+              "x_l5_group_atomicity",
+              "x_m2_pair_conservation",
+              "r_b3_sigkill_resync",
+              "r_notification_multiset"
+            ]
+          }
+        ],
+        "belowOne": {
+          "b_total_field": 0.75,
+          "b_buckets_dst": 0.9872,
+          "d_decisions_doc": 0.6667,
+          "j_sync_journey": 0.75,
+          "j_error_state": 0.3,
+          "p_stream_apply": 0.0,
+          "t_click_semantics": 0.3333,
+          "t_coast_identity": 0.5,
+          "t_coast_reality": 0.2667,
+          "t_brush_link": 0.6667,
+          "t_stream_diff": 0.8,
+          "x_l5_group_atomicity": 0.0,
+          "x_m2_pair_conservation": 0.0,
+          "r_b3_sigkill_resync": 0.6667,
+          "r_notification_multiset": 0.75,
+          "e_stream_apply_latency": 0.0,
+          "e_mastery": 0.4802,
+          "q_legible_presentation": 0,
+          "m_committed_event_replay": 0.6667
+        },
+        "uptime": {
+          "before": "10:52  up 9 days,  4:12, 1 user, load averages: 5.82 6.83 7.36",
+          "after": "11:02  up 9 days,  4:23, 1 user, load averages: 4.60 5.02 5.95",
+          "exit": "exit: 0"
+        }
+      },
+      "sb72": {
+        "report": "runs/sb72-validation/20261002/calib-ds-43896353-sb72.json",
+        "reportSha256": "7aec779a4bb26b8f84e6e051fa606b0d93a120c71c1fd09a6f374e34b3ca723b",
+        "scorerVersion": "sb-7.2",
+        "seed": "75d22700da6b7264",
+        "score": 0.799,
+        "rawScore": 0.8348,
+        "inner": 0.8639,
+        "excellence": 0.6217,
+        "criticalMultiplier": 1.0,
+        "unsuppressedCriticals": [],
+        "ceiling": 0.799,
+        "failedChecksByBand": [
+          {
+            "ceiling": 0.799,
+            "checks": [
+              "t_click_semantics",
+              "t_camera_math",
+              "t_coast_identity",
+              "t_coast_reality",
+              "t_brush_link",
+              "t_stream_diff",
+              "q_overview_legibility",
+              "q_inspector_framing"
+            ]
+          },
+          {
+            "ceiling": 0.899,
+            "checks": [
+              "m_committed_event_replay",
+              "x_l5_group_atomicity",
+              "x_m2_pair_conservation",
+              "r_b3_sigkill_resync",
+              "r_notification_multiset"
+            ]
+          }
+        ],
+        "belowOne": {
+          "b_total_field": 0.75,
+          "b_buckets_dst": 0.9872,
+          "d_decisions_doc": 0.6667,
+          "j_sync_journey": 0.75,
+          "j_error_state": 0.3,
+          "p_stream_apply": 0.0,
+          "t_click_semantics": 0.3333,
+          "t_camera_math": 0.8571,
+          "t_coast_identity": 0.5,
+          "t_coast_reality": 0.2667,
+          "t_brush_link": 0.6667,
+          "t_stream_diff": 0.8,
+          "x_l5_group_atomicity": 0.0,
+          "x_m2_pair_conservation": 0.0,
+          "r_b3_sigkill_resync": 0.6667,
+          "r_notification_multiset": 0.75,
+          "e_stream_apply_latency": 0.0,
+          "e_mastery": 0.4781,
+          "q_overview_legibility": 0.5365,
+          "m_committed_event_replay": 0.6667,
+          "q_inspector_framing": 0.0,
+          "v_presentation_text": 0.75
+        },
+        "uptime": {
+          "before": "10:42  up 9 days,  4:02, 1 user, load averages: 5.59 6.59 8.20",
+          "after": "10:52  up 9 days,  4:12, 1 user, load averages: 5.82 6.83 7.36",
+          "exit": "exit: 0"
+        }
+      }
+    },
+    "deepseek-pinned-01dae737": {
+      "sb71": {
+        "report": "runs/sb72-validation/20261002/calib-ds-01dae737-sb71.json",
+        "reportSha256": "da39ed9dfc328b69b9ed7f6ccdb9c5da9e6cfdb1d4756eaa7fd110462140150e",
+        "scorerVersion": "sb-7.1",
+        "seed": "a435e8242e758c46",
+        "score": 0.699,
+        "rawScore": 0.7721,
+        "inner": 0.9023,
+        "excellence": 0.8006,
+        "criticalMultiplier": 0.8674,
+        "unsuppressedCriticals": [
+          "b_money_rendered",
+          "j_workflow_journey"
+        ],
+        "ceiling": 0.699,
+        "failedChecksByBand": [
+          {
+            "ceiling": 0.699,
+            "checks": [
+              "s_tower_geometry",
+              "t_vs7dbg_truth"
+            ]
+          },
+          {
+            "ceiling": 0.799,
+            "checks": [
+              "q_legible_presentation",
+              "t_pick_buffer",
+              "t_click_semantics",
+              "t_camera_math",
+              "t_labels_culling",
+              "t_brush_link"
+            ]
+          },
+          {
+            "ceiling": 0.899,
+            "checks": [
+              "x_l5_group_atomicity",
+              "x_m2_pair_conservation",
+              "r_b3_sigkill_resync",
+              "r_notification_multiset"
+            ]
+          }
+        ],
+        "belowOne": {
+          "a_package_layout": 0.875,
+          "b_total_field": 0.75,
+          "b_money_rendered": 0.8,
+          "b_buckets_dst": 0.9836,
+          "c_webhook_discipline": 0.6,
+          "d_decisions_doc": 0.0,
+          "j_workflow_journey": 0.8571,
+          "j_error_state": 0.3,
+          "t_pick_buffer": 0.2,
+          "t_click_semantics": 0.6667,
+          "t_camera_math": 0.8571,
+          "t_labels_culling": 0.3,
+          "t_brush_link": 0.4444,
+          "t_vs7dbg_truth": 0.8,
+          "x_l5_group_atomicity": 0.0,
+          "x_m2_pair_conservation": 0.0,
+          "r_b3_sigkill_resync": 0.6667,
+          "r_notification_multiset": 0.75,
+          "e_stream_apply_latency": 0.75,
+          "e_mastery": 0.4757,
+          "s_tower_geometry": 0.6111,
+          "q_legible_presentation": 0.5
+        },
+        "uptime": {
+          "before": "10:30  up 9 days,  3:51, 1 user, load averages: 5.10 9.19 10.91",
+          "after": "10:42  up 9 days,  4:02, 1 user, load averages: 5.59 6.59 8.20",
+          "exit": "exit: 0"
+        }
+      },
+      "sb72": {
+        "report": "runs/sb72-validation/20261002/calib-ds-01dae737-sb72.json",
+        "reportSha256": "bc6791af41067a6ac0bc70fafffd54d3fc8f60e956b8fbf14d9815de27889e97",
+        "scorerVersion": "sb-7.2",
+        "seed": "a435e8242e758c46",
+        "score": 0.699,
+        "rawScore": 0.7738,
+        "inner": 0.8979,
+        "excellence": 0.8496,
+        "criticalMultiplier": 0.8674,
+        "unsuppressedCriticals": [
+          "b_money_rendered",
+          "j_workflow_journey"
+        ],
+        "ceiling": 0.699,
+        "failedChecksByBand": [
+          {
+            "ceiling": 0.699,
+            "checks": [
+              "s_tower_geometry",
+              "t_vs7dbg_truth"
+            ]
+          },
+          {
+            "ceiling": 0.799,
+            "checks": [
+              "t_pick_buffer",
+              "t_click_semantics",
+              "t_camera_math",
+              "t_labels_culling",
+              "t_brush_link",
+              "q_overview_legibility"
+            ]
+          },
+          {
+            "ceiling": 0.899,
+            "checks": [
+              "m_committed_event_replay",
+              "x_l5_group_atomicity",
+              "x_m2_pair_conservation",
+              "r_notification_multiset"
+            ]
+          }
+        ],
+        "belowOne": {
+          "a_package_layout": 0.875,
+          "b_money_rendered": 0.8,
+          "b_buckets_dst": 0.9891,
+          "d_decisions_doc": 0.0,
+          "j_workflow_journey": 0.8571,
+          "j_error_state": 0.3,
+          "t_pick_buffer": 0.2,
+          "t_click_semantics": 0.6667,
+          "t_camera_math": 0.8571,
+          "t_labels_culling": 0.3,
+          "t_brush_link": 0.6667,
+          "t_vs7dbg_truth": 0.8,
+          "x_l5_group_atomicity": 0.0,
+          "x_m2_pair_conservation": 0.0,
+          "r_notification_multiset": 0.75,
+          "e_mastery": 0.4841,
+          "s_tower_geometry": 0.8056,
+          "q_overview_legibility": 0.7451,
+          "m_committed_event_replay": 0.6667,
+          "v_presentation_text": 0.5
+        },
+        "uptime": {
+          "before": "10:23  up 9 days,  3:44, 1 user, load averages: 26.09 14.63 12.65",
+          "after": "10:30  up 9 days,  3:51, 1 user, load averages: 5.10 9.19 10.91",
+          "exit": "exit: 0"
+        }
+      }
+    },
+    "deepseek-c003209f": {
+      "sb71": {
+        "report": "runs/sb72-validation/20261002/calib-ds-c003209f-sb71.json",
+        "reportSha256": "94bf28df1f462e006676958ec51bb0d550607bb513899e8d24825fd5cccde456",
+        "scorerVersion": "sb-7.1",
+        "seed": "09699756384b0886",
+        "score": 0.4932,
+        "rawScore": 0.4932,
+        "inner": 0.8789,
+        "excellence": 0.4044,
+        "criticalMultiplier": 0.6,
+        "unsuppressedCriticals": [
+          "j_workflow_journey"
+        ],
+        "ceiling": 0.699,
+        "failedChecksByBand": [
+          {
+            "ceiling": 0.699,
+            "checks": [
+              "s_tower_geometry",
+              "t_height_pixels",
+              "t_vs7dbg_truth"
+            ]
+          },
+          {
+            "ceiling": 0.799,
+            "checks": [
+              "q_legible_presentation",
+              "t_pick_buffer",
+              "t_coast_reality",
+              "t_brush_link"
+            ]
+          },
+          {
+            "ceiling": 0.899,
+            "checks": [
+              "m_committed_event_replay",
+              "x_l5_group_atomicity",
+              "x_m2_pair_conservation",
+              "r_notification_multiset"
+            ]
+          }
+        ],
+        "belowOne": {
+          "b_error_envelope": 0.9333,
+          "d_decisions_doc": 0.6667,
+          "j_workflow_journey": 0.0,
+          "j_workflow_reject": 0.0,
+          "j_error_state": 0.0,
+          "p_stream_apply": 0.0,
+          "t_height_pixels": 0.8333,
+          "t_pick_buffer": 0.3,
+          "t_coast_reality": 0.8,
+          "t_brush_link": 0.4444,
+          "t_vs7dbg_truth": 0.5,
+          "x_l5_group_atomicity": 0.0,
+          "x_m2_pair_conservation": 0.0,
+          "r_notification_multiset": 0.6667,
+          "e_stream_apply_latency": 0.0,
+          "e_optimistic_paint": 0.0,
+          "e_mastery": 0.4887,
+          "s_tower_geometry": 0.7778,
+          "q_legible_presentation": 0,
+          "m_committed_event_replay": 0
+        },
+        "uptime": {
+          "before": "10:17  up 9 days,  3:38, 1 user, load averages: 6.09 9.04 11.21",
+          "after": "10:23  up 9 days,  3:44, 1 user, load averages: 26.09 14.63 12.65",
+          "exit": "exit: 0"
+        }
+      },
+      "sb72": {
+        "report": "runs/sb72-validation/20261002/calib-ds-c003209f-sb72.json",
+        "reportSha256": "de076f4b2c4cc61ad188a103131014c4d01816efcf6afb529f8718088bf54768",
+        "scorerVersion": "sb-7.2",
+        "seed": "09699756384b0886",
+        "score": 0.452,
+        "rawScore": 0.452,
+        "inner": 0.8009,
+        "excellence": 0.4042,
+        "criticalMultiplier": 0.6,
+        "unsuppressedCriticals": [
+          "j_workflow_journey"
+        ],
+        "ceiling": 0.699,
+        "failedChecksByBand": [
+          {
+            "ceiling": 0.699,
+            "checks": [
+              "s_tower_geometry",
+              "t_height_pixels",
+              "t_vs7dbg_truth"
+            ]
+          },
+          {
+            "ceiling": 0.799,
+            "checks": [
+              "t_pick_buffer",
+              "t_camera_math",
+              "t_coast_reality",
+              "t_brush_link",
+              "q_overview_legibility",
+              "q_inspector_framing"
+            ]
+          },
+          {
+            "ceiling": 0.899,
+            "checks": [
+              "m_committed_event_replay",
+              "x_l5_group_atomicity",
+              "x_m2_pair_conservation",
+              "r_notification_multiset"
+            ]
+          }
+        ],
+        "belowOne": {
+          "b_error_envelope": 0.9333,
+          "d_decisions_doc": 0.6667,
+          "j_workflow_journey": 0.0,
+          "j_workflow_reject": 0.0,
+          "j_error_state": 0.0,
+          "p_stream_apply": 0.0,
+          "t_height_pixels": 0.8333,
+          "t_pick_buffer": 0.3,
+          "t_camera_math": 0.8571,
+          "t_coast_reality": 0.4667,
+          "t_brush_link": 0.5556,
+          "t_vs7dbg_truth": 0.8,
+          "x_l5_group_atomicity": 0.0,
+          "x_m2_pair_conservation": 0.0,
+          "r_notification_multiset": 0.6667,
+          "e_stream_apply_latency": 0.0,
+          "e_optimistic_paint": 0.0,
+          "e_mastery": 0.4877,
+          "s_tower_geometry": 0.7778,
+          "q_overview_legibility": 0.5917,
+          "m_committed_event_replay": 0,
+          "q_inspector_framing": 0.0,
+          "v_presentation_text": 0.5
+        },
+        "uptime": {
+          "before": "10:11  up 9 days,  3:32, 1 user, load averages: 6.96 9.88 12.24",
+          "after": "10:17  up 9 days,  3:38, 1 user, load averages: 6.09 9.04 11.21",
+          "exit": "exit: 0"
+        }
+      }
+    }
+  },
+  "limitations": {
+    "difficultyAcceptance": "No SB7.2 model run yet; archived SB7.1 entrant trees re-scored for calibration only (built against the SB7.1 prompt).",
+    "subjectiveArtisticExcellence": "not established by deterministic geometry, legibility, presentation and motion checks",
+    "legibilityThresholds": "Set from one reference app and one seed (five identical runs) with stated margins.",
+    "installedScoringRetryAcceptance": "pending separate receipt",
+    "publishedAcceptance": "pending separate receipt",
+    "notarizedDistribution": "pending separate receipt",
+    "empiricalCalibration": "Fixed published budgets plus one measured stream-apply excellence rung (sb72-thresholds.json receipt); no worst-of-five fit or hardware normalization.",
+    "referenceRepeatsWithFinalBytes": "one (golden-sb72-ref-a); the second was cut for time"
+  }
+}
