@@ -227,6 +227,40 @@ class ScorerRuntimeTests(unittest.TestCase):
             server.server_close()
             thread.join()
 
+    def test_idle_sse_stream_keeps_its_observed_content_type(self):
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        release = threading.Event()
+        class Idle(BaseHTTPRequestHandler):
+            protocol_version = 'HTTP/1.1'
+            def do_GET(self):
+                # The 01dae737 candidate's shape: a 26-byte comment preamble, then 12 s of quiet.
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/event-stream')
+                self.send_header('Transfer-Encoding', 'chunked')
+                self.end_headers()
+                preamble = b':' + b' ' * 24 + b'\n\n'
+                self.wfile.write(b'%x\r\n' % len(preamble) + preamble + b'\r\n')
+                self.wfile.flush()
+                release.wait(10)
+                self.close_connection = True
+            def log_message(self, *_):
+                pass
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Idle)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        try:
+            with score.probe_runtime():
+                observed = score.base._sse_head('http://127.0.0.1:' + str(server.server_port), timeout=2)
+            self.assertEqual(observed['status'], 200)
+            self.assertEqual(observed['ctype'], 'text/event-stream')
+            self.assertEqual(observed['head'], ':' + ' ' * 24 + '\n\n')
+        finally:
+            release.set()
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
     def test_stream_handshake_fires_only_after_ready_and_never_twice(self):
         import threading
         with tempfile.TemporaryDirectory() as tmp:

@@ -318,8 +318,14 @@ def probe_runtime():
     def sse_head(url, timeout=5):
         try:
             with urllib.request.urlopen(urllib.request.Request(url + '/api/stream'), timeout=timeout) as response:
-                return {'status': response.status, 'ctype': response.headers.get('Content-Type', ''),
-                        'head': response.read(160).decode(errors='replace')}
+                observed = {'status': response.status, 'ctype': response.headers.get('Content-Type', '')}
+                # A stream that idles after its first chunk is legal SSE; read(160) waited for
+                # 160 bytes, timed out, and discarded the content type already received.
+                try:
+                    observed['head'] = response.read1(160).decode(errors='replace')
+                except Exception as error:
+                    observed['head_error'] = type(error).__name__
+                return observed
         except urllib.error.HTTPError as error:
             with error:
                 return {'status': error.code, 'ctype': error.headers.get('Content-Type', ''),
