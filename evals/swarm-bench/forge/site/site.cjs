@@ -71,7 +71,7 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
       if (f.windowUntil !== null && now < f.windowUntil) {
         const rec = { fault: f.id, kind: 'early_retry', at: new Date(now).toISOString(), invocationId: caller.invocationId, path, retryAfter: Math.ceil((f.windowUntil - now) / 1000) };
         faultLog.push(rec);
-        return { f, retryAfter: rec.retryAfter };
+        return { f, retryAfter: rec.retryAfter, kind: 'early_retry' };
       }
       if (f.fired) continue;
       let fire = false;
@@ -83,7 +83,7 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
         const rec = { fault: f.id, kind: 'fired', at: new Date(now).toISOString(), invocationId: caller.invocationId, moduleType: caller.moduleType, path, retryAfter: f.retryAfter, scope: f.match.scope };
         faultLog.push(rec);
         traceLine({ event: 'fault', ...rec });
-        return { f, retryAfter: f.retryAfter };
+        return { f, retryAfter: f.retryAfter, kind: 'fired' };
       }
     }
     return null;
@@ -120,7 +120,15 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
     const entry = { t: new Date(state.now()).toISOString(), method, path: url.pathname + url.search, as: caller?.as ?? null, accountId: caller?.accountId ?? null,
       invocationId: caller?.invocationId ?? null, moduleType: caller?.moduleType ?? null, moduleKey: caller?.moduleKey ?? null, source: caller?.source ?? null };
     log.push(entry);
-    const send = (status, body, headers) => { entry.status = status; json(res, status, body, headers); };
+    const send = (status, body, headers = {}) => {
+      entry.status = status;
+      // Harness-internal attribution for the proxy's call log; the proxy strips x-forge-site-* before the app sees the response.
+      const internal = {};
+      if (entry.fault) { internal['x-forge-site-fault'] = entry.fault; internal['x-forge-site-fault-kind'] = entry.faultKind; }
+      if (entry.scopeAlternative) internal['x-forge-site-scopes'] = JSON.stringify(entry.scopeAlternative);
+      if (entry.op) internal['x-forge-site-op'] = entry.op;
+      json(res, status, body, { ...headers, ...internal });
+    };
     if (!caller) return send(401, { errorMessages: ['Client must be authenticated to access this resource.'], errors: {} });
     if (!caller.accountId) return send(401, { code: 401, message: 'Unauthorized; no user or app identity on this request' });
     let body;
@@ -156,6 +164,7 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
     const fault = faultFor(caller, opKey, pathname);
     if (fault) {
       entry.fault = fault.f.id;
+      entry.faultKind = fault.kind;
       return send(429, { errorMessages: ['Rate limit exceeded.'], errors: {} }, { 'Retry-After': String(fault.retryAfter), 'RateLimit-Reason': fault.f.reason });
     }
     if (WRITE_OPS.has(opKey)) {
@@ -259,6 +268,9 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
     signals,
     harnessMissing,
     control,
+    // A live change that happens in Jira without its event reaching the app (a dropped delivery).
+    applyChange: (change) => state.applyThrough(typeof change === 'string' ? change : change.changelogId),
+    flushLive: () => state.flush(),
     stop: () => new Promise((ok) => server.close(() => ok())),
   };
 }
