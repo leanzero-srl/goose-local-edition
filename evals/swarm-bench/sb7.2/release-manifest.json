@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "scorerVersion": "sb-7.2",
-  "sourceCommit": "5354baacdc9457518645134fb07aba7b1b82055f",
+  "sourceCommit": "c2b257fa927c575f844068c80a3738a4c03eee7a",
   "sourceCommitScope": "Benchmark implementation snapshot for SB7.2 (scorer sb-7.2): SB7.1's Meridian product, SB7 contract, starter (sb7.1/starter), fixtures and vendor with a 3D-weighted scorer (score_sb72.py wraps score_sb71.py), the framed default camera and overview legibility (product_probe_sb72.mjs = product_probe_sb71.mjs under the SB7.2 profile), public excellence rungs and a 180 ms stream-apply rung (sb72-thresholds.json), and run_build.py --sb72 through isolated_tiers.py. Release metadata and the validation receipt are added by the manifest commit. Call budget and wallet guard (5ae66cd5e, owner-approved 2026-10-02): run_build.py passes --max-turns bench_budget.CALL_BUDGET (150) to every isolated single-model entrant's goose run (swarm entrants unbudgeted), records budget{max_calls, calls_used, stopped_by} in agent, verdict and model-cost.json, scores a call-budget or wallet-guard stop instead of refusing it, and with BENCH_MAX_USD set SIGTERMs an OpenRouter entrant's pid once its billed generations reach the limit; bench_budget.py and test_bench_budget.py are new, bench_cost.py and bench_rescore.py changed with it; scorer bytes unchanged. SB7.2 public contract trim (2026-10-02, f202fcaab): isolated_tiers.py gains a per-tier `public` table that run_build.py renders into the workdir; SB7.1 still renders spec-build-sb7.md and sb7.1/VISUAL-CONTRACT.md (receipt contract tuple unchanged, test-pinned); SB7.2 renders its own sb7.2/SB7-CONTRACT.md, sb7.2/VISUAL-CONTRACT.md and sb7.2/STARTER.md (72,107 -> 35,848 bytes; three refuter-found measured requirements restored: newest-first notifications, /api/events seq > after ascending, /api/drafts?state= filter) and its prompt gains a definition of done and the 150-call budget; score_sb72.py hashes the SB7.2 contract files; release_manifest.py pins the two new files. Scoring bytes (probes, thresholds, check logic) unchanged.",
   "validation": {
     "status": "passed",
@@ -58,7 +58,7 @@
     "bench/release_manifest.py": "c88c5c0614f10229e172eb5956fcab913712a6f4b623d27904f2b99d6f91cdf5",
     "bench/repair.py": "83734027abae84772688198d4da694c4df57e638bd763cdd9c2432bf6a9793f6",
     "bench/route_oracle.py": "8712733b7bdf377c10e62455e72478c68aed6647b0b3c939046de30737b6d848",
-    "bench/run_build.py": "23daf23ede4473a4d70be8213eadee8275e894f69707f7056b8b09b2e64c67ba",
+    "bench/run_build.py": "f6e6bef523f4dd822642e89949b0a02156124eafa19ea8037032ca7e6e9583a9",
     "bench/sb6-thresholds.json": "723e71b5a029885103b2a4c61674bc8c8c6ca415ac397e20f3f7ecd1aa66490a",
     "bench/sb7-thresholds.json": "a945595fbfcd36f7837e4f3cf558e30a8964301f7108b96c7a3418968d35abc3",
     "bench/sb71-release-validation.json": "a9dacd7131c6c72d82c06c2d4b692503f71d73c179fc291f231c2a302366edf4",
@@ -88,7 +88,7 @@
     "bench/test_port_holder.py": "e4be7adfc57c198ec19486442d959bdde73da62fb9343dcb34e1077638655307",
     "bench/test_probe_preflight.py": "b2f31018f7324a552b164b188264fd6af349f4a8b6baacc38306ad4b19c42dd4",
     "bench/test_quality_observer_aggregate.py": "507cbdfcde5c5112549fd647a4540727d3c9b0eb32fe2656afb02d5da17b208b",
-    "bench/test_run_build_cloud.py": "6d069e379bad8e3fea28b1a625104c998a62b10415c9ec678a1c4945d31563c1",
+    "bench/test_run_build_cloud.py": "8aeeacdade91daa3784ce9ae0f40b9128bc85c48e8ed5fa577e345e5212e02f3",
     "bench/test_run_build_scoring_vendor.py": "8650fe06a342ba9c9065a47fa115834f3423fbd20f27aa567d4255091f1aac0f",
     "bench/test_sb71_drag_budget_read.mjs": "9da52291badf35908801b5f500c9a6ff6bb5bf9628629b4aa69b56bdc055be5e",
     "bench/test_sb71_drag_budget_read.py": "af5147721ec996ffbaff63fc5f1e79a4862f1c1fb7ccda8f74e9a2d33fc4e6a1",
