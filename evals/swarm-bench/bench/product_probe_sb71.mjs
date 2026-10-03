@@ -710,9 +710,9 @@ const isViz = scenario === 'viz' || scenario === 'sb71-visual' || scenario === '
 
 // F18 lineage: viz carries SwiftShader startup at N=12,288 plus the full scripted battery.
 // SB7.2's viz battery is longer (aimed presses, a retried flick, rest windows after every interaction
-// kind, picks after a batch and mid-coast): measured 143 s (golden) .. 258 s (07caff2d) at load < 8,
-// so its cap is 400 s (1.55x the slowest quiet run; 230 s refused 07caff2d twice).
-const HARD_MS = isViz ? (PROBE_TIER === 'sb-7.2' ? 400000 : 230000) : scenario === 'flow' ? 110000 : 90000;
+// kind, picks after a batch and mid-coast): measured 138-143 s (golden) .. 258 s (07caff2d) .. 281 s
+// (648336b4) at load < 8, so its cap is 480 s (1.7x the slowest quiet run; 230 s refused 07caff2d twice).
+const HARD_MS = isViz ? (PROBE_TIER === 'sb-7.2' ? 480000 : 230000) : scenario === 'flow' ? 110000 : 90000;
 const startedAt = Date.now();
 const budgetLeft = () => HARD_MS - (Date.now() - startedAt);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

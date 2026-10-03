@@ -369,9 +369,9 @@ def _probe(scenario: str, base: str, *flags: str, env: Optional[Dict] = None,
     if not PROBE_SCRIPT.is_file():
         return {"_probe_error": f"{scenario}: product_probe_v3.mjs not present (sibling deliverable)"}
     cmd = [node, str(PROBE_SCRIPT), scenario, base, *flags]
-    # The probe's own hard cap is 230 s for viz (400 s under SB7.2, whose battery is longer); this
+    # The probe's own hard cap is 230 s for viz (480 s under SB7.2, whose battery is longer); this
     # outer bound only catches a probe that never emits, so it sits 10 s above the probe's cap.
-    budget = timeout or ((410 if SB72_STRICT else 240) if scenario == "viz" else 120)
+    budget = timeout or ((490 if SB72_STRICT else 240) if scenario == "viz" else 120)
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=budget,
                            env={**os.environ, **(env or {})})
