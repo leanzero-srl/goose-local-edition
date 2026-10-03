@@ -1,6 +1,6 @@
 ---
 name: goose-mlx-inference
-description: Operate and evolve goose Local Edition's in-house MLX inference engine (the supervised sidecar living NEXT TO LM Studio, never replacing it). Use when working on branch goose/mlx-inferencing, running the engine bake-off, mounting/benching MLX models, patching the engine fork, touching crates/goose-sidecar or the MLX desktop window, or when an experiment/finding about local MLX inference needs recording.
+description: Operate and evolve goose Local Edition's in-house MLX inference engine (the supervised sidecar living NEXT TO LM Studio, never replacing it). Use when working on branch goose/mlx-inferencing, running the engine bake-off, mounting/benching MLX models, patching the engine fork, touching crates/goose-sidecar or the MLX desktop window, or when an experiment/finding about local MLX inference needs recording. Also the home of goose's DISTRIBUTED engine (one model split across the two Macs over JACCL/ring, the qwen4_exp pipeline fork, Flash, rank launcher/supervisor, hang/watchdog rules) and REMOTE SINGLE (the engine on a LeanZero Link peer) — their dated record is in references/. The raw two-Mac MLX/JACCL layer underneath is the mlx-jaccl-cluster skill.
 ---
 
 # goose-mlx-inference
