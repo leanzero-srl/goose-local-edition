@@ -1,0 +1,73 @@
+{
+ "receipt": "openai/gpt-6-luna-pro SB7.2 run openrouter-cloud-8304e798 (seed d5077a6dfefc9fc3), rescored with the target_absent probe; probe-observations.json sha256 a4f1d6267302ac0e65a27f6f346d923f7f99bc45a54005e024cad6e664872ee4. In-app scoring refused \"fire_d1_mutation:failed\": its sync() raises UnboundLocalError (hdr) before any GET /v3/payments, so it held 30/12288 payments and drew 6.",
+ "viz": {
+  "sb71StreamHandshake": {
+   "signal": {
+    "state": "target_absent",
+    "id": "pay_03034",
+    "reason": "D1 target pay_03034 absent from the candidate: GET /api/payments/pay_03034 answered 404 and its scene digest counts 6 of 12289 records",
+    "targetAbsent": {
+     "targetId": "pay_03034",
+     "payment": {
+      "status": 404,
+      "body": "{\"error\":{\"code\":\"not_found\",\"message\":\"Payment not found\"}}"
+     },
+     "sceneCount": 6,
+     "expectedCount": 12289
+    }
+   },
+   "delivery": {
+    "payment_id": "pay_03034",
+    "version": 2,
+    "to_status": "settled",
+    "delivery": {
+     "event_id": "evt_d1_0002",
+     "kind": "apply",
+     "status": 200,
+     "error": null,
+     "ms": 1.1,
+     "sched": "d1_mutation"
+    }
+   }
+  },
+  "streamPixelArm": {
+   "error": "No independently decisive D1 pixel witness",
+   "mode": "target_absent",
+   "targetAbsent": {
+    "targetId": "pay_03034",
+    "payment": {
+     "status": 404,
+     "body": "{\"error\":{\"code\":\"not_found\",\"message\":\"Payment not found\"}}"
+    },
+    "sceneCount": 6,
+    "expectedCount": 12289
+   },
+   "rejected": {
+    "no independent pixel point at this pose": 73,
+    "click at the target pixel did not brush it": 28,
+    "unbrushing click not attributable: target colour not drawn at the clicked pixel": 28
+   }
+  },
+  "d1Arm": {
+   "targetId": "pay_03034",
+   "brushed": false,
+   "via": "unreachable"
+  },
+  "d1": {
+   "targetId": "pay_03034",
+   "armedBrushed": false,
+   "via": "unreachable",
+   "mutationSeen": true,
+   "brushAfter": [],
+   "survivedInBrush": false,
+   "survived": null,
+   "rowBrushedAfter": false
+  },
+  "streamApplied": {
+   "observed": true,
+   "applied": false,
+   "batches": 4
+  },
+  "timedOut": false
+ }
+}

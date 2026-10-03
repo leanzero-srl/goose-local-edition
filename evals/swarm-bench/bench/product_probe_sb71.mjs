@@ -3438,7 +3438,23 @@ async function armStreamWitness(page,model,d1TargetId,seed) {
         streamReady({state,id:d1TargetId,reason,candidateFailure});
         return {mode:state,witness};
       }
-      merge({streamPixelArm:{error:'No independently decisive D1 pixel witness',rejected}});
+      // No pixel anywhere draws the target: ask the candidate whether it holds the record at all. Its
+      // own 404 for a payment the vendor serves is the candidate's absence (it never ingested D1),
+      // not a harness failure (receipt: gpt-6-luna-pro SB7.2, 30/12288 synced, 6 instances drawn).
+      const held=await page.request.get(baseUrl+'/api/payments/'+encodeURIComponent(d1TargetId))
+        .then(async r=>({status:r.status(),body:(await r.text()).slice(0,300)}))
+        .catch(error=>({status:null,error:String(error).slice(0,160)}));
+      if(held.status===404) {
+        const digest=(await vs7({want:['digest']})).digest;
+        const targetAbsent={targetId:d1TargetId,payment:held,
+          sceneCount:digest&&typeof digest.count==='number'?digest.count:null,expectedCount:model.items.length};
+        const reason='D1 target '+d1TargetId+' absent from the candidate: GET /api/payments/'+d1TargetId+
+          ' answered 404 and its scene digest counts '+targetAbsent.sceneCount+' of '+targetAbsent.expectedCount+' records';
+        merge({streamPixelArm:{error:'No independently decisive D1 pixel witness',mode:'target_absent',targetAbsent,rejected}});
+        streamReady({state:'target_absent',id:d1TargetId,reason,targetAbsent});
+        return {mode:'target_absent',witness:null};
+      }
+      merge({streamPixelArm:{error:'No independently decisive D1 pixel witness',rejected,targetHeld:held}});
       streamReady({state:'witness_unavailable',reason:'No independently decisive D1 pixel witness'});
       return {mode:'witness_unavailable',witness:null};
 }
