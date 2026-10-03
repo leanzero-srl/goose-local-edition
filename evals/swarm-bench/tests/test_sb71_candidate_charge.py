@@ -242,3 +242,127 @@ class DuplicatedVendorPaymentTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class BurstRejectedTests(unittest.TestCase):
+    """qwen/qwen3.8-omni-flash, SB7.2 (2026-10-03): its ledgerd strips 'whsec_' from the HMAC key, so all
+    24 burst deliveries were answered 401 within 16 ms; the readers' overlap with that instant burst was
+    0.367 and the run was REFUSED as 'load unproven'. The stream load never existed: charged at any overlap."""
+
+    def setUp(self):
+        saved = json.loads((Path(__file__).parent / 'fixtures/sb72-omni-flash-burst-rejected.json').read_text())
+        self.trace, self.under = saved['trace'], saved['under_stream']
+
+    def ctx(self, trace=None, under=None):
+        return SimpleNamespace(trace=copy.deepcopy(self.trace if trace is None else trace),
+                               under_stream=dict(self.under if under is None else under))
+
+    def test_the_omni_flash_receipt_is_charged(self):
+        for name in ('p_under_stream', 'e_under_load_latency'):
+            self.assertTrue(check(name)(self.ctx()).get('unavailable'), 'the control: it refused before')
+            row = result(name, self.ctx())
+            self.assertEqual(row['score'], 0)
+            self.assertNotIn('unavailable', row)
+            self.assertIn('HTTP 401 x24 of 24 burst deliveries', row['detail'])
+            self.assertEqual(row['parts']['burst_rejected']['burst_ms'], 15.9)
+
+    def test_a_rejected_burst_is_charged_even_when_reads_overlapped_it(self):
+        ctx = self.ctx(under={'overlap_frac': 0.9, 'p95_ms': 2.0, 'n': 30, 'correct': True})
+        self.assertEqual(check('p_under_stream')(ctx)['score'], 1.0, 'the control: a fast idle read earned 1.0')
+        self.assertEqual(result('p_under_stream', ctx)['score'], 0)
+
+    def test_a_never_registered_webhook_is_charged(self):
+        trace = [e for e in self.trace if not e.get('webhook_delivery') and 'sched-partial' not in e]
+        trace += [{'sched-partial': 'burst', 'event': f'evt_burst_{i:04d}', 'reason': 'no_webhook_registered',
+                   't': e['t']} for i, e in enumerate(trace)]
+        row = result('p_under_stream', self.ctx(trace=trace))
+        self.assertEqual(row['score'], 0)
+        self.assertIn('no webhook registered x24', row['detail'])
+
+    def test_harness_side_bursts_still_refuse(self):
+        def accepted(trace):
+            next(e for e in trace if e.get('webhook_delivery'))['delivery_status'] = 200
+        def timed_out(trace):
+            first = next(e for e in trace if e.get('webhook_delivery'))
+            first.update(delivery_status=None, delivery_error='TimeoutError')
+        def lost(trace):
+            trace.remove(next(e for e in trace if e.get('webhook_delivery')))
+        for name, edit in [('one delivery acked', accepted), ('a transport timeout', timed_out),
+                           ('a delivery missing from the trace', lost),
+                           ('no burst fired', lambda trace: trace.clear())]:
+            trace = copy.deepcopy(self.trace)
+            edit(trace)
+            with self.subTest(name):
+                self.assertTrue(result('p_under_stream', self.ctx(trace=trace))['unavailable'])
+        never = SimpleNamespace(trace=copy.deepcopy(self.trace), under_stream={})
+        self.assertTrue(result('e_under_load_latency', never)['unavailable'])
+
+
+class D1TargetAbsentTests(unittest.TestCase):
+    """openai/gpt-6-luna-pro, SB7.2 (2026-10-03): its sync() raised UnboundLocalError before any list
+    request, so it held 30 of 12,288 payments and drew 6; no pose could draw the D1 target, the probe
+    signalled witness_unavailable, the D1 mutation never fired and the run was REFUSED as
+    'fire_d1_mutation:failed'. Its own GET /api/payments/<target> answers 404: charged now."""
+
+    def setUp(self):
+        saved = json.loads((Path(__file__).parent / 'fixtures/sb72-luna-pro-d1-target-absent.json').read_text())
+        self.viz = saved['viz']
+        self.decisions = {'score': 0.5, 'detail': 'D1=0.5, D2=0.5, D3=0.5', 'parts': {
+            'D1': {'documented': True, 'doc_stance': None, 'observed': None, 'score': 0.5},
+            'D2': {'documented': True, 'doc_stance': None, 'observed': None, 'score': 0.5},
+            'D3': {'documented': True, 'doc_stance': None, 'observed': None, 'score': 0.5}}}
+
+    def test_the_handshake_fires_the_mutation_on_the_target_absent_signal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'ready.json'
+            path.write_text(json.dumps(self.viz['sb71StreamHandshake']['signal']))
+            calls = []
+            handshake = score.StreamHandshake(path, lambda: calls.append('fired') or {'version': 2})
+            handshake.start()
+            self.assertTrue(handshake.done.wait(2))
+            handshake.finish()
+            self.assertEqual(handshake.result(), {'version': 2})
+            self.assertEqual(calls, ['fired'])
+
+    def test_the_luna_pro_receipt_is_charged(self):
+        witness = score.stream_witness(self.viz)
+        self.assertEqual(witness['status'], 'target_absent')
+        self.assertFalse(witness['stream_measured'])
+        self.assertEqual(witness['evidence']['payment']['status'], 404)
+        ctx = SimpleNamespace(probes={'viz': copy.deepcopy(self.viz)})
+        charged = result('d_decisions_doc', ctx, lambda _: copy.deepcopy(self.decisions))
+        self.assertEqual(charged['parts']['D1']['score'], 0.0)
+        self.assertAlmostEqual(charged['score'], 1 / 3)
+        unmeasured = {'score': 0, 'detail': 'no stream batch applied', 'consequence': 'the live stream never landed'}
+        row = result('p_stream_apply', ctx, lambda _: dict(unmeasured))
+        self.assertEqual(row['parts'], {'stream_witness': 'target_absent'})
+        timed = {'score': 1.0, 'detail': 'batch visible in 0.4 ms', 'parts': {'ms': 0.4}}
+        self.assertEqual(result('p_stream_apply', ctx, lambda _: timed), timed)
+
+    def test_contradicted_absence_still_refuses(self):
+        def edits(viz):
+            signal = viz['sb71StreamHandshake']['signal']
+            return [
+                ('candidate holds the record', lambda: signal['targetAbsent']['payment'].update(status=200)),
+                ('observation disagrees', lambda: viz['streamPixelArm']['targetAbsent'].update(sceneCount=12289)),
+                ('another target', lambda: signal.update(id='pay_00001')),
+                ('early arm found the row', lambda: viz['d1Arm'].update(via='table-click', brushed=True)),
+                ('pixel search never ran', lambda: viz['streamPixelArm'].update(rejected={'vs7dbg.brush unavailable': 1})),
+            ]
+        for index in range(5):
+            viz = copy.deepcopy(self.viz)
+            name, apply = edits(viz)[index]
+            apply()
+            with self.subTest(name):
+                self.assertIn('contradictory SB7.1 D1 stream witness', score.stream_witness(viz)['refuse'])
+
+    def test_a_witness_unavailable_signal_still_refuses(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'ready.json'
+            path.write_text(json.dumps({'state': 'witness_unavailable'}))
+            handshake = score.StreamHandshake(path, lambda: self.fail('must not mutate'))
+            handshake.start()
+            self.assertTrue(handshake.done.wait(2))
+            handshake.finish()
+            with self.assertRaisesRegex(RuntimeError, 'SB7.1 stream witness unavailable'):
+                handshake.result()
