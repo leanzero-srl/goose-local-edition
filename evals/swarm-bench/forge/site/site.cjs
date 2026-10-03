@@ -32,8 +32,8 @@ function json(res, status, body, headers = {}) {
   res.end(text);
 }
 
-async function createSite({ seed, port = 0, trace = null, token = crypto.randomBytes(12).toString('hex'), openapiDir, pack: givenPack } = {}) {
-  const pack = givenPack ?? facts(seed);
+async function createSite({ seed, port = 0, trace = null, token = crypto.randomBytes(12).toString('hex'), openapiDir, pack: givenPack, scoring = false } = {}) {
+  const pack = givenPack ?? facts(seed, { scoring });
   const state = createState(pack);
   const render = createRenderer(state);
   const openapi = createOpenApi(openapiDir);
@@ -176,7 +176,7 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
         return send(429, { errorMessages: ['Rate limit exceeded.'], errors: {} }, { 'Retry-After': String(wait), 'RateLimit-Reason': 'jira-per-issue-on-write' });
       }
     }
-    const ctx = { state, render, limits: pack.limits, caller, params: m.params,
+    const ctx = { state, render, limits: pack.limits, paging: pack.paging, caller, params: m.params,
       req: { method, pathname, query: url.searchParams, body },
       canBrowse: (iss) => state.canBrowse(caller.accountId, iss), canComment: (iss) => state.canComment(caller.accountId, iss) };
     try {

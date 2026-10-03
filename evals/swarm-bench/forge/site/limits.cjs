@@ -26,4 +26,23 @@ const LIMITS = {
   issueWritesPer30s: { value: 100, receipt: { doc: 'https://developer.atlassian.com/cloud/jira/platform/rate-limiting/', quote: '100 write operations per 30 seconds' } },
 };
 
-module.exports = { LIMITS };
+// The SCORING site's page rule (DESIGN §17.6; the dev site never carries it). Jira serves at most `maxResults` per
+// page and may serve fewer: "To manage page size, API may return fewer items per page" (jira.json GET
+// /rest/api/3/search/jql maxResults; jsw.json /rest/software/1.0 issue lists), "Each operation can have a different
+// limit for the number of items returned, and these limits may change without notice"
+// (developer.atlassian.com/cloud/jira/platform/rest/v3/intro/#pagination). At the pack's volume no backfill read
+// crosses a documented cap, so an app's paging loop never ran (Sol 2026-10-03: 79 of 83 walks were one page). The
+// scoring site uses that latitude so every list of two or more items spans at least two pages — a ratio of the
+// list itself, never a typed size.
+const SCORING_PAGING = {
+  rule: 'half',
+  receipt: { doc: 'https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/#pagination',
+    quote: 'Each operation can have a different limit for the number of items returned, and these limits may change without notice.',
+    openapi: 'jira.json GET /rest/api/3/search/jql maxResults', openapiQuote: 'To manage page size, API may return fewer items per page' },
+};
+
+// Items the site puts on one page: `size` is the request clamped to the documented cap; under the scoring rule a
+// list of `total` >= 2 items is served in pages of at most ceil(total / 2).
+const servedPageSize = (paging, size, total) => (paging?.rule === 'half' && total >= 2 ? Math.min(size, Math.ceil(total / 2)) : size);
+
+module.exports = { LIMITS, SCORING_PAGING, servedPageSize };

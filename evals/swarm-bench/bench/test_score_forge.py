@@ -130,9 +130,13 @@ def golden_observations(pack):
         'calls': [jira(0, 'b1', 'scheduled', '/rest/api/3/field'),
                   jira(1, 'b1', 'scheduled', '/rest/agile/1.0/board', status=429, fault=f_rec['id']),
                   jira(3.5, 'b1', 'scheduled', '/rest/agile/1.0/board', response={'isLast': True, 'values': [{}]}),
+                  # the scoring site serves the backfill search in two pages (pack.paging); the golden walks both
                   jira(4, 'b1', 'scheduled', '/rest/api/3/search/jql', method='POST',
                        body={'jql': 'updated >= -30d', 'fields': ['customfield_10020']},
-                       response={'issues': [{'id': '100'}]}),
+                       response={'issues': [{'id': '100'}], 'nextPageToken': 'p2', 'isLast': False}),
+                  jira(4.5, 'b1', 'scheduled', '/rest/api/3/search/jql', method='POST',
+                       body={'jql': 'updated >= -30d', 'fields': ['customfield_10020'], 'nextPageToken': 'p2'},
+                       response={'issues': [{'id': '101'}], 'isLast': True}),
                   jira(5, 'b1', 'scheduled', '/rest/api/3/changelog/bulkfetch', method='POST',
                        body={'issueIdsOrKeys': ['100']}, response={'issueChangeLogs': []}),
                   jira(6, 'b1', 'scheduled', '/rest/api/3/issue/bulkfetch', method='POST', body={'issueIdsOrKeys': ['100']})]
@@ -565,13 +569,51 @@ class DefectTests(Golden):
 
     def test_ids_only_search_without_fields_is_legitimate_for_pagination(self):
         def ids_only(obs):
-            obs['phases']['backfill']['calls'][3]['body'].pop('fields')
+            for page in obs['phases']['backfill']['calls'][3:5]:
+                page['body'].pop('fields')
         self.assertEqual(self.rows(self.mutate(ids_only))['r_pagination']['score'], 1)
 
     def test_a_walk_that_stops_on_a_next_page_token_is_incomplete(self):
         def stop(obs):
-            obs['phases']['backfill']['calls'][3]['response']['nextPageToken'] = 'p2'
+            del obs['phases']['backfill']['calls'][4]
         self.assertLess(self.rows(self.mutate(stop))['r_pagination']['score'], 1)
+
+    def test_one_page_reads_are_not_pagination_evidence(self):
+        # Sol 2026-10-03: "83/83 paginated reads walked to their end" while 79 were one page the site answered as
+        # the last. A read with nothing after its first page never ran the paging loop: graded on nothing.
+        def one_page(obs):
+            del obs['phases']['backfill']['calls'][4]
+            obs['phases']['backfill']['calls'][3]['response'] = {'issues': [{'id': '100'}], 'isLast': True}
+        row = self.rows(self.mutate(one_page))['r_pagination']
+        self.assertEqual(row['score'], 0.0)
+        self.assertIn('vacuous', row['detail'])
+
+        # beside a real walk, the golden's one-page reads (board list, changelog bulkfetch) ride along ungraded
+        row = self.rows(self.score())['r_pagination']
+        self.assertEqual(row['score'], 1.0, row['detail'])
+        self.assertEqual(row['parts']['paged_walks'], 1)
+        self.assertIn('one-page read', row['detail'])
+
+    def test_a_page_that_skips_items_is_incomplete(self):
+        def skip(obs):   # offset paging by the REQUESTED maxResults while the site served fewer
+            calls = obs['phases']['backfill']['calls']
+            calls[2]['response'] = {'startAt': 0, 'maxResults': 1, 'total': 3, 'isLast': False, 'values': [{'id': '1'}]}
+            calls.insert(3, {**calls[2], 't': 3.7, 'path': '/rest/agile/1.0/board?startAt=50',
+                             'response': {'startAt': 50, 'maxResults': 1, 'total': 3, 'isLast': True, 'values': []}})
+        row = self.rows(self.mutate(skip))['r_pagination']
+        self.assertLess(row['score'], 1)
+        self.assertIn('items skipped', row['detail'])
+
+        def token_mismatch(obs):
+            obs['phases']['backfill']['calls'][4]['body']['nextPageToken'] = 'forged'
+        self.assertLess(self.rows(self.mutate(token_mismatch))['r_pagination']['score'], 1)
+
+    def test_a_one_page_list_of_many_items_on_the_scoring_site_is_a_harness_gap(self):
+        def unpaged(obs):
+            obs['phases']['backfill']['calls'][2]['response'] = {'isLast': True, 'values': [{'id': '1'}, {'id': '2'}]}
+        self.pack['paging'] = {'rule': 'half'}
+        row = self.rows(self.mutate(unpaged))['r_pagination']
+        self.assertTrue(row.get('unavailable'), row)
 
     def test_the_removed_search_endpoint_costs_pagination_and_currency(self):
         def old(obs):
@@ -1036,6 +1078,16 @@ class MutantJudgeTests(unittest.TestCase):
 class OracleTests(unittest.TestCase):
     def setUp(self):
         self.o = fo.Oracle(fo.synthetic_pack())
+
+    def test_the_reconcile_optimum_walks_the_scoring_sites_pages(self):
+        pack = fo.synthetic_pack()
+        self.assertEqual(fo.Oracle(pack).reconcile_optimum(), (9, []))   # the dev-site formula, unchanged
+        pack['paging'] = {'rule': 'half'}
+        self.assertEqual(fo.Oracle(pack).reconcile_optimum(), (None, ['agileBoardPage']))
+        pack['limits']['agileBoardPage'] = {'value': 50}
+        # field 1 + 2 scrum boards in 2 pages + 2 configurations + active sprints {1: 2 -> 2 pages, 2: 1 -> 1}
+        # + ids-only search 2 pages + changelog bulkfetch 2 pages + issue bulkfetch 1
+        self.assertEqual(fo.Oracle(pack).reconcile_optimum(), (13, []))
 
     def test_creep_rounds_half_away_from_zero_with_decimal(self):
         self.assertEqual(fo.creep(Decimal(1), Decimal(16)), Decimal('6.3'))   # float round() gives 6.2

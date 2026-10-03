@@ -244,7 +244,7 @@ async function main() {
 
   const { createSite } = require(join(repo, 'forge', 'site', 'site.cjs'));
   const { createEmulator } = require(join(kitDir, 'lib', 'emulator.cjs'));
-  site = await createSite({ seed, port: 0, trace: null });
+  site = await createSite({ seed, port: 0, trace: null, scoring: true });
   const pack = site.pack;
   // A refusal here (no sandbox, wrapper sha mismatch) is the harness's: main()'s catch marks every section.
   emu = await createEmulator({ appDir, kitDir, site, runtime });

@@ -260,7 +260,7 @@ Pack JSON (the interface WP2 consumes; `node forge/site/fixtures.cjs --seed S --
   documented (`integer` is 32-bit) and its error names the value range, not only the type.
 - ADF: comment `body` must be an ADF doc; a string → 400 "Operation value must be an Atlassian Document".
 - Pagination styles as Jira: `nextPageToken` (search/jql, changelog/bulkfetch), `startAt`/`maxResults`/`isLast`
-  (issue changelog, Agile).
+  (issue changelog, Agile). The SCORING site (never the dev site) serves every list of ≥ 2 items in ≥ 2 pages (§17.6).
 - Scripted 429s (§5.2 faults) with `Retry-After` and `RateLimit-Reason`; the per-issue write rule (20 writes per
   2 s, RESEARCH §2) on writes. No invented burst limits.
 - Virtual clock: `now = real elapsed + skipped`; the emulator advances it by an `InvocationError.retryAfter`. A
@@ -461,7 +461,7 @@ call log; "ev" = probe evidence; "oracle" = forge_oracle.py on the pack.
 | `r_backfill_complete` | R | after the first scheduled run: historical rows = oracle (fraction) | entity read + oracle | — | C |
 | `r_removals_found` | R | removed-to-backlog changes present | subset | — |  |
 | `r_heal_dropped` | R | after the second run every dropped change has exactly one row; its `source` may be `reconcile` OR `event` (a consumer re-reading the full changelog while handling another delivery legitimately records it first — P7); no other row added | rows diff | — |  |
-| `r_pagination` | R | every paginated read walked to its end in the endpoint's own style (`nextPageToken` for `/search/jql` and `/changelog/bulkfetch`, `startAt`/`isLast` for issue changelog and Agile), each page once; no `/rest/api/3/search`. Ids-only searches are legitimate — a missing field shows up in the numbers, not here | log | ≥ 1 paginated read |  |
+| `r_pagination` | R | every read the scoring site served in two or more pages (§17.6) walked to its end in the endpoint's own style (`nextPageToken` for `/search/jql` and `/changelog/bulkfetch`, `startAt`/`isLast` for issue changelog and Agile), each page once, each page continuing where the site's previous answer left off (its token, or the offset after the items it served); no `/rest/api/3/search`. A read the site answered in one page ran no paging code and is not graded; a one-page answer of ≥ 2 items on the scoring site is a harness gap (unavailable). Ids-only searches are legitimate — a missing field shows up in the numbers, not here | log | ≥ 1 read served in two or more pages |  |
 | `r_rate_limit` | R | reconcile 429 (Retry-After 2): retried at ≥ 2 virtual s, run completes | fault log | the fault fired |  |
 | `r_as_app` | R | reconcile reads are `provider=app` | log | ≥ 1 scheduled-run Jira read |  |
 | `r_completes_in_timeout` | R | every scheduled invocation finishes inside its module timeout | emulator | a scheduled trigger made ≥ 1 Jira call |  |
@@ -995,3 +995,11 @@ Pages re-fetched 2026-10-03.
 | 33 no comment-forbidden user on the dev site | `forge/site/fixtures.cjs` (shared by both seeds) already forbids the VIEWER on one issue, so the case exists for forge-dev's default viewer; STARTER now says so. WP1 (coordinator) is asked to confirm it reproduces on forge-dev, since WP3 saw 201 for all six users — likely tried other issues; if WP1 adds a dedicated flag, STARTER names it |
 | §13.5 rows | updated to WP3's verified evidence: `m_config_in_kvs`, `m_ids_only`, `m_one_estimate_field`, `m_retry_now`, `m_runtime18`, `m_storage_api`, `m_llm_unknown_model` |
 
+
+### 17.6 Scorer fixes after the first four entrant builds (2026-10-03)
+
+| point | evidence | resolution |
+|---|---|---|
+| explain error flag after a kept explanation | `u_llm_explain` charged `error_flag` when ANY `[data-change-id]` showed after a failed attempt; Sol (cf712137) kept the digits step's one cited id through refusal/malformed/error, each with an error flag, and lost 3 subs — gap 29 says keeping passes | a failure step is charged only for ids its own click put on screen (ids shown minus those already showing before the click) |
+| `showFlag({ appearance })` | @forge/bridge `FlagOptions`: "If `appearance` is given, `type` is overriden to equal `appearance`", and `showFlag` forwards `type: options.type ?? 'info'`; the kit host renders `appearance ?? type`; the probe read `type` only, so MiMo's (c7e206c0) `appearance: 'error'`/`'success'` flags counted as info — `u_llm_explain` error flags and the CRITICAL `b_comment_exactly_once` success flags both read 0 | the probe reads a flag as `appearance ?? type` |
+| pagination never exercised | `r_pagination` "83/83 paginated reads walked to their end" on Sol while 79 were one page the site answered as the last: at the pack's volume no backfill read crosses a documented cap. Contract: spec "backfills every change of every active sprint, through paginated search and rate limits"; STARTER "It behaves like Jira Cloud — REST v3 and Jira Software REST, including the bulk endpoints, their pagination, errors and rate limits" | the SCORING site (`facts(seed, { scoring: true })`, `pack.paging`, never the dev site) serves every list of ≥ 2 items a paginated endpoint returns in pages of at most ceil(total / 2) — Jira's documented latitude ("API may return fewer items per page"; "Each operation can have a different limit for the number of items returned"). Only page sizes change, never data. `r_pagination` grades only reads the site served in ≥ 2 pages (vacuous with none), adds a continuity check (each page continues from the site's token or the offset after the items it served), and a one-page answer of ≥ 2 items on the scoring site is a harness gap. `reconcile_optimum` walks the same pages (9 → 13 calls on every calibration seed), so the economy rungs were refitted on golden ×5 and `CALIB_SHA256` re-pinned |

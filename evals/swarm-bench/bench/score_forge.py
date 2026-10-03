@@ -70,7 +70,7 @@ CONTRACT = 'forge/public/FORGE-CONTRACT.md'
 # ── calibration-owned thresholds ─────────────────────────────────────────────────────────────
 
 THRESHOLDS_FILE = HERE / 'forge-thresholds.json'
-CALIB_SHA256 = 'd08a7e00ec2c74e3d365078749f38f869fc7e7c711af2ab8695115adf19e8b74'  # frozen 2026-10-03: golden x5 (forge-thresholds.json calibration.seeds)
+CALIB_SHA256 = '580e5c8714f26b6249958daa2a6f9c2400eafe310bde6bcd6a6936e4b2e1ca56'  # frozen 2026-10-03: golden x5 (forge-thresholds.json calibration.seeds)
 
 
 def _load_thresholds() -> Dict:
@@ -575,7 +575,8 @@ def pre_background_jira(c):
 
 
 def pre_paginated(c):
-    return (any(_page_style(call) for call in c.all_calls('jira')), '>= 1 paginated read')
+    legacy, _walks_all, paged = _paged_walks(c)
+    return (bool(legacy or paged), '>= 1 read the site served in two or more pages')
 
 
 def pre_scheduled_read(c):
@@ -1719,6 +1720,37 @@ def _walks(calls: List[Dict]) -> Dict[tuple, List[Dict]]:
     return walks
 
 
+def _page_items(response: Dict) -> int:
+    if isinstance(response.get('issueChangeLogs'), list):
+        return sum(len(log.get('changeHistories') or []) for log in response['issueChangeLogs'] if isinstance(log, dict))
+    return len(response.get('values') or response.get('issues') or response.get('histories') or [])
+
+
+def _page_start(page: Dict) -> Optional[int]:
+    response = page.get('response') if isinstance(page.get('response'), dict) else {}
+    body = page.get('body') if isinstance(page.get('body'), dict) else {}
+    for value in (response.get('startAt'), _query(page).get('startAt'), body.get('startAt'), 0):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _offered_more(style: str, page: Dict) -> bool:
+    """The site's own answer on this page names a page after it (a nextPageToken, isLast false, or a total
+    past the items served so far)."""
+    response = page.get('response')
+    if not isinstance(response, dict):
+        return False
+    if style == 'token':
+        return bool(response.get('nextPageToken'))
+    if 'isLast' in response:
+        return response.get('isLast') is False
+    total = response.get('total')
+    return isinstance(total, int) and (_page_start(page) or 0) + _page_items(response) < total
+
+
 def _walk_complete(style: str, pages: List[Dict]) -> Tuple[bool, str]:
     marks = []
     for p in pages:
@@ -1726,6 +1758,22 @@ def _walk_complete(style: str, pages: List[Dict]) -> Tuple[bool, str]:
         marks.append(q.get('nextPageToken') or body.get('nextPageToken') or q.get('startAt') or body.get('startAt') or '')
     if len(set(marks)) != len(marks):
         return False, 'a page was read twice'
+    # Each page must continue where the site's previous answer left off: the token it handed out, or the offset
+    # right after the items it served. Advancing by the REQUESTED maxResults skips items whenever the site serves
+    # fewer, which Jira may ("API may return fewer items per page").
+    for before, page in zip(pages, pages[1:]):
+        prev = before.get('response') if isinstance(before.get('response'), dict) else None
+        if prev is None:
+            continue
+        if style == 'token':
+            body = page.get('body') if isinstance(page.get('body'), dict) else {}
+            sent = _query(page).get('nextPageToken') or body.get('nextPageToken')
+            if prev.get('nextPageToken') and sent != prev.get('nextPageToken'):
+                return False, 'a page did not continue from the nextPageToken the site handed out'
+        else:
+            want = (_page_start(before) or 0) + _page_items(prev)
+            if _page_start(page) != want:
+                return False, f'a page started at {_page_start(page)}, the previous page ended at {want} (items skipped)'
     last = pages[-1].get('response')
     if not isinstance(last, dict):
         return False, 'no response body was recorded for the last page'
@@ -1742,24 +1790,54 @@ def _walk_complete(style: str, pages: List[Dict]) -> Tuple[bool, str]:
     return False, 'the page carries neither isLast nor total'
 
 
-@check('r_pagination', 'R', pre=pre_paginated, needs=('backfill', 'live', 'heal', 'rerun', 'ui', 'rovo'))
-def _(c):
+def _endpoint(call: Dict) -> str:
+    path = str(call.get('path') or '').split('?')[0]
+    return re.sub(r'(?<!/api)/(?:\d+|[A-Z][A-Z0-9_]*-\d+)(?=/|$)', '/{id}', path)   # /rest/api/3 keeps its version
+
+
+def _paged_walks(c: Ctx) -> Tuple[List[Dict], Dict[tuple, List[Dict]], Dict[tuple, List[Dict]]]:
+    """(legacy calls, every walk, the walks the site served in two or more pages). A walk whose first page the site
+    answered as the last one never ran the app's paging code: it is evidence of nothing about pagination."""
     calls = c.all_calls('jira')
     legacy = [x for x in calls if _page_style(x) == 'legacy']
     walks = _walks([x for x in calls if _page_style(x) != 'legacy'])
+    paged = {k: p for k, p in walks.items() if len(p) > 1 or _offered_more(_page_style(p[0]), p[0])}
+    return legacy, walks, paged
+
+
+@check('r_pagination', 'R', pre=pre_paginated, needs=('backfill', 'live', 'heal', 'rerun', 'ui', 'rovo'))
+def _(c):
+    legacy, walks, paged = _paged_walks(c)
     if any(not isinstance(x.get('response'), dict) for w in walks.values() for x in w[-1:]) and walks and \
             all(not isinstance(w[-1].get('response'), dict) for w in walks.values()):
         return unavail('no paginated response bodies were recorded')
+    # The scoring site serves every list of >= 2 items in >= 2 pages (pack.paging, forge/site/limits.cjs): a
+    # one-page answer holding two or more items means the site did not page it, a harness gap, never the app's.
+    if (c.pack.get('paging') or {}).get('rule') == 'half':
+        unpaged = sorted({_endpoint(p[0]) for k, p in walks.items() if k not in paged
+                          and isinstance(p[0].get('response'), dict) and _page_items(p[0]['response']) >= 2})
+        if unpaged:
+            return unavail(f'the scoring site served a list of >= 2 items in one page on {unpaged}')
     done, bad = 0, []
-    for key, pages in walks.items():
+    types: Dict[str, List[int]] = {}
+    for key, pages in paged.items():
         complete, why = _walk_complete(_page_style(pages[0]), pages)
         done += complete
+        tally = types.setdefault(_endpoint(pages[0]), [0, 0])
+        tally[0] += complete
+        tally[1] += 1
         if not complete:
             bad.append(f'{key[1]}: {why}')
-    total = len(walks) + len(legacy)
-    return g(done / total if total else 0, f'{done}/{total} paginated reads walked to their end'
+    total = len(paged) + len(legacy)
+    single = len(walks) - len(paged)
+    return g(done / total if total else 0, f'{done}/{total} reads the site served in two or more pages walked to their '
+             'end, each page once, continuing where the site left off ('
+             + ', '.join(f'{ep} {ok}/{n}' for ep, (ok, n) in sorted(types.items())) + ')'
+             + (f'; {single} one-page read(s), nothing to walk, not graded' if single else '')
              + (f'; {len(legacy)} call(s) to the removed /rest/api/3/search' if legacy else '')
-             + (f'; {bad[:3]}' if bad else ''), 'pages silently skipped')
+             + (f'; {bad[:3]}' if bad else ''), 'pages silently skipped',
+             parts={'paged_walks': len(paged), 'one_page_walks': single, 'legacy_calls': len(legacy),
+                    'by_endpoint': {ep: {'complete': ok, 'walks': n} for ep, (ok, n) in sorted(types.items())}})
 
 
 @check('r_rate_limit', 'R', pre=pre_scheduled_fault, needs=('backfill',))
@@ -3207,7 +3285,7 @@ def build_pack(seed: str, out: Path) -> Dict:
     if not fixtures.is_file():
         raise RuntimeError('forge/site/fixtures.cjs is not present (WP1, interface I1)')
     node = _render_node()
-    proc = subprocess.run([node, str(fixtures), '--seed', seed, '--out', str(out)], capture_output=True, text=True)
+    proc = subprocess.run([node, str(fixtures), '--seed', seed, '--out', str(out), '--scoring'], capture_output=True, text=True)
     if proc.returncode != 0:
         raise RuntimeError(f'fixtures.cjs failed: {proc.stderr[-400:]}')
     return json.loads(out.read_text())

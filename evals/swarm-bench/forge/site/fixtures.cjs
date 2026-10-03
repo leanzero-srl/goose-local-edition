@@ -2,10 +2,12 @@
 // facts(seed) -> pack: the seeded Jira site the Scope Ledger app is installed into (DESIGN.md §5.1/§5.2).
 // Pure: every value comes from the seed's xorshift128+ stream; no Math.random, no wall clock.
 // The ranges below are GENERATOR POLICY; the scorer reads the pack's actual values, never these.
-//   node forge/site/fixtures.cjs --seed <16 hex> [--out pack.json]
+//   node forge/site/fixtures.cjs --seed <16 hex> [--out pack.json] [--scoring]
+// facts(seed, { scoring: true }) is the SCORING site's pack: the same data plus `paging`, the scoring page rule
+// (limits.cjs SCORING_PAGING); the dev site's pack carries no `paging`.
 const fs = require('fs');
 const { createRng, SEED_RE } = require('./rng.cjs');
-const { LIMITS } = require('./limits.cjs');
+const { LIMITS, SCORING_PAGING } = require('./limits.cjs');
 
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
@@ -97,7 +99,7 @@ const SYSTEM_FIELDS = [
 
 const iso = (ms) => new Date(ms).toISOString();
 
-function facts(seed) {
+function facts(seed, { scoring = false } = {}) {
   if (!SEED_RE.test(seed)) throw new Error(`seed must be 16 lowercase hex chars, got ${JSON.stringify(seed)}`);
   const r = createRng(seed);
   const now = ANCHOR + r.int(0, 60) * DAY + r.int(8 * 60, 16 * 60) * MIN + r.int(0, 59_999);
@@ -595,6 +597,7 @@ function facts(seed) {
       { id: faultId(2), match: { scope: 'scheduled-run', run: 1, nth: 2 }, status: 429, retryAfter: 2, reason: 'jira-burst-based' },
     ],
     limits: LIMITS,
+    ...(scoring ? { paging: SCORING_PAGING } : {}),
     stats: { issues: total, history: historyCount, carryOverAtStart: carriedA.length + carriedB.length, live: liveEvents.length },
   };
 }
@@ -603,7 +606,7 @@ if (require.main === module) {
   const args = process.argv.slice(2);
   const get = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
   const seed = get('--seed');
-  const json = JSON.stringify(facts(seed), null, 1) + '\n';
+  const json = JSON.stringify(facts(seed, { scoring: args.includes('--scoring') }), null, 1) + '\n';
   const out = get('--out');
   if (out) fs.writeFileSync(out, json); else process.stdout.write(json);
 }
