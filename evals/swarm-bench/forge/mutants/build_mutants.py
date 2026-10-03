@@ -326,10 +326,19 @@ resolver.define('saveWidgetBoard', async ({ payload }) => {
                'LLM defect band 0.899.',
     },
     'm_llm_no_refusal_path': {
-        'edits': [("src/explain.js", "  if (!call) return { ok: false, error: 'The model declined to explain this sprint.' };\n", '')],
-        'expect': {'loses': ['u_llm_explain', 'b_invoke_contract'], 'critical': False, 'max_final': DEFECT_CAP},
-        'why': 'The code assumes the model always calls report_scope: a refusal (no tool call) makes the resolver '
-               'throw a TypeError instead of answering with an error. LLM defect band 0.899.',
+        'edits': [(
+            'src/explain.js',
+            """  if (!call) return { ok: false, error: 'The model declined to explain this sprint.' };
+  const args = call.function.arguments;""",
+            """  const text = (response?.choices ?? []).flatMap((c) => c.message?.content ?? []).map((p) => (typeof p === 'string' ? p : p.text ?? '')).join(' ');
+  const args = call ? call.function.arguments : { summary: text, changeIds: [] };""",
+        )],
+        'expect': {'loses': ['u_llm_explain'], 'critical': False, 'max_final': DEFECT_CAP},
+        'why': 'The explain flow has no refusal path: when the model answers without calling report_scope, its raw '
+               'text is rendered as the explanation (ok, no error flag) instead of an error flag. Survives the '
+               'golden\'s never-throw resolver wrapper (71926c50f), which made the earlier throwing variant '
+               'indistinguishable; b_invoke_contract therefore no longer drops (the §13.5 row should drop it). '
+               'LLM defect band 0.899.',
     },
     'm_rt_publish_in_consumer': {
         'edits': [

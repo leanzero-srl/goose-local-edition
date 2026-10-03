@@ -1,9 +1,8 @@
 {
   "loses": [
-    "u_llm_explain",
-    "b_invoke_contract"
+    "u_llm_explain"
   ],
   "critical": false,
   "max_final": 0.899,
-  "why": "The code assumes the model always calls report_scope: a refusal (no tool call) makes the resolver throw a TypeError instead of answering with an error. LLM defect band 0.899."
+  "why": "The explain flow has no refusal path: when the model answers without calling report_scope, its raw text is rendered as the explanation (ok, no error flag) instead of an error flag. Survives the golden's never-throw resolver wrapper (71926c50f), which made the earlier throwing variant indistinguishable; b_invoke_contract therefore no longer drops (the \u00a713.5 row should drop it). LLM defect band 0.899."
 }

@@ -199,3 +199,4 @@ DESIGN §13.5 rows that must change (verified against each mutant and the bed or
 `m_retry_now` add `r_backfill_complete` (crit) + `r_removals_found`; `m_runtime18` add `k_current_apis` and mark
 `l_deployable` crit; `m_storage_api` drop `r_pagination` (its scheduled run makes zero Jira reads on forge-dev);
 `m_llm_deprecated_model` -> `m_llm_unknown_model` (`u_llm_explain`, `k_llm_model_current`).
+- `m_llm_no_refusal_path` re-authored after the never-throw wrapper: a refusal renders the raw model text as the explanation with no error flag; expected loss `u_llm_explain` only (drop `b_invoke_contract` from the §13.5 row).
