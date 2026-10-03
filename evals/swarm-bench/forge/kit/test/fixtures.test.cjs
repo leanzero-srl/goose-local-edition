@@ -50,7 +50,7 @@ test('three seeds differ in every id class', () => {
 });
 
 // The §5.2 shapes, over many seeds (the generator policy every graded behaviour relies on).
-function shapeProblems(p) {
+function shapeProblems(p, scoring = false) {
   const out = [];
   const actives = p.sprints.filter((s) => s.state === 'active');
   const state = (id) => p.sprints.find((s) => String(s.id) === String(id))?.state;
@@ -81,7 +81,24 @@ function shapeProblems(p) {
   if (!ui.some((e) => e.items[0].fieldId === uiBoard.estimationFieldId)) out.push('no live-UI estimate change on the widget board');
   // DESIGN §17.1 19/20: sprint start dates are distinct, and no change lands exactly on a sprint start.
   const starts = p.sprints.filter((s) => s.startDate).map((s) => Date.parse(s.startDate));
-  if (new Set(starts).size !== starts.length) out.push('tied sprint startDates');
+  // The SCORING site ties the first board's two active sprints on purpose (contract §4 "ties by sprint id"); every
+  // other start date stays distinct.
+  const actStarts = actives.map((s) => Date.parse(s.startDate));
+  const ties = actStarts.length - new Set(actStarts).size;
+  if (new Set(starts).size !== starts.length - (scoring ? 1 : 0) || ties !== (scoring ? 1 : 0)) out.push(`tied sprint startDates (${ties} active ties)`);
+  if (scoring) {
+    // F4: the tied pair shares a board; one active sprint starts EMPTY (committed 0); one carries a long name (<= 30).
+    const tied = actives.filter((a) => actives.some((b) => b !== a && b.startDate === a.startDate));
+    if (tied.length !== 2 || tied[0].originBoardId !== tied[1].originBoardId) out.push('the tied sprints are not one board\'s');
+    const emptyAtStart = actives.filter((a) => !p.issues.some((i) => {
+      const before = [...p.history].filter((h) => h.issueId === i.id && h.items[0].fieldId === p.sprintFieldId
+        && Date.parse(h.created) <= Date.parse(a.startDate)).at(-1);
+      return before && ids(before.items[0].to).includes(String(a.id));
+    }));
+    if (emptyAtStart.length !== 1) out.push(`active sprints empty at their start: ${emptyAtStart.length}`);
+    if (p.sprints.some((s) => s.name.length > 30) || !actives.some((s) => s.name.length >= 26)) out.push('no long sprint name within 30 characters');
+    if (p.faults.length !== 5) out.push(`faults ${p.faults.length}`);
+  }
   const onStart = [...p.history, ...p.live].filter((e) => starts.includes(Date.parse(e.created)));
   if (onStart.length) out.push(`changes on a sprint start: ${onStart.map((e) => e.changelogId).join(',')}`);
   const post = p.history.filter(touches);
@@ -94,14 +111,16 @@ function shapeProblems(p) {
   if (scripted.length < 36 || scripted.length > 44) out.push(`scripted live ${scripted.length}`);
   const dups = p.live.filter((c) => c.delivery.duplicates.length).length;
   const drops = p.live.filter((c) => c.delivery.dropped).length;
-  if (dups !== 4 || drops !== 3) out.push(`dups ${dups} drops ${drops}`);
+  if (dups !== (scoring ? 8 : 4) || drops !== (scoring ? 5 : 3)) out.push(`dups ${dups} drops ${drops}`);
+  const estimateDrops = p.live.filter((c) => c.delivery.dropped && c.items[0].field !== 'Sprint').length;
+  if (estimateDrops !== (scoring ? 1 : 0)) out.push(`dropped estimate changes ${estimateDrops}`);
   const delivered = scripted.filter((c) => !c.delivery.dropped).sort((a, b) => a.delivery.slot - b.delivery.slot);
   let swapped = 0;
   for (let i = 0; i + 1 < delivered.length; i++) {
     const [x, y] = [delivered[i], delivered[i + 1]];
     if (Date.parse(x.created) > Date.parse(y.created) && x.issueId === y.issueId) swapped++;
   }
-  if (swapped !== 2) out.push(`same-issue permuted pairs ${swapped}`);
+  if (swapped !== (scoring ? 4 : 2)) out.push(`same-issue permuted pairs ${swapped}`);
   const slots = p.live.flatMap((c) => [c.delivery.slot, ...c.delivery.duplicates]).filter((s) => s !== null).sort((a, b) => a - b);
   if (slots.some((s, i) => s !== i)) out.push('delivery slots are not 0..n-1');
   const hidden = p.issues.filter((i) => i.hiddenFrom.includes(p.viewer));
@@ -149,6 +168,18 @@ test('pack shapes hold on 300 seeds (DESIGN §5.2)', () => {
   for (let i = 0; i < 300; i++) {
     const seed = crypto.createHash('sha256').update(`forge-fixture-${i}`).digest('hex').slice(0, 16);
     const problems = shapeProblems(facts(seed));
+    if (problems.length) bad.push(`${seed}: ${problems.join('; ')}`);
+  }
+  assert.deepStrictEqual(bad, []);
+});
+
+// The SCORING pack (DESIGN §5.1, §17.6; 2026-10-03 stringency F4/F7): the same shapes, scaled faults, the stated tie,
+// committed-0 and long-name cases — and the dev pack of the same seed stays the dev pack.
+test('scoring pack shapes hold on 300 seeds', () => {
+  const bad = [];
+  for (let i = 0; i < 300; i++) {
+    const seed = crypto.createHash('sha256').update(`forge-fixture-${i}`).digest('hex').slice(0, 16);
+    const problems = shapeProblems(facts(seed, { scoring: true }), true);
     if (problems.length) bad.push(`${seed}: ${problems.join('; ')}`);
   }
   assert.deepStrictEqual(bad, []);
