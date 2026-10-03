@@ -1,0 +1,7 @@
+{
+  "loses": [
+    "v_widget_sizes"
+  ],
+  "critical": false,
+  "why": "The widget squeezes every number into two characters with an ellipsis (contract \u00a74 \"no number is clipped or truncated\"). The DOM text is intact, so only the size row sees it. Points only."
+}

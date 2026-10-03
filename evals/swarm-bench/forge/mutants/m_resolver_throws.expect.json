@@ -1,0 +1,7 @@
+{
+  "loses": [
+    "b_invoke_contract"
+  ],
+  "critical": false,
+  "why": "Resolvers rethrow every non-429 failure: the scoring site's Jira 500 on the sprint ledger read (and the forbidden comment's 400) reaches the page as a rejected invoke instead of a value describing it (contract \u00a72 \"Every resolver returns a value and never throws\"). The page still catches it."
+}

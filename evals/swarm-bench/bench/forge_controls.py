@@ -67,7 +67,7 @@ def _wait_quiet() -> None:
 def score(tree: Path, seed: str, out: Path) -> Dict:
     """One serial scoring through the real CLI (it takes the host lock itself)."""
     _wait_quiet()
-    cmd = [sys.executable, '-B', str(HERE / 'score_forge.py'), '--tree', str(tree), '--seed', seed,
+    cmd = [sys.executable, '-B', str(HERE / 'score_forge.py'), '--tree', str(tree), '--seed', seed, '--single-seed',
            '--json-out', str(out)]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0 or not out.is_file():

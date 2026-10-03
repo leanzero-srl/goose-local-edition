@@ -35,6 +35,8 @@ T_ROWS = ['t_trigger_handoff', 't_event_rows', 't_no_double_count', 't_out_of_or
 R_ROWS = ['r_backfill_complete', 'r_removals_found', 'r_heal_dropped', 'r_pagination', 'r_rate_limit']
 S_ROWS = ['s_entity_index_used', 's_index_order']
 
+TAIL = '## Reading the result\n\nThe action returns a JSON object:\n\n- `sprintName`: the sprint\'s name; use it when you answer.\n- `committed`: story points of the issues that were in the sprint when it started.\n- `added`: story points of issues in the sprint now that were not in it at the start.\n- `removed`: story points of issues that were in the sprint at some point after the start and are not\n  in it now.\n- `creepPercent`: `100 × added / committed`, already rounded to one decimal. It is `null` when nothing\n  was committed; then say creep cannot be computed because the sprint started with no committed points.\n- `hiddenChanges`: how many changes exist on issues the person cannot browse. These are counted in the\n  totals but not listed. Mention the number when it is not 0, and never speculate about those issues.\n- `changes`: the changes the person can see, oldest first. Each has `issueKey`, `kind` (`added` or\n  `removed`), `points` (the issue\'s current estimate), `by` (who made the change) and `at` (an ISO-8601\n  UTC time).\n\nPoints use the board\'s estimation field; an issue with no estimate counts as 0. The totals are the same\nfor everyone; only the list of changes depends on what the person can browse.\n\n## Answering\n\n1. Lead with the sprint name and the creep, for example "Sprint 41 grew by 23.5% since it started".\n2. Give committed, added and removed points exactly as returned.\n3. List the relevant changes with issue key, kind, points, who made the change and when. For long lists,\n   summarise by person or by kind and offer the full list.\n4. If `hiddenChanges` is above 0, say that many changes are on issues the person cannot see.\n\n## Errors\n\nIf the result has an `error` field instead of numbers, tell the person what it says in plain words. For\na missing or unknown sprint, ask them to check the sprint id. For a rate-limit message, suggest trying\nagain after the stated number of seconds. Do not retry more than once in the same answer.\n'
+
 MUTANTS = {
     'm_storage_api': {
         'edits': [
@@ -371,6 +373,54 @@ resolver.define('saveWidgetBoard', async ({ payload }) => {
         'expect': {'loses': ['u_widget_live'], 'critical': False, 'max_final': DEFECT_CAP},
         'why': 'The widget polls its resolver every five seconds instead of subscribing to Forge Realtime (the contract '
                'says no polling). Realtime defect band 0.899.',
+    },
+    # ── 2026-10-03 stringency (DESIGN §17.7): one mutant per newly measured clause ─────────────────────────────
+    'm_rerun_rewrites': {
+        'edits': [('src/sync.js',
+                   "      if (await writeMember(memberRow(cfg, sprintId, issue, currentIds), storedMembers.get(`${sprintId}:${issue.id}`))) {",
+                   '      if (await writeMember(memberRow(cfg, sprintId, issue, currentIds), undefined)) {')],
+        'expect': {'loses': ['r_idempotent_rerun'], 'critical': False},
+        'why': 'Every scheduled run rewrites every membership row it computes, changed or not: the values stay right, '
+               'but a run with nothing new writes (contract §3 "a run with nothing new writes nothing"). Not banded.',
+    },
+    'm_resolver_throws': {
+        'edits': [('src/index.js',
+                   """    console.error(`resolver ${req?.call?.functionKey ?? ''} failed: ${e?.message ?? e}`);
+    return { ok: false, error: e instanceof JiraError ? `Jira refused the request (${e.status}).` : `The request failed: ${e?.message ?? e}` };""",
+                   '    throw e;')],
+        'expect': {'loses': ['b_invoke_contract'], 'critical': False},
+        'why': 'Resolvers rethrow every non-429 failure: the scoring site\'s Jira 500 on the sprint ledger read (and the '
+               'forbidden comment\'s 400) reaches the page as a rejected invoke instead of a value describing it '
+               '(contract §2 "Every resolver returns a value and never throws"). The page still catches it.',
+    },
+    'm_explain_dates': {
+        'edits': [('src/explain.js',
+                   "    : `${view.sprint.name} grew by ${creep}: ${added} points entered after the start against ${committed} committed, and ${removed} points left it.`;",
+                   "    : `${view.sprint.name} grew by ${creep}: ${added} points entered after the start (${String(view.sprint.startDate).slice(0, 10)}) against ${committed} committed, and ${removed} points left it.`;")],
+        'expect': {'loses': ['u_llm_explain'], 'critical': False, 'max_final': DEFECT_CAP},
+        'why': 'The replacement sentence for a digits answer adds the sprint\'s start date: a number that is not one of '
+               'the ledger\'s (contract §5 "your own sentence with the ledger\'s numbers"). LLM defect band 0.899.',
+    },
+    'm_sort_resumes_desc': {
+        'edits': [('static/sprint/src/index.jsx',
+                   "    if (col === 'at') setSort((s) => ({ col: 'at', dir: s.col === 'at' && s.dir === 'ascending' ? 'descending' : 'ascending' }));",
+                   "    if (col === 'at') setSort((s) => ({ col: 'at', dir: s.col === 'at' ? (s.dir === 'ascending' ? 'descending' : 'ascending') : s.dir }));")],
+        'expect': {'loses': ['u_ledger_sort'], 'critical': False, 'max_final': DEFECT_CAP},
+        'why': 'After the points sort (descending) the first `at` click keeps that direction instead of starting with '
+               'ascending (contract §5 "starting with ascending when another sort was active"). Ordering defect band 0.899.',
+    },
+    'm_skill_bare': {
+        'edits': [('skills/sprint-scope-analyst/SKILL.md', TAIL, '')],
+        'expect': {'loses': ['a_skill_instructions'], 'critical': False},
+        'why': 'SKILL.md tells the agent when to call get-sprint-scope and what sprintId is, but not how to read the '
+               'result or what to do with an error (contract §6). Points only.',
+    },
+    'm_metric_clip': {
+        'edits': [('static/widget/src/widget.css', '.metric-creep dd {\n',
+                   '.sprint dd {\n  max-width: 2ch;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.metric-creep dd {\n')],
+        'expect': {'loses': ['v_widget_sizes'], 'critical': False},
+        'why': 'The widget squeezes every number into two characters with an ellipsis (contract §4 "no number is clipped '
+               'or truncated"). The DOM text is intact, so only the size row sees it. Points only.',
     },
 }
 

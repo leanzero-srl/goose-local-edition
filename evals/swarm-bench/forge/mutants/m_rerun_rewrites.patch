@@ -1,0 +1,13 @@
+diff --git a/src/sync.js b/src/sync.js
+index c5a45ae..026367d 100644
+--- a/src/sync.js
++++ b/src/sync.js
+@@ -240,7 +240,7 @@ export async function reconcileAll(cfg, policy) {
+     for (const sprintId of sprintIds) if (storedMembers.has(`${sprintId}:${issue.id}`)) touched.add(sprintId);
+     for (const sprintId of touched) {
+       if (!cfg.sprints[sprintId]) continue;
+-      if (await writeMember(memberRow(cfg, sprintId, issue, currentIds), storedMembers.get(`${sprintId}:${issue.id}`))) {
++      if (await writeMember(memberRow(cfg, sprintId, issue, currentIds), undefined)) {
+         members += 1;
+         changed.add(sprintId);
+       }

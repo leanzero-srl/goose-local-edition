@@ -26,7 +26,7 @@ index 800a816..1e1b52d 100644
    try {
      await kvs.entity(CHANGES).set(key, row, { keyPolicy: 'FAIL_IF_EXISTS' });
 diff --git a/src/sync.js b/src/sync.js
-index e315bc0..75b42ae 100644
+index c5a45ae..1982cdc 100644
 --- a/src/sync.js
 +++ b/src/sync.js
 @@ -95,7 +95,7 @@ export function memberRow(cfg, sprintId, issue, currentSprintIds) {
@@ -38,7 +38,7 @@ index e315bc0..75b42ae 100644
    const negative = new Set();
    const resolve = async (sprintId) => {
      if (negative.has(sprintId)) return null;
-@@ -129,7 +129,7 @@ export async function applyIssueEvent(cfg, { issueId, changelogId, sprintChange
+@@ -141,7 +141,7 @@ export async function applyIssueEvent(cfg, { issueId, changelogId, sprintChange
    const changed = new Set();
    let written = 0;
    for (const row of rows) {

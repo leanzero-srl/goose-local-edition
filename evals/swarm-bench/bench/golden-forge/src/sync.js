@@ -104,22 +104,34 @@ export async function applyIssueEvent(cfg, { issueId, changelogId, sprintChange 
     return s;
   };
 
-  // The event names its changelog entry; its `created` and author come from Jira (the product event
-  // carries neither). Only that entry is recorded: lost siblings are the scheduled run's to heal.
-  let histories = [];
-  if (sprintChange && changelogId) {
-    const all = (await sprintHistories([String(issueId)], cfg.sprintFieldId, policy)).get(String(issueId)) ?? [];
-    histories = all.filter((h) => String(h.id) === String(changelogId));
-    for (const history of histories) for (const move of sprintMoves(history, cfg.sprintFieldId)) await resolve(move.sprintId);
-  }
-
-  const getIssue = () =>
-    jiraJson('app', route`/rest/api/3/issue/${issueId}?fields=${issueFields(cfg).join(',')}`, undefined, policy).catch((e) => {
+  // One read: the issue's current Sprint and estimate values AND its changelog (`expand=changelog`, the most recent
+  // histories embedded). The event names its changelog entry; its `created` and author come from Jira (the product
+  // event carries neither). Only that entry is recorded: lost siblings are the scheduled run's to heal.
+  const wantsLog = Boolean(sprintChange && changelogId);
+  const getIssue = () => {
+    const fields = issueFields(cfg).join(',');
+    const path = wantsLog
+      ? route`/rest/api/3/issue/${issueId}?fields=${fields}&expand=changelog`
+      : route`/rest/api/3/issue/${issueId}?fields=${fields}`;
+    return jiraJson('app', path, undefined, policy).catch((e) => {
       if (e.status === 404) return null;
       throw e;
     });
+  };
   let issue = await getIssue();
   if (!issue) return { rows: 0, members: 0, sprintIds: [] };
+
+  let histories = [];
+  if (wantsLog) {
+    const embedded = issue.changelog?.histories ?? [];
+    histories = embedded.filter((h) => String(h.id) === String(changelogId));
+    // The embedded changelog is the most recent page only; an entry older than it is read in full.
+    if (!histories.length && (issue.changelog?.total ?? 0) > embedded.length) {
+      const all = (await sprintHistories([String(issueId)], cfg.sprintFieldId, policy)).get(String(issueId)) ?? [];
+      histories = all.filter((h) => String(h.id) === String(changelogId));
+    }
+    for (const history of histories) for (const move of sprintMoves(history, cfg.sprintFieldId)) await resolve(move.sprintId);
+  }
   const current = sprintsOfField(issue.fields?.[cfg.sprintFieldId]);
   const knownFields = issueFields(cfg).join(',');
   for (const s of current) if (s.state === undefined || s.state === 'active') await resolve(s.id);

@@ -1,9 +1,9 @@
 {
-  "calibrated": true,
-  "note": "forge-1.0 calibrated thresholds: the economy rungs are fitted to the golden worst-of-5 (DESIGN §13.4 item 4); everything else keeps its rc receipt. Pinned as CALIB_SHA256 in score_forge.py.",
+  "calibrated": false,
+  "note": "forge-1.0-rc defaults (DESIGN §8.4). The economy thresholds are ratios of the oracle's optimum and are calibration-owned: the freeze replaces them with the golden's worst-of-5 receipts and pins this file's sha256 as CALIB_SHA256 in score_forge.py. Re-opened 2026-10-03 (stringency F1: e_event_economy graded continuously at the optimum; forced 429 repeats join both optima).",
   "critical_multiplier_floor": 0.6,
-  "economy_rungs": [[1.0, 1.0], [0.75, 2.0], [0.5, 6.67], [0.25, 26.67]],
-  "event_economy_rungs": [[1.0, 3.18], [0.75, 6.36], [0.5, 21.2], [0.25, 84.8]],
+  "economy_rungs": [[1.0, 1.5], [0.75, 3], [0.5, 10], [0.25, 40]],
+  "event_economy_top": 1.5,
   "ui_round_trip_rungs": [[1.0, 1], [0.75, 2], [0.5, 4]],
   "idempotent_rerun_rungs": [[1.0, 0], [0.5, 0.01]],
   "contrast_min": 4.5,
@@ -12,34 +12,13 @@
   "blank_share": 0.995,
   "receipts": {
     "critical_multiplier_floor": "DESIGN §8.3 (SB's floor, one severity model across families)",
-    "economy_rungs": "golden worst-of-5 e_reconcile_economy ratio 1.0 (per seed {'0123456789abcdef': 1.0, 'fedcba9876543210': 1.0, '00000000deadbeef': 1.0, 'a5a5a5a5a5a5a5a5': 1.0, '5eed0123456789ab': 1.0}) -> top rung 1.0; lower rungs keep the rc multiples of the top ([[1.0, 1.5], [0.75, 3], [0.5, 10], [0.25, 40]])",
-    "event_economy_rungs": "golden worst-of-5 e_event_economy ratio 3.1724 (per seed {'0123456789abcdef': 2.5667, 'fedcba9876543210': 2.6087, '00000000deadbeef': 2.7143, 'a5a5a5a5a5a5a5a5': 3.1304, '5eed0123456789ab': 3.1724}) -> top rung 3.18; lower rungs keep the rc multiples of the top ([[1.0, 1.5], [0.75, 3], [0.5, 10], [0.25, 40]])",
+    "economy_rungs": "DESIGN §8.4 rc rungs for e_reconcile_economy: <=1.5x the oracle optimum 1.0, <=3x .75, <=10x .5, <=40x .25",
+    "event_economy_top": "DESIGN §8.4 rc top for e_event_economy (score = min(1, top / ratio)) until calibration fits it to the golden's worst-of-5 ratio",
     "ui_round_trip_rungs": "DESIGN §8.4: 1 invoke before first paint 1.0, 2 .75, <=4 .5",
-    "idempotent_rerun_rungs": "DESIGN §8.4: 0 writes 1.0, <=1% of rows .5, else 0",
+    "idempotent_rerun_rungs": "DESIGN §8.4: 0 writes 1.0, <=1% of rows .5, else 0 (r_idempotent_rerun, contract §3)",
     "contrast_min": "FORGE-CONTRACT.md §7: contrast at least 4.5:1",
     "chart_tolerance_px": "FORGE-CONTRACT.md §4: rendered height proportional within 1 px",
     "color_tolerance": "8-bit rounding of token colours through computed styles and PNG encoding",
     "blank_share": "a surface whose dominant colour covers >= 99.5% of its pixels shows nothing"
-  },
-  "calibration": {
-    "seeds": [
-      "00000000deadbeef",
-      "0123456789abcdef",
-      "5eed0123456789ab",
-      "a5a5a5a5a5a5a5a5",
-      "fedcba9876543210"
-    ],
-    "scorer_files_sha256": {
-      "score_forge.py": "005be753f8faf31f8e042ffcf1dc0af0b27b8d7ebcbe58accfb78043828b6731",
-      "forge_oracle.py": "50917b27b86b644cfe8b047b2aaa222a6777c158630ce8abdfd135ae82bcd21c",
-      "forge_probe.mjs": "cb62f2f09f144dd90d359d60b4b5387852410463a998aa51d06edc09f426b464",
-      "forge-thresholds.json": "02d46feaae73b4d38cdcd9d2ec1b6d61f58178b6926ce15387e215271cf728a7"
-    },
-    "kit_lock_sha256": "825be630e817fabfdff3bdc2a8015a163c66195ef94f1164617b6694374c1bed",
-    "wrapper_sha256": "4f8170e0fb4adb6deb28e3daf2035d42438984a71a76e1a7d5f93ea419e6c45a",
-    "verified_top": {
-      "e_ui_round_trips": "golden 1.0 on every seed",
-      "e_idempotent_rerun": "golden 1.0 on every seed"
-    }
   }
 }
