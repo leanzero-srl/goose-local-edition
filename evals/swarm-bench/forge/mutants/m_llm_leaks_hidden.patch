@@ -18,10 +18,10 @@ index 8671170..727d7a5 100644
    };
  }
 diff --git a/src/index.js b/src/index.js
-index 4125bdb..7b4ceff 100644
+index 68653f2..6121098 100644
 --- a/src/index.js
 +++ b/src/index.js
-@@ -118,7 +118,7 @@ resolver.define(
+@@ -122,7 +122,7 @@ resolver.define(
      const sprintId = contextSprintId(context);
      const sprint = sprintId && (await getSprint(sprintId, UI_POLICY));
      if (!sprint) return { ok: false, error: 'This action was opened without a known sprint.' };

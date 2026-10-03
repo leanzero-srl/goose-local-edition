@@ -1,15 +1,15 @@
 diff --git a/src/index.js b/src/index.js
-index 4125bdb..192490e 100644
+index 68653f2..9f9fc26 100644
 --- a/src/index.js
 +++ b/src/index.js
 @@ -1,5 +1,6 @@
  import Resolver from '@forge/resolver';
  import { Queue, InvocationError, InvocationErrorCode } from '@forge/events';
 +import { kvs } from '@forge/kvs';
- import { RateLimited } from './jira';
+ import { JiraError, RateLimited } from './jira';
  import { loadConfig, saveConfig, discoverConfig } from './config';
  import { applyIssueEvent, estimateFieldIds, reconcileAll } from './sync';
-@@ -90,10 +91,15 @@ const contextSprintId = (context) => {
+@@ -94,10 +95,15 @@ const contextSprintId = (context) => {
  
  resolver.define('boards', rateLimitedAware(async () => ({ boards: await boardsView(UI_POLICY) })));
  
@@ -27,7 +27,7 @@ index 4125bdb..192490e 100644
      const view = await widgetView(String(boardId), UI_POLICY);
      return { ...view, realtime: { channel: CHANNEL } };
 diff --git a/static/widget-edit/src/index.jsx b/static/widget-edit/src/index.jsx
-index c8c48d1..eb638a5 100644
+index 6a9444f..c792aa7 100644
 --- a/static/widget-edit/src/index.jsx
 +++ b/static/widget-edit/src/index.jsx
 @@ -26,6 +26,7 @@ function Edit({ context }) {
@@ -39,7 +39,7 @@ index c8c48d1..eb638a5 100644
  
    return (
 diff --git a/static/widget/src/index.jsx b/static/widget/src/index.jsx
-index ee675b2..e1be302 100644
+index 499b97d..ce020fb 100644
 --- a/static/widget/src/index.jsx
 +++ b/static/widget/src/index.jsx
 @@ -98,7 +98,7 @@ function Widget({ initialContext }) {
@@ -49,5 +49,5 @@ index ee675b2..e1be302 100644
 -      const data = await call('widget', { boardId: String(boardId) });
 +      const data = await call('widget', {});
        if (data.needsConfig) return setState({ phase: 'needs-config' });
+       if (data.ok === false) return setState({ phase: 'error', message: data.error });
        shownSprints.current = new Set(data.sprints.map((s) => s.id));
-       setState({ phase: 'ready', data });

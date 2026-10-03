@@ -1,8 +1,9 @@
 {
   "loses": [
-    "l_deployable"
+    "l_deployable",
+    "k_current_apis"
   ],
-  "critical": false,
+  "critical": true,
   "max_final": 0.499,
-  "why": "nodejs18.x is outside the manifest runtime enum: a lint ERROR (measured, RESEARCH \u00a71), so the lint band caps the run at 0.499."
+  "why": "nodejs18.x is outside the manifest runtime enum: a lint ERROR (measured, RESEARCH \u00a71), so the lint band caps the run at 0.499; l_deployable is critical (as in m_skill_name) and nodejs18.x is not a current runtime, so k_current_apis goes too."
 }

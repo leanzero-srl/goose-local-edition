@@ -190,6 +190,16 @@ async function main() {
   const c1 = site.comments.length;
   const deferred = await platform.resolver('jira:sprintAction', 'scope-sprint-ledger', 'postSummary', { changeId: target.changeId }, { aaid: bob.accountId, extension: sprintExt('11') });
   ok(deferred.rateLimited === true && deferred.retryAfter === 9 && site.comments.length === c1, 'a Retry-After longer than the resolver can wait goes back to the page, nothing posted');
+  for (const status of [403, 400, 500]) {
+    site.rateLimits.push({ match: (m, p) => m === 'POST' && p.endsWith('/comment'), times: 1, status });
+    let answered;
+    try {
+      answered = await platform.resolver('jira:sprintAction', 'scope-sprint-ledger', 'postSummary', { changeId: target.changeId }, { aaid: bob.accountId, extension: sprintExt('11') });
+    } catch (e) {
+      answered = { threw: e.message };
+    }
+    ok(answered.ok === false && typeof answered.error === 'string', `a Jira ${status} on the comment is answered {ok:false, error}, never thrown (${JSON.stringify(answered)})`);
+  }
 
   // ---------- 6. Forge LLM explanation ----------
   const explainAs = (user) => platform.resolver('jira:sprintAction', 'scope-sprint-ledger', 'explain', {}, { aaid: user.accountId, extension: sprintExt('11') });

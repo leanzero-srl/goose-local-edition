@@ -1,5 +1,5 @@
 diff --git a/src/index.js b/src/index.js
-index 4125bdb..5737930 100644
+index 68653f2..7c873f9 100644
 --- a/src/index.js
 +++ b/src/index.js
 @@ -35,7 +35,7 @@ export async function consumeChange(event) {

@@ -42,18 +42,21 @@ MUTANTS = {
             ('src/config.js', 'export const loadConfig = () => kvs.get(CONFIG_KEY);', 'export const loadConfig = () => storage.get(CONFIG_KEY);'),
             ('src/config.js', '  await kvs.set(CONFIG_KEY, next);', '  await storage.set(CONFIG_KEY, next);'),
         ],
-        'expect': {'loses': ['l_lint_warnings', 'k_current_apis'] + T_ROWS + R_ROWS + S_ROWS, 'critical': True, 'max_final': LEDGER_CAP},
+        'expect': {'loses': ['l_lint_warnings', 'k_current_apis'] + T_ROWS + [r for r in R_ROWS if r != 'r_pagination'] + S_ROWS, 'critical': True, 'max_final': LEDGER_CAP},
         'why': 'Config load/save on the removed @forge/api storage export (storage:app is declared, so lint only '
                'WARNS deprecated-api-storage). In 8.2.0 `storage` is undefined: trigger, consumer and scheduled run '
                'throw on their first config read, so no row and no membership is ever written (T/R/S rows; '
                'r_backfill_complete is critical). No lint cap; no working ledger caps at 0.699. Downstream U/B/A '
-               'rows that read an empty ledger are expected to be ROOT_BLOCKS-attributed to r_backfill_complete.',
+               'rows that read an empty ledger are expected to be ROOT_BLOCKS-attributed to r_backfill_complete. '
+               'r_pagination is NOT lost: measured on forge-dev the failing scheduled run makes zero Jira reads (it '
+               'throws on the config read), and WP2 observed every paginated read that does happen walked (9/9).',
     },
     'm_runtime18': {
         'edits': [('manifest.yml', '    name: nodejs22.x', '    name: nodejs18.x')],
-        'expect': {'loses': ['l_deployable'], 'critical': False, 'max_final': LINT_CAP},
+        'expect': {'loses': ['l_deployable', 'k_current_apis'], 'critical': True, 'max_final': LINT_CAP},
         'why': 'nodejs18.x is outside the manifest runtime enum: a lint ERROR (measured, RESEARCH §1), so the lint '
-               'band caps the run at 0.499.',
+               'band caps the run at 0.499; l_deployable is critical (as in m_skill_name) and nodejs18.x is not a current '
+               'runtime, so k_current_apis goes too.',
     },
     'm_old_search': {
         'edits': [(
@@ -82,10 +85,11 @@ MUTANTS = {
     },
     'm_ids_only': {
         'edits': [('src/sync.js', '    const body = { jql, fields: issueFields(cfg), maxResults: 100 };', '    const body = { jql, maxResults: 100 };')],
-        'expect': {'loses': ['r_backfill_complete', 'u_widget_numbers', 'a_action_result'], 'critical': True, 'max_final': LEDGER_CAP},
+        'expect': {'loses': ['u_widget_numbers', 'a_action_result'], 'critical': False, 'max_final': SURFACE_CAP},
         'why': '/search/jql without `fields` returns ids only: the backfill still finds every changelog (bulkfetch '
                'by id) but sees no current sprint and no estimate, so membership and every committed/added/removed '
-               'number after the backfill is wrong ("backfill rows/numbers").',
+               'number after the backfill is wrong ("backfill rows/numbers"). The ROWS are complete (WP3 bed: ledger == '
+               'oracle; WP2: 57/57 changelogs), so r_backfill_complete holds and the run lands at 0.799, not 0.699.',
     },
     'm_open_sprints_only': {
         'edits': [
@@ -115,10 +119,12 @@ MUTANTS = {
             """    if (!estimateFields.size) estimateFields.set('all', await boardEstimateField(boardId, policy));
     sprints[id] = sprintEntry(sprint, boardId, estimateFields.get('all'));""",
         )],
-        'expect': {'loses': ['t_reestimate_followed', 'u_widget_numbers', 'a_action_result'], 'critical': False},
+        'expect': {'loses': ['t_reestimate_followed', 'u_widget_numbers', 'a_action_result', 't_trigger_handoff'], 'critical': False},
         'why': 'One estimation field (the first board\'s) for every sprint: sprints of boards that estimate with '
-               'another field read the wrong value, and re-estimates on that field never move the numbers. No band '
-               'names wrong numbers on some boards, so no max_final is asserted.',
+               'another field read the wrong value, and re-estimates on that field never move the numbers. The trigger '
+               'recognises estimate changes by the configured fields, so it also drops those updates instead of '
+               'handing them to the queue (t_trigger_handoff; WP2 measured 38/44). No band names wrong numbers on '
+               'some boards, so no max_final is asserted.',
     },
     'm_retry_now': {
         'edits': [(
@@ -136,9 +142,10 @@ MUTANTS = {
     if (res.status !== 429 || attempt === 3) return res;
   }""",
         )],
-        'expect': {'loses': ['t_retry_after_honoured', 'r_rate_limit'], 'critical': False, 'max_final': DEFECT_CAP},
-        'why': 'A 429 is retried at once (up to four attempts) instead of after Retry-After, in every path. Rate-limit '
-               'defect band 0.899.',
+        'expect': {'loses': ['t_retry_after_honoured', 'r_rate_limit', 'r_backfill_complete', 'r_removals_found'], 'critical': True, 'max_final': DEFECT_CAP},
+        'why': 'A 429 is retried at once (up to four attempts) instead of after Retry-After, in every path. The four '
+               'attempts fall inside the Retry-After window, so the scheduled run gives up on the 429 and the backfill '
+               'is incomplete (r_backfill_complete critical, removals missing). Rate-limit defect band 0.899.',
     },
     'm_asapp_ui': {
         'edits': [('src/ledger.js', "    const page = await jiraJson('user', route`/rest/api/3/issue/bulkfetch`,", "    const page = await jiraJson('app', route`/rest/api/3/issue/bulkfetch`,")],
@@ -182,7 +189,7 @@ resolver.define('saveWidgetBoard', async ({ payload, context }) => {
   return { ok: true };
 });
 resolver.define('widgetBoard', async ({ context }) => ({ boardId: (await kvs.get(widgetKey(context))) ?? null }));"""),
-            ('src/index.js', "import { RateLimited } from './jira';", "import { kvs } from '@forge/kvs';\nimport { RateLimited } from './jira';"),
+            ('src/index.js', "import { JiraError, RateLimited } from './jira';", "import { kvs } from '@forge/kvs';\nimport { JiraError, RateLimited } from './jira';"),
             ('src/index.js', '    const boardId = payload?.boardId ?? context?.extension?.config?.boardId;', '    const boardId = await kvs.get(widgetKey(context));'),
             ('static/widget-edit/src/index.jsx', """    widgetEdit
       .onProductSave(async (config) => (selectedRef.current ? { ...(config ?? {}), boardId: selectedRef.current } : null))
@@ -244,16 +251,17 @@ resolver.define('saveWidgetBoard', async ({ payload }) => {
   await kvs.set('widget-board', String(payload.boardId));
   return { ok: true };
 });"""),
-            ('src/index.js', "import { RateLimited } from './jira';", "import { kvs } from '@forge/kvs';\nimport { RateLimited } from './jira';"),
+            ('src/index.js', "import { JiraError, RateLimited } from './jira';", "import { kvs } from '@forge/kvs';\nimport { JiraError, RateLimited } from './jira';"),
             ('src/index.js', '    const boardId = payload?.boardId ?? context?.extension?.config?.boardId;', "    const boardId = await kvs.get('widget-board');"),
             ('static/widget-edit/src/index.jsx', '    widgetEdit.updateConfig({ ...stored, boardId: board.id }).catch((e) => setError(e.message));',
              "    widgetEdit.updateConfig({ ...stored, boardId: board.id }).catch((e) => setError(e.message));\n    call('saveWidgetBoard', { boardId: board.id }).catch((e) => setError(e.message));"),
             ('static/widget/src/index.jsx', "      const data = await call('widget', { boardId: String(boardId) });", "      const data = await call('widget', {});"),
         ],
-        'expect': {'loses': ['u_widget_edit_config', 'k_widget_edit_bridge'], 'critical': False, 'max_final': SURFACE_CAP},
+        'expect': {'loses': ['u_widget_edit_config'], 'critical': False, 'max_final': SURFACE_CAP},
         'why': 'The G3 control shape: edit still uses the edit API, but also stores the board in ONE app-storage key '
                'through a resolver, and the view reads that key instead of extension.config, so two widgets on one '
-               'dashboard show the same (last chosen) board.',
+               'dashboard show the same (last chosen) board. The edit API is still used, so k_widget_edit_bridge holds '
+               '(the §13.5 row lists it; that row should drop it).',
     },
     'm_throw_on_429': {
         'edits': [(

@@ -100,6 +100,7 @@ function Widget({ initialContext }) {
       // The answer names the realtime channel, so the widget renders and subscribes in one round trip.
       const data = await call('widget', { boardId: String(boardId) });
       if (data.needsConfig) return setState({ phase: 'needs-config' });
+      if (data.ok === false) return setState({ phase: 'error', message: data.error });
       shownSprints.current = new Set(data.sprints.map((s) => s.id));
       setState({ phase: 'ready', data });
       if (data.realtime && !subscription.current) subscribe(data.realtime);

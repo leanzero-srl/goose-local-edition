@@ -12,12 +12,11 @@
     "r_backfill_complete",
     "r_removals_found",
     "r_heal_dropped",
-    "r_pagination",
     "r_rate_limit",
     "s_entity_index_used",
     "s_index_order"
   ],
   "critical": true,
   "max_final": 0.699,
-  "why": "Config load/save on the removed @forge/api storage export (storage:app is declared, so lint only WARNS deprecated-api-storage). In 8.2.0 `storage` is undefined: trigger, consumer and scheduled run throw on their first config read, so no row and no membership is ever written (T/R/S rows; r_backfill_complete is critical). No lint cap; no working ledger caps at 0.699. Downstream U/B/A rows that read an empty ledger are expected to be ROOT_BLOCKS-attributed to r_backfill_complete."
+  "why": "Config load/save on the removed @forge/api storage export (storage:app is declared, so lint only WARNS deprecated-api-storage). In 8.2.0 `storage` is undefined: trigger, consumer and scheduled run throw on their first config read, so no row and no membership is ever written (T/R/S rows; r_backfill_complete is critical). No lint cap; no working ledger caps at 0.699. Downstream U/B/A rows that read an empty ledger are expected to be ROOT_BLOCKS-attributed to r_backfill_complete. r_pagination is NOT lost: measured on forge-dev the failing scheduled run makes zero Jira reads (it throws on the config read), and WP2 observed every paginated read that does happen walked (9/9)."
 }

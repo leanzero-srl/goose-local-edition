@@ -2,8 +2,9 @@
   "loses": [
     "t_reestimate_followed",
     "u_widget_numbers",
-    "a_action_result"
+    "a_action_result",
+    "t_trigger_handoff"
   ],
   "critical": false,
-  "why": "One estimation field (the first board's) for every sprint: sprints of boards that estimate with another field read the wrong value, and re-estimates on that field never move the numbers. No band names wrong numbers on some boards, so no max_final is asserted."
+  "why": "One estimation field (the first board's) for every sprint: sprints of boards that estimate with another field read the wrong value, and re-estimates on that field never move the numbers. The trigger recognises estimate changes by the configured fields, so it also drops those updates instead of handing them to the queue (t_trigger_handoff; WP2 measured 38/44). No band names wrong numbers on some boards, so no max_final is asserted."
 }

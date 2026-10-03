@@ -1,9 +1,11 @@
 {
   "loses": [
     "t_retry_after_honoured",
-    "r_rate_limit"
+    "r_rate_limit",
+    "r_backfill_complete",
+    "r_removals_found"
   ],
-  "critical": false,
+  "critical": true,
   "max_final": 0.899,
-  "why": "A 429 is retried at once (up to four attempts) instead of after Retry-After, in every path. Rate-limit defect band 0.899."
+  "why": "A 429 is retried at once (up to four attempts) instead of after Retry-After, in every path. The four attempts fall inside the Retry-After window, so the scheduled run gives up on the 429 and the backfill is incomplete (r_backfill_complete critical, removals missing). Rate-limit defect band 0.899."
 }

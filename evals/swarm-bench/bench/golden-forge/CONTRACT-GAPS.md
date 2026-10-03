@@ -181,3 +181,21 @@ added/creep with 0 reloads after one realtime delivery, subscribed once, clean c
 scripted sequence: clean -> summary + 3 visible ids; digits -> the ledger's own sentence, unknown/hidden ids
 dropped (1 kept); refusal, malformed, error -> 3 error flags, no explanation; clean again -> summary.
 `npm run lint`: No issues found.
+
+## E. Freeze-gate round (WP2 fe6e67f84 / 23012c899)
+
+32. **Resolvers that throw.** FORGE-CONTRACT.md does not say a resolver must not throw. The only sentences are
+    §5 "A failure shows an error flag and leaves the modal working" (the golden's page always did) and §6's
+    "does not throw" for the Rovo action. WP2 still scores a thrown resolver as a failure. The golden now
+    answers every failure as `{ok:false, error}` (Jira 4xx/5xx, KVS, anything else). Settle in §5: "resolvers
+    answer errors; they never throw".
+33. The dev site has no user who is forbidden to comment (all six dev users got 201 on forge-dev), so an
+    entrant cannot meet the scoring site's 403 before it is graded. Either seed one on the dev site or name the
+    case in §5.
+
+DESIGN §13.5 rows that must change (verified against each mutant and the bed or forge-dev):
+`m_config_in_kvs` drop `k_widget_edit_bridge` (the edit API stays in use); `m_ids_only` = `u_widget_numbers`,
+`a_action_result`, not critical, lands 0.799 (rows complete); `m_one_estimate_field` add `t_trigger_handoff`;
+`m_retry_now` add `r_backfill_complete` (crit) + `r_removals_found`; `m_runtime18` add `k_current_apis` and mark
+`l_deployable` crit; `m_storage_api` drop `r_pagination` (its scheduled run makes zero Jira reads on forge-dev);
+`m_llm_deprecated_model` -> `m_llm_unknown_model` (`u_llm_explain`, `k_llm_model_current`).

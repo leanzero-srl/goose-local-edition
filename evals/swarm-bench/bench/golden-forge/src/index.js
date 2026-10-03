@@ -1,6 +1,6 @@
 import Resolver from '@forge/resolver';
 import { Queue, InvocationError, InvocationErrorCode } from '@forge/events';
-import { RateLimited } from './jira';
+import { JiraError, RateLimited } from './jira';
 import { loadConfig, saveConfig, discoverConfig } from './config';
 import { applyIssueEvent, estimateFieldIds, reconcileAll } from './sync';
 import { boardsView, widgetView, getSprint, personView, postSummary } from './views';
@@ -74,12 +74,16 @@ const UI_POLICY = { maxWaitSeconds: 5 };
 
 const resolver = new Resolver();
 
+// Every resolver answers; none throws. A long Retry-After goes back to the page to wait out; any other
+// failure (a Jira 4xx/5xx such as a forbidden comment, a KVS or LLM error) becomes {ok:false, error},
+// which the page shows as an error flag or message while staying usable.
 const rateLimitedAware = (fn) => async (req) => {
   try {
     return await fn(req);
   } catch (e) {
     if (e instanceof RateLimited) return { rateLimited: true, retryAfter: e.retryAfterSeconds };
-    throw e;
+    console.error(`resolver ${req?.call?.functionKey ?? ''} failed: ${e?.message ?? e}`);
+    return { ok: false, error: e instanceof JiraError ? `Jira refused the request (${e.status}).` : `The request failed: ${e?.message ?? e}` };
   }
 };
 

@@ -18,7 +18,7 @@ function Edit({ context }) {
       .onProductSave(async (config) => (selectedRef.current ? { ...(config ?? {}), boardId: selectedRef.current } : null))
       .catch((e) => setError(`The dashboard did not accept the save handler: ${e.message}`));
     call('boards')
-      .then((res) => setBoards(res.boards))
+      .then((res) => (res.ok === false ? setError(res.error) : setBoards(res.boards)))
       .catch((e) => setError(e?.message ?? String(e)));
   }, []);
 
