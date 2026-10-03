@@ -58,15 +58,19 @@ export interface BenchSession {
   /** finished AND the stored latest result AND its benchmark is not frozen per the cached catalog. */
   publishable: boolean;
   retryScoring?: { ready: boolean; reason?: string };
+  /** A finished run's saved build can be re-graded by this app's scorer (receipt-proven). */
+  rescore?: { ready: boolean; reason?: string };
+  /** The shown result came from a re-score at this ISO time (its runMeta.rescoredAt). */
+  rescoredAt?: string;
   scoringError?: string;
   /** This machine posted the run to leanzero.net — its card says so and offers no second post. */
   published?: {
-        url: string | null;
-        title: string;
-        score: number;
-        publishedAt: string | null;
-        source: 'app' | 'board';
-      };
+    url: string | null;
+    title: string;
+    score: number;
+    publishedAt: string | null;
+    source: 'app' | 'board';
+  };
 }
 
 /** The 'benchmark-started' payload's version skew fact: the site's current benchmark is newer

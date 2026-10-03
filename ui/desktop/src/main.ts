@@ -1,6 +1,13 @@
 import './utils/userDataPath';
 import { benchmarkResultTransaction } from './benchResultTransaction';
-import { retryScoringEligibility, type BuildCompletionReceipt } from './benchRescore';
+import {
+  publishRunMeta,
+  publishedIsCurrent,
+  rescoreEligibility,
+  retryScoringEligibility,
+  type BuildCompletionReceipt,
+  type StoredRunMeta,
+} from './benchRescore';
 import { billedCostRowField } from './benchBilledCost';
 import { budgetRowField, maxUsdLaunchEnv } from './benchBudget';
 import {
@@ -4058,7 +4065,9 @@ ipcMain.handle('benchmark-sessions', async () => {
   // own tree) AND its benchmark is not frozen AND this machine has not already posted it.
   const published = await readPublished();
   const resolvedByStart = new Map(
-    await Promise.all(rows.map(async (row) => [row.startedAt, await resolveRunResult(row)] as const))
+    await Promise.all(
+      rows.map(async (row) => [row.startedAt, await resolveRunResult(row)] as const)
+    )
   );
   const resultReadable = new Map(
     rows.map((row) => [row.startedAt, resolvedByStart.get(row.startedAt) != null] as const)
@@ -4104,16 +4113,31 @@ ipcMain.handle('benchmark-sessions', async () => {
       .filter((b) => b?.frozen === true)
       .map((b) => String(b.scorerVersion))
   );
-  const retryByStart = new Map(
+  const scoringByStart = new Map(
     await Promise.all(
-      rows.map(
-        async (row) =>
-          [
-            row.startedAt,
-            retryScoringEligibility(row, await readBuildCompletion(row), await forgeClipMissing(row)),
-          ] as const
-      )
+      rows.map(async (row) => {
+        const receipt = await readBuildCompletion(row);
+        return [
+          row.startedAt,
+          {
+            retry: retryScoringEligibility(row, receipt, await forgeClipMissing(row)),
+            rescore: rescoreEligibility(row, receipt),
+          },
+        ] as const;
+      })
     )
+  );
+  // The shown result came from a re-score when its own runMeta says so (persistBenchmarkResult).
+  const rescoredAtByStart = new Map(
+    rows.map((row) => {
+      const meta = resolvedByStart.get(row.startedAt)?.result.runMeta as
+        | Partial<StoredRunMeta>
+        | undefined;
+      return [
+        row.startedAt,
+        typeof meta?.rescoredAt === 'string' ? meta.rescoredAt : null,
+      ] as const;
+    })
   );
   // The run's folder, reported only when it EXISTS — an ask-AI prompt states it as a fact.
   const dataDirByStart = new Map(
@@ -4140,7 +4164,11 @@ ipcMain.handle('benchmark-sessions', async () => {
       startedAt: r.startedAt,
       ...(r.endedAt ? { endedAt: r.endedAt } : {}),
       outcome: r.outcome,
-      retryScoring: retryByStart.get(r.startedAt),
+      retryScoring: scoringByStart.get(r.startedAt)?.retry,
+      rescore: scoringByStart.get(r.startedAt)?.rescore,
+      ...(rescoredAtByStart.get(r.startedAt)
+        ? { rescoredAt: rescoredAtByStart.get(r.startedAt)! }
+        : {}),
       ...(r.scoringError ? { scoringError: r.scoringError } : {}),
       ...(r.score != null ? { score: r.score } : {}),
       ...(r.tiers ? { tiers: r.tiers } : {}),
@@ -4150,7 +4178,8 @@ ipcMain.handle('benchmark-sessions', async () => {
         r.outcome === 'finished' &&
         resultReadable.get(r.startedAt) === true &&
         !frozen.has(r.scorerVersion) &&
-        !published[benchRunKey(r)],
+        // A re-score after the post makes the run publishable again — the site replaces its entry.
+        !publishedIsCurrent(published[benchRunKey(r)], rescoredAtByStart.get(r.startedAt)),
     }));
   return { sessions };
 });
@@ -4346,7 +4375,8 @@ const benchClipTools = async (): Promise<ClipTools> => {
 const forgeClipMissing = async (row: BenchSessionRow): Promise<boolean> => {
   if (row.outcome !== 'finished' || familyOfScorer(row.scorerVersion) !== 'forge') return false;
   const resolved = await resolveRunResult(row);
-  const workdir = resolved && typeof resolved.result.workdir === 'string' ? resolved.result.workdir : null;
+  const workdir =
+    resolved && typeof resolved.result.workdir === 'string' ? resolved.result.workdir : null;
   if (!resolved || !workdir) return false;
   const media = await readBenchMedia(workdir);
   if (media.videos.length === 1 && !media.error) return false;
@@ -4372,6 +4402,7 @@ const buildBenchResultRow = async ({
   startedAt,
   finishedAt,
   sessionRunId,
+  rescoredAt,
 }: {
   v: ReturnType<typeof JSON.parse>;
   workdir: string;
@@ -4381,6 +4412,8 @@ const buildBenchResultRow = async ({
   startedAt: string;
   finishedAt: string;
   sessionRunId: string | null;
+  /** This verdict re-grades a run that already had a scored result (benchmark-retry-scoring). */
+  rescoredAt?: string;
 }) => {
   const counts = await benchRunCounts(workdir);
   const scoring = projectBenchScore(v);
@@ -4419,6 +4452,7 @@ const buildBenchResultRow = async ({
       finishedAt,
       engineEvents: counts.engineEvents,
       repairRounds: counts.repairRounds,
+      ...(rescoredAt ? { rescoredAt } : {}),
     },
     workdir: evidenceWorkdir ?? workdir,
     candidateWorkdir: workdir,
@@ -4463,6 +4497,7 @@ const persistBenchmarkResult = async ({
   finishedAt,
   sessionRunId,
   launchKey,
+  rescoredAt,
 }: {
   v: ReturnType<typeof JSON.parse>;
   workdir: string;
@@ -4473,6 +4508,7 @@ const persistBenchmarkResult = async ({
   finishedAt: string;
   sessionRunId: string | null;
   launchKey: { startedAt: string; slotDir: string; runId?: string };
+  rescoredAt?: string;
 }) => {
   const row = await buildBenchResultRow({
     v,
@@ -4483,6 +4519,7 @@ const persistBenchmarkResult = async ({
     startedAt,
     finishedAt,
     sessionRunId,
+    rescoredAt,
   });
   await fs.mkdir(BENCH_DIR, { recursive: true });
   // Snapshot the screenshots NOW, next to the result row. The workdir is reused by the
@@ -4960,7 +4997,10 @@ ipcMain.handle(
   }
 );
 
-ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string) => {
+// ONE door re-grades a saved build (bench_rescore.py from its completed-build receipt, no model calls):
+// a scoring retry for a run whose scoring did not finish, and — `mode: 'rescore'` — a re-score of a
+// FINISHED run with this app's scorer, which replaces the stored result only when it succeeds.
+ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string, mode?: 'rescore') => {
   if (activeBenchRun || benchmarkLaunchPending) throw new Error('A benchmark is already running.');
   benchmarkLaunchPending = true;
   try {
@@ -4976,15 +5016,32 @@ ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string) => {
     // belongs to (and its receipt) is the tier's.
     const clipMissing = await forgeClipMissing(session);
     const priorOutcome = session.outcome;
+    // The tier a finished Forge row's rc identity belongs to (and the identity a re-grade may report).
+    const tierVersion =
+      forge && priorOutcome === 'finished'
+        ? session.scorerVersion.replace(/-rc$/, '')
+        : session.scorerVersion;
     const launchProblem = benchmarkLaunchProblem(
       (await fetchBenchCatalog()).benchmarks,
       false,
-      clipMissing ? session.scorerVersion.replace(/-rc$/, '') : session.scorerVersion,
+      tierVersion,
       family
     );
     if (launchProblem) throw new Error(launchProblem);
     const receipt = await readBuildCompletion(session);
-    const eligible = retryScoringEligibility(session, receipt, clipMissing);
+    const eligible =
+      mode === 'rescore'
+        ? rescoreEligibility(session, receipt)
+        : retryScoringEligibility(session, receipt, clipMissing);
+    // A finished run already carries a result: this attempt re-grades it, keeps the build's own finish
+    // time, stamps rescoredAt, and on failure leaves that result exactly as it was.
+    const regrade = priorOutcome === 'finished';
+    const priorMeta = regrade
+      ? ((await resolveRunResult(session))?.result.runMeta as Partial<StoredRunMeta> | undefined)
+      : undefined;
+    const failedWords = regrade
+      ? 'Re-score did not finish. The previous result is kept.'
+      : 'Scoring did not finish. The completed build is saved; you can retry scoring.';
     if (!eligible.ready || !receipt || !session.completionReceipt) throw new Error(eligible.reason);
     const workdir =
       session.slot && session.slotDir ? session.slotDir : path.join(benchSessionsRoot(), runId);
@@ -4992,7 +5049,8 @@ ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string) => {
     // never by whatever tier this app defaults to (retryScoringEligibility already refused any
     // scorer outside the isolated family, so a null here is unreachable — and refused, not guessed).
     const sessionTier = forge ? FORGE_BENCHMARK_TIER : isolatedPaymentsTier(session.scorerVersion);
-    if (!sessionTier) throw new Error(`No isolated benchmark tier records ${session.scorerVersion}.`);
+    if (!sessionTier)
+      throw new Error(`No isolated benchmark tier records ${session.scorerVersion}.`);
     const runtime = await resolveBenchmarkRuntime(benchWorkRoot());
     if (forge) {
       const kit = await readForgeKitStatus(
@@ -5146,15 +5204,19 @@ ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string) => {
           // reports `forge-1.0-rc` until its thresholds freeze — bench_rescore accepts exactly that
           // identity for the receipt's tier, and so does this.
           const sameScorer = forge
-            ? v.scorerVersion === session.scorerVersion ||
-              v.scorerVersion === `${session.scorerVersion}-rc`
+            ? v.scorerVersion === tierVersion || v.scorerVersion === `${tierVersion}-rc`
             : v.scorerVersion === session.scorerVersion;
           if (!hasScoredVerdict(v) || !sameScorer || (!forge && typeof v.evidence_dir !== 'string'))
             throw new Error('Scorer produced no valid result or evidence directory.');
           const evidenceWorkdir = forge ? workdir : path.join(output, 'verdict-evidence');
           if (!forge && path.resolve(v.evidence_dir) !== path.resolve(evidenceWorkdir))
             throw new Error('Scorer evidence directory does not belong to this attempt.');
-          const finishedAt = new Date().toISOString();
+          const scoredAt = new Date().toISOString();
+          // A re-grade keeps the build's own finish (runMeta.finishedAt, the session's endedAt): the
+          // build did not end again. A row whose prior result recorded neither has only this stamp.
+          const finishedAt = regrade
+            ? (priorMeta?.finishedAt ?? session.endedAt ?? scoredAt)
+            : scoredAt;
           benchmarkResultCommitInProgress = true;
           const row = await benchmarkResultTransaction(
             [
@@ -5187,6 +5249,7 @@ ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string) => {
                 finishedAt,
                 sessionRunId: runId,
                 launchKey,
+                ...(regrade ? { rescoredAt: scoredAt } : {}),
               });
               return row;
             }
@@ -5203,8 +5266,8 @@ ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string) => {
             await stamp(cancelled ? 'cancelled' : 'failed', detail);
             // A finished run re-scored for its clip keeps its finished verdict (it was never replaced).
             await stampBenchLaunchRow(launchKey, {
-              outcome: priorOutcome === 'finished' ? 'finished' : 'did_not_finish',
-              endedAt: new Date().toISOString(),
+              outcome: regrade ? 'finished' : 'did_not_finish',
+              ...(regrade ? {} : { endedAt: new Date().toISOString() }),
               scoringError: detail,
             });
           } catch (recordError) {
@@ -5212,21 +5275,10 @@ ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string) => {
           }
           if (activeBenchRun?.child === child) activeBenchRun = null;
           finishBench({
-            ...(cancelled
-              ? { cancelled: true }
-              : {
-                  error:
-                    'Scoring did not finish. The completed build is saved; you can retry scoring.',
-                }),
+            ...(cancelled ? { cancelled: true } : { error: failedWords }),
             details: failure,
           });
-          reject(
-            new Error(
-              cancelled
-                ? 'Scoring cancelled.'
-                : 'Scoring did not finish. The completed build is saved; you can retry scoring.'
-            )
-          );
+          reject(new Error(cancelled ? 'Scoring cancelled.' : failedWords));
         }
       });
     }).catch(async (error) => {
@@ -5304,11 +5356,13 @@ ipcMain.handle('benchmark-publish', async (_event, args?: { title?: string; runK
   if (typeof args?.runKey === 'string' && args.runKey) {
     const row = (await readBenchSessionRows()).find((r) => benchRunKey(r) === args.runKey);
     if (!row) return { ok: false, error: 'this run is no longer in the session list' };
-    if ((await readPublished())[args.runKey])
-      return { ok: false, error: 'this run is already live on leanzero.net' };
     const resolved = await resolveRunResult(row);
     if (!resolved)
       return { ok: false, error: "this run's scored result could not be read from its folder" };
+    // Posted and not re-scored since: the board already shows exactly this result.
+    const rescoredAt = (resolved.result.runMeta as Partial<StoredRunMeta> | undefined)?.rescoredAt;
+    if (publishedIsCurrent((await readPublished())[args.runKey], rescoredAt))
+      return { ok: false, error: 'this run is already live on leanzero.net' };
     stored = resolved.result;
     storedIsLatest = resolved.latest;
     runKey = args.runKey;
@@ -5319,9 +5373,9 @@ ipcMain.handle('benchmark-publish', async (_event, args?: { title?: string; runK
       return { ok: false, error: 'no benchmark result to publish — run the benchmark first' };
     }
   }
-  const runMeta = stored.runMeta as
-    | { startedAt: string; finishedAt: string; engineEvents: number; repairRounds: number }
-    | undefined;
+  // Key by key for both families: the build's id and, after a re-score, rescoredAt — what lets the
+  // site replace the entry it already shows for this build instead of adding a second one.
+  const runMeta = publishRunMeta(stored);
   if (!runMeta) {
     return {
       ok: false,
@@ -5433,7 +5487,10 @@ ipcMain.handle('benchmark-publish', async (_event, args?: { title?: string; runK
         : { videos: [], error: 'no run directory' };
     const clipless =
       media.videos.length !== 1 || media.error
-        ? clipAbsence(stored.scorerVersion as string, (stored.verdict as { checks?: unknown })?.checks)
+        ? clipAbsence(
+            stored.scorerVersion as string,
+            (stored.verdict as { checks?: unknown })?.checks
+          )
         : null;
     // Surfaces rendered (or the probe failed) but no verified clip: a SCORING problem, never a clip-less
     // post — the card offers Retry scoring on the saved build (forgeClipMissing).
@@ -5445,7 +5502,11 @@ ipcMain.handle('benchmark-publish', async (_event, args?: { title?: string; runK
     if (clipless) payload.noRecording = true;
     else {
       try {
-        const clip = await publishableClip(stored.workdir as string, media.videos[0], benchClipTools);
+        const clip = await publishableClip(
+          stored.workdir as string,
+          media.videos[0],
+          benchClipTools
+        );
         payload.videoReceipt = await uploadBenchmarkVideo(
           clip.video,
           BENCH_PUBLISH_URL,
@@ -5677,9 +5738,7 @@ function publishRunningElsewhere(reporter: number | null = null): void {
     const contents = win.webContents;
     if (contents.isDestroyed()) continue;
     live.add(contents.id);
-    const key = JSON.stringify(
-      runningElsewhereFor(contents.id, running, turnsInFlightByContents)
-    );
+    const key = JSON.stringify(runningElsewhereFor(contents.id, running, turnsInFlightByContents));
     if (contents.id !== reporter && lastRunningElsewhere.get(contents.id) === key) continue;
     lastRunningElsewhere.set(contents.id, key);
     contents.send(RUNNING_ELSEWHERE_CHANNEL, JSON.parse(key));

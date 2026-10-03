@@ -16,6 +16,7 @@ import {
   defaultBenchmarkScorer,
 } from '../../benchTierPayload';
 import { forgePublishProblem } from '../../benchForgePublish';
+import { publishedIsCurrent } from '../../benchRescore';
 import { clipAbsence, publishedUrlText } from '../../benchRunResults';
 import type { ForgeKitStatus } from '../../benchForgeKitTypes';
 import { RunVideoEvidence } from './RunVideoEvidence';
@@ -28,6 +29,7 @@ import {
   Gauge,
   Loader2,
   Play,
+  RefreshCw,
   Trash2,
   Upload,
   XCircle,
@@ -141,7 +143,13 @@ interface MineRow extends BenchmarkRow {
   billedCost?: unknown;
   /** The harness's `agent.budget` record, verbatim (benchBudget.ts reads it). */
   budget?: unknown;
-  runMeta?: { startedAt: string; finishedAt: string; engineEvents: number; repairRounds: number };
+  runMeta?: {
+    startedAt: string;
+    finishedAt: string;
+    engineEvents: number;
+    repairRounds: number;
+    rescoredAt?: string;
+  };
   workdir?: string;
   /** Full scoring detail (every check + evidence + repair story) — absent on pre-detail results. */
   verdict?: VerdictDetail;
@@ -601,6 +609,69 @@ function SessionHeader({
   );
 }
 
+/**
+ * Re-grade a FINISHED run's saved build with this app's scorer (bench_rescore.py from the run's
+ * completed-build receipt). It costs no model calls, and the stored result is replaced only when the
+ * scoring succeeds — a failed re-score keeps the result shown and says so.
+ */
+function RescorePanel({
+  session,
+  onRescore,
+  blockedWhy,
+}: {
+  session: BenchSession;
+  onRescore: () => void;
+  /** Why the action cannot start right now (a run in progress, tools, an era this app cannot score). */
+  blockedWhy: string | null;
+}) {
+  const rescoredWhen = session.rescoredAt
+    ? (fmtWhen(session.rescoredAt) ?? session.rescoredAt)
+    : null;
+  return (
+    <Panel title="Re-score">
+      <div data-testid="rescore" className="flex flex-col gap-3">
+        {rescoredWhen && (
+          <p data-testid="rescored-at" className={cx(TYPE.body, WEIGHT.semibold)}>
+            This result was re-scored {rescoredWhen} with this app&rsquo;s scorer.
+          </p>
+        )}
+        {session.scoringError && (
+          <>
+            <ToneBand tone="err">
+              The last re-score did not finish — the result shown is the previous one, unchanged.
+            </ToneBand>
+            <FailureDetails text={session.scoringError} />
+          </>
+        )}
+        {session.rescore?.ready ? (
+          <>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                onClick={onRescore}
+                disabled={blockedWhy != null}
+                title={blockedWhy ?? 'Re-grade the saved build with this app’s scorer'}
+                icon={<RefreshCw />}
+              >
+                Re-score saved build
+              </Button>
+              <p className={cx('max-w-[70ch]', TYPE.bodyMuted)}>
+                Re-grades the saved build with this app&rsquo;s scorer. No model calls. The new
+                result replaces the stored one only if scoring succeeds; if it fails, this result is
+                kept.
+              </p>
+            </div>
+            {blockedWhy && <p className={TYPE.meta}>{blockedWhy}</p>}
+          </>
+        ) : (
+          <p className={TYPE.bodyMuted}>
+            Re-score is not available: {session.rescore?.reason ?? 'this app did not report why.'}
+          </p>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
 function SessionDetail({
   session,
   baselines,
@@ -612,6 +683,8 @@ function SessionDetail({
   publishSlot,
   onRetryScoring,
   retryBusy,
+  onRescore,
+  rescoreBlockedWhy,
   justEnded,
 }: {
   session: BenchSession;
@@ -624,6 +697,8 @@ function SessionDetail({
   publishSlot: ReactNode;
   onRetryScoring: () => void;
   retryBusy: boolean;
+  onRescore: () => void;
+  rescoreBlockedWhy: string | null;
   /** This view watched the session flip from running to its end. Only then does a failure earn
    *  the full-width band; an old failure is the header's chip plus one line. */
   justEnded: boolean;
@@ -870,6 +945,11 @@ function SessionDetail({
           </p>
         )}
       </Panel>
+
+      {/* The clip retry above IS a re-score of this finished run; one action, never two. */}
+      {!session.retryScoring?.ready && session.rescore && (
+        <RescorePanel session={session} onRescore={onRescore} blockedWhy={rescoreBlockedWhy} />
+      )}
 
       {publishSlot}
     </div>
@@ -1461,23 +1541,36 @@ export default function BenchmarkView() {
     }
   }, [nodes, sampling, entrant, forge, cloudProvider, cloudModel, loadShots, loadSessions]);
 
-  const retryScoring = useCallback(
-    async (session: BenchSession) => {
-      if (!session.runId || !session.retryScoring?.ready) return;
+  // ONE path re-grades a saved build: a retry for scoring that did not finish, or a re-score of a
+  // finished run. Both stream through the same scoring progress (phase 'score') and the tray.
+  const scoreSavedBuild = useCallback(
+    async (session: BenchSession, mode: 'retry' | 'rescore') => {
+      if (!session.runId) return;
+      if (mode === 'retry' ? !session.retryScoring?.ready : !session.rescore?.ready) return;
       setRunning(true);
       setHarnessStage('score');
       setScored(false);
       setStatus(null);
       setFailureDetails(null);
+      // A publish outcome described the result this re-score replaces.
+      setPub({ kind: 'idle' });
       try {
-        const result = (await window.electron.benchmarkRetryScoring(session.runId)) as MineRow;
+        const result = (await (mode === 'rescore'
+          ? window.electron.benchmarkRescore(session.runId)
+          : window.electron.benchmarkRetryScoring(session.runId))) as MineRow;
         setMine(result);
-        setStatus('Run complete.');
+        setStatus(mode === 'rescore' ? 'Re-score complete.' : 'Run complete.');
         setFailureDetails(null);
         void loadShots(result.workdir);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        setStatus(/cancelled/i.test(message) ? 'Scoring cancelled.' : 'Scoring did not finish.');
+        setStatus(
+          /cancelled/i.test(message)
+            ? 'Scoring cancelled.'
+            : mode === 'rescore'
+              ? 'Re-score did not finish — the previous result is kept.'
+              : 'Scoring did not finish.'
+        );
         setFailureDetails((previous) => previous ?? message);
       } finally {
         setRunning(false);
@@ -1602,7 +1695,8 @@ export default function BenchmarkView() {
   // Publish belongs to the selected session's detail and posts THAT run's own result row. A run this
   // machine already posted says where it is live instead of offering a second post.
   const publishSection =
-    !shownRow || !selectedSession ? null : selectedSession.published ? (
+    !shownRow || !selectedSession ? null : selectedSession.published &&
+      publishedIsCurrent(selectedSession.published, selectedSession.rescoredAt) ? (
       <Panel title="Publish to leanzero.net">
         <div
           data-testid="published-live"
@@ -1629,6 +1723,14 @@ export default function BenchmarkView() {
           Posts your score, the check-by-check breakdown and graded app evidence under the title you
           choose. The result appears on the leanzero.net board immediately.
         </p>
+        {selectedSession.published && (
+          // Posted before, re-scored since: the board still shows the old result for this build.
+          <p data-testid="republish-note" className={cx('mt-3', TYPE.body, WEIGHT.semibold)}>
+            Re-scored since it was posted (&ldquo;{selectedSession.published.title}&rdquo; ·{' '}
+            {(selectedSession.published.score * 100).toFixed(1)}%). Publishing replaces that board
+            entry with this result.
+          </p>
+        )}
         <div className="mt-4 flex flex-col gap-4">
           <div className="max-w-[560px]">
             <label htmlFor={modelId} className={cx('mb-1.5 block', TYPE.meta)}>
@@ -1696,8 +1798,8 @@ export default function BenchmarkView() {
         </div>
         {publishing && (
           <p data-testid="publish-progress" className={cx('mt-3', TYPE.meta)}>
-            A graded clip over leanzero.net&rsquo;s 4 MiB limit is first re-encoded to a smaller clip of
-            the same recording, which can take a few minutes.
+            A graded clip over leanzero.net&rsquo;s 4 MiB limit is first re-encoded to a smaller
+            clip of the same recording, which can take a few minutes.
           </p>
         )}
         {selectedFrozen && (
@@ -2032,7 +2134,21 @@ export default function BenchmarkView() {
                   mineMatched={shownRow != null}
                   shots={shown?.shots ?? []}
                   publishSlot={publishSection}
-                  onRetryScoring={() => void retryScoring(selectedSession)}
+                  onRetryScoring={() => void scoreSavedBuild(selectedSession, 'retry')}
+                  onRescore={() => void scoreSavedBuild(selectedSession, 'rescore')}
+                  rescoreBlockedWhy={
+                    running
+                      ? 'Waiting for the run in progress to finish.'
+                      : !runtimeReady
+                        ? 'Install the Benchmark tools first.'
+                        : launchProblem
+                          ? launchProblem
+                          : (family === 'forge'
+                                ? selectedSession.scorerVersion.replace(/-rc$/, '')
+                                : selectedSession.scorerVersion) !== defaultBenchmarkScorer(family)
+                            ? 'Only the latest stable benchmark can be re-scored.'
+                            : null
+                  }
                   justEnded={justEndedKeys.has(sessionKey(selectedSession))}
                   retryBusy={
                     running ||

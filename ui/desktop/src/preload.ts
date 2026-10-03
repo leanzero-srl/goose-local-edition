@@ -209,6 +209,10 @@ type ElectronAPI = {
       nodes?: number;
       publishable: boolean;
       retryScoring?: { ready: boolean; reason?: string };
+      /** A finished run's saved build can be re-graded by this app's scorer (receipt-proven). */
+      rescore?: { ready: boolean; reason?: string };
+      /** The shown result came from a re-score at this ISO time (its runMeta.rescoredAt). */
+      rescoredAt?: string;
       scoringError?: string;
       /** This machine posted the run to leanzero.net (url null when the site returned none). */
       published?: {
@@ -255,6 +259,9 @@ type ElectronAPI = {
   }>;
   /** Stop the active benchmark by its owned process IDs. */
   benchmarkRetryScoring: (runId: string) => Promise<unknown>;
+  /** Re-grade a FINISHED run's saved build with this app's scorer — no model calls; the stored
+   *  result is replaced only when scoring succeeds. */
+  benchmarkRescore: (runId: string) => Promise<unknown>;
   benchmarkCancel: () => Promise<{ ok: boolean; error?: string }>;
   /** The in-flight run, if any — lets a remounted view re-attach to the live panel. */
   benchmarkStatus: () => Promise<{
@@ -594,6 +601,8 @@ const electronAPI: ElectronAPI = {
   // Legacy 3-arg calls still arrive as (nodes, tier, sampling) — a string second argument is the
   // dead tier choice: strip it so main's (nodes, sampling) contract holds for both call shapes.
   benchmarkRetryScoring: (runId: string) => ipcRenderer.invoke('benchmark-retry-scoring', runId),
+  benchmarkRescore: (runId: string) =>
+    ipcRenderer.invoke('benchmark-retry-scoring', runId, 'rescore'),
   benchmarkRun: (nodes: number, tierOrSampling?: SwarmSampling | string, legacy?: SwarmSampling) =>
     ipcRenderer.invoke(
       'benchmark-run',
