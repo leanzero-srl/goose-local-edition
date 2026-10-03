@@ -465,6 +465,7 @@ call log; "ev" = probe evidence; "oracle" = forge_oracle.py on the pack.
 | `r_rate_limit` | R | reconcile 429 (Retry-After 2): retried at ≥ 2 virtual s, run completes | fault log | the fault fired |  |
 | `r_as_app` | R | reconcile reads are `provider=app` | log | ≥ 1 scheduled-run Jira read |  |
 | `r_completes_in_timeout` | R | every scheduled invocation finishes inside its module timeout | emulator | a scheduled trigger made ≥ 1 Jira call |  |
+| `r_idempotent_rerun` | R | entity writes by the third (no-change) scheduled run: 0 → 1.0, ≤ 1% of rows → .5, else 0 (contract §3 "a run with nothing new writes nothing"; promoted from the E slice 2026-10-03 — a stated behaviour earns weight) | log | ≥ 1 ledger row |  |
 | `s_storage_scope` | S | KVS used and no 403 from the KVS proxy | log | ≥ 1 KVS call |  |
 | `s_entity_index_used` | S | ledger reads are entity queries on the declared index with the sprint as partition | log | ≥ 1 ledger read |  |
 | `s_index_order` | S | rows read by the index come back in change-time order (default table order = oracle) | ev + log | table rows rendered |  |
@@ -495,7 +496,7 @@ call log; "ev" = probe evidence; "oracle" = forge_oracle.py on the pack.
 | `a_action_result` | A | action JSON = oracle for each active sprint (numbers rounded as creep, visible changes in table order, `at` as instants) | emulator | — |  |
 | `a_action_errors` | A | unknown and missing `sprintId` → `{error}`, no throw | emulator | the action exists |  |
 | `a_action_permissions` | A | the per-person OUTCOME: `hiddenChanges` and the visible list are right for two users, whether read `asUser` or `asApp` + an explicit permission check (`asUser` in actions is undocumented) | emulator | — |  |
-| `a_skill_instructions` | A | SKILL.md body ≤ 500 lines, names `get-sprint-scope` and `sprintId` | tree | SKILL.md exists |  |
+| `a_skill_instructions` | A | SKILL.md body ≤ 500 lines, names `get-sprint-scope` and `sprintId`, reads the result (names at least half of the answer's fields `sprintName`, `committed`, `added`, `removed`, `creepPercent`, `hiddenChanges`, `changes`) and says what to do with an `error` (contract §6: "how to read the result, and what to do with an error", 2026-10-03) | tree | SKILL.md exists |  |
 
 Partial credit: every fraction-valued row is the measured fraction; an absent surface is 0 with `absent_surface`
 (severity 0 when critical) — never a refusal (score_sb7 F9 doctrine).
@@ -540,7 +541,6 @@ with golden receipts; initial values below are the rc defaults):
 | `e_reconcile_economy` | Jira calls of the backfill ÷ oracle optimum (field list + boards + configs + sprints + one ids-only search page set + changelog bulkfetch pages + issue bulkfetch) | ≤ 1.5× 1.0, ≤ 3× .75, ≤ 10× .5, ≤ 40× .25 |
 | `e_event_economy` | Jira calls per relevant live change ÷ oracle optimum (1 read, sprint/field metadata cached in KVS) | same |
 | `e_ui_round_trips` | invokes before first meaningful paint per surface | 1 → 1.0, 2 → .75, ≤ 4 → .5 |
-| `e_idempotent_rerun` | entity writes by the third (no-change) scheduled run | 0 → 1.0, ≤ 1% of rows → .5, else 0 |
 
 ### 8.5 Admission bands (passing awards nothing; `passed` = exactly 1.0, available, not vacuous — sb71.passed)
 
@@ -549,11 +549,27 @@ with golden receipts; initial values below are the rc defaults):
 | deployable | 0.499 | `l_deployable`, `l_bundles_load` |
 | working ledger | 0.699 | `u_widget_loads`, `t_event_rows`, `r_backfill_complete`, `s_storage_scope`, `s_entity_index_used` |
 | current platform, complete surfaces | 0.799 | `k_dashboard_widget`, `k_widget_edit_bridge`, `k_rovo_skill`, `u_widget_edit_config`, `u_ledger_table`, `a_action_result`, `v_theme_tokens`, `v_dark_mode` |
-| production robustness (graded) | 0.899 − 0.03·(n−1), never below 0.799 | `t_no_double_count`, `t_out_of_order`, `t_retry_after_honoured`, `r_heal_dropped`, `r_rate_limit`, `r_pagination`, `b_no_permission_leak`, `b_comment_exactly_once`, `b_realtime_payload_clean`, `u_llm_explain`, `u_widget_live`, `v_csp_clean`, `v_console_clean` |
+| production robustness (graded) | 0.899 − 0.03·(n−1), never below 0.799 | `t_no_double_count`, `t_out_of_order`, `t_retry_after_honoured`, `r_heal_dropped`, `r_rate_limit`, `r_pagination`, `b_no_permission_leak`, `b_comment_exactly_once`, `b_realtime_payload_clean`, `u_llm_explain`, `u_widget_live`, `v_csp_clean`, `v_console_clean`, `u_ledger_sort`, `s_index_order`, `b_hidden_count`, `a_action_permissions`, `l_scopes`, `k_llm_model_current` |
 
-Band 4 is graded: with n of its 13 rows failing (n ≥ 1) the ceiling is `max(0.799, 0.899 − 0.03·(n − 1))` — n=1 → 0.899,
-n=2 → 0.869, n=3 → 0.839, n=4 → 0.809, n ≥ 5 → 0.799 — so it never undercuts band 3's cap. The prompt's "Score
+Band 4 is graded: with n DEFECTS among its 19 rows (n ≥ 1) the ceiling is `max(0.799, 0.899 − 0.03·(n − 1))` — n=1 →
+0.899, n=2 → 0.869, n=3 → 0.839, n=4 → 0.809, n ≥ 5 → 0.799 — so it never undercuts band 3's cap. The prompt's "Score
 bands" section states these four in words (parity test, §14).
+
+2026-10-03 stringency (owner: "more brutal … without making it unfair"): the roster is the prompt's list read word by
+word — "Any duplicate, ordering, rate-limit, pagination, permission, policy, console, LLM or realtime defect" — so
+ordering adds `u_ledger_sort` and `s_index_order`, permission adds `b_hidden_count` and `a_action_permissions`,
+permission/policy adds `l_scopes` (the scopes and the CSP script relaxation), and LLM adds `k_llm_model_current` (this
+supersedes §17.2's points-only note on it). n counts DEFECTS, not rows (`band_defects`): a failed row that ROOT_BLOCKS
+attributes to another failed row of the band is that row's shadow and is priced once (asApp in the UI fails the leak,
+the hidden count and the action's per-person list — one defect; an unknown model id fails `k_llm_model_current` and
+every explain step — one defect). A root outside the band never absorbs a band row.
+
+A final never sits exactly on a cap (owner rule 2026-10-03 22:4x: "two models at exactly 0.899 is a big red flag"):
+`final = min(earned, ceiling − 0.05·(1 − earned))` (`capped_final`, `BAND_PULL = 0.05`). Continuous and monotone in
+earned, equal to the cap only at earned = 1, a no-op when nothing caps (ceiling 1.0); the largest pull below a cap,
+0.05·(1 − cap) (0.025 at 0.499, 0.005 at 0.899), stays under the graded 0.03 step, so one more band defect always
+costs more than any earned difference. The verdict carries the rule as `admission.final_rule`; the site's
+validateForgeAdmission mirrors it.
 
 ### 8.6 Severity selftest (wired into `--reference`; an inversion refuses the freeze)
 
@@ -831,7 +847,7 @@ check. Anchors are FORGE-CONTRACT.md sections unless marked P (prompt) or S (STA
 | `t_retry_after_honoured`, `r_rate_limit` | §3 429 bullet, §8 redelivery schedule and "a wait inside an invocation is real time" |
 | `t_no_user_in_async`, `r_as_app` | §3 asApp bullet |
 | `r_backfill_complete`, `r_removals_found` | §3 first bullet |
-| `r_heal_dropped`, `e_idempotent_rerun` | §3 `source` bullet ("event work may also record other changes of the issue it reads"), "Later scheduled runs…" |
+| `r_heal_dropped`, `r_idempotent_rerun` | §3 `source` bullet ("event work may also record other changes of the issue it reads"), "Later scheduled runs…" |
 | `r_pagination` | P done 3; S dev-site paragraph (bulk endpoints, pagination, JQL subset, ISO dates) |
 | `r_completes_in_timeout` | §8 "with the platform's timeouts" |
 | `s_storage_scope`, `s_limits` | §2 storage, platform limits discoverable |

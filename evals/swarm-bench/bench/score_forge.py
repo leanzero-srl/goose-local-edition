@@ -107,7 +107,7 @@ assert abs(sum(TIER_WEIGHT.values()) - 1.0) < 1e-9
 TIER_ORDER = ('L', 'K', 'T', 'R', 'S', 'B', 'U', 'V', 'A', 'E')
 
 DIAGNOSTIC = {'u_widget_loads'}
-CALIBRATION_OWNED = {'e_reconcile_economy', 'e_event_economy', 'e_ui_round_trips', 'e_idempotent_rerun'}
+CALIBRATION_OWNED = {'e_reconcile_economy', 'e_event_economy', 'e_ui_round_trips'}
 
 CRITICAL_CHECKS = {
     'l_deployable': 'deploy blocked — lint errors',
@@ -128,16 +128,44 @@ ADMISSION_BANDS = (
     (0.799, 'current platform, complete surfaces', ('k_dashboard_widget', 'k_widget_edit_bridge', 'k_rovo_skill',
                                                     'u_widget_edit_config', 'u_ledger_table', 'a_action_result',
                                                     'v_theme_tokens', 'v_dark_mode')),
+    # The prompt's list, word by word: "Any duplicate, ordering, rate-limit, pagination, permission, policy, console,
+    # LLM or realtime defect". Ordering is the table's sort and the index's change-time order as well as delivery
+    # order; permission is every per-person outcome (the hidden count, the Rovo action's per-person list) and the
+    # scopes the app asks for; LLM is the model the app names as well as the explanation (2026-10-03 stringency).
     (0.899, 'production robustness', ('t_no_double_count', 't_out_of_order', 't_retry_after_honoured',
                                       'r_heal_dropped', 'r_rate_limit', 'r_pagination', 'b_no_permission_leak',
                                       'b_comment_exactly_once', 'b_realtime_payload_clean', 'u_llm_explain',
-                                      'u_widget_live', 'v_csp_clean', 'v_console_clean')),
+                                      'u_widget_live', 'v_csp_clean', 'v_console_clean',
+                                      'u_ledger_sort', 's_index_order', 'b_hidden_count', 'a_action_permissions',
+                                      'l_scopes', 'k_llm_model_current')),
 )
 # The graded band (DESIGN §8.5, 2006de559): with n of its rows failing the ceiling is max(floor, top - step·(n-1)).
 # Single source: admit() reads it, and leanzero.net's sync (scripts/sync-forge-public.py) re-derives the caps from it.
 GRADED_BAND = ('production robustness', 0.899, 0.03, 0.799)
 assert GRADED_BAND[0] == ADMISSION_BANDS[-1][1] and GRADED_BAND[1] == ADMISSION_BANDS[-1][0]
 assert GRADED_BAND[3] == ADMISSION_BANDS[-2][0]   # never undercuts the band above it
+
+
+# Owner rule 2026-10-03 22:4x: a final never sits exactly on a band cap ("two models at exactly 0.899 is a big red
+# flag"). A capped run keeps its own earned gradient below the cap: final = min(earned, cap - BAND_PULL·(1 - earned)).
+# Continuous and monotone in earned, equal to the cap only at earned = 1, and a no-op when nothing caps (cap 1.0).
+# The largest pull below a cap, BAND_PULL·(1 - cap) at earned = cap (0.00505 at 0.899), stays under the graded
+# band's 0.03 step, so one more band defect always costs more than any earned difference.
+BAND_PULL = 0.05   # policy ratio: the share of the earned shortfall a capped final keeps (owner rule above)
+assert BAND_PULL * (1 - ADMISSION_BANDS[0][0]) < GRADED_BAND[2]
+
+
+def capped_final(earned: float, ceiling: float) -> float:
+    return min(earned, ceiling - BAND_PULL * (1.0 - earned))
+
+
+def published_score(final: float, ceiling: float) -> float:
+    """Four decimals. A final strictly below its cap is never printed AS the cap: a near-perfect capped run (earned
+    0.9999, pull 0.000005) would round back onto 0.899 — the tie the owner rule forbids — so it is truncated instead."""
+    shown = round(final, 4)
+    if ceiling < 1.0 and final < ceiling - 1e-12 and shown >= ceiling:
+        shown = math.floor(final * 1e4) / 1e4
+    return shown
 
 
 def band_ceiling(limit: float, label: str, failed: int) -> float:
@@ -1891,6 +1919,18 @@ def _(c):
              'the scheduled job is killed by its timeout')
 
 
+# Contract §3 states it as behaviour, not as economy: "a run with nothing new writes nothing" (promoted from the E slice
+# 2026-10-03: a stated requirement earns weight, and a rerun that rewrites the ledger is a defect, not a missed bonus).
+@check('r_idempotent_rerun', 'R', pre=pre_ledger_row, needs=('heal', 'rerun'))
+def _(c):
+    rows = len([1 for tok, _it in c.kvs_rows('heal') if any(ch.change_id in tok for ch in c.oracle.changes('final'))])
+    if not rows:
+        return g(0, 'no ledger rows after the heal — nothing to keep idempotent', 'the rerun is not judged')
+    writes = sum(_entity_writes(x) for x in c.calls(('rerun',), 'kvs'))
+    return g(ladder(writes / rows, TH['idempotent_rerun_rungs']), f'{writes} entity write(s) on a no-change run over {rows} rows',
+             'a scheduled run with nothing new rewrites the ledger', parts={'writes': writes, 'rows': rows})
+
+
 # ══ S: storage ═══════════════════════════════════════════════════════════════════════════════
 
 def _kvs_op(call: Dict) -> str:
@@ -2670,13 +2710,24 @@ def _(c):
              'per-person visibility wrong')
 
 
+# The action's answer as contract §6 prints it: what "how to read the result" has to cover (sprintId is the input).
+RESULT_KEYS = ('sprintName', 'committed', 'added', 'removed', 'creepPercent', 'hiddenChanges', 'changes')
+
+
 @check('a_skill_instructions', 'A', pre=pre_skill_md)
 def _(c):
     _fm, body = parse_frontmatter(_skill_text(c) or '')
+    named = [k for k in RESULT_KEYS if re.search(r'(?<![A-Za-z])' + k + r'(?![A-Za-z])', body)]
+    # Contract §6: the body tells the agent "when and how to call get-sprint-scope, what sprintId is, how to read the
+    # result, and what to do with an error". Reading the result = naming at least half of its fields; the error
+    # clause = the `error` answer named at all.
     conds = {'body_le_500_lines': len(body.splitlines()) <= 500, 'names_action': ACTION_KEY in body,
-             'names_sprintId': 'sprintId' in body}
+             'names_sprintId': 'sprintId' in body, 'reads_the_result': 2 * len(named) >= len(RESULT_KEYS),
+             'says_what_to_do_with_an_error': bool(re.search(r'\berrors?\b', body, re.I))}
     met = sum(conds.values())
-    return g(met / 3, f'SKILL.md body {met}/3', 'the skill does not tell the agent how to call the action', parts=conds)
+    return g(met / len(conds), f'SKILL.md body {met}/{len(conds)}: result fields named {named}'
+             + ('; missing: ' + ', '.join(k for k, v in conds.items() if not v) if met < len(conds) else ''),
+             'the skill does not tell the agent how to call the action and read its answer', parts=conds)
 
 
 # ══ E: excellence rows (rungs are ratios of the oracle optimum; calibration-owned) ═══════════
@@ -2722,24 +2773,15 @@ def _(c):
     return g(sum(scores.values()) / len(scores), f'round trips before first paint: {firsts}', parts=scores)
 
 
-@check('e_idempotent_rerun', 'E', needs=('rerun',))
-def _(c):
-    rows = len([1 for tok, _it in c.kvs_rows('heal') if any(ch.change_id in tok for ch in c.oracle.changes('final'))])
-    if not rows:
-        return g(0, 'no ledger rows — nothing to keep idempotent')
-    writes = sum(_entity_writes(x) for x in c.calls(('rerun',), 'kvs'))
-    return g(ladder(writes / rows, TH['idempotent_rerun_rungs']), f'{writes} entity write(s) on a no-change run over {rows} rows')
-
-
 # ── calibration (DESIGN §13.4 item 4: thresholds frozen with golden ×5 receipts, sha pinned) ──────────────
 
 CALIBRATION_SEEDS = 5   # DESIGN §13.4 item 4
 # The two economy ratios are FITTED: the top rung moves to the golden's worst-of-5 ratio (rounded up to 0.01, never
 # below the oracle optimum 1.0) and every lower rung keeps its rc multiple of the top, so the golden defines 1.0 on
-# every calibration seed. The round-trip and rerun rungs sit at their floor already (1 invoke, 0 writes): they are
+# every calibration seed. The round-trip rungs sit at their floor already (1 invoke): they are
 # VERIFIED (the golden reaches the top rung on every seed), never fitted — a golden that misses them refuses.
 FITTED_RUNGS = {'economy_rungs': 'e_reconcile_economy', 'event_economy_rungs': 'e_event_economy'}
-VERIFIED_TOP = ('e_ui_round_trips', 'e_idempotent_rerun')
+VERIFIED_TOP = ('e_ui_round_trips',)
 
 
 def _exact_ratio(parts: Dict) -> float:
@@ -2796,7 +2838,7 @@ assert set(TIER_OF.values()) == set(TIER_WEIGHT) | {'E'}
 assert DIAGNOSTIC <= REGISTERED and set(CRITICAL_CHECKS) <= REGISTERED and CALIBRATION_OWNED <= REGISTERED
 assert {n for _c, _l, names in ADMISSION_BANDS for n in names} <= REGISTERED
 assert set(EXCELLENCE_VALUED) | set(EXCELLENCE_BINARY) <= REGISTERED
-assert sum(1 for t in TIER_OF.values() if t != 'E') == 62 and sum(1 for t in TIER_OF.values() if t == 'E') == 4
+assert sum(1 for t in TIER_OF.values() if t != 'E') == 63 and sum(1 for t in TIER_OF.values() if t == 'E') == 3
 
 # Rows that compare a person's change LIST with the oracle: one wrong row in the ledger or one change shown that
 # should be hidden makes each of them wrong, and that is one defect, not N (DESIGN §13.4 item 5, gap #23).
@@ -2823,6 +2865,12 @@ ROOT_BLOCKS = {
                           'u_widget_numbers', 'u_widget_chart', 't_reestimate_followed'),
     # measured on m_asapp_ui: hidden changes listed -> the table, its sort and the action's list are wrong too.
     'b_no_permission_leak': CHANGE_LIST_ROWS,
+    # One defect, two band-4 rows (band_defects prices it once): a model id list() does not return fails every explain
+    # call (m_llm_unknown_model); a ledger read out of change-time order is a wrong default order and a wrong toggle;
+    # a wrong hidden count is wrong in the action's per-person answer too.
+    'k_llm_model_current': ('u_llm_explain',),
+    's_index_order': ('u_ledger_sort',),
+    'b_hidden_count': ('a_action_permissions',),
 }
 for _root, _deps in ROOT_BLOCKS.items():
     assert {_root, *_deps} <= REGISTERED
@@ -2960,16 +3008,33 @@ def excellence(rows: List[Dict]) -> Tuple[float, float, List[Dict]]:
     return fraction, e_mean, conds
 
 
+def band_defects(label: str, failed: List[str]) -> List[str]:
+    """The graded band counts DEFECTS ("minus 0.03 for each further such defect"), not rows: a failed row that
+    ROOT_BLOCKS attributes to another failed row of the same band is that row's shadow (asApp in the UI leaks AND
+    miscounts the hidden changes AND lists them in the action — one defect), priced once. Only a root inside the
+    band absorbs a row, so a defect is never dropped from the band by a root the band does not charge."""
+    if label != GRADED_BAND[0]:
+        return failed
+    defects = [n for n in failed if not any(n in ROOT_BLOCKS.get(root, ()) for root in failed if root != n)]
+    return defects or failed[:1]
+
+
 def admit(rows: List[Dict]) -> Dict:
     by = {r['check']: r for r in rows}
     ceiling, reasons, failed_by_band = 1.0, [], []
     for limit, label, names in ADMISSION_BANDS:
         failed = [n for n in names if not passed(by.get(n))]
         if failed:
-            cap = band_ceiling(limit, label, len(failed))
+            defects = band_defects(label, failed)
+            cap = band_ceiling(limit, label, len(defects))
             ceiling = min(ceiling, cap)
-            failed_by_band.append({'ceiling': cap, 'band': label, 'checks': failed})
-            reasons.append(f'{label}: {", ".join(failed)} (maximum {cap:.3f})')
+            entry = {'ceiling': cap, 'band': label, 'checks': failed}
+            shadows = [n for n in failed if n not in defects]
+            if shadows:
+                entry['priced_once'] = shadows
+            failed_by_band.append(entry)
+            reasons.append(f'{label}: {", ".join(failed)} (maximum {cap:.3f}'
+                           + (f'; {", ".join(shadows)} priced with their root' if shadows else '') + ')')
     return {'ceiling': ceiling, 'reasons': reasons, 'failedChecksByBand': failed_by_band}
 
 
@@ -3017,7 +3082,8 @@ def compose_from_rows(rows: List[Dict], c: Optional[Ctx] = None) -> Dict:
         crit_rows.append({**entry, 'factor': round(factor, 4)})
     earned = pre_severity * mult
     admission = admit(rows)
-    final = min(earned, admission['ceiling'])
+    admission['final_rule'] = f'final = min(earned, ceiling - {BAND_PULL:g} * (1 - earned))'
+    final = capped_final(earned, admission['ceiling'])
     tiers['E'] = {'mean': round(fraction * e_mean, 4), 'gate': fraction >= 1.0, 'gate_fraction': round(fraction, 4),
                   'weight': E_WEIGHT}
     harness_missing = list(c.harness_missing) if c is not None else []
@@ -3029,7 +3095,8 @@ def compose_from_rows(rows: List[Dict], c: Optional[Ctx] = None) -> Dict:
         unpublishable.append(f'runtime {runtime} (the in-repo shim, not the pinned Forge wrapper)')
     status = 'held' if harness_missing else 'scored'
     return {
-        'status': status, 'score': round(final, 4), 'rawScore': round(earned, 4), 'inner': round(inner, 4),
+        'status': status, 'score': published_score(final, admission['ceiling']), 'rawScore': round(earned, 4),
+        'inner': round(inner, 4),
         'scorerVersion': VERSION, 'scorer_version': VERSION, 'family': 'forge',
         'fixture_seed': c.fixture_seed if c is not None else None, 'dev_seed': c.dev_seed if c is not None else None,
         'critical': {'floor': floor, 'multiplier': round(mult, 4), 'pre_severity_score': round(pre_severity, 4),
@@ -3160,9 +3227,10 @@ def severity_selftest() -> List[str]:
         for n in names:
             v = score(_scenario({n: 0.0}))
             expect(v['score'] <= limit + 1e-9, f'(9) {n} failing must hold {label} at {limit} (got {v["score"]})')
-    # (11) band 4's graded ceiling at n = 1, 2, 3, 4, 5 and 13 failed rows (DESIGN §8.5)
-    band4 = ADMISSION_BANDS[-1][2]
-    for k, want in ((1, 0.899), (2, 0.869), (3, 0.839), (4, 0.809), (5, 0.799), (13, 0.799)):
+    # (11) band 4's graded ceiling at n = 1, 2, 3, 4, 5 and every failed row (DESIGN §8.5)
+    # Rows no other band row is the root of, so k failed rows are k defects (band_defects prices a shadow once).
+    band4 = [n for n in ADMISSION_BANDS[-1][2] if not any(n in ROOT_BLOCKS.get(r, ()) for r in ADMISSION_BANDS[-1][2])]
+    for k, want in ((1, 0.899), (2, 0.869), (3, 0.839), (4, 0.809), (5, 0.799), (len(band4), 0.799)):
         got = admit(_scenario({n: 0.0 for n in band4[:k]}))['ceiling']
         expect(abs(got - want) < 1e-9, f'(11) band 4 with {k} failed row(s) must cap at {want} (got {got})')
     # severity ordering: every critical costs more than any single non-critical defect

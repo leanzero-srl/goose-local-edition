@@ -908,7 +908,10 @@ class LlmRealtimeMcpTests(Golden):
                     e.update(model='claude-3-opus', modelStatus='unknown', status=400)
         rows, v = self.mutate(unknown)
         self.assertEqual(rows['k_llm_model_current']['score'], 0.5)
-        self.assertEqual(v['admission']['ceiling'], 1.0)     # points only, never a band (DESIGN 17.2)
+        # An LLM defect is a band-4 defect (prompt: "Any ... LLM ... defect"; 2026-10-03 stringency supersedes
+        # DESIGN 17.2's points-only note); with u_llm_explain failing too it is priced once (band_defects).
+        self.assertEqual(v['admission']['ceiling'], 0.899)
+        self.assertIn('k_llm_model_current', v['admission']['failedChecksByBand'][-1]['checks'])
         rule = [f for f in v['deploy_readiness']['rules'] if f['rule'].startswith('R11 ')][0]
         self.assertEqual((rule['status'], rule['graded_by']), ('fail', 'k_llm_model_current'))
 
@@ -1012,6 +1015,43 @@ class LlmRealtimeMcpTests(Golden):
         self.assertEqual(rows['b_no_permission_leak']['score'], 0)
         self.assertIn('b_no_permission_leak', v['critical']['unsuppressed'])
 
+    def test_band_four_roster_is_the_prompts_list(self):
+        # Prompt "Score bands": "Any duplicate, ordering, rate-limit, pagination, permission, policy, console, LLM or
+        # realtime defect" (2026-10-03 stringency: ordering, permission, policy and LLM rows added).
+        self.assertEqual(set(sf.ADMISSION_BANDS[-1][2]), {
+            't_no_double_count', 't_out_of_order', 't_retry_after_honoured', 'r_heal_dropped', 'r_rate_limit',
+            'r_pagination', 'b_no_permission_leak', 'b_comment_exactly_once', 'b_realtime_payload_clean',
+            'u_llm_explain', 'u_widget_live', 'v_csp_clean', 'v_console_clean', 'u_ledger_sort', 's_index_order',
+            'b_hidden_count', 'a_action_permissions', 'l_scopes', 'k_llm_model_current'})
+
+    def test_band_four_prices_a_shadow_once(self):
+        # m_asapp_ui's shape: one asApp defect fails the leak, the hidden count and the action's per-person list.
+        rows = sf._scenario({'b_no_permission_leak': 0.0, 'b_hidden_count': 0.0, 'a_action_permissions': 0.0})
+        adm = sf.admit(rows)
+        self.assertEqual(adm['ceiling'], 0.899)
+        self.assertEqual(sorted(adm['failedChecksByBand'][-1]['priced_once']), ['a_action_permissions', 'b_hidden_count'])
+        # two unrelated defects are two
+        self.assertEqual(sf.admit(sf._scenario({'l_scopes': 0.0, 'u_widget_live': 0.0}))['ceiling'], 0.869)
+
+    def test_a_final_never_sits_on_a_cap(self):
+        # Owner rule 2026-10-03: final = min(earned, cap - 0.05 * (1 - earned)).
+        self.assertEqual(sf.capped_final(1.0, 0.899), 0.899)
+        self.assertAlmostEqual(sf.capped_final(0.98, 0.899), 0.899 - 0.05 * 0.02)
+        self.assertEqual(sf.capped_final(0.5, 0.899), 0.5)
+        self.assertEqual(sf.capped_final(0.97, 1.0), 0.97)
+        grid = [i / 1000 for i in range(1001)]
+        for cap in (0.499, 0.699, 0.799, 0.809, 0.839, 0.869, 0.899, 1.0):
+            finals = [sf.capped_final(e, cap) for e in grid]
+            self.assertEqual(finals, sorted(finals))                      # monotone in earned
+            self.assertTrue(all(f < cap for f, e in zip(finals, grid) if e < 1.0 and cap < 1.0))
+        # a near-perfect capped run never PRINTS the cap either (rounding would put it back on 0.899)
+        self.assertEqual(sf.published_score(sf.capped_final(0.99998, 0.899), 0.899), 0.8989)
+        self.assertEqual(sf.published_score(sf.capped_final(1.0, 0.899), 0.899), 0.899)
+        self.assertEqual(sf.published_score(0.99999999999, 1.0), 1.0)
+        v = sf.compose_from_rows(sf._scenario({'u_widget_live': 0.0}))
+        self.assertLess(v['score'], 0.899)
+        self.assertEqual(v['admission']['final_rule'], 'final = min(earned, ceiling - 0.05 * (1 - earned))')
+
     def test_band_four_is_graded(self):
         rows = sf._scenario({'u_llm_explain': 0.0, 'u_widget_live': 0.0, 'v_console_clean': 0.0})
         self.assertEqual(sf.admit(rows)['ceiling'], 0.839)
@@ -1047,14 +1087,15 @@ class ControlTests(unittest.TestCase):
     def test_single_defect_cost_table_is_pinned(self):
         # DESIGN §8.6 (10): computed once from the composition; a change here is a scoring change.
         pinned = {
-            'l_deployable': 0.499, 'l_bundles_load': 0.499, 'b_no_permission_leak': 0.5894,
-            'b_comment_exactly_once': 0.5894, 't_no_double_count': 0.5894, 'r_backfill_complete':
-            0.5894, 'u_widget_loads': 0.6, 't_event_rows': 0.699, 'k_dashboard_widget': 0.799,
-            'r_pagination': 0.899, 'u_llm_explain': 0.899, 'u_widget_live': 0.899, 'k_rovo_mcp': 0.9845,
-            'k_llm_model_current': 0.9845, 'e_reconcile_economy': 0.97, 'b_comment_adf_as_user': 0.9757,
-            'u_widget_numbers': 0.9805, 'l_lint_warnings': 0.9816, 't_reestimate_followed': 0.9824,
-            'u_widget_chart': 0.9872, 'v_widget_sizes': 0.9859, 'l_scopes': 0.9883,
-            'k_manifest_semantics': 0.9845, 'k_runtime_risks': 0.9845}
+            'l_deployable': 0.4786, 'l_bundles_load': 0.4786, 'b_no_permission_leak': 0.5894,
+            'b_comment_exactly_once': 0.5894, 't_no_double_count': 0.5894, 'r_backfill_complete': 0.5908,
+            'u_widget_loads': 0.6, 't_event_rows': 0.6978, 'k_dashboard_widget': 0.7982, 'r_pagination': 0.8982,
+            'u_llm_explain': 0.8984, 'u_widget_live': 0.8984, 'k_rovo_mcp': 0.9845, 'k_llm_model_current': 0.8982,
+            'e_reconcile_economy': 0.96, 'b_comment_adf_as_user': 0.9757, 'u_widget_numbers': 0.9805,
+            'l_lint_warnings': 0.9816, 't_reestimate_followed': 0.9824, 'u_widget_chart': 0.9872,
+            'v_widget_sizes': 0.9859, 'l_scopes': 0.8984, 'k_manifest_semantics': 0.9845, 'k_runtime_risks': 0.9845,
+            'u_ledger_sort': 0.8984, 's_index_order': 0.8981, 'b_hidden_count': 0.8981, 'a_action_permissions': 0.8981,
+            'r_idempotent_rerun': 0.9846, 'a_skill_instructions': 0.9824}
         costs = sf.single_defect_costs()
         self.assertEqual({k: costs[k] for k in pinned}, pinned)
 
@@ -1190,7 +1231,7 @@ class RegistryAndContractTests(unittest.TestCase):
         't_event_rows': '§3', 't_no_double_count': '§3', 't_out_of_order': '§3', 't_multi_sprint_parse': '§1',
         't_reestimate_followed': '§3', 't_retry_after_honoured': '§3', 'r_rate_limit': '§3',
         't_no_user_in_async': '§3', 'r_as_app': '§3', 'r_backfill_complete': '§3', 'r_removals_found': '§3',
-        'r_heal_dropped': '§3', 'e_idempotent_rerun': '§3', 'r_pagination': 'P3', 'r_completes_in_timeout': '§8',
+        'r_heal_dropped': '§3', 'r_idempotent_rerun': '§3', 'r_pagination': 'P3', 'r_completes_in_timeout': '§8',
         's_storage_scope': '§2', 's_limits': '§2', 'b_invoke_contract': '§6', 'b_no_permission_leak': '§1',
         'b_hidden_count': '§5', 'a_action_permissions': '§6', 'b_comment_adf_as_user': '§5',
         'b_comment_exactly_once': '§5', 'u_comment_flow': '§5', 'u_widget_loads': '§4', 'u_widget_numbers': '§4',
@@ -1229,7 +1270,7 @@ class RegistryAndContractTests(unittest.TestCase):
         counts = {}
         for _n, t, *_ in sf.CHECKS:
             counts[t] = counts.get(t, 0) + 1
-        self.assertEqual(counts, {'L': 6, 'K': 10, 'T': 8, 'R': 7, 'S': 4, 'B': 6, 'U': 12, 'V': 5, 'A': 4, 'E': 4})
+        self.assertEqual(counts, {'L': 6, 'K': 10, 'T': 8, 'R': 8, 'S': 4, 'B': 6, 'U': 12, 'V': 5, 'A': 4, 'E': 3})
         self.assertEqual(sf.TIER_WEIGHT, {'L': .08, 'K': .10, 'T': .16, 'R': .14, 'S': .08, 'B': .12, 'U': .16,
                                           'V': .08, 'A': .08})
 
