@@ -239,7 +239,8 @@ def golden_observations(pack):
                              'status': 201, 'body': body})
             comments.append({'t': 1010, 'issueKey': target.issue_key, 'provider': 'user', 'accountId': viewer,
                              'status': 201, 'body': body})
-            comments.append({'t': 1020, 'issueKey': 'OPS-9', 'provider': 'user', 'accountId': viewer, 'status': 403, 'body': body})
+            comments.append({'t': 1020, 'issueKey': 'OPS-9', 'provider': 'user', 'accountId': viewer, 'status': 400, 'body': body,
+                             'errorMessages': ['Vera Viewer, you do not have the permission to comment on this issue.']})
             render.update({'select': {'changeId': target.change_id, 'ariaSelected': True},
                            'post': {'commentsAdded': 1, 'successFlags': 1, 'errorFlags': 0},
                            'doubleClick': {'commentsAdded': 1, 'successFlags': 1, 'errorFlags': 0},
@@ -402,6 +403,22 @@ class DefectTests(Golden):
         v = self.mutate(string_body)
         self.assertEqual(self.rows(v)['b_comment_adf_as_user']['score'], 0)
         self.assertEqual(self.rows(v)['b_comment_exactly_once']['score'], 1)
+
+    def test_the_forbidden_comment_400_is_refused_not_landed(self):
+        # Jira's measured answer to a comment without ADD_COMMENTS (WP1 d21b58a53): the fixture's forbidden post.
+        self.assertEqual(self.rows(self.score(self.obs))['b_comment_adf_as_user']['score'], 1)
+
+        def invalid_body(obs):   # a 400 without the permission message is an attempt that landed badly
+            for x in obs['comments']:
+                if x['status'] == 400:
+                    x['errorMessages'] = []
+        self.assertLess(self.rows(self.mutate(invalid_body))['b_comment_adf_as_user']['score'], 1)
+
+        def legacy_403(obs):   # observations from the earlier dev site (403) are still refused
+            for x in obs['comments']:
+                if x['status'] == 400:
+                    x.update(status=403, errorMessages=None)
+        self.assertEqual(self.rows(self.mutate(legacy_403))['b_comment_adf_as_user']['score'], 1)
 
     def test_a_double_post_is_a_cliff(self):
         def double(obs):

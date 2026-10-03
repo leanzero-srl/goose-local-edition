@@ -1986,9 +1986,21 @@ def adf_text(node, depth: int = 0) -> Optional[str]:
     return ' '.join(parts)
 
 
+# Jira Cloud answers a comment POST without ADD_COMMENTS with 400 {"errorMessages":["<display name>, you do not have the
+# permission to comment on this issue."],"errors":{}} — not 403 (measured on wolfaenpak 2026-10-03, WP1 d21b58a53).
+COMMENT_FORBIDDEN_MESSAGE = re.compile(r'you do not have the permission to comment on this issue', re.I)
+
+
+def comment_refused(x: Dict) -> bool:
+    """A comment POST the platform refused (rate limit or no permission) — an attempt that did not land."""
+    if x.get('status') in (429, 403):
+        return True
+    return x.get('status') == 400 and any(COMMENT_FORBIDDEN_MESSAGE.search(str(m)) for m in x.get('errorMessages') or [])
+
+
 @check('b_comment_adf_as_user', 'B', pre=pre_comment_post, needs=('ui',))
 def _(c):
-    attempts = [x for x in c.obs.get('comments') or [] if x.get('status') not in (429, 403)]
+    attempts = [x for x in c.obs.get('comments') or [] if not comment_refused(x)]
     if not attempts:
         return g(0, 'every comment POST was rate-limited or forbidden; none landed', 'no comment')
     ok, notes = 0, []

@@ -381,7 +381,9 @@ function commentAttempts(pack) {
   return all.filter((c) => c.service === 'jira' && c.method === 'POST' && /\/rest\/api\/[23]\/issue\/[^/]+\/comment$/.test(String(c.path).split('?')[0]))
     .map((c) => ({ t: c.t, issueKey: String(c.path).split('/issue/')[1].split('/')[0], provider: c.provider,
       accountId: c.provider === 'user' ? pack.viewer : pack.appAccountId, status: c.status,
-      body: c.body && typeof c.body === 'object' ? c.body.body : c.body, fault: c.fault }));
+      body: c.body && typeof c.body === 'object' ? c.body.body : c.body, fault: c.fault,
+      // Jira refuses a comment without ADD_COMMENTS with 400 + a named message, not 403 (measured, WP1 d21b58a53).
+      errorMessages: Array.isArray(c.response?.errorMessages) ? c.response.errorMessages : undefined }));
 }
 
 // ── UI (§8.7 step 8) ──────────────────────────────────────────────────────────────────────
