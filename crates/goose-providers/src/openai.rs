@@ -3,7 +3,6 @@ use super::base::{ConfigKey, ModelInfo, Provider, ProviderMetadata};
 use super::retry::ProviderRetry;
 use crate::api_client::{AuthMethod, TlsConfig};
 use crate::conversation::message::Message;
-use crate::conversation::message::SystemNotificationType;
 use crate::conversation::token_usage::ProviderUsage;
 use crate::declarative::{DeclarativeProviderConfig, KeyResolver};
 use crate::errors::ProviderError;
@@ -16,7 +15,7 @@ use crate::formats::openai_responses::{
     create_responses_request, get_responses_usage, responses_api_to_message, ResponsesApiResponse,
 };
 use crate::http_status::sanitize_url;
-use crate::images::{withheld_images_notice, ImageFormat};
+use crate::images::{announced, withheld_images_notice, ImageFormat, ImageInput};
 use crate::openai_compatible::{
     handle_response_openai_compat, handle_status, stream_responses_compat,
 };
@@ -738,18 +737,9 @@ fn served_entry<'a>(
         })
 }
 
-/// What an engine declares about image input (Q-260).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ImageInput {
-    /// `capabilities` lists `vision`.
-    Reads,
-    /// `capabilities` is listed without `vision`: the engine refuses image parts, and a refused
-    /// image left in history would fail every later turn of the session.
-    TextOnly,
-    /// No `capabilities` (or no entry for the model): the engine says nothing either way.
-    Undeclared,
-}
-
+/// What a goose MLX engine's `/v1/models` entry declares about image input (Q-260): `capabilities`
+/// listing `vision` reads images, `capabilities` without it reads text only, and no `capabilities`
+/// (or no entry for the model) says nothing either way.
 fn declared_image_input(json: &serde_json::Value, model_name: &str) -> ImageInput {
     match served_entry(json, model_name)
         .and_then(|e| e.get("capabilities"))
@@ -1142,30 +1132,6 @@ impl Provider for OpenAiProvider {
             Ok(announced(stream, images_notice))
         }
     }
-}
-
-/// The engine's stream, led by the chat's notice when this request is the first to withhold an
-/// image (Q-260). The notice is a system notification — no formatter sends it to a model — so it
-/// is shown and kept in the session, never read back as something the model said. It rides in
-/// front of the engine's FIRST item and only when that item is not an error: a stream that fails
-/// before its first item stays retryable (`reply_parts`' retry-before-the-first-item contract),
-/// and the retried request carries the notice again.
-fn announced(stream: MessageStream, notice: Option<String>) -> MessageStream {
-    use futures::StreamExt;
-    let Some(notice) = notice else {
-        return stream;
-    };
-    let mut notice = Some(
-        Message::assistant()
-            .with_system_notification(SystemNotificationType::InlineMessage, notice),
-    );
-    Box::pin(stream.flat_map(move |item| {
-        let lead = notice
-            .take()
-            .filter(|_| item.is_ok())
-            .map(|message| Ok((Some(message), None)));
-        futures::stream::iter(lead.into_iter().chain(std::iter::once(item)))
-    }))
 }
 
 pub fn from_declarative_config(
