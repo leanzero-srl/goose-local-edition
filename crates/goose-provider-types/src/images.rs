@@ -5,6 +5,8 @@ use rmcp::model::{AnnotateAble as _, ImageContent, RawImageContent};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::base::MessageStream;
+use crate::conversation::message::{Message, SystemNotificationType};
 use crate::errors::ProviderError;
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
@@ -95,6 +97,45 @@ pub fn withheld_images_notice(model: &str, withheld: &[WithheldImage]) -> Option
             many.join(", ")
         )),
     }
+}
+
+/// What a model's provider declares about image input. A provider reads it from its own metadata:
+/// a goose MLX engine's `/v1/models` `capabilities` (Q-260), OpenRouter's models listing
+/// `architecture.input_modalities`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageInput {
+    /// The model takes image parts.
+    Reads,
+    /// The model takes text only: the upstream refuses image parts (OpenRouter answers 404 "No
+    /// endpoints found that support image input"), and a refused image left in history would fail
+    /// every later turn of the session.
+    TextOnly,
+    /// The metadata says nothing either way (no entry for the model, or no such field).
+    Undeclared,
+}
+
+/// The stream, led by the chat's notice when this request is the first to withhold an image
+/// (Q-260). The notice is a system notification — no formatter sends it to a model — so it is
+/// shown and kept in the session, never read back as something the model said. It rides in front
+/// of the stream's FIRST item and only when that item is not an error: a stream that fails before
+/// its first item stays retryable (`reply_parts`' retry-before-the-first-item contract), and the
+/// retried request carries the notice again.
+pub fn announced(stream: MessageStream, notice: Option<String>) -> MessageStream {
+    use futures::StreamExt;
+    let Some(notice) = notice else {
+        return stream;
+    };
+    let mut notice = Some(
+        Message::assistant()
+            .with_system_notification(SystemNotificationType::InlineMessage, notice),
+    );
+    Box::pin(stream.flat_map(move |item| {
+        let lead = notice
+            .take()
+            .filter(|_| item.is_ok())
+            .map(|message| Ok((Some(message), None)));
+        futures::stream::iter(lead.into_iter().chain(std::iter::once(item)))
+    }))
 }
 
 pub fn detect_image_path(text: &str) -> Option<Cow<'_, str>> {

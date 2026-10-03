@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
 use async_trait::async_trait;
 use futures::future::BoxFuture;
-use goose_providers::images::ImageFormat;
+use goose_providers::images::{announced, withheld_images_notice, ImageFormat, ImageInput};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
@@ -16,7 +16,7 @@ use crate::conversation::message::Message;
 use crate::providers::formats::openrouter as openrouter_format;
 use goose_providers::errors::ProviderError;
 use goose_providers::formats::anthropic_cache::apply_anthropic_cache_breakpoints;
-use goose_providers::formats::openai::create_request;
+use goose_providers::formats::openai::{create_request_reporting_images, OpenAiFormatOptions};
 use goose_providers::model::ModelConfig;
 use goose_providers::request_log::{start_log, LoggerHandleExt};
 use rmcp::model::Tool;
@@ -52,7 +52,7 @@ pub struct OpenRouterProvider {
     #[serde(skip)]
     configured_parameters: Option<HashMap<String, Value>>,
     #[serde(skip)]
-    context_windows: tokio::sync::OnceCell<HashMap<String, usize>>,
+    listing: tokio::sync::OnceCell<ModelsListing>,
     #[serde(skip)]
     resolved_windows: std::sync::Mutex<HashMap<String, Option<usize>>>,
 }
@@ -80,7 +80,7 @@ impl OpenRouterProvider {
             supports_streaming: true,
             name: OPENROUTER_PROVIDER_NAME.to_string(),
             configured_parameters,
-            context_windows: tokio::sync::OnceCell::new(),
+            listing: tokio::sync::OnceCell::new(),
             resolved_windows: std::sync::Mutex::new(HashMap::new()),
         })
     }
@@ -108,13 +108,102 @@ impl OpenRouterProvider {
         parse_models_listing(&json)
     }
 
-    async fn context_windows(&self) -> Result<&HashMap<String, usize>, ProviderError> {
-        self.context_windows
+    /// The live models listing, fetched once; a failed fetch is not remembered, so the next lookup
+    /// tries again.
+    async fn listing(&self) -> Result<&ModelsListing, ProviderError> {
+        self.listing
             .get_or_try_init(|| async {
                 let listing = self.fetch_models_listing().await?;
-                Ok(context_windows_of(&listing))
+                Ok(ModelsListing::of(&listing))
             })
             .await
+    }
+
+    async fn context_windows(&self) -> Result<&HashMap<String, usize>, ProviderError> {
+        Ok(&self.listing().await?.windows)
+    }
+
+    /// Whether `model_name` takes image input, as OpenRouter's models listing declares it in
+    /// `architecture.input_modalities`.
+    async fn listed_image_input(&self, model_name: &str) -> Result<ImageInput, ProviderError> {
+        Ok(self
+            .listing()
+            .await?
+            .image_inputs
+            .get(model_name)
+            .copied()
+            .unwrap_or(ImageInput::Undeclared))
+    }
+
+    /// The request for `model_config`, with every image part withheld behind a named placeholder
+    /// when the listing declares the model text-only, and the chat's notice for the images this
+    /// request is the first to withhold. OpenRouter answers an image part sent to a text-only model
+    /// with 404 "No endpoints found that support image input" — a turn lost, and a session lost
+    /// once the image sits in history. A request with no image never consults the listing.
+    async fn chat_request(
+        &self,
+        model_config: &ModelConfig,
+        system: &str,
+        messages: &[Message],
+        tools: &[Tool],
+    ) -> Result<(Value, Option<String>), ProviderError> {
+        let options = OpenAiFormatOptions {
+            preserve_thinking_context: true,
+            ..Default::default()
+        };
+        let build = |options: OpenAiFormatOptions| -> Result<_, ProviderError> {
+            Ok(create_request_reporting_images(
+                model_config,
+                system,
+                messages,
+                tools,
+                &ImageFormat::OpenAi,
+                true,
+                options,
+            )?)
+        };
+        let (payload, images) = build(options)?;
+        if images.sent == 0 {
+            return Ok((payload, None));
+        }
+        match self.listed_image_input(&model_config.model_name).await {
+            Ok(ImageInput::TextOnly) => {
+                let (payload, images) = build(OpenAiFormatOptions {
+                    text_only_engine: true,
+                    ..options
+                })?;
+                tracing::info!(
+                    model = %model_config.model_name,
+                    withheld = images.withheld.len(),
+                    "images_withheld: OpenRouter's models listing declares this model's \
+                     input_modalities without image; every image part went as a named placeholder"
+                );
+                let notice = withheld_images_notice(&model_config.model_name, &images.withheld);
+                Ok((payload, notice))
+            }
+            Ok(ImageInput::Reads) => Ok((payload, None)),
+            Ok(ImageInput::Undeclared) => {
+                tracing::warn!(
+                    model = %model_config.model_name,
+                    images = images.sent,
+                    "image_input_undeclared: OpenRouter's models listing names no \
+                     input_modalities for this model, so whether it takes images is unknown; \
+                     the images are sent as they are"
+                );
+                Ok((payload, None))
+            }
+            Err(err) => {
+                tracing::warn!(
+                    model = %model_config.model_name,
+                    images = images.sent,
+                    reason = %err,
+                    "image_input_probe_failed: OpenRouter's models listing could not be read, \
+                     so whether this model takes images is unknown; the images are sent as they \
+                     are"
+                );
+                Ok((payload, None))
+            }
+        }
     }
 
     /// The window OpenRouter's live models listing declares for `model_name` — `None`, with a
@@ -165,6 +254,41 @@ impl OpenRouterProvider {
 struct ListedModel {
     id: String,
     context_length: Option<usize>,
+    image_input: ImageInput,
+}
+
+/// What the models listing declares per model id, kept for the life of the provider.
+struct ModelsListing {
+    windows: HashMap<String, usize>,
+    image_inputs: HashMap<String, ImageInput>,
+}
+
+impl ModelsListing {
+    fn of(listing: &[ListedModel]) -> Self {
+        Self {
+            windows: context_windows_of(listing),
+            image_inputs: listing
+                .iter()
+                .map(|model| (model.id.clone(), model.image_input))
+                .collect(),
+        }
+    }
+}
+
+/// A listing entry's `architecture.input_modalities` (e.g. `["text"]`, `["text", "image"]`): a
+/// list naming `image` takes images, a list without it is text-only, no list declares nothing.
+fn listed_image_input(model: &Value) -> ImageInput {
+    match model
+        .get("architecture")
+        .and_then(|architecture| architecture.get("input_modalities"))
+        .and_then(Value::as_array)
+    {
+        Some(modalities) if modalities.iter().any(|m| m.as_str() == Some("image")) => {
+            ImageInput::Reads
+        }
+        Some(_) => ImageInput::TextOnly,
+        None => ImageInput::Undeclared,
+    }
 }
 
 fn parse_models_listing(json: &Value) -> Result<Vec<ListedModel>, ProviderError> {
@@ -196,6 +320,7 @@ fn parse_models_listing(json: &Value) -> Result<Vec<ListedModel>, ProviderError>
             Some(ListedModel {
                 id: id.to_string(),
                 context_length,
+                image_input: listed_image_input(model),
             })
         })
         .collect())
@@ -294,7 +419,7 @@ impl Provider for OpenRouterProvider {
 
     async fn fetch_supported_models(&self) -> Result<Vec<String>, ProviderError> {
         let listing = self.fetch_models_listing().await?;
-        let _ = self.context_windows.set(context_windows_of(&listing));
+        let _ = self.listing.set(ModelsListing::of(&listing));
         let mut models: Vec<String> = listing.into_iter().map(|model| model.id).collect();
         models.sort();
         Ok(models)
@@ -342,14 +467,9 @@ impl Provider for OpenRouterProvider {
             model_config
         };
 
-        let mut payload = create_request(
-            model_config,
-            system,
-            messages,
-            tools,
-            &ImageFormat::OpenAi,
-            true,
-        )?;
+        let (mut payload, images_notice) = self
+            .chat_request(model_config, system, messages, tools)
+            .await?;
 
         // Add user field for OpenRouter attribution/rate-limiting
         if !session_id.is_empty() {
@@ -389,7 +509,13 @@ impl Provider for OpenRouterProvider {
 
         // The telemetry line carries the generation id OpenRouter bills under, so a benchmark harness
         // can read the provider's own bill per call (evals/swarm-bench/bench/bench_cost.py).
-        stream_openai_compat_timed(response, log, telemetry_t0, model_config.model_name.clone())
+        let stream = stream_openai_compat_timed(
+            response,
+            log,
+            telemetry_t0,
+            model_config.model_name.clone(),
+        )?;
+        Ok(announced(stream, images_notice))
     }
 }
 
@@ -403,6 +529,7 @@ fn supports_cache_control(model: &ModelConfig) -> bool {
 mod tests {
     use super::*;
     use goose_providers::base::ProviderDescriptor;
+    use goose_providers::formats::openai::create_request;
 
     fn model_config(model_name: &str) -> ModelConfig {
         ModelConfig {
@@ -487,7 +614,7 @@ mod tests {
     }
 
     fn provider_with_listing(listing: &Value) -> OpenRouterProvider {
-        let windows = context_windows_of(&parse_models_listing(listing).unwrap());
+        let listing = ModelsListing::of(&parse_models_listing(listing).unwrap());
         OpenRouterProvider {
             api_client: ApiClient::new_with_tls(
                 "http://127.0.0.1:9".to_string(),
@@ -498,7 +625,7 @@ mod tests {
             supports_streaming: true,
             name: OPENROUTER_PROVIDER_NAME.to_string(),
             configured_parameters: None,
-            context_windows: tokio::sync::OnceCell::new_with(Some(windows)),
+            listing: tokio::sync::OnceCell::new_with(Some(listing)),
             resolved_windows: std::sync::Mutex::new(HashMap::new()),
         }
     }
@@ -894,5 +1021,135 @@ mod tests {
         assert_eq!(lines[1]["response_id"], json!(gen_id));
         assert_eq!(lines[1]["ended"], json!("incomplete"));
         assert_eq!(lines[1]["usage"], json!(false));
+    }
+
+    /// Entries shaped as OpenRouter's live `/api/v1/models` serves them (2026-10-03).
+    fn modality_listing() -> Value {
+        json!({"data": [
+            {"id": "inclusionai/ling-3.1-flash", "context_length": 262144,
+             "architecture": {"modality": "text->text", "input_modalities": ["text"],
+                              "output_modalities": ["text"]}},
+            {"id": "anthropic/claude-sonnet-4", "context_length": 1000000,
+             "architecture": {"modality": "text+image+file->text",
+                              "input_modalities": ["image", "text", "file"],
+                              "output_modalities": ["text"]}},
+            {"id": "vendor/no-architecture", "context_length": 32768},
+        ]})
+    }
+
+    /// The run that lost its session: `read_image` returned st3.png, and the request carried it.
+    fn screenshot_turn() -> Vec<Message> {
+        vec![
+            Message::user().with_text("Check the page renders"),
+            Message::assistant().with_tool_request(
+                "c1",
+                Ok(rmcp::model::CallToolRequestParams::new("read_image")),
+            ),
+            Message::user().with_tool_response(
+                "c1",
+                Ok(rmcp::model::CallToolResult::success(vec![
+                    rmcp::model::Content::text(
+                        "Loaded image from /w/st3.png (475916 bytes, image/png, 1440x3233).",
+                    ),
+                    rmcp::model::Content::image("aW1hZ2VkYXRh", "image/png"),
+                ])),
+            ),
+        ]
+    }
+
+    fn image_parts(payload: &Value) -> usize {
+        payload["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|m| m["content"].as_array())
+            .flatten()
+            .filter(|part| part["type"] == json!("image_url"))
+            .count()
+    }
+
+    #[test]
+    fn the_listing_declares_each_models_image_input() {
+        let listing = ModelsListing::of(&parse_models_listing(&modality_listing()).unwrap());
+
+        assert_eq!(
+            listing.image_inputs,
+            HashMap::from([
+                (
+                    "inclusionai/ling-3.1-flash".to_string(),
+                    ImageInput::TextOnly
+                ),
+                ("anthropic/claude-sonnet-4".to_string(), ImageInput::Reads),
+                ("vendor/no-architecture".to_string(), ImageInput::Undeclared),
+            ])
+        );
+        assert_eq!(
+            listing.windows.get("inclusionai/ling-3.1-flash"),
+            Some(&262_144)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_text_only_model_is_told_the_image_was_omitted_and_never_sent_it() {
+        let provider = provider_with_listing(&modality_listing());
+
+        let (payload, notice) = provider
+            .chat_request(
+                &model_config("inclusionai/ling-3.1-flash"),
+                "system prompt",
+                &screenshot_turn(),
+                &[],
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(image_parts(&payload), 0, "{payload}");
+        let tool = payload["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["role"] == json!("tool"))
+            .unwrap();
+        assert_eq!(
+            tool["content"],
+            json!(
+                "Loaded image from /w/st3.png (475916 bytes, image/png, 1440x3233). \
+                 [image from read_image (image/png) not sent: this model reads text only]"
+            )
+        );
+        assert_eq!(
+            notice.as_deref(),
+            Some("ling-3.1-flash reads text only — the image from read_image (image/png) was not sent")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_vision_model_and_an_undeclared_one_are_sent_the_image_unchanged() {
+        let provider = provider_with_listing(&modality_listing());
+
+        for model in ["anthropic/claude-sonnet-4", "vendor/no-architecture"] {
+            let (payload, notice) = provider
+                .chat_request(
+                    &model_config(model),
+                    "system prompt",
+                    &screenshot_turn(),
+                    &[],
+                )
+                .await
+                .unwrap();
+            let formatted = create_request(
+                &model_config(model),
+                "system prompt",
+                &screenshot_turn(),
+                &[],
+                &ImageFormat::OpenAi,
+                true,
+            )
+            .unwrap();
+
+            assert_eq!(payload, formatted, "{model}");
+            assert_eq!(image_parts(&payload), 1, "{model}");
+            assert_eq!(notice, None, "{model}");
+        }
     }
 }
