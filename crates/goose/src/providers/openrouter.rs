@@ -61,13 +61,30 @@ impl OpenRouterProvider {
     pub async fn from_env(
         tls_config: Option<crate::providers::api_client::TlsConfig>,
     ) -> Result<Self> {
+        Self::with_parameters(tls_config, configured_openrouter_parameters()?)
+    }
+
+    /// The provider a key check runs. OPENROUTER_PARAMETERS steers WHERE a chosen model runs (a
+    /// `provider.order` pin with `allow_fallbacks: false` removes every other upstream); it is no
+    /// part of the key. Under a pin the saved default model can have no endpoint at all: on
+    /// 2026-10-03 an `["xiaomi"]` pin turned the check of a working key into OpenRouter's 404 "No
+    /// endpoints found for deepseek/deepseek-v4.1-flash", recorded as the connection error, and
+    /// OpenRouter vanished from every configured-provider picker for as long as the pin stood.
+    pub(crate) fn for_key_check(
+        tls_config: Option<crate::providers::api_client::TlsConfig>,
+    ) -> Result<Self> {
+        Self::with_parameters(tls_config, None)
+    }
+
+    fn with_parameters(
+        tls_config: Option<crate::providers::api_client::TlsConfig>,
+        configured_parameters: Option<HashMap<String, Value>>,
+    ) -> Result<Self> {
         let config = crate::config::Config::global();
         let api_key: String = config.get_secret("OPENROUTER_API_KEY")?;
         let host: String = config
             .get_param("OPENROUTER_HOST")
             .unwrap_or_else(|_| "https://openrouter.ai".to_string());
-
-        let configured_parameters = configured_openrouter_parameters()?;
 
         let auth = AuthMethod::BearerToken(api_key);
         let api_client = ApiClient::new_with_tls(host, auth, tls_config)?

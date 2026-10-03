@@ -70,7 +70,7 @@ pub(crate) async fn check(
             return Err(anyhow!("{} requires {}", metadata.display_name, key.name));
         }
     }
-    let provider = crate::providers::create(provider_id, vec![]).await?;
+    let provider = provider_for_check(provider_id).await?;
     if provider_id == "azure_openai" {
         let deployment = config.get_param::<String>("AZURE_OPENAI_DEPLOYMENT_NAME")?;
         probe(provider.as_ref(), &deployment, &metadata.display_name).await?;
@@ -100,6 +100,21 @@ pub(crate) async fn check(
     }
     probe(provider.as_ref(), registry_default, &metadata.display_name).await?;
     Ok(Verification::Proven)
+}
+
+/// The provider a check runs: the registry's, except OpenRouter's, which leaves the operator's
+/// routing preferences out of the request (`OpenRouterProvider::for_key_check` says why).
+async fn provider_for_check(
+    provider_id: &str,
+) -> Result<std::sync::Arc<dyn crate::providers::base::Provider>> {
+    use crate::providers::openrouter::{OpenRouterProvider, OPENROUTER_PROVIDER_NAME};
+    if provider_id == OPENROUTER_PROVIDER_NAME {
+        let entry = crate::providers::get_from_registry(provider_id).await?;
+        return Ok(std::sync::Arc::new(OpenRouterProvider::for_key_check(
+            entry.tls_config(),
+        )?));
+    }
+    crate::providers::create(provider_id, vec![]).await
 }
 
 /// The models this key can see, as the provider reports them. An empty answer means the provider
@@ -505,6 +520,76 @@ mod tests {
             let result = probe(&provider, "test-model", "OpenAI").await;
             assert_eq!(result.is_ok(), succeeds, "{result:?}");
         }
+    }
+
+    /// 2026-10-03: `OPENROUTER_PARAMETERS: '{"provider":{"order":["xiaomi"],"allow_fallbacks":false}}'`
+    /// rode the check of the saved default model, OpenRouter answered 404 "No endpoints found", and
+    /// the recorded connection error unlisted a working key from every configured-provider picker.
+    /// The mock answers a pinned request exactly as OpenRouter did; the control proves the pin is live.
+    #[tokio::test]
+    async fn an_openrouter_routing_pin_never_decides_the_key_check() {
+        use wiremock::{
+            matchers::{body_partial_json, header, method, path},
+            Mock, MockServer, ResponseTemplate,
+        };
+        let model = "deepseek/deepseek-v4.1-flash";
+        let pin = serde_json::json!({"provider": {"order": ["xiaomi"], "allow_fallbacks": false}});
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/v1/chat/completions"))
+            .and(body_partial_json(pin.clone()))
+            .respond_with(ResponseTemplate::new(404).set_body_json(serde_json::json!({
+                "error": {"code": 404, "message": format!(
+                    "No endpoints found for {model}. Every candidate endpoint was removed during routing"
+                )}
+            })))
+            .mount(&server)
+            .await;
+        let ok = serde_json::json!({"id": "gen-1", "object": "chat.completion.chunk", "created": 1,
+            "model": model, "choices": [{"index": 0, "delta": {"role": "assistant", "content": "OK"},
+            "finish_reason": "stop"}]});
+        Mock::given(method("POST"))
+            .and(path("/api/v1/chat/completions"))
+            .and(header("Authorization", "Bearer or-test-key"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                format!("data: {ok}\n\ndata: [DONE]\n\n"),
+                "text/event-stream",
+            ))
+            .mount(&server)
+            .await;
+        let pin_text = pin.to_string();
+        let _env = env_lock::lock_env([
+            ("OPENROUTER_API_KEY", Some("or-test-key")),
+            ("OPENROUTER_HOST", Some(server.uri().as_str())),
+            ("OPENROUTER_PARAMETERS", Some(pin_text.as_str())),
+        ]);
+
+        let chat = crate::providers::create("openrouter", vec![])
+            .await
+            .unwrap();
+        let pinned = probe(chat.as_ref(), model, "OpenRouter").await;
+        assert!(
+            pinned
+                .as_ref()
+                .is_err_and(|error| error.to_string().contains("No endpoints found")),
+            "the pin must still shape chat requests: {pinned:?}"
+        );
+
+        let checked = provider_for_check("openrouter").await.unwrap();
+        let result = probe(checked.as_ref(), model, "OpenRouter").await;
+        assert!(result.is_ok(), "the key check carried the pin: {result:?}");
+
+        let requests = server.received_requests().await.unwrap();
+        let bodies: Vec<serde_json::Value> = requests
+            .iter()
+            .map(|request| serde_json::from_slice(&request.body).unwrap())
+            .collect();
+        let (check_body, chat_bodies) = bodies.split_last().unwrap();
+        assert!(!chat_bodies.is_empty());
+        for body in chat_bodies {
+            assert_eq!(body["provider"], pin["provider"], "{body}");
+        }
+        assert!(check_body.get("provider").is_none(), "{check_body}");
     }
 
     #[test]

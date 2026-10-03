@@ -54,6 +54,10 @@ impl ProviderEntry {
         (self.inventory_configured)()
     }
 
+    pub(crate) fn tls_config(&self) -> Option<TlsConfig> {
+        self.tls_config.clone()
+    }
+
     /// Apply provider-specific normalization to a model config: materialize
     /// global defaults and backfill `context_limit` from the provider's known
     /// models when the canonical registry didn't already resolve one. Used by

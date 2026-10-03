@@ -62,3 +62,35 @@ it('shows fresh-profile setup and an explicit failed-read state', async () => {
   expect(await screen.findByRole('alert')).toHaveTextContent('backend disconnected');
   expect(screen.getByRole('textbox')).toBeDisabled();
 });
+it('names why a saved provider is not offered instead of claiming none is configured', async () => {
+  const pinned = {
+    ...row('openrouter', false),
+    credentials_saved: true,
+    connection_checked: true,
+    connection_error:
+      "OpenRouter could not run model 'deepseek/deepseek-v4.1-flash': Request failed: Resource not found (404) at https://openrouter.ai/api/v1/chat/completions: No endpoints found for deepseek/deepseek-v4.1-flash.",
+    metadata: { ...row('openrouter').metadata, display_name: 'OpenRouter' },
+  };
+  const unchecked = {
+    ...row('anthropic', false),
+    credentials_saved: true,
+    metadata: { ...row('anthropic').metadata, display_name: 'Claude' },
+  };
+  vi.mocked(acpListProviderDetails).mockResolvedValue([
+    pinned,
+    unchecked,
+    row('mistral', false),
+    row('lmstudio', false),
+  ]);
+  render(<CloudEntrant provider="" model="" disabled={false} onChange={vi.fn()} />);
+  const reasons = await screen.findByRole('list', { name: 'Providers that cannot run' });
+  const items = reasons.querySelectorAll('li');
+  expect(items).toHaveLength(2);
+  expect(items[0]).toHaveTextContent(
+    /^OpenRouter is not offered: its connection check failed: OpenRouter could not run model 'deepseek\/deepseek-v4\.1-flash'.*No endpoints found/
+  );
+  expect(items[1]).toHaveTextContent(
+    'Claude is not offered: its key is saved but the connection check has not passed yet'
+  );
+  expect(screen.queryByText(/No configured providers/)).toBeNull();
+});
