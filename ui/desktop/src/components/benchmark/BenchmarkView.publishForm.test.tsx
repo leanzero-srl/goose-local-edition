@@ -189,9 +189,10 @@ describe('the publish form', () => {
     const errorLine = await findByText(new RegExp('checksSummary\\[49\\]'));
     expect(errorLine.textContent).toContain(serverWords);
     expect(getByRole('status').getAttribute('aria-live')).toBe('polite');
-    expect((electron().benchmarkPublish as ReturnType<typeof vi.fn>).mock.calls[0][0]).toEqual({
-      title: 'sb-7 first try',
-    }); // no model in the payload — engine truth lives in main
+    // No model in the payload — engine truth lives in main; the run is named by its own key.
+    const sent = (electron().benchmarkPublish as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(sent).toEqual({ title: 'sb-7 first try', runKey: expect.any(String) });
+    expect(sent).not.toHaveProperty('model');
   });
 
   it("surfaces main's frozen refusal verbatim — the {ok:false, status:'error', message} shape", async () => {

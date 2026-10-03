@@ -3,6 +3,7 @@ import {
   ISOLATED_PAYMENTS_TIERS,
   TIER_SCORER,
   eraDisplayName,
+  familyOfScorer,
 } from './components/benchmark/baselines';
 
 /** Exactly the scorer identities a completed-build receipt can carry — never an rc or a sibling. The
@@ -34,21 +35,28 @@ export interface BuildCompletionReceipt {
 
 export function retryScoringEligibility(
   row: BenchSessionRow,
-  value: unknown
+  value: unknown,
+  /** A FINISHED Forge run whose surfaces were graded but whose graded clip could not be verified — a
+   *  scoring problem the saved build can fix (the site refuses it clip-less). Its row carries the rc
+   *  identity score_forge reported; the receipt names the tier (forge-1.0). */
+  forgeClipMissing = false
 ): { ready: boolean; reason?: string } {
-  if (!RESCORABLE.includes(row.scorerVersion))
+  const rescoring =
+    forgeClipMissing && row.outcome === 'finished' && familyOfScorer(row.scorerVersion) === 'forge';
+  const version = rescoring ? row.scorerVersion.replace(/-rc$/, '') : row.scorerVersion;
+  if (!RESCORABLE.includes(version))
     return {
       ready: false,
       reason: `Only ${RESCORABLE_WORDS} runs can be rescored; this run is ${eraDisplayName(row.scorerVersion)}.`,
     };
-  if (row.outcome !== 'did_not_finish')
+  if (row.outcome !== 'did_not_finish' && !rescoring)
     return { ready: false, reason: 'This session is not awaiting a scoring retry.' };
   if (!value || typeof value !== 'object')
     return { ready: false, reason: 'No completed-build receipt was recorded for this run.' };
   const receipt = value as Partial<BuildCompletionReceipt>;
   if (
     receipt.schemaVersion !== 1 ||
-    receipt.scorerVersion !== row.scorerVersion ||
+    receipt.scorerVersion !== version ||
     receipt.runId !== row.runId ||
     receipt.startedAt !== row.startedAt ||
     receipt.agent?.exit !== 0 ||

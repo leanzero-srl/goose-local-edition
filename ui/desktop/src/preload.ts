@@ -210,8 +210,13 @@ type ElectronAPI = {
       publishable: boolean;
       retryScoring?: { ready: boolean; reason?: string };
       scoringError?: string;
+      /** This machine posted the run to leanzero.net (url null when the site returned none). */
+      published?: { url: string | null; title: string; score: number; publishedAt: string };
     }>;
   }>;
+  /** One finished run's own scored result row (verdict, breakdown, evidence dir), by its session key —
+   *  its stored row, or rebuilt from the verdict in its own tree; null when neither can be read. */
+  benchmarkRunResult: (runKey: string) => Promise<unknown | null>;
   /** Delete one session's data and its index row. Refuses the running session; never touches the
    *  operator-renamed archive siblings beside the live-run slot. */
   benchmarkDeleteSession: (runId: string) => Promise<{ ok: boolean; error?: string }>;
@@ -274,7 +279,7 @@ type ElectronAPI = {
    *  blocks external hosts. `title` is REQUIRED (the user's name for the run); the model id is
    *  engine truth read from the stored result — the renderer cannot send one. Returns the
    *  server's own message on 4xx and the live card's url on success. */
-  benchmarkPublish: (args?: { title?: string }) => Promise<{
+  benchmarkPublish: (args?: { title?: string; runKey?: string }) => Promise<{
     ok: boolean;
     error?: string;
     status?: number | string;
@@ -594,7 +599,9 @@ const electronAPI: ElectronAPI = {
   benchmarkStatus: () => ipcRenderer.invoke('benchmark-status'),
   benchmarkMedia: (workdir: string) => ipcRenderer.invoke('benchmark-media', workdir),
   benchmarkShots: (workdir?: string) => ipcRenderer.invoke('benchmark-shots', workdir),
-  benchmarkPublish: (args?: { title?: string }) => ipcRenderer.invoke('benchmark-publish', args),
+  benchmarkPublish: (args?: { title?: string; runKey?: string }) =>
+    ipcRenderer.invoke('benchmark-publish', args),
+  benchmarkRunResult: (runKey: string) => ipcRenderer.invoke('benchmark-run-result', runKey),
   fleetStatus: () => ipcRenderer.invoke('fleet-status'),
   fleetProbe: (endpoint: string) => ipcRenderer.invoke('fleet-probe', endpoint),
   mlxLiveStatus: (baseUrl: string) => ipcRenderer.invoke('mlx-live-status', baseUrl),

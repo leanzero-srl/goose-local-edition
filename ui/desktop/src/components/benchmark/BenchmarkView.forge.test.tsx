@@ -288,6 +288,20 @@ describe('Benchmark view — the Gauntlet | Forge switch', () => {
     expect(cloud).not.toHaveBeenCalled();
   });
 
+  it('a finished Forge run whose clip could not be verified offers Retry scoring, not a clip-less post', async () => {
+    window.location.hash = '#/benchmark?era=forge-1.0-rc&run=cloud-forge-1';
+    mockElectron({ sessions: [{ ...SESSION, retryScoring: { ready: true } }] });
+    const retry = vi.fn(() => new Promise(() => {}));
+    electron().benchmarkRetryScoring = retry;
+    mount();
+    const block = await screen.findByTestId('clip-retry');
+    expect(block).toHaveTextContent('No graded browser clip could be verified');
+    const button = within(block).getByRole('button', { name: 'Retry scoring' });
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
+    expect(retry).toHaveBeenCalledWith('cloud-forge-1');
+  });
+
   it('launches Forge as one model on forge-1.0, never as a swarm', async () => {
     mockElectron({ sessions: [], mine: null });
     const cloud = vi.fn(async () => null);

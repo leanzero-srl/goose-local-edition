@@ -127,6 +127,16 @@ import {
 } from './benchForgeKit';
 import { forgePublishBody, forgePublishProblem } from './benchForgePublish';
 import {
+  benchRunKey,
+  clipAbsence,
+  parsePublishedIndex,
+  resultDescribesRun,
+  runResultFileName,
+  treeVerdictDescribesRun,
+  type PublishedIndex,
+  type PublishedRecord,
+} from './benchRunResults';
+import {
   outcomeFromSlot,
   findLaunchRow,
   upsertArchivedRow,
@@ -3879,18 +3889,14 @@ ipcMain.handle('benchmark-sessions', async () => {
     }
   }
   if (dirty) await writeBenchSessionRows(rows);
-  // publishable = finished AND it IS the stored latest result (publish reads BENCH_RESULT, the
-  // "last completed run") AND its benchmark is not frozen per the cached catalog.
-  let latestResultStartedAt: string | null = null;
-  try {
-    const stored = JSON.parse(await fs.readFile(BENCH_RESULT, 'utf8')) as {
-      runMeta?: { startedAt?: unknown };
-    };
-    latestResultStartedAt =
-      typeof stored.runMeta?.startedAt === 'string' ? stored.runMeta.startedAt : null;
-  } catch {
-    /* no stored result yet — nothing is publishable */
-  }
+  // publishable = finished AND its own scored result can be read (its stored row, or the verdict in its
+  // own tree) AND its benchmark is not frozen AND this machine has not already posted it.
+  const published = await readPublished();
+  const resultReadable = new Map(
+    await Promise.all(
+      rows.map(async (row) => [row.startedAt, (await resolveRunResult(row)) != null] as const)
+    )
+  );
   const cachedCatalog = await readBenchCatalogCache();
   const frozen = new Set(
     (cachedCatalog?.benchmarks ?? [])
@@ -3901,7 +3907,10 @@ ipcMain.handle('benchmark-sessions', async () => {
     await Promise.all(
       rows.map(
         async (row) =>
-          [row.startedAt, retryScoringEligibility(row, await readBuildCompletion(row))] as const
+          [
+            row.startedAt,
+            retryScoringEligibility(row, await readBuildCompletion(row), await forgeClipMissing(row)),
+          ] as const
       )
     )
   );
@@ -3935,11 +3944,12 @@ ipcMain.handle('benchmark-sessions', async () => {
       ...(r.score != null ? { score: r.score } : {}),
       ...(r.tiers ? { tiers: r.tiers } : {}),
       ...(r.nodes != null ? { nodes: r.nodes } : {}),
+      ...(published[benchRunKey(r)] ? { published: published[benchRunKey(r)] } : {}),
       publishable:
         r.outcome === 'finished' &&
-        latestResultStartedAt != null &&
-        r.startedAt === latestResultStartedAt &&
-        !frozen.has(r.scorerVersion),
+        resultReadable.get(r.startedAt) === true &&
+        !frozen.has(r.scorerVersion) &&
+        !published[benchRunKey(r)],
     }));
   return { sessions };
 });
@@ -4042,7 +4052,111 @@ ipcMain.handle('benchmark-shots', async (_event, workdir?: string) => {
   return pickBenchShots(dir);
 });
 
-const persistBenchmarkResult = async ({
+// ── Per-run results and published state ───────────────────────────────────────────────────────
+// result.json is the LAST run only; every run's own row lives in results/<key>.json, and a run that
+// predates that store is rebuilt from the verdict in its own tree (benchRunResults.ts has the rules).
+const BENCH_RUN_RESULTS = path.join(BENCH_DIR, 'results');
+const BENCH_PUBLISHED = path.join(BENCH_DIR, 'published.json');
+
+const writeRunResult = async (key: string, row: unknown): Promise<void> => {
+  await fs.mkdir(BENCH_RUN_RESULTS, { recursive: true });
+  const file = path.join(BENCH_RUN_RESULTS, runResultFileName(key));
+  await fs.writeFile(`${file}.pending`, JSON.stringify(row, null, 2));
+  await fs.rename(`${file}.pending`, file);
+};
+
+const readJson = async (file: string): Promise<Record<string, unknown> | null> => {
+  try {
+    const parsed = JSON.parse(await fs.readFile(file, 'utf8'));
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null; // absent or unreadable: the caller tries the next source, then states the absence
+  }
+};
+
+const readPublished = async (): Promise<PublishedIndex> =>
+  parsePublishedIndex(await readJson(BENCH_PUBLISHED));
+
+const recordPublished = async (key: string, record: PublishedRecord): Promise<void> => {
+  const index = { ...(await readPublished()), [key]: record };
+  await fs.mkdir(BENCH_DIR, { recursive: true });
+  await fs.writeFile(`${BENCH_PUBLISHED}.pending`, JSON.stringify(index, null, 2));
+  await fs.rename(`${BENCH_PUBLISHED}.pending`, BENCH_PUBLISHED);
+};
+
+const pathExists = (file: string) =>
+  fs.stat(file).then(
+    () => true,
+    () => false
+  );
+
+/**
+ * The scored result row of ONE session: its own stored row, else result.json when that describes it,
+ * else the verdict in its own tree rebuilt into a row. `latest` says the row is result.json's (whose
+ * screenshots were snapshotted at close). The evidence directory is re-pointed at the run's current
+ * folder when its old live-run slot was archived or since reused — a slot must never lend its files.
+ */
+const resolveRunResult = async (
+  row: BenchSessionRow
+): Promise<{ result: Record<string, unknown>; latest: boolean } | null> => {
+  if (row.outcome !== 'finished') return null;
+  const key = benchRunKey(row);
+  const dataDir = benchRunDataDir(row, benchSessionsRoot());
+  const latestRow = await readJson(BENCH_RESULT);
+  const latest = resultDescribesRun(latestRow as never, row);
+  let result = await readJson(path.join(BENCH_RUN_RESULTS, runResultFileName(key)));
+  if (!resultDescribesRun(result as never, row)) result = latest ? latestRow : null;
+  if (!result && dataDir) {
+    const verdict = await readJson(path.join(dataDir, 'verdict.json'));
+    if (verdict && hasScoredVerdict(verdict) && treeVerdictDescribesRun(verdict, row)) {
+      result = await buildBenchResultRow({
+        v: verdict,
+        workdir: dataDir,
+        nodes: row.nodes ?? 1,
+        ...(typeof verdict.provider === 'string' && typeof verdict.model === 'string'
+          ? { cloud: { provider: verdict.provider, model: verdict.model } }
+          : {}),
+        startedAt: row.startedAt,
+        finishedAt: row.endedAt ?? row.startedAt,
+        sessionRunId: row.runId,
+      });
+    }
+  }
+  if (!result) return null;
+  const workdir = typeof result.workdir === 'string' ? result.workdir : null;
+  if (
+    dataDir &&
+    (!workdir ||
+      (row.slotDir != null && workdir === row.slotDir && !row.slot) ||
+      !(await pathExists(workdir)))
+  )
+    result = { ...result, workdir: dataDir };
+  return { result, latest };
+};
+
+/** A FINISHED Forge run whose surfaces were graded yet whose graded clip cannot be verified: the site
+ *  refuses it clip-less, so it is a scoring problem the saved build can fix (Retry scoring). */
+const forgeClipMissing = async (row: BenchSessionRow): Promise<boolean> => {
+  if (row.outcome !== 'finished' || familyOfScorer(row.scorerVersion) !== 'forge') return false;
+  const resolved = await resolveRunResult(row);
+  const workdir = resolved && typeof resolved.result.workdir === 'string' ? resolved.result.workdir : null;
+  if (!resolved || !workdir) return false;
+  const media = await readBenchMedia(workdir);
+  if (media.videos.length === 1 && !media.error) return false;
+  const checks = (resolved.result.verdict as { checks?: unknown } | undefined)?.checks;
+  return clipAbsence(row.scorerVersion.replace(/-rc$/, ''), checks) == null;
+};
+
+ipcMain.handle('benchmark-run-result', async (_event, key: string) => {
+  const row = (await readBenchSessionRows()).find((r) => benchRunKey(r) === key);
+  if (!row) return null;
+  const resolved = await resolveRunResult(row);
+  return resolved?.result ?? null;
+});
+
+/** The result row a scored verdict becomes — the one shape result.json, the per-run store and a run
+ *  rebuilt from its own tree all share. No side effects. */
+const buildBenchResultRow = async ({
   v,
   workdir,
   evidenceWorkdir,
@@ -4051,7 +4165,6 @@ const persistBenchmarkResult = async ({
   startedAt,
   finishedAt,
   sessionRunId,
-  launchKey,
 }: {
   v: ReturnType<typeof JSON.parse>;
   workdir: string;
@@ -4061,7 +4174,6 @@ const persistBenchmarkResult = async ({
   startedAt: string;
   finishedAt: string;
   sessionRunId: string | null;
-  launchKey: { startedAt: string; slotDir: string; runId?: string };
 }) => {
   const counts = await benchRunCounts(workdir);
   const scoring = projectBenchScore(v);
@@ -4131,6 +4243,40 @@ const persistBenchmarkResult = async ({
       })),
     },
   };
+  return row;
+};
+
+const persistBenchmarkResult = async ({
+  v,
+  workdir,
+  evidenceWorkdir,
+  nodes,
+  cloud,
+  startedAt,
+  finishedAt,
+  sessionRunId,
+  launchKey,
+}: {
+  v: ReturnType<typeof JSON.parse>;
+  workdir: string;
+  evidenceWorkdir?: string;
+  nodes: number;
+  cloud?: { provider: string; model: string };
+  startedAt: string;
+  finishedAt: string;
+  sessionRunId: string | null;
+  launchKey: { startedAt: string; slotDir: string; runId?: string };
+}) => {
+  const row = await buildBenchResultRow({
+    v,
+    workdir,
+    evidenceWorkdir,
+    nodes,
+    cloud,
+    startedAt,
+    finishedAt,
+    sessionRunId,
+  });
   await fs.mkdir(BENCH_DIR, { recursive: true });
   // Snapshot the screenshots NOW, next to the result row. The workdir is reused by the
   // next run (and wiped within seconds of its start), so a publish that reads it later can
@@ -4162,6 +4308,9 @@ const persistBenchmarkResult = async ({
     scorerVersion: row.scorerVersion,
     scoringError: undefined,
   });
+  // Every finished run keeps its OWN row (verdict, breakdown, evidence dir) under its key, so it stays
+  // viewable and publishable after the next run replaces result.json.
+  await writeRunResult(benchRunKey({ runId: sessionRunId, startedAt }), row);
   const pendingResult = `${BENCH_RESULT}.pending`;
   await fs.writeFile(pendingResult, JSON.stringify(row, null, 2));
   await fs.rename(pendingResult, BENCH_RESULT);
@@ -4582,15 +4731,19 @@ ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string) => {
     // score_forge on the kit it was built against, never by a Gauntlet tier.
     const family = familyOfScorer(session.scorerVersion);
     const forge = family === 'forge';
+    // A finished Forge run re-scored for its missing clip carries score_forge's rc identity; the era it
+    // belongs to (and its receipt) is the tier's.
+    const clipMissing = await forgeClipMissing(session);
+    const priorOutcome = session.outcome;
     const launchProblem = benchmarkLaunchProblem(
       (await fetchBenchCatalog()).benchmarks,
       false,
-      session.scorerVersion,
+      clipMissing ? session.scorerVersion.replace(/-rc$/, '') : session.scorerVersion,
       family
     );
     if (launchProblem) throw new Error(launchProblem);
     const receipt = await readBuildCompletion(session);
-    const eligible = retryScoringEligibility(session, receipt);
+    const eligible = retryScoringEligibility(session, receipt, clipMissing);
     if (!eligible.ready || !receipt || !session.completionReceipt) throw new Error(eligible.reason);
     const workdir =
       session.slot && session.slotDir ? session.slotDir : path.join(benchSessionsRoot(), runId);
@@ -4791,8 +4944,9 @@ ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string) => {
           let failure = detail;
           try {
             await stamp(cancelled ? 'cancelled' : 'failed', detail);
+            // A finished run re-scored for its clip keeps its finished verdict (it was never replaced).
             await stampBenchLaunchRow(launchKey, {
-              outcome: 'did_not_finish',
+              outcome: priorOutcome === 'finished' ? 'finished' : 'did_not_finish',
               endedAt: new Date().toISOString(),
               scoringError: detail,
             });
@@ -4823,7 +4977,7 @@ ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string) => {
       if (current?.outcome === 'running' && !activeBenchRun) {
         await stamp('failed', String(error));
         await stampBenchLaunchRow(launchKey, {
-          outcome: 'did_not_finish',
+          outcome: priorOutcome === 'finished' ? 'finished' : 'did_not_finish',
           scoringError: String(error),
         });
       }
@@ -4882,14 +5036,31 @@ const cancelActiveBenchRun = (why: string): { ok: boolean; error?: string } => {
 
 ipcMain.handle('benchmark-cancel', async () => cancelActiveBenchRun('cancel requested'));
 
-ipcMain.handle('benchmark-publish', async (_event, args?: { title?: string }) => {
+ipcMain.handle('benchmark-publish', async (_event, args?: { title?: string; runKey?: string }) => {
   if (activeBenchRun || benchmarkLaunchPending)
     return { ok: false, error: 'Wait for the benchmark to finish before publishing.' };
+  // ANY finished run publishes from its OWN result row (runKey); without a key, the latest result as
+  // before. A run this machine already posted is not posted twice.
   let stored: Record<string, unknown>;
-  try {
-    stored = JSON.parse(await fs.readFile(BENCH_RESULT, 'utf8')) as Record<string, unknown>;
-  } catch {
-    return { ok: false, error: 'no benchmark result to publish — run the benchmark first' };
+  let storedIsLatest = true;
+  let runKey: string | null = null;
+  if (typeof args?.runKey === 'string' && args.runKey) {
+    const row = (await readBenchSessionRows()).find((r) => benchRunKey(r) === args.runKey);
+    if (!row) return { ok: false, error: 'this run is no longer in the session list' };
+    if ((await readPublished())[args.runKey])
+      return { ok: false, error: 'this run is already live on leanzero.net' };
+    const resolved = await resolveRunResult(row);
+    if (!resolved)
+      return { ok: false, error: "this run's scored result could not be read from its folder" };
+    stored = resolved.result;
+    storedIsLatest = resolved.latest;
+    runKey = args.runKey;
+  } else {
+    try {
+      stored = JSON.parse(await fs.readFile(BENCH_RESULT, 'utf8')) as Record<string, unknown>;
+    } catch {
+      return { ok: false, error: 'no benchmark result to publish — run the benchmark first' };
+    }
   }
   const runMeta = stored.runMeta as
     | { startedAt: string; finishedAt: string; engineEvents: number; repairRounds: number }
@@ -4937,6 +5108,8 @@ ipcMain.handle('benchmark-publish', async (_event, args?: { title?: string }) =>
   // by the next run, so reading it at publish time can attach another run's screenshots to
   // this row's score.
   const snapshotShots = await (async (): Promise<BenchShot[]> => {
+    // The snapshot belongs to result.json's run only; any other run reads its own tree.
+    if (!storedIsLatest) return [];
     const snapDir = path.join(BENCH_DIR, 'shots-snapshot');
     const entries = await fs.readdir(snapDir).catch(() => [] as string[]);
     const out: BenchShot[] = [];
@@ -4993,18 +5166,27 @@ ipcMain.handle('benchmark-publish', async (_event, args?: { title?: string }) =>
       ? { telemetry: stored.telemetry }
       : {}),
   };
-  // Forge's graded browser recording (score_forge.py, SB7.x's media shape) rides when the run produced
-  // one — INTEGRATION.md: "the screenshot set + any clip score_forge produces". Its absence is the
-  // verdict's named media absence, shown on the card; a clip that fails verification refuses the publish.
-  if (forgeResult && typeof stored.workdir === 'string') {
-    const media = await readBenchMedia(stored.workdir);
-    const absent = /ENOENT/.test(media.error ?? '');
-    if (!absent && (media.error || media.videos.length !== 1))
+  // Forge's graded browser recording (score_forge.py, SB7.x's media shape) rides like Gauntlet's. Without
+  // a verified clip it publishes ONLY when the four visual rows are the scorer's own "no surface rendered
+  // app content" vacuous zeros (clipAbsence = the site's rule); anything else is refused.
+  if (forgeResult) {
+    const media =
+      typeof stored.workdir === 'string'
+        ? await readBenchMedia(stored.workdir)
+        : { videos: [], error: 'no run directory' };
+    const clipless =
+      media.videos.length !== 1 || media.error
+        ? clipAbsence(stored.scorerVersion as string, (stored.verdict as { checks?: unknown })?.checks)
+        : null;
+    // Surfaces rendered (or the probe failed) but no verified clip: a SCORING problem, never a clip-less
+    // post — the card offers Retry scoring on the saved build (forgeClipMissing).
+    if (!clipless && (media.error || media.videos.length !== 1))
       return {
         ok: false,
-        error: `${stored.scorerVersion} recording could not be verified: ${media.error ?? 'clip count mismatch'}`,
+        error: `${stored.scorerVersion} publication requires its graded browser clip, and none could be verified although the app's surfaces were graded (${media.error ?? 'clip count mismatch'}). Retry scoring re-grades the saved build and records it.`,
       };
-    if (!absent) {
+    if (clipless) payload.noRecording = true;
+    else {
       try {
         payload.videoReceipt = await uploadBenchmarkVideo(
           media.videos[0],
@@ -5021,20 +5203,31 @@ ipcMain.handle('benchmark-publish', async (_event, args?: { title?: string }) =>
     if (typeof stored.workdir !== 'string')
       return { ok: false, error: `${stored.scorerVersion} recording has no run directory` };
     const media = await readBenchMedia(stored.workdir);
-    if (media.error || media.videos.length !== 1)
-      return {
-        ok: false,
-        error: `${stored.scorerVersion} publication requires one verified graded browser clip: ${media.error ?? 'clip count mismatch'}`,
-      };
-    try {
-      payload.videoReceipt = await uploadBenchmarkVideo(
-        media.videos[0],
-        BENCH_PUBLISH_URL,
-        identity.installId,
-        stored.scorerVersion
-      );
-    } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    // With its one verified clip: uploaded as always. Without one, ONLY when the scorer's own rows say
+    // the app never served a page (clipAbsence = the site's rule, website 9c371d7): the payload simply
+    // carries no videoReceipt and the posted checksSummary rows are the proof. Otherwise refused.
+    const clipless =
+      media.videos.length !== 1 || media.error
+        ? clipAbsence(stored.scorerVersion, (stored.verdict as { checks?: unknown })?.checks)
+        : null;
+    // The site accepts noRecording only when it equals its own absence computed from the posted rows.
+    if (clipless) payload.noRecording = true;
+    else {
+      if (media.error || media.videos.length !== 1)
+        return {
+          ok: false,
+          error: `${stored.scorerVersion} publication requires one verified graded browser clip: ${media.error ?? 'clip count mismatch'}`,
+        };
+      try {
+        payload.videoReceipt = await uploadBenchmarkVideo(
+          media.videos[0],
+          BENCH_PUBLISH_URL,
+          identity.installId,
+          stored.scorerVersion
+        );
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      }
     }
   }
   // v2.3: per-node detail from the persisted pool_resolved devices — omitted entirely when
@@ -5134,7 +5327,21 @@ ipcMain.handle('benchmark-publish', async (_event, args?: { title?: string }) =>
         error: serverMessage ? `HTTP ${res.status}: ${serverMessage}` : `HTTP ${res.status}`,
       };
     }
-    return { ok: true, ...(await res.json().catch(() => ({}))) };
+    const accepted = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    // The run is now live: remembered per run so its card says so and it is never posted twice.
+    const publishedKey =
+      runKey ??
+      benchRunKey({
+        runId: typeof stored.runId === 'string' ? stored.runId : null,
+        startedAt: runMeta.startedAt,
+      });
+    await recordPublished(publishedKey, {
+      url: typeof accepted.url === 'string' ? accepted.url : null,
+      title,
+      score: typeof stored.score === 'number' ? stored.score : 0,
+      publishedAt: new Date().toISOString(),
+    }).catch((error) => log.error('Published run could not be recorded:', error));
+    return { ok: true, ...accepted };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }

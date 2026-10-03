@@ -2,7 +2,18 @@ import { useEffect, useState } from 'react';
 import { TYPE } from '../lz';
 import { BenchmarkVideo, type BenchmarkVideoEvidence } from './BenchmarkVideo';
 
-export function RunVideoEvidence({ workdir }: { workdir: string | undefined }) {
+/**
+ * The run's graded browser clip. `absence` is the scorer's own reason no browser session could be
+ * recorded (clipAbsence: the app never served a page / no surface rendered) — stated as the run's
+ * result, never as a missing file.
+ */
+export function RunVideoEvidence({
+  workdir,
+  absence,
+}: {
+  workdir: string | undefined;
+  absence?: string | null;
+}) {
   const [result, setResult] = useState<{ videos: BenchmarkVideoEvidence[]; error?: string } | null>(
     null
   );
@@ -26,6 +37,12 @@ export function RunVideoEvidence({ workdir }: { workdir: string | undefined }) {
     };
   }, [workdir]);
   if (!result) return <p className={TYPE.bodyMuted}>Loading the graded browser recording…</p>;
+  if (!result.videos.length && absence)
+    return (
+      <p role="status" data-testid="recording-absent" className={TYPE.body}>
+        No recording: {absence}.
+      </p>
+    );
   if (result.error || !result.videos.length)
     return (
       <p role="status" className={TYPE.bodyMuted}>
