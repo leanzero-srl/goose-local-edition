@@ -44,8 +44,11 @@ YIELD_TO: List[str] = []  # --yield-to PATTERN: wait while another scorer (pgrep
 def _busy_scorers() -> List[str]:
     found = []
     for pattern in YIELD_TO:
-        out = subprocess.run(['pgrep', '-f', pattern], capture_output=True, text=True).stdout.split()
-        found += [f'{pattern}:{pid}' for pid in out if int(pid) != os.getpid()]
+        for pid in subprocess.run(['pgrep', '-f', pattern], capture_output=True, text=True).stdout.split():
+            args = subprocess.run(['ps', '-o', 'args=', '-p', pid], capture_output=True, text=True).stdout
+            # a process that merely NAMES the pattern as an argument (another controls run's --yield-to) is not a scorer
+            if int(pid) != os.getpid() and args and '--yield-to' not in args:
+                found.append(f'{pattern}:{pid}')
     return found
 
 
