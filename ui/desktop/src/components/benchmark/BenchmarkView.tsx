@@ -1808,7 +1808,7 @@ export default function BenchmarkView() {
 
           <p className={TYPE.bodyMuted} data-testid="family-intro">
             {forge
-              ? `${BENCH_FAMILY_NAME.forge} runs one model in goose: it builds an Atlassian Forge app on eight module types, graded offline by running it against a seeded Jira site — no deploy, no internet for the entrant. Forge sessions stay separate from Gauntlet.`
+              ? `${BENCH_FAMILY_NAME.forge} runs one model in goose: it builds an Atlassian Forge app on ten module types plus the Realtime API, among them Forge LLM and two Rovo modules in Preview, graded offline by running it against a seeded Jira site — no deploy, no internet for the entrant. Forge sessions stay separate from Gauntlet.`
               : `${BENCH_FAMILY_NAME.sb} runs with Swarm or a single model. Swarm nodes can mix local and cloud providers. Earlier benchmarks remain separate in your session history.`}
           </p>
 
