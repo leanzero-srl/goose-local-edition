@@ -47,7 +47,10 @@ export interface PublishedRecord {
   url: string | null;
   title: string;
   score: number;
-  publishedAt: string;
+  /** When this app posted it; null when the post predates the index and the site's board named it. */
+  publishedAt: string | null;
+  /** 'app' — this app's own accepted POST; 'board' — reconciled from the site's GET (siteRowForRun). */
+  source: 'app' | 'board';
 }
 
 export type PublishedIndex = Record<string, PublishedRecord>;
@@ -62,12 +65,74 @@ export function parsePublishedIndex(raw: unknown): PublishedIndex {
       v &&
       typeof v.title === 'string' &&
       typeof v.score === 'number' &&
-      typeof v.publishedAt === 'string' &&
+      (typeof v.publishedAt === 'string' || v.publishedAt === null) &&
       (typeof v.url === 'string' || v.url === null)
     )
-      out[key] = { url: v.url, title: v.title, score: v.score, publishedAt: v.publishedAt };
+      out[key] = {
+        url: v.url,
+        title: v.title,
+        score: v.score,
+        publishedAt: v.publishedAt,
+        // Records written before `source` existed were all this app's own posts.
+        source: v.source === 'board' ? 'board' : 'app',
+      };
   }
   return out;
+}
+
+/** A board row as the site's GET lists it — read defensively, it crossed the network. */
+export interface SiteBoardRow {
+  label?: unknown;
+  title?: unknown;
+  score?: unknown;
+  model?: unknown;
+  startedAt?: unknown;
+  wallSecs?: unknown;
+  url?: unknown;
+}
+
+export interface PostedRunIdentity {
+  scorerVersion: string;
+  model: string;
+  score: number;
+  startedAt: string | null;
+  wallSecs: number | null;
+}
+
+/**
+ * The site's row for a run this app posted BEFORE it kept published.json (Luna, MiMo Flash on
+ * 2026-10-02): same era, same model, the exact score, AND the run's own identity — its launch stamp
+ * (runMeta.startedAt, stored verbatim) or its wall seconds. Model + score alone can collide between two
+ * runs, so a row without either identity field never matches, and two matching rows are ambiguous —
+ * no marker rather than a borrowed one.
+ */
+export function siteRowForRun(
+  run: PostedRunIdentity,
+  benchmarks: ReadonlyArray<{ scorerVersion?: unknown; baselines?: unknown }>
+): { url: string; title: string } | null {
+  const rows = benchmarks
+    .filter((b) => b?.scorerVersion === run.scorerVersion && Array.isArray(b.baselines))
+    .flatMap((b) => b.baselines as SiteBoardRow[]);
+  const matches = rows.filter(
+    (row) =>
+      row != null &&
+      row.model === run.model &&
+      row.score === run.score &&
+      typeof row.url === 'string' &&
+      ((typeof row.startedAt === 'string' && row.startedAt === run.startedAt) ||
+        (typeof row.wallSecs === 'number' && row.wallSecs === run.wallSecs))
+  );
+  if (matches.length !== 1) return null;
+  const row = matches[0];
+  const title =
+    typeof row.title === 'string' ? row.title : typeof row.label === 'string' ? row.label : run.model;
+  return { url: row.url as string, title };
+}
+
+/** "leanzero.net/agentic-benchmarks/run/…" for a site path or an absolute URL — the live line's text. */
+export function publishedUrlText(url: string): string {
+  if (url.startsWith('/')) return `leanzero.net${url}`;
+  return url.replace(/^https?:\/\//, '');
 }
 
 /**

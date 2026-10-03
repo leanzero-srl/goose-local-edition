@@ -131,13 +131,41 @@ describe('every finished run keeps its own card and can be published', () => {
       session(SOLAR),
       session(DEEPSEEK, {
         publishable: false,
-        published: { url: '/runs/abc', title: 'DeepSeek Pro', score: 0.699, publishedAt: 'x' },
+        published: {
+          url: '/runs/abc',
+          title: 'DeepSeek Pro',
+          score: 0.699,
+          publishedAt: 'x',
+          source: 'app',
+        },
       }),
     ]);
     window.location.hash = `#/benchmark?era=sb-7.2&run=${DEEPSEEK.runId}`;
     mount();
     expect(await screen.findByTestId('published-live')).toHaveTextContent(
       'Live on leanzero.net — “DeepSeek Pro” · 69.9% · leanzero.net/runs/abc'
+    );
+    expect(screen.queryByRole('button', { name: 'Publish' })).toBeNull();
+  });
+
+  it('a run the site board named (posted before the index) shows its board URL', async () => {
+    mockElectron([
+      session(SOLAR),
+      session(DEEPSEEK, {
+        publishable: false,
+        published: {
+          url: 'https://leanzero.net/agentic-benchmarks/run/brun-2cbdb9f5-48c9-4845-ac7a-9d025c1cc0d0',
+          title: 'GPT-6 Luna, single model via OpenRouter',
+          score: 0.699,
+          publishedAt: null,
+          source: 'board',
+        },
+      }),
+    ]);
+    window.location.hash = `#/benchmark?era=sb-7.2&run=${DEEPSEEK.runId}`;
+    mount();
+    expect(await screen.findByTestId('published-live')).toHaveTextContent(
+      'Live on leanzero.net — “GPT-6 Luna, single model via OpenRouter” · 69.9% · leanzero.net/agentic-benchmarks/run/brun-2cbdb9f5-48c9-4845-ac7a-9d025c1cc0d0'
     );
     expect(screen.queryByRole('button', { name: 'Publish' })).toBeNull();
   });

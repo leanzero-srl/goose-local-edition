@@ -11,6 +11,7 @@ import {
   isolatedPaymentsTier,
 } from './baselines';
 import { sb8CompositionSchema } from '../../sb8ScoreSchema';
+import { summarizeParts, type PartLeaf } from './partSummary';
 import { Check, ChevronDown, ChevronRight, X, XCircle } from 'lucide-react';
 import {
   Chip,
@@ -133,32 +134,57 @@ function ScoreChip({ score }: { score: number }) {
   );
 }
 
-/** parts — the scorer's per-item evidence map. Booleans as solid check/cross chips, numbers inline. */
-function PartChips({ parts }: { parts: Record<string, unknown> }) {
-  const entries = Object.entries(parts).slice(0, 24);
-  if (entries.length === 0) return null;
+/** parts — the scorer's per-item evidence map. Booleans as solid check/cross chips, numbers inline,
+ *  each nested object as its own row of key: value chips (partSummary.ts — never "[object Object]"). */
+function PartLeafChip({ leaf }: { leaf: PartLeaf }) {
+  if (leaf.kind === 'flag')
+    return (
+      <Chip tone={leaf.ok ? 'ok' : 'err'} icon={leaf.ok ? <Check /> : <X />}>
+        {leaf.key}
+      </Chip>
+    );
   return (
-    <div className="mt-1.5 flex flex-wrap gap-1">
-      {entries.map(([key, value]) => {
-        if (typeof value === 'boolean') {
-          return (
-            <Chip key={key} tone={value ? 'ok' : 'err'} icon={value ? <Check /> : <X />}>
-              {key}
+    <Chip tone={leaf.tone}>
+      {leaf.key} {leaf.text}
+    </Chip>
+  );
+}
+
+export function PartChips({ parts }: { parts: Record<string, unknown> }) {
+  const views = summarizeParts(Object.fromEntries(Object.entries(parts).slice(0, 24)));
+  if (views.length === 0) return null;
+  const leaves = views.filter((v): v is PartLeaf => v.kind !== 'group');
+  const groups = views.filter((v) => v.kind === 'group');
+  return (
+    <div className="mt-1.5 flex flex-col gap-1.5">
+      {leaves.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {leaves.map((leaf) => (
+            <PartLeafChip key={leaf.key} leaf={leaf} />
+          ))}
+        </div>
+      )}
+      {groups.map((group) => (
+        <div
+          key={group.key}
+          data-testid="part-group"
+          data-part={group.key}
+          className="flex flex-wrap items-center gap-1">
+          {group.ok == null ? (
+            <span className={cx('mr-0.5 font-mono text-lz-mono text-lz-ink-2', WEIGHT.semibold)}>
+              {group.key}
+            </span>
+          ) : (
+            <Chip tone={group.ok ? 'ok' : 'err'} icon={group.ok ? <Check /> : <X />}>
+              {group.key}
             </Chip>
-          );
-        }
-        const shown =
-          typeof value === 'number'
-            ? Number.isInteger(value)
-              ? String(value)
-              : value.toFixed(2)
-            : String(value).slice(0, 40);
-        return (
-          <Chip key={key}>
-            {key} {shown}
-          </Chip>
-        );
-      })}
+          )}
+          {group.items.map((leaf) => (
+            <PartLeafChip key={leaf.key} leaf={leaf} />
+          ))}
+          {group.more > 0 && <Chip>+{group.more} more</Chip>}
+        </div>
+      ))}
     </div>
   );
 }

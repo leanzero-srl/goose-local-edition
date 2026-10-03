@@ -16,7 +16,7 @@ import {
   defaultBenchmarkScorer,
 } from '../../benchTierPayload';
 import { forgePublishProblem } from '../../benchForgePublish';
-import { clipAbsence } from '../../benchRunResults';
+import { clipAbsence, publishedUrlText } from '../../benchRunResults';
 import type { ForgeKitStatus } from '../../benchForgeKitTypes';
 import { RunVideoEvidence } from './RunVideoEvidence';
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -1067,7 +1067,9 @@ export default function BenchmarkView() {
 
   useEffect(() => {
     void loadExisting();
-    void loadCatalog();
+    // Sessions load twice: at once, and again once the site's board is cached — the board is what
+    // names runs posted before this app kept its published index (main: siteRowForRun).
+    void loadCatalog().then(() => loadSessions());
     void loadSessions();
     // Re-attach to a run started before this mount — a run takes hours and must survive navigation.
     const lifecycleAtRequest = lifecycleRevision.current;
@@ -1615,7 +1617,9 @@ export default function BenchmarkView() {
           <span>
             Live on leanzero.net — &ldquo;{selectedSession.published.title}&rdquo; ·{' '}
             {(selectedSession.published.score * 100).toFixed(1)}%
-            {selectedSession.published.url ? ` · leanzero.net${selectedSession.published.url}` : ''}
+            {selectedSession.published.url
+              ? ` · ${publishedUrlText(selectedSession.published.url)}`
+              : ''}
           </span>
         </div>
       </Panel>

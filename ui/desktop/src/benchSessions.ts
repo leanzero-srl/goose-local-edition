@@ -116,6 +116,10 @@ export interface BenchCatalogBaseline {
   score: number;
   model: string;
   title?: string;
+  /** The run's own runMeta.startedAt and wallSecs, as posted (site b091082) — what tells this app a
+   *  board row is a run it published; absent on rows the site holds no such field for. */
+  startedAt?: string;
+  wallSecs?: number;
   url?: string;
 }
 
