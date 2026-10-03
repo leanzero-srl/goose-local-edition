@@ -510,6 +510,23 @@ class DefectTests(Golden):
             calls.insert(2, {**calls[2], 'earlyRetry': 'f-reconcile', 'status': 429})
         self.assertEqual(self.rows(self.mutate(early))['r_rate_limit']['score'], 0)
 
+    def test_a_concurrent_request_refused_in_the_window_is_not_a_retry(self):
+        # Luna 2026-10-03: the board list's second page went out 1 ms after the field list's 429 (Promise.all); the
+        # site refused it as Jira would, and the app retried each refused request only after Retry-After.
+        def concurrent(obs):
+            calls = obs['phases']['backfill']['calls']
+            calls.insert(2, {**calls[2], 't': 1.001, 'path': '/rest/api/3/field', 'status': 429,
+                             'fault': 'f-reconcile', 'earlyRetry': 'f-reconcile', 'response': None})
+        rows = self.rows(self.mutate(concurrent))
+        self.assertEqual(rows['r_rate_limit']['score'], 1, rows['r_rate_limit']['detail'])
+        self.assertIn('concurrent request(s) refused in the window, none a retry', rows['r_rate_limit']['detail'])
+
+        def concurrent_then_retried_early(obs):   # the refused concurrent request, repeated inside the window, is
+            concurrent(obs)                        # a retry
+            calls = obs['phases']['backfill']['calls']
+            calls.insert(3, {**calls[2], 't': 1.2})
+        self.assertEqual(self.rows(self.mutate(concurrent_then_retried_early))['r_rate_limit']['score'], 0)
+
     def test_an_open_sprints_only_backfill_misses_removals_and_multiplies_by_its_severity(self):
         gone = {'9005'}
 

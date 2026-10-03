@@ -1326,7 +1326,7 @@ def deploy_findings(c: Ctx) -> List[Dict]:
          graded_by=_charged(c, 'r_pagination'))
     # Static: the code reads Retry-After at all. Runtime: no retry landed inside a 429's window (the site answers an
     # early retry with another 429, as Jira does). Either failing is the finding.
-    early = [x for x in c.all_calls('jira') if x.get('earlyRetry')]
+    early = _refused_in_window(c.all_calls('jira'))[0]
     rule('R6 Jira calls honour Retry-After', 'runtime', bool(routes),
          bool(RETRY_AFTER_HANDLING.search(backend)) and not early, 'would_fail',
          'Jira answers 429 with Retry-After; a retry inside the window is refused again', 'ratelimit',
@@ -1581,18 +1581,42 @@ def _fault(c: Ctx, scope: str) -> Optional[Dict]:
     return None
 
 
+def _request_key(call: Dict) -> tuple:
+    return (call.get('inv'), call.get('method'), call.get('path'), json.dumps(call.get('body'), sort_keys=True, default=str))
+
+
+def _refused_in_window(calls: List[Dict], fault_id: Optional[str] = None) -> Tuple[List[Dict], List[Dict]]:
+    """(early retries, concurrent refusals) among the calls the site refused inside an open fault window. Jira's
+    Retry-After "Indicates how many seconds to wait before retrying" (rate-limiting page, RESEARCH §2): an early RETRY
+    repeats a request the site had already refused with that fault (same invocation, method, path and body). A
+    different request issued beside it — a concurrent branch that never saw the 429 (Luna 2026-10-03: the board
+    list's second page 1 ms after the field list's 429, inside Promise.all) — is refused too, as Jira refuses it, but
+    retried nothing."""
+    early, concurrent, refused = [], [], set()
+    for x in sorted(calls, key=lambda x: x.get('t') or 0):
+        fid = x.get('earlyRetry') or x.get('fault')
+        if not fid or (fault_id is not None and fid != fault_id):
+            continue
+        if x.get('earlyRetry'):
+            (early if (fid, _request_key(x)) in refused else concurrent).append(x)
+        if x.get('status') == 429:
+            refused.add((fid, _request_key(x)))
+    return early, concurrent
+
+
 def _retry_verdict(c: Ctx, scope: str, phases: Tuple[str, ...]) -> Tuple[float, str]:
     fault = _fault(c, scope)
     calls = sorted(c.calls(phases, 'jira'), key=lambda x: x.get('t') or 0)
     hit = next((x for x in calls if x.get('fault') == fault['id']), None)
     ra = float(fault.get('retryAfter') or 0)
-    early = [x for x in calls if x.get('earlyRetry') == fault['id']]
+    early, concurrent = _refused_in_window(calls, fault['id'])
     if early:
         return 0.0, f"retried {len(early)}x inside the {ra:g}s Retry-After window"
     inv_id = hit.get('inv')
     inv = next((i for i in c.invocations(phases) if i.get('inv') == inv_id), {})
     deliveries = [d for ph in phases for d in c.phase(ph).get('deliveries') or [] if d.get('inv') == inv_id]
-    later_same = [x for x in calls if x.get('inv') == inv_id and (x.get('t') or 0) > (hit.get('t') or 0)]
+    later_same = [x for x in calls if x.get('inv') == inv_id and (x.get('t') or 0) > (hit.get('t') or 0)
+                  and not any(x is y for y in concurrent)]
     if inv.get('threw') or inv.get('timedOut') or any(d.get('result') in ('throw', 'timeout') for d in deliveries):
         return 0.0, f'the invocation threw/timed out on the 429 (platform backoff, not Retry-After): {inv.get("error")}'
     retry_after = inv.get('retryAfter')
@@ -1601,9 +1625,10 @@ def _retry_verdict(c: Ctx, scope: str, phases: Tuple[str, ...]) -> Tuple[float, 
     if retry_after is not None:
         return (1.0, f'InvocationError retryAfter {retry_after}s >= {ra:g}s') if float(retry_after) >= ra else \
             (0.0, f'InvocationError retryAfter {retry_after}s < {ra:g}s')
+    side = f'; {len(concurrent)} concurrent request(s) refused in the window, none a retry' if concurrent else ''
     if later_same:
         gap = (later_same[0].get('t') or 0) - (hit.get('t') or 0)
-        return (1.0, f'waited {gap:.1f} virtual s in-invocation') if gap >= ra else (0.0, f'retried after {gap:.1f}s < {ra:g}s')
+        return (1.0, f'waited {gap:.1f} virtual s in-invocation{side}') if gap >= ra else (0.0, f'retried after {gap:.1f}s < {ra:g}s')
     return 0.0, 'the 429 was never retried'
 
 
