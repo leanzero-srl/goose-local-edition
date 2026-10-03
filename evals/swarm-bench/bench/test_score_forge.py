@@ -900,6 +900,24 @@ class LlmRealtimeMcpTests(Golden):
             o['ui']['explain']['steps'][2].update(errorFlags=0, sortWorksAfter=False)
         self.assertLess(self.mutate(no_refusal_path)[0]['u_llm_explain']['score'], 1)
 
+    def test_a_kept_explanation_after_a_failed_attempt_passes_and_a_new_id_does_not(self):
+        # DESIGN §17.4 gap 29: clearing or keeping the previous explanation both pass. Sol (cf712137) kept the digits
+        # step's one cited id on screen through refusal/malformed/error, each with an error flag, and lost 3 subs.
+        def kept(o):
+            steps = o['ui']['explain']['steps']
+            for st in steps[2:]:
+                st.update(explanation=steps[1]['explanation'], idsShown=list(steps[1]['idsShown']))
+        rows = self.mutate(kept)[0]
+        self.assertEqual(rows['u_llm_explain']['score'], 1.0, rows['u_llm_explain']['detail'])
+
+        def invented(o):   # an id the failed click put on screen is still charged, kept ones beside it or not
+            steps = o['ui']['explain']['steps']
+            for st in steps[2:]:
+                st.update(idsShown=[*steps[1]['idsShown'], 'see the ledger'])
+        rows = self.mutate(invented)[0]
+        self.assertIn('2:refusal:error_flag', rows['u_llm_explain']['detail'])
+        self.assertNotIn('3:malformed:error_flag', rows['u_llm_explain']['detail'])   # same ids as the step before
+
     def test_a_resolver_that_throws_on_the_refusal_has_no_refusal_path(self):
         def throws(o):   # m_llm_no_refusal_path: the page shows the same error flag, the resolver threw instead of answering
             for r in o['ui']['invokeResponses']:
