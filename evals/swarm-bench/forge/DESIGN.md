@@ -800,7 +800,7 @@ pointer double click can land on the container).
 | `m_llm_leaks_hidden` | explain prompt built from all ledger rows (asApp) and returned ids shown unfiltered | `b_no_permission_leak` (crit), `u_llm_explain` |
 | `m_llm_unknown_model` | a hard-coded model id `list()` does not return → every explain call errors | `k_llm_model_current`, `u_llm_explain` (verified) |
 | `m_llm_sampling_params` | sends the README's `temperature: 0.7, top_p: 0.9` | `u_llm_explain` |
-| `m_llm_no_refusal_path` | assumes a tool call is always present; a refusal throws in the resolver | `u_llm_explain`, `b_invoke_contract` |
+| `m_llm_no_refusal_path` | on a refusal renders the model's raw text as a valid explanation, no error flag (re-authored 42a5bf116: the never-throw wrapper masked the old throwing variant) | `u_llm_explain` |
 | `m_rt_publish_in_consumer` | consumer calls `publish()` instead of `publishGlobal()` | `u_widget_live` |
 | `m_rt_payload_leak` | realtime payload carries the changed rows (keys, points, authors) | `b_realtime_payload_clean` |
 | `m_rt_poll_instead` | widget polls its resolver every few seconds, no subscription | `u_widget_live` |
