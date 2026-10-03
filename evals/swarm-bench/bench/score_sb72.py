@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import copy
+from decimal import ROUND_FLOOR, Decimal
 import hashlib
 import json
 from pathlib import Path
@@ -55,16 +56,35 @@ INTERACTION_CHECKS = (*sb71.QUALITY_CHECKS, 'q_overview_legibility', 'q_inspecto
 REPORT_ONLY = ('x_m2_pair_conservation',)
 BACKEND_EXCELLENCE = tuple(name for name in sb71.BACKEND_EXCELLENCE if name not in REPORT_ONLY)
 passed = sb71.passed
-# The 0.899 band is graded like Forge's (score_forge.GRADED_BAND): with n of its checks failing the
-# ceiling is max(0.799, 0.899 - 0.03·(n - 1)). The 0.599/0.699/0.799 bands stay binary.
-GRADED_BAND = ('Event animation and backend recovery', .899, .03, .799)
+# Graded bands (owner 2026-10-03: "it's impossible to have 3 models with the same score"): the
+# 0.699, 0.799 and 0.899 bands step like Forge's (score_forge.GRADED_BAND) - with n of a band's OWN
+# checks failing, its ceiling is max(next lower cap, cap - 0.03·(n - 1)). One failure caps exactly
+# as the binary band did, so the severity ordering holds. 0.599 (a visible scene) stays binary.
+GRADED_STEP = .03
+GRADED_FLOOR = {.699: .599, .799: .699, .899: .799}
 
 
-def band_ceiling(limit, label, failed):
-    if label == GRADED_BAND[0]:
-        _label, top, step, floor = GRADED_BAND
-        return round(max(floor, top - step * (max(failed, 1) - 1)), 4)
-    return limit
+# Below a cap (owner 2026-10-03: a final sitting exactly on a cap for two models "is a big red flag"):
+# final = min(earned, cap - 0.05·(1 - earned)). Continuous and monotone in earned, equal to the cap
+# only at earned = 1; the deepest pull, 0.05·(1 - cap) (0.005 at 0.899 .. 0.020 at 0.599), stays
+# under the 0.03 graded step. No cap (ceiling 1.0) leaves earned untouched.
+CAP_PULL = .05
+
+
+def capped(earned, ceiling):
+    if ceiling >= 1.0:
+        return earned
+    # A capped final is TRUNCATED to 4 decimals (Forge's rule): rounding could put an earned < 1
+    # back on the cap (0.99998 under 0.899 -> 0.8989, never 0.8990). round(.., 9) first drops float
+    # dust (0.794 computed as 0.79399999...) so the floor cuts real digits only.
+    exact = min(earned, ceiling - CAP_PULL * (1.0 - earned))
+    return float(Decimal(repr(round(exact, 9))).quantize(Decimal('0.0001'), rounding=ROUND_FLOOR))
+
+
+def band_ceiling(limit, failed):
+    if limit not in GRADED_FLOOR:
+        return limit
+    return round(max(GRADED_FLOOR[limit], limit - GRADED_STEP * (max(failed, 1) - 1)), 4)
 
 
 def thresholds():
@@ -81,7 +101,7 @@ def tier_runtime():
     """Swap SB7.2's probe, version, weights, thresholds and data roots into the shared machinery."""
     overlay = thresholds()
     saved = (sb71.PROBE_NAME, sb71.VERSION, base.TIER_WEIGHT_SB7, base.ROOT_BLOCKS,
-             base.TH['e_stream_apply_ms_rungs'], base.DIAGNOSTIC, base.NOTIFY_PAGED)
+             base.TH['e_stream_apply_ms_rungs'], base.DIAGNOSTIC, base.NOTIFY_PAGED, base.SB72_STRICT)
     blocks = dict(base.ROOT_BLOCKS)
     # Without synced data there is no field to see: the visual rows are downstream of sync.
     blocks['sync_completeness'] = (*blocks['sync_completeness'],
@@ -91,11 +111,12 @@ def tier_runtime():
     base.TH['e_stream_apply_ms_rungs'] = overlay['e_stream_apply_ms_rungs']
     base.DIAGNOSTIC = base.DIAGNOSTIC | set(REPORT_ONLY)
     base.NOTIFY_PAGED = True
+    base.SB72_STRICT = True
     try:
         yield
     finally:
         (sb71.PROBE_NAME, sb71.VERSION, base.TIER_WEIGHT_SB7, base.ROOT_BLOCKS,
-         base.TH['e_stream_apply_ms_rungs'], base.DIAGNOSTIC, base.NOTIFY_PAGED) = saved
+         base.TH['e_stream_apply_ms_rungs'], base.DIAGNOSTIC, base.NOTIFY_PAGED, base.SB72_STRICT) = saved
 
 
 def _probe_preflight():
@@ -181,19 +202,23 @@ def admit(raw):
          ('m_committed_event_replay', *BACKEND_EXCELLENCE)),
     ]
     ceiling, reasons, failures_by_band = 1.0, [], []
+    lower = set()
     for condition, limit, label, names in bands:
+        own = [name for name in names if name not in lower]
+        lower |= set(names)
         if condition:
             continue
         failed = [name for name in names if not passed(by.get(name))]
-        cap = band_ceiling(limit, label, len(failed))
+        graded = [name for name in failed if name in own]
+        cap = band_ceiling(limit, len(graded))
         ceiling = min(ceiling, cap)
-        failures_by_band.append({'ceiling': cap, 'checks': failed})
+        failures_by_band.append({'band': limit, 'ceiling': cap, 'checks': failed, 'graded_failures': len(graded)})
         cause = ', '.join(failed) if failed else 'an earlier admission band is incomplete'
         if limit == .899 and (raw.get('harness_missing') or raw.get('sched_unreached')):
             cause += '; required infrastructure or recovery schedule evidence is missing'
         reasons.append(f'{label}: {cause} (maximum {cap:.3f})')
     result.update(scorer_version=VERSION, scorerVersion=VERSION, rawScore=raw['score'],
-                  score=min(raw['score'], ceiling),
+                  score=capped(raw['score'], ceiling),
                   # `good` keeps SB7.1's verdict shape (the desktop's Admission reads it): it is the
                   # same 0.799 band, now 3D interaction and overview legibility.
                   admission={'visible': visible, 'matching': matching, 'interactive': interactive, 'good': interactive,
@@ -304,12 +329,23 @@ def severity_selftest():
             for name in VISUAL_CHECKS:
                 if not score_with({name: 0.0})['rawScore'] < 1.0:
                     fails.append(f'SB7.2: visual row {name} earns no weight')
-            # The graded 0.899 band (2026-10-03): more failed backend/animation checks never raise
-            # the ceiling, and it never undercuts the binary 0.799 band below it.
-            band = ('m_committed_event_replay', *BACKEND_EXCELLENCE)
-            ceilings = [score_with({n: .5 for n in band[:k]})['admission']['ceiling'] for k in range(1, len(band) + 1)]
-            if ceilings[0] != .899 or any(b > a for a, b in zip(ceilings, ceilings[1:])) or min(ceilings) < .799:
-                fails.append(f'SB7.2: graded 0.899 band is not monotone within [0.799, 0.899]: {ceilings[:6]}')
+            # The graded bands (2026-10-03): one failure caps exactly as the binary band did, more
+            # failures never raise the ceiling, and no band undercuts the next lower cap.
+            for top, band in ((.899, ('m_committed_event_replay', *BACKEND_EXCELLENCE)),
+                              (.799, INTERACTION_CHECKS),
+                              (.699, ('s_tower_geometry', 's_currency_collar', *STRUCTURE_CHECKS))):
+                ceilings = [score_with({n: .5 for n in band[:k]})['admission']['ceiling'] for k in range(1, len(band) + 1)]
+                if (ceilings[0] != top or any(b > a for a, b in zip(ceilings, ceilings[1:]))
+                        or min(ceilings) < GRADED_FLOOR[top]):
+                    fails.append(f'SB7.2: graded {top} band is not monotone within [{GRADED_FLOOR[top]}, {top}]: '
+                                 f'{ceilings[:6]}')
+            # Below-cap pull: at equal earned, one more graded failure never ranks above one fewer,
+            # and a capped final reaches its cap only at earned 1.
+            for earned in (.80, .85, .90, .95, .99):
+                for top in (.899, .799, .699):
+                    a_, b_ = capped(earned, band_ceiling(top, 1)), capped(earned, band_ceiling(top, 2))
+                    if b_ > a_ or capped(earned, top) >= top:
+                        fails.append(f'SB7.2: below-cap pull breaks ranking at earned {earned}, cap {top}')
             for name in REPORT_ONLY:
                 if score_with({name: 0.0})['score'] != 1.0:
                     fails.append(f'SB7.2: report-only row {name} moved the score')

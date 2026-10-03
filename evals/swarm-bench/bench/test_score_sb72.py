@@ -339,6 +339,49 @@ class AimedPressTests(unittest.TestCase):
         self.assertEqual(check_fn('t_coast_reality')(ctx)['score'], 1.0)
 
 
+class StringencyTests(unittest.TestCase):
+    """G1 rest after every interaction kind, G2 pick refresh after a batch and mid-coast, G4 named paths."""
+
+    rest = [{'defaultDraws': 0, 'batchLanded': False}] * 2
+
+    def test_idle_flatness_grades_every_rest_context_and_old_evidence_stays_binary(self):
+        fn = check_fn('p_idle_flatness')
+        self.assertEqual(fn(viz_ctx(idle={'windows': self.rest}))['score'], 1.0)
+        self.assertEqual(fn(viz_ctx(idle={'windows': [{'defaultDraws': 3}]}))['score'], 0.0)
+        ctx = viz_ctx(idle={'windows': self.rest}, idleAfterWheel=self.rest, idleAfterStream=self.rest,
+                      idleAfterAnimation=[{'defaultDraws': 30, 'batchLanded': False}],
+                      idleAfterCoast=[{'defaultDraws': 4, 'batchLanded': True}])
+        row = fn(ctx)
+        self.assertEqual(row['score'], .75)          # load, wheel, stream flat; animation draws; coast void
+        self.assertIn('animation 30', row['detail'])
+        self.assertNotIn('coast', row['parts']['contexts'])
+
+    def test_pick_refresh_after_batch_and_mid_coast(self):
+        fn = check_fn('t_pick_real_pass')
+        base_pc = {'pickCounters': {'sinceInvalidation': {'offDraws': 1, 'offReads': 1},
+                                    'duringPickCalls': {'defDraws': 0}, 'pickCalls': 9}}
+        self.assertEqual(fn(viz_ctx(**base_pc))['score'], 1.0)
+        good = {'offDrawsSinceBatch': 1, 'offReadsSinceBatch': 1, 'pickDefaultDraws': 0, 'agrees': True}
+        coast = {'cameraMovedSinceRelease': True, 'offDrawsSinceRelease': 3, 'offReadsSinceRelease': 1,
+                 'pickDefaultDraws': 0, 'agrees': True}
+        self.assertEqual(fn(viz_ctx(**base_pc, pickAfterBatch=good, pickDuringCoast=coast))['score'], 1.0)
+        stale = {**good, 'offReadsSinceBatch': 0}
+        self.assertEqual(fn(viz_ctx(**base_pc, pickAfterBatch=stale, pickDuringCoast=coast))['score'], 0.0)
+        still = {**coast, 'cameraMovedSinceRelease': False, 'offReadsSinceRelease': 0}
+        self.assertEqual(fn(viz_ctx(**base_pc, pickAfterBatch=good, pickDuringCoast=still))['score'], 1.0)
+
+    def test_error_paths_must_name_the_offending_field(self):
+        fn = check_fn('b_error_envelope')
+        cases = [{'path': '/api/payments?limit=-1', 'envelope_ok': True, 'expects_field_errors': True,
+                  'field_paths_ok': True, 'expected_path': 'limit', 'field_path_named': False},
+                 {'path': '/api/drafts[counterparty.name missing]', 'envelope_ok': True, 'expects_field_errors': True,
+                  'field_paths_ok': True, 'expected_path': 'counterparty.name', 'field_path_named': True}]
+        row = fn(SimpleNamespace(envelope_cases=cases))
+        self.assertAlmostEqual(row['score'], .6 + .4 * .5)
+        old = [{k: v for k, v in x.items() if k not in ('expected_path', 'field_path_named')} for x in cases]
+        self.assertEqual(fn(SimpleNamespace(envelope_cases=old))['score'], 1.0)
+
+
 class CompositionReworkTests(unittest.TestCase):
     def test_x_m2_is_report_only_and_x_l5_still_costs(self):
         self.assertEqual(compose({'x_m2_pair_conservation': 0.0})['score'], 1.0)
@@ -357,12 +400,42 @@ class CompositionReworkTests(unittest.TestCase):
                 self.assertEqual(result['admission']['ceiling'], ceiling)
         self.assertEqual(compose({'t_brush_link': .9, 'x_l5_group_atomicity': .5})['admission']['ceiling'], .799)
 
+    def test_the_0799_and_0699_bands_step_by_their_own_failures_and_0599_stays_binary(self):
+        interaction = ['t_click_semantics', 't_coast_identity', 't_coast_reality', 't_brush_link', 'q_inspector_framing']
+        for n, ceiling in [(1, .799), (2, .769), (3, .739), (4, .709), (5, .699)]:
+            with self.subTest(band=.799, n=n):
+                self.assertEqual(compose({name: .5 for name in interaction[:n]})['admission']['ceiling'], ceiling)
+        structure = ['s_tower_geometry', 's_currency_collar', 't_height_pixels', 't_vs7dbg_truth', 't_layout_basis']
+        for n, ceiling in [(1, .699), (2, .669), (3, .639), (4, .609), (5, .599)]:
+            with self.subTest(band=.699, n=n):
+                self.assertEqual(compose({name: .5 for name in structure[:n]})['admission']['ceiling'], ceiling)
+        dark = compose({'s_visible_surface': .5})
+        self.assertEqual(dark['admission']['ceiling'], .599)
+        # a failed lower band never counts toward a higher band's step
+        self.assertEqual(compose({'s_visible_surface': .5, 's_tower_geometry': .5})['admission']['failedChecksByBand'][1]
+                         ['graded_failures'], 1)
+
+    def test_a_capped_final_sits_below_its_cap_monotone_and_continuous(self):
+        for cap in (.899, .869, .799, .699, .599):
+            finals = [score.capped(e / 1000, cap) for e in range(0, 1001)]
+            self.assertTrue(all(b >= a for a, b in zip(finals, finals[1:])))
+            self.assertTrue(all(abs(b - a) <= .0011 for a, b in zip(finals, finals[1:])))
+            self.assertEqual(score.capped(1.0, cap), cap)
+            self.assertTrue(all(f < cap for f in finals[:-1]))
+            self.assertAlmostEqual(cap - score.capped(cap, cap), .05 * (1 - cap), delta=.0001)
+        self.assertEqual(score.capped(.9084, 1.0), .9084)
+        self.assertEqual(score.capped(.9084, .799), round(.799 - .05 * (1 - .9084), 4))
+        self.assertEqual(score.capped(.7, .799), .7)
+        self.assertEqual(score.capped(.99998, .899), .8989)
+        self.assertEqual(score.capped(.9, .799), .794)
+        self.assertEqual(score.capped(.7424, .799), .7424)
+
     def test_runtime_restores_diagnostic_and_paging(self):
-        before = (set(base.DIAGNOSTIC), base.NOTIFY_PAGED)
+        before = (set(base.DIAGNOSTIC), base.NOTIFY_PAGED, base.SB72_STRICT)
         with score.tier_runtime():
             self.assertIn('x_m2_pair_conservation', base.DIAGNOSTIC)
             self.assertTrue(base.NOTIFY_PAGED)
-        self.assertEqual((set(base.DIAGNOSTIC), base.NOTIFY_PAGED), before)
+        self.assertEqual((set(base.DIAGNOSTIC), base.NOTIFY_PAGED, base.SB72_STRICT), before)
 
     def test_half_state_samples_ride_both_atomicity_rows(self):
         samples = [{'previous': {'t': 1}, 'confirming': {'t': 2}}]

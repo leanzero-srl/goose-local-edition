@@ -369,7 +369,9 @@ def _probe(scenario: str, base: str, *flags: str, env: Optional[Dict] = None,
     if not PROBE_SCRIPT.is_file():
         return {"_probe_error": f"{scenario}: product_probe_v3.mjs not present (sibling deliverable)"}
     cmd = [node, str(PROBE_SCRIPT), scenario, base, *flags]
-    budget = timeout or (240 if scenario == "viz" else 120)
+    # The probe's own hard cap is 230 s for viz (330 s under SB7.2, whose battery is longer); this
+    # outer bound only catches a probe that never emits, so it sits 10 s above the probe's cap.
+    budget = timeout or ((340 if SB72_STRICT else 240) if scenario == "viz" else 120)
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=budget,
                            env={**os.environ, **(env or {})})
@@ -1107,11 +1109,15 @@ def _(c: Ctx):
         return g(0, "no error responses observed", "an API that cannot say what went wrong")
     ok = sum(1 for x in cases if x.get("envelope_ok")) / len(cases)
     fe = [x for x in cases if x.get("expects_field_errors")]
-    paths = (sum(1 for x in fe if x.get("field_paths_ok")) / len(fe)) if fe else 0.0
+    # SB7.2 cases carry the offending field: a well-formed path that names something else fails.
+    paths = (sum(1 for x in fe if x.get("field_paths_ok") and x.get("field_path_named", True))
+             / len(fe)) if fe else 0.0
     return g(0.6 * ok + 0.4 * paths,
              f"envelope {ok:.2f}, field paths {paths:.2f} over {len(cases)} cases",
              "structured errors are the contract's error half",
-             parts={"cases": [{k: x.get(k) for k in ('path', 'envelope_ok', 'field_paths_ok')}
+             parts={"cases": [{k: x.get(k) for k in ('path', 'envelope_ok', 'field_paths_ok',
+                                                     'expected_path', 'got_paths', 'field_path_named',
+                                                     'status', 'code') if k in x}
                               for x in cases]})
 
 
@@ -1747,11 +1753,34 @@ def _(c: Ctx):
     if not valid:
         return g(0, "no idle windows sampled", "demand rendering unproven")
     worst = max(w["defaultDraws"] for w in valid)
-    return g(1.0 if worst == 0 else 0.0,
-             f"{worst} default-FBO draws in the worst 500ms rest window "
-             f"({len(valid)} sampled)",
+    p = _pv(c, "viz")
+    after = {k: p[f"idleAfter{k.title()}"] for k in ("wheel", "coast", "stream", "animation")
+             if isinstance(p.get(f"idleAfter{k.title()}"), list)}
+    if not after:
+        return g(1.0 if worst == 0 else 0.0,
+                 f"{worst} default-FBO draws in the worst 500ms rest window "
+                 f"({len(valid)} sampled)",
+                 "continuous-rAF renderers fail the frozen §3.2 demand-render rule by design",
+                 parts={"max_draws_500ms": worst, "windows": len(valid)})
+    # SB7.2 (G1): "at rest 0 default-framebuffer draws in any 500 ms window" after EVERY kind of
+    # activity - load, a wheel step, a coast, an applied batch, the inspection animation ("demand
+    # rendering resumes"). Each rest context is flat or not; contexts whose windows were all voided
+    # by a landing batch are unmeasured.
+    contexts = {"load": worst}
+    for kind, ws in after.items():
+        ok = [w for w in ws if isinstance(w, dict) and isinstance(w.get("defaultDraws"), int)
+              and not w.get("batchLanded") and not w.get("cameraMoving")]
+        if ok:
+            contexts[kind] = max(w["defaultDraws"] for w in ok)
+    flat = [k for k, v in contexts.items() if v == 0]
+    return g(len(flat) / len(contexts),
+             f"{len(flat)}/{len(contexts)} rest contexts draw nothing in 500 ms: "
+             + ", ".join(f"{k} {v}" for k, v in contexts.items())
+             + (f"; unmeasured (a batch landed or the camera moved in every window): "
+                f"{sorted(set(after) - set(contexts))}"
+                if set(after) - set(contexts) else ""),
              "continuous-rAF renderers fail the frozen §3.2 demand-render rule by design",
-             parts={"max_draws_500ms": worst, "windows": len(valid)})
+             parts={"max_draws_500ms": max(contexts.values()), "contexts": contexts})
 
 
 @check("p_stream_apply", "P")
@@ -1990,10 +2019,31 @@ def _(c: Ctx):
              "offscreen_read": 1.0 if (since.get("offReads") or 0) >= 1 else 0.0,
              "pick_pass_budget": 1.0 if (since.get("offDraws") or 99) <= 4 else 0.0,
              "no_visible_flash": 1.0 if (during.get("defDraws") or 0) == 0 else 0.0}
-    return g(min(parts.values()),
-             f"since invalidation: {since.get('offDraws')} offscreen draws, "
-             f"{since.get('offReads')} readbacks; {during.get('defDraws')} default-FBO "
-             f"draws across {calls} pick calls",
+    detail = (f"since invalidation: {since.get('offDraws')} offscreen draws, "
+              f"{since.get('offReads')} readbacks; {during.get('defDraws')} default-FBO "
+              f"draws across {calls} pick calls")
+    # SB7.2 (G2): the same law after the other two invalidations - an applied SSE batch and a camera
+    # moving under a coast. Each must show >= 1 offscreen draw and readback before the first pick
+    # answers, the pick itself must not draw to the default framebuffer, and pick() and
+    # pickPixel() must agree. ("at most 4 per refresh" is not windowed here: a coast refreshes
+    # every frame, so a window holds several refreshes.)
+    viz = _pv(c, "viz")
+    ab, cp = viz.get("pickAfterBatch"), viz.get("pickDuringCoast")
+    if isinstance(ab, dict):
+        parts["after_batch_refresh"] = 1.0 if ((ab.get("offDrawsSinceBatch") or 0) >= 1
+                                               and (ab.get("offReadsSinceBatch") or 0) >= 1) else 0.0
+        parts["after_batch_pick_clean"] = 1.0 if (ab.get("pickDefaultDraws") == 0 and ab.get("agrees")) else 0.0
+        detail += (f"; after a batch {ab.get('offDrawsSinceBatch')} offscreen draws / "
+                   f"{ab.get('offReadsSinceBatch')} readbacks, pick drew {ab.get('pickDefaultDraws')} default, "
+                   f"pick==pickPixel {ab.get('agrees')}")
+    if isinstance(cp, dict) and cp.get("cameraMovedSinceRelease"):
+        parts["coast_refresh"] = 1.0 if ((cp.get("offDrawsSinceRelease") or 0) >= 1
+                                         and (cp.get("offReadsSinceRelease") or 0) >= 1) else 0.0
+        parts["coast_pick_clean"] = 1.0 if (cp.get("pickDefaultDraws") == 0 and cp.get("agrees")) else 0.0
+        detail += (f"; mid-coast {cp.get('offDrawsSinceRelease')} offscreen draws / "
+                   f"{cp.get('offReadsSinceRelease')} readbacks since release, pick drew "
+                   f"{cp.get('pickDefaultDraws')} default, pick==pickPixel {cp.get('agrees')}")
+    return g(min(parts.values()), detail,
              "CPU raycasts with fabricated pickPixel bytes fail the counters", parts=parts)
 
 
@@ -3699,20 +3749,28 @@ def _measure_under_stream(base: str, V) -> Dict:
         finally:
             burst_done.set()
 
-    def _reader():
+    def _payments_ok(status, body):
+        return (status == 200 and isinstance(body, dict) and isinstance(body.get("total"), int)
+                and bool(body.get("data")))
+
+    def _summary_ok(status, body):
+        return (status == 200 and isinstance(body, dict) and isinstance(body.get("by_currency"), list)
+                and bool(body.get("by_currency")))
+
+    def _reader(k):
         go.wait(timeout=10)
         n = 0
         while n < 40 and (n < 5 or not burst_done.is_set()):
             n += 1
+            summary = SB72_STRICT and (n + k) % 2 == 0
+            path = "/api/summary" if summary else "/api/payments?limit=50"
             t0 = time.time()
-            status, body, _raw, _h = _get(f"{base}/api/payments?limit=50", timeout=10)
+            status, body, _raw, _h = _get(f"{base}{path}", timeout=10)
             t1 = time.time()
             with lock:
-                samples.append({"t0": t0, "t1": t1, "ms": (t1 - t0) * 1000,
-                                "ok": status == 200 and isinstance(body, dict)
-                                and isinstance(body.get("total"), int)
-                                and bool(body.get("data"))})
-    readers = [threading.Thread(target=_reader) for _ in range(6)]
+                samples.append({"t0": t0, "t1": t1, "ms": (t1 - t0) * 1000, "path": path,
+                                "ok": (_summary_ok if summary else _payments_ok)(status, body)})
+    readers = [threading.Thread(target=_reader, args=(k,)) for k in range(6)]
     for r_ in readers:
         r_.start()
     bt = threading.Thread(target=_burst_wrapped)
@@ -3724,17 +3782,34 @@ def _measure_under_stream(base: str, V) -> Dict:
         return {}
     s0, s1 = window["t0"], window["t1"] or time.time()
     overlapped = [x for x in samples if s0 is not None and x["t1"] > s0 and x["t0"] < s1]
-    ms = sorted(x["ms"] for x in samples)
-    p95 = ms[min(len(ms) - 1, int(0.95 * len(ms)))]
-    return {"p95_ms": round(p95, 1), "n": len(samples),
-            "overlap_frac": round(len(overlapped) / len(samples), 3),
-            "correct": all(x["ok"] for x in samples)}
+    def _p95(rows):
+        ms = sorted(x["ms"] for x in rows)
+        return ms[min(len(ms) - 1, int(0.95 * len(ms)))]
+    out = {"p95_ms": round(_p95(samples), 1), "n": len(samples),
+           "overlap_frac": round(len(overlapped) / len(samples), 3),
+           "correct": all(x["ok"] for x in samples)}
+    if SB72_STRICT:
+        # Each endpoint must hold the published p95 on its own; the graded p95 is the worse one.
+        by = {}
+        for path in ("/api/payments?limit=50", "/api/summary"):
+            rows = [x for x in samples if x["path"] == path]
+            if rows:
+                by[path] = {"p95_ms": round(_p95(rows), 1), "n": len(rows),
+                            "correct": all(x["ok"] for x in rows)}
+        out["by_endpoint"] = by
+        out["p95_ms"] = max(v["p95_ms"] for v in by.values())
+    return out
 
 
 # SB7.2 grades the whole notifier feed; SB7.0/7.1 keep their frozen single read (score_sb72's
 # tier_runtime flips this). One 200-row page under-counted every feed past 200 rows: 7 SB7.2 runs
 # returned exactly 200 rows (194 reversal.created + 6 drafts) against 1,438-5,646 committed reversals.
 NOTIFY_PAGED = False
+# SB7.2 stringency (2026-10-03, flipped by score_sb72.tier_runtime): field-error paths must name the
+# offending field (+ a nested counterparty.name case and the admin-write 403 envelope), and the
+# burst readers time GET /api/summary beside GET /api/payments?limit=50 (both are in the 150 ms
+# p95 sentence). SB7.0/7.1 gathers are unchanged.
+SB72_STRICT = False
 NOTIFY_PAGE = 200      # the largest page the contract's sibling list (/api/payments) honours
 
 
@@ -4264,6 +4339,14 @@ def gather(root: Path, vendor_port: int, db_dir: Path, trace_path: Path,
             return bool(e) and isinstance(e.get("code"), str) \
                 and isinstance(e.get("message"), str)
 
+        named = {"/api/payments?limit=-1": "limit", "/api/payments?limit=abc": "limit",
+                 "/api/payments?offset=-5": "offset", "/api/payments?sort=bogus": "sort",
+                 "/api/payments?status=bogus": "status"}
+
+        def _paths_named(fe, want) -> Dict:
+            got = [x.get("path") for x in (fe or []) if isinstance(x, dict)]
+            return {"expected_path": want, "got_paths": got[:6], "field_path_named": want in got}
+
         for path, want_status, expects_fe in [
             ("/api/payments?limit=-1", 400, True),
             ("/api/payments?limit=abc", 400, True),
@@ -4290,7 +4373,8 @@ def gather(root: Path, vendor_port: int, db_dir: Path, trace_path: Path,
                 and isinstance(x.get("code"), str) for x in fe)
             c.envelope_cases.append({"path": path, "envelope_ok": _envelope_ok(body),
                                      "expects_field_errors": expects_fe,
-                                     "field_paths_ok": paths_ok})
+                                     "field_paths_ok": paths_ok,
+                                     **(_paths_named(fe, named[path]) if SB72_STRICT and path in named else {})})
         draft_probe = {"amount_minor": 1200, "currency": "EUR",
                        "counterparty": {"name": "Auth Probe", "country": "DE"},
                        "note": "auth-matrix"}
@@ -4318,7 +4402,31 @@ def gather(root: Path, vendor_port: int, db_dir: Path, trace_path: Path,
         c.envelope_cases.append({"path": "/api/drafts[invalid]",
                                  "envelope_ok": _envelope_ok(body_bad),
                                  "expects_field_errors": True,
-                                 "field_paths_ok": bool(_error_obj(body_bad).get("field_errors"))})
+                                 "field_paths_ok": bool(_error_obj(body_bad).get("field_errors")),
+                                 **(_paths_named(_error_obj(body_bad).get("field_errors"), "amount_minor")
+                                    if SB72_STRICT else {})})
+        if SB72_STRICT:
+            # Contract: invalid draft input "(e.g. ... a missing field) -> 400 with field_errors",
+            # each `{"path": "<dot.path[i]>"}`; and "known token, wrong role -> 403 ("forbidden")",
+            # "`admin` ... writes nothing".
+            nested = {"amount_minor": 1200, "currency": "EUR", "counterparty": {"country": "DE"},
+                      "note": "sb72 nested path"}
+            st_n, body_n, _r, _h = _post_auth(f"{base}/api/drafts", nested, maker)
+            c.val_matrix.append(("/api/drafts[counterparty.name missing]", st_n, st_n == 400))
+            fe_n = _error_obj(body_n).get("field_errors")
+            c.envelope_cases.append({"path": "/api/drafts[counterparty.name missing]",
+                                     "envelope_ok": _envelope_ok(body_n) and st_n == 400,
+                                     "expects_field_errors": True,
+                                     "field_paths_ok": bool(fe_n) and all(
+                                         isinstance(x, dict) and isinstance(x.get("path"), str)
+                                         and isinstance(x.get("code"), str) for x in fe_n),
+                                     **_paths_named(fe_n, "counterparty.name")})
+            st_a, body_a, _r, _h = _post_auth(f"{base}/api/drafts", draft_probe, admin)
+            c.envelope_cases.append({"path": "/api/drafts[admin write]",
+                                     "envelope_ok": st_a == 403 and _envelope_ok(body_a)
+                                     and _error_obj(body_a).get("code") == "forbidden",
+                                     "expects_field_errors": False, "status": st_a,
+                                     "code": _error_obj(body_a).get("code")})
         for jp in ("/api/payments?limit=1", "/api/summary", "/api/buckets",
                    "/api/outbox/status", "/api/nope", "/api/payments?limit=-1"):
             stj, _bj, rawj, hj = _get(f"{base}{jp}")

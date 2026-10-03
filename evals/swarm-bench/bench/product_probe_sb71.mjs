@@ -709,7 +709,9 @@ if (!SCENARIOS.includes(scenario) || !baseUrl) {
 const isViz = scenario === 'viz' || scenario === 'sb71-visual' || scenario === 'sb71-stream' || scenario === 'sb71-camera';
 
 // F18 lineage: viz carries SwiftShader startup at N=12,288 plus the full scripted battery.
-const HARD_MS = isViz ? 230000 : scenario === 'flow' ? 110000 : 90000;
+// SB7.2's viz battery is longer (aimed presses, a retried flick, rest windows after every interaction
+// kind, picks after a batch and mid-coast): its cap is raised in proportion (measured: see score_sb72).
+const HARD_MS = isViz ? (PROBE_TIER === 'sb-7.2' ? 330000 : 230000) : scenario === 'flow' ? 110000 : 90000;
 const startedAt = Date.now();
 const budgetLeft = () => HARD_MS - (Date.now() - startedAt);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -726,7 +728,9 @@ let browser = null;
 function emit(extra, cb) {
   if (printed) return;
   printed = true;
-  process.stdout.write(JSON.stringify({ ...result, ...extra }) + '\n', cb || (() => {}));
+  // SB7.2 records its own wall time against the hard cap (the budget is the harness's, never the model's).
+  const timing = PROBE_TIER === 'sb-7.2' ? { elapsedMs: Date.now() - startedAt, hardMs: HARD_MS } : {};
+  process.stdout.write(JSON.stringify({ ...result, ...timing, ...extra }) + '\n', cb || (() => {}));
 }
 
 const hardTimer = setTimeout(() => {
@@ -862,7 +866,7 @@ function streamInstrument() {
   const P = window.__p7 || (window.__p7 = { stream: [] });
   if (!Array.isArray(P.stream)) P.stream = [];
   const counters = () => ({
-    defDraws: P.defDraws || 0, offDraws: P.offDraws || 0,
+    defDraws: P.defDraws || 0, offDraws: P.offDraws || 0, offReads: P.offReads || 0,
     bufDataBytes: P.bufDataBytes || 0, bufSubBytes: P.bufSubBytes || 0,
     bufDataCalls: P.bufDataCalls || 0, bufSubCalls: P.bufSubCalls || 0,
     reallocs: P.reallocs || 0,
@@ -918,6 +922,55 @@ function streamInstrument() {
   window.EventSource = Wrapped;
 }
 
+// SB7.2 (G2): one synchronous pick + pickPixel with the GL counters around it — no frame can run
+// inside one evaluate, so a default-framebuffer draw in the window is the pick's own.
+function pageSyncPick({ x, y }) {
+  const P = window.__p7 || {}, d = window.vs7dbg;
+  const snap = () => ({ defDraws: P.defDraws || 0, offDraws: P.offDraws || 0, offReads: P.offReads || 0 });
+  let camBefore = null;
+  try { camBefore = d.camera(); } catch { camBefore = null; }
+  const before = snap();
+  let pick = null, px = null, err = null;
+  try {
+    pick = d.pick(x, y);
+    px = d.pickPixel(x, y);
+    px = px && typeof px.length === 'number' ? Array.from(px).slice(0, 4) : px;
+  } catch (e) { err = String(e).slice(0, 80); }
+  const after = snap();
+  const idNum = Array.isArray(px) ? px[0] + 256 * px[1] + 65536 * px[2] : null;
+  return { x, y, before, after, camBefore, err, pickPixel: px,
+           pick: pick && typeof pick === 'object' ? { id: pick.id, index: pick.index } : pick,
+           pickDefaultDraws: after.defDraws - before.defDraws,
+           agrees: err == null && idNum != null && (idNum === 0 ? pick == null : !!pick && pick.index === idNum - 1) };
+}
+// SB7.2 (G1): two 500 ms rest windows after a settle. A window is void when an SSE batch landed in
+// it (data change legally draws) or the camera was not at rest (|vyaw| or |vpitch| >= 2 or the pose
+// moved: a coast that never stops is the coast law's defect, charged by t_coast_*, not twice here).
+function pageCameraNow() {
+  try { const c = window.vs7dbg && window.vs7dbg.camera ? window.vs7dbg.camera() : null; return c && typeof c.yaw === 'number' ? c : null; }
+  catch { return null; }
+}
+async function restWindows(page, settleMs = 700) {
+  await sleep(settleMs);
+  const windows = [];
+  for (let k = 0; k < 2; k++) {
+    const s0 = await page.evaluate(pageGlCounters).catch(() => null);
+    const l0 = await page.evaluate(pageStreamLog).catch(() => ({ entries: [] }));
+    const k0 = await page.evaluate(pageCameraNow).catch(() => null);
+    await sleep(500);
+    const s1 = await page.evaluate(pageGlCounters).catch(() => null);
+    const l1 = await page.evaluate(pageStreamLog).catch(() => ({ entries: [] }));
+    const k1 = await page.evaluate(pageCameraNow).catch(() => null);
+    const atRest = (c) => !!c && Math.abs(c.vyaw || 0) < 2 && Math.abs(c.vpitch || 0) < 2;
+    windows.push({ ms: 500, defaultDraws: s0 && s1 ? s1.defDraws - s0.defDraws : null,
+                   rafTicks: s0 && s1 ? s1.rafTicks - s0.rafTicks : null,
+                   batchLanded: (l1.entries || []).length !== (l0.entries || []).length,
+                   cameraMoving: !(atRest(k0) && atRest(k1) && Math.abs(k0.yaw - k1.yaw) < .01
+                                   && Math.abs(k0.pitch - k1.pitch) < .01 && Math.abs(k0.distance - k1.distance) < .01) });
+    await sleep(200);
+  }
+  return windows;
+}
 function pageGlCounters() {
   const P = window.__p7 || {};
   return {
@@ -3337,6 +3390,8 @@ async function sb71VisualScenario(page,model,H,pack) {
       const replayAfter=await page.request.get(baseUrl+'/api/payments/'+encodeURIComponent(target.id)).then(r=>r.json());
       page.off('request',onReplayRequest);replay.writes=replayWrites;
       replay.noWrite=replayWrites.length===0&&JSON.stringify(replayAfter)===JSON.stringify(after);replay.ok=replay.ok&&replay.noWrite;
+      // G1: "for exactly one second ... it then rests at [0.76h,0.84h] and demand rendering resumes".
+      if(PROBE_TIER==='sb-7.2')merge({idleAfterAnimation:await restWindows(page,1200)});
     }
   }
   if(target&&replay.noWrite) {
@@ -3838,6 +3893,7 @@ async function vizScenario(page, pack, H) {
       const c2 = await vs7({ want: ['camera'] });
       const cam2 = c2.camera && !c2.camera.__err ? c2.camera : null;
       const want2 = clamp(want1 * Math.exp(V7.wheelK * -V7.wheelDelta), V7.distMin, V7.distMax);
+      if (PROBE_TIER === 'sb-7.2') merge({ idleAfterWheel: await restWindows(page) });
       cameraMath.wheel = {
         events:await page.evaluate(()=>{const evidence=window.__p7.wheelEvidence;document.removeEventListener('wheel',evidence.listener,true);return evidence.events;}),
         pageScrolled: !!(r1 && rect && Math.abs(r1.top - rect.top) > 1),
@@ -4468,9 +4524,14 @@ async function vizScenario(page, pack, H) {
         await sleep(30);
       }
       await page.mouse.up();
+      const cUp = sb72Aim ? await page.evaluate(pageGlCounters).catch(() => null) : null;
+      const camUp = sb72Aim ? ((await vs7({ want: ['camera'] })).camera || null) : null;
       await sleep(200);
       const sMid = await page.evaluate(pageSamplePixels, { points: basePts }).catch(() => null);
       const gotMid = sMid && sMid.samples ? sMid.samples.map((s) => s.got) : [];
+      // G2: "After each invalidation (camera change ...) the first pick does >= 1 offscreen draw and
+      // >= 1 offscreen readPixels ... a pick never draws to the default framebuffer" - mid-coast.
+      const coastPick = sb72Aim ? await page.evaluate(pageSyncPick, { x: rect.w / 2, y: rect.h / 2 }).catch(() => null) : null;
       const movedCount = got0.length ? gotMid.filter((g, i) =>
         g && got0[i] && g.some((v, ch) => Math.abs(v - got0[i][ch]) > V7.tol)).length : null;
       let w = null;
@@ -4482,7 +4543,7 @@ async function vizScenario(page, pack, H) {
           await sleep(120);
         }
       }
-      return { aim, got0, movedCount, w, yawBefore };
+      return { aim, got0, movedCount, w, yawBefore, cUp, camUp, coastPick };
     };
     // A flick "moved" when the camera left its pre-press yaw by >= 1 deg or reported |v0| >= 2 deg/s
     // (the stop threshold). Nothing moving is never credit for the settle/direction legs.
@@ -4513,6 +4574,13 @@ async function vizScenario(page, pack, H) {
       ? +Math.abs(dragBudget.cameraAfter.yaw - V7.yaw0).toFixed(3) : null;
     const sb72Flick = sb72Aim ? { moved: !!(flickLast && flickLast.moved), attempts: flickAttempts, dragOrbitDeg,
       ...(flickLast && flickLast.miss ? { probeMiss: flickLast.miss } : {}) } : {};
+    if (sb72Aim && F.coastPick && F.cUp && F.camUp && F.coastPick.camBefore) {
+      const cp = F.coastPick, moved = Math.abs((cp.camBefore.yaw || 0) - (F.camUp.yaw || 0)) >= .5;
+      merge({ pickDuringCoast: { cameraMovedSinceRelease: moved, yawAtRelease: F.camUp.yaw, yawAtPick: cp.camBefore.yaw,
+        offDrawsSinceRelease: cp.after.offDraws - F.cUp.offDraws, offReadsSinceRelease: cp.after.offReads - F.cUp.offReads,
+        pickDefaultDraws: cp.pickDefaultDraws, agrees: cp.agrees, pick: cp.pick, pickPixel: cp.pickPixel, err: cp.err } });
+    }
+    if (sb72Aim) merge({ idleAfterCoast: await restWindows(page) });
     const camRest = (await vs7({ want: ['camera'] })).camera || null;
     let restPixel = null;
     if (camRest && camRest.yaw != null) {
@@ -4669,6 +4737,18 @@ async function vizScenario(page, pack, H) {
     //                        no digest moment (harness fix: a 1.5 s read left them null)
     log = await page.evaluate(pageStreamLog).catch(() => ({ entries: [] }));
     const entries = log.entries || [];
+    if (PROBE_TIER === 'sb-7.2') {
+      const applied = entries.find((e) => e.size > 0 && e.c1 && e.c0 && typeof e.c0.offReads === 'number');
+      if (applied) {
+        const r0 = await page.evaluate(pageCanvasRect).catch(() => null);
+        const bp = r0 ? await page.evaluate(pageSyncPick, { x: r0.w / 2, y: r0.h / 2 }).catch(() => null) : null;
+        if (bp) merge({ pickAfterBatch: { batch: applied.batch,
+          offDrawsSinceBatch: bp.after.offDraws - applied.c0.offDraws,
+          offReadsSinceBatch: bp.after.offReads - applied.c0.offReads,
+          pickDefaultDraws: bp.pickDefaultDraws, agrees: bp.agrees, pick: bp.pick, err: bp.err } });
+      }
+      merge({ idleAfterStream: await restWindows(page) });
+    }
     const model2 = buildModel(pack);
     let lastUpdate = null;
     const perBatch = [];
