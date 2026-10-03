@@ -740,7 +740,11 @@ def stream_witness(viz):
                     for a, b in zip(got, expected))):
         problems.append('the target colour was not shown drawn at the clicked pixel')
     pick = failure.get('appPick', {'__err': 'absent'})
-    if not (pick is None or (isinstance(pick, dict) and '__err' not in pick and pick.get('id') != target)):
+    click_ignored = failure.get('cause') == 'click_ignored'
+    if click_ignored:
+        corroboration, disproof = click_ignored_corroboration(viz, failure, pick, target)
+        problems += disproof
+    elif not (pick is None or (isinstance(pick, dict) and '__err' not in pick and pick.get('id') != target)):
         problems.append("the candidate's own vs7dbg.pick there was not read or named the target")
     if not isinstance(failure.get('brushAfterClick'), list) or target in failure['brushAfterClick']:
         problems.append('the click is not shown to have left the target unbrushed')
@@ -753,7 +757,7 @@ def stream_witness(viz):
         return {'refuse': 'contradictory SB7.1 D1 stream witness: ' + '; '.join(problems)}
     measured = state == 'armed_unbrushed'
     clicks = (arm.get('rejected') or {}).get('click at the target pixel did not brush it')
-    return {
+    record = {
         'status': 'candidate_unreachable', 'target': target, 'stream_measured': measured,
         'witness': 'unbrushed' if measured else 'none', 'reason': signal.get('reason'),
         'via_tried': [f"3D click through the candidate's pick at {clicks} pose(s) with an independently decisive target pixel",
@@ -761,6 +765,35 @@ def stream_witness(viz):
         'evidence': failure, 'rejected': arm.get('rejected'),
         'charged': ['d_decisions_doc:D1'] + ([] if measured else list(PIXEL_WITNESS_ROWS)),
     }
+    if click_ignored:
+        door = corroboration['door3d']
+        record['cause'] = 'click_ignored'
+        record['corroboration'] = corroboration
+        record['via_tried'].append(
+            f"same-session click semantics: a 3D click on {door['targetId']} left the brush "
+            f"{json.dumps(door.get('brushAfter'))} (t_click_semantics click_toggles_on False)")
+    return record
+
+
+def click_ignored_corroboration(viz, failure, pick, target):
+    """The click_ignored attribution: the candidate draws the D1 target at the clicked pixel, its own
+    vs7dbg.pick there names the target, the click was delivered to its canvas and the brush stayed
+    without it. Charged only when the session's independent click-semantics measurement (t_click_semantics'
+    brush.door3d, a different decisive instance) also shows a 3D click not brushing; a click that works
+    there, or click semantics never measured, leaves the D1 failure unexplained and the run refuses."""
+    problems = []
+    if not (isinstance(pick, dict) and '__err' not in pick and pick.get('id') == target):
+        problems.append("the click-ignored attribution does not show the candidate's own pick naming the target")
+    if (failure.get('clickLanded') or {}).get('canvas') is not True:
+        problems.append("the click is not shown delivered to the candidate's canvas")
+    door = (viz.get('brush') or {}).get('door3d')
+    if not isinstance(door, dict) or not door.get('targetId') or not isinstance(door.get('inBrush'), bool):
+        problems.append("the session's click semantics (brush.door3d) were not measured")
+    elif door['inBrush']:
+        problems.append(f"the session's click semantics show a 3D click brushing {door['targetId']}")
+    elif door['targetId'] == target:
+        problems.append('the click-semantics measurement is not independent of the D1 target')
+    return {'door3d': door}, problems
 
 
 def target_absent_witness(viz, signal, arm):

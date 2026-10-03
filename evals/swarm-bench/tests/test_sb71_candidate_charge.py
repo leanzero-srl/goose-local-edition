@@ -366,3 +366,82 @@ class D1TargetAbsentTests(unittest.TestCase):
             handshake.finish()
             with self.assertRaisesRegex(RuntimeError, 'SB7.1 stream witness unavailable'):
                 handshake.result()
+
+
+class D1ClickIgnoredTests(unittest.TestCase):
+    """Gauntlet 7.2 typesafe/jev-router, SB7.2 (2026-10-03): REFUSED 'fire_d1_mutation:failed'. Its 3D click
+    never toggles (t_click_semantics click_toggles_on False) while its pick is right (t_pick_buffer 6/6), but
+    the D1 arm never clicked: no seeded pose framed pay_11795, for any renderer. The archived receipt keeps
+    refusing; the fixed probe frames the target, clicks it, and signals the click_ignored proof charged here."""
+
+    def setUp(self):
+        saved = json.loads((Path(__file__).parent / 'fixtures/sb72-jev-router-d1-click-ignored.json').read_text())
+        self.archived, projected = saved['archived'], saved['projected']
+        failure = projected['candidateFailure']
+        signal = {'state': 'armed_unbrushed', 'id': 'pay_11795', 'candidateFailure': failure, 'reason': (
+            'brushed D1 state unreachable through the candidate selection surface: its click on its own canvas at '
+            'a pixel drawing pay_11795, where its vs7dbg.pick names pay_11795, left the brush [] '
+            '(the click does not toggle the picked instance)')}
+        self.viz = {**copy.deepcopy(self.archived),
+                    'sb71StreamHandshake': {'signal': signal, 'delivery': projected['delivery']},
+                    'streamPixelArm': {**projected['unbrushedArm'], 'mode': 'armed_unbrushed',
+                                       'candidateFailure': copy.deepcopy(failure), 'rejected': projected['rejected']}}
+        self.decisions = {'score': 0.5, 'detail': 'D1=0.5, D2=0.5, D3=0.5', 'parts': {
+            'D1': {'documented': True, 'doc_stance': True, 'observed': None, 'score': 0.5},
+            'D2': {'documented': True, 'doc_stance': None, 'observed': True, 'score': 0.5},
+            'D3': {'documented': True, 'doc_stance': None, 'observed': True, 'score': 0.5}}}
+
+    def test_the_archived_receipt_still_refuses_because_no_click_was_made(self):
+        self.assertEqual(self.archived['streamPixelArm']['rejected'], {'no independent pixel point at this pose': 101})
+        self.assertIsNone(score.stream_witness(self.archived))
+        ctx = SimpleNamespace(probes={'viz': copy.deepcopy(self.archived)})
+        self.assertEqual(result('d_decisions_doc', ctx, lambda _: copy.deepcopy(self.decisions)), self.decisions)
+
+    def test_the_click_ignored_witness_is_charged(self):
+        witness = score.stream_witness(self.viz)
+        self.assertEqual((witness['status'], witness['cause']), ('candidate_unreachable', 'click_ignored'))
+        self.assertTrue(witness['stream_measured'])
+        self.assertEqual(witness['charged'], ['d_decisions_doc:D1'])
+        self.assertEqual(witness['corroboration']['door3d']['targetId'], 'pay_03102')
+        ctx = SimpleNamespace(probes={'viz': copy.deepcopy(self.viz)})
+        charged = result('d_decisions_doc', ctx, lambda _: copy.deepcopy(self.decisions))
+        self.assertEqual(charged['parts']['D1']['score'], 0.0)
+        self.assertAlmostEqual(charged['score'], 1 / 3)
+        unobservable = charged['parts']['D1']['unobservable']
+        self.assertIn("3D click through the candidate's pick at 3 pose(s)", unobservable)
+        self.assertIn('a 3D click on pay_03102 left the brush []', unobservable)
+        timed = {'score': 1.0, 'detail': 'batch visible in 40.0 ms', 'parts': {'ms': 40.0}}
+        self.assertEqual(result('p_stream_apply', ctx, lambda _: timed), timed)
+
+    def test_the_handshake_fires_the_mutation_on_the_click_ignored_signal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'ready.json'
+            path.write_text(json.dumps(self.viz['sb71StreamHandshake']['signal']))
+            calls = []
+            handshake = score.StreamHandshake(path, lambda: calls.append('fired') or {'version': 2})
+            handshake.start()
+            self.assertTrue(handshake.done.wait(2))
+            handshake.finish()
+            self.assertEqual(handshake.result(), {'version': 2})
+            self.assertEqual(calls, ['fired'])
+
+    def test_working_or_unmeasured_click_semantics_still_refuse(self):
+        def failures(viz):
+            return [viz['sb71StreamHandshake']['signal']['candidateFailure'], viz['streamPixelArm']['candidateFailure']]
+        edits = {
+            'click semantics work': lambda viz: viz['brush']['door3d'].update(inBrush=True, brushAfter=['pay_03102']),
+            'click semantics unmeasured': lambda viz: viz.pop('brush'),
+            'door3d not recorded': lambda viz: viz['brush'].pop('door3d'),
+            'measured on the D1 target itself': lambda viz: viz['brush']['door3d'].update(targetId='pay_11795'),
+            'click covered by an overlay': lambda viz: [f.update(clickLanded={'canvas': False, 'element': 'div#labels'})
+                                                        for f in failures(viz)],
+            'pick names another instance': lambda viz: [f.update(appPick={'id': 'pay_00001', 'index': 4})
+                                                        for f in failures(viz)],
+            'pick not read': lambda viz: [f.update(appPick={'__err': 'TypeError'}) for f in failures(viz)],
+            'no cause recorded': lambda viz: [f.pop('cause') for f in failures(viz)],
+        }
+        for name, edit in edits.items():
+            viz = copy.deepcopy(self.viz)
+            edit(viz)
+            with self.subTest(name):
+                self.assertIn('contradictory SB7.1 D1 stream witness', score.stream_witness(viz)['refuse'])

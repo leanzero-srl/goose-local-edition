@@ -475,6 +475,31 @@ function findPixelWitnessFor(ctx, model, n) {
   }
   return null;
 }
+// The D1 stream arm's seeded poses: the default, then 100 seeded cameras biased toward the target.
+function seededLatencyPoses(model,n,seed) {
+  const it=model.items[n],rng=seedRng(seed||'sb71','latency-pose'),az=Math.atan2(it.x,it.z)*180/Math.PI;
+  const radius=Math.hypot(it.x,it.z);
+  const poses=[[V7.yaw0,V7.pitch0,V7.dist0]];
+  for(let k=0;k<100;k++){const pitch=16+rng()*32;poses.push([az+(rng()-.5)*50,pitch,clamp((radius+15+rng()*65)/Math.cos(deg(pitch)),16,340)]);}
+  return poses;
+}
+// Cameras inside the published bounds whose view frames the target's cap centre, nearest first. The
+// camera always looks at (0,1,0), so the seeded poses can leave a target deep in a far row off-screen
+// or occluded at every pose for ANY renderer — receipt: Gauntlet 7.2 typesafe/jev-router, pay_11795 on
+// a 980x480 canvas, 101 of 101 seeded poses without a pixel point (88 of them off-screen); this order
+// reaches it. Pure geometry: depends on the target and the canvas size only (grid: 5 deg yaw, 4 deg
+// pitch, 12% distance steps).
+function framedPosesFor(model,n,W,H) {
+  const it=model.items[n],az=Math.atan2(it.x,it.z)*180/Math.PI,ranked=[];
+  for(let dy=-180;dy<180;dy+=5)for(let pitch=V7.pitchMin+1;pitch<V7.pitchMax;pitch+=4)
+    for(let distance=V7.distMin+1;distance<V7.distMax;distance*=1.12) {
+      const eye=cameraEye(az+dy,pitch,distance),p=projectPt(eye,cameraBasis(eye),W,H,[it.x,it.h,it.z]);
+      if(!p||p.x<8||p.x>W-8||p.y<8||p.y>H-8)continue;
+      ranked.push({pose:[az+dy,pitch,distance],zc:p.zc});
+    }
+  ranked.sort((a,b)=>a.zc-b.zc||a.pose[0]-b.pose[0]||a.pose[1]-b.pose[1]||a.pose[2]-b.pose[2]);
+  return ranked.map(r=>r.pose);
+}
 // ── label-culling expectation (§3.5): candidates, eligibility, priority-order culling ────────
 function labelCandidates(model, packList) {
   if (Array.isArray(packList) && packList.length) {
@@ -1523,6 +1548,13 @@ function pageCanvasRect() {
   const r = c.getBoundingClientRect();
   return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, w: r.width, h: r.height,
            viewportW: window.innerWidth, viewportH: window.innerHeight, scrollY: window.scrollY, dpr:window.devicePixelRatio };
+}
+// Which element a click at canvas point (sx,sy) is delivered to: the canvas itself, or what covers it.
+function pageCanvasHitAt({ sx, sy }) {
+  const c = document.getElementById('viz3d');
+  if (!c) return { canvas: false, element: null };
+  const r = c.getBoundingClientRect(), el = document.elementFromPoint(r.left + sx, r.top + sy);
+  return { canvas: el === c, element: el ? el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') : null };
 }
 
 // §3.2 pinned budget window: [dispatch of first pointermove after arming, dispatch of
@@ -3355,6 +3387,7 @@ async function observeClickFailure(page,ctx,n,it,point,pose,brushAfterClick,d1Ta
 }
 const pickNamesOther=(evidence,id)=>evidence.appPick===null||
   (!!evidence.appPick&&!evidence.appPick.__err&&evidence.appPick.id!==id);
+const pickNamesTarget=(evidence,id)=>!!evidence.appPick&&!evidence.appPick.__err&&evidence.appPick.id===id;
 async function armStreamWitness(page,model,d1TargetId,seed) {
   const vs7=arg=>page.evaluate(pageVs7,arg);
   const setCam=async(...pose)=>{await vs7({setCamera:pose});await sleep(80);};
@@ -3388,19 +3421,17 @@ async function armStreamWitness(page,model,d1TargetId,seed) {
         return armed;
       };
       if(it) {
-        const rng=seedRng(seed||'sb71','latency-pose'),az=Math.atan2(it.x,it.z)*180/Math.PI;
-        const radius=Math.hypot(it.x,it.z);
-        const poses=[[V7.yaw0,V7.pitch0,V7.dist0]];
-        for(let k=0;k<100;k++){const pitch=16+rng()*32;poses.push([az+(rng()-.5)*50,pitch,clamp((radius+15+rng()*65)/Math.cos(deg(pitch)),16,340)]);}
-        for(const pose of poses) {
+        const poses=seededLatencyPoses(model,n,seed),noPoint='no independent pixel point at this pose';
+        // true ends the search: a witness is armed, or the candidate's brush cannot be read at all.
+        const attempt=async(pose,missing)=>{
           const ctx=poseCtx(model,...pose,Wc,Hcs),point=findPixelWitnessFor(ctx,model,n);
-          if(!point){reject('no independent pixel point at this pose');continue;}
+          if(!point){reject(missing);return false;}
           await setCam(...pose);await page.evaluate(pageScrollCanvasIntoView);rect=await page.evaluate(pageCanvasRect);
           let brush=(await vs7({want:['brush']})).brush;
-          if(!Array.isArray(brush)){reject('vs7dbg.brush unavailable');break;}
+          if(!Array.isArray(brush)){reject('vs7dbg.brush unavailable');return true;}
           if(brush.some(id=>id!==d1TargetId)) {
             brush=await clearBrush(ctx,brush);
-            if(!brush)continue;
+            if(!brush)return false;
           }
           if(!brush.includes(d1TargetId)){await page.mouse.click(rect.left+point.sx,rect.top+point.sy);await sleep(100);brush=(await vs7({want:['brush']})).brush;}
           if(!Array.isArray(brush)||!brush.includes(d1TargetId)) {
@@ -3408,13 +3439,26 @@ async function armStreamWitness(page,model,d1TargetId,seed) {
             if(!candidateFailure&&Array.isArray(brush)) {
               const evidence=await observeClickFailure(page,ctx,n,it,point,pose,brush,d1TargetId);
               if(evidence.drawn&&pickNamesOther(evidence,d1TargetId))candidateFailure=evidence;
+              else if(evidence.drawn&&pickNamesTarget(evidence,d1TargetId)) {
+                // The candidate draws the target here AND its own pick names it, yet its click did not
+                // brush it: the click handler ignores the pick — provided the click reached the canvas.
+                const landed=await page.evaluate(pageCanvasHitAt,{sx:point.sx,sy:point.sy});
+                if(landed.canvas)candidateFailure={...evidence,cause:'click_ignored',clickLanded:landed};
+                else reject('unbrushing click not attributable: the clicked point is covered by '+landed.element);
+              }
               else reject('unbrushing click not attributable: '+(evidence.reason||(evidence.drawn?'vs7dbg.pick names the target':'target colour not drawn at the clicked pixel')));
             }
-            continue;
+            return false;
           }
           witness=await armAt(ctx,point,pose,brush);
-          if(witness)break;
-        }
+          return !!witness;
+        };
+        for(const pose of poses)if(await attempt(pose,noPoint))break;
+        // Only when no seeded pose had a pixel point at all (no click was ever made): the framed poses,
+        // within the seeded search's own pose count. Every other outcome is unchanged.
+        if(rejected[noPoint]===poses.length)
+          for(const pose of framedPosesFor(model,n,Wc,Hcs).slice(0,poses.length))
+            if(await attempt(pose,'framed pose: no independent pixel point'))break;
         if(!witness&&candidateFailure) {
           const pose=candidateFailure.pose,ctx=poseCtx(model,...pose,Wc,Hcs),point=findPixelWitnessFor(ctx,model,n);
           await setCam(...pose);await page.evaluate(pageScrollCanvasIntoView);rect=await page.evaluate(pageCanvasRect);
@@ -3432,7 +3476,9 @@ async function armStreamWitness(page,model,d1TargetId,seed) {
         return {mode:'armed',witness};
       }
       if(candidateFailure) {
-        const reason='brushed D1 state unreachable through the candidate selection surface: its click at a pixel drawing '+d1TargetId+' left the brush '+JSON.stringify(candidateFailure.brushAfterClick)+' and vs7dbg.pick there returned '+JSON.stringify(candidateFailure.appPick);
+        const reason=candidateFailure.cause==='click_ignored'
+          ?'brushed D1 state unreachable through the candidate selection surface: its click on its own canvas at a pixel drawing '+d1TargetId+', where its vs7dbg.pick names '+d1TargetId+', left the brush '+JSON.stringify(candidateFailure.brushAfterClick)+' (the click does not toggle the picked instance)'
+          :'brushed D1 state unreachable through the candidate selection surface: its click at a pixel drawing '+d1TargetId+' left the brush '+JSON.stringify(candidateFailure.brushAfterClick)+' and vs7dbg.pick there returned '+JSON.stringify(candidateFailure.appPick);
         const state=witness?'armed_unbrushed':'candidate_unreachable';
         merge({streamPixelArm:{...(witness||{error:'No unbrushed D1 pixel witness at the attributed pose'}),mode:state,candidateFailure,rejected}});
         streamReady({state,id:d1TargetId,reason,candidateFailure});
