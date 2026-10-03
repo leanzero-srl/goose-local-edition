@@ -10,6 +10,25 @@ import {
 } from '../ui/dropdown-menu';
 import { Button, TYPE } from '../lz';
 import { isLocalEditionCloudProvider } from '../settings/models/leanzeroSelectorPolicy';
+import { providerRowState } from '../leanzero-swarm/cloudProviderState';
+
+/** A cloud provider whose settings are saved but which the form cannot offer, and why — the check's
+ *  own words when it failed. 2026-10-03: an OPENROUTER_PARAMETERS pin failed OpenRouter's check with
+ *  a 404 and the form said only "No configured providers", hiding the one line that named the cause. */
+export function unusableProviderReasons(
+  rows: readonly ProviderDetails[]
+): { name: string; label: string; reason: string }[] {
+  return rows.flatMap((row) => {
+    if (row.is_configured || !isLocalEditionCloudProvider(row.name)) return [];
+    const state = providerRowState(row);
+    if (state === 'not-set-up') return [];
+    const reason =
+      state === 'failed'
+        ? `its connection check failed: ${row.connection_error}`
+        : 'its key is saved but the connection check has not passed yet — press Refresh providers';
+    return [{ name: row.name, label: row.metadata.display_name, reason }];
+  });
+}
 
 export function CloudEntrant({
   provider,
@@ -23,6 +42,7 @@ export function CloudEntrant({
   onChange: (provider: string, model: string) => void;
 }) {
   const [providers, setProviders] = useState<ProviderDetails[]>([]);
+  const [unusable, setUnusable] = useState<ReturnType<typeof unusableProviderReasons>>([]);
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -39,6 +59,7 @@ export function CloudEntrant({
         setProviders(
           rows.filter((row) => row.is_configured && isLocalEditionCloudProvider(row.name))
         );
+        setUnusable(unusableProviderReasons(rows));
         setError(null);
       })
       .catch((err: unknown) => {
@@ -98,7 +119,16 @@ export function CloudEntrant({
           {error}
         </p>
       )}
-      {!loading && !error && providers.length === 0 && (
+      {!loading && !error && unusable.length > 0 && (
+        <ul aria-label="Providers that cannot run" className="flex flex-col gap-1 text-lz-err">
+          {unusable.map((row) => (
+            <li key={row.name}>
+              {row.label} is not offered: {row.reason}
+            </li>
+          ))}
+        </ul>
+      )}
+      {!loading && !error && providers.length === 0 && unusable.length === 0 && (
         <p className={TYPE.bodyMuted}>
           No configured providers. Add a provider in Goose Swarm, then return and refresh.
         </p>
