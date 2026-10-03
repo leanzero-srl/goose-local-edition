@@ -3,7 +3,7 @@
   "scorerVersion": "forge-1.0",
   "family": "forge",
   "status": "rc \u2014 pins the committed forge payload; refrozen at the forge-1.0 freeze (DESIGN \u00a713.4) once WP1's kit/site/starter and the calibrated thresholds land",
-  "sourceCommit": "5354baacdc9457518645134fb07aba7b1b82055f",
+  "sourceCommit": "47762c28069d2f0f3d24eab76f28e176f75bc9be",
   "sourceCommitScope": "forge-1.0 Scope Ledger: forge/public (prompt, contract, starter note), forge/kit and forge/site as committed, bench/score_forge.py + forge_oracle.py + forge_probe.mjs + forge-thresholds.json (rc), forge_controls.py, and the harness closure run_build.py --forge through isolated_tiers.FORGE10.",
   "files": {
     "bench/bench_budget.py": "dd37fd939e1640b7238caf34449fb16012c1526acc82fcd410ff0a19e6e1b41e",
@@ -13,7 +13,7 @@
     "bench/browser-self-test.mjs": "df8feec1c3f7d18d14c26dc34dd53f7b74dcf42a5c54c29a3f315ae23be0b095",
     "bench/fixtures.py": "212af979ec537531516273f2f68691f028189bbec52c92495b616f3b3c7b7db1",
     "bench/forge-thresholds.json": "d08a7e00ec2c74e3d365078749f38f869fc7e7c711af2ab8695115adf19e8b74",
-    "bench/forge_controls.py": "f9d90dca25abb359896b7b7e4fc15f19956016ee3c22223bd2cf6da49018db35",
+    "bench/forge_controls.py": "8026a37403612db29e66962886635e1f7e811a73bae65ecade035704e1da406c",
     "bench/forge_kit.py": "a942a7376c29c5b3ae18d1d8a7ddd2964c34468a98bf7b1e88b314459ff1836f",
     "bench/forge_oracle.py": "11908db4ec20b4334e4b695f02d74e4f6741e84b2ab2005d32f968bc1da0aa5c",
     "bench/forge_probe.mjs": "0e4fa8e40e7d6468cb97ad118459c334b7d71907a6c971c859b677d728fd3c06",
