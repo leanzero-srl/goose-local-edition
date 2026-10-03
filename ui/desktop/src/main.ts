@@ -18,6 +18,22 @@ import { inspectBenchmarkRuntime, installBenchmarkRuntime } from './benchRuntime
 import { resolveBenchmarkRuntime } from './benchRuntime';
 import { validCloudEntrant } from './benchCloudLaunch';
 import { harnessPhase, type BenchmarkPhase } from './benchPhase';
+import {
+  benchTrayEndOf,
+  benchTrayEndTitle,
+  benchTrayLines,
+  benchTrayTitle,
+  lastBenchLine,
+  parseBenchBudgetLine,
+  type BenchFinishedPayload,
+  type BenchTrayLast,
+  type BenchTrayRun,
+} from './benchTray';
+import {
+  BenchTelemetryCounter,
+  benchTelemetryCandidates,
+  readBenchCallBudget,
+} from './benchTrayTelemetry';
 import { hasScoredVerdict } from './benchSessions';
 import { cloudRunStarted } from './benchCloudEvidence';
 import { benchmarkPythonLaunch } from './benchPython';
@@ -2575,6 +2591,140 @@ const linkTrayMenuItems = (): MenuItemConstructorOptions[] => {
   return items;
 };
 
+// ── The benchmark in the menu bar (owner 2026-10-03: "it should say if a benchmark is running") ──
+// While the harness child is alive (activeBenchRun) the title leads with the run and the menu opens on
+// it; the engine's status returns once it ends. A finished run leaves one "Last benchmark" line until
+// the next run starts. Every value is main's own bookkeeping (benchTray.ts); an unknown one is omitted.
+interface BenchTrayFacts {
+  scorerVersion: string;
+  model: string | null;
+  rescore: boolean;
+  callsUsed: number | null;
+  callBudget: number | null;
+  /** The harness printed its final BENCH_BUDGET record, which outranks the live sink count. */
+  callsFinal: boolean;
+  counter: BenchTelemetryCounter | null;
+}
+let lastBenchTray: BenchTrayLast | null = null;
+// UI cadence for the counters (calls, elapsed) — not model work; phase changes and ends draw at once.
+const BENCH_TRAY_REFRESH_MS = 5000;
+// How long a just-ended run keeps the title before the engine's status returns.
+const BENCH_TRAY_END_HOLD_MS = 60_000;
+let benchTrayTicker: ReturnType<typeof setInterval> | null = null;
+let benchTrayRefreshing = false;
+let lastBenchTraySignature = '';
+let benchTrayEndHold: ReturnType<typeof setTimeout> | null = null;
+
+const benchTrayRun = (): BenchTrayRun | null => {
+  const run = activeBenchRun;
+  if (!run) return null;
+  return {
+    scorerVersion: run.tray.scorerVersion,
+    model: run.tray.model,
+    nodes: run.nodes,
+    phase: run.phase,
+    rescore: run.tray.rescore,
+    startedAtMs: Date.parse(run.activityStartedAt ?? run.startedAt),
+    callsUsed: run.tray.callsUsed,
+    callBudget: run.tray.callBudget,
+  };
+};
+
+const renderBenchTray = () => renderMlxTray(mlxMonitor.current());
+
+const stopBenchTrayTicker = () => {
+  if (benchTrayTicker) clearInterval(benchTrayTicker);
+  benchTrayTicker = null;
+};
+
+const refreshBenchTray = async () => {
+  const run = activeBenchRun;
+  if (!run) {
+    stopBenchTrayTicker();
+    renderBenchTray();
+    return;
+  }
+  if (benchTrayRefreshing) return;
+  benchTrayRefreshing = true;
+  try {
+    if (run.tray.counter && !run.tray.callsFinal) {
+      const calls = await run.tray.counter.read();
+      if (calls != null && !run.tray.callsFinal) run.tray.callsUsed = calls;
+    }
+  } catch (error) {
+    log.warn('[benchmark-tray] the telemetry sink could not be read:', error);
+  } finally {
+    benchTrayRefreshing = false;
+  }
+  const view = benchTrayRun();
+  if (activeBenchRun !== run || !view) return;
+  // The tick redraws only when what the tray says moved (a call landed, a minute passed).
+  const signature = [benchTrayTitle(view), ...benchTrayLines(view, Date.now())].join('\n');
+  if (signature === lastBenchTraySignature) return;
+  lastBenchTraySignature = signature;
+  renderBenchTray();
+};
+
+/** A run became active: the previous run's line goes and the counters start. */
+const startBenchTray = () => {
+  lastBenchTray = null;
+  lastBenchTraySignature = '';
+  if (benchTrayEndHold) clearTimeout(benchTrayEndHold);
+  benchTrayEndHold = null;
+  stopBenchTrayTicker();
+  benchTrayTicker = setInterval(() => void refreshBenchTray(), BENCH_TRAY_REFRESH_MS);
+  renderBenchTray();
+};
+
+/** The run ended as its `benchmark-finished` payload says; the title holds the end, then returns. */
+const endBenchTray = (facts: BenchTrayFacts, nodes: number, payload: BenchFinishedPayload) => {
+  stopBenchTrayTicker();
+  lastBenchTray = benchTrayEndOf({ ...facts, nodes }, payload, Date.now());
+  if (benchTrayEndHold) clearTimeout(benchTrayEndHold);
+  benchTrayEndHold = setTimeout(() => {
+    benchTrayEndHold = null;
+    renderBenchTray();
+  }, BENCH_TRAY_END_HOLD_MS);
+  renderBenchTray();
+};
+
+/** The harness's final BENCH_BUDGET record outranks the live count; true when the line was one. */
+const benchTrayHarnessLine = (facts: BenchTrayFacts, line: string): boolean => {
+  const budget = parseBenchBudgetLine(line);
+  if (!budget) return false;
+  facts.callsFinal = true;
+  if (budget.callsUsed != null) facts.callsUsed = budget.callsUsed;
+  if (budget.maxCalls != null) facts.callBudget = budget.maxCalls;
+  return true;
+};
+
+const openBenchmarkView = () => {
+  const win = mlxActionWindow();
+  if (!win) return;
+  if (!win.isVisible()) win.show();
+  win.focus();
+  win.webContents.send('set-view', 'benchmark');
+};
+
+const benchTrayMenuItems = (): MenuItemConstructorOptions[] => {
+  const run = benchTrayRun();
+  const lines = run
+    ? benchTrayLines(run, Date.now())
+    : lastBenchTray
+      ? [lastBenchLine(lastBenchTray)]
+      : [];
+  if (lines.length === 0) return [];
+  // Enabled, opening the Benchmark view: a disabled item is drawn grey, a faded colour (Q-111).
+  const canOpen = mlxActionWindow() != null;
+  const items: MenuItemConstructorOptions[] = lines.map((line) => ({
+    label: clipTrayText(line),
+    enabled: canOpen,
+    click: openBenchmarkView,
+  }));
+  if (run) items.push({ label: 'Open Benchmark', enabled: canOpen, click: openBenchmarkView });
+  return items;
+};
+
 let lastMlxTrayMenu = '';
 const renderMlxTray = (snapshot: MlxEngineSnapshot) => {
   // The glance reads what the tray reads, redrawn on every fact that redraws the tray — with or
@@ -2614,12 +2764,23 @@ const renderMlxTray = (snapshot: MlxEngineSnapshot) => {
     restore: mlxRestore,
     swap,
   });
+  // A live benchmark leads the title over the engine's status; a just-ended one holds it briefly.
+  const benchRun = benchTrayRun();
+  const benchTitle = benchRun
+    ? benchTrayTitle(benchRun)
+    : lastBenchTray && benchTrayEndHold
+      ? benchTrayEndTitle(lastBenchTray)
+      : null;
   if (process.platform === 'darwin') {
-    tray.setTitle(silent ? '' : trayTitleText(model), { fontType: 'monospacedDigit' });
+    tray.setTitle(benchTitle ?? (silent ? '' : trayTitleText(model)), {
+      fontType: 'monospacedDigit',
+    });
   }
   const items = silent ? [] : model.items;
   const glanceBack = trayOffersGlanceBack(engineGlanceDesktop.isDismissed(), currentGlancePrefs());
+  const benchItems = benchTrayMenuItems();
   const key = JSON.stringify({
+    bench: benchItems.map((item) => item.label),
     items,
     linkTray,
     macsTray,
@@ -2631,7 +2792,7 @@ const renderMlxTray = (snapshot: MlxEngineSnapshot) => {
   const glanceItems: MenuItemConstructorOptions[] = glanceBack
     ? [{ label: SHOW_GLANCE_TRAY_LABEL, click: showDesktopGlanceAgain }]
     : [];
-  const section = [linkTrayMenuItems(), items.map(mlxTrayMenuItem), glanceItems]
+  const section = [benchItems, linkTrayMenuItems(), items.map(mlxTrayMenuItem), glanceItems]
     .filter((group) => group.length > 0)
     .flatMap((group, i) => (i === 0 ? group : [{ type: 'separator' as const }, ...group]));
   setTrayEngineSection(section, () => {
@@ -3442,6 +3603,8 @@ interface ActiveBenchRun {
   /** The engine's run id, null until <workdir>/.swarm/current-run.json appears (the engine writes
    *  it before any phase starts). The session index row is reconciled with it the moment it lands. */
   runId: string | null;
+  /** What the menu-bar tray says about this run (benchTray.ts). */
+  tray: BenchTrayFacts;
 }
 let activeBenchRun: ActiveBenchRun | null = null;
 let benchmarkLaunchPending = false;
@@ -4599,7 +4762,33 @@ ipcMain.handle(
           scored: false,
           lastLine: null,
           runId: cloudRunId,
+          tray: {
+            scorerVersion: benchmarkScorer(tier),
+            model: cloud ? cloud.model : null,
+            rescore: false,
+            callsUsed: null,
+            callBudget: null,
+            callsFinal: false,
+            // A swarm's calls are spread across its nodes and are not budgeted: its tray shows phase.
+            counter: cloud
+              ? new BenchTelemetryCounter(benchTelemetryCandidates(workdir), cloud.model)
+              : null,
+          },
         };
+        const trayFacts = activeBenchRun.tray;
+        startBenchTray();
+        // run_build budgets exactly the single-model entrant of an isolated tier (`budgeted` there);
+        // the number is the payload's own bench_budget.CALL_BUDGET, never restated here.
+        if (cloud && isolated) {
+          void readBenchCallBudget(runtime.python, path.join(payloadDir, 'bench'), {
+            ...process.env,
+            ...runtime.env,
+          }).then((budget) => {
+            if (budget == null || trayFacts.callsFinal) return;
+            trayFacts.callBudget = budget;
+            if (activeBenchRun?.tray === trayFacts) renderBenchTray();
+          });
+        }
         // Reconcile the session row's runId the moment the engine publishes current-run.json (written
         // before any phase starts). A cheap local-file poll, cleared on first hit and on run end.
         let reconcileInFlight = false;
@@ -4636,6 +4825,11 @@ ipcMain.handle(
           scorerVersion: benchmarkScorer(tier),
         });
 
+        // Every end the view hears is the end the tray shows.
+        const finishBench = (payload: BenchFinishedPayload) => {
+          endBenchTray(trayFacts, nodes, payload);
+          sendSafe('benchmark-finished', payload);
+        };
         let tail = '';
         const buffers: Record<string, string> = { stdout: '', stderr: '' };
         const onData = (stream: 'stdout' | 'stderr') => (d: Buffer | string) => {
@@ -4656,6 +4850,9 @@ ipcMain.handle(
               );
               const nextPhase = stream === 'stdout' ? harnessPhase(line) : null;
               if (nextPhase) activeBenchRun.phase = nextPhase;
+              const budgetLine =
+                stream === 'stdout' && benchTrayHarnessLine(activeBenchRun.tray, line);
+              if (nextPhase || budgetLine) renderBenchTray();
             }
           }
           if (lines.length) {
@@ -4690,7 +4887,7 @@ ipcMain.handle(
               log.error('Benchmark launch failure could not be recorded:', error);
             }
             if (activeBenchRun?.child === child) activeBenchRun = null;
-            sendSafe('benchmark-finished', { error: spawnFailure.message });
+            finishBench({ error: spawnFailure.message });
             reject(new Error(`Could not start the benchmark runner: ${spawnFailure.message}`));
             return;
           }
@@ -4712,7 +4909,7 @@ ipcMain.handle(
             } catch (error) {
               log.error('Benchmark cancellation could not be recorded:', error);
             }
-            sendSafe('benchmark-finished', { cancelled: true });
+            finishBench({ cancelled: true });
             reject(new Error('run cancelled'));
             return;
           }
@@ -4732,7 +4929,7 @@ ipcMain.handle(
               launchKey,
             });
             if (activeBenchRun?.child === child) activeBenchRun = null;
-            sendSafe('benchmark-finished', { row });
+            finishBench({ row });
             resolvePromise(row);
           } catch {
             if (activeBenchRun?.child === child) activeBenchRun = null;
@@ -4748,11 +4945,11 @@ ipcMain.handle(
               });
             } catch (error) {
               const message = `Run evidence could not be read: ${String(error)}`;
-              sendSafe('benchmark-finished', { error: message });
+              finishBench({ error: message });
               reject(new Error(message));
               return;
             }
-            sendSafe('benchmark-finished', { error: `no verdict produced. ${tail.slice(-400)}` });
+            finishBench({ error: `no verdict produced. ${tail.slice(-400)}` });
             reject(new Error(`no verdict produced. ${tail.slice(-400)}`));
           }
         });
@@ -4879,6 +5076,22 @@ ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string) => {
         scored: false,
         lastLine: null,
         runId,
+        tray: {
+          scorerVersion: session.scorerVersion,
+          model: receipt.model ?? null,
+          rescore: true,
+          callsUsed: null,
+          callBudget: null,
+          callsFinal: false,
+          counter: null,
+        },
+      };
+      const trayFacts = activeBenchRun.tray;
+      startBenchTray();
+      // Every end the view hears is the end the tray shows.
+      const finishBench = (payload: BenchFinishedPayload) => {
+        endBenchTray(trayFacts, session.nodes ?? 1, payload);
+        send('benchmark-finished', payload);
       };
       send('benchmark-started', {
         workdir,
@@ -4981,7 +5194,7 @@ ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string) => {
             benchmarkResultCommitInProgress = false;
           });
           if (activeBenchRun?.child === child) activeBenchRun = null;
-          send('benchmark-finished', { row });
+          finishBench({ row });
           resolve(row);
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
@@ -4998,7 +5211,7 @@ ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string) => {
             failure += ` Failure record could not be saved: ${String(recordError)}`;
           }
           if (activeBenchRun?.child === child) activeBenchRun = null;
-          send('benchmark-finished', {
+          finishBench({
             ...(cancelled
               ? { cancelled: true }
               : {
