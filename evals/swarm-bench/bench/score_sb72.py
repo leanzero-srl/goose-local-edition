@@ -48,8 +48,23 @@ VISUAL_CHECKS = {
 }
 STRUCTURE_CHECKS = sb71.STRUCTURE_CHECKS
 INTERACTION_CHECKS = (*sb71.QUALITY_CHECKS, 'q_overview_legibility', 'q_inspector_framing')
-BACKEND_EXCELLENCE = sb71.BACKEND_EXCELLENCE
+# x_m2_pair_conservation grades the same predicate as x_l5_group_atomicity in SB7.1's scorer
+# (pair_conservation_result: 0 iff confirmed_half_states > 0, exactly x_l5's test), so one defect
+# was counted twice — in X's mean and in the 0.899 band. SB7.2 keeps it as a report-only row
+# (DIAGNOSTIC: computed and shown, weight zero; X's mean re-normalises over the remaining rows).
+REPORT_ONLY = ('x_m2_pair_conservation',)
+BACKEND_EXCELLENCE = tuple(name for name in sb71.BACKEND_EXCELLENCE if name not in REPORT_ONLY)
 passed = sb71.passed
+# The 0.899 band is graded like Forge's (score_forge.GRADED_BAND): with n of its checks failing the
+# ceiling is max(0.799, 0.899 - 0.03·(n - 1)). The 0.599/0.699/0.799 bands stay binary.
+GRADED_BAND = ('Event animation and backend recovery', .899, .03, .799)
+
+
+def band_ceiling(limit, label, failed):
+    if label == GRADED_BAND[0]:
+        _label, top, step, floor = GRADED_BAND
+        return round(max(floor, top - step * (max(failed, 1) - 1)), 4)
+    return limit
 
 
 def thresholds():
@@ -66,7 +81,7 @@ def tier_runtime():
     """Swap SB7.2's probe, version, weights, thresholds and data roots into the shared machinery."""
     overlay = thresholds()
     saved = (sb71.PROBE_NAME, sb71.VERSION, base.TIER_WEIGHT_SB7, base.ROOT_BLOCKS,
-             base.TH['e_stream_apply_ms_rungs'])
+             base.TH['e_stream_apply_ms_rungs'], base.DIAGNOSTIC, base.NOTIFY_PAGED)
     blocks = dict(base.ROOT_BLOCKS)
     # Without synced data there is no field to see: the visual rows are downstream of sync.
     blocks['sync_completeness'] = (*blocks['sync_completeness'],
@@ -74,11 +89,13 @@ def tier_runtime():
     sb71.PROBE_NAME, sb71.VERSION = PROBE_NAME, VERSION
     base.TIER_WEIGHT_SB7, base.ROOT_BLOCKS = TIER_WEIGHT_SB72, blocks
     base.TH['e_stream_apply_ms_rungs'] = overlay['e_stream_apply_ms_rungs']
+    base.DIAGNOSTIC = base.DIAGNOSTIC | set(REPORT_ONLY)
+    base.NOTIFY_PAGED = True
     try:
         yield
     finally:
         (sb71.PROBE_NAME, sb71.VERSION, base.TIER_WEIGHT_SB7, base.ROOT_BLOCKS,
-         base.TH['e_stream_apply_ms_rungs']) = saved
+         base.TH['e_stream_apply_ms_rungs'], base.DIAGNOSTIC, base.NOTIFY_PAGED) = saved
 
 
 def _probe_preflight():
@@ -101,11 +118,23 @@ def split_presentation(row):
     readable = sum(bool(g.get('ok')) for g in groups)
     unreadable = parts.get('unreadable') or []
     reached = row is not None and 'parts' in row
+    misses = []
+    for pose in framing:
+        if pose.get('ok') or 'labelChecks' not in pose:
+            continue
+        why = [f"{c['part']}: {', '.join(c['failures'])}" for c in pose['labelChecks'] if not c['ok']]
+        if not pose.get('geometryOk', True):
+            why.append('part pixels below 97% match')
+        if not pose.get('unclipped', True) or not .4 <= (pose.get('heightFraction') or 0) <= .9:
+            why.append(f"tower spans {pose.get('heightFraction', 0):.2f} of the canvas height"
+                       + ('' if pose.get('unclipped', True) else ', clipped'))
+        misses.append(f"{pose['id']}@{pose['yaw']}: " + '; '.join(why or ['canvas below 600 x 460']))
     return [
         {'check': 'q_inspector_framing', 'tier': 'Q',
          'score': round(framed / 8, 4) if len(framing) == 8 else 0.0,
          'detail': (f'{framed}/8 inspector poses frame the tower at 40-90% of the canvas height, unclipped, '
-                    'with part callouts beside it and matching structural pixels') if reached
+                    'with part callouts beside it and matching structural pixels'
+                    + ('; ' + ' | '.join(misses[:3]) if misses else '')) if reached
                    else 'Required SB7.2 inspector observation was not reached',
          'parts': {'framing': framing}},
         {'check': 'v_presentation_text', 'tier': 'V',
@@ -156,12 +185,13 @@ def admit(raw):
         if condition:
             continue
         failed = [name for name in names if not passed(by.get(name))]
-        ceiling = min(ceiling, limit)
-        failures_by_band.append({'ceiling': limit, 'checks': failed})
+        cap = band_ceiling(limit, label, len(failed))
+        ceiling = min(ceiling, cap)
+        failures_by_band.append({'ceiling': cap, 'checks': failed})
         cause = ', '.join(failed) if failed else 'an earlier admission band is incomplete'
         if limit == .899 and (raw.get('harness_missing') or raw.get('sched_unreached')):
             cause += '; required infrastructure or recovery schedule evidence is missing'
-        reasons.append(f'{label}: {cause} (maximum {limit:.3f})')
+        reasons.append(f'{label}: {cause} (maximum {cap:.3f})')
     result.update(scorer_version=VERSION, scorerVersion=VERSION, rawScore=raw['score'],
                   score=min(raw['score'], ceiling),
                   # `good` keeps SB7.1's verdict shape (the desktop's Admission reads it): it is the
@@ -174,6 +204,23 @@ def admit(raw):
     return result
 
 
+def report_only_rows(rows, half_samples):
+    """Mark the report-only rows and archive the confirmed half-state samples behind x_l5/x_m2 —
+    the read pairs (previous + confirming) whose reversal total disagreed with the refunded row."""
+    out = []
+    for row in rows:
+        row = copy.deepcopy(row)
+        if row['check'] in ('x_l5_group_atomicity', *REPORT_ONLY) and half_samples is not None \
+                and isinstance(row.get('parts'), dict) and 'confirmed_half_states' in row['parts']:
+            row['parts']['half_state_samples'] = half_samples
+        if row['check'] in REPORT_ONLY:
+            row['report_only'] = True
+            row['detail'] = (f"{row.get('detail', '')} [report-only in SB7.2: the same confirmed-half-state "
+                             'predicate as x_l5_group_atomicity, which carries the points and the band]')
+        out.append(row)
+    return out
+
+
 CARRIED = ('initial_api', 'threshold_policy', 'calibration', 'media', 'stream_witness', 'telemetry')
 
 
@@ -182,6 +229,7 @@ def evaluate(ctx):
         inherited = sb71.evaluate(ctx)
         rows = [r for r in inherited['checks'] if r['check'] not in sb71.VISUAL_CHECKS]
         observation = ctx.probes.get('viz', {}).get('sb71', {})
+        rows = report_only_rows(rows, getattr(ctx, '_m2_half_samples', None))
         raw = base.compose_from_rows(rows + visual_rows(observation.get('checks', [])),
                                      base._nominal_console_errors(ctx), ctx)
     why = {r['check']: r.get('why') for r in inherited.get('critical', {}).get('rows', [])}
@@ -256,6 +304,15 @@ def severity_selftest():
             for name in VISUAL_CHECKS:
                 if not score_with({name: 0.0})['rawScore'] < 1.0:
                     fails.append(f'SB7.2: visual row {name} earns no weight')
+            # The graded 0.899 band (2026-10-03): more failed backend/animation checks never raise
+            # the ceiling, and it never undercuts the binary 0.799 band below it.
+            band = ('m_committed_event_replay', *BACKEND_EXCELLENCE)
+            ceilings = [score_with({n: .5 for n in band[:k]})['admission']['ceiling'] for k in range(1, len(band) + 1)]
+            if ceilings[0] != .899 or any(b > a for a, b in zip(ceilings, ceilings[1:])) or min(ceilings) < .799:
+                fails.append(f'SB7.2: graded 0.899 band is not monotone within [0.799, 0.899]: {ceilings[:6]}')
+            for name in REPORT_ONLY:
+                if score_with({name: 0.0})['score'] != 1.0:
+                    fails.append(f'SB7.2: report-only row {name} moved the score')
         finally:
             base.SB7_CHECKS = saved
     return fails
