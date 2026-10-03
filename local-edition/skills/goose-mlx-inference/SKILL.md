@@ -82,7 +82,7 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   answers `{"admission_open": true}` at once when open (it BLOCKS while held — never run it without `-m` on a held split
   unless you mean to wait). Gaps: the pipeline runner's fork 503 has no code (Q-398); a peer's split over the Link relay
   cannot be waited on (relay routes chat/models/status only, Q-399).
-- Live tests + measured numbers: mlx-jaccl-cluster skill, section "goose's DISTRIBUTED engine".
+- Live tests + measured numbers: `references/distributed-engine-history.md`, section "goose's DISTRIBUTED engine" (moved from the mlx-jaccl-cluster skill 2026-10-03).
 - SERVED ID (2026-09-24, 3.0.26 defect): `engine::served_model_id(settings, model_id)` applies
   `mlx_engine.served_model_name` ONLY when `model_id == mlx_engine.model_id` (the alias names ONE model;
   AddNodeDialog / `goose swarm` write the pair). Before: the alias applied to ANY model, so a Flash split
@@ -729,7 +729,7 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
   (`settle_counters`); measured 21,074 tokens clean. The hang rule now reads per-rank GPU time (ioreg
   IOGPUDeviceUserClient accumulatedGPUTime) — CPU time missed a stuck rank 0 that still answered our own polls (4 min
   19 s, no event). Any single rank stalled > ~5 s (e.g. `vmmap` on it) reaches the same deadlock or a GPU-Timeout death.
-  Detail, tools (sample, the __cxa_throw logger) and traps: skill mlx-jaccl-cluster, section "Q-114 ROOT CAUSE".
+  Detail, tools (sample, the __cxa_throw logger) and traps: `references/distributed-engine-history.md`, section "Q-114 ROOT CAUSE".
 - 2026-09-27 Q-162: the hang rule killed a WORKING tensor split. E2E #3e's 259,408-token compaction call sat 22 s on
   rank 0 in mlx_lm 0.31.3 `PromptTrie.search` (cache.py:1612, the "longer" DFS) — no step, no GPU, both ranks `R` —
   because every push copies the whole path (`extra + [tok]`): quadratic in the branch depth. Measured on the evidence
@@ -824,3 +824,16 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
   rss 73 GB at 180k and pushed the MacBook to pressure WARN — never replay a 190k prompt on a Mac already using
   ~58 GB (the coordinator killed it at 0.8 GB free). The fit rule's 64 KiB/token KV is ~2.5x under the engine's
   measured growth (Q-424).
+
+## One home, and the merged references (2026-10-03)
+- THIS repo file is the only goose-mlx-inference skill. `~/.claude/skills/goose-mlx-inference` is a SYMLINK to
+  `~/Projects/goose/local-edition/skills/goose-mlx-inference` on both Macs (projsync skips symlinked skills; git
+  syncs this file). Until 2026-10-03 a second, diverged copy lived at that global path (workhorse-owned); its
+  unique sections are in `references/remote-single-and-engine-fixes.md` (Remote single over Link, the hidden
+  generation caps, Q-85, Q-142, Q-508) — read it before touching remote single or the split's cache.
+- `references/distributed-engine-history.md` — the dated 2026-09-23..26 record of the distributed engine (rank
+  launcher, Link control plane, Local Network privacy, Flash/pipeline server, image input, compaction, Q-65,
+  Q-66/71, Q-75, Q-114), moved verbatim from the `mlx-jaccl-cluster` skill, which now keeps only the raw two-Mac
+  MLX/JACCL layer. `scripts/link-live-test.sh` + `scripts/tailscale_identity.py` moved with it.
+- Edit this file from either Mac and COMMIT it in the goose repo; an uncommitted edit only reaches the other Mac
+  as a projsync wip snapshot.
