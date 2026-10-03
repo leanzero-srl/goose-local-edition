@@ -696,11 +696,13 @@ def _openrouter_model_limits(model: str, credentials: Dict[str, str]) -> dict:
     entry = matches[0]
     top = entry.get("top_provider") if isinstance(entry.get("top_provider"), dict) else {}
     # A null max_completion_tokens was measured on 7 of 464 listed models on 2026-10-01, all of them
-    # routers (openrouter/auto, openrouter/free, ...), never on a frontier model, so it is refused
-    # rather than derived from the context window.
+    # routers (openrouter/auto, typesafe/jev-router, ...). This lane never SENDS an output cap
+    # (provider_model_limits deletes GOOSE_MAX_TOKENS for openrouter), so a router's missing cap is
+    # recorded as a named absence instead of refusing the run; it is never derived from the context.
     context = _positive_limit(entry.get("context_length"), f"OpenRouter context_length for {model}")
-    output = _positive_limit(top.get("max_completion_tokens"),
-                             f"OpenRouter top_provider.max_completion_tokens for {model}")
+    raw_output = top.get("max_completion_tokens")
+    output = None if raw_output is None else _positive_limit(
+        raw_output, f"OpenRouter top_provider.max_completion_tokens for {model}")
     return {"context": context, "output": output,
             "provenance": {"source": "openrouter-model-metadata", "url": url,
                            "fields": {"context_length": context,
@@ -764,10 +766,14 @@ def provider_model_limits(provider: str, model: str, credentials: Dict[str, str]
         if configured:
             record["goose_config"] = configured
         return record
-    if output > GOOSE_MAX_TOKENS_TYPE_BOUND:
+    if output is not None and output > GOOSE_MAX_TOKENS_TYPE_BOUND:
         raise RuntimeError(f"REFUSED: output cap {output} for {model} exceeds goose's i32 GOOSE_MAX_TOKENS")
     provenance = {**provenance, "provider": provider, "model": model,
                   "resolved_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    if output is None and provider != "openrouter":
+        raise RuntimeError(f"REFUSED: no output cap for {provider}/{model}")
+    if output is None:
+        provenance["output_cap_absent"] = "the listing names no top_provider.max_completion_tokens (a router); none is sent on this lane"
     limits = {"GOOSE_CONTEXT_LIMIT": str(context), "GOOSE_MAX_TOKENS": str(output)}
     if provider == "openrouter":
         # MEASURED 2026-10-01: sending the listed maximum (943,718 for deepseek-v4.1-flash) shrinks

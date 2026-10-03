@@ -260,12 +260,21 @@ class ProviderModelLimitsTests(unittest.TestCase):
                 run_build.provider_model_limits('openrouter', 'openai/gpt-6', {'OPENROUTER_API_KEY': 'k'})
 
     def test_openrouter_non_positive_or_null_limits_are_refused(self):
-        for context, output in [(0, 128000), (1050000, None), (1050000, -1), ('1050000', 128000), (True, 128000)]:
+        for context, output in [(0, 128000), (1050000, -1), ('1050000', 128000), (True, 128000)]:
             entry = {**ASTRA, 'context_length': context, 'top_provider': {'max_completion_tokens': output}}
             with self.subTest(context=context, output=output), \
                     patch.object(run_build.urllib.request, 'urlopen', return_value=_listing(entry)):
                 with self.assertRaisesRegex(RuntimeError, 'REFUSED: OpenRouter .* not a positive integer'):
                     run_build.provider_model_limits('openrouter', 'openai/gpt-6-astra', {'OPENROUTER_API_KEY': 'k'})
+
+    def test_openrouter_router_without_an_output_cap_runs_on_the_context_limit(self):
+        # typesafe/jev-router lists no top_provider.max_completion_tokens; this lane never sends one.
+        entry = {**ASTRA, 'context_length': 1000000, 'top_provider': {'max_completion_tokens': None}}
+        with patch.object(run_build.urllib.request, 'urlopen', return_value=_listing(entry)):
+            limits = run_build.provider_model_limits('openrouter', 'openai/gpt-6-astra', {'OPENROUTER_API_KEY': 'k'})
+        self.assertEqual(limits['GOOSE_CONTEXT_LIMIT'], '1000000')
+        self.assertNotIn('GOOSE_MAX_TOKENS', limits)
+        self.assertIn('output_cap_absent', limits['provenance'])
 
     def test_openrouter_without_a_key_is_refused_before_any_request(self):
         with patch.object(run_build.urllib.request, 'urlopen') as call:
