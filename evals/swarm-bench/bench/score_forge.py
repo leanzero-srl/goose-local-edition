@@ -2396,17 +2396,21 @@ def _(c):
     ledger_digits = set(re.findall(r'\d+(?:\.\d+)?', ' '.join([*n.metrics_text().values(), n.name,
                                                                   str(o.hidden_count(sid, o.viewer))]))) if n else set()
     subs: Dict[str, bool] = {}
+    before_click: set = set()
     for i, st in enumerate(ex['steps']):
         # Graded by POSITION: an LLM call the platform refused before the script answered (an unknown model id, a
         # sampling rule) leaves the click without its scripted answer — the clean answer never reached the page.
         kind = EXPLAIN_SCRIPT[i] if i < len(EXPLAIN_SCRIPT) else 'clean'
         entry = st.get('llm') or {}
         label = f'{i}:{kind}'
+        shown_ids = {str(x) for x in st.get('idsShown') or []}
+        # DESIGN §17.4 gap 29: after a failed attempt, clearing OR keeping the previous explanation both pass, so a
+        # failure step is charged only for ids THIS click put on screen, never for the ones still showing from before.
+        new_ids, before_click = shown_ids - before_click, shown_ids
         if st.get('llmCalls', 0) != 1 or entry.get('step') != kind:
             subs[f'{label}:one_llm_call_answered_{kind}'] = False
             continue
         subs[f'{label}:report_scope_forced'] = _explain_request_ok(entry)
-        shown_ids = {str(x) for x in st.get('idsShown') or []}
         text = str(st.get('explanation') or '')
         if kind in ('clean', 'digits'):
             args = _model_args(entry)
@@ -2427,7 +2431,7 @@ def _(c):
             inv = next((r for r in _invokes(c) if r.get('invocationId') and r.get('invocationId') == entry.get('invocationId')), None)
             if inv is not None:
                 subs[f'{label}:resolver_answered_{kind}'] = not inv.get('threw')
-            subs[f'{label}:error_flag'] = (st.get('errorFlags') or 0) >= 1 and not shown_ids
+            subs[f'{label}:error_flag'] = (st.get('errorFlags') or 0) >= 1 and not new_ids
             subs[f'{label}:modal_still_sorts'] = bool(st.get('sortWorksAfter'))
     met = sum(subs.values())
     return g(met / len(subs) if subs else 0, f"explain {met}/{len(subs)} over {len(ex['steps'])} scripted answers: "

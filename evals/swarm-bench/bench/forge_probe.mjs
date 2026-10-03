@@ -660,8 +660,13 @@ const tableRows = (page) => page.evaluate(() => [...document.querySelectorAll('t
 const ariaSort = (page) => page.evaluate(() => Object.fromEntries([...document.querySelectorAll('th[data-col][aria-sort]')]
   .filter((th) => th.getAttribute('aria-sort') !== 'none').map((th) => [th.getAttribute('data-col'), th.getAttribute('aria-sort')])));
 
+// @forge/bridge FlagOptions: "If `appearance` is given, `type` is overriden to equal `appearance`" — and showFlag
+// itself forwards `type: options.type ?? 'info'`, so an appearance-only error flag arrives typed 'info'. The kit's
+// host page renders `appearance ?? type` (bridge-page.cjs); the probe reads the flag the same way.
+const flagType = (b) => String(b.payload?.appearance ?? b.options?.appearance ?? b.appearance
+  ?? b.payload?.type ?? b.options?.type ?? b.type ?? '');
 function flagCounts(ops) {
-  const flags = ops.filter((b) => opName(b) === 'showFlag').map((b) => String(b.payload?.type ?? b.options?.type ?? b.type ?? ''));
+  const flags = ops.filter((b) => opName(b) === 'showFlag').map(flagType);
   return { successFlags: flags.filter((t) => t === 'success').length, errorFlags: flags.filter((t) => ['error', 'warning'].includes(t)).length };
 }
 
