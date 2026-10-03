@@ -824,6 +824,12 @@ pointer double click can land on the container).
 | `m_skill_name` | SKILL.md `name` ≠ directory | MEASURED by WP3 with the client-side lint: ERROR "Skill sprint-scope-analyst frontmatter field 'name' must match the parent directory name" → `l_deployable` (crit) + `k_rovo_skill`, ≤ 0.499 |
 | `m_config_in_kvs` | widget board stored in KVS by a resolver, view ignores `extension.config` | `u_widget_edit_config` (second instance); NOT `k_widget_edit_bridge` — the edit API stays in use (verified on the bed) |
 | `m_throw_on_429` | consumer throws on 429 instead of a retry request | `t_retry_after_honoured` (rows still land) |
+| `m_rerun_rewrites` | every scheduled run rewrites every membership it computes | `r_idempotent_rerun` (§17.7 F5) |
+| `m_resolver_throws` | resolvers rethrow every non-429 failure | `b_invoke_contract` (the scoring site's resolver-read 500; §17.7 F5) |
+| `m_explain_dates` | the digits answer's replacement sentence adds the sprint's start date | `u_llm_explain`, band 4 (§17.7 F5) |
+| `m_sort_resumes_desc` | after the points sort the first `at` click keeps descending | `u_ledger_sort`, band 4 (§17.7 F5/F6) |
+| `m_skill_bare` | SKILL.md without "how to read the result" and the error clause | `a_skill_instructions` (§17.7 F5) |
+| `m_metric_clip` | every widget number squeezed to two characters with an ellipsis | `v_widget_sizes` (§17.7 F4) |
 
 ## 14. Check ↔ contract map (measured is stated)
 
