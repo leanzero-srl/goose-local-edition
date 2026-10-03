@@ -70,7 +70,7 @@ CONTRACT = 'forge/public/FORGE-CONTRACT.md'
 # ── calibration-owned thresholds ─────────────────────────────────────────────────────────────
 
 THRESHOLDS_FILE = HERE / 'forge-thresholds.json'
-CALIB_SHA256 = 'TBD-AT-FREEZE'  # baked at freeze; a calibrated file must hash to this
+CALIB_SHA256 = 'd08a7e00ec2c74e3d365078749f38f869fc7e7c711af2ab8695115adf19e8b74'  # frozen 2026-10-03: golden x5 (forge-thresholds.json calibration.seeds)
 
 
 def _load_thresholds() -> Dict:
@@ -2671,7 +2671,8 @@ def calibrate(verdicts: List[Dict], rc: Dict) -> Dict:
         top = max(1.0, math.ceil(worst * 100 - 1e-9) / 100)
         rc_top = rc[key][0][1]
         out[key] = [[score, round(cut * top / rc_top, 2)] for score, cut in rc[key]]
-        out['receipts'][key] = (f'golden worst-of-{len(per_seed)} {row} ratio {worst} (per seed {per_seed}) -> top rung '
+        shown = {seed: round(r, 4) for seed, r in per_seed.items()}
+        out['receipts'][key] = (f'golden worst-of-{len(per_seed)} {row} ratio {round(worst, 4)} (per seed {shown}) -> top rung '
                                 f'{top}; lower rungs keep the rc multiples of the top ({rc[key]})')
     out['calibration'] = {'seeds': sorted(seeds), 'scorer_files_sha256': verdicts[0].get('scorer_files_sha256'),
                           'kit_lock_sha256': verdicts[0].get('kit_lock_sha256'), 'wrapper_sha256': verdicts[0].get('wrapper_sha256'),

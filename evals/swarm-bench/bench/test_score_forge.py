@@ -350,6 +350,12 @@ class GoldenTests(Golden):
 
 class CalibrationTests(Golden):
     SEEDS = ('a5a5a5a5a5a5a5a5', '5eed0123456789ab', '0123456789abcdef', 'fedcba9876543210', '00000000deadbeef')
+    RC_ECONOMY = [[1.0, 1.5], [0.75, 3], [0.5, 10], [0.25, 40]]   # DESIGN §8.4 rc rungs, the fit's starting point
+
+    @property
+    def rc(self):
+        return {**sf.TH, 'calibrated': False, 'economy_rungs': self.RC_ECONOMY, 'event_economy_rungs': self.RC_ECONOMY,
+                'receipts': dict(sf.TH['receipts'])}
 
     def verdicts(self, event_ratios=(1.2, 2.07, 1.9, 2.0, 1.4), reconcile=(1.0, 1.11, 1.05, 1.0, 1.0)):
         base = self.score()
@@ -357,6 +363,7 @@ class CalibrationTests(Golden):
         for seed, ev, rec in zip(self.SEEDS, event_ratios, reconcile):
             v = copy.deepcopy(base)
             v['fixture_seed'] = seed
+            v['scorerVersion'] = 'forge-1.0-rc'
             for r in v['checks']:
                 if r['check'] in ('e_event_economy', 'e_reconcile_economy'):
                     r['parts'] = {'ratio': ev if r['check'] == 'e_event_economy' else rec}
@@ -364,41 +371,41 @@ class CalibrationTests(Golden):
         return out
 
     def test_the_economy_rungs_fit_the_golden_worst_of_five(self):
-        fitted = sf.calibrate(self.verdicts(), sf.TH)
+        fitted = sf.calibrate(self.verdicts(), self.rc)
         self.assertTrue(fitted['calibrated'])
         self.assertEqual(fitted['event_economy_rungs'], [[1.0, 2.07], [0.75, 4.14], [0.5, 13.8], [0.25, 55.2]])
         self.assertEqual(fitted['economy_rungs'], [[1.0, 1.11], [0.75, 2.22], [0.5, 7.4], [0.25, 29.6]])
         self.assertIn('worst-of-5', fitted['receipts']['event_economy_rungs'])
-        self.assertEqual(fitted['ui_round_trip_rungs'], sf.TH['ui_round_trip_rungs'])
+        self.assertEqual(fitted['ui_round_trip_rungs'], self.rc['ui_round_trip_rungs'])
         self.assertEqual(sorted(fitted['calibration']['seeds']), sorted(self.SEEDS))
         # a golden better than the optimum never fits a top rung below the oracle's optimum
-        best = sf.calibrate(self.verdicts(event_ratios=(1.0,) * 5, reconcile=(0.9,) * 5), sf.TH)
+        best = sf.calibrate(self.verdicts(event_ratios=(1.0,) * 5, reconcile=(0.9,) * 5), self.rc)
         self.assertEqual(best['economy_rungs'][0], [1.0, 1.0])
         # the fit reads calls/optimum, not the display-rounded ratio: 10/9 = 1.1111 rounds to 1.111 but fits 1.12
         exact = self.verdicts()
         for v in exact:
             next(r for r in v['checks'] if r['check'] == 'e_reconcile_economy')['parts'] = {'calls': 10, 'optimum': 9, 'ratio': 1.111}
-        self.assertEqual(sf.calibrate(exact, sf.TH)['economy_rungs'][0], [1.0, 1.12])
+        self.assertEqual(sf.calibrate(exact, self.rc)['economy_rungs'][0], [1.0, 1.12])
 
     def test_calibration_refuses_short_or_failing_evidence(self):
         with self.assertRaisesRegex(ValueError, 'distinct fixture seeds'):
-            sf.calibrate(self.verdicts()[:4], sf.TH)
+            sf.calibrate(self.verdicts()[:4], self.rc)
         dup = self.verdicts()
         dup[1]['fixture_seed'] = dup[0]['fixture_seed']
         with self.assertRaisesRegex(ValueError, 'distinct fixture seeds'):
-            sf.calibrate(dup, sf.TH)
+            sf.calibrate(dup, self.rc)
         bad = self.verdicts()
         next(r for r in bad[2]['checks'] if r['check'] == 'u_widget_numbers')['score'] = 0.5
         with self.assertRaisesRegex(ValueError, 'u_widget_numbers'):
-            sf.calibrate(bad, sf.TH)
+            sf.calibrate(bad, self.rc)
         miss = self.verdicts()
         next(r for r in miss[3]['checks'] if r['check'] == 'e_ui_round_trips')['score'] = 0.75
         with self.assertRaisesRegex(ValueError, 'misses the floor rung'):
-            sf.calibrate(miss, sf.TH)
+            sf.calibrate(miss, self.rc)
         mixed = self.verdicts()
         mixed[4]['scorer_files_sha256'] = {'score_forge.py': 'other'}
         with self.assertRaisesRegex(ValueError, 'different scorer files'):
-            sf.calibrate(mixed, sf.TH)
+            sf.calibrate(mixed, self.rc)
 
 
 class DefectTests(Golden):
@@ -1165,11 +1172,22 @@ class RegistryAndContractTests(unittest.TestCase):
     def test_the_prompt_states_the_call_budget(self):
         self.assertEqual(bench_budget.stated_budgets(self.SPEC), [bench_budget.CALL_BUDGET])
 
-    def test_thresholds_are_uncalibrated_until_the_freeze(self):
-        data = json.loads(sf.THRESHOLDS_FILE.read_text())
-        self.assertFalse(data['calibrated'])
-        self.assertEqual(sf.VERSION, 'forge-1.0-rc')
-        self.assertEqual(sf.CALIB_SHA256, 'TBD-AT-FREEZE')
+    def test_thresholds_are_frozen_and_pinned(self):
+        raw = sf.THRESHOLDS_FILE.read_bytes()
+        data = json.loads(raw)
+        self.assertTrue(data['calibrated'])
+        self.assertEqual(sf.VERSION, 'forge-1.0')
+        self.assertEqual(hashlib.sha256(raw).hexdigest(), sf.CALIB_SHA256)
+        self.assertEqual(len(data['calibration']['seeds']), sf.CALIBRATION_SEEDS)
+        for key in sf.FITTED_RUNGS:
+            self.assertIn('worst-of-5', data['receipts'][key])
+
+    def test_a_calibrated_file_off_its_pin_refuses_to_score(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            edited = Path(tmp) / 'forge-thresholds.json'
+            edited.write_text(sf.THRESHOLDS_FILE.read_text().replace('"contrast_min": 4.5', '"contrast_min": 3.0'))
+            with patch.object(sf, 'THRESHOLDS_FILE', edited), self.assertRaisesRegex(SystemExit, 'does not match the pin'):
+                sf._load_thresholds()
 
 
 class CliTests(unittest.TestCase):
