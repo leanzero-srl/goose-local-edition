@@ -165,6 +165,11 @@ class StreamHandshake:
                     if signal.get('state') not in FIRING_WITNESS_STATES:
                         raise RuntimeError('SB7.1 stream witness unavailable: ' + str(signal))
                     self.receipt = {'signal': signal, 'delivery': self.fire()}
+                    # The probe's stream wait reads this back: a delivery the app refused can never
+                    # stream, so waiting the full window for it only spends the visual sections' budget.
+                    delivered, staged = Path(str(self.path) + '.delivered'), Path(str(self.path) + '.delivered.tmp')
+                    staged.write_text(json.dumps(self.receipt))
+                    staged.replace(delivered)
                     return
             except Exception as error:
                 self.error = error

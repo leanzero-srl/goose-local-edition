@@ -112,6 +112,9 @@ function measuredApplicationSurfaceAbsent(glBeforePixelProbe, observations) {
     !glBeforePixelProbe.contexts.some(context=>!context.offscreen) && glBeforePixelProbe.defDraws===0 &&
     observations.length>=2 && observations.every(o=>o.evaluationSucceeded===true&&o.present===false);
 }
+// The scorer writes the D1 delivery receipt beside the readiness file once it has fired; a non-2xx
+// answer from the app means no batch can follow, so the stream wait ends instead of spending the cap.
+function streamDeliveryRefused() { const path=process.env.BENCH_SB71_STREAM_READY;if(!path)return null;let r;try{r=JSON.parse(readFileSync(path+'.delivered','utf8'));}catch{return null;}const status=r?.delivery?.delivery?.status;return Number.isInteger(status)&&(status<200||status>299)?status:null; }
 function streamReady(value) { const path=process.env.BENCH_SB71_STREAM_READY;if(!path)return;writeFileSync(path+'.tmp',JSON.stringify(value));renameSync(path+'.tmp',path); }
 
 function loadPlaywright() {
@@ -4466,11 +4469,15 @@ async function vizScenario(page, pack, H) {
     const waitCap = Math.max(5000, Math.min(90000, budgetLeft() - 25000));
     const t0 = Date.now();
     let log = await page.evaluate(pageStreamLog).catch(() => ({ entries: [] }));
+    let streamWaitEnd = null;
     while (Date.now() - t0 < waitCap) {
       log = await page.evaluate(pageStreamLog).catch(() => ({ entries: [] }));
       if ((log.entries || []).some((e) => e.size != null && e.size > 0)) break;
+      const refused = streamDeliveryRefused();
+      if (refused) { streamWaitEnd = { reason: 'delivery_refused_by_app', status: refused, afterMs: Date.now() - t0 }; break; }
       await sleep(700);
     }
+    if (streamWaitEnd) merge({ streamWaitEnd });
     await sleep(3400);      // outlast the instrument's 3 s apply-detection cap, so
     //                        c1/digest1 are recorded even when a batch legally changes
     //                        no digest moment (harness fix: a 1.5 s read left them null)
