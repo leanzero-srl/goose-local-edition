@@ -22,6 +22,7 @@ import { hasScoredVerdict } from './benchSessions';
 import { cloudRunStarted } from './benchCloudEvidence';
 import { benchmarkPythonLaunch } from './benchPython';
 import { uploadBenchmarkVideo } from './benchVideoUpload';
+import { publishableClip, type ClipTools } from './benchEvidenceClip';
 import { BenchMediaServer, readBenchMedia } from './benchMedia';
 import { pickBenchShots, limitBenchShotsForPublish, type BenchShot } from './benchShots';
 import { projectBenchScore, recoverStoredSb8Score } from './benchScoreProjection';
@@ -4171,6 +4172,12 @@ const resolveRunResult = async (
   return { result, latest };
 };
 
+/** The benchmark runtime's own ffmpeg/ffprobe (resolved only when a graded clip is over the limit). */
+const benchClipTools = async (): Promise<ClipTools> => {
+  const runtime = await resolveBenchmarkRuntime(benchWorkRoot());
+  return { ffmpeg: runtime.env.BENCH_FFMPEG, ffprobe: runtime.env.BENCH_FFPROBE };
+};
+
 /** A FINISHED Forge run whose surfaces were graded yet whose graded clip cannot be verified: the site
  *  refuses it clip-less, so it is a scoring problem the saved build can fix (Retry scoring). */
 const forgeClipMissing = async (row: BenchSessionRow): Promise<boolean> => {
@@ -5225,8 +5232,9 @@ ipcMain.handle('benchmark-publish', async (_event, args?: { title?: string; runK
     if (clipless) payload.noRecording = true;
     else {
       try {
+        const clip = await publishableClip(stored.workdir as string, media.videos[0], benchClipTools);
         payload.videoReceipt = await uploadBenchmarkVideo(
-          media.videos[0],
+          clip.video,
           BENCH_PUBLISH_URL,
           identity.installId,
           stored.scorerVersion as string
@@ -5256,8 +5264,9 @@ ipcMain.handle('benchmark-publish', async (_event, args?: { title?: string; runK
           error: `${stored.scorerVersion} publication requires one verified graded browser clip: ${media.error ?? 'clip count mismatch'}`,
         };
       try {
+        const clip = await publishableClip(stored.workdir, media.videos[0], benchClipTools);
         payload.videoReceipt = await uploadBenchmarkVideo(
-          media.videos[0],
+          clip.video,
           BENCH_PUBLISH_URL,
           identity.installId,
           stored.scorerVersion

@@ -1694,6 +1694,12 @@ export default function BenchmarkView() {
             </Button>
           </div>
         </div>
+        {publishing && (
+          <p data-testid="publish-progress" className={cx('mt-3', TYPE.meta)}>
+            A graded clip over leanzero.net&rsquo;s 4 MiB limit is first re-encoded to a smaller clip of
+            the same recording, which can take a few minutes.
+          </p>
+        )}
         {selectedFrozen && (
           <p className={cx('mt-3', TYPE.meta, WEIGHT.semibold, TONE_TEXT.warn)}>
             Benchmark frozen — submissions closed.
