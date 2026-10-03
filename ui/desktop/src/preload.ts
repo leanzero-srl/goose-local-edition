@@ -211,7 +211,13 @@ type ElectronAPI = {
       retryScoring?: { ready: boolean; reason?: string };
       scoringError?: string;
       /** This machine posted the run to leanzero.net (url null when the site returned none). */
-      published?: { url: string | null; title: string; score: number; publishedAt: string };
+      published?: {
+        url: string | null;
+        title: string;
+        score: number;
+        publishedAt: string | null;
+        source: 'app' | 'board';
+      };
     }>;
   }>;
   /** One finished run's own scored result row (verdict, breakdown, evidence dir), by its session key —
@@ -239,6 +245,8 @@ type ElectronAPI = {
         score: number;
         model: string;
         title?: string;
+        startedAt?: string;
+        wallSecs?: number;
         url?: string;
       }>;
     }>;

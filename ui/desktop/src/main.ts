@@ -133,6 +133,7 @@ import {
   resultDescribesRun,
   runResultFileName,
   treeVerdictDescribesRun,
+  siteRowForRun,
   type PublishedIndex,
   type PublishedRecord,
 } from './benchRunResults';
@@ -3892,12 +3893,48 @@ ipcMain.handle('benchmark-sessions', async () => {
   // publishable = finished AND its own scored result can be read (its stored row, or the verdict in its
   // own tree) AND its benchmark is not frozen AND this machine has not already posted it.
   const published = await readPublished();
+  const resolvedByStart = new Map(
+    await Promise.all(rows.map(async (row) => [row.startedAt, await resolveRunResult(row)] as const))
+  );
   const resultReadable = new Map(
-    await Promise.all(
-      rows.map(async (row) => [row.startedAt, (await resolveRunResult(row)) != null] as const)
-    )
+    rows.map((row) => [row.startedAt, resolvedByStart.get(row.startedAt) != null] as const)
   );
   const cachedCatalog = await readBenchCatalogCache();
+  // A run posted before published.json existed (Luna, MiMo Flash on 2026-10-02) is named by the site's
+  // own board: same era, model and exact score AND its launch stamp or wall seconds (siteRowForRun).
+  // The match is stamped into the index so the marker survives an offline start.
+  for (const r of rows) {
+    const key = benchRunKey(r);
+    const resolved = resolvedByStart.get(r.startedAt);
+    if (published[key] || typeof r.score !== 'number' || !resolved || !cachedCatalog) continue;
+    const result = resolved.result;
+    const model = typeof result.modelId === 'string' ? result.modelId.trim() : '';
+    const runMeta = result.runMeta as { startedAt?: unknown } | undefined;
+    const site = model
+      ? siteRowForRun(
+          {
+            scorerVersion: r.scorerVersion,
+            model,
+            score: r.score,
+            startedAt: typeof runMeta?.startedAt === 'string' ? runMeta.startedAt : null,
+            wallSecs: typeof result.wallSecs === 'number' ? result.wallSecs : null,
+          },
+          cachedCatalog.benchmarks
+        )
+      : null;
+    if (!site) continue;
+    const record: PublishedRecord = {
+      url: site.url,
+      title: site.title,
+      score: r.score,
+      publishedAt: null,
+      source: 'board',
+    };
+    published[key] = record;
+    await recordPublished(key, record).catch((error) =>
+      log.error('Published run found on the board could not be recorded:', error)
+    );
+  }
   const frozen = new Set(
     (cachedCatalog?.benchmarks ?? [])
       .filter((b) => b?.frozen === true)
@@ -5340,6 +5377,7 @@ ipcMain.handle('benchmark-publish', async (_event, args?: { title?: string; runK
       title,
       score: typeof stored.score === 'number' ? stored.score : 0,
       publishedAt: new Date().toISOString(),
+      source: 'app',
     }).catch((error) => log.error('Published run could not be recorded:', error));
     return { ok: true, ...accepted };
   } catch (err) {

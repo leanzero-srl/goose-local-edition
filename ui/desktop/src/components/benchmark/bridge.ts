@@ -60,7 +60,13 @@ export interface BenchSession {
   retryScoring?: { ready: boolean; reason?: string };
   scoringError?: string;
   /** This machine posted the run to leanzero.net — its card says so and offers no second post. */
-  published?: { url: string | null; title: string; score: number; publishedAt: string };
+  published?: {
+        url: string | null;
+        title: string;
+        score: number;
+        publishedAt: string | null;
+        source: 'app' | 'board';
+      };
 }
 
 /** The 'benchmark-started' payload's version skew fact: the site's current benchmark is newer

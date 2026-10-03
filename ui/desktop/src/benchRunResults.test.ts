@@ -4,6 +4,8 @@ import {
   FORGE_NO_SURFACE_DETAIL,
   clipAbsence,
   parsePublishedIndex,
+  publishedUrlText,
+  siteRowForRun,
   resultDescribesRun,
   runResultFileName,
   treeVerdictDescribesRun,
@@ -43,10 +45,12 @@ describe('every finished run keeps its own result', () => {
         a: { url: '/runs/1', title: 'T', score: 0.7, publishedAt: '2026-10-03T09:00:00Z' },
         b: { url: null, title: 'U', score: 0.1, publishedAt: '2026-10-03T09:00:00Z' },
         c: { title: 'no score' },
+        d: { url: 'https://x/run/1', title: 'V', score: 0.4, publishedAt: null, source: 'board' },
       })
     ).toEqual({
-      a: { url: '/runs/1', title: 'T', score: 0.7, publishedAt: '2026-10-03T09:00:00Z' },
-      b: { url: null, title: 'U', score: 0.1, publishedAt: '2026-10-03T09:00:00Z' },
+      a: { url: '/runs/1', title: 'T', score: 0.7, publishedAt: '2026-10-03T09:00:00Z', source: 'app' },
+      b: { url: null, title: 'U', score: 0.1, publishedAt: '2026-10-03T09:00:00Z', source: 'app' },
+      d: { url: 'https://x/run/1', title: 'V', score: 0.4, publishedAt: null, source: 'board' },
     });
     expect(parsePublishedIndex(null)).toEqual({});
     expect(parsePublishedIndex([1])).toEqual({});
@@ -137,5 +141,85 @@ describe('a result publishes without its clip ONLY on the site rule (website 290
         { check: 'u_widget_loads', tier: 'U', score: 0.5 },
       ])
     ).toBeNull();
+  });
+});
+
+describe('a run posted before the published index is found on the site board by its identity', () => {
+  // The REAL sb-7.2 board rows (GET /api/benchmark-runs, 2026-10-03) with the run identity the site
+  // branch b091082 adds — values read from the dataset: identical to this machine's session rows.
+  const luna = {
+    label: 'openai/gpt-6-luna · single agent',
+    score: 0.4711,
+    model: 'openai/gpt-6-luna',
+    title: 'GPT-6 Luna, single model via OpenRouter',
+    startedAt: '2026-10-02T15:19:07.122Z',
+    wallSecs: 2009.7,
+    url: 'https://leanzero.net/agentic-benchmarks/run/brun-2cbdb9f5-48c9-4845-ac7a-9d025c1cc0d0',
+  };
+  const mimo = {
+    label: 'xiaomi/mimo-v2.6-flash · single agent',
+    score: 0.7424,
+    model: 'xiaomi/mimo-v2.6-flash',
+    title: 'xiaomi/mimo-v2.6-flash, single model via OpenRouter',
+    startedAt: '2026-10-02T16:10:51.268Z',
+    wallSecs: 7708.5,
+    url: 'https://leanzero.net/agentic-benchmarks/run/brun-029b6e80-82b5-49e1-83f9-e501cd296cb8',
+  };
+  const board = [
+    { scorerVersion: 'sb-7.2', baselines: [mimo, luna] },
+    { scorerVersion: 'sb-7.1-rc', baselines: [{ ...luna, url: 'https://x/other-era' }] },
+  ];
+  // This machine's runs, as resolveRunResult rebuilds them from their own trees.
+  const lunaRun = {
+    scorerVersion: 'sb-7.2',
+    model: 'openai/gpt-6-luna',
+    score: 0.4711,
+    startedAt: '2026-10-02T15:19:07.122Z',
+    wallSecs: 2009.7,
+  };
+  const mimoRun = {
+    scorerVersion: 'sb-7.2',
+    model: 'xiaomi/mimo-v2.6-flash',
+    score: 0.7424,
+    startedAt: '2026-10-02T16:10:51.268Z',
+    wallSecs: 7708.5,
+  };
+
+  it('names Luna and MiMo Flash by their own rows', () => {
+    expect(siteRowForRun(lunaRun, board)).toEqual({ url: luna.url, title: luna.title });
+    expect(siteRowForRun(mimoRun, board)).toEqual({ url: mimo.url, title: mimo.title });
+  });
+
+  it('never matches on model + score alone', () => {
+    // The board as it is live today, without the identity keys: no marker.
+    const today = [
+      {
+        scorerVersion: 'sb-7.2',
+        baselines: [mimo, luna].map(({ startedAt: _s, wallSecs: _w, ...row }) => row),
+      },
+    ];
+    expect(siteRowForRun(lunaRun, today)).toBeNull();
+    // A second run of the same model that landed on the same score is a different run.
+    const rerun = { ...lunaRun, startedAt: '2026-10-03T08:00:00.000Z', wallSecs: 1999.1 };
+    expect(siteRowForRun(rerun, board)).toBeNull();
+  });
+
+  it('accepts either identity field, and refuses another era or an ambiguous board', () => {
+    expect(siteRowForRun({ ...lunaRun, startedAt: null }, board)?.url).toBe(luna.url);
+    expect(siteRowForRun({ ...lunaRun, wallSecs: null }, board)?.url).toBe(luna.url);
+    expect(siteRowForRun({ ...lunaRun, startedAt: null, wallSecs: null }, board)).toBeNull();
+    expect(siteRowForRun({ ...lunaRun, scorerVersion: 'sb-7.1' }, board)).toBeNull();
+    expect(siteRowForRun({ ...lunaRun, model: 'openai/gpt-6-sol' }, board)).toBeNull();
+    const twice = [{ scorerVersion: 'sb-7.2', baselines: [luna, { ...luna, url: 'https://x/dup' }] }];
+    expect(siteRowForRun(lunaRun, twice)).toBeNull();
+  });
+
+  it('writes the live line from a site path or an absolute board URL', () => {
+    expect(publishedUrlText('/agentic-benchmarks/run/brun-1')).toBe(
+      'leanzero.net/agentic-benchmarks/run/brun-1'
+    );
+    expect(publishedUrlText(luna.url)).toBe(
+      'leanzero.net/agentic-benchmarks/run/brun-2cbdb9f5-48c9-4845-ac7a-9d025c1cc0d0'
+    );
   });
 });
