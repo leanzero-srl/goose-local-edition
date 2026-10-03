@@ -259,3 +259,28 @@ test('the live-UI changes stay held back: never in the delivery plan or the flus
   const r = site.control.event({ changelogId: ui[0] });
   assert.deepStrictEqual(r.applied, [ui[0]], 'delivering one applies exactly that change');
 }));
+
+test('the default viewer may not comment on one issue per seed: Jira\'s measured 400, discoverable in info', async () => {
+  for (const seed of ['feedfacefeedface', '0123456789abcdef', '5eed0123456789ab']) {
+    const site = await createSite({ seed, port: 0 });
+    try {
+      const forbidden = site.control.info().commentForbidden;
+      assert.strictEqual(forbidden.length, 1);
+      assert.deepStrictEqual(forbidden[0].accountIds, [site.pack.viewer]);
+      const viewerName = site.pack.users.find((u) => u.accountId === site.pack.viewer).displayName;
+      const adf = { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: 'x' }] }] };
+      const post = async (key, who, body) => {
+        const r = await fetch(`${site.url}/rest/api/3/issue/${key}/comment`, { method: 'POST', headers: { 'content-type': 'application/json',
+          'x-forge-as': 'user', 'x-forge-account': who, 'x-forge-scopes': JSON.stringify(SCOPES) }, body: JSON.stringify({ body }) });
+        return { status: r.status, body: await r.json() };
+      };
+      const denied = await post(forbidden[0].issueKey, site.pack.viewer, adf);
+      assert.deepStrictEqual(denied, { status: 400, body: { errorMessages: [`${viewerName}, you do not have the permission to comment on this issue.`], errors: {} } });
+      const other = site.pack.users.find((u) => u.accountId !== site.pack.viewer && !site.pack.issues.find((i) => i.key === forbidden[0].issueKey).hiddenFrom.includes(u.accountId));
+      assert.strictEqual((await post(forbidden[0].issueKey, other.accountId, adf)).status, 201, 'another user may comment there');
+      assert.strictEqual(site.comments.length, 1);
+    } finally {
+      await site.stop();
+    }
+  }
+});

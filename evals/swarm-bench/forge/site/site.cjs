@@ -222,6 +222,8 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
     rtlog: ({ since = 0 }) => ({ ...realtime.eventsSince(Number(since)), subscriptions: realtime.subscriptions() }),
     info: () => ({ cloudId: pack.cloudId, siteUrl: pack.siteUrl, appAccountId: pack.appAccountId, now: new Date(state.now()).toISOString(),
       users: pack.users.map(({ accountId, displayName }) => ({ accountId, displayName })), viewer: pack.viewer,
+      // Who may not comment where (the default viewer on one issue): Jira answers such a comment 400.
+      commentForbidden: pack.issues.filter((i) => i.commentForbiddenFor.length).map((i) => ({ issueKey: i.key, accountIds: i.commentForbiddenFor })),
       // What the Agile REST API discloses anyway; the dev kit builds sprint-action contexts from it.
       projects: pack.projects.map(({ id, key }) => ({ id, key })),
       boards: pack.boards.map(({ id, type, projectKey }) => ({ id, type, projectKey })),

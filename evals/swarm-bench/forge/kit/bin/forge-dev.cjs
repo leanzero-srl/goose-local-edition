@@ -35,7 +35,8 @@ const USAGE = `forge-dev <command>   (run from the app directory; $FORGE_SITE_UR
                               subscriber / rejected) and the open subscriptions; --follow keeps watching.
                               A served surface's log also prints each event delivered to its page.
   kvs                         dump stored keys and entities
-  users                       list the dev site's users (the first line is the default viewer)
+  users                       list the dev site's users (the first line is the default viewer) and the issue the
+                              default viewer may not comment on (Jira answers that comment with a 400)
   reset                       clear dev storage, queues and saved widget configs, and rewind the dev site's update stream
 `;
 
@@ -250,6 +251,10 @@ async function main() {
     const info = await (await fetch(`${site.adminUrl}/info`, { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } })).json();
     for (const u of [info.users.find((x) => x.accountId === info.viewer), ...info.users.filter((x) => x.accountId !== info.viewer)]) console.log(`${u.accountId}  ${u.displayName}${u.accountId === info.viewer ? '  (default viewer)' : ''}`);
     console.log(`app account: ${info.appAccountId}`);
+    for (const f of info.commentForbidden ?? []) {
+      const names = f.accountIds.map((a) => info.users.find((u) => u.accountId === a)?.displayName ?? a).join(', ');
+      console.log(`may not comment on ${f.issueKey}: ${names} (Jira answers 400 "<name>, you do not have the permission to comment on this issue.")`);
+    }
     return 0;
   }
   if (cmd === 'reset') {

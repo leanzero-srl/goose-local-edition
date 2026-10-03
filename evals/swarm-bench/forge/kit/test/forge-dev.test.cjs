@@ -43,6 +43,7 @@ export const onUpdate = async (event) => {
     const users = await run([devBin, 'users'], { cwd: app, env });
     assert.strictEqual(users.code, 0, users.stderr);
     assert.match(users.stdout, /\(default viewer\)/);
+    assert.match(users.stdout, /may not comment on [A-Z]+-\d+: .+ \(Jira answers 400/);
 
     // invoke with a resolver key (user-led, defaulting to the dev viewer) — the spike resolver reads payload.issueKey.
     const pack = require(path.join(FORGE, 'site', 'fixtures.cjs')).facts('feedfacefeedface');

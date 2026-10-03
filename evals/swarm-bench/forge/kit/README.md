@@ -99,6 +99,10 @@ holder's lock is taken over by atomic rename; a corrupt state file is an error, 
 substitute). It holds dev KVS, pending queue events and saved widget configs: a widget Save persists
 across `serve` runs as on a dashboard, `--config` overrides it for one run, `reset` clears all of it.
 Every `invoke` writes the full result to `.forge-dev/last-result.json` (the terminal shows 4,000 chars).
+`forge-dev users` lists the dev users (default viewer first) and the one issue the default viewer may not
+comment on (`pack.issues[].commentForbiddenFor`, also `info.commentForbidden` on the site's control surface).
+Jira answers that comment 400 `{"errorMessages":["<display name>, you do not have the permission to comment
+on this issue."],"errors":{}}` — measured on Jira Cloud 2026-10-03 without ADD_COMMENTS; it is not a 403.
 
 ## Deliberate deviations from Jira Cloud
 

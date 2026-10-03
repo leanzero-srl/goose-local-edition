@@ -204,9 +204,17 @@ const handlers = {
     if (!iss || !c.canBrowse(iss)) return err(404, NOT_FOUND_ISSUE);
     const body = c.req.body?.body;
     const adf = body && typeof body === 'object' && !Array.isArray(body) && body.type === 'doc' && body.version === 1 && Array.isArray(body.content);
-    // Measured: a plain-string body on v3 -> 400 {"errorMessages":[],"errors":{"comment":"Comment body is not valid!"}}
-    if (!adf) return { status: 400, body: { errorMessages: [], errors: { comment: 'Comment body is not valid!' } } };
-    if (!c.canComment(iss)) return err(403, 'You do not have the permission to comment on this issue.');
+    // Measured on Jira Cloud 2026-10-03 (a project whose scheme grants BROWSE_PROJECTS but not ADD_COMMENTS;
+    // mypermissions said ADD_COMMENTS havePermission:false): an ADF comment -> 400 (NOT 403)
+    // {"errorMessages":["<display name>, you do not have the permission to comment on this issue."],"errors":{}};
+    // a plain-string body there -> the same message plus errors.comment. With permission, a plain-string body ->
+    // 400 {"errorMessages":[],"errors":{"comment":"Comment body is not valid!"}} (measured 2026-10-02).
+    const denied = !c.canComment(iss);
+    if (denied || !adf) {
+      const who = c.state.userById.get(c.caller.accountId)?.displayName ?? c.caller.accountId;
+      return { status: 400, body: { errorMessages: denied ? [`${who}, you do not have the permission to comment on this issue.`] : [],
+        errors: adf ? {} : { comment: 'Comment body is not valid!' } } };
+    }
     const t = c.state.now();
     const comment = { id: String(10000 + ++c.state.st.commentSeq), issueId: iss.id, issueKey: iss.key, authorId: c.caller.accountId, body, created: new Date(t).toISOString(),
       as: c.caller.as, invocationId: c.caller.invocationId ?? null, moduleKey: c.caller.moduleKey ?? null };
