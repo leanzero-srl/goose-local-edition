@@ -26,7 +26,7 @@ hard-coded absolutes without receipts.
 | D7 | Score-time runtime = Atlassian's runtime wrapper fetched from its public CDN, pinned by sha256; the in-repo shim runs ONLY behind an explicit `--runtime shim` flag and the verdict is then unpublishable | licence (wrapper not committed, spike .gitignore); gate 1 forbids a silent fallback (§6.1) |
 | D8 | Custom UI only. UI Kit, Forge SQL, webtrigger, apiRoute, global:fullPage, objectStore, app-managed permissions: not in v1 | @forge/react closure is 1,246 MB (measured); SQL needs a MySQL engine; the others have unmeasured handler contracts (RESEARCH §5) |
 | D9 | Composition = SB's: `final = min(earned, ceilings)`, `earned = (0.88·inner + 0.12·gate·e_mean) × critical multiplier` (floor 0.6) | one severity model across families; selftest machinery reused (score_sb7.py `compose_from_rows`) |
-| D10 | Public input 18,501 bytes (prompt 3,106 + contract 11,996 + starter 3,399) + BROWSER-TESTING 537 | target ≤ 25 KB; SB7.2's 45.7 KB still produced desk audits |
+| D10 | Public input 18,788 bytes (prompt 3,106 + contract 12,174 + starter 3,508) + BROWSER-TESTING 537 | target ≤ 25 KB; SB7.2's 45.7 KB still produced desk audits |
 | D11 | Its own benchmark family on leanzero.net (`family: forge`), scorer version `forge-1.0` (`forge-1.0-rc` until thresholds freeze) | not an SB era: different product, different scale |
 
 ## 1. Requirement → where it lands
@@ -781,14 +781,14 @@ pointer double click can land on the container).
 
 | id | defect | expected loss |
 |---|---|---|
-| `m_storage_api` | `import { storage } from '@forge/api'` (storage:app declared) | measured 2026-10-02: lint gives a WARNING only (`deprecated-api-storage`) — so `l_lint_warnings`, `k_current_apis`, and the runtime T/R/S rows (8.2.0 has no `storage`, the call throws); no lint cap |
-| `m_runtime18` | `nodejs18.x` | `l_deployable`, ≤ 0.499 |
+| `m_storage_api` | `import { storage } from '@forge/api'` (storage:app declared) | measured 2026-10-02: lint gives a WARNING only (`deprecated-api-storage`) — so `l_lint_warnings`, `k_current_apis`, and the runtime T/R/S rows (8.2.0 has no `storage`, the call throws); NOT `r_pagination` (its scheduled run makes zero Jira reads on forge-dev); no lint cap |
+| `m_runtime18` | `nodejs18.x` | `l_deployable` (crit), `k_current_apis`, ≤ 0.499 (verified) |
 | `m_old_search` | `/rest/api/3/search` + `startAt` | `r_backfill_complete` (crit), `r_pagination`, `k_current_apis` |
-| `m_ids_only` | `/search/jql` without `fields` | backfill rows/numbers |
+| `m_ids_only` | `/search/jql` without `fields` | `u_widget_numbers`, `a_action_result`; rows complete, so NOT `r_backfill_complete` and not critical; lands at 0.799 (verified) |
 | `m_open_sprints_only` | reconcile JQL `sprint in openSprints()` | `r_removals_found`, `r_backfill_complete` (crit 0.8) |
 | `m_dedupe_event_id` | idempotency on queue `eventId` | `t_no_double_count` (crit) |
-| `m_one_estimate_field` | one hard-coded estimate field | `t_reestimate_followed`, `u_widget_numbers`, `a_action_result` |
-| `m_retry_now` | immediate retry on 429 | `t_retry_after_honoured`, `r_rate_limit` |
+| `m_one_estimate_field` | one hard-coded estimate field | `t_reestimate_followed`, `u_widget_numbers`, `a_action_result`, `t_trigger_handoff` (verified) |
+| `m_retry_now` | immediate retry on 429 | `t_retry_after_honoured`, `r_rate_limit`, `r_backfill_complete` (crit), `r_removals_found` (verified) |
 | `m_asapp_ui` | ledger resolver and action read Jira `asApp` | `b_no_permission_leak` (crit), `b_hidden_count`, `a_action_permissions` |
 | `m_double_post` | no double-click guard | `b_comment_exactly_once` (crit) |
 | `m_string_comment` | plain-string comment body | `b_comment_adf_as_user`, `u_comment_flow`, `b_comment_exactly_once` (no comment lands) |
@@ -798,14 +798,14 @@ pointer double click can land on the container).
 | `m_abs_assets` | `/assets/…` absolute paths | `u_widget_loads` (crit), `v_csp_clean` |
 | `m_llm_trusts_numbers` | the model's summary shown verbatim, digits included | `u_llm_explain`, band 4 |
 | `m_llm_leaks_hidden` | explain prompt built from all ledger rows (asApp) and returned ids shown unfiltered | `b_no_permission_leak` (crit), `u_llm_explain` |
-| `m_llm_unknown_model` | a hard-coded model id `list()` does not return → every explain call errors | `k_llm_model_current`, `u_llm_explain` |
+| `m_llm_unknown_model` | a hard-coded model id `list()` does not return → every explain call errors | `k_llm_model_current`, `u_llm_explain` (verified) |
 | `m_llm_sampling_params` | sends the README's `temperature: 0.7, top_p: 0.9` | `u_llm_explain` |
 | `m_llm_no_refusal_path` | assumes a tool call is always present; a refusal throws in the resolver | `u_llm_explain`, `b_invoke_contract` |
 | `m_rt_publish_in_consumer` | consumer calls `publish()` instead of `publishGlobal()` | `u_widget_live` |
 | `m_rt_payload_leak` | realtime payload carries the changed rows (keys, points, authors) | `b_realtime_payload_clean` |
 | `m_rt_poll_instead` | widget polls its resolver every few seconds, no subscription | `u_widget_live` |
 | `m_skill_name` | SKILL.md `name` ≠ directory | MEASURED by WP3 with the client-side lint: ERROR "Skill sprint-scope-analyst frontmatter field 'name' must match the parent directory name" → `l_deployable` (crit) + `k_rovo_skill`, ≤ 0.499 |
-| `m_config_in_kvs` | widget board stored in KVS by a resolver, view ignores `extension.config` | `u_widget_edit_config` (second instance), `k_widget_edit_bridge` |
+| `m_config_in_kvs` | widget board stored in KVS by a resolver, view ignores `extension.config` | `u_widget_edit_config` (second instance); NOT `k_widget_edit_bridge` — the edit API stays in use (verified on the bed) |
 | `m_throw_on_429` | consumer throws on 429 instead of a retry request | `t_retry_after_honoured` (rows still land) |
 
 ## 14. Check ↔ contract map (measured is stated)
@@ -835,7 +835,7 @@ check. Anchors are FORGE-CONTRACT.md sections unless marked P (prompt) or S (STA
 | `r_pagination` | P done 3; S dev-site paragraph (bulk endpoints, pagination, JQL subset, ISO dates) |
 | `r_completes_in_timeout` | §8 "with the platform's timeouts" |
 | `s_storage_scope`, `s_limits` | §2 storage, platform limits discoverable |
-| `b_invoke_contract` | §6 errors, P done 7 |
+| `b_invoke_contract` | §2 "Every resolver returns a value and never throws…", §6 errors |
 | `b_no_permission_leak`, `b_hidden_count`, `a_action_permissions` | §1 last paragraph, §5 hidden-count and explain ("send it only what the viewer may see"), §6 |
 | `b_comment_adf_as_user`, `b_comment_exactly_once`, `u_comment_flow` | §5 post-summary bullet |
 | `u_widget_loads`, `u_widget_numbers`, `u_widget_chart`, `u_widget_edit_config` | §4 (`onProductSave` receives the last `updateConfig` value; ties by sprint id) |
@@ -986,4 +986,12 @@ Pages re-fetched 2026-10-03.
 | ALT kit README "429" vs site 500 for the error answer | — | both are errors to the app; `u_llm_explain` accepts any `ForgeLlmAPIError` status |
 | ALT emulated `stream()` returns one chunk | real chunking undocumented (§17.3) | `chat()` or `stream()` accepted; risk R6 covers stream fidelity |
 | WP1 a: deprecated-model trap invented | models page: no deprecated model exists | dropped `m_llm_deprecated_model` and the "deprecated model" wording (§2.2, §2.4, §5.2); `k_llm_model_current` = "the id the app sends is one `list()` returns"; replaced by `m_llm_unknown_model` (plus `m_llm_sampling_params`). §17.2's mentions are history, superseded here |
+
+### 17.5 Gaps 32–33 (WP3, golden 71926c50f) and the verified §13.5 rows
+
+| point | resolution |
+|---|---|
+| 32 resolvers that throw | contract §2 now states it for every resolver: "Every resolver returns a value and never throws: a failure (a Jira error, storage, Forge LLM) returns a value describing it, e.g. `{ "error": "…" }`, and the surface shows it." Matched to score_forge.py `b_invoke_contract` as it stands: an invoke is bad when the probe records `threw` (the bridge saw an error) — ANY returned value passes, so the contract names no required shape; §14 re-anchored |
+| 33 no comment-forbidden user on the dev site | `forge/site/fixtures.cjs` (shared by both seeds) already forbids the VIEWER on one issue, so the case exists for forge-dev's default viewer; STARTER now says so. WP1 (coordinator) is asked to confirm it reproduces on forge-dev, since WP3 saw 201 for all six users — likely tried other issues; if WP1 adds a dedicated flag, STARTER names it |
+| §13.5 rows | updated to WP3's verified evidence: `m_config_in_kvs`, `m_ids_only`, `m_one_estimate_field`, `m_retry_now`, `m_runtime18`, `m_storage_api`, `m_llm_unknown_model` |
 

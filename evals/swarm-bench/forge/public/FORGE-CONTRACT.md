@@ -46,7 +46,9 @@ everyone.
 | `rovo:mcp` | one module, `name` at most 30 characters, exposing `get-sprint-scope` |
 | `llm` | Forge LLM (`model: [claude]`), for the sprint action's explanation (§5) |
 
-Resolvers use `@forge/resolver`. Storage is Forge KVS: ledger changes live in a **custom entity
+Resolvers use `@forge/resolver`. Every resolver returns a value and never throws: a failure (a
+Jira error, storage, Forge LLM) returns a value describing it, e.g. `{ "error": "…" }`, and the
+surface shows it. Storage is Forge KVS: ledger changes live in a **custom entity
 indexed by sprint (partition) and change time (range)**, and are read back through that index.
 Request only the scopes your calls need: per call, the OAuth2 scopes the shipped OpenAPI lists for
 it (the classic scope where one exists, else the whole granular set). The linter does not see every

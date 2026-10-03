@@ -25,7 +25,8 @@ fields `project`, `key`, `sprint`, `updated`, `created`, `status`, `statusCatego
 `AND OR NOT`, parentheses, `ORDER BY`; functions `openSprints()`, `closedSprints()`,
 `futureSprints()`, `currentUser()`, `now()`, `startOfDay()`; relative dates like `-14d`. Forge LLM answers with a
 scripted model on the dev site. You
-never call the site directly; your app reaches it through the Forge runtime.
+never call the site directly; your app reaches it through the Forge runtime. As the default viewer
+(`users`, first line) one dev issue refuses comments with 403, as on the scoring site.
 
 **Tools** (`npm run lint` and `node $FORGE_KIT/bin/forge-dev.cjs <command>`):
 
