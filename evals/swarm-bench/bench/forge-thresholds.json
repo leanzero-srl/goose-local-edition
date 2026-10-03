@@ -3,6 +3,7 @@
   "note": "forge-1.0-rc defaults (DESIGN §8.4 rc rungs). The E rungs are ratios of the oracle's optimum and are calibration-owned: the freeze replaces them with the golden's worst-of-5 receipts and pins this file's sha256 as CALIB_SHA256 in score_forge.py.",
   "critical_multiplier_floor": 0.6,
   "economy_rungs": [[1.0, 1.5], [0.75, 3], [0.5, 10], [0.25, 40]],
+  "event_economy_rungs": [[1.0, 1.5], [0.75, 3], [0.5, 10], [0.25, 40]],
   "ui_round_trip_rungs": [[1.0, 1], [0.75, 2], [0.5, 4]],
   "idempotent_rerun_rungs": [[1.0, 0], [0.5, 0.01]],
   "contrast_min": 4.5,
@@ -11,7 +12,8 @@
   "blank_share": 0.995,
   "receipts": {
     "critical_multiplier_floor": "DESIGN §8.3 (SB's floor, one severity model across families)",
-    "economy_rungs": "DESIGN §8.4 rc rungs: <=1.5x the oracle optimum 1.0, <=3x .75, <=10x .5, <=40x .25",
+    "economy_rungs": "DESIGN §8.4 rc rungs for e_reconcile_economy: <=1.5x the oracle optimum 1.0, <=3x .75, <=10x .5, <=40x .25",
+    "event_economy_rungs": "DESIGN §8.4 rc rungs for e_event_economy (the backfill's rungs until calibration fits each to the golden)",
     "ui_round_trip_rungs": "DESIGN §8.4: 1 invoke before first paint 1.0, 2 .75, <=4 .5",
     "idempotent_rerun_rungs": "DESIGN §8.4: 0 writes 1.0, <=1% of rows .5, else 0",
     "contrast_min": "FORGE-CONTRACT.md §7: contrast at least 4.5:1",

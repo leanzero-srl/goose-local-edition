@@ -38,11 +38,24 @@ KEEP = None  # a directory where every verdict is kept (--keep)
 
 
 QUIET_LOAD = None  # --quiet-load N: wait before each scoring until the 1-minute load average is below N
+YIELD_TO: List[str] = []  # --yield-to PATTERN: wait while another scorer (pgrep -f PATTERN) is measuring on this host
+
+
+def _busy_scorers() -> List[str]:
+    found = []
+    for pattern in YIELD_TO:
+        out = subprocess.run(['pgrep', '-f', pattern], capture_output=True, text=True).stdout.split()
+        found += [f'{pattern}:{pid}' for pid in out if int(pid) != os.getpid()]
+    return found
 
 
 def _wait_quiet() -> None:
-    """A loaded host turns real-time rows (module timeouts, in-invocation waits) into host noise: wait it out."""
+    """A loaded host turns real-time rows (module timeouts, in-invocation waits) into host noise: wait it out. Another
+    scorer measuring latency on this host (a Gauntlet's score_sb7) is not loaded on top of: yield until it ends."""
     import time
+    while _busy_scorers():
+        print(f'yielding to {_busy_scorers()} before the next scoring', file=sys.stderr, flush=True)
+        time.sleep(30)
     while QUIET_LOAD is not None and os.getloadavg()[0] >= QUIET_LOAD:
         print(f'load {os.getloadavg()[0]:.1f} >= {QUIET_LOAD}: waiting before the next scoring', file=sys.stderr, flush=True)
         time.sleep(30)
@@ -153,9 +166,12 @@ def main(argv=None) -> int:
     ap.add_argument('--out', type=Path)
     ap.add_argument('--keep', type=Path, help='keep every verdict JSON here')
     ap.add_argument('--quiet-load', type=float, help='wait before each scoring until the 1-min load is below this')
+    ap.add_argument('--yield-to', action='append', default=[], metavar='PATTERN',
+                    help='wait before each scoring while `pgrep -f PATTERN` finds another scorer (repeatable)')
     a = ap.parse_args(argv)
-    global KEEP, QUIET_LOAD
+    global KEEP, QUIET_LOAD, YIELD_TO
     QUIET_LOAD = a.quiet_load
+    YIELD_TO = a.yield_to
     if a.keep:
         a.keep.mkdir(parents=True, exist_ok=True)
         KEEP = a.keep

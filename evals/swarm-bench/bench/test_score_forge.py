@@ -348,6 +348,59 @@ class GoldenTests(Golden):
         self.assertIn('Unsuppressed criticals: none', sf.format_report(v, 't'))
 
 
+class CalibrationTests(Golden):
+    SEEDS = ('a5a5a5a5a5a5a5a5', '5eed0123456789ab', '0123456789abcdef', 'fedcba9876543210', '00000000deadbeef')
+
+    def verdicts(self, event_ratios=(1.2, 2.07, 1.9, 2.0, 1.4), reconcile=(1.0, 1.11, 1.05, 1.0, 1.0)):
+        base = self.score()
+        out = []
+        for seed, ev, rec in zip(self.SEEDS, event_ratios, reconcile):
+            v = copy.deepcopy(base)
+            v['fixture_seed'] = seed
+            for r in v['checks']:
+                if r['check'] in ('e_event_economy', 'e_reconcile_economy'):
+                    r['parts'] = {'ratio': ev if r['check'] == 'e_event_economy' else rec}
+            out.append(v)
+        return out
+
+    def test_the_economy_rungs_fit_the_golden_worst_of_five(self):
+        fitted = sf.calibrate(self.verdicts(), sf.TH)
+        self.assertTrue(fitted['calibrated'])
+        self.assertEqual(fitted['event_economy_rungs'], [[1.0, 2.07], [0.75, 4.14], [0.5, 13.8], [0.25, 55.2]])
+        self.assertEqual(fitted['economy_rungs'], [[1.0, 1.11], [0.75, 2.22], [0.5, 7.4], [0.25, 29.6]])
+        self.assertIn('worst-of-5', fitted['receipts']['event_economy_rungs'])
+        self.assertEqual(fitted['ui_round_trip_rungs'], sf.TH['ui_round_trip_rungs'])
+        self.assertEqual(sorted(fitted['calibration']['seeds']), sorted(self.SEEDS))
+        # a golden better than the optimum never fits a top rung below the oracle's optimum
+        best = sf.calibrate(self.verdicts(event_ratios=(1.0,) * 5, reconcile=(0.9,) * 5), sf.TH)
+        self.assertEqual(best['economy_rungs'][0], [1.0, 1.0])
+        # the fit reads calls/optimum, not the display-rounded ratio: 10/9 = 1.1111 rounds to 1.111 but fits 1.12
+        exact = self.verdicts()
+        for v in exact:
+            next(r for r in v['checks'] if r['check'] == 'e_reconcile_economy')['parts'] = {'calls': 10, 'optimum': 9, 'ratio': 1.111}
+        self.assertEqual(sf.calibrate(exact, sf.TH)['economy_rungs'][0], [1.0, 1.12])
+
+    def test_calibration_refuses_short_or_failing_evidence(self):
+        with self.assertRaisesRegex(ValueError, 'distinct fixture seeds'):
+            sf.calibrate(self.verdicts()[:4], sf.TH)
+        dup = self.verdicts()
+        dup[1]['fixture_seed'] = dup[0]['fixture_seed']
+        with self.assertRaisesRegex(ValueError, 'distinct fixture seeds'):
+            sf.calibrate(dup, sf.TH)
+        bad = self.verdicts()
+        next(r for r in bad[2]['checks'] if r['check'] == 'u_widget_numbers')['score'] = 0.5
+        with self.assertRaisesRegex(ValueError, 'u_widget_numbers'):
+            sf.calibrate(bad, sf.TH)
+        miss = self.verdicts()
+        next(r for r in miss[3]['checks'] if r['check'] == 'e_ui_round_trips')['score'] = 0.75
+        with self.assertRaisesRegex(ValueError, 'misses the floor rung'):
+            sf.calibrate(miss, sf.TH)
+        mixed = self.verdicts()
+        mixed[4]['scorer_files_sha256'] = {'score_forge.py': 'other'}
+        with self.assertRaisesRegex(ValueError, 'different scorer files'):
+            sf.calibrate(mixed, sf.TH)
+
+
 class DefectTests(Golden):
     def mutate(self, fn):
         obs = copy.deepcopy(self.obs)

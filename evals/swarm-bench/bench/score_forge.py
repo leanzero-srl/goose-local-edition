@@ -84,7 +84,8 @@ def _load_thresholds() -> Dict:
         if CALIB_SHA256 == 'TBD-AT-FREEZE' or digest != CALIB_SHA256:
             raise SystemExit('forge-thresholds.json claims calibrated=true but its sha256 does not match the pin '
                              f'in score_forge.py ({digest[:16]}… vs {CALIB_SHA256[:16]}…) — refusing to score.')
-    for name in ('critical_multiplier_floor', 'economy_rungs', 'ui_round_trip_rungs', 'idempotent_rerun_rungs',
+    for name in ('critical_multiplier_floor', 'economy_rungs', 'event_economy_rungs', 'ui_round_trip_rungs',
+                 'idempotent_rerun_rungs',
                  'contrast_min', 'chart_tolerance_px', 'color_tolerance'):
         if name not in data:
             raise SystemExit(f'forge-thresholds.json lacks {name!r} — refusing to score on a silent default')
@@ -2597,8 +2598,8 @@ def _(c):
     relevant = [e for e in c.oracle.relevant_live() if not (e.get('delivery') or {}).get('dropped')]
     used = len(c.calls(('live',), 'jira', ('trigger', 'consumer')))
     ratio = used / max(1, len(relevant))
-    return g(ladder(ratio, TH['economy_rungs']), f'{used} Jira calls for {len(relevant)} relevant changes = '
-             f'{ratio:.2f} per change (optimum 1)', parts={'calls': used, 'changes': len(relevant)})
+    return g(ladder(ratio, TH['event_economy_rungs']), f'{used} Jira calls for {len(relevant)} relevant changes = '
+             f'{ratio:.2f} per change (optimum 1)', parts={'calls': used, 'changes': len(relevant), 'ratio': round(ratio, 3)})
 
 
 @check('e_ui_round_trips', 'E', needs=('ui',))
@@ -2621,6 +2622,61 @@ def _(c):
         return g(0, 'no ledger rows — nothing to keep idempotent')
     writes = sum(_entity_writes(x) for x in c.calls(('rerun',), 'kvs'))
     return g(ladder(writes / rows, TH['idempotent_rerun_rungs']), f'{writes} entity write(s) on a no-change run over {rows} rows')
+
+
+# ── calibration (DESIGN §13.4 item 4: thresholds frozen with golden ×5 receipts, sha pinned) ──────────────
+
+CALIBRATION_SEEDS = 5   # DESIGN §13.4 item 4
+# The two economy ratios are FITTED: the top rung moves to the golden's worst-of-5 ratio (rounded up to 0.01, never
+# below the oracle optimum 1.0) and every lower rung keeps its rc multiple of the top, so the golden defines 1.0 on
+# every calibration seed. The round-trip and rerun rungs sit at their floor already (1 invoke, 0 writes): they are
+# VERIFIED (the golden reaches the top rung on every seed), never fitted — a golden that misses them refuses.
+FITTED_RUNGS = {'economy_rungs': 'e_reconcile_economy', 'event_economy_rungs': 'e_event_economy'}
+VERIFIED_TOP = ('e_ui_round_trips', 'e_idempotent_rerun')
+
+
+def _exact_ratio(parts: Dict) -> float:
+    # parts['ratio'] is rounded for display; a top rung fitted to a rounded-DOWN ratio would grade the golden below 1.0
+    den = parts.get('optimum') or parts.get('changes')
+    return parts['calls'] / den if isinstance(parts.get('calls'), int) and den else parts['ratio']
+
+
+def calibrate(verdicts: List[Dict], rc: Dict) -> Dict:
+    """The calibrated thresholds from >= 5 reference-passing golden verdicts on distinct seeds; refuses otherwise."""
+    fails = []
+    seeds = [v.get('fixture_seed') for v in verdicts]
+    if len(set(seeds)) < CALIBRATION_SEEDS or None in seeds:
+        fails.append(f'{CALIBRATION_SEEDS} distinct fixture seeds needed, got {seeds}')
+    shas = {json.dumps(v.get('scorer_files_sha256'), sort_keys=True) for v in verdicts}
+    if len(shas) != 1:
+        fails.append('the golden verdicts were scored by different scorer files')
+    if any(v.get('scorerVersion') != 'forge-1.0-rc' for v in verdicts):
+        fails.append('calibration fits rc-grade verdicts only (thresholds already calibrated?)')
+    for v in verdicts:
+        fails += [f"{v.get('fixture_seed')}: {f}" for f in reference_failures(v)]
+        rows = {r['check']: r for r in v['checks']}
+        fails += [f"{v.get('fixture_seed')}: {n} {rows[n]['score']} — the golden misses the floor rung"
+                  for n in VERIFIED_TOP if rows[n]['score'] < 1.0]
+        fails += [f"{v.get('fixture_seed')}: {n} carries no measured ratio" for n in FITTED_RUNGS.values()
+                  if not isinstance((rows[n].get('parts') or {}).get('ratio'), (int, float))]
+    if fails:
+        raise ValueError('calibration refused:\n  ' + '\n  '.join(fails))
+    out = json.loads(json.dumps(rc))
+    out['calibrated'] = True
+    out['note'] = ('forge-1.0 calibrated thresholds: the economy rungs are fitted to the golden worst-of-5 '
+                   '(DESIGN §13.4 item 4); everything else keeps its rc receipt. Pinned as CALIB_SHA256 in score_forge.py.')
+    for key, row in FITTED_RUNGS.items():
+        per_seed = {v['fixture_seed']: _exact_ratio(next(r for r in v['checks'] if r['check'] == row)['parts']) for v in verdicts}
+        worst = max(per_seed.values())
+        top = max(1.0, math.ceil(worst * 100 - 1e-9) / 100)
+        rc_top = rc[key][0][1]
+        out[key] = [[score, round(cut * top / rc_top, 2)] for score, cut in rc[key]]
+        out['receipts'][key] = (f'golden worst-of-{len(per_seed)} {row} ratio {worst} (per seed {per_seed}) -> top rung '
+                                f'{top}; lower rungs keep the rc multiples of the top ({rc[key]})')
+    out['calibration'] = {'seeds': sorted(seeds), 'scorer_files_sha256': verdicts[0].get('scorer_files_sha256'),
+                          'kit_lock_sha256': verdicts[0].get('kit_lock_sha256'), 'wrapper_sha256': verdicts[0].get('wrapper_sha256'),
+                          'verified_top': {n: 'golden 1.0 on every seed' for n in VERIFIED_TOP}}
+    return out
 
 
 # ── registry-close asserts ───────────────────────────────────────────────────────────────────
@@ -3209,13 +3265,30 @@ LOCK_FILE = Path(tempfile.gettempdir()) / 'goose-forge-score.lock'
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
-    ap.add_argument('--tree', type=Path, required=True)
+    ap.add_argument('--tree', type=Path)
     ap.add_argument('--seed')
-    ap.add_argument('--json-out', type=Path, required=True)
+    ap.add_argument('--json-out', type=Path)
+    ap.add_argument('--calibrate', type=Path, nargs='+', metavar='GOLDEN_VERDICT',
+                    help='fit forge-thresholds.json from >= 5 reference-passing golden verdicts; prints the sha to pin')
     ap.add_argument('--reference', action='store_true')
     ap.add_argument('--runtime', choices=('wrapper', 'shim'), default='wrapper')
     ap.add_argument('--port', type=int, help='accepted for the rescorer; forge binds ephemeral ports')
     a = ap.parse_args(argv)
+    if a.calibrate:
+        try:
+            fitted = calibrate([json.loads(p.read_text()) for p in a.calibrate], TH)
+        except ValueError as e:
+            print(f'REFUSED: {e}', file=sys.stderr)
+            return 3
+        text = json.dumps(fitted, indent=2, ensure_ascii=False)
+        for key in [k for k in fitted if k.endswith('_rungs')]:   # one rung list per line, as the rc file
+            text = re.sub(r'("%s": )\[[\s\S]*?\n  \]' % re.escape(key), lambda m, k=key: m.group(1) + json.dumps(fitted[k]), text)
+        raw = (text + '\n').encode()
+        THRESHOLDS_FILE.write_bytes(raw)
+        print(f"wrote {THRESHOLDS_FILE.name}; pin CALIB_SHA256 = '{hashlib.sha256(raw).hexdigest()}' in score_forge.py")
+        return 0
+    if not a.tree or not a.json_out:
+        ap.error('--tree and --json-out are required to score')
     fails = severity_selftest()
     if fails:
         print('REFUSED: severity_selftest() failed — the gradient is inverted:\n  ' + '\n  '.join(fails), file=sys.stderr)
