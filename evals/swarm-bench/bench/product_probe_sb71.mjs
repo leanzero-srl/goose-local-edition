@@ -4622,8 +4622,11 @@ async function vizScenario(page, pack, H) {
       survivedInBrush: !!(d1TargetId != null && brushAfter && brushAfter.includes(d1TargetId)),
       // survived is the D1-corner OBSERVATION: null unless the target was brushed when a
       // mutation for it was actually seen — the only case documented-vs-observed can grade.
-      // An unbrushed stream witness means the target was not brushed when it mutated.
-      survived: (d1TargetId != null && d1.brushed && mutationSeen && brushAfter && !(streamArm && streamArm.mode !== 'armed'))
+      // When the stream arm ran it is the authority on that: 'armed' means it left the target
+      // brushed right before the driver's D1 mutation (also when the early arm could not reach
+      // it — Jev 7.2: early arm 'unreachable', stream arm armed at a framed pose); any other
+      // mode means the target was not brushed when it mutated. Without it, the early arm's.
+      survived: (d1TargetId != null && (streamArm ? streamArm.mode === 'armed' : d1.brushed) && mutationSeen && brushAfter)
         ? brushAfter.includes(d1TargetId) : null,
       rowBrushedAfter: d1Row.found ? d1Row.dataBrushed === 'true' : null,
     } });
