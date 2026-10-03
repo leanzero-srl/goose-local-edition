@@ -139,7 +139,8 @@ def _kill_owned(proc):
 # armed: brushed D1 witness. app_surface_absent: measured missing scene. The candidate_* states
 # carry the probe's proof that the candidate's own click/pick could not brush a target its canvas
 # draws; stream_witness() re-checks that proof before any row is charged.
-CANDIDATE_WITNESS_STATES = ('armed_unbrushed', 'candidate_unreachable')
+# target_absent: no pixel draws the target and the candidate's own API answers 404 for it.
+CANDIDATE_WITNESS_STATES = ('armed_unbrushed', 'candidate_unreachable', 'target_absent')
 FIRING_WITNESS_STATES = ('armed', 'app_surface_absent', *CANDIDATE_WITNESS_STATES)
 
 
@@ -559,7 +560,7 @@ def gather(root, vendor_port, db_dir, trace_path, mark_phase=None, seed=None):
             'initial_api': initial_api_evidence(ctx),
             'endpoint_absences': absences, 'notifier_notification_reads': notifier_reads,
             'stream_head': ctx.stream_head,
-            'workflow': ctx.workflow, 'api_lat': ctx.api_lat,
+            'workflow': ctx.workflow, 'api_lat': ctx.api_lat, 'under_stream': ctx.under_stream,
             'resync_interruption': resync, 'partition_status': ctx.sb71_partition,
             'partition_immediate_status': ctx.outbox_during_partition,
             'read_stream': ctx.read_stream}, indent=2))
@@ -723,6 +724,8 @@ def stream_witness(viz):
     if state not in CANDIDATE_WITNESS_STATES:
         return None
     arm = viz.get('streamPixelArm') or {}
+    if state == 'target_absent':
+        return target_absent_witness(viz, signal, arm)
     failure = signal.get('candidateFailure') or {}
     target = signal.get('id')
     problems = []
@@ -757,6 +760,39 @@ def stream_witness(viz):
                       f"early D1 arm (3D click at seeded poses, then the table row on the rendered page): {early}"],
         'evidence': failure, 'rejected': arm.get('rejected'),
         'charged': ['d_decisions_doc:D1'] + ([] if measured else list(PIXEL_WITNESS_ROWS)),
+    }
+
+
+def target_absent_witness(viz, signal, arm):
+    """The probe found no pose whose pixel draws the D1 target, and the candidate's own
+    GET /api/payments/<target> answered 404 for a record the vendor serves: the candidate never
+    ingested it, so no witness of any kind exists. Charged like candidate_unreachable with no
+    witness; contradicted evidence refuses."""
+    target = signal.get('id')
+    absent = signal.get('targetAbsent') or {}
+    problems = []
+    if arm.get('mode') != 'target_absent' or arm.get('targetAbsent') != absent:
+        problems.append('the handshake and the viz observation disagree')
+    if not target or absent.get('targetId') != target:
+        problems.append('the evidence names a different target')
+    if (absent.get('payment') or {}).get('status') != 404:
+        problems.append("the candidate's GET /api/payments/<target> is not shown answering 404")
+    early = viz.get('d1Arm') or {}
+    if early.get('brushed') is True or str(early.get('via', '')).startswith(('3d-click', 'table-click')):
+        problems.append('the early D1 arm reached the target (' + str(early.get('via')) + ')')
+    rejected = arm.get('rejected') or {}
+    if not rejected or any(reason.startswith('vs7dbg.brush unavailable') for reason in rejected):
+        problems.append('the pixel search did not run over the seeded poses')
+    if problems:
+        return {'refuse': 'contradictory SB7.1 D1 stream witness: ' + '; '.join(problems)}
+    return {
+        'status': 'target_absent', 'target': target, 'stream_measured': False, 'witness': 'none',
+        'reason': signal.get('reason'),
+        'via_tried': [f"3D click at seeded poses ({sum(rejected.values())} rejections: {json.dumps(rejected)})",
+                      f"early D1 arm (3D click, then the table row): {early.get('via')}",
+                      f"the candidate's GET /api/payments/{target}: HTTP 404"],
+        'evidence': absent, 'rejected': rejected,
+        'charged': ['d_decisions_doc:D1', *PIXEL_WITNESS_ROWS],
     }
 
 
@@ -795,6 +831,13 @@ def inherited_observation_result(name, original, ctx):
         return base.unavail(ctx.probes['flow']['paymentWitness']['unavailable'])
     if name == 'x_m2_pair_conservation':
         return pair_conservation_result(original, ctx)
+    if name in ('p_under_stream', 'e_under_load_latency') and getattr(ctx, 'under_stream', None):
+        rejected = burst_rejected(ctx)
+        if rejected is not None:
+            return base.g(0.0, f"the stream burst applied nothing: the candidate answered {rejected['answered']} "
+                          f"(overlap {ctx.under_stream.get('overlap_frac')}, burst {rejected['burst_ms']} ms)",
+                          'read latency under stream load is unmeasured because the candidate refused the stream',
+                          parts={'burst_rejected': rejected, 'under_stream': ctx.under_stream})
     # A partition phase that never ran (the candidate failed before it) has no evidence to judge; the
     # inherited check grades that from b7_result like any other unreached-by-the-candidate row.
     if name == 'r_b7_partition' and getattr(ctx, 'sb71_partition', None) is not None:
@@ -897,6 +940,34 @@ def b3_walk_short(ctx):
             'sync2_list_requests': [{k: e.get(k) for k in ('t', 'status', 'offset', 'last', 'generation', 'if_none_match')}
                                     for e in lists],
             'reason': (getattr(ctx, 'b3_result', None) or {}).get('reason')}
+
+
+def burst_rejected(ctx):
+    """Every delivery of the under-stream burst (vendor fire_burst) was answered by the candidate with
+    a non-2xx HTTP status, or reached no webhook because the candidate never registered one: the
+    stream load the readers are timed under was never applied, so their latency is not a latency
+    under load at any overlap (receipt: qwen3.8-omni-flash SB7.2, all 24 burst deliveries 401 in
+    16 ms because its ledgerd strips 'whsec_' from the HMAC key, overlap 0.367 -> refused).
+    A transport error (timeout, refused connection) keeps the existing path: host load confounds it."""
+    trace = getattr(ctx, 'trace', None) or []
+    commits = [e for e in trace if e.get('commit') and e.get('sched') == 'burst']
+    delivered = [e for e in trace if e.get('webhook_delivery') and e.get('sched') == 'burst']
+    unregistered = [e for e in trace if e.get('sched-partial') == 'burst'
+                    and e.get('reason') == 'no_webhook_registered']
+    if (not commits or len(delivered) + len(unregistered) != len(commits)
+            or any(e.get('delivery_error') is not None or not isinstance(e.get('delivery_status'), int)
+                   or 200 <= e['delivery_status'] < 300 for e in delivered)):
+        return None
+    statuses = {}
+    for e in delivered:
+        statuses[e['delivery_status']] = statuses.get(e['delivery_status'], 0) + 1
+    answered = ', '.join(f'HTTP {code} x{n}' for code, n in sorted(statuses.items()))
+    if unregistered:
+        answered = ', '.join(filter(None, [answered, f'no webhook registered x{len(unregistered)}']))
+    stamps = [e['t'] for e in (*commits, *delivered, *unregistered) if isinstance(e.get('t'), (int, float))]
+    return {'deliveries': len(commits), 'statuses': statuses, 'unregistered': len(unregistered),
+            'answered': f'{answered} of {len(commits)} burst deliveries',
+            'burst_ms': round((max(stamps) - min(stamps)) * 1000, 1) if stamps else None}
 
 
 def b5_unpresented(ctx):

@@ -242,3 +242,57 @@ class DuplicatedVendorPaymentTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class BurstRejectedTests(unittest.TestCase):
+    """qwen/qwen3.8-omni-flash, SB7.2 (2026-10-03): its ledgerd strips 'whsec_' from the HMAC key, so all
+    24 burst deliveries were answered 401 within 16 ms; the readers' overlap with that instant burst was
+    0.367 and the run was REFUSED as 'load unproven'. The stream load never existed: charged at any overlap."""
+
+    def setUp(self):
+        saved = json.loads((Path(__file__).parent / 'fixtures/sb72-omni-flash-burst-rejected.json').read_text())
+        self.trace, self.under = saved['trace'], saved['under_stream']
+
+    def ctx(self, trace=None, under=None):
+        return SimpleNamespace(trace=copy.deepcopy(self.trace if trace is None else trace),
+                               under_stream=dict(self.under if under is None else under))
+
+    def test_the_omni_flash_receipt_is_charged(self):
+        for name in ('p_under_stream', 'e_under_load_latency'):
+            self.assertTrue(check(name)(self.ctx()).get('unavailable'), 'the control: it refused before')
+            row = result(name, self.ctx())
+            self.assertEqual(row['score'], 0)
+            self.assertNotIn('unavailable', row)
+            self.assertIn('HTTP 401 x24 of 24 burst deliveries', row['detail'])
+            self.assertEqual(row['parts']['burst_rejected']['burst_ms'], 15.9)
+
+    def test_a_rejected_burst_is_charged_even_when_reads_overlapped_it(self):
+        ctx = self.ctx(under={'overlap_frac': 0.9, 'p95_ms': 2.0, 'n': 30, 'correct': True})
+        self.assertEqual(check('p_under_stream')(ctx)['score'], 1.0, 'the control: a fast idle read earned 1.0')
+        self.assertEqual(result('p_under_stream', ctx)['score'], 0)
+
+    def test_a_never_registered_webhook_is_charged(self):
+        trace = [e for e in self.trace if not e.get('webhook_delivery') and 'sched-partial' not in e]
+        trace += [{'sched-partial': 'burst', 'event': f'evt_burst_{i:04d}', 'reason': 'no_webhook_registered',
+                   't': e['t']} for i, e in enumerate(trace)]
+        row = result('p_under_stream', self.ctx(trace=trace))
+        self.assertEqual(row['score'], 0)
+        self.assertIn('no webhook registered x24', row['detail'])
+
+    def test_harness_side_bursts_still_refuse(self):
+        def accepted(trace):
+            next(e for e in trace if e.get('webhook_delivery'))['delivery_status'] = 200
+        def timed_out(trace):
+            first = next(e for e in trace if e.get('webhook_delivery'))
+            first.update(delivery_status=None, delivery_error='TimeoutError')
+        def lost(trace):
+            trace.remove(next(e for e in trace if e.get('webhook_delivery')))
+        for name, edit in [('one delivery acked', accepted), ('a transport timeout', timed_out),
+                           ('a delivery missing from the trace', lost),
+                           ('no burst fired', lambda trace: trace.clear())]:
+            trace = copy.deepcopy(self.trace)
+            edit(trace)
+            with self.subTest(name):
+                self.assertTrue(result('p_under_stream', self.ctx(trace=trace))['unavailable'])
+        never = SimpleNamespace(trace=copy.deepcopy(self.trace), under_stream={})
+        self.assertTrue(result('e_under_load_latency', never)['unavailable'])
