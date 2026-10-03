@@ -16,6 +16,7 @@ import {
   defaultBenchmarkScorer,
 } from '../../benchTierPayload';
 import { forgePublishProblem } from '../../benchForgePublish';
+import { clipAbsence } from '../../benchRunResults';
 import type { ForgeKitStatus } from '../../benchForgeKitTypes';
 import { RunVideoEvidence } from './RunVideoEvidence';
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -770,10 +771,32 @@ function SessionDetail({
         </Panel>
       )}
 
+      {session.retryScoring?.ready && (
+        // A finished Forge run whose surfaces were graded but whose clip could not be verified: the
+        // site refuses it clip-less, so the saved build is re-scored rather than posted without it.
+        <div data-testid="clip-retry" className="flex flex-col gap-3">
+          <ToneBand tone="warn">
+            No graded browser clip could be verified although the app&rsquo;s surfaces were graded —
+            a scoring problem, not the model&rsquo;s.
+          </ToneBand>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button onClick={onRetryScoring} disabled={retryBusy}>
+              Retry scoring
+            </Button>
+            <p className={TYPE.bodyMuted}>Uses the saved build. No new model run.</p>
+          </div>
+        </div>
+      )}
       {mineMatched &&
         (isIsolatedPaymentsScorer(session.scorerVersion) || isForge(session.scorerVersion)) && (
           <Panel title="Graded browser recording">
-            <RunVideoEvidence workdir={mine?.workdir} />
+            <RunVideoEvidence
+              workdir={mine?.workdir}
+              absence={clipAbsence(
+                session.scorerVersion,
+                (mine?.verdict as { checks?: unknown } | undefined)?.checks
+              )}
+            />
           </Panel>
         )}
 
@@ -842,8 +865,8 @@ function SessionDetail({
           </p>
         ) : (
           <p className={TYPE.bodyMuted}>
-            The check-by-check breakdown is kept with the latest stored result only — this session
-            shows its score and tier split.
+            This run&rsquo;s scored result could not be read from its folder — the session shows its
+            score and tier split only.
           </p>
         )}
       </Panel>
@@ -1348,6 +1371,52 @@ export default function BenchmarkView() {
     return sessionKey(candidates.reduce((a, b) => (startMs(b) > startMs(a) ? b : a)));
   }, [mine, sessions]);
 
+  // EVERY finished run shows (and publishes) its OWN result: main reads its stored row, or rebuilds it
+  // from the verdict in its own tree — result.json is only the latest run. Keyed by the session, so a
+  // reply for a run no longer selected is dropped rather than shown under the wrong headline.
+  const selectedKey = selectedSession ? sessionKey(selectedSession) : null;
+  const selectedFinished = selectedSession?.outcome === 'finished';
+  const [runResult, setRunResult] = useState<{
+    key: string;
+    row: MineRow | null;
+    shots: BenchShot[];
+  } | null>(null);
+  useEffect(() => {
+    if (!selectedKey || !selectedFinished || !window.electron.benchmarkRunResult) return;
+    let alive = true;
+    void (async () => {
+      const row = (await window.electron
+        .benchmarkRunResult(selectedKey)
+        .catch(() => null)) as MineRow | null;
+      const picked =
+        row?.workdir != null
+          ? await window.electron.benchmarkShots?.(row.workdir).catch(() => [])
+          : [];
+      if (alive)
+        setRunResult({
+          key: selectedKey,
+          row,
+          shots: Array.isArray(picked) ? (picked as BenchShot[]) : [],
+        });
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [selectedKey, selectedFinished, mine, sessions]);
+  // The selected run's own row: the per-run read when it answered for THIS run, else the latest result
+  // when it is this run's (a build without the per-run bridge), else nothing — never a neighbour's.
+  const shown =
+    runResult && runResult.key === selectedKey && runResult.row
+      ? { row: runResult.row, shots: runResult.shots }
+      : mine && selectedKey != null && selectedKey === mineSessionKey
+        ? { row: mine, shots }
+        : null;
+  const shownRow = shown?.row ?? null;
+  // A publish outcome belongs to the run it was for.
+  useEffect(() => {
+    setPub({ kind: 'idle' });
+  }, [selectedKey]);
+
   const run = useCallback(async () => {
     setRunning(true);
     setHarnessStage('boot');
@@ -1456,17 +1525,18 @@ export default function BenchmarkView() {
   }, [deleteTarget, loadSessions]);
 
   const publish = useCallback(async () => {
-    if (!mine) return;
+    if (!shownRow || !selectedKey) return;
     const chosen = title.trim();
     if (!chosen) return;
     setPub({ kind: 'publishing' });
     try {
-      const res = await window.electron.benchmarkPublish?.({ title: chosen });
+      const res = await window.electron.benchmarkPublish?.({ title: chosen, runKey: selectedKey });
       if (res?.ok) {
+        void loadSessions();
         setPub({
           kind: 'accepted',
           title: chosen,
-          score: mine.score,
+          score: shownRow.score,
           url: typeof res.url === 'string' ? res.url : null,
         });
       } else {
@@ -1482,11 +1552,11 @@ export default function BenchmarkView() {
     } catch (err) {
       setPub({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
     }
-  }, [mine, title]);
+  }, [shownRow, selectedKey, title, loadSessions]);
 
   const publishing = pub.kind === 'publishing';
-  const publishable = mine != null && mine.runMeta != null;
-  const modelProblem = modelIdProblem(mine?.modelId);
+  const publishable = shownRow != null && shownRow.runMeta != null;
+  const modelProblem = modelIdProblem(shownRow?.modelId);
   const publishTitleProblem = titleProblem(title);
   const uid = useId();
   const lockedId = `${uid}-locked`;
@@ -1508,8 +1578,8 @@ export default function BenchmarkView() {
     selectedEra.scorerVersion === `${currentEra.scorerVersion}-rc`;
   // The scorer's own refusal for a Forge result (held, unpublishable, rc) — main refuses the same way.
   const forgeProblem =
-    mine && isForge(mine.scorerVersion)
-      ? forgePublishProblem({ scorerVersion: mine.scorerVersion, verdict: mine.verdict })
+    shownRow && isForge(shownRow.scorerVersion)
+      ? forgePublishProblem({ scorerVersion: shownRow.scorerVersion, verdict: shownRow.verdict })
       : null;
   const publishWhy = !publishable
     ? 'Run the benchmark (v2) first'
@@ -1518,7 +1588,7 @@ export default function BenchmarkView() {
       : selectedFrozen
         ? 'Benchmark frozen — submissions closed'
         : selectedSession && selectedSession.publishable === false
-          ? 'This session is not publishable — its stored result predates the v2 publisher'
+          ? "This run's scored result cannot be published from this machine"
           : forgeProblem
             ? forgeProblem
             : modelProblem
@@ -1527,10 +1597,29 @@ export default function BenchmarkView() {
                 ? publishTitleProblem
                 : null;
 
-  // Publish belongs to the selected session's detail, and ONLY when that session is the one the
-  // stored result describes — publishing posts mine/result.json, nothing else.
+  // Publish belongs to the selected session's detail and posts THAT run's own result row. A run this
+  // machine already posted says where it is live instead of offering a second post.
   const publishSection =
-    mine && selectedSession && sessionKey(selectedSession) === mineSessionKey ? (
+    !shownRow || !selectedSession ? null : selectedSession.published ? (
+      <Panel title="Publish to leanzero.net">
+        <div
+          data-testid="published-live"
+          className={cx(
+            'flex items-start gap-2 px-4 py-3 text-lz-body [&>svg]:mt-0.5 [&>svg]:size-4 [&>svg]:shrink-0',
+            WEIGHT.medium,
+            RADIUS.card,
+            TONE_FILL.ok
+          )}
+        >
+          <BadgeCheck />
+          <span>
+            Live on leanzero.net — &ldquo;{selectedSession.published.title}&rdquo; ·{' '}
+            {(selectedSession.published.score * 100).toFixed(1)}%
+            {selectedSession.published.url ? ` · leanzero.net${selectedSession.published.url}` : ''}
+          </span>
+        </div>
+      </Panel>
+    ) : (
       <Panel title="Publish to leanzero.net">
         <p className={cx('max-w-[70ch]', TYPE.bodyMuted)}>
           Posts your score, the check-by-check breakdown and graded app evidence under the title you
@@ -1547,7 +1636,7 @@ export default function BenchmarkView() {
             <input
               id={modelId}
               type="text"
-              value={mine.modelId ?? ''}
+              value={shownRow.modelId ?? ''}
               readOnly
               aria-describedby={modelHintId}
               className={cx(INPUT, 'cursor-default bg-lz-surface-2')}
@@ -1653,7 +1742,7 @@ export default function BenchmarkView() {
           )}
         </div>
       </Panel>
-    ) : null;
+    );
 
   return (
     <MainPanelLayout>
@@ -1929,9 +2018,9 @@ export default function BenchmarkView() {
                   baselines={selectedEra.baselines}
                   catalogAbsent={catalog.kind === 'absent'}
                   fromCatalog={selectedEra.fromCatalog}
-                  mine={mine}
-                  mineMatched={sessionKey(selectedSession) === mineSessionKey}
-                  shots={shots}
+                  mine={shownRow}
+                  mineMatched={shownRow != null}
+                  shots={shown?.shots ?? []}
                   publishSlot={publishSection}
                   onRetryScoring={() => void retryScoring(selectedSession)}
                   justEnded={justEndedKeys.has(sessionKey(selectedSession))}
@@ -1939,7 +2028,10 @@ export default function BenchmarkView() {
                     running ||
                     !runtimeReady ||
                     !!launchProblem ||
-                    selectedSession.scorerVersion !== defaultBenchmarkScorer(family)
+                    // A finished Forge run re-scored for its clip carries score_forge's rc identity.
+                    (selectedSession.outcome === 'finished' && family === 'forge'
+                      ? selectedSession.scorerVersion.replace(/-rc$/, '')
+                      : selectedSession.scorerVersion) !== defaultBenchmarkScorer(family)
                   }
                 />
               </div>

@@ -1,0 +1,602 @@
+{
+ "_source": "openrouter-cloud-25eb9626-739f-44c1-bffa-ec0e05a39f2b-r0/verdict.json (upstage/solar-mini4, measured 2026-10-02)",
+ "scorerVersion": "sb-7.2",
+ "score": 0.0083,
+ "media": null,
+ "checks": [
+  {
+   "check": "a_package_layout",
+   "tier": "A",
+   "score": 0.875,
+   "detail": "5/6 named files, 2/2 bootable service modules"
+  },
+  {
+   "check": "server_runs",
+   "tier": "A",
+   "score": 0.15,
+   "detail": "process survives 5s without binding"
+  },
+  {
+   "check": "a_combined_entrypoint",
+   "tier": "A",
+   "score": 0.0,
+   "detail": "not exercised: ledgerd never bound its port at boot, so grading stopped before this phase"
+  },
+  {
+   "check": "serves_page",
+   "tier": "A",
+   "score": 0.0,
+   "detail": "GET / -> None"
+  },
+  {
+   "check": "a_asset_budget",
+   "tier": "A",
+   "score": 1.0,
+   "detail": "47 KB of 150 KB (4/4 files), 0 external ref(s)"
+  },
+  {
+   "check": "a_db_ownership",
+   "tier": "A",
+   "score": 0.5,
+   "detail": "ledger.db=True notifier.db=False"
+  },
+  {
+   "check": "sync_completeness",
+   "tier": "B",
+   "score": 0.0,
+   "detail": "Eventual evidenced total 0; initial API snapshot total None; initial expected total None. Totals reflect their respective measurement phases."
+  },
+  {
+   "check": "b_total_field",
+   "tier": "B",
+   "score": 0.0,
+   "detail": "no full state to grade the total against"
+  },
+  {
+   "check": "b_row_shape",
+   "tier": "B",
+   "score": 0.0,
+   "detail": "no rows"
+  },
+  {
+   "check": "b_chronological_order",
+   "tier": "B",
+   "score": 0.0,
+   "detail": "too few rows"
+  },
+  {
+   "check": "b_summary_shape",
+   "tier": "B",
+   "score": 0.0,
+   "detail": "no summary"
+  },
+  {
+   "check": "b_money_rendered",
+   "tier": "B",
+   "score": 0.0,
+   "detail": "vacuous \u2014 nothing to lose because `sync_completeness` already failed"
+  },
+  {
+   "check": "b_buckets_dst",
+   "tier": "B",
+   "score": 0.0,
+   "detail": "vacuous \u2014 nothing to lose because `sync_completeness` already failed"
+  },
+  {
+   "check": "b_viz_records",
+   "tier": "B",
+   "score": 0.0,
+   "detail": "no /api/viz/records"
+  },
+  {
+   "check": "b_events_log",
+   "tier": "B",
+   "score": 0.0,
+   "detail": "no events returned (status None)"
+  },
+  {
+   "check": "b_error_envelope",
+   "tier": "B",
+   "score": 0.0,
+   "detail": "no error responses observed"
+  },
+  {
+   "check": "b_json_shapes",
+   "tier": "B",
+   "score": 0.0,
+   "detail": "no responses sampled"
+  },
+  {
+   "check": "c_paged_walk",
+   "tier": "C",
+   "score": 0.0,
+   "detail": "not exercised: ledgerd never bound its port at boot, so grading stopped before this phase"
+  },
+  {
+   "check": "c_b1_drop_resume",
+   "tier": "C",
+   "score": 0.0,
+   "detail": "not exercised: ledgerd never bound its port at boot, so grading stopped before this phase"
+  },
+  {
+   "check": "c_b2_retry_after",
+   "tier": "C",
+   "score": 0.0,
+   "detail": "not exercised: ledgerd never bound its port at boot, so grading stopped before this phase"
+  },
+  {
+   "check": "c_b5_generation_304",
+   "tier": "C",
+   "score": 0.0,
+   "detail": "not exercised: ledgerd never bound its port at boot, so grading stopped before this phase"
+  },
+  {
+   "check": "c_conditional_resync",
+   "tier": "C",
+   "score": 0.0,
+   "detail": "not exercised: ledgerd never bound its port at boot, so grading stopped before this phase"
+  },
+  {
+   "check": "c_webhook_discipline",
+   "tier": "C",
+   "score": 0.0,
+   "detail": "not exercised: ledgerd never bound its port at boot, so grading stopped before this phase"
+  },
+  {
+   "check": "c_send_idempotency",
+   "tier": "C",
+   "score": 0.0,
+   "detail": "not exercised: ledgerd never bound its port at boot, so grading stopped before this phase"
+  },
+  {
+   "check": "d_content_types",
+   "tier": "D",
+   "score": 0.0,
+   "detail": "api json 0.00, /api/stream ctype ''"
+  },
+  {
+   "check": "d_validation",
+   "tier": "D",
+   "score": 0.0,
+   "detail": "matrix not exercised"
+  },
+  {
+   "check": "d_client_timeouts",
+   "tier": "D",
+   "score": 0.4,
+   "detail": "vendor-down boot not proven; timeout= present in source"
+  },
+  {
+   "check": "d_peer_absence",
+   "tier": "D",
+   "score": 0.0,
+   "detail": "not exercised: ledgerd never bound its port at boot, so grading stopped before this phase"
+  },
+  {
+   "check": "d_decisions_doc",
+   "tier": "D",
+   "score": 0.0,
+   "detail": "DECISIONS.md absent or carries none of the frozen ## D1/D2/D3 headings"
+  },
+  {
+   "check": "j_loads_data",
+   "tier": "J",
+   "score": 0.0,
+   "detail": "0 rows rendered, DOM claims None (want None)"
+  },
+  {
+   "check": "j_console_clean",
+   "tier": "J",
+   "score": 1.0,
+   "detail": "0 console error(s) across load+sync"
+  },
+  {
+   "check": "j_first_use",
+   "tier": "J",
+   "score": 0.0,
+   "detail": "ttfd=Nonems reconcile=0.0 consoleErrs=0"
+  },
+  {
+   "check": "j_sync_journey",
+   "tier": "J",
+   "score": 0.0,
+   "detail": "sync button never found"
+  },
+  {
+   "check": "j_workflow_journey",
+   "tier": "J",
+   "score": 0.0,
+   "detail": "required app surface absent: workflow UI (role token / draft form / approve)"
+  },
+  {
+   "check": "j_workflow_reject",
+   "tier": "J",
+   "score": 0.0,
+   "detail": "rejection never completed"
+  },
+  {
+   "check": "j_notifications_feed",
+   "tier": "J",
+   "score": 0.25,
+   "detail": "partition state=None, heal state=None, live in Nones"
+  },
+  {
+   "check": "j_error_state",
+   "tier": "J",
+   "score": 0.0,
+   "detail": "no error state"
+  },
+  {
+   "check": "j_empty_state",
+   "tier": "J",
+   "score": 0.0,
+   "detail": "blank page on empty db"
+  },
+  {
+   "check": "v_dates_readable",
+   "tier": "V",
+   "score": 0.0,
+   "detail": "no date cells rendered"
+  },
+  {
+   "check": "v_money_presentation",
+   "tier": "V",
+   "score": 0.0,
+   "detail": "no amount cells rendered"
+  },
+  {
+   "check": "v_status_badges",
+   "tier": "V",
+   "score": 0.0,
+   "detail": "no status cells rendered"
+  },
+  {
+   "check": "v_responsive_375",
+   "tier": "V",
+   "score": 0.0,
+   "detail": "375px horizontal scroll: None"
+  },
+  {
+   "check": "v_styling",
+   "tier": "V",
+   "score": 0.2,
+   "detail": "stylesheet=False, None backgrounds, font '', header=True"
+  },
+  {
+   "check": "p_drag_frames",
+   "tier": "P",
+   "score": 0.0,
+   "detail": "frames not measurable over the scripted drag"
+  },
+  {
+   "check": "p_idle_flatness",
+   "tier": "P",
+   "score": 0.0,
+   "detail": "no idle windows sampled"
+  },
+  {
+   "check": "p_stream_apply",
+   "tier": "P",
+   "score": 0.0,
+   "detail": "no stream batch applied"
+  },
+  {
+   "check": "p_under_stream",
+   "tier": "P",
+   "score": 0.0,
+   "detail": "not exercised: ledgerd never bound its port at boot, so grading stopped before this phase"
+  },
+  {
+   "check": "p_api_latency",
+   "tier": "P",
+   "score": 0.0,
+   "detail": "not exercised: ledgerd never bound its port at boot, so grading stopped before this phase"
+  },
+  {
+   "check": "p_sync_wall",
+   "tier": "P",
+   "score": 0.0,
+   "detail": "sync #1 never completed inside the harness budget"
+  },
+  {
+   "check": "t_context_real",
+   "tier": "T",
+   "score": 0.0,
+   "detail": "ctx=0 type=None nonBg=None/None distinct=None backingOk=None"
+  },
+  {
+   "check": "t_layout_basis",
+   "tier": "T",
+   "score": 0.0,
+   "detail": "layout got={'d0': None, 'D0': None, 'R0': None} want={'d0': '2026-08-19', 'D0': 96, 'R0': 178} unmoved_after_stream=None"
+  },
+  {
+   "check": "t_scene_binding",
+   "tier": "T",
+   "score": 0.0,
+   "detail": "no data to bind"
+  },
+  {
+   "check": "t_height_pixels",
+   "tier": "T",
+   "score": 0.0,
+   "detail": "no data to measure"
+  },
+  {
+   "check": "t_draw_budget",
+   "tier": "T",
+   "score": 0.0,
+   "detail": "wrapper counted no draws over the budget window"
+  },
+  {
+   "check": "t_pick_buffer",
+   "tier": "T",
+   "score": 0.0,
+   "detail": "no instances to pick"
+  },
+  {
+   "check": "t_pick_real_pass",
+   "tier": "T",
+   "score": 0.0,
+   "detail": "no pick-refresh counter windows"
+  },
+  {
+   "check": "t_click_semantics",
+   "tier": "T",
+   "score": 0.0,
+   "detail": "click semantics never exercised"
+  },
+  {
+   "check": "t_camera_math",
+   "tier": "T",
+   "score": 0.0,
+   "detail": "camera math never exercised"
+  },
+  {
+   "check": "t_coast_identity",
+   "tier": "T",
+   "score": 0.0,
+   "detail": "no coast evidence at all"
+  },
+  {
+   "check": "t_coast_reality",
+   "tier": "T",
+   "score": 0.0,
+   "detail": "no flick-coast evidence"
+  },
+  {
+   "check": "t_labels_culling",
+   "tier": "T",
+   "score": 0.0,
+   "detail": "no candidates to label"
+  },
+  {
+   "check": "t_brush_link",
+   "tier": "T",
+   "score": 0.0,
+   "detail": "no rows to brush"
+  },
+  {
+   "check": "t_stream_diff",
+   "tier": "T",
+   "score": 0.0,
+   "detail": "no SSE batch observed applying"
+  },
+  {
+   "check": "t_vs7dbg_truth",
+   "tier": "T",
+   "score": 0.0,
+   "detail": "required app surface absent: window.vs7dbg"
+  },
+  {
+   "check": "x_l1_no_invented_states",
+   "tier": "X",
+   "score": 0.0,
+   "detail": "nothing applied to check"
+  },
+  {
+   "check": "x_l2_per_key_order",
+   "tier": "X",
+   "score": 0.0,
+   "detail": "no event log to order-check"
+  },
+  {
+   "check": "x_l3_monotonic_reads",
+   "tier": "X",
+   "score": 0.0,
+   "detail": "no read stream against a live sync"
+  },
+  {
+   "check": "x_l4_convergence",
+   "tier": "X",
+   "score": 0.0,
+   "detail": "never converged because sync never completed"
+  },
+  {
+   "check": "x_l5_group_atomicity",
+   "tier": "X",
+   "score": 0.0,
+   "detail": "the group never applied"
+  },
+  {
+   "check": "x_m1_amount_immutability",
+   "tier": "X",
+   "score": 0.0,
+   "detail": "no amounts served"
+  },
+  {
+   "check": "x_m2_pair_conservation",
+   "tier": "X",
+   "score": 0.0,
+   "detail": "no summaries to conserve"
+  },
+  {
+   "check": "x_m3_terminal_conservation",
+   "tier": "X",
+   "score": 0.0,
+   "detail": "no terminal state"
+  },
+  {
+   "check": "x_m4_no_cross_currency",
+   "tier": "X",
+   "score": 0.0,
+   "detail": "no summary to scan"
+  },
+  {
+   "check": "x_conservation_residual",
+   "tier": "X",
+   "score": 0.0,
+   "detail": "vacuous \u2014 nothing to lose because `sync_completeness` already failed"
+  },
+  {
+   "check": "x_no_lost_write",
+   "tier": "X",
+   "score": 0.0,
+   "detail": "vacuous \u2014 nothing to lose because `sync_completeness` already failed"
+  },
+  {
+   "check": "x_ooo_dup_forged",
+   "tier": "X",
+   "score": 0.0,
+   "detail": "the deliveries never applied"
+  },
+  {
+   "check": "r_b3_sigkill_resync",
+   "tier": "R",
+   "score": 0.0,
+   "detail": "not exercised: ledgerd never bound its port at boot, so grading stopped before this phase"
+  },
+  {
+   "check": "r_b4_vendor_down_boot",
+   "tier": "R",
+   "score": 0.0,
+   "detail": "{'armed': True, 'refusal_secs': 4, 'bound_in_10s': False, 'served_while_down': False, 'no_crash': False}"
+  },
+  {
+   "check": "r_b6_outbox_atomic",
+   "tier": "R",
+   "score": 0.0,
+   "detail": "not exercised: ledgerd never bound its port at boot, so grading stopped before this phase"
+  },
+  {
+   "check": "r_b7_partition",
+   "tier": "R",
+   "score": 0.0,
+   "detail": "not exercised: ledgerd never bound its port at boot, so grading stopped before this phase"
+  },
+  {
+   "check": "r_notifier_exactly_once",
+   "tier": "R",
+   "score": 0.0,
+   "detail": "not exercised: ledgerd never bound its port at boot, so grading stopped before this phase"
+  },
+  {
+   "check": "r_notification_multiset",
+   "tier": "R",
+   "score": 0.0,
+   "detail": "not exercised: ledgerd never bound its port at boot, so grading stopped before this phase"
+  },
+  {
+   "check": "r_no_row_loss",
+   "tier": "R",
+   "score": 0.0,
+   "detail": "vacuous \u2014 nothing to lose because `sync_completeness` already failed"
+  },
+  {
+   "check": "r_no_dupe_effect",
+   "tier": "R",
+   "score": 0.0,
+   "detail": "vacuous \u2014 nothing to lose because `sync_completeness` already failed"
+  },
+  {
+   "check": "r_cache_truth",
+   "tier": "R",
+   "score": 0.0,
+   "detail": "vacuous \u2014 nothing to lose because `sync_completeness` already failed"
+  },
+  {
+   "check": "r_workflow_durability",
+   "tier": "R",
+   "score": 0.0,
+   "detail": "not exercised: ledgerd never bound its port at boot, so grading stopped before this phase"
+  },
+  {
+   "check": "e_frames_under_drag",
+   "tier": "E",
+   "score": 0.0,
+   "detail": "frames not measurable or no draw calls"
+  },
+  {
+   "check": "e_stream_apply_latency",
+   "tier": "E",
+   "score": 0.0,
+   "detail": "no stream batch applied"
+  },
+  {
+   "check": "e_under_load_latency",
+   "tier": "E",
+   "score": 0.0,
+   "detail": "not exercised: ledgerd never bound its port at boot, so grading stopped before this phase"
+  },
+  {
+   "check": "e_optimistic_paint",
+   "tier": "E",
+   "score": 0.0,
+   "detail": "no optimistic-paint exercise in the flow emit"
+  },
+  {
+   "check": "e_mastery",
+   "tier": "E",
+   "score": 0.0,
+   "detail": "T+X+R mean 0.000"
+  },
+  {
+   "check": "s_visible_surface",
+   "tier": "S",
+   "score": 0.0,
+   "detail": "Required SB7.2 visual observation was not reached"
+  },
+  {
+   "check": "s_tower_geometry",
+   "tier": "S",
+   "score": 0.0,
+   "detail": "Required SB7.2 visual observation was not reached"
+  },
+  {
+   "check": "s_currency_collar",
+   "tier": "S",
+   "score": 0.0,
+   "detail": "Required SB7.2 visual observation was not reached"
+  },
+  {
+   "check": "q_payment_context",
+   "tier": "Q",
+   "score": 0.0,
+   "detail": "Required SB7.2 visual observation was not reached"
+  },
+  {
+   "check": "q_overview_legibility",
+   "tier": "Q",
+   "score": 0.0,
+   "detail": "Required SB7.2 visual observation was not reached"
+  },
+  {
+   "check": "m_committed_event_replay",
+   "tier": "M",
+   "score": 0.0,
+   "detail": "Required SB7.2 visual observation was not reached"
+  },
+  {
+   "check": "q_inspector_framing",
+   "tier": "Q",
+   "score": 0.0,
+   "detail": "Required SB7.2 inspector observation was not reached"
+  },
+  {
+   "check": "v_presentation_text",
+   "tier": "V",
+   "score": 0.0,
+   "detail": "Required SB7.2 presentation observation was not reached"
+  }
+ ]
+}

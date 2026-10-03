@@ -59,6 +59,8 @@ export interface BenchSession {
   publishable: boolean;
   retryScoring?: { ready: boolean; reason?: string };
   scoringError?: string;
+  /** This machine posted the run to leanzero.net — its card says so and offers no second post. */
+  published?: { url: string | null; title: string; score: number; publishedAt: string };
 }
 
 /** The 'benchmark-started' payload's version skew fact: the site's current benchmark is newer
