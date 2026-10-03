@@ -3,6 +3,7 @@
 // the ones measured on a Jira Cloud site on 2026-10-02 unless noted.
 const crypto = require('crypto');
 const { compile, JqlError, NotModelledError } = require('../jql.cjs');
+const { servedPageSize } = require('../limits.cjs');
 
 const err = (status, messages, errors = {}) => ({ status, body: { errorMessages: [].concat(messages), errors } });
 const NOT_FOUND_ISSUE = 'Issue does not exist or you do not have permission to see it.';
@@ -99,7 +100,7 @@ const handlers = {
     const all = c.state.st.histories.get(iss.id);
     const cap = c.limits.issueChangelogPage.value;
     const startAt = intParam(c.req.query.get('startAt'), 0);
-    const maxResults = Math.min(intParam(c.req.query.get('maxResults'), cap), cap);
+    const maxResults = servedPageSize(c.paging, Math.min(intParam(c.req.query.get('maxResults'), cap), cap), all.length);
     const values = all.slice(startAt, startAt + maxResults).map((h) => c.render.history(h));
     const base = `${c.state.pack.siteUrl}/rest/api/3/issue/${iss.key}/changelog`;
     const isLast = startAt + values.length >= all.length;
@@ -158,7 +159,7 @@ const handlers = {
       }
     }
     rows.sort((x, y) => Date.parse(x.h.created) - Date.parse(y.h.created) || Number(x.issueId) - Number(y.issueId));
-    const page = rows.slice(offset, offset + maxResults);
+    const page = rows.slice(offset, offset + servedPageSize(c.paging, maxResults, rows.length));
     const grouped = [];
     for (const r of page) {
       let g = grouped.find((x) => x.issueId === r.issueId);
@@ -280,7 +281,7 @@ function searchJql(c, { jql, nextPageToken, maxResults, fields, expand }) {
   const cap = idsOnly ? c.limits.searchJqlIdsOnlyMax.value : c.limits.searchJqlFieldsMax.value;
   const want = intParam(maxResults, c.limits.searchJqlDefault.value);
   if (!(want >= 0)) return err(400, `maxResults: must be a non-negative number`);
-  const size = Math.min(want, cap);
+  const size = servedPageSize(c.paging, Math.min(want, cap), r.hits.length);
   const bind = hash(String(jql));
   const offset = readToken(nextPageToken, bind);
   if (offset === null) return err(400, 'The provided next page token is invalid or expired.');

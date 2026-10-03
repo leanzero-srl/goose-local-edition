@@ -13,8 +13,8 @@ const SCOPES = ['read:jira-work', 'write:jira-work', 'read:jira-user', 'read:boa
   'read:board-scope.admin:jira-software', 'read:issue:jira-software', 'read:epic:jira-software'];
 const ISO = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}[+-]\d{4}$/;
 
-async function withSite(fn) {
-  const site = await createSite({ seed: '0123456789abcdef', port: 0 });
+async function withSite(fn, opts = {}) {
+  const site = await createSite({ seed: '0123456789abcdef', port: 0, ...opts });
   const call = async (method, p, body, scopes = SCOPES) => {
     const res = await fetch(site.url + p, { method, headers: { 'content-type': 'application/json', 'x-forge-as': 'app',
       'x-forge-scopes': JSON.stringify(scopes) }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -283,4 +283,67 @@ test('the default viewer may not comment on one issue per seed: Jira\'s measured
       await site.stop();
     }
   }
+});
+
+// The scoring site's page rule (limits.cjs SCORING_PAGING, DESIGN §17.6): every list of >= 2 items a paginated
+// endpoint serves spans >= 2 pages, the walk returns exactly what one dev-site page returns, and the dev site keeps
+// the documented caps (one page for the same reads).
+test('the scoring site pages every list of two or more items; the dev site keeps the documented caps', async () => {
+  const walkToken = async (call, method, p, body) => {
+    const items = [];
+    let token;
+    let pages = 0;
+    for (;;) {
+      const r = method === 'POST'
+        ? await call('POST', p, { ...body, ...(token ? { nextPageToken: token } : {}) })
+        : await call('GET', p + (token ? `&nextPageToken=${encodeURIComponent(token)}` : ''));
+      assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+      pages += 1;
+      items.push(...(r.body.issues ?? (r.body.issueChangeLogs ?? []).flatMap((g) => g.changeHistories.map((h) => `${g.issueId}:${h.id}`))));
+      token = r.body.nextPageToken;
+      if (!token) return { pages, items: items.map((x) => (typeof x === 'string' ? x : x.id)) };
+    }
+  };
+  const walkOffset = async (call, p) => {
+    const items = [];
+    let pages = 0;
+    for (let startAt = 0; ;) {
+      const r = await call('GET', `${p}${p.includes('?') ? '&' : '?'}startAt=${startAt}&maxResults=50`);
+      assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+      pages += 1;
+      const values = r.body.values ?? r.body.issues ?? [];
+      items.push(...values.map((v) => String(v.id)));
+      if (r.body.isLast === true || startAt + values.length >= (r.body.total ?? Infinity) || !values.length) return { pages, items };
+      startAt += values.length;
+    }
+  };
+  const reads = async (site, call) => {
+    const sprint = site.pack.sprints.find((s) => s.state === 'active');
+    const board = site.pack.boards.find((b) => b.type === 'scrum');
+    const search = await walkToken(call, 'POST', '/rest/api/3/search/jql', { jql: `sprint = ${sprint.id}`, fields: ['key'], maxResults: 5000 });
+    const ids = site.pack.issues.slice(0, 40).map((i) => i.id);
+    const bulk = await walkToken(call, 'POST', '/rest/api/3/changelog/bulkfetch', { issueIdsOrKeys: ids, maxResults: 1000 });
+    const boards = await walkOffset(call, '/rest/agile/1.0/board');
+    const sprints = await walkOffset(call, `/rest/agile/1.0/board/${board.id}/sprint`);
+    const sprintIssues = await walkOffset(call, `/rest/agile/1.0/sprint/${sprint.id}/issue`);
+    const soft = await walkToken(call, 'GET', `/rest/software/1.0/sprint/${sprint.id}/issue?maxResults=5000`);
+    const busy = site.pack.issues.find((i) => site.state.st.histories.get(i.id).length >= 2);
+    const changelog = await walkOffset(call, `/rest/api/3/issue/${busy.id}/changelog`);
+    return { search, bulk, boards, sprints, sprintIssues, soft, changelog };
+  };
+  let dev;
+  await withSite(async (site, call) => {
+    assert.strictEqual(site.pack.paging, undefined);
+    dev = await reads(site, call);
+  });
+  await withSite(async (site, call) => {
+    assert.strictEqual(site.pack.paging.rule, 'half');
+    const scoring = await reads(site, call);
+    for (const [name, got] of Object.entries(scoring)) {
+      assert.ok(dev[name].items.length >= 2, `${name}: the fixture list has ${dev[name].items.length} item(s)`);
+      assert.strictEqual(dev[name].pages, 1, `${name}: the dev site keeps the documented cap`);
+      assert.ok(got.pages >= 2, `${name}: the scoring site served ${got.pages} page(s)`);
+      assert.deepStrictEqual([...got.items].sort(), [...dev[name].items].sort(), `${name}: the walk returns every item once`);
+    }
+  }, { scoring: true });
 });

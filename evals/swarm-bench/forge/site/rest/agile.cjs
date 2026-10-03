@@ -3,6 +3,7 @@
 // kanban /sprint -> 400 "The board does not support sprints"; unknown sprint -> 404 "We could not find the sprint".
 const { compile, JqlError, NotModelledError } = require('../jql.cjs');
 const { err, listParam, intParam } = require('./platform.cjs');
+const { servedPageSize } = require('../limits.cjs');
 
 const board = (c, id) => c.state.pack.boards.find((b) => String(b.id) === String(id));
 const boardBody = (c, b) => {
@@ -14,9 +15,9 @@ const boardBody = (c, b) => {
 const sprintBody = (c, s) => ({ id: s.id, self: `${c.state.pack.siteUrl}/rest/agile/1.0/sprint/${s.id}`, state: s.state, name: s.name,
   ...(s.startDate ? { startDate: s.startDate, endDate: s.endDate } : {}), ...(s.completeDate ? { completeDate: s.completeDate } : {}),
   createdDate: s.createdDate, originBoardId: s.originBoardId, goal: s.goal ?? '' });
-const page = (q, all, cap, dflt) => {
+const page = (c, q, all, cap, dflt) => {
   const startAt = intParam(q.get('startAt'), 0);
-  const maxResults = Math.min(intParam(q.get('maxResults'), dflt), cap);
+  const maxResults = servedPageSize(c.paging, Math.min(intParam(q.get('maxResults'), dflt), cap), all.length);
   const values = all.slice(startAt, startAt + maxResults);
   return { maxResults, startAt, total: all.length, isLast: startAt + values.length >= all.length, values };
 };
@@ -66,13 +67,13 @@ function issuePage(c, hits) {
     const token = q.get('nextPageToken');
     const offset = token ? decodeToken(token) : 0;
     if (offset === null) return err(400, 'The nextPageToken is invalid.');
-    const maxResults = Math.min(intParam(q.get('maxResults'), c.limits.softwareIssueDefault.value), c.limits.softwareIssuePage.value);
+    const maxResults = servedPageSize(c.paging, Math.min(intParam(q.get('maxResults'), c.limits.softwareIssueDefault.value), c.limits.softwareIssuePage.value), hits.length);
     const page = hits.slice(offset, offset + maxResults);
     const isLast = offset + page.length >= hits.length;
     return { status: 200, body: { expand: 'names,schema', issues: render(page), ...(isLast ? {} : { nextPageToken: encodeToken(offset + page.length) }), isLast } };
   }
   const startAt = intParam(q.get('startAt'), 0);
-  const maxResults = Math.min(intParam(q.get('maxResults'), c.limits.agileIssueDefault.value), c.limits.agileIssuePage.value);
+  const maxResults = servedPageSize(c.paging, Math.min(intParam(q.get('maxResults'), c.limits.agileIssueDefault.value), c.limits.agileIssuePage.value), hits.length);
   return { status: 200, body: { expand: 'names,schema', startAt, maxResults, total: hits.length, issues: render(hits.slice(startAt, startAt + maxResults)) } };
 }
 
@@ -86,7 +87,7 @@ const handlers = {
     if (p) list = list.filter((b) => { const pr = c.state.pack.projects.find((x) => x.key === b.projectKey); return pr.key === p.toUpperCase() || pr.id === p; });
     const name = q.get('name');
     if (name) list = list.filter((b) => b.name.toLowerCase().includes(name.toLowerCase()));
-    return { status: 200, body: page(q, list.map((b) => boardBody(c, b)), c.limits.agileBoardPage.value, c.limits.agileBoardPage.value) };
+    return { status: 200, body: page(c, q, list.map((b) => boardBody(c, b)), c.limits.agileBoardPage.value, c.limits.agileBoardPage.value) };
   },
 
   'GET /rest/agile/1.0/board/{boardId}': (c) => {
@@ -114,7 +115,7 @@ const handlers = {
     if (b.type !== 'scrum') return err(400, 'The board does not support sprints');
     const states = listParam(c.req.query, 'state');
     const list = c.state.pack.sprints.filter((s) => s.originBoardId === b.id && (!states.length || states.includes(s.state))).sort((x, y) => x.id - y.id);
-    return { status: 200, body: page(c.req.query, list.map((s) => sprintBody(c, s)), c.limits.agileSprintPage.value, c.limits.agileSprintPage.value) };
+    return { status: 200, body: page(c, c.req.query, list.map((s) => sprintBody(c, s)), c.limits.agileSprintPage.value, c.limits.agileSprintPage.value) };
   },
 
   'GET /rest/agile/1.0/board/{boardId}/issue': (c) => {

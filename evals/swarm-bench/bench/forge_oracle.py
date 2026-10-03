@@ -430,8 +430,10 @@ class Oracle:
         sprint page per scrum board + the ids-only search pages + changelog bulkfetch pages + issue
         bulkfetch pages, over the issues touched since the earliest active start (plus every issue
         currently in an active sprint). Returns (calls, missing limit names)."""
+        paged = (self.pack.get('paging') or {}).get('rule') == 'half'
         need = {name: self.limit(name) for name in
-                ('searchJqlIdsOnlyMax', 'changelogBulkIssues', 'changelogBulkPageMax', 'issueBulkNamedFields')}
+                ('searchJqlIdsOnlyMax', 'changelogBulkIssues', 'changelogBulkPageMax', 'issueBulkNamedFields')
+                + (('agileBoardPage', 'agileSprintPage') if paged else ())}
         missing = [name for name, value in need.items() if value is None]
         if missing:
             return None, missing
@@ -444,8 +446,22 @@ class Oracle:
         entries = sum(1 for e in self.history if str(e['issueId']) in touched)
         boards = len(self.scrum_boards())
         pages = lambda total, size: max(1, math.ceil(total / size))  # noqa: E731
-        changelog_pages = max(pages(n, need['changelogBulkIssues']), pages(entries, need['changelogBulkPageMax']))
-        calls = (1 + 1 + boards + boards + pages(n, need['searchJqlIdsOnlyMax']) + changelog_pages
+        if not paged:
+            changelog_pages = max(pages(n, need['changelogBulkIssues']), pages(entries, need['changelogBulkPageMax']))
+            calls = (1 + 1 + boards + boards + pages(n, need['searchJqlIdsOnlyMax']) + changelog_pages
+                     + pages(n, need['issueBulkNamedFields']))
+            return calls, []
+        # The scoring site's page rule (pack.paging, forge/site/limits.cjs): a list of >= 2 items is served in pages
+        # of at most ceil(total / 2), so the optimal run walks those pages too. The sprint list is the board's active
+        # sprints (the cheapest filter the API offers).
+        served = lambda total, size: pages(total, min(size, math.ceil(total / 2)) if total >= 2 else size)  # noqa: E731
+        chunks = pages(n, need['changelogBulkIssues'])
+        active = self.active_sprints()
+        sprint_pages = sum(served(sum(1 for sid in active if str(self.sprints[sid].get('originBoardId')) == str(b)),
+                                  need['agileSprintPage']) for b in self.scrum_boards())
+        calls = (1 + served(boards, need['agileBoardPage']) + boards + sprint_pages
+                 + served(n, need['searchJqlIdsOnlyMax'])
+                 + chunks * served(math.ceil(entries / chunks), need['changelogBulkPageMax'])
                  + pages(n, need['issueBulkNamedFields']))
         return calls, []
 
