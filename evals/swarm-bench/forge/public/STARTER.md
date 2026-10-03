@@ -26,7 +26,7 @@ fields `project`, `key`, `sprint`, `updated`, `created`, `status`, `statusCatego
 `futureSprints()`, `currentUser()`, `now()`, `startOfDay()`; relative dates like `-14d`. Forge LLM answers with a
 scripted model on the dev site. You
 never call the site directly; your app reaches it through the Forge runtime. As the default viewer
-(`users`, first line) one dev issue refuses comments with 403, as on the scoring site.
+(`users`, first line) one dev issue refuses comments with Jira's 400 "you do not have the permission to comment" (no ADD_COMMENTS), as on the scoring site; `forge-dev users` names it.
 
 **Tools** (`npm run lint` and `node $FORGE_KIT/bin/forge-dev.cjs <command>`):
 
