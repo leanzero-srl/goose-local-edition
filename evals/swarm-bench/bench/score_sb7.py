@@ -369,7 +369,9 @@ def _probe(scenario: str, base: str, *flags: str, env: Optional[Dict] = None,
     if not PROBE_SCRIPT.is_file():
         return {"_probe_error": f"{scenario}: product_probe_v3.mjs not present (sibling deliverable)"}
     cmd = [node, str(PROBE_SCRIPT), scenario, base, *flags]
-    budget = timeout or (240 if scenario == "viz" else 120)
+    # The probe's own hard cap is 230 s for viz (480 s under SB7.2, whose battery is longer); this
+    # outer bound only catches a probe that never emits, so it sits 10 s above the probe's cap.
+    budget = timeout or ((490 if SB72_STRICT else 240) if scenario == "viz" else 120)
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=budget,
                            env={**os.environ, **(env or {})})
@@ -1107,11 +1109,15 @@ def _(c: Ctx):
         return g(0, "no error responses observed", "an API that cannot say what went wrong")
     ok = sum(1 for x in cases if x.get("envelope_ok")) / len(cases)
     fe = [x for x in cases if x.get("expects_field_errors")]
-    paths = (sum(1 for x in fe if x.get("field_paths_ok")) / len(fe)) if fe else 0.0
+    # SB7.2 cases carry the offending field: a well-formed path that names something else fails.
+    paths = (sum(1 for x in fe if x.get("field_paths_ok") and x.get("field_path_named", True))
+             / len(fe)) if fe else 0.0
     return g(0.6 * ok + 0.4 * paths,
              f"envelope {ok:.2f}, field paths {paths:.2f} over {len(cases)} cases",
              "structured errors are the contract's error half",
-             parts={"cases": [{k: x.get(k) for k in ('path', 'envelope_ok', 'field_paths_ok')}
+             parts={"cases": [{k: x.get(k) for k in ('path', 'envelope_ok', 'field_paths_ok',
+                                                     'expected_path', 'got_paths', 'field_path_named',
+                                                     'status', 'code') if k in x}
                               for x in cases]})
 
 
@@ -1747,11 +1753,34 @@ def _(c: Ctx):
     if not valid:
         return g(0, "no idle windows sampled", "demand rendering unproven")
     worst = max(w["defaultDraws"] for w in valid)
-    return g(1.0 if worst == 0 else 0.0,
-             f"{worst} default-FBO draws in the worst 500ms rest window "
-             f"({len(valid)} sampled)",
+    p = _pv(c, "viz")
+    after = {k: p[f"idleAfter{k.title()}"] for k in ("wheel", "coast", "stream", "animation")
+             if isinstance(p.get(f"idleAfter{k.title()}"), list)}
+    if not after:
+        return g(1.0 if worst == 0 else 0.0,
+                 f"{worst} default-FBO draws in the worst 500ms rest window "
+                 f"({len(valid)} sampled)",
+                 "continuous-rAF renderers fail the frozen §3.2 demand-render rule by design",
+                 parts={"max_draws_500ms": worst, "windows": len(valid)})
+    # SB7.2 (G1): "at rest 0 default-framebuffer draws in any 500 ms window" after EVERY kind of
+    # activity - load, a wheel step, a coast, an applied batch, the inspection animation ("demand
+    # rendering resumes"). Each rest context is flat or not; contexts whose windows were all voided
+    # by a landing batch are unmeasured.
+    contexts = {"load": worst}
+    for kind, ws in after.items():
+        ok = [w for w in ws if isinstance(w, dict) and isinstance(w.get("defaultDraws"), int)
+              and not w.get("batchLanded") and not w.get("cameraMoving")]
+        if ok:
+            contexts[kind] = max(w["defaultDraws"] for w in ok)
+    flat = [k for k, v in contexts.items() if v == 0]
+    return g(len(flat) / len(contexts),
+             f"{len(flat)}/{len(contexts)} rest contexts draw nothing in 500 ms: "
+             + ", ".join(f"{k} {v}" for k, v in contexts.items())
+             + (f"; unmeasured (a batch landed or the camera moved in every window): "
+                f"{sorted(set(after) - set(contexts))}"
+                if set(after) - set(contexts) else ""),
              "continuous-rAF renderers fail the frozen §3.2 demand-render rule by design",
-             parts={"max_draws_500ms": worst, "windows": len(valid)})
+             parts={"max_draws_500ms": max(contexts.values()), "contexts": contexts})
 
 
 @check("p_stream_apply", "P")
@@ -1990,11 +2019,60 @@ def _(c: Ctx):
              "offscreen_read": 1.0 if (since.get("offReads") or 0) >= 1 else 0.0,
              "pick_pass_budget": 1.0 if (since.get("offDraws") or 99) <= 4 else 0.0,
              "no_visible_flash": 1.0 if (during.get("defDraws") or 0) == 0 else 0.0}
-    return g(min(parts.values()),
-             f"since invalidation: {since.get('offDraws')} offscreen draws, "
-             f"{since.get('offReads')} readbacks; {during.get('defDraws')} default-FBO "
-             f"draws across {calls} pick calls",
+    detail = (f"since invalidation: {since.get('offDraws')} offscreen draws, "
+              f"{since.get('offReads')} readbacks; {during.get('defDraws')} default-FBO "
+              f"draws across {calls} pick calls")
+    # SB7.2 (G2): the same law after the other two invalidations - an applied SSE batch and a camera
+    # moving under a coast. Each must show >= 1 offscreen draw and readback before the first pick
+    # answers, the pick itself must not draw to the default framebuffer, and pick() and
+    # pickPixel() must agree. ("at most 4 per refresh" is not windowed here: a coast refreshes
+    # every frame, so a window holds several refreshes.)
+    viz = _pv(c, "viz")
+    ab, cp = viz.get("pickAfterBatch"), viz.get("pickDuringCoast")
+    if isinstance(ab, dict):
+        parts["after_batch_refresh"] = 1.0 if ((ab.get("offDrawsSinceBatch") or 0) >= 1
+                                               and (ab.get("offReadsSinceBatch") or 0) >= 1) else 0.0
+        parts["after_batch_pick_clean"] = 1.0 if (ab.get("pickDefaultDraws") == 0 and ab.get("agrees")) else 0.0
+        detail += (f"; after a batch {ab.get('offDrawsSinceBatch')} offscreen draws / "
+                   f"{ab.get('offReadsSinceBatch')} readbacks, pick drew {ab.get('pickDefaultDraws')} default, "
+                   f"pick==pickPixel {ab.get('agrees')}")
+    if isinstance(cp, dict) and cp.get("cameraMovedSinceRelease"):
+        parts["coast_refresh"] = 1.0 if ((cp.get("offDrawsSinceRelease") or 0) >= 1
+                                         and (cp.get("offReadsSinceRelease") or 0) >= 1) else 0.0
+        parts["coast_pick_clean"] = 1.0 if (cp.get("pickDefaultDraws") == 0 and cp.get("agrees")) else 0.0
+        detail += (f"; mid-coast {cp.get('offDrawsSinceRelease')} offscreen draws / "
+                   f"{cp.get('offReadsSinceRelease')} readbacks since release, pick drew "
+                   f"{cp.get('pickDefaultDraws')} default, pick==pickPixel {cp.get('agrees')}")
+    return g(min(parts.values()), detail,
              "CPU raycasts with fabricated pickPixel bytes fail the counters", parts=parts)
+
+
+def _graded_parts(parts: Dict, unmeasured, weights: Optional[Dict] = None):
+    """SB7.2 aimed presses: a sub-part whose press the probe could not deliver (probeMiss), or whose
+    motion is unexplained while the same session's drag orbited, is excluded — neither credit nor
+    charge. Returns (score, parts-with-None-for-excluded) or (None, ...) when nothing was measured.
+    Without exclusions this is exactly the plain (weighted) mean the SB7.0/7.1 rows always used."""
+    weights = weights or {k: 1.0 for k in parts}
+    measured = [k for k in parts if k not in unmeasured]
+    if not measured:
+        return None, {k: None for k in parts}
+    total = sum(weights[k] for k in measured)
+    score = sum(weights[k] * float(parts[k]) for k in measured) / total
+    return score, {k: (None if k in unmeasured else v) for k, v in parts.items()}
+
+
+def _flick_unmeasured(fl: Dict) -> Optional[str]:
+    """SB7.2 flick evidence (`moved` present): why its motion legs are unmeasured, else None. A
+    flick that moved nothing although the session's own 40-move drag orbited is a probe miss; one
+    that moved nothing in a session whose drag never orbited is the app's (charged, not excused)."""
+    if "moved" not in fl:
+        return None
+    if fl.get("probeMiss"):
+        return fl["probeMiss"]
+    if not fl["moved"] and (fl.get("dragOrbitDeg") or 0) >= 1:
+        return (f"the flick moved the camera on neither aimed attempt while the session's drag "
+                f"orbited {fl['dragOrbitDeg']} deg")
+    return None
 
 
 @check("t_click_semantics", "T")
@@ -2013,8 +2091,16 @@ def _(c: Ctx):
     parts = {"click_toggles_on": bool((br.get("door3d") or {}).get("inBrush")),
              "click_toggles_off": bool((br.get("toggleOff") or {}).get("removed")),
              "background_clears": bool(bc.get("emptied"))}
-    return g(sum(parts.values()) / 3, f"{parts}",
-             "§3.3 click semantics: toggle on instance, clear on background", parts=parts)
+    misses = {k: (br.get(key) or {}).get("probeMiss") for k, key in
+              (("click_toggles_on", "door3d"), ("click_toggles_off", "toggleOff"))}
+    unmeasured = {k for k, miss in misses.items() if miss}
+    if not unmeasured:
+        return g(sum(parts.values()) / 3, f"{parts}",
+                 "§3.3 click semantics: toggle on instance, clear on background", parts=parts)
+    score, shown = _graded_parts(parts, unmeasured)
+    return g(score, f"{shown}; unmeasured (probe miss): "
+             + "; ".join(f"{k}: {misses[k]}" for k in sorted(unmeasured)),
+             "§3.3 click semantics: toggle on instance, clear on background", parts=shown)
 
 
 @check("t_camera_math", "T")
@@ -2087,12 +2173,36 @@ def _(c: Ctx):
                  and fl["settleMs"] <= fl["settleBudgetMs"])
     parts = {"remaining_coast_identity": round(id_frac, 3),
              "slow_release_no_coast": slow_ok, "settle_budget": settle_ok}
-    return g(0.5 * id_frac + 0.25 * slow_ok + 0.25 * settle_ok,
-             f"identity {id_frac:.2f} over {len(residuals)} mid-coast samples, "
-             f"slow={slow_ok} (drift {slow.get('driftDeg')}°), settle={settle_ok} "
-             f"({fl.get('settleMs')}ms of {fl.get('settleBudgetMs')}ms)",
-             "yaw_rest − yaw(t) = v(t)·τ is the τ=0.4 exponential-decay identity",
-             parts=parts)
+    detail = (f"identity {id_frac:.2f} over {len(residuals)} mid-coast samples, "
+              f"slow={slow_ok} (drift {slow.get('driftDeg')}°), settle={settle_ok} "
+              f"({fl.get('settleMs')}ms of {fl.get('settleBudgetMs')}ms)")
+    consequence = "yaw_rest − yaw(t) = v(t)·τ is the τ=0.4 exponential-decay identity"
+    if "moved" not in fl:
+        return g(0.5 * id_frac + 0.25 * slow_ok + 0.25 * settle_ok, detail, consequence, parts=parts)
+    # SB7.2: a camera that never moved earns nothing for "settled in budget" or "did not drift".
+    parts["settle_budget"] = settle_ok and bool(fl["moved"])
+    orbited = (fl.get("dragOrbitDeg") or 0) >= 1
+    if "dragMoved" in slow:
+        parts["slow_release_no_coast"] = slow_ok and bool(slow["dragMoved"])
+    why = {}
+    flick_miss = _flick_unmeasured(fl)
+    if flick_miss:
+        why.update({"remaining_coast_identity": flick_miss, "settle_budget": flick_miss})
+    if slow.get("probeMiss"):
+        why["slow_release_no_coast"] = slow["probeMiss"]
+    elif slow.get("dragMoved") is False and orbited:
+        why["slow_release_no_coast"] = (f"the slow drag moved the camera {slow.get('dragDeg')} deg while the "
+                                        f"session's drag orbited {fl.get('dragOrbitDeg')} deg")
+    score, shown = _graded_parts(parts, set(why), {"remaining_coast_identity": .5, "slow_release_no_coast": .25,
+                                                   "settle_budget": .25})
+    if score is None:
+        return unavail("coast identity unmeasured: " + "; ".join(sorted(set(why.values()))))
+    detail = (f"identity {id_frac:.2f} over {len(residuals)} mid-coast samples, "
+              f"slow={shown['slow_release_no_coast']} (drift {slow.get('driftDeg')}°, drag {slow.get('dragDeg')}°), "
+              f"settle={shown['settle_budget']} ({fl.get('settleMs')}ms of {fl.get('settleBudgetMs')}ms), "
+              f"flick moved={fl['moved']}" + ("; unmeasured: " + "; ".join(f"{k}: {v}" for k, v in sorted(why.items()))
+                                               if why else ""))
+    return g(score, detail, consequence, parts={**shown, "flick_attempts": fl.get("attempts")})
 
 
 @check("t_coast_reality", "T")
@@ -2102,6 +2212,8 @@ def _(c: Ctx):
         return ref
     co = co or {}
     fl = co.get("flick") or {}
+    if _flick_unmeasured(fl):
+        return unavail("coast reality unmeasured: " + _flick_unmeasured(fl))
     if not fl or (fl.get("samples") is None and fl.get("coastDeg") is None):
         return g(0, "no flick-coast evidence", "an identity without motion is circular")
     deg = fl.get("coastDeg")
@@ -2115,10 +2227,21 @@ def _(c: Ctx):
         px_frac = min(1.0, px_frac + 1.0 / (px_total + 1))
     parts = {"coasted_3deg": moved, "drag_direction": direction,
              "pixel_spot_checks": round(px_frac, 3)}
-    return g(0.4 * moved + 0.2 * direction + 0.4 * px_frac,
-             f"coasted {deg}° past release, direction={direction}, pixels moved "
-             f"{px_moved}/{px_total}, rest pixel ok={rest_px.get('ok')}",
-             "camera() alone can lie — reality is pixels moving after release", parts=parts)
+    detail = (f"coasted {deg}° past release, direction={direction}, pixels moved "
+              f"{px_moved}/{px_total}, rest pixel ok={rest_px.get('ok')}")
+    consequence = "camera() alone can lie — reality is pixels moving after release"
+    if "moved" not in fl:
+        return g(0.4 * moved + 0.2 * direction + 0.4 * px_frac, detail, consequence, parts=parts)
+    # SB7.2: "rest yaw <= release yaw" holds trivially for a camera that never moved, and a correct
+    # rest pixel at the pose it never left proves nothing about motion.
+    parts["drag_direction"] = direction and bool(fl["moved"])
+    if not fl["moved"]:
+        px_frac = (px_moved / px_total) if px_total else 0.0
+        parts["pixel_spot_checks"] = round(px_frac, 3)
+    return g(0.4 * moved + 0.2 * parts["drag_direction"] + 0.4 * px_frac,
+             detail.replace(f"direction={direction}", f"direction={parts['drag_direction']}")
+             + f", flick moved={fl['moved']}", consequence,
+             parts={**parts, "flick_attempts": fl.get("attempts")})
 
 
 @check("t_labels_culling", "T")
@@ -2190,12 +2313,20 @@ def _(c: Ctx):
         "background_clears": bool(bc.get("emptied")),
         "pixels_restored": bool(bc.get("fullHexOk")),
     }
-    if not any(parts.values()):
-        return g(0, "neither brush door works", "the linked brush is the table⇄3D contract")
-    return g(sum(parts.values()) / len(parts),
-             ", ".join(k for k, v in parts.items() if v),
-             "one brush set, two doors, one truth — either door failing breaks the link",
-             parts=parts)
+    miss = door3d.get("probeMiss")
+    if not miss:
+        if not any(parts.values()):
+            return g(0, "neither brush door works", "the linked brush is the table⇄3D contract")
+        return g(sum(parts.values()) / len(parts),
+                 ", ".join(k for k, v in parts.items() if v),
+                 "one brush set, two doors, one truth — either door failing breaks the link",
+                 parts=parts)
+    score, shown = _graded_parts(parts, {"instance_click_toggles", "row_navigated", "row_brushed_attr"})
+    if not any(v for v in shown.values() if v is not None):
+        return g(0, "the table door does not work and the 3D door was unmeasured (probe miss: " + miss + ")",
+                 "the linked brush is the table⇄3D contract", parts=shown)
+    return g(score, ", ".join(k for k, v in shown.items() if v) + "; 3D door unmeasured (probe miss): " + miss,
+             "one brush set, two doors, one truth — either door failing breaks the link", parts=shown)
 
 
 @check("t_stream_diff", "T")
@@ -2423,10 +2554,16 @@ def _(c: Ctx):
     m2 = getattr(c, "_m2_conclusion", None)
     if m2 is None:
         return unavail("read stream never sampled the refund window")
+    if "excluded_backfill_samples" in m2 and not m2.get("samples"):
+        return g(0.0, f"no gradable read: all {m2['excluded_backfill_samples']} samples were taken during sync #1 "
+                 "before the store's reversals were loaded, none after it",
+                 "group atomicity unobserved", parts={**m2, "vacuous_root": "sync_completeness"})
     halves = m2.get("confirmed_half_states", 0)
     return g(1.0 if halves == 0 else 0.0,
              f"{halves} confirmed half-applied group observations over "
-             f"{m2.get('samples')} samples",
+             f"{m2.get('samples')} samples"
+             + (f" ({m2['excluded_backfill_samples']} sync-#1 samples before the reversals backfill excluded)"
+                if "excluded_backfill_samples" in m2 else ""),
              "no scorer read may observe a half-applied transaction group (L5/M2)",
              parts=m2)
 
@@ -2743,10 +2880,13 @@ def _(c: Ctx):
     exact = sum(1 for k in keys if got.get(k, 0) == want.get(k, 0))
     sent_leaked = got.get("payment.sent", 0)
     score = exact / len(keys) * (0.5 if sent_leaked else 1.0)
+    paging = (c.notifier_notifications or {}).get("paging")
     return g(score, f"got {got} want {want}"
-             + (f"; payment.sent leaked {sent_leaked} rows" if sent_leaked else ""),
+             + (f"; payment.sent leaked {sent_leaked} rows" if sent_leaked else "")
+             + (f"; feed read in {paging['pages']} pages ({paging['rows_read']} rows, total "
+                f"{paging['reported_total']}, {paging['stop']})" if paging else ""),
              "'notify everything' and 'notify nothing' are both wrong (§4.2)",
-             parts={"got": got, "want": want})
+             parts={"got": got, "want": want, **({"paging": paging} if paging else {})})
 
 
 @check("r_no_row_loss", "R")
@@ -3615,20 +3755,28 @@ def _measure_under_stream(base: str, V) -> Dict:
         finally:
             burst_done.set()
 
-    def _reader():
+    def _payments_ok(status, body):
+        return (status == 200 and isinstance(body, dict) and isinstance(body.get("total"), int)
+                and bool(body.get("data")))
+
+    def _summary_ok(status, body):
+        return (status == 200 and isinstance(body, dict) and isinstance(body.get("by_currency"), list)
+                and bool(body.get("by_currency")))
+
+    def _reader(k):
         go.wait(timeout=10)
         n = 0
         while n < 40 and (n < 5 or not burst_done.is_set()):
             n += 1
+            summary = SB72_STRICT and (n + k) % 2 == 0
+            path = "/api/summary" if summary else "/api/payments?limit=50"
             t0 = time.time()
-            status, body, _raw, _h = _get(f"{base}/api/payments?limit=50", timeout=10)
+            status, body, _raw, _h = _get(f"{base}{path}", timeout=10)
             t1 = time.time()
             with lock:
-                samples.append({"t0": t0, "t1": t1, "ms": (t1 - t0) * 1000,
-                                "ok": status == 200 and isinstance(body, dict)
-                                and isinstance(body.get("total"), int)
-                                and bool(body.get("data"))})
-    readers = [threading.Thread(target=_reader) for _ in range(6)]
+                samples.append({"t0": t0, "t1": t1, "ms": (t1 - t0) * 1000, "path": path,
+                                "ok": (_summary_ok if summary else _payments_ok)(status, body)})
+    readers = [threading.Thread(target=_reader, args=(k,)) for k in range(6)]
     for r_ in readers:
         r_.start()
     bt = threading.Thread(target=_burst_wrapped)
@@ -3640,11 +3788,102 @@ def _measure_under_stream(base: str, V) -> Dict:
         return {}
     s0, s1 = window["t0"], window["t1"] or time.time()
     overlapped = [x for x in samples if s0 is not None and x["t1"] > s0 and x["t0"] < s1]
-    ms = sorted(x["ms"] for x in samples)
-    p95 = ms[min(len(ms) - 1, int(0.95 * len(ms)))]
-    return {"p95_ms": round(p95, 1), "n": len(samples),
-            "overlap_frac": round(len(overlapped) / len(samples), 3),
-            "correct": all(x["ok"] for x in samples)}
+    def _p95(rows):
+        ms = sorted(x["ms"] for x in rows)
+        return ms[min(len(ms) - 1, int(0.95 * len(ms)))]
+    out = {"p95_ms": round(_p95(samples), 1), "n": len(samples),
+           "overlap_frac": round(len(overlapped) / len(samples), 3),
+           "correct": all(x["ok"] for x in samples)}
+    if SB72_STRICT:
+        # Each endpoint must hold the published p95 on its own; the graded p95 is the worse one.
+        by = {}
+        for path in ("/api/payments?limit=50", "/api/summary"):
+            rows = [x for x in samples if x["path"] == path]
+            if rows:
+                by[path] = {"p95_ms": round(_p95(rows), 1), "n": len(rows),
+                            "correct": all(x["ok"] for x in rows)}
+        out["by_endpoint"] = by
+        out["p95_ms"] = max(v["p95_ms"] for v in by.values())
+    return out
+
+
+# SB7.2 grades the whole notifier feed; SB7.0/7.1 keep their frozen single read (score_sb72's
+# tier_runtime flips this). One 200-row page under-counted every feed past 200 rows: 7 SB7.2 runs
+# returned exactly 200 rows (194 reversal.created + 6 drafts) against 1,438-5,646 committed reversals.
+NOTIFY_PAGED = False
+# SB7.2 stringency (2026-10-03, flipped by score_sb72.tier_runtime): field-error paths must name the
+# offending field (+ a nested counterparty.name case and the admin-write 403 envelope), and the
+# burst readers time GET /api/summary beside GET /api/payments?limit=50 (both are in the 150 ms
+# p95 sentence). SB7.0/7.1 gathers are unchanged.
+SB72_STRICT = False
+NOTIFY_PAGE = 200      # the largest page the contract's sibling list (/api/payments) honours
+
+
+def _notification_key(row) -> str:
+    if isinstance(row, dict) and row.get("id") is not None:
+        return "id:" + str(row["id"])
+    return "row:" + json.dumps(row, sort_keys=True, default=str)
+
+
+def _walk_notifications(nbase: str):
+    """One limit/offset walk of /notify/notifications ("{data, total}", newest first). Ends on an
+    empty or short page, a page that adds nothing new (offset ignored), or a non-list answer."""
+    rows: List = []
+    seen = set()
+    totals: List = []
+    pages: List[Dict] = []
+    offset = 0
+    while True:
+        status, body, _r, _h = _get(f"{nbase}/notify/notifications?limit={NOTIFY_PAGE}&offset={offset}",
+                                    timeout=8)
+        if not (isinstance(body, dict) and isinstance(body.get("data"), list)):
+            if not pages:
+                return body, None
+            stop = f"offset {offset} answered {status} without a data list"
+            break
+        data = body["data"]
+        totals.append(body.get("total"))
+        fresh = [r for r in data if _notification_key(r) not in seen]
+        pages.append({"offset": offset, "rows": len(data), "new": len(fresh), "total": body.get("total")})
+        for r in fresh:
+            seen.add(_notification_key(r))
+        rows.extend(fresh)
+        if not data:
+            stop = "empty page"
+            break
+        if not fresh:
+            stop = f"offset {offset} repeated earlier rows (offset not honoured)"
+            break
+        offset += len(data)
+        if len(data) < NOTIFY_PAGE:
+            stop = "short page"
+            break
+    return rows, {"pages": pages, "totals": totals, "stop": stop}
+
+
+def _notifications_feed(nbase: str):
+    """The notifier feed as one {data, total} body. Unpaged (SB7.0/7.1): the frozen single
+    ?limit=200 read, returned as the raw body. Paged (SB7.2): walked through `total`; a walk
+    whose `total` moved while paging (the relay still draining) is walked again, up to 3 times."""
+    if not NOTIFY_PAGED:
+        _s, nn, _r, _h = _get(f"{nbase}/notify/notifications?limit=200", timeout=8)
+        return nn
+    walks: List[Dict] = []
+    rows: List = []
+    for _attempt in range(3):
+        rows, walk = _walk_notifications(nbase)
+        if walk is None:
+            return rows
+        walks.append(walk)
+        totals = walk["totals"]
+        if all(t == totals[0] for t in totals):
+            break
+    last = walks[-1]
+    total = last["totals"][-1] if last["totals"] else None
+    return {"data": rows, "total": total,
+            "paging": {"walks": len(walks), "rows_read": len(rows), "reported_total": total,
+                       "stable_total": all(t == last["totals"][0] for t in last["totals"]),
+                       "stop": last["stop"], "pages": len(last["pages"])}}
 
 
 def _fetch_events(base: str, token: Optional[str] = None) -> List[Dict]:
@@ -3840,13 +4079,35 @@ def _conclude_read_stream(c: Ctx) -> None:
     row0 = fx.index().get(pid) or {}
     cur, amt = row0.get("currency"), row0.get("amount_minor", 0)
     boot = fx.EXPECTED_REVERSALS_BY_CURRENCY.get(cur, {}).get("total_minor", 0)
-    samples = ok = confirmed = 0
-    prev_half = False
-    for s in c.read_stream:
+    conclusion, half_samples = _l5_conclusion(c.read_stream, pid, cur, amt, boot,
+                                              getattr(c, "postsync1_t", None) if SB72_STRICT else None)
+    c._m2_conclusion = conclusion
+    # Kept off _m2_conclusion (whose dict SB7.0/7.1 rows publish verbatim); SB7.2 archives it.
+    c._m2_half_samples = half_samples
+
+
+def _l5_conclusion(read_stream, pid, cur, amt, boot, postsync1_t=None):
+    """The pair-conservation walk. `postsync1_t` (SB7.2 only) excludes a sample taken during sync #1
+    while the store's reversals for the currency are still below the vendor's pre-group total: that
+    store is INCOMPLETE (the REST backfill of GET /v3/reversals has not landed), not torn - a
+    transaction group is webhook parts carrying `txn` (vendor docs §8). Every sample after sync #1,
+    and every sync-#1 sample whose reversals are loaded, is graded, so the group's own application
+    (committed during the first walk on every measured run) stays in the window. Receipt: 64
+    confirmed half states on 8 SB7.2 runs, every one with the reversal total below that floor."""
+    samples = ok = confirmed = excluded = 0
+    prev_half = None
+    half_samples: List[Dict] = []
+    for s in read_stream:
         summ = s.get("summary") or {}
         row = (s.get("rows") or {}).get(pid)
         if not summ or not isinstance(row, dict):
             continue
+        if postsync1_t is not None and isinstance(s.get("t"), (int, float)) and s["t"] < postsync1_t:
+            rev0 = {x.get("currency"): x for x in (summ.get("reversals") or []) if isinstance(x, dict)}
+            if rev0.get(cur, {}).get("total_minor", 0) < boot:
+                excluded += 1
+                prev_half = None
+                continue
         samples += 1
         refunded = row.get("status") == "refunded"
         rev = {x.get("currency"): x for x in (summ.get("reversals") or [])
@@ -3855,14 +4116,19 @@ def _conclude_read_stream(c: Ctx) -> None:
         want = boot + (amt if refunded else 0)
         if got == want:
             ok += 1
-            prev_half = False
+            prev_half = None
         else:
-            if prev_half:
+            seen = {"t": s.get("t"), "status": row.get("status"), "version": row.get("version"),
+                    "reversals_total_minor": got, "expected_total_minor": want}
+            if prev_half is not None:
                 confirmed += 1
-            prev_half = True
-    c._m2_conclusion = {"samples": samples, "ok_samples": ok,
-                        "confirmed_half_states": confirmed,
-                        "refund_pid": pid, "currency": cur}
+                half_samples.append({"previous": prev_half, "confirming": seen})
+            prev_half = seen
+    conclusion = {"samples": samples, "ok_samples": ok, "confirmed_half_states": confirmed,
+                  "refund_pid": pid, "currency": cur}
+    if postsync1_t is not None:
+        conclusion["excluded_backfill_samples"] = excluded
+    return conclusion, half_samples
 
 
 def _write_expect_pack(c: Ctx, path: Path, created_rows: List[Dict],
@@ -4039,6 +4305,7 @@ def gather(root: Path, vendor_port: int, db_dir: Path, trace_path: Path,
         c.sync1_done = reached
         c.sync1_wall_ms = wall
         c.b4_result["recovered"] = last is not None and last > 0
+        c.postsync1_t = time.time()
         mark("postsync1", False)
 
         # ── 4: API battery ────────────────────────────────────────────────────────────────────
@@ -4100,6 +4367,14 @@ def gather(root: Path, vendor_port: int, db_dir: Path, trace_path: Path,
             return bool(e) and isinstance(e.get("code"), str) \
                 and isinstance(e.get("message"), str)
 
+        named = {"/api/payments?limit=-1": "limit", "/api/payments?limit=abc": "limit",
+                 "/api/payments?offset=-5": "offset", "/api/payments?sort=bogus": "sort",
+                 "/api/payments?status=bogus": "status"}
+
+        def _paths_named(fe, want) -> Dict:
+            got = [x.get("path") for x in (fe or []) if isinstance(x, dict)]
+            return {"expected_path": want, "got_paths": got[:6], "field_path_named": want in got}
+
         for path, want_status, expects_fe in [
             ("/api/payments?limit=-1", 400, True),
             ("/api/payments?limit=abc", 400, True),
@@ -4126,7 +4401,8 @@ def gather(root: Path, vendor_port: int, db_dir: Path, trace_path: Path,
                 and isinstance(x.get("code"), str) for x in fe)
             c.envelope_cases.append({"path": path, "envelope_ok": _envelope_ok(body),
                                      "expects_field_errors": expects_fe,
-                                     "field_paths_ok": paths_ok})
+                                     "field_paths_ok": paths_ok,
+                                     **(_paths_named(fe, named[path]) if SB72_STRICT and path in named else {})})
         draft_probe = {"amount_minor": 1200, "currency": "EUR",
                        "counterparty": {"name": "Auth Probe", "country": "DE"},
                        "note": "auth-matrix"}
@@ -4154,7 +4430,31 @@ def gather(root: Path, vendor_port: int, db_dir: Path, trace_path: Path,
         c.envelope_cases.append({"path": "/api/drafts[invalid]",
                                  "envelope_ok": _envelope_ok(body_bad),
                                  "expects_field_errors": True,
-                                 "field_paths_ok": bool(_error_obj(body_bad).get("field_errors"))})
+                                 "field_paths_ok": bool(_error_obj(body_bad).get("field_errors")),
+                                 **(_paths_named(_error_obj(body_bad).get("field_errors"), "amount_minor")
+                                    if SB72_STRICT else {})})
+        if SB72_STRICT:
+            # Contract: invalid draft input "(e.g. ... a missing field) -> 400 with field_errors",
+            # each `{"path": "<dot.path[i]>"}`; and "known token, wrong role -> 403 ("forbidden")",
+            # "`admin` ... writes nothing".
+            nested = {"amount_minor": 1200, "currency": "EUR", "counterparty": {"country": "DE"},
+                      "note": "sb72 nested path"}
+            st_n, body_n, _r, _h = _post_auth(f"{base}/api/drafts", nested, maker)
+            c.val_matrix.append(("/api/drafts[counterparty.name missing]", st_n, st_n == 400))
+            fe_n = _error_obj(body_n).get("field_errors")
+            c.envelope_cases.append({"path": "/api/drafts[counterparty.name missing]",
+                                     "envelope_ok": _envelope_ok(body_n) and st_n == 400,
+                                     "expects_field_errors": True,
+                                     "field_paths_ok": bool(fe_n) and all(
+                                         isinstance(x, dict) and isinstance(x.get("path"), str)
+                                         and isinstance(x.get("code"), str) for x in fe_n),
+                                     **_paths_named(fe_n, "counterparty.name")})
+            st_a, body_a, _r, _h = _post_auth(f"{base}/api/drafts", draft_probe, admin)
+            c.envelope_cases.append({"path": "/api/drafts[admin write]",
+                                     "envelope_ok": st_a == 403 and _envelope_ok(body_a)
+                                     and _error_obj(body_a).get("code") == "forbidden",
+                                     "expects_field_errors": False, "status": st_a,
+                                     "code": _error_obj(body_a).get("code")})
         for jp in ("/api/payments?limit=1", "/api/summary", "/api/buckets",
                    "/api/outbox/status", "/api/nope", "/api/payments?limit=-1"):
             stj, _bj, rawj, hj = _get(f"{base}{jp}")
@@ -4373,7 +4673,7 @@ def gather(root: Path, vendor_port: int, db_dir: Path, trace_path: Path,
         _s, pr2, _r, _h = _get(f"{nbase}/notify/processed?after=0", timeout=8)
         c.notifier_processed = ((pr2 or {}).get("processed")
                                 if isinstance(pr2, dict) else []) or []
-        _s, nn, _r, _h = _get(f"{nbase}/notify/notifications?limit=200", timeout=8)
+        nn = _notifications_feed(nbase)
         c.notifier_notifications = nn if isinstance(nn, dict) else {}
         _s, nh2, _r, _h = _get(f"{nbase}/health", timeout=5)
         c.notifier_health_final = nh2 if isinstance(nh2, dict) else {}
@@ -4568,7 +4868,7 @@ def gather(root: Path, vendor_port: int, db_dir: Path, trace_path: Path,
         _s, pr3, _r, _h = _get(f"{nbase}/notify/processed?after=0", timeout=8)
         if isinstance(pr3, dict) and pr3.get("processed"):
             c.notifier_processed = pr3["processed"]
-        _s, nn2, _r, _h = _get(f"{nbase}/notify/notifications?limit=200", timeout=8)
+        nn2 = _notifications_feed(nbase)
         if isinstance(nn2, dict):
             c.notifier_notifications = nn2
 
