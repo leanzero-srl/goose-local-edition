@@ -2554,10 +2554,16 @@ def _(c: Ctx):
     m2 = getattr(c, "_m2_conclusion", None)
     if m2 is None:
         return unavail("read stream never sampled the refund window")
+    if "excluded_backfill_samples" in m2 and not m2.get("samples"):
+        return g(0.0, f"no gradable read: all {m2['excluded_backfill_samples']} samples were taken during sync #1 "
+                 "before the store's reversals were loaded, none after it",
+                 "group atomicity unobserved", parts={**m2, "vacuous_root": "sync_completeness"})
     halves = m2.get("confirmed_half_states", 0)
     return g(1.0 if halves == 0 else 0.0,
              f"{halves} confirmed half-applied group observations over "
-             f"{m2.get('samples')} samples",
+             f"{m2.get('samples')} samples"
+             + (f" ({m2['excluded_backfill_samples']} sync-#1 samples before the reversals backfill excluded)"
+                if "excluded_backfill_samples" in m2 else ""),
              "no scorer read may observe a half-applied transaction group (L5/M2)",
              parts=m2)
 
@@ -4073,14 +4079,35 @@ def _conclude_read_stream(c: Ctx) -> None:
     row0 = fx.index().get(pid) or {}
     cur, amt = row0.get("currency"), row0.get("amount_minor", 0)
     boot = fx.EXPECTED_REVERSALS_BY_CURRENCY.get(cur, {}).get("total_minor", 0)
-    samples = ok = confirmed = 0
+    conclusion, half_samples = _l5_conclusion(c.read_stream, pid, cur, amt, boot,
+                                              getattr(c, "postsync1_t", None) if SB72_STRICT else None)
+    c._m2_conclusion = conclusion
+    # Kept off _m2_conclusion (whose dict SB7.0/7.1 rows publish verbatim); SB7.2 archives it.
+    c._m2_half_samples = half_samples
+
+
+def _l5_conclusion(read_stream, pid, cur, amt, boot, postsync1_t=None):
+    """The pair-conservation walk. `postsync1_t` (SB7.2 only) excludes a sample taken during sync #1
+    while the store's reversals for the currency are still below the vendor's pre-group total: that
+    store is INCOMPLETE (the REST backfill of GET /v3/reversals has not landed), not torn - a
+    transaction group is webhook parts carrying `txn` (vendor docs §8). Every sample after sync #1,
+    and every sync-#1 sample whose reversals are loaded, is graded, so the group's own application
+    (committed during the first walk on every measured run) stays in the window. Receipt: 64
+    confirmed half states on 8 SB7.2 runs, every one with the reversal total below that floor."""
+    samples = ok = confirmed = excluded = 0
     prev_half = None
     half_samples: List[Dict] = []
-    for s in c.read_stream:
+    for s in read_stream:
         summ = s.get("summary") or {}
         row = (s.get("rows") or {}).get(pid)
         if not summ or not isinstance(row, dict):
             continue
+        if postsync1_t is not None and isinstance(s.get("t"), (int, float)) and s["t"] < postsync1_t:
+            rev0 = {x.get("currency"): x for x in (summ.get("reversals") or []) if isinstance(x, dict)}
+            if rev0.get(cur, {}).get("total_minor", 0) < boot:
+                excluded += 1
+                prev_half = None
+                continue
         samples += 1
         refunded = row.get("status") == "refunded"
         rev = {x.get("currency"): x for x in (summ.get("reversals") or [])
@@ -4097,11 +4124,11 @@ def _conclude_read_stream(c: Ctx) -> None:
                 confirmed += 1
                 half_samples.append({"previous": prev_half, "confirming": seen})
             prev_half = seen
-    c._m2_conclusion = {"samples": samples, "ok_samples": ok,
-                        "confirmed_half_states": confirmed,
-                        "refund_pid": pid, "currency": cur}
-    # Kept off _m2_conclusion (whose dict SB7.0/7.1 rows publish verbatim); SB7.2 archives it.
-    c._m2_half_samples = half_samples
+    conclusion = {"samples": samples, "ok_samples": ok, "confirmed_half_states": confirmed,
+                  "refund_pid": pid, "currency": cur}
+    if postsync1_t is not None:
+        conclusion["excluded_backfill_samples"] = excluded
+    return conclusion, half_samples
 
 
 def _write_expect_pack(c: Ctx, path: Path, created_rows: List[Dict],
@@ -4278,6 +4305,7 @@ def gather(root: Path, vendor_port: int, db_dir: Path, trace_path: Path,
         c.sync1_done = reached
         c.sync1_wall_ms = wall
         c.b4_result["recovered"] = last is not None and last > 0
+        c.postsync1_t = time.time()
         mark("postsync1", False)
 
         # ── 4: API battery ────────────────────────────────────────────────────────────────────

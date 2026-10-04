@@ -382,6 +382,40 @@ class StringencyTests(unittest.TestCase):
         self.assertEqual(fn(SimpleNamespace(envelope_cases=old))['score'], 1.0)
 
 
+class GroupAtomicityWindowTests(unittest.TestCase):
+    """x_l5: a sync-#1 read whose reversals are not yet backfilled is incomplete, not torn (64 confirmed
+    'half states' on 8 runs were all this); a torn read with the reversals loaded, or any after sync #1, counts."""
+    boot, amt, T = 1000, 50, 100.0
+
+    def sample(self, t, status, total):
+        return {'t': t, 'summary': {'reversals': [{'currency': 'EUR', 'total_minor': total}]},
+                'rows': {'pay_1': {'id': 'pay_1', 'status': status, 'version': 2 if status == 'refunded' else 1}}}
+
+    def row(self, stream, window=True):
+        conclusion, _hs = base._l5_conclusion(stream, 'pay_1', 'EUR', self.amt, self.boot,
+                                              self.T if window else None)
+        ctx = SimpleNamespace(payments={'total': base.N_FROZEN}, _m2_conclusion=conclusion)
+        return check_fn('x_l5_group_atomicity')(ctx)
+
+    def test_pre_sync_backfill_gap_is_not_counted(self):
+        stream = [self.sample(t, 'settled', 400) for t in (90, 91, 92)] + \
+                 [self.sample(t, 'refunded', self.boot + self.amt) for t in (101, 102)]
+        self.assertEqual(self.row(stream)['score'], 1.0)
+        self.assertEqual(self.row(stream, window=False)['score'], 0.0)      # SB7.1 reading unchanged
+
+    def test_post_sync_half_state_is_charged(self):
+        stream = [self.sample(t, 'refunded', self.boot) for t in (101, 102, 103)]
+        self.assertEqual(self.row(stream)['score'], 0.0)
+
+    def test_sync1_torn_group_with_reversals_loaded_is_charged(self):
+        stream = [self.sample(t, 'refunded', self.boot) for t in (95, 96)]
+        self.assertEqual(self.row(stream)['score'], 0.0)
+
+    def test_no_gradable_read_is_vacuous_not_a_pass(self):
+        row = self.row([self.sample(t, 'settled', 0) for t in (90, 91)])
+        self.assertEqual((row['score'], row['parts']['vacuous_root']), (0.0, 'sync_completeness'))
+
+
 class CompositionReworkTests(unittest.TestCase):
     def test_x_m2_is_report_only_and_x_l5_still_costs(self):
         self.assertEqual(compose({'x_m2_pair_conservation': 0.0})['score'], 1.0)
