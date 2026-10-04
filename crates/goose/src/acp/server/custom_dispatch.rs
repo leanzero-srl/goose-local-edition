@@ -243,6 +243,38 @@ impl GooseAcpAgent {
         self.on_list_provider_supported_models(req).await
     }
 
+    #[custom_method(OpenRouterPinReadRequest)]
+    async fn dispatch_openrouter_pin_read(
+        &self,
+        req: OpenRouterPinReadRequest,
+    ) -> Result<OpenRouterPinResponse, agent_client_protocol::Error> {
+        self.on_openrouter_pin_read(req).await
+    }
+
+    #[custom_method(OpenRouterPinSetRequest)]
+    async fn dispatch_openrouter_pin_set(
+        &self,
+        req: OpenRouterPinSetRequest,
+    ) -> Result<OpenRouterPinResponse, agent_client_protocol::Error> {
+        self.on_openrouter_pin_set(req).await
+    }
+
+    #[custom_method(OpenRouterHostsListRequest)]
+    async fn dispatch_openrouter_hosts_list(
+        &self,
+        req: OpenRouterHostsListRequest,
+    ) -> Result<OpenRouterHostsListResponse, agent_client_protocol::Error> {
+        self.on_openrouter_hosts_list(req).await
+    }
+
+    #[custom_method(OpenRouterHostProbeRequest)]
+    async fn dispatch_openrouter_host_probe(
+        &self,
+        req: OpenRouterHostProbeRequest,
+    ) -> Result<OpenRouterHostProbeResponse, agent_client_protocol::Error> {
+        self.on_openrouter_host_probe(req).await
+    }
+
     #[custom_method(ProviderCatalogListRequest)]
     async fn dispatch_list_provider_catalog(
         &self,

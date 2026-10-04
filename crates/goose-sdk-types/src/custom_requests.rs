@@ -18,6 +18,8 @@ mod loops;
 pub use loops::*;
 mod compaction;
 pub use compaction::*;
+mod openrouter;
+pub use openrouter::*;
 mod notes;
 pub use notes::*;
 

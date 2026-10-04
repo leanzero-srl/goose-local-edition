@@ -136,6 +136,26 @@
       "responseType": "ProviderSupportedModelsListResponse_unstable"
     },
     {
+      "method": "_goose/unstable/openrouter/pin/read",
+      "requestType": "OpenRouterPinReadRequest_unstable",
+      "responseType": "OpenRouterPinResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/openrouter/pin/set",
+      "requestType": "OpenRouterPinSetRequest_unstable",
+      "responseType": "OpenRouterPinResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/openrouter/hosts/list",
+      "requestType": "OpenRouterHostsListRequest_unstable",
+      "responseType": "OpenRouterHostsListResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/openrouter/hosts/probe",
+      "requestType": "OpenRouterHostProbeRequest_unstable",
+      "responseType": "OpenRouterHostProbeResponse_unstable"
+    },
+    {
       "method": "_goose/unstable/providers/catalog/list",
       "requestType": "ProviderCatalogListRequest_unstable",
       "responseType": "ProviderCatalogListResponse_unstable"

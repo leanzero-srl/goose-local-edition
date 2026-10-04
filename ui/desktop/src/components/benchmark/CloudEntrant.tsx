@@ -11,6 +11,7 @@ import {
 import { Button, TYPE } from '../lz';
 import { isLocalEditionCloudProvider } from '../settings/models/leanzeroSelectorPolicy';
 import { providerRowState } from '../leanzero-swarm/cloudProviderState';
+import { OpenRouterHostPicker } from '../openrouter/OpenRouterHostPicker';
 
 /** A cloud provider whose settings are saved but which the form cannot offer, and why — the check's
  *  own words when it failed. 2026-10-03: an OPENROUTER_PARAMETERS pin failed OpenRouter's check with
@@ -146,6 +147,9 @@ export function CloudEntrant({
           Uses this provider’s saved configuration. Enter the provider’s exact model ID.
         </span>
       </label>
+      {provider === 'openrouter' && selected && !error && (
+        <OpenRouterHostPicker model={model} disabled={disabled} />
+      )}
     </div>
   );
 }

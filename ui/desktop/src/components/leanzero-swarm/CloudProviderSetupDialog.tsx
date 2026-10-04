@@ -23,6 +23,7 @@ import { defineMessages, useIntl } from '../../i18n';
 import { ProviderTile } from './ProviderTile';
 import { ModelChoice, type ModelSource } from './ModelChoice';
 import { officialEndpointReset, type EndpointOverride } from './openaiEndpoint';
+import { OpenRouterHostPicker } from '../openrouter/OpenRouterHostPicker';
 
 const i18n = defineMessages({
   titleSetup: { id: 'cloudProviderSetup.titleSetup', defaultMessage: 'Connect {provider}' },
@@ -241,7 +242,10 @@ export default function CloudProviderSetupDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && busy == null && onClose()}>
-      <DialogContent className="sm:max-w-[600px]" data-testid="cloud-provider-setup">
+      <DialogContent
+        className="max-h-[90vh] overflow-y-auto sm:max-w-[600px]"
+        data-testid="cloud-provider-setup"
+      >
         <DialogHeader>
           <DialogTitle className={cx('flex items-center gap-3', TYPE.h1)}>
             <ProviderTile providerId={provider.name} label={label} size="md" />
@@ -350,6 +354,9 @@ export default function CloudProviderSetupDialog({
                   setChosen(null);
                 }}
               />
+            )}
+            {provider.name === 'openrouter' && (
+              <OpenRouterHostPicker model={selection} disabled={busy != null} />
             )}
             {error && (
               <ToneBanner

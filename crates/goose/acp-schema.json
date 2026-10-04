@@ -1917,6 +1917,227 @@
       "x-side": "agent",
       "x-method": "_goose/unstable/providers/supported-models/list"
     },
+    "OpenRouterPinReadRequest_unstable": {
+      "type": "object",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/openrouter/pin/read"
+    },
+    "OpenRouterPinResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "pin": {
+          "$ref": "#/$defs/OpenRouterPinDto"
+        }
+      },
+      "required": [
+        "pin"
+      ],
+      "x-side": "agent"
+    },
+    "OpenRouterPinDto": {
+      "type": "object",
+      "properties": {
+        "raw": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The key's value as written (compact JSON); absent when no pin is set and OpenRouter routes."
+        },
+        "tag": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The one host the pin keeps every request on: `provider.order` names exactly this tag and\n`allow_fallbacks` is false. Absent for no pin and for any other routing (several hosts,\nfallbacks allowed, an `ignore` list) — `raw` then says what it is."
+        }
+      },
+      "description": "The routing pin as config.yaml holds it right now."
+    },
+    "OpenRouterPinSetRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "tag": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "description": "Pin every OpenRouter request to one host (`tag`), or remove the pin (`tag` absent) so\nOpenRouter routes. Writes `OPENROUTER_PARAMETERS:\n'{\"provider\":{\"order\":[\"<tag>\"],\"allow_fallbacks\":false}}'`.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/openrouter/pin/set"
+    },
+    "OpenRouterHostsListRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "model"
+      ],
+      "description": "The hosts OpenRouter's endpoints listing names for `model` (`author/slug`).",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/openrouter/hosts/list"
+    },
+    "OpenRouterHostsListResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": "string"
+        },
+        "hosts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OpenRouterHostDto"
+          }
+        },
+        "untagged": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Provider names of listed endpoints that carry no tag, so no pin can name them.",
+          "default": []
+        }
+      },
+      "required": [
+        "model",
+        "hosts"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/openrouter/hosts/list"
+    },
+    "OpenRouterHostDto": {
+      "type": "object",
+      "properties": {
+        "tag": {
+          "type": "string",
+          "description": "What `provider.order` takes: `wafer`, `deepinfra/bf16`."
+        },
+        "providerName": {
+          "type": "string"
+        },
+        "quantization": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "contextLength": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "supportsTools": {
+          "type": "boolean",
+          "description": "`supported_parameters` lists `tools`."
+        },
+        "uptimeLast30m": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "description": "Percent of requests that succeeded in the last 30 minutes."
+        },
+        "status": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "OpenRouter's endpoint status (0 = normal; negative = degraded or down)."
+        }
+      },
+      "required": [
+        "tag",
+        "providerName",
+        "supportsTools"
+      ],
+      "description": "One upstream host OpenRouter runs the model on, as its endpoints listing declares it."
+    },
+    "OpenRouterHostProbeRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": "string"
+        },
+        "tag": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "model",
+        "tag"
+      ],
+      "description": "One chat completion sent to `model` on exactly the host `tag` (no fallbacks), with one `ping`\ntool the prompt asks the model to call.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/openrouter/hosts/probe"
+    },
+    "OpenRouterHostProbeResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "tag": {
+          "type": "string"
+        },
+        "seconds": {
+          "type": "number",
+          "format": "double",
+          "description": "Wall seconds from sending the request to the whole answer read."
+        },
+        "completionTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "tokensPerSecond": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "description": "`completion_tokens / seconds`."
+        },
+        "toolCall": {
+          "type": "boolean",
+          "description": "The answer carried a `ping` tool call."
+        },
+        "finishReason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "httpStatus": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The host's or OpenRouter's own error text, verbatim; absent when the call answered."
+        }
+      },
+      "required": [
+        "tag",
+        "seconds",
+        "toolCall"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/openrouter/hosts/probe"
+    },
     "ProviderCatalogListRequest_unstable": {
       "type": "object",
       "properties": {
@@ -19872,6 +20093,42 @@
                 {
                   "allOf": [
                     {
+                      "$ref": "#/$defs/OpenRouterPinReadRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/openrouter/pin/read",
+                  "title": "OpenRouterPinReadRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/OpenRouterPinSetRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/openrouter/pin/set",
+                  "title": "OpenRouterPinSetRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/OpenRouterHostsListRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/openrouter/hosts/list",
+                  "title": "OpenRouterHostsListRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/OpenRouterHostProbeRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/openrouter/hosts/probe",
+                  "title": "OpenRouterHostProbeRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
                       "$ref": "#/$defs/ProviderCatalogListRequest_unstable"
                     }
                   ],
@@ -21562,6 +21819,30 @@
                         }
                       ],
                       "title": "ProviderSupportedModelsListResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/OpenRouterPinResponse_unstable"
+                        }
+                      ],
+                      "title": "OpenRouterPinResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/OpenRouterHostsListResponse_unstable"
+                        }
+                      ],
+                      "title": "OpenRouterHostsListResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/OpenRouterHostProbeResponse_unstable"
+                        }
+                      ],
+                      "title": "OpenRouterHostProbeResponse_unstable"
                     },
                     {
                       "allOf": [

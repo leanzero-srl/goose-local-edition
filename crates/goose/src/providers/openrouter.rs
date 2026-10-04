@@ -22,7 +22,7 @@ use goose_providers::request_log::{start_log, LoggerHandleExt};
 use rmcp::model::Tool;
 
 pub const OPENROUTER_PROVIDER_NAME: &str = "openrouter";
-const OPENROUTER_PARAMETERS_CONFIG_KEY: &str = "OPENROUTER_PARAMETERS";
+pub(crate) const OPENROUTER_PARAMETERS_CONFIG_KEY: &str = "OPENROUTER_PARAMETERS";
 pub const OPENROUTER_DEFAULT_MODEL: &str = "anthropic/claude-sonnet-4";
 pub const OPENROUTER_DEFAULT_FAST_MODEL: &str = "google/gemini-2.5-flash";
 pub const OPENROUTER_MODEL_PREFIX_ANTHROPIC: &str = "anthropic";
@@ -80,17 +80,8 @@ impl OpenRouterProvider {
         tls_config: Option<crate::providers::api_client::TlsConfig>,
         configured_parameters: Option<HashMap<String, Value>>,
     ) -> Result<Self> {
-        let config = crate::config::Config::global();
-        let api_key: String = config.get_secret("OPENROUTER_API_KEY")?;
-        let host: String = config
-            .get_param("OPENROUTER_HOST")
-            .unwrap_or_else(|_| "https://openrouter.ai".to_string());
-
-        let auth = AuthMethod::BearerToken(api_key);
-        let api_client = ApiClient::new_with_tls(host, auth, tls_config)?
-            .with_request_builder(crate::session_context::session_id_request_builder())
-            .with_header("HTTP-Referer", "https://goose-docs.ai")?
-            .with_header("X-Title", "goose")?;
+        let api_client = openrouter_api_client(crate::config::Config::global(), tls_config)?
+            .with_request_builder(crate::session_context::session_id_request_builder());
 
         Ok(Self {
             api_client,
@@ -354,7 +345,23 @@ fn is_gemini_model(model_name: &str) -> bool {
     model_name.starts_with("google/")
 }
 
-fn parse_openrouter_parameters(raw: Value) -> Result<HashMap<String, Value>> {
+/// The client every OpenRouter call goes through — chat, the models listing, the host probe: the
+/// saved OPENROUTER_API_KEY as the bearer, OPENROUTER_HOST (default openrouter.ai) and the
+/// attribution headers.
+pub(crate) fn openrouter_api_client(
+    config: &crate::config::Config,
+    tls_config: Option<crate::providers::api_client::TlsConfig>,
+) -> Result<ApiClient> {
+    let api_key: String = config.get_secret("OPENROUTER_API_KEY")?;
+    let host: String = config
+        .get_param("OPENROUTER_HOST")
+        .unwrap_or_else(|_| "https://openrouter.ai".to_string());
+    ApiClient::new_with_tls(host, AuthMethod::BearerToken(api_key), tls_config)?
+        .with_header("HTTP-Referer", "https://goose-docs.ai")?
+        .with_header("X-Title", "goose")
+}
+
+pub(crate) fn parse_openrouter_parameters(raw: Value) -> Result<HashMap<String, Value>> {
     match raw {
         Value::Object(params) => Ok(params.into_iter().collect()),
         Value::String(raw_json) => match serde_json::from_str::<Value>(&raw_json)? {

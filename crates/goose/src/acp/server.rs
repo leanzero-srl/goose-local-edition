@@ -127,6 +127,7 @@ mod new_session;
 mod nodes_loader;
 mod notes;
 mod onboarding;
+mod openrouter_hosts;
 mod prompts;
 mod proposals;
 mod providers;

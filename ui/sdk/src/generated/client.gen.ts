@@ -282,6 +282,13 @@ import type {
   OnboardingImportApplyResponse_unstable,
   OnboardingImportScanRequest_unstable,
   OnboardingImportScanResponse_unstable,
+  OpenRouterHostProbeRequest_unstable,
+  OpenRouterHostProbeResponse_unstable,
+  OpenRouterHostsListRequest_unstable,
+  OpenRouterHostsListResponse_unstable,
+  OpenRouterPinReadRequest_unstable,
+  OpenRouterPinResponse_unstable,
+  OpenRouterPinSetRequest_unstable,
   ParseRecipeRequest_unstable,
   ParseRecipeResponse_unstable,
   PauseScheduleRequest_unstable,
@@ -474,6 +481,9 @@ import {
   zNotesTargetsResponse_unstable,
   zOnboardingImportApplyResponse_unstable,
   zOnboardingImportScanResponse_unstable,
+  zOpenRouterHostProbeResponse_unstable,
+  zOpenRouterHostsListResponse_unstable,
+  zOpenRouterPinResponse_unstable,
   zParseRecipeResponse_unstable,
   zPreferencesReadResponse_unstable,
   zPromptOperationResponse_unstable,
@@ -776,6 +786,54 @@ export class GooseExtClient {
     return zProviderSupportedModelsListResponse_unstable.parse(
       raw,
     ) as ProviderSupportedModelsListResponse_unstable;
+  }
+
+  async openrouterPinRead_unstable(
+    params: OpenRouterPinReadRequest_unstable,
+  ): Promise<OpenRouterPinResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/openrouter/pin/read",
+      params,
+    );
+    return zOpenRouterPinResponse_unstable.parse(
+      raw,
+    ) as OpenRouterPinResponse_unstable;
+  }
+
+  async openrouterPinSet_unstable(
+    params: OpenRouterPinSetRequest_unstable,
+  ): Promise<OpenRouterPinResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/openrouter/pin/set",
+      params,
+    );
+    return zOpenRouterPinResponse_unstable.parse(
+      raw,
+    ) as OpenRouterPinResponse_unstable;
+  }
+
+  async openrouterHostsList_unstable(
+    params: OpenRouterHostsListRequest_unstable,
+  ): Promise<OpenRouterHostsListResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/openrouter/hosts/list",
+      params,
+    );
+    return zOpenRouterHostsListResponse_unstable.parse(
+      raw,
+    ) as OpenRouterHostsListResponse_unstable;
+  }
+
+  async openrouterHostsProbe_unstable(
+    params: OpenRouterHostProbeRequest_unstable,
+  ): Promise<OpenRouterHostProbeResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/openrouter/hosts/probe",
+      params,
+    );
+    return zOpenRouterHostProbeResponse_unstable.parse(
+      raw,
+    ) as OpenRouterHostProbeResponse_unstable;
   }
 
   async providersCatalogList_unstable(

@@ -833,6 +833,111 @@ export const zProviderSupportedModelsListResponse_unstable = z.object({
     models: z.array(z.string())
 });
 
+export const zOpenRouterPinReadRequest_unstable = z.record(z.unknown());
+
+/**
+ * The routing pin as config.yaml holds it right now.
+ */
+export const zOpenRouterPinDto = z.object({
+    raw: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    tag: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zOpenRouterPinResponse_unstable = z.object({
+    pin: zOpenRouterPinDto
+});
+
+/**
+ * Pin every OpenRouter request to one host (`tag`), or remove the pin (`tag` absent) so
+ * OpenRouter routes. Writes `OPENROUTER_PARAMETERS:
+ * '{"provider":{"order":["<tag>"],"allow_fallbacks":false}}'`.
+ */
+export const zOpenRouterPinSetRequest_unstable = z.object({
+    tag: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * The hosts OpenRouter's endpoints listing names for `model` (`author/slug`).
+ */
+export const zOpenRouterHostsListRequest_unstable = z.object({
+    model: z.string()
+});
+
+/**
+ * One upstream host OpenRouter runs the model on, as its endpoints listing declares it.
+ */
+export const zOpenRouterHostDto = z.object({
+    tag: z.string(),
+    providerName: z.string(),
+    quantization: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    contextLength: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    supportsTools: z.boolean(),
+    uptimeLast30m: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    status: z.union([
+        z.number().int(),
+        z.null()
+    ]).optional()
+});
+
+export const zOpenRouterHostsListResponse_unstable = z.object({
+    model: z.string(),
+    hosts: z.array(zOpenRouterHostDto),
+    untagged: z.array(z.string()).optional().default([])
+});
+
+/**
+ * One chat completion sent to `model` on exactly the host `tag` (no fallbacks), with one `ping`
+ * tool the prompt asks the model to call.
+ */
+export const zOpenRouterHostProbeRequest_unstable = z.object({
+    model: z.string(),
+    tag: z.string()
+});
+
+export const zOpenRouterHostProbeResponse_unstable = z.object({
+    tag: z.string(),
+    seconds: z.number(),
+    completionTokens: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    tokensPerSecond: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    toolCall: z.boolean(),
+    finishReason: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    httpStatus: z.union([
+        z.number().int().gte(0).lte(65535),
+        z.null()
+    ]).optional(),
+    error: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
 /**
  * List custom-provider catalog entries. Omit `format` to list all formats.
  */
@@ -8100,6 +8205,10 @@ export const zExtRequest = z.object({
             zGetSessionExtensionsRequest_unstable,
             zListProvidersRequest_unstable,
             zProviderSupportedModelsListRequest_unstable,
+            zOpenRouterPinReadRequest_unstable,
+            zOpenRouterPinSetRequest_unstable,
+            zOpenRouterHostsListRequest_unstable,
+            zOpenRouterHostProbeRequest_unstable,
             zProviderCatalogListRequest_unstable,
             zProviderSetupCatalogListRequest_unstable,
             zProviderCatalogTemplateRequest_unstable,
@@ -8300,6 +8409,9 @@ export const zExtResponse = z.union([
                 zGetSessionExtensionsResponse_unstable,
                 zListProvidersResponse_unstable,
                 zProviderSupportedModelsListResponse_unstable,
+                zOpenRouterPinResponse_unstable,
+                zOpenRouterHostsListResponse_unstable,
+                zOpenRouterHostProbeResponse_unstable,
                 zProviderCatalogListResponse_unstable,
                 zProviderSetupCatalogListResponse_unstable,
                 zProviderCatalogTemplateResponse_unstable,
