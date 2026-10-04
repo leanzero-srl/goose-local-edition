@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import tempfile
 import subprocess
@@ -43,6 +44,12 @@ QUALITY_CHECKS = ('t_draw_budget', 't_pick_buffer', 't_pick_real_pass', 't_click
 BACKEND_EXCELLENCE = tuple(name for name, tier, _ in base.SB7_CHECKS if tier in {'X', 'R'})
 _draw_seed = base._draw_seed
 _port_holder = base._port_holder
+# Owner 2026-10-04: "it needs to give a bad score and that it! without changing the benchmark". A viz
+# probe that runs into its own hard cap is the app's 3D view not finishing inside the budget: SB7.2
+# (score_sb72.tier_runtime) sets this, and every row the cap left unobserved scores 0 instead of refusing
+# the run. SB7.1 is a frozen tier and keeps refusing; while this is False nothing new is read or recorded.
+CHARGE_VIZ_CAP = False
+VIZ_CAP_LOSS = re.compile(r"viz section '([^']+)' lost to the probe's hard cap \(timedOut\)")
 
 
 class ReadStream(threading.Thread):
@@ -142,6 +149,7 @@ def _kill_owned(proc):
 # target_absent: no pixel draws the target and the candidate's own API answers 404 for it.
 CANDIDATE_WITNESS_STATES = ('armed_unbrushed', 'candidate_unreachable', 'target_absent')
 FIRING_WITNESS_STATES = ('armed', 'app_surface_absent', *CANDIDATE_WITNESS_STATES)
+READINESS_ABSENT = 'SB7.1 stream probe ended without a readiness signal'
 
 
 class StreamHandshake:
@@ -159,7 +167,7 @@ class StreamHandshake:
                 while True:
                     if not self.path.exists():
                         if self.stop.wait(.05) and not self.path.exists():
-                            raise RuntimeError('SB7.1 stream probe ended without a readiness signal')
+                            raise RuntimeError(READINESS_ABSENT)
                         continue
                     signal = json.loads(self.path.read_text())
                     if signal.get('state') not in FIRING_WITNESS_STATES:
@@ -314,6 +322,7 @@ def probe_runtime(notifier_reads=None):
         if scenario != 'viz':
             return old_browser_probe(scenario, url, *flags, env=env, timeout=timeout)
         handshake.start()
+        load_at_start = os.getloadavg() if CHARGE_VIZ_CAP else None
         try:
             result = old_browser_probe(scenario, url, *flags,
                 env={**(env or {}), 'BENCH_SB71_STREAM_READY': str(handshake.path)}, timeout=timeout)
@@ -321,6 +330,8 @@ def probe_runtime(notifier_reads=None):
             handshake.finish()
         result['sb71StreamHandshake'] = (handshake.receipt if handshake.receipt is not None
                                         else {'error': str(handshake.error)})
+        if load_at_start is not None:
+            result['harnessLoad'] = harness_load(load_at_start, os.getloadavg())
         return result
     def get(url, *args, **kwargs):
         response = old_get(url, *args, **kwargs)
@@ -829,6 +840,54 @@ def target_absent_witness(viz, signal, arm):
     }
 
 
+def harness_load(start, end):
+    """The machine's load averages (1, 5, 15 min) when the viz probe started and when it returned,
+    finished or capped. Information for the board only: no score and no refusal reads it."""
+    return {'cpus': os.cpu_count(), 'start': [round(v, 2) for v in start], 'end': [round(v, 2) for v in end]}
+
+
+def viz_cap_note(viz):
+    """Why the 3D rows went unobserved when the viz probe ran into its own hard cap; None otherwise.
+    Every figure is the probe's own emission or the scorer's load sample, and each absence is named."""
+    if viz.get('timedOut') is not True:
+        return None
+    hard, elapsed = viz.get('hardMs'), viz.get('elapsedMs')
+    budget = (f'the {hard / 1000:g} s budget' if isinstance(hard, (int, float))
+              else "the probe's hard cap (the probe emitted no budget)")
+    ran = (f'the viz probe ran {elapsed / 1000:.1f} s' if isinstance(elapsed, (int, float))
+           else 'the probe emitted no elapsed time')
+    load = viz.get('harnessLoad')
+    machine = (f"1-min load {load['start'][0]} at the viz probe's start and {load['end'][0]} at its end, "
+               f"on {load['cpus']} CPUs" if load else 'machine load was not recorded for this probe')
+    return f"the app's 3D view did not finish the probe's visual observations within {budget} ({ran}; {machine})"
+
+
+def viz_cap_charge(ctx, outcome):
+    """SB7.2: a row unavailable only because the viz probe hit its cap is charged 0, never refused."""
+    if not CHARGE_VIZ_CAP:
+        return None
+    viz = ctx.probes.get('viz', {})
+    note = viz_cap_note(viz)
+    lost = VIZ_CAP_LOSS.search(outcome.get('detail') or '')
+    if note is None or lost is None:
+        return None
+    return base.g(0.0, f"viz section '{lost.group(1)}' not observed: {note}",
+                  'the 3D view did not deliver this observation inside the probe budget; scored as not delivered',
+                  parts={'viz_cap': {'section': lost.group(1), 'elapsedMs': viz.get('elapsedMs'),
+                                     'hardMs': viz.get('hardMs'), 'harness_load': viz.get('harnessLoad')}})
+
+
+def viz_cap_missing(viz):
+    """SB7.2: the harness entries the viz cap itself caused. The D1 vendor mutation fires on the probe's
+    stream-arm readiness signal, which the viz battery writes late; a probe capped before that point never
+    signals, so `fire_d1_mutation:failed` is the cap's consequence, not a separate harness fault."""
+    if not CHARGE_VIZ_CAP or viz_cap_note(viz) is None:
+        return ()
+    if (viz.get('sb71StreamHandshake') or {}).get('error') != READINESS_ABSENT:
+        return ()
+    return ('fire_d1_mutation:failed',)
+
+
 def scene_measured_absent(viz):
     """The app drew nothing, created no GL context and never exposed its debug surface — measured
     repeatedly, each evaluation succeeding. A probe that then runs into its cap waited on a scene that
@@ -852,6 +911,8 @@ def observed_absence_result(name, original, ctx):
     if not outcome.get('unavailable'):
         return outcome
     charged = candidate_charge(name, original, ctx, outcome)
+    if charged is None:
+        charged = viz_cap_charge(ctx, outcome)
     return outcome if charged is None else charged
 
 
@@ -1152,12 +1213,14 @@ def evaluate(ctx):
     witness = stream_witness(viz)
     if witness and 'refuse' in witness:
         raise UnavailableEvidence(ctx, raw, witness['refuse'])
-    if viz.get('timedOut') is True and 'sb71' not in viz and not scene_measured_absent(viz):
-        # The cap is the harness's own budget; the visual rows would otherwise be zeroed as
-        # 'not reached' and hold the run at the visible-surface band.
+    if (viz.get('timedOut') is True and 'sb71' not in viz and not scene_measured_absent(viz)
+            and not CHARGE_VIZ_CAP):
+        # SB7.1: the cap is the harness's own budget; the visual rows would otherwise be zeroed as
+        # 'not reached' and hold the run at the visible-surface band. SB7.2 charges it (CHARGE_VIZ_CAP).
         raise UnavailableEvidence(ctx, raw, 'viz probe hit its hard cap before the SB7.1 visual observations')
-    if raw.get('harness_missing'):
-        raise UnavailableEvidence(ctx, raw, 'missing benchmark infrastructure: ' + ', '.join(raw['harness_missing']))
+    missing = [name for name in raw.get('harness_missing') or [] if name not in viz_cap_missing(viz)]
+    if missing:
+        raise UnavailableEvidence(ctx, raw, 'missing benchmark infrastructure: ' + ', '.join(missing))
     if raw.get('probe_unavailable'):
         raise UnavailableEvidence(ctx, raw, 'required benchmark observations unavailable: ' + ', '.join(raw['probe_unavailable']))
     rows = {row['check']: row for row in raw['checks']}
