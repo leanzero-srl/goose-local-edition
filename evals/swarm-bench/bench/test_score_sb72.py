@@ -679,3 +679,26 @@ class UnreachedFaultTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class CappedRecordingManifest(unittest.TestCase):
+    """GLM-5.3 on 3.0.95: scored 0.082 after a viz cap, then could not publish (no media-manifest.json)."""
+
+    def test_a_capped_probe_s_raw_recording_gets_the_manifest_finalizeMedia_would_have_written(self):
+        import tempfile, json as _json
+        from pathlib import Path as _P
+        with tempfile.TemporaryDirectory() as root:
+            raw = _P(root) / 'bench-media' / 'raw'
+            raw.mkdir(parents=True)
+            (raw / 'page@abc.webm').write_bytes(b'\x1aE\xdf\xa3' + b'0' * 100)
+            media = score_sb71.capped_recording_manifest(root)
+            self.assertEqual(media['manifest'], 'bench-media/media-manifest.json')
+            written = _json.loads((_P(root) / media['manifest']).read_text())
+            self.assertEqual(written['recording'], 'graded-browser')
+            self.assertEqual(written['videos'][0]['sourceFile'], 'bench-media/raw/page@abc.webm')
+            self.assertEqual(written['videos'][0]['bytes'], 104)
+
+    def test_no_raw_recording_means_no_manifest(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as root:
+            self.assertIsNone(score_sb71.capped_recording_manifest(root))
