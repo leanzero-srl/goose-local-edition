@@ -102,7 +102,7 @@ def tier_runtime():
     overlay = thresholds()
     saved = (sb71.PROBE_NAME, sb71.VERSION, base.TIER_WEIGHT_SB7, base.ROOT_BLOCKS,
              base.TH['e_stream_apply_ms_rungs'], base.DIAGNOSTIC, base.NOTIFY_PAGED, base.SB72_STRICT,
-             sb71.CHARGE_VIZ_CAP)
+             sb71.CHARGE_VIZ_CAP, sb71.CHARGE_UNREACHED_FAULTS)
     blocks = dict(base.ROOT_BLOCKS)
     # Without synced data there is no field to see: the visual rows are downstream of sync.
     blocks['sync_completeness'] = (*blocks['sync_completeness'],
@@ -115,12 +115,14 @@ def tier_runtime():
     base.SB72_STRICT = True
     # A viz probe that hits its cap is a 3D view that did not finish: scored 0, never refused.
     sb71.CHARGE_VIZ_CAP = True
+    # A sync-1 fault the app's own walk never reached is the app's behaviour: scored 0, never refused.
+    sb71.CHARGE_UNREACHED_FAULTS = True
     try:
         yield
     finally:
         (sb71.PROBE_NAME, sb71.VERSION, base.TIER_WEIGHT_SB7, base.ROOT_BLOCKS,
          base.TH['e_stream_apply_ms_rungs'], base.DIAGNOSTIC, base.NOTIFY_PAGED, base.SB72_STRICT,
-         sb71.CHARGE_VIZ_CAP) = saved
+         sb71.CHARGE_VIZ_CAP, sb71.CHARGE_UNREACHED_FAULTS) = saved
 
 
 def _probe_preflight():
@@ -315,6 +317,8 @@ def format_report(result, title=''):
              *result['admission']['reasons'],
              *([f"STREAM WITNESS {result['stream_witness']['status']}: {result['stream_witness']['reason']}"]
                if result.get('stream_witness') else []),
+             *[f"FAULT UNREACHED {r['check']}: {r['detail']}" for r in result['checks']
+               if 'fault_unreached' in (r.get('parts') or {})],
              *([f"VIZ CAP: {result['viz_cap']['detail']}; charged 0: {', '.join(result['viz_cap']['charged'])}"
                 + (f"; harness steps the cap prevented: {', '.join(result['viz_cap']['harness_missing_from_cap'])}"
                    if result['viz_cap']['harness_missing_from_cap'] else '')]

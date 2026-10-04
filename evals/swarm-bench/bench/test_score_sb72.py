@@ -592,5 +592,88 @@ class VizCapTests(unittest.TestCase):
                 self.assertEqual(result.get('harnessLoad'), expected)
 
 
+def glm_walk_trace(sync1_requests=58, start_offset=8576):
+    """GLM-5.3's 3.0.93 grading trace in shape (attempt 4b862689): the trace header, then vendor sync #1
+    opening on a cursor for offset 8576 the vendor never issued, ending on the last page after 58
+    requests, then the app re-walking from offset 0 (sync #2)."""
+    trace = [{'method': '-', 'path': '-', 'status': 0, 'query': {}, 'trace_header': 'meridian-v3',
+              'fixture_seed': '1bc7a0beb26de9ef', 'n': 12288, 'page_size': 64, 'pages': 192, 'seq': 1}]
+    for i in range(sync1_requests):
+        offset = start_offset + 64 * i
+        trace.append({'method': 'GET', 'path': '/v3/payments', 'status': 200, 'sync': 1, 'page': i + 1,
+                      'offset': offset, 'last': offset + 64 >= 12288, 'seq': 10 + i,
+                      'query': {'cursor': f'cursor-{offset}'}})
+    trace += [{'method': 'GET', 'path': '/v3/payments', 'status': 200, 'sync': 2, 'page': i + 1, 'offset': 64 * i,
+               'last': False, 'seq': 1000 + i, 'query': {}} for i in range(3)]
+    return trace
+
+
+class UnreachedFaultTests(unittest.TestCase):
+    """GLM-5.3 on 3.0.93: 'REFUSED: required benchmark observations unavailable: c_b1_drop_resume,
+    c_b2_retry_after'. B1/B2 arm only on vendor sync #1's page count, and the app's own sync #1 ended first."""
+    FAULTS = ('c_b1_drop_resume', 'c_b2_retry_after')
+
+    def score(self, tier, trace, b1=None, b2=None):
+        real = {name: fn for name, _t, fn in base.SB7_CHECKS}
+        checks = [(name, t, real[name] if name in self.FAULTS else (lambda c: base.g(1.0, 'synthetic')))
+                  for name, t, _fn in base.SB7_CHECKS]
+        with tempfile.TemporaryDirectory() as tmp, patch.object(base, 'SB7_CHECKS', checks), \
+                patch.object(base, '_nominal_console_errors', return_value=0):
+            ctx = SimpleNamespace(probes={'viz': {'sb71': {'checks': []}}}, root=Path(tmp), fixture_seed='1bc7a0beb26de9ef',
+                                  port_bound=True, harness_missing=[], sched_unreached=[], stream_head=None,
+                                  b3_result=None, trace=trace, payments={'total': 12288},
+                                  schedule=SimpleNamespace(drop_after_page=191, http500_page=159),
+                                  b1_result=b1 or {'armed': False}, b2_result=b2 or {'armed': False})
+            return tier.evaluate(ctx)
+
+    def test_a_fault_the_apps_own_walk_never_reached_is_charged_with_the_counts(self):
+        result = self.score(score, glm_walk_trace())
+        rows = {r['check']: r for r in result['checks']}
+        self.assertEqual(result['probe_unavailable'], [])
+        for name, label, needed, page in (('c_b1_drop_resume', 'B1 connection drop', 192, 191),
+                                          ('c_b2_retry_after', 'B2 HTTP 500', 159, 159)):
+            with self.subTest(name=name):
+                row = rows[name]
+                self.assertEqual(row['score'], 0.0)
+                self.assertNotIn('unavailable', row)
+                self.assertIn(f"the app's sync #1 never reached the scheduled {label}: it needs {needed} sync-1 list "
+                              f'requests (page {page} of 192); the app\'s sync #1 began at offset 8576 with a cursor '
+                              'this vendor had not issued and reached the last page after 58 requests. Over the whole '
+                              'grading the app made 61 payment-list requests across 2 vendor syncs', row['detail'])
+                self.assertEqual(row['parts']['fault_unreached']['sync1_requests'], 58)
+        self.assertIn('FAULT UNREACHED c_b1_drop_resume: ', score.format_report(result, 'glm'))
+
+    def test_an_armed_fault_grades_exactly_as_before(self):
+        armed = {'armed': True, 'resumed': True, 'no_full_restart': True, 'walk_completed': True}
+        result = self.score(score, glm_walk_trace(), b1=armed,
+                            b2={'armed': True, 'single_retry': True, 'waited': True, 'continued': True})
+        rows = {r['check']: r for r in result['checks']}
+        for name in self.FAULTS:
+            self.assertEqual(rows[name]['score'], 1.0)
+            self.assertNotIn('fault_unreached', rows[name]['parts'])
+
+    def test_a_harness_side_absence_still_refuses(self):
+        with self.assertRaisesRegex(RuntimeError, 'unavailable: c_b1_drop_resume, c_b2_retry_after'):
+            self.score(score, [])
+        # sync #1 made enough requests and still no fault: a vendor anomaly, not the app's walk.
+        with self.assertRaisesRegex(RuntimeError, 'unavailable: c_b1_drop_resume, c_b2_retry_after'):
+            self.score(score, glm_walk_trace(sync1_requests=192, start_offset=0))
+        # no sync-1 traffic at all: nothing says the app ever walked against this vendor.
+        with self.assertRaisesRegex(RuntimeError, 'unavailable: c_b1_drop_resume, c_b2_retry_after'):
+            self.score(score, [e for e in glm_walk_trace() if e.get('sync') != 1])
+
+    def test_only_the_fault_the_walk_fell_short_of_is_charged(self):
+        result = self.score(score, glm_walk_trace(sync1_requests=170, start_offset=0),
+                            b2={'armed': True, 'single_retry': True, 'waited': True, 'continued': True})
+        row = next(r for r in result['checks'] if r['check'] == 'c_b1_drop_resume')
+        self.assertIn('stopped after 170 requests', row['detail'])
+
+    def test_sb71_still_refuses(self):
+        self.assertFalse(score_sb71.CHARGE_UNREACHED_FAULTS)
+        with self.assertRaisesRegex(RuntimeError, 'unavailable: c_b1_drop_resume, c_b2_retry_after'):
+            self.score(score_sb71, glm_walk_trace())
+        self.assertFalse(score_sb71.CHARGE_UNREACHED_FAULTS)
+
+
 if __name__ == '__main__':
     unittest.main()

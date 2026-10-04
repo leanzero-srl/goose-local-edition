@@ -50,6 +50,14 @@ _port_holder = base._port_holder
 # the run. SB7.1 is a frozen tier and keeps refusing; while this is False nothing new is read or recorded.
 CHARGE_VIZ_CAP = False
 VIZ_CAP_LOSS = re.compile(r"viz section '([^']+)' lost to the probe's hard cap \(timedOut\)")
+# Same owner rule, set by SB7.2 alongside CHARGE_VIZ_CAP: a sync-1 fault (B1 drop, B2 500) that never
+# armed because the app's OWN first walk ended before the scheduled page is charged 0, not refused.
+CHARGE_UNREACHED_FAULTS = False
+# row -> (schedule field, sync-1 list requests the vendor must see before the fault fires, label).
+# vendor_service_v3._list: the drop arms after sync #1 serves page j and fires on the NEXT request (j + 1
+# requests); the 500 answers the request made once j2 - 1 pages are served (j2 requests).
+SYNC1_FAULTS = {'c_b1_drop_resume': ('drop_after_page', 1, 'B1 connection drop'),
+                'c_b2_retry_after': ('http500_page', 0, 'B2 HTTP 500')}
 
 
 class ReadStream(threading.Thread):
@@ -877,6 +885,43 @@ def viz_cap_charge(ctx, outcome):
                                      'hardMs': viz.get('hardMs'), 'harness_load': viz.get('harnessLoad')}})
 
 
+def unreached_fault_charge(name, ctx, outcome):
+    """SB7.2: B1/B2 arm only on vendor sync #1's page count. When the trace is live and the app's own
+    sync #1 made fewer list requests than the fault needs, the fault page was never reached: charged 0.
+    A missing trace, a missing schedule, no sync-1 traffic, or enough requests with no fault (a harness
+    anomaly) all keep the inherited refusal."""
+    if not CHARGE_UNREACHED_FAULTS or name not in SYNC1_FAULTS or 'never fired' not in (outcome.get('detail') or ''):
+        return None
+    field, extra, label = SYNC1_FAULTS[name]
+    page = getattr(getattr(ctx, 'schedule', None), field, None)
+    trace = getattr(ctx, 'trace', None) or []
+    if not isinstance(page, int) or page < 1 or not trace:
+        return None
+    path = base._list_path()
+    lists = [e for e in trace if e.get('path') == path and e.get('method') == 'GET']
+    sync1 = [e for e in lists if e.get('sync') == 1]
+    needed = page + extra
+    if not sync1 or len(sync1) >= needed:
+        return None
+    header = next((e for e in trace if 'trace_header' in e), {})
+    pages = header.get('pages')
+    first = sync1[0]
+    served_before = any(e.get('status') == 200 for e in lists if e.get('seq', 0) < first.get('seq', 0))
+    start = f"offset {first.get('offset')}" + (
+        ' with a cursor this vendor had not issued' if (first.get('query') or {}).get('cursor') and not served_before
+        else '')
+    ended = any(e.get('last') for e in sync1)
+    syncs = len({e.get('sync') for e in lists if e.get('sync') is not None})
+    detail = (f"the app's sync #1 never reached the scheduled {label}: it needs {needed} sync-1 list requests "
+              f"(page {page}{f' of {pages}' if pages else ''}); the app's sync #1 began at {start} and "
+              f"{'reached the last page' if ended else 'stopped'} after {len(sync1)} requests. Over the whole "
+              f"grading the app made {len(lists)} payment-list requests across {syncs} vendor syncs")
+    return base.g(0.0, detail, 'the recovery this row grades is unproven because the app never walked into the fault',
+                  parts={'fault_unreached': {'fault': field, 'scheduled_page': page, 'requests_needed': needed,
+                                             'sync1_requests': len(sync1), 'sync1_start_offset': first.get('offset'),
+                                             'sync1_ended': ended, 'list_requests': len(lists), 'syncs': syncs}})
+
+
 def viz_cap_missing(viz):
     """SB7.2: the harness entries the viz cap itself caused. The D1 vendor mutation fires on the probe's
     stream-arm readiness signal, which the viz battery writes late; a probe capped before that point never
@@ -913,6 +958,8 @@ def observed_absence_result(name, original, ctx):
     charged = candidate_charge(name, original, ctx, outcome)
     if charged is None:
         charged = viz_cap_charge(ctx, outcome)
+    if charged is None:
+        charged = unreached_fault_charge(name, ctx, outcome)
     return outcome if charged is None else charged
 
 
