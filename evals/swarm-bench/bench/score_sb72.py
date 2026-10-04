@@ -101,7 +101,8 @@ def tier_runtime():
     """Swap SB7.2's probe, version, weights, thresholds and data roots into the shared machinery."""
     overlay = thresholds()
     saved = (sb71.PROBE_NAME, sb71.VERSION, base.TIER_WEIGHT_SB7, base.ROOT_BLOCKS,
-             base.TH['e_stream_apply_ms_rungs'], base.DIAGNOSTIC, base.NOTIFY_PAGED, base.SB72_STRICT)
+             base.TH['e_stream_apply_ms_rungs'], base.DIAGNOSTIC, base.NOTIFY_PAGED, base.SB72_STRICT,
+             sb71.CHARGE_VIZ_CAP)
     blocks = dict(base.ROOT_BLOCKS)
     # Without synced data there is no field to see: the visual rows are downstream of sync.
     blocks['sync_completeness'] = (*blocks['sync_completeness'],
@@ -112,11 +113,14 @@ def tier_runtime():
     base.DIAGNOSTIC = base.DIAGNOSTIC | set(REPORT_ONLY)
     base.NOTIFY_PAGED = True
     base.SB72_STRICT = True
+    # A viz probe that hits its cap is a 3D view that did not finish: scored 0, never refused.
+    sb71.CHARGE_VIZ_CAP = True
     try:
         yield
     finally:
         (sb71.PROBE_NAME, sb71.VERSION, base.TIER_WEIGHT_SB7, base.ROOT_BLOCKS,
-         base.TH['e_stream_apply_ms_rungs'], base.DIAGNOSTIC, base.NOTIFY_PAGED, base.SB72_STRICT) = saved
+         base.TH['e_stream_apply_ms_rungs'], base.DIAGNOSTIC, base.NOTIFY_PAGED, base.SB72_STRICT,
+         sb71.CHARGE_VIZ_CAP) = saved
 
 
 def _probe_preflight():
@@ -129,7 +133,11 @@ def gather(root, vendor_port, db_dir, trace_path, mark_phase=None, seed=None):
         return sb71.gather(root, vendor_port, db_dir, trace_path, mark_phase, seed)
 
 
-def split_presentation(row):
+def unreached(what, why):
+    return f'Required SB7.2 {what} observation was not reached' + (f': {why}' if why else '')
+
+
+def split_presentation(row, why_unreached=None):
     """SB7.1's q_legible_presentation mixed 3D framing with DOM text readability. SB7.2 keeps the
     3D half in Q (and in the 0.799 band) and moves text/control readability to V as points."""
     parts = (row or {}).get('parts') or {}
@@ -156,7 +164,7 @@ def split_presentation(row):
          'detail': (f'{framed}/8 inspector poses frame the tower at 40-90% of the canvas height, unclipped, '
                     'with part callouts beside it and matching structural pixels'
                     + ('; ' + ' | '.join(misses[:3]) if misses else '')) if reached
-                   else 'Required SB7.2 inspector observation was not reached',
+                   else unreached('inspector', why_unreached),
          'parts': {'framing': framing}},
         {'check': 'v_presentation_text', 'tier': 'V',
          'score': round(readable / 4, 4) if len(groups) == 4 else 0.0,
@@ -164,21 +172,22 @@ def split_presentation(row):
                     'unclipped, uncovered, inked)' + ('; ' + '; '.join(
                         f"{e['group']} / {e['text']}: {', '.join(e['failures'])}" for e in unreadable[:6])
                         if unreadable else '')) if reached
-                   else 'Required SB7.2 presentation observation was not reached',
+                   else unreached('presentation', why_unreached),
          'consequence': 'text or controls are hard to read; a cosmetic defect that never caps the 3D bands',
          'parts': {'elements': groups, 'unreadable': unreadable}},
     ]
 
 
-def visual_rows(observed):
+def visual_rows(observed, why_unreached=None):
+    """`why_unreached` names the measured cause on every row the probe never observed (the viz cap)."""
     by = {row['check']: row for row in observed}
     rows = []
     for name in ('s_visible_surface', 's_tower_geometry', 's_currency_collar', 'q_payment_context',
                  'q_overview_legibility', 'm_committed_event_replay'):
         rows.append(copy.deepcopy(by.get(name)) or {
             'check': name, 'tier': VISUAL_CHECKS[name], 'score': 0.0,
-            'detail': 'Required SB7.2 visual observation was not reached'})
-    rows += split_presentation(by.get('q_legible_presentation'))
+            'detail': unreached('visual', why_unreached)})
+    rows += split_presentation(by.get('q_legible_presentation'), why_unreached)
     assert {r['check'] for r in rows} == set(VISUAL_CHECKS)
     return rows
 
@@ -253,15 +262,28 @@ def evaluate(ctx):
     with tier_runtime():
         inherited = sb71.evaluate(ctx)
         rows = [r for r in inherited['checks'] if r['check'] not in sb71.VISUAL_CHECKS]
-        observation = ctx.probes.get('viz', {}).get('sb71', {})
+        viz = ctx.probes.get('viz', {})
+        observation = viz.get('sb71', {})
+        cap_note, cap_missing = sb71.viz_cap_note(viz), sb71.viz_cap_missing(viz)
         rows = report_only_rows(rows, getattr(ctx, '_m2_half_samples', None))
-        raw = base.compose_from_rows(rows + visual_rows(observation.get('checks', [])),
+        raw = base.compose_from_rows(rows + visual_rows(observation.get('checks', []), cap_note),
                                      base._nominal_console_errors(ctx), ctx)
     why = {r['check']: r.get('why') for r in inherited.get('critical', {}).get('rows', [])}
     for critical in raw['critical']['rows']:
         critical['why'] = why.get(critical['check'], critical['why'])
     result = admit(raw)
     result.update({key: inherited[key] for key in CARRIED if key in inherited})
+    if 'harnessLoad' in viz:
+        result['harness_load'] = viz['harnessLoad']
+    if cap_note:
+        result['viz_cap'] = {
+            'detail': cap_note, 'elapsedMs': viz.get('elapsedMs'), 'hardMs': viz.get('hardMs'),
+            'charged': [r['check'] for r in result['checks']
+                        if 'viz_cap' in (r.get('parts') or {}) or cap_note in r.get('detail', '')],
+            # Kept in harness_missing (it did fail); named here as the cap's consequence, which is why it did
+            # not refuse the run.
+            'harness_missing_from_cap': [name for name in result.get('harness_missing') or []
+                                         if name in cap_missing]}
     result['weights'] = {'inner': TIER_WEIGHT_SB72, 'three_d_share': sum(TIER_WEIGHT_SB72[t] for t in THREE_D_TIERS),
                          'excellence': base.E_WEIGHT}
     result['thresholds_overlay'] = {'file': THRESHOLDS_FILE.name,
@@ -293,6 +315,10 @@ def format_report(result, title=''):
              *result['admission']['reasons'],
              *([f"STREAM WITNESS {result['stream_witness']['status']}: {result['stream_witness']['reason']}"]
                if result.get('stream_witness') else []),
+             *([f"VIZ CAP: {result['viz_cap']['detail']}; charged 0: {', '.join(result['viz_cap']['charged'])}"
+                + (f"; harness steps the cap prevented: {', '.join(result['viz_cap']['harness_missing_from_cap'])}"
+                   if result['viz_cap']['harness_missing_from_cap'] else '')]
+               if result.get('viz_cap') else []),
              '3D tiers: ' + ' · '.join(f"{t} {100 * tiers[t]['mean']:.0f}% (w {tiers[t]['weight']})"
                                        for t in ('S', 'Q', 'M', 'T', 'P')),
              '', behavioral, '', 'SB7.2 visual rows (weighted):']

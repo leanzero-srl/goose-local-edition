@@ -1,4 +1,5 @@
 """SB7.2 scorer: weights, 3D-pure bands, the presentation split, public-number parity and wiring."""
+import contextlib
 import copy
 import json
 import os
@@ -480,6 +481,115 @@ class CompositionReworkTests(unittest.TestCase):
         self.assertEqual([r['parts']['half_state_samples'] for r in rows], [samples, samples])
         self.assertTrue(rows[1]['report_only'])
         self.assertNotIn('report_only', rows[0])
+
+
+# GLM-5.3 (openrouter-cloud-e7aa12a4, refused 2026-10-04): the viz probe emitted these and nothing past
+# them; nine rows came back "lost to the probe's hard cap". The load figures are what the box measured.
+GLM_CAP = {'timedOut': True, 'elapsedMs': 480017, 'hardMs': 480000,
+           'sb71StreamHandshake': {'error': score_sb71.READINESS_ABSENT}}
+GLM_LOAD = {'cpus': 16, 'start': [12.6, 12.0, 11.3], 'end': [12.1, 12.3, 11.4]}
+CAP_LOST = {'t_stream_diff': 'stream', 'p_stream_apply': 'stream', 'e_stream_apply_latency': 'stream',
+            't_brush_link': 'brush', 't_click_semantics': 'brush', 't_coast_identity': 'coast',
+            't_coast_reality': 'coast', 't_height_pixels': 'heightPixels', 't_vs7dbg_truth': 'vs7dbgTruth'}
+
+
+class VizCapTests(unittest.TestCase):
+    """Owner 2026-10-04: "it needs to give a bad score and that it! without changing the benchmark"."""
+
+    def stub(self, name):
+        key = CAP_LOST.get(name)
+
+        def fn(c):
+            lost = base._viz_section(c, key)[1] if key else None
+            return lost or base.g(1.0, 'synthetic')
+        return fn
+
+    def score(self, tier, viz, harness_missing=()):
+        checks = [(name, t, self.stub(name)) for name, t, _fn in base.SB7_CHECKS]
+        with tempfile.TemporaryDirectory() as tmp, patch.object(base, 'SB7_CHECKS', checks), \
+                patch.object(base, '_nominal_console_errors', return_value=0):
+            ctx = SimpleNamespace(probes={'viz': viz}, root=Path(tmp), fixture_seed='1bc7a0beb26de9ef',
+                                  port_bound=True, harness_missing=list(harness_missing), sched_unreached=[],
+                                  stream_head=None, b3_result=None)
+            return tier.evaluate(ctx)
+
+    def test_a_cap_hit_is_scored_with_every_unobserved_row_zero_and_the_load_named(self):
+        # base.gather records fire_d1_mutation:failed when the capped probe never signalled its stream arm.
+        result = self.score(score, {**GLM_CAP, 'harnessLoad': GLM_LOAD}, ['fire_d1_mutation:failed'])
+        rows = {r['check']: r for r in result['checks']}
+        self.assertEqual(result['harness_missing'], ['fire_d1_mutation:failed'])
+        self.assertEqual(result['viz_cap']['harness_missing_from_cap'], ['fire_d1_mutation:failed'])
+        self.assertEqual(result['probe_unavailable'], [])
+        self.assertEqual([r['check'] for r in result['checks'] if 'PROBE ERROR' in r.get('detail', '')], [])
+        for name in (*CAP_LOST, *score.VISUAL_CHECKS):
+            with self.subTest(name=name):
+                self.assertEqual(rows[name]['score'], 0.0)
+                self.assertNotIn('unavailable', rows[name])
+                self.assertIn("the app's 3D view did not finish the probe's visual observations within the 480 s "
+                              "budget (the viz probe ran 480.0 s; 1-min load 12.6 at the viz probe's start and 12.1 "
+                              'at its end, on 16 CPUs)', rows[name]['detail'])
+        self.assertEqual(set(result['viz_cap']['charged']), set(CAP_LOST) | set(score.VISUAL_CHECKS))
+        self.assertEqual((result['viz_cap']['elapsedMs'], result['viz_cap']['hardMs']), (480017, 480000))
+        self.assertEqual(result['harness_load'], GLM_LOAD)
+        # The bands are the ordinary ones: no visible surface holds the binary 0.599 band.
+        self.assertEqual(result['admission']['ceiling'], .599)
+        self.assertLess(result['score'], .599)
+        self.assertEqual(result['critical']['multiplier'], 1.0)
+        self.assertIn('VIZ CAP: ', score.format_report(result, 'glm'))
+
+    def test_a_cap_hit_without_a_load_sample_names_the_absence(self):
+        result = self.score(score, dict(GLM_CAP))
+        detail = next(r['detail'] for r in result['checks'] if r['check'] == 't_stream_diff')
+        self.assertIn('machine load was not recorded for this probe', detail)
+        self.assertNotIn('harness_load', result)
+        no_budget = score_sb71.viz_cap_note({'timedOut': True})
+        self.assertIn("the probe's hard cap (the probe emitted no budget)", no_budget)
+        self.assertIn('the probe emitted no elapsed time', no_budget)
+
+    def test_no_cap_leaves_the_verdict_unchanged(self):
+        result = self.score(score, {'timedOut': False, 'stream': {}, 'brush': {}, 'coast': {},
+                                    'heightPixels': {}, 'vs7dbgTruth': {}})
+        self.assertNotIn('viz_cap', result)
+        self.assertNotIn('harness_load', result)
+        rows = {r['check']: r for r in result['checks']}
+        self.assertEqual(rows['s_visible_surface']['detail'], 'Required SB7.2 visual observation was not reached')
+        self.assertEqual(rows['q_inspector_framing']['detail'], 'Required SB7.2 inspector observation was not reached')
+        quiet = self.score(score, {'timedOut': False, 'harnessLoad': GLM_LOAD})
+        self.assertEqual(quiet['harness_load'], GLM_LOAD)
+        self.assertNotIn('viz_cap', quiet)
+
+    def test_a_harness_fault_the_cap_did_not_cause_still_refuses(self):
+        with self.assertRaisesRegex(RuntimeError, r'missing benchmark infrastructure: arm_hold_create:failed$'):
+            self.score(score, dict(GLM_CAP), ['fire_d1_mutation:failed', 'arm_hold_create:failed'])
+        # Without the cap a failed D1 fire is a harness fault, as before.
+        with self.assertRaisesRegex(RuntimeError, 'missing benchmark infrastructure: fire_d1_mutation:failed'):
+            self.score(score, {'timedOut': False, 'sb71StreamHandshake': {'error': score_sb71.READINESS_ABSENT}},
+                       ['fire_d1_mutation:failed'])
+        # A capped probe whose handshake failed for another reason does not excuse the fire.
+        with self.assertRaisesRegex(RuntimeError, 'missing benchmark infrastructure: fire_d1_mutation:failed'):
+            self.score(score, {**GLM_CAP, 'sb71StreamHandshake': {'error': 'SB7.1 stream witness unavailable: {}'}},
+                       ['fire_d1_mutation:failed'])
+
+    def test_sb71_keeps_refusing_and_records_nothing_new(self):
+        self.assertFalse(score_sb71.CHARGE_VIZ_CAP)
+        with self.assertRaisesRegex(RuntimeError, 'viz probe hit its hard cap before the SB7.1 visual observations'):
+            self.score(score_sb71, dict(GLM_CAP), ['fire_d1_mutation:failed'])
+        self.assertEqual(score_sb71.viz_cap_missing(dict(GLM_CAP)), ())
+        lost = base.unavail("viz section 'stream' lost to the probe's hard cap (timedOut)")
+        self.assertIsNone(score_sb71.viz_cap_charge(SimpleNamespace(probes={'viz': dict(GLM_CAP)}), lost))
+        self.assertFalse(score_sb71.CHARGE_VIZ_CAP)
+
+    def test_the_load_is_sampled_around_the_viz_probe_only_under_sb72(self):
+        def fake_probe(scenario, url, *flags, env=None, timeout=None):
+            return dict(GLM_CAP)
+        samples = [(12.6, 12.0, 11.3), (12.1, 12.3, 11.4)]
+        for tier, expected in ((score, GLM_LOAD), (None, None)):
+            with self.subTest(tier=tier and tier.VERSION), patch.object(base, '_probe', fake_probe), \
+                    patch.object(score_sb71.os, 'getloadavg', side_effect=list(samples)), \
+                    patch.object(score_sb71.os, 'cpu_count', return_value=16):
+                with (tier.tier_runtime() if tier else contextlib.nullcontext()), score_sb71.probe_runtime():
+                    result = base._probe('viz', 'http://127.0.0.1:1')
+                self.assertEqual(result.get('harnessLoad'), expected)
 
 
 if __name__ == '__main__':
