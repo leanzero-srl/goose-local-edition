@@ -5990,6 +5990,54 @@
   "modelAndProviderContext.unknownProviderTitle": {
     "defaultMessage": "Provider name lookup"
   },
+  "modelCustomFields.above": {
+    "defaultMessage": "The highest value is {max}."
+  },
+  "modelCustomFields.below": {
+    "defaultMessage": "The lowest value is {min}."
+  },
+  "modelCustomFields.default": {
+    "defaultMessage": "Default"
+  },
+  "modelCustomFields.heading": {
+    "defaultMessage": "Model settings"
+  },
+  "modelCustomFields.loadFailed": {
+    "defaultMessage": "This model’s settings could not be read: {error}"
+  },
+  "modelCustomFields.loading": {
+    "defaultMessage": "Reading this model’s settings…"
+  },
+  "modelCustomFields.modelDefault": {
+    "defaultMessage": "Model default ({value})"
+  },
+  "modelCustomFields.notANumber": {
+    "defaultMessage": "Enter a number."
+  },
+  "modelCustomFields.notWhole": {
+    "defaultMessage": "Enter a whole number."
+  },
+  "modelCustomFields.numberPlaceholder": {
+    "defaultMessage": "default"
+  },
+  "modelCustomFields.pinned": {
+    "defaultMessage": "Pinned for this run: {note}"
+  },
+  "modelCustomFields.sampling": {
+    "defaultMessage": "Sampling ({count})"
+  },
+  "modelCustomFields.saveFailed": {
+    "defaultMessage": "Not saved: {error}"
+  },
+  "modelCustomFields.saving": {
+    "defaultMessage": "Saving…"
+  },
+  "modelCustomFields.scope": {
+    "defaultMessage": "Saved for this model. New chats and benchmark runs use them; an open chat keeps the values it started with."
+  },
+  "modelCustomFields.unlisted": {
+    "defaultMessage": "The provider’s model listing has no model “{model}”, so it declares no settings for it. Check the model ID."
+  },
   "modelMatrix.cancel": {
     "defaultMessage": "Cancel"
   },

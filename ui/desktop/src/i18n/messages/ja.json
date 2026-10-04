@@ -5966,6 +5966,54 @@
   "modelAndProviderContext.unknownProviderTitle": {
     "defaultMessage": "プロバイダー名の確認"
   },
+  "modelCustomFields.above": {
+    "defaultMessage": "最大値は {max} です。"
+  },
+  "modelCustomFields.below": {
+    "defaultMessage": "最小値は {min} です。"
+  },
+  "modelCustomFields.default": {
+    "defaultMessage": "デフォルト"
+  },
+  "modelCustomFields.heading": {
+    "defaultMessage": "モデル設定"
+  },
+  "modelCustomFields.loadFailed": {
+    "defaultMessage": "このモデルの設定を読み取れませんでした: {error}"
+  },
+  "modelCustomFields.loading": {
+    "defaultMessage": "このモデルの設定を読み取り中…"
+  },
+  "modelCustomFields.modelDefault": {
+    "defaultMessage": "モデルのデフォルト ({value})"
+  },
+  "modelCustomFields.notANumber": {
+    "defaultMessage": "数値を入力してください。"
+  },
+  "modelCustomFields.notWhole": {
+    "defaultMessage": "整数を入力してください。"
+  },
+  "modelCustomFields.numberPlaceholder": {
+    "defaultMessage": "デフォルト"
+  },
+  "modelCustomFields.pinned": {
+    "defaultMessage": "この実行では固定: {note}"
+  },
+  "modelCustomFields.sampling": {
+    "defaultMessage": "サンプリング ({count})"
+  },
+  "modelCustomFields.saveFailed": {
+    "defaultMessage": "保存されていません: {error}"
+  },
+  "modelCustomFields.saving": {
+    "defaultMessage": "保存中…"
+  },
+  "modelCustomFields.scope": {
+    "defaultMessage": "このモデル用に保存されます。新しいチャットとベンチマーク実行で使われ、開いているチャットは開始時の値を保ちます。"
+  },
+  "modelCustomFields.unlisted": {
+    "defaultMessage": "プロバイダーのモデル一覧に「{model}」がないため、設定は宣言されていません。モデル ID を確認してください。"
+  },
   "modelMatrix.cancel": {
     "defaultMessage": "キャンセル"
   },

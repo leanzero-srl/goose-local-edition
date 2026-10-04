@@ -22,6 +22,7 @@ import { errorMessage } from '../../utils/conversionUtils';
 import { defineMessages, useIntl } from '../../i18n';
 import { ProviderTile } from './ProviderTile';
 import { ModelChoice, type ModelSource } from './ModelChoice';
+import { ModelCustomFields } from '../modelFields/ModelCustomFields';
 import { officialEndpointReset, type EndpointOverride } from './openaiEndpoint';
 
 const i18n = defineMessages({
@@ -349,6 +350,13 @@ export default function CloudProviderSetupDialog({
                   setTyped(model);
                   setChosen(null);
                 }}
+              />
+            )}
+            {!deploymentOnly && selection && (
+              <ModelCustomFields
+                providerId={provider.name}
+                modelId={selection}
+                disabled={busy != null}
               />
             )}
             {error && (

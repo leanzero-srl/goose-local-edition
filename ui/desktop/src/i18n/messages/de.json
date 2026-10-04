@@ -5966,6 +5966,54 @@
   "modelAndProviderContext.unknownProviderTitle": {
     "defaultMessage": "Anbietername-Suche"
   },
+  "modelCustomFields.above": {
+    "defaultMessage": "Der höchste Wert ist {max}."
+  },
+  "modelCustomFields.below": {
+    "defaultMessage": "Der niedrigste Wert ist {min}."
+  },
+  "modelCustomFields.default": {
+    "defaultMessage": "Standard"
+  },
+  "modelCustomFields.heading": {
+    "defaultMessage": "Modelleinstellungen"
+  },
+  "modelCustomFields.loadFailed": {
+    "defaultMessage": "Die Einstellungen dieses Modells konnten nicht gelesen werden: {error}"
+  },
+  "modelCustomFields.loading": {
+    "defaultMessage": "Einstellungen dieses Modells werden gelesen…"
+  },
+  "modelCustomFields.modelDefault": {
+    "defaultMessage": "Modellstandard ({value})"
+  },
+  "modelCustomFields.notANumber": {
+    "defaultMessage": "Gib eine Zahl ein."
+  },
+  "modelCustomFields.notWhole": {
+    "defaultMessage": "Gib eine ganze Zahl ein."
+  },
+  "modelCustomFields.numberPlaceholder": {
+    "defaultMessage": "Standard"
+  },
+  "modelCustomFields.pinned": {
+    "defaultMessage": "Für diesen Lauf festgelegt: {note}"
+  },
+  "modelCustomFields.sampling": {
+    "defaultMessage": "Sampling ({count})"
+  },
+  "modelCustomFields.saveFailed": {
+    "defaultMessage": "Nicht gespeichert: {error}"
+  },
+  "modelCustomFields.saving": {
+    "defaultMessage": "Wird gespeichert…"
+  },
+  "modelCustomFields.scope": {
+    "defaultMessage": "Für dieses Modell gespeichert. Neue Chats und Benchmark-Läufe verwenden sie; ein offener Chat behält die Werte, mit denen er begonnen hat."
+  },
+  "modelCustomFields.unlisted": {
+    "defaultMessage": "Die Modellliste des Anbieters enthält kein Modell „{model}“, daher deklariert sie keine Einstellungen dafür. Prüfe die Modell-ID."
+  },
   "modelMatrix.cancel": {
     "defaultMessage": "Abbrechen"
   },

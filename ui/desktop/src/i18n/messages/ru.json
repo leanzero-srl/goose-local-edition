@@ -5966,6 +5966,54 @@
   "modelAndProviderContext.unknownProviderTitle": {
     "defaultMessage": "Поиск имени провайдера"
   },
+  "modelCustomFields.above": {
+    "defaultMessage": "Наибольшее значение — {max}."
+  },
+  "modelCustomFields.below": {
+    "defaultMessage": "Наименьшее значение — {min}."
+  },
+  "modelCustomFields.default": {
+    "defaultMessage": "По умолчанию"
+  },
+  "modelCustomFields.heading": {
+    "defaultMessage": "Настройки модели"
+  },
+  "modelCustomFields.loadFailed": {
+    "defaultMessage": "Не удалось прочитать настройки этой модели: {error}"
+  },
+  "modelCustomFields.loading": {
+    "defaultMessage": "Чтение настроек этой модели…"
+  },
+  "modelCustomFields.modelDefault": {
+    "defaultMessage": "По умолчанию у модели ({value})"
+  },
+  "modelCustomFields.notANumber": {
+    "defaultMessage": "Введите число."
+  },
+  "modelCustomFields.notWhole": {
+    "defaultMessage": "Введите целое число."
+  },
+  "modelCustomFields.numberPlaceholder": {
+    "defaultMessage": "по умолчанию"
+  },
+  "modelCustomFields.pinned": {
+    "defaultMessage": "Закреплено для этого запуска: {note}"
+  },
+  "modelCustomFields.sampling": {
+    "defaultMessage": "Сэмплирование ({count})"
+  },
+  "modelCustomFields.saveFailed": {
+    "defaultMessage": "Не сохранено: {error}"
+  },
+  "modelCustomFields.saving": {
+    "defaultMessage": "Сохранение…"
+  },
+  "modelCustomFields.scope": {
+    "defaultMessage": "Сохранено для этой модели. Их используют новые чаты и запуски бенчмарка; открытый чат сохраняет значения, с которыми начался."
+  },
+  "modelCustomFields.unlisted": {
+    "defaultMessage": "В списке моделей провайдера нет модели «{model}», поэтому для неё не объявлено настроек. Проверьте ID модели."
+  },
   "modelMatrix.cancel": {
     "defaultMessage": "Отменить"
   },

@@ -24,6 +24,13 @@ import { benchmarkProfileDirectory } from './benchProfile';
 import { inspectBenchmarkRuntime, installBenchmarkRuntime } from './benchRuntimeInstaller';
 import { resolveBenchmarkRuntime } from './benchRuntime';
 import { validCloudEntrant } from './benchCloudLaunch';
+import {
+  modelFieldsForRun,
+  modelFieldsLaunchEnv,
+  validBenchModelFields,
+  type BenchModelFields,
+  type BenchModelFieldsRecord,
+} from './benchModelFields';
 import { harnessPhase, type BenchmarkPhase } from './benchPhase';
 import {
   benchTrayEndOf,
@@ -4349,6 +4356,7 @@ const resolveRunResult = async (
         startedAt: row.startedAt,
         finishedAt: row.endedAt ?? row.startedAt,
         sessionRunId: row.runId,
+        modelFields: row.modelFields,
       });
     }
   }
@@ -4403,6 +4411,7 @@ const buildBenchResultRow = async ({
   finishedAt,
   sessionRunId,
   rescoredAt,
+  modelFields,
 }: {
   v: ReturnType<typeof JSON.parse>;
   workdir: string;
@@ -4414,6 +4423,9 @@ const buildBenchResultRow = async ({
   sessionRunId: string | null;
   /** This verdict re-grades a run that already had a scored result (benchmark-retry-scoring). */
   rescoredAt?: string;
+  /** The run's custom fields as its session row recorded them at launch. Local-only:
+   *  benchmark-publish builds its allowlisted payload key by key and never carries it. */
+  modelFields?: BenchModelFieldsRecord;
 }) => {
   const counts = await benchRunCounts(workdir);
   const scoring = projectBenchScore(v);
@@ -4425,6 +4437,7 @@ const buildBenchResultRow = async ({
     tiers: scoring.tiers,
     nodes: v.actual_nodes ?? nodes,
     ...(cloud ? { provider: cloud.provider } : {}),
+    ...(modelFields ? { modelFields } : {}),
     mine: true,
     scorerVersion: scoring.scorerVersion,
     // sb-4 additions — the site's endpoint stores these when present and older
@@ -4498,6 +4511,7 @@ const persistBenchmarkResult = async ({
   sessionRunId,
   launchKey,
   rescoredAt,
+  modelFields,
 }: {
   v: ReturnType<typeof JSON.parse>;
   workdir: string;
@@ -4509,6 +4523,7 @@ const persistBenchmarkResult = async ({
   sessionRunId: string | null;
   launchKey: { startedAt: string; slotDir: string; runId?: string };
   rescoredAt?: string;
+  modelFields?: BenchModelFieldsRecord;
 }) => {
   const row = await buildBenchResultRow({
     v,
@@ -4520,6 +4535,7 @@ const persistBenchmarkResult = async ({
     finishedAt,
     sessionRunId,
     rescoredAt,
+    modelFields,
   });
   await fs.mkdir(BENCH_DIR, { recursive: true });
   // Snapshot the screenshots NOW, next to the result row. The workdir is reused by the
@@ -4567,7 +4583,12 @@ ipcMain.handle(
     _event,
     nodes: number,
     sampling?: RunSampling,
-    cloud?: { provider: string; model: string; tier: CloudBenchmarkTier }
+    cloud?: {
+      provider: string;
+      model: string;
+      tier: CloudBenchmarkTier;
+      modelFields?: BenchModelFields;
+    }
   ) => {
     if (activeBenchRun || benchmarkLaunchPending) {
       throw new Error('a benchmark run is already in progress');
@@ -4578,6 +4599,9 @@ ipcMain.handle(
         throw new Error('Wait for Benchmark tools installation to finish.');
       if (cloud && !validCloudEntrant(cloud)) {
         throw new Error('Choose a configured provider and provide a valid model ID.');
+      }
+      if (cloud?.modelFields !== undefined && !validBenchModelFields(cloud.modelFields)) {
+        throw new Error("The model's settings are not valid field values.");
       }
       if (cloud) nodes = 1;
       const cloudRunId = cloud ? `cloud-${crypto.randomUUID()}` : null;
@@ -4595,6 +4619,12 @@ ipcMain.handle(
       // Forge is a single-model benchmark (forge/DESIGN.md: one model in goose, 150-call budget).
       if (family === 'forge' && !cloud)
         throw new Error('Forge runs one model: choose a provider and model ID.');
+      // Forge pins one reasoning effort for every entrant (isolated_tiers.FORGE10, forge/DESIGN.md
+      // §11): the model's saved effort is recorded as pinned and never sent, so it cannot displace
+      // the tier's.
+      const runModelFields = cloud
+        ? modelFieldsForRun(cloud.modelFields ?? {}, family === 'forge')
+        : null;
       const regimeFlag = BENCH_RUN_FLAG[tier];
       const isolated =
         (ISOLATED_PAYMENTS_TIERS as readonly string[]).includes(tier) || family === 'forge';
@@ -4659,6 +4689,7 @@ ipcMain.handle(
           slot: true,
           slotDir: workdir,
           completionReceipt,
+          ...(runModelFields ? { modelFields: runModelFields } : {}),
         });
         await writeBenchSessionRows(rows);
       }
@@ -4713,6 +4744,9 @@ ipcMain.handle(
                 GOOSE_SWARM_RENDER_NODE: benchNode,
                 ...browserEnv,
                 ...walletEnv,
+                ...(cloud && runModelFields
+                  ? modelFieldsLaunchEnv(cloud.provider, cloud.model, runModelFields.sent)
+                  : {}),
                 // Forge: the kit run_build verifies (same cache the view prepared) and the browser
                 // aliases its probe reads.
                 ...(family === 'forge'
@@ -4964,6 +4998,7 @@ ipcMain.handle(
               finishedAt,
               sessionRunId,
               launchKey,
+              ...(runModelFields ? { modelFields: runModelFields } : {}),
             });
             if (activeBenchRun?.child === child) activeBenchRun = null;
             finishBench({ row });
@@ -5250,6 +5285,7 @@ ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string, mode?: '
                 sessionRunId: runId,
                 launchKey,
                 ...(regrade ? { rescoredAt: scoredAt } : {}),
+                modelFields: session.modelFields,
               });
               return row;
             }

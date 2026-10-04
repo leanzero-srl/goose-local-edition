@@ -5966,6 +5966,54 @@
   "modelAndProviderContext.unknownProviderTitle": {
     "defaultMessage": "Carian nama penyedia"
   },
+  "modelCustomFields.above": {
+    "defaultMessage": "Nilai tertinggi ialah {max}."
+  },
+  "modelCustomFields.below": {
+    "defaultMessage": "Nilai terendah ialah {min}."
+  },
+  "modelCustomFields.default": {
+    "defaultMessage": "Lalai"
+  },
+  "modelCustomFields.heading": {
+    "defaultMessage": "Tetapan model"
+  },
+  "modelCustomFields.loadFailed": {
+    "defaultMessage": "Tetapan model ini tidak dapat dibaca: {error}"
+  },
+  "modelCustomFields.loading": {
+    "defaultMessage": "Membaca tetapan model ini…"
+  },
+  "modelCustomFields.modelDefault": {
+    "defaultMessage": "Lalai model ({value})"
+  },
+  "modelCustomFields.notANumber": {
+    "defaultMessage": "Masukkan nombor."
+  },
+  "modelCustomFields.notWhole": {
+    "defaultMessage": "Masukkan nombor bulat."
+  },
+  "modelCustomFields.numberPlaceholder": {
+    "defaultMessage": "lalai"
+  },
+  "modelCustomFields.pinned": {
+    "defaultMessage": "Ditetapkan untuk larian ini: {note}"
+  },
+  "modelCustomFields.sampling": {
+    "defaultMessage": "Pensampelan ({count})"
+  },
+  "modelCustomFields.saveFailed": {
+    "defaultMessage": "Tidak disimpan: {error}"
+  },
+  "modelCustomFields.saving": {
+    "defaultMessage": "Menyimpan…"
+  },
+  "modelCustomFields.scope": {
+    "defaultMessage": "Disimpan untuk model ini. Sembang baharu dan larian penanda aras menggunakannya; sembang yang terbuka mengekalkan nilai permulaannya."
+  },
+  "modelCustomFields.unlisted": {
+    "defaultMessage": "Senarai model pembekal tiada model “{model}”, jadi tiada tetapan diisytiharkan untuknya. Semak ID model."
+  },
   "modelMatrix.cancel": {
     "defaultMessage": "Batal"
   },

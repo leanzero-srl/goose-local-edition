@@ -70,6 +70,13 @@ import { loadSamplingDefaults, sanitizeSampling, type SamplingSettings } from '.
 import { ConfirmationModal } from '../ui/ConfirmationModal';
 import { acpReadConfig } from '../../acp/config';
 import { deviceEnabled, type SwarmConfig, type SwarmDeviceRow } from '../settings/swarm/golden';
+import { ModelCustomFields } from '../modelFields/ModelCustomFields';
+import type { ModelFieldValues } from '../../acp/modelFields';
+import {
+  describeRunModelFields,
+  forgeEffortPin,
+  type BenchModelFieldsRecord,
+} from '../../benchModelFields';
 import {
   Button,
   Chip,
@@ -155,6 +162,8 @@ interface MineRow extends BenchmarkRow {
   verdict?: VerdictDetail;
   /** Engine-truth model identifier (pool_resolved, host prefixes stripped) — the Model prefill. */
   modelId?: string;
+  /** A single-model run's custom fields: what the entrant was sent and what the tier pinned. */
+  modelFields?: BenchModelFieldsRecord;
   /** The engine's run id main stamps at close (null when .swarm/current-run.json never appeared) —
    *  the exact mine↔session join. Absent on rows written by builds before the stamp landed. */
   runId?: string | null;
@@ -829,6 +838,11 @@ function SessionDetail({
       {mineMatched && mine && (
         <BilledCostNote value={mine.billedCost} provider={mine.provider ?? null} />
       )}
+      {mineMatched && mine?.provider && (
+        <p data-testid="run-model-fields" className={TYPE.body}>
+          Model settings: {describeRunModelFields(mine.modelFields)}
+        </p>
+      )}
 
       {mineMatched && (
         <Panel
@@ -1015,6 +1029,8 @@ export default function BenchmarkView() {
   const [entrant, setEntrant] = useState<'swarm' | 'cloud'>('swarm');
   const [cloudProvider, setCloudProvider] = useState('');
   const [cloudModel, setCloudModel] = useState('');
+  // The chosen model's saved custom fields (reasoning effort, sampling): the run sends and records them.
+  const [cloudModelFields, setCloudModelFields] = useState<ModelFieldValues>({});
   const [nodes, setNodes] = useState<NodeChoice>(3);
   // The pool's size caps the offered node counts and is the default; read once per mount (a device
   // edit is a config change, and the next mount sees it). Unreadable config keeps every choice.
@@ -1512,13 +1528,15 @@ export default function BenchmarkView() {
         ? await window.electron.benchmarkRunCloud(
             cloudProvider,
             cloudModel.trim(),
-            FORGE_BENCHMARK_TIER
+            FORGE_BENCHMARK_TIER,
+            cloudModelFields
           )
         : entrant === 'cloud'
           ? await window.electron.benchmarkRunCloud(
               cloudProvider,
               cloudModel.trim(),
-              DEFAULT_BENCHMARK_TIER
+              DEFAULT_BENCHMARK_TIER,
+              cloudModelFields
             )
           : await window.electron.benchmarkRun?.(nodes, sampling);
       if (result) {
@@ -1539,7 +1557,17 @@ export default function BenchmarkView() {
       setLaunchedSampling(null);
       void loadSessions();
     }
-  }, [nodes, sampling, entrant, forge, cloudProvider, cloudModel, loadShots, loadSessions]);
+  }, [
+    nodes,
+    sampling,
+    entrant,
+    forge,
+    cloudProvider,
+    cloudModel,
+    cloudModelFields,
+    loadShots,
+    loadSessions,
+  ]);
 
   // ONE path re-grades a saved build: a retry for scoring that did not finish, or a re-score of a
   // finished run. Both stream through the same scoring progress (phase 'score') and the tray.
@@ -2003,6 +2031,13 @@ export default function BenchmarkView() {
                     setCloudProvider(provider);
                     setCloudModel(model);
                   }}
+                />
+                <ModelCustomFields
+                  providerId={cloudProvider}
+                  modelId={cloudModel}
+                  disabled={running}
+                  pinned={forge ? forgeEffortPin(forgeKit?.reasoningEffort) : undefined}
+                  onValuesChange={setCloudModelFields}
                 />
                 <WalletLimit disabled={running} />
               </>

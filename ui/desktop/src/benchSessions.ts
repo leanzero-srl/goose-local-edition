@@ -14,6 +14,7 @@
  */
 
 import path from 'node:path';
+import type { BenchModelFieldsRecord } from './benchModelFields';
 
 export type BenchSessionOutcome = 'running' | 'finished' | 'did_not_finish' | 'did_not_start';
 
@@ -32,6 +33,9 @@ export interface BenchSessionRow {
   slotDir?: string;
   completionReceipt?: string;
   scoringError?: string;
+  /** A single-model run's custom fields, stamped at launch: what the entrant was sent and what
+   *  the tier pinned. Every result row rebuilt for this run (a re-score included) reads it here. */
+  modelFields?: BenchModelFieldsRecord;
 }
 
 /** Where a session's files live: the live-run slot while it still holds them, else
