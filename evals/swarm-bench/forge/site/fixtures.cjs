@@ -487,9 +487,14 @@ function facts(seed, { scoring = false } = {}) {
     step(tick(), kind, 'live');
   }
   // The last two updates make sure both estimation fields move live (t_reestimate_followed).
+  // The SCORING site holds each board to it: the change must be on an issue of that board's project now in one of its
+  // active sprints, so every board's numbers move (a decoy-field change on the other project's issue does not count;
+  // m_one_estimate_field passed t_reestimate_followed on seed 0123456789abcdef without it, 2026-10-04).
   for (const p of [PA, PB]) {
     const field = boardOf[p.key].estimationFieldId;
-    if (!events.slice(liveStart).some((e) => e.items[0].fieldId === field)) {
+    const moves = (e) => e.items[0].fieldId === field && (!scoring || (byId.get(e.issueId).projectKey === p.key
+      && activeOf(p.key).some((a) => openSprintOf(byId.get(e.issueId)) === a.id)));
+    if (!events.slice(liveStart).some(moves)) {
       const st = r.pick(issues.filter((s) => s.projectKey === p.key && activeOf(p.key).some((a) => openSprintOf(s) === a.id)));
       setEstimate(st, field, r.pick(ESTIMATES.filter((v) => v !== st.est[field])), tick(), 'live');
     } else {

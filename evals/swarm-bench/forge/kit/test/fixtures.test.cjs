@@ -154,8 +154,10 @@ function shapeProblems(p, scoring = false) {
     if (h.items[0].from !== prev) { out.push(`issue ${h.issueId} changelog ${h.changelogId} from '${h.items[0].from}' but previous to '${prev}'`); break; }
     chain.set(h.issueId, h.items[0].to);
   }
-  // Both scrum boards' estimation fields move during the live script.
-  for (const b of scrum) if (!scripted.some((c) => c.items[0].fieldId === b.estimationFieldId)) out.push(`no scripted live estimate change on ${b.estimationFieldId}`);
+  // Both scrum boards' estimation fields move during the live script — on the SCORING site on an issue of the board's
+  // own project, so every board's numbers move (2026-10-04).
+  for (const b of scrum) if (!scripted.some((c) => c.items[0].fieldId === b.estimationFieldId
+    && (!scoring || p.issues.find((i) => i.id === c.issueId).projectKey === b.projectKey))) out.push(`no scripted live estimate change on ${b.estimationFieldId}`);
   // Changelog ids increase with creation time.
   const all = [...p.history, ...p.live];
   const byTime = all.slice().sort((x, y) => Date.parse(x.created) - Date.parse(y.created));
