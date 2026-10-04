@@ -79,13 +79,19 @@ export async function discoverConfig(policy) {
 
 // An event can name a sprint that started after the last scheduled run. Returns the sprint's entry
 // when it is active (and adds it to cfg), or null for future/closed sprints.
+// A sprint found not active is remembered in cfg.inactive (saved with the config, so later events read it from KVS,
+// not from Jira); the hourly run rebuilds the config from Jira, which forgets it again should it have started since.
 export async function resolveSprint(cfg, sprintId, policy) {
   if (cfg.sprints[sprintId]) return cfg.sprints[sprintId];
+  if (cfg.inactive?.includes(sprintId)) return null;
   const res = await jiraJson('app', route`/rest/agile/1.0/sprint/${sprintId}`, undefined, policy).catch((e) => {
     if (e.status === 404) return null;
     throw e;
   });
-  if (!res || res.state !== 'active' || !isStarted(res)) return null;
+  if (!res || res.state !== 'active' || !isStarted(res)) {
+    cfg.inactive = [...(cfg.inactive ?? []), sprintId];
+    return null;
+  }
   const boardId = res.originBoardId;
   const known = Object.values(cfg.sprints).find((s) => s.boardId === String(boardId));
   const estimateFieldId = known ? known.estimateFieldId : await boardEstimateField(boardId, policy);

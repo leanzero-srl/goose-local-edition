@@ -25,6 +25,10 @@ const { createRealtime } = require('./realtime.cjs');
 const HANDLERS = { ...platform.handlers, ...agile.handlers };
 const COMMENT_POST = 'POST /rest/api/3/issue/{issueIdOrKey}/comment';
 const WRITE_OPS = new Set([COMMENT_POST]);
+const UI_MODULE_TYPES = new Set(['jira:sprintAction', 'dashboards:widget']);
+// A page after the first: a nextPageToken, or a startAt past 0, in the query or the JSON body.
+const isContinuation = (query, body) => Boolean(query.get('nextPageToken') || Number(query.get('startAt')) > 0
+  || (body && typeof body === 'object' && (body.nextPageToken || Number(body.startAt) > 0)));
 
 function json(res, status, body, headers = {}) {
   const text = body === undefined ? '' : JSON.stringify(body);
@@ -61,12 +65,14 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
       case 'consumer-of-change': return caller.moduleType === 'consumer';
       case 'scheduled-run': return caller.scheduledRun === f.match.run;
       case 'comment-post': return opKey === COMMENT_POST;
+      // A Custom UI resolver's own Jira read (never the page's direct requestJira): DESIGN §5.2, armed by the probe.
+      case 'resolver-read': return UI_MODULE_TYPES.has(caller.moduleType) && caller.source !== 'frontend';
       default: return false;
     }
   };
   // Scripted 429s, matched by WHO is calling (DESIGN.md §5.2 faults); an early retry inside an open
   // window gets another 429 and is recorded `early_retry`.
-  const faultFor = (caller, opKey, path) => {
+  const faultFor = (caller, opKey, path, query, body) => {
     const now = state.now();
     for (const f of faults) {
       if (!inScope(f, caller, opKey)) continue;
@@ -76,12 +82,14 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
         return { f, retryAfter: rec.retryAfter, kind: 'early_retry' };
       }
       if (f.fired) continue;
+      if (f.match.continuation && !isContinuation(query, body)) continue;
       let fire = false;
-      if (f.match.scope === 'consumer-of-change') fire = f.armed;
+      if (f.match.scope === 'consumer-of-change' || f.match.scope === 'resolver-read') fire = f.armed;
       else { f.count += 1; fire = f.count === f.match.nth; }
       if (fire) {
         f.fired = true;
-        f.windowUntil = now + f.retryAfter * 1000;
+        // A 429 opens a Retry-After window; any other scripted status (the resolver's 500) answers once.
+        f.windowUntil = f.status === 429 ? now + f.retryAfter * 1000 : null;
         const rec = { fault: f.id, kind: 'fired', at: new Date(now).toISOString(), invocationId: caller.invocationId, moduleType: caller.moduleType, path, retryAfter: f.retryAfter, scope: f.match.scope };
         faultLog.push(rec);
         traceLine({ event: 'fault', ...rec });
@@ -163,10 +171,13 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
       missing(`REST ${opKey}`, { method, path: pathname });
       return send(501, { code: 'EMULATOR_NOT_MODELLED', message: `${opKey} is a Jira Cloud operation the emulator does not model` });
     }
-    const fault = faultFor(caller, opKey, pathname);
+    const fault = faultFor(caller, opKey, pathname, url.searchParams, body);
     if (fault) {
       entry.fault = fault.f.id;
       entry.faultKind = fault.kind;
+      if (fault.kind === 'fired' && fault.f.status !== 429) {
+        return send(fault.f.status, { errorMessages: ['Internal server error'], errors: {} });
+      }
       return send(429, { errorMessages: ['Rate limit exceeded.'], errors: {} }, { 'Retry-After': String(fault.retryAfter), 'RateLimit-Reason': fault.f.reason });
     }
     if (WRITE_OPS.has(opKey)) {
@@ -240,6 +251,10 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
       return delivery({ slot: change.delivery.slot, duplicate: !applied.includes(changelogId), remaining: null, applied, change, issue: state.st.issues.get(change.issueId) });
     },
     flush: () => ({ applied: state.flush() }),
+    // The probe arms a resolver-read fault for one extra surface open (DESIGN §5.2): it fires on the next resolver's
+    // first Jira read; disarm withdraws it when that open made no Jira read.
+    arm: ({ id }) => { const f = faults.find((x) => x.id === id); if (!f) throw new Error(`no fault ${id}`); f.armed = true; return { ok: true }; },
+    disarm: ({ id }) => { const f = faults.find((x) => x.id === id); if (f) f.armed = false; return { ok: true, fired: Boolean(f?.fired) }; },
     signal: (s) => {
       signals.push({ ...s, at: new Date(state.now()).toISOString() });
       if (s.type === 'consumer-start' && s.originChange) {

@@ -31,10 +31,10 @@ index e3bd570..0a99a6c 100644
    } catch (e) {
      console.error(`realtime: publish threw for sprints ${ids.join(',')}: ${e.message}`);
 diff --git a/src/sync.js b/src/sync.js
-index e315bc0..2988845 100644
+index c5a45ae..22fe5c3 100644
 --- a/src/sync.js
 +++ b/src/sync.js
-@@ -146,7 +146,7 @@ export async function applyIssueEvent(cfg, { issueId, changelogId, sprintChange
+@@ -158,7 +158,7 @@ export async function applyIssueEvent(cfg, { issueId, changelogId, sprintChange
        changed.add(sprintId);
      }
    }

@@ -1,0 +1,13 @@
+diff --git a/static/sprint/src/index.jsx b/static/sprint/src/index.jsx
+index 9505c10..4b4ba4f 100644
+--- a/static/sprint/src/index.jsx
++++ b/static/sprint/src/index.jsx
+@@ -48,7 +48,7 @@ function Ledger({ data, context }) {
+   const selectedRow = data.changes.find((c) => c.changeId === selected) ?? null;
+ 
+   const sortBy = (col) => {
+-    if (col === 'at') setSort((s) => ({ col: 'at', dir: s.col === 'at' && s.dir === 'ascending' ? 'descending' : 'ascending' }));
++    if (col === 'at') setSort((s) => ({ col: 'at', dir: s.col === 'at' ? (s.dir === 'ascending' ? 'descending' : 'ascending') : s.dir }));
+     if (col === 'points') setSort({ col: 'points', dir: 'descending' });
+   };
+ 

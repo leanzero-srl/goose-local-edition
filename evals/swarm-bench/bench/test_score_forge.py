@@ -205,7 +205,8 @@ def golden_observations(pack):
                           'chart': {'present': True, 'count': 1, 'rects': [
                               {'sprintId': s, 'series': ser, 'height': float(getattr(oo.numbers(s), ser)) * 4}
                               for s in sprints for ser in ('committed', 'added', 'removed')]},
-                          'overflow': {'scrollWidth': width, 'clientWidth': width}, 'sprintsVisible': True})
+                          'overflow': {'scrollWidth': width, 'clientWidth': width}, 'sprintsVisible': True,
+                          'metricsClipped': []})
     live_board = o.scrum_boards()[0]
     live_ui = {'board': live_board, 'subscribed': True, 'idleInvokes': 0, 'reloaded': False,
             'sprintsAfter': [{'id': s, 'metrics': _metrics(ou.numbers(s))} for s in ou.sprints_of_board(live_board)]}
@@ -233,6 +234,9 @@ def golden_observations(pack):
                   'sortAt': [{'rows': [c.change_id for c in reversed(vis)],
                               'ariaSort': {'at': 'descending'}},
                              {'rows': [c.change_id for c in vis], 'ariaSort': {'at': 'ascending'}}],
+                  # contract §5: after another column's sort, the first `at` click is ascending (the probe's sortAfterOther)
+                  'sortAfterOther': {'col': 'points', 'tried': ['issue', 'points'], 'otherAriaSort': {'points': 'descending'},
+                                     'rows': [c.change_id for c in vis], 'ariaSort': {'at': 'ascending'}},
                   'router': [{'issueKey': c.issue_key, 'ops': [{'op': 'open', 'url': f'/browse/{c.issue_key}'}]} for c in vis[:1]],
                   'close': {'closeCalled': True}}
         if vis:
@@ -278,9 +282,11 @@ def golden_observations(pack):
         invokes.append({'surface': f'sprint-action:{ex_sid}', 'functionKey': 'explain', 'invocationId': entry['invocationId'],
                         'response': {'ok': args is not None}, 'threw': False})
         if kind == 'clean':
-            st = {'explanation': clean['summary'], 'idsShown': clean['changeIds'], 'errorFlags': 0}
+            st = {'explanation': clean['summary'], 'explanationOwn': clean['summary'], 'idsShown': clean['changeIds'],
+                  'errorFlags': 0}
         elif kind == 'digits':
-            st = {'explanation': f"Committed {fo.format_points(ou.numbers(ex_sid).committed)} points.", 'idsShown': ex_vis[:1], 'errorFlags': 0}
+            own = f"Committed {fo.format_points(ou.numbers(ex_sid).committed)} points."
+            st = {'explanation': own, 'explanationOwn': own, 'idsShown': ex_vis[:1], 'errorFlags': 0}
         else:
             st = {'explanation': '', 'idsShown': [], 'errorFlags': 1, 'sortWorksAfter': True}
         steps.append({'step': kind, 'llmCalls': 1, 'llm': entry, **st})
@@ -309,6 +315,11 @@ def golden_observations(pack):
                'edit': {'options': [{'boardId': b, 'pressed': False} for b in o.scrum_boards()], 'picks': picks},
                'sprintAction': renders, 'live': live_ui,
                'explain': {'sprintId': ex_sid, 'steps': steps},
+               # the scoring site's resolver-read 500 (DESIGN §5.2): the resolver answered with a value, the page shows it
+               'resolverFault': {'sprintId': ex_sid, 'faultId': 'f-resolver', 'fired': True, 'invocationId': 'inv-fault',
+                                 'invoke': {'functionKey': 'ledger', 'threw': False, 'error': None,
+                                            'response': {'error': 'Jira refused the request (500).'}},
+                                 'pageErrors': [], 'text': 'Scope ledger Jira refused the request (500). Close', 'blank': False},
                'notStarted': {'sprintId': future, 'onlyNotStarted': True},
                'invokeResponses': invokes},
         'harnessMissing': [], 'sectionErrors': {}, 'shots': [],
@@ -358,7 +369,7 @@ class CalibrationTests(Golden):
 
     @property
     def rc(self):
-        return {**sf.TH, 'calibrated': False, 'economy_rungs': self.RC_ECONOMY, 'event_economy_rungs': self.RC_ECONOMY,
+        return {**sf.TH, 'calibrated': False, 'economy_rungs': self.RC_ECONOMY, 'event_economy_top': 1.5,
                 'receipts': dict(sf.TH['receipts'])}
 
     def verdicts(self, event_ratios=(1.2, 2.07, 1.9, 2.0, 1.4), reconcile=(1.0, 1.11, 1.05, 1.0, 1.0)):
@@ -377,14 +388,16 @@ class CalibrationTests(Golden):
     def test_the_economy_rungs_fit_the_golden_worst_of_five(self):
         fitted = sf.calibrate(self.verdicts(), self.rc)
         self.assertTrue(fitted['calibrated'])
-        self.assertEqual(fitted['event_economy_rungs'], [[1.0, 2.07], [0.75, 4.14], [0.5, 13.8], [0.25, 55.2]])
+        # the event path is continuous at the golden's worst ratio (2026-10-03 F1): score = min(1, top / ratio)
+        self.assertEqual(fitted['event_economy_top'], 2.07)
         self.assertEqual(fitted['economy_rungs'], [[1.0, 1.11], [0.75, 2.22], [0.5, 7.4], [0.25, 29.6]])
-        self.assertIn('worst-of-5', fitted['receipts']['event_economy_rungs'])
+        self.assertIn('worst-of-5', fitted['receipts']['event_economy_top'])
         self.assertEqual(fitted['ui_round_trip_rungs'], self.rc['ui_round_trip_rungs'])
         self.assertEqual(sorted(fitted['calibration']['seeds']), sorted(self.SEEDS))
         # a golden better than the optimum never fits a top rung below the oracle's optimum
         best = sf.calibrate(self.verdicts(event_ratios=(1.0,) * 5, reconcile=(0.9,) * 5), self.rc)
         self.assertEqual(best['economy_rungs'][0], [1.0, 1.0])
+        self.assertEqual(best['event_economy_top'], 1.0)
         # the fit reads calls/optimum, not the display-rounded ratio: 10/9 = 1.1111 rounds to 1.111 but fits 1.12
         exact = self.verdicts()
         for v in exact:
@@ -721,6 +734,156 @@ class DefectTests(Golden):
         self.assertEqual(self.rows(self.mutate(scripts))['l_scopes']['score'], 0.75)
 
 
+class StringencyTests(Golden):
+    """2026-10-03 stringency (owner: "more brutal … without making it unfair"): rows that now measure clauses the
+    contract already states."""
+
+    def mutate(self, fn):
+        obs = copy.deepcopy(self.obs)
+        fn(obs)
+        v = self.score(obs)
+        return self.rows(v), v
+
+    def step(self, obs, kind):
+        return next(st for st in obs['ui']['explain']['steps'] if st['step'] == kind)
+
+    def test_explanation_numbers_are_ledger_numbers(self):
+        def year(o):
+            self.step(o, 'digits')['explanationOwn'] += ' Since 2026.'
+        rows, v = self.mutate(year)
+        self.assertEqual(rows['u_llm_explain']['parts']['1:digits:every_number_is_a_ledger_number'], False)
+        self.assertLess(v['score'], 0.899)
+
+        def no_number(o):
+            self.step(o, 'digits')['explanationOwn'] = 'Scope grew after the sprint started.'
+        rows, _ = self.mutate(no_number)
+        self.assertEqual(rows['u_llm_explain']['parts']['1:digits:own_sentence_has_a_ledger_number'], False)
+
+        def names_and_keys(o):
+            n = fo.Oracle(self.pack, include_live_ui=True).numbers(o['ui']['explain']['sprintId'])
+            self.step(o, 'digits')['explanationOwn'] = f'{n.name}: OPS-12 and PAY-3 moved; added {fo.format_points(n.added)} points.'
+        rows, _ = self.mutate(names_and_keys)
+        self.assertEqual(rows['u_llm_explain']['score'], 1.0)
+
+        def predates(o):
+            for st in o['ui']['explain']['steps']:
+                st.pop('explanationOwn', None)
+        rows, _ = self.mutate(predates)
+        self.assertEqual(rows['u_llm_explain']['score'], 1.0)
+        self.assertNotIn('1:digits:every_number_is_a_ledger_number', rows['u_llm_explain']['parts'])
+
+    def test_at_starts_ascending_after_another_sort(self):
+        def resumes_descending(o):
+            for r in o['ui']['sprintAction']:
+                if r.get('sortAfterOther'):
+                    r['sortAfterOther']['rows'] = list(reversed(r['sortAfterOther']['rows']))
+                    r['sortAfterOther']['ariaSort'] = {'at': 'descending'}
+        rows, v = self.mutate(resumes_descending)
+        self.assertLess(rows['u_ledger_sort']['score'], 1.0)
+        self.assertIn('u_ledger_sort', v['admission']['failedChecksByBand'][-1]['checks'])
+
+        def no_other_sort(o):
+            for r in o['ui']['sprintAction']:
+                if r.get('sortAfterOther'):
+                    r['sortAfterOther'] = {'col': None, 'tried': ['issue', 'points', 'kind', 'by', 'source']}
+        rows, _ = self.mutate(no_other_sort)
+        self.assertEqual(rows['u_ledger_sort']['score'], 1.0)
+
+    def test_a_jira_500_on_a_resolver_read_is_answered_and_shown(self):
+        def threw(o):
+            o['ui']['resolverFault']['invoke'].update(threw=True, error='Jira 500 on /rest/agile/1.0/sprint/11')
+        rows, _ = self.mutate(threw)
+        self.assertEqual(rows['b_invoke_contract']['parts']['jira_error'],
+                         {'returned_a_value': False, 'surface_shows_it': True})
+        self.assertLessEqual(rows['b_invoke_contract']['score'], 0.5)
+
+        def blank(o):
+            o['ui']['resolverFault'].update(blank=True, text='')
+        self.assertLessEqual(self.mutate(blank)[0]['b_invoke_contract']['score'], 0.5)
+
+        def never_fired(o):
+            o['ui']['resolverFault'].update(fired=False, invoke=None)
+        self.assertEqual(self.mutate(never_fired)[0]['b_invoke_contract']['score'], 1.0)
+
+    def test_a_clipped_number_fails_the_widget_sizes(self):
+        def clipped(o):
+            o['ui']['widget']['views'][0]['metricsClipped'] = ['11:creep']
+        rows, _ = self.mutate(clipped)
+        self.assertLess(rows['v_widget_sizes']['score'], 1.0)
+        self.assertIn('11:creep', rows['v_widget_sizes']['detail'])
+
+    def test_every_scheduled_429_is_graded(self):
+        heal_fault = {'id': 'f-heal', 'match': {'scope': 'scheduled-run', 'run': 2, 'nth': 2}, 'status': 429, 'retryAfter': 2,
+                      'reason': 'jira-burst-based'}
+        self.pack = copy.deepcopy(self.pack)
+        self.pack['faults'].append(heal_fault)
+
+        def early(o):
+            calls = o['phases']['heal']['calls']
+            calls.append({**calls[0], 't': 501, 'status': 429, 'fault': 'f-heal'})
+            calls.append({**calls[0], 't': 501.5, 'status': 429, 'fault': 'f-heal', 'earlyRetry': 'f-heal'})
+            calls.append({**calls[0], 't': 504})
+        rows, _ = self.mutate(early)
+        self.assertEqual(rows['r_rate_limit']['score'], 0.5)
+        self.assertEqual(rows['r_rate_limit']['parts'], {'faults': 2})
+        self.assertIn('heal request 2: retried 1x', rows['r_rate_limit']['detail'])
+
+    def test_event_economy_is_continuous_at_the_optimum(self):
+        top = float(sf.TH['event_economy_top'])
+        base = self.rows(self.score())['e_event_economy']
+        opt = base['parts']['optimum']
+
+        def chatty(o):
+            calls = o['phases']['live']['calls']
+            extra = [dict(c) for c in calls if c.get('service') == 'jira' and c.get('kind') == 'consumer' and not c.get('fault')]
+            calls.extend(extra)   # a second read per change
+        rows, _ = self.mutate(chatty)
+        ev = rows['e_event_economy']
+        self.assertAlmostEqual(ev['score'], round(min(1.0, top / (ev['parts']['calls'] / opt)), 4), places=4)
+        self.assertLess(ev['score'], 1.0)
+
+    def test_three_scoring_sites_worst_row_mean_excellence(self):
+        seeds = sf.scoring_seeds('486d81c1c0717aff', '775bda9d03461428')
+        self.assertEqual(len(seeds), sf.SCORING_SEEDS)
+        self.assertEqual(seeds[0], '486d81c1c0717aff')
+        self.assertEqual(seeds, sf.scoring_seeds('486D81C1C0717AFF', '775bda9d03461428'))   # deterministic
+        dev = seeds[1]
+        self.assertNotIn(dev, sf.scoring_seeds('486d81c1c0717aff', dev))                    # never the dev seed
+        a = sf._scenario({})
+        b = sf._scenario({'u_widget_chart': 0.5, 'e_event_economy': 0.4})
+        c = sf._scenario({'u_widget_chart': 0.75, 'e_event_economy': 1.0})
+        merged = {r['check']: r for r in sf.merge_seed_rows([a, b, c], seeds)}
+        self.assertEqual(merged['u_widget_chart']['score'], 0.5)
+        self.assertIn(f'(seed {seeds[1]})', merged['u_widget_chart']['detail'])
+        self.assertEqual(merged['e_event_economy']['score'], 0.8)
+        self.assertEqual(merged['u_widget_chart']['seeds'], dict(zip(seeds, (1.0, 0.5, 0.75))))
+        c[0] = {**c[0], 'unavailable': True, 'detail': 'UNAVAILABLE: probe'}
+        merged = {r['check']: r for r in sf.merge_seed_rows([a, b, c], seeds)}
+        self.assertTrue(merged[c[0]['check']]['unavailable'])
+        # evaluate() merges the seed contexts it is handed and reports each site's own score
+        ctx = sf.Ctx(self.root, self.obs, self.pack, fixture_seed='a' * 16)
+        bad = copy.deepcopy(self.obs)
+        bad['ui']['widget']['views'][0]['chart']['rects'] = []
+        ctx.seed_ctxs = [sf.Ctx(self.root, self.obs, self.pack, fixture_seed='b' * 16),
+                         sf.Ctx(self.root, bad, self.pack, fixture_seed='c' * 16)]
+        v = sf.evaluate(ctx)
+        self.assertEqual(v['fixture_seeds'], ['a' * 16, 'b' * 16, 'c' * 16])
+        self.assertEqual(v['seed_scores']['a' * 16], 1.0)
+        self.assertLess(v['seed_scores']['c' * 16], 1.0)
+        self.assertEqual(v['score'], v['seed_scores']['c' * 16])
+
+    def test_a_rerun_that_rewrites_the_ledger_is_a_weighted_defect(self):
+        def rewrites(o):
+            rows = o['phases']['heal']['kvsAfter']['entities'][ENTITY]
+            o['phases']['rerun']['calls'] += [{'t': 901, 'inv': 'r1', 'kind': 'scheduled', 'provider': 'app', 'service': 'kvs',
+                                               'method': 'POST', 'path': '/api/v1/entity/set', 'status': 200,
+                                               'body': {'entityName': ENTITY, **r}} for r in rows]
+        rows, v = self.mutate(rewrites)
+        self.assertEqual(rows['r_idempotent_rerun']['score'], 0.0)
+        self.assertEqual(rows['r_idempotent_rerun']['tier'], 'R')
+        self.assertLess(v['inner'], 1.0)
+
+
 class DeployReadinessTests(Golden):
     """Every deploy-readiness rule, each with a passing and a failing case (owner 2026-10-03)."""
 
@@ -908,7 +1071,10 @@ class LlmRealtimeMcpTests(Golden):
                     e.update(model='claude-3-opus', modelStatus='unknown', status=400)
         rows, v = self.mutate(unknown)
         self.assertEqual(rows['k_llm_model_current']['score'], 0.5)
-        self.assertEqual(v['admission']['ceiling'], 1.0)     # points only, never a band (DESIGN 17.2)
+        # An LLM defect is a band-4 defect (prompt: "Any ... LLM ... defect"; 2026-10-03 stringency supersedes
+        # DESIGN 17.2's points-only note); with u_llm_explain failing too it is priced once (band_defects).
+        self.assertEqual(v['admission']['ceiling'], 0.899)
+        self.assertIn('k_llm_model_current', v['admission']['failedChecksByBand'][-1]['checks'])
         rule = [f for f in v['deploy_readiness']['rules'] if f['rule'].startswith('R11 ')][0]
         self.assertEqual((rule['status'], rule['graded_by']), ('fail', 'k_llm_model_current'))
 
@@ -1012,6 +1178,43 @@ class LlmRealtimeMcpTests(Golden):
         self.assertEqual(rows['b_no_permission_leak']['score'], 0)
         self.assertIn('b_no_permission_leak', v['critical']['unsuppressed'])
 
+    def test_band_four_roster_is_the_prompts_list(self):
+        # Prompt "Score bands": "Any duplicate, ordering, rate-limit, pagination, permission, policy, console, LLM or
+        # realtime defect" (2026-10-03 stringency: ordering, permission, policy and LLM rows added).
+        self.assertEqual(set(sf.ADMISSION_BANDS[-1][2]), {
+            't_no_double_count', 't_out_of_order', 't_retry_after_honoured', 'r_heal_dropped', 'r_rate_limit',
+            'r_pagination', 'b_no_permission_leak', 'b_comment_exactly_once', 'b_realtime_payload_clean',
+            'u_llm_explain', 'u_widget_live', 'v_csp_clean', 'v_console_clean', 'u_ledger_sort', 's_index_order',
+            'b_hidden_count', 'a_action_permissions', 'l_scopes', 'k_llm_model_current'})
+
+    def test_band_four_prices_a_shadow_once(self):
+        # m_asapp_ui's shape: one asApp defect fails the leak, the hidden count and the action's per-person list.
+        rows = sf._scenario({'b_no_permission_leak': 0.0, 'b_hidden_count': 0.0, 'a_action_permissions': 0.0})
+        adm = sf.admit(rows)
+        self.assertEqual(adm['ceiling'], 0.899)
+        self.assertEqual(sorted(adm['failedChecksByBand'][-1]['priced_once']), ['a_action_permissions', 'b_hidden_count'])
+        # two unrelated defects are two
+        self.assertEqual(sf.admit(sf._scenario({'l_scopes': 0.0, 'u_widget_live': 0.0}))['ceiling'], 0.869)
+
+    def test_a_final_never_sits_on_a_cap(self):
+        # Owner rule 2026-10-03: final = min(earned, cap - 0.05 * (1 - earned)).
+        self.assertEqual(sf.capped_final(1.0, 0.899), 0.899)
+        self.assertAlmostEqual(sf.capped_final(0.98, 0.899), 0.899 - 0.05 * 0.02)
+        self.assertEqual(sf.capped_final(0.5, 0.899), 0.5)
+        self.assertEqual(sf.capped_final(0.97, 1.0), 0.97)
+        grid = [i / 1000 for i in range(1001)]
+        for cap in (0.499, 0.699, 0.799, 0.809, 0.839, 0.869, 0.899, 1.0):
+            finals = [sf.capped_final(e, cap) for e in grid]
+            self.assertEqual(finals, sorted(finals))                      # monotone in earned
+            self.assertTrue(all(f < cap for f, e in zip(finals, grid) if e < 1.0 and cap < 1.0))
+        # a near-perfect capped run never PRINTS the cap either (rounding would put it back on 0.899)
+        self.assertEqual(sf.published_score(sf.capped_final(0.99998, 0.899), 0.899), 0.8989)
+        self.assertEqual(sf.published_score(sf.capped_final(1.0, 0.899), 0.899), 0.899)
+        self.assertEqual(sf.published_score(0.99999999999, 1.0), 1.0)
+        v = sf.compose_from_rows(sf._scenario({'u_widget_live': 0.0}))
+        self.assertLess(v['score'], 0.899)
+        self.assertEqual(v['admission']['final_rule'], 'final = min(earned, ceiling - 0.05 * (1 - earned))')
+
     def test_band_four_is_graded(self):
         rows = sf._scenario({'u_llm_explain': 0.0, 'u_widget_live': 0.0, 'v_console_clean': 0.0})
         self.assertEqual(sf.admit(rows)['ceiling'], 0.839)
@@ -1047,14 +1250,15 @@ class ControlTests(unittest.TestCase):
     def test_single_defect_cost_table_is_pinned(self):
         # DESIGN §8.6 (10): computed once from the composition; a change here is a scoring change.
         pinned = {
-            'l_deployable': 0.499, 'l_bundles_load': 0.499, 'b_no_permission_leak': 0.5894,
-            'b_comment_exactly_once': 0.5894, 't_no_double_count': 0.5894, 'r_backfill_complete':
-            0.5894, 'u_widget_loads': 0.6, 't_event_rows': 0.699, 'k_dashboard_widget': 0.799,
-            'r_pagination': 0.899, 'u_llm_explain': 0.899, 'u_widget_live': 0.899, 'k_rovo_mcp': 0.9845,
-            'k_llm_model_current': 0.9845, 'e_reconcile_economy': 0.97, 'b_comment_adf_as_user': 0.9757,
-            'u_widget_numbers': 0.9805, 'l_lint_warnings': 0.9816, 't_reestimate_followed': 0.9824,
-            'u_widget_chart': 0.9872, 'v_widget_sizes': 0.9859, 'l_scopes': 0.9883,
-            'k_manifest_semantics': 0.9845, 'k_runtime_risks': 0.9845}
+            'l_deployable': 0.4786, 'l_bundles_load': 0.4786, 'b_no_permission_leak': 0.5894,
+            'b_comment_exactly_once': 0.5894, 't_no_double_count': 0.5894, 'r_backfill_complete': 0.5908,
+            'u_widget_loads': 0.6, 't_event_rows': 0.6978, 'k_dashboard_widget': 0.7982, 'r_pagination': 0.8982,
+            'u_llm_explain': 0.8984, 'u_widget_live': 0.8984, 'k_rovo_mcp': 0.9845, 'k_llm_model_current': 0.8982,
+            'e_reconcile_economy': 0.96, 'b_comment_adf_as_user': 0.9757, 'u_widget_numbers': 0.9805,
+            'l_lint_warnings': 0.9816, 't_reestimate_followed': 0.9824, 'u_widget_chart': 0.9872,
+            'v_widget_sizes': 0.9859, 'l_scopes': 0.8984, 'k_manifest_semantics': 0.9845, 'k_runtime_risks': 0.9845,
+            'u_ledger_sort': 0.8984, 's_index_order': 0.8981, 'b_hidden_count': 0.8981, 'a_action_permissions': 0.8981,
+            'r_idempotent_rerun': 0.9846, 'a_skill_instructions': 0.9824}
         costs = sf.single_defect_costs()
         self.assertEqual({k: costs[k] for k in pinned}, pinned)
 
@@ -1190,7 +1394,7 @@ class RegistryAndContractTests(unittest.TestCase):
         't_event_rows': '§3', 't_no_double_count': '§3', 't_out_of_order': '§3', 't_multi_sprint_parse': '§1',
         't_reestimate_followed': '§3', 't_retry_after_honoured': '§3', 'r_rate_limit': '§3',
         't_no_user_in_async': '§3', 'r_as_app': '§3', 'r_backfill_complete': '§3', 'r_removals_found': '§3',
-        'r_heal_dropped': '§3', 'e_idempotent_rerun': '§3', 'r_pagination': 'P3', 'r_completes_in_timeout': '§8',
+        'r_heal_dropped': '§3', 'r_idempotent_rerun': '§3', 'r_pagination': 'P3', 'r_completes_in_timeout': '§8',
         's_storage_scope': '§2', 's_limits': '§2', 'b_invoke_contract': '§6', 'b_no_permission_leak': '§1',
         'b_hidden_count': '§5', 'a_action_permissions': '§6', 'b_comment_adf_as_user': '§5',
         'b_comment_exactly_once': '§5', 'u_comment_flow': '§5', 'u_widget_loads': '§4', 'u_widget_numbers': '§4',
@@ -1229,7 +1433,7 @@ class RegistryAndContractTests(unittest.TestCase):
         counts = {}
         for _n, t, *_ in sf.CHECKS:
             counts[t] = counts.get(t, 0) + 1
-        self.assertEqual(counts, {'L': 6, 'K': 10, 'T': 8, 'R': 7, 'S': 4, 'B': 6, 'U': 12, 'V': 5, 'A': 4, 'E': 4})
+        self.assertEqual(counts, {'L': 6, 'K': 10, 'T': 8, 'R': 8, 'S': 4, 'B': 6, 'U': 12, 'V': 5, 'A': 4, 'E': 3})
         self.assertEqual(sf.TIER_WEIGHT, {'L': .08, 'K': .10, 'T': .16, 'R': .14, 'S': .08, 'B': .12, 'U': .16,
                                           'V': .08, 'A': .08})
 

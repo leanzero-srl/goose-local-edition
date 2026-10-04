@@ -331,11 +331,15 @@ test('the scoring site pages every list of two or more items; the dev site keeps
     const changelog = await walkOffset(call, `/rest/api/3/issue/${busy.id}/changelog`);
     return { search, bulk, boards, sprints, sprintIssues, soft, changelog };
   };
+  // The scoring pack's DATA differs from the dev pack's since 2026-10-03 (DESIGN §17.7 F4/F7), so the baseline is the
+  // scoring pack served without its page rule: the rule may change page sizes only, never items.
+  const { facts } = require(path.join(__dirname, '..', '..', 'site', 'fixtures.cjs'));
+  const { paging: _rule, ...unpaged } = facts('0123456789abcdef', { scoring: true });
   let dev;
   await withSite(async (site, call) => {
     assert.strictEqual(site.pack.paging, undefined);
     dev = await reads(site, call);
-  });
+  }, { pack: unpaged });
   await withSite(async (site, call) => {
     assert.strictEqual(site.pack.paging.rule, 'half');
     const scoring = await reads(site, call);

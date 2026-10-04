@@ -1,0 +1,8 @@
+{
+  "loses": [
+    "u_ledger_sort"
+  ],
+  "critical": false,
+  "max_final": 0.899,
+  "why": "After the points sort (descending) the first `at` click keeps that direction instead of starting with ascending (contract \u00a75 \"starting with ascending when another sort was active\"). Ordering defect band 0.899."
+}

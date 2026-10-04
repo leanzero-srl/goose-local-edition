@@ -202,14 +202,14 @@ seeds:
 | projects | two projects; keys drawn per seed from a realistic list (`OPS`/`PAY` below are placeholders), ids seeded |
 | boards | one scrum board per project; which board estimates with "Story point estimate" and which with "Story Points" is seeded, and some issues also carry a value in the other board's field (a decoy only the board configuration resolves); one kanban board (no sprints: `/board/{id}/sprint` answers 400 as Jira does) |
 | custom fields | Sprint, both estimate fields and ~30 decoys from a realistic field list; every custom field id seeded (`customfield_1xxxx`) |
-| sprints | OPS: 2 active (parallel), 1 future, 2 closed; PAY: 1 active, 1 future, 1 closed; names, ids and dates seeded |
+| sprints | OPS: 2 active (parallel), 1 future, 2 closed; PAY: 1 active, 1 future, 1 closed; names, ids and dates seeded. SCORING site only (§17.7 F4): OPS's two active sprints share one `startDate` (ties by sprint id), the second starts EMPTY (committed 0, creep `—`, `creepPercent` null), and PAY's active sprint carries a name as long as Jira's 30 characters allow |
 | issues | 229–245 across both projects ("237-ish"); estimates from {0.5,1,2,3,5,8,13} or none |
 | history (before install) | 50–70 sprint changes after the active sprints' starts; ≥ 8 carry-over issues whose Sprint values list several ids; ≥ 4 issues removed to the backlog |
 | sprint/change timing | no two sprints of a board share a `startDate`; no change is created exactly at a `startDate`; the scheduled job runs before the first live update |
-| live script | 36–44 updates: ~60% sprint, ~15% estimate, ~25% irrelevant (summary, labels, status); 4 duplicated deliveries, 2 permuted pairs, 3 dropped |
+| live script | 36–44 updates: ~60% sprint, ~15% estimate, ~25% irrelevant (summary, labels, status); 4 duplicated deliveries, 2 permuted pairs, 3 dropped. SCORING site (§17.7 F7): 8 duplicated, 4 permuted pairs, 5 dropped — one of them an estimate change on a board's own field |
 | people | 6 users; `viewer` (the probe's identity); the app's own account |
 | visibility | 4–6 issues under a security level the viewer cannot browse, ≥ 2 with changes in active sprints; 1 visible issue on which the viewer may not comment |
-| faults | matched by WHO is calling, never by path (an efficient app may never touch a given endpoint): the first Jira request of the consumer invocation processing one scripted live change → 429 `Retry-After: 30` (if that invocation makes none, the first Jira request of the next consumer invocation that makes one); the second Jira request of the first scheduled run → 429 `Retry-After: 2`; every 429 carries `RateLimit-Reason` (the comment-path 429 was dropped, §17.2 E) |
+| faults | matched by WHO is calling, never by path (an efficient app may never touch a given endpoint): the first Jira request of the consumer invocation processing one scripted live change → 429 `Retry-After: 30` (if that invocation makes none, the first Jira request of the next consumer invocation that makes one); the second Jira request of the first scheduled run → 429 `Retry-After: 2`; every 429 carries `RateLimit-Reason` (the comment-path 429 was dropped, §17.2 E). SCORING site (§17.7): also the first CONTINUATION page request of the first scheduled run (a `nextPageToken` or `startAt` > 0) → 429 `Retry-After: 2`; the second Jira request of the second scheduled run (the heal) → 429 `Retry-After: 2`; and a `resolver-read` fault the probe arms for one extra sprint-action open: the first Jira read of a Custom UI resolver → Jira's 500 |
 | LLM | `list()` returns the 8 ids of the public models page, all `active` (no seeded deprecated model — none exists in the docs); the site enforces the documented validation rules (`temperature` + `top_p` together → 400 on every model; either one → 400 on claude-opus-4-7/4-8/5 and claude-sonnet-5); an id `list()` does not return → 400; a scripted responder answers explain calls in order: clean `report_scope` call; summary WITH digits + one hidden and one unknown change id; refusal (text, no tool call); malformed arguments (an object missing `changeIds` and with a non-string `summary`, malformed under every reading — a JSON-string `arguments` is NOT used as the malformed case, since the types say `object` and an app may parse a string); `ForgeLlmAPIError` 500 |
 | live-UI slot | 2 live changes held back from the script and delivered while the widget is open (§8.7 step 8) |
 | limits | from the OpenAPI/docs with the quoted sentence as receipt: search/jql page size, ids-only page size, `/changelog/bulkfetch` issue cap (1000) and field cap (10), `/issue/bulkfetch` caps, Agile `maxResults` |
@@ -462,14 +462,15 @@ call log; "ev" = probe evidence; "oracle" = forge_oracle.py on the pack.
 | `r_removals_found` | R | removed-to-backlog changes present | subset | — |  |
 | `r_heal_dropped` | R | after the second run every dropped change has exactly one row; its `source` may be `reconcile` OR `event` (a consumer re-reading the full changelog while handling another delivery legitimately records it first — P7); no other row added | rows diff | — |  |
 | `r_pagination` | R | every read the scoring site served in two or more pages (§17.6) walked to its end in the endpoint's own style (`nextPageToken` for `/search/jql` and `/changelog/bulkfetch`, `startAt`/`isLast` for issue changelog and Agile), each page once, each page continuing where the site's previous answer left off (its token, or the offset after the items it served); no `/rest/api/3/search`. A read the site answered in one page ran no paging code and is not graded; a one-page answer of ≥ 2 items on the scoring site is a harness gap (unavailable). Ids-only searches are legitimate — a missing field shows up in the numbers, not here | log | ≥ 1 read served in two or more pages |  |
-| `r_rate_limit` | R | reconcile 429 (Retry-After 2): retried at ≥ 2 virtual s, run completes | fault log | the fault fired |  |
+| `r_rate_limit` | R | every scheduled-run 429 that fired (the backfill's, and on the scoring site the backfill's continuation page and the heal's): retried at ≥ 2 virtual s, its run completes; mean over the faults | fault log | a scheduled fault fired |  |
 | `r_as_app` | R | reconcile reads are `provider=app` | log | ≥ 1 scheduled-run Jira read |  |
 | `r_completes_in_timeout` | R | every scheduled invocation finishes inside its module timeout | emulator | a scheduled trigger made ≥ 1 Jira call |  |
+| `r_idempotent_rerun` | R | entity writes by the third (no-change) scheduled run: 0 → 1.0, ≤ 1% of rows → .5, else 0 (contract §3 "a run with nothing new writes nothing"; promoted from the E slice 2026-10-03 — a stated behaviour earns weight) | log | ≥ 1 ledger row |  |
 | `s_storage_scope` | S | KVS used and no 403 from the KVS proxy | log | ≥ 1 KVS call |  |
 | `s_entity_index_used` | S | ledger reads are entity queries on the declared index with the sprint as partition | log | ≥ 1 ledger read |  |
 | `s_index_order` | S | rows read by the index come back in change-time order (default table order = oracle) | ev + log | table rows rendered |  |
 | `s_limits` | S | no KVS limit errors (value bytes, key length, transaction ops) | log | ≥ 1 KVS write |  |
-| `b_invoke_contract` | B | every invoked key is defined; no `undefined` results; bad input → structured error, not a throw | ev bridge log | ≥ 1 invoke observed |  |
+| `b_invoke_contract` | B | every invoked key is defined; no `undefined` results; bad input → structured error, not a throw; and (scoring site, §17.7 F5) a Jira 500 on the resolver's first read returns a value (no throw through the bridge) and the surface shows it (not blank, no page error) — half the row | ev bridge log | ≥ 1 invoke observed |  |
 | `b_no_permission_leak` | B | hidden issues' keys (whole-token match, `\b<KEY>\b`, so `OPS-12` never matches `OPS-120`) and summaries appear in no invoke/action response, no LLM prompt sent from a person-facing invocation (folds the reviewer's `b_llm_prompt_no_leak`), and no DOM text; change ids are compared only in `data-change-id` attributes and `changeId` fields | ev scan vs oracle | ≥ 1 person-facing change list returned or rendered | C |
 | `b_hidden_count` | B | `hidden-count` and `hiddenChanges` = oracle per sprint | ev | — |  |
 | `b_comment_adf_as_user` | B | comment body valid ADF (pinned @atlaskit/adf-schema JSON schema), contains issue key, sprint name, creep; author = viewer | site comments | ≥ 1 comment POST |  |
@@ -480,22 +481,22 @@ call log; "ev" = probe evidence; "oracle" = forge_oracle.py on the pack.
 | `u_widget_chart` | U | one rect per sprint × series; heights on one linear scale within 1 px | ev rects | — |  |
 | `u_widget_edit_config` | U | pick board B → host Save → view shows B's sprints; reopening edit shows B pressed; no config → `needs-config` only; a SECOND widget instance (different `widgetId`, host-injected `extension.config` naming the other board) shows its own board | ev | — |  |
 | `u_ledger_table` | U | rows = oracle visible changes for the context sprint, cells correct (`datetime` as instants), default order `at` then changelog id | ev DOM | — |  |
-| `u_ledger_sort` | U | `at` toggles between default order and its exact reverse; changelog ids compared numerically; `aria-sort` on the active header | ev | table rows rendered |  |
+| `u_ledger_sort` | U | `at` toggles between default order and its exact reverse; changelog ids compared numerically; `aria-sort` on the active header; after ANOTHER header's sort became active, the first `at` click is ascending (contract §5; judged only where another header sorts) | ev | table rows rendered |  |
 | `u_issue_router` | U | issue key click → bridge `open` or `navigate` (any `type`) to `/browse/<KEY>`; no popup or top navigation | ev | table rows rendered |  |
 | `u_comment_flow` | U | select + post → success flag; forbidden issue → error flag, modal still sorts | ev | — |  |
 | `u_modal_close` | U | close → bridge `close` | ev | modal rendered |  |
-| `u_llm_explain` | U | via `chat()` or `stream()` (stream tool-call delivery is undocumented, both accepted), any `active` model, the scripted explain answers in order: the request carries tool `report_scope` (`summary` string, `changeIds` string array) and a forcing `tool_choice` (`required` or the named function); clean answer → summary shown, cited visible ids shown; digits answer → no model digit on screen (ledger numbers instead), hidden and unknown ids dropped; refusal, malformed, `ForgeLlmAPIError` → error flag and the modal still sorts | ev + llm log | explain control rendered |  |
+| `u_llm_explain` | U | via `chat()` or `stream()` (stream tool-call delivery is undocumented, both accepted), any `active` model, the scripted explain answers in order: the request carries tool `report_scope` (`summary` string, `changeIds` string array) and a forcing `tool_choice` (`required` or the named function); clean answer → summary shown, cited visible ids shown; digits answer → no model digit on screen (ledger numbers instead), hidden and unknown ids dropped; every number in the explanation's own words (the box without its `[data-change-id]` elements; issue keys and the sprint name are names) is a ledger number — the four §1 numbers, the hidden count, the visible change counts, a visible change's points — and the digits answer's replacement sentence carries at least one of the four (contract §5 "your own sentence with the ledger's numbers", §17.7 F5); refusal, malformed, `ForgeLlmAPIError` → error flag and the modal still sorts | ev + llm log | explain control rendered |  |
 | `u_widget_live` | U | the widget subscribed to a realtime channel (any name, token optional); the two live-UI changes are published from the event path and the open widget shows the oracle's new numbers without a reload; 0 invokes from the widget while idle before the publish (polling scores 0) | ev bridge + realtime log | widget rendered sprints |  |
 | `u_not_started` | U | future sprint context → `not-started` and no ledger, metrics or post button (a close button is allowed) | ev | — |  |
 | `v_theme_tokens` | V | `enableTheming` called on every surface; metric and table text colours equal the mode's `--ds-text*` values (`--ds-link*` accepted on links); contrast ≥ 4.5:1 in both modes; disabled controls exempt | ev computed styles | a surface rendered app content |  |
 | `v_dark_mode` | V | the host page is unpainted, so the app paints its own surface: dark screenshots' dominant colour is in the dark `--ds-surface*` family, light in the light family; no surface blank | ev pixels + tokens | a surface rendered app content |  |
 | `v_csp_clean` | V | 0 `securitypolicyviolation`, 0 failed asset requests | ev | a surface rendered app content |  |
 | `v_console_clean` | V | 0 console errors/page errors on nominal scenarios | ev | a surface rendered app content |  |
-| `v_widget_sizes` | V | at 380 px: no horizontal overflow, every sprint visible, no `data-metric` text clipped or ellipsized (names may ellipsize) | ev | widget rendered sprints |  |
+| `v_widget_sizes` | V | at 380 px: no horizontal overflow, every sprint visible, no `data-metric` text clipped or ellipsized (names may ellipsize) — measured since §17.7 as each number's laid-out text range inside the viewport and every horizontally clipping ancestor | ev | widget rendered sprints |  |
 | `a_action_result` | A | action JSON = oracle for each active sprint (numbers rounded as creep, visible changes in table order, `at` as instants) | emulator | — |  |
 | `a_action_errors` | A | unknown and missing `sprintId` → `{error}`, no throw | emulator | the action exists |  |
 | `a_action_permissions` | A | the per-person OUTCOME: `hiddenChanges` and the visible list are right for two users, whether read `asUser` or `asApp` + an explicit permission check (`asUser` in actions is undocumented) | emulator | — |  |
-| `a_skill_instructions` | A | SKILL.md body ≤ 500 lines, names `get-sprint-scope` and `sprintId` | tree | SKILL.md exists |  |
+| `a_skill_instructions` | A | SKILL.md body ≤ 500 lines, names `get-sprint-scope` and `sprintId`, reads the result (names at least half of the answer's fields `sprintName`, `committed`, `added`, `removed`, `creepPercent`, `hiddenChanges`, `changes`) and says what to do with an `error` (contract §6: "how to read the result, and what to do with an error", 2026-10-03) | tree | SKILL.md exists |  |
 
 Partial credit: every fraction-valued row is the measured fraction; an absent surface is 0 with `absent_surface`
 (severity 0 when critical) — never a refusal (score_sb7 F9 doctrine).
@@ -537,10 +538,9 @@ with golden receipts; initial values below are the rc defaults):
 
 | id | measured | rc rungs |
 |---|---|---|
-| `e_reconcile_economy` | Jira calls of the backfill ÷ oracle optimum (field list + boards + configs + sprints + one ids-only search page set + changelog bulkfetch pages + issue bulkfetch) | ≤ 1.5× 1.0, ≤ 3× .75, ≤ 10× .5, ≤ 40× .25 |
-| `e_event_economy` | Jira calls per relevant live change ÷ oracle optimum (1 read, sprint/field metadata cached in KVS) | same |
+| `e_reconcile_economy` | Jira calls of the backfill ÷ oracle optimum (field list + boards + configs + sprints + one ids-only search page set + changelog bulkfetch pages + issue bulkfetch + one repeat per scripted 429 it met) | ≤ 1.5× 1.0, ≤ 3× .75, ≤ 10× .5, ≤ 40× .25 |
+| `e_event_economy` | Jira calls of the event path ÷ oracle optimum (1 read per delivered relevant change — sprint/field metadata cached in KVS, a duplicate delivery recognised from KVS — plus one repeat per consumer-path 429), graded CONTINUOUSLY (§17.7 F1): `min(1, top / ratio)`, `top` the golden's worst-of-5 ratio | continuous |
 | `e_ui_round_trips` | invokes before first meaningful paint per surface | 1 → 1.0, 2 → .75, ≤ 4 → .5 |
-| `e_idempotent_rerun` | entity writes by the third (no-change) scheduled run | 0 → 1.0, ≤ 1% of rows → .5, else 0 |
 
 ### 8.5 Admission bands (passing awards nothing; `passed` = exactly 1.0, available, not vacuous — sb71.passed)
 
@@ -549,11 +549,27 @@ with golden receipts; initial values below are the rc defaults):
 | deployable | 0.499 | `l_deployable`, `l_bundles_load` |
 | working ledger | 0.699 | `u_widget_loads`, `t_event_rows`, `r_backfill_complete`, `s_storage_scope`, `s_entity_index_used` |
 | current platform, complete surfaces | 0.799 | `k_dashboard_widget`, `k_widget_edit_bridge`, `k_rovo_skill`, `u_widget_edit_config`, `u_ledger_table`, `a_action_result`, `v_theme_tokens`, `v_dark_mode` |
-| production robustness (graded) | 0.899 − 0.03·(n−1), never below 0.799 | `t_no_double_count`, `t_out_of_order`, `t_retry_after_honoured`, `r_heal_dropped`, `r_rate_limit`, `r_pagination`, `b_no_permission_leak`, `b_comment_exactly_once`, `b_realtime_payload_clean`, `u_llm_explain`, `u_widget_live`, `v_csp_clean`, `v_console_clean` |
+| production robustness (graded) | 0.899 − 0.03·(n−1), never below 0.799 | `t_no_double_count`, `t_out_of_order`, `t_retry_after_honoured`, `r_heal_dropped`, `r_rate_limit`, `r_pagination`, `b_no_permission_leak`, `b_comment_exactly_once`, `b_realtime_payload_clean`, `u_llm_explain`, `u_widget_live`, `v_csp_clean`, `v_console_clean`, `u_ledger_sort`, `s_index_order`, `b_hidden_count`, `a_action_permissions`, `l_scopes`, `k_llm_model_current` |
 
-Band 4 is graded: with n of its 13 rows failing (n ≥ 1) the ceiling is `max(0.799, 0.899 − 0.03·(n − 1))` — n=1 → 0.899,
-n=2 → 0.869, n=3 → 0.839, n=4 → 0.809, n ≥ 5 → 0.799 — so it never undercuts band 3's cap. The prompt's "Score
+Band 4 is graded: with n DEFECTS among its 19 rows (n ≥ 1) the ceiling is `max(0.799, 0.899 − 0.03·(n − 1))` — n=1 →
+0.899, n=2 → 0.869, n=3 → 0.839, n=4 → 0.809, n ≥ 5 → 0.799 — so it never undercuts band 3's cap. The prompt's "Score
 bands" section states these four in words (parity test, §14).
+
+2026-10-03 stringency (owner: "more brutal … without making it unfair"): the roster is the prompt's list read word by
+word — "Any duplicate, ordering, rate-limit, pagination, permission, policy, console, LLM or realtime defect" — so
+ordering adds `u_ledger_sort` and `s_index_order`, permission adds `b_hidden_count` and `a_action_permissions`,
+permission/policy adds `l_scopes` (the scopes and the CSP script relaxation), and LLM adds `k_llm_model_current` (this
+supersedes §17.2's points-only note on it). n counts DEFECTS, not rows (`band_defects`): a failed row that ROOT_BLOCKS
+attributes to another failed row of the band is that row's shadow and is priced once (asApp in the UI fails the leak,
+the hidden count and the action's per-person list — one defect; an unknown model id fails `k_llm_model_current` and
+every explain step — one defect). A root outside the band never absorbs a band row.
+
+A final never sits exactly on a cap (owner rule 2026-10-03 22:4x: "two models at exactly 0.899 is a big red flag"):
+`final = min(earned, ceiling − 0.05·(1 − earned))` (`capped_final`, `BAND_PULL = 0.05`). Continuous and monotone in
+earned, equal to the cap only at earned = 1, a no-op when nothing caps (ceiling 1.0); the largest pull below a cap,
+0.05·(1 − cap) (0.025 at 0.499, 0.005 at 0.899), stays under the graded 0.03 step, so one more band defect always
+costs more than any earned difference. The verdict carries the rule as `admission.final_rule`; the site's
+validateForgeAdmission mirrors it.
 
 ### 8.6 Severity selftest (wired into `--reference`; an inversion refuses the freeze)
 
@@ -567,6 +583,7 @@ table (WP2 computes it once from the composition and pins it in `test_score_forg
 
 ### 8.7 Scoring sequence (one fresh site, serial)
 
+0. Three scoring sites (§17.7 F3): the run's own `fixture_seed` and two derived from it (`scoring_seeds`, never the `dev_seed`); steps 1–8 run once per site, serially; step 9 keeps each correctness row's WORST site and each E row's MEAN (`merge_seed_rows`), and the verdict carries `fixture_seeds` and `seed_scores`. The run's own site keeps the published shots, recording and `forge-observations.json`; the others land under `forge-shots/seeds/<seed>/`. `--single-seed` (the controls and the calibration, which name their seeds) grades one site.
 1. Clone the tree (excluding `node_modules`, `.forge-dev`, `forge-shots`); clone the kit's pristine modules in.
 2. Lint ×2; bundle every function; load each under the wrapper.
 3. Start the scoring site (`fixture_seed`, ephemeral port), the proxy and the emulator; empty KVS.
@@ -593,7 +610,7 @@ clean lint. Published beside the score as "recall vs research"; never part of th
 
 ## 9. Hermetic scoring CLI (`bench/score_forge.py`)
 
-`score_forge.py --tree <run tree> --seed <fixture_seed> --json-out v.json [--reference] [--runtime shim]`
+`score_forge.py --tree <run tree> --seed <fixture_seed> --json-out v.json [--reference] [--runtime shim] [--single-seed]`
 
 - Refuses (exit 2) without `--seed`, on a malformed seed, and when `--seed` equals the tree's `dev_seed`
   (`trace.jsonl` header).
@@ -807,6 +824,12 @@ pointer double click can land on the container).
 | `m_skill_name` | SKILL.md `name` ≠ directory | MEASURED by WP3 with the client-side lint: ERROR "Skill sprint-scope-analyst frontmatter field 'name' must match the parent directory name" → `l_deployable` (crit) + `k_rovo_skill`, ≤ 0.499 |
 | `m_config_in_kvs` | widget board stored in KVS by a resolver, view ignores `extension.config` | `u_widget_edit_config` (second instance); NOT `k_widget_edit_bridge` — the edit API stays in use (verified on the bed) |
 | `m_throw_on_429` | consumer throws on 429 instead of a retry request | `t_retry_after_honoured` (rows still land) |
+| `m_rerun_rewrites` | every scheduled run rewrites every membership it computes | `r_idempotent_rerun` (§17.7 F5) |
+| `m_resolver_throws` | resolvers rethrow every non-429 failure | `b_invoke_contract` (the scoring site's resolver-read 500; §17.7 F5) |
+| `m_explain_dates` | the digits answer's replacement sentence adds the sprint's start date | `u_llm_explain`, band 4 (§17.7 F5) |
+| `m_sort_resumes_desc` | after the points sort the first `at` click keeps descending | `u_ledger_sort`, band 4 (§17.7 F5/F6) |
+| `m_skill_bare` | SKILL.md without "how to read the result" and the error clause | `a_skill_instructions` (§17.7 F5) |
+| `m_metric_clip` | every widget number squeezed to two characters with an ellipsis | `v_widget_sizes` (§17.7 F4) |
 
 ## 14. Check ↔ contract map (measured is stated)
 
@@ -831,7 +854,7 @@ check. Anchors are FORGE-CONTRACT.md sections unless marked P (prompt) or S (STA
 | `t_retry_after_honoured`, `r_rate_limit` | §3 429 bullet, §8 redelivery schedule and "a wait inside an invocation is real time" |
 | `t_no_user_in_async`, `r_as_app` | §3 asApp bullet |
 | `r_backfill_complete`, `r_removals_found` | §3 first bullet |
-| `r_heal_dropped`, `e_idempotent_rerun` | §3 `source` bullet ("event work may also record other changes of the issue it reads"), "Later scheduled runs…" |
+| `r_heal_dropped`, `r_idempotent_rerun` | §3 `source` bullet ("event work may also record other changes of the issue it reads"), "Later scheduled runs…" |
 | `r_pagination` | P done 3; S dev-site paragraph (bulk endpoints, pagination, JQL subset, ISO dates) |
 | `r_completes_in_timeout` | §8 "with the platform's timeouts" |
 | `s_storage_scope`, `s_limits` | §2 storage, platform limits discoverable |
@@ -1004,3 +1027,22 @@ Pages re-fetched 2026-10-03.
 | `showFlag({ appearance })` | @forge/bridge `FlagOptions`: "If `appearance` is given, `type` is overriden to equal `appearance`", and `showFlag` forwards `type: options.type ?? 'info'`; the kit host renders `appearance ?? type`; the probe read `type` only, so MiMo's (c7e206c0) `appearance: 'error'`/`'success'` flags counted as info — `u_llm_explain` error flags and the CRITICAL `b_comment_exactly_once` success flags both read 0 | the probe reads a flag as `appearance ?? type` |
 | pagination never exercised | `r_pagination` "83/83 paginated reads walked to their end" on Sol while 79 were one page the site answered as the last: at the pack's volume no backfill read crosses a documented cap. Contract: spec "backfills every change of every active sprint, through paginated search and rate limits"; STARTER "It behaves like Jira Cloud — REST v3 and Jira Software REST, including the bulk endpoints, their pagination, errors and rate limits" | the SCORING site (`facts(seed, { scoring: true })`, `pack.paging`, never the dev site) serves every list of ≥ 2 items a paginated endpoint returns in pages of at most ceil(total / 2) — Jira's documented latitude ("API may return fewer items per page"; "Each operation can have a different limit for the number of items returned"). Only page sizes change, never data. `r_pagination` grades only reads the site served in ≥ 2 pages (vacuous with none), adds a continuity check (each page continues from the site's token or the offset after the items it served), and a one-page answer of ≥ 2 items on the scoring site is a harness gap. `reconcile_optimum` walks the same pages (9 → 13 calls on every calibration seed), so the economy rungs were refitted on golden ×5 and `CALIB_SHA256` re-pinned |
 | a concurrent request inside a 429 window | the scoring site's paging gave Luna (580b027f) a second board-list page that left 1 ms after the field list's scripted 429, from a parallel branch; the site refused it (correct: the window refuses every request) and the scorer counted it as an early retry — r_rate_limit 0 — though each refused request was re-sent only after Retry-After. Jira: Retry-After "Indicates how many seconds to wait before retrying" | an early retry is a call that REPEATS a request the site had already refused with that fault (same invocation, method, path, body); other refused calls are concurrent refusals, named in the detail, never charged; one definition for `_retry_verdict` (r_rate_limit, t_retry_after_honoured) and R6 |
+
+### 17.7 Stringency on stated requirements (owner 2026-10-03 22:2x: "more brutal / more stringent … without making it unfair")
+
+No public text changed and no model re-ran: every item measures a sentence FORGE-CONTRACT.md or the prompt already states,
+and every new fixture shape exists only on the SCORING site (the dev site's pack is byte-identical, measured on three
+seeds). Rejected by design: 429s on resolver paths, a bigger excellence weight, stricter critical multipliers, anything
+needing contract text.
+
+| item | stated where | what changed |
+|---|---|---|
+| F1 | P "A small excellence share rewards few Jira requests"; §8.4 "oracle optimum (1 read, sprint/field metadata cached in KVS)" | `e_event_economy` continuous at the optimum (one read per delivered relevant change + one repeat per consumer 429), `top` fitted to the golden ×5; the golden's consumer reads `/rest/api/3/issue/{id}?fields=…&expand=changelog` (the embedded changelog; bulkfetch only when the entry is older than the embedded page) and caches not-active sprint ids in its KVS config; `e_reconcile_economy`'s optimum counts the scripted 429 repeats |
+| F3 | §8 "The scoring site uses a different seed than the dev site" | three scoring sites, the worst per correctness row, the mean per E row (§8.7 step 0) |
+| F4 | §4 "ordered by startDate (ties by sprint id)", §1 "— when committed is 0", §6 `creepPercent` null, §4 "long names may end in an ellipsis" + "no number is clipped or truncated" | scoring-site tie, committed-0 sprint, 30-character name; the probe measures each number's text range (`metricsClipped`) |
+| F5 | §2 failure value + "the surface shows it"; §5 explanation "your own sentence with the ledger's numbers"; §5 "starting with ascending when another sort was active"; §6 SKILL.md "how to read the result, and what to do with an error"; §3 "a run with nothing new writes nothing" | resolver-read 500 (half of `b_invoke_contract`); the explanation's own numbers; the `at` click after another sort; SKILL.md result fields and `error`; `e_idempotent_rerun` promoted to the weighted `r_idempotent_rerun` |
+| F6 | P "Any duplicate, ordering, rate-limit, pagination, permission, policy, console, LLM or realtime defect" | band 4 = 19 rows, counted per DEFECT (§8.5) |
+| F7 | §3 "more than once and out of order, and some never arrive"; "Jira may answer 429 with Retry-After" (every fault type occurs on the dev site, §3 rule 3) | scoring site: 8 duplicates, 4 permuted pairs, 5 drops incl. an estimate change, a 429 on the backfill's continuation page and one in the heal |
+| owner rule 22:4x | — (composition) | `final = min(earned, ceiling − 0.05·(1 − earned))`, a capped final truncated never rounded onto its cap (§8.5) |
+| F2 | — | person-facing call economy relative to the golden: SKIPPED — the golden's person-facing reads are not at a clean optimum on the paging site (every open re-reads the sprint or the board's active sprints as the app and the visible issues as the viewer, views.js getSprint/widgetView/personView, and the half-page rule doubles every list read), so a ratio to it would grade the golden's own choices, not a stated optimum |
+| gate finds (2026-10-04) | — | the first controls pass found three unfair or untested spots, fixed before the final gate: the explanation's numbers are judged against the ledger before OR after the live-UI slot (an app with no widget never receives it — m_gadget) and wrong numbers there are a NUMBER_ROWS shadow of `u_widget_numbers` (m_ids_only); the scoring site moves each board's own estimation field on an issue of that board (a decoy-field change on the other project satisfied "both fields move" on 10 of 19 packs, so m_one_estimate_field kept `t_reestimate_followed`); the dropped estimate change falls back to any own-field one, else a fifth sprint drop (1 seed in 300 has none) |

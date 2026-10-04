@@ -537,8 +537,25 @@ async function finishSurface(s, meta, meaningfulSelector) {
 const widgetMetrics = (page) => page.evaluate(() => [...document.querySelectorAll('[data-testid="sprint"][data-sprint-id]')].map((el) => {
   const m = (n) => { const x = el.querySelector(`[data-metric="${n}"]`); return x ? x.textContent.trim() : null; };
   const r = el.getBoundingClientRect();
+  // Contract §4: "no number is clipped or truncated (long names may end in an ellipsis)". A number's laid-out text
+  // (its Range, which keeps the full width when an ellipsis or overflow hides part of it) must sit inside the
+  // viewport and inside every ancestor that clips horizontally.
+  const clipped = [];
+  for (const x of el.querySelectorAll('[data-metric]')) {
+    const range = document.createRange();
+    range.selectNodeContents(x);
+    const t = range.getBoundingClientRect();
+    if (!x.textContent.trim() || t.width === 0) continue;
+    let cut = t.left < -1 || t.right > window.innerWidth + 1;
+    for (let a = x; a && a !== document.documentElement && !cut; a = a.parentElement) {
+      if (getComputedStyle(a).overflowX === 'visible') continue;
+      const ar = a.getBoundingClientRect();
+      if (t.left < ar.left - 1 || t.right > ar.right + 1) cut = true;
+    }
+    if (cut) clipped.push(x.getAttribute('data-metric'));
+  }
   return { id: el.getAttribute('data-sprint-id'), metrics: { committed: m('committed'), added: m('added'), removed: m('removed'), creep: m('creep') },
-    visible: r.width > 0 && r.height > 0 && r.left >= -1 && r.right <= window.innerWidth + 1 };
+    visible: r.width > 0 && r.height > 0 && r.left >= -1 && r.right <= window.innerWidth + 1, clipped };
 }));
 
 const chartOf = (page) => page.evaluate(() => {
@@ -595,7 +612,8 @@ async function probeUi(pack) {
           const sprints = await widgetMetrics(v.page);
           const surf = obs.ui.surfaces[obs.ui.surfaces.length - 1];
           obs.ui.widget.views.push({ board, theme, width, afterLive: liveDone, sprints: sprints.map(({ id, metrics }) => ({ id, metrics })),
-            chart: await chartOf(v.page), overflow: surf.overflow, sprintsVisible: sprints.length > 0 && sprints.every((x) => x.visible) });
+            chart: await chartOf(v.page), overflow: surf.overflow, sprintsVisible: sprints.length > 0 && sprints.every((x) => x.visible),
+            metricsClipped: sprints.flatMap((x) => x.clipped.map((mm) => `${x.id}:${mm}`)) });
           if (theme === 'light' && width === 380) pick.viewSprints = sprints.map((x) => x.id);
           if (theme === 'light' && !liveDone) {
             obs.ui.live = await liveStep(v, board, pack);   // the live-UI slot, with this view open (§8.7 step 8)
@@ -631,6 +649,11 @@ async function probeUi(pack) {
         await s.page.close();
       }
     }
+    // Contract §2: "Every resolver returns a value and never throws: a failure (a Jira error, …) returns a value
+    // describing it … and the surface shows it." One extra open of the first active sprint with the scoring site's
+    // resolver-read fault armed: the resolver's first Jira read answers 500 (DESIGN §5.2; the scoring pack only).
+    const rf = (pack.faults || []).find((f) => f.match?.scope === 'resolver-read');
+    if (rf && active.length) obs.ui.resolverFault = await resolverFaultStep(action, active[0], ext(active[0]), rf, viewer);
     const future = pack.sprints.find((x) => x.state === 'future');
     if (future) {
       const s = await openSurface({ moduleKey: action.key, entry: 'view', theme: 'light', width: 800, height: 600, asUser: viewer, extension: ext(future) });
@@ -706,6 +729,24 @@ async function exerciseModal(s, sid, forbidden, reopen) {
     await page.locator('th[data-col="at"]').first().click().catch(() => {});
     await sleep(200);
     out.sortAt.push({ rows: (await tableRows(page)).map((r) => r.changeId), ariaSort: await ariaSort(page) });
+  }
+  // Contract §5: the `at` toggle starts "with ascending when another sort was active". Only an app whose other
+  // headers sort can be held to it: the first header whose click moves aria-sort off `at` is that other sort.
+  out.sortAfterOther = { col: null, tried: [] };
+  for (const col of out.headers.filter((c) => c !== 'at')) {
+    await page.locator(`th[data-col="${col}"]`).first().click().catch(() => {});
+    await sleep(200);
+    const active = await ariaSort(page);
+    out.sortAfterOther.tried.push(col);
+    if (Object.keys(active).some((c) => c !== 'at')) {
+      out.sortAfterOther.col = col;
+      out.sortAfterOther.otherAriaSort = active;
+      await page.locator('th[data-col="at"]').first().click().catch(() => {});
+      await sleep(200);
+      out.sortAfterOther.rows = (await tableRows(page)).map((r) => r.changeId);
+      out.sortAfterOther.ariaSort = await ariaSort(page);
+      break;
+    }
   }
 
   await sleep(200);
@@ -854,6 +895,30 @@ async function liveStep(s, board, pack) {
     sprintsBefore: before.map(({ id, metrics }) => ({ id, metrics })), sprintsAfter: after.map(({ id, metrics }) => ({ id, metrics })) };
 }
 
+// The resolver-read fault (DESIGN §5.2): armed for one open, it answers the first Jira read of the surface's resolver
+// with Jira's 500. Graded: the invoke that met it returned a value (no throw through the bridge) and the surface shows
+// something (not a blank page). Not a nominal scenario: console output here is not graded by v_console_clean.
+async function resolverFaultStep(action, sp, extension, fault, viewer) {
+  const fired0 = site.faultLog.length;
+  site.control.arm({ id: fault.id });
+  const s = await openSurface({ moduleKey: action.key, entry: 'view', theme: 'light', width: 800, height: 600, asUser: viewer, extension });
+  await settle(s);
+  await sleep(500);
+  const rec = site.faultLog.slice(fired0).find((x) => x.fault === fault.id && x.kind === 'fired');
+  site.control.disarm({ id: fault.id });
+  const invokes = bridgeOps(s).filter((b) => opName(b) === 'invoke');
+  const hit = rec ? invokes.find((b) => b.invocationId && b.invocationId === rec.invocationId) : null;
+  const text = await s.page.evaluate(() => (document.body ? document.body.innerText.replace(/\s+/g, ' ').trim() : ''));
+  const shot = join(shotsDir, `sprint-action-resolver-500-${sp.id}.png`);
+  await s.page.screenshot({ path: shot, fullPage: false }).catch(() => {});
+  obs.shots.push(shot);
+  await s.page.close();
+  return { sprintId: String(sp.id), faultId: fault.id, fired: Boolean(rec), invocationId: rec?.invocationId ?? null,
+    invoke: hit ? { functionKey: hit.payload?.functionKey ?? null, threw: Boolean(hit.error) || hit.ok === false,
+      error: hit.error ? String(hit.error) : null, response: hit.result ?? null } : null,
+    pageErrors: s.ev.pageErrors, text: text.slice(0, 400), blank: !text };
+}
+
 // The five scripted explain answers (site/llm.cjs SCRIPT: clean, digits, refusal, malformed, error), in order.
 async function explainSteps(s, sid) {
   const button = s.page.locator('[data-testid="explain"]').first();
@@ -868,7 +933,16 @@ async function explainSteps(s, sid) {
     const fresh = ((await emu.llm.log(since)).entries || []).filter((e) => e.op === 'chat' || e.op === 'stream');
     const shown = await s.page.evaluate(() => {
       const box = document.querySelector('[data-testid="explanation"]');
-      return { text: box ? box.textContent.trim() : '', ids: box ? [...box.querySelectorAll('[data-change-id]')].map((e) => e.getAttribute('data-change-id')) : [] };
+      // The explanation's own words: the box without its per-change elements (contract §5: one [data-change-id]
+      // element per returned id), whose keys and ids are not the sentence's numbers.
+      let own = '';
+      if (box) {
+        const copy = box.cloneNode(true);
+        copy.querySelectorAll('[data-change-id]').forEach((e) => e.remove());
+        own = copy.textContent.replace(/\s+/g, ' ').trim();
+      }
+      return { text: box ? box.textContent.trim() : '', own,
+        ids: box ? [...box.querySelectorAll('[data-change-id]')].map((e) => e.getAttribute('data-change-id')) : [] };
     });
     const orderBefore = (await tableRows(s.page)).map((r) => r.changeId);
     await s.page.locator('th[data-col="at"]').first().click().catch(() => {});
@@ -877,7 +951,7 @@ async function explainSteps(s, sid) {
     await s.page.locator('th[data-col="at"]').first().click().catch(() => {});   // back to the default order
     await sleep(200);
     steps.push({ step: fresh[0]?.step ?? null, llmCalls: fresh.length, llm: fresh[0] ?? null, explanation: shown.text,
-      idsShown: shown.ids, ...flagCounts(bridgeOps(s).slice(o0)),
+      explanationOwn: shown.own, idsShown: shown.ids, ...flagCounts(bridgeOps(s).slice(o0)),
       sortWorksAfter: orderAfter.length === orderBefore.length && orderAfter.length > 1 ? orderAfter.join() !== orderBefore.join() : orderAfter.length > 0 });
   }
   return { sprintId: sid, steps };

@@ -1,5 +1,5 @@
 diff --git a/src/config.js b/src/config.js
-index 8893648..fb2fcd6 100644
+index 81c58e5..211294a 100644
 --- a/src/config.js
 +++ b/src/config.js
 @@ -71,8 +71,8 @@ export async function discoverConfig(policy) {

@@ -70,7 +70,7 @@ CONTRACT = 'forge/public/FORGE-CONTRACT.md'
 # ── calibration-owned thresholds ─────────────────────────────────────────────────────────────
 
 THRESHOLDS_FILE = HERE / 'forge-thresholds.json'
-CALIB_SHA256 = '580e5c8714f26b6249958daa2a6f9c2400eafe310bde6bcd6a6936e4b2e1ca56'  # frozen 2026-10-03: golden x5 (forge-thresholds.json calibration.seeds)
+CALIB_SHA256 = 'e5d7f98e283a0183c6e1f872f6f65471b05012233452b13554da9c91b0c485d5'  # refrozen 2026-10-04: golden x5 on the stringency scoring site (forge-thresholds.json calibration.seeds)
 
 
 def _load_thresholds() -> Dict:
@@ -84,7 +84,7 @@ def _load_thresholds() -> Dict:
         if CALIB_SHA256 == 'TBD-AT-FREEZE' or digest != CALIB_SHA256:
             raise SystemExit('forge-thresholds.json claims calibrated=true but its sha256 does not match the pin '
                              f'in score_forge.py ({digest[:16]}… vs {CALIB_SHA256[:16]}…) — refusing to score.')
-    for name in ('critical_multiplier_floor', 'economy_rungs', 'event_economy_rungs', 'ui_round_trip_rungs',
+    for name in ('critical_multiplier_floor', 'economy_rungs', 'event_economy_top', 'ui_round_trip_rungs',
                  'idempotent_rerun_rungs',
                  'contrast_min', 'chart_tolerance_px', 'color_tolerance'):
         if name not in data:
@@ -107,7 +107,7 @@ assert abs(sum(TIER_WEIGHT.values()) - 1.0) < 1e-9
 TIER_ORDER = ('L', 'K', 'T', 'R', 'S', 'B', 'U', 'V', 'A', 'E')
 
 DIAGNOSTIC = {'u_widget_loads'}
-CALIBRATION_OWNED = {'e_reconcile_economy', 'e_event_economy', 'e_ui_round_trips', 'e_idempotent_rerun'}
+CALIBRATION_OWNED = {'e_reconcile_economy', 'e_event_economy', 'e_ui_round_trips'}
 
 CRITICAL_CHECKS = {
     'l_deployable': 'deploy blocked — lint errors',
@@ -128,16 +128,44 @@ ADMISSION_BANDS = (
     (0.799, 'current platform, complete surfaces', ('k_dashboard_widget', 'k_widget_edit_bridge', 'k_rovo_skill',
                                                     'u_widget_edit_config', 'u_ledger_table', 'a_action_result',
                                                     'v_theme_tokens', 'v_dark_mode')),
+    # The prompt's list, word by word: "Any duplicate, ordering, rate-limit, pagination, permission, policy, console,
+    # LLM or realtime defect". Ordering is the table's sort and the index's change-time order as well as delivery
+    # order; permission is every per-person outcome (the hidden count, the Rovo action's per-person list) and the
+    # scopes the app asks for; LLM is the model the app names as well as the explanation (2026-10-03 stringency).
     (0.899, 'production robustness', ('t_no_double_count', 't_out_of_order', 't_retry_after_honoured',
                                       'r_heal_dropped', 'r_rate_limit', 'r_pagination', 'b_no_permission_leak',
                                       'b_comment_exactly_once', 'b_realtime_payload_clean', 'u_llm_explain',
-                                      'u_widget_live', 'v_csp_clean', 'v_console_clean')),
+                                      'u_widget_live', 'v_csp_clean', 'v_console_clean',
+                                      'u_ledger_sort', 's_index_order', 'b_hidden_count', 'a_action_permissions',
+                                      'l_scopes', 'k_llm_model_current')),
 )
 # The graded band (DESIGN §8.5, 2006de559): with n of its rows failing the ceiling is max(floor, top - step·(n-1)).
 # Single source: admit() reads it, and leanzero.net's sync (scripts/sync-forge-public.py) re-derives the caps from it.
 GRADED_BAND = ('production robustness', 0.899, 0.03, 0.799)
 assert GRADED_BAND[0] == ADMISSION_BANDS[-1][1] and GRADED_BAND[1] == ADMISSION_BANDS[-1][0]
 assert GRADED_BAND[3] == ADMISSION_BANDS[-2][0]   # never undercuts the band above it
+
+
+# Owner rule 2026-10-03 22:4x: a final never sits exactly on a band cap ("two models at exactly 0.899 is a big red
+# flag"). A capped run keeps its own earned gradient below the cap: final = min(earned, cap - BAND_PULL·(1 - earned)).
+# Continuous and monotone in earned, equal to the cap only at earned = 1, and a no-op when nothing caps (cap 1.0).
+# The largest pull below a cap, BAND_PULL·(1 - cap) at earned = cap (0.00505 at 0.899), stays under the graded
+# band's 0.03 step, so one more band defect always costs more than any earned difference.
+BAND_PULL = 0.05   # policy ratio: the share of the earned shortfall a capped final keeps (owner rule above)
+assert BAND_PULL * (1 - ADMISSION_BANDS[0][0]) < GRADED_BAND[2]
+
+
+def capped_final(earned: float, ceiling: float) -> float:
+    return min(earned, ceiling - BAND_PULL * (1.0 - earned))
+
+
+def published_score(final: float, ceiling: float) -> float:
+    """Four decimals. A final strictly below its cap is never printed AS the cap: a near-perfect capped run (earned
+    0.9999, pull 0.000005) would round back onto 0.899 — the tie the owner rule forbids — so it is truncated instead."""
+    shown = round(final, 4)
+    if ceiling < 1.0 and final < ceiling - 1e-12 and shown >= ceiling:
+        shown = math.floor(final * 1e4) / 1e4
+    return shown
 
 
 def band_ceiling(limit: float, label: str, failed: int) -> float:
@@ -1604,8 +1632,7 @@ def _refused_in_window(calls: List[Dict], fault_id: Optional[str] = None) -> Tup
     return early, concurrent
 
 
-def _retry_verdict(c: Ctx, scope: str, phases: Tuple[str, ...]) -> Tuple[float, str]:
-    fault = _fault(c, scope)
+def _retry_verdict(c: Ctx, fault: Dict, phases: Tuple[str, ...]) -> Tuple[float, str]:
     calls = sorted(c.calls(phases, 'jira'), key=lambda x: x.get('t') or 0)
     hit = next((x for x in calls if x.get('fault') == fault['id']), None)
     ra = float(fault.get('retryAfter') or 0)
@@ -1634,7 +1661,7 @@ def _retry_verdict(c: Ctx, scope: str, phases: Tuple[str, ...]) -> Tuple[float, 
 
 @check('t_retry_after_honoured', 'T', pre=pre_consumer_fault, needs=('live', 'heal'))
 def _(c):
-    score, why = _retry_verdict(c, 'consumer-of-change', ('live', 'heal'))
+    score, why = _retry_verdict(c, _fault(c, 'consumer-of-change'), ('live', 'heal'))
     fault = _fault(c, 'consumer-of-change')
     target = str((fault.get('match') or {}).get('changelogId') or '')
     landed = [ch for ch in c.oracle.changes('final') if ch.change_id == target]
@@ -1865,13 +1892,30 @@ def _(c):
                     'by_endpoint': {ep: {'complete': ok, 'walks': n} for ep, (ok, n) in sorted(types.items())}})
 
 
-@check('r_rate_limit', 'R', pre=pre_scheduled_fault, needs=('backfill',))
+# The scheduled run each scripted fault targets (pack faults' match.run: 1 = the backfill, 2 = the heal).
+SCHEDULED_RUN_PHASE = {1: 'backfill', 2: 'heal'}
+
+
+@check('r_rate_limit', 'R', pre=pre_scheduled_fault, needs=('backfill', 'heal'))
 def _(c):
-    score, why = _retry_verdict(c, 'scheduled-run', ('backfill',))
-    sched = [i for i in c.invocations(('backfill',)) if i.get('kind') == 'scheduled']
-    if score and not any(i.get('ok') for i in sched):
-        score, why = 0.0, why + '; the scheduled run did not complete'
-    return g(score, why, 'the reconcile ignores Retry-After')
+    # Every scheduled-run 429 that fired: the dev site's (the backfill's 2nd request) and the scoring site's (the
+    # backfill's first continuation page, the heal's 2nd request — 2026-10-03 stringency, F7), each retried after its
+    # Retry-After with its run completing.
+    fired = {call.get('fault') for call in c.all_calls('jira')}
+    verdicts = []
+    for fault in c.pack.get('faults') or []:
+        match = fault.get('match') or {}
+        phase = SCHEDULED_RUN_PHASE.get(match.get('run', 1))
+        if match.get('scope') != 'scheduled-run' or fault['id'] not in fired or phase is None:
+            continue
+        score, why = _retry_verdict(c, fault, (phase,))
+        sched = [i for i in c.invocations((phase,)) if i.get('kind') == 'scheduled']
+        if score and not any(i.get('ok') for i in sched):
+            score, why = 0.0, why + f'; the {phase} run did not complete'
+        where = 'continuation page' if match.get('continuation') else f"request {match.get('nth')}"
+        verdicts.append((score, f'{phase} {where}: {why}'))
+    return g(sum(v for v, _w in verdicts) / len(verdicts), '; '.join(w for _v, w in verdicts),
+             'the reconcile ignores Retry-After', parts={'faults': len(verdicts)})
 
 
 @check('r_as_app', 'R', pre=pre_scheduled_read, needs=('backfill', 'heal', 'rerun'))
@@ -1889,6 +1933,18 @@ def _(c):
     ok = sum(1 for i in sched if not i.get('timedOut'))
     return g(ok / len(sched) if sched else 0, f'{ok}/{len(sched)} scheduled invocations inside the module timeout',
              'the scheduled job is killed by its timeout')
+
+
+# Contract §3 states it as behaviour, not as economy: "a run with nothing new writes nothing" (promoted from the E slice
+# 2026-10-03: a stated requirement earns weight, and a rerun that rewrites the ledger is a defect, not a missed bonus).
+@check('r_idempotent_rerun', 'R', pre=pre_ledger_row, needs=('heal', 'rerun'))
+def _(c):
+    rows = len([1 for tok, _it in c.kvs_rows('heal') if any(ch.change_id in tok for ch in c.oracle.changes('final'))])
+    if not rows:
+        return g(0, 'no ledger rows after the heal — nothing to keep idempotent', 'the rerun is not judged')
+    writes = sum(_entity_writes(x) for x in c.calls(('rerun',), 'kvs'))
+    return g(ladder(writes / rows, TH['idempotent_rerun_rungs']), f'{writes} entity write(s) on a no-change run over {rows} rows',
+             'a scheduled run with nothing new rewrites the ledger', parts={'writes': writes, 'rows': rows})
 
 
 # ══ S: storage ═══════════════════════════════════════════════════════════════════════════════
@@ -1994,9 +2050,23 @@ def _invokes(c: Ctx) -> List[Dict]:
 def _(c):
     inv = _invokes(c)
     bad = [r for r in inv if r.get('threw') or r.get('undefined') or r.get('unknownKey')]
-    return g(1 - len(bad) / len(inv), f'{len(inv) - len(bad)}/{len(inv)} invokes returned a defined, structured result'
-             + (f"; bad: {[(r.get('functionKey'), r.get('error')) for r in bad[:3]]}" if bad else ''),
-             'resolver contract broken')
+    share = 1 - len(bad) / len(inv)
+    detail = f'{len(inv) - len(bad)}/{len(inv)} invokes returned a defined, structured result' + (
+        f"; bad: {[(r.get('functionKey'), r.get('error')) for r in bad[:3]]}" if bad else '')
+    # Contract §2: "a failure (a Jira error, …) returns a value describing it … and the surface shows it". The scoring
+    # site's resolver-read 500 (DESIGN §5.2): judged only when it reached a resolver's Jira read (an app that read no
+    # Jira from that surface met no failure) and only on observations that carry it (older ones stay silent).
+    rf = c.ui().get('resolverFault')
+    if isinstance(rf, dict) and rf.get('fired'):
+        hit = rf.get('invoke') or {}
+        handled = {'returned_a_value': bool(rf.get('invoke')) and not hit.get('threw'),
+                   'surface_shows_it': not rf.get('blank') and not rf.get('pageErrors')}
+        ok = all(handled.values())
+        return g((share + (1.0 if ok else 0.0)) / 2, detail + f"; a Jira 500 on {hit.get('functionKey') or 'a resolver'}'s "
+                 f"read: {'handled' if ok else ', '.join(k for k, v in handled.items() if not v) + ' FAILED'}"
+                 + ('' if ok else f" ({hit.get('error') or rf.get('pageErrors') or 'blank surface'})"),
+                 'resolver contract broken', parts={'invoke_share': round(share, 4), 'jira_error': handled})
+    return g(share, detail, 'resolver contract broken')
 
 
 def _leak_hits(text: str, terms: Dict[str, List[str]]) -> List[str]:
@@ -2277,7 +2347,7 @@ def _sorted_ok(ids: List[str], expected: List[fo.Change], key) -> bool:
 
 @check('u_ledger_sort', 'U', pre=pre_table_rows, needs=('ui',))
 def _(c):
-    total, ok = 0, 0
+    total, ok, after_other = 0, 0, 0
     for r in c.sprint_renders():
         if not r.get('rows'):
             continue
@@ -2294,9 +2364,17 @@ def _(c):
             [x for x in second.get('rows') or []] == [ch.change_id for ch in expected]
             and (second.get('ariaSort') or {}).get('at') == 'ascending',
         ]
+        # "… starting with ascending when another sort was active": held only where another header's click made ITS
+        # sort the active one (the probe's sortAfterOther; an app whose other headers do not sort is not held to it).
+        other = r.get('sortAfterOther') or {}
+        if other.get('col'):
+            subs.append(list(other.get('rows') or []) == [ch.change_id for ch in expected]
+                        and (other.get('ariaSort') or {}).get('at') == 'ascending')
+            after_other += 1
         total += len(subs)
         ok += sum(subs)
-    return g(ok / total if total else 0, f'{ok}/{total} at-toggle states ordered with aria-sort', 'sorting broken')
+    return g(ok / total if total else 0, f'{ok}/{total} at-toggle states ordered with aria-sort'
+             + (f' ({after_other} after another sort was active)' if after_other else ''), 'sorting broken')
 
 
 @check('u_issue_router', 'U', pre=pre_table_rows, needs=('ui',))
@@ -2469,6 +2547,28 @@ def _(c):
              'the dashboard does not update live', parts=conds)
 
 
+ISSUE_KEY = re.compile(r'(?<![A-Za-z0-9])[A-Z][A-Z0-9]+-\d+(?![0-9])')
+
+
+def explanation_numbers(own_text: str, sprint_name: str) -> List[Decimal]:
+    """The numbers of the explanation's own sentence: issue keys and the sprint's name are names, not numbers."""
+    text = ISSUE_KEY.sub(' ', own_text.replace(sprint_name, ' ') if sprint_name else own_text)
+    return [Decimal(x) for x in re.findall(r'\d+(?:\.\d+)?', text)]
+
+
+def explanation_ledger_numbers(o, sid: str) -> set:
+    """What "the ledger's numbers" can be for the viewer: the four §1 numbers, the hidden count, the counts of the
+    visible changes (all, added, removed) and each visible change's points."""
+    n = o.numbers(sid)
+    visible = o.visible_changes(sid, o.viewer)
+    out = {n.committed, n.added, n.removed, Decimal(o.hidden_count(sid, o.viewer)), Decimal(len(visible)),
+           Decimal(sum(1 for ch in visible if ch.kind == 'added')), Decimal(sum(1 for ch in visible if ch.kind == 'removed'))}
+    out |= {ch.points for ch in visible}
+    if n.creep is not None:
+        out.add(n.creep)
+    return out
+
+
 def _explain_request_ok(entry: Dict) -> bool:
     req = entry.get('request') or {}
     tools = [t.get('function') or {} for t in req.get('tools') or [] if isinstance(t, dict)]
@@ -2526,6 +2626,22 @@ def _(c):
                 model_digits = set(re.findall(r'\d+(?:\.\d+)?', summary)) - ledger_digits
                 own = set(re.findall(r'\d+(?:\.\d+)?', text))
                 subs[f'{label}:no_model_digits'] = summary not in text and not (own & model_digits)
+            # Contract §5: the summary shows "only if it holds no digits (otherwise your own sentence with the
+            # ledger's numbers)". Judged on the explanation's own words (the probe's explanationOwn: the box without
+            # its [data-change-id] elements; observations that predate it stay silent): every number on screen is a
+            # ledger number, and the digits answer's replacement sentence carries at least one of the four.
+            if n is not None and isinstance(st.get('explanationOwn'), str):
+                found = explanation_numbers(st['explanationOwn'], n.name)
+                # The ledger before OR after the live-UI slot: an app with no widget never receives the two held-back
+                # changes (the probe delivers them with the widget open), and its numbers are the earlier state's
+                # (m_gadget, measured 2026-10-04: 73.5% shown, 70.9% after the slot it never saw).
+                states = [o] + ([c.oracle] if c.oracle and sid in c.oracle.all_numbers() else [])
+                allowed = set().union(*(explanation_ledger_numbers(x, sid) for x in states))
+                subs[f'{label}:every_number_is_a_ledger_number'] = all(x in allowed for x in found)
+                if kind == 'digits':
+                    four = {v for x in states for v in (x.numbers(sid).committed, x.numbers(sid).added, x.numbers(sid).removed,
+                                                        x.numbers(sid).creep) if v is not None}
+                    subs[f'{label}:own_sentence_has_a_ledger_number'] = any(x in four for x in found)
             subs[f'{label}:no_error_flag'] = not st.get('errorFlags')
         else:
             # The refusal path (DESIGN 103/803): the error flag must come from a resolver that ANSWERED the bad model
@@ -2600,10 +2716,13 @@ def _(c):
 @check('v_widget_sizes', 'V', pre=pre_widget_sprints, needs=('ui',))
 def _(c):
     views = [v for v in (c.ui().get('widget') or {}).get('views') or [] if v.get('sprints')]
+    # Contract §4: "no number is clipped or truncated" — the probe's metricsClipped (a [data-metric] whose laid-out text
+    # leaves the viewport or a clipping ancestor); observations that predate it are judged on overflow alone.
+    clipped = sorted({m for v in views for m in v.get('metricsClipped') or []})
     ok = sum(1 for v in views if (v.get('overflow') or {}).get('scrollWidth', 1 << 30) <= (v.get('overflow') or {}).get('clientWidth', 0)
-             and v.get('sprintsVisible'))
-    return g(ok / len(views), f'{ok}/{len(views)} widget sizes without horizontal overflow, every sprint visible',
-             'clips at some width')
+             and v.get('sprintsVisible') and not v.get('metricsClipped'))
+    return g(ok / len(views), f'{ok}/{len(views)} widget sizes without horizontal overflow, every sprint visible, no number '
+             'clipped' + (f'; clipped: {clipped[:6]}' if clipped else ''), 'clips at some width')
 
 
 # ══ A: Rovo ══════════════════════════════════════════════════════════════════════════════════
@@ -2670,13 +2789,24 @@ def _(c):
              'per-person visibility wrong')
 
 
+# The action's answer as contract §6 prints it: what "how to read the result" has to cover (sprintId is the input).
+RESULT_KEYS = ('sprintName', 'committed', 'added', 'removed', 'creepPercent', 'hiddenChanges', 'changes')
+
+
 @check('a_skill_instructions', 'A', pre=pre_skill_md)
 def _(c):
     _fm, body = parse_frontmatter(_skill_text(c) or '')
+    named = [k for k in RESULT_KEYS if re.search(r'(?<![A-Za-z])' + k + r'(?![A-Za-z])', body)]
+    # Contract §6: the body tells the agent "when and how to call get-sprint-scope, what sprintId is, how to read the
+    # result, and what to do with an error". Reading the result = naming at least half of its fields; the error
+    # clause = the `error` answer named at all.
     conds = {'body_le_500_lines': len(body.splitlines()) <= 500, 'names_action': ACTION_KEY in body,
-             'names_sprintId': 'sprintId' in body}
+             'names_sprintId': 'sprintId' in body, 'reads_the_result': 2 * len(named) >= len(RESULT_KEYS),
+             'says_what_to_do_with_an_error': bool(re.search(r'\berrors?\b', body, re.I))}
     met = sum(conds.values())
-    return g(met / 3, f'SKILL.md body {met}/3', 'the skill does not tell the agent how to call the action', parts=conds)
+    return g(met / len(conds), f'SKILL.md body {met}/{len(conds)}: result fields named {named}'
+             + ('; missing: ' + ', '.join(k for k, v in conds.items() if not v) if met < len(conds) else ''),
+             'the skill does not tell the agent how to call the action and read its answer', parts=conds)
 
 
 # ══ E: excellence rows (rungs are ratios of the oracle optimum; calibration-owned) ═══════════
@@ -2692,21 +2822,35 @@ def _(c):
     optimum, missing = c.oracle.reconcile_optimum()
     if optimum is None:
         return unavail(f'pack.limits lacks {missing}')
+    # Each scripted 429 the backfill met forces one repeat of the refused read (the scoring site scripts two, F7).
+    scheduled = {f['id'] for f in c.pack.get('faults') or [] if (f.get('match') or {}).get('scope') == 'scheduled-run'}
+    repeats = sum(1 for x in c.calls(('backfill',), 'jira') if x.get('fault') in scheduled and not x.get('earlyRetry'))
+    optimum += repeats
     used = len([x for x in c.calls(('backfill',), 'jira')])
     ratio = used / optimum
-    return g(ladder(ratio, TH['economy_rungs']), f'backfill {used} Jira calls / optimum {optimum} = {ratio:.2f}x',
-             parts={'calls': used, 'optimum': optimum, 'ratio': round(ratio, 3)})
+    return g(ladder(ratio, TH['economy_rungs']), f'backfill {used} Jira calls / optimum {optimum} (incl. {repeats} forced 429 '
+             f'repeat(s)) = {ratio:.2f}x', parts={'calls': used, 'optimum': optimum, 'ratio': round(ratio, 3)})
 
 
 @check('e_event_economy', 'E', needs=('live',))
 def _(c):
     if _row(c, 't_event_rows').get('score', 0) < 1.0:
         return g(0, 'event rows inexact — economy is not credited on unfinished work')
-    relevant = [e for e in c.oracle.relevant_live() if not (e.get('delivery') or {}).get('dropped')]
+    # DESIGN §8.4: the oracle optimum is ONE read per delivered relevant change (sprint and field metadata cached in
+    # KVS; a duplicate delivery needs none), plus the one repeat each consumer-path 429 forces. Graded continuously at
+    # that optimum (2026-10-03 stringency, F1): score = min(1, top / (used / optimum)), `top` the golden's worst ratio
+    # over the calibration seeds (calibration-owned), so the golden defines 1.0 and every extra request costs.
+    relevant = c.oracle.event_optimum()
+    faults = sum(1 for x in c.calls(('live',), 'jira') if x.get('fault') and not x.get('earlyRetry')
+                 and x.get('fault') in {f['id'] for f in c.pack.get('faults') or []
+                                        if (f.get('match') or {}).get('scope') == 'consumer-of-change'})
+    optimum = max(1, relevant + faults)
     used = len(c.calls(('live',), 'jira', ('trigger', 'consumer')))
-    ratio = used / max(1, len(relevant))
-    return g(ladder(ratio, TH['event_economy_rungs']), f'{used} Jira calls for {len(relevant)} relevant changes = '
-             f'{ratio:.2f} per change (optimum 1)', parts={'calls': used, 'changes': len(relevant), 'ratio': round(ratio, 3)})
+    ratio = used / optimum
+    top = float(TH['event_economy_top'])
+    return g(min(1.0, top / ratio) if ratio else 1.0, f'{used} Jira calls / optimum {optimum} ({relevant} delivered relevant '
+             f'change(s) x 1 read + {faults} forced 429 repeat) = {ratio:.2f}x; 1.0 at <= {top:g}x',
+             parts={'calls': used, 'optimum': optimum, 'changes': relevant, 'ratio': round(ratio, 3)})
 
 
 @check('e_ui_round_trips', 'E', needs=('ui',))
@@ -2722,24 +2866,17 @@ def _(c):
     return g(sum(scores.values()) / len(scores), f'round trips before first paint: {firsts}', parts=scores)
 
 
-@check('e_idempotent_rerun', 'E', needs=('rerun',))
-def _(c):
-    rows = len([1 for tok, _it in c.kvs_rows('heal') if any(ch.change_id in tok for ch in c.oracle.changes('final'))])
-    if not rows:
-        return g(0, 'no ledger rows — nothing to keep idempotent')
-    writes = sum(_entity_writes(x) for x in c.calls(('rerun',), 'kvs'))
-    return g(ladder(writes / rows, TH['idempotent_rerun_rungs']), f'{writes} entity write(s) on a no-change run over {rows} rows')
-
-
 # ── calibration (DESIGN §13.4 item 4: thresholds frozen with golden ×5 receipts, sha pinned) ──────────────
 
 CALIBRATION_SEEDS = 5   # DESIGN §13.4 item 4
-# The two economy ratios are FITTED: the top rung moves to the golden's worst-of-5 ratio (rounded up to 0.01, never
-# below the oracle optimum 1.0) and every lower rung keeps its rc multiple of the top, so the golden defines 1.0 on
-# every calibration seed. The round-trip and rerun rungs sit at their floor already (1 invoke, 0 writes): they are
-# VERIFIED (the golden reaches the top rung on every seed), never fitted — a golden that misses them refuses.
-FITTED_RUNGS = {'economy_rungs': 'e_reconcile_economy', 'event_economy_rungs': 'e_event_economy'}
-VERIFIED_TOP = ('e_ui_round_trips', 'e_idempotent_rerun')
+# The two economy ratios are FITTED to the golden's worst-of-5 ratio (rounded up to 0.01, never below the oracle
+# optimum 1.0), so the golden defines 1.0 on every calibration seed: the backfill's top rung (every lower rung keeps
+# its rc multiple of the top), and the event path's continuous top (score = min(1, top / ratio), 2026-10-03 F1). The
+# round-trip rungs sit at their floor already (1 invoke): they are VERIFIED (the golden reaches the top rung on every
+# seed), never fitted — a golden that misses them refuses.
+FITTED_RUNGS = {'economy_rungs': 'e_reconcile_economy'}
+FITTED_TOPS = {'event_economy_top': 'e_event_economy'}
+VERIFIED_TOP = ('e_ui_round_trips',)
 
 
 def _exact_ratio(parts: Dict) -> float:
@@ -2764,7 +2901,7 @@ def calibrate(verdicts: List[Dict], rc: Dict) -> Dict:
         rows = {r['check']: r for r in v['checks']}
         fails += [f"{v.get('fixture_seed')}: {n} {rows[n]['score']} — the golden misses the floor rung"
                   for n in VERIFIED_TOP if rows[n]['score'] < 1.0]
-        fails += [f"{v.get('fixture_seed')}: {n} carries no measured ratio" for n in FITTED_RUNGS.values()
+        fails += [f"{v.get('fixture_seed')}: {n} carries no measured ratio" for n in [*FITTED_RUNGS.values(), *FITTED_TOPS.values()]
                   if not isinstance((rows[n].get('parts') or {}).get('ratio'), (int, float))]
     if fails:
         raise ValueError('calibration refused:\n  ' + '\n  '.join(fails))
@@ -2772,6 +2909,13 @@ def calibrate(verdicts: List[Dict], rc: Dict) -> Dict:
     out['calibrated'] = True
     out['note'] = ('forge-1.0 calibrated thresholds: the economy rungs are fitted to the golden worst-of-5 '
                    '(DESIGN §13.4 item 4); everything else keeps its rc receipt. Pinned as CALIB_SHA256 in score_forge.py.')
+    for key, row in FITTED_TOPS.items():
+        per_seed = {v['fixture_seed']: _exact_ratio(next(r for r in v['checks'] if r['check'] == row)['parts']) for v in verdicts}
+        worst = max(per_seed.values())
+        out[key] = max(1.0, math.ceil(worst * 100 - 1e-9) / 100)
+        shown = {seed: round(r, 4) for seed, r in per_seed.items()}
+        out['receipts'][key] = (f'golden worst-of-{len(per_seed)} {row} ratio {round(worst, 4)} (per seed {shown}) -> '
+                                f'top {out[key]}; score = min(1, top / ratio), continuous (no rungs)')
     for key, row in FITTED_RUNGS.items():
         per_seed = {v['fixture_seed']: _exact_ratio(next(r for r in v['checks'] if r['check'] == row)['parts']) for v in verdicts}
         worst = max(per_seed.values())
@@ -2796,7 +2940,7 @@ assert set(TIER_OF.values()) == set(TIER_WEIGHT) | {'E'}
 assert DIAGNOSTIC <= REGISTERED and set(CRITICAL_CHECKS) <= REGISTERED and CALIBRATION_OWNED <= REGISTERED
 assert {n for _c, _l, names in ADMISSION_BANDS for n in names} <= REGISTERED
 assert set(EXCELLENCE_VALUED) | set(EXCELLENCE_BINARY) <= REGISTERED
-assert sum(1 for t in TIER_OF.values() if t != 'E') == 62 and sum(1 for t in TIER_OF.values() if t == 'E') == 4
+assert sum(1 for t in TIER_OF.values() if t != 'E') == 63 and sum(1 for t in TIER_OF.values() if t == 'E') == 3
 
 # Rows that compare a person's change LIST with the oracle: one wrong row in the ledger or one change shown that
 # should be hidden makes each of them wrong, and that is one defect, not N (DESIGN §13.4 item 5, gap #23).
@@ -2805,14 +2949,18 @@ CHANGE_LIST_ROWS = ('u_ledger_table', 'u_ledger_sort', 's_index_order', 'u_comme
 # Rows that compare the four §1 numbers (or a value printed from them, like the comment's creep and the points
 # cell) with the oracle: wrong numbers are one defect wherever they show.
 NUMBER_ROWS = ('u_widget_chart', 'a_action_result', 'u_ledger_table', 'u_ledger_sort', 'b_comment_adf_as_user',
-               't_out_of_order', 't_reestimate_followed', 'u_widget_live')
+               't_out_of_order', 't_reestimate_followed', 'u_widget_live',
+               # the explanation's replacement sentence prints the ledger's numbers (m_ids_only, 2026-10-04)
+               'u_llm_explain')
 ROOT_BLOCKS = {
     'l_bundles_load': tuple(n for n, t in TIER_OF.items() if t in ('T', 'R', 'S', 'B', 'U', 'A')),
     # measured on m_old_search / m_open_sprints_only / m_storage_api: a backfill that never lands leaves every
     # ledger-derived row wrong, the same scheduled run's heal and rate-limit rows unfinished, and the scopes
     # its calls would have used unexercised (l_scopes reads observed calls).
+    # m_retry_now (2026-10-04): a backfill that never lands leaves its rows for a LATER run to write, so the no-change
+    # rerun writes them (143 writes over 19 rows) — the same defect, not a separate idempotency one.
     'r_backfill_complete': ('u_widget_numbers', 'r_removals_found', *CHANGE_LIST_ROWS, *NUMBER_ROWS, 'r_heal_dropped',
-                            'r_rate_limit', 't_multi_sprint_parse', 'l_scopes'),
+                            'r_rate_limit', 't_multi_sprint_parse', 'l_scopes', 'r_idempotent_rerun'),
     # measured on m_ids_only / m_one_estimate_field: wrong numbers show in the chart, the action, the table's
     # points cell and sort, and the comment's creep.
     'u_widget_numbers': NUMBER_ROWS,
@@ -2823,6 +2971,12 @@ ROOT_BLOCKS = {
                           'u_widget_numbers', 'u_widget_chart', 't_reestimate_followed'),
     # measured on m_asapp_ui: hidden changes listed -> the table, its sort and the action's list are wrong too.
     'b_no_permission_leak': CHANGE_LIST_ROWS,
+    # One defect, two band-4 rows (band_defects prices it once): a model id list() does not return fails every explain
+    # call (m_llm_unknown_model); a ledger read out of change-time order is a wrong default order and a wrong toggle;
+    # a wrong hidden count is wrong in the action's per-person answer too.
+    'k_llm_model_current': ('u_llm_explain',),
+    's_index_order': ('u_ledger_sort',),
+    'b_hidden_count': ('a_action_permissions',),
 }
 for _root, _deps in ROOT_BLOCKS.items():
     assert {_root, *_deps} <= REGISTERED
@@ -2882,8 +3036,62 @@ def evaluate_rows(c: Ctx) -> List[Dict]:
     return rows
 
 
+# Contract §8: "The scoring site uses a different seed than the dev site". A build is graded on THREE scoring sites
+# (2026-10-03 stringency, F3): the run's own archived fixture_seed plus two derived from it (never the dev seed), and
+# each row keeps its WORST seed — a correct app is correct on every site, one that happens to fit one pack is not — while
+# the excellence rows (economy ratios, round trips) keep their MEAN, as measurements rather than verdicts.
+SCORING_SEEDS = 3
+
+
+def scoring_seeds(seed: str, dev_seed: Optional[str], n: int = SCORING_SEEDS) -> List[str]:
+    out, k = [seed.lower()], 0
+    while len(out) < n:
+        k += 1
+        cand = hashlib.sha256(f'forge-scoring-site:{seed.lower()}:{k}'.encode()).hexdigest()[:16]
+        if cand != str(dev_seed or '').lower() and cand not in out:
+            out.append(cand)
+    return out
+
+
+def merge_seed_rows(row_sets: List[List[Dict]], seeds: List[str]) -> List[Dict]:
+    by_seed = [{r['check']: r for r in rows} for rows in row_sets]
+    merged = []
+    for row in row_sets[0]:
+        name = row['check']
+        rs = [b[name] for b in by_seed if name in b]
+        scores = {seed: b[name]['score'] for seed, b in zip(seeds, by_seed) if name in b}
+        gone = [(seed, b[name]) for seed, b in zip(seeds, by_seed) if name in b and b[name].get('unavailable')]
+        if gone:
+            seed, r = gone[0]
+            out = {**r, 'detail': f'seed {seed}: {r["detail"]}'[:400]}
+        elif row['tier'] == 'E':
+            out = {**row, 'score': round(sum(r['score'] for r in rs) / len(rs), 4),
+                   'detail': f'mean over {len(rs)} scoring sites: {row["detail"]}'[:400]}
+        else:
+            worst_seed, worst = min(zip(seeds, rs), key=lambda sr: sr[1]['score'])
+            out = {**worst, 'detail': (f'worst of {len(rs)} scoring sites (seed {worst_seed}): ' if len(set(scores.values())) > 1
+                                       else '') + str(worst.get('detail'))}
+            out['detail'] = out['detail'][:400]
+        out['seeds'] = scores
+        merged.append(out)
+    return merged
+
+
 def evaluate(c: Ctx) -> Dict:
-    result = compose_from_rows(evaluate_rows(c), c)
+    extra = list(getattr(c, 'seed_ctxs', None) or [])
+    rows = evaluate_rows(c)
+    seed_scores = None
+    if extra:
+        sets = [rows] + [evaluate_rows(x) for x in extra]
+        seeds = [c.fixture_seed] + [x.fixture_seed for x in extra]
+        seed_scores = {s: compose_from_rows(r, x)['score'] for s, r, x in zip(seeds, sets, [c] + extra)}
+        for x in extra:
+            c.harness_missing += [h for h in x.harness_missing if h not in c.harness_missing]
+        rows = merge_seed_rows(sets, seeds)
+    result = compose_from_rows(rows, c)
+    if seed_scores is not None:
+        result['fixture_seeds'] = list(seed_scores)
+        result['seed_scores'] = seed_scores
     result['recall_trace'] = recall_trace(c.root)
     result['media'] = media_block(c)
     result['deploy_readiness'] = deploy_readiness(c)
@@ -2960,16 +3168,33 @@ def excellence(rows: List[Dict]) -> Tuple[float, float, List[Dict]]:
     return fraction, e_mean, conds
 
 
+def band_defects(label: str, failed: List[str]) -> List[str]:
+    """The graded band counts DEFECTS ("minus 0.03 for each further such defect"), not rows: a failed row that
+    ROOT_BLOCKS attributes to another failed row of the same band is that row's shadow (asApp in the UI leaks AND
+    miscounts the hidden changes AND lists them in the action — one defect), priced once. Only a root inside the
+    band absorbs a row, so a defect is never dropped from the band by a root the band does not charge."""
+    if label != GRADED_BAND[0]:
+        return failed
+    defects = [n for n in failed if not any(n in ROOT_BLOCKS.get(root, ()) for root in failed if root != n)]
+    return defects or failed[:1]
+
+
 def admit(rows: List[Dict]) -> Dict:
     by = {r['check']: r for r in rows}
     ceiling, reasons, failed_by_band = 1.0, [], []
     for limit, label, names in ADMISSION_BANDS:
         failed = [n for n in names if not passed(by.get(n))]
         if failed:
-            cap = band_ceiling(limit, label, len(failed))
+            defects = band_defects(label, failed)
+            cap = band_ceiling(limit, label, len(defects))
             ceiling = min(ceiling, cap)
-            failed_by_band.append({'ceiling': cap, 'band': label, 'checks': failed})
-            reasons.append(f'{label}: {", ".join(failed)} (maximum {cap:.3f})')
+            entry = {'ceiling': cap, 'band': label, 'checks': failed}
+            shadows = [n for n in failed if n not in defects]
+            if shadows:
+                entry['priced_once'] = shadows
+            failed_by_band.append(entry)
+            reasons.append(f'{label}: {", ".join(failed)} (maximum {cap:.3f}'
+                           + (f'; {", ".join(shadows)} priced with their root' if shadows else '') + ')')
     return {'ceiling': ceiling, 'reasons': reasons, 'failedChecksByBand': failed_by_band}
 
 
@@ -3017,7 +3242,8 @@ def compose_from_rows(rows: List[Dict], c: Optional[Ctx] = None) -> Dict:
         crit_rows.append({**entry, 'factor': round(factor, 4)})
     earned = pre_severity * mult
     admission = admit(rows)
-    final = min(earned, admission['ceiling'])
+    admission['final_rule'] = f'final = min(earned, ceiling - {BAND_PULL:g} * (1 - earned))'
+    final = capped_final(earned, admission['ceiling'])
     tiers['E'] = {'mean': round(fraction * e_mean, 4), 'gate': fraction >= 1.0, 'gate_fraction': round(fraction, 4),
                   'weight': E_WEIGHT}
     harness_missing = list(c.harness_missing) if c is not None else []
@@ -3029,7 +3255,8 @@ def compose_from_rows(rows: List[Dict], c: Optional[Ctx] = None) -> Dict:
         unpublishable.append(f'runtime {runtime} (the in-repo shim, not the pinned Forge wrapper)')
     status = 'held' if harness_missing else 'scored'
     return {
-        'status': status, 'score': round(final, 4), 'rawScore': round(earned, 4), 'inner': round(inner, 4),
+        'status': status, 'score': published_score(final, admission['ceiling']), 'rawScore': round(earned, 4),
+        'inner': round(inner, 4),
         'scorerVersion': VERSION, 'scorer_version': VERSION, 'family': 'forge',
         'fixture_seed': c.fixture_seed if c is not None else None, 'dev_seed': c.dev_seed if c is not None else None,
         'critical': {'floor': floor, 'multiplier': round(mult, 4), 'pre_severity_score': round(pre_severity, 4),
@@ -3160,9 +3387,10 @@ def severity_selftest() -> List[str]:
         for n in names:
             v = score(_scenario({n: 0.0}))
             expect(v['score'] <= limit + 1e-9, f'(9) {n} failing must hold {label} at {limit} (got {v["score"]})')
-    # (11) band 4's graded ceiling at n = 1, 2, 3, 4, 5 and 13 failed rows (DESIGN §8.5)
-    band4 = ADMISSION_BANDS[-1][2]
-    for k, want in ((1, 0.899), (2, 0.869), (3, 0.839), (4, 0.809), (5, 0.799), (13, 0.799)):
+    # (11) band 4's graded ceiling at n = 1, 2, 3, 4, 5 and every failed row (DESIGN §8.5)
+    # Rows no other band row is the root of, so k failed rows are k defects (band_defects prices a shadow once).
+    band4 = [n for n in ADMISSION_BANDS[-1][2] if not any(n in ROOT_BLOCKS.get(r, ()) for r in ADMISSION_BANDS[-1][2])]
+    for k, want in ((1, 0.899), (2, 0.869), (3, 0.839), (4, 0.809), (5, 0.799), (len(band4), 0.799)):
         got = admit(_scenario({n: 0.0 for n in band4[:k]}))['ceiling']
         expect(abs(got - want) < 1e-9, f'(11) band 4 with {k} failed row(s) must cap at {want} (got {got})')
     # severity ordering: every critical costs more than any single non-critical defect
@@ -3322,34 +3550,25 @@ def clone_tree(src: Path, dest: Path) -> None:
         'engine-console.log', 'forge-observations.json'))
 
 
-def gather(root: Path, _port, _db_dir, trace_path: Optional[Path] = None, mark_phase=None, seed: Optional[str] = None,
-           runtime: str = 'wrapper') -> Ctx:
-    """run_build's interface: clone the tree, start the scoring site with `seed`, run the probe, load I5."""
-    if not seed:
-        raise RuntimeError('REFUSED: score_forge.gather needs the fixture seed')
-    kit, why = _kit()
-    if kit is None:
-        raise RuntimeError('REFUSED: ' + why)
-    header = _trace_header(Path(root))
-    started = time.monotonic()
+def _probe_one(root: Path, seed: str, kit: Dict, runtime: str, shots: Path, media_dir: Optional[Path],
+               obs_copy: Path) -> Tuple[Dict, Dict]:
+    """One scoring site: a fresh clone of the tree, the site seeded with `seed`, the probe; returns (observations, pack)."""
     with tempfile.TemporaryDirectory(prefix='forge-score-') as tmp:
         tmp = Path(tmp)
         app = tmp / 'app'
         clone_tree(Path(root), app)
         pack = build_pack(seed, tmp / 'pack.json')
         obs_path = tmp / 'forge-observations.json'
-        shots = Path(root) / 'forge-shots'
-        shutil.rmtree(shots, ignore_errors=True)
-        media_dir = Path(root).resolve() / 'bench-media'
-        shutil.rmtree(media_dir, ignore_errors=True)
+        shots.mkdir(parents=True, exist_ok=True)
         cmd = [_render_node(), str(PROBE_SCRIPT), '--app', str(app), '--kit', str(kit.get('dir')), '--seed', seed,
-               '--out', str(obs_path), '--shots', str(shots), '--runtime', runtime, '--repo', str(ROOT),
-               '--media', str(media_dir)]
+               '--out', str(obs_path), '--shots', str(shots), '--runtime', runtime, '--repo', str(ROOT)]
+        if media_dir is not None:
+            cmd += ['--media', str(media_dir)]
         proc = subprocess.Popen(cmd, cwd=tmp)
         _CHILDREN.append(proc)
         code = proc.wait()
         if not obs_path.is_file():
-            raise RuntimeError(f'REFUSED: forge_probe.mjs exited {code} without observations')
+            raise RuntimeError(f'REFUSED: forge_probe.mjs exited {code} without observations (seed {seed})')
         obs = json.loads(obs_path.read_text())
         # Pixels are read once, here, into the observations, so evaluate() stays pure over (tree, observations,
         # pack) and a kept observation file rescored later grades v_dark_mode the same way.
@@ -3361,8 +3580,37 @@ def gather(root: Path, _port, _db_dir, trace_path: Optional[Path] = None, mark_p
                 surface['dominantShare'] = round(measured[1], 4)
                 surface['blank'] = measured[1] >= float(TH['blank_share'])
         obs_path.write_text(json.dumps(obs))
-        shutil.copy2(obs_path, Path(root) / 'forge-observations.json')
-    ctx = Ctx(Path(root), obs, pack, fixture_seed=seed, dev_seed=header.get('dev_seed'), runtime=runtime)
+        obs_copy.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(obs_path, obs_copy)
+    return obs, pack
+
+
+def gather(root: Path, _port, _db_dir, trace_path: Optional[Path] = None, mark_phase=None, seed: Optional[str] = None,
+           runtime: str = 'wrapper', single_seed: bool = False) -> Ctx:
+    """run_build's interface: clone the tree, start the scoring site with `seed`, run the probe, load I5 — on the
+    run's own seed and, unless `single_seed` (the controls and the calibration, which name their seeds), on the two
+    derived scoring sites (SCORING_SEEDS). The run's own seed keeps the published shots, recording and
+    forge-observations.json; the derived sites' evidence lands under forge-shots/seeds/<seed>/."""
+    if not seed:
+        raise RuntimeError('REFUSED: score_forge.gather needs the fixture seed')
+    kit, why = _kit()
+    if kit is None:
+        raise RuntimeError('REFUSED: ' + why)
+    header = _trace_header(Path(root))
+    started = time.monotonic()
+    seeds = [seed.lower()] if single_seed else scoring_seeds(seed, header.get('dev_seed'))
+    shots = Path(root) / 'forge-shots'
+    shutil.rmtree(shots, ignore_errors=True)
+    media_dir = Path(root).resolve() / 'bench-media'
+    shutil.rmtree(media_dir, ignore_errors=True)
+    ctxs = []
+    for i, s in enumerate(seeds):
+        where = shots if i == 0 else shots / 'seeds' / s
+        obs, pack = _probe_one(root, s, kit, runtime, where, media_dir if i == 0 else None,
+                               Path(root) / 'forge-observations.json' if i == 0 else where / 'forge-observations.json')
+        ctxs.append(Ctx(Path(root), obs, pack, fixture_seed=s, dev_seed=header.get('dev_seed'), runtime=runtime))
+    ctx = ctxs[0]
+    ctx.seed_ctxs = ctxs[1:]
     ctx.scorer_seconds = round(time.monotonic() - started, 3)
     ctx.kit = kit
     return ctx
@@ -3381,6 +3629,9 @@ def main(argv=None) -> int:
     ap.add_argument('--reference', action='store_true')
     ap.add_argument('--runtime', choices=('wrapper', 'shim'), default='wrapper')
     ap.add_argument('--port', type=int, help='accepted for the rescorer; forge binds ephemeral ports')
+    ap.add_argument('--single-seed', action='store_true',
+                    help='score on --seed alone (the controls and the calibration name their seeds); the default grades '
+                         f'{SCORING_SEEDS} scoring sites (contract §8), the worst per correctness row')
     a = ap.parse_args(argv)
     if a.calibrate:
         try:
@@ -3428,7 +3679,7 @@ def main(argv=None) -> int:
     LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
     with LOCK_FILE.open('w') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)   # serial: one forge scoring per host
-        ctx = gather(tree, None, None, seed=seed, runtime=a.runtime)
+        ctx = gather(tree, None, None, seed=seed, runtime=a.runtime, single_seed=a.single_seed)
         result = evaluate(ctx)
     a.json_out.write_text(json.dumps(result, indent=2, default=str))
     print(format_report(result, tree.name))

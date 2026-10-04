@@ -99,6 +99,14 @@ const SYSTEM_FIELDS = [
 
 const iso = (ms) => new Date(ms).toISOString();
 
+// Jira Software caps a sprint name at 30 characters; the SCORING site names one active sprint as long as that allows
+// (contract §4: "no number is clipped or truncated (long names may end in an ellipsis)"), from the longest realistic
+// form that fits.
+const SPRINT_NAME_MAX = 30;
+const longSprintName = (key, n) => [`${key} Reliability Hardening Sprint ${n}`, `${key} Reliability Hardening ${n}`,
+  `${key} Hardening Sprint ${n} - EU`, `${key} Hardening Sprint ${n}`]
+  .filter((x) => x.length <= SPRINT_NAME_MAX).sort((a, b) => b.length - a.length)[0];
+
 function facts(seed, { scoring = false } = {}) {
   if (!SEED_RE.test(seed)) throw new Error(`seed must be 16 lowercase hex chars, got ${JSON.stringify(seed)}`);
   const r = createRng(seed);
@@ -177,8 +185,11 @@ function facts(seed, { scoring = false } = {}) {
   const sprintNoB = r.int(5, 40);
   const team = r.pick(TEAMS);
   const a1Start = now - r.int(4, 9) * DAY - r.int(0, 8) * HOUR;
-  const a2Start = a1Start + r.int(1, 3) * DAY + r.int(0, 6) * HOUR;
-  // Sprint start dates are all distinct (DESIGN §17.1 19: ties are by sprint id, fixtures avoid them).
+  const a2Offset = r.int(1, 3) * DAY + r.int(0, 6) * HOUR;
+  // The dev site's start dates are all distinct (DESIGN §17.1 19). The SCORING site exercises the stated tie rule
+  // instead (contract §4: "ordered by startDate (ties by sprint id)"): the first board's two parallel sprints start at
+  // the same instant, so only the sprint id orders them (2026-10-03 stringency, F4).
+  const a2Start = scoring ? a1Start : a1Start + a2Offset;
   let b1Start = now - r.int(2, 8) * DAY - r.int(0, 8) * HOUR;
   if (b1Start === a1Start || b1Start === a2Start) b1Start -= 17 * MIN;
   const mk = (key, name, state, board, start, complete) => ({
@@ -200,7 +211,7 @@ function facts(seed, { scoring = false } = {}) {
     mk('c1B', `${PB.key} Sprint ${sprintNoB - 1}`, 'closed', boards[1], c1BComplete - 14 * DAY, c1BComplete),
     mk('c2A', `${PA.key} Sprint ${sprintNoA - 1}`, 'closed', boards[0], c2AComplete - 14 * DAY, c2AComplete),
     mk('a1A', `${PA.key} Sprint ${sprintNoA}`, 'active', boards[0], a1Start, null),
-    mk('a1B', `${PB.key} Sprint ${sprintNoB}`, 'active', boards[1], b1Start, null),
+    mk('a1B', scoring ? longSprintName(PB.key, sprintNoB) : `${PB.key} Sprint ${sprintNoB}`, 'active', boards[1], b1Start, null),
     mk('a2A', `${PA.key} ${team} Sprint ${r.int(2, 9)}`, 'active', boards[0], a2Start, null),
     mk('fA', `${PA.key} Sprint ${sprintNoA + 1}`, 'future', boards[0], null, null),
     mk('fB', `${PB.key} Sprint ${sprintNoB + 1}`, 'future', boards[1], null, null),
@@ -337,7 +348,10 @@ function facts(seed, { scoring = false } = {}) {
   const planFrom = Math.max(c2AComplete, c1BComplete);
   const planAt = firstActiveStart;
   plan(S.a1A, projectIssues(PA, planFrom), r.int(12, 18), planFrom, planAt);
-  plan(S.a2A, projectIssues(PA, planFrom), r.int(8, 12), planFrom, planAt);
+  // The SCORING site starts the team sprint EMPTY, so its committed is 0 and creep is the stated special case
+  // (contract §1: "— when committed is 0"; §6: creepPercent null) — 2026-10-03 stringency, F4. The dev site plans it.
+  const a2Planned = r.int(8, 12);
+  plan(S.a2A, projectIssues(PA, planFrom), scoring ? 0 : a2Planned, planFrom, planAt);
   plan(S.a1B, projectIssues(PB, planFrom), r.int(12, 18), planFrom, planAt);
   plan(S.fA, projectIssues(PA, planFrom), r.int(5, 9), planFrom, planAt);
   plan(S.fB, projectIssues(PB, planFrom), r.int(4, 7), planFrom, planAt);
@@ -448,13 +462,17 @@ function facts(seed, { scoring = false } = {}) {
   const liveStart = events.length;
   let t = now;
   const tick = () => (t += r.int(2, 9) * MIN + r.int(0, 59_999));
-  // Two same-issue consecutive pairs (delivered swapped), placed early and late.
+  // Two same-issue consecutive pairs (delivered swapped), placed early and late. The SCORING site scales the stated
+  // background faults (contract §3 "more than once and out of order, and some never arrive"; every fault type
+  // already occurs on the dev site, DESIGN §3 rule 3): four pairs, eight duplicates, five drops — one of them an
+  // estimate change only a heal can recover (2026-10-03 stringency, F7).
   const pairAt = [r.int(4, 9), r.int(Math.floor(liveN / 2), liveN - 6)];
+  if (scoring) pairAt.push(r.int(12, 15), liveN - 4);
   const pairs = [];
   const visibleHistoryIssue = (p) => issues.filter((s) => s.projectKey === p && !s.hiddenFrom.length && s.created < now);
   while (events.length - liveStart < liveN - 2) {
     const idx = events.length - liveStart;
-    if (pairAt.includes(idx) && pairs.length < 2) {
+    if (pairAt.includes(idx) && pairs.length < pairAt.length) {
       const sprint = pairs.length === 0 ? S.a1A : r.pick([S.a1B, S.a2A]);
       const p = sprint._project;
       const st = r.pick(visibleHistoryIssue(p).filter((s) => !openSprintOf(s)));
@@ -469,9 +487,14 @@ function facts(seed, { scoring = false } = {}) {
     step(tick(), kind, 'live');
   }
   // The last two updates make sure both estimation fields move live (t_reestimate_followed).
+  // The SCORING site holds each board to it: the change must be on an issue of that board's project now in one of its
+  // active sprints, so every board's numbers move (a decoy-field change on the other project's issue does not count;
+  // m_one_estimate_field passed t_reestimate_followed on seed 0123456789abcdef without it, 2026-10-04).
   for (const p of [PA, PB]) {
     const field = boardOf[p.key].estimationFieldId;
-    if (!events.slice(liveStart).some((e) => e.items[0].fieldId === field)) {
+    const moves = (e) => e.items[0].fieldId === field && (!scoring || (byId.get(e.issueId).projectKey === p.key
+      && activeOf(p.key).some((a) => openSprintOf(byId.get(e.issueId)) === a.id)));
+    if (!events.slice(liveStart).some(moves)) {
       const st = r.pick(issues.filter((s) => s.projectKey === p.key && activeOf(p.key).some((a) => openSprintOf(s) === a.id)));
       setEstimate(st, field, r.pick(ESTIMATES.filter((v) => v !== st.est[field])), tick(), 'live');
     } else {
@@ -516,12 +539,26 @@ function facts(seed, { scoring = false } = {}) {
   const isSprint = (e) => e.items[0].field === 'Sprint';
   const paired = new Set(pairs.flat());
   const sprintLive = scripted.filter((e) => isSprint(e) && !paired.has(e.changelogId));
-  const dropped = new Set(r.sample(sprintLive, 3).map((e) => e.changelogId));
-  const relevantLeft = scripted.filter((e) => (isSprint(e) || e.items[0].fieldId === boardOf[byId.get(e.issueId).projectKey].estimationFieldId)
+  const isBoardEstimate = (e) => e.items[0].fieldId === boardOf[byId.get(e.issueId).projectKey].estimationFieldId;
+  const dropped = new Set(r.sample(sprintLive, scoring ? 4 : 3).map((e) => e.changelogId));
+  if (scoring) {
+    // A dropped estimate change on a board's own estimation field, of an issue an active sprint counts: only the
+    // heal re-reads it, so the numbers stay wrong unless the scheduled run heals estimates too (prompt done 5).
+    const counted = (e) => actives.some((a) => byId.get(e.issueId).sprints.includes(a.id)
+      || events.some((h) => h.issueId === e.issueId && h.items[0].field === 'Sprint' && h.items[0].to.split(', ').includes(String(a.id))));
+    // The site applies a dropped change all the same, so the numbers (and t_reestimate_followed, read after the heal)
+    // still move: only an app whose heal refreshes estimates shows them.
+    const own = scripted.filter((e) => isBoardEstimate(e) && !paired.has(e.changelogId));
+    const pool = own.filter(counted).length ? own.filter(counted) : own;
+    // A script with no estimate change on a board's own field (1 seed in 300) drops a fifth sprint change instead.
+    if (pool.length) dropped.add(r.pick(pool).changelogId);
+    else dropped.add(r.pick(sprintLive.filter((e) => !dropped.has(e.changelogId))).changelogId);
+  }
+  const relevantLeft = scripted.filter((e) => (isSprint(e) || isBoardEstimate(e))
     && !paired.has(e.changelogId) && !dropped.has(e.changelogId));
   const middle = relevantLeft.filter((e, i) => i > 2 && i < relevantLeft.length - 2 && isSprint(e) && !byId.get(e.issueId).hiddenFrom.length);
   const faultChange = r.pick(middle.length ? middle : relevantLeft.filter(isSprint));
-  const duplicated = new Set(r.sample(relevantLeft.filter((e) => e !== faultChange), 4).map((e) => e.changelogId));
+  const duplicated = new Set(r.sample(relevantLeft.filter((e) => e !== faultChange), scoring ? 8 : 4).map((e) => e.changelogId));
   let order = scripted.map((e) => e.changelogId);
   for (const [a, b] of pairs) {
     const i = order.indexOf(a);
@@ -595,6 +632,16 @@ function facts(seed, { scoring = false } = {}) {
     faults: [
       { id: faultId(1), match: { scope: 'consumer-of-change', changelogId: faultChange.changelogId, nth: 1 }, status: 429, retryAfter: 30, reason: 'jira-quota-tenant-based' },
       { id: faultId(2), match: { scope: 'scheduled-run', run: 1, nth: 2 }, status: 429, retryAfter: 2, reason: 'jira-burst-based' },
+      // SCORING site only (2026-10-03 stringency): the same stated faults where they bite harder — a 429 on the
+      // backfill's first CONTINUATION page (the paging loop must retry that page, not restart or skip it), a 429 in
+      // the heal (F7, contract §3 "Jira may answer 429 with Retry-After"), and one Jira 500 on a resolver's first read,
+      // armed by the probe for one extra sprint-action open (F5, contract §2 "a failure (a Jira error, …) returns a
+      // value describing it … and the surface shows it").
+      ...(scoring ? [
+        { id: faultId(3), match: { scope: 'scheduled-run', run: 1, continuation: true, nth: 1 }, status: 429, retryAfter: 2, reason: 'jira-burst-based' },
+        { id: faultId(4), match: { scope: 'scheduled-run', run: 2, nth: 2 }, status: 429, retryAfter: 2, reason: 'jira-burst-based' },
+        { id: faultId(5), match: { scope: 'resolver-read' }, status: 500, reason: 'internal-server-error' },
+      ] : []),
     ],
     limits: LIMITS,
     ...(scoring ? { paging: SCORING_PAGING } : {}),

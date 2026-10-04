@@ -1,0 +1,8 @@
+{
+  "loses": [
+    "u_llm_explain"
+  ],
+  "critical": false,
+  "max_final": 0.899,
+  "why": "The replacement sentence for a digits answer adds the sprint's start date: a number that is not one of the ledger's (contract \u00a75 \"your own sentence with the ledger's numbers\"). LLM defect band 0.899."
+}
