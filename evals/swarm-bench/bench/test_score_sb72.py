@@ -744,6 +744,55 @@ class DebugSurfaceAbsentTests(unittest.TestCase):
         self.assertIsNone(score_sb71.stream_witness(copy.deepcopy(QWEN_VIZ)))
 
 
+
+QWEN_AIM = {'x': 540, 'y': 399.6, 'inViewport': True, 'onCanvas': False, 'element': 'div#viz-labels', 'scrollY': 95}
+QWEN_COAST = {'flick': {'samples': None, 'watchMissing': True, 'moved': False, 'dragOrbitDeg': None,
+                        'attempts': [{'moved': False, 'aim': [QWEN_AIM, QWEN_AIM], 'miss': score_sb71.CANVAS_MISS}] * 2,
+                        'probeMiss': score_sb71.CANVAS_MISS},
+              'slowRelease': {'watched': False, 'probeMiss': score_sb71.CANVAS_MISS, 'aim': [QWEN_AIM, QWEN_AIM]}}
+
+
+class CoveredCanvasTests(unittest.TestCase):
+    """Qwen3.8-27B's re-score then refused t_coast_identity/t_coast_reality: its div#viz-labels covers the
+    canvas, so the probe's drag never reached #viz3d. SB7.2 charges it; other aim misses still refuse."""
+
+    def charge(self, coast, name='t_coast_identity'):
+        ctx = SimpleNamespace(probes={'viz': {'coast': coast}})
+        return score_sb71.covered_canvas_charge(name, ctx, base.unavail('coast identity unmeasured: ' + score_sb71.CANVAS_MISS))
+
+    def test_sb72_charges_both_coast_rows_when_the_app_covers_its_canvas(self):
+        with score.tier_runtime():
+            for name in score_sb71.COAST_ROWS:
+                row = self.charge(copy.deepcopy(QWEN_COAST), name)
+                self.assertEqual(row['score'], 0.0)
+                self.assertIn('div#viz-labels covers the 3D canvas', row['detail'])
+                self.assertEqual(row['parts']['covered_canvas']['aims'], 6)
+
+    def test_other_misses_keep_refusing(self):
+        def with_aims(aims):
+            coast = copy.deepcopy(QWEN_COAST)
+            coast['flick']['attempts'] = [{'moved': False, 'aim': aims, 'miss': score_sb71.CANVAS_MISS}]
+            coast['slowRelease'] = {}
+            return coast
+        cases = {
+            'outside the viewport': with_aims([{**QWEN_AIM, 'inViewport': False}]),
+            'no rect read': with_aims([{'rect': None}]),
+            'differing elements': with_aims([QWEN_AIM, {**QWEN_AIM, 'element': 'div#tooltip'}]),
+            'the canvas itself': with_aims([{**QWEN_AIM, 'element': 'canvas#viz3d'}]),
+            'flick moved': {**copy.deepcopy(QWEN_COAST), 'flick': {**QWEN_COAST['flick'], 'moved': True}},
+            'other miss': {**copy.deepcopy(QWEN_COAST), 'flick': {**QWEN_COAST['flick'], 'probeMiss': 'x'}},
+        }
+        for name, coast in cases.items():
+            with self.subTest(name), score.tier_runtime():
+                self.assertIsNone(self.charge(coast))
+        with score.tier_runtime():
+            self.assertIsNone(self.charge(copy.deepcopy(QWEN_COAST), 't_labels_culling'))
+
+    def test_sb71_is_unchanged(self):
+        self.assertFalse(score_sb71.CHARGE_COVERED_CANVAS)
+        self.assertIsNone(self.charge(copy.deepcopy(QWEN_COAST)))
+
+
 if __name__ == '__main__':
     unittest.main()
 

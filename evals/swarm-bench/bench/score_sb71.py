@@ -60,6 +60,13 @@ CHARGE_UNREACHED_FAULTS = False
 # while vs7dbg answered absent on all of its evaluations.
 CHARGE_DEBUG_SURFACE_ABSENT = False
 WITNESS_UNAVAILABLE = 'witness_unavailable'
+# Same owner rule, set by SB7.2: the coast rows' drag never reached #viz3d because the app's OWN element
+# covers the canvas at the aimed point on every re-centred attempt (document.elementFromPoint skips
+# pointer-events:none, so the element really takes the pointer). A user cannot orbit that view either:
+# charged 0, not refused. Qwen3.8-27B SB7.2 (2026-10-05): div#viz-labels over the canvas.
+CHARGE_COVERED_CANVAS = False
+CANVAS_MISS = 'the point was not delivered to #viz3d after re-centring the canvas twice'
+COAST_ROWS = ('t_coast_identity', 't_coast_reality')
 # row -> (schedule field, sync-1 list requests the vendor must see before the fault fires, label).
 # vendor_service_v3._list: the drop arms after sync #1 serves page j and fires on the NEXT request (j + 1
 # requests); the 500 answers the request made once j2 - 1 pages are served (j2 requests).
@@ -926,6 +933,45 @@ def debug_surface_absent_witness(viz, signal, arm):
     }
 
 
+def canvas_cover(aims):
+    """The single non-canvas element the app laid over #viz3d at every aimed point, else None."""
+    if not aims or not all(isinstance(a, dict) and a.get('inViewport') is True and a.get('onCanvas') is False
+                           and isinstance(a.get('element'), str) and a['element'] for a in aims):
+        return None
+    elements = {a['element'] for a in aims}
+    if len(elements) != 1:
+        return None
+    element = elements.pop()
+    return None if element.split('#')[0].split('.')[0].lower() == 'canvas' else element
+
+
+def covered_canvas_charge(name, ctx, outcome):
+    """SB7.2: a coast row left unmeasured only because the app's own element covers the canvas wherever
+    the probe aimed its drag. Any other miss (no rect, a point outside the viewport, differing elements)
+    keeps the inherited refusal."""
+    if not CHARGE_COVERED_CANVAS or name not in COAST_ROWS or not outcome.get('unavailable'):
+        return None
+    coast = ctx.probes.get('viz', {}).get('coast') or {}
+    flick, slow = coast.get('flick') or {}, coast.get('slowRelease') or {}
+    if flick.get('probeMiss') != CANVAS_MISS or flick.get('moved') is not False:
+        return None
+    attempts = flick.get('attempts') or []
+    aims = [aim for attempt in attempts for aim in (attempt.get('aim') or [])]
+    if slow.get('probeMiss'):
+        if slow['probeMiss'] != CANVAS_MISS:
+            return None
+        aims += slow.get('aim') or []
+    if not attempts or any(attempt.get('miss') != CANVAS_MISS for attempt in attempts):
+        return None
+    cover = canvas_cover(aims)
+    if cover is None:
+        return None
+    return base.g(0.0, f"the app's {cover} covers the 3D canvas at every aimed point ({len(aims)} aims, each "
+                       'inside the viewport after re-centring), so no drag or flick reaches #viz3d',
+                  'a pointer cannot orbit the view: the coast law is never exercised',
+                  parts={'covered_canvas': {'element': cover, 'aims': len(aims), 'attempts': len(attempts)}})
+
+
 def harness_load(start, end):
     """The machine's load averages (1, 5, 15 min) when the viz probe started and when it returned,
     finished or capped. Information for the board only: no score and no refusal reads it."""
@@ -1038,6 +1084,8 @@ def observed_absence_result(name, original, ctx):
         charged = viz_cap_charge(ctx, outcome)
     if charged is None:
         charged = unreached_fault_charge(name, ctx, outcome)
+    if charged is None:
+        charged = covered_canvas_charge(name, ctx, outcome)
     return outcome if charged is None else charged
 
 
