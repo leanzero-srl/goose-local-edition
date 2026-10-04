@@ -70,7 +70,7 @@ CONTRACT = 'forge/public/FORGE-CONTRACT.md'
 # ── calibration-owned thresholds ─────────────────────────────────────────────────────────────
 
 THRESHOLDS_FILE = HERE / 'forge-thresholds.json'
-CALIB_SHA256 = '580e5c8714f26b6249958daa2a6f9c2400eafe310bde6bcd6a6936e4b2e1ca56'  # frozen 2026-10-03: golden x5 (forge-thresholds.json calibration.seeds)
+CALIB_SHA256 = 'c4a6cbb8b2e569fddc69f5d8d2c129d064f3aed9170e9b4fbc55a12ad1dbf625'  # refrozen 2026-10-04: golden x5 on the stringency scoring site (forge-thresholds.json calibration.seeds)
 
 
 def _load_thresholds() -> Dict:
