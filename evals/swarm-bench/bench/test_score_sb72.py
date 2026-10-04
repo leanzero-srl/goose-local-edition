@@ -517,7 +517,9 @@ class VizCapTests(unittest.TestCase):
         # base.gather records fire_d1_mutation:failed when the capped probe never signalled its stream arm.
         result = self.score(score, {**GLM_CAP, 'harnessLoad': GLM_LOAD}, ['fire_d1_mutation:failed'])
         rows = {r['check']: r for r in result['checks']}
-        self.assertEqual(result['harness_missing'], ['fire_d1_mutation:failed'])
+        # The cap's consequence leaves harness_missing (bench_rescore.py and the desktop read a non-empty list as
+        # unscored) and is named only in viz_cap.
+        self.assertEqual(result['harness_missing'], [])
         self.assertEqual(result['viz_cap']['harness_missing_from_cap'], ['fire_d1_mutation:failed'])
         self.assertEqual(result['probe_unavailable'], [])
         self.assertEqual([r['check'] for r in result['checks'] if 'PROBE ERROR' in r.get('detail', '')], [])

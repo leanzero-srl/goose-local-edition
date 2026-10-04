@@ -282,10 +282,14 @@ def evaluate(ctx):
             'detail': cap_note, 'elapsedMs': viz.get('elapsedMs'), 'hardMs': viz.get('hardMs'),
             'charged': [r['check'] for r in result['checks']
                         if 'viz_cap' in (r.get('parts') or {}) or cap_note in r.get('detail', '')],
-            # Kept in harness_missing (it did fail); named here as the cap's consequence, which is why it did
-            # not refuse the run.
+            # Named here as the cap's consequence, which is why it did not refuse the run.
             'harness_missing_from_cap': [name for name in result.get('harness_missing') or []
                                          if name in cap_missing]}
+        # ...and moved OUT of harness_missing: every consumer (bench_rescore.py's publish gate, the desktop's
+        # "held for rescore" card) reads a non-empty harness_missing as an unscored run. GLM-5.3 on 3.0.94
+        # (2026-10-04) scored 0.1457 and was then discarded for 'fire_d1_mutation:failed' still listed here.
+        result['harness_missing'] = [name for name in result.get('harness_missing') or []
+                                     if name not in result['viz_cap']['harness_missing_from_cap']]
     result['weights'] = {'inner': TIER_WEIGHT_SB72, 'three_d_share': sum(TIER_WEIGHT_SB72[t] for t in THREE_D_TIERS),
                          'excellence': base.E_WEIGHT}
     result['thresholds_overlay'] = {'file': THRESHOLDS_FILE.name,
