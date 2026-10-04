@@ -677,6 +677,73 @@ class UnreachedFaultTests(unittest.TestCase):
         self.assertFalse(score_sb71.CHARGE_UNREACHED_FAULTS)
 
 
+
+# Qwen3.8-27B's SB7.2 viz observation in shape (2026-10-05, tree openrouter-cloud-f4a3b4ae): a WebGL2 canvas,
+# vs7dbg absent on every evaluation, the D1 pixel search ended on an unreadable brush.
+QWEN_VIZ = {
+    'timedOut': False,
+    'sb71StreamHandshake': {'signal': {'state': 'witness_unavailable',
+                                       'reason': 'No independently decisive D1 pixel witness'},
+                            'delivery': {'fired': True}},
+    'streamPixelArm': {'error': 'No independently decisive D1 pixel witness',
+                       'rejected': {'no independent pixel point at this pose': 2, 'vs7dbg.brush unavailable': 1},
+                       'targetHeld': {'status': 200}},
+    'debugSurfaceObservations': [{'present': False, 'evaluationSucceeded': True}] * 21,
+    'vs7dbgTruth': {'surfacePresent': False, 'digestOk': False},
+    'd1Arm': {'targetId': 'pay_09447', 'brushed': False, 'via': 'unreachable'},
+    'contextReal': {'contextType': 'webgl2'},
+}
+
+
+class DebugSurfaceAbsentTests(unittest.TestCase):
+    """Qwen3.8-27B on 3.0.97 was refused 'fire_d1_mutation:failed': its app exposes no vs7dbg surface, so the
+    probe could not stage the D1 witness. SB7.2 charges that; any other undecided witness still refuses."""
+
+    def test_sb72_charges_the_witness_rows_when_vs7dbg_is_measured_absent(self):
+        with score.tier_runtime():
+            witness = score_sb71.stream_witness(copy.deepcopy(QWEN_VIZ))
+        self.assertEqual(witness['status'], 'debug_surface_absent')
+        self.assertEqual(witness['charged'], ['d_decisions_doc:D1', *score_sb71.PIXEL_WITNESS_ROWS])
+        self.assertIn('absent on all 21 evaluations', witness['via_tried'][-1])
+        row = score_sb71.stream_witness_result('p_stream_apply', base.g(0.5, 'unwitnessed', 'x'), witness)
+        self.assertEqual(row['score'], 0.0)
+        self.assertIn("documented selection surfaces", row['detail'])
+
+    def test_an_undecided_witness_with_a_present_or_unread_surface_still_refuses(self):
+        cases = {
+            'surface seen once': {'debugSurfaceObservations': [{'present': False, 'evaluationSucceeded': True},
+                                                               {'present': True, 'evaluationSucceeded': True}]},
+            'an evaluation failed': {'debugSurfaceObservations': [{'present': False, 'evaluationSucceeded': False}] * 3},
+            'one observation only': {'debugSurfaceObservations': [{'present': False, 'evaluationSucceeded': True}]},
+            'search ended elsewhere': {'streamPixelArm': {**QWEN_VIZ['streamPixelArm'],
+                                                          'rejected': {'no independent pixel point at this pose': 3}}},
+            'early arm brushed': {'d1Arm': {'targetId': 'pay_09447', 'brushed': True, 'via': 'table-click'}},
+        }
+        for name, change in cases.items():
+            with self.subTest(name), score.tier_runtime():
+                witness = score_sb71.stream_witness({**copy.deepcopy(QWEN_VIZ), **change})
+                self.assertIn('without a candidate cause', witness['refuse'])
+
+    def test_sb72_fires_d1_on_an_undecided_witness_and_sb71_does_not(self):
+        for tier, fires in ((score, True), (None, False)):
+            with self.subTest(tier=tier and tier.VERSION), tempfile.TemporaryDirectory() as root, \
+                    (tier.tier_runtime() if tier else contextlib.nullcontext()):
+                ready = Path(root) / 'ready.json'
+                ready.write_text(json.dumps(QWEN_VIZ['sb71StreamHandshake']['signal']))
+                handshake = score_sb71.StreamHandshake(ready, lambda: {'fired': True})
+                handshake.start()
+                handshake.finish()
+                if fires:
+                    self.assertEqual(handshake.result(), {'fired': True})
+                else:
+                    with self.assertRaisesRegex(RuntimeError, 'stream witness unavailable'):
+                        handshake.result()
+
+    def test_sb71_is_unchanged(self):
+        self.assertFalse(score_sb71.CHARGE_DEBUG_SURFACE_ABSENT)
+        self.assertIsNone(score_sb71.stream_witness(copy.deepcopy(QWEN_VIZ)))
+
+
 if __name__ == '__main__':
     unittest.main()
 

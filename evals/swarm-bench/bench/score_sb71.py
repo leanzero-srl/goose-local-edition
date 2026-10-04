@@ -53,6 +53,13 @@ VIZ_CAP_LOSS = re.compile(r"viz section '([^']+)' lost to the probe's hard cap \
 # Same owner rule, set by SB7.2 alongside CHARGE_VIZ_CAP: a sync-1 fault (B1 drop, B2 500) that never
 # armed because the app's OWN first walk ended before the scheduled page is charged 0, not refused.
 CHARGE_UNREACHED_FAULTS = False
+# Same owner rule, set by SB7.2: the D1 stream witness is unreachable because the app exposes no vs7dbg
+# debug surface the contract requires (measured absent on every successful evaluation, so the probe cannot
+# read the brush it must stage). The vendor still fires D1 and the witness rows are charged 0, not refused.
+# Qwen3.8-27B SB7.2 (2026-10-05): 'fire_d1_mutation:failed' refused a build whose canvas drew in WebGL2
+# while vs7dbg answered absent on all of its evaluations.
+CHARGE_DEBUG_SURFACE_ABSENT = False
+WITNESS_UNAVAILABLE = 'witness_unavailable'
 # row -> (schedule field, sync-1 list requests the vendor must see before the fault fires, label).
 # vendor_service_v3._list: the drop arms after sync #1 serves page j and fires on the NEXT request (j + 1
 # requests); the 500 answers the request made once j2 - 1 pages are served (j2 requests).
@@ -178,7 +185,8 @@ class StreamHandshake:
                             raise RuntimeError(READINESS_ABSENT)
                         continue
                     signal = json.loads(self.path.read_text())
-                    if signal.get('state') not in FIRING_WITNESS_STATES:
+                    firing = FIRING_WITNESS_STATES + ((WITNESS_UNAVAILABLE,) if CHARGE_DEBUG_SURFACE_ABSENT else ())
+                    if signal.get('state') not in firing:
                         raise RuntimeError('SB7.1 stream witness unavailable: ' + str(signal))
                     self.receipt = {'signal': signal, 'delivery': self.fire()}
                     return
@@ -770,9 +778,11 @@ def stream_witness(viz):
     candidate attribution does not hold on its own evidence."""
     signal = (viz.get('sb71StreamHandshake') or {}).get('signal') or {}
     state = signal.get('state')
+    arm = viz.get('streamPixelArm') or {}
+    if state == WITNESS_UNAVAILABLE and CHARGE_DEBUG_SURFACE_ABSENT:
+        return debug_surface_absent_witness(viz, signal, arm)
     if state not in CANDIDATE_WITNESS_STATES:
         return None
-    arm = viz.get('streamPixelArm') or {}
     if state == 'target_absent':
         return target_absent_witness(viz, signal, arm)
     failure = signal.get('candidateFailure') or {}
@@ -874,6 +884,44 @@ def target_absent_witness(viz, signal, arm):
                       f"early D1 arm (3D click, then the table row): {early.get('via')}",
                       f"the candidate's GET /api/payments/{target}: HTTP 404"],
         'evidence': absent, 'rejected': rejected,
+        'charged': ['d_decisions_doc:D1', *PIXEL_WITNESS_ROWS],
+    }
+
+
+def debug_surface_measured_absent(viz):
+    """vs7dbg answered absent on every debug-surface evaluation (at least two), each evaluation itself
+    succeeding, and the probe's truth summary agrees the surface was never present."""
+    observations = viz.get('debugSurfaceObservations') or []
+    return (len(observations) >= 2
+            and all(o.get('evaluationSucceeded') is True and o.get('present') is False for o in observations)
+            and (viz.get('vs7dbgTruth') or {}).get('surfacePresent') is False)
+
+
+def debug_surface_absent_witness(viz, signal, arm):
+    """SB7.2: no D1 pixel witness because the candidate exposes no vs7dbg surface, so the probe could not
+    read the brush it must stage. Charged like target_absent; any other witness_unavailable still refuses."""
+    problems = []
+    rejected = arm.get('rejected') or {}
+    if arm.get('mode') is not None or arm.get('error') != 'No independently decisive D1 pixel witness':
+        problems.append('the viz observation does not record an undecided D1 witness')
+    if 'vs7dbg.brush unavailable' not in rejected:
+        problems.append('the pixel search did not end on an unreadable vs7dbg.brush')
+    if not debug_surface_measured_absent(viz):
+        problems.append('the vs7dbg surface is not measured absent on every evaluation')
+    early = viz.get('d1Arm') or {}
+    if early.get('brushed') is True or str(early.get('via', '')).startswith(('3d-click', 'table-click')):
+        problems.append('the early D1 arm reached the target (' + str(early.get('via')) + ')')
+    if problems:
+        return {'refuse': 'SB7.1 stream witness unavailable without a candidate cause: ' + '; '.join(problems)}
+    observations = viz.get('debugSurfaceObservations')
+    return {
+        'status': 'debug_surface_absent', 'target': early.get('targetId'), 'stream_measured': False,
+        'witness': 'none', 'reason': signal.get('reason'),
+        'via_tried': [f"3D click at seeded poses ({sum(rejected.values())} rejections: {json.dumps(rejected)})",
+                      f"early D1 arm (3D click, then the table row): {early.get('via')}",
+                      f"the candidate's vs7dbg debug surface: absent on all {len(observations)} evaluations"],
+        'evidence': {'debugSurfaceObservations': len(observations), 'vs7dbgTruth': viz.get('vs7dbgTruth')},
+        'rejected': rejected,
         'charged': ['d_decisions_doc:D1', *PIXEL_WITNESS_ROWS],
     }
 

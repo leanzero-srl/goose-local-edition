@@ -102,7 +102,7 @@ def tier_runtime():
     overlay = thresholds()
     saved = (sb71.PROBE_NAME, sb71.VERSION, base.TIER_WEIGHT_SB7, base.ROOT_BLOCKS,
              base.TH['e_stream_apply_ms_rungs'], base.DIAGNOSTIC, base.NOTIFY_PAGED, base.SB72_STRICT,
-             sb71.CHARGE_VIZ_CAP, sb71.CHARGE_UNREACHED_FAULTS)
+             sb71.CHARGE_VIZ_CAP, sb71.CHARGE_UNREACHED_FAULTS, sb71.CHARGE_DEBUG_SURFACE_ABSENT)
     blocks = dict(base.ROOT_BLOCKS)
     # Without synced data there is no field to see: the visual rows are downstream of sync.
     blocks['sync_completeness'] = (*blocks['sync_completeness'],
@@ -117,12 +117,14 @@ def tier_runtime():
     sb71.CHARGE_VIZ_CAP = True
     # A sync-1 fault the app's own walk never reached is the app's behaviour: scored 0, never refused.
     sb71.CHARGE_UNREACHED_FAULTS = True
+    # A D1 witness lost to an absent vs7dbg debug surface is the app's missing contract surface: charged.
+    sb71.CHARGE_DEBUG_SURFACE_ABSENT = True
     try:
         yield
     finally:
         (sb71.PROBE_NAME, sb71.VERSION, base.TIER_WEIGHT_SB7, base.ROOT_BLOCKS,
          base.TH['e_stream_apply_ms_rungs'], base.DIAGNOSTIC, base.NOTIFY_PAGED, base.SB72_STRICT,
-         sb71.CHARGE_VIZ_CAP, sb71.CHARGE_UNREACHED_FAULTS) = saved
+         sb71.CHARGE_VIZ_CAP, sb71.CHARGE_UNREACHED_FAULTS, sb71.CHARGE_DEBUG_SURFACE_ABSENT) = saved
 
 
 def _probe_preflight():
