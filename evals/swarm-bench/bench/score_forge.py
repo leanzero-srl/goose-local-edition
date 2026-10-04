@@ -2957,8 +2957,10 @@ ROOT_BLOCKS = {
     # measured on m_old_search / m_open_sprints_only / m_storage_api: a backfill that never lands leaves every
     # ledger-derived row wrong, the same scheduled run's heal and rate-limit rows unfinished, and the scopes
     # its calls would have used unexercised (l_scopes reads observed calls).
+    # m_retry_now (2026-10-04): a backfill that never lands leaves its rows for a LATER run to write, so the no-change
+    # rerun writes them (143 writes over 19 rows) — the same defect, not a separate idempotency one.
     'r_backfill_complete': ('u_widget_numbers', 'r_removals_found', *CHANGE_LIST_ROWS, *NUMBER_ROWS, 'r_heal_dropped',
-                            'r_rate_limit', 't_multi_sprint_parse', 'l_scopes'),
+                            'r_rate_limit', 't_multi_sprint_parse', 'l_scopes', 'r_idempotent_rerun'),
     # measured on m_ids_only / m_one_estimate_field: wrong numbers show in the chart, the action, the table's
     # points cell and sort, and the comment's creep.
     'u_widget_numbers': NUMBER_ROWS,
