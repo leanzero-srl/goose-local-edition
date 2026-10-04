@@ -2632,10 +2632,15 @@ def _(c):
             # ledger number, and the digits answer's replacement sentence carries at least one of the four.
             if n is not None and isinstance(st.get('explanationOwn'), str):
                 found = explanation_numbers(st['explanationOwn'], n.name)
-                allowed = explanation_ledger_numbers(o, sid)
+                # The ledger before OR after the live-UI slot: an app with no widget never receives the two held-back
+                # changes (the probe delivers them with the widget open), and its numbers are the earlier state's
+                # (m_gadget, measured 2026-10-04: 73.5% shown, 70.9% after the slot it never saw).
+                states = [o] + ([c.oracle] if c.oracle and sid in c.oracle.all_numbers() else [])
+                allowed = set().union(*(explanation_ledger_numbers(x, sid) for x in states))
                 subs[f'{label}:every_number_is_a_ledger_number'] = all(x in allowed for x in found)
                 if kind == 'digits':
-                    four = {n.committed, n.added, n.removed} | ({n.creep} if n.creep is not None else set())
+                    four = {v for x in states for v in (x.numbers(sid).committed, x.numbers(sid).added, x.numbers(sid).removed,
+                                                        x.numbers(sid).creep) if v is not None}
                     subs[f'{label}:own_sentence_has_a_ledger_number'] = any(x in four for x in found)
             subs[f'{label}:no_error_flag'] = not st.get('errorFlags')
         else:
@@ -2944,7 +2949,9 @@ CHANGE_LIST_ROWS = ('u_ledger_table', 'u_ledger_sort', 's_index_order', 'u_comme
 # Rows that compare the four §1 numbers (or a value printed from them, like the comment's creep and the points
 # cell) with the oracle: wrong numbers are one defect wherever they show.
 NUMBER_ROWS = ('u_widget_chart', 'a_action_result', 'u_ledger_table', 'u_ledger_sort', 'b_comment_adf_as_user',
-               't_out_of_order', 't_reestimate_followed', 'u_widget_live')
+               't_out_of_order', 't_reestimate_followed', 'u_widget_live',
+               # the explanation's replacement sentence prints the ledger's numbers (m_ids_only, 2026-10-04)
+               'u_llm_explain')
 ROOT_BLOCKS = {
     'l_bundles_load': tuple(n for n, t in TIER_OF.items() if t in ('T', 'R', 'S', 'B', 'U', 'A')),
     # measured on m_old_search / m_open_sprints_only / m_storage_api: a backfill that never lands leaves every
