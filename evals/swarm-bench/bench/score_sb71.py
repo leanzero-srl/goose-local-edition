@@ -542,8 +542,14 @@ def threshold_policy():
 
 
 def encode_recorded_media(ctx, root):
-    observation = ctx.probes.get('viz', {}).get('sb71', {})
+    viz = ctx.probes.get('viz', {})
+    observation = viz.get('sb71', {})
     media = observation.get('media')
+    if media is None and CHARGE_VIZ_CAP and viz.get('timedOut') is True:
+        media = capped_recording_manifest(root)
+        if media is not None:
+            viz.setdefault('sb71', observation)
+            observation['media'] = media
     if media is None:
         return
     manifest = Path(root) / media['manifest']
@@ -555,6 +561,30 @@ def encode_recorded_media(ctx, root):
     except (OSError, subprocess.CalledProcessError, ValueError) as error:
         media['errors'].append(f'Publication encoding unavailable; graded observations retained: {type(error).__name__}')
         manifest.write_text(json.dumps({key: value for key, value in media.items() if key != 'manifest'}, indent=2))
+
+
+def capped_recording_manifest(root):
+    """SB7.2 (CHARGE_VIZ_CAP): the probe was killed at its cap before finalizeMedia wrote the manifest, but
+    Playwright's raw recording of the graded session is on disk. Write the manifest finalizeMedia would have
+    written (no phase clock: the probe died before reporting it) so the run publishes with its one graded clip.
+    GLM-5.3 on 3.0.95 (2026-10-04) scored 0.082 and could not publish: no media-manifest.json, a 9.3 MB raw clip."""
+    media_dir = Path(root).resolve() / 'bench-media'
+    raws = sorted((media_dir / 'raw').glob('*.webm'), key=lambda p: p.stat().st_mtime)
+    if not raws:
+        return None
+    raw = raws[-1]
+    data = raw.read_bytes()
+    rel = str(raw.relative_to(Path(root).resolve()))
+    manifest = {'schemaVersion': 1, 'scorerVersion': 'sb-7.1', 'recording': 'graded-browser',
+                'videos': [{'file': rel, 'caption': 'Original graded browser recording; publication encoding pending',
+                            'mimeType': 'video/webm', 'scenario': 'viz', 'sha256': hashlib.sha256(data).hexdigest(),
+                            'bytes': len(data), 'selection': 'Full original graded browser recording (probe stopped at its cap)',
+                            'publishable': len(data) <= 4 * 1024 * 1024, 'sourceInterval': None,
+                            'recordingClock': None, 'sourceFile': rel}],
+                'errors': []}
+    path = media_dir / 'media-manifest.json'
+    path.write_text(json.dumps(manifest, indent=2) + '\n')
+    return {'manifest': str(path.relative_to(Path(root).resolve())), **manifest}
 
 
 def gather(root, vendor_port, db_dir, trace_path, mark_phase=None, seed=None):
