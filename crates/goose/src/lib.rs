@@ -31,6 +31,7 @@ pub mod logging;
 pub mod loop_clock;
 pub mod mcp_utils;
 pub mod model_config;
+pub mod model_fields;
 pub mod needs_you;
 pub mod nodes;
 pub mod oauth;

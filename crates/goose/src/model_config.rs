@@ -60,6 +60,11 @@ fn materialize_model_config_inner(
         .with_default_context_limit(config.get_goose_context_limit()?)
         .with_default_max_tokens(config.get_goose_max_tokens()?);
 
+    // The model's saved custom fields go in before the global thinking-effort default, so a
+    // per-model effort wins over GOOSE_THINKING_EFFORT while a param the caller already set wins
+    // over both.
+    model = crate::model_fields::with_saved_values(model, provider_name)?;
+
     if include_default_thinking_effort {
         model = model.with_default_thinking_effort(config.get_goose_thinking_effort());
     }

@@ -1,5 +1,6 @@
 use anyhow::{bail, Context, Result};
 use goose::config::{declarative_providers, Config, ConfigError};
+use goose::model_fields::MODEL_FIELDS_CONFIG_KEY;
 use goose::providers::base::ProviderType;
 use goose::providers::get_from_registry;
 use serde_json::{json, Map, Value};
@@ -98,9 +99,37 @@ pub async fn export(provider: Option<&str>, output: &Path) -> Result<()> {
             params.insert(key.into(), value);
         }
     }
+    if let Some(fields) = launcher_model_fields(
+        std::env::var(MODEL_FIELDS_CONFIG_KEY).ok().as_deref(),
+        &providers,
+    )? {
+        params.insert(MODEL_FIELDS_CONFIG_KEY.into(), fields);
+    }
     let snapshot = json!({"version": 1, "providers": providers, "config": params,
                           "secrets": secrets, "custom_providers": definitions});
     write_private(output, &snapshot)
+}
+
+/// The per-model custom fields the benchmark LAUNCHER chose for this run (the desktop passes the
+/// form's values in the environment), narrowed to the run's providers. The saved fields in
+/// config.yaml are deliberately not read: a run launched without the variable (a hand-run
+/// `run_build.py`, a tier whose effort is pinned for every entrant) carries none, so a saved
+/// per-model effort can never displace the pin unnoticed. The snapshot's config becomes the
+/// entrant's config.yaml, where the map is read like any saved value.
+fn launcher_model_fields(raw: Option<&str>, providers: &BTreeSet<String>) -> Result<Option<Value>> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let Value::Object(all) = serde_json::from_str::<Value>(raw)
+        .with_context(|| format!("{MODEL_FIELDS_CONFIG_KEY} is not JSON"))?
+    else {
+        bail!("{MODEL_FIELDS_CONFIG_KEY} must be a JSON object of provider → model → fields");
+    };
+    let kept: Map<String, Value> = all
+        .into_iter()
+        .filter(|(provider, _)| providers.contains(provider))
+        .collect();
+    Ok((!kept.is_empty()).then_some(Value::Object(kept)))
 }
 
 fn validate_isolated_device(device: &Value) -> Result<()> {
@@ -127,6 +156,25 @@ fn write_private(output: &Path, snapshot: &Value) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_launchers_model_fields_ride_narrowed_to_the_runs_provider() {
+        let providers = BTreeSet::from(["openrouter".to_string()]);
+        assert_eq!(launcher_model_fields(None, &providers).unwrap(), None);
+
+        let raw = r#"{"openrouter": {"deepseek/deepseek-v4.1-flash": {"effort": "low"}},
+                      "anthropic": {"claude-x": {"effort": "high"}}}"#;
+        assert_eq!(
+            launcher_model_fields(Some(raw), &providers).unwrap(),
+            Some(json!({"openrouter": {"deepseek/deepseek-v4.1-flash": {"effort": "low"}}}))
+        );
+        assert_eq!(
+            launcher_model_fields(Some(r#"{"anthropic": {}}"#), &providers).unwrap(),
+            None
+        );
+        assert!(launcher_model_fields(Some("[1]"), &providers).is_err());
+        assert!(launcher_model_fields(Some("not json"), &providers).is_err());
+    }
 
     #[test]
     fn managed_mlx_requires_attachment_but_api_devices_remain_available() {

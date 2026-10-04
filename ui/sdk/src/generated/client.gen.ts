@@ -244,6 +244,10 @@ import type {
   MlxEngineStopOtherEngineRequest_unstable,
   MlxEngineStopOtherEngineResponse_unstable,
   MlxEngineUnmountRequest_unstable,
+  ModelFieldsListRequest_unstable,
+  ModelFieldsListResponse_unstable,
+  ModelFieldsSaveRequest_unstable,
+  ModelFieldsSaveResponse_unstable,
   NodesBuildEligibilityRequest_unstable,
   NodesBuildEligibilityResponse_unstable,
   NodesEnsureServingRequest_unstable,
@@ -455,6 +459,8 @@ import {
   zMlxEngineSpeedHistoryResponse_unstable,
   zMlxEngineStatusResponse_unstable,
   zMlxEngineStopOtherEngineResponse_unstable,
+  zModelFieldsListResponse_unstable,
+  zModelFieldsSaveResponse_unstable,
   zNodesBuildEligibilityResponse_unstable,
   zNodesEnsureServingResponse_unstable,
   zNodesLoadHistoryResponse_unstable,
@@ -953,6 +959,30 @@ export class GooseExtClient {
       "_goose/unstable/providers/secrets/delete",
       params,
     );
+  }
+
+  async providersModelFieldsList_unstable(
+    params: ModelFieldsListRequest_unstable,
+  ): Promise<ModelFieldsListResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/providers/model-fields/list",
+      params,
+    );
+    return zModelFieldsListResponse_unstable.parse(
+      raw,
+    ) as ModelFieldsListResponse_unstable;
+  }
+
+  async providersModelFieldsSave_unstable(
+    params: ModelFieldsSaveRequest_unstable,
+  ): Promise<ModelFieldsSaveResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/providers/model-fields/save",
+      params,
+    );
+    return zModelFieldsSaveResponse_unstable.parse(
+      raw,
+    ) as ModelFieldsSaveResponse_unstable;
   }
 
   async providersCanonicalModelInfo_unstable(

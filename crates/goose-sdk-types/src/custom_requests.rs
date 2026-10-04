@@ -20,6 +20,8 @@ mod compaction;
 pub use compaction::*;
 mod notes;
 pub use notes::*;
+mod model_fields;
+pub use model_fields::*;
 
 /// Schema descriptor for a single custom method, produced by the
 /// `#[custom_methods]` macro's generated `custom_method_schemas()` function.

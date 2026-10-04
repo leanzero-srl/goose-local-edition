@@ -363,6 +363,22 @@ impl GooseAcpAgent {
         self.on_delete_provider_secret(req).await
     }
 
+    #[custom_method(ModelFieldsListRequest)]
+    async fn dispatch_list_model_fields(
+        &self,
+        req: ModelFieldsListRequest,
+    ) -> Result<ModelFieldsListResponse, agent_client_protocol::Error> {
+        self.on_list_model_fields(req).await
+    }
+
+    #[custom_method(ModelFieldsSaveRequest)]
+    async fn dispatch_save_model_fields(
+        &self,
+        req: ModelFieldsSaveRequest,
+    ) -> Result<ModelFieldsSaveResponse, agent_client_protocol::Error> {
+        self.on_save_model_fields(req).await
+    }
+
     #[custom_method(CanonicalModelInfoRequest)]
     async fn dispatch_canonical_model_info(
         &self,

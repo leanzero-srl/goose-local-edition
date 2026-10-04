@@ -211,6 +211,16 @@
       "responseType": "EmptyResponse"
     },
     {
+      "method": "_goose/unstable/providers/model-fields/list",
+      "requestType": "ModelFieldsListRequest_unstable",
+      "responseType": "ModelFieldsListResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/providers/model-fields/save",
+      "requestType": "ModelFieldsSaveRequest_unstable",
+      "responseType": "ModelFieldsSaveResponse_unstable"
+    },
+    {
       "method": "_goose/unstable/providers/canonical-model-info",
       "requestType": "CanonicalModelInfoRequest_unstable",
       "responseType": "CanonicalModelInfoResponse_unstable"
