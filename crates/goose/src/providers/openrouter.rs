@@ -7,8 +7,8 @@ use std::collections::HashMap;
 
 use super::api_client::{ApiClient, AuthMethod};
 use super::base::{
-    model_info_for_provider_model, ConfigKey, MessageStream, ModelInfo, Provider, ProviderDef,
-    ProviderMetadata,
+    model_info_for_provider_model, ConfigKey, DeclaredModelParameters, MessageStream, ModelInfo,
+    Provider, ProviderDef, ProviderMetadata,
 };
 use super::openai_compatible::{handle_status, stream_openai_compat_timed};
 use super::retry::ProviderRetry;
@@ -263,12 +263,14 @@ struct ListedModel {
     id: String,
     context_length: Option<usize>,
     image_input: ImageInput,
+    parameters: DeclaredModelParameters,
 }
 
 /// What the models listing declares per model id, kept for the life of the provider.
 struct ModelsListing {
     windows: HashMap<String, usize>,
     image_inputs: HashMap<String, ImageInput>,
+    parameters: HashMap<String, DeclaredModelParameters>,
 }
 
 impl ModelsListing {
@@ -279,7 +281,52 @@ impl ModelsListing {
                 .iter()
                 .map(|model| (model.id.clone(), model.image_input))
                 .collect(),
+            parameters: listing
+                .iter()
+                .map(|model| (model.id.clone(), model.parameters.clone()))
+                .collect(),
         }
+    }
+}
+
+fn string_list(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// A listing entry's `supported_parameters`, its `reasoning` block (`supported_efforts`,
+/// `default_effort`, `mandatory`) and the non-null values of its `default_parameters`.
+fn listed_parameters(model: &Value) -> DeclaredModelParameters {
+    let reasoning = model.get("reasoning");
+    DeclaredModelParameters {
+        supported_parameters: string_list(model.get("supported_parameters")),
+        effort_levels: string_list(reasoning.and_then(|r| r.get("supported_efforts"))),
+        default_effort: reasoning
+            .and_then(|r| r.get("default_effort"))
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        reasoning_mandatory: reasoning
+            .and_then(|r| r.get("mandatory"))
+            .and_then(Value::as_bool)
+            == Some(true),
+        default_parameters: model
+            .get("default_parameters")
+            .and_then(Value::as_object)
+            .map(|defaults| {
+                defaults
+                    .iter()
+                    .filter(|(_, value)| !value.is_null())
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
 }
 
@@ -329,6 +376,7 @@ fn parse_models_listing(json: &Value) -> Result<Vec<ListedModel>, ProviderError>
                 id: id.to_string(),
                 context_length,
                 image_input: listed_image_input(model),
+                parameters: listed_parameters(model),
             })
         })
         .collect())
@@ -471,6 +519,13 @@ impl Provider for OpenRouterProvider {
             }
         }
         Ok(info)
+    }
+
+    async fn declared_model_parameters(
+        &self,
+        model_name: &str,
+    ) -> Result<Option<DeclaredModelParameters>, ProviderError> {
+        Ok(self.listing().await?.parameters.get(model_name).cloned())
     }
 
     async fn stream(
@@ -1175,5 +1230,141 @@ mod tests {
             assert_eq!(image_parts(&payload), 1, "{model}");
             assert_eq!(notice, None, "{model}");
         }
+    }
+}
+
+#[cfg(test)]
+mod model_field_tests {
+    use super::*;
+    use crate::model_fields::{self, FieldValues};
+    use goose_providers::thinking::ThinkingEffort;
+
+    /// Entries shaped as OpenRouter's live `/api/v1/models` served them on 2026-10-04.
+    fn listing() -> Value {
+        json!({"data": [
+            {"id": "deepseek/deepseek-v4.1-flash", "context_length": 1048576,
+             "supported_parameters": ["frequency_penalty", "include_reasoning", "max_tokens",
+                                      "min_p", "reasoning", "reasoning_effort", "temperature",
+                                      "tools", "top_k", "top_p"],
+             "default_parameters": {},
+             "reasoning": {"mandatory": false, "default_enabled": true,
+                           "supported_efforts": ["max", "high", "low"], "default_effort": "high"}},
+            {"id": "anthropic/claude-sonnet-4.5", "context_length": 1000000,
+             "supported_parameters": ["include_reasoning", "max_tokens", "reasoning",
+                                      "temperature", "tools", "top_k", "top_p"],
+             "default_parameters": {"temperature": 1, "top_p": 1, "top_k": null},
+             "reasoning": {"mandatory": false}},
+            {"id": "vendor/plain", "context_length": 32768,
+             "supported_parameters": ["tools"]}
+        ]})
+    }
+
+    fn provider(host: &str) -> OpenRouterProvider {
+        let listing = ModelsListing::of(&parse_models_listing(&listing()).unwrap());
+        OpenRouterProvider {
+            api_client: ApiClient::new_with_tls(
+                host.to_string(),
+                AuthMethod::BearerToken("test".to_string()),
+                None,
+            )
+            .unwrap(),
+            supports_streaming: true,
+            name: OPENROUTER_PROVIDER_NAME.to_string(),
+            configured_parameters: None,
+            listing: tokio::sync::OnceCell::new_with(Some(listing)),
+            resolved_windows: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
+
+    #[tokio::test]
+    async fn the_listing_declares_each_models_parameters_and_reasoning_block() {
+        let provider = provider("http://127.0.0.1:9");
+
+        let deepseek = provider
+            .declared_model_parameters("deepseek/deepseek-v4.1-flash")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(deepseek.effort_levels, vec!["max", "high", "low"]);
+        assert_eq!(deepseek.default_effort.as_deref(), Some("high"));
+        assert!(!deepseek.reasoning_mandatory);
+        assert!(deepseek.supported_parameters.contains(&"min_p".to_string()));
+
+        let claude = provider
+            .declared_model_parameters("anthropic/claude-sonnet-4.5")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(claude.effort_levels.is_empty());
+        assert_eq!(
+            claude.default_parameters,
+            std::collections::BTreeMap::from([
+                ("temperature".to_string(), json!(1)),
+                ("top_p".to_string(), json!(1)),
+            ])
+        );
+
+        assert_eq!(
+            provider
+                .declared_model_parameters("vendor/absent")
+                .await
+                .unwrap(),
+            None
+        );
+    }
+
+    /// The whole path a saved effort takes: the values become request params, and the body
+    /// OpenRouter receives carries `reasoning: {effort}` — over a global thinking-effort default.
+    #[tokio::test]
+    async fn a_saved_effort_reaches_the_wire_as_reasoning_effort() {
+        use futures::StreamExt;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let body = [
+            format!(
+                "data: {}\n\n",
+                json!({"id": "gen-1", "object": "chat.completion.chunk", "created": 1,
+                       "model": "deepseek/deepseek-v4.1-flash",
+                       "choices": [{"index": 0, "delta": {"role": "assistant", "content": "ok"},
+                                    "finish_reason": "stop"}]})
+            ),
+            "data: [DONE]\n\n".to_string(),
+        ]
+        .concat();
+        Mock::given(method("POST"))
+            .and(path("/api/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+            .mount(&server)
+            .await;
+        let provider = provider(&server.uri());
+
+        let saved = FieldValues::from([
+            ("effort".to_string(), json!("low")),
+            ("top_k".to_string(), json!(40)),
+        ]);
+        let mut model = ModelConfig::new("deepseek/deepseek-v4.1-flash")
+            .with_merged_request_params(model_fields::request_params(
+                OPENROUTER_PROVIDER_NAME,
+                &saved,
+            ))
+            .with_default_thinking_effort(Some(ThinkingEffort::High));
+        model.reasoning = Some(true);
+
+        let mut stream = provider
+            .stream(&model, "system", &[Message::user().with_text("hi")], &[])
+            .await
+            .unwrap();
+        while let Some(item) = stream.next().await {
+            item.unwrap();
+        }
+
+        let requests = server.received_requests().await.unwrap();
+        let sent: Value = serde_json::from_slice(&requests[0].body).unwrap();
+        assert_eq!(sent["reasoning"], json!({"effort": "low"}));
+        assert_eq!(sent["top_k"], json!(40));
+        assert!(sent.get("reasoning_effort").is_none(), "{sent}");
+        assert!(sent.get("thinking_effort").is_none(), "{sent}");
     }
 }

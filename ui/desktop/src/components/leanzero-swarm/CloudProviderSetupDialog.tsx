@@ -22,6 +22,7 @@ import { errorMessage } from '../../utils/conversionUtils';
 import { defineMessages, useIntl } from '../../i18n';
 import { ProviderTile } from './ProviderTile';
 import { ModelChoice, type ModelSource } from './ModelChoice';
+import { ModelCustomFields } from '../modelFields/ModelCustomFields';
 import { officialEndpointReset, type EndpointOverride } from './openaiEndpoint';
 import { OpenRouterHostPicker } from '../openrouter/OpenRouterHostPicker';
 
@@ -357,6 +358,13 @@ export default function CloudProviderSetupDialog({
             )}
             {provider.name === 'openrouter' && (
               <OpenRouterHostPicker model={selection} disabled={busy != null} />
+            )}
+            {!deploymentOnly && selection && (
+              <ModelCustomFields
+                providerId={provider.name}
+                modelId={selection}
+                disabled={busy != null}
+              />
             )}
             {error && (
               <ToneBanner

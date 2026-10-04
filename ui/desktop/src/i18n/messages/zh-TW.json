@@ -5966,6 +5966,54 @@
   "modelAndProviderContext.unknownProviderTitle": {
     "defaultMessage": "供應商名稱查詢"
   },
+  "modelCustomFields.above": {
+    "defaultMessage": "最大值為 {max}。"
+  },
+  "modelCustomFields.below": {
+    "defaultMessage": "最小值為 {min}。"
+  },
+  "modelCustomFields.default": {
+    "defaultMessage": "預設"
+  },
+  "modelCustomFields.heading": {
+    "defaultMessage": "模型設定"
+  },
+  "modelCustomFields.loadFailed": {
+    "defaultMessage": "無法讀取此模型的設定：{error}"
+  },
+  "modelCustomFields.loading": {
+    "defaultMessage": "正在讀取此模型的設定…"
+  },
+  "modelCustomFields.modelDefault": {
+    "defaultMessage": "模型預設值（{value}）"
+  },
+  "modelCustomFields.notANumber": {
+    "defaultMessage": "請輸入數字。"
+  },
+  "modelCustomFields.notWhole": {
+    "defaultMessage": "請輸入整數。"
+  },
+  "modelCustomFields.numberPlaceholder": {
+    "defaultMessage": "預設"
+  },
+  "modelCustomFields.pinned": {
+    "defaultMessage": "本次執行已固定：{note}"
+  },
+  "modelCustomFields.sampling": {
+    "defaultMessage": "取樣（{count}）"
+  },
+  "modelCustomFields.saveFailed": {
+    "defaultMessage": "未儲存：{error}"
+  },
+  "modelCustomFields.saving": {
+    "defaultMessage": "正在儲存…"
+  },
+  "modelCustomFields.scope": {
+    "defaultMessage": "已為此模型儲存。新對話和基準測試執行會使用這些值；已開啟的對話保留其開始時的值。"
+  },
+  "modelCustomFields.unlisted": {
+    "defaultMessage": "供應商的模型清單中沒有模型「{model}」，因此未為其宣告任何設定。請檢查模型 ID。"
+  },
   "modelMatrix.cancel": {
     "defaultMessage": "取消"
   },

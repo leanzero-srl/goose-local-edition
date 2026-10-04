@@ -2,6 +2,7 @@ import type { BenchmarkActivity } from './benchActivity';
 import type { BenchmarkRuntimeStatus } from './benchRuntimeTypes';
 import type { ForgeKitStatus } from './benchForgeKitTypes';
 import type { CloudBenchmarkTier } from './benchTierPayload';
+import type { BenchModelFields } from './benchModelFields';
 import Electron, { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { Recipe } from './recipe';
 import type { GooseApp } from './types/apps';
@@ -173,10 +174,13 @@ type ElectronAPI = {
   benchmarkForgeKitStatus: () => Promise<ForgeKitStatus>;
   /** forge_kit.py ensure: npm ci from the pinned lockfiles + Atlassian's runtime wrapper by sha256. */
   benchmarkForgeKitPrepare: () => Promise<ForgeKitStatus>;
+  /** `modelFields`: the model's saved custom fields (effort, sampling) — main sends the ones the
+   *  tier does not pin and records both on the result. */
   benchmarkRunCloud: (
     provider: string,
     model: string,
-    tier: CloudBenchmarkTier
+    tier: CloudBenchmarkTier,
+    modelFields?: BenchModelFields
   ) => Promise<unknown>;
   /** Run the NEWEST bundled benchmark on N nodes — latest-only, the app takes no tier choice
    *  (main derives the tier from the bundled tier data). Long-running; resolves with the scored
@@ -596,8 +600,12 @@ const electronAPI: ElectronAPI = {
   benchmarkRuntimeInstall: () => ipcRenderer.invoke('benchmark-runtime-install'),
   benchmarkForgeKitStatus: () => ipcRenderer.invoke('benchmark-forge-kit-status'),
   benchmarkForgeKitPrepare: () => ipcRenderer.invoke('benchmark-forge-kit-prepare'),
-  benchmarkRunCloud: (provider: string, model: string, tier: CloudBenchmarkTier) =>
-    ipcRenderer.invoke('benchmark-run', 1, undefined, { provider, model, tier }),
+  benchmarkRunCloud: (
+    provider: string,
+    model: string,
+    tier: CloudBenchmarkTier,
+    modelFields?: BenchModelFields
+  ) => ipcRenderer.invoke('benchmark-run', 1, undefined, { provider, model, tier, modelFields }),
   // Legacy 3-arg calls still arrive as (nodes, tier, sampling) — a string second argument is the
   // dead tier choice: strip it so main's (nodes, sampling) contract holds for both call shapes.
   benchmarkRetryScoring: (runId: string) => ipcRenderer.invoke('benchmark-retry-scoring', runId),

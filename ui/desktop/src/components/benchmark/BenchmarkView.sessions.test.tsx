@@ -21,6 +21,10 @@ vi.mock('../swarm/useSamplingDefaults', () => ({
   useSaveSamplingDefaults: () => () => {},
 }));
 
+vi.mock('../../acp/modelFields', () => ({
+  acpListModelFields: vi.fn(async () => ({ source: 'none', fields: [], values: {} })),
+  acpSaveModelFields: vi.fn(),
+}));
 vi.mock('../../acp/providers', () => ({
   acpListProviderDetails: vi.fn(async () => [
     {
@@ -220,7 +224,9 @@ describe('the benchmark sections and their sessions', () => {
       target: { value: 'gemini-3.8-flash' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Run benchmark' }));
-    await waitFor(() => expect(cloud).toHaveBeenCalledWith('google', 'gemini-3.8-flash', 'sb-7.2'));
+    await waitFor(() =>
+      expect(cloud).toHaveBeenCalledWith('google', 'gemini-3.8-flash', 'sb-7.2', {})
+    );
     expect(swarm).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: 'SB7 · legacy' })).toBeNull();
     expect(cloud).toHaveBeenCalledTimes(1);

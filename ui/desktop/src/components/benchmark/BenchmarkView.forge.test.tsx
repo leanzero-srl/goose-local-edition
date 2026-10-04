@@ -21,6 +21,21 @@ vi.mock('../swarm/SwarmRunPanel', async () => {
   return { SwarmRunPanel: Stub, default: Stub };
 });
 vi.mock('../swarm/useSamplingDefaults', () => ({ useSaveSamplingDefaults: () => () => {} }));
+vi.mock('../../acp/modelFields', () => ({
+  acpListModelFields: vi.fn(async () => ({
+    source: 'provider_metadata',
+    fields: [
+      {
+        id: 'effort',
+        label: 'Effort',
+        description: 'Sent as reasoning.effort.',
+        kind: { type: 'select', options: ['high', 'medium', 'low'] },
+      },
+    ],
+    values: { effort: 'low' },
+  })),
+  acpSaveModelFields: vi.fn(),
+}));
 vi.mock('../../acp/providers', () => ({
   acpListProviderDetails: vi.fn(async () => [
     {
@@ -322,9 +337,15 @@ describe('Benchmark view — the Gauntlet | Forge switch', () => {
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Run benchmark' })).toBeEnabled()
     );
+    // The model's saved effort rides to main (which records it as pinned and never sends it);
+    // the form shows the tier's pin on the row.
+    const effortRow = await screen.findByTestId('model-field-row-effort');
+    expect(effortRow.textContent).toContain('Pinned for this run: Forge runs every model');
     fireEvent.click(screen.getByRole('button', { name: 'Run benchmark' }));
     await waitFor(() =>
-      expect(cloud).toHaveBeenCalledWith('openrouter', 'openai/gpt-6-luna', 'forge-1.0')
+      expect(cloud).toHaveBeenCalledWith('openrouter', 'openai/gpt-6-luna', 'forge-1.0', {
+        effort: 'low',
+      })
     );
     expect(swarm).not.toHaveBeenCalled();
   });

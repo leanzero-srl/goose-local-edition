@@ -5966,6 +5966,54 @@
   "modelAndProviderContext.unknownProviderTitle": {
     "defaultMessage": "Sağlayıcı adı araması"
   },
+  "modelCustomFields.above": {
+    "defaultMessage": "En yüksek değer {max}."
+  },
+  "modelCustomFields.below": {
+    "defaultMessage": "En düşük değer {min}."
+  },
+  "modelCustomFields.default": {
+    "defaultMessage": "Varsayılan"
+  },
+  "modelCustomFields.heading": {
+    "defaultMessage": "Model ayarları"
+  },
+  "modelCustomFields.loadFailed": {
+    "defaultMessage": "Bu modelin ayarları okunamadı: {error}"
+  },
+  "modelCustomFields.loading": {
+    "defaultMessage": "Bu modelin ayarları okunuyor…"
+  },
+  "modelCustomFields.modelDefault": {
+    "defaultMessage": "Model varsayılanı ({value})"
+  },
+  "modelCustomFields.notANumber": {
+    "defaultMessage": "Bir sayı girin."
+  },
+  "modelCustomFields.notWhole": {
+    "defaultMessage": "Bir tam sayı girin."
+  },
+  "modelCustomFields.numberPlaceholder": {
+    "defaultMessage": "varsayılan"
+  },
+  "modelCustomFields.pinned": {
+    "defaultMessage": "Bu çalıştırma için sabit: {note}"
+  },
+  "modelCustomFields.sampling": {
+    "defaultMessage": "Örnekleme ({count})"
+  },
+  "modelCustomFields.saveFailed": {
+    "defaultMessage": "Kaydedilmedi: {error}"
+  },
+  "modelCustomFields.saving": {
+    "defaultMessage": "Kaydediliyor…"
+  },
+  "modelCustomFields.scope": {
+    "defaultMessage": "Bu model için kaydedildi. Yeni sohbetler ve benchmark çalıştırmaları bunları kullanır; açık bir sohbet başladığı değerleri korur."
+  },
+  "modelCustomFields.unlisted": {
+    "defaultMessage": "Sağlayıcının model listesinde “{model}” modeli yok, bu yüzden onun için ayar bildirilmiyor. Model kimliğini kontrol edin."
+  },
   "modelMatrix.cancel": {
     "defaultMessage": "İptal"
   },

@@ -5966,6 +5966,54 @@
   "modelAndProviderContext.unknownProviderTitle": {
     "defaultMessage": "प्रदाता का नाम लुकअप"
   },
+  "modelCustomFields.above": {
+    "defaultMessage": "सबसे ऊँचा मान {max} है।"
+  },
+  "modelCustomFields.below": {
+    "defaultMessage": "सबसे नीचा मान {min} है।"
+  },
+  "modelCustomFields.default": {
+    "defaultMessage": "डिफ़ॉल्ट"
+  },
+  "modelCustomFields.heading": {
+    "defaultMessage": "मॉडल सेटिंग्स"
+  },
+  "modelCustomFields.loadFailed": {
+    "defaultMessage": "इस मॉडल की सेटिंग्स पढ़ी नहीं जा सकीं: {error}"
+  },
+  "modelCustomFields.loading": {
+    "defaultMessage": "इस मॉडल की सेटिंग्स पढ़ी जा रही हैं…"
+  },
+  "modelCustomFields.modelDefault": {
+    "defaultMessage": "मॉडल डिफ़ॉल्ट ({value})"
+  },
+  "modelCustomFields.notANumber": {
+    "defaultMessage": "एक संख्या दर्ज करें।"
+  },
+  "modelCustomFields.notWhole": {
+    "defaultMessage": "एक पूर्ण संख्या दर्ज करें।"
+  },
+  "modelCustomFields.numberPlaceholder": {
+    "defaultMessage": "डिफ़ॉल्ट"
+  },
+  "modelCustomFields.pinned": {
+    "defaultMessage": "इस रन के लिए तय: {note}"
+  },
+  "modelCustomFields.sampling": {
+    "defaultMessage": "सैंपलिंग ({count})"
+  },
+  "modelCustomFields.saveFailed": {
+    "defaultMessage": "सहेजा नहीं गया: {error}"
+  },
+  "modelCustomFields.saving": {
+    "defaultMessage": "सहेजा जा रहा है…"
+  },
+  "modelCustomFields.scope": {
+    "defaultMessage": "इस मॉडल के लिए सहेजा गया। नई चैट और बेंचमार्क रन इन्हें उपयोग करते हैं; खुली चैट अपने शुरुआती मान रखती है।"
+  },
+  "modelCustomFields.unlisted": {
+    "defaultMessage": "प्रदाता की मॉडल सूची में “{model}” मॉडल नहीं है, इसलिए उसके लिए कोई सेटिंग घोषित नहीं है। मॉडल ID जाँचें।"
+  },
   "modelMatrix.cancel": {
     "defaultMessage": "रद्द करें"
   },

@@ -5966,6 +5966,54 @@
   "modelAndProviderContext.unknownProviderTitle": {
     "defaultMessage": "Recherche du nom du fournisseur"
   },
+  "modelCustomFields.above": {
+    "defaultMessage": "La valeur maximale est {max}."
+  },
+  "modelCustomFields.below": {
+    "defaultMessage": "La valeur minimale est {min}."
+  },
+  "modelCustomFields.default": {
+    "defaultMessage": "Par défaut"
+  },
+  "modelCustomFields.heading": {
+    "defaultMessage": "Réglages du modèle"
+  },
+  "modelCustomFields.loadFailed": {
+    "defaultMessage": "Impossible de lire les réglages de ce modèle : {error}"
+  },
+  "modelCustomFields.loading": {
+    "defaultMessage": "Lecture des réglages de ce modèle…"
+  },
+  "modelCustomFields.modelDefault": {
+    "defaultMessage": "Valeur par défaut du modèle ({value})"
+  },
+  "modelCustomFields.notANumber": {
+    "defaultMessage": "Saisissez un nombre."
+  },
+  "modelCustomFields.notWhole": {
+    "defaultMessage": "Saisissez un nombre entier."
+  },
+  "modelCustomFields.numberPlaceholder": {
+    "defaultMessage": "par défaut"
+  },
+  "modelCustomFields.pinned": {
+    "defaultMessage": "Fixé pour cette exécution : {note}"
+  },
+  "modelCustomFields.sampling": {
+    "defaultMessage": "Échantillonnage ({count})"
+  },
+  "modelCustomFields.saveFailed": {
+    "defaultMessage": "Non enregistré : {error}"
+  },
+  "modelCustomFields.saving": {
+    "defaultMessage": "Enregistrement…"
+  },
+  "modelCustomFields.scope": {
+    "defaultMessage": "Enregistré pour ce modèle. Les nouvelles discussions et les benchmarks les utilisent ; une discussion ouverte garde les valeurs de son démarrage."
+  },
+  "modelCustomFields.unlisted": {
+    "defaultMessage": "La liste des modèles du fournisseur ne contient pas « {model} », elle ne déclare donc aucun réglage pour lui. Vérifiez l’ID du modèle."
+  },
   "modelMatrix.cancel": {
     "defaultMessage": "Annuler"
   },

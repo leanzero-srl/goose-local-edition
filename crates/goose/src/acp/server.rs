@@ -121,6 +121,7 @@ mod mlx_placement;
 mod mlx_remote_single;
 mod mlx_replica;
 pub use mlx_engine::GoosedMlxControl;
+mod model_fields;
 mod needs_you;
 mod new_session;
 #[cfg(unix)]

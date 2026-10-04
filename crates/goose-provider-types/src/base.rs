@@ -217,6 +217,24 @@ impl ConfigKey {
     }
 }
 
+/// What a provider's own model metadata declares about the request knobs one model takes, in
+/// OpenRouter's parameter vocabulary (`reasoning`, `verbosity`, `top_k`, …). Only a provider that
+/// publishes per-model parameter metadata returns one; goose's own mapped controls cover the rest.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DeclaredModelParameters {
+    /// The request parameters the model accepts, verbatim from the metadata.
+    pub supported_parameters: Vec<String>,
+    /// The reasoning effort levels the metadata declares for this model, in its order; empty =
+    /// the metadata names none.
+    pub effort_levels: Vec<String>,
+    /// The effort the model uses when a request names none, when declared.
+    pub default_effort: Option<String>,
+    /// Reasoning cannot be switched off for this model.
+    pub reasoning_mandatory: bool,
+    /// The model's own defaults for sampling parameters, where the metadata gives a value.
+    pub default_parameters: std::collections::BTreeMap<String, serde_json::Value>,
+}
+
 /// Information about a model's capabilities
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq)]
 pub struct ModelInfo {
@@ -467,6 +485,16 @@ pub trait Provider: Send + Sync {
 
     fn skip_canonical_filtering(&self) -> bool {
         false
+    }
+
+    /// The request knobs this provider's own model metadata declares for `model_name`. `None` =
+    /// the provider publishes no per-model parameter metadata, or its listing does not carry
+    /// this model.
+    async fn declared_model_parameters(
+        &self,
+        _model_name: &str,
+    ) -> Result<Option<DeclaredModelParameters>, ProviderError> {
+        Ok(None)
     }
 
     /// Fetch inventory models filtered by canonical registry and usability.

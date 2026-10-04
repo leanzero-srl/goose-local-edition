@@ -5966,6 +5966,54 @@
   "modelAndProviderContext.unknownProviderTitle": {
     "defaultMessage": "제공업체 이름 조회"
   },
+  "modelCustomFields.above": {
+    "defaultMessage": "최댓값은 {max}입니다."
+  },
+  "modelCustomFields.below": {
+    "defaultMessage": "최솟값은 {min}입니다."
+  },
+  "modelCustomFields.default": {
+    "defaultMessage": "기본값"
+  },
+  "modelCustomFields.heading": {
+    "defaultMessage": "모델 설정"
+  },
+  "modelCustomFields.loadFailed": {
+    "defaultMessage": "이 모델의 설정을 읽을 수 없습니다: {error}"
+  },
+  "modelCustomFields.loading": {
+    "defaultMessage": "이 모델의 설정을 읽는 중…"
+  },
+  "modelCustomFields.modelDefault": {
+    "defaultMessage": "모델 기본값 ({value})"
+  },
+  "modelCustomFields.notANumber": {
+    "defaultMessage": "숫자를 입력하세요."
+  },
+  "modelCustomFields.notWhole": {
+    "defaultMessage": "정수를 입력하세요."
+  },
+  "modelCustomFields.numberPlaceholder": {
+    "defaultMessage": "기본값"
+  },
+  "modelCustomFields.pinned": {
+    "defaultMessage": "이 실행에 고정됨: {note}"
+  },
+  "modelCustomFields.sampling": {
+    "defaultMessage": "샘플링 ({count})"
+  },
+  "modelCustomFields.saveFailed": {
+    "defaultMessage": "저장되지 않음: {error}"
+  },
+  "modelCustomFields.saving": {
+    "defaultMessage": "저장 중…"
+  },
+  "modelCustomFields.scope": {
+    "defaultMessage": "이 모델에 저장됩니다. 새 채팅과 벤치마크 실행이 사용하며, 열린 채팅은 시작할 때의 값을 유지합니다."
+  },
+  "modelCustomFields.unlisted": {
+    "defaultMessage": "제공자의 모델 목록에 “{model}” 모델이 없어 선언된 설정이 없습니다. 모델 ID를 확인하세요."
+  },
   "modelMatrix.cancel": {
     "defaultMessage": "취소"
   },

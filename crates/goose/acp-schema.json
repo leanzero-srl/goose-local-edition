@@ -3194,6 +3194,193 @@
       "x-side": "agent",
       "x-method": "_goose/unstable/providers/secrets/delete"
     },
+    "ModelFieldsListRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "providerId": {
+          "type": "string"
+        },
+        "modelId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "providerId",
+        "modelId"
+      ],
+      "description": "The custom fields `modelId` takes on `providerId`, and the values saved for it.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/providers/model-fields/list"
+    },
+    "ModelFieldsListResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ModelFieldDto"
+          }
+        },
+        "source": {
+          "$ref": "#/$defs/ModelFieldSourceDto"
+        },
+        "values": {
+          "type": "object",
+          "additionalProperties": {},
+          "description": "The saved values, keyed by field id; a field with no entry runs on the model's default."
+        }
+      },
+      "required": [
+        "fields",
+        "source",
+        "values"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/providers/model-fields/list"
+    },
+    "ModelFieldDto": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The saved value's key (`effort`, `verbosity`, `top_k`, …)."
+        },
+        "label": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string",
+          "description": "What the field is sent as and where its choices come from."
+        },
+        "kind": {
+          "$ref": "#/$defs/ModelFieldKindDto"
+        },
+        "modelDefault": {
+          "description": "The model's own value when a request sends none, where the metadata declares it."
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "description",
+        "kind"
+      ]
+    },
+    "ModelFieldKindDto": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "options": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "select"
+            }
+          },
+          "required": [
+            "type",
+            "options"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "min": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "max": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "integer": {
+              "type": "boolean"
+            },
+            "type": {
+              "type": "string",
+              "const": "number"
+            }
+          },
+          "required": [
+            "type",
+            "integer"
+          ]
+        }
+      ]
+    },
+    "ModelFieldSourceDto": {
+      "oneOf": [
+        {
+          "type": "string",
+          "const": "provider_metadata",
+          "description": "The provider's own per-model metadata (OpenRouter's models listing)."
+        },
+        {
+          "type": "string",
+          "const": "unlisted_model",
+          "description": "The provider publishes per-model metadata, but its listing does not carry this model id."
+        },
+        {
+          "type": "string",
+          "const": "goose_effort",
+          "description": "goose's own effort mapping for a model goose knows reasons."
+        },
+        {
+          "type": "string",
+          "const": "none",
+          "description": "No field applies to this model."
+        }
+      ]
+    },
+    "ModelFieldsSaveRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "providerId": {
+          "type": "string"
+        },
+        "modelId": {
+          "type": "string"
+        },
+        "values": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "providerId",
+        "modelId",
+        "values"
+      ],
+      "description": "Replaces the saved values for `modelId` on `providerId`. Each value is checked against the\nfield the model declares; a null value clears the field. An empty map clears the model.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/providers/model-fields/save"
+    },
+    "ModelFieldsSaveResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "values": {
+          "type": "object",
+          "additionalProperties": {},
+          "description": "The values as saved."
+        }
+      },
+      "required": [
+        "values"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/providers/model-fields/save"
+    },
     "CanonicalModelInfoRequest_unstable": {
       "type": "object",
       "properties": {
@@ -20264,6 +20451,24 @@
                 {
                   "allOf": [
                     {
+                      "$ref": "#/$defs/ModelFieldsListRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/providers/model-fields/list",
+                  "title": "ModelFieldsListRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/ModelFieldsSaveRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/providers/model-fields/save",
+                  "title": "ModelFieldsSaveRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
                       "$ref": "#/$defs/CanonicalModelInfoRequest_unstable"
                     }
                   ],
@@ -21939,6 +22144,22 @@
                         }
                       ],
                       "title": "ProviderSecretsListResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/ModelFieldsListResponse_unstable"
+                        }
+                      ],
+                      "title": "ModelFieldsListResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/ModelFieldsSaveResponse_unstable"
+                        }
+                      ],
+                      "title": "ModelFieldsSaveResponse_unstable"
                     },
                     {
                       "allOf": [

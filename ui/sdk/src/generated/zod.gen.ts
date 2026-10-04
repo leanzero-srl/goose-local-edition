@@ -1351,6 +1351,68 @@ export const zProviderSecretDeleteRequest_unstable = z.object({
 });
 
 /**
+ * The custom fields `modelId` takes on `providerId`, and the values saved for it.
+ */
+export const zModelFieldsListRequest_unstable = z.object({
+    providerId: z.string(),
+    modelId: z.string()
+});
+
+export const zModelFieldKindDto = z.union([
+    z.object({
+        options: z.array(z.string()),
+        type: z.literal('select')
+    }),
+    z.object({
+        min: z.union([
+            z.number(),
+            z.null()
+        ]).optional(),
+        max: z.union([
+            z.number(),
+            z.null()
+        ]).optional(),
+        integer: z.boolean(),
+        type: z.literal('number')
+    })
+]);
+
+export const zModelFieldDto = z.object({
+    id: z.string(),
+    label: z.string(),
+    description: z.string(),
+    kind: zModelFieldKindDto,
+    modelDefault: z.unknown().optional()
+});
+
+export const zModelFieldSourceDto = z.union([
+    z.literal('provider_metadata'),
+    z.literal('unlisted_model'),
+    z.literal('goose_effort'),
+    z.literal('none')
+]);
+
+export const zModelFieldsListResponse_unstable = z.object({
+    fields: z.array(zModelFieldDto),
+    source: zModelFieldSourceDto,
+    values: z.record(z.unknown())
+});
+
+/**
+ * Replaces the saved values for `modelId` on `providerId`. Each value is checked against the
+ * field the model declares; a null value clears the field. An empty map clears the model.
+ */
+export const zModelFieldsSaveRequest_unstable = z.object({
+    providerId: z.string(),
+    modelId: z.string(),
+    values: z.record(z.unknown())
+});
+
+export const zModelFieldsSaveResponse_unstable = z.object({
+    values: z.record(z.unknown())
+});
+
+/**
  * Look up canonical (bundled-registry) model info for a provider/model pair.
  */
 export const zCanonicalModelInfoRequest_unstable = z.object({
@@ -8224,6 +8286,8 @@ export const zExtRequest = z.object({
             zProviderConfigAuthenticateRequest_unstable,
             zProviderSecretsListRequest_unstable,
             zProviderSecretDeleteRequest_unstable,
+            zModelFieldsListRequest_unstable,
+            zModelFieldsSaveRequest_unstable,
             zCanonicalModelInfoRequest_unstable,
             zPreferencesReadRequest_unstable,
             zPreferencesSaveRequest_unstable,
@@ -8424,6 +8488,8 @@ export const zExtResponse = z.union([
                 zProviderConfigStatusResponse_unstable,
                 zProviderConfigChangeResponse_unstable,
                 zProviderSecretsListResponse_unstable,
+                zModelFieldsListResponse_unstable,
+                zModelFieldsSaveResponse_unstable,
                 zCanonicalModelInfoResponse_unstable,
                 zPreferencesReadResponse_unstable,
                 zConfigReadResponse_unstable,

@@ -1573,6 +1573,10 @@ async fn stream_on(
     if let Some(kwargs) = kwargs {
         add_template_kwargs(&mut node_cfg, kwargs)?;
     }
+    if let NodeKind::Cloud { registry } = &lease.node.kind {
+        crate::model_fields::apply_saved_values_over(&mut node_cfg, registry)
+            .map_err(|e| ProviderError::ExecutionError(format!("swarm chat: {e:#}")))?;
+    }
     // This Mac's own engine: its sanitized mid-stream failure is explained from its log here
     // (Q-423); a linked Mac's engine is explained by that Mac's inference proxy.
     let stream_errors = match lease.node.kind {

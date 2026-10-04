@@ -5966,6 +5966,54 @@
   "modelAndProviderContext.unknownProviderTitle": {
     "defaultMessage": "Tra cứu tên nhà cung cấp"
   },
+  "modelCustomFields.above": {
+    "defaultMessage": "Giá trị cao nhất là {max}."
+  },
+  "modelCustomFields.below": {
+    "defaultMessage": "Giá trị thấp nhất là {min}."
+  },
+  "modelCustomFields.default": {
+    "defaultMessage": "Mặc định"
+  },
+  "modelCustomFields.heading": {
+    "defaultMessage": "Cài đặt mô hình"
+  },
+  "modelCustomFields.loadFailed": {
+    "defaultMessage": "Không đọc được cài đặt của mô hình này: {error}"
+  },
+  "modelCustomFields.loading": {
+    "defaultMessage": "Đang đọc cài đặt của mô hình này…"
+  },
+  "modelCustomFields.modelDefault": {
+    "defaultMessage": "Mặc định của mô hình ({value})"
+  },
+  "modelCustomFields.notANumber": {
+    "defaultMessage": "Nhập một số."
+  },
+  "modelCustomFields.notWhole": {
+    "defaultMessage": "Nhập một số nguyên."
+  },
+  "modelCustomFields.numberPlaceholder": {
+    "defaultMessage": "mặc định"
+  },
+  "modelCustomFields.pinned": {
+    "defaultMessage": "Cố định cho lần chạy này: {note}"
+  },
+  "modelCustomFields.sampling": {
+    "defaultMessage": "Lấy mẫu ({count})"
+  },
+  "modelCustomFields.saveFailed": {
+    "defaultMessage": "Chưa lưu: {error}"
+  },
+  "modelCustomFields.saving": {
+    "defaultMessage": "Đang lưu…"
+  },
+  "modelCustomFields.scope": {
+    "defaultMessage": "Đã lưu cho mô hình này. Các cuộc trò chuyện mới và lần chạy benchmark dùng chúng; cuộc trò chuyện đang mở giữ giá trị lúc bắt đầu."
+  },
+  "modelCustomFields.unlisted": {
+    "defaultMessage": "Danh sách mô hình của nhà cung cấp không có “{model}”, nên không khai báo cài đặt nào cho nó. Hãy kiểm tra ID mô hình."
+  },
   "modelMatrix.cancel": {
     "defaultMessage": "Hủy"
   },
