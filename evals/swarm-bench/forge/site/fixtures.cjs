@@ -541,10 +541,13 @@ function facts(seed, { scoring = false } = {}) {
     // heal re-reads it, so the numbers stay wrong unless the scheduled run heals estimates too (prompt done 5).
     const counted = (e) => actives.some((a) => byId.get(e.issueId).sprints.includes(a.id)
       || events.some((h) => h.issueId === e.issueId && h.items[0].field === 'Sprint' && h.items[0].to.split(', ').includes(String(a.id))));
-    const pool = scripted.filter((e) => isBoardEstimate(e) && !paired.has(e.changelogId) && counted(e));
-    // Keep each board's field moving live in at least one delivered change (t_reestimate_followed).
-    const spare = pool.filter((e) => pool.some((o) => o !== e && o.items[0].fieldId === e.items[0].fieldId));
-    if (spare.length) dropped.add(r.pick(spare).changelogId);
+    // The site applies a dropped change all the same, so the numbers (and t_reestimate_followed, read after the heal)
+    // still move: only an app whose heal refreshes estimates shows them.
+    const own = scripted.filter((e) => isBoardEstimate(e) && !paired.has(e.changelogId));
+    const pool = own.filter(counted).length ? own.filter(counted) : own;
+    // A script with no estimate change on a board's own field (1 seed in 300) drops a fifth sprint change instead.
+    if (pool.length) dropped.add(r.pick(pool).changelogId);
+    else dropped.add(r.pick(sprintLive.filter((e) => !dropped.has(e.changelogId))).changelogId);
   }
   const relevantLeft = scripted.filter((e) => (isSprint(e) || isBoardEstimate(e))
     && !paired.has(e.changelogId) && !dropped.has(e.changelogId));

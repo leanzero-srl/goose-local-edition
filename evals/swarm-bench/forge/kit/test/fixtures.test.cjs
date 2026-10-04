@@ -113,7 +113,9 @@ function shapeProblems(p, scoring = false) {
   const drops = p.live.filter((c) => c.delivery.dropped).length;
   if (dups !== (scoring ? 8 : 4) || drops !== (scoring ? 5 : 3)) out.push(`dups ${dups} drops ${drops}`);
   const estimateDrops = p.live.filter((c) => c.delivery.dropped && c.items[0].field !== 'Sprint').length;
-  if (estimateDrops !== (scoring ? 1 : 0)) out.push(`dropped estimate changes ${estimateDrops}`);
+  const ownEstimate = p.live.some((c) => !c.delivery.liveUi && c.items[0].field !== 'Sprint'
+    && c.items[0].fieldId === p.boards.find((b) => b.projectKey === p.issues.find((i) => i.id === c.issueId).projectKey)?.estimationFieldId);
+  if (estimateDrops !== (scoring && ownEstimate ? 1 : 0)) out.push(`dropped estimate changes ${estimateDrops}`);
   const delivered = scripted.filter((c) => !c.delivery.dropped).sort((a, b) => a.delivery.slot - b.delivery.slot);
   let swapped = 0;
   for (let i = 0; i + 1 < delivered.length; i++) {
