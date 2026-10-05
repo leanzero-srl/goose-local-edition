@@ -26,7 +26,7 @@
     "bench/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "bench/bench_budget.py": "dd37fd939e1640b7238caf34449fb16012c1526acc82fcd410ff0a19e6e1b41e",
     "bench/bench_cost.py": "e6e6747433da56d55807ed7b464ce62ce358792777f55555403fd0f1c73e59d3",
-    "bench/bench_isolation.py": "5841ffe7f6c7ed600a3712575b3f4d661f39e4cbc7ea4ac8d844eb4d89255ac1",
+    "bench/bench_isolation.py": "24211e0f27c95ed927f9b44bcd649ec9f3cb6689d80f0211ee537e6c7939b5ee",
     "bench/bench_rescore.py": "1d1c5432d39d8a49bee16ae434e4a92604960e0295b3be64c1eacd65661e07a0",
     "bench/browser-self-test.mjs": "df8feec1c3f7d18d14c26dc34dd53f7b74dcf42a5c54c29a3f315ae23be0b095",
     "bench/calibrate.py": "9ac08148b9063d238902269c34d5b42fefbc82e69b9f70f7511017e9079832b1",

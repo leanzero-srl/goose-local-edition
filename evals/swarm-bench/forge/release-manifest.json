@@ -8,7 +8,7 @@
   "files": {
     "bench/bench_budget.py": "dd37fd939e1640b7238caf34449fb16012c1526acc82fcd410ff0a19e6e1b41e",
     "bench/bench_cost.py": "e6e6747433da56d55807ed7b464ce62ce358792777f55555403fd0f1c73e59d3",
-    "bench/bench_isolation.py": "5841ffe7f6c7ed600a3712575b3f4d661f39e4cbc7ea4ac8d844eb4d89255ac1",
+    "bench/bench_isolation.py": "24211e0f27c95ed927f9b44bcd649ec9f3cb6689d80f0211ee537e6c7939b5ee",
     "bench/bench_rescore.py": "1d1c5432d39d8a49bee16ae434e4a92604960e0295b3be64c1eacd65661e07a0",
     "bench/browser-self-test.mjs": "df8feec1c3f7d18d14c26dc34dd53f7b74dcf42a5c54c29a3f315ae23be0b095",
     "bench/fixtures.py": "212af979ec537531516273f2f68691f028189bbec52c92495b616f3b3c7b7db1",
@@ -61,7 +61,7 @@
     "forge/kit/test/llm-realtime.test.cjs": "27010e7b613685917a1687fe7527128b511d6392b645da33369109f7685e0bff",
     "forge/kit/test/site.test.cjs": "e8d7a5f19ca3a7a25c4abf4151850ca117b6c7211bfb666361442e547ea8b42e",
     "forge/kit/test/smoke-spike.test.cjs": "bb588d1d33e7c822d866e41f01554aaaea4a5fc72c7a2b1bfb6627b5de2b739d",
-    "forge/kit/test/test_entrant_fence.py": "4a02ffa3dbffc6da5d8e602eaf696d8214708b33664b8e4207d2f46b2ba0d452",
+    "forge/kit/test/test_entrant_fence.py": "bf7e3b0034ea262026295a22bd4c4a1f206ee5d9e648202049c3a8540bd178ed",
     "forge/kit/test/test_forge_kit_status.py": "8e726725826551e6c2a76e34da4af8d2029e71db7ca9a826dbba6b5daaad0a5b",
     "forge/kit/test/widget.test.cjs": "d1b4ab42b295ebab9fefc7e6cd99411f7549ea8a53bcd5ed8b20e5ccde842d64",
     "forge/public/FORGE-CONTRACT.md": "2065058a5db5f071249254dac8695fdfa8f664ade8f6067f4c56b475764e745d",
