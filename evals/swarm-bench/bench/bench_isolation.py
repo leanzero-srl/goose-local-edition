@@ -151,19 +151,24 @@ def _loopback_endpoint(url) -> bool:
 def provider_hosts(snapshot: dict) -> list[str]:
     """The host:port list the relay admits: the snapshot's selected providers' endpoints, nothing else.
     A provider whose endpoint is loopback is reached directly and adds nothing."""
+    return provider_endpoints(snapshot)[0]
+
+
+def provider_endpoints(snapshot: dict) -> tuple[list[str], list[str]]:
+    """(relayed host:port list, loopback endpoint URLs reached directly). The fence preflight proves the
+    first through the relay, or — when every selected provider is on this machine — the second directly."""
     override = os.environ.get('BENCH_RELAY_ALLOW', '').strip()
     if override:
-        return sorted({h.strip() for h in override.split(',') if h.strip()})
+        return sorted({h.strip() for h in override.split(',') if h.strip()}), []
     if not snapshot:
         raise RuntimeError('REFUSED: a fenced entrant needs the benchmark configuration snapshot to know its provider')
     values = {**snapshot.get('config', {}), **snapshot.get('secrets', {})}
     hosts: set[str] = set()
-    direct = False  # a selected provider served on this machine: reachable through the fence without the relay
+    direct: list[str] = []  # selected providers served on this machine: reachable through the fence without the relay
 
     def admit(url, what):
-        nonlocal direct
         if _loopback_endpoint(url):
-            direct = True
+            direct.append(str(url))
         else:
             hosts.add(_https_hostport(url, what))
 
@@ -193,7 +198,7 @@ def provider_hosts(snapshot: dict) -> list[str]:
             raise RuntimeError(f'REFUSED: no relay endpoint is known for provider {name!r}; set BENCH_RELAY_ALLOW=host:443 deliberately')
     if not hosts and not direct:
         raise RuntimeError('REFUSED: the snapshot selects no cloud provider, so a fenced entrant could reach no model')
-    return sorted(hosts)
+    return sorted(hosts), direct
 
 
 class ProviderRelay:
@@ -286,26 +291,38 @@ def relay_environment(relay: ProviderRelay) -> dict[str, str]:
             'NO_PROXY': ','.join(_LOOPBACK), 'no_proxy': ','.join(_LOOPBACK), 'BENCH_RELAY_URL': relay.url}
 
 
-def fence_preflight(prefix: list[str], workdir: Path, relay: ProviderRelay, probe_url: str = 'https://developer.atlassian.com/') -> dict:
+def fence_preflight(prefix: list[str], workdir: Path, relay: ProviderRelay, probe_url: str = 'https://developer.atlassian.com/',
+                    direct: list[str] | tuple = ()) -> dict:
     """Two-sided proof inside the sandbox: the internet is unreachable directly AND through the relay,
-    and one allowlisted provider endpoint answers through the relay. Any other outcome refuses the run."""
+    and one allowlisted provider endpoint answers through the relay — or, when every selected provider is
+    served on this machine (`direct`, loopback URLs; the relay then admits nothing), one of them answers
+    directly. Any other outcome refuses the run. 2026-10-05: the empty relay list crashed here
+    (IndexError) on the first Forge run of a model served by the LeanZero MLX engine."""
     def curl(*args):
         # Transport timeouts on a one-shot probe, not a bound on model work.
         return subprocess.run(prefix + ['/usr/bin/curl', '-sS', '-o', '/dev/null', '-w', '%{http_code}', '--connect-timeout', '15', '--max-time', '30', *args],
                               cwd=workdir, capture_output=True, text=True)
-    direct = curl('--noproxy', '*', probe_url)
-    if direct.returncode == 0:
-        raise RuntimeError(f'REFUSED: the fence is open: {probe_url} answered {direct.stdout} from inside the sandbox')
+    direct_probe = curl('--noproxy', '*', probe_url)
+    if direct_probe.returncode == 0:
+        raise RuntimeError(f'REFUSED: the fence is open: {probe_url} answered {direct_probe.stdout} from inside the sandbox')
     proxied = curl('-x', relay.url, probe_url)
     if proxied.returncode == 0:
         raise RuntimeError(f'REFUSED: the relay tunnelled a non-provider host: {probe_url} answered {proxied.stdout}')
+    if not relay.allow:
+        if not direct:
+            raise RuntimeError('REFUSED: the relay admits no provider and no provider is served on this machine')
+        local = curl('--noproxy', '*', str(direct[0]).rstrip('/') + '/')
+        if local.returncode != 0 or not local.stdout.strip().isdigit() or local.stdout.strip() == '000':
+            raise RuntimeError(f'REFUSED: the provider served on this machine is unreachable from the sandbox ({direct[0]}): {local.stderr.strip()[-400:]}')
+        return {'direct_internet': f'blocked (curl exit {direct_probe.returncode})', 'relay_non_provider': f'refused (curl exit {proxied.returncode})',
+                'local_provider': f'{direct[0]} answered HTTP {local.stdout.strip()} directly (loopback; the relay admits nothing)'}
     host = sorted(relay.allow)[0]
     name, _, port = host.rpartition(':')
     provider_url = f'https://{name}' + ('' if port == '443' else f':{port}') + '/'
     reached = curl('-x', relay.url, provider_url)
     if reached.returncode != 0 or not reached.stdout.strip().isdigit() or reached.stdout.strip() == '000':
         raise RuntimeError(f'REFUSED: the provider is unreachable through the relay ({provider_url}): {reached.stderr.strip()[-400:]}')
-    return {'direct_internet': f'blocked (curl exit {direct.returncode})', 'relay_non_provider': f'refused (curl exit {proxied.returncode})',
+    return {'direct_internet': f'blocked (curl exit {direct_probe.returncode})', 'relay_non_provider': f'refused (curl exit {proxied.returncode})',
             'relay_provider': f'{provider_url} answered HTTP {reached.stdout.strip()}'}
 
 
@@ -388,10 +405,12 @@ await page.screenshot({path:process.argv[2]});} finally {await b.close();}})().c
     fence = {}
     relay = None
     if network == 'fenced':
-        relay = ProviderRelay(provider_hosts(snapshot), runtime / 'relay.log')
+        relayed, direct = provider_endpoints(snapshot)
+        relay = ProviderRelay(relayed, runtime / 'relay.log')
         _relays.append(relay)
         fence = {'network': 'fenced', 'relay': {'url': relay.url, 'allow': sorted(relay.allow)},
-                 'preflight': fence_preflight(prefix, workdir, relay)}
+                 **({'direct_providers': direct} if direct else {}),
+                 'preflight': fence_preflight(prefix, workdir, relay, direct=direct)}
     (workdir / 'isolation.json').write_text(json.dumps({
         'mechanism': 'macOS sandbox-exec', 'private_reference_read': 'denied',
         'candidate_read_write': 'passed', 'runtime': str(runtime),

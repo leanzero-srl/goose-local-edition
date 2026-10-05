@@ -55,6 +55,46 @@ export const sweep = async () => {
 
 @unittest.skipUnless(sys.platform == 'darwin', 'macOS sandbox integration')
 class EntrantFenceTests(unittest.TestCase):
+    def test_a_fenced_workspace_whose_only_provider_is_local_proves_it_directly(self):
+        # 2026-10-05: our fine-tune on the LeanZero MLX engine (OpenAI provider at http://127.0.0.1:<port>) —
+        # the relay admits nothing, and the preflight crashed on sorted(relay.allow)[0] (IndexError) in 3.0.99.
+        import http.server, threading
+        class Ok(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200); self.end_headers(); self.wfile.write(b'ok')
+            def log_message(self, *a):
+                pass
+        server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Ok)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                work, private = root / 'candidate', root / 'private'
+                work.mkdir(); private.mkdir()
+                url = f'http://127.0.0.1:{server.server_address[1]}'
+                snapshot = {'version': 1, 'providers': ['openai'], 'config': {'OPENAI_HOST': url}, 'secrets': {}, 'custom_providers': {}}
+                bench_isolation.prepare(work, Path(sys.executable), private, snapshot=snapshot, network='fenced')
+                try:
+                    isolation = json.loads((work / 'isolation.json').read_text())
+                    self.assertEqual(isolation['relay']['allow'], [])
+                    self.assertEqual(isolation['direct_providers'], [url])
+                    self.assertIn('blocked', isolation['preflight']['direct_internet'])
+                    self.assertIn('refused', isolation['preflight']['relay_non_provider'])
+                    self.assertIn('answered HTTP 200 directly', isolation['preflight']['local_provider'])
+                finally:
+                    bench_isolation.stop_relays()
+                # control: the same snapshot with nothing listening is refused, not crashed
+                server.shutdown(); server.server_close()
+                work2 = root / 'candidate2'; work2.mkdir()
+                with self.assertRaisesRegex(RuntimeError, 'unreachable from the sandbox'):
+                    bench_isolation.prepare(work2, Path(sys.executable), private, snapshot=snapshot, network='fenced')
+                bench_isolation.stop_relays()
+        finally:
+            try:
+                server.server_close()
+            except Exception:
+                pass
+
     def test_fenced_workspace_runs_the_dev_kit_and_reaches_only_the_provider(self):
         kit = forge_kit.ensure()
         with tempfile.TemporaryDirectory() as tmp:
