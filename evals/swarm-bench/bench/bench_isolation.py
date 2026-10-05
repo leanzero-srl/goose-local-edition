@@ -135,8 +135,22 @@ def _https_hostport(url: str, what: str) -> str:
     return f'{parts.hostname}:{parts.port or 443}'
 
 
+def _loopback_endpoint(url) -> bool:
+    """An endpoint on THIS machine (http or https): the fence already admits loopback outbound, and goose's
+    NO_PROXY keeps loopback off the relay, so it needs no relay entry. 2026-10-05: our own fine-tune served by
+    the LeanZero MLX engine on http://127.0.0.1:<port> through the OpenAI provider was refused here as a
+    non-HTTPS provider endpoint, although the sandbox reaches it directly."""
+    from urllib.parse import urlsplit
+    try:
+        parts = urlsplit(str(url))
+    except ValueError:
+        return False
+    return parts.scheme in ('http', 'https') and parts.hostname in _LOOPBACK
+
+
 def provider_hosts(snapshot: dict) -> list[str]:
-    """The host:port list the relay admits: the snapshot's selected providers' endpoints, nothing else."""
+    """The host:port list the relay admits: the snapshot's selected providers' endpoints, nothing else.
+    A provider whose endpoint is loopback is reached directly and adds nothing."""
     override = os.environ.get('BENCH_RELAY_ALLOW', '').strip()
     if override:
         return sorted({h.strip() for h in override.split(',') if h.strip()})
@@ -144,6 +158,15 @@ def provider_hosts(snapshot: dict) -> list[str]:
         raise RuntimeError('REFUSED: a fenced entrant needs the benchmark configuration snapshot to know its provider')
     values = {**snapshot.get('config', {}), **snapshot.get('secrets', {})}
     hosts: set[str] = set()
+    direct = False  # a selected provider served on this machine: reachable through the fence without the relay
+
+    def admit(url, what):
+        nonlocal direct
+        if _loopback_endpoint(url):
+            direct = True
+        else:
+            hosts.add(_https_hostport(url, what))
+
     for name in snapshot.get('providers', []):
         if name in LOCAL_PROVIDERS:
             continue
@@ -152,15 +175,15 @@ def provider_hosts(snapshot: dict) -> list[str]:
             url = definition.get('base_url') or definition.get('api_url') or definition.get('host')
             if not url:
                 raise RuntimeError(f'REFUSED: custom provider {name!r} names no base_url/api_url to relay to')
-            hosts.add(_https_hostport(url, f'custom provider {name} endpoint'))
+            admit(url, f'custom provider {name} endpoint')
         elif name in PROVIDER_DEFAULT_HOSTS:
             key, default = PROVIDER_DEFAULT_HOSTS[name]
-            hosts.add(_https_hostport(values.get(key) or default if key else default, f'{name} endpoint'))
+            admit(values.get(key) or default if key else default, f'{name} endpoint')
         elif name in PROVIDER_ENDPOINT_KEYS:
             key = PROVIDER_ENDPOINT_KEYS[name]
             if not values.get(key):
                 raise RuntimeError(f'REFUSED: {name} needs {key} in the snapshot to know where to relay')
-            hosts.add(_https_hostport(values[key], f'{name} {key}'))
+            admit(values[key], f'{name} {key}')
         elif name == 'aws_bedrock':
             region = values.get('AWS_REGION') or values.get('AWS_DEFAULT_REGION')
             if not region:
@@ -168,7 +191,7 @@ def provider_hosts(snapshot: dict) -> list[str]:
             hosts.add(f'bedrock-runtime.{region}.amazonaws.com:443')
         else:
             raise RuntimeError(f'REFUSED: no relay endpoint is known for provider {name!r}; set BENCH_RELAY_ALLOW=host:443 deliberately')
-    if not hosts:
+    if not hosts and not direct:
         raise RuntimeError('REFUSED: the snapshot selects no cloud provider, so a fenced entrant could reach no model')
     return sorted(hosts)
 

@@ -156,6 +156,19 @@ class EntrantFenceTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'REFUSED'):
             bench_isolation.provider_hosts({'providers': ['lmstudio'], 'config': {}, 'secrets': {}, 'custom_providers': {}})
 
+    def test_a_loopback_provider_is_reached_directly_not_relayed(self):
+        # 2026-10-05: our fine-tune on the LeanZero MLX engine (http://127.0.0.1:8096 via the OpenAI provider)
+        snap = {'providers': ['openai'], 'config': {'OPENAI_HOST': 'http://127.0.0.1:8096'}, 'secrets': {}, 'custom_providers': {}}
+        self.assertEqual(bench_isolation.provider_hosts(snap), [])
+        snap = {'providers': ['openai', 'openrouter'], 'config': {'OPENAI_HOST': 'http://localhost:8096'}, 'secrets': {}, 'custom_providers': {}}
+        self.assertEqual(bench_isolation.provider_hosts(snap), ['openrouter.ai:443'])
+        snap = {'providers': ['mine'], 'config': {}, 'secrets': {}, 'custom_providers': {'mine': {'base_url': 'http://127.0.0.1:9000/v1'}}}
+        self.assertEqual(bench_isolation.provider_hosts(snap), [])
+        # controls: a plain-http REMOTE endpoint is still refused, and so is an unset default (https api.openai.com is relayed)
+        with self.assertRaisesRegex(RuntimeError, 'HTTPS provider endpoints only'):
+            bench_isolation.provider_hosts({'providers': ['openai'], 'config': {'OPENAI_HOST': 'http://llm.example.org'}, 'secrets': {}, 'custom_providers': {}})
+        self.assertEqual(bench_isolation.provider_hosts({'providers': ['openai'], 'config': {}, 'secrets': {}, 'custom_providers': {}}), ['api.openai.com:443'])
+
     def test_default_provider_hosts_match_the_rust_providers(self):
         providers = HERE.parents[3].parent / 'crates' / 'goose' / 'src' / 'providers'
         if not providers.is_dir():
