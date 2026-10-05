@@ -204,16 +204,19 @@ async fn probe(
 ) -> Result<()> {
     let model_config = ModelConfig::new(model).with_max_tokens(Some(1024));
     let messages = [Message::user().with_text("Reply with OK.")];
-    let (message, _) = crate::session_context::with_session_id(
-        Some("provider-connection-check".into()),
-        provider.complete(&model_config, "Respond briefly.", &messages, &[]),
-    )
-    .await
-    .map_err(|error| ProviderRefusal {
-        label: label.to_string(),
-        model: Some(model.to_string()),
-        error,
-    })?;
+    // A connection check answers in seconds: a 429 here keeps the ordinary quick retries instead
+    // of the long rate-limit wait model work gets (providers::retry, 2026-10-05).
+    let (message, _) =
+        crate::providers::retry::with_short_rate_limits(crate::session_context::with_session_id(
+            Some("provider-connection-check".into()),
+            provider.complete(&model_config, "Respond briefly.", &messages, &[]),
+        ))
+        .await
+        .map_err(|error| ProviderRefusal {
+            label: label.to_string(),
+            model: Some(model.to_string()),
+            error,
+        })?;
     if message.as_concat_text().trim().is_empty() {
         return Err(anyhow!(
             "{} returned no visible response for model '{}'",
