@@ -2997,11 +2997,51 @@ def attribute_root_causes(rows: List[Dict]) -> Dict[str, List[str]]:
 
 # ── evaluation ───────────────────────────────────────────────────────────────────────────────
 
+UNDECLARED_RESOURCE = re.compile(r"resource '([^']+)' is not declared under resources")
+
+
+def _manifest_resource_refs(manifest) -> List[str]:
+    """Every `resource` key a module of the manifest names (top-level and nested, e.g. dashboards:widget edit)."""
+    refs = []
+    def walk(node):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == 'resource' and isinstance(value, str):
+                    refs.append(value)
+                else:
+                    walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+    walk(((manifest or {}).get('modules')) or {})
+    return refs
+
+
+def candidate_section_fault(c: Ctx, why: str) -> Optional[str]:
+    """A probe section that failed because the APP's manifest names a resource it never declares is the app's fault,
+    not the harness's: real Forge refuses that manifest too. Measured 2026-10-06 (ling-3.0-flash, Forge): the
+    dashboards:widget said `resource: widget` with no such entry under `resources`, the UI host threw, and 35 rows
+    went 'unavailable' -> the verdict was unpublishable (a refusal by another name). Proven from the manifest itself;
+    any other section error stays a harness failure."""
+    m = UNDECLARED_RESOURCE.search(why or '')
+    if not m:
+        return None
+    key = m.group(1)
+    declared = {r.get('key') for r in c.resources()}
+    if key in declared or key not in _manifest_resource_refs(c.manifest):
+        return None
+    return (f"the app's manifest names resource '{key}' in a module but declares no such resource under "
+            f"`resources` (declared: {sorted(k for k in declared if k) or 'none'}), so the surface cannot be opened")
+
+
 def _run_check(c: Ctx, name: str, tier: str, fn, pre, needs) -> Dict:
     if c.oracle is None:
         return {'check': name, 'tier': tier, **unavail(f'pack defect: {c.oracle_error}')}
     why = c.section_error(*needs)
     if why:
+        fault = candidate_section_fault(c, why)
+        if fault:
+            return {'check': name, 'tier': tier, **g(0.0, fault, 'the app cannot be opened: its own manifest is broken')}
         return {'check': name, 'tier': tier, **unavail(why)}
     if pre is not None:
         try:

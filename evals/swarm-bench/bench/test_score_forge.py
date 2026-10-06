@@ -682,6 +682,26 @@ class DefectTests(Golden):
         self.assertFalse(v['publishable'])
         self.assertNotIn('a_action_result', v['probe_unavailable'])
 
+    def test_a_ui_section_lost_to_the_apps_own_undeclared_resource_is_charged_not_unavailable(self):
+        # 2026-10-06 ling-3.0-flash: dashboards:widget `resource: widget`, no `widget` under resources -> the UI host
+        # threw and 35 rows went unavailable (unpublishable). The manifest proves the cause: charged 0, publishable.
+        obs = copy.deepcopy(self.obs)
+        widget = obs['manifest']['modules']['dashboards:widget'][0]
+        widget['resource'] = 'widget-ghost'
+        obs['sectionErrors'] = {'ui': "Error: resource 'widget-ghost' is not declared under resources |     at resourceFor (bridge-host.cjs:42:19)"}
+        v = self.score(obs)
+        rows = self.rows(v)
+        self.assertNotIn('u_widget_numbers', v['probe_unavailable'])
+        self.assertEqual(rows['u_widget_numbers']['score'], 0.0)
+        self.assertIn("names resource 'widget-ghost'", rows['u_widget_numbers']['detail'])
+        # controls: an error naming a resource the manifest never references, or one it DOES declare, stays a harness failure
+        for key in ('nope-not-in-manifest', 'widget'):
+            obs2 = copy.deepcopy(self.obs)
+            obs2['sectionErrors'] = {'ui': f"Error: resource '{key}' is not declared under resources"}
+            v = self.score(obs2)
+            self.assertIn('u_widget_numbers', v['probe_unavailable'], key)
+            self.assertFalse(v['publishable'])
+
     def test_a_run_without_ui_still_scores_and_names_the_missing_recording(self):
         obs = copy.deepcopy(self.obs)
         obs['ui']['surfaces'] = []
