@@ -703,10 +703,58 @@ def _openrouter_model_limits(model: str, credentials: Dict[str, str]) -> dict:
     raw_output = top.get("max_completion_tokens")
     output = None if raw_output is None else _positive_limit(
         raw_output, f"OpenRouter top_provider.max_completion_tokens for {model}")
-    return {"context": context, "output": output,
-            "provenance": {"source": "openrouter-model-metadata", "url": url,
-                           "fields": {"context_length": context,
-                                      "top_provider.max_completion_tokens": output}}}
+    provenance = {"source": "openrouter-model-metadata", "url": url,
+                  "fields": {"context_length": context, "top_provider.max_completion_tokens": output}}
+    pin = _openrouter_pin(credentials)
+    if pin:
+        pinned = _openrouter_pinned_limits(host, key, model, pin)
+        # The pinned host's own window decides, less the completion it reserves: no max_tokens is sent on
+        # this lane, and DeepInfra then reserves its max_completion_tokens (measured 2026-10-06: ling-3.0-flash
+        # on deepinfra/bf16 = 131072 context, 32768 reserved; the listing said 262144, goose never compacted
+        # and the run died at 102198 input tokens with "exceeds the model's maximum context length").
+        usable = pinned["context"] - (pinned["output"] if pinned["output"] and pinned["output"] < pinned["context"] else 0)
+        if usable < context:
+            context = usable
+        provenance = {**provenance, "pinned": {**pinned, "usable_context": usable}}
+    return {"context": context, "output": output, "provenance": provenance}
+
+
+def _openrouter_pin(credentials: Dict[str, str]) -> list[str] | None:
+    """The host tags a run is pinned to: OPENROUTER_PARAMETERS provider.order with allow_fallbacks false."""
+    raw = credentials.get("OPENROUTER_PARAMETERS")
+    if not raw:
+        return None
+    try:
+        provider = (json.loads(raw) if isinstance(raw, str) else raw).get("provider") or {}
+    except (ValueError, AttributeError):
+        return None
+    order = provider.get("order")
+    if provider.get("allow_fallbacks", True) is not False or not isinstance(order, list) or not order:
+        return None
+    return [str(tag) for tag in order]
+
+
+def _openrouter_pinned_limits(host: str, key: str, model: str, pin: list[str]) -> dict:
+    """context_length / max_completion_tokens of the endpoints the pin admits (smallest window wins)."""
+    url = host.rstrip("/") + f"/api/v1/models/{model}/endpoints"
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {key}"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            endpoints = (json.load(response).get("data") or {}).get("endpoints") or []
+    except (OSError, ValueError, AttributeError) as error:
+        raise RuntimeError(f"REFUSED: OpenRouter endpoints for {model} unreadable at {url}: "
+                           f"{type(error).__name__}") from None
+    def admitted(tag: str) -> bool:
+        return any(tag == p or tag.startswith(p + "/") for p in pin)
+    hits = [e for e in endpoints if isinstance(e, dict) and admitted(str(e.get("tag") or ""))]
+    if not hits:
+        raise RuntimeError(f"REFUSED: the pinned host(s) {pin} serve no endpoint of {model} on OpenRouter "
+                           f"({[e.get('tag') for e in endpoints if isinstance(e, dict)]})")
+    best = min(hits, key=lambda e: e.get("context_length") or 0)
+    context = _positive_limit(best.get("context_length"), f"pinned endpoint {best.get('tag')} context_length for {model}")
+    raw = best.get("max_completion_tokens")
+    output = None if raw is None else _positive_limit(raw, f"pinned endpoint {best.get('tag')} max_completion_tokens")
+    return {"url": url, "tag": best.get("tag"), "context": context, "output": output}
 
 
 def provider_model_limits(provider: str, model: str, credentials: Dict[str, str]) -> dict | None:

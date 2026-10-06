@@ -248,6 +248,39 @@ class ProviderModelLimitsTests(unittest.TestCase):
         self.assertEqual(provenance['replaced_goose_config'], {'GOOSE_CONTEXT_LIMIT': '128000'})
         self.assertNotIn('test-or', json.dumps(limits))
 
+    def test_a_pinned_host_with_a_smaller_window_sets_the_context_limit(self):
+        # 2026-10-06: ling-3.0-flash pinned deepinfra/bf16 (131072, reserves 32768) ran on the listing's 262144 and died
+        ling = {'id': 'inclusionai/ling-3.0-flash', 'context_length': 262144,
+                'top_provider': {'context_length': 262144, 'max_completion_tokens': 32768}}
+        endpoints = {'data': {'endpoints': [{'tag': 'novita', 'context_length': 262144, 'max_completion_tokens': 32768},
+                                            {'tag': 'deepinfra/bf16', 'context_length': 131072, 'max_completion_tokens': 32768}]}}
+        def answer(request, timeout=None):
+            body = endpoints if request.full_url.endswith('/endpoints') else {'data': [ling]}
+            return contextlib.closing(io.BytesIO(json.dumps(body).encode()))
+        pin = '{"provider":{"order":["deepinfra/bf16"],"allow_fallbacks":false}}'
+        with patch.object(run_build.urllib.request, 'urlopen', side_effect=answer):
+            limits = run_build.provider_model_limits('openrouter', 'inclusionai/ling-3.0-flash',
+                                                     {'OPENROUTER_API_KEY': 'k', 'OPENROUTER_PARAMETERS': pin})
+        self.assertEqual(limits['GOOSE_CONTEXT_LIMIT'], str(131072 - 32768))
+        self.assertEqual(limits['provenance']['pinned']['tag'], 'deepinfra/bf16')
+        # a provider-slug pin ('z-ai') admits its quantized tag ('z-ai/fp8'); a roomy pinned host keeps the listing
+        endpoints['data']['endpoints'] = [{'tag': 'novita/fp8', 'context_length': 1048576, 'max_completion_tokens': 65536}]
+        with patch.object(run_build.urllib.request, 'urlopen', side_effect=answer):
+            limits = run_build.provider_model_limits('openrouter', 'inclusionai/ling-3.0-flash',
+                                                     {'OPENROUTER_API_KEY': 'k', 'OPENROUTER_PARAMETERS': '{"provider":{"order":["novita"],"allow_fallbacks":false}}'})
+        self.assertEqual(limits['GOOSE_CONTEXT_LIMIT'], '262144')
+        # a pin that names no serving host is refused before the model is called
+        with patch.object(run_build.urllib.request, 'urlopen', side_effect=answer):
+            with self.assertRaisesRegex(RuntimeError, 'serve no endpoint'):
+                run_build.provider_model_limits('openrouter', 'inclusionai/ling-3.0-flash',
+                                                {'OPENROUTER_API_KEY': 'k', 'OPENROUTER_PARAMETERS': '{"provider":{"order":["wafer"],"allow_fallbacks":false}}'})
+        # control: no pin (or fallbacks allowed) -> the listing, one request only
+        with patch.object(run_build.urllib.request, 'urlopen', side_effect=answer) as call:
+            limits = run_build.provider_model_limits('openrouter', 'inclusionai/ling-3.0-flash',
+                                                     {'OPENROUTER_API_KEY': 'k', 'OPENROUTER_PARAMETERS': '{"provider":{"order":["deepinfra/bf16"]}}'})
+        self.assertEqual(limits['GOOSE_CONTEXT_LIMIT'], '262144')
+        self.assertEqual(call.call_count, 1)
+
     def test_openrouter_queries_the_configured_host(self):
         with patch.object(run_build.urllib.request, 'urlopen', return_value=_listing(ASTRA)) as call:
             run_build.provider_model_limits('openrouter', 'openai/gpt-6-astra',
