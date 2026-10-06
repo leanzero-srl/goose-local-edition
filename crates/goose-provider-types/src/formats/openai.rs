@@ -545,6 +545,14 @@ pub fn format_messages_reporting_images(
 
                         if let Some(metadata) = &request.metadata {
                             for (key, value) in metadata {
+                                // reasoning_details belong to the assistant MESSAGE (openrouter's
+                                // add_reasoning_details_to_request puts them there); inside a tool call
+                                // strict providers reject them: Fireworks answered 400 "Extra inputs are
+                                // not permitted, field: messages[2].tool_calls[0].reasoning_details"
+                                // (ember-1, 2026-10-06, the day 3.0.106 began storing them on the request).
+                                if key == "reasoning_details" {
+                                    continue;
+                                }
                                 tool_call_json[key] = value.clone();
                             }
                         }
@@ -4621,6 +4629,31 @@ data: [DONE]"#;
         }
 
         panic!("Expected tool call message with nested extra_content metadata");
+    }
+
+    #[test]
+    fn reasoning_details_never_land_inside_a_tool_call() {
+        let mut meta = ProviderMetadata::new();
+        meta.insert(
+            "reasoning_details".to_string(),
+            json!([{"type": "reasoning.text", "text": "Let"}]),
+        );
+        meta.insert(
+            "extra_content".to_string(),
+            json!({"google": {"thought_signature": "sig"}}),
+        );
+        let message =
+            Message::assistant().with_content(MessageContent::tool_request_with_metadata(
+                "call_1".to_string(),
+                Ok(CallToolRequestParams::new("shell")
+                    .with_arguments(object(json!({"command": "ls"})))),
+                Some(&meta),
+            ));
+        let spec = format_messages(&[message], &ImageFormat::OpenAi);
+        let call = &spec[0]["tool_calls"][0];
+        assert!(call.get("reasoning_details").is_none(), "{call}");
+        // the Gemini-compat extra field still travels on the call
+        assert_eq!(call["extra_content"]["google"]["thought_signature"], "sig");
     }
 
     #[tokio::test]
