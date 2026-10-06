@@ -780,13 +780,36 @@ class MisdrawnSceneTests(unittest.TestCase):
         row = score_sb71.stream_witness_result('p_stream_apply', base.g(0.5, 'unwitnessed', 'x'), witness)
         self.assertEqual(row['score'], 0.0)
 
+    def test_sb72_charges_a_scene_whose_heights_are_off_the_contract(self):
+        # muse-spark-1.3 (2026-10-06, tree openrouter-cloud-5523ae69): layout ok, positions exact, heights wrong,
+        # surface present on 38 of 39 evaluations, 11 clicks at the target pixel unbrushed.
+        muse = copy.deepcopy(LING_VIZ)
+        muse['vs7dbgTruth'] = {'surfacePresent': True, 'layoutOk': True, 'digestOk': False}
+        muse['layout'] = {'present': True, 'ok': True, 'got': {'d0': '2027-02-15'}, 'expect': {'d0': '2027-02-15'}}
+        muse['digest'] = {'present': True, 'ok': False, 'got': {'count': 12291, 'Sh': 21764.2456, 'Sx': -20794.2},
+                          'expect': {'count': 12291, 'Sh': 25028.2121, 'Sx': -20794.2}}
+        muse['debugSurfaceObservations'] = [{'present': True, 'evaluationSucceeded': True}] * 38 + [{'present': False, 'evaluationSucceeded': True}]
+        with score.tier_runtime():
+            witness = score_sb71.stream_witness(muse)
+        self.assertEqual(witness['status'], 'misdrawn_scene')
+        self.assertIn('geometry digest off the contract over the same 12291 records', witness['via_tried'][-1])
+        self.assertIn('Sh', witness['via_tried'][-1])
+        # controls: a digest off over a DIFFERENT record count (a sync desync) and a surface mostly absent still refuse
+        for name, change in {
+            'count differs': {'digest': {**muse['digest'], 'got': {**muse['digest']['got'], 'count': 12000}}},
+            'surface mostly absent': {'debugSurfaceObservations': [{'present': True, 'evaluationSucceeded': True}] * 3 + [{'present': False, 'evaluationSucceeded': True}] * 2},
+            'digest ok too': {'vs7dbgTruth': {'surfacePresent': True, 'layoutOk': True, 'digestOk': True}},
+        }.items():
+            with self.subTest(name), score.tier_runtime():
+                self.assertIn('without a candidate cause', score_sb71.stream_witness({**copy.deepcopy(muse), **change})['refuse'])
+
     def test_harness_controls_still_refuse(self):
         cases = {
             'layout correct': {'vs7dbgTruth': {'surfacePresent': True, 'layoutOk': True}},
             'layout unmeasured': {'vs7dbgTruth': {'surfacePresent': True, 'layoutOk': None}},
             'brush unreadable': {'streamPixelArm': {**LING_VIZ['streamPixelArm'], 'rejected': {**LING_VIZ['streamPixelArm']['rejected'], 'vs7dbg.brush unavailable': 1}}},
             'no unbrushed click': {'streamPixelArm': {**LING_VIZ['streamPixelArm'], 'rejected': {'no independent pixel point at this pose': 5}}},
-            'surface missed once': {'debugSurfaceObservations': [{'present': True, 'evaluationSucceeded': True}, {'present': False, 'evaluationSucceeded': True}]},
+            'surface missed on half': {'debugSurfaceObservations': [{'present': True, 'evaluationSucceeded': True}, {'present': False, 'evaluationSucceeded': True}]},
             'early arm reached it': {'d1Arm': {'targetId': 'pay_02501', 'brushed': True, 'via': '3d-click'}},
         }
         for name, change in cases.items():

@@ -938,41 +938,58 @@ def debug_surface_absent_witness(viz, signal, arm):
     }
 
 
+def scene_off_contract(viz):
+    """Why the candidate's OWN vs7dbg scene contradicts the public contract, else None: a layout off the contract
+    (Ling 3.0 Flash: d0 a day early), or a geometry digest off it over the SAME record count (Muse Spark 1.3: positions
+    exact, heights wrong - Sh 21764 vs 25028, 0/6 heights). A count mismatch could be a sync desync: not attributed."""
+    truth = viz.get('vs7dbgTruth') or {}
+    layout, digest = viz.get('layout') or {}, viz.get('digest') or {}
+    if truth.get('layoutOk') is False:
+        return 'layout off the contract (got ' + json.dumps(layout.get('got')) + ', expected ' + json.dumps(layout.get('expect')) + ')'
+    got, expect = digest.get('got') or {}, digest.get('expect') or {}
+    if truth.get('digestOk') is False and got.get('count') is not None and got.get('count') == expect.get('count'):
+        off = {k: [got.get(k), expect.get(k)] for k in expect if k != 'count' and got.get(k) != expect.get(k)}
+        return f"geometry digest off the contract over the same {got.get('count')} records ({json.dumps(off)})"
+    return None
+
+
 def misdrawn_scene_witness(viz, signal, arm):
-    """SB7.2: no D1 pixel witness because the candidate's scene is not where the public layout puts it. The probe
-    aims at the target's contract pixel; the candidate's click there does not brush it, and the candidate's OWN
-    vs7dbg surface (present on every evaluation) reports a layout that fails the contract (layout.ok false).
-    Measured 2026-10-06 on ling-3.0-flash: d0 2026-01-30 vs 2026-01-31, digest Sx 14172 vs -1018.8, 33 clicks at
-    the target pixel unbrushed. Charged like debug_surface_absent; a correct layout or an unread brush still refuses."""
+    """SB7.2: no D1 pixel witness because the candidate draws its scene off the public contract. The probe aims at the
+    target's contract pixel; the candidate's click there does not brush it, and the candidate's OWN vs7dbg surface
+    reports a scene that contradicts the contract (scene_off_contract). Measured 2026-10-06 on ling-3.0-flash (layout)
+    and muse-spark-1.3 (heights). Charged like debug_surface_absent; a scene on the contract, an unread brush, a surface
+    mostly absent or an early arm that reached the target still refuse."""
     problems = []
     rejected = arm.get('rejected') or {}
-    truth = viz.get('vs7dbgTruth') or {}
     observations = viz.get('debugSurfaceObservations') or []
+    present = [o for o in observations if o.get('evaluationSucceeded') is True and o.get('present') is True]
     if arm.get('mode') is not None or arm.get('error') != 'No independently decisive D1 pixel witness':
         problems.append('the viz observation does not record an undecided D1 witness')
     if not rejected.get('click at the target pixel did not brush it'):
         problems.append('no click at the target pixel went unbrushed')
     if 'vs7dbg.brush unavailable' in rejected:
         problems.append('the brush was unreadable (the absent-surface path, not a misdrawn scene)')
-    if not (len(observations) >= 2 and all(o.get('evaluationSucceeded') is True and o.get('present') is True for o in observations)):
-        problems.append('the vs7dbg surface is not measured present on every evaluation')
-    if truth.get('layoutOk') is not False:
-        problems.append('the candidate layout is not measured off the contract')
+    # Muse showed the surface on 38 of 39 evaluations: the brush stayed readable (no 'vs7dbg.brush unavailable').
+    if not (len(present) >= 2 and len(present) >= 0.9 * len(observations)
+            and all(o.get('evaluationSucceeded') is True for o in observations)):
+        problems.append('the vs7dbg surface is not measured present on (nearly) every evaluation')
+    off = scene_off_contract(viz)
+    if not off:
+        problems.append('the candidate scene is not measured off the contract')
     early = viz.get('d1Arm') or {}
     if early.get('brushed') is True or str(early.get('via', '')).startswith(('3d-click', 'table-click')):
         problems.append('the early D1 arm reached the target (' + str(early.get('via')) + ')')
     if problems:
         return {'refuse': 'SB7.1 stream witness unavailable without a candidate cause: ' + '; '.join(problems)}
-    layout = viz.get('layout') or {}
     return {
         'status': 'misdrawn_scene', 'target': early.get('targetId'), 'stream_measured': False,
         'witness': 'none', 'reason': signal.get('reason'),
         'via_tried': [f"3D click at the target's contract pixel at seeded poses ({rejected.get('click at the target pixel did not brush it')} "
                       f"clicks left it unbrushed; all rejections: {json.dumps(rejected)})",
                       f"early D1 arm (3D click, then the table row): {early.get('via')}",
-                      "the candidate's own vs7dbg layout is off the contract (got "
-                      + json.dumps(layout.get('got')) + ', expected ' + json.dumps(layout.get('expect')) + ')'],
-        'evidence': {'vs7dbgTruth': truth, 'layout': layout},
+                      "the candidate's own vs7dbg scene is off the contract: " + off],
+        'evidence': {'vs7dbgTruth': viz.get('vs7dbgTruth'), 'layout': viz.get('layout'), 'digest': viz.get('digest'),
+                     'surface_present': f'{len(present)}/{len(observations)}'},
         'rejected': rejected,
         'charged': ['d_decisions_doc:D1', *PIXEL_WITNESS_ROWS],
     }
