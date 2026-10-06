@@ -97,8 +97,17 @@ impl RetryConfig {
         streak: usize,
         waited: Duration,
     ) -> Option<Duration> {
-        let ProviderError::RateLimitExceeded { retry_delay, .. } = error else {
-            return None;
+        let retry_delay = match error {
+            ProviderError::RateLimitExceeded { retry_delay, .. } => *retry_delay,
+            // OpenRouter's 402 "This request would exceed your available credits given your current in-flight
+            // requests. Retry after in-flight requests settle, or add credits." is a wait, not an empty account:
+            // muse-spark-1.3's Forge run died on it at call 100 (~$12, 2026-10-06) while auto top-up was landing.
+            ProviderError::CreditsExhausted { details, .. }
+                if credits_wait_is_retryable(details) =>
+            {
+                None
+            }
+            _ => return None,
         };
         if short_rate_limits() {
             return None;
@@ -149,6 +158,12 @@ impl RetryConfig {
             _ => self.delay_for_attempt(attempt),
         }
     }
+}
+
+/// A credits refusal that names a retry (in-flight requests settling) rather than an empty account.
+pub fn credits_wait_is_retryable(details: &str) -> bool {
+    let lower = details.to_ascii_lowercase();
+    lower.contains("in-flight") || lower.contains("retry after")
 }
 
 tokio::task_local! {
@@ -566,6 +581,24 @@ mod tests {
         .await;
         assert!(result.is_err());
         assert_eq!(calls.load(Ordering::SeqCst), 4);
+    }
+
+    #[test]
+    fn an_in_flight_credits_refusal_is_waited_out_but_an_empty_account_is_not() {
+        let config = RetryConfig::default().rate_limit_wait(Duration::from_secs(1_800));
+        let in_flight = ProviderError::CreditsExhausted {
+            details: "This request would exceed your available credits given your current in-flight requests. Retry after in-flight requests settle, or add credits.".into(),
+            top_up_url: None,
+        };
+        assert_eq!(
+            config.next_rate_limit_wait(&in_flight, 1, Duration::ZERO),
+            Some(Duration::from_secs(5))
+        );
+        let empty = ProviderError::CreditsExhausted {
+            details: "Insufficient credits. Add more using https://openrouter.ai/credits".into(),
+            top_up_url: None,
+        };
+        assert_eq!(config.next_rate_limit_wait(&empty, 1, Duration::ZERO), None);
     }
 
     #[test]
