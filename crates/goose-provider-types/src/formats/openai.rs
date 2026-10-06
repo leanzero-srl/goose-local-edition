@@ -1831,7 +1831,12 @@ where
                     unplaced_text.clear();
                 }
 
-                let _metadata: Option<ProviderMetadata> = if !accumulated_reasoning.is_empty() {
+                // OpenRouter's reasoning_details (Gemini 3's encrypted thought signatures, "google-gemini-v1") must
+                // travel back on the assistant turn of every tool call, or the model degrades: Gemini 3.8 Flash
+                // returned empty STOPs 47 messages into a Forge run (2026-10-06). They arrive in a reasoning-only
+                // chunk BEFORE the tool_calls chunks and were collected here but never attached (the binding was
+                // `_metadata`), so openrouter::add_reasoning_details_to_request found nothing to send back.
+                let reasoning_metadata: Option<ProviderMetadata> = if !accumulated_reasoning.is_empty() {
                     let mut map = ProviderMetadata::new();
                     map.insert("reasoning_details".to_string(), json!(accumulated_reasoning));
                     Some(map)
@@ -1887,9 +1892,10 @@ where
                 let mut sorted_indices: Vec<_> = tool_call_data.keys().cloned().collect();
                 sorted_indices.sort();
 
+                let mut reasoning_metadata = reasoning_metadata;
                 for index in sorted_indices {
                     if let Some((id, function_name, arguments, extra_fields)) = tool_call_data.get(&index) {
-                        let metadata = if let Some(sig) = &last_signature {
+                        let mut metadata = if let Some(sig) = &last_signature {
                             let mut combined = extra_fields.clone().unwrap_or_default();
                             combined.insert(
                                 GEMINI_THOUGHT_SIGNATURE_KEY.to_string(),
@@ -1899,6 +1905,13 @@ where
                         } else {
                             extra_fields.as_ref().filter(|m| !m.is_empty()).cloned()
                         };
+                        // The response's reasoning_details ride on its FIRST tool request (the one the request
+                        // builder reads back); later calls of the same response do not repeat them.
+                        if let Some(reasoning) = reasoning_metadata.take() {
+                            let mut combined = metadata.unwrap_or_default();
+                            combined.extend(reasoning);
+                            metadata = Some(combined);
+                        }
 
                         let content = if arguments.is_empty() {
                             MessageContent::tool_request_with_metadata(
@@ -4608,6 +4621,45 @@ data: [DONE]"#;
         }
 
         panic!("Expected tool call message with nested extra_content metadata");
+    }
+
+    #[tokio::test]
+    async fn openrouter_reasoning_details_before_the_tool_call_ride_on_the_tool_request(
+    ) -> anyhow::Result<()> {
+        // Gemini 3.8 Flash via OpenRouter, measured 2026-10-06: the encrypted thought signature arrives in a
+        // reasoning-only chunk, then the tool call streams in. It must reach the tool request's metadata, or the
+        // history is replayed without it and Gemini answers an empty STOP.
+        let response_lines = r#"data: {"model":"google/gemini-3.8-flash","choices":[{"delta":{"role":"assistant","content":"","reasoning_details":[{"type":"reasoning.encrypted","data":"EmkKZw==","format":"google-gemini-v1","id":"call_371070","index":0}]},"index":0,"finish_reason":null}],"object":"chat.completion.chunk","id":"gen-1","created":1}
+data: {"model":"google/gemini-3.8-flash","choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_371070","type":"function","function":{"name":"shell","arguments":""}}]},"index":0,"finish_reason":null}],"object":"chat.completion.chunk","id":"gen-1","created":1}
+data: {"model":"google/gemini-3.8-flash","choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"function":{"arguments":"{\"command\":\"ls\"}"}}]},"index":0,"finish_reason":null}],"object":"chat.completion.chunk","id":"gen-1","created":1}
+data: {"model":"google/gemini-3.8-flash","choices":[{"delta":{"role":"assistant"},"index":0,"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":100,"completion_tokens":10,"total_tokens":110},"object":"chat.completion.chunk","id":"gen-1","created":1}
+data: [DONE]"#;
+
+        let response_stream =
+            tokio_stream::iter(response_lines.lines().map(|line| Ok(line.to_string())));
+        let messages = response_to_streaming_message(response_stream);
+        pin!(messages);
+
+        while let Some(Ok((message, _usage))) = messages.next().await {
+            if let Some(msg) = message {
+                for content in &msg.content {
+                    if let MessageContent::ToolRequest(request) = content {
+                        assert!(request.tool_call.is_ok());
+                        let details = request
+                            .metadata
+                            .as_ref()
+                            .and_then(|m| m.get("reasoning_details"))
+                            .and_then(|v| v.as_array())
+                            .expect("reasoning_details on the tool request");
+                        assert_eq!(details[0]["format"], "google-gemini-v1");
+                        assert_eq!(details[0]["data"], "EmkKZw==");
+                        return Ok(());
+                    }
+                }
+            }
+        }
+
+        panic!("Expected a tool request carrying the response's reasoning_details");
     }
 
     #[tokio::test]
