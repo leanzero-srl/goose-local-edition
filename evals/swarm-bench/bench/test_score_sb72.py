@@ -745,6 +745,64 @@ class DebugSurfaceAbsentTests(unittest.TestCase):
 
 
 
+# ling-3.0-flash's SB7.2 viz observation in shape (2026-10-06, tree openrouter-cloud-8b4536e0): vs7dbg present on
+# every evaluation, its layout off the contract (d0 a day early, digest far off), 33 clicks at the target pixel unbrushed.
+LING_VIZ = {
+    'timedOut': False,
+    'sb71StreamHandshake': {'signal': {'state': 'witness_unavailable',
+                                       'reason': 'No independently decisive D1 pixel witness'},
+                            'delivery': {'fired': True}},
+    'streamPixelArm': {'error': 'No independently decisive D1 pixel witness',
+                       'rejected': {'no independent pixel point at this pose': 68,
+                                    'click at the target pixel did not brush it': 33,
+                                    'unbrushing click not attributable: target colour not drawn at the clicked pixel': 33},
+                       'targetHeld': {'status': 200}},
+    'debugSurfaceObservations': [{'present': True, 'evaluationSucceeded': True}] * 169,
+    'vs7dbgTruth': {'surfacePresent': True, 'layoutOk': False, 'digestOk': False},
+    'layout': {'present': True, 'got': {'d0': '2026-01-30', 'D0': 96, 'R0': 181},
+               'expect': {'d0': '2026-01-31', 'D0': 96, 'R0': 180}, 'ok': False},
+    'd1Arm': {'targetId': 'pay_02501', 'brushed': False, 'via': 'unreachable'},
+    'contextReal': {'contextType': 'webgl2'},
+}
+
+
+class MisdrawnSceneTests(unittest.TestCase):
+    """ling-3.0-flash on 3.0.101 was refused 'stream witness unavailable without a candidate cause': its vs7dbg
+    surface was present but its scene is drawn off the public layout, so no click at the target's contract pixel
+    could brush it. SB7.2 charges that; a correct layout, an unread brush or a reached target still refuse."""
+
+    def test_sb72_charges_the_witness_rows_when_the_candidate_layout_is_off_the_contract(self):
+        with score.tier_runtime():
+            witness = score_sb71.stream_witness(copy.deepcopy(LING_VIZ))
+        self.assertEqual(witness['status'], 'misdrawn_scene')
+        self.assertEqual(witness['charged'], ['d_decisions_doc:D1', *score_sb71.PIXEL_WITNESS_ROWS])
+        self.assertIn('2026-01-30', witness['via_tried'][-1])
+        row = score_sb71.stream_witness_result('p_stream_apply', base.g(0.5, 'unwitnessed', 'x'), witness)
+        self.assertEqual(row['score'], 0.0)
+
+    def test_harness_controls_still_refuse(self):
+        cases = {
+            'layout correct': {'vs7dbgTruth': {'surfacePresent': True, 'layoutOk': True}},
+            'layout unmeasured': {'vs7dbgTruth': {'surfacePresent': True, 'layoutOk': None}},
+            'brush unreadable': {'streamPixelArm': {**LING_VIZ['streamPixelArm'], 'rejected': {**LING_VIZ['streamPixelArm']['rejected'], 'vs7dbg.brush unavailable': 1}}},
+            'no unbrushed click': {'streamPixelArm': {**LING_VIZ['streamPixelArm'], 'rejected': {'no independent pixel point at this pose': 5}}},
+            'surface missed once': {'debugSurfaceObservations': [{'present': True, 'evaluationSucceeded': True}, {'present': False, 'evaluationSucceeded': True}]},
+            'early arm reached it': {'d1Arm': {'targetId': 'pay_02501', 'brushed': True, 'via': '3d-click'}},
+        }
+        for name, change in cases.items():
+            with self.subTest(name), score.tier_runtime():
+                witness = score_sb71.stream_witness({**copy.deepcopy(LING_VIZ), **change})
+                self.assertIn('without a candidate cause', witness['refuse'])
+
+    def test_the_absent_surface_path_is_unchanged(self):
+        with score.tier_runtime():
+            self.assertEqual(score_sb71.stream_witness(copy.deepcopy(QWEN_VIZ))['status'], 'debug_surface_absent')
+
+    def test_sb71_is_unchanged(self):
+        self.assertFalse(score_sb71.CHARGE_MISDRAWN_SCENE)
+        self.assertIsNone(score_sb71.stream_witness(copy.deepcopy(LING_VIZ)))
+
+
 QWEN_AIM = {'x': 540, 'y': 399.6, 'inViewport': True, 'onCanvas': False, 'element': 'div#viz-labels', 'scrollY': 95}
 QWEN_COAST = {'flick': {'samples': None, 'watchMissing': True, 'moved': False, 'dragOrbitDeg': None,
                         'attempts': [{'moved': False, 'aim': [QWEN_AIM, QWEN_AIM], 'miss': score_sb71.CANVAS_MISS}] * 2,

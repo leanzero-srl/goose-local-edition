@@ -102,7 +102,8 @@ def tier_runtime():
     overlay = thresholds()
     saved = (sb71.PROBE_NAME, sb71.VERSION, base.TIER_WEIGHT_SB7, base.ROOT_BLOCKS,
              base.TH['e_stream_apply_ms_rungs'], base.DIAGNOSTIC, base.NOTIFY_PAGED, base.SB72_STRICT,
-             sb71.CHARGE_VIZ_CAP, sb71.CHARGE_UNREACHED_FAULTS, sb71.CHARGE_DEBUG_SURFACE_ABSENT, sb71.CHARGE_COVERED_CANVAS)
+             sb71.CHARGE_VIZ_CAP, sb71.CHARGE_UNREACHED_FAULTS, sb71.CHARGE_DEBUG_SURFACE_ABSENT, sb71.CHARGE_COVERED_CANVAS,
+             sb71.CHARGE_MISDRAWN_SCENE)
     blocks = dict(base.ROOT_BLOCKS)
     # Without synced data there is no field to see: the visual rows are downstream of sync.
     blocks['sync_completeness'] = (*blocks['sync_completeness'],
@@ -121,12 +122,15 @@ def tier_runtime():
     sb71.CHARGE_DEBUG_SURFACE_ABSENT = True
     # A coast drag the app's own overlay intercepts is a view no pointer can orbit: charged.
     sb71.CHARGE_COVERED_CANVAS = True
+    # A D1 witness lost because the app draws its scene off the public layout (its own vs7dbg says so): charged.
+    sb71.CHARGE_MISDRAWN_SCENE = True
     try:
         yield
     finally:
         (sb71.PROBE_NAME, sb71.VERSION, base.TIER_WEIGHT_SB7, base.ROOT_BLOCKS,
          base.TH['e_stream_apply_ms_rungs'], base.DIAGNOSTIC, base.NOTIFY_PAGED, base.SB72_STRICT,
-         sb71.CHARGE_VIZ_CAP, sb71.CHARGE_UNREACHED_FAULTS, sb71.CHARGE_DEBUG_SURFACE_ABSENT, sb71.CHARGE_COVERED_CANVAS) = saved
+         sb71.CHARGE_VIZ_CAP, sb71.CHARGE_UNREACHED_FAULTS, sb71.CHARGE_DEBUG_SURFACE_ABSENT, sb71.CHARGE_COVERED_CANVAS,
+         sb71.CHARGE_MISDRAWN_SCENE) = saved
 
 
 def _probe_preflight():

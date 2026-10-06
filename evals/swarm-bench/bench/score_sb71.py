@@ -59,6 +59,9 @@ CHARGE_UNREACHED_FAULTS = False
 # Qwen3.8-27B SB7.2 (2026-10-05): 'fire_d1_mutation:failed' refused a build whose canvas drew in WebGL2
 # while vs7dbg answered absent on all of its evaluations.
 CHARGE_DEBUG_SURFACE_ABSENT = False
+# SB7.2 (score_sb72.tier_runtime): a D1 witness lost because the candidate draws its scene off the public layout
+# (its own vs7dbg reports layout.ok false) is the candidate's contract fault: charged. SB7.1 keeps refusing.
+CHARGE_MISDRAWN_SCENE = False
 WITNESS_UNAVAILABLE = 'witness_unavailable'
 # Same owner rule, set by SB7.2: the coast rows' drag never reached #viz3d because the app's OWN element
 # covers the canvas at the aimed point on every re-centred attempt (document.elementFromPoint skips
@@ -786,6 +789,8 @@ def stream_witness(viz):
     signal = (viz.get('sb71StreamHandshake') or {}).get('signal') or {}
     state = signal.get('state')
     arm = viz.get('streamPixelArm') or {}
+    if state == WITNESS_UNAVAILABLE and CHARGE_MISDRAWN_SCENE and (viz.get('vs7dbgTruth') or {}).get('surfacePresent') is True:
+        return misdrawn_scene_witness(viz, signal, arm)
     if state == WITNESS_UNAVAILABLE and CHARGE_DEBUG_SURFACE_ABSENT:
         return debug_surface_absent_witness(viz, signal, arm)
     if state not in CANDIDATE_WITNESS_STATES:
@@ -928,6 +933,46 @@ def debug_surface_absent_witness(viz, signal, arm):
                       f"early D1 arm (3D click, then the table row): {early.get('via')}",
                       f"the candidate's vs7dbg debug surface: absent on all {len(observations)} evaluations"],
         'evidence': {'debugSurfaceObservations': len(observations), 'vs7dbgTruth': viz.get('vs7dbgTruth')},
+        'rejected': rejected,
+        'charged': ['d_decisions_doc:D1', *PIXEL_WITNESS_ROWS],
+    }
+
+
+def misdrawn_scene_witness(viz, signal, arm):
+    """SB7.2: no D1 pixel witness because the candidate's scene is not where the public layout puts it. The probe
+    aims at the target's contract pixel; the candidate's click there does not brush it, and the candidate's OWN
+    vs7dbg surface (present on every evaluation) reports a layout that fails the contract (layout.ok false).
+    Measured 2026-10-06 on ling-3.0-flash: d0 2026-01-30 vs 2026-01-31, digest Sx 14172 vs -1018.8, 33 clicks at
+    the target pixel unbrushed. Charged like debug_surface_absent; a correct layout or an unread brush still refuses."""
+    problems = []
+    rejected = arm.get('rejected') or {}
+    truth = viz.get('vs7dbgTruth') or {}
+    observations = viz.get('debugSurfaceObservations') or []
+    if arm.get('mode') is not None or arm.get('error') != 'No independently decisive D1 pixel witness':
+        problems.append('the viz observation does not record an undecided D1 witness')
+    if not rejected.get('click at the target pixel did not brush it'):
+        problems.append('no click at the target pixel went unbrushed')
+    if 'vs7dbg.brush unavailable' in rejected:
+        problems.append('the brush was unreadable (the absent-surface path, not a misdrawn scene)')
+    if not (len(observations) >= 2 and all(o.get('evaluationSucceeded') is True and o.get('present') is True for o in observations)):
+        problems.append('the vs7dbg surface is not measured present on every evaluation')
+    if truth.get('layoutOk') is not False:
+        problems.append('the candidate layout is not measured off the contract')
+    early = viz.get('d1Arm') or {}
+    if early.get('brushed') is True or str(early.get('via', '')).startswith(('3d-click', 'table-click')):
+        problems.append('the early D1 arm reached the target (' + str(early.get('via')) + ')')
+    if problems:
+        return {'refuse': 'SB7.1 stream witness unavailable without a candidate cause: ' + '; '.join(problems)}
+    layout = viz.get('layout') or {}
+    return {
+        'status': 'misdrawn_scene', 'target': early.get('targetId'), 'stream_measured': False,
+        'witness': 'none', 'reason': signal.get('reason'),
+        'via_tried': [f"3D click at the target's contract pixel at seeded poses ({rejected.get('click at the target pixel did not brush it')} "
+                      f"clicks left it unbrushed; all rejections: {json.dumps(rejected)})",
+                      f"early D1 arm (3D click, then the table row): {early.get('via')}",
+                      "the candidate's own vs7dbg layout is off the contract (got "
+                      + json.dumps(layout.get('got')) + ', expected ' + json.dumps(layout.get('expect')) + ')'],
+        'evidence': {'vs7dbgTruth': truth, 'layout': layout},
         'rejected': rejected,
         'charged': ['d_decisions_doc:D1', *PIXEL_WITNESS_ROWS],
     }
