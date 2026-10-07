@@ -960,6 +960,27 @@ class DeployReadinessTests(Golden):
         bad = self.mobs(lambda m: m['app']['storage']['entities'][0]['indexes'][0].update(range=['changedAt']))
         self.assertEqual(self.status('M7', bad)['status'], 'fail')
 
+    def test_m7_wrong_shaped_manifest_is_charged_not_a_scorer_crash(self):
+        # GLM-5.3 Prime (2026-10-07) wrote `sprintId: string` instead of `sprintId: {type: string}`; the scorer raised
+        # AttributeError and the paid run got no verdict. Every wrong shape must fail a rule and still score.
+        def shorthand(m):
+            ent = m['app']['storage']['entities'][0]
+            ent['attributes'] = {k: 'string' for k in ent['attributes']}
+        f = self.status('M7', self.mobs(shorthand))
+        self.assertEqual(f['status'], 'fail')
+        self.assertIn('is not a {type: …} mapping', f['where'])
+        bad_index = self.mobs(lambda m: m['app']['storage']['entities'][0]['indexes'][0].update(partition='sprintId'))
+        self.assertIn('is not a list', self.status('M7', bad_index)['where'])
+
+        def scalars(m):
+            m['permissions'] = 'storage:app'
+            m['app']['runtime'] = 'nodejs22.x'
+            m['app']['storage'] = ['entities']
+        v = self.score(self.mobs(scalars))
+        self.assertEqual(v['status'], 'scored')
+        rules = {f['rule'].split(' ')[0]: f['status'] for f in v['deploy_readiness']['rules']}
+        self.assertEqual(rules['M10'], 'fail')
+
     def test_m8_custom_ui_only(self):
         self.assertEqual(self.status('M8')['status'], 'pass')
         self.assertEqual(self.status('M8', self.mobs(lambda m: m['modules']['jira:sprintAction'][0].update(render='native')))['status'], 'fail')

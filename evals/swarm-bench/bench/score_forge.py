@@ -748,7 +748,7 @@ def _(c):
     built = {f.get('key'): f for f in (c.obs.get('build') or {}).get('functions') or []}
     rules['referenced_functions_exist_and_export'] = all(
         ref in fn_keys and (built.get(ref) or {}).get('exported') for ref in referenced)
-    scopes = set(((c.manifest or {}).get('permissions') or {}).get('scopes') or [])
+    scopes = {x for x in _dig_list(c.manifest, 'permissions', 'scopes') if isinstance(x, str)}
     rules['storage_app_with_kvs'] = (not c.all_calls('kvs')) or 'storage:app' in scopes
     met = sum(rules.values())
     return g(met / len(rules), f'{met}/{len(rules)} manifest rules met: '
@@ -759,7 +759,7 @@ def _scope_evidence(c: Ctx) -> Tuple[Optional[Dict], Optional[str]]:
     """Per call, the OAuth2 alternative it is satisfied by. WP1's site reports the CHOSEN alternative (classic where
     one exists, else the full granular set); a call no declared alternative satisfies is a 401 scope mismatch and
     counts one missing scope per operation."""
-    declared = set(((c.manifest or {}).get('permissions') or {}).get('scopes') or [])
+    declared = {x for x in _dig_list(c.manifest, 'permissions', 'scopes') if isinstance(x, str)}
     used, missing, tolerated = set(), set(), set()
     for call in c.all_calls('jira'):
         if isinstance(call.get('scopes'), dict):
@@ -811,7 +811,7 @@ def _(c):
         return unavail(why)
     costs = sum(2 if (s.startswith('manage:') or '.admin' in s or 'admin' in s.split(':')[0]) else 1
                 for s in ev['missing'] + ev['extra'])
-    scripts = ((((c.manifest or {}).get('permissions') or {}).get('content') or {}).get('scripts'))
+    scripts = _dig(c.manifest, 'permissions', 'content', 'scripts')
     if scripts:
         costs += 1
     return g(max(0.0, 1 - 0.25 * costs), f"scopes: missing {ev['missing']}, extra {ev['extra']}"
@@ -903,7 +903,7 @@ def _(c):
     fm, _body = parse_frontmatter(text or '')
     fm = fm or {}
     dirname = os.path.basename(os.path.normpath(d or ''))
-    tools = ((skills[0].get('dependencies') or {}).get('tools')) or []
+    tools = _dig_list(skills[0], 'dependencies', 'tools')
     allowed = (fm.get('allowed-tools') or '').split()
     agents = c.modules('rovo:agent')
     conds = {
@@ -942,7 +942,7 @@ OLD_SEARCH = re.compile(r"""/rest/api/(?:2|3|latest)/search(?![/A-Za-z])""")
 def _(c):
     texts = _src_texts(c)
     errors = ' '.join(str(i.get('error') or '') for i in c.invocations())
-    runtime = (((c.manifest or {}).get('app') or {}).get('runtime') or {}).get('name')
+    runtime = _dig(c.manifest, 'app', 'runtime', 'name')
     conds = {
         'no_api_storage': not any(STORAGE_IMPORT.search(t) for t in texts.values()),
         'no_forge_ui': not any(FORGE_UI_IMPORT.search(t) for t in texts.values()),
@@ -973,8 +973,25 @@ def _(c):
     return g(met / len(conds), f'consumer shape {met}/{len(conds)}', 'consumer wired wrongly', parts=conds)
 
 
+def _dig(obj, *keys):
+    """obj[k1][k2]… or None. The manifest is the candidate's YAML: any level can be a string, a list or null where
+    the schema wants a mapping (GLM-5.3 Prime wrote KVS attributes as `sprintId: string`, 2026-10-07, and
+    `(spec or {}).get` crashed the whole score). A wrong shape is the candidate's defect for a rule to charge, never a
+    scorer crash."""
+    for k in keys:
+        if not isinstance(obj, dict):
+            return None
+        obj = obj.get(k)
+    return obj
+
+
+def _dig_list(obj, *keys) -> list:
+    v = _dig(obj, *keys)
+    return v if isinstance(v, list) else []
+
+
 def _entities(c: Ctx) -> List[Dict]:
-    ents = (((c.manifest or {}).get('app') or {}).get('storage') or {}).get('entities')
+    ents = _dig(c.manifest, 'app', 'storage', 'entities')
     return [e for e in ents if isinstance(e, dict)] if isinstance(ents, list) else []
 
 
@@ -985,7 +1002,7 @@ def _sprint_indexes(c: Ctx) -> Dict[str, set]:
         for idx in e.get('indexes') or []:
             if not isinstance(idx, dict):
                 continue
-            part, rng = idx.get('partition') or [], idx.get('range') or []
+            part, rng = _dig_list(idx, 'partition'), _dig_list(idx, 'range')
             if len(part) == 1 and re.search(r'sprint', str(part[0]), re.I) and len(rng) == 1:
                 out.setdefault(str(e.get('name')), set()).add(str(idx.get('name')))
     return out
@@ -1211,7 +1228,8 @@ def deploy_findings(c: Ctx) -> List[Dict]:
     dangling = [f"agent {a.get('key')} action {x}" for a in c.modules('rovo:agent') for x in a.get('actions') or [] if x not in action_keys]
     dangling += [f"agent {a.get('key')} skill {x}" for a in c.modules('rovo:agent') for x in a.get('skills') or [] if x not in skill_keys]
     dangling += [f"skill {s.get('key')} tool {x}" for s in c.modules('rovo:skill')
-                 for x in ((s.get('dependencies') or {}).get('tools') or []) if x not in action_keys]
+                 for x in _dig_list(s, 'dependencies', 'tools')
+                 if isinstance(x, str) and x not in action_keys]
     dangling += [f"mcp {m.get('key')} tool {x}" for m in c.modules('rovo:mcp')
                  for x in (m.get('tools') or []) if isinstance(x, str) and x not in action_keys]
     rule('M5 Rovo agent, skill, MCP and action references resolve', 'manifest',
@@ -1232,13 +1250,19 @@ def deploy_findings(c: Ctx) -> List[Dict]:
         if len(attrs) > ENTITY_LIMITS['attributes']:
             ent_problems.append(f"{e.get('name')}: {len(attrs)} attributes")
         for an, spec in attrs.items():
-            if (spec or {}).get('type') not in ENTITY_ATTRIBUTE_TYPES:
-                ent_problems.append(f"{e.get('name')}.{an}: type {(spec or {}).get('type')!r}")
+            # The schema wants `name: {type: …}`; a bare `name: string` is refused at deploy, so it is a problem here.
+            atype = spec.get('type') if isinstance(spec, dict) else None
+            if atype not in ENTITY_ATTRIBUTE_TYPES:
+                ent_problems.append(f"{e.get('name')}.{an}: type {atype!r}" if isinstance(spec, dict) or spec is None
+                                    else f"{e.get('name')}.{an}: {spec!r} is not a {{type: …}} mapping")
         idx = [i for i in e.get('indexes') or [] if isinstance(i, dict)]
         if len(idx) > ENTITY_LIMITS['indexes']:
             ent_problems.append(f"{e.get('name')}: {len(idx)} indexes")
         for i in idx:
-            for an in (i.get('partition') or []) + (i.get('range') or []):
+            for key in ('partition', 'range'):
+                if i.get(key) is not None and not isinstance(i.get(key), list):
+                    ent_problems.append(f"{e.get('name')}.{i.get('name')}: {key} {i.get(key)!r} is not a list")
+            for an in _dig_list(i, 'partition') + _dig_list(i, 'range'):
                 if an not in attrs:
                     ent_problems.append(f"{e.get('name')}.{i.get('name')}: {an} is not a declared attribute")
     rule('M7 KVS entity indexes name declared attributes within the documented limits', 'manifest', bool(entities),
@@ -1253,7 +1277,7 @@ def deploy_findings(c: Ctx) -> List[Dict]:
     rule('M9 no legacy jira:dashboardGadget', 'manifest', bool(mods), not gadget, 'poor_practice',
          'dashboards:widget replaces it ("will be deprecated by 17 May 2027", CDAC 102826)', 'uikit',
          graded_by='k_dashboard_widget')
-    runtime = (((c.manifest or {}).get('app') or {}).get('runtime') or {}).get('name')
+    runtime = _dig(c.manifest, 'app', 'runtime', 'name')
     rule('M10 runtime is a current Node.js runtime', 'manifest', c.manifest is not None, runtime in CURRENT_RUNTIMES,
          'would_fail', f'runtime {runtime!r} is outside the manifest runtime enum', 'invocation', str(runtime),
          graded_by='k_current_apis')
@@ -1277,7 +1301,7 @@ def deploy_findings(c: Ctx) -> List[Dict]:
          '(lint 6.3.0 only warns); the emulator refuses the call', 'llm', '', graded_by=_charged(c, 'k_llm_model_current'))
 
     # ── permissions ─────────────────────────────────────────────────────────────────────────
-    declared = set(((c.manifest or {}).get('permissions') or {}).get('scopes') or [])
+    declared = {x for x in _dig_list(c.manifest, 'permissions', 'scopes') if isinstance(x, str)}
     routes = static_routes(texts)
     unknown, needs_missing = [], []
     for rel, path in routes:
@@ -1298,14 +1322,16 @@ def deploy_findings(c: Ctx) -> List[Dict]:
          not extra, 'poor_practice', 'every declared scope is shown to the admin who installs the app', 'permissions',
          ', '.join(extra), graded_by='l_scopes')
     hosts = sorted({m.group(1) for t in texts.values() for m in EXTERNAL_FETCH.finditer(t)})
-    allowed = ' '.join(str(x if isinstance(x, str) else (x or {}).get('address'))
-                       for x in ((((c.manifest or {}).get('permissions') or {}).get('external') or {}).get('fetch') or {}).get('backend') or [])
+    allowed = ' '.join(str(x if isinstance(x, str) else x.get('address'))
+                       for x in _dig_list(c.manifest, 'permissions', 'external', 'fetch', 'backend')
+                       if isinstance(x, (str, dict)))
     missing_egress = [h for h in hosts if h.split('://', 1)[-1] not in allowed]
     rule('P4 every external fetch host is declared under permissions.external.fetch', 'permissions', bool(hosts),
          not missing_egress, 'would_fail', 'Forge refuses egress to an undeclared host', 'permissions', ', '.join(missing_egress),
          graded_by='l_deployable' if _lint_mentions(c, 'egress') else None)
     html = _ui_html(c)
-    content = (((c.manifest or {}).get('permissions') or {}).get('content') or {})
+    content = _dig(c.manifest, 'permissions', 'content')
+    content = content if isinstance(content, dict) else {}
     styles_ok = 'unsafe-inline' in (content.get('styles') or [])
     csp = []
     for rel, page in html.items():
@@ -2464,7 +2490,8 @@ def _(c):
     if not mcps:
         return absent('rovo:mcp module')
     m = mcps[0]
-    tools = [t if isinstance(t, str) else (t or {}).get('action') for t in m.get('tools') or []]
+    tools = [t if isinstance(t, str) else t.get('action') for t in (m.get('tools') if isinstance(m.get('tools'), list) else [])
+             if isinstance(t, (str, dict))]
     # docs /manifest-reference/modules/rovo-mcp/: "An app can have at most one rovo:mcp module"; schema 13.6.0:
     # name 1-30 characters, tools are action-key strings.
     conds = {'exactly_one': len(mcps) == 1, 'name_1_30': 1 <= len(str(m.get('name') or '')) <= 30,
@@ -2571,7 +2598,7 @@ def explanation_ledger_numbers(o, sid: str) -> set:
 
 def _explain_request_ok(entry: Dict) -> bool:
     req = entry.get('request') or {}
-    tools = [t.get('function') or {} for t in req.get('tools') or [] if isinstance(t, dict)]
+    tools = [t['function'] for t in req.get('tools') or [] if isinstance(t, dict) and isinstance(t.get('function'), dict)]
     tool = next((t for t in tools if t.get('name') == REPORT_TOOL), None)
     props = ((tool or {}).get('parameters') or {}).get('properties') or {}
     shape = (props.get('summary') or {}).get('type') == 'string' and (props.get('changeIds') or {}).get('type') == 'array' \
