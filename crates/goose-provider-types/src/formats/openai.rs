@@ -1620,6 +1620,13 @@ where
         let mut completion = StreamCompletion::default();
         let mut call_hold = UnparsedCallHold::new(unparsed);
         let mut refused: Vec<RefusedToolCall> = Vec::new();
+        // A reply cut at the output-token limit must say so even when its last chunk carries no
+        // text: a reasoning-only reply (aion-labs/aion-3.5, 2026-10-07: 32,768 tokens of thinking,
+        // no text, no call) otherwise reads as an empty turn and the agent re-asks the identical
+        // prompt, so the model never learns it was cut.
+        let mut cut_by_length = false;
+        let mut length_marked = false;
+        let mut yielded_tool_call = false;
 
         'outer: while let Some(response) = stream.next().await {
             let response_str = response?;
@@ -1641,6 +1648,9 @@ where
                 continue  // metadata-only frame
             };
             completion.observe(&chunk);
+            if chunk.choices.first().and_then(|c| c.finish_reason.as_deref()) == Some("length") {
+                cut_by_length = true;
+            }
             if let Some(model) = &chunk.model {
                 last_seen_model = Some(model.clone());
             }
@@ -1980,6 +1990,7 @@ where
                     msg = msg.with_id(id);
                 }
 
+                yielded_tool_call = true;
                 yield (
                     Some(msg),
                     usage,
@@ -2034,6 +2045,7 @@ where
                     // longer passes as complete, and the retry machinery has a signal to re-ask.
                     if chunk.choices[0].finish_reason.as_deref() == Some("length") {
                         msg = msg.with_text(OUTPUT_TRUNCATED_BY_LENGTH);
+                        length_marked = true;
                     }
 
                     yield (
@@ -2064,7 +2076,14 @@ where
 
         let tail = call_hold.push(&filtered.content);
         let (settled, failed_calls) = settle_reply(call_hold.finish(), &refused);
-        let shown = tail + &settled;
+        let mut shown = tail + &settled;
+        if cut_by_length && !length_marked && !yielded_tool_call {
+            if shown.is_empty() {
+                shown.push_str(OUTPUT_TRUNCATED_BY_LENGTH.trim_start());
+            } else {
+                shown.push_str(OUTPUT_TRUNCATED_BY_LENGTH);
+            }
+        }
         if !failed_calls.is_empty() {
             tracing::warn!(
                 refused = ?refused,
@@ -6875,6 +6894,37 @@ mod unparsed_tool_call_tests {
         assert!(text.starts_with("<tool_call>\n<function=shell>"), "{text}");
         assert!(text.contains(OUTPUT_TRUNCATED_BY_LENGTH), "{text}");
         assert!(failed.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_reasoning_only_reply_cut_by_length_is_stamped() {
+        // aion-labs/aion-3.5 on 2026-10-07: 32,768 tokens of reasoning, no text, no call, and a final
+        // chunk with an empty delta. Unstamped, the agent read it as an empty turn and re-asked.
+        let lines = vec![
+            frame(
+                json!({"reasoning": "Plan: write the server, then the UI"}),
+                None,
+                json!({}),
+            ),
+            frame(
+                json!({"reasoning": " and the webhook handler"}),
+                None,
+                json!({}),
+            ),
+            frame(json!({}), Some("length"), json!({})),
+            "data: [DONE]".to_string(),
+        ];
+        let (text, failed, calls, _) = decode(lines).await;
+        assert_eq!(text, OUTPUT_TRUNCATED_BY_LENGTH.trim_start());
+        assert!(failed.is_empty() && calls.is_empty());
+
+        // A finished reasoning-then-answer reply is not stamped.
+        let done = vec![
+            frame(json!({"reasoning": "Plan"}), None, json!({})),
+            frame(json!({"content": "Done."}), Some("stop"), json!({})),
+            "data: [DONE]".to_string(),
+        ];
+        assert_eq!(decode(done).await.0, "Done.");
     }
 
     #[test]

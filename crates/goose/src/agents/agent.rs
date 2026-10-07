@@ -76,6 +76,13 @@ pub(crate) const COMPACTION_THINKING_TEXT: &str = "goose is compacting the conve
 /// so a rewording here moves the matcher with it instead of silently un-arming it.
 pub const MAX_TURNS_MESSAGE: &str = "I've reached the maximum number of actions I can do without user input. Would you like me to continue?";
 const MAX_EMPTY_TURN_RETRIES: u32 = 3;
+/// Consecutive replies cut at the output-token limit before any tool call that are answered with
+/// LENGTH_CUT_CONTINUATION instead of ending (text) or re-asking blind (reasoning only).
+const MAX_LENGTH_CUT_NUDGES: u32 = 3;
+const LENGTH_CUT_CONTINUATION: &str = "Your last reply was cut off at the model's output-token limit, so it is \
+     unfinished and nothing in it was carried out. Continue from where it stopped in smaller steps: if the task needs \
+     actions, take the next one now with a tool call instead of planning everything in one reply, and keep each reply \
+     well under the limit.";
 const EMPTY_TURN_MESSAGE: &str =
     "The model returned an empty response. Please resend your message to continue.";
 const DEFAULT_FRONTEND_INSTRUCTIONS: &str = "The following tools are provided directly by the frontend and will be executed by the frontend when called.";
@@ -2168,6 +2175,7 @@ impl Agent {
             });
             let mut compaction_attempts = 0;
             let mut empty_turn_retries = 0u32;
+            let mut length_cut_nudges = 0u32;
             let mut retrying_after_empty_turn = false;
             let mut retrying_after_transient_error = false;
             let mut last_assistant_text = String::new();
@@ -3109,6 +3117,9 @@ impl Agent {
                     && !did_recovery_compact_this_iteration
                     && last_assistant_text.is_empty();
 
+                if !no_tools_called {
+                    length_cut_nudges = 0;
+                }
                 if empty_response {
                     messages_to_add = Conversation::default();
                 } else if !resending {
@@ -3166,6 +3177,23 @@ impl Agent {
                             // continue from last user message after recovery compact
                         }
                         None if self.has_pending_steers(&session_config.id).await => {}
+                        // A reply the server cut at its output limit is unfinished, not a final
+                        // answer (it would end the run) and not an empty turn (re-asked blind, the
+                        // model repeats the same over-long plan: aion-labs/aion-3.5, 2026-10-07).
+                        None if length_cut_nudges < MAX_LENGTH_CUT_NUDGES
+                            && last_assistant_text
+                                .contains(goose_providers::formats::openai::OUTPUT_TRUNCATED_BY_LENGTH.trim()) =>
+                        {
+                            length_cut_nudges += 1;
+                            warn!(
+                                "Reply cut at the output-token limit before any tool call; continuing ({}/{})",
+                                length_cut_nudges, MAX_LENGTH_CUT_NUDGES
+                            );
+                            let message = Message::user()
+                                .with_text(LENGTH_CUT_CONTINUATION)
+                                .with_visibility(false, true);
+                            messages_to_add.push(message);
+                        }
                         None if self.goal.lock().await.is_some() && !goal_check_pending => {
                             goal_check_pending = true;
                             let goal = self.goal.lock().await.clone().unwrap();

@@ -3233,6 +3233,10 @@ mod tests {
         struct EmptyThenTextProvider {
             call_count: AtomicUsize,
             empty_count: usize,
+            /// Instead of empty turns: replies cut at the output limit (reasoning + the stamp).
+            length_cut: bool,
+            /// The text of the last message of every request, in call order.
+            last_texts: std::sync::Mutex<Vec<String>>,
         }
 
         impl EmptyThenTextProvider {
@@ -3240,6 +3244,15 @@ mod tests {
                 Self {
                     call_count: AtomicUsize::new(0),
                     empty_count,
+                    length_cut: false,
+                    last_texts: std::sync::Mutex::new(Vec::new()),
+                }
+            }
+
+            fn length_cut(cut_count: usize) -> Self {
+                Self {
+                    length_cut: true,
+                    ..Self::new(cut_count)
                 }
             }
         }
@@ -3278,11 +3291,27 @@ mod tests {
                 &self,
                 _model_config: &ModelConfig,
                 _system_prompt: &str,
-                _messages: &[Message],
+                messages: &[Message],
                 _tools: &[Tool],
             ) -> Result<MessageStream, ProviderError> {
                 let call = self.call_count.fetch_add(1, Ordering::SeqCst);
-                if call < self.empty_count {
+                self.last_texts.lock().unwrap().push(
+                    messages
+                        .last()
+                        .map(|m| m.as_concat_text())
+                        .unwrap_or_default(),
+                );
+                if call < self.empty_count && self.length_cut {
+                    Ok(stream_from_single_message(
+                        Message::assistant()
+                            .with_thinking("Plan the whole app in one go", "")
+                            .with_text(
+                                goose_providers::formats::openai::OUTPUT_TRUNCATED_BY_LENGTH
+                                    .trim_start(),
+                            ),
+                        usage(),
+                    ))
+                } else if call < self.empty_count {
                     // Empty assistant turn: no text, no tool calls.
                     Ok(stream_from_single_message(Message::assistant(), usage()))
                 } else {
@@ -3386,6 +3415,50 @@ mod tests {
             assert!(
                 !persisted.iter().any(is_empty_assistant),
                 "retried empty turns must not be persisted: {persisted:?}"
+            );
+            Ok(())
+        }
+
+        /// A reply cut at the output-token limit before any tool call (aion-labs/aion-3.5,
+        /// 2026-10-07: reasoning only, 32,768 tokens) is neither the final answer nor an empty
+        /// turn: the model is told it was cut and keeps working.
+        #[tokio::test]
+        async fn test_length_cut_reply_is_continued_not_ended() -> Result<()> {
+            // The session-title request goes through the same provider; only the turn's requests count.
+            let turn = |p: &EmptyThenTextProvider| -> Vec<String> {
+                p.last_texts
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|t| !t.contains("Generate a short title"))
+                    .cloned()
+                    .collect()
+            };
+            let nudge = "cut off at the model's output-token limit";
+            // The title call and the first two turn calls are cut; the third turn call answers.
+            let provider = Arc::new(EmptyThenTextProvider::length_cut(3));
+            let (messages, _persisted) = run_reply(provider.clone(), "length-cut-continue").await?;
+            assert!(
+                concat_text(&messages).contains("All done."),
+                "{:?}",
+                concat_text(&messages)
+            );
+            let seen = turn(&provider);
+            assert_eq!(seen.len(), 3, "{seen:?}");
+            assert!(
+                seen[0].starts_with("Hi") && seen[1].contains(nudge) && seen[2].contains(nudge),
+                "{seen:?}"
+            );
+
+            // The nudge is bounded: a model that is always cut ends the turn after three.
+            let always = Arc::new(EmptyThenTextProvider::length_cut(usize::MAX));
+            run_reply(always.clone(), "length-cut-bounded").await?;
+            let seen = turn(&always);
+            assert_eq!(seen.len(), 4, "{seen:?}");
+            assert_eq!(
+                seen.iter().filter(|t| t.contains(nudge)).count(),
+                3,
+                "{seen:?}"
             );
             Ok(())
         }

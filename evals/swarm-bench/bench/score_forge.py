@@ -1262,9 +1262,15 @@ def deploy_findings(c: Ctx) -> List[Dict]:
             for key in ('partition', 'range'):
                 if i.get(key) is not None and not isinstance(i.get(key), list):
                     ent_problems.append(f"{e.get('name')}.{i.get('name')}: {key} {i.get(key)!r} is not a list")
+            # storage-reference/entities-manifest: range "can only have one attribute"; partition and range
+            # accept "all data types except any" (Qwen3.8 Max Prime's range [at, changeId], 2026-10-07).
+            if len(_dig_list(i, 'range')) > 1:
+                ent_problems.append(f"{e.get('name')}.{i.get('name')}: range has {len(_dig_list(i, 'range'))} attributes (one allowed)")
             for an in _dig_list(i, 'partition') + _dig_list(i, 'range'):
                 if an not in attrs:
                     ent_problems.append(f"{e.get('name')}.{i.get('name')}: {an} is not a declared attribute")
+                elif isinstance(attrs.get(an), dict) and attrs[an].get('type') == 'any':
+                    ent_problems.append(f"{e.get('name')}.{i.get('name')}: {an} is type any (not indexable)")
     rule('M7 KVS entity indexes name declared attributes within the documented limits', 'manifest', bool(entities),
          not ent_problems, 'would_fail', 'an index over an undeclared attribute or past the limits is refused', 'entities',
          '; '.join(ent_problems[:4]))

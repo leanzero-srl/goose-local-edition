@@ -969,6 +969,9 @@ class DeployReadinessTests(Golden):
         f = self.status('M7', self.mobs(shorthand))
         self.assertEqual(f['status'], 'fail')
         self.assertIn('is not a {type: …} mapping', f['where'])
+        two_range = self.mobs(lambda m: m['app']['storage']['entities'][0]['indexes'][0].update(
+            range=m['app']['storage']['entities'][0]['indexes'][0]['range'] * 2))
+        self.assertIn('(one allowed)', self.status('M7', two_range)['where'])
         bad_index = self.mobs(lambda m: m['app']['storage']['entities'][0]['indexes'][0].update(partition='sprintId'))
         self.assertIn('is not a list', self.status('M7', bad_index)['where'])
 
