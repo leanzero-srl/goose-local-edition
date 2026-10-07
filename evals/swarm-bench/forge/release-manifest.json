@@ -25,7 +25,7 @@
     "bench/probes/vendor_trace.py": "11a25b8b41dc612de2c551a279b6ff24cf3d2974e82807c24e0256ed404bb159",
     "bench/run_build.py": "d31af5f7dd0c395057778703b633b5be43b5f5ef333ba4e4b2a75b12e52b2208",
     "bench/score_build.py": "3c1fe96b5d43be3cb58cf8e6faca38ef0012062e1ce0dbca03c02c8d1cb59500",
-    "bench/score_forge.py": "106cfa6f45d7262405c99643c8bbf62c6e5e27122b1a6bc8bb0ae99db96981c7",
+    "bench/score_forge.py": "e3e45f7c965116d61fd0395b95fc7434e33fd91b2d81447da57ccf5faadc6e2d",
     "bench/vendor_service.py": "a0d255dfa5dc37af3d6039902f0c883d66fb218623e09a97df521754bb28dd3f",
     "forge/kit/FOLLOWUPS.md": "d52f60d8b53330ca358a552a667dd07cccc6aff1028a82aca09be3ebe7c94dd2",
     "forge/kit/README.md": "949e7bee758b6fc68de09a04dc9e69e31765f68b2b6937a90fa2dedac3c55a2c",
