@@ -37,6 +37,9 @@ function kvStore(env: Env): KVStore {
   };
 }
 
+// The Node adapter logs config warnings at boot; a Worker has no boot, so log them once per isolate.
+let warnedConfig = false;
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const deps: Deps = {
@@ -48,6 +51,10 @@ export default {
       config: parseConfig(env),
       waitUntil: (work) => ctx.waitUntil(work),
     };
+    if (!warnedConfig) {
+      warnedConfig = true;
+      for (const warning of deps.config.warnings) deps.log("config_error", { ...warning });
+    }
     return handleRequest(request, deps);
   },
 } satisfies ExportedHandler<Env>;

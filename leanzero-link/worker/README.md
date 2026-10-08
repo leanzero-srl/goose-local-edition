@@ -70,7 +70,8 @@ When `SITE_EVENTS_SANITY_*` is set, each successful verify also records one priv
 sign-in, `link-signin` after; `email`, `at`, `source` = `leanzero-link`) through Sanity's
 mutate API, AFTER the response is decided (Cloudflare: `ctx.waitUntil`). A failure is logged
 as `site_event_failed` and never affects the sign-in. Unset, nothing is sent. Half-set is a
-`config_error{site_events_partial_config}` at boot and the record stays off.
+`config_error{site_events_partial_config}` (at boot on the Node adapter, on the first request of each
+isolate on Cloudflare) and the record stays off.
 
 `audienceSync` values: `synced` (contact created, or already existed and was attached to
 the segment), `skipped` (no `RESEND_AUDIENCE_ID` configured), `failed` (Resend refused or

@@ -2,7 +2,7 @@ import { JWT_TTL_SECONDS, OTP_MAX_ATTEMPTS, RATE_WINDOW_SECONDS, VERIFY_RATE_LIM
 import type { Deps, KVStore } from "../lib/deps";
 import { jsonResponse, readJsonBody } from "../lib/http";
 import { signJwt } from "../lib/jwt";
-import { ensureNodeSecret, nodeSecretKey } from "../lib/nodeSecret";
+import { ensureNodeSecretStatus } from "../lib/nodeSecret";
 import { constantTimeEqual, hashOtp } from "../lib/otp";
 import { bumpFixedWindow } from "../lib/ratelimit";
 import { recordSiteEvent } from "../lib/siteEvent";
@@ -127,10 +127,9 @@ export async function handleVerify(request: Request, deps: Deps): Promise<Respon
   await deps.kv.delete(key);
   const iat = Math.floor(deps.now() / 1000);
   const token = await signJwt(secret, { sub: email, iat, exp: iat + JWT_TTL_SECONDS, ver: 1 });
-  // The account secret is minted on an email's FIRST successful verify, so its absence
-  // here is what makes this sign-in a new account (racing first sign-ins both say so).
-  const newAccount = (await deps.kv.get(nodeSecretKey(email))) === null;
-  const nodeSecret = await ensureNodeSecret(deps.kv, email, deps.log);
+  // The account secret is minted on an email's FIRST successful verify: minting it here is
+  // what makes this sign-in a new account.
+  const { secret: nodeSecret, created: newAccount } = await ensureNodeSecretStatus(deps.kv, email, deps.log);
   const audienceSync = await upsertAudienceContact(deps, email);
   deps.log("auth_verified", { email, audienceSync, newAccount });
   // After the answer, never in its way: the record is the operator's, not the user's.

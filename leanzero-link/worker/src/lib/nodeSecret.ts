@@ -21,7 +21,18 @@ export async function ensureNodeSecret(
   email: string,
   log: (event: string, fields?: Record<string, unknown>) => void,
 ): Promise<string> {
+  return (await ensureNodeSecretStatus(kv, email, log)).secret;
+}
+
+/// Same, and says whether THIS call minted the secret (= the account's first sign-in),
+/// decided inside the store's atomic update, so two racing first sign-ins report it once.
+export async function ensureNodeSecretStatus(
+  kv: KVStore,
+  email: string,
+  log: (event: string, fields?: Record<string, unknown>) => void,
+): Promise<{ secret: string; created: boolean }> {
   let secret: string | undefined;
+  let created = false;
   await kv.update(nodeSecretKey(email), (raw) => {
     if (raw !== null && NODE_SECRET_HEX.test(raw)) {
       secret = raw;
@@ -33,11 +44,12 @@ export async function ensureNodeSecret(
     const bytes = new Uint8Array(NODE_SECRET_BYTES);
     crypto.getRandomValues(bytes);
     secret = bytesToHex(bytes);
+    created = true;
     log("node_secret_minted", { email });
     return { value: secret };
   });
   if (secret === undefined) {
     throw new Error("kv.update did not run the node-secret mutator");
   }
-  return secret;
+  return { secret, created };
 }

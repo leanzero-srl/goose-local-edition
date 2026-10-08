@@ -165,11 +165,15 @@ function siteEventsConfig(env: WorkerEnvVars, warnings: ConfigWarning[]): Config
   if (projectId === undefined && token === undefined) {
     return undefined;
   }
-  if (projectId === undefined || token === undefined || !/^[a-z0-9-]+$/i.test(projectId)) {
+  if (projectId === undefined || token === undefined) {
     warnings.push({
       error: "site_events_partial_config",
       missing: [projectId === undefined ? "SITE_EVENTS_SANITY_PROJECT_ID" : "", token === undefined ? "SITE_EVENTS_SANITY_TOKEN" : ""].filter(Boolean),
     });
+    return undefined;
+  }
+  if (!/^[a-z0-9-]+$/i.test(projectId)) {
+    warnings.push({ error: "site_events_invalid_project_id" });
     return undefined;
   }
   return { projectId, token, dataset: nonEmpty(env.SITE_EVENTS_SANITY_DATASET) ?? "production" };
