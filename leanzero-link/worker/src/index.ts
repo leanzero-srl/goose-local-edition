@@ -38,7 +38,7 @@ function kvStore(env: Env): KVStore {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const deps: Deps = {
       kv: kvStore(env),
       fetchFn: (url, init) => fetch(url, init),
@@ -46,6 +46,7 @@ export default {
       randomOtp: generateOtp,
       log: (event, fields) => console.log(JSON.stringify({ event, ...fields })),
       config: parseConfig(env),
+      waitUntil: (work) => ctx.waitUntil(work),
     };
     return handleRequest(request, deps);
   },

@@ -13,6 +13,10 @@ export interface WorkerEnvVars {
   HEADSCALE_API_KEY?: string;
   HEADSCALE_LOGIN_SERVER?: string;
   ALLOWED_ORIGINS?: string;
+  // Optional operator activity record (lib/siteEvent.ts): all three unset = off.
+  SITE_EVENTS_SANITY_PROJECT_ID?: string;
+  SITE_EVENTS_SANITY_DATASET?: string;
+  SITE_EVENTS_SANITY_TOKEN?: string;
 }
 
 export const OTP_TTL_SECONDS = 600;
@@ -64,6 +68,8 @@ export interface Config {
   /// endpoint answers 500 with this text instead of 501 "not configured".
   meshConfigError: string | undefined;
   allowedOrigins: string[];
+  /// Where sign-ins are recorded for the operator's daily digest; undefined = off.
+  siteEvents: { projectId: string; dataset: string; token: string } | undefined;
   warnings: ConfigWarning[];
 }
 
@@ -148,8 +154,25 @@ export function parseConfig(env: WorkerEnvVars): Config {
     meshProvider,
     meshConfigError,
     allowedOrigins: origins.length > 0 ? origins : ["*"],
+    siteEvents: siteEventsConfig(env, warnings),
     warnings,
   };
+}
+
+function siteEventsConfig(env: WorkerEnvVars, warnings: ConfigWarning[]): Config["siteEvents"] {
+  const projectId = nonEmpty(env.SITE_EVENTS_SANITY_PROJECT_ID);
+  const token = nonEmpty(env.SITE_EVENTS_SANITY_TOKEN);
+  if (projectId === undefined && token === undefined) {
+    return undefined;
+  }
+  if (projectId === undefined || token === undefined || !/^[a-z0-9-]+$/i.test(projectId)) {
+    warnings.push({
+      error: "site_events_partial_config",
+      missing: [projectId === undefined ? "SITE_EVENTS_SANITY_PROJECT_ID" : "", token === undefined ? "SITE_EVENTS_SANITY_TOKEN" : ""].filter(Boolean),
+    });
+    return undefined;
+  }
+  return { projectId, token, dataset: nonEmpty(env.SITE_EVENTS_SANITY_DATASET) ?? "production" };
 }
 
 export interface Capabilities {

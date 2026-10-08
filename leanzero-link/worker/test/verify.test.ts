@@ -270,3 +270,69 @@ describe("POST /v1/auth/verify", () => {
     expect(h.logs.find((l) => l.event === "config_error")?.fields).toEqual({ error: "LINK_JWT_SECRET is 20 bytes; at least 32 required" });
   });
 });
+
+describe("operator activity record (SITE_EVENTS_SANITY_*)", () => {
+  const SANITY_URL = "https://proj1.api.sanity.io/v2025-01-01/data/mutate/production";
+  const SINK_ENV = { ...FULL_ENV, SITE_EVENTS_SANITY_PROJECT_ID: "proj1", SITE_EVENTS_SANITY_TOKEN: "sk_test" };
+  const settle = async (): Promise<void> => {
+    for (let i = 0; i < 10; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+  };
+  const sinkFetch = (status = 200) => (url: string, init?: RequestInit) =>
+    url === SANITY_URL ? jsonRes(status, { transactionId: "t1" }) : resendHappyFetch(url, init);
+
+  async function signIn(h: TestHarness, code: string): Promise<Response> {
+    const sent = await handleRequestCode(postJson("/v1/auth/request-code", { email: EMAIL }, IP), h.deps);
+    expect(sent.status).toBe(200);
+    return handleVerify(postJson("/v1/auth/verify", { email: EMAIL, code }), h.deps);
+  }
+
+  it("records link-signup on the first sign-in and link-signin after, as private siteEvent docs", async () => {
+    const h = makeHarness({ env: SINK_ENV, fetchHandler: sinkFetch(), otp: ["111111", "222222"] });
+    expect((await signIn(h, "111111")).status).toBe(200);
+    expect((await signIn(h, "222222")).status).toBe(200);
+    await settle();
+    const sinkCalls = h.calls.filter((c) => c.url === SANITY_URL);
+    expect(sinkCalls).toHaveLength(2);
+    const docs = sinkCalls.map((c) => (jsonBody(c.init) as { mutations: Array<{ create: Record<string, unknown> }> }).mutations[0]!.create);
+    expect(docs.map((d) => d.kind)).toEqual(["link-signup", "link-signin"]);
+    for (const d of docs) {
+      expect(d._type).toBe("siteEvent");
+      expect(String(d._id)).toMatch(/^siteEvent\.[0-9a-f-]{36}$/);
+      expect(d.email).toBe(EMAIL);
+      expect(d.source).toBe("leanzero-link");
+      expect(d.at).toBe(new Date(h.clock.now()).toISOString());
+    }
+    expect((sinkCalls[0]!.init?.headers as Record<string, string>).Authorization).toBe("Bearer sk_test");
+  });
+
+  it("a failing record never fails the sign-in", async () => {
+    const h = makeHarness({ env: SINK_ENV, fetchHandler: sinkFetch(500) });
+    const response = await signIn(h, "123456");
+    expect(response.status).toBe(200);
+    await settle();
+    expect(h.logs.some((l) => l.event === "site_event_failed")).toBe(true);
+  });
+
+  it("is off without the env: no call anywhere but Resend", async () => {
+    const h = makeHarness({ fetchHandler: resendHappyFetch });
+    expect((await signIn(h, "123456")).status).toBe(200);
+    await settle();
+    expect(h.calls.every((c) => c.url.startsWith("https://api.resend.com/"))).toBe(true);
+  });
+
+  it("hands the record to waitUntil when the runtime has one (Cloudflare)", async () => {
+    const h = makeHarness({ env: SINK_ENV, fetchHandler: sinkFetch() });
+    const kept: Array<Promise<unknown>> = [];
+    h.deps.waitUntil = (work) => kept.push(work);
+    expect((await signIn(h, "123456")).status).toBe(200);
+    expect(kept).toHaveLength(1);
+    await Promise.all(kept);
+    expect(h.calls.filter((c) => c.url === SANITY_URL)).toHaveLength(1);
+  });
+
+  it("a half-set sink is a config warning, not a guess", () => {
+    const h = makeHarness({ env: { ...FULL_ENV, SITE_EVENTS_SANITY_TOKEN: "sk_test" } });
+    expect(h.deps.config.siteEvents).toBeUndefined();
+    expect(h.deps.config.warnings.map((w) => w.error)).toContain("site_events_partial_config");
+  });
+});

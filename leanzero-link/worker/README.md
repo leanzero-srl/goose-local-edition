@@ -65,6 +65,13 @@ returned unchanged by every later `/verify` and `/mesh/join-key`. Every device o
 account derives the same node token from it; it is never derivable from the email and is
 only ever returned to a caller holding a valid OTP or identity JWT.
 
+When `SITE_EVENTS_SANITY_*` is set, each successful verify also records one private
+`siteEvent` document (`_id` = `siteEvent.<uuid>`, `kind` = `link-signup` on the email's first
+sign-in, `link-signin` after; `email`, `at`, `source` = `leanzero-link`) through Sanity's
+mutate API, AFTER the response is decided (Cloudflare: `ctx.waitUntil`). A failure is logged
+as `site_event_failed` and never affects the sign-in. Unset, nothing is sent. Half-set is a
+`config_error{site_events_partial_config}` at boot and the record stays off.
+
 `audienceSync` values: `synced` (contact created, or already existed and was attached to
 the segment), `skipped` (no `RESEND_AUDIENCE_ID` configured), `failed` (Resend refused or
 was unreachable — details in the worker logs).
@@ -133,6 +140,9 @@ answers 204 with `GET, POST, OPTIONS` and `Content-Type, Authorization`.
 | `TS_NODE_TAG` | var | — | `tag:leanzero-link` |
 | `TS_KEY_EXPIRY_SECONDS` | var | — | `600` |
 | `ALLOWED_ORIGINS` | var | — | `*` |
+| `SITE_EVENTS_SANITY_PROJECT_ID` | var | operator activity record (optional) — Sanity project that receives one private `siteEvent` document per successful sign-in | — (off) |
+| `SITE_EVENTS_SANITY_DATASET` | var | operator activity record | `production` |
+| `SITE_EVENTS_SANITY_TOKEN` | secret | operator activity record — a Sanity token with write access | — (off) |
 | `LINK_KV` | KV binding | OTP storage + rate limits | — (required) |
 
 `TS_API_TOKEN` containing a `:` is treated as an OAuth client and exchanged at

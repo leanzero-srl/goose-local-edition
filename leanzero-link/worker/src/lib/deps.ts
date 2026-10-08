@@ -25,4 +25,7 @@ export interface Deps {
   randomOtp: () => string;
   log: (event: string, fields?: Record<string, unknown>) => void;
   config: Config;
+  /// Keeps work that runs after the response alive (Cloudflare's ctx.waitUntil). Absent on
+  /// the Node adapter, where a pending promise simply finishes; the work never rejects.
+  waitUntil?: (work: Promise<unknown>) => void;
 }
