@@ -2093,14 +2093,19 @@ def _(c):
     reads = _ledger_reads(c)
     indexes = _sprint_indexes(c)
     sprints = set(c.oracle.sprints) if c.oracle else set()
+    # 2.0 reads the ledger by issue too (R4 marks a deleted issue's rows, R6 an issue's deployments): a query on any
+    # declared index of the entity with its partition given is a read by index; only a scan is not.
+    declared = {str(e.get('name')): {str(i.get('name')) for i in e.get('indexes') or [] if isinstance(i, dict)} for e in _entities(c)}
     ok = 0
     for call in reads:
         body = call['body']
         part = body.get('partition') or []
-        if (_kvs_op(call) == 'entity/query' and body.get('indexName') in indexes.get(body.get('entityName'), set())
-                and len(part) == 1 and _leaf_text(part[0]) in sprints):
+        name, entity = body.get('indexName'), body.get('entityName')
+        by_sprint = name in indexes.get(entity, set()) and len(part) == 1 and _leaf_text(part[0]) in sprints
+        by_other = name in declared.get(entity, set()) and name not in indexes.get(entity, set()) and bool(part)
+        if _kvs_op(call) == 'entity/query' and (by_sprint or by_other):
             ok += 1
-    return g(ok / len(reads), f'{ok}/{len(reads)} ledger reads are entity queries on the sprint index',
+    return g(ok / len(reads), f'{ok}/{len(reads)} ledger reads are entity queries on a declared index',
              'the ledger is scanned instead of read by its index')
 
 
@@ -2414,7 +2419,10 @@ def _(c):
     conds = {'no_config_needs_config_only': bool((w.get('noConfig') or {}).get('onlyNeedsConfig'))}
     for i, p in enumerate(e.get('picks') or []):
         want = c.oracle.sprints_of_board(str(p.get('board')))
-        conds[f'pick{i}_view_shows_board'] = [str(x) for x in p.get('viewSprints') or []] == want and bool(want)
+        # A board whose active sprints the world closed (SPEC §2.5) shows none: its empty view is the right one.
+        had = any(str(s.get('originBoardId')) == str(p.get('board')) and s.get('state') == 'active'
+                  for s in c.oracle.sprints.values())
+        conds[f'pick{i}_view_shows_board'] = [str(x) for x in p.get('viewSprints') or []] == want and (bool(want) or had)
         conds[f'pick{i}_reopen_pressed'] = [str(x) for x in p.get('reopenPressed') or []] == [str(p.get('board'))]
     second = w.get('secondInstance') or {}
     want2 = c.oracle.sprints_of_board(str(second.get('configBoard')))
