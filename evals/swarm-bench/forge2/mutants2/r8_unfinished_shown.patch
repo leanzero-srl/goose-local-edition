@@ -1,0 +1,12 @@
+diff --git a/src/explain.js b/src/explain.js
+--- a/src/explain.js
++++ b/src/explain.js
+@@ -63,7 +63,7 @@ function tokensOf(response, promptChars) {
+ // other tool call (a model can be steered by issue text) is never acted on.
+ function readAnswer(response, view) {
+   const choice = response?.choices?.[0];
+-  if (!choice || typeof choice.finish_reason !== 'string' || !choice.finish_reason) return { error: 'The model answer was incomplete (no finish reason), so it is not shown.' };
++  if (!choice) return { error: 'The model answer was incomplete (no finish reason), so it is not shown.' };
+   const calls = (response.choices ?? []).flatMap((c) => c.message?.tool_calls ?? []);
+   const call = calls.find((t) => t.function?.name === 'report_scope');
+   const foreign = calls.filter((t) => t.function?.name !== 'report_scope').map((t) => t.function?.name);

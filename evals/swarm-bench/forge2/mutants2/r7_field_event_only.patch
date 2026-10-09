@@ -1,0 +1,11 @@
+diff --git a/src/sync.js b/src/sync.js
+--- a/src/sync.js
++++ b/src/sync.js
+@@ -353,7 +353,6 @@ export async function reconcileAll(cfg, previous, work) {
+     const closed = [...new Set([...Object.keys(previous?.sprints ?? {}), ...(previous?.closed ?? [])])];
+     const skip = new Set([...candidateIds, ...values.keys(), ...deleted]);
+     for (const [id, value] of await closedSprintStatuses(active, closed, skip)) values.set(id, value);
+-    if (values.size) statuses = await writeStatuses(cfg.scopeFieldId, values, work);
+   }
+   await kvs.set(RECONCILE_KEY, { startedAt, fields });
+   return { issues: issues.length, rows, members, statuses, deleted: deleted.length, sprintIds: [...changed] };

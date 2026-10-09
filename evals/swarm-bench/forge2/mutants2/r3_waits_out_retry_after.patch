@@ -1,0 +1,13 @@
+diff --git a/src/jira.js b/src/jira.js
+--- a/src/jira.js
++++ b/src/jira.js
+@@ -250,7 +250,8 @@ export async function jira(who, path, init = {}, work = { maxWaitSeconds: Infini
+     if (work.background) {
+       if (reason === QUOTA_REASON) {
+         await work.pause(wait);
+-        throw new RateLimited(wait, reason);
++        await sleep(wait * 1000 + 50);
++        continue;
+       }
+       if (reason === BURST_REASON) work.slow(endpointOf(method, path));
+       if (reason === ISSUE_REASON) work.delayIssues(writtenIssues(method, path, init), wait);

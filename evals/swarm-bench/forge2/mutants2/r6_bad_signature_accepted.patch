@@ -1,0 +1,12 @@
+diff --git a/src/ci.js b/src/ci.js
+--- a/src/ci.js
++++ b/src/ci.js
+@@ -30,7 +30,7 @@ function header(request, name) {
+ function signatureValid(secret, timestamp, rawBody, given) {
+   const expected = Buffer.from(`sha256=${createHmac('sha256', secret).update(`${timestamp}.${rawBody}`, 'utf8').digest('hex')}`);
+   const actual = Buffer.from(given.trim().toLowerCase());
+-  return actual.length === expected.length && timingSafeEqual(actual, expected);
++  return actual.length === expected.length || timingSafeEqual(actual, expected);
+ }
+ 
+ function parseEvent(rawBody) {

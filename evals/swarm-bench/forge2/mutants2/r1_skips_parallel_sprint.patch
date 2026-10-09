@@ -1,0 +1,15 @@
+diff --git a/src/migrate.js b/src/migrate.js
+--- a/src/migrate.js
++++ b/src/migrate.js
+@@ -37,9 +37,8 @@ async function countV1(sprintId) {
+ async function plan(work) {
+   const boardOf = new Map();
+   for (const board of await listScrumBoards(work)) {
+-    for (const s of await listSprints(board.id, 'active,closed', work)) {
+-      if (!boardOf.has(String(s.id))) boardOf.set(String(s.id), String(s.originBoardId ?? board.id));
+-    }
++    const [s] = await listSprints(board.id, 'active', work);
++    if (s && !boardOf.has(String(s.id))) boardOf.set(String(s.id), String(s.originBoardId ?? board.id));
+   }
+   for (const s of Object.values((await loadConfig())?.sprints ?? {})) if (!boardOf.has(String(s.id))) boardOf.set(String(s.id), String(s.boardId));
+   const sprints = [];
