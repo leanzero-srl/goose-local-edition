@@ -34,7 +34,6 @@ MUTANTS = ROOT / 'forge2' / 'mutants'
 STARTER = ROOT / 'forge2' / 'starter'
 IDLE_MAX = 0.05     # DESIGN §8.6 (6) / §13.4 item 6
 STARTER_MAX = 0.30  # SPEC §5: "starter untouched <= 0.30"
-FAMILIES = ('R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7', 'R8', 'R9')   # SPEC §4 (score_forge2.FAMILY_WEIGHT, asserted)
 
 
 KEEP = None  # a directory where every verdict is kept (--keep)
@@ -132,10 +131,10 @@ def judge(golden: Dict, mutant: Dict, expect: Dict, root_blocks: Dict[str, tuple
     return fails
 
 
-def family_gaps(mutants: Dict[str, Dict], tier_of: Dict[str, str]) -> List[str]:
+def family_gaps(mutants: Dict[str, Dict], tier_of: Dict[str, str], families) -> List[str]:
     """SPEC §5: "one mutant per R-family loses its rows" — the families with no PASSING mutant that lost a row of it."""
     covered = {tier_of.get(n) for entry in mutants.values() if not entry.get('fails') for n in entry.get('lost') or []}
-    return [fam for fam in FAMILIES if fam not in covered]
+    return [fam for fam in families if fam not in covered]
 
 
 def _materialise(src: Path, dest: Path) -> None:
@@ -261,7 +260,7 @@ def main(argv=None) -> int:
             report['mutants_missing'] = f'no *.patch under {MUTANTS} (SPEC §5: one mutant per R-family)'
             failed = True
         if not a.only:
-            uncovered = family_gaps(report['mutants'], score_forge2.TIER_OF)
+            uncovered = family_gaps(report['mutants'], score_forge2.TIER_OF, tuple(score_forge2.FAMILY_WEIGHT))
             report['family_coverage'] = {'uncovered': uncovered}
             failed |= bool(uncovered)
         for label, build, cap in (('starter_untouched', starter_untouched, STARTER_MAX),
