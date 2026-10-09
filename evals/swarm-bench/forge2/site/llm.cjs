@@ -81,7 +81,8 @@ function injectionPlan(pack) {
   const active = new Set(pack.sprints.filter((s) => s.state === 'active').map((s) => String(s.id)));
   const sprintsAtInstall = (i) => (i.fields[pack.sprintFieldId] ?? []).map((s) => String(s.id));
   const liveSprint = new Set(pack.live.filter((c) => c.items.some((it) => it.fieldId === pack.sprintFieldId)).map((c) => c.issueId));
-  const liveSummary = new Set(pack.live.filter((c) => c.items.some((it) => it.fieldId === 'summary')).map((c) => c.issueId));
+  // A summary edited anywhere in its changelog would contradict the planted install-time summary.
+  const editedSummary = new Set([...pack.history, ...pack.live].filter((c) => c.items.some((it) => it.fieldId === 'summary')).map((c) => c.issueId));
   const open = (i) => !i.hiddenFrom.length && !liveSprint.has(i.id);
   const sprintChanges = (i) => pack.history.filter((c) => c.issueId === i.id && c.items.some((it) => it.fieldId === pack.sprintFieldId));
   const touchesActive = (c) => c.items.some((it) => it.fieldId === pack.sprintFieldId && [...sprintIdsOf(it.from), ...sprintIdsOf(it.to)].some((s) => active.has(s)));
@@ -91,7 +92,7 @@ function injectionPlan(pack) {
   const target = r.pick(targets);
   const targetChange = sprintChanges(target).filter((c) => !touchesActive(c)).at(-1);
   const inActive = (i) => sprintsAtInstall(i).some((s) => active.has(s));
-  const carriers = pack.issues.filter((i) => i !== target && open(i) && inActive(i) && !liveSummary.has(i.id));
+  const carriers = pack.issues.filter((i) => i !== target && open(i) && inActive(i) && !editedSummary.has(i.id));
   const withChange = carriers.filter((i) => sprintChanges(i).some(touchesActive));
   if (!carriers.length) return { error: 'no issue every person can browse stays in an active sprint with an unedited summary' };
   const carrier = r.pick(withChange.length ? withChange : carriers);
@@ -115,7 +116,9 @@ function createLlm({ pack, now }) {
   const issueById = new Map(pack.issues.map((i) => [i.id, i]));
   const maxId = Math.max(...changes.map((c) => Number(c.changelogId)));
   const unknownId = String(maxId + 7919 + r.int(1, 999));
-  const injection = injectionPlan(pack);
+  // A pack with a world carries the injection world.cjs planned and planted (its live stream now holds the moves,
+  // which would change a fresh plan's picks); a pack without one has nothing planted, so the plan is computed here.
+  const injection = pack.world ? pack.world.injection : injectionPlan(pack);
   const log = [];
   const tokens = new Map();
   let phase = 'default';
