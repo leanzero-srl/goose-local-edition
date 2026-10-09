@@ -199,14 +199,14 @@ function planWorld(pack, { scoring = false } = {}) {
       const target = Math.round(start + f * (end - start));
       const ev = plan[cls](target);
       events.push({ class: cls, atMs: target, ...ev });
-  }
-  events.sort((a, b) => a.atMs - b.atMs);
-  const prefix = `world-${pack.seed.slice(0, 6)}`;
-  return {
-    window: { start: iso(start), end: iso(end) },
-    injection,
-    events: events.map((e, n) => ({ id: `${prefix}-${n + 1}`, class: e.class, at: iso(e.atMs), ...e })),
-  };
+    }
+    events.sort((a, b) => a.atMs - b.atMs);
+    const prefix = `world-${pack.seed.slice(0, 6)}`;
+    return {
+      window: { start: iso(start), end: iso(end) },
+      injection,
+      events: events.map((e, n) => ({ id: `${prefix}-${n + 1}`, class: e.class, at: iso(e.atMs), ...e })),
+    };
   }
 }
 
