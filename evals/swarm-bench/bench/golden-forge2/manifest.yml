@@ -4,6 +4,14 @@ modules:
       function: on-issue-updated
       events:
         - avi:jira:updated:issue
+    - key: scope-issue-deleted
+      function: on-issue-deleted
+      events:
+        - avi:jira:deleted:issue
+    - key: scope-app-upgraded
+      function: on-app-upgraded
+      events:
+        - avi:forge:upgraded:app
   consumer:
     - key: scope-ledger-consumer
       queue: scope-ledger
@@ -69,6 +77,41 @@ modules:
       name: Scope Ledger
       tools:
         - get-sprint-scope
+  jira:adminPage:
+    - key: scope-admin
+      title: Scope Ledger
+      resource: admin
+      render: native
+      resolver:
+        function: admin-resolver
+  jira:customField:
+    - key: scope-status
+      name: Scope status
+      description: Where the issue stands in its active sprint's scope - committed, added +points, or removed. Written by Scope Ledger.
+      type: string
+      readOnly: true
+  webtrigger:
+    - key: ci-deploy
+      function: on-ci-deploy
+      response:
+        type: static
+        outputs:
+          - key: accepted
+            statusCode: 202
+            contentType: application/json
+            body: '{"status":"accepted"}'
+          - key: duplicate
+            statusCode: 200
+            contentType: application/json
+            body: '{"status":"duplicate"}'
+          - key: unauthorized
+            statusCode: 401
+            contentType: application/json
+            body: '{"error":"invalid signature"}'
+          - key: invalid
+            statusCode: 400
+            contentType: application/json
+            body: '{"error":"invalid event"}'
   llm:
     - key: scope-ledger-llm
       model:
@@ -76,6 +119,10 @@ modules:
   function:
     - key: on-issue-updated
       handler: index.onIssueUpdated
+    - key: on-issue-deleted
+      handler: index.onIssueDeleted
+    - key: on-app-upgraded
+      handler: index.onAppUpgraded
     - key: consume-change
       handler: index.consumeChange
       timeoutSeconds: 900
@@ -84,6 +131,10 @@ modules:
       timeoutSeconds: 900
     - key: ui-resolver
       handler: index.uiResolver
+    - key: admin-resolver
+      handler: index.adminResolver
+    - key: on-ci-deploy
+      handler: index.ciDeploy
     - key: rovo-get-sprint-scope
       handler: index.getSprintScope
 resources:
@@ -93,6 +144,8 @@ resources:
     path: static/widget-edit/build
   - key: sprint
     path: static/sprint/build
+  - key: admin
+    path: src/frontend/admin.jsx
 permissions:
   scopes:
     - read:jira-work
@@ -102,12 +155,54 @@ permissions:
     - read:board-scope.admin:jira-software
     - read:sprint:jira-software
     - read:project:jira
+    - read:jira-user
 app:
   id: ari:cloud:ecosystem::app/00000000-0000-0000-0000-000000000000
   runtime:
     name: nodejs22.x
   storage:
     entities:
+      - name: scope-ledger
+        attributes:
+          sprintId:
+            type: string
+          at:
+            type: float
+          changeId:
+            type: string
+          kind:
+            type: string
+          issueId:
+            type: string
+          issueKey:
+            type: string
+          estimate:
+            type: float
+          boardId:
+            type: string
+          estimateField:
+            type: string
+          deleted:
+            type: boolean
+          deployedEnvs:
+            type: string
+          authorId:
+            type: string
+          authorName:
+            type: string
+          source:
+            type: string
+        indexes:
+          - name: by-sprint
+            partition:
+              - sprintId
+            range:
+              - at
+          - name: by-issue
+            partition:
+              - issueId
+            range:
+              - at
       - name: scope-change
         attributes:
           sprintId:
@@ -148,6 +243,8 @@ app:
             type: boolean
           estimate:
             type: float
+          deleted:
+            type: boolean
         indexes:
           - name: by-sprint
             partition:

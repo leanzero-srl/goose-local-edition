@@ -72,6 +72,7 @@ export async function personView(sprint, policy) {
         at: iso(c.at),
         by: c.authorName,
         source: c.source,
+        deployedTo: c.deployedEnvs ? c.deployedEnvs.split(',') : [],
       };
     });
   return { sprint, ...totalsView(totals), hiddenCount: changes.length - rows.length, changes: rows };
@@ -95,7 +96,9 @@ export function summaryDoc(issueKey, sprintName, creepText, totalsText) {
   };
 }
 
-export async function postSummary(sprint, changeId, policy) {
+// commentGroup (admin setting): when set, the comment is visible to that group only; empty = everyone who
+// can browse the issue.
+export async function postSummary(sprint, changeId, policy, commentGroup) {
   const { changes, totals } = await sprintTotals(sprint.id);
   const change = changes.find((c) => c.changeId === String(changeId));
   if (!change) return { ok: false, error: `Change ${changeId} is not in sprint ${sprint.name}.` };
@@ -103,6 +106,8 @@ export async function postSummary(sprint, changeId, policy) {
   if (!visible.has(change.issueId)) return { ok: false, error: 'You cannot browse this issue.' };
   const issueKey = visible.get(change.issueId);
   const view = totalsView(totals);
-  await jiraJson('user', route`/rest/api/3/issue/${change.issueId}/comment`, postJson({ body: summaryDoc(issueKey, sprint.name, view.text.creep, view.text) }), policy);
+  const comment = { body: summaryDoc(issueKey, sprint.name, view.text.creep, view.text) };
+  if (commentGroup) comment.visibility = { type: 'group', value: commentGroup };
+  await jiraJson('user', route`/rest/api/3/issue/${change.issueId}/comment`, postJson(comment), policy);
   return { ok: true, issueKey };
 }

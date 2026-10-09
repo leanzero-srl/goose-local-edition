@@ -1,9 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { events, realtime, view } from '@forge/bridge';
-import { boot, call } from '../../shared/bridge';
-import '../../shared/base.css';
-import './widget.css';
+import { call } from '../../shared/bridge';
 
 const SERIES = ['committed', 'added', 'removed'];
 const LABELS = { committed: 'Committed', added: 'Added', removed: 'Removed', creep: 'Creep' };
@@ -82,9 +80,16 @@ function safeJson(text) {
   }
 }
 
-function Widget({ initialContext }) {
+// The boot script (boot.js) painted the first data from the one resolver call; the app starts from it.
+function stateOf(data) {
+  if (!data || data.needsConfig) return { phase: 'needs-config' };
+  if (data.ok === false) return { phase: 'error', message: data.error };
+  return { phase: 'ready', data };
+}
+
+function Widget({ initialContext, initialData }) {
   const [context, setContext] = useState(initialContext);
-  const [state, setState] = useState({ phase: 'loading' });
+  const [state, setState] = useState(() => stateOf(initialData));
   const boardId = context?.extension?.config?.boardId;
 
   const [live, setLive] = useState(false);
@@ -132,7 +137,16 @@ function Widget({ initialContext }) {
     }
   }
 
+  const booted = useRef(true);
   useEffect(() => {
+    if (booted.current) {
+      booted.current = false;
+      if (state.phase === 'ready') {
+        shownSprints.current = new Set(state.data.sprints.map((s) => s.id));
+        if (state.data.realtime && !subscription.current) subscribe(state.data.realtime);
+      }
+      return;
+    }
     load();
   }, [load]);
 
@@ -191,4 +205,5 @@ function Widget({ initialContext }) {
   );
 }
 
-boot((context) => createRoot(document.getElementById('root')).render(<Widget initialContext={context} />));
+const booted = window.__scopeBoot;
+createRoot(document.getElementById('root')).render(<Widget initialContext={booted.context} initialData={booted.data} />);

@@ -1,9 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { router, showFlag, view } from '@forge/bridge';
-import { boot, call, formatInstant } from '../../shared/bridge';
-import '../../shared/base.css';
-import './sprint.css';
+import { call, formatInstant } from '../../shared/bridge';
 
 const METRICS = [
   ['committed', 'Committed'],
@@ -19,6 +17,7 @@ const COLUMNS = [
   ['by', 'By'],
   ['at', 'When'],
   ['source', 'Source'],
+  ['deployed', 'Deployed'],
 ];
 
 const isNumeric = (s) => /^\d+$/.test(s);
@@ -183,6 +182,7 @@ function Ledger({ data, context }) {
                   <time dateTime={r.at}>{formatInstant(r.at, context)}</time>
                 </td>
                 <td data-col="source">{r.source}</td>
+                <td data-col="deployed">{r.deployedTo.map((env) => `Deployed to ${env}`).join(', ')}</td>
               </tr>
             ))}
           </tbody>
@@ -219,13 +219,13 @@ function Ledger({ data, context }) {
   );
 }
 
-function SprintAction({ context }) {
-  const [state, setState] = useState({ phase: 'loading' });
-  useEffect(() => {
-    call('sprintLedger')
-      .then((data) => setState(data.error ? { phase: 'error', message: data.error } : { phase: data.notStarted ? 'not-started' : 'ready', data }))
-      .catch((e) => setState({ phase: 'error', message: e?.message ?? String(e) }));
-  }, []);
+// The boot script (boot.js) painted the first data from the one sprintLedger call; the app starts from it.
+function SprintAction({ context, initialData }) {
+  const [state] = useState(() =>
+    !initialData || initialData.error
+      ? { phase: 'error', message: initialData?.error ?? 'The sprint could not be loaded.' }
+      : { phase: initialData.notStarted ? 'not-started' : 'ready', data: initialData },
+  );
 
   if (state.phase === 'not-started') {
     return (
@@ -257,4 +257,5 @@ function SprintAction({ context }) {
   );
 }
 
-boot((context) => createRoot(document.getElementById('root')).render(<SprintAction context={context} />));
+const booted = window.__scopeBoot;
+createRoot(document.getElementById('root')).render(<SprintAction context={booted.context} initialData={booted.data} />);
