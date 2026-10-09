@@ -175,7 +175,7 @@ class Numbers(unittest.TestCase):
                                 'Fresh within the same virtual hour as the change',
                                 'at most 3 attempts per virtual minute', 'no `finish_reason`',
                                 'within 10 virtual minutes', 'at most 1 `invoke` before their first data paint',
-                                'at most 150 KB of JavaScript and CSS', 'never request another origin',
+                                'at most 150 KB (153,600 bytes) of JavaScript and CSS', 'never request another origin',
                                 'The admin page makes at most 1 `invoke` before its first render',
                                 'render: native', '`jira:adminPage`')
 

@@ -199,11 +199,11 @@ v2 keeps its ledger in a NEW entity `scope-ledger`:
   `issueKey` string, `estimate` float, `boardId` string, `estimateField` string, `deleted` boolean, `deployedEnvs`
   string; index `by-sprint`, partition `[sprintId]`, range `[at]`. A named index takes exactly ONE range attribute:
   Forge refuses more at lint and at deploy. Add attributes and indexes as you need; row keys are yours to choose.
-- Per row: `at` the change time in epoch milliseconds; `kind` `added` or `removed`; `estimate` the issue's points in
-  the estimation field the sprint's board uses at the time of the change, read when the row is written (no value =
-  0); `estimateField` that field's id; `boardId` that board's id; `deleted` true once the issue is deleted (§12);
-  `deployedEnvs` the environments the issue was deployed to (§14), comma-separated, each once (empty when none).
-  Once written, a row's `estimate`, `estimateField` and `boardId` never change.
+- Per row: `at` the change time in epoch milliseconds; `kind` `added` or `removed`; `estimate` the issue's points
+  when the row is written, in the estimation field the sprint's board uses then (no value = 0); `estimateField` that
+  field's id; `boardId` that board's id; `deleted` true once the issue is deleted (§12); `deployedEnvs` the
+  environments the issue was deployed to (§14), comma-separated, each once (empty when none). Once written, a row's
+  `estimate`, `estimateField` and `boardId` never change.
 
 Migration guarantees (graded):
 - Every `scope-change` row appears in `scope-ledger` exactly once, as the same change (changelog id + sprint) with its
@@ -244,7 +244,7 @@ transaction condition → 400 `CONDITIONAL_CHECK_FAILED`; a transaction of more 
 
 Guarantees (graded; the site's own accounting per virtual hour and per invocation is what is measured):
 - Background work never takes more than `Background share (%)` of any virtual hour's quota (default 70 % = 1,680
-  points). Below 480 remaining points nothing tells the app its spend, so it keeps its own count.
+  points). Until fewer than 480 points remain no response shows the spend, so the app keeps its own count.
 - No person-facing request is ever answered with a quota 429. The harness's own person-facing traffic in any hour stays
   below the share your background leaves free.
 - The backfill and every reconciliation finish correctly inside that budget (§3).
@@ -373,7 +373,7 @@ the end of each scored hour.
   its `changeIds` that are visible changes of this sprint for this viewer are shown. No tool call makes the app do
   anything but show that validated explanation.
 - **429:** Forge LLM answers 429 without a Retry-After. Back off between attempts (never retry at once), at most 3
-  attempts per virtual minute; then show the error flag.
+  attempts per virtual minute, then show the error flag.
 - **Incomplete answers:** a response or stream whose final choice has no `finish_reason` is a failure: show the error
   flag, never its content.
 - **Cache:** an identical explanation request (same sprint, same content sent to the model for what this viewer may
@@ -381,13 +381,14 @@ the end of each scored hour.
   served an explanation built from changes they cannot see.
 - **Admin controls, enforced server-side:** with `AI explanations enabled` off, or once the virtual day's tokens (the
   `usage.total_tokens` each Forge LLM response reports) reach `Daily AI token budget`, the explain resolver makes no
-  Forge LLM call, even when invoked directly, and the modal shows the error flag.
+  Forge LLM call, even when invoked directly, and the modal shows the error flag. A virtual day is a UTC calendar
+  day of the virtual clock.
 
 ## 17. Boot budget (Custom UI)
 
 Counted, never timed (graded):
 - The widget view and the sprint action each make at most 1 `invoke` before their first data paint, load at most 150
-  KB of JavaScript and CSS before it, and never request another origin. First data paint: the first moment the
+  KB (153,600 bytes) of JavaScript and CSS before it, and never request another origin. First data paint: the first moment the
   surface shows its `[data-metric]` numbers, or `[data-testid="needs-config"]` (widget) or
   `[data-testid="not-started"]` (sprint action). Bytes: your own `.js` and `.css` files as served, uncompressed; the
   platform's injected scripts and the Atlassian design-token stylesheets do not count.

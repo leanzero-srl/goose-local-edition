@@ -61,7 +61,7 @@ command prints every flag):
 | `scheduled <moduleKey>` | runs a scheduled trigger once, then drains the queues |
 | `serve <moduleKey> [--edit] [--sprint <id>] [--config <json>] [--theme light\|dark] [--as <accountId>]` | serves a Custom UI module with the Forge bridge and the dashboard host emulated, prints its URL and runs until stopped (start it in the background); its log prints every bridge call the page makes. In a served edit surface, `window.__forgeHost.save()` performs the dashboard's Save. |
 | `uikit <moduleKey>` | renders a UI Kit (`render: native`) module with the real `@forge/react` reconciler, its resolver calls going to the dev site, and prints the tree it produced |
-| `ci send` | signs a deployment event the way CI does (contract §14), posts it to your web trigger and prints the answer |
+| `ci send` | signs a deployment event the way CI does (contract §14) with the secret you give it, posts it to your web trigger and prints the answer |
 | `llm` / `realtime` | the dev site's Forge LLM (model list, scripted answers, every call) / every Realtime publish and subscription |
 | `kvs` / `users` / `reset` | dump stored keys and entities / list dev users / return the dev storage, queues and update stream to the upgrade instant (v1's rows in place) |
 
