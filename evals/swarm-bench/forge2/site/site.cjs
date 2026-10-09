@@ -111,10 +111,7 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
   };
   // The request's virtual instant: the invocation's clock as the proxy sends it (x-forge-vtime, epoch ms), else the
   // site's clock (a request outside any invocation's clock).
-  const instantOf = (h) => {
-    const v = h['x-forge-vtime'];
-    return v !== undefined && Number.isFinite(Number(v)) ? Number(v) : state.now();
-  };
+  const instantOf = (h) => (/^\d+$/.test(h['x-forge-vtime'] ?? '') ? Number(h['x-forge-vtime']) : state.now());
 
   const handleProduct = (req, res, raw) => {
     const url = new URL(req.url, 'http://site');
@@ -255,7 +252,7 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
     // The rate model's ledger (SPEC §2.1): per virtual hour, points by kind, requests, refusals by kind and reason.
     rate: () => ({ model: rate.model, hours: rate.summary() }),
     // Points drawn from this installation's hour by the rest of the world (other tenants on the shared pool).
-    draw: ({ points, at }) => rate.draw({ t: at === undefined ? state.now() : Number(at), points: Number(points) }),
+    draw: ({ points, at }) => rate.draw({ t: at ?? state.now(), points: Number(points) }),
     // The world mutation API (state.cjs, SPEC §2.5); `at` is a virtual epoch ms. A changelog entry the world writes
     // comes back with `events`: the issue-updated payloads in the shape `next`/`event` deliver live changes; a deletion
     // comes back with the deleted issue's snapshot.
