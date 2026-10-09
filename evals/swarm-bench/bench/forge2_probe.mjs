@@ -114,6 +114,7 @@ const obs = {
   boot: {},
   checkpoints: {},
   upgrade: null,
+  person_reads: [],
 };
 const save = () => writeFileSync(outPath, JSON.stringify(obs, null, 1));
 // An interface this probe needs and the harness lacks: a harness gap, so the sections it feeds are unavailable.
@@ -536,120 +537,21 @@ async function main() {
 
   // ── the 2.0 drive ───────────────────────────────────────────────────────────────────────
   const adminPage = modules('jira:adminPage')[0] ?? null;
-  // `rotation`: the rotate click's own action entries, the one place the new secret may be shown.
-  const admin = { secret: null, secretSource: null, rotation: new Set() };
-  const host = (() => {
-    const p = join(kitDir, 'lib', 'uikit-host', 'index.cjs');
-    return existsSync(p) ? require(p) : null;
-  })();
-  const ctxFor = (accountId, moduleKey) => ({ accountId, cloudId: emu.siteInfo.cloudId, siteUrl: emu.siteInfo.siteUrl, moduleKey,
-    localId: `${moduleKey}-probe`, locale: 'en-US', timezone: 'UTC', extension: { type: 'jira:adminPage' } });
-  const callResolver = (moduleKey, functionKey, payload, accountId) =>
-    emu.invokeResolver(moduleKey, functionKey, payload, ctxFor(accountId, moduleKey), accountId);
+  const uikitPath = join(kitDir, 'lib', 'uikit-host', 'index.cjs');
+  const adm = adminDriver({ emu, pack, host: existsSync(uikitPath) ? require(uikitPath) : null, adminPage, appDir, now });
 
-  // The UI Kit admin page as one person sees it (P2's host); every invoke it makes is recorded with its caller.
-  const openAdmin = async (accountId, as) => {
-    const invokes = [];
-    const ui = await host.render({ appDir, moduleKey: adminPage.key, context: ctxFor(accountId, adminPage.key),
-      invoke: async (functionKey, payload) => {
-        const r = await callResolver(adminPage.key, functionKey, payload, accountId);
-        invokes.push({ as, resolver: functionKey, payload: payload ?? null, ok: Boolean(r.ok), response: r.ok ? (r.result ?? null) : null,
-          error: r.ok ? null : String(r.error?.message ?? r.error) });
-        if (!r.ok) throw new Error(`There was an error invoking the function - ${r.error?.message ?? 'invoke failed'}`);
-        return r.result;
-      } });
-    return { ui, invokes };
-  };
-  const found = (ui, label) => { try { return Boolean(ui.findByLabel(label)); } catch { return false; } };
-  // R9: the invokes the page made before its first render that shows the settings form (`Save settings`).
-  const invokesBeforeFirstRender = async (a) => {
-    let idle = false;
-    const done = Promise.resolve(a.ui.waitIdle()).then(() => { idle = true; });
-    for (;;) {
-      if (found(a.ui, LABELS.save)) return a.invokes.length;
-      if (idle) return null;
-      await new Promise((r) => setImmediate(r));
+  // The viewer's own reads during the hours, through v1's Rovo action (person-facing): R4's "next request" after a
+  // permission loss needs requests before it as well, and R2 needs person-facing traffic inside the busy hours.
+  const KEY_RE = /\b[A-Z][A-Z0-9]+-\d+\b/g;
+  const personReads = async (cp) => {
+    if (!modules('action').some((a) => a.key === 'get-sprint-scope')) return;
+    for (const sp of pack.sprints.filter((s) => s.state === 'active')) {
+      const sid = String(sp.id);
+      const r = await emu.invokeAction('get-sprint-scope', { sprintId: sid }, { asUser: pack.viewer });
+      obs.person_reads.push({ cp, t_ms: now(), as: pack.viewer, sprintId: sid, ok: Boolean(r?.ok), killed: Boolean(r?.timedOut),
+        issueKeys: r?.ok ? [...new Set(JSON.stringify(r.result ?? null).match(KEY_RE) ?? [])].sort() : [] });
     }
   };
-  // One person's UI action on the panel: the invokes it made, each judged by what it changed in the app's
-  // non-ledger storage (settings, secrets, cursors, the audit list), as the action made it.
-  const act = async (a, as, fn) => {
-    const s0 = configState(emu.kvs.dump());
-    const i0 = a.invokes.length;
-    await fn();
-    await a.ui.waitIdle();
-    const changed = changedKeys(s0, configState(emu.kvs.dump()));
-    const entries = a.invokes.slice(i0).map((inv) => ({ as, via: 'ui', resolver: inv.resolver, payload: inv.payload, result_ok: inv.ok,
-      state_changed: changed.length > 0, changed_keys: changed, response: inv.response, error: inv.error }));
-    obs.admin.actions.push(...entries);
-    return entries;
-  };
-  // A direct resolver call, as a non-admin or with a forged payload (P1's explicit-context invocation).
-  const replay = async (as, accountId, resolver, payload) => {
-    const s0 = configState(emu.kvs.dump());
-    const r = await callResolver(adminPage.key, resolver, payload, accountId);
-    const changed = changedKeys(s0, configState(emu.kvs.dump()));
-    obs.admin.actions.push({ as, via: 'resolver', resolver, payload, result_ok: Boolean(r.ok), state_changed: changed.length > 0,
-      changed_keys: changed, response: r.ok ? (r.result ?? null) : null, error: r.ok ? null : String(r.error?.message ?? r.error) });
-  };
-  const migrationLine = (text) => {
-    const m = String(text).match(/Migrated\s+([\d,]+)\s+of\s+([\d,]+)\s+v1 rows/);
-    return { text: m ? m[0] : null, migrated: m ? Number(m[1].replace(/,/g, '')) : null, total: m ? Number(m[2].replace(/,/g, '')) : null,
-      complete: /\bcomplete\b/i.test(String(text).split(LABELS.migration).slice(1).join(LABELS.migration).slice(0, 200)) };
-  };
-
-  const adminLane = async () => {
-    if (!adminPage) { obs.admin.absent = 'no jira:adminPage module in the manifest'; return; }
-    if (!host?.render) { gap('kit lib/uikit-host/index.cjs render() (P2)', 'admin', 'boot'); return; }
-    if (!pack.admin) { gap('site.pack.admin (P4: an account with global ADMINISTER)', 'admin'); return; }
-    const a = await openAdmin(pack.admin, 'admin');
-    obs.boot['admin-page'] = { invokes_before_paint: await invokesBeforeFirstRender(a), bytes_before_paint: null, external_requests: null };
-    await a.ui.waitIdle();
-    obs.admin.first_text = a.ui.text();
-    obs.admin.controls = Object.fromEntries(Object.entries(LABELS).map(([k, l]) => [k, found(a.ui, l)]));
-    const saves = found(a.ui, LABELS.budget) && found(a.ui, LABELS.save)
-      ? await act(a, 'admin', async () => { await a.ui.setValue(LABELS.budget, ADMIN_BUDGET); await a.ui.click(LABELS.save); }) : [];
-    let rotations = [];
-    if (found(a.ui, LABELS.rotate)) {
-      const before = a.ui.text();
-      rotations = await act(a, 'admin', () => a.ui.click(LABELS.rotate));
-      admin.secret = shownSecret(before, a.ui.text());
-      admin.secretSource = admin.secret ? 'panel' : null;
-      admin.rotation = new Set(rotations);
-    }
-    // The secret signs the CI sequence. When the panel showed none (the R6/§2.6 defect P8 grades from
-    // `secret_shown`), the app's one stored secret signs it instead, so the web-trigger rows grade the trigger.
-    obs.admin.secret_shown = Boolean(admin.secret);
-    if (!admin.secret) {
-      const values = (emu.kvs.dump().secrets ?? []).map(([, r]) => r?.value).filter((v) => typeof v === 'string' && v);
-      if (values.length === 1) { admin.secret = values[0]; admin.secretSource = 'kvs-secret'; }
-    }
-    obs.admin.secret_source = admin.secretSource;
-    const again = await openAdmin(pack.admin, 'admin');
-    await again.ui.waitIdle();
-    obs.admin.tree_text = again.ui.text();
-    // The same actions by a person without ADMINISTER: replayed with the budget they would set, then with a payload
-    // that claims the admin's identity. Then the non-admin's own panel, and its own save if the panel offers one.
-    for (const inv of [...saves, ...rotations]) {
-      await replay('nonadmin', pack.viewer, inv.resolver, replaceDeep(inv.payload, ADMIN_BUDGET, FORGED_BUDGET));
-      await replay('forged', pack.viewer, inv.resolver, forgedPayload(replaceDeep(inv.payload, ADMIN_BUDGET, FORGED_BUDGET), pack.admin));
-    }
-    const n = await openAdmin(pack.viewer, 'nonadmin');
-    await n.ui.waitIdle();
-    obs.admin.nonadmin_text = n.ui.text();
-    if (found(n.ui, LABELS.budget) && found(n.ui, LABELS.save)) {
-      await act(n, 'nonadmin', async () => { await n.ui.setValue(LABELS.budget, FORGED_BUDGET); await n.ui.click(LABELS.save); });
-    }
-  };
-
-  // The migration line the admin reads near each hour mark (R1: progress is visible in the panel).
-  const panelRead = async (cp) => {
-    if (!adminPage || !host?.render || !pack.admin) return;
-    const a = await openAdmin(pack.admin, 'admin');
-    await a.ui.waitIdle();
-    obs.migration.panel_by_checkpoint[cp] = { t_ms: now(), ...migrationLine(a.ui.text()) };
-  };
-
   const fieldValues = async () => {
     if (typeof site.control.fieldvalues !== 'function') { gap('site.control.fieldvalues (P5: the app field values)', 'field'); return null; }
     return (await site.control.fieldvalues({})).values ?? {};
@@ -683,8 +585,9 @@ async function main() {
     const active = new Set(pack.sprints.filter((s) => s.state === 'active').map((s) => String(s.id)));
     const issueKeys = [...new Set((pack.v1Preload?.entities?.['scope-change'] ?? []).filter(({ value }) => active.has(String(value.sprintId)))
       .map(({ value }) => value.issueKey).filter(Boolean))].sort().slice(0, 2);
-    obs.webtriggerSetup = { moduleKey: wt.key, secretSource: admin.secretSource, issueKeys };
-    const cases = scoringSequence({ secret: admin.secret, issueKeys, nowSeconds: Math.floor(now() / 1000) });
+    const secret = adm.ciSecret();
+    obs.webtriggerSetup = { moduleKey: wt.key, secretSource: adm.state.secretSource, issueKeys };
+    const cases = scoringSequence({ secret, issueKeys, nowSeconds: Math.floor(now() / 1000) });
     const url = emu.webtriggerUrl(wt.key);
     for (const c of cases) {
       ciCalls.push(...takeCalls(emu));
@@ -711,7 +614,7 @@ async function main() {
     obs.upgrade = { t_ms: obs.clock.upgrade_t_ms, lifecycleTriggers: fired, calls: takeCalls(emu) };
   }, ['migration']);
 
-  await section('admin', adminLane, ['admin']);
+  await section('admin', adm.lane, ['admin']);
   await section('backfill', async () => {
     const ph = await runSchedules('backfill', now());
     ph.kvsAfter = snapshot('backfill');
@@ -749,7 +652,8 @@ async function main() {
       },
       panel: async (cp) => {
         ph.calls.push(...takeCalls(emu));
-        await section(`panel-${cp}`, () => panelRead(cp));
+        await section(`panel-${cp}`, () => adm.panelRead(cp));
+        await section(`person-${cp}`, () => personReads(cp));
         (obs.ui.adminCalls ??= []).push(...takeCalls(emu));
       },
       checkpoint: async (cp) => checkpoint(cp),
@@ -799,7 +703,7 @@ async function main() {
     }
     await probeUi(pack);
   }, ['boot']);
-  await section('llm_v2', () => llmCases(pack, { adminPage, host, admin, openAdmin, found, now }), ['llm_v2']);
+  await section('llm_v2', () => llmCases(pack, adm), ['llm_v2']);
   // After every timed measurement: serialising the clip never overlaps grading.
   if (recording) obs.media = await assembleRecording();
   obs.comments = commentAttempts(pack);
@@ -818,20 +722,165 @@ async function main() {
   }, ['rate']);
   obs.field.writes = (emu.log || []).filter((e) => e.method === 'PUT' && /\/rest\/api\/3\/app\/field\/value$/.test(String(e.path).split('?')[0]))
     .map((e) => ({ t_ms: Date.parse(e.t_virtual), updates: e.body?.updates ?? null, status: e.status, invocation: e.invocationId ?? null }));
-  obs.admin.secret_leaks = secretLeaks(admin.secret, admin.rotation);
+  obs.admin.secret_leaks = secretLeaks(adm.state.secret, adm.state.answers);
   // The invocation list comes from the emulator's onInvocation hook; invocations the phases saw but the hook never
   // reported mean the hook is not wired, not that nothing ran.
   if (!obs.invocations.length && Object.values(obs.phases).some((p) => p.invocations?.length)) gap('createEmulator({onInvocation}) (P1)', 'invocations');
   obs.harnessMissing = [...new Set([...(emu.harnessMissing || []).map((x) => (typeof x === 'string' ? x : JSON.stringify(x)))])];
 }
 
-// Where the CI secret can be read by someone who should not: every resolver answer but the rotation's own, the panel
-// after the one-time display, the non-admin's panel, plain (non-secret) storage, invocation logs, Jira writes, prompts.
-function secretLeaks(secret, rotation) {
+// The admin panel (SPEC §1 R5/R6, §2.6) through P2's UI Kit host: the admin's own actions, the same actions replayed
+// by a person without ADMINISTER and with a payload that claims the admin, the CI secret it shows once, the Migration
+// line. Every admin-page invoke is recorded with its caller and judged on what it changed in the app's non-ledger
+// storage (settings, secrets, cursors, the audit list).
+function adminDriver({ emu, pack, host, adminPage, appDir, now }) {
+  // `answers`: every admin-page resolver answer with its caller; the rotate clicks' own (`rotation`) are the one place
+  // the new secret may be shown.
+  const state = { secret: null, secretSource: null, answers: [] };
+  const ctxFor = (accountId, moduleKey) => ({ accountId, cloudId: emu.siteInfo.cloudId, siteUrl: emu.siteInfo.siteUrl, moduleKey,
+    localId: `${moduleKey}-probe`, locale: 'en-US', timezone: 'UTC', extension: { type: 'jira:adminPage' } });
+  const callResolver = (functionKey, payload, accountId) =>
+    emu.invokeResolver(adminPage.key, functionKey, payload, ctxFor(accountId, adminPage.key), accountId);
+
+  // The UI Kit admin page as one person sees it (P2's host); every invoke it makes is recorded with its caller.
+  const openAdmin = async (accountId, as) => {
+    const invokes = [];
+    const ui = await host.render({ appDir, moduleKey: adminPage.key, context: ctxFor(accountId, adminPage.key),
+      invoke: async (functionKey, payload) => {
+        const r = await callResolver(functionKey, payload, accountId);
+        const rec = { as, resolver: functionKey, payload: payload ?? null, ok: Boolean(r.ok), response: r.ok ? (r.result ?? null) : null,
+          error: r.ok ? null : String(r.error?.message ?? r.error) };
+        invokes.push(rec);
+        state.answers.push(rec);
+        if (!r.ok) throw new Error(`There was an error invoking the function - ${r.error?.message ?? 'invoke failed'}`);
+        return r.result;
+      } });
+    return { ui, invokes };
+  };
+  const found = (ui, label) => { try { return Boolean(ui.findByLabel(label)); } catch { return false; } };
+  // R9: the invokes the page made before its first render that shows the settings form (`Save settings`).
+  const invokesBeforeFirstRender = async (a) => {
+    let idle = false;
+    Promise.resolve(a.ui.waitIdle()).then(() => { idle = true; });
+    for (;;) {
+      if (found(a.ui, LABELS.save)) return a.invokes.length;
+      if (idle) return found(a.ui, LABELS.save) ? a.invokes.length : null;
+      await new Promise((r) => setImmediate(r));
+    }
+  };
+  const act = async (a, as, fn) => {
+    const s0 = configState(emu.kvs.dump());
+    const i0 = a.invokes.length;
+    await fn();
+    await a.ui.waitIdle();
+    const changed = changedKeys(s0, configState(emu.kvs.dump()));
+    const entries = a.invokes.slice(i0).map((inv) => ({ as, via: 'ui', resolver: inv.resolver, payload: inv.payload, result_ok: inv.ok,
+      state_changed: changed.length > 0, changed_keys: changed, response: inv.response, error: inv.error }));
+    obs.admin.actions.push(...entries);
+    return entries;
+  };
+  // A direct resolver call, as a non-admin or with a forged payload (P1's explicit-context invocation).
+  const replay = async (as, accountId, resolver, payload) => {
+    const s0 = configState(emu.kvs.dump());
+    const r = await callResolver(resolver, payload, accountId);
+    const changed = changedKeys(s0, configState(emu.kvs.dump()));
+    const entry = { as, via: 'resolver', resolver, payload, result_ok: Boolean(r.ok), state_changed: changed.length > 0,
+      changed_keys: changed, response: r.ok ? (r.result ?? null) : null, error: r.ok ? null : String(r.error?.message ?? r.error) };
+    obs.admin.actions.push(entry);
+    state.answers.push({ as, resolver, response: entry.response });
+    return entry;
+  };
+  const rotate = async (a) => {
+    const before = a.ui.text();
+    const i0 = a.invokes.length;
+    const entries = await act(a, 'admin', () => a.ui.click(LABELS.rotate));
+    for (const rec of a.invokes.slice(i0)) rec.rotation = true;
+    return { entries, shown: shownSecret(before, a.ui.text()) };
+  };
+  const migrationLine = (text) => {
+    const m = String(text).match(/Migrated\s+([\d,]+)\s+of\s+([\d,]+)\s+v1 rows/);
+    return { text: m ? m[0] : null, migrated: m ? Number(m[1].replace(/,/g, '')) : null, total: m ? Number(m[2].replace(/,/g, '')) : null,
+      complete: /\bcomplete\b/i.test(String(text).split(LABELS.migration).slice(1).join(LABELS.migration).slice(0, 200)) };
+  };
+  const usable = () => Boolean(adminPage && host?.render && pack.admin);
+
+  async function lane() {
+    if (!adminPage) { obs.admin.absent = 'no jira:adminPage module in the manifest'; return; }
+    if (!host?.render) { gap('kit lib/uikit-host/index.cjs render() (P2)', 'admin', 'boot'); return; }
+    if (!pack.admin) { gap('site.pack.admin (P4: an account with global ADMINISTER)', 'admin'); return; }
+    const a = await openAdmin(pack.admin, 'admin');
+    obs.boot['admin-page'] = { invokes_before_paint: await invokesBeforeFirstRender(a), bytes_before_paint: null, external_requests: null };
+    await a.ui.waitIdle();
+    obs.admin.first_text = a.ui.text();
+    obs.admin.controls = Object.fromEntries(Object.entries(LABELS).map(([k, l]) => [k, found(a.ui, l)]));
+    const saves = found(a.ui, LABELS.budget) && found(a.ui, LABELS.save)
+      ? await act(a, 'admin', async () => { await a.ui.setValue(LABELS.budget, ADMIN_BUDGET); await a.ui.click(LABELS.save); }) : [];
+    let rotations = [];
+    if (found(a.ui, LABELS.rotate)) {
+      const r = await rotate(a);
+      rotations = r.entries;
+      state.secret = r.shown;
+      state.secretSource = r.shown ? 'panel' : null;
+    }
+    obs.admin.secret_shown = Boolean(state.secret);
+    const again = await openAdmin(pack.admin, 'admin');
+    await again.ui.waitIdle();
+    obs.admin.tree_text = again.ui.text();
+    // The same actions by a person without ADMINISTER: replayed with the budget they would set, then with a payload
+    // that claims the admin's identity. Then the non-admin's own panel, and its own save if the panel offers one.
+    const replays = [];
+    for (const inv of [...saves, ...rotations]) {
+      replays.push(await replay('nonadmin', pack.viewer, inv.resolver, replaceDeep(inv.payload, ADMIN_BUDGET, FORGED_BUDGET)));
+      replays.push(await replay('forged', pack.viewer, inv.resolver, forgedPayload(replaceDeep(inv.payload, ADMIN_BUDGET, FORGED_BUDGET), pack.admin)));
+    }
+    const n = await openAdmin(pack.viewer, 'nonadmin');
+    await n.ui.waitIdle();
+    obs.admin.nonadmin_text = n.ui.text();
+    if (found(n.ui, LABELS.budget) && found(n.ui, LABELS.save)) {
+      replays.push(...await act(n, 'nonadmin', async () => { await n.ui.setValue(LABELS.budget, FORGED_BUDGET); await n.ui.click(LABELS.save); }));
+    }
+    // A replay that rotated the secret (the R5 critical, priced there) leaves the panel's secret stale: the admin
+    // rotates once more, so the CI sequence grades the web trigger and not that defect a second time.
+    if (state.secretSource === 'panel' && replays.some((x) => x.changed_keys.some((k) => k.startsWith('secret:')))) {
+      const r2 = await openAdmin(pack.admin, 'admin');
+      await r2.ui.waitIdle();
+      const r = await rotate(r2);
+      if (r.shown) state.secret = r.shown;
+      obs.admin.rerotated = Boolean(r.shown);
+    }
+  }
+
+  // The secret the CI sequence signs with: the one the panel showed; when it showed none (the defect P8 grades from
+  // `secret_shown`), the app's one stored secret, so the web-trigger rows grade the trigger and not the panel.
+  function ciSecret() {
+    if (state.secretSource !== 'panel') {
+      const values = (emu.kvs.dump().secrets ?? []).map(([, r]) => r?.value).filter((v) => typeof v === 'string' && v);
+      state.secret = values.length === 1 ? values[0] : null;
+      state.secretSource = values.length === 1 ? 'kvs-secret' : null;
+    }
+    obs.admin.secret_source = state.secretSource;
+    return state.secret;
+  }
+
+  // The Migration line the admin reads near each hour mark (R1: progress is visible in the panel).
+  async function panelRead(cp) {
+    if (!usable()) return;
+    const a = await openAdmin(pack.admin, 'admin');
+    await a.ui.waitIdle();
+    obs.migration.panel_by_checkpoint[cp] = { t_ms: now(), ...migrationLine(a.ui.text()) };
+  }
+
+  return { state, lane, panelRead, ciSecret, openAdmin, found, usable };
+}
+
+// Where the CI secret can be read by someone who should not: every admin-page resolver answer but the rotate click's
+// own (R6: never returned by any resolver), the panel after the one-time display, the non-admin's panel, plain
+// (non-secret) storage, invocation logs, Jira writes, prompts.
+function secretLeaks(secret, answers) {
   if (!secret) return [];
   const has = (x) => (typeof x === 'string' ? x : JSON.stringify(x ?? null)).includes(secret);
   const leaks = [];
-  for (const a of obs.admin.actions) if (!rotation.has(a) && has(a.response)) leaks.push(`resolver ${a.resolver} response (as ${a.as})`);
+  for (const a of answers) if (!a.rotation && has(a.response)) leaks.push(`resolver ${a.resolver} response (as ${a.as})`);
   if (has(obs.admin.tree_text)) leaks.push('admin page after the one-time display');
   if (has(obs.admin.nonadmin_text)) leaks.push('admin page as a non-admin');
   const s = emu.kvs.snapshot();
@@ -1498,7 +1547,7 @@ async function llmCases(pack, v) {
     await emu.advance(EXPLAIN_GAP_MS);
     const row = { case: c.case, llm_calls: null, shown_text: '', writes_out_of_scope: null, per_click: [] };
     if (c.admin) {
-      if (!v.adminPage || !v.host?.render || !pack.admin) { row.absent = 'no admin panel to switch the setting'; obs.llm_v2.push(row); continue; }
+      if (!v.usable()) { row.absent = 'no admin panel to switch the setting'; obs.llm_v2.push(row); continue; }
       row.setting_applied = await panelSet(c.admin.label, c.admin.value);
     }
     await emu.llm.phase(c.script);
@@ -1656,6 +1705,104 @@ async function selftest() {
   await test('ledgerRow: the §2.4 attributes, absent ones null', async () => {
     assert.deepEqual(ledgerRow({ changeId: 'c', sprintId: '7', at: 1.5, deleted: false, junk: 1 }),
       { sprintId: '7', at: 1.5, changeId: 'c', kind: null, issueId: null, issueKey: null, estimate: null, boardId: null, estimateField: null, deleted: false, deployedEnvs: null });
+  });
+
+  // The admin lane against a fake UI Kit host and three fake apps: one that authorizes from req.context, one that
+  // trusts the payload's identity claim, one that hands its secret back on every read.
+  const ADMIN = 'acct-admin';
+  const fakeApp = (kind) => {
+    const kv = new Map([['settings', { value: { budget: 200000 } }]]);
+    const secrets = new Map();
+    const allowed = (ctx, payload) => ctx.accountId === ADMIN || (kind === 'trusting' && payload?.isAdmin === true);
+    const resolvers = {
+      getSettings: () => ({ budget: kv.get('settings').value.budget, mask: secrets.has('ci') ? `••••${secrets.get('ci').value.slice(-4)}` : null,
+        ...(kind === 'leaky' && secrets.has('ci') ? { secret: secrets.get('ci').value } : {}) }),
+      saveSettings: (p, ctx) => {
+        if (!allowed(ctx, p)) return { error: 'Only Jira administrators can change these settings.' };
+        kv.set('settings', { value: { budget: p.budget } });
+        return { saved: true };
+      },
+      rotateSecret: (p, ctx) => {
+        if (!allowed(ctx, p)) return { error: 'Only Jira administrators can rotate the secret.' };
+        const secret = `S${Math.random().toString(36).slice(2).padEnd(12, 'x')}Q${Date.now().toString(36)}`;
+        secrets.set('ci', { value: secret });
+        return { secret };
+      },
+    };
+    const fake = {
+      siteInfo: { cloudId: 'cloud-1', siteUrl: 'https://site.example' }, log: [],
+      kvs: { dump: () => ({ kv: [...kv], secrets: [...secrets], ents: [] }),
+        snapshot: () => ({ kvs: Object.fromEntries([...kv].map(([k, r]) => [k, r.value])), secrets: [...secrets.keys()], entities: {} }) },
+      invokeResolver: async (_m, fn, payload, ctx) => ({ ok: true, result: resolvers[fn](payload, ctx) }),
+      stored: () => secrets.get('ci')?.value ?? null,
+    };
+    return fake;
+  };
+  const fakeHost = {
+    render: async ({ invoke }) => {
+      let settings = await invoke('getSettings', {});
+      let shown = null;
+      const values = {};
+      const labels = [LABELS.budget, LABELS.save, LABELS.rotate, LABELS.migration];
+      return {
+        text: () => [LABELS.budget, settings.budget, LABELS.rotate, shown ? `New secret ${shown} (shown once)` : (settings.mask ?? 'not set'),
+          settings.secret ?? '', LABELS.migration, 'Migrated 3 of 10 v1 rows', LABELS.save].join(' '),
+        findByLabel: (l) => (labels.includes(l) ? { label: l } : null),
+        setValue: (l, val) => { values[l] = val; },
+        click: async (l) => {
+          if (l === LABELS.save) { await invoke('saveSettings', { budget: values[LABELS.budget] }); settings = await invoke('getSettings', {}); }
+          if (l === LABELS.rotate) shown = (await invoke('rotateSecret', {})).secret ?? null;
+        },
+        waitIdle: async () => {},
+      };
+    },
+  };
+  const runLane = async (kind) => {
+    obs.admin = { actions: [], tree_text: '', secret_leaks: [] };
+    obs.boot = {};
+    const fake = fakeApp(kind);
+    emu = fake;
+    const d = adminDriver({ emu: fake, pack: { admin: ADMIN, viewer: 'acct-viewer' }, host: fakeHost, adminPage: { key: 'admin-page' }, appDir: null, now: () => 0 });
+    await d.lane();
+    const secret = d.ciSecret();
+    return { d, fake, secret, leaks: secretLeaks(d.state.secret, d.state.answers),
+      by: (as, resolver) => obs.admin.actions.filter((x) => x.as === as && x.resolver === resolver) };
+  };
+
+  await test('admin lane, an app that authorizes from req.context: no replay changes anything, nothing leaks', async () => {
+    const r = await runLane('correct');
+    assert.equal(obs.boot['admin-page'].invokes_before_paint, 1);
+    assert.equal(obs.admin.secret_shown, true);
+    assert.equal(r.secret, r.fake.stored());
+    assert.equal(r.by('admin', 'saveSettings')[0].state_changed, true);
+    assert.equal(r.by('admin', 'rotateSecret')[0].state_changed, true);
+    assert.equal(r.by('admin', 'rotateSecret')[0].changed_keys.join(), 'secret:ci');
+    for (const as of ['nonadmin', 'forged']) for (const fn of ['saveSettings', 'rotateSecret']) {
+      assert.equal(r.by(as, fn).length >= 1, true, `${as} ${fn} replayed`);
+      assert.equal(r.by(as, fn).every((x) => !x.state_changed), true, `${as} ${fn} changed nothing`);
+    }
+    assert.equal(r.by('nonadmin', 'saveSettings').some((x) => x.via === 'ui'), true, "the non-admin's own panel save");
+    assert.deepEqual(r.by('forged', 'saveSettings')[0].payload.budget, FORGED_BUDGET);
+    assert.match(obs.admin.tree_text, /••••/);
+    assert.deepEqual(r.leaks, []);
+  });
+
+  await test('admin lane, an app that trusts the payload: the forged replays land, the CI secret follows the store', async () => {
+    const r = await runLane('trusting');
+    assert.equal(r.by('nonadmin', 'saveSettings').every((x) => !x.state_changed), true);
+    assert.equal(r.by('forged', 'saveSettings')[0].state_changed, true);
+    assert.equal(r.by('forged', 'rotateSecret')[0].state_changed, true);
+    assert.equal(obs.admin.rerotated, true);
+    assert.equal(r.secret, r.fake.stored());
+    assert.equal(r.leaks.includes('resolver rotateSecret response (as forged)'), false, 'the forged rotation showed a secret since replaced');
+  });
+
+  await test('admin lane, an app that returns its secret on every read: the leaks are named', async () => {
+    const r = await runLane('leaky');
+    assert.equal(r.leaks.includes('resolver getSettings response (as admin)'), true, 'the re-rendered panel read');
+    assert.equal(r.leaks.includes('resolver getSettings response (as nonadmin)'), true, "the non-admin's read");
+    assert.equal(r.leaks.includes('admin page after the one-time display'), true);
+    assert.equal(r.leaks.includes('resolver rotateSecret response (as admin)'), false, 'the rotation shows it once, legitimately');
   });
 
   for (const r of results) console.log(`ok - ${r}`);
