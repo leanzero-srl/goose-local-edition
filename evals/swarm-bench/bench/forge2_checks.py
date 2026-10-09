@@ -284,16 +284,15 @@ def _(ev: Ev) -> Dict:
     copies = [r for r in final if key(r) in expected]
     if not copies:
         return vacuous('nothing was migrated: no v1 row reached scope-ledger, so v1 was never at risk')
+    # Damage to v1's own entity only: a v2 copy with another time is a wrong migration, priced by r1_v1_rows_migrated.
     have = index([r for r in v1 if isinstance(r, dict)])
     lost = [k for k in expected if k not in have]
     changed = [k for k, e in expected.items() if k in have and not any(same_at(r, e['at']) for r in have[k])]
-    corrupt = sorted({key(r) for r in copies if not same_at(r, expected[key(r)]['at'])})
-    if lost or changed or corrupt:
+    if lost or changed:
         found = [f'{label} {len(ks)} (e.g. {sample(ks)})' for label, ks in
-                 (('v1 rows lost:', lost), ('v1 rows rewritten:', changed),
-                  ('scope-ledger copies with another time:', corrupt)) if ks]
+                 (('v1 rows lost:', lost), ('v1 rows rewritten:', changed)) if ks]
         return g(0.0, '; '.join(found), 'v1 rows lost or corrupted by the migration')
-    return g(1.0, f'all {len(expected)} v1 rows intact in scope-change; {len(copies)} copies keep their time')
+    return g(1.0, f'all {len(expected)} v1 rows intact in scope-change after {len(copies)} were migrated')
 
 
 @row('r1_events_during_migration', 'R1')
@@ -803,6 +802,18 @@ def wt_gate(ev: Ev) -> Optional[Dict]:
     return None if ev.has_module('webtrigger') else absent('webtrigger (SPEC R6)')
 
 
+def repeated_env(value) -> bool:
+    """A `deployedEnvs` string that names one environment twice ('staging,staging', '["staging","staging"]')."""
+    if not isinstance(value, str) or not value.strip():
+        return False
+    try:
+        parsed = json.loads(value)
+        envs = [str(x) for x in parsed] if isinstance(parsed, list) else [str(parsed)]
+    except ValueError:
+        envs = [x for x in re.split(r'[\s,;|]+', value) if x]
+    return len(envs) != len(set(envs))
+
+
 def wt_valid_worked(cases: List[Dict]) -> bool:
     return any(c.get('case') in WT_VALID and (effects(c) or 0) >= 1 for c in cases)
 
@@ -842,13 +853,22 @@ def _(ev: Ev) -> Dict:
         return vacuous('no event was replayed')
     if not wt_valid_worked(cases):
         return vacuous('the original event had no effect to repeat')
-    if any(effects(c) is None for c in replays):
-        return unavail('webtrigger[].side_effects missing on the replay')
-    twice = [c for c in replays if effects(c) > 0]
-    if twice:
-        return g(0.0, f'a replayed eventId applied again ({effects(twice[0])} side effects)',
+    if any(not isinstance(c.get('writes'), list) for c in replays):
+        return unavail('webtrigger[].writes missing on the replay')
+    rows, why = ev.v2('final')
+    if why:
+        return unavail(why)
+    # "no second effect" is judged on what a person sees twice — a Jira write in the replay's own request, or an
+    # environment recorded twice on a ledger row — never on bookkeeping (a dedupe marker is not an effect).
+    jira = [w for c in replays for w in c['writes'] if str(w).startswith('jira ')]
+    doubled = sorted({key(r) for r in rows if repeated_env(r.get('deployedEnvs'))})
+    if jira or doubled:
+        return g(0.0, 'a replayed eventId applied again: ' + '; '.join(
+            x for x in (f'Jira writes {sample(jira, 2)}' if jira else '',
+                        f'environment recorded twice on {sample(doubled, 2)}' if doubled else '') if x),
                  'duplicate side effect: a replayed web-trigger event applied twice')
-    return g(1.0, f'{len(replays)} replay(s) had no second effect')
+    return g(1.0, f'{len(replays)} replay(s) made no Jira write and doubled no deployment; bookkeeping writes '
+             f'{sum(effects(c) or 0 for c in replays)}')
 
 
 @row('r6_status_codes', 'R6')
@@ -1223,10 +1243,12 @@ def perfect_observations(o: fo.Oracle) -> Dict:
              'limit_ms': 900000, 'killed': False, 'result_kind': 'ok'},
             {'id': 'inv-r1', 'function_key': 'ui-resolver', 'module_type': 'resolver', 'virtual_ms': 300,
              'limit_ms': 25000, 'killed': False, 'result_kind': 'ok'}],
-        'webtrigger': [{'case': 'valid', 'status': 202, 'side_effects': 2},
-                       {'case': 'replay', 'status': 200, 'side_effects': 0},
-                       *({'case': c, 'status': 401, 'side_effects': 0} for c in WT_INVALID),
-                       {'case': 'header-case', 'status': 202, 'side_effects': 1}],
+        'webtrigger': [{'case': 'valid', 'status': 202, 'side_effects': 2,
+                        'writes': ['kvs POST /api/v1/entity/set', 'jira POST /rest/api/3/issue/OPS-1/comment']},
+                       {'case': 'replay', 'status': 200, 'side_effects': 0, 'writes': []},
+                       *({'case': c, 'status': 401, 'side_effects': 0, 'writes': []} for c in WT_INVALID),
+                       {'case': 'header-case', 'status': 202, 'side_effects': 1,
+                        'writes': ['kvs POST /api/v1/entity/set']}],
         'admin': {'actions': [
             {'as': 'admin', 'via': 'ui', 'resolver': 'save-settings', 'result_ok': True, 'state_changed': True,
              'changed_keys': ['kv:settings']},
@@ -1323,6 +1345,18 @@ def _mutants(o: fo.Oracle) -> Dict[str, Tuple[Callable[[Dict], None], Dict[str, 
     def unsigned_writes(obs):
         next(c for c in obs['webtrigger'] if c['case'] == 'bad-signature')['side_effects'] = 1
 
+    def replay(obs):
+        return next(c for c in obs['webtrigger'] if c['case'] == 'replay')
+
+    def replay_posts_again(obs):
+        replay(obs).update(side_effects=1, writes=['jira POST /rest/api/3/issue/OPS-1/comment'])
+
+    def replay_bookkeeping(obs):
+        replay(obs).update(side_effects=1, writes=['kvs POST /api/v1/set'])
+
+    def replay_doubles_env(obs):
+        obs['migration']['v2_by_checkpoint']['final'][0]['deployedEnvs'] = 'staging,staging'
+
     def stale_field(obs):
         pay1 = o.issue_by_key['PAY-1']['id']
         obs['field']['values_by_checkpoint']['h3'][pay1] = 'committed'
@@ -1364,6 +1398,9 @@ def _mutants(o: fo.Oracle) -> Dict[str, Tuple[Callable[[Dict], None], Dict[str, 
         'R5 non-admin write': (nonadmin_writes, {'r5_nonadmin_refused': 0.0}, ('r5_nonadmin_refused',)),
         'R5 refusal written to the audit list': (refusal_audited, {}, ()),
         'R6 unsigned write': (unsigned_writes, {'r6_unsigned_no_effect': 0.0}, ('r6_unsigned_no_effect',)),
+        'R6 replay posts again': (replay_posts_again, {'r6_replay_once': 0.0}, ('r6_replay_once',)),
+        'R6 replay doubles an environment': (replay_doubles_env, {'r6_replay_once': 0.0}, ('r6_replay_once',)),
+        'R6 replay writes a dedupe marker only': (replay_bookkeeping, {}, ()),
         'R7 stale field': (stale_field, {'r7_values_fresh': pay1_cut}, ()),
         'R8 truncated answer shown': (truncated_shown, {'r8_failure_handling': 0.5}, ()),
         'R8 no cache': (no_cache, {'r8_cost_controls': round(2 / 3, 4)}, ()),
