@@ -274,6 +274,25 @@ ForgeReconciler.render(<App />);
   } finally { await dev.close(); }
 });
 
+test('a host process that dies or hangs never takes the caller with it: commands reject HARNESS, close() always ends it', async () => {
+  const host = await renderTemp(`import React from 'react';
+import ForgeReconciler, { Button, Stack } from '@forge/react';
+const p = setTimeout.constructor('return process')();
+const App = () => <Stack><Button onClick={() => p.exit(3)}>Quit</Button><Button onClick={() => { for (;;) {} }}>Spin</Button></Stack>;
+ForgeReconciler.render(<App />);
+`);
+  await assert.rejects(host.click('Quit'), (e) => e.code === 'HARNESS' && /ended \(exit 3\)/.test(e.message));
+  await assert.rejects(host.waitIdle(), (e) => e.code === 'HARNESS');
+  await host.close();
+  const spin = await renderTemp(`import React from 'react';
+import ForgeReconciler, { Button } from '@forge/react';
+ForgeReconciler.render(<Button onClick={() => { for (;;) {} }}>Spin</Button>);
+`);
+  const stuck = spin.click('Spin');
+  await spin.close();
+  await assert.rejects(stuck, (e) => e.code === 'HARNESS' && /SIGKILL/.test(e.message));
+});
+
 test('a commit loop is reported as NOT_IDLE after a counted number of turns, never by a clock', async () => {
   const host = await renderTemp(`import React, { useEffect, useState } from 'react';
 import ForgeReconciler, { Text } from '@forge/react';

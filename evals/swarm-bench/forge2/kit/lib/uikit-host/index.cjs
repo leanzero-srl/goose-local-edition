@@ -166,7 +166,9 @@ async function render({ appDir, moduleKey, context, invoke, fetchProduct = null,
     }
   };
   readline.createInterface({ input: child.stdio[3] }).on('line', (line) => {
-    const m = JSON.parse(line);
+    let m;
+    // a child that dies mid-write leaves a partial last line: it is part of the end the 'exit' handler reports
+    try { m = JSON.parse(line); } catch { stderr += ` [unparseable host message: ${line.slice(0, 200)}]`; return; }
     if (m.t === 'call') { answerCall(m); return; }
     apply(m.state);
     if (m.t === 'ready') { ready.resolve(); return; }
@@ -174,14 +176,18 @@ async function render({ appDir, moduleKey, context, invoke, fetchProduct = null,
     waiting.delete(m.id);
     if (m.ok) w.resolve(m.value); else w.reject(new UikitHostError(m.error.code, m.error.message));
   });
-  child.on('exit', (codeNum, signal) => {
-    ended = `the UI Kit host process ended (${signal ?? `exit ${codeNum}`})${stderr ? `: ${stderr.trim().split('\n').slice(-6).join(' | ')}` : ''}`;
+  const end = (why) => {
+    if (ended) return;
+    ended = `the UI Kit host process ended (${why})${stderr ? `: ${stderr.trim().split('\n').slice(-6).join(' | ')}` : ''}`;
     const err = new UikitHostError('HARNESS', ended);
     ready.reject(err);
     for (const w of waiting.values()) w.reject(err);
     waiting.clear();
     fs.rmSync(dir, { recursive: true, force: true });
-  });
+  };
+  // 'close', not 'exit': it comes after the child's last message has been read
+  child.on('close', (codeNum, signal) => end(signal ?? `exit ${codeNum}`));
+  child.on('error', (e) => end(`spawn failed: ${e.message}`));
   const command = (name, ...a) => {
     if (ended) return Promise.reject(new UikitHostError('HARNESS', ended));
     const id = ++nextId;
@@ -235,11 +241,12 @@ async function render({ appDir, moduleKey, context, invoke, fetchProduct = null,
     flush: () => command('flush'),
     advance: (ms) => command('advance', ms),
     now: () => mirror.now,
-    // ends the child (its pid only, gate 4) and resolves when it has gone
+    // ends the child by its pid alone (never a process group: gate 4) and resolves when it has gone; SIGKILL because
+    // the child holds no state worth flushing and a hung app (a synchronous loop) would never read a polite request
     close: () => new Promise((resolve) => {
       if (ended) { resolve(); return; }
-      child.once('exit', () => resolve());
-      child.stdin.end();
+      child.once('close', () => resolve());
+      child.kill('SIGKILL');
     }),
   };
 }
