@@ -1955,6 +1955,14 @@ async function selftest() {
     ];
     // the comment by key and the 429 by id are one issue; the bulk 429 names PAY-2 (written 700 ms before), not PAY-3
     assert.deepEqual(requestIssues(entries, raw, calls, pack, rateModel), ['101', '102', '101', '102', null, null]);
+    // a refused write opens no window: PAY-2's own 429 does not shadow PAY-3, written 100 ms before the bulk 429
+    assert.deepEqual(requestIssues([
+      { t_ms: 3000, invocation: 'g', method: 'POST', path_tpl: comment, status: 429, reason: perIssue },
+      { t_ms: 3100, invocation: 'h', method: 'POST', path_tpl: comment, status: 201 },
+      { t_ms: 3200, invocation: 'i', method: 'POST', path_tpl: fv, status: 429, reason: perIssue },
+    ], [{ path: '/rest/api/3/issue/PAY-2/comment' }, { path: '/rest/api/3/issue/PAY-3/comment' }, { path: fv }],
+    [{ service: 'jira', invocationId: 'i', op: `POST ${fv}`, body: { updates: [{ customField: 'f', issueIds: [102, 103], value: 'removed' }] } }],
+    pack, rateModel), ['102', '103', '103']);
     assert.deepEqual(pathParams('/rest/agile/1.0/board/{boardId}/sprint', '/rest/agile/1.0/board/7/sprint?state=active'), { boardId: '7' });
   });
 
