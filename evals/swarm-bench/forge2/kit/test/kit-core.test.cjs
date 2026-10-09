@@ -76,6 +76,10 @@ export const trig = async (event) => {
   if (!event.retryContext) return new InvocationError({ retryAfter: 30 });
   return { ok: true };
 };
+export const trigThrows = async (event) => {
+  console.log('THROWS ' + JSON.stringify({ at: Date.now(), retryCount: event.retryContext?.retryCount ?? 0, reason: event.retryContext?.retryReason ?? null }));
+  throw new Error('always fails');
+};
 const ui = new Resolver();
 ui.define('whoami', ({ payload, context }) => ({ accountId: context.accountId, claimed: payload.accountId ?? null, ext: context.extension?.type ?? null }));
 ui.define('sleep', async ({ payload }) => { await sleep(payload.ms); return { slept: payload.ms }; });
@@ -106,6 +110,10 @@ function writeApp(dir) {
       function: vt-trig
       events:
         - avi:jira:updated:issue
+    - key: vt-trigger-throws
+      function: vt-trig-throws
+      events:
+        - avi:jira:updated:issue
   jira:adminPage:
     - key: vt-admin
       title: VT admin
@@ -129,6 +137,8 @@ function writeApp(dir) {
       handler: index.rconsume
     - key: vt-trig
       handler: index.trig
+    - key: vt-trig-throws
+      handler: index.trigThrows
     - key: vt-resolve
       handler: index.resolve
     - key: vt-web
@@ -280,7 +290,7 @@ test('redelivery: a product trigger InvocationError is retried after retryAfter 
   assert.strictEqual(first.retry?.kind, 'retry');
   assert.strictEqual(first.retry.waitS, 30);
   const ds = await emu.drainQueues();
-  const retried = ds.find((x) => x.eventId === `trigger:vt-trigger:${d.changelogId}:1`);
+  const retried = ds.find((x) => x.kind === 'trigger' && x.eventId.startsWith(`trigger:vt-trigger:${d.changelogId}#`));
   assert.ok(retried, JSON.stringify(ds.map((x) => [x.kind, x.eventId, x.outcome])));
   assert.strictEqual(retried.outcome, 'ok');
   const [line] = logLines(retried, 'TRIG');
@@ -288,6 +298,16 @@ test('redelivery: a product trigger InvocationError is retried after retryAfter 
   // The 1.0-forked site clock also runs on wall time, so a gap BETWEEN invocations carries a few ms of it.
   const gap = Date.parse(retried.t) - Date.parse(first.t1);
   assert.ok(gap >= 30_000 && gap < 32_000, `retry gap ${gap}`);
+  // A trigger that always throws: retried exactly 4 times, backing off 1, 2, 4, 8 virtual minutes, then dropped.
+  const thrown = d.triggers.find((x) => x.moduleKey === 'vt-trigger-throws');
+  assert.strictEqual(thrown.retry?.kind, 'throw');
+  const chain = ds.filter((x) => x.kind === 'trigger' && x.eventId.startsWith(`trigger:vt-trigger-throws:${d.changelogId}#`));
+  assert.strictEqual(new Set(chain.map((x) => x.eventId)).size, 1, 'one eventId for the whole chain');
+  assert.deepStrictEqual(chain.map((x) => [x.attempt, x.outcome, x.dropped ?? null]), [[1, 'throw', null], [2, 'throw', null], [3, 'throw', null], [4, 'throw', 'retried 4 times']]);
+  assert.deepStrictEqual(chain.map((x) => logLines(x, 'THROWS')[0].retryCount), [1, 2, 3, 4]);
+  const starts = [Date.parse(thrown.t1), ...chain.map((x) => Date.parse(x.t))];
+  const gaps = starts.slice(1).map((t, i) => Math.round((t - starts[i]) / 1000));
+  assert.ok(gaps.every((g, i) => g >= [60, 120, 240, 480][i] && g < [60, 120, 240, 480][i] + 3), `backoff ${gaps}`);
 });
 
 test('redelivery: consumer InvocationError comes back after 30 virtual s; defect C: the resolver-form consumer runs', { timeout: 180_000 }, async () => {

@@ -318,12 +318,14 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
 
   // A product-event trigger that asked for a retry, threw or was killed is delivered again (≤ TRIGGER_MAX_RETRIES), from
   // the same pending list the queues use, so retries and queue events run in one virtual-time order.
-  function scheduleTriggerRetry(t, event, r, attempt, lineage) {
+  // One eventId per delivery for its whole retry chain (as a queue event keeps its id across attempts).
+  function scheduleTriggerRetry(t, event, r, attempt, lineage, eventId) {
     const plan = retryPlan(r, attempt);
     if (!plan) return null;
     if (attempt >= TRIGGER_MAX_RETRIES) return { ...plan, dropped: `retried ${TRIGGER_MAX_RETRIES} times` };
     const readyAt = Date.parse(r.t1) + plan.waitS * 1000;
-    queueState.pending.push({ kind: 'trigger', seq: queueState.seq++, eventId: `trigger:${t.key}:${event.changelog?.id ?? event.eventType}:${attempt + 1}`,
+    const seq = queueState.seq++;
+    queueState.pending.push({ kind: 'trigger', seq, eventId: eventId ?? `trigger:${t.key}:${event.changelog?.id ?? event.eventType}#${seq}`,
       moduleKey: t.key, event, attempt: attempt + 1, retryReason: plan.reason, retryData: plan.data, readyAt, lineage });
     return { ...plan, redeliverAt: new Date(readyAt).toISOString() };
   }
@@ -332,7 +334,7 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     const t = modules('trigger').find((x) => x.key === ev.moduleKey);
     const event = { ...ev.event, retryContext: { retryCount: ev.attempt, retryReason: ev.retryReason, retryData: ev.retryData } };
     const r = await invokeFunction(t.function, { moduleKey: t.key, moduleType: 'trigger', event, lineage: ev.lineage });
-    const next = scheduleTriggerRetry(t, ev.event, r, ev.attempt, ev.lineage);
+    const next = scheduleTriggerRetry(t, ev.event, r, ev.attempt, ev.lineage, ev.eventId);
     return { kind: 'trigger', eventId: ev.eventId, queueName: null, attempt: ev.attempt, invocationId: r.invocationId, functionKey: r.functionKey, moduleKey: t.key,
       t: r.t0, t1: r.t1, lineage: ev.lineage, ok: r.ok, result: r.result ?? null, error: r.error ?? null, timedOut: r.timedOut, logs: r.logs,
       outcome: next ? next.kind : 'ok', ...(next ? { retryAfter: next.waitS, ...(next.dropped ? { dropped: next.dropped } : { redeliverAt: next.redeliverAt }) } : {}) };
