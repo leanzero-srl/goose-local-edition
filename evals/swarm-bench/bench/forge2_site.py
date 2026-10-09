@@ -1,14 +1,15 @@
-"""forge-1.0 vendor interface for run_build (DESIGN.md §12): the DEV site the entrant's tools talk to.
+"""forge-2.0 vendor interface for run_build (forge/DESIGN.md §12, forge2/SPEC.md §3 P9): the DEV site the
+entrant's tools talk to — forge2/site/site.cjs, which carries the dev world schedule and the v1 preload.
 
-    server = forge_site.serve(port, trace, seed=fixture_seed)
+    server = forge2_site.serve(port, trace, seed=fixture_seed)
     server.url           FORGE_SITE_URL for the entrant: http://admin:<token>@127.0.0.1:<port>
     server.dev_seed      the dev site's own seed, drawn here, never equal to fixture_seed
     server.shutdown(); server.server_close()      stops the node process by pid (gate 4)
-    forge_site.mark_phase(name)                   appends a phase marker to the trace
+    forge2_site.mark_phase(name)                  appends a phase marker to the trace
 
 The trace's first line is the header the scorer reads: {trace_header, tier, fixture_seed, dev_seed,
 kit_lock_sha256}. `fixture_seed` is only recorded here — the dev site serves `dev_seed`, so nothing the
-entrant can observe derives from the scoring seed. The scoring site is started by score_forge itself.
+entrant can observe derives from the scoring seed. The scoring site is started by forge2_probe.mjs itself.
 """
 from __future__ import annotations
 
@@ -26,10 +27,10 @@ import threading
 import time
 
 HERE = Path(__file__).resolve().parent
-SITE_JS = HERE.parent / 'forge' / 'site' / 'site.cjs'
+SITE_JS = HERE.parent / 'forge2' / 'site' / 'site.cjs'
 DOCS_PATH = None
 API_KEY = None
-TIER = 'forge-1.0'
+TIER = 'forge-2.0'
 SEED_RE = re.compile(r'^[0-9a-f]{16}$')
 _current_trace: Path | None = None
 _live: list['DevSite'] = []
@@ -87,12 +88,12 @@ def serve(port: int, trace: Path, seed: str | None = None) -> DevSite:
     global _current_trace
     if seed is not None and not SEED_RE.match(seed):
         raise ValueError(f'fixture seed must be 16 lowercase hex chars, got {seed!r}')
-    import forge_kit
+    import forge2_kit
     dev_seed = draw_dev_seed(seed)
     trace = Path(trace)
     trace.parent.mkdir(parents=True, exist_ok=True)
     trace.write_text(json.dumps({'trace_header': TIER, 'tier': TIER, 'fixture_seed': seed, 'dev_seed': dev_seed,
-                                 'kit_lock_sha256': forge_kit.lock_sha256()}) + '\n')
+                                 'kit_lock_sha256': forge2_kit.lock_sha256()}) + '\n')
     _current_trace = trace
     token = secrets.token_hex(12)
     proc = subprocess.Popen([_node(), str(SITE_JS), '--seed', dev_seed, '--port', str(port), '--token', token, '--trace', str(trace)],
@@ -106,7 +107,7 @@ def serve(port: int, trace: Path, seed: str | None = None) -> DevSite:
         err = proc.stderr.read() if proc.poll() is not None else ''
         if proc.poll() is None:
             os.kill(proc.pid, signal.SIGKILL)
-        raise RuntimeError(f'REFUSED: the forge dev site did not start on port {port}: {err[-800:]}')
+        raise RuntimeError(f'REFUSED: the forge2 dev site did not start on port {port}: {err[-800:]}')
     info = json.loads(line[0])
     site = DevSite(proc, info['url'], info['adminUrl'], dev_seed, seed, trace)
     _live.append(site)
@@ -125,7 +126,7 @@ def trace_header(trace: Path) -> dict:
 
 
 if __name__ == '__main__':
-    target = Path(sys.argv[2] if len(sys.argv) > 2 else 'forge-dev-trace.jsonl')
+    target = Path(sys.argv[2] if len(sys.argv) > 2 else 'forge2-dev-trace.jsonl')
     site = serve(int(sys.argv[1]) if len(sys.argv) > 1 else 0, target, seed=None)
     print(json.dumps({'FORGE_SITE_URL': site.url, 'dev_seed': site.dev_seed, 'pid': site.pid}))
     try:
