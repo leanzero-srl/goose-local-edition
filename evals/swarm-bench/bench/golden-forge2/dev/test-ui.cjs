@@ -147,7 +147,17 @@ async function main() {
 
   async function open({ resource, moduleType, moduleKey, extension, aaid = alice.accountId, theme = 'light', width = 800, height = 700, shot }) {
     const page = await browser.newPage({ viewport: { width, height } });
-    const log = { ops: [], flags: [], navigations: [], closes: 0, updates: [], saved: [], console: [], pending: 0, lastSettled: Date.now(), subscriptions: [], invokes: [] };
+    const log = { ops: [], flags: [], navigations: [], closes: 0, updates: [], saved: [], console: [], pending: 0, lastSettled: Date.now(), subscriptions: [], invokes: [], requests: [], firstPaintAt: null };
+    // R9: every request with its time, and the moment the first data appears in the DOM.
+    page.on('request', (r) => log.requests.push({ url: r.url(), type: r.resourceType(), at: Date.now() }));
+    await page.addInitScript(() => {
+      const shown = () => document.querySelector('[data-metric], [data-testid="not-started"], [data-testid="needs-config"]');
+      new MutationObserver((_, obs) => {
+        if (!shown()) return;
+        obs.disconnect();
+        window.__paintAt = performance.now();
+      }).observe(document, { childList: true, subtree: true });
+    });
     page.on('console', (m) => (m.type() === 'error' || m.type() === 'warning') && log.console.push(`${m.type()}: ${m.text()}`));
     page.on('pageerror', (e) => log.console.push(`pageerror: ${e}`));
     const context = { accountId: aaid, cloudId: 'golden', siteUrl: 'https://golden.atlassian.net', localId: `${moduleKey}-1`, moduleKey, environmentType: 'DEVELOPMENT', locale: 'en-US', timezone: 'Europe/Bucharest', theme: { colorMode: theme }, extension };
@@ -455,6 +465,29 @@ async function main() {
   await ns.shot();
   clean(ns.log, 'not-started');
   await ns.page.close();
+
+  // ---------- R9: the boot budget of the widget view and the sprint modal ----------
+  for (const [label, spec] of [
+    ['widget', { resource: 'widget', moduleType: 'dashboards:widget', moduleKey: 'scope-widget', extension: widgetExt({ boardId: '1' }) }],
+    ['sprint modal', { resource: 'sprint', moduleType: 'jira:sprintAction', moduleKey: 'scope-sprint-ledger', extension: sprintExt(11, 'active') }],
+  ]) {
+    const b = await open(spec);
+    await b.page.waitForFunction(() => document.querySelector('[data-metric]'));
+    await b.page.waitForTimeout(300);
+    // Page-side order: resources whose request started before the first data appeared in the DOM.
+    const t = await b.page.evaluate(() => ({ paintAt: window.__paintAt, offset: performance.timeOrigin, resources: performance.getEntriesByType('resource').map((e) => ({ url: e.name, start: e.startTime })) }));
+    const paint = t.offset + t.paintAt;
+    // The app's own files (the bed's host injects its token stylesheet, as the product injects its scripts).
+    const own = (url) => path.join(APP, 'static', spec.resource, 'build', path.basename(new URL(url).pathname));
+    const assets = t.resources.filter((r) => r.start <= t.paintAt && /\.(js|css)$/.test(new URL(r.url).pathname) && fs.existsSync(own(r.url))).map((r) => r.url);
+    const bytes = assets.reduce((n, url) => n + fs.statSync(own(url)).size, 0);
+    const invokes = b.log.invokes.filter((i) => i.at <= paint).length;
+    const origin = new URL(servers[spec.resource].url).origin;
+    ok(t.paintAt && invokes <= 1, `R9 ${label}: ${invokes} invoke(s) before the first data paint`);
+    ok(t.paintAt && bytes <= 150 * 1024, `R9 ${label}: ${bytes} bytes of JS+CSS before the first data paint (${assets.map((u) => path.basename(new URL(u).pathname)).join(', ')})`);
+    ok(b.log.requests.every((r) => r.url.startsWith(origin) || r.url.startsWith('data:')), `R9 ${label}: no external origin requested`);
+    await b.page.close();
+  }
 
   await browser.close();
   for (const s of Object.values(servers)) s.srv.close();
