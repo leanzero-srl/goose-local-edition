@@ -102,7 +102,9 @@ async function main({ emu, argv, print = console.log }) {
         print(`  ${i.functionKey}(${short(i.payload)}) after ${i.reconcilesBefore} commit(s) -> ${outcome}`);
       }
       if (host.flags.length) { print('== flags'); for (const f of host.flags) print(`  ${f.type ?? 'info'} ${short(f.title)} ${f.description ? short(f.description) : ''}${f.closed ? ' (closed)' : ''}`); }
-      if (host.errors.length) { print('== errors'); for (const e of host.errors) print(`  ${e.kind}: ${e.stack ?? e.message}`); }
+      // the app's own frames only (the bundle's file:line); the host's frames say nothing about the app
+      const appFrames = (e) => (e.stack ?? '').split('\n').filter((l) => /^\s+at /.test(l) && l.includes(emu.appDir)).slice(0, 3);
+      if (host.errors.length) { print('== errors'); for (const e of host.errors) print([`  ${e.kind}: ${e.name && e.name !== 'Error' ? `${e.name}: ` : ''}${e.message}`, ...appFrames(e)].join('\n')); }
       const loud = host.console.filter((c) => c.level === 'error' || c.level === 'warn');
       if (loud.length) { print('== console'); for (const c of loud) print(`  ${c.level}: ${c.text}`); }
       if (host.harnessMissing.length) { print('== not modelled by this host (a harness gap, not your app\'s fault)'); for (const m of host.harnessMissing) print(`  ${m.what}`); }
