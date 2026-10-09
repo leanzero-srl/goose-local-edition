@@ -387,8 +387,10 @@ const ledgerRow = (v) => Object.fromEntries(LEDGER_ATTRS.map((k) => [k, v?.[k] ?
 // drawn a few virtual minutes before a clock-hour top in the middle of the scored hours, so background work meets a
 // quota 429 whose Retry-After runs to that top (longer than a trigger's or consumer's limit: SPEC R2 and R3). The
 // window holds none of the harness's own person-facing reads (they come PANEL_BEFORE_MS before each mark).
-// The window's length in virtual seconds, longest first: every one outlasts a trigger's 25 s limit.
-const QUOTA_WINDOW_S = [480, 420, 360, 300, 240, 180, 120, 90, 60, 40];
+// The window's length in virtual seconds, longest first: the first three outlast the longest invocation limit (900 s,
+// a consumer or scheduled trigger with timeoutSeconds), every one a trigger's 25 s. A checkpoint mark inside the
+// window is graded without the issues changed under the wall (P8 r7_values_fresh reads rate.wall).
+const QUOTA_WINDOW_S = [1200, 1080, 960, 480, 420, 360, 300, 240, 180, 120, 90, 60, 40];
 const READS_MARGIN_MS = 15_000;
 function quotaWindow(t0) {
   const top = (Math.floor((t0 + 2.5 * H) / H) + 1) * H;

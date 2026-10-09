@@ -961,9 +961,19 @@ def _(ev: Ev) -> Dict:
     if late:
         return unavail(f'field.applied_by_checkpoint lacks {sample(late)} (the live changes the site had applied)')
     key_of = {iid: i['key'] for iid, i in ev.o.issues.items()}
+    # The shared pool's wall the probe drew (rate.wall, contract §10): background could not write while it stood, so
+    # at a mark inside it the issues changed under it are graded at the next mark.
+    rate, _why = ev.section('rate')
+    wall = (rate or {}).get('wall') if isinstance(rate, dict) else None
     shares, worst = [], None
     for cp in cps:
         values, ungraded = ev.o.field_values(cp, None if cp == 'final' else applied[cp])
+        mark = ev.o.checkpoint_mark(cp)
+        if wall and mark is not None and wall.get('t_ms') is not None and wall.get('until_ms') is not None:
+            at, mark_ms = int(wall['t_ms']), int(mark.timestamp() * 1000)
+            if at <= mark_ms <= int(wall['until_ms']):
+                ungraded = set(ungraded) | {key_of[str(e['issueId'])] for e in ev.o.relevant_live()
+                                            if at <= int(ev.o._created(e).timestamp() * 1000) <= mark_ms}
         observed = {key_of.get(str(k), str(k)): v for k, v in by[cp].items()}
         graded = ({k for k, v in values.items() if v != frozenset({''})}
                   | {k for k, v in observed.items() if str(v or '').strip()}) - ungraded
