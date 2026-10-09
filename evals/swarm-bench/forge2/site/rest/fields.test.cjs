@@ -96,9 +96,7 @@ test('refusals: asUser, unknown and foreign fields, duplicates, type, size, miss
   assert.strictEqual(state.st.issues.get(ids[0]).fields[FIELD], 'x', 'a refused request applies nothing');
 });
 
-test('updateCount counts field-issue combinations; before v2 installs the field it is a 404; no field id fails loudly', () => {
-  assert.strictEqual(fields.updateCount({ updates: [{ customField: FIELD, issueIds: [1, 2, 3], value: 'a' }, { issueIds: [4], value: 'b' }] }), 4);
-  assert.strictEqual(fields.updateCount({ nope: true }), 0);
+test('before v2 installs the field a write is a 404; a pack without the field id fails loudly', () => {
   const { call, ids } = rig({ installed: false });
   assert.strictEqual(call(POST, { body: { updates: [{ customField: FIELD, issueIds: [ids[0]], value: 'committed' }] } }).status, 404);
   const pack = facts('0123456789abcdef');

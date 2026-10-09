@@ -37,12 +37,6 @@ function appFieldId(pack) {
   return pack.scopeStatusFieldId;
 }
 
-// The number of field-issue combinations a request asks for (what the rate model prices: 1 + 1 per 50 updates).
-function updateCount(body) {
-  const updates = body && typeof body === 'object' && Array.isArray(body.updates) ? body.updates : [];
-  return updates.reduce((n, u) => n + (u && Array.isArray(u.issueIds) ? u.issueIds.length : 0), 0);
-}
-
 function fitsType(field, value) {
   if (value === null) return true;
   const type = field.schema?.type;
@@ -131,4 +125,4 @@ function fieldValues(state) {
   return Object.fromEntries([...state.st.issues.values()].filter((i) => i.fields[id] !== null && i.fields[id] !== undefined).map((i) => [i.id, i.fields[id]]));
 }
 
-module.exports = { handlers, updateCount, fieldWrites, fieldValues, MAX_UPDATES };
+module.exports = { handlers, fieldWrites, fieldValues, MAX_UPDATES };
