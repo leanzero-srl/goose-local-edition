@@ -1,3 +1,43 @@
+# Forge 2.0 golden (P10, 2026-10-09): what the v2 golden decides where SPEC §1-§2 leaves room
+
+Built from `forge2/SPEC.md` §1-§2 and the verified research only (P6's contract text was not read). Each line is
+an interpretation the contract (P6), the oracle (P8) and the probe (P9) must match, or the golden must change.
+
+- **R7 field API: `POST /rest/api/3/app/field/value`**, not the `PUT` SPEC §1/§2.1 name. The shipped OpenAPI
+  (`forge2/kit/openapi/jira.json`) has the bulk update as POST (`MultipleCustomFieldValuesUpdateDetails`:
+  `{updates:[{customField, issueIds:[int], value}]}`); PUT exists only as `/app/field/{fieldIdOrKey}/value`. The
+  golden sends `?generateChangelog=false&generateAppEvents=false`, ≤ 200 issue updates per request, empty = `null`.
+- **R7 field discovery:** `GET /rest/api/3/field`, the field whose `schema.custom` ends `/scope-status` (the extension
+  ARI `…/static/scope-status`) or whose `key` ends `__scope-status`. None found = logged, statuses not written.
+- **R7 values:** `committed` / `added +<points>` (points as §1 plain decimals, the board's current estimate) for the
+  active sprint the issue is in; `removed` when it left an active sprint after its start and is in none now; empty
+  otherwise (incl. after its sprint closed). Deleted issues are not written.
+- **R4 deleted issue:** rows get `deleted: true`; the membership keeps its last state with `deleted: true`, so the
+  issue counts as not-in-now: still in `committed` if it was in at start, and in `removed`. Its rows are hidden from
+  every person (no one can browse a deleted issue) and counted in hidden-count.
+- **R4 closed sprint:** no row with a change time after `completeDate`; the event path reads each sprint and board
+  fresh (one agile GET each per invocation), so closes and estimation-field switches apply at once.
+- **R4 estimation-field switch:** rows keep the estimate they were written with; totals and the modal's points
+  column stay v1's "current estimate" (the board's current field).
+- **R1:** the v1 key (`<changeId>:<sprintId>`) is the v2 key, so copies are exactly-once by construction. Migrated
+  rows: estimate = the issue's current value of the sprint's board field (v1 stored none), `deleted` if Jira no
+  longer has the issue. Progress text: `Migrated <n> of <total> v1 rows`, `… — complete`, before the first step
+  `Migration has not started yet`. Starts on `avi:forge:upgraded:app` and on every scheduled run.
+- **R2 dose:** each background invocation records its spend under KVS `dose:<hour>:<invocation>` and sums the
+  hour's keys; it stops (consumer: `InvocationError`; scheduled: a delayed queue continuation) before a request
+  that would pass `floor(2400 × share / 100)`. A quota 429 writes `dose-paused-until`. Needs `Date.now()` virtual.
+- **R6:** static web trigger, outputs `accepted` 202 / `duplicate` 200 / `unauthorized` 401 / `invalid` 400 (a
+  signed but malformed body). The handler returns `{outputKey}` AND the dynamic shape (`statusCode`, `body`,
+  `headers`) so either host reads it. "Deployed to <env>" = `deployedEnvs` on every ledger row of the issue, shown in
+  the sprint ledger's extra column `th[data-col="deployed"]`. A valid event before the migration completes is
+  queued (still 202) and applied by the consumer once it has.
+- **R8:** an LLM 429 (the SDK exposes no Retry-After) backs off 20 s, 40 s, … server-side; the page gets an error
+  with `retryAfter`, never an auto-retry. Cache key = the exact prompt input (viewer-visible data only), 10 minutes.
+- **R9:** `index.js` (bridge + plain DOM, ~97 KB) + `index.css` paint the first data after one invoke; React
+  `app.js` is requested on the next frame and starts from `window.__scopeBoot` (no second invoke).
+- **R5 labels:** each control is `<Label labelFor=id>` + the control with that `id`; buttons by their text; the
+  migration status is a read-only Textfield labelled `Migration` plus the same text as a Text node.
+
 # Contract gaps found while building the golden (WP3, 2026-10-02)
 
 The golden was built from `forge/public/{spec-build-forge.md, FORGE-CONTRACT.md, STARTER.md}`, the installed
