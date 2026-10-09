@@ -80,7 +80,7 @@ resolver.define(
     await kvs.setSecret(SECRET_KEY, secret);
     const meta = { last4: secret.slice(-4), rotatedAt: new Date(Date.now()).toISOString() };
     await kvs.set(SECRET_META_KEY, meta);
-    await audit([{ at: meta.rotatedAt, accountId: actor.accountId, who: actor.who, what: 'Rotated the CI secret' }]);
+    await audit([{ at: meta.rotatedAt, accountId: actor.accountId, who: actor.who, what: 'Rotate CI secret' }]);
     return { ...(await adminState()), newSecret: secret };
   }),
 );

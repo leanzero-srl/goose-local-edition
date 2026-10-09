@@ -3,9 +3,7 @@
 Scope Ledger v1 is installed on a large Jira Cloud site and has been in use for days: agile coaches see on a
 dashboard, from the sprint itself and from Rovo what entered a sprint after it started, who added it and how many
 story points it carried. This workspace is v1's source (`STARTER.md`). Ship v2: everything v1 does (§1–§8, which
-keep their rules unless a later section changes them) plus the guarantees of §9–§18: a live migration of v1's data,
-a points quota, time limits, a changing world, a UI Kit admin panel, signed CI events, a custom field, safer Forge
-LLM use and a Custom UI boot budget.
+keep their rules unless a later section changes them) plus the guarantees of §9–§18.
 
 The harness upgrades the installation from v1 to your v2 over v1's stored data — that instant is virtual hour 0 —
 and runs it for 6 virtual hours on a seeded site: product events, queue deliveries, scheduled runs, resolver calls
@@ -31,13 +29,13 @@ For each **active** sprint S, with `startDate` from the Jira Software sprint API
 - **creep** = `100 × added / committed`, rounded half away from zero to one decimal and always written with that
   decimal and `%` (`20.0%`); `—` when committed is 0.
 - An issue's **estimate** for S is the value of the estimation field S's board (the sprint's `originBoardId`) uses
-  now; no value counts as 0, and a deleted issue has no value. "After `startDate`" is strictly after.
+  now; a change's **points** are the issue's current value of the field that board used at the time of the change
+  (§9). No value counts as 0, and a deleted issue has no value. "After `startDate`" is strictly after.
 - Points are written as plain decimals (`34.5`, `0`), no thousands separators.
 
-Background work (triggers, consumers, scheduled jobs, the web trigger) sees every issue. What a **person** sees in the
-sprint action and the Rovo action lists only changes to issues that person can browse, plus a count of the changes
-hidden from them; the totals above are team totals and are the same for everyone. Changes of deleted issues are
-listed to nobody and counted as hidden for nobody.
+Background work (§10) sees every issue. What a **person** sees in the sprint action and the Rovo action lists only
+changes to issues that person can browse, plus a count of the changes hidden from them; the totals above are team
+totals and are the same for everyone. Changes of deleted issues are listed to nobody and counted as hidden for nobody.
 
 ## 2. Modules
 
@@ -117,7 +115,7 @@ shows `[data-testid="not-started"]` (and optionally close) and nothing else. Oth
   changes hidden from the viewer.
 - `table[data-testid="ledger"]`, headers `th[data-col]` for `issue`, `points`, `kind`, `by`, `at`, `source`,
   `deployed`; one `tr[data-change-id="<changelog id>"]` per visible change with `td[data-col=…]` cells: issue key,
-  current estimate, `added`/`removed`, author display name, a `<time datetime>` holding an ISO-8601 instant with
+  the change's points, `added`/`removed`, author display name, a `<time datetime>` holding an ISO-8601 instant with
   offset (compared as instants), `event`/`reconcile`, and one `[data-env="<env>"]` element with the text
   `Deployed to <env>` per environment the issue was deployed to (§14; empty when none).
 - Default order: `at` ascending, equal times by changelog id ascending (ids compare as numbers). Clicking
@@ -150,9 +148,9 @@ returns a JSON object:
                  "at": "<ISO-8601 UTC>", "by": "<display name>" } ] }
 ```
 
-`creepPercent` is rounded as creep (§1) and `null` when committed is 0; `changeId` is the changelog id; `changes` are
-the visible ones in table order (§5); `at` is compared as an instant. An unknown or missing `sprintId` returns
-`{ "error": "<message>" }` and does not throw.
+`creepPercent` is rounded as creep (§1) and `null` when committed is 0; `changeId` is the changelog id, `points` the
+change's points; `changes` are the visible ones in table order (§5); `at` is compared as an instant. An unknown or
+missing `sprintId` returns `{ "error": "<message>" }` and does not throw.
 
 `skills/sprint-scope-analyst/SKILL.md`: YAML frontmatter `name` equal to the directory name (1–64 characters:
 lowercase letters, digits, single hyphens, no leading or trailing hyphen), `description` (50–1,024 characters: what it
@@ -201,10 +199,10 @@ v2 keeps its ledger in a NEW entity `scope-ledger`:
   string; index `by-sprint`, partition `[sprintId]`, range `[at]`. A named index takes exactly ONE range attribute:
   Forge refuses more at lint and at deploy. Add attributes and indexes as you need; row keys are yours to choose.
 - Per row: `at` the change time in epoch milliseconds; `kind` `added` or `removed`; `estimate` the issue's points
-  when the row is written, in the estimation field the sprint's board uses then (no value = 0); `estimateField` that
-  field's id; `boardId` that board's id; `deleted` true once the issue is deleted (§12); `deployedEnvs` the
-  environments the issue was deployed to (§14), comma-separated, each once (empty when none). Once written, a row's
-  `estimate`, `estimateField` and `boardId` never change.
+  when the row is written, in the estimation field the sprint's board used at the change (no value = 0);
+  `estimateField` that field's id; `boardId` that board's id; `deleted` true once the issue is deleted (§12);
+  `deployedEnvs` the environments the issue was deployed to (§14), comma-separated, each once (empty when none).
+  Once written, a row's `estimate`, `estimateField` and `boardId` never change.
 
 Migration guarantees (graded):
 - Every `scope-change` row appears in `scope-ledger` exactly once: the same change (changelog id + sprint) with its
@@ -285,8 +283,8 @@ Guarantees (graded):
 While v2 runs, sprints close, issues move to another board's sprint, a board's estimation field changes, issues are
 deleted, and people lose browse permission on a project. The dev site exercises every one of these at least once; the
 scoring schedule is private. Guarantees (graded):
-- **A sprint closes:** its ledger is final (no change after the close is recorded for it) and it leaves the widget,
-  which shows active sprints only.
+- **A sprint closes:** its ledger is final (no change after the close is recorded for it; its numbers and points
+  stay as at the close) and it leaves the widget, which shows active sprints only.
 - **An issue moves to another board's sprint:** recorded as `removed` from the old sprint and `added` to the new one;
   the `added` row and the new sprint's numbers use the NEW board's estimation field.
 - **A board's estimation field changes:** changes after the switch use the new field; earlier rows keep their
@@ -363,8 +361,8 @@ app (`asApp`), in bulk, through the app field-value API (`POST /rest/api/3/app/f
 find it with `GET /rest/api/3/field`, where it is the custom field whose `name` is your module's `name`.
 
 Value per issue (graded), from the facts of §1:
-- in an active sprint S now: `committed` if it was in S at S's `startDate`, else `added +<points>` with its current
-  estimate for S written as §1 points (`added +5`, `added +2.5`, `added +0`);
+- in an active sprint S now: `committed` if it was in S at S's `startDate`, else `added +<points>` with the points
+  of the change that last added it to S, as in §1 (`added +5`, `added +2.5`, `added +0`);
 - in no active sprint now, but in a currently active sprint S at some time after S's `startDate`: `removed`;
 - any other issue: empty (no value), including the issues of a sprint once it closes.
 

@@ -8,6 +8,7 @@ import {
   rowsOfIssue,
   recordChange,
   writeMember,
+  sameMember,
   changeKey,
   memberKey,
   markIssueDeleted,
@@ -95,6 +96,8 @@ async function rowsOf(cfg, issue, histories, source, resolve) {
   return rows;
 }
 
+// `estimate` is the value of the field the sprint's board uses now (the totals); `estimates` holds every
+// estimation field's current value, so a change made under another field keeps showing that one (contract §1).
 export function memberRow(cfg, sprintId, issue, currentSprintIds) {
   const sprint = cfg.sprints[sprintId];
   return {
@@ -103,6 +106,7 @@ export function memberRow(cfg, sprintId, issue, currentSprintIds) {
     issueKey: issue.key ?? '',
     inSprint: currentSprintIds.has(sprintId),
     estimate: estimateOf(issue.fields, sprint.estimateFieldId),
+    estimates: JSON.stringify(Object.fromEntries(estimateFieldIds(cfg).sort().map((f) => [f, estimateOf(issue.fields, f)]))),
   };
 }
 
@@ -168,7 +172,12 @@ export async function applyIssueEvent(cfg, { issueId, changelogId, sprintChange 
   let members = 0;
   for (const sprintId of touched) {
     if (!cfg.sprints[sprintId]) continue;
-    if (await writeMember(memberRow(cfg, sprintId, issue, currentIds), stored.get(sprintId))) {
+    const next = memberRow(cfg, sprintId, issue, currentIds);
+    // A sprint the issue left may have closed since (a close sends no event): read it before its member moves, so a
+    // closed sprint's numbers stay as they stood at the close (contract §12).
+    if (!currentIds.has(sprintId) && !sameMember(next, stored.get(sprintId))) await resolve(sprintId);
+    if (!cfg.sprints[sprintId]) continue;
+    if (await writeMember(next, stored.get(sprintId))) {
       members += 1;
       changed.add(sprintId);
     }

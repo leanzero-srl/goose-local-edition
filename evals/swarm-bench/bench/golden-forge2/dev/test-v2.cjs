@@ -174,7 +174,18 @@ async function main() {
   eq(wRows, [['11', 'removed', w.fields[w.estField] ?? 0, site.boards[0].estimateField], ['21', 'added', 8, EST_WEB]], 'a move to another board is removed from the old sprint and added to the new with the new board\'s estimate');
   // (c) a sprint closes: its ledger is final and it leaves the widget
   const in12 = ops.filter((i) => i.sprints.includes(12));
+  // An issue leaves sprint 12, the sprint closes, and the issue is re-estimated before any event reveals the close:
+  // the closed sprint's numbers stay as they stood at the close (contract §12).
+  const left12 = in12[1];
+  await deliver(site.update(left12.key, { sprints: left12.sprints.filter((s) => s !== 12) }));
+  const member12 = () => {
+    const m = platform.kvs.entities.get('sprint-issue')?.get(`12:${left12.id}`);
+    return m && JSON.stringify([m.inSprint, m.estimate, m.estimates]);
+  };
   site.closeSprint(12);
+  const frozen12 = member12();
+  await deliver(site.update(left12.key, { estimate: (left12.fields[left12.estField] ?? 0) + 1 }));
+  ok(frozen12 && member12() === frozen12, `a re-estimate after the close leaves the closed sprint's numbers as at the close (${left12.key})`);
   const rows12 = [...ledger(platform).values()].filter((r) => r.sprintId === '12').length;
   await deliver(site.update(in12[0].key, { sprints: in12[0].sprints.filter((s) => s !== 12) }));
   ok([...ledger(platform).values()].filter((r) => r.sprintId === '12').length === rows12, 'a change after a sprint closed adds nothing to its ledger');

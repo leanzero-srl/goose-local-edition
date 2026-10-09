@@ -116,7 +116,7 @@ function Admin() {
       <Stack space="space.100">
         <Heading as="h3">CI deployments</Heading>
         {newSecret ? (
-          <Text>New CI secret (shown once): {newSecret}</Text>
+          <Text>CI secret: {newSecret}</Text>
         ) : (
           <Text>{state.secret ? `CI secret: ${state.secret.masked}` : 'No CI secret yet: rotate to create one.'}</Text>
         )}

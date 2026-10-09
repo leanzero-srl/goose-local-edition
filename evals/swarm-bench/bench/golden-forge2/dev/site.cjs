@@ -463,7 +463,10 @@ function createSite({ seed = 7, scopes = null, clock: vclock = null } = {}) {
   }
   function setBoardField(boardId, fieldId) {
     advance(60000);
-    boards.find((b) => b.id === boardId).estimateField = fieldId;
+    const board = boards.find((b) => b.id === boardId);
+    // Kept so the oracle knows the field a change was made under (contract §1: a change keeps it).
+    board.switches = [...(board.switches ?? []), { at: now(), from: board.estimateField, to: fieldId }];
+    board.estimateField = fieldId;
   }
 
   return { SPRINT_FIELD, SCOPE_FIELD, users, boards, sprints, sprintById, issues, issueByKey, issueById, comments, requests, rateLimits, fieldWrites, handle, update, deleteIssue, closeSprint, setBoardField, now };
@@ -473,8 +476,11 @@ function createSite({ seed = 7, scopes = null, clock: vclock = null } = {}) {
 // history (the app reconstructs it backwards from the ledger, so this is an independent derivation).
 function oracle(site) {
   const out = {};
-  const perIssue = new Map(); // issueId -> [{ sprintId, atStart, everAfter, inNow, e }]
-  const ests = (i) => i.fields[i.estField] ?? 0;
+  const perIssue = new Map(); // issueId -> [{ sprintId, atStart, everAfter, inNow, e, addedE }]
+  // Contract §1: no value counts as 0 and a deleted issue has no value; a change's points read the field its board
+  // used at the time of the change.
+  const valueOf = (i, field) => (i.deleted ? 0 : i.fields[field] ?? 0);
+  const fieldAt = (board, t) => (board.switches ?? []).reduce((f, s) => (s.at <= t ? s.to : f), board.switches?.[0]?.from ?? board.estimateField);
   for (const s of site.sprints.filter((x) => x.state === 'active')) {
     const changes = [];
     let committed = 0;
@@ -507,9 +513,11 @@ function oracle(site) {
       }
       const inNow = !i.deleted && i.sprints.includes(s.id);
       const board = site.boards.find((b) => b.id === s.board);
-      const e = board.estimateField === i.estField ? ests(i) : i.fields[board.estimateField] ?? 0;
+      const e = valueOf(i, board.estimateField);
+      const lastAdd = changes.filter((c) => c.issueId === i.id && c.kind === 'added').at(-1);
+      const addedE = lastAdd ? valueOf(i, fieldAt(board, lastAdd.at)) : e;
       if (!perIssue.has(i.id)) perIssue.set(i.id, []);
-      perIssue.get(i.id).push({ sprintId: s.id, atStart, everAfter, inNow, e });
+      perIssue.get(i.id).push({ sprintId: s.id, atStart, everAfter, inNow, e, addedE });
       if (atStart) committed += e;
       if (inNow && !atStart) added += e;
       if (everAfter && !inNow) removed += e;
@@ -525,7 +533,7 @@ function oracle(site) {
     if (i.deleted) continue;
     const per = perIssue.get(i.id) ?? [];
     const now = per.find((x) => x.inNow);
-    status.set(i.id, now ? (now.atStart ? 'committed' : `added +${Math.round(now.e * 1e6) / 1e6}`) : per.some((x) => x.everAfter) ? 'removed' : '');
+    status.set(i.id, now ? (now.atStart ? 'committed' : `added +${Math.round(now.addedE * 1e6) / 1e6}`) : per.some((x) => x.everAfter) ? 'removed' : '');
   }
   Object.defineProperty(out, 'status', { value: status, enumerable: false });
   return out;
