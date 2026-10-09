@@ -197,7 +197,8 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
       entry.retryAfter = fault.retryAfter;
       return send(429, rate.model.body429, { 'Retry-After': String(fault.retryAfter), 'RateLimit-Reason': fault.f.reason });
     }
-    const ctx = { state, render, limits: pack.limits, paging: pack.paging, caller, params: m.params,
+    // `t`: the request's virtual instant, Jira's "now" for it (relative-date JQL); the site's clock may be later.
+    const ctx = { state, render, limits: pack.limits, paging: pack.paging, caller, params: m.params, t,
       req: { method, pathname, query: url.searchParams, body },
       canBrowse: (iss) => state.canBrowse(caller.accountId, iss), canComment: (iss) => state.canComment(caller.accountId, iss),
       canBrowseProject: (key) => state.canBrowseProject(caller.accountId, key) };

@@ -23,6 +23,8 @@ const LIMITS = {
   softwareIssueDefault: { value: 50, receipt: { measured: 'Jira Cloud 2026-10-02: GET /rest/software/1.0/board/{id}/issue and /backlog with no maxResults returned 50 issues, isLast false, a nextPageToken' } },
   softwareIssuePage: { value: 5000, receipt: { openapi: 'jsw.json GET /rest/software/1.0/sprint/{sprintId}/issue maxResults', quote: 'It returns max 5000 issues.' } },
   agileIssueDefault: { value: 50, receipt: { openapi: 'jsw.json GET /rest/agile/1.0/board/{boardId}/backlog (also epic issue lists; board/sprint issue lists state no default)', quote: 'The maximum number of issues to return per page. Default: 50.' } },
+  groupMemberPage: { value: 50, receipt: { openapi: 'jira.json GET /rest/api/3/group/member maxResults', quote: 'The maximum number of items to return per page (number should be between 1 and 50).',
+    measured: 'Jira Cloud 2026-10-10: no maxResults and maxResults=100 echoed 50; maxResults=0 and -1 echoed 1' } },
 };
 
 // The SCORING site's page rule (DESIGN §17.6; the dev site never carries it). Jira serves at most `maxResults` per

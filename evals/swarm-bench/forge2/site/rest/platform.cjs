@@ -22,14 +22,16 @@ const hash = (x) => crypto.createHash('sha256').update(JSON.stringify(x)).digest
 const listParam = (q, name) => q.getAll(name).flatMap((v) => v.split(',')).map((v) => v.trim()).filter(Boolean);
 const intParam = (v, dflt) => (v === undefined || v === null || v === '' ? dflt : Number.parseInt(v, 10));
 
-// The JQL model reads the LIVE site (sprints close, fields join), never the pack.
+// The JQL model reads the LIVE site (sprints close, fields join), never the pack; its clock is the request's virtual
+// instant (relative dates count from the invocation's time, not the site's). Agile's JQL uses the same model.
 function jqlModel(c) {
   const { pack } = c.state;
   return { fields: c.state.fields(), sprints: c.state.sprints(), statuses: pack.statuses, issueTypes: pack.issueTypes, projects: pack.projects,
-    sprintFieldId: pack.sprintFieldId, now: c.state.now, currentUser: c.caller.accountId };
+    sprintFieldId: pack.sprintFieldId, now: () => c.t, currentUser: c.caller.accountId };
 }
 
-// Hits are filtered and sorted once per (caller, query, state version); every page of a walk slices the same list.
+// Hits are filtered and sorted once per (caller, query, state version), and every page of a walk slices the same
+// list — except a query that reads the clock, whose hits are per instant: each page counts from its own request's.
 function runSearch(c, jql) {
   if (jql === undefined || jql === null) return { error: err(400, 'Unbounded JQL queries are not allowed here. Please add a search restriction to your query.') };
   let q;
@@ -39,7 +41,8 @@ function runSearch(c, jql) {
     throw e;
   }
   if (!q.bounded) return { error: err(400, 'Unbounded JQL queries are not allowed here. Please add a search restriction to your query.') };
-  const hits = c.state.cached(`search\u0000${c.caller.accountId}\u0000${jql}`, () => c.state.allIssues().filter((i) => c.canBrowse(i) && q.matches(i)).sort(q.compare));
+  const key = `search\u0000${c.caller.accountId}\u0000${jql}${q.timed ? `\u0000${c.t}` : ''}`;
+  const hits = c.state.cached(key, () => c.state.allIssues().filter((i) => c.canBrowse(i) && q.matches(i)).sort(q.compare));
   return { hits };
 }
 
@@ -322,4 +325,4 @@ function searchJql(c, { jql, nextPageToken, maxResults, fields, expand }) {
   return { status: 200, body: { issues: page.map((i) => c.render.issue(i, sel, { expand })), ...(more ? { nextPageToken: token(offset + page.length, bind) } : {}), isLast: !more } };
 }
 
-module.exports = { handlers, err, runSearch, listParam, intParam, NOT_FOUND_ISSUE };
+module.exports = { handlers, err, runSearch, jqlModel, listParam, intParam, NOT_FOUND_ISSUE };
