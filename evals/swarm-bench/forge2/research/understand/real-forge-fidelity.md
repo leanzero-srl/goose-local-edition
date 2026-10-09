@@ -2,7 +2,7 @@
 
 Phase 1 (UNDERSTAND), real-Forge fidelity tooling. Measured 2026-10-09, 19:38–20:05 EEST, on the Mac Studio
 (`workhorse`). The Forge CLI is `/usr/local/bin/forge`, which links to `@forge/cli` 14.1.0, installed 2026-10-09 16:34. Local
-Node is v24.15.0. Logged in as mihai@wolfaenpak.com.
+Node is v24.15.0. Logged in as the wolfaenpak test-site account.
 
 The probe app is the throwaway `lz-range-probe`, `ari:cloud:ecosystem::app/ea75d1b1-757a-4613-a2bc-a4c379494602`,
 in the LeanZero SRL developer space. Nothing else on wolfaenpak was touched. The app was installed for 2 minutes and
