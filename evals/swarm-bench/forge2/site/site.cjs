@@ -14,19 +14,26 @@
 // for a refusal, `rateLimited` (the RateLimit-Reason) and `retryAfter`.
 const http = require('http');
 const fs = require('fs');
+const path = require('path');
 const crypto = require('crypto');
 const { facts } = require('./fixtures.cjs');
 const { createState } = require('./state.cjs');
 const { createOpenApi } = require('./openapi.cjs');
 const { createRenderer } = require('./rest/render.cjs');
-const platform = require('./rest/platform.cjs');
-const agile = require('./rest/agile.cjs');
 const { NotModelledError } = require('./jql.cjs');
 const { createLlm } = require('./llm.cjs');
 const { createRealtime } = require('./realtime.cjs');
 const rateModel = require('./rate.cjs');
 
-const HANDLERS = { ...platform.handlers, ...agile.handlers };
+// Every rest/*.cjs module that exports `handlers` ({ 'METHOD /template': (ctx) => {status, body, headers?} }) serves
+// its operations: platform.cjs, agile.cjs, and site-world's fields.cjs. One operation has one handler.
+const HANDLERS = {};
+for (const file of fs.readdirSync(path.join(__dirname, 'rest')).filter((f) => f.endsWith('.cjs')).sort()) {
+  for (const [op, fn] of Object.entries(require(path.join(__dirname, 'rest', file)).handlers ?? {})) {
+    if (HANDLERS[op]) throw new Error(`rest/${file} handles ${op} a second time`);
+    HANDLERS[op] = fn;
+  }
+}
 const COMMENT_POST = 'POST /rest/api/3/issue/{issueIdOrKey}/comment';
 const UI_MODULE_TYPES = new Set(['jira:sprintAction', 'dashboards:widget']);
 // A page after the first: a nextPageToken, or a startAt past 0, in the query or the JSON body.
