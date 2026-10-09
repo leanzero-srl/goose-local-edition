@@ -62,12 +62,13 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
 
 ## Line state
 
-- 2026-10-10 01:0x INTEGRATED on branch `forge2/integrate` (11 package branches merged, every integration note applied
-  or listed). Golden v2 on scoring seed 0123456789abcdef: 0.6649 -> 0.9419 (no critical; v2 0.7229 of 0.75), scoring
-  wall ~436 s per seed. Untouched starter: 0.3716 under the old 0.599 band -> band lowered to 0.30 (SPEC §4/§5
-  conflict) -> 0.2692 rescored. Remaining fix list (golden estimation-field refresh, v1 economy optimums, entity-index
-  row, R3's 900 s stimulus on some seeds, mutants for 2.0, 3-seed gate, calibration) is in the integrator's report.
-
+- 2026-10-10 01:2x INTEGRATED on branch `forge2/integrate` (11 package branches merged, every integration note applied
+  or listed in the integrator's report). Golden v2 on scoring seed 0123456789abcdef: 0.6649 -> 0.9573 (no critical; v2
+  0.7229 of 0.75), scoring wall ~436 s per seed alone. Untouched starter: 0.3716 under the old 0.599 band -> band
+  lowered to 0.30 (SPEC §4/§5 conflict) -> 0.2694 through `run_build --forge2` (e2e: 5/6 PASS; the 6th compared a
+  contract I edited mid-run). Open: golden 'added +<points>' after a field switch (contract wording), v1 economy
+  optimums without 2.0 work, R3's 900 s stimulus blocked by the panel read on some seeds, 2.0 mutants, 3-seed gate,
+  calibration, sb7.x/forge manifests to refreeze after P11's shared bench edits.
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
 - (history) Owner 2026-10-09 21:2x: "freeze forge 1.0 with a note, 2.0 replaces it" -> wf forge10-freeze-note running (map site+app,
