@@ -42,7 +42,7 @@ field 0.05, Forge LLM 0.04, the boot budget 0.05. Lint warnings cost points but 
 Conditions also cap it:
 
 - Lint errors, or manifest functions that do not bundle and load: maximum 0.499.
-- None of the v2 surfaces exists (no `jira:adminPage`, no `webtrigger` and no `scope-ledger` entity): maximum 0.599.
+- None of the v2 surfaces exists (no `jira:adminPage`, no `webtrigger` and no `scope-ledger` entity): maximum 0.30.
 
 Each of these defects, when observed, multiplies the score by 0.6, once per root cause:
 

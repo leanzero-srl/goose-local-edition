@@ -10,7 +10,7 @@ Forge 1.0's machinery (score_forge.py, forked) with the 2.0 composition (SPEC §
            imported from bench/forge2_checks.py, each weighted inside its family)
   criticals: five CLASSES, ×0.6 each, a class fires at most once (each root priced once) and only on an observed
            defect — never on a vacuous, absent, unavailable or manifest-fault row
-  bands: lint/bundle failure → max 0.499; none of jira:adminPage, webtrigger, scope-ledger → max 0.599.
+  bands: lint/bundle failure → max 0.499; none of jira:adminPage, webtrigger, scope-ledger → max 0.30.
 The §17.8 fixes: B (the duplicate critical needs >= 2 comments for one gesture; zero comments or a missing flag
 is u_comment_flow's), F (both economy rows continuous), G (vacuous / manifest-fault rows never fire a critical,
 a vacuous root counts as charged), H (u_widget_live grades the outcome on the moved sprints; polling scores 0).
@@ -144,10 +144,12 @@ CRITICAL_CLASSES = {
 }
 V1_CRITICAL = {'b_no_permission_leak': 'leak', 'b_comment_exactly_once': 'duplicate', 't_no_double_count': 'duplicate'}
 
-# ADMISSION (SPEC §4): `final = min(earned, ceilings)`; passing awards nothing.
+# ADMISSION (SPEC §4): `final = min(earned, ceilings)`; passing awards nothing. Ascending by cap. The v2-surfaces cap
+# is 0.30 so the untouched v1 starter stays <= 0.30 (SPEC §5): its v1 rows alone earn ~0.22 and a well-built v1 app
+# passes several v2 rows by doing little (background share, never killed, tool-call scope), 0.37 measured at 0.599.
 ADMISSION_BANDS = (
+    (0.30, 'v2 surfaces', ('k_v2_surfaces',)),
     (0.499, 'deployable', ('l_deployable', 'l_bundles_load')),
-    (0.599, 'v2 surfaces', ('k_v2_surfaces',)),
 )
 V2_SURFACE_ENTITY = 'scope-ledger'
 
@@ -1042,7 +1044,7 @@ def _(c):
              'the ledger has no sprint index')
 
 
-# SPEC §4 band: "none of the v2 surfaces exists (no jira:adminPage, no webtrigger, no scope-ledger) -> max 0.599".
+# SPEC §4 band: "none of the v2 surfaces exists (no jira:adminPage, no webtrigger, no scope-ledger) -> max 0.30".
 # Diagnostic (no weight): it only feeds the band, so compose_from_rows stays pure over the rows.
 @check('k_v2_surfaces', 'K')
 def _(c):

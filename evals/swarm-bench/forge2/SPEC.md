@@ -112,7 +112,7 @@ web-trigger shapes (BRIEF; body is the raw string, headers are arrays of strings
   disclosed; a hidden issue's data shown to a person who cannot browse it; a duplicate side effect (≥ 2 comments for one
   click, or duplicate ledger rows).
 - Bands: lint/bundle failure → max 0.499; none of the v2 surfaces exists (no `jira:adminPage`, no `webtrigger`, no
-  `scope-ledger`) → max 0.599.
+  `scope-ledger`) → max 0.30 (v1 untouched scores ≤ 0.30, §5: the band, not the rows, holds it there).
 - No wall-clock thresholds anywhere (counts and virtual time only). Harness/probe failures are never app evidence.
 
 ## 5. Tonight's gate and pilot
