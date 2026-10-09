@@ -1,0 +1,8 @@
+{
+  "loses": [
+    "u_llm_explain"
+  ],
+  "critical": false,
+  "max_final": 0.899,
+  "why": "The model's summary is shown verbatim even when it holds digits, so a model-invented number reaches the coach next to the ledger's. LLM defect band 0.899."
+}

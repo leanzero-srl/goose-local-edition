@@ -1,0 +1,13 @@
+diff --git a/src/explain.js b/src/explain.js
+index 8671170..16a9c9f 100644
+--- a/src/explain.js
++++ b/src/explain.js
+@@ -86,7 +86,7 @@ export async function explainSprint(view) {
+ 
+   const visible = new Map(view.changes.map((c) => [c.changeId, c]));
+   const ids = [...new Set(args.changeIds)].filter((id) => visible.has(id));
+-  const summary = /\d/.test(args.summary) || !args.summary.trim() ? ledgerSentence(view) : args.summary.trim();
++  const summary = args.summary.trim();
+   return {
+     ok: true,
+     model,

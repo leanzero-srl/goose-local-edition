@@ -1,0 +1,8 @@
+{
+  "loses": [
+    "u_widget_edit_config"
+  ],
+  "critical": false,
+  "max_final": 0.799,
+  "why": "The G3 control shape: edit still uses the edit API, but also stores the board in ONE app-storage key through a resolver, and the view reads that key instead of extension.config, so two widgets on one dashboard show the same (last chosen) board. The edit API is still used, so k_widget_edit_bridge holds (the \u00a713.5 row lists it; that row should drop it)."
+}

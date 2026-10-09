@@ -1,0 +1,25 @@
+diff --git a/src/sync.js b/src/sync.js
+index c5a45ae..da42e89 100644
+--- a/src/sync.js
++++ b/src/sync.js
+@@ -177,15 +177,12 @@ export async function searchCandidates(cfg, policy) {
+   const since = Math.min(...sprints.map((s) => s.startMs)) - 24 * 3600 * 1000;
+   const jql = `sprint in (${sprints.map((s) => s.id).join(', ')}) OR updated >= "${jqlDate(since)}"`;
+   const issues = [];
+-  let nextPageToken;
+-  do {
+-    const body = { jql, fields: issueFields(cfg), maxResults: 100 };
+-    if (nextPageToken) body.nextPageToken = nextPageToken;
+-    const page = await jiraJson('app', route`/rest/api/3/search/jql`, postJson(body), policy);
++  for (let startAt = 0; ; ) {
++    const page = await jiraJson('app', route`/rest/api/3/search?jql=${jql}&fields=${issueFields(cfg).join(',')}&startAt=${startAt}&maxResults=100`, undefined, policy);
+     issues.push(...(page.issues ?? []));
+-    nextPageToken = page.isLast === true ? undefined : page.nextPageToken ?? undefined;
+-  } while (nextPageToken);
+-  return issues;
++    startAt += page.issues?.length ?? 0;
++    if (!page.issues?.length || startAt >= page.total) return issues;
++  }
+ }
+ 
+ export async function sprintHistories(issueIds, sprintFieldId, policy) {

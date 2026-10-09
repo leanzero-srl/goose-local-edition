@@ -1,0 +1,14 @@
+diff --git a/src/index.js b/src/index.js
+index 68653f2..0543107 100644
+--- a/src/index.js
++++ b/src/index.js
+@@ -82,8 +82,7 @@ const rateLimitedAware = (fn) => async (req) => {
+     return await fn(req);
+   } catch (e) {
+     if (e instanceof RateLimited) return { rateLimited: true, retryAfter: e.retryAfterSeconds };
+-    console.error(`resolver ${req?.call?.functionKey ?? ''} failed: ${e?.message ?? e}`);
+-    return { ok: false, error: e instanceof JiraError ? `Jira refused the request (${e.status}).` : `The request failed: ${e?.message ?? e}` };
++    throw e;
+   }
+ };
+ 

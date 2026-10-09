@@ -1,0 +1,90 @@
+diff --git a/src/index.js b/src/index.js
+index 68653f2..e7acab9 100644
+--- a/src/index.js
++++ b/src/index.js
+@@ -1,5 +1,6 @@
+ import Resolver from '@forge/resolver';
+ import { Queue, InvocationError, InvocationErrorCode } from '@forge/events';
++import { kvs } from '@forge/kvs';
+ import { JiraError, RateLimited } from './jira';
+ import { loadConfig, saveConfig, discoverConfig } from './config';
+ import { applyIssueEvent, estimateFieldIds, reconcileAll } from './sync';
+@@ -94,10 +95,17 @@ const contextSprintId = (context) => {
+ 
+ resolver.define('boards', rateLimitedAware(async () => ({ boards: await boardsView(UI_POLICY) })));
+ 
++const widgetKey = (context) => `widget-board:${context?.extension?.context?.widgetId ?? 'default'}`;
++resolver.define('saveWidgetBoard', async ({ payload, context }) => {
++  await kvs.set(widgetKey(context), String(payload.boardId));
++  return { ok: true };
++});
++resolver.define('widgetBoard', async ({ context }) => ({ boardId: (await kvs.get(widgetKey(context))) ?? null }));
++
+ resolver.define(
+   'widget',
+   rateLimitedAware(async ({ payload, context }) => {
+-    const boardId = payload?.boardId ?? context?.extension?.config?.boardId;
++    const boardId = await kvs.get(widgetKey(context));
+     if (boardId === undefined || boardId === null || boardId === '') return { needsConfig: true };
+     const view = await widgetView(String(boardId), UI_POLICY);
+     return { ...view, realtime: { channel: CHANNEL } };
+diff --git a/static/widget-edit/src/index.jsx b/static/widget-edit/src/index.jsx
+index 6a9444f..908f10f 100644
+--- a/static/widget-edit/src/index.jsx
++++ b/static/widget-edit/src/index.jsx
+@@ -1,6 +1,5 @@
+ import React, { useEffect, useRef, useState } from 'react';
+ import { createRoot } from 'react-dom/client';
+-import { widgetEdit } from '@forge/dashboards-bridge';
+ import { boot, call } from '../../shared/bridge';
+ import '../../shared/base.css';
+ import './edit.css';
+@@ -14,9 +13,10 @@ function Edit({ context }) {
+ 
+   useEffect(() => {
+     // The dashboard's own Save stores what this returns; with no board chosen there is nothing to store.
+-    widgetEdit
+-      .onProductSave(async (config) => (selectedRef.current ? { ...(config ?? {}), boardId: selectedRef.current } : null))
+-      .catch((e) => setError(`The dashboard did not accept the save handler: ${e.message}`));
++    call('widgetBoard').then((res) => {
++      selectedRef.current = res.boardId;
++      setSelected(res.boardId);
++    });
+     call('boards')
+       .then((res) => (res.ok === false ? setError(res.error) : setBoards(res.boards)))
+       .catch((e) => setError(e?.message ?? String(e)));
+@@ -25,7 +25,7 @@ function Edit({ context }) {
+   const choose = (board) => {
+     selectedRef.current = board.id;
+     setSelected(board.id);
+-    widgetEdit.updateConfig({ ...stored, boardId: board.id }).catch((e) => setError(e.message));
++    call('saveWidgetBoard', { boardId: board.id }).catch((e) => setError(e.message));
+   };
+ 
+   return (
+diff --git a/static/widget/src/index.jsx b/static/widget/src/index.jsx
+index 499b97d..eb4b788 100644
+--- a/static/widget/src/index.jsx
++++ b/static/widget/src/index.jsx
+@@ -85,7 +85,10 @@ function safeJson(text) {
+ function Widget({ initialContext }) {
+   const [context, setContext] = useState(initialContext);
+   const [state, setState] = useState({ phase: 'loading' });
+-  const boardId = context?.extension?.config?.boardId;
++  const [boardId, setBoardId] = useState(undefined);
++  useEffect(() => {
++    call('widgetBoard').then((res) => setBoardId(res.boardId ?? ''));
++  }, [context]);
+ 
+   const [live, setLive] = useState(false);
+   const [liveError, setLiveError] = useState(null);
+@@ -94,7 +97,8 @@ function Widget({ initialContext }) {
+   const reload = useRef(null);
+ 
+   const load = useCallback(async () => {
+-    if (boardId === undefined || boardId === null || boardId === '') return setState({ phase: 'needs-config' });
++    if (boardId === undefined) return undefined;
++    if (boardId === null || boardId === '') return setState({ phase: 'needs-config' });
+     setState((s) => (s.phase === 'ready' ? s : { phase: 'loading' }));
+     try {
+       // The answer names the realtime channel, so the widget renders and subscribes in one round trip.

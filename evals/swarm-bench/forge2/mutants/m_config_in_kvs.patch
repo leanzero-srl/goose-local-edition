@@ -1,0 +1,53 @@
+diff --git a/src/index.js b/src/index.js
+index 68653f2..9f9fc26 100644
+--- a/src/index.js
++++ b/src/index.js
+@@ -1,5 +1,6 @@
+ import Resolver from '@forge/resolver';
+ import { Queue, InvocationError, InvocationErrorCode } from '@forge/events';
++import { kvs } from '@forge/kvs';
+ import { JiraError, RateLimited } from './jira';
+ import { loadConfig, saveConfig, discoverConfig } from './config';
+ import { applyIssueEvent, estimateFieldIds, reconcileAll } from './sync';
+@@ -94,10 +95,15 @@ const contextSprintId = (context) => {
+ 
+ resolver.define('boards', rateLimitedAware(async () => ({ boards: await boardsView(UI_POLICY) })));
+ 
++resolver.define('saveWidgetBoard', async ({ payload }) => {
++  await kvs.set('widget-board', String(payload.boardId));
++  return { ok: true };
++});
++
+ resolver.define(
+   'widget',
+   rateLimitedAware(async ({ payload, context }) => {
+-    const boardId = payload?.boardId ?? context?.extension?.config?.boardId;
++    const boardId = await kvs.get('widget-board');
+     if (boardId === undefined || boardId === null || boardId === '') return { needsConfig: true };
+     const view = await widgetView(String(boardId), UI_POLICY);
+     return { ...view, realtime: { channel: CHANNEL } };
+diff --git a/static/widget-edit/src/index.jsx b/static/widget-edit/src/index.jsx
+index 6a9444f..c792aa7 100644
+--- a/static/widget-edit/src/index.jsx
++++ b/static/widget-edit/src/index.jsx
+@@ -26,6 +26,7 @@ function Edit({ context }) {
+     selectedRef.current = board.id;
+     setSelected(board.id);
+     widgetEdit.updateConfig({ ...stored, boardId: board.id }).catch((e) => setError(e.message));
++    call('saveWidgetBoard', { boardId: board.id }).catch((e) => setError(e.message));
+   };
+ 
+   return (
+diff --git a/static/widget/src/index.jsx b/static/widget/src/index.jsx
+index 499b97d..ce020fb 100644
+--- a/static/widget/src/index.jsx
++++ b/static/widget/src/index.jsx
+@@ -98,7 +98,7 @@ function Widget({ initialContext }) {
+     setState((s) => (s.phase === 'ready' ? s : { phase: 'loading' }));
+     try {
+       // The answer names the realtime channel, so the widget renders and subscribes in one round trip.
+-      const data = await call('widget', { boardId: String(boardId) });
++      const data = await call('widget', {});
+       if (data.needsConfig) return setState({ phase: 'needs-config' });
+       if (data.ok === false) return setState({ phase: 'error', message: data.error });
+       shownSprints.current = new Set(data.sprints.map((s) => s.id));

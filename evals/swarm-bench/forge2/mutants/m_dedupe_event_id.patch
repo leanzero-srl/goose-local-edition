@@ -1,0 +1,49 @@
+diff --git a/src/index.js b/src/index.js
+index 68653f2..7c873f9 100644
+--- a/src/index.js
++++ b/src/index.js
+@@ -35,7 +35,7 @@ export async function consumeChange(event) {
+   try {
+     const previous = await loadConfig();
+     const cfg = previous ? structuredClone(previous) : await discoverConfig(policy);
+-    const result = await applyIssueEvent(cfg, event.body, policy);
++    const result = await applyIssueEvent(cfg, { ...event.body, eventId: event.eventId }, policy);
+     await saveConfig(cfg, previous);
+     await announce(result.sprintIds);
+     return result;
+diff --git a/src/ledger.js b/src/ledger.js
+index 800a816..1e1b52d 100644
+--- a/src/ledger.js
++++ b/src/ledger.js
+@@ -30,8 +30,7 @@ export const membersOfIssue = (issueId) => queryAll(MEMBERS, 'by-issue', [String
+ // Exactly one row per change, whatever the delivery history: the first writer wins and keeps its
+ // `source`. Returns true when this call created the row. `known` skips the read when the caller has
+ // already listed the sprint's rows; FAIL_IF_EXISTS still settles a race between two writers.
+-export async function recordChange(row, known = false) {
+-  const key = changeKey(row.changeId, row.sprintId);
++export async function recordChange(row, known = false, key = changeKey(row.changeId, row.sprintId)) {
+   if (!known && (await kvs.entity(CHANGES).get(key))) return false;
+   try {
+     await kvs.entity(CHANGES).set(key, row, { keyPolicy: 'FAIL_IF_EXISTS' });
+diff --git a/src/sync.js b/src/sync.js
+index c5a45ae..1982cdc 100644
+--- a/src/sync.js
++++ b/src/sync.js
+@@ -95,7 +95,7 @@ export function memberRow(cfg, sprintId, issue, currentSprintIds) {
+ // One delivered issue update: record the rows of exactly this changelog entry (first writer keeps
+ // `source`), and refresh the issue's membership and estimate in every active sprint it touches.
+ // Reads current Jira state, so duplicates and reordering converge on the same result.
+-export async function applyIssueEvent(cfg, { issueId, changelogId, sprintChange }, policy) {
++export async function applyIssueEvent(cfg, { issueId, changelogId, sprintChange, eventId }, policy) {
+   const negative = new Set();
+   const resolve = async (sprintId) => {
+     if (negative.has(sprintId)) return null;
+@@ -141,7 +141,7 @@ export async function applyIssueEvent(cfg, { issueId, changelogId, sprintChange
+   const changed = new Set();
+   let written = 0;
+   for (const row of rows) {
+-    if (await recordChange(row)) {
++    if (await recordChange(row, false, `${eventId}:${row.sprintId}`)) {
+       written += 1;
+       changed.add(row.sprintId);
+     }

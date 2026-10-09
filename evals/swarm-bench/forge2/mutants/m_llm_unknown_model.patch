@@ -1,0 +1,15 @@
+diff --git a/src/explain.js b/src/explain.js
+index 8671170..6587a4c 100644
+--- a/src/explain.js
++++ b/src/explain.js
+@@ -25,9 +25,7 @@ const SYSTEM = [
+ 
+ // The model is whichever claude model the platform reports active right now, never a hard-coded name.
+ async function activeModel() {
+-  const { models } = await list();
+-  const active = (models ?? []).filter((m) => m.status === 'active').map((m) => m.model);
+-  return active.find((m) => /sonnet/i.test(m)) ?? active[0] ?? null;
++  return 'claude-2.1';
+ }
+ 
+ function ledgerSentence(view) {

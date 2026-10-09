@@ -1,0 +1,13 @@
+diff --git a/src/explain.js b/src/explain.js
+index 8671170..1aab855 100644
+--- a/src/explain.js
++++ b/src/explain.js
+@@ -34,7 +34,7 @@ function ledgerSentence(view) {
+   const { committed, added, removed, creep } = view.text;
+   return creep === '—'
+     ? `Nothing was committed when ${view.sprint.name} started; ${added} points entered and ${removed} points left it since.`
+-    : `${view.sprint.name} grew by ${creep}: ${added} points entered after the start against ${committed} committed, and ${removed} points left it.`;
++    : `${view.sprint.name} grew by ${creep}: ${added} points entered after the start (${String(view.sprint.startDate).slice(0, 10)}) against ${committed} committed, and ${removed} points left it.`;
+ }
+ 
+ // view = personView(): only what this viewer may see is ever sent to the model.

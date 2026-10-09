@@ -1,0 +1,8 @@
+{
+  "loses": [
+    "b_realtime_payload_clean"
+  ],
+  "critical": false,
+  "max_final": 0.899,
+  "why": "The realtime payload carries the changed rows (issue keys, authors) to every subscriber of a global channel, regardless of what each viewer may browse. The widget still updates. Realtime defect band 0.899."
+}

@@ -1,0 +1,13 @@
+diff --git a/manifest.yml b/manifest.yml
+index 5115137..bd841d0 100644
+--- a/manifest.yml
++++ b/manifest.yml
+@@ -12,7 +12,7 @@ modules:
+     - key: scope-reconcile
+       function: reconcile
+       interval: hour
+-  dashboards:widget:
++  jira:dashboardGadget:
+     - key: scope-widget
+       title: Sprint scope creep
+       description: Committed, added and removed story points and scope creep for the active sprints of one scrum board.

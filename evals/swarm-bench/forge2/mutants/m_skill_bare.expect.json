@@ -1,0 +1,7 @@
+{
+  "loses": [
+    "a_skill_instructions"
+  ],
+  "critical": false,
+  "why": "SKILL.md tells the agent when to call get-sprint-scope and what sprintId is, but not how to read the result or what to do with an error (contract \u00a76). Points only."
+}

@@ -1,0 +1,18 @@
+diff --git a/static/widget/src/widget.css b/static/widget/src/widget.css
+index 275a851..1c535b9 100644
+--- a/static/widget/src/widget.css
++++ b/static/widget/src/widget.css
+@@ -23,6 +23,13 @@
+   overflow-wrap: anywhere;
+ }
+ 
++.sprint dd {
++  max-width: 2ch;
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++
+ .metric-creep dd {
+   color: var(--ds-text-warning);
+ }

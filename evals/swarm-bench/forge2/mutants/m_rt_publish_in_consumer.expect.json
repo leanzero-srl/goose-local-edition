@@ -1,0 +1,8 @@
+{
+  "loses": [
+    "u_widget_live"
+  ],
+  "critical": false,
+  "max_final": 0.899,
+  "why": "The consumer (and the scheduled run) announce with publish(), which the realtime docs say is not available for async events: nothing reaches the widget's global subscription, so an open widget never updates. Realtime defect band 0.899."
+}

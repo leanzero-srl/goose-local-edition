@@ -1,0 +1,8 @@
+{
+  "loses": [
+    "b_comment_exactly_once"
+  ],
+  "critical": true,
+  "max_final": 0.899,
+  "why": "No in-flight guard on post-summary: a double click posts two comments (critical)."
+}

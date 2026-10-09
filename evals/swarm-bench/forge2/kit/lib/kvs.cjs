@@ -1,0 +1,290 @@
+'use strict';
+// Forge KVS + Custom Entity Store, modelled for every endpoint @forge/kvs 2.0.7 calls
+// (out/storage-api.js): /api/v1/{get,set,delete,query}, /api/v1/secret/{get,set,delete},
+// /api/v1/entity/{get,set,delete,query}, /api/v1/batch/{get,set,delete}, /api/v1/transaction.
+// Limits and error codes are the documented ones (developer.atlassian.com, fetched 2026-10-02):
+//   limits-kvs-ce: key 500, value 240 KiB (raw bytes), object depth 31, 25 operations per transaction;
+//   kvs-batch / entities-batch: "Each batch operation can contain a maximum of 25 keys.";
+//   kvs-api-query / entities-api-query: "up to 10 values by default ... a maximum of 100";
+//   entities-errorhandling: EMPTY_KEY INVALID_KEY KEY_TOO_LONG NOT_FOUND MAX_SIZE MAX_DEPTH
+//   INVALID_ENTITY_TYPE INVALID_ENTITY_VALUE INVALID_ENTITY_INDEX COMPLEX_QUERY_PAGE_LIMIT_NOT_IN_RANGE
+//   EMPTY_FILTER_OPERATOR INVALID_FILTER_OPERATORS_COMBINATION INSUFFICIENT_FILTER_VALUES.
+// UNCONFIRMED (no docs page names them; chosen so an app's catch sees a ForgeKvsAPIError):
+//   a failed FAIL_IF_EXISTS set and a failed transaction condition answer 409 CONDITIONAL_CHECK_FAILED;
+//   a batch over 25 keys answers 400 MAX_BATCH_SIZE; an undeclared entity answers 400 INVALID_ENTITY_TYPE;
+//   also TOO_MANY_OPERATIONS (transaction over 25), DUPLICATE_KEY (a key twice in one transaction), INVALID_TTL,
+//   INVALID_REQUEST, INVALID_CONDITION and KEY_NOT_FOUND (404) are harness names for documented refusals.
+
+const KEY_RE = /^(?!\s+$)[a-zA-Z0-9:._\s\-#]+$/;
+const LIMITS = { keyLength: 500, valueBytes: 240 * 1024, depth: 31, transactionOps: 25, batchKeys: 25, pageDefault: 10, pageMax: 100 };
+const TTL_UNIT = { SECONDS: 1000, MINUTES: 60_000, HOURS: 3_600_000, DAYS: 86_400_000 };
+
+class KvsError extends Error {
+  constructor(status, code, message, extra = {}) { super(message); this.status = status; this.code = code; this.extra = extra; }
+}
+
+function depth(v) {
+  if (v === null || typeof v !== 'object') return 0;
+  let d = 0;
+  for (const x of Object.values(v)) d = Math.max(d, depth(x));
+  return d + 1;
+}
+
+function createKvs({ entities: declared = [], now = () => Date.now() } = {}) {
+  let kv = new Map();
+  let secrets = new Map();
+  let ents = new Map(); // `${entity}\u0000${key}` -> record
+  const entityDefs = new Map(declared.map((e) => [e.name, e]));
+
+  const checkKey = (key) => {
+    if (key === undefined || key === null || key === '') throw new KvsError(400, 'EMPTY_KEY', 'Key cannot be empty.');
+    if (typeof key !== 'string' || !KEY_RE.test(key)) throw new KvsError(400, 'INVALID_KEY', `The provided key does not match the regex: ${KEY_RE}`);
+    if (key.length > LIMITS.keyLength) throw new KvsError(400, 'KEY_TOO_LONG', `The provided key has exceeded the maximum ${LIMITS.keyLength} characters.`, { limit: 'key-length' });
+  };
+  const checkValue = (value) => {
+    const bytes = Buffer.byteLength(JSON.stringify(value ?? null));
+    if (bytes > LIMITS.valueBytes) throw new KvsError(400, 'MAX_SIZE', 'The provided value has exceeded the maximum size limit.', { limit: 'value-size', bytes });
+    if (depth(value) > LIMITS.depth) throw new KvsError(400, 'MAX_DEPTH', `The provided value has exceeded the maximum object depth (${LIMITS.depth}) limit.`, { limit: 'depth' });
+  };
+  const entityDef = (name) => {
+    const def = entityDefs.get(name);
+    if (!def) throw new KvsError(400, 'INVALID_ENTITY_TYPE', `Entity '${name}' is not declared under app.storage.entities in the manifest.`);
+    return def;
+  };
+  const TYPE_OK = {
+    string: (v) => typeof v === 'string',
+    integer: (v) => Number.isInteger(v) && v >= -2147483648 && v <= 2147483647,
+    float: (v) => typeof v === 'number' && Number.isFinite(v),
+    boolean: (v) => typeof v === 'boolean',
+    any: () => true,
+  };
+  const checkEntityValue = (def, value) => {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new KvsError(400, 'INVALID_ENTITY_VALUE', 'Entity values must be objects.');
+    for (const [attr, spec] of Object.entries(def.attributes ?? {})) {
+      if (value[attr] === undefined || value[attr] === null) continue;
+      const ok = TYPE_OK[spec.type];
+      if (ok && !ok(value[attr])) {
+        // The documented integer range (storage-reference/storage-api-custom-entities: "Must be a 32-bit signed
+        // integer") is named in the error so an out-of-range value is diagnosable (DESIGN §17.1 0b).
+        const why = spec.type === 'integer' ? 'a 32-bit signed integer (-2,147,483,648 to 2,147,483,647)'
+          : spec.type === 'float' ? 'a finite number' : `of type ${spec.type}`;
+        throw new KvsError(400, 'INVALID_ENTITY_VALUE', `Attribute '${attr}' must be ${why}; got ${JSON.stringify(value[attr])}.`);
+      }
+    }
+  };
+  const alive = (rec) => rec && !(rec.expireAt && rec.expireAt <= now());
+  const meta = (key, rec, extra = {}) => ({ key, value: rec.value, createdAt: rec.createdAt, updatedAt: rec.updatedAt, ...(rec.expireAt ? { expireTime: new Date(rec.expireAt).toISOString() } : {}), ...extra });
+  const write = (map, key, value, options = {}) => {
+    const t = now();
+    const prev = map.get(key);
+    const live = alive(prev) ? prev : undefined;
+    if (options.keyPolicy === 'FAIL_IF_EXISTS' && live) throw new KvsError(409, 'CONDITIONAL_CHECK_FAILED', `Key '${key}' already exists.`);
+    const ttl = options.ttl ? options.ttl.value * (TTL_UNIT[options.ttl.unit] ?? NaN) : null;
+    if (ttl !== null && !(ttl > 0)) throw new KvsError(400, 'INVALID_TTL', 'TTL must be a positive value with unit SECONDS, MINUTES, HOURS or DAYS.');
+    const rec = { value, createdAt: live?.createdAt ?? t, updatedAt: t, expireAt: ttl ? t + ttl : null };
+    map.set(key, rec);
+    if (options.returnValue === 'PREVIOUS') return live ? meta(key, live) : undefined;
+    if (options.returnValue === 'LATEST') return meta(key, rec);
+    return undefined;
+  };
+  const read = (map, key) => {
+    const rec = map.get(key);
+    if (!alive(rec)) throw new KvsError(404, 'KEY_NOT_FOUND', `Key '${key}' not found.`);
+    return rec;
+  };
+  const ekey = (name, key) => `${name}\u0000${key}`;
+  const encodeCursor = (k) => Buffer.from(k).toString('base64url');
+  const decodeCursor = (c) => (c ? Buffer.from(String(c), 'base64url').toString() : null);
+  const pageSize = (limit) => {
+    if (limit === undefined || limit === null) return LIMITS.pageDefault;
+    if (!(Number.isInteger(limit) && limit >= 1 && limit <= LIMITS.pageMax)) throw new KvsError(400, 'COMPLEX_QUERY_PAGE_LIMIT_NOT_IN_RANGE', `The page limit must be set between 1 and ${LIMITS.pageMax}.`);
+    return limit;
+  };
+  const cond = (c, v) => {
+    const [a, b] = c.values ?? [];
+    switch (c.condition) {
+      case 'BEGINS_WITH': return typeof v === 'string' && v.startsWith(a);
+      case 'BETWEEN': return v >= a && v <= b;
+      case 'EQUAL_TO': return v === a;
+      case 'NOT_EQUAL_TO': return v !== a;
+      case 'GREATER_THAN': return v > a;
+      case 'GREATER_THAN_EQUAL_TO': return v >= a;
+      case 'LESS_THAN': return v < a;
+      case 'LESS_THAN_EQUAL_TO': return v <= a;
+      case 'CONTAINS': return typeof v === 'string' && v.includes(a);
+      case 'NOT_CONTAINS': return typeof v === 'string' && !v.includes(a);
+      case 'EXISTS': return v !== undefined && v !== null;
+      case 'NOT_EXISTS': return v === undefined || v === null;
+      default: throw new KvsError(400, 'INVALID_CONDITION', `Unknown condition ${c.condition}.`);
+    }
+  };
+  const filtersMatch = (filters, value) => {
+    if (!filters) return true;
+    const ops = Object.keys(filters);
+    if (ops.length > 1) throw new KvsError(400, 'INVALID_FILTER_OPERATORS_COMBINATION', 'Filter operators "and" and "or" cannot be present at the same level.');
+    const op = ops[0];
+    const list = filters[op] ?? [];
+    if (!list.length) throw new KvsError(400, 'EMPTY_FILTER_OPERATOR', 'Filter operators "and" and "or" cannot be empty.');
+    const hits = list.map((c) => {
+      if (c.condition === 'BETWEEN' && (c.values ?? []).length < 2) throw new KvsError(400, 'INSUFFICIENT_FILTER_VALUES', 'The specified condition needs at least two values.');
+      return cond(c, value?.[c.property]);
+    });
+    return op === 'and' ? hits.every(Boolean) : hits.some(Boolean);
+  };
+  const indexOf = (def, name) => {
+    for (const ix of def.indexes ?? []) {
+      if (typeof ix === 'string' && ix === name) return { name: ix, partition: [], range: [ix] };
+      if (ix && typeof ix === 'object' && ix.name === name) return { name: ix.name, partition: ix.partition ?? [], range: ix.range ?? [] };
+    }
+    throw new KvsError(400, 'INVALID_ENTITY_INDEX', `Index '${name}' is not declared for entity '${def.name}'.`);
+  };
+
+  const ops = {
+    '/api/v1/get': (b) => { checkKey(b.key); return meta(b.key, read(kv, b.key)); },
+    '/api/v1/set': (b) => { checkKey(b.key); checkValue(b.value); return write(kv, b.key, b.value, b.options); },
+    '/api/v1/delete': (b) => { checkKey(b.key); read(kv, b.key); kv.delete(b.key); return undefined; },
+    '/api/v1/secret/get': (b) => { checkKey(b.key); return meta(b.key, read(secrets, b.key)); },
+    '/api/v1/secret/set': (b) => { checkKey(b.key); checkValue(b.value); return write(secrets, b.key, b.value, b.options); },
+    '/api/v1/secret/delete': (b) => { checkKey(b.key); read(secrets, b.key); secrets.delete(b.key); return undefined; },
+    '/api/v1/query': (b) => {
+      const limit = pageSize(b.limit);
+      let keys = [...kv.keys()].filter((k) => alive(kv.get(k))).sort();
+      const w = b.where?.[0];
+      if (b.where && b.where.length > 1) throw new KvsError(400, 'INVALID_CONDITION', 'There may only be a single where condition for a query.');
+      if (w) {
+        if (w.property !== 'key' || w.condition !== 'BEGINS_WITH') throw new KvsError(400, 'INVALID_CONDITION', 'The only condition supported by the Key-value store is beginsWith on key.');
+        keys = keys.filter((k) => k.startsWith(w.values[0]));
+      }
+      const after = decodeCursor(b.after);
+      if (after !== null) keys = keys.filter((k) => k > after);
+      const page = keys.slice(0, limit);
+      const more = keys.length > page.length;
+      return { data: page.map((k) => ({ key: k, value: kv.get(k).value })), ...(more ? { cursor: encodeCursor(page[page.length - 1]) } : {}) };
+    },
+    '/api/v1/entity/get': (b) => { entityDef(b.entityName); checkKey(b.key); return meta(b.key, read(ents, ekey(b.entityName, b.key))); },
+    '/api/v1/entity/set': (b) => {
+      const def = entityDef(b.entityName);
+      checkKey(b.key); checkValue(b.value); checkEntityValue(def, b.value);
+      return write(ents, ekey(b.entityName, b.key), b.value, b.options);
+    },
+    '/api/v1/entity/delete': (b) => { entityDef(b.entityName); checkKey(b.key); read(ents, ekey(b.entityName, b.key)); ents.delete(ekey(b.entityName, b.key)); return undefined; },
+    '/api/v1/entity/query': (b) => {
+      const def = entityDef(b.entityName);
+      const ix = indexOf(def, b.indexName);
+      const limit = pageSize(b.limit);
+      const part = b.partition ?? [];
+      if (ix.partition.length && part.length !== ix.partition.length) throw new KvsError(400, 'INVALID_PARTITION', `Index '${ix.name}' needs a partition of ${ix.partition.length} value(s).`);
+      const rows = [];
+      for (const [k, rec] of ents) {
+        const [name, key] = k.split('\u0000');
+        if (name !== b.entityName || !alive(rec)) continue;
+        const v = rec.value;
+        if (ix.partition.some((a, i) => v[a] !== part[i])) continue;
+        if (ix.range.some((a) => v[a] === undefined || v[a] === null)) continue;
+        if (b.range && !cond(b.range, v[ix.range[0]])) continue;
+        if (!filtersMatch(b.filters, v)) continue;
+        rows.push({ key, rec, sortKey: ix.range.map((a) => v[a]) });
+      }
+      const dir = b.sort === 'DESC' ? -1 : 1;
+      rows.sort((x, y) => {
+        for (let i = 0; i < x.sortKey.length; i++) {
+          if (x.sortKey[i] < y.sortKey[i]) return -dir;
+          if (x.sortKey[i] > y.sortKey[i]) return dir;
+        }
+        return x.key < y.key ? -dir : x.key > y.key ? dir : 0;
+      });
+      const after = decodeCursor(b.cursor);
+      const start = after === null ? 0 : rows.findIndex((r) => r.key === after) + 1;
+      const page = rows.slice(start, start + limit);
+      const more = start + page.length < rows.length;
+      return { data: page.map((r) => ({ key: r.key, value: r.rec.value })), ...(more ? { cursor: encodeCursor(page[page.length - 1].key) } : {}) };
+    },
+    '/api/v1/batch/set': (items) => batch(items, (it) => {
+      if (it.entityName) { const def = entityDef(it.entityName); checkKey(it.key); checkValue(it.value); checkEntityValue(def, it.value); write(ents, ekey(it.entityName, it.key), it.value, it.options); }
+      else { checkKey(it.key); checkValue(it.value); write(kv, it.key, it.value, it.options); }
+      return { key: it.key, ...(it.entityName ? { entityName: it.entityName } : {}) };
+    }),
+    '/api/v1/batch/delete': (items) => batch(items, (it) => {
+      checkKey(it.key);
+      if (it.entityName) { entityDef(it.entityName); ents.delete(ekey(it.entityName, it.key)); } else kv.delete(it.key);
+      return { key: it.key, ...(it.entityName ? { entityName: it.entityName } : {}) };
+    }),
+    '/api/v1/batch/get': (items) => batch(items, (it) => {
+      checkKey(it.key);
+      const rec = it.entityName ? (entityDef(it.entityName), ents.get(ekey(it.entityName, it.key))) : kv.get(it.key);
+      if (!alive(rec)) throw new KvsError(404, 'KEY_NOT_FOUND', `Key '${it.key}' not found.`);
+      return { key: it.key, ...(it.entityName ? { entityName: it.entityName } : {}), value: rec.value, createdAt: rec.createdAt, updatedAt: rec.updatedAt };
+    }),
+    '/api/v1/transaction': (b) => {
+      const sets = b.set ?? [];
+      const dels = b.delete ?? [];
+      const checks = b.check ?? [];
+      const n = sets.length + dels.length + checks.length;
+      if (n > LIMITS.transactionOps) throw new KvsError(400, 'TOO_MANY_OPERATIONS', `Each transaction can contain a maximum of ${LIMITS.transactionOps} operations.`, { limit: 'transaction-ops' });
+      const seen = new Set();
+      for (const op of [...sets, ...dels, ...checks]) {
+        const id = `${op.entityName ?? ''}\u0000${op.key}`;
+        if (seen.has(id)) throw new KvsError(400, 'DUPLICATE_KEY', 'Each key can only be used once in a transaction.');
+        seen.add(id);
+        checkKey(op.key);
+      }
+      const conditionHolds = (op) => {
+        if (!op.conditions) return true;
+        const rec = ents.get(ekey(op.entityName, op.key));
+        return alive(rec) && filtersMatch(op.conditions, rec.value);
+      };
+      for (const op of [...sets, ...dels, ...checks]) {
+        if (op.entityName) entityDef(op.entityName);
+        if (!conditionHolds(op)) throw new KvsError(409, 'CONDITIONAL_CHECK_FAILED', `Transaction condition failed for key '${op.key}'.`);
+      }
+      for (const op of sets) {
+        checkValue(op.value);
+        if (op.entityName) { checkEntityValue(entityDef(op.entityName), op.value); write(ents, ekey(op.entityName, op.key), op.value, op.options); }
+        else write(kv, op.key, op.value, op.options);
+      }
+      for (const op of dels) (op.entityName ? ents : kv).delete(op.entityName ? ekey(op.entityName, op.key) : op.key);
+      return undefined;
+    },
+  };
+  function batch(items, fn) {
+    if (!Array.isArray(items)) throw new KvsError(400, 'INVALID_REQUEST', 'Batch requests take an array of items.');
+    if (items.length > LIMITS.batchKeys) throw new KvsError(400, 'MAX_BATCH_SIZE', `Each batch operation can contain a maximum of ${LIMITS.batchKeys} keys.`, { limit: 'batch-keys' });
+    const successfulKeys = [];
+    const failedKeys = [];
+    for (const it of items) {
+      try { successfulKeys.push(fn(it)); } catch (e) {
+        if (!(e instanceof KvsError)) throw e;
+        failedKeys.push({ key: it.key, ...(it.entityName ? { entityName: it.entityName } : {}), error: { code: e.code, message: e.message } });
+      }
+    }
+    return { successfulKeys, failedKeys };
+  }
+
+  // -> {status, body, error?}
+  const handle = (op, body) => {
+    const fn = ops[op];
+    if (!fn) return { status: 501, body: { code: 'EMULATOR_NOT_MODELLED', message: `KVS ${op} is not modelled` }, notModelled: true };
+    try {
+      const out = fn(body ?? {});
+      return out === undefined ? { status: 204, body: undefined } : { status: 200, body: out };
+    } catch (e) {
+      if (e instanceof KvsError) return { status: e.status, body: { code: e.code, message: e.message }, error: { code: e.code, ...e.extra } };
+      throw e;
+    }
+  };
+  const snapshot = () => ({
+    kvs: Object.fromEntries([...kv].filter(([, r]) => alive(r)).map(([k, r]) => [k, r.value])),
+    secrets: [...secrets.keys()].filter((k) => alive(secrets.get(k))).sort(),
+    entities: [...ents].filter(([, r]) => alive(r)).reduce((acc, [k, r]) => {
+      const [name, key] = k.split('\u0000');
+      (acc[name] ??= {})[key] = r.value;
+      return acc;
+    }, {}),
+  });
+  const dump = () => ({ kv: [...kv], secrets: [...secrets], ents: [...ents] });
+  const load = (d) => { kv = new Map(d.kv); secrets = new Map(d.secrets); ents = new Map(d.ents); };
+  const clear = () => { kv = new Map(); secrets = new Map(); ents = new Map(); };
+  return { handle, snapshot, dump, load, clear, LIMITS, ops: Object.keys(ops) };
+}
+
+module.exports = { createKvs, LIMITS };

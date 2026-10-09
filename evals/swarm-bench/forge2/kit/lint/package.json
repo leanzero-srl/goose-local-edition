@@ -1,0 +1,12 @@
+{
+  "name": "forge-kit-lint-modules",
+  "version": "1.0.0",
+  "private": true,
+  "description": "forge-1.0 kit: Forge's client-side linter and the manifest schema (lint-modules tree).",
+  "dependencies": {
+    "@forge/cli-shared": "9.7.0",
+    "@forge/lint": "6.3.0",
+    "@forge/manifest": "13.6.0",
+    "yaml": "2.9.1"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "loses": [
+    "u_widget_loads",
+    "v_csp_clean"
+  ],
+  "critical": true,
+  "max_final": 0.799,
+  "why": "The widget view references its assets absolutely; Forge serves the resource under its own path, so the script and stylesheet 404 and the widget never renders (critical). Other widget rows are expected to be ROOT_BLOCKS-attributed to u_widget_loads. A broken surface caps at 0.799."
+}

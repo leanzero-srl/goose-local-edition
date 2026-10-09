@@ -1,0 +1,13 @@
+diff --git a/src/sync.js b/src/sync.js
+index c5a45ae..0cff185 100644
+--- a/src/sync.js
++++ b/src/sync.js
+@@ -179,7 +179,7 @@ export async function searchCandidates(cfg, policy) {
+   const issues = [];
+   let nextPageToken;
+   do {
+-    const body = { jql, fields: issueFields(cfg), maxResults: 100 };
++    const body = { jql, maxResults: 100 };
+     if (nextPageToken) body.nextPageToken = nextPageToken;
+     const page = await jiraJson('app', route`/rest/api/3/search/jql`, postJson(body), policy);
+     issues.push(...(page.issues ?? []));

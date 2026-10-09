@@ -1,0 +1,15 @@
+diff --git a/src/config.js b/src/config.js
+index 81c58e5..211294a 100644
+--- a/src/config.js
++++ b/src/config.js
+@@ -71,8 +71,8 @@ export async function discoverConfig(policy) {
+   const sprints = {};
+   for (const [id, { sprint, boardId }] of [...found].sort(([a], [b]) => Number(a) - Number(b))) {
+     if (!isStarted(sprint)) continue;
+-    if (!estimateFields.has(String(boardId))) estimateFields.set(String(boardId), await boardEstimateField(boardId, policy));
+-    sprints[id] = sprintEntry(sprint, boardId, estimateFields.get(String(boardId)));
++    if (!estimateFields.size) estimateFields.set('all', await boardEstimateField(boardId, policy));
++    sprints[id] = sprintEntry(sprint, boardId, estimateFields.get('all'));
+   }
+   return { sprintFieldId, sprints };
+ }

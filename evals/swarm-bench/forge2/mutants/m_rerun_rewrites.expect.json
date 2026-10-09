@@ -1,0 +1,7 @@
+{
+  "loses": [
+    "r_idempotent_rerun"
+  ],
+  "critical": false,
+  "why": "Every scheduled run rewrites every membership row it computes, changed or not: the values stay right, but a run with nothing new writes (contract \u00a73 \"a run with nothing new writes nothing\"). Not banded."
+}

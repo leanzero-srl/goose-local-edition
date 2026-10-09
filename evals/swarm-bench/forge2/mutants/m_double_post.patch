@@ -1,0 +1,12 @@
+diff --git a/static/sprint/src/index.jsx b/static/sprint/src/index.jsx
+index 9505c10..c76101d 100644
+--- a/static/sprint/src/index.jsx
++++ b/static/sprint/src/index.jsx
+@@ -60,7 +60,6 @@ function Ledger({ data, context }) {
+ 
+   // One click (or a double click) is one comment: a second click while the first is in flight is ignored.
+   const post = async () => {
+-    if (inFlight.current) return;
+     if (!selectedRow) {
+       flag('info', 'Select a change first', 'Click a row of the ledger, then post its summary.');
+       return;

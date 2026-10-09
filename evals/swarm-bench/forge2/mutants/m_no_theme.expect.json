@@ -1,0 +1,9 @@
+{
+  "loses": [
+    "v_theme_tokens",
+    "v_dark_mode"
+  ],
+  "critical": false,
+  "max_final": 0.799,
+  "why": "No view.theme.enable() and a hard-coded white page: no design tokens arrive and dark mode stays white. A surface broken in dark caps at 0.799."
+}

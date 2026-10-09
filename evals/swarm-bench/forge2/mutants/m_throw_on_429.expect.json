@@ -1,0 +1,8 @@
+{
+  "loses": [
+    "t_retry_after_honoured"
+  ],
+  "critical": false,
+  "max_final": 0.899,
+  "why": "The consumer throws on a 429 instead of returning a retry request: the platform redelivers on its own schedule (1, 2, 4, 8 min), which can come back before Retry-After; the rows still land. Rate-limit defect band 0.899."
+}

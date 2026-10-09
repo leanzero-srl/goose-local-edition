@@ -1,0 +1,9 @@
+{
+  "loses": [
+    "u_llm_explain",
+    "k_llm_model_current"
+  ],
+  "critical": false,
+  "max_final": 0.899,
+  "why": "A hard-coded model id that list() does not return: every explain call errors (error flag, no explanation). Replaces m_llm_deprecated_model \u2014 the public models page lists no deprecated model. LLM defect band 0.899."
+}
