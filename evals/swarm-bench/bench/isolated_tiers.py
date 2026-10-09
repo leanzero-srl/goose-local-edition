@@ -46,8 +46,8 @@ class IsolatedTier:
     reasoning_effort: str | None = None
     # The scorer starts its own seeded site instead of run_build re-serving the vendor (forge/DESIGN.md §12).
     own_scoring_site: bool = False
-    # The model calls a single-model entrant gets (`goose run --max-turns`); the tier's prompt states this number
-    # (test_bench_budget holds every stated budget to it).
+    # The model calls a single-model entrant gets (bench_budget.call_budget_args); the tier's prompt states this
+    # number (test_bench_budget holds every stated budget to it).
     call_budget: int = CALL_BUDGET
 
     @property
