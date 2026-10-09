@@ -27,6 +27,7 @@ const SOURCE = `import api, { route, webTrigger } from '@forge/api';
 import { kvs } from '@forge/kvs';
 import Resolver from '@forge/resolver';
 import { InvocationError, Queue } from '@forge/events';
+import { list, stream } from '@forge/llm';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export const sched = async (event) => {
   const t0 = Date.now();
@@ -45,6 +46,20 @@ export const sched = async (event) => {
     case 'subtle': await crypto.subtle.digest('SHA-256', new TextEncoder().encode('x')); return { elapsed: Date.now() - t0 };
     case 'push': await new Queue({ key: event.queue }).push({ body: event.body }); return { pushed: true };
     case 'url': return { url: await webTrigger.getUrl('vt-ci') };
+    case 'poll': {
+      await kvs.set('vt-poll', 0);
+      let ticks = 0;
+      await new Promise((resolve) => { const h = setInterval(() => { ticks++; if (ticks === 5) { clearInterval(h); resolve(); } }, 2000); });
+      return { ticks, elapsed: Date.now() - t0 };
+    }
+    case 'stream': {
+      const models = await list();
+      const s = await stream({ model: models.models.find((m) => m.status === 'active').model, messages: [{ role: 'user', content: 'x' }] });
+      const chunks = [];
+      for await (const c of s) chunks.push(c);
+      s.close();
+      return { chunks: chunks.length, finish: chunks.map((c) => c.choices[0].finish_reason ?? null).filter(Boolean), elapsed: Date.now() - t0 };
+    }
     default: throw new Error('unknown op ' + event.op);
   }
 };
@@ -101,6 +116,10 @@ function writeApp(dir) {
   webtrigger:
     - key: vt-ci
       function: vt-web
+  llm:
+    - key: llm
+      model:
+        - claude
   function:
     - key: vt-sched
       handler: index.sched
@@ -200,6 +219,22 @@ test('virtual time: a 50 ms timer beats a 120 ms GET; KVS read 120 + write 200',
   const k = await sched(emu, { op: 'kvs' });
   assert.ok(k.ok, JSON.stringify(k.error));
   assert.strictEqual(k.result.elapsed, 200 + 120);
+});
+
+test('virtual time: an app interval it waits on moves time (5 x 2 s after one KVS write = 10.2 s)', { timeout: 120_000 }, async () => {
+  const { emu } = await world();
+  const r = await sched(emu, { op: 'poll' });
+  assert.ok(r.ok, JSON.stringify(r.error));
+  assert.deepStrictEqual(r.result, { ticks: 5, elapsed: 200 + 10_000 });
+});
+
+test('virtual time: a Forge LLM stream read through the agent keeps every chunk (list GET 120 + stream POST 200)', { timeout: 120_000 }, async () => {
+  const { emu } = await world();
+  const r = await sched(emu, { op: 'stream' });
+  assert.ok(r.ok, JSON.stringify(r.error));
+  assert.ok(r.result.chunks >= 2, JSON.stringify(r.result));
+  assert.strictEqual(r.result.finish.length, 1, JSON.stringify(r.result));
+  assert.strictEqual(r.result.elapsed, 120 + 200);
 });
 
 test('limits: past the module limit the invocation is killed in virtual time (55 s scheduled, 25 s resolver)', { timeout: 120_000 }, async () => {

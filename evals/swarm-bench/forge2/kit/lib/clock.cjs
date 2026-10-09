@@ -14,7 +14,7 @@
 //        would complete (at its send time + its class cost) before it — and after one quiet turn of the event loop (no
 //        timer set or cleared, no request sent or answered, no setImmediate), so a yield or a short un-proxied await
 //        (a small crypto.subtle digest) is not overtaken. Unref'd timers, and the runtime wrapper's own log interval
-//        (the setInterval it starts in the same turn it installs __forge_fetch__), never move time on their own; they
+//        (the first setInterval after it installs __forge_fetch__, in that same turn), never move time on their own; they
 //        fire when time passes them for another reason. Known gap: a LONG un-proxied await (pbkdf2, zlib) can still be
 //        overtaken by a pending timer of the app's;
 //      * every platform request (global.__forge_fetch__, which @forge/api, kvs, events, llm and realtime all use) carries
@@ -121,6 +121,7 @@ function install() {
     let d = Number(ms);
     if (!(d >= 1 && d <= 2147483647)) d = 1; // Node's rule: outside 1..TIMEOUT_MAX the delay is 1 ms
     const e = { id: ++seq, seq, due: vnow + d, ms: d, fn, args, repeat, ref: true, active: true, background: repeat && platformTurn };
+    if (e.background) platformTurn = false; // the wrapper's log interval is the first; any later one is the app's
     byId.set(e.id, e);
     activity++;
     insert(e);
