@@ -426,7 +426,7 @@ class Oracle:
     def _compute(self) -> Dict[str, SprintNumbers]:
         """The §1 numbers per ledger sprint, with the 2.0 world (SPEC §2.5; a no-op on a 1.0 pack): a closed sprint's
         numbers are its state just before the close; a deleted issue counts nowhere; an issue's points are its
-        CURRENT value of the field in force when it entered (committed: at the start) or left (removed) the sprint."""
+        CURRENT value of the field the sprint's board uses now (contract §1; before the close, for a closed sprint)."""
         final_entries = self._entries('all')
         changes = self._changes('all', final_entries)
         gone = set(self.deleted_at)
@@ -451,8 +451,14 @@ class Oracle:
                 last[(ch.issue_id, ch.kind)] = ch.at
             ever = at_start | {ch.issue_id for ch in changes[sid] if ch.kind == 'added' and ch.issue_id not in gone}
 
-            def points(iid: str, when: datetime) -> Decimal:
-                return self.estimate_of(iid, self.field_in_force(board_id, when), final_entries)
+            # Contract §1: an issue's estimate for S is the value of the field S's board uses NOW (a closed sprint's
+            # numbers are its state just before the close) — after a switch, the new field for every issue.
+            view_at = closed - JUST_BEFORE if closed is not None else max(
+                (t for t, _f in self.field_switches.get(board_id, ())), default=start)
+            field_now = self.field_in_force(board_id, max(view_at, start))
+
+            def points(iid: str, _when: datetime) -> Decimal:
+                return self.estimate_of(iid, field_now, final_entries)
             committed = sum((points(i, start) for i in at_start), Decimal(0))
             added = sum((points(i, last.get((i, 'added'), start)) for i in now - at_start), Decimal(0))
             removed = sum((points(i, last.get((i, 'removed'), start)) for i in ever - now), Decimal(0))
