@@ -3547,12 +3547,18 @@ def selftest_empty_observations(pack: Dict, one_function: bool = False) -> Dict:
         build, live_events, invs = {'functions': []}, [], []
     lint_run = {'counts': {'errors': 0, 'warnings': 0}, 'problems': [], 'stageReached': 3, 'stagesTotal': 3}
     empty_phase = {'calls': [], 'invocations': [], 'deliveries': [], 'kvsAfter': {'entities': {}, 'keys': []}}
+    # 2.0's added keys as the probe writes them for an app that did nothing (the P8/P9 observations contract): present
+    # and empty, so a v2 row reads "nothing happened" — never "the probe did not run".
+    idle_v2 = {'rate': {'requests': [], 'hours': []}, 'invocations': [],
+               'migration': {'v1_rows': [], 'v2_by_checkpoint': {}}, 'world': [], 'webtrigger': [],
+               'admin': {'actions': [], 'tree_text': '', 'secret_leaks': []},
+               'field': {'writes': [], 'values_by_checkpoint': {}}, 'llm_v2': [], 'boot': {}}
     return {'manifest': manifest, 'kit': {'pins': {'@forge/api': '8.2.0'}},
             'lint': {'runs': [lint_run, copy.deepcopy(lint_run)]}, 'build': build,
             'phases': {'backfill': dict(empty_phase), 'live': {**empty_phase, 'events': live_events, 'invocations': invs},
                        'heal': dict(empty_phase), 'rerun': dict(empty_phase)},
             'rovo': {'calls': []}, 'comments': [], 'ui': {'surfaces': [], 'sprintAction': []},
-            'harnessMissing': [], 'sectionErrors': {}}
+            'harnessMissing': [], 'sectionErrors': {}, **idle_v2}
 
 
 def single_defect_costs() -> Dict[str, float]:
