@@ -46,7 +46,10 @@ world, webtrigger, admin, field, llm_v2, boot — are read by forge2_checks.py):
     inv  = {inv, kind, moduleKey, functionKey, t0, t1, ok, threw, error, errorName, timedOut, retryAfter}
     delivery = {eventId, inv, attempt, result (ok|retry|throw|timeout), retryAfter, t}
   rovo {calls: [{as, label (sprint|unknown|missing), sprintId, threw, result, error}]},
-  comments [{t, issueKey, provider, accountId, status, body, fault}]   (every comment POST the site saw),
+  comments [{t, issueKey, provider, accountId, status, body, fault, kind}]   (every comment POST the site saw; `kind`
+        the invoking module kind — a web-trigger/background comment never feeds the v1 comment rows),
+  ui.sprintAction[].{select {changeId}, post, doubleClick {changeId, commentsAdded, successFlags, clickFailed?}}:
+        the double click goes to a FRESH viewer-visible row; `clickFailed` names a gesture the probe could not deliver,
   ui {surfaces [surface], widget {noConfig, views, secondInstance}, edit {options, picks, reopen},
       sprintAction [render], notStarted, invokeResponses [{surface, functionKey, response, threw, undefined}]},
   harnessMissing [str], sectionErrors {section: reason}, shots [paths].
