@@ -2,7 +2,7 @@
   "name": "scope-ledger",
   "version": "1.0.0",
   "private": true,
-  "description": "Scope Ledger — forge-1.0 golden reference app",
+  "description": "Scope Ledger v1 — sprint scope-change ledger for Jira (Forge)",
   "scripts": {
     "build": "node build.mjs",
     "lint": "node \"$FORGE_KIT/bin/lint.cjs\""

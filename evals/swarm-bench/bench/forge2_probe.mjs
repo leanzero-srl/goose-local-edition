@@ -369,6 +369,13 @@ function configState(dump) {
   return out;
 }
 const changedKeys = (a, b) => [...new Set([...a.keys(), ...b.keys()])].filter((k) => a.get(k) !== b.get(k)).sort();
+// Whether an attempted admin action LANDED (P8 r5_nonadmin_refused): a secret changed, or a setting now holds the
+// forged budget it did not hold before. An audit entry that records a refused attempt is no landing.
+const holds = (v, n) => v === n || v === String(n) || (Array.isArray(v) ? v.some((x) => holds(x, n))
+  : v !== null && typeof v === 'object' ? Object.values(v).some((x) => holds(x, n)) : false);
+const parsed = (text) => { try { return JSON.parse(text ?? 'null'); } catch { return text; } };
+const landedOf = (s0, s1, changed) => changed.some((k) => k.startsWith('secret:')
+  || (holds(parsed(s1.get(k)), FORGED_BUDGET) && !holds(parsed(s0.get(k)), FORGED_BUDGET)));
 
 const ledgerRow = (v) => Object.fromEntries(LEDGER_ATTRS.map((k) => [k, v?.[k] ?? null]));
 
@@ -823,9 +830,10 @@ function adminDriver({ emu, pack, host, adminPage, appDir, now }) {
     const i0 = a.invokes.length;
     await fn();
     await a.ui.waitIdle();
-    const changed = changedKeys(s0, configState(emu.kvs.dump()));
+    const s1 = configState(emu.kvs.dump());
+    const changed = changedKeys(s0, s1);
     const entries = a.invokes.slice(i0).map((inv) => ({ as, via: 'ui', resolver: inv.resolver, payload: inv.payload, result_ok: inv.ok,
-      state_changed: changed.length > 0, changed_keys: changed, response: inv.response, error: inv.error }));
+      state_changed: changed.length > 0, changed_keys: changed, landed: landedOf(s0, s1, changed), response: inv.response, error: inv.error }));
     obs.admin.actions.push(...entries);
     return entries;
   };
@@ -833,9 +841,10 @@ function adminDriver({ emu, pack, host, adminPage, appDir, now }) {
   const replay = async (as, accountId, resolver, payload) => {
     const s0 = configState(emu.kvs.dump());
     const r = await callResolver(resolver, payload, accountId);
-    const changed = changedKeys(s0, configState(emu.kvs.dump()));
+    const s1 = configState(emu.kvs.dump());
+    const changed = changedKeys(s0, s1);
     const entry = { as, via: 'resolver', resolver, payload, result_ok: Boolean(r.ok), state_changed: changed.length > 0,
-      changed_keys: changed, response: r.ok ? (r.result ?? null) : null, error: r.ok ? null : String(r.error?.message ?? r.error) };
+      changed_keys: changed, landed: landedOf(s0, s1, changed), response: r.ok ? (r.result ?? null) : null, error: r.ok ? null : String(r.error?.message ?? r.error) };
     obs.admin.actions.push(entry);
     state.answers.push({ as, resolver, response: entry.response });
     return entry;
