@@ -283,7 +283,11 @@ export async function reconcileAll(cfg, previous, work) {
   const active = new Set(sprintIds);
   const last = await kvs.get(RECONCILE_KEY);
   const knewAll = sprintIds.every((id) => previous?.sprints?.[id]);
-  const issues = sprintIds.length ? await searchCandidates(cfg, last && knewAll ? last.startedAt : null, work) : [];
+  // A board that switched estimation fields since the last pass sends no event (SPEC §2.5): every member of its
+  // sprints is re-read, so the totals use the field the board uses now (contract §1).
+  const fields = Object.fromEntries(Object.values(cfg.sprints).map((s) => [s.boardId, s.estimateFieldId ?? null]));
+  const switched = Object.entries(fields).some(([b, f]) => last?.fields?.[b] !== undefined && last.fields[b] !== f);
+  const issues = sprintIds.length ? await searchCandidates(cfg, last && knewAll && !switched ? last.startedAt : null, work) : [];
   const histories = issues.length ? await sprintHistories(issues.map((i) => String(i.id)), cfg.sprintFieldId, work) : new Map();
 
   const storedRows = new Set();
@@ -351,6 +355,6 @@ export async function reconcileAll(cfg, previous, work) {
     for (const [id, value] of await closedSprintStatuses(active, closed, skip)) values.set(id, value);
     if (values.size) statuses = await writeStatuses(cfg.scopeFieldId, values, work);
   }
-  await kvs.set(RECONCILE_KEY, { startedAt });
+  await kvs.set(RECONCILE_KEY, { startedAt, fields });
   return { issues: issues.length, rows, members, statuses, deleted: deleted.length, sprintIds: [...changed] };
 }
