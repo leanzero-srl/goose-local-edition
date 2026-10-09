@@ -24,15 +24,18 @@ reads exactly them; checkpoints are 'h1'..'h6' — virtual-hour marks after the 
   world       [{class, ...}] the world events the site applied (world.cjs class names)
   rovo        {calls: [{as, sprintId, result, ...}]} (1.0's section; the peer's calls run after the browse-revoke)
   webtrigger  [{case, status, side_effects}] with forge2/site/ci.cjs's step names (WT_STATUS)
-  admin       {actions: [{as: 'admin'|'nonadmin'|'forged', resolver, result_ok, state_changed}], controls: {<label
-               key>: found}, tree_text, secret_shown, secret_source, secret_leaks: [string]}
+  admin       {actions: [{as: 'admin'|'nonadmin'|'forged', resolver, result_ok, state_changed, changed_keys[, landed]}],
+               controls: {<label key>: found}, tree_text, secret_shown, secret_source, secret_leaks: [string]}
   field       {writes: [{t_ms, updates, status}], values_by_checkpoint: {<checkpoint>: {<issueId|issueKey>: value}},
                applied_by_checkpoint: {<checkpoint>: <live changes the site had applied>}}
   llm_v2      [{case, llm_calls, shown_text, writes_out_of_scope[, absent][, setting_applied]}] (LLM_TOOL/FAILURE/COST)
   boot        {'widget-view'|'sprint-modal'|'admin-page': {invokes_before_paint, bytes_before_paint,
                external_requests}} (null = the surface never painted)
-`rate.requests[].issue` (the issue a per-issue 429 names) and `field.applied_by_checkpoint` are the two keys the probe
-must add for its rows to grade (until then: per-issue 429s are named as not graded; r7_values_fresh is unavailable).
+Three keys the probe must add for its rows to grade exactly (until then each row says so in its detail):
+`rate.requests[].issue` (the issue a per-issue 429 names; without it those 429s are named as not graded),
+`field.applied_by_checkpoint` (without it r7_values_fresh is unavailable), and `admin.actions[].landed` on non-admin
+and forged attempts (the forged budget stored or a `secret:` key rotated; without it r5_nonadmin_refused judges on
+`state_changed`, which also counts an audit entry recording the refusal).
 
 `python3 forge2_checks.py` runs the selftest: observations built from the oracle score 1.0 on every row, an idle app
 earns 0 with no critical fired, and one injected defect per family costs exactly the rows it should.
@@ -315,8 +318,9 @@ def _(ev: Ev) -> Dict:
 
 @row('r1_progress_visible', 'R1')
 def _(ev: Ev) -> Dict:
-    """The panel's `Migrated <n> of <total> v1 rows` line read near each hour mark: before the deadline it must name
-    the right total with n <= total; from the deadline on, n = total and `complete`."""
+    """The panel's `Migrated <n> of <total> v1 rows` line, read shortly BEFORE each hour mark (the probe's 'hK' read
+    precedes mark K): up to the deadline's read it must name the right total with n <= total; every read after the
+    deadline must show n = total and `complete`."""
     if not ev.has_module('jira:adminPage'):
         return absent('jira:adminPage (the migration progress lives in the admin panel)')
     mig, why = ev.section('migration')
@@ -334,14 +338,14 @@ def _(ev: Ev) -> Dict:
     for cp in cps:
         p = panels[cp]
         n, shown_total = p.get('migrated'), p.get('total')
-        if fo.CHECKPOINTS.index(cp) < due:
+        if fo.CHECKPOINTS.index(cp) <= due:
             ok = shown_total == total and isinstance(n, int) and 0 <= n <= total
         else:
             ok = shown_total == total and n == total and p.get('complete') is True
         if not ok:
             wrong.append(f'{cp}: {p.get("text")!r}' + (' without `complete`' if p.get('complete') is not True else ''))
     return g((len(cps) - len(wrong)) / len(cps), f'{len(cps) - len(wrong)} of {len(cps)} panel reads show the migration '
-             f'right (total {total}; complete from {fo.MIGRATION_DEADLINE})' + (f'; {sample(wrong, 2)}' if wrong else ''),
+             f'right (total {total}; complete after the {fo.MIGRATION_DEADLINE} read)' + (f'; {sample(wrong, 2)}' if wrong else ''),
              'migration progress invisible to the admin')
 
 
@@ -510,7 +514,8 @@ def _(ev: Ev) -> Dict:
     dups = {}
     seen = 0
     for cp, rows in by.items():
-        keys = [key(r) for r in rows or [] if isinstance(r, dict)]
+        keys = [key(r) for r in rows or [] if isinstance(r, dict)
+                and r.get('changeId') is not None and r.get('sprintId') is not None]   # §2.4 rows only
         seen += len(keys)
         twice = [k for k, n in Counter(keys).items() if n > 1]
         if twice:
@@ -767,11 +772,18 @@ def _(ev: Ev) -> Dict:
     works, _w = admin_actions(ev, 'admin')
     if not any(a.get('result_ok') is True and a.get('state_changed') is True for a in works or []):
         return vacuous('no admin action changed state even for an admin, so a refusal proves nothing')
-    breaches = [f'{a.get("as")}: {a.get("resolver")} ({sample(a.get("changed_keys") or [], 2)})'
-                for a in acts if a.get('state_changed')]
+    # The breach is the attempted EFFECT in storage (the forged settings value stored, the secret rotated): an audit
+    # entry recording a refused attempt is no breach. The probe's `landed` says it; without it the row says so and
+    # judges on any change to the app's settings/secret storage.
+    if all('landed' in a for a in acts):
+        hit, basis = (lambda a: a['landed'] is True), 'the attempted effect landed in storage'
+    else:
+        hit = lambda a: a.get('state_changed') is True  # noqa: E731
+        basis = 'any change to settings/secret storage (the probe recorded no `landed`: a refusal audit entry counts)'
+    breaches = [f'{a.get("as")}: {a.get("resolver")} ({sample(a.get("changed_keys") or [], 2)})' for a in acts if hit(a)]
     if breaches:
-        return g(0.0, f'state changed by {sample(breaches, 2)}', 'an admin action by a non-admin succeeded')
-    return g(1.0, f'{len(acts)} non-admin/forged admin actions changed nothing')
+        return g(0.0, f'{sample(breaches, 2)} — judged on {basis}', 'an admin action by a non-admin succeeded')
+    return g(1.0, f'{len(acts)} non-admin/forged admin actions changed nothing — judged on {basis}')
 
 
 # ── R6 the CI deployment web trigger ─────────────────────────────────────────────────────────
@@ -1221,9 +1233,9 @@ def perfect_observations(o: fo.Oracle) -> Dict:
             {'as': 'admin', 'via': 'ui', 'resolver': 'rotate-secret', 'result_ok': True, 'state_changed': True,
              'changed_keys': ['secret:ci']},
             {'as': 'nonadmin', 'via': 'resolver', 'resolver': 'save-settings', 'result_ok': False,
-             'state_changed': False, 'changed_keys': []},
+             'state_changed': False, 'changed_keys': [], 'landed': False},
             {'as': 'forged', 'via': 'resolver', 'resolver': 'save-settings', 'result_ok': False,
-             'state_changed': False, 'changed_keys': []}],
+             'state_changed': False, 'changed_keys': [], 'landed': False}],
             'controls': {k: True for k in ('share', 'ai', 'budget', 'group', 'rotate', 'migration', 'audit', 'save')},
             'tree_text': ' | '.join(ADMIN_LABELS) + f' | Migrated {total} of {total} v1 rows | complete | ••••9f3a',
             'secret_shown': True, 'secret_source': 'panel', 'secret_leaks': []},
@@ -1306,7 +1318,7 @@ def _mutants(o: fo.Oracle) -> Dict[str, Tuple[Callable[[Dict], None], Dict[str, 
         obs['rovo']['calls'][0]['result']['changes'].append({'issueKey': 'PAY-1'})
 
     def nonadmin_writes(obs):
-        obs['admin']['actions'][2].update(state_changed=True, changed_keys=['kv:settings'])
+        obs['admin']['actions'][2].update(state_changed=True, changed_keys=['kv:settings'], landed=True)
 
     def unsigned_writes(obs):
         next(c for c in obs['webtrigger'] if c['case'] == 'bad-signature')['side_effects'] = 1
@@ -1320,6 +1332,16 @@ def _mutants(o: fo.Oracle) -> Dict[str, Tuple[Callable[[Dict], None], Dict[str, 
 
     def no_cache(obs):
         next(c for c in obs['llm_v2'] if c['case'] == 'cache')['llm_calls'] = 1
+
+    def refusal_audited(obs):
+        obs['admin']['actions'][2].update(state_changed=True, changed_keys=['kv:audit'], landed=False)
+
+    def panel_running_at_h2(obs):
+        for cp in ('h1', 'h2'):    # the h2 read comes before the 2-hour mark: still running is fine
+            obs['migration']['panel_by_checkpoint'][cp].update(migrated=1, complete=False)
+
+    def panel_incomplete_after_deadline(obs):
+        obs['migration']['panel_by_checkpoint']['h3'].update(migrated=1, complete=False)
 
     def chatty_boot(obs):
         obs['boot']['widget-view']['invokes_before_paint'] = 3
@@ -1336,7 +1358,11 @@ def _mutants(o: fo.Oracle) -> Dict[str, Tuple[Callable[[Dict], None], Dict[str, 
                                                           'r2_backfill_complete': None}, ()),
         'R4 old board estimate': (old_board_estimate, {'r4_move_new_board': 0.0}, ()),
         'R4 stale cache after revoke': (stale_after_revoke, {'r4_permission_revoked': 0.0}, ('r4_permission_revoked',)),
+        'R1 panel still running at the h2 read': (panel_running_at_h2, {}, ()),
+        'R1 panel incomplete after the deadline': (panel_incomplete_after_deadline,
+                                                   {'r1_progress_visible': round(5 / 6, 4)}, ()),
         'R5 non-admin write': (nonadmin_writes, {'r5_nonadmin_refused': 0.0}, ('r5_nonadmin_refused',)),
+        'R5 refusal written to the audit list': (refusal_audited, {}, ()),
         'R6 unsigned write': (unsigned_writes, {'r6_unsigned_no_effect': 0.0}, ('r6_unsigned_no_effect',)),
         'R7 stale field': (stale_field, {'r7_values_fresh': pay1_cut}, ()),
         'R8 truncated answer shown': (truncated_shown, {'r8_failure_handling': 0.5}, ()),

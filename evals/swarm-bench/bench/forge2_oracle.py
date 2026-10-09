@@ -715,6 +715,8 @@ class Oracle:
         fields = {ch.estimate_field}
         if ch.moved_to_board:
             fields.add(self.field_in_force(ch.moved_to_board, ch.at))
+        if ch.phase == 'history':   # a backfill written after its board switched could read only the new field
+            fields |= {fid for _t, fid in self.field_switches.get(ch.board_id, ())}
         return frozenset(self.estimate_at(ch.issue_id, f, when) for f in fields for when in (ch.at, mark))
 
     def expected_rows(self, checkpoint: str) -> List[Dict]:
