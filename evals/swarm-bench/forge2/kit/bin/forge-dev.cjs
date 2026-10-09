@@ -34,10 +34,21 @@ const USAGE = `forge-dev <command>   (run from the app directory; $FORGE_SITE_UR
   realtime [--follow]         every Realtime publish on the dev site (channel, payload, delivered / no
                               subscriber / rejected) and the open subscriptions; --follow keeps watching.
                               A served surface's log also prints each event delivered to its page.
+  uikit <moduleKey> [--as <accountId>] [--set "<label>=<value>"]... [--click "<label>"]...
+        render a UI Kit (render: native) module headless with the real @forge/react reconciler, its resolver calls
+        answered by your functions; prints the visible text after each step and writes the whole tree to
+        .forge-dev/uikit-tree.json. --set and --click run in the order given (controls are found by their label).
+  ci <args...>                the CI sender (bin/ci.cjs) against your web trigger(s), served here while it runs;
+                              \`forge-dev ci --help\` lists its commands (e.g. \`ci send ...\`)
   kvs                         dump stored keys and entities
   users                       list the dev site's users (the first line is the default viewer) and the issue the
                               default viewer may not comment on (Jira answers that comment with a 400)
   reset                       clear dev storage, queues and saved widget configs, and rewind the dev site's update stream
+
+  Time is virtual, as in scoring: every proxied request costs its class (GET 120 ms, search page 300 ms, changelog
+  bulkfetch 600 ms, a write 200 ms; KVS reads 120 ms, writes 200 ms) and every wait its face value; a function past
+  its limit (resolver 25 s, scheduled and consumer 55 s or timeoutSeconds up to 900 s, web trigger and action 55 s)
+  is killed. Each invocation prints its virtual duration next to the real one.
 `;
 
 const argv = process.argv.slice(2);
@@ -116,7 +127,7 @@ async function saveState(emu, consumed = new Set()) {
   });
 }
 
-async function emulator() {
+async function emulator({ onInvocation = null } = {}) {
   const site = siteFromEnv();
   const { createEmulator } = lib('emulator.cjs');
   const state = await withLock(async () => loadState());
@@ -131,7 +142,7 @@ async function emulator() {
   });
   // A separate work dir per process: two concurrent forge-dev commands never rebuild each other's bundle.
   emu = await createEmulator({ appDir, kitDir, site, runtime: 'wrapper', fence: 'dev-auto', workDir: path.join(stateDir, 'work', String(process.pid)),
-    devState: state.kvs ? { kvs: state.kvs, queue: state.queue } : null, aroundInvocation });
+    devState: state.kvs ? { kvs: state.kvs, queue: state.queue } : null, aroundInvocation, onInvocation });
   if (emu.fence !== 'sandbox') {
     console.log('fence: node --permission (macOS refuses a nested sandbox inside this workspace). The scorer runs every invocation under a deny-default\n'
       + '       sandbox: no file reads outside the bundle, no child processes, network only to the Forge proxy.');
@@ -170,7 +181,9 @@ function realtimeSummary(c) {
   return `${c.op} '${c.body?.channel}' payload ${c.body?.payload} -> ${outcome}`;
 }
 function printInvocation(r, label) {
-  console.log(`== ${label}: ${r.functionKey ?? '?'} (${r.moduleType ?? '?'} ${r.moduleKey ?? ''})${r.asUser ? ` as ${r.asUser}` : ' as app'} -> ${r.ok ? 'ok' : r.timedOut ? 'TIMED OUT' : 'FAILED'} ${r.ms ?? 0} ms`);
+  const took = `${r.vms ?? 0} ms virtual (limit ${r.timeoutSec ?? '?'} s; ${r.ms ?? 0} ms real)`;
+  console.log(`== ${label}: ${r.functionKey ?? '?'} (${r.moduleType ?? '?'} ${r.moduleKey ?? ''})${r.asUser ? ` as ${r.asUser}` : ' as app'} -> ${r.ok ? 'ok' : r.timedOut ? 'KILLED' : 'FAILED'} ${took}`);
+  if (r.retry) console.log(`   retried later: ${r.retry.kind}${r.retry.dropped ? ` — DROPPED: ${r.retry.dropped}` : ` at ${r.retry.redeliverAt} (+${r.retry.waitS} s)`}`);
   if (r.ok) {
     // The full result is always written; the terminal shows it whole up to the print budget.
     const full = JSON.stringify(r.result === undefined ? null : r.result, null, 2);
@@ -186,7 +199,8 @@ function printInvocation(r, label) {
 }
 function printDeliveries(ds) {
   for (const d of ds) {
-    console.log(`-- queue ${d.queueName} event ${d.eventId} attempt ${d.attempt}: ${d.outcome}${d.retryAfter ? ` (redelivered after ${d.retryAfter} s)` : ''}${d.dropped ? ` DROPPED: ${d.dropped}` : ''}`);
+    const what = d.kind === 'trigger' ? `trigger ${d.moduleKey} retry` : `queue ${d.queueName} event`;
+    console.log(`-- ${what} ${d.eventId} attempt ${d.attempt}: ${d.outcome}${d.retryAfter ? ` (redelivered after ${d.retryAfter} s)` : ''}${d.dropped ? ` DROPPED: ${d.dropped}` : ''}`);
     if (d.error) console.log(`   error: ${d.error.name}: ${d.error.message}`);
     for (const l of d.logs ?? []) console.log(`   [${l.logLevel ?? 'log'}] ${(l.logArguments ?? [l.raw]).join(' ')}`);
   }
@@ -207,8 +221,35 @@ function devExtension(info, moduleType, { sprint, config, edit, widgetId = 'dev-
   return { type: moduleType };
 }
 
+// The UI Kit host is P2's lib/uikit-host (render({appDir, moduleKey, context, invoke}) -> {tree, text, findByLabel,
+// setValue, click, waitIdle, invokes}); absent, `uikit` refuses by name instead of rendering nothing.
+function uikitHost() {
+  for (const entry of ['uikit-host/index.cjs', 'uikit-host']) {
+    let file;
+    try { file = require.resolve(path.join(kitDir, 'lib', entry)); } catch { continue; }
+    return require(file);
+  }
+  throw new Error(`the UI Kit host is not installed in this kit (${path.join(kitDir, 'lib', 'uikit-host')})`);
+}
+// --set "<label>=<value>" and --click "<label>" in the order given.
+function uikitSteps() {
+  const steps = [];
+  for (let i = 1; i < argv.length; i++) {
+    if (argv[i] !== '--set' && argv[i] !== '--click') continue;
+    const arg = argv[i + 1];
+    if (arg === undefined) throw new Error(`${argv[i]} needs a value`);
+    if (argv[i] === '--set') {
+      const eq = arg.indexOf('=');
+      if (eq <= 0) throw new Error(`--set "${arg}": expected "<label>=<value>"`);
+      steps.push({ op: 'set', label: arg.slice(0, eq), value: arg.slice(eq + 1) });
+    } else steps.push({ op: 'click', label: arg });
+    i++;
+  }
+  return steps;
+}
+
 async function main() {
-  if (!cmd || cmd === 'help' || flag('help')) { console.log(USAGE); return 0; }
+  if (!cmd || cmd === 'help' || (flag('help') && cmd !== 'ci')) { console.log(USAGE); return 0; }
   if (cmd === 'kvs') {
     const { createKvs } = lib('kvs.cjs');
     const st = loadState();
@@ -264,11 +305,57 @@ async function main() {
     console.log('dev storage and queues cleared; the dev site rewound to its first update');
     return 0;
   }
-  const emu = await emulator();
+  const finished = [];
+  const emu = await emulator({ onInvocation: (record, out) => finished.push(out) });
   const info = emu.siteInfo;
   const consumed = new Set();
   let serving = false;
   try {
+    if (cmd === 'uikit') {
+      const key = positional[0];
+      const found = key && emu.moduleByKey(key);
+      if (!found) throw new Error(`uikit <moduleKey>: no module '${key}'`);
+      const { render } = uikitHost();
+      const asUser = opt('as') ?? info.viewer;
+      const context = lib('bridge-host.cjs').contextFor(emu, { type: found.type, moduleKey: key, asUser, extension: {}, theme: opt('theme') ?? 'light', entry: 'view' });
+      // invoke(functionKey, payload) or invoke({functionKey, payload}): resolves with the resolver's answer, rejects when it failed.
+      const invoke = async (a, b) => {
+        const { functionKey, payload } = a !== null && typeof a === 'object' ? a : { functionKey: a, payload: b };
+        const r = await emu.callResolver({ moduleKey: key, functionKey, payload: payload ?? {}, asUser });
+        printInvocation(r, `resolver ${functionKey}`);
+        if (!r.ok) throw new Error(`${r.error?.name}: ${r.error?.message}`);
+        return r.result;
+      };
+      const ui = await render({ appDir, moduleKey: key, context, invoke });
+      await ui.waitIdle();
+      console.log(`--- ${key} as ${asUser}\n${ui.text()}`);
+      for (const s of uikitSteps()) {
+        if (s.op === 'set') await ui.setValue(s.label, s.value); else await ui.click(s.label);
+        await ui.waitIdle();
+        console.log(`--- after ${s.op} "${s.label}"${s.op === 'set' ? ` = ${JSON.stringify(s.value)}` : ''}\n${ui.text()}`);
+      }
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.writeFileSync(path.join(stateDir, 'uikit-tree.json'), JSON.stringify(ui.tree(), null, 2) + '\n');
+      console.log(`whole tree: ${path.relative(process.cwd(), path.join(stateDir, 'uikit-tree.json'))}${Array.isArray(ui.invokes) ? `; ${ui.invokes.length} invoke(s)` : ''}`);
+      await saveState(emu, consumed);
+      return 0;
+    }
+    if (cmd === 'ci') {
+      // The sender is P3's bin/ci.cjs; this process serves the app's web trigger(s) while it runs.
+      const sender = path.join(kitDir, 'bin', 'ci.cjs');
+      if (!fs.existsSync(sender)) throw new Error(`the CI sender is not installed in this kit (${sender})`);
+      const triggers = emu.modules('webtrigger').map((w) => w.key);
+      const env = { ...process.env, FORGE_WEBTRIGGER_BASE: emu.webtriggerUrl('').replace(/\/$/, ''),
+        ...(triggers.length === 1 ? { FORGE_WEBTRIGGER_URL: emu.webtriggerUrl(triggers[0]) } : {}) };
+      if (!triggers.length) console.log('no webtrigger module in manifest.yml: every request will answer 501');
+      const code = await new Promise((resolve) => {
+        const child = require('child_process').spawn(process.execPath, [sender, ...argv.slice(1)], { cwd: appDir, env, stdio: 'inherit' });
+        child.on('close', (c) => resolve(c ?? 1));
+      });
+      for (const r of finished.filter((x) => x.moduleType === 'webtrigger')) printInvocation(r, 'web trigger');
+      await saveState(emu, consumed);
+      return code;
+    }
     if (cmd === 'invoke') {
       const fnKey = positional[0];
       if (!fnKey) throw new Error('invoke <functionKey> ...');
