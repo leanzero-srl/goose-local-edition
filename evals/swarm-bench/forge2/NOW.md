@@ -64,6 +64,13 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
 
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 00:1x note CORRECTED live (771 chars): "top four by 0.01" + Pareto added as too low — its hourly job hands Jira reads to a
+  queue worker, which 1.0's r_as_app / r_completes_in_timeout don't count (vacuous 0s; contract allows it). Found by the
+  blog-correction red team and the frontier-behaviour report independently; verified on the local tree a221226b.
+- 00:1x two blog corrections published (callout first in body, revision-guarded, read back): the Sonnet-vs-Opus post
+  (defects B + A, the emulator's notices over Sonnet's buttons) and the Flash-vs-Max-Prime post (Max Prime/Muse too
+  high; Omni Flash posted none, not two; Sonnet gains rather than drops; Flash's explain button covered). Text in
+  scratchpad rt-blogcorr/fixes-final.txt.
 - (history) Owner 2026-10-09 21:2x: "freeze forge 1.0 with a note, 2.0 replaces it" -> wf forge10-freeze-note running (map site+app,
   note drafted + attacked on facts and reading, `note` field on benchmarkState + render on board/run pages on site branch
   `forge10-freeze-note`, two diff reviews); then I do the Sanity write (frozen:true + note; familyCurrent stays until the
