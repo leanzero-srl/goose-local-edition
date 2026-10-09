@@ -2,20 +2,20 @@ import Resolver from '@forge/resolver';
 import { kvs } from '@forge/kvs';
 
 const resolver = new Resolver();
-const DEFAULTS = { backgroundShare: 70, aiEnabled: true };
+const DEFAULTS = { retentionDays: 30, digestEnabled: true };
 
-resolver.define('getSettings', async () => ({ ...DEFAULTS, ...((await kvs.get('settings')) ?? {}), changes: (await kvs.get('changes')) ?? [] }));
+resolver.define('getPreferences', async () => ({ ...DEFAULTS, ...((await kvs.get('preferences')) ?? {}), changes: (await kvs.get('changes')) ?? [] }));
 
-resolver.define('saveSettings', async ({ payload, context }) => {
+resolver.define('savePreferences', async ({ payload, context }) => {
   // A number input's value reaches the resolver as the string the DOM holds.
-  const share = Number(payload.backgroundShare);
-  if (!Number.isInteger(share) || share < 10 || share > 90) throw new Error('backgroundShare must be a whole number from 10 to 90');
-  const settings = { backgroundShare: share, aiEnabled: payload.aiEnabled === true };
-  await kvs.set('settings', settings);
+  const days = Number(payload.retentionDays);
+  if (!Number.isInteger(days) || days < 1 || days > 365) throw new Error('retentionDays must be a whole number from 1 to 365');
+  const preferences = { retentionDays: days, digestEnabled: payload.digestEnabled === true };
+  await kvs.set('preferences', preferences);
   const changes = (await kvs.get('changes')) ?? [];
-  changes.push({ when: changes.length + 1, who: context.accountId, what: `share ${share}, AI ${settings.aiEnabled ? 'on' : 'off'}` });
+  changes.push({ when: changes.length + 1, who: context.accountId, what: `retention ${days}, digest ${preferences.digestEnabled ? 'on' : 'off'}` });
   await kvs.set('changes', changes);
-  return settings;
+  return preferences;
 });
 
 export const handler = resolver.getDefinitions();

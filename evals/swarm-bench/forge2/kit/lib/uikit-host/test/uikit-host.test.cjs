@@ -1,5 +1,5 @@
 'use strict';
-// node --test evals/swarm-bench/forge2/kit/lib/uikit-host/test/
+// node --test evals/swarm-bench/forge2/kit/lib/uikit-host/test/uikit-host.test.cjs
 // Needs the forge2 kit's modules with @forge/react 12.3.0 in them: FORGE_KIT (a materialised kit) or FORGE_KIT_MODULES
 // (its module cache); the emulator test also needs the pinned runtime wrapper beside them.
 const test = require('node:test');
@@ -16,22 +16,26 @@ if (!process.env.FORGE_KIT && !process.env.FORGE_KIT_MODULES) {
 const FIXTURE = path.join(__dirname, 'fixture-admin');
 const SITE = path.resolve(__dirname, '..', '..', '..', '..', 'site', 'site.cjs');
 const CONTEXT = { accountId: 'admin-1', cloudId: 'cloud-1', moduleKey: 'fixture-admin', extension: { type: 'jira:adminPage' } };
+const RETENTION = 'Retention (days)';
+const DIGEST = 'Email digest enabled';
+const SAVE = 'Save preferences';
 
-function backend({ getSettings, saveSettings } = {}) {
-  const state = { settings: { backgroundShare: 70, aiEnabled: true },
-    changes: [{ when: 1, who: 'alice', what: 'installed' }, { when: 2, who: 'bob', what: 'share 60' }, { when: 10, who: 'carol', what: 'AI off' }] };
+function backend({ getPreferences, savePreferences } = {}) {
+  const state = { preferences: { retentionDays: 30, digestEnabled: true },
+    changes: [{ when: 1, who: 'alice', what: 'installed' }, { when: 2, who: 'bob', what: 'retention 60' }, { when: 10, who: 'carol', what: 'digest off' }] };
   const calls = [];
   const invoke = async (call) => {
     calls.push(call);
-    if (call.functionKey === 'getSettings') return getSettings ? getSettings(state) : { ...state.settings, changes: state.changes };
-    if (call.functionKey === 'saveSettings') {
-      const save = () => { state.settings = { backgroundShare: Number(call.payload.backgroundShare), aiEnabled: call.payload.aiEnabled === true }; return state.settings; };
-      return saveSettings ? saveSettings(save) : save();
+    if (call.functionKey === 'getPreferences') return getPreferences ? getPreferences(state) : { ...state.preferences, changes: state.changes };
+    if (call.functionKey === 'savePreferences') {
+      const save = () => { state.preferences = { retentionDays: Number(call.payload.retentionDays), digestEnabled: call.payload.digestEnabled === true }; return state.preferences; };
+      return savePreferences ? savePreferences(save) : save();
     }
     throw new Error(`no resolver '${call.functionKey}'`);
   };
   return { invoke, calls, state };
 }
+const renderFixture = (be, extra = {}) => render({ appDir: FIXTURE, moduleKey: 'fixture-admin', context: CONTEXT, invoke: be.invoke, ...extra });
 
 function tempApp(source, { native = true } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'uikit-host-'));
@@ -50,28 +54,25 @@ app:
 `);
   return dir;
 }
-const renderTemp = (source, invoke = async () => ({})) => render({ appDir: tempApp(source), moduleKey: 'tmp-admin', context: { ...CONTEXT, moduleKey: 'tmp-admin' }, invoke });
+const renderTemp = (source, invoke = async () => ({}), extra = {}) => render({ appDir: tempApp(source), moduleKey: 'tmp-admin', context: { ...CONTEXT, moduleKey: 'tmp-admin' }, invoke, ...extra });
 
 test('boot: the first commit paints before the one invoke; the screen reads as text', async () => {
   const be = backend();
-  const host = await render({ appDir: FIXTURE, moduleKey: 'fixture-admin', context: CONTEXT, invoke: be.invoke });
+  const host = await renderFixture(be);
   try {
-    assert.strictEqual(host.text(host.docs[0]), 'Loading settings…', 'the first ForgeDoc is the loading state');
+    assert.strictEqual(host.text(host.docs[0]), 'Loading preferences…', 'the first ForgeDoc is the loading state');
     const idle = await host.waitIdle();
-    assert.deepStrictEqual(host.invokes.map((i) => [i.functionKey, i.reconcilesBefore, i.state]), [['getSettings', 1, 'ok']]);
+    assert.deepStrictEqual(host.invokes.map((i) => [i.functionKey, i.reconcilesBefore, i.state]), [['getPreferences', 1, 'ok']]);
     assert.strictEqual(be.calls[0].context.accountId, 'admin-1', 'the resolver gets the frontend context');
-    assert.strictEqual(idle.turns <= 4, true, `boot settles in a few turns, took ${idle.turns}`);
+    assert.ok(idle.turns <= 4, `boot settles in a few turns, took ${idle.turns}`);
     assert.strictEqual(host.text(), [
-      'Settings', 'Background share (%)', '[70]', '[x] AI explanations enabled', '[Save settings]',
-      'Recent admin changes', 'When | Who | What', '10 | carol | AI off', '2 | bob | share 60', '1 | alice | installed', '[Enable theming]', '[Check identity]',
+      'Preferences', RETENTION, '[30]', `[x] ${DIGEST}`, `[${SAVE}]`,
+      'Change history', 'When | Who | What', '10 | carol | digest off', '2 | bob | retention 60', '1 | alice | installed', '[Enable theming]', '[Check identity]',
     ].join('\n'));
-    const share = host.findByLabel('Background share (%)');
-    assert.strictEqual(share.type, 'Textfield');
-    assert.strictEqual(share.via, 'Label labelFor');
-    assert.strictEqual(share.value, '70');
-    assert.strictEqual(share.props.type, 'number');
-    assert.strictEqual(host.findByLabel('AI explanations enabled').checked, true);
-    assert.strictEqual(host.findByLabel('Save settings').type, 'LoadingButton');
+    const days = host.findByLabel(RETENTION);
+    assert.deepStrictEqual([days.type, days.via, days.value, days.props.type], ['Textfield', 'Label labelFor', '30', 'number']);
+    assert.deepStrictEqual([host.findByLabel(DIGEST).type, host.findByLabel(DIGEST).checked], ['Toggle', true]);
+    assert.strictEqual(host.findByLabel(SAVE).type, 'LoadingButton');
     assert.strictEqual(host.tree().type, 'Root');
     assert.deepStrictEqual([host.errors, host.harnessMissing], [[], []]);
   } finally { host.close(); }
@@ -79,21 +80,21 @@ test('boot: the first commit paints before the one invoke; the screen reads as t
 
 test('drive by label: type, toggle, submit -> exactly one invoke with the DOM\'s string value; timers are virtual', async () => {
   const be = backend();
-  const host = await render({ appDir: FIXTURE, moduleKey: 'fixture-admin', context: CONTEXT, invoke: be.invoke });
+  const host = await renderFixture(be);
   try {
     await host.waitIdle();
-    assert.deepStrictEqual(await host.setValue('Background share (%)', 60), { changed: true });
-    assert.deepStrictEqual(await host.click('AI explanations enabled'), { clicked: true });
-    assert.deepStrictEqual(await host.setValue('AI explanations enabled', false), { changed: false, reason: 'unchanged' });
-    assert.deepStrictEqual(await host.click('Save settings'), { clicked: true, submitted: true });
+    assert.deepStrictEqual(await host.setValue(RETENTION, 60), { changed: true });
+    assert.deepStrictEqual(await host.click(DIGEST), { clicked: true });
+    assert.deepStrictEqual(await host.setValue(DIGEST, false), { changed: false, reason: 'unchanged' });
+    assert.deepStrictEqual(await host.click(SAVE), { clicked: true, submitted: true });
     const idle = await host.waitIdle();
-    const saves = host.invokes.filter((i) => i.functionKey === 'saveSettings');
+    const saves = host.invokes.filter((i) => i.functionKey === 'savePreferences');
     assert.strictEqual(saves.length, 1);
-    assert.deepStrictEqual(saves[0].payload, { backgroundShare: '60', aiEnabled: false }, 'a number input hands over the string the DOM holds');
-    assert.match(host.text(), /\[60\]\n\[ \] AI explanations enabled\n\[Save settings\]\nSaved: share 60, AI off\n/);
+    assert.deepStrictEqual(saves[0].payload, { retentionDays: '60', digestEnabled: false }, 'a number input hands over the string the DOM holds');
+    assert.match(host.text(), new RegExp(`\\[60\\]\\n\\[ \\] ${DIGEST}\\n\\[${SAVE}\\]\\nSaved: retention 60, digest off\\n`));
     assert.strictEqual(idle.timersPending, 1, 'the 3 s flash timer waits for virtual time');
     await host.advance(2999);
-    assert.match(host.text(), /Saved: share 60/);
+    assert.match(host.text(), /Saved: retention 60/);
     await host.advance(1);
     assert.doesNotMatch(host.text(), /Saved:/);
     assert.strictEqual(host.now(), 3000);
@@ -102,59 +103,56 @@ test('drive by label: type, toggle, submit -> exactly one invoke with the DOM\'s
 });
 
 test('validation: an out-of-range value shows the error and nothing is submitted', async () => {
-  const be = backend();
-  const host = await render({ appDir: FIXTURE, moduleKey: 'fixture-admin', context: CONTEXT, invoke: be.invoke });
+  const host = await renderFixture(backend());
   try {
     await host.waitIdle();
-    await host.setValue('Background share (%)', 5);
+    await host.setValue(RETENTION, 0);
     await host.waitIdle();
-    assert.match(host.text(), /\[5\] \(invalid\)\nEnter a number from 10 to 90/, 'useForm validates on blur');
-    assert.deepStrictEqual(await host.click('Save settings'), { clicked: true, submitted: true });
+    assert.match(host.text(), /\[0\] \(invalid\)\nEnter a number of days from 1 to 365/, 'useForm validates on blur');
+    assert.deepStrictEqual(await host.click(SAVE), { clicked: true, submitted: true });
     await host.waitIdle();
-    assert.deepStrictEqual(host.invokes.map((i) => i.functionKey), ['getSettings']);
+    assert.deepStrictEqual(host.invokes.map((i) => i.functionKey), ['getPreferences']);
   } finally { host.close(); }
 });
 
 test('a loading button is not clickable: a second Save while the first is in flight does nothing', async () => {
   let release;
   const gate = new Promise((r) => { release = r; });
-  const be = backend({ saveSettings: async (save) => { await gate; return save(); } });
-  const host = await render({ appDir: FIXTURE, moduleKey: 'fixture-admin', context: CONTEXT, invoke: be.invoke });
+  const host = await renderFixture(backend({ savePreferences: async (save) => { await gate; return save(); } }));
   try {
     await host.waitIdle();
-    await host.click('Save settings');
+    await host.click(SAVE);
     await host.flush();
-    assert.strictEqual(host.findByLabel('Save settings').props.isLoading, true);
-    assert.match(host.text(), /\[Save settings\] \(loading\)/);
-    assert.deepStrictEqual(await host.click('Save settings'), { clicked: false, reason: 'loading' });
+    assert.strictEqual(host.findByLabel(SAVE).props.isLoading, true);
+    assert.match(host.text(), new RegExp(`\\[${SAVE}\\] \\(loading\\)`));
+    assert.deepStrictEqual(await host.click(SAVE), { clicked: false, reason: 'loading' });
     release();
     await host.waitIdle();
-    assert.strictEqual(host.invokes.filter((i) => i.functionKey === 'saveSettings').length, 1);
-    assert.deepStrictEqual(host.invokes.find((i) => i.functionKey === 'saveSettings').payload, { backgroundShare: 70, aiEnabled: true },
+    const saves = host.invokes.filter((i) => i.functionKey === 'savePreferences');
+    assert.strictEqual(saves.length, 1);
+    assert.deepStrictEqual(saves[0].payload, { retentionDays: 30, digestEnabled: true },
       'untouched fields submit the app\'s own defaultValues (a number here); only typed ones carry the DOM\'s string');
   } finally { host.close(); }
 });
 
 test('labels: a table by its caption (rows sorted as ADS sorts them), a missing label lists the screen, codes for misuse', async () => {
-  const be = backend();
-  const host = await render({ appDir: FIXTURE, moduleKey: 'fixture-admin', context: CONTEXT, invoke: be.invoke });
+  const host = await renderFixture(backend());
   try {
     await host.waitIdle();
-    const table = host.findByLabel('Recent admin changes');
+    const table = host.findByLabel('Change history');
     assert.strictEqual(table.type, 'DynamicTable');
-    assert.strictEqual(host.text(table), 'Recent admin changes\nWhen | Who | What\n10 | carol | AI off\n2 | bob | share 60\n1 | alice | installed');
-    assert.strictEqual(host.findByLabel('Settings').type, 'FormSection');
+    assert.strictEqual(host.text(table), 'Change history\nWhen | Who | What\n10 | carol | digest off\n2 | bob | retention 60\n1 | alice | installed');
+    assert.strictEqual(host.findByLabel('Preferences').type, 'FormSection');
     assert.strictEqual(host.findByLabel('Nope'), null);
-    await assert.rejects(host.click('Nope'), (e) => e instanceof UikitHostError && e.code === 'NO_CONTROL' && /"Background share \(%\)"/.test(e.message));
-    await assert.rejects(host.click('Background share (%)'), (e) => e.code === 'NOT_CLICKABLE');
-    await assert.rejects(host.setValue('Save settings', 'x'), (e) => e.code === 'NOT_AN_INPUT');
-    await assert.rejects(host.setValue('AI explanations enabled', 'yes'), (e) => e.code === 'BAD_VALUE');
+    await assert.rejects(host.click('Nope'), (e) => e instanceof UikitHostError && e.code === 'NO_CONTROL' && /"Retention \(days\)"/.test(e.message));
+    await assert.rejects(host.click(RETENTION), (e) => e.code === 'NOT_CLICKABLE');
+    await assert.rejects(host.setValue(SAVE, 'x'), (e) => e.code === 'NOT_AN_INPUT');
+    await assert.rejects(host.setValue(DIGEST, 'yes'), (e) => e.code === 'BAD_VALUE');
   } finally { host.close(); }
 });
 
 test('a bridge op this host does not model rejects in the app and is recorded, never answered', async () => {
-  const be = backend();
-  const host = await render({ appDir: FIXTURE, moduleKey: 'fixture-admin', context: CONTEXT, invoke: be.invoke });
+  const host = await renderFixture(backend());
   try {
     await host.waitIdle();
     await host.click('Enable theming');
@@ -164,11 +162,10 @@ test('a bridge op this host does not model rejects in the app and is recorded, n
   } finally { host.close(); }
 });
 
-test('context, flags and requestJira: the bridge ops an admin page uses besides invoke', async () => {
+test('context, flags, requestJira and links: what an admin page uses besides invoke', async () => {
   const fetched = [];
-  const host = await render({
-    appDir: tempApp(`import React, { useState } from 'react';
-import ForgeReconciler, { Button, Stack, Text, useProductContext } from '@forge/react';
+  const host = await renderTemp(`import React, { useState } from 'react';
+import ForgeReconciler, { Button, Link, Stack, Text, useProductContext } from '@forge/react';
 import { requestJira, showFlag } from '@forge/bridge';
 const App = () => {
   const ctx = useProductContext();
@@ -179,33 +176,33 @@ const App = () => {
     setMe(r.status + ' ' + body.permissions.ADMINISTER.havePermission);
     showFlag({ id: 'checked', title: 'Checked', type: 'success' });
   };
-  return <Stack><Text>{ctx ? 'viewer ' + ctx.accountId + ' on ' + ctx.extension.type : 'no context yet'}</Text><Button onClick={check}>Check</Button><Text>{me}</Text></Stack>;
+  return <Stack><Text>{ctx ? 'viewer ' + ctx.accountId + ' on ' + ctx.extension.type : 'no context yet'}</Text><Button onClick={check}>Check</Button><Text>{me}</Text><Link href="https://example.com/docs">Docs</Link></Stack>;
 };
 ForgeReconciler.render(<App />);
-`),
-    moduleKey: 'tmp-admin', context: { ...CONTEXT, moduleKey: 'tmp-admin', locale: 'en-US' }, invoke: async () => ({}),
+`, async () => ({}), {
     fetchProduct: async (req) => { fetched.push(req); return { body: JSON.stringify({ permissions: { ADMINISTER: { havePermission: false } } }), headers: { 'content-type': 'application/json' }, status: 200, statusText: 'OK', isAttachment: false }; },
   });
   try {
-    assert.strictEqual(host.text(host.docs[0]), 'no context yet\n[Check]', 'useProductContext is undefined on the first render');
+    assert.strictEqual(host.text(host.docs[0]), 'no context yet\n[Check]\nDocs', 'useProductContext is undefined on the first render');
     await host.waitIdle();
-    assert.match(host.text(), /^viewer admin-1 on jira:adminPage\n\[Check\]$/);
+    assert.match(host.text(), /^viewer admin-1 on jira:adminPage\n\[Check\]\nDocs$/);
     await host.click('Check');
     await host.waitIdle();
-    assert.match(host.text(), /\n200 false$/);
+    assert.match(host.text(), /\n200 false\nDocs$/);
     assert.deepStrictEqual(fetched.map((f) => [f.product, f.restPath, f.fetchRequestInit.method ?? 'GET', f.context.accountId]), [['jira', '/rest/api/3/mypermissions?permissions=ADMINISTER', 'GET', 'admin-1']]);
     assert.deepStrictEqual(host.flags.map((f) => [f.id, f.title, f.type, f.closed]), [['checked', 'Checked', 'success', false]]);
     assert.deepStrictEqual([host.errors, host.harnessMissing], [[], []]);
+    assert.deepStrictEqual(await host.click('Docs'), { clicked: true, submitted: false });
+    assert.deepStrictEqual(host.harnessMissing.map((m) => m.what), ['navigation to https://example.com/docs'], 'a link leaving the page is recorded, not followed');
   } finally { host.close(); }
 });
 
 test('a failing resolver reaches the app as a rejected invoke', async () => {
-  const be = backend({ getSettings: () => { throw new Error('boom'); } });
-  const host = await render({ appDir: FIXTURE, moduleKey: 'fixture-admin', context: CONTEXT, invoke: be.invoke });
+  const host = await renderFixture(backend({ getPreferences: () => { throw new Error('boom'); } }));
   try {
     await host.waitIdle();
-    assert.strictEqual(host.text(), 'Could not load settings: There was an error invoking the function - boom');
-    assert.deepStrictEqual(host.invokes.map((i) => [i.functionKey, i.state, i.error.message]), [['getSettings', 'error', 'boom']]);
+    assert.strictEqual(host.text(), 'Could not load preferences: There was an error invoking the function - boom');
+    assert.deepStrictEqual(host.invokes.map((i) => [i.functionKey, i.state, i.error.message]), [['getPreferences', 'error', 'boom']]);
   } finally { host.close(); }
 });
 
@@ -255,6 +252,7 @@ ForgeReconciler.render(<App />);
 test('what forge deploy refuses or cannot find is an app error code', async () => {
   const invoke = async () => ({});
   await assert.rejects(render({ appDir: FIXTURE, moduleKey: 'nope', context: CONTEXT, invoke }), (e) => e.code === 'NO_MODULE');
+  await assert.rejects(render({ appDir: os.tmpdir(), moduleKey: 'x', context: CONTEXT, invoke }), (e) => e.code === 'BAD_MANIFEST');
   await assert.rejects(render({ appDir: tempApp('x', { native: false }), moduleKey: 'tmp-admin', context: CONTEXT, invoke }), (e) => e.code === 'NOT_NATIVE');
   await assert.rejects(renderTemp('import React from "react";\nconst = ;\n'), (e) => e.code === 'BUILD_FAILED');
   await assert.rejects(renderTemp('import x from "not-a-kit-package";\n'), (e) => e.code === 'BUILD_FAILED' && /not one of the installed packages/.test(e.message));
@@ -276,28 +274,27 @@ test('through the emulator: resolvers run in the Forge runtime as the viewer; fo
     const host = await renderInEmulator(emu, { moduleKey: 'fixture-admin', asUser: viewer });
     try {
       await host.waitIdle();
-      assert.strictEqual(host.findByLabel('Background share (%)').value, '70');
-      await host.setValue('Background share (%)', 55);
-      await host.click('Save settings');
+      assert.strictEqual(host.findByLabel(RETENTION).value, '30');
+      await host.setValue(RETENTION, 55);
+      await host.click(SAVE);
       await host.waitIdle();
-      assert.deepStrictEqual(host.invokes.map((i) => [i.functionKey, i.state]), [['getSettings', 'ok'], ['saveSettings', 'ok'], ['getSettings', 'ok']], JSON.stringify(host.invokes));
-      assert.match(host.text(), new RegExp(`Saved: share 55, AI on[\\s\\S]*1 \\| ${viewer} \\| share 55, AI on`));
-      assert.strictEqual(host.tree().children.length, 1);
+      assert.deepStrictEqual(host.invokes.map((i) => [i.functionKey, i.state]), [['getPreferences', 'ok'], ['savePreferences', 'ok'], ['getPreferences', 'ok']], JSON.stringify(host.invokes));
+      assert.match(host.text(), new RegExp(`Saved: retention 55, digest on[\\s\\S]*1 \\| ${viewer} \\| retention 55, digest on`));
       await host.click('Check identity');
       await host.waitIdle();
       assert.match(host.text(), /\nSigned in as [^\n]+ \(200\)$/, 'requestJira reaches the site as the viewer through the proxy');
       assert.deepStrictEqual([host.errors, host.harnessMissing.map((m) => m.what)], [[], []]);
     } finally { host.close(); }
     const stored = emu.kvs.snapshot();
-    assert.match(JSON.stringify(stored), /"backgroundShare":55/, JSON.stringify(stored).slice(0, 400));
+    assert.match(JSON.stringify(stored), /"retentionDays":55/, JSON.stringify(stored).slice(0, 400));
 
     const out = [];
-    const code = await main({ emu, argv: ['fixture-admin', '--set', 'Background share (%)=40', '--set', 'AI explanations enabled=false', '--click', 'Save settings'], print: (s) => out.push(s) });
+    const code = await main({ emu, argv: ['fixture-admin', '--set', `${RETENTION}=40`, '--set', `${DIGEST}=false`, '--click', SAVE], print: (s) => out.push(s) });
     const printed = out.join('\n');
     assert.strictEqual(code, 0, printed);
-    assert.match(printed, /> set "Background share \(%\)" = "40" -> \{"changed":true\}/);
-    assert.match(printed, /== screen\n[\s\S]*\[40\]\n\[ \] AI explanations enabled[\s\S]*Saved: share 40, AI off/);
-    assert.match(printed, /saveSettings\(\{"backgroundShare":"40","aiEnabled":false\}\) after \d+ commit\(s\) -> ok/);
+    assert.match(printed, /> set "Retention \(days\)" = "40" -> \{"changed":true\}/);
+    assert.match(printed, new RegExp(`== screen\\n[\\s\\S]*\\[40\\]\\n\\[ \\] ${DIGEST}[\\s\\S]*Saved: retention 40, digest off`));
+    assert.match(printed, /savePreferences\(\{"retentionDays":"40","digestEnabled":false\}\) after \d+ commit\(s\) -> ok/);
     assert.match(printed, /== tree\nRoot\n {2}Stack/);
     const bad = [];
     assert.strictEqual(await main({ emu, argv: ['fixture-admin', '--click', 'Save'], print: (s) => bad.push(s) }), 1);

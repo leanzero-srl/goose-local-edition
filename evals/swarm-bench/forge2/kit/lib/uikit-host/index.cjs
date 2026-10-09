@@ -42,9 +42,9 @@ const D = require('./doc.cjs');
 class UikitHostError extends Error {
   constructor(code, message) { super(message); this.name = 'UikitHostError'; this.code = code; }
 }
-// Codes: NO_MODULE / NOT_NATIVE / NO_RESOURCE / BUILD_FAILED are the app's (what forge deploy would refuse or
-// cannot find); NO_CONTROL / AMBIGUOUS / NOT_CLICKABLE / NOT_AN_INPUT / BAD_VALUE / NOT_IDLE are what a drive call
-// found on the screen; HARNESS is this host's own failure (never app evidence).
+// Codes: BAD_MANIFEST / NO_MODULE / NOT_NATIVE / NO_RESOURCE / BUILD_FAILED are the app's (what forge deploy would
+// refuse or cannot find); NO_CONTROL / AMBIGUOUS / NOT_CLICKABLE / NOT_AN_INPUT / BAD_VALUE / NOT_IDLE are what a
+// drive call found on the screen; HARNESS is this host's own failure (never app evidence).
 
 // Bridge ops with no observable effect in a text host (fire-and-forget in @forge/bridge 7.1.0).
 const INERT = new Set(['emitReadyEvent', 'changeWindowTitle', 'emitFrontendCustomMetric']);
@@ -64,14 +64,15 @@ class PageRequest extends Request {
 
 function locate(appDir, moduleKey, paths) {
   const YAML = paths.require('yaml');
-  const manifest = YAML.parse(fs.readFileSync(path.join(appDir, 'manifest.yml'), 'utf8'));
+  let manifest;
+  try { manifest = YAML.parse(fs.readFileSync(path.join(appDir, 'manifest.yml'), 'utf8')); } catch (e) { throw new UikitHostError('BAD_MANIFEST', `manifest.yml: ${e.message}`); }
   for (const [type, entries] of Object.entries(manifest?.modules ?? {})) {
     if (type === 'function' || !Array.isArray(entries)) continue;
     const module = entries.find((e) => e?.key === moduleKey);
     if (!module) continue;
     if (module.render !== 'native') throw new UikitHostError('NOT_NATIVE', `module '${moduleKey}' (${type}) is not UI Kit: it has no \`render: native\``);
-    const resource = (manifest.resources ?? []).find((r) => r.key === module.resource);
-    if (!resource) throw new UikitHostError('NO_RESOURCE', `module '${moduleKey}' names resource '${module.resource}', which is not declared under resources`);
+    const resource = (Array.isArray(manifest.resources) ? manifest.resources : []).find((r) => r?.key === module.resource);
+    if (!resource || typeof resource.path !== 'string') throw new UikitHostError('NO_RESOURCE', `module '${moduleKey}' names resource '${module.resource}', which is not declared (with a path) under resources`);
     return { manifest, type, module, resource };
   }
   throw new UikitHostError('NO_MODULE', `no module with key '${moduleKey}' in ${path.join(appDir, 'manifest.yml')}`);
@@ -218,7 +219,10 @@ async function render({ appDir, moduleKey, context, invoke, fetchProduct = null,
       }
       case 'fetchProduct': {
         if (!fetchProduct) throw notModelled('requestJira/requestConfluence (no fetchProduct route was given to render())');
-        const r = await fetchProduct({ moduleKey, moduleType: type, product: payload?.product, restPath: payload?.restPath, fetchRequestInit: plain(payload?.fetchRequestInit ?? {}), context: plain(context) });
+        let r;
+        try {
+          r = await fetchProduct({ moduleKey, moduleType: type, product: payload?.product, restPath: payload?.restPath, fetchRequestInit: plain(payload?.fetchRequestInit ?? {}), context: plain(context) });
+        } catch (e) { throw appReject(String(e?.message ?? e)); }
         entry.status = r.status;
         return toApp(r);
       }
@@ -389,7 +393,9 @@ async function render({ appDir, moduleKey, context, invoke, fetchProduct = null,
     if (!D.BUTTONS.has(n.type)) throw new UikitHostError('NOT_CLICKABLE', `'${label}' is a ${n.type}, not a button`);
     if (n.props.isDisabled) return { clicked: false, reason: 'disabled' };
     if (n.props.isLoading) return { clicked: false, reason: 'loading' };
-    await deliver(n, 'onClick', event(n, 'click', { tagName: n.type === 'Link' ? 'A' : 'BUTTON', type: n.props.type ?? 'button' }));
+    const handled = await deliver(n, 'onClick', event(n, 'click', { tagName: n.type === 'Link' ? 'A' : 'BUTTON', type: n.props.type ?? 'button' }));
+    // a link's navigation leaves the page: the product does it, this host only records that it would
+    if (!handled && typeof n.props.href === 'string') harnessMissing.push({ what: `navigation to ${n.props.href}`, at: clock.now, moduleKey });
     const form = n.props.type === 'submit' ? [...m.ancestors].reverse().find((a) => a.type === 'Form') : null;
     const submitted = form ? await deliver(form, 'onSubmit') : false;
     return { clicked: true, submitted };
