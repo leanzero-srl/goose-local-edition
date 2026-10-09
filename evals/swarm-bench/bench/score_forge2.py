@@ -3415,12 +3415,16 @@ def evaluate(c: Ctx) -> Dict:
     result.update({'kit_lock_sha256': kit.get('lock_sha256') or (c.obs.get('kit') or {}).get('lockSha256'),
                    'wrapper_sha256': kit.get('wrapper_sha256') or (c.obs.get('kit') or {}).get('wrapperSha256'),
                    'scorer_seconds': getattr(c, 'scorer_seconds', None), 'shots': list(c.obs.get('shots') or []),
-                   'scorer_files_sha256': {n: hashlib.sha256(p.read_bytes()).hexdigest() for n, p in (
-                       ('score_forge2.py', HERE / 'score_forge2.py'), ('forge2_checks.py', Path(forge2_checks.__file__)),
-                       ('forge2_oracle.py', Path(fo.__file__)), ('forge2_probe.mjs', PROBE_SCRIPT),
-                       (THRESHOLDS_FILE.name, THRESHOLDS_FILE))},
+                   'scorer_files_sha256': scorer_files_sha256(),
                    'spec_sha256': hashlib.sha256((ROOT / SPEC).read_bytes()).hexdigest()})
     return result
+
+
+def scorer_files_sha256() -> Dict[str, str]:
+    """The files that produced a verdict (calibrate() refuses golden verdicts scored by different ones)."""
+    return {n: hashlib.sha256(p.read_bytes()).hexdigest() for n, p in (
+        ('score_forge2.py', HERE / 'score_forge2.py'), ('forge2_checks.py', Path(V2.__file__)),
+        ('forge2_oracle.py', Path(fo.__file__)), ('forge2_probe.mjs', PROBE_SCRIPT), (THRESHOLDS_FILE.name, THRESHOLDS_FILE))}
 
 
 def media_block(c: Ctx) -> Dict:
@@ -4106,7 +4110,12 @@ def main(argv=None) -> int:
         if V2_ABSENT:
             print(f'NOTE: {V2_ABSENT}; the selftest composes on the synthetic stand-in registry', file=sys.stderr)
         fails = severity_selftest() + defect_selftest()
-        families = ', '.join(f'{fam} {sum(1 for t in TIER_OF.values() if t == fam)}' for fam in FAMILY_WEIGHT)
+        if not V2_ABSENT:   # the verdict's provenance block (evaluate() writes it on every scoring)
+            try:
+                scorer_files_sha256()
+            except Exception as error:
+                fails.append(f'scorer_files_sha256: {type(error).__name__}: {error}')
+        families =', '.join(f'{fam} {sum(1 for t in TIER_OF.values() if t == fam)}' for fam in FAMILY_WEIGHT)
         print(f'{VERSION}: {len(CHECKS)} rows ({len(V1_ROWS)} v1; v2 per family: {families}); '
               f'{len(CRITICAL_OF)} critical rows in {len(CRITICAL_CLASSES)} classes')
         print('SELFTEST: ' + ('PASS' if not fails else 'FAIL\n  ' + '\n  '.join(fails)))
