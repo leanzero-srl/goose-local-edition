@@ -644,8 +644,18 @@ def pre_person_list(c):
     return (listed, '>= 1 person-facing change list returned or rendered')
 
 
+BACKGROUND_COMMENT_KINDS = ('webtrigger', 'trigger', 'consumer', 'scheduled')
+
+
+def person_comments(c) -> List[Dict]:
+    """The comment POSTs a person's click made. 2.0's web trigger may mark an issue "Deployed to <env>" with a comment
+    of its own (SPEC R6), asApp and with no sprint in it: the v1 comment rows never grade those. The probe tags each
+    comment with the invoking module kind; an untagged comment (1.0 evidence) is a person's, as 1.0 graded it."""
+    return [x for x in c.obs.get('comments') or [] if x.get('kind') not in BACKGROUND_COMMENT_KINDS]
+
+
 def pre_comment_post(c):
-    return (bool(c.obs.get('comments')), '>= 1 comment POST')
+    return (bool(person_comments(c)), '>= 1 comment POST')
 
 
 def pre_modal_rendered(c):
@@ -2247,7 +2257,7 @@ def comment_refused(x: Dict) -> bool:
 
 @check('b_comment_adf_as_user', 'B', pre=pre_comment_post, needs=('ui',))
 def _(c):
-    attempts = [x for x in c.obs.get('comments') or [] if not comment_refused(x)]
+    attempts = [x for x in person_comments(c) if not comment_refused(x)]
     if not attempts:
         return g(0, 'every comment POST was rate-limited or forbidden; none landed', 'no comment')
     ok, notes = 0, []
@@ -2288,7 +2298,11 @@ def _post_scenarios(c: Ctx) -> List[Dict]:
 def _(c):
     scen = _post_scenarios(c)
     if not scen:
-        return unavail('comments were posted but the probe recorded no deliverable click/double-click scenario')
+        undelivered = [f"{name}@{r.get('sprintId')}" for r in c.sprint_renders() for name in ('post', 'doubleClick')
+                       if isinstance(r.get(name), dict) and r[name].get('clickFailed')]
+        if undelivered:
+            return unavail(f'the probe could not deliver the click(s) {undelivered[:4]} (harness, not app evidence)')
+        return vacuous('a click/double-click post scenario')
     dup = [f"{s['_name']}@{s['_sprint']}: {s.get('commentsAdded')} comments" for s in scen
            if isinstance(s.get('commentsAdded'), int) and s['commentsAdded'] >= 2]
     if dup:
