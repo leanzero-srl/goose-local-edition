@@ -1,0 +1,83 @@
+[
+  {
+    "name": "r1_skips_parallel_sprint",
+    "family": "R1",
+    "patch": "r1_skips_parallel_sprint.patch",
+    "loses": ["r1_progress_visible"],
+    "may_lose": ["r1_v1_rows_migrated"],
+    "critical": false,
+    "why": "The migration plan keeps one active sprint per board (the first listed) instead of every active and closed sprint, so the v1 rows of every parallel active sprint are never copied (seed 0123: boards 26 and 181 run two active sprints each) and the panel's total leaves them out: `Migrated <n> of <total>` names the wrong total at every read. The ledger rows come back through the golden's own backfill: the first scheduled run migrates first, then re-derives every history change of the active sprints the ledger lacks once the migration reports complete, with v1's time (recordChange), so r1_v1_rows_migrated holds unless that backfill lands after the 2-hour mark. v1's entity is untouched: the migration critical must not fire."
+  },
+  {
+    "name": "r2_syncs_past_quota_wall",
+    "family": "R2",
+    "patch": "r2_syncs_past_quota_wall.patch",
+    "loses": ["r2_rate_limit_reaction"],
+    "may_lose": [],
+    "critical": false,
+    "why": "A quota 429 stops only the invocation that drew it: the shared pause is never stored, so the rest of the background keeps syncing into the wall until the reset (seed 0123: three consumer deliveries reach Jira inside the first quota 429's Retry-After). Not the brief's literal 'ignores the 70 % cap': deleting the share check is an equivalent mutant on these sites, because the golden's busiest background hour spends 228 of the 1,680-point share (seed 0123), so no row can see the cap."
+  },
+  {
+    "name": "r3_waits_out_retry_after",
+    "family": "R3",
+    "patch": "r3_waits_out_retry_after.patch",
+    "loses": ["r3_long_retry_after_deferred", "r3_never_killed"],
+    "may_lose": [],
+    "critical": false,
+    "why": "A quota 429 still pauses the rest of the background, but the invocation that drew it sleeps until the reset in-function instead of returning InvocationError, so a Retry-After longer than the time left kills the consumer at its 900 s limit. Requires the probe's quota wall to outlast that limit (INTEGRATION fix list): on seed 0123 the wall was 300 s and its 429 carried 178 s, which fits, so both R3 rows are vacuous for the golden and the mutant alike there."
+  },
+  {
+    "name": "r4_deletion_unflagged",
+    "family": "R4",
+    "patch": "r4_deletion_unflagged.patch",
+    "loses": ["r4_deleted_history", "b_hidden_count"],
+    "may_lose": ["a_action_result"],
+    "critical": false,
+    "why": "A deleted issue's memberships are still marked deleted (it leaves current scope; the totals do not move) but its ledger rows never get deleted: true. r4_deleted_history loses every such row. The person view leaves out only flagged rows, so the deleted issue's changes count as hidden for everyone (Jira no longer returns the issue): b_hidden_count (a_action_permissions follows by ROOT_BLOCKS), and a_action_result where that sprint was otherwise answered right (seed 0123: sprint 850 holds both deleted issues' rows and the golden answers it right, so it is lost there)."
+  },
+  {
+    "name": "r5_save_unguarded",
+    "family": "R5",
+    "patch": "r5_save_unguarded.patch",
+    "loses": ["r5_nonadmin_refused"],
+    "may_lose": [],
+    "critical": "admin",
+    "why": "saveSettings is registered without the ADMINISTER guard (the page shows the form to admins only, so the resolver trusts that): the non-admin's replayed save stores the forged budget. getAdmin and rotateSecret stay guarded, so the labels, the admin's own actions and the secret are unaffected."
+  },
+  {
+    "name": "r6_bad_signature_accepted",
+    "family": "R6",
+    "patch": "r6_bad_signature_accepted.patch",
+    "loses": ["r6_unsigned_no_effect", "r6_status_codes"],
+    "may_lose": [],
+    "critical": "webtrigger",
+    "why": "`&&` became `||` in the signature comparison: any signature of the right length passes, so the bad-signature and tampered events are answered 202 and applied. Unsigned and stale events are still refused before the comparison, the replay still dedupes and the valid events still apply."
+  },
+  {
+    "name": "r7_field_event_only",
+    "family": "R7",
+    "patch": "r7_field_event_only.patch",
+    "loses": ["r7_values_fresh"],
+    "may_lose": [],
+    "critical": false,
+    "why": "The field is written one issue per request from the event path only: the scheduled run computes the statuses but never bulk-writes them, so every issue no event touched (the backfill's issues, a closed sprint's issues, a board's field switch) keeps a stale or empty value. The event path's writes are still accepted, so r7_writes_accepted holds. Not the brief's literal per-issue bulk writer: that one is equivalent on these sites (values stay fresh and accepted, 2 points per issue stay far inside the share and the burst bucket), and only the e_* economy rows count requests, which are calibration-owned and never a mutant's defect."
+  },
+  {
+    "name": "r8_unfinished_shown",
+    "family": "R8",
+    "patch": "r8_unfinished_shown.patch",
+    "loses": ["r8_failure_handling"],
+    "may_lose": [],
+    "critical": false,
+    "why": "readAnswer checks that a choice exists, not its finish_reason: the unfinished answer's report_scope call (its summary is the site's PARTIAL_TEXT) is shown as complete, failing 1 of the 2 failure cases. The probe spaces its cases 11 virtual minutes apart, past the 10-minute cache, so the cached unfinished answer reaches no other case."
+  },
+  {
+    "name": "r9_widget_double_invoke",
+    "family": "R9",
+    "patch": "r9_widget_double_invoke.patch",
+    "loses": ["r9_widget_boot"],
+    "may_lose": [],
+    "critical": false,
+    "why": "The widget's boot script asks the `boards` resolver before its own first-paint invoke: 2 invokes before the first data paint against a budget of 1. Its bytes do not grow (the boot bundle already carries @forge/bridge's invoke); the sprint modal and the admin page are untouched."
+  }
+]

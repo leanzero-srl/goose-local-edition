@@ -1,0 +1,21 @@
+diff --git a/src/admin.js b/src/admin.js
+--- a/src/admin.js
++++ b/src/admin.js
+@@ -57,7 +57,7 @@ resolver.define('getAdmin', guarded(() => adminState()));
+ 
+ resolver.define(
+   'saveSettings',
+-  guarded(async ({ payload, context }) => {
++  async ({ payload, context }) => {
+     const current = await loadSettings();
+     const checked = validateSettings(payload?.settings ?? {}, current);
+     if (checked.error) return { ok: false, error: checked.error };
+@@ -68,7 +68,7 @@ resolver.define(
+     const at = new Date(Date.now()).toISOString();
+     await audit(changed.map((k) => ({ at, accountId: actor.accountId, who: actor.who, what: `${LABELS[k]}: ${show(current[k])} → ${show(checked.settings[k])}` })));
+     return { ...(await adminState()), saved: changed.length };
+-  }),
++  },
+ );
+ 
+ // The new secret is in this one answer only; every later read shows ••••<last4>.
