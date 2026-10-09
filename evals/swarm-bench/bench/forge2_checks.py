@@ -40,7 +40,8 @@ and forged attempts (the forged budget stored or a `secret:` key rotated; withou
 `state_changed`, which also counts an audit entry recording the refusal).
 
 `python3 forge2_checks.py` runs the selftest: observations built from the oracle score 1.0 on every row, an idle app
-earns 0 with no critical fired, and one injected defect per family costs exactly the rows it should.
+earns 0 with no critical fired, and one injected defect per family costs exactly the rows it should — and fires no
+critical once the v2 surface its row is gated on is gone from the manifest.
 """
 from __future__ import annotations
 
@@ -697,6 +698,11 @@ def _(ev: Ev) -> Dict:
         after = ev.o.hidden_issue_ids(account, loss['t'])
         visible = {k for k in ledger_keys if ev.o.issue_by_key[k]['id'] not in after}
         terms = ev.o.leak_terms_for(after - before)
+        # A hidden summary that is text of a summary the person still browses ("Add the refund queue" inside "Add the
+        # refund queue for large accounts": 59 of 489 on seed 0123) shows no hidden data — score_forge2.leak_terms' rule.
+        end = ev.o.hidden_issue_ids(account)
+        still = [i['summary'] for iid, i in ev.o.issues.items() if iid not in end and i.get('summary')]
+        terms['summaries'] = [s for s in terms['summaries'] if not any(s in v for v in still)]
         for c in calls:
             if not isinstance(c, dict) or str(c.get('as')) != account or c.get('result') is None:
                 continue
@@ -1493,9 +1499,15 @@ def _mutants(o: fo.Oracle) -> Dict[str, Tuple[Callable[[Dict], None], Dict[str, 
     }
 
 
+# Critical rows no v2 surface gates: duplicates are judged on the scope-ledger rows themselves (an undeclared entity
+# holds none: the KVS refuses it, SCHEMA_NOT_FOUND) and the revoke on v1's Rovo action.
+UNGATED_CRITICALS = {'r3_no_duplicate_rows', 'r4_permission_revoked'}
+
+
 def selftest() -> List[str]:
     """Perfect observations score 1.0 on every row (0.75 weighted); an idle app scores 0 with no critical fired; each
-    one-defect mutant moves exactly its row(s) by exactly the expected amount and fires exactly its critical."""
+    one-defect mutant moves exactly its row(s) by exactly the expected amount and fires exactly its critical, and none
+    once the v2 surfaces are gone from the manifest."""
     global SITE_LLM
     failures = []
     real_site = SITE_LLM
@@ -1527,6 +1539,34 @@ def selftest() -> List[str]:
                 moved = [n for n, r in rows.items() if n not in want and r['score'] != 1.0]
                 if moved:
                     failures.append(f'{name}: rows beyond the defect moved: {moved}')
+                # absent beats evidence (SPEC §4): with the v2 surfaces gone from the manifest (the starter's), a
+                # critical row gated on one of them is absent and fires nothing, whatever its observations hold
+                obs['manifest']['modules'] = {k: v for k, v in obs['manifest']['modules'].items()
+                                              if k not in ('jira:adminPage', 'webtrigger')}
+                obs['manifest']['app']['storage']['entities'] = [{'name': 'scope-change'}]
+                rows = {r['check']: r for r in evaluate(obs, o)}
+                ungated = sorted(n for n in set(fires) - UNGATED_CRITICALS
+                                 if not (rows[n].get('parts') or {}).get('absent_surface'))
+                fired = sorted(n for n in set(rows) - UNGATED_CRITICALS if critical_fired(rows[n]))
+                if ungated or fired:
+                    failures.append(f'{name} without the v2 surfaces: not absent {ungated}, fired {fired}')
+            # leak at scale: a newly hidden summary that is text of a summary the person still browses is no leak; the
+            # newly hidden key still is one
+            pack = fo.synthetic_pack_v2()
+            loss = o.world('browse-revoke')[0]
+            peer = str(loss['accountId'])
+            newly = o.hidden_issue_ids(peer, loss['t']) - o.hidden_issue_ids(peer, loss['t'] - fo.JUST_BEFORE)
+            hidden = next(i for i in pack['issues'] if str(i['id']) in newly
+                          and i.get('summary') in o.leak_terms_for(newly)['summaries'])
+            seen = next(i for i in pack['issues'] if str(i['id']) not in o.hidden_issue_ids(peer))
+            seen['summary'] = f"{hidden['summary']} on mobile"
+            nested = fo.Oracle(pack)
+            for label, text, want in (('visible superstring', seen['summary'], 1.0), ('hidden key', hidden['key'], 0.0)):
+                obs = perfect_observations(nested)
+                obs['rovo']['calls'][0]['result']['changes'].append({'issueKey': seen['key'], 'summary': text})
+                r = {x['check']: x for x in evaluate(obs, nested)}['r4_permission_revoked']
+                if r['score'] != want or critical_fired(r) != (want == 0.0):
+                    failures.append(f'leak on a {label}: {r["score"]} fired={critical_fired(r)} — {r["detail"]}')
             no_v2 = evaluate(perfect_observations(o), fo.Oracle(fo.synthetic_pack()))
             if not all(r.get('unavailable') for r in no_v2):
                 failures.append('a 1.0 pack must leave every v2 row unavailable')
