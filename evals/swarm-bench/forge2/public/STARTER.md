@@ -8,7 +8,7 @@ editable.
   `edit`, sprint action, Rovo action, skill, agent and MCP server, Forge LLM), its scopes and its storage entities.
 - `src/`: the backend; `index.js` exports every handler. `config.js` finds the Sprint field, the scrum boards, their
   active sprints and each board's estimation field; `sync.js` is the event path, the backfill and the reconciliation;
-  `ledger.js` the storage and the §1 totals; `jira.js` the Jira requests and their 429 handling; `views.js` what each
+  `ledger.js` the storage and the contract's §1 totals; `jira.js` the Jira requests and their 429 handling; `views.js` what each
   surface and the Rovo action get; `explain.js` the Forge LLM explanation; `realtime.js` the live updates;
   `numbers.js` the formatting.
 - `static/widget`, `static/widget-edit`, `static/sprint`: the Custom UI surfaces (React sources in `src/`, the
