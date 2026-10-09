@@ -76,7 +76,7 @@ test('boot: the first commit paints before the one invoke; the screen reads as t
     assert.strictEqual(host.tree().type, 'Root');
     assert.ok(host.tree().children instanceof Array && host.tree().props.constructor === Object, 'a snapshot is plain host data, not app-realm objects');
     assert.deepStrictEqual([host.errors, host.harnessMissing], [[], []]);
-  } finally { host.close(); }
+  } finally { await host.close(); }
 });
 
 test('drive by label: type, toggle, submit -> exactly one invoke with the DOM\'s string value; timers are virtual', async () => {
@@ -100,7 +100,7 @@ test('drive by label: type, toggle, submit -> exactly one invoke with the DOM\'s
     assert.doesNotMatch(host.text(), /Saved:/);
     assert.strictEqual(host.now(), 3000);
     assert.deepStrictEqual(host.errors, []);
-  } finally { host.close(); }
+  } finally { await host.close(); }
 });
 
 test('validation: an out-of-range value shows the error and nothing is submitted', async () => {
@@ -113,7 +113,7 @@ test('validation: an out-of-range value shows the error and nothing is submitted
     assert.deepStrictEqual(await host.click(SAVE), { clicked: true, submitted: true });
     await host.waitIdle();
     assert.deepStrictEqual(host.invokes.map((i) => i.functionKey), ['getPreferences']);
-  } finally { host.close(); }
+  } finally { await host.close(); }
 });
 
 test('a loading button is not clickable: a second Save while the first is in flight does nothing', async () => {
@@ -133,7 +133,7 @@ test('a loading button is not clickable: a second Save while the first is in fli
     assert.strictEqual(saves.length, 1);
     assert.deepStrictEqual(saves[0].payload, { retentionDays: 30, digestEnabled: true },
       'untouched fields submit the app\'s own defaultValues (a number here); only typed ones carry the DOM\'s string');
-  } finally { host.close(); }
+  } finally { await host.close(); }
 });
 
 test('labels: a table by its caption (rows sorted as ADS sorts them), a missing label lists the screen, codes for misuse', async () => {
@@ -151,7 +151,7 @@ test('labels: a table by its caption (rows sorted as ADS sorts them), a missing 
     await assert.rejects(host.click(RETENTION), (e) => e.code === 'NOT_CLICKABLE');
     await assert.rejects(host.setValue(SAVE, 'x'), (e) => e.code === 'NOT_AN_INPUT');
     await assert.rejects(host.setValue(DIGEST, 'yes'), (e) => e.code === 'BAD_VALUE');
-  } finally { host.close(); }
+  } finally { await host.close(); }
 });
 
 test('a bridge op this host does not model rejects in the app and is recorded, never answered', async () => {
@@ -162,7 +162,7 @@ test('a bridge op this host does not model rejects in the app and is recorded, n
     await host.waitIdle();
     assert.deepStrictEqual(host.harnessMissing.map((m) => m.what), ["bridge op 'enableTheming'"]);
     assert.deepStrictEqual(host.errors.map((e) => [e.kind, e.message]), [['handler', "uikit host: bridge op 'enableTheming' is not modelled"]]);
-  } finally { host.close(); }
+  } finally { await host.close(); }
 });
 
 test('context, flags, requestJira and links: what an admin page uses besides invoke', async () => {
@@ -197,7 +197,7 @@ ForgeReconciler.render(<App />);
     assert.deepStrictEqual([host.errors, host.harnessMissing], [[], []]);
     assert.deepStrictEqual(await host.click('Docs'), { clicked: true, submitted: false });
     assert.deepStrictEqual(host.harnessMissing.map((m) => m.what), ['navigation to https://example.com/docs'], 'a link leaving the page is recorded, not followed');
-  } finally { host.close(); }
+  } finally { await host.close(); }
 });
 
 test('labels: a required Label still names its input; two elements with one label are AMBIGUOUS, never a guess', async () => {
@@ -211,7 +211,7 @@ ForgeReconciler.render(<App />);
     assert.deepStrictEqual([host.findByLabel('Display name').type, host.findByLabel('Display name').value], ['Textfield', 'Ada']);
     assert.throws(() => host.findByLabel('Go'), (e) => e.code === 'AMBIGUOUS');
     await assert.rejects(host.click('Go'), (e) => e.code === 'AMBIGUOUS' && /names 2 elements/.test(e.message));
-  } finally { host.close(); }
+  } finally { await host.close(); }
 });
 
 test('a failing resolver reaches the app as a rejected invoke', async () => {
@@ -220,7 +220,7 @@ test('a failing resolver reaches the app as a rejected invoke', async () => {
     await host.waitIdle();
     assert.strictEqual(host.text(), 'Could not load preferences: There was an error invoking the function - boom');
     assert.deepStrictEqual(host.invokes.map((i) => [i.functionKey, i.state, i.error.message]), [['getPreferences', 'error', 'boom']]);
-  } finally { host.close(); }
+  } finally { await host.close(); }
 });
 
 test('classic JSX: a .jsx file without `import React` fails at runtime, as Forge\'s Babel build does', async () => {
@@ -228,29 +228,46 @@ test('classic JSX: a .jsx file without `import React` fails at runtime, as Forge
   try {
     assert.deepStrictEqual(host.errors.map((e) => [e.kind, e.message]), [['eval', 'React is not defined']]);
     assert.strictEqual(host.tree(), null);
-  } finally { host.close(); }
+  } finally { await host.close(); }
 });
 
-test('an unhandled rejection in the app is its console error, never the end of the hosting process', async () => {
-  // node:test listens for unhandled rejections itself (and fails the test); a probe process does not.
-  const theirs = process.listeners('unhandledRejection');
-  process.removeAllListeners('unhandledRejection');
-  try {
-    const host = await renderTemp(`import React, { useEffect } from 'react';
+test('an unhandled rejection in the app is its console error, never the end of the page', async () => {
+  const host = await renderTemp(`import React, { useEffect } from 'react';
 import ForgeReconciler, { Text } from '@forge/react';
 import { invoke } from '@forge/bridge';
 const App = () => { useEffect(() => { invoke('missing'); }, []); return <Text>ok</Text>; };
 ForgeReconciler.render(<App />);
 `, async () => { throw new Error('no such resolver'); });
+  try {
     await host.waitIdle();
-    await new Promise((r) => setImmediate(r));
     assert.deepStrictEqual(host.errors.map((e) => [e.kind, e.message]), [['unhandledRejection', 'There was an error invoking the function - no such resolver']]);
     assert.strictEqual(host.text(), 'ok');
-    host.close();
-    assert.strictEqual(process.listenerCount('unhandledRejection'), 0, 'closing the last host removes its listener');
-  } finally {
-    for (const l of theirs) process.on('unhandledRejection', l);
-  }
+  } finally { await host.close(); }
+});
+
+test('the fence: app code that escapes the realm is in a separate process that cannot read files or exec', async () => {
+  const secret = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'uikit-secret-')), 'secret.json');
+  fs.writeFileSync(secret, '{"answer": 42}');
+  // the vm realm is not a security boundary: a host function's constructor is the host's Function
+  const escape = `import React from 'react';
+import ForgeReconciler, { Text } from '@forge/react';
+const p = setTimeout.constructor('return process')();
+const tryIt = (f) => { try { f(); return 'allowed'; } catch (e) { return e.code ?? e.message; } };
+const read = tryIt(() => p.getBuiltinModule('fs').readFileSync(${JSON.stringify(secret)}, 'utf8'));
+const exec = tryIt(() => p.getBuiltinModule('child_process').execFileSync('/bin/echo', ['x']));
+const App = () => <Text>{'read ' + read + ', exec ' + exec + ', same process as the scorer ' + (p.pid === ${process.pid})}</Text>;
+ForgeReconciler.render(<App />);
+`;
+  const host = await renderTemp(escape);
+  try {
+    assert.strictEqual(host.fence, 'sandbox');
+    assert.strictEqual(host.text(), 'read EPERM, exec EPERM, same process as the scorer false');
+  } finally { await host.close(); }
+  // forge-dev's fallback inside the entrant's workspace, where macOS refuses a nested sandbox
+  const dev = await renderTemp(escape, async () => ({}), { fence: 'node-permission' });
+  try {
+    assert.strictEqual(dev.text(), 'read ERR_ACCESS_DENIED, exec ERR_ACCESS_DENIED, same process as the scorer false');
+  } finally { await dev.close(); }
 });
 
 test('a commit loop is reported as NOT_IDLE after a counted number of turns, never by a clock', async () => {
@@ -263,7 +280,7 @@ ForgeReconciler.render(<App />);
     await assert.rejects(host.waitIdle(), (e) => e.code === 'NOT_IDLE' && /did not settle after 1001 turns/.test(e.message));
     assert.ok(host.docs.length > 1000, `${host.docs.length} commits`);
     assert.strictEqual(host.now(), 0, 'virtual timer time never moved');
-  } finally { host.close(); }
+  } finally { await host.close(); }
 });
 
 test('a poller is not a loop: advance runs each interval at its own virtual time; Date moves with the timers', async () => {
@@ -287,7 +304,7 @@ ForgeReconciler.render(<App />);
     assert.strictEqual(polls, 1500);
     assert.strictEqual(host.text(), 'Migrated 1500 after 1500 s, string 1970-01-01T00:00:00.000Z date');
     assert.deepStrictEqual([idle.now, idle.timersPending, host.errors], [1_500_000, 1, []]);
-  } finally { host.close(); }
+  } finally { await host.close(); }
 });
 
 test('what forge deploy refuses or cannot find is an app error code', async () => {
@@ -298,6 +315,7 @@ test('what forge deploy refuses or cannot find is an app error code', async () =
   await assert.rejects(renderTemp('import React from "react";\nconst = ;\n'), (e) => e.code === 'BUILD_FAILED');
   await assert.rejects(renderTemp('import x from "not-a-kit-package";\n'), (e) => e.code === 'BUILD_FAILED' && /not one of the installed packages/.test(e.message));
   await assert.rejects(render({ appDir: FIXTURE, moduleKey: 'fixture-admin', context: CONTEXT }), (e) => e.code === 'HARNESS');
+  await assert.rejects(render({ appDir: FIXTURE, moduleKey: 'fixture-admin', context: CONTEXT, invoke, fence: 'none' }), (e) => e.code === 'HARNESS' && /REFUSED: unknown fence/.test(e.message));
 });
 
 test('through the emulator: resolvers run in the Forge runtime as the viewer; forge-dev uikit drives the same host', { timeout: 180_000 }, async () => {
@@ -325,7 +343,7 @@ test('through the emulator: resolvers run in the Forge runtime as the viewer; fo
       await host.waitIdle();
       assert.match(host.text(), /\nSigned in as [^\n]+ \(200\)$/, 'requestJira reaches the site as the viewer through the proxy');
       assert.deepStrictEqual([host.errors, host.harnessMissing.map((m) => m.what)], [[], []]);
-    } finally { host.close(); }
+    } finally { await host.close(); }
     const stored = emu.kvs.snapshot();
     assert.match(JSON.stringify(stored), /"retentionDays":55/, JSON.stringify(stored).slice(0, 400));
 

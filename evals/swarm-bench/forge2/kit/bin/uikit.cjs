@@ -111,7 +111,7 @@ async function main({ emu, argv, print = console.log }) {
     }
     return failed || host.errors.length || host.harnessMissing.length ? 1 : 0;
   } finally {
-    host.close();
+    await host.close();
   }
 }
 

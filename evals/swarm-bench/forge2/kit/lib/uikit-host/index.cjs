@@ -1,70 +1,46 @@
 'use strict';
-// The UI Kit host (SPEC §3 P2). Runs a `render: native` module's frontend in Node with the REAL @forge/react
-// reconciler, captures every ForgeDoc it sends (callBridge('reconcile', {forgeDoc})), routes `invoke` to the caller
-// (the emulator), and drives the tree by its visible labels. The product's renderer (ForgeDoc -> Atlaskit) is
-// Atlassian-internal and unpublished (research/uikit.md §2.6), so this host renders TEXT, never pixels.
+// The UI Kit host (SPEC §3 P2). Runs a `render: native` module's frontend with the REAL @forge/react reconciler,
+// captures every ForgeDoc it sends (callBridge('reconcile', {forgeDoc})), routes `invoke` to the caller (the emulator),
+// and drives the tree by its visible labels. The product's renderer (ForgeDoc -> Atlaskit) is Atlassian-internal and
+// unpublished (research/uikit.md §2.6), so this host renders TEXT, never pixels.
 //
-//   const host = await render({ appDir, moduleKey, context, invoke, fetchProduct?, kitDir? });
+//   const host = await render({ appDir, moduleKey, context, invoke, fetchProduct?, fence?, startTime?, kitDir? });
 //   await host.waitIdle();                         // every runnable timer, bridge call and commit has settled
 //   host.text(); host.tree(); host.outline();       // the latest ForgeDoc as text / JSON / one node per line
 //   host.findByLabel('Background share (%)');      // -> {type, key, props, children, value|checked, via} | null
 //   host.table('Recent admin changes');            // -> {head: [..], rows: [[..]]} in display order
 //   await host.setValue('Background share (%)', 60); await host.click('Save settings'); await host.waitIdle();
 //   host.invokes; host.log; host.docs; host.flags; host.errors; host.console; host.harnessMissing
-//   await host.advance(ms); await host.flush(); host.close();
+//   await host.advance(ms); await host.flush(); await host.close();
 //   await renderInEmulator(emu, { moduleKey, asUser })   // the same, invoke + requestJira through the emulator
 //
-// Fidelity choices (each from research/uikit.md):
-//  - The bundle runs in its own vm realm with `self === globalThis` (the reconciler reads self.__bridge,
-//    @forge/bridge reads globalThis.__bridge at module load: verification #5/#6) and no DOM (UI Kit has none).
-//  - .jsx compiles with the classic React.createElement runtime, as Forge's Babel does (F10): a .jsx file without
-//    `import React` throws at runtime here as it does in Jira. .tsx follows the app's tsconfig, as ts-loader does.
-//  - Bare imports resolve ONLY from the kit's modules (as the backend bundle does: runtime.cjs).
-//  - Time is VIRTUAL: setTimeout/setInterval and Date run on a clock that moves only when the host is told (`advance`),
-//    so every reading is deterministic and nothing waits on a wall clock. A bridge call takes zero virtual time. Date
-//    must move with the timers: @forge/bridge's own limiter (500 invokes per 25 s, utils/index.js) reads Date.now(),
-//    and a poller advanced over virtual minutes would otherwise trip it in real milliseconds. Date starts at
-//    `startTime` (renderInEmulator: the site's clock). performance.now() is the virtual clock plus 1 ms per commit so
-//    far: React's scheduler yields after 5 ms of work (scheduler 0.23.2 frameYieldMs), so on a frozen clock a commit
-//    loop would spin inside one task forever; with commits costing time it yields between them as in a browser frame
-//    and is counted in turns (NOT_IDLE).
-//  - Handlers are delivered on a later macrotask, never inside a batch, with arguments serialised the way the
-//    bridge does (functions cannot cross); the handler of the LATEST commit receives them. Inputs get the documented
-//    SerialisableEvent (target.type, value as a string for text inputs, as the DOM gives it); a submit button calls
-//    its Form's onSubmit with no argument (FormProps.onSubmit: () => ...). A disabled or loading button is not
-//    clickable (@atlaskit/button 25.4.7 button-base: isInteractive = !isDisabled && !isLoading/overlay).
-//  - Any bridge op this host does not model rejects in the app and is recorded in `harnessMissing`, never answered
-//    with a quiet default.
+//   invoke({moduleKey, functionKey, payload, context}) -> the resolver's result (throw = the app's invoke rejects)
+//   fetchProduct({moduleKey, moduleType, product, restPath, fetchRequestInit, context}) -> {body, headers, status, statusText, isAttachment}
+//
+// The app's frontend code runs in a CHILD process under the kit's fence, never in the caller's process: scoring never
+// runs app code unfenced (README: the default fence REFUSES when sandbox-exec cannot apply). fence 'sandbox' (the
+// default) is the deny-default sandbox-exec profile with no network; 'dev-auto' falls back to Node's permission model
+// where a nested sandbox is refused (the entrant's workspace), as forge-dev's emulator does.
+// Reads (text, tree, findByLabel, table, the arrays) are exact as of the last command that resolved (render, waitIdle,
+// flush, advance, setValue, click): the child sends its state with every answer.
+// Bare imports resolve ONLY from the kit's modules (as the backend bundle does, runtime.cjs), and .jsx compiles with the
+// classic React.createElement runtime as Forge's Babel does (research F10): a .jsx without `import React` fails at
+// runtime here as it does in Jira; .tsx follows the app's tsconfig, as ts-loader does.
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const http = require('http');
-const util = require('util');
-const vm = require('vm');
+const readline = require('readline');
+const { spawn } = require('child_process');
 const { kitPaths } = require('../kitpaths.cjs');
+const { sandboxAvailable } = require('../runtime.cjs');
 const D = require('./doc.cjs');
-
-class UikitHostError extends Error {
-  constructor(code, message) { super(message); this.name = 'UikitHostError'; this.code = code; }
-}
+const { UikitHostError } = require('./host.cjs');
 // Codes: BAD_MANIFEST / NO_MODULE / NOT_NATIVE / NO_RESOURCE / BUILD_FAILED are the app's (what forge deploy would
 // refuse or cannot find); NO_CONTROL / AMBIGUOUS / NOT_CLICKABLE / NOT_AN_INPUT / NOT_A_TABLE / BAD_VALUE / NOT_IDLE
 // are what a drive call found on the screen; HARNESS is this host's own failure (never app evidence).
 
-// Bridge ops with no observable effect in a text host (fire-and-forget in @forge/bridge 7.1.0).
-const INERT = new Set(['emitReadyEvent', 'changeWindowTitle', 'emitFrontendCustomMetric']);
-// measured: the fixture admin page (test/fixture-admin) settles in 2 turns at boot and 1 after set + toggle + save;
-// a commit loop (an effect that always sets state, a 0 ms interval) never settles. A turn is one timer run or one
-// bridge answer awaited, so this bounds work by count, never by time.
-const MAX_TURNS = 1000;
-
-const macrotask = () => new Promise((r) => setImmediate(r));
-const plain = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
-// @forge/bridge's requestJira builds `new Request('', init)` only to normalise headers and body (fetch/fetch.js);
-// in the product iframe '' resolves against the page's URL, which this host does not have, so it names a reserved one.
-const PAGE_URL = 'https://uikit-host.invalid/';
-class PageRequest extends Request {
-  constructor(input, init) { super(typeof input === 'string' ? new URL(input, PAGE_URL) : input, init); }
-}
+const CHILD_FILES = ['runner.cjs', 'host.cjs', 'doc.cjs'];
 
 function locate(appDir, moduleKey, paths) {
   const YAML = paths.require('yaml');
@@ -118,330 +94,150 @@ async function build(appDir, moduleKey, resource, paths) {
   }
 }
 
-// Unhandled rejections inside an app realm are the app's console errors, as in a browser; they never end the
-// process that hosts it. Any other rejection keeps Node's default: with no other listener it is raised as an
-// uncaught exception, with one it is that listener's.
-const liveHosts = new Set();
-function onUnhandledRejection(reason, promise) {
-  for (const h of liveHosts) if (promise instanceof h.AppPromise) { h.recordError('unhandledRejection', reason); return; }
-  if (process.listenerCount('unhandledRejection') === 1) process.nextTick(() => { throw reason; });
+// The deny-default profile of runtime.cjs sandboxProfile() minus its one network grant: the child reads its own
+// directory and the Node runtime and talks to the parent only over the pipes it was started with.
+function childProfile(dir, node) {
+  const q = (p) => JSON.stringify(fs.realpathSync(p));
+  const nodeRoot = path.dirname(path.dirname(fs.realpathSync(node)));
+  return [
+    '(version 1)', '(deny default)',
+    `(allow process-exec (literal ${q(node)}))`,
+    `(allow file-read* (subpath "/usr/lib") (subpath "/System") (subpath ${q(nodeRoot)}) (subpath ${q(dir)}) (literal "/dev/urandom") (literal "/dev/null") (literal "/"))`,
+    '(allow file-read-metadata)', '(allow sysctl-read)', '(allow mach-lookup)', '(allow ipc-posix-shm)',
+    '(allow signal (target self))',
+  ].join('\n');
 }
-const hostOpened = (h) => { if (!liveHosts.size) process.on('unhandledRejection', onUnhandledRejection); liveHosts.add(h); };
-const hostClosed = (h) => { liveHosts.delete(h); if (!liveHosts.size) process.off('unhandledRejection', onUnhandledRejection); };
+function resolveFence(fence) {
+  if (fence === 'sandbox' || fence === 'node-permission') {
+    if (fence === 'sandbox' && !sandboxAvailable()) throw new UikitHostError('HARNESS', 'REFUSED: sandbox-exec cannot apply the fence on this host; scoring never runs app code unfenced');
+    return fence;
+  }
+  if (fence === 'dev-auto') return sandboxAvailable() ? 'sandbox' : 'node-permission';
+  throw new UikitHostError('HARNESS', `REFUSED: unknown fence ${fence}`);
+}
 
-async function render({ appDir, moduleKey, context, invoke, fetchProduct = null, kitDir, startTime = Date.now() } = {}) {
+async function render({ appDir, moduleKey, context, invoke, fetchProduct = null, fence = 'sandbox', startTime = Date.now(), kitDir, node = process.execPath } = {}) {
   if (typeof invoke !== 'function') throw new UikitHostError('HARNESS', 'render() needs invoke({moduleKey, functionKey, payload, context}) -> the resolver result');
   if (!context || typeof context !== 'object') throw new UikitHostError('HARNESS', 'render() needs the frontend context (what view.getContext() answers)');
+  const mode = resolveFence(fence);
   let paths;
   try { paths = kitPaths(kitDir); paths.resolve('@forge/react'); } catch (e) { throw new UikitHostError('HARNESS', `kit modules: ${e.message}`); }
   const { type, resource } = locate(appDir, moduleKey, paths);
   const { code, entry } = await build(appDir, moduleKey, resource, paths);
 
-  const clock = { now: 0 };
-  let workMs = 0; // 1 per commit, never reset: performance.now() stays monotonic
-  const timers = new Map();
-  let timerSeq = 0;
-  let seq = 0;
-  let closed = false;
-  const pending = new Set();
-  const docs = [];
-  const log = [];
-  const invokes = [];
-  const flags = [];
-  const errors = [];
-  const consoleLines = [];
-  const harnessMissing = [];
-  const typed = new Map(); // what the person typed or toggled, by element key (an uncontrolled input's value)
-  let latest = { doc: null, handlers: new Map() };
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'uikit-host-')));
+  fs.writeFileSync(path.join(dir, 'ui.js'), code);
+  for (const f of CHILD_FILES) fs.copyFileSync(path.join(__dirname, f), path.join(dir, f));
+  const runner = path.join(dir, 'runner.cjs');
+  const [cmd, args] = mode === 'sandbox'
+    ? ['/usr/bin/sandbox-exec', ['-p', childProfile(dir, node), node, runner]]
+    : [node, ['--permission', `--allow-fs-read=${dir}`, runner]];
+  const child = spawn(cmd, args, { cwd: dir, env: { PATH: '/usr/bin:/bin', TZ: 'UTC', LANG: 'C' }, stdio: ['pipe', 'ignore', 'pipe', 'pipe'] });
+  let stderr = '';
+  child.stderr.on('data', (d) => { stderr = (stderr + d).slice(-4000); });
+  // a write after the child ended (EPIPE) is the same end the 'exit' handler reports
+  child.stdin.on('error', (e) => { stderr += ` [stdin ${e.code ?? e.message}]`; });
 
-  const errorInfo = (e) => ({ message: String(e?.message ?? e), name: e?.name ?? null, stack: typeof e?.stack === 'string' ? e.stack : null });
-  const recordError = (kind, e, extra = {}) => errors.push({ kind, ...errorInfo(e), at: clock.now, seq: ++seq, ...extra });
-  const say = (level) => (...args) => consoleLines.push({ level, text: util.format(...args), at: clock.now });
-
-  // Virtual timers: due when `at <= clock.now`; run in (at, id) order.
-  const addTimer = (fn, ms, args, repeat) => {
-    if (typeof fn !== 'function') throw new TypeError('uikit host: string timer callbacks are not supported');
-    const id = ++timerSeq;
-    const delay = Math.max(0, Number(ms) || 0);
-    timers.set(id, { id, fn, args, at: clock.now + delay, every: repeat ? delay : null });
-    return id;
+  const mirror = { docs: [], log: [], invokes: [], flags: [], errors: [], console: [], harnessMissing: [], typed: new Map(), now: 0 };
+  const apply = (s) => {
+    mirror.docs.splice(s.docsFrom, s.docs.length, ...s.docs);
+    Object.assign(mirror, { log: s.log, invokes: s.invokes, flags: s.flags, errors: s.errors, console: s.console, harnessMissing: s.harnessMissing, typed: new Map(s.typed), now: s.now });
   };
-  const nextTimer = (limit) => {
-    let t = null;
-    for (const x of timers.values()) if (x.at <= limit && (!t || x.at < t.at || (x.at === t.at && x.id < t.id))) t = x;
-    return t;
+  const waiting = new Map();
+  let nextId = 0;
+  let ended = null;
+  const send = (m) => child.stdin.write(`${JSON.stringify(m)}\n`);
+  let ready;
+  const started = new Promise((resolve, reject) => { ready = { resolve, reject }; });
+  const answerCall = async (m) => {
+    try {
+      let value;
+      if (m.kind === 'invoke') value = await invoke({ moduleKey, functionKey: m.args.functionKey, payload: m.args.payload, context: JSON.parse(JSON.stringify(context)) });
+      else if (m.kind === 'fetchProduct') {
+        if (!fetchProduct) throw Object.assign(new Error('requestJira/requestConfluence (no fetchProduct route was given to render())'), { errorType: 'NOT_MODELLED' });
+        value = await fetchProduct({ moduleKey, moduleType: type, ...m.args, context: JSON.parse(JSON.stringify(context)) });
+      } else throw new Error(`unknown call '${m.kind}'`);
+      send({ t: 'reply', id: m.id, ok: true, value: value === undefined ? null : value });
+    } catch (e) {
+      send({ t: 'reply', id: m.id, ok: false, error: { message: String(e?.message ?? e), errorType: e?.errorType ?? null } });
+    }
   };
-  const runTimer = (t) => {
-    if (t.every === null) timers.delete(t.id); else t.at += t.every;
-    try { t.fn(...t.args); } catch (e) { recordError('timer', e); }
+  readline.createInterface({ input: child.stdio[3] }).on('line', (line) => {
+    const m = JSON.parse(line);
+    if (m.t === 'call') { answerCall(m); return; }
+    apply(m.state);
+    if (m.t === 'ready') { ready.resolve(); return; }
+    const w = waiting.get(m.id);
+    waiting.delete(m.id);
+    if (m.ok) w.resolve(m.value); else w.reject(new UikitHostError(m.error.code, m.error.message));
+  });
+  child.on('exit', (codeNum, signal) => {
+    ended = `the UI Kit host process ended (${signal ?? `exit ${codeNum}`})${stderr ? `: ${stderr.trim().split('\n').slice(-6).join(' | ')}` : ''}`;
+    const err = new UikitHostError('HARNESS', ended);
+    ready.reject(err);
+    for (const w of waiting.values()) w.reject(err);
+    waiting.clear();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  const command = (name, ...a) => {
+    if (ended) return Promise.reject(new UikitHostError('HARNESS', ended));
+    const id = ++nextId;
+    return new Promise((resolve, reject) => { waiting.set(id, { resolve, reject }); send({ t: 'cmd', id, name, args: a }); });
   };
+  send({ t: 'start', filename: entry, context, moduleKey, startTime });
+  await started;
 
-  const sandbox = {
-    console: { log: say('log'), info: say('info'), warn: say('warn'), error: say('error'), debug: say('debug') },
-    setTimeout: (fn, ms, ...args) => addTimer(fn, ms, args, false),
-    setInterval: (fn, ms, ...args) => addTimer(fn, ms, args, true),
-    clearTimeout: (id) => { timers.delete(id); },
-    clearInterval: (id) => { timers.delete(id); },
-    queueMicrotask,
-    performance: { now: () => clock.now + workMs },
-    crypto: globalThis.crypto,
-    TextEncoder, TextDecoder, URL, URLSearchParams, AbortController, AbortSignal, atob, btoa,
-    // @forge/bridge's requestJira builds a Request and answers a Response (fetch/fetch.js)
-    Request: PageRequest, Response, Headers, FormData, Blob,
-    fetch: (url) => AppPromise.reject(notModelled(`fetch(${JSON.stringify(String(url))}) from the frontend`)),
-    __uikitNow: () => startTime + clock.now, // taken by the realm's Date below, then deleted
-  };
-  const ctx = vm.createContext(sandbox, { name: `uikit:${moduleKey}` });
-  vm.runInContext('globalThis.self = globalThis; globalThis.window = globalThis;', ctx);
-  // The realm's own Date, on the virtual clock: new Date() / Date.now() read it, Date() as a function too.
-  vm.runInContext(`(() => {
-    const read = globalThis.__uikitNow;
-    delete globalThis.__uikitNow;
-    class VirtualDate extends Date {
-      constructor(...a) { if (a.length) super(...a); else super(read()); }
-      static now() { return read(); }
-    }
-    globalThis.Date = new Proxy(VirtualDate, { apply: () => new VirtualDate().toString() });
-  })();`, ctx);
-  const AppPromise = vm.runInContext('Promise', ctx);
-  const AppError = vm.runInContext('Error', ctx);
-  const appJSON = vm.runInContext('JSON', ctx);
-  const toApp = (v) => (v === undefined ? undefined : appJSON.parse(JSON.stringify(v)));
-  const appReject = (message) => new AppError(message);
-
-  const notModelled = (what) => {
-    harnessMissing.push({ what, at: clock.now, moduleKey });
-    return appReject(`uikit host: ${what} is not modelled`);
-  };
-
-  async function answer(op, payload, entry) {
-    switch (op) {
-      case 'getContext': return toApp(context);
-      case 'invoke': {
-        if (payload?.metadata !== undefined) throw notModelled('invoke metadata (rateLimitProperties)');
-        const rec = { seq: entry.seq, functionKey: payload?.functionKey, payload: plain(payload?.payload), reconcilesBefore: entry.reconciles, at: clock.now, state: 'pending' };
-        invokes.push(rec);
-        try {
-          rec.result = plain(await invoke({ moduleKey, functionKey: rec.functionKey, payload: plain(payload?.payload), context: plain(context) }));
-          rec.state = 'ok';
-          return toApp(rec.result);
-        } catch (e) {
-          rec.state = 'error';
-          rec.error = { message: String(e?.message ?? e), errorType: e?.errorType ?? null };
-          // the message a Custom UI invoke rejects with in this kit (bridge-host.cjs)
-          throw appReject(`There was an error invoking the function - ${rec.error.message}`);
-        }
-      }
-      case 'fetchProduct': {
-        if (!fetchProduct) throw notModelled('requestJira/requestConfluence (no fetchProduct route was given to render())');
-        let r;
-        try {
-          r = await fetchProduct({ moduleKey, moduleType: type, product: payload?.product, restPath: payload?.restPath, fetchRequestInit: plain(payload?.fetchRequestInit ?? {}), context: plain(context) });
-        } catch (e) { throw appReject(String(e?.message ?? e)); }
-        entry.status = r.status;
-        return toApp(r);
-      }
-      case 'showFlag': flags.push({ ...plain(payload), shownAt: clock.now, closed: false }); return null;
-      case 'closeFlag': for (const f of flags) if (f.id === payload?.id) f.closed = true; return null;
-      case 'onError': recordError('onError', payload?.error); return null;
-      default:
-        if (INERT.has(op)) return null;
-        throw notModelled(`bridge op '${op}'`);
-    }
-  }
-
-  function callBridge(op, payload) {
-    const entry = { seq: ++seq, op, at: clock.now, reconciles: docs.length };
-    if (closed) return undefined;
-    if (op === 'reconcile') {
-      workMs += 1;
-      const doc = D.snapshot(payload.forgeDoc);
-      docs.push(doc);
-      latest = { doc, handlers: D.handlersOf(payload.forgeDoc) };
-      log.push({ ...entry, doc: docs.length - 1 });
-      return undefined;
-    }
-    log.push(entry);
-    const p = (async () => answer(op, payload, entry))();
-    const settle = p.then(() => { entry.ok = true; }, (e) => { entry.ok = false; entry.error = String(e?.message ?? e); });
-    pending.add(settle);
-    settle.then(() => pending.delete(settle));
-    return AppPromise.resolve(p);
-  }
-  sandbox.__bridge = { callBridge };
-
-  const host = { AppPromise, recordError };
-  hostOpened(host);
-  try {
-    vm.runInContext(code, ctx, { filename: entry });
-  } catch (e) {
-    recordError('eval', e);
-  }
-
-  // ---- settling -------------------------------------------------------------------------------------------------
-  const notIdle = (turns) => new UikitHostError('NOT_IDLE', `the app did not settle after ${turns} turns (${docs.length} commits, ${timers.size} timers, ${pending.size} bridge calls pending): a commit or timer loop`);
-  // Everything runnable NOW: microtasks and the timers due at the current virtual time. Bridge calls stay in flight.
-  async function flush(turns = { n: 0 }) {
-    for (;;) {
-      await macrotask();
-      const t = nextTimer(clock.now);
-      if (!t) return turns.n;
-      if (++turns.n > MAX_TURNS) throw notIdle(turns.n);
-      runTimer(t);
-    }
-  }
-  // flush + every bridge call answered, until nothing is runnable and nothing is in flight.
-  async function waitIdle() {
-    const turns = { n: 0 };
-    for (;;) {
-      await flush(turns);
-      if (!pending.size) break;
-      await Promise.race([...pending]);
-      if (++turns.n > MAX_TURNS) throw notIdle(turns.n);
-    }
-    return { commits: docs.length, invokes: invokes.length, timersPending: timers.size, turns: turns.n, now: clock.now };
-  }
-  // Move virtual time forward by `ms`, running each timer at its own time and settling after each. A loop is runs
-  // at ONE virtual time (waitIdle counts those); a poller advanced over an hour is many times, not a loop.
-  async function advance(ms) {
-    const target = clock.now + Math.max(0, Number(ms) || 0);
-    for (;;) {
-      const t = nextTimer(target);
-      if (!t) break;
-      clock.now = Math.max(clock.now, t.at);
-      runTimer(t);
-      await waitIdle();
-    }
-    clock.now = target;
-    return waitIdle();
-  }
-
-  // ---- driving ---------------------------------------------------------------------------------------------------
-  function resolve(label) {
-    if (!latest.doc) throw new UikitHostError('NO_CONTROL', `no control labelled '${label}': the app has not rendered anything`);
-    const r = D.findLabel(latest.doc, label);
+  const latest = () => mirror.docs[mirror.docs.length - 1] ?? null;
+  const match = (label) => {
+    const doc = latest();
+    if (!doc) return null;
+    const r = D.findLabel(doc, label);
     if (r.ambiguous) throw new UikitHostError('AMBIGUOUS', `'${label}' names ${r.ambiguous.length} elements: ${r.ambiguous.join(', ')}`);
-    if (!r.match) throw new UikitHostError('NO_CONTROL', `no control labelled '${label}'; labels on screen: ${r.available.map((l) => JSON.stringify(l)).join(', ') || 'none'}`);
     return r.match;
-  }
-  const handlers = (node) => latest.handlers.get(node.key) ?? {};
-  const event = (n, type, target) => ({ bubbles: true, cancelable: type === 'click', defaultPrevented: false, eventPhase: 2, isTrusted: true, timeStamp: clock.now, type,
-    target: { name: n.props.name, id: n.props.id, ...target } });
-  // Delivered on a later macrotask, outside any batch; returns once its microtask fallout has run.
-  async function deliver(node, prop, arg) {
-    await macrotask();
-    const fn = handlers(node)[prop];
-    if (fn) {
-      try {
-        const r = arg === undefined ? fn() : fn(toApp(arg));
-        if (r && typeof r.then === 'function') r.then(undefined, (e) => recordError('handler', e, { element: node.type, handler: prop }));
-      } catch (e) { recordError('handler', e, { element: node.type, handler: prop }); }
-    }
-    await macrotask();
-    return Boolean(fn);
-  }
-
-  function findByLabel(label) {
-    if (!latest.doc) return null;
-    const r = D.findLabel(latest.doc, label);
-    if (r.ambiguous) throw new UikitHostError('AMBIGUOUS', `'${label}' names ${r.ambiguous.length} elements: ${r.ambiguous.join(', ')}`);
-    if (!r.match) return null;
-    const n = r.match.node;
-    const out = { ...n, via: r.match.via };
-    if (D.CHECKS.has(n.type)) out.checked = D.isChecked(n, typed);
-    else if (D.TEXT_INPUTS.has(n.type)) { const v = D.inputValue(n, typed); out.value = v === undefined || v === null ? '' : String(v); } // a DOM input's value is a string
-    else if (D.INPUTS.has(n.type)) out.value = D.inputValue(n, typed);
-    return out;
-  }
-
-  async function setValue(label, value) {
-    const { node: n } = resolve(label);
-    if (!D.INPUTS.has(n.type)) throw new UikitHostError('NOT_AN_INPUT', `'${label}' is a ${n.type}, not an input`);
-    if (n.props.isDisabled) return { changed: false, reason: 'disabled' };
-    if (n.props.isReadOnly) return { changed: false, reason: 'read-only' };
-    if (D.TEXT_INPUTS.has(n.type)) {
-      const t = { value: String(value), type: n.type === 'TextArea' ? 'textarea' : (n.props.type ?? 'text'), tagName: n.type === 'TextArea' ? 'TEXTAREA' : 'INPUT' };
-      typed.set(n.key, t.value);
-      await deliver(n, 'onChange', event(n, 'change', t));
-      await deliver(n, 'onBlur', event(n, 'blur', t));
-      return { changed: true };
-    }
-    if (D.CHECKS.has(n.type)) {
-      if (typeof value !== 'boolean') throw new UikitHostError('BAD_VALUE', `'${label}' is a ${n.type}: set it to true or false`);
-      if (D.isChecked(n, typed) === value) return { changed: false, reason: 'unchanged' };
-      const t = { checked: value, type: 'checkbox', tagName: 'INPUT', ...(n.props.value !== undefined ? { value: n.props.value } : {}) };
-      typed.set(n.key, value);
-      await deliver(n, 'onChange', event(n, 'change', t));
-      await deliver(n, 'onBlur', event(n, 'blur', t));
-      return { changed: true };
-    }
-    if (n.type === 'Select' || n.type === 'RadioGroup') {
-      const options = n.props.options ?? [];
-      const pick = (v) => options.find((o) => o.value === v || o.label === v);
-      const chosen = n.props.isMulti ? [].concat(value).map(pick) : [pick(value)];
-      if (chosen.some((o) => !o)) throw new UikitHostError('BAD_VALUE', `'${label}' has no option ${JSON.stringify(value)}; options: ${options.map((o) => JSON.stringify(o.label ?? o.value)).join(', ')}`);
-      if (n.type === 'RadioGroup') {
-        typed.set(n.key, chosen[0].value);
-        await deliver(n, 'onChange', event(n, 'change', { value: chosen[0].value, type: 'radio', tagName: 'INPUT' }));
-        return { changed: true };
-      }
-      const v = n.props.isMulti ? chosen : chosen[0];
-      typed.set(n.key, v);
-      await deliver(n, 'onChange', v);
-      await deliver(n, 'onBlur', event(n, 'blur', { tagName: 'INPUT' }));
-      return { changed: true };
-    }
-    // DatePicker/TimePicker take the string, Range the number, UserPicker the user object (documented onChange types).
-    typed.set(n.key, value);
-    await deliver(n, 'onChange', value);
-    return { changed: true };
-  }
-
-  async function click(label) {
-    const m = resolve(label);
-    const n = m.node;
-    if (D.CHECKS.has(n.type)) {
-      const r = await setValue(label, !D.isChecked(n, typed));
-      return { clicked: r.changed, ...(r.reason ? { reason: r.reason } : {}) };
-    }
-    if (!D.BUTTONS.has(n.type)) throw new UikitHostError('NOT_CLICKABLE', `'${label}' is a ${n.type}, not a button`);
-    if (n.props.isDisabled) return { clicked: false, reason: 'disabled' };
-    if (n.props.isLoading) return { clicked: false, reason: 'loading' };
-    const handled = await deliver(n, 'onClick', event(n, 'click', { tagName: n.type === 'Link' ? 'A' : 'BUTTON', type: n.props.type ?? 'button' }));
-    // a link's navigation leaves the page: the product does it, this host only records that it would
-    if (!handled && typeof n.props.href === 'string') harnessMissing.push({ what: `navigation to ${n.props.href}`, at: clock.now, moduleKey });
-    const form = n.props.type === 'submit' ? [...m.ancestors].reverse().find((a) => a.type === 'Form') : null;
-    const submitted = form ? await deliver(form, 'onSubmit') : false;
-    return { clicked: true, submitted };
-  }
-
+  };
   return {
     moduleKey,
     moduleType: type,
-    get docs() { return docs; },
-    log,
-    invokes,
-    flags,
-    errors,
-    console: consoleLines,
-    harnessMissing,
-    tree: () => latest.doc,
-    text: (node = latest.doc) => D.textOf(node, typed),
-    // the DynamicTable a label names -> { head: [cell text], rows: [[cell text]] } in display order
-    table: (label) => {
-      const { node } = resolve(label);
-      if (node.type !== 'DynamicTable') throw new UikitHostError('NOT_A_TABLE', `'${label}' is a ${node.type}, not a DynamicTable`);
-      return D.tableOf(node, typed);
+    fence: mode,
+    get docs() { return mirror.docs; },
+    get log() { return mirror.log; },
+    get invokes() { return mirror.invokes; },
+    get flags() { return mirror.flags; },
+    get errors() { return mirror.errors; },
+    get console() { return mirror.console; },
+    get harnessMissing() { return mirror.harnessMissing; },
+    tree: latest,
+    text: (n = latest()) => D.textOf(n, mirror.typed),
+    outline: (n = latest()) => D.outline(n),
+    findByLabel(label) {
+      const m = match(label);
+      if (!m) return null;
+      const n = m.node;
+      const out = { ...n, via: m.via };
+      if (D.CHECKS.has(n.type)) out.checked = D.isChecked(n, mirror.typed);
+      else if (D.TEXT_INPUTS.has(n.type)) { const v = D.inputValue(n, mirror.typed); out.value = v === undefined || v === null ? '' : String(v); } // a DOM input's value is a string
+      else if (D.INPUTS.has(n.type)) out.value = D.inputValue(n, mirror.typed);
+      return out;
     },
-    outline: (node = latest.doc) => D.outline(node),
-    findByLabel,
-    setValue,
-    click,
-    flush: () => flush(),
-    waitIdle,
-    advance,
-    now: () => clock.now,
-    close: () => { closed = true; timers.clear(); hostClosed(host); },
+    // the DynamicTable a label names -> { head: [cell text], rows: [[cell text]] } in display order
+    table(label) {
+      const m = match(label);
+      if (!m) throw new UikitHostError('NO_CONTROL', `no table labelled '${label}'`);
+      if (m.node.type !== 'DynamicTable') throw new UikitHostError('NOT_A_TABLE', `'${label}' is a ${m.node.type}, not a DynamicTable`);
+      return D.tableOf(m.node, mirror.typed);
+    },
+    setValue: (label, value) => command('setValue', label, value),
+    click: (label) => command('click', label),
+    waitIdle: () => command('waitIdle'),
+    flush: () => command('flush'),
+    advance: (ms) => command('advance', ms),
+    now: () => mirror.now,
+    // ends the child (its pid only, gate 4) and resolves when it has gone
+    close: () => new Promise((resolve) => {
+      if (ended) { resolve(); return; }
+      child.once('exit', () => resolve());
+      child.stdin.end();
+    }),
   };
 }
 
@@ -475,10 +271,11 @@ function emulatorContext(emu, moduleKey, accountId, extension = {}) {
   return require('../bridge-host.cjs').contextFor(emu, { type: found.type, moduleKey, asUser: accountId, theme: 'light', extension });
 }
 
+// The fence follows the emulator's (scoring: 'sandbox'; forge-dev in the entrant's workspace: its dev fallback).
 async function renderInEmulator(emu, { moduleKey, asUser, context, extension } = {}) {
   const via = viaEmulator(emu);
   return render({ appDir: emu.appDir, kitDir: emu.paths.kitDir, moduleKey, context: context ?? emulatorContext(emu, moduleKey, asUser, extension),
-    invoke: via.invoke, fetchProduct: via.fetchProduct, startTime: emu.clock.now() });
+    invoke: via.invoke, fetchProduct: via.fetchProduct, fence: emu.fence, startTime: emu.clock.now() });
 }
 
 module.exports = { render, renderInEmulator, viaEmulator, emulatorContext, UikitHostError, textOf: D.textOf, outline: D.outline };
