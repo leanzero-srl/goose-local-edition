@@ -2121,6 +2121,18 @@ def _(c):
     return g(share, detail, 'resolver contract broken')
 
 
+def leak_terms(o, account: str) -> Dict[str, List[str]]:
+    """The oracle's leak terms for `account`, minus every hidden summary that is also text of a summary the person MAY
+    see. At 2.0's scale (~1,000 seeded "<verb> <object> [<qualifier>]" summaries, the qualifier sometimes empty) a hidden
+    "Fix webhook retries" is a substring of a visible "Fix webhook retries on mobile": showing the visible one is no
+    leak, and only an observed defect may fire the critical (SPEC §4). Hidden keys and change ids stay exact."""
+    terms = dict(o.leak_terms(account))
+    hidden = o.hidden_issue_ids(account)
+    visible = [i.get('summary') for iid, i in o.issues.items() if iid not in hidden and i.get('summary')]
+    terms['summaries'] = [s for s in terms['summaries'] if not any(s in v for v in visible)]
+    return terms
+
+
 def _leak_hits(text: str, terms: Dict[str, List[str]]) -> List[str]:
     hits = [k for k in terms['keys'] if re.search(r'(?<![A-Za-z0-9])' + re.escape(k) + r'(?![0-9])', text)]
     hits += [s for s in terms['summaries'] if s and s in text]
@@ -2130,7 +2142,7 @@ def _leak_hits(text: str, terms: Dict[str, List[str]]) -> List[str]:
 @check('b_no_permission_leak', 'B', pre=pre_person_list, needs=('ui', 'rovo'))
 def _(c):
     found = []
-    viewer_terms = c.oracle.leak_terms(c.oracle.viewer)
+    viewer_terms = leak_terms(c.oracle, c.oracle.viewer)
     for s in c.surfaces():
         found += [f"{s.get('id')}: {h}" for h in _leak_hits('\n'.join(map(str, s.get('texts') or [])), viewer_terms)]
         found += [f"{s.get('id')}: data-change-id {cid}" for cid in s.get('changeIdAttrs') or []
@@ -2146,11 +2158,11 @@ def _(c):
         person = str(e.get('asUser') or c.oracle.viewer)
         prompt = ' '.join(str(m.get('content') if isinstance(m.get('content'), str) else json.dumps(m.get('content')))
                           for m in ((e.get('request') or {}).get('messages') or []) if isinstance(m, dict))
-        terms = c.oracle.leak_terms(person)
+        terms = leak_terms(c.oracle, person)
         found += [f"LLM prompt ({e.get('moduleKey')}): {h}" for h in _leak_hits(prompt, terms)]
         found += [f'LLM prompt: change {x}' for x in terms['changeIds'] if re.search(r'(?<!\d)' + x + r'(?!\d)', prompt)]
     for call in c.rovo_calls():
-        terms = c.oracle.leak_terms(str(call.get('as')))
+        terms = leak_terms(c.oracle, str(call.get('as')))
         res = call.get('result')
         found += [f"rovo as {call.get('as')}: {h}" for h in _leak_hits(json.dumps(res, default=str), terms)]
         if isinstance(res, dict):
@@ -3666,6 +3678,19 @@ def defect_selftest() -> List[str]:
         phases = {ph: {'kvsAfter': {'entities': entities, 'keys': []}} for ph in ('live', 'heal', 'rerun')}
         got = row('t_no_double_count', {'manifest': v2_manifest, 'phases': phases})
         expect(got['score'] == want, f"v2 ledger t_no_double_count {label}: {got['score']} (want {want}) — {got.get('detail')}")
+    # leak at scale: a hidden summary that is text of a visible summary is no leak; the hidden key still is one
+    shared = copy.deepcopy(pack)
+    hidden_issue = next(i for i in shared['issues'] if i.get('hiddenFrom'))
+    visible_issue = next(i for i in shared['issues'] if not i.get('hiddenFrom'))
+    visible_issue['summary'] = f"{hidden_issue['summary']} on mobile"
+    for label, text, want in (('visible superstring', visible_issue['summary'], 1.0),
+                              ('hidden key', f"{visible_issue['summary']} {hidden_issue['key']}", 0.0)):
+        sctx = Ctx(None, {'ui': {'surfaces': [{'id': 'widget', 'texts': [text]}],
+                                 'sprintAction': [{'sprintId': '1', 'rows': [{'changeId': 'x'}]}]}},
+                   shared, fixture_seed=pack['seed'])
+        fn, pre, needs = next((f, p, x) for n, _t, f, p, x in CHECKS if n == 'b_no_permission_leak')
+        got = _run_check(sctx, 'b_no_permission_leak', 'B', fn, pre, needs)
+        expect(got['score'] == want, f"leak on a {label}: {got['score']} (want {want}) — {got.get('detail')}")
     # G: a UI section that failed on the app's own undeclared resource scores 0 but fires no critical
     broken = {'manifest': {'modules': {'dashboards:widget': [{'key': 'w', 'resource': 'widget'}]}},
               'comments': comments(1), 'sectionErrors': {'ui': "resource 'widget' is not declared under resources"}}
