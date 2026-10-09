@@ -421,7 +421,9 @@ async function section(name, fn, feeds = []) {
 // Every invocation the emulator ran (SPEC §2.2): its virtual duration against its limit, and how it ended. The logs
 // stay in memory for the secret-leak scan.
 const invocationLogs = [];
+const completedInvocations = new Set();
 function onInvocation(_record, out) {
+  completedInvocations.add(out.invocationId);
   const ms = Date.parse(out.t1) - Date.parse(out.t0);
   obs.invocations.push({ id: out.invocationId, function_key: out.functionKey, module_type: out.moduleType, module_key: out.moduleKey ?? null,
     virtual_ms: Number.isFinite(ms) ? ms : null, limit_ms: Number.isFinite(out.timeoutSec) ? out.timeoutSec * 1000 : null,
@@ -583,6 +585,7 @@ async function main() {
     const ciPath = join(repo, 'forge2', 'site', 'ci.cjs');
     if (!existsSync(ciPath)) { gap('forge2/site/ci.cjs scoringSequence (P3)', 'webtrigger'); return; }
     if (typeof emu.webtriggerUrl !== 'function') { gap('emu.webtriggerUrl (P1/P3: the web-trigger ingress)', 'webtrigger'); return; }
+    if (!(emu.invocations instanceof Map)) { gap('emu.invocations (P1: the invocation records, for attribution)', 'webtrigger'); return; }
     const { scoringSequence } = require(ciPath);
     // Two issues of the started sprints that hold v1 rows, so a valid event has ledger rows to mark "Deployed to".
     const active = new Set(pack.sprints.filter((s) => s.state === 'active').map((s) => String(s.id)));
@@ -591,16 +594,8 @@ async function main() {
     const secret = adm.ciSecret();
     obs.webtriggerSetup = { moduleKey: wt.key, secretSource: adm.state.secretSource, issueKeys };
     const cases = scoringSequence({ secret, issueKeys, nowSeconds: Math.floor(now() / 1000) });
-    const url = emu.webtriggerUrl(wt.key);
-    for (const c of cases) {
-      ciCalls.push(...takeCalls(emu));
-      const l0 = emu.log.length;
-      const res = await fetch(url, { method: 'POST', headers: c.headers, body: c.body });
-      const text = await res.text();
-      const writes = emu.log.slice(l0).filter(isWrite);
-      obs.webtrigger.push({ case: c.case, status: res.status, side_effects: writes.length,
-        writes: writes.map((e) => `${e.service ?? 'jira'} ${e.method} ${String(e.path).split('?')[0]}`), body: text.slice(0, 400) });
-    }
+    ciCalls.push(...takeCalls(emu));
+    obs.webtrigger.push(...await sendCiCases({ cases, url: emu.webtriggerUrl(wt.key), emu, completed: completedInvocations }));
     ciCalls.push(...takeCalls(emu));
   };
   const ciCalls = [];
@@ -733,6 +728,28 @@ async function main() {
   // reported mean the hook is not wired, not that nothing ran.
   if (!obs.invocations.length && Object.values(obs.phases).some((p) => p.invocations?.length)) gap('createEmulator({onInvocation}) (P1)', 'invocations');
   obs.harnessMissing = [...new Set([...(emu.harnessMissing || []).map((x) => (typeof x === 'string' ? x : JSON.stringify(x)))])];
+}
+
+// The CI sequence against the web-trigger ingress, one case at a time. A case's side effects are the writes made by
+// the invocations it started (by invocation id, so a write logged after its response is still that case's), and a
+// case whose invocation had not finished when the response came is marked `settled: false`, never silently counted.
+async function sendCiCases({ cases, url, emu, completed }) {
+  const out = [];
+  for (const c of cases) {
+    const before = new Set(emu.invocations.keys());
+    const res = await fetch(url, { method: 'POST', headers: c.headers, body: c.body });
+    const text = await res.text();
+    const started = [...emu.invocations.keys()].filter((id) => !before.has(id));
+    out.push({ case: c.case, status: res.status, invocations: started, body: text.slice(0, 400) });
+  }
+  for (const row of out) {
+    const writes = (emu.log || []).filter((e) => row.invocations.includes(e.invocationId) && isWrite(e));
+    // A request reaches the app's function whatever its signature (static web triggers carry no platform auth), so a
+    // case that started no invocation is a harness miss, not a clean case.
+    Object.assign(row, { side_effects: writes.length, settled: row.invocations.length > 0 && row.invocations.every((id) => completed.has(id)),
+      writes: writes.map((e) => `${e.service ?? 'jira'} ${e.method} ${String(e.path).split('?')[0]}`) });
+  }
+  return out;
 }
 
 // The admin panel (SPEC §1 R5/R6, §2.6) through P2's UI Kit host: the admin's own actions, the same actions replayed
@@ -1840,6 +1857,35 @@ async function selftest() {
     assert.equal(r.leaks.includes('resolver getSettings response (as nonadmin)'), true, "the non-admin's read");
     assert.equal(r.leaks.includes('admin page after the one-time display'), true);
     assert.equal(r.leaks.includes('resolver rotateSecret response (as admin)'), false, 'the rotation shows it once, legitimately');
+  });
+
+  await test('sendCiCases: side effects follow the invocation, even when its writes land after its response', async () => {
+    const http = await import('node:http');
+    const fake = { invocations: new Map(), log: [] };
+    const completed = new Set();
+    let seq = 0;
+    let pending = null;   // the 'late' case's write, logged only once the NEXT case's request has arrived
+    const write = (inv) => fake.log.push({ invocationId: inv, service: 'kvs', method: 'POST', path: '/api/v1/entity/set', status: 200 });
+    const server = http.createServer((req, res) => {
+      if (pending) { pending(); pending = null; }
+      const kind = req.headers['x-case'];
+      const inv = `inv-${++seq}`;
+      fake.invocations.set(inv, { moduleType: 'webtrigger' });
+      if (kind === 'valid') { write(inv); completed.add(inv); res.writeHead(202); return res.end('{}'); }
+      if (kind === 'late') { res.writeHead(202); res.end('{}'); pending = () => { write(inv); completed.add(inv); }; return undefined; }
+      if (kind === 'writes-then-401') { write(inv); completed.add(inv); res.writeHead(401); return res.end(''); }
+      if (kind === 'unrecorded') { fake.invocations.delete(inv); res.writeHead(401); return res.end(''); }
+      completed.add(inv);
+      res.writeHead(401);
+      res.end('');
+    });
+    await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
+    const url = `http://127.0.0.1:${server.address().port}/x/webtrigger/ci`;
+    const cases = ['valid', 'late', 'bad-signature', 'writes-then-401', 'unrecorded'].map((k) => ({ case: k, headers: { 'x-case': k }, body: '{}' }));
+    const rows = await sendCiCases({ cases, url, emu: fake, completed });
+    server.close();
+    assert.deepEqual(rows.map((r) => [r.case, r.status, r.side_effects, r.settled]),
+      [['valid', 202, 1, true], ['late', 202, 1, true], ['bad-signature', 401, 0, true], ['writes-then-401', 401, 1, true], ['unrecorded', 401, 0, false]]);
   });
 
   for (const r of results) console.log(`ok - ${r}`);
