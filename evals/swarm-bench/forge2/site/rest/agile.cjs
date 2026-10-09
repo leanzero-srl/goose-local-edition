@@ -2,11 +2,24 @@
 // Jira Software (Agile) REST 1.0 handlers. Shapes and errors measured on a Jira Cloud site 2026-10-02:
 // kanban /sprint -> 400 "The board does not support sprints"; unknown sprint -> 404 "We could not find the sprint".
 const { compile, JqlError, NotModelledError } = require('../jql.cjs');
-const { err, listParam, intParam } = require('./platform.cjs');
+const { err, jqlModel, listParam, intParam } = require('./platform.cjs');
 const { servedPageSize } = require('../limits.cjs');
 
-// Boards and sprints are read from the LIVE site: the world closes sprints and switches estimation fields.
-const board = (c, id) => c.state.board(id);
+// Boards and sprints are read from the LIVE site: the world closes sprints and switches estimation fields, and a
+// person can lose browse permission on a project. As the shipped OpenAPI (jsw.json) states it: a board is returned
+// "only if the user has permission to view it" (here: browse its location project), else 404 — so the board list and
+// every board-keyed read (its sprints, issues, backlog, configuration) leave it out; a sprint is returned "only if the
+// user can view the board that the sprint was created on, or view at least one of the issues in the sprint".
+const board = (c, id) => {
+  const b = c.state.board(id);
+  return b && c.canBrowseProject(b.projectKey) ? b : undefined;
+};
+const inSprint = (c, iss, s) => (iss.fields[c.state.pack.sprintFieldId] ?? []).some((x) => x.id === s.id);
+const sprint = (c, id) => {
+  const s = c.state.sprint(id);
+  if (!s || board(c, s.originBoardId)) return s;
+  return c.state.allIssues().some((i) => c.canBrowse(i) && inSprint(c, i, s)) ? s : undefined;
+};
 const boardBody = (c, b) => {
   const p = c.state.pack.projects.find((x) => x.key === b.projectKey);
   return { id: b.id, self: `${c.state.pack.siteUrl}/rest/agile/1.0/board/${b.id}`, name: b.name, type: b.type,
@@ -23,22 +36,23 @@ const page = (c, q, all, cap, dflt) => {
   return { maxResults, startAt, total: all.length, isLast: startAt + values.length >= all.length, values };
 };
 
-// Hits are computed once per (caller, resource path, jql, state version); every page slices the same list.
+// Hits are computed once per (caller, resource path, jql, state version), and every page slices the same list —
+// except a jql that reads the clock, whose hits are per instant: each page counts from its own request's.
 function issuesFor(c, base, jql) {
   let filter = () => true;
+  let timed = false;
   if (jql) {
     try {
-      const pack = c.state.pack;
-      const q = compile(String(jql), { fields: c.state.fields(), sprints: c.state.sprints(), statuses: pack.statuses, issueTypes: pack.issueTypes,
-        projects: pack.projects, sprintFieldId: pack.sprintFieldId, now: c.state.now, currentUser: c.caller.accountId });
+      const q = compile(String(jql), jqlModel(c));
       filter = q.matches;
+      timed = q.timed;
     } catch (e) {
       if (e instanceof NotModelledError) throw e;
       if (e instanceof JqlError) return { error: err(400, e.message) };
       throw e;
     }
   }
-  const key = `agile\u0000${c.caller.accountId}\u0000${c.req.pathname.replace(/^\/rest\/(agile|software)\/1\.0\//, '').replace(/\/approximate-count$/, '')}\u0000${jql ?? ''}`;
+  const key = `agile\u0000${c.caller.accountId}\u0000${c.req.pathname.replace(/^\/rest\/(agile|software)\/1\.0\//, '').replace(/\/approximate-count$/, '')}\u0000${jql ?? ''}${timed ? `\u0000${c.t}` : ''}`;
   return { hits: c.state.cached(key, () => c.state.allIssues().filter((i) => c.canBrowse(i) && base(i) && filter(i)).sort((a, b) => Number(a.id) - Number(b.id))) };
 }
 
@@ -83,7 +97,7 @@ function issuePage(c, hits) {
 const handlers = {
   'GET /rest/agile/1.0/board': (c) => {
     const q = c.req.query;
-    let list = c.state.boards().slice().sort((a, b) => a.id - b.id);
+    let list = c.state.boards().filter((b) => board(c, b.id)).sort((a, b) => a.id - b.id);
     const type = listParam(q, 'type');
     if (type.length) list = list.filter((b) => type.includes(b.type));
     const p = q.get('projectKeyOrId');
@@ -129,15 +143,14 @@ const handlers = {
   },
 
   'GET /rest/agile/1.0/sprint/{sprintId}': (c) => {
-    const s = c.state.sprint(c.params.sprintId);
+    const s = sprint(c, c.params.sprintId);
     return s ? { status: 200, body: sprintBody(c, s) } : err(404, 'We could not find the sprint');
   },
 
   'GET /rest/agile/1.0/sprint/{sprintId}/issue': (c) => {
-    const s = c.state.sprint(c.params.sprintId);
+    const s = sprint(c, c.params.sprintId);
     if (!s) return err(404, 'We could not find the sprint');
-    const fid = c.state.pack.sprintFieldId;
-    const r = issuesFor(c, (i) => (i.fields[fid] ?? []).some((x) => x.id === s.id), c.req.query.get('jql'));
+    const r = issuesFor(c, (i) => inSprint(c, i, s), c.req.query.get('jql'));
     return r.error ?? issuePage(c, r.hits);
   },
 };
@@ -162,10 +175,9 @@ Object.assign(handlers, {
   'GET /rest/agile/1.0/board/{boardId}/sprint/{sprintId}/issue': (c) => {
     const b = board(c, c.params.boardId);
     if (!b) return err(404, `Board does not exist or you do not have permission to see it.`);
-    const s = c.state.sprint(c.params.sprintId);
+    const s = sprint(c, c.params.sprintId);
     if (!s) return err(404, 'We could not find the sprint');
-    const fid = c.state.pack.sprintFieldId;
-    const r = issuesFor(c, (i) => i.projectKey === b.projectKey && (i.fields[fid] ?? []).some((x) => x.id === s.id), c.req.query.get('jql'));
+    const r = issuesFor(c, (i) => i.projectKey === b.projectKey && inSprint(c, i, s), c.req.query.get('jql'));
     return r.error ?? issuePage(c, r.hits);
   },
   'GET /rest/agile/1.0/board/{boardId}/backlog': (c) => {

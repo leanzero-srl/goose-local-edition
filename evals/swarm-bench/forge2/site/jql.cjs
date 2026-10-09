@@ -211,9 +211,14 @@ function dateFunction(name, args, now) {
 }
 
 // model: { fields, sprints, statuses, issueTypes, projects, users, now, currentUser, appAccountId }
+//   now(): the request's instant (epoch ms), what relative dates and date functions count from
 // view(issue) must expose: id, key, projectKey, projectId, fields (the current field map)
+// -> { bounded, matches, compare, timed }: `timed` when the query read now() (a date value or a date function), so
+// a caller caching its hits keys them on the instant as well.
 function compile(src, model) {
   const ast = parse(src);
+  let timed = false;
+  const now = () => { timed = true; return model.now(); };
   const fieldsByName = new Map();
   for (const f of model.fields) {
     for (const c of f.clauseNames ?? []) fieldsByName.set(c.toLowerCase(), f);
@@ -249,7 +254,7 @@ function compile(src, model) {
       if (!model.currentUser) return [];
       return [model.currentUser];
     }
-    const d = dateFunction(v.name, v.args, model.now());
+    const d = dateFunction(v.name, v.args, now());
     if (d !== undefined) {
       if (!['created', 'updated'].includes(kind)) throw new JqlError(`Error in the JQL Query: The function '${v.name}' is not supported for this field.`);
       return [d];
@@ -290,7 +295,7 @@ function compile(src, model) {
         return [t.id];
       }
       case 'created': case 'updated': {
-        const d = parseDate(raw, model.now());
+        const d = parseDate(raw, now());
         if (d === null) throw new JqlError(`Date value '${raw}' for field '${kind}' is invalid. Valid formats include: 'yyyy/MM/dd HH:mm', 'yyyy-MM-dd HH:mm', 'yyyy/MM/dd', 'yyyy-MM-dd', or a period format e.g. '-5d', '4w 2d'.`);
         return [d];
       }
@@ -423,6 +428,7 @@ function compile(src, model) {
     bounded: ast.where !== null,
     matches: (issue) => (ast.where ? evalNode(ast.where, issue) === true : true),
     compare,
+    timed,
   };
 }
 
