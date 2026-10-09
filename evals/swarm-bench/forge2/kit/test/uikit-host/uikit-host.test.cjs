@@ -1,5 +1,5 @@
 'use strict';
-// node --test evals/swarm-bench/forge2/kit/lib/uikit-host/test/uikit-host.test.cjs
+// node --test evals/swarm-bench/forge2/kit/test/uikit-host/uikit-host.test.cjs
 // Needs the forge2 kit's modules with @forge/react 12.3.0 in them: FORGE_KIT (a materialised kit) or FORGE_KIT_MODULES
 // (its module cache); the emulator test also needs the pinned runtime wrapper beside them.
 const test = require('node:test');
@@ -7,14 +7,14 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { render, renderInEmulator, UikitHostError } = require('../index.cjs');
+const { render, renderInEmulator, UikitHostError } = require('../../lib/uikit-host/index.cjs');
 
 if (!process.env.FORGE_KIT && !process.env.FORGE_KIT_MODULES) {
   throw new Error('REFUSED: set FORGE_KIT (a materialised forge2 kit) or FORGE_KIT_MODULES (its module cache, with @forge/react 12.3.0 in app-modules)');
 }
 
 const FIXTURE = path.join(__dirname, 'fixture-admin');
-const SITE = path.resolve(__dirname, '..', '..', '..', '..', 'site', 'site.cjs');
+const SITE = path.resolve(__dirname, '..', '..', '..', 'site', 'site.cjs');
 const CONTEXT = { accountId: 'admin-1', cloudId: 'cloud-1', moduleKey: 'fixture-admin', extension: { type: 'jira:adminPage' } };
 const RETENTION = 'Retention (days)';
 const DIGEST = 'Email digest enabled';
@@ -347,8 +347,8 @@ test('what forge deploy refuses or cannot find is an app error code', async () =
 
 test('through the emulator: resolvers run in the Forge runtime as the viewer; forge-dev uikit drives the same host', { timeout: 180_000 }, async () => {
   const { createSite } = require(SITE);
-  const { createEmulator } = require('../../emulator.cjs');
-  const { main } = require('../../../bin/uikit.cjs');
+  const { createEmulator } = require('../../lib/emulator.cjs');
+  const { main } = require('../../bin/uikit.cjs');
   const appDir = scratch('uikit-test-emu-');
   fs.cpSync(FIXTURE, appDir, { recursive: true });
   const site = await createSite({ seed: '0123456789abcdef' });

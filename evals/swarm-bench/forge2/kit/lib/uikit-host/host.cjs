@@ -28,7 +28,7 @@ class UikitHostError extends Error {
 
 // Bridge ops with no observable effect in a text host (fire-and-forget in @forge/bridge 7.1.0).
 const INERT = new Set(['emitReadyEvent', 'changeWindowTitle', 'emitFrontendCustomMetric']);
-// measured: the fixture admin page (test/fixture-admin) settles in 2 turns at boot and 1 after set + toggle + save;
+// measured: the fixture admin page (kit/test/uikit-host/fixture-admin) settles in 2 turns at boot and 1 after set + toggle + save;
 // a commit loop (an effect that always sets state, a 0 ms interval) never settles. A turn is one timer run or one
 // bridge answer awaited at ONE virtual time, so this bounds work by count, never by time.
 const MAX_TURNS = 1000;

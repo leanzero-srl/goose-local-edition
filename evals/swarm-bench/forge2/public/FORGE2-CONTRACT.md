@@ -181,7 +181,8 @@ permissions. §17 budgets how the widget and the sprint action boot.
 - Trigger `filter.expression` is not evaluated: the handler receives every issue-updated event.
 - A consumer that throws or is killed is redelivered after 1, 2, 4 and 8 virtual minutes, then every 15, for 24
   virtual hours; a retry request (`InvocationError`) is redelivered after its `retryAfter`.
-- Jira requests made from Custom UI (`requestJira`) are charged by §10 as person-facing requests.
+- Jira requests made from Custom UI (`requestJira`) cost no points (as on Forge); they still count in their
+  endpoint's burst bucket (§10).
 - The scoring site uses a different seed than the dev site: ids, keys, custom field ids, users, groups, sprint names
   and dates all differ.
 - The widget runs at the dashboard layout the harness chooses; the sprint action in a modal; the admin page in the

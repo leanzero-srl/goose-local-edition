@@ -42,7 +42,8 @@ ${require('./uikit.cjs').USAGE.replace(/\n$/, '')}
         what it answered and what it did, then drain the queues (secret: --secret or $FORGE_CI_SECRET, the one your
         admin page showed when you rotated it)
   kvs                         dump stored keys and entities
-  users                       list the dev site's users (the first line is the default viewer) and the issue the
+  users                       list the dev site's users (the first line is the default viewer; the Jira administrator
+                              is marked) and the issue the
                               default viewer may not comment on (Jira answers that comment with a 400)
   reset                       clear dev storage, queues and saved widget configs, and rewind the dev site's update stream
 
@@ -284,7 +285,10 @@ async function main() {
   if (cmd === 'users') {
     const site = siteFromEnv();
     const info = await (await fetch(`${site.adminUrl}/info`, { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } })).json();
-    for (const u of [info.users.find((x) => x.accountId === info.viewer), ...info.users.filter((x) => x.accountId !== info.viewer)]) console.log(`${u.accountId}  ${u.displayName}${u.accountId === info.viewer ? '  (default viewer)' : ''}`);
+    const admins = new Set(info.admins ?? []);
+    for (const u of [info.users.find((x) => x.accountId === info.viewer), ...info.users.filter((x) => x.accountId !== info.viewer)]) {
+      console.log(`${u.accountId}  ${u.displayName}${u.accountId === info.viewer ? '  (default viewer)' : ''}${admins.has(u.accountId) ? '  (Jira administrator: global ADMINISTER)' : ''}`);
+    }
     console.log(`app account: ${info.appAccountId}`);
     for (const f of info.commentForbidden ?? []) {
       const names = f.accountIds.map((a) => info.users.find((u) => u.accountId === a)?.displayName ?? a).join(', ');
