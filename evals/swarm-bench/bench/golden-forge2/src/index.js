@@ -1,19 +1,51 @@
 import Resolver from '@forge/resolver';
 import { Queue, InvocationError, InvocationErrorCode } from '@forge/events';
-import { JiraError, RateLimited } from './jira';
+import { JiraError, RateLimited, Background } from './jira';
 import { loadConfig, saveConfig, discoverConfig } from './config';
 import { applyIssueEvent, estimateFieldIds, reconcileAll } from './sync';
 import { boardsView, widgetView, getSprint, personView, postSummary } from './views';
 import { announce, CHANNEL } from './realtime';
 import { explainSprint } from './explain';
+import { migrateSome } from './migrate';
+import { markIssueDeleted, migrationComplete } from './ledger';
+import { loadSettings } from './settings';
+import { handleCiEvent, applyDeployment } from './ci';
+
+export { adminResolver } from './admin';
 
 const QUEUE_KEY = 'scope-ledger';
-const MAX_RETRY_AFTER = 900; // @forge/events: InvocationError retryAfter is at most 900 s
+const MAX_RETRY_AFTER = 900; // @forge/events: InvocationError retryAfter and push delay are at most 900 s
+const LONG_LIMIT_SECONDS = 900; // consume-change and reconcile declare timeoutSeconds: 900
+const WEBTRIGGER_LIMIT_SECONDS = 55;
 
-// ---- trigger: avi:jira:updated:issue ------------------------------------------------------------
+const queue = () => new Queue({ key: QUEUE_KEY });
+const enqueue = (body, delaySeconds = 0) =>
+  queue().push([delaySeconds > 0 ? { body, delayInSeconds: Math.min(delaySeconds, MAX_RETRY_AFTER) } : { body }]);
 
-// Hands the update to the queue only when its changelog touches the Sprint field or an estimation
-// field; anything else does no Jira or queue work.
+// Background work (triggers, the consumer, the scheduled run, the web trigger) runs dosed: at most the
+// admin's background share of the hour's points, paused after a quota 429, paced per endpoint, and never
+// waiting past its own time limit.
+async function backgroundWork(limitSeconds) {
+  const { backgroundShare } = await loadSettings();
+  return new Background({ sharePercent: backgroundShare, limitSeconds });
+}
+
+// retryData is not optional in practice: for a function with timeoutSeconds > 55 the Forge runtime wrapper
+// measures Buffer.byteLength(JSON.stringify(retryData)), which throws on undefined (measured 2026-10-02).
+const retryLater = (e) =>
+  new InvocationError({
+    retryAfter: Math.min(Math.max(e.retryAfterSeconds, 1), MAX_RETRY_AFTER),
+    retryReason: InvocationErrorCode.FUNCTION_UPSTREAM_RATE_LIMITED,
+    retryData: { retryAfterSeconds: e.retryAfterSeconds, reason: e.reason },
+  });
+
+// v1's config has no scopeFieldId: v2 rediscovers before its first event.
+const isV2Config = (cfg) => Boolean(cfg) && 'scopeFieldId' in cfg;
+
+// ---- triggers: hand the work to the queue and return ------------------------------------------------------
+
+// Only updates whose changelog touches the Sprint field or an estimation field become queue work;
+// anything else does no Jira or queue work.
 export async function onIssueUpdated(event) {
   const items = event?.changelog?.items ?? [];
   if (!items.length || !event.issue?.id) return;
@@ -22,54 +54,117 @@ export async function onIssueUpdated(event) {
   const sprintChange = items.some((i) => (cfg && i.fieldId ? i.fieldId === cfg.sprintFieldId : i.field === 'Sprint'));
   const estimateChange = items.some((i) => estimateFields.has(i.fieldId) || estimateFields.has(i.field));
   if (!sprintChange && !estimateChange) return;
-  await new Queue({ key: QUEUE_KEY }).push([
-    { body: { issueId: String(event.issue.id), changelogId: String(event.changelog.id ?? ''), sprintChange, estimateChange } },
-  ]);
+  await enqueue({ issueId: String(event.issue.id), changelogId: String(event.changelog.id ?? ''), sprintChange, estimateChange });
 }
 
-// ---- consumer --------------------------------------------------------------------------------
+export async function onIssueDeleted(event) {
+  if (!event?.issue?.id) return;
+  await enqueue({ type: 'deleted', issueId: String(event.issue.id) });
+}
 
-// Any 429 becomes a retry request carrying Retry-After, so the queue (not this invocation) waits.
+// The v1 -> v2 upgrade: start copying the v1 ledger at once rather than at the next scheduled run.
+export async function onAppUpgraded() {
+  await enqueue({ type: 'migrate' });
+}
+
+// ---- the consumer --------------------------------------------------------------------------------------
+
+async function issueEvent(body, work) {
+  const previous = await loadConfig();
+  const cfg = isV2Config(previous) ? structuredClone(previous) : await discoverConfig(work);
+  const result = await applyIssueEvent(cfg, body, work, async (issueId) => ({ rows: 0, members: 0, sprintIds: await markIssueDeleted(issueId) }));
+  await saveConfig(cfg, previous);
+  await announce(result.sprintIds);
+  return result;
+}
+
+async function continueMigration(work) {
+  const state = await migrateSome(work);
+  if (!state.complete) await enqueue({ type: 'migrate' });
+  return { migration: state.complete ? 'complete' : 'continued' };
+}
+
+// Deployment marks are written on v2 rows, so they wait for the migration to finish.
+async function deployment(body, work) {
+  if (!(await migrationComplete())) {
+    const state = await migrateSome(work);
+    if (!state.complete) throw new RateLimited(1, 'migration');
+  }
+  const result = await applyDeployment(body, work);
+  await announce(result.sprintIds);
+  return result;
+}
+
+// The scheduled pass, also run from the queue when a pass was cut off: the migration first, then a fresh
+// view of the active sprints and boards, then the backfill/heal.
+async function runReconcile(work) {
+  const migration = await migrateSome(work);
+  if (!migration.complete) await enqueue({ type: 'migrate' });
+  const previous = await loadConfig();
+  const cfg = await discoverConfig(work);
+  const result = await reconcileAll(cfg, isV2Config(previous) ? previous : null, work);
+  await saveConfig(cfg, previous);
+  await announce(result.sprintIds);
+  console.log(
+    `reconcile: ${Object.keys(cfg.sprints).length} active sprints, ${result.issues} issues read, ${result.rows} rows, ${result.members} memberships, ${result.statuses} statuses, ${result.deleted} deleted`,
+  );
+  return result;
+}
+
+// A 429, a spent background share, a pause or the time limit becomes a retry request carrying the wait,
+// so the queue — not this invocation — waits.
 export async function consumeChange(event) {
-  const policy = { maxWaitSeconds: 0 };
+  const work = await backgroundWork(LONG_LIMIT_SECONDS);
+  const body = event?.body ?? {};
   try {
-    const previous = await loadConfig();
-    const cfg = previous ? structuredClone(previous) : await discoverConfig(policy);
-    const result = await applyIssueEvent(cfg, event.body, policy);
-    await saveConfig(cfg, previous);
-    await announce(result.sprintIds);
-    return result;
-  } catch (e) {
-    if (e instanceof RateLimited) {
-      // retryData is not optional in practice: for a function with timeoutSeconds > 55 the Forge runtime
-      // wrapper measures Buffer.byteLength(JSON.stringify(retryData)), which throws on undefined and turns
-      // the retry request into a function error (measured on the real wrapper, 2026-10-02).
-      return new InvocationError({
-        retryAfter: Math.min(Math.max(e.retryAfterSeconds, 1), MAX_RETRY_AFTER),
-        retryReason: InvocationErrorCode.FUNCTION_UPSTREAM_RATE_LIMITED,
-        retryData: { retryAfterSeconds: e.retryAfterSeconds },
-      });
+    if (body.type === 'migrate') return await continueMigration(work);
+    if (body.type === 'reconcile') return await runReconcile(work);
+    if (body.type === 'deploy') return await deployment(body, work);
+    if (body.type === 'deleted') {
+      const sprintIds = await markIssueDeleted(body.issueId);
+      await announce(sprintIds);
+      return { sprintIds };
     }
+    return await issueEvent(body, work);
+  } catch (e) {
+    if (e instanceof RateLimited) return retryLater(e);
     throw e;
+  } finally {
+    await work.flush();
   }
 }
 
 // ---- scheduled trigger (hourly) ---------------------------------------------------------------
 
+// Scheduled runs are not retried: a pass that has to stop hands the rest to the queue after the wait.
 export async function reconcile() {
-  const policy = { maxWaitSeconds: Infinity };
-  const previous = await loadConfig();
-  const cfg = await discoverConfig(policy);
-  await saveConfig(cfg, previous);
-  const result = await reconcileAll(cfg, policy);
-  await announce(result.sprintIds);
-  console.log(`reconcile: ${Object.keys(cfg.sprints).length} active sprints, ${result.issues} issues read, ${result.rows} rows and ${result.members} memberships written`);
+  const work = await backgroundWork(LONG_LIMIT_SECONDS);
+  try {
+    await runReconcile(work);
+  } catch (e) {
+    if (!(e instanceof RateLimited)) throw e;
+    await enqueue({ type: 'reconcile' }, Math.max(e.retryAfterSeconds, 1));
+    console.log(`reconcile: continues from the queue in ${e.retryAfterSeconds}s (${e.reason})`);
+  } finally {
+    await work.flush();
+  }
+}
+
+// ---- web trigger: CI deployments --------------------------------------------------------------------
+
+export async function ciDeploy(request) {
+  const work = await backgroundWork(WEBTRIGGER_LIMIT_SECONDS);
+  try {
+    return await handleCiEvent(request, work, (body) => enqueue(body));
+  } finally {
+    await work.flush();
+  }
 }
 
 // ---- Custom UI resolvers (dashboard widget + sprint action) ------------------------------------
 
-// Resolvers live 25 s. A Retry-After this short is slept through; a longer one goes back to the page,
-// which waits and calls again.
+// Resolvers live 25 s and are person-facing (never held back for the background share). A Retry-After
+// this short is slept through; a longer one goes back to the page, which waits and calls again.
 const UI_POLICY = { maxWaitSeconds: 5 };
 
 const resolver = new Resolver();
@@ -122,7 +217,7 @@ resolver.define(
     const sprintId = contextSprintId(context);
     const sprint = sprintId && (await getSprint(sprintId, UI_POLICY));
     if (!sprint) return { ok: false, error: 'This action was opened without a known sprint.' };
-    return explainSprint(await personView(sprint, UI_POLICY));
+    return explainSprint(await personView(sprint, UI_POLICY), await loadSettings());
   }),
 );
 
@@ -132,7 +227,7 @@ resolver.define(
     const sprintId = contextSprintId(context);
     const sprint = sprintId && (await getSprint(sprintId, UI_POLICY));
     if (!sprint) return { ok: false, error: 'This action was opened without a known sprint.' };
-    return postSummary(sprint, payload?.changeId, UI_POLICY);
+    return postSummary(sprint, payload?.changeId, UI_POLICY, (await loadSettings()).commentGroup);
   }),
 );
 
