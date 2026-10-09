@@ -8,6 +8,7 @@ import {
   rowsOfIssue,
   recordChange,
   writeMember,
+  sameMember,
   changeKey,
   memberKey,
   markIssueDeleted,
@@ -171,7 +172,12 @@ export async function applyIssueEvent(cfg, { issueId, changelogId, sprintChange 
   let members = 0;
   for (const sprintId of touched) {
     if (!cfg.sprints[sprintId]) continue;
-    if (await writeMember(memberRow(cfg, sprintId, issue, currentIds), stored.get(sprintId))) {
+    const next = memberRow(cfg, sprintId, issue, currentIds);
+    // A sprint the issue left may have closed since (a close sends no event): read it before its member moves, so a
+    // closed sprint's numbers stay as they stood at the close (contract §12).
+    if (!currentIds.has(sprintId) && !sameMember(next, stored.get(sprintId))) await resolve(sprintId);
+    if (!cfg.sprints[sprintId]) continue;
+    if (await writeMember(next, stored.get(sprintId))) {
       members += 1;
       changed.add(sprintId);
     }

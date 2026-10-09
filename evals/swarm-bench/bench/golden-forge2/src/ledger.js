@@ -107,7 +107,7 @@ export async function recordChange(row, known = false) {
 
 export const copyV1 = (v1, extra) => createRow(changeKey(v1.changeId, v1.sprintId), fromV1(v1, extra));
 
-const sameMember = (a, b) =>
+export const sameMember = (a, b) =>
   a && b && a.inSprint === b.inSprint && a.estimate === b.estimate && a.estimates === b.estimates && a.issueKey === b.issueKey && (a.deleted === true) === (b.deleted === true);
 
 // A change's points (contract §1): the issue's current value of the estimation field its sprint's board used at the
