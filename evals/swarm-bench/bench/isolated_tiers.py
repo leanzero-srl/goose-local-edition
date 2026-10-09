@@ -15,11 +15,16 @@ site), a fenced network (localhost plus the provider relay), the pinned Forge ki
 pinned reasoning effort. No tier arms a dollar stop: BENCH_MAX_USD applies only when the operator sets it (owner,
 2026-10-02: "Let it run until the credits go away as long as the model is not stuck"). The defaults below keep SB7.1/SB7.2 identical in
 behaviour: payments family, vendor_service_v3, open network, no kit, no effort pin.
+
+forge-2.0 (forge2/SPEC.md) is the second Forge era, wholly in its own files: forge2/{public,starter,kit,site} and the
+bench/*forge2* modules, so forge-1.0 stays reproducible byte for byte. It is the one tier with its own call budget.
 """
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+
+from bench_budget import CALL_BUDGET
 
 
 @dataclass(frozen=True)
@@ -41,6 +46,9 @@ class IsolatedTier:
     reasoning_effort: str | None = None
     # The scorer starts its own seeded site instead of run_build re-serving the vendor (forge/DESIGN.md §12).
     own_scoring_site: bool = False
+    # The model calls a single-model entrant gets (`goose run --max-turns`); the tier's prompt states this number
+    # (test_bench_budget holds every stated budget to it).
+    call_budget: int = CALL_BUDGET
 
     @property
     def contracts(self):
@@ -64,7 +72,20 @@ FORGE10 = IsolatedTier('BENCH_FORGE10', 'forge-1.0', 'score_forge', 'forge/publi
                        (('FORGE-CONTRACT.md', 'forge/public/FORGE-CONTRACT.md'), ('STARTER.md', 'forge/public/STARTER.md')),
                        family='forge', vendor='forge_site', network='fenced', kit=True,
                        reasoning_effort='medium', own_scoring_site=True)
-TIERS = (SB71, SB72, FORGE10)
+FORGE20 = IsolatedTier('BENCH_FORGE20', 'forge-2.0', 'score_forge2', 'forge2/public/spec-build-forge2.md', '',
+                       'forge2/starter',
+                       ('score_forge2.py', 'forge2_checks.py', 'forge2_oracle.py', 'forge2_probe.mjs',
+                        'forge2-thresholds.json', 'forge2_site.py', 'forge2_kit.py', 'media_sb71.mjs'),
+                       (('FORGE2-CONTRACT.md', 'forge2/public/FORGE2-CONTRACT.md'),
+                        ('STARTER.md', 'forge2/public/STARTER.md'),
+                        ('RATE-MODEL.json', 'forge2/public/RATE-MODEL.json'),
+                        ('BROWSER-TESTING.md', 'forge2/public/BROWSER-TESTING.md')),
+                       family='forge', vendor='forge2_site', network='fenced', kit=True,
+                       reasoning_effort='medium', own_scoring_site=True,
+                       # policy: forge2/SPEC.md §3 P11 — 300 calls ("ensure it involves a ton of calls", owner 2026-10-09;
+                       # 1.0's 150 stays for every other tier, so SB7.2 and forge-1.0 results stay comparable).
+                       call_budget=300)
+TIERS = (SB71, SB72, FORGE10, FORGE20)
 BY_VERSION = {tier.version: tier for tier in TIERS}
 
 

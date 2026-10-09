@@ -5,8 +5,9 @@ Owner, 2026-10-02, after a GPT-6 Luna run on SB7.2 spent 3 h, 309 model calls an
 there; plus a dollar guard", he answered "ok do it". This is a rule of the CLOUD BENCHMARK HARNESS only.
 The swarm engine's NO CAPS invariant (AGENTS.md) is untouched: swarm entrants run without a budget.
 
-CALL BUDGET (published, the same for every entrant): an isolated tier passes `--max-turns CALL_BUDGET`
-to `goose run`. goose counts one turn per model call in its reply loop (crates/goose/src/agents/agent.rs:
+CALL BUDGET (published, the same for every entrant of a tier): an isolated tier passes `--max-turns
+<tier.call_budget>` to `goose run` (isolated_tiers.py; CALL_BUDGET unless the tier publishes its own, as
+forge-2.0 does). goose counts one turn per model call in its reply loop (crates/goose/src/agents/agent.rs:
 `turns_taken > max_turns` yields MAX_TURNS_MESSAGE and breaks); a headless `-t` run then exits 0 without
 asking for input. Measured 2026-10-02 with anthropic/claude-haiku-4.5 on OpenRouter and --max-turns 3:
 exit 0 after 5.3 s, three tool calls made, the console ending on MAX_TURNS_MESSAGE, three entrant
@@ -36,9 +37,9 @@ import urllib.parse
 
 import bench_cost
 
-# policy: the published SB7.1/SB7.2 call budget, the same for every single-model entrant. Owner,
-# 2026-10-02: "ok do it". Receipt: the GPT-6 Luna run that prompted it made 309 calls in 3 h for $9;
-# 150 calls is the budget he approved.
+# policy: the published SB7.1/SB7.2 (and forge-1.0) call budget, the same for every single-model entrant.
+# Owner, 2026-10-02: "ok do it". Receipt: the GPT-6 Luna run that prompted it made 309 calls in 3 h for $9;
+# 150 calls is the budget he approved. A tier that publishes another number carries it as call_budget.
 CALL_BUDGET = 150
 # The sentence goose's reply loop writes when the turn budget is spent (agent.rs MAX_TURNS_MESSAGE;
 # test_bench_budget pins it to the source).
@@ -52,12 +53,12 @@ WALLET_POLL_SECONDS = bench_cost.LATE_RECORD_BACKOFF[0]
 STATED_BUDGET = re.compile(r'budget of\s+([0-9][0-9,]*)\s+model calls', re.IGNORECASE)
 
 
-def call_budget_args() -> list[str]:
-    return ['--max-turns', str(CALL_BUDGET)]
+def call_budget_args(tier) -> list[str]:
+    return ['--max-turns', str(tier.call_budget)]
 
 
 def stated_budgets(text: str) -> list[int]:
-    """Every "budget of N model calls" a public contract states, so a test can hold it to CALL_BUDGET."""
+    """Every "budget of N model calls" a public contract states, so a test can hold it to its tier's budget."""
     return [int(match.replace(',', '')) for match in STATED_BUDGET.findall(text)]
 
 

@@ -137,7 +137,7 @@ class CallBudgetTests(IsolatedInvoke):
         self.assertNotIn('budget', result)
 
     def test_the_budget_is_one_named_policy(self):
-        self.assertEqual(bench_budget.call_budget_args(), ['--max-turns', str(bench_budget.CALL_BUDGET)])
+        self.assertEqual(bench_budget.call_budget_args(isolated_tiers.SB72), ['--max-turns', str(bench_budget.CALL_BUDGET)])
         sources = [path for path in Path(run_build.HERE).glob('*.py')
                    if path.name != 'test_bench_budget.py'
                    and '--max-turns' in path.read_text()]
@@ -150,7 +150,7 @@ class CallBudgetTests(IsolatedInvoke):
             for contract in tier.contracts:
                 with self.subTest(contract=contract):
                     for stated in bench_budget.stated_budgets((root / contract).read_text()):
-                        self.assertEqual(stated, bench_budget.CALL_BUDGET)
+                        self.assertEqual(stated, tier.call_budget)
 
     @unittest.skipUnless(GOOSE_AGENT_RS.is_file(), 'the goose sources ship only with the checkout')
     def test_the_budget_closing_is_the_sentence_goose_writes(self):
