@@ -1575,10 +1575,15 @@ def _(c):
     if not expected:
         return unavail('the pack delivers no live sprint change')
     rows = c.kvs_rows('live')
+    # Under the shared pool's wall (rate.wall, contract §10) background pauses: a change made there may be recorded
+    # first by the next reconcile, and the row keeps that path (contract §3).
+    wall = (c.obs.get('rate') or {}).get('wall') or {}
+    walled = lambda ch: (wall.get('t_ms') is not None and wall.get('until_ms') is not None  # noqa: E731
+                         and wall['t_ms'] <= ch.at.timestamp() * 1000 <= wall['until_ms'])
     tp, fp = 0, 0
     for ch in expected:
         found = rows_for(rows, ch)
-        if len(found) >= 1 and row_correct(found[0][0], ch, ('event',)) and len(found) == 1:
+        if len(found) >= 1 and row_correct(found[0][0], ch, ('event', 'reconcile') if walled(ch) else ('event',)) and len(found) == 1:
             tp += 1
         fp += max(0, len(found) - 1)
     irrelevant = _irrelevant_row_ids(c)

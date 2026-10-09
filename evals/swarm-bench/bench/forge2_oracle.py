@@ -404,7 +404,11 @@ class Oracle:
                     kind = 'added' if sid in to else 'removed'
                     phase = 'live' if cid in self._live_ids else 'history'
                     dropped = bool(delivery.get('dropped'))
-                    sources = ('reconcile',) if phase == 'history' else \
+                    # 2.0 doses the backfill while events arrive, and a row keeps the path that recorded it FIRST
+                    # (contract §3: event work may record other changes of the issue it reads): a historical change
+                    # may carry `event` too. On a 1.0 pack the backfill ran before any event.
+                    history_sources = ('reconcile', 'event') if self.is_v2 else ('reconcile',)
+                    sources = history_sources if phase == 'history' else \
                         (('event', 'reconcile') if dropped else ('event',))
                     board_id = str(self.sprints[sid]['originBoardId'])
                     field_id = self.field_in_force(board_id, created)
