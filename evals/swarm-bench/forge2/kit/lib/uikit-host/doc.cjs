@@ -21,7 +21,9 @@ function cloneValue(v, seen) {
   if (typeof v.$$typeof === 'symbol') {
     return { type: typeof v.type === 'string' ? v.type : FN, props: cloneValue(v.props ?? {}, seen) };
   }
-  if (Array.isArray(v)) return v.map((x) => cloneValue(x, seen));
+  // Array.from, not v.map: map would build the copy with the APP realm's Array (species), and a snapshot must be
+  // plain host data (deepStrictEqual and instanceof Array hold for whoever reads it).
+  if (Array.isArray(v)) return Array.from(v, (x) => cloneValue(x, seen));
   const out = {};
   for (const [k, x] of Object.entries(v)) {
     const c = cloneValue(x, seen);
@@ -33,7 +35,7 @@ function cloneValue(v, seen) {
 function snapshot(node) {
   const seen = new WeakSet();
   const walk = (n) => {
-    const s = { type: n.type, key: n.key, props: cloneValue(n.props ?? {}, seen), children: (n.children ?? []).map(walk) };
+    const s = { type: n.type, key: n.key, props: cloneValue(n.props ?? {}, seen), children: Array.from(n.children ?? [], walk) };
     if (n.forgeReactMajorVersion !== undefined) s.forgeReactMajorVersion = n.forgeReactMajorVersion;
     return s;
   };
@@ -107,15 +109,21 @@ function sortRows(rows, headCells, sortKey, sortOrder) {
     return mod * COLLATOR.compare(String(x), String(y));
   });
 }
-function tableLines(n, typed) {
+// A DynamicTable as the person sees it: head cell texts and row cell texts, rows in display order. Every row is
+// listed (rowsPerPage paging is the host's and is not modelled).
+function tableOf(n, typed = null) {
   const part = (name) => n.children.find((c) => c.type === 'ContentWrapper' && c.props.name === name)?.children ?? [];
   const head = part('head');
   const sortKey = n.props.sortKey ?? n.props.defaultSortKey;
   const rows = sortKey ? sortRows(part('rows'), head, sortKey, n.props.sortOrder ?? n.props.defaultSortOrder) : part('rows');
-  const cells = (cs) => cs.map((c) => squash(textOf(c, typed).replace(/\n/g, ' '))).join(' | ');
+  const cells = (cs) => cs.map((c) => squash(textOf(c, typed).replace(/\n/g, ' ')));
+  return { head: cells(head), rows: rows.map((r) => cells(r.children)) };
+}
+function tableLines(n, typed) {
+  const t = tableOf(n, typed);
   const lines = [];
-  if (head.length) lines.push(cells(head));
-  for (const r of rows) lines.push(cells(r.children));
+  if (t.head.length) lines.push(t.head.join(' | '));
+  for (const r of t.rows) lines.push(r.join(' | '));
   if (n.props.isLoading) lines.push('(loading)');
   return lines;
 }
@@ -126,7 +134,7 @@ function textOf(n, typed = null) {
   const kids = (sep) => n.children.map((c) => textOf(c, typed)).filter((s) => s !== '').join(sep);
   const flags = (...fs) => fs.filter(Boolean).map((f) => ` (${f})`).join('');
   const lines = VISIBLE_PROPS.filter((p) => typeof n.props[p] === 'string').map((p) => n.props[p]);
-  if (n.type === 'RequiredAsterisk') return '*';
+  if (n.type === 'RequiredAsterisk') return ' *';
   if (BUTTONS.has(n.type) && n.type !== 'Link') return `[${squash(kids(''))}]${flags(n.props.isDisabled && 'disabled', n.props.isLoading && 'loading')}`;
   if (TEXT_INPUTS.has(n.type)) {
     const v = inputValue(n, typed);
@@ -212,5 +220,5 @@ function findLabel(doc, label) {
   return { match: distinct[0], ambiguous: null, available };
 }
 
-module.exports = { FN, snapshot, handlersOf, walk, textOf, outline, findLabel, inputValue, isChecked, labelText,
+module.exports = { FN, snapshot, handlersOf, walk, textOf, tableOf, outline, findLabel, inputValue, isChecked, labelText,
   BUTTONS, TEXT_INPUTS, CHECKS, INPUTS };

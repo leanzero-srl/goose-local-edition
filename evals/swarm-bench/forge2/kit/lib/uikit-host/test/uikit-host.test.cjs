@@ -74,6 +74,7 @@ test('boot: the first commit paints before the one invoke; the screen reads as t
     assert.deepStrictEqual([host.findByLabel(DIGEST).type, host.findByLabel(DIGEST).checked], ['Toggle', true]);
     assert.strictEqual(host.findByLabel(SAVE).type, 'LoadingButton');
     assert.strictEqual(host.tree().type, 'Root');
+    assert.ok(host.tree().children instanceof Array && host.tree().props.constructor === Object, 'a snapshot is plain host data, not app-realm objects');
     assert.deepStrictEqual([host.errors, host.harnessMissing], [[], []]);
   } finally { host.close(); }
 });
@@ -142,6 +143,8 @@ test('labels: a table by its caption (rows sorted as ADS sorts them), a missing 
     const table = host.findByLabel('Change history');
     assert.strictEqual(table.type, 'DynamicTable');
     assert.strictEqual(host.text(table), 'Change history\nWhen | Who | What\n10 | carol | digest off\n2 | bob | retention 60\n1 | alice | installed');
+    assert.deepStrictEqual(host.table('Change history'), { head: ['When', 'Who', 'What'], rows: [['10', 'carol', 'digest off'], ['2', 'bob', 'retention 60'], ['1', 'alice', 'installed']] });
+    assert.throws(() => host.table('Preferences'), (e) => e.code === 'NOT_A_TABLE');
     assert.strictEqual(host.findByLabel('Preferences').type, 'FormSection');
     assert.strictEqual(host.findByLabel('Nope'), null);
     await assert.rejects(host.click('Nope'), (e) => e instanceof UikitHostError && e.code === 'NO_CONTROL' && /"Retention \(days\)"/.test(e.message));
@@ -194,6 +197,20 @@ ForgeReconciler.render(<App />);
     assert.deepStrictEqual([host.errors, host.harnessMissing], [[], []]);
     assert.deepStrictEqual(await host.click('Docs'), { clicked: true, submitted: false });
     assert.deepStrictEqual(host.harnessMissing.map((m) => m.what), ['navigation to https://example.com/docs'], 'a link leaving the page is recorded, not followed');
+  } finally { host.close(); }
+});
+
+test('labels: a required Label still names its input; two elements with one label are AMBIGUOUS, never a guess', async () => {
+  const host = await renderTemp(`import React from 'react';
+import ForgeReconciler, { Button, Label, RequiredAsterisk, Stack, Textfield } from '@forge/react';
+const App = () => <Stack><Label labelFor="name">Display name<RequiredAsterisk /></Label><Textfield id="name" name="name" defaultValue="Ada" /><Button>Go</Button><Button>Go</Button></Stack>;
+ForgeReconciler.render(<App />);
+`);
+  try {
+    assert.strictEqual(host.text(), 'Display name *\n[Ada]\n[Go]\n[Go]');
+    assert.deepStrictEqual([host.findByLabel('Display name').type, host.findByLabel('Display name').value], ['Textfield', 'Ada']);
+    assert.throws(() => host.findByLabel('Go'), (e) => e.code === 'AMBIGUOUS');
+    await assert.rejects(host.click('Go'), (e) => e.code === 'AMBIGUOUS' && /names 2 elements/.test(e.message));
   } finally { host.close(); }
 });
 

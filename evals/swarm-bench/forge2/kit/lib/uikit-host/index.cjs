@@ -8,6 +8,7 @@
 //   await host.waitIdle();                         // every runnable timer, bridge call and commit has settled
 //   host.text(); host.tree(); host.outline();       // the latest ForgeDoc as text / JSON / one node per line
 //   host.findByLabel('Background share (%)');      // -> {type, key, props, children, value|checked, via} | null
+//   host.table('Recent admin changes');            // -> {head: [..], rows: [[..]]} in display order
 //   await host.setValue('Background share (%)', 60); await host.click('Save settings'); await host.waitIdle();
 //   host.invokes; host.log; host.docs; host.flags; host.errors; host.console; host.harnessMissing
 //   await host.advance(ms); await host.flush(); host.close();
@@ -43,8 +44,8 @@ class UikitHostError extends Error {
   constructor(code, message) { super(message); this.name = 'UikitHostError'; this.code = code; }
 }
 // Codes: BAD_MANIFEST / NO_MODULE / NOT_NATIVE / NO_RESOURCE / BUILD_FAILED are the app's (what forge deploy would
-// refuse or cannot find); NO_CONTROL / AMBIGUOUS / NOT_CLICKABLE / NOT_AN_INPUT / BAD_VALUE / NOT_IDLE are what a
-// drive call found on the screen; HARNESS is this host's own failure (never app evidence).
+// refuse or cannot find); NO_CONTROL / AMBIGUOUS / NOT_CLICKABLE / NOT_AN_INPUT / NOT_A_TABLE / BAD_VALUE / NOT_IDLE
+// are what a drive call found on the screen; HARNESS is this host's own failure (never app evidence).
 
 // Bridge ops with no observable effect in a text host (fire-and-forget in @forge/bridge 7.1.0).
 const INERT = new Set(['emitReadyEvent', 'changeWindowTitle', 'emitFrontendCustomMetric']);
@@ -413,6 +414,12 @@ async function render({ appDir, moduleKey, context, invoke, fetchProduct = null,
     harnessMissing,
     tree: () => latest.doc,
     text: (node = latest.doc) => D.textOf(node, typed),
+    // the DynamicTable a label names -> { head: [cell text], rows: [[cell text]] } in display order
+    table: (label) => {
+      const { node } = resolve(label);
+      if (node.type !== 'DynamicTable') throw new UikitHostError('NOT_A_TABLE', `'${label}' is a ${node.type}, not a DynamicTable`);
+      return D.tableOf(node, typed);
+    },
     outline: (node = latest.doc) => D.outline(node),
     findByLabel,
     setValue,
