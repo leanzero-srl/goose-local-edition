@@ -2924,6 +2924,15 @@ def _row(c: Ctx, name: str) -> Dict:
     return c._row_cache.get(name) or {}
 
 
+FIELD_VALUE_WRITE = re.compile(r'^/rest/api/3/app/field/(?:value|[^/]+/value)$')
+
+
+def v1_economy_calls(calls: List[Dict]) -> List[Dict]:
+    """The Jira calls the v1 economy rows count against 1.0's read optimum. 2.0 MANDATES the scope-status field write
+    (SPEC R7, `app/field/value`) on top of v1's reads: R7's rows grade it, so it never costs v1's economy."""
+    return [x for x in calls if not FIELD_VALUE_WRITE.match(str(x.get('path') or '').split('?')[0])]
+
+
 @check('e_reconcile_economy', 'E', needs=('backfill',))
 def _(c):
     if _row(c, 'r_backfill_complete').get('score', 0) < 1.0:
@@ -2935,7 +2944,7 @@ def _(c):
     scheduled = {f['id'] for f in c.pack.get('faults') or [] if (f.get('match') or {}).get('scope') == 'scheduled-run'}
     repeats = sum(1 for x in c.calls(('backfill',), 'jira') if x.get('fault') in scheduled and not x.get('earlyRetry'))
     optimum += repeats
-    used = len([x for x in c.calls(('backfill',), 'jira')])
+    used = len(v1_economy_calls(c.calls(('backfill',), 'jira')))
     ratio = used / optimum
     # §17.8 F: continuous like e_event_economy (a rung cliff at optimum+1 call ordered the 1.0 top four on 0.010).
     top = float(TH['reconcile_economy_top'])
@@ -2957,7 +2966,7 @@ def _(c):
                  and x.get('fault') in {f['id'] for f in c.pack.get('faults') or []
                                         if (f.get('match') or {}).get('scope') == 'consumer-of-change'})
     optimum = max(1, relevant + faults)
-    used = len(c.calls(('live',), 'jira', ('trigger', 'consumer')))
+    used = len(v1_economy_calls(c.calls(('live',), 'jira', ('trigger', 'consumer'))))
     ratio = used / optimum
     top = float(TH['event_economy_top'])
     return g(min(1.0, top / ratio) if ratio else 1.0, f'{used} Jira calls / optimum {optimum} ({relevant} delivered relevant '
@@ -3762,6 +3771,13 @@ def defect_selftest() -> List[str]:
             fn = next(f for n, _t, f, _p, _x in CHECKS if n == 'e_reconcile_economy')
             got, want = fn(ctx)['score'], round(min(1.0, top / (used / optimum)), 4)
             expect(got == want, f'F e_reconcile_economy at {used}/{optimum} calls: {got} (want {want}, continuous)')
+        # R7's mandated field writes are not v1 reads
+        writes = [{'service': 'jira', 'kind': 'scheduled', 'method': 'POST', 'path': '/rest/api/3/app/field/value'}] * 3
+        ctx = Ctx(None, {'phases': {'backfill': {'calls': [{'service': 'jira', 'kind': 'scheduled'}] * optimum + writes}}},
+                  pack, fixture_seed=pack['seed'])
+        ctx._row_cache['r_backfill_complete'] = {'score': 1.0}
+        fn = next(f for n, _t, f, _p, _x in CHECKS if n == 'e_reconcile_economy')
+        expect(fn(ctx)['score'] == round(min(1.0, top), 4), 'F R7 field writes must not cost the v1 backfill economy')
     return fails
 
 
