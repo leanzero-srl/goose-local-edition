@@ -310,6 +310,9 @@ function issueRefs(e) {
   const b = e.body && typeof e.body === 'object' ? e.body : {};
   for (const u of Array.isArray(b.updates) ? b.updates : []) for (const id of u?.issueIds ?? []) refs.push(String(id));
   for (const id of b.issueIdsOrKeys ?? b.issueIds ?? []) refs.push(String(id));
+  for (const v of [b.value, ...(Array.isArray(e.body) ? e.body.map((x) => x?.value) : [])]) {
+    if (v && typeof v === 'object') for (const k of ['issueKey', 'issueId']) if (v[k] !== undefined && v[k] !== null) refs.push(String(v[k]));
+  }
   return refs;
 }
 
@@ -629,7 +632,10 @@ async function main() {
       advanceTo,
       nextDeliveryAt: () => {
         const d = planDone ? null : site.state.plan[site.state.st.cursor];
-        return d ? Math.max(now(), Date.parse(liveById.get(d.changelogId).created)) : null;
+        if (!d) return null;
+        const c = liveById.get(d.changelogId) ?? pack.live.find((x) => x.changelogId === d.changelogId);
+        if (!c) throw new Error(`the delivery plan names ${d.changelogId}, which pack.live does not hold`);
+        return Math.max(now(), Date.parse(c.created));
       },
       deliver: async () => {
         const r = await emu.deliverNext();
@@ -907,10 +913,25 @@ function commentAttempts(pack) {
 
 // ── UI (§8.7 step 8) ──────────────────────────────────────────────────────────────────────
 
-const PAGE_HELPERS = () => {
-  window.__forgeProbe = { csp: [] };
+// The contract roots whose first appearance is a surface's first data paint (each finishSurface names its own).
+const PAINT_ROOTS = ['[data-testid="sprint"]', '[data-testid="needs-config"]', '[data-testid="board-option"]',
+  'table[data-testid="ledger"] tr[data-change-id]', '[data-metric]', '[data-testid="not-started"]'];
+// R9's paint clock: the wall time each root first appears, stamped in the page by a MutationObserver (it runs before
+// the app's passive effects, so an invoke fired right after the paint lands after this stamp). Bridge ops and CDP
+// finishes are stamped on the same machine's wall clock as they arrive.
+const PAGE_HELPERS = (roots) => {
+  window.__forgeProbe = { csp: [], firstSeen: {} };
   document.addEventListener('securitypolicyviolation', (e) =>
     window.__forgeProbe.csp.push(`${e.violatedDirective} ${e.blockedURI}`));
+  const seen = window.__forgeProbe.firstSeen;
+  const check = () => { for (const r of roots) if (!(r in seen) && document.querySelector(r)) seen[r] = Date.now(); };
+  new MutationObserver(check).observe(document, { childList: true, subtree: true, characterData: true, attributes: true });
+};
+const stampArrivals = (arr) => {
+  if (!arr || arr.__wallStamped) return;
+  const push = arr.push.bind(arr);
+  arr.push = (...xs) => { const t = Date.now(); for (const x of xs) if (x && typeof x === 'object' && x.wallAt === undefined) x.wallAt = t; return push(...xs); };
+  arr.__wallStamped = true;
 };
 
 // R9's network side, read over CDP with the cache off (every open is a cold boot): each request's type, origin and
@@ -922,10 +943,11 @@ async function netWatch(page) {
   const reqs = new Map();
   cdp.on('Network.requestWillBeSent', (e) => reqs.set(e.requestId, { url: e.request.url, type: e.type ?? null, header: 0, bytes: 0, done: false }));
   cdp.on('Network.responseReceived', (e) => { const r = reqs.get(e.requestId); if (r) { r.type = e.type ?? r.type; r.header = e.response?.encodedDataLength ?? 0; } });
-  cdp.on('Network.loadingFinished', (e) => { const r = reqs.get(e.requestId); if (r) { r.bytes = Math.max(0, (e.encodedDataLength ?? 0) - r.header); r.done = true; } });
+  cdp.on('Network.loadingFinished', (e) => { const r = reqs.get(e.requestId); if (r) { r.bytes = Math.max(0, (e.encodedDataLength ?? 0) - r.header); r.done = true; r.finishedAt = Date.now(); } });
   return { reqs };
 }
-const assetBytes = (net) => [...net.reqs.values()].filter((r) => r.done && (r.type === 'Script' || r.type === 'Stylesheet')).reduce((n, r) => n + r.bytes, 0);
+const assetBytes = (net, by) => [...net.reqs.values()].filter((r) => r.done && r.finishedAt < by && (r.type === 'Script' || r.type === 'Stylesheet'))
+  .reduce((n, r) => n + r.bytes, 0);
 const externalOf = (net, origin) => [...net.reqs.values()].map((r) => r.url).filter((u) => /^https?:/.test(u) && new URL(u).origin !== origin);
 
 async function openSurface(spec) {
@@ -943,8 +965,9 @@ async function openSurface(spec) {
   page.on('requestfailed', (r) => ev.failedRequests.push(r.url()));
   page.on('response', (r) => { if (r.status() >= 400 && r.request().resourceType() !== 'fetch') ev.failedRequests.push(`${r.status()} ${r.url()}`); });
   page.on('popup', () => { ev.popups += 1; });
-  await page.addInitScript(PAGE_HELPERS);
+  await page.addInitScript(PAGE_HELPERS, PAINT_ROOTS);
   const net = await netWatch(page);
+  stampArrivals(emu.bridgeLog);
   const bridgeStart = (emu.bridgeLog || []).length;
   const cspStart = typeof emu.cspReports === 'function' ? emu.cspReports().length : 0;
   const t0 = Date.now();
@@ -962,20 +985,32 @@ const routeOf = (p) => (typeof p === 'string' ? p : p?.url ?? (p?.target === 'is
 const opName = (b) => b.op ?? b.name ?? b.type;
 
 // The first meaningful paint: the moment a contract root shows content. Returns how many bridge ops had been
-// made by then (the round trips the excellence row counts), or null when it never painted; `s.paintBytes` keeps the
-// JS+CSS bytes finished by then (R9).
+// made by then (the round trips the excellence row counts), or null when it never painted.
 async function waitMeaningful(s, selector) {
   const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
     const opsSoFar = bridgeOps(s).length;
-    const bytesSoFar = s.net ? assetBytes(s.net) : null;
-    if (await s.page.locator(selector).count().catch(() => 0)) {
-      s.paintBytes = bytesSoFar;
-      return opsSoFar;
-    }
-    await sleep(25);
+    if (await s.page.locator(selector).count().catch(() => 0)) return opsSoFar;
+    await sleep(100);
   }
   return null;
+}
+
+// R9 for one open (count-based): invokes and JS+CSS bytes before the first data paint on the page's paint clock,
+// external origins over the whole open. A paint the poll saw but the observer did not stamp is unmeasured (null).
+// Strictly before: measured in Chromium, a call made by a microtask or a passive effect right after the commit
+// arrives in the paint's own millisecond, while anything the paint needed was sent a round trip earlier.
+async function bootCounts(s, selector, painted) {
+  const seen = await s.page.evaluate(() => window.__forgeProbe?.firstSeen ?? {}).catch(() => ({}));
+  const stamps = selector.split(/\s*,\s*/).map((p) => seen[p]).filter((x) => typeof x === 'number');
+  const paintAt = stamps.length ? Math.min(...stamps) : null;
+  const external = externalOf(s.net, new URL(s.startUrl).origin);
+  const measured = painted && paintAt !== null;
+  return { painted, paint_missed: painted && paintAt === null,
+    invokes_before_paint: measured ? bridgeOps(s).filter((b) => opName(b) === 'invoke' && b.wallAt < paintAt).length : null,
+    round_trips_before_paint: measured ? bridgeOps(s).filter((b) => ['invoke', 'fetchProduct'].includes(opName(b)) && b.wallAt < paintAt).length : null,
+    bytes_before_paint: measured ? assetBytes(s.net, paintAt) : null,
+    external_requests: external.length, external_urls: [...new Set(external)].slice(0, 10) };
 }
 
 async function readTokens(page) {
@@ -1063,16 +1098,14 @@ async function finishSurface(s, meta, meaningfulSelector) {
   const shot = join(shotsDir, `${meta.id.replace(/[^A-Za-z0-9_.-]+/g, '-')}.png`);
   await s.page.screenshot({ path: shot, fullPage: false }).catch(() => {});
   obs.shots.push(shot);
-  const external = externalOf(s.net, new URL(s.startUrl).origin);
+  const boot = await bootCounts(s, meaningfulSelector, paintOps !== null);
   const surface = { ...meta, ...dom, tokens, shot, enableTheming: ops.some((b) => opName(b) === 'enableTheming'),
     bridgeOps: ops.map((b) => ({ op: opName(b) })), consoleErrors: s.ev.consoleErrors, pageErrors: s.ev.pageErrors,
     cspViolations: [...new Set([...dom.csp, ...cspReportsOf(s), ...s.ev.consoleErrors.filter((m) => /Content Security Policy/i.test(m))])],
     failedRequests: [...new Set([...s.ev.failedRequests, ...(s.ev.networkConsole || []).map((x) => x.split(' ').pop()).filter(Boolean)])],
     networkConsole: s.ev.networkConsole || [], nominal: meta.nominal !== false,
     invokesBeforePaint: paintOps !== null ? before.filter((b) => ['invoke', 'fetchProduct'].includes(opName(b))).length : null,
-    // R9 (count-based): invokes and JS+CSS bytes before the first data paint, external origins over the whole open.
-    boot: { painted: paintOps !== null, invokes_before_paint: paintOps !== null ? before.filter((b) => opName(b) === 'invoke').length : null,
-      bytes_before_paint: paintOps !== null ? s.paintBytes : null, external_requests: external.length, external_urls: [...new Set(external)].slice(0, 10) } };
+    boot };
   delete surface.csp;
   obs.ui.surfaces.push(surface);
   return surface;
@@ -1082,9 +1115,11 @@ async function finishSurface(s, meta, meaningfulSelector) {
 function bootOf(surfaces) {
   const xs = surfaces.map((s) => s.boot).filter(Boolean);
   if (!xs.length) return null;
-  const worst = (k) => (xs.some((b) => b[k] === null) ? null : Math.max(...xs.map((b) => b[k])));
-  return { invokes_before_paint: worst('invokes_before_paint'), bytes_before_paint: worst('bytes_before_paint'),
-    external_requests: Math.max(...xs.map((b) => b.external_requests)), opens: xs.length, painted: xs.filter((b) => b.painted).length,
+  // The worst measured open; `opens`/`painted`/`unmeasured` say how many opens that covers.
+  const worst = (k) => { const v = xs.map((b) => b[k]).filter((x) => typeof x === 'number'); return v.length ? Math.max(...v) : null; };
+  return { invokes_before_paint: worst('invokes_before_paint'), round_trips_before_paint: worst('round_trips_before_paint'),
+    bytes_before_paint: worst('bytes_before_paint'), external_requests: Math.max(...xs.map((b) => b.external_requests)), opens: xs.length,
+    painted: xs.filter((b) => b.painted).length, unmeasured: xs.filter((b) => b.paint_missed).length,
     external_urls: [...new Set(xs.flatMap((b) => b.external_urls))].slice(0, 10) };
 }
 
@@ -1567,7 +1602,7 @@ async function llmCases(pack, v) {
     row.llm_calls = row.absent ? null : c.clicks > 1 ? row.per_click[row.per_click.length - 1] : row.per_click.reduce((n, x) => n + x, 0);
     row.shown_text = (await explanationOf(s.page)).text;
     const scope = inScope();
-    const writes = emu.log.slice(l0).filter((e) => isWrite(e) && (e.service ?? 'jira') === 'jira');
+    const writes = emu.log.slice(l0).filter((e) => isWrite(e) && ['jira', 'kvs'].includes(e.service ?? 'jira'));
     row.writes_out_of_scope = writes.filter((e) => issueRefs(e).some((r) => !scope.has(r))).length;
     row.writes = writes.map((e) => `${e.method} ${String(e.path).split('?')[0]}`);
     await s.page.close();
@@ -1667,6 +1702,8 @@ async function selftest() {
   await test('issueRefs: path keys and bulk field-value ids', async () => {
     assert.deepEqual(issueRefs({ path: '/rest/api/3/issue/OPS-7/comment' }), ['OPS-7']);
     assert.deepEqual(issueRefs({ path: '/rest/api/3/app/field/value', body: { updates: [{ customField: 'x', issueIds: [101, 102], value: 'removed' }] } }), ['101', '102']);
+    assert.deepEqual(issueRefs({ service: 'kvs', path: '/api/v1/entity/set', body: { entityName: 'scope-ledger', key: 'k', value: { issueKey: 'PAY-9', issueId: '77' } } }), ['PAY-9', '77']);
+    assert.deepEqual(issueRefs({ service: 'kvs', path: '/api/v1/set', body: { key: 'explain:41', value: { text: 'why' } } }), []);
   });
 
   await test('hoursOf: per quota hour, background and person apart, counted from the upgrade hour', async () => {
