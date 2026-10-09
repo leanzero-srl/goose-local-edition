@@ -108,7 +108,7 @@ export async function recordChange(row, known = false) {
 export const copyV1 = (v1, extra) => createRow(changeKey(v1.changeId, v1.sprintId), fromV1(v1, extra));
 
 const sameMember = (a, b) =>
-  a && b && a.inSprint === b.inSprint && a.estimate === b.estimate && a.issueKey === b.issueKey;
+  a && b && a.inSprint === b.inSprint && a.estimate === b.estimate && a.issueKey === b.issueKey && (a.deleted === true) === (b.deleted === true);
 
 // Writes the member row only when it differs from what is stored, so a run with nothing new writes nothing.
 export async function writeMember(next, stored) {
@@ -117,9 +117,9 @@ export async function writeMember(next, stored) {
   return true;
 }
 
-// A deleted issue: its rows stay as history marked `deleted`, and it is in no sprint any more (it keeps
-// its last known estimate, so it leaves current scope as a removal). Runs after the migration, so every
-// row of the issue is a v2 row.
+// A deleted issue: its rows stay as history marked `deleted`, and its memberships are marked `deleted`
+// (keeping the last known membership and estimate), so it no longer counts in current scope and leaves it
+// as a removal. Its v1 rows not copied yet are marked by the migration, which finds the issue gone.
 export async function markIssueDeleted(issueId) {
   const sprintIds = new Set();
   for (const row of await ledgerRowsOfIssue(issueId)) {
@@ -128,8 +128,8 @@ export async function markIssueDeleted(issueId) {
     sprintIds.add(row.sprintId);
   }
   for (const m of await membersOfIssue(issueId)) {
-    if (!m.inSprint) continue;
-    await kvs.entity(MEMBERS).set(memberKey(m.sprintId, m.issueId), { ...m, inSprint: false });
+    if (m.deleted === true) continue;
+    await kvs.entity(MEMBERS).set(memberKey(m.sprintId, m.issueId), { ...m, deleted: true });
     sprintIds.add(m.sprintId);
   }
   return [...sprintIds];
@@ -163,12 +163,13 @@ export function compareIds(a, b) {
 export const byTime = (a, b) => a.at - b.at || compareIds(a.changeId, b.changeId);
 
 // Membership of one issue in one sprint: at startDate it was the opposite of its first recorded change
-// after it (an issue whose first change is `added` was not in S at start), or its current membership when
-// nothing changed.
+// after it (an issue whose first change is `added` was not in S at start), or its last known membership
+// when nothing changed. A deleted issue is in no sprint now.
 export function issueInSprint(history, member) {
   const sorted = [...history].sort(byTime);
-  const inNow = member?.inSprint === true;
-  const inAtStart = sorted.length ? sorted[0].kind === 'removed' : inNow;
+  const lastKnown = member?.inSprint === true;
+  const inNow = lastKnown && member?.deleted !== true;
+  const inAtStart = sorted.length ? sorted[0].kind === 'removed' : lastKnown;
   const everInAfterStart = inAtStart || sorted.some((c) => c.kind === 'added');
   return { inNow, inAtStart, everInAfterStart };
 }

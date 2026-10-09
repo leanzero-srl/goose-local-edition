@@ -267,12 +267,12 @@ function createSite({ seed = 7, scopes = null, clock: vclock = null } = {}) {
   ];
 
   // as: 'app' | 'user'; accountId for user calls.
-  function handle({ as, accountId, method, path, body }) {
+  function handle({ as, accountId, method, path, body, kind }) {
     const url = new URL(path, 'https://site.example');
     const p = url.pathname;
     const q = url.searchParams;
     const route = `${method} ${p}`;
-    const entry = { at: now(), as, accountId, method, path: p + url.search, body };
+    const entry = { at: now(), as, accountId, method, path: p + url.search, body, kind };
     requests.push(entry);
     const send = (status, json, headers = {}) => ({ status, json, headers });
     const rl = rateLimits.find((r) => r.times > 0 && r.match(method, p, body, as));
@@ -361,6 +361,7 @@ function createSite({ seed = 7, scopes = null, clock: vclock = null } = {}) {
       const start = body.nextPageToken ? Number(Buffer.from(body.nextPageToken, 'base64url').toString()) : 0;
       const max = Math.min(Number(body.maxResults ?? 50), 50);
       const page = list.slice(start, start + max);
+      entry.returned = page.length;
       const isLast = start + page.length >= list.length;
       const issuesOut = page.map((i) => (fields.length === 1 && fields[0] === 'id' ? { id: i.id } : issueJson(i, fields)));
       return send(200, { issues: issuesOut, isLast, ...(isLast ? {} : { nextPageToken: Buffer.from(String(start + page.length)).toString('base64url') }) });

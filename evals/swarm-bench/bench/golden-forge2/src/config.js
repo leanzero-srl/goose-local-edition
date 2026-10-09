@@ -115,7 +115,11 @@ export function sprintReader(cfg, work) {
         cfg.sprints[sprintId] = active;
       }
     }
-    if (!entry || entry.completeMs !== null) delete cfg.sprints[sprintId];
+    if ((!entry || entry.completeMs !== null) && cfg.sprints[sprintId]) {
+      // Remembered until the next scheduled run, which recomputes the closed sprint's issues' statuses.
+      delete cfg.sprints[sprintId];
+      cfg.closed = [...new Set([...(cfg.closed ?? []), sprintId])];
+    }
     sprints.set(sprintId, entry);
     return entry;
   };

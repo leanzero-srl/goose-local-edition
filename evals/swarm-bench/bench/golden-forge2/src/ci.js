@@ -69,6 +69,7 @@ export async function handleCiEvent(request, work, enqueue) {
   const event = parseEvent(rawBody);
   if (!event) return answer('invalid');
   const claim = `ci-event:${createHash('sha256').update(event.eventId).digest('hex')}`;
+  if (await kvs.get(claim)) return answer('duplicate');
   try {
     await kvs.set(claim, { environment: event.environment, at: Date.now() }, { keyPolicy: 'FAIL_IF_EXISTS' });
   } catch (e) {

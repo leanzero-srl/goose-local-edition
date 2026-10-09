@@ -243,6 +243,8 @@ app:
             type: boolean
           estimate:
             type: float
+          deleted:
+            type: boolean
         indexes:
           - name: by-sprint
             partition:

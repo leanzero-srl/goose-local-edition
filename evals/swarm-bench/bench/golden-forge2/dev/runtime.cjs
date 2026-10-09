@@ -38,8 +38,14 @@ function createKvs(manifest) {
   const ops = [];
   const typeOk = (t, v) => (t === 'any' ? true : t === 'string' ? typeof v === 'string' : t === 'boolean' ? typeof v === 'boolean' : t === 'integer' ? Number.isInteger(v) && v >= -2147483648 && v <= 2147483647 : t === 'float' ? typeof v === 'number' : false);
   const err = (status, code, message) => ({ status, json: { code, message } });
+  const faults = []; // { match(op, body), times }: the next matching op fails with 500 (a cut-off invocation)
   function handle(op, body) {
     ops.push({ op, body });
+    const fault = faults.find((f) => f.times > 0 && f.match(op, body));
+    if (fault) {
+      fault.times -= 1;
+      return err(500, 'INTERNAL_SERVER_ERROR', 'scripted storage failure');
+    }
     switch (op) {
       case '/api/v1/get':
         return plain.has(body.key) ? { status: 200, json: { key: body.key, value: plain.get(body.key) } } : err(404, 'KEY_NOT_FOUND', 'not found');
@@ -107,7 +113,7 @@ function createKvs(manifest) {
   }
   const writes = () => ops.filter((o) => /\/(set|delete|transaction)$|batch\/(set|delete)/.test(o.op));
   const entityWrites = () => ops.filter((o) => /^\/api\/v1\/entity\/(set|delete)$/.test(o.op));
-  return { plain, secrets, entities, ops, writes, entityWrites, handle };
+  return { plain, secrets, entities, ops, writes, entityWrites, faults, handle };
 }
 
 // Default scripted model: explains with words only and names the first three changes it was sent.
@@ -199,7 +205,7 @@ function createPlatform({ site, manifest = loadManifest(), clock = null }) {
     }
     if (target.type === 'fpp' && target.remote === 'jira') {
       if (target.provider === 'user' && !store?.aaid) return toResponse({ status: 401, json: { code: 'NEEDS_AUTHENTICATION_ERR', message: 'asUser() has no user in this invocation' } });
-      return toResponse(site.handle({ as: target.provider === 'user' ? 'user' : 'app', accountId: store?.aaid, method: (init.method ?? 'GET').toUpperCase(), path: p, body }));
+      return toResponse(site.handle({ as: target.provider === 'user' ? 'user' : 'app', accountId: store?.aaid, method: (init.method ?? 'GET').toUpperCase(), path: p, body, kind: store?.moduleType }));
     }
     return toResponse({ status: 501, json: { code: 'NOT_MODELLED', message: `${JSON.stringify(target)} ${p}` } });
   };

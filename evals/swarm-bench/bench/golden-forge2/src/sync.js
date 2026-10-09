@@ -300,7 +300,7 @@ export async function reconcileAll(cfg, previous, work) {
   // Every issue in an active sprint is a candidate, so a member still "in" a sprint that the search did
   // not return has either left it unseen or been deleted: Jira says which.
   const candidateIds = new Set(issues.map((i) => String(i.id)));
-  const orphans = [...new Set([...membersNow.values()].filter((m) => m.inSprint && !candidateIds.has(m.issueId)).map((m) => m.issueId))];
+  const orphans = [...new Set([...membersNow.values()].filter((m) => m.inSprint && m.deleted !== true && !candidateIds.has(m.issueId)).map((m) => m.issueId))];
   const deleted = orphans.length ? await missingIssues(orphans, work) : [];
   for (const issueId of deleted) for (const sprintId of await markIssueDeleted(issueId)) changed.add(sprintId);
 
@@ -315,10 +315,11 @@ export async function reconcileAll(cfg, previous, work) {
       if (currentStatus(issue.fields, cfg.scopeFieldId) !== value) values.set(id, value);
     }
     const goneDeleted = new Set(deleted);
-    for (const sprintId of Object.keys(previous?.sprints ?? {})) {
+    const closed = new Set([...Object.keys(previous?.sprints ?? {}), ...(previous?.closed ?? [])]);
+    for (const sprintId of closed) {
       if (active.has(sprintId)) continue;
       for (const m of await membersOfSprint(sprintId)) {
-        if (candidateIds.has(m.issueId) || values.has(m.issueId) || goneDeleted.has(m.issueId)) continue;
+        if (candidateIds.has(m.issueId) || values.has(m.issueId) || goneDeleted.has(m.issueId) || m.deleted === true) continue;
         const issueMembers = await membersOfIssue(m.issueId);
         const issueRows = await rowsOfIssue(m.issueId, issueMembers.map((x) => x.sprintId));
         if (issueRows.some((r) => r.deleted)) continue;
