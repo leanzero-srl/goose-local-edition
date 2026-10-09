@@ -77,7 +77,11 @@ function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clo
     if (inv?.moduleKey) fwd['x-forge-module-key'] = inv.moduleKey;
     if (inv?.scheduledRun) fwd['x-forge-scheduled-run'] = String(inv.scheduledRun);
     if (inv?.originChange) fwd['x-forge-origin-change'] = inv.originChange;
-    if (tv !== undefined) await clock.advanceTo(tv);
+    if (tv !== undefined) {
+      await clock.advanceTo(tv);
+      // The request's own virtual instant (site.cjs instantOf): rate windows and per-issue spacing see the invocation's time.
+      fwd['x-forge-vtime'] = String(Math.round(tv));
+    }
     const started = Date.now();
     const r = await fetch(new URL(path, siteUrl), { method, headers: fwd, body: method === 'GET' || method === 'HEAD' ? undefined : body });
     const text = await r.text();
@@ -103,7 +107,7 @@ function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clo
           : Array.isArray(parsed.histories) ? parsed.histories.length : null };
     }
     const out = {};
-    for (const h of ['content-type', 'retry-after', 'ratelimit-reason']) if (r.headers.get(h)) out[h] = r.headers.get(h);
+    for (const h of ['content-type', 'retry-after', 'ratelimit-reason', 'x-ratelimit-limit', 'x-ratelimit-remaining', 'x-ratelimit-nearlimit']) if (r.headers.get(h)) out[h] = r.headers.get(h);
     return { status: r.status, headers: out, body: text };
   }
 
@@ -170,12 +174,11 @@ function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clo
             missing(`webtrigger ingress for ${moduleKey}`, null);
             return send(501, { code: 'EMULATOR_NOT_MODELLED', message: 'no web-trigger ingress is mounted in this emulator (lib/webtrigger.cjs handle)' });
           }
-          // Header values as arrays and the raw body string: the shapes a web trigger function receives.
-          const headers = {};
-          for (let i = 0; i < req.rawHeaders.length; i += 2) (headers[req.rawHeaders[i].toLowerCase()] ??= []).push(req.rawHeaders[i + 1]);
-          const queryParameters = {};
-          for (const [k, v] of url.searchParams) (queryParameters[k] ??= []).push(v);
-          const r = await webtrigger(moduleKey, { method: req.method, path: route, headers, queryParameters, body: raw });
+          // The sender's header pairs with their spelling and the raw body: lib/webtrigger.cjs builds the request a web
+          // trigger function receives (header names may arrive in any letter case, contract §14).
+          const headers = [];
+          for (let i = 0; i < req.rawHeaders.length; i += 2) headers.push([req.rawHeaders[i], req.rawHeaders[i + 1]]);
+          const r = await webtrigger(moduleKey, { method: req.method, path: req.url, headers, body: raw });
           const out = {};
           for (const [k, v] of Object.entries(r?.headers ?? {})) out[k] = Array.isArray(v) ? v.join(', ') : String(v);
           res.writeHead(Number(r?.statusCode ?? 500), out);

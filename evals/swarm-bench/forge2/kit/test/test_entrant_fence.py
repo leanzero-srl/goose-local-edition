@@ -3,7 +3,7 @@
 bench_isolation.prepare(network='fenced', extra_read=[kit]) builds the sandbox; inside it the internet is
 unreachable (directly and through the relay), the provider answers through the relay, localhost works,
 and the dev kit runs: `npm run lint` (bin/lint.cjs) offline and forge-dev against a dev site started
-outside the sandbox (forge_site.serve). Run: python3 -m unittest forge/kit/test/test_entrant_fence.py
+outside the sandbox (forge_site.serve). Run: python3 -m unittest forge2/kit/test/test_entrant_fence.py
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ HERE = Path(__file__).resolve().parent
 BENCH = HERE.parent.parent.parent / 'bench'
 sys.path.insert(0, str(BENCH))
 import bench_isolation  # noqa: E402
-import forge_kit  # noqa: E402
+import forge2_kit as forge_kit  # noqa: E402
 import forge_site  # noqa: E402
 
 MANIFEST = """modules:

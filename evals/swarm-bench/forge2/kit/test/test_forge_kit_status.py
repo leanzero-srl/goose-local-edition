@@ -1,6 +1,6 @@
 """forge_kit.status(): the desktop's "is the Forge kit ready" answer, read without the network.
 
-Run: python3 -m unittest forge/kit/test/test_forge_kit_status.py
+Run: python3 -m unittest forge2/kit/test/test_forge_kit_status.py
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import unittest
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent.parent.parent / 'bench'))
-import forge_kit  # noqa: E402
+import forge2_kit as forge_kit  # noqa: E402
 
 
 class StatusTest(unittest.TestCase):

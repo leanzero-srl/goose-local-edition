@@ -281,13 +281,14 @@ const LEDGER_ATTRS = ['sprintId', 'at', 'changeId', 'kind', 'issueId', 'issueKey
   'deleted', 'deployedEnvs'];
 // SPEC §1 R8, one entry per scripted model case (P5's site/llm.cjs names the scripts): `clicks` explain requests on one
 // open sprint modal; `admin` switches a panel setting for the case and back after it.
+// `steps`: the scripted model's answers for the phase (site/llm.cjs kinds; then `clean` for every later call).
 const LLM_V2_CASES = [
-  { case: 'tool-injection', script: 'v2-tool-injection', clicks: 1 },
-  { case: 'rate-limited-no-retry-after', script: 'v2-429-no-retry-after', clicks: 1 },
-  { case: 'no-finish-reason', script: 'v2-no-finish-reason', clicks: 1 },
-  { case: 'cache', script: 'v2-cache', clicks: 2 },
-  { case: 'kill-switch', script: 'v2-cache', clicks: 1, admin: { label: LABELS.ai, value: false, restore: true } },
-  { case: 'token-budget', script: 'v2-cache', clicks: 1, admin: { label: LABELS.budget, value: 1, restore: ADMIN_BUDGET } },
+  { case: 'tool-injection', script: 'v2-tool-injection', steps: ['injected'], clicks: 1 },
+  { case: 'rate-limited-no-retry-after', script: 'v2-429-no-retry-after', steps: ['ratelimited'], clicks: 1 },
+  { case: 'no-finish-reason', script: 'v2-no-finish-reason', steps: ['unfinished'], clicks: 1 },
+  { case: 'cache', script: 'v2-cache', steps: ['clean'], clicks: 2 },
+  { case: 'kill-switch', script: 'v2-cache', steps: ['clean'], clicks: 1, admin: { label: LABELS.ai, value: false, restore: true } },
+  { case: 'token-budget', script: 'v2-cache', steps: ['clean'], clicks: 1, admin: { label: LABELS.budget, value: 1, restore: ADMIN_BUDGET } },
 ];
 
 // A request that changes something: a KVS/secret/entity write, a queue push, a Jira write (POSTs that only read excluded).
@@ -431,6 +432,9 @@ function onInvocation(_record, out) {
   invocationLogs.push({ id: out.invocationId, functionKey: out.functionKey, text: JSON.stringify([out.logs ?? null, out.stderr ?? null]) });
 }
 
+// A preload entity's rows as [{key, value}]: fixtures.cjs emits {<key>: value}; a list of pairs reads the same.
+const preloadRows = (rows) => (Array.isArray(rows) ? rows : Object.entries(rows ?? {}).map(([key, value]) => ({ key, value })));
+
 // The v1 KVS content laid down under v1's own schema (the starter manifest), as the dump the v2 emulator inherits.
 function v1Dump(preload) {
   const { createKvs } = require(join(kitDir, 'lib', 'kvs.cjs'));
@@ -442,7 +446,7 @@ function v1Dump(preload) {
     const r = kvs.handle(op, body);
     if (r.status >= 400) throw new Error(`v1 preload ${op} ${body.entityName ?? ''} ${body.key} refused under v1's schema: ${JSON.stringify(r.body)}`);
   };
-  for (const [entityName, rows] of Object.entries(preload.entities ?? {})) for (const { key, value } of rows) put('/api/v1/entity/set', { entityName, key, value });
+  for (const [entityName, rows] of Object.entries(preload.entities ?? {})) for (const { key, value } of preloadRows(rows)) put('/api/v1/entity/set', { entityName, key, value });
   for (const { key, value } of preload.keys ?? []) put('/api/v1/set', { key, value });
   return kvs.dump();
 }
@@ -463,9 +467,9 @@ async function main() {
   await section('preload', async () => {
     if (!pack.v1Preload) { gap('site.pack.v1Preload (P4: the v1 KVS content)', 'migration'); return; }
     devState = { kvs: v1Dump(pack.v1Preload) };
-    obs.migration.v1_rows = (pack.v1Preload.entities?.['scope-change'] ?? [])
+    obs.migration.v1_rows = preloadRows(pack.v1Preload.entities?.['scope-change'])
       .map(({ value }) => ({ changeId: value.changeId, sprintId: value.sprintId, at: value.at }));
-    obs.migration.preload = { entities: Object.fromEntries(Object.entries(pack.v1Preload.entities ?? {}).map(([n, rows]) => [n, rows.length])),
+    obs.migration.preload = { entities: Object.fromEntries(Object.entries(pack.v1Preload.entities ?? {}).map(([n, rows]) => [n, preloadRows(rows).length])),
       keys: (pack.v1Preload.keys ?? []).length };
   }, ['migration']);
   // A refusal here (no sandbox, wrapper sha mismatch) is the harness's: main()'s catch marks every section.
@@ -565,6 +569,10 @@ async function main() {
     if (typeof site.control.world !== 'function') { gap('site.control.world (P5: the world schedule)', 'world'); return; }
     const r = await site.control.world({ until: t });
     obs.world.push(...(r.applied ?? []));
+    // The world's product events (avi:jira:deleted:issue) reach the app's triggers as the site applies them.
+    for (const w of await emu.deliverWorldEvents()) {
+      (obs.phases.live?.invocations ?? []).push(...w.invocations.map((x) => normInvocation(x, 'trigger', x?.moduleKey)));
+    }
   };
   const checkpoint = async (cp) => {
     const t = now();
@@ -575,6 +583,7 @@ async function main() {
       entity_counts: Object.fromEntries(Object.entries(s.entities ?? {}).map(([n, rows]) => [n, Object.keys(rows).length])) };
     const values = await fieldValues();
     if (values) obs.field.values_by_checkpoint[cp] = values;
+    (obs.field.applied_by_checkpoint ??= {})[cp] = site.state.st.applied.size;
   };
 
   // The CI deployment sequence (P3's scoring cases) against the app's static web trigger; each case's side effects
@@ -586,19 +595,26 @@ async function main() {
     if (!existsSync(ciPath)) { gap('forge2/site/ci.cjs scoringSequence (P3)', 'webtrigger'); return; }
     if (typeof emu.webtriggerUrl !== 'function') { gap('emu.webtriggerUrl (P1/P3: the web-trigger ingress)', 'webtrigger'); return; }
     if (!(emu.invocations instanceof Map)) { gap('emu.invocations (P1: the invocation records, for attribution)', 'webtrigger'); return; }
-    const { scoringSequence } = require(ciPath);
-    // Two issues of the started sprints that hold v1 rows, so a valid event has ledger rows to mark "Deployed to".
-    const active = new Set(pack.sprints.filter((s) => s.state === 'active').map((s) => String(s.id)));
-    const issueKeys = [...new Set((pack.v1Preload?.entities?.['scope-change'] ?? []).filter(({ value }) => active.has(String(value.sprintId)))
-      .map(({ value }) => value.issueKey).filter(Boolean))].sort().slice(0, 2);
+    const { createCiSequence } = require(ciPath);
+    // Issues of the active sprints that hold v1 rows (each step owns its own), so a valid event has ledger rows to
+    // mark "Deployed to"; deleted issues are left out.
+    const active = new Set(site.state.sprints().filter((s) => s.state === 'active').map((s) => String(s.id)));
+    const issueKeys = [...new Set(preloadRows(pack.v1Preload?.entities?.['scope-change']).filter(({ value }) => active.has(String(value.sprintId)))
+      .map(({ value }) => value.issueKey).filter((k) => k && site.state.issueByIdOrKey(k)))].sort();
     // No secret the panel showed and none stored: the app has no key, so the sequence signs with one the app cannot
     // know and every case, the "valid" ones included, must be refused (R6 graded, never made unavailable).
     const known = adm.ciSecret();
     const secret = known ?? (await import('node:crypto')).randomBytes(24).toString('hex');
     obs.webtriggerSetup = { moduleKey: wt.key, secretSource: known ? adm.state.secretSource : 'none: a key the app cannot know', issueKeys };
-    const cases = scoringSequence({ secret, issueKeys, nowSeconds: Math.floor(now() / 1000) });
+    const seq = createCiSequence({ seed, secret, issueKeys });
+    obs.webtriggerSetup.plan = seq.plan;
+    const cases = { next: () => { const s = seq.next(Math.floor(now() / 1000)); return s && { case: s.name, headers: s.request.headers, body: s.request.body }; } };
     ciCalls.push(...takeCalls(emu));
-    obs.webtrigger.push(...await sendCiCases({ cases, url: emu.webtriggerUrl(wt.key), emu, completed: completedInvocations }));
+    // In-process through the kit's ingress (the same one the proxy route mounts): fetch would lower-case the header
+    // names, and the header-case step sends them spelled as a CI system might.
+    const { invokeWebtrigger } = require(join(kitDir, 'lib', 'webtrigger.cjs'));
+    const send = async (c) => { const r = await invokeWebtrigger(emu, wt.key, { method: 'POST', headers: c.headers, body: c.body }); return { status: r.statusCode, text: r.body ?? '' }; };
+    obs.webtrigger.push(...await sendCiCases({ cases, url: emu.webtriggerUrl(wt.key), emu, completed: completedInvocations, send }));
     ciCalls.push(...takeCalls(emu));
   };
   const ciCalls = [];
@@ -724,7 +740,8 @@ async function main() {
       kind: e.kind, method: e.method, path_tpl: e.path_tpl, cost: e.cost, status: e.status, reason: e.reason ?? null, retry_after_s: e.retry_after_s ?? null }));
     obs.rate.hours = hoursOf(obs.rate.requests, obs.clock.upgrade_t_ms);
   }, ['rate']);
-  obs.field.writes = (emu.log || []).filter((e) => e.method === 'PUT' && /\/rest\/api\/3\/app\/field\/value$/.test(String(e.path).split('?')[0]))
+  obs.field.writes = (emu.log || []).filter((e) => (e.method === 'POST' && /\/rest\/api\/3\/app\/field\/value$/.test(String(e.path).split('?')[0]))
+    || (e.method === 'PUT' && /\/rest\/api\/3\/app\/field\/[^/]+\/value$/.test(String(e.path).split('?')[0])))
     .map((e) => ({ t_ms: Date.parse(e.t_virtual), updates: e.body?.updates ?? null, status: e.status, invocation: e.invocationId ?? null }));
   obs.admin.secret_leaks = secretLeaks(adm.state.secret, adm.state.answers);
   // The invocation list comes from the emulator's onInvocation hook; invocations the phases saw but the hook never
@@ -736,12 +753,14 @@ async function main() {
 // The CI sequence against the web-trigger ingress, one case at a time. A case's side effects are the writes made by
 // the invocations it started (by invocation id, so a write logged after its response is still that case's), and a
 // case whose invocation had not finished when the response came is marked `settled: false`, never silently counted.
-async function sendCiCases({ cases, url, emu, completed }) {
+async function sendCiCases({ cases, url, emu, completed, send = null }) {
   const out = [];
-  for (const c of cases) {
+  const list = Array.isArray(cases) ? cases[Symbol.iterator]() : { next: () => { const v = cases.next(); return { value: v, done: !v }; } };
+  for (let it = list.next(); !it.done; it = list.next()) {
+    const c = it.value;
     const before = new Set(emu.invocations.keys());
-    const res = await fetch(url, { method: 'POST', headers: c.headers, body: c.body });
-    const text = await res.text();
+    const res = send ? await send(c) : await fetch(url, { method: 'POST', headers: c.headers, body: c.body });
+    const text = send ? res.text : await res.text();
     const started = [...emu.invocations.keys()].filter((id) => !before.has(id));
     out.push({ case: c.case, status: res.status, invocations: started, body: text.slice(0, 400) });
   }
@@ -1605,7 +1624,7 @@ async function llmCases(pack, v) {
       if (!v.usable()) { row.absent = 'no admin panel to switch the setting'; obs.llm_v2.push(row); continue; }
       row.setting_applied = await panelSet(c.admin.label, c.admin.value);
     }
-    await emu.llm.phase(c.script);
+    await emu.llm.phase(c.script, c.steps);
     takeCalls(emu);
     const s = await openSurface({ moduleKey: action.key, entry: 'view', theme: 'light', width: 800, height: 600, asUser: viewer, extension: ext });
     await waitMeaningful(s, 'table[data-testid="ledger"] tr[data-change-id], [data-metric]');

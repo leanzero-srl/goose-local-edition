@@ -119,6 +119,10 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
   const clock = { now: () => vnow, observe: (t) => { if (t > vnow) vnow = t; }, advanceTo };
   const advance = async (ms) => { const r = await client.call('advance', { ms }); vnow = Math.max(vnow, r.now); return vnow; };
   await syncClock();
+  // Installing the app creates its custom fields on the site (Jira gives each an id; the site names it per seed).
+  for (const cf of Array.isArray(manifest?.modules?.['jira:customField']) ? manifest.modules['jira:customField'] : []) {
+    if (typeof cf?.key === 'string') await client.call('installfield', { key: cf.key, name: cf.name, description: cf.description });
+  }
 
   const entities = manifest?.app?.storage?.entities ?? [];
   const kvs = createKvs({ entities: Array.isArray(entities) ? entities : [], now: clock.now });
@@ -340,11 +344,13 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
       outcome: next ? next.kind : 'ok', ...(next ? { retryAfter: next.waitS, ...(next.dropped ? { dropped: next.dropped } : { redeliverAt: next.redeliverAt }) } : {}) };
   }
 
-  async function drainQueues() {
+  // `until` (virtual ms): only the deliveries due by then; the rest stay pending for a later drain.
+  async function drainQueues({ until = null } = {}) {
     const deliveries = [];
     for (;;) {
       if (!queueState.pending.length) break;
       queueState.pending.sort((a, b) => a.readyAt - b.readyAt || a.seq - b.seq);
+      if (until !== null && queueState.pending[0].readyAt > until) break;
       const ev = queueState.pending.shift();
       await advanceTo(ev.readyAt);
       if (ev.kind === 'trigger') { deliveries.push(await deliverTriggerRetry(ev)); continue; }
@@ -389,6 +395,20 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     return deliveries;
   }
 
+  // Every trigger subscribed to `event.eventType` runs once (retries scheduled as for any trigger).
+  async function runTriggers(event, lineage) {
+    const results = [];
+    for (const t of modules('trigger')) {
+      const events = (Array.isArray(t.events) ? t.events : []).map((e) => (typeof e === 'string' ? e : e?.eventType));
+      if (!events.includes(event.eventType)) continue;
+      if (t.filter?.ignoreSelf && event.selfGenerated) continue;
+      const r = await invokeFunction(t.function, { moduleKey: t.key, moduleType: 'trigger', event, lineage });
+      const retry = scheduleTriggerRetry(t, event, r, 0, lineage);
+      results.push(retry ? { ...r, retry } : r);
+    }
+    return results;
+  }
+
   async function triggerEvent(delivery) {
     const change = delivery.change;
     const event = {
@@ -396,39 +416,41 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
       issue: delivery.issue, atlassianId: change.authorId,
       changelog: { id: change.id, items: change.items }, associatedUsers: [{ accountId: change.authorId }],
     };
-    const results = [];
-    for (const t of modules('trigger')) {
-      const events = (Array.isArray(t.events) ? t.events : []).map((e) => (typeof e === 'string' ? e : e?.eventType));
-      if (!events.includes('avi:jira:updated:issue')) continue;
-      if (t.filter?.ignoreSelf && event.selfGenerated) continue;
-      const lineage = { originChange: change.id };
-      const r = await invokeFunction(t.function, { moduleKey: t.key, moduleType: 'trigger', event, lineage });
-      const retry = scheduleTriggerRetry(t, event, r, 0, lineage);
-      results.push(retry ? { ...r, retry } : r);
-    }
+    const results = await runTriggers(event, { originChange: change.id });
     return { changelogId: change.id, duplicate: Boolean(delivery.duplicate), slot: delivery.slot, event, triggers: results, invocations: results };
+  }
+
+  // The world's own product events (SPEC §2.5: a deleted issue sends avi:jira:deleted:issue), queued on the site as the
+  // world applies them; delivered before the next issue update, and by the probe after each world step.
+  async function deliverWorldEvents() {
+    const { events = [] } = await client.call('worldevents');
+    const out = [];
+    for (const event of events) out.push({ event, invocations: await runTriggers(event, { originChange: `world:${event.issue?.id ?? event.eventType}` }) });
+    return out;
   }
 
   async function deliverProductEvent(change) {
     const changelogId = typeof change === 'string' ? change : change.changelogId ?? change.id;
     const delivery = await client.call('event', { changelogId });
-    return triggerEvent(delivery);
+    const world = await deliverWorldEvents();
+    return { ...(await triggerEvent(delivery)), world };
   }
 
   async function deliverNext() {
     const d = await client.call('next');
+    const world = await deliverWorldEvents();
     if (d.done) return null;
-    return triggerEvent(d);
+    return { ...(await triggerEvent(d)), world };
   }
 
   let scheduledRuns = 0;
-  async function runScheduled(moduleKey) {
+  async function runScheduled(moduleKey, { until = null } = {}) {
     const m = modules('scheduledTrigger').find((x) => x.key === moduleKey);
     if (!m) throw new Error(`no scheduledTrigger '${moduleKey}' in the manifest`);
     const run = ++scheduledRuns;
     const invocation = await invokeFunction(m.function, { moduleKey: m.key, moduleType: 'scheduledTrigger',
       event: { context: { cloudId: info.cloudId, moduleKey: m.key }, contextToken: crypto.randomBytes(16).toString('hex') }, lineage: { scheduledRun: run } });
-    const deliveries = await drainQueues();
+    const deliveries = await drainQueues({ until });
     return { run, invocation, deliveries };
   }
 
@@ -489,6 +511,7 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     webtriggerUrl: (moduleKey) => `${proxyAddr.url}/x/webtrigger/${encodeURIComponent(moduleKey)}`,
     deliverProductEvent,
     deliverNext,
+    deliverWorldEvents,
     drainQueues,
     runScheduled,
     invokeAction,
@@ -522,7 +545,7 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
   // Forge LLM and Realtime live on the site (site/llm.cjs, site/realtime.cjs); these read them through it.
   emu.llm = {
     log: (since = 0) => client.call('llmlog', { since }),
-    phase: (phase) => client.call('llmphase', { phase }),
+    phase: (phase, script) => client.call('llmphase', { phase, ...(script ? { script } : {}) }),
   };
   emu.realtime = {
     log: (since = 0) => client.call('rtlog', { since }),

@@ -28,9 +28,10 @@ const USAGE = `forge-dev <command>   (run from the app directory; $FORGE_SITE_UR
         processes may run side by side. In an edit surface window.__forgeHost.save()
         performs the dashboard's Save. A saved widget config persists like a dashboard's: later
         serve runs of the widget open with it; --config '<json>' overrides it for one run, reset clears it.
-  llm [--phase <name>]        the dev site's Forge LLM: the model list, the scripted answer the next chat call
-                              gets, every call so far (full prompts and answers in .forge-dev/llm-log.json);
-                              --phase restarts the script (clean, digits, refusal, malformed, error, then clean)
+  llm [--phase <name> [--script k1,k2]]   the dev site's Forge LLM: the model list, the scripted answer the next
+                              chat call gets, every call so far (full prompts and answers in .forge-dev/llm-log.json);
+                              --phase restarts the script (clean, digits, refusal, malformed, error, then clean);
+                              --script names the steps instead (also injected, ratelimited, unfinished)
   realtime [--follow]         every Realtime publish on the dev site (channel, payload, delivered / no
                               subscriber / rejected) and the open subscriptions; --follow keeps watching.
                               A served surface's log also prints each event delivered to its page.
@@ -38,8 +39,11 @@ const USAGE = `forge-dev <command>   (run from the app directory; $FORGE_SITE_UR
         render a UI Kit (render: native) module headless with the real @forge/react reconciler, its resolver calls
         answered by your functions; prints the visible text after each step and writes the whole tree to
         .forge-dev/uikit-tree.json. --set and --click run in the order given (controls are found by their label).
-  ci <args...>                the CI sender (bin/ci.cjs) against your web trigger(s), served here while it runs;
-                              \`forge-dev ci --help\` lists its commands (e.g. \`ci send ...\`)
+  ci send --env staging|production --issues KEY-1,KEY-2 [--secret <s>] [--module <webtrigger key>]
+          [--event-id <id>] [--skew <seconds>] [--bad-signature | --unsigned | --tamper | --stale | --replay | --header-case]
+        play the CI system: POST one signed deployment event to your web trigger at the dev site's virtual time, print
+        what it answered and what it did, then drain the queues (secret: --secret or $FORGE_CI_SECRET, the one your
+        admin page showed when you rotated it)
   kvs                         dump stored keys and entities
   users                       list the dev site's users (the first line is the default viewer) and the issue the
                               default viewer may not comment on (Jira answers that comment with a 400)
@@ -143,6 +147,16 @@ async function emulator({ onInvocation = null } = {}) {
   // A separate work dir per process: two concurrent forge-dev commands never rebuild each other's bundle.
   emu = await createEmulator({ appDir, kitDir, site, runtime: 'wrapper', fence: 'dev-auto', workDir: path.join(stateDir, 'work', String(process.pid)),
     devState: state.kvs ? { kvs: state.kvs, queue: state.queue } : null, aroundInvocation, onInvocation });
+  // Empty dev storage is the upgrade instant: v1's rows (entity scope-change) are in place, as on the scoring site.
+  if (!state.kvs && emu.manifest) {
+    const { v1Preload } = await emu.site.call('v1preload');
+    const rows = Object.entries(v1Preload?.entities?.['scope-change'] ?? {});
+    let refused = 0;
+    for (const [key, value] of rows) if (emu.kvs.handle('/api/v1/entity/set', { entityName: 'scope-change', key, value }).status >= 400) refused += 1;
+    await withLock(async () => writeState({ ...loadState(), kvs: emu.kvs.dump() }));
+    console.log(`dev storage: v1's ${rows.length - refused} scope-change row(s) laid down (the upgrade instant)`
+      + (refused ? `; ${refused} refused: manifest.yml does not declare v1's entity scope-change` : ''));
+  }
   if (emu.fence !== 'sandbox') {
     console.log('fence: node --permission (macOS refuses a nested sandbox inside this workspace). The scorer runs every invocation under a deny-default\n'
       + '       sandbox: no file reads outside the bundle, no child processes, network only to the Forge proxy.');
@@ -249,7 +263,7 @@ function uikitSteps() {
 }
 
 async function main() {
-  if (!cmd || cmd === 'help' || (flag('help') && cmd !== 'ci')) { console.log(USAGE); return 0; }
+  if (!cmd || cmd === 'help' || flag('help')) { console.log(USAGE); return 0; }
   if (cmd === 'kvs') {
     const { createKvs } = lib('kvs.cjs');
     const st = loadState();
@@ -261,7 +275,8 @@ async function main() {
   if (cmd === 'llm') {
     const site = siteFromEnv();
     const post = async (op, args) => (await fetch(`${site.adminUrl}/${op}`, { method: 'POST', body: JSON.stringify(args), headers: { 'content-type': 'application/json' } })).json();
-    if (opt('phase') !== undefined) console.log(`script restarted: ${JSON.stringify(await post('llmphase', { phase: opt('phase') }))}`);
+    const script = opt('script') !== undefined ? String(opt('script')).split(',').map((s) => s.trim()).filter(Boolean) : undefined;
+    if (opt('phase') !== undefined) console.log(`script restarted: ${JSON.stringify(await post('llmphase', { phase: opt('phase'), ...(script ? { script } : {}) }))}`);
     const r = await post('llmlog', { since: 0 });
     console.log(`models (list()): ${r.models.map((m) => `${m.model} ${m.status}`).join(', ')}`);
     console.log(`script: ${r.state.script.join(' -> ')}, then clean; next chat call gets: ${r.state.next}`);
@@ -341,20 +356,11 @@ async function main() {
       return 0;
     }
     if (cmd === 'ci') {
-      // The sender is P3's bin/ci.cjs; this process serves the app's web trigger(s) while it runs.
-      const sender = path.join(kitDir, 'bin', 'ci.cjs');
-      if (!fs.existsSync(sender)) throw new Error(`the CI sender is not installed in this kit (${sender})`);
-      const triggers = emu.modules('webtrigger').map((w) => w.key);
-      const env = { ...process.env, FORGE_WEBTRIGGER_BASE: emu.webtriggerUrl('').replace(/\/$/, ''),
-        ...(triggers.length === 1 ? { FORGE_WEBTRIGGER_URL: emu.webtriggerUrl(triggers[0]) } : {}) };
-      if (!triggers.length) console.log('no webtrigger module in manifest.yml: every request will answer 501');
-      const code = await new Promise((resolve) => {
-        const child = require('child_process').spawn(process.execPath, [sender, ...argv.slice(1)], { cwd: appDir, env, stdio: 'inherit' });
-        child.on('close', (c) => resolve(c ?? 1));
-      });
-      for (const r of finished.filter((x) => x.moduleType === 'webtrigger')) printInvocation(r, 'web trigger');
+      // The CI sender (bin/ci.cjs) sends in-process, at the dev site's virtual time, through the web-trigger ingress.
+      const r = await require('./ci.cjs').ciCommand(argv.slice(1), { emu, printInvocation, printDeliveries });
+      for (const d of r.deliveries) consumed.add(d.eventId);
       await saveState(emu, consumed);
-      return code;
+      return r.code;
     }
     if (cmd === 'invoke') {
       const fnKey = positional[0];
@@ -393,6 +399,10 @@ async function main() {
       for (let i = 0; i < limit; i++) {
         const d = await emu.deliverNext();
         if (!d) { console.log('no more issue updates on the dev site (`reset` replays them)'); break; }
+        for (const w of d.world ?? []) {
+          console.log(`### ${w.event.eventType} ${w.event.issue?.key ?? ''}`);
+          for (const t of w.invocations) printInvocation(t, 'trigger');
+        }
         const items = d.event.changelog.items.map((it) => `${it.field}: ${it.fromString ?? '∅'} -> ${it.toString ?? '∅'}`).join('; ');
         console.log(`### update ${d.event.issue.key} changelog ${d.changelogId}${d.duplicate ? ' (redelivery)' : ''}: ${items}`);
         if (!d.triggers.length) console.log('   no trigger subscribes to avi:jira:updated:issue');

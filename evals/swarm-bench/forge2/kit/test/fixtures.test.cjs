@@ -10,7 +10,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 
 const FIXTURES = path.join(__dirname, '..', '..', 'site', 'fixtures.cjs');
-const { facts, sprintMoves, V1_WINDOW } = require(FIXTURES);
+const { facts, worldPack, sprintMoves, V1_WINDOW } = require(FIXTURES);
 const SEEDS = ['0123456789abcdef', 'deadbeefcafef00d', '5eed5eed5eed5eed'];
 const seedOf = (i) => crypto.createHash('sha256').update(`forge2-fixture-${i}`).digest('hex').slice(0, 16);
 
@@ -19,7 +19,7 @@ test('byte-identical reruns per seed, in separate processes', () => {
     const a = execFileSync(process.execPath, [FIXTURES, '--seed', seed], { encoding: 'utf8', maxBuffer: 64 << 20 });
     const b = execFileSync(process.execPath, [FIXTURES, '--seed', seed], { encoding: 'utf8', maxBuffer: 64 << 20 });
     assert.strictEqual(crypto.createHash('sha256').update(a).digest('hex'), crypto.createHash('sha256').update(b).digest('hex'), seed);
-    assert.strictEqual(a, JSON.stringify(facts(seed), null, 1) + '\n');
+    assert.strictEqual(a, JSON.stringify(worldPack(seed), null, 1) + '\n', 'the CLI prints the pack with its world (world.cjs)');
   }
 });
 

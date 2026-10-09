@@ -16,7 +16,9 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { facts } = require('./fixtures.cjs');
+const { worldPack } = require('./fixtures.cjs');
+const { createWorld } = require('./world.cjs');
+const fieldsRest = require('./rest/fields.cjs');
 const { createState } = require('./state.cjs');
 const { createOpenApi } = require('./openapi.cjs');
 const { createRenderer } = require('./rest/render.cjs');
@@ -47,7 +49,7 @@ function json(res, status, body, headers = {}) {
 }
 
 async function createSite({ seed, port = 0, trace = null, token = crypto.randomBytes(12).toString('hex'), openapiDir, pack: givenPack, scoring = false } = {}) {
-  const pack = givenPack ?? facts(seed, { scoring });
+  const pack = givenPack ?? worldPack(seed, { scoring });
   const state = createState(pack);
   const rate = rateModel.createRate();
   const render = createRenderer(state);
@@ -232,11 +234,27 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
   const worldEvent = (change) => delivery({ slot: null, duplicate: false, remaining: null, applied: [], change, issue: state.st.issues.get(change.issueId) });
   // Platform services the site hosts for every emulator attached to it: Forge LLM (llm.cjs) and Realtime
   // (realtime.cjs). The realtime token key derives from the control token, so only this site's emulators can sign.
+  // The world that changes mid-run (world.cjs, SPEC §2.5): its scheduled events apply as the site's time reaches them
+  // (state.cjs calls the hook before each live change and at flush); a deletion queues the avi:jira:deleted:issue
+  // event the emulator delivers (control `worldevents`).
+  const world = pack.world ? createWorld({ pack, state }) : null;
+  const worldLog = [];
+  const worldPending = [];
+  let worldReported = 0;
+  if (world) {
+    state.setWorldHook((t) => {
+      for (const rec of world.applyDue(t)) {
+        const { result, event, ...e } = rec;
+        worldLog.push({ t_ms: e.atMs, ...e });
+        if (event) worldPending.push({ ...event, issue: eventSnapshot(event.issue) });
+      }
+    });
+  }
   const llm = createLlm({ pack, now: () => state.now() });
   const realtime = createRealtime({ now: () => state.now(), secret: crypto.createHash('sha256').update(`realtime:${token}`).digest() });
   const control = {
     llm: (req) => llm.handle(req),
-    llmphase: ({ phase }) => llm.phase(phase),
+    llmphase: ({ phase, script }) => llm.phase(phase, script),
     llmlog: ({ since = 0 }) => ({ entries: llm.log.slice(Number(since)), next: llm.log.length, state: llm.state(), models: llm.models() }),
     rtsign: (a) => realtime.signToken(a),
     rtcontext: (ctx) => ({ contextToken: realtime.mintContext(ctx) }),
@@ -246,7 +264,7 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
     rtdeliveries: ({ since = 0, origin = null }) => ({ deliveries: realtime.deliveriesSince(Number(since), origin) }),
     rtlog: ({ since = 0 }) => ({ ...realtime.eventsSince(Number(since)), subscriptions: realtime.subscriptions() }),
     info: () => ({ cloudId: pack.cloudId, siteUrl: pack.siteUrl, appAccountId: pack.appAccountId, now: new Date(state.now()).toISOString(),
-      users: pack.users.map(({ accountId, displayName }) => ({ accountId, displayName })), viewer: pack.viewer, admins: pack.admins,
+      users: pack.users.map(({ accountId, displayName }) => ({ accountId, displayName })), viewer: pack.viewer, admins: pack.admins, admin: pack.admin,
       // Who may not comment where (the default viewer on one issue): Jira answers such a comment 400.
       commentForbidden: pack.issues.filter((i) => i.commentForbiddenFor.length).map((i) => ({ issueKey: i.key, accountIds: i.commentForbiddenFor })),
       // What the Agile REST API discloses anyway; the dev kit builds sprint-action contexts from it (live: the world
@@ -278,7 +296,36 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
     estimationfield: ({ boardId, fieldId, at }) => state.setBoardEstimationField(boardId, fieldId, { at: at ?? state.now() }),
     revokebrowse: ({ accountId, projectKey, at }) => state.revokeBrowse(accountId, projectKey, { at: at ?? state.now() }),
     addfield: (def) => state.addField(def),
-    world: ({ since = 0 }) => ({ entries: state.st.world.slice(Number(since)), next: state.st.world.length }),
+    // With `until` (virtual epoch ms): the site as Jira stands then (live changes created by then, world events due by
+    // then) -> the world events applied since the last such call. Without it: the state's mutation log since `since`.
+    world: ({ since = 0, until }) => {
+      if (until === undefined) return { entries: state.st.world.slice(Number(since)), next: state.st.world.length };
+      state.applyUntil(Number(until));
+      const applied = worldLog.slice(worldReported);
+      worldReported = worldLog.length;
+      return { applied, pending: world ? world.pending().map((e) => e.id) : [] };
+    },
+    worldplan: () => ({ world: pack.world ?? null, applied: worldLog }),
+    worldevents: () => ({ events: worldPending.splice(0) }),
+    // The app's scope-status field (SPEC R7): installed with v2 (idempotent: every emulator of the app installs it).
+    installfield: ({ key, name, description }) => {
+      if (key !== 'scope-status') return { installed: null, reason: `the site names no field id for custom field '${key}'` };
+      const id = pack.scopeStatusFieldId;
+      if (!state.field(id)) {
+        state.addField({ id, key: id, name: name ?? key, custom: true, orderable: true, navigable: true, searchable: true,
+          clauseNames: [`cf[${id.replace('customfield_', '')}]`, name ?? key], ...(description ? { description } : {}),
+          schema: { type: 'string', custom: `ari:cloud:ecosystem::extension/${pack.cloudId}/forge-app/static/${key}`, customId: Number(id.replace('customfield_', '')) } });
+      }
+      return { installed: id };
+    },
+    fieldvalues: () => ({ values: state.field(pack.scopeStatusFieldId) ? fieldsRest.fieldValues(state) : {} }),
+    fieldwrites: ({ since = 0 }) => ({ writes: fieldsRest.fieldWrites(state).slice(Number(since)) }),
+    // Every /rest request the rate model priced, in the probe's shape (SPEC §2.1).
+    ratelog: ({ since = 0 }) => ({ entries: log.slice(Number(since)).filter((e) => e.op).map((e) => ({ t_ms: Date.parse(e.t), invocation: e.invocationId,
+      kind: e.kind, method: e.method, path_tpl: e.op.slice(e.op.indexOf(' ') + 1), cost: e.points, status: e.status,
+      reason: e.rateLimited ?? null, retry_after_s: e.retryAfter ?? null, module_type: e.moduleType, source: e.source })), next: log.length }),
+    // v1's KVS content at the upgrade (SPEC §2.4): the dev kit lays it down when its storage is empty.
+    v1preload: () => ({ v1Preload: pack.v1Preload ?? null }),
     clock: () => ({ now: state.now(), skippedMs: state.st.skipped }),
     advance: ({ ms }) => ({ now: state.advance(Number(ms)) }),
     next: () => delivery(state.nextDelivery()) ?? { done: true },
@@ -301,7 +348,11 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
       }
       return { ok: true };
     },
-    reset: () => { state.reset(); rate.reset(); resetFaults(); log.length = 0; faultLog.length = 0; signals.length = 0; llm.reset(); realtime.reset(); return { ok: true }; },
+    reset: () => {
+      state.reset(); rate.reset(); resetFaults(); log.length = 0; faultLog.length = 0; signals.length = 0; llm.reset(); realtime.reset();
+      world?.reset(); worldLog.length = 0; worldPending.length = 0; worldReported = 0;
+      return { ok: true };
+    },
     log: ({ since = 0 }) => ({ entries: log.slice(Number(since)), next: log.length }),
     comments: () => ({ comments: state.st.comments }),
     users: () => control.info().users,

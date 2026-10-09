@@ -92,6 +92,10 @@ function createState(pack) {
       throw new Error(`site cannot apply changelog item for field ${item.fieldId}`);
     }
   };
+  // The world's scheduled events (world.cjs createWorld.applyDue), set by site.cjs: called with a change's creation
+  // instant before the change applies, so world events and human edits interleave in creation order.
+  let worldDue = null;
+  const setWorldHook = (fn) => { worldDue = fn; };
   // Apply every not-yet-applied live change created up to and including `changelogId`.
   const applyThrough = (changelogId) => {
     const upto = liveIndex.get(changelogId);
@@ -101,6 +105,7 @@ function createState(pack) {
       const id = liveOrder[i];
       if (st.applied.has(id)) continue;
       const c = liveById.get(id);
+      worldDue?.(Date.parse(c.created));
       const issue = st.issues.get(c.issueId);
       advanceTo(Date.parse(c.created));
       for (const item of c.items) applyItem(issue, item);
@@ -116,7 +121,20 @@ function createState(pack) {
   // scorer delivers them with the widget open (DESIGN §8.7 step 8); they are created last, so nothing scripted
   // waits behind them.
   const scriptedOrder = pack.live.filter((c) => !c.delivery.liveUi).map((c) => c.changelogId);
-  const flush = () => (scriptedOrder.length ? applyThrough(scriptedOrder[scriptedOrder.length - 1]) : []);
+  const flush = () => {
+    const applied = scriptedOrder.length ? applyThrough(scriptedOrder[scriptedOrder.length - 1]) : [];
+    if (pack.world) worldDue?.(Date.parse(pack.world.window.end));
+    return applied;
+  };
+  // The site as Jira stands at `t`: every scripted live change created by then (in creation order) and the world
+  // events due by then. A change applies whatever its delivery: the delivery schedule only hides it from the app.
+  const applyUntil = (t) => {
+    let last = null;
+    for (const id of scriptedOrder) if (Date.parse(liveById.get(id).created) <= t) last = id;
+    const applied = last ? applyThrough(last) : [];
+    worldDue?.(t);
+    return applied;
+  };
   const nextDelivery = () => {
     if (st.cursor >= plan.length) return null;
     const d = plan[st.cursor++];
@@ -255,7 +273,7 @@ function createState(pack) {
 
   return {
     pack, st, plan, statusById, userById,
-    now, advance, advanceTo, reset, applyThrough, flush, nextDelivery, cached,
+    now, advance, advanceTo, reset, applyThrough, applyUntil, flush, nextDelivery, cached, setWorldHook,
     issueByIdOrKey: (k) => st.issues.get(String(k)) ?? st.byKey.get(String(k).toUpperCase()),
     allIssues: () => [...st.issues.values()],
     sprints: () => [...st.sprints.values()],

@@ -18,12 +18,7 @@ function rig({ installed = true } = {}) {
   const pack = facts('0123456789abcdef');
   pack.scopeStatusFieldId = FIELD;
   const state = createState(pack);
-  // P4's state API (forge2/P4 state.cjs): the live field list, addField when v2 is installed, setFieldValue. This
-  // branch's state.cjs is still 1.0's, whose renderer reads pack.fields, so the shim's addField feeds both lists.
-  const fieldList = pack.fields.slice();
-  state.fields = () => fieldList;
-  state.addField = (def) => { fieldList.push(def); pack.fields.push(def); };
-  state.setFieldValue = (ref, fieldId, value) => { state.issueByIdOrKey(ref).fields[fieldId] = value; };
+  // The site state's own API (state.cjs): the live field list, addField when v2 is installed, setFieldValue.
   if (installed) state.addField(DEF);
   const render = createRenderer(state);
   const call = (opKey, { as = 'app', body, params = {}, query = '' } = {}) => {
@@ -100,6 +95,7 @@ test('before v2 installs the field a write is a 404; a pack without the field id
   const { call, ids } = rig({ installed: false });
   assert.strictEqual(call(POST, { body: { updates: [{ customField: FIELD, issueIds: [ids[0]], value: 'committed' }] } }).status, 404);
   const pack = facts('0123456789abcdef');
+  delete pack.scopeStatusFieldId;
   const state = createState(pack);
   assert.throws(() => fields.fieldValues(state), /scopeStatusFieldId is missing/);
 });

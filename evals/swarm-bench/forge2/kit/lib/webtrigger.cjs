@@ -158,4 +158,13 @@ function webtriggerRoute(emu) {
   };
 }
 
-module.exports = { CI, ciSignature, encodeCiEvent, webtriggerModules, webtriggerRequest, responseFor, invokeWebtrigger, webtriggerRoute };
+// The emulator's proxy route (POST <proxy>/x/webtrigger/<key>) answers through this: `request` carries the sender's
+// header pairs as sent ([[name, value], ...]) and the raw body; the emulator-failure cause rides a named header.
+async function handle(emu, moduleKey, request) {
+  const r = await invokeWebtrigger(emu, moduleKey, request);
+  const headers = { ...r.headers };
+  if (r.error) headers['x-forge-emulator-error'] = [headerSafe(r.error)];
+  return { statusCode: r.statusCode, headers, body: r.body };
+}
+
+module.exports = { CI, ciSignature, encodeCiEvent, webtriggerModules, webtriggerRequest, responseFor, invokeWebtrigger, webtriggerRoute, handle };

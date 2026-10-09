@@ -21,6 +21,9 @@ const ANCHOR = Date.UTC(2026, 8, 24);
 const ESTIMATES = [0.5, 1, 2, 3, 5, 8, 13];
 // SPEC §2.3: v1 rows exist for the first 2 days of each active sprint.
 const V1_WINDOW = 2 * DAY;
+// ratio: half of the six scored virtual hours (SPEC §2.3) — the closing sprint's last live change, so its close leaves
+// hours of the window after it.
+const QUIET_AFTER = 3 * HOUR;
 // Scrum boards: [project index, active, future, closed] (SPEC §2.3 totals: 6 active, 2 future, 6 closed). The first
 // project has two boards whose teams plan disjoint issues, so an issue can move to ANOTHER board's sprint (with that
 // board's estimation field) without changing projects.
@@ -418,14 +421,21 @@ function facts(seed, { scoring = false } = {}) {
 
   const activeOf = (p) => actives.filter((s) => s._project === p);
   const futureOf = (p) => perBoard.flatMap((b) => b.future).find((s) => s._project === p) ?? null;
+  // The sprint the world closes mid-run (world.cjs sprint-close, SPEC §2.5): one active sprint off the live-UI board
+  // goes quiet QUIET_AFTER into the scored hours — no live change moves an issue into or out of it after that — so
+  // the close lands mid-window, not in its last minutes, and leaves hours to observe a final ledger.
+  const closing = actives.filter((a) => !perBoard[0].active.includes(a)).at(-1) ?? null;
+  const quietAt = now + QUIET_AFTER;
+  const quiet = (s, at) => s === closing && at >= quietAt;
   // One scope change (or estimate / irrelevant update) at time `at`; returns the event or null.
   const step = (at, kind, phase, focus = null) => {
-    const startedActives = actives.filter((s) => s._start < at);
+    const startedActives = actives.filter((s) => s._start < at && !quiet(s, at));
     if (kind === 'sprint') {
       const sprint = focus?.sprint ?? r.pick(startedActives);
       const p = sprint._project;
       const inSprint = issues.filter((s) => s.projectKey === p && s.created < at && openSprintOf(s) === sprint.id);
-      const outside = issues.filter((s) => s.projectKey === p && s.created < at && openSprintOf(s) !== sprint.id);
+      const outside = issues.filter((s) => s.projectKey === p && s.created < at && openSprintOf(s) !== sprint.id
+        && !(closing && openSprintOf(s) === closing.id && at >= quietAt));
       const move = focus?.move ?? r.pick(['add', 'add', 'add', 'remove', 'remove', 'swap', 'fromFuture', 'toFuture']);
       if (move === 'add' || move === 'fromFuture' || (move === 'swap' && activeOf(p).length < 2)) {
         const future = futureOf(p);
@@ -437,7 +447,7 @@ function facts(seed, { scoring = false } = {}) {
       }
       if (move === 'swap') {
         // To another started active sprint of the project: on the first project that may be ANOTHER board's.
-        const other = r.pick(activeOf(p).filter((s) => s !== sprint && s._start < at));
+        const other = r.pick(activeOf(p).filter((s) => s !== sprint && s._start < at && !quiet(s, at)));
         const st = focus?.issue ?? r.pick(inSprint);
         return st && other ? addTo(st, other, at, phase) : null;
       }
@@ -545,11 +555,11 @@ function facts(seed, { scoring = false } = {}) {
   const visibleHistoryIssue = (p) => issues.filter((s) => s.projectKey === p && !s.hiddenFrom.length && s.created < now);
   for (let idx = 0; idx < liveN; idx++) {
     if (pairAt.includes(idx) && pairs.length < pairAt.length) {
-      const sprint = pairs.length === 0 ? aFirst : r.pick(actives.filter((a) => a !== aFirst));
+      const sprint = pairs.length === 0 ? aFirst : r.pick(actives.filter((a) => a !== aFirst && a !== closing));
       const p = sprint._project;
       const st = r.pick(visibleHistoryIssue(p).filter((s) => !openSprintOf(s)));
       const first = addTo(st, sprint, tick(), 'live');
-      const other = activeOf(p).find((s) => s !== sprint);
+      const other = activeOf(p).find((s) => s !== sprint && s !== closing);
       const second = other && r.chance(0.5) ? addTo(st, other, tick(), 'live') : removeOpen(st, tick(), 'live');
       pairs.push([first.changelogId, second.changelogId]);
     }
@@ -706,6 +716,7 @@ function facts(seed, { scoring = false } = {}) {
     viewer,
     peer,
     admins: [admin],
+    admin,
     users,
     groups,
     fields,
@@ -753,9 +764,15 @@ if (require.main === module) {
   const args = process.argv.slice(2);
   const get = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
   const seed = get('--seed');
-  const json = JSON.stringify(facts(seed, { scoring: args.includes('--scoring') }), null, 1) + '\n';
+  const json = JSON.stringify(worldPack(seed, { scoring: args.includes('--scoring') }), null, 1) + '\n';
   const out = get('--out');
   if (out) fs.writeFileSync(out, json); else process.stdout.write(json);
 }
 
-module.exports = { facts, sprintMoves, V1_WINDOW };
+// The pack a site serves and the oracle grades: the facts plus the world that changes mid-run (world.cjs, SPEC §2.5).
+function worldPack(seed, { scoring = false } = {}) {
+  const { withWorld } = require('./world.cjs');
+  return withWorld(facts(seed, { scoring }), { scoring });
+}
+
+module.exports = { facts, worldPack, sprintMoves, V1_WINDOW };
