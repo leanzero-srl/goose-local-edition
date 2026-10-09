@@ -266,6 +266,30 @@ ForgeReconciler.render(<App />);
   } finally { host.close(); }
 });
 
+test('a poller is not a loop: advance runs each interval at its own virtual time; Date moves with the timers', async () => {
+  let polls = 0;
+  const host = await renderTemp(`import React, { useEffect, useState } from 'react';
+import ForgeReconciler, { Text } from '@forge/react';
+import { invoke } from '@forge/bridge';
+const start = Date.now();
+const App = () => {
+  const [n, setN] = useState('none');
+  useEffect(() => { const id = setInterval(() => invoke('progress').then((r) => setN(r.n)), 1000); return () => clearInterval(id); }, []);
+  return <Text>Migrated {n} after {Math.round((Date.now() - start) / 1000)} s, {typeof Date()} {new Date(0).toISOString()} {new Date() instanceof Date ? 'date' : 'no'}</Text>;
+};
+ForgeReconciler.render(<App />);
+`, async () => ({ n: ++polls }), { startTime: Date.parse('2026-10-09T21:00:00Z') });
+  try {
+    await host.waitIdle();
+    assert.strictEqual(host.text(), 'Migrated none after 0 s, string 1970-01-01T00:00:00.000Z date');
+    // 1500 polls: more than @forge/bridge's 500 invokes per 25 s, which it counts on Date.now()
+    const idle = await host.advance(1_500_000);
+    assert.strictEqual(polls, 1500);
+    assert.strictEqual(host.text(), 'Migrated 1500 after 1500 s, string 1970-01-01T00:00:00.000Z date');
+    assert.deepStrictEqual([idle.now, idle.timersPending, host.errors], [1_500_000, 1, []]);
+  } finally { host.close(); }
+});
+
 test('what forge deploy refuses or cannot find is an app error code', async () => {
   const invoke = async () => ({});
   await assert.rejects(render({ appDir: FIXTURE, moduleKey: 'nope', context: CONTEXT, invoke }), (e) => e.code === 'NO_MODULE');

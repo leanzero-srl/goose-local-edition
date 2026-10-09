@@ -20,11 +20,14 @@
 //  - .jsx compiles with the classic React.createElement runtime, as Forge's Babel does (F10): a .jsx file without
 //    `import React` throws at runtime here as it does in Jira. .tsx follows the app's tsconfig, as ts-loader does.
 //  - Bare imports resolve ONLY from the kit's modules (as the backend bundle does: runtime.cjs).
-//  - Timers are VIRTUAL: setTimeout/setInterval run on a clock that moves only when the host is told (`advance`), so
-//    every reading is deterministic and nothing waits on a wall clock. A bridge call takes zero virtual time. `Date`
-//    stays real. performance.now() is that clock plus 1 ms per commit so far: React's scheduler yields after 5 ms of
-//    work (scheduler 0.23.2 frameYieldMs), so on a frozen clock a commit loop would spin inside one task forever;
-//    with commits costing time it yields between them as in a browser frame and is counted in turns (NOT_IDLE).
+//  - Time is VIRTUAL: setTimeout/setInterval and Date run on a clock that moves only when the host is told (`advance`),
+//    so every reading is deterministic and nothing waits on a wall clock. A bridge call takes zero virtual time. Date
+//    must move with the timers: @forge/bridge's own limiter (500 invokes per 25 s, utils/index.js) reads Date.now(),
+//    and a poller advanced over virtual minutes would otherwise trip it in real milliseconds. Date starts at
+//    `startTime` (renderInEmulator: the site's clock). performance.now() is the virtual clock plus 1 ms per commit so
+//    far: React's scheduler yields after 5 ms of work (scheduler 0.23.2 frameYieldMs), so on a frozen clock a commit
+//    loop would spin inside one task forever; with commits costing time it yields between them as in a browser frame
+//    and is counted in turns (NOT_IDLE).
 //  - Handlers are delivered on a later macrotask, never inside a batch, with arguments serialised the way the
 //    bridge does (functions cannot cross); the handler of the LATEST commit receives them. Inputs get the documented
 //    SerialisableEvent (target.type, value as a string for text inputs, as the DOM gives it); a submit button calls
@@ -126,7 +129,7 @@ function onUnhandledRejection(reason, promise) {
 const hostOpened = (h) => { if (!liveHosts.size) process.on('unhandledRejection', onUnhandledRejection); liveHosts.add(h); };
 const hostClosed = (h) => { liveHosts.delete(h); if (!liveHosts.size) process.off('unhandledRejection', onUnhandledRejection); };
 
-async function render({ appDir, moduleKey, context, invoke, fetchProduct = null, kitDir } = {}) {
+async function render({ appDir, moduleKey, context, invoke, fetchProduct = null, kitDir, startTime = Date.now() } = {}) {
   if (typeof invoke !== 'function') throw new UikitHostError('HARNESS', 'render() needs invoke({moduleKey, functionKey, payload, context}) -> the resolver result');
   if (!context || typeof context !== 'object') throw new UikitHostError('HARNESS', 'render() needs the frontend context (what view.getContext() answers)');
   let paths;
@@ -186,9 +189,20 @@ async function render({ appDir, moduleKey, context, invoke, fetchProduct = null,
     // @forge/bridge's requestJira builds a Request and answers a Response (fetch/fetch.js)
     Request: PageRequest, Response, Headers, FormData, Blob,
     fetch: (url) => AppPromise.reject(notModelled(`fetch(${JSON.stringify(String(url))}) from the frontend`)),
+    __uikitNow: () => startTime + clock.now, // taken by the realm's Date below, then deleted
   };
   const ctx = vm.createContext(sandbox, { name: `uikit:${moduleKey}` });
   vm.runInContext('globalThis.self = globalThis; globalThis.window = globalThis;', ctx);
+  // The realm's own Date, on the virtual clock: new Date() / Date.now() read it, Date() as a function too.
+  vm.runInContext(`(() => {
+    const read = globalThis.__uikitNow;
+    delete globalThis.__uikitNow;
+    class VirtualDate extends Date {
+      constructor(...a) { if (a.length) super(...a); else super(read()); }
+      static now() { return read(); }
+    }
+    globalThis.Date = new Proxy(VirtualDate, { apply: () => new VirtualDate().toString() });
+  })();`, ctx);
   const AppPromise = vm.runInContext('Promise', ctx);
   const AppError = vm.runInContext('Error', ctx);
   const appJSON = vm.runInContext('JSON', ctx);
@@ -287,15 +301,14 @@ async function render({ appDir, moduleKey, context, invoke, fetchProduct = null,
     }
     return { commits: docs.length, invokes: invokes.length, timersPending: timers.size, turns: turns.n, now: clock.now };
   }
-  // Move virtual time forward by `ms`, running each timer at its own time and settling after each.
+  // Move virtual time forward by `ms`, running each timer at its own time and settling after each. A loop is runs
+  // at ONE virtual time (waitIdle counts those); a poller advanced over an hour is many times, not a loop.
   async function advance(ms) {
     const target = clock.now + Math.max(0, Number(ms) || 0);
-    const turns = { n: 0 };
     for (;;) {
       const t = nextTimer(target);
       if (!t) break;
       clock.now = Math.max(clock.now, t.at);
-      if (++turns.n > MAX_TURNS) throw notIdle(turns.n);
       runTimer(t);
       await waitIdle();
     }
@@ -464,7 +477,8 @@ function emulatorContext(emu, moduleKey, accountId, extension = {}) {
 
 async function renderInEmulator(emu, { moduleKey, asUser, context, extension } = {}) {
   const via = viaEmulator(emu);
-  return render({ appDir: emu.appDir, kitDir: emu.paths.kitDir, moduleKey, context: context ?? emulatorContext(emu, moduleKey, asUser, extension), invoke: via.invoke, fetchProduct: via.fetchProduct });
+  return render({ appDir: emu.appDir, kitDir: emu.paths.kitDir, moduleKey, context: context ?? emulatorContext(emu, moduleKey, asUser, extension),
+    invoke: via.invoke, fetchProduct: via.fetchProduct, startTime: emu.clock.now() });
 }
 
 module.exports = { render, renderInEmulator, viaEmulator, emulatorContext, UikitHostError, textOf: D.textOf, outline: D.outline };
