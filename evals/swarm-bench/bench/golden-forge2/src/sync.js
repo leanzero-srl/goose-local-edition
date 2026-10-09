@@ -128,6 +128,7 @@ export async function applyIssueEvent(cfg, { issueId, changelogId, sprintChange 
   };
   let issue = await getIssue();
   if (!issue) return onDeleted(String(issueId));
+  resolve.learn(issue.fields?.[cfg.sprintFieldId]);
 
   let histories = [];
   if (wantsLog) {
@@ -138,13 +139,18 @@ export async function applyIssueEvent(cfg, { issueId, changelogId, sprintChange 
       const all = (await sprintHistories([String(issueId)], cfg.sprintFieldId, work)).get(String(issueId)) ?? [];
       histories = all.filter((h) => String(h.id) === String(changelogId));
     }
-    for (const history of histories) for (const move of sprintMoves(history, cfg.sprintFieldId)) await resolve(move.sprintId);
   }
   const current = sprintsOfField(issue.fields?.[cfg.sprintFieldId]);
   const stored = new Map((await membersOfIssue(issue.id)).map((m) => [m.sprintId, m]));
   const knownFields = issueFields(cfg).join(',');
-  for (const s of current) if (s.state === undefined || s.state === 'active') await resolve(s.id);
-  for (const sprintId of stored.keys()) if (cfg.sprints[sprintId]) await resolve(sprintId);
+  for (const s of current) await resolve(s.id);
+  // A sprint this change records a row for: its board's estimation field is read now.
+  for (const history of histories) {
+    for (const move of sprintMoves(history, cfg.sprintFieldId)) {
+      const sprint = await resolve(move.sprintId);
+      if (sprint) await resolve.readBoard(sprint.boardId);
+    }
+  }
   if (issueFields(cfg).join(',') !== knownFields) issue = (await getIssue()) ?? issue;
 
   const rows = await rowsOf(cfg, issue, histories, 'event', resolve);

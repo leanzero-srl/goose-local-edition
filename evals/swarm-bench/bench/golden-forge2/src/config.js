@@ -39,8 +39,10 @@ async function pagedAgile(build, work) {
   }
 }
 
-export const listScrumBoards = (work) =>
-  pagedAgile((startAt) => route`/rest/agile/1.0/board?type=scrum&startAt=${startAt}&maxResults=50`, work);
+const readScrumBoards = (work) => pagedAgile((startAt) => route`/rest/agile/1.0/board?type=scrum&startAt=${startAt}&maxResults=50`, work);
+
+// One background invocation reads the board list once (the migration plan and the discovery both need it).
+export const listScrumBoards = (work) => (work.background ? (work.scrumBoards ??= readScrumBoards(work)) : readScrumBoards(work));
 
 export const listSprints = (boardId, state, work) =>
   pagedAgile((startAt) => route`/rest/agile/1.0/board/${boardId}/sprint?state=${state}&startAt=${startAt}&maxResults=50`, work);
@@ -86,29 +88,40 @@ export async function discoverConfig(work) {
   return { sprintFieldId, scopeFieldId, sprints };
 }
 
-// An event names a sprint: read it (and its board's estimation field) from Jira now, once per invocation,
-// so a sprint that closed or a board that switched its estimation field since the last scheduled run is
-// seen at once. Returns the sprint with `completeMs` (null while active), or null for a sprint that never
-// started or does not exist. cfg follows what was read: closed sprints leave cfg.sprints, active ones
-// enter it, and every active sprint of a board gets the board's current estimation field.
+// The sprints one event touches, as they are now: a sprint the issue's own Sprint field carries (state,
+// dates and board come with the issue) or, for one it left, a fresh read of the sprint. Returns the sprint
+// with `completeMs` (null while active), or null for a sprint that never started or does not exist. cfg
+// follows what was read: closed sprints leave cfg.sprints (and are listed in cfg.closed until the next
+// scheduled run settles them), active ones enter it. readBoard(boardId) reads a board's estimation field
+// fresh, once per invocation, so a change recorded after the board switched fields uses the new one.
 export function sprintReader(cfg, work) {
   const sprints = new Map();
-  const boards = new Map();
-  const boardField = async (boardId) => {
-    if (!boards.has(boardId)) boards.set(boardId, await boardEstimateField(boardId, work));
-    const field = boards.get(boardId);
-    for (const s of Object.values(cfg.sprints)) if (s.boardId === boardId) s.estimateFieldId = field;
-    return field;
+  const known = new Map();
+  const fresh = new Map();
+  const readBoard = async (boardId) => {
+    if (!fresh.has(boardId)) {
+      const field = await boardEstimateField(boardId, work);
+      fresh.set(boardId, field);
+      for (const s of [...Object.values(cfg.sprints), ...sprints.values()]) if (s && s.boardId === boardId) s.estimateFieldId = field;
+    }
+    return fresh.get(boardId);
   };
-  return async (sprintId) => {
+  const boardField = async (boardId) => {
+    if (fresh.has(boardId)) return fresh.get(boardId);
+    const cached = Object.values(cfg.sprints).find((s) => s.boardId === boardId);
+    return cached ? cached.estimateFieldId : readBoard(boardId);
+  };
+  const resolve = async (sprintId) => {
     if (sprints.has(sprintId)) return sprints.get(sprintId);
-    const res = await jiraJson('app', route`/rest/agile/1.0/sprint/${sprintId}`, undefined, work).catch((e) => {
-      if (e.status === 404) return null;
-      throw e;
-    });
+    const res =
+      known.get(sprintId) ??
+      (await jiraJson('app', route`/rest/agile/1.0/sprint/${sprintId}`, undefined, work).catch((e) => {
+        if (e.status === 404) return null;
+        throw e;
+      }));
     let entry = null;
     if (res && isStarted(res)) {
-      const boardId = String(res.originBoardId);
+      const boardId = String(res.originBoardId ?? res.boardId);
       entry = { ...sprintEntry(res, boardId, await boardField(boardId)), completeMs: res.state === 'closed' ? Date.parse(res.completeDate ?? res.endDate) : null };
       if (res.state === 'active') {
         const { completeMs, ...active } = entry;
@@ -123,4 +136,9 @@ export function sprintReader(cfg, work) {
     sprints.set(sprintId, entry);
     return entry;
   };
+  resolve.readBoard = readBoard;
+  resolve.learn = (fieldValue) => {
+    for (const s of Array.isArray(fieldValue) ? fieldValue : []) if (s !== null && typeof s === 'object' && s.id !== undefined) known.set(String(s.id), s);
+  };
+  return resolve;
 }
