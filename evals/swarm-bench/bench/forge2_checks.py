@@ -12,25 +12,27 @@ Three zeros that are never confused:
   * absent — the app lacks the graded surface (no jira:adminPage, no webtrigger, …): 0 with parts.absent_surface;
   * unavailable — the probe did not write what the row reads: a harness failure, never app evidence.
 
-THE OBSERVATIONS CONTRACT (P9 writes these keys into forge2-observations.json beside 1.0's; P8 reads exactly them;
-checkpoints are 'h1'..'h6' — virtual-hour marks after the upgrade — and 'final'):
+THE OBSERVATIONS CONTRACT (bench/forge2_probe.mjs writes these keys into forge2-observations.json beside 1.0's; P8
+reads exactly them; checkpoints are 'h1'..'h6' — virtual-hour marks after the upgrade — and 'final'):
   rate        {requests: [{t_ms, invocation, kind: 'background'|'person', method, path_tpl, cost, status, reason,
-                           retry_after_s}], hours: [{hour, used, background_used, person_used}]}
+                           retry_after_s[, issue]}], hours: [{hour, used, background_used, person_used}]
+               [, background_share_pct]}
   invocations [{id, function_key, module_type, virtual_ms, limit_ms, killed, result_kind}]
-  migration   {v1_rows: [{changeId, sprintId, at}],
-               v2_by_checkpoint: {<checkpoint>: [{changeId, sprintId, at, deleted, estimate, boardId}]}}
-  world       [{t_ms, class, detail}]
-  webtrigger  [{case, status, side_effects}]
-  admin       {actions: [{as: 'admin'|'nonadmin'|'forged', resolver, payload, result_ok, state_changed}],
-               tree_text: string, secret_leaks: [string]}
-  field       {writes: [{t_ms, updates, status}], values_by_checkpoint: {<checkpoint>: {<issueKey>: string}}}
-  llm_v2      [{case, llm_calls, shown_text, writes_out_of_scope}]
-  boot        {<surface>: {invokes_before_paint, bytes_before_paint, external_requests}}
-and the values inside them this module relies on (named in OPTIONAL_KEYS and CASES below): `rate.requests[].issue`
-for a per-issue 429, `rate.background_share_pct` when the probe changed the admin share, `world[].detail` a dict
-(permission_loss: {accountId, projectKey, next_response}), the webtrigger and llm_v2 `case` names, llm_v2
-`model_text` on the no_finish_reason case, `admin.actions[].expect_change` false for a read, boot surfaces
-'widget' / 'sprint' / 'admin'.
+  migration   {v1_final: [{changeId, sprintId, at}] (the v1 entity at the end),
+               v2_by_checkpoint: {<checkpoint>: [{changeId, sprintId, at, deleted, estimate, boardId, ...}]},
+               panel_by_checkpoint: {<checkpoint>: {text, migrated, total, complete}}}
+  world       [{class, ...}] the world events the site applied (world.cjs class names)
+  rovo        {calls: [{as, sprintId, result, ...}]} (1.0's section; the peer's calls run after the browse-revoke)
+  webtrigger  [{case, status, side_effects}] with forge2/site/ci.cjs's step names (WT_STATUS)
+  admin       {actions: [{as: 'admin'|'nonadmin'|'forged', resolver, result_ok, state_changed}], controls: {<label
+               key>: found}, tree_text, secret_shown, secret_source, secret_leaks: [string]}
+  field       {writes: [{t_ms, updates, status}], values_by_checkpoint: {<checkpoint>: {<issueId|issueKey>: value}},
+               applied_by_checkpoint: {<checkpoint>: <live changes the site had applied>}}
+  llm_v2      [{case, llm_calls, shown_text, writes_out_of_scope[, absent][, setting_applied]}] (LLM_TOOL/FAILURE/COST)
+  boot        {'widget-view'|'sprint-modal'|'admin-page': {invokes_before_paint, bytes_before_paint,
+               external_requests}} (null = the surface never painted)
+`rate.requests[].issue` (the issue a per-issue 429 names) and `field.applied_by_checkpoint` are the two keys the probe
+must add for its rows to grade (until then: per-issue 429s are named as not graded; r7_values_fresh is unavailable).
 
 `python3 forge2_checks.py` runs the selftest: observations built from the oracle score 1.0 on every row, an idle app
 earns 0 with no critical fired, and one injected defect per family costs exactly the rows it should.
@@ -41,11 +43,15 @@ from collections import Counter
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 import json
+from pathlib import Path
 import re
 import sys
+import tempfile
 from typing import Callable, Dict, List, Optional, Tuple
 
 import forge2_oracle as fo
+
+ROOT = Path(__file__).resolve().parent.parent
 
 FAMILY_WEIGHT = {'R1': .12, 'R2': .13, 'R3': .08, 'R4': .10, 'R5': .10, 'R6': .08, 'R7': .05, 'R8': .04, 'R9': .05}
 assert abs(sum(FAMILY_WEIGHT.values()) - 0.75) < 1e-9   # SPEC §4: v2 rows are 0.75 of the score
@@ -53,23 +59,20 @@ assert abs(sum(FAMILY_WEIGHT.values()) - 0.75) < 1e-9   # SPEC §4: v2 rows are 
 ADMIN_LABELS = ('Background share (%)', 'AI explanations enabled', 'Daily AI token budget', 'Comment group',
                 'Rotate CI secret', 'Migration', 'Recent admin changes', 'Save settings')       # SPEC §2.6
 SECRET_MASK = re.compile(r'••••\S{4}')
-MIGRATED = re.compile(r'Migrated\s+([\d,]+)\s+of\s+([\d,]+)\s+v1 rows', re.I)
 QUOTA_REASON = 'jira-quota-tenant-based'
 PER_ISSUE_REASON = 'jira-per-issue-on-write'
-WT_INVALID = ('missing_signature', 'bad_signature', 'tampered_body', 'stale_timestamp')
-WT_VALID = ('valid', 'header_case')
-WT_STATUS = {**{c: 401 for c in WT_INVALID}, 'replay': 200, 'valid': 202, 'header_case': 202}   # SPEC R6
-LLM_TOOL = ('tool_out_of_scope',)
-LLM_FAILURE = ('429_no_retry_after', 'no_finish_reason')
-LLM_COST = ('cache_repeat', 'kill_switch', 'token_budget')
+WT_INVALID = ('bad-signature', 'unsigned', 'tampered', 'stale', 'stale-future')      # forge2/site/ci.cjs steps
+WT_VALID = ('valid', 'header-case')
+WT_STATUS = {**{c: 401 for c in WT_INVALID}, 'replay': 200, 'valid': 202, 'header-case': 202}   # SPEC R6
+LLM_TOOL = ('tool-injection',)                                               # forge2_probe.mjs LLM_V2_CASES
+LLM_FAILURE = ('rate-limited-no-retry-after', 'no-finish-reason')
+LLM_COST = ('cache', 'kill-switch', 'token-budget')
 LLM_429_ATTEMPTS = 3                       # SPEC R8: <= 3 attempts per minute
+SITE_LLM = ROOT / 'forge2' / 'site' / 'llm.cjs'   # PARTIAL_TEXT: the unfinished answer's words
 BOOT_INVOKES = 1                           # SPEC R9
 BOOT_BYTES = 150 * 1024                    # SPEC R9 "150 KB", read as KiB: the lenient side of the unit
-BOOT_SURFACES = {'widget': ('dashboards:widget', True), 'sprint': ('jira:sprintAction', True),
-                 'admin': ('jira:adminPage', False)}
-CASES = {'webtrigger': tuple(WT_STATUS), 'llm_v2': LLM_TOOL + LLM_FAILURE + LLM_COST, 'boot': tuple(BOOT_SURFACES)}
-OPTIONAL_KEYS = ('rate.requests[].issue', 'rate.background_share_pct', 'world[].detail.next_response',
-                 'llm_v2[].model_text', 'admin.actions[].expect_change')
+BOOT_SURFACES = {'widget-view': ('dashboards:widget', True), 'sprint-modal': ('jira:sprintAction', True),
+                 'admin-page': ('jira:adminPage', False)}
 
 
 # ── registry ─────────────────────────────────────────────────────────────────────────────────
@@ -241,18 +244,14 @@ def _(ev: Ev) -> Dict:
     expected = ev.o.v1_rows()
     if not expected:
         return vacuous('no v1 row was preloaded')
-    worst = None
-    for cp in (fo.MIGRATION_DEADLINE, 'final'):
-        rows, why = ev.v2(cp)
-        if why:
-            return unavail(why)
-        have = index(rows)
-        missing = [key(e) for e in expected if key(e) not in have]
-        moved = [key(e) for e in expected if key(e) in have and not any(same_at(r, e['at']) for r in have[key(e)])]
-        share = (len(expected) - len(missing) - len(moved)) / len(expected)
-        if worst is None or share < worst[0]:
-            worst = (share, cp, missing, moved)
-    share, cp, missing, moved = worst
+    cp = fo.MIGRATION_DEADLINE
+    rows, why = ev.v2(cp)
+    if why:
+        return unavail(why)
+    have = index(rows)
+    missing = [key(e) for e in expected if key(e) not in have]
+    moved = [key(e) for e in expected if key(e) in have and not any(same_at(r, e['at']) for r in have[key(e)])]
+    share = (len(expected) - len(missing) - len(moved)) / len(expected)
     detail = (f'{cp}: {len(expected) - len(missing) - len(moved)} of {len(expected)} v1 rows in scope-ledger with '
               f'their changeId and time')
     if missing:
@@ -273,9 +272,9 @@ def _(ev: Ev) -> Dict:
     mig, why = ev.section('migration')
     if why:
         return unavail(why)
-    v1 = mig.get('v1_rows')
+    v1 = mig.get('v1_final')
     if not isinstance(v1, list):
-        return unavail('migration.v1_rows is not a list')
+        return unavail('migration.v1_final (the v1 entity at the end) is not a list')
     final, why = ev.v2('final')
     if why:
         return unavail(why)
@@ -316,26 +315,34 @@ def _(ev: Ev) -> Dict:
 
 @row('r1_progress_visible', 'R1')
 def _(ev: Ev) -> Dict:
+    """The panel's `Migrated <n> of <total> v1 rows` line read near each hour mark: before the deadline it must name
+    the right total with n <= total; from the deadline on, n = total and `complete`."""
     if not ev.has_module('jira:adminPage'):
         return absent('jira:adminPage (the migration progress lives in the admin panel)')
-    admin, why = ev.section('admin')
+    mig, why = ev.section('migration')
     if why:
         return unavail(why)
-    text = admin.get('tree_text')
-    if not isinstance(text, str):
-        return unavail('admin.tree_text is not a string')
+    panels = mig.get('panel_by_checkpoint')
+    cps = [cp for cp in fo.CHECKPOINTS if isinstance((panels or {}).get(cp), dict)] if isinstance(panels, dict) else []
+    if not cps:
+        return unavail('migration.panel_by_checkpoint holds no checkpoint')
     total = len(ev.o.v1_rows())
     if not total:
         return vacuous('no v1 row was preloaded')
-    m = MIGRATED.search(text)
-    shown = (int(m.group(1).replace(',', '')), int(m.group(2).replace(',', ''))) if m else None
-    parts = {'label': 'Migration' in text, 'total': bool(shown) and shown[1] == total,
-             'complete': bool(shown) and shown[0] == total and bool(re.search(r'\bcomplete\b', text, re.I))}
-    detail = f'admin panel shows {m.group(0)!r}' if m else f'no "Migrated <n> of {total} v1 rows" text in the admin panel'
-    if not parts['complete']:
-        detail += f'; `complete` with {total} of {total} not shown'
-    return g(sum(parts.values()) / len(parts), detail, 'migration progress invisible to the admin',
-             parts={k: int(v) for k, v in parts.items()})
+    due = fo.CHECKPOINTS.index(fo.MIGRATION_DEADLINE)
+    wrong = []
+    for cp in cps:
+        p = panels[cp]
+        n, shown_total = p.get('migrated'), p.get('total')
+        if fo.CHECKPOINTS.index(cp) < due:
+            ok = shown_total == total and isinstance(n, int) and 0 <= n <= total
+        else:
+            ok = shown_total == total and n == total and p.get('complete') is True
+        if not ok:
+            wrong.append(f'{cp}: {p.get("text")!r}' + (' without `complete`' if p.get('complete') is not True else ''))
+    return g((len(cps) - len(wrong)) / len(cps), f'{len(cps) - len(wrong)} of {len(cps)} panel reads show the migration '
+             f'right (total {total}; complete from {fo.MIGRATION_DEADLINE})' + (f'; {sample(wrong, 2)}' if wrong else ''),
+             'migration progress invisible to the admin')
 
 
 # ── R2 Tier 1 dosing at scale ────────────────────────────────────────────────────────────────
@@ -530,32 +537,35 @@ def world_applied(ev: Ev, cls: str) -> Optional[str]:
 
 @row('r4_sprint_close_final', 'R4')
 def _(ev: Ev) -> Dict:
+    """SPEC §2.5 "its ledger is final": at the end the closed sprint holds exactly the rows it had at its close —
+    none purged with the sprint, none added after it."""
     gate = ledger_gate(ev)
     if gate:
         return gate
-    closes = [c for c in ev.o.world('sprint_close') if ev.o.changes_after_close(c['sprintId'])]
+    expected = ev.o.expected_rows('final')
+    closes = [str(c['sprintId']) for c in ev.o.world('sprint-close')]
+    closes = [sid for sid in closes if any(e['sprintId'] == sid for e in expected)]
     if not closes:
-        return vacuous('no sprint closed with a change touching it afterwards')
-    why = world_applied(ev, 'sprint_close')
+        return vacuous('no sprint with ledger rows closed')
+    why = world_applied(ev, 'sprint-close')
     if why:
         return unavail(why)
     rows, why = ev.v2('final')
     if why:
         return unavail(why)
     good, notes = 0, []
-    for c in closes:
-        sid = str(c['sprintId'])
-        after = set(ev.o.changes_after_close(sid))
-        mine = [r for r in rows if str(r.get('sprintId')) == sid]
-        late = sorted({str(r.get('changeId')) for r in mine if str(r.get('changeId')) in after})
-        if not mine:
-            notes.append(f'sprint {sid}: no ledger rows at all')
-        elif late:
-            notes.append(f'sprint {sid}: rows recorded after its close ({sample(late)})')
-        else:
+    for sid in closes:
+        want = {key(e) for e in expected if e['sprintId'] == sid}
+        have = {key(r) for r in rows if str(r.get('sprintId')) == sid}
+        if have == want:
             good += 1
-    return g(good / len(closes), f'{good} of {len(closes)} closed sprints kept a final ledger'
-             + (f'; {"; ".join(notes[:2])}' if notes else ''), 'a closed sprint keeps changing')
+        else:
+            gone, extra = sorted(want - have), sorted(have - want)
+            notes.append(f'sprint {sid}: ' + ', '.join(
+                f'{len(ks)} {label} (e.g. {sample(ks, 2)})' for label, ks in
+                (('rows gone', gone), ('rows that are not its ledger', extra)) if ks))
+    return g(good / len(closes), f'{good} of {len(closes)} closed sprints kept exactly their final ledger'
+             + (f'; {notes[0]}' if notes else ''), 'a closed sprint loses or gains history')
 
 
 @row('r4_move_new_board', 'R4')
@@ -566,7 +576,7 @@ def _(ev: Ev) -> Dict:
     moves = ev.o.cross_board_moves()
     if not moves:
         return vacuous("no issue moved into another board's sprint")
-    why = world_applied(ev, 'issue_move')
+    why = world_applied(ev, 'issue-move')
     if why:
         return unavail(why)
     rows, why = ev.v2('final')
@@ -596,7 +606,7 @@ def _(ev: Ev) -> Dict:
     gate = ledger_gate(ev)
     if gate:
         return gate
-    switches = ev.o.world('estimation_field_change')
+    switches = ev.o.world('estimation-field')
     expected = ev.o.expected_rows('final')
     after, before = [], []
     for sw in switches:
@@ -612,7 +622,7 @@ def _(ev: Ev) -> Dict:
                 before.append(e)
     if not after:
         return vacuous("no change after a board's estimation-field switch tells the two fields apart")
-    why = world_applied(ev, 'estimation_field_change')
+    why = world_applied(ev, 'estimation-field')
     if why:
         return unavail(why)
     rows, why = ev.v2('final')
@@ -639,7 +649,7 @@ def _(ev: Ev) -> Dict:
     expected = [e for e in ev.o.expected_rows('final') if e['deleted']]
     if not expected:
         return vacuous('the world deleted no issue that has ledger rows')
-    why = world_applied(ev, 'issue_delete')
+    why = world_applied(ev, 'issue-delete')
     if why:
         return unavail(why)
     rows, why = ev.v2('final')
@@ -654,44 +664,47 @@ def _(ev: Ev) -> Dict:
              'deleted issues erase history or keep counting')
 
 
+def key_in(text: str, issue_key: str) -> bool:
+    return bool(re.search(r'(?<![A-Za-z0-9])' + re.escape(issue_key) + r'(?![0-9])', text))
+
+
 @row('r4_permission_revoked', 'R4', critical="data leak — a hidden issue's data shown to a person who cannot browse it")
 def _(ev: Ev) -> Dict:
-    losses = ev.o.world('permission_loss')
+    """The person who lost browse on a project asks the Rovo action after the loss (the probe's rovo section runs
+    after the scored hours): none of that project's newly hidden issues may show. Issues hidden from them since the
+    install are 1.0's b_no_permission_leak, never priced here."""
+    losses = ev.o.world('browse-revoke')
     if not losses:
         return vacuous('no person lost browse permission')
-    world, why = ev.section('world', list)
+    why = world_applied(ev, 'browse-revoke')
     if why:
         return unavail(why)
-    records = [w for w in world if isinstance(w, dict) and w.get('class') == 'permission_loss']
-    leaks, graded, idle = [], 0, 0
+    rovo = ev.obs.get('rovo')
+    calls = rovo.get('calls') if isinstance(rovo, dict) else None
+    if not isinstance(calls, list):
+        return unavail('the probe wrote no rovo.calls (the requests after the browse-revoke)')
+    ledger_keys = {e['issueKey'] for e in ev.o.expected_rows('final')}
+    leaks, shown = [], 0
     for loss in losses:
-        account, project = str(loss['accountId']), loss['projectKey']
-        rec = next((w for w in records if isinstance(w.get('detail'), dict)
-                    and str(w['detail'].get('accountId')) == account and w['detail'].get('projectKey') == project), None)
-        if rec is None or rec['detail'].get('next_response') is None:
-            return unavail(f'the probe recorded no request by {account} after losing {project} '
-                           '(world[].detail.next_response)')
-        text = rec['detail']['next_response']
-        text = text if isinstance(text, str) else json.dumps(text, default=str)
+        account = str(loss['accountId'])
         before = ev.o.hidden_issue_ids(account, loss['t'] - fo.JUST_BEFORE)
         after = ev.o.hidden_issue_ids(account, loss['t'])
-        newly = after - before
-        visible = {ev.o.issues[i]['key'] for i in ev.o.issues if i not in after}
-        if not any(re.search(r'(?<![A-Za-z0-9])' + re.escape(k) + r'(?![0-9])', text) for k in visible):
-            idle += 1
-            continue
-        graded += 1
-        terms = ev.o.leak_terms_for(newly)
-        hits = [k for k in terms['keys'] if re.search(r'(?<![A-Za-z0-9])' + re.escape(k) + r'(?![0-9])', text)]
-        hits += [s for s in terms['summaries'] if s in text]
-        if hits:
-            leaks.append(f'{account} after losing {project}: {sample(hits)}')
-    if not graded:
-        return vacuous(f'the request after the permission loss showed no ledger data at all ({idle} request(s))')
+        visible = {k for k in ledger_keys if ev.o.issue_by_key[k]['id'] not in after}
+        terms = ev.o.leak_terms_for(after - before)
+        for c in calls:
+            if not isinstance(c, dict) or str(c.get('as')) != account or c.get('result') is None:
+                continue
+            text = json.dumps(c['result'], default=str)
+            shown += any(key_in(text, k) for k in visible)
+            hits = [k for k in terms['keys'] if key_in(text, k)] + [s for s in terms['summaries'] if s in text]
+            if hits:
+                leaks.append(f'{account} on sprint {c.get("sprintId")} after losing {loss["projectKey"]}: {sample(hits)}')
     if leaks:
-        return g(0.0, f'stale data after a permission loss: {leaks[0]}',
+        return g(0.0, f'stale data after a browse revoke: {leaks[0]}',
                  "data leak — a hidden issue's data shown to a person who cannot browse it")
-    return g(1.0, f'{graded} request(s) after a permission loss showed none of the newly hidden issues')
+    if not shown:
+        return vacuous('no request after the browse revoke showed any ledger data, so hiding proves nothing')
+    return g(1.0, f'{shown} answer(s) after a browse revoke showed ledger data and none of the newly hidden issues')
 
 
 # ── R5 the UI Kit admin panel ────────────────────────────────────────────────────────────────
@@ -706,26 +719,25 @@ def admin_actions(ev: Ev, *who: str) -> Tuple[Optional[List[Dict]], Optional[str
     return [a for a in actions if isinstance(a, dict) and a.get('as') in who], None
 
 
-def applied(a: Dict) -> bool:
-    return a.get('result_ok') is True and (a.get('state_changed') is True or a.get('expect_change') is False)
-
-
 @row('r5_panel_labels', 'R5')
 def _(ev: Ev) -> Dict:
+    """Every §2.6 control found by its label, the CI secret shown once after `Rotate CI secret`, then masked."""
     if not ev.has_module('jira:adminPage'):
         return absent('jira:adminPage')
     admin, why = ev.section('admin')
     if why:
         return unavail(why)
-    text = admin.get('tree_text')
-    if not isinstance(text, str):
-        return unavail('admin.tree_text is not a string')
-    missing = [label for label in ADMIN_LABELS if label not in text]
-    masked = bool(SECRET_MASK.search(text))
-    return g((len(ADMIN_LABELS) - len(missing) + masked) / (len(ADMIN_LABELS) + 1),
-             f'{len(ADMIN_LABELS) - len(missing)} of {len(ADMIN_LABELS)} §2.6 labels; secret masked as ••••<last4>: '
-             f'{"yes" if masked else "no"}' + (f'; missing {sample(missing, 4)}' if missing else ''),
-             'the admin cannot find a control')
+    controls = admin.get('controls')
+    if not isinstance(controls, dict) or len(controls) != len(ADMIN_LABELS):
+        return unavail(f'admin.controls does not name the {len(ADMIN_LABELS)} §2.6 labels')
+    missing = sorted(k for k, found in controls.items() if found is not True)
+    shown = admin.get('secret_shown') is True
+    masked = bool(SECRET_MASK.search(str(admin.get('tree_text') or '')))
+    have = len(ADMIN_LABELS) - len(missing) + shown + masked
+    return g(have / (len(ADMIN_LABELS) + 2),
+             f'{len(ADMIN_LABELS) - len(missing)} of {len(ADMIN_LABELS)} §2.6 controls found by label; new secret shown '
+             f'once: {"yes" if shown else "no"}; then masked ••••<last4>: {"yes" if masked else "no"}'
+             + (f'; missing {sample(missing, 4)}' if missing else ''), 'the admin cannot find a control')
 
 
 @row('r5_admin_actions_apply', 'R5')
@@ -737,9 +749,10 @@ def _(ev: Ev) -> Dict:
         return unavail(why)
     if not acts:
         return vacuous('no admin action was made as an admin')
-    bad = [str(a.get('resolver')) for a in acts if not applied(a)]
-    return g((len(acts) - len(bad)) / len(acts), f'{len(acts) - len(bad)} of {len(acts)} admin actions by an admin '
-             'applied' + (f'; failed: {sample(bad)}' if bad else ''), 'the admin panel does not work for admins')
+    bad = [str(a.get('resolver')) for a in acts if not (a.get('result_ok') is True and a.get('state_changed') is True)]
+    return g((len(acts) - len(bad)) / len(acts), f'{len(acts) - len(bad)} of {len(acts)} admin-page invokes of the '
+             'admin\'s save and rotate applied' + (f'; failed or changed nothing: {sample(bad)}' if bad else ''),
+             'the admin panel does not work for admins')
 
 
 @row('r5_nonadmin_refused', 'R5', critical='an admin action by a non-admin succeeded')
@@ -752,11 +765,12 @@ def _(ev: Ev) -> Dict:
     if not acts:
         return vacuous('no admin action was attempted by a non-admin or with a forged payload')
     works, _w = admin_actions(ev, 'admin')
-    if not any(applied(a) and a.get('state_changed') is True for a in works or []):
+    if not any(a.get('result_ok') is True and a.get('state_changed') is True for a in works or []):
         return vacuous('no admin action changed state even for an admin, so a refusal proves nothing')
-    breaches = [f'{a.get("as")}: {a.get("resolver")}' for a in acts if a.get('state_changed')]
+    breaches = [f'{a.get("as")}: {a.get("resolver")} ({sample(a.get("changed_keys") or [], 2)})'
+                for a in acts if a.get('state_changed')]
     if breaches:
-        return g(0.0, f'state changed by {sample(breaches)}', 'an admin action by a non-admin succeeded')
+        return g(0.0, f'state changed by {sample(breaches, 2)}', 'an admin action by a non-admin succeeded')
     return g(1.0, f'{len(acts)} non-admin/forged admin actions changed nothing')
 
 
@@ -800,7 +814,7 @@ def _(ev: Ev) -> Dict:
     if breaches:
         return g(0.0, f'side effects without a valid signature: {sample(breaches)}',
                  'a web-trigger write without a valid signature')
-    return g(1.0, f'{len(invalid)} invalid events ({sample(sorted({c["case"] for c in invalid}), 4)}) had no effect')
+    return g(1.0, f'{len(invalid)} invalid events ({sample(sorted({c["case"] for c in invalid}), 5)}) had no effect')
 
 
 @row('r6_replay_once', 'R6', critical='duplicate side effect: a replayed web-trigger event applied twice')
@@ -873,11 +887,11 @@ def _(ev: Ev) -> Dict:
     leaks = admin.get('secret_leaks')
     if not isinstance(leaks, list):
         return unavail('admin.secret_leaks is not a list')
-    if not SECRET_MASK.search(str(admin.get('tree_text') or '')):
-        return vacuous('no CI secret was rotated (the panel shows no ••••<last4>)')
+    if not admin.get('secret_source'):
+        return vacuous('no CI secret existed to leak (the panel showed none and storage holds no single secret)')
     if leaks:
-        return g(0.0, f'the full CI secret appeared in {sample(leaks)}', 'the CI secret disclosed')
-    return g(1.0, 'the rotated CI secret never appeared outside its one-time display')
+        return g(0.0, f'the CI secret appeared in {sample(leaks, 2)}', 'the CI secret disclosed')
+    return g(1.0, f'the CI secret ({admin["secret_source"]}) never appeared outside its one-time display')
 
 
 # ── R7 the scope-status custom field ─────────────────────────────────────────────────────────
@@ -898,21 +912,27 @@ def value_ok(observed, accepted) -> bool:
 
 @row('r7_values_fresh', 'R7')
 def _(ev: Ev) -> Dict:
+    """At every checkpoint each issue's scope-status equals the oracle's for the Jira state the site had applied when
+    the probe read it (field.applied_by_checkpoint; 'final' is every scripted change)."""
     if not ev.has_module('jira:customField', 'scope-status'):
         return absent('jira:customField scope-status')
     field, why = ev.section('field')
     if why:
         return unavail(why)
-    by = field.get('values_by_checkpoint')
-    if not isinstance(by, dict):
-        return unavail('field.values_by_checkpoint is not an object')
+    by, applied = field.get('values_by_checkpoint'), field.get('applied_by_checkpoint')
+    if not isinstance(by, dict) or not isinstance(applied, dict):
+        return unavail('field.values_by_checkpoint / field.applied_by_checkpoint is not an object')
     cps = [cp for cp in fo.CHECKPOINTS if isinstance(by.get(cp), dict)]
     if not cps:
         return unavail('field.values_by_checkpoint holds no checkpoint')
+    late = [cp for cp in cps if cp != 'final' and not isinstance(applied.get(cp), int)]
+    if late:
+        return unavail(f'field.applied_by_checkpoint lacks {sample(late)} (the live changes the site had applied)')
+    key_of = {iid: i['key'] for iid, i in ev.o.issues.items()}
     shares, worst = [], None
     for cp in cps:
-        values, ungraded = ev.o.field_values(cp)
-        observed = by[cp]
+        values, ungraded = ev.o.field_values(cp, None if cp == 'final' else applied[cp])
+        observed = {key_of.get(str(k), str(k)): v for k, v in by[cp].items()}
         graded = ({k for k, v in values.items() if v != frozenset({''})}
                   | {k for k, v in observed.items() if str(v or '').strip()}) - ungraded
         if not graded:
@@ -948,13 +968,32 @@ def _(ev: Ev) -> Dict:
 
 # ── R8 Forge LLM, properly ───────────────────────────────────────────────────────────────────
 
+def partial_text() -> Optional[str]:
+    """The words of the site's unfinished answer (forge2/site/llm.cjs PARTIAL_TEXT): read from the site, never copied."""
+    try:
+        m = re.search(r"const PARTIAL_TEXT = '([^']+)'", SITE_LLM.read_text())
+    except OSError:
+        return None
+    return m.group(1) if m else None
+
+
 def llm_cases(ev: Ev, names: Tuple[str, ...]) -> Tuple[Optional[List[Dict]], Optional[str], bool]:
     cases, why = ev.section('llm_v2', list)
     if why:
         return None, why, False
     cases = [c for c in cases if isinstance(c, dict)]
-    calls_model = any((count(c.get('llm_calls')) or 0) >= 1 for c in cases)
+    calls_model = any((count(c.get('llm_calls')) or 0) >= 1 or any((count(x) or 0) >= 1 for x in c.get('per_click') or [])
+                      for c in cases)
     return [c for c in cases if c.get('case') in names], None, calls_model
+
+
+def case_blocked(c: Dict) -> Optional[str]:
+    """A case the app could not be put through is its failure, named: no explain control, no admin setting."""
+    if c.get('absent'):
+        return f'{c["case"]}: {c["absent"]}'
+    if c.get('setting_applied') is False:
+        return f'{c["case"]}: the admin panel could not switch the setting'
+    return None
 
 
 def llm_gate(ev: Ev) -> Optional[Dict]:
@@ -969,14 +1008,16 @@ def _(ev: Ev) -> Dict:
     cases, why, _calls = llm_cases(ev, LLM_TOOL)
     if why:
         return unavail(why)
-    cases = [c for c in cases if (count(c.get('llm_calls')) or 0) >= 1]
-    if not cases:
+    blocked = [b for b in map(case_blocked, cases) if b]
+    asked = [c for c in cases if not case_blocked(c) and (count(c.get('llm_calls')) or 0) >= 1]
+    if not asked and not blocked:
         return vacuous('the model was never asked in the manipulated-tool-call case')
-    bad = [c for c in cases if (count(c.get('writes_out_of_scope')) or 0) > 0]
-    return g((len(cases) - len(bad)) / len(cases), f'{len(cases) - len(bad)} of {len(cases)} manipulated tool calls '
-             'validated against the viewer\'s sprint scope before acting'
-             + (f'; acted out of scope {count(bad[0].get("writes_out_of_scope"))} time(s)' if bad else ''),
-             'a prompt-injected tool call writes outside the viewer\'s scope')
+    bad = [c for c in asked if (count(c.get('writes_out_of_scope')) or 0) > 0]
+    total = len(asked) + len(blocked)
+    return g((len(asked) - len(bad)) / total, f'{len(asked) - len(bad)} of {total} manipulated tool calls validated '
+             "against the viewer's sprint scope before acting"
+             + (f'; acted out of scope {count(bad[0].get("writes_out_of_scope"))} time(s)' if bad else '')
+             + (f'; {blocked[0]}' if blocked else ''), "a prompt-injected tool call writes outside the viewer's scope")
 
 
 @row('r8_failure_handling', 'R8')
@@ -991,15 +1032,18 @@ def _(ev: Ev) -> Dict:
         return vacuous('no LLM failure case reached a model call')
     ok, notes = 0, []
     for c in cases:
-        if c['case'] == '429_no_retry_after':
+        blocked = case_blocked(c)
+        if blocked:
+            good, note = False, blocked
+        elif c['case'] == 'rate-limited-no-retry-after':
             good = (count(c.get('llm_calls')) or 0) <= LLM_429_ATTEMPTS
-            note = f'429 without Retry-After: {c.get("llm_calls")} attempts (<= {LLM_429_ATTEMPTS})'
+            note = f'429 without Retry-After: {c.get("llm_calls")} attempts in the minute (<= {LLM_429_ATTEMPTS})'
         else:
-            model = c.get('model_text')
-            if not isinstance(model, str) or not model.strip():
-                return unavail('llm_v2 no_finish_reason case carries no model_text')
-            good = model.strip() not in str(c.get('shown_text') or '')
-            note = 'a response without finish_reason was ' + ('not shown' if good else 'SHOWN')
+            words = partial_text()
+            if words is None:
+                return unavail(f'{SITE_LLM} defines no PARTIAL_TEXT (the unfinished answer the probe looks for)')
+            good = words not in str(c.get('shown_text') or '')
+            note = 'an answer without finish_reason was ' + ('not shown' if good else 'SHOWN as if complete')
         ok += good
         if not good:
             notes.append(note)
@@ -1019,16 +1063,18 @@ def _(ev: Ev) -> Dict:
         return vacuous('no cache, kill-switch or token-budget case was run')
     if not calls_model:
         return vacuous('the app never called the model, so making no call proves nothing')
-    bad = [f'{c["case"]} ({c.get("llm_calls")} calls)' for c in cases if (count(c.get('llm_calls')) or 0) > 0]
+    bad = [case_blocked(c) or f'{c["case"]} ({c.get("llm_calls")} calls)' for c in cases
+           if case_blocked(c) or (count(c.get('llm_calls')) or 0) > 0]
     return g((len(cases) - len(bad)) / len(cases), f'{len(cases) - len(bad)} of {len(cases)} cache/kill-switch/budget '
-             'cases made no model call' + (f'; called anyway: {sample(bad)}' if bad else ''),
+             'cases made no model call' + (f'; {sample(bad, 2)}' if bad else ''),
              'AI spend the admin switched off or capped')
 
 
 # ── R9 the Custom UI boot budget ─────────────────────────────────────────────────────────────
 
 def boot_row(ev: Ev, surface: str) -> Dict:
-    mtype, bytes_graded = BOOT_SURFACES[surface]
+    """null in the probe's record means the surface never reached its first paint/render: that budget item fails."""
+    mtype, front = BOOT_SURFACES[surface]
     if not ev.has_module(mtype):
         return absent(mtype)
     boot, why = ev.section('boot')
@@ -1036,33 +1082,33 @@ def boot_row(ev: Ev, surface: str) -> Dict:
         return unavail(why)
     rec = boot.get(surface)
     if not isinstance(rec, dict):
-        return unavail(f'boot.{surface} not recorded')
-    invokes, external = count(rec.get('invokes_before_paint')), count(rec.get('external_requests'))
-    size = count(rec.get('bytes_before_paint')) if bytes_graded else 0
-    if invokes is None or external is None or size is None:
-        return unavail(f'boot.{surface} lacks a count')
-    parts = {'invokes': int(invokes <= BOOT_INVOKES), 'external': int(external == 0)}
-    if bytes_graded:
-        parts['bytes'] = int(size <= BOOT_BYTES)
-    return g(sum(parts.values()) / len(parts),
-             f'{surface}: {invokes} invoke(s) before first paint (<= {BOOT_INVOKES})'
-             + (f', {size} bytes of JS+CSS (<= {BOOT_BYTES})' if bytes_graded else '')
-             + f', {external} external request(s)', 'a slow or leaky first paint', parts=parts)
+        return unavail(f'boot[{surface!r}] not recorded')
+    invokes = count(rec.get('invokes_before_paint'))
+    if invokes is None:
+        return g(0.0, f'{surface}: never reached its first paint, so no boot budget was met', 'a surface that never paints')
+    parts = {'invokes': int(invokes <= BOOT_INVOKES)}
+    detail = f'{surface}: {invokes} invoke(s) before first paint (<= {BOOT_INVOKES})'
+    if front:
+        size, external = count(rec.get('bytes_before_paint')), count(rec.get('external_requests'))
+        parts['bytes'] = int(size is not None and size <= BOOT_BYTES)
+        parts['external'] = int(external == 0)
+        detail += f', {size} bytes of JS+CSS (<= {BOOT_BYTES}), {external} external request(s)'
+    return g(sum(parts.values()) / len(parts), detail, 'a slow or leaky first paint', parts=parts)
 
 
 @row('r9_widget_boot', 'R9')
 def _(ev: Ev) -> Dict:
-    return boot_row(ev, 'widget')
+    return boot_row(ev, 'widget-view')
 
 
 @row('r9_sprint_boot', 'R9')
 def _(ev: Ev) -> Dict:
-    return boot_row(ev, 'sprint')
+    return boot_row(ev, 'sprint-modal')
 
 
 @row('r9_admin_boot', 'R9')
 def _(ev: Ev) -> Dict:
-    return boot_row(ev, 'admin')
+    return boot_row(ev, 'admin-page')
 
 
 # ── evaluation ───────────────────────────────────────────────────────────────────────────────
@@ -1099,25 +1145,29 @@ def weighted(rows: List[Dict]) -> float:
 
 # ── selftest: perfect, idle, and one defect per family ──────────────────────────────────────
 
+SELFTEST_PARTIAL = 'Scope grew after the sprint started because the team pulled in'
+
+
 def perfect_observations(o: fo.Oracle) -> Dict:
-    """What an app that meets every R1-R9 guarantee shows the probe on this pack, built from the oracle."""
+    """What an app that meets every R1-R9 guarantee shows the probe on this pack, built from the oracle in the shapes
+    forge2_probe.mjs writes."""
     def v2(cp):
         return [{'changeId': e['changeId'], 'sprintId': e['sprintId'], 'at': float(e['at']), 'deleted': e['deleted'],
-                 'estimate': float(min(e['estimates'])), 'boardId': e['boardId']} for e in o.expected_rows(cp)]
-    values = {}
+                 'estimate': float(min(e['estimates'])), 'boardId': e['boardId'], 'kind': e['kind'],
+                 'issueKey': e['issueKey'], 'deployedEnvs': None} for e in o.expected_rows(cp)]
+    order = [str(e['changelogId']) for e in o.pack['live']]
+    values, applied = {}, {}
     for cp in fo.CHECKPOINTS:
-        accepted, ungraded = o.field_values(cp)
-        values[cp] = {k: min(v) for k, v in accepted.items() if v != frozenset({''}) and k not in ungraded}
-    world = []
-    for w in o.world():
-        detail = {k: v for k, v in w.items() if k not in ('t', 'class')}
-        if w['class'] == 'permission_loss':
-            hidden = o.hidden_issue_ids(w['accountId'], w['t'])
-            visible = sorted(o.issues[i]['key'] for i in o.issues if i not in hidden)
-            detail['next_response'] = {'changes': [{'issueKey': k} for k in visible[:3]]}
-        world.append({'t_ms': int((w['t'] - o.upgrade_at).total_seconds() * 1000), 'class': w['class'],
-                      'detail': detail})
+        mark = o.checkpoint_mark(cp)
+        applied[cp] = sum(1 for e in o.pack['live'] if mark is None or fo.instant(e['created']) <= mark)
+        accepted, ungraded = o.field_values(cp, None if cp == 'final' else applied[cp])
+        by_id = {i['key']: iid for iid, i in o.issues.items()}
+        values[cp] = {by_id[k]: min(v) for k, v in accepted.items() if v != frozenset({''}) and k not in ungraded}
+    assert len(order) == applied['final']
     total = len(o.v1_rows())
+    peer = next(e for e in o.world('browse-revoke'))['accountId']
+    hidden = o.hidden_issue_ids(peer)
+    visible = sorted({e['issueKey'] for e in o.expected_rows('final') if o.issue_by_key[e['issueKey']]['id'] not in hidden})
     bg = lambda t, tpl, **kw: {'t_ms': t, 'invocation': 'inv-c1', 'kind': 'background', 'method': 'GET',  # noqa: E731
                                'path_tpl': tpl, 'cost': 1, 'status': 200, 'reason': None, 'retry_after_s': None, **kw}
     return {
@@ -1128,8 +1178,15 @@ def perfect_observations(o: fo.Oracle) -> Dict:
                      'app': {'storage': {'entities': [{'name': 'scope-change'}, {'name': 'scope-ledger'}]}}},
         'migration': {'v1_rows': [{'changeId': r['changeId'], 'sprintId': r['sprintId'], 'at': r['at']}
                                   for r in o.v1_rows()],
-                      'v2_by_checkpoint': {cp: v2(cp) for cp in fo.CHECKPOINTS}},
-        'world': world,
+                      'v1_final': [{'changeId': r['changeId'], 'sprintId': r['sprintId'], 'at': r['at']}
+                                   for r in o.v1_rows()],
+                      'v2_by_checkpoint': {cp: v2(cp) for cp in fo.CHECKPOINTS},
+                      'panel_by_checkpoint': {cp: {'t_ms': 0, 'text': f'Migrated {total} of {total} v1 rows',
+                                                   'migrated': total, 'total': total, 'complete': True}
+                                              for cp in fo.CHECKPOINTS[:-1]}},
+        'world': [{'class': e['class'], 'at': e['at']} for e in o.world()],
+        'rovo': {'calls': [{'as': peer, 'label': 'sprint', 'sprintId': sid, 'threw': False,
+                            'result': {'changes': [{'issueKey': k} for k in visible[:3]]}} for sid in o.ledger_sprints()]},
         'rate': {'requests': [
             bg(1000, '/rest/api/3/search/jql'),
             bg(2000, '/rest/api/3/changelog/bulkfetch', method='POST', status=429, reason='jira-burst-based',
@@ -1149,60 +1206,74 @@ def perfect_observations(o: fo.Oracle) -> Dict:
             {'id': 'inv-c1', 'function_key': 'consume-change', 'module_type': 'consumer', 'virtual_ms': 4000,
              'limit_ms': 55000, 'killed': False, 'result_kind': 'ok'},
             {'id': 'inv-s1', 'function_key': 'reconcile', 'module_type': 'scheduledTrigger', 'virtual_ms': 9000,
-             'limit_ms': 900000, 'killed': False, 'result_kind': 'returned'},
+             'limit_ms': 900000, 'killed': False, 'result_kind': 'ok'},
             {'id': 'inv-s2', 'function_key': 'reconcile', 'module_type': 'scheduledTrigger', 'virtual_ms': 3000,
-             'limit_ms': 900000, 'killed': False, 'result_kind': 'returned'},
+             'limit_ms': 900000, 'killed': False, 'result_kind': 'ok'},
             {'id': 'inv-r1', 'function_key': 'ui-resolver', 'module_type': 'resolver', 'virtual_ms': 300,
              'limit_ms': 25000, 'killed': False, 'result_kind': 'ok'}],
         'webtrigger': [{'case': 'valid', 'status': 202, 'side_effects': 2},
-                       {'case': 'header_case', 'status': 202, 'side_effects': 1},
+                       {'case': 'replay', 'status': 200, 'side_effects': 0},
                        *({'case': c, 'status': 401, 'side_effects': 0} for c in WT_INVALID),
-                       {'case': 'replay', 'status': 200, 'side_effects': 0}],
+                       {'case': 'header-case', 'status': 202, 'side_effects': 1}],
         'admin': {'actions': [
-            {'as': 'admin', 'resolver': 'save-settings', 'payload': {}, 'result_ok': True, 'state_changed': True},
-            {'as': 'admin', 'resolver': 'rotate-secret', 'payload': {}, 'result_ok': True, 'state_changed': True},
-            {'as': 'nonadmin', 'resolver': 'save-settings', 'payload': {}, 'result_ok': False, 'state_changed': False},
-            {'as': 'forged', 'resolver': 'save-settings', 'payload': {'accountId': 'u-ana'}, 'result_ok': False,
-             'state_changed': False}],
+            {'as': 'admin', 'via': 'ui', 'resolver': 'save-settings', 'result_ok': True, 'state_changed': True,
+             'changed_keys': ['kv:settings']},
+            {'as': 'admin', 'via': 'ui', 'resolver': 'rotate-secret', 'result_ok': True, 'state_changed': True,
+             'changed_keys': ['secret:ci']},
+            {'as': 'nonadmin', 'via': 'resolver', 'resolver': 'save-settings', 'result_ok': False,
+             'state_changed': False, 'changed_keys': []},
+            {'as': 'forged', 'via': 'resolver', 'resolver': 'save-settings', 'result_ok': False,
+             'state_changed': False, 'changed_keys': []}],
+            'controls': {k: True for k in ('share', 'ai', 'budget', 'group', 'rotate', 'migration', 'audit', 'save')},
             'tree_text': ' | '.join(ADMIN_LABELS) + f' | Migrated {total} of {total} v1 rows | complete | ••••9f3a',
-            'secret_leaks': []},
-        'field': {'writes': [{'t_ms': 60_000, 'updates': 11, 'status': 204}], 'values_by_checkpoint': values},
-        'llm_v2': [{'case': 'tool_out_of_scope', 'llm_calls': 1, 'shown_text': 'Scope grew.', 'writes_out_of_scope': 0},
-                   {'case': '429_no_retry_after', 'llm_calls': 3, 'shown_text': 'AI explanation unavailable',
-                    'writes_out_of_scope': 0},
-                   {'case': 'no_finish_reason', 'llm_calls': 1, 'shown_text': 'AI explanation unavailable',
-                    'writes_out_of_scope': 0, 'model_text': 'Scope grew after the sprint'},
-                   *({'case': c, 'llm_calls': 0, 'shown_text': '', 'writes_out_of_scope': 0} for c in LLM_COST)],
-        'boot': {'widget': {'invokes_before_paint': 1, 'bytes_before_paint': 96_000, 'external_requests': 0},
-                 'sprint': {'invokes_before_paint': 1, 'bytes_before_paint': 120_000, 'external_requests': []},
-                 'admin': {'invokes_before_paint': 1, 'bytes_before_paint': 0, 'external_requests': 0}},
+            'secret_shown': True, 'secret_source': 'panel', 'secret_leaks': []},
+        'field': {'writes': [{'t_ms': 60_000, 'updates': [{'issueIds': [1], 'value': 'committed'}], 'status': 204}],
+                  'values_by_checkpoint': values, 'applied_by_checkpoint': applied},
+        'llm_v2': [{'case': 'tool-injection', 'llm_calls': 1, 'shown_text': 'Scope grew.', 'writes_out_of_scope': 0,
+                    'per_click': [1]},
+                   {'case': 'rate-limited-no-retry-after', 'llm_calls': 3, 'shown_text': 'AI explanation unavailable',
+                    'writes_out_of_scope': 0, 'per_click': [3]},
+                   {'case': 'no-finish-reason', 'llm_calls': 1, 'shown_text': 'AI explanation unavailable',
+                    'writes_out_of_scope': 0, 'per_click': [1]},
+                   {'case': 'cache', 'llm_calls': 0, 'shown_text': 'Scope grew.', 'writes_out_of_scope': 0,
+                    'per_click': [1, 0]},
+                   {'case': 'kill-switch', 'llm_calls': 0, 'shown_text': '', 'writes_out_of_scope': 0,
+                    'per_click': [0], 'setting_applied': True},
+                   {'case': 'token-budget', 'llm_calls': 0, 'shown_text': '', 'writes_out_of_scope': 0,
+                    'per_click': [0], 'setting_applied': True}],
+        'boot': {'widget-view': {'invokes_before_paint': 1, 'bytes_before_paint': 96_000, 'external_requests': 0},
+                 'sprint-modal': {'invokes_before_paint': 1, 'bytes_before_paint': 120_000, 'external_requests': 0},
+                 'admin-page': {'invokes_before_paint': 1, 'bytes_before_paint': None, 'external_requests': None}},
     }
 
 
 def idle_observations(o: fo.Oracle) -> Dict:
     """The starter's surfaces with nothing done: every section present, nothing exercised."""
     obs = perfect_observations(o)
-    obs['migration'] = {'v1_rows': obs['migration']['v1_rows'], 'v2_by_checkpoint': {cp: [] for cp in fo.CHECKPOINTS}}
+    obs['migration'].update({'v2_by_checkpoint': {cp: [] for cp in fo.CHECKPOINTS},
+                             'panel_by_checkpoint': {cp: {'t_ms': 0, 'text': None, 'migrated': None, 'total': None,
+                                                          'complete': False} for cp in fo.CHECKPOINTS[:-1]}})
+    obs['rovo'] = {'calls': [{**c, 'result': {'changes': []}} for c in obs['rovo']['calls']]}
     obs['rate'] = {'requests': [], 'hours': [{'hour': h, 'used': 0, 'background_used': 0, 'person_used': 0}
                                              for h in range(1, 7)]}
     obs['invocations'] = []
     obs['webtrigger'] = [{'case': c['case'], 'status': 401, 'side_effects': 0} for c in obs['webtrigger']]
     obs['admin'] = {'actions': [{**a, 'result_ok': False, 'state_changed': False} for a in obs['admin']['actions']],
-                    'tree_text': '', 'secret_leaks': []}
-    obs['field'] = {'writes': [], 'values_by_checkpoint': {cp: {} for cp in fo.CHECKPOINTS}}
-    obs['llm_v2'] = [{**c, 'llm_calls': 0} for c in obs['llm_v2']]
-    for w in obs['world']:
-        if w['class'] == 'permission_loss':
-            w['detail']['next_response'] = {'changes': []}
-    obs['boot'] = {}
+                    'controls': {k: False for k in obs['admin']['controls']}, 'tree_text': '', 'secret_shown': False,
+                    'secret_source': None, 'secret_leaks': []}
+    obs['field'] = {'writes': [], 'values_by_checkpoint': {cp: {} for cp in fo.CHECKPOINTS},
+                    'applied_by_checkpoint': obs['field']['applied_by_checkpoint']}
+    obs['llm_v2'] = [{**c, 'llm_calls': 0, 'per_click': [0]} for c in obs['llm_v2']]
+    obs['boot'] = {s: {'invokes_before_paint': None, 'bytes_before_paint': None, 'external_requests': 0}
+                   for s in BOOT_SURFACES}
     return obs
 
 
-def _mutants(o: fo.Oracle) -> Dict[str, Tuple[Callable[[Dict], None], Dict[str, float], Tuple[str, ...]]]:
-    """name -> (defect injected into perfect observations, {row: expected score}, criticals expected to fire)."""
+def _mutants(o: fo.Oracle) -> Dict[str, Tuple[Callable[[Dict], None], Dict[str, Optional[float]], Tuple[str, ...]]]:
+    """name -> (defect injected into perfect observations, {row: expected score, None = strictly between 0 and 1},
+    criticals expected to fire)."""
     v1_first = o.v1_rows()[0]
     closed = next(iter(o.closed_at))
-    late = o.changes_after_close(closed)[0]
     move = o.cross_board_moves()[0]
 
     def drop_v1_at_h2(obs):
@@ -1210,85 +1281,109 @@ def _mutants(o: fo.Oracle) -> Dict[str, Tuple[Callable[[Dict], None], Dict[str, 
         rows[:] = [r for r in rows if key(r) != key(v1_first)]
 
     def lose_v1(obs):
-        obs['migration']['v1_rows'] = obs['migration']['v1_rows'][1:]
+        obs['migration']['v1_final'] = obs['migration']['v1_final'][1:]
 
     def hot_hour(obs):
         obs['rate']['hours'][2]['background_used'] = 1700
+
+    def retry_inside_window(obs):
+        obs['rate']['requests'].append(dict(obs['rate']['requests'][2], t_ms=3000))
 
     def duplicate_row(obs):
         rows = obs['migration']['v2_by_checkpoint']['h3']
         rows.append(dict(rows[0]))
 
-    def record_after_close(obs):
-        obs['migration']['v2_by_checkpoint']['final'].append(
-            {'changeId': late, 'sprintId': closed, 'at': 0.0, 'deleted': False, 'estimate': 0.0, 'boardId': '1'})
+    def purge_closed_sprint(obs):
+        rows = obs['migration']['v2_by_checkpoint']['final']
+        rows[:] = [r for r in rows if str(r['sprintId']) != closed]
 
     def old_board_estimate(obs):
         for r in obs['migration']['v2_by_checkpoint']['final']:
             if r['changeId'] == move['changeId'] and r['sprintId'] in move['toSprintIds']:
                 r['estimate'] = 8.0
 
+    def stale_after_revoke(obs):
+        obs['rovo']['calls'][0]['result']['changes'].append({'issueKey': 'PAY-1'})
+
     def nonadmin_writes(obs):
-        obs['admin']['actions'][2]['state_changed'] = True
+        obs['admin']['actions'][2].update(state_changed=True, changed_keys=['kv:settings'])
 
     def unsigned_writes(obs):
-        next(c for c in obs['webtrigger'] if c['case'] == 'bad_signature')['side_effects'] = 1
+        next(c for c in obs['webtrigger'] if c['case'] == 'bad-signature')['side_effects'] = 1
 
     def stale_field(obs):
-        values = obs['field']['values_by_checkpoint']['h3']
-        values['PAY-1'] = 'committed'
+        pay1 = o.issue_by_key['PAY-1']['id']
+        obs['field']['values_by_checkpoint']['h3'][pay1] = 'committed'
+
+    def truncated_shown(obs):
+        next(c for c in obs['llm_v2'] if c['case'] == 'no-finish-reason')['shown_text'] = SELFTEST_PARTIAL
 
     def no_cache(obs):
-        next(c for c in obs['llm_v2'] if c['case'] == 'cache_repeat')['llm_calls'] = 1
+        next(c for c in obs['llm_v2'] if c['case'] == 'cache')['llm_calls'] = 1
 
     def chatty_boot(obs):
-        obs['boot']['widget']['invokes_before_paint'] = 3
+        obs['boot']['widget-view']['invokes_before_paint'] = 3
 
-    third = round(1 - 1 / 3, 4)
+    pay1_cut = round(1 - 1 / 7 * (1 / 11), 4)    # one wrong issue of 11 at one of 7 checkpoints
     return {
         'R1 v1 row late': (drop_v1_at_h2, {'r1_v1_rows_migrated': round(1 - 1 / len(o.v1_rows()), 4)}, ()),
         'R1 v1 row lost': (lose_v1, {'r1_v1_rows_intact': 0.0}, ('r1_v1_rows_intact',)),
         'R2 hot hour': (hot_hour, {'r2_background_share': round(5 / 6, 4)}, ()),
+        'R2 retry inside Retry-After': (retry_inside_window, {'r2_rate_limit_reaction': round(2 / 3, 4)}, ()),
         'R3 duplicate row': (duplicate_row, {'r3_no_duplicate_rows': 0.0}, ('r3_no_duplicate_rows',)),
-        'R4 row after close': (record_after_close, {'r4_sprint_close_final': 0.0}, ()),
+        # A purged ledger also loses the live and backfilled rows those rows grade at the end (priced in each).
+        'R4 closed sprint purged': (purge_closed_sprint, {'r4_sprint_close_final': 0.0, 'r1_events_during_migration': None,
+                                                          'r2_backfill_complete': None}, ()),
         'R4 old board estimate': (old_board_estimate, {'r4_move_new_board': 0.0}, ()),
+        'R4 stale cache after revoke': (stale_after_revoke, {'r4_permission_revoked': 0.0}, ('r4_permission_revoked',)),
         'R5 non-admin write': (nonadmin_writes, {'r5_nonadmin_refused': 0.0}, ('r5_nonadmin_refused',)),
         'R6 unsigned write': (unsigned_writes, {'r6_unsigned_no_effect': 0.0}, ('r6_unsigned_no_effect',)),
-        'R7 stale field': (stale_field, {'r7_values_fresh': None}, ()),
-        'R8 no cache': (no_cache, {'r8_cost_controls': third}, ()),
+        'R7 stale field': (stale_field, {'r7_values_fresh': pay1_cut}, ()),
+        'R8 truncated answer shown': (truncated_shown, {'r8_failure_handling': 0.5}, ()),
+        'R8 no cache': (no_cache, {'r8_cost_controls': round(2 / 3, 4)}, ()),
         'R9 chatty boot': (chatty_boot, {'r9_widget_boot': round(2 / 3, 4)}, ()),
     }
 
 
 def selftest() -> List[str]:
+    """Perfect observations score 1.0 on every row (0.75 weighted); an idle app scores 0 with no critical fired; each
+    one-defect mutant moves exactly its row(s) by exactly the expected amount and fires exactly its critical."""
+    global SITE_LLM
     failures = []
-    o = fo.Oracle(fo.synthetic_pack_v2(), include_live_ui=True)
-    perfect = evaluate(perfect_observations(o), o)
-    for r in perfect:
-        if r['score'] != 1.0:
-            failures.append(f'perfect: {r["check"]} {r["score"]} — {r["detail"]}')
-    if abs(weighted(perfect) - 0.75) > 1e-9:
-        failures.append(f'perfect: weighted {weighted(perfect)} != 0.75')
-    for r in evaluate(idle_observations(o), o):
-        if r['score'] > 0 or critical_fired(r):
-            failures.append(f'idle: {r["check"]} {r["score"]} fired={critical_fired(r)} — {r["detail"]}')
-    for name, (inject, want, fires) in _mutants(o).items():
-        obs = perfect_observations(o)
-        inject(obs)
-        rows = {r['check']: r for r in evaluate(obs, o)}
-        for check, score in want.items():
-            got = rows[check]['score']
-            if (score is None and not 0 < got < 1) or (score is not None and got != score):
-                failures.append(f'{name}: {check} scored {got}, want {score} — {rows[check]["detail"]}')
-        fired = {n for n, r in rows.items() if critical_fired(r)}
-        if fired != set(fires):
-            failures.append(f'{name}: criticals fired {sorted(fired)}, want {sorted(fires)}')
-        moved = [n for n, r in rows.items() if n not in want and r['score'] != 1.0]
-        if moved:
-            failures.append(f'{name}: rows beyond the defect moved: {moved}')
-    no_v2 = evaluate(perfect_observations(o), fo.Oracle(fo.synthetic_pack()))
-    if not all(r.get('unavailable') for r in no_v2):
-        failures.append('a 1.0 pack must leave every v2 row unavailable')
+    real_site = SITE_LLM
+    with tempfile.TemporaryDirectory() as tmp:
+        SITE_LLM = Path(tmp) / 'llm.cjs'
+        SITE_LLM.write_text(f"const PARTIAL_TEXT = '{SELFTEST_PARTIAL}';\n")
+        try:
+            o = fo.Oracle(fo.synthetic_pack_v2())
+            perfect = evaluate(perfect_observations(o), o)
+            for r in perfect:
+                if r['score'] != 1.0:
+                    failures.append(f'perfect: {r["check"]} {r["score"]} — {r["detail"]}')
+            if abs(weighted(perfect) - 0.75) > 1e-9:
+                failures.append(f'perfect: weighted {weighted(perfect)} != 0.75')
+            for r in evaluate(idle_observations(o), o):
+                if r['score'] > 0 or critical_fired(r):
+                    failures.append(f'idle: {r["check"]} {r["score"]} fired={critical_fired(r)} — {r["detail"]}')
+            for name, (inject, want, fires) in _mutants(o).items():
+                obs = perfect_observations(o)
+                inject(obs)
+                rows = {r['check']: r for r in evaluate(obs, o)}
+                for check, score in want.items():
+                    got = rows[check]['score']
+                    if (score is None and not 0 < got < 1) or (score is not None and got != score):
+                        failures.append(f'{name}: {check} scored {got}, want {score} — {rows[check]["detail"]}')
+                fired = {n for n, r in rows.items() if critical_fired(r)}
+                if fired != set(fires):
+                    failures.append(f'{name}: criticals fired {sorted(fired)}, want {sorted(fires)}')
+                moved = [n for n, r in rows.items() if n not in want and r['score'] != 1.0]
+                if moved:
+                    failures.append(f'{name}: rows beyond the defect moved: {moved}')
+            no_v2 = evaluate(perfect_observations(o), fo.Oracle(fo.synthetic_pack()))
+            if not all(r.get('unavailable') for r in no_v2):
+                failures.append('a 1.0 pack must leave every v2 row unavailable')
+        finally:
+            SITE_LLM = real_site
     return failures
 
 
@@ -1296,8 +1391,6 @@ if __name__ == '__main__':
     problems = selftest()
     for p in problems:
         print('FAIL', p)
-    oracle = fo.Oracle(fo.synthetic_pack_v2(), include_live_ui=True)
-    rows = evaluate(perfect_observations(oracle), oracle)
-    print(f'{len(rows)} v2 rows, {len(CRITICAL)} critical, weights sum {sum(WEIGHTS.values()):.4f}; '
-          f'selftest {"FAILED" if problems else "ok"} ({len(_mutants(oracle))} mutants)')
+    print(f'{len(ROWS)} v2 rows, {len(CRITICAL)} critical, weights sum {sum(WEIGHTS.values()):.4f}; '
+          f'selftest {"FAILED" if problems else "ok"}')
     sys.exit(1 if problems else 0)
