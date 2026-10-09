@@ -591,8 +591,11 @@ async function main() {
     const active = new Set(pack.sprints.filter((s) => s.state === 'active').map((s) => String(s.id)));
     const issueKeys = [...new Set((pack.v1Preload?.entities?.['scope-change'] ?? []).filter(({ value }) => active.has(String(value.sprintId)))
       .map(({ value }) => value.issueKey).filter(Boolean))].sort().slice(0, 2);
-    const secret = adm.ciSecret();
-    obs.webtriggerSetup = { moduleKey: wt.key, secretSource: adm.state.secretSource, issueKeys };
+    // No secret the panel showed and none stored: the app has no key, so the sequence signs with one the app cannot
+    // know and every case, the "valid" ones included, must be refused (R6 graded, never made unavailable).
+    const known = adm.ciSecret();
+    const secret = known ?? (await import('node:crypto')).randomBytes(24).toString('hex');
+    obs.webtriggerSetup = { moduleKey: wt.key, secretSource: known ? adm.state.secretSource : 'none: a key the app cannot know', issueKeys };
     const cases = scoringSequence({ secret, issueKeys, nowSeconds: Math.floor(now() / 1000) });
     ciCalls.push(...takeCalls(emu));
     obs.webtrigger.push(...await sendCiCases({ cases, url: emu.webtriggerUrl(wt.key), emu, completed: completedInvocations }));
