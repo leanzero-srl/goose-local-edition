@@ -188,7 +188,8 @@ export function computeTotals(changes, members) {
   for (const issueId of issueIds) {
     const member = memberByIssue.get(issueId);
     const { inNow, inAtStart, everInAfterStart } = issueInSprint(changesByIssue.get(issueId) ?? [], member);
-    const estimate = toMicro(member?.estimate);
+    // Contract §1: a deleted issue has no value — it counts nowhere.
+    const estimate = member?.deleted === true ? 0 : toMicro(member?.estimate);
     if (inAtStart) committed += estimate;
     if (inNow && !inAtStart) added += estimate;
     if (everInAfterStart && !inNow) removed += estimate;

@@ -491,13 +491,15 @@ class Oracle:
                 hidden |= {iid for iid, issue in self.issues.items() if issue.get('projectKey') == loss['projectKey']}
         return hidden
 
+    # Contract §1: changes of deleted issues are listed to nobody and counted as hidden for nobody (their ledger rows
+    # stay as history, `numbers().changes`).
     def visible_changes(self, sprint_id: str, account_id: str) -> List[Change]:
         hidden = self.hidden_issue_ids(account_id)
-        return [c for c in self.numbers(sprint_id).changes if c.issue_id not in hidden]
+        return [c for c in self.numbers(sprint_id).changes if c.issue_id not in hidden and c.issue_id not in self.deleted_at]
 
     def hidden_count(self, sprint_id: str, account_id: str) -> int:
         hidden = self.hidden_issue_ids(account_id)
-        return sum(1 for c in self.numbers(sprint_id).changes if c.issue_id in hidden)
+        return sum(1 for c in self.numbers(sprint_id).changes if c.issue_id in hidden and c.issue_id not in self.deleted_at)
 
     def action_result(self, sprint_id: str, account_id: str) -> Dict:
         n = self.numbers(sprint_id)
@@ -819,6 +821,20 @@ class Oracle:
             t = self._created(e)
             if (e.get('delivery') or {}).get('dropped') and t > lower and (upper is None or t <= upper):
                 ungraded.add(self.issues[str(e['issueId'])]['key'])
+        # The same for the world changes that send NO event (a sprint close, a board's estimation-field switch; SPEC
+        # §2.5): an issue whose value they move in the hour ending at the mark is graded at the next mark (SPEC R7:
+        # "fresh within the same virtual hour as the change"; the hourly reconcile is the app's only signal).
+        world_upper = mark if upper is None else upper
+        for sid, t in self.closed_at.items():
+            if t > lower and (world_upper is None or t <= world_upper):
+                ungraded |= {issue['key'] for iid, issue in self.issues.items()
+                             if sid in self.member_at(iid, t - JUST_BEFORE, entries)
+                             or any(ch.issue_id == iid for ch in self._numbers[sid].changes)}
+        for board_id, switches in self.field_switches.items():
+            if any(t > lower and (world_upper is None or t <= world_upper) for t, _f in switches):
+                board_sprints = {sid for sid in active if str(self.sprints[sid]['originBoardId']) == board_id}
+                ungraded |= {issue['key'] for iid, issue in self.issues.items()
+                             if board_sprints & self.member_now(iid, entries)}
         return values, ungraded
 
     def dosing_optimum(self) -> Dict:

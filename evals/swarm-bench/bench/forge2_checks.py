@@ -1383,7 +1383,7 @@ def _mutants(o: fo.Oracle) -> Dict[str, Tuple[Callable[[Dict], None], Dict[str, 
     def chatty_boot(obs):
         obs['boot']['widget-view']['invokes_before_paint'] = 3
 
-    pay1_cut = round(1 - 1 / 7 * (1 / 11), 4)    # one wrong issue of 11 at one of 7 checkpoints
+    pay1_cut = round(1 - 1 / 7 * (1 / 7), 4)    # one wrong issue of the 7 graded at h3 (the hour's event-less world changes ungrade 4) at one of 7 checkpoints
     return {
         'R1 v1 row late': (drop_v1_at_h2, {'r1_v1_rows_migrated': round(1 - 1 / len(o.v1_rows()), 4)}, ()),
         'R1 v1 row lost': (lose_v1, {'r1_v1_rows_intact': 0.0}, ('r1_v1_rows_intact',)),

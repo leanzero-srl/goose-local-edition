@@ -54,7 +54,9 @@ export async function getSprint(sprintId, policy) {
 // What one person sees of a sprint: team totals, and only the changes to issues they can browse
 // (read as them) plus how many are hidden. Rows in table order: at ascending, then changelog id.
 export async function personView(sprint, policy) {
-  const { changes, members, totals } = await sprintTotals(sprint.id);
+  const { changes: all, members, totals } = await sprintTotals(sprint.id);
+  // Contract §1: changes of deleted issues are listed to nobody and counted as hidden for nobody.
+  const changes = all.filter((c) => c.deleted !== true);
   const visible = changes.length ? await visibleIssues(changes.map((c) => c.issueId), policy) : new Map();
   const estimate = new Map(members.map((m) => [memberKey(m.sprintId, m.issueId), m.estimate]));
   const rows = changes
