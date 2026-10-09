@@ -2,7 +2,7 @@
 // The private dev/scoring site against the measured Jira Cloud facts and STARTER.md's promises:
 // ISO-8601 dates everywhere (bulk changelog included), /search/jql token paging, the measured 400/404/410
 // texts, OAuth2 scope refusal, v2 = harness_missing, the STARTER JQL vocabulary, ADF-only comments.
-// Run: node --test forge/kit/test/site.test.cjs
+// Run: node --test forge2/kit/test/site.test.cjs
 const test = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
