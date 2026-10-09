@@ -2280,13 +2280,26 @@ def _(c):
              + (f'; {notes[:3]}' if notes else ''), 'comment body or author wrong')
 
 
+def _undeliverable(r: Dict, name: str) -> Optional[str]:
+    """Why the probe's `name` gesture on render `r` is harness evidence rather than the app's: the click could not be
+    delivered (`clickFailed`, e.g. an overlay intercepted it, §17.8 A), or the double click re-used the row the single
+    click had just posted (§17.8 B: it goes to a FRESH viewer-visible row, or an app that refuses to re-post the same
+    summary reads as one that posts nothing)."""
+    gesture = r.get(name) or {}
+    if gesture.get('clickFailed'):
+        return f"click not delivered: {gesture['clickFailed']}"
+    posted = (r.get('select') or {}).get('changeId')
+    if name == 'doubleClick' and gesture.get('changeId') and gesture['changeId'] == posted:
+        return f'double click re-used the posted row {posted}'
+    return None
+
+
 def _post_scenarios(c: Ctx) -> List[Dict]:
-    """The single click and the double click of every sprint render. A gesture the probe could not deliver
-    (`clickFailed`: e.g. an overlay intercepted it, §17.8 A) is harness evidence, never the app's."""
+    """The single click and the double click of every sprint render the probe delivered."""
     out = []
     for r in c.sprint_renders():
         for name in ('post', 'doubleClick'):
-            if isinstance(r.get(name), dict) and not r[name].get('clickFailed'):
+            if isinstance(r.get(name), dict) and not _undeliverable(r, name):
                 out.append({**r[name], '_name': name, '_sprint': r.get('sprintId')})
     return out
 
@@ -2298,8 +2311,8 @@ def _post_scenarios(c: Ctx) -> List[Dict]:
 def _(c):
     scen = _post_scenarios(c)
     if not scen:
-        undelivered = [f"{name}@{r.get('sprintId')}" for r in c.sprint_renders() for name in ('post', 'doubleClick')
-                       if isinstance(r.get(name), dict) and r[name].get('clickFailed')]
+        undelivered = [f"{name}@{r.get('sprintId')}: {_undeliverable(r, name)}" for r in c.sprint_renders()
+                       for name in ('post', 'doubleClick') if isinstance(r.get(name), dict) and _undeliverable(r, name)]
         if undelivered:
             return unavail(f'the probe could not deliver the click(s) {undelivered[:4]} (harness, not app evidence)')
         return vacuous('a click/double-click post scenario')
@@ -2492,10 +2505,10 @@ def _(c):
         # zero-comment and missing-flag cases here from the critical). A gesture the probe could not deliver is not
         # graded (clickFailed, harness evidence).
         subs = {'select': bool((r.get('select') or {}).get('ariaSelected'))}
-        if not post.get('clickFailed'):
+        if not _undeliverable(r, 'post'):
             subs['post_one_comment'] = post.get('commentsAdded') == 1
             subs['post_success_flag'] = post.get('successFlags') == 1
-        if dbl and not dbl.get('clickFailed'):
+        if dbl and not _undeliverable(r, 'doubleClick'):
             subs['double_one_comment'] = dbl.get('commentsAdded') == 1
             subs['double_success_flag'] = (dbl.get('successFlags') or 0) >= 1
         if forb and not forb.get('clickFailed'):
@@ -3708,6 +3721,11 @@ def defect_selftest() -> List[str]:
                                                                    {'commentsAdded': 0, 'successFlags': 0})}})
     expect(abs(flow['score'] - 5 / 7) < 1e-3, f"B u_comment_flow must charge the zero-comment double click 2 of 7 steps "
            f"(got {flow['score']}: {flow.get('detail')})")
+    # B: a double click the probe sent to the row the single click had just posted is not the app's evidence
+    reused = renders({'commentsAdded': 1, 'successFlags': 1}, {'changeId': 'c1', 'commentsAdded': 0, 'successFlags': 1})
+    reused[0]['select']['changeId'] = 'c1'
+    flow = row('u_comment_flow', {'ui': {'sprintAction': reused}})
+    expect(flow['score'] == 1.0, f"B a re-used row's double click must not be graded (got {flow['score']}: {flow.get('detail')})")
     # v2 storage: a change kept in v1's entity AND migrated into scope-ledger is one row; two in scope-ledger are two
     ch = Ctx(None, {}, pack).oracle.changes('final')[0]
     item = {'key': f'r-{ch.change_id}', 'value': {'changeId': ch.change_id, 'sprintId': ch.sprint_id}}
