@@ -21,7 +21,8 @@
 //   P4 site.pack.admin                 the accountId holding Jira's global ADMINISTER (pack.viewer is a non-admin)
 //   P4 site.state.plan / .st.cursor    the delivery plan (1.0's): the next delivery's change and its `created` time
 //   P4 site.control.ratelog({since})   {entries: [{t_ms, invocation, kind, method, path_tpl, cost, status, reason,
-//                                       retry_after_s}], next}: every /rest request the rate model priced
+//                                       retry_after_s}], next}: every /rest request the rate model priced; site.log
+//                                       holds the same requests (with their paths) and rate.cjs writtenRefs what each writes
 //   P5 site.control.world({until})     {applied: [{t_ms, class, detail}]}: applies the world schedule through `until`
 //   P5 site.control.fieldvalues()      {values: {<issueKey>: string}}: the app's scope-status values on the site now
 //   P5 emu.llm.phase(<name>)           restarts the scripted model on a named script (LLM_V2_CASES)
@@ -263,7 +264,7 @@ const HOURS = 6;                     // SPEC §2.3: 6 virtual hours scored after
 // background work of the migration and the backfill runs.
 const CI_AT_MS = 1.5 * H;
 // policy: the admin reads the Migration line 5 virtual minutes before each hour mark, a person-facing request made
-// when the hour's background work has run.
+// when the hour's background work has run (in the quota wall's hour, before the wall: readsAt).
 const PANEL_BEFORE_MS = 5 * 60_000;
 // SPEC §1 R8: identical explanation requests within 10 virtual minutes come from the cache. v1's scripted explain
 // steps and each LLM case are separate requests, so the probe lets that window pass before each one.
@@ -336,6 +337,43 @@ function hoursOf(requests, upgradeMs) {
   return [...by.values()].sort((a, b) => a.start_ms - b.start_ms);
 }
 
+// A request path's template parameters (the site prices by template, e.g. /rest/api/3/issue/{issueIdOrKey}/comment).
+function pathParams(tpl, path) {
+  const names = [];
+  const re = new RegExp(`^${String(tpl).replace(/[.*+?^$()|[\]\\]/g, '\\$&').replace(/\{([^}]+)\}/g, (_, n) => { names.push(n); return '([^/]+)'; })}$`);
+  const m = String(path ?? '').split('?')[0].match(re);
+  return m ? Object.fromEntries(names.map((n, i) => [n, decodeURIComponent(m[i + 1])])) : {};
+}
+
+// The issue of each priced request (P8 r2_rate_limit_reaction: `rate.requests[].issue`), as an issue id. What a request
+// writes is the site's own rule (rate.cjs writtenRefs: the issue on its path, every issue of an app field-value update);
+// `raw` is site.log's entries behind the ledger (their paths), `calls` the emulator's record of the same requests (the
+// field-value bodies, matched per invocation and operation in order). A per-issue 429 on a request that writes several
+// issues names the one whose 2 s window refused it, replayed in the site's arrival order as rate.cjs check/charge keep
+// it; any other request names its issue when it writes exactly one.
+function requestIssues(entries, raw, calls, pack, rateModel) {
+  const idOf = new Map(pack.issues.flatMap((i) => [[String(i.id), String(i.id)], [String(i.key).toUpperCase(), String(i.id)]]));
+  const bodies = new Map();
+  for (const c of calls) {
+    if (c.service !== 'jira' || !c.op) continue;
+    const k = `${c.invocationId}|${c.op}`;
+    if (!bodies.has(k)) bodies.set(k, []);
+    bodies.get(k).push(c.body);
+  }
+  const lastWrite = new Map();
+  return entries.map((e, i) => {
+    const op = `${e.method} ${e.path_tpl}`;
+    const body = bodies.get(`${e.invocation}|${op}`)?.shift();
+    const ids = [...new Set(rateModel.writtenRefs(op, pathParams(e.path_tpl, raw[i].path), body)
+      .map((r) => idOf.get(String(r).toUpperCase()) ?? String(r)))];
+    const issue = Number(e.status) === 429 && e.reason === rateModel.MODEL.reasons.perIssue && ids.length > 1
+      ? ids.find((id) => e.t_ms - (lastWrite.get(id) ?? -Infinity) < rateModel.MODEL.perIssueWriteMs) ?? null
+      : ids.length === 1 ? ids[0] : null;
+    if (Number(e.status) < 400) for (const id of ids) lastWrite.set(id, Math.max(lastWrite.get(id) ?? -Infinity, e.t_ms));
+    return issue;
+  });
+}
+
 // The secret the panel shows once after `Rotate CI secret`: the longest token of ≥ 16 secret-alphabet characters the
 // text after the click carries and the text before it did not.
 function shownSecret(before, after) {
@@ -384,32 +422,33 @@ const ledgerRow = (v) => Object.fromEntries(LEDGER_ATTRS.map((k) => [k, v?.[k] ?
 // deliveries), so a checkpoint reads the state AT its mark unless a delivery's own virtual time ran past it — the
 // actual read time is what `clock.checkpoints` records.
 // The shared pool's wall brought forward by the app's other tenants (contract §10): the hour's remaining points are
-// drawn a few virtual minutes before a clock-hour top in the middle of the scored hours, so background work meets a
-// quota 429 whose Retry-After runs to that top (longer than a trigger's or consumer's limit: SPEC R2 and R3). The
-// window holds none of the harness's own person-facing reads (they come PANEL_BEFORE_MS before each mark).
-// The window's length in virtual seconds, longest first: the first three outlast the longest invocation limit (900 s,
-// a consumer or scheduled trigger with timeoutSeconds), every one a trigger's 25 s. A checkpoint mark inside the
-// window is graded without the issues changed under the wall (P8 r7_values_fresh reads rate.wall).
-const QUOTA_WINDOW_S = [1200, 1080, 960, 480, 420, 360, 300, 240, 180, 120, 90, 60, 40];
+// drawn QUOTA_WINDOW_MS before a clock-hour top in the middle of the scored hours, so background work meets a quota 429
+// whose Retry-After runs to that top (SPEC R2 and R3). A checkpoint mark inside the window is graded without the issues
+// changed under the wall (P8 r7_values_fresh reads rate.wall).
+// policy: 30 virtual minutes, so background work that first arrives up to 15 minutes after the draw still meets a
+// Retry-After past the longest invocation limit (900 s, a consumer or scheduled trigger with timeoutSeconds: P8
+// r3_long_retry_after_deferred) on every seed. measured: the golden's background requests leave gaps of up to 523
+// virtual seconds (integration run, seed 0123456789abcdef), and the 20-minute window that run would have drawn gives
+// none past 300 s.
+const QUOTA_WINDOW_MS = 30 * 60_000;
+// The window holds none of the harness's own person-facing traffic (contract §10): the hour whose panel and person
+// reads would fall inside it reads them READS_MARGIN_MS before the window opens, still inside that hour.
 const READS_MARGIN_MS = 15_000;
 function quotaWindow(t0) {
-  const top = (Math.floor((t0 + 2.5 * H) / H) + 1) * H;
-  const reads = Array.from({ length: HOURS }, (_, i) => t0 + (i + 1) * H - PANEL_BEFORE_MS);
-  for (const w of QUOTA_WINDOW_S) {
-    const at = top - w * 1000;
-    if (!reads.some((p) => p > at - READS_MARGIN_MS && p < top)) return { at, until: top };
-  }
-  return null;
+  const until = (Math.floor((t0 + 2.5 * H) / H) + 1) * H;
+  return { at: until - QUOTA_WINDOW_MS, until };
 }
+const readsAt = (t, win) => (win && t > win.at - READS_MARGIN_MS && t < win.until ? win.at - READS_MARGIN_MS : t);
 
 async function runHours(io, t0) {
   const ciAt = t0 + CI_AT_MS;
-  const quotaAt = typeof io.quotaAt === 'function' ? io.quotaAt(t0) : null;
+  const win = typeof io.quotaWindow === 'function' ? io.quotaWindow(t0) : null;
+  const quotaAt = win ? win.at : null;
   let ciDone = false;
   let quotaDone = quotaAt === null;
   for (let k = 1; k <= HOURS; k++) {
     const end = t0 + k * H;
-    const panelAt = end - PANEL_BEFORE_MS;
+    const panelAt = readsAt(end - PANEL_BEFORE_MS, win);
     let panelDone = false;
     if (k > 1) await io.hourly(k - 1, end);
     for (;;) {
@@ -709,7 +748,7 @@ async function main() {
         (obs.ui.adminCalls ??= []).push(...takeCalls(emu));
       },
       checkpoint: async (cp) => checkpoint(cp),
-      quotaAt: (t0) => quotaWindow(t0)?.at ?? null,
+      quotaWindow,
       quota: async () => {
         const t = now();
         const win = quotaWindow(obs.clock.upgrade_t_ms);
@@ -718,7 +757,7 @@ async function main() {
         const spent = row ? row.total : 0;
         const points = model.quotaPerHour - spent;
         if (points > 0) site.control.draw({ points, at: t });
-        obs.rate.wall = { t_ms: t, until_ms: win?.until ?? null, points: Math.max(0, points), spent_before: spent };
+        obs.rate.wall = { t_ms: t, until_ms: win.until, points: Math.max(0, points), spent_before: spent };
       },
     };
     await runHours(io, obs.clock.upgrade_t_ms);
@@ -780,8 +819,17 @@ async function main() {
   });
   await section('rate', async () => {
     if (typeof site.control.ratelog !== 'function') { gap('site.control.ratelog (P4: the priced request ledger)', 'rate'); return; }
-    obs.rate.requests = ((await site.control.ratelog({ since: 0 })).entries ?? []).map((e) => ({ t_ms: e.t_ms, invocation: e.invocation ?? null,
-      kind: e.kind, method: e.method, path_tpl: e.path_tpl, cost: e.cost, status: e.status, reason: e.reason ?? null, retry_after_s: e.retry_after_s ?? null }));
+    // The ledger is site.log's entries that carry an op, in the same order (site.cjs control.ratelog), read here in
+    // the same synchronous step.
+    const raw = (site.log ?? []).filter((e) => e.op);
+    const entries = (await site.control.ratelog({ since: 0 })).entries ?? [];
+    let issues = [];
+    if (raw.length === entries.length && raw.every((r, i) => r.method === entries[i].method)) {
+      issues = requestIssues(entries, raw, emu.log || [], pack, require(join(repo, 'forge2', 'site', 'rate.cjs')));
+    } else gap('site.log in step with site.control.ratelog (P4: each priced request\'s path, for rate.requests[].issue)');
+    obs.rate.requests = entries.map((e, i) => ({ t_ms: e.t_ms, invocation: e.invocation ?? null,
+      kind: e.kind, method: e.method, path_tpl: e.path_tpl, cost: e.cost, status: e.status, reason: e.reason ?? null, retry_after_s: e.retry_after_s ?? null,
+      ...(issues[i] ? { issue: issues[i] } : {}) }));
     obs.rate.hours = hoursOf(obs.rate.requests, obs.clock.upgrade_t_ms);
   }, ['rate']);
   obs.field.writes = (emu.log || []).filter((e) => (e.method === 'POST' && /\/rest\/api\/3\/app\/field\/value$/.test(String(e.path).split('?')[0]))
@@ -1392,6 +1440,45 @@ async function settle(s) {
   }
 }
 
+// §17.8 A: a gesture's click the probe could not deliver (an overlay intercepted it, it timed out) is harness evidence,
+// never the app's: it is recorded as `clickFailed` (score_forge2 _undeliverable). A control the app does not render,
+// hides or disables is the app's own state: no click is attempted and the gesture's counts stand as the app's.
+const firstLine = (e) => String(e?.message ?? e).split('\n')[0].slice(0, 200);
+async function deliver(control, act) {
+  try {
+    if (!(await control.count()) || !(await control.isVisible()) || await control.isDisabled()) return null;
+    await act(control);
+    return null;
+  } catch (e) {
+    return firstLine(e);
+  }
+}
+// Clicking a row selects it (contract §5): its `kind` cell, or the row itself when it has none.
+function selectRow(page, changeId) {
+  const row = page.locator(`tr[data-change-id="${changeId}"]`).first();
+  return deliver(row, async () => {
+    const cell = row.locator('td[data-col="kind"]').first();
+    await ((await cell.count()) ? cell : row).click();
+  });
+}
+// One post gesture on the selected row: the comments the site saw and the flags the page raised. A selection the probe
+// could not deliver makes the gesture the harness's too (the post would land on whichever row was selected before).
+async function postGesture(s, selectFailed, act) {
+  const c0 = commentsNow();
+  const o0 = bridgeOps(s).length;
+  const failed = selectFailed ? `select: ${selectFailed}` : await deliver(s.page.locator('[data-testid="post-summary"]').first(), act);
+  await settle(s);
+  return { commentsAdded: commentsNow() - c0, ...flagCounts(bridgeOps(s).slice(o0)), ...(failed ? { clickFailed: failed } : {}) };
+}
+// The issue of a ledger row the viewer may see now: it exists and they can browse it (the world deletes issues and
+// revokes browse permission while v2 runs). A leaked hidden row is b_no_permission_leak's evidence; posting on it would
+// grade its 404 as the comment flow's.
+function viewerIssue(cell) {
+  const key = String(cell ?? '').match(/\b[A-Z][A-Z0-9]+-\d+\b/)?.[0];
+  const issue = key ? site.state.issueByIdOrKey(key) : null;
+  return issue && site.state.canBrowse(site.pack.viewer, issue) ? issue : null;
+}
+
 async function exerciseModal(s, sid, forbidden, reopen) {
   const page = s.page;
   const out = { sprintId: sid };
@@ -1451,35 +1538,42 @@ async function exerciseModal(s, sid, forbidden, reopen) {
   const post = await reopen();
   await waitMeaningful(post, 'table[data-testid="ledger"] tr[data-change-id]');
   const rows = await tableRows(post.page);
-  const target = rows.find((r) => !forbidden.has(r.cells.issue));
+  // §17.8 B: every post goes to a row the viewer may see now (viewerIssue).
+  const seen = rows.map((r) => ({ ...r, issue: viewerIssue(r.cells.issue) })).filter((r) => r.issue);
+  const postable = seen.filter((r) => !forbidden.has(r.issue.key));
+  const target = postable[0];
   if (target) {
-    const row = post.page.locator(`tr[data-change-id="${target.changeId}"]`);
-    await row.locator('td[data-col="kind"]').click().catch(() => row.click().catch(() => {}));
+    const selectFailed = await selectRow(post.page, target.changeId);
     await sleep(200);
-    out.select = { changeId: target.changeId, ariaSelected: (await tableRows(post.page)).find((r) => r.changeId === target.changeId)?.selected ?? false };
-    // Gap #24: the double click is two clicks on the SAME element handle (a moving label cannot dodge the second);
-    // force skips actionability waits but a disabled button still swallows the click, as a browser does.
-    const twice = async (l) => { const h = await l.elementHandle(); await h.click(); await h.click({ force: true }); };
-    for (const [name, act] of [['post', (l) => l.click()], ['doubleClick', twice]]) {
-      const c0 = commentsNow();
-      const o0 = bridgeOps(post).length;
-      await act(post.page.locator('[data-testid="post-summary"]').first()).catch(() => {});
-      await settle(post);
-      out[name] = { commentsAdded: commentsNow() - c0, ...flagCounts(bridgeOps(post).slice(o0)) };
-    }
-    const forb = rows.find((r) => forbidden.has(r.cells.issue));
+    out.select = { changeId: target.changeId, ariaSelected: (await tableRows(post.page)).find((r) => r.changeId === target.changeId)?.selected ?? false,
+      ...(selectFailed ? { clickFailed: selectFailed } : {}) };
+    out.post = await postGesture(post, selectFailed, (l) => l.click());
+    // §17.8 B: the double click goes to a fresh row on another issue, so an app that will not post the same summary
+    // twice is not read as one that posts nothing. Gap #24: two clicks on the SAME element handle (a moving label
+    // cannot dodge the second); force skips actionability waits but a disabled button still swallows the click, as a
+    // browser does.
+    const fresh = postable.find((r) => r.issue.key !== target.issue.key);
+    if (fresh) {
+      const failed = await selectRow(post.page, fresh.changeId);
+      await sleep(200);
+      let second = null;
+      const g = await postGesture(post, failed, async (l) => {
+        const h = await l.elementHandle();
+        await h.click();
+        // The second click misses only when the first changed the page (the app removed, hid or replaced the button),
+        // which a person's second click meets as well: recorded, never `clickFailed`.
+        await h.click({ force: true }).catch((e) => { second = firstLine(e); });
+      });
+      out.doubleClick = { changeId: fresh.changeId, ...g, ...(second ? { secondClick: second } : {}) };
+    } else out.doubleClickSkipped = 'no viewer-visible row on another issue';
+    const forb = seen.find((r) => forbidden.has(r.issue.key));
     if (forb) {
-      const fr = post.page.locator(`tr[data-change-id="${forb.changeId}"]`);
-      await fr.locator('td[data-col="kind"]').click().catch(() => fr.click().catch(() => {}));
-      const c0 = commentsNow();
-      const o0 = bridgeOps(post).length;
-      await post.page.locator('[data-testid="post-summary"]').first().click().catch(() => {});
-      await settle(post);
+      const g = await postGesture(post, await selectRow(post.page, forb.changeId), (l) => l.click());
       const orderBefore = (await tableRows(post.page)).map((r) => r.changeId);
       await post.page.locator('th[data-col="at"]').first().click().catch(() => {});
       await sleep(200);
       const orderAfter = (await tableRows(post.page)).map((r) => r.changeId);
-      out.forbidden = { issueKey: forb.cells.issue, commentsAdded: commentsNow() - c0, ...flagCounts(bridgeOps(post).slice(o0)),
+      out.forbidden = { issueKey: forb.cells.issue, ...g,
         sortWorksAfter: orderAfter.length === orderBefore.length && orderAfter.join() !== orderBefore.join() };
     }
   }
@@ -1766,20 +1860,31 @@ async function selftest() {
     for (const [i, x] of seen.entries()) if (x[0] === 'deliver') assert.equal(seen[i - 1][0], 'drain');
   });
 
-  await test('quotaWindow: ends at a clock-hour top mid-run, holds no person-facing read; runHours draws it once', async () => {
-    for (const t0 of [1_000 * H, 1_000 * H + 17 * 60_000, 1_000 * H + 58 * 60_000, 1_000 * H + 3 * 60_000]) {
+  await test('quotaWindow: the full window on every upgrade offset; the reads it would hold move before it, in their hour', async () => {
+    // 58.906 min: seed 0123456789abcdef's upgrade offset, where the old reads-avoiding window shrank to 300 s.
+    for (const offMin of [0, 3, 17, 25, 30, 44.9, 58, 58.906, 59.99]) {
+      const t0 = 1_000 * H + offMin * 60_000;
       const w = quotaWindow(t0);
-      assert.ok(w, `a window exists for t0 offset ${(t0 % H) / 60_000} min`);
       assert.equal(w.until % H, 0);
-      assert.ok(w.at > t0 + 2 * H && w.until < t0 + HOURS * H);
-      for (let k = 1; k <= HOURS; k += 1) { const p = t0 + k * H - PANEL_BEFORE_MS; assert.ok(!(p > w.at - READS_MARGIN_MS && p < w.until)); }
+      assert.equal(w.until - w.at, QUOTA_WINDOW_MS);
+      assert.ok(QUOTA_WINDOW_MS - 900_000 >= 15 * 60_000, 'background arriving 15 virtual minutes into the wall still meets a Retry-After past 900 s');
+      assert.ok(w.at > t0 + CI_AT_MS && w.until < t0 + HOURS * H, `offset ${offMin}: the wall sits after the CI sequence, inside the scored hours`);
+      let clock = t0;
+      const reads = [];
+      const draws = [];
+      await runHours({ now: () => clock, advanceTo: async (t) => { if (t > clock) clock = t; }, nextDeliveryAt: () => null, deliver: async () => false,
+        drain: async () => {}, world: async () => {}, hourly: async () => {}, ci: async () => {}, panel: async (cp) => reads.push([cp, clock]),
+        checkpoint: async () => {}, quotaWindow, quota: async () => draws.push(clock) }, t0);
+      assert.deepEqual(draws, [w.at], `offset ${offMin}: one draw, at the window's start`);
+      assert.deepEqual(reads.map(([cp]) => cp), ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
+      for (const [cp, p] of reads) {
+        const k = Number(cp.slice(1));
+        assert.ok(p > t0 + (k - 1) * H && p < t0 + k * H, `offset ${offMin}: ${cp} reads inside its own hour`);
+        assert.ok(!(p > w.at - READS_MARGIN_MS && p < w.until), `offset ${offMin}: ${cp} reads outside the wall`);
+        assert.equal(p, readsAt(t0 + k * H - PANEL_BEFORE_MS, w));
+      }
+      if (offMin === 58.906) assert.equal(reads[2][1], w.at - READS_MARGIN_MS, 'the h3 read moved before the wall');
     }
-    let clock = 1_000 * H;
-    const draws = [];
-    await runHours({ now: () => clock, advanceTo: async (t) => { if (t > clock) clock = t; }, nextDeliveryAt: () => null, deliver: async () => false,
-      drain: async () => {}, world: async () => {}, hourly: async () => {}, ci: async () => {}, panel: async () => {}, checkpoint: async () => {},
-      quotaAt: (t0) => quotaWindow(t0).at, quota: async () => draws.push(clock) }, clock);
-    assert.deepEqual(draws, [quotaWindow(1_000 * H).at]);
   });
 
   await test('runHours: a drain that runs past a mark makes the checkpoint late, never early', async () => {
@@ -1825,6 +1930,61 @@ async function selftest() {
       { t_ms: 12 * H + 1, kind: 'background', cost: 3, status: 200 },
     ], up);
     assert.deepEqual(rows.map((r) => [r.hour, r.used, r.background_used, r.person_used, r.refused]), [[1, 3, 2, 1, 0], [2, 0, 0, 0, 1], [3, 3, 3, 0, 0]]);
+  });
+
+  await test('requestIssues: a per-issue 429 names the issue its write window refused; reads name none', async () => {
+    const rateModel = require('../forge2/site/rate.cjs');
+    const pack = { issues: [{ id: 101, key: 'PAY-1' }, { id: 102, key: 'PAY-2' }, { id: 103, key: 'PAY-3' }] };
+    const comment = '/rest/api/3/issue/{issueIdOrKey}/comment';
+    const fv = '/rest/api/3/app/field/value';
+    const perIssue = rateModel.MODEL.reasons.perIssue;
+    const entries = [
+      { t_ms: 0, invocation: 'a', method: 'POST', path_tpl: comment, status: 201 },
+      { t_ms: 500, invocation: 'b', method: 'POST', path_tpl: fv, status: 204 },
+      { t_ms: 1000, invocation: 'c', method: 'POST', path_tpl: comment, status: 429, reason: perIssue },
+      { t_ms: 1200, invocation: 'd', method: 'POST', path_tpl: fv, status: 429, reason: perIssue },
+      { t_ms: 1300, invocation: 'e', method: 'GET', path_tpl: '/rest/api/3/issue/{issueIdOrKey}', status: 200 },
+      { t_ms: 1400, invocation: 'f', method: 'POST', path_tpl: fv, status: 204 },
+    ];
+    const raw = [{ path: '/rest/api/3/issue/PAY-1/comment' }, { path: fv }, { path: '/rest/api/3/issue/101/comment?expand=x' }, { path: fv },
+      { path: '/rest/api/3/issue/PAY-3' }, { path: fv }];
+    const calls = [
+      { service: 'jira', invocationId: 'b', op: `POST ${fv}`, body: { updates: [{ customField: 'f', issueIds: [102], value: 'committed' }] } },
+      { service: 'jira', invocationId: 'd', op: `POST ${fv}`, body: { updates: [{ customField: 'f', issueIds: [103, 102], value: 'committed' }] } },
+      { service: 'jira', invocationId: 'f', op: `POST ${fv}`, body: { updates: [{ customField: 'f', issueIds: [101, 103], value: 'removed' }] } },
+    ];
+    // the comment by key and the 429 by id are one issue; the bulk 429 names PAY-2 (written 700 ms before), not PAY-3
+    assert.deepEqual(requestIssues(entries, raw, calls, pack, rateModel), ['101', '102', '101', '102', null, null]);
+    assert.deepEqual(pathParams('/rest/agile/1.0/board/{boardId}/sprint', '/rest/agile/1.0/board/7/sprint?state=active'), { boardId: '7' });
+  });
+
+  await test('deliver: a control the app does not render, hides or disables is not clicked; a click that fails is named', async () => {
+    const control = ({ count = 1, visible = true, disabled = false, fails = null }) => {
+      const c = { clicks: 0, count: async () => count, isVisible: async () => visible, isDisabled: async () => disabled,
+        click: async () => { if (fails) throw new Error(`${fails}\nCall log: …`); c.clicks += 1; } };
+      return c;
+    };
+    for (const [label, spec, want, clicks] of [['absent', { count: 0 }, null, 0], ['hidden', { visible: false }, null, 0],
+      ['disabled', { disabled: true }, null, 0], ['delivered', {}, null, 1],
+      ['intercepted', { fails: 'locator.click: Timeout 30000ms exceeded.' }, 'locator.click: Timeout 30000ms exceeded.', 0]]) {
+      const c = control(spec);
+      assert.equal(await deliver(c, (l) => l.click()), want, label);
+      assert.equal(c.clicks, clicks, `${label}: clicks`);
+    }
+  });
+
+  await test('viewerIssue: the row\'s issue only while the viewer may browse it', async () => {
+    const issues = new Map([['PAY-1', { key: 'PAY-1', hidden: false }], ['PAY-2', { key: 'PAY-2', hidden: true }]]);
+    site = { pack: { viewer: 'acct-viewer' }, state: { issueByIdOrKey: (k) => issues.get(k), canBrowse: (who, i) => who === 'acct-viewer' && !i.hidden } };
+    try {
+      assert.equal(viewerIssue('PAY-1')?.key, 'PAY-1');
+      assert.equal(viewerIssue('PAY-1 ↗')?.key, 'PAY-1');
+      assert.equal(viewerIssue('PAY-2'), null, 'a leaked hidden row');
+      assert.equal(viewerIssue('PAY-3'), null, 'a deleted issue');
+      assert.equal(viewerIssue(null), null);
+    } finally {
+      site = null;
+    }
   });
 
   await test('shownSecret: the new long token only', async () => {
@@ -1919,6 +2079,7 @@ async function selftest() {
   await test('admin lane, an app that authorizes from req.context: no replay changes anything, nothing leaks', async () => {
     const r = await runLane('correct');
     assert.equal(obs.boot['admin-page'].invokes_before_paint, 1);
+    assert.deepEqual(obs.ui.surfaces, [], "the UI Kit admin page is graded by boot['admin-page'], never as a Custom UI surface");
     assert.equal(obs.admin.secret_shown, true);
     assert.equal(r.secret, r.fake.stored());
     assert.equal(r.by('admin', 'saveSettings')[0].state_changed, true);
