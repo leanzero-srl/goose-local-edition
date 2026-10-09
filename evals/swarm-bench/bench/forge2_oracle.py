@@ -746,6 +746,23 @@ class Oracle:
                                 'toBoardId': ch.moved_to_board, 'created': ch.at})
         return out
 
+    def changes_after_close(self, sprint_id: str) -> List[str]:
+        """Changelog ids of Sprint changes that touch a closed sprint at or after its close: the stimulus that tells a
+        final ledger from one that keeps recording (none of them may become a row of that sprint)."""
+        self._need_v2()
+        closed = self.closed_at.get(str(sprint_id))
+        if closed is None:
+            return []
+        out = []
+        for e in self._entries('all'):
+            if self._created(e) < closed:
+                continue
+            for item in self._sprint_items(e):
+                frm, to = sprint_ids(item.get('from')), sprint_ids(item.get('to'))
+                if str(sprint_id) in (frm ^ to):
+                    out.append(str(e['changelogId']))
+        return out
+
     def active_sprints_at(self, mark: Optional[datetime]) -> List[str]:
         return [sid for sid in self.ledger_sprints()
                 if not (sid in self.closed_at and (mark is None or self.closed_at[sid] <= mark))]
