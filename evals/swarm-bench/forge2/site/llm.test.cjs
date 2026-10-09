@@ -111,7 +111,7 @@ test('injected answers a tool with an issue-key argument by aiming the key; a to
   const bare = { type: 'function', function: { name: 'note', parameters: { type: 'object', properties: { text: { type: 'string' } } } } };
   llm.handle({ method: 'POST', model: MODEL, caller: { asUser: viewer }, body: { messages: [{ role: 'user', content: 'x' }], tools: [bare] } });
   assert.strictEqual(llm.log.at(-1).injectedTarget, null);
-  assert.match(llm.log.at(-1).injectedNote, /no change or issue argument/);
+  assert.match(llm.log.at(-1).injectedNote, /no tool argument naming a change or an issue/);
   assert.ok(pack.issues.some((i) => i.key === llm.state().injection.targetKey));
 });
 

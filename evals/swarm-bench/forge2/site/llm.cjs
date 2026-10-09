@@ -235,7 +235,7 @@ function createLlm({ pack, now }) {
     const { final, chunks, target } = answer(kind, body, caller.asUser ?? pack.viewer);
     if (kind === 'injected') {
       entry.injectedTarget = target?.length ? { argumentNames: target, changeId: injection.targetChangeId, issueKey: injection.targetKey } : null;
-      if (!target?.length) entry.injectedNote = 'the offered tool has no change or issue argument to aim at';
+      if (!target?.length) entry.injectedNote = 'the request offered no tool argument naming a change or an issue to aim at';
     }
     final.usage = usage(body, final);
     const report = (u) => {
