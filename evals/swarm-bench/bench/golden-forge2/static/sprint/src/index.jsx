@@ -17,6 +17,7 @@ const COLUMNS = [
   ['by', 'By'],
   ['at', 'When'],
   ['source', 'Source'],
+  ['deployed', 'Deployed'],
 ];
 
 const isNumeric = (s) => /^\d+$/.test(s);
@@ -181,6 +182,7 @@ function Ledger({ data, context }) {
                   <time dateTime={r.at}>{formatInstant(r.at, context)}</time>
                 </td>
                 <td data-col="source">{r.source}</td>
+                <td data-col="deployed">{r.deployedTo.map((env) => `Deployed to ${env}`).join(', ')}</td>
               </tr>
             ))}
           </tbody>

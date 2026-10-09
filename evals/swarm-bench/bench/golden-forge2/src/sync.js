@@ -236,6 +236,32 @@ async function missingIssues(issueIds, work) {
   return issueIds.filter((id) => !found.has(id));
 }
 
+// The statuses of the issues of sprints that closed: they no longer come from those sprints (an issue in
+// another active sprint keeps that one's). `skip` names issues already decided. Deleted issues have no
+// field to write.
+async function closedSprintStatuses(active, sprintIds, skip) {
+  const values = new Map();
+  for (const sprintId of sprintIds) {
+    if (active.has(sprintId)) continue;
+    for (const m of await membersOfSprint(sprintId)) {
+      if (skip.has(m.issueId) || values.has(m.issueId) || m.deleted === true) continue;
+      const issueMembers = await membersOfIssue(m.issueId);
+      const issueRows = await rowsOfIssue(m.issueId, issueMembers.map((x) => x.sprintId));
+      if (issueRows.some((r) => r.deleted)) continue;
+      values.set(m.issueId, scopeStatus(active, issueMembers, issueRows));
+    }
+  }
+  return values;
+}
+
+// A sprint the event path found closed: its issues' statuses are rewritten at once, so they are fresh
+// within the hour of the close rather than at the next scheduled run.
+export async function settleClosedSprints(cfg, sprintIds, work) {
+  if (!cfg.scopeFieldId || !sprintIds.length) return 0;
+  const values = await closedSprintStatuses(new Set(Object.keys(cfg.sprints)), sprintIds, new Set());
+  return values.size ? writeStatuses(cfg.scopeFieldId, values, work) : 0;
+}
+
 const push = (map, key, value) => {
   if (!map.has(key)) map.set(key, []);
   map.get(key).push(value);
@@ -314,18 +340,9 @@ export async function reconcileAll(cfg, previous, work) {
       const value = scopeStatus(active, issueMembers, issueRows);
       if (currentStatus(issue.fields, cfg.scopeFieldId) !== value) values.set(id, value);
     }
-    const goneDeleted = new Set(deleted);
-    const closed = new Set([...Object.keys(previous?.sprints ?? {}), ...(previous?.closed ?? [])]);
-    for (const sprintId of closed) {
-      if (active.has(sprintId)) continue;
-      for (const m of await membersOfSprint(sprintId)) {
-        if (candidateIds.has(m.issueId) || values.has(m.issueId) || goneDeleted.has(m.issueId) || m.deleted === true) continue;
-        const issueMembers = await membersOfIssue(m.issueId);
-        const issueRows = await rowsOfIssue(m.issueId, issueMembers.map((x) => x.sprintId));
-        if (issueRows.some((r) => r.deleted)) continue;
-        values.set(m.issueId, scopeStatus(active, issueMembers, issueRows));
-      }
-    }
+    const closed = [...new Set([...Object.keys(previous?.sprints ?? {}), ...(previous?.closed ?? [])])];
+    const skip = new Set([...candidateIds, ...values.keys(), ...deleted]);
+    for (const [id, value] of await closedSprintStatuses(active, closed, skip)) values.set(id, value);
     if (values.size) statuses = await writeStatuses(cfg.scopeFieldId, values, work);
   }
   await kvs.set(RECONCILE_KEY, { startedAt });

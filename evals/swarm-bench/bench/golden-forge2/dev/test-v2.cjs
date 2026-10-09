@@ -178,6 +178,10 @@ async function main() {
   const rows12 = [...ledger(platform).values()].filter((r) => r.sprintId === '12').length;
   await deliver(site.update(in12[0].key, { sprints: in12[0].sprints.filter((s) => s !== 12) }));
   ok([...ledger(platform).values()].filter((r) => r.sprintId === '12').length === rows12, 'a change after a sprint closed adds nothing to its ledger');
+  const truthClosed = oracle(site);
+  const stale12 = site.issues.filter((i) => !i.deleted && i.sprints.includes(12) && (i.fields[site.SCOPE_FIELD] ?? '') !== truthClosed.status.get(i.id));
+  const writes12 = site.fieldWrites.filter((fw) => in12.some((i) => i.id === fw.issueId)).at(-1);
+  ok(!stale12.length && writes12 && Math.floor(writes12.at / HOUR) === Math.floor(site.sprintById.get(12).complete / HOUR), `the closed sprint's issues' statuses are fresh within the hour of the close (${stale12.length} stale)`);
   // (d) an issue is deleted: its rows stay as history with deleted: true
   const v = in11[2];
   const vRows = [...ledger(platform).values()].filter((r) => r.issueId === v.id).length;

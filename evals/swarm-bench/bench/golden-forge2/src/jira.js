@@ -151,7 +151,7 @@ export class Background {
 
   async flush() {
     if (this.hour === null || this.mine === this.flushedMine) return;
-    await kvs.set(this.key(), this.mine);
+    await kvs.set(this.key(), this.mine, { ttl: { value: 1, unit: 'DAYS' } });
     this.flushedMine = this.mine;
   }
 

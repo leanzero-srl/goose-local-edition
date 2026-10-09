@@ -368,8 +368,8 @@ async function main() {
     const first = vis[0];
     const firstRow = await s.page.$eval(`tr[data-change-id="${first.changeId}"]`, (tr) => Object.fromEntries([...tr.querySelectorAll('td[data-col]')].map((td) => [td.getAttribute('data-col'), td.getAttribute('data-col') === 'at' ? td.querySelector('time').getAttribute('datetime') : td.textContent])));
     const issue = site.issueById.get(first.issueId);
-    eq(firstRow, { issue: first.issueKey, points: fmtPoints(issue.fields[issue.estField] ?? 0), kind: first.kind, by: first.by, at: new Date(first.at).toISOString(), source: 'reconcile' }, `${label}: cells of the first row`);
-    eq(await s.page.$$eval('th[data-col]', (els) => els.map((e) => e.getAttribute('data-col'))), ['issue', 'points', 'kind', 'by', 'at', 'source'], `${label}: headers`);
+    eq(firstRow, { issue: first.issueKey, points: fmtPoints(issue.fields[issue.estField] ?? 0), kind: first.kind, by: first.by, at: new Date(first.at).toISOString(), source: 'reconcile', deployed: '' }, `${label}: cells of the first row`);
+    eq(await s.page.$$eval('th[data-col]', (els) => els.map((e) => e.getAttribute('data-col'))), ['issue', 'points', 'kind', 'by', 'at', 'source', 'deployed'], `${label}: headers`);
     await audit(s.page, label);
     await s.shot();
     if (who === 'alice') {

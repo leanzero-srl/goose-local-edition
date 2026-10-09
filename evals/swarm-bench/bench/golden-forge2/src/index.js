@@ -2,7 +2,7 @@ import Resolver from '@forge/resolver';
 import { Queue, InvocationError, InvocationErrorCode } from '@forge/events';
 import { JiraError, RateLimited, Background } from './jira';
 import { loadConfig, saveConfig, discoverConfig } from './config';
-import { applyIssueEvent, estimateFieldIds, reconcileAll } from './sync';
+import { applyIssueEvent, estimateFieldIds, reconcileAll, settleClosedSprints } from './sync';
 import { boardsView, widgetView, getSprint, personView, postSummary } from './views';
 import { announce, CHANNEL } from './realtime';
 import { explainSprint } from './explain';
@@ -72,7 +72,9 @@ export async function onAppUpgraded() {
 async function issueEvent(body, work) {
   const previous = await loadConfig();
   const cfg = isV2Config(previous) ? structuredClone(previous) : await discoverConfig(work);
+  const closedBefore = new Set(cfg.closed ?? []);
   const result = await applyIssueEvent(cfg, body, work, async (issueId) => ({ rows: 0, members: 0, sprintIds: await markIssueDeleted(issueId) }));
+  await settleClosedSprints(cfg, (cfg.closed ?? []).filter((id) => !closedBefore.has(id)), work);
   await saveConfig(cfg, previous);
   await announce(result.sprintIds);
   return result;
