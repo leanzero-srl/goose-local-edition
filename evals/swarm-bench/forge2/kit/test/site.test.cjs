@@ -13,11 +13,15 @@ const SCOPES = ['read:jira-work', 'write:jira-work', 'read:jira-user', 'read:boa
   'read:board-scope.admin:jira-software', 'read:issue:jira-software', 'read:epic:jira-software'];
 const ISO = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}[+-]\d{4}$/;
 
+// Each call carries its own virtual instant 10 s after the previous one (as the proxy's x-forge-vtime would), so these
+// shape tests never meet the rate model's burst bucket (site-core.test.cjs tests the rate model itself).
 async function withSite(fn, opts = {}) {
   const site = await createSite({ seed: '0123456789abcdef', port: 0, ...opts });
+  let vt = site.state.now();
   const call = async (method, p, body, scopes = SCOPES) => {
+    vt += 10_000;
     const res = await fetch(site.url + p, { method, headers: { 'content-type': 'application/json', 'x-forge-as': 'app',
-      'x-forge-scopes': JSON.stringify(scopes) }, body: body === undefined ? undefined : JSON.stringify(body) });
+      'x-forge-scopes': JSON.stringify(scopes), 'x-forge-vtime': String(vt) }, body: body === undefined ? undefined : JSON.stringify(body) });
     const text = await res.text();
     let json = null;
     try { json = JSON.parse(text); } catch { json = text; }
@@ -304,11 +308,12 @@ test('the scoring site pages every list of two or more items; the dev site keeps
       if (!token) return { pages, items: items.map((x) => (typeof x === 'string' ? x : x.id)) };
     }
   };
-  const walkOffset = async (call, p) => {
+  // `size` covers the whole list on the dev site (a sprint holds ~50 issues at the 2.0 scale; its documented cap is 5000).
+  const walkOffset = async (call, p, size = 50) => {
     const items = [];
     let pages = 0;
     for (let startAt = 0; ;) {
-      const r = await call('GET', `${p}${p.includes('?') ? '&' : '?'}startAt=${startAt}&maxResults=50`);
+      const r = await call('GET', `${p}${p.includes('?') ? '&' : '?'}startAt=${startAt}&maxResults=${size}`);
       assert.strictEqual(r.status, 200, JSON.stringify(r.body));
       pages += 1;
       const values = r.body.values ?? r.body.issues ?? [];
@@ -325,7 +330,7 @@ test('the scoring site pages every list of two or more items; the dev site keeps
     const bulk = await walkToken(call, 'POST', '/rest/api/3/changelog/bulkfetch', { issueIdsOrKeys: ids, maxResults: 1000 });
     const boards = await walkOffset(call, '/rest/agile/1.0/board');
     const sprints = await walkOffset(call, `/rest/agile/1.0/board/${board.id}/sprint`);
-    const sprintIssues = await walkOffset(call, `/rest/agile/1.0/sprint/${sprint.id}/issue`);
+    const sprintIssues = await walkOffset(call, `/rest/agile/1.0/sprint/${sprint.id}/issue`, 1000);
     const soft = await walkToken(call, 'GET', `/rest/software/1.0/sprint/${sprint.id}/issue?maxResults=5000`);
     const busy = site.pack.issues.find((i) => site.state.st.histories.get(i.id).length >= 2);
     const changelog = await walkOffset(call, `/rest/api/3/issue/${busy.id}/changelog`);

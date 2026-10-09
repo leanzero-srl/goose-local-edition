@@ -44,7 +44,8 @@ function createRenderer(state) {
       default: return v;
     }
   };
-  const ALL = () => pack.fields.filter((f) => f.id !== 'issuekey' && f.id !== 'comment').map((f) => f.id);
+  // The LIVE field list: the app's own field joins it at install (state.addField).
+  const ALL = () => state.fields().filter((f) => f.id !== 'issuekey' && f.id !== 'comment').map((f) => f.id);
   // `fields` request semantics: names, `*all`, `*navigable`, `-name` exclusions; field names resolve to ids.
   const selectFields = (requested, defaultAll) => {
     let list = requested;
@@ -66,7 +67,7 @@ function createRenderer(state) {
   };
   const resolve = (name) => {
     const lower = name.toLowerCase();
-    const f = pack.fields.find((x) => x.id.toLowerCase() === lower || x.key.toLowerCase() === lower) ?? pack.fields.find((x) => x.name.toLowerCase() === lower);
+    const f = state.fields().find((x) => x.id.toLowerCase() === lower || x.key.toLowerCase() === lower) ?? state.fields().find((x) => x.name.toLowerCase() === lower);
     return f ? f.id : name;
   };
   const history = (h) => ({ id: h.changelogId, author: user(h.authorId), created: jiraDate(h.created), items: h.items });
@@ -78,7 +79,7 @@ function createRenderer(state) {
     if (!fieldIds.length) return { id: iss.id, self: `${site}${apiBase}/issue/${iss.id}`, key: iss.key };
     const fields = {};
     for (const id of fieldIds) {
-      if (!pack.fields.some((f) => f.id === id)) continue;
+      if (!state.field(id)) continue;
       fields[id] = fieldValue(id, iss.fields[id]);
     }
     const out = { expand: 'renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations', id: iss.id, self: `${site}${apiBase}/issue/${iss.id}`, key: iss.key };

@@ -462,7 +462,7 @@ function facts(seed, { scoring = false } = {}) {
   const touchesStarted = (e) => e.items[0].field === 'Sprint' && actives.some((a) => e.created > a._start
     && (idList(e.items[0].from).includes(String(a.id)) || idList(e.items[0].to).includes(String(a.id))));
   const MULTI_ID_ADDS = 6;
-  const target = r.int(220, 260) - MULTI_ID_ADDS;
+  const target = r.int(170, 200) - MULTI_ID_ADDS;
   let postStart = 0;
   let removals = 0;
   let cursorT = firstActiveStart + MIN;

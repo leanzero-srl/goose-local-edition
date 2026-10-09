@@ -22,12 +22,14 @@ const hash = (x) => crypto.createHash('sha256').update(JSON.stringify(x)).digest
 const listParam = (q, name) => q.getAll(name).flatMap((v) => v.split(',')).map((v) => v.trim()).filter(Boolean);
 const intParam = (v, dflt) => (v === undefined || v === null || v === '' ? dflt : Number.parseInt(v, 10));
 
+// The JQL model reads the LIVE site (sprints close, fields join), never the pack.
 function jqlModel(c) {
   const { pack } = c.state;
-  return { fields: pack.fields, sprints: pack.sprints, statuses: pack.statuses, issueTypes: pack.issueTypes, projects: pack.projects,
+  return { fields: c.state.fields(), sprints: c.state.sprints(), statuses: pack.statuses, issueTypes: pack.issueTypes, projects: pack.projects,
     sprintFieldId: pack.sprintFieldId, now: c.state.now, currentUser: c.caller.accountId };
 }
 
+// Hits are filtered and sorted once per (caller, query, state version); every page of a walk slices the same list.
 function runSearch(c, jql) {
   if (jql === undefined || jql === null) return { error: err(400, 'Unbounded JQL queries are not allowed here. Please add a search restriction to your query.') };
   let q;
@@ -37,16 +39,16 @@ function runSearch(c, jql) {
     throw e;
   }
   if (!q.bounded) return { error: err(400, 'Unbounded JQL queries are not allowed here. Please add a search restriction to your query.') };
-  const hits = c.state.allIssues().filter((i) => c.canBrowse(i) && q.matches(i)).sort(q.compare);
+  const hits = c.state.cached(`search\u0000${c.caller.accountId}\u0000${jql}`, () => c.state.allIssues().filter((i) => c.canBrowse(i) && q.matches(i)).sort(q.compare));
   return { hits };
 }
 
 const handlers = {
-  'GET /rest/api/3/field': (c) => ({ status: 200, body: c.state.pack.fields }),
+  'GET /rest/api/3/field': (c) => ({ status: 200, body: c.state.fields() }),
 
   'GET /rest/api/3/field/search': (c) => {
     const q = c.req.query;
-    let list = c.state.pack.fields.filter((f) => f.custom || q.get('type') !== 'custom');
+    let list = c.state.fields().filter((f) => f.custom || q.get('type') !== 'custom');
     if (q.get('type') === 'system') list = list.filter((f) => !f.custom);
     const ids = listParam(q, 'id');
     if (ids.length) list = list.filter((f) => ids.includes(f.id));
@@ -77,12 +79,12 @@ const handlers = {
   'GET /rest/api/3/project/{projectIdOrKey}': (c) => {
     const k = c.params.projectIdOrKey;
     const p = c.state.pack.projects.find((x) => x.key === k.toUpperCase() || x.id === k);
-    if (!p) return err(404, `No project could be found with key '${k}'.`);
+    if (!p || !c.canBrowseProject(p.key)) return err(404, `No project could be found with key '${k}'.`);
     return { status: 200, body: { self: `${c.state.pack.siteUrl}/rest/api/3/project/${p.id}`, id: p.id, key: p.key, name: p.name, projectTypeKey: 'software', simplified: false, style: 'classic', isPrivate: false } };
   },
 
   'GET /rest/api/3/project/search': (c) => {
-    const values = c.state.pack.projects.map((p) => ({ self: `${c.state.pack.siteUrl}/rest/api/3/project/${p.id}`, id: p.id, key: p.key, name: p.name, projectTypeKey: 'software', simplified: false, style: 'classic', isPrivate: false }));
+    const values = c.state.pack.projects.filter((p) => c.canBrowseProject(p.key)).map((p) => ({ self: `${c.state.pack.siteUrl}/rest/api/3/project/${p.id}`, id: p.id, key: p.key, name: p.name, projectTypeKey: 'software', simplified: false, style: 'classic', isPrivate: false }));
     return { status: 200, body: { self: `${c.state.pack.siteUrl}/rest/api/3/project/search`, maxResults: 50, startAt: 0, total: values.length, isLast: true, values } };
   },
 
@@ -227,6 +229,7 @@ const handlers = {
     const b = c.req.body ?? {};
     const who = b.accountId ?? c.caller.accountId;
     const out = [];
+    for (const k of b.globalPermissions ?? []) if (!GLOBAL[k]) throw new NotModelledError(`global permission key ${k} in /permissions/check`);
     for (const pp of b.projectPermissions ?? []) {
       for (const perm of pp.permissions ?? []) {
         if (!PERMS[perm]) throw new NotModelledError(`permission key ${perm} in /permissions/check`);
@@ -238,7 +241,7 @@ const handlers = {
         out.push({ permission: perm, issues, projects });
       }
     }
-    return { status: 200, body: { projectPermissions: out, globalPermissions: [] } };
+    return { status: 200, body: { projectPermissions: out, globalPermissions: (b.globalPermissions ?? []).filter((k) => GLOBAL[k](c.state, who)) } };
   },
 
   'GET /rest/api/3/mypermissions': (c) => {
@@ -248,11 +251,18 @@ const handlers = {
     const issueRef = q.get('issueKey') ?? q.get('issueId');
     const iss = issueRef ? c.state.issueByIdOrKey(issueRef) : null;
     if (issueRef && !iss) return err(404, NOT_FOUND_ISSUE);
+    const projectRef = q.get('projectKey') ?? q.get('projectId');
+    const project = projectRef ? c.state.pack.projects.find((p) => p.key === projectRef.toUpperCase() || p.id === projectRef) : null;
+    if (projectRef && !project) return err(404, `No project could be found with key '${projectRef}'.`);
+    const who = c.caller.accountId;
     const permissions = {};
     for (const k of keys) {
-      if (!PERMS[k]) throw new NotModelledError(`permission key ${k} in /mypermissions`);
-      permissions[k] = { id: PERM_META[k][0], key: k, name: PERM_META[k][1], type: 'PROJECT', description: PERM_META[k][2],
-        havePermission: iss ? PERMS[k](c.state, c.caller.accountId, iss) : true };
+      if (!PERMS[k] && !GLOBAL[k]) throw new NotModelledError(`permission key ${k} in /mypermissions`);
+      // A project permission without an issue: in that project, or (global context) in any project.
+      const have = GLOBAL[k] ? GLOBAL[k](c.state, who)
+        : iss ? PERMS[k](c.state, who, iss)
+          : (project ? [project] : c.state.pack.projects).some((p) => c.state.canBrowseProject(who, p.key));
+      permissions[k] = { id: PERM_META[k][0], key: k, name: PERM_META[k][1], type: GLOBAL[k] ? 'GLOBAL' : 'PROJECT', description: PERM_META[k][2], havePermission: have };
     }
     return { status: 200, body: { permissions } };
   },
@@ -262,9 +272,16 @@ const PERMS = {
   BROWSE_PROJECTS: (s, who, iss) => s.canBrowse(who, iss),
   ADD_COMMENTS: (s, who, iss) => s.canComment(who, iss),
 };
+// Jira's global ADMINISTER: the site's administrators (pack.admins); the app's own account is not one (SPEC R5 checks
+// the person, asUser).
+const GLOBAL = {
+  ADMINISTER: (s, who) => s.pack.admins.includes(who),
+};
+// id and description are the site's own text; apps read key and havePermission.
 const PERM_META = {
   BROWSE_PROJECTS: ['10', 'Browse Projects', 'Ability to browse projects and the issues within them.'],
   ADD_COMMENTS: ['15', 'Add Comments', 'Ability to comment on issues.'],
+  ADMINISTER: ['0', 'Administer Jira', 'Ability to administer Jira.'],
 };
 
 function commentBody(c, x) {
