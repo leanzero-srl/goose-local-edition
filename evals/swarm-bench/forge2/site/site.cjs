@@ -30,7 +30,7 @@ const rateModel = require('./rate.cjs');
 // Every rest/*.cjs module that exports `handlers` ({ 'METHOD /template': (ctx) => {status, body, headers?} }) serves
 // its operations: platform.cjs, agile.cjs, and site-world's fields.cjs. One operation has one handler.
 const HANDLERS = {};
-for (const file of fs.readdirSync(path.join(__dirname, 'rest')).filter((f) => f.endsWith('.cjs')).sort()) {
+for (const file of fs.readdirSync(path.join(__dirname, 'rest')).filter((f) => f.endsWith('.cjs') && !f.endsWith('.test.cjs')).sort()) {
   for (const [op, fn] of Object.entries(require(path.join(__dirname, 'rest', file)).handlers ?? {})) {
     if (HANDLERS[op]) throw new Error(`rest/${file} handles ${op} a second time`);
     HANDLERS[op] = fn;
@@ -325,7 +325,7 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
       kind: e.kind, method: e.method, path_tpl: e.op.slice(e.op.indexOf(' ') + 1), cost: e.points, status: e.status,
       reason: e.rateLimited ?? null, retry_after_s: e.retryAfter ?? null, module_type: e.moduleType, source: e.source })), next: log.length }),
     // v1's KVS content at the upgrade (SPEC §2.4): the dev kit lays it down when its storage is empty.
-    v1preload: () => ({ v1Preload: pack.v1Preload ?? null }),
+    preload: () => ({ v1Preload: pack.v1Preload ?? null }),
     clock: () => ({ now: state.now(), skippedMs: state.st.skipped }),
     advance: ({ ms }) => ({ now: state.advance(Number(ms)) }),
     next: () => delivery(state.nextDelivery()) ?? { done: true },

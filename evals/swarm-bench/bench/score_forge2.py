@@ -3162,11 +3162,11 @@ CRITICAL_OF = {**V1_CRITICAL, **{n: cls for n, _f, _w, cls in _V2_ROWS if cls}}
 
 def v2_rows(c: Ctx, evaluate=None) -> List[Dict]:
     """P8's rows for this run: V2.evaluate (or `evaluate`, the selftest's stub) over the observations and the run's
-    oracle after the live-UI slot, each stamped with its registry weight and critical CLASS. A row the probe could not
+    own 2.0 oracle, Oracle(pack) — never the live-UI view, which P8 refuses (every row unavailable) — each stamped with its registry weight and critical CLASS. A row the probe could not
     produce because the APP's manifest names an undeclared resource is the app's fault (candidate_section_fault, §17.8
     G): 0, vacuous, never a critical."""
     try:
-        got, why = {r.get('check'): r for r in (evaluate or V2.evaluate)(c.obs, c.oracle_ui)}, None
+        got, why = {r.get('check'): r for r in (evaluate or V2.evaluate)(c.obs, c.oracle)}, None
     except Exception as error:   # a P8 bug is the scorer's, never the app's
         got, why = {}, f'scorer error: forge2_checks.evaluate: {type(error).__name__}: {error}'
     out = []
@@ -3635,7 +3635,7 @@ def selftest_empty_observations(pack: Dict, one_function: bool = False) -> Dict:
                'admin': {'actions': [], 'tree_text': '', 'secret_leaks': []},
                'field': {'writes': [], 'values_by_checkpoint': {}}, 'llm_v2': [], 'boot': {}}
     if callable(getattr(V2, 'idle_observations', None)):
-        idle = V2.idle_observations(fo.Oracle(pack, include_live_ui=True))
+        idle = V2.idle_observations(fo.Oracle(pack))
         idle_v2.update({k: idle[k] for k in idle_v2 if k in idle})
     return {'manifest': manifest, 'kit': {'pins': {'@forge/api': '8.2.0'}},
             'lint': {'runs': [lint_run, copy.deepcopy(lint_run)]}, 'build': build,

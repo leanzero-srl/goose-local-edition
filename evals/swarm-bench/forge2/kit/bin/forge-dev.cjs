@@ -35,10 +35,7 @@ const USAGE = `forge-dev <command>   (run from the app directory; $FORGE_SITE_UR
   realtime [--follow]         every Realtime publish on the dev site (channel, payload, delivered / no
                               subscriber / rejected) and the open subscriptions; --follow keeps watching.
                               A served surface's log also prints each event delivered to its page.
-  uikit <moduleKey> [--as <accountId>] [--set "<label>=<value>"]... [--click "<label>"]...
-        render a UI Kit (render: native) module headless with the real @forge/react reconciler, its resolver calls
-        answered by your functions; prints the visible text after each step and writes the whole tree to
-        .forge-dev/uikit-tree.json. --set and --click run in the order given (controls are found by their label).
+${require('./uikit.cjs').USAGE.replace(/\n$/, '')}
   ci send --env staging|production --issues KEY-1,KEY-2 [--secret <s>] [--module <webtrigger key>]
           [--event-id <id>] [--skew <seconds>] [--bad-signature | --unsigned | --tamper | --stale | --replay | --header-case]
         play the CI system: POST one signed deployment event to your web trigger at the dev site's virtual time, print
@@ -147,9 +144,19 @@ async function emulator({ onInvocation = null } = {}) {
   // A separate work dir per process: two concurrent forge-dev commands never rebuild each other's bundle.
   emu = await createEmulator({ appDir, kitDir, site, runtime: 'wrapper', fence: 'dev-auto', workDir: path.join(stateDir, 'work', String(process.pid)),
     devState: state.kvs ? { kvs: state.kvs, queue: state.queue } : null, aroundInvocation, onInvocation });
+  try {
+    await prepare(emu, state);
+  } catch (e) {
+    await emu.close();
+    throw e;
+  }
+  return emu;
+}
+
+async function prepare(emu, state) {
   // Empty dev storage is the upgrade instant: v1's rows (entity scope-change) are in place, as on the scoring site.
   if (!state.kvs && emu.manifest) {
-    const { v1Preload } = await emu.site.call('v1preload');
+    const { v1Preload } = await emu.site.call('preload');
     const rows = Object.entries(v1Preload?.entities?.['scope-change'] ?? {});
     let refused = 0;
     for (const [key, value] of rows) if (emu.kvs.handle('/api/v1/entity/set', { entityName: 'scope-change', key, value }).status >= 400) refused += 1;
@@ -161,10 +168,9 @@ async function emulator({ onInvocation = null } = {}) {
     console.log('fence: node --permission (macOS refuses a nested sandbox inside this workspace). The scorer runs every invocation under a deny-default\n'
       + '       sandbox: no file reads outside the bundle, no child processes, network only to the Forge proxy.');
   }
-  if (!emu.manifest) { console.log(`manifest.yml: ${emu.manifestError}`); return emu; }
+  if (!emu.manifest) { console.log(`manifest.yml: ${emu.manifestError}`); return; }
   const built = await emu.build();
   for (const f of built.functions.filter((x) => !x.loaded)) console.log(`function ${f.key} (${f.handler}) does not load: ${f.error}`);
-  return emu;
 }
 
 const SHORT_CHARS = 4000; // ratio: a terminal screen of JSON; the whole value is always in .forge-dev/last-result.json
@@ -235,33 +241,6 @@ function devExtension(info, moduleType, { sprint, config, edit, widgetId = 'dev-
   return { type: moduleType };
 }
 
-// The UI Kit host is P2's lib/uikit-host (render({appDir, moduleKey, context, invoke}) -> {tree, text, findByLabel,
-// setValue, click, waitIdle, invokes}); absent, `uikit` refuses by name instead of rendering nothing.
-function uikitHost() {
-  for (const entry of ['uikit-host/index.cjs', 'uikit-host']) {
-    let file;
-    try { file = require.resolve(path.join(kitDir, 'lib', entry)); } catch { continue; }
-    return require(file);
-  }
-  throw new Error(`the UI Kit host is not installed in this kit (${path.join(kitDir, 'lib', 'uikit-host')})`);
-}
-// --set "<label>=<value>" and --click "<label>" in the order given.
-function uikitSteps() {
-  const steps = [];
-  for (let i = 1; i < argv.length; i++) {
-    if (argv[i] !== '--set' && argv[i] !== '--click') continue;
-    const arg = argv[i + 1];
-    if (arg === undefined) throw new Error(`${argv[i]} needs a value`);
-    if (argv[i] === '--set') {
-      const eq = arg.indexOf('=');
-      if (eq <= 0) throw new Error(`--set "${arg}": expected "<label>=<value>"`);
-      steps.push({ op: 'set', label: arg.slice(0, eq), value: arg.slice(eq + 1) });
-    } else steps.push({ op: 'click', label: arg });
-    i++;
-  }
-  return steps;
-}
-
 async function main() {
   if (!cmd || cmd === 'help' || flag('help')) { console.log(USAGE); return 0; }
   if (cmd === 'kvs') {
@@ -327,33 +306,10 @@ async function main() {
   let serving = false;
   try {
     if (cmd === 'uikit') {
-      const key = positional[0];
-      const found = key && emu.moduleByKey(key);
-      if (!found) throw new Error(`uikit <moduleKey>: no module '${key}'`);
-      const { render } = uikitHost();
-      const asUser = opt('as') ?? info.viewer;
-      const context = lib('bridge-host.cjs').contextFor(emu, { type: found.type, moduleKey: key, asUser, extension: {}, theme: opt('theme') ?? 'light', entry: 'view' });
-      // invoke(functionKey, payload) or invoke({functionKey, payload}): resolves with the resolver's answer, rejects when it failed.
-      const invoke = async (a, b) => {
-        const { functionKey, payload } = a !== null && typeof a === 'object' ? a : { functionKey: a, payload: b };
-        const r = await emu.callResolver({ moduleKey: key, functionKey, payload: payload ?? {}, asUser });
-        printInvocation(r, `resolver ${functionKey}`);
-        if (!r.ok) throw new Error(`${r.error?.name}: ${r.error?.message}`);
-        return r.result;
-      };
-      const ui = await render({ appDir, moduleKey: key, context, invoke });
-      await ui.waitIdle();
-      console.log(`--- ${key} as ${asUser}\n${ui.text()}`);
-      for (const s of uikitSteps()) {
-        if (s.op === 'set') await ui.setValue(s.label, s.value); else await ui.click(s.label);
-        await ui.waitIdle();
-        console.log(`--- after ${s.op} "${s.label}"${s.op === 'set' ? ` = ${JSON.stringify(s.value)}` : ''}\n${ui.text()}`);
-      }
-      fs.mkdirSync(stateDir, { recursive: true });
-      fs.writeFileSync(path.join(stateDir, 'uikit-tree.json'), JSON.stringify(ui.tree(), null, 2) + '\n');
-      console.log(`whole tree: ${path.relative(process.cwd(), path.join(stateDir, 'uikit-tree.json'))}${Array.isArray(ui.invokes) ? `; ${ui.invokes.length} invoke(s)` : ''}`);
+      // P2's command (bin/uikit.cjs): parses its own --as/--set/--click/--advance/--json, always closes its host process.
+      const code = await require('./uikit.cjs').main({ emu, argv: argv.slice(1) });
       await saveState(emu, consumed);
-      return 0;
+      return code;
     }
     if (cmd === 'ci') {
       // The CI sender (bin/ci.cjs) sends in-process, at the dev site's virtual time, through the web-trigger ingress.
