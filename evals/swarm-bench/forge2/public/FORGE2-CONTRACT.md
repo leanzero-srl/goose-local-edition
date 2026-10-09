@@ -227,8 +227,8 @@ transaction condition → 400 `CONDITIONAL_CHECK_FAILED`; a transaction of more 
 `RATE-MODEL.json` is the rate model both sites enforce on every Jira request; its numbers are binding:
 - **Quota:** 2,400 points per installation per virtual hour, reset at the top of each virtual hour, nothing carried
   over; a hard wall: once spent, every request is answered 429 until the reset. It is the app's fair share of its
-  65,000-point Tier 1 pool, which every tenant of the app shares: in a busy hour the other tenants can bring the wall
-  forward, so a quota 429 may arrive before your installation spent its 2,400 points.
+  65,000-point Tier 1 pool, shared by every tenant of the app: in a busy hour the others can bring the wall forward,
+  before your own 2,400 points are spent.
 - **Background** = product event triggers, async event consumers, scheduled triggers, the web trigger.
   **Person-facing** = resolvers invoked from a UI surface (Custom UI or UI Kit) and the Rovo action. Every Jira
   request counts, `asApp` and `asUser` alike.
@@ -260,9 +260,8 @@ Guarantees (graded; the site's own accounting per virtual hour and per invocatio
 The harness runs on a virtual clock. Inside an invocation `Date.now()` and `new Date()` read it, and
 `getAppContext().invocationRemainingTimeInMillis()` (`@forge/api`) reports the virtual time left. Each request a
 function makes advances its invocation's clock: a GET 120 ms, a search page 300 ms, a `bulkfetch` 600 ms, a write
-200 ms; a wait inside a function (`setTimeout`, sleep) counts at face value. Platform calls count the same way: a
-storage read (`get`, `query`, a secret or entity get or query) 120 ms; a storage write (`set`, `delete`, a
-transaction) 200 ms; a queue push, a Forge LLM call and a Realtime publish 200 ms each. CPU time is free.
+200 ms; a wait inside a function (`setTimeout`, sleep) counts at face value. Platform calls too: a storage read
+120 ms, a storage write or transaction 200 ms, a queue push, Forge LLM call or Realtime publish 200 ms. CPU is free.
 
 | invocation | limit |
 |---|---|
@@ -295,6 +294,9 @@ scoring schedule is private. Guarantees (graded):
 - **An issue is deleted:** its rows stay as history with `deleted: true`; it no longer counts in current scope (§1).
 - **A person loses browse permission:** their next request shows none of the rows of the issues they can no longer
   browse (no stale cache).
+
+Events: a deletion sends `avi:jira:deleted:issue`; a sprint close (unfinished issues go to the backlog, no changelog
+entry), a board's field switch and a permission change send none.
 
 ## 13. The admin panel (UI Kit)
 
@@ -377,7 +379,7 @@ the end of each scored hour.
   acting on any tool call, validate it against the viewer's sprint scope: only `report_scope` is accepted, and only
   its `changeIds` that are visible changes of this sprint for this viewer are shown. No tool call makes the app do
   anything but show that validated explanation.
-- **429:** Forge LLM answers 429 without a Retry-After. Back off between attempts (never retry at once), at most 3
+- **429:** Forge LLM answers 429 (body `{"code":"TOO_MANY_REQUESTS"}`) without a Retry-After. Back off between attempts (never retry at once), at most 3
   attempts per virtual minute, then show the error flag.
 - **Incomplete answers:** a response or stream whose final choice has no `finish_reason` is a failure: show the error
   flag, never its content.
