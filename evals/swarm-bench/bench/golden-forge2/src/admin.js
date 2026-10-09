@@ -65,7 +65,7 @@ resolver.define(
     if (!changed.length) return { ...(await adminState()), saved: 0 };
     const actor = await actorOf(context);
     await saveSettings(checked.settings);
-    const at = new Date().toISOString();
+    const at = new Date(Date.now()).toISOString();
     await audit(changed.map((k) => ({ at, accountId: actor.accountId, who: actor.who, what: `${LABELS[k]}: ${show(current[k])} → ${show(checked.settings[k])}` })));
     return { ...(await adminState()), saved: changed.length };
   }),
@@ -78,7 +78,7 @@ resolver.define(
     const actor = await actorOf(context);
     const secret = randomBytes(32).toString('hex');
     await kvs.setSecret(SECRET_KEY, secret);
-    const meta = { last4: secret.slice(-4), rotatedAt: new Date().toISOString() };
+    const meta = { last4: secret.slice(-4), rotatedAt: new Date(Date.now()).toISOString() };
     await kvs.set(SECRET_META_KEY, meta);
     await audit([{ at: meta.rotatedAt, accountId: actor.accountId, who: actor.who, what: 'Rotated the CI secret' }]);
     return { ...(await adminState()), newSecret: secret };

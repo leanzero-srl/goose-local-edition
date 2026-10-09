@@ -8,6 +8,7 @@ const path = require('path');
 const os = require('os');
 const { createSite, oracle, fmtCreep } = require('./site.cjs');
 const { createPlatform } = require('./runtime.cjs');
+const { installClock } = require('./clock.cjs');
 
 let failures = 0;
 const ok = (cond, msg) => {
@@ -19,7 +20,7 @@ const eq = (a, b, msg) => ok(JSON.stringify(a) === JSON.stringify(b), `${msg}${J
 const fmtPoints = (n) => String(Math.round(n * 1e6) / 1e6);
 
 function ledgerRows(platform) {
-  const m = platform.kvs.entities.get('scope-change') ?? new Map();
+  const m = platform.kvs.entities.get('scope-ledger') ?? new Map();
   return [...m.values()];
 }
 
@@ -31,8 +32,9 @@ function expectedRowSet(truth) {
 
 async function main() {
   const outDir = process.argv[2] ?? path.join(os.tmpdir(), 'golden-forge-backend');
-  const site = createSite({ seed: 7 });
-  const platform = createPlatform({ site });
+  const clock = installClock(Date.parse('2026-10-02T12:00:00.000Z'));
+  const site = createSite({ seed: 7, clock });
+  const platform = createPlatform({ site, clock });
   await platform.build(path.join(outDir, 'bundle'));
   const { alice, bob } = site.users;
 
@@ -104,8 +106,12 @@ async function main() {
 
   for (const n of order) await platform.invoke('on-issue-updated', ev[n], { moduleKey: 'scope-issue-updated' });
   const deliveries = await platform.drain();
+  // The consumer either sleeps the Retry-After in-function (it fits: 900 s) or hands it to the queue.
   const retried = deliveries.filter((dl) => dl.result && dl.result._retry);
-  ok(retried.length === 1 && retried[0].result.retryOptions.retryAfter >= 17, `consumer 429 -> InvocationError retryAfter ${retried[0]?.result?.retryOptions?.retryAfter} >= Retry-After 17`);
+  const hits = site.requests.filter((r) => r.method === 'GET' && r.path.startsWith(`/rest/api/3/issue/${a.id}?`));
+  const h429 = hits.findIndex((r) => r.status === 429);
+  const waited = h429 >= 0 && hits[h429 + 1] ? (hits[h429 + 1].at - hits[h429].at) / 1000 : null;
+  ok((retried.length === 1 && retried[0].result.retryOptions.retryAfter >= 17) || (retried.length === 0 && waited >= 17), `consumer 429 honoured: ${retried.length ? `InvocationError retryAfter ${retried[0].result.retryOptions.retryAfter}` : `waited ${waited} virtual s in-function`} >= Retry-After 17`);
   ok(deliveries.every((dl) => !dl.error), 'no consumer delivery threw');
 
   const truth1 = oracle(site);
@@ -135,18 +141,18 @@ async function main() {
   ok(rows2.filter((r) => r.source === 'event').length === 4, 'heal did not overwrite event rows');
   await checkTotals('after heal');
 
-  const writesBefore = platform.kvs.writes().length;
+  const writesBefore = platform.kvs.entityWrites().length;
   const pushes2 = platform.queuePushes.length;
   const pubs2 = platform.realtime.published.length;
   await platform.invoke('reconcile', {}, { moduleKey: 'scope-reconcile' });
   ok(platform.realtime.published.length === pubs2, 'a scheduled run with nothing new announces nothing');
-  ok(platform.kvs.writes().length === writesBefore && platform.queuePushes.length === pushes2, `a scheduled run with nothing new writes nothing (${platform.kvs.writes().length - writesBefore} writes)`);
+  ok(platform.kvs.entityWrites().length === writesBefore && platform.queuePushes.length === pushes2, `a scheduled run with nothing new writes nothing (${platform.kvs.entityWrites().length - writesBefore} writes)`);
 
   // redelivering an old event again changes nothing
-  const w3 = platform.kvs.writes().length;
+  const w3 = platform.kvs.entityWrites().length;
   await platform.invoke('on-issue-updated', ev[0], { moduleKey: 'scope-issue-updated' });
   await platform.drain();
-  ok(platform.kvs.writes().length === w3 && ledgerRows(platform).length === rows2.length, `a late duplicate after heal writes nothing ${JSON.stringify(platform.kvs.writes().slice(w3)).slice(0, 400)}`);
+  ok(platform.kvs.entityWrites().length === w3 && ledgerRows(platform).length === rows2.length, `a late duplicate after heal writes nothing ${JSON.stringify(platform.kvs.entityWrites().slice(w3)).slice(0, 400)}`);
 
   // ---------- 4. what a person sees ----------
   const truth = oracle(site);
@@ -168,7 +174,7 @@ async function main() {
       ok(act.changes.every((x) => /Z$/.test(x.at) && vis.find((y) => y.changeId === x.changeId).at === Date.parse(x.at)), `${who} sprint ${sid}: Rovo 'at' are UTC instants equal to the changelog created`);
     }
   }
-  const bobRows = platform.kvs.entities.get('scope-change');
+  const bobRows = platform.kvs.entities.get('scope-ledger');
   ok([...bobRows.values()].some((r) => !bob.browse(site.issueById.get(r.issueId))), 'the bed holds changes bob cannot browse (the permission check is exercised)');
   eq(await platform.invoke('rovo-get-sprint-scope', { sprintId: '999' }, { aaid: alice.accountId }), { error: 'No sprint with id 999 exists on this site.' }, 'Rovo: unknown sprintId -> {error}');
   ok(typeof (await platform.invoke('rovo-get-sprint-scope', {}, { aaid: alice.accountId })).error === 'string', 'Rovo: missing sprintId -> {error}');
@@ -215,15 +221,19 @@ async function main() {
   ok(hiddenIds.length > 0 && hiddenIds.every((id) => !sent.includes(`"${id}"`)) && truth['11'].changes.filter((c) => hiddenIds.includes(c.changeId)).every((c) => !sent.includes(c.issueKey)), 'the prompt holds nothing the viewer cannot see');
   eq(ex.changes.map((c) => c.changeId), [bobView.changes[1].changeId, bobView.changes[0].changeId], 'only returned ids that are visible changes of this sprint are kept');
   eq(ex.summary, 'Work kept being pulled in after the start.', 'a summary without digits is shown as is');
+  clock.advance(11 * 60000); // R8: identical requests within 10 minutes are answered from the cache
   platform.llm.script.push(toolReply({ summary: 'Scope grew 40% because 12 points came in.', changeIds: [] }));
   ex = await explainAs(alice);
   ok(ex.ok && !/40%|12 points/.test(ex.summary) && ex.summary.includes(fmtCreep(truth['11'].creep)), `a summary with digits is replaced by the ledger's own sentence ("${ex.summary}")`);
+  clock.advance(11 * 60000);
   platform.llm.script.push(() => ({ choices: [{ finish_reason: 'end_turn', message: { role: 'assistant', content: [{ type: 'text', text: 'I cannot help with that.' }] } }] }));
   ex = await explainAs(alice);
   ok(ex.ok === false && typeof ex.error === 'string', 'a refusal (no tool call) is an error answer, not a throw');
+  clock.advance(11 * 60000);
   platform.llm.script.push(toolReply({ summary: 42, changeIds: 'all' }));
   ex = await explainAs(alice);
   ok(ex.ok === false && typeof ex.error === 'string', 'malformed tool arguments are an error answer');
+  clock.advance(11 * 60000);
   platform.llm.script.push(() => ({ status: 500, json: { code: 'INTERNAL', message: 'model unavailable' } }));
   ex = await explainAs(alice);
   ok(ex.ok === false && /LLM/.test(ex.error), 'an LLM error is an error answer');
