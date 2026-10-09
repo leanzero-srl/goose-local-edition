@@ -3,28 +3,38 @@
 // calling through x-forge-* headers; a request without them is unauthenticated, as on Jira.
 //
 //   const site = await createSite({ seed, port: 0, trace })
-//     -> { url, adminUrl, pack, state, clock, log, comments, faultLog, harnessMissing, stop, ... }
-//   node forge/site/site.cjs --seed <16 hex> [--port N] [--token T] [--trace file]   (prints {"url","adminUrl"})
+//     -> { url, adminUrl, pack, state, rate, clock, log, comments, faultLog, harnessMissing, stop, ... }
+//   node forge2/site/site.cjs --seed <16 hex> [--port N] [--token T] [--trace file] [--scoring]   (prints {"url","adminUrl"})
 //
 // Every request is matched against the pinned OpenAPI: not in it -> 404 like Jira (the app's defect);
 // in it but not modelled -> 501 EMULATOR_NOT_MODELLED + a harness_missing entry (a harness gap: the
-// verdict is held, never zeroed). Scopes are checked from the OpenAPI before any handler runs.
+// verdict is held, never zeroed). Scopes are checked from the OpenAPI before any handler runs, then the rate model
+// (rate.cjs, SPEC §2.1) admits or refuses the request and charges it. Each log entry carries the request's virtual
+// instant `t`, its `kind` (person / background / unlabelled, from the emulator's labels), the `points` charged and,
+// for a refusal, `rateLimited` (the RateLimit-Reason) and `retryAfter`.
 const http = require('http');
 const fs = require('fs');
+const path = require('path');
 const crypto = require('crypto');
 const { facts } = require('./fixtures.cjs');
 const { createState } = require('./state.cjs');
 const { createOpenApi } = require('./openapi.cjs');
 const { createRenderer } = require('./rest/render.cjs');
-const platform = require('./rest/platform.cjs');
-const agile = require('./rest/agile.cjs');
 const { NotModelledError } = require('./jql.cjs');
 const { createLlm } = require('./llm.cjs');
 const { createRealtime } = require('./realtime.cjs');
+const rateModel = require('./rate.cjs');
 
-const HANDLERS = { ...platform.handlers, ...agile.handlers };
+// Every rest/*.cjs module that exports `handlers` ({ 'METHOD /template': (ctx) => {status, body, headers?} }) serves
+// its operations: platform.cjs, agile.cjs, and site-world's fields.cjs. One operation has one handler.
+const HANDLERS = {};
+for (const file of fs.readdirSync(path.join(__dirname, 'rest')).filter((f) => f.endsWith('.cjs')).sort()) {
+  for (const [op, fn] of Object.entries(require(path.join(__dirname, 'rest', file)).handlers ?? {})) {
+    if (HANDLERS[op]) throw new Error(`rest/${file} handles ${op} a second time`);
+    HANDLERS[op] = fn;
+  }
+}
 const COMMENT_POST = 'POST /rest/api/3/issue/{issueIdOrKey}/comment';
-const WRITE_OPS = new Set([COMMENT_POST]);
 const UI_MODULE_TYPES = new Set(['jira:sprintAction', 'dashboards:widget']);
 // A page after the first: a nextPageToken, or a startAt past 0, in the query or the JSON body.
 const isContinuation = (query, body) => Boolean(query.get('nextPageToken') || Number(query.get('startAt')) > 0
@@ -39,6 +49,7 @@ function json(res, status, body, headers = {}) {
 async function createSite({ seed, port = 0, trace = null, token = crypto.randomBytes(12).toString('hex'), openapiDir, pack: givenPack, scoring = false } = {}) {
   const pack = givenPack ?? facts(seed, { scoring });
   const state = createState(pack);
+  const rate = rateModel.createRate();
   const render = createRenderer(state);
   const openapi = createOpenApi(openapiDir);
   const log = [];
@@ -46,11 +57,9 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
   const faultLog = [];
   const signals = [];
   let faults;
-  let writes;
   const traceLine = (o) => { if (trace) fs.appendFileSync(trace, JSON.stringify({ t: new Date(state.now()).toISOString(), ...o }) + '\n'); };
   const resetFaults = () => {
     faults = pack.faults.map((f) => ({ ...f, armed: false, fired: false, count: 0, windowUntil: null }));
-    writes = new Map();
   };
   resetFaults();
 
@@ -72,8 +81,7 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
   };
   // Scripted 429s, matched by WHO is calling (DESIGN.md §5.2 faults); an early retry inside an open
   // window gets another 429 and is recorded `early_retry`.
-  const faultFor = (caller, opKey, path, query, body) => {
-    const now = state.now();
+  const faultFor = (caller, opKey, path, query, body, now) => {
     for (const f of faults) {
       if (!inScope(f, caller, opKey)) continue;
       if (f.windowUntil !== null && now < f.windowUntil) {
@@ -98,20 +106,6 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
     }
     return null;
   };
-  // Per-issue write limit (RESEARCH §2 rate-limiting page): 20 writes per 2 s and 100 per 30 s.
-  const writeLimit = (issueKeyOrId) => {
-    const iss = state.issueByIdOrKey(issueKeyOrId);
-    if (!iss) return null;
-    const now = state.now();
-    const list = (writes.get(iss.id) ?? []).filter((t) => now - t < 30_000);
-    const last2 = list.filter((t) => now - t < 2_000);
-    if (last2.length >= pack.limits.issueWritesPer2s.value) return Math.ceil((2_000 - (now - last2[0])) / 1000);
-    if (list.length >= pack.limits.issueWritesPer30s.value) return Math.ceil((30_000 - (now - list[0])) / 1000);
-    list.push(now);
-    writes.set(iss.id, list);
-    return null;
-  };
-
   const callerOf = (h) => {
     const as = h['x-forge-as'];
     if (!as) return null;
@@ -122,13 +116,19 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
       moduleKey: h['x-forge-module-key'] ?? null, source: h['x-forge-source'] ?? 'function',
       scheduledRun: h['x-forge-scheduled-run'] ? Number(h['x-forge-scheduled-run']) : null, originChange: h['x-forge-origin-change'] ?? null };
   };
+  // The request's virtual instant: the invocation's clock as the proxy sends it (x-forge-vtime, epoch ms), else the
+  // site's clock (a request outside any invocation's clock).
+  const instantOf = (h) => (/^\d+$/.test(h['x-forge-vtime'] ?? '') ? Number(h['x-forge-vtime']) : state.now());
 
   const handleProduct = (req, res, raw) => {
     const url = new URL(req.url, 'http://site');
     const method = req.method;
     const caller = callerOf(req.headers);
-    const entry = { t: new Date(state.now()).toISOString(), method, path: url.pathname + url.search, as: caller?.as ?? null, accountId: caller?.accountId ?? null,
-      invocationId: caller?.invocationId ?? null, moduleType: caller?.moduleType ?? null, moduleKey: caller?.moduleKey ?? null, source: caller?.source ?? null };
+    const t = instantOf(req.headers);
+    const kind = caller ? rateModel.kindOf(caller) : 'unlabelled';
+    const entry = { t: new Date(t).toISOString(), method, path: url.pathname + url.search, as: caller?.as ?? null, accountId: caller?.accountId ?? null,
+      invocationId: caller?.invocationId ?? null, moduleType: caller?.moduleType ?? null, moduleKey: caller?.moduleKey ?? null, source: caller?.source ?? null,
+      kind, points: 0 };
     log.push(entry);
     const send = (status, body, headers = {}) => {
       entry.status = status;
@@ -136,8 +136,9 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
       const internal = {};
       if (entry.fault) { internal['x-forge-site-fault'] = entry.fault; internal['x-forge-site-fault-kind'] = entry.faultKind; }
       if (entry.scopeAlternative) internal['x-forge-site-scopes'] = JSON.stringify(entry.scopeAlternative);
-      if (entry.op) internal['x-forge-site-op'] = entry.op;
-      json(res, status, body, { ...headers, ...internal });
+      if (entry.op) { internal['x-forge-site-op'] = entry.op; internal['x-forge-site-latency-ms'] = String(rateModel.latencyOf(entry.op)); }
+      internal['x-forge-site-points'] = String(entry.points);
+      json(res, status, body, { ...rate.headers(t), ...headers, ...internal });
     };
     if (!caller) return send(401, { errorMessages: ['Client must be authenticated to access this resource.'], errors: {} });
     if (!caller.accountId) return send(401, { code: 401, message: 'Unauthorized; no user or app identity on this request' });
@@ -171,35 +172,47 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
       missing(`REST ${opKey}`, { method, path: pathname });
       return send(501, { code: 'EMULATOR_NOT_MODELLED', message: `${opKey} is a Jira Cloud operation the emulator does not model` });
     }
-    const fault = faultFor(caller, opKey, pathname, url.searchParams, body);
+    // The rate model (SPEC §2.1): the wall, the endpoint's bucket, the per-issue write window. A page's own bridge
+    // request is not charged to the quota (rate.cjs quotaCharged).
+    const written = [...new Set(rateModel.writtenRefs(opKey, m.params, body).map((k) => state.issueByIdOrKey(k)?.id).filter(Boolean))];
+    const charged = rateModel.quotaCharged(caller);
+    const refusal = rate.check({ t, endpoint: opKey, kind, cost: rateModel.costOf(opKey, body, 0), issues: written, charged });
+    if (refusal) {
+      entry.rateLimited = refusal.reason;
+      entry.retryAfter = refusal.retryAfter;
+      traceLine({ event: 'rate_limited', kind, op: opKey, reason: refusal.reason, retryAfter: refusal.retryAfter, invocationId: caller.invocationId });
+      return send(429, rate.model.body429, { 'Retry-After': String(refusal.retryAfter), 'RateLimit-Reason': refusal.reason });
+    }
+    const fault = faultFor(caller, opKey, pathname, url.searchParams, body, t);
     if (fault) {
       entry.fault = fault.f.id;
       entry.faultKind = fault.kind;
       if (fault.kind === 'fired' && fault.f.status !== 429) {
         return send(fault.f.status, { errorMessages: ['Internal server error'], errors: {} });
       }
-      return send(429, { errorMessages: ['Rate limit exceeded.'], errors: {} }, { 'Retry-After': String(fault.retryAfter), 'RateLimit-Reason': fault.f.reason });
-    }
-    if (WRITE_OPS.has(opKey)) {
-      const wait = writeLimit(m.params.issueIdOrKey);
-      if (wait !== null) {
-        entry.writeLimited = true;
-        return send(429, { errorMessages: ['Rate limit exceeded.'], errors: {} }, { 'Retry-After': String(wait), 'RateLimit-Reason': 'jira-per-issue-on-write' });
-      }
+      return send(429, rate.model.body429, { 'Retry-After': String(fault.retryAfter), 'RateLimit-Reason': fault.f.reason });
     }
     const ctx = { state, render, limits: pack.limits, paging: pack.paging, caller, params: m.params,
       req: { method, pathname, query: url.searchParams, body },
-      canBrowse: (iss) => state.canBrowse(caller.accountId, iss), canComment: (iss) => state.canComment(caller.accountId, iss) };
-    try {
-      const out = handler(ctx);
+      canBrowse: (iss) => state.canBrowse(caller.accountId, iss), canComment: (iss) => state.canComment(caller.accountId, iss),
+      canBrowseProject: (key) => state.canBrowseProject(caller.accountId, key) };
+    // Every served request is charged (a refused one never is); a write counts in its issues' window only when it
+    // succeeded. `points` is what the quota was charged (0 for a bridge request, whose cost still drains the bucket).
+    const serve = (out) => {
+      const cost = rateModel.costOf(opKey, body, Array.isArray(out.body?.issues) ? out.body.issues.length : 0);
+      entry.points = charged ? cost : 0;
+      rate.charge({ t, endpoint: opKey, kind, cost, issues: out.status < 400 ? written : [], charged });
       send(out.status, out.body, out.headers);
+    };
+    try {
+      serve(handler(ctx));
     } catch (e) {
       if (e instanceof NotModelledError) {
         missing(e.message, { method, path: pathname });
         return send(501, { code: 'EMULATOR_NOT_MODELLED', message: e.message });
       }
       entry.error = String(e.stack ?? e);
-      send(500, { errorMessages: [`site handler crashed: ${e.message}`], errors: {} });
+      serve({ status: 500, body: { errorMessages: [`site handler crashed: ${e.message}`], errors: {} } });
     }
   };
 
@@ -216,6 +229,7 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
     change: { id: d.change.changelogId, created: d.change.created, authorId: d.change.authorId,
       items: d.change.items.map(({ field, fieldId, from, fromString, to, toString }) => ({ field, fieldId, from: from === '' ? null : from, fromString: fromString === '' ? null : fromString, to: to === '' ? null : to, toString: toString === '' ? null : toString })) },
     issue: eventSnapshot(d.issue) });
+  const worldEvent = (change) => delivery({ slot: null, duplicate: false, remaining: null, applied: [], change, issue: state.st.issues.get(change.issueId) });
   // Platform services the site hosts for every emulator attached to it: Forge LLM (llm.cjs) and Realtime
   // (realtime.cjs). The realtime token key derives from the control token, so only this site's emulators can sign.
   const llm = createLlm({ pack, now: () => state.now() });
@@ -232,14 +246,39 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
     rtdeliveries: ({ since = 0, origin = null }) => ({ deliveries: realtime.deliveriesSince(Number(since), origin) }),
     rtlog: ({ since = 0 }) => ({ ...realtime.eventsSince(Number(since)), subscriptions: realtime.subscriptions() }),
     info: () => ({ cloudId: pack.cloudId, siteUrl: pack.siteUrl, appAccountId: pack.appAccountId, now: new Date(state.now()).toISOString(),
-      users: pack.users.map(({ accountId, displayName }) => ({ accountId, displayName })), viewer: pack.viewer,
+      users: pack.users.map(({ accountId, displayName }) => ({ accountId, displayName })), viewer: pack.viewer, admins: pack.admins,
       // Who may not comment where (the default viewer on one issue): Jira answers such a comment 400.
       commentForbidden: pack.issues.filter((i) => i.commentForbiddenFor.length).map((i) => ({ issueKey: i.key, accountIds: i.commentForbiddenFor })),
-      // What the Agile REST API discloses anyway; the dev kit builds sprint-action contexts from it.
+      // What the Agile REST API discloses anyway; the dev kit builds sprint-action contexts from it (live: the world
+      // closes sprints and switches estimation fields).
       projects: pack.projects.map(({ id, key }) => ({ id, key })),
-      boards: pack.boards.map(({ id, type, projectKey }) => ({ id, type, projectKey })),
-      sprints: pack.sprints.map(({ id, state, originBoardId }) => ({ id, state, originBoardId })),
+      boards: state.boards().map(({ id, type, projectKey }) => ({ id, type, projectKey })),
+      sprints: state.sprints().map(({ id, state: s, originBoardId }) => ({ id, state: s, originBoardId })),
+      scopeStatusFieldId: pack.scopeStatusFieldId,
       liveRemaining: state.plan.length - state.st.cursor }),
+    // The rate model's ledger (SPEC §2.1): per virtual hour, points by kind, requests, refusals by kind and reason.
+    rate: () => ({ model: rate.model, hours: rate.summary() }),
+    // Points drawn from this installation's hour by the rest of the world (other tenants on the shared pool).
+    draw: ({ points, at }) => rate.draw({ t: at ?? state.now(), points: Number(points) }),
+    // The world mutation API (state.cjs, SPEC §2.5); `at` is a virtual epoch ms. A changelog entry the world writes
+    // comes back with `events`: the issue-updated payloads in the shape `next`/`event` deliver live changes; a deletion
+    // comes back with the deleted issue's snapshot.
+    moveissue: ({ issue, sprintId, at, authorId, estimate }) => {
+      const w = state.moveIssue(issue, sprintId, { at: at ?? state.now(), authorId, estimate });
+      return { ...w, events: [worldEvent(w.change)] };
+    },
+    deleteissue: ({ issue, at }) => {
+      const w = state.deleteIssue(issue, { at: at ?? state.now() });
+      return { ...w, snapshot: eventSnapshot(w.issue) };
+    },
+    closesprint: ({ sprintId, at, carryTo = null, authorId }) => {
+      const w = state.closeSprint(sprintId, { at: at ?? state.now(), carryTo, authorId });
+      return { ...w, events: w.carried.map(worldEvent) };
+    },
+    estimationfield: ({ boardId, fieldId, at }) => state.setBoardEstimationField(boardId, fieldId, { at: at ?? state.now() }),
+    revokebrowse: ({ accountId, projectKey, at }) => state.revokeBrowse(accountId, projectKey, { at: at ?? state.now() }),
+    addfield: (def) => state.addField(def),
+    world: ({ since = 0 }) => ({ entries: state.st.world.slice(Number(since)), next: state.st.world.length }),
     clock: () => ({ now: state.now(), skippedMs: state.st.skipped }),
     advance: ({ ms }) => ({ now: state.advance(Number(ms)) }),
     next: () => delivery(state.nextDelivery()) ?? { done: true },
@@ -262,7 +301,7 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
       }
       return { ok: true };
     },
-    reset: () => { state.reset(); resetFaults(); log.length = 0; faultLog.length = 0; signals.length = 0; llm.reset(); realtime.reset(); return { ok: true }; },
+    reset: () => { state.reset(); rate.reset(); resetFaults(); log.length = 0; faultLog.length = 0; signals.length = 0; llm.reset(); realtime.reset(); return { ok: true }; },
     log: ({ since = 0 }) => ({ entries: log.slice(Number(since)), next: log.length }),
     comments: () => ({ comments: state.st.comments }),
     users: () => control.info().users,
@@ -298,6 +337,7 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
     token,
     pack,
     state,
+    rate,
     clock: { now: state.now, advance: state.advance },
     log,
     get comments() { return state.st.comments; },
@@ -317,7 +357,8 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
 if (require.main === module) {
   const args = process.argv.slice(2);
   const get = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : undefined; };
-  createSite({ seed: get('--seed'), port: Number(get('--port') ?? 0), trace: get('--trace') ?? null, ...(get('--token') ? { token: get('--token') } : {}) })
+  createSite({ seed: get('--seed'), port: Number(get('--port') ?? 0), trace: get('--trace') ?? null, scoring: args.includes('--scoring'),
+    ...(get('--token') ? { token: get('--token') } : {}) })
     .then((site) => {
       process.stdout.write(JSON.stringify({ url: site.url, adminUrl: site.adminUrl, pid: process.pid }) + '\n');
       const stop = () => site.stop().then(() => process.exit(0));

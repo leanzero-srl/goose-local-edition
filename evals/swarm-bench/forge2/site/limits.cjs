@@ -1,7 +1,8 @@
 'use strict';
 // Every page cap and limit the site enforces, with its receipt. `openapi` receipts are verified
-// against the pinned kit OpenAPI files by forge/kit/test/limits.test.cjs (the quote must occur in the
+// against the pinned kit OpenAPI files by forge2/kit/test/site.test.cjs (the quote must occur in the
 // named operation's text); `measured` receipts were read on a Jira Cloud site on 2026-10-02.
+// The rate limits (points quota, burst bucket, per-issue writes) are the benchmark's own model: rate.cjs MODEL.
 const LIMITS = {
   searchJqlDefault: { value: 50, receipt: { openapi: 'jira.json GET /rest/api/3/search/jql maxResults', quote: '"default":50' } },
   searchJqlIdsOnlyMax: { value: 5000, receipt: { openapi: 'jira.json GET /rest/api/3/search/jql maxResults', quote: 'The greatest number of items returned per page is achieved when requesting `id` or `key` only. It returns max 5000 issues.' } },
@@ -22,8 +23,6 @@ const LIMITS = {
   softwareIssueDefault: { value: 50, receipt: { measured: 'Jira Cloud 2026-10-02: GET /rest/software/1.0/board/{id}/issue and /backlog with no maxResults returned 50 issues, isLast false, a nextPageToken' } },
   softwareIssuePage: { value: 5000, receipt: { openapi: 'jsw.json GET /rest/software/1.0/sprint/{sprintId}/issue maxResults', quote: 'It returns max 5000 issues.' } },
   agileIssueDefault: { value: 50, receipt: { openapi: 'jsw.json GET /rest/agile/1.0/board/{boardId}/backlog (also epic issue lists; board/sprint issue lists state no default)', quote: 'The maximum number of issues to return per page. Default: 50.' } },
-  issueWritesPer2s: { value: 20, receipt: { doc: 'https://developer.atlassian.com/cloud/jira/platform/rate-limiting/', quote: '20 write operations per 2 seconds' } },
-  issueWritesPer30s: { value: 100, receipt: { doc: 'https://developer.atlassian.com/cloud/jira/platform/rate-limiting/', quote: '100 write operations per 30 seconds' } },
 };
 
 // The SCORING site's page rule (DESIGN §17.6; the dev site never carries it). Jira serves at most `maxResults` per
