@@ -55,7 +55,7 @@ test('response: dynamic shape checked, static outputKey mapped, anything else is
     [dyn, { body: 'x' }, /statusCode undefined/],
     [dyn, { statusCode: '202' }, /statusCode "202"/],
     [dyn, { statusCode: 202, body: { ok: true } }, /body must be a string/],
-    [dyn, { statusCode: 202, headers: { 'X-A': '1' } }, /arrays of strings/],
+    [dyn, { statusCode: 202, headers: { 'X-A': '1' } }, /an array of strings/],
     [dyn, undefined, /returned undefined/],
     [st, { outputKey: 'nope' }, /naming one of response.outputs \(accepted, duplicate, unauthorized\)/],
     [st, { statusCode: 202 }, /must return \{outputKey\}/],
@@ -100,7 +100,7 @@ test('ingress: undeclared module 404, missing function and thrown or timed-out f
 test('sequence: seeded, refuses missing inputs, every step built exactly as named', () => {
   assert.throws(() => createCiSequence({ seed: 'nope', secret: SECRET, issueKeys: KEYS }), /16 lowercase hex/);
   assert.throws(() => createCiSequence({ seed: SEED, secret: '', issueKeys: KEYS }), /secret/);
-  assert.throws(() => createCiSequence({ seed: SEED, secret: SECRET, issueKeys: KEYS.slice(0, 8) }), /needs 9 distinct issue keys, got 8/);
+  assert.throws(() => createCiSequence({ seed: SEED, secret: SECRET, issueKeys: KEYS.slice(0, 7) }), /needs 8 distinct issue keys, got 7/);
   const a = createCiSequence({ seed: SEED, secret: SECRET, issueKeys: KEYS });
   const b = createCiSequence({ seed: SEED, secret: SECRET, issueKeys: [...KEYS].reverse() });
   const c = createCiSequence({ seed: '1111222233334444', secret: SECRET, issueKeys: KEYS });
