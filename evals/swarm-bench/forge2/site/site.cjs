@@ -225,6 +225,7 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
     change: { id: d.change.changelogId, created: d.change.created, authorId: d.change.authorId,
       items: d.change.items.map(({ field, fieldId, from, fromString, to, toString }) => ({ field, fieldId, from: from === '' ? null : from, fromString: fromString === '' ? null : fromString, to: to === '' ? null : to, toString: toString === '' ? null : toString })) },
     issue: eventSnapshot(d.issue) });
+  const worldEvent = (change) => delivery({ slot: null, duplicate: false, remaining: null, applied: [], change, issue: state.st.issues.get(change.issueId) });
   // Platform services the site hosts for every emulator attached to it: Forge LLM (llm.cjs) and Realtime
   // (realtime.cjs). The realtime token key derives from the control token, so only this site's emulators can sign.
   const llm = createLlm({ pack, now: () => state.now() });
@@ -255,10 +256,21 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
     rate: () => ({ model: rate.model, hours: rate.summary() }),
     // Points drawn from this installation's hour by the rest of the world (other tenants on the shared pool).
     draw: ({ points, at }) => rate.draw({ t: at === undefined ? state.now() : Number(at), points: Number(points) }),
-    // The world mutation API (state.cjs, SPEC §2.5) for a site in another process; `at` is a virtual epoch ms.
-    moveissue: ({ issue, sprintId, at, authorId, estimate }) => state.moveIssue(issue, sprintId, { at: at ?? state.now(), authorId, estimate }),
-    deleteissue: ({ issue, at }) => state.deleteIssue(issue, { at: at ?? state.now() }),
-    closesprint: ({ sprintId, at, carryTo = null, authorId }) => state.closeSprint(sprintId, { at: at ?? state.now(), carryTo, authorId }),
+    // The world mutation API (state.cjs, SPEC §2.5); `at` is a virtual epoch ms. A changelog entry the world writes
+    // comes back with `events`: the issue-updated payloads in the shape `next`/`event` deliver live changes; a deletion
+    // comes back with the deleted issue's snapshot.
+    moveissue: ({ issue, sprintId, at, authorId, estimate }) => {
+      const w = state.moveIssue(issue, sprintId, { at: at ?? state.now(), authorId, estimate });
+      return { ...w, events: [worldEvent(w.change)] };
+    },
+    deleteissue: ({ issue, at }) => {
+      const w = state.deleteIssue(issue, { at: at ?? state.now() });
+      return { ...w, snapshot: eventSnapshot(w.issue) };
+    },
+    closesprint: ({ sprintId, at, carryTo = null, authorId }) => {
+      const w = state.closeSprint(sprintId, { at: at ?? state.now(), carryTo, authorId });
+      return { ...w, events: w.carried.map(worldEvent) };
+    },
     estimationfield: ({ boardId, fieldId, at }) => state.setBoardEstimationField(boardId, fieldId, { at: at ?? state.now() }),
     revokebrowse: ({ accountId, projectKey, at }) => state.revokeBrowse(accountId, projectKey, { at: at ?? state.now() }),
     addfield: (def) => state.addField(def),

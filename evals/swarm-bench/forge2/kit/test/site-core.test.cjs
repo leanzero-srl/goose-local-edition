@@ -167,6 +167,7 @@ test('world: an issue moves to another board\'s sprint with that board\'s estima
   const w = site.control.moveissue({ issue: mover.key, sprintId: to.id, at, authorId: pack.users[0].accountId, estimate: 8 });
   assert.strictEqual(w.type, 'moveIssue');
   assert.deepStrictEqual([w.fromSprintId, w.toSprintId], [from.id, to.id]);
+  assert.deepStrictEqual([w.events.length, w.events[0].change.id, w.events[0].issue.key, w.events[0].slot], [1, w.change.changelogId, mover.key, null]);
   assert.strictEqual(state.now(), at, 'the site clock moved to the change');
   const sprintItem = w.change.items[0];
   assert.deepStrictEqual(sprintItem.to.split(', ').map(Number).includes(to.id) && !sprintItem.to.split(', ').map(Number).includes(from.id), true);
@@ -192,7 +193,7 @@ test('world: deleted issues vanish everywhere; an issue with live changes left c
   assert.throws(() => state.deleteIssue(busy.id), /live change/);
   const gone = pack.issues.find((i) => state.liveRemainingFor(i.id) === 0 && (i.fields[pack.sprintFieldId] ?? []).some((s) => s.state === 'active'));
   const w = site.control.deleteissue({ issue: gone.key });
-  assert.strictEqual(w.issue.id, gone.id);
+  assert.deepStrictEqual([w.issue.id, w.snapshot.id, w.snapshot.key], [gone.id, gone.id, gone.key]);
   assert.strictEqual((await call('GET', `/rest/api/3/issue/${gone.key}`)).status, 404);
   const sid = gone.fields[pack.sprintFieldId].find((s) => s.state === 'active').id;
   const s = await call('POST', '/rest/api/3/search/jql', { body: { jql: `sprint = ${sid}`, fields: ['id'], maxResults: 5000 } });
@@ -213,6 +214,7 @@ test('world: a sprint closes (carry-over written as Jira writes it), leaves open
   assert.throws(() => state.closeSprint(sprint.id, { carryTo: future.id }), /needs an author/);
   const w = site.control.closesprint({ sprintId: sprint.id, carryTo: future.id, authorId: pack.users[1].accountId });
   assert.strictEqual(w.carried.length, open.length);
+  assert.deepStrictEqual(w.events.map((e) => e.change.id), w.carried.map((c) => c.changelogId));
   for (const c of w.carried) assert.strictEqual(c.items[0].to, `${c.items[0].from}, ${future.id}`);
   const got = await call('GET', `/rest/agile/1.0/sprint/${sprint.id}`);
   assert.deepStrictEqual([got.body.state, got.body.completeDate], ['closed', new Date(state.now()).toISOString()]);
