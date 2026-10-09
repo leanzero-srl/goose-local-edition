@@ -179,6 +179,7 @@ test('every modelled operation answers the shape the shipped OpenAPI documents f
   const issue = pack.issues.find((i) => !i.hiddenFrom?.length && i.projectKey === scrum.projectKey);
   const fill = { boardId: scrum.id, sprintId: sprint.id, issueIdOrKey: issue.key, projectIdOrKey: issue.projectKey };
   const query = { 'GET /rest/api/3/user': `accountId=${pack.users[0].accountId}`, 'GET /rest/api/3/user/bulk': `accountId=${pack.users[0].accountId}`,
+    'GET /rest/api/3/user/groups': `accountId=${pack.users[0].accountId}`,
     'GET /rest/api/3/search/jql': `jql=${encodeURIComponent(`project = ${issue.projectKey}`)}&maxResults=2`,
     'GET /rest/agile/1.0/issue/{issueIdOrKey}/estimation': `boardId=${scrum.id}`, 'GET /rest/api/3/mypermissions': 'permissions=BROWSE_PROJECTS' };
   const body = { 'POST /rest/api/3/issue/{issueIdOrKey}/changelog/list': { changelogIds: [1] },

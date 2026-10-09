@@ -690,6 +690,12 @@ function facts(seed, { scoring = false } = {}) {
     }
   }
   const inActive = packIssues.filter((i) => (i.fields[sprintFieldId] ?? []).some((s) => s.state === 'active')).length;
+  // Jira groups (the admin panel's `Comment group`, SPEC §2.6): everyone, and one team group the viewer is not in.
+  const groups = [
+    { name: 'jira-software-users', groupId: r.uuid(), members: humans.slice().sort() },
+    { name: r.pick(['scope-reviewers', 'delivery-leads', 'release-managers', 'agile-coaches']), groupId: r.uuid(),
+      members: r.sample(humans.filter((a) => a !== viewer), 3).sort() },
+  ];
 
   return {
     seed,
@@ -701,6 +707,7 @@ function facts(seed, { scoring = false } = {}) {
     peer,
     admins: [admin],
     users,
+    groups,
     fields,
     sprintFieldId,
     // The id Jira gives the app's `scope-status` custom field when v2 is installed (SPEC R7); the field itself joins

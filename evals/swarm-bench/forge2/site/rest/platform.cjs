@@ -60,7 +60,18 @@ const handlers = {
     return { status: 200, body: { maxResults, startAt, total: list.length, isLast: startAt + values.length >= list.length, values } };
   },
 
-  'GET /rest/api/3/myself': (c) => ({ status: 200, body: c.render.user(c.caller.accountId) }),
+  'GET /rest/api/3/myself': (c) => {
+    const me = c.render.user(c.caller.accountId);
+    if (!listParam(c.req.query, 'expand').includes('groups')) return { status: 200, body: me };
+    const items = groupsOf(c, c.caller.accountId);
+    return { status: 200, body: { ...me, groups: { size: items.length, items } } };
+  },
+
+  'GET /rest/api/3/user/groups': (c) => {
+    const id = c.req.query.get('accountId');
+    if (!c.state.userById.has(id) && id !== c.state.pack.appAccountId) return err(404, `Specified user does not exist or you do not have required permissions`);
+    return { status: 200, body: groupsOf(c, id) };
+  },
 
   'GET /rest/api/3/user': (c) => {
     const u = c.render.user(c.req.query.get('accountId'));
@@ -283,6 +294,10 @@ const PERM_META = {
   ADD_COMMENTS: ['15', 'Add Comments', 'Ability to comment on issues.'],
   ADMINISTER: ['0', 'Administer Jira', 'Ability to administer Jira.'],
 };
+
+// The groups a person belongs to (pack.groups), in Jira's GroupName shape.
+const groupsOf = (c, accountId) => c.state.pack.groups.filter((g) => g.members.includes(accountId))
+  .map((g) => ({ name: g.name, groupId: g.groupId, self: `${c.state.pack.siteUrl}/rest/api/3/group?groupId=${g.groupId}` }));
 
 function commentBody(c, x) {
   const self = `${c.state.pack.siteUrl}/rest/api/3/issue/${x.issueId}/comment/${x.id}`;

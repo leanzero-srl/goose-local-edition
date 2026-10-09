@@ -261,6 +261,15 @@ test('world: a revoked person stops seeing the project at once; others and the a
   assert.strictEqual(appPerm.body.permissions.ADMINISTER.havePermission, false, 'the app is not a Jira administrator');
   const bulk = await call('POST', '/rest/api/3/permissions/check', { body: { accountId: admin, globalPermissions: ['ADMINISTER'] } });
   assert.deepStrictEqual(bulk.body.globalPermissions, ['ADMINISTER']);
+  // Groups (the admin panel's Comment group): everyone's group, and a team group the viewer is not in.
+  const team = pack.groups[1];
+  const viewerGroups = await call('GET', `/rest/api/3/user/groups?accountId=${viewer}`);
+  assert.deepStrictEqual(viewerGroups.body.map((g) => g.name), ['jira-software-users']);
+  const member = team.members[0];
+  const me = await call('GET', '/rest/api/3/myself?expand=groups', { as: member, source: 'resolver' });
+  assert.deepStrictEqual(me.body.groups.items.map((g) => g.name).sort(), ['jira-software-users', team.name].sort());
+  assert.strictEqual(me.body.groups.size, 2);
+  assert.strictEqual((await call('GET', '/rest/api/3/user/groups?accountId=nobody')).status, 404);
 }));
 
 test('the app\'s scope-status field joins the field list at install and its values show on issues', () => withSite(async (site, call) => {
