@@ -108,7 +108,17 @@ export async function recordChange(row, known = false) {
 export const copyV1 = (v1, extra) => createRow(changeKey(v1.changeId, v1.sprintId), fromV1(v1, extra));
 
 const sameMember = (a, b) =>
-  a && b && a.inSprint === b.inSprint && a.estimate === b.estimate && a.issueKey === b.issueKey && (a.deleted === true) === (b.deleted === true);
+  a && b && a.inSprint === b.inSprint && a.estimate === b.estimate && a.estimates === b.estimates && a.issueKey === b.issueKey && (a.deleted === true) === (b.deleted === true);
+
+// A change's points (contract §1): the issue's current value of the estimation field its sprint's board used at the
+// time of the change, the field its row records — a later switch of the board's field leaves it alone. The member
+// row carries every estimation field's current value (`estimates`, JSON); a row without a field (a v1 row not copied
+// yet) reads the board's.
+export function changePoints(member, fieldId) {
+  if (!member) return 0;
+  const values = member.estimates ? JSON.parse(member.estimates) : {};
+  return fieldId && Object.hasOwn(values, fieldId) ? values[fieldId] : member.estimate ?? 0;
+}
 
 // Writes the member row only when it differs from what is stored, so a run with nothing new writes nothing.
 export async function writeMember(next, stored) {
@@ -197,15 +207,20 @@ export function computeTotals(changes, members) {
   return { committed, added, removed, creepTenths: creepTenths(added, committed) };
 }
 
-// The `scope-status` value of one issue (R7): `committed` or `added +<points>` in the active sprint it is
-// in now, `removed` when it left an active sprint after its start, empty otherwise. `activeSprintIds` are
-// the active sprints; members and rows are this issue's.
+// The `scope-status` value of one issue (R7): `committed` or `added +<points>` (the points of the change that
+// last added it) in the active sprint it is in now, `removed` when it left an active sprint after its start,
+// empty otherwise. `activeSprintIds` are the active sprints; members and rows are this issue's.
 export function scopeStatus(activeSprintIds, members, rows) {
   let removed = false;
   for (const m of members) {
     if (!activeSprintIds.has(m.sprintId)) continue;
-    const { inNow, inAtStart, everInAfterStart } = issueInSprint(rows.filter((r) => r.sprintId === m.sprintId), m);
-    if (inNow) return inAtStart ? 'committed' : `added +${formatPoints(toMicro(m.estimate))}`;
+    const history = rows.filter((r) => r.sprintId === m.sprintId);
+    const { inNow, inAtStart, everInAfterStart } = issueInSprint(history, m);
+    if (inNow) {
+      if (inAtStart) return 'committed';
+      const lastAdd = history.filter((r) => r.kind === 'added').sort(byTime).at(-1);
+      return `added +${formatPoints(toMicro(changePoints(m, lastAdd?.estimateField)))}`;
+    }
     if (everInAfterStart) removed = true;
   }
   return removed ? 'removed' : '';

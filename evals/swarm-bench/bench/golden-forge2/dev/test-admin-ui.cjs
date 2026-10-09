@@ -114,9 +114,9 @@ async function main() {
   await page.idle();
   h = page.current();
   const secret = platform.kvs.secrets.get('ci-secret');
-  ok(secret && h.text.includes(`New CI secret (shown once): ${secret}`), 'Rotate CI secret shows the new secret once');
+  ok(secret && h.text.includes(`CI secret: ${secret}`), 'Rotate CI secret shows the new secret once');
   const again = await render(site.users.alice.accountId);
-  ok(!again.current().text.includes(secret) && again.current().text.includes(`••••${secret.slice(-4)}`), 'a fresh load shows only ••••<last4>');
+  ok(!again.current().text.includes(secret) && again.current().text.includes(`CI secret: ••••${secret.slice(-4)}`), 'a fresh load shows only CI secret: ••••<last4>');
 
   console.log(`\n${failures ? `${failures} FAILED` : 'ALL PASSED'}`);
   process.exit(failures ? 1 : 0);

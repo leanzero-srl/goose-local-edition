@@ -9,16 +9,19 @@ an interpretation the contract (P6), the oracle (P8) and the probe (P9) must mat
   golden sends `?generateChangelog=false&generateAppEvents=false`, ≤ 200 issue updates per request, empty = `null`.
 - **R7 field discovery:** `GET /rest/api/3/field`, the field whose `schema.custom` ends `/scope-status` (the extension
   ARI `…/static/scope-status`) or whose `key` ends `__scope-status`. None found = logged, statuses not written.
-- **R7 values:** `committed` / `added +<points>` (points as §1 plain decimals, the board's current estimate) for the
-  active sprint the issue is in; `removed` when it left an active sprint after its start and is in none now; empty
+- **R7 values:** `committed` / `added +<points>` (the points of the change that last added it: the current value of
+  the field its board used at that change, contract §1/§15) for the active sprint the issue is in; `removed` when it left an active sprint after its start and is in none now; empty
   otherwise (incl. after its sprint closed). Deleted issues are not written.
 - **R4 deleted issue:** rows get `deleted: true`; the membership keeps its last state with `deleted: true`, so the
   issue counts as not-in-now: still in `committed` if it was in at start, and in `removed`. Its rows are hidden from
   every person (no one can browse a deleted issue) and counted in hidden-count.
 - **R4 closed sprint:** no row with a change time after `completeDate`; the event path reads each sprint and board
   fresh (one agile GET each per invocation), so closes and estimation-field switches apply at once.
-- **R4 estimation-field switch:** rows keep the estimate they were written with; totals and the modal's points
-  column stay v1's "current estimate" (the board's current field).
+- **R4 estimation-field switch** (settled by contract §1, 2026-10-10): rows keep the estimate they were written
+  with; the totals use the board's current field; a change's points (the modal's points column, the Rovo action,
+  `added +<points>`) are the current value of the field its row records (`estimateField`, the field the board used
+  at the change). Members carry every estimation field's current value (`estimates`, JSON) for that. A closed
+  sprint's members stop updating, so its numbers and points stay as at the close (§12).
 - **R1:** the v1 key (`<changeId>:<sprintId>`) is the v2 key, so copies are exactly-once by construction. Migrated
   rows: estimate = the issue's current value of the sprint's board field (v1 stored none), `deleted` if Jira no
   longer has the issue. Progress text: `Migrated <n> of <total> v1 rows`, `… — complete`, before the first step

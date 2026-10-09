@@ -1,6 +1,6 @@
 import { jiraJson, route, postJson } from './jira';
 import { listScrumBoards, listActiveSprints, isStarted } from './config';
-import { sprintTotals, visibleIssues, byTime, memberKey } from './ledger';
+import { sprintTotals, visibleIssues, byTime, memberKey, changePoints } from './ledger';
 import { formatPoints, fromMicro, formatCreep, creepPercent } from './numbers';
 
 const iso = (ms) => new Date(ms).toISOString();
@@ -58,12 +58,12 @@ export async function personView(sprint, policy) {
   // Contract §1: changes of deleted issues are listed to nobody and counted as hidden for nobody.
   const changes = all.filter((c) => c.deleted !== true);
   const visible = changes.length ? await visibleIssues(changes.map((c) => c.issueId), policy) : new Map();
-  const estimate = new Map(members.map((m) => [memberKey(m.sprintId, m.issueId), m.estimate]));
+  const memberOf = new Map(members.map((m) => [memberKey(m.sprintId, m.issueId), m]));
   const rows = changes
     .filter((c) => visible.has(c.issueId))
     .sort(byTime)
     .map((c) => {
-      const points = estimate.get(memberKey(c.sprintId, c.issueId)) ?? 0;
+      const points = changePoints(memberOf.get(memberKey(c.sprintId, c.issueId)), c.estimateField);
       return {
         changeId: c.changeId,
         issueId: c.issueId,

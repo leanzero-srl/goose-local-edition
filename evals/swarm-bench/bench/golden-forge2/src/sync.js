@@ -95,6 +95,8 @@ async function rowsOf(cfg, issue, histories, source, resolve) {
   return rows;
 }
 
+// `estimate` is the value of the field the sprint's board uses now (the totals); `estimates` holds every
+// estimation field's current value, so a change made under another field keeps showing that one (contract §1).
 export function memberRow(cfg, sprintId, issue, currentSprintIds) {
   const sprint = cfg.sprints[sprintId];
   return {
@@ -103,6 +105,7 @@ export function memberRow(cfg, sprintId, issue, currentSprintIds) {
     issueKey: issue.key ?? '',
     inSprint: currentSprintIds.has(sprintId),
     estimate: estimateOf(issue.fields, sprint.estimateFieldId),
+    estimates: JSON.stringify(Object.fromEntries(estimateFieldIds(cfg).sort().map((f) => [f, estimateOf(issue.fields, f)]))),
   };
 }
 

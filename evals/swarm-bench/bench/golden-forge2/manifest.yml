@@ -243,6 +243,8 @@ app:
             type: boolean
           estimate:
             type: float
+          estimates:
+            type: string
           deleted:
             type: boolean
         indexes:

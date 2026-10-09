@@ -38,6 +38,8 @@ The rules are FORGE-CONTRACT.md §1 verbatim:
   * a change is a Sprint-field changelog entry created strictly after the sprint's `startDate` that puts the
     issue into S (`added`) or takes it out of S (`removed`), keyed by changelog id + sprint;
   * committed / added / removed sum CURRENT estimates (the sprint's board estimation field; no value is 0);
+  * a change's points are the CURRENT value of the field its sprint's board used AT the change (2.0 contract §1:
+    a change keeps its field when the board switches; a closed sprint's numbers and points stay as at the close, §12);
   * creep = 100 x added / committed, rounded half away from zero to one decimal (Decimal ROUND_HALF_UP — the
     values are non-negative, so half-up IS half-away-from-zero), `None` when committed is 0.
 """
@@ -416,11 +418,15 @@ class Oracle:
                     if kind == 'removed':   # a move needs a ledger on both sides: a future sprint has no added row
                         boards = {str(self.sprints[t]['originBoardId']) for t in to - frm if t in by_sprint}
                         moved_to = next(iter(sorted(boards - {board_id})), '')
+                    # Contract §1: the CURRENT value of the field the board used at the change (a later switch leaves
+                    # it alone); §12: a closed sprint's points stay as they stood at the close.
+                    points = (self.estimate_at(str(issue['id']), field_id, closed - JUST_BEFORE) if closed is not None
+                              else self.estimate_of(str(issue['id']), field_id, final_entries))
                     by_sprint[sid].append(Change(
                         change_id=cid, sprint_id=sid, issue_id=str(issue['id']), issue_key=issue['key'],
                         kind=kind, at=created, at_text=str(entry['created']), by=str(entry.get('authorId')),
                         by_name=self.users.get(str(entry.get('authorId')), ''),
-                        points=self.estimate_of(str(issue['id']), field_id, final_entries),
+                        points=points,
                         phase=phase, dropped=dropped, duplicates=duplicate_count(delivery),
                         sources=sources, board_id=board_id, estimate_field=field_id, moved_to_board=moved_to))
         for sid in by_sprint:
@@ -429,8 +435,8 @@ class Oracle:
 
     def _compute(self) -> Dict[str, SprintNumbers]:
         """The §1 numbers per ledger sprint, with the 2.0 world (SPEC §2.5; a no-op on a 1.0 pack): a closed sprint's
-        numbers are its state just before the close; a deleted issue counts nowhere; an issue's points are its
-        CURRENT value of the field the sprint's board uses now (contract §1; before the close, for a closed sprint)."""
+        numbers are its state just before the close (membership, field and values); a deleted issue counts nowhere; an
+        issue's points are its CURRENT value of the field the sprint's board uses now (contract §1)."""
         final_entries = self._entries('all')
         changes = self._changes('all', final_entries)
         gone = set(self.deleted_at)
@@ -455,13 +461,15 @@ class Oracle:
                 last[(ch.issue_id, ch.kind)] = ch.at
             ever = at_start | {ch.issue_id for ch in changes[sid] if ch.kind == 'added' and ch.issue_id not in gone}
 
-            # Contract §1: an issue's estimate for S is the value of the field S's board uses NOW (a closed sprint's
-            # numbers are its state just before the close) — after a switch, the new field for every issue.
+            # Contract §1: an issue's estimate for S is the value of the field S's board uses NOW — after a switch, the
+            # new field for every issue; §12: a closed sprint's numbers stay as they stood at the close.
             view_at = closed - JUST_BEFORE if closed is not None else max(
                 (t for t, _f in self.field_switches.get(board_id, ())), default=start)
             field_now = self.field_in_force(board_id, max(view_at, start))
 
             def points(iid: str, _when: datetime) -> Decimal:
+                if closed is not None:
+                    return self.estimate_at(iid, field_now, closed - JUST_BEFORE)
                 return self.estimate_of(iid, field_now, final_entries)
             committed = sum((points(i, start) for i in at_start), Decimal(0))
             added = sum((points(i, last.get((i, 'added'), start)) for i in now - at_start), Decimal(0))
@@ -788,8 +796,9 @@ class Oracle:
                      ) -> Tuple[Dict[str, FrozenSet[str]], Set[str]]:
         """R7 at a checkpoint: {issueKey: accepted values} and the issue keys not graded there. Live changes count up
         to `applied_cut` (what the site had applied when the probe read the field), world events up to the mark. Per
-        active sprint S: in S since its start -> `committed`; in S, added after the start -> `added +<points>` (its
-        last added row's estimate); in S's scope since the start but not in S now -> `removed`; every other issue ->
+        active sprint S: in S since its start -> `committed`; in S, added after the start -> `added +<points>` (the
+        points of its last `added` change: the value at the cut of the field S's board used at that change, contract
+        §1/§15); in S's scope since the start but not in S now -> `removed`; every other issue ->
         `` (empty). An issue related to two active sprints accepts either sprint's value. Not graded: a deleted
         issue, and an issue a DROPPED change touched in the hour that ends at the mark (no event exists to make it
         fresh; the next hourly reconcile must, so it is graded at the next mark)."""
@@ -819,7 +828,8 @@ class Oracle:
                 elif in_now:
                     adds = [ch for ch in mine if ch.kind == 'added']
                     if adds:
-                        accepted |= {f'added +{format_points(p)}' for p in self._row_estimates(adds[-1], cut)}
+                        last = adds[-1]
+                        accepted.add(f'added +{format_points(self.estimate_at(iid, last.estimate_field, cut))}')
                 elif in_start or any(ch.kind == 'added' for ch in mine):
                     accepted.add('removed')
             values[issue['key']] = frozenset(accepted or {''})
