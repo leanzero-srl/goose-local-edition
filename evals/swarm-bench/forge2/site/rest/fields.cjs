@@ -16,8 +16,10 @@
 //   * an empty string clears the value like null;
 //   * `generateChangelog` / `generateAppEvents` are accepted and recorded, but the site writes no changelog entry
 //     and sends no event for an app field write.
-// The value is stored on the issue (`fields[<field id>]`), so GET /issue, search and bulkfetch show it wherever the
-// renderer lists the field: the field must be in `pack.fields`, and `pack.scopeStatusFieldId` names it (P4 fixtures).
+// The value is stored on the issue through the state API (`state.setFieldValue`, which also bumps the search-cache
+// version), so GET /issue, search and bulkfetch show it wherever the renderer lists the field. Fields resolve against
+// the site's live field list (`state.fields()`): the app's field (`pack.scopeStatusFieldId`) joins it when v2 is
+// installed (`state.addField`), so a write before that is a 404, as on a site without the field.
 const MAX_UPDATES = 200;
 
 const err = (status, messages) => ({ status, body: { errorMessages: [].concat(messages), errors: {} } });
@@ -30,11 +32,9 @@ function fieldWrites(state) {
   return logs.get(state.st.issues);
 }
 
-function appField(pack) {
-  if (!pack.scopeStatusFieldId) throw new Error("pack.scopeStatusFieldId is missing: the fixtures must add the app's jira:customField to pack.fields and name its id");
-  const f = pack.fields.find((x) => x.id === pack.scopeStatusFieldId);
-  if (!f) throw new Error(`pack.scopeStatusFieldId ${pack.scopeStatusFieldId} is not in pack.fields`);
-  return f;
+function appFieldId(pack) {
+  if (!pack.scopeStatusFieldId) throw new Error("pack.scopeStatusFieldId is missing: the fixtures must name the id of the app's jira:customField");
+  return pack.scopeStatusFieldId;
 }
 
 // The number of field-issue combinations a request asks for (what the rate model prices: 1 + 1 per 50 updates).
@@ -53,13 +53,12 @@ function fitsType(field, value) {
 
 // entries: [{fieldRef, issueIds, value}] already shape-checked -> {status, body}
 function write(c, entries) {
-  const { pack } = c.state;
-  const own = appField(pack);
+  const own = appFieldId(c.state.pack);
   const resolved = [];
   for (const e of entries) {
-    const field = pack.fields.find((f) => f.id === e.fieldRef || f.key === e.fieldRef);
+    const field = c.state.fields().find((f) => f.id === e.fieldRef || f.key === e.fieldRef);
     if (!field) return err(404, `The custom field was not found: ${e.fieldRef}`);
-    if (field.id !== own.id) return err(403, `Only the app that provided the field can update its values: ${e.fieldRef}`);
+    if (field.id !== own) return err(403, `Only the app that provided the field can update its values: ${e.fieldRef}`);
     resolved.push({ ...e, field });
   }
   const total = resolved.reduce((n, e) => n + e.issueIds.length, 0);
@@ -73,8 +72,8 @@ function write(c, entries) {
       seen.add(pair);
     }
   }
-  const gone = (id) => { const iss = c.state.st.issues.get(id); return !iss || iss.deleted === true; };
-  const missing = [...new Set(resolved.flatMap((e) => e.issueIds))].filter(gone);
+  // A deleted issue has left the site's issue map (state.deleteIssue), like one that never existed.
+  const missing = [...new Set(resolved.flatMap((e) => e.issueIds))].filter((id) => !c.state.st.issues.has(id));
   if (missing.length) return err(400, `Issue does not exist or you do not have permission to see it: ${missing.join(', ')}`);
   const at = c.state.now();
   const q = c.req.query;
@@ -83,7 +82,7 @@ function write(c, entries) {
   for (const e of resolved) {
     const value = e.value === '' ? null : e.value;
     for (const id of e.issueIds) {
-      c.state.st.issues.get(id).fields[e.field.id] = value;
+      c.state.setFieldValue(id, e.field.id, value);
       log.push({ atMs: at, t: new Date(at).toISOString(), issueId: id, fieldId: e.field.id, value, invocationId: c.caller.invocationId, ...flags });
     }
   }
@@ -128,7 +127,7 @@ const handlers = {
 
 // The app field's current value per issue that has one (the oracle's read of R7).
 function fieldValues(state) {
-  const id = appField(state.pack).id;
+  const id = appFieldId(state.pack);
   return Object.fromEntries([...state.st.issues.values()].filter((i) => i.fields[id] !== null && i.fields[id] !== undefined).map((i) => [i.id, i.fields[id]]));
 }
 

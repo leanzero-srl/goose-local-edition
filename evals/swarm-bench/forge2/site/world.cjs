@@ -6,8 +6,8 @@
 //       is a Sprint changelog entry inserted into `pack.live` (creation order, an id that fits the global changelog
 //       sequence, a delivery slot at its time) so the live machinery applies and delivers it like any human edit; the
 //       Forge LLM injection (llm.cjs injectionPlan) is planted in its carrier issue's install-time summary.
-//   createWorld({pack, mutate}) -> {events, applied, pending(), applyDue(t), reset()}: applies the other four classes
-//       through `mutate` (the state API) once the site's virtual time reaches them.
+//   createWorld({pack, state}) -> {events, applied, pending(), applyDue(t), reset()}: applies the other four classes
+//       through the state's mutation API once the site's virtual time reaches them.
 //   node world.cjs --seed <16 hex> [--scoring]   prints the plan (the scoring plan is private: site code never ships).
 //
 // THE CLASSES and what each event names (times are site virtual time, `at` ISO + `atMs`):
@@ -238,22 +238,30 @@ function withWorld(pack, { scoring = false } = {}) {
   return pack;
 }
 
-// Applies the scheduled non-changelog events through the state API. `mutate` (P4's state):
-//   closeSprint(sprintId, atMs)  setBoardEstimationField(boardId, fieldId, atMs)  revokeBrowse(accountId, projectKey, atMs)
-//   deleteIssue(issueId, atMs) -> the issue as it was (for the avi:jira:deleted:issue event)
-// Issue moves are live changes (pack.live): the live machinery applies and delivers them, so they are not applied here.
-function createWorld({ pack, mutate }) {
+// Applies the scheduled non-changelog events through the site state's mutation API (state.cjs, forge2/P4), each at its
+// own virtual instant: closeSprint(sprintId, {at}) (no carryTo: the backlog), setBoardEstimationField(boardId, fieldId,
+// {at}), revokeBrowse(accountId, projectKey, {at}), deleteIssue(issueId, {at}) -> its record, whose `issue` is the issue
+// as it was (the avi:jira:deleted:issue event's subject). Issue moves are live changes (pack.live): the live machinery
+// applies and delivers them, so they are not applied here.
+// ORDER: the caller applies the live stream up to `t` before applyDue(t) (state.applyThrough calls applyDue(created)
+// before each change; flush ends with applyDue(window end)), so world events and human edits interleave in creation
+// order — state.deleteIssue refuses an issue with unapplied live changes, so a wrong order fails loudly.
+function createWorld({ pack, state }) {
   if (!pack.world) throw new Error('createWorld: the pack carries no world (withWorld adds it)');
-  const missing = MUTATIONS.filter((fn) => typeof mutate?.[fn] !== 'function');
+  const missing = MUTATIONS.filter((fn) => typeof state?.[fn] !== 'function');
   if (missing.length) throw new Error(`createWorld: the state mutation API lacks ${missing.join(', ')}`);
   const due = pack.world.events.filter((e) => !e.viaLive);
   const applied = [];
   const apply = (e) => {
+    const at = { at: e.atMs };
     switch (e.class) {
-      case 'sprint-close': mutate.closeSprint(e.sprintId, e.atMs); return { ...e };
-      case 'estimation-field': mutate.setBoardEstimationField(e.boardId, e.toFieldId, e.atMs); return { ...e };
-      case 'browse-revoke': mutate.revokeBrowse(e.accountId, e.projectKey, e.atMs); return { ...e };
-      case 'issue-delete': return { ...e, event: { eventType: 'avi:jira:deleted:issue', atlassianId: e.authorId, issue: mutate.deleteIssue(e.issueId, e.atMs) } };
+      case 'sprint-close': return { ...e, result: state.closeSprint(e.sprintId, at) };
+      case 'estimation-field': return { ...e, result: state.setBoardEstimationField(e.boardId, e.toFieldId, at) };
+      case 'browse-revoke': return { ...e, result: state.revokeBrowse(e.accountId, e.projectKey, at) };
+      case 'issue-delete': {
+        const result = state.deleteIssue(e.issueId, at);
+        return { ...e, result, event: { eventType: 'avi:jira:deleted:issue', atlassianId: e.authorId, issue: result.issue } };
+      }
       default: throw new Error(`world event ${e.id}: no class ${e.class}`);
     }
   };

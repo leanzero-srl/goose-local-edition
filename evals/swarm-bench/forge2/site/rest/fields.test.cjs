@@ -12,13 +12,19 @@ const platform = require('./platform.cjs');
 const fields = require('./fields.cjs');
 
 const FIELD = 'customfield_29999';
-function rig() {
+const DEF = { id: FIELD, key: FIELD, name: 'Scope status', untranslatedName: 'Scope status', custom: true, orderable: true, navigable: true,
+  searchable: true, clauseNames: ['cf[29999]', 'Scope status'], schema: { type: 'string', custom: 'forge:scope-status', customId: 29999 } };
+function rig({ installed = true } = {}) {
   const pack = facts('0123456789abcdef');
-  // What P4's fixtures add: the app's jira:customField in pack.fields, named by pack.scopeStatusFieldId.
-  pack.fields.push({ id: FIELD, key: FIELD, name: 'Scope status', untranslatedName: 'Scope status', custom: true, orderable: true, navigable: true,
-    searchable: true, clauseNames: ['cf[29999]', 'Scope status'], schema: { type: 'string', custom: 'forge:scope-status', customId: 29999 } });
   pack.scopeStatusFieldId = FIELD;
   const state = createState(pack);
+  // P4's state API (forge2/P4 state.cjs): the live field list, addField when v2 is installed, setFieldValue. This
+  // branch's state.cjs is still 1.0's, whose renderer reads pack.fields, so the shim's addField feeds both lists.
+  const fieldList = pack.fields.slice();
+  state.fields = () => fieldList;
+  state.addField = (def) => { fieldList.push(def); pack.fields.push(def); };
+  state.setFieldValue = (ref, fieldId, value) => { state.issueByIdOrKey(ref).fields[fieldId] = value; };
+  if (installed) state.addField(DEF);
   const render = createRenderer(state);
   const call = (opKey, { as = 'app', body, params = {}, query = '' } = {}) => {
     const accountId = as === 'app' ? pack.appAccountId : pack.viewer;
@@ -85,14 +91,16 @@ test('refusals: asUser, unknown and foreign fields, duplicates, type, size, miss
   const gone = call(POST, upd({ customField: FIELD, issueIds: [ids[0], '999999999'], value: 'removed' }));
   assert.strictEqual(gone.status, 400);
   assert.match(gone.body.errorMessages[0], /999999999/);
-  state.st.issues.get(ids[1]).deleted = true;
+  state.st.issues.delete(ids[1]); // what state.deleteIssue does (forge2/P4)
   assert.strictEqual(call(POST, upd({ customField: FIELD, issueIds: [ids[1]], value: 'removed' })).status, 400, 'a deleted issue is gone');
   assert.strictEqual(state.st.issues.get(ids[0]).fields[FIELD], 'x', 'a refused request applies nothing');
 });
 
-test('updateCount counts field-issue combinations; a pack without the field id fails loudly', () => {
+test('updateCount counts field-issue combinations; before v2 installs the field it is a 404; no field id fails loudly', () => {
   assert.strictEqual(fields.updateCount({ updates: [{ customField: FIELD, issueIds: [1, 2, 3], value: 'a' }, { issueIds: [4], value: 'b' }] }), 4);
   assert.strictEqual(fields.updateCount({ nope: true }), 0);
+  const { call, ids } = rig({ installed: false });
+  assert.strictEqual(call(POST, { body: { updates: [{ customField: FIELD, issueIds: [ids[0]], value: 'committed' }] } }).status, 404);
   const pack = facts('0123456789abcdef');
   const state = createState(pack);
   assert.throws(() => fields.fieldValues(state), /scopeStatusFieldId is missing/);

@@ -111,13 +111,14 @@ test('the site state applies and delivers the moves with the live stream; the mo
 test('createWorld applies the other classes through the mutation API at their times, in order', () => {
   const pack = withWorld(facts(SEEDS[2], { scoring: true }), { scoring: true });
   const calls = [];
-  const mutate = {
-    closeSprint: (...a) => calls.push(['closeSprint', ...a]),
-    setBoardEstimationField: (...a) => calls.push(['setBoardEstimationField', ...a]),
-    revokeBrowse: (...a) => calls.push(['revokeBrowse', ...a]),
-    deleteIssue: (id, at) => { calls.push(['deleteIssue', id, at]); return { id, key: pack.issues.find((i) => i.id === id).key }; },
+  // The signatures of forge2/P4's state.cjs mutation API.
+  const state = {
+    closeSprint: (id, { at }) => calls.push(['closeSprint', id, at]),
+    setBoardEstimationField: (id, fieldId, { at }) => calls.push(['setBoardEstimationField', id, fieldId, at]),
+    revokeBrowse: (accountId, projectKey, { at }) => calls.push(['revokeBrowse', accountId, projectKey, at]),
+    deleteIssue: (id, { at }) => { calls.push(['deleteIssue', id, at]); return { type: 'deleteIssue', issue: { id, key: pack.issues.find((i) => i.id === id).key } }; },
   };
-  const world = createWorld({ pack, mutate });
+  const world = createWorld({ pack, state });
   const due = pack.world.events.filter((e) => !e.viaLive);
   assert.strictEqual(world.pending().length, due.length);
   assert.deepStrictEqual(world.applyDue(due[0].atMs - 1), []);
@@ -133,10 +134,11 @@ test('createWorld applies the other classes through the mutation API at their ti
   const del = world.applied.find((e) => e.class === 'issue-delete');
   assert.deepStrictEqual(Object.keys(del.event), ['eventType', 'atlassianId', 'issue']);
   assert.strictEqual(del.event.eventType, 'avi:jira:deleted:issue');
+  assert.strictEqual(del.event.issue.id, del.issueId);
   world.reset();
   assert.strictEqual(world.pending().length, due.length);
-  assert.throws(() => createWorld({ pack, mutate: { closeSprint() {} } }), /lacks setBoardEstimationField, deleteIssue, revokeBrowse/);
-  assert.throws(() => createWorld({ pack: facts(SEEDS[2]), mutate }), /carries no world/);
+  assert.throws(() => createWorld({ pack, state: { closeSprint() {} } }), /lacks setBoardEstimationField, deleteIssue, revokeBrowse/);
+  assert.throws(() => createWorld({ pack: facts(SEEDS[2]), state }), /carries no world/);
 });
 
 test('the LLM uses the planted injection of a world pack', () => {
