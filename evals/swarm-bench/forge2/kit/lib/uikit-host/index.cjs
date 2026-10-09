@@ -19,9 +19,11 @@
 //  - .jsx compiles with the classic React.createElement runtime, as Forge's Babel does (F10): a .jsx file without
 //    `import React` throws at runtime here as it does in Jira. .tsx follows the app's tsconfig, as ts-loader does.
 //  - Bare imports resolve ONLY from the kit's modules (as the backend bundle does: runtime.cjs).
-//  - Timers are VIRTUAL: setTimeout/setInterval and performance.now run on a clock that moves only when the host
-//    is told (`advance`), so every reading is deterministic and nothing waits on a wall clock. A bridge call takes
-//    zero virtual time. `Date` stays real.
+//  - Timers are VIRTUAL: setTimeout/setInterval run on a clock that moves only when the host is told (`advance`), so
+//    every reading is deterministic and nothing waits on a wall clock. A bridge call takes zero virtual time. `Date`
+//    stays real. performance.now() is that clock plus 1 ms per commit so far: React's scheduler yields after 5 ms of
+//    work (scheduler 0.23.2 frameYieldMs), so on a frozen clock a commit loop would spin inside one task forever;
+//    with commits costing time it yields between them as in a browser frame and is counted in turns (NOT_IDLE).
 //  - Handlers are delivered on a later macrotask, never inside a batch, with arguments serialised the way the
 //    bridge does (functions cannot cross); the handler of the LATEST commit receives them. Inputs get the documented
 //    SerialisableEvent (target.type, value as a string for text inputs, as the DOM gives it); a submit button calls
@@ -46,8 +48,9 @@ class UikitHostError extends Error {
 
 // Bridge ops with no observable effect in a text host (fire-and-forget in @forge/bridge 7.1.0).
 const INERT = new Set(['emitReadyEvent', 'changeWindowTitle', 'emitFrontendCustomMetric']);
-// measured: the fixture admin page settles in 4 turns at boot and 6 after a save (test/uikit-host.test.cjs);
-// a commit loop (an effect that always sets state, a 0 ms interval) never settles.
+// measured: the fixture admin page (test/fixture-admin) settles in 2 turns at boot and 1 after set + toggle + save;
+// a commit loop (an effect that always sets state, a 0 ms interval) never settles. A turn is one timer run or one
+// bridge answer awaited, so this bounds work by count, never by time.
 const MAX_TURNS = 1000;
 
 const macrotask = () => new Promise((r) => setImmediate(r));
@@ -105,11 +108,12 @@ async function build(appDir, moduleKey, resource, paths) {
 }
 
 // Unhandled rejections inside an app realm are the app's console errors, as in a browser; they never end the
-// process that hosts it. Everything else keeps Node's default (raised as an uncaught exception).
+// process that hosts it. Any other rejection keeps Node's default: with no other listener it is raised as an
+// uncaught exception, with one it is that listener's.
 const liveHosts = new Set();
 function onUnhandledRejection(reason, promise) {
   for (const h of liveHosts) if (promise instanceof h.AppPromise) { h.recordError('unhandledRejection', reason); return; }
-  process.nextTick(() => { throw reason; });
+  if (process.listenerCount('unhandledRejection') === 1) process.nextTick(() => { throw reason; });
 }
 const hostOpened = (h) => { if (!liveHosts.size) process.on('unhandledRejection', onUnhandledRejection); liveHosts.add(h); };
 const hostClosed = (h) => { liveHosts.delete(h); if (!liveHosts.size) process.off('unhandledRejection', onUnhandledRejection); };
@@ -123,6 +127,7 @@ async function render({ appDir, moduleKey, context, invoke, fetchProduct = null,
   const { code, entry } = await build(appDir, moduleKey, resource, paths);
 
   const clock = { now: 0 };
+  let workMs = 0; // 1 per commit, never reset: performance.now() stays monotonic
   const timers = new Map();
   let timerSeq = 0;
   let seq = 0;
@@ -167,7 +172,7 @@ async function render({ appDir, moduleKey, context, invoke, fetchProduct = null,
     clearTimeout: (id) => { timers.delete(id); },
     clearInterval: (id) => { timers.delete(id); },
     queueMicrotask,
-    performance: { now: () => clock.now },
+    performance: { now: () => clock.now + workMs },
     crypto: globalThis.crypto,
     TextEncoder, TextDecoder, URL, URLSearchParams, AbortController, AbortSignal, atob, btoa,
   };
@@ -221,6 +226,7 @@ async function render({ appDir, moduleKey, context, invoke, fetchProduct = null,
     const entry = { seq: ++seq, op, at: clock.now, reconciles: docs.length };
     if (closed) return undefined;
     if (op === 'reconcile') {
+      workMs += 1;
       const doc = D.snapshot(payload.forgeDoc);
       docs.push(doc);
       latest = { doc, handlers: D.handlersOf(payload.forgeDoc) };
@@ -316,6 +322,7 @@ async function render({ appDir, moduleKey, context, invoke, fetchProduct = null,
     const n = r.match.node;
     const out = { ...n, via: r.match.via };
     if (D.CHECKS.has(n.type)) out.checked = D.isChecked(n, typed);
+    else if (D.TEXT_INPUTS.has(n.type)) { const v = D.inputValue(n, typed); out.value = v === undefined || v === null ? '' : String(v); } // a DOM input's value is a string
     else if (D.INPUTS.has(n.type)) out.value = D.inputValue(n, typed);
     return out;
   }
