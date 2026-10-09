@@ -258,7 +258,9 @@ Guarantees (graded; the site's own accounting per virtual hour and per invocatio
 The harness runs on a virtual clock. Inside an invocation `Date.now()` and `new Date()` read it, and
 `getAppContext().invocationRemainingTimeInMillis()` (`@forge/api`) reports the virtual time left. Each request a
 function makes advances its invocation's clock: a GET 120 ms, a search page 300 ms, a `bulkfetch` 600 ms, a write
-200 ms; a wait inside a function (`setTimeout`, sleep) counts at face value.
+200 ms; a wait inside a function (`setTimeout`, sleep) counts at face value. Platform calls count the same way: a
+storage read (`get`, `query`, a secret or entity get or query) 120 ms; a storage write (`set`, `delete`, a
+transaction) 200 ms; a queue push, a Forge LLM call and a Realtime publish 200 ms each. CPU time is free.
 
 | invocation | limit |
 |---|---|
@@ -269,7 +271,7 @@ function makes advances its invocation's clock: a GET 120 ms, a search page 300 
 Exceeding the limit kills the invocation: it returns no result, and what it already wrote stays written. A consumer
 that returns an `InvocationError` (`retryAfter` ≤ 900 s) or is killed is redelivered, at least once and in any order.
 Scheduled triggers run once per virtual hour and are not retried: a failed or killed run waits for the next. Product
-event triggers are retried up to 4 times.
+event triggers are retried up to 4 times (after 1, 2, 4 and 8 virtual minutes, or the `retryAfter` they asked for).
 
 Guarantees (graded):
 - Work that cannot finish in one invocation continues in the next (a queue continuation, the next scheduled run).

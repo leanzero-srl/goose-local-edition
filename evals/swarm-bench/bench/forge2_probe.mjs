@@ -724,6 +724,7 @@ async function main() {
     await probeUi(pack);
   }, ['boot']);
   await section('llm_v2', () => llmCases(pack, adm), ['llm_v2']);
+  await adm.closeAll();
   // After every timed measurement: serialising the clip never overlaps grading.
   if (recording) obs.media = await assembleRecording();
   obs.comments = commentAttempts(pack);
@@ -787,7 +788,10 @@ function adminDriver({ emu, pack, host, adminPage, appDir, now }) {
   const callResolver = (functionKey, payload, accountId) =>
     emu.invokeResolver(adminPage.key, functionKey, payload, ctxFor(accountId, adminPage.key), accountId);
 
-  // The UI Kit admin page as one person sees it (P2's host); every invoke it makes is recorded with its caller.
+  // The UI Kit admin page as one person sees it (P2's host); every invoke it makes is recorded with its caller. Each
+  // host is a child process: closeAll() ends them (P2: always close), once its readings are taken.
+  const opened = [];
+  const closeAll = async () => { for (const ui of opened.splice(0)) await Promise.resolve(ui.close?.()).catch(() => {}); };
   const openAdmin = async (accountId, as) => {
     const invokes = [];
     const ui = await host.render({ appDir, moduleKey: adminPage.key, context: ctxFor(accountId, adminPage.key),
@@ -800,6 +804,7 @@ function adminDriver({ emu, pack, host, adminPage, appDir, now }) {
         if (!r.ok) throw new Error(`There was an error invoking the function - ${r.error?.message ?? 'invoke failed'}`);
         return r.result;
       } });
+    opened.push(ui);
     return { ui, invokes };
   };
   const found = (ui, label) => { try { return Boolean(ui.findByLabel(label)); } catch { return false; } };
@@ -893,6 +898,7 @@ function adminDriver({ emu, pack, host, adminPage, appDir, now }) {
       if (r.shown) state.secret = r.shown;
       obs.admin.rerotated = Boolean(r.shown);
     }
+    await closeAll();
   }
 
   // The secret the CI sequence signs with: the one the panel showed; when it showed none (the defect P8 grades from
@@ -913,9 +919,10 @@ function adminDriver({ emu, pack, host, adminPage, appDir, now }) {
     const a = await openAdmin(pack.admin, 'admin');
     await a.ui.waitIdle();
     obs.migration.panel_by_checkpoint[cp] = { t_ms: now(), ...migrationLine(a.ui.text()) };
+    await closeAll();
   }
 
-  return { state, lane, panelRead, ciSecret, openAdmin, found, usable };
+  return { state, lane, panelRead, ciSecret, openAdmin, found, usable, closeAll };
 }
 
 // Where the CI secret can be read by someone who should not: every admin-page resolver answer but the rotate click's
@@ -1611,10 +1618,11 @@ async function llmCases(pack, v) {
   const panelSet = async (label, value) => {
     const a = await v.openAdmin(pack.admin, 'admin');
     await a.ui.waitIdle();
-    if (!v.found(a.ui, label) || !v.found(a.ui, LABELS.save)) return false;
+    if (!v.found(a.ui, label) || !v.found(a.ui, LABELS.save)) { await v.closeAll(); return false; }
     await a.ui.setValue(label, value);
     await a.ui.click(LABELS.save);
     await a.ui.waitIdle();
+    await v.closeAll();
     return true;
   };
   for (const c of LLM_V2_CASES) {

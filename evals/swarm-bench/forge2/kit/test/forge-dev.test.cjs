@@ -7,7 +7,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 const { spawn, execFile } = require('child_process');
-const { FORGE, ensureKit, scratch, copyDir } = require('./helpers.cjs');
+const { FORGE, SPIKE, ensureKit, scratch, copyDir } = require('./helpers.cjs');
 
 const run = (args, opts) => new Promise((resolve) => execFile(process.execPath, args, { ...opts, maxBuffer: 32 << 20 }, (err, stdout, stderr) => resolve({ code: err ? err.code ?? 1 : 0, stdout, stderr })));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -16,7 +16,7 @@ test('forge-dev: invoke, events/reset rewind, concurrent serve processes keep on
   const kit = ensureKit();
   const dir = scratch('forgedev');
   const app = path.join(dir, 'app');
-  copyDir(path.join(FORGE, 'spike', 'app'), app, new Set(['node_modules', 'build']));
+  copyDir(path.join(SPIKE, 'app'), app, new Set(['node_modules', 'build']));
   // A trigger that records every Sprint change it is handed, so `events` has visible effects.
   fs.appendFileSync(path.join(app, 'src', 'index.js'), `
 export const onUpdate = async (event) => {

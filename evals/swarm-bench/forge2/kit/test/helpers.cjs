@@ -8,6 +8,8 @@ const { createRequire } = require('module');
 
 const REPO = path.resolve(__dirname, '..', '..', '..');          // evals/swarm-bench
 const FORGE = path.join(REPO, 'forge2');
+// The kit's fixture app (DESIGN §4 spike) is 1.0's: forge2 forked the kit, not the spike.
+const SPIKE = path.join(REPO, 'forge', 'spike');
 let kit = null;
 
 function ensureKit() {
@@ -43,4 +45,4 @@ function copyDir(src, dst, skip = new Set(['node_modules'])) {
   }
 }
 
-module.exports = { REPO, FORGE, ensureKit, playwright, scratch, copyDir };
+module.exports = { REPO, FORGE, SPIKE, ensureKit, playwright, scratch, copyDir };

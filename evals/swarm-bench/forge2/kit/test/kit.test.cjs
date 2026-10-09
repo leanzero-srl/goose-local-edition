@@ -90,7 +90,7 @@ test('G7: an invocation reads only its bundle, cannot exec, reaches only the pro
   }
 });
 
-test('KVS: documented limits and codes; an out-of-range integer names the 32-bit range', () => {
+test('KVS: documented limits and the measured real-Forge codes (forge2 SPEC §2.4)', () => {
   const { createKvs } = require(path.join(FORGE, 'kit', 'lib', 'kvs.cjs'));
   const kvs = createKvs({ entities: [{ name: 'row', attributes: { n: { type: 'integer' }, s: { type: 'string' } } }] });
   const code = (op, body) => { const r = kvs.handle(op, body); return r.status < 300 ? 'ok' : `${r.status} ${r.body.code}: ${r.body.message}`; };
@@ -103,16 +103,17 @@ test('KVS: documented limits and codes; an out-of-range integer names the 32-bit
   for (let i = 0; i < 32; i++) deep = { d: deep };
   assert.match(code('/api/v1/set', { key: 'deep', value: deep }), /^400 MAX_DEPTH/);
   assert.match(code('/api/v1/query', { limit: 101 }), /^400 COMPLEX_QUERY_PAGE_LIMIT_NOT_IN_RANGE/);
-  assert.match(code('/api/v1/entity/set', { entityName: 'nope', key: 'x', value: { n: 1 } }), /^400 INVALID_ENTITY_TYPE/);
+  assert.match(code('/api/v1/entity/set', { entityName: 'nope', key: 'x', value: { n: 1 } }), /^404 SCHEMA_NOT_FOUND/);
   assert.strictEqual(code('/api/v1/entity/set', { entityName: 'row', key: 'x', value: { n: 2147483647 } }), 'ok');
   const over = code('/api/v1/entity/set', { entityName: 'row', key: 'y', value: { n: 2147483648 } });
-  assert.match(over, /^400 INVALID_ENTITY_VALUE: Attribute 'n' must be a 32-bit signed integer \(-2,147,483,648 to 2,147,483,647\); got 2147483648\./);
-  assert.match(code('/api/v1/entity/set', { entityName: 'row', key: 'z', value: { n: 1.5 } }), /32-bit signed integer/);
+  // forge2: the measured real-Forge answer (SPEC §2.4, research/understand/real-forge-fidelity.md).
+  assert.match(over, /^400 INCORRECT_PROPERTY_TYPE: Data type for property "n" is defined as "integer"/);
+  assert.match(code('/api/v1/entity/set', { entityName: 'row', key: 'z', value: { n: 1.5 } }), /^400 INCORRECT_PROPERTY_TYPE/);
   const ops = Array.from({ length: 26 }, (_, i) => ({ set: { key: `t${i}`, value: i } }));
-  assert.match(code('/api/v1/transaction', { set: ops.map((o) => o.set) }), /^400 TOO_MANY_OPERATIONS/);
+  assert.match(code('/api/v1/transaction', { set: ops.map((o) => o.set) }), /^422 UNPROCESSABLE_ENTITY/);
   assert.strictEqual(code('/api/v1/transaction', { set: ops.slice(0, 25).map((o) => o.set) }), 'ok');
-  assert.match(code('/api/v1/batch/set', ops.map((o) => o.set)), /^400 MAX_BATCH_SIZE/);
-  assert.match(code('/api/v1/set', { key: 'k'.repeat(500), value: 2, options: { keyPolicy: 'FAIL_IF_EXISTS' } }), /^409 CONDITIONAL_CHECK_FAILED/);
+  assert.match(code('/api/v1/batch/set', ops.map((o) => o.set)), /^400 TOO_MANY_BATCH_ENTITIES/);
+  assert.match(code('/api/v1/set', { key: 'k'.repeat(500), value: 2, options: { keyPolicy: 'FAIL_IF_EXISTS' } }), /^409 KEY_CONFLICT/);
   assert.match(code('/api/v1/get', { key: 'missing' }), /^404 KEY_NOT_FOUND/);
   assert.strictEqual(kvs.handle('/api/v1/not-an-op', {}).status, 501, 'an unmodelled KVS op is loud, never a silent 200');
 });
