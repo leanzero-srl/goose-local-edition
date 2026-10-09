@@ -1,15 +1,17 @@
 #!/usr/bin/env node
 'use strict';
-// `npm run lint`: Forge's own client-side linter, offline. `forge lint` itself is login-gated twice
+// `npm run lint`: Forge's own linter, offline. `forge lint` itself is login-gated twice
 // (command.js checkAuthentication, and its default mode 'both' uploads the app to the server-side
 // linter); its client-side half is @forge/lint 6.3.0's lint() with linter.mode 'client-side' — the same
 // 16 linters the CLI runs locally. The PermissionLinter maps calls to scopes with the kit's pinned Jira /
-// Confluence / Bitbucket OpenAPI files (USE_LOCAL_SWAGGER) instead of fetching them.
+// Confluence / Bitbucket OpenAPI files (USE_LOCAL_SWAGGER) instead of fetching them. After the client
+// half, the measured SERVER rules (lint-pack/server-rules.cjs) run over the same manifest and their
+// findings land exactly where the CLI prints the server's: `manifest.yml 0:0`, reference MANIFEST_INVALID_RULE.
 //
 //   node $FORGE_KIT/bin/lint.cjs [--json] [appDir]       (cwd defaults to the app)
 //
-// --json prints one line: {counts, problems:[{sev,file,line,column,message,linter}], stageReached,
-// stagesTotal, stages, statsig}. `stageReached` is the first manifest validation stage that failed in
+// --json prints one line: {counts, problems:[{sev,file,line,column,message,reference}], stageReached,
+// stagesTotal, stages, statsig, serverRules}. `stageReached` is the first manifest validation stage that failed in
 // @forge/manifest's FullValidationProcessor order (later stages are unproven, never clean), or 'complete'.
 // Exit 0 when there are no errors, 1 with errors, 2 when the linter itself crashed.
 const fs = require('fs');
@@ -38,6 +40,12 @@ Object.assign(process.env, {
 const { kitPaths } = require(path.join(kitDir, 'lib', 'kitpaths.cjs'));
 const paths = kitPaths(kitDir);
 const req = (name) => require(require.resolve(name, { paths: [paths.lintModules] }));
+const serverPack = path.join(kitDir, 'lint-pack', 'server-rules.cjs');
+if (!fs.existsSync(serverPack)) {
+  process.stderr.write(`LINT_CRASH REFUSED: the server-rule pack ${serverPack} is missing from this kit; without it lint would pass manifests real Forge refuses\n`);
+  process.exit(2);
+}
+const server = require(serverPack);
 
 const SOURCE_EXT = /\.(jsx?|tsx?)$/;
 function walk(dir) {
@@ -51,7 +59,7 @@ function walk(dir) {
 
 async function manifestStages() {
   const { ProcessorBuilder, ValidationTypes } = req('@forge/manifest');
-  const processor = ProcessorBuilder.instance().withValidation(ValidationTypes.FULL).withOptions({ deprecatedRuntimes: [] }).build();
+  const processor = ProcessorBuilder.instance().withValidation(ValidationTypes.FULL).withOptions({ deprecatedRuntimes: server.DEPRECATED_RUNTIMES }).build();
   const stages = [];
   let manifestObject;
   for (const v of processor.validators ?? []) {
@@ -65,7 +73,7 @@ async function manifestStages() {
 
 (async () => {
   process.chdir(appDir);
-  const { lint, problemCount } = req('@forge/lint');
+  const { lint, problemCount, LintResult } = req('@forge/lint');
   const YAML = req('yaml');
   let manifest;
   try {
@@ -76,8 +84,15 @@ async function manifestStages() {
   const files = walk('src').map((f) => path.relative(appDir, f)).sort();
   const lines = [];
   const logger = { info: (m) => lines.push(String(m)), warn: (m) => lines.push(String(m)), error: (m) => lines.push(String(m)), debug() {}, trace() {} };
-  const statsig = { getDeprecatedRuntimes: async () => [] };
+  const statsig = { getDeprecatedRuntimes: async () => server.DEPRECATED_RUNTIMES };
   const results = await lint(files, manifest, 'development', logger, statsig, { linter: { mode: 'client-side' } });
+  // The server half, mapped as @forge/lint's ServerSideLinter.mapServerSideResponse maps the real check's outcomes.
+  const serverFindings = manifest && typeof manifest === 'object' ? server.rules(manifest) : [];
+  if (serverFindings.length) {
+    const r = new LintResult('manifest.yml');
+    r.batchAdd(...serverFindings.map(({ rule, reason, category }) => ({ class: category.toLowerCase(), message: reason, reference: rule, line: 0, column: 0, metadata: {} })));
+    results.push(r);
+  }
   const counts = problemCount(results);
   const problems = results.flatMap((r) => [
     ...r.errors.map((e) => ({ sev: 'error', file: r.file, line: e.line, column: e.column, message: e.message, reference: e.reference ?? null })),
@@ -86,7 +101,8 @@ async function manifestStages() {
   const stages = await manifestStages();
   if (json) {
     process.stdout.write('LINT_JSON ' + JSON.stringify({ counts, problems, ...stages,
-      statsig: 'offline stub: getDeprecatedRuntimes() -> [] (the schema runtime enum still applies)' }) + '\n');
+      statsig: `pinned flag xls-forge-cli-deprecated-runtimes ${JSON.stringify(server.DEPRECATED_RUNTIMES)} (fetched 2026-10-09)`,
+      serverRules: serverFindings.map((f) => f.variant) }) + '\n');
   } else {
     const { reportLintResults } = req('@forge/lint');
     const out = [];

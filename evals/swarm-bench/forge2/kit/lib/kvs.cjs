@@ -9,11 +9,23 @@
 //   entities-errorhandling: EMPTY_KEY INVALID_KEY KEY_TOO_LONG NOT_FOUND MAX_SIZE MAX_DEPTH
 //   INVALID_ENTITY_TYPE INVALID_ENTITY_VALUE INVALID_ENTITY_INDEX COMPLEX_QUERY_PAGE_LIMIT_NOT_IN_RANGE
 //   EMPTY_FILTER_OPERATOR INVALID_FILTER_OPERATORS_COMBINATION INSUFFICIENT_FILTER_VALUES.
-// UNCONFIRMED (no docs page names them; chosen so an app's catch sees a ForgeKvsAPIError):
-//   a failed FAIL_IF_EXISTS set and a failed transaction condition answer 409 CONDITIONAL_CHECK_FAILED;
-//   a batch over 25 keys answers 400 MAX_BATCH_SIZE; an undeclared entity answers 400 INVALID_ENTITY_TYPE;
-//   also TOO_MANY_OPERATIONS (transaction over 25), DUPLICATE_KEY (a key twice in one transaction), INVALID_TTL,
-//   INVALID_REQUEST, INVALID_CONDITION and KEY_NOT_FOUND (404) are harness names for documented refusals.
+// MEASURED on real Forge (wolfaenpak, 2026-10-09, @forge/kvs 2.0.7; forge2/research/understand/
+// real-forge-fidelity.md §3.1, the 24-case probe) — status, code and message as the platform answered:
+//   FAIL_IF_EXISTS on an existing key        409 KEY_CONFLICT "Provided key already exists and cannot be overwritten"
+//   transaction condition false / key absent 400 CONDITIONAL_CHECK_FAILED "Request failed due to conditional check
+//                                                specified or optimistic locking" (atomic: nothing lands)
+//   transaction of 26 operations             422 UNPROCESSABLE_ENTITY "Request cannot be processed due to one or more
+//                                                semantic errors"
+//   the same key twice in one transaction    400 KEY_DUPLICATION_ERROR "Duplicate key found in request"
+//   batchSet of 26 items                     400 TOO_MANY_BATCH_ENTITIES "Number of entities to set was 26, but you can
+//                                                only set a maximum of 25 entities at a time."
+//   batchGet of a missing key                failedKeys[].error {code: KEY_NOT_FOUND, message: "Provided key does not exist"}
+//   an undeclared entity                     404 SCHEMA_NOT_FOUND "The schema provided does not exist"
+//   ttl {value: 0}                           400 INVALID_TTL "TTL value must be a positive integer, received: 0"
+//   integer attribute 2^31 or "5"            400 INCORRECT_PROPERTY_TYPE 'Data type for property "n" is defined as "integer"'
+// UNMEASURED (harness names for documented refusals): batchGet/batchDelete over 25 (same code as batchSet, its verb),
+//   INVALID_REQUEST, INVALID_CONDITION, INCORRECT_PROPERTY_TYPE for non-integer attribute types, and a plain get/
+//   delete of a missing key answering 404 KEY_NOT_FOUND (the SDK turns it into undefined / a no-op, as measured).
 
 const KEY_RE = /^(?!\s+$)[a-zA-Z0-9:._\s\-#]+$/;
 const LIMITS = { keyLength: 500, valueBytes: 240 * 1024, depth: 31, transactionOps: 25, batchKeys: 25, pageDefault: 10, pageMax: 100 };
@@ -48,7 +60,7 @@ function createKvs({ entities: declared = [], now = () => Date.now() } = {}) {
   };
   const entityDef = (name) => {
     const def = entityDefs.get(name);
-    if (!def) throw new KvsError(400, 'INVALID_ENTITY_TYPE', `Entity '${name}' is not declared under app.storage.entities in the manifest.`);
+    if (!def) throw new KvsError(404, 'SCHEMA_NOT_FOUND', 'The schema provided does not exist');
     return def;
   };
   const TYPE_OK = {
@@ -63,13 +75,8 @@ function createKvs({ entities: declared = [], now = () => Date.now() } = {}) {
     for (const [attr, spec] of Object.entries(def.attributes ?? {})) {
       if (value[attr] === undefined || value[attr] === null) continue;
       const ok = TYPE_OK[spec.type];
-      if (ok && !ok(value[attr])) {
-        // The documented integer range (storage-reference/storage-api-custom-entities: "Must be a 32-bit signed
-        // integer") is named in the error so an out-of-range value is diagnosable (DESIGN §17.1 0b).
-        const why = spec.type === 'integer' ? 'a 32-bit signed integer (-2,147,483,648 to 2,147,483,647)'
-          : spec.type === 'float' ? 'a finite number' : `of type ${spec.type}`;
-        throw new KvsError(400, 'INVALID_ENTITY_VALUE', `Attribute '${attr}' must be ${why}; got ${JSON.stringify(value[attr])}.`);
-      }
+      // Measured for `integer` (2^31 and "5" both answer this); the documented range is a 32-bit signed integer.
+      if (ok && !ok(value[attr])) throw new KvsError(400, 'INCORRECT_PROPERTY_TYPE', `Data type for property "${attr}" is defined as "${spec.type}"`);
     }
   };
   const alive = (rec) => rec && !(rec.expireAt && rec.expireAt <= now());
@@ -78,9 +85,9 @@ function createKvs({ entities: declared = [], now = () => Date.now() } = {}) {
     const t = now();
     const prev = map.get(key);
     const live = alive(prev) ? prev : undefined;
-    if (options.keyPolicy === 'FAIL_IF_EXISTS' && live) throw new KvsError(409, 'CONDITIONAL_CHECK_FAILED', `Key '${key}' already exists.`);
+    if (options.keyPolicy === 'FAIL_IF_EXISTS' && live) throw new KvsError(409, 'KEY_CONFLICT', 'Provided key already exists and cannot be overwritten');
     const ttl = options.ttl ? options.ttl.value * (TTL_UNIT[options.ttl.unit] ?? NaN) : null;
-    if (ttl !== null && !(ttl > 0)) throw new KvsError(400, 'INVALID_TTL', 'TTL must be a positive value with unit SECONDS, MINUTES, HOURS or DAYS.');
+    if (ttl !== null && !(ttl > 0)) throw new KvsError(400, 'INVALID_TTL', `TTL value must be a positive integer, received: ${options.ttl?.value}`);
     const rec = { value, createdAt: live?.createdAt ?? t, updatedAt: t, expireAt: ttl ? t + ttl : null };
     map.set(key, rec);
     if (options.returnValue === 'PREVIOUS') return live ? meta(key, live) : undefined;
@@ -199,20 +206,20 @@ function createKvs({ entities: declared = [], now = () => Date.now() } = {}) {
       const more = start + page.length < rows.length;
       return { data: page.map((r) => ({ key: r.key, value: r.rec.value })), ...(more ? { cursor: encodeCursor(page[page.length - 1].key) } : {}) };
     },
-    '/api/v1/batch/set': (items) => batch(items, (it) => {
+    '/api/v1/batch/set': (items) => batch(items, 'set', (it) => {
       if (it.entityName) { const def = entityDef(it.entityName); checkKey(it.key); checkValue(it.value); checkEntityValue(def, it.value); write(ents, ekey(it.entityName, it.key), it.value, it.options); }
       else { checkKey(it.key); checkValue(it.value); write(kv, it.key, it.value, it.options); }
       return { key: it.key, ...(it.entityName ? { entityName: it.entityName } : {}) };
     }),
-    '/api/v1/batch/delete': (items) => batch(items, (it) => {
+    '/api/v1/batch/delete': (items) => batch(items, 'delete', (it) => {
       checkKey(it.key);
       if (it.entityName) { entityDef(it.entityName); ents.delete(ekey(it.entityName, it.key)); } else kv.delete(it.key);
       return { key: it.key, ...(it.entityName ? { entityName: it.entityName } : {}) };
     }),
-    '/api/v1/batch/get': (items) => batch(items, (it) => {
+    '/api/v1/batch/get': (items) => batch(items, 'get', (it) => {
       checkKey(it.key);
       const rec = it.entityName ? (entityDef(it.entityName), ents.get(ekey(it.entityName, it.key))) : kv.get(it.key);
-      if (!alive(rec)) throw new KvsError(404, 'KEY_NOT_FOUND', `Key '${it.key}' not found.`);
+      if (!alive(rec)) throw new KvsError(404, 'KEY_NOT_FOUND', 'Provided key does not exist');
       return { key: it.key, ...(it.entityName ? { entityName: it.entityName } : {}), value: rec.value, createdAt: rec.createdAt, updatedAt: rec.updatedAt };
     }),
     '/api/v1/transaction': (b) => {
@@ -220,11 +227,11 @@ function createKvs({ entities: declared = [], now = () => Date.now() } = {}) {
       const dels = b.delete ?? [];
       const checks = b.check ?? [];
       const n = sets.length + dels.length + checks.length;
-      if (n > LIMITS.transactionOps) throw new KvsError(400, 'TOO_MANY_OPERATIONS', `Each transaction can contain a maximum of ${LIMITS.transactionOps} operations.`, { limit: 'transaction-ops' });
+      if (n > LIMITS.transactionOps) throw new KvsError(422, 'UNPROCESSABLE_ENTITY', 'Request cannot be processed due to one or more semantic errors', { limit: 'transaction-ops' });
       const seen = new Set();
       for (const op of [...sets, ...dels, ...checks]) {
         const id = `${op.entityName ?? ''}\u0000${op.key}`;
-        if (seen.has(id)) throw new KvsError(400, 'DUPLICATE_KEY', 'Each key can only be used once in a transaction.');
+        if (seen.has(id)) throw new KvsError(400, 'KEY_DUPLICATION_ERROR', 'Duplicate key found in request');
         seen.add(id);
         checkKey(op.key);
       }
@@ -235,7 +242,7 @@ function createKvs({ entities: declared = [], now = () => Date.now() } = {}) {
       };
       for (const op of [...sets, ...dels, ...checks]) {
         if (op.entityName) entityDef(op.entityName);
-        if (!conditionHolds(op)) throw new KvsError(409, 'CONDITIONAL_CHECK_FAILED', `Transaction condition failed for key '${op.key}'.`);
+        if (!conditionHolds(op)) throw new KvsError(400, 'CONDITIONAL_CHECK_FAILED', 'Request failed due to conditional check specified or optimistic locking');
       }
       for (const op of sets) {
         checkValue(op.value);
@@ -246,9 +253,11 @@ function createKvs({ entities: declared = [], now = () => Date.now() } = {}) {
       return undefined;
     },
   };
-  function batch(items, fn) {
+  function batch(items, verb, fn) {
     if (!Array.isArray(items)) throw new KvsError(400, 'INVALID_REQUEST', 'Batch requests take an array of items.');
-    if (items.length > LIMITS.batchKeys) throw new KvsError(400, 'MAX_BATCH_SIZE', `Each batch operation can contain a maximum of ${LIMITS.batchKeys} keys.`, { limit: 'batch-keys' });
+    if (items.length > LIMITS.batchKeys) {
+      throw new KvsError(400, 'TOO_MANY_BATCH_ENTITIES', `Number of entities to ${verb} was ${items.length}, but you can only ${verb} a maximum of ${LIMITS.batchKeys} entities at a time.`, { limit: 'batch-keys' });
+    }
     const successfulKeys = [];
     const failedKeys = [];
     for (const it of items) {
