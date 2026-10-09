@@ -55,6 +55,12 @@ const MAX_TURNS = 1000;
 
 const macrotask = () => new Promise((r) => setImmediate(r));
 const plain = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
+// @forge/bridge's requestJira builds `new Request('', init)` only to normalise headers and body (fetch/fetch.js);
+// in the product iframe '' resolves against the page's URL, which this host does not have, so it names a reserved one.
+const PAGE_URL = 'https://uikit-host.invalid/';
+class PageRequest extends Request {
+  constructor(input, init) { super(typeof input === 'string' ? new URL(input, PAGE_URL) : input, init); }
+}
 
 function locate(appDir, moduleKey, paths) {
   const YAML = paths.require('yaml');
@@ -175,6 +181,9 @@ async function render({ appDir, moduleKey, context, invoke, fetchProduct = null,
     performance: { now: () => clock.now + workMs },
     crypto: globalThis.crypto,
     TextEncoder, TextDecoder, URL, URLSearchParams, AbortController, AbortSignal, atob, btoa,
+    // @forge/bridge's requestJira builds a Request and answers a Response (fetch/fetch.js)
+    Request: PageRequest, Response, Headers, FormData, Blob,
+    fetch: (url) => AppPromise.reject(notModelled(`fetch(${JSON.stringify(String(url))}) from the frontend`)),
   };
   const ctx = vm.createContext(sandbox, { name: `uikit:${moduleKey}` });
   vm.runInContext('globalThis.self = globalThis; globalThis.window = globalThis;', ctx);
@@ -184,16 +193,16 @@ async function render({ appDir, moduleKey, context, invoke, fetchProduct = null,
   const toApp = (v) => (v === undefined ? undefined : appJSON.parse(JSON.stringify(v)));
   const appReject = (message) => new AppError(message);
 
-  const missing = (what) => {
+  const notModelled = (what) => {
     harnessMissing.push({ what, at: clock.now, moduleKey });
-    throw appReject(`uikit host: ${what} is not modelled`);
+    return appReject(`uikit host: ${what} is not modelled`);
   };
 
   async function answer(op, payload, entry) {
     switch (op) {
       case 'getContext': return toApp(context);
       case 'invoke': {
-        if (payload?.metadata !== undefined) return missing('invoke metadata (rateLimitProperties)');
+        if (payload?.metadata !== undefined) throw notModelled('invoke metadata (rateLimitProperties)');
         const rec = { seq: entry.seq, functionKey: payload?.functionKey, payload: plain(payload?.payload), reconcilesBefore: entry.reconciles, at: clock.now, state: 'pending' };
         invokes.push(rec);
         try {
@@ -208,7 +217,7 @@ async function render({ appDir, moduleKey, context, invoke, fetchProduct = null,
         }
       }
       case 'fetchProduct': {
-        if (!fetchProduct) return missing('requestJira/requestConfluence (no fetchProduct route was given to render())');
+        if (!fetchProduct) throw notModelled('requestJira/requestConfluence (no fetchProduct route was given to render())');
         const r = await fetchProduct({ moduleKey, moduleType: type, product: payload?.product, restPath: payload?.restPath, fetchRequestInit: plain(payload?.fetchRequestInit ?? {}), context: plain(context) });
         entry.status = r.status;
         return toApp(r);
@@ -218,7 +227,7 @@ async function render({ appDir, moduleKey, context, invoke, fetchProduct = null,
       case 'onError': recordError('onError', payload?.error); return null;
       default:
         if (INERT.has(op)) return null;
-        return missing(`bridge op '${op}'`);
+        throw notModelled(`bridge op '${op}'`);
     }
   }
 

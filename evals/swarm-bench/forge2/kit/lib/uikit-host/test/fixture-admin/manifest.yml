@@ -15,6 +15,7 @@ resources:
 permissions:
   scopes:
     - storage:app
+    - read:jira-user
 app:
   id: ari:cloud:ecosystem::app/00000000-0000-0000-0000-000000000000
   runtime:

@@ -63,7 +63,7 @@ test('boot: the first commit paints before the one invoke; the screen reads as t
     assert.strictEqual(idle.turns <= 4, true, `boot settles in a few turns, took ${idle.turns}`);
     assert.strictEqual(host.text(), [
       'Settings', 'Background share (%)', '[70]', '[x] AI explanations enabled', '[Save settings]',
-      'Recent admin changes', 'When | Who | What', '10 | carol | AI off', '2 | bob | share 60', '1 | alice | installed', '[Enable theming]',
+      'Recent admin changes', 'When | Who | What', '10 | carol | AI off', '2 | bob | share 60', '1 | alice | installed', '[Enable theming]', '[Check identity]',
     ].join('\n'));
     const share = host.findByLabel('Background share (%)');
     assert.strictEqual(share.type, 'Textfield');
@@ -164,6 +164,41 @@ test('a bridge op this host does not model rejects in the app and is recorded, n
   } finally { host.close(); }
 });
 
+test('context, flags and requestJira: the bridge ops an admin page uses besides invoke', async () => {
+  const fetched = [];
+  const host = await render({
+    appDir: tempApp(`import React, { useState } from 'react';
+import ForgeReconciler, { Button, Stack, Text, useProductContext } from '@forge/react';
+import { requestJira, showFlag } from '@forge/bridge';
+const App = () => {
+  const ctx = useProductContext();
+  const [me, setMe] = useState('');
+  const check = async () => {
+    const r = await requestJira('/rest/api/3/mypermissions?permissions=ADMINISTER', { headers: { Accept: 'application/json' } });
+    const body = await r.json();
+    setMe(r.status + ' ' + body.permissions.ADMINISTER.havePermission);
+    showFlag({ id: 'checked', title: 'Checked', type: 'success' });
+  };
+  return <Stack><Text>{ctx ? 'viewer ' + ctx.accountId + ' on ' + ctx.extension.type : 'no context yet'}</Text><Button onClick={check}>Check</Button><Text>{me}</Text></Stack>;
+};
+ForgeReconciler.render(<App />);
+`),
+    moduleKey: 'tmp-admin', context: { ...CONTEXT, moduleKey: 'tmp-admin', locale: 'en-US' }, invoke: async () => ({}),
+    fetchProduct: async (req) => { fetched.push(req); return { body: JSON.stringify({ permissions: { ADMINISTER: { havePermission: false } } }), headers: { 'content-type': 'application/json' }, status: 200, statusText: 'OK', isAttachment: false }; },
+  });
+  try {
+    assert.strictEqual(host.text(host.docs[0]), 'no context yet\n[Check]', 'useProductContext is undefined on the first render');
+    await host.waitIdle();
+    assert.match(host.text(), /^viewer admin-1 on jira:adminPage\n\[Check\]$/);
+    await host.click('Check');
+    await host.waitIdle();
+    assert.match(host.text(), /\n200 false$/);
+    assert.deepStrictEqual(fetched.map((f) => [f.product, f.restPath, f.fetchRequestInit.method ?? 'GET', f.context.accountId]), [['jira', '/rest/api/3/mypermissions?permissions=ADMINISTER', 'GET', 'admin-1']]);
+    assert.deepStrictEqual(host.flags.map((f) => [f.id, f.title, f.type, f.closed]), [['checked', 'Checked', 'success', false]]);
+    assert.deepStrictEqual([host.errors, host.harnessMissing], [[], []]);
+  } finally { host.close(); }
+});
+
 test('a failing resolver reaches the app as a rejected invoke', async () => {
   const be = backend({ getSettings: () => { throw new Error('boom'); } });
   const host = await render({ appDir: FIXTURE, moduleKey: 'fixture-admin', context: CONTEXT, invoke: be.invoke });
@@ -248,6 +283,10 @@ test('through the emulator: resolvers run in the Forge runtime as the viewer; fo
       assert.deepStrictEqual(host.invokes.map((i) => [i.functionKey, i.state]), [['getSettings', 'ok'], ['saveSettings', 'ok'], ['getSettings', 'ok']], JSON.stringify(host.invokes));
       assert.match(host.text(), new RegExp(`Saved: share 55, AI on[\\s\\S]*1 \\| ${viewer} \\| share 55, AI on`));
       assert.strictEqual(host.tree().children.length, 1);
+      await host.click('Check identity');
+      await host.waitIdle();
+      assert.match(host.text(), /\nSigned in as [^\n]+ \(200\)$/, 'requestJira reaches the site as the viewer through the proxy');
+      assert.deepStrictEqual([host.errors, host.harnessMissing.map((m) => m.what)], [[], []]);
     } finally { host.close(); }
     const stored = emu.kvs.snapshot();
     assert.match(JSON.stringify(stored), /"backgroundShare":55/, JSON.stringify(stored).slice(0, 400));

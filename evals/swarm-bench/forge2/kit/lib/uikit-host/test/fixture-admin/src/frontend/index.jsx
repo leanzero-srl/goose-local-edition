@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import ForgeReconciler, { Button, DynamicTable, ErrorMessage, Form, FormFooter, FormSection, Label, LoadingButton, Stack, Text, Textfield, Toggle, useForm } from '@forge/react';
-import { invoke, view } from '@forge/bridge';
+import { invoke, requestJira, view } from '@forge/bridge';
 
 const Settings = ({ initial, onSaved }) => {
   const { register, handleSubmit, getFieldId, formState } = useForm({ defaultValues: initial });
@@ -32,7 +32,12 @@ const App = () => {
   const [state, setState] = useState(null);
   const [error, setError] = useState(null);
   const [flash, setFlash] = useState(null);
+  const [me, setMe] = useState(null);
   const load = () => invoke('getSettings').then(setState, (e) => setError(e.message));
+  const whoAmI = async () => {
+    const r = await requestJira('/rest/api/3/myself');
+    setMe(`Signed in as ${(await r.json()).displayName} (${r.status})`);
+  };
   useEffect(() => { load(); }, []);
   const saved = (s) => {
     setFlash(`Saved: share ${s.backgroundShare}, AI ${s.aiEnabled ? 'on' : 'off'}`);
@@ -53,6 +58,8 @@ const App = () => {
         rows={state.changes.map((c) => ({ key: `change-${c.when}`, cells: [{ key: c.when, content: String(c.when) }, { key: c.who, content: c.who }, { key: c.what, content: c.what }] }))}
       />
       <Button onClick={() => view.theme.enable()}>Enable theming</Button>
+      <Button onClick={whoAmI}>Check identity</Button>
+      {me && <Text>{me}</Text>}
     </Stack>
   );
 };
