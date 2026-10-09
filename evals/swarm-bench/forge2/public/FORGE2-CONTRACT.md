@@ -227,7 +227,8 @@ transaction condition → 400 `CONDITIONAL_CHECK_FAILED`; a transaction of more 
 `RATE-MODEL.json` is the rate model both sites enforce on every Jira request; its numbers are binding:
 - **Quota:** 2,400 points per installation per virtual hour, reset at the top of each virtual hour, nothing carried
   over; a hard wall: once spent, every request is answered 429 until the reset. It is the app's fair share of its
-  65,000-point Tier 1 pool, which every tenant of the app shares.
+  65,000-point Tier 1 pool, which every tenant of the app shares: in a busy hour the other tenants can bring the wall
+  forward, so a quota 429 may arrive before your installation spent its 2,400 points.
 - **Background** = product event triggers, async event consumers, scheduled triggers, the web trigger.
   **Person-facing** = resolvers invoked from a UI surface (Custom UI or UI Kit) and the Rovo action. Every Jira
   request counts, `asApp` and `asUser` alike.

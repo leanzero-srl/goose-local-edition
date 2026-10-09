@@ -192,6 +192,9 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
       if (fault.kind === 'fired' && fault.f.status !== 429) {
         return send(fault.f.status, { errorMessages: ['Internal server error'], errors: {} });
       }
+      // A scripted 429 is a rate-limit answer like the model's own: the ledger shows its reason and Retry-After.
+      entry.rateLimited = fault.f.reason;
+      entry.retryAfter = fault.retryAfter;
       return send(429, rate.model.body429, { 'Retry-After': String(fault.retryAfter), 'RateLimit-Reason': fault.f.reason });
     }
     const ctx = { state, render, limits: pack.limits, paging: pack.paging, caller, params: m.params,
@@ -241,6 +244,15 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
   const worldLog = [];
   const worldPending = [];
   let worldReported = 0;
+  // An issue move is a live change (world.cjs inserts it into pack.live): it happened once the site applied it.
+  const movesReported = new Set();
+  const reportMoves = () => {
+    for (const e of pack.world?.events ?? []) {
+      if (e.class !== 'issue-move' || movesReported.has(e.id) || !state.st.applied.has(e.changelogId)) continue;
+      movesReported.add(e.id);
+      worldLog.push({ t_ms: e.atMs, ...e });
+    }
+  };
   if (world) {
     state.setWorldHook((t) => {
       for (const rec of world.applyDue(t)) {
@@ -301,11 +313,12 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
     world: ({ since = 0, until }) => {
       if (until === undefined) return { entries: state.st.world.slice(Number(since)), next: state.st.world.length };
       state.applyUntil(Number(until));
-      const applied = worldLog.slice(worldReported);
+      reportMoves();
+      const applied = worldLog.slice(worldReported).sort((a, b) => a.t_ms - b.t_ms);
       worldReported = worldLog.length;
       return { applied, pending: world ? world.pending().map((e) => e.id) : [] };
     },
-    worldplan: () => ({ world: pack.world ?? null, applied: worldLog }),
+    worldplan: () => { reportMoves(); return { world: pack.world ?? null, applied: worldLog }; },
     worldevents: () => ({ events: worldPending.splice(0) }),
     // The app's scope-status field (SPEC R7): installed with v2 (idempotent: every emulator of the app installs it).
     installfield: ({ key, name, description }) => {
@@ -350,7 +363,7 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
     },
     reset: () => {
       state.reset(); rate.reset(); resetFaults(); log.length = 0; faultLog.length = 0; signals.length = 0; llm.reset(); realtime.reset();
-      world?.reset(); worldLog.length = 0; worldPending.length = 0; worldReported = 0;
+      world?.reset(); worldLog.length = 0; worldPending.length = 0; worldReported = 0; movesReported.clear();
       return { ok: true };
     },
     log: ({ since = 0 }) => ({ entries: log.slice(Number(since)), next: log.length }),

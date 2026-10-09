@@ -752,7 +752,12 @@ def _(c):
 @check('l_manifest_rules', 'L', pre=pre_resource_and_function, needs=('build',))
 def _(c):
     rules: Dict[str, bool] = {}
-    paths = [str(r.get('path') or '') for r in c.resources()]
+    # A UI Kit resource (`render: native`, SPEC R5's admin page) is the frontend SOURCE file the CLI bundles, so the
+    # Custom UI rules (a built folder with index.html, outside src/) never apply to it.
+    native = {str(m.get('resource')) for t in c.module_types() for m in c.modules(t) if m.get('render') == 'native'}
+    native |= {str(m['edit'].get('resource')) for t in c.module_types() for m in c.modules(t)
+               if isinstance(m.get('edit'), dict) and m['edit'].get('render') == 'native'}
+    paths = [str(r.get('path') or '') for r in c.resources() if str(r.get('key')) not in native]
     rules['resource_has_index_html'] = all(c.read_tree(os.path.join(p, 'index.html')) is not None for p in paths)
     rules['resource_not_under_src'] = all(not p.strip('./').startswith('src/') and p.strip('./') != 'src' for p in paths)
     every = [e for t in c.module_types() for e in c.modules(t)]
@@ -1757,15 +1762,20 @@ def _(c):
 
 # ══ R: reconcile ═════════════════════════════════════════════════════════════════════════════
 
+# 2.0 doses the backfill (SPEC R2): the probe reads it one virtual hour after the upgrade, when issue events have run
+# too, and a row records the path that recorded it first (contract §3) — event work may record a historical change.
+BACKFILL_SOURCES = ('reconcile', 'event')
+
+
 @check('r_backfill_complete', 'R', needs=('backfill',))
 def _(c):
     if not c.modules('scheduledTrigger'):
         return absent('scheduledTrigger module')
     expected = c.oracle.changes('backfill')
     rows = c.kvs_rows('backfill')
-    ok = [ch for ch in expected if rows_for(rows, ch) and row_correct(rows_for(rows, ch)[0][0], ch, ('reconcile',))]
+    ok = [ch for ch in expected if rows_for(rows, ch) and row_correct(rows_for(rows, ch)[0][0], ch, BACKFILL_SOURCES)]
     return g(len(ok) / len(expected) if expected else 0, f'{len(ok)}/{len(expected)} historical changes recorded '
-             'exactly after the first scheduled run', 'data loss — changes silently missing',
+             'exactly one virtual hour after the upgrade (the backfill is dosed)', 'data loss — changes silently missing',
              parts={'missing': [ch.key for ch in expected if ch not in ok][:12]})
 
 
@@ -1780,7 +1790,7 @@ def _(c):
     if not expected:
         return unavail('the pack has no removed-to-backlog change after an active start')
     rows = c.kvs_rows('backfill')
-    ok = sum(1 for ch in expected if rows_for(rows, ch) and row_correct(rows_for(rows, ch)[0][0], ch, ('reconcile',)))
+    ok = sum(1 for ch in expected if rows_for(rows, ch) and row_correct(rows_for(rows, ch)[0][0], ch, BACKFILL_SOURCES))
     return g(ok / len(expected), f'{ok}/{len(expected)} removed-to-backlog changes found',
              'issues that left every sprint are missed')
 

@@ -383,9 +383,28 @@ const ledgerRow = (v) => Object.fromEntries(LEDGER_ATTRS.map((k) => [k, v?.[k] ?
 // and the site, --selftest to a fake. Everything due by an agenda point happens before it (world changes, queue
 // deliveries), so a checkpoint reads the state AT its mark unless a delivery's own virtual time ran past it — the
 // actual read time is what `clock.checkpoints` records.
+// The shared pool's wall brought forward by the app's other tenants (contract §10): the hour's remaining points are
+// drawn a few virtual minutes before a clock-hour top in the middle of the scored hours, so background work meets a
+// quota 429 whose Retry-After runs to that top (longer than a trigger's or consumer's limit: SPEC R2 and R3). The
+// window holds none of the harness's own person-facing reads (they come PANEL_BEFORE_MS before each mark).
+// The window's length in virtual seconds, longest first: every one outlasts a trigger's 25 s limit.
+const QUOTA_WINDOW_S = [480, 420, 360, 300, 240, 180, 120, 90, 60, 40];
+const READS_MARGIN_MS = 15_000;
+function quotaWindow(t0) {
+  const top = (Math.floor((t0 + 2.5 * H) / H) + 1) * H;
+  const reads = Array.from({ length: HOURS }, (_, i) => t0 + (i + 1) * H - PANEL_BEFORE_MS);
+  for (const w of QUOTA_WINDOW_S) {
+    const at = top - w * 1000;
+    if (!reads.some((p) => p > at - READS_MARGIN_MS && p < top)) return { at, until: top };
+  }
+  return null;
+}
+
 async function runHours(io, t0) {
   const ciAt = t0 + CI_AT_MS;
+  const quotaAt = typeof io.quotaAt === 'function' ? io.quotaAt(t0) : null;
   let ciDone = false;
+  let quotaDone = quotaAt === null;
   for (let k = 1; k <= HOURS; k++) {
     const end = t0 + k * H;
     const panelAt = end - PANEL_BEFORE_MS;
@@ -394,11 +413,12 @@ async function runHours(io, t0) {
     for (;;) {
       const nd = io.nextDeliveryAt();
       const due = Math.min(end, panelDone ? Infinity : panelAt, !ciDone && ciAt < end ? ciAt : Infinity,
-        nd !== null && nd < end ? nd : Infinity);
+        !quotaDone && quotaAt < end ? quotaAt : Infinity, nd !== null && nd < end ? nd : Infinity);
       await io.world(due);
       await io.drain(due);
       await io.advanceTo(due);
       if (!ciDone && ciAt < end && ciAt <= due) { ciDone = true; await io.ci(); continue; }
+      if (!quotaDone && quotaAt < end && quotaAt <= due) { quotaDone = true; await io.quota(); continue; }
       if (!panelDone && panelAt <= due) { panelDone = true; await io.panel(`h${k}`); continue; }
       if (nd !== null && nd < end && nd <= due) { if (await io.deliver()) continue; }
       if (due >= end) break;
@@ -590,6 +610,9 @@ async function main() {
       entity_counts: Object.fromEntries(Object.entries(s.entities ?? {}).map(([n, rows]) => [n, Object.keys(rows).length])) };
     const values = await fieldValues();
     if (values) obs.field.values_by_checkpoint[cp] = values;
+    // The v1 backfill rows are read when the backfill is due, not right after the run that starts it (SPEC R2 doses
+    // it over the hour: contract §3 "the first run starts the backfill").
+    if (cp === 'h1' && obs.phases.backfill) obs.phases.backfill.kvsAfter = snapshot('backfill');
     (obs.field.applied_by_checkpoint ??= {})[cp] = site.state.st.applied.size;
   };
 
@@ -684,6 +707,17 @@ async function main() {
         (obs.ui.adminCalls ??= []).push(...takeCalls(emu));
       },
       checkpoint: async (cp) => checkpoint(cp),
+      quotaAt: (t0) => quotaWindow(t0)?.at ?? null,
+      quota: async () => {
+        const t = now();
+        const win = quotaWindow(obs.clock.upgrade_t_ms);
+        const { model, hours } = site.control.rate();
+        const row = (hours ?? []).find((h) => Date.parse(h.hour) === Math.floor(t / H) * H);
+        const spent = row ? row.total : 0;
+        const points = model.quotaPerHour - spent;
+        if (points > 0) site.control.draw({ points, at: t });
+        obs.rate.wall = { t_ms: t, until_ms: win?.until ?? null, points: Math.max(0, points), spent_before: spent };
+      },
     };
     await runHours(io, obs.clock.upgrade_t_ms);
     // Deliveries the plan holds past the sixth hour (none on a well-formed pack) still reach the app before heal.
@@ -802,7 +836,9 @@ function adminDriver({ emu, pack, host, adminPage, appDir, now }) {
   const openAdmin = async (accountId, as) => {
     const invokes = [];
     const ui = await host.render({ appDir, moduleKey: adminPage.key, context: ctxFor(accountId, adminPage.key),
-      invoke: async (functionKey, payload) => {
+      // P2's host calls invoke({moduleKey, functionKey, payload, context}); (functionKey, payload) reads the same.
+      invoke: async (a, b) => {
+        const { functionKey, payload } = a !== null && typeof a === 'object' ? a : { functionKey: a, payload: b };
         const r = await callResolver(functionKey, payload, accountId);
         const rec = { as, resolver: functionKey, payload: payload ?? null, ok: Boolean(r.ok), response: r.ok ? (r.result ?? null) : null,
           error: r.ok ? null : String(r.error?.message ?? r.error) };
@@ -959,7 +995,7 @@ function commentAttempts(pack) {
   const all = [...Object.values(obs.phases).flatMap((p) => p.calls || []), ...obs.ui.calls,
     ...obs.rovo.calls.flatMap((c) => c.calls || [])];
   return all.filter((c) => c.service === 'jira' && c.method === 'POST' && /\/rest\/api\/[23]\/issue\/[^/]+\/comment$/.test(String(c.path).split('?')[0]))
-    .map((c) => ({ t: c.t, issueKey: String(c.path).split('/issue/')[1].split('/')[0], provider: c.provider,
+    .map((c) => ({ t: c.t, kind: c.kind, issueKey: String(c.path).split('/issue/')[1].split('/')[0], provider: c.provider,
       accountId: c.provider === 'user' ? pack.viewer : pack.appAccountId, status: c.status,
       body: c.body && typeof c.body === 'object' ? c.body.body : c.body, fault: c.fault,
       // Jira refuses a comment without ADD_COMMENTS with 400 + a named message, not 403 (measured, WP1 d21b58a53).
@@ -1726,6 +1762,22 @@ async function selftest() {
     const worlds = seen.filter((x) => x[0] === 'world').map((x) => x[1]);
     assert.deepEqual(worlds, [...worlds].sort((a, b) => a - b));
     for (const [i, x] of seen.entries()) if (x[0] === 'deliver') assert.equal(seen[i - 1][0], 'drain');
+  });
+
+  await test('quotaWindow: ends at a clock-hour top mid-run, holds no person-facing read; runHours draws it once', async () => {
+    for (const t0 of [1_000 * H, 1_000 * H + 17 * 60_000, 1_000 * H + 58 * 60_000, 1_000 * H + 3 * 60_000]) {
+      const w = quotaWindow(t0);
+      assert.ok(w, `a window exists for t0 offset ${(t0 % H) / 60_000} min`);
+      assert.equal(w.until % H, 0);
+      assert.ok(w.at > t0 + 2 * H && w.until < t0 + HOURS * H);
+      for (let k = 1; k <= HOURS; k += 1) { const p = t0 + k * H - PANEL_BEFORE_MS; assert.ok(!(p > w.at - READS_MARGIN_MS && p < w.until)); }
+    }
+    let clock = 1_000 * H;
+    const draws = [];
+    await runHours({ now: () => clock, advanceTo: async (t) => { if (t > clock) clock = t; }, nextDeliveryAt: () => null, deliver: async () => false,
+      drain: async () => {}, world: async () => {}, hourly: async () => {}, ci: async () => {}, panel: async () => {}, checkpoint: async () => {},
+      quotaAt: (t0) => quotaWindow(t0).at, quota: async () => draws.push(clock) }, clock);
+    assert.deepEqual(draws, [quotaWindow(1_000 * H).at]);
   });
 
   await test('runHours: a drain that runs past a mark makes the checkpoint late, never early', async () => {
