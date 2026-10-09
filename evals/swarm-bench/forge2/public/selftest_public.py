@@ -132,7 +132,8 @@ class Numbers(unittest.TestCase):
                                 'use the NEW board\'s estimation field',
                                 'changes after the switch use the new field; earlier rows keep their `estimate`',
                                 'its rows stay as history with `deleted: true`',
-                                'their next request shows none of that issue\'s rows (no stale cache)',
+                                'their next request shows none of the rows of the issues they can no longer browse '
+                                '(no stale cache)',
                                 'The dev site exercises every one of these at least once',
                                 'the scoring schedule is private')
 
@@ -168,7 +169,7 @@ class Numbers(unittest.TestCase):
     def test_requirements_1(self):
         self.assert_in_contract('complete within the first 2 virtual hours after the upgrade',
                                 '`Migrated <n> of <total> v1 rows`', 'contains `complete`',
-                                'exactly once, as the same change',
+                                'exactly once: the same change (changelog id + sprint) with its original `at`',
                                 '`scope-change` stays declared exactly as in v1\'s manifest',
                                 'key `scope-status`, `type: string`, `readOnly: true`',
                                 '`committed` if it was in S at S\'s `startDate`, else `added +<points>`', '`removed`',

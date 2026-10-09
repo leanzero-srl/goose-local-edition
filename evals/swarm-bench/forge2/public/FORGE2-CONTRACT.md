@@ -3,9 +3,9 @@
 Scope Ledger v1 is installed on a large Jira Cloud site and has been in use for days: agile coaches see on a
 dashboard, from the sprint itself and from Rovo what entered a sprint after it started, who added it and how many
 story points it carried. This workspace is v1's source (`STARTER.md`). Ship v2: everything v1 does (§1–§8, which
-keep their rules unless a later section changes them) plus the guarantees of §9–§18 — a live migration of v1's data,
-a points quota, invocation time limits, a world that changes while the app runs, a UI Kit admin panel, signed CI
-events, a custom field, safer Forge LLM use and a boot budget for the Custom UI surfaces.
+keep their rules unless a later section changes them) plus the guarantees of §9–§18: a live migration of v1's data,
+a points quota, time limits, a changing world, a UI Kit admin panel, signed CI events, a custom field, safer Forge
+LLM use and a Custom UI boot budget.
 
 The harness upgrades the installation from v1 to your v2 over v1's stored data — that instant is virtual hour 0 —
 and runs it for 6 virtual hours on a seeded site: product events, queue deliveries, scheduled runs, resolver calls
@@ -206,8 +206,8 @@ v2 keeps its ledger in a NEW entity `scope-ledger`:
   `estimate`, `estimateField` and `boardId` never change.
 
 Migration guarantees (graded):
-- Every `scope-change` row appears in `scope-ledger` exactly once, as the same change (changelog id + sprint) with its
-  original `at`, `kind`, issue, author and `source`.
+- Every `scope-change` row appears in `scope-ledger` exactly once: the same change (changelog id + sprint) with its
+  original `at`. Its kind, issue, author and `source` stay as v1 recorded them (§3, §5).
 - `scope-change` stays declared exactly as in v1's manifest, and its rows are never changed or deleted.
 - It runs while events keep flowing: a change v1 recorded that arrives again through events or reconciliation is still
   one row.
@@ -289,7 +289,8 @@ scoring schedule is private. Guarantees (graded):
 - **A board's estimation field changes:** changes after the switch use the new field; earlier rows keep their
   `estimate`.
 - **An issue is deleted:** its rows stay as history with `deleted: true`; it no longer counts in current scope (§1).
-- **A person loses browse permission:** their next request shows none of that issue's rows (no stale cache).
+- **A person loses browse permission:** their next request shows none of the rows of the issues they can no longer
+  browse (no stale cache).
 
 ## 13. The admin panel (UI Kit)
 
@@ -333,7 +334,7 @@ strings, and header names may arrive in any letter case.
   `X-LZ-Signature: sha256=<hex HMAC-SHA256(secret, "<timestamp>.<raw body>")>`: `<timestamp>` is that header's value,
   `<raw body>` the body string exactly as received, the key the secret's UTF-8 bytes.
 - Checks, in this order: the signature (compared with `crypto.timingSafeEqual`), then the timestamp (reject when
-  |now − timestamp| > 300 s), then the `eventId`.
+  |now − timestamp| > 300 s), then the `eventId`. Answers and effects (graded):
 
 | request | answer | effect |
 |---|---|---|
