@@ -3657,6 +3657,24 @@ def defect_selftest() -> List[str]:
                                                                    {'commentsAdded': 0, 'successFlags': 0})}})
     expect(abs(flow['score'] - 5 / 7) < 1e-3, f"B u_comment_flow must charge the zero-comment double click 2 of 7 steps "
            f"(got {flow['score']}: {flow.get('detail')})")
+    # v2 storage: a change kept in v1's entity AND migrated into scope-ledger is one row; two in scope-ledger are two
+    ch = Ctx(None, {}, pack).oracle.changes('final')[0]
+    item = {'key': f'r-{ch.change_id}', 'value': {'changeId': ch.change_id, 'sprintId': ch.sprint_id}}
+    v2_manifest = {'app': {'storage': {'entities': [{'name': 'scope-change'}, {'name': V2_SURFACE_ENTITY}]}}}
+    for label, entities, want in (('migrated beside v1', {'scope-change': [item], V2_SURFACE_ENTITY: [item]}, 1.0),
+                                  ('duplicated in scope-ledger', {V2_SURFACE_ENTITY: [item, item]}, 0.0)):
+        phases = {ph: {'kvsAfter': {'entities': entities, 'keys': []}} for ph in ('live', 'heal', 'rerun')}
+        got = row('t_no_double_count', {'manifest': v2_manifest, 'phases': phases})
+        expect(got['score'] == want, f"v2 ledger t_no_double_count {label}: {got['score']} (want {want}) — {got.get('detail')}")
+    # G: a UI section that failed on the app's own undeclared resource scores 0 but fires no critical
+    broken = {'manifest': {'modules': {'dashboards:widget': [{'key': 'w', 'resource': 'widget'}]}},
+              'comments': comments(1), 'sectionErrors': {'ui': "resource 'widget' is not declared under resources"}}
+    for name in ('b_no_permission_leak', 'b_comment_exactly_once'):
+        got = row(name, broken)
+        fired = criticals([got])[0]
+        expect(got['score'] == 0 and str((got.get('parts') or {}).get('vacuous_root', '')).startswith('manifest:')
+               and fired == 1.0, f"G {name} on a manifest fault: score {got['score']}, parts {got.get('parts')}, "
+               f'multiplier {fired}')
     # H: polling scores 0; a subscriber that updates the moved sprints scores 1; one that never updates scores 0
     o, oui = Ctx(None, {}, pack).oracle, Ctx(None, {}, pack).oracle_ui
     board = next((b for b in oui.boards if any(o.numbers(s).metrics_text() != oui.numbers(s).metrics_text()
