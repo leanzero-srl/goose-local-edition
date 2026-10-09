@@ -11,8 +11,19 @@
 //         /fpp/as/app/provider/atlassian/capability/realtime                     (Realtime GraphQL -> realtime.cjs)
 // The last two routes are what the pinned wrapper was MEASURED to call (2026-10-03, see site/llm.cjs and
 // site/realtime.cjs for the recorded requests).
+//         /x/webtrigger/<moduleKey>   PUBLIC (no token): a web trigger's URL; the request goes to the emulator's
+//                                     ingress (lib/webtrigger.cjs). `webTrigger.getUrl(key)` answers this URL.
 // Anything else answers 501 EMULATOR_NOT_MODELLED and is recorded as harness_missing, never a silent 200.
+//
+// Virtual time (clock.cjs): every request of an invocation carries its virtual send time (`forge-vclock`); the proxy
+// charges the request's class cost, answers the completion time in the same header, keeps the site's clock at least at
+// the send time before a product request reaches it (so rate windows and per-issue write spacing see the invocation's
+// time), and logs `t_virtual` (send) and `vcostMs` for every call.
 const http = require('http');
+const { costOf, VCLOCK_HEADER } = require('./clock.cjs');
+
+const KVS_ROUTE = '/fpp/as/app/provider/atlassian/capability/kvs';
+const WEBTRIGGER_ROUTE = /^\/x\/webtrigger\/([^/]+)$/;
 
 const STREAM_READ_GAP_MS = 20; // transport: a pause long enough for two writes to arrive as two socket reads
 const REQUEST_STATS = /^\/webhook\/queue\/stats\//;
@@ -25,18 +36,22 @@ function decodeToken(header) {
   try { return JSON.parse(Buffer.from(m[1].split('.')[1], 'base64url').toString()); } catch { return null; }
 }
 
-function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clock, log = [], harnessMissing = [] }) {
+function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clock, log = [], harnessMissing = [], webtrigger = null }) {
   const llmModules = manifest?.modules?.llm ?? [];
+  const webtriggerKeys = new Set((manifest?.modules?.webtrigger ?? []).map((w) => w?.key).filter(Boolean));
   const scopes = manifest?.permissions?.scopes ?? [];
   const egressAllow = (manifest?.permissions?.external?.fetch?.backend ?? []).map((e) => (typeof e === 'string' ? e : e?.address)).filter(Boolean);
-  const vnow = () => new Date(clock.now()).toISOString();
-  const record = (entry) => { const e = { t_virtual: vnow(), ...entry }; log.push(e); return e; };
-  const missing = (what, inv) => harnessMissing.push({ what, at: vnow(), invocationId: inv?.id ?? null, moduleType: inv?.moduleType ?? null });
+  let selfUrl = null;
+  const iso = (t) => new Date(t ?? clock.now()).toISOString();
+  // `tv`: the virtual time the call was made (an invocation's send time); frontend calls use the emulator's clock.
+  const record = (entry, tv) => { const e = { t_virtual: iso(tv), ...entry }; log.push(e); return e; };
+  const missing = (what, inv) => harnessMissing.push({ what, at: iso(), invocationId: inv?.id ?? null, moduleType: inv?.moduleType ?? null });
 
   // One product request (Jira), shared by the wrapper route and the Custom UI host's fetchProduct.
-  async function productFetch({ inv, provider, product, method, path, headers = {}, body }) {
+  async function productFetch({ inv, provider, product, method, path, headers = {}, body, tv, vcostMs }) {
     const entry = record({ invocationId: inv?.id ?? null, moduleType: inv?.moduleType ?? null, moduleKey: inv?.moduleKey ?? null,
-      functionKey: inv?.functionKey ?? null, source: inv?.source ?? 'function', service: product, provider, method, path, body: parseMaybe(body) });
+      functionKey: inv?.functionKey ?? null, source: inv?.source ?? 'function', service: product, provider, method, path, body: parseMaybe(body),
+      ...(vcostMs !== undefined ? { vcostMs } : {}) }, tv);
     if (product !== 'jira') {
       entry.status = 404;
       return { status: 404, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: `This site has no ${product} product installed.` }) };
@@ -62,6 +77,7 @@ function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clo
     if (inv?.moduleKey) fwd['x-forge-module-key'] = inv.moduleKey;
     if (inv?.scheduledRun) fwd['x-forge-scheduled-run'] = String(inv.scheduledRun);
     if (inv?.originChange) fwd['x-forge-origin-change'] = inv.originChange;
+    if (tv !== undefined) await clock.advanceTo(tv);
     const started = Date.now();
     const r = await fetch(new URL(path, siteUrl), { method, headers: fwd, body: method === 'GET' || method === 'HEAD' ? undefined : body });
     const text = await r.text();
@@ -91,26 +107,37 @@ function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clo
     return { status: r.status, headers: out, body: text };
   }
 
-  function stargate(inv, target, body) {
+  function stargate(inv, target, body, tv, vcostMs) {
     if (REQUEST_PUSH.test(target)) {
-      const res = queue.push(inv, body);
+      const res = queue.push(inv, body, tv);
       record({ invocationId: inv.id, moduleType: inv.moduleType, moduleKey: inv.moduleKey, functionKey: inv.functionKey, service: 'queue', provider: 'app',
-        method: 'POST', path: target, body: { queueName: body.queueName, jobId: body.jobId, payload: body.payload }, status: res.status });
+        method: 'POST', path: target, body: { queueName: body.queueName, jobId: body.jobId, payload: body.payload }, status: res.status, vcostMs }, tv);
       return res;
     }
     if (REQUEST_STATS.test(target) || REQUEST_CANCEL.test(target)) {
       const res = REQUEST_STATS.test(target) ? queue.stats(body) : queue.cancel(body);
-      record({ invocationId: inv.id, moduleType: inv.moduleType, moduleKey: inv.moduleKey, service: 'queue', provider: 'app', method: 'POST', path: target, body, status: res.status });
+      record({ invocationId: inv.id, moduleType: inv.moduleType, moduleKey: inv.moduleKey, service: 'queue', provider: 'app', method: 'POST', path: target, body, status: res.status, vcostMs }, tv);
+      return res;
+    }
+    // @forge/api webTrigger.getUrl(key): the GraphQL mutation createWebTriggerUrl (api/out/webTrigger.js). The URL is this
+    // emulator's public web-trigger route, so a URL the app shows can be called.
+    if (target === '/graphql' && /\bcreateWebTriggerUrl\b/.test(String(body?.query ?? ''))) {
+      const key = body?.variables?.input?.triggerKey;
+      const ok = webtriggerKeys.has(key);
+      const res = ok ? { status: 200, body: { data: { createWebTriggerUrl: { url: `${selfUrl}/x/webtrigger/${encodeURIComponent(key)}` } } } }
+        : { status: 200, body: { data: null, errors: [{ message: `No web trigger module with key '${key}' in the manifest` }] } };
+      record({ invocationId: inv.id, moduleType: inv.moduleType, moduleKey: inv.moduleKey, service: 'webtrigger', provider: 'app', method: 'POST', path: target, op: 'createWebTriggerUrl',
+        body: { triggerKey: key }, status: res.status, ...(ok ? {} : { refused: 'unknown web trigger key' }), vcostMs }, tv);
       return res;
     }
     missing(`stargate ${target}`, inv);
-    record({ invocationId: inv.id, moduleType: inv.moduleType, moduleKey: inv.moduleKey, service: 'stargate', provider: 'app', method: 'POST', path: target, body, status: 501 });
+    record({ invocationId: inv.id, moduleType: inv.moduleType, moduleKey: inv.moduleKey, service: 'stargate', provider: 'app', method: 'POST', path: target, body, status: 501, vcostMs }, tv);
     return { status: 501, body: { code: 'EMULATOR_NOT_MODELLED', message: `stargate ${target}` } };
   }
 
-  function kvsCall(inv, op, body) {
+  function kvsCall(inv, op, body, tv, vcostMs) {
     const entry = record({ invocationId: inv?.id ?? null, moduleType: inv?.moduleType ?? null, moduleKey: inv?.moduleKey ?? null,
-      functionKey: inv?.functionKey ?? null, service: 'kvs', provider: 'app', method: 'POST', path: op, body });
+      functionKey: inv?.functionKey ?? null, service: 'kvs', provider: 'app', method: 'POST', path: op, body, ...(vcostMs !== undefined ? { vcostMs } : {}) }, tv);
     if (!scopes.includes('storage:app')) {
       entry.status = 403;
       entry.missingScope = 'storage:app';
@@ -128,36 +155,63 @@ function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clo
     req.on('data', (c) => chunks.push(c));
     req.on('end', async () => {
       const raw = Buffer.concat(chunks).toString('utf8');
+      let timing = {};
       const send = (status, body, headers = {}) => {
-        res.writeHead(status, { 'content-type': 'application/json', ...headers });
+        res.writeHead(status, { 'content-type': 'application/json', ...timing, ...headers });
         res.end(body === undefined ? '' : typeof body === 'string' ? body : JSON.stringify(body));
       };
       try {
-        const route = new URL(req.url, 'http://proxy').pathname;
+        const url = new URL(req.url, 'http://proxy');
+        const route = url.pathname;
+        let m;
+        if ((m = route.match(WEBTRIGGER_ROUTE))) {
+          const moduleKey = decodeURIComponent(m[1]);
+          if (!webtrigger) {
+            missing(`webtrigger ingress for ${moduleKey}`, null);
+            return send(501, { code: 'EMULATOR_NOT_MODELLED', message: 'no web-trigger ingress is mounted in this emulator (lib/webtrigger.cjs handle)' });
+          }
+          // Header values as arrays and the raw body string: the shapes a web trigger function receives.
+          const headers = {};
+          for (let i = 0; i < req.rawHeaders.length; i += 2) (headers[req.rawHeaders[i].toLowerCase()] ??= []).push(req.rawHeaders[i + 1]);
+          const queryParameters = {};
+          for (const [k, v] of url.searchParams) (queryParameters[k] ??= []).push(v);
+          const r = await webtrigger(moduleKey, { method: req.method, path: route, headers, queryParameters, body: raw });
+          const out = {};
+          for (const [k, v] of Object.entries(r?.headers ?? {})) out[k] = Array.isArray(v) ? v.join(', ') : String(v);
+          res.writeHead(Number(r?.statusCode ?? 500), out);
+          return res.end(r?.body === undefined || r?.body === null ? '' : typeof r.body === 'string' ? r.body : JSON.stringify(r.body));
+        }
         const target = req.headers['forge-proxy-target'];
         const claims = decodeToken(req.headers['forge-proxy-authorization']);
         const inv = claims ? invocations.get(claims.inv) : null;
         if (route === '/logs') return send(200, {});
         if (!inv) return send(401, { code: 'UNAUTHENTICATED', message: 'unknown or missing proxy token' }, { 'forge-proxy-error': 'PROXY_ERR' });
-        let m;
+        // The invocation's virtual clock: its send time (or, for a request the agent did not stamp, the latest time the
+        // proxy knows for it), plus this request's class cost.
+        const stamped = Number(req.headers[VCLOCK_HEADER]);
+        const tv = Number.isFinite(stamped) && stamped > 0 ? stamped : (inv.vnow ?? clock.now());
+        const vcostMs = costOf({ kvs: route === KVS_ROUTE, method: req.method, path: target ?? route });
+        inv.vnow = Math.max(inv.vnow ?? tv, tv + vcostMs);
+        clock.observe(tv);
+        timing = { [VCLOCK_HEADER]: String(tv + vcostMs) };
         if ((m = route.match(/^\/fpp\/provider\/(app|user|none)\/remote\/(jira|confluence|bitbucket|stargate)(?:\/account\/(.+))?$/))) {
           const [, provider, remote] = m;
           if (remote === 'stargate') {
-            const r = stargate(inv, target, parseMaybe(raw));
+            const r = stargate(inv, target, parseMaybe(raw), tv, vcostMs);
             return send(r.status, r.body);
           }
-          const r = await productFetch({ inv, provider, product: remote, method: req.method, path: target, headers: req.headers, body: raw || undefined });
+          const r = await productFetch({ inv, provider, product: remote, method: req.method, path: target, headers: req.headers, body: raw || undefined, tv, vcostMs });
           return send(r.status, r.body, r.headers);
         }
-        if (route === '/fpp/as/app/provider/atlassian/capability/kvs') {
-          const r = kvsCall(inv, target, parseMaybe(raw));
+        if (route === KVS_ROUTE) {
+          const r = kvsCall(inv, target, parseMaybe(raw), tv, vcostMs);
           return send(r.status, r.body);
         }
         if (route === '/llm/' || route.startsWith('/llm/')) {
           const model = route === '/llm/' ? null : decodeURIComponent(route.slice('/llm/'.length));
           const body = parseMaybe(raw);
           const entry = record({ invocationId: inv.id, moduleType: inv.moduleType, moduleKey: inv.moduleKey, functionKey: inv.functionKey, asUser: inv.aaid ?? null,
-            service: 'llm', provider: 'app', method: req.method, path: route, op: req.method === 'GET' ? 'list' : body?.stream ? 'stream' : 'chat', model, body });
+            service: 'llm', provider: 'app', method: req.method, path: route, op: req.method === 'GET' ? 'list' : body?.stream ? 'stream' : 'chat', model, body, vcostMs }, tv);
           if (!llmModules.length) {
             // The docs: "If the SDK is used without declaring this module, linting will fail with an error like:
             // Error: LLM package is used but 'llm' module is not defined in the manifest". What the runtime answers is
@@ -172,7 +226,7 @@ function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clo
             // Newline-delimited ChatResponse chunks (site/llm.cjs STREAMING). The tool-call line is cut in two writes,
             // with a pause so they arrive as two reads, which drives @forge/llm's fragment path (llm-stream-parser.js:25-32).
             entry.streamedChunks = r.stream.length;
-            res.writeHead(200, { 'content-type': 'application/x-ndjson' });
+            res.writeHead(200, { 'content-type': 'application/x-ndjson', ...timing });
             const cut = Math.max(0, r.stream.findIndex((c) => c.choices?.[0]?.message?.tool_calls));
             for (const [i, c] of r.stream.entries()) {
               const line = `${JSON.stringify(c)}\n`;
@@ -200,31 +254,31 @@ function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clo
               contextToken, contextOverrides: overrides, origin });
             record({ ...origin, service: 'realtime', provider: 'app', method: 'POST', path: route, op: v.isGlobal ? 'publishGlobal' : 'publish',
               body: { channel: v.name, payload: v.payload, isGlobal: Boolean(v.isGlobal), token: Boolean(v.token), contextToken: contextToken ?? null, contextOverrides: overrides },
-              status: 200, response: r });
+              status: 200, response: r, vcostMs }, tv);
             if (r.errors) return send(200, { data: null, errors: r.errors });
             return send(200, { data: { ecosystem: { publishRealtimeChannel: { eventId: r.eventId, eventTimestamp: r.eventTimestamp } } } });
           }
           if (/\bsignRealtimeToken\b/.test(query)) {
             const r = await siteCall('rtsign', { channelName: v.channelName, claims: v.claims, permissions: v.permissions ?? null });
-            record({ ...origin, service: 'realtime', provider: 'app', method: 'POST', path: route, op: 'signRealtimeToken', body: v, status: 200, response: { expiresAt: r.expiresAt } });
+            record({ ...origin, service: 'realtime', provider: 'app', method: 'POST', path: route, op: 'signRealtimeToken', body: v, status: 200, response: { expiresAt: r.expiresAt }, vcostMs }, tv);
             return send(200, { data: { ecosystem: { signRealtimeToken: { errors: null, forgeRealtimeToken: { jwt: r.jwt, expiresAt: r.expiresAt }, success: true } } } });
           }
           missing(`realtime operation ${query.slice(0, 60)}`, inv);
-          record({ ...origin, service: 'realtime', provider: 'app', method: 'POST', path: route, body: gql, status: 400 });
+          record({ ...origin, service: 'realtime', provider: 'app', method: 'POST', path: route, body: gql, status: 400, vcostMs }, tv);
           return send(400, { errors: [{ message: 'EMULATOR_NOT_MODELLED: unknown realtime operation' }] });
         }
         if (route === '/egress') {
           let host = null;
           try { host = new URL(target).host; } catch { host = null; }
           const allowed = host && egressAllow.some((a) => a === '*' || safeHost(a) === host || (a.startsWith('*.') && host.endsWith(a.slice(1))));
-          record({ invocationId: inv.id, moduleType: inv.moduleType, moduleKey: inv.moduleKey, service: 'egress', provider: 'app', method: req.method, path: target, status: allowed ? 502 : 403 });
+          record({ invocationId: inv.id, moduleType: inv.moduleType, moduleKey: inv.moduleKey, service: 'egress', provider: 'app', method: req.method, path: target, status: allowed ? 502 : 403, vcostMs }, tv);
           if (!allowed) return send(403, '', { 'forge-proxy-error': 'REQUEST_EGRESS_ALLOWLIST_ERR' });
           return send(502, { message: 'The benchmark harness has no internet: declared egress cannot be reached.' });
         }
         missing(`proxy route ${route}`, inv);
         // The whole request is kept so an unmodelled platform capability can be read off the log exactly.
         record({ invocationId: inv.id, moduleType: inv.moduleType, moduleKey: inv.moduleKey, service: 'unknown', provider: 'app', method: req.method, path: route,
-          headers: Object.fromEntries(Object.entries(req.headers).filter(([k]) => k !== 'forge-proxy-authorization')), body: parseMaybe(raw), status: 501 });
+          headers: Object.fromEntries(Object.entries(req.headers).filter(([k]) => k !== 'forge-proxy-authorization')), body: parseMaybe(raw), status: 501, vcostMs }, tv);
         return send(501, { code: 'EMULATOR_NOT_MODELLED', message: `proxy route ${route}` });
       } catch (e) {
         send(500, { code: 'PROXY_CRASH', message: String(e.message) });
@@ -234,7 +288,10 @@ function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clo
 
   return {
     log, harnessMissing, productFetch, kvsCall,
-    listen: () => new Promise((ok) => server.listen(0, '127.0.0.1', () => ok({ url: `http://127.0.0.1:${server.address().port}`, port: server.address().port }))),
+    listen: () => new Promise((ok) => server.listen(0, '127.0.0.1', () => {
+      selfUrl = `http://127.0.0.1:${server.address().port}`;
+      ok({ url: selfUrl, port: server.address().port });
+    })),
     close: () => new Promise((ok) => server.close(() => ok())),
   };
 }

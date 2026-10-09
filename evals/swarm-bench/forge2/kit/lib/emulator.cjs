@@ -6,9 +6,16 @@
 //   await emu.build();                       -> { functions: [{key, handler, bundled, loaded, error}], files }
 //   await emu.invoke(fnKey, { moduleKey, event, asUser })   -> {ok, result, error, logs, ms, calls, ...}
 //   await emu.deliverProductEvent(change)    -> the site applies it, every subscribed trigger runs (no drain)
-//   await emu.drainQueues()                  -> [{eventId, attempt, result, retryAfter, ...}]
+//   await emu.drainQueues()                  -> [{eventId, attempt, result, retryAfter, ...}] (queue events and trigger retries)
 //   await emu.runScheduled(moduleKey)        -> invoke + drain
 //   await emu.invokeAction(actionKey, inputs, { asUser })
+//   await emu.callResolver({ moduleKey, functionKey, payload, asUser, extension })   the platform's context for asUser
+//   await emu.invokeWebtrigger(moduleKey, request) / emu.webtriggerUrl(moduleKey)    the public route /x/webtrigger/<key>
+//
+// TIME IS VIRTUAL (SPEC §2.2, clock.cjs). `emu.clock.now()` is the site's clock as last seen. An invocation starts at
+// the site's current time, its process runs on its own virtual clock (proxied requests cost their class, waits their
+// face value), it is killed when that clock passes the module's limit, and when it ends the site's clock moves to its
+// end. Each result carries t0/t1 (virtual ISO), vms (virtual ms) and ms (real ms, never a grading input).
 //   await emu.openSurface(page, { moduleKey, entry, theme, layout, asUser, extension })   (bridge-host.cjs)
 //   await emu.hostSave(page)
 //   emu.kvs.snapshot(); emu.log; emu.bridgeLog; emu.harnessMissing; emu.close()
@@ -37,8 +44,13 @@ const REDELIVERY_MINUTES = [1, 2, 4, 8];
 const REDELIVERY_CAP_MINUTES = 15;
 const RETENTION_MS = DAY_MS;
 const MAX_RETRY_AFTER_S = 900;
+// limits-async-events: "Cyclic invocation limit 1000 ... push requests across all handlers originating from a single
+// initial function invocation" (forge2/research/BRIEF.md rob#18).
 const CYCLIC_INVOCATION_LIMIT = 1000;
 const LONG_RUNNING_PAYLOAD_BYTES = 100 * 1024;
+// events-reference/product_events: "You can only retry an event for a maximum of four times"; platform errors (a timeout)
+// are retried too (CHANGE-681). SPEC §2.2: product-event triggers, up to 4 retries.
+const TRIGGER_MAX_RETRIES = 4;
 
 function siteClient(site) {
   if (site.control) {
@@ -94,10 +106,18 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
 
   const client = siteClient(site);
   const info = await client.call('info');
-  let clockOffset = Date.parse(info.now) - Date.now();
-  const syncClock = async () => { const c = await client.call('clock'); clockOffset = c.now - Date.now(); return c.now; };
-  const clock = { now: () => Date.now() + clockOffset };
-  const advance = async (ms) => { const r = await client.call('advance', { ms }); clockOffset = r.now - Date.now(); return r.now; };
+  // The emulator's clock mirrors the site's (the world's) clock and never runs on wall time by itself.
+  let vnow = Date.parse(info.now);
+  // The site's and the emulator's clock both reach at least t (the site's may already be later: world events, probes).
+  const advanceTo = async (t) => {
+    let siteNow = (await client.call('clock')).now;
+    if (t > siteNow) siteNow = (await client.call('advance', { ms: t - siteNow })).now;
+    vnow = Math.max(vnow, siteNow);
+    return vnow;
+  };
+  const syncClock = () => advanceTo(vnow);
+  const clock = { now: () => vnow, observe: (t) => { if (t > vnow) vnow = t; }, advanceTo };
+  const advance = async (ms) => { const r = await client.call('advance', { ms }); vnow = Math.max(vnow, r.now); return vnow; };
   await syncClock();
 
   const entities = manifest?.app?.storage?.entities ?? [];
@@ -120,12 +140,15 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
   };
 
   const consumerFor = (queueName) => modules('consumer').find((c) => c.queue === queueName);
+  // A consumer names its function directly (`function:`) or through a resolver (`resolver: {function, method}`): both are
+  // arms of the schema's oneOf and both are invoked (1.0 defect C invoked only the first).
+  const consumerFunction = (consumer) => consumer?.function ?? consumer?.resolver?.function;
   const queue = {
-    push(inv, body) {
+    push(inv, body, at = clock.now()) {
       const items = Array.isArray(body?.payload) ? body.payload : [];
       if ((inv.depth ?? 0) >= CYCLIC_INVOCATION_LIMIT) return { status: 405, body: { message: 'Cyclic invocation limit reached' } };
       const consumer = consumerFor(body.queueName);
-      const fnDef = consumer && functions.find((f) => f.key === consumer.function);
+      const fnDef = consumer && functions.find((f) => f.key === consumerFunction(consumer));
       if (fnDef && Number(fnDef.timeoutSeconds) > TIMEOUTS.longRunningDefault && Buffer.byteLength(JSON.stringify(items)) > LONG_RUNNING_PAYLOAD_BYTES) {
         return { status: 413, body: { errorMessage: 'Payload size for long running functions exceeds 100 KB' } };
       }
@@ -135,7 +158,7 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
         const delay = Number(item.delayInSeconds ?? 0);
         queueState.pending.push({
           seq: queueState.seq++, eventId: `${body.jobId}#${i}`, jobId: body.jobId, queueName: body.queueName, body: item.body,
-          delayInSeconds: item.delayInSeconds, concurrency: item.concurrency, enqueuedAt: clock.now(), readyAt: clock.now() + delay * 1000,
+          delayInSeconds: item.delayInSeconds, concurrency: item.concurrency, enqueuedAt: at, readyAt: at + delay * 1000,
           attempt: 0, retryReason: null, retryData: null, lineage: { originChange: inv.originChange ?? null, scheduledRun: inv.scheduledRun ?? null, depth: (inv.depth ?? 0) + 1 },
         });
         job.inProgress += 1;
@@ -156,7 +179,19 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     },
   };
 
-  const proxy = createProxy({ siteUrl: client.url, siteCall: client.call, manifest, kvs, queue, invocations, clock, log, harnessMissing });
+  // The public web-trigger route answers through the ingress P3 owns (lib/webtrigger.cjs: handle(emu, moduleKey, request)
+  // -> {statusCode, headers, body}); without it the route is a loud 501, never a quiet success.
+  const webtriggerIngress = async (moduleKey, request) => {
+    let ingress;
+    try { ingress = require('./webtrigger.cjs'); } catch (e) {
+      if (e?.code !== 'MODULE_NOT_FOUND') throw e;
+      harnessMissing.push({ what: `webtrigger ingress (lib/webtrigger.cjs) for ${moduleKey}`, at: new Date(clock.now()).toISOString(), invocationId: null, moduleType: 'webtrigger' });
+      return { statusCode: 501, headers: { 'content-type': 'application/json' }, body: { code: 'EMULATOR_NOT_MODELLED', message: 'web-trigger ingress lib/webtrigger.cjs is not installed in this kit' } };
+    }
+    if (typeof ingress.handle !== 'function') throw new Error('lib/webtrigger.cjs exports no handle(emu, moduleKey, request)');
+    return ingress.handle(emu, moduleKey, request);
+  };
+  const proxy = createProxy({ siteUrl: client.url, siteCall: client.call, manifest, kvs, queue, invocations, clock, log, harnessMissing, webtrigger: webtriggerIngress });
   const proxyAddr = await proxy.listen();
   const ownWorkDir = !workDir;
   const work = workDir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'forge-emu-'));
@@ -194,7 +229,7 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     const loadable = Object.entries(files).filter(([, f]) => f.bundled).map(([k]) => k);
     let probe = {};
     if (loadable.length) {
-      const r = await rt.runInvocation({ bundleDir, lambdaEvent: null, timeoutSec: TIMEOUTS.standard, clockOffsetMs: clockOffset, runtime: 'probe', fence: fenceMode,
+      const r = await rt.runInvocation({ bundleDir, lambdaEvent: null, timeoutSec: TIMEOUTS.standard, vStart: clock.now(), runtime: 'probe', fence: fenceMode,
         proxyPort: proxyAddr.port, extra: { files: loadable, appContext: appContext('probe', 'probe', 'probe') } });
       probe = r.result ?? {};
       if (!r.result) for (const k of loadable) probe[k] = { functions: [], error: r.crash?.message ?? 'load probe produced no result' };
@@ -222,13 +257,17 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     const mType = moduleType ?? user?.type ?? null;
     const mKey = moduleKey ?? user?.key ?? null;
     const id = `inv-${(++invSeq).toString().padStart(5, '0')}-${crypto.randomBytes(3).toString('hex')}`;
-    const record = { id, functionKey: fnKey, moduleType: mType, moduleKey: mKey, aaid: asUser ?? undefined, source,
-      scheduledRun: lineage.scheduledRun ?? null, originChange: lineage.originChange ?? null, depth: lineage.depth ?? 0 };
-    invocations.set(id, record);
     const timeoutSec = timeoutFor(fnDef, mType);
+    // The invocation starts at the site's current time — after the change that triggered it was applied (the 1.0 stale
+    // trigger clock started it at the emulator's older time, so 29 of 41 measured trigger runs exceeded 25 s on paper).
+    const vStart = await syncClock();
+    const record = { id, functionKey: fnKey, moduleType: mType, moduleKey: mKey, aaid: asUser ?? undefined, source,
+      scheduledRun: lineage.scheduledRun ?? null, originChange: lineage.originChange ?? null, depth: lineage.depth ?? 0,
+      vStart, vnow: vStart, deadline: vStart + timeoutSec * 1000 };
+    invocations.set(id, record);
+    const t0 = new Date(vStart).toISOString();
     if (!status?.loaded) {
-      const t = new Date(clock.now()).toISOString();
-      const out = { ok: false, invocationId: id, functionKey: fnKey, moduleType: mType, moduleKey: mKey, t0: t, t1: t,
+      const out = { ok: false, invocationId: id, functionKey: fnKey, moduleType: mType, moduleKey: mKey, t0, t1: t0, vms: 0,
         error: errorOf({ errorType: 'FunctionNotLoaded', errorMessage: status?.error ?? 'function did not bundle' }), logs: [], ms: 0, calls: [], timedOut: false };
       onInvocation?.(record, out);
       return out;
@@ -236,27 +275,67 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     const lambdaEvent = {
       body: event, handler: fnDef.handler, variables: [],
       _meta: {
-        proxy: { url: proxyAddr.url, token: rt.fakeJwt({ inv: id, exp: Math.floor(clock.now() / 1000) + 86400 }), host: '127.0.0.1' },
+        proxy: { url: proxyAddr.url, token: rt.fakeJwt({ inv: id, exp: Math.floor(vStart / 1000) + 86400 }), host: '127.0.0.1' },
         contextAri, appContext: appContext(fnKey, mKey, id),
         tracing: { traceId: crypto.randomBytes(8).toString('hex'), spanId: crypto.randomBytes(8).toString('hex') },
         ...(asUser ? { aaid: asUser } : {}), timeout: timeoutSec, featureFlags: [],
       },
     };
-    const t0 = new Date(clock.now()).toISOString();
-    const exec = () => rt.runInvocation({ bundleDir, lambdaEvent, timeoutSec, clockOffsetMs: clockOffset, runtime, fence: fenceMode, proxyPort: proxyAddr.port });
+    const exec = () => rt.runInvocation({ bundleDir, lambdaEvent, timeoutSec, vStart, runtime, fence: fenceMode, proxyPort: proxyAddr.port });
     const r = aroundInvocation ? await aroundInvocation(exec) : await exec();
-    await syncClock();
-    const t1 = new Date(clock.now()).toISOString();
+    // The clock the process reported; a process that died without one ends at the last completion the proxy answered.
+    const vEnd = Math.max(r.vEnd ?? record.vnow, vStart);
+    record.vnow = vEnd;
+    await advanceTo(vEnd);
+    const t1 = new Date(vEnd).toISOString();
     const calls = log.filter((c) => c.invocationId === id);
     let out;
-    if (r.timedOut) out = { ok: false, timedOut: true, error: errorOf({ errorType: 'TimeoutError', errorMessage: `invocation exceeded the ${timeoutSec} s platform timeout` }) };
-    else if (r.crash) out = { ok: false, error: errorOf({ errorType: r.crash.name ?? 'RunnerError', errorMessage: r.crash.message }) };
+    if (r.timedOut) {
+      out = { ok: false, timedOut: true, error: errorOf({ errorType: 'TimeoutError', errorMessage: r.killedAtLimit
+        ? `invocation exceeded the ${timeoutSec} s platform limit (virtual time) and was killed`
+        : `invocation ran ${timeoutSec} s of real time without finishing (CPU-bound or hung) and was killed` }) };
+    } else if (r.crash) out = { ok: false, error: errorOf({ errorType: r.crash.name ?? 'RunnerError', errorMessage: r.crash.message }) };
     else if (r.result?.success) out = { ok: true, result: r.result.body };
     else out = { ok: false, error: errorOf(r.result?.error ?? { errorType: 'Unknown', errorMessage: 'no result' }) };
-    Object.assign(out, { invocationId: id, functionKey: fnKey, moduleType: mType, moduleKey: mKey, asUser: asUser ?? null, t0, t1, timeoutSec,
-      logs: r.logs, stderr: r.stderr, ms: r.ms, calls, timedOut: Boolean(r.timedOut) });
+    Object.assign(out, { invocationId: id, functionKey: fnKey, moduleType: mType, moduleKey: mKey, asUser: asUser ?? null, t0, t1, vms: vEnd - vStart, timeoutSec,
+      logs: r.logs, stderr: r.stderr, ms: r.ms, calls, timedOut: Boolean(r.timedOut), realTimeout: Boolean(r.realTimeout) });
     onInvocation?.(record, out);
     return out;
+  }
+
+  // A retry decision shared by queue events and product-event triggers: the app's InvocationError, or a failure.
+  const retryPlan = (r, attempt) => {
+    if (r.ok && r.result && r.result._retry === true) {
+      const opts = r.result.retryOptions ?? {};
+      return { kind: 'retry', waitS: Math.min(Math.max(Number(opts.retryAfter ?? 1), 1), MAX_RETRY_AFTER_S),
+        reason: opts.retryReason ?? 'FUNCTION_RETRY_REQUEST', data: opts.retryData ?? null };
+    }
+    if (r.ok) return null;
+    // @forge/events InvocationErrorCode names a timeout FUNCTION_TIME_OUT; a thrown error has no code there (harness name).
+    return { kind: r.timedOut ? 'timeout' : 'throw', waitS: (REDELIVERY_MINUTES[attempt] ?? REDELIVERY_CAP_MINUTES) * 60,
+      reason: r.timedOut ? 'FUNCTION_TIME_OUT' : 'FUNCTION_ERROR', data: null };
+  };
+
+  // A product-event trigger that asked for a retry, threw or was killed is delivered again (≤ TRIGGER_MAX_RETRIES), from
+  // the same pending list the queues use, so retries and queue events run in one virtual-time order.
+  function scheduleTriggerRetry(t, event, r, attempt, lineage) {
+    const plan = retryPlan(r, attempt);
+    if (!plan) return null;
+    if (attempt >= TRIGGER_MAX_RETRIES) return { ...plan, dropped: `retried ${TRIGGER_MAX_RETRIES} times` };
+    const readyAt = Date.parse(r.t1) + plan.waitS * 1000;
+    queueState.pending.push({ kind: 'trigger', seq: queueState.seq++, eventId: `trigger:${t.key}:${event.changelog?.id ?? event.eventType}:${attempt + 1}`,
+      moduleKey: t.key, event, attempt: attempt + 1, retryReason: plan.reason, retryData: plan.data, readyAt, lineage });
+    return { ...plan, redeliverAt: new Date(readyAt).toISOString() };
+  }
+
+  async function deliverTriggerRetry(ev) {
+    const t = modules('trigger').find((x) => x.key === ev.moduleKey);
+    const event = { ...ev.event, retryContext: { retryCount: ev.attempt, retryReason: ev.retryReason, retryData: ev.retryData } };
+    const r = await invokeFunction(t.function, { moduleKey: t.key, moduleType: 'trigger', event, lineage: ev.lineage });
+    const next = scheduleTriggerRetry(t, ev.event, r, ev.attempt, ev.lineage);
+    return { kind: 'trigger', eventId: ev.eventId, queueName: null, attempt: ev.attempt, invocationId: r.invocationId, functionKey: r.functionKey, moduleKey: t.key,
+      t: r.t0, t1: r.t1, lineage: ev.lineage, ok: r.ok, result: r.result ?? null, error: r.error ?? null, timedOut: r.timedOut, logs: r.logs,
+      outcome: next ? next.kind : 'ok', ...(next ? { retryAfter: next.waitS, ...(next.dropped ? { dropped: next.dropped } : { redeliverAt: next.redeliverAt }) } : {}) };
   }
 
   async function drainQueues() {
@@ -265,51 +344,44 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
       if (!queueState.pending.length) break;
       queueState.pending.sort((a, b) => a.readyAt - b.readyAt || a.seq - b.seq);
       const ev = queueState.pending.shift();
-      if (ev.readyAt > clock.now()) await advance(ev.readyAt - clock.now());
+      await advanceTo(ev.readyAt);
+      if (ev.kind === 'trigger') { deliveries.push(await deliverTriggerRetry(ev)); continue; }
       const job = queueState.jobs.get(ev.jobId);
       const consumer = consumerFor(ev.queueName);
-      if (!consumer) {
+      const fnKey = consumerFunction(consumer);
+      if (!fnKey) {
         deliveries.push({ eventId: ev.eventId, queueName: ev.queueName, attempt: ev.attempt, outcome: 'no_consumer', ok: false, result: null, t: new Date(clock.now()).toISOString() });
         if (job) { job.inProgress -= 1; job.failed += 1; }
         continue;
       }
       await client.call('signal', { type: 'consumer-start', originChange: ev.lineage.originChange, scheduledRun: ev.lineage.scheduledRun });
-      const asyncEvent = {
-        body: ev.body, queueName: ev.queueName, jobId: ev.jobId, eventId: ev.eventId,
+      const meta = {
+        queueName: ev.queueName, jobId: ev.jobId, eventId: ev.eventId,
         ...(ev.delayInSeconds !== undefined ? { delayInSeconds: ev.delayInSeconds } : {}), ...(ev.concurrency ? { concurrency: ev.concurrency } : {}),
         ...(ev.attempt > 0 ? { retryContext: { retryCount: ev.attempt, retryReason: ev.retryReason, retryData: ev.retryData,
           retentionWindow: { startTime: new Date(ev.enqueuedAt).toISOString(), remainingTimeMs: Math.max(0, ev.enqueuedAt + RETENTION_MS - clock.now()) } } } : {}),
       };
-      const r = await invokeFunction(consumer.function, { moduleKey: consumer.key, moduleType: 'consumer', event: asyncEvent, lineage: ev.lineage });
+      // The resolver form is called the way @forge/resolver's getDefinitions() dispatches: {call: {functionKey, payload,
+      // jobId}, context}; the event's metadata (retryContext included) rides in `context` (not documented: harness choice).
+      const event = consumer.function ? { body: ev.body, ...meta } : { call: { functionKey: consumer.resolver.method, payload: ev.body, jobId: ev.jobId }, context: meta };
+      const r = await invokeFunction(fnKey, { moduleKey: consumer.key, moduleType: 'consumer', event, lineage: ev.lineage });
       const base = { eventId: ev.eventId, queueName: ev.queueName, attempt: ev.attempt, invocationId: r.invocationId, functionKey: r.functionKey, moduleKey: consumer.key,
         t: r.t0, t1: r.t1, lineage: ev.lineage, ok: r.ok, result: r.result ?? null, error: r.error ?? null, timedOut: r.timedOut, logs: r.logs };
-      const retry = r.ok && r.result && r.result._retry === true;
-      if (r.ok && !retry) {
+      const plan = retryPlan(r, ev.attempt);
+      if (!plan) {
         deliveries.push({ ...base, outcome: 'ok' });
         if (job) { job.inProgress -= 1; job.success += 1; }
         continue;
       }
-      let waitS;
-      let kind;
-      if (retry) {
-        const opts = r.result.retryOptions ?? {};
-        waitS = Math.min(Math.max(Number(opts.retryAfter ?? 1), 1), MAX_RETRY_AFTER_S);
-        ev.retryReason = opts.retryReason ?? 'FUNCTION_RETRY_REQUEST';
-        ev.retryData = opts.retryData ?? null;
-        kind = 'retry';
-      } else {
-        waitS = (REDELIVERY_MINUTES[ev.attempt] ?? REDELIVERY_CAP_MINUTES) * 60;
-        ev.retryReason = r.timedOut ? 'FUNCTION_TIMEOUT' : 'FUNCTION_ERROR';
-        ev.retryData = null;
-        kind = r.timedOut ? 'timeout' : 'throw';
-      }
-      const next = clock.now() + waitS * 1000;
+      ev.retryReason = plan.reason;
+      ev.retryData = plan.data;
+      const next = clock.now() + plan.waitS * 1000;
       if (next > ev.enqueuedAt + RETENTION_MS) {
-        deliveries.push({ ...base, outcome: kind, retryAfter: waitS, dropped: 'retention window exceeded' });
+        deliveries.push({ ...base, outcome: plan.kind, retryAfter: plan.waitS, dropped: 'retention window exceeded' });
         if (job) { job.inProgress -= 1; job.failed += 1; }
         continue;
       }
-      deliveries.push({ ...base, outcome: kind, retryAfter: waitS, redeliverAt: new Date(next).toISOString() });
+      deliveries.push({ ...base, outcome: plan.kind, retryAfter: plan.waitS, redeliverAt: new Date(next).toISOString() });
       queueState.pending.push({ ...ev, attempt: ev.attempt + 1, readyAt: next, seq: queueState.seq++ });
     }
     return deliveries;
@@ -327,7 +399,10 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
       const events = (Array.isArray(t.events) ? t.events : []).map((e) => (typeof e === 'string' ? e : e?.eventType));
       if (!events.includes('avi:jira:updated:issue')) continue;
       if (t.filter?.ignoreSelf && event.selfGenerated) continue;
-      results.push(await invokeFunction(t.function, { moduleKey: t.key, moduleType: 'trigger', event, lineage: { originChange: change.id } }));
+      const lineage = { originChange: change.id };
+      const r = await invokeFunction(t.function, { moduleKey: t.key, moduleType: 'trigger', event, lineage });
+      const retry = scheduleTriggerRetry(t, event, r, 0, lineage);
+      results.push(retry ? { ...r, retry } : r);
     }
     return { changelogId: change.id, duplicate: Boolean(delivery.duplicate), slot: delivery.slot, event, triggers: results, invocations: results };
   }
@@ -380,6 +455,24 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     return invokeFunction(fnKey, { moduleKey, moduleType: found.type, asUser, event: { call: { functionKey, payload: payload ?? {} }, context, contextToken }, source: 'resolver' });
   }
 
+  // The probe's door to a resolver (admin / non-admin / forged payload): the context is the one the platform builds for
+  // `asUser` on that module (the Custom UI host's contextFor), so identity can only come from asUser — a forged identity
+  // can only travel in `payload`, exactly as on Forge, where a frontend controls the payload and never the context.
+  async function callResolver({ moduleKey, functionKey, payload = {}, asUser = null, extension = {}, theme = 'light' } = {}) {
+    const found = moduleByKey(moduleKey);
+    if (!found) return { ok: false, error: errorOf({ errorType: 'EmulatorError', errorMessage: `no module '${moduleKey}' in the manifest` }), calls: [] };
+    const context = host.contextFor(emu, { type: found.type, moduleKey, asUser, extension, theme, entry: 'view' });
+    return invokeResolver(moduleKey, functionKey, payload, context, asUser);
+  }
+
+  // A web trigger's function with the request a web trigger receives (limit 55 s); the ingress (lib/webtrigger.cjs) maps
+  // HTTP to this request and the function's answer (or a static output) back to HTTP.
+  async function invokeWebtrigger(moduleKey, request) {
+    const m = modules('webtrigger').find((x) => x.key === moduleKey);
+    if (!m?.function) return { ok: false, error: errorOf({ errorType: 'EmulatorError', errorMessage: `no web trigger '${moduleKey}' with a function in the manifest` }), calls: [] };
+    return invokeFunction(m.function, { moduleKey, moduleType: 'webtrigger', event: request, source: 'webtrigger' });
+  }
+
   const emu = {
     get manifest() { return manifest; },
     manifestError,
@@ -389,6 +482,9 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     build,
     invoke: (fnKey, { moduleKey, event, asUser } = {}) => invokeFunction(fnKey, { moduleKey, event, asUser }),
     invokeResolver,
+    callResolver,
+    invokeWebtrigger,
+    webtriggerUrl: (moduleKey) => `${proxyAddr.url}/x/webtrigger/${encodeURIComponent(moduleKey)}`,
     deliverProductEvent,
     deliverNext,
     drainQueues,
@@ -433,4 +529,4 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
   return emu;
 }
 
-module.exports = { createEmulator, functionUsers, TIMEOUTS };
+module.exports = { createEmulator, functionUsers, TIMEOUTS, TRIGGER_MAX_RETRIES };
