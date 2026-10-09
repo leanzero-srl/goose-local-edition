@@ -64,6 +64,13 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
 
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 01:25 INTEGRATED: branch forge2/integrate (11 branches + 16 integration commits, local worktree wf_2b463dc6-45f-1),
+  every suite green; golden 0.9573 on one seed (main gap: the estimate-after-field-switch rule unstated), starter 0.2694
+  (the "no v2 surfaces" band is 0.30, not 0.599 — SPEC §4/§5 contradicted; decided 0.30). Report: scratchpad
+  forge2-int/INTEGRATION.md; scorer command integ/score.sh. Pilot launcher: ~/goose-builds/loop-state/forge2_pilot.sh.
+- 01:30 wf forge2-fix-and-gate: fixers (estimate rule, checks economy classes, probe R3 window, site gaps), nine real
+  mutants (forge2/mutants2), contract red team -> merge -> GATE (golden x3 seeds = 1.000, starter <= 0.30, each mutant
+  loses exactly its rows). Then Sol pilot (forge2_pilot.sh openai/gpt-6.1-sol sol), then Haiku 5.5.
 - 00:1x note CORRECTED live (771 chars): "top four by 0.01" + Pareto added as too low — its hourly job hands Jira reads to a
   queue worker, which 1.0's r_as_app / r_completes_in_timeout don't count (vacuous 0s; contract allows it). Found by the
   blog-correction red team and the frontier-behaviour report independently; verified on the local tree a221226b.
