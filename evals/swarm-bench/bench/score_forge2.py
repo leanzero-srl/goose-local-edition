@@ -15,6 +15,15 @@ The §17.8 fixes: B (the duplicate critical needs >= 2 comments for one gesture;
 is u_comment_flow's), F (both economy rows continuous), G (vacuous / manifest-fault rows never fire a critical,
 a vacuous root counts as charged), H (u_widget_live grades the outcome on the moved sprints; polling scores 0).
 
+P8's registry (bench/forge2_checks.py) — what this module imports and refuses without:
+  CHECKS: a list; each row a dict (or object) with name, tier ('R1'..'R9'), weight (relative inside its family, 0 =
+    diagnostic, default 1), critical (None, or the CLASS it observes: 'migration' | 'webtrigger' | 'admin' | 'leak' |
+    'duplicate'), fn (or body) taking this module's Ctx, pre (optional, `pre(ctx) -> (ok, what)`; unmet = vacuous),
+    needs (I5 section names whose sectionErrors make the row unavailable) — or the 1.0 tuple (name, tier, fn, pre,
+    needs[, weight[, critical]]). fn returns {'score': 0..1, 'detail': str, 'parts'?: {...}}; {'parts': {'vacuous_root':
+    'precondition: …'}} when nothing was exercised; {'unavailable': True, …} for a harness gap. A critical row scores
+    < 1 ONLY on an observed defect. ROOT_BLOCKS (optional): {root: (rows it explains)}. forge2_checks must not import
+    this module at its top level (this module imports it).
 PRECONDITIONS (G5) stay: a row whose surface was never exercised scores 0 as `vacuous_root` — an idle app cannot
 collect "nothing went wrong" credit. Evidence is interface I5: `forge2_probe.mjs` drives the forge2 emulator and
 writes `forge-observations.json`; this module grades it against forge2_oracle.py on the run's own pack.
@@ -3333,9 +3342,10 @@ def evaluate(c: Ctx) -> Dict:
     result.update({'kit_lock_sha256': kit.get('lock_sha256') or (c.obs.get('kit') or {}).get('lockSha256'),
                    'wrapper_sha256': kit.get('wrapper_sha256') or (c.obs.get('kit') or {}).get('wrapperSha256'),
                    'scorer_seconds': getattr(c, 'scorer_seconds', None), 'shots': list(c.obs.get('shots') or []),
-                   'scorer_files_sha256': {n: hashlib.sha256((HERE / n).read_bytes()).hexdigest()
-                                           for n in ('score_forge2.py', 'forge2_checks.py', 'forge2_oracle.py',
-                                                     'forge2_probe.mjs', THRESHOLDS_FILE.name)},
+                   'scorer_files_sha256': {n: hashlib.sha256(p.read_bytes()).hexdigest() for n, p in (
+                       ('score_forge2.py', HERE / 'score_forge2.py'), ('forge2_checks.py', Path(forge2_checks.__file__)),
+                       ('forge2_oracle.py', Path(fo.__file__)), ('forge2_probe.mjs', PROBE_SCRIPT),
+                       (THRESHOLDS_FILE.name, THRESHOLDS_FILE))},
                    'spec_sha256': hashlib.sha256((ROOT / SPEC).read_bytes()).hexdigest()})
     return result
 
