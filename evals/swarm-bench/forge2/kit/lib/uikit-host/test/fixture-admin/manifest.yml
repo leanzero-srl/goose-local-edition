@@ -1,0 +1,21 @@
+modules:
+  jira:adminPage:
+    - key: fixture-admin
+      title: Fixture admin
+      render: native
+      resource: admin-ui
+      resolver:
+        function: resolver
+  function:
+    - key: resolver
+      handler: index.handler
+resources:
+  - key: admin-ui
+    path: src/frontend/index.jsx
+permissions:
+  scopes:
+    - storage:app
+app:
+  id: ari:cloud:ecosystem::app/00000000-0000-0000-0000-000000000000
+  runtime:
+    name: nodejs22.x
