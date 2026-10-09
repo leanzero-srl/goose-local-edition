@@ -18,6 +18,11 @@
   for front users custom UI and then UI kit 2 for admin panel, robustness in how it use burst calls to keep it within
   tier 1, good forge LLM usage. GO!"
 
+- 22:5x "ok great and then implement the new forge 2.0 and then please start the new benchmarks on all of the
+  previous models" -> after the red-team: BUILD (all work packages) -> GATE -> release + site per-era support ->
+  Sol pilot (the 20:1x acceptance test) -> flip -> rerun EVERY model that ran Forge 1.0 (31 entries; Mistral excluded:
+  no OpenRouter host streams tool args) plus Haiku 5.5 / Step 5 preview, Forge-only queue entries.
+
 ## Mandate checklist (every item must be a graded, STATED requirement in the design)
 
 1. latest Forge modules combined · 2. big, tough app (top models struggle; no 2.1 soon → maximal now) ·
