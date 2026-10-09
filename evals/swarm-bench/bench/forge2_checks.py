@@ -1,7 +1,7 @@
 """forge-2.0 — the v2 rows (forge2/SPEC.md R1-R9), graded from forge2-observations.json against forge2_oracle.
 
     import forge2_checks as fc
-    rows = fc.evaluate(obs, oracle)   # oracle = forge2_oracle.Oracle(pack, include_live_ui=True), the run's own pack
+    rows = fc.evaluate(obs, oracle)   # oracle = forge2_oracle.Oracle(pack): the run's own 2.0 pack, no live-UI view
 
 A row is {check, tier (its family 'R1'..'R9'), weight, critical, score, detail, consequence[, parts][, unavailable]}:
 the dict score_forge2.py's 1.0 rows carry, plus `weight` (SPEC §4: the family's weight split evenly over its rows) and
@@ -1152,13 +1152,16 @@ assert abs(sum(WEIGHTS.values()) - 0.75) < 1e-9
 
 
 def evaluate(obs: Dict, oracle: Optional[fo.Oracle]) -> List[Dict]:
-    """Every v2 row. `oracle` is the run's 2.0 oracle (include_live_ui=True); None or a 1.0 pack makes every row
+    """Every v2 row. `oracle` is the run's 2.0 oracle, Oracle(pack) (never the live-UI view); None or a 1.0 pack makes every row
     unavailable (a pack defect is the harness's, never the app's)."""
     out = []
     for r in ROWS:
         base = {'check': r.name, 'tier': r.family, 'weight': round(WEIGHTS[r.name], 6), 'critical': r.critical}
         if oracle is None or not getattr(oracle, 'is_v2', False):
-            res = unavail('pack defect: no 2.0 oracle (the pack lacks upgradeAt/v1Rows/world or failed to load)')
+            res = unavail('pack defect: no 2.0 oracle (the pack lacks v1Preload/world.events or failed to load)')
+        elif oracle.include_live_ui:
+            res = unavail('scorer wiring: pass Oracle(pack) — the v2 rows grade the scored hours, before the held-back '
+                          'live-UI pair is delivered (Oracle(pack, True) expects it in every final view)')
         else:
             try:
                 res = r.fn(Ev(obs, oracle))
@@ -1445,6 +1448,9 @@ def selftest() -> List[str]:
             no_v2 = evaluate(perfect_observations(o), fo.Oracle(fo.synthetic_pack()))
             if not all(r.get('unavailable') for r in no_v2):
                 failures.append('a 1.0 pack must leave every v2 row unavailable')
+            ui_view = evaluate(perfect_observations(o), fo.Oracle(fo.synthetic_pack_v2(), include_live_ui=True))
+            if not all(r.get('unavailable') for r in ui_view):
+                failures.append('the live-UI oracle view must leave every v2 row unavailable (scorer wiring)')
         finally:
             SITE_LLM = real_site
     return failures
