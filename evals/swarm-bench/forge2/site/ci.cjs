@@ -7,7 +7,9 @@
 //   seq.plan              -> [{ name, eventId, environment, issueKeys, expect }]      (the secret is not in it)
 //   seq.next(nowSeconds)  -> { name, request: { method, headers: [[name, value], ...], body }, expect } | null
 //   await runCiSequence(emu, { moduleKey, seed, secret, issueKeys })
-//                         -> { plan, steps: [{ name, eventId, expect, statusCode, body, error, invocation }] }
+//                         -> { plan, steps: [{ name, eventId, expect, request, statusCode, body, error, invocation }] }
+//   (`error` is the emulator's named cause when the platform answered for the app — a 500 or 404 — else null;
+//    `invocation` is emu.invoke's record: ok, calls, logs, t0/t1. The 1.0 probe's normInvocation reads it as is.)
 //
 // expect = { status, effect }: effect {environment, issueKeys} is what the step must show (the issues' ledger
 // rows/issue say "Deployed to <environment>"); null means the step must change nothing — for the replay, nothing

@@ -41,6 +41,8 @@ test('request: raw body string, header arrays under the sender spelling, query a
   assert.deepStrictEqual(r, { method: 'POST', body: '{"a": 1}', path: '/x/webtrigger/ci/hooks/a', userPath: '/hooks/a',
     headers: { 'X-LZ-Timestamp': ['1', '2'], 'Content-Type': ['application/json'] }, queryParameters: { env: ['staging', 'prod'], x: ['1'] } });
   assert.deepStrictEqual(wt.webtriggerRequest('ci', { headers: { 'X-A': ['1', '2'], b: 'c' } }).headers, { 'X-A': ['1', '2'], b: ['c'] });
+  assert.deepStrictEqual(Object.entries(wt.webtriggerRequest('ci', { path: '/x/webtrigger/ci?__proto__=q', headers: [['__proto__', 'h']] }))
+    .filter(([k]) => ['headers', 'queryParameters'].includes(k)).map(([, v]) => Object.entries(v)), [[['__proto__', ['h']]], [['__proto__', ['q']]]], 'a hostile name is an own key, never the prototype');
   assert.strictEqual(wt.webtriggerRequest('ci', {}).path, '/x/webtrigger/ci');
   assert.strictEqual(wt.webtriggerRequest('ci', {}).userPath, '');
 });

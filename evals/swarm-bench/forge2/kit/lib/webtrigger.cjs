@@ -49,28 +49,28 @@ const webtriggerModules = (manifest) =>
 const headerPairs = (headers) => (Array.isArray(headers) ? headers
   : Object.entries(headers ?? {}).flatMap(([name, v]) => (Array.isArray(v) ? v : [v]).map((x) => [name, x])));
 
-function headerMap(pairs) {
-  const out = {};
+// Built in a Map: a sender-chosen name such as `__proto__` stays an ordinary own key.
+function arrays(pairs, keyOf = (name) => name) {
+  const out = new Map();
   const spelling = new Map();
   for (const [name, value] of pairs) {
-    const lower = String(name).toLowerCase();
-    if (!spelling.has(lower)) spelling.set(lower, String(name));
-    (out[spelling.get(lower)] ??= []).push(String(value));
+    const id = keyOf(String(name));
+    if (!spelling.has(id)) spelling.set(id, String(name));
+    const key = spelling.get(id);
+    out.set(key, [...(out.get(key) ?? []), String(value)]);
   }
-  return out;
+  return Object.fromEntries(out);
 }
 
 function webtriggerRequest(moduleKey, { method = 'POST', path, headers = [], body = '' } = {}) {
   const url = new URL(path ?? `/x/webtrigger/${encodeURIComponent(moduleKey)}`, 'http://webtrigger.invalid');
-  const queryParameters = {};
-  for (const [k, v] of url.searchParams) (queryParameters[k] ??= []).push(v);
   return {
     method: String(method).toUpperCase(),
     body: Buffer.isBuffer(body) ? body.toString('utf8') : String(body),
     path: url.pathname,
     userPath: url.pathname.match(ROUTE)?.[2] ?? '',
-    headers: headerMap(headerPairs(headers)),
-    queryParameters,
+    headers: arrays(headerPairs(headers), (name) => name.toLowerCase()),
+    queryParameters: arrays(url.searchParams),
   };
 }
 
@@ -131,13 +131,14 @@ function webtriggerRoute(emu) {
     const m = new URL(req.url, 'http://webtrigger.invalid').pathname.match(ROUTE);
     if (!m) return false;
     const chunks = [];
+    req.on('error', () => res.destroy()); // the sender went away mid-body: nobody is left to answer
     req.on('data', (c) => chunks.push(c));
     req.on('end', async () => {
       const headers = [];
       for (let i = 0; i < req.rawHeaders.length; i += 2) headers.push([req.rawHeaders[i], req.rawHeaders[i + 1]]);
       let out;
       try {
-        out = await invokeWebtrigger(emu, decodeURIComponent(m[1]), { method: req.method, path: req.url, headers, body: Buffer.concat(chunks) });
+        out = await invokeWebtrigger(emu, m[1], { method: req.method, path: req.url, headers, body: Buffer.concat(chunks) });
       } catch (e) {
         // The emulator failed, not the app: 502 and a named header, so no reader takes it for the app's answer.
         out = { statusCode: 502, headers: {}, body: '', error: `emulator failure, not the app's: ${e.message}` };
