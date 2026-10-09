@@ -92,7 +92,7 @@ modules:
       readOnly: true
   webtrigger:
     - key: ci-deploy
-      function: ci-deploy
+      function: on-ci-deploy
       response:
         type: static
         outputs:
@@ -133,7 +133,7 @@ modules:
       handler: index.uiResolver
     - key: admin-resolver
       handler: index.adminResolver
-    - key: ci-deploy
+    - key: on-ci-deploy
       handler: index.ciDeploy
     - key: rovo-get-sprint-scope
       handler: index.getSprintScope

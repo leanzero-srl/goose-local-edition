@@ -228,7 +228,7 @@ async function main() {
   // ===== R6: the CI web trigger ====================================================================
   const target = [...ledger(platform).values()].find((r) => r.sprintId === '11' && !r.deleted);
   const targetKey = site.issueById.get(target.issueId).key;
-  const ci = (headers, body) => run('ci-deploy', { method: 'POST', path: '/', headers, body, queryParameters: {} }, 'ci-deploy');
+  const ci = (headers, body) => run('on-ci-deploy', { method: 'POST', path: '/', headers, body, queryParameters: {} }, 'ci-deploy');
   const event = (id, env = 'staging') => JSON.stringify({ eventId: id, sentAt: Math.floor(clock.now() / 1000), environment: env, issueKeys: [targetKey] });
   const now = () => String(Math.floor(clock.now() / 1000));
   const hdr = (ts, sig) => ({ 'x-lz-timestamp': [ts], 'x-lz-signature': [sig] });

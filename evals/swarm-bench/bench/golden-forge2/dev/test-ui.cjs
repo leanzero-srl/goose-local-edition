@@ -130,7 +130,8 @@ function pageBridge() {
 async function main() {
   const outDir = process.argv[2] ?? path.join(os.tmpdir(), 'golden-forge-ui');
   fs.mkdirSync(outDir, { recursive: true });
-  const site = createSite({ seed: 11 });
+  // Browser waits are real here, so the site's clock is the real one (the app reads Date.now() too).
+  const site = createSite({ seed: 11, clock: { now: () => Date.now(), advance: () => {} } });
   const platform = createPlatform({ site });
   await platform.build(path.join(outDir, 'bundle'));
   await platform.invoke('reconcile', {}, { moduleKey: 'scope-reconcile' });
@@ -432,6 +433,8 @@ async function main() {
       const exIds = await s.page.$$eval('[data-testid="explanation"] [data-change-id]', (els) => els.map((e) => e.getAttribute('data-change-id')));
       const exText = await s.page.textContent('[data-testid="explanation"] p');
       ok(exIds.length > 0 && exIds.every((id) => visIds.has(id)) && !/\d/.test(exText), `explain: summary without digits + ${exIds.length} visible change elements`);
+      // R8 answers identical requests from its cache for 10 minutes: let them expire.
+      for (const k of [...platform.kvs.plain.keys()]) if (k.startsWith('explain:')) platform.kvs.plain.delete(k);
       platform.llm.script.push(() => ({ choices: [{ finish_reason: 'end_turn', message: { role: 'assistant', content: [{ type: 'text', text: 'No.' }] } }] }));
       const ef = s.log.flags.filter((f) => f.type === 'error').length;
       await s.page.click('[data-testid="explain"]');

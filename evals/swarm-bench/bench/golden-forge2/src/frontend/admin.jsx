@@ -22,19 +22,15 @@ const formFrom = (settings) => ({
 });
 
 function Admin() {
-  const [state, setState] = useState(null);
-  const [form, setForm] = useState(null);
+  // One state object: the resolver's answer and the form edited from it render together.
+  const [page, setPage] = useState(null);
   const [message, setMessage] = useState(null);
   const [newSecret, setNewSecret] = useState(null);
   const [busy, setBusy] = useState(false);
 
   const take = (res) => {
-    if (res?.ok) {
-      setState(res);
-      setForm(formFrom(res.settings));
-    } else if (res?.forbidden) {
-      setState(res);
-    }
+    if (res?.ok) setPage({ state: res, form: formFrom(res.settings) });
+    else if (res?.forbidden) setPage({ state: res, form: null });
     return res;
   };
 
@@ -63,15 +59,15 @@ function Admin() {
     }
   };
 
-  const save = () =>
-    run('saveSettings', { settings: { ...form, aiEnabled: form.aiEnabled } }, (res) => (res.saved ? 'Settings saved.' : 'Nothing changed.'));
+  const save = () => run('saveSettings', { settings: page.form }, (res) => (res.saved ? 'Settings saved.' : 'Nothing changed.'));
   const rotate = () => {
     setNewSecret(null);
     return run('rotateSecret', {}, () => 'A new CI secret was created. Copy it now: it is shown only once.');
   };
-  const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e?.target?.value ?? '' }));
+  const edit = (key, value) => setPage((p) => ({ ...p, form: { ...p.form, [key]: value } }));
+  const set = (key) => (e) => edit(key, e?.target?.value ?? '');
 
-  if (!state) {
+  if (!page) {
     return (
       <Stack space="space.200">
         <Heading as="h2">Scope Ledger</Heading>
@@ -79,6 +75,7 @@ function Admin() {
       </Stack>
     );
   }
+  const { state, form } = page;
   if (state.forbidden) {
     return (
       <Stack space="space.200">
@@ -104,7 +101,7 @@ function Admin() {
         <Label labelFor="background-share">Background share (%)</Label>
         <Textfield id="background-share" name="backgroundShare" type="number" min={10} max={90} value={form.backgroundShare} onChange={set('backgroundShare')} />
         <Label labelFor="ai-enabled">AI explanations enabled</Label>
-        <Toggle id="ai-enabled" name="aiEnabled" label="AI explanations enabled" isChecked={form.aiEnabled} onChange={(e) => setForm((f) => ({ ...f, aiEnabled: e?.target?.checked ?? !f.aiEnabled }))} />
+        <Toggle id="ai-enabled" name="aiEnabled" label="AI explanations enabled" isChecked={form.aiEnabled} onChange={(e) => edit('aiEnabled', e?.target?.checked ?? !form.aiEnabled)} />
         <Label labelFor="token-budget">Daily AI token budget</Label>
         <Textfield id="token-budget" name="dailyTokenBudget" type="number" min={0} value={form.dailyTokenBudget} onChange={set('dailyTokenBudget')} />
         <Label labelFor="comment-group">Comment group</Label>
