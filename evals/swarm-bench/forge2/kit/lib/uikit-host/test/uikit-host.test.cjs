@@ -37,8 +37,12 @@ function backend({ getPreferences, savePreferences } = {}) {
 }
 const renderFixture = (be, extra = {}) => render({ appDir: FIXTURE, moduleKey: 'fixture-admin', context: CONTEXT, invoke: be.invoke, ...extra });
 
+const scratchDirs = [];
+const scratch = (prefix) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); scratchDirs.push(d); return d; };
+test.after(() => { for (const d of scratchDirs) fs.rmSync(d, { recursive: true, force: true }); });
+
 function tempApp(source, { native = true } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'uikit-host-'));
+  const dir = scratch('uikit-test-app-');
   fs.mkdirSync(path.join(dir, 'src', 'frontend'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'src', 'frontend', 'index.jsx'), source);
   fs.writeFileSync(path.join(dir, 'manifest.yml'), `modules:
@@ -246,7 +250,7 @@ ForgeReconciler.render(<App />);
 });
 
 test('the fence: app code that escapes the realm is in a separate process that cannot read files or exec', async () => {
-  const secret = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'uikit-secret-')), 'secret.json');
+  const secret = path.join(scratch('uikit-test-secret-'), 'secret.json');
   fs.writeFileSync(secret, '{"answer": 42}');
   // the vm realm is not a security boundary: a host function's constructor is the host's Function
   const escape = `import React from 'react';
@@ -322,7 +326,7 @@ test('through the emulator: resolvers run in the Forge runtime as the viewer; fo
   const { createSite } = require(SITE);
   const { createEmulator } = require('../../emulator.cjs');
   const { main } = require('../../../bin/uikit.cjs');
-  const appDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uikit-host-emu-'));
+  const appDir = scratch('uikit-test-emu-');
   fs.cpSync(FIXTURE, appDir, { recursive: true });
   const site = await createSite({ seed: '0123456789abcdef' });
   const emu = await createEmulator({ appDir, site, runtime: 'wrapper', fence: 'dev-auto' });
@@ -355,6 +359,7 @@ test('through the emulator: resolvers run in the Forge runtime as the viewer; fo
     assert.match(printed, new RegExp(`== screen\\n[\\s\\S]*\\[40\\]\\n\\[ \\] ${DIGEST}[\\s\\S]*Saved: retention 40, digest off`));
     assert.match(printed, /savePreferences\(\{"retentionDays":"40","digestEnabled":false\}\) after \d+ commit\(s\) -> ok/);
     assert.match(printed, /== tree\nRoot\n {2}Stack/);
+    assert.deepStrictEqual(fs.readdirSync(path.join(appDir, '.forge-dev', 'uikit')), [], 'the child\'s directory under .forge-dev/uikit is removed when it ends');
     const bad = [];
     assert.strictEqual(await main({ emu, argv: ['fixture-admin', '--click', 'Save'], print: (s) => bad.push(s) }), 1);
     assert.match(bad.join('\n'), /> click "Save" -> FAILED NO_CONTROL: no control labelled 'Save'; labels on screen: /);

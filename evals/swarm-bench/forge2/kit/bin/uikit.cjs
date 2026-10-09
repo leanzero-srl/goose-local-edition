@@ -61,7 +61,7 @@ async function main({ emu, argv, print = console.log }) {
   const asUser = opts.as ?? emu.siteInfo.viewer;
   let host;
   try {
-    host = await renderInEmulator(emu, { moduleKey: opts.moduleKey, asUser });
+    host = await renderInEmulator(emu, { moduleKey: opts.moduleKey, asUser, workDir: path.join(emu.appDir, '.forge-dev', 'uikit') });
   } catch (e) {
     if (!e.code) throw e;
     print(`uikit ${opts.moduleKey}: ${e.code}: ${e.message}`);

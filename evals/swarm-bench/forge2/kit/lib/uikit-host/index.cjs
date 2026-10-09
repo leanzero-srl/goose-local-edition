@@ -116,7 +116,9 @@ function resolveFence(fence) {
   throw new UikitHostError('HARNESS', `REFUSED: unknown fence ${fence}`);
 }
 
-async function render({ appDir, moduleKey, context, invoke, fetchProduct = null, fence = 'sandbox', startTime = Date.now(), kitDir, node = process.execPath } = {}) {
+// workDir: where the child's directory (bundle + host files, the only files it may read) is made; os.tmpdir() unless
+// given (forge-dev keeps its files under the workspace's .forge-dev/, as its emulator does).
+async function render({ appDir, moduleKey, context, invoke, fetchProduct = null, fence = 'sandbox', startTime = Date.now(), kitDir, workDir = os.tmpdir(), node = process.execPath } = {}) {
   if (typeof invoke !== 'function') throw new UikitHostError('HARNESS', 'render() needs invoke({moduleKey, functionKey, payload, context}) -> the resolver result');
   if (!context || typeof context !== 'object') throw new UikitHostError('HARNESS', 'render() needs the frontend context (what view.getContext() answers)');
   const mode = resolveFence(fence);
@@ -125,7 +127,8 @@ async function render({ appDir, moduleKey, context, invoke, fetchProduct = null,
   const { type, resource } = locate(appDir, moduleKey, paths);
   const { code, entry } = await build(appDir, moduleKey, resource, paths);
 
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'uikit-host-')));
+  fs.mkdirSync(workDir, { recursive: true });
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(workDir, 'uikit-host-')));
   fs.writeFileSync(path.join(dir, 'ui.js'), code);
   for (const f of CHILD_FILES) fs.copyFileSync(path.join(__dirname, f), path.join(dir, f));
   const runner = path.join(dir, 'runner.cjs');
@@ -272,10 +275,10 @@ function emulatorContext(emu, moduleKey, accountId, extension = {}) {
 }
 
 // The fence follows the emulator's (scoring: 'sandbox'; forge-dev in the entrant's workspace: its dev fallback).
-async function renderInEmulator(emu, { moduleKey, asUser, context, extension } = {}) {
+async function renderInEmulator(emu, { moduleKey, asUser, context, extension, workDir } = {}) {
   const via = viaEmulator(emu);
   return render({ appDir: emu.appDir, kitDir: emu.paths.kitDir, moduleKey, context: context ?? emulatorContext(emu, moduleKey, asUser, extension),
-    invoke: via.invoke, fetchProduct: via.fetchProduct, fence: emu.fence, startTime: emu.clock.now() });
+    invoke: via.invoke, fetchProduct: via.fetchProduct, fence: emu.fence, startTime: emu.clock.now(), ...(workDir ? { workDir } : {}) });
 }
 
 module.exports = { render, renderInEmulator, viaEmulator, emulatorContext, UikitHostError, textOf: D.textOf, outline: D.outline };
