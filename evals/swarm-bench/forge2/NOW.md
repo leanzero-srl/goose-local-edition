@@ -23,6 +23,15 @@
   Sol pilot (the 20:1x acceptance test) -> flip -> rerun EVERY model that ran Forge 1.0 (31 entries; Mistral excluded:
   no OpenRouter host streams tool args) plus Haiku 5.5 / Step 5 preview, Forge-only queue entries.
 
+- 23:0x "decide on your own stuff ... I just want to wake up to have at least 2 models benchmarked or at least one on
+  the new benchmark" · 23:1x "WTF? What do you mean days of work? ... find the more effective way" · "please make it a
+  hard rule never to over engineer shit like this" (now a global CLAUDE.md HARD RULE + memory).
+  -> THE PLAN IS `forge2/SPEC.md` (lean: Scope Ledger 2 = brownfield upgrade of the 1.0 app on 1.0's machinery).
+  DESIGN-DRAFT.md + panel/ are reference only. Build wf forge2-build-night (11 packages, branches forge2/<pkg>,
+  deadline 02:30) -> integrate + gate (golden 1.000, starter <= 0.30, one mutant per R-family, e2e) -> pilot via
+  run_build --forge2: GPT-6.1 Sol, then Claude Haiku 5.5. Call budget 300 (FORGE20 only). Publishing after the app
+  ships the forge2 tier.
+
 ## Mandate checklist (every item must be a graded, STATED requirement in the design)
 
 1. latest Forge modules combined · 2. big, tough app (top models struggle; no 2.1 soon → maximal now) ·
