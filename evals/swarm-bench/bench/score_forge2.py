@@ -15,15 +15,15 @@ The §17.8 fixes: B (the duplicate critical needs >= 2 comments for one gesture;
 is u_comment_flow's), F (both economy rows continuous), G (vacuous / manifest-fault rows never fire a critical,
 a vacuous root counts as charged), H (u_widget_live grades the outcome on the moved sprints; polling scores 0).
 
-P8's registry (bench/forge2_checks.py) — what this module imports and refuses without:
-  CHECKS: a list; each row a dict (or object) with name, tier ('R1'..'R9'), weight (relative inside its family, 0 =
-    diagnostic, default 1), critical (None, or the CLASS it observes: 'migration' | 'webtrigger' | 'admin' | 'leak' |
-    'duplicate'), fn (or body) taking this module's Ctx, pre (optional, `pre(ctx) -> (ok, what)`; unmet = vacuous),
-    needs (I5 section names whose sectionErrors make the row unavailable) — or the 1.0 tuple (name, tier, fn, pre,
-    needs[, weight[, critical]]). fn returns {'score': 0..1, 'detail': str, 'parts'?: {...}}; {'parts': {'vacuous_root':
-    'precondition: …'}} when nothing was exercised; {'unavailable': True, …} for a harness gap. A critical row scores
-    < 1 ONLY on an observed defect. ROOT_BLOCKS (optional): {root: (rows it explains)}. forge2_checks must not import
-    this module at its top level (this module imports it).
+P8's module (bench/forge2_checks.py) — what this module imports, validates at import, and refuses to score without:
+  ROWS      entries (objects or dicts) with name, family ('R1'..'R9'; `tier` also read) and critical (None, a class
+            key, or its consequence text — mapped to exactly one class by CLASS_OF_TEXT, else refused);
+  WEIGHTS   {name: weight} (a row's share; only the proportions inside a family matter; 0 = diagnostic);
+  evaluate(obs, oracle) -> [{check, score, detail, parts?, unavailable?}]   run once per scoring site with the
+            observations and forge2_oracle.Oracle(pack, include_live_ui=True); vacuous = parts.vacuous_root, absent =
+            parts.absent_surface, harness gap = unavailable; a critical row scores < 1 ONLY on an observed defect;
+  optional  ROOT_BLOCKS {root: (rows it explains)}; idle_observations(oracle) (the selftest's idle app).
+  forge2_checks must not import this module at its top level (this module imports it).
 PRECONDITIONS (G5) stay: a row whose surface was never exercised scores 0 as `vacuous_root` — an idle app cannot
 collect "nothing went wrong" credit. Evidence is interface I5: `forge2_probe.mjs` drives the forge2 emulator and
 writes `forge-observations.json`; this module grades it against forge2_oracle.py on the run's own pack.
@@ -3064,56 +3064,60 @@ def calibrate(verdicts: List[Dict], rc: Dict) -> Dict:
     return out
 
 
-# ── the v2 rows: P8's registry (bench/forge2_checks.py) ──────────────────────────────────────
+# ── the v2 rows: P8's module (bench/forge2_checks.py) ────────────────────────────────────────
 
 V1_ROWS = {n for n, *_ in CHECKS}
 assert len(V1_ROWS) == len(CHECKS), 'duplicate check name in the v1 registry'
 assert sum(1 for _n, t, *_ in CHECKS if t != 'E') == 64 and sum(1 for _n, t, *_ in CHECKS if t == 'E') == 3
 
-
-def _v2_entry(e) -> tuple:
-    """One forge2_checks row as (name, tier, fn, pre, needs, weight, critical). Accepted shapes: a dict or an object
-    carrying name, tier, weight, critical, fn (or body), pre, needs — or the 1.0 tuple (name, tier, fn, pre, needs
-    [, weight [, critical]])."""
-    if isinstance(e, (tuple, list)):
-        defaults = (None, None, None, None, (), 1.0, None)
-        name, tier, fn, pre, needs, weight, critical = list(e)[:7] + list(defaults[len(e):])
-    else:
-        get = e.get if isinstance(e, dict) else (lambda k, d=None: getattr(e, k, d))
-        name, tier, fn = get('name'), get('tier'), get('fn') or get('body')
-        pre, needs, weight, critical = get('pre'), get('needs') or (), get('weight', 1.0), get('critical')
-    return name, tier, fn, pre, tuple(needs or ()), (1.0 if weight is None else weight), critical or None
+# P8 states a critical as its consequence text ("v1 rows lost or corrupted by the migration", "the CI secret
+# disclosed", …); composition prices the SPEC §4 CLASSES, so each text maps to exactly one class — the first rule whose
+# words it contains. A text no rule maps refuses at import (never a silent non-critical).
+CLASS_OF_TEXT = (('migration', 'migration'), ('web-trigger write', 'webtrigger'), ('non-admin', 'admin'),
+                 ('secret', 'admin'), ('duplicate', 'duplicate'), ('hidden issue', 'leak'))
 
 
-def _register_v2(entries, root_blocks: Dict) -> Tuple[List[tuple], Dict[str, tuple]]:
-    """Validate P8's rows against SPEC §4 and return them normalised. Refuses (RuntimeError) on a row the composition
-    cannot price: an unknown family, a duplicate name, a non-numeric or negative weight, a critical flag that names no
-    SPEC class, a family with no weighted row, a v2 critical class no row can fire, or a ROOT_BLOCKS name nobody
-    registered. A refusal names every problem at once."""
-    rows, problems, seen = [], [], set(V1_ROWS)
-    for e in entries:
-        name, tier, fn, pre, needs, weight, critical = _v2_entry(e)
+def critical_class(flag) -> Optional[str]:
+    if not flag:
+        return None
+    if flag in CRITICAL_CLASSES:
+        return flag
+    return next((cls for words, cls in CLASS_OF_TEXT if words in str(flag).lower()), None)
+
+
+def _register_v2(module) -> Tuple[List[Tuple[str, str, float, Optional[str]]], Dict[str, tuple]]:
+    """P8's registry as (name, family, weight, class): `ROWS` entries (dicts or objects) carrying name, family (or
+    tier) and critical (a SPEC class or its consequence text); weights from `WEIGHTS` (a row's share of the 0.75 —
+    only the proportions inside a family matter here), else the entry's `weight`, else 1. Refuses (RuntimeError) on what
+    the composition cannot price, naming every problem at once: no evaluate(), an unknown family, a duplicate name, a bad
+    weight, a critical no class maps, a family with no weighted row, a v2 class no row can fire, an unknown ROOT_BLOCKS
+    name."""
+    problems = [] if callable(getattr(module, 'evaluate', None)) else ['no evaluate(obs, oracle) -> rows']
+    weights = getattr(module, 'WEIGHTS', None) or {}
+    rows, seen = [], set(V1_ROWS)
+    for e in getattr(module, 'ROWS', None) or []:
+        get = e.get if isinstance(e, dict) else (lambda k, d=None, e=e: getattr(e, k, d))
+        name, family, flag = get('name'), get('family') or get('tier'), get('critical')
+        weight, cls = weights.get(name, get('weight', 1.0)), critical_class(flag)
         where = f'forge2_checks row {name!r}'
         if not isinstance(name, str) or not name or name in seen:
             problems.append(f'{where}: missing or duplicate name')
-        if tier not in FAMILY_WEIGHT:
-            problems.append(f'{where}: tier {tier!r} is not one of {sorted(FAMILY_WEIGHT)}')
-        if not callable(fn):
-            problems.append(f'{where}: no callable fn/body')
+        if family not in FAMILY_WEIGHT:
+            problems.append(f'{where}: family {family!r} is not one of {sorted(FAMILY_WEIGHT)}')
         if not isinstance(weight, (int, float)) or isinstance(weight, bool) or weight < 0:
             problems.append(f'{where}: weight {weight!r} must be a number >= 0 (0 = diagnostic)')
-        if critical is True or (critical and critical not in CRITICAL_CLASSES):
-            problems.append(f'{where}: critical {critical!r} must name its class, one of {sorted(CRITICAL_CLASSES)}')
+        if flag and cls is None:
+            problems.append(f'{where}: critical {flag!r} maps to no SPEC §4 class {sorted(CRITICAL_CLASSES)}')
         seen.add(name)
-        rows.append((name, tier, fn, pre, needs, weight, critical))
+        rows.append((name, family, weight, cls))
     for fam in FAMILY_WEIGHT:
-        if not any(t == fam and isinstance(w, (int, float)) and w > 0 for _n, t, _f, _p, _x, w, _c in rows):
+        if not any(f == fam and isinstance(w, (int, float)) and w > 0 for _n, f, w, _c in rows):
             problems.append(f'no weighted row for {fam} (SPEC §4 weight {FAMILY_WEIGHT[fam]}) — it would score 0 silently')
     for cls in ('migration', 'webtrigger', 'admin'):
-        if not any(cr == cls for *_r, cr in rows):
+        if not any(c == cls for *_r, c in rows):
             problems.append(f'no row carries critical class {cls!r} (SPEC §4: "{CRITICAL_CLASSES[cls]}")')
     blocks = {}
-    for root, deps in (root_blocks or {}).items():
+    for root, deps in (getattr(module, 'ROOT_BLOCKS', None) or {}).items():
         unknown = [n for n in (root, *deps) if n not in seen]
         if unknown:
             problems.append(f'ROOT_BLOCKS[{root!r}] names unregistered rows {unknown}')
@@ -3123,31 +3127,60 @@ def _register_v2(entries, root_blocks: Dict) -> Tuple[List[tuple], Dict[str, tup
     return rows, blocks
 
 
-def _synthetic_v2() -> List[Dict]:
-    """The stand-in registry `--selftest` composes on when forge2_checks.py is absent: one weighted row per family and
+def _synthetic_v2():
+    """The stand-in module `--selftest` composes on when forge2_checks.py is absent: one weighted row per family and
     one row per v2 critical class, each vacuous on any evidence. gather() / evaluate() refuse to score on it."""
-    def idle(_c):
-        return vacuous('synthetic stand-in row (bench/forge2_checks.py absent)')
-    rows = [{'name': f'{fam.lower()}_synthetic', 'tier': fam, 'weight': 1.0, 'fn': idle} for fam in FAMILY_WEIGHT]
-    rows += [{'name': f'{cls}_synthetic', 'tier': fam, 'weight': 1.0, 'critical': cls, 'fn': idle}
-             for cls, fam in (('migration', 'R1'), ('admin', 'R5'), ('webtrigger', 'R6'), ('leak', 'R4'),
-                              ('duplicate', 'R3'))]
-    return rows
+    import types
+    spec = [(f'{fam.lower()}_synthetic', fam, None) for fam in FAMILY_WEIGHT]
+    spec += [(f'{cls}_synthetic', fam, cls) for cls, fam in (('migration', 'R1'), ('admin', 'R5'), ('webtrigger', 'R6'),
+                                                              ('leak', 'R4'), ('duplicate', 'R3'))]
+
+    def evaluate(_obs, _oracle):
+        return [{'check': n, 'tier': fam, 'critical': cls, **vacuous('synthetic stand-in row (forge2_checks.py absent)')}
+                for n, fam, cls in spec]
+    return types.SimpleNamespace(ROWS=[{'name': n, 'family': fam, 'critical': cls} for n, fam, cls in spec],
+                                 evaluate=evaluate)
 
 
 try:
-    import forge2_checks   # P8: the R1..R9 rows. Must not import this module at its top level (it imports us).
+    import forge2_checks as V2   # P8. It must not import this module at its top level (this module imports it).
     V2_ABSENT: Optional[str] = None
-    _V2_ROWS, _V2_BLOCKS = _register_v2(getattr(forge2_checks, 'CHECKS'), getattr(forge2_checks, 'ROOT_BLOCKS', {}))
 except ImportError as _error:
     V2_ABSENT = (f'bench/forge2_checks.py is not importable ({_error}): the v2 rows (0.75 of the score) are missing — '
                  'refusing to score')
-    _V2_ROWS, _V2_BLOCKS = _register_v2(_synthetic_v2(), {})
+    V2 = _synthetic_v2()
+_V2_ROWS, _V2_BLOCKS = _register_v2(V2)
 
-for _name, _tier, _fn, _pre, _needs, _w, _cls in _V2_ROWS:
-    CHECKS.append((_name, _tier, _fn, _pre, _needs))
-ROW_WEIGHT = {n: float(w) for n, _t, _f, _p, _x, w, _c in _V2_ROWS}
-CRITICAL_OF = {**V1_CRITICAL, **{n: cls for n, _t, _f, _p, _x, _w, cls in _V2_ROWS if cls}}
+for _name, _family, _w, _cls in _V2_ROWS:
+    CHECKS.append((_name, _family, None, None, ()))   # run by V2.evaluate (v2_rows), never by _run_check
+ROW_WEIGHT = {n: float(w) for n, _f, w, _c in _V2_ROWS}
+CRITICAL_OF = {**V1_CRITICAL, **{n: cls for n, _f, _w, cls in _V2_ROWS if cls}}
+
+
+def v2_rows(c: Ctx, evaluate=None) -> List[Dict]:
+    """P8's rows for this run: V2.evaluate (or `evaluate`, the selftest's stub) over the observations and the run's
+    oracle after the live-UI slot, each stamped with its registry weight and critical CLASS. A row the probe could not
+    produce because the APP's manifest names an undeclared resource is the app's fault (candidate_section_fault, §17.8
+    G): 0, vacuous, never a critical."""
+    try:
+        got, why = {r.get('check'): r for r in (evaluate or V2.evaluate)(c.obs, c.oracle_ui)}, None
+    except Exception as error:   # a P8 bug is the scorer's, never the app's
+        got, why = {}, f'scorer error: forge2_checks.evaluate: {type(error).__name__}: {error}'
+    out = []
+    for name, family, _w, _cls in _V2_ROWS:
+        r = got.get(name)
+        if r is None:
+            outcome = unavail(why or f'forge2_checks.evaluate returned no {name} row')
+        else:
+            outcome = {k: v for k, v in r.items() if k not in ('check', 'tier', 'weight', 'critical')}
+            fault = candidate_section_fault(c, str(r.get('detail') or '')) if r.get('unavailable') else None
+            if fault:
+                outcome = g(0.0, fault, 'the app cannot be opened: its own manifest is broken',
+                            parts={'vacuous_root': f'manifest: {fault[:160]}'})
+        row = _stamp(name, family, outcome)
+        c._row_cache[name] = row
+        out.append(row)
+    return out
 
 # ── registry-close asserts ───────────────────────────────────────────────────────────────────
 
@@ -3300,13 +3333,17 @@ DEFERRED = ('k_manifest_semantics', 'k_runtime_risks')
 
 def evaluate_rows(c: Ctx) -> List[Dict]:
     rows = []
-    order = [x for x in CHECKS if x[0] not in DEFERRED] + [x for x in CHECKS if x[0] in DEFERRED]
-    for name, tier, fn, pre, needs in order:
-        if tier == 'E':
-            continue
-        row = _run_check(c, name, tier, fn, pre, needs)
-        c._row_cache[name] = row
-        rows.append(row)
+    for name, tier, fn, pre, needs in CHECKS:
+        if tier in TIER_WEIGHT and name not in DEFERRED:
+            row = _run_check(c, name, tier, fn, pre, needs)
+            c._row_cache[name] = row
+            rows.append(row)
+    rows += v2_rows(c)
+    for name, tier, fn, pre, needs in CHECKS:
+        if name in DEFERRED:
+            row = _run_check(c, name, tier, fn, pre, needs)
+            c._row_cache[name] = row
+            rows.append(row)
     for name, tier, fn, pre, needs in CHECKS:
         if tier == 'E':
             rows.append(_run_check(c, name, tier, fn, pre, needs))
@@ -3584,11 +3621,15 @@ def selftest_empty_observations(pack: Dict, one_function: bool = False) -> Dict:
     lint_run = {'counts': {'errors': 0, 'warnings': 0}, 'problems': [], 'stageReached': 3, 'stagesTotal': 3}
     empty_phase = {'calls': [], 'invocations': [], 'deliveries': [], 'kvsAfter': {'entities': {}, 'keys': []}}
     # 2.0's added keys as the probe writes them for an app that did nothing (the P8/P9 observations contract): present
-    # and empty, so a v2 row reads "nothing happened" — never "the probe did not run".
+    # and empty, so a v2 row reads "nothing happened" — never "the probe did not run". P8 states that shape for its own
+    # rows (idle_observations on a 2.0 pack); its keys win when it does.
     idle_v2 = {'rate': {'requests': [], 'hours': []}, 'invocations': [],
                'migration': {'v1_rows': [], 'v2_by_checkpoint': {}}, 'world': [], 'webtrigger': [],
                'admin': {'actions': [], 'tree_text': '', 'secret_leaks': []},
                'field': {'writes': [], 'values_by_checkpoint': {}}, 'llm_v2': [], 'boot': {}}
+    if callable(getattr(V2, 'idle_observations', None)):
+        idle = V2.idle_observations(fo.Oracle(pack, include_live_ui=True))
+        idle_v2.update({k: idle[k] for k in idle_v2 if k in idle})
     return {'manifest': manifest, 'kit': {'pins': {'@forge/api': '8.2.0'}},
             'lint': {'runs': [lint_run, copy.deepcopy(lint_run)]}, 'build': build,
             'phases': {'backfill': dict(empty_phase), 'live': {**empty_phase, 'events': live_events, 'invocations': invs},
@@ -3648,11 +3689,16 @@ def severity_selftest() -> List[str]:
     every = score(_scenario({n: 0.0 for n in CRITICAL_OF}))
     expect(abs(every['critical']['multiplier'] - round(floor ** len(CRITICAL_CLASSES), 4)) < 1e-9,
            f"(5) the five classes compound to {floor ** len(CRITICAL_CLASSES):.4f} (got {every['critical']['multiplier']})")
-    # (6) empty app and one-function app: scored through the REAL checks, final <= 0.05
-    pack = fo.synthetic_pack()
+    # (6) empty app and one-function app: scored through the REAL checks (v1 rows and P8's), final <= 0.05 — on the
+    # oracle's 2.0 synthetic pack when it has one (P8's rows need a 2.0 pack; a 1.0 pack leaves them unavailable)
+    pack = (getattr(fo, 'synthetic_pack_v2', None) or fo.synthetic_pack)()
     for label, one in (('empty app', False), ('one-function app', True)):
-        ctx = Ctx(None, selftest_empty_observations(pack, one), pack, fixture_seed=pack['seed'])
-        v = compose_from_rows(evaluate_rows(ctx), ctx)
+        try:
+            ctx = Ctx(None, selftest_empty_observations(pack, one), pack, fixture_seed=pack['seed'])
+            v = compose_from_rows(evaluate_rows(ctx), ctx)
+        except Exception as error:   # the oracle or P8's idle shape broke: a failed selftest, named, never a crash
+            expect(False, f'(6) {label}: could not be scored: {type(error).__name__}: {error}')
+            continue
         expect(v['status'] == 'scored' and v['score'] <= 0.05, f"(6) {label} must be scored at <= 0.05 (got {v['score']})")
         expect(not v['probe_unavailable'], f"(6) {label}: rows unavailable {v['probe_unavailable']}")
         expect(not v['critical']['unsuppressed'], f"(6) {label}: an idle app fired {v['critical']['unsuppressed']}")
@@ -3748,6 +3794,24 @@ def defect_selftest() -> List[str]:
         fn, pre, needs = next((f, p, x) for n, _t, f, p, x in CHECKS if n == 'b_no_permission_leak')
         got = _run_check(sctx, 'b_no_permission_leak', 'B', fn, pre, needs)
         expect(got['score'] == want, f"leak on a {label}: {got['score']} (want {want}) — {got.get('detail')}")
+    # P8's rows through v2_rows: stamped with the registry's weight and class; a manifest-fault unavailable row turns
+    # vacuous (no critical); an evaluate() that raises or forgets a row leaves it unavailable, never scored
+    names = [n for n, *_ in _V2_ROWS]
+    wt = next(n for n, _f, _w, cls in _V2_ROWS if cls == 'webtrigger')
+    fault_obs = {'manifest': {'modules': {'webtrigger': [{'key': 'ci', 'resource': 'ci-page'}]}},
+                 'sectionErrors': {'webtrigger': "resource 'ci-page' is not declared under resources"}}
+    stub = lambda obs, _o: [{'check': n, **(unavail(f"webtrigger: {obs['sectionErrors']['webtrigger']}") if n == wt
+                                            else {'score': 1.0, 'detail': 'ok'})} for n in names]
+    got = {r['check']: r for r in v2_rows(Ctx(None, fault_obs, pack, fixture_seed=pack['seed']), stub)}
+    expect(str((got[wt].get('parts') or {}).get('vacuous_root', '')).startswith('manifest:') and not got[wt].get('unavailable')
+           and got[wt]['critical'] == 'webtrigger' and got[wt]['weight'] == ROW_WEIGHT[wt]
+           and criticals(list(got.values()))[0] == 1.0, f'v2_rows manifest fault: {got[wt]}')
+
+    def raises(_obs, _o):
+        raise KeyError('rate')
+    for label, fn, gone in (('raises', raises, names), ('forgets a row', lambda _obs, _o: [], names[:1])):
+        got = {r['check']: r for r in v2_rows(Ctx(None, {}, pack, fixture_seed=pack['seed']), fn)}
+        expect(all(got[n].get('unavailable') for n in gone), f'v2_rows when evaluate() {label}: {got[gone[0]]}')
     # G: a UI section that failed on the app's own undeclared resource scores 0 but fires no critical
     broken = {'manifest': {'modules': {'dashboards:widget': [{'key': 'w', 'resource': 'widget'}]}},
               'comments': comments(1), 'sectionErrors': {'ui': "resource 'widget' is not declared under resources"}}
