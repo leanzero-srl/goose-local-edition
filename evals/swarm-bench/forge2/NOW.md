@@ -49,4 +49,10 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
 ## Line state
 
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
-- Open owner question: fix + re-score the Forge 1.0 board (Sonnet/Omni need the laptop) or freeze 1.0 with a note.
+- Owner 2026-10-09 21:2x: "freeze forge 1.0 with a note, 2.0 replaces it" -> wf forge10-freeze-note running (map site+app,
+  note drafted + attacked on facts and reading, `note` field on benchmarkState + render on board/run pages on site branch
+  `forge10-freeze-note`, two diff reviews); then I do the Sanity write (frozen:true + note; familyCurrent stays until the
+  2.0 flip), push, revalidate, verify live.
+- Owner 21:2x on Mistral: "it's a petty that mistral can't be benchmarked". Route found: goose's built-in `mistral` provider
+  (MISTRAL_API_KEY, in the benchmark's CLOUD_PROVIDER_LABELS) talks to Mistral's own API, bypassing OpenRouter's 120 s idle
+  cut. Needs a Mistral key from the owner; probe a big tool call on it before any paid run.
