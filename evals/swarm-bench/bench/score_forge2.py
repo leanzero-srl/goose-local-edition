@@ -3757,12 +3757,16 @@ def reference_failures(result: Dict) -> List[str]:
         if (r.get('parts') or {}).get('vacuous_root'):
             fails.append(f'{n}: vacuous on the golden — its contract hook produced no evidence')
             continue
-        if n in CALIBRATION_OWNED or n in DIAGNOSTIC and n not in CRITICAL_OF:
+        if n in CALIBRATION_OWNED:
             continue
+        # the diagnostic rows too: u_widget_loads is no longer a critical and k_v2_surfaces feeds a band
         if n in CRITICAL_OF and r['score'] < 1.0 - 1e-9:
             fails.append(f"{n}: CRITICAL {r['score']} != 1.0 — criticals are facts the golden achieves")
         elif r['score'] < 1.0 - 1e-9:
             fails.append(f"{n}: {r['score']} < 1.0 — {str(r.get('detail'))[:100]}")
+    # rc thresholds are not fitted to the golden yet (the economy rows above are exempt so calibration can run)
+    if CALIBRATED and result.get('score') != 1.0:
+        fails.append(f"final {result.get('score')} != 1.000 (SPEC §5: the golden v2 scores 1.000)")
     if result.get('harness_missing'):
         fails.append(f"harness_missing: {result['harness_missing'][:6]}")
     if not result.get('excellence_gate'):
