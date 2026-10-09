@@ -720,8 +720,10 @@ function facts(seed, { scoring = false } = {}) {
     // memberships from Jira on its next scheduled run).
     v1Preload: { entities: { 'scope-change': v1Rows } },
     // DESIGN §5.2 faults; the comment-path 429 was dropped in §17.2 E (the per-issue write limit still applies).
+    // The consumer's 429 is a burst refusal in 2.0: a quota refusal's Retry-After runs to the top of the hour (SPEC
+    // §2.1), which a scripted 30 s window would contradict (1.0 named it jira-quota-tenant-based).
     faults: [
-      { id: faultId(1), match: { scope: 'consumer-of-change', changelogId: faultChange.changelogId, nth: 1 }, status: 429, retryAfter: 30, reason: 'jira-quota-tenant-based' },
+      { id: faultId(1), match: { scope: 'consumer-of-change', changelogId: faultChange.changelogId, nth: 1 }, status: 429, retryAfter: 30, reason: 'jira-burst-based' },
       { id: faultId(2), match: { scope: 'scheduled-run', run: 1, nth: 2 }, status: 429, retryAfter: 2, reason: 'jira-burst-based' },
       // SCORING site only (2026-10-03 stringency): the same stated faults where they bite harder — a 429 on the
       // backfill's first CONTINUATION page, a 429 in the heal (F7), and one Jira 500 on a resolver's first read, armed

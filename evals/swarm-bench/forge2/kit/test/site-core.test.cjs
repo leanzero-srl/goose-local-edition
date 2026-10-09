@@ -133,6 +133,10 @@ test('the wall: a draw on the hour refuses person-facing requests too, until the
   assert.strictEqual(r.headers.get('ratelimit-reason'), 'jira-quota-tenant-based');
   assert.strictEqual(Number(r.headers.get('retry-after')), Math.ceil((next - t) / 1000));
   assert.strictEqual(r.headers.get('x-ratelimit-remaining'), '0');
+  // The page's own bridge request costs no points and never meets the wall (BRIEF §0 fact 5); it still drains the bucket.
+  const bridge = await call('GET', '/rest/api/3/myself', { as: site.pack.viewer, source: 'frontend', moduleType: 'dashboards:widget' });
+  assert.strictEqual(bridge.status, 200);
+  assert.deepStrictEqual([site.log.at(-1).kind, site.log.at(-1).points], ['person', 0]);
   site.state.advanceTo(next);
   assert.strictEqual((await call('GET', '/rest/api/3/myself', { as: site.pack.viewer, source: 'resolver', moduleType: 'dashboards:widget' })).status, 200);
   assert.strictEqual(site.log[0].kind, 'person');

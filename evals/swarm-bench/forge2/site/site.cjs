@@ -168,9 +168,11 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
       missing(`REST ${opKey}`, { method, path: pathname });
       return send(501, { code: 'EMULATOR_NOT_MODELLED', message: `${opKey} is a Jira Cloud operation the emulator does not model` });
     }
-    // The rate model (SPEC §2.1): the wall, the endpoint's bucket, the per-issue write window.
+    // The rate model (SPEC §2.1): the wall, the endpoint's bucket, the per-issue write window. A page's own bridge
+    // request is not charged to the quota (rate.cjs quotaCharged).
     const written = [...new Set(rateModel.writtenRefs(opKey, m.params, body).map((k) => state.issueByIdOrKey(k)?.id).filter(Boolean))];
-    const refusal = rate.check({ t, endpoint: opKey, kind, cost: rateModel.costOf(opKey, body, 0), issues: written });
+    const charged = rateModel.quotaCharged(caller);
+    const refusal = rate.check({ t, endpoint: opKey, kind, cost: rateModel.costOf(opKey, body, 0), issues: written, charged });
     if (refusal) {
       entry.rateLimited = refusal.reason;
       entry.retryAfter = refusal.retryAfter;
@@ -191,10 +193,11 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
       canBrowse: (iss) => state.canBrowse(caller.accountId, iss), canComment: (iss) => state.canComment(caller.accountId, iss),
       canBrowseProject: (key) => state.canBrowseProject(caller.accountId, key) };
     // Every served request is charged (a refused one never is); a write counts in its issues' window only when it
-    // succeeded.
+    // succeeded. `points` is what the quota was charged (0 for a bridge request, whose cost still drains the bucket).
     const serve = (out) => {
-      entry.points = rateModel.costOf(opKey, body, Array.isArray(out.body?.issues) ? out.body.issues.length : 0);
-      rate.charge({ t, endpoint: opKey, kind, cost: entry.points, issues: out.status < 400 ? written : [] });
+      const cost = rateModel.costOf(opKey, body, Array.isArray(out.body?.issues) ? out.body.issues.length : 0);
+      entry.points = charged ? cost : 0;
+      rate.charge({ t, endpoint: opKey, kind, cost, issues: out.status < 400 ? written : [], charged });
       send(out.status, out.body, out.headers);
     };
     try {

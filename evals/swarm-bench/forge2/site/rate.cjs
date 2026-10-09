@@ -69,6 +69,10 @@ function kindOf(caller) {
   return 'unlabelled';
 }
 
+// A Custom UI page's own `@forge/bridge` requestJira costs no points and never meets the wall; it still meets the
+// burst buckets and the per-issue window (BRIEF §0 fact 5: staff, twice; tiers#24,25).
+const quotaCharged = (caller) => caller.source !== 'frontend';
+
 function latencyOf(opKey) {
   if (SEARCH.has(opKey)) return MODEL.latencyMs.search;
   if (opKey === BULK_CHANGELOG) return MODEL.latencyMs.bulkfetch;
@@ -99,11 +103,12 @@ function createRate(model = MODEL) {
     return { reason, retryAfter: Math.max(1, Math.ceil(seconds)) };
   };
 
-  // Quota first (the wall refuses everything), then the endpoint's bucket, then the per-issue window. `cost` is what is
-  // known before serving (a search's per-issue points are charged after it).
-  const check = ({ t, endpoint, kind, cost, issues = [] }) => {
+  // Quota first (the wall refuses everything the quota charges), then the endpoint's bucket, then the per-issue
+  // window. `cost` is what is known before serving (a search's per-issue points are charged after it). `charged: false`
+  // is a request the quota does not charge (the page's own bridge request): only the bucket and the window apply.
+  const check = ({ t, endpoint, kind, cost, issues = [], charged = true }) => {
     const h = hour(t);
-    if (spent(h) >= model.quotaPerHour) return refuse(h, kind, model.reasons.quota, ((hourOf(t) + 1) * HOUR_MS - t) / 1000);
+    if (charged && spent(h) >= model.quotaPerHour) return refuse(h, kind, model.reasons.quota, ((hourOf(t) + 1) * HOUR_MS - t) / 1000);
     const b = bucket(endpoint, t);
     if (b.tokens < cost) return refuse(h, kind, model.reasons.burst, (cost - b.tokens) / model.burst.refillPerSecond);
     for (const id of issues) {
@@ -112,9 +117,9 @@ function createRate(model = MODEL) {
     }
     return null;
   };
-  const charge = ({ t, endpoint, kind, cost, issues = [] }) => {
+  const charge = ({ t, endpoint, kind, cost, issues = [], charged = true }) => {
     const h = hour(t);
-    h[kind] += cost;
+    if (charged) h[kind] += cost;
     h.requests += 1;
     const b = bucket(endpoint, t);
     buckets.set(endpoint, { tokens: b.tokens - cost, at: b.at });
@@ -140,4 +145,4 @@ function createRate(model = MODEL) {
 
 if (require.main === module && process.argv.includes('--model')) process.stdout.write(JSON.stringify(MODEL, null, 1) + '\n');
 
-module.exports = { MODEL, createRate, costOf, writtenRefs, kindOf, latencyOf, HOUR_MS };
+module.exports = { MODEL, createRate, costOf, writtenRefs, kindOf, quotaCharged, latencyOf, HOUR_MS };
