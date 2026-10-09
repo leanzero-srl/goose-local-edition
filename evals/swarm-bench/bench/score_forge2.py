@@ -1,22 +1,27 @@
-"""forge-1.0 — grade a built Scope Ledger Forge app (forge/DESIGN.md §8–§9) by RUNNING it.
+"""forge-2.0 — grade a built Scope Ledger v2 Forge app (forge2/SPEC.md §4) by RUNNING it.
 
-    score_forge.py --tree <run tree> --seed <fixture_seed> --json-out v.json [--reference] [--runtime shim]
+    score_forge2.py --tree <run tree> --seed <fixture_seed> --json-out v.json [--reference] [--runtime shim]
+    score_forge2.py --selftest     (the composition and the §17.8 fixes, no tree, no probe)
 
-Mirrors the SB scorer machinery (score_sb7.py) with forge's own registry, nothing imported from it:
-`@check(name, tier, pre=…)` registry with PRECONDITIONS (G5: a row whose surface was never exercised scores 0
-as `vacuous_root`, priced 0, no multiplier of its own — an idle app cannot collect "nothing went wrong"
-credit), `compose_from_rows` (`earned = (0.88·inner + 0.12·gate·e_mean) × critical multiplier`, floor 0.6),
-the 7-member CRITICAL registry with per-critical severity transforms, ROOT_BLOCKS attribution + multiplier
-dedup, the four ADMISSION bands (`final = min(earned, ceilings)`; passing awards nothing), the proportional
-EXCELLENCE gate, `severity_selftest()` (wired into every run and into `--reference`), the `--reference`
-freeze gate, and the calibration pin (`CALIB_SHA256` over forge-thresholds.json).
+Forge 1.0's machinery (score_forge.py, forked) with the 2.0 composition (SPEC §4):
+  earned = (0.25 · v1 + Σ_family w_family · mean(family rows)) × critical multiplier
+  v1     = 0.88 · inner(1.0 tiers L..A) + 0.12 · excellence gate · e_mean      (the 1.0 rows, now regression rows)
+  family = R1 0.12 · R2 0.13 · R3 0.08 · R4 0.10 · R5 0.10 · R6 0.08 · R7 0.05 · R8 0.04 · R9 0.05 (P8's rows,
+           imported from bench/forge2_checks.py, each weighted inside its family)
+  criticals: five CLASSES, ×0.6 each, a class fires at most once (each root priced once) and only on an observed
+           defect — never on a vacuous, absent, unavailable or manifest-fault row
+  bands: lint/bundle failure → max 0.499; none of jira:adminPage, webtrigger, scope-ledger → max 0.599.
+The §17.8 fixes: B (the duplicate critical needs >= 2 comments for one gesture; zero comments or a missing flag
+is u_comment_flow's), F (both economy rows continuous), G (vacuous / manifest-fault rows never fire a critical,
+a vacuous root counts as charged), H (u_widget_live grades the outcome on the moved sprints; polling scores 0).
 
-Evidence is interface I5: `forge_probe.mjs` drives WP1's emulator (I2) through §8.7's scoring sequence and
-writes `forge-observations.json`; this module grades it against forge_oracle.py on the run's own pack (I1).
-`evaluate(ctx)` is PURE over (observations, pack): the unit tests and the severity selftest push synthetic
-observations through the real checks.
+PRECONDITIONS (G5) stay: a row whose surface was never exercised scores 0 as `vacuous_root` — an idle app cannot
+collect "nothing went wrong" credit. Evidence is interface I5: `forge2_probe.mjs` drives the forge2 emulator and
+writes `forge-observations.json`; this module grades it against forge2_oracle.py on the run's own pack.
+`evaluate(ctx)` is PURE over (observations, pack).
 
-I5 — forge-observations.json, the fields this scorer reads (the probe normalises WP1's logs into it):
+I5 — forge-observations.json, the 1.0 fields the v1 rows read (2.0's added keys — rate, invocations, migration,
+world, webtrigger, admin, field, llm_v2, boot — are read by forge2_checks.py):
   manifest (parsed manifest.yml | null), manifestError, kit {pins {pkg: version}, lockSha256, wrapperSha256},
   lint {runs: [{counts {errors, warnings}, problems [{sev, message, file, line, linter}], stageReached,
         stagesTotal, crashed}]}  (two runs; must be identical),
@@ -59,18 +64,20 @@ import time
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 import zlib
 
-import forge_oracle as fo
+import forge2_oracle as fo
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
-PROBE_SCRIPT = HERE / 'forge_probe.mjs'
-SPEC = 'forge/public/spec-build-forge.md'
-CONTRACT = 'forge/public/FORGE-CONTRACT.md'
+PROBE_SCRIPT = HERE / 'forge2_probe.mjs'
+SPEC = 'forge2/public/spec-build-forge2.md'
+CONTRACT = 'forge2/public/FORGE2-CONTRACT.md'
+OPENAPI_DIR = ROOT / 'forge2' / 'kit' / 'openapi'
+FIXTURES = ROOT / 'forge2' / 'site' / 'fixtures.cjs'
 
 # ── calibration-owned thresholds ─────────────────────────────────────────────────────────────
 
-THRESHOLDS_FILE = HERE / 'forge-thresholds.json'
-CALIB_SHA256 = 'e5d7f98e283a0183c6e1f872f6f65471b05012233452b13554da9c91b0c485d5'  # refrozen 2026-10-04: golden x5 on the stringency scoring site (forge-thresholds.json calibration.seeds)
+THRESHOLDS_FILE = HERE / 'forge2-thresholds.json'
+CALIB_SHA256 = 'TBD-AT-FREEZE'   # pinned when the golden v2 x5 calibration lands (calibrate(), --calibrate)
 
 
 def _load_thresholds() -> Dict:
@@ -78,81 +85,67 @@ def _load_thresholds() -> Dict:
     try:
         data = json.loads(raw)
     except ValueError:
-        raise SystemExit(f'forge-thresholds.json is unparsable — refusing to score: {THRESHOLDS_FILE}')
+        raise SystemExit(f'{THRESHOLDS_FILE.name} is unparsable — refusing to score: {THRESHOLDS_FILE}')
     if data.get('calibrated'):
         digest = hashlib.sha256(raw).hexdigest()
         if CALIB_SHA256 == 'TBD-AT-FREEZE' or digest != CALIB_SHA256:
-            raise SystemExit('forge-thresholds.json claims calibrated=true but its sha256 does not match the pin '
-                             f'in score_forge.py ({digest[:16]}… vs {CALIB_SHA256[:16]}…) — refusing to score.')
-    for name in ('critical_multiplier_floor', 'economy_rungs', 'event_economy_top', 'ui_round_trip_rungs',
+            raise SystemExit(f'{THRESHOLDS_FILE.name} claims calibrated=true but its sha256 does not match the pin '
+                             f'in score_forge2.py ({digest[:16]}… vs {CALIB_SHA256[:16]}…) — refusing to score.')
+    for name in ('critical_multiplier_floor', 'reconcile_economy_top', 'event_economy_top', 'ui_round_trip_rungs',
                  'idempotent_rerun_rungs',
-                 'contrast_min', 'chart_tolerance_px', 'color_tolerance'):
+                 'contrast_min', 'chart_tolerance_px', 'color_tolerance', 'blank_share'):
         if name not in data:
-            raise SystemExit(f'forge-thresholds.json lacks {name!r} — refusing to score on a silent default')
+            raise SystemExit(f'{THRESHOLDS_FILE.name} lacks {name!r} — refusing to score on a silent default')
     return data
 
 
 TH = _load_thresholds()
 CALIBRATED = bool(TH.get('calibrated'))
-VERSION = 'forge-1.0' if CALIBRATED else 'forge-1.0-rc'
-UNCALIBRATED_BANNER = ('FORGE-1.0 UNCALIBRATED — forge-thresholds.json carries rc defaults (no CALIB pin); '
-                       'scores are rc-grade (forge-1.0-rc), never board-grade.')
+VERSION = 'forge-2.0' if CALIBRATED else 'forge-2.0-rc'
+UNCALIBRATED_BANNER = ('FORGE-2.0 UNCALIBRATED — forge2-thresholds.json carries rc defaults (no CALIB pin); '
+                       'scores are rc-grade (forge-2.0-rc), never board-grade.')
 
-# ── weights (DESIGN §8.1, asserted) ──────────────────────────────────────────────────────────
+# ── weights (SPEC §4, asserted) ──────────────────────────────────────────────────────────────
 
+# v1 (the 1.0 rows, now regression rows, R10): 1.0's own composition inside a 0.25 share.
 TIER_WEIGHT = {'L': .08, 'K': .10, 'T': .16, 'R': .14, 'S': .08, 'B': .12, 'U': .16, 'V': .08, 'A': .08}
 E_WEIGHT = 0.12
 INNER_WEIGHT = 1.0 - E_WEIGHT
 assert abs(sum(TIER_WEIGHT.values()) - 1.0) < 1e-9
-TIER_ORDER = ('L', 'K', 'T', 'R', 'S', 'B', 'U', 'V', 'A', 'E')
+V1_WEIGHT = 0.25
+# v2: P8's rows (bench/forge2_checks.py), one family per stated requirement R1..R9.
+FAMILY_WEIGHT = {'R1': .12, 'R2': .13, 'R3': .08, 'R4': .10, 'R5': .10, 'R6': .08, 'R7': .05, 'R8': .04, 'R9': .05}
+assert abs(V1_WEIGHT + sum(FAMILY_WEIGHT.values()) - 1.0) < 1e-9
+TIER_ORDER = ('L', 'K', 'T', 'R', 'S', 'B', 'U', 'V', 'A', 'E', *FAMILY_WEIGHT)
 
-DIAGNOSTIC = {'u_widget_loads'}
+DIAGNOSTIC = {'u_widget_loads', 'k_v2_surfaces'}
 CALIBRATION_OWNED = {'e_reconcile_economy', 'e_event_economy', 'e_ui_round_trips'}
 
-CRITICAL_CHECKS = {
-    'l_deployable': 'deploy blocked — lint errors',
-    'l_bundles_load': 'crash — the app does not run',
-    't_no_double_count': 'wrong numbers — a change counted twice',
-    'r_backfill_complete': 'data loss — changes silently missing',
-    'b_no_permission_leak': 'data leak — hidden issues shown to a person',
-    'b_comment_exactly_once': "duplicate side effect on a customer's Jira",
-    'u_widget_loads': 'dead primary flow — no data on the dashboard',
+# SPEC §4: the five criticals. Each is a CLASS: it fires at most once (×floor) however many rows observe it, and
+# only on an observed defect (a row that ran, was not vacuous, absent or a manifest fault, and scored below 1).
+CRITICAL_CLASSES = {
+    'migration': 'v1 rows lost or corrupted by the migration',
+    'webtrigger': 'a web-trigger write without a valid signature',
+    'admin': 'an admin action by a non-admin succeeded, or the CI secret disclosed',
+    'leak': "a hidden issue's data shown to a person who cannot browse it",
+    'duplicate': 'a duplicate side effect (>= 2 comments for one click, or duplicate ledger rows)',
 }
-assert not set(CRITICAL_CHECKS) & CALIBRATION_OWNED
+V1_CRITICAL = {'b_no_permission_leak': 'leak', 'b_comment_exactly_once': 'duplicate', 't_no_double_count': 'duplicate'}
 
-# ADMISSION (DESIGN §8.5): the four maxima the prompt's "Score bands" states in words (parity-tested).
+# ADMISSION (SPEC §4): `final = min(earned, ceilings)`; passing awards nothing.
 ADMISSION_BANDS = (
     (0.499, 'deployable', ('l_deployable', 'l_bundles_load')),
-    (0.699, 'working ledger', ('u_widget_loads', 't_event_rows', 'r_backfill_complete', 's_storage_scope',
-                               's_entity_index_used')),
-    (0.799, 'current platform, complete surfaces', ('k_dashboard_widget', 'k_widget_edit_bridge', 'k_rovo_skill',
-                                                    'u_widget_edit_config', 'u_ledger_table', 'a_action_result',
-                                                    'v_theme_tokens', 'v_dark_mode')),
-    # The prompt's list, word by word: "Any duplicate, ordering, rate-limit, pagination, permission, policy, console,
-    # LLM or realtime defect". Ordering is the table's sort and the index's change-time order as well as delivery
-    # order; permission is every per-person outcome (the hidden count, the Rovo action's per-person list) and the
-    # scopes the app asks for; LLM is the model the app names as well as the explanation (2026-10-03 stringency).
-    (0.899, 'production robustness', ('t_no_double_count', 't_out_of_order', 't_retry_after_honoured',
-                                      'r_heal_dropped', 'r_rate_limit', 'r_pagination', 'b_no_permission_leak',
-                                      'b_comment_exactly_once', 'b_realtime_payload_clean', 'u_llm_explain',
-                                      'u_widget_live', 'v_csp_clean', 'v_console_clean',
-                                      'u_ledger_sort', 's_index_order', 'b_hidden_count', 'a_action_permissions',
-                                      'l_scopes', 'k_llm_model_current')),
+    (0.599, 'v2 surfaces', ('k_v2_surfaces',)),
 )
-# The graded band (DESIGN §8.5, 2006de559): with n of its rows failing the ceiling is max(floor, top - step·(n-1)).
-# Single source: admit() reads it, and leanzero.net's sync (scripts/sync-forge-public.py) re-derives the caps from it.
-GRADED_BAND = ('production robustness', 0.899, 0.03, 0.799)
-assert GRADED_BAND[0] == ADMISSION_BANDS[-1][1] and GRADED_BAND[1] == ADMISSION_BANDS[-1][0]
-assert GRADED_BAND[3] == ADMISSION_BANDS[-2][0]   # never undercuts the band above it
+V2_SURFACE_ENTITY = 'scope-ledger'
 
 
 # Owner rule 2026-10-03 22:4x: a final never sits exactly on a band cap ("two models at exactly 0.899 is a big red
 # flag"). A capped run keeps its own earned gradient below the cap: final = min(earned, cap - BAND_PULL·(1 - earned)).
 # Continuous and monotone in earned, equal to the cap only at earned = 1, and a no-op when nothing caps (cap 1.0).
-# The largest pull below a cap, BAND_PULL·(1 - cap) at earned = cap (0.00505 at 0.899), stays under the graded
-# band's 0.03 step, so one more band defect always costs more than any earned difference.
+# The largest pull below a cap stays under the gap between the two bands, so the lower band always holds lower.
 BAND_PULL = 0.05   # policy ratio: the share of the earned shortfall a capped final keeps (owner rule above)
-assert BAND_PULL * (1 - ADMISSION_BANDS[0][0]) < GRADED_BAND[2]
+assert BAND_PULL * (1 - ADMISSION_BANDS[0][0]) < ADMISSION_BANDS[1][0] - ADMISSION_BANDS[0][0]
 
 
 def capped_final(earned: float, ceiling: float) -> float:
@@ -161,18 +154,11 @@ def capped_final(earned: float, ceiling: float) -> float:
 
 def published_score(final: float, ceiling: float) -> float:
     """Four decimals. A final strictly below its cap is never printed AS the cap: a near-perfect capped run (earned
-    0.9999, pull 0.000005) would round back onto 0.899 — the tie the owner rule forbids — so it is truncated instead."""
+    0.9999, pull 0.000005) would round back onto the cap — the tie the owner rule forbids — so it is truncated."""
     shown = round(final, 4)
     if ceiling < 1.0 and final < ceiling - 1e-12 and shown >= ceiling:
         shown = math.floor(final * 1e4) / 1e4
     return shown
-
-
-def band_ceiling(limit: float, label: str, failed: int) -> float:
-    if label == GRADED_BAND[0]:
-        _l, top, step, floor = GRADED_BAND
-        return round(max(floor, top - step * (failed - 1)), 4)
-    return limit
 
 EXCELLENCE_VALUED = ('t_event_rows', 'r_heal_dropped', 'u_widget_numbers', 'u_ledger_table', 'b_comment_adf_as_user')
 EXCELLENCE_BINARY = ('v_console_clean', 'v_csp_clean', 'l_lint_warnings')
@@ -302,14 +288,26 @@ class Ctx:
         return [{**inv, '_phase': ph} for ph in phases for inv in self.phase(ph).get('invocations') or []]
 
     def kvs_rows(self, phase: str) -> List[Tuple[set, Dict]]:
+        """The ledger rows the v1 regression rows grade. A v2 app keeps its ledger in `scope-ledger` while v1's
+        preloaded `scope-change` stays intact (SPEC R1), so once the manifest declares the v2 entity only that entity
+        is the ledger — reading both would count every migrated change twice. A v1-shaped app (the starter) keeps
+        1.0's reading: every entity and key."""
         snap = self.phase(phase).get('kvsAfter') or {}
+        entities = snap.get('entities') or {}
         out = []
-        for _entity, items in (snap.get('entities') or {}).items():
+        if self.declares_v2_ledger():
+            for item in entities.get(V2_SURFACE_ENTITY) or []:
+                out.append((_tokens(item), item))
+            return out
+        for _entity, items in entities.items():
             for item in items or []:
                 out.append((_tokens(item), item))
         for item in snap.get('keys') or []:
             out.append((_tokens(item), item))
         return out
+
+    def declares_v2_ledger(self) -> bool:
+        return any(e.get('name') == V2_SURFACE_ENTITY for e in _entities(self))
 
     def ui(self) -> Dict:
         return self.obs.get('ui') or {}
@@ -1017,6 +1015,16 @@ def _(c):
              'the ledger has no sprint index')
 
 
+# SPEC §4 band: "none of the v2 surfaces exists (no jira:adminPage, no webtrigger, no scope-ledger) -> max 0.599".
+# Diagnostic (no weight): it only feeds the band, so compose_from_rows stays pure over the rows.
+@check('k_v2_surfaces', 'K')
+def _(c):
+    have = {'jira:adminPage': bool(c.modules('jira:adminPage')), 'webtrigger': bool(c.modules('webtrigger')),
+            V2_SURFACE_ENTITY: c.declares_v2_ledger()}
+    present = [k for k, v in have.items() if v]
+    return g(1 if present else 0, f'v2 surfaces declared: {present or "none"}', 'the app is still v1', parts=have)
+
+
 # ══ Deploy readiness: the manifest, the module wiring, the scopes and the predicted runtime failures ════════
 # Owner, 2026-10-03: "make sure the scorer is extra judicious and has the capability to judge the manifest, judge
 # the module usage, understand where it would fail or not". Deterministic, from the manifest, the app's sources, the
@@ -1074,7 +1082,7 @@ def openapi_ops() -> List[Dict]:
     if _OPENAPI_OPS is None:
         ops = []
         for name in ('jira.json', 'jsw.json'):
-            spec = json.loads((ROOT / 'forge' / 'kit' / 'openapi' / name).read_text())
+            spec = json.loads((OPENAPI_DIR / name).read_text())
             for template, item in spec['paths'].items():
                 regex = re.compile('^' + '/'.join('[^/]+' if re.fullmatch(r'\{.+\}', seg) else re.escape(seg)
                                                   for seg in template.split('/')) + '/?$')
@@ -1160,8 +1168,12 @@ def _ui_html(c: Ctx) -> Dict[str, str]:
 
 
 def _row_score(c: Ctx, name: str) -> Optional[float]:
+    """A vacuous row already priced its 0 in its tier (§17.8 G: one root, priced once), so it counts as charged; only
+    a row the harness could not run (unavailable) or did not run grades nothing."""
     r = c._row_cache.get(name)
-    return None if r is None or r.get('unavailable') or (r.get('parts') or {}).get('vacuous_root') else r['score']
+    if r is None or r.get('unavailable'):
+        return None
+    return 0.0 if (r.get('parts') or {}).get('vacuous_root') else r['score']
 
 
 def _charged(c: Ctx, *names: str) -> Optional[str]:
@@ -1271,14 +1283,18 @@ def deploy_findings(c: Ctx) -> List[Dict]:
                     ent_problems.append(f"{e.get('name')}.{i.get('name')}: {an} is not a declared attribute")
                 elif isinstance(attrs.get(an), dict) and attrs[an].get('type') == 'any':
                     ent_problems.append(f"{e.get('name')}.{i.get('name')}: {an} is type any (not indexable)")
+    # Two range attributes are refused by `forge lint` and `forge deploy` (measured on wolfaenpak, §17.8 E) and the
+    # forge2 kit's lint pack refuses them too: when lint already charged it, l_deployable prices it (once).
+    only_range = bool(ent_problems) and all('range has' in p for p in ent_problems)
     rule('M7 KVS entity indexes name declared attributes within the documented limits', 'manifest', bool(entities),
          not ent_problems, 'would_fail', 'an index over an undeclared attribute or past the limits is refused', 'entities',
-         '; '.join(ent_problems[:4]))
-    native = [f'{t}:{m.get("key")}' for t, ms in mods.items() for m in ms
+         '; '.join(ent_problems[:4]), graded_by='l_deployable' if only_range and _lint_mentions(c, 'range attribute') else None)
+    # SPEC R5: the admin page is UI Kit (`render: native`); the person-facing surfaces stay Custom UI (R9).
+    native = [f'{t}:{m.get("key")}' for t, ms in mods.items() if t != 'jira:adminPage' for m in ms
               if m.get('render') == 'native' or (isinstance(m.get('edit'), dict) and m['edit'].get('render') == 'native')]
-    rule('M8 Custom UI only (no render: native)', 'manifest', bool(mods), not native, 'would_fail',
-         'UI Kit surfaces earn nothing in this task (contract §2) and need @forge/react, which is not installed',
-         'uikit', ', '.join(native))
+    rule('M8 Custom UI on the person-facing surfaces (render: native only on jira:adminPage)', 'manifest', bool(mods),
+         not native, 'would_fail', 'the widget and the sprint modal are Custom UI surfaces (contract R9); a UI Kit one '
+         'is not the graded surface', 'uikit', ', '.join(native))
     gadget = bool(c.modules('jira:dashboardGadget'))
     rule('M9 no legacy jira:dashboardGadget', 'manifest', bool(mods), not gadget, 'poor_practice',
          'dashboards:widget replaces it ("will be deprecated by 17 May 2027", CDAC 102826)', 'uikit',
@@ -1369,7 +1385,9 @@ def deploy_findings(c: Ctx) -> List[Dict]:
             body = _function_body(src, fn) or ''
             if re.search(r'\basUser\s*\(', body):
                 bg_user.append(f'{t}:{m.get("key")} ({handler})')
-    runtime_user = _charged(c, 't_no_user_in_async') is not None
+    measured = c._row_cache.get('t_no_user_in_async') or {}
+    runtime_user = (isinstance(measured.get('score'), (int, float)) and measured['score'] < 1.0 - 1e-9
+                    and not measured.get('unavailable') and not (measured.get('parts') or {}).get('vacuous_root'))
     rule('R2 no asUser() in trigger, consumer or scheduled work', 'runtime', bool(texts) and any(c.modules(t) for t in BACKGROUND_TYPES),
          not bg_user and not runtime_user, 'would_fail',
          'asUser needs a user in the invocation; product and async events have none (NeedsAuthenticationError)', 'asuser',
@@ -1553,7 +1571,7 @@ def _(c):
             if n > 1:
                 doubled.append(f'{ph}:{ch.change_id}/{ch.sprint_id}x{n}')
     if doubled:
-        return g(0, f'changes counted more than once: {sorted(set(doubled))[:6]}', CRITICAL_CHECKS['t_no_double_count'])
+        return g(0, f'changes counted more than once: {sorted(set(doubled))[:6]}', CRITICAL_CLASSES['duplicate'])
     return g(1, 'every change holds at most one ledger row in every phase (duplicated deliveries included)')
 
 
@@ -1725,7 +1743,7 @@ def _(c):
     rows = c.kvs_rows('backfill')
     ok = [ch for ch in expected if rows_for(rows, ch) and row_correct(rows_for(rows, ch)[0][0], ch, ('reconcile',))]
     return g(len(ok) / len(expected) if expected else 0, f'{len(ok)}/{len(expected)} historical changes recorded '
-             'exactly after the first scheduled run', CRITICAL_CHECKS['r_backfill_complete'],
+             'exactly after the first scheduled run', 'data loss — changes silently missing',
              parts={'missing': [ch.key for ch in expected if ch not in ok][:12]})
 
 
@@ -2006,6 +2024,8 @@ def _entity_writes(call: Dict) -> int:
 
 
 def _ledger_entities(c: Ctx) -> set:
+    if c.declares_v2_ledger():
+        return {V2_SURFACE_ENTITY}   # v1's preserved entity is history, not the ledger a v2 app reads (Ctx.kvs_rows)
     names = set()
     snap = c.phase('rerun').get('kvsAfter') or c.phase('heal').get('kvsAfter') or {}
     for name, items in (snap.get('entities') or {}).items():
@@ -2137,7 +2157,7 @@ def _(c):
             found += [f"rovo changeId {ch.get('changeId')}" for ch in res.get('changes') or []
                       if isinstance(ch, dict) and str(ch.get('changeId')) in terms['changeIds']]
     if found:
-        return g(0, f'hidden issue data shown to a person: {found[:6]}', CRITICAL_CHECKS['b_no_permission_leak'])
+        return g(0, f'hidden issue data shown to a person: {found[:6]}', CRITICAL_CLASSES['leak'])
     return g(1, 'no hidden key, summary or change id reached a person')
 
 
@@ -2230,25 +2250,29 @@ def _(c):
 
 
 def _post_scenarios(c: Ctx) -> List[Dict]:
+    """The single click and the double click of every sprint render. A gesture the probe could not deliver
+    (`clickFailed`: e.g. an overlay intercepted it, §17.8 A) is harness evidence, never the app's."""
     out = []
     for r in c.sprint_renders():
         for name in ('post', 'doubleClick'):
-            if isinstance(r.get(name), dict):
+            if isinstance(r.get(name), dict) and not r[name].get('clickFailed'):
                 out.append({**r[name], '_name': name, '_sprint': r.get('sprintId')})
     return out
 
 
+# §17.8 B: the critical is "a duplicate side effect" — it fires ONLY when one gesture (a click or a double click, the
+# double click sent on a fresh viewer-visible row) added two or more comments. Zero comments and a missing success
+# flag are graded in u_comment_flow, never priced as a duplicate.
 @check('b_comment_exactly_once', 'B', pre=pre_comment_post, needs=('ui',))
 def _(c):
     scen = _post_scenarios(c)
     if not scen:
-        return g(0, 'no post scenario completed', CRITICAL_CHECKS['b_comment_exactly_once'])
-    bad = [f"{s['_name']}@{s['_sprint']}: {s.get('commentsAdded')} comment(s), {s.get('successFlags')} success flag(s)"
-           for s in scen if s.get('commentsAdded') != 1 or s.get('successFlags') != 1]
-    if bad:
-        return g(0, f'not exactly once: {bad[:4]}', CRITICAL_CHECKS['b_comment_exactly_once'])
-    return g(1, f'{len(scen)} click/double-click posts each ended with exactly one comment and one success flag '
-             '(the 429-once fault included)')
+        return unavail('comments were posted but the probe recorded no deliverable click/double-click scenario')
+    dup = [f"{s['_name']}@{s['_sprint']}: {s.get('commentsAdded')} comments" for s in scen
+           if isinstance(s.get('commentsAdded'), int) and s['commentsAdded'] >= 2]
+    if dup:
+        return g(0, f'one gesture posted a duplicate: {dup[:4]}', CRITICAL_CLASSES['duplicate'])
+    return g(1, f'{len(scen)} click/double-click gesture(s), none posted more than one comment')
 
 
 # ══ U: UI function ═══════════════════════════════════════════════════════════════════════════
@@ -2265,7 +2289,7 @@ def _(c):
     live = [v for v in views if any(all(str((s.get('metrics') or {}).get(m) or '').strip()
                                         for m in ('committed', 'added', 'removed', 'creep')) for s in v.get('sprints') or [])]
     return g(1 if live else 0, f'{len(live)}/{len(views)} configured widget views render a sprint with its numbers',
-             CRITICAL_CHECKS['u_widget_loads'])
+             'dead primary flow — no data on the dashboard')
 
 
 @check('u_widget_numbers', 'U', needs=('ui',))
@@ -2426,15 +2450,27 @@ def _(c):
     renders = [r for r in c.sprint_renders() if isinstance(r.get('post'), dict)]
     if not renders:
         return absent('post-summary flow')
-    total, ok = 0, 0
+    total, ok, failed = 0, 0, []
     for r in renders:
-        post, forb = r.get('post') or {}, r.get('forbidden') or {}
-        subs = [bool((r.get('select') or {}).get('ariaSelected')), post.get('successFlags') == 1]
-        if forb:
-            subs += [(forb.get('errorFlags') or 0) >= 1 and not forb.get('successFlags'), bool(forb.get('sortWorksAfter'))]
+        post, forb, dbl = r.get('post') or {}, r.get('forbidden') or {}, r.get('doubleClick') or {}
+        # Contract: "One click, or a double click, posts exactly one comment … then a success flag" (§17.8 B moved the
+        # zero-comment and missing-flag cases here from the critical). A gesture the probe could not deliver is not
+        # graded (clickFailed, harness evidence).
+        subs = {'select': bool((r.get('select') or {}).get('ariaSelected'))}
+        if not post.get('clickFailed'):
+            subs['post_one_comment'] = post.get('commentsAdded') == 1
+            subs['post_success_flag'] = post.get('successFlags') == 1
+        if dbl and not dbl.get('clickFailed'):
+            subs['double_one_comment'] = dbl.get('commentsAdded') == 1
+            subs['double_success_flag'] = (dbl.get('successFlags') or 0) >= 1
+        if forb and not forb.get('clickFailed'):
+            subs['forbidden_error_flag'] = (forb.get('errorFlags') or 0) >= 1 and not forb.get('successFlags')
+            subs['modal_works_after'] = bool(forb.get('sortWorksAfter'))
         total += len(subs)
-        ok += sum(subs)
-    return g(ok / total, f'{ok}/{total} comment-flow steps right (select, success flag, forbidden error flag, modal works)',
+        ok += sum(subs.values())
+        failed += [f"{k}@{r.get('sprintId')}" for k, v in subs.items() if not v]
+    return g(ok / total, f'{ok}/{total} comment-flow steps right (select, one comment and a success flag per click and '
+             'double click, forbidden error flag, modal works)' + (f'; failed: {failed[:5]}' if failed else ''),
              'comment flow broken')
 
 
@@ -2567,17 +2603,22 @@ def _(c):
         return unavail(live['absent'])
     if not live:
         return g(0, 'the live widget step did not run', 'the widget never updates live')
+    # §17.8 H: graded on the OUTCOME — the sprints the live changes moved show their new numbers without a reload.
+    # Polling scores 0 (DESIGN §8: "polling scores 0"), a reload or no subscription is no live update; the sprints the
+    # live changes did not move are u_widget_numbers' (never charged twice here).
     want = c.oracle_ui.sprints_of_board(str(live.get('board')))
-    after = {str(x.get('id')): x.get('metrics') for x in live.get('sprintsAfter') or []}
-    right = [sid for sid in want if metrics_ok(after.get(sid) or {}, c.oracle_ui.numbers(sid)) == 4]
     moved = [sid for sid in want if c.oracle.numbers(sid).metrics_text() != c.oracle_ui.numbers(sid).metrics_text()]
-    conds = {'subscribed': bool(live.get('subscribed')), 'no_polling_while_idle': live.get('idleInvokes') == 0,
-             'no_reload': not live.get('reloaded'), 'shows_new_numbers': bool(moved) and set(moved) <= set(right)
-             and len(right) == len(want)}
-    met = sum(conds.values())
-    return g(met / len(conds), f"live widget {met}/{len(conds)}: " + ', '.join(k for k, v in conds.items() if not v)
-             + f"; {live.get('idleInvokes')} idle invoke(s), sprints right after the live changes {len(right)}/{len(want)}",
-             'the dashboard does not update live', parts=conds)
+    if not moved:
+        return unavail(f"the live changes moved no active sprint of board {live.get('board')} (the watched board)")
+    after = {str(x.get('id')): x.get('metrics') for x in live.get('sprintsAfter') or []}
+    right = [sid for sid in moved if metrics_ok(after.get(sid) or {}, c.oracle_ui.numbers(sid)) == 4]
+    gates = {'subscribed': bool(live.get('subscribed')), 'no_polling_while_idle': live.get('idleInvokes') == 0,
+             'no_reload': not live.get('reloaded')}
+    score = len(right) / len(moved) if all(gates.values()) else 0.0
+    return g(score, f'moved sprints showing the new numbers live {len(right)}/{len(moved)}'
+             + (f"; gate failed: {', '.join(k for k, v in gates.items() if not v)}" if not all(gates.values()) else '')
+             + f"; {live.get('idleInvokes')} idle invoke(s)", 'the dashboard does not update live',
+             parts={**gates, 'moved': moved, 'right': right})
 
 
 ISSUE_KEY = re.compile(r'(?<![A-Za-z0-9])[A-Z][A-Z0-9]+-\d+(?![0-9])')
@@ -2861,8 +2902,11 @@ def _(c):
     optimum += repeats
     used = len([x for x in c.calls(('backfill',), 'jira')])
     ratio = used / optimum
-    return g(ladder(ratio, TH['economy_rungs']), f'backfill {used} Jira calls / optimum {optimum} (incl. {repeats} forced 429 '
-             f'repeat(s)) = {ratio:.2f}x', parts={'calls': used, 'optimum': optimum, 'ratio': round(ratio, 3)})
+    # §17.8 F: continuous like e_event_economy (a rung cliff at optimum+1 call ordered the 1.0 top four on 0.010).
+    top = float(TH['reconcile_economy_top'])
+    return g(min(1.0, top / ratio) if ratio else 1.0, f'backfill {used} Jira calls / optimum {optimum} (incl. {repeats} '
+             f'forced 429 repeat(s)) = {ratio:.2f}x; 1.0 at <= {top:g}x',
+             parts={'calls': used, 'optimum': optimum, 'ratio': round(ratio, 3)})
 
 
 @check('e_event_economy', 'E', needs=('live',))
@@ -2903,12 +2947,11 @@ def _(c):
 
 CALIBRATION_SEEDS = 5   # DESIGN §13.4 item 4
 # The two economy ratios are FITTED to the golden's worst-of-5 ratio (rounded up to 0.01, never below the oracle
-# optimum 1.0), so the golden defines 1.0 on every calibration seed: the backfill's top rung (every lower rung keeps
-# its rc multiple of the top), and the event path's continuous top (score = min(1, top / ratio), 2026-10-03 F1). The
-# round-trip rungs sit at their floor already (1 invoke): they are VERIFIED (the golden reaches the top rung on every
-# seed), never fitted — a golden that misses them refuses.
-FITTED_RUNGS = {'economy_rungs': 'e_reconcile_economy'}
-FITTED_TOPS = {'event_economy_top': 'e_event_economy'}
+# optimum 1.0), so the golden defines 1.0 on every calibration seed; both are continuous (score = min(1, top / ratio):
+# 1.0's F1 for the event path, §17.8 F for the backfill). The round-trip rungs sit at their floor already (1 invoke):
+# they are VERIFIED (the golden reaches the top rung on every seed), never fitted — a golden that misses them refuses.
+FITTED_RUNGS: Dict[str, str] = {}
+FITTED_TOPS = {'event_economy_top': 'e_event_economy', 'reconcile_economy_top': 'e_reconcile_economy'}
 VERIFIED_TOP = ('e_ui_round_trips',)
 
 
@@ -2927,7 +2970,7 @@ def calibrate(verdicts: List[Dict], rc: Dict) -> Dict:
     shas = {json.dumps(v.get('scorer_files_sha256'), sort_keys=True) for v in verdicts}
     if len(shas) != 1:
         fails.append('the golden verdicts were scored by different scorer files')
-    if any(v.get('scorerVersion') != 'forge-1.0-rc' for v in verdicts):
+    if any(v.get('scorerVersion') != 'forge-2.0-rc' for v in verdicts):
         fails.append('calibration fits rc-grade verdicts only (thresholds already calibrated?)')
     for v in verdicts:
         fails += [f"{v.get('fixture_seed')}: {f}" for f in reference_failures(v)]
@@ -2940,8 +2983,8 @@ def calibrate(verdicts: List[Dict], rc: Dict) -> Dict:
         raise ValueError('calibration refused:\n  ' + '\n  '.join(fails))
     out = json.loads(json.dumps(rc))
     out['calibrated'] = True
-    out['note'] = ('forge-1.0 calibrated thresholds: the economy rungs are fitted to the golden worst-of-5 '
-                   '(DESIGN §13.4 item 4); everything else keeps its rc receipt. Pinned as CALIB_SHA256 in score_forge.py.')
+    out['note'] = ('forge-2.0 calibrated thresholds: the economy tops are fitted to the golden v2 worst-of-5 '
+                   '(DESIGN §13.4 item 4); everything else keeps its rc receipt. Pinned as CALIB_SHA256 in score_forge2.py.')
     for key, row in FITTED_TOPS.items():
         per_seed = {v['fixture_seed']: _exact_ratio(next(r for r in v['checks'] if r['check'] == row)['parts']) for v in verdicts}
         worst = max(per_seed.values())
@@ -2964,16 +3007,101 @@ def calibrate(verdicts: List[Dict], rc: Dict) -> Dict:
     return out
 
 
+# ── the v2 rows: P8's registry (bench/forge2_checks.py) ──────────────────────────────────────
+
+V1_ROWS = {n for n, *_ in CHECKS}
+assert len(V1_ROWS) == len(CHECKS), 'duplicate check name in the v1 registry'
+assert sum(1 for _n, t, *_ in CHECKS if t != 'E') == 64 and sum(1 for _n, t, *_ in CHECKS if t == 'E') == 3
+
+
+def _v2_entry(e) -> tuple:
+    """One forge2_checks row as (name, tier, fn, pre, needs, weight, critical). Accepted shapes: a dict or an object
+    carrying name, tier, weight, critical, fn (or body), pre, needs — or the 1.0 tuple (name, tier, fn, pre, needs
+    [, weight [, critical]])."""
+    if isinstance(e, (tuple, list)):
+        defaults = (None, None, None, None, (), 1.0, None)
+        name, tier, fn, pre, needs, weight, critical = list(e)[:7] + list(defaults[len(e):])
+    else:
+        get = e.get if isinstance(e, dict) else (lambda k, d=None: getattr(e, k, d))
+        name, tier, fn = get('name'), get('tier'), get('fn') or get('body')
+        pre, needs, weight, critical = get('pre'), get('needs') or (), get('weight', 1.0), get('critical')
+    return name, tier, fn, pre, tuple(needs or ()), (1.0 if weight is None else weight), critical or None
+
+
+def _register_v2(entries, root_blocks: Dict) -> Tuple[List[tuple], Dict[str, tuple]]:
+    """Validate P8's rows against SPEC §4 and return them normalised. Refuses (RuntimeError) on a row the composition
+    cannot price: an unknown family, a duplicate name, a non-numeric or negative weight, a critical flag that names no
+    SPEC class, a family with no weighted row, a v2 critical class no row can fire, or a ROOT_BLOCKS name nobody
+    registered. A refusal names every problem at once."""
+    rows, problems, seen = [], [], set(V1_ROWS)
+    for e in entries:
+        name, tier, fn, pre, needs, weight, critical = _v2_entry(e)
+        where = f'forge2_checks row {name!r}'
+        if not isinstance(name, str) or not name or name in seen:
+            problems.append(f'{where}: missing or duplicate name')
+        if tier not in FAMILY_WEIGHT:
+            problems.append(f'{where}: tier {tier!r} is not one of {sorted(FAMILY_WEIGHT)}')
+        if not callable(fn):
+            problems.append(f'{where}: no callable fn/body')
+        if not isinstance(weight, (int, float)) or isinstance(weight, bool) or weight < 0:
+            problems.append(f'{where}: weight {weight!r} must be a number >= 0 (0 = diagnostic)')
+        if critical is True or (critical and critical not in CRITICAL_CLASSES):
+            problems.append(f'{where}: critical {critical!r} must name its class, one of {sorted(CRITICAL_CLASSES)}')
+        seen.add(name)
+        rows.append((name, tier, fn, pre, needs, weight, critical))
+    for fam in FAMILY_WEIGHT:
+        if not any(t == fam and isinstance(w, (int, float)) and w > 0 for _n, t, _f, _p, _x, w, _c in rows):
+            problems.append(f'no weighted row for {fam} (SPEC §4 weight {FAMILY_WEIGHT[fam]}) — it would score 0 silently')
+    for cls in ('migration', 'webtrigger', 'admin'):
+        if not any(cr == cls for *_r, cr in rows):
+            problems.append(f'no row carries critical class {cls!r} (SPEC §4: "{CRITICAL_CLASSES[cls]}")')
+    blocks = {}
+    for root, deps in (root_blocks or {}).items():
+        unknown = [n for n in (root, *deps) if n not in seen]
+        if unknown:
+            problems.append(f'ROOT_BLOCKS[{root!r}] names unregistered rows {unknown}')
+        blocks[root] = tuple(deps)
+    if problems:
+        raise RuntimeError('REFUSED: bench/forge2_checks.py cannot be composed (SPEC §4):\n  ' + '\n  '.join(problems))
+    return rows, blocks
+
+
+def _synthetic_v2() -> List[Dict]:
+    """The stand-in registry `--selftest` composes on when forge2_checks.py is absent: one weighted row per family and
+    one row per v2 critical class, each vacuous on any evidence. gather() / evaluate() refuse to score on it."""
+    def idle(_c):
+        return vacuous('synthetic stand-in row (bench/forge2_checks.py absent)')
+    rows = [{'name': f'{fam.lower()}_synthetic', 'tier': fam, 'weight': 1.0, 'fn': idle} for fam in FAMILY_WEIGHT]
+    rows += [{'name': f'{cls}_synthetic', 'tier': fam, 'weight': 1.0, 'critical': cls, 'fn': idle}
+             for cls, fam in (('migration', 'R1'), ('admin', 'R5'), ('webtrigger', 'R6'), ('leak', 'R4'),
+                              ('duplicate', 'R3'))]
+    return rows
+
+
+try:
+    import forge2_checks   # P8: the R1..R9 rows. Must not import this module at its top level (it imports us).
+    V2_ABSENT: Optional[str] = None
+    _V2_ROWS, _V2_BLOCKS = _register_v2(getattr(forge2_checks, 'CHECKS'), getattr(forge2_checks, 'ROOT_BLOCKS', {}))
+except ImportError as _error:
+    V2_ABSENT = (f'bench/forge2_checks.py is not importable ({_error}): the v2 rows (0.75 of the score) are missing — '
+                 'refusing to score')
+    _V2_ROWS, _V2_BLOCKS = _register_v2(_synthetic_v2(), {})
+
+for _name, _tier, _fn, _pre, _needs, _w, _cls in _V2_ROWS:
+    CHECKS.append((_name, _tier, _fn, _pre, _needs))
+ROW_WEIGHT = {n: float(w) for n, _t, _f, _p, _x, w, _c in _V2_ROWS}
+CRITICAL_OF = {**V1_CRITICAL, **{n: cls for n, _t, _f, _p, _x, _w, cls in _V2_ROWS if cls}}
+
 # ── registry-close asserts ───────────────────────────────────────────────────────────────────
 
 REGISTERED = {n for n, *_ in CHECKS}
 assert len(REGISTERED) == len(CHECKS), 'duplicate check name in the forge registry'
 TIER_OF = {n: t for n, t, *_ in CHECKS}
-assert set(TIER_OF.values()) == set(TIER_WEIGHT) | {'E'}
-assert DIAGNOSTIC <= REGISTERED and set(CRITICAL_CHECKS) <= REGISTERED and CALIBRATION_OWNED <= REGISTERED
+assert set(TIER_OF.values()) == set(TIER_WEIGHT) | {'E'} | set(FAMILY_WEIGHT)
+assert DIAGNOSTIC <= REGISTERED and set(CRITICAL_OF) <= REGISTERED and CALIBRATION_OWNED <= REGISTERED
+assert set(CRITICAL_OF.values()) == set(CRITICAL_CLASSES) and not set(CRITICAL_OF) & (CALIBRATION_OWNED | DIAGNOSTIC)
 assert {n for _c, _l, names in ADMISSION_BANDS for n in names} <= REGISTERED
 assert set(EXCELLENCE_VALUED) | set(EXCELLENCE_BINARY) <= REGISTERED
-assert sum(1 for t in TIER_OF.values() if t != 'E') == 63 and sum(1 for t in TIER_OF.values() if t == 'E') == 3
 
 # Rows that compare a person's change LIST with the oracle: one wrong row in the ledger or one change shown that
 # should be hidden makes each of them wrong, and that is one defect, not N (DESIGN §13.4 item 5, gap #23).
@@ -2986,7 +3114,8 @@ NUMBER_ROWS = ('u_widget_chart', 'a_action_result', 'u_ledger_table', 'u_ledger_
                # the explanation's replacement sentence prints the ledger's numbers (m_ids_only, 2026-10-04)
                'u_llm_explain')
 ROOT_BLOCKS = {
-    'l_bundles_load': tuple(n for n, t in TIER_OF.items() if t in ('T', 'R', 'S', 'B', 'U', 'A')),
+    # a bundle that does not load leaves every runtime row of v1 AND every v2 row without a running app
+    'l_bundles_load': tuple(n for n, t in TIER_OF.items() if t in ('T', 'R', 'S', 'B', 'U', 'A', *FAMILY_WEIGHT)),
     # measured on m_old_search / m_open_sprints_only / m_storage_api: a backfill that never lands leaves every
     # ledger-derived row wrong, the same scheduled run's heal and rate-limit rows unfinished, and the scopes
     # its calls would have used unexercised (l_scopes reads observed calls).
@@ -3004,13 +3133,15 @@ ROOT_BLOCKS = {
                           'u_widget_numbers', 'u_widget_chart', 't_reestimate_followed'),
     # measured on m_asapp_ui: hidden changes listed -> the table, its sort and the action's list are wrong too.
     'b_no_permission_leak': CHANGE_LIST_ROWS,
-    # One defect, two band-4 rows (band_defects prices it once): a model id list() does not return fails every explain
-    # call (m_llm_unknown_model); a ledger read out of change-time order is a wrong default order and a wrong toggle;
-    # a wrong hidden count is wrong in the action's per-person answer too.
+    # One defect, two rows: a model id list() does not return fails every explain call (m_llm_unknown_model); a ledger
+    # read out of change-time order is a wrong default order and a wrong toggle; a wrong hidden count is wrong in the
+    # action's per-person answer too.
     'k_llm_model_current': ('u_llm_explain',),
     's_index_order': ('u_ledger_sort',),
     'b_hidden_count': ('a_action_permissions',),
 }
+for _root, _deps in _V2_BLOCKS.items():   # P8's attribution among (and into) its own rows
+    ROOT_BLOCKS[_root] = tuple(dict.fromkeys((*ROOT_BLOCKS.get(_root, ()), *_deps)))
 for _root, _deps in ROOT_BLOCKS.items():
     assert {_root, *_deps} <= REGISTERED
 
@@ -3067,27 +3198,43 @@ def candidate_section_fault(c: Ctx, why: str) -> Optional[str]:
             f"`resources` (declared: {sorted(k for k in declared if k) or 'none'}), so the surface cannot be opened")
 
 
+def _stamp(name: str, tier: str, outcome: Dict) -> Dict:
+    """A row carries what composition needs (its v2 weight, its critical class), so compose_from_rows stays pure
+    over stored rows."""
+    row = {'check': name, 'tier': tier, **outcome}
+    if name in ROW_WEIGHT:
+        row['weight'] = ROW_WEIGHT[name]
+    if name in CRITICAL_OF:
+        row['critical'] = CRITICAL_OF[name]
+    return row
+
+
 def _run_check(c: Ctx, name: str, tier: str, fn, pre, needs) -> Dict:
     if c.oracle is None:
-        return {'check': name, 'tier': tier, **unavail(f'pack defect: {c.oracle_error}')}
+        return _stamp(name, tier, unavail(f'pack defect: {c.oracle_error}'))
     why = c.section_error(*needs)
     if why:
         fault = candidate_section_fault(c, why)
         if fault:
-            return {'check': name, 'tier': tier, **g(0.0, fault, 'the app cannot be opened: its own manifest is broken')}
-        return {'check': name, 'tier': tier, **unavail(why)}
+            # §17.8 G: the row scores 0 (the app's own manifest broke the surface) but observed no defect of its own,
+            # so it is vacuous — a manifest root never fires the criticals of the surfaces it never opened.
+            return _stamp(name, tier, g(0.0, fault, 'the app cannot be opened: its own manifest is broken',
+                                        parts={'vacuous_root': f'manifest: {fault[:160]}'}))
+        return _stamp(name, tier, unavail(why))
     if pre is not None:
         try:
             ok, what = pre(c)
         except Exception as error:  # a precondition bug is the scorer's, never the app's
-            return {'check': name, 'tier': tier, **unavail(f'precondition error: {type(error).__name__}: {error}')}
+            return _stamp(name, tier, unavail(f'precondition error: {type(error).__name__}: {error}'))
         if not ok:
-            return {'check': name, 'tier': tier, **vacuous(what)}
+            return _stamp(name, tier, vacuous(what))
     try:
         outcome = fn(c)
+        if not isinstance(outcome, dict) or not isinstance(outcome.get('score'), (int, float)):
+            raise TypeError(f'{name} returned {type(outcome).__name__} without a numeric score')
     except Exception as error:
         outcome = unavail(f'scorer error: {type(error).__name__}: {error}')
-    return {'check': name, 'tier': tier, **outcome}
+    return _stamp(name, tier, outcome)
 
 
 # The deploy-readiness rows price only what no other row already graded, so they run after every other row.
@@ -3151,6 +3298,8 @@ def merge_seed_rows(row_sets: List[List[Dict]], seeds: List[str]) -> List[Dict]:
 
 
 def evaluate(c: Ctx) -> Dict:
+    if V2_ABSENT:
+        raise RuntimeError('REFUSED: ' + V2_ABSENT)
     extra = list(getattr(c, 'seed_ctxs', None) or [])
     rows = evaluate_rows(c)
     seed_scores = None
@@ -3173,8 +3322,8 @@ def evaluate(c: Ctx) -> Dict:
                    'wrapper_sha256': kit.get('wrapper_sha256') or (c.obs.get('kit') or {}).get('wrapperSha256'),
                    'scorer_seconds': getattr(c, 'scorer_seconds', None), 'shots': list(c.obs.get('shots') or []),
                    'scorer_files_sha256': {n: hashlib.sha256((HERE / n).read_bytes()).hexdigest()
-                                           for n in ('score_forge.py', 'forge_oracle.py', 'forge_probe.mjs',
-                                                     THRESHOLDS_FILE.name)},
+                                           for n in ('score_forge2.py', 'forge2_checks.py', 'forge2_oracle.py',
+                                                     'forge2_probe.mjs', THRESHOLDS_FILE.name)},
                    'spec_sha256': hashlib.sha256((ROOT / SPEC).read_bytes()).hexdigest()})
     return result
 
@@ -3201,35 +3350,46 @@ def recall_trace(root) -> Dict:
             'reason': 'the isolated goose session database is not captured beside the tree (DESIGN §8.8)'}
 
 
-# ── severity: transforms, multiplier + dedup, excellence, admission ──────────────────────────
+# ── severity: criticals by class, excellence, admission ──────────────────────────────────────
 
 def passed(row: Optional[Dict]) -> bool:
     return bool(row and isinstance(row.get('score'), (int, float)) and abs(row['score'] - 1.0) < 1e-12
                 and not row.get('unavailable') and not (row.get('parts') or {}).get('vacuous_root'))
 
 
-def critical_severity_input(r: Dict) -> float:
-    s = max(0.0, min(1.0, r['score']))
-    if (r.get('parts') or {}).get('absent_surface'):
-        return 0.0
-    if s >= 1.0 - 1e-9:
-        return 1.0
-    name = r['check']
-    if name == 'l_deployable':
-        return 0.0
-    if name == 'l_bundles_load':
-        return 0.0 if s < 0.4 else 1.0
-    if name == 'r_backfill_complete':
-        return min(s, 0.5)
-    if name == 'u_widget_loads':
-        return 0.0 if s == 0.0 else 1.0
-    return 0.0   # t_no_double_count, b_no_permission_leak, b_comment_exactly_once: cliffs
+def observed_defect(r: Dict) -> bool:
+    """SPEC §4: a critical fires ONLY on an observed defect — a row that ran (not unavailable), was exercised (not
+    vacuous, which covers the manifest-fault rows, §17.8 G), whose surface exists (not absent) and scored below 1."""
+    parts = r.get('parts') or {}
+    return (isinstance(r.get('score'), (int, float)) and r['score'] < 1.0 - 1e-9 and not r.get('unavailable')
+            and not parts.get('vacuous_root') and not parts.get('absent_surface'))
+
+
+def criticals(rows: List[Dict]) -> Tuple[float, List[Dict]]:
+    """(multiplier, the critical rows that observed a defect). Each SPEC class multiplies by the floor at most once
+    (one root, priced once); a row whose ROOT_BLOCKS root is itself an observed critical defect is that root's shadow."""
+    floor = float(TH['critical_multiplier_floor'])
+    failed = {r['check']: r for r in rows if r.get('critical') in CRITICAL_CLASSES and observed_defect(r)}
+    mult, out, priced = 1.0, [], {}
+    for name, r in failed.items():
+        cls = r['critical']
+        entry = {'check': name, 'class': cls, 'score': r['score'], 'why': CRITICAL_CLASSES[cls]}
+        root = next((root for root, deps in ROOT_BLOCKS.items() if root != name and name in deps and root in failed), None)
+        if root:
+            out.append({**entry, 'factor': 1.0, 'suppressed': f'root:{root}'})
+        elif cls in priced:
+            out.append({**entry, 'factor': 1.0, 'suppressed': f'class:{cls} priced by {priced[cls]}'})
+        else:
+            priced[cls] = name
+            mult *= floor
+            out.append({**entry, 'factor': floor})
+    return mult, out
 
 
 def excellence(rows: List[Dict]) -> Tuple[float, float, List[Dict]]:
     by = {r['check']: r for r in rows}
     conds = []
-    for n in EXCELLENCE_VALUED + tuple(sorted(n for n, t in TIER_OF.items() if t == 'K')):
+    for n in EXCELLENCE_VALUED + tuple(sorted(n for n, t in TIER_OF.items() if t == 'K' and n not in DIAGNOSTIC)):
         r = by.get(n) or {}
         v = 0.0 if (r.get('parts') or {}).get('vacuous_root') or r.get('unavailable') else float(r.get('score') or 0)
         conds.append({'name': n, 'ok': passed(r), 'share': max(0.0, min(1.0, v))})
@@ -3241,34 +3401,22 @@ def excellence(rows: List[Dict]) -> Tuple[float, float, List[Dict]]:
     return fraction, e_mean, conds
 
 
-def band_defects(label: str, failed: List[str]) -> List[str]:
-    """The graded band counts DEFECTS ("minus 0.03 for each further such defect"), not rows: a failed row that
-    ROOT_BLOCKS attributes to another failed row of the same band is that row's shadow (asApp in the UI leaks AND
-    miscounts the hidden changes AND lists them in the action — one defect), priced once. Only a root inside the
-    band absorbs a row, so a defect is never dropped from the band by a root the band does not charge."""
-    if label != GRADED_BAND[0]:
-        return failed
-    defects = [n for n in failed if not any(n in ROOT_BLOCKS.get(root, ()) for root in failed if root != n)]
-    return defects or failed[:1]
-
-
 def admit(rows: List[Dict]) -> Dict:
     by = {r['check']: r for r in rows}
     ceiling, reasons, failed_by_band = 1.0, [], []
     for limit, label, names in ADMISSION_BANDS:
         failed = [n for n in names if not passed(by.get(n))]
         if failed:
-            defects = band_defects(label, failed)
-            cap = band_ceiling(limit, label, len(defects))
-            ceiling = min(ceiling, cap)
-            entry = {'ceiling': cap, 'band': label, 'checks': failed}
-            shadows = [n for n in failed if n not in defects]
-            if shadows:
-                entry['priced_once'] = shadows
-            failed_by_band.append(entry)
-            reasons.append(f'{label}: {", ".join(failed)} (maximum {cap:.3f}'
-                           + (f'; {", ".join(shadows)} priced with their root' if shadows else '') + ')')
+            ceiling = min(ceiling, limit)
+            failed_by_band.append({'ceiling': limit, 'band': label, 'checks': failed})
+            reasons.append(f'{label}: {", ".join(failed)} (maximum {limit:.3f})')
     return {'ceiling': ceiling, 'reasons': reasons, 'failedChecksByBand': failed_by_band}
+
+
+def _mean(rows: List[Dict], weight=lambda r: 1.0) -> Tuple[float, int]:
+    avail = [r for r in rows if not r.get('unavailable')]
+    den = sum(weight(r) for r in avail)
+    return (sum(weight(r) * max(0.0, min(1.0, r['score'])) for r in avail) / den if den else 0.0), len(avail)
 
 
 def compose_from_rows(rows: List[Dict], c: Optional[Ctx] = None) -> Dict:
@@ -3276,49 +3424,34 @@ def compose_from_rows(rows: List[Dict], c: Optional[Ctx] = None) -> Dict:
     vacuous_rows = {r['check']: (r.get('parts') or {}).get('vacuous_root') for r in rows
                     if (r.get('parts') or {}).get('vacuous_root')}
     tiers: Dict[str, Dict] = {}
-    inner = 0.0
+    inner_v1 = 0.0
     for tier, w in TIER_WEIGHT.items():
         sub = [r for r in rows if r['tier'] == tier and r['check'] not in DIAGNOSTIC]
-        avail = [r for r in sub if not r.get('unavailable')]
-        mean = sum(max(0.0, min(1.0, r['score'])) for r in avail) / len(avail) if avail else 0.0
-        tiers[tier] = {'mean': round(mean, 4), 'checks': len(avail), 'weight': w}
-        if len(avail) != len(sub):
+        mean, n = _mean(sub)
+        tiers[tier] = {'mean': round(mean, 4), 'checks': n, 'weight': round(w * V1_WEIGHT * INNER_WEIGHT, 4)}
+        if n != len(sub):
             tiers[tier]['unavailable'] = [r['check'] for r in sub if r.get('unavailable')]
-        inner += mean * w
+        inner_v1 += mean * w
     fraction, e_mean, conds = excellence(rows)
-    pre_severity = INNER_WEIGHT * inner + E_WEIGHT * fraction * e_mean
-
+    v1 = INNER_WEIGHT * inner_v1 + E_WEIGHT * fraction * e_mean
+    tiers['E'] = {'mean': round(fraction * e_mean, 4), 'gate': fraction >= 1.0, 'gate_fraction': round(fraction, 4),
+                  'weight': round(V1_WEIGHT * E_WEIGHT, 4)}
+    v2 = 0.0
+    for fam, w in FAMILY_WEIGHT.items():
+        # weight 0 = a diagnostic v2 row; a row with no stamped weight (a synthetic scenario row) weighs 1
+        sub = [r for r in rows if r['tier'] == fam and r.get('weight', 1.0) > 0]
+        mean, n = _mean(sub, lambda r: float(r.get('weight', 1.0)))
+        tiers[fam] = {'mean': round(mean, 4), 'checks': n, 'weight': w}
+        if n != len(sub):
+            tiers[fam]['unavailable'] = [r['check'] for r in sub if r.get('unavailable')]
+        v2 += mean * w
+    pre_severity = V1_WEIGHT * v1 + v2
     floor = float(TH['critical_multiplier_floor'])
-    sev = {r['check']: critical_severity_input(r) for r in rows
-           if r['check'] in CRITICAL_CHECKS and not r.get('unavailable')}
-    suppressed: Dict[str, str] = {}
-    for name in sev:
-        if name in vacuous_rows:
-            suppressed[name] = f'vacuous:{vacuous_rows[name]}'
-            continue
-        for root, deps in ROOT_BLOCKS.items():
-            if (root != name and name in deps and root in sev and sev[root] < 1.0 - 1e-9
-                    and root not in vacuous_rows):
-                suppressed[name] = f'root:{root}'
-                break
-    mult, crit_rows = 1.0, []
-    for r in rows:
-        name = r['check']
-        if name not in sev or sev[name] >= 1.0 - 1e-9:
-            continue
-        entry = {'check': name, 'score': r['score'], 'severity_input': round(sev[name], 4), 'why': CRITICAL_CHECKS[name]}
-        if name in suppressed:
-            crit_rows.append({**entry, 'factor': 1.0, 'suppressed': suppressed[name]})
-            continue
-        factor = floor + (1.0 - floor) * sev[name]
-        mult *= factor
-        crit_rows.append({**entry, 'factor': round(factor, 4)})
+    mult, crit_rows = criticals(rows)
     earned = pre_severity * mult
     admission = admit(rows)
     admission['final_rule'] = f'final = min(earned, ceiling - {BAND_PULL:g} * (1 - earned))'
     final = capped_final(earned, admission['ceiling'])
-    tiers['E'] = {'mean': round(fraction * e_mean, 4), 'gate': fraction >= 1.0, 'gate_fraction': round(fraction, 4),
-                  'weight': E_WEIGHT}
     harness_missing = list(c.harness_missing) if c is not None else []
     runtime = c.runtime if c is not None else 'wrapper'
     unpublishable = []
@@ -3329,12 +3462,15 @@ def compose_from_rows(rows: List[Dict], c: Optional[Ctx] = None) -> Dict:
     status = 'held' if harness_missing else 'scored'
     return {
         'status': status, 'score': published_score(final, admission['ceiling']), 'rawScore': round(earned, 4),
-        'inner': round(inner, 4),
+        'inner': round(pre_severity, 4),
+        'v1': {'weight': V1_WEIGHT, 'score': round(v1, 4), 'inner': round(inner_v1, 4)},
+        'v2': {'weight': round(sum(FAMILY_WEIGHT.values()), 4), 'score': round(v2, 4)},
         'scorerVersion': VERSION, 'scorer_version': VERSION, 'family': 'forge',
         'fixture_seed': c.fixture_seed if c is not None else None, 'dev_seed': c.dev_seed if c is not None else None,
         'critical': {'floor': floor, 'multiplier': round(mult, 4), 'pre_severity_score': round(pre_severity, 4),
                      'rows': crit_rows,
-                     'unsuppressed': [x['check'] for x in crit_rows if not x.get('suppressed')]},
+                     'unsuppressed': [x['check'] for x in crit_rows if not x.get('suppressed')],
+                     'classes': sorted({x['class'] for x in crit_rows if not x.get('suppressed')})},
         'admission': admission,
         'excellence': {'fraction': round(fraction, 4), 'e_mean': round(e_mean, 4), 'gate': fraction >= 1.0,
                        'conditions': conds},
@@ -3353,10 +3489,10 @@ def compose_from_rows(rows: List[Dict], c: Optional[Ctx] = None) -> Dict:
     }
 
 
-# ── severity selftest (DESIGN §8.6) ──────────────────────────────────────────────────────────
+# ── severity selftest (DESIGN §8.6, SPEC §4) ─────────────────────────────────────────────────
 
 def _perfect_rows() -> List[Dict]:
-    return [{'check': n, 'tier': t, 'score': 1.0, 'detail': 'synthetic'} for n, t, *_ in CHECKS]
+    return [_stamp(n, t, {'score': 1.0, 'detail': 'synthetic'}) for n, t, *_ in CHECKS]
 
 
 def _scenario(overrides: Dict[str, float], parts: Optional[Dict[str, Dict]] = None) -> List[Dict]:
@@ -3370,8 +3506,8 @@ def _scenario(overrides: Dict[str, float], parts: Optional[Dict[str, Dict]] = No
 
 
 def selftest_empty_observations(pack: Dict, one_function: bool = False) -> Dict:
-    """The observations an empty starter (manifest with no modules) or a one-function app (a trigger that
-    does nothing) produces: lint clean, nothing else exercised. Run through the REAL checks by the selftest."""
+    """The observations an empty app (manifest with no modules) or a one-function app (a trigger that does nothing)
+    produces: lint clean, nothing else exercised. Run through the REAL checks by the selftest."""
     if one_function:
         manifest = {'app': {'id': 'ari:cloud:ecosystem::app/00000000-0000-0000-0000-000000000000',
                             'runtime': {'name': 'nodejs22.x'}},
@@ -3412,13 +3548,20 @@ def severity_selftest() -> List[str]:
     def score(rows):
         return compose_from_rows(rows)
 
+    floor = float(TH['critical_multiplier_floor'])
     base = score(_perfect_rows())
     expect(abs(base['score'] - 1.0) < 1e-9, f"all-perfect must compose to 1.0 (got {base['score']})")
     # (1) every weighted row earns
     for n, t, *_ in CHECKS:
-        if n in DIAGNOSTIC:
+        if n in DIAGNOSTIC or ROW_WEIGHT.get(n, 1.0) == 0:
             continue
         expect(score(_scenario({n: 0.0}))['rawScore'] < 1.0, f'(1) row {n} earns no weight')
+    # (1b) the SPEC §4 shares: v1 at 0 keeps exactly the v2 0.75; one family at 0 loses exactly its weight
+    v1_zero = score(_scenario({n: 0.0 for n, t, *_ in CHECKS if t in TIER_WEIGHT or t == 'E'}))
+    expect(abs(v1_zero['inner'] - (1 - V1_WEIGHT)) < 1e-4, f"(1b) v1 at 0 must keep the v2 share 0.75 (got {v1_zero['inner']})")
+    for fam, w in FAMILY_WEIGHT.items():
+        fam_zero = score(_scenario({n: 0.0 for n, t, *_ in CHECKS if t == fam}))
+        expect(abs(fam_zero['inner'] - (1 - w)) < 1e-4, f"(1b) {fam} at 0 must lose exactly {w} (got {fam_zero['inner']})")
     # (2) one lint warning costs points and never caps
     warn = score(_scenario({'l_lint_warnings': 0.8}))
     expect(warn['score'] < 1.0 and warn['admission']['ceiling'] == 1.0, '(2) a lint warning must cost and never cap')
@@ -3426,52 +3569,126 @@ def severity_selftest() -> List[str]:
     leak = score(_scenario({'b_no_permission_leak': 0.0}))['score']
     chart = score(_scenario({'u_widget_chart': 0.0}))['score']
     expect(leak < chart, f'(3) leak ({leak}) must score below a missing chart ({chart})')
-    # (4) a duplicate comment scores below a missing comment
-    dup = score(_scenario({'b_comment_exactly_once': 0.0}))['score']
-    vac = {'vacuous_root': 'precondition: >= 1 comment POST'}
-    missing = score(_scenario({'b_comment_exactly_once': 0.0, 'b_comment_adf_as_user': 0.0, 'u_comment_flow': 0.0},
-                              parts={'b_comment_exactly_once': vac, 'b_comment_adf_as_user': vac}))['score']
-    expect(dup < missing, f'(4) duplicate comment ({dup}) must score below a missing comment ({missing})')
-    # (5) gadget instead of widget is held at 0.799
-    gadget = score(_scenario({'k_dashboard_widget': 0.0}))
-    expect(gadget['score'] <= 0.799, f"(5) a gadget app must be held at 0.799 (got {gadget['score']})")
-    # (6) empty starter and one-function app: scored through the REAL checks, final <= 0.05
+    # (4) §17.8 B: a duplicate comment scores below a MEASURED zero comment, and the zero fires no critical
+    dup = score(_scenario({'b_comment_exactly_once': 0.0}))
+    zero = score(_scenario({'u_comment_flow': 0.6}))   # post + double click posted nothing: 2 of 5 steps
+    expect(dup['score'] < zero['score'], f"(4) duplicate ({dup['score']}) must score below a measured zero comment "
+           f"({zero['score']})")
+    expect(not zero['critical']['unsuppressed'], f"(4) a zero-comment post fired {zero['critical']['unsuppressed']}")
+    # (5) each class prices once: two rows of one class at 0 multiply by the floor once
+    for cls in CRITICAL_CLASSES:
+        members = [n for n, c in CRITICAL_OF.items() if c == cls]
+        v = score(_scenario({n: 0.0 for n in members}))
+        expect(abs(v['critical']['multiplier'] - floor) < 1e-9,
+               f"(5) class {cls} ({members}) must multiply once by {floor} (got {v['critical']['multiplier']})")
+    every = score(_scenario({n: 0.0 for n in CRITICAL_OF}))
+    expect(abs(every['critical']['multiplier'] - round(floor ** len(CRITICAL_CLASSES), 4)) < 1e-9,
+           f"(5) the five classes compound to {floor ** len(CRITICAL_CLASSES):.4f} (got {every['critical']['multiplier']})")
+    # (6) empty app and one-function app: scored through the REAL checks, final <= 0.05
     pack = fo.synthetic_pack()
-    for label, one in (('empty starter', False), ('one-function app', True)):
+    for label, one in (('empty app', False), ('one-function app', True)):
         ctx = Ctx(None, selftest_empty_observations(pack, one), pack, fixture_seed=pack['seed'])
         v = compose_from_rows(evaluate_rows(ctx), ctx)
         expect(v['status'] == 'scored' and v['score'] <= 0.05, f"(6) {label} must be scored at <= 0.05 (got {v['score']})")
         expect(not v['probe_unavailable'], f"(6) {label}: rows unavailable {v['probe_unavailable']}")
-    # (7) a dead bundle multiplies once and lands <= 0.30
+        expect(not v['critical']['unsuppressed'], f"(6) {label}: an idle app fired {v['critical']['unsuppressed']}")
+    # (7) a dead bundle fires no critical (it observed nothing) and lands <= 0.30
     deps = ROOT_BLOCKS['l_bundles_load']
     over = {n: 0.0 for n in deps}
     over.update({'l_bundles_load': 0.0, 'l_lint_warnings': 0.0, 'l_scopes': 0.0, 'k_widget_edit_bridge': 0.0,
                  'k_current_apis': 0.0})
-    parts = {n: {'vacuous_root': 'l_bundles_load'} for n in deps if n in CRITICAL_CHECKS}
+    parts = {n: {'vacuous_root': 'precondition: >= 1 function loads'} for n in deps if n in CRITICAL_OF}
     dead = score(_scenario(over, parts))
-    fired = [r for r in dead['critical']['rows'] if not r.get('suppressed')]
-    expect(len(fired) == 1, f'(7) a dead bundle must multiply once (fired {len(fired)})')
+    expect(not dead['critical']['unsuppressed'], f"(7) a dead bundle fired {dead['critical']['unsuppressed']}")
     expect(dead['score'] <= 0.30, f"(7) a dead bundle must land <= 0.30 (got {dead['score']})")
-    # (8) a 0.9 backfill multiplies by exactly 0.8
-    b9 = score(_scenario({'r_backfill_complete': 0.9}))
-    expect(abs(b9['critical']['multiplier'] - 0.8) < 1e-9, f"(8) 0.9 backfill must multiply by 0.8 ({b9['critical']['multiplier']})")
+    # (8) §17.8 G: a vacuous, absent or manifest-fault critical row never fires
+    for label, p in (('vacuous', {'vacuous_root': 'precondition: >= 1 comment POST'}),
+                     ('manifest fault', {'vacuous_root': "manifest: resource 'widget' is not declared"}),
+                     ('absent', {'absent_surface': 'webtrigger'})):
+        v = score(_scenario({n: 0.0 for n in CRITICAL_OF}, {n: p for n in CRITICAL_OF}))
+        expect(abs(v['critical']['multiplier'] - 1.0) < 1e-9, f"(8) {label} critical rows fired {v['critical']['unsuppressed']}")
     # (9) dominance: every band failure lands at or below its ceiling
     for limit, label, names in ADMISSION_BANDS:
         for n in names:
             v = score(_scenario({n: 0.0}))
             expect(v['score'] <= limit + 1e-9, f'(9) {n} failing must hold {label} at {limit} (got {v["score"]})')
-    # (11) band 4's graded ceiling at n = 1, 2, 3, 4, 5 and every failed row (DESIGN §8.5)
-    # Rows no other band row is the root of, so k failed rows are k defects (band_defects prices a shadow once).
-    band4 = [n for n in ADMISSION_BANDS[-1][2] if not any(n in ROOT_BLOCKS.get(r, ()) for r in ADMISSION_BANDS[-1][2])]
-    for k, want in ((1, 0.899), (2, 0.869), (3, 0.839), (4, 0.809), (5, 0.799), (len(band4), 0.799)):
-        got = admit(_scenario({n: 0.0 for n in band4[:k]}))['ceiling']
-        expect(abs(got - want) < 1e-9, f'(11) band 4 with {k} failed row(s) must cap at {want} (got {got})')
-    # severity ordering: every critical costs more than any single non-critical defect
+    # severity ordering: every critical costs more than any single unbanded defect
     costs = single_defect_costs()
-    worst_plain = min(v for n, v in costs.items() if n not in CRITICAL_CHECKS and n not in DIAGNOSTIC
-                      and n not in {x for _l, _b, names in ADMISSION_BANDS for x in names})
-    for n in CRITICAL_CHECKS:
+    banded = {x for _l, _b, names in ADMISSION_BANDS for x in names}
+    worst_plain = min(v for n, v in costs.items() if n not in CRITICAL_OF and n not in DIAGNOSTIC and n not in banded)
+    for n in CRITICAL_OF:
         expect(costs[n] < worst_plain, f'a critical ({n} {costs[n]}) must cost more than any unbanded defect ({worst_plain})')
+    return fails
+
+
+def defect_selftest() -> List[str]:
+    """The §17.8 B, F and H fixes through the REAL rows on synthetic evidence (no tree, no probe)."""
+    fails: List[str] = []
+
+    def expect(cond, msg):
+        if not cond:
+            fails.append(msg)
+
+    pack = fo.synthetic_pack()
+
+    def row(name: str, obs: Dict) -> Dict:
+        ctx = Ctx(None, obs, pack, fixture_seed=pack['seed'])
+        fn, pre, needs = next((f, p, x) for n, _t, f, p, x in CHECKS if n == name)
+        return _run_check(ctx, name, TIER_OF[name], fn, pre, needs)
+
+    def comments(n):
+        return [{'t': i, 'issueKey': 'X-1', 'provider': 'user', 'status': 201, 'body': {}} for i in range(n)]
+
+    def renders(post, dbl):
+        return [{'sprintId': '1', 'select': {'ariaSelected': True}, 'post': post, 'doubleClick': dbl,
+                 'forbidden': {'errorFlags': 1, 'sortWorksAfter': True}}]
+
+    # B: one comment per gesture passes; zero comments and no flag do not fire; two comments for one gesture do
+    for label, post, dbl, want in (
+            ('exactly once', {'commentsAdded': 1, 'successFlags': 1}, {'commentsAdded': 1, 'successFlags': 1}, 1.0),
+            ('zero comments, no flag', {'commentsAdded': 1, 'successFlags': 1}, {'commentsAdded': 0, 'successFlags': 0}, 1.0),
+            ('double click duplicate', {'commentsAdded': 1, 'successFlags': 1}, {'commentsAdded': 2, 'successFlags': 2}, 0.0),
+            ('undeliverable click', {'commentsAdded': 1, 'successFlags': 1}, {'clickFailed': 'intercepted'}, 1.0)):
+        obs = {'comments': comments(3), 'ui': {'sprintAction': renders(post, dbl)}}
+        got = row('b_comment_exactly_once', obs)
+        expect(got['score'] == want and got.get('critical') == 'duplicate',
+               f"B b_comment_exactly_once on {label}: {got['score']} (want {want}) — {got.get('detail')}")
+    flow = row('u_comment_flow', {'ui': {'sprintAction': renders({'commentsAdded': 1, 'successFlags': 1},
+                                                                   {'commentsAdded': 0, 'successFlags': 0})}})
+    expect(abs(flow['score'] - 5 / 7) < 1e-3, f"B u_comment_flow must charge the zero-comment double click 2 of 7 steps "
+           f"(got {flow['score']}: {flow.get('detail')})")
+    # H: polling scores 0; a subscriber that updates the moved sprints scores 1; one that never updates scores 0
+    o, oui = Ctx(None, {}, pack).oracle, Ctx(None, {}, pack).oracle_ui
+    board = next((b for b in oui.boards if any(o.numbers(s).metrics_text() != oui.numbers(s).metrics_text()
+                                               for s in oui.sprints_of_board(b))), None)
+    expect(board is not None, 'H the synthetic pack moves no sprint live (cannot test u_widget_live)')
+    if board is not None:
+        sids = oui.sprints_of_board(board)
+
+        def shown(oracle):
+            return [{'id': s, 'metrics': {'committed': fo.format_points(oracle.numbers(s).committed),
+                                          'added': fo.format_points(oracle.numbers(s).added),
+                                          'removed': fo.format_points(oracle.numbers(s).removed),
+                                          'creep': fo.format_creep(oracle.numbers(s).creep)}} for s in sids]
+        view = {'views': [{'board': board, 'sprints': shown(o)}]}
+        for label, live, want in (
+                ('live update', {'board': board, 'subscribed': True, 'idleInvokes': 0, 'sprintsAfter': shown(oui)}, 1.0),
+                ('polling', {'board': board, 'subscribed': False, 'idleInvokes': 3, 'sprintsAfter': shown(oui)}, 0.0),
+                ('never updates', {'board': board, 'subscribed': True, 'idleInvokes': 0, 'sprintsAfter': shown(o)}, 0.0)):
+            got = row('u_widget_live', {'ui': {'widget': view, 'live': live}})
+            expect(got['score'] == want, f"H u_widget_live on {label}: {got['score']} (want {want}) — {got.get('detail')}")
+    # F: the backfill economy is continuous — one call over the top costs a little, never a rung
+    top = float(TH['reconcile_economy_top'])
+    optimum, missing = Ctx(None, {}, pack).oracle.reconcile_optimum()
+    expect(optimum is not None, f'F the synthetic pack has no reconcile optimum ({missing})')
+    if optimum is not None:
+        for used in (optimum, optimum + 1, 2 * optimum):
+            ctx = Ctx(None, {'phases': {'backfill': {'calls': [{'service': 'jira', 'kind': 'scheduled'}] * used}}},
+                      pack, fixture_seed=pack['seed'])
+            ctx._row_cache['r_backfill_complete'] = {'score': 1.0}
+            fn = next(f for n, _t, f, _p, _x in CHECKS if n == 'e_reconcile_economy')
+            got, want = fn(ctx)['score'], round(min(1.0, top / (used / optimum)), 4)
+            expect(got == want, f'F e_reconcile_economy at {used}/{optimum} calls: {got} (want {want}, continuous)')
     return fails
 
 
@@ -3487,9 +3704,9 @@ def reference_failures(result: Dict) -> List[str]:
         if (r.get('parts') or {}).get('vacuous_root'):
             fails.append(f'{n}: vacuous on the golden — its contract hook produced no evidence')
             continue
-        if n in CALIBRATION_OWNED or n in DIAGNOSTIC and n not in CRITICAL_CHECKS:
+        if n in CALIBRATION_OWNED or n in DIAGNOSTIC and n not in CRITICAL_OF:
             continue
-        if n in CRITICAL_CHECKS and r['score'] < 1.0 - 1e-9:
+        if n in CRITICAL_OF and r['score'] < 1.0 - 1e-9:
             fails.append(f"{n}: CRITICAL {r['score']} != 1.0 — criticals are facts the golden achieves")
         elif r['score'] < 1.0 - 1e-9:
             fails.append(f"{n}: {r['score']} < 1.0 — {str(r.get('detail'))[:100]}")
@@ -3509,10 +3726,11 @@ def format_report(result: Dict, title: str = '') -> str:
     t, crit = result['tiers'], result['critical']
     lines = [f"{title} {result['scorerVersion']}: {result['score']:.4f} [{result['status']}]"
              f"{'' if result['publishable'] else ' UNPUBLISHABLE: ' + '; '.join(result['unpublishable_reasons'])}",
-             f"Earned {result['rawScore']:.4f} = (0.88 x inner {result['inner']:.4f} + 0.12 x excellence "
-             f"{t['E']['mean']:.4f}) x critical multiplier {crit['multiplier']}; admission ceiling "
-             f"{result['admission']['ceiling']:.3f}",
-             'Unsuppressed criticals: ' + (', '.join(crit['unsuppressed']) or 'none'),
+             f"Earned {result['rawScore']:.4f} = ({V1_WEIGHT:g} x v1 {result['v1']['score']:.4f} [0.88 x inner "
+             f"{result['v1']['inner']:.4f} + 0.12 x excellence {t['E']['mean']:.4f}] + v2 {result['v2']['score']:.4f}) "
+             f"x critical multiplier {crit['multiplier']}; admission ceiling {result['admission']['ceiling']:.3f}",
+             'Unsuppressed criticals: ' + (', '.join(f"{x['check']} ({x['class']})" for x in crit['rows']
+                                                    if not x.get('suppressed')) or 'none'),
              *result['admission']['reasons'],
              '  '.join(f"{k} {100 * t[k]['mean']:.0f}%" for k in TIER_ORDER if k in t),
              f"seed {result.get('fixture_seed')} (dev {result.get('dev_seed')}), runtime {result.get('runtime')}"]
@@ -3535,7 +3753,7 @@ def format_report(result: Dict, title: str = '') -> str:
     return '\n'.join(lines)
 
 
-# ── gathering (I2 through forge_probe.mjs) and the hermetic CLI ──────────────────────────────
+# ── gathering (I2 through forge2_probe.mjs) and the hermetic CLI ──────────────────────────────
 
 _CHILDREN: List[subprocess.Popen] = []
 
@@ -3583,14 +3801,14 @@ def _probe_preflight() -> Optional[str]:
 
 def _kit() -> Tuple[Optional[Dict], Optional[str]]:
     try:
-        import forge_kit  # WP1 (DESIGN §10)
+        import forge2_kit  # P11 (SPEC §3)
     except ImportError:
-        return None, 'bench/forge_kit.py is not present (WP1 deliverable) — no pinned kit to score against'
+        return None, 'bench/forge2_kit.py is not present (P11 deliverable) — no pinned kit to score against'
     try:
-        info = forge_kit.ensure()
+        info = forge2_kit.ensure()
     except Exception as error:
-        return None, f'forge_kit.ensure() refused: {error}'
-    # forge_kit.ensure() -> {kit_dir, modules_dir, kit_lock_sha256, kit_code_sha256, wrapper_sha256}
+        return None, f'forge2_kit.ensure() refused: {error}'
+    # forge2_kit.ensure() -> {kit_dir, modules_dir, kit_lock_sha256, kit_code_sha256, wrapper_sha256}
     return {**info, 'dir': info['kit_dir'], 'lock_sha256': info['kit_lock_sha256'],
             'wrapper_sha256': info.get('wrapper_sha256'),
             'app_modules': str(Path(info['modules_dir']) / 'app-modules' / 'node_modules')}, None
@@ -3607,11 +3825,10 @@ def _trace_header(tree: Path) -> Dict:
 
 
 def build_pack(seed: str, out: Path) -> Dict:
-    fixtures = ROOT / 'forge' / 'site' / 'fixtures.cjs'
-    if not fixtures.is_file():
-        raise RuntimeError('forge/site/fixtures.cjs is not present (WP1, interface I1)')
+    if not FIXTURES.is_file():
+        raise RuntimeError(f'{FIXTURES.relative_to(ROOT)} is not present (P4, interface I1)')
     node = _render_node()
-    proc = subprocess.run([node, str(fixtures), '--seed', seed, '--out', str(out), '--scoring'], capture_output=True, text=True)
+    proc = subprocess.run([node, str(FIXTURES), '--seed', seed, '--out', str(out), '--scoring'], capture_output=True, text=True)
     if proc.returncode != 0:
         raise RuntimeError(f'fixtures.cjs failed: {proc.stderr[-400:]}')
     return json.loads(out.read_text())
@@ -3626,7 +3843,7 @@ def clone_tree(src: Path, dest: Path) -> None:
 def _probe_one(root: Path, seed: str, kit: Dict, runtime: str, shots: Path, media_dir: Optional[Path],
                obs_copy: Path) -> Tuple[Dict, Dict]:
     """One scoring site: a fresh clone of the tree, the site seeded with `seed`, the probe; returns (observations, pack)."""
-    with tempfile.TemporaryDirectory(prefix='forge-score-') as tmp:
+    with tempfile.TemporaryDirectory(prefix='forge2-score-') as tmp:
         tmp = Path(tmp)
         app = tmp / 'app'
         clone_tree(Path(root), app)
@@ -3641,7 +3858,7 @@ def _probe_one(root: Path, seed: str, kit: Dict, runtime: str, shots: Path, medi
         _CHILDREN.append(proc)
         code = proc.wait()
         if not obs_path.is_file():
-            raise RuntimeError(f'REFUSED: forge_probe.mjs exited {code} without observations (seed {seed})')
+            raise RuntimeError(f'REFUSED: forge2_probe.mjs exited {code} without observations (seed {seed})')
         obs = json.loads(obs_path.read_text())
         # Pixels are read once, here, into the observations, so evaluate() stays pure over (tree, observations,
         # pack) and a kept observation file rescored later grades v_dark_mode the same way.
@@ -3665,7 +3882,9 @@ def gather(root: Path, _port, _db_dir, trace_path: Optional[Path] = None, mark_p
     derived scoring sites (SCORING_SEEDS). The run's own seed keeps the published shots, recording and
     forge-observations.json; the derived sites' evidence lands under forge-shots/seeds/<seed>/."""
     if not seed:
-        raise RuntimeError('REFUSED: score_forge.gather needs the fixture seed')
+        raise RuntimeError('REFUSED: score_forge2.gather needs the fixture seed')
+    if V2_ABSENT:
+        raise RuntimeError('REFUSED: ' + V2_ABSENT)
     kit, why = _kit()
     if kit is None:
         raise RuntimeError('REFUSED: ' + why)
@@ -3698,14 +3917,25 @@ def main(argv=None) -> int:
     ap.add_argument('--seed')
     ap.add_argument('--json-out', type=Path)
     ap.add_argument('--calibrate', type=Path, nargs='+', metavar='GOLDEN_VERDICT',
-                    help='fit forge-thresholds.json from >= 5 reference-passing golden verdicts; prints the sha to pin')
+                    help='fit forge2-thresholds.json from >= 5 reference-passing golden verdicts; prints the sha to pin')
     ap.add_argument('--reference', action='store_true')
+    ap.add_argument('--selftest', action='store_true',
+                    help='run the composition selftest and the §17.8 defect selftest on synthetic evidence, then exit')
     ap.add_argument('--runtime', choices=('wrapper', 'shim'), default='wrapper')
     ap.add_argument('--port', type=int, help='accepted for the rescorer; forge binds ephemeral ports')
     ap.add_argument('--single-seed', action='store_true',
                     help='score on --seed alone (the controls and the calibration name their seeds); the default grades '
                          f'{SCORING_SEEDS} scoring sites (contract §8), the worst per correctness row')
     a = ap.parse_args(argv)
+    if a.selftest:
+        if V2_ABSENT:
+            print(f'NOTE: {V2_ABSENT}; the selftest composes on the synthetic stand-in registry', file=sys.stderr)
+        fails = severity_selftest() + defect_selftest()
+        families = ', '.join(f'{fam} {sum(1 for t in TIER_OF.values() if t == fam)}' for fam in FAMILY_WEIGHT)
+        print(f'{VERSION}: {len(CHECKS)} rows ({len(V1_ROWS)} v1; v2 per family: {families}); '
+              f'{len(CRITICAL_OF)} critical rows in {len(CRITICAL_CLASSES)} classes')
+        print('SELFTEST: ' + ('PASS' if not fails else 'FAIL\n  ' + '\n  '.join(fails)))
+        return 1 if fails else 0
     if a.calibrate:
         try:
             fitted = calibrate([json.loads(p.read_text()) for p in a.calibrate], TH)
@@ -3717,7 +3947,7 @@ def main(argv=None) -> int:
             text = re.sub(r'("%s": )\[[\s\S]*?\n  \]' % re.escape(key), lambda m, k=key: m.group(1) + json.dumps(fitted[k]), text)
         raw = (text + '\n').encode()
         THRESHOLDS_FILE.write_bytes(raw)
-        print(f"wrote {THRESHOLDS_FILE.name}; pin CALIB_SHA256 = '{hashlib.sha256(raw).hexdigest()}' in score_forge.py")
+        print(f"wrote {THRESHOLDS_FILE.name}; pin CALIB_SHA256 = '{hashlib.sha256(raw).hexdigest()}' in score_forge2.py")
         return 0
     if not a.tree or not a.json_out:
         ap.error('--tree and --json-out are required to score')
@@ -3739,7 +3969,7 @@ def main(argv=None) -> int:
         print('REFUSED: --seed equals the tree\'s dev_seed — the scoring site must differ from the site the entrant '
               'developed against (DESIGN §5.1)', file=sys.stderr)
         return 2
-    why = _probe_preflight()
+    why = V2_ABSENT or _probe_preflight()
     if why is None:
         _kit_info, why = _kit()
     if why:
