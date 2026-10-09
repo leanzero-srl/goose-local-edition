@@ -2,6 +2,7 @@
 
     python3 release_manifest.py sb7.1/release-manifest.json [--source-commit SHA] [--check]
     python3 release_manifest.py forge/release-manifest.json [--source-commit SHA] [--check]
+    python3 release_manifest.py forge2/release-manifest.json [--source-commit SHA] [--check]
 
 The payload is what ui/desktop/forge.config.ts mirrorSwarmBenchPayload() ships: the specs, the
 SB7.1 starter, each tier's VISUAL-CONTRACT.md, SB7.2's own SB7-CONTRACT.md and STARTER.md, sb8/, and bench/ through the same name filter. Only
@@ -10,11 +11,13 @@ the pins without writing. ui/desktop/scripts/copy-bench-release-manifest.cjs ref
 bytes differ from the pins, so a bench edit without a refreeze fails packaging, never ships silently.
 
 The payload is per FAMILY (forge/DESIGN.md §12), read from the manifest's own `family` (absent = payments):
-`payments` is exactly the SB7.x payload it always was — the forge files that now share bench/ are excluded,
-so the SB7.x pins do not move when forge does. `forge` is forge/public, forge/starter, forge/kit without
-module trees, forge/site, and the bench files the forge tier runs: its scorer files, the harness entry points
-and their top-level bench imports, followed statically. Forge pins only git-tracked files: three packages
-build it in one tree, and a manifest pins committed bytes, never another package's work in progress.
+`payments` is exactly the SB7.x payload it always was — every bench file named for forge (any era) is excluded,
+so the SB7.x pins do not move when forge does. `forge` is per ERA, the manifest's `scorerVersion` choosing its
+isolated tier: <era>/public, <era>/starter, <era>/kit without module trees, <era>/site (forge/ for forge-1.0,
+forge2/ for forge-2.0), and the bench files the tier runs: its scorer files, the harness entry points, the era's
+controls runner and their top-level bench imports, followed statically. Forge pins only git-tracked files:
+several packages build it in one tree, and a manifest pins committed bytes, never another package's work in
+progress.
 """
 from __future__ import annotations
 
@@ -27,6 +30,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import isolated_tiers  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 SPECS = ('spec-build.md', 'spec-build-v2.md', 'spec-build-v3.md', 'spec-build-sb7.md',
@@ -44,15 +48,20 @@ def _bench_file(name: str) -> bool:
             or name in ('vendor_docs.md', 'vendor_docs_v3.md'))
 
 
-FORGE_BENCH = re.compile(r'^(score_forge|forge_[a-z_]+|test_score_forge)\.(py|mjs)$|^forge-thresholds\.json$')
-FORGE_TREES = ('forge/public', 'forge/starter', 'forge/kit', 'forge/site')
-FORGE_HARNESS = ('run_build.py', 'bench_rescore.py', 'bench_isolation.py', 'browser-self-test.mjs', 'forge_controls.py')
+# Every forge bench file of every era carries "forge" in its name (score_forge2.py, forge2_site.py,
+# forge2-thresholds.json, test_forge2_harness.py, ...). The old exact-name pattern let the forge2 files into
+# the SB7.x pins (forge2/research/understand/integration.md §3).
+FORGE_BENCH = re.compile(r'forge')
+FORGE_TREES = ('public', 'starter', 'kit', 'site')
+FORGE_HARNESS = ('run_build.py', 'bench_rescore.py', 'bench_isolation.py', 'browser-self-test.mjs')
+FORGE_CONTROLS = {'forge-1.0': 'forge_controls.py', 'forge-2.0': 'forge2_controls.py'}
 TOP_IMPORT = re.compile(r'^(?:import|from)\s+([A-Za-z_][A-Za-z0-9_]*)', re.M)
 
 
-def payload(root: Path = ROOT, family: str = 'payments') -> list[str]:
+def payload(root: Path = ROOT, family: str = 'payments', version: str = 'forge-1.0') -> list[str]:
+    """`version` picks the forge era (a manifest's scorerVersion); the payments payload is one for every SB7.x."""
     if family == 'forge':
-        return forge_payload(root)
+        return forge_payload(root, isolated_tiers.BY_VERSION[version])
     if family != 'payments':
         raise ValueError(f'unknown benchmark family {family!r}')
     files = [name for name in SPECS if (root / name).is_file()]
@@ -61,7 +70,7 @@ def payload(root: Path = ROOT, family: str = 'payments') -> list[str]:
                   if path.is_file() and _shipped(path.relative_to(root))]
     files += [name for name in CONTRACTS if (root / name).is_file()]
     files += [f'bench/{path.name}' for path in sorted((root / 'bench').iterdir())
-              if path.is_file() and _bench_file(path.name) and not FORGE_BENCH.match(path.name)]
+              if path.is_file() and _bench_file(path.name) and not FORGE_BENCH.search(path.name)]
     files += [f'bench/probes/{path.name}' for path in sorted((root / 'bench/probes').iterdir())
               if path.is_file() and path.name.endswith('.py')]
     return sorted(files)
@@ -96,22 +105,23 @@ def _bench_closure(root: Path, roots: tuple) -> set[str]:
     return {f'bench/{name}' for name in seen}
 
 
-def forge_payload(root: Path = ROOT) -> list[str]:
-    import isolated_tiers
-    tier = isolated_tiers.FORGE10
+def forge_payload(root: Path, tier) -> list[str]:
+    if tier.family != 'forge':
+        raise ValueError(f'{tier.version} is not a forge era')
+    era = Path(tier.starter).parent
     files = {tier.spec, *(source for _name, source in tier.public)}
-    for tree in FORGE_TREES:
+    for tree in (era / name for name in FORGE_TREES):
         if (root / tree).is_dir():
             files |= {str(p.relative_to(root)) for p in (root / tree).rglob('*') if p.is_file()
                       and _shipped(p.relative_to(root)) and 'node_modules' not in p.parts
                       and 'lint-modules' not in p.parts and 'app-modules' not in p.parts}
-    files |= _bench_closure(root, (*tier.scorer_files, *FORGE_HARNESS))
+    files |= _bench_closure(root, (*tier.scorer_files, *FORGE_HARNESS, FORGE_CONTROLS[tier.version]))
     tracked = _tracked(root)
     return sorted(name for name in files if name in tracked)
 
 
-def pins(root: Path = ROOT, family: str = 'payments') -> dict[str, str]:
-    return {name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in payload(root, family)}
+def pins(root: Path = ROOT, family: str = 'payments', version: str = 'forge-1.0') -> dict[str, str]:
+    return {name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in payload(root, family, version)}
 
 
 def main(argv=None) -> int:
@@ -122,7 +132,11 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     path = ROOT / args.manifest
     manifest = json.loads(path.read_text())
-    current = pins(ROOT, manifest.get('family', 'payments'))
+    tier = isolated_tiers.BY_VERSION[manifest['scorerVersion']]
+    family = manifest.get('family', 'payments')
+    if family != tier.family:
+        raise SystemExit(f'REFUSED: {args.manifest} names family {family!r}, but {tier.version} is {tier.family!r}')
+    current = pins(ROOT, family, tier.version)
     if args.check:
         stale = sorted(name for name in set(current) | set(manifest['files'])
                        if current.get(name) != manifest['files'].get(name))

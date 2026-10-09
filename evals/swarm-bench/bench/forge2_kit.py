@@ -1,21 +1,26 @@
-"""The forge-1.0 kit: materialise, pin and verify (DESIGN.md §6.1, §10).
+"""The forge-2.0 kit: materialise, pin and verify — forge_kit.py's procedure over forge2/kit (forge2/SPEC.md §3).
 
-The repo commits only the kit's recipe (forge/kit: package.json + package-lock.json for the
-app-modules tree, lint/package.json + lint/package-lock.json for the lint-modules tree, bin/, lib/,
-openapi/, runtime-pin.json). ensure() turns it into a cache dir that is never committed:
+The repo commits only the kit's recipe (forge2/kit: package.json + package-lock.json for the
+app-modules tree — forge-2.0 adds @forge/react for the UI Kit admin page — lint/package.json +
+lint/package-lock.json for the lint-modules tree, bin/, lib/, openapi/, lint-pack/, runtime-pin.json).
+ensure() turns it into a cache dir that is never committed:
 
     <cache>/<lock_sha256[:16]>/app-modules/node_modules     npm ci --ignore-scripts (integrity hashes)
     <cache>/<lock_sha256[:16]>/lint-modules/node_modules
     <cache>/<lock_sha256[:16]>/wrapper/{wrapper.js,loader.js}  Atlassian's runtime wrapper, by sha256
     <cache>/<lock_sha256[:16]>/schema/manifest-schema.json    copied out of @forge/manifest
-    <cache>/<lock_sha256[:16]>/kit-<code_sha256[:16]>/        $FORGE_KIT: bin lib openapi runtime-pin.json
+    <cache>/<lock_sha256[:16]>/kit-<code_sha256[:16]>/        $FORGE_KIT: the code parts below
                                                               + links to the four dirs above
+
+The cache is shared with forge_kit.py: both key it by content (lock / code hashes), so the two kits never
+collide and identical module trees are fetched once. lint-pack/ (the server-side lint rules) ships when the
+recipe has it; KIT.json lists the code parts each kit was built from.
 
 Network is needed once per kit version, outside any sandbox. Every mismatch refuses (RuntimeError
 starting "REFUSED:"); nothing falls back. Cache root: $FORGE_KIT_CACHE or
 ~/Library/Application Support/Goose/benchmark/forge-kit.
 
-CLI: forge_kit.py ensure | status | repin | lock-sha | install-modules <workdir>
+CLI: forge2_kit.py ensure | status | repin | lock-sha | install-modules <workdir>
 
 status() answers, without the network and without writing, whether ensure() would return at once: the
 desktop's Benchmark view shows it as the Forge kit's readiness before a run may launch.
@@ -34,8 +39,8 @@ import sys
 import tempfile
 import urllib.request
 
-KIT_SRC = Path(__file__).resolve().parent.parent / 'forge' / 'kit'
-CODE_PARTS = ('bin', 'lib', 'openapi', 'runtime-pin.json')
+KIT_SRC = Path(__file__).resolve().parent.parent / 'forge2' / 'kit'
+CODE_PARTS = ('bin', 'lib', 'openapi', 'lint-pack', 'runtime-pin.json')
 WRAPPER_CDN = 'https://forge-node-runtime.prod-east.frontend.public.atl-paas.net/'
 
 
@@ -57,9 +62,13 @@ def lock_sha256(src: Path = KIT_SRC) -> str:
     return _sha(b''.join(parts))
 
 
+def code_parts(src: Path = KIT_SRC) -> list[str]:
+    return [part for part in CODE_PARTS if (src / part).exists()]
+
+
 def code_sha256(src: Path = KIT_SRC) -> str:
     h = hashlib.sha256()
-    for part in CODE_PARTS:
+    for part in code_parts(src):
         root = src / part
         files = [root] if root.is_file() else sorted(p for p in root.rglob('*') if p.is_file())
         for path in files:
@@ -149,7 +158,8 @@ def _ensure_locked(root: Path) -> dict:
     kit = modules / ('kit-' + code[:16])
     if not (kit / 'KIT.json').is_file():
         staging = Path(tempfile.mkdtemp(prefix='kit-', dir=modules))
-        for part in CODE_PARTS:
+        parts = code_parts()
+        for part in parts:
             src = KIT_SRC / part
             if src.is_dir():
                 shutil.copytree(src, staging / part)
@@ -161,6 +171,7 @@ def _ensure_locked(root: Path) -> dict:
                     for name in json.loads((KIT_SRC / 'package.json').read_text())['dependencies']}
         (staging / 'KIT.json').write_text(json.dumps({
             'kit_lock_sha256': lock, 'kit_code_sha256': code, 'wrapper_sha256': wrapper_sha, 'app_modules': versions,
+            'code_parts': parts,
         }, indent=2) + '\n')
         if kit.exists():
             shutil.rmtree(kit)
@@ -218,7 +229,7 @@ def repin() -> dict:
            'loader_url': found['loader'], 'loader_sha256': _sha(loader), 'loader_bytes': len(loader),
            'fetched': datetime.date.today().isoformat(),
            'discovered_from': WRAPPER_CDN + " (the index @forge/bundler 7.2.3 NetworkWrapperProvider parses: the first <script src> containing 'wrapper' / 'loader')",
-           'repin': 'python3 evals/swarm-bench/bench/forge_kit.py repin'}
+           'repin': 'python3 evals/swarm-bench/bench/forge2_kit.py repin'}
     (KIT_SRC / 'runtime-pin.json').write_text(json.dumps(pin, indent=2) + '\n')
     return pin
 
