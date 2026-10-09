@@ -24,6 +24,8 @@ reads exactly them; checkpoints are 'h1'..'h6' — virtual-hour marks after the 
   world       [{class, ...}] the world events the site applied (world.cjs class names)
   rovo        {calls: [{as, sprintId, result, ...}]} (1.0's section; the peer's calls run after the browse-revoke)
   webtrigger  [{case, status, side_effects}] with forge2/site/ci.cjs's step names (WT_STATUS)
+  webtriggerSetup {plan: [{name, eventId, environment, issueKeys, expect: {status, effect}}]} (ci.cjs's plan: what each
+              step names and must show)
   admin       {actions: [{as: 'admin'|'nonadmin'|'forged', resolver, result_ok, state_changed, changed_keys[, landed]}],
                controls: {<label key>: found}, tree_text, secret_shown, secret_source, secret_leaks: [string]}
   field       {writes: [{t_ms, updates, status}], values_by_checkpoint: {<checkpoint>: {<issueId|issueKey>: value}},
@@ -38,7 +40,8 @@ and forged attempts (the forged budget stored or a `secret:` key rotated; withou
 `state_changed`, which also counts an audit entry recording the refusal).
 
 `python3 forge2_checks.py` runs the selftest: observations built from the oracle score 1.0 on every row, an idle app
-earns 0 with no critical fired, and one injected defect per family costs exactly the rows it should.
+earns 0 with no critical fired, and one injected defect per family costs exactly the rows it should — and fires no
+critical once the v2 surface its row is gated on is gone from the manifest.
 """
 from __future__ import annotations
 
@@ -695,6 +698,11 @@ def _(ev: Ev) -> Dict:
         after = ev.o.hidden_issue_ids(account, loss['t'])
         visible = {k for k in ledger_keys if ev.o.issue_by_key[k]['id'] not in after}
         terms = ev.o.leak_terms_for(after - before)
+        # A hidden summary that is text of a summary the person still browses ("Add the refund queue" inside "Add the
+        # refund queue for large accounts": 59 of 489 on seed 0123) shows no hidden data — score_forge2.leak_terms' rule.
+        end = ev.o.hidden_issue_ids(account)
+        still = [i['summary'] for iid, i in ev.o.issues.items() if iid not in end and i.get('summary')]
+        terms['summaries'] = [s for s in terms['summaries'] if not any(s in v for v in still)]
         for c in calls:
             if not isinstance(c, dict) or str(c.get('as')) != account or c.get('result') is None:
                 continue
@@ -802,15 +810,20 @@ def wt_gate(ev: Ev) -> Optional[Dict]:
     return None if ev.has_module('webtrigger') else absent('webtrigger (SPEC R6)')
 
 
-def repeated_env(value) -> bool:
-    """A `deployedEnvs` string that names one environment twice ('staging,staging', '["staging","staging"]')."""
+def envs_of(value) -> List[str]:
+    """The environments a `deployedEnvs` string names (contract §2.4: comma-separated, each once; a JSON list read too)."""
     if not isinstance(value, str) or not value.strip():
-        return False
+        return []
     try:
         parsed = json.loads(value)
-        envs = [str(x) for x in parsed] if isinstance(parsed, list) else [str(parsed)]
+        return [str(x) for x in parsed] if isinstance(parsed, list) else [str(parsed)]
     except ValueError:
-        envs = [x for x in re.split(r'[\s,;|]+', value) if x]
+        return [x for x in re.split(r'[\s,;|]+', value) if x]
+
+
+def repeated_env(value) -> bool:
+    """A `deployedEnvs` string that names one environment twice ('staging,staging', '["staging","staging"]')."""
+    envs = envs_of(value)
     return len(envs) != len(set(envs))
 
 
@@ -894,6 +907,9 @@ def _(ev: Ev) -> Dict:
 
 @row('r6_valid_applies', 'R6')
 def _(ev: Ev) -> Dict:
+    """A validly signed new event is accepted (202) and recorded (contract §14): at the end every scope-ledger row of
+    each issue it names carries its environment in `deployedEnvs` — what the sprint action's `Deployed to <env>` cell
+    shows. The probe's webtriggerSetup.plan names each step's environment and issues (forge2/site/ci.cjs)."""
     gate = wt_gate(ev)
     if gate:
         return gate
@@ -903,10 +919,37 @@ def _(ev: Ev) -> Dict:
     valid = [c for c in cases if c.get('case') in WT_VALID]
     if not valid:
         return vacuous('no validly signed event was sent')
-    bad = [c['case'] for c in valid if c.get('status') != 202 or (effects(c) or 0) < 1]
+    setup = ev.obs.get('webtriggerSetup')
+    plan = setup.get('plan') if isinstance(setup, dict) else None
+    if not isinstance(plan, list):
+        return unavail('the probe wrote no webtriggerSetup.plan (the environment and issues each CI event names)')
+    effect = {p.get('name'): (p.get('expect') or {}).get('effect') for p in plan if isinstance(p, dict)}
+    unplanned = [c['case'] for c in valid if not isinstance(effect.get(c['case']), dict)
+                 or not isinstance(effect[c['case']].get('issueKeys'), list) or not effect[c['case']]['issueKeys']
+                 or not effect[c['case']].get('environment')]
+    if unplanned:
+        return unavail(f'webtriggerSetup.plan names no environment and issues for {sample(unplanned)}')
+    rows, why = ev.v2('final')
+    if why:
+        return unavail(why)
+
+    def shows(issue_key: str, env: str) -> bool:
+        issue_id = (ev.o.issue_by_key.get(issue_key) or {}).get('id')
+        mine = [r for r in rows if r.get('issueKey') == issue_key
+                or (issue_id is not None and str(r.get('issueId')) == str(issue_id))]
+        return bool(mine) and all(env in envs_of(r.get('deployedEnvs')) for r in mine)
+
+    bad = []
+    for c in valid:
+        env, keys = effect[c['case']]['environment'], [str(k) for k in effect[c['case']]['issueKeys']]
+        unshown = [k for k in keys if not shows(k, env)]
+        if c.get('status') != 202:
+            bad.append(f'{c["case"]}: status {c.get("status")}')
+        elif unshown:
+            bad.append(f'{c["case"]}: no `Deployed to {env}` on every ledger row of {sample(unshown, 2)}')
     return g((len(valid) - len(bad)) / len(valid), f'{len(valid) - len(bad)} of {len(valid)} validly signed events '
-             'accepted (202) and applied' + (f'; not applied: {sample(bad)}' if bad else ''),
-             'deployments never reach the ledger')
+             'accepted (202) and recorded as `Deployed to <env>` on every ledger row of the issues they name'
+             + (f'; {sample(bad, 2)}' if bad else ''), 'deployments never reach the ledger')
 
 
 @row('r6_secret_never_disclosed', 'R6', critical='the CI secret disclosed')
@@ -1193,13 +1236,31 @@ def weighted(rows: List[Dict]) -> float:
 SELFTEST_PARTIAL = 'Scope grew after the sprint started because the team pulled in'
 
 
+def selftest_deployments(o: fo.Oracle) -> Dict[str, Tuple[str, List[str]]]:
+    """The CI plan's two valid steps on this pack: {step: (environment, issue keys)}, issues whose ledger rows all sit in
+    sprints that stay active (the probe names issues of the active sprints)."""
+    rows = o.expected_rows('final')
+    keys = sorted({e['issueKey'] for e in rows} - {e['issueKey'] for e in rows if e['sprintId'] in o.closed_at})
+    return {'valid': ('staging', keys[:2]), 'header-case': ('production', keys[2:3])}
+
+
 def perfect_observations(o: fo.Oracle) -> Dict:
     """What an app that meets every R1-R9 guarantee shows the probe on this pack, built from the oracle in the shapes
     forge2_probe.mjs writes."""
+    deployments = selftest_deployments(o)
+    deployed = {k: env for env, keys in deployments.values() for k in keys}
+
     def v2(cp):
         return [{'changeId': e['changeId'], 'sprintId': e['sprintId'], 'at': float(e['at']), 'deleted': e['deleted'],
                  'estimate': float(min(e['estimates'])), 'boardId': e['boardId'], 'kind': e['kind'],
-                 'issueKey': e['issueKey'], 'deployedEnvs': None} for e in o.expected_rows(cp)]
+                 'issueKey': e['issueKey'], 'deployedEnvs': deployed.get(e['issueKey'])} for e in o.expected_rows(cp)]
+
+    plan = [{'name': n, 'eventId': f'evt-{n}', 'environment': env, 'issueKeys': keys,
+             'expect': {'status': 202, 'effect': {'environment': env, 'issueKeys': keys}}}
+            for n, (env, keys) in deployments.items()]
+    plan += [{**plan[0], 'name': 'replay', 'expect': {'status': 200, 'effect': None}}]
+    plan += [{'name': c, 'eventId': f'evt-{c}', 'environment': 'staging', 'issueKeys': [],
+              'expect': {'status': 401, 'effect': None}} for c in WT_INVALID]
     order = [str(e['changelogId']) for e in o.pack['live']]
     values, applied = {}, {}
     for cp in fo.CHECKPOINTS:
@@ -1262,6 +1323,7 @@ def perfect_observations(o: fo.Oracle) -> Dict:
                        *({'case': c, 'status': 401, 'side_effects': 0, 'writes': []} for c in WT_INVALID),
                        {'case': 'header-case', 'status': 202, 'side_effects': 1,
                         'writes': ['kvs POST /api/v1/entity/set']}],
+        'webtriggerSetup': {'moduleKey': 'ci', 'secretSource': 'panel', 'plan': plan},
         'admin': {'actions': [
             {'as': 'admin', 'via': 'ui', 'resolver': 'save-settings', 'result_ok': True, 'state_changed': True,
              'changed_keys': ['kv:settings']},
@@ -1367,8 +1429,22 @@ def _mutants(o: fo.Oracle) -> Dict[str, Tuple[Callable[[Dict], None], Dict[str, 
     def replay_bookkeeping(obs):
         replay(obs).update(side_effects=1, writes=['kvs POST /api/v1/set'])
 
+    staging_key = selftest_deployments(o)['valid'][1][0]
+    cased_env, cased_keys = selftest_deployments(o)['header-case']
+
     def replay_doubles_env(obs):
-        obs['migration']['v2_by_checkpoint']['final'][0]['deployedEnvs'] = 'staging,staging'
+        next(r for r in obs['migration']['v2_by_checkpoint']['final']
+             if r['issueKey'] == staging_key)['deployedEnvs'] = 'staging,staging'
+
+    def deployment_unrecorded(obs):
+        for r in obs['migration']['v2_by_checkpoint']['final']:
+            if r['issueKey'] in cased_keys:
+                r['deployedEnvs'] = None
+
+    def deployment_other_env(obs):
+        for r in obs['migration']['v2_by_checkpoint']['final']:
+            if r['issueKey'] in cased_keys:
+                r['deployedEnvs'] = 'staging' if cased_env != 'staging' else 'production'
 
     def stale_field(obs):
         pay1 = o.issue_by_key['PAY-1']['id']
@@ -1414,6 +1490,8 @@ def _mutants(o: fo.Oracle) -> Dict[str, Tuple[Callable[[Dict], None], Dict[str, 
         'R6 replay posts again': (replay_posts_again, {'r6_replay_once': 0.0}, ('r6_replay_once',)),
         'R6 replay doubles an environment': (replay_doubles_env, {'r6_replay_once': 0.0}, ('r6_replay_once',)),
         'R6 replay writes a dedupe marker only': (replay_bookkeeping, {}, ()),
+        'R6 deployment accepted but not recorded': (deployment_unrecorded, {'r6_valid_applies': 0.5}, ()),
+        'R6 deployment recorded for the wrong environment': (deployment_other_env, {'r6_valid_applies': 0.5}, ()),
         'R7 stale field': (stale_field, {'r7_values_fresh': pay1_cut}, ()),
         'R8 truncated answer shown': (truncated_shown, {'r8_failure_handling': 0.5}, ()),
         'R8 no cache': (no_cache, {'r8_cost_controls': round(2 / 3, 4)}, ()),
@@ -1421,9 +1499,15 @@ def _mutants(o: fo.Oracle) -> Dict[str, Tuple[Callable[[Dict], None], Dict[str, 
     }
 
 
+# Critical rows no v2 surface gates: duplicates are judged on the scope-ledger rows themselves (an undeclared entity
+# holds none: the KVS refuses it, SCHEMA_NOT_FOUND) and the revoke on v1's Rovo action.
+UNGATED_CRITICALS = {'r3_no_duplicate_rows', 'r4_permission_revoked'}
+
+
 def selftest() -> List[str]:
     """Perfect observations score 1.0 on every row (0.75 weighted); an idle app scores 0 with no critical fired; each
-    one-defect mutant moves exactly its row(s) by exactly the expected amount and fires exactly its critical."""
+    one-defect mutant moves exactly its row(s) by exactly the expected amount and fires exactly its critical, and none
+    once the v2 surfaces are gone from the manifest."""
     global SITE_LLM
     failures = []
     real_site = SITE_LLM
@@ -1455,6 +1539,34 @@ def selftest() -> List[str]:
                 moved = [n for n, r in rows.items() if n not in want and r['score'] != 1.0]
                 if moved:
                     failures.append(f'{name}: rows beyond the defect moved: {moved}')
+                # absent beats evidence (SPEC §4): with the v2 surfaces gone from the manifest (the starter's), a
+                # critical row gated on one of them is absent and fires nothing, whatever its observations hold
+                obs['manifest']['modules'] = {k: v for k, v in obs['manifest']['modules'].items()
+                                              if k not in ('jira:adminPage', 'webtrigger')}
+                obs['manifest']['app']['storage']['entities'] = [{'name': 'scope-change'}]
+                rows = {r['check']: r for r in evaluate(obs, o)}
+                ungated = sorted(n for n in set(fires) - UNGATED_CRITICALS
+                                 if not (rows[n].get('parts') or {}).get('absent_surface'))
+                fired = sorted(n for n in set(rows) - UNGATED_CRITICALS if critical_fired(rows[n]))
+                if ungated or fired:
+                    failures.append(f'{name} without the v2 surfaces: not absent {ungated}, fired {fired}')
+            # leak at scale: a newly hidden summary that is text of a summary the person still browses is no leak; the
+            # newly hidden key still is one
+            pack = fo.synthetic_pack_v2()
+            loss = o.world('browse-revoke')[0]
+            peer = str(loss['accountId'])
+            newly = o.hidden_issue_ids(peer, loss['t']) - o.hidden_issue_ids(peer, loss['t'] - fo.JUST_BEFORE)
+            hidden = next(i for i in pack['issues'] if str(i['id']) in newly
+                          and i.get('summary') in o.leak_terms_for(newly)['summaries'])
+            seen = next(i for i in pack['issues'] if str(i['id']) not in o.hidden_issue_ids(peer))
+            seen['summary'] = f"{hidden['summary']} on mobile"
+            nested = fo.Oracle(pack)
+            for label, text, want in (('visible superstring', seen['summary'], 1.0), ('hidden key', hidden['key'], 0.0)):
+                obs = perfect_observations(nested)
+                obs['rovo']['calls'][0]['result']['changes'].append({'issueKey': seen['key'], 'summary': text})
+                r = {x['check']: x for x in evaluate(obs, nested)}['r4_permission_revoked']
+                if r['score'] != want or critical_fired(r) != (want == 0.0):
+                    failures.append(f'leak on a {label}: {r["score"]} fired={critical_fired(r)} — {r["detail"]}')
             no_v2 = evaluate(perfect_observations(o), fo.Oracle(fo.synthetic_pack()))
             if not all(r.get('unavailable') for r in no_v2):
                 failures.append('a 1.0 pack must leave every v2 row unavailable')

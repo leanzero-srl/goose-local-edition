@@ -2969,9 +2969,13 @@ FIELD_VALUE_WRITE = re.compile(r'^/rest/api/3/app/field/(?:value|[^/]+/value)$')
 
 
 def v1_economy_calls(calls: List[Dict]) -> List[Dict]:
-    """The Jira calls the v1 economy rows count against 1.0's read optimum. 2.0 MANDATES the scope-status field write
-    (SPEC R7, `app/field/value`) on top of v1's reads: R7's rows grade it, so it never costs v1's economy."""
-    return [x for x in calls if not FIELD_VALUE_WRITE.match(str(x.get('path') or '').split('?')[0])]
+    """The Jira calls the v1 economy rows count against 1.0's read optimum: background calls (trigger, consumer,
+    scheduled), the ledger reads 1.0 calibrated on. 2.0's own work is R2's dosing rows', never here: the scope-status
+    field writes (SPEC R7, `app/field/value`), the admin page's ADMINISTER reads and any other person-facing call (R5;
+    the probe's admin lane lands in the backfill phase), the web trigger's calls (R6), the migration's KVS work (R1,
+    never a Jira call). Any other background call still costs, as in 1.0."""
+    return [x for x in calls if x.get('kind') in BACKGROUND_KINDS
+            and not FIELD_VALUE_WRITE.match(str(x.get('path') or '').split('?')[0])]
 
 
 @check('e_reconcile_economy', 'E', needs=('backfill',))
@@ -2981,16 +2985,19 @@ def _(c):
     optimum, missing = c.oracle.reconcile_optimum()
     if optimum is None:
         return unavail(f'pack.limits lacks {missing}')
+    jira = c.calls(('backfill',), 'jira')
+    calls = v1_economy_calls(jira)
     # Each scripted 429 the backfill met forces one repeat of the refused read (the scoring site scripts two, F7).
     scheduled = {f['id'] for f in c.pack.get('faults') or [] if (f.get('match') or {}).get('scope') == 'scheduled-run'}
-    repeats = sum(1 for x in c.calls(('backfill',), 'jira') if x.get('fault') in scheduled and not x.get('earlyRetry'))
+    repeats = sum(1 for x in calls if x.get('fault') in scheduled and not x.get('earlyRetry'))
     optimum += repeats
-    used = len(v1_economy_calls(c.calls(('backfill',), 'jira')))
+    used = len(calls)
     ratio = used / optimum
     # §17.8 F: continuous like e_event_economy (a rung cliff at optimum+1 call ordered the 1.0 top four on 0.010).
     top = float(TH['reconcile_economy_top'])
-    return g(min(1.0, top / ratio) if ratio else 1.0, f'backfill {used} Jira calls / optimum {optimum} (incl. {repeats} '
-             f'forced 429 repeat(s)) = {ratio:.2f}x; 1.0 at <= {top:g}x',
+    return g(min(1.0, top / ratio) if ratio else 1.0, f'backfill {used} background Jira calls / optimum {optimum} (incl. '
+             f'{repeats} forced 429 repeat(s)) = {ratio:.2f}x; 1.0 at <= {top:g}x; {len(jira) - used} 2.0 call(s) not '
+             'counted (field-value writes, person-facing, web trigger)',
              parts={'calls': used, 'optimum': optimum, 'ratio': round(ratio, 3)})
 
 
@@ -3003,15 +3010,18 @@ def _(c):
     # that optimum (2026-10-03 stringency, F1): score = min(1, top / (used / optimum)), `top` the golden's worst ratio
     # over the calibration seeds (calibration-owned), so the golden defines 1.0 and every extra request costs.
     relevant = c.oracle.event_optimum()
-    faults = sum(1 for x in c.calls(('live',), 'jira') if x.get('fault') and not x.get('earlyRetry')
+    jira = c.calls(('live',), 'jira', ('trigger', 'consumer'))
+    calls = v1_economy_calls(jira)
+    faults = sum(1 for x in calls if x.get('fault') and not x.get('earlyRetry')
                  and x.get('fault') in {f['id'] for f in c.pack.get('faults') or []
                                         if (f.get('match') or {}).get('scope') == 'consumer-of-change'})
     optimum = max(1, relevant + faults)
-    used = len(v1_economy_calls(c.calls(('live',), 'jira', ('trigger', 'consumer'))))
+    used = len(calls)
     ratio = used / optimum
     top = float(TH['event_economy_top'])
     return g(min(1.0, top / ratio) if ratio else 1.0, f'{used} Jira calls / optimum {optimum} ({relevant} delivered relevant '
-             f'change(s) x 1 read + {faults} forced 429 repeat) = {ratio:.2f}x; 1.0 at <= {top:g}x',
+             f'change(s) x 1 read + {faults} forced 429 repeat) = {ratio:.2f}x; 1.0 at <= {top:g}x; {len(jira) - used} '
+             'field-value write(s) not counted',
              parts={'calls': used, 'optimum': optimum, 'changes': relevant, 'ratio': round(ratio, 3)})
 
 
@@ -3885,13 +3895,38 @@ def defect_selftest() -> List[str]:
             fn = next(f for n, _t, f, _p, _x in CHECKS if n == 'e_reconcile_economy')
             got, want = fn(ctx)['score'], round(min(1.0, top / (used / optimum)), 4)
             expect(got == want, f'F e_reconcile_economy at {used}/{optimum} calls: {got} (want {want}, continuous)')
-        # R7's mandated field writes are not v1 reads
-        writes = [{'service': 'jira', 'kind': 'scheduled', 'method': 'POST', 'path': '/rest/api/3/app/field/value'}] * 3
-        ctx = Ctx(None, {'phases': {'backfill': {'calls': [{'service': 'jira', 'kind': 'scheduled'}] * optimum + writes}}},
-                  pack, fixture_seed=pack['seed'])
-        ctx._row_cache['r_backfill_complete'] = {'score': 1.0}
+        # 2.0's own work is not v1's economy: R7's field writes, the admin page's ADMINISTER reads (person-facing), the
+        # web trigger's calls; a background read beyond the optimum still costs
         fn = next(f for n, _t, f, _p, _x in CHECKS if n == 'e_reconcile_economy')
-        expect(fn(ctx)['score'] == round(min(1.0, top), 4), 'F R7 field writes must not cost the v1 backfill economy')
+        reads = [{'service': 'jira', 'kind': 'scheduled'}] * optimum
+        for label, extra, want in (
+                ('R7 field writes', [{'service': 'jira', 'kind': 'scheduled', 'method': 'POST',
+                                      'path': '/rest/api/3/app/field/value'}] * 3, round(min(1.0, top), 4)),
+                ('admin reads', [{'service': 'jira', 'kind': 'resolver', 'method': 'GET',
+                                  'path': '/rest/api/3/mypermissions?permissions=ADMINISTER'}] * 3, round(min(1.0, top), 4)),
+                ('web-trigger calls', [{'service': 'jira', 'kind': 'webtrigger', 'method': 'POST',
+                                        'path': '/rest/api/3/issue/bulkfetch'}] * 3, round(min(1.0, top), 4)),
+                ('background reads beyond the optimum', [{'service': 'jira', 'kind': 'consumer', 'method': 'GET',
+                                                          'path': '/rest/api/3/issue/1'}] * (2 * optimum),
+                 round(min(1.0, top / 3), 4))):
+            ctx = Ctx(None, {'phases': {'backfill': {'calls': reads + extra}}}, pack, fixture_seed=pack['seed'])
+            ctx._row_cache['r_backfill_complete'] = {'score': 1.0}
+            got = fn(ctx)['score']
+            expect(got == want, f'F e_reconcile_economy with {label}: {got} (want {want})')
+    # F: the event economy counts the background event path only, never R7's field writes
+    event_top = float(TH['event_economy_top'])
+    relevant = Ctx(None, {}, pack).oracle.event_optimum()
+    expect(relevant > 0, 'F the synthetic pack delivers no relevant live change (cannot test e_event_economy)')
+    fn = next(f for n, _t, f, _p, _x in CHECKS if n == 'e_event_economy')
+    read = {'service': 'jira', 'kind': 'consumer', 'method': 'GET', 'path': '/rest/api/3/issue/1'}
+    for label, extra, want in (
+            ('R7 field writes', [{**read, 'method': 'POST', 'path': '/rest/api/3/app/field/value'}] * 3,
+             round(min(1.0, event_top), 4)),
+            ('consumer reads beyond the optimum', [read] * (2 * relevant), round(min(1.0, event_top / 3), 4))):
+        ctx = Ctx(None, {'phases': {'live': {'calls': [read] * relevant + extra}}}, pack, fixture_seed=pack['seed'])
+        ctx._row_cache['t_event_rows'] = {'score': 1.0}
+        got = fn(ctx)['score']
+        expect(relevant == 0 or got == want, f'F e_event_economy with {label}: {got} (want {want})')
     return fails
 
 
