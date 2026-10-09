@@ -42,7 +42,11 @@ const COMMANDS = {
   advance: (ms) => host.advance(ms),
 };
 
-readline.createInterface({ input: process.stdin }).on('line', async (line) => {
+// A fault in this protocol is the host's, never the app's: it ends the process with the stack on stderr, which the
+// parent reports as HARNESS.
+const fatal = (e) => { process.stderr.write(`uikit runner: ${e?.stack ?? e}\n`); process.exit(70); };
+
+readline.createInterface({ input: process.stdin }).on('line', (line) => {
   const m = JSON.parse(line);
   if (m.t === 'start') {
     host = createHost({ code: fs.readFileSync(path.join(__dirname, 'ui.js'), 'utf8'), filename: m.filename, context: m.context, moduleKey: m.moduleKey, startTime: m.startTime, call });
@@ -53,12 +57,11 @@ readline.createInterface({ input: process.stdin }).on('line', async (line) => {
     if (m.ok) c.resolve(m.value);
     else c.reject(Object.assign(new Error(m.error.message), { errorType: m.error.errorType ?? null }));
   } else if (m.t === 'cmd') {
-    try {
-      if (!COMMANDS[m.name]) throw Object.assign(new Error(`unknown command '${m.name}'`), { code: 'HARNESS' });
-      const value = await COMMANDS[m.name](...m.args);
-      send({ t: 'done', id: m.id, ok: true, value, state: state() });
-    } catch (e) {
-      send({ t: 'done', id: m.id, ok: false, error: { code: e.code ?? 'HARNESS', message: String(e.message) }, state: state() });
-    }
-  }
+    if (!COMMANDS[m.name]) throw new Error(`unknown command '${m.name}'`);
+    COMMANDS[m.name](...m.args).then(
+      (value) => send({ t: 'done', id: m.id, ok: true, value, state: state() }),
+      (e) => send({ t: 'done', id: m.id, ok: false, error: { code: e.code ?? 'HARNESS', message: String(e.message) }, state: state() }),
+    ).catch(fatal);
+  } else throw new Error(`unknown message '${m.t}'`);
 }).on('close', () => { host?.close(); process.exit(0); });
+process.on('uncaughtException', fatal);

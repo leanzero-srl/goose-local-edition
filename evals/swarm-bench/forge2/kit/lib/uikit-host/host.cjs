@@ -91,7 +91,8 @@ function createHost({ code, filename, context, moduleKey, startTime, call }) {
     setInterval: (fn, ms, ...args) => addTimer(fn, ms, args, true),
     clearTimeout: (id) => { timers.delete(id); },
     clearInterval: (id) => { timers.delete(id); },
-    queueMicrotask,
+    // a throwing microtask is the page's error (reported, the page lives on), not the end of the host process
+    queueMicrotask: (fn) => queueMicrotask(() => { try { fn(); } catch (e) { recordError('microtask', e); } }),
     performance: { now: () => clock.now + workMs },
     crypto: globalThis.crypto,
     TextEncoder, TextDecoder, URL, URLSearchParams, AbortController, AbortSignal, atob, btoa,

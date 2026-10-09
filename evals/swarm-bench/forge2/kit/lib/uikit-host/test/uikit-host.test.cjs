@@ -235,16 +235,20 @@ test('classic JSX: a .jsx file without `import React` fails at runtime, as Forge
   } finally { await host.close(); }
 });
 
-test('an unhandled rejection in the app is its console error, never the end of the page', async () => {
+test('an unhandled rejection, a throwing microtask or timer is the page\'s error, never the end of the page', async () => {
   const host = await renderTemp(`import React, { useEffect } from 'react';
 import ForgeReconciler, { Text } from '@forge/react';
 import { invoke } from '@forge/bridge';
-const App = () => { useEffect(() => { invoke('missing'); }, []); return <Text>ok</Text>; };
+const App = () => {
+  useEffect(() => { invoke('missing'); queueMicrotask(() => { throw new Error('micro'); }); setTimeout(() => { throw new Error('tick'); }, 0); }, []);
+  return <Text>ok</Text>;
+};
 ForgeReconciler.render(<App />);
 `, async () => { throw new Error('no such resolver'); });
   try {
     await host.waitIdle();
-    assert.deepStrictEqual(host.errors.map((e) => [e.kind, e.message]), [['unhandledRejection', 'There was an error invoking the function - no such resolver']]);
+    assert.deepStrictEqual(host.errors.map((e) => `${e.kind}: ${e.message}`).sort(),
+      ['microtask: micro', 'timer: tick', 'unhandledRejection: There was an error invoking the function - no such resolver']);
     assert.strictEqual(host.text(), 'ok');
   } finally { await host.close(); }
 });
