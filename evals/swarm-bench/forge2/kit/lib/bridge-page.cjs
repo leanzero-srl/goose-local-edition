@@ -41,7 +41,9 @@ function pageBridge(cfg) {
       document.documentElement.appendChild(host);
       root = host.attachShadow({ mode: 'closed' });
       const sheet = new CSSStyleSheet();
-      sheet.replaceSync(':host{position:fixed;left:16px;bottom:16px;z-index:2147483647;display:flex;flex-direction:column;gap:8px;font:14px/1.4 -apple-system,Segoe UI,sans-serif}'
+      // pointer-events:none (1.0 defect A): Jira draws flags outside the app frame, so a flag never covers the app's
+      // own controls; drawn here inside the page it must let every click through to the app beneath it.
+      sheet.replaceSync(':host{position:fixed;left:16px;bottom:16px;z-index:2147483647;display:flex;flex-direction:column;gap:8px;pointer-events:none;font:14px/1.4 -apple-system,Segoe UI,sans-serif}'
         + '.f{min-width:260px;max-width:360px;padding:12px 16px;border-radius:4px;color:#fff;background:#0C66E4;box-shadow:0 4px 12px rgba(0,0,0,.3)}'
         + '.f[data-appearance=success]{background:#1F845A}.f[data-appearance=error]{background:#C9372C}.f[data-appearance=warning]{background:#B65C02}'
         + '.t{font-weight:600}');
