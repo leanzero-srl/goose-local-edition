@@ -1440,17 +1440,19 @@ async function settle(s) {
   }
 }
 
-// §17.8 A: a gesture's click the probe could not deliver (an overlay intercepted it, it timed out) is harness evidence,
-// never the app's: it is recorded as `clickFailed` (score_forge2 _undeliverable). A control the app does not render,
-// hides or disables is the app's own state: no click is attempted and the gesture's counts stand as the app's.
+// §17.8 A: a gesture's click the probe could not deliver (an overlay intercepted it, it never settled) is harness
+// evidence, never the app's: it is recorded as `clickFailed` (score_forge2 _undeliverable). The click waits as a person
+// would (Playwright's actionability wait); a control that is still absent, hidden or disabled when the wait ends is the
+// app's own state, so the gesture's counts stand as the app's.
 const firstLine = (e) => String(e?.message ?? e).split('\n')[0].slice(0, 200);
 async function deliver(control, act) {
   try {
-    if (!(await control.count()) || !(await control.isVisible()) || await control.isDisabled()) return null;
     await act(control);
     return null;
   } catch (e) {
-    return firstLine(e);
+    const appState = await (async () => !(await control.count()) || !(await control.isVisible()) || await control.isDisabled())()
+      .catch(() => false);
+    return appState ? null : firstLine(e);
   }
 }
 // Clicking a row selects it (contract §5): its `kind` cell, or the row itself when it has none.
@@ -1966,15 +1968,19 @@ async function selftest() {
     assert.deepEqual(pathParams('/rest/agile/1.0/board/{boardId}/sprint', '/rest/agile/1.0/board/7/sprint?state=active'), { boardId: '7' });
   });
 
-  await test('deliver: a control the app does not render, hides or disables is not clicked; a click that fails is named', async () => {
-    const control = ({ count = 1, visible = true, disabled = false, fails = null }) => {
+  await test('deliver: a click that fails on a live control is named; one on an absent, hidden or disabled control is the app\'s', async () => {
+    // Playwright's click waits for the control to be attached, visible, enabled and to receive the click, then throws.
+    const control = ({ count = 1, visible = true, disabled = false, intercepted = false }) => {
       const c = { clicks: 0, count: async () => count, isVisible: async () => visible, isDisabled: async () => disabled,
-        click: async () => { if (fails) throw new Error(`${fails}\nCall log: …`); c.clicks += 1; } };
+        click: async () => {
+          if (!count || !visible || disabled || intercepted) throw new Error('locator.click: Timeout 30000ms exceeded.\nCall log: …');
+          c.clicks += 1;
+        } };
       return c;
     };
     for (const [label, spec, want, clicks] of [['absent', { count: 0 }, null, 0], ['hidden', { visible: false }, null, 0],
       ['disabled', { disabled: true }, null, 0], ['delivered', {}, null, 1],
-      ['intercepted', { fails: 'locator.click: Timeout 30000ms exceeded.' }, 'locator.click: Timeout 30000ms exceeded.', 0]]) {
+      ['intercepted', { intercepted: true }, 'locator.click: Timeout 30000ms exceeded.', 0]]) {
       const c = control(spec);
       assert.equal(await deliver(c, (l) => l.click()), want, label);
       assert.equal(c.clicks, clicks, `${label}: clicks`);
