@@ -409,8 +409,8 @@ class Oracle:
                     board_id = str(self.sprints[sid]['originBoardId'])
                     field_id = self.field_in_force(board_id, created)
                     moved_to = ''
-                    if kind == 'removed':
-                        boards = {str(self.sprints[t]['originBoardId']) for t in to if t in self.sprints}
+                    if kind == 'removed':   # a move needs a ledger on both sides: a future sprint has no added row
+                        boards = {str(self.sprints[t]['originBoardId']) for t in to - frm if t in by_sprint}
                         moved_to = next(iter(sorted(boards - {board_id})), '')
                     by_sprint[sid].append(Change(
                         change_id=cid, sprint_id=sid, issue_id=str(issue['id']), issue_key=issue['key'],
