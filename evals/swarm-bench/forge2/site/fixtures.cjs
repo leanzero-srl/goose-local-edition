@@ -408,10 +408,10 @@ function facts(seed, { scoring = false } = {}) {
       if (k === b.closed.length - 1) carriedAtStart += carried.length;
     });
     const planFrom = Date.parse(b.closed[b.closed.length - 1].completeDate);
-    plan(b.active[0], pool, r.int(30, 36), planFrom, firstActiveStart);
+    plan(b.active[0], pool, r.int(32, 40), planFrom, firstActiveStart);
     // The SCORING site starts the first board's parallel sprint EMPTY, so its committed is 0 and creep is the stated
     // special case (contract: "— when committed is 0"; creepPercent null). The dev site plans it.
-    const parallel = r.int(30, 36);
+    const parallel = r.int(32, 40);
     if (b.active[1]) plan(b.active[1], pool, scoring && i === 0 ? 0 : parallel, planFrom, firstActiveStart);
     for (const f of b.future) plan(f, pool, r.int(10, 14), planFrom, firstActiveStart);
   });
@@ -491,6 +491,19 @@ function facts(seed, { scoring = false } = {}) {
     tEnd = Math.min(tEnd + r.int(5, 50) * MIN, now - MIN);
     addTo(st, r.pick(activeOf(st.projectKey)), tEnd, 'history');
   }
+  // At least one issue moved to ANOTHER board's active sprint before the upgrade (the backfill meets the move).
+  const boardOfOpen = (st) => (openSprintOf(st) ? sprintById.get(openSprintOf(st))._board : null);
+  const crossBoard = (e) => {
+    if (e.items[0].field !== 'Sprint') return false;
+    const from = idList(e.items[0].from).map(Number).find((id) => sprintById.get(id).state === 'active');
+    const to = idList(e.items[0].to).map(Number).find((id) => sprintById.get(id).state === 'active');
+    return Boolean(from && to) && sprintById.get(from)._board !== sprintById.get(to)._board;
+  };
+  if (!events.some(crossBoard)) {
+    const mover = r.pick(issues.filter((s) => boardOfOpen(s) === 1 && sprintById.get(openSprintOf(s)).state === 'active'));
+    tEnd = Math.min(tEnd + r.int(5, 50) * MIN, now - MIN);
+    addTo(mover, r.pick(perBoard[0].active), tEnd, 'history');
+  }
 
   // ---- visibility: hidden from the viewer / the peer, one comment-forbidden issue --------------
   const changedInActive = (phaseFilter) => [...new Set(events.filter((e) => phaseFilter(e) && touchesStarted(e)).map((e) => e.issueId))].map((id) => byId.get(id));
@@ -539,7 +552,6 @@ function facts(seed, { scoring = false } = {}) {
       const other = activeOf(p).find((s) => s !== sprint);
       const second = other && r.chance(0.5) ? addTo(st, other, tick(), 'live') : removeOpen(st, tick(), 'live');
       pairs.push([first.changelogId, second.changelogId]);
-      continue;
     }
     if (kinds[idx] === 'irrelevant') step(tick(), 'irrelevant', 'live');
     else step(tick(), r.chance(0.75) ? 'sprint' : 'estimate', 'live');
