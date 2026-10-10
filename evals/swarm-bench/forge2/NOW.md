@@ -110,6 +110,11 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
   calibration, sb7.x/forge manifests to refreeze after P11's shared bench edits.
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 00:20 (Oct 11) LUNA PUBLISHED: openai/gpt-6-luna = 0.6250 (brun-d920b645-fb64-42b6-9495-b9c30b573b33; 300 of 300 calls =
+  stopped by the call budget, $0.63; tests earned 0.9567 x reliability 0.6532, 12 groups incl. u_widget_live 0,
+  a_action_result 0, r_pagination .49, r6_valid_applies .5). I read its steps at 226 calls: small real edits and lint
+  runs, not a loop -> left alone. MiMo v2.6 Flash launched 00:20 (pin xiaomi). BOARD: Sol 0.8111, Sonnet 0.7698, Luna
+  0.6250. Spend so far: Sonnet $4.62, Sol $1.47, Luna $0.63.
 - 23:15 SOL PUBLISHED BY THE CHAIN ALONE: openai/gpt-6.1-sol = 0.8111 (brun-48b141b1-5554-44ad-841e-e9a860d84435; 70 of 300
   calls, $1.47, ~33 min build + ~22 min in-app scoring; tests earned 0.9845 x reliability 0.8238; groups R r_rate_limit
   .3333 ("the 429 was never retried", identical on all three sites), U u_ledger_table .9475, A a_action_result 0, R5
