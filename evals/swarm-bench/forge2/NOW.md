@@ -110,6 +110,18 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
   calibration, sb7.x/forge manifests to refreeze after P11's shared bench edits.
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 21:21 SITE PUSHED TO MASTER: forge2-era 80c26b5c fast-forwarded onto origin/master 0b0cce6e (the other session's 225
+  commits merged in cf385d9c — BoardPage.tsx / RunsLeaderboard.tsx conflicts keep both sides, checked line by line; the
+  owner asked 21:0x whether I rebased to avoid stomping work: verified the branch contained master's tip before the
+  push; my agent's one change to the SHARED Header.tsx (breadcrumb classes) was taken back out in 80c26b5c because
+  that header is the other session's surface — the phone breadcrumb cut is left to them). Site state at the push:
+  synced at the FINAL scorer a9aa59a4e (sync now refuses an uncalibrated commit), real desktop bodies as the fixture
+  (Sol 0.8417 / Sonnet 0.7530 -> 201; eight tampered kinds -> 422), suites 158/152/17/213/16, tsc clean, production
+  build passed on the merged tree, 154 screenshots in /Volumes/AI-workhorse/media/leanzero-website/
+  forge2-release-2026-10-10/ (I looked at the Sol run page: 19 named groups, the step formula and group lines read
+  right). Waiting for Amplify (marker lz-forge-eras = forge-1.0:d40aca35…;forge-2.0:a9aa59a4…), then
+  `node scripts/register-forge2.mjs add --manifest ~/Projects/goose/evals/swarm-bench/forge2/release-manifest.json
+  --sha256 0a366e7970d5783119cf816b31a53441f6a33c46b7d5693acd387f295133d135 --live`.
 - 20:57 FIRST IN-APP FORGE 2.0 RUN IS LIVE: 3.0.109 installed 20:53 (notarized, bundles forge2 with CALIB 34550b5d…; the
   Forge tile reads "Forge 2.0 · Scope Ledger 2", kit ready 663bf851ac7b, 300-call budget — seen in the running app),
   catalog proxy restarted from loop-state/tools with FORGE_CURRENT=forge-2.0 (eb4a851: it also NAMES the era while the
