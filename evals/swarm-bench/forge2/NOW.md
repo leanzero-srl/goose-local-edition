@@ -64,6 +64,27 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
 
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 13:4x RELIABILITY RULE v1 REFUTED -> v2 (my decision; owner 13:3x asked "I assume that it is still all very fair
+  correct?" — answered: not yet proven, fixing). The severity workflow's Attack returned FIX-THEN-SHIP: D1 the partial
+  root fold INVERTS the gradient (I reproduced it with --recompose on Sonnet's verdict: as graded 0.7473; u_widget_numbers
+  FIXED 0.875->1.0 gives 0.7078; made worse ->0.5 gives 0.7747); D2 a fired critical is charged twice (x0.6 and x0.9);
+  D3 the weight-0 diagnostic k_v2_surfaces multiplies; D4 cross-family pairs double count; and INHERENT to any per-row
+  "count once" exemption with K=0.10 against row weights 0.003-0.03: doing less beats doing more (dead widget 0.8838 vs
+  live widget with three rows at 0 0.7220; absent web trigger 0.8424 vs present with two rows at 0 0.7841).
+  v2 = WORST TEST PER GROUP: reliability = max(0.25, prod over the 18 tiers except E of (1 - 0.10 x (1 - worst eligible
+  row))); not eligible: harness-unavailable rows, weight-0 diagnostic rows, a row whose critical fired (priced there);
+  no ROOT_BLOCKS / vacuous / absent-surface logic in reliability(). Monotone by construction (raising a row never
+  lowers the final) — pinned by a selftest + a sweep on the real verdicts. Hand estimate: Sol-hardened ~0.825,
+  Sonnet-hardened ~0.745. Verdict block: reliability{multiplier,k,floor,floored,defects[{tier,check,score,factor}],
+  folded{tier:[rows]},priced_as_critical[]}. Being implemented by an agent ON forge2/final (wt-final, 9866b588e = the
+  merge of forge2/severity + forge2/hardened-gate with the ONE source rule; light suites pass, manifest pending);
+  fixtures -> scratchpad/sev2-out/. The site mirror (forge2-era b4e3c06) and the desktop agent (told by message) must
+  follow v2 — the site mirror is NOT yet re-done (dispatch after the scorer lands).
+- 13:3x wf forge2-fairness-audit (wt5h1l6az / wf_b8da61d3-ac3): every row Sol-hardened and Sonnet-hardened lost points
+  on (19 rows in 16 items), one reader each against the public text + the check + the observations + the reference
+  and independent apps, then a refuter per row. THE THREE THAT SMELL (identical fraction in both models):
+  r5_panel_labels 0.9 (both miss the SAME control, "Migration"), t_reestimate_followed 5/6 both, b_comment_adf_as_user
+  10/12 both. Any confirmed unfair row is fixed on forge2/final BEFORE the freeze.
 - 13:1x IN FLIGHT (four jobs, then the merge): (1) wf forge2-harden gate agent on forge2/hardened-gate — final golden
   on the calibration seeds, then CALIB_SHA256 + scorerVersion forge-2.0; its scorer change is ONE source rule
   `sources_for(c, change)` (a change made under the rate wall may name `reconcile` in every row that judges a source).
