@@ -64,6 +64,13 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
 
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 16:1x OWNER (screenshot of the Forge 1.0 board's bottom rows 25-31): "here are the ones I want you to avoid ... aside
+  from GLM-5.3 flash, that one please redo with forge 2.0, but the rest drop" -> forge2/chain ce558ad: solar-mini4,
+  aion-3.5, aion-3.5-mini, nemotron-3.5-lightning dropped (nex-n2.5-pro and deepseek-pro-latest already were);
+  glm-5.3-flash KEPT on his word. FORGE 2.0 QUEUE = 26 MODELS: Sonnet 5.5, Sol, Luna, MiMo v2.6 Flash, Qwen3.8 Omni
+  Flash, DeepSeek v4.1 Flash, Opus 5.5, Jev, GLM-5.3, Qwen3.8 27B, Qwen3.8 Flash, GLM-5.3 Flash, Ling 3.0 Flash, Muse
+  Spark 1.3, Gemini 3.8 Flash, HY4, GPT Terra, Ember 1, Grok 4.7, Qwen3.8 Max Prime, GLM-5.3 Prime, Pareto, GLM-5.3
+  FlashX, Haiku 5.5, Step 5, Ling 3.1 Flash.
 - 16:0x OWNER: "deepseek pro and next 2.5 pro also I don't care as they're worthless" -> forge2/chain ee08007: both
   dropped too. FORGE 2.0 QUEUE = 30 MODELS, none named Pro (Sonnet 5.5 first, Sol second). Rule saved (memory): never
   queue any model named Pro.
