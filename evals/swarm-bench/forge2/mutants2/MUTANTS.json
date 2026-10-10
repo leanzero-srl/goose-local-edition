@@ -4,18 +4,18 @@
     "family": "R1",
     "patch": "r1_skips_parallel_sprint.patch",
     "loses": ["r1_progress_visible"],
-    "may_lose": ["r1_v1_rows_migrated"],
+    "may_lose": ["r1_v1_rows_migrated", "r_pagination"],
     "critical": false,
-    "why": "The migration plan keeps one active sprint per board (the first listed) instead of every active and closed sprint, so the v1 rows of every parallel active sprint are never copied (seed 0123: boards 26 and 181 run two active sprints each) and the panel's total leaves them out: `Migrated <n> of <total>` names the wrong total at every read. The ledger rows come back through the golden's own backfill: the first scheduled run migrates first, then re-derives every history change of the active sprints the ledger lacks once the migration reports complete, with v1's time (recordChange), so r1_v1_rows_migrated holds unless that backfill lands after the 2-hour mark. v1's entity is untouched: the migration critical must not fire."
+    "why": "The migration plan keeps one active sprint per board (the first listed) instead of every active and closed sprint, so the v1 rows of every parallel active sprint are never copied (seed 0123: boards 26 and 181 run two active sprints each) and the panel's total leaves them out: `Migrated <n> of <total>` names the wrong total at every read. The ledger rows come back through the golden's own backfill: the first scheduled run migrates first, then re-derives every history change of the active sprints the ledger lacks once the migration reports complete, with v1's time (recordChange), so r1_v1_rows_migrated holds unless that backfill lands after the 2-hour mark. v1's entity is untouched: the migration critical must not fire. Measured 2026-10-10 (seed 0123, identical on forge2/gate-fix and forge2/hardened): r_pagination 0.9298 too — the plan now lists each board's `state=active` sprints, the request the same scheduled run's discovery makes again, so 4 of 25 board-sprint walks read a page twice (boards 26, 126, ...)."
   },
   {
     "name": "r2_syncs_past_quota_wall",
     "family": "R2",
     "patch": "r2_syncs_past_quota_wall.patch",
     "loses": ["r2_rate_limit_reaction"],
-    "may_lose": [],
+    "may_lose": ["u_ledger_table"],
     "critical": false,
-    "why": "A quota 429 stops only the invocation that drew it: the shared pause is never stored, so the rest of the background keeps syncing into the wall until the reset (seed 0123: three consumer deliveries reach Jira inside the first quota 429's Retry-After). Not the brief's literal 'ignores the 70 % cap': deleting the share check is an equivalent mutant on these sites, because the golden's busiest background hour spends 228 of the 1,680-point share (seed 0123), so no row can see the cap."
+    "why": "A quota 429 stops only the invocation that drew it: the shared pause is never stored, so the rest of the background keeps syncing into the wall until the reset (seed 0123: three consumer deliveries reach Jira inside the first quota 429's Retry-After). Not the brief's literal 'ignores the 70 % cap': deleting the share check is an equivalent mutant on these sites, because the golden's busiest background hour spends 228 of the 1,680-point share (seed 0123), so no row can see the cap. Measured 2026-10-10 (seed 0123, identical on forge2/gate-fix and forge2/hardened): u_ledger_table 5.98/6 too — with no stored pause the change 1325994 (sprint 1253, 11:59:44, inside the wall) keeps meeting the wall until the hour's scheduled run records it first, so its row's source is `reconcile` where the oracle has `event`."
   },
   {
     "name": "r3_waits_out_retry_after",
@@ -40,9 +40,9 @@
     "family": "R4",
     "patch": "r4_deletion_unflagged.patch",
     "loses": ["r4_deleted_history", "b_hidden_count"],
-    "may_lose": ["a_action_result"],
+    "may_lose": ["a_action_result", "r2_backfill_complete"],
     "critical": false,
-    "why": "A deleted issue's memberships are still marked deleted (it leaves current scope; the totals do not move) but its ledger rows never get deleted: true. r4_deleted_history loses every such row. The person view leaves out only flagged rows, so the deleted issue's changes count as hidden for everyone (Jira no longer returns the issue): b_hidden_count (a_action_permissions follows by ROOT_BLOCKS), and a_action_result where that sprint was otherwise answered right (seed 0123: sprint 850 holds both deleted issues' rows and the golden answers it right, so it is lost there)."
+    "why": "A deleted issue's memberships are still marked deleted (it leaves current scope; the totals do not move) but its ledger rows never get deleted: true. r4_deleted_history loses every such row. The person view leaves out only flagged rows, so the deleted issue's changes count as hidden for everyone (Jira no longer returns the issue): b_hidden_count (a_action_permissions follows by ROOT_BLOCKS), and a_action_result where that sprint was otherwise answered right (seed 0123: sprint 850 holds both deleted issues' rows and the golden answers it right, so it is lost there). Measured 2026-10-10 (seed 0123, identical on forge2/gate-fix and forge2/hardened): r2_backfill_complete 110/111 too — the backfilled row ('1313902', '850') belongs to a deleted issue and stays unflagged."
   },
   {
     "name": "r5_save_unguarded",
