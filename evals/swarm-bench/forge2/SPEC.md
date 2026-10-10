@@ -151,6 +151,22 @@ platform behaviours are added (NEVER OVER-ENGINEER):
   migration; a web-trigger write without a valid signature; an admin action by a non-admin succeeded or the CI secret
   disclosed; a hidden issue's data shown to a person who cannot browse it; a duplicate side effect (≥ 2 comments for one
   click, or duplicate ledger rows).
+- Reliability (2026-10-10). Why: the paid pilots — GPT-6.1 Sol 0.9618 with 11 failed guarantee rows, Claude Sonnet
+  5.5 on the hardened task 0.9628 with 13 (a live widget that never updated, both surfaces ~245 KB against the 150 KB
+  boot budget, field values wrong for a third of the issues in one hour, a resolver killed at its limit, Rovo right
+  for 3 of 5 sprints) — showed that a failed STATED guarantee barely moves a 99-row weighted mean; the owner's
+  acceptance rule: Sonnet near 0.9 is not discriminating. So `final = earned × critical multiplier × reliability`,
+  reliability = max(0.25, Π over the failed guarantees of (1 − K × counted shortfall)), K = 0.10 (`reliability_k` and
+  `reliability_floor` in `bench/forge2-thresholds.json`): a guarantee that fails completely multiplies the score by
+  0.90, a partial failure in proportion. A failed guarantee is a scored row outside the E tier (economy is a reward)
+  whose score is below 1. Never one: a row unavailable for a harness reason, and a vacuous row (its surface was never
+  exercised, so nothing was seen to fail — its 0 is its price, as for the criticals). One root cause counts once: a
+  row counts only the shortfall beyond its failed ROOT_BLOCKS root's (a root at 0 absorbs every row it blocks; a row
+  that failed worse than a partly failed root pays the difference), and the rows one missing surface zeroes count
+  that surface once. Attribution reaches as far as ROOT_BLOCKS declares (9 roots, none among the R1-R9 rows): rows
+  one bug moves that it does not relate each count, so the public text promises only that a test failing because
+  another one did is not counted again. Criticals stay as they are and multiply separately. The verdict's
+  `reliability` block lists every counted row (score, factor), the rows counted with a root, and the unexercised rows.
 - Bands: lint/bundle failure → max 0.499; none of the v2 surfaces exists (no `jira:adminPage`, no `webtrigger`, no
   `scope-ledger`) → max 0.30 (v1 untouched scores ≤ 0.30, §5: the band, not the rows, holds it there).
 - No wall-clock thresholds anywhere (counts and virtual time only). Harness/probe failures are never app evidence.

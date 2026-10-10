@@ -2,14 +2,18 @@
 
     score_forge2.py --tree <run tree> --seed <fixture_seed> --json-out v.json [--reference] [--runtime shim]
     score_forge2.py --selftest     (the composition and the §17.8 fixes, no tree, no probe)
+    score_forge2.py --recompose <verdict.json> [--json-out v.json]   (a kept verdict's stored rows through today's
+                                   composition: no tree, no probe, the rows exactly as they were graded)
 
 Forge 1.0's machinery (score_forge.py, forked) with the 2.0 composition (SPEC §4):
-  earned = (0.25 · v1 + Σ_family w_family · mean(family rows)) × critical multiplier
+  earned = (0.25 · v1 + Σ_family w_family · mean(family rows)) × critical multiplier × reliability
   v1     = 0.88 · inner(1.0 tiers L..A) + 0.12 · excellence gate · e_mean      (the 1.0 rows, now regression rows)
   family = R1 0.12 · R2 0.13 · R3 0.08 · R4 0.10 · R5 0.10 · R6 0.08 · R7 0.05 · R8 0.04 · R9 0.05 (P8's rows,
            imported from bench/forge2_checks.py, each weighted inside its family)
   criticals: five CLASSES, ×0.6 each, a class fires at most once (each root priced once) and only on an observed
            defect — never on a vacuous, absent, unavailable or manifest-fault row
+  reliability: max(floor, Π over failed guarantees (1 − K × counted shortfall)), K and the floor from the thresholds
+           file — every scored row outside E below 1 multiplies the whole score, one root cause once (reliability())
   bands: lint/bundle failure → max 0.499; none of jira:adminPage, webtrigger, scope-ledger → max 0.30.
 The §17.8 fixes: B (the duplicate critical needs >= 2 comments for one gesture; zero comments or a missing flag
 is u_comment_flow's), F (both economy rows continuous), G (vacuous / manifest-fault rows never fire a critical,
@@ -108,8 +112,8 @@ def _load_thresholds() -> Dict:
         if CALIB_SHA256 == 'TBD-AT-FREEZE' or digest != CALIB_SHA256:
             raise SystemExit(f'{THRESHOLDS_FILE.name} claims calibrated=true but its sha256 does not match the pin '
                              f'in score_forge2.py ({digest[:16]}… vs {CALIB_SHA256[:16]}…) — refusing to score.')
-    for name in ('critical_multiplier_floor', 'reconcile_economy_top', 'event_economy_top', 'ui_round_trip_rungs',
-                 'idempotent_rerun_rungs',
+    for name in ('critical_multiplier_floor', 'reliability_k', 'reliability_floor', 'reconcile_economy_top',
+                 'event_economy_top', 'ui_round_trip_rungs', 'idempotent_rerun_rungs',
                  'contrast_min', 'chart_tolerance_px', 'color_tolerance', 'blank_share'):
         if name not in data:
             raise SystemExit(f'{THRESHOLDS_FILE.name} lacks {name!r} — refusing to score on a silent default')
@@ -3415,6 +3419,28 @@ for _root, _deps in ROOT_BLOCKS.items():
     assert {_root, *_deps} <= REGISTERED
 
 
+def _root_cycle() -> Optional[List[str]]:
+    """reliability() lets a failed root account for the rows it blocks, so two rows naming each other would both count
+    for nothing: ROOT_BLOCKS stays acyclic."""
+    done: set = set()
+
+    def walk(name: str, path: Tuple[str, ...]) -> Optional[List[str]]:
+        if name in path:
+            return [*path[path.index(name):], name]
+        if name in done:
+            return None
+        for dep in ROOT_BLOCKS.get(name, ()):
+            found = walk(dep, (*path, name))
+            if found:
+                return found
+        done.add(name)
+        return None
+    return next((c for c in (walk(root, ()) for root in ROOT_BLOCKS) if c), None)
+
+
+assert _root_cycle() is None, f'ROOT_BLOCKS cycle: {_root_cycle()}'
+
+
 def attribute_root_causes(rows: List[Dict]) -> Dict[str, List[str]]:
     by = {r['check']: r for r in rows}
     out = {}
@@ -3664,6 +3690,44 @@ def criticals(rows: List[Dict]) -> Tuple[float, List[Dict]]:
     return mult, out
 
 
+def reliability(rows: List[Dict]) -> Tuple[float, Dict]:
+    """SPEC §4: final = earned × critical multiplier × RELIABILITY, RELIABILITY = max(floor, Π (1 − K × counted)) over
+    the failed guarantees: every scored row outside the E tier (economy is a reward, never a guarantee) below 1.
+    Never one: an unavailable row (the harness's failure) and a vacuous row (its surface was never exercised, so nothing
+    was seen to fail; its 0 is its price, as for the criticals).
+    One root cause counts once. A row counts its shortfall only beyond what a failed ROOT_BLOCKS root already accounts
+    for — `root score − score`, never below 0: a root at 0 absorbs every row it blocks, a row that failed no worse than
+    its root counts nothing, and one that failed worse than a partly failed root counts the difference (Sonnet 5.5,
+    2026-10-10: u_widget_numbers 0.875 must not hide u_widget_live 0, the widget that never updated). The rows one
+    missing surface zeroes (`absent_surface`, which leads with the surface's name) count that surface once."""
+    k, floor = float(TH['reliability_k']), float(TH['reliability_floor'])
+    below = [r for r in rows if r['tier'] != 'E' and not r.get('unavailable') and r['score'] < 1.0 - 1e-9]
+    failed = {r['check']: r['score'] for r in below if not (r.get('parts') or {}).get('vacuous_root')}
+    product, defects, folded, unexercised, surfaces = 1.0, [], {}, [], {}
+    for r in below:
+        name, parts = r['check'], r.get('parts') or {}
+        root = min((x for x, deps in ROOT_BLOCKS.items() if x in failed and name in deps), key=failed.get, default=None)
+        if parts.get('vacuous_root'):
+            (folded.setdefault(root, []) if root else unexercised).append(name)
+            continue
+        counted = (failed[root] if root else 1.0) - r['score']
+        surface = str(parts.get('absent_surface') or '').split(' ')[0]
+        if surface and counted > 1e-9:
+            first = surfaces.setdefault(surface, name)
+            if first != name:
+                root, counted = first, 0.0
+        if counted <= 1e-9:
+            folded.setdefault(root, []).append(name)
+            continue
+        factor = 1.0 - k * counted
+        product *= factor
+        defects.append({'check': name, 'score': r['score'], 'factor': round(factor, 4),
+                        **({'root': root, 'root_score': failed[root]} if root else {})})
+    multiplier = max(floor, product)
+    return multiplier, {'multiplier': round(multiplier, 4), 'k': k, 'floor': floor, 'floored': product < floor,
+                        'defects': defects, 'folded': folded, 'unexercised': unexercised}
+
+
 def excellence(rows: List[Dict]) -> Tuple[float, float, List[Dict]]:
     by = {r['check']: r for r in rows}
     conds = []
@@ -3726,7 +3790,8 @@ def compose_from_rows(rows: List[Dict], c: Optional[Ctx] = None) -> Dict:
     pre_severity = V1_WEIGHT * v1 + v2
     floor = float(TH['critical_multiplier_floor'])
     mult, crit_rows = criticals(rows)
-    earned = pre_severity * mult
+    reliable, reliability_block = reliability(rows)
+    earned = pre_severity * mult * reliable
     admission = admit(rows)
     admission['final_rule'] = f'final = min(earned, ceiling - {BAND_PULL:g} * (1 - earned))'
     final = capped_final(earned, admission['ceiling'])
@@ -3749,6 +3814,7 @@ def compose_from_rows(rows: List[Dict], c: Optional[Ctx] = None) -> Dict:
                      'rows': crit_rows,
                      'unsuppressed': [x['check'] for x in crit_rows if not x.get('suppressed')],
                      'classes': sorted({x['class'] for x in crit_rows if not x.get('suppressed')})},
+        'reliability': reliability_block,
         'admission': admission,
         'excellence': {'fraction': round(fraction, 4), 'e_mean': round(e_mean, 4), 'gate': fraction >= 1.0,
                        'conditions': conds},
@@ -3765,6 +3831,28 @@ def compose_from_rows(rows: List[Dict], c: Optional[Ctx] = None) -> Dict:
         'calibration': 'frozen' if CALIBRATED else 'UNCALIBRATED — rc defaults',
         'root_causes': attribute_root_causes(rows),
     }
+
+
+def recompose(kept: Dict, source: str = '') -> Dict:
+    """A kept verdict's stored rows through today's composition. NOT a rescore: every row is the one its own scorer
+    graded (`recomposed_from` names that scorer's files), only weights, criticals, reliability and bands are applied
+    again. The per-seed scores are not carried: a verdict keeps the merged rows, not each scoring site's. Refuses
+    (ValueError) a verdict of another scorer family or one whose rows are not this registry's: weights over other rows
+    would be a number nobody graded."""
+    version, names = str(kept.get('scorerVersion')), [r.get('check') for r in kept.get('checks') or []]
+    if version.removesuffix('-rc') != VERSION.removesuffix('-rc'):
+        raise ValueError(f'the verdict was scored by {version}, not {VERSION.removesuffix("-rc")}')
+    if set(names) != REGISTERED or len(names) != len(REGISTERED):
+        raise ValueError(f'the verdict holds {len(names)} rows, the registry {len(REGISTERED)}; missing '
+                         f'{sorted(REGISTERED - set(names))[:6]}, unknown {sorted(set(names) - REGISTERED)[:6]}')
+    ctx = argparse.Namespace(fixture_seed=kept.get('fixture_seed'), dev_seed=kept.get('dev_seed'),
+                             runtime=kept.get('runtime', 'wrapper'), harness_missing=list(kept.get('harness_missing') or []))
+    result = compose_from_rows(kept['checks'], ctx)
+    result['fixture_seeds'] = kept.get('fixture_seeds')
+    result['recomposed_from'] = {'verdict': source, 'score': kept.get('score'), 'rawScore': kept.get('rawScore'),
+                                 'scorer_files_sha256': kept.get('scorer_files_sha256'),
+                                 'spec_sha256': kept.get('spec_sha256'), 'composed_by': scorer_files_sha256()}
+    return result
 
 
 # ── severity selftest (DESIGN §8.6, SPEC §4) ─────────────────────────────────────────────────
@@ -3905,6 +3993,57 @@ def severity_selftest() -> List[str]:
         for n in names:
             v = score(_scenario({n: 0.0}))
             expect(v['score'] <= limit + 1e-9, f'(9) {n} failing must hold {label} at {limit} (got {v["score"]})')
+    # (10) reliability (SPEC §4): every failed guarantee multiplies the whole score, one root cause once
+    k, rel_floor = float(TH['reliability_k']), float(TH['reliability_floor'])
+    linked = set(ROOT_BLOCKS) | {d for deps in ROOT_BLOCKS.values() for d in deps}
+    lone = [n for n, t, *_ in CHECKS if t != 'E' and n not in linked and n not in DIAGNOSTIC and n not in CRITICAL_OF
+            and n not in {x for _l, _b, names in ADMISSION_BANDS for x in names}]
+
+    def rel(overrides, parts=None, unavailable=()):
+        rows = _scenario(overrides, parts)
+        for r in rows:
+            if r['check'] in unavailable:
+                r.update(unavail('synthetic harness failure'))
+        return score(rows)
+
+    def expect_rel(label, v, want):
+        got = v['reliability']
+        expect(abs(got['multiplier'] - round(want, 4)) < 1e-9, f"(10) {label}: reliability {got['multiplier']} "
+               f"(want {round(want, 4)}); defects {got['defects']}; folded {got['folded']}")
+        # `inner` is itself printed to four decimals, so the product is compared to two units of the last one
+        expect(abs(v['rawScore'] - v['inner'] * v['critical']['multiplier'] * want) < 2e-4,
+               f"(10) {label}: earned {v['rawScore']} is not tests {v['inner']} x criticals x reliability {want}")
+
+    expect(base['reliability']['multiplier'] == 1.0 and not base['reliability']['defects'], '(10) all-perfect reliability != 1')
+    expect_rel('one guarantee failed completely', rel({lone[0]: 0.0}), 1 - k)
+    expect_rel('one guarantee half failed', rel({lone[0]: 0.5}), 1 - k / 2)
+    expect_rel('two independent guarantees failed', rel({lone[0]: 0.0, lone[1]: 0.0}), (1 - k) ** 2)
+    blocked = ('u_widget_chart', 'u_widget_edit_config', 'v_widget_sizes')
+    once = rel({'u_widget_loads': 0.0, **{n: 0.0 for n in blocked}})
+    expect_rel('a root with three blocked dependents', once, 1 - k)
+    expect(once['reliability']['folded'] == {'u_widget_loads': list(blocked)},
+           f"(10) the blocked rows must be recorded under their root: {once['reliability']['folded']}")
+    expect_rel('a dependent that failed no worse than its partly failed root',
+               rel({'u_widget_numbers': 0.5, 'u_widget_chart': 0.5, 'u_ledger_table': 0.9}), 1 - k / 2)
+    expect_rel('a dependent that failed worse than its partly failed root pays the difference',
+               rel({'u_widget_numbers': 0.8, 'u_widget_live': 0.3}), (1 - k * 0.2) * (1 - k * 0.5))
+    expect_rel('an E-tier shortfall', rel({n: 0.0 for n, t, *_ in CHECKS if t == 'E'}), 1.0)
+    expect_rel('a harness-unavailable row', rel({}, unavailable=(lone[0], 'u_widget_live')), 1.0)
+    idle = rel({lone[0]: 0.0, 'u_widget_live': 0.0}, {lone[0]: {'vacuous_root': 'precondition: synthetic'},
+                                                     'u_widget_live': {'vacuous_root': 'precondition: synthetic'}})
+    expect_rel('a vacuous row (nothing exercised, nothing seen to fail)', idle, 1.0)
+    expect(sorted(idle['reliability']['unexercised']) == sorted((lone[0], 'u_widget_live')),
+           f"(10) vacuous rows must be named unexercised: {idle['reliability']}")
+    surface = {n: {'absent_surface': 'webtrigger (SPEC R6)'} for n in lone[:3]}
+    expect_rel('three rows one missing surface zeroes', rel({n: 0.0 for n in lone[:3]}, surface), 1 - k)
+    surface[lone[2]] = {'absent_surface': 'jira:adminPage (where the CI secret is rotated)'}
+    expect_rel('two missing surfaces', rel({n: 0.0 for n in lone[:3]}, surface), (1 - k) ** 2)
+    everything = rel({n: 0.0 for n, t, *_ in CHECKS if t != 'E'})
+    expect_rel('the floor', everything, rel_floor)
+    expect(everything['reliability']['floored'], '(10) the floor must be recorded as reached')
+    again = compose_from_rows(once['checks'])
+    expect((again['score'], again['reliability']) == (once['score'], once['reliability']),
+           '(10) a verdict recomposed from its own stored rows must not move')
     # severity ordering: every critical costs more than any single unbanded defect
     costs = single_defect_costs()
     banded = {x for _l, _b, names in ADMISSION_BANDS for x in names}
@@ -4265,6 +4404,8 @@ def reference_failures(result: Dict) -> List[str]:
         fails.append(f"final {result.get('score')} != 1.000 (SPEC §5: the golden v2 scores 1.000)")
     if result.get('harness_missing'):
         fails.append(f"harness_missing: {result['harness_missing'][:6]}")
+    if reliability(result['checks'])[0] != 1.0:   # from the rows: a golden verdict kept before the rule has no block
+        fails.append(f"reliability {round(reliability(result['checks'])[0], 4)} != 1 — the golden fails no guarantee")
     if not result.get('excellence_gate'):
         fails.append('E gate shut on the golden')
     if result.get('runtime') != 'wrapper':
@@ -4275,15 +4416,27 @@ def reference_failures(result: Dict) -> List[str]:
 
 # ── report ───────────────────────────────────────────────────────────────────────────────────
 
+def _reliability_lines(rel: Dict) -> List[str]:
+    counted = ', '.join(f"{d['check']} {d['score']} x{d['factor']}"
+                        + (f" (beyond {d['root']} {d['root_score']})" if d.get('root') else '') for d in rel['defects'])
+    return [f"Reliability {rel['multiplier']}{' (the floor)' if rel['floored'] else ''}: {len(rel['defects'])} failed "
+            f"guarantee(s), each x (1 - {rel['k']:g} x its shortfall)" + (f': {counted}' if counted else ''),
+            *(f"  counted with `{root}`: {', '.join(names)}" for root, names in rel['folded'].items()),
+            *([f"  never exercised, not counted: {', '.join(rel['unexercised'])}"] if rel['unexercised'] else [])]
+
+
 def format_report(result: Dict, title: str = '') -> str:
-    t, crit = result['tiers'], result['critical']
+    # A verdict kept from before the reliability rule carries no such block: it renders as it always did.
+    t, crit, rel = result['tiers'], result['critical'], result.get('reliability')
     lines = [f"{title} {result['scorerVersion']}: {result['score']:.4f} [{result['status']}]"
              f"{'' if result['publishable'] else ' UNPUBLISHABLE: ' + '; '.join(result['unpublishable_reasons'])}",
              f"Earned {result['rawScore']:.4f} = ({V1_WEIGHT:g} x v1 {result['v1']['score']:.4f} [0.88 x inner "
              f"{result['v1']['inner']:.4f} + 0.12 x excellence {t['E']['mean']:.4f}] + v2 {result['v2']['score']:.4f}) "
-             f"x critical multiplier {crit['multiplier']}; admission ceiling {result['admission']['ceiling']:.3f}",
+             f"x critical multiplier {crit['multiplier']}" + (f" x reliability {rel['multiplier']}" if rel else '')
+             + f"; admission ceiling {result['admission']['ceiling']:.3f}",
              'Unsuppressed criticals: ' + (', '.join(f"{x['check']} ({x['class']})" for x in crit['rows']
                                                     if not x.get('suppressed')) or 'none'),
+             *(_reliability_lines(rel) if rel else []),
              *result['admission']['reasons'],
              '  '.join(f"{k} {100 * t[k]['mean']:.0f}%" for k in TIER_ORDER if k in t),
              f"seed {result.get('fixture_seed')} (dev {result.get('dev_seed')}), runtime {result.get('runtime')}"]
@@ -4491,6 +4644,8 @@ def main(argv=None) -> int:
     ap.add_argument('--reference', action='store_true')
     ap.add_argument('--selftest', action='store_true',
                     help='run the composition selftest and the §17.8 defect selftest on synthetic evidence, then exit')
+    ap.add_argument('--recompose', type=Path, metavar='VERDICT',
+                    help="compose a kept verdict's stored rows again: no tree, no probe, the rows as they were graded")
     ap.add_argument('--runtime', choices=('wrapper', 'shim'), default='wrapper')
     ap.add_argument('--port', type=int, help='accepted for the rescorer; forge binds ephemeral ports')
     ap.add_argument('--single-seed', action='store_true',
@@ -4524,12 +4679,25 @@ def main(argv=None) -> int:
         THRESHOLDS_FILE.write_bytes(raw)
         print(f"wrote {THRESHOLDS_FILE.name}; pin CALIB_SHA256 = '{hashlib.sha256(raw).hexdigest()}' in score_forge2.py")
         return 0
-    if not a.tree or not a.json_out:
+    if not a.recompose and (not a.tree or not a.json_out):
         ap.error('--tree and --json-out are required to score')
     fails = severity_selftest()
     if fails:
         print('REFUSED: severity_selftest() failed — the gradient is inverted:\n  ' + '\n  '.join(fails), file=sys.stderr)
         return 4
+    if a.recompose:
+        try:
+            result = recompose(json.loads(a.recompose.read_text()), str(a.recompose))
+        except ValueError as error:
+            print(f'REFUSED: {a.recompose}: {error}', file=sys.stderr)
+            return 2
+        if a.json_out:
+            a.json_out.write_text(json.dumps(result, indent=2, default=str))
+        was = result['recomposed_from']
+        print(format_report(result, a.recompose.parent.name))
+        print(f"RECOMPOSED from stored rows (no probe; graded by score_forge2.py "
+              f"{str((was['scorer_files_sha256'] or {}).get('score_forge2.py'))[:12]}): {was['score']} -> {result['score']}")
+        return 0
     if not a.seed:
         print('REFUSED: no --seed. A tree is scored against the fixture_seed its run was fed (trace.jsonl header).',
               file=sys.stderr)

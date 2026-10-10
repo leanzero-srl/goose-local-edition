@@ -2,6 +2,8 @@
   "calibrated": false,
   "note": "forge-2.0 rc thresholds (scorerVersion forge-2.0-rc): every value carries its receipt; the two economy tops are refitted on the golden v2 x5 at freeze (score_forge2.py --calibrate), then pinned as CALIB_SHA256.",
   "critical_multiplier_floor": 0.6,
+  "reliability_k": 0.10,
+  "reliability_floor": 0.25,
   "reconcile_economy_top": 1.0,
   "event_economy_top": 1.46,
   "ui_round_trip_rungs": [[1.0, 1], [0.75, 2], [0.5, 4]],
@@ -12,6 +14,8 @@
   "blank_share": 0.995,
   "receipts": {
     "critical_multiplier_floor": "SPEC §4: x0.6 per critical class",
+    "reliability_k": "SPEC §4, policy ratio (owner 2026-10-10: Sonnet 5.5 near 0.9 with 13 failed guarantee rows is not discriminating): a guarantee that fails completely multiplies the score by 1 - K = 0.90, a partial failure in proportion; the 2026-10-10 pilots' stored rows recompose to Sol 0.9618 -> 0.7564 and Sonnet 0.9628 -> 0.7473, the reference app's reliability is 1",
+    "reliability_floor": "SPEC §4, policy ratio: the failed guarantees together never take the score below a quarter of what the tests earned",
     "reconcile_economy_top": "rc: the oracle optimum itself (the 1.0 golden ran at 0.9333x of it on all 5 calibration seeds, so its fitted top was clamped to 1.0); score = min(1, top / ratio), continuous (forge/DESIGN.md §17.8 F); refitted on the golden v2 x5",
     "event_economy_top": "rc: Forge 1.0's fitted value (golden worst-of-5 ratio 1.4545); score = min(1, top / ratio), continuous; refitted on the golden v2 x5",
     "ui_round_trip_rungs": "DESIGN §8.4: 1 invoke before first paint 1.0, 2 .75, <=4 .5",

@@ -62,6 +62,19 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
 
 ## Line state
 
+- 2026-10-10 12:17 RELIABILITY (branch `forge2/severity`, off `forge2/prerun` 9ac3ed765; not merged, not pushed). Owner's
+  acceptance rule: Sonnet 5.5 near 0.9 (0.9628 with 13 failed guarantee rows) is not discriminating. SPEC §4 now:
+  `final = earned × critical multiplier × reliability`, reliability = max(0.25, Π (1 − 0.10 × counted shortfall)) over
+  the scored rows outside E below 1; unavailable and vacuous rows never count; a row counts only the shortfall beyond
+  its failed ROOT_BLOCKS root's; one missing surface counts once. Kept verdicts recomposed from their stored rows
+  (`score_forge2.py --recompose <verdict.json>`, no probe): Sol 0.9618 -> 0.7564, Sonnet-hardened 0.9628 -> 0.7473,
+  Haiku 0.3378 -> 0.0845 (the floor), the reference's kept verdict 0.9907 -> 0.9907 (reliability 1). Sol and Haiku were
+  graded by the pre-hardening scorer and probe: their rows are not the hardened scorer's. A run scored by an app
+  bundle that predates this branch composes by the old rule: recompose its verdict. Open (panel work, not done here):
+  the desktop's ScoringDetail prints the recorded composition inputs (inner, excellence, critical multiplier) and no
+  reliability, so a 0.96 inner beside a 0.75 final reads unexplained until it shows the verdict's `reliability`
+  block. `rawScore` carries reliability, so `score` is still the capped `rawScore` (the site's side of a publish was
+  not read here).
 - 2026-10-10 01:2x INTEGRATED on branch `forge2/integrate` (11 package branches merged, every integration note applied
   or listed in the integrator's report). Golden v2 on scoring seed 0123456789abcdef: 0.6649 -> 0.9573 (no critical; v2
   0.7229 of 0.75), scoring wall ~436 s per seed alone. Untouched starter: 0.3716 under the old 0.599 band -> band

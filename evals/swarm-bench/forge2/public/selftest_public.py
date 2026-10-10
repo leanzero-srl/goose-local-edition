@@ -3,8 +3,8 @@
 Run: python3 -m unittest evals/swarm-bench/forge2/public/selftest_public.py   (stdlib only)
 
 It reads SPEC.md where the SPEC carries a machine-readable list (the admin labels of §2.6, the concurrency numbers and
-contract wording of §2.8, the weights and bands of §4) and pins the rest as literals copied from SPEC §1-§2, so a drift
-on either side fails here. This file is the package's
+contract wording of §2.8, the weights, bands and reliability numbers of §4 — the last also against the scorer's
+thresholds file) and pins the rest as literals copied from SPEC §1-§2, so a drift on either side fails here. This file is the package's
 own check; it is not entrant material and run_build never copies it (FORGE20's `public` tuple names files).
 """
 import json
@@ -208,6 +208,17 @@ class Prompt(unittest.TestCase):
             self.assertIn(f'maximum {band}', body)
         self.assertIn('×0.6', scoring)
         self.assertIn('multiplies the score by 0.6', body)
+        # reliability: SPEC §4's K and floor are the scorer's thresholds and the prompt's own words
+        k = float(re.search(r'K = (0\.\d+)', scoring).group(1))
+        floor = float(re.search(r'reliability = max\((0\.\d+),', scoring).group(1))
+        thresholds = json.loads((FORGE2.parent / 'bench' / 'forge2-thresholds.json').read_text())
+        self.assertEqual((thresholds['reliability_k'], thresholds['reliability_floor']), (k, floor))
+        self.assertIn(f'multiplies the score by {1 - k:.2f}', scoring)
+        self.assertIn(f'each test that fails completely multiplies it by {1 - k:.2f}, a partial failure in proportion', body)
+        self.assertEqual(floor, 0.25)
+        self.assertIn('never take the score below a quarter of what the tests earned', body)
+        self.assertIn('a test that fails only because another one did is not counted again', body)
+        self.assertIn('The excellence share never multiplies', body)
         weights = dict(re.findall(r'(R\d) (0\.\d+)', scoring))
         self.assertAlmostEqual(sum(float(w) for w in weights.values()) + 0.25, 1.0)
         names = {'R1': 'migration', 'R2': 'dosing', 'R3': 'time limits', 'R4': 'the changing world',

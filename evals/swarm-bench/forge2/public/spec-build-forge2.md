@@ -41,6 +41,10 @@ field 0.05, Forge LLM 0.04, the boot budget 0.05. Inside v1's quarter, a small e
 requests (in the first scheduled run, and in triggers and consumers per relevant change) and surfaces that paint
 after one round trip. Lint warnings cost points but never cap.
 
+Failed tests also multiply the whole score: each test that fails completely multiplies it by 0.90, a partial failure
+in proportion, and a test that fails only because another one did is not counted again. The excellence share never
+multiplies, and together these never take the score below a quarter of what the tests earned.
+
 Conditions also cap it:
 
 - Lint errors, or manifest functions that do not bundle and load: maximum 0.499.
