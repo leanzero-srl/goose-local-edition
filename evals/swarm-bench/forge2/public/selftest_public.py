@@ -2,8 +2,9 @@
 
 Run: python3 -m unittest evals/swarm-bench/forge2/public/selftest_public.py   (stdlib only)
 
-It reads SPEC.md where the SPEC carries a machine-readable list (the admin labels of §2.6, the weights and bands of §4)
-and pins the rest as literals copied from SPEC §1-§2, so a drift on either side fails here. This file is the package's
+It reads SPEC.md where the SPEC carries a machine-readable list (the admin labels of §2.6, the concurrency numbers and
+contract wording of §2.8, the weights and bands of §4) and pins the rest as literals copied from SPEC §1-§2, so a drift
+on either side fails here. This file is the package's
 own check; it is not entrant material and run_build never copies it (FORGE20's `public` tuple names files).
 """
 import json
@@ -165,6 +166,23 @@ class Numbers(unittest.TestCase):
             '`X-LZ-Signature: sha256=<hex HMAC-SHA256(secret, "<timestamp>.<raw body>")>`',
             '|now − timestamp| > 300 s', '`crypto.timingSafeEqual`', '`kvs.setSecret`', '`401`', '`200`', '`202`',
             'Deployed to <env>', '`response.type: static`', 'any letter case')
+
+    def test_concurrency_and_consistency_2_8(self):
+        spec = flat(spec_section('2.8'))
+        workers = re.search(r'The emulator runs up to (\d+) consumer invocations concurrently', spec).group(1)
+        stale = re.search(r'reflects a write only once it is (\d+) virtual seconds old', spec).group(1)
+        wording = re.search(r'FORGE2-CONTRACT\.md §3 carries verbatim: "(.*?)"', spec).group(1)
+        self.assertIn(f'here up to {workers} run at once', wording)
+        self.assertIn(f'may miss writes made in the last {stale} virtual seconds', wording)
+        backend = flat(re.search(r'^## 3\..*?(?=^## 4\.)', CONTRACT, re.M | re.S).group(0))
+        for phrase in (wording, 'Whatever the delivery history, and under concurrent delivery, the ledger holds '
+                       '**exactly one row per change**, one click or double click posts one comment (§5) and one CI '
+                       'event records one deployment (§14)'):
+            self.assertIn(phrase, backend, f'contract §3 lacks: {phrase}')
+        self.assert_in_contract("A pushed event's `concurrency` key and limit are not applied.")
+        starter = flat(STARTER)
+        self.assertIn(f'up to {workers} consumer invocations run at once', starter)
+        self.assertIn(f'misses writes younger than {stale} virtual seconds', starter)
 
     def test_requirements_1(self):
         self.assert_in_contract('complete within the first 2 virtual hours after the upgrade',

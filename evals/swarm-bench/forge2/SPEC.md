@@ -51,7 +51,7 @@ list of the faults the grader injects. The 1.0 contract's product rules (FORGE-C
   web trigger and Rovo action **55 s**. Exceeding the limit kills the invocation (no result).
 - Async: a consumer that returns `InvocationError` (retryAfter ≤ 900 s) or is killed is redelivered (at least once,
   any order). Scheduled triggers run hourly and are not retried (a failed run waits for the next). Product-event
-  triggers: up to 4 retries.
+  triggers: up to 4 retries. Consumers run concurrently (§2.8 S1).
 
 ### 2.3 Scale (scoring sites; the dev site is the same shape, another seed)
 3 projects, 4 scrum boards (2 estimate with field A, 2 with field B — ids vary per seed), 6 active sprints, 2 future,
@@ -67,6 +67,7 @@ plus ~800 irrelevant issue updates, v1 rows preloaded for the first 2 days of ea
 - KVS errors are the REAL ones (measured on wolfaenpak, research/understand/real-forge-fidelity.md): `FAIL_IF_EXISTS` on
   an existing key → 409 `KEY_CONFLICT`; failed transaction condition → 400 `CONDITIONAL_CHECK_FAILED`; > 25 ops → 422
   `UNPROCESSABLE_ENTITY`; undeclared entity → 404 `SCHEMA_NOT_FOUND`.
+- KVS consistency: `get` and transaction conditions strict, queries eventually consistent (§2.8 S2).
 
 ### 2.5 World-change guarantees
 - Sprint closes → its ledger is final; it leaves the widget (active sprints only).
@@ -87,6 +88,33 @@ the new secret once, then `••••<last4>`) · `Migration` (read-only text 
 Headers: `X-LZ-Timestamp: <unix seconds>`, `X-LZ-Signature: sha256=<hex HMAC-SHA256(secret, "<timestamp>.<raw body>")>`
 (header names case-insensitive). Reject if |now − timestamp| > 300 s. Request/response shapes are Forge's documented
 web-trigger shapes (BRIEF; body is the raw string, headers are arrays of strings, response needs `statusCode`).
+
+### 2.8 Concurrent delivery and query consistency (hardening, 2026-10-10)
+Why: GPT-6.1 Sol scored 0.9618 on the gate build (seeds 0.9607 / 0.9629 / 0.9657) while the emulator delivered every
+consumer invocation one at a time and answered every query fresh, so concurrent updates to the same records and
+read-after-write — what Forge 1.0's transcripts showed frontier models do NOT handle — were never exercised. Forge
+processes async events at least once, unordered and, without a concurrency key, unbounded in parallel (BRIEF rob#21,
+rob#28, rob#30); KVS `get` is strictly consistent and `query` eventually consistent (BRIEF rob#43). Exactly these two
+platform behaviours are added (NEVER OVER-ENGINEER):
+- **S1 CONCURRENT DELIVERY.** Consumer invocations may run at the same time. The emulator runs up to 3 consumer
+  invocations concurrently. Whenever two pending deliveries carry the same event (a redelivery or a trigger-level
+  duplicate) or name the same issue, they are started together under a deterministic READS-FIRST schedule: the KVS
+  layer holds each invocation's first WRITE (set/delete/transaction commit) until every invocation of that pair has
+  either issued a write itself or ended — so a check-then-act sequence (get, then set) races exactly like it does in
+  production, deterministically (seeded by delivery order). KVS transactions with conditions and keyPolicy
+  FAIL_IF_EXISTS are evaluated against strict current state at commit time, with the measured real-Forge errors (409
+  KEY_CONFLICT; 400 CONDITIONAL_CHECK_FAILED). Product-event triggers stay as today. A push's `concurrency`
+  key/limit does not exempt a pair from this schedule; on real Forge it would serialize same-key events, so the
+  contract states the difference (§8).
+- **S2 EVENTUALLY CONSISTENT QUERIES.** A KVS query (kvs.query / entity index query) reflects a write only once it
+  is 5 virtual seconds old; get (and entity get) and transaction conditions always see current state.
+- **Public text.** FORGE2-CONTRACT.md §3 carries verbatim: "Forge runs consumer invocations concurrently, including
+  two deliveries of the same event; here up to 3 run at once. Key reads (get) and transaction conditions are strongly
+  consistent; queries are eventually consistent and may miss writes made in the last 5 virtual seconds." It states
+  the exactly-once guarantees (one ledger row per change, one comment per click or double click, one deployment per
+  CI event) as holding under concurrent delivery, and §8 says "A pushed event's `concurrency` key and limit are not
+  applied." STARTER.md says forge-dev's `events` and `scheduled` run the same concurrency and staleness, so an entrant
+  can see both on the dev site.
 
 ## 3. Packages (one owner per file; branch per package; the integrator merges)
 
