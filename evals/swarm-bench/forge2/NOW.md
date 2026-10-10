@@ -64,6 +64,12 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
 
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 12:45 SOL ON THE HARDENED TASK (same task/scorer as Sonnet): 0.9793 provisional (seeds 0.9795/0.9814/0.9846), no
+  critical, 66 of 300 calls, $1.35; 10 defect rows (a_action_result 0/5 in BOTH Sol runs — being diagnosed as model vs
+  contract vs check; t_reestimate 5/6; b_comment 10/12; small ones). LIKE-FOR-LIKE under the severity rule (offline,
+  K=0.10): SOL ~0.82 vs SONNET ~0.70 (K=0.12: 0.80 vs 0.65) -> the discrimination the owner asked for, pending the
+  refuter's verdict on the rule, the calibrated re-scores and the a_action_result diagnosis. Pilot vigil cron ended.
+  Runs: /Volumes/AI-workhorse/runs/forge2-pilot/{20261010-0357-sol, 20261010-0505-haiku, *-sonnet-hardened, *-sol-hardened}.
 - 11:55 SONNET 5.5 ON THE HARDENED TASK: 0.9628 provisional (seeds 0.966/0.965/0.967), no critical, 39 of 300 calls,
   $2.22 — by the owner's rule NOT GOOD (Sonnet in the 0.9s). But it has 13 defect rows (u_widget_live 0 = the S2
   staleness trap; r9 boot ~245 KB of 153,600 on both surfaces; r7_values_fresh 0.84 (191/286 in the worst hour);
