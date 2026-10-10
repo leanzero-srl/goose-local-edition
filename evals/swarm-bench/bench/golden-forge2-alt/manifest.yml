@@ -4,6 +4,7 @@ modules:
       function: on-issue-updated
       events:
         - avi:jira:updated:issue
+        - avi:jira:deleted:issue
   consumer:
     - key: scope-ledger-consumer
       queue: scope-ledger
@@ -73,6 +74,45 @@ modules:
     - key: scope-ledger-llm
       model:
         - claude
+  jira:adminPage:
+    - key: scope-admin
+      title: Scope Ledger
+      resource: admin
+      render: native
+      resolver:
+        function: admin-resolver
+  webtrigger:
+    - key: scope-ci-deployments
+      function: ci-deployment
+      response:
+        type: static
+        outputs:
+          - key: accepted
+            statusCode: 202
+            contentType: application/json
+            body: '{"status":"accepted"}'
+          - key: duplicate
+            statusCode: 200
+            contentType: application/json
+            body: '{"status":"already accepted"}'
+          - key: unauthorized
+            statusCode: 401
+            contentType: application/json
+            body: '{"error":"unauthorized"}'
+          - key: invalid
+            statusCode: 400
+            contentType: application/json
+            body: '{"error":"invalid deployment event"}'
+          - key: error
+            statusCode: 500
+            contentType: application/json
+            body: '{"error":"the deployment could not be recorded"}'
+  jira:customField:
+    - key: scope-status
+      name: Scope status
+      description: Where the issue stands in its active sprint's scope - committed, added (with points) or removed after the sprint started.
+      type: string
+      readOnly: true
   function:
     - key: on-issue-updated
       handler: index.onIssueUpdated
@@ -84,8 +124,12 @@ modules:
       timeoutSeconds: 900
     - key: ui-resolver
       handler: index.uiResolver
+    - key: admin-resolver
+      handler: index.adminResolver
     - key: rovo-get-sprint-scope
       handler: index.getSprintScope
+    - key: ci-deployment
+      handler: index.ciDeployment
 resources:
   - key: widget
     path: static/widget/build
@@ -93,10 +137,14 @@ resources:
     path: static/widget-edit/build
   - key: sprint
     path: static/sprint/build
+  - key: admin
+    path: src/frontend/admin.jsx
 permissions:
   scopes:
     - read:jira-work
     - write:jira-work
+    - read:jira-user
+    - write:app-data:jira
     - storage:app
     - read:board-scope:jira-software
     - read:board-scope.admin:jira-software
@@ -159,3 +207,116 @@ app:
               - issueId
             range:
               - sprintId
+      - name: scope-ledger
+        attributes:
+          sprintId:
+            type: string
+          at:
+            type: float
+          changeId:
+            type: string
+          kind:
+            type: string
+          issueId:
+            type: string
+          issueKey:
+            type: string
+          estimate:
+            type: float
+          boardId:
+            type: string
+          estimateField:
+            type: string
+          deleted:
+            type: boolean
+          deployedEnvs:
+            type: string
+          created:
+            type: string
+          authorId:
+            type: string
+          authorName:
+            type: string
+          source:
+            type: string
+          migrated:
+            type: boolean
+        indexes:
+          - name: by-sprint
+            partition:
+              - sprintId
+            range:
+              - at
+          - name: by-issue
+            partition:
+              - issueId
+            range:
+              - at
+          - name: by-issue-key
+            partition:
+              - issueKey
+            range:
+              - at
+      - name: scope-member
+        attributes:
+          sprintId:
+            type: string
+          issueId:
+            type: string
+          issueKey:
+            type: string
+          inSprint:
+            type: boolean
+          estimates:
+            type: string
+          deleted:
+            type: boolean
+          syncedAt:
+            type: float
+        indexes:
+          - name: by-sprint
+            partition:
+              - sprintId
+            range:
+              - issueId
+          - name: by-issue
+            partition:
+              - issueId
+            range:
+              - sprintId
+      - name: scope-deploy
+        attributes:
+          kind:
+            type: string
+          issueKey:
+            type: string
+          envs:
+            type: string
+          version:
+            type: integer
+        indexes:
+          - name: all
+            partition:
+              - kind
+            range:
+              - issueKey
+      - name: rate-budget
+        attributes:
+          hour:
+            type: integer
+          spent:
+            type: integer
+          blocked:
+            type: boolean
+          holds:
+            type: string
+          version:
+            type: integer
+      - name: llm-usage
+        attributes:
+          day:
+            type: string
+          tokens:
+            type: integer
+          version:
+            type: integer

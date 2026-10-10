@@ -142,3 +142,14 @@
   flex-wrap: wrap;
   gap: 8px 16px;
 }
+
+.env {
+  display: inline-block;
+  margin-right: 4px;
+  padding: 0 6px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: 700;
+  background-color: var(--ds-background-success-bold);
+  color: var(--ds-text-inverse);
+}

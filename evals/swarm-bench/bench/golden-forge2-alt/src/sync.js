@@ -1,9 +1,35 @@
-import { jiraJson, route, postJson } from './jira';
-import { resolveSprint } from './config';
-import { changesOfSprint, membersOfSprint, membersOfIssue, recordChange, writeMember, changeKey } from './ledger';
+import { kvs } from '@forge/kvs';
+import { jiraJson, route } from './jira';
+import { resolveSprint, fieldAt, trackedFields, observeField, boardEstimateField, getSprintFromJira } from './config';
+import {
+  recordRow,
+  writeMember,
+  patchRow,
+  membersOfIssue,
+  membersOfSprint,
+  ledgerOfIssue,
+  ledgerOfSprint,
+  rowKey,
+  memberKey,
+  tombstoneKey,
+  LEDGER,
+  envString,
+  envList,
+  DEPLOYS,
+  queryAll,
+} from './ledger';
+import { freezeSprint } from './scope';
+import { statusFor, writtenStatus, writtenStatuses, writeStatuses, keysWithPrefix } from './status';
+import { remainingMs, sleep } from './time';
 
-// The Sprint field's issue value is an array of sprint objects (or ids); its changelog `from`/`to`
-// hold the comma-separated sprint ids before and after the change.
+// Index queries miss writes younger than this (§3); a handler that records a fact and then patches what it can
+// see waits it out first.
+export const QUERY_STALENESS_MS = 5_000;
+
+// ---- Jira shapes ------------------------------------------------------------------------------------
+
+// The Sprint field's issue value is an array of sprint objects (or ids); its changelog `from`/`to` hold the
+// comma-separated sprint ids before and after the change.
 export function sprintsOfField(value) {
   if (!Array.isArray(value)) return [];
   return value.map((s) => (s !== null && typeof s === 'object' ? { id: String(s.id), state: s.state } : { id: String(s), state: undefined }));
@@ -25,43 +51,46 @@ export function sprintMoves(history, sprintFieldId) {
   return moves;
 }
 
-export const estimateFieldIds = (cfg) => [...new Set(Object.values(cfg.sprints).map((s) => s.estimateFieldId).filter(Boolean))];
-
-export const issueFields = (cfg) => [cfg.sprintFieldId, ...estimateFieldIds(cfg)];
-
-function estimateOf(fields, fieldId) {
-  if (!fieldId) return 0;
-  const v = fields?.[fieldId];
-  const n = typeof v === 'number' ? v : v === null || v === undefined || v === '' ? 0 : Number(v);
-  return Number.isFinite(n) ? n : 0;
-}
-
 // Jira types changelog `created` as an ISO-8601 date-time; an epoch-millisecond number is accepted too.
-// Anything else is logged and the entry skipped, never silently dropped.
 export function instantOf(created) {
   if (typeof created === 'number' && Number.isFinite(created)) return created;
   if (typeof created === 'string') return Date.parse(created);
   return NaN;
 }
 
-export function changeRow(sprint, history, issue, kind, source) {
+export const numberOrNull = (v) => {
+  if (v === null || v === undefined || v === '') return null;
+  const n = typeof v === 'number' ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+
+// Every tracked estimation field's value (null = no value), as a stable string so equal states compare equal.
+export const estimatesJson = (fields, tracked) => JSON.stringify(Object.fromEntries(tracked.map((f) => [f, numberOrNull(fields?.[f])])));
+
+function buildRow(cfg, sprint, history, issue, kind, source) {
   const at = instantOf(history.created);
+  const field = fieldAt(cfg, sprint.boardId, at);
   return {
     sprintId: sprint.id,
     changeId: String(history.id),
     at,
     created: new Date(at).toISOString(),
+    kind,
     issueId: String(issue.id),
     issueKey: issue.key ?? '',
-    kind,
     authorId: history.author?.accountId ?? '',
     authorName: history.author?.displayName ?? '',
     source,
+    estimate: numberOrNull(issue.fields?.[field]) ?? 0,
+    estimateField: field ?? '',
+    boardId: sprint.boardId,
+    deleted: false,
+    deployedEnvs: '',
   };
 }
 
-// Rows for the active sprints this changelog entry moved the issue into or out of, after their start.
-async function rowsOf(cfg, issue, histories, source, resolve) {
+// The rows a set of changelog histories hold for active sprints, after each sprint's start.
+async function candidateRows(cfg, issue, histories, source, resolve) {
   const rows = [];
   for (const history of histories) {
     const at = instantOf(history.created);
@@ -73,119 +102,10 @@ async function rowsOf(cfg, issue, histories, source, resolve) {
         continue;
       }
       if (!(at > sprint.startMs)) continue;
-      rows.push(changeRow(sprint, history, issue, move.kind, source));
+      rows.push({ sprint, history, kind: move.kind });
     }
   }
   return rows;
-}
-
-export function memberRow(cfg, sprintId, issue, currentSprintIds) {
-  const sprint = cfg.sprints[sprintId];
-  return {
-    sprintId,
-    issueId: String(issue.id),
-    issueKey: issue.key ?? '',
-    inSprint: currentSprintIds.has(sprintId),
-    estimate: estimateOf(issue.fields, sprint.estimateFieldId),
-  };
-}
-
-// ---- event path ------------------------------------------------------------------------------
-
-// One delivered issue update: record the rows of exactly this changelog entry (first writer keeps
-// `source`), and refresh the issue's membership and estimate in every active sprint it touches.
-// Reads current Jira state, so duplicates and reordering converge on the same result.
-export async function applyIssueEvent(cfg, { issueId, changelogId, sprintChange }, policy) {
-  const negative = new Set();
-  const resolve = async (sprintId) => {
-    if (negative.has(sprintId)) return null;
-    const s = await resolveSprint(cfg, sprintId, policy);
-    if (!s) negative.add(sprintId);
-    return s;
-  };
-
-  // One read: the issue's current Sprint and estimate values AND its changelog (`expand=changelog`, the most recent
-  // histories embedded). The event names its changelog entry; its `created` and author come from Jira (the product
-  // event carries neither). Only that entry is recorded: lost siblings are the scheduled run's to heal.
-  const wantsLog = Boolean(sprintChange && changelogId);
-  const getIssue = () => {
-    const fields = issueFields(cfg).join(',');
-    const path = wantsLog
-      ? route`/rest/api/3/issue/${issueId}?fields=${fields}&expand=changelog`
-      : route`/rest/api/3/issue/${issueId}?fields=${fields}`;
-    return jiraJson('app', path, undefined, policy).catch((e) => {
-      if (e.status === 404) return null;
-      throw e;
-    });
-  };
-  let issue = await getIssue();
-  if (!issue) return { rows: 0, members: 0, sprintIds: [] };
-
-  let histories = [];
-  if (wantsLog) {
-    const embedded = issue.changelog?.histories ?? [];
-    histories = embedded.filter((h) => String(h.id) === String(changelogId));
-    // The embedded changelog is the most recent page only; an entry older than it is read in full.
-    if (!histories.length && (issue.changelog?.total ?? 0) > embedded.length) {
-      const all = (await sprintHistories([String(issueId)], cfg.sprintFieldId, policy)).get(String(issueId)) ?? [];
-      histories = all.filter((h) => String(h.id) === String(changelogId));
-    }
-    for (const history of histories) for (const move of sprintMoves(history, cfg.sprintFieldId)) await resolve(move.sprintId);
-  }
-  const current = sprintsOfField(issue.fields?.[cfg.sprintFieldId]);
-  const knownFields = issueFields(cfg).join(',');
-  for (const s of current) if (s.state === undefined || s.state === 'active') await resolve(s.id);
-  if (issueFields(cfg).join(',') !== knownFields) issue = (await getIssue()) ?? issue;
-
-  const rows = await rowsOf(cfg, issue, histories, 'event', resolve);
-  const changed = new Set();
-  let written = 0;
-  for (const row of rows) {
-    if (await recordChange(row)) {
-      written += 1;
-      changed.add(row.sprintId);
-    }
-  }
-
-  const currentIds = new Set(current.map((s) => s.id));
-  const stored = new Map((await membersOfIssue(issue.id)).map((m) => [m.sprintId, m]));
-  const touched = new Set([...currentIds, ...rows.map((r) => r.sprintId), ...stored.keys()]);
-  let members = 0;
-  for (const sprintId of touched) {
-    if (!cfg.sprints[sprintId]) continue;
-    if (await writeMember(memberRow(cfg, sprintId, issue, currentIds), stored.get(sprintId))) {
-      members += 1;
-      changed.add(sprintId);
-    }
-  }
-  return { rows: written, members, sprintIds: [...changed] };
-}
-
-// ---- scheduled path --------------------------------------------------------------------------
-
-function jqlDate(ms) {
-  const d = new Date(ms);
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
-}
-
-// Every issue that can hold a change of an active sprint: those in one now, and every issue updated
-// since the earliest start (an issue taken out of a sprint was updated by that change, even if it has
-// left every sprint since). The date is one day early so the site's JQL time zone cannot cut it.
-export async function searchCandidates(cfg, policy) {
-  const sprints = Object.values(cfg.sprints);
-  const since = Math.min(...sprints.map((s) => s.startMs)) - 24 * 3600 * 1000;
-  const jql = `sprint in (${sprints.map((s) => s.id).join(', ')}) OR updated >= "${jqlDate(since)}"`;
-  const issues = [];
-  let nextPageToken;
-  do {
-    const body = { jql, fields: issueFields(cfg), maxResults: 100 };
-    if (nextPageToken) body.nextPageToken = nextPageToken;
-    const page = await jiraJson('app', route`/rest/api/3/search/jql`, postJson(body), policy);
-    issues.push(...(page.issues ?? []));
-    nextPageToken = page.isLast === true ? undefined : page.nextPageToken ?? undefined;
-  } while (nextPageToken);
-  return issues;
 }
 
 export async function sprintHistories(issueIds, sprintFieldId, policy) {
@@ -193,9 +113,9 @@ export async function sprintHistories(issueIds, sprintFieldId, policy) {
   for (let i = 0; i < issueIds.length; i += 1000) {
     let nextPageToken;
     do {
-      const body = { issueIdsOrKeys: issueIds.slice(i, i + 1000), fieldIds: [sprintFieldId], maxResults: 1000 };
+      const body = { issueIdsOrKeys: issueIds.slice(i, i + 1000), fieldIds: [sprintFieldId], maxResults: 10000 };
       if (nextPageToken) body.nextPageToken = nextPageToken;
-      const page = await jiraJson('app', route`/rest/api/3/changelog/bulkfetch`, postJson(body), policy);
+      const page = await jiraJson('app', 'POST /rest/api/3/changelog/bulkfetch', route`/rest/api/3/changelog/bulkfetch`, policy, { body });
       for (const log of page.issueChangeLogs ?? []) {
         const id = String(log.issueId);
         if (!byIssue.has(id)) byIssue.set(id, []);
@@ -207,44 +127,340 @@ export async function sprintHistories(issueIds, sprintFieldId, policy) {
   return byIssue;
 }
 
-// Backfill and heal: compute every change and membership of every active sprint from Jira, then write
-// only what the ledger does not hold yet. A run with nothing new writes nothing.
-export async function reconcileAll(cfg, policy) {
-  const sprintIds = Object.keys(cfg.sprints);
-  if (!sprintIds.length) return { issues: 0, rows: 0, members: 0, sprintIds: [] };
-  const issues = await searchCandidates(cfg, policy);
-  const histories = await sprintHistories(issues.map((i) => String(i.id)), cfg.sprintFieldId, policy);
+// Issues as the app, by id: { found: Map(id -> issue), missing: Set(id) }. The app can see every issue, so an id
+// Jira does not return is a deleted issue.
+export async function fetchIssues(issueIds, fields, policy) {
+  const found = new Map();
+  const ids = [...new Set(issueIds.map(String))];
+  for (let i = 0; i < ids.length; i += 100) {
+    const page = await jiraJson('app', 'POST /rest/api/3/issue/bulkfetch', route`/rest/api/3/issue/bulkfetch`, policy, {
+      body: { issueIdsOrKeys: ids.slice(i, i + 100), fields },
+    });
+    for (const issue of page.issues ?? []) found.set(String(issue.id), issue);
+  }
+  return { found, missing: new Set(ids.filter((id) => !found.has(id))) };
+}
 
-  const storedRows = new Set();
+// ---- deletion -------------------------------------------------------------------------------------
+
+// §12: the issue's rows stay as history with deleted: true and it counts in no current scope. The tombstone is
+// written first; every row writer re-checks it after writing, and after the staleness window every row the index
+// shows is patched.
+export async function markDeleted(issueIds) {
+  const ids = [...new Set(issueIds.map(String))];
+  if (!ids.length) return [];
+  for (const id of ids) await kvs.set(tombstoneKey(id), { at: Date.now() });
+  await sleep(QUERY_STALENESS_MS + 100);
+  const changed = new Set();
+  for (const id of ids) {
+    for (const row of await ledgerOfIssue(id)) {
+      if (row.deleted) continue;
+      await patchRow(rowKey(row.changeId, row.sprintId), (r) => ({ ...r, deleted: true }));
+      changed.add(row.sprintId);
+    }
+    for (const member of await membersOfIssue(id)) {
+      if (member.deleted) continue;
+      if (await writeMember({ ...member, inSprint: false, deleted: true, estimates: '{}', syncedAt: Date.now() }, member)) changed.add(member.sprintId);
+    }
+  }
+  return [...changed];
+}
+
+// ---- closed sprints --------------------------------------------------------------------------------
+
+// A sprint the config held as active is closed now: freeze its ledger as it stands and stop treating it as active.
+export async function closeSprint(cfg, sprintId, sprint) {
+  const known = cfg.known?.[sprintId] ?? {};
+  const meta = { name: sprint?.name ?? cfg.sprints[sprintId]?.name ?? known.name, completeDate: sprint?.completeDate ?? known.completeDate ?? new Date().toISOString(), boardId: cfg.sprints[sprintId]?.boardId ?? known.boardId };
+  await freezeSprint(sprintId, meta, cfg);
+  delete cfg.sprints[sprintId];
+  cfg.known = { ...(cfg.known ?? {}), [sprintId]: { ...known, state: 'closed', name: meta.name, boardId: meta.boardId, completeDate: meta.completeDate } };
+}
+
+// ---- event path -------------------------------------------------------------------------------------
+
+async function getIssue(issueId, fields, withLog, policy) {
+  const path = withLog ? route`/rest/api/3/issue/${issueId}?fields=${fields}&expand=changelog` : route`/rest/api/3/issue/${issueId}?fields=${fields}`;
+  try {
+    return await jiraJson('app', 'GET /rest/api/3/issue/{issueIdOrKey}', path, policy);
+  } catch (e) {
+    if (e.status === 404) return null;
+    throw e;
+  }
+}
+
+function groupRows(rows) {
+  const bySprint = new Map();
+  for (const r of rows) {
+    if (!bySprint.has(r.sprintId)) bySprint.set(r.sprintId, []);
+    bySprint.get(r.sprintId).push(r);
+  }
+  return bySprint;
+}
+
+// One delivered issue update. Reads current Jira state, so duplicates, reordering and concurrent deliveries converge:
+// rows are created once (first writer keeps `source`), member rows keep the fresher read, and the field value follows
+// what storage then says. Records every Sprint change of the issue's embedded changelog the ledger lacks (event work
+// may record siblings whose own event was lost). Returns the sprints whose numbers may have moved.
+export async function applyIssueEvent(cfg, body, policy) {
+  const issueId = String(body.issueId);
+  const withLog = Boolean(body.sprintChange);
+  let tracked = trackedFields(cfg);
+  const readAt = Date.now();
+  let issue = await getIssue(issueId, [cfg.sprintFieldId, ...tracked].join(','), withLog, policy);
+  if (!issue) return { sprintIds: await markDeleted([issueId]), rows: 0, deleted: true };
+
+  let histories = [];
+  if (withLog) {
+    const embedded = issue.changelog?.histories ?? [];
+    histories = embedded.filter((h) => (h.items ?? []).some((i) => isSprintItem(i, cfg.sprintFieldId)));
+    const named = body.changelogId && embedded.some((h) => String(h.id) === String(body.changelogId));
+    if (body.changelogId && !named && (issue.changelog?.total ?? 0) > embedded.length) {
+      histories = (await sprintHistories([issueId], cfg.sprintFieldId, policy)).get(issueId) ?? [];
+    }
+  }
+
+  const current = sprintsOfField(issue.fields?.[cfg.sprintFieldId]);
+  const negative = new Set();
+  const resolve = async (sprintId, hint) => {
+    if (negative.has(sprintId)) return null;
+    if (cfg.sprints[sprintId] && hint === 'closed') {
+      await closeSprint(cfg, sprintId);
+      negative.add(sprintId);
+      return null;
+    }
+    const s = await resolveSprint(cfg, sprintId, policy, hint);
+    if (!s) negative.add(sprintId);
+    return s;
+  };
+  for (const s of current) await resolve(s.id, s.state);
+
+  const [storedRows, storedMembers] = await Promise.all([ledgerOfIssue(issueId), membersOfIssue(issueId)]);
+  const have = new Set(storedRows.map((r) => rowKey(r.changeId, r.sprintId)));
+  const found = (await candidateRows(cfg, issue, histories, 'event', resolve)).filter((c) => !have.has(rowKey(String(c.history.id), c.sprint.id)));
+
+  // A new row's estimation field is the one its board used at the change; Jira sends no event when a board switches
+  // fields, so the board is read now, when a change needs it.
+  const observed = new Set();
+  for (const c of found) {
+    if (observed.has(c.sprint.boardId)) continue;
+    observed.add(c.sprint.boardId);
+    observeField(cfg, c.sprint.boardId, await boardEstimateField(c.sprint.boardId, policy));
+  }
+  if (trackedFields(cfg).join(',') !== tracked.join(',')) {
+    tracked = trackedFields(cfg);
+    issue = (await getIssue(issueId, [cfg.sprintFieldId, ...tracked].join(','), false, policy)) ?? issue;
+  }
+
+  const changed = new Set();
+  const newRows = [];
+  const seenRows = [];
+  for (const c of found) {
+    const row = buildRow(cfg, c.sprint, c.history, issue, c.kind, 'event');
+    const written = await recordRow(row);
+    if (written) {
+      newRows.push(written);
+      changed.add(written.sprintId);
+    } else {
+      // A concurrent delivery wrote it moments ago (too fresh for the index): read it by key.
+      const existing = await kvs.entity(LEDGER).get(rowKey(row.changeId, row.sprintId));
+      if (existing) seenRows.push(existing);
+    }
+  }
+
+  const rowsBySprint = groupRows([...storedRows, ...newRows, ...seenRows]);
+  const currentIds = new Set(current.map((s) => s.id));
+  const storedBySprint = new Map(storedMembers.map((m) => [m.sprintId, m]));
+  const touched = new Set([...currentIds, ...rowsBySprint.keys(), ...storedBySprint.keys()]);
+  const estimates = estimatesJson(issue.fields, tracked);
+  const members = new Map();
+  for (const sprintId of touched) {
+    if (!cfg.sprints[sprintId]) continue;
+    const stored = storedBySprint.get(sprintId);
+    const inSprint = currentIds.has(sprintId);
+    // Left the sprint with no Sprint change recorded: a sprint close moves unfinished issues out without a changelog
+    // entry. Ask Jira before touching a sprint that may have closed.
+    if (stored?.inSprint && !inSprint) {
+      const last = (rowsBySprint.get(sprintId) ?? []).sort((a, b) => a.at - b.at).pop();
+      if (!last || last.kind !== 'removed') {
+        const sprint = await getSprintFromJira(sprintId, policy);
+        if (!sprint || sprint.state === 'closed') {
+          await closeSprint(cfg, sprintId, sprint);
+          changed.add(sprintId);
+          continue;
+        }
+      }
+    }
+    const next = { sprintId, issueId, issueKey: issue.key ?? '', inSprint, estimates, deleted: false, syncedAt: readAt };
+    members.set(sprintId, next);
+    if (await writeMember(next, stored)) changed.add(sprintId);
+  }
+
+  await updateStatus(cfg, issueId, members, rowsBySprint, policy);
+  return { sprintIds: [...changed], rows: newRows.length };
+}
+
+// The issue's field value from what this invocation knows (its own writes included), written only when it changed.
+async function updateStatus(cfg, issueId, members, rowsBySprint, policy) {
+  const entries = [];
+  for (const [sprintId, member] of members) if (cfg.sprints[sprintId]) entries.push({ member, rows: rowsBySprint.get(sprintId) ?? [] });
+  const value = statusFor(entries);
+  if (value === null || value === (await writtenStatus(issueId))) return;
+  await writeStatuses(cfg, new Map([[issueId, value]]), policy);
+}
+
+// ---- scheduled path ---------------------------------------------------------------------------------
+
+function jqlDate(ms) {
+  const d = new Date(ms);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+}
+
+// Every issue that can hold a change of an active sprint: those in one now, and every issue updated since the
+// earliest start (an issue taken out of a sprint was updated by that change). The date is a day early so the site's
+// JQL time zone cannot cut it.
+export async function searchCandidates(cfg, policy) {
+  const sprints = Object.values(cfg.sprints);
+  const since = Math.min(...sprints.map((s) => s.startMs)) - 24 * 3600 * 1000;
+  const jql = `sprint in (${sprints.map((s) => s.id).join(', ')}) OR updated >= "${jqlDate(since)}"`;
+  const fields = [cfg.sprintFieldId, ...trackedFields(cfg)];
+  const issues = [];
+  let nextPageToken;
+  do {
+    const readAt = Date.now();
+    const body = { jql, fields, maxResults: 1000 };
+    if (nextPageToken) body.nextPageToken = nextPageToken;
+    const page = await jiraJson('app', 'POST /rest/api/3/search/jql', route`/rest/api/3/search/jql`, policy, { body });
+    for (const issue of page.issues ?? []) issues.push({ ...issue, readAt });
+    nextPageToken = page.isLast === true ? undefined : page.nextPageToken ?? undefined;
+  } while (nextPageToken);
+  return issues;
+}
+
+export class OutOfTime extends Error {}
+
+const checkTime = (marginMs) => {
+  if (remainingMs() < marginMs) throw new OutOfTime(`less than ${Math.round(marginMs / 1000)} s left`);
+};
+
+// Backfill and heal: every change and membership of every active sprint from Jira; write only what storage lacks.
+// A run with nothing new writes nothing.
+export async function reconcileAll(cfg, policy, { marginMs, migrate }) {
+  const sprintIds = Object.keys(cfg.sprints);
+  const changed = new Set();
+  const tracked = trackedFields(cfg);
+  const issues = sprintIds.length ? await searchCandidates(cfg, policy) : [];
+  checkTime(marginMs);
+  const histories = issues.length ? await sprintHistories(issues.map((i) => String(i.id)), cfg.sprintFieldId, policy) : new Map();
+  checkTime(marginMs);
+  const byId = new Map(issues.map((i) => [String(i.id), i]));
+  if (migrate) await migrate(byId);
+
+  const storedRows = new Map();
   const storedMembers = new Map();
   for (const sprintId of sprintIds) {
-    for (const row of await changesOfSprint(sprintId)) storedRows.add(changeKey(row.changeId, row.sprintId));
-    for (const m of await membersOfSprint(sprintId)) storedMembers.set(`${m.sprintId}:${m.issueId}`, m);
+    for (const row of await ledgerOfSprint(sprintId)) storedRows.set(rowKey(row.changeId, row.sprintId), row);
+    for (const m of await membersOfSprint(sprintId)) storedMembers.set(memberKey(m.sprintId, m.issueId), m);
   }
 
   const resolve = async (sprintId) => cfg.sprints[sprintId] ?? null;
-  const changed = new Set();
   let rows = 0;
   let members = 0;
+  const allRows = new Map(storedRows);
+  const memberState = new Map(storedMembers);
+  const consumerFresh = new Set();
   for (const issue of issues) {
-    const issueRows = await rowsOf(cfg, issue, histories.get(String(issue.id)) ?? [], 'reconcile', resolve);
-    for (const row of issueRows) {
-      if (storedRows.has(changeKey(row.changeId, row.sprintId))) continue;
-      if (await recordChange(row, true)) {
+    checkTime(marginMs);
+    const issueId = String(issue.id);
+    for (const c of await candidateRows(cfg, issue, histories.get(issueId) ?? [], 'reconcile', resolve)) {
+      const key = rowKey(String(c.history.id), c.sprint.id);
+      if (allRows.has(key)) continue;
+      const row = buildRow(cfg, c.sprint, c.history, issue, c.kind, 'reconcile');
+      const written = await recordRow(row);
+      if (written) {
         rows += 1;
         changed.add(row.sprintId);
       }
+      allRows.set(key, written ?? (await kvs.entity(LEDGER).get(key)) ?? row);
     }
     const currentIds = new Set(sprintsOfField(issue.fields?.[cfg.sprintFieldId]).map((s) => s.id));
-    const touched = new Set([...currentIds, ...issueRows.map((r) => r.sprintId)]);
-    for (const sprintId of sprintIds) if (storedMembers.has(`${sprintId}:${issue.id}`)) touched.add(sprintId);
+    const touched = new Set(currentIds);
+    for (const r of allRows.values()) if (r.issueId === issueId) touched.add(r.sprintId);
+    for (const sprintId of sprintIds) if (storedMembers.has(memberKey(sprintId, issueId))) touched.add(sprintId);
+    const estimates = estimatesJson(issue.fields, tracked);
     for (const sprintId of touched) {
       if (!cfg.sprints[sprintId]) continue;
-      if (await writeMember(memberRow(cfg, sprintId, issue, currentIds), storedMembers.get(`${sprintId}:${issue.id}`))) {
+      const key = memberKey(sprintId, issueId);
+      const stored = storedMembers.get(key);
+      const next = { sprintId, issueId, issueKey: issue.key ?? '', inSprint: currentIds.has(sprintId), estimates, deleted: false, syncedAt: issue.readAt };
+      if (stored && stored.syncedAt > issue.readAt) {
+        consumerFresh.add(issueId);
+        continue;
+      }
+      if (await writeMember(next, stored)) {
         members += 1;
         changed.add(sprintId);
+        memberState.set(key, next);
+      } else if (!stored || stored.inSprint !== next.inSprint || stored.estimates !== next.estimates || stored.deleted) {
+        consumerFresh.add(issueId); // a fresher read won the write
       }
     }
   }
-  return { issues: issues.length, rows, members, sprintIds: [...changed] };
+
+  // Issues storage knows in an active sprint that Jira no longer returns: deleted, if Jira confirms.
+  const known = new Set([...[...memberState.values()].filter((m) => !m.deleted).map((m) => String(m.issueId)), ...[...allRows.values()].filter((r) => !r.deleted).map((r) => String(r.issueId))]);
+  const unseen = [...known].filter((id) => !byId.has(id));
+  if (unseen.length) {
+    const { missing } = await fetchIssues(unseen, ['key'], policy);
+    for (const s of await markDeleted([...missing])) changed.add(s);
+    for (const id of missing) {
+      for (const [key, m] of memberState) if (String(m.issueId) === id) memberState.set(key, { ...m, deleted: true, inSprint: false });
+    }
+  }
+  checkTime(marginMs);
+
+  const statuses = await syncStatuses(cfg, [...memberState.values()], [...allRows.values()], consumerFresh, policy);
+  await healDeployments([...allRows.values()]);
+  return { issues: issues.length, rows, members, statuses, sprintIds: [...changed] };
+}
+
+// Every issue's scope-status from storage's view of the active sprints; issues a consumer refreshed after this run's
+// read are left to that consumer.
+async function syncStatuses(cfg, memberRows, rows, skip, policy) {
+  const written = await writtenStatuses();
+  for (const issueId of (await keysWithPrefix('deleted:')).keys()) skip.add(issueId); // never compared
+  const membersByIssue = new Map();
+  for (const m of memberRows) {
+    if (!cfg.sprints[m.sprintId]) continue;
+    const id = String(m.issueId);
+    if (!membersByIssue.has(id)) membersByIssue.set(id, []);
+    membersByIssue.get(id).push(m);
+  }
+  const rowsByIssueSprint = new Map();
+  for (const r of rows) {
+    const k = `${r.issueId}|${r.sprintId}`;
+    if (!rowsByIssueSprint.has(k)) rowsByIssueSprint.set(k, []);
+    rowsByIssueSprint.get(k).push(r);
+  }
+  const changes = new Map();
+  for (const issueId of new Set([...membersByIssue.keys(), ...written.keys()])) {
+    if (skip.has(issueId)) continue;
+    const entries = (membersByIssue.get(issueId) ?? []).map((member) => ({ member, rows: rowsByIssueSprint.get(`${issueId}|${member.sprintId}`) ?? [] }));
+    const value = statusFor(entries);
+    if (value === null) continue;
+    if (value !== (written.get(issueId) ?? '')) changes.set(issueId, value);
+  }
+  return writeStatuses(cfg, changes, policy);
+}
+
+// Safety net for §14: every row of a deployed issue carries its environments.
+async function healDeployments(rows) {
+  const records = await queryAll(DEPLOYS, 'all', ['deploy']);
+  const envsByKey = new Map(records.map((d) => [d.issueKey, envList(d.envs)]));
+  for (const row of rows) {
+    const envs = envsByKey.get(row.issueKey) ?? [];
+    if (!envs.length || envs.every((e) => envList(row.deployedEnvs).includes(e))) continue;
+    await patchRow(rowKey(row.changeId, row.sprintId), (r) => ({ ...r, deployedEnvs: envString([...envList(r.deployedEnvs), ...envs]) }));
+  }
 }
