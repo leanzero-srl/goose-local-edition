@@ -110,6 +110,11 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
   calibration, sb7.x/forge manifests to refreeze after P11's shared bench edits.
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 21:27 SITE LIVE + FORGE 2.0 REGISTERED: deploy marker seen 21:26:18 (lz-forge-eras forge-1.0:d40aca35…;forge-2.0:
+  a9aa59a4…), `register-forge2 probe` clean, `add --live` done: bstate-forge-2-0 = "Forge 2.0 — Scope Ledger 2", open,
+  NOT current (forge-1.0 stays the frozen forge familyCurrent until the flip; sb-7.2 unchanged); the site says "forge-2.0
+  accepts results now (POST and graded clips)". Back-out while no 2.0 run exists: delete bstate-forge-2-0. Sonnet's
+  publish can now land (the proxy re-flags the real forge-2.0 entry as familyCurrent for the app).
 - 21:21 SITE PUSHED TO MASTER: forge2-era 80c26b5c fast-forwarded onto origin/master 0b0cce6e (the other session's 225
   commits merged in cf385d9c — BoardPage.tsx / RunsLeaderboard.tsx conflicts keep both sides, checked line by line; the
   owner asked 21:0x whether I rebased to avoid stomping work: verified the branch contained master's tip before the
