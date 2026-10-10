@@ -42,7 +42,9 @@ world, webtrigger, admin, field, llm_v2, boot — are read by forge2_checks.py):
     call = {t (virtual s), inv, kind (trigger|consumer|scheduled|resolver|action|ui), moduleKey, provider
             (app|user|none), service (jira|kvs|queue|egress), method, path, body, status, response,
             scopes {classic [..], granular [..]} (jira: the endpoint's OAuth2 alternatives), fault (id of the
-            scripted fault that answered), earlyRetry (fault id when retried inside its window), limitError}
+            scripted fault that answered), earlyRetry (fault id when retried inside its window), limitError,
+            originChange / scheduledRun (the invocation's lineage: the product event or the scheduled run its chain
+            began with, handed on by every queue push — the economy rows and the scheduled run's rows read it)}
     inv  = {inv, kind, moduleKey, functionKey, t0, t1, ok, threw, error, errorName, timedOut, retryAfter}
     delivery = {eventId, inv, attempt, result (ok|retry|throw|timeout), retryAfter, t}
   rovo {calls: [{as, label (sprint|unknown|missing), sprintId, threw, result, error}]},
@@ -57,6 +59,7 @@ world, webtrigger, admin, field, llm_v2, boot — are read by forge2_checks.py):
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import copy
 from decimal import Decimal, InvalidOperation
 import fcntl
@@ -629,7 +632,8 @@ def pre_paginated(c):
 
 
 def pre_scheduled_read(c):
-    return (bool(c.calls(service='jira', kinds=('scheduled',))), '>= 1 scheduled-run Jira read')
+    calls, scope = scheduled_chain_calls(c)
+    return (bool(calls), f'>= 1 Jira read of {scope}')
 
 
 def pre_kvs_call(c):
@@ -2033,20 +2037,51 @@ def _(c):
              'the reconcile ignores Retry-After', parts={'faults': len(verdicts)})
 
 
-@check('r_as_app', 'R', pre=pre_scheduled_read, needs=('backfill', 'heal', 'rerun'))
+CHAIN_SCOPE = 'the scheduled runs and their queue continuations'
+UNTRACED_SCOPE = 'the scheduled runs alone (the probe recorded no call lineage)'
+
+
+def scheduled_chain_calls(c: Ctx) -> Tuple[List[Dict], str]:
+    """The Jira calls of the scheduled runs' chains — each run's own and its queue continuations' — by the lineage the
+    probe stamps on every call (`scheduledRun`, which a queue push hands to the consumer it starts, kit emulator), in
+    every phase that drained them. The behaviour is graded, not the invocation kind: an app that hands its reconcile to
+    a consumer reads Jira there (both rows were vacuous for it — Pareto on Forge 1.0, Sol on 2.0). Observations without
+    lineage keep 1.0's reading, the scheduled invocations' own calls, named as such in the row."""
+    every = c.calls(None, 'jira')
+    if traced(every):
+        return [x for x in every if x.get('scheduledRun') is not None], CHAIN_SCOPE
+    return [x for x in every if x.get('kind') == 'scheduled'], UNTRACED_SCOPE
+
+
+def scheduled_chain_invocations(c: Ctx) -> Tuple[List[Dict], str]:
+    """The scheduled runs and the invocations of their chains: every invocation whose calls carry a run's lineage (all
+    of one invocation's calls carry its own). An invocation that made no call carries no recorded lineage; it cannot
+    reach its virtual-time limit either (only calls advance an invocation's clock), and r3_never_killed grades every
+    function."""
+    invs = c.invocations()
+    if scheduled_chain_calls(c)[1] != CHAIN_SCOPE:
+        return [i for i in invs if i.get('kind') == 'scheduled'], UNTRACED_SCOPE
+    in_chain = {x['inv'] for x in c.calls(None, None) if x.get('inv') and x.get('scheduledRun') is not None}
+    return [i for i in invs if i.get('kind') == 'scheduled' or i.get('inv') in in_chain], CHAIN_SCOPE
+
+
+# The hourly runs and the continuations drained between issue events are recorded inside the probe's live section.
+@check('r_as_app', 'R', pre=pre_scheduled_read, needs=('backfill', 'live', 'heal', 'rerun'))
 def _(c):
-    calls = c.calls(service='jira', kinds=('scheduled',))
+    calls, scope = scheduled_chain_calls(c)
     app = sum(1 for x in calls if x.get('provider') == 'app')
-    return g(app / len(calls), f'{app}/{len(calls)} scheduled-run Jira calls asApp', 'reconcile as a user')
+    kinds = ', '.join(f'{k} {n}' for k, n in sorted(Counter(str(x.get('kind')) for x in calls).items()))
+    return g(app / len(calls), f'{app}/{len(calls)} Jira calls of {scope} asApp ({kinds})', 'reconcile as a user')
 
 
-@check('r_completes_in_timeout', 'R', needs=('backfill', 'heal', 'rerun'),
-       pre=lambda c: (any(x.get('kind') == 'scheduled' for x in c.calls(service='jira')),
-                      'a scheduled trigger made >= 1 Jira call'))
+@check('r_completes_in_timeout', 'R', pre=pre_scheduled_read, needs=('backfill', 'live', 'heal', 'rerun'))
 def _(c):
-    sched = [i for i in c.invocations() if i.get('kind') == 'scheduled']
-    ok = sum(1 for i in sched if not i.get('timedOut'))
-    return g(ok / len(sched) if sched else 0, f'{ok}/{len(sched)} scheduled invocations inside the module timeout',
+    invs, scope = scheduled_chain_invocations(c)
+    if not invs:
+        return unavail(f'Jira calls of {scope} were recorded, but none of their invocations')
+    ok = sum(1 for i in invs if not i.get('timedOut'))
+    kinds = ', '.join(f'{k} {n}' for k, n in sorted(Counter(str(i.get('kind')) for i in invs).items()))
+    return g(ok / len(invs), f'{ok}/{len(invs)} invocations of {scope} inside their module timeout ({kinds})',
              'the scheduled job is killed by its timeout')
 
 
@@ -4047,6 +4082,44 @@ def defect_selftest() -> List[str]:
         got = _run_check(fctx, 'r_rate_limit', 'R', fn, pre, needs)
         expect(got['score'] == want and not got.get('unavailable') and got.get('parts', {}).get('faults') == 2,
                f"r_rate_limit {label} in hour-1 and in a live continuation: {got['score']} (want {want}) — {got.get('detail')}")
+    # S3: the scheduled run's rows grade its chain. A run that only pushes and hands its reconcile to a consumer is not
+    # vacuous (Pareto 1.0, Sol 2.0); the continuation's asUser read or timeout costs; an issue event's consumer is not
+    # the run's; observations without lineage keep 1.0's reading (the scheduled invocations' own calls), named as such.
+    board_read = {'service': 'jira', 'method': 'GET', 'path': '/rest/agile/1.0/board'}
+    queue_push = {'service': 'queue', 'method': 'POST', 'path': '/webhook/queue/publish', 'status': 201}
+
+    def delegated(cont='app', killed=False, untraced=False, run_reads=False):
+        own = [lined({**board_read, 'kind': 'scheduled', 'provider': 'app'}, 's1', run=1)] if run_reads else []
+        calls = {'backfill': own + [lined({**queue_push, 'kind': 'scheduled', 'provider': 'app'}, 's1', run=1)],
+                 'live': [lined({**board_read, 'kind': 'consumer', 'provider': cont}, 'k1', run=1),
+                          lined({**board_read, 'kind': 'consumer', 'provider': 'app'}, 'k1', run=1),
+                          lined({**board_read, 'kind': 'consumer', 'provider': 'user'}, 'e1', origin='9201')]}
+        if untraced:
+            calls = {ph: [{k: v for k, v in x.items() if k not in ('originChange', 'scheduledRun')} for x in xs]
+                     for ph, xs in calls.items()}
+        return {'phases': {
+            'backfill': {'invocations': [{'inv': 's1', 'kind': 'scheduled', 'ok': True, 'timedOut': False}],
+                         'calls': calls['backfill']},
+            'live': {'invocations': [{'inv': 'k1', 'kind': 'consumer', 'ok': not killed, 'timedOut': killed},
+                                     {'inv': 'e1', 'kind': 'consumer', 'ok': True, 'timedOut': False}],
+                     'calls': calls['live']}}}
+    for label, obs, as_app, in_time in (
+            ('a reconcile handed to a consumer', delegated(), 1.0, 1.0),
+            ('a continuation reading as a user', delegated(cont='user'), 0.5, 1.0),
+            ('the run reading asApp beside its continuation reading as a user', delegated(cont='user', run_reads=True),
+             round(2 / 3, 4), 1.0),
+            ('a continuation killed by its timeout', delegated(killed=True), 1.0, 0.5),
+            ('no lineage recorded: the scheduled invocation made no Jira call', delegated(untraced=True), None, None)):
+        for name, want in (('r_as_app', as_app), ('r_completes_in_timeout', in_time)):
+            got = row(name, obs)
+            vac = (got.get('parts') or {}).get('vacuous_root')
+            ok = bool(vac) if want is None else (got['score'] == want and not vac and not got.get('unavailable'))
+            expect(ok, f"S3 {name} on {label}: {got['score']} (want {'vacuous' if want is None else want}) — {got.get('detail')}")
+    untraced_run = delegated(untraced=True)
+    untraced_run['phases']['backfill']['calls'].append({**board_read, 'kind': 'scheduled', 'provider': 'app', 'inv': 's1'})
+    got = row('r_as_app', untraced_run)
+    expect(got['score'] == 1.0 and UNTRACED_SCOPE in str(got.get('detail')),
+           f"S3 r_as_app without lineage reads the scheduled invocations' own calls and says so: {got.get('detail')}")
     # 2.0's backfill read (one hour after the upgrade) owes the history changes v1 never recorded; v1's own rows are R1's
     # at the 2-hour mark (contract §9), so a v2 ledger holding every other history change is complete at that read
     pack2 = fo.synthetic_pack_v2()
