@@ -111,6 +111,16 @@ describe('how a run ended', () => {
     expect(benchTrayEndTitle(last)).toBe('Benchmark · gpt-6.1-sol · 41.2%');
   });
 
+  it('prints a Forge 2.0 score in the app’s one format for it — four decimals, as leanzero.net does', () => {
+    const last = benchTrayEndOf(
+      { ...facts, scorerVersion: 'forge-2.0' },
+      { row: { score: 0.745, scorerVersion: 'forge-2.0', provider: 'openrouter' } },
+      START
+    );
+    expect(lastBenchLine(last)).toBe('Last benchmark: gpt-6.1-sol · Forge 2.0 · 0.7450');
+    expect(benchTrayEndTitle(last)).toBe('Benchmark · gpt-6.1-sol · 0.7450');
+  });
+
   it('states a partial bill as a floor and omits an absent one', () => {
     const partial = benchTrayEndOf(
       facts,

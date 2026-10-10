@@ -3,7 +3,6 @@ import {
   outcomeFromSlot,
   findLaunchRow,
   upsertArchivedRow,
-  catalogMismatchOf,
   frozenPublishRefusal,
   benchRunDataDir,
   type BenchSessionRow,
@@ -136,30 +135,6 @@ const CATALOG: BenchCatalogBenchmark[] = [
     baselines: [],
   },
 ];
-
-describe('catalogMismatchOf — the "site needs an app update" signal', () => {
-  it('is null when the site current matches the bundled scorer', () => {
-    expect(catalogMismatchOf(CATALOG, 'sb-7.0-rc')).toBeNull();
-  });
-
-  it('names both sides when they differ — the run still launches the bundled newest', () => {
-    expect(catalogMismatchOf(CATALOG, 'sb-6.0')).toEqual({
-      siteCurrent: 'sb-7.0-rc',
-      bundled: 'sb-6.0',
-    });
-  });
-
-  it('is null with no catalog or no current entry — absence is not a mismatch claim', () => {
-    expect(catalogMismatchOf(null, 'sb-7.0-rc')).toBeNull();
-    expect(catalogMismatchOf([], 'sb-7.0-rc')).toBeNull();
-    expect(
-      catalogMismatchOf(
-        CATALOG.map((b) => ({ ...b, current: false })),
-        'sb-6.0'
-      )
-    ).toBeNull();
-  });
-});
 
 describe('frozenPublishRefusal — the server-shaped refusal, without burning the POST', () => {
   it('refuses a frozen benchmark with the server error shape', () => {

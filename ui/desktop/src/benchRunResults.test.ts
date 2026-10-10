@@ -10,6 +10,7 @@ import {
   runResultFileName,
   treeVerdictDescribesRun,
 } from './benchRunResults';
+import forge2Verdict from './components/benchmark/forge2-pilot.fixture.json';
 
 describe('every finished run keeps its own result', () => {
   it('keys a run by its engine id, or its start stamp before the id exists, as the view does', () => {
@@ -141,6 +142,28 @@ describe('a result publishes without its clip ONLY on the site rule (website 290
         { check: 'u_widget_loads', tier: 'U', score: 0.5 },
       ])
     ).toBeNull();
+  });
+
+  it('forge-2.0: the same rule over its v1 regression rows; a v2 family never stands in for a surface', () => {
+    const rows = [
+      ...['v_theme_tokens', 'v_dark_mode', 'v_csp_clean', 'v_console_clean'].map((check) => ({
+        check,
+        tier: 'V',
+        score: 0,
+        detail: FORGE_NO_SURFACE_DETAIL,
+      })),
+      { check: 'u_widget_loads', tier: 'U', score: 0, detail: 'no widget' },
+      // The UI Kit admin page renders in no browser: its rows say nothing about a clip.
+      { check: 'r5_panel_labels', tier: 'R5', score: 1, detail: 'every label rendered' },
+    ];
+    expect(clipAbsence('forge-2.0', rows)).toBe(
+      'no surface rendered app content, so there was nothing to record'
+    );
+    expect(clipAbsence('forge-2.0', rows.slice(1))).toBeNull();
+    // The REAL Sol pilot rendered every surface: its clip is required.
+    expect(clipAbsence('forge-2.0', forge2Verdict.checks)).toBeNull();
+    // Only the eras the site names: an rc identity is never one.
+    expect(clipAbsence('forge-2.0-rc', rows)).toBeNull();
   });
 });
 

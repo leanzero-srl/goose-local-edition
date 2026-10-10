@@ -1,5 +1,5 @@
 import { Chip, RADIUS, SURFACE, TNUM, TONE_DOT, TYPE, WEIGHT, cx } from '../lz';
-import { BenchmarkRow, Tier } from './baselines';
+import { BenchmarkRow, Tier, scoresAsDecimals, weightText } from './baselines';
 
 const TIERS: Tier[] = ['A', 'B', 'C', 'D', 'E', 'F'];
 
@@ -59,7 +59,9 @@ export function TierBreakdown({ rows, tiers }: { rows: BenchmarkRow[]; tiers?: T
               <span className="truncate">{row.label}</span>
               {row.mine && <Chip tone="accent">yours</Chip>}
             </div>
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(128px,1fr))] gap-x-4 gap-y-3">
+            {/* 148px: the longest name a cell carries, Forge's "Resolvers and permissions", is ~140px at
+                the meta size — a 128px track cut it to an ellipsis at some window widths. */}
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(148px,1fr))] gap-x-4 gap-y-3">
               {tiers
                 .filter((column) => row.tiers?.[column.tier] !== undefined)
                 .map((column) => {
@@ -72,12 +74,15 @@ export function TierBreakdown({ rows, tiers }: { rows: BenchmarkRow[]; tiers?: T
                       <TierBar value={value} />
                       <div className={cx('mt-1 flex items-baseline gap-2', TYPE.meta, TNUM)}>
                         <span className={cx('text-lz-ink', WEIGHT.semibold)}>
-                          {column.tier} {(value * 100).toFixed(0)}%
+                          {column.tier}{' '}
+                          {scoresAsDecimals(row.scorerVersion)
+                            ? value.toFixed(4)
+                            : `${(value * 100).toFixed(0)}%`}
                         </span>
                         {column.admissionOnly ? (
                           <span>admission gate</span>
                         ) : column.weight != null ? (
-                          <span>weight {(column.weight * 100).toFixed(0)}%</span>
+                          <span>weight {weightText(column.weight)}</span>
                         ) : null}
                       </div>
                     </div>

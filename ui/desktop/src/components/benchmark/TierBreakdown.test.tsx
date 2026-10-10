@@ -85,4 +85,24 @@ it('shows every recorded sb-7 family tier with its weight — SB7.2 S/Q/M as wei
     />
   );
   expect(getByTestId('tier-cell-S')).toHaveTextContent('3D structureS 80%admission gate');
+
+  // Forge 2.0's Forge 1.0 tiers weigh 1.76%–3.52% each: printed exactly, they add to 100% with R1–R9;
+  // rounded to whole percents they read 2, 2, 4… and add to 102%. A whole-percent weight prints as before.
+  rerender(
+    <TierBreakdown
+      rows={[{ ...row, tiers: { L: 1, K: 1, E: 0.5, R2: 1 }, scorerVersion: 'forge-2.0' }]}
+      tiers={[
+        { tier: 'L', name: 'Lint and bundles', weight: 0.0176 },
+        { tier: 'K', name: 'Platform currency', weight: 0.022 },
+        { tier: 'E', name: 'Excellence', weight: 0.03 },
+        { tier: 'R2', name: 'Dosing', weight: 0.13 },
+      ]}
+    />
+  );
+  // …and on a Forge 2.0 result a group's mean is four decimals, the app's one format for a score there.
+  expect(getByTestId('tier-cell-L')).toHaveTextContent('Lint and bundlesL 1.0000weight 1.76%');
+  expect(getByTestId('tier-cell-E')).toHaveTextContent('E 0.5000');
+  expect(getByTestId('tier-cell-K')).toHaveTextContent('weight 2.2%');
+  expect(getByTestId('tier-cell-E')).toHaveTextContent('weight 3%');
+  expect(getByTestId('tier-cell-R2')).toHaveTextContent('weight 13%');
 }, 30_000);

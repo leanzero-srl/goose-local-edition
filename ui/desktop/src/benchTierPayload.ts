@@ -29,7 +29,7 @@ import {
   isFamilyCurrent,
 } from './components/benchmark/baselines';
 import type { BenchCatalogBenchmark } from './benchSessions';
-import type { BenchFamily, BenchTier } from './components/benchmark/baselines';
+import type { BenchFamily, BenchTier, ForgeEra } from './components/benchmark/baselines';
 
 export const BENCH_SPEC_FILE: Record<BenchTier, string> = {
   'sb-5.3': 'spec-build-v2.md',
@@ -39,6 +39,7 @@ export const BENCH_SPEC_FILE: Record<BenchTier, string> = {
   'sb-7.2': 'spec-build-sb72.md',
   'sb-8': 'spec-build-sb8.md',
   'forge-1.0': 'forge/public/spec-build-forge.md',
+  'forge-2.0': 'forge2/public/spec-build-forge2.md',
 };
 
 export const BENCH_RENDER_PROBE: Record<BenchTier, string> = {
@@ -49,6 +50,7 @@ export const BENCH_RENDER_PROBE: Record<BenchTier, string> = {
   'sb-7.2': 'product_probe_sb72.mjs',
   'sb-8': 'product_probe_v4.mjs',
   'forge-1.0': 'forge_probe.mjs',
+  'forge-2.0': 'forge2_probe.mjs',
 };
 
 /**
@@ -65,6 +67,7 @@ export const BENCH_RUN_FLAG: Record<BenchTier, string | null> = {
   'sb-7.2': '--sb72',
   'sb-8': '--sb8',
   'forge-1.0': '--forge',
+  'forge-2.0': '--forge2',
 };
 
 /** The latest stable benchmark shipped by this app; bundled experiments remain available for historical reads. */
@@ -73,8 +76,21 @@ export const DEFAULT_BENCHMARK_TIER = 'sb-7.2' satisfies BenchTier;
 /** How the stable benchmark is named in copy (`Gauntlet 7.2 · payments`) — derived, so copy cannot lag the default. */
 export const DEFAULT_BENCHMARK_NAME = eraLabel(TIER_SCORER[DEFAULT_BENCHMARK_TIER], 'payments');
 
-/** The Forge family's runnable era — also the tier a Forge launch names over IPC. */
-export const FORGE_BENCHMARK_TIER = 'forge-1.0' satisfies BenchTier;
+/** The Forge family's runnable era — also the tier a Forge launch names over IPC. forge-1.0 stays a
+ *  tier for its sessions' history; a launch or re-score of it is refused as history only. */
+export const FORGE_BENCHMARK_TIER = 'forge-2.0' satisfies ForgeEra;
+
+/** Each Forge era's product and what its run asks of the model, as copy names them (the era's public prompt). */
+export const FORGE_ERA_COPY: Record<ForgeEra, { product: string; task: string }> = {
+  'forge-1.0': {
+    product: 'Scope Ledger',
+    task: 'it builds an Atlassian Forge app on ten module types plus the Realtime API, among them Forge LLM and two Rovo modules in Preview, graded offline by running it against a seeded Jira site — no deploy, no internet for the entrant.',
+  },
+  'forge-2.0': {
+    product: 'Scope Ledger 2',
+    task: 'it ships v2 of a working Atlassian Forge app installed on a large seeded Jira site. The requirements include a live data migration, a points quota, invocation time limits, a world that changes mid-run, a signed CI web trigger and a UI Kit admin panel. The result is graded offline over six virtual hours, with no deploy and no internet for the model.',
+  },
+};
 
 /** Each family's runnable era in this app (INTEGRATION.md: the launch gate compares the SELECTED family's
  *  current era to this). SB's is DEFAULT_BENCHMARK_TIER, unchanged. */
@@ -86,7 +102,7 @@ export const BENCH_FAMILY_DEFAULT: Record<BenchFamily, BenchTier> = {
 /** The bundled era per family, as copy names it. */
 export const BENCH_FAMILY_NAME: Record<BenchFamily, string> = {
   sb: DEFAULT_BENCHMARK_NAME,
-  forge: eraLabel(TIER_SCORER[FORGE_BENCHMARK_TIER], 'Scope Ledger'),
+  forge: eraLabel(TIER_SCORER[FORGE_BENCHMARK_TIER], FORGE_ERA_COPY[FORGE_BENCHMARK_TIER].product),
 };
 
 /** The scorer versions a family's eras carry on the site (an rc identity is never a runnable era). */
@@ -94,6 +110,19 @@ const FAMILY_ERA: Record<BenchFamily, RegExp> = {
   sb: /^sb-\d+(?:\.\d+)*$/,
   forge: /^forge-\d+(?:\.\d+)*$/,
 };
+
+/** Whether era `a` is an earlier release than era `b` of one family (`forge-1.0` before `forge-2.0`). */
+function eraBefore(a: string, b: string): boolean {
+  const parts = (era: string) =>
+    era
+      .replace(/^[a-z]+-/, '')
+      .split('.')
+      .map(Number);
+  const [x, y] = [parts(a), parts(b)];
+  for (let i = 0; i < Math.max(x.length, y.length); i++)
+    if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) < (y[i] ?? 0);
+  return false;
+}
 
 export function defaultBenchmarkTier(family: BenchFamily = 'sb'): BenchTier {
   return BENCH_FAMILY_DEFAULT[family];
@@ -103,7 +132,7 @@ export function defaultBenchmarkScorer(family: BenchFamily = 'sb'): string {
   return TIER_SCORER[BENCH_FAMILY_DEFAULT[family]];
 }
 
-export type CloudBenchmarkTier = 'sb-7' | 'sb-7.1' | 'sb-7.2' | 'forge-1.0';
+export type CloudBenchmarkTier = 'sb-7' | 'sb-7.1' | 'sb-7.2' | 'forge-1.0' | 'forge-2.0';
 export function benchmarkLaunchTier(cloud?: { tier: CloudBenchmarkTier }): BenchTier {
   if (cloud && cloud.tier === BENCH_FAMILY_DEFAULT.forge) return BENCH_FAMILY_DEFAULT.forge;
   if (cloud && cloud.tier !== DEFAULT_BENCHMARK_TIER)
@@ -134,16 +163,25 @@ export function benchmarkLaunchProblem(
   );
   if (family === 'forge' && current.length === 0)
     return 'leanzero.net lists no current Forge benchmark yet, so a Forge run cannot be verified. Refresh once the Forge board opens.';
+  // The app is ahead of the site (integration.md §10 D7): the site's current era is an EARLIER one than
+  // the bundle — open or already frozen for its successor. No update can help, so it is not asked for.
+  if (
+    current.length === 1 &&
+    FAMILY_ERA[family].test(current[0].scorerVersion) &&
+    FAMILY_ERA[family].test(bundled) &&
+    eraBefore(current[0].scorerVersion, bundled)
+  )
+    return `leanzero.net has not opened ${eraDisplayName(bundled)} yet: its current benchmark is still ${eraDisplayName(current[0].scorerVersion)}. Refresh once it opens.`;
   if (
     current.length !== 1 ||
     !FAMILY_ERA[family].test(current[0].scorerVersion) ||
     current[0].frozen !== false
   )
     return family === 'forge'
-      ? 'The catalog has no single available Forge benchmark. Refresh before running.'
+      ? 'leanzero.net has no single Forge benchmark open for new runs right now, so a Forge run cannot start or be re-scored until one opens.'
       : 'The catalog has no single available stable benchmark. Refresh before running.';
   if (current[0].scorerVersion !== bundled)
-    return `Update Goose to run the latest stable benchmark (${eraDisplayName(current[0].scorerVersion)}). This app bundles ${eraDisplayName(bundled)}.`;
+    return `Update Goose Swarm to run the latest stable benchmark (${eraDisplayName(current[0].scorerVersion)}). This app bundles ${eraDisplayName(bundled)}.`;
   if (wanted !== current[0].scorerVersion)
     return 'This benchmark is history only. Only the latest stable benchmark can be run or re-scored.';
   return null;

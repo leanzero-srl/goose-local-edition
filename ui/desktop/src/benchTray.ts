@@ -1,6 +1,6 @@
 import { billedCostLine } from './benchBilledCost';
 import type { BenchmarkPhase } from './benchPhase';
-import { eraDisplayName } from './components/benchmark/baselines';
+import { eraDisplayName, scoreText } from './components/benchmark/baselines';
 
 /**
  * The menu-bar tray's benchmark presence (owner 2026-10-03: "when benchmarks run the status bar of
@@ -21,7 +21,7 @@ export interface BenchTrayRun {
   /** Provider calls the entrant made on its model, counted from its telemetry sink or the harness's
    *  final BENCH_BUDGET record; null until either exists. */
   callsUsed: number | null;
-  /** The harness's call budget (bench_budget.CALL_BUDGET), known only for a budgeted entrant. */
+  /** The harness's call budget for this tier (isolated_tiers call_budget), known only for a budgeted entrant. */
   callBudget: number | null;
 }
 
@@ -85,12 +85,8 @@ function callsProgress(run: BenchTrayRun): string | null {
     : `${run.callsUsed} call${run.callsUsed === 1 ? '' : 's'}`;
 }
 
-function scoreText(score: number): string {
-  return `${(score * 100).toFixed(1)}%`;
-}
-
 function endText(last: BenchTrayLast): string {
-  if (last.end === 'scored' && last.score != null) return scoreText(last.score);
+  if (last.end === 'scored' && last.score != null) return scoreText(last.score, last.scorerVersion);
   const what = last.end === 'cancelled' ? 'cancelled' : 'did not finish';
   return last.rescore ? `scoring ${what}` : what;
 }
@@ -222,7 +218,7 @@ export function telemetryEntrantCalls(wholeLines: string, model: string): number
   return calls;
 }
 
-/** The harness's call budget as `python -c 'print(bench_budget.CALL_BUDGET)'` answers it. */
+/** The harness's call budget as the payload's Python prints it (readBenchCallBudget). */
 export function parseCallBudget(stdout: string): number | null {
   const value = Number(stdout.trim().split('\n').pop());
   return Number.isInteger(value) && value > 0 ? value : null;

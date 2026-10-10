@@ -25,7 +25,15 @@ export interface BenchmarkRow {
  * The runnable-tier vocabulary main.ts's spec/probe mapping is keyed by (benchTierPayload.ts).
  * The stable default is shared with the launcher; historical scorer identities stay distinct.
  */
-export type BenchTier = 'sb-5.3' | 'sb-6' | 'sb-7' | 'sb-7.1' | 'sb-7.2' | 'sb-8' | 'forge-1.0';
+export type BenchTier =
+  | 'sb-5.3'
+  | 'sb-6'
+  | 'sb-7'
+  | 'sb-7.1'
+  | 'sb-7.2'
+  | 'sb-8'
+  | 'forge-1.0'
+  | 'forge-2.0';
 export const TIERS: BenchTier[] = [
   'sb-5.3',
   'sb-6',
@@ -34,6 +42,7 @@ export const TIERS: BenchTier[] = [
   'sb-7.2',
   'sb-8',
   'forge-1.0',
+  'forge-2.0',
 ];
 export const TIER_SCORER: Record<BenchTier, string> = {
   'sb-5.3': 'sb-5.3',
@@ -45,10 +54,13 @@ export const TIER_SCORER: Record<BenchTier, string> = {
   'sb-7.1': 'sb-7.1',
   'sb-7.2': 'sb-7.2',
   'sb-8': 'sb-8.0-rc',
-  // The era this app bundles (forge/release-manifest.json `scorerVersion`). Until the freeze pins
-  // forge-thresholds.json, score_forge.py reports its verdicts as forge-1.0-rc — that identity is
-  // recorded on the result and refused at publish, never rewritten to the era's.
+  // History: the Forge era Goose ≤ 3.0.108 bundled (forge/release-manifest.json), frozen on the site.
+  // Its sessions stay readable under their own scorer identity.
   'forge-1.0': 'forge-1.0',
+  // The Forge era this app bundles (forge2/release-manifest.json `scorerVersion`). Until the freeze pins
+  // forge2-thresholds.json, score_forge2.py reports its verdicts as forge-2.0-rc — that identity is
+  // recorded on the result and refused at publish, never rewritten to the era's.
+  'forge-2.0': 'forge-2.0',
 };
 
 /**
@@ -76,6 +88,19 @@ export const catalogFamily = (entry: { family?: unknown; scorerVersion?: string 
 export const isForge = (scorerVersion: string | undefined) =>
   familyOfScorer(scorerVersion) === 'forge';
 
+/** The Forge eras this app knows: forge-1.0 as history, forge-2.0 bundled (benchTierPayload.ts). */
+export const FORGE_ERAS = ['forge-1.0', 'forge-2.0'] as const satisfies readonly BenchTier[];
+export type ForgeEra = (typeof FORGE_ERAS)[number];
+
+/** The Forge era a recorded scorer version belongs to (`forge-2.0`, its rc `forge-2.0-rc`), or null. */
+export function forgeEra(scorerVersion: string | undefined): ForgeEra | null {
+  return (
+    FORGE_ERAS.find(
+      (era) => scorerVersion === TIER_SCORER[era] || scorerVersion === `${TIER_SCORER[era]}-rc`
+    ) ?? null
+  );
+}
+
 /**
  * Whether a catalog entry is its FAMILY's current era (forge/INTEGRATION.md, corrected 2026-10-03): the
  * site states `familyCurrent` (one per family) and keeps the legacy `current` only on the SB current entry,
@@ -97,13 +122,40 @@ export const isFamilyCurrent = (entry: {
 export const FAMILY_WORD: Record<BenchFamily, string> = { sb: 'Gauntlet', forge: 'Forge' };
 
 /** An era as people read it: `sb-7.2` → "Gauntlet 7.2", `forge-1.0` → "Forge 1.0", `sb-7.0-rc` →
- *  "Gauntlet 7.0 rc". Anything else is shown as recorded, never guessed. */
+ *  "Gauntlet 7.0 rc". A Forge era scored before its thresholds were final (`forge-2.0-rc`) is its "pilot",
+ *  leanzero.net's word for it (scorerDisplayName), so the app and the site name one result one way.
+ *  Anything else is shown as recorded, never guessed. */
 export function eraDisplayName(scorerVersion: string): string {
   const match = /^(sb|forge)-(\d+(?:\.\d+)*)(?:-(.+))?$/.exec(scorerVersion);
   if (!match) return scorerVersion;
-  const word = FAMILY_WORD[match[1] === 'forge' ? 'forge' : 'sb'];
-  return `${word} ${match[2]}${match[3] ? ` ${match[3]}` : ''}`;
+  const forge = match[1] === 'forge';
+  const suffix = forge && match[3] === 'rc' ? 'pilot' : match[3];
+  return `${FAMILY_WORD[forge ? 'forge' : 'sb']} ${match[2]}${suffix ? ` ${suffix}` : ''}`;
 }
+
+/** The eras whose scores print as leanzero.net prints them: four decimals, the precision its board ranks by
+ *  (0.7450 and 0.7454 are two places; "74.5%" is one). */
+const DECIMAL_SCORE_ERAS: readonly ForgeEra[] = ['forge-2.0'];
+
+/** Whether an era's scores — the run's, a group's mean, a test's — print as four decimals. */
+export function scoresAsDecimals(scorerVersion: string | undefined): boolean {
+  const era = forgeEra(scorerVersion);
+  return era !== null && DECIMAL_SCORE_ERAS.includes(era);
+}
+
+/**
+ * A run's score as text — ONE format per era, used by every surface that prints it (the result card, the
+ * board, the bars, the outcome chip, the publish lines, the tray), so a screen never shows one number three
+ * ways. Forge 2.0: `0.7450`. Every other era keeps the one-decimal percent its sessions were always shown in.
+ */
+export function scoreText(score: number, scorerVersion: string | undefined): string {
+  return scoresAsDecimals(scorerVersion) ? score.toFixed(4) : `${(score * 100).toFixed(1)}%`;
+}
+
+/** A tier's weight as text: up to two decimals, trailing zeros dropped — leanzero.net's formatter, so both
+ *  surfaces print one string. Forge 2.0's ten Forge 1.0 tiers weigh 1.76%–3.52% each; whole percents made
+ *  them read 2, 2, 4, 3… and add to 102%. A whole-percent weight prints as it always did ("10%"). */
+export const weightText = (weight: number): string => `${Number((weight * 100).toFixed(2))}%`;
 
 /** The era's name with the catalog's description, its own version prefix ("SB7.2", "Forge 1.0 —")
  *  stripped: "Gauntlet 7.2 · payments", "Forge 1.0 · Scope Ledger". */
@@ -115,12 +167,34 @@ export function eraLabel(scorerVersion: string, title?: string): string {
   return rest ? `${name} · ${rest}` : name;
 }
 
-/** score_forge.py's TIER_ORDER: nine weighted tiers and the E excellence slice. */
-export const FORGE_TIER_ORDER = ['L', 'K', 'T', 'R', 'S', 'B', 'U', 'V', 'A', 'E'] as const;
+/** score_forge.py's TIER_ORDER (forge-1.0): nine weighted tiers and the E excellence slice. */
+const FORGE_V1_TIERS = ['L', 'K', 'T', 'R', 'S', 'B', 'U', 'V', 'A', 'E'];
 
-/** The Forge tiers (forge/DESIGN.md §8.1–§8.2). The letters overlap SB's; the meanings do not. */
+/**
+ * Each Forge era's tier letters in its scorer's TIER_ORDER. score_forge2.py (forge-2.0) keeps 1.0's ten as
+ * its v1 regression rows and adds one family per v2 requirement, R1–R9. A publish carries exactly its
+ * era's letters; the site validates them per era.
+ */
+export const FORGE_ERA_TIER_ORDER: Record<ForgeEra, readonly string[]> = {
+  'forge-1.0': FORGE_V1_TIERS,
+  'forge-2.0': [...FORGE_V1_TIERS, 'R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7', 'R8', 'R9'],
+};
+
+/** Every Forge era's letters in order — what a view lists, filtered to the tiers a result recorded, so a
+ *  forge-1.0 session shows its ten and a forge-2.0 session its nineteen. */
+export const FORGE_TIER_ORDER: readonly string[] = [
+  ...new Set(FORGE_ERAS.flatMap((era) => FORGE_ERA_TIER_ORDER[era])),
+];
+
+/**
+ * The Forge groups of tests, ONE set of names for the app and leanzero.net: L…E exactly as the site's Forge 1.0
+ * brief names them (its FORGE10_TIERS), R1–R9 exactly as the task text's Score section names forge-2.0's
+ * requirements ("migration 0.12, dosing 0.13, time limits 0.08, the changing world 0.10, …"). A name changed
+ * here changes on the site in the same release, or a result reads two ways. The letters overlap SB's; the
+ * meanings do not.
+ */
 export const FORGE_TIERS: Record<string, { name: string; desc: string }> = {
-  L: { name: 'Lint', desc: 'Forge lint clean, every function bundles and loads' },
+  L: { name: 'Lint and bundles', desc: 'Forge lint clean, every function bundles and loads' },
   K: {
     name: 'Platform currency',
     desc: 'The newest modules and APIs: dashboards widget, Rovo skill',
@@ -128,14 +202,59 @@ export const FORGE_TIERS: Record<string, { name: string; desc: string }> = {
   T: { name: 'Event pipeline', desc: 'Trigger → queue → consumer: duplicates, order, retries' },
   R: { name: 'Reconcile', desc: 'Scheduled backfill and heal: pagination, rate limits' },
   S: { name: 'Storage', desc: 'KVS custom entities, indexes and scope' },
-  B: { name: 'Resolvers', desc: 'Backend resolvers: permissions and exactly-once side effects' },
+  B: {
+    name: 'Resolvers and permissions',
+    desc: 'Backend resolvers: permissions and exactly-once side effects',
+  },
   U: {
     name: 'UI function',
     desc: 'The widget, its edit view and the sprint action, driven in a browser',
   },
   V: { name: 'Visual', desc: 'Theme tokens, dark mode, CSP and console' },
-  A: { name: 'Rovo', desc: 'The Rovo action and agent answer with the right numbers' },
-  E: { name: 'Excellence', desc: 'Economy and polish, gated by the core' },
+  A: {
+    name: 'Rovo',
+    desc: 'The Rovo action: right numbers per person, errors returned not thrown; SKILL.md says how to use it',
+  },
+  E: {
+    name: 'Excellence',
+    desc: 'Few Jira requests and surfaces that paint after one round trip, paid in proportion to the excellence gate',
+  },
+  R1: {
+    name: 'Migration',
+    desc: 'Every v1 row moves to the new ledger exactly once, live and across invocation limits',
+  },
+  R2: {
+    name: 'Dosing',
+    desc: 'Background work inside its share of the hourly quota; Retry-After and RateLimit-Reason decide retries',
+  },
+  R3: {
+    name: 'Time limits',
+    desc: 'Work continues across invocations; none waits past its limit or duplicates when killed',
+  },
+  R4: {
+    name: 'Changing world',
+    desc: 'Closed sprints, moved issues, estimation-field switches, deletions and lost permissions',
+  },
+  R5: {
+    name: 'Admin panel',
+    desc: 'The UI Kit admin page, every admin resolver checking ADMINISTER on the server',
+  },
+  R6: {
+    name: 'CI web trigger',
+    desc: 'Signature, timestamp and replay verified; deployments recorded',
+  },
+  R7: {
+    name: 'Custom field',
+    desc: 'scope-status holds the right value for every issue, fresh each virtual hour',
+  },
+  R8: {
+    name: 'Forge LLM',
+    desc: 'Validated tool calls, 429 back-off, incomplete answers refused, the cache, kill switch and token budget',
+  },
+  R9: {
+    name: 'Boot budget',
+    desc: 'The widget and the sprint action boot within budget, the admin page with one invoke',
+  },
 };
 
 /**

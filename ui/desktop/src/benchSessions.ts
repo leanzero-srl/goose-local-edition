@@ -139,19 +139,6 @@ export interface BenchCatalogBenchmark {
   baselines: BenchCatalogBaseline[];
 }
 
-/** Non-null when the site's CURRENT benchmark is not the one this app bundles — the run still
- *  launches the bundled newest (the app cannot run a spec it does not ship), and the view says
- *  "the site's current benchmark needs an app update". */
-export const catalogMismatchOf = (
-  benchmarks: BenchCatalogBenchmark[] | null | undefined,
-  bundledScorer: string
-): { siteCurrent: string; bundled: string } | null => {
-  const current = (benchmarks ?? []).find((b) => b?.current === true);
-  if (!current || typeof current.scorerVersion !== 'string') return null;
-  if (current.scorerVersion === bundledScorer) return null;
-  return { siteCurrent: current.scorerVersion, bundled: bundledScorer };
-};
-
 /** The client-side half of the server's frozen gate: the same refusal shape the server returns,
  *  produced from the cached catalog without burning the POST. The server stays the authority —
  *  it refuses too — this only saves the round trip and keeps the message identical offline. */

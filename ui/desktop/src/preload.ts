@@ -170,9 +170,9 @@ type ElectronAPI = {
   benchmarkRead: () => Promise<unknown | null>;
   benchmarkRuntimeStatus: () => Promise<BenchmarkRuntimeStatus>;
   benchmarkRuntimeInstall: () => Promise<void>;
-  /** The Forge kit's readiness (forge_kit.status, read without the network) and the Forge tier's run policy. */
+  /** The bundled era's Forge kit readiness (its kit module's status, read without the network) and the tier's run policy. */
   benchmarkForgeKitStatus: () => Promise<ForgeKitStatus>;
-  /** forge_kit.py ensure: npm ci from the pinned lockfiles + Atlassian's runtime wrapper by sha256. */
+  /** The kit module's ensure (forge2_kit.py): npm ci from the pinned lockfiles + Atlassian's runtime wrapper by sha256. */
   benchmarkForgeKitPrepare: () => Promise<ForgeKitStatus>;
   /** `modelFields`: the model's saved custom fields (effort, sampling) — main sends the ones the
    *  tier does not pin and records both on the result. */
@@ -184,7 +184,7 @@ type ElectronAPI = {
   ) => Promise<unknown>;
   /** Run the NEWEST bundled benchmark on N nodes — latest-only, the app takes no tier choice
    *  (main derives the tier from the bundled tier data). Long-running; resolves with the scored
-   *  row. Two-phase: 'benchmark-started' {workdir, tier, scorerVersion, catalogMismatch?} fires
+   *  row. Two-phase: 'benchmark-started' {workdir, tier, scorerVersion} fires
    *  immediately (subscribe via `on`), then 'benchmark-log' lines stream and 'benchmark-finished'
    *  closes the run. `sampling` pins this run's knobs via env (knobs ride only when set).
    *  The legacy 3-arg call (nodes, tier, sampling) is accepted for one release; the tier is

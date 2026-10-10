@@ -41,21 +41,33 @@ const PAYMENTS_CAPTIONS: Record<string, string> = Object.fromEntries(
 const PAYMENTS_INSPECT = new RegExp(`^(?:${PAYMENTS_SHOT_PREFIXES.join('|')})-inspect-([a-z]+)$`);
 
 /**
- * forge_probe.mjs's captures (forge/DESIGN.md §6.6): `<surface>-<board|sprint>-<theme>-<w>x<h>.png` in
- * `forge-shots/`, plus the contact sheet of every surface. The card leads with the full-width widget and
- * the sprint action in both themes; the contact sheet closes the set (it is the largest, so the upload
- * limit drops it first). Within a kind the lowest name wins, so the pick is deterministic.
+ * The Forge probes' captures (forge_probe.mjs, forge2_probe.mjs; forge/DESIGN.md §6.6):
+ * `<surface>-<board|sprint>-<theme>-<w>x<h>.png` in `forge-shots/`, plus the contact sheet of every surface.
+ * The card leads with the widget and the sprint action in both themes; the contact sheet closes the set (it
+ * is the largest, so the upload limit drops it first). Within a kind the lowest name wins, so the pick is
+ * deterministic, and a file is shown once. The widget leads at whatever width the run captured: both
+ * probes grade it at 380 px only since forge/DESIGN.md 2006de559 §17.2 E, and the 1180 px lead of older
+ * runs sorts first where it exists — so a 380 px lead is never repeated as the narrow pick.
+ *
+ * The UI Kit admin panel (forge-2.0, R5) follows the two Custom UI leads: `admin-panel-light.png`,
+ * `admin-panel-dark.png` and `admin-panel-saved-light.png`, which the harness writes only when the admin page
+ * rendered. A run without them shows and publishes no admin picture — there is no placeholder to pick.
+ *
+ * Each admin caption says whose drawing it is: the benchmark's (forge2_uikit_shot.mjs draws the component tree
+ * the admin page produced; the UI Kit host itself prints text and never pixels), not Jira's, so the picture
+ * is never read as a browser capture of the app. leanzero.net shows the same words under the same picture.
  */
+const ADMIN_PANEL_NOTE = "drawn by the benchmark from the app's component tree, not by Jira.";
 const FORGE_PICKS: Array<{ name: string; caption: string; match: RegExp }> = [
   {
     name: 'forge-widget-light',
     caption: 'Dashboard widget · light',
-    match: /^widget-view-\d+-light-1180x\d+\.png$/,
+    match: /^widget-view-\d+-light-\d+x\d+\.png$/,
   },
   {
     name: 'forge-widget-dark',
     caption: 'Dashboard widget · dark',
-    match: /^widget-view-\d+-dark-1180x\d+\.png$/,
+    match: /^widget-view-\d+-dark-\d+x\d+\.png$/,
   },
   {
     name: 'forge-sprint-light',
@@ -66,6 +78,21 @@ const FORGE_PICKS: Array<{ name: string; caption: string; match: RegExp }> = [
     name: 'forge-sprint-dark',
     caption: 'Sprint action · dark',
     match: /^sprint-action-\d+-dark-\d+x\d+\.png$/,
+  },
+  {
+    name: 'forge-admin-light',
+    caption: `Admin panel (UI Kit) · light: ${ADMIN_PANEL_NOTE}`,
+    match: /^admin-panel-light\.png$/,
+  },
+  {
+    name: 'forge-admin-dark',
+    caption: `Admin panel (UI Kit) · dark: ${ADMIN_PANEL_NOTE}`,
+    match: /^admin-panel-dark\.png$/,
+  },
+  {
+    name: 'forge-admin-saved',
+    caption: `Admin panel (UI Kit) · after saving: ${ADMIN_PANEL_NOTE}`,
+    match: /^admin-panel-saved-light\.png$/,
   },
   { name: 'forge-edit', caption: 'Widget edit view', match: /^widget-edit-\d+-light\.png$/ },
   {
@@ -85,9 +112,11 @@ const FORGE_PICKS: Array<{ name: string; caption: string; match: RegExp }> = [
 async function pickForgeShots(dir: string, files: string[]): Promise<BenchShot[]> {
   const sorted = files.slice().sort();
   const result: BenchShot[] = [];
+  const shown = new Set<string>();
   for (const pick of FORGE_PICKS) {
     const file = sorted.find((name) => pick.match.test(name));
-    if (!file) continue;
+    if (!file || shown.has(file)) continue;
+    shown.add(file);
     try {
       const bytes = await fs.readFile(path.join(dir, file));
       result.push({ name: pick.name, caption: pick.caption, b64: bytes.toString('base64') });
@@ -181,11 +210,73 @@ export async function pickBenchShots(workdir: string): Promise<BenchShot[]> {
   return result;
 }
 
+/**
+ * A result row's frozen copy of its picks: one JSON file per pick, `order` its place in the pick order.
+ * The place is written because a directory listing answers in the file system's order (by name on APFS),
+ * which put a Forge run's contact sheet first and its widget lead ninth — so the five pictures a publish
+ * kept were not the leads. The caller clears the directory first, so a failed pick leaves no other run's
+ * pictures behind.
+ */
+export async function writeBenchShotsSnapshot(dir: string, shots: BenchShot[]): Promise<void> {
+  await fs.mkdir(dir, { recursive: true });
+  for (const [order, shot] of shots.entries())
+    await fs.writeFile(
+      path.join(dir, `${shot.name}.json`),
+      JSON.stringify({ caption: shot.caption, b64: shot.b64, order })
+    );
+}
+
+/** The snapshot's picks in the order they were picked. A snapshot written before `order` existed keeps the
+ *  listing's order, as it always read; an unreadable entry is skipped, not fatal. */
+export async function readBenchShotsSnapshot(dir: string): Promise<BenchShot[]> {
+  const entries = await fs.readdir(dir).catch(() => [] as string[]);
+  const read: Array<{ shot: BenchShot; order: number }> = [];
+  for (const file of entries) {
+    if (!file.endsWith('.json')) continue;
+    try {
+      const parsed = JSON.parse(await fs.readFile(path.join(dir, file), 'utf8'));
+      if (typeof parsed?.b64 === 'string' && typeof parsed?.caption === 'string')
+        read.push({
+          shot: { name: file.slice(0, -5), caption: parsed.caption, b64: parsed.b64 },
+          order: typeof parsed.order === 'number' ? parsed.order : Number.POSITIVE_INFINITY,
+        });
+    } catch {
+      // An entry still being written or damaged is not this row's evidence.
+    }
+  }
+  return read.sort((a, b) => (a.order === b.order ? 0 : a.order - b.order)).map((r) => r.shot);
+}
+
+/**
+ * leanzero.net stores at most five pictures of a run (benchmark-runs route: MAX_SCREENSHOTS 5, 1.5 MB each,
+ * 3.5 MB together). A Forge run sends its two Custom UI surfaces in both themes — the widget and the sprint
+ * action, each dark capture being the entrant's own dark-mode CSS — and, when the admin page rendered, the
+ * admin panel in light. Its dark picture is not sent: the benchmark draws both themes from the same
+ * component tree, so the second theme shows nothing more of the entrant's work (it stays in the local
+ * view). Every other pick follows in pick order, so a run without the admin panel sends what it always sent
+ * (widget and sprint action in both themes, the edit view), and so does a snapshot that recorded no order.
+ */
+const FORGE_PUBLISH_FIRST = [
+  'forge-widget-light',
+  'forge-widget-dark',
+  'forge-sprint-light',
+  'forge-sprint-dark',
+  'forge-admin-light',
+];
+const FORGE_PICK_NAMES = FORGE_PICKS.map((pick) => pick.name);
+/** A Forge pick's place in the publish order; every other shot keeps the place it was given in. */
+function publishRank(name: string): number {
+  const first = FORGE_PUBLISH_FIRST.indexOf(name);
+  if (first >= 0) return first;
+  const pick = FORGE_PICK_NAMES.indexOf(name);
+  return FORGE_PUBLISH_FIRST.length + (pick >= 0 ? pick : FORGE_PICK_NAMES.length);
+}
+
 /** The site's existing upload contract, applied only when constructing its publish payload. */
 export function limitBenchShotsForPublish(shots: BenchShot[]): BenchShot[] {
   const result: BenchShot[] = [];
   let total = 0;
-  for (const shot of shots) {
+  for (const shot of shots.slice().sort((a, b) => publishRank(a.name) - publishRank(b.name))) {
     const bytes = Buffer.byteLength(shot.b64, 'base64');
     if (bytes > Math.floor(1.4 * 1024 * 1024) || total + bytes > Math.floor(3.5 * 1024 * 1024))
       continue;

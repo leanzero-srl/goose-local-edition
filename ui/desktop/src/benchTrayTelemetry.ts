@@ -72,16 +72,23 @@ export class BenchTelemetryCounter {
   }
 }
 
-/** bench_budget.CALL_BUDGET from the payload's own Python, the one source of the number; null on any failure. */
+/** The isolated tier's own call_budget from the payload's Python (isolated_tiers — bench_budget.CALL_BUDGET
+ *  unless the tier publishes its own, as forge-2.0 does), the one source of the number; null on any failure. */
 export function readBenchCallBudget(
   python: string,
   benchDir: string,
-  env: NodeJS.ProcessEnv
+  env: NodeJS.ProcessEnv,
+  scorerVersion: string
 ): Promise<number | null> {
   return new Promise((resolve) => {
     execFile(
       python,
-      ['-B', '-c', 'import bench_budget; print(bench_budget.CALL_BUDGET)'],
+      [
+        '-B',
+        '-c',
+        'import sys, isolated_tiers; print(isolated_tiers.BY_VERSION[sys.argv[1]].call_budget)',
+        scorerVersion,
+      ],
       { cwd: benchDir, env: { ...env, PYTHONDONTWRITEBYTECODE: '1' } },
       (error, stdout) => resolve(error ? null : parseCallBudget(String(stdout)))
     );

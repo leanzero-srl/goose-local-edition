@@ -54,7 +54,13 @@ import { benchmarkPythonLaunch } from './benchPython';
 import { uploadBenchmarkVideo } from './benchVideoUpload';
 import { publishableClip, type ClipTools } from './benchEvidenceClip';
 import { BenchMediaServer, readBenchMedia } from './benchMedia';
-import { pickBenchShots, limitBenchShotsForPublish, type BenchShot } from './benchShots';
+import {
+  pickBenchShots,
+  limitBenchShotsForPublish,
+  readBenchShotsSnapshot,
+  writeBenchShotsSnapshot,
+  type BenchShot,
+} from './benchShots';
 import { projectBenchScore, recoverStoredSb8Score } from './benchScoreProjection';
 import type {
   MenuItemConstructorOptions,
@@ -142,11 +148,11 @@ import {
   benchmarkLaunchTier,
   benchmarkLaunchProblem,
   benchmarkScorer,
-  FORGE_BENCHMARK_TIER,
   type CloudBenchmarkTier,
 } from './benchTierPayload';
 import {
   familyOfScorer,
+  forgeEra,
   isolatedPaymentsTier,
   ISOLATED_PAYMENTS_TIERS,
 } from './components/benchmark/baselines';
@@ -3535,9 +3541,10 @@ ipcMain.handle('benchmark-runtime-install', async () => {
 
 // ── The Forge kit (forge/DESIGN.md §10) ─────────────────────────────────────────────────────────
 // The pinned Forge module trees and Atlassian's runtime wrapper are never shipped in the app: the
-// payload's own forge_kit.py materialises them into <benchmark>/forge-kit (npm ci from the committed
-// lockfiles, the wrapper by sha256) and reports readiness without the network. A Forge run launches only
-// against a ready kit; run_build re-verifies it through the same ensure().
+// bundled era's kit module (benchForgeKit.ts FORGE_KIT_MODULE) materialises them into
+// <benchmark>/forge-kit (npm ci from the committed lockfiles, the wrapper by sha256) and reports
+// readiness without the network. A Forge run launches only against a ready kit; run_build re-verifies
+// it through the same ensure().
 let forgeKitPreparation: Promise<ForgeKitStatus> | null = null;
 const forgeKitStatus = async (): Promise<ForgeKitStatus> => {
   let runtime: Awaited<ReturnType<typeof resolveBenchmarkRuntime>>;
@@ -4545,14 +4552,7 @@ const persistBenchmarkResult = async ({
   try {
     const snapDir = path.join(BENCH_DIR, 'shots-snapshot');
     await fs.rm(snapDir, { recursive: true, force: true });
-    await fs.mkdir(snapDir, { recursive: true });
-    const picked = await pickBenchShots(evidenceWorkdir ?? workdir);
-    for (const shot of picked) {
-      await fs.writeFile(
-        path.join(snapDir, `${shot.name}.json`),
-        JSON.stringify({ caption: shot.caption, b64: shot.b64 })
-      );
-    }
+    await writeBenchShotsSnapshot(snapDir, await pickBenchShots(evidenceWorkdir ?? workdir));
   } catch {
     // No snapshot is a degraded publish (falls back to the live workdir), never a failed run.
   }
@@ -4616,12 +4616,12 @@ ipcMain.handle(
         family
       );
       if (launchProblem) throw new Error(launchProblem);
-      // Forge is a single-model benchmark (forge/DESIGN.md: one model in goose, 150-call budget).
+      // Forge is a single-model benchmark (forge/DESIGN.md: one model in goose, the tier's call budget).
       if (family === 'forge' && !cloud)
         throw new Error('Forge runs one model: choose a provider and model ID.');
-      // Forge pins one reasoning effort for every entrant (isolated_tiers.FORGE10, forge/DESIGN.md
-      // §11): the model's saved effort is recorded as pinned and never sent, so it cannot displace
-      // the tier's.
+      // Forge pins one reasoning effort for every entrant (the tier's reasoning_effort in isolated_tiers,
+      // forge/DESIGN.md §11): the model's saved effort is recorded as pinned and never sent, so it cannot
+      // displace the tier's.
       const runModelFields = cloud
         ? modelFieldsForRun(cloud.modelFields ?? {}, family === 'forge')
         : null;
@@ -4849,12 +4849,14 @@ ipcMain.handle(
         const trayFacts = activeBenchRun.tray;
         startBenchTray();
         // run_build budgets exactly the single-model entrant of an isolated tier (`budgeted` there);
-        // the number is the payload's own bench_budget.CALL_BUDGET, never restated here.
+        // the number is the payload's own call_budget of THIS tier (isolated_tiers), never restated here.
         if (cloud && isolated) {
-          void readBenchCallBudget(runtime.python, path.join(payloadDir, 'bench'), {
-            ...process.env,
-            ...runtime.env,
-          }).then((budget) => {
+          void readBenchCallBudget(
+            runtime.python,
+            path.join(payloadDir, 'bench'),
+            { ...process.env, ...runtime.env },
+            benchmarkScorer(tier)
+          ).then((budget) => {
             if (budget == null || trayFacts.callsFinal) return;
             trayFacts.callBudget = budget;
             if (activeBenchRun?.tray === trayFacts) renderBenchTray();
@@ -5080,10 +5082,13 @@ ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string, mode?: '
     if (!eligible.ready || !receipt || !session.completionReceipt) throw new Error(eligible.reason);
     const workdir =
       session.slot && session.slotDir ? session.slotDir : path.join(benchSessionsRoot(), runId);
-    // The receipt-proven session names its own tier: an SB7.1 row is re-graded by SB7.1's probe,
-    // never by whatever tier this app defaults to (retryScoringEligibility already refused any
-    // scorer outside the isolated family, so a null here is unreachable — and refused, not guessed).
-    const sessionTier = forge ? FORGE_BENCHMARK_TIER : isolatedPaymentsTier(session.scorerVersion);
+    // The receipt-proven session names its own tier: an SB7.1 row is re-graded by SB7.1's probe and a
+    // Forge row by its own era's, never by whatever tier this app defaults to (retryScoringEligibility
+    // already refused any scorer outside the isolated family and the Forge eras, so a null here is
+    // unreachable — and refused, not guessed).
+    const sessionTier = forge
+      ? forgeEra(session.scorerVersion)
+      : isolatedPaymentsTier(session.scorerVersion);
     if (!sessionTier)
       throw new Error(`No isolated benchmark tier records ${session.scorerVersion}.`);
     const runtime = await resolveBenchmarkRuntime(benchWorkRoot());
@@ -5235,9 +5240,9 @@ ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string, mode?: '
           if (code !== 0) throw new Error(`Scoring failed (exit ${code}). ${tail}`);
           const reportPath = path.join(output, 'verdict.json');
           const v = JSON.parse(await fs.readFile(reportPath, 'utf8'));
-          // score_forge writes its evidence (forge-shots, the graded clip) into the tree it grades and
-          // reports `forge-1.0-rc` until its thresholds freeze — bench_rescore accepts exactly that
-          // identity for the receipt's tier, and so does this.
+          // A Forge scorer writes its evidence (forge-shots, the graded clip) into the tree it grades and
+          // reports its era's rc (`forge-2.0-rc`) until its thresholds freeze — bench_rescore accepts
+          // exactly that identity for the receipt's tier, and so does this.
           const sameScorer = forge
             ? v.scorerVersion === tierVersion || v.scorerVersion === `${tierVersion}-rc`
             : v.scorerVersion === session.scorerVersion;
@@ -5415,7 +5420,8 @@ ipcMain.handle('benchmark-publish', async (_event, args?: { title?: string; runK
   if (!runMeta) {
     return {
       ok: false,
-      error: 'this result predates the v2 publisher — run the benchmark again to publish',
+      error:
+        'this result was saved by an older version of the app and is missing the run record publishing needs — run the benchmark again to publish',
     };
   }
   // Frozen gate, from the CACHED catalog: the same refusal the server would return, without
@@ -5454,25 +5460,10 @@ ipcMain.handle('benchmark-publish', async (_event, args?: { title?: string; runK
   // Prefer the frozen snapshot written WITH the result row — the workdir is reused and wiped
   // by the next run, so reading it at publish time can attach another run's screenshots to
   // this row's score.
-  const snapshotShots = await (async (): Promise<BenchShot[]> => {
-    // The snapshot belongs to result.json's run only; any other run reads its own tree.
-    if (!storedIsLatest) return [];
-    const snapDir = path.join(BENCH_DIR, 'shots-snapshot');
-    const entries = await fs.readdir(snapDir).catch(() => [] as string[]);
-    const out: BenchShot[] = [];
-    for (const f of entries) {
-      if (!f.endsWith('.json')) continue;
-      try {
-        const parsed = JSON.parse(await fs.readFile(path.join(snapDir, f), 'utf8'));
-        if (typeof parsed?.b64 === 'string' && typeof parsed?.caption === 'string') {
-          out.push({ name: f.slice(0, -5), caption: parsed.caption, b64: parsed.b64 });
-        }
-      } catch {
-        // an unreadable snapshot entry is skipped, not fatal
-      }
-    }
-    return out;
-  })();
+  // The snapshot belongs to result.json's run only; any other run reads its own tree.
+  const snapshotShots: BenchShot[] = storedIsLatest
+    ? await readBenchShotsSnapshot(path.join(BENCH_DIR, 'shots-snapshot'))
+    : [];
   const screenshots = limitBenchShotsForPublish(
     snapshotShots.length
       ? snapshotShots

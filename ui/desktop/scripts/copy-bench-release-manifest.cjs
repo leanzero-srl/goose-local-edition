@@ -15,13 +15,14 @@ const STABLE_RELEASE = {
 };
 
 // The Forge family's bundled era (benchTierPayload.ts BENCH_FAMILY_DEFAULT.forge). Its manifest pins the
-// forge payload (forge/public, starter, kit sources without module trees, site, and the bench closure
-// run_build --forge imports — release_manifest.py's `forge` family), verified the same way as SB's.
+// forge-2.0 payload (forge2/public, starter, kit sources without module trees, site, and the bench closure
+// run_build --forge2 imports — release_manifest.py's `forge` family, per era), verified the same way as
+// SB's. forge/release-manifest.json stays in the repository as forge-1.0's receipt (Goose 3.0.108).
 const FORGE_RELEASE = {
-  dir: 'forge',
-  scorerVersion: 'forge-1.0',
-  spec: 'forge/public/spec-build-forge.md',
-  probe: 'bench/forge_probe.mjs',
+  dir: 'forge2',
+  scorerVersion: 'forge-2.0',
+  spec: 'forge2/public/spec-build-forge2.md',
+  probe: 'bench/forge2_probe.mjs',
 };
 
 function copyBenchReleaseManifest(sourceRoot, destinationRoot, release = STABLE_RELEASE) {

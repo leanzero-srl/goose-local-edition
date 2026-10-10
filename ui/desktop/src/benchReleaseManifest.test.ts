@@ -48,9 +48,9 @@ it('verifies the release the app runs by default — the sb7.2 manifest, its spe
     probe: `bench/${BENCH_RENDER_PROBE[defaultBenchmarkTier()]}`,
   });
 });
-it('verifies the Forge family the app bundles — the forge manifest, its spec and its probe', () => {
+it('verifies the Forge era the app bundles — the forge2 manifest, its spec and its probe', () => {
   expect(FORGE_RELEASE).toEqual({
-    dir: 'forge',
+    dir: 'forge2',
     scorerVersion: defaultBenchmarkScorer('forge'),
     spec: BENCH_SPEC_FILE[defaultBenchmarkTier('forge')],
     probe: `bench/${BENCH_RENDER_PROBE[defaultBenchmarkTier('forge')]}`,

@@ -7,6 +7,7 @@
  * next run finished. Each run's row is now stored under its own key, and a run that predates that store
  * is rebuilt from the verdict in its own tree — never borrowed from a neighbour.
  */
+import { familyOfScorer } from './components/benchmark/baselines';
 
 export interface RunIdentity {
   runId: string | null;
@@ -144,7 +145,8 @@ export function publishedUrlText(url: string): string {
  *   at least one row whose detail is the scorer's "not exercised: ledgerd never bound its port at
  *   boot…"; `j_loads_data` exactly 0; no check name twice. (A J/V row may hold credit a page-less probe
  *   still awards — the real solar run has j_console_clean 1.0, j_notifications_feed 0.25, v_styling 0.2.)
- * - Forge (forge-1.0): v_theme_tokens, v_dark_mode, v_csp_clean and v_console_clean exactly 0 with detail
+ * - Forge (forge-1.0, and forge-2.0 whose v1 regression rows are the same U and V checks with the same
+ *   precondition): v_theme_tokens, v_dark_mode, v_csp_clean and v_console_clean exactly 0 with detail
  *   exactly "vacuous — precondition unmet: a surface rendered app content", AND every U and V row 0.
  *   Surfaces that rendered without a verified clip are a SCORING problem (retry), never a clip-less post.
  * Returns the absence in words for the run card, or null when a clip is required.
@@ -152,7 +154,7 @@ export function publishedUrlText(url: string): string {
 export const FORGE_NO_SURFACE_DETAIL =
   'vacuous — precondition unmet: a surface rendered app content';
 const FORGE_VISUAL_ROWS = ['v_theme_tokens', 'v_dark_mode', 'v_csp_clean', 'v_console_clean'];
-const CLIPLESS_ERAS = new Set(['sb-7.1', 'sb-7.2', 'forge-1.0']);
+const CLIPLESS_ERAS = new Set(['sb-7.1', 'sb-7.2', 'forge-1.0', 'forge-2.0']);
 const NO_SERVER = ['crash at boot', 'process survives 5s without binding'];
 const NEVER_BOUND = 'not exercised: ledgerd never bound its port at boot';
 
@@ -168,7 +170,7 @@ export function clipAbsence(scorerVersion: string | undefined, checks: unknown):
   const rows = (Array.isArray(checks) ? checks : []) as CheckRow[];
   const row = (name: string) => rows.find((r) => r?.check === name);
   const detail = (r: CheckRow | undefined) => (typeof r?.detail === 'string' ? r.detail : '');
-  if (scorerVersion === 'forge-1.0') {
+  if (familyOfScorer(scorerVersion) === 'forge') {
     const vacuous = FORGE_VISUAL_ROWS.every((name) => {
       const r = row(name);
       return r != null && r.score === 0 && detail(r) === FORGE_NO_SURFACE_DETAIL;

@@ -42,6 +42,28 @@ describe('ScoreBars', () => {
     expect(texts).toContain('1.6%');
   });
 
+  it('prints a Forge 2.0 score as leanzero.net does — four decimals — and never calls one model a fleet', () => {
+    const forge: BenchmarkRow = {
+      label: 'Your run',
+      score: 0.745,
+      mine: true,
+      scorerVersion: 'forge-2.0',
+    };
+    const baseline: BenchmarkRow = {
+      label: 'GPT-6.1 Sol',
+      score: 0.8248,
+      scorerVersion: 'forge-2.0',
+    };
+    const { container } = render(<ScoreBars rows={[baseline, forge]} />);
+    const texts = [...container.querySelectorAll('text')].map((t) => t.textContent);
+    // 0.7450 and 0.7454 are two places on the board; "74.5%" is one.
+    expect(texts).toContain('0.7450');
+    expect(texts).toContain('0.8248');
+    expect(texts.some((text) => /%/.test(text ?? ''))).toBe(false);
+    expect(texts).toContain('YOUR RUN');
+    expect(badges(container)).toHaveLength(0);
+  });
+
   it('fills the user row in the accent and baselines in a neutral slate — never a node hue', async () => {
     const baseline: BenchmarkRow = {
       label: 'Claude Opus 5',

@@ -79,9 +79,11 @@ function mirrorSwarmBenchPayload() {
       fs.copyFileSync(join(benchSrc, 'probes', name), join(dest, 'bench', 'probes', name));
     }
   }
-  // The Forge family (forge/DESIGN.md §10): the public task files, the starter, the kit's SOURCES and the
-  // mock site. The kit's module trees (npm ci) and Atlassian's runtime wrapper are never shipped — the
-  // payload's forge_kit.py materialises them on the user's machine — so no node_modules may ride along.
+  // The Forge family (forge/DESIGN.md §10), every era's tree: forge/ (forge-1.0, history) and forge2/
+  // (forge-2.0, the bundled era whose manifest is verified below) — the public task files, the starter,
+  // the kit's SOURCES and the mock site. The kit's module trees (npm ci) and Atlassian's runtime wrapper are
+  // never shipped — the era's kit module (forge_kit.py, forge2_kit.py) materialises them on the user's
+  // machine — so no node_modules may ride along.
   const forgeSource = {
     recursive: true,
     filter: (source) =>
@@ -97,8 +99,9 @@ function mirrorSwarmBenchPayload() {
             part === 'lint-modules'
         ),
   };
-  for (const tree of ['public', 'starter', 'kit', 'site'])
-    fs.cpSync(join(src, 'forge', tree), join(dest, 'forge', tree), forgeSource);
+  for (const era of ['forge', 'forge2'])
+    for (const tree of ['public', 'starter', 'kit', 'site'])
+      fs.cpSync(join(src, era, tree), join(dest, era, tree), forgeSource);
   const copyManifest = require('./scripts/copy-bench-release-manifest.cjs');
   copyManifest(src, dest);
   copyManifest(src, dest, copyManifest.FORGE_RELEASE);

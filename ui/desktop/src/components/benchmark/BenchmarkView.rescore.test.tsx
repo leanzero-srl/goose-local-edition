@@ -81,12 +81,21 @@ const SB_CURRENT = {
   baselines: [],
 };
 const FORGE_CURRENT = {
-  scorerVersion: 'forge-1.0',
-  title: 'Forge 1.0 — Scope Ledger',
+  scorerVersion: 'forge-2.0',
+  title: 'Forge 2.0 — Scope Ledger 2',
   family: 'forge',
   familyCurrent: true,
   current: false,
   frozen: false,
+  baselines: [],
+};
+const FORGE10_FROZEN = {
+  scorerVersion: 'forge-1.0',
+  title: 'Forge 1.0 — Scope Ledger',
+  family: 'forge',
+  familyCurrent: false,
+  current: false,
+  frozen: true,
   baselines: [],
 };
 
@@ -96,7 +105,7 @@ function mockElectron(sessions: () => unknown[], mine: unknown = MINE) {
   e.benchmarkForgeKitStatus = vi.fn(async () => ({
     state: 'ready',
     missing: [],
-    callBudget: 150,
+    callBudget: 300,
     reasoningEffort: 'medium',
   }));
   e.benchmarkStatus = vi.fn(async () => ({ running: false }));
@@ -108,7 +117,7 @@ function mockElectron(sessions: () => unknown[], mine: unknown = MINE) {
   e.benchmarkCatalog = vi.fn(async () => ({
     ok: true,
     stale: false,
-    benchmarks: [SB_CURRENT, FORGE_CURRENT],
+    benchmarks: [SB_CURRENT, FORGE_CURRENT, FORGE10_FROZEN],
   }));
   e.benchmarkSessions = vi.fn(async () => ({ sessions: sessions() }));
   e.benchmarkMedia = vi.fn(async () => ({ videos: [] }));
@@ -241,18 +250,18 @@ describe('Benchmark view — Re-score a finished run', () => {
   });
 
   it('offers the same Re-score on a finished Forge run, through the same door', async () => {
-    window.location.hash = `#/benchmark?era=forge-1.0-rc&run=cloud-forge-1`;
+    window.location.hash = `#/benchmark?era=forge-2.0-rc&run=cloud-forge2-1`;
     const forgeSession = {
       ...SESSION,
-      runId: 'cloud-forge-1',
-      scorerVersion: 'forge-1.0-rc',
+      runId: 'cloud-forge2-1',
+      scorerVersion: 'forge-2.0-rc',
       published: undefined,
       publishable: true,
     };
     mockElectron(() => [forgeSession], {
       ...MINE,
-      runId: 'cloud-forge-1',
-      scorerVersion: 'forge-1.0-rc',
+      runId: 'cloud-forge2-1',
+      scorerVersion: 'forge-2.0-rc',
       tiers: {},
     });
     const rescore = vi.fn(() => new Promise(() => {}));
@@ -261,6 +270,34 @@ describe('Benchmark view — Re-score a finished run', () => {
     const button = await screen.findByRole('button', { name: 'Re-score saved build' });
     await waitFor(() => expect(button).toBeEnabled());
     fireEvent.click(button);
-    expect(rescore).toHaveBeenCalledWith('cloud-forge-1');
+    expect(rescore).toHaveBeenCalledWith('cloud-forge2-1');
+  });
+
+  it('holds Re-score on a forge-1.0 run: history of a frozen era this app no longer scores', async () => {
+    window.location.hash = `#/benchmark?era=forge-1.0&run=cloud-forge-1`;
+    const forgeSession = {
+      ...SESSION,
+      runId: 'cloud-forge-1',
+      scorerVersion: 'forge-1.0',
+      published: undefined,
+      publishable: true,
+    };
+    mockElectron(() => [forgeSession], {
+      ...MINE,
+      runId: 'cloud-forge-1',
+      scorerVersion: 'forge-1.0',
+      tiers: {},
+    });
+    const rescore = vi.fn();
+    electron().benchmarkRescore = rescore;
+    mount();
+    const panel = await screen.findByTestId('rescore');
+    await waitFor(() =>
+      expect(panel).toHaveTextContent('Only the latest stable benchmark can be re-scored.')
+    );
+    const button = within(panel).getByRole('button', { name: 'Re-score saved build' });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(rescore).not.toHaveBeenCalled();
   });
 });

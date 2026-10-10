@@ -16,6 +16,38 @@ export interface BenchMedia {
   error?: string;
 }
 
+/** How every scorer's probe opens the caption of its full publication-encoded recording; leanzero.net reads
+ *  the same opening to tell a full recording from an excerpt. */
+const FULL_RECORDING = 'Full graded browser recording:';
+
+/**
+ * The caption of a Forge 2.0 full recording, owned here because the probe's own is wrong for this era
+ * (forge2_probe.mjs assembleRecording, the string beginning "Full graded browser recording: dashboard widget
+ * (no config, edit + Save, light and dark, 380 and 1180 px, a second instance), sprint action modal (sort,
+ * router, select, comment post through the 429 retry, …"): Forge 2.0 arms no 429 on the comment path, and
+ * the widget is graded in both themes at 380 px only — 1180 px is the second instance. This one names what
+ * forge2_probe.mjs drives while it records (probeUi, exerciseModal, llmCases), in grading order, and that
+ * the UI Kit admin panel is drawn outside the recording. It is what the card shows AND what a publish signs
+ * into the site's receipt, so both surfaces print one caption.
+ *
+ * ASCII only and at most 400 characters: it travels as the `x-benchmark-caption` header, and leanzero.net
+ * refuses a longer one (MAX_BENCHMARK_VIDEO_CAPTION_CHARS).
+ */
+export const FORGE2_RECORDING_CAPTION =
+  `${FULL_RECORDING} dashboard widget (before configuration, edit and Save, light and dark at 380 px, ` +
+  'a second instance at 1180 px), sprint action (light and dark, sort, issue link, select, comment post, ' +
+  'double click, forbidden post, explain, close), the not-started sprint and the Forge LLM cases, where the ' +
+  'app has each. The UI Kit admin panel is not in the recording.';
+
+/** The caption a clip is shown and published under: the manifest's, except a Forge 2.0 full recording's
+ *  (the manifest states its own scorer). Any other caption — another era's, an encoding-pending note — is
+ *  the manifest's own words. */
+function recordingCaption(manifestScorer: unknown, caption: string): string {
+  return manifestScorer === 'forge-2.0' && caption.startsWith(FULL_RECORDING)
+    ? FORGE2_RECORDING_CAPTION
+    : caption;
+}
+
 export async function readBenchMedia(workdir: string): Promise<BenchMedia> {
   try {
     const root = await fs.realpath(workdir);
@@ -48,7 +80,7 @@ export async function readBenchMedia(workdir: string): Promise<BenchMedia> {
         throw new Error('Video evidence hash or size does not match its manifest');
       videos.push({
         file,
-        caption: entry.caption,
+        caption: recordingCaption(manifest.scorerVersion, entry.caption),
         mimeType: 'video/webm',
         sha256,
         bytes: bytes.length,

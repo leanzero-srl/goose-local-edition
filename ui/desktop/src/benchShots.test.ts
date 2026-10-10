@@ -2,7 +2,12 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { pickBenchShots, limitBenchShotsForPublish } from './benchShots';
+import {
+  pickBenchShots,
+  limitBenchShotsForPublish,
+  readBenchShotsSnapshot,
+  writeBenchShotsSnapshot,
+} from './benchShots';
 
 const dirs: string[] = [];
 const PNG = Buffer.from(
@@ -80,6 +85,27 @@ describe('benchmark screenshot evidence', () => {
     };
     expect(limitBenchShotsForPublish([oversized, medium, medium, medium])).toHaveLength(2);
   });
+});
+
+it('reads a result row’s snapshot back in pick order, not the directory’s, so a publish keeps the first five picks', async () => {
+  const dir = await fixture([
+    '100-loaded.png',
+    '200-loaded.png',
+    '201-synced.png',
+    '202-error.png',
+    '203-empty.png',
+    '204-mobile.png',
+  ]);
+  const shots = await pickBenchShots(dir);
+  const names = shots.map((shot) => shot.name);
+  expect(names).toEqual(['loaded-before', 'loaded', 'synced', 'error', 'empty', 'mobile']);
+  const snapshot = path.join(dir, 'shots-snapshot');
+  await writeBenchShotsSnapshot(snapshot, shots);
+  // By name `empty` and `error` come first and `synced` last: that order used to decide the publish set.
+  expect((await fs.readdir(snapshot)).sort()[0]).toBe('empty.json');
+  const read = await readBenchShotsSnapshot(snapshot);
+  expect(read).toEqual(shots);
+  expect(limitBenchShotsForPublish(read).map((shot) => shot.name)).toEqual(names.slice(0, 5));
 });
 
 it('keeps SB71 field, currency inspection and live update evidence', async () => {

@@ -1,5 +1,5 @@
 import { TNUM, WEIGHT, cx } from '../lz';
-import { BenchmarkRow } from './baselines';
+import { BenchmarkRow, isForge, scoreText } from './baselines';
 
 /**
  * Ranked score bars. Hand-rolled SVG on purpose — the desktop ships no charting library, and one
@@ -13,7 +13,8 @@ export function ScoreBars({ rows }: { rows: BenchmarkRow[] }) {
   if (!rows.length) return null;
   const barHeight = 26;
   /** "YOUR FLEET" at 10px/800 with 0.06em tracking measured ~66px. The Studio sets it at 600, which
-   *  is narrower, so the same floor still keeps the badge clear of the row label beside it. */
+   *  is narrower, so the same floor still keeps the badge clear of the row label beside it. A Forge run
+   *  is one model, never a fleet: its badge is the shorter "YOUR RUN", inside the same floor. */
   const YOUR_FLEET_LABEL_WIDTH = 66;
   const gap = 10;
   const labelWidth = 190;
@@ -65,7 +66,7 @@ export function ScoreBars({ rows }: { rows: BenchmarkRow[] }) {
                 y={y + barHeight * 0.68}
                 className={cx('fill-lz-ink text-lz-body', WEIGHT.semibold, TNUM)}
               >
-                {(row.score * 100).toFixed(1)}%
+                {scoreText(row.score, row.scorerVersion)}
               </text>
               {/* ONLY INSIDE A BAR THAT CAN HOLD IT.
                   This was drawn unconditionally at `labelWidth + filled - 8`, end-anchored, so a low
@@ -84,7 +85,7 @@ export function ScoreBars({ rows }: { rows: BenchmarkRow[] }) {
                   className="fill-lz-accent-ink"
                   style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.06em' }}
                 >
-                  YOUR FLEET
+                  {isForge(row.scorerVersion) ? 'YOUR RUN' : 'YOUR FLEET'}
                 </text>
               )}
             </g>
