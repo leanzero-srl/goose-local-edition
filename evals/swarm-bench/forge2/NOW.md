@@ -64,6 +64,19 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
 
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 15:3x FAIRNESS FIXES LANDED on forge2/final: 8c87d4047 R9 ignores §9's CONDITIONAL_CHECK_FAILED (probe records kvsCode),
+  27692e551 r_pagination excuses a hand-off finished by the same event's redelivery (refuter's mutants still graded),
+  71f5613c3 oracle field-switch allowance (observed wall + delivery times), 2ad6f0913 r7 carry after an in-wall mark,
+  d4121aaf7 emulated Jira 404 on a deleted-issue write, b850dc265 wording (event row: "baseline", not "optimum";
+  RATE-MODEL.json states the scripted burst 429s — contract byte-identical), 2aec08d9e sources_for third route (a
+  scheduled run or its continuation in flight between the change and its event's success; kept both old arms — the
+  "started in between" form missed aef2's 1157004; medium: broad for apps with continuous continuations, ships as a
+  net), eb6c6a4ae the 2.0 scorer takes both score locks, ee4dd033d manifest (140, clean; CALIB unchanged). Regrade
+  (no probe): reference 1.0000 x9; Sol 0.8301 -> 0.8344 (0.8417 projected once a re-probe records kvsCode), Sonnet
+  0.7486 -> 0.7530; monotone on 12 verdicts.
+  FINAL GATE dispatched (one agent, serial): golden x5 on the final probe (recalibrate if the worst-of-5 ratio moved;
+  calibrate() must keep reliability_k/floor), --reference, starter, Sol + Sonnet re-probed on their own seeds, alt app
+  >= 0.95, 10 mutants judged. Outputs -> /Volumes/AI-workhorse/runs/forge2-final-gate/.
 - 15:0x RELEASE PREP (no scoring involved): (a) released tiers PROVEN untouched by the shared harness edits (read-only
   agent: every hunk of bench_budget/isolated_tiers/run_build/release_manifest classified (a); run_build.invoke()
   differential byte-identical for SB71/SB72/FORGE10 on both branches; SB7.x and Forge 1.0 stay at 150 calls) -> refreeze
