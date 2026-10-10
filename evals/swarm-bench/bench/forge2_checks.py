@@ -711,10 +711,11 @@ def _(ev: Ev) -> Dict:
     wrong_before = [key(e) for e in present_before if not any(row_right(r, e) for r in have[key(e)])]
     graded = len(after) + len(present_before)
     ok = graded - len(wrong_after) - len(wrong_before)
+    # A row is written once (contract §9): a wrong earlier row was written with a wrong estimate, never rewritten.
     return g(ok / graded, f'{len(after) - len(wrong_after)} of {len(after)} rows after the switch use the new field; '
              f'{len(present_before) - len(wrong_before)} of {len(present_before)} earlier rows keep their estimate'
              + (f'; wrong after: {sample(wrong_after)}' if wrong_after else '')
-             + (f'; rewritten before: {sample(wrong_before)}' if wrong_before else ''),
+             + (f'; wrong before: {sample(wrong_before)}' if wrong_before else ''),
              'estimates read from the wrong field after the board switched')
 
 

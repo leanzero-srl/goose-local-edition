@@ -188,7 +188,7 @@ class Change:
     board_id: str = ''         # 2.0: the sprint's board (v2 `boardId`)
     estimate_field: str = ''   # 2.0: the board's estimation field in force at the change (v2 `estimateField`)
     moved_to_board: str = ''   # 2.0: a `removed` row of a cross-board move names the board the issue went to
-    late_fields: Tuple[str, ...] = ()       # 2.0: a dropped live change's board switched to these fields after it
+    late_fields: Tuple[str, ...] = ()       # 2.0: fields its board switched to after it, unknowably (see _changes)
     late_points: FrozenSet[Decimal] = frozenset()   # its points in them: accepted beside `points` (see _changes)
 
     @property
@@ -219,11 +219,20 @@ class SprintNumbers:
 class Oracle:
     """All graded expectations for one pack. Construction validates the pack's I1 invariants."""
 
-    def __init__(self, pack: Dict, include_live_ui: bool = False):
+    def __init__(self, pack: Dict, include_live_ui: bool = False,
+                 event_deliveries: Optional[Dict[str, Iterable[datetime]]] = None,
+                 quota_wall: Optional[Tuple[datetime, datetime]] = None):
         """`include_live_ui`: the state after the live-UI slot (DESIGN §5.2: two live changes held back from the
         script and delivered while the widget is open, `delivery.liveUi: true`). Without it the oracle is the site
-        before the UI phase: what the KVS snapshots, the Rovo action and the widget views opened first must show."""
+        before the UI phase: what the KVS snapshots, the Rovo action and the widget views opened first must show.
+        `event_deliveries` ({live changelog id: the instants the run delivered that change's event work — its product
+        event and the queue deliveries its lineage names}) and `quota_wall` ((start, end) of the shared pool's wall the
+        probe drew, rate.wall) are the run's OBSERVED timing (score_forge2 reads them from the observations). They feed
+        one rule, the switched-field allowance in `_changes` (`_switch_unseen`); without them the oracle is the pack's
+        alone."""
         self.pack = pack
+        self.event_deliveries = {str(cid): tuple(sorted(ts)) for cid, ts in (event_deliveries or {}).items()}
+        self.quota_wall = quota_wall
         try:
             self.viewer = str(pack['viewer'])
             self.sprint_field = str(pack['sprintFieldId'])
@@ -386,6 +395,24 @@ class Oracle:
 
     # ── changes and numbers ───────────────────────────────────────────────────────────────
 
+    def _switch_unseen(self, change_id: str, created: datetime, switch_at: datetime) -> bool:
+        """A board's estimation-field switch at `switch_at`, after the live change made at `created`, that no app could
+        tell from the field in force at the change, by the run's observed timing: (a) the change was made inside the
+        quota wall the probe drew (contract §10: no background request at all until it ends) and the switch came no
+        later than the change's first event delivery at or after the wall's end — the first moment any app could read
+        the board for it; or (b) the run first delivered the change's event at or after the switch (the world applies
+        before a delivery at the same instant). A switch sends no event and no changelog, and the board configuration
+        answers only the field in force now (§12), so either way the app cannot know which side of the switch the
+        change fell on. The bound is the observed delivery, never a typed drain time; no evidence, no allowance."""
+        times = self.event_deliveries.get(change_id) or ()
+        if times and times[0] >= switch_at:
+            return True
+        wall = self.quota_wall
+        if wall is None or not wall[0] <= created < wall[1]:
+            return False
+        after = [t for t in times if t >= wall[1]]
+        return bool(after) and switch_at <= after[0]
+
     def _changes(self, live_mode: str, final_entries: List[Dict]) -> Dict[str, List[Change]]:
         entries = self._entries(live_mode)
         by_sprint: Dict[str, List[Change]] = {sid: [] for sid in self.ledger_sprints()}
@@ -428,8 +455,11 @@ class Oracle:
                                  # A live change whose event never came is first recorded by a later reconcile; when its
                                  # board switched fields after it, the app cannot tell which side of the switch the
                                  # change fell on (a switch sends no event, §12): the field switched to is accepted too.
+                                 # So for a delivered change no app could read its board for before the switch
+                                 # (_switch_unseen: made under the quota wall, or first delivered after the switch).
                                  for fid in (field_id, *(f for t, f in self.field_switches.get(board_id, ())
-                                                         if dropped and phase == 'live' and t > created))}
+                                                         if phase == 'live' and t > created
+                                                         and (dropped or self._switch_unseen(cid, created, t))))}
                     late = tuple(f for f in points_of if f != field_id)
                     by_sprint[sid].append(Change(
                         change_id=cid, sprint_id=sid, issue_id=iid, issue_key=issue['key'],
@@ -746,7 +776,7 @@ class Oracle:
         checkpoint (SPEC §2.5 "earlier rows keep their estimate" and §1's current estimates both stay accepted).
         A cross-board move's `removed` row also accepts the new board's field (§2.5 "with the NEW board's
         estimate" names the move, not which of its two rows)."""
-        # late: a dropped change healed after its board switched (only a switch made by the mark)
+        # late: a field its board switched to after the change, unknowably (_changes; only a switch made by the mark)
         fields = {ch.estimate_field} | (set(ch.late_fields) & {f for t, f in self.field_switches.get(ch.board_id, ())
                                                                 if mark is None or t <= mark})
         if ch.moved_to_board:

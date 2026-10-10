@@ -68,6 +68,7 @@ import argparse
 from collections import Counter
 import contextlib
 import copy
+from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 import fcntl
 import hashlib
@@ -243,10 +244,12 @@ class Ctx:
         self.dev_seed = dev_seed
         self.runtime = runtime
         self.oracle_error = None
+        # The run's observed timing, for the oracle's one switched-field allowance (forge2_oracle._switch_unseen).
+        deliveries, wall = observed_timing(self)
         try:
-            self.oracle = fo.Oracle(pack)
+            self.oracle = fo.Oracle(pack, event_deliveries=deliveries, quota_wall=wall)
             # The site after the live-UI slot (DESIGN §8.7 step 8): what every surface opened after the live step shows.
-            self.oracle_ui = fo.Oracle(pack, include_live_ui=True)
+            self.oracle_ui = fo.Oracle(pack, include_live_ui=True, event_deliveries=deliveries, quota_wall=wall)
         except fo.PackDefect as error:
             self.oracle, self.oracle_ui, self.oracle_error = None, None, str(error)
         self.manifest = self.obs.get('manifest') if isinstance(self.obs.get('manifest'), dict) else None
@@ -432,6 +435,30 @@ def row_correct(tokens: set, change: fo.Change, sources: Iterable[str]) -> bool:
     return (change.kind in tokens and (change.issue_id in tokens or change.issue_key in tokens)
             and (change.by in tokens or (change.by_name and change.by_name in tokens))
             and change.at in _instants(tokens) and any(s in tokens for s in sources))
+
+
+def observed_timing(c: Ctx) -> Tuple[Dict[str, List[datetime]], Optional[Tuple[datetime, datetime]]]:
+    """({live changelog id: the instants the run delivered that change's event work}, (start, end) of the quota wall the
+    probe drew or None): what the oracle's switched-field allowance reads (forge2_oracle.Oracle `event_deliveries`,
+    `quota_wall`). A change's event work is its product event (each delivery the live phase recorded) and the queue
+    deliveries whose invocation's calls carry its lineage (originChange, as _redelivered_after_next_run matches them)."""
+    def at(seconds):
+        return fo.instant(round(seconds * 1000)) if isinstance(seconds, (int, float)) and math.isfinite(seconds) else None
+    out: Dict[str, List[datetime]] = {}
+    for ev in c.phase('live').get('events') or []:
+        when = at(ev.get('t')) if isinstance(ev, dict) else None
+        if when is not None:
+            out.setdefault(str(ev.get('changelogId')), []).append(when)
+    phases = c.background_phases()
+    origin = {x['inv']: str(x['originChange']) for x in c.calls(phases) if x.get('inv') and x.get('originChange')}
+    for ph in phases:
+        for d in c.phase(ph).get('deliveries') or []:
+            when = at(d.get('t')) if isinstance(d, dict) and d.get('inv') in origin else None
+            if when is not None:
+                out.setdefault(origin[d['inv']], []).append(when)
+    wall = (c.obs.get('rate') or {}).get('wall') if isinstance(c.obs.get('rate'), dict) else None
+    bounds = (fo.instant(wall.get('t_ms')), fo.instant(wall.get('until_ms'))) if isinstance(wall, dict) else (None, None)
+    return out, (bounds if None not in bounds else None)
 
 
 def sources_for(c: Ctx, change: fo.Change) -> Tuple[str, ...]:
@@ -4588,6 +4615,68 @@ def defect_selftest() -> List[str]:
         got = _run_check(Ctx(None, obs, half, fixture_seed=pack['seed']), 'r_pagination', 'R', fn, pre, needs)
         expect(got['score'] == want and not got.get('unavailable') and ('handed back' in str(got.get('detail'))) == excused,
                f"r_pagination on {label}: {got['score']} (want {want}, excused {excused}) — {got.get('detail')}")
+    # The oracle's one switched-field allowance (forge2_oracle._switch_unseen), wired from the observations by
+    # observed_timing: a change no app could read its board for before a later switch — made under the observed quota
+    # wall with the switch no later than its first delivery after the wall, or first delivered at or after the switch —
+    # may be valued in the field switched to. A change delivered before the switch may not, and no change after the
+    # switch ever may: an app that keeps the old field cached forever still fails those rows.
+    o_plain = Ctx(None, {}, pack2).oracle
+    switch_at, new_field = o_plain.field_switches['2'][0]
+    early = next(ch for ch in o_plain.changes('final') if ch.board_id == '2' and ch.phase == 'live' and ch.at < switch_at
+                 and not ch.moved_to_board)
+    late_change = next(ch for ch in o_plain.changes('final') if ch.board_id == '2' and ch.phase == 'live'
+                       and ch.at > switch_at)
+    new_value = o_plain.estimate_of(early.issue_id, new_field, o_plain._entries('all'))
+    minute = timedelta(minutes=1)
+    wall = (early.at - 5 * minute, early.at + 15 * minute)
+
+    def timing(product, consumer=(), drawn=None):
+        lineage = [{'inv': f'k{i}', 'service': 'kvs', 'originChange': early.change_id, 't': t.timestamp()}
+                   for i, t in enumerate(consumer)]
+        obs = {'phases': {'live': {'events': [{'changelogId': early.change_id, 't': t.timestamp()} for t in product],
+                                   'calls': lineage,
+                                   'deliveries': [{'eventId': 'q#0', 'inv': f'k{i}', 'attempt': i, 't': t.timestamp(),
+                                                   'result': 'ok' if i == len(consumer) - 1 else 'retry'}
+                                                  for i, t in enumerate(consumer)]}}}
+        if drawn:
+            obs['rate'] = {'wall': {'t_ms': drawn[0].timestamp() * 1000, 'until_ms': drawn[1].timestamp() * 1000}}
+        return obs
+    expect(early.points != new_value and wall[1] + minute < switch_at, 'the synthetic switch does not tell its fields apart')
+    allow = None
+    for label, obs, want in (
+            ('made under the wall, first delivered after it at the switch or later',
+             timing([early.at + minute], [early.at + minute, switch_at + minute], wall), True),
+            ('made under the wall, first delivered after it before the switch',
+             timing([early.at + minute], [early.at + minute, wall[1] + minute], wall), False),
+            ('first delivered at the switch', timing([switch_at]), True),
+            ('delivered before the switch, redelivered after it', timing([switch_at - minute], [switch_at - minute,
+                                                                                               switch_at + minute]), False),
+            ('no delivery observed', {}, False)):
+        o = Ctx(None, obs, pack2).oracle
+        ch = next(x for x in o.changes('final') if x.key == early.key)
+        expect((new_field in ch.late_fields and new_value in ch.late_points) == want
+               and not next(x for x in o.changes('final') if x.key == late_change.key).late_fields,
+               f'switched-field allowance on a change {label}: late fields {ch.late_fields} (want {want})')
+        allow = allow or (o if want else None)
+    if not V2_ABSENT and allow is not None:
+        r4 = next(r for r in V2.ROWS if r.name == 'r4_field_switch').fn
+
+        def graded(oracle, values):
+            obs = V2.perfect_observations(oracle)
+            for r in obs['migration']['v2_by_checkpoint']['final']:
+                if (r['changeId'], r['sprintId']) in values:
+                    r['estimate'] = float(values[(r['changeId'], r['sprintId'])])
+            return r4(V2.Ev(obs, oracle))
+        old_field = o_plain.field_in_force('2', switch_at - fo.JUST_BEFORE)
+        cached = {early.key: new_value, late_change.key: o_plain.estimate_of(late_change.issue_id, old_field,
+                                                                              o_plain._entries('all'))}
+        for label, oracle, values, want in (
+                ('the switched-to field on an unknowable earlier row', allow, {early.key: new_value}, 1.0),
+                ('the switched-to field on a knowable earlier row', o_plain, {early.key: new_value}, None),
+                ('the old field cached past the switch', allow, cached, None)):
+            got = graded(oracle, values)
+            expect(got['score'] == want if want is not None else got['score'] < 1.0,
+                   f"r4_field_switch with {label}: {got['score']} (want {want or '< 1'}) — {got.get('detail')}")
     return fails
 
 
