@@ -454,15 +454,19 @@ function quotaWindow(t0) {
 }
 const readsAt = (t, win) => (win && t > win.at - READS_MARGIN_MS && t < win.until ? win.at - READS_MARGIN_MS : t);
 
-// `io.deliver(agendaAt)` learns the next agenda point (hour mark, admin/person read, CI sequence, quota draw) and
-// `io.drain(due, {beforeDelivery})` whether the next thing to happen is a delivery: the drive may leave the queues
-// undrained between related deliveries (SPEC §2.8 S1, batchDecision), never before an agenda point.
+// `io.deliver(agendaAt)` learns the next agenda point (hour mark, admin/person read, CI sequence, quota draw, world
+// event) and `io.drain(due, {beforeDelivery})` whether the next thing to happen is a delivery: the drive may leave the
+// queues undrained between related deliveries (SPEC §2.8 S1, batchDecision), never before an agenda point.
+// Each scheduled world event (`io.nextWorldAt()`: a sprint close, a field switch, a revoke, a deletion) is its own
+// agenda point: the live stream applies up to the instant before it and the queues drain to it, THEN it applies, so a
+// change delivered just before a field switch or a deletion is processed against the world it happened in.
 async function runHours(io, t0) {
   const ciAt = t0 + CI_AT_MS;
   const win = typeof io.quotaWindow === 'function' ? io.quotaWindow(t0) : null;
   const quotaAt = win ? win.at : null;
   let ciDone = false;
   let quotaDone = quotaAt === null;
+  let worldDone = -Infinity;   // the last world point taken: an event the io did not apply is never taken twice
   for (let k = 1; k <= HOURS; k++) {
     const end = t0 + k * H;
     const panelAt = readsAt(end - PANEL_BEFORE_MS, win);
@@ -470,12 +474,15 @@ async function runHours(io, t0) {
     if (k > 1) await io.hourly(k - 1, end);
     for (;;) {
       const nd = io.nextDeliveryAt();
+      const wa = typeof io.nextWorldAt === 'function' ? io.nextWorldAt() : null;
+      const worldAt = wa !== null && wa > worldDone ? wa : Infinity;
       const agendaAt = Math.min(end, panelDone ? Infinity : panelAt, !ciDone && ciAt < end ? ciAt : Infinity,
-        !quotaDone && quotaAt < end ? quotaAt : Infinity);
+        !quotaDone && quotaAt < end ? quotaAt : Infinity, worldAt);
       const due = Math.min(agendaAt, nd !== null && nd < end ? nd : Infinity);
-      await io.world(due);
+      await io.world(due === worldAt ? due - 1 : due);
       await io.drain(due, { beforeDelivery: due < agendaAt });
       await io.advanceTo(due);
+      if (due === worldAt) { worldDone = due; await io.world(due); continue; }
       if (!ciDone && ciAt < end && ciAt <= due) { ciDone = true; await io.ci(); continue; }
       if (!quotaDone && quotaAt < end && quotaAt <= due) { quotaDone = true; await io.quota(); continue; }
       if (!panelDone && panelAt <= due) { panelDone = true; await io.panel(`h${k}`); continue; }
@@ -490,10 +497,10 @@ async function runHours(io, t0) {
 // leaves the queues undrained through a batch the site's plan marks (deliverNext's `batchEnd`: a duplicate with every
 // delivery since its original, the two halves of a permuted same-issue pair). A batch opened at `now` (plan slot
 // `slot`) is held only when its last delivery (`createdAt(k)`: each later slot's change time; a redelivery arrives at
-// once) comes before the next agenda point, so no checkpoint, read, CI step or quota draw meets work the hold delayed,
-// and never inside the quota wall's window, where two partners' first requests would both meet the wall before either
-// could store the pause (READS-FIRST holds that write). The drain guard (`beforeDelivery`) releases a hold at any
-// agenda point regardless.
+// once) comes before the next agenda point, so no checkpoint, read, CI step, quota draw or world event meets work the
+// hold delayed, and never inside the quota wall's window, where two partners' first requests would both meet the wall
+// before either could store the pause (READS-FIRST holds that write). The drain guard (`beforeDelivery`) releases a
+// hold at any agenda point regardless.
 function batchDecision({ slot, end, now, createdAt, agendaAt, win }) {
   let endsAt = now;
   for (let k = slot + 1; k <= end; k++) endsAt = Math.max(endsAt, createdAt(k));
@@ -685,6 +692,14 @@ async function main() {
       (obs.phases.live?.invocations ?? []).push(...w.invocations.map((x) => normInvocation(x, 'trigger', x?.moduleKey)));
     }
   };
+  // The next scheduled world event the site has not applied (its atMs), the agenda point runHours drains to before it
+  // applies. Issue moves are live changes (world.cjs `viaLive`): the delivery plan carries them.
+  const nextWorldAt = () => {
+    if (typeof site.control.worldplan !== 'function') return null;
+    const { world, applied } = site.control.worldplan();
+    const done = new Set((applied ?? []).map((e) => e.id));
+    return (world?.events ?? []).find((e) => !e.viaLive && !done.has(e.id))?.atMs ?? null;
+  };
   const checkpoint = async (cp) => {
     const t = now();
     obs.clock.checkpoints[cp] = t;
@@ -800,6 +815,7 @@ async function main() {
         consumed(ph, await emu.drainQueues({ until }));
       },
       world: worldUntil,
+      nextWorldAt,
       hourly: async (k) => {
         ph.calls.push(...takeCalls(emu));
         await runSchedules(`hour-${k}`, now());
@@ -2020,6 +2036,43 @@ async function selftest() {
     assert.deepEqual(drains.slice(0, 5), [[plan[0], true], [plan[1], true], [plan[2], true], [panelAt, false], [H, false]]);
     assert.deepEqual(delivers, [panelAt, panelAt, panelAt]);
     assert.ok(drains.slice(5).every(([, before]) => before === false), 'no delivery after the first hour: every later drain precedes an agenda point');
+  });
+
+  await test('runHours: each world event is an agenda point, applied only once the queues drained to it', async () => {
+    let clock = 0;
+    const plan = [10 * 60_000, 20 * 60_000];
+    // a switch between two deliveries, a second event 1 ms after it, one at a delivery's instant, one in hour 3
+    const events = [15 * 60_000, 15 * 60_000 + 1, 20 * 60_000, 2.5 * H];
+    let cursor = 0;
+    let applied = 0;
+    const seen = [];
+    const delivers = [];
+    await runHours({
+      now: () => clock, advanceTo: async (t) => { if (t > clock) clock = t; },
+      nextDeliveryAt: () => (cursor < plan.length ? Math.max(clock, plan[cursor]) : null),
+      nextWorldAt: () => events[applied] ?? null,
+      deliver: async (agendaAt) => { seen.push(['deliver', clock]); delivers.push(agendaAt); cursor += 1; return true; },
+      drain: async (t) => seen.push(['drain', t]),
+      world: async (t) => { while (applied < events.length && events[applied] <= t) seen.push(['apply', events[applied++]]); seen.push(['world', t]); },
+      hourly: async () => {}, ci: async () => {}, panel: async () => {}, checkpoint: async () => {},
+    }, 0);
+    assert.equal(applied, events.length);
+    for (const at of events) {
+      const i = seen.findIndex((x) => x[0] === 'apply' && x[1] === at);
+      assert.deepEqual(seen.slice(i - 2, i + 2), [['world', at - 1], ['drain', at], ['apply', at], ['world', at]], `world event at ${at}`);
+    }
+    const index = (x) => seen.findIndex((y) => y[0] === x[0] && y[1] === x[1]);
+    assert.ok(index(['apply', 20 * 60_000]) < index(['deliver', 20 * 60_000]), 'at one instant the world event applies before the delivery');
+    assert.deepEqual(delivers, [15 * 60_000, H - PANEL_BEFORE_MS], 'a delivery learns the next world event as its next agenda point');
+    // a world event the io does not apply is taken once, never looped on
+    clock = 0;
+    let stuck = 0;
+    await runHours({
+      now: () => clock, advanceTo: async (t) => { if (t > clock) clock = t; }, nextDeliveryAt: () => null,
+      nextWorldAt: () => 30 * 60_000, deliver: async () => false, drain: async () => {},
+      world: async (t) => { if (t === 30 * 60_000) stuck += 1; }, hourly: async () => {}, ci: async () => {}, panel: async () => {}, checkpoint: async () => {},
+    }, 0);
+    assert.equal(stuck, 1);
   });
 
   await test('batchDecision: held only when its last delivery comes before the next agenda point, never inside the quota window', async () => {
