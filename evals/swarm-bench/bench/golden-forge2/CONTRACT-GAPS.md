@@ -17,12 +17,18 @@ an interpretation the contract (P6), the oracle (P8) and the probe (P9) must mat
   issue counts nowhere (contract §1: a deleted issue has no value). Its rows are listed to nobody and counted as
   hidden for nobody (contract §1).
 - **R4 closed sprint:** no row with a change time after `completeDate`; the event path reads each sprint and board
-  fresh (one agile GET each per invocation), so closes and estimation-field switches apply at once.
+  fresh (one agile GET each per invocation), so closes and estimation-field switches apply at once. A change made
+  BEFORE the close whose delivery is handed over after it (the gate, 2026-10-10: deliveries retried for half an hour
+  around the close) still counts: its member is written as it stood at the close (membership now, values now with
+  every later change undone from the changelog).
 - **R4 estimation-field switch** (settled by contract §1, 2026-10-10): rows keep the estimate they were written
   with; the totals use the board's current field; a change's points (the modal's points column, the Rovo action,
   `added +<points>`) are the current value of the field its row records (`estimateField`, the field the board used
   at the change). Members carry every estimation field's current value (`estimates`, JSON) for that. A closed
-  sprint's members stop updating, so its numbers and points stay as at the close (§12).
+  sprint's members stop updating, so its numbers and points stay as at the close (§12). "Every estimation field" is
+  every field a board of the app's sprints has USED (`cfg.estimateFields`), not only those the active boards use now:
+  once a board switches away from a field and the last active sprint using it closes, the rows recorded under it still
+  read it and the trigger still hands its updates to the queue.
 - **R1:** the v1 key (`<changeId>:<sprintId>`) is the v2 key, so copies are exactly-once by construction. Migrated
   rows: estimate = the issue's current value of the sprint's board field (v1 stored none), `deleted` if Jira no
   longer has the issue. Progress text: `Migrated <n> of <total> v1 rows`, `… — complete`, before the first step
