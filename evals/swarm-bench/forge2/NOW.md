@@ -64,6 +64,10 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
 
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 07:5x HAIKU PROVISIONAL: 0.3378 (seeds 0.348/0.350/0.345), no critical; BUT 9 admin-dependent rows came back
+  probe_unavailable (its jira:adminPage has no render: native) instead of charged — SCORER TODO (S4): an admin page
+  that is not UI Kit is the app's observed defect -> charge those rows 0 (owner rule: "give a bad score", never refuse).
+  Lean-version pilot summary: Sol 0.9618 ($2.90, 176 calls) vs Haiku 0.3378 ($0.49, 18 calls, quit itself).
 - 07:5x HAIKU 5.5 (lean version): QUIT ITSELF after 18 of 300 calls ($0.49) with stubs — its words: "The core v2 work is
   still ahead, and I'm fairly deep into this session's budget" / "I can't finish all eight inside the remaining budget at
   the detail this takes"; admin page built in Custom UI, not UI Kit. Not a harness fault: goose showed "context: 4,342 of
