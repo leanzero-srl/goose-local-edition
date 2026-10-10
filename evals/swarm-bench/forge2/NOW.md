@@ -64,6 +64,26 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
 
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 14:3x FAIRNESS AUDIT DONE (wf_b8da61d3-ac3, 31 agents; journal = the evidence): of 16 items, FAIR (real model defects,
+  stated + achievable): a_action_result (Sol serves the frozen row estimate; Sonnet falls back to it after a field
+  switch), r5_panel_labels (both miss the Migration control), r3_never_killed, r9 boot (Sonnet ~245 KB vs 153,600),
+  u_widget_live (Sonnet ignores the 5 s query staleness), u_widget_numbers/chart, t_trigger_handoff (medium),
+  r7_writes_accepted (real Jira measured live on wolfaenpak: refuses the whole request, 404), t_reestimate_followed and
+  the closed-sprint creep in b_comment_adf_as_user (I overrode the b_comment refuter: §12 "as at the close" + §3 + §10
+  state it and the FIXED reference passes it on the 4 calibration seeds whose close falls inside the wall: 5eed, fedc,
+  0123, aef2). UNFAIR (fixing on forge2/final now, one agent): k_runtime_risks (R9 charged §9's documented 400
+  CONDITIONAL_CHECK_FAILED retries as limit errors — needs a re-probe, probe gains kvsCode), r_pagination (a sanctioned
+  InvocationError hand-off finished by the redelivery charged as skipped pages), the FIELD SWITCH inside the quota wall
+  (unknowable: no event/changelog; oracle allowance in one home beside the dropped-change one; reaches r4_field_switch,
+  u_ledger_table, a_action_result, row_right), r7_values_fresh (the mark after an in-wall hourly run graded values
+  nothing could refresh; Sonnet 0.842 -> 0.888), the E rows at the rc tops (fixed by the calibration: 2.58 / 2.0).
+  Plus: emulated Jira answers the deleted-issue write like real Jira (404), honest E-row wording ("optimum" was not
+  reachable), one public sentence that scripted burst 429s happen. Stray: an uninstalled scratch app
+  "fair-probe-field-r7" left in the LeanZero SRL developer console (wolfaenpak test env; deletable only in the console).
+- 14:2x forge2/final MERGES: admin-shot (8bf1ef8a1 + f5327f8db) and the CALIBRATED gate (8111d5c65 + 5a2fd113b; CALIB_SHA256
+  re-pinned to the merged thresholds file 34550b5d…: calibration 7ed584279 unchanged + reliability_k/floor). Scorer now
+  emits forge-2.0. Reference re-graded from kept observations (no probe): 1.0000 on all 9 seeds, reference_failures []
+  (only the two E rows moved). Light suites all pass.
 - 14:0x v2 LANDED on forge2/final: df9387c0e (rule, selftests, public text, SPEC §4, receipts, poor_practice) +
   de79a9841 (manifest refrozen, --check clean). Monotonicity sweep (every non-E row over {0,.25,.5,.75,.9,1}): 0
   violating moves on all ten kept verdicts (old rule: 10/14/11/5 on the four pilots); 16 mutated rules each fail the
