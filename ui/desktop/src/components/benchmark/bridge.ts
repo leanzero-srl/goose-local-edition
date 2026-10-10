@@ -72,10 +72,3 @@ export interface BenchSession {
     source: 'app' | 'board';
   };
 }
-
-/** The 'benchmark-started' payload's version skew fact: the site's current benchmark is newer
- *  than what this app bundles — runnable, but an app update is what catches the board up. */
-export interface CatalogMismatch {
-  siteCurrent: string;
-  bundled: string;
-}

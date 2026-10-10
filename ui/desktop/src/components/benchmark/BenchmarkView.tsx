@@ -59,7 +59,7 @@ import {
   type BenchmarkRow,
   type Tier,
 } from './baselines';
-import type { BenchSession, CatalogBaseline, CatalogBenchmark, CatalogMismatch } from './bridge';
+import type { BenchSession, CatalogBaseline, CatalogBenchmark } from './bridge';
 import { ScoreBars } from './ScoreBars';
 import { TierBreakdown, type TierColumn } from './TierBreakdown';
 import { ScoringDetail, type VerdictDetail } from './ScoringDetail';
@@ -1091,9 +1091,6 @@ export default function BenchmarkView() {
     previousOutcomes.current = next;
     if (ended.length > 0) setJustEndedKeys((prev) => new Set([...prev, ...ended]));
   }, [sessions]);
-  // The 'benchmark-started' fact that the site's current benchmark outruns this app's bundle —
-  // each new launch restates or clears it, so a stale notice cannot outlive an app update.
-  const [catalogMismatch, setCatalogMismatch] = useState<CatalogMismatch | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<BenchSession | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -1213,7 +1210,6 @@ export default function BenchmarkView() {
         phase?: BenchPhase;
         provider?: string;
         scorerVersion?: string;
-        catalogMismatch?: CatalogMismatch;
       };
       if (p?.workdir) {
         lifecycleRevision.current++;
@@ -1223,7 +1219,6 @@ export default function BenchmarkView() {
           setEntrant('cloud');
           setCloudProvider(p.provider);
         }
-        setCatalogMismatch(p.catalogMismatch ?? null);
         setActiveWorkdir(p.workdir);
         setRunStartedAt(p.startedAt ? Date.parse(p.startedAt) : Date.now());
         setLaunchedSampling(sanitizeSampling(p.sampling));
@@ -2091,13 +2086,6 @@ export default function BenchmarkView() {
                 {fmtWhen(catalog.fetchedAt) ?? catalog.fetchedAt ?? 'at an unknown time'}
               </Chip>
             </div>
-          )}
-          {catalogMismatch && (
-            <ToneBand tone="warn">
-              The site&rsquo;s current benchmark is {eraDisplayName(catalogMismatch.siteCurrent)},
-              but this app bundles {eraDisplayName(catalogMismatch.bundled)}. Update Goose before
-              starting another run. Older results remain available as history.
-            </ToneBand>
           )}
 
           {running && (

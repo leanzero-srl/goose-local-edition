@@ -184,7 +184,7 @@ type ElectronAPI = {
   ) => Promise<unknown>;
   /** Run the NEWEST bundled benchmark on N nodes — latest-only, the app takes no tier choice
    *  (main derives the tier from the bundled tier data). Long-running; resolves with the scored
-   *  row. Two-phase: 'benchmark-started' {workdir, tier, scorerVersion, catalogMismatch?} fires
+   *  row. Two-phase: 'benchmark-started' {workdir, tier, scorerVersion} fires
    *  immediately (subscribe via `on`), then 'benchmark-log' lines stream and 'benchmark-finished'
    *  closes the run. `sampling` pins this run's knobs via env (knobs ride only when set).
    *  The legacy 3-arg call (nodes, tier, sampling) is accepted for one release; the tier is

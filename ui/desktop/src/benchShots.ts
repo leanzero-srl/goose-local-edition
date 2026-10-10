@@ -246,17 +246,19 @@ export async function readBenchShotsSnapshot(dir: string): Promise<BenchShot[]> 
 
 /**
  * leanzero.net stores at most five pictures of a run (benchmark-runs route: MAX_SCREENSHOTS 5, 1.5 MB each,
- * 3.5 MB together). A Forge run with its admin panel captured sends one of every surface the app ships: the
- * widget in both themes, the sprint action, and the admin panel in both themes — the sprint action's dark
- * capture gives its place. Every other pick follows in pick order, so a run without the admin panel sends
- * what it always sent (widget and sprint action in both themes, the edit view).
+ * 3.5 MB together). A Forge run sends its two Custom UI surfaces in both themes — the widget and the sprint
+ * action, each dark capture being the entrant's own dark-mode CSS — and, when the admin page rendered, the
+ * admin panel in light. Its dark picture is not sent: the benchmark's UI Kit host draws both themes from the
+ * same component tree, so the second theme shows nothing more of the entrant's work (it stays in the local
+ * view). Every other pick follows in pick order, so a run without the admin panel sends what it always sent
+ * (widget and sprint action in both themes, the edit view), and so does a snapshot that recorded no order.
  */
 const FORGE_PUBLISH_FIRST = [
   'forge-widget-light',
   'forge-widget-dark',
   'forge-sprint-light',
+  'forge-sprint-dark',
   'forge-admin-light',
-  'forge-admin-dark',
 ];
 const FORGE_PICK_NAMES = FORGE_PICKS.map((pick) => pick.name);
 /** A Forge pick's place in the publish order; every other shot keeps the place it was given in. */

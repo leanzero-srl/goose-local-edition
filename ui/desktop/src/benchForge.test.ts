@@ -173,7 +173,7 @@ describe('forge screenshots', () => {
   const NOTE =
     "the app's component tree, drawn by the benchmark's UI Kit host. Jira draws the same tree with its own components.";
 
-  it('shows the UI Kit admin panel after the widget and sprint leads, and publishes it in light and dark within the site’s five', async () => {
+  it('shows the UI Kit admin panel after the widget and sprint leads, and publishes its light picture within the site’s five', async () => {
     const shots = await pickBenchShots(await shotsDir([...SOL_SHOTS, ...ADMIN_SHOTS]));
     const file = (b64: string) => Buffer.from(b64, 'base64').toString();
     expect(shots.map((shot) => [shot.name, file(shot.b64)])).toEqual([
@@ -198,15 +198,18 @@ describe('forge screenshots', () => {
       `Admin panel (UI Kit) · after saving: ${NOTE}`,
     ]);
     // leanzero.net's route takes five pictures, a filename-safe name and a caption of at most 200
-    // characters each: one of every surface, the admin panel in both themes.
+    // characters each: the widget and the sprint action in both themes (each dark capture is the entrant's
+    // own dark-mode CSS), then the admin panel in light. Its dark picture is the benchmark's UI Kit host
+    // drawing the same tree in its own dark theme, so it stays in the local view and is not sent.
     const published = limitBenchShotsForPublish(shots);
     expect(published.map((shot) => shot.name)).toEqual([
       'forge-widget-light',
       'forge-widget-dark',
       'forge-sprint-light',
+      'forge-sprint-dark',
       'forge-admin-light',
-      'forge-admin-dark',
     ]);
+    expect(published.map((shot) => file(shot.b64))).not.toContain('admin-panel-dark.png');
     for (const shot of shots) {
       expect(shot.caption.length).toBeLessThanOrEqual(200);
       expect(shot.name).toMatch(/^[a-z0-9][a-z0-9._-]{0,59}$/i);
@@ -245,7 +248,8 @@ describe('forge screenshots', () => {
     const read = await readBenchShotsSnapshot(snapshot);
     expect(read).toEqual(shots);
     expect(limitBenchShotsForPublish(read)).toEqual(limitBenchShotsForPublish(shots));
-    // A snapshot an earlier build wrote records no order: its Forge picks still publish as the leads.
+    // A snapshot an earlier build wrote records no order (it reads back by name: contact sheet, edit,
+    // admin dark… first): its Forge picks still publish as the leads.
     const legacy = path.join(dir, 'legacy-snapshot');
     await fs.mkdir(legacy);
     for (const shot of shots)
@@ -255,13 +259,18 @@ describe('forge screenshots', () => {
       );
     const old = await readBenchShotsSnapshot(legacy);
     expect(old.map((shot) => shot.name).sort()).toEqual(names.slice().sort());
-    expect(limitBenchShotsForPublish(old).map((shot) => shot.name)).toEqual([
+    const leads = [
       'forge-widget-light',
       'forge-widget-dark',
       'forge-sprint-light',
+      'forge-sprint-dark',
       'forge-admin-light',
-      'forge-admin-dark',
-    ]);
+    ];
+    expect(limitBenchShotsForPublish(old).map((shot) => shot.name)).toEqual(leads);
+    // Whatever order a caller hands them in.
+    expect(limitBenchShotsForPublish(shots.slice().reverse()).map((shot) => shot.name)).toEqual(
+      leads
+    );
     // No snapshot at all is an empty read (the publisher then reads the run's own tree), never a throw.
     expect(await readBenchShotsSnapshot(path.join(dir, 'absent'))).toEqual([]);
   });

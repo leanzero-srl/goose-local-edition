@@ -362,42 +362,6 @@ describe('the benchmark sections and their sessions', () => {
     window.location.hash = '';
   });
 
-  it('renders the catalog-mismatch notice from benchmark-started — the site moved on, the app has not', async () => {
-    mockElectron();
-    const handlers = new Map<string, (e: unknown, payload: unknown) => void>();
-    electron().on = vi.fn((channel: string, cb: (e: unknown, payload: unknown) => void) => {
-      handlers.set(channel, cb);
-    });
-    render(
-      <IntlTestWrapper>
-        <BenchmarkView />
-      </IntlTestWrapper>
-    );
-    await screen.findByText('Gauntlet 7.0 rc · Meridian Payments Console');
-
-    handlers.get('benchmark-started')?.(null, {
-      workdir: '/tmp/bench',
-      startedAt: '2026-08-30T10:00:00.000Z',
-      sampling: {},
-      tier: 'sb-7',
-      scorerVersion: 'sb-7.0-rc',
-      catalogMismatch: { siteCurrent: 'sb-8.0', bundled: 'sb-7.0-rc' },
-    });
-    const notice = await screen.findByText(/Update Goose before starting another run/);
-    expect(notice.textContent).toContain('Gauntlet 8.0');
-    expect(notice.textContent).toContain('Gauntlet 7.0 rc');
-
-    // A later launch with NO mismatch clears the notice — the event stream updates the claim.
-    handlers.get('benchmark-started')?.(null, {
-      workdir: '/tmp/bench',
-      startedAt: '2026-08-30T11:00:00.000Z',
-      sampling: {},
-    });
-    await waitFor(() =>
-      expect(screen.queryByText(/Update Goose before starting another run/)).toBeNull()
-    );
-  });
-
   it('states the catalog absence LOUDLY and renders no comparison rows — never invented bars', async () => {
     mockElectron({ catalog: undefined, sessions: [SESSIONS[1]] });
     render(
