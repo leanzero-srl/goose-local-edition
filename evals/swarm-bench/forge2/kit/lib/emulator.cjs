@@ -16,6 +16,17 @@
 // the site's current time, its process runs on its own virtual clock (proxied requests cost their class, waits their
 // face value), it is killed when that clock passes the module's limit, and when it ends the site's clock moves to its
 // end. Each result carries t0/t1 (virtual ISO), vms (virtual ms) and ms (real ms, never a grading input).
+//
+// CONCURRENT DELIVERY (contract S1). Forge runs consumer invocations at the same time; here up to
+// MAX_CONCURRENT_CONSUMERS. When drainQueues starts a consumer delivery, every other pending consumer delivery due by
+// then that carries the same event (a copy of the same queue event, or work pushed for the same product event: a
+// trigger-level duplicate) or names the same issue (its chain began with a product event of that issue) starts with
+// it, in delivery order, as far as the deliveries' own `concurrency: {key, limit}` allow. The group runs under the
+// proxy's deterministic READS-FIRST schedule (proxy.cjs). Each member's delivery record, invocation result and
+// invocation record carry `concurrent: {group, reason: 'same-event'|'same-issue', schedule, size, index, with:
+// [{index, eventId, invocationId}]}`; `emu.concurrency` lists every group with its first writes in commit order; a KVS
+// call the schedule held is logged `heldReadsFirst: true`. Unrelated deliveries and product-event triggers run one at
+// a time, as before. KVS queries are eventually consistent (S2, kvs.cjs).
 //   await emu.openSurface(page, { moduleKey, entry, theme, layout, asUser, extension })   (bridge-host.cjs)
 //   await emu.hostSave(page)
 //   emu.kvs.snapshot(); emu.log; emu.bridgeLog; emu.harnessMissing; emu.close()
@@ -30,7 +41,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { kitPaths } = require('./kitpaths.cjs');
 const { createKvs } = require('./kvs.cjs');
-const { createProxy } = require('./proxy.cjs');
+const { createProxy, createConcurrentGroup } = require('./proxy.cjs');
 const rt = require('./runtime.cjs');
 const host = require('./bridge-host.cjs');
 
@@ -51,6 +62,9 @@ const LONG_RUNNING_PAYLOAD_BYTES = 100 * 1024;
 // events-reference/product_events: "You can only retry an event for a maximum of four times"; platform errors (a timeout)
 // are retried too (CHANGE-681). SPEC §2.2: product-event triggers, up to 4 retries.
 const TRIGGER_MAX_RETRIES = 4;
+// async-events-api: without a concurrency key "Event processing will be unbounded and limited only by the general
+// per-installation invocation limits" (robustness.md §5.5). The harness's own bound, stated in the contract (S1).
+const MAX_CONCURRENT_CONSUMERS = 3;
 
 function siteClient(site) {
   if (site.control) {
@@ -109,11 +123,19 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
   // The emulator's clock mirrors the site's (the world's) clock and never runs on wall time by itself.
   let vnow = Date.parse(info.now);
   // The site's and the emulator's clock both reach at least t (the site's may already be later: world events, probes).
-  const advanceTo = async (t) => {
+  // One move at a time: the site's `advance` is relative, so two interleaved read-then-advance pairs (two concurrent
+  // invocations ending) would move it twice.
+  let clockMoves = Promise.resolve();
+  const moveTo = async (t) => {
     let siteNow = (await client.call('clock')).now;
     if (t > siteNow) siteNow = (await client.call('advance', { ms: t - siteNow })).now;
     vnow = Math.max(vnow, siteNow);
     return vnow;
+  };
+  const advanceTo = (t) => {
+    const move = clockMoves.then(() => moveTo(t));
+    clockMoves = move.catch(() => {}); // the caller gets the failure; the next move still runs
+    return move;
   };
   const syncClock = () => advanceTo(vnow);
   const clock = { now: () => vnow, observe: (t) => { if (t > vnow) vnow = t; }, advanceTo };
@@ -125,8 +147,14 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
   }
 
   const entities = manifest?.app?.storage?.entities ?? [];
-  const kvs = createKvs({ entities: Array.isArray(entities) ? entities : [], now: clock.now });
+  // Every later KVS request is sent at or after the oldest running invocation's start (S2's versions older than that
+  // are unreachable).
+  const running = new Set();
+  const kvsFloor = () => Math.min(clock.now(), ...[...running].map((r) => r.vStart));
+  const kvs = createKvs({ entities: Array.isArray(entities) ? entities : [], now: clock.now, floor: kvsFloor });
   const invocations = new Map();
+  const concurrency = [];
+  let groupSeq = 0;
   const log = [];
   const harnessMissing = [];
   const bridgeLog = [];
@@ -163,7 +191,8 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
         queueState.pending.push({
           seq: queueState.seq++, eventId: `${body.jobId}#${i}`, jobId: body.jobId, queueName: body.queueName, body: item.body,
           delayInSeconds: item.delayInSeconds, concurrency: item.concurrency, enqueuedAt: at, readyAt: at + delay * 1000,
-          attempt: 0, retryReason: null, retryData: null, lineage: { originChange: inv.originChange ?? null, scheduledRun: inv.scheduledRun ?? null, depth: (inv.depth ?? 0) + 1 },
+          attempt: 0, retryReason: null, retryData: null,
+          lineage: { originChange: inv.originChange ?? null, originIssue: inv.originIssue ?? null, scheduledRun: inv.scheduledRun ?? null, depth: (inv.depth ?? 0) + 1 },
         });
         job.inProgress += 1;
       });
@@ -252,7 +281,9 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     return built;
   }
 
-  async function invokeFunction(fnKey, { moduleKey, moduleType, event, asUser, lineage = {}, source = 'function' } = {}) {
+  // `seat` {group, member}: a member of a concurrent consumer group (S1). It joins the group before its process starts,
+  // the proxy schedules its requests, and the group as a whole (not each member) runs inside aroundInvocation.
+  async function invokeFunction(fnKey, { moduleKey, moduleType, event, asUser, lineage = {}, source = 'function', seat = null } = {}) {
     if (!built) await build();
     const fnDef = functions.find((f) => f.key === fnKey);
     if (!fnDef) return { ok: false, error: errorOf({ errorType: 'EmulatorError', errorMessage: `no function '${fnKey}' in the manifest` }), logs: [], ms: 0, calls: [] };
@@ -264,47 +295,66 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     const timeoutSec = timeoutFor(fnDef, mType);
     // The invocation starts at the site's current time — after the change that triggered it was applied (the 1.0 stale
     // trigger clock started it at the emulator's older time, so 29 of 41 measured trigger runs exceeded 25 s on paper).
-    const vStart = await syncClock();
+    // A member that cannot start leaves its group, so its partners never wait for it.
+    let vStart;
+    try { vStart = await syncClock(); } catch (e) {
+      if (seat) { seat.group.join(seat.member, id); seat.group.end(seat.member); }
+      throw e;
+    }
     const record = { id, functionKey: fnKey, moduleType: mType, moduleKey: mKey, aaid: asUser ?? undefined, source,
-      scheduledRun: lineage.scheduledRun ?? null, originChange: lineage.originChange ?? null, depth: lineage.depth ?? 0,
-      vStart, vnow: vStart, deadline: vStart + timeoutSec * 1000 };
+      scheduledRun: lineage.scheduledRun ?? null, originChange: lineage.originChange ?? null, originIssue: lineage.originIssue ?? null,
+      depth: lineage.depth ?? 0, vStart, vnow: vStart, deadline: vStart + timeoutSec * 1000 };
     invocations.set(id, record);
-    const t0 = new Date(vStart).toISOString();
-    if (!status?.loaded) {
-      const out = { ok: false, invocationId: id, functionKey: fnKey, moduleType: mType, moduleKey: mKey, t0, t1: t0, vms: 0,
-        error: errorOf({ errorType: 'FunctionNotLoaded', errorMessage: status?.error ?? 'function did not bundle' }), logs: [], ms: 0, calls: [], timedOut: false };
+    running.add(record);
+    try {
+      if (seat) {
+        Object.defineProperty(record, 'seat', { value: seat });
+        seat.group.join(seat.member, id);
+        await seat.group.ready();
+        record.concurrent = seat.group.describe(seat.member);
+      }
+      const concurrent = record.concurrent ? { concurrent: record.concurrent } : {};
+      const t0 = new Date(vStart).toISOString();
+      if (!status?.loaded) {
+        const out = { ok: false, invocationId: id, functionKey: fnKey, moduleType: mType, moduleKey: mKey, t0, t1: t0, vms: 0,
+          error: errorOf({ errorType: 'FunctionNotLoaded', errorMessage: status?.error ?? 'function did not bundle' }), logs: [], ms: 0, calls: [], timedOut: false, ...concurrent };
+        onInvocation?.(record, out);
+        return out;
+      }
+      const lambdaEvent = {
+        body: event, handler: fnDef.handler, variables: [],
+        _meta: {
+          proxy: { url: proxyAddr.url, token: rt.fakeJwt({ inv: id, exp: Math.floor(vStart / 1000) + 86400 }), host: '127.0.0.1' },
+          contextAri, appContext: appContext(fnKey, mKey, id),
+          tracing: { traceId: crypto.randomBytes(8).toString('hex'), spanId: crypto.randomBytes(8).toString('hex') },
+          ...(asUser ? { aaid: asUser } : {}), timeout: timeoutSec, featureFlags: [],
+        },
+      };
+      const exec = () => rt.runInvocation({ bundleDir, lambdaEvent, timeoutSec, vStart, runtime, fence: fenceMode, proxyPort: proxyAddr.port });
+      const r = aroundInvocation && !seat ? await aroundInvocation(exec) : await exec();
+      seat?.group.end(seat.member);
+      // The clock the process reported; a process that died without one ends at the last completion the proxy answered.
+      const vEnd = Math.max(r.vEnd ?? record.vnow, vStart);
+      record.vnow = vEnd;
+      await advanceTo(vEnd);
+      const t1 = new Date(vEnd).toISOString();
+      const calls = log.filter((c) => c.invocationId === id);
+      let out;
+      if (r.timedOut) {
+        out = { ok: false, timedOut: true, error: errorOf({ errorType: 'TimeoutError', errorMessage: r.killedAtLimit
+          ? `invocation exceeded the ${timeoutSec} s platform limit (virtual time) and was killed`
+          : `invocation ran ${timeoutSec} s of real time without finishing (CPU-bound or hung) and was killed` }) };
+      } else if (r.crash) out = { ok: false, error: errorOf({ errorType: r.crash.name ?? 'RunnerError', errorMessage: r.crash.message }) };
+      else if (r.result?.success) out = { ok: true, result: r.result.body };
+      else out = { ok: false, error: errorOf(r.result?.error ?? { errorType: 'Unknown', errorMessage: 'no result' }) };
+      Object.assign(out, { invocationId: id, functionKey: fnKey, moduleType: mType, moduleKey: mKey, asUser: asUser ?? null, t0, t1, vms: vEnd - vStart, timeoutSec,
+        logs: r.logs, stderr: r.stderr, ms: r.ms, calls, timedOut: Boolean(r.timedOut), realTimeout: Boolean(r.realTimeout), ...concurrent });
       onInvocation?.(record, out);
       return out;
+    } finally {
+      running.delete(record);
+      seat?.group.end(seat.member);
     }
-    const lambdaEvent = {
-      body: event, handler: fnDef.handler, variables: [],
-      _meta: {
-        proxy: { url: proxyAddr.url, token: rt.fakeJwt({ inv: id, exp: Math.floor(vStart / 1000) + 86400 }), host: '127.0.0.1' },
-        contextAri, appContext: appContext(fnKey, mKey, id),
-        tracing: { traceId: crypto.randomBytes(8).toString('hex'), spanId: crypto.randomBytes(8).toString('hex') },
-        ...(asUser ? { aaid: asUser } : {}), timeout: timeoutSec, featureFlags: [],
-      },
-    };
-    const exec = () => rt.runInvocation({ bundleDir, lambdaEvent, timeoutSec, vStart, runtime, fence: fenceMode, proxyPort: proxyAddr.port });
-    const r = aroundInvocation ? await aroundInvocation(exec) : await exec();
-    // The clock the process reported; a process that died without one ends at the last completion the proxy answered.
-    const vEnd = Math.max(r.vEnd ?? record.vnow, vStart);
-    record.vnow = vEnd;
-    await advanceTo(vEnd);
-    const t1 = new Date(vEnd).toISOString();
-    const calls = log.filter((c) => c.invocationId === id);
-    let out;
-    if (r.timedOut) {
-      out = { ok: false, timedOut: true, error: errorOf({ errorType: 'TimeoutError', errorMessage: r.killedAtLimit
-        ? `invocation exceeded the ${timeoutSec} s platform limit (virtual time) and was killed`
-        : `invocation ran ${timeoutSec} s of real time without finishing (CPU-bound or hung) and was killed` }) };
-    } else if (r.crash) out = { ok: false, error: errorOf({ errorType: r.crash.name ?? 'RunnerError', errorMessage: r.crash.message }) };
-    else if (r.result?.success) out = { ok: true, result: r.result.body };
-    else out = { ok: false, error: errorOf(r.result?.error ?? { errorType: 'Unknown', errorMessage: 'no result' }) };
-    Object.assign(out, { invocationId: id, functionKey: fnKey, moduleType: mType, moduleKey: mKey, asUser: asUser ?? null, t0, t1, vms: vEnd - vStart, timeoutSec,
-      logs: r.logs, stderr: r.stderr, ms: r.ms, calls, timedOut: Boolean(r.timedOut), realTimeout: Boolean(r.realTimeout) });
-    onInvocation?.(record, out);
-    return out;
   }
 
   // A retry decision shared by queue events and product-event triggers: the app's InvocationError, or a failure.
@@ -344,6 +394,94 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
       outcome: next ? next.kind : 'ok', ...(next ? { retryAfter: next.waitS, ...(next.dropped ? { dropped: next.dropped } : { redeliverAt: next.redeliverAt }) } : {}) };
   }
 
+  // One consumer delivery's event, after the site's consumer-start signal.
+  async function startConsumer(ev) {
+    const consumer = consumerFor(ev.queueName);
+    await client.call('signal', { type: 'consumer-start', originChange: ev.lineage.originChange, scheduledRun: ev.lineage.scheduledRun });
+    const meta = {
+      queueName: ev.queueName, jobId: ev.jobId, eventId: ev.eventId,
+      ...(ev.delayInSeconds !== undefined ? { delayInSeconds: ev.delayInSeconds } : {}), ...(ev.concurrency ? { concurrency: ev.concurrency } : {}),
+      ...(ev.attempt > 0 ? { retryContext: { retryCount: ev.attempt, retryReason: ev.retryReason, retryData: ev.retryData,
+        retentionWindow: { startTime: new Date(ev.enqueuedAt).toISOString(), remainingTimeMs: Math.max(0, ev.enqueuedAt + RETENTION_MS - clock.now()) } } } : {}),
+    };
+    // The resolver form is called the way @forge/resolver's getDefinitions() dispatches: {call: {functionKey, payload,
+    // jobId}, context}; the event's metadata (retryContext included) rides in `context` (not documented: harness choice).
+    const event = consumer.function ? { body: ev.body, ...meta } : { call: { functionKey: consumer.resolver.method, payload: ev.body, jobId: ev.jobId }, context: meta };
+    return { ev, consumer, fnKey: consumerFunction(consumer), event };
+  }
+
+  // The delivery record of one consumer invocation, and its redelivery when it asked for one, threw or was killed.
+  function finishConsumer({ ev, consumer }, r) {
+    const job = queueState.jobs.get(ev.jobId);
+    const base = { eventId: ev.eventId, queueName: ev.queueName, attempt: ev.attempt, invocationId: r.invocationId, functionKey: r.functionKey, moduleKey: consumer.key,
+      t: r.t0, t1: r.t1, lineage: ev.lineage, ok: r.ok, result: r.result ?? null, error: r.error ?? null, timedOut: r.timedOut, logs: r.logs,
+      ...(r.concurrent ? { concurrent: r.concurrent } : {}) };
+    const plan = retryPlan(r, ev.attempt);
+    if (!plan) {
+      if (job) { job.inProgress -= 1; job.success += 1; }
+      return { ...base, outcome: 'ok' };
+    }
+    ev.retryReason = plan.reason;
+    ev.retryData = plan.data;
+    const next = clock.now() + plan.waitS * 1000;
+    if (next > ev.enqueuedAt + RETENTION_MS) {
+      if (job) { job.inProgress -= 1; job.failed += 1; }
+      return { ...base, outcome: plan.kind, retryAfter: plan.waitS, dropped: 'retention window exceeded' };
+    }
+    queueState.pending.push({ ...ev, attempt: ev.attempt + 1, readyAt: next, seq: queueState.seq++ });
+    return { ...base, outcome: plan.kind, retryAfter: plan.waitS, redeliverAt: new Date(next).toISOString() };
+  }
+
+  // S1: two pending consumer deliveries carry the same event when they are copies of one queue event or work pushed for
+  // the same product event (a trigger-level duplicate carries the same changelog id); they name the same issue when
+  // their chains began with product events of that issue.
+  const relation = (a, b) => {
+    const change = a.lineage?.originChange;
+    if (a.eventId === b.eventId || (change && change === b.lineage?.originChange)) return 'same-event';
+    const issue = a.lineage?.originIssue;
+    return issue && issue === b.lineage?.originIssue ? 'same-issue' : null;
+  };
+  // async-events-api: `concurrency: {key, limit}` "limits the number of events that can be processed concurrently".
+  const keysAllow = (group) => {
+    const limits = new Map();
+    for (const e of group) {
+      const key = e.concurrency?.key;
+      if (key === undefined || key === null) continue;
+      if (!limits.has(key)) limits.set(key, []);
+      limits.get(key).push(Number(e.concurrency.limit));
+    }
+    return [...limits.values()].every((l) => l.length <= Math.min(...l));
+  };
+  const runnable = (e) => e.kind !== 'trigger' && functions.some((f) => f.key === consumerFunction(consumerFor(e.queueName)));
+  // The deliveries that start with `ev`: due by `dueBy` and related to it, in delivery order (the list is sorted).
+  function partnersOf(ev, dueBy) {
+    const group = [ev];
+    for (const p of queueState.pending) {
+      if (group.length >= MAX_CONCURRENT_CONSUMERS || p.readyAt > dueBy) break;
+      if (runnable(p) && relation(ev, p) && keysAllow([...group, p])) group.push(p);
+    }
+    return group.slice(1);
+  }
+
+  async function deliverGroup(members) {
+    const partners = members.slice(1);
+    const reason = partners.every((p) => relation(members[0], p) === 'same-event') ? 'same-event' : 'same-issue';
+    const group = createConcurrentGroup({ id: `c${++groupSeq}`, reason, members: members.map((e) => ({ eventId: e.eventId })) });
+    const started = [];
+    for (const e of members) started.push(await startConsumer(e));
+    const t = new Date(clock.now()).toISOString();
+    const run = () => Promise.allSettled(started.map((s, member) => invokeFunction(s.fnKey,
+      { moduleKey: s.consumer.key, moduleType: 'consumer', event: s.event, lineage: s.ev.lineage, seat: { group, member } })));
+    const settled = aroundInvocation ? await aroundInvocation(run) : await run();
+    const failed = settled.find((x) => x.status === 'rejected');
+    if (failed) throw failed.reason;
+    const out = settled.map((x, i) => finishConsumer(started[i], x.value));
+    concurrency.push({ group: group.id, reason, schedule: 'reads-first', t,
+      members: group.members().map((m, i) => ({ ...m, queueName: members[i].queueName, attempt: members[i].attempt, outcome: out[i].outcome })),
+      firstWrites: group.firstWrites });
+    return out;
+  }
+
   // `until` (virtual ms): only the deliveries due by then; the rest stay pending for a later drain.
   async function drainQueues({ until = null } = {}) {
     const deliveries = [];
@@ -355,42 +493,19 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
       await advanceTo(ev.readyAt);
       if (ev.kind === 'trigger') { deliveries.push(await deliverTriggerRetry(ev)); continue; }
       const job = queueState.jobs.get(ev.jobId);
-      const consumer = consumerFor(ev.queueName);
-      const fnKey = consumerFunction(consumer);
-      if (!fnKey) {
+      if (!consumerFunction(consumerFor(ev.queueName))) {
         deliveries.push({ eventId: ev.eventId, queueName: ev.queueName, attempt: ev.attempt, outcome: 'no_consumer', ok: false, result: null, t: new Date(clock.now()).toISOString() });
         if (job) { job.inProgress -= 1; job.failed += 1; }
         continue;
       }
-      await client.call('signal', { type: 'consumer-start', originChange: ev.lineage.originChange, scheduledRun: ev.lineage.scheduledRun });
-      const meta = {
-        queueName: ev.queueName, jobId: ev.jobId, eventId: ev.eventId,
-        ...(ev.delayInSeconds !== undefined ? { delayInSeconds: ev.delayInSeconds } : {}), ...(ev.concurrency ? { concurrency: ev.concurrency } : {}),
-        ...(ev.attempt > 0 ? { retryContext: { retryCount: ev.attempt, retryReason: ev.retryReason, retryData: ev.retryData,
-          retentionWindow: { startTime: new Date(ev.enqueuedAt).toISOString(), remainingTimeMs: Math.max(0, ev.enqueuedAt + RETENTION_MS - clock.now()) } } } : {}),
-      };
-      // The resolver form is called the way @forge/resolver's getDefinitions() dispatches: {call: {functionKey, payload,
-      // jobId}, context}; the event's metadata (retryContext included) rides in `context` (not documented: harness choice).
-      const event = consumer.function ? { body: ev.body, ...meta } : { call: { functionKey: consumer.resolver.method, payload: ev.body, jobId: ev.jobId }, context: meta };
-      const r = await invokeFunction(fnKey, { moduleKey: consumer.key, moduleType: 'consumer', event, lineage: ev.lineage });
-      const base = { eventId: ev.eventId, queueName: ev.queueName, attempt: ev.attempt, invocationId: r.invocationId, functionKey: r.functionKey, moduleKey: consumer.key,
-        t: r.t0, t1: r.t1, lineage: ev.lineage, ok: r.ok, result: r.result ?? null, error: r.error ?? null, timedOut: r.timedOut, logs: r.logs };
-      const plan = retryPlan(r, ev.attempt);
-      if (!plan) {
-        deliveries.push({ ...base, outcome: 'ok' });
-        if (job) { job.inProgress -= 1; job.success += 1; }
+      const partners = runnable(ev) ? partnersOf(ev, Math.min(clock.now(), until ?? Infinity)) : [];
+      if (partners.length) {
+        queueState.pending = queueState.pending.filter((p) => !partners.includes(p));
+        deliveries.push(...await deliverGroup([ev, ...partners]));
         continue;
       }
-      ev.retryReason = plan.reason;
-      ev.retryData = plan.data;
-      const next = clock.now() + plan.waitS * 1000;
-      if (next > ev.enqueuedAt + RETENTION_MS) {
-        deliveries.push({ ...base, outcome: plan.kind, retryAfter: plan.waitS, dropped: 'retention window exceeded' });
-        if (job) { job.inProgress -= 1; job.failed += 1; }
-        continue;
-      }
-      deliveries.push({ ...base, outcome: plan.kind, retryAfter: plan.waitS, redeliverAt: new Date(next).toISOString() });
-      queueState.pending.push({ ...ev, attempt: ev.attempt + 1, readyAt: next, seq: queueState.seq++ });
+      const s = await startConsumer(ev);
+      deliveries.push(finishConsumer(s, await invokeFunction(s.fnKey, { moduleKey: s.consumer.key, moduleType: 'consumer', event: s.event, lineage: ev.lineage })));
     }
     return deliveries;
   }
@@ -416,16 +531,20 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
       issue: delivery.issue, atlassianId: change.authorId,
       changelog: { id: change.id, items: change.items }, associatedUsers: [{ accountId: change.authorId }],
     };
-    const results = await runTriggers(event, { originChange: change.id });
+    const results = await runTriggers(event, { originChange: change.id, originIssue: issueOf(delivery.issue) });
     return { changelogId: change.id, duplicate: Boolean(delivery.duplicate), slot: delivery.slot, event, triggers: results, invocations: results };
   }
+  // The issue a product event names (S1 relates the queue work it leads to by it).
+  const issueOf = (issue) => (issue?.id === undefined || issue?.id === null ? null : String(issue.id));
 
   // The world's own product events (SPEC §2.5: a deleted issue sends avi:jira:deleted:issue), queued on the site as the
   // world applies them; delivered before the next issue update, and by the probe after each world step.
   async function deliverWorldEvents() {
     const { events = [] } = await client.call('worldevents');
     const out = [];
-    for (const event of events) out.push({ event, invocations: await runTriggers(event, { originChange: `world:${event.issue?.id ?? event.eventType}` }) });
+    for (const event of events) {
+      out.push({ event, invocations: await runTriggers(event, { originChange: `world:${event.issue?.id ?? event.eventType}`, originIssue: issueOf(event.issue) }) });
+    }
     return out;
   }
 
@@ -520,6 +639,7 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     bridgeLog,
     harnessMissing,
     invocations,
+    concurrency,
     proxy,
     clock,
     advance,
@@ -554,4 +674,4 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
   return emu;
 }
 
-module.exports = { createEmulator, functionUsers, TIMEOUTS, TRIGGER_MAX_RETRIES };
+module.exports = { createEmulator, functionUsers, TIMEOUTS, TRIGGER_MAX_RETRIES, MAX_CONCURRENT_CONSUMERS };

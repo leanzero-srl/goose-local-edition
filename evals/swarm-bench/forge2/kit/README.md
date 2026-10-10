@@ -48,6 +48,24 @@ Async events retry at 1, 2, 4, 8 then every 15 minutes inside 24 h; `InvocationE
 clamped to 1..900 s. The real wrapper throws on an `InvocationError` without `retryData` when
 `timeoutSeconds > 55` — kept (platform fidelity).
 
+Forge 2.0 hardening (contract S1, S2):
+
+- Concurrent delivery. `drainQueues` starts a consumer delivery together with every other pending consumer
+  delivery due by then that carries the same event (a copy of the queue event, or work pushed for the same
+  product event, e.g. by a trigger-level duplicate) or names the same issue (its chain began with a product
+  event of that issue): at most 3, in delivery order, never more per `concurrency: {key, limit}` than the limit.
+  The proxy serves the group's requests one at a time — each when every running member has one waiting,
+  earliest virtual send time first, ties by delivery order — and holds each member's first KVS write until every
+  other running member has issued a write or ended (READS-FIRST). The interleaving is the same on every run.
+  The pair shows in each delivery record, invocation result and record (`concurrent: {group, reason, index,
+  with}`), in `emu.concurrency` (members, first writes in commit order) and in the KVS call log
+  (`heldReadsFirst`). Pairs form only from deliveries pending together: deliver a duplicate before draining
+  its original's queue work. Unrelated deliveries and product-event triggers run one at a time.
+- Eventually consistent queries. `kvs.query` and entity queries see a write once it is 5 virtual seconds old
+  (until then the value before it, or no row); `get`, `batchGet`, transaction conditions and `FAIL_IF_EXISTS`
+  read the current state. Writes the harness makes outside an invocation (the v1 preload) are settled at once;
+  `kvs.dump()` carries the writes in flight (`index`) so forge-dev keeps them from one process to the next.
+
 ## Forge LLM and Realtime
 
 Both live on the site, so every emulator attached to it (the scorer's; the dev kit's `serve` and CLI

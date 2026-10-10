@@ -19,8 +19,16 @@
 // charges the request's class cost, answers the completion time in the same header, keeps the site's clock at least at
 // the send time before a product request reaches it (so rate windows and per-issue write spacing see the invocation's
 // time), and logs `t_virtual` (send) and `vcostMs` for every call.
+//
+// Concurrent consumer invocations (contract S1; the emulator forms the groups): the requests of one group are served
+// one at a time, each when every member still running has a request waiting, earliest virtual send time first (ties:
+// delivery order, then arrival), so the interleaving never depends on OS scheduling. READS-FIRST: a member's first KVS
+// write (set, delete, secret, entity, batch set/delete, transaction) waits until every other running member has issued
+// a write too or ended — a get-then-set on one key by two members reads twice before either write lands, as production
+// can interleave them. The held write is applied when served, so FAIL_IF_EXISTS and transaction conditions meet the
+// state at that moment.
 const http = require('http');
-const { costOf, VCLOCK_HEADER } = require('./clock.cjs');
+const { costOf, VCLOCK_HEADER, KVS_READS } = require('./clock.cjs');
 
 const KVS_ROUTE = '/fpp/as/app/provider/atlassian/capability/kvs';
 const WEBTRIGGER_ROUTE = /^\/x\/webtrigger\/([^/]+)$/;
@@ -34,6 +42,63 @@ function decodeToken(header) {
   const m = /^Bearer\s+(.+)$/.exec(header ?? '');
   if (!m) return null;
   try { return JSON.parse(Buffer.from(m[1].split('.')[1], 'base64url').toString()); } catch { return null; }
+}
+
+// One concurrent group (S1). `members`: [{eventId}] in delivery order. Each member invocation joins with its record
+// before its process starts (ready() resolves once all have), asks for a turn per request and ends when its process
+// does. A turn resolves to {held, done}; `done()` (idempotent) frees the group for the next request.
+function createConcurrentGroup({ id, reason, members }) {
+  const m = members.map((x, index) => ({ index, eventId: x.eventId ?? null, invocationId: null, joined: false, ended: false,
+    wrote: false, firstWriteServed: false, pending: [] }));
+  const firstWrites = [];
+  let busy = false;
+  let seq = 0;
+  let resolveReady;
+  const ready = new Promise((ok) => { resolveReady = ok; });
+  const pump = () => {
+    if (busy || m.some((x) => !x.joined)) return;
+    const live = m.filter((x) => !x.ended);
+    if (!live.length || live.some((x) => !x.pending.length)) return;
+    let best = null;
+    for (const x of live) {
+      for (const r of x.pending) {
+        if (r.write && !x.firstWriteServed && live.some((o) => o !== x && !o.wrote)) { r.held = true; continue; }
+        if (!best || r.tv < best.r.tv || (r.tv === best.r.tv && (x.index < best.x.index || (x.index === best.x.index && r.seq < best.r.seq)))) best = { x, r };
+      }
+    }
+    // Every running member has a request waiting; were all of them held writes, each member would have issued a write,
+    // and none would be held. So `best` exists.
+    busy = true;
+    best.x.pending.splice(best.x.pending.indexOf(best.r), 1);
+    if (best.r.write && !best.x.firstWriteServed) {
+      best.x.firstWriteServed = true;
+      firstWrites.push({ index: best.x.index, invocationId: best.x.invocationId, t_virtual: new Date(best.r.tv).toISOString(), held: Boolean(best.r.held) });
+    }
+    let freed = false;
+    best.r.go({ held: Boolean(best.r.held), done: () => { if (freed) return; freed = true; busy = false; pump(); } });
+  };
+  return {
+    id, reason, size: m.length, ready: () => ready, firstWrites,
+    join(index, invocationId) { Object.assign(m[index], { joined: true, invocationId }); if (m.every((x) => x.joined)) resolveReady(); pump(); },
+    // A request still waiting when its process has died (the real-time guard killed it) is never served.
+    end(index) {
+      const x = m[index];
+      if (x.ended) return;
+      x.ended = true;
+      for (const r of x.pending.splice(0)) r.go({ held: Boolean(r.held), dropped: true, done: () => {} });
+      pump();
+    },
+    turn(index, { tv, write }) {
+      return new Promise((go) => {
+        if (write) m[index].wrote = true;
+        m[index].pending.push({ tv, write, seq: seq++, held: false, go });
+        pump();
+      });
+    },
+    describe: (index) => ({ group: id, reason, schedule: 'reads-first', size: m.length, index,
+      with: m.filter((x) => x.index !== index).map((x) => ({ index: x.index, eventId: x.eventId, invocationId: x.invocationId })) }),
+    members: () => m.map((x) => ({ index: x.index, eventId: x.eventId, invocationId: x.invocationId })),
+  };
 }
 
 function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clock, log = [], harnessMissing = [], webtrigger = null }) {
@@ -139,15 +204,17 @@ function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clo
     return { status: 501, body: { code: 'EMULATOR_NOT_MODELLED', message: `stargate ${target}` } };
   }
 
-  function kvsCall(inv, op, body, tv, vcostMs) {
+  // `turn`: the request's turn in a concurrent group (S1); a write READS-FIRST held is logged `heldReadsFirst`.
+  function kvsCall(inv, op, body, tv, vcostMs, turn = null) {
     const entry = record({ invocationId: inv?.id ?? null, moduleType: inv?.moduleType ?? null, moduleKey: inv?.moduleKey ?? null,
-      functionKey: inv?.functionKey ?? null, service: 'kvs', provider: 'app', method: 'POST', path: op, body, ...(vcostMs !== undefined ? { vcostMs } : {}) }, tv);
+      functionKey: inv?.functionKey ?? null, service: 'kvs', provider: 'app', method: 'POST', path: op, body, ...(vcostMs !== undefined ? { vcostMs } : {}),
+      ...(inv?.concurrent ? { concurrentGroup: inv.concurrent.group } : {}), ...(turn?.held ? { heldReadsFirst: true } : {}) }, tv);
     if (!scopes.includes('storage:app')) {
       entry.status = 403;
       entry.missingScope = 'storage:app';
       return { status: 403, body: { code: 'FORBIDDEN', message: "The app does not have the 'storage:app' scope required to use Forge storage." } };
     }
-    const res = kvs.handle(op, body);
+    const res = kvs.handle(op, body, { t: tv });
     entry.status = res.status;
     if (res.error) { entry.kvsError = res.error; if (res.error.limit) entry.limitError = res.error.code; }
     if (res.notModelled) missing(`kvs ${op}`, inv);
@@ -197,6 +264,14 @@ function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clo
         inv.vnow = Math.max(inv.vnow ?? tv, tv + vcostMs);
         clock.observe(tv);
         timing = { [VCLOCK_HEADER]: String(tv + vcostMs) };
+        const seat = inv.seat;
+        const turn = seat ? await seat.group.turn(seat.member, { tv, write: route === KVS_ROUTE && !KVS_READS.has(target) }) : null;
+        if (turn?.dropped) {
+          record({ invocationId: inv.id, moduleType: inv.moduleType, moduleKey: inv.moduleKey, service: route === KVS_ROUTE ? 'kvs' : 'platform', provider: 'app',
+            method: req.method, path: target ?? route, status: 503, droppedAtEnd: 'the invocation ended before its turn' }, tv);
+          return send(503, { code: 'INVOCATION_ENDED', message: 'the invocation ended before this request was served' });
+        }
+        if (turn) { res.once('finish', turn.done); res.once('close', turn.done); }
         if ((m = route.match(/^\/fpp\/provider\/(app|user|none)\/remote\/(jira|confluence|bitbucket|stargate)(?:\/account\/(.+))?$/))) {
           const [, provider, remote] = m;
           if (remote === 'stargate') {
@@ -207,7 +282,7 @@ function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clo
           return send(r.status, r.body, r.headers);
         }
         if (route === KVS_ROUTE) {
-          const r = kvsCall(inv, target, parseMaybe(raw), tv, vcostMs);
+          const r = kvsCall(inv, target, parseMaybe(raw), tv, vcostMs, turn);
           return send(r.status, r.body);
         }
         if (route === '/llm/' || route.startsWith('/llm/')) {
@@ -306,4 +381,4 @@ function parseMaybe(raw) {
 }
 function safeHost(a) { try { return new URL(a.includes('://') ? a : `https://${a}`).host; } catch { return null; } }
 
-module.exports = { createProxy, decodeToken };
+module.exports = { createProxy, createConcurrentGroup, decodeToken };

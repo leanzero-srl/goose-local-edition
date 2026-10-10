@@ -222,6 +222,7 @@ function printDeliveries(ds) {
   for (const d of ds) {
     const what = d.kind === 'trigger' ? `trigger ${d.moduleKey} retry` : `queue ${d.queueName} event`;
     console.log(`-- ${what} ${d.eventId} attempt ${d.attempt}: ${d.outcome}${d.retryAfter ? ` (redelivered after ${d.retryAfter} s)` : ''}${d.dropped ? ` DROPPED: ${d.dropped}` : ''}`);
+    if (d.concurrent) console.log(`   ran at the same time as ${d.concurrent.with.map((x) => `event ${x.eventId}`).join(', ')} (${d.concurrent.reason})`);
     if (d.error) console.log(`   error: ${d.error.name}: ${d.error.message}`);
     for (const l of d.logs ?? []) console.log(`   [${l.logLevel ?? 'log'}] ${(l.logArguments ?? [l.raw]).join(' ')}`);
   }
