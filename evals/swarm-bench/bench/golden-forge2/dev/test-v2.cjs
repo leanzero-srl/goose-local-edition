@@ -190,11 +190,18 @@ async function main() {
     site.update(joins12.key, { sprints: [...joins12.sprints, 12] }),
     site.update(reestimated12.key, { estimate: (reestimated12.fields[reestimated12.estField] ?? 0) + 2 }),
   ];
+  const totalsText = (t) => ({ committed: fmtPoints(t.committed), added: fmtPoints(t.added), removed: fmtPoints(t.removed), creep: fmtCreep(t.creep) });
+  const delivered12 = oracle(site)['12'];
+  // Two more whose events never arrive (lost events): only the scheduled run after the close can record them.
+  const lostJoin12 = free[4];
+  const lostJoinId = site.update(lostJoin12.key, { sprints: [...lostJoin12.sprints, 12] }).changelog.id;
+  const lostEstimate12 = in12[3];
+  site.update(lostEstimate12.key, { estimate: (lostEstimate12.fields[lostEstimate12.estField] ?? 0) + 1 });
   const atClose12 = oracle(site)['12'];
   site.closeSprint(12);
   const frozen12 = member12();
   for (const ev of late12) await deliver(ev);
-  eq((await ledgerAs(alice.accountId, '12')).text, { committed: fmtPoints(atClose12.committed), added: fmtPoints(atClose12.added), removed: fmtPoints(atClose12.removed), creep: fmtCreep(atClose12.creep) },
+  eq((await ledgerAs(alice.accountId, '12')).text, totalsText(delivered12),
     `changes made before the close and delivered after it count in the closed sprint's numbers (${joins12.key} joined, ${reestimated12.key} re-estimated)`);
   await deliver(site.update(left12.key, { estimate: (left12.fields[left12.estField] ?? 0) + 1 }));
   ok(frozen12 && member12() === frozen12, `a re-estimate after the close leaves the closed sprint's numbers as at the close (${left12.key})`);
@@ -227,6 +234,9 @@ async function main() {
   ledgerMatchesOracle(site, platform, 'after the world changes');
   statusesMatchOracle(site, 'after the world changes');
   await widgetMatchesOracle(site, platform, alice.accountId, 'after the world changes');
+  ok([...ledger(platform).values()].some((r) => r.changeId === lostJoinId && r.sprintId === '12' && r.source === 'reconcile'), `the scheduled run after the close records a change made before it whose event never arrived (${lostJoin12.key})`);
+  eq((await ledgerAs(alice.accountId, '12')).text, totalsText(atClose12),
+    `the closed sprint's numbers are as at the close: the lost join and re-estimate (${lostEstimate12.key}) count, the changes after the close do not`);
 
   // ===== R5: the admin resolvers ===================================================================
   for (const key of ['getAdmin', 'saveSettings', 'rotateSecret']) {

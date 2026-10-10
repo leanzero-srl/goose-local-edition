@@ -19,8 +19,11 @@ an interpretation the contract (P6), the oracle (P8) and the probe (P9) must mat
 - **R4 closed sprint:** no row with a change time after `completeDate`; the event path reads each sprint and board
   fresh (one agile GET each per invocation), so closes and estimation-field switches apply at once. A change made
   BEFORE the close whose delivery is handed over after it (the gate, 2026-10-10: deliveries retried for half an hour
-  around the close) still counts: its member is written as it stood at the close (membership now, values now with
-  every later change undone from the changelog).
+  around the close) still counts: its member is written as it stood at the close (membership and values now, with
+  every later change undone from the changelog). A change made before the close whose event never arrived is healed
+  by the first scheduled run after the close, which treats a sprint closed since the last run once more as at its
+  close (rows up to `completeDate`, members settled the same way); 20 of 300 scoring packs hold such a change after
+  the last hourly run before the close.
 - **R4 estimation-field switch** (settled by contract §1, 2026-10-10): rows keep the estimate they were written
   with; the totals use the board's current field; a change's points (the modal's points column, the Rovo action,
   `added +<points>`) are the current value of the field its row records (`estimateField`, the field the board used
