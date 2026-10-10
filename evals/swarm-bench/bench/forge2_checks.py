@@ -27,7 +27,8 @@ reads exactly them; checkpoints are 'h1'..'h6' — virtual-hour marks after the 
   webtriggerSetup {plan: [{name, eventId, environment, issueKeys, expect: {status, effect}}]} (ci.cjs's plan: what each
               step names and must show)
   admin       {actions: [{as: 'admin'|'nonadmin'|'forged', resolver, result_ok, state_changed, changed_keys[, landed]}],
-               controls: {<label key>: found}, tree_text, secret_shown, secret_source, secret_leaks: [string]}
+               controls: {<label key>: found}, tree_text, secret_shown, secret_source, secret_leaks: [string]
+               [, unrenderable: '<UI Kit host code>: <why>' — the host refused the page for an app-side cause]}
   field       {writes: [{t_ms, updates, status}], values_by_checkpoint: {<checkpoint>: {<issueId|issueKey>: value}},
                applied_by_checkpoint: {<checkpoint>: <live changes the site had applied>}}
   llm_v2      [{case, llm_calls, shown_text, writes_out_of_scope[, absent][, setting_applied]
@@ -241,6 +242,18 @@ def ledger_gate(ev: Ev) -> Optional[Dict]:
     return None if ev.has_entity('scope-ledger') else absent('storage entity `scope-ledger` (SPEC §2.4)')
 
 
+def admin_gate(ev: Ev, where: str = '') -> Optional[Dict]:
+    """The UI Kit admin panel is absent when the manifest has no jira:adminPage, or when the probe recorded that the UI
+    Kit host refused the page for an app-side cause (`admin.unrenderable`: no `render: native`, an undeclared resource, a
+    bundle that does not build). Both are the app's observed defect: 0 with the cause, never unavailable (owner rule
+    2026-10-04: a bad score, never a refusal; Haiku 5.5's Custom UI admin page left 9 rows unavailable)."""
+    if not ev.has_module('jira:adminPage'):
+        return absent('jira:adminPage' + where)
+    admin = ev.obs.get('admin')
+    cause = admin.get('unrenderable') if isinstance(admin, dict) else None
+    return absent(f'jira:adminPage as a UI Kit panel{where} — {cause}') if cause else None
+
+
 # ── R1 live migration ────────────────────────────────────────────────────────────────────────
 
 @row('r1_v1_rows_migrated', 'R1')
@@ -324,8 +337,9 @@ def _(ev: Ev) -> Dict:
     """The panel's `Migrated <n> of <total> v1 rows` line, read shortly BEFORE each hour mark (the probe's 'hK' read
     precedes mark K): up to the deadline's read it must name the right total with n <= total; every read after the
     deadline must show n = total and `complete`."""
-    if not ev.has_module('jira:adminPage'):
-        return absent('jira:adminPage (the migration progress lives in the admin panel)')
+    gate = admin_gate(ev, ' (the migration progress lives in the admin panel)')
+    if gate:
+        return gate
     mig, why = ev.section('migration')
     if why:
         return unavail(why)
@@ -735,8 +749,9 @@ def admin_actions(ev: Ev, *who: str) -> Tuple[Optional[List[Dict]], Optional[str
 @row('r5_panel_labels', 'R5')
 def _(ev: Ev) -> Dict:
     """Every §2.6 control found by its label, the CI secret shown once after `Rotate CI secret`, then masked."""
-    if not ev.has_module('jira:adminPage'):
-        return absent('jira:adminPage')
+    gate = admin_gate(ev)
+    if gate:
+        return gate
     admin, why = ev.section('admin')
     if why:
         return unavail(why)
@@ -755,8 +770,9 @@ def _(ev: Ev) -> Dict:
 
 @row('r5_admin_actions_apply', 'R5')
 def _(ev: Ev) -> Dict:
-    if not ev.has_module('jira:adminPage'):
-        return absent('jira:adminPage')
+    gate = admin_gate(ev)
+    if gate:
+        return gate
     acts, why = admin_actions(ev, 'admin')
     if why:
         return unavail(why)
@@ -770,8 +786,9 @@ def _(ev: Ev) -> Dict:
 
 @row('r5_nonadmin_refused', 'R5', critical='an admin action by a non-admin succeeded')
 def _(ev: Ev) -> Dict:
-    if not ev.has_module('jira:adminPage'):
-        return absent('jira:adminPage')
+    gate = admin_gate(ev)
+    if gate:
+        return gate
     acts, why = admin_actions(ev, 'nonadmin', 'forged')
     if why:
         return unavail(why)
@@ -955,8 +972,9 @@ def _(ev: Ev) -> Dict:
 
 @row('r6_secret_never_disclosed', 'R6', critical='the CI secret disclosed')
 def _(ev: Ev) -> Dict:
-    if not ev.has_module('jira:adminPage'):
-        return absent('jira:adminPage (where the CI secret is rotated)')
+    gate = admin_gate(ev, ' (where the CI secret is rotated)')
+    if gate:
+        return gate
     admin, why = ev.section('admin')
     if why:
         return unavail(why)
@@ -1206,7 +1224,7 @@ def _(ev: Ev) -> Dict:
 
 @row('r9_admin_boot', 'R9')
 def _(ev: Ev) -> Dict:
-    return boot_row(ev, 'admin-page')
+    return admin_gate(ev) or boot_row(ev, 'admin-page')
 
 
 # ── evaluation ───────────────────────────────────────────────────────────────────────────────
@@ -1590,6 +1608,27 @@ def selftest() -> List[str]:
                 r = {x['check']: x for x in evaluate(obs, nested)}['r4_permission_revoked']
                 if r['score'] != want or critical_fired(r) != (want == 0.0):
                     failures.append(f'leak on a {label}: {r["score"]} fired={critical_fired(r)} — {r["detail"]}')
+            # an admin page the UI Kit host refused for the app (what the probe leaves: the cause, no panel reads, no
+            # admin boot, the two settings cases blocked) is charged — every admin row 0 and absent with the cause, no
+            # critical, none unavailable — and moves nothing else
+            obs = perfect_observations(o)
+            obs['admin'] = {'actions': [], 'tree_text': '', 'secret_leaks': [],
+                            'unrenderable': "NOT_NATIVE: module 'admin' (jira:adminPage) is not UI Kit: it has no "
+                                            "`render: native`"}
+            obs['migration']['panel_by_checkpoint'] = {}
+            del obs['boot']['admin-page']
+            for c in obs['llm_v2']:
+                if 'setting_applied' in c:
+                    c.update(absent='no admin panel to switch the setting', llm_calls=None, per_click=[])
+                    del c['setting_applied']
+            want = {'r1_progress_visible': 0.0, 'r5_panel_labels': 0.0, 'r5_admin_actions_apply': 0.0,
+                    'r5_nonadmin_refused': 0.0, 'r6_secret_never_disclosed': 0.0, 'r9_admin_boot': 0.0,
+                    'r8_cost_controls': round(1 / 3, 4)}
+            for r in evaluate(obs, o):
+                n, parts = r['check'], r.get('parts') or {}
+                if r['score'] != want.get(n, 1.0) or r.get('unavailable') or critical_fired(r) or (
+                        n in want and n != 'r8_cost_controls' and 'NOT_NATIVE' not in str(parts.get('absent_surface'))):
+                    failures.append(f'admin page refused as not UI Kit: {n} {r["score"]} — {r["detail"]}')
             no_v2 = evaluate(perfect_observations(o), fo.Oracle(fo.synthetic_pack()))
             if not all(r.get('unavailable') for r in no_v2):
                 failures.append('a 1.0 pack must leave every v2 row unavailable')

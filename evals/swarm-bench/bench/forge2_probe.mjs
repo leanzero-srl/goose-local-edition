@@ -485,8 +485,10 @@ let site = null;
 let emu = null;
 let browser = null;
 
-// `feeds`: the contract keys this section's evidence feeds, unavailable when it fails.
+// `feeds`: the contract keys this section's evidence feeds, unavailable when it fails. Each section logs its wall time:
+// the Haiku 5.5 pilot's scoring sat 2 h 16 min in one seed and only file mtimes could say where.
 async function section(name, fn, feeds = []) {
+  const t0 = Date.now();
   try {
     await fn();
   } catch (e) {
@@ -495,6 +497,7 @@ async function section(name, fn, feeds = []) {
     for (const f of feeds) obs.sectionErrors[f] = obs.sectionErrors[f] || `section ${name} failed: ${why}`;
     log(`section ${name} failed:`, e?.message || e);
   }
+  log(`section ${name}: ${((Date.now() - t0) / 1000).toFixed(1)} s`);
   save();
 }
 
@@ -818,8 +821,9 @@ async function main() {
   }, ['boot']);
   await section('llm_v2', () => llmCases(pack, adm), ['llm_v2']);
   await adm.closeAll();
-  // After every timed measurement: serialising the clip never overlaps grading.
-  if (recording) obs.media = await assembleRecording();
+  // After every timed measurement: serialising the clip never overlaps grading. assembleRecording records its own
+  // failures in media.errors; the section is here for its wall-time line.
+  if (recording) await section('media', async () => { obs.media = await assembleRecording(); });
   obs.comments = commentAttempts(pack);
   // Forge LLM and Realtime logs live on the site (kit README): every prompt/answer, every publish and subscription.
   await section('logs', async () => {
@@ -881,6 +885,10 @@ async function sendCiCases({ cases, url, emu, completed, send = null }) {
 // by a person without ADMINISTER and with a payload that claims the admin, the CI secret it shows once, the Migration
 // line. Every admin-page invoke is recorded with its caller and judged on what it changed in the app's non-ledger
 // storage (settings, secrets, cursors, the audit list).
+// The UI Kit host's own split of its refusals (kit lib/uikit-host/index.cjs): these codes are the APP's — what forge
+// deploy refuses or cannot find (no `render: native`, an undeclared resource, a bundle that does not build) — so an admin
+// page refused with one is the app's observed defect, charged on every admin row. HARNESS stays a harness failure.
+const APP_UIKIT_CODES = new Set(['BAD_MANIFEST', 'NO_MODULE', 'NOT_NATIVE', 'NO_RESOURCE', 'BUILD_FAILED']);
 function adminDriver({ emu, pack, host, adminPage, appDir, now }) {
   // `answers`: every admin-page resolver answer with its caller; the rotate clicks' own (`rotation`) are the one place
   // the new secret may be shown.
@@ -958,13 +966,22 @@ function adminDriver({ emu, pack, host, adminPage, appDir, now }) {
     return { text: m ? m[0] : null, migrated: m ? Number(m[1].replace(/,/g, '')) : null, total: m ? Number(m[2].replace(/,/g, '')) : null,
       complete: /\bcomplete\b/i.test(String(text).split(LABELS.migration).slice(1).join(LABELS.migration).slice(0, 200)) };
   };
-  const usable = () => Boolean(adminPage && host?.render && pack.admin);
+  // `admin.unrenderable` (set once, by lane()) ends every later admin lane of this seed: the panel reads and the LLM
+  // cases' settings record the absence instead of opening a page that cannot open.
+  const usable = () => Boolean(adminPage && host?.render && pack.admin && !obs.admin.unrenderable);
 
   async function lane() {
     if (!adminPage) { obs.admin.absent = 'no jira:adminPage module in the manifest'; return; }
     if (!host?.render) { gap('kit lib/uikit-host/index.cjs render() (P2)', 'admin', 'boot'); return; }
     if (!pack.admin) { gap('site.pack.admin (P4: an account with global ADMINISTER)', 'admin'); return; }
-    const a = await openAdmin(pack.admin, 'admin');
+    let a;
+    try {
+      a = await openAdmin(pack.admin, 'admin');
+    } catch (e) {
+      if (e?.name !== 'UikitHostError' || !APP_UIKIT_CODES.has(e.code)) throw e;
+      obs.admin.unrenderable = `${e.code}: ${String(e.message).slice(0, 300)}`;
+      return;
+    }
     obs.boot['admin-page'] = { invokes_before_paint: await invokesBeforeFirstRender(a), bytes_before_paint: null, external_requests: null };
     await a.ui.waitIdle();
     obs.admin.first_text = a.ui.text();
@@ -2157,6 +2174,26 @@ async function selftest() {
     assert.equal(r.leaks.includes('resolver getSettings response (as nonadmin)'), true, "the non-admin's read");
     assert.equal(r.leaks.includes('admin page after the one-time display'), true);
     assert.equal(r.leaks.includes('resolver rotateSecret response (as admin)'), false, 'the rotation shows it once, legitimately');
+  });
+
+  await test('admin lane, a page the host refuses for the app (not UI Kit): the cause is recorded, no admin lane retries it', async () => {
+    const refusing = (code) => ({ render: async () => {
+      throw Object.assign(new Error("module 'admin-page' (jira:adminPage) is not UI Kit: it has no `render: native`"), { name: 'UikitHostError', code });
+    } });
+    const driver = (host) => adminDriver({ emu: fakeApp('correct'), pack: { admin: ADMIN, viewer: 'acct-viewer' }, host, adminPage: { key: 'admin-page' }, appDir: null, now: () => 0 });
+    obs.admin = { actions: [], tree_text: '', secret_leaks: [] };
+    obs.boot = {};
+    obs.migration.panel_by_checkpoint = {};
+    const d = driver(refusing('NOT_NATIVE'));
+    await d.lane();
+    assert.match(obs.admin.unrenderable, /^NOT_NATIVE: module 'admin-page' \(jira:adminPage\) is not UI Kit/);
+    assert.equal(d.usable(), false, 'the panel reads and the LLM cases\' settings record the absence');
+    await d.panelRead('h1');
+    assert.deepEqual(obs.migration.panel_by_checkpoint, {});
+    assert.equal('admin-page' in obs.boot, false);
+    obs.admin = { actions: [], tree_text: '', secret_leaks: [] };
+    await assert.rejects(driver(refusing('HARNESS')).lane(), /not UI Kit/, "the host's own failure stays a harness failure");
+    assert.equal(obs.admin.unrenderable, undefined);
   });
 
   await test('sendCiCases: side effects follow the invocation, even when its writes land after its response', async () => {
