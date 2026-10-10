@@ -2,7 +2,8 @@
 // extended into the 2.0 upgrade drive. The site and emulator start with Scope Ledger v1's KVS content (the preload),
 // the entrant's v2 app takes over (the upgrade), and six virtual hours run as one ordered agenda: the site's delivery
 // plan, its world schedule, the hourly scheduled triggers, the CI web-trigger sequence and the admin's UI Kit panel;
-// then 1.0's heal/rerun/Rovo/UI lanes, the Custom UI boot counts and the Forge LLM cases. It writes the evidence
+// then 1.0's heal/rerun/Rovo/UI lanes, the Custom UI boot counts and the Forge LLM cases; with the Custom UI shots it
+// leaves pictures of the admin panel, drawn from the trees the admin saw (forge2_uikit_shot.mjs). It writes the evidence
 // bench/score_forge2.py (P7) and bench/forge2_checks.py (P8) grade: 1.0's keys plus the 2.0 contract keys (rate,
 // invocations, migration, world, webtrigger, admin, field, llm_v2, boot) and `clock` (the upgrade and checkpoint times).
 //
@@ -892,8 +893,9 @@ async function main() {
       mkdirSync(join(mediaDir, 'raw'), { recursive: true });
       recording = { context: await browser.newContext({ recordVideo: { dir: join(mediaDir, 'raw'), size: RECORD_SIZE } }), pages: [] };
     }
-    await probeUi(pack);
+    await probeUi(pack, adm);
   }, ['boot']);
+  obs.admin.shot ??= { written: false, files: [], reason: `the ui section ended before the admin picture: ${obs.sectionErrors.ui ?? 'no error recorded'}` };
   await section('llm_v2', () => llmCases(pack, adm), ['llm_v2']);
   await adm.closeAll();
   // After every timed measurement: serialising the clip never overlaps grading. assembleRecording records its own
@@ -967,8 +969,9 @@ async function sendCiCases({ cases, url, emu, completed, send = null }) {
 const APP_UIKIT_CODES = new Set(['BAD_MANIFEST', 'NO_MODULE', 'NOT_NATIVE', 'NO_RESOURCE', 'BUILD_FAILED']);
 function adminDriver({ emu, pack, host, adminPage, appDir, now }) {
   // `answers`: every admin-page resolver answer with its caller; the rotate clicks' own (`rotation`) are the one place
-  // the new secret may be shown.
-  const state = { secret: null, secretSource: null, answers: [] };
+  // the new secret may be shown. `shown`: what each rotate click showed. `kept`: the admin's own panel as it was drawn
+  // at two moments, for its picture (adminShots); in memory only, and never a render after a rotate click.
+  const state = { secret: null, secretSource: null, answers: [], shown: [], kept: {} };
   const ctxFor = (accountId, moduleKey) => ({ accountId, cloudId: emu.siteInfo.cloudId, siteUrl: emu.siteInfo.siteUrl, moduleKey,
     localId: `${moduleKey}-probe`, locale: 'en-US', timezone: 'UTC', extension: { type: 'jira:adminPage' } });
   const callResolver = (functionKey, payload, accountId) =>
@@ -996,6 +999,24 @@ function adminDriver({ emu, pack, host, adminPage, appDir, now }) {
     return { ui, invokes };
   };
   const found = (ui, label) => { try { return Boolean(ui.findByLabel(label)); } catch { return false; } };
+  const storedSecrets = () => (emu.kvs.dump().secrets ?? []).map(([, r]) => r?.value).filter((v) => typeof v === 'string' && v);
+  // The panel as the admin sees it now, kept for its picture: the ForgeDoc tree, the host's value of each control the
+  // probe types into (it types by these labels only; every other input shows what its props say), and the app's stored
+  // secrets at this moment. Reads of the host's last state: no command, no invoke, no virtual time.
+  const keep = (name, ui) => {
+    try {
+      const typed = [];
+      for (const label of Object.values(LABELS)) {
+        let c = null;
+        try { c = ui.findByLabel(label); } catch { /* the label names several elements: none is typed into */ }
+        if (c && ('checked' in c || 'value' in c)) typed.push([c.key, 'checked' in c ? c.checked : c.value]);
+      }
+      const tree = ui.tree();
+      state.kept[name] = tree ? { tree: JSON.parse(JSON.stringify(tree)), typed, secrets: storedSecrets() } : { reason: 'the UI Kit host held no tree' };
+    } catch (e) {
+      state.kept[name] = { reason: `the tree could not be kept: ${String(e?.message ?? e).slice(0, 200)}` };
+    }
+  };
   // R9: the invokes the page made before its first render that shows the settings form (`Save settings`).
   const invokesBeforeFirstRender = async (a) => {
     let idle = false;
@@ -1035,7 +1056,9 @@ function adminDriver({ emu, pack, host, adminPage, appDir, now }) {
     const i0 = a.invokes.length;
     const entries = await act(a, 'admin', () => a.ui.click(LABELS.rotate));
     for (const rec of a.invokes.slice(i0)) rec.rotation = true;
-    return { entries, shown: shownSecret(before, a.ui.text()) };
+    const shown = shownSecret(before, a.ui.text());
+    if (shown) state.shown.push(shown);
+    return { entries, shown };
   };
   const migrationLine = (text) => {
     const m = String(text).match(/Migrated\s+([\d,]+)\s+of\s+([\d,]+)\s+v1 rows/);
@@ -1061,9 +1084,13 @@ function adminDriver({ emu, pack, host, adminPage, appDir, now }) {
     obs.boot['admin-page'] = { invokes_before_paint: await invokesBeforeFirstRender(a), bytes_before_paint: null, external_requests: null };
     await a.ui.waitIdle();
     obs.admin.first_text = a.ui.text();
+    keep('loaded', a.ui);
     obs.admin.controls = Object.fromEntries(Object.entries(LABELS).map(([k, l]) => [k, found(a.ui, l)]));
-    const saves = found(a.ui, LABELS.budget) && found(a.ui, LABELS.save)
+    const savable = found(a.ui, LABELS.budget) && found(a.ui, LABELS.save);
+    const saves = savable
       ? await act(a, 'admin', async () => { await a.ui.setValue(LABELS.budget, ADMIN_BUDGET); await a.ui.click(LABELS.save); }) : [];
+    if (savable) keep('saved', a.ui);
+    else state.kept.saved = { reason: `the admin made no save: the panel has no '${LABELS.budget}' field with '${LABELS.save}'` };
     let rotations = [];
     if (found(a.ui, LABELS.rotate)) {
       const r = await rotate(a);
@@ -1112,6 +1139,20 @@ function adminDriver({ emu, pack, host, adminPage, appDir, now }) {
     return state.secret;
   }
 
+  // Every value the probe knows to be, or to have been, a CI secret (the admin panel's pictures show none of them):
+  // the one the CI sequence signed with, what each rotate click showed, the app's stored secrets now and at each kept
+  // render, and the secret-alphabet tokens (shownSecret's) a rotation answer carried that no answer before it did.
+  function secretValues() {
+    const out = new Set([state.secret, ...state.shown, ...storedSecrets(), ...Object.values(state.kept).flatMap((k) => k.secrets ?? [])]);
+    let before = '';
+    for (const a of state.answers) {
+      const text = JSON.stringify(a.response ?? null);
+      if (a.rotation) for (const token of text.match(/[A-Za-z0-9_\-+/=]{16,}/g) ?? []) if (!before.includes(token)) out.add(token);
+      before += text;
+    }
+    return [...out].filter((v) => typeof v === 'string' && v);
+  }
+
   // The Migration line the admin reads near each hour mark (R1: progress is visible in the panel).
   async function panelRead(cp) {
     if (!usable()) return;
@@ -1121,7 +1162,7 @@ function adminDriver({ emu, pack, host, adminPage, appDir, now }) {
     await closeAll();
   }
 
-  return { state, lane, panelRead, ciSecret, openAdmin, found, usable, closeAll };
+  return { state, lane, panelRead, ciSecret, secretValues, openAdmin, found, usable, closeAll };
 }
 
 // Where the CI secret can be read by someone who should not: every admin-page resolver answer but the rotate click's
@@ -1399,7 +1440,7 @@ const chartOf = (page) => page.evaluate(() => {
     sprintId: r.getAttribute('data-sprint-id'), series: r.getAttribute('data-series'), height: r.getBoundingClientRect().height })) : [] };
 });
 
-async function probeUi(pack) {
+async function probeUi(pack, adm) {
   const widget = (emu.modules ? emu.modules('dashboards:widget') : [])[0];
   const action = (emu.modules ? emu.modules('jira:sprintAction') : [])[0];
   const viewer = pack.viewer;
@@ -1509,6 +1550,7 @@ async function probeUi(pack) {
   const modals = obs.ui.surfaces.filter((x) => x.kind === 'sprint-action' && !String(x.id).startsWith('not-started'));
   if (widget) obs.boot['widget-view'] = bootOf(views);
   if (action) obs.boot['sprint-modal'] = bootOf(modals);
+  await adminShots(adm);
   await contactSheet();
 }
 
@@ -1975,11 +2017,58 @@ async function llmCases(pack, v) {
 }
 const modules0 = (t) => (emu.modules ? emu.modules(t) : (emu.manifest?.modules?.[t] || [])) || [];
 
+// The admin panel's pictures (report-only: the page is graded from its component tree, never from these pixels). The
+// UI Kit host draws no pixels, so the trees the admin lane kept are drawn by forge2_uikit_shot.mjs: the panel as it
+// loaded and as it stood after the admin's save, light and dark. A page that did not render, a render the lane did not
+// reach and a drawing that still showed a secret write NO file, and obs.admin.shot.reason says which and why. A page
+// outside the recording, after every graded surface; a failure here is recorded and never fails the ui section.
+const ADMIN_SHOTS = [['loaded', 'admin-panel'], ['saved', 'admin-panel-saved']];
+async function adminShots(adm) {
+  const shot = obs.admin.shot = { written: false, files: [], unknown: [], masked: 0 };
+  const why = [];
+  let page = null;
+  try {
+    const cause = obs.admin.absent ?? (obs.admin.unrenderable ? `the admin page did not render: ${obs.admin.unrenderable}` : null);
+    if (cause) why.push(cause);
+    else {
+      const { drawForgeDoc, CAPTION } = await import('./forge2_uikit_shot.mjs');
+      const D = require(join(kitDir, 'lib', 'uikit-host', 'doc.cjs'));
+      const secrets = adm.secretValues();
+      shot.caption = CAPTION;
+      for (const [name, file] of ADMIN_SHOTS) {
+        const kept = adm.state.kept[name];
+        if (!kept?.tree?.children?.length) {
+          const lane = obs.sectionErrors.admin ? `the admin lane did not reach this render (${obs.sectionErrors.admin})` : 'the admin lane did not reach this render';
+          why.push(`${file}: ${kept?.reason ?? (kept ? 'the page rendered an empty tree' : lane)}`);
+          continue;
+        }
+        for (const theme of ['light', 'dark']) {
+          page ??= await browser.newPage();
+          const path = join(shotsDir, `${file}-${theme}.png`);
+          const r = await drawForgeDoc(page, kept, { D, theme, secrets, path });
+          shot.unknown = [...new Set([...shot.unknown, ...r.unknown])].sort();
+          if (!r.written) { why.push(`${file}-${theme}: ${r.reason}`); continue; }
+          shot.masked += r.masked;
+          shot.files.push({ file: relative(shotsDir, path), state: name, theme });
+          obs.shots.push(path);
+        }
+      }
+    }
+  } catch (e) {
+    why.push(`the admin picture failed: ${String(e?.message ?? e).split('\n')[0].slice(0, 300)}`);
+  }
+  if (page) await page.close().catch(() => {});
+  shot.written = shot.files.length > 0;
+  if (why.length) shot.reason = why.join('; ');
+}
+
 async function contactSheet() {
   const shots = obs.shots.filter(existsSync);
   if (!shots.length) return;
   const page = await browser.newPage({ viewport: { width: 1600, height: 1200 } });
-  const tiles = shots.map((p) => `<figure><img src="data:image/png;base64,${readFileSync(p).toString('base64')}"><figcaption>${relative(shotsDir, p)}</figcaption></figure>`).join('');
+  const drawn = new Set((obs.admin.shot?.files ?? []).map((f) => f.file));
+  const label = (p) => (drawn.has(relative(shotsDir, p)) ? `${relative(shotsDir, p)}: ${obs.admin.shot.caption}` : relative(shotsDir, p));
+  const tiles = shots.map((p) => `<figure><img src="data:image/png;base64,${readFileSync(p).toString('base64')}"><figcaption>${label(p)}</figcaption></figure>`).join('');
   await page.setContent(`<style>body{margin:0;font:11px sans-serif;display:flex;flex-wrap:wrap;gap:6px;background:#222;color:#eee}figure{margin:0;width:390px}img{width:390px}</style>${tiles}`);
   const sheet = join(shotsDir, 'contact-sheet.png');
   await page.screenshot({ path: sheet, fullPage: true });
@@ -2339,7 +2428,15 @@ async function selftest() {
       return {
         text: () => [LABELS.budget, settings.budget, LABELS.rotate, shown ? `New secret ${shown} (shown once)` : (settings.mask ?? 'not set'),
           settings.secret ?? '', LABELS.migration, 'Migrated 3 of 10 v1 rows', LABELS.save].join(' '),
-        findByLabel: (l) => (labels.includes(l) ? { label: l } : null),
+        // P2's tree(): the page text() reads, as a ForgeDoc; the budget field is the control the lane types into
+        tree: () => {
+          const node = (type, key, props, ...children) => ({ type, key, props, children });
+          const line = (key, words) => node('Text', key, {}, node('String', `${key}-s`, { text: String(words) }));
+          return node('Root', 'root', {}, node('Textfield', 'budget', { defaultValue: String(settings.budget) }),
+            line('secret', shown ? `New secret ${shown} (shown once)` : (settings.mask ?? 'not set')), line('leak', settings.secret ?? ''),
+            line('migration', 'Migrated 3 of 10 v1 rows'), node('Button', 'save', {}, node('String', 'save-s', { text: LABELS.save })));
+        },
+        findByLabel: (l) => (labels.includes(l) ? { label: l, ...(l === LABELS.budget ? { key: 'budget', value: String(values[l] ?? settings.budget) } : {}) } : null),
         setValue: (l, val) => { values[l] = val; },
         click: async (l) => {
           if (l === LABELS.save) { await invoke('saveSettings', { budget: values[LABELS.budget] }); settings = await invoke('getSettings', {}); }
@@ -2416,6 +2513,87 @@ async function selftest() {
     obs.admin = { actions: [], tree_text: '', secret_leaks: [] };
     await assert.rejects(driver(refusing('HARNESS')).lane(), /not UI Kit/, "the host's own failure stays a harness failure");
     assert.equal(obs.admin.unrenderable, undefined);
+  });
+
+  await test('admin lane: the panel is kept for its picture as it loaded and after the save, never after a rotate click', async () => {
+    const r = await runLane('correct');
+    const { loaded, saved } = r.d.state.kept;
+    const budget = (k) => k.tree.children.find((n) => n.key === 'budget').props.defaultValue;
+    assert.deepEqual([budget(loaded), loaded.typed], ['200000', [['budget', '200000']]]);
+    assert.deepEqual([budget(saved), saved.typed], [String(ADMIN_BUDGET), [['budget', String(ADMIN_BUDGET)]]], 'what the admin typed, as the host reads it');
+    assert.deepEqual(r.d.state.shown, [r.secret], 'the one rotate click showed the secret');
+    assert.equal(r.d.secretValues().includes(r.secret), true);
+    for (const k of [loaded, saved]) assert.equal(JSON.stringify(k.tree).includes(r.secret), false, 'no kept render shows the rotated secret');
+    // a forged rotation that landed, then the admin's second one: every secret a rotate click showed stays a secret
+    const t = await runLane('trusting');
+    assert.equal(t.d.state.shown.length, 2);
+    for (const shown of t.d.state.shown) assert.equal(t.d.secretValues().includes(shown), true);
+    // a secret the panel never showed is still one: the long token of the rotate answer, and the stored value
+    const answered = `Hidden${'k'.repeat(20)}`;
+    const quiet = adminDriver({ emu: fakeApp('correct'), pack: { admin: ADMIN, viewer: 'acct-viewer' }, host: null, adminPage: { key: 'admin-page' }, appDir: null, now: () => 0 });
+    quiet.state.answers.push({ as: 'admin', resolver: 'getSettings', response: { who: 'acct-admin-0123456789' } },
+      { as: 'admin', resolver: 'rotateSecret', rotation: true, response: { secret: answered, who: 'acct-admin-0123456789', ok: true } });
+    assert.deepEqual(quiet.secretValues(), [answered], 'the token the rotation answer brought, not the one an earlier answer already held');
+    // a panel with no save control: the saved render is named absent, with the reason
+    const noSave = { render: async (o) => { const ui = await fakeHost.render(o); return { ...ui, findByLabel: (l) => (l === LABELS.save ? null : ui.findByLabel(l)) }; } };
+    obs.admin = { actions: [], tree_text: '', secret_leaks: [] };
+    obs.boot = {};
+    emu = fakeApp('correct');
+    const d = adminDriver({ emu, pack: { admin: ADMIN, viewer: 'acct-viewer' }, host: noSave, adminPage: { key: 'admin-page' }, appDir: null, now: () => 0 });
+    await d.lane();
+    assert.equal(Boolean(d.state.kept.loaded.tree), true);
+    assert.match(d.state.kept.saved.reason, /^the admin made no save: the panel has no 'Daily AI token budget' field with 'Save settings'$/);
+  });
+
+  await test('admin picture: every component is drawn or named, inputs show what the host reads, no secret and no app markup reach it', async () => {
+    const { forgeDocHtml, drawForgeDoc, CAPTION } = await import('./forge2_uikit_shot.mjs');
+    const D = require('../forge2/kit/lib/uikit-host/doc.cjs');
+    let seq = 0;
+    const node = (type, props = {}, ...children) => ({ type, key: `${type}-${++seq}`, props,
+      children: children.map((c) => (typeof c === 'string' ? { type: 'String', key: `s-${++seq}`, props: { text: c }, children: [] } : c)) });
+    const secret = 'Zk3p_9QwErTyUiOp1234';
+    const budget = node('Textfield', { defaultValue: '200000' });
+    const row = (when, what) => node('Row', {}, node('Cell', { cellKey: when }, `at ${when}`), node('Cell', { cellKey: what }, what));
+    const table = (rows, props = {}) => node('DynamicTable', { caption: 'Recent admin changes', ...props },
+      node('ContentWrapper', { name: 'head' }, node('Cell', { cellKey: 'when' }, 'When'), node('Cell', { cellKey: 'what' }, 'What')), node('ContentWrapper', { name: 'rows' }, ...rows));
+    const tree = node('Root', {}, node('Stack', { space: 'space.200' },
+      node('Heading', { as: 'h2' }, 'Scope Ledger'), node('SectionMessage', { appearance: 'success', title: 'Saved' }, node('Text', {}, 'Settings saved.')),
+      node('Label', { labelFor: 'b' }, 'Daily AI token budget'), budget, node('Textfield', { type: 'password', value: 'hunter2' }),
+      node('Toggle', { isChecked: true, label: 'AI explanations enabled' }), node('Toggle', { defaultChecked: false }),
+      node('Select', { value: { label: 'Everyone', value: 'all' } }), node('Checkbox', { label: 'Notify', isChecked: true }),
+      node('DatePicker', { value: '2026-10-02' }), node('Inline', { space: 'space.100' }, node('Button', { appearance: 'primary' }, 'Save settings'), node('Lozenge', { appearance: 'success' }, 'DONE')),
+      node('Text', {}, 'CI secret: ', secret), node('Text', {}, '<script>alert(1)</script> & "quoted"'),
+      node('InlineEdit', { label: 'Team name' }, node('Text', {}, 'Platform')),
+      table([row(1, 'installed'), row(10, 'budget 150000'), row(2, 'rotated')], { defaultSortKey: 'when', defaultSortOrder: 'DESC', rowsPerPage: 2 }),
+      table([], { emptyView: { type: 'Text', props: { children: 'No admin changes yet.' } } })));
+    const light = forgeDocHtml(tree, { D, typed: [[budget.key, '150000']], theme: 'light', secrets: [secret, ''] });
+    const { html } = light;
+    assert.match(html, /^<!doctype html><html data-theme="light">/);
+    assert.match(forgeDocHtml(tree, { D, theme: 'dark' }).html, /^<!doctype html><html data-theme="dark">/);
+    for (const words of ['Scope Ledger', 'Settings saved.', 'Daily AI token budget', '>150000<', 'class="toggle on"', 'class="toggle"', 'Everyone', 'Notify',
+      '2026-10-02', 'btn primary', 'Save settings', 'lozenge c-success', 'Recent admin changes', 'No admin changes yet.',
+      'Jira pages this table at 2 rows; every row is drawn here.', "InlineEdit: not drawn by the benchmark's renderer", 'Platform']) {
+      assert.equal(html.includes(words), true, `drawn: ${words}`);
+    }
+    assert.equal(html.includes('200000'), false, 'the typed value replaces the default, as in the host');
+    assert.deepEqual(light.unknown, ['InlineEdit'], 'the one component with no drawer is named');
+    assert.deepEqual([html.indexOf('at 10'), html.indexOf('at 2'), html.indexOf('at 1<')].map((i) => i > 0), [true, true, true]);
+    assert.equal(html.indexOf('at 10') < html.indexOf('at 2') && html.indexOf('at 2') < html.indexOf('at 1<'), true, "the kit's own descending order");
+    assert.deepEqual([light.masked, html.includes(secret), html.includes('CI secret hidden by the benchmark')], [1, false, true]);
+    assert.deepEqual([html.includes('hunter2'), html.includes('•••••••')], [false, true], 'a password field draws dots');
+    assert.equal(html.includes('&lt;script&gt;alert(1)&lt;/script&gt; &amp; &quot;quoted&quot;'), true);
+    assert.equal(/<(script|select|input|textarea|button|img|a|iframe|link)\b|href=|src=|url\(/i.test(html), false, 'no native control, no app markup, no URL');
+    assert.equal(/border-left|rgba\(|opacity/.test(html), false, 'no accent rail, no tint');
+    assert.match(CAPTION, /^Admin panel \(UI Kit\): the app's component tree, drawn by the benchmark's UI Kit host\. Jira draws the same tree with its own components\.$/);
+    // a secret split across two texts passes the per-text mask; the drawn page's text still carries it, so no file
+    const written = [];
+    const page = { setViewportSize: async () => {}, setContent: async (h) => { page.html = h; }, screenshot: async (o) => { written.push(o.path); },
+      evaluate: async () => page.html.replace(/<style>[\s\S]*?<\/style>/, '').replace(/<[^>]+>/g, '') };
+    const split = node('Root', {}, node('Text', {}, 'CI secret: ', secret.slice(0, 9), secret.slice(9)));
+    const refused = await drawForgeDoc(page, { tree: split, typed: [] }, { D, theme: 'light', secrets: [secret], path: '/x/split.png' });
+    assert.deepEqual([refused.written, refused.reason, written], [false, 'the drawn panel still carried a CI secret value after masking', []]);
+    const drawn = await drawForgeDoc(page, { tree, typed: [] }, { D, theme: 'dark', secrets: [secret], path: '/x/panel.png' });
+    assert.deepEqual([drawn.written, drawn.masked, written], [true, 1, ['/x/panel.png']]);
   });
 
   await test('sendCiCases: side effects follow the invocation, even when its writes land after its response', async () => {

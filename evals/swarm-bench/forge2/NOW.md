@@ -78,6 +78,16 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
   ones carry the retired block). Also: deploy-readiness poor-practice findings are no longer priced in
   k_manifest_semantics (M3 "every consumer queue is pushed to" is not in the contract; M9/P3 are, and stay priced by
   k_dashboard_widget / l_scopes) — no kept verdict moves (M3 passes on all ten).
+- 2026-10-10 13:5x ADMIN PICTURE (branch `forge2/admin-shot` off `forge2/severity` dab70b928; not merged, not pushed).
+  Every scored run now carries pictures of its UI Kit admin panel (report-only, never graded): the admin lane keeps the
+  ForgeDoc tree as the panel loaded and after the admin's save (never a render after a rotate click), and the ui
+  section draws them with `bench/forge2_uikit_shot.mjs` into `forge-shots/admin-panel-{light,dark}.png` and
+  `admin-panel-saved-{light,dark}.png`, listed in `verdict.json` `shots` and the contact sheet. Caption: "Admin panel (UI
+  Kit): the app's component tree, drawn by the benchmark's UI Kit host. Jira draws the same tree with its own
+  components." `obs.admin.shot` = {written, files, unknown (component types drawn as labelled boxes), masked, caption,
+  reason}. No image (and the reason) when the page did not render. Golden on 0123456789abcdef: 0.9907 before and after,
+  99/99 rows identical in every field. Open for the desktop (not edited here): `benchShots.ts` FORGE_PICKS has no
+  admin pick, so only the contact sheet carries the panel until it gains `^admin-panel(-saved)?-(light|dark)\.png$`.
 - 2026-10-10 12:17 RELIABILITY (branch `forge2/severity`, off `forge2/prerun` 9ac3ed765; not merged, not pushed). Owner's
   acceptance rule: Sonnet 5.5 near 0.9 (0.9628 with 13 failed guarantee rows) is not discriminating. SPEC §4 now:
   `final = earned × critical multiplier × reliability`, reliability = max(0.25, Π (1 − 0.10 × counted shortfall)) over
