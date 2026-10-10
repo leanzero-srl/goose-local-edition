@@ -57,6 +57,7 @@ world, webtrigger, admin, field, llm_v2, boot — are read by forge2_checks.py):
 from __future__ import annotations
 
 import argparse
+import contextlib
 import copy
 from decimal import Decimal, InvalidOperation
 import fcntl
@@ -4254,12 +4255,31 @@ def _probe_one(root: Path, seed: str, kit: Dict, runtime: str, shots: Path, medi
     return obs, pack
 
 
+# One forge scoring per host, whoever scores: the CLI and run_build's in-process scoring both go through gather(). The
+# probe's timed rows (boot counts, paint clocks, settle windows) run on this machine's wall clock, so two probes at once
+# distort each other. The path is fixed per host, never $TMPDIR, which differs between callers (an app-launched
+# run_build, an agent's shell): two lock files lock nothing.
+LOCK_FILE = Path('/tmp/goose-forge-score.lock')
+
+
+@contextlib.contextmanager
+def score_lock():
+    with LOCK_FILE.open('w') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print(f'waiting for {LOCK_FILE}: another forge scoring holds it', file=sys.stderr, flush=True)
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+
+
 def gather(root: Path, _port, _db_dir, trace_path: Optional[Path] = None, mark_phase=None, seed: Optional[str] = None,
            runtime: str = 'wrapper', single_seed: bool = False) -> Ctx:
     """run_build's interface: clone the tree, start the scoring site with `seed`, run the probe, load I5 — on the
     run's own seed and, unless `single_seed` (the controls and the calibration, which name their seeds), on the two
     derived scoring sites (SCORING_SEEDS). The run's own seed keeps the published shots, recording and
-    forge-observations.json; the derived sites' evidence lands under forge-shots/seeds/<seed>/."""
+    forge-observations.json; the derived sites' evidence lands under forge-shots/seeds/<seed>/. The probes run under
+    score_lock()."""
     if not seed:
         raise RuntimeError('REFUSED: score_forge2.gather needs the fixture seed')
     if V2_ABSENT:
@@ -4268,26 +4288,24 @@ def gather(root: Path, _port, _db_dir, trace_path: Optional[Path] = None, mark_p
     if kit is None:
         raise RuntimeError('REFUSED: ' + why)
     header = _trace_header(Path(root))
-    started = time.monotonic()
-    seeds = [seed.lower()] if single_seed else scoring_seeds(seed, header.get('dev_seed'))
-    shots = Path(root) / 'forge-shots'
-    shutil.rmtree(shots, ignore_errors=True)
-    media_dir = Path(root).resolve() / 'bench-media'
-    shutil.rmtree(media_dir, ignore_errors=True)
-    ctxs = []
-    for i, s in enumerate(seeds):
-        where = shots if i == 0 else shots / 'seeds' / s
-        obs, pack = _probe_one(root, s, kit, runtime, where, media_dir if i == 0 else None,
-                               Path(root) / 'forge-observations.json' if i == 0 else where / 'forge-observations.json')
-        ctxs.append(Ctx(Path(root), obs, pack, fixture_seed=s, dev_seed=header.get('dev_seed'), runtime=runtime))
-    ctx = ctxs[0]
-    ctx.seed_ctxs = ctxs[1:]
-    ctx.scorer_seconds = round(time.monotonic() - started, 3)
-    ctx.kit = kit
+    with score_lock():
+        started = time.monotonic()
+        seeds = [seed.lower()] if single_seed else scoring_seeds(seed, header.get('dev_seed'))
+        shots = Path(root) / 'forge-shots'
+        shutil.rmtree(shots, ignore_errors=True)
+        media_dir = Path(root).resolve() / 'bench-media'
+        shutil.rmtree(media_dir, ignore_errors=True)
+        ctxs = []
+        for i, s in enumerate(seeds):
+            where = shots if i == 0 else shots / 'seeds' / s
+            obs, pack = _probe_one(root, s, kit, runtime, where, media_dir if i == 0 else None,
+                                   Path(root) / 'forge-observations.json' if i == 0 else where / 'forge-observations.json')
+            ctxs.append(Ctx(Path(root), obs, pack, fixture_seed=s, dev_seed=header.get('dev_seed'), runtime=runtime))
+        ctx = ctxs[0]
+        ctx.seed_ctxs = ctxs[1:]
+        ctx.scorer_seconds = round(time.monotonic() - started, 3)
+        ctx.kit = kit
     return ctx
-
-
-LOCK_FILE = Path(tempfile.gettempdir()) / 'goose-forge-score.lock'
 
 
 def main(argv=None) -> int:
@@ -4363,11 +4381,8 @@ def main(argv=None) -> int:
     atexit.register(_reap_children)
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_x: (_reap_children(), sys.exit(130)))
-    LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with LOCK_FILE.open('w') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)   # serial: one forge scoring per host
-        ctx = gather(tree, None, None, seed=seed, runtime=a.runtime, single_seed=a.single_seed)
-        result = evaluate(ctx)
+    ctx = gather(tree, None, None, seed=seed, runtime=a.runtime, single_seed=a.single_seed)   # serial: score_lock()
+    result = evaluate(ctx)
     a.json_out.write_text(json.dumps(result, indent=2, default=str))
     print(format_report(result, tree.name))
     if a.reference:
