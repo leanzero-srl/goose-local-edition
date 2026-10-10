@@ -1,9 +1,9 @@
-"""The entrant's workspace for forge-1.0, measured end to end (DESIGN.md §4, §6.5):
+"""The entrant's workspace for forge-2.0, measured end to end (DESIGN.md §4, §6.5):
 
 bench_isolation.prepare(network='fenced', extra_read=[kit]) builds the sandbox; inside it the internet is
 unreachable (directly and through the relay), the provider answers through the relay, localhost works,
 and the dev kit runs: `npm run lint` (bin/lint.cjs) offline and forge-dev against a dev site started
-outside the sandbox (forge_site.serve). Run: python3 -m unittest forge2/kit/test/test_entrant_fence.py
+outside the sandbox (forge2_site.serve: the 2.0 site, whose `preload` control op forge-dev reads). Run: python3 -m unittest forge2/kit/test/test_entrant_fence.py
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ BENCH = HERE.parent.parent.parent / 'bench'
 sys.path.insert(0, str(BENCH))
 import bench_isolation  # noqa: E402
 import forge2_kit as forge_kit  # noqa: E402
-import forge_site  # noqa: E402
+import forge2_site as forge_site  # noqa: E402
 
 MANIFEST = """modules:
   scheduledTrigger:

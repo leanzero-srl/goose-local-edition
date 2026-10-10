@@ -30,7 +30,8 @@ reads exactly them; checkpoints are 'h1'..'h6' — virtual-hour marks after the 
                controls: {<label key>: found}, tree_text, secret_shown, secret_source, secret_leaks: [string]}
   field       {writes: [{t_ms, updates, status}], values_by_checkpoint: {<checkpoint>: {<issueId|issueKey>: value}},
                applied_by_checkpoint: {<checkpoint>: <live changes the site had applied>}}
-  llm_v2      [{case, llm_calls, shown_text, writes_out_of_scope[, absent][, setting_applied]}] (LLM_TOOL/FAILURE/COST)
+  llm_v2      [{case, llm_calls, shown_text, writes_out_of_scope[, absent][, setting_applied]
+               [, day_tokens, budget_reached]}] (LLM_TOOL/FAILURE/COST; the last two on the token-budget case)
   boot        {'widget-view'|'sprint-modal'|'admin-page': {invokes_before_paint, bytes_before_paint,
                external_requests}} (null = the surface never painted)
 Three keys the probe must add for its rows to grade exactly (until then each row says so in its detail):
@@ -1042,12 +1043,18 @@ def _(ev: Ev) -> Dict:
     field, why = ev.section('field')
     if why:
         return unavail(why)
-    writes = [w for w in field.get('writes') or [] if isinstance(w, dict)]
-    if not writes:
+    every = [w for w in field.get('writes') or [] if isinstance(w, dict)]
+    if not every:
         return vacuous('the app wrote no field value')
+    # A 429 is the rate model's answer (the quota wall, a burst, an issue's 2 s window), graded by R2's rows; this row
+    # grades what the field-value API itself refuses.
+    writes = [w for w in every if w.get('status') != 429]
+    if not writes:
+        return vacuous(f'every one of {len(every)} field writes met a rate limit (R2 grades those)')
     bad = [w for w in writes if not (isinstance(w.get('status'), int) and 200 <= w['status'] < 300)]
     return g((len(writes) - len(bad)) / len(writes), f'{len(writes) - len(bad)} of {len(writes)} bulk field writes '
-             'accepted' + (f'; refused: {sample(sorted({str(w.get("status")) for w in bad}))}' if bad else ''),
+             'accepted' + (f'; refused: {sample(sorted({str(w.get("status")) for w in bad}))}' if bad else '')
+             + (f'; {len(every) - len(writes)} rate-limited (429, R2\'s)' if len(every) > len(writes) else ''),
              'field writes refused (over 200 updates, wrong shape)')
 
 
@@ -1144,15 +1151,21 @@ def _(ev: Ev) -> Dict:
     cases, why, calls_model = llm_cases(ev, LLM_COST)
     if why:
         return unavail(why)
+    # Contract §16: the budget binds once the virtual day's tokens REACH it. A click on a UTC day whose tokens had not
+    # reached the budget the probe set (the day turned over between cases) owes no refusal: that case is not graded.
+    not_due = [c for c in cases if c.get('budget_reached') is False]
+    cases = [c for c in cases if c.get('budget_reached') is not False]
     if not cases:
-        return vacuous('no cache, kill-switch or token-budget case was run')
+        return vacuous('no cache, kill-switch or token-budget case was run' + (
+            f'; the budget case\'s day had {not_due[0].get("day_tokens")} tokens, under its budget' if not_due else ''))
     if not calls_model:
         return vacuous('the app never called the model, so making no call proves nothing')
     bad = [case_blocked(c) or f'{c["case"]} ({c.get("llm_calls")} calls)' for c in cases
            if case_blocked(c) or (count(c.get('llm_calls')) or 0) > 0]
     return g((len(cases) - len(bad)) / len(cases), f'{len(cases) - len(bad)} of {len(cases)} cache/kill-switch/budget '
-             'cases made no model call' + (f'; {sample(bad, 2)}' if bad else ''),
-             'AI spend the admin switched off or capped')
+             'cases made no model call' + (f'; {sample(bad, 2)}' if bad else '')
+             + (f'; token-budget not graded: its UTC day had {not_due[0].get("day_tokens")} tokens, under the budget'
+                if not_due else ''), 'AI spend the admin switched off or capped')
 
 
 # ── R9 the Custom UI boot budget ─────────────────────────────────────────────────────────────
@@ -1456,6 +1469,13 @@ def _mutants(o: fo.Oracle) -> Dict[str, Tuple[Callable[[Dict], None], Dict[str, 
     def no_cache(obs):
         next(c for c in obs['llm_v2'] if c['case'] == 'cache')['llm_calls'] = 1
 
+    def budget(obs, reached):
+        next(c for c in obs['llm_v2'] if c['case'] == 'token-budget').update(
+            llm_calls=1, per_click=[1], day_tokens=4200 if reached else 0, budget_reached=reached)
+
+    def field_write_rate_limited(obs):
+        obs['field']['writes'].append({'t_ms': 1, 'updates': 50, 'status': 429})
+
     def refusal_audited(obs):
         obs['admin']['actions'][2].update(state_changed=True, changed_keys=['kv:audit'], landed=False)
 
@@ -1494,7 +1514,10 @@ def _mutants(o: fo.Oracle) -> Dict[str, Tuple[Callable[[Dict], None], Dict[str, 
         'R6 deployment recorded for the wrong environment': (deployment_other_env, {'r6_valid_applies': 0.5}, ()),
         'R7 stale field': (stale_field, {'r7_values_fresh': pay1_cut}, ()),
         'R8 truncated answer shown': (truncated_shown, {'r8_failure_handling': 0.5}, ()),
+        'R7 a field write meets a rate limit (R2\'s)': (field_write_rate_limited, {}, ()),
         'R8 no cache': (no_cache, {'r8_cost_controls': round(2 / 3, 4)}, ()),
+        'R8 budget reached, model called': (lambda obs: budget(obs, True), {'r8_cost_controls': round(2 / 3, 4)}, ()),
+        'R8 budget day turned over, model called': (lambda obs: budget(obs, False), {}, ()),
         'R9 chatty boot': (chatty_boot, {'r9_widget_boot': round(2 / 3, 4)}, ()),
     }
 

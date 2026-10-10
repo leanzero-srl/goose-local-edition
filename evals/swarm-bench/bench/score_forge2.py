@@ -274,11 +274,19 @@ class Ctx:
     def phase(self, name: str) -> Dict:
         return ((self.obs.get('phases') or {}).get(name)) or {}
 
-    def calls(self, phases: Iterable[str] = ('backfill', 'live', 'heal', 'rerun'), service: Optional[str] = None,
+    def background_phases(self) -> Tuple[str, ...]:
+        """1.0's four phases plus 2.0's hourly scheduled runs: the probe records each hour's run, and the queue
+        deliveries due by its start, as its own phase `hour-<k>` (forge2_probe.mjs runSchedules) — work no 1.0 phase
+        holds, so a row reading only the four never saw six of the nine scheduled runs."""
+        hourly = sorted((p for p in (self.obs.get('phases') or {}) if re.fullmatch(r'hour-\d+', str(p))),
+                        key=lambda p: int(p.split('-')[1]))
+        return ('backfill', *hourly, 'live', 'heal', 'rerun')
+
+    def calls(self, phases: Optional[Iterable[str]] = None, service: Optional[str] = None,
               kinds: Optional[Iterable[str]] = None) -> List[Dict]:
         out = []
         kinds = set(kinds) if kinds else None
-        for ph in phases:
+        for ph in self.background_phases() if phases is None else phases:
             for call in self.phase(ph).get('calls') or []:
                 if service and call.get('service') != service:
                     continue
@@ -298,8 +306,9 @@ class Ctx:
                 out.append({**call, '_phase': 'ui'})
         return out
 
-    def invocations(self, phases=('backfill', 'live', 'heal', 'rerun')) -> List[Dict]:
-        return [{**inv, '_phase': ph} for ph in phases for inv in self.phase(ph).get('invocations') or []]
+    def invocations(self, phases: Optional[Iterable[str]] = None) -> List[Dict]:
+        return [{**inv, '_phase': ph} for ph in (self.background_phases() if phases is None else phases)
+                for inv in self.phase(ph).get('invocations') or []]
 
     def kvs_rows(self, phase: str) -> List[Tuple[set, Dict]]:
         """The ledger rows the v1 regression rows grade. A v2 app keeps its ledger in `scope-ledger` while v1's
@@ -1774,16 +1783,23 @@ def _(c):
 BACKFILL_SOURCES = ('reconcile', 'event')
 
 
+def backfill_changes(c: Ctx) -> List[fo.Change]:
+    """The pre-upgrade changes the backfill owes at the one-hour read (contract §3): every history change but v1's
+    own rows, which the migration has until the 2-hour mark to copy (§9; R1 grades them there)."""
+    v1 = c.oracle.v1_keys()
+    return [ch for ch in c.oracle.changes('backfill') if ch.key not in v1]
+
+
 @check('r_backfill_complete', 'R', needs=('backfill',))
 def _(c):
     if not c.modules('scheduledTrigger'):
         return absent('scheduledTrigger module')
-    expected = c.oracle.changes('backfill')
+    expected = backfill_changes(c)
     rows = c.kvs_rows('backfill')
     ok = [ch for ch in expected if rows_for(rows, ch) and row_correct(rows_for(rows, ch)[0][0], ch, BACKFILL_SOURCES)]
-    return g(len(ok) / len(expected) if expected else 0, f'{len(ok)}/{len(expected)} historical changes recorded '
-             'exactly one virtual hour after the upgrade (the backfill is dosed)', 'data loss — changes silently missing',
-             parts={'missing': [ch.key for ch in expected if ch not in ok][:12]})
+    return g(len(ok) / len(expected) if expected else 0, f'{len(ok)}/{len(expected)} historical changes v1 never '
+             'recorded, recorded one virtual hour after the upgrade (the backfill is dosed; v1 rows are R1\'s, at 2 h)',
+             'data loss — changes silently missing', parts={'missing': [ch.key for ch in expected if ch not in ok][:12]})
 
 
 @check('r_removals_found', 'R', needs=('backfill',))
@@ -1793,9 +1809,9 @@ def _(c):
         for item in c.oracle._sprint_items(e):
             if fo.sprint_ids(item.get('from')) and not fo.sprint_ids(item.get('to')):
                 gone.add(str(e['changelogId']))
-    expected = [ch for ch in c.oracle.changes('backfill') if ch.change_id in gone and ch.kind == 'removed']
+    expected = [ch for ch in backfill_changes(c) if ch.change_id in gone and ch.kind == 'removed']
     if not expected:
-        return unavail('the pack has no removed-to-backlog change after an active start')
+        return unavail('the pack has no removed-to-backlog change after an active start that v1 never recorded')
     rows = c.kvs_rows('backfill')
     ok = sum(1 for ch in expected if rows_for(rows, ch) and row_correct(rows_for(rows, ch)[0][0], ch, BACKFILL_SOURCES))
     return g(ok / len(expected), f'{ok}/{len(expected)} removed-to-backlog changes found',
@@ -1981,28 +1997,38 @@ def _(c):
                     'by_endpoint': {ep: {'complete': ok, 'walks': n} for ep, (ok, n) in sorted(types.items())}})
 
 
-# The scheduled run each scripted fault targets (pack faults' match.run: 1 = the backfill, 2 = the heal).
-SCHEDULED_RUN_PHASE = {1: 'backfill', 2: 'heal'}
+def scheduled_runs(c: Ctx) -> List[Tuple[str, Dict]]:
+    """(phase, invocation) of every scheduled-trigger run in the order the probe ran them. The site numbers runs the
+    same way — the emulator counts each runScheduled (one per scheduledTrigger module per round) into the
+    `x-forge-scheduled-run` a pack fault's `match.run` names — so run k is the k-th: with one module, run 1 is the
+    backfill and run 2 the first hour's (2.0 runs hourly; 1.0's run 2 was the heal)."""
+    return [(ph, inv) for ph in c.background_phases() for inv in c.phase(ph).get('invocations') or []
+            if inv.get('kind') == 'scheduled']
 
 
-@check('r_rate_limit', 'R', pre=pre_scheduled_fault, needs=('backfill', 'heal'))
+@check('r_rate_limit', 'R', pre=pre_scheduled_fault, needs=('backfill', 'live', 'heal'))
 def _(c):
     # Every scheduled-run 429 that fired: the dev site's (the backfill's 2nd request) and the scoring site's (the
-    # backfill's first continuation page, the heal's 2nd request — 2026-10-03 stringency, F7), each retried after its
-    # Retry-After with its run completing.
-    fired = {call.get('fault') for call in c.all_calls('jira')}
+    # backfill's first continuation page, the next run's 2nd request — 2026-10-03 stringency, F7), each retried after
+    # its Retry-After with its run completing. A fault fires in its run's own invocation or in a queue continuation the
+    # run started, which the probe records in whichever phase drained it: the verdict reads the phase that holds it.
+    runs = scheduled_runs(c)
     verdicts = []
     for fault in c.pack.get('faults') or []:
         match = fault.get('match') or {}
-        phase = SCHEDULED_RUN_PHASE.get(match.get('run', 1))
-        if match.get('scope') != 'scheduled-run' or fault['id'] not in fired or phase is None:
+        if match.get('scope') != 'scheduled-run':
             continue
-        score, why = _retry_verdict(c, fault, (phase,))
-        sched = [i for i in c.invocations((phase,)) if i.get('kind') == 'scheduled']
-        if score and not any(i.get('ok') for i in sched):
-            score, why = 0.0, why + f'; the {phase} run did not complete'
+        hit = next((ph for ph in c.background_phases()
+                    if any(x.get('fault') == fault['id'] for x in c.phase(ph).get('calls') or [])), None)
+        if hit is None:
+            continue
+        k = match.get('run', 1)
+        run_phase, run_inv = runs[k - 1]
+        score, why = _retry_verdict(c, fault, (hit,))
+        if score and not run_inv.get('ok'):
+            score, why = 0.0, why + f'; scheduled run {k} ({run_phase}) did not complete'
         where = 'continuation page' if match.get('continuation') else f"request {match.get('nth')}"
-        verdicts.append((score, f'{phase} {where}: {why}'))
+        verdicts.append((score, f'run {k} ({run_phase}) {where}: {why}'))
     return g(sum(v for v, _w in verdicts) / len(verdicts), '; '.join(w for _v, w in verdicts),
              'the reconcile ignores Retry-After', parts={'faults': len(verdicts)})
 
@@ -2441,7 +2467,8 @@ def _(c):
 
 def cells_ok(row: Dict, ch: fo.Change) -> bool:
     cells = row.get('cells') or {}
-    return (str(cells.get('issue') or '').strip() == ch.issue_key and points_text_ok(cells.get('points'), ch.points)
+    return (str(cells.get('issue') or '').strip() == ch.issue_key
+            and any(points_text_ok(cells.get('points'), p) for p in (ch.points, *ch.late_points))
             and str(cells.get('kind') or '').strip() == ch.kind and str(cells.get('by') or '').strip() == ch.by_name
             and fo.instant(cells.get('at')) == ch.at and str(cells.get('source') or '').strip() in ch.sources)
 
@@ -2713,7 +2740,7 @@ def explanation_ledger_numbers(o, sid: str) -> set:
     visible = o.visible_changes(sid, o.viewer)
     out = {n.committed, n.added, n.removed, Decimal(o.hidden_count(sid, o.viewer)), Decimal(len(visible)),
            Decimal(sum(1 for ch in visible if ch.kind == 'added')), Decimal(sum(1 for ch in visible if ch.kind == 'removed'))}
-    out |= {ch.points for ch in visible}
+    out |= {p for ch in visible for p in (ch.points, *ch.late_points)}
     if n.creep is not None:
         out.add(n.creep)
     return out
@@ -2895,7 +2922,8 @@ def action_ok(res, want: Dict) -> bool:
         return False
     for a, b in zip(got, want['changes']):
         if not isinstance(a, dict) or str(a.get('changeId')) != b['changeId'] or a.get('issueKey') != b['issueKey'] \
-                or a.get('kind') != b['kind'] or not json_number_ok(a.get('points'), b['points']) \
+                or a.get('kind') != b['kind'] \
+                or not any(json_number_ok(a.get('points'), p) for p in (b['points'], *b.get('late_points', ()))) \
                 or fo.instant(a.get('at')) != b['at'] or a.get('by') != b['by']:
             return False
     return True
@@ -2978,14 +3006,36 @@ def v1_economy_calls(calls: List[Dict]) -> List[Dict]:
             and not FIELD_VALUE_WRITE.match(str(x.get('path') or '').split('?')[0])]
 
 
-@check('e_reconcile_economy', 'E', needs=('backfill',))
+def traced(calls: List[Dict]) -> bool:
+    """Whether the probe stamped every call an invocation made with that invocation's lineage: `originChange` (the
+    product event that started the chain) and `scheduledRun` (the scheduled run that did), which a queue push hands to
+    the consumer it starts (kit emulator). 2.0 runs a scheduled run's continuations, and the consumers of an event,
+    wherever the timeline drains them — a phase holds pieces of several chains, so the economy rows attribute calls by
+    lineage."""
+    made = [x for x in calls if x.get('inv')]
+    return bool(made) and all('originChange' in x and 'scheduledRun' in x for x in made)
+
+
+def economy_jira(c: Ctx, keep: Callable[[Dict], bool], kinds: Optional[Tuple[str, ...]], fallback: str
+                 ) -> Tuple[List[Dict], str]:
+    """The Jira calls of one chain class across every phase, or — observations without lineage — the `fallback`
+    phase's calls of those kinds, the measurement 1.0 made, named as such in the row's detail."""
+    every = c.calls(None, 'jira', kinds)
+    if traced(every):
+        return [x for x in every if keep(x)], 'by lineage, every phase'
+    return c.calls((fallback,), 'jira', kinds), f'the {fallback} phase only: the probe recorded no call lineage'
+
+
+@check('e_reconcile_economy', 'E', needs=('backfill', 'live'))
 def _(c):
     if _row(c, 'r_backfill_complete').get('score', 0) < 1.0:
         return g(0, 'backfill incomplete — economy is not credited on unfinished work')
     optimum, missing = c.oracle.reconcile_optimum()
     if optimum is None:
         return unavail(f'pack.limits lacks {missing}')
-    jira = c.calls(('backfill',), 'jira')
+    # The backfill is the first round of scheduled runs and the queue work they started, whenever it ran.
+    runs = {k for k, (ph, _inv) in enumerate(scheduled_runs(c), 1) if ph == 'backfill'}
+    jira, scope = economy_jira(c, lambda x: x.get('scheduledRun') in runs, None, 'backfill')
     calls = v1_economy_calls(jira)
     # Each scripted 429 the backfill met forces one repeat of the refused read (the scoring site scripts two, F7).
     scheduled = {f['id'] for f in c.pack.get('faults') or [] if (f.get('match') or {}).get('scope') == 'scheduled-run'}
@@ -2995,9 +3045,9 @@ def _(c):
     ratio = used / optimum
     # §17.8 F: continuous like e_event_economy (a rung cliff at optimum+1 call ordered the 1.0 top four on 0.010).
     top = float(TH['reconcile_economy_top'])
-    return g(min(1.0, top / ratio) if ratio else 1.0, f'backfill {used} background Jira calls / optimum {optimum} (incl. '
-             f'{repeats} forced 429 repeat(s)) = {ratio:.2f}x; 1.0 at <= {top:g}x; {len(jira) - used} 2.0 call(s) not '
-             'counted (field-value writes, person-facing, web trigger)',
+    return g(min(1.0, top / ratio) if ratio else 1.0, f'backfill {used} background Jira calls ({scope}) / optimum '
+             f'{optimum} (incl. {repeats} forced 429 repeat(s)) = {ratio:.2f}x; 1.0 at <= {top:g}x; {len(jira) - used} '
+             '2.0 call(s) not counted (field-value writes, person-facing, web trigger)',
              parts={'calls': used, 'optimum': optimum, 'ratio': round(ratio, 3)})
 
 
@@ -3009,8 +3059,12 @@ def _(c):
     # KVS; a duplicate delivery needs none), plus the one repeat each consumer-path 429 forces. Graded continuously at
     # that optimum (2026-10-03 stringency, F1): score = min(1, top / (used / optimum)), `top` the golden's worst ratio
     # over the calibration seeds (calibration-owned), so the golden defines 1.0 and every extra request costs.
+    # The event path is what an issue event started: its trigger and the consumers it queued, wherever they ran — never
+    # a continuation of the backfill, the migration, an hourly run or the CI trigger, which 2.0 drains in the same
+    # phase (a world event's own trigger, `world:`, is R4's).
     relevant = c.oracle.event_optimum()
-    jira = c.calls(('live',), 'jira', ('trigger', 'consumer'))
+    jira, scope = economy_jira(c, lambda x: bool(x.get('originChange')) and not str(x['originChange']).startswith('world:'),
+                               ('trigger', 'consumer'), 'live')
     calls = v1_economy_calls(jira)
     faults = sum(1 for x in calls if x.get('fault') and not x.get('earlyRetry')
                  and x.get('fault') in {f['id'] for f in c.pack.get('faults') or []
@@ -3019,9 +3073,9 @@ def _(c):
     used = len(calls)
     ratio = used / optimum
     top = float(TH['event_economy_top'])
-    return g(min(1.0, top / ratio) if ratio else 1.0, f'{used} Jira calls / optimum {optimum} ({relevant} delivered relevant '
-             f'change(s) x 1 read + {faults} forced 429 repeat) = {ratio:.2f}x; 1.0 at <= {top:g}x; {len(jira) - used} '
-             'field-value write(s) not counted',
+    return g(min(1.0, top / ratio) if ratio else 1.0, f'{used} Jira calls ({scope}) / optimum {optimum} ({relevant} '
+             f'delivered relevant change(s) x 1 read + {faults} forced 429 repeat) = {ratio:.2f}x; 1.0 at <= {top:g}x; '
+             f'{len(jira) - used} field-value write(s) not counted',
              parts={'calls': used, 'optimum': optimum, 'changes': relevant, 'ratio': round(ratio, 3)})
 
 
@@ -3927,6 +3981,66 @@ def defect_selftest() -> List[str]:
         ctx._row_cache['t_event_rows'] = {'score': 1.0}
         got = fn(ctx)['score']
         expect(relevant == 0 or got == want, f'F e_event_economy with {label}: {got} (want {want})')
+    # 2.0 lineage: the event economy counts what an issue event started, in any phase, never a scheduled run's
+    # continuation or a world event's trigger drained beside it; the backfill economy counts its run's continuations
+    def lined(call, inv, origin=None, run=None):
+        return {**call, 'inv': inv, 'originChange': origin, 'scheduledRun': run}
+    event = [lined(read, 'e1', '9201')] * relevant
+    noise = [lined(read, 'k1', run=1)] * (2 * relevant) + [lined({**read, 'kind': 'trigger'}, 'w1', 'world:5')] * 3
+    for label, phases in (('beside continuations', {'live': {'calls': event + noise}}),
+                          ('drained in an hourly run', {'hour-1': {'calls': event}, 'live': {'calls': noise}})):
+        ctx = Ctx(None, {'phases': phases}, pack, fixture_seed=pack['seed'])
+        ctx._row_cache['t_event_rows'] = {'score': 1.0}
+        got, want = fn(ctx)['score'], round(min(1.0, event_top), 4)
+        expect(relevant == 0 or got == want, f'F e_event_economy by lineage {label}: {got} (want {want})')
+    if optimum is not None:
+        fn = next(f for n, _t, f, _p, _x in CHECKS if n == 'e_reconcile_economy')
+        sched = {'service': 'jira', 'kind': 'scheduled', 'method': 'GET', 'path': '/rest/agile/1.0/board'}
+        phases = {'backfill': {'invocations': [{'inv': 's1', 'kind': 'scheduled', 'ok': True}],
+                               'calls': [lined(sched, 's1', run=1)] * optimum
+                               + [lined({**sched, 'kind': 'resolver'}, 'r1')] * 3},
+                  'live': {'calls': [lined({**sched, 'kind': 'consumer'}, 'k1', run=1)] * optimum + event}}
+        ctx = Ctx(None, {'phases': phases}, pack, fixture_seed=pack['seed'])
+        ctx._row_cache['r_backfill_complete'] = {'score': 1.0}
+        got, want = fn(ctx)['score'], round(min(1.0, top / 2), 4)
+        expect(got == want, f'F e_reconcile_economy by lineage (its continuations in live): {got} (want {want})')
+    # 2.0 runs hourly: a run-2 fault fires in the first hour's run (phase hour-1), a run-1 continuation fault in a
+    # consumer the live phase drained — each is graded where it fired (1.0 mapped run 2 to the heal and crashed on both)
+    faulted = copy.deepcopy(pack)
+    faulted['faults'] = [{'id': 'f-run2', 'match': {'scope': 'scheduled-run', 'run': 2, 'nth': 2}, 'retryAfter': 2},
+                         {'id': 'f-cont', 'match': {'scope': 'scheduled-run', 'run': 1, 'continuation': True, 'nth': 1},
+                          'retryAfter': 2}]
+    q = {'service': 'jira', 'method': 'GET', 'path': '/rest/api/3/search/jql'}
+    for label, gap, want in (('retried after Retry-After', 2.5, 1.0), ('retried early', 1.0, 0.0)):
+        phases = {'backfill': {'invocations': [{'inv': 's1', 'kind': 'scheduled', 'ok': True}], 'calls': []},
+                  'hour-1': {'invocations': [{'inv': 's2', 'kind': 'scheduled', 'ok': True}],
+                             'calls': [{**q, 'kind': 'scheduled', 'inv': 's2', 't': 10.0, 'fault': 'f-run2', 'status': 429},
+                                       {**q, 'kind': 'scheduled', 'inv': 's2', 't': 10.0 + gap, 'status': 200}]},
+                  'live': {'invocations': [{'inv': 'c1', 'kind': 'consumer', 'ok': True}],
+                           'calls': [{**q, 'kind': 'consumer', 'inv': 'c1', 't': 99.0, 'fault': 'f-cont', 'status': 429},
+                                     {**q, 'kind': 'consumer', 'inv': 'c1', 't': 99.0 + gap, 'status': 200}]}}
+        fctx = Ctx(None, {'phases': phases}, faulted, fixture_seed=pack['seed'])
+        fn, pre, needs = next((f, p, x) for n, _t, f, p, x in CHECKS if n == 'r_rate_limit')
+        got = _run_check(fctx, 'r_rate_limit', 'R', fn, pre, needs)
+        expect(got['score'] == want and not got.get('unavailable') and got.get('parts', {}).get('faults') == 2,
+               f"r_rate_limit {label} in hour-1 and in a live continuation: {got['score']} (want {want}) — {got.get('detail')}")
+    # 2.0's backfill read (one hour after the upgrade) owes the history changes v1 never recorded; v1's own rows are R1's
+    # at the 2-hour mark (contract §9), so a v2 ledger holding every other history change is complete at that read
+    pack2 = fo.synthetic_pack_v2()
+    o2 = fo.Oracle(pack2)
+    v1 = o2.v1_keys()
+    owed = [ch for ch in o2.changes('backfill') if ch.key not in v1]
+    items = [{'key': f'{ch.change_id}:{ch.sprint_id}', 'value': {
+        'changeId': ch.change_id, 'sprintId': ch.sprint_id, 'kind': ch.kind, 'issueId': ch.issue_id, 'authorId': ch.by,
+        'at': fo.epoch_ms(ch.at), 'source': 'reconcile'}} for ch in owed]
+    v2_obs = {'manifest': {'modules': {'scheduledTrigger': [{'key': 'hourly'}]},
+                           'app': {'storage': {'entities': [{'name': 'scope-change'}, {'name': V2_SURFACE_ENTITY}]}}},
+              'phases': {'backfill': {'kvsAfter': {'entities': {V2_SURFACE_ENTITY: items}, 'keys': []}}}}
+    bctx = Ctx(None, v2_obs, pack2, fixture_seed=pack2['seed'])
+    fn, pre, needs = next((f, p, x) for n, _t, f, p, x in CHECKS if n == 'r_backfill_complete')
+    got = _run_check(bctx, 'r_backfill_complete', 'R', fn, pre, needs)
+    expect(bool(v1) and bool(owed) and got['score'] == 1.0,
+           f"r_backfill_complete must not owe v1's rows at the one-hour read: {got['score']} — {got.get('detail')}")
     return fails
 
 

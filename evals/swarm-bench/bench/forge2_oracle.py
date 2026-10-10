@@ -188,6 +188,8 @@ class Change:
     board_id: str = ''         # 2.0: the sprint's board (v2 `boardId`)
     estimate_field: str = ''   # 2.0: the board's estimation field in force at the change (v2 `estimateField`)
     moved_to_board: str = ''   # 2.0: a `removed` row of a cross-board move names the board the issue went to
+    late_fields: Tuple[str, ...] = ()       # 2.0: a dropped live change's board switched to these fields after it
+    late_points: FrozenSet[Decimal] = frozenset()   # its points in them: accepted beside `points` (see _changes)
 
     @property
     def key(self) -> Tuple[str, str]:
@@ -420,15 +422,23 @@ class Oracle:
                         moved_to = next(iter(sorted(boards - {board_id})), '')
                     # Contract §1: the CURRENT value of the field the board used at the change (a later switch leaves
                     # it alone); §12: a closed sprint's points stay as they stood at the close.
-                    points = (self.estimate_at(str(issue['id']), field_id, closed - JUST_BEFORE) if closed is not None
-                              else self.estimate_of(str(issue['id']), field_id, final_entries))
+                    iid = str(issue['id'])
+                    points_of = {fid: (self.estimate_at(iid, fid, closed - JUST_BEFORE) if closed is not None
+                                       else self.estimate_of(iid, fid, final_entries))
+                                 # A live change whose event never came is first recorded by a later reconcile; when its
+                                 # board switched fields after it, the app cannot tell which side of the switch the
+                                 # change fell on (a switch sends no event, §12): the field switched to is accepted too.
+                                 for fid in (field_id, *(f for t, f in self.field_switches.get(board_id, ())
+                                                         if dropped and phase == 'live' and t > created))}
+                    late = tuple(f for f in points_of if f != field_id)
                     by_sprint[sid].append(Change(
-                        change_id=cid, sprint_id=sid, issue_id=str(issue['id']), issue_key=issue['key'],
+                        change_id=cid, sprint_id=sid, issue_id=iid, issue_key=issue['key'],
                         kind=kind, at=created, at_text=str(entry['created']), by=str(entry.get('authorId')),
                         by_name=self.users.get(str(entry.get('authorId')), ''),
-                        points=points,
+                        points=points_of[field_id],
                         phase=phase, dropped=dropped, duplicates=duplicate_count(delivery),
-                        sources=sources, board_id=board_id, estimate_field=field_id, moved_to_board=moved_to))
+                        sources=sources, board_id=board_id, estimate_field=field_id, moved_to_board=moved_to,
+                        late_fields=late, late_points=frozenset(points_of[f] for f in late)))
         for sid in by_sprint:
             by_sprint[sid].sort(key=Change.sort_key)
         return by_sprint
@@ -525,7 +535,7 @@ class Oracle:
                 'committed': n.committed, 'added': n.added, 'removed': n.removed,
                 'creepPercent': n.creep, 'hiddenChanges': self.hidden_count(sprint_id, account_id),
                 'changes': [{'changeId': c.change_id, 'issueKey': c.issue_key, 'kind': c.kind,
-                             'points': c.points, 'at': c.at, 'by': c.by_name}
+                             'points': c.points, 'late_points': sorted(c.late_points), 'at': c.at, 'by': c.by_name}
                             for c in self.visible_changes(sprint_id, account_id)]}
 
     def sprints_of_board(self, board_id: str) -> List[str]:
@@ -727,12 +737,18 @@ class Oracle:
         self._need_v2()
         return [dict(r) for r in self._v1]
 
+    def v1_keys(self) -> Set[Tuple[str, str]]:
+        """(changeId, sprintId) of every preloaded v1 row; a 1.0 pack preloads none, so it is empty there."""
+        return {(r['changeId'], r['sprintId']) for r in self._v1}
+
     def _row_estimates(self, ch: Change, mark: Optional[datetime]) -> FrozenSet[Decimal]:
         """The values a v2 row's `estimate` may hold: the field in force at the change, read at the change or at the
         checkpoint (SPEC §2.5 "earlier rows keep their estimate" and §1's current estimates both stay accepted).
         A cross-board move's `removed` row also accepts the new board's field (§2.5 "with the NEW board's
         estimate" names the move, not which of its two rows)."""
-        fields = {ch.estimate_field}
+        # late: a dropped change healed after its board switched (only a switch made by the mark)
+        fields = {ch.estimate_field} | (set(ch.late_fields) & {f for t, f in self.field_switches.get(ch.board_id, ())
+                                                                if mark is None or t <= mark})
         if ch.moved_to_board:
             fields.add(self.field_in_force(ch.moved_to_board, ch.at))
         if ch.phase == 'history':   # a backfill written after its board switched could read only the new field
@@ -829,7 +845,9 @@ class Oracle:
                     adds = [ch for ch in mine if ch.kind == 'added']
                     if adds:
                         last = adds[-1]
-                        accepted.add(f'added +{format_points(self.estimate_at(iid, last.estimate_field, cut))}')
+                        switched = {f for t, f in self.field_switches.get(last.board_id, ()) if cut is None or t <= cut}
+                        accepted |= {f'added +{format_points(self.estimate_at(iid, f, cut))}'
+                                     for f in (last.estimate_field, *(set(last.late_fields) & switched))}
                 elif in_start or any(ch.kind == 'added' for ch in mine):
                     accepted.add('removed')
             values[issue['key']] = frozenset(accepted or {''})

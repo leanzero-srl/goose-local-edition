@@ -248,10 +248,21 @@ function normInvocation(r, kind, moduleKey) {
   };
 }
 
+// Each call an invocation made carries that invocation's lineage, which the kit's queue push hands to the consumer it
+// starts: the product event (`originChange`) or the scheduled run (`scheduledRun`) its chain began with. 2.0 drains
+// several chains in one phase (a backfill continuation beside an event's consumer), so the economy rows attribute calls
+// by it. A kit without the invocation records stamps nothing, and the rows say they fell back.
+const lineageOf = (emu, inv) => {
+  const rec = inv && emu.invocations instanceof Map ? emu.invocations.get(inv) : null;
+  return rec ? { originChange: rec.originChange ?? null, scheduledRun: rec.scheduledRun ?? null } : {};
+};
 let logCursor = 0;
 const takeCalls = (emu) => {
   const all = emu.log || [];
-  const fresh = all.slice(logCursor).map(normCall);
+  const fresh = all.slice(logCursor).map((e) => {
+    const call = normCall(e);
+    return call.inv ? { ...call, ...lineageOf(emu, call.inv) } : call;
+  });
   logCursor = all.length;
   return fresh;
 };
@@ -1781,6 +1792,14 @@ async function llmCases(pack, v) {
     await waitMeaningful(s, 'table[data-testid="ledger"] tr[data-change-id], [data-metric]');
     const button = s.page.locator('[data-testid="explain"]').first();
     if (!(await button.count())) row.absent = 'no [data-testid="explain"] control';
+    // Contract §16: the budget binds "once the virtual day's tokens reach" it. The day is a UTC day of the virtual
+    // clock and turns over between cases on a late upgrade: a click on a day whose tokens are still under the budget
+    // owes no refusal, so the case records the day's tokens before its click.
+    if (c.admin?.label === LABELS.budget) {
+      const day = new Date(site.state.now()).toISOString().slice(0, 10);
+      row.day_tokens = (await emu.llm.log(0)).state?.tokensByDay?.[day]?.total_tokens ?? 0;
+      row.budget_reached = row.day_tokens >= c.admin.value;
+    }
     const l0 = emu.log.length;
     for (let i = 0; i < c.clicks && !row.absent; i += 1) {
       const since = (await emu.llm.log(0)).next;
@@ -2026,6 +2045,19 @@ async function selftest() {
   await test('ledgerRow: the §2.4 attributes, absent ones null', async () => {
     assert.deepEqual(ledgerRow({ changeId: 'c', sprintId: '7', at: 1.5, deleted: false, junk: 1 }),
       { sprintId: '7', at: 1.5, changeId: 'c', kind: null, issueId: null, issueKey: null, estimate: null, boardId: null, estimateField: null, deleted: false, deployedEnvs: null });
+  });
+
+  await test("takeCalls: a call carries its invocation's lineage; a page's own call carries none", async () => {
+    const fake = { log: [{ invocationId: 'i-ev', moduleType: 'consumer', method: 'GET', path: '/rest/api/3/issue/1', status: 200 },
+      { invocationId: 'i-run', moduleType: 'consumer', method: 'GET', path: '/rest/api/3/search/jql', status: 200 },
+      { method: 'GET', path: '/rest/api/3/myself', status: 200 }],
+    invocations: new Map([['i-ev', { originChange: '9201', scheduledRun: null }], ['i-run', { originChange: null, scheduledRun: 1 }]]) };
+    const saved = logCursor;
+    logCursor = 0;
+    const [ev, run, page] = takeCalls(fake);
+    logCursor = saved;
+    assert.deepEqual([ev.originChange, ev.scheduledRun, run.originChange, run.scheduledRun], ['9201', null, null, 1]);
+    assert.ok(!('originChange' in page) && !('scheduledRun' in page));
   });
 
   // The admin lane against a fake UI Kit host and three fake apps: one that authorizes from req.context, one that
