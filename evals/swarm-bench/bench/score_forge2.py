@@ -46,7 +46,8 @@ world, webtrigger, admin, field, llm_v2, boot — are read by forge2_checks.py):
             originChange / scheduledRun (the invocation's lineage: the product event or the scheduled run its chain
             began with, handed on by every queue push — the economy rows and the scheduled run's rows read it)}
     inv  = {inv, kind, moduleKey, functionKey, t0, t1, ok, threw, error, errorName, timedOut, retryAfter}
-    delivery = {eventId, inv, attempt, result (ok|retry|throw|timeout), retryAfter, t}
+    delivery = {eventId, inv, attempt, result (ok|retry|throw|timeout), retryAfter, t, concurrent? (the kit's group
+            record when the delivery ran in a concurrent group: forge2_checks.concurrent_groups)}
   rovo {calls: [{as, label (sprint|unknown|missing), sprintId, threw, result, error}]},
   comments [{t, issueKey, provider, accountId, status, body, fault, kind}]   (every comment POST the site saw; `kind`
         the invoking module kind — a web-trigger/background comment never feeds the v1 comment rows),
@@ -1608,6 +1609,8 @@ def _(c):
              'the event path loses or invents ledger rows', parts={'tp': tp, 'fp': fp, 'expected': len(expected)})
 
 
+# Concurrent delivery (contract): a duplicate row is the app's defect whether or not its group raced; a group the
+# harness did not run whole is no evidence the app survives the race, so the pass it would buy is unavailable.
 @check('t_no_double_count', 'T', pre=pre_ledger_row, needs=('live', 'heal', 'rerun'))
 def _(c):
     doubled = []
@@ -1617,9 +1620,14 @@ def _(c):
             n = len(rows_for(rows, ch))
             if n > 1:
                 doubled.append(f'{ph}:{ch.change_id}/{ch.sprint_id}x{n}')
+    whole, broken = V2.concurrent_groups(c.obs)
+    raced = V2.raced(whole)
     if doubled:
-        return g(0, f'changes counted more than once: {sorted(set(doubled))[:6]}', CRITICAL_CLASSES['duplicate'])
-    return g(1, 'every change holds at most one ledger row in every phase (duplicated deliveries included)')
+        return g(0, f'changes counted more than once: {sorted(set(doubled))[:6]}{raced}', CRITICAL_CLASSES['duplicate'])
+    if broken:
+        return unavail(f'no change counted twice, but {len(broken)} concurrent group(s) were not run whole '
+                       f'({"; ".join(broken[:2])}): a race the harness never ran is no evidence the app survives it')
+    return g(1, f'every change holds at most one ledger row in every phase (duplicated deliveries included){raced}')
 
 
 def _person_numbers(c: Ctx, sid: str) -> List[Tuple[Dict, object]]:
@@ -3271,8 +3279,10 @@ def _synthetic_v2():
     def evaluate(_obs, _oracle):
         return [{'check': n, 'tier': fam, 'critical': cls, **vacuous('synthetic stand-in row (forge2_checks.py absent)')}
                 for n, fam, cls in spec]
+    # The group reader lives in forge2_checks; the stand-in reads no group record (it never scores: gather() refuses).
     return types.SimpleNamespace(ROWS=[{'name': n, 'family': fam, 'critical': cls} for n, fam, cls in spec],
-                                 evaluate=evaluate)
+                                 evaluate=evaluate, concurrent_groups=lambda _obs: (Counter(), []),
+                                 raced=lambda _whole: '')
 
 
 try:
@@ -3918,6 +3928,26 @@ def defect_selftest() -> List[str]:
         phases = {ph: {'kvsAfter': {'entities': entities, 'keys': []}} for ph in ('live', 'heal', 'rerun')}
         got = row('t_no_double_count', {'manifest': v2_manifest, 'phases': phases})
         expect(got['score'] == want, f"v2 ledger t_no_double_count {label}: {got['score']} (want {want}) — {got.get('detail')}")
+    # Concurrent delivery: a duplicate row is the app's whether or not its group raced; a group the harness did not run
+    # whole buys no pass — the row is unavailable, neither 1.0 nor a fired critical (the group reader is forge2_checks')
+    def member(group, index, invs, size=2):
+        return {'eventId': f'e#{group}', 'inv': invs[index], 'concurrent': {
+            'group': group, 'reason': 'same-event', 'schedule': 'reads-first', 'size': size, 'index': index,
+            'with': [{'index': 1 - index, 'eventId': f'e#{group}', 'invocationId': invs[1 - index]}]}}
+    raced_pair = [member('c1', j, ['k1', 'k2']) for j in range(2)]
+    half_pair = [member('c2', 0, ['k3', None])]
+    for label, ledger, deliveries, want in (() if V2_ABSENT else (
+            ('a raced pair, one row', [item], raced_pair, 1.0),
+            ('a raced pair wrote a duplicate', [item, item], raced_pair, 0.0),
+            ('a pair not run whole, one row', [item], raced_pair + half_pair, None),
+            ('a pair not run whole beside a duplicate', [item, item], half_pair, 0.0))):
+        phases = {ph: {'kvsAfter': {'entities': {V2_SURFACE_ENTITY: ledger}, 'keys': []}} for ph in ('live', 'heal', 'rerun')}
+        phases['live']['deliveries'] = deliveries
+        got = row('t_no_double_count', {'manifest': v2_manifest, 'phases': phases})
+        fired = criticals([got])[0] < 1.0
+        ok = (bool(got.get('unavailable')) and not fired) if want is None else (got['score'] == want and fired == (want == 0.0))
+        expect(ok, f"concurrent t_no_double_count on {label}: {got['score']} (want {'unavailable' if want is None else want}), "
+               f"critical fired {fired} — {got.get('detail')}")
     # leak at scale: a hidden summary that is text of a visible summary is no leak; the hidden key still is one
     shared = copy.deepcopy(pack)
     hidden_issue = next(i for i in shared['issues'] if i.get('hiddenFrom'))
