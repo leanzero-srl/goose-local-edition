@@ -4967,16 +4967,32 @@ def _probe_one(root: Path, seed: str, kit: Dict, runtime: str, shots: Path, medi
 # distort each other. The path is fixed per host, never $TMPDIR, which differs between callers (an app-launched
 # run_build, an agent's shell): two lock files lock nothing.
 LOCK_FILE = Path('/tmp/goose-forge-score.lock')
+# The frozen Forge 1.0 scorer (score_forge.py, its bytes pinned by forge/'s manifest) locks the same name under the
+# caller's temp dir instead — /var/folders/… on macOS, never /tmp — computed exactly so, and the desktop app still
+# re-scores saved 1.0 sessions: a 2.0 scoring takes that lock too, so neither era's timed rows run beside the other's.
+FORGE1_LOCK_FILE = Path(tempfile.gettempdir()) / 'goose-forge-score.lock'
+
+
+def score_lock_files() -> List[Path]:
+    """The locks a 2.0 scoring holds, in the one order every 2.0 scorer takes them (so two cannot deadlock; a 1.0
+    scorer takes only its own): LOCK_FILE, then FORGE1_LOCK_FILE — once, when both name one file (a $TMPDIR of /tmp),
+    since a second flock of one file in one process waits on itself."""
+    return [LOCK_FILE] + ([FORGE1_LOCK_FILE] if os.path.realpath(FORGE1_LOCK_FILE) != os.path.realpath(LOCK_FILE) else [])
 
 
 @contextlib.contextmanager
 def score_lock():
-    with LOCK_FILE.open('w') as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            print(f'waiting for {LOCK_FILE}: another forge scoring holds it', file=sys.stderr, flush=True)
-            fcntl.flock(lock, fcntl.LOCK_EX)
+    """Every lock of score_lock_files(), taken in order and released in reverse on every exit path (the ExitStack
+    closes each file, which drops its flock)."""
+    with contextlib.ExitStack() as held:
+        for path in score_lock_files():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            lock = held.enter_context(path.open('w'))
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                print(f'waiting for {path}: another forge scoring holds it', file=sys.stderr, flush=True)
+                fcntl.flock(lock, fcntl.LOCK_EX)
         yield
 
 

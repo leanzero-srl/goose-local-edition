@@ -17,6 +17,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import types
 import unittest
 from unittest.mock import patch
@@ -199,13 +200,77 @@ class ScoreLockTests(unittest.TestCase):
             return {}, {}
         with tempfile.TemporaryDirectory() as tmp, \
                 patch.object(score_forge2, 'LOCK_FILE', Path(tmp) / 'score.lock'), \
+                patch.object(score_forge2, 'FORGE1_LOCK_FILE', Path(tmp) / 'forge1' / 'score.lock'), \
                 patch.object(score_forge2, '_kit', return_value=({'dir': tmp}, None)), \
                 patch.object(score_forge2, '_probe_one', side_effect=probe_one), \
                 patch.object(score_forge2, 'Ctx', side_effect=lambda *_a, **_k: types.SimpleNamespace()):
             score_forge2.gather(Path(tmp), None, None, seed=SEED)
-            with open(score_forge2.LOCK_FILE, 'w') as after:
-                fcntl.flock(after, fcntl.LOCK_EX | fcntl.LOCK_NB)   # released: the next scoring proceeds
+            for path in (score_forge2.LOCK_FILE, score_forge2.FORGE1_LOCK_FILE):
+                with open(path, 'w') as after:
+                    fcntl.flock(after, fcntl.LOCK_EX | fcntl.LOCK_NB)   # released: the next scoring proceeds
         self.assertEqual(len(held), score_forge2.SCORING_SEEDS)
+
+    def test_a_holder_of_either_lock_blocks_a_forge2_scoring(self):
+        """The frozen Forge 1.0 scorer locks <temp dir>/goose-forge-score.lock, the 2.0 scorer /tmp/goose-forge-score.lock
+        too: a 2.0 scoring takes both, so a process holding EITHER (a 1.0 re-score, another 2.0 scoring) makes it wait,
+        and it releases both when it leaves. Two real processes, the locks at scratch paths."""
+        import score_forge2
+        hold = ('import fcntl, sys, time\nf = open(sys.argv[1], "w")\nfcntl.flock(f, fcntl.LOCK_EX)\n'
+                'open(sys.argv[2], "w").close()\nwhile not __import__("os").path.exists(sys.argv[3]): time.sleep(0.05)\n')
+        score = ('import os, sys, time\nfrom pathlib import Path\nsys.path.insert(0, sys.argv[1])\nimport score_forge2 as s\n'
+                 's.LOCK_FILE, s.FORGE1_LOCK_FILE = Path(sys.argv[2]), Path(sys.argv[3])\nwith s.score_lock():\n'
+                 '    open(sys.argv[4], "w").close()\n    while not os.path.exists(sys.argv[5]): time.sleep(0.05)\n')
+
+        def wait_for(path, seconds):
+            deadline = time.monotonic() + seconds
+            while time.monotonic() < deadline and not path.exists():
+                time.sleep(0.05)
+            return path.exists()
+
+        def free(path):
+            with open(path, 'w') as f:
+                try:
+                    fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    return True
+                except BlockingIOError:
+                    return False
+        for held in ('fixed', 'forge1'):
+            with tempfile.TemporaryDirectory() as tmp:
+                tmp = Path(tmp)
+                fixed, forge1 = tmp / 'fixed.lock', tmp / 'tmpdir' / 'goose-forge-score.lock'
+                forge1.parent.mkdir()
+                procs = []
+                try:
+                    procs.append(subprocess.Popen([sys.executable, '-c', hold, str(fixed if held == 'fixed' else forge1),
+                                                   str(tmp / 'holding'), str(tmp / 'release-holder')]))
+                    self.assertTrue(wait_for(tmp / 'holding', 20), 'the holder never took its lock')
+                    procs.append(subprocess.Popen([sys.executable, '-B', '-c', score, str(run_build.HERE), str(fixed),
+                                                   str(forge1), str(tmp / 'scoring'), str(tmp / 'release-scorer')],
+                                                  stderr=subprocess.PIPE, text=True))
+                    self.assertFalse(wait_for(tmp / 'scoring', 3), f'a 2.0 scoring ran while the {held} lock was held')
+                    (tmp / 'release-holder').touch()
+                    self.assertTrue(wait_for(tmp / 'scoring', 30), f'the 2.0 scoring never ran after the {held} lock freed')
+                    self.assertEqual([free(fixed), free(forge1)], [False, False], 'a 2.0 scoring holds both locks')
+                    (tmp / 'release-scorer').touch()
+                    self.assertEqual(procs[1].wait(timeout=30), 0)
+                    self.assertIn(f'waiting for {fixed if held == "fixed" else forge1}', procs[1].stderr.read())
+                    self.assertEqual([free(fixed), free(forge1)], [True, True], 'both locks released')
+                finally:
+                    for p in procs:   # the pid only (gate 4): these two are this test's own children
+                        if p.poll() is None:
+                            p.kill()
+                            p.wait()
+                        if p.stderr:
+                            p.stderr.close()
+
+    def test_one_lock_file_under_both_names_is_locked_once(self):
+        import score_forge2
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.object(score_forge2, 'LOCK_FILE', Path(tmp) / 'score.lock'), \
+                patch.object(score_forge2, 'FORGE1_LOCK_FILE', Path(tmp) / '.' / 'score.lock'):
+            self.assertEqual(score_forge2.score_lock_files(), [score_forge2.LOCK_FILE])
+            with score_forge2.score_lock():   # a second flock of the same file in one process would wait on itself
+                pass
 
     def test_callers_with_different_tmpdirs_lock_the_same_file(self):
         import score_forge2
