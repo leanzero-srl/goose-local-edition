@@ -110,6 +110,21 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
   calibration, sb7.x/forge manifests to refreeze after P11's shared bench edits.
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 22:15 FIRST FORGE 2.0 RESULT PUBLISHED FROM THE APP: anthropic/claude-sonnet-5.5 = 0.7698 (brun-c084f7ac-818b-4040-9a17-
+  93b448577db4; in-app scoring on 3.0.109 at load ~2-5; 52 of 300 calls, $4.62, finished itself in ~54 min; tests earned
+  0.9635 x critical 1.0 x reliability 0.7990; groups T t_reestimate_followed .8333, R r_heal_dropped .75, B
+  b_comment_adf_as_user .8333, U u_ledger_sort .8333, A a_action_result .6, R4 r4_sprint_close_final 0 (x0.9), R7
+  .9756; seeds 9f606c78…, 1d8aa6ad…, f0dbf1df…). Proxy: media 200 (scorerVersion forge-2.0, the app's own caption),
+  POST 201; marked Cloud baseline. LIVE PAGE VERIFIED by fetching it: title "claude-sonnet-5.5 scores 0.7698 on Forge
+  2.0", the step line "0.9635 tests earned x 1.0000 critical defects x 0.7990 reliability = 0.7698 final score", group
+  lines, 5 pictures (widget L/D, sprint action L/D, admin panel light with the "drawn by the benchmark" caption), the
+  recording, no "Excellent" label. TRAP FOUND + FIXED: the sidebar keeps an era the site does not call CURRENT
+  COLLAPSED, so the chain could not see its Finished row and waited (I opened the group by hand at 22:13); loop-state
+  9f686ab makes finished_labels open a collapsed group (proven on the live app: collapsed -> opened -> open).
+  22:17 SOL LAUNCHED from the Benchmark view (the other 25 unblocked, chain restarted on the fixed code). STILL TO DO
+  THIS HOUR: GitHub release v3.0.109 (notes under an independent refuter now; target 16501c6390b777db8cb2fec9794f677
+  cfb95b9eb), `register-forge2 flip --promote-run brun-c084f7ac-… --live` (dry-run passes), the 1.0 note, proxy
+  restart WITHOUT FORGE_CURRENT after the flip (in a gap with no publish in flight).
 - 21:27 SITE LIVE + FORGE 2.0 REGISTERED: deploy marker seen 21:26:18 (lz-forge-eras forge-1.0:d40aca35…;forge-2.0:
   a9aa59a4…), `register-forge2 probe` clean, `add --live` done: bstate-forge-2-0 = "Forge 2.0 — Scope Ledger 2", open,
   NOT current (forge-1.0 stays the frozen forge familyCurrent until the flip; sb-7.2 unchanged); the site says "forge-2.0
