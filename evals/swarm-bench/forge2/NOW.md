@@ -64,6 +64,15 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
 
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 09:1x PARALLEL TRACK DONE: forge2/desktop 8985a45b3 (2.0 bundled era; 223 tests; fixes: 2.0 rows were dropped at
+  publish, tray read the shared 150 budget; needs SB7.2 + forge2 manifest refreeze and a fresh SDK build to typecheck);
+  site branch forge2-era (local, 5 commits; per-era snapshots/validation, era-scoped replace, register-forge2.mjs;
+  125 tests + build; re-sync the 2.0 snapshot at the frozen commit; the 2.0 brief needs an adversarial review before
+  going public); loop-state branch forge2/chain (era field + era guard, proxy FORGE_CURRENT=forge-2.0, per-era
+  board_audit, 33 blocked forge-2.0 entries: Sonnet 5.5, Sol, then the field); forge2/pilot-fixes e09e2b6ba (non-UI-Kit
+  admin charged: Haiku 0.3467; one fixed-path score lock in gather(); Haiku's 2.5 h was ONE hung ffprobe, not UI
+  timeouts); forge2/alt (independent app from public text; ~30 unclear points in ALT-NOTES.md; React+bridge ~240 KB
+  breaks the 150 KB boot budget -> surfaces rewritten without React).
 - 08:2x owner: "Let's step it up and ensure everything that can be done safely in parallel is being done!" -> wf
   forge2-parallel-track beside wf forge2-harden: (1) desktop forge-2.0 era (branch forge2/desktop), (2) leanzero.net
   per-era forge support + register-forge2.mjs (site branch forge2-era, worktree /private/tmp/claude-501/lz-forge2-era,
