@@ -64,6 +64,14 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
 
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 11:0x HARDENED TASK READY: branch forge2/prerun 9ac3ed765 (worktree scratchpad/wt-prerun) = forge2/hardened + pilot
+  fixes + fairness review (43 alt-app notes: 39 fine, 1 must-fix contract sentence in §4 Live, 4 check/probe fixes) +
+  a probe wall-clock race fixed (explain button counted the instant data painted; 4 of 25 golden scorings mis-scored).
+  Golden 0.9907 (97/99 rows 1.0; economy rows uncalibrated). Site brief copy fixes on site branch forge2-era 110f600.
+  The gate (branch forge2/hardened-gate) is still fixing golden edge cases before calibration.
+- 11:08 SONNET 5.5 LAUNCHED on the hardened task (the owner's deciding check): forge2_pilot.sh anthropic/claude-sonnet-5.5
+  sonnet-hardened 8854, FORGE2_REPO=wt-prerun, log ~/goose-builds/loop-state/forge2-pilot-sonnet.log. OpenRouter $25.68.
+  Next: Sol rerun (sol-hardened 8855); results = calibrated re-scores once hardened-gate lands.
 - 09:1x PARALLEL TRACK DONE: forge2/desktop 8985a45b3 (2.0 bundled era; 223 tests; fixes: 2.0 rows were dropped at
   publish, tray read the shared 150 budget; needs SB7.2 + forge2 manifest refreeze and a fresh SDK build to typecheck);
   site branch forge2-era (local, 5 commits; per-era snapshots/validation, era-scoped replace, register-forge2.mjs;
