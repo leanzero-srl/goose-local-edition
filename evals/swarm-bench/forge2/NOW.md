@@ -110,6 +110,16 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
   calibration, sb7.x/forge manifests to refreeze after P11's shared bench edits.
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 23:15 SOL PUBLISHED BY THE CHAIN ALONE: openai/gpt-6.1-sol = 0.8111 (brun-48b141b1-5554-44ad-841e-e9a860d84435; 70 of 300
+  calls, $1.47, ~33 min build + ~22 min in-app scoring; tests earned 0.9845 x reliability 0.8238; groups R r_rate_limit
+  .3333 ("the 429 was never retried", identical on all three sites), U u_ledger_table .9475, A a_action_result 0, R5
+  r5_panel_labels .9, R7 .959; seeds d65c448c…, 1a9e83fa…, f12765aa…; a 1-min load spike to 10 during its scoring
+  touched no timed row — every lost row has the same value on all three sites). Luna launched 23:15 by the chain.
+  BOARD: Sol 0.8111, Sonnet 0.7698. OWNER 23:1x: "from here on out you got this right? you'll run on rails each and
+  every model we have queued up" -> yes; told him the ONE thing that needs him: OPENROUTER BALANCE $15.77 (total 530)
+  against ~$130-200 for the queue; cheap models next (Luna, MiMo Flash, Omni Flash, DeepSeek Flash), then Opus 5.5 is
+  where it runs out unless auto top-up is on — he has not answered that yet. If the balance cannot cover the next run:
+  touch sb72-chain.HOLD before it launches (never let a run die on a 402) and tell him.
 - 22:27 GITHUB RELEASE v3.0.109 PUBLISHED (https://github.com/leanzero-srl/goose-local-edition/releases/tag/v3.0.109; DMG +
   two zips + latest-mac.yml; target 16501c639; corrected notes). The release sequence is COMPLETE; what remains is the
   queue: Sol running, 24 more after it, vigil every 10 min; at queue end: board_audit.sh, skill changelog, scores +
