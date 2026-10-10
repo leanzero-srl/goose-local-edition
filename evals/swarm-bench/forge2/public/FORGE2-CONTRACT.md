@@ -1,9 +1,8 @@
 # Scope Ledger 2 — Forge app contract (forge-2.0)
 
-Scope Ledger v1, in use for days on a large Jira Cloud site, shows agile coaches (on a dashboard, in the sprint and
-through Rovo) what entered a sprint after it started, who added it and its story points. This workspace is v1's source
-(`STARTER.md`). Ship v2: everything v1 does (§1–§8, which keep their rules unless a later section changes them) plus
-the guarantees of §9–§18.
+Scope Ledger v1, in use for days on a large Jira Cloud site, shows agile coaches what entered a sprint after it
+started, who added it and its story points. This workspace is v1's source (`STARTER.md`). Ship v2: everything v1 does
+(§1–§8, which keep their rules unless a later section changes them) plus the guarantees of §9–§18.
 
 The harness upgrades the installation from v1 to your v2 over v1's stored data (virtual hour 0), runs it for 6
 virtual hours on a seeded site (events, queues, scheduled runs, every surface as different people, Rovo, CI, admin
@@ -54,8 +53,8 @@ totals and are the same for everyone. Changes of deleted issues are listed to no
 | `webtrigger` | static (`response.type: static`); receives CI deployment events (§14) |
 | `jira:customField` | key `scope-status`, `type: string`, `readOnly: true` (§15) |
 
-Resolvers use `@forge/resolver`. Every resolver returns a value and never throws: a failure (a Jira error, storage,
-Forge LLM, a refused permission) returns a value describing it, e.g. `{ "error": "…" }`, and the surface shows it.
+Resolvers use `@forge/resolver`, return a value and never throw: a failure (a Jira error, storage, Forge LLM, a
+refused permission) returns a value describing it, e.g. `{ "error": "…" }`, and the surface shows it.
 Storage is Forge KVS: the v2 ledger lives in the custom entity `scope-ledger` (§9), read back through its index.
 Request only the scopes your calls need: per call, the OAuth2 scopes the shipped OpenAPI lists for it (the classic
 scope where one exists, else the whole granular set). The linter does not see every call. A UI Kit widget or sprint
@@ -63,17 +62,21 @@ action earns nothing.
 
 ## 3. Backend behaviour
 
-- v1's ledger holds the changes of each active sprint's first 2 days (§9). After
-  the upgrade the harness runs your scheduled triggers once, at virtual hour 0, before it delivers any update, then
-  once per virtual hour. The first run starts the backfill of every change since each active sprint started that
-  the ledger lacks, including changes of issues that have since left every sprint; by the first virtual hour mark
-  `scope-ledger` holds them all (v1's own rows: by §9's 2-hour mark).
+- v1's ledger holds the changes of each active sprint's first 2 days (§9). After the upgrade the harness runs your
+  scheduled triggers at virtual hour 0, before any update, then once per virtual hour. The first run starts the
+  backfill of every change since each active sprint started that the ledger lacks, including changes of issues that
+  have since left every sprint; by the first virtual hour mark `scope-ledger` holds them all (v1's own rows: by §9's
+  2-hour mark).
 - Issue updates keep the ledger current: sprint changes add ledger rows; estimate changes move the numbers. Updates
   that touch neither do no Jira or queue work (storage reads are fine).
-- Product events can arrive more than once and out of order, and some never arrive. The ledger holds **exactly one
-  row per change**, whatever the delivery history. Each row records `source`: `event` or `reconcile`, the path that
-  recorded it first (event work may also record other changes of the issue it reads); a migrated row keeps v1's.
-  Later scheduled runs record what the event stream missed; a run with nothing new writes nothing.
+- Product events can arrive more than once and out of order, and some never arrive. Forge runs consumer invocations
+  concurrently, including two deliveries of the same event; here up to 3 run at once. Key reads (get) and transaction
+  conditions are strongly consistent; queries are eventually consistent and may miss writes made in the last 5
+  virtual seconds. Whatever the delivery history, and under concurrent delivery, the ledger holds **exactly one row
+  per change**, one click or double click posts one comment (§5) and one CI event records one deployment (§14). Each
+  row records `source`: `event` or `reconcile`, the path that recorded it first (event work may also record other
+  changes of the issue it reads); a migrated row keeps v1's. Later scheduled runs record what the event stream
+  missed; a run with nothing new writes nothing.
 - Background work uses `asApp()`. Whatever shows a person issue data (keys, authors, change lists, explanations) shows
   only what that person can browse at the time of the request — read as them (`asUser()`), or as the app with an
   explicit permission check for them. Comments are posted as the person. Team totals come from the ledger.
@@ -100,10 +103,9 @@ context (two widgets on one dashboard can show different boards):
 - Live: after ledger rows are written, an open widget shows the new numbers without a reload, through Forge Realtime
   (`@forge/realtime` in the backend, the bridge's `realtime` in the widget) — no polling. A `publishGlobal` reaches the
   `subscribeGlobal` subscriptions on its channel; a `publish` reaches `subscribe` subscriptions of the same module
-  context and is accepted only from resolvers (never from triggers, async events, scheduled runs or web triggers).
-  Channel names are yours; realtime tokens are optional, but an event reaches a subscription only when neither has a
-  token or both have tokens with the same claims. Global channels reach every user of the app, so payloads carry
-  sprint ids only.
+  context and is accepted only from resolvers (never from background work, §10). Channel names are yours; realtime
+  tokens are optional, but an event reaches a subscription only when neither has a token or both have tokens with the
+  same claims. Global channels reach every user of the app, so payloads carry sprint ids only.
 
 ## 5. Sprint action (modal)
 
@@ -146,7 +148,7 @@ returns a JSON object:
 { "sprintId": "41", "sprintName": "…", "committed": 34, "added": 8, "removed": 3,
   "creepPercent": 23.5, "hiddenChanges": 1,
   "changes": [ { "changeId": "…", "issueKey": "OPS-12", "kind": "added", "points": 5,
-                 "at": "<ISO-8601 UTC>", "by": "<display name>" } ] }
+    "at": "<ISO-8601 UTC>", "by": "<display name>" } ] }
 ```
 
 `creepPercent` is rounded as creep (§1) and `null` when committed is 0; `changeId` is the changelog id, `points` the
@@ -176,9 +178,8 @@ permissions.
   resource's source and `src/` are bundled the way `forge deploy` does (the classic JSX transform: `import React` in
   every `.jsx` file).
 - Every invocation runs in a fresh Node process of the Forge runtime, on §11's virtual clock.
+- A pushed event's `concurrency` key and limit are not applied.
 - Trigger `filter.expression` is not evaluated: the handler receives every issue-updated event.
-- A consumer that throws or is killed is redelivered after 1, 2, 4 and 8 virtual minutes, then every 15, for 24
-  virtual hours; a retry request (`InvocationError`) is redelivered after its `retryAfter`.
 - A Custom UI page's own `requestJira` costs no points (as on Forge) but counts in its endpoint's burst bucket
   (§10).
 - The scoring site's seed differs from the dev site's: ids, keys, custom field ids, users, groups, sprint names and
@@ -268,7 +269,8 @@ function makes advances its invocation's clock: a GET 120 ms, a search page 300 
 | web trigger, Rovo action | 55 s |
 
 Exceeding the limit kills the invocation: it returns no result, and what it already wrote stays written. A consumer
-that returns an `InvocationError` (`retryAfter` ≤ 900 s) or is killed is redelivered, at least once and in any order.
+that returns an `InvocationError` (`retryAfter` ≤ 900 s) is redelivered after its `retryAfter`, one that throws or is
+killed after 1, 2, 4 and 8 virtual minutes, then every 15, for 24 virtual hours: at least once and in any order.
 Scheduled triggers run once per virtual hour and are not retried: a failed or killed run waits for the next. Product
 event triggers are retried up to 4 times (after 1, 2, 4 and 8 virtual minutes, or the `retryAfter` they asked for).
 A push to a consumer with `timeoutSeconds` above 55 carries at most 100 KB (413), and continuation chains stop at
@@ -300,8 +302,7 @@ entry), a board's field switch and a permission change send none.
 
 ## 13. The admin panel (UI Kit)
 
-A `jira:adminPage` module (`render: native`, `@forge/react`). The harness finds its controls by these visible
-labels, exactly:
+The harness finds the admin page's controls (§2) by these visible labels, exactly:
 
 | label | control |
 |---|---|
@@ -335,10 +336,10 @@ ADMINISTER gets `{ "error": "…" }` and nothing changes: no setting, no secret,
 
 ## 14. CI deployment events (web trigger)
 
-A `webtrigger` module, static: `response.type: static` with its outputs (`key`, `statusCode`, `contentType`, `body`)
-declared in the manifest, and your function returns `{ "outputKey": "<key>" }`. CI posts deployment events in Forge's
-documented web-trigger request shape: `body` is the raw string; `headers` maps each header name to an array of
-strings, and header names may arrive in any letter case.
+The web trigger declares `response.type: static` and its outputs (`key`, `statusCode`, `contentType`, `body`) in the
+manifest; your function returns `{ "outputKey": "<key>" }`. CI posts deployment events in Forge's documented
+web-trigger request shape: `body` is the raw string; `headers` maps each header name to an array of strings, and
+header names may arrive in any letter case.
 - Body: JSON `{"eventId": string, "sentAt": unix seconds, "environment": "staging" | "production", "issueKeys": [string, …]}`.
 - Headers: `X-LZ-Timestamp: <unix seconds>` and
   `X-LZ-Signature: sha256=<hex HMAC-SHA256(secret, "<timestamp>.<raw body>")>`: `<timestamp>` is that header's value,
@@ -353,18 +354,16 @@ strings, and header names may arrive in any letter case.
 | valid, new `eventId` | `202` | the deployment is recorded |
 
 Recorded: every `scope-ledger` row of each referenced issue carries the environment in `deployedEnvs` (rows written
-later for that issue carry it too), and the sprint action's `deployed` cell (§5) shows `Deployed to <env>`. An
-`eventId` is applied at most once, ever. Before any rotation there is no secret and every request gets `401`. The
-secret comes only from the admin panel's `Rotate CI secret`, is stored only with `kvs.setSecret` (never with
-`kvs.set`, in an entity, a log line, or any resolver answer but that rotation's), and no resolver returns it except as
-`••••<last4>`.
+later for that issue carry it too), and the sprint action's `deployed` cell shows it (§5). An `eventId` is applied
+at most once, ever. Before any rotation there is no secret and every request gets `401`. The secret comes only from
+the admin panel's `Rotate CI secret`, is stored only with `kvs.setSecret` (never with `kvs.set`, in an entity, a log
+line, or any resolver answer but that rotation's), and no resolver returns it except as `••••<last4>`.
 
 ## 15. The `scope-status` custom field
 
-A `jira:customField` module, key `scope-status`, `type: string`, `readOnly: true`. The app writes its values as the
-app (`asApp`), in bulk, through the app field-value API (`POST /rest/api/3/app/field/value` or
-`PUT /rest/api/3/app/field/{fieldIdOrKey}/value`; at most 200 updates per request). Its field id differs per site:
-find it with `GET /rest/api/3/field`, where it is the custom field whose `name` is your module's `name`.
+The app writes the field's values (§2) as the app (`asApp`), in bulk, through the app field-value API
+(`POST /rest/api/3/app/field/value` or `PUT /rest/api/3/app/field/{fieldIdOrKey}/value`, §10). The field's id differs
+per site: find it with `GET /rest/api/3/field`, where it is the custom field whose `name` is your module's `name`.
 
 Value per issue (graded), from the facts of §1:
 - in an active sprint S now: `committed` if it was in S at S's `startDate`, else `added +<points>` with the points
@@ -378,8 +377,7 @@ field switch) or met a spent quota (compared an hour later) and a deleted issue 
 
 ## 16. Forge LLM, properly
 
-§5's explanation rules stay: numbers only from your ledger, nothing hidden from the viewer in any prompt,
-`report_scope` forced. In addition (graded):
+§5's explanation rules stay. In addition (graded):
 - **Model output is untrusted** (issue text can carry instructions): validate every tool call against the viewer's
   sprint scope. Only `report_scope` is accepted, only its `changeIds` that are visible changes of this sprint for
   this viewer are shown, and no tool call makes the app do anything else.

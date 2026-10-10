@@ -45,10 +45,13 @@ dates are ISO-8601 strings as the OpenAPI types them. JQL: fields `project`, `ke
 `= != in not in > >= < <= is is not ~`, `AND OR NOT`, parentheses, `ORDER BY`; functions `openSprints()`,
 `closedSprints()`, `futureSprints()`, `currentUser()`, `now()`, `startOfDay()`; relative dates like `-14d`. Its update
 stream also carries the world changes of contract §12, each kind at least once. Invocations run on its virtual clock
-with the contract's limits (§11). Forge LLM answers with a scripted model. You never call the site directly; your app
-reaches it through the Forge runtime. `users` lists the dev users: the first line is the default viewer; it marks who
-holds Jira's `ADMINISTER` permission and names the issue the default viewer may not comment on (Jira answers that
-comment with a 400 "you do not have the permission to comment", no ADD_COMMENTS), as on the scoring site.
+with the contract's limits (§11) and with the scoring site's concurrency and staleness (§3): up to 3 consumer
+invocations run at once, two deliveries of the same event included, and a KVS query (`kvs.query` or an entity index
+query) misses writes younger than 5 virtual seconds, while `get` and transaction conditions always see current state.
+Forge LLM answers with a scripted model. You never call the site directly; your app reaches it through the Forge
+runtime. `users` lists the dev users: the first line is the default viewer; it marks who holds Jira's `ADMINISTER`
+permission and names the issue the default viewer may not comment on (Jira answers that comment with a 400 "you do not
+have the permission to comment", no ADD_COMMENTS), as on the scoring site.
 
 **Tools** (`npm run lint`, `npm run build` and `node $FORGE_KIT/bin/forge-dev.cjs <command>`; `forge-dev` with no
 command prints every flag):
@@ -57,8 +60,8 @@ command prints every flag):
 |---|---|
 | `npm run lint` | Forge's own client-side linter, offline, plus the checks Forge's servers apply at deploy (a named index takes exactly one range attribute; index names 3–50 allowed characters; at most 20 entities; a supported Node runtime). It is staged: fix and rerun until it reports no errors. |
 | `invoke <functionKey> [--module <key>] [--resolver <key>] [--payload <file>] [--as <accountId>]` | runs a manifest function in the Forge runtime against the dev site with the event shape of the module that references it (`--resolver` calls that resolver key with `--payload`); prints the result, logs and every Jira, storage and queue call. `--as` makes the invocation user-led. |
-| `events [--limit N]` | delivers the dev site's next N updates to your trigger(s) and drains the queues |
-| `scheduled <moduleKey>` | runs a scheduled trigger once, then drains the queues |
+| `events [--limit N]` | delivers the dev site's next N updates to your trigger(s) and drains the queues, consumers running concurrently as on the scoring site |
+| `scheduled <moduleKey>` | runs a scheduled trigger once, then drains the queues the same way |
 | `serve <moduleKey> [--edit] [--sprint <id>] [--config <json>] [--theme light\|dark] [--as <accountId>]` | serves a Custom UI module with the Forge bridge and the dashboard host emulated, prints its URL and runs until stopped (start it in the background); its log prints every bridge call the page makes. In a served edit surface, `window.__forgeHost.save()` performs the dashboard's Save. |
 | `uikit <moduleKey>` | renders a UI Kit (`render: native`) module with the real `@forge/react` reconciler, its resolver calls going to the dev site, and prints the tree it produced |
 | `ci send` | signs a deployment event the way CI does (contract §14) with the secret you give it, posts it to your web trigger and prints the answer |
