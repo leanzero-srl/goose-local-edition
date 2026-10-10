@@ -1788,8 +1788,11 @@ def _(c):
     if not moved:
         return unavail('the pack has no live estimate change in an active sprint')
     ok = [sid for sid in moved if _sprint_numbers_right(c, sid)]
+    # Both directions fail it: an active sprint's numbers that miss its estimate changes, and a closed sprint's that are
+    # not its numbers at the close (§12) — moved by a change after the close, or missing one made before it.
     return g(len(ok) / len(moved), f'{len(ok)}/{len(moved)} re-estimated sprints show the oracle numbers',
-             'estimate changes do not move the numbers')
+             "the numbers do not follow estimate changes: an active sprint's miss them, or a closed sprint's are not "
+             'its numbers at the close (moved after it, or missing changes made before it)')
 
 
 def _fault(c: Ctx, scope: str) -> Optional[Dict]:
@@ -3196,7 +3199,8 @@ def _(c):
              'the skill does not tell the agent how to call the action and read its answer', parts=conds)
 
 
-# ══ E: excellence rows (rungs are ratios of the oracle optimum; calibration-owned) ═══════════
+# ══ E: excellence rows (rungs are ratios of an oracle denominator — the backfill's optimal plan, the event path's
+# one-read-per-change baseline; calibration-owned) ═══════════
 
 def _row(c: Ctx, name: str) -> Dict:
     return c._row_cache.get(name) or {}
@@ -3264,10 +3268,13 @@ def _(c):
 def _(c):
     if _row(c, 't_event_rows').get('score', 0) < 1.0:
         return g(0, 'event rows inexact — economy is not credited on unfinished work')
-    # DESIGN §8.4: the oracle optimum is ONE read per delivered relevant change (sprint and field metadata cached in
-    # KVS; a duplicate delivery needs none), plus the one repeat each consumer-path 429 forces. Graded continuously at
-    # that optimum (2026-10-03 stringency, F1): score = min(1, top / (used / optimum)), `top` the golden's worst ratio
-    # over the calibration seeds (calibration-owned), so the golden defines 1.0 and every extra request costs.
+    # The denominator is a BASELINE, not an optimum: ONE read per delivered relevant change (a duplicate delivery needs
+    # none), plus the one repeat each consumer-path 429 forces — 1.0's optimum (DESIGN §8.4), which assumed sprint and
+    # field metadata cached in KVS. No correct 2.0 app reaches it: a board's estimation-field switch sends no event
+    # (contract §12), so a correct app reads the board's configuration again on the changes that write a row (the
+    # reference reads about 2.5 per change). It normalizes, continuously (2026-10-03 stringency, F1): score =
+    # min(1, top / (used / baseline)), `top` the golden's worst ratio over the calibration seeds (calibration-owned), so
+    # the golden defines 1.0 and every extra request costs.
     # The event path is what an issue event started: its trigger and the consumers it queued, wherever they ran — never
     # a continuation of the backfill, the migration, an hourly run or the CI trigger, which 2.0 drains in the same
     # phase (a world event's own trigger, `world:`, is R4's).
@@ -3282,9 +3289,9 @@ def _(c):
     used = len(calls)
     ratio = used / optimum
     top = float(TH['event_economy_top'])
-    return g(min(1.0, top / ratio) if ratio else 1.0, f'{used} Jira calls ({scope}) / optimum {optimum} ({relevant} '
-             f'delivered relevant change(s) x 1 read + {faults} forced 429 repeat) = {ratio:.2f}x; 1.0 at <= {top:g}x; '
-             f'{len(jira) - used} field-value write(s) not counted',
+    return g(min(1.0, top / ratio) if ratio else 1.0, f'{used} Jira calls ({scope}) / baseline {optimum} ({relevant} '
+             f'delivered relevant change(s) x 1 read + {faults} forced 429 repeat; a normalizer, not a reachable '
+             f'optimum) = {ratio:.2f}x; 1.0 at <= {top:g}x; {len(jira) - used} field-value write(s) not counted',
              parts={'calls': used, 'optimum': optimum, 'changes': relevant, 'ratio': round(ratio, 3)})
 
 
@@ -3304,8 +3311,9 @@ def _(c):
 # ── calibration (DESIGN §13.4 item 4: thresholds frozen with golden ×5 receipts, sha pinned) ──────────────
 
 CALIBRATION_SEEDS = 5   # DESIGN §13.4 item 4
-# The two economy ratios are FITTED to the golden's worst-of-5 ratio (rounded up to 0.01, never below the oracle
-# optimum 1.0), so the golden defines 1.0 on every calibration seed; both are continuous (score = min(1, top / ratio):
+# The two economy ratios are FITTED to the golden's worst-of-5 ratio (rounded up to 0.01, never below the ratio 1.0 of
+# the oracle's denominator), so the golden defines 1.0 on every calibration seed; both are continuous (score =
+# min(1, top / ratio):
 # 1.0's F1 for the event path, §17.8 F for the backfill). The round-trip rungs sit at their floor already (1 invoke):
 # they are VERIFIED (the golden reaches the top rung on every seed), never fitted — a golden that misses them refuses.
 FITTED_RUNGS: Dict[str, str] = {}

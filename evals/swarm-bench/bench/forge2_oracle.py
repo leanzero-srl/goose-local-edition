@@ -611,8 +611,10 @@ class Oracle:
     # ── economy optimum (§8.4; rungs are ratios of these) ─────────────────────────────────
 
     def event_optimum(self) -> int:
-        """Jira reads an optimal event path makes in the live phase: one per relevant scripted change that is
-        delivered (its first delivery; a duplicate is recognised from KVS), none for a dropped one."""
+        """The event economy's BASELINE: one Jira read per relevant scripted change that is delivered (its first
+        delivery; a duplicate is recognised from KVS), none for a dropped one. 1.0's optimum; in 2.0 a normalizer no
+        correct app reaches — a board's field switch sends no event, so the board configuration is read again (the
+        name is kept for the economy rows and the calibration that read it)."""
         return sum(1 for e in self.relevant_live() if not (e.get('delivery') or {}).get('dropped'))
 
     def limit(self, name: str) -> Optional[int]:

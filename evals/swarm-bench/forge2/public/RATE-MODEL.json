@@ -52,7 +52,7 @@
     "bucket": "one token bucket per endpoint: method + path template (for example GET /rest/api/3/issue/{issueIdOrKey})",
     "capacityPoints": 30,
     "refillPointsPerSecond": 5,
-    "rule": "a request draws its points from its endpoint's bucket; a request the bucket cannot pay for is answered 429 jira-burst-based"
+    "rule": "a request draws its points from its endpoint's bucket; a request the bucket cannot pay for is answered 429 jira-burst-based. As on real shared Jira, a request the bucket could pay for is sometimes refused the same way too: that 429 carries a Retry-After like any other, honoured the same way"
   },
   "perIssueWrites": {
     "maxWritesPerIssue": 1,
@@ -70,7 +70,7 @@
       "headers": { "Retry-After": "<seconds>", "RateLimit-Reason": "<one of the reasons below>" },
       "reasons": {
         "jira-quota-tenant-based": "the hour's quota is spent; Retry-After = seconds to the next virtual hour",
-        "jira-burst-based": "the endpoint's burst bucket is empty",
+        "jira-burst-based": "the endpoint's burst bucket is empty, or the site refused a burst it could pay for (burst.rule)",
         "jira-per-issue-on-write": "a second write to one issue inside its 2 s window"
       }
     }
