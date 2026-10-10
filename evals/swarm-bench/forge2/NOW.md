@@ -64,6 +64,17 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
 
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 16:3x COPY REVIEW DONE (wf_8e4008f2-e57, 107 agents): 103 findings, 100 CONFIRMED by a refuter each (site 58: 4 high;
+  desktop 33: 4 high; the 1.0 note draft 9: 1 high) -> scratchpad/copyreview/review-result.json. The highs: Gauntlet's
+  payments copy printed above every Forge recording; Forge board/run meta descriptions + structured data describe Forge
+  1.0's task for 2.0; "Excellent: no" on every Forge run; the app shows Forge 1.0's cap rule and the REFUTED root wording
+  under 2.0 results; the note reads as if the top of the 1.0 board were sound. Being applied now by two agents (site on
+  forge2-era, desktop on forge2/desktop) with ONE vocabulary (Tests earned -> x critical defects -> x reliability ->
+  Final score; "test", "sprint action", "cap"; 19 group names from the task text + the live 1.0 brief in
+  copyreview/group-names.json; the admin picture "drawn by the benchmark ... not by Jira"). The final 1.0 past-tense note
+  -> copyreview/forge1-note-past-tense.txt (NOT written to Sanity until after the flip). OWED after the gate: `next
+  build` on the site; probe-side caption strings (video + contact sheet) fixed at the source with one confirming
+  single-seed golden scoring, if still wanted.
 - 16:1x OWNER (screenshot of the Forge 1.0 board's bottom rows 25-31): "here are the ones I want you to avoid ... aside
   from GLM-5.3 flash, that one please redo with forge 2.0, but the rest drop" -> forge2/chain ce558ad: solar-mini4,
   aion-3.5, aion-3.5-mini, nemotron-3.5-lightning dropped (nex-n2.5-pro and deepseek-pro-latest already were);
