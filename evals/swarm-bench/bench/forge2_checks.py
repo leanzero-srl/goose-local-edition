@@ -58,6 +58,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
+from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 import json
 from pathlib import Path
@@ -1084,14 +1085,27 @@ def _(ev: Ev) -> Dict:
     rate, _why = ev.section('rate')
     wall = (rate or {}).get('wall') if isinstance(rate, dict) else None
     shares, worst = [], None
+    # The hourly run at a mark inside the wall can make no request (§11: a scheduled run stops and resumes from a later
+    # run; §15 compares a quota-hit change an hour later), and the probe reads each mark BEFORE that mark's hourly run,
+    # so what only that run could refresh — the issues field_values leaves to the next mark (a dropped change, a sprint
+    # close, a field switch in the hour) — is first refreshable after the next mark: those issues are carried one more
+    # mark. Its OWN set only: an issue changed live under the wall has its event redelivered once the wall ends, before
+    # the next mark. At `until` the quota has reset, so a mark there is not inside (fairness audit 2026-10-10: Sonnet's
+    # site 3d2bca1ae1c9b961, 93 issues of sprint 854 graded at h4 that no run was allowed to refresh).
+    carry, prev_inside = set(), False
     for cp in cps:
         values, ungraded = ev.o.field_values(cp, None if cp == 'final' else applied[cp])
+        own, inside = set(ungraded), False
         mark = ev.o.checkpoint_mark(cp)
         if wall and mark is not None and wall.get('t_ms') is not None and wall.get('until_ms') is not None:
             at, mark_ms = int(wall['t_ms']), int(mark.timestamp() * 1000)
             if at <= mark_ms <= int(wall['until_ms']):
                 ungraded = set(ungraded) | {key_of[str(e['issueId'])] for e in ev.o.relevant_live()
                                             if at <= int(ev.o._created(e).timestamp() * 1000) <= mark_ms}
+            inside = at <= mark_ms < int(wall['until_ms'])
+        if prev_inside:
+            ungraded = set(ungraded) | carry
+        carry, prev_inside = own, inside
         observed = {key_of.get(str(k), str(k)): v for k, v in by[cp].items()}
         graded = ({k for k, v in values.items() if v != frozenset({''})}
                   | {k for k, v in observed.items() if str(v or '').strip()}) - ungraded
@@ -1718,6 +1732,38 @@ def selftest() -> List[str]:
                 if not ok:
                     failures.append(f'r3_no_duplicate_rows on {label}: {r["score"]} unavailable={r.get("unavailable")} '
                                     f'fired={critical_fired(r)} — {r["detail"]}')
+            # R7 under the quota wall: an issue only the hourly run could refresh (field_values leaves it to the next
+            # mark) is carried one more mark past a mark inside the wall, whose run could make no request; an issue
+            # changed live under the wall is not (its event is redelivered after the wall), nor is anything when the
+            # mark is not inside — at `until` the quota has reset
+            applied = perfect_observations(o)['field']['applied_by_checkpoint']
+            h3 = o.checkpoint_mark('h3')
+            own3 = o.field_values('h3', applied['h3'])[1]
+            graded4 = {k for k, v in o.field_values('h4', applied['h4'])[0].items() if v != frozenset({''})}
+            drawn = h3 - timedelta(minutes=30)
+            live3 = {o.issues[str(e['issueId'])]['key'] for e in o.relevant_live() if drawn <= o._created(e) <= h3}
+            carried = sorted((own3 & graded4) - live3)
+            under = sorted((live3 & graded4) - own3)
+            ms = lambda t: int(t.timestamp() * 1000)   # noqa: E731
+            around = (drawn, h3 + timedelta(minutes=10))
+            for label, issue, wall, want in (('carried past a mark inside the wall', carried[:1], around, 1.0),
+                                             ('changed live under the wall', under[:1], around, None),
+                                             ('no wall', carried[:1], None, None),
+                                             ('a wall that ends at the mark', carried[:1], (drawn, h3), None)):
+                if not issue:
+                    failures.append(f'r7 carry selftest: the synthetic pack holds no issue {label}')
+                    continue
+                obs = perfect_observations(o)
+                iid = o.issue_by_key[issue[0]]['id']
+                accepted = o.field_values('h4', applied['h4'])[0][issue[0]]
+                obs['field']['values_by_checkpoint']['h4'][iid] = next(
+                    v for v in ('committed', 'removed', 'added +999') if v not in accepted)
+                if wall:
+                    obs['rate']['wall'] = {'t_ms': ms(wall[0]), 'until_ms': ms(wall[1]), 'points': 100}
+                r = {x['check']: x for x in evaluate(obs, o)}['r7_values_fresh']
+                if (r['score'] != 1.0) if want == 1.0 else not r['score'] < 1.0:
+                    failures.append(f'r7_values_fresh with a stale value at h4 {label} ({issue[0]}): {r["score"]} '
+                                    f'(want {want or "< 1"}) — {r["detail"]}')
             no_v2 = evaluate(perfect_observations(o), fo.Oracle(fo.synthetic_pack()))
             if not all(r.get('unavailable') for r in no_v2):
                 failures.append('a 1.0 pack must leave every v2 row unavailable')
