@@ -14,9 +14,10 @@
     "bench/forge2_controls.py": "b2b24a82995f8b2447a2acd59140e44b16deceac9f0be9143106b09cf31a33ff",
     "bench/forge2_kit.py": "68597fe2369d0732d0c3d6792495f00b4882f1636d4db80935a0085169793343",
     "bench/forge2_oracle.py": "82c39f143c2452b1e6a5161f28eba5d40f504afffa8c2bbdeead7e18e7d82f0e",
-    "bench/forge2_probe.mjs": "fe054594bc4b55c72c87553704aa874e5ac849ed4ce61a03100277547e01cb27",
+    "bench/forge2_probe.mjs": "b0b8b6598de892318a778426cdc2cd32fe595988468270d46a848b0ecc5fbc4c",
     "bench/forge2_site.py": "9878b3ca85f00edcd733444a0d09eb00d1920677a0e7c9716d5b6849f6079301",
-    "bench/isolated_tiers.py": "c55c6205d7be06ac658ec6a660183a201228ca23f1f719ee614da3756d5e0eae",
+    "bench/forge2_uikit_shot.mjs": "e6f2f8e494a6cf2255f078be6424368bbd3f265ea9055beb88cf546750d65489",
+    "bench/isolated_tiers.py": "83f9d3565eb3d13c4c126cb5219600b0a0381bea2b186428613d6d406f4c2abe",
     "bench/media_sb71.mjs": "3ec2696b74b3f9ef4bdceaf2723cfef97b56a37bbe0f7918072ecdf01474577e",
     "bench/perf_probe.py": "73ad3f41a1823c45291754cd9200a07999385aa671cbbf8f19901cd09cfae33c",
     "bench/probes/client_probe.py": "e32c6c2573108a43dc0e55be69779f87362c9da2be7dc2e02d27aebb94b7c2db",
@@ -143,5 +144,5 @@
     "forge2/starter/static/widget/src/index.jsx": "05e6bff92998b3598b69682c69a47a3f28ea5f053b645890a5da5e17007d1f89",
     "forge2/starter/static/widget/src/widget.css": "6c13a7cd365e348c60d658b8f3eb75b45173c1cb6493db3bb75df06032f39ddf"
   },
-  "sourceCommit": "df9387c0e"
+  "sourceCommit": "8bf1ef8a1a97ae1946e993cd32c6bbe1dbaadbc4"
 }
