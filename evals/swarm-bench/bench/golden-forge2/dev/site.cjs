@@ -193,7 +193,8 @@ function createSite({ seed = 7, scopes = null, clock: vclock = null } = {}) {
   const userJson = (u) => ({ accountId: u.accountId, displayName: u.displayName, active: true, accountType: 'atlassian' });
 
   function fieldValue(issue, f) {
-    if (f === SPRINT_FIELD) return issue.sprints.length ? issue.sprints.map((s) => { const sp = sprintJson(sprintById.get(s)); return { id: sp.id, name: sp.name, state: sp.state, boardId: sp.originBoardId, startDate: sp.startDate, endDate: sp.endDate }; }) : null;
+    // As Jira (and the benchmark's site) render it: a closed sprint carries its completeDate on the issue too.
+    if (f === SPRINT_FIELD) return issue.sprints.length ? issue.sprints.map((s) => { const sp = sprintJson(sprintById.get(s)); return { id: sp.id, name: sp.name, state: sp.state, boardId: sp.originBoardId, startDate: sp.startDate, endDate: sp.endDate, ...(sp.completeDate ? { completeDate: sp.completeDate } : {}) }; }) : null;
     if (f === 'updated') return jiraTime(issue.updated);
     if (f === 'created') return jiraTime(issue.created);
     if (f === 'project') return { key: issue.project };

@@ -17,12 +17,21 @@ an interpretation the contract (P6), the oracle (P8) and the probe (P9) must mat
   issue counts nowhere (contract §1: a deleted issue has no value). Its rows are listed to nobody and counted as
   hidden for nobody (contract §1).
 - **R4 closed sprint:** no row with a change time after `completeDate`; the event path reads each sprint and board
-  fresh (one agile GET each per invocation), so closes and estimation-field switches apply at once.
+  fresh (one agile GET each per invocation), so closes and estimation-field switches apply at once. A change made
+  BEFORE the close whose delivery is handed over after it (the gate, 2026-10-10: deliveries retried for half an hour
+  around the close) still counts: its member is written as it stood at the close (membership and values now, with
+  every later change undone from the changelog). A change made before the close whose event never arrived is healed
+  by the first scheduled run after the close, which treats a sprint closed since the last run once more as at its
+  close (rows up to `completeDate`, members settled the same way); 20 of 300 scoring packs hold such a change after
+  the last hourly run before the close.
 - **R4 estimation-field switch** (settled by contract §1, 2026-10-10): rows keep the estimate they were written
   with; the totals use the board's current field; a change's points (the modal's points column, the Rovo action,
   `added +<points>`) are the current value of the field its row records (`estimateField`, the field the board used
   at the change). Members carry every estimation field's current value (`estimates`, JSON) for that. A closed
-  sprint's members stop updating, so its numbers and points stay as at the close (§12).
+  sprint's members stop updating, so its numbers and points stay as at the close (§12). "Every estimation field" is
+  every field a board of the app's sprints has USED (`cfg.estimateFields`), not only those the active boards use now:
+  once a board switches away from a field and the last active sprint using it closes, the rows recorded under it still
+  read it and the trigger still hands its updates to the queue.
 - **R1:** the v1 key (`<changeId>:<sprintId>`) is the v2 key, so copies are exactly-once by construction. Migrated
   rows: estimate = the issue's current value of the sprint's board field (v1 stored none), `deleted` if Jira no
   longer has the issue. Progress text: `Migrated <n> of <total> v1 rows`, `… — complete`, before the first step
@@ -34,7 +43,9 @@ an interpretation the contract (P6), the oracle (P8) and the probe (P9) must mat
   signed but malformed body). The handler returns `{outputKey}` AND the dynamic shape (`statusCode`, `body`,
   `headers`) so either host reads it. "Deployed to <env>" = `deployedEnvs` on every ledger row of the issue, shown in
   the sprint ledger's extra column `th[data-col="deployed"]`. A valid event before the migration completes is
-  queued (still 202) and applied by the consumer once it has.
+  queued (still 202) and applied by the consumer once it has. "Rows written later for that issue carry it too"
+  (contract §14; the gate, 2026-10-10: 128 of 300 scoring packs write such a row): each deployment is kept per issue
+  under `deployed:<issueId>:<environment>`, set before the issue's rows are marked and read by every later row.
 - **R8:** an LLM 429 (the SDK exposes no Retry-After) backs off 20 s, 40 s, … server-side; the page gets an error
   with `retryAfter`, never an auto-retry. Cache key = the exact prompt input (viewer-visible data only), 10 minutes.
 - **R9:** `index.js` (bridge + plain DOM, ~97 KB) + `index.css` paint the first data after one invoke; React

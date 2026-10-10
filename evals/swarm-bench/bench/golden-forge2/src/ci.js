@@ -1,11 +1,11 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { kvs } from '@forge/kvs';
 import { jiraJson, route, postJson } from './jira';
-import { markDeployed, migrationComplete } from './ledger';
+import { markDeployed, migrationComplete, DEPLOY_ENVIRONMENTS } from './ledger';
 import { SECRET_KEY } from './settings';
 
 const MAX_SKEW_SECONDS = 300;
-const ENVIRONMENTS = new Set(['staging', 'production']);
+const ENVIRONMENTS = new Set(DEPLOY_ENVIRONMENTS);
 const MAX_KEYS = 100; // one issue bulkfetch
 
 // The static web trigger's declared outputs (manifest webtrigger.response.outputs). The dynamic-shape

@@ -5,13 +5,22 @@ const CONFIG_KEY = 'config';
 const SPRINT_FIELD_TYPE = 'com.pyxis.greenhopper.jira:gh-sprint';
 export const SCOPE_FIELD_MODULE = 'scope-status';
 
-// config = { sprintFieldId, scopeFieldId, sprints: { [sprintId]: { id, name, startDate, startMs, boardId, estimateFieldId } } }
-// holding the ACTIVE sprints only. Written by the scheduled run, extended by the consumer when an event
+// config = { sprintFieldId, scopeFieldId, sprints: { [sprintId]: { id, name, startDate, startMs, boardId, estimateFieldId } },
+// estimateFields } holding the ACTIVE sprints only. Written by the scheduled run, extended by the consumer when an event
 // names an active sprint it has not seen yet, and corrected by the consumer when it reads a sprint or a
 // board fresh (a sprint that closed, a board whose estimation field changed).
 export const loadConfig = () => kvs.get(CONFIG_KEY);
 
+// estimateFields: every estimation field a board of the app's sprints has used, carried across the scheduled run's
+// fresh discovery (sync.js estimateFieldIds reads it: a change keeps the field its board used then, contract §1).
+export function withEstimateFields(next, previous) {
+  const used = (cfg) => [...(cfg?.estimateFields ?? []), ...Object.values(cfg?.sprints ?? {}).map((s) => s.estimateFieldId)];
+  next.estimateFields = [...new Set([...used(previous), ...used(next)].filter(Boolean))].sort();
+  return next;
+}
+
 export async function saveConfig(next, previous) {
+  withEstimateFields(next, previous);
   if (previous && JSON.stringify(previous) === JSON.stringify(next)) return false;
   await kvs.set(CONFIG_KEY, next);
   return true;
@@ -91,8 +100,8 @@ export async function discoverConfig(work) {
 // The sprints one event touches, as they are now: a sprint the issue's own Sprint field carries (state,
 // dates and board come with the issue) or, for one it left, a fresh read of the sprint. Returns the sprint
 // with `completeMs` (null while active), or null for a sprint that never started or does not exist. cfg
-// follows what was read: closed sprints leave cfg.sprints (and are listed in cfg.closed until the next
-// scheduled run settles them), active ones enter it. readBoard(boardId) reads a board's estimation field
+// follows what was read: closed sprints leave cfg.sprints (and are listed in cfg.closed / cfg.closedSprints until
+// the next scheduled run settles them), active ones enter it. readBoard(boardId) reads a board's estimation field
 // fresh, once per invocation, so a change recorded after the board switched fields uses the new one.
 export function sprintReader(cfg, work) {
   const sprints = new Map();
@@ -129,9 +138,11 @@ export function sprintReader(cfg, work) {
       }
     }
     if ((!entry || entry.completeMs !== null) && cfg.sprints[sprintId]) {
-      // Remembered until the next scheduled run, which recomputes the closed sprint's issues' statuses.
+      // Remembered until the next scheduled run, which recomputes the closed sprint's issues' statuses and heals the
+      // sprint as at its close (cfg.closedSprints: the sprint as read here, with the field its board used then).
       delete cfg.sprints[sprintId];
       cfg.closed = [...new Set([...(cfg.closed ?? []), sprintId])];
+      if (entry) cfg.closedSprints = { ...(cfg.closedSprints ?? {}), [sprintId]: { ...entry } };
     }
     sprints.set(sprintId, entry);
     return entry;

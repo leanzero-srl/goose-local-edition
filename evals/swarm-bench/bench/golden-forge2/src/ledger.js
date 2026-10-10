@@ -107,13 +107,14 @@ async function createRow(key, value) {
 
 // Exactly one row per change, whatever the delivery history: the first writer wins and keeps its
 // `source`. A change v1 already recorded keeps v1's time, author and source (the event path can reach it
-// before the migration does). `known` skips the v2 read when the caller has listed the sprint's rows.
+// before the migration does). `known` skips the v2 read when the caller has listed the sprint's rows. A row written
+// after a deployment reached its issue carries that deployment too (contract §14).
 export async function recordChange(row, known = false) {
   const key = changeKey(row.changeId, row.sprintId);
   if (!known && (await kvs.entity(LEDGER).get(key))) return false;
   const v1 = await kvs.entity(V1_CHANGES).get(key);
   const value = v1 ? { ...row, at: v1.at, kind: v1.kind, authorId: v1.authorId ?? '', authorName: v1.authorName ?? '', source: v1.source ?? row.source } : row;
-  return createRow(key, value);
+  return createRow(key, { ...value, deployedEnvs: await deployedEnvsOf(row.issueId) });
 }
 
 export const copyV1 = (v1, extra) => createRow(changeKey(v1.changeId, v1.sprintId), fromV1(v1, extra));
@@ -159,10 +160,25 @@ export async function markIssueDeleted(issueId) {
   return [...sprintIds];
 }
 
+// The environments a CI deployment can name (contract §14), in the order `deployedEnvs` lists them.
+export const DEPLOY_ENVIRONMENTS = ['production', 'staging'];
+const deployedKey = (issueId, environment) => `deployed:${issueId}:${environment}`;
+
+// The environments deployed for one issue so far: key reads, so a row written right after a deployment sees it.
+async function deployedEnvsOf(issueId) {
+  const envs = [];
+  for (const environment of DEPLOY_ENVIRONMENTS) if (await kvs.get(deployedKey(issueId, environment))) envs.push(environment);
+  return envs.join(',');
+}
+
 // A CI deployment reached these issues: every ledger row of each names the environment, rewritten under the key it
-// was read from. Idempotent.
+// was read from. Idempotent. The rows written later carry it too (contract §14): the deployment is first kept per issue
+// under its own key (recordChange reads it), then — once the index has caught up with the rows written just before
+// that — the issue's rows are marked.
 export async function markDeployed(issueIds, environment) {
   const sprintIds = new Set();
+  for (const issueId of issueIds) await kvs.set(deployedKey(issueId, environment), true);
+  await untilQueryable();
   for (const issueId of issueIds) {
     for (const { key, value: row } of await queryEntries(LEDGER, 'by-issue', [String(issueId)])) {
       const envs = new Set(row.deployedEnvs ? row.deployedEnvs.split(',') : []);

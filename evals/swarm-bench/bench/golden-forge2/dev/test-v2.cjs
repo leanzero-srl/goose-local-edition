@@ -7,7 +7,7 @@
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
-const { createSite, oracle, fmtCreep, EST_WEB } = require('./site.cjs');
+const { createSite, oracle, fmtCreep, EST_OPS, EST_WEB } = require('./site.cjs');
 const { createPlatform } = require('./runtime.cjs');
 const { installClock } = require('./clock.cjs');
 
@@ -182,8 +182,27 @@ async function main() {
     const m = platform.kvs.entities.get('sprint-issue')?.get(`12:${left12.id}`);
     return m && JSON.stringify([m.inSprint, m.estimate, m.estimates]);
   };
+  // Two changes made before the close whose deliveries are handed over only after it (the rate limits held them back):
+  // the closed sprint still takes them, and its numbers are as they stood at the close.
+  const joins12 = free[2];
+  const reestimated12 = in12[2];
+  const late12 = [
+    site.update(joins12.key, { sprints: [...joins12.sprints, 12] }),
+    site.update(reestimated12.key, { estimate: (reestimated12.fields[reestimated12.estField] ?? 0) + 2 }),
+  ];
+  const totalsText = (t) => ({ committed: fmtPoints(t.committed), added: fmtPoints(t.added), removed: fmtPoints(t.removed), creep: fmtCreep(t.creep) });
+  const delivered12 = oracle(site)['12'];
+  // Two more whose events never arrive (lost events): only the scheduled run after the close can record them.
+  const lostJoin12 = free[4];
+  const lostJoinId = site.update(lostJoin12.key, { sprints: [...lostJoin12.sprints, 12] }).changelog.id;
+  const lostEstimate12 = in12[3];
+  site.update(lostEstimate12.key, { estimate: (lostEstimate12.fields[lostEstimate12.estField] ?? 0) + 1 });
+  const atClose12 = oracle(site)['12'];
   site.closeSprint(12);
   const frozen12 = member12();
+  for (const ev of late12) await deliver(ev);
+  eq((await ledgerAs(alice.accountId, '12')).text, totalsText(delivered12),
+    `changes made before the close and delivered after it count in the closed sprint's numbers (${joins12.key} joined, ${reestimated12.key} re-estimated)`);
   await deliver(site.update(left12.key, { estimate: (left12.fields[left12.estField] ?? 0) + 1 }));
   ok(frozen12 && member12() === frozen12, `a re-estimate after the close leaves the closed sprint's numbers as at the close (${left12.key})`);
   const rows12 = [...ledger(platform).values()].filter((r) => r.sprintId === '12').length;
@@ -215,6 +234,9 @@ async function main() {
   ledgerMatchesOracle(site, platform, 'after the world changes');
   statusesMatchOracle(site, 'after the world changes');
   await widgetMatchesOracle(site, platform, alice.accountId, 'after the world changes');
+  ok([...ledger(platform).values()].some((r) => r.changeId === lostJoinId && r.sprintId === '12' && r.source === 'reconcile'), `the scheduled run after the close records a change made before it whose event never arrived (${lostJoin12.key})`);
+  eq((await ledgerAs(alice.accountId, '12')).text, totalsText(atClose12),
+    `the closed sprint's numbers are as at the close: the lost join and re-estimate (${lostEstimate12.key}) count, the changes after the close do not`);
 
   // ===== R5: the admin resolvers ===================================================================
   for (const key of ['getAdmin', 'saveSettings', 'rotateSecret']) {
@@ -269,6 +291,11 @@ async function main() {
   const ts2 = now();
   const res2 = await ci({ 'X-Lz-Timestamp': [ts2], 'X-LZ-SIGNATURE': [sign(secret, ts2, b2)] }, b2);
   ok(res2.statusCode === 202 && [...ledger(platform).values()].filter((r) => r.issueId === target.issueId).every((r) => r.deployedEnvs === 'production,staging'), 'case-varied header names are accepted');
+  // contract §14: "rows written later for that issue carry it too"
+  const deployed = site.issueById.get(target.issueId);
+  const laterEv = site.update(deployed.key, { sprints: deployed.sprints.includes(11) ? deployed.sprints.filter((s) => s !== 11) : [...deployed.sprints, 11] });
+  await deliver(laterEv);
+  eq([...ledger(platform).values()].find((r) => r.changeId === laterEv.changelog.id && r.sprintId === '11')?.deployedEnvs, 'production,staging', `a row written after the deployments carries them too (${deployed.key})`);
 
   // ===== R8: Forge LLM ==============================================================================
   const explain = (user) => platform.resolver('jira:sprintAction', 'scope-sprint-ledger', 'explain', {}, { aaid: user.accountId, extension: sprintExt('11') });
@@ -347,6 +374,23 @@ async function main() {
   ledgerMatchesOracle(site, platform, 'at the end');
   statusesMatchOracle(site, 'at the end');
   for (const [h, pts] of backgroundPerHour(site)) if (h >= hour) ok(pts <= (h === hour ? 240 - 230 : 1680), `hour ${h}: background ${pts} points within its share`);
+
+  // ===== a field no active board uses any more =====================================================
+  // Board 4 left EST_OPS in (a) and sprint 12 closed in (c); once board 1 switches too, no active sprint's board estimates
+  // with EST_OPS, yet sprint 31's changes recorded before (a) show their issue's current EST_OPS value (contract §1): an
+  // EST_OPS update still reaches the queue and moves them.
+  site.setBoardField(1, EST_WEB);
+  clock.advance(HOUR);
+  await run('reconcile', {}, 'scope-reconcile');
+  await platform.drain();
+  const opsRow = [...ledger(platform).values()].find((r) => r.sprintId === '31' && r.estimateField === EST_OPS && !r.deleted);
+  const opsIssue = site.issueById.get(opsRow.issueId);
+  const opsValue = (opsIssue.fields[EST_OPS] ?? 0) + 3;
+  await deliver(site.update(opsIssue.key, { estimate: opsValue }));
+  const opsShown = (await ledgerAs(alice.accountId, '31')).changes.find((c) => c.changeId === opsRow.changeId);
+  ok(opsShown?.points === opsValue, `a change recorded under a field no active board uses any more shows that field's current value (${opsIssue.key}: ${opsShown?.points}, want ${opsValue})`);
+  statusesMatchOracle(site, 'after a field left every active board');
+  await widgetMatchesOracle(site, platform, alice.accountId, 'after a field left every active board');
 
   console.log(`\n${failures ? `${failures} FAILED` : 'ALL PASSED'}  (Jira requests ${site.requests.length}, KVS ops ${platform.kvs.ops.length})`);
   process.exit(failures ? 1 : 0);
