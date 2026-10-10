@@ -9,9 +9,9 @@
     "bench/bench_rescore.py": "1d1c5432d39d8a49bee16ae434e4a92604960e0295b3be64c1eacd65661e07a0",
     "bench/browser-self-test.mjs": "df8feec1c3f7d18d14c26dc34dd53f7b74dcf42a5c54c29a3f315ae23be0b095",
     "bench/fixtures.py": "212af979ec537531516273f2f68691f028189bbec52c92495b616f3b3c7b7db1",
-    "bench/forge2-thresholds.json": "be15094a2bc8dcc48294bf816673fdf7e825670dcab05f8ed856d78458ddbee5",
+    "bench/forge2-thresholds.json": "e975623a4d7a9cb2077d3e789fce7eac6335948214b4792177d7339640d2d242",
     "bench/forge2_checks.py": "daf4e10cfa8533d32c001098e141d9cc5a8fd00a93e1a095ffb6f2d5203de69c",
-    "bench/forge2_controls.py": "d73d004ca3e15d14ade8de54d2a5cd01c998e153a29cc480206fbdad4dba8a16",
+    "bench/forge2_controls.py": "b2b24a82995f8b2447a2acd59140e44b16deceac9f0be9143106b09cf31a33ff",
     "bench/forge2_kit.py": "68597fe2369d0732d0c3d6792495f00b4882f1636d4db80935a0085169793343",
     "bench/forge2_oracle.py": "82c39f143c2452b1e6a5161f28eba5d40f504afffa8c2bbdeead7e18e7d82f0e",
     "bench/forge2_probe.mjs": "fe054594bc4b55c72c87553704aa874e5ac849ed4ce61a03100277547e01cb27",
@@ -23,7 +23,7 @@
     "bench/probes/vendor_trace.py": "11a25b8b41dc612de2c551a279b6ff24cf3d2974e82807c24e0256ed404bb159",
     "bench/run_build.py": "3532ae0603e3b7e210b3a1faaba76157711d00fb52895f095f522e1bf6cd05f4",
     "bench/score_build.py": "3c1fe96b5d43be3cb58cf8e6faca38ef0012062e1ce0dbca03c02c8d1cb59500",
-    "bench/score_forge2.py": "4c58fc7a1bc286c2b39bcbd1d0dfba5201837341a4fbbfd76b7548a8e16c4469",
+    "bench/score_forge2.py": "48d471a6d9a68ab1511a7f77fa16284385ddb63b9798e364ed476ef50db35bf7",
     "bench/vendor_service.py": "a0d255dfa5dc37af3d6039902f0c883d66fb218623e09a97df521754bb28dd3f",
     "forge2/kit/FOLLOWUPS.md": "d52f60d8b53330ca358a552a667dd07cccc6aff1028a82aca09be3ebe7c94dd2",
     "forge2/kit/README.md": "6f987c54524768c6479feeb6140214bdf5550a3de82659a0276ed07d4ecedfad",
@@ -83,8 +83,8 @@
     "forge2/public/FORGE2-CONTRACT.md": "275c328bf26709834e2c071fa4f44262f2e84273e0e01bb55d54511b1840c322",
     "forge2/public/RATE-MODEL.json": "8b82b4c01564820b068ac627238d4f7e551d7a4ab7ca9fa204ef87bafb3dc338",
     "forge2/public/STARTER.md": "43fb3ec63e3e2463c7c59837b49d0b5df5689201aae4369afa849ee122b96351",
-    "forge2/public/selftest_public.py": "0637f01bd8624084e1d0d69d46c08d9385446c68c3ad4032c0ae2a911e1ce349",
-    "forge2/public/spec-build-forge2.md": "ca728866269b50d31724277a071d24286e2eef12f30a825a06cb95631e61286e",
+    "forge2/public/selftest_public.py": "95c592971cdf2a1ddd8b1ef02ee7564307c3dcae88e83dfc6be117c7b22f5bf7",
+    "forge2/public/spec-build-forge2.md": "91493fa63d721f30189f5ed380eb4f8f700296e555c1b906ada76a0162017643",
     "forge2/site/ci.cjs": "f4da04b69961dd229fd3286ac84f5e2ea783042c0b00dafd634d99a3035a04b9",
     "forge2/site/fixtures.cjs": "9a83ff0923f1eb77669a994b91e5c1ffcf37892bf11bfb41a740a53633ad407e",
     "forge2/site/jql.cjs": "992a2e4c11d15e56ab391c4f202e4ddaa8af469630929ada62e9f3b035a51a98",
@@ -143,5 +143,5 @@
     "forge2/starter/static/widget/src/index.jsx": "05e6bff92998b3598b69682c69a47a3f28ea5f053b645890a5da5e17007d1f89",
     "forge2/starter/static/widget/src/widget.css": "6c13a7cd365e348c60d658b8f3eb75b45173c1cb6493db3bb75df06032f39ddf"
   },
-  "sourceCommit": "71cf9d6b4"
+  "sourceCommit": "df9387c0e"
 }
