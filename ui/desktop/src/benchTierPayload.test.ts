@@ -61,8 +61,9 @@ describe('every benchmark tier carries its OWN spec and probe', () => {
     expect(BENCH_RUN_FLAG['sb-5.3']).toBeNull();
     const named = flags.filter((f): f is string => f !== null);
     expect(new Set(named).size).toBe(named.length);
-    for (const flag of named) expect(flag).toMatch(/^--(?:sb\d+|forge)$/);
+    for (const flag of named) expect(flag).toMatch(/^--(?:sb\d+|forge\d*)$/);
     expect(BENCH_RUN_FLAG['forge-1.0']).toBe('--forge');
+    expect(BENCH_RUN_FLAG['forge-2.0']).toBe('--forge2');
     expect(BENCH_RUN_FLAG['sb-7.1']).toBe('--sb71');
   });
 
@@ -99,7 +100,17 @@ const stable = {
   baselines: [],
 };
 it('refuses legacy, experimental and missing tier overrides at the launch boundary', () => {
-  for (const tier of ['sb-7', 'sb-7.1', 'sb-8', 'sb-7.1-rc', 'sb-7.2-rc', '', undefined])
+  for (const tier of [
+    'sb-7',
+    'sb-7.1',
+    'sb-8',
+    'sb-7.1-rc',
+    'sb-7.2-rc',
+    'forge-1.0',
+    'forge-2.0-rc',
+    '',
+    undefined,
+  ])
     expect(() => benchmarkLaunchTier({ tier } as never)).toThrow('Only the latest stable');
 });
 it('allows only one fresh available current stable release matching the bundled scorer', () => {
@@ -132,54 +143,82 @@ it('allows only one fresh available current stable release matching the bundled 
 import { BENCH_FAMILY_DEFAULT } from './benchTierPayload';
 describe('the Forge family has its own bundled era and its own launch gate (forge/INTEGRATION.md)', () => {
   // The site's corrected shape (INTEGRATION.md 2026-10-03): `familyCurrent` per family, the legacy
-  // `current` only on the SB entry so shipped apps still find exactly one sb- current.
+  // `current` only on the SB entry so shipped apps still find exactly one sb- current. The app bundles
+  // forge-2.0; forge-1.0 is history (frozen on the site since 2026-10-09).
   const forge = {
-    scorerVersion: 'forge-1.0',
-    title: 'Forge 1.0 — Scope Ledger',
+    scorerVersion: 'forge-2.0',
+    title: 'Forge 2.0 — Scope Ledger 2',
     family: 'forge',
     familyCurrent: true,
     current: false,
     frozen: false,
     baselines: [],
   };
-  it('launches forge-1.0 through run_build --forge with its own spec and probe', () => {
-    expect(BENCH_FAMILY_DEFAULT).toEqual({ sb: 'sb-7.2', forge: 'forge-1.0' });
-    expect(defaultBenchmarkTier('forge')).toBe('forge-1.0');
-    expect(defaultBenchmarkScorer('forge')).toBe('forge-1.0');
+  const forge10 = {
+    ...forge,
+    scorerVersion: 'forge-1.0',
+    title: 'Forge 1.0 — Scope Ledger',
+    familyCurrent: false,
+    frozen: true,
+  };
+  it('launches forge-2.0 through run_build --forge2 with its own spec and probe', () => {
+    expect(BENCH_FAMILY_DEFAULT).toEqual({ sb: 'sb-7.2', forge: 'forge-2.0' });
+    expect(defaultBenchmarkTier('forge')).toBe('forge-2.0');
+    expect(defaultBenchmarkScorer('forge')).toBe('forge-2.0');
+    expect(BENCH_SPEC_FILE['forge-2.0']).toBe('forge2/public/spec-build-forge2.md');
+    expect(BENCH_RENDER_PROBE['forge-2.0']).toBe('forge2_probe.mjs');
+    expect(BENCH_RUN_FLAG['forge-2.0']).toBe('--forge2');
+    expect(benchmarkLaunchTier({ tier: 'forge-2.0' })).toBe('forge-2.0');
+    // forge-1.0 keeps its own payload names for its history, and is refused as a launch.
     expect(BENCH_SPEC_FILE['forge-1.0']).toBe('forge/public/spec-build-forge.md');
     expect(BENCH_RENDER_PROBE['forge-1.0']).toBe('forge_probe.mjs');
-    expect(benchmarkLaunchTier({ tier: 'forge-1.0' })).toBe('forge-1.0');
+    expect(() => benchmarkLaunchTier({ tier: 'forge-1.0' })).toThrow('Only the latest stable');
   });
   it('checks the current era OF THE SELECTED FAMILY against that family’s bundled default', () => {
     // Two families, one current each: both launch, neither disturbs the other.
     expect(benchmarkLaunchProblem([stable, forge])).toBeNull();
     expect(benchmarkLaunchProblem([stable, forge], false, undefined, 'forge')).toBeNull();
+    // The flipped catalog: forge-2.0 current, forge-1.0 frozen history beside it.
+    expect(benchmarkLaunchProblem([stable, forge, forge10], false, undefined, 'forge')).toBeNull();
     // A site that has not opened Forge yet: SB unchanged, Forge refused in words.
     expect(benchmarkLaunchProblem([stable])).toBeNull();
     expect(benchmarkLaunchProblem([stable], false, undefined, 'forge')).toMatch(
       /no current Forge benchmark/
     );
+    // Before the flip: forge-1.0 is still the family's current era but frozen — nothing to run.
+    expect(
+      benchmarkLaunchProblem(
+        [stable, { ...forge10, familyCurrent: true }, { ...forge, familyCurrent: false }],
+        false,
+        undefined,
+        'forge'
+      )
+    ).toMatch(/no single available Forge/);
     // A newer Forge era on the site: update, naming the family's bundle.
     expect(
       benchmarkLaunchProblem(
-        [stable, { ...forge, scorerVersion: 'forge-1.1' }],
+        [stable, { ...forge, scorerVersion: 'forge-2.1' }],
         false,
         undefined,
         'forge'
       )
     ).toBe(
-      'Update Goose to run the latest stable benchmark (Forge 1.1). This app bundles Forge 1.0.'
+      'Update Goose to run the latest stable benchmark (Forge 2.1). This app bundles Forge 2.0.'
     );
     // An rc identity is never a runnable era; a frozen one is closed; two currents are ambiguous.
     for (const rows of [
-      [stable, { ...forge, scorerVersion: 'forge-1.0-rc' }],
+      [stable, { ...forge, scorerVersion: 'forge-2.0-rc' }],
       [stable, { ...forge, frozen: true }],
-      [stable, forge, { ...forge, scorerVersion: 'forge-1.1' }],
+      [stable, forge, { ...forge, scorerVersion: 'forge-2.1' }],
     ])
       expect(benchmarkLaunchProblem(rows, false, undefined, 'forge')).toMatch(
         /no single available Forge/
       );
     expect(benchmarkLaunchProblem([stable, forge], true, undefined, 'forge')).toMatch(/Connect/);
+    // A forge-1.0 session cannot be re-scored once forge-2.0 is the bundled era.
+    expect(benchmarkLaunchProblem([stable, forge, forge10], false, 'forge-1.0', 'forge')).toMatch(
+      /history only/
+    );
   });
   it('keeps the SB rule when the catalog carries no family at all (apps ≤ 3.0.88 shape)', () => {
     const { family: _ignored, ...unlabelled } = forge;
@@ -215,13 +254,19 @@ describe('the Forge family has its own bundled era and its own launch gate (forg
   });
 });
 
-import { BENCH_FAMILY_NAME } from './benchTierPayload';
-import { eraDisplayName, eraLabel } from './components/benchmark/baselines';
+import { BENCH_FAMILY_NAME, FORGE_BENCHMARK_TIER, FORGE_ERA_COPY } from './benchTierPayload';
+import { FORGE_ERAS, eraDisplayName, eraLabel } from './components/benchmark/baselines';
 it('names eras for people — Gauntlet and Forge — while every id stays sb-* / forge-*', () => {
   expect(BENCH_FAMILY_NAME).toEqual({
     sb: 'Gauntlet 7.2 · payments',
-    forge: 'Forge 1.0 · Scope Ledger',
+    forge: 'Forge 2.0 · Scope Ledger 2',
   });
+  // Each Forge era names its own product; the bundled era's is the one copy shows.
+  expect(FORGE_ERA_COPY['forge-1.0'].product).toBe('Scope Ledger');
+  expect(FORGE_ERA_COPY[FORGE_BENCHMARK_TIER].product).toBe('Scope Ledger 2');
+  for (const era of FORGE_ERAS) expect(FORGE_ERA_COPY[era].task).toMatch(/^it .+\.$/);
+  expect(eraDisplayName('forge-2.0-rc')).toBe('Forge 2.0 rc');
+  expect(eraLabel('forge-2.0', 'Forge 2.0 — Scope Ledger 2')).toBe('Forge 2.0 · Scope Ledger 2');
   expect(eraDisplayName('sb-7.2')).toBe('Gauntlet 7.2');
   expect(eraDisplayName('sb-7.0-rc')).toBe('Gauntlet 7.0 rc');
   expect(eraDisplayName('forge-1.0-rc')).toBe('Forge 1.0 rc');

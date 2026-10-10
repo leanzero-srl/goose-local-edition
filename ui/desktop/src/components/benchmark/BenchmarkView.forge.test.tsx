@@ -4,15 +4,19 @@ import { IntlTestWrapper } from '../../i18n/test-utils';
 import { allClasses, assertStudioClean } from '../lz/assertStudioClean';
 import { missingUtilities } from '../lz/compileStudioCss';
 import { projectBenchScore } from '../../benchScoreProjection';
+import { FORGE_ERA_TIER_ORDER } from './baselines';
 import forgeVerdict from './forge-alt.fixture.json';
+import forge2Verdict from './forge2-pilot.fixture.json';
 
 /**
- * THE FORGE FAMILY ON THE BENCHMARK VIEW. The fixture is a REAL score_forge.py verdict (the alt golden
- * app, seed 0123456789abcdef, 2026-10-02): forge-1.0-rc, 0.799 — capped by the "current platform,
- * complete surfaces" band on k_widget_edit_bridge. The switch scopes the whole view to Forge: its era
- * picker, a single-model run form with the kit's readiness and the tier's run policy, its sessions, and a
- * run card that reads the verdict's own tier letters, admission band and screenshots — and refuses to
- * publish what the scorer itself marks not board-grade.
+ * THE FORGE FAMILY ON THE BENCHMARK VIEW. The app bundles forge-2.0; forge-1.0 is a frozen era whose
+ * sessions stay readable. Two REAL verdicts: score_forge2.py's for the GPT-6.1 Sol pilot (2026-10-10, three
+ * scoring seeds): forge-2.0-rc, 0.9618, no band, no critical — and score_forge.py's for the forge-1.0 alt
+ * golden app (seed 0123456789abcdef, 2026-10-02): 0.799, capped by the "current platform, complete
+ * surfaces" band on k_widget_edit_bridge. The switch scopes the whole view to Forge: its era picker, a
+ * single-model run form with the kit's readiness and the bundled tier's run policy, its sessions, and a run
+ * card that reads the verdict's own tier letters, admission band and screenshots — and refuses to publish
+ * what the scorer itself marks not board-grade, or what the site has frozen.
  */
 
 vi.mock('../swarm/SwarmRunPanel', async () => {
@@ -51,37 +55,70 @@ import BenchmarkView from './BenchmarkView';
 type ElectronMock = Record<string, unknown>;
 const electron = () => (window as unknown as { electron: ElectronMock }).electron;
 
-const projected = projectBenchScore(forgeVerdict as never);
+const projected = projectBenchScore(forge2Verdict as never);
 const MINE = {
-  label: 'openai/gpt-6-luna · single agent',
-  score: forgeVerdict.score,
+  label: 'openai/gpt-6.1-sol · single agent',
+  score: forge2Verdict.score,
   tiers: projected.tiers,
   nodes: 1,
   provider: 'openrouter',
   mine: true,
   scorerVersion: projected.scorerVersion,
   runMeta: {
-    startedAt: '2026-10-02T20:00:00.000Z',
-    finishedAt: '2026-10-02T21:10:00.000Z',
+    startedAt: '2026-10-10T00:57:00.000Z',
+    finishedAt: '2026-10-10T01:54:00.000Z',
+    engineEvents: 0,
+    repairRounds: 0,
+  },
+  workdir: '/tmp/forge2-run',
+  modelId: 'openai/gpt-6.1-sol',
+  runId: 'cloud-forge2-1',
+  verdict: projected.verdict,
+  budget: { max_calls: 300, calls_used: 176, stopped_by: 'model_finished' },
+};
+const SESSION = {
+  runId: 'cloud-forge2-1',
+  scorerVersion: 'forge-2.0-rc',
+  startedAt: '2026-10-10T00:57:00.000Z',
+  endedAt: '2026-10-10T01:54:00.000Z',
+  outcome: 'finished',
+  score: forge2Verdict.score,
+  tiers: projected.tiers,
+  nodes: 1,
+  publishable: true,
+};
+// The forge-1.0 history: the alt golden app's real verdict under the frozen era's identity.
+const projected10 = projectBenchScore(forgeVerdict as never);
+const SESSION_10 = {
+  runId: 'cloud-forge-1',
+  scorerVersion: 'forge-1.0',
+  startedAt: '2026-10-02T20:00:00.000Z',
+  endedAt: '2026-10-02T21:10:00.000Z',
+  outcome: 'finished',
+  score: forgeVerdict.score,
+  tiers: projected10.tiers,
+  nodes: 1,
+  publishable: true,
+};
+const ROW_10 = {
+  label: 'openai/gpt-6-luna · single agent',
+  score: forgeVerdict.score,
+  tiers: projected10.tiers,
+  nodes: 1,
+  provider: 'openrouter',
+  mine: true,
+  scorerVersion: 'forge-1.0',
+  runMeta: {
+    startedAt: SESSION_10.startedAt,
+    finishedAt: SESSION_10.endedAt,
     engineEvents: 0,
     repairRounds: 0,
   },
   workdir: '/tmp/forge-run',
   modelId: 'openai/gpt-6-luna',
   runId: 'cloud-forge-1',
-  verdict: projected.verdict,
+  verdict: projected10.verdict,
   budget: { max_calls: 150, calls_used: 150, stopped_by: 'call_budget' },
-};
-const SESSION = {
-  runId: 'cloud-forge-1',
-  scorerVersion: 'forge-1.0-rc',
-  startedAt: '2026-10-02T20:00:00.000Z',
-  endedAt: '2026-10-02T21:10:00.000Z',
-  outcome: 'finished',
-  score: forgeVerdict.score,
-  tiers: projected.tiers,
-  nodes: 1,
-  publishable: true,
 };
 const SB_SESSION = {
   runId: 'sb-run',
@@ -103,19 +140,28 @@ const SB_CURRENT = {
   baselines: [],
 };
 const FORGE_CURRENT = {
-  scorerVersion: 'forge-1.0',
-  title: 'Forge 1.0 — Scope Ledger',
+  scorerVersion: 'forge-2.0',
+  title: 'Forge 2.0 — Scope Ledger 2',
   family: 'forge',
   familyCurrent: true,
   current: false,
   frozen: false,
+  baselines: [],
+};
+const FORGE10_FROZEN = {
+  scorerVersion: 'forge-1.0',
+  title: 'Forge 1.0 — Scope Ledger',
+  family: 'forge',
+  familyCurrent: false,
+  current: false,
+  frozen: true,
   baselines: [{ label: 'GPT-6 Luna', score: 0.31, model: 'openai/gpt-6-luna' }],
 };
 const KIT_READY = {
   state: 'ready',
   missing: [],
-  kitLockSha256: '0a0b8c760fb127e629cb57d4db2c2437308ad963ceb787a5bf749c28574aea58',
-  callBudget: 150,
+  kitLockSha256: '663bf851ac7b8fadc8bd1bd385d3439f90579279e9e61f3751e895eb41c03640',
+  callBudget: 300,
   reasoningEffort: 'medium',
 };
 const SHOTS = [
@@ -132,15 +178,21 @@ function mockElectron(
   e.benchmarkForgeKitPrepare = vi.fn(async () => KIT_READY);
   e.benchmarkStatus = vi.fn(async () => ({ running: false }));
   e.benchmarkRead = vi.fn(async () => ('mine' in opts ? opts.mine : MINE));
+  // Each finished run's own stored row (main's per-run store): the forge-1.0 history included.
+  e.benchmarkRunResult = vi.fn(async (key: string) =>
+    key === SESSION_10.runId ? ROW_10 : key === SESSION.runId ? MINE : null
+  );
   e.benchmarkShots = vi.fn(async () => SHOTS);
   e.readSwarmRun = vi.fn(async () => null);
   e.fleetStatus = vi.fn(async () => ({}));
   e.benchmarkCatalog = vi.fn(async () => ({
     ok: true,
     stale: false,
-    benchmarks: opts.benchmarks ?? [SB_CURRENT, FORGE_CURRENT],
+    benchmarks: opts.benchmarks ?? [SB_CURRENT, FORGE_CURRENT, FORGE10_FROZEN],
   }));
-  e.benchmarkSessions = vi.fn(async () => ({ sessions: opts.sessions ?? [SESSION, SB_SESSION] }));
+  e.benchmarkSessions = vi.fn(async () => ({
+    sessions: opts.sessions ?? [SESSION, SESSION_10, SB_SESSION],
+  }));
   e.benchmarkMedia = vi.fn(async () => ({ videos: [] }));
 }
 
@@ -172,63 +224,100 @@ describe('Benchmark view — the Gauntlet | Forge switch', () => {
       'false'
     );
     expect(screen.getByTestId('family-intro').textContent).toMatch(
-      /^Forge 1\.0 · Scope Ledger runs one model in goose/
+      /^Forge 2\.0 · Scope Ledger 2 runs one model in goose: it ships v2 of a working Atlassian Forge app/
     );
     expect(await screen.findByTestId('forge-kit-ready')).toHaveTextContent('Forge kit ready');
+    expect(screen.getByText('forge-2.0 runtime')).toBeInTheDocument();
     expect(screen.getByTestId('forge-run-policy')).toHaveTextContent(
-      'One model · 150-call budget · reasoning effort medium'
+      'One model · 300-call budget · reasoning effort medium'
     );
     // No Swarm entrant for Forge; the single-model provider, model and spend limit are the form.
     expect(screen.queryByRole('button', { name: 'Swarm' })).toBeNull();
     expect(screen.getByRole('textbox', { name: 'Model ID' })).toBeInTheDocument();
     expect(screen.getByLabelText('Stop a run at (US dollars, OpenRouter)')).toBeInTheDocument();
-    // The era picker lists only Forge's eras — Gauntlet's are another family.
+    // The era picker lists only Forge's eras — Gauntlet's are another family — the bundled one
+    // runnable, forge-1.0 kept as frozen history.
     const chooser = screen.getByRole('combobox', { name: 'Benchmark' });
-    await waitFor(() => expect(chooser.textContent).toContain('Forge 1.0 · Scope Ledger'));
+    await waitFor(() => expect(chooser.textContent).toContain('Forge 2.0 · Scope Ledger 2'));
     fireEvent.click(chooser);
     expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual([
-      'Forge 1.0 · Scope Ledger',
-      'Forge 1.0 rc (history)',
+      'Forge 2.0 · Scope Ledger 2',
+      'Forge 2.0 rc (history)',
+      'Forge 1.0 · Scope Ledger (frozen)',
     ]);
     fireEvent.keyDown(chooser, { key: 'Escape' });
     assertStudioClean(container);
   });
 
-  it('renders a forge verdict: tier letters L…E, the band that capped it, screenshots, and no publish', async () => {
+  it('renders a forge-2.0 verdict: the v1 tiers and R1–R9, no band, screenshots, and no publish', async () => {
     mockElectron();
     mount();
-    expect(await screen.findByRole('heading', { name: 'Forge 1.0 rc' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Forge 2.0 rc' })).toBeInTheDocument();
     // The rc of the current era is that benchmark before its freeze — never "an earlier benchmark".
     expect(screen.getByText('uncalibrated')).toBeInTheDocument();
     expect(screen.getByTestId('era-note').textContent).toMatch(
-      /Scored by Forge 1\.0 rc, the uncalibrated scorer of Forge 1\.0 · Scope Ledger/
+      /Scored by Forge 2\.0 rc, the uncalibrated scorer of Forge 2\.0 · Scope Ledger 2/
     );
-    for (const tier of ['L', 'K', 'T', 'R', 'S', 'B', 'U', 'V', 'A', 'E'])
+    // Every one of the era's nineteen letters, each named, with the weight THIS verdict recorded.
+    for (const tier of FORGE_ERA_TIER_ORDER['forge-2.0'])
       expect(screen.getByTestId(`tier-cell-${tier}`)).toBeInTheDocument();
-    expect(screen.getByTestId('tier-cell-K')).toHaveTextContent('Platform currency');
-    expect(screen.getByTestId('tier-cell-K')).toHaveTextContent('K 83%');
-    // The band the verdict recorded, with the check that held it — read, not restated.
-    const band = await screen.findByTestId('forge-failed-band');
-    expect(band).toHaveTextContent('Capped at 0.799');
-    expect(band).toHaveTextContent('current platform, complete surfaces');
-    expect(within(band).getByText('k_widget_edit_bridge')).toBeInTheDocument();
+    expect(screen.getByTestId('tier-cell-R5')).toHaveTextContent('Admin panel');
+    expect(screen.getByTestId('tier-cell-R5')).toHaveTextContent('R5 93%');
+    expect(screen.getByTestId('tier-cell-R5')).toHaveTextContent('weight 10%');
+    expect(screen.getByTestId('tier-cell-R')).toHaveTextContent('Reconcile');
+    expect(screen.getByTestId('tier-cell-R')).toHaveTextContent('R 75%');
+    // No band capped it — said, not left blank.
+    expect(await screen.findByText('Every admission band passed — no ceiling')).toBeInTheDocument();
+    expect(screen.queryByTestId('forge-failed-band')).toBeNull();
     expect(screen.getByTestId('forge-verdict-facts')).toHaveTextContent(
-      'forge-1.0-rc is uncalibrated (rc thresholds)'
+      'forge-2.0-rc is uncalibrated (rc thresholds)'
     );
     // Screenshots from forge-shots/, under the forge captions.
     expect(screen.getByText('Dashboard widget · light')).toBeInTheDocument();
     expect(screen.getByText('Sprint action · dark')).toBeInTheDocument();
-    // The call budget that ended it.
-    expect(screen.getByText('Stopped at the 150-call budget')).toBeInTheDocument();
-    // Publishing refuses what the scorer marked not board-grade, in words, before any POST.
+    // How the run ended against the tier's own budget.
+    expect(
+      screen.getByText('Finished on its own after 176 of 300 model calls')
+    ).toBeInTheDocument();
+    // Publishing refuses what the scorer marked not board-grade, in its era's words, before any POST.
     expect(screen.getByTestId('forge-publish-refusal')).toHaveTextContent(
-      'Scored by forge-1.0-rc: the Forge thresholds are not frozen yet'
+      'Scored by forge-2.0-rc: the Forge thresholds are not frozen yet, so the result is not board-grade. Forge results publish once the forge-2.0 freeze pins them.'
     );
     expect(screen.getByRole('button', { name: 'Publish' })).toBeDisabled();
     // Every class the Forge card, the switch and the kit panel emit compiles (a dead utility is
     // invisible in the running app). lucide's identifiers are names, not utilities.
     const classes = allClasses(document.body).filter((c) => !c.startsWith('lucide'));
     expect(await missingUtilities(classes)).toEqual([]);
+  });
+
+  it('keeps a forge-1.0 run readable as frozen history: its own ten tiers and band, publish closed', async () => {
+    window.location.hash = '#/benchmark?era=forge-1.0&run=cloud-forge-1';
+    mockElectron();
+    mount();
+    expect(
+      await screen.findByRole('heading', { name: 'Forge 1.0 · Scope Ledger' })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Frozen on the site — sessions stay viewable; submissions are closed.')
+    ).toBeInTheDocument();
+    expect(screen.getByTestId('era-note').textContent).toMatch(
+      /This run is from an earlier benchmark \(Forge 1\.0\)\. The current benchmark, Forge 2\.0 · Scope Ledger 2/
+    );
+    // Its own era's letters under their own names — no 2.0 family appears on a 1.0 run.
+    for (const tier of FORGE_ERA_TIER_ORDER['forge-1.0'])
+      expect(screen.getByTestId(`tier-cell-${tier}`)).toBeInTheDocument();
+    expect(screen.getByTestId('tier-cell-K')).toHaveTextContent('Platform currency');
+    expect(screen.getByTestId('tier-cell-K')).toHaveTextContent('K 83%');
+    expect(screen.queryByTestId('tier-cell-R1')).toBeNull();
+    // The band its own verdict recorded, with the check that held it — read, not restated.
+    const band = await screen.findByTestId('forge-failed-band');
+    expect(band).toHaveTextContent('Capped at 0.799');
+    expect(band).toHaveTextContent('current platform, complete surfaces');
+    expect(within(band).getByText('k_widget_edit_bridge')).toBeInTheDocument();
+    expect(screen.getByText('Stopped at the 150-call budget')).toBeInTheDocument();
+    // The site froze the era: publishing is closed, said in words.
+    expect(screen.getByText('Benchmark frozen — submissions closed.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Publish' })).toBeDisabled();
   });
 
   it('switches families through the URL, by click and by arrow key, and Gauntlet reads as before', async () => {
@@ -274,18 +363,18 @@ describe('Benchmark view — the Gauntlet | Forge switch', () => {
   });
 
   it('offers Retry scoring for a Forge build whose scoring did not finish — the saved build, no model run', async () => {
-    window.location.hash = '#/benchmark?era=forge-1.0&run=cloud-forge-retry';
+    window.location.hash = '#/benchmark?era=forge-2.0&run=cloud-forge-retry';
     mockElectron({
       mine: null,
       sessions: [
         {
           runId: 'cloud-forge-retry',
-          scorerVersion: 'forge-1.0',
-          startedAt: '2026-10-03T08:00:00.000Z',
+          scorerVersion: 'forge-2.0',
+          startedAt: '2026-10-10T08:00:00.000Z',
           outcome: 'did_not_finish',
           publishable: false,
           retryScoring: { ready: true },
-          scoringError: 'REFUSED: forge_probe.mjs exited 1 without observations',
+          scoringError: 'REFUSED: forge2_probe.mjs exited 1 without observations',
         },
       ],
     });
@@ -304,7 +393,7 @@ describe('Benchmark view — the Gauntlet | Forge switch', () => {
   });
 
   it('a finished Forge run whose clip could not be verified offers Retry scoring, not a clip-less post', async () => {
-    window.location.hash = '#/benchmark?era=forge-1.0-rc&run=cloud-forge-1';
+    window.location.hash = '#/benchmark?era=forge-2.0-rc&run=cloud-forge2-1';
     mockElectron({ sessions: [{ ...SESSION, retryScoring: { ready: true } }] });
     const retry = vi.fn(() => new Promise(() => {}));
     electron().benchmarkRetryScoring = retry;
@@ -314,10 +403,10 @@ describe('Benchmark view — the Gauntlet | Forge switch', () => {
     const button = within(block).getByRole('button', { name: 'Retry scoring' });
     await waitFor(() => expect(button).toBeEnabled());
     fireEvent.click(button);
-    expect(retry).toHaveBeenCalledWith('cloud-forge-1');
+    expect(retry).toHaveBeenCalledWith('cloud-forge2-1');
   });
 
-  it('launches Forge as one model on forge-1.0, never as a swarm', async () => {
+  it('launches Forge as one model on forge-2.0, never as a swarm', async () => {
     mockElectron({ sessions: [], mine: null });
     const cloud = vi.fn(async () => null);
     const swarm = vi.fn(async () => null);
@@ -343,7 +432,7 @@ describe('Benchmark view — the Gauntlet | Forge switch', () => {
     expect(effortRow.textContent).toContain('Pinned for this run: Forge runs every model');
     fireEvent.click(screen.getByRole('button', { name: 'Run benchmark' }));
     await waitFor(() =>
-      expect(cloud).toHaveBeenCalledWith('openrouter', 'openai/gpt-6-luna', 'forge-1.0', {
+      expect(cloud).toHaveBeenCalledWith('openrouter', 'openai/gpt-6-luna', 'forge-2.0', {
         effort: 'low',
       })
     );

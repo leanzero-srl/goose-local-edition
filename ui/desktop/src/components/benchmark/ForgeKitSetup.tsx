@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { CheckCircle2, Loader2 } from 'lucide-react';
 import type { ForgeKitStatus } from '../../benchForgeKitTypes';
+import { FORGE_BENCHMARK_TIER } from '../../benchTierPayload';
+import { TIER_SCORER } from './baselines';
 import { Button, Panel, TONE_TEXT, TYPE, WEIGHT, cx } from '../lz';
 
 /** The kit parts as a person reads them; an unknown part keeps its own name. */
@@ -14,10 +16,10 @@ const PART_WORDS: Record<string, string> = {
 };
 
 /**
- * Forge's own runtime needs, beside the shared Benchmark tools: the pinned Forge module trees (npm ci from
- * the committed lockfiles) and Atlassian's runtime wrapper, fetched and sha-pinned by the payload's
- * forge_kit.py — never shipped in the app. Readiness is forge_kit.status(), read without the network, and
- * the launch refuses until it says ready. Also states the Forge tier's run policy from the payload.
+ * Forge's own runtime needs, beside the shared Benchmark tools: the bundled era's pinned Forge module
+ * trees (npm ci from the committed lockfiles) and Atlassian's runtime wrapper, fetched and sha-pinned by
+ * the era's kit module in the payload — never shipped in the app. Readiness is its status(), read without
+ * the network, and the launch refuses until it says ready. Also states the Forge tier's run policy.
  */
 export function ForgeKitSetup({
   toolsReady,
@@ -78,7 +80,10 @@ export function ForgeKitSetup({
   const ready = status?.state === 'ready';
   const missing = (status?.missing ?? []).map((part) => PART_WORDS[part] ?? part);
   return (
-    <Panel title="Forge kit" headerRight={<span className={TYPE.meta}>forge-1.0 runtime</span>}>
+    <Panel
+      title="Forge kit"
+      headerRight={<span className={TYPE.meta}>{TIER_SCORER[FORGE_BENCHMARK_TIER]} runtime</span>}
+    >
       <p className={cx('max-w-[75ch]', TYPE.bodyMuted)}>
         Forge apps run on Atlassian&rsquo;s own runtime wrapper and the pinned Forge packages.
         Neither ships in Goose: preparing the kit downloads them once, checks every file against its

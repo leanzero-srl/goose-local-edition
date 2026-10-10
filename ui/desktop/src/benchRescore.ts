@@ -1,5 +1,6 @@
 import type { BenchSessionRow } from './benchSessions';
 import {
+  FORGE_ERAS,
   ISOLATED_PAYMENTS_TIERS,
   TIER_SCORER,
   eraDisplayName,
@@ -7,10 +8,11 @@ import {
 } from './components/benchmark/baselines';
 
 /** Exactly the scorer identities a completed-build receipt can carry — never an rc or a sibling. The
- *  isolated payments tiers and Forge (bench_rescore.py replays score_forge from the receipt's own seed). */
+ *  isolated payments tiers and every Forge era (bench_rescore.py replays the receipt's own era scorer from
+ *  its own seed). Whether THIS app may re-grade an era is the launch gate's call (history only). */
 const RESCORABLE: readonly string[] = [
   ...ISOLATED_PAYMENTS_TIERS.map((tier) => TIER_SCORER[tier]),
-  TIER_SCORER['forge-1.0'],
+  ...FORGE_ERAS.map((era) => TIER_SCORER[era]),
 ];
 const RESCORABLE_WORDS = RESCORABLE.map(eraDisplayName).reduce(
   (words, name, i, all) =>
@@ -38,7 +40,7 @@ export function retryScoringEligibility(
   value: unknown,
   /** A FINISHED Forge run whose surfaces were graded but whose graded clip could not be verified — a
    *  scoring problem the saved build can fix (the site refuses it clip-less). Its row carries the rc
-   *  identity score_forge reported; the receipt names the tier (forge-1.0). */
+   *  identity its era's scorer reported; the receipt names the tier (forge-2.0). */
   forgeClipMissing = false
 ): { ready: boolean; reason?: string } {
   const rescoring =
@@ -97,7 +99,7 @@ export function rescoreEligibility(
     return { ready: false, reason: 'This run is in progress — re-score it once it has ended.' };
   if (row.outcome !== 'finished')
     return { ready: false, reason: 'Only a finished run with a score can be re-scored.' };
-  // score_forge reports `forge-1.0-rc` until its thresholds freeze; the receipt names the tier.
+  // A Forge scorer reports its era's rc (`forge-2.0-rc`) until its thresholds freeze; the receipt names the tier.
   const version =
     familyOfScorer(row.scorerVersion) === 'forge'
       ? row.scorerVersion.replace(/-rc$/, '')

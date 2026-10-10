@@ -25,7 +25,15 @@ export interface BenchmarkRow {
  * The runnable-tier vocabulary main.ts's spec/probe mapping is keyed by (benchTierPayload.ts).
  * The stable default is shared with the launcher; historical scorer identities stay distinct.
  */
-export type BenchTier = 'sb-5.3' | 'sb-6' | 'sb-7' | 'sb-7.1' | 'sb-7.2' | 'sb-8' | 'forge-1.0';
+export type BenchTier =
+  | 'sb-5.3'
+  | 'sb-6'
+  | 'sb-7'
+  | 'sb-7.1'
+  | 'sb-7.2'
+  | 'sb-8'
+  | 'forge-1.0'
+  | 'forge-2.0';
 export const TIERS: BenchTier[] = [
   'sb-5.3',
   'sb-6',
@@ -34,6 +42,7 @@ export const TIERS: BenchTier[] = [
   'sb-7.2',
   'sb-8',
   'forge-1.0',
+  'forge-2.0',
 ];
 export const TIER_SCORER: Record<BenchTier, string> = {
   'sb-5.3': 'sb-5.3',
@@ -45,10 +54,13 @@ export const TIER_SCORER: Record<BenchTier, string> = {
   'sb-7.1': 'sb-7.1',
   'sb-7.2': 'sb-7.2',
   'sb-8': 'sb-8.0-rc',
-  // The era this app bundles (forge/release-manifest.json `scorerVersion`). Until the freeze pins
-  // forge-thresholds.json, score_forge.py reports its verdicts as forge-1.0-rc — that identity is
-  // recorded on the result and refused at publish, never rewritten to the era's.
+  // History: the Forge era Goose ≤ 3.0.108 bundled (forge/release-manifest.json), frozen on the site.
+  // Its sessions stay readable under their own scorer identity.
   'forge-1.0': 'forge-1.0',
+  // The Forge era this app bundles (forge2/release-manifest.json `scorerVersion`). Until the freeze pins
+  // forge2-thresholds.json, score_forge2.py reports its verdicts as forge-2.0-rc — that identity is
+  // recorded on the result and refused at publish, never rewritten to the era's.
+  'forge-2.0': 'forge-2.0',
 };
 
 /**
@@ -75,6 +87,19 @@ export const catalogFamily = (entry: { family?: unknown; scorerVersion?: string 
 
 export const isForge = (scorerVersion: string | undefined) =>
   familyOfScorer(scorerVersion) === 'forge';
+
+/** The Forge eras this app knows: forge-1.0 as history, forge-2.0 bundled (benchTierPayload.ts). */
+export const FORGE_ERAS = ['forge-1.0', 'forge-2.0'] as const satisfies readonly BenchTier[];
+export type ForgeEra = (typeof FORGE_ERAS)[number];
+
+/** The Forge era a recorded scorer version belongs to (`forge-2.0`, its rc `forge-2.0-rc`), or null. */
+export function forgeEra(scorerVersion: string | undefined): ForgeEra | null {
+  return (
+    FORGE_ERAS.find(
+      (era) => scorerVersion === TIER_SCORER[era] || scorerVersion === `${TIER_SCORER[era]}-rc`
+    ) ?? null
+  );
+}
 
 /**
  * Whether a catalog entry is its FAMILY's current era (forge/INTEGRATION.md, corrected 2026-10-03): the
@@ -115,10 +140,27 @@ export function eraLabel(scorerVersion: string, title?: string): string {
   return rest ? `${name} · ${rest}` : name;
 }
 
-/** score_forge.py's TIER_ORDER: nine weighted tiers and the E excellence slice. */
-export const FORGE_TIER_ORDER = ['L', 'K', 'T', 'R', 'S', 'B', 'U', 'V', 'A', 'E'] as const;
+/** score_forge.py's TIER_ORDER (forge-1.0): nine weighted tiers and the E excellence slice. */
+const FORGE_V1_TIERS = ['L', 'K', 'T', 'R', 'S', 'B', 'U', 'V', 'A', 'E'];
 
-/** The Forge tiers (forge/DESIGN.md §8.1–§8.2). The letters overlap SB's; the meanings do not. */
+/**
+ * Each Forge era's tier letters in its scorer's TIER_ORDER. score_forge2.py (forge-2.0) keeps 1.0's ten as
+ * its v1 regression rows and adds one family per v2 requirement, R1–R9. A publish carries exactly its
+ * era's letters; the site validates them per era.
+ */
+export const FORGE_ERA_TIER_ORDER: Record<ForgeEra, readonly string[]> = {
+  'forge-1.0': FORGE_V1_TIERS,
+  'forge-2.0': [...FORGE_V1_TIERS, 'R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7', 'R8', 'R9'],
+};
+
+/** Every Forge era's letters in order — what a view lists, filtered to the tiers a result recorded, so a
+ *  forge-1.0 session shows its ten and a forge-2.0 session its nineteen. */
+export const FORGE_TIER_ORDER: readonly string[] = [
+  ...new Set(FORGE_ERAS.flatMap((era) => FORGE_ERA_TIER_ORDER[era])),
+];
+
+/** The Forge tiers (forge/DESIGN.md §8.1–§8.2; R1–R9 are forge-2.0's requirements under the names its
+ *  public prompt scores them by). The letters overlap SB's; the meanings do not. */
 export const FORGE_TIERS: Record<string, { name: string; desc: string }> = {
   L: { name: 'Lint', desc: 'Forge lint clean, every function bundles and loads' },
   K: {
@@ -136,6 +178,42 @@ export const FORGE_TIERS: Record<string, { name: string; desc: string }> = {
   V: { name: 'Visual', desc: 'Theme tokens, dark mode, CSP and console' },
   A: { name: 'Rovo', desc: 'The Rovo action and agent answer with the right numbers' },
   E: { name: 'Excellence', desc: 'Economy and polish, gated by the core' },
+  R1: {
+    name: 'Migration',
+    desc: 'Every v1 row moves to the new ledger exactly once, live and across invocation limits',
+  },
+  R2: {
+    name: 'Dosing',
+    desc: 'Background work inside its share of the hourly quota; Retry-After and RateLimit-Reason decide retries',
+  },
+  R3: {
+    name: 'Time limits',
+    desc: 'Work continues across invocations; none waits past its limit or duplicates when killed',
+  },
+  R4: {
+    name: 'Changing world',
+    desc: 'Closed sprints, moved issues, estimation-field switches, deletions and lost permissions',
+  },
+  R5: {
+    name: 'Admin panel',
+    desc: 'The UI Kit admin page, every admin resolver checking ADMINISTER on the server',
+  },
+  R6: {
+    name: 'CI web trigger',
+    desc: 'Signature, timestamp and replay verified; deployments recorded',
+  },
+  R7: {
+    name: 'Custom field',
+    desc: 'scope-status holds the right value for every issue, fresh each virtual hour',
+  },
+  R8: {
+    name: 'Forge LLM',
+    desc: 'Validated tool calls, 429 back-off, incomplete answers refused, the cache, kill switch and token budget',
+  },
+  R9: {
+    name: 'Boot budget',
+    desc: 'The widget and the sprint action boot within budget, the admin page with one invoke',
+  },
 };
 
 /**

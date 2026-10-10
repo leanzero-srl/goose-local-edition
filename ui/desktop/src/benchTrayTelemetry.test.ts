@@ -68,14 +68,19 @@ describe('the entrant telemetry counter', () => {
 describe('the call budget read', () => {
   const benchDir = path.resolve(__dirname, '..', '..', '..', 'evals', 'swarm-bench', 'bench');
 
-  it("answers the payload's own bench_budget.CALL_BUDGET", async () => {
+  it("answers the tier's own call budget: bench_budget.CALL_BUDGET for SB7.2, forge-2.0 its own", async () => {
     const source = await fs.readFile(path.join(benchDir, 'bench_budget.py'), 'utf8');
     const stated = Number(/^CALL_BUDGET = (\d+)$/m.exec(source)?.[1]);
     expect(stated).toBeGreaterThan(0);
-    expect(await readBenchCallBudget('python3', benchDir, process.env)).toBe(stated);
+    expect(await readBenchCallBudget('python3', benchDir, process.env, 'sb-7.2')).toBe(stated);
+    const tiers = await fs.readFile(path.join(benchDir, 'isolated_tiers.py'), 'utf8');
+    const forge2 = Number(/FORGE20 = IsolatedTier\([\s\S]*?call_budget=(\d+)\)/.exec(tiers)?.[1]);
+    expect(forge2).not.toBe(stated);
+    expect(await readBenchCallBudget('python3', benchDir, process.env, 'forge-2.0')).toBe(forge2);
   });
 
   it('is null when the payload cannot answer', async () => {
-    expect(await readBenchCallBudget('python3', root, process.env)).toBeNull();
+    expect(await readBenchCallBudget('python3', root, process.env, 'sb-7.2')).toBeNull();
+    expect(await readBenchCallBudget('python3', benchDir, process.env, 'forge-9.9')).toBeNull();
   });
 });

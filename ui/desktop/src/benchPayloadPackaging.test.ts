@@ -26,7 +26,7 @@ function runMirror(exists: (file: string) => boolean = () => true) {
       filters.push(options.filter);
     },
   };
-  const copyManifest = Object.assign(vi.fn(), { FORGE_RELEASE: { dir: 'forge' } });
+  const copyManifest = Object.assign(vi.fn(), { FORGE_RELEASE: { dir: 'forge2' } });
   const requireHelper = vi.fn((id: string) => {
     expect(id).toBe('./scripts/copy-bench-release-manifest.cjs');
     return copyManifest;
@@ -42,15 +42,18 @@ function runMirror(exists: (file: string) => boolean = () => true) {
 }
 
 const SRC = '/fixture/evals/swarm-bench';
-const FORGE_TREES = ['public', 'starter', 'kit', 'site'].map((tree) => `${SRC}/forge/${tree}`);
+// Every Forge era's tree: forge-1.0's (history) and forge-2.0's (the bundled era, its manifest verified).
+const FORGE_TREES = ['forge', 'forge2'].flatMap((era) =>
+  ['public', 'starter', 'kit', 'site'].map((tree) => `${SRC}/${era}/${tree}`)
+);
 
 it('every recursive payload copy excludes bytecode and OS caches', () => {
   const { filters, copyManifest, requireHelper } = runMirror();
   expect(requireHelper).toHaveBeenCalledOnce();
-  // SB's stable manifest, then the Forge family's — both verified against the shipped bytes.
+  // SB's stable manifest, then the bundled Forge era's — both verified against the shipped bytes.
   expect(copyManifest).toHaveBeenCalledTimes(2);
-  expect(copyManifest.mock.calls[1][2]).toEqual({ dir: 'forge' });
-  expect(filters).toHaveLength(7);
+  expect(copyManifest.mock.calls[1][2]).toEqual({ dir: 'forge2' });
+  expect(filters).toHaveLength(11);
   for (const filter of filters) {
     for (const file of [
       '/starter/app/__pycache__/x.pyc',
@@ -69,8 +72,15 @@ it('ships every tier spec, and both payments tiers starters and visual contracts
   for (const tier of TIERS)
     if (familyOfScorer(TIER_SCORER[tier]) === 'sb')
       expect(files).toContain(`${SRC}/${BENCH_SPEC_FILE[tier]}`);
-    // Forge's public task files ride in the forge/public tree.
-    else expect(BENCH_SPEC_FILE[tier].startsWith('forge/public/')).toBe(true);
+    // A Forge era's public task files ride in its own <era>/public tree, which the mirror copies whole.
+    else
+      expect(
+        trees.filter(
+          (tree) =>
+            tree.endsWith('/public') && `${SRC}/${BENCH_SPEC_FILE[tier]}`.startsWith(`${tree}/`)
+        ),
+        `no public tree carries ${BENCH_SPEC_FILE[tier]}`
+      ).toHaveLength(1);
   expect(files).toContain(`${SRC}/${BENCH_SPEC_FILE[defaultBenchmarkTier()]}`);
   expect(trees).toEqual([
     `${SRC}/sb7.1/starter`,
@@ -95,17 +105,20 @@ it('leaves SB7.2 starter inputs to the release manifest when the bench payload s
 
 it('never ships a Forge module tree: the kit is materialised on the user machine, not bundled', () => {
   const { filters, trees } = runMirror();
-  const forge = filters.filter((_f, i) => trees[i].includes('/forge/'));
-  expect(forge).toHaveLength(4);
+  const forge = filters.filter((_f, i) => /\/forge2?\//.test(trees[i]));
+  expect(forge).toHaveLength(8);
   for (const filter of forge) {
     for (const file of [
       '/forge/kit/node_modules/@forge/api/index.js',
       '/forge/kit/app-modules/node_modules',
       '/forge/kit/lint-modules',
       '/forge/kit/test/__pycache__/x.pyc',
+      '/forge2/kit/node_modules/@forge/react/index.js',
+      '/forge2/starter/node_modules/@forge/bridge/index.js',
     ])
       expect(filter(file)).toBe(false);
     expect(filter('/forge/kit/lib/emulator.cjs')).toBe(true);
     expect(filter('/forge/starter/skills/.gitkeep')).toBe(true);
+    expect(filter('/forge2/kit/lib/uikit-host/host.cjs')).toBe(true);
   }
 });

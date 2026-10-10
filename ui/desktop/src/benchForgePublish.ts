@@ -1,16 +1,19 @@
-import { FORGE_TIER_ORDER } from './components/benchmark/baselines';
+import { FORGE_ERA_TIER_ORDER, forgeEra, type ForgeEra } from './components/benchmark/baselines';
 import { publicScoreDetails } from './benchPublicScore';
 
 /**
- * The Forge half of benchmark-publish (forge/INTEGRATION.md: same routes, same envelope, scorerVersion
- * forge-1.0, tier letters L K T R S B U V A + E). The server validates per family and stays the authority;
- * these refuse locally what score_forge.py itself marks as not board-grade, in its own words.
+ * The Forge half of benchmark-publish (forge/INTEGRATION.md: same routes, same envelope, the result's own
+ * scorerVersion and its era's tier letters — forge-1.0's L K T R S B U V A + E, forge-2.0's ten plus R1–R9).
+ * The server validates per era and stays the authority; these refuse locally what the era's scorer itself
+ * marks as not board-grade, in its own words.
  */
 export function forgePublishProblem(stored: {
   scorerVersion?: unknown;
   verdict?: unknown;
 }): string | null {
   const version = typeof stored.scorerVersion === 'string' ? stored.scorerVersion : '';
+  if (!forgeEra(version))
+    return `${version || 'This result'} is not a Forge benchmark this app knows, so it cannot publish from here.`;
   const verdict = (stored.verdict ?? {}) as {
     status?: unknown;
     publishable?: unknown;
@@ -45,14 +48,20 @@ export function forgePublishProblem(stored: {
   )
     return 'This Forge result lacks its admission record, earned score or check rows — run the benchmark again to publish.';
   if (/-rc$/.test(version))
-    return `Scored by ${version}: the Forge thresholds are not frozen yet, so the result is not board-grade. Forge results publish once the forge-1.0 freeze pins them.`;
+    return `Scored by ${version}: the Forge thresholds are not frozen yet, so the result is not board-grade. Forge results publish once the ${version.replace(/-rc$/, '')} freeze pins them.`;
   return null;
 }
 
-/** Every Forge tier letter with its mean, an unrecorded tier as 0 — the SB publisher's A–D rule, per family. */
-export function forgePublishTiers(tiers: Record<string, unknown>): Record<string, number> {
+/** Every tier letter of the era with its mean, an unrecorded tier as 0 — the SB publisher's A–D rule, per era. */
+export function forgePublishTiers(
+  tiers: Record<string, unknown>,
+  era: ForgeEra
+): Record<string, number> {
   return Object.fromEntries(
-    FORGE_TIER_ORDER.map((tier) => [tier, typeof tiers[tier] === 'number' ? tiers[tier] : 0])
+    FORGE_ERA_TIER_ORDER[era].map((tier) => [
+      tier,
+      typeof tiers[tier] === 'number' ? tiers[tier] : 0,
+    ])
   );
 }
 
@@ -65,16 +74,22 @@ interface ForgeCheckRow {
 
 /**
  * The Forge-specific body of a publish (forge/INTEGRATION.md, "Publish — as implemented on the site"):
- * `tiers` exactly L K T R S B U V A E (per-tier means, E the excellence slice), `checksSummary` with every
+ * `tiers` exactly the era's letters (per-tier means, E the excellence slice), `checksSummary` with every
  * forge row and its tier letter, `admission` {ceiling, reasons, failedChecksByBand} and `rawScore` as the
  * scorer recorded them (the site recomputes the caps from the rows and refuses a mismatch), the recorded
  * composition inputs with each excellence condition's `share` as `gateConditions[].value`, and NO
- * `composition`. main.ts merges it over the shared envelope (title, model, poster, runMeta, shots).
+ * `composition`. main.ts merges it over the shared envelope (title, model, poster, runMeta, shots) after
+ * forgePublishProblem passed, which refuses a scorer that names no era this app knows.
  */
 export function forgePublishBody(stored: {
+  scorerVersion?: unknown;
   tiers?: unknown;
   verdict?: unknown;
 }): Record<string, unknown> {
+  const era = forgeEra(typeof stored.scorerVersion === 'string' ? stored.scorerVersion : undefined);
+  if (!era)
+    throw new Error(`${String(stored.scorerVersion)} is not a Forge benchmark this app knows.`);
+  const letters = FORGE_ERA_TIER_ORDER[era];
   const verdict = (stored.verdict ?? {}) as Record<string, unknown> & {
     checks?: ForgeCheckRow[];
     admission?: { ceiling: number; reasons: string[]; failedChecksByBand: unknown[] };
@@ -86,7 +101,7 @@ export function forgePublishBody(stored: {
       (c) =>
         typeof c?.check === 'string' &&
         typeof c?.tier === 'string' &&
-        (FORGE_TIER_ORDER as readonly string[]).includes(c.tier) &&
+        letters.includes(c.tier) &&
         typeof c?.score === 'number'
     )
     .map((c) => ({
@@ -100,7 +115,7 @@ export function forgePublishBody(stored: {
   if (Array.isArray(conditions))
     details.gateConditions = conditions.map(({ name, ok, share }) => ({ name, ok, value: share }));
   return {
-    tiers: forgePublishTiers((stored.tiers ?? {}) as Record<string, unknown>),
+    tiers: forgePublishTiers((stored.tiers ?? {}) as Record<string, unknown>, era),
     ...details,
     ...(verdict.admission
       ? {

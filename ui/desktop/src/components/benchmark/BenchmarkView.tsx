@@ -11,6 +11,7 @@ import { WalletLimit } from './WalletLimit';
 import {
   BENCH_FAMILY_NAME,
   FORGE_BENCHMARK_TIER,
+  FORGE_ERA_COPY,
   DEFAULT_BENCHMARK_TIER,
   benchmarkLaunchProblem,
   defaultBenchmarkScorer,
@@ -971,10 +972,10 @@ function SessionDetail({
 }
 
 /**
- * The Forge tier's run policy, read from the payload (bench_budget.CALL_BUDGET, isolated_tiers.FORGE10):
- * one model, the call budget, the pinned reasoning effort. No default spend limit exists (owner 2026-10-02);
- * the form's "Stop a run at $" is the only stop, empty = none. A number the kit status could not read is
- * left out, never restated from memory.
+ * The bundled Forge tier's run policy, read from the payload (its call_budget and reasoning_effort in
+ * isolated_tiers): one model, the call budget, the pinned reasoning effort. No default spend limit exists
+ * (owner 2026-10-02); the form's "Stop a run at $" is the only stop, empty = none. A number the kit status
+ * could not read is left out, never restated from memory.
  */
 function ForgeRunPolicy({ kit }: { kit: ForgeKitStatus | null }) {
   const parts = [
@@ -1693,7 +1694,7 @@ export default function BenchmarkView() {
     ? sections.find((sec) => sec.scorerVersion === selectedSession.scorerVersion)
     : undefined;
   const selectedFrozen = selectedEra?.frozen === true;
-  // An rc scorer of the family's CURRENT era (forge-1.0-rc beside forge-1.0) is that benchmark before
+  // An rc scorer of the family's CURRENT era (forge-2.0-rc beside forge-2.0) is that benchmark before
   // its thresholds froze — never "an earlier benchmark".
   const selectedIsCurrentRc =
     selectedEra != null &&
@@ -1938,7 +1939,7 @@ export default function BenchmarkView() {
 
           <p className={TYPE.bodyMuted} data-testid="family-intro">
             {forge
-              ? `${BENCH_FAMILY_NAME.forge} runs one model in goose: it builds an Atlassian Forge app on ten module types plus the Realtime API, among them Forge LLM and two Rovo modules in Preview, graded offline by running it against a seeded Jira site — no deploy, no internet for the entrant. Forge sessions stay separate from Gauntlet.`
+              ? `${BENCH_FAMILY_NAME.forge} runs one model in goose: ${FORGE_ERA_COPY[FORGE_BENCHMARK_TIER].task} Forge sessions stay separate from Gauntlet.`
               : `${BENCH_FAMILY_NAME.sb} runs with Swarm or a single model. Swarm nodes can mix local and cloud providers. Earlier benchmarks remain separate in your session history.`}
           </p>
 

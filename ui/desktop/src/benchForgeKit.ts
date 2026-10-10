@@ -1,19 +1,27 @@
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import type { ForgeKitStatus } from './benchForgeKitTypes';
+import { FORGE_BENCHMARK_TIER } from './benchTierPayload';
+import { TIER_SCORER } from './components/benchmark/baselines';
 
 export type { ForgeKitStatus } from './benchForgeKitTypes';
 
+/** The bundled Forge era's kit module in the payload's bench/: forge2_kit.py materialises forge2/kit
+ *  (forge_kit.py is forge-1.0's, whose runs this app no longer launches or re-scores). */
+export const FORGE_KIT_MODULE = 'forge2_kit';
+
 /**
- * Reads the kit's readiness and the Forge tier's published run policy from the payload's own Python —
- * one rule for "ready" (forge_kit.status) and one source for the numbers the view shows (the call budget,
- * the pinned effort), so the app never restates a policy that lives in bench/. There is no default spend
- * limit (owner 2026-10-02: an OpenRouter run runs until the credits go; the field in the form is the only stop).
+ * Reads the bundled era's kit readiness and its tier's published run policy from the payload's own Python —
+ * one rule for "ready" (the kit module's status()) and one source for the numbers the view shows (the
+ * tier's call budget and pinned effort in isolated_tiers), so the app never restates a policy that lives in
+ * bench/. There is no default spend limit (owner 2026-10-02: an OpenRouter run runs until the credits go;
+ * the field in the form is the only stop).
  */
 export const FORGE_KIT_STATUS_SCRIPT = [
-  'import json, forge_kit, bench_budget, isolated_tiers',
-  "print(json.dumps({**forge_kit.status(), 'call_budget': bench_budget.CALL_BUDGET,",
-  "                  'reasoning_effort': isolated_tiers.FORGE10.reasoning_effort}))",
+  `import json, isolated_tiers, ${FORGE_KIT_MODULE}`,
+  `tier = isolated_tiers.BY_VERSION['${TIER_SCORER[FORGE_BENCHMARK_TIER]}']`,
+  `print(json.dumps({**${FORGE_KIT_MODULE}.status(), 'call_budget': tier.call_budget,`,
+  "                  'reasoning_effort': tier.reasoning_effort}))",
 ].join('\n');
 
 export interface ForgeKitRuntime {
@@ -93,7 +101,7 @@ export async function readForgeKitStatus(
   }
 }
 
-/** `forge_kit.py ensure`: npm ci from the committed lockfiles and the runtime wrapper by sha256. Throws its REFUSED text. */
+/** The kit module's `ensure`: npm ci from the committed lockfiles and the runtime wrapper by sha256. Throws its REFUSED text. */
 export async function prepareForgeKit(
   payloadDir: string,
   runtime: ForgeKitRuntime,
@@ -101,7 +109,7 @@ export async function prepareForgeKit(
 ): Promise<void> {
   await run(
     runtime.python,
-    ['-B', '-u', path.join(payloadDir, 'bench', 'forge_kit.py'), 'ensure'],
+    ['-B', '-u', path.join(payloadDir, 'bench', `${FORGE_KIT_MODULE}.py`), 'ensure'],
     path.join(payloadDir, 'bench'),
     forgeKitEnv(runtime, cache)
   );

@@ -41,21 +41,24 @@ const PAYMENTS_CAPTIONS: Record<string, string> = Object.fromEntries(
 const PAYMENTS_INSPECT = new RegExp(`^(?:${PAYMENTS_SHOT_PREFIXES.join('|')})-inspect-([a-z]+)$`);
 
 /**
- * forge_probe.mjs's captures (forge/DESIGN.md §6.6): `<surface>-<board|sprint>-<theme>-<w>x<h>.png` in
- * `forge-shots/`, plus the contact sheet of every surface. The card leads with the full-width widget and
- * the sprint action in both themes; the contact sheet closes the set (it is the largest, so the upload
- * limit drops it first). Within a kind the lowest name wins, so the pick is deterministic.
+ * The Forge probes' captures (forge_probe.mjs, forge2_probe.mjs; forge/DESIGN.md §6.6):
+ * `<surface>-<board|sprint>-<theme>-<w>x<h>.png` in `forge-shots/`, plus the contact sheet of every surface.
+ * The card leads with the widget and the sprint action in both themes; the contact sheet closes the set (it
+ * is the largest, so the upload limit drops it first). Within a kind the lowest name wins, so the pick is
+ * deterministic, and a file is shown once. The widget leads at whatever width the run captured: both
+ * probes grade it at 380 px only since forge/DESIGN.md 2006de559 §17.2 E, and the 1180 px lead of older
+ * runs sorts first where it exists — so a 380 px lead is never repeated as the narrow pick.
  */
 const FORGE_PICKS: Array<{ name: string; caption: string; match: RegExp }> = [
   {
     name: 'forge-widget-light',
     caption: 'Dashboard widget · light',
-    match: /^widget-view-\d+-light-1180x\d+\.png$/,
+    match: /^widget-view-\d+-light-\d+x\d+\.png$/,
   },
   {
     name: 'forge-widget-dark',
     caption: 'Dashboard widget · dark',
-    match: /^widget-view-\d+-dark-1180x\d+\.png$/,
+    match: /^widget-view-\d+-dark-\d+x\d+\.png$/,
   },
   {
     name: 'forge-sprint-light',
@@ -85,9 +88,11 @@ const FORGE_PICKS: Array<{ name: string; caption: string; match: RegExp }> = [
 async function pickForgeShots(dir: string, files: string[]): Promise<BenchShot[]> {
   const sorted = files.slice().sort();
   const result: BenchShot[] = [];
+  const shown = new Set<string>();
   for (const pick of FORGE_PICKS) {
     const file = sorted.find((name) => pick.match.test(name));
-    if (!file) continue;
+    if (!file || shown.has(file)) continue;
+    shown.add(file);
     try {
       const bytes = await fs.readFile(path.join(dir, file));
       result.push({ name: pick.name, caption: pick.caption, b64: bytes.toString('base64') });

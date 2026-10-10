@@ -50,7 +50,7 @@ it('offers the same retry to an SB7.2 session with its own SB7.2 receipt, never 
     ['sb-8.0-rc', 'Gauntlet 8.0 rc'],
   ])
     expect(retryScoringEligibility({ ...row, scorerVersion }, receipt).reason).toBe(
-      `Only Gauntlet 7.1, Gauntlet 7.2 and Forge 1.0 runs can be rescored; this run is ${shown}.`
+      `Only Gauntlet 7.1, Gauntlet 7.2, Forge 1.0 and Forge 2.0 runs can be rescored; this run is ${shown}.`
     );
 });
 it('keeps legacy missing completion evidence explicit rather than using usage or transcript prose', () => {
@@ -70,7 +70,7 @@ it('offers the same retry to a Forge session with its own forge-1.0 receipt — 
   expect(
     retryScoringEligibility({ ...row, scorerVersion: 'forge-1.0-rc' }, forgeReceipt).reason
   ).toBe(
-    'Only Gauntlet 7.1, Gauntlet 7.2 and Forge 1.0 runs can be rescored; this run is Forge 1.0 rc.'
+    'Only Gauntlet 7.1, Gauntlet 7.2, Forge 1.0 and Forge 2.0 runs can be rescored; this run is Forge 1.0 rc.'
   );
 });
 
@@ -80,12 +80,31 @@ it('re-scores a FINISHED Forge run only for a missing clip — its rc row agains
   expect(retryScoringEligibility(finished, forgeReceipt, true)).toEqual({ ready: true });
   // Without the clip fact a finished rc row is no rescorable identity at all.
   expect(retryScoringEligibility(finished, forgeReceipt).reason).toBe(
-    'Only Gauntlet 7.1, Gauntlet 7.2 and Forge 1.0 runs can be rescored; this run is Forge 1.0 rc.'
+    'Only Gauntlet 7.1, Gauntlet 7.2, Forge 1.0 and Forge 2.0 runs can be rescored; this run is Forge 1.0 rc.'
   );
   // The exemption is Forge's alone: a finished Gauntlet run is never re-scored this way.
   expect(
     retryScoringEligibility({ ...row, outcome: 'finished', scorerVersion: 'sb-7.2' }, receipt, true)
       .ready
+  ).toBe(false);
+});
+
+it('offers the same retry to a forge-2.0 session with its own forge-2.0 receipt — never across eras', () => {
+  const forge2Row = { ...row, scorerVersion: 'forge-2.0' };
+  const forge2Receipt = { ...receipt, scorerVersion: 'forge-2.0' };
+  expect(retryScoringEligibility(forge2Row, forge2Receipt)).toEqual({ ready: true });
+  // A forge-1.0 receipt proves nothing about a forge-2.0 session, and the reverse.
+  expect(retryScoringEligibility(forge2Row, { ...receipt, scorerVersion: 'forge-1.0' }).ready).toBe(
+    false
+  );
+  expect(retryScoringEligibility({ ...row, scorerVersion: 'forge-1.0' }, forge2Receipt).ready).toBe(
+    false
+  );
+  // A finished forge-2.0 rc row whose clip is missing is re-graded against its forge-2.0 receipt.
+  const finished = { ...row, scorerVersion: 'forge-2.0-rc', outcome: 'finished' as const };
+  expect(retryScoringEligibility(finished, forge2Receipt, true)).toEqual({ ready: true });
+  expect(
+    retryScoringEligibility(finished, { ...receipt, scorerVersion: 'forge-1.0' }, true).ready
   ).toBe(false);
 });
 
@@ -135,7 +154,17 @@ describe('Re-score a FINISHED run (owner 2026-10-03: rescore all runs and republ
     expect(rescoreEligibility(forgeRow, receipt).ready).toBe(false);
     // An rc Gauntlet identity is no rescorable tier.
     expect(rescoreEligibility({ ...finished, scorerVersion: 'sb-7.2-rc' }, receipt).reason).toBe(
-      'Only Gauntlet 7.1, Gauntlet 7.2 and Forge 1.0 runs can be re-scored; this run is Gauntlet 7.2 rc.'
+      'Only Gauntlet 7.1, Gauntlet 7.2, Forge 1.0 and Forge 2.0 runs can be re-scored; this run is Gauntlet 7.2 rc.'
+    );
+  });
+
+  it('re-grades a finished forge-2.0 rc row against its forge-2.0 receipt, never a forge-1.0 one', () => {
+    const forge2Row = { ...finished, scorerVersion: 'forge-2.0-rc' };
+    expect(rescoreEligibility(forge2Row, { ...receipt, scorerVersion: 'forge-2.0' })).toEqual({
+      ready: true,
+    });
+    expect(rescoreEligibility(forge2Row, { ...receipt, scorerVersion: 'forge-1.0' }).ready).toBe(
+      false
     );
   });
 });
@@ -147,7 +176,7 @@ describe('publish runMeta — the same build, recognised on republish (both fami
     engineEvents: 12,
     repairRounds: 1,
   };
-  for (const scorerVersion of ['sb-7.2', 'forge-1.0']) {
+  for (const scorerVersion of ['sb-7.2', 'forge-1.0', 'forge-2.0']) {
     it(`${scorerVersion}: carries buildId always and rescoredAt only for a re-scored result`, () => {
       const stored = { scorerVersion, runId: 'cloud-0b8d6f0e', runMeta: meta };
       expect(publishRunMeta(stored)).toEqual({ ...meta, buildId: 'cloud-0b8d6f0e' });

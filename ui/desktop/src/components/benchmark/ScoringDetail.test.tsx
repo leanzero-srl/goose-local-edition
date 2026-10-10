@@ -1,4 +1,4 @@
-import { render } from '@testing-library/react';
+import { render, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { ScoringDetail, type VerdictDetail } from './ScoringDetail';
 import { allClasses, assertStudioClean } from '../lz/assertStudioClean';
@@ -352,5 +352,36 @@ describe('a Forge verdict reads its own tiers, bands and publishability (score_f
       'Not publishable: runtime shim (the in-repo shim, not the pinned Forge wrapper).'
     );
     expect(facts).toHaveTextContent("Scored on the shim runtime, not Atlassian's pinned wrapper.");
+  });
+});
+
+import forge2Verdict from './forge2-pilot.fixture.json';
+import { FORGE_ERA_TIER_ORDER, FORGE_TIERS } from './baselines';
+describe('a forge-2.0 verdict reads its v1 tiers AND its v2 families R1–R9 (score_forge2.py)', () => {
+  // The REAL GPT-6.1 Sol pilot verdict: v1 rows a quarter of the score, R1–R9 the other three quarters.
+  const projected = projectBenchScore(forge2Verdict as never).verdict as unknown as VerdictDetail;
+
+  it('groups every row under its own tier and composes all nineteen, so the table adds up to the score', async () => {
+    const view = render(
+      <ScoringDetail verdict={projected} score={forge2Verdict.score} scorerVersion="forge-2.0-rc" />
+    );
+    // No family is dropped for being new: each letter's group is named.
+    for (const tier of FORGE_ERA_TIER_ORDER['forge-2.0'])
+      expect(view.getAllByText(FORGE_TIERS[tier].name).length).toBeGreaterThan(0);
+    const composition = view.getByRole('region', { name: 'Earned score composition' });
+    const rows = within(composition).getAllByRole('row').slice(1);
+    expect(rows.map((row) => row.firstElementChild?.textContent?.split(' ')[0])).toEqual(
+      FORGE_ERA_TIER_ORDER['forge-2.0']
+    );
+    expect(within(composition).getByText('R5 Admin panel')).toBeInTheDocument();
+    // The points column sums to the recorded earned score (each cell rounded to 0.1 point) — a 1.0-only
+    // table would stop at the v1 quarter (21.9 points of 96.2).
+    const points = rows.reduce((sum, row) => sum + Number(row.lastElementChild?.textContent), 0);
+    expect(Math.abs(points - forge2Verdict.critical.pre_severity_score * 100)).toBeLessThan(
+      0.05 * rows.length
+    );
+    view.getByText('Every admission band passed — no ceiling');
+    assertStudioClean(view.container);
+    expect(await missingUtilities(utilitiesOf(allClasses(view.container)))).toEqual([]);
   });
 });
