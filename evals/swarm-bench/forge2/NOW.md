@@ -64,6 +64,17 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
 
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 15:0x RELEASE PREP (no scoring involved): (a) released tiers PROVEN untouched by the shared harness edits (read-only
+  agent: every hunk of bench_budget/isolated_tiers/run_build/release_manifest classified (a); run_build.invoke()
+  differential byte-identical for SB71/SB72/FORGE10 on both branches; SB7.x and Forge 1.0 stay at 150 calls) -> refreeze
+  sb7.2 (packaging refuses it today), sb7.1, forge, forge2 on main after the merges; procedure + tools in the skill and
+  ~/goose-builds/loop-state/tools/forge2-release/. Found: main's release_manifest filter leaked forge2_* files into the
+  payments payload unpinned (fixed on forge2/final). (b) DESKTOP: shared SDK rebuilt (`build-goose-sdk`, 6 s, no Rust;
+  dist was Sep 5) -> forge2/desktop 93276c26b typecheck 667 -> 0, full suite 4847 pass / 2 env-skips, eslint clean.
+  (c) SITE 9bb7b07 on forge2-era: tier means (and E, scoreInner, excellence fields) recomputed from the posted rows for
+  both eras (all 41 real results match: 31 live forge-1.0 runs + 10 forge-2.0 verdicts); a post must carry EVERY check
+  in the era's registry (dropping a failed row had lifted Sonnet 0.745 -> 0.8201); real bodies 201, 38/38 shifted-tier
+  copies 422. (d) forge-2.0 scorer to take BOTH score locks (/tmp fixed + 1.0's $TMPDIR one) — sent to the fix agent.
 - 14:5x wf forge2-harden COMPLETE (gate agent): hardened-gate 9cb27f51a = calibrated (CALIB 72acca75…, merged into
   forge2/final as 34550b5d…), golden 1.0000 forge-2.0 on the 3 scoring sites (--reference PASS), race mutant
   r3_check_then_act_dedupe 0.5652 judge PASS, starter 0.2706 (<= 0.30), 10 mutants build+lint. ITS OPEN ITEMS, triaged:
