@@ -256,6 +256,7 @@ class Ctx:
         self.harness_missing = list(self.obs.get('harnessMissing') or [])
         self._row_cache: Dict = {}
         self._redelivered_late: Optional[set] = None
+        self._scheduled_work: Optional[Tuple[List[float], Dict[str, float]]] = None
 
     def oracle_for(self, after_live: bool):
         return self.oracle_ui if after_live else self.oracle
@@ -468,15 +469,57 @@ def sources_for(c: Ctx, change: fo.Change) -> Tuple[str, ...]:
     runs. t_event_rows carried this alone (ebb949907); the same change then failed t_multi_sprint_parse and
     u_ledger_table (gate 2026-10-10, seed ca72f2358777d98c: 1089939, made 14:33:15 under the 14:30-15:00 wall, recorded
     by the deferred hourly run at 15:02:58, its own delivery handled at 15:03:33). So may a live change whose event
-    work was redelivered only after the next scheduled run (_redelivered_after_next_run, 0a7849bf9)."""
+    work was redelivered only after the next scheduled run (_redelivered_after_next_run, 0a7849bf9), and one a
+    scheduled run's work began on between the change and its event work's success (_scheduled_work_between)."""
     if change.phase != 'live':
         return tuple(change.sources)
     wall = (c.obs.get('rate') or {}).get('wall') or {}
     walled = (wall.get('t_ms') is not None and wall.get('until_ms') is not None
               and wall['t_ms'] <= change.at.timestamp() * 1000 <= wall['until_ms'])
-    if walled or change.change_id in _redelivered_after_next_run(c):
+    if walled or change.change_id in _redelivered_after_next_run(c) or _scheduled_work_between(c, change):
         return tuple(dict.fromkeys((*change.sources, 'reconcile')))
     return tuple(change.sources)
+
+
+def _scheduled_work_between(c: Ctx, change: fo.Change) -> bool:
+    """A scheduled run's work began after the live change was made and before the change's event work succeeded, so the
+    run may have recorded it first (contract §3: a row keeps the path that recorded it first). The run's work is the run
+    itself (its phase's start) and every invocation its chain's lineage names (`scheduledRun` on the invocation's calls:
+    a continuation a run handed to the queue starts at its delivery) — the run itself is not enough: the hourly run
+    whose mark fell inside the quota wall hands its work on to after the wall, and that continuation records changes
+    made after the run started (gate 2026-10-10: seed aef272018835b2e3, 1157004 made 1790967501.358 under the wall
+    after its hourly run started at 1790967478.237, recorded by the run's continuation that began at 1790967623.479,
+    before the change's own consumer succeeded at 1790967680.639; a change made just after a wall, before that
+    continuation, is the same case). The event work succeeded at its first queue delivery with result ok (matched
+    through lineage like _redelivered_after_next_run); if every delivery of it failed it never did; if no delivery
+    carries its lineage nothing is known and this route does not apply."""
+    if c._scheduled_work is None:
+        phases = c.background_phases()
+        calls = c.calls(phases)
+        origin = {x['inv']: str(x['originChange']) for x in calls if x.get('inv') and x.get('originChange')}
+        run_of = {x['inv'] for x in calls if x.get('inv') and x.get('scheduledRun') is not None}
+        deliveries = [d for ph in phases for d in c.phase(ph).get('deliveries') or [] if isinstance(d, dict)]
+        started = {t for t in (c.phase(p).get('at') for p in phases) if isinstance(t, (int, float))}
+        began: Dict[str, float] = {}
+        for x in calls:   # a chain invocation's first call, unless a queue delivery dates its start
+            if x.get('inv') in run_of and isinstance(x.get('t'), (int, float)):
+                began[x['inv']] = min(began.get(x['inv'], x['t']), x['t'])
+        for d in deliveries:
+            if d.get('inv') in run_of and isinstance(d.get('t'), (int, float)):
+                began[d['inv']] = d['t']
+        succeeded: Dict[str, float] = {}
+        change_of = {d['eventId']: origin[d['inv']] for d in deliveries if d.get('eventId') and d.get('inv') in origin}
+        for d in deliveries:   # every attempt of a queue event is its change's, whether or not that attempt made a call
+            cid = origin.get(d.get('inv')) or change_of.get(d.get('eventId'))
+            if cid is None or not isinstance(d.get('t'), (int, float)):
+                continue
+            t = d['t'] if d.get('result') == 'ok' else math.inf
+            succeeded[cid] = min(succeeded.get(cid, math.inf), t)
+        c._scheduled_work = (sorted(started | set(began.values())), succeeded)
+    starts, succeeded = c._scheduled_work
+    end = succeeded.get(change.change_id)
+    made = change.at.timestamp()
+    return end is not None and any(made < s < end for s in starts)
 
 
 def _num(text) -> Optional[Decimal]:
@@ -4291,14 +4334,15 @@ def defect_selftest() -> List[str]:
         phases = {'heal': {'kvsAfter': {'entities': {V2_SURFACE_ENTITY: [item]}, 'keys': []}}, 'rerun': {'calls': calls}}
         got = row('r_idempotent_rerun', {'manifest': v2_manifest, 'phases': phases})
         expect(got['score'] == want, f"r_idempotent_rerun on {label}: {got['score']} (want {want}) — {got.get('detail')}")
-    # t_event_rows: a delivered change's row records `event` (§3's first writer) unless its event work was redelivered
-    # only after the next scheduled run, which may record it first: then `reconcile` is right too
+    # t_event_rows: a delivered change's row records `event` (§3's first writer) unless the next scheduled run came
+    # before its event work succeeded (redelivered after the run, or never successful), which may record it first:
+    # then `reconcile` is right too; never when its event work succeeded before that run
     delivered = [c for c in Ctx(None, {}, pack).oracle.changes('live') if c.phase == 'live']
     target = next(c for c in delivered if sum(d.change_id == c.change_id for d in delivered) == 1)
     t_ev = target.at.timestamp()
     ev_manifest = {**v2_manifest, 'modules': {'trigger': [{'key': 't'}], 'consumer': [{'key': 'c'}]}}
     for label, source, redelivered, want in (('event, no redelivery', 'event', None, True),
-                                             ('reconcile, no redelivery', 'reconcile', None, False),
+                                             ('reconcile, never succeeded: the next run came first', 'reconcile', None, True),
                                              ('reconcile, redelivered before the next run', 'reconcile', t_ev + 1700, False),
                                              ('reconcile, redelivered after the next run', 'reconcile', t_ev + 1900, True)):
         items = [{'key': f'{c.change_id}:{c.sprint_id}', 'value': {
@@ -4328,6 +4372,34 @@ def defect_selftest() -> List[str]:
         expect(got == want and cells_ok({'cells': cells}, walled, got) == ('reconcile' in want)
                and row_correct({walled.kind, walled.issue_key, walled.by_name, str(int(at_ms)), 'reconcile'}, walled, got) == ('reconcile' in want),
                f'source rule {label}: sources {got} (want {want}), one answer for the ledger row and the table cell')
+    # ... and with no wall: `reconcile` too when a scheduled run's work — the run, or a continuation its chain's lineage
+    # names, as the hourly run whose mark fell in the wall hands on — began between the change and its event work's
+    # success; never when the event work succeeded before any later scheduled work began, or when no delivery carries
+    # the change's lineage (nothing is known)
+    t_at = walled.at.timestamp()
+
+    def timeline(run_at=None, continuation_at=None, ok_at=None, failed_at=None, lineage=True):
+        calls = [{'inv': 'k1', 't': t, 'service': 'kvs', 'originChange': walled.change_id if lineage else None,
+                  'scheduledRun': None} for t in (ok_at, failed_at) if t is not None]
+        deliveries = ([{'eventId': 'e#0', 'inv': 'k1', 'attempt': 0, 'result': 'ok', 't': ok_at}] if ok_at else []) \
+            + ([{'eventId': 'e#0', 'inv': 'k1', 'attempt': 0, 'result': 'retry', 't': failed_at}] if failed_at else [])
+        if continuation_at is not None:
+            calls.append({'inv': 's2', 't': continuation_at + 0.2, 'service': 'jira', 'originChange': None, 'scheduledRun': 2})
+            deliveries.append({'eventId': 'r#0', 'inv': 's2', 'attempt': 0, 'result': 'ok', 't': continuation_at})
+        phases = {'live': {'calls': calls, 'deliveries': deliveries}}
+        if run_at is not None:
+            phases['hour-1'] = {'at': run_at, 'calls': [], 'deliveries': []}
+        return {'phases': phases}
+    for label, obs, want in (
+            ('a run started between the change and its success', timeline(run_at=t_at + 5, ok_at=t_at + 60), True),
+            ('a continuation of an earlier run began between them', timeline(run_at=t_at - 30, continuation_at=t_at + 5,
+                                                                             ok_at=t_at + 60), True),
+            ('its event work never succeeded', timeline(run_at=t_at + 5, failed_at=t_at + 1), True),
+            ('its event work succeeded before any later scheduled work', timeline(run_at=t_at + 90, continuation_at=t_at - 5,
+                                                                                ok_at=t_at + 60), False),
+            ('no delivery carries its lineage', timeline(run_at=t_at + 5, ok_at=t_at + 60, lineage=False), False)):
+        got = sources_for(Ctx(None, obs, pack), walled)
+        expect(('reconcile' in got) == want, f'source rule, {label}: sources {got} (want reconcile {want})')
     # Concurrent delivery: a duplicate row is the app's whether or not its group raced; a group the harness did not run
     # whole buys no pass — the row is unavailable, neither 1.0 nor a fired critical (the group reader is forge2_checks')
     def member(group, index, invs, size=2):
