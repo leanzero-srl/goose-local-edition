@@ -110,6 +110,23 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
   calibration, sb7.x/forge manifests to refreeze after P11's shared bench edits.
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 18:5x FINAL GATE COMPLETE on ee4dd033d (= main's forge2 payload; nothing committed, calibration did NOT move: the five
+  ratios are call-for-call the 7ed584279 ones, tops stay 2.58 / 2.0, CALIB 34550b5d…): reference 1.0000 x5 + --reference
+  multi-seed PASS; starter 0.1304; MUTANTS 10/10 judge PASS (r1 .8666, r2 .9147, r3-wait .8733, r3-race .4182 crit, r4
+  .8469, r5 .5800 crit, r6 .5733 crit, r7 .9098, r8 .9437, r9 .9613; no undeclared loss); Sol 0.8417, Sonnet 0.7530
+  (evidence only). INDEPENDENT APP 0.7467 (tests earned 0.9696, reliability 0.7702; reproduces): my old ">= 0.95" bar
+  predates the reliability rule and is met on tests earned. MY RULING — not a fairness defect, not a blocker: (1) the
+  reference scores 1.0 on all 13 rows it lost on the same sites; (2) every one of those rows is passed by a real
+  model working from the public text alone (Sol passes u_widget_live, r4_sprint_close_final on its own wall-collision
+  seed, a_action_permissions, u_llm_explain, u_ledger_sort, u_widget_chart/numbers; the closed-sprint rows are passed
+  by Sol and Sonnet on two of their three seeds each); (3) six of its ten lost rows on site 0123 are the untouched
+  starter's scores (it left starter weaknesses in), four trace to ONE dropped row (a pre-close change delivered after
+  the close — the trap the audit ruled fair), and its author never ran it against a scoring site. Outputs:
+  /Volumes/AI-workhorse/runs/forge2-final-gate/ (1.5 GB); scripts loop-state tools/forge2-gate/final/.
+  -> THE SCORER IS FROZEN: goose main a9aa59a4e payload. No source-strings commit (the three cosmetic strings are not
+  shown publicly; the app and site carry their own corrected words) — DROPPED to keep the gated bytes.
+- 18:55 APP BUILD STARTED: 3.0.109 from main 16501c639 in ~/Projects/goose-rel (`just release-notarized 3.0.109`, log
+  ~/goose-builds/loop-state/release-3.0.109.log; manifests --check 116/116/78/140 in that tree before the build).
 - 17:25 OWNER: "but isn't benchmark and scoring going through the desktop app?! I don't see any activity on the app. I do
   not want headless bench and scoring." ANSWERED plainly: nothing is being benchmarked now (the installed 3.0.108 has no
   Forge 2.0); what runs is the scorer's own acceptance test (reference, starter, independent app, mutants — no model,
