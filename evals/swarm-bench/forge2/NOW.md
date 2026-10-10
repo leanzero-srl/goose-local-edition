@@ -64,6 +64,24 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
 
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 17:3x SITE WORDING FIXES: forge2-era 85bc900 + 7893de4 + 315f905 + f002ad7 (58 findings = 36 defects, 35 applied; the one
+  declined is the probe's recording caption -> the post-gate source-strings commit). Tests 157/113/17/11, tsc+eslint
+  clean; its own refuter found 6 more in the merged wording, fixed. Key phrases checked against the app by grep: the
+  reliability sentence, the cap sentence and the admin caption prefix match. FORGE 1.0 NOTE for after the flip: 987
+  chars in scratchpad/copyreview/forge1-note-past-tense.txt — it adds sizes ("about 0.2 or more", "up to about 0.2",
+  Pareto "about 0.03 too low", Grok 4.7 named) and "Forge 2.0 has these faults fixed": VERIFY EACH CLAIM against
+  forge/DESIGN.md §17.8 and the 2.0 scorer with an independent refuter BEFORE `register-forge.mjs note --live`.
+  OWED on the site: `next build` + both themes at 1280/390 (never rendered), re-sync at the frozen goose commit,
+  regenerate forge2-desktop-bodies.fixture.json with the app's final captions.
+  GATE SO FAR (final scorer ee4dd033d): reference 1.0000 on the 5 calibration seeds AND --reference multi-seed (every row
+  incl. E at 1.0 -> the tops hold on the final probe); starter 0.1304; SOL RE-PROBED 0.8417 (inner 0.9866, rel 0.8531,
+  groups T .8333, B .8333, U .9172, A 0, R5 .9, R7 .985; k_runtime_risks, r_pagination, r4 now 1.0). Sonnet running.
+  AFTER THE GATE: (1) source-strings commit + refreeze + one confirming single-seed golden; (2) merge forge2/final +
+  forge2/desktop -> main, refreeze sb7.2/sb7.1/forge/forge2 manifests, CI green; (3) site re-sync + build + look + note
+  refuter -> master -> live check; (4) register-forge2 add --live; (5) app version bump, notarized release, install,
+  screenshot pass in the installed app; (6) first real run (Sonnet 5.5) through the Benchmark view with the proxy's
+  FORGE_CURRENT=forge-2.0, publish, verify the run page; (7) flip --promote-run, then the 1.0 note; (8) merge
+  forge2/chain, unblock the 26, chain + vigil.
 - 17:1x DESKTOP WORDING FIXES: forge2/desktop 90f4f198f (33 findings = 18 defects, all applied; 4860 tests pass, tsc 0,
   eslint clean). Cap rule shown from the verdict's admission.final_rule with a "Here:" line that prints only when it
   reproduces the recorded final; reliability step in the shared sentence; Forge 2.0 renders no root wording; own
