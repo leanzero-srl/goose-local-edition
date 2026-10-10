@@ -64,6 +64,12 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
 
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 15:45 OWNER: "and then please let's queue all models from gauntlet so we have a counterpart in forge for each."
+  Checked the live board (Sanity, read-only): 34 Gauntlet 7.2 runs, all cloud baselines; 33 already had a forge-2.0
+  queue entry; the one missing was openai/gpt-6-luna-pro (its Forge 1.0 entry was dropped 2026-10-04 under "one OpenAI
+  variant per family") -> added on loop-state forge2/chain 6ec6a2a: 34 of 34, all BLOCKED until the Forge 2.0 release +
+  register; order Sonnet 5.5, Sol, then the rest, Luna Pro last. Both agents resumed after the 429 (gate agent by
+  SendMessage, copy review by resumeFromRunId wf_8e4008f2-e57 -> task wxmsozqcf).
 - 15:40 SESSION LIMIT (429) KILLED THE FINAL-GATE AGENT at ~15:35; owner re-logged in 15:39 ("continue and retry").
   MAP: its queue runner SURVIVED as a plain shell process (scratchpad/fgate/run_jobs.sh jobs1.txt -> score.sh, serial,
   load-gated; log jobs1.txt.log): reference x5 on the final scorer ee4dd033d — g-0123 1.0000 and g-a0c4 1.0000 (forge-2.0,
