@@ -64,6 +64,14 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
 
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 03:57 GATE PASSED (substance): golden 0.9907 / 0.9911 / 0.9908 on 3 seeds — every row 1.0 except the two economy rows
+  awaiting calibration; starter 0.2697; deterministic. Contract red team: 24 defects, all fixed (19 contract, 5 graders).
+  Final task+scorer: branch forge2/gate-fix e3f92d05a (worktree wf_1d0643c4-2d8-8 — FROZEN while pilots run from it).
+- 03:57 SOL PILOT LAUNCHED: run_build --forge2, openai/gpt-6.1-sol, budget 300, out
+  /Volumes/AI-workhorse/runs/forge2-pilot/20261010-0357-sol (log ~/goose-builds/loop-state/forge2-pilot-sol.log).
+  Parallel: wf forge2-calibrate-mutants (branch forge2/calibrate: 5 golden seeds -> CALIB pinned -> starter + 9 mutants).
+  The pilot's auto-score is provisional (pre-calibration scorer); the result is the CLI re-score with forge2/calibrate.
+  Then Haiku 5.5 (forge2_pilot.sh anthropic/claude-haiku-5.5 haiku 8853). Vigil cron every 10 min.
 - 01:25 INTEGRATED: branch forge2/integrate (11 branches + 16 integration commits, local worktree wf_2b463dc6-45f-1),
   every suite green; golden 0.9573 on one seed (main gap: the estimate-after-field-switch rule unstated), starter 0.2694
   (the "no v2 surfaces" band is 0.30, not 0.599 — SPEC §4/§5 contradicted; decided 0.30). Report: scratchpad
