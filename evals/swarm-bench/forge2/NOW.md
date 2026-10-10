@@ -64,6 +64,34 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
 
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 13:1x IN FLIGHT (four jobs, then the merge): (1) wf forge2-harden gate agent on forge2/hardened-gate — final golden
+  on the calibration seeds, then CALIB_SHA256 + scorerVersion forge-2.0; its scorer change is ONE source rule
+  `sources_for(c, change)` (a change made under the rate wall may name `reconcile` in every row that judges a source).
+  (2) wf forge2-severity Attack (read-only refuter) on forge2/severity dab70b928; site mirror b4e3c06 on forge2-era.
+  (3) agent on NEW branch forge2/admin-shot (worktree scratchpad/wt-admin-shot, from forge2/severity): pictures of the
+  UI Kit admin panel in forge-shots/ (admin-panel-light/dark.png, admin-panel-saved-light.png), drawn from the kept
+  ForgeDoc tree, CI secret never in a picture, no placeholder when the page did not render. WHY: owner 12:5x asked
+  whether what is published still carries pictures + video of what was delivered — it does (34 shots + forge-ui.webm
+  per run) except the admin panel, which is graded from its tree and had no image. (4) agent on forge2/desktop
+  (worktree .claude/worktrees/wf_a728d84f-f50-1): publish body + ScoringDetail carry the reliability rule
+  (verdict.reliability{multiplier,defects,folded,unexercised} -> post reliability/reliabilityDefects/criticalMultiplier;
+  site route refuses a rawScore without the factor), admin shots in the publish set.
+  MERGE PLAN (mine, when 1+2 return): forge2/severity + forge2/hardened-gate + forge2/admin-shot -> one branch; the ONE
+  conflict is score_forge2.py t_event_rows: resolve by folding severity's `_redelivered_after_next_run` into the gate's
+  `sources_for` (walled OR redelivered-past-the-next-run -> + reconcile, for every row). Then re-pin CALIB_SHA256 (the
+  thresholds file gained reliability_k/floor), refreeze the manifest, `--reference` must give 1.000, re-score the four
+  pilot trees + alt app + mutants on the final scorer, THEN site re-sync/review/register and the app build.
+- 12:55 SOL's a_action_result 0/5 (both runs) = MODEL DEFECT (words-reader, high confidence; oracle reproduced from the
+  seeds): Sol serves the frozen row attribute (`const points = c.estimate ?? 0` in src/views.js) where contract §1 says
+  "a change's points are the issue's current value of the field that board used at the time of the change"; the
+  starter it was handed had it right and its own SKILL.md still says "current estimate". Sonnet has a narrower form
+  (falls back to the frozen estimate when the board's field switched: 3/5). NO check change, NO contract change.
+- 12:2x SEVERITY RULE AS IMPLEMENTED (71cf9d6b4; differs from my brief in three reviewed places): a row under a failed
+  root counts only its shortfall BEYOND the root's; vacuous/unexercised rows never count; the public sentence says "a
+  test that fails only because another one did is not counted again". Recomposed from stored rows: Sol(lean) 0.7564,
+  Sonnet(hardened) 0.7473, Haiku 0.0845 (floor), reference 0.9907 (reliability exactly 1.0; E rows uncalibrated).
+  Sol(hardened) 0.9793 -> 0.8247 (`score_forge2.py --recompose <verdict.json>`, 13:1x). LIKE-FOR-LIKE ON THE HARDENED
+  TASK: SOL 0.8247 vs SONNET 0.7473. Verdicts: scratchpad/sev-out/recomposed-*.json.
 - 12:45 SOL ON THE HARDENED TASK (same task/scorer as Sonnet): 0.9793 provisional (seeds 0.9795/0.9814/0.9846), no
   critical, 66 of 300 calls, $1.35; 10 defect rows (a_action_result 0/5 in BOTH Sol runs — being diagnosed as model vs
   contract vs check; t_reestimate 5/6; b_comment 10/12; small ones). LIKE-FOR-LIKE under the severity rule (offline,
