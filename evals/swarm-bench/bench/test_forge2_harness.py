@@ -8,11 +8,13 @@ lock). They fail until those packages are merged, and each failure names what is
 """
 import contextlib
 import dataclasses
+import fcntl
 import io
 import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 import tempfile
 import types
@@ -178,6 +180,40 @@ class Forge20Workspace(unittest.TestCase):
             self.assertTrue((work / run_build.BUILD_VENDOR_TRACE).is_file())
             self.assertEqual(verdict['kit'], {'lock_sha256': 'k' * 64, 'wrapper_sha256': 'w' * 64, 'dir': kit['dir']})
             self.assertEqual(verdict['reasoning_effort']['source'], 'forge-2.0 pin')
+
+
+class ScoreLockTests(unittest.TestCase):
+    """run_build scores forge-2.0 in-process through score_forge2.gather(), and so does the score_forge2.py CLI: every
+    probe runs under the one per-host score lock, at a path no caller's $TMPDIR moves."""
+
+    def test_gather_runs_every_probe_under_the_score_lock_and_releases_it(self):
+        import score_forge2
+        held = []
+
+        def probe_one(_root, seed, *_rest):
+            with open(score_forge2.LOCK_FILE, 'w') as other:
+                try:
+                    fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    held.append(seed)
+            return {}, {}
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.object(score_forge2, 'LOCK_FILE', Path(tmp) / 'score.lock'), \
+                patch.object(score_forge2, '_kit', return_value=({'dir': tmp}, None)), \
+                patch.object(score_forge2, '_probe_one', side_effect=probe_one), \
+                patch.object(score_forge2, 'Ctx', side_effect=lambda *_a, **_k: types.SimpleNamespace()):
+            score_forge2.gather(Path(tmp), None, None, seed=SEED)
+            with open(score_forge2.LOCK_FILE, 'w') as after:
+                fcntl.flock(after, fcntl.LOCK_EX | fcntl.LOCK_NB)   # released: the next scoring proceeds
+        self.assertEqual(len(held), score_forge2.SCORING_SEEDS)
+
+    def test_callers_with_different_tmpdirs_lock_the_same_file(self):
+        import score_forge2
+        with tempfile.TemporaryDirectory() as tmp:
+            out = subprocess.run([sys.executable, '-B', '-c', 'import score_forge2; print(score_forge2.LOCK_FILE)'],
+                                 cwd=run_build.HERE, env={**os.environ, 'TMPDIR': tmp}, capture_output=True, text=True,
+                                 check=True)
+        self.assertEqual(out.stdout.strip(), str(score_forge2.LOCK_FILE))
 
 
 class KitTests(unittest.TestCase):
