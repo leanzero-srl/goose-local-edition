@@ -64,6 +64,27 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
 
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 14:5x wf forge2-harden COMPLETE (gate agent): hardened-gate 9cb27f51a = calibrated (CALIB 72acca75…, merged into
+  forge2/final as 34550b5d…), golden 1.0000 forge-2.0 on the 3 scoring sites (--reference PASS), race mutant
+  r3_check_then_act_dedupe 0.5652 judge PASS, starter 0.2706 (<= 0.30), 10 mutants build+lint. ITS OPEN ITEMS, triaged:
+  (1) forge2/final's PROBE differs from the one calibrated (f866b7490 world events as agenda points, 4e20900e4 Rovo after
+  the query lag, e45c44176 explain wait, admin pictures, kvsCode) -> the final gate re-probes the golden x5 on the final
+  probe and recalibrates if a ratio passes its top [QUEUED behind: the fairness-fix agent]; (4) a change made just after
+  the wall can be recorded first by the deferred hourly run and no row accepts it -> sent to the fairness-fix agent as
+  item 7 (one general source rule); (5) golden corner (late delivery for a closed sprint after a switch) -> the oracle's
+  new switch allowance (b) covers entrants; the golden stays as is unless a gate seed trips it; (6) economy tops loose
+  (2.58/2.0) -> kept: reference-fitted is the fair bar, E never multiplies; (8) gate scripts committed in loop-state
+  9016bb7. SITE v2 mirror 6d5f1b5 on forge2-era: per-group recompute equals the scorer field for field on all 10 real
+  verdicts; the site now recomputes criticals() from posted rows (a poster can no longer hide a fired critical or move a
+  row out of its group); refuses UNAVAILABLE rows; desktop bodies 201, four tampered copies 422; monotone. Pre-existing
+  gap to close at the freeze re-sync: posted tier means are never recomputed from the rows (both Forge eras).
+  forge2-era is 10 ahead / 3 behind origin (pre-rebase copy published by projsync; projsync never force-pushes) — the
+  site lands via master, so the stale remote branch is harmless.
+  FINAL SEQUENCE: fairness fixes -> final gate (golden x5 re-probe + calibrate if needed + --reference, Sol & Sonnet
+  re-probed on their own seeds, alt app >= 0.95, 10 mutants + race + starter judged) -> freeze (manifest, CALIB) ->
+  site re-sync at the frozen commit + tier-mean check + adversarial copy review -> desktop merge + SB7.x manifests +
+  fresh SDK build + typecheck + notarized release + install -> register forge-2.0 (add) -> real publish test -> flip
+  -> proxy FORGE_CURRENT + forge2/chain -> queue the 33 reruns (Sonnet first, Sol second).
 - 14:3x FAIRNESS AUDIT DONE (wf_b8da61d3-ac3, 31 agents; journal = the evidence): of 16 items, FAIR (real model defects,
   stated + achievable): a_action_result (Sol serves the frozen row estimate; Sonnet falls back to it after a field
   switch), r5_panel_labels (both miss the Migration control), r3_never_killed, r9 boot (Sonnet ~245 KB vs 153,600),
