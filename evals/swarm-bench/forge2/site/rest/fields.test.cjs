@@ -83,11 +83,16 @@ test('refusals: asUser, unknown and foreign fields, duplicates, type, size, miss
   assert.strictEqual(big.status, 400);
   assert.match(big.body.errorMessages[0], /at most 200/);
   assert.strictEqual(call(POST, upd({ customField: FIELD, issueIds: many.slice(0, 200), value: 'x' })).status, 204, '200 is allowed');
+  // Jira Cloud, measured live (fields.cjs header): the whole request is refused with 404 naming the ids, nothing applied.
   const gone = call(POST, upd({ customField: FIELD, issueIds: [ids[0], '999999999'], value: 'removed' }));
-  assert.strictEqual(gone.status, 400);
-  assert.match(gone.body.errorMessages[0], /999999999/);
+  assert.deepStrictEqual(gone, { status: 404, body: { errorMessages: ['Issues with the following IDs do not exist: 999999999.'], errors: {} } });
   state.st.issues.delete(ids[1]); // what state.deleteIssue does (forge2/P4)
-  assert.strictEqual(call(POST, upd({ customField: FIELD, issueIds: [ids[1]], value: 'removed' })).status, 400, 'a deleted issue is gone');
+  const deleted = call(POST, { body: { updates: [{ customField: FIELD, issueIds: [ids[0]], value: 'c' }, { customField: FIELD, issueIds: [ids[1]], value: null }] } });
+  assert.strictEqual(deleted.status, 404, 'a deleted issue is gone, in another entry too');
+  assert.match(deleted.body.errorMessages[0], /^Issues with the following IDs do not exist: \d+\.$/);
+  assert.match(deleted.body.errorMessages[0], new RegExp(`\\b${ids[1]}\\.$`));
+  const put = call(PUT, { params: { fieldIdOrKey: FIELD }, body: { updates: [{ issueIds: [ids[0], ids[1]], value: 'e' }] } });
+  assert.strictEqual(put.status, 404, 'the per-field PUT refuses it the same way');
   assert.strictEqual(state.st.issues.get(ids[0]).fields[FIELD], 'x', 'a refused request applies nothing');
 });
 

@@ -9,9 +9,12 @@
 // found"; "Combinations of custom field and issue should be unique within the request" (400); each update entry has
 // no properties beyond its schema's (`additionalProperties: false`, 400); the value must fit the field's type
 // (`string` -> a string; null clears).
+// MEASURED on Jira Cloud (wolfaenpak, 2026-10-10, a scratch Forge app owning a read-only string field; receipt in
+// forge2/research/understand/real-forge-fidelity.md §3.3): a request naming an issue id that does not exist (deleted,
+// or never created) is refused WHOLE — 404 "Issues with the following IDs do not exist: <ids>." and nothing applied —
+// on POST and PUT alike, alone or beside a live issue, in the same update entry or another.
 // HARNESS CHOICES (Atlassian documents none of these; the contract states them):
 //   * at most MAX_UPDATES field-issue combinations per request (SPEC §2.1), else 400 and nothing applied;
-//   * an issue id that does not exist (never did, or was deleted) -> 400 naming it, and nothing applied;
 //   * issue ids may be numbers or numeric strings (Jira's own JSON gives issue ids as strings);
 //   * an empty string clears the value like null;
 //   * `generateChangelog` / `generateAppEvents` are accepted and recorded, but the site writes no changelog entry
@@ -68,7 +71,7 @@ function write(c, entries) {
   }
   // A deleted issue has left the site's issue map (state.deleteIssue), like one that never existed.
   const missing = [...new Set(resolved.flatMap((e) => e.issueIds))].filter((id) => !c.state.st.issues.has(id));
-  if (missing.length) return err(400, `Issue does not exist or you do not have permission to see it: ${missing.join(', ')}`);
+  if (missing.length) return err(404, `Issues with the following IDs do not exist: ${missing.join(', ')}.`);
   const at = c.state.now();
   const q = c.req.query;
   const flags = { generateChangelog: q.get('generateChangelog') ?? null, generateAppEvents: q.get('generateAppEvents') ?? null };

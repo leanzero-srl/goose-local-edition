@@ -425,6 +425,28 @@ built. CPU is negligible except for deploys, at about 6 s each.
 - One full live calibration pass: about 1.5–2 h wall, mostly waiting on retries, with CPU under 5 min.
 - The browser legs need a quiet machine and must never overlap a scoring window.
 
+### 3.3 Measured: an app field-value write naming an issue that does not exist (2026-10-10)
+
+Measured for the 2.0 fairness audit (row r7_writes_accepted) with a scratch Forge app (`fair-probe-field-r7`, a
+read-only `jira:customField` of type string, a dynamic webtrigger running the writes `asApp`), on a classic project
+(FIEL) and a team-managed one (LZPT). X is an issue kept during the test, Y one created and deleted before the writes.
+
+| request | status and body | X afterwards |
+|---|---|---|
+| `POST /rest/api/3/app/field/value` `[X] = a` (baseline) | 204 | `a` |
+| `POST` `[X, Y(deleted)] = b` | 404 `{"errorMessages":["Issues with the following IDs do not exist: 45492."],"errors":{}}` | `a` |
+| `POST` `[X] = c` and `[Y(deleted)] = null` in two entries | 404, same message | `a` |
+| `POST` `[Y(deleted)] = null` alone | 404, same message | — |
+| `POST` `[X, 999999999 (never existed)] = d` | 404 `"Issues with the following IDs do not exist: 999999999."` | `a` |
+| `PUT /rest/api/3/app/field/{id}/value` `[X, Y(deleted)] = e` | 404, same message | `a` |
+
+So Jira refuses the WHOLE request and applies nothing, with 404 and that message, whatever the deleted id rides with;
+the OpenAPI says only "400 Returned if the request is invalid" and "404 Returned if any field is not found". The site
+(`forge2/site/rest/fields.cjs`) answers exactly this since the audit; it had answered 400 "Issue does not exist or you
+do not have permission to see it: <ids>" as a harness choice. The four test issues (LZPT-565/566, FIEL-44/45) were
+deleted (204 each) and the app uninstalled; its registration (7c09994d-c0ce-47da-9eae-068b0213024d) stays in the
+LeanZero developer space until removed in the developer console.
+
 ---
 
 ## 4. Recommended fidelity architecture for 2.0
