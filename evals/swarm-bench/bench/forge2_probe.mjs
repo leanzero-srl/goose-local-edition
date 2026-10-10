@@ -116,6 +116,9 @@ const obs = {
   checkpoints: {},
   upgrade: null,
   person_reads: [],
+  // SPEC §2.8: the batches the drive held (and the ones it could not), the kit's concurrent groups, and the live-UI
+  // step's read-after-write window (the widget re-reads at the app's own realtime publish).
+  concurrency: { query_lag_ms: null, max_concurrent: null, batches: [], groups: [], same_event: 0, same_issue: 0, read_after_write: [] },
 };
 const save = () => writeFileSync(outPath, JSON.stringify(obs, null, 1));
 // An interface this probe needs and the harness lacks: a harness gap, so the sections it feeds are unavailable.
@@ -451,6 +454,9 @@ function quotaWindow(t0) {
 }
 const readsAt = (t, win) => (win && t > win.at - READS_MARGIN_MS && t < win.until ? win.at - READS_MARGIN_MS : t);
 
+// `io.deliver(agendaAt)` learns the next agenda point (hour mark, admin/person read, CI sequence, quota draw) and
+// `io.drain(due, {beforeDelivery})` whether the next thing to happen is a delivery: the drive may leave the queues
+// undrained between related deliveries (SPEC §2.8 S1, batchDecision), never before an agenda point.
 async function runHours(io, t0) {
   const ciAt = t0 + CI_AT_MS;
   const win = typeof io.quotaWindow === 'function' ? io.quotaWindow(t0) : null;
@@ -464,19 +470,36 @@ async function runHours(io, t0) {
     if (k > 1) await io.hourly(k - 1, end);
     for (;;) {
       const nd = io.nextDeliveryAt();
-      const due = Math.min(end, panelDone ? Infinity : panelAt, !ciDone && ciAt < end ? ciAt : Infinity,
-        !quotaDone && quotaAt < end ? quotaAt : Infinity, nd !== null && nd < end ? nd : Infinity);
+      const agendaAt = Math.min(end, panelDone ? Infinity : panelAt, !ciDone && ciAt < end ? ciAt : Infinity,
+        !quotaDone && quotaAt < end ? quotaAt : Infinity);
+      const due = Math.min(agendaAt, nd !== null && nd < end ? nd : Infinity);
       await io.world(due);
-      await io.drain(due);
+      await io.drain(due, { beforeDelivery: due < agendaAt });
       await io.advanceTo(due);
       if (!ciDone && ciAt < end && ciAt <= due) { ciDone = true; await io.ci(); continue; }
       if (!quotaDone && quotaAt < end && quotaAt <= due) { quotaDone = true; await io.quota(); continue; }
       if (!panelDone && panelAt <= due) { panelDone = true; await io.panel(`h${k}`); continue; }
-      if (nd !== null && nd < end && nd <= due) { if (await io.deliver()) continue; }
+      if (nd !== null && nd < end && nd <= due) { if (await io.deliver(agendaAt)) continue; }
       if (due >= end) break;
     }
     await io.checkpoint(`h${k}`, end);
   }
+}
+
+// SPEC §2.8 S1: deliveries of one event, or of one issue, start together only while both are pending, so the drive
+// leaves the queues undrained through a batch the site's plan marks (deliverNext's `batchEnd`: a duplicate with every
+// delivery since its original, the two halves of a permuted same-issue pair). A batch opened at `now` (plan slot
+// `slot`) is held only when its last delivery (`createdAt(k)`: each later slot's change time; a redelivery arrives at
+// once) comes before the next agenda point, so no checkpoint, read, CI step or quota draw meets work the hold delayed,
+// and never inside the quota wall's window, where two partners' first requests would both meet the wall before either
+// could store the pause (READS-FIRST holds that write). The drain guard (`beforeDelivery`) releases a hold at any
+// agenda point regardless.
+function batchDecision({ slot, end, now, createdAt, agendaAt, win }) {
+  let endsAt = now;
+  for (let k = slot + 1; k <= end; k++) endsAt = Math.max(endsAt, createdAt(k));
+  if (win && now >= win.at && now < win.until) return { held: false, endsAt, why: 'inside the quota wall window' };
+  if (!(endsAt < agendaAt)) return { held: false, endsAt, why: 'its last delivery would pass the next agenda point' };
+  return { held: true, endsAt };
 }
 
 // ── main sequence ─────────────────────────────────────────────────────────────────────────
@@ -553,6 +576,11 @@ async function main() {
   }, ['migration']);
   // A refusal here (no sandbox, wrapper sha mismatch) is the harness's: main()'s catch marks every section.
   emu = await createEmulator({ appDir, kitDir, site, runtime, devState, onInvocation });
+  obs.concurrency.query_lag_ms = require(join(kitDir, 'lib', 'kvs.cjs')).QUERY_LAG_MS ?? null;
+  obs.concurrency.max_concurrent = require(join(kitDir, 'lib', 'emulator.cjs')).MAX_CONCURRENT_CONSUMERS ?? null;
+  if (obs.concurrency.query_lag_ms === null || obs.concurrency.max_concurrent === null || !Array.isArray(emu.concurrency)) {
+    gap('the kit\'s S1/S2 (kvs.cjs QUERY_LAG_MS, emulator.cjs MAX_CONCURRENT_CONSUMERS, emu.concurrency)', 'concurrency');
+  }
   obs.manifest = emu.manifest;
   obs.manifestError = emu.manifestError ?? null;
   obs.runtimePublishable = emu.publishable ?? null;
@@ -597,9 +625,10 @@ async function main() {
     return { entities: Object.fromEntries(Object.entries(s.entities || {}).map(([n, items]) => [n, pairs(items)])),
       keys: pairs(s.kvs ?? s.keys) };
   };
+  // `concurrent`: the kit's record on a delivery that ran in a concurrent group (forge2_checks.concurrent_groups).
   const normDelivery = (d) => ({ eventId: d.eventId, inv: d.invocationId ?? d.inv ?? null, attempt: d.attempt,
     result: d.result?._retry ? 'retry' : (d.outcome ?? (d.ok === false ? 'throw' : 'ok')),
-    retryAfter: d.retryAfter ?? d.result?.retryOptions?.retryAfter ?? null, t: vt(d.t) });
+    retryAfter: d.retryAfter ?? d.result?.retryOptions?.retryAfter ?? null, t: vt(d.t), ...(d.concurrent ? { concurrent: d.concurrent } : {}) });
   const now = () => site.state.now();
   const advanceTo = async (t) => { if (t > now()) await emu.advance(t - now()); };
   takeCalls(emu);
@@ -723,6 +752,9 @@ async function main() {
     const ph = obs.phases.live = { calls: [], invocations: [], deliveries: [], events: [] };
     const liveById = new Map(pack.live.map((c) => [c.changelogId, c]));
     let planDone = false;
+    // The batch the drive is holding the queues for (SPEC §2.8 S1, batchDecision): {end: its last plan slot, rec}.
+    let hold = null;
+    const createdAt = (slot) => Date.parse(liveById.get(site.state.plan[slot].changelogId).created);
     const io = {
       now,
       advanceTo,
@@ -733,16 +765,36 @@ async function main() {
         if (!c) throw new Error(`the delivery plan names ${d.changelogId}, which pack.live does not hold`);
         return Math.max(now(), Date.parse(c.created));
       },
-      deliver: async () => {
+      deliver: async (agendaAt = -Infinity) => {
+        const t = now();
         const r = await emu.deliverNext();
         if (!r) { planDone = true; return false; }
         const trig = (r.invocations || []).map((x) => normInvocation(x, 'trigger', x?.moduleKey));
         ph.invocations.push(...trig);
         ph.events.push({ changelogId: r.changelogId, slot: r.slot, duplicate: Boolean(r.duplicate), t: vt(new Date(now()).toISOString()),
-          triggerInvocations: trig.map((x) => x.inv).filter(Boolean) });
+          triggerInvocations: trig.map((x) => x.inv).filter(Boolean), ...(Number.isInteger(r.batchEnd) ? { batchEnd: r.batchEnd } : {}) });
+        if (hold) {
+          hold.rec.delivered.push(r.changelogId);
+          if (r.slot >= hold.end) hold = null;
+        } else if (Number.isInteger(r.batchEnd) && r.batchEnd > r.slot) {
+          const b = batchDecision({ slot: r.slot, end: r.batchEnd, now: t, createdAt, agendaAt, win: quotaWindow(obs.clock.upgrade_t_ms) });
+          const slots = site.state.plan.slice(r.slot, r.batchEnd + 1);
+          const rec = { slots: [r.slot, r.batchEnd], changelogIds: [...new Set(slots.map((d) => d.changelogId))],
+            issueIds: [...new Set(slots.map((d) => String(liveById.get(d.changelogId).issueId)))], duplicates: slots.filter((d) => d.duplicate).length,
+            t_ms: t, ends_ms: b.endsAt, held: b.held, ...(b.why ? { why: b.why } : {}), delivered: [r.changelogId] };
+          obs.concurrency.batches.push(rec);
+          if (b.held) hold = { end: r.batchEnd, rec };
+        }
         return true;
       },
-      drain: async (until) => consumed(ph, await emu.drainQueues({ until })),
+      drain: async (until, { beforeDelivery = false } = {}) => {
+        if (hold && beforeDelivery) return;
+        if (hold) {
+          hold.rec.released = `at ${new Date(until).toISOString()}, an agenda point before its last delivery`;
+          hold = null;
+        }
+        consumed(ph, await emu.drainQueues({ until }));
+      },
       world: worldUntil,
       hourly: async (k) => {
         ph.calls.push(...takeCalls(emu));
@@ -778,6 +830,7 @@ async function main() {
       await io.drain(io.nextDeliveryAt());
       if (!(await io.deliver())) break;
     }
+    hold = null;
     if (typeof site.flushLive === 'function') site.flushLive();
     else gap('site.flushLive (dropped changes after the last delivery)', 'live', 'heal');
     consumed(ph, await emu.drainQueues());
@@ -828,6 +881,7 @@ async function main() {
     const rt = await emu.realtime?.log(0);
     obs.realtime = { events: rt?.events ?? [], subscriptions: rt?.subscriptions ?? [] };
   });
+  await section('concurrency', async () => recordGroups(), ['concurrency']);
   await section('rate', async () => {
     if (typeof site.control.ratelog !== 'function') { gap('site.control.ratelog (P4: the priced request ledger)', 'rate'); return; }
     // The ledger is site.log's entries that carry an op, in the same order (site.cjs control.ratelog), read here in
@@ -1684,10 +1738,58 @@ async function liveStep(s, board, pack) {
   await sleep(500);
   after = await widgetMetrics(s.page);
   const ops = bridgeOps(s);
+  const widgetKey = (emu.modules ? emu.modules('dashboards:widget') : [])[0]?.key ?? null;
+  const windows = changes.map((c) => readAfterWrite(c.changelogId, widgetKey, obs.concurrency.query_lag_ms));
+  obs.concurrency.read_after_write.push(...windows);
   return { board, subscribed: ops.some((b) => opName(b) === 'subscribeRealtimeChannel'),
     idleInvokes: idle.filter((b) => ['invoke', 'fetchProduct'].includes(opName(b))).length, idleMs: LIVE_IDLE_MS,
     reloaded: navigations > 0, delivered: changes.map((c) => c.changelogId),
-    sprintsBefore: before.map(({ id, metrics }) => ({ id, metrics })), sprintsAfter: after.map(({ id, metrics }) => ({ id, metrics })) };
+    sprintsBefore: before.map(({ id, metrics }) => ({ id, metrics })), sprintsAfter: after.map(({ id, metrics }) => ({ id, metrics })),
+    readAfterWrite: windows };
+}
+
+// The read-after-write window of one live-UI change (SPEC §2.8 S2): the last KVS write of the consumers its delivery
+// started, their last realtime publish, and the open widget's re-read after it (the first widget resolver invocation
+// that started at or after the publish, and its first KVS query). The drive lets no virtual time pass between the
+// publish and the re-read, so `gap_ms` below `query_lag_ms` means the re-read came inside the window where an index
+// query misses that write; an app that publishes only once its writes are queryable, or reads them by key, shows the
+// new numbers either way (u_widget_live grades what the widget shows).
+function readAfterWrite(changelogId, widgetKey, lagMs) {
+  const recs = emu.invocations instanceof Map ? [...emu.invocations.values()] : [];
+  const ids = new Set(recs.filter((r) => r.moduleType === 'consumer' && String(r.originChange) === String(changelogId)).map((r) => r.id));
+  const at = (e) => Date.parse(e.t_virtual);
+  const mine = (emu.log || []).filter((e) => ids.has(e.invocationId));
+  const writes = mine.filter((e) => e.service === 'kvs' && isWrite(e)).map(at);
+  const publishes = mine.filter((e) => e.service === 'realtime' && /^publish/.test(String(e.op ?? '')) && Number(e.status) < 400).map(at);
+  const lastWrite = writes.length ? Math.max(...writes) : null;
+  const publish = publishes.length ? Math.max(...publishes) : null;
+  const reread = publish === null || !widgetKey ? null
+    : recs.filter((r) => r.moduleKey === widgetKey && r.source === 'resolver' && r.vStart >= publish).sort((a, b) => a.vStart - b.vStart)[0] ?? null;
+  const query = reread ? (emu.log || []).filter((e) => e.invocationId === reread.id && e.service === 'kvs' && /query$/.test(String(e.path ?? ''))).map(at)[0] ?? null : null;
+  const gap = query !== null && lastWrite !== null ? query - lastWrite : null;
+  return { changelogId, consumers: [...ids], writes: writes.length, last_write_ms: lastWrite, publish_ms: publish,
+    reread: reread ? { inv: reread.id, t0_ms: reread.vStart, first_query_ms: query } : null,
+    gap_ms: gap, inside_lag: gap === null || !Number.isFinite(lagMs) ? null : gap < lagMs };
+}
+
+// The kit's concurrent groups (emu.concurrency) with each member's lineage: the product event (`originChange`) and the
+// issue (`originIssue`) its chain began with, so a same-event group names the change and a same-issue group the issue.
+// Each held batch lists the groups its changes formed.
+function recordGroups() {
+  const lineage = (inv) => {
+    const r = emu.invocations instanceof Map ? emu.invocations.get(inv) : null;
+    return r ? { originChange: r.originChange ?? null, originIssue: r.originIssue ?? null, scheduledRun: r.scheduledRun ?? null } : {};
+  };
+  const groups = (emu.concurrency || []).map((g) => ({ group: g.group, reason: g.reason, schedule: g.schedule, t_ms: Date.parse(g.t),
+    members: (g.members || []).map((m) => ({ index: m.index, eventId: m.eventId, inv: m.invocationId, queue: m.queueName, attempt: m.attempt,
+      outcome: m.outcome, ...lineage(m.invocationId) })),
+    first_writes: (g.firstWrites || []).map((w) => ({ index: w.index, inv: w.invocationId, t_ms: Date.parse(w.t_virtual), held: Boolean(w.held) })) }));
+  obs.concurrency.groups = groups;
+  obs.concurrency.same_event = groups.filter((g) => g.reason === 'same-event').length;
+  obs.concurrency.same_issue = groups.filter((g) => g.reason === 'same-issue').length;
+  for (const b of obs.concurrency.batches) {
+    b.groups = groups.filter((g) => g.members.some((m) => b.changelogIds.includes(String(m.originChange)))).map((g) => g.group);
+  }
 }
 
 // The resolver-read fault (DESIGN §5.2): armed for one open, it answers the first Jira read of the surface's resolver
@@ -1879,6 +1981,40 @@ async function selftest() {
     const worlds = seen.filter((x) => x[0] === 'world').map((x) => x[1]);
     assert.deepEqual(worlds, [...worlds].sort((a, b) => a - b));
     for (const [i, x] of seen.entries()) if (x[0] === 'deliver') assert.equal(seen[i - 1][0], 'drain');
+  });
+
+  await test('runHours: io.drain learns whether a delivery comes next; io.deliver learns the next agenda point', async () => {
+    let clock = 0;
+    const plan = [10 * 60_000, 10.5 * 60_000, 54 * 60_000];
+    let cursor = 0;
+    const drains = [];
+    const delivers = [];
+    await runHours({
+      now: () => clock, advanceTo: async (t) => { if (t > clock) clock = t; },
+      nextDeliveryAt: () => (cursor < plan.length ? Math.max(clock, plan[cursor]) : null),
+      deliver: async (agendaAt) => { delivers.push(agendaAt); cursor += 1; return true; },
+      drain: async (t, o) => drains.push([t, o?.beforeDelivery]), world: async () => {}, hourly: async () => {},
+      ci: async () => {}, panel: async () => {}, checkpoint: async () => {},
+    }, 0);
+    const panelAt = H - PANEL_BEFORE_MS;
+    assert.deepEqual(drains.slice(0, 5), [[plan[0], true], [plan[1], true], [plan[2], true], [panelAt, false], [H, false]]);
+    assert.deepEqual(delivers, [panelAt, panelAt, panelAt]);
+    assert.ok(drains.slice(5).every(([, before]) => before === false), 'no delivery after the first hour: every later drain precedes an agenda point');
+  });
+
+  await test('batchDecision: held only when its last delivery comes before the next agenda point, never inside the quota window', async () => {
+    const t0 = 1_000 * H;
+    const created = [t0, t0 + 20_000, t0 + 5_000, t0 + 50_000];   // slot 2 redelivers an older change: it arrives at once
+    const createdAt = (k) => created[k];
+    const win = { at: t0 + 2 * H, until: t0 + 2.5 * H };
+    assert.deepEqual(batchDecision({ slot: 0, end: 2, now: t0, createdAt, agendaAt: t0 + 30_000, win }), { held: true, endsAt: t0 + 20_000 });
+    assert.deepEqual(batchDecision({ slot: 0, end: 3, now: t0, createdAt, agendaAt: t0 + 30_000, win }),
+      { held: false, endsAt: t0 + 50_000, why: 'its last delivery would pass the next agenda point' });
+    assert.equal(batchDecision({ slot: 0, end: 1, now: t0, createdAt, agendaAt: t0 + 20_000, win }).held, false, 'ending AT the agenda point is not before it');
+    assert.deepEqual(batchDecision({ slot: 1, end: 2, now: t0 + 20_000, createdAt, agendaAt: t0 + 20_001, win }), { held: true, endsAt: t0 + 20_000 });
+    const inWall = batchDecision({ slot: 0, end: 1, now: t0 + 2.1 * H, createdAt: () => t0 + 2.1 * H, agendaAt: t0 + 3 * H, win });
+    assert.deepEqual([inWall.held, inWall.why], [false, 'inside the quota wall window']);
+    assert.equal(batchDecision({ slot: 0, end: 1, now: t0 + 2.5 * H, createdAt: () => t0 + 2.5 * H, agendaAt: t0 + 3 * H, win }).held, true, 'the wall has reset at its until');
   });
 
   await test('quotaWindow: the full window on every upgrade offset; the reads it would hold move before it, in their hour', async () => {
