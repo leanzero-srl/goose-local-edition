@@ -110,6 +110,24 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
   calibration, sb7.x/forge manifests to refreeze after P11's shared bench edits.
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 17:25 OWNER: "but isn't benchmark and scoring going through the desktop app?! I don't see any activity on the app. I do
+  not want headless bench and scoring." ANSWERED plainly: nothing is being benchmarked now (the installed 3.0.108 has no
+  Forge 2.0); what runs is the scorer's own acceptance test (reference, starter, independent app, mutants — no model,
+  nothing published); the three pilots (Sol, Sonnet, Haiku) and this afternoon's re-scores of Sol's and Sonnet's saved
+  builds WERE headless — evidence only, never published. RULE (memory no-headless-bench-or-scoring-even-pilots): no
+  more headless model runs or headless scoring of model builds; all 26 run and score in the Benchmark view.
+- 17:3x RELEASE STEPS DONE WHILE THE SCORER TESTS RUN: goose main = 5d5e04ea9 (merge forge2/final) + ffb715bf3 (merge
+  forge2/desktop) + a9aa59a4e (sb7.2/sb7.1/forge manifests refrozen in a clean worktree; --check 116/116/78/140) +
+  0745b1b6c (docs/releases/3.0.109-forge-2.0.md; forge/DESIGN.md §17.8 row I = the Pareto queue-delegation fault + the
+  measured re-scores behind the 1.0 note). Bench python suites pass on main; pushed to lz; CI run 38059759485 on the
+  merge (an earlier run on a notes-only commit failed in the Rust tests and the next passed: a flake). loop-state
+  master 58e045e = forge2/chain merged (26 blocked forge-2.0 entries; chain_dryrun: next none). THE 1.0 NOTE: refuter
+  CONFIRMED-WITH-CORRECTION -> scratchpad/refuter-note/corrected-note.txt (989 chars: "Others may be affected, x-ai/
+  grok-4.7 among them"; "Forge 1.0's linter passed it"); post ONLY after the flip. SONNET RE-PROBED 0.7530 (rel 0.7774;
+  8 groups) vs SOL 0.8417 — both exactly the regrade projections. Site agent: re-sync at a9aa59a4e, real bodies from
+  fgate/{sol,sonnet}-multi, build + screenshots once the queue ends. RELEASE NOTES CLAIM "deliberately broken apps lose
+  the tests they should" IS PENDING the mutant judge results — amend the notes if any mutant fails before the GitHub
+  release. Version: 3.0.109 (installed 3.0.108).
 - 17:3x SITE WORDING FIXES: forge2-era 85bc900 + 7893de4 + 315f905 + f002ad7 (58 findings = 36 defects, 35 applied; the one
   declined is the probe's recording caption -> the post-gate source-strings commit). Tests 157/113/17/11, tsc+eslint
   clean; its own refuter found 6 more in the merged wording, fixed. Key phrases checked against the app by grep: the
