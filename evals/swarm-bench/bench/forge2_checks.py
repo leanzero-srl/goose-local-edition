@@ -1608,6 +1608,12 @@ def selftest() -> List[str]:
                 r = {x['check']: x for x in evaluate(obs, nested)}['r4_permission_revoked']
                 if r['score'] != want or critical_fired(r) != (want == 0.0):
                     failures.append(f'leak on a {label}: {r["score"]} fired={critical_fired(r)} — {r["detail"]}')
+            no_v2 = evaluate(perfect_observations(o), fo.Oracle(fo.synthetic_pack()))
+            if not all(r.get('unavailable') for r in no_v2):
+                failures.append('a 1.0 pack must leave every v2 row unavailable')
+            ui_view = evaluate(perfect_observations(o), fo.Oracle(fo.synthetic_pack_v2(), include_live_ui=True))
+            if not all(r.get('unavailable') for r in ui_view):
+                failures.append('the live-UI oracle view must leave every v2 row unavailable (scorer wiring)')
             # an admin page the UI Kit host refused for the app (what the probe leaves: the cause, no panel reads, no
             # admin boot, the two settings cases blocked) is charged — every admin row 0 and absent with the cause, no
             # critical, none unavailable — and moves nothing else
@@ -1629,12 +1635,6 @@ def selftest() -> List[str]:
                 if r['score'] != want.get(n, 1.0) or r.get('unavailable') or critical_fired(r) or (
                         n in want and n != 'r8_cost_controls' and 'NOT_NATIVE' not in str(parts.get('absent_surface'))):
                     failures.append(f'admin page refused as not UI Kit: {n} {r["score"]} — {r["detail"]}')
-            no_v2 = evaluate(perfect_observations(o), fo.Oracle(fo.synthetic_pack()))
-            if not all(r.get('unavailable') for r in no_v2):
-                failures.append('a 1.0 pack must leave every v2 row unavailable')
-            ui_view = evaluate(perfect_observations(o), fo.Oracle(fo.synthetic_pack_v2(), include_live_ui=True))
-            if not all(r.get('unavailable') for r in ui_view):
-                failures.append('the live-UI oracle view must leave every v2 row unavailable (scorer wiring)')
         finally:
             SITE_LLM = real_site
     return failures
