@@ -1,6 +1,6 @@
 import { jiraJson, route, postJson } from './jira';
 import { listScrumBoards, listActiveSprints, isStarted } from './config';
-import { sprintTotals, visibleIssues, byTime, memberKey } from './ledger';
+import { sprintTotals, visibleIssues, byTime, memberKey, changePoints } from './ledger';
 import { formatPoints, fromMicro, formatCreep, creepPercent } from './numbers';
 
 const iso = (ms) => new Date(ms).toISOString();
@@ -54,14 +54,16 @@ export async function getSprint(sprintId, policy) {
 // What one person sees of a sprint: team totals, and only the changes to issues they can browse
 // (read as them) plus how many are hidden. Rows in table order: at ascending, then changelog id.
 export async function personView(sprint, policy) {
-  const { changes, members, totals } = await sprintTotals(sprint.id);
+  const { changes: all, members, totals } = await sprintTotals(sprint.id);
+  // Contract §1: changes of deleted issues are listed to nobody and counted as hidden for nobody.
+  const changes = all.filter((c) => c.deleted !== true);
   const visible = changes.length ? await visibleIssues(changes.map((c) => c.issueId), policy) : new Map();
-  const estimate = new Map(members.map((m) => [memberKey(m.sprintId, m.issueId), m.estimate]));
+  const memberOf = new Map(members.map((m) => [memberKey(m.sprintId, m.issueId), m]));
   const rows = changes
     .filter((c) => visible.has(c.issueId))
     .sort(byTime)
     .map((c) => {
-      const points = estimate.get(memberKey(c.sprintId, c.issueId)) ?? 0;
+      const points = changePoints(memberOf.get(memberKey(c.sprintId, c.issueId)), c.estimateField);
       return {
         changeId: c.changeId,
         issueId: c.issueId,
@@ -72,6 +74,7 @@ export async function personView(sprint, policy) {
         at: iso(c.at),
         by: c.authorName,
         source: c.source,
+        deployedTo: c.deployedEnvs ? c.deployedEnvs.split(',') : [],
       };
     });
   return { sprint, ...totalsView(totals), hiddenCount: changes.length - rows.length, changes: rows };
@@ -95,7 +98,9 @@ export function summaryDoc(issueKey, sprintName, creepText, totalsText) {
   };
 }
 
-export async function postSummary(sprint, changeId, policy) {
+// commentGroup (admin setting): when set, the comment is visible to that group only; empty = everyone who
+// can browse the issue.
+export async function postSummary(sprint, changeId, policy, commentGroup) {
   const { changes, totals } = await sprintTotals(sprint.id);
   const change = changes.find((c) => c.changeId === String(changeId));
   if (!change) return { ok: false, error: `Change ${changeId} is not in sprint ${sprint.name}.` };
@@ -103,6 +108,8 @@ export async function postSummary(sprint, changeId, policy) {
   if (!visible.has(change.issueId)) return { ok: false, error: 'You cannot browse this issue.' };
   const issueKey = visible.get(change.issueId);
   const view = totalsView(totals);
-  await jiraJson('user', route`/rest/api/3/issue/${change.issueId}/comment`, postJson({ body: summaryDoc(issueKey, sprint.name, view.text.creep, view.text) }), policy);
+  const comment = { body: summaryDoc(issueKey, sprint.name, view.text.creep, view.text) };
+  if (commentGroup) comment.visibility = { type: 'group', value: commentGroup };
+  await jiraJson('user', route`/rest/api/3/issue/${change.issueId}/comment`, postJson(comment), policy);
   return { ok: true, issueKey };
 }

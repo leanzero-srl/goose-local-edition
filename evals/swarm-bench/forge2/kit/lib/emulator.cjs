@@ -6,9 +6,29 @@
 //   await emu.build();                       -> { functions: [{key, handler, bundled, loaded, error}], files }
 //   await emu.invoke(fnKey, { moduleKey, event, asUser })   -> {ok, result, error, logs, ms, calls, ...}
 //   await emu.deliverProductEvent(change)    -> the site applies it, every subscribed trigger runs (no drain)
-//   await emu.drainQueues()                  -> [{eventId, attempt, result, retryAfter, ...}]
+//   await emu.drainQueues()                  -> [{eventId, attempt, result, retryAfter, ...}] (queue events and trigger retries)
 //   await emu.runScheduled(moduleKey)        -> invoke + drain
 //   await emu.invokeAction(actionKey, inputs, { asUser })
+//   await emu.callResolver({ moduleKey, functionKey, payload, asUser, extension })   the platform's context for asUser
+//   await emu.invokeWebtrigger(moduleKey, request) / emu.webtriggerUrl(moduleKey)    the public route /x/webtrigger/<key>
+//
+// TIME IS VIRTUAL (SPEC §2.2, clock.cjs). `emu.clock.now()` is the site's clock as last seen. An invocation starts at
+// the site's current time, its process runs on its own virtual clock (proxied requests cost their class, waits their
+// face value), it is killed when that clock passes the module's limit, and when it ends the site's clock moves to its
+// end. Each result carries t0/t1 (virtual ISO), vms (virtual ms) and ms (real ms, never a grading input).
+//
+// CONCURRENT DELIVERY (contract S1). Forge runs consumer invocations at the same time; here up to
+// MAX_CONCURRENT_CONSUMERS. When drainQueues starts a consumer delivery, every other pending consumer delivery due by
+// then that carries the same event (a copy of the same queue event, or work pushed for the same product event: a
+// trigger-level duplicate) or names the same issue (its chain began with a product event of that issue) starts with
+// it, in delivery order. A push's `concurrency: {key, limit}` does not exempt a pair (SPEC §2.8; contract §8 states
+// the difference from production, where a key would serialize them). The group runs under the proxy's deterministic
+// READS-FIRST schedule (proxy.cjs). Each member's delivery record, invocation result and invocation record carry
+// `concurrent: {group, reason: 'same-event'|'same-issue', schedule, size, index, with: [{index, eventId,
+// invocationId}]}`; `emu.concurrency` lists every group with its first writes in commit order; a KVS call the schedule
+// held is logged `heldReadsFirst: true`. Unrelated deliveries and product-event triggers run one at a time, as before.
+// A pair forms only from deliveries pending together: deliverNext's `batchEnd` (the site's plan) names the delivery
+// up to which the drive leaves the queues undrained. KVS queries are eventually consistent (S2, kvs.cjs).
 //   await emu.openSurface(page, { moduleKey, entry, theme, layout, asUser, extension })   (bridge-host.cjs)
 //   await emu.hostSave(page)
 //   emu.kvs.snapshot(); emu.log; emu.bridgeLog; emu.harnessMissing; emu.close()
@@ -23,7 +43,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { kitPaths } = require('./kitpaths.cjs');
 const { createKvs } = require('./kvs.cjs');
-const { createProxy } = require('./proxy.cjs');
+const { createProxy, createConcurrentGroup } = require('./proxy.cjs');
 const rt = require('./runtime.cjs');
 const host = require('./bridge-host.cjs');
 
@@ -37,8 +57,16 @@ const REDELIVERY_MINUTES = [1, 2, 4, 8];
 const REDELIVERY_CAP_MINUTES = 15;
 const RETENTION_MS = DAY_MS;
 const MAX_RETRY_AFTER_S = 900;
+// limits-async-events: "Cyclic invocation limit 1000 ... push requests across all handlers originating from a single
+// initial function invocation" (forge2/research/BRIEF.md rob#18).
 const CYCLIC_INVOCATION_LIMIT = 1000;
 const LONG_RUNNING_PAYLOAD_BYTES = 100 * 1024;
+// events-reference/product_events: "You can only retry an event for a maximum of four times"; platform errors (a timeout)
+// are retried too (CHANGE-681). SPEC §2.2: product-event triggers, up to 4 retries.
+const TRIGGER_MAX_RETRIES = 4;
+// async-events-api: without a concurrency key "Event processing will be unbounded and limited only by the general
+// per-installation invocation limits" (robustness.md §5.5). The harness's own bound, stated in the contract (S1).
+const MAX_CONCURRENT_CONSUMERS = 3;
 
 function siteClient(site) {
   if (site.control) {
@@ -94,15 +122,41 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
 
   const client = siteClient(site);
   const info = await client.call('info');
-  let clockOffset = Date.parse(info.now) - Date.now();
-  const syncClock = async () => { const c = await client.call('clock'); clockOffset = c.now - Date.now(); return c.now; };
-  const clock = { now: () => Date.now() + clockOffset };
-  const advance = async (ms) => { const r = await client.call('advance', { ms }); clockOffset = r.now - Date.now(); return r.now; };
+  // The emulator's clock mirrors the site's (the world's) clock and never runs on wall time by itself.
+  let vnow = Date.parse(info.now);
+  // The site's and the emulator's clock both reach at least t (the site's may already be later: world events, probes).
+  // One move at a time: the site's `advance` is relative, so two interleaved read-then-advance pairs (two concurrent
+  // invocations ending) would move it twice.
+  let clockMoves = Promise.resolve();
+  const moveTo = async (t) => {
+    let siteNow = (await client.call('clock')).now;
+    if (t > siteNow) siteNow = (await client.call('advance', { ms: t - siteNow })).now;
+    vnow = Math.max(vnow, siteNow);
+    return vnow;
+  };
+  const advanceTo = (t) => {
+    const move = clockMoves.then(() => moveTo(t));
+    clockMoves = move.catch(() => {}); // the caller gets the failure; the next move still runs
+    return move;
+  };
+  const syncClock = () => advanceTo(vnow);
+  const clock = { now: () => vnow, observe: (t) => { if (t > vnow) vnow = t; }, advanceTo };
+  const advance = async (ms) => { const r = await client.call('advance', { ms }); vnow = Math.max(vnow, r.now); return vnow; };
   await syncClock();
+  // Installing the app creates its custom fields on the site (Jira gives each an id; the site names it per seed).
+  for (const cf of Array.isArray(manifest?.modules?.['jira:customField']) ? manifest.modules['jira:customField'] : []) {
+    if (typeof cf?.key === 'string') await client.call('installfield', { key: cf.key, name: cf.name, description: cf.description });
+  }
 
   const entities = manifest?.app?.storage?.entities ?? [];
-  const kvs = createKvs({ entities: Array.isArray(entities) ? entities : [], now: clock.now });
+  // Every later KVS request is sent at or after the oldest running invocation's start (S2's versions older than that
+  // are unreachable).
+  const running = new Set();
+  const kvsFloor = () => Math.min(clock.now(), ...[...running].map((r) => r.vStart));
+  const kvs = createKvs({ entities: Array.isArray(entities) ? entities : [], now: clock.now, floor: kvsFloor });
   const invocations = new Map();
+  const concurrency = [];
+  let groupSeq = 0;
   const log = [];
   const harnessMissing = [];
   const bridgeLog = [];
@@ -120,12 +174,15 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
   };
 
   const consumerFor = (queueName) => modules('consumer').find((c) => c.queue === queueName);
+  // A consumer names its function directly (`function:`) or through a resolver (`resolver: {function, method}`): both are
+  // arms of the schema's oneOf and both are invoked (1.0 defect C invoked only the first).
+  const consumerFunction = (consumer) => consumer?.function ?? consumer?.resolver?.function;
   const queue = {
-    push(inv, body) {
+    push(inv, body, at = clock.now()) {
       const items = Array.isArray(body?.payload) ? body.payload : [];
       if ((inv.depth ?? 0) >= CYCLIC_INVOCATION_LIMIT) return { status: 405, body: { message: 'Cyclic invocation limit reached' } };
       const consumer = consumerFor(body.queueName);
-      const fnDef = consumer && functions.find((f) => f.key === consumer.function);
+      const fnDef = consumer && functions.find((f) => f.key === consumerFunction(consumer));
       if (fnDef && Number(fnDef.timeoutSeconds) > TIMEOUTS.longRunningDefault && Buffer.byteLength(JSON.stringify(items)) > LONG_RUNNING_PAYLOAD_BYTES) {
         return { status: 413, body: { errorMessage: 'Payload size for long running functions exceeds 100 KB' } };
       }
@@ -135,8 +192,9 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
         const delay = Number(item.delayInSeconds ?? 0);
         queueState.pending.push({
           seq: queueState.seq++, eventId: `${body.jobId}#${i}`, jobId: body.jobId, queueName: body.queueName, body: item.body,
-          delayInSeconds: item.delayInSeconds, concurrency: item.concurrency, enqueuedAt: clock.now(), readyAt: clock.now() + delay * 1000,
-          attempt: 0, retryReason: null, retryData: null, lineage: { originChange: inv.originChange ?? null, scheduledRun: inv.scheduledRun ?? null, depth: (inv.depth ?? 0) + 1 },
+          delayInSeconds: item.delayInSeconds, concurrency: item.concurrency, enqueuedAt: at, readyAt: at + delay * 1000,
+          attempt: 0, retryReason: null, retryData: null,
+          lineage: { originChange: inv.originChange ?? null, originIssue: inv.originIssue ?? null, scheduledRun: inv.scheduledRun ?? null, depth: (inv.depth ?? 0) + 1 },
         });
         job.inProgress += 1;
       });
@@ -156,7 +214,19 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     },
   };
 
-  const proxy = createProxy({ siteUrl: client.url, siteCall: client.call, manifest, kvs, queue, invocations, clock, log, harnessMissing });
+  // The public web-trigger route answers through the ingress P3 owns (lib/webtrigger.cjs: handle(emu, moduleKey, request)
+  // -> {statusCode, headers, body}); without it the route is a loud 501, never a quiet success.
+  const webtriggerIngress = async (moduleKey, request) => {
+    let ingress;
+    try { ingress = require('./webtrigger.cjs'); } catch (e) {
+      if (e?.code !== 'MODULE_NOT_FOUND') throw e;
+      harnessMissing.push({ what: `webtrigger ingress (lib/webtrigger.cjs) for ${moduleKey}`, at: new Date(clock.now()).toISOString(), invocationId: null, moduleType: 'webtrigger' });
+      return { statusCode: 501, headers: { 'content-type': 'application/json' }, body: { code: 'EMULATOR_NOT_MODELLED', message: 'web-trigger ingress lib/webtrigger.cjs is not installed in this kit' } };
+    }
+    if (typeof ingress.handle !== 'function') throw new Error('lib/webtrigger.cjs exports no handle(emu, moduleKey, request)');
+    return ingress.handle(emu, moduleKey, request);
+  };
+  const proxy = createProxy({ siteUrl: client.url, siteCall: client.call, manifest, kvs, queue, invocations, clock, log, harnessMissing, webtrigger: webtriggerIngress });
   const proxyAddr = await proxy.listen();
   const ownWorkDir = !workDir;
   const work = workDir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'forge-emu-'));
@@ -194,7 +264,7 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     const loadable = Object.entries(files).filter(([, f]) => f.bundled).map(([k]) => k);
     let probe = {};
     if (loadable.length) {
-      const r = await rt.runInvocation({ bundleDir, lambdaEvent: null, timeoutSec: TIMEOUTS.standard, clockOffsetMs: clockOffset, runtime: 'probe', fence: fenceMode,
+      const r = await rt.runInvocation({ bundleDir, lambdaEvent: null, timeoutSec: TIMEOUTS.standard, vStart: clock.now(), runtime: 'probe', fence: fenceMode,
         proxyPort: proxyAddr.port, extra: { files: loadable, appContext: appContext('probe', 'probe', 'probe') } });
       probe = r.result ?? {};
       if (!r.result) for (const k of loadable) probe[k] = { functions: [], error: r.crash?.message ?? 'load probe produced no result' };
@@ -213,7 +283,9 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     return built;
   }
 
-  async function invokeFunction(fnKey, { moduleKey, moduleType, event, asUser, lineage = {}, source = 'function' } = {}) {
+  // `seat` {group, member}: a member of a concurrent consumer group (S1). It joins the group before its process starts,
+  // the proxy schedules its requests, and the group as a whole (not each member) runs inside aroundInvocation.
+  async function invokeFunction(fnKey, { moduleKey, moduleType, event, asUser, lineage = {}, source = 'function', seat = null } = {}) {
     if (!built) await build();
     const fnDef = functions.find((f) => f.key === fnKey);
     if (!fnDef) return { ok: false, error: errorOf({ errorType: 'EmulatorError', errorMessage: `no function '${fnKey}' in the manifest` }), logs: [], ms: 0, calls: [] };
@@ -222,97 +294,226 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     const mType = moduleType ?? user?.type ?? null;
     const mKey = moduleKey ?? user?.key ?? null;
     const id = `inv-${(++invSeq).toString().padStart(5, '0')}-${crypto.randomBytes(3).toString('hex')}`;
-    const record = { id, functionKey: fnKey, moduleType: mType, moduleKey: mKey, aaid: asUser ?? undefined, source,
-      scheduledRun: lineage.scheduledRun ?? null, originChange: lineage.originChange ?? null, depth: lineage.depth ?? 0 };
-    invocations.set(id, record);
     const timeoutSec = timeoutFor(fnDef, mType);
-    if (!status?.loaded) {
-      const t = new Date(clock.now()).toISOString();
-      const out = { ok: false, invocationId: id, functionKey: fnKey, moduleType: mType, moduleKey: mKey, t0: t, t1: t,
-        error: errorOf({ errorType: 'FunctionNotLoaded', errorMessage: status?.error ?? 'function did not bundle' }), logs: [], ms: 0, calls: [], timedOut: false };
+    // The invocation starts at the site's current time — after the change that triggered it was applied (the 1.0 stale
+    // trigger clock started it at the emulator's older time, so 29 of 41 measured trigger runs exceeded 25 s on paper).
+    // A member that cannot start leaves its group, so its partners never wait for it.
+    let vStart;
+    try { vStart = await syncClock(); } catch (e) {
+      if (seat) { seat.group.join(seat.member, id); seat.group.end(seat.member); }
+      throw e;
+    }
+    const record = { id, functionKey: fnKey, moduleType: mType, moduleKey: mKey, aaid: asUser ?? undefined, source,
+      scheduledRun: lineage.scheduledRun ?? null, originChange: lineage.originChange ?? null, originIssue: lineage.originIssue ?? null,
+      depth: lineage.depth ?? 0, vStart, vnow: vStart, deadline: vStart + timeoutSec * 1000 };
+    invocations.set(id, record);
+    running.add(record);
+    try {
+      if (seat) {
+        Object.defineProperty(record, 'seat', { value: seat });
+        seat.group.join(seat.member, id);
+        await seat.group.ready();
+        record.concurrent = seat.group.describe(seat.member);
+      }
+      const concurrent = record.concurrent ? { concurrent: record.concurrent } : {};
+      const t0 = new Date(vStart).toISOString();
+      if (!status?.loaded) {
+        const out = { ok: false, invocationId: id, functionKey: fnKey, moduleType: mType, moduleKey: mKey, t0, t1: t0, vms: 0,
+          error: errorOf({ errorType: 'FunctionNotLoaded', errorMessage: status?.error ?? 'function did not bundle' }), logs: [], ms: 0, calls: [], timedOut: false, ...concurrent };
+        onInvocation?.(record, out);
+        return out;
+      }
+      const lambdaEvent = {
+        body: event, handler: fnDef.handler, variables: [],
+        _meta: {
+          proxy: { url: proxyAddr.url, token: rt.fakeJwt({ inv: id, exp: Math.floor(vStart / 1000) + 86400 }), host: '127.0.0.1' },
+          contextAri, appContext: appContext(fnKey, mKey, id),
+          tracing: { traceId: crypto.randomBytes(8).toString('hex'), spanId: crypto.randomBytes(8).toString('hex') },
+          ...(asUser ? { aaid: asUser } : {}), timeout: timeoutSec, featureFlags: [],
+        },
+      };
+      const exec = () => rt.runInvocation({ bundleDir, lambdaEvent, timeoutSec, vStart, runtime, fence: fenceMode, proxyPort: proxyAddr.port });
+      const r = aroundInvocation && !seat ? await aroundInvocation(exec) : await exec();
+      seat?.group.end(seat.member);
+      // The clock the process reported; a process that died without one ends at the last completion the proxy answered.
+      const vEnd = Math.max(r.vEnd ?? record.vnow, vStart);
+      record.vnow = vEnd;
+      await advanceTo(vEnd);
+      const t1 = new Date(vEnd).toISOString();
+      const calls = log.filter((c) => c.invocationId === id);
+      let out;
+      if (r.timedOut) {
+        out = { ok: false, timedOut: true, error: errorOf({ errorType: 'TimeoutError', errorMessage: r.killedAtLimit
+          ? `invocation exceeded the ${timeoutSec} s platform limit (virtual time) and was killed`
+          : `invocation ran ${timeoutSec} s of real time without finishing (CPU-bound or hung) and was killed` }) };
+      } else if (r.crash) out = { ok: false, error: errorOf({ errorType: r.crash.name ?? 'RunnerError', errorMessage: r.crash.message }) };
+      else if (r.result?.success) out = { ok: true, result: r.result.body };
+      else out = { ok: false, error: errorOf(r.result?.error ?? { errorType: 'Unknown', errorMessage: 'no result' }) };
+      Object.assign(out, { invocationId: id, functionKey: fnKey, moduleType: mType, moduleKey: mKey, asUser: asUser ?? null, t0, t1, vms: vEnd - vStart, timeoutSec,
+        logs: r.logs, stderr: r.stderr, ms: r.ms, calls, timedOut: Boolean(r.timedOut), realTimeout: Boolean(r.realTimeout), ...concurrent });
       onInvocation?.(record, out);
       return out;
+    } finally {
+      running.delete(record);
+      seat?.group.end(seat.member);
     }
-    const lambdaEvent = {
-      body: event, handler: fnDef.handler, variables: [],
-      _meta: {
-        proxy: { url: proxyAddr.url, token: rt.fakeJwt({ inv: id, exp: Math.floor(clock.now() / 1000) + 86400 }), host: '127.0.0.1' },
-        contextAri, appContext: appContext(fnKey, mKey, id),
-        tracing: { traceId: crypto.randomBytes(8).toString('hex'), spanId: crypto.randomBytes(8).toString('hex') },
-        ...(asUser ? { aaid: asUser } : {}), timeout: timeoutSec, featureFlags: [],
-      },
+  }
+
+  // A retry decision shared by queue events and product-event triggers: the app's InvocationError, or a failure.
+  const retryPlan = (r, attempt) => {
+    if (r.ok && r.result && r.result._retry === true) {
+      const opts = r.result.retryOptions ?? {};
+      return { kind: 'retry', waitS: Math.min(Math.max(Number(opts.retryAfter ?? 1), 1), MAX_RETRY_AFTER_S),
+        reason: opts.retryReason ?? 'FUNCTION_RETRY_REQUEST', data: opts.retryData ?? null };
+    }
+    if (r.ok) return null;
+    // @forge/events InvocationErrorCode names a timeout FUNCTION_TIME_OUT; a thrown error has no code there (harness name).
+    return { kind: r.timedOut ? 'timeout' : 'throw', waitS: (REDELIVERY_MINUTES[attempt] ?? REDELIVERY_CAP_MINUTES) * 60,
+      reason: r.timedOut ? 'FUNCTION_TIME_OUT' : 'FUNCTION_ERROR', data: null };
+  };
+
+  // A product-event trigger that asked for a retry, threw or was killed is delivered again (≤ TRIGGER_MAX_RETRIES), from
+  // the same pending list the queues use, so retries and queue events run in one virtual-time order.
+  // One eventId per delivery for its whole retry chain (as a queue event keeps its id across attempts).
+  function scheduleTriggerRetry(t, event, r, attempt, lineage, eventId) {
+    const plan = retryPlan(r, attempt);
+    if (!plan) return null;
+    if (attempt >= TRIGGER_MAX_RETRIES) return { ...plan, dropped: `retried ${TRIGGER_MAX_RETRIES} times` };
+    const readyAt = Date.parse(r.t1) + plan.waitS * 1000;
+    const seq = queueState.seq++;
+    queueState.pending.push({ kind: 'trigger', seq, eventId: eventId ?? `trigger:${t.key}:${event.changelog?.id ?? event.eventType}#${seq}`,
+      moduleKey: t.key, event, attempt: attempt + 1, retryReason: plan.reason, retryData: plan.data, readyAt, lineage });
+    return { ...plan, redeliverAt: new Date(readyAt).toISOString() };
+  }
+
+  async function deliverTriggerRetry(ev) {
+    const t = modules('trigger').find((x) => x.key === ev.moduleKey);
+    const event = { ...ev.event, retryContext: { retryCount: ev.attempt, retryReason: ev.retryReason, retryData: ev.retryData } };
+    const r = await invokeFunction(t.function, { moduleKey: t.key, moduleType: 'trigger', event, lineage: ev.lineage });
+    const next = scheduleTriggerRetry(t, ev.event, r, ev.attempt, ev.lineage, ev.eventId);
+    return { kind: 'trigger', eventId: ev.eventId, queueName: null, attempt: ev.attempt, invocationId: r.invocationId, functionKey: r.functionKey, moduleKey: t.key,
+      t: r.t0, t1: r.t1, lineage: ev.lineage, ok: r.ok, result: r.result ?? null, error: r.error ?? null, timedOut: r.timedOut, logs: r.logs,
+      outcome: next ? next.kind : 'ok', ...(next ? { retryAfter: next.waitS, ...(next.dropped ? { dropped: next.dropped } : { redeliverAt: next.redeliverAt }) } : {}) };
+  }
+
+  // One consumer delivery's event, after the site's consumer-start signal.
+  async function startConsumer(ev) {
+    const consumer = consumerFor(ev.queueName);
+    await client.call('signal', { type: 'consumer-start', originChange: ev.lineage.originChange, scheduledRun: ev.lineage.scheduledRun });
+    const meta = {
+      queueName: ev.queueName, jobId: ev.jobId, eventId: ev.eventId,
+      ...(ev.delayInSeconds !== undefined ? { delayInSeconds: ev.delayInSeconds } : {}), ...(ev.concurrency ? { concurrency: ev.concurrency } : {}),
+      ...(ev.attempt > 0 ? { retryContext: { retryCount: ev.attempt, retryReason: ev.retryReason, retryData: ev.retryData,
+        retentionWindow: { startTime: new Date(ev.enqueuedAt).toISOString(), remainingTimeMs: Math.max(0, ev.enqueuedAt + RETENTION_MS - clock.now()) } } } : {}),
     };
-    const t0 = new Date(clock.now()).toISOString();
-    const exec = () => rt.runInvocation({ bundleDir, lambdaEvent, timeoutSec, clockOffsetMs: clockOffset, runtime, fence: fenceMode, proxyPort: proxyAddr.port });
-    const r = aroundInvocation ? await aroundInvocation(exec) : await exec();
-    await syncClock();
-    const t1 = new Date(clock.now()).toISOString();
-    const calls = log.filter((c) => c.invocationId === id);
-    let out;
-    if (r.timedOut) out = { ok: false, timedOut: true, error: errorOf({ errorType: 'TimeoutError', errorMessage: `invocation exceeded the ${timeoutSec} s platform timeout` }) };
-    else if (r.crash) out = { ok: false, error: errorOf({ errorType: r.crash.name ?? 'RunnerError', errorMessage: r.crash.message }) };
-    else if (r.result?.success) out = { ok: true, result: r.result.body };
-    else out = { ok: false, error: errorOf(r.result?.error ?? { errorType: 'Unknown', errorMessage: 'no result' }) };
-    Object.assign(out, { invocationId: id, functionKey: fnKey, moduleType: mType, moduleKey: mKey, asUser: asUser ?? null, t0, t1, timeoutSec,
-      logs: r.logs, stderr: r.stderr, ms: r.ms, calls, timedOut: Boolean(r.timedOut) });
-    onInvocation?.(record, out);
+    // The resolver form is called the way @forge/resolver's getDefinitions() dispatches: {call: {functionKey, payload,
+    // jobId}, context}; the event's metadata (retryContext included) rides in `context` (not documented: harness choice).
+    const event = consumer.function ? { body: ev.body, ...meta } : { call: { functionKey: consumer.resolver.method, payload: ev.body, jobId: ev.jobId }, context: meta };
+    return { ev, consumer, fnKey: consumerFunction(consumer), event };
+  }
+
+  // The delivery record of one consumer invocation, and its redelivery when it asked for one, threw or was killed.
+  function finishConsumer({ ev, consumer }, r) {
+    const job = queueState.jobs.get(ev.jobId);
+    const base = { eventId: ev.eventId, queueName: ev.queueName, attempt: ev.attempt, invocationId: r.invocationId, functionKey: r.functionKey, moduleKey: consumer.key,
+      t: r.t0, t1: r.t1, lineage: ev.lineage, ok: r.ok, result: r.result ?? null, error: r.error ?? null, timedOut: r.timedOut, logs: r.logs,
+      ...(r.concurrent ? { concurrent: r.concurrent } : {}) };
+    const plan = retryPlan(r, ev.attempt);
+    if (!plan) {
+      if (job) { job.inProgress -= 1; job.success += 1; }
+      return { ...base, outcome: 'ok' };
+    }
+    ev.retryReason = plan.reason;
+    ev.retryData = plan.data;
+    const next = clock.now() + plan.waitS * 1000;
+    if (next > ev.enqueuedAt + RETENTION_MS) {
+      if (job) { job.inProgress -= 1; job.failed += 1; }
+      return { ...base, outcome: plan.kind, retryAfter: plan.waitS, dropped: 'retention window exceeded' };
+    }
+    queueState.pending.push({ ...ev, attempt: ev.attempt + 1, readyAt: next, seq: queueState.seq++ });
+    return { ...base, outcome: plan.kind, retryAfter: plan.waitS, redeliverAt: new Date(next).toISOString() };
+  }
+
+  // S1: two pending consumer deliveries carry the same event when they are copies of one queue event or work pushed for
+  // the same product event (a trigger-level duplicate carries the same changelog id); they name the same issue when
+  // their chains began with product events of that issue.
+  const relation = (a, b) => {
+    const change = a.lineage?.originChange;
+    if (a.eventId === b.eventId || (change && change === b.lineage?.originChange)) return 'same-event';
+    const issue = a.lineage?.originIssue;
+    return issue && issue === b.lineage?.originIssue ? 'same-issue' : null;
+  };
+  const runnable = (e) => e.kind !== 'trigger' && functions.some((f) => f.key === consumerFunction(consumerFor(e.queueName)));
+  // The deliveries that start with `ev`: due by `dueBy` and related to it, in delivery order (the list is sorted). Their
+  // `concurrency` keys are not consulted (SPEC §2.8: a key does not exempt a pair; contract §8).
+  function partnersOf(ev, dueBy) {
+    const group = [ev];
+    for (const p of queueState.pending) {
+      if (group.length >= MAX_CONCURRENT_CONSUMERS || p.readyAt > dueBy) break;
+      if (runnable(p) && relation(ev, p)) group.push(p);
+    }
+    return group.slice(1);
+  }
+
+  async function deliverGroup(members) {
+    const partners = members.slice(1);
+    const reason = partners.every((p) => relation(members[0], p) === 'same-event') ? 'same-event' : 'same-issue';
+    const group = createConcurrentGroup({ id: `c${++groupSeq}`, reason, members: members.map((e) => ({ eventId: e.eventId })) });
+    const started = [];
+    for (const e of members) started.push(await startConsumer(e));
+    const t = new Date(clock.now()).toISOString();
+    const run = () => Promise.allSettled(started.map((s, member) => invokeFunction(s.fnKey,
+      { moduleKey: s.consumer.key, moduleType: 'consumer', event: s.event, lineage: s.ev.lineage, seat: { group, member } })));
+    const settled = aroundInvocation ? await aroundInvocation(run) : await run();
+    const failed = settled.find((x) => x.status === 'rejected');
+    if (failed) throw failed.reason;
+    const out = settled.map((x, i) => finishConsumer(started[i], x.value));
+    concurrency.push({ group: group.id, reason, schedule: 'reads-first', t,
+      members: group.members().map((m, i) => ({ ...m, queueName: members[i].queueName, attempt: members[i].attempt, outcome: out[i].outcome })),
+      firstWrites: group.firstWrites });
     return out;
   }
 
-  async function drainQueues() {
+  // `until` (virtual ms): only the deliveries due by then; the rest stay pending for a later drain.
+  async function drainQueues({ until = null } = {}) {
     const deliveries = [];
     for (;;) {
       if (!queueState.pending.length) break;
       queueState.pending.sort((a, b) => a.readyAt - b.readyAt || a.seq - b.seq);
+      if (until !== null && queueState.pending[0].readyAt > until) break;
       const ev = queueState.pending.shift();
-      if (ev.readyAt > clock.now()) await advance(ev.readyAt - clock.now());
+      await advanceTo(ev.readyAt);
+      if (ev.kind === 'trigger') { deliveries.push(await deliverTriggerRetry(ev)); continue; }
       const job = queueState.jobs.get(ev.jobId);
-      const consumer = consumerFor(ev.queueName);
-      if (!consumer) {
+      if (!consumerFunction(consumerFor(ev.queueName))) {
         deliveries.push({ eventId: ev.eventId, queueName: ev.queueName, attempt: ev.attempt, outcome: 'no_consumer', ok: false, result: null, t: new Date(clock.now()).toISOString() });
         if (job) { job.inProgress -= 1; job.failed += 1; }
         continue;
       }
-      await client.call('signal', { type: 'consumer-start', originChange: ev.lineage.originChange, scheduledRun: ev.lineage.scheduledRun });
-      const asyncEvent = {
-        body: ev.body, queueName: ev.queueName, jobId: ev.jobId, eventId: ev.eventId,
-        ...(ev.delayInSeconds !== undefined ? { delayInSeconds: ev.delayInSeconds } : {}), ...(ev.concurrency ? { concurrency: ev.concurrency } : {}),
-        ...(ev.attempt > 0 ? { retryContext: { retryCount: ev.attempt, retryReason: ev.retryReason, retryData: ev.retryData,
-          retentionWindow: { startTime: new Date(ev.enqueuedAt).toISOString(), remainingTimeMs: Math.max(0, ev.enqueuedAt + RETENTION_MS - clock.now()) } } } : {}),
-      };
-      const r = await invokeFunction(consumer.function, { moduleKey: consumer.key, moduleType: 'consumer', event: asyncEvent, lineage: ev.lineage });
-      const base = { eventId: ev.eventId, queueName: ev.queueName, attempt: ev.attempt, invocationId: r.invocationId, functionKey: r.functionKey, moduleKey: consumer.key,
-        t: r.t0, t1: r.t1, lineage: ev.lineage, ok: r.ok, result: r.result ?? null, error: r.error ?? null, timedOut: r.timedOut, logs: r.logs };
-      const retry = r.ok && r.result && r.result._retry === true;
-      if (r.ok && !retry) {
-        deliveries.push({ ...base, outcome: 'ok' });
-        if (job) { job.inProgress -= 1; job.success += 1; }
+      const partners = runnable(ev) ? partnersOf(ev, Math.min(clock.now(), until ?? Infinity)) : [];
+      if (partners.length) {
+        queueState.pending = queueState.pending.filter((p) => !partners.includes(p));
+        deliveries.push(...await deliverGroup([ev, ...partners]));
         continue;
       }
-      let waitS;
-      let kind;
-      if (retry) {
-        const opts = r.result.retryOptions ?? {};
-        waitS = Math.min(Math.max(Number(opts.retryAfter ?? 1), 1), MAX_RETRY_AFTER_S);
-        ev.retryReason = opts.retryReason ?? 'FUNCTION_RETRY_REQUEST';
-        ev.retryData = opts.retryData ?? null;
-        kind = 'retry';
-      } else {
-        waitS = (REDELIVERY_MINUTES[ev.attempt] ?? REDELIVERY_CAP_MINUTES) * 60;
-        ev.retryReason = r.timedOut ? 'FUNCTION_TIMEOUT' : 'FUNCTION_ERROR';
-        ev.retryData = null;
-        kind = r.timedOut ? 'timeout' : 'throw';
-      }
-      const next = clock.now() + waitS * 1000;
-      if (next > ev.enqueuedAt + RETENTION_MS) {
-        deliveries.push({ ...base, outcome: kind, retryAfter: waitS, dropped: 'retention window exceeded' });
-        if (job) { job.inProgress -= 1; job.failed += 1; }
-        continue;
-      }
-      deliveries.push({ ...base, outcome: kind, retryAfter: waitS, redeliverAt: new Date(next).toISOString() });
-      queueState.pending.push({ ...ev, attempt: ev.attempt + 1, readyAt: next, seq: queueState.seq++ });
+      const s = await startConsumer(ev);
+      deliveries.push(finishConsumer(s, await invokeFunction(s.fnKey, { moduleKey: s.consumer.key, moduleType: 'consumer', event: s.event, lineage: ev.lineage })));
     }
     return deliveries;
+  }
+
+  // Every trigger subscribed to `event.eventType` runs once (retries scheduled as for any trigger).
+  async function runTriggers(event, lineage) {
+    const results = [];
+    for (const t of modules('trigger')) {
+      const events = (Array.isArray(t.events) ? t.events : []).map((e) => (typeof e === 'string' ? e : e?.eventType));
+      if (!events.includes(event.eventType)) continue;
+      if (t.filter?.ignoreSelf && event.selfGenerated) continue;
+      const r = await invokeFunction(t.function, { moduleKey: t.key, moduleType: 'trigger', event, lineage });
+      const retry = scheduleTriggerRetry(t, event, r, 0, lineage);
+      results.push(retry ? { ...r, retry } : r);
+    }
+    return results;
   }
 
   async function triggerEvent(delivery) {
@@ -322,36 +523,48 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
       issue: delivery.issue, atlassianId: change.authorId,
       changelog: { id: change.id, items: change.items }, associatedUsers: [{ accountId: change.authorId }],
     };
-    const results = [];
-    for (const t of modules('trigger')) {
-      const events = (Array.isArray(t.events) ? t.events : []).map((e) => (typeof e === 'string' ? e : e?.eventType));
-      if (!events.includes('avi:jira:updated:issue')) continue;
-      if (t.filter?.ignoreSelf && event.selfGenerated) continue;
-      results.push(await invokeFunction(t.function, { moduleKey: t.key, moduleType: 'trigger', event, lineage: { originChange: change.id } }));
+    const results = await runTriggers(event, { originChange: change.id, originIssue: issueOf(delivery.issue) });
+    // `batchEnd`: the plan slot up to which the drive leaves the queues undrained, so this delivery's queue work and a
+    // later duplicate or permuted same-issue partner are pending together (S1); null outside a batch.
+    return { changelogId: change.id, duplicate: Boolean(delivery.duplicate), slot: delivery.slot, batchEnd: delivery.batchEnd ?? null,
+      event, triggers: results, invocations: results };
+  }
+  // The issue a product event names (S1 relates the queue work it leads to by it).
+  const issueOf = (issue) => (issue?.id === undefined || issue?.id === null ? null : String(issue.id));
+
+  // The world's own product events (SPEC §2.5: a deleted issue sends avi:jira:deleted:issue), queued on the site as the
+  // world applies them; delivered before the next issue update, and by the probe after each world step.
+  async function deliverWorldEvents() {
+    const { events = [] } = await client.call('worldevents');
+    const out = [];
+    for (const event of events) {
+      out.push({ event, invocations: await runTriggers(event, { originChange: `world:${event.issue?.id ?? event.eventType}`, originIssue: issueOf(event.issue) }) });
     }
-    return { changelogId: change.id, duplicate: Boolean(delivery.duplicate), slot: delivery.slot, event, triggers: results, invocations: results };
+    return out;
   }
 
   async function deliverProductEvent(change) {
     const changelogId = typeof change === 'string' ? change : change.changelogId ?? change.id;
     const delivery = await client.call('event', { changelogId });
-    return triggerEvent(delivery);
+    const world = await deliverWorldEvents();
+    return { ...(await triggerEvent(delivery)), world };
   }
 
   async function deliverNext() {
     const d = await client.call('next');
+    const world = await deliverWorldEvents();
     if (d.done) return null;
-    return triggerEvent(d);
+    return { ...(await triggerEvent(d)), world };
   }
 
   let scheduledRuns = 0;
-  async function runScheduled(moduleKey) {
+  async function runScheduled(moduleKey, { until = null } = {}) {
     const m = modules('scheduledTrigger').find((x) => x.key === moduleKey);
     if (!m) throw new Error(`no scheduledTrigger '${moduleKey}' in the manifest`);
     const run = ++scheduledRuns;
     const invocation = await invokeFunction(m.function, { moduleKey: m.key, moduleType: 'scheduledTrigger',
       event: { context: { cloudId: info.cloudId, moduleKey: m.key }, contextToken: crypto.randomBytes(16).toString('hex') }, lineage: { scheduledRun: run } });
-    const deliveries = await drainQueues();
+    const deliveries = await drainQueues({ until });
     return { run, invocation, deliveries };
   }
 
@@ -380,6 +593,24 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     return invokeFunction(fnKey, { moduleKey, moduleType: found.type, asUser, event: { call: { functionKey, payload: payload ?? {} }, context, contextToken }, source: 'resolver' });
   }
 
+  // The probe's door to a resolver (admin / non-admin / forged payload): the context is the one the platform builds for
+  // `asUser` on that module (the Custom UI host's contextFor), so identity can only come from asUser — a forged identity
+  // can only travel in `payload`, exactly as on Forge, where a frontend controls the payload and never the context.
+  async function callResolver({ moduleKey, functionKey, payload = {}, asUser = null, extension = {}, theme = 'light' } = {}) {
+    const found = moduleByKey(moduleKey);
+    if (!found) return { ok: false, error: errorOf({ errorType: 'EmulatorError', errorMessage: `no module '${moduleKey}' in the manifest` }), calls: [] };
+    const context = host.contextFor(emu, { type: found.type, moduleKey, asUser, extension, theme, entry: 'view' });
+    return invokeResolver(moduleKey, functionKey, payload, context, asUser);
+  }
+
+  // A web trigger's function with the request a web trigger receives (limit 55 s); the ingress (lib/webtrigger.cjs) maps
+  // HTTP to this request and the function's answer (or a static output) back to HTTP.
+  async function invokeWebtrigger(moduleKey, request) {
+    const m = modules('webtrigger').find((x) => x.key === moduleKey);
+    if (!m?.function) return { ok: false, error: errorOf({ errorType: 'EmulatorError', errorMessage: `no web trigger '${moduleKey}' with a function in the manifest` }), calls: [] };
+    return invokeFunction(m.function, { moduleKey, moduleType: 'webtrigger', event: request, source: 'webtrigger' });
+  }
+
   const emu = {
     get manifest() { return manifest; },
     manifestError,
@@ -389,8 +620,12 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     build,
     invoke: (fnKey, { moduleKey, event, asUser } = {}) => invokeFunction(fnKey, { moduleKey, event, asUser }),
     invokeResolver,
+    callResolver,
+    invokeWebtrigger,
+    webtriggerUrl: (moduleKey) => `${proxyAddr.url}/x/webtrigger/${encodeURIComponent(moduleKey)}`,
     deliverProductEvent,
     deliverNext,
+    deliverWorldEvents,
     drainQueues,
     runScheduled,
     invokeAction,
@@ -399,6 +634,7 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     bridgeLog,
     harnessMissing,
     invocations,
+    concurrency,
     proxy,
     clock,
     advance,
@@ -424,7 +660,7 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
   // Forge LLM and Realtime live on the site (site/llm.cjs, site/realtime.cjs); these read them through it.
   emu.llm = {
     log: (since = 0) => client.call('llmlog', { since }),
-    phase: (phase) => client.call('llmphase', { phase }),
+    phase: (phase, script) => client.call('llmphase', { phase, ...(script ? { script } : {}) }),
   };
   emu.realtime = {
     log: (since = 0) => client.call('rtlog', { since }),
@@ -433,4 +669,4 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
   return emu;
 }
 
-module.exports = { createEmulator, functionUsers, TIMEOUTS };
+module.exports = { createEmulator, functionUsers, TIMEOUTS, TRIGGER_MAX_RETRIES, MAX_CONCURRENT_CONSUMERS };

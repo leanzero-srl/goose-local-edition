@@ -246,19 +246,19 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
                "--log-file", str(workdir / "run.jsonl")]
     else:
         raise SystemExit(f"unknown entrant {entrant!r}")
-    # THE CALL BUDGET (bench_budget.py): every single-model entrant of an isolated tier gets the same
+    # THE CALL BUDGET (bench_budget.py): every single-model entrant of an isolated tier gets its tier's
     # published number of model calls, then goose ends the session and the harness scores what exists.
     # A swarm entrant (`goose swarm run`) is not budgeted: the engine's NO CAPS invariant stands.
-    budgeted = bool(isolated_tiers.active()) and cmd[1] == "run"
+    tier = isolated_tiers.active()
+    budgeted = bool(tier) and cmd[1] == "run"
     if budgeted:
         prompt_at = cmd.index("-t")
-        cmd[prompt_at:prompt_at] = bench_budget.call_budget_args()
+        cmd[prompt_at:prompt_at] = bench_budget.call_budget_args(tier)
     wallet_limit = bench_budget.wallet_limit()
 
     child_env = {**os.environ, **env}
-    if isolated_tiers.active():
+    if tier:
         import bench_isolation
-        tier = isolated_tiers.active()
         if tier.network == "open":
             prefix, isolated_env = bench_isolation.prepare(workdir, GOOSE, workdir.parent, snapshot=snapshot)
         else:
@@ -380,7 +380,7 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
     if isolated_tiers.active():
         result["telemetry_landing"] = land_telemetry(runtime_telemetry, tpath)
     if budgeted or wallet is not None:
-        budget = {"max_calls": bench_budget.CALL_BUDGET} if budgeted else {}
+        budget = {"max_calls": tier.call_budget} if budgeted else {}
         entrant_model = cmd[cmd.index("--model") + 1] if "--model" in cmd else None
         budget.update(bench_budget.entrant_calls(tpath, entrant_model))
         budget["stopped_by"] = bench_budget.stopped_by(result, wallet)
@@ -1006,10 +1006,12 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
             raise RuntimeError(f"REFUSED: {tier.version} starts from its public starter only")
         starter = ROOT / tier.starter
         # A kit tier's starter keeps its empty static/ and skills/ in git with .gitkeep; STARTER.md says they
-        # are empty, so the placeholders never reach the entrant.
+        # are empty, so the placeholders never reach the entrant. forge-2.0's starter is a whole buildable app
+        # (the v1 golden), so a local install or dev-kit state in the checkout must not reach the workspace
+        # either: its node_modules is the kit's pinned clone, nothing else.
         shutil.copytree(starter, workdir, dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '.DS_Store',
-                                                      *(('.gitkeep',) if tier.kit else ())))
+                                                      *(('.gitkeep', *KIT_TREE_EXCLUDES) if tier.kit else ())))
         if tier.kit:
             clone_kit_modules(kit, workdir)
         for name, source in tier.public:
@@ -1017,16 +1019,18 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
             (workdir / name).write_text(text)
         (workdir / "benchmark-prompt.md").write_text(build_prompt(port))
         shutil.copy2(HERE / 'browser-self-test.mjs', workdir / 'browser-self-test.mjs')
-        (workdir / 'BROWSER-TESTING.md').write_text(
-            '# Browser self-testing\n\n'
-            'Python 3, Node, Playwright and a headless Chromium browser are supplied. '
-            'Start your app with its documented command, then run '
-            '`node browser-self-test.mjs http://127.0.0.1:PORT screenshot.png`. '
-            'The helper reports page errors and saves a screenshot. '
-            'You may modify it or write your own Playwright tests. '
-            'Load Playwright with `require(process.env.BENCH_BROWSER_MODULE)` and launch Chromium '
-            'with `executablePath: process.env.BENCH_BROWSER_EXECUTABLE`. '
-            'These paths work inside the same isolation boundary as your app.\n')
+        # forge-2.0 publishes its own BROWSER-TESTING.md (rendered above); the generic one never replaces it.
+        if 'BROWSER-TESTING.md' not in dict(tier.public):
+            (workdir / 'BROWSER-TESTING.md').write_text(
+                '# Browser self-testing\n\n'
+                'Python 3, Node, Playwright and a headless Chromium browser are supplied. '
+                'Start your app with its documented command, then run '
+                '`node browser-self-test.mjs http://127.0.0.1:PORT screenshot.png`. '
+                'The helper reports page errors and saves a screenshot. '
+                'You may modify it or write your own Playwright tests. '
+                'Load Playwright with `require(process.env.BENCH_BROWSER_MODULE)` and launch Chromium '
+                'with `executablePath: process.env.BENCH_BROWSER_EXECUTABLE`. '
+                'These paths work inside the same isolation boundary as your app.\n')
         if tier.kit:
             # 15k kit files are one fact: the kit's lock hash (forge/DESIGN.md §10).
             manifest = {str(path.relative_to(workdir)): hashlib.sha256(path.read_bytes()).hexdigest()
@@ -1238,6 +1242,8 @@ def main() -> int:
                     help="SB7.2: SB7.1's product and starter, 3D-weighted scorer, framed and legible overview")
     ap.add_argument("--forge", action="store_true",
                     help="forge-1.0: the Scope Ledger Forge app, fenced network, pinned Forge kit (forge/DESIGN.md)")
+    ap.add_argument("--forge2", action="store_true",
+                    help="forge-2.0: Scope Ledger v2, a brownfield upgrade of the v1 app on the forge2 kit (forge2/SPEC.md)")
     args = ap.parse_args()
     if bool(args.provider) != bool(args.model):
         ap.error("--provider and --model must be supplied together")
@@ -1256,6 +1262,8 @@ def main() -> int:
         os.environ["BENCH_SB72"] = "1"
     if args.forge:
         os.environ[isolated_tiers.FORGE10.flag] = "1"
+    if args.forge2:
+        os.environ[isolated_tiers.FORGE20.flag] = "1"
     isolated_tiers.active()
 
     verdicts = []

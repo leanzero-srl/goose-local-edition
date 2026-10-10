@@ -19,7 +19,9 @@ const USAGE = `forge-dev <command>   (run from the app directory; $FORGE_SITE_UR
         user-led: --as defaults to the dev viewer). For a trigger, consumer or action, --payload is the
         event JSON (a consumer gets it as the AsyncEvent body, an action as its inputs).
   events [--limit N]          deliver the dev site's next N issue updates (default 1) to your trigger(s),
-                              then drain the queues
+                              then drain the queues; a redelivery or a second change of one issue that arrives
+                              before the first one's queue work ran is delivered with it (past N), and their
+                              consumers run concurrently, as on the scoring site
   scheduled <moduleKey>       run a scheduled trigger once, then drain the queues
   serve <moduleKey> [--edit] [--sprint <id>] [--config <json>] [--theme light|dark] [--as <accountId>]
         serve a Custom UI module with the bridge and dashboard host; prints its URL and runs until stopped.
@@ -28,16 +30,29 @@ const USAGE = `forge-dev <command>   (run from the app directory; $FORGE_SITE_UR
         processes may run side by side. In an edit surface window.__forgeHost.save()
         performs the dashboard's Save. A saved widget config persists like a dashboard's: later
         serve runs of the widget open with it; --config '<json>' overrides it for one run, reset clears it.
-  llm [--phase <name>]        the dev site's Forge LLM: the model list, the scripted answer the next chat call
-                              gets, every call so far (full prompts and answers in .forge-dev/llm-log.json);
-                              --phase restarts the script (clean, digits, refusal, malformed, error, then clean)
+  llm [--phase <name> [--script k1,k2]]   the dev site's Forge LLM: the model list, the scripted answer the next
+                              chat call gets, every call so far (full prompts and answers in .forge-dev/llm-log.json);
+                              --phase restarts the script (clean, digits, refusal, malformed, error, then clean);
+                              --script names the steps instead (also injected, ratelimited, unfinished)
   realtime [--follow]         every Realtime publish on the dev site (channel, payload, delivered / no
                               subscriber / rejected) and the open subscriptions; --follow keeps watching.
                               A served surface's log also prints each event delivered to its page.
+${require('./uikit.cjs').USAGE.replace(/\n$/, '')}
+  ci send --env staging|production --issues KEY-1,KEY-2 [--secret <s>] [--module <webtrigger key>]
+          [--event-id <id>] [--skew <seconds>] [--bad-signature | --unsigned | --tamper | --stale | --replay | --header-case]
+        play the CI system: POST one signed deployment event to your web trigger at the dev site's virtual time, print
+        what it answered and what it did, then drain the queues (secret: --secret or $FORGE_CI_SECRET, the one your
+        admin page showed when you rotated it)
   kvs                         dump stored keys and entities
-  users                       list the dev site's users (the first line is the default viewer) and the issue the
+  users                       list the dev site's users (the first line is the default viewer; the Jira administrator
+                              is marked) and the issue the
                               default viewer may not comment on (Jira answers that comment with a 400)
   reset                       clear dev storage, queues and saved widget configs, and rewind the dev site's update stream
+
+  Time is virtual, as in scoring: every proxied request costs its class (GET 120 ms, search page 300 ms, changelog
+  bulkfetch 600 ms, a write 200 ms; KVS reads 120 ms, writes 200 ms) and every wait its face value; a function past
+  its limit (resolver 25 s, scheduled and consumer 55 s or timeoutSeconds up to 900 s, web trigger and action 55 s)
+  is killed. Each invocation prints its virtual duration next to the real one.
 `;
 
 const argv = process.argv.slice(2);
@@ -116,7 +131,7 @@ async function saveState(emu, consumed = new Set()) {
   });
 }
 
-async function emulator() {
+async function emulator({ onInvocation = null } = {}) {
   const site = siteFromEnv();
   const { createEmulator } = lib('emulator.cjs');
   const state = await withLock(async () => loadState());
@@ -131,15 +146,34 @@ async function emulator() {
   });
   // A separate work dir per process: two concurrent forge-dev commands never rebuild each other's bundle.
   emu = await createEmulator({ appDir, kitDir, site, runtime: 'wrapper', fence: 'dev-auto', workDir: path.join(stateDir, 'work', String(process.pid)),
-    devState: state.kvs ? { kvs: state.kvs, queue: state.queue } : null, aroundInvocation });
+    devState: state.kvs ? { kvs: state.kvs, queue: state.queue } : null, aroundInvocation, onInvocation });
+  try {
+    await prepare(emu, state);
+  } catch (e) {
+    await emu.close();
+    throw e;
+  }
+  return emu;
+}
+
+async function prepare(emu, state) {
+  // Empty dev storage is the upgrade instant: v1's rows (entity scope-change) are in place, as on the scoring site.
+  if (!state.kvs && emu.manifest) {
+    const { v1Preload } = await emu.site.call('preload');
+    const rows = Object.entries(v1Preload?.entities?.['scope-change'] ?? {});
+    let refused = 0;
+    for (const [key, value] of rows) if (emu.kvs.handle('/api/v1/entity/set', { entityName: 'scope-change', key, value }).status >= 400) refused += 1;
+    await withLock(async () => writeState({ ...loadState(), kvs: emu.kvs.dump() }));
+    console.log(`dev storage: v1's ${rows.length - refused} scope-change row(s) laid down (the upgrade instant)`
+      + (refused ? `; ${refused} refused: manifest.yml does not declare v1's entity scope-change` : ''));
+  }
   if (emu.fence !== 'sandbox') {
     console.log('fence: node --permission (macOS refuses a nested sandbox inside this workspace). The scorer runs every invocation under a deny-default\n'
       + '       sandbox: no file reads outside the bundle, no child processes, network only to the Forge proxy.');
   }
-  if (!emu.manifest) { console.log(`manifest.yml: ${emu.manifestError}`); return emu; }
+  if (!emu.manifest) { console.log(`manifest.yml: ${emu.manifestError}`); return; }
   const built = await emu.build();
   for (const f of built.functions.filter((x) => !x.loaded)) console.log(`function ${f.key} (${f.handler}) does not load: ${f.error}`);
-  return emu;
 }
 
 const SHORT_CHARS = 4000; // ratio: a terminal screen of JSON; the whole value is always in .forge-dev/last-result.json
@@ -170,7 +204,9 @@ function realtimeSummary(c) {
   return `${c.op} '${c.body?.channel}' payload ${c.body?.payload} -> ${outcome}`;
 }
 function printInvocation(r, label) {
-  console.log(`== ${label}: ${r.functionKey ?? '?'} (${r.moduleType ?? '?'} ${r.moduleKey ?? ''})${r.asUser ? ` as ${r.asUser}` : ' as app'} -> ${r.ok ? 'ok' : r.timedOut ? 'TIMED OUT' : 'FAILED'} ${r.ms ?? 0} ms`);
+  const took = `${r.vms ?? 0} ms virtual (limit ${r.timeoutSec ?? '?'} s; ${r.ms ?? 0} ms real)`;
+  console.log(`== ${label}: ${r.functionKey ?? '?'} (${r.moduleType ?? '?'} ${r.moduleKey ?? ''})${r.asUser ? ` as ${r.asUser}` : ' as app'} -> ${r.ok ? 'ok' : r.timedOut ? 'KILLED' : 'FAILED'} ${took}`);
+  if (r.retry) console.log(`   retried later: ${r.retry.kind}${r.retry.dropped ? ` — DROPPED: ${r.retry.dropped}` : ` at ${r.retry.redeliverAt} (+${r.retry.waitS} s)`}`);
   if (r.ok) {
     // The full result is always written; the terminal shows it whole up to the print budget.
     const full = JSON.stringify(r.result === undefined ? null : r.result, null, 2);
@@ -186,7 +222,9 @@ function printInvocation(r, label) {
 }
 function printDeliveries(ds) {
   for (const d of ds) {
-    console.log(`-- queue ${d.queueName} event ${d.eventId} attempt ${d.attempt}: ${d.outcome}${d.retryAfter ? ` (redelivered after ${d.retryAfter} s)` : ''}${d.dropped ? ` DROPPED: ${d.dropped}` : ''}`);
+    const what = d.kind === 'trigger' ? `trigger ${d.moduleKey} retry` : `queue ${d.queueName} event`;
+    console.log(`-- ${what} ${d.eventId} attempt ${d.attempt}: ${d.outcome}${d.retryAfter ? ` (redelivered after ${d.retryAfter} s)` : ''}${d.dropped ? ` DROPPED: ${d.dropped}` : ''}`);
+    if (d.concurrent) console.log(`   ran at the same time as ${d.concurrent.with.map((x) => `event ${x.eventId}`).join(', ')} (${d.concurrent.reason})`);
     if (d.error) console.log(`   error: ${d.error.name}: ${d.error.message}`);
     for (const l of d.logs ?? []) console.log(`   [${l.logLevel ?? 'log'}] ${(l.logArguments ?? [l.raw]).join(' ')}`);
   }
@@ -220,7 +258,8 @@ async function main() {
   if (cmd === 'llm') {
     const site = siteFromEnv();
     const post = async (op, args) => (await fetch(`${site.adminUrl}/${op}`, { method: 'POST', body: JSON.stringify(args), headers: { 'content-type': 'application/json' } })).json();
-    if (opt('phase') !== undefined) console.log(`script restarted: ${JSON.stringify(await post('llmphase', { phase: opt('phase') }))}`);
+    const script = opt('script') !== undefined ? String(opt('script')).split(',').map((s) => s.trim()).filter(Boolean) : undefined;
+    if (opt('phase') !== undefined) console.log(`script restarted: ${JSON.stringify(await post('llmphase', { phase: opt('phase'), ...(script ? { script } : {}) }))}`);
     const r = await post('llmlog', { since: 0 });
     console.log(`models (list()): ${r.models.map((m) => `${m.model} ${m.status}`).join(', ')}`);
     console.log(`script: ${r.state.script.join(' -> ')}, then clean; next chat call gets: ${r.state.next}`);
@@ -249,7 +288,10 @@ async function main() {
   if (cmd === 'users') {
     const site = siteFromEnv();
     const info = await (await fetch(`${site.adminUrl}/info`, { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } })).json();
-    for (const u of [info.users.find((x) => x.accountId === info.viewer), ...info.users.filter((x) => x.accountId !== info.viewer)]) console.log(`${u.accountId}  ${u.displayName}${u.accountId === info.viewer ? '  (default viewer)' : ''}`);
+    const admins = new Set(info.admins ?? []);
+    for (const u of [info.users.find((x) => x.accountId === info.viewer), ...info.users.filter((x) => x.accountId !== info.viewer)]) {
+      console.log(`${u.accountId}  ${u.displayName}${u.accountId === info.viewer ? '  (default viewer)' : ''}${admins.has(u.accountId) ? '  (Jira administrator: global ADMINISTER)' : ''}`);
+    }
     console.log(`app account: ${info.appAccountId}`);
     for (const f of info.commentForbidden ?? []) {
       const names = f.accountIds.map((a) => info.users.find((u) => u.accountId === a)?.displayName ?? a).join(', ');
@@ -264,11 +306,25 @@ async function main() {
     console.log('dev storage and queues cleared; the dev site rewound to its first update');
     return 0;
   }
-  const emu = await emulator();
+  const finished = [];
+  const emu = await emulator({ onInvocation: (record, out) => finished.push(out) });
   const info = emu.siteInfo;
   const consumed = new Set();
   let serving = false;
   try {
+    if (cmd === 'uikit') {
+      // P2's command (bin/uikit.cjs): parses its own --as/--set/--click/--advance/--json, always closes its host process.
+      const code = await require('./uikit.cjs').main({ emu, argv: argv.slice(1) });
+      await saveState(emu, consumed);
+      return code;
+    }
+    if (cmd === 'ci') {
+      // The CI sender (bin/ci.cjs) sends in-process, at the dev site's virtual time, through the web-trigger ingress.
+      const r = await require('./ci.cjs').ciCommand(argv.slice(1), { emu, printInvocation, printDeliveries });
+      for (const d of r.deliveries) consumed.add(d.eventId);
+      await saveState(emu, consumed);
+      return r.code;
+    }
     if (cmd === 'invoke') {
       const fnKey = positional[0];
       if (!fnKey) throw new Error('invoke <functionKey> ...');
@@ -303,13 +359,7 @@ async function main() {
     }
     if (cmd === 'events') {
       const limit = Number(opt('limit') ?? 1);
-      for (let i = 0; i < limit; i++) {
-        const d = await emu.deliverNext();
-        if (!d) { console.log('no more issue updates on the dev site (`reset` replays them)'); break; }
-        const items = d.event.changelog.items.map((it) => `${it.field}: ${it.fromString ?? '∅'} -> ${it.toString ?? '∅'}`).join('; ');
-        console.log(`### update ${d.event.issue.key} changelog ${d.changelogId}${d.duplicate ? ' (redelivery)' : ''}: ${items}`);
-        if (!d.triggers.length) console.log('   no trigger subscribes to avi:jira:updated:issue');
-        for (const t of d.triggers) printInvocation(t, 'trigger');
+      const drain = async () => {
         const ds = await emu.drainQueues();
         for (const x of ds) consumed.add(x.eventId);
         printDeliveries(ds);
@@ -317,6 +367,29 @@ async function main() {
           const calls = emu.log.filter((c) => c.invocationId === id);
           if (calls.length) { console.log(`   calls of ${id}:`); printCalls(calls); }
         }
+      };
+      // An update whose queue work the scoring drive leaves pending until a later, related update (a redelivery, or the
+      // other half of a pair of changes to one issue) is followed by the rest of that batch before the queues drain, so
+      // their consumers run together as they do on the scoring site — past --limit when the batch is still open.
+      let open = false;
+      for (let i = 0; i < limit || open; i++) {
+        const d = await emu.deliverNext();
+        if (!d) {
+          console.log('no more issue updates on the dev site (`reset` replays them)');
+          if (open) await drain();
+          break;
+        }
+        for (const w of d.world ?? []) {
+          console.log(`### ${w.event.eventType} ${w.event.issue?.key ?? ''}`);
+          for (const t of w.invocations) printInvocation(t, 'trigger');
+        }
+        const items = d.event.changelog.items.map((it) => `${it.field}: ${it.fromString ?? '∅'} -> ${it.toString ?? '∅'}`).join('; ');
+        console.log(`### update ${d.event.issue.key} changelog ${d.changelogId}${d.duplicate ? ' (redelivery)' : ''}: ${items}`);
+        if (!d.triggers.length) console.log('   no trigger subscribes to avi:jira:updated:issue');
+        for (const t of d.triggers) printInvocation(t, 'trigger');
+        open = Number.isInteger(d.batchEnd) && d.batchEnd > d.slot;
+        if (open) { console.log('   queued: the next update arrives before this one\'s queue work runs; their consumers run concurrently'); continue; }
+        await drain();
       }
       await saveState(emu, consumed);
       return 0;

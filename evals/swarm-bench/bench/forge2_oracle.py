@@ -1,4 +1,19 @@
-"""forge-1.0 oracle: every number the Scope Ledger scorer grades, recomputed from the run's pack.
+"""forge-2.0 oracle: every number the Scope Ledger scorer grades, recomputed from the run's pack.
+
+The 1.0 oracle (below, unchanged in behaviour on a 1.0-shaped pack) plus the 2.0 views (forge2/SPEC.md §1-§2): the
+larger site (entries indexed per issue, so ~1,000 issues and ~1,000 live changes stay linear), the world timeline
+(§2.5), the migration's expected v1 and v2 rows at each checkpoint, the scope-status field values, and the dosing
+optimum. A 2.0 pack is the scoring site's `withWorld(facts(seed, {scoring}), {scoring})` (forge2/site/fixtures.cjs +
+world.cjs): it carries `v1Preload`, and then must carry `world` too (PackDefect otherwise — the oracle never invents
+a timeline). The 2.0 pack keys, as this oracle reads them:
+  * `now`: the upgrade, virtual t = 0 of the six scored hours (world.cjs); checkpoint 'hK' is now + K virtual hours,
+    'final' is after every scripted change (the held-back live-UI pair excluded: Oracle(pack), include_live_ui=False).
+    `issues[].fields` is the site at the upgrade, `history` is before it, `live` holds the changes of the scored hours
+    (1.0's `delivery` semantics unchanged; the site applies live changes as a PREFIX of creation order).
+  * `v1Preload.entities['scope-change']`: the preloaded v1 rows ([{key, value}] like kvs.snapshot(), or {key: value}).
+    Each must be a history ledger change of this oracle with the same `at` (PackDefect otherwise).
+  * `world.events` [{class, at (ISO) | atMs, ...}], class one of WORLD_CLASSES with the fields WORLD_FIELDS names. A
+    cross-board move is an ordinary Sprint-field change world.cjs inserts into `live`; its `issue-move` event names it.
 
 The pack is interface I1 (forge/DESIGN.md §5.2): `node forge/site/fixtures.cjs --seed S --out pack.json`.
 Nothing here is hand-written expectation: the scorer feeds the pack of the run's own `fixture_seed`.
@@ -23,20 +38,44 @@ The rules are FORGE-CONTRACT.md §1 verbatim:
   * a change is a Sprint-field changelog entry created strictly after the sprint's `startDate` that puts the
     issue into S (`added`) or takes it out of S (`removed`), keyed by changelog id + sprint;
   * committed / added / removed sum CURRENT estimates (the sprint's board estimation field; no value is 0);
+  * a change's points are the CURRENT value of the field its sprint's board used AT the change (2.0 contract §1:
+    a change keeps its field when the board switches; a closed sprint's numbers and points stay as at the close, §12);
   * creep = 100 x added / committed, rounded half away from zero to one decimal (Decimal ROUND_HALF_UP — the
     values are non-negative, so half-up IS half-away-from-zero), `None` when committed is 0.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 import math
 import re
-from typing import Dict, Iterable, List, Optional, Set, Tuple
+from typing import Dict, FrozenSet, Iterable, List, Optional, Set, Tuple
 
 ONE_DECIMAL = Decimal('0.1')
 PHASES = ('backfill', 'live', 'final')
+
+# ── 2.0 constants (forge2/SPEC.md; RATE-MODEL.json carries the §2.1 numbers verbatim) ─────────
+SCORED_HOURS = 6                                    # §2.3
+CHECKPOINTS = tuple(f'h{k}' for k in range(1, SCORED_HOURS + 1)) + ('final',)
+MIGRATION_DEADLINE = 'h2'                           # R1: complete within the first 2 virtual hours
+WORLD_CLASSES = ('sprint-close', 'issue-move', 'estimation-field', 'issue-delete', 'browse-revoke')   # world.cjs
+WORLD_FIELDS = {'sprint-close': ('sprintId',), 'issue-move': ('changelogId',),
+                'estimation-field': ('boardId', 'toFieldId'), 'issue-delete': ('issueId',),
+                'browse-revoke': ('accountId', 'projectKey')}
+QUOTA_POINTS = 2400                                 # §2.1 per installation per virtual hour
+BACKGROUND_SHARE_PCT = 70                           # §2.1 / §2.6 default
+SEARCH_ISSUES_PER_POINT = 50                        # §2.1 search/jql: 1 + 1 per 50 issues returned
+BULKFETCH_POINTS, BULKFETCH_ISSUES_MAX = 2, 1000    # §2.1 changelog bulkfetch: 2 per call, <= 1,000 issues
+FIELD_UPDATES_PER_POINT, FIELD_UPDATES_MAX = 50, 200  # §2.1 app/field/value: 1 + 1 per 50 updates, <= 200
+EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+JUST_BEFORE = timedelta(microseconds=1)
+
+
+def epoch_ms(when: datetime) -> int:
+    """Exact integer epoch milliseconds (v1's `at`): integer arithmetic, so a float compare with the app's
+    `Date.parse` value is exact."""
+    return (when - EPOCH) // timedelta(milliseconds=1)
 
 
 def duplicate_count(delivery: Dict) -> int:
@@ -146,6 +185,11 @@ class Change:
     dropped: bool
     duplicates: int
     sources: Tuple[str, ...]   # sources the contract accepts for this row (P7)
+    board_id: str = ''         # 2.0: the sprint's board (v2 `boardId`)
+    estimate_field: str = ''   # 2.0: the board's estimation field in force at the change (v2 `estimateField`)
+    moved_to_board: str = ''   # 2.0: a `removed` row of a cross-board move names the board the issue went to
+    late_fields: Tuple[str, ...] = ()       # 2.0: fields its board switched to after it, unknowably (see _changes)
+    late_points: FrozenSet[Decimal] = frozenset()   # its points in them: accepted beside `points` (see _changes)
 
     @property
     def key(self) -> Tuple[str, str]:
@@ -175,11 +219,20 @@ class SprintNumbers:
 class Oracle:
     """All graded expectations for one pack. Construction validates the pack's I1 invariants."""
 
-    def __init__(self, pack: Dict, include_live_ui: bool = False):
+    def __init__(self, pack: Dict, include_live_ui: bool = False,
+                 event_deliveries: Optional[Dict[str, Iterable[datetime]]] = None,
+                 quota_wall: Optional[Tuple[datetime, datetime]] = None):
         """`include_live_ui`: the state after the live-UI slot (DESIGN §5.2: two live changes held back from the
         script and delivered while the widget is open, `delivery.liveUi: true`). Without it the oracle is the site
-        before the UI phase: what the KVS snapshots, the Rovo action and the widget views opened first must show."""
+        before the UI phase: what the KVS snapshots, the Rovo action and the widget views opened first must show.
+        `event_deliveries` ({live changelog id: the instants the run delivered that change's event work — its product
+        event and the queue deliveries its lineage names}) and `quota_wall` ((start, end) of the shared pool's wall the
+        probe drew, rate.wall) are the run's OBSERVED timing (score_forge2 reads them from the observations). They feed
+        one rule, the switched-field allowance in `_changes` (`_switch_unseen`); without them the oracle is the pack's
+        alone."""
         self.pack = pack
+        self.event_deliveries = {str(cid): tuple(sorted(ts)) for cid, ts in (event_deliveries or {}).items()}
+        self.quota_wall = quota_wall
         try:
             self.viewer = str(pack['viewer'])
             self.sprint_field = str(pack['sprintFieldId'])
@@ -213,13 +266,30 @@ class Oracle:
                 raise PackDefect(f'active sprint {sid} has no startDate instant')
             if str(sprint.get('originBoardId')) not in self.boards:
                 raise PackDefect(f'sprint {sid} names unknown board {sprint.get("originBoardId")}')
+        # The larger site (2.0 §2.3): parse each instant once and index entries per issue, so membership and estimate
+        # lookups stop scanning every changelog entry for every issue.
+        self._t = {str(e['changelogId']): instant(e['created']) for e in history + live}
+        self._live_ids = {str(e['changelogId']) for e in self.live}
+        self._entry_cache: Dict[str, List[Dict]] = {}
+        self._issue_index: Dict[int, Tuple[List[Dict], Dict[str, List[Dict]]]] = {}
+        self._series_cache: Dict[Tuple[int, str], Tuple[List[Dict], List[Tuple[datetime, Set[str], Set[str]]]]] = {}
+        self._load_v2()
         self._numbers = self._compute()
+        if self.is_v2:
+            self._load_v1_rows()
 
     # ── membership and estimates ───────────────────────────────────────────────────────────
 
-    def active_sprints(self) -> List[str]:
+    def ledger_sprints(self) -> List[str]:
+        """Sprints active at install (2.0: at the upgrade). The app keeps a ledger for each, also after the world
+        closes one (SPEC §2.5: its ledger is final)."""
         active = [sid for sid, s in self.sprints.items() if s.get('state') == 'active']
         return sorted(active, key=lambda sid: (instant(self.sprints[sid]['startDate']), changelog_order(sid)))
+
+    def active_sprints(self) -> List[str]:
+        """Sprints active at the END of the run: a sprint the world closes leaves every surface (SPEC §2.5). On a
+        1.0 pack (no world) this is `ledger_sprints()`."""
+        return [sid for sid in self.ledger_sprints() if sid not in self.closed_at]
 
     def future_sprints(self) -> List[str]:
         return sorted(sid for sid, s in self.sprints.items() if s.get('state') == 'future')
@@ -231,14 +301,46 @@ class Oracle:
             raise PackDefect(f"scrum board {board.get('id')} has no estimationFieldId")
         return str(fid)
 
+    def field_in_force(self, board_id: str, when: datetime) -> str:
+        """The board's estimation field at `when`: the pack's field, replaced by each world `estimation_field_change`
+        of that board at or before `when` (SPEC §2.5: changes after the switch use the new field)."""
+        board = self.boards[str(board_id)]
+        fid = board.get('estimationFieldId')
+        if not fid:
+            raise PackDefect(f"scrum board {board.get('id')} has no estimationFieldId")
+        for t, new_field in self.field_switches.get(str(board_id), ()):
+            if t <= when:
+                fid = new_field
+        return str(fid)
+
+    def _created(self, entry: Dict) -> datetime:
+        return self._t[str(entry['changelogId'])]
+
+    def _start(self, sprint_id: str) -> datetime:
+        return instant(self.sprints[sprint_id]['startDate'])
+
     def _entries(self, live_mode: str) -> List[Dict]:
-        """history, plus live entries: 'none' | 'delivered' (not dropped) | 'all'."""
-        chosen = list(self.history)
-        if live_mode == 'delivered':
-            chosen += [e for e in self.live if not (e.get('delivery') or {}).get('dropped')]
-        elif live_mode == 'all':
-            chosen += list(self.live)
-        return sorted(chosen, key=lambda e: (instant(e['created']), changelog_order(str(e['changelogId']))))
+        """history, plus live entries: 'none' | 'delivered' (not dropped) | 'all'. Memoised per mode: the per-issue
+        index below is keyed by the list's identity."""
+        if live_mode not in self._entry_cache:
+            chosen = list(self.history)
+            if live_mode == 'delivered':
+                chosen += [e for e in self.live if not (e.get('delivery') or {}).get('dropped')]
+            elif live_mode == 'all':
+                chosen += list(self.live)
+            self._entry_cache[live_mode] = sorted(
+                chosen, key=lambda e: (self._created(e), changelog_order(str(e['changelogId']))))
+        return self._entry_cache[live_mode]
+
+    def _by_issue(self, entries: List[Dict]) -> Dict[str, List[Dict]]:
+        hit = self._issue_index.get(id(entries))
+        if hit is None or hit[0] is not entries:
+            index: Dict[str, List[Dict]] = {}
+            for entry in entries:
+                index.setdefault(str(entry['issueId']), []).append(entry)
+            hit = (entries, index)
+            self._issue_index[id(entries)] = hit
+        return hit[1]
 
     def _sprint_items(self, entry: Dict) -> List[Dict]:
         return [item for item in entry.get('items') or []
@@ -246,13 +348,16 @@ class Oracle:
                 or (not item.get('fieldId') and item.get('field') == 'Sprint')]
 
     def _membership_series(self, issue_id: str, entries: List[Dict]) -> List[Tuple[datetime, Set[str], Set[str]]]:
-        out = []
-        for entry in entries:
-            if str(entry['issueId']) != issue_id:
-                continue
-            for item in self._sprint_items(entry):
-                out.append((instant(entry['created']), sprint_ids(item.get('from')), sprint_ids(item.get('to'))))
-        return out
+        key = (id(entries), issue_id)
+        hit = self._series_cache.get(key)
+        if hit is None or hit[0] is not entries:
+            out = []
+            for entry in self._by_issue(entries).get(issue_id, ()):
+                for item in self._sprint_items(entry):
+                    out.append((self._created(entry), sprint_ids(item.get('from')), sprint_ids(item.get('to'))))
+            hit = (entries, out)
+            self._series_cache[key] = hit
+        return hit[1]
 
     def member_at(self, issue_id: str, when: datetime, entries: List[Dict]) -> Set[str]:
         series = self._membership_series(issue_id, entries)
@@ -270,22 +375,49 @@ class Oracle:
         return sprint_ids(self.issues[issue_id].get('fields', {}).get(self.sprint_field))
 
     def estimate_of(self, issue_id: str, field_id: str, entries: List[Dict]) -> Decimal:
+        live = [e for e in self._by_issue(entries).get(issue_id, ()) if str(e['changelogId']) in self._live_ids]
+        return self._estimate_from(issue_id, field_id, live)
+
+    def estimate_at(self, issue_id: str, field_id: str, when: Optional[datetime]) -> Decimal:
+        """The issue's value of `field_id` at `when` (None: after every scripted change): the value at install, then
+        each live change of that field created at or before `when`."""
+        live = [e for e in self._by_issue(self._entries('all')).get(issue_id, ())
+                if str(e['changelogId']) in self._live_ids and (when is None or self._created(e) <= when)]
+        return self._estimate_from(issue_id, field_id, live)
+
+    def _estimate_from(self, issue_id: str, field_id: str, live_entries: List[Dict]) -> Decimal:
         value = self.issues[issue_id].get('fields', {}).get(field_id)
-        install_value = value
-        live_items = [(instant(e['created']), item) for e in entries if e in self.live and str(e['issueId']) == issue_id
+        live_items = [(self._created(e), item) for e in live_entries
                       for item in e.get('items') or [] if str(item.get('fieldId') or '') == field_id]
         for _t, item in sorted(live_items, key=lambda pair: pair[0]):
             value = item.get('to')
-        return estimate(value if live_items else install_value)
+        return estimate(value)
 
     # ── changes and numbers ───────────────────────────────────────────────────────────────
 
+    def _switch_unseen(self, change_id: str, created: datetime, switch_at: datetime) -> bool:
+        """A board's estimation-field switch at `switch_at`, after the live change made at `created`, that no app could
+        tell from the field in force at the change, by the run's observed timing: (a) the change was made inside the
+        quota wall the probe drew (contract §10: no background request at all until it ends) and the switch came no
+        later than the change's first event delivery at or after the wall's end — the first moment any app could read
+        the board for it; or (b) the run first delivered the change's event at or after the switch (the world applies
+        before a delivery at the same instant). A switch sends no event and no changelog, and the board configuration
+        answers only the field in force now (§12), so either way the app cannot know which side of the switch the
+        change fell on. The bound is the observed delivery, never a typed drain time; no evidence, no allowance."""
+        times = self.event_deliveries.get(change_id) or ()
+        if times and times[0] >= switch_at:
+            return True
+        wall = self.quota_wall
+        if wall is None or not wall[0] <= created < wall[1]:
+            return False
+        after = [t for t in times if t >= wall[1]]
+        return bool(after) and switch_at <= after[0]
+
     def _changes(self, live_mode: str, final_entries: List[Dict]) -> Dict[str, List[Change]]:
         entries = self._entries(live_mode)
-        live_ids = {str(e['changelogId']) for e in self.live}
-        by_sprint: Dict[str, List[Change]] = {sid: [] for sid in self.active_sprints()}
+        by_sprint: Dict[str, List[Change]] = {sid: [] for sid in self.ledger_sprints()}
         for entry in entries:
-            created = instant(entry['created'])
+            created = self._created(entry)
             cid = str(entry['changelogId'])
             issue = self.issues[str(entry['issueId'])]
             delivery = entry.get('delivery') or {}
@@ -294,47 +426,96 @@ class Oracle:
                 for sid in sorted((to - frm) | (frm - to)):
                     if sid not in by_sprint:
                         continue
-                    start = instant(self.sprints[sid]['startDate'])
+                    start = self._start(sid)
                     if created <= start:
                         continue
+                    closed = self.closed_at.get(sid)
+                    if closed is not None and created >= closed:
+                        continue   # SPEC §2.5: a closed sprint's ledger is final
                     kind = 'added' if sid in to else 'removed'
-                    phase = 'live' if cid in live_ids else 'history'
+                    phase = 'live' if cid in self._live_ids else 'history'
                     dropped = bool(delivery.get('dropped'))
-                    sources = ('reconcile',) if phase == 'history' else \
+                    # 2.0 doses the backfill while events arrive, and a row keeps the path that recorded it FIRST
+                    # (contract §3: event work may record other changes of the issue it reads): a historical change
+                    # may carry `event` too. On a 1.0 pack the backfill ran before any event.
+                    history_sources = ('reconcile', 'event') if self.is_v2 else ('reconcile',)
+                    sources = history_sources if phase == 'history' else \
                         (('event', 'reconcile') if dropped else ('event',))
-                    field_id = self.board_estimate_field(sid)
+                    board_id = str(self.sprints[sid]['originBoardId'])
+                    field_id = self.field_in_force(board_id, created)
+                    moved_to = ''
+                    if kind == 'removed':   # a move needs a ledger on both sides: a future sprint has no added row
+                        boards = {str(self.sprints[t]['originBoardId']) for t in to - frm if t in by_sprint}
+                        moved_to = next(iter(sorted(boards - {board_id})), '')
+                    # Contract §1: the CURRENT value of the field the board used at the change (a later switch leaves
+                    # it alone); §12: a closed sprint's points stay as they stood at the close.
+                    iid = str(issue['id'])
+                    points_of = {fid: (self.estimate_at(iid, fid, closed - JUST_BEFORE) if closed is not None
+                                       else self.estimate_of(iid, fid, final_entries))
+                                 # A live change whose event never came is first recorded by a later reconcile; when its
+                                 # board switched fields after it, the app cannot tell which side of the switch the
+                                 # change fell on (a switch sends no event, §12): the field switched to is accepted too.
+                                 # So for a delivered change no app could read its board for before the switch
+                                 # (_switch_unseen: made under the quota wall, or first delivered after the switch).
+                                 for fid in (field_id, *(f for t, f in self.field_switches.get(board_id, ())
+                                                         if phase == 'live' and t > created
+                                                         and (dropped or self._switch_unseen(cid, created, t))))}
+                    late = tuple(f for f in points_of if f != field_id)
                     by_sprint[sid].append(Change(
-                        change_id=cid, sprint_id=sid, issue_id=str(issue['id']), issue_key=issue['key'],
+                        change_id=cid, sprint_id=sid, issue_id=iid, issue_key=issue['key'],
                         kind=kind, at=created, at_text=str(entry['created']), by=str(entry.get('authorId')),
                         by_name=self.users.get(str(entry.get('authorId')), ''),
-                        points=self.estimate_of(str(issue['id']), field_id, final_entries),
+                        points=points_of[field_id],
                         phase=phase, dropped=dropped, duplicates=duplicate_count(delivery),
-                        sources=sources))
+                        sources=sources, board_id=board_id, estimate_field=field_id, moved_to_board=moved_to,
+                        late_fields=late, late_points=frozenset(points_of[f] for f in late)))
         for sid in by_sprint:
             by_sprint[sid].sort(key=Change.sort_key)
         return by_sprint
 
     def _compute(self) -> Dict[str, SprintNumbers]:
+        """The §1 numbers per ledger sprint, with the 2.0 world (SPEC §2.5; a no-op on a 1.0 pack): a closed sprint's
+        numbers are its state just before the close (membership, field and values); a deleted issue counts nowhere; an
+        issue's points are its CURRENT value of the field the sprint's board uses now (contract §1)."""
         final_entries = self._entries('all')
         changes = self._changes('all', final_entries)
+        gone = set(self.deleted_at)
         out: Dict[str, SprintNumbers] = {}
-        for sid in self.active_sprints():
+        for sid in self.ledger_sprints():
             sprint = self.sprints[sid]
-            start = instant(sprint['startDate'])
-            field_id = self.board_estimate_field(sid)
-            at_start, now, ever = set(), set(), set()
+            start = self._start(sid)
+            board_id = str(sprint['originBoardId'])
+            closed = self.closed_at.get(sid)
+            at_start, now = set(), set()
             for iid in self.issues:
+                if iid in gone:
+                    continue
                 if sid in self.member_at(iid, start, final_entries):
                     at_start.add(iid)
-                if sid in self.member_now(iid, final_entries):
+                members = (self.member_at(iid, closed - JUST_BEFORE, final_entries) if closed is not None
+                           else self.member_now(iid, final_entries))
+                if sid in members:
                     now.add(iid)
-            ever = set(at_start) | {c.issue_id for c in changes[sid] if c.kind == 'added'}
-            est = {iid: self.estimate_of(iid, field_id, final_entries) for iid in at_start | now | ever}
-            committed = sum((est[i] for i in at_start), Decimal(0))
-            added = sum((est[i] for i in now - at_start), Decimal(0))
-            removed = sum((est[i] for i in ever - now), Decimal(0))
+            last: Dict[Tuple[str, str], datetime] = {}
+            for ch in changes[sid]:          # sorted by time: the last row of each kind wins
+                last[(ch.issue_id, ch.kind)] = ch.at
+            ever = at_start | {ch.issue_id for ch in changes[sid] if ch.kind == 'added' and ch.issue_id not in gone}
+
+            # Contract §1: an issue's estimate for S is the value of the field S's board uses NOW — after a switch, the
+            # new field for every issue; §12: a closed sprint's numbers stay as they stood at the close.
+            view_at = closed - JUST_BEFORE if closed is not None else max(
+                (t for t, _f in self.field_switches.get(board_id, ())), default=start)
+            field_now = self.field_in_force(board_id, max(view_at, start))
+
+            def points(iid: str, _when: datetime) -> Decimal:
+                if closed is not None:
+                    return self.estimate_at(iid, field_now, closed - JUST_BEFORE)
+                return self.estimate_of(iid, field_now, final_entries)
+            committed = sum((points(i, start) for i in at_start), Decimal(0))
+            added = sum((points(i, last.get((i, 'added'), start)) for i in now - at_start), Decimal(0))
+            removed = sum((points(i, last.get((i, 'removed'), start)) for i in ever - now), Decimal(0))
             out[sid] = SprintNumbers(sprint_id=sid, name=str(sprint.get('name', '')),
-                                     board_id=str(sprint['originBoardId']), start=start,
+                                     board_id=board_id, start=start,
                                      committed=committed, added=added, removed=removed,
                                      creep=creep(added, committed), changes=changes[sid])
         return out
@@ -359,16 +540,24 @@ class Oracle:
             return [c for c in final_rows if c.phase == 'history']
         return [c for c in final_rows if c.phase == 'history' or not c.dropped]
 
-    def hidden_issue_ids(self, account_id: str) -> Set[str]:
-        return {iid for iid, issue in self.issues.items() if account_id in (issue.get('hiddenFrom') or [])}
+    def hidden_issue_ids(self, account_id: str, at: Optional[datetime] = None) -> Set[str]:
+        """Issues the person cannot browse: hidden at install, plus every project the world took their browse
+        permission on (SPEC §2.5) at or before `at` (None: the end of the run, when the surfaces are graded)."""
+        hidden = {iid for iid, issue in self.issues.items() if account_id in (issue.get('hiddenFrom') or [])}
+        for loss in self.permission_losses:
+            if str(loss['accountId']) == account_id and (at is None or loss['t'] <= at):
+                hidden |= {iid for iid, issue in self.issues.items() if issue.get('projectKey') == loss['projectKey']}
+        return hidden
 
+    # Contract §1: changes of deleted issues are listed to nobody and counted as hidden for nobody (their ledger rows
+    # stay as history, `numbers().changes`).
     def visible_changes(self, sprint_id: str, account_id: str) -> List[Change]:
         hidden = self.hidden_issue_ids(account_id)
-        return [c for c in self.numbers(sprint_id).changes if c.issue_id not in hidden]
+        return [c for c in self.numbers(sprint_id).changes if c.issue_id not in hidden and c.issue_id not in self.deleted_at]
 
     def hidden_count(self, sprint_id: str, account_id: str) -> int:
         hidden = self.hidden_issue_ids(account_id)
-        return sum(1 for c in self.numbers(sprint_id).changes if c.issue_id in hidden)
+        return sum(1 for c in self.numbers(sprint_id).changes if c.issue_id in hidden and c.issue_id not in self.deleted_at)
 
     def action_result(self, sprint_id: str, account_id: str) -> Dict:
         n = self.numbers(sprint_id)
@@ -376,7 +565,7 @@ class Oracle:
                 'committed': n.committed, 'added': n.added, 'removed': n.removed,
                 'creepPercent': n.creep, 'hiddenChanges': self.hidden_count(sprint_id, account_id),
                 'changes': [{'changeId': c.change_id, 'issueKey': c.issue_key, 'kind': c.kind,
-                             'points': c.points, 'at': c.at, 'by': c.by_name}
+                             'points': c.points, 'late_points': sorted(c.late_points), 'at': c.at, 'by': c.by_name}
                             for c in self.visible_changes(sprint_id, account_id)]}
 
     def sprints_of_board(self, board_id: str) -> List[str]:
@@ -415,14 +604,17 @@ class Oracle:
         """Live entries that touch the Sprint field or an estimation field (the events that warrant Jira or
         queue work); the rest are the irrelevant updates `t_trigger_handoff` grades."""
         est_fields = {str(b.get('estimationFieldId')) for b in self.boards.values() if b.get('estimationFieldId')}
+        est_fields |= {fid for switches in self.field_switches.values() for _t, fid in switches}
         return [e for e in self.live
                 if self._sprint_items(e) or any(str(i.get('fieldId') or '') in est_fields for i in e.get('items') or [])]
 
     # ── economy optimum (§8.4; rungs are ratios of these) ─────────────────────────────────
 
     def event_optimum(self) -> int:
-        """Jira reads an optimal event path makes in the live phase: one per relevant scripted change that is
-        delivered (its first delivery; a duplicate is recognised from KVS), none for a dropped one."""
+        """The event economy's BASELINE: one Jira read per relevant scripted change that is delivered (its first
+        delivery; a duplicate is recognised from KVS), none for a dropped one. 1.0's optimum; in 2.0 a normalizer no
+        correct app reaches — a board's field switch sends no event, so the board configuration is read again (the
+        name is kept for the economy rows and the calibration that read it)."""
         return sum(1 for e in self.relevant_live() if not (e.get('delivery') or {}).get('dropped'))
 
     def limit(self, name: str) -> Optional[int]:
@@ -461,7 +653,7 @@ class Oracle:
         # sprints (the cheapest filter the API offers).
         served = lambda total, size: pages(total, min(size, math.ceil(total / 2)) if total >= 2 else size)  # noqa: E731
         chunks = pages(n, need['changelogBulkIssues'])
-        active = self.active_sprints()
+        active = self.ledger_sprints()
         sprint_pages = sum(served(sum(1 for sid in active if str(self.sprints[sid].get('originBoardId')) == str(b)),
                                   need['agileSprintPage']) for b in self.scrum_boards())
         calls = (1 + served(boards, need['agileBoardPage']) + boards + sprint_pages
@@ -469,6 +661,305 @@ class Oracle:
                  + chunks * served(math.ceil(entries / chunks), need['changelogBulkPageMax'])
                  + pages(n, need['issueBulkNamedFields']))
         return calls, []
+
+    # ── 2.0: the world, the migration, the field, the dosing optimum (forge2/SPEC.md) ──────
+
+    def _load_v2(self) -> None:
+        """A 2.0 pack carries `v1Preload` and `world`; a 1.0 pack carries neither, every 2.0 view refuses it
+        (`_need_v2`), and the world-dependent 1.0 views stay exactly 1.0's."""
+        self.is_v2 = 'v1Preload' in self.pack
+        self.upgrade_at: Optional[datetime] = None
+        self.world_events: List[Dict] = []
+        self.closed_at: Dict[str, datetime] = {}
+        self.deleted_at: Dict[str, datetime] = {}
+        self.field_switches: Dict[str, List[Tuple[datetime, str]]] = {}
+        self.permission_losses: List[Dict] = []
+        self._v1: List[Dict] = []
+        if not self.is_v2:
+            return
+        self.upgrade_at = instant(self.pack.get('now'))
+        if self.upgrade_at is None:
+            raise PackDefect('pack.now (the upgrade) is not an ISO-8601 instant')
+        world = self.pack.get('world')
+        if not isinstance(world, dict) or not isinstance(world.get('events'), list):
+            raise PackDefect('a 2.0 pack (it carries v1Preload) needs world.events: build it with world.cjs withWorld')
+        projects = {i.get('projectKey') for i in self.issues.values()}
+        ledger = set(self.ledger_sprints())
+        for raw in world['events']:
+            cls = (raw or {}).get('class')
+            if cls not in WORLD_CLASSES:
+                raise PackDefect(f'world event class {cls!r} is not one of {WORLD_CLASSES}')
+            when = instant(raw.get('atMs')) if isinstance(raw.get('atMs'), (int, float)) else instant(raw.get('at'))
+            if when is None:
+                raise PackDefect(f'world {cls} event has neither atMs nor an ISO `at`')
+            missing = [k for k in WORLD_FIELDS[cls] if raw.get(k) in (None, '')]
+            if missing:
+                raise PackDefect(f'world {cls} event lacks {missing}')
+            ev = {**raw, 'class': cls, 't': when}
+            if cls == 'sprint-close' and str(raw['sprintId']) not in ledger:
+                raise PackDefect(f'world closes sprint {raw["sprintId"]}, which is not active at the upgrade')
+            if cls == 'estimation-field' and str(raw['boardId']) not in self.boards:
+                raise PackDefect(f'world switches the field of unknown board {raw["boardId"]}')
+            if cls == 'issue-delete' and str(raw['issueId']) not in self.issues:
+                raise PackDefect(f'world deletes unknown issue {raw["issueId"]}')
+            if cls == 'browse-revoke' and raw['projectKey'] not in projects:
+                raise PackDefect(f'world revokes browse on unknown project {raw["projectKey"]}')
+            if cls == 'issue-move' and str(raw['changelogId']) not in self._live_ids:
+                raise PackDefect(f'world move names changelog {raw["changelogId"]}, which is not a live change')
+            self.world_events.append(ev)
+        self.world_events.sort(key=lambda e: e['t'])
+        for ev in self.world_events:
+            if ev['class'] == 'sprint-close':
+                self.closed_at.setdefault(str(ev['sprintId']), ev['t'])
+            elif ev['class'] == 'issue-delete':
+                self.deleted_at.setdefault(str(ev['issueId']), ev['t'])
+            elif ev['class'] == 'estimation-field':
+                self.field_switches.setdefault(str(ev['boardId']), []).append((ev['t'], str(ev['toFieldId'])))
+            elif ev['class'] == 'browse-revoke':
+                self.permission_losses.append(ev)
+
+    def _load_v1_rows(self) -> None:
+        """The preloaded v1 rows, each proven to be a history ledger change of this oracle with the same time — the
+        site's preload and the oracle's ledger must agree, or no migration row can be graded (PackDefect)."""
+        history = {(c.change_id, c.sprint_id): c for n in self._numbers.values() for c in n.changes
+                   if c.phase == 'history'}
+        rows = ((self.pack.get('v1Preload') or {}).get('entities') or {}).get('scope-change')
+        if isinstance(rows, dict):
+            rows = list(rows.values())
+        elif isinstance(rows, list):
+            rows = [r['value'] if isinstance(r, dict) and isinstance(r.get('value'), dict) else r for r in rows]
+        else:
+            raise PackDefect("v1Preload.entities['scope-change'] is neither a list nor an object")
+        for raw in rows:
+            try:
+                key = (str(raw['changeId']), str(raw['sprintId']))
+                at = float(raw['at'])
+            except (KeyError, TypeError, ValueError):
+                raise PackDefect(f'v1 row {raw!r} lacks changeId/sprintId/at') from None
+            ch = history.get(key)
+            if ch is None or at != float(epoch_ms(ch.at)):
+                raise PackDefect(f'v1 row {key} is not a history ledger change at its `at` ({at})')
+            self._v1.append({**raw, 'changeId': key[0], 'sprintId': key[1], 'at': at})
+        keys = [(r['changeId'], r['sprintId']) for r in self._v1]
+        if len(set(keys)) != len(keys):
+            raise PackDefect("v1Preload's scope-change rows repeat a (changeId, sprintId)")
+
+    def _need_v2(self) -> None:
+        if not self.is_v2:
+            raise PackDefect('not a 2.0 pack: no v1Preload (the 2.0 views need v1Preload and world.events)')
+
+    def world(self, cls: Optional[str] = None) -> List[Dict]:
+        """The scripted world events (SPEC §2.5) in time order; each carries `t` (an aware datetime)."""
+        self._need_v2()
+        return [dict(e) for e in self.world_events if cls is None or e['class'] == cls]
+
+    def checkpoint_mark(self, checkpoint: str) -> Optional[datetime]:
+        """'hK' -> the upgrade (pack.now) + K virtual hours; 'final' -> None (every scripted change applied)."""
+        self._need_v2()
+        if checkpoint == 'final':
+            return None
+        m = re.fullmatch(r'h([1-9]\d*)', str(checkpoint))
+        if not m:
+            raise ValueError(f'unknown checkpoint {checkpoint!r}')
+        return self.upgrade_at + timedelta(hours=int(m.group(1)))
+
+    def v1_rows(self) -> List[Dict]:
+        """The preloaded `scope-change` rows (R1: each must appear in `scope-ledger` exactly once, original
+        changeId and time; the v1 entity stays intact)."""
+        self._need_v2()
+        return [dict(r) for r in self._v1]
+
+    def v1_keys(self) -> Set[Tuple[str, str]]:
+        """(changeId, sprintId) of every preloaded v1 row; a 1.0 pack preloads none, so it is empty there."""
+        return {(r['changeId'], r['sprintId']) for r in self._v1}
+
+    def _row_estimates(self, ch: Change, mark: Optional[datetime]) -> FrozenSet[Decimal]:
+        """The values a v2 row's `estimate` may hold: the field in force at the change, read at the change or at the
+        checkpoint (SPEC §2.5 "earlier rows keep their estimate" and §1's current estimates both stay accepted).
+        A cross-board move's `removed` row also accepts the new board's field (§2.5 "with the NEW board's
+        estimate" names the move, not which of its two rows)."""
+        # late: a field its board switched to after the change, unknowably (_changes; only a switch made by the mark)
+        fields = {ch.estimate_field} | (set(ch.late_fields) & {f for t, f in self.field_switches.get(ch.board_id, ())
+                                                                if mark is None or t <= mark})
+        if ch.moved_to_board:
+            fields.add(self.field_in_force(ch.moved_to_board, ch.at))
+        if ch.phase == 'history':   # a backfill written after its board switched could read only the new field
+            fields |= {fid for _t, fid in self.field_switches.get(ch.board_id, ())}
+        return frozenset(self.estimate_at(ch.issue_id, f, when) for f in fields for when in (ch.at, mark))
+
+    def expected_rows(self, checkpoint: str) -> List[Dict]:
+        """Every `scope-ledger` row that exists at the checkpoint: each ledger change (history + live) created by the
+        mark, of every sprint active at the upgrade (a closed sprint keeps its final rows). `at` is the change's
+        epoch ms; `deleted` is whether the issue was deleted by the mark; `estimates` the accepted values; `v1`
+        whether the row was preloaded in v1."""
+        mark = self.checkpoint_mark(checkpoint)
+        v1 = {(r['changeId'], r['sprintId']) for r in self._v1}
+        out = []
+        for sid, n in self._numbers.items():
+            for ch in n.changes:
+                if mark is not None and ch.at > mark:
+                    continue
+                gone = self.deleted_at.get(ch.issue_id)
+                out.append({'changeId': ch.change_id, 'sprintId': sid, 'issueId': ch.issue_id,
+                            'issueKey': ch.issue_key, 'kind': ch.kind, 'at': epoch_ms(ch.at),
+                            'boardId': ch.board_id, 'estimateField': ch.estimate_field,
+                            'estimates': self._row_estimates(ch, mark),
+                            'deleted': gone is not None and (mark is None or gone <= mark),
+                            'phase': ch.phase, 'dropped': ch.dropped, 'v1': (ch.change_id, sid) in v1,
+                            'created': ch.at})
+        return out
+
+    def cross_board_moves(self) -> List[Dict]:
+        """Sprint changes that take an issue out of a ledger sprint into a sprint of ANOTHER board (SPEC §2.5)."""
+        self._need_v2()
+        out = []
+        for n in self._numbers.values():
+            for ch in n.changes:
+                if ch.kind == 'removed' and ch.moved_to_board:
+                    targets = [c for m in self._numbers.values() for c in m.changes
+                               if c.change_id == ch.change_id and c.kind == 'added' and c.board_id == ch.moved_to_board]
+                    out.append({'changeId': ch.change_id, 'issueId': ch.issue_id, 'issueKey': ch.issue_key,
+                                'fromSprintId': ch.sprint_id, 'toSprintIds': sorted(c.sprint_id for c in targets),
+                                'toBoardId': ch.moved_to_board, 'created': ch.at})
+        return out
+
+    def active_sprints_at(self, mark: Optional[datetime]) -> List[str]:
+        return [sid for sid in self.ledger_sprints()
+                if not (sid in self.closed_at and (mark is None or self.closed_at[sid] <= mark))]
+
+    def applied_cut(self, checkpoint: str, live_applied: Optional[int]) -> Optional[datetime]:
+        """The instant the site's Jira state stood at when a checkpoint was read. The site applies live changes as a
+        PREFIX of creation order (state.cjs applyThrough), so `live_applied` applied changes means every change created
+        up to the last of them and none after — even one created before the mark, when the app's own virtual time
+        pushed its delivery past the mark. None (or 'final') reads the nominal mark."""
+        mark = self.checkpoint_mark(checkpoint)
+        if mark is None or live_applied is None:
+            return mark
+        order = self.pack['live']
+        if not 0 <= live_applied <= len(order):
+            raise PackDefect(f'{live_applied} live changes applied at {checkpoint}, but the pack scripts {len(order)}')
+        return min(mark, self.upgrade_at if live_applied == 0 else instant(order[live_applied - 1]['created']))
+
+    def field_values(self, checkpoint: str, live_applied: Optional[int] = None
+                     ) -> Tuple[Dict[str, FrozenSet[str]], Set[str]]:
+        """R7 at a checkpoint: {issueKey: accepted values} and the issue keys not graded there. Live changes count up
+        to `applied_cut` (what the site had applied when the probe read the field), world events up to the mark. Per
+        active sprint S: in S since its start -> `committed`; in S, added after the start -> `added +<points>` (the
+        points of its last `added` change: the value at the cut of the field S's board used at that change, contract
+        §1/§15); in S's scope since the start but not in S now -> `removed`; every other issue ->
+        `` (empty). An issue related to two active sprints accepts either sprint's value. Not graded: a deleted
+        issue, and an issue a DROPPED change touched in the hour that ends at the mark (no event exists to make it
+        fresh; the next hourly reconcile must, so it is graded at the next mark)."""
+        mark = self.checkpoint_mark(checkpoint)
+        cut = self.applied_cut(checkpoint, live_applied)
+        entries = self._entries('all')
+        active = self.active_sprints_at(mark)
+        rows: Dict[Tuple[str, str], List[Change]] = {}
+        for sid in active:
+            for ch in self._numbers[sid].changes:
+                if cut is None or ch.at <= cut:
+                    rows.setdefault((ch.issue_id, sid), []).append(ch)
+        values: Dict[str, FrozenSet[str]] = {}
+        ungraded: Set[str] = set()
+        for iid, issue in self.issues.items():
+            gone = self.deleted_at.get(iid)
+            if gone is not None and (mark is None or gone <= mark):
+                ungraded.add(issue['key'])
+                continue
+            accepted: Set[str] = set()
+            for sid in active:
+                in_start = sid in self.member_at(iid, self._start(sid), entries)
+                in_now = sid in (self.member_now(iid, entries) if cut is None else self.member_at(iid, cut, entries))
+                mine = rows.get((iid, sid), [])
+                if in_now and in_start:
+                    accepted.add('committed')
+                elif in_now:
+                    adds = [ch for ch in mine if ch.kind == 'added']
+                    if adds:
+                        last = adds[-1]
+                        switched = {f for t, f in self.field_switches.get(last.board_id, ()) if cut is None or t <= cut}
+                        accepted |= {f'added +{format_points(self.estimate_at(iid, f, cut))}'
+                                     for f in (last.estimate_field, *(set(last.late_fields) & switched))}
+                elif in_start or any(ch.kind == 'added' for ch in mine):
+                    accepted.add('removed')
+            values[issue['key']] = frozenset(accepted or {''})
+        if mark is None:
+            lower, upper = self.checkpoint_mark(CHECKPOINTS[-2]), None
+        else:
+            lower, upper = max(self.upgrade_at, mark - timedelta(hours=1)), cut
+        for e in self.relevant_live():
+            t = self._created(e)
+            if (e.get('delivery') or {}).get('dropped') and t > lower and (upper is None or t <= upper):
+                ungraded.add(self.issues[str(e['issueId'])]['key'])
+        # The same for the world changes that send NO event (a sprint close, a board's estimation-field switch; SPEC
+        # §2.5): an issue whose value they move in the hour ending at the mark is graded at the next mark (SPEC R7:
+        # "fresh within the same virtual hour as the change"; the hourly reconcile is the app's only signal).
+        world_upper = mark if upper is None else upper
+        for sid, t in self.closed_at.items():
+            if t > lower and (world_upper is None or t <= world_upper):
+                ungraded |= {issue['key'] for iid, issue in self.issues.items()
+                             if sid in self.member_at(iid, t - JUST_BEFORE, entries)
+                             or any(ch.issue_id == iid for ch in self._numbers[sid].changes)}
+        for board_id, switches in self.field_switches.items():
+            if any(t > lower and (world_upper is None or t <= world_upper) for t, _f in switches):
+                board_sprints = {sid for sid in active if str(self.sprints[sid]['originBoardId']) == board_id}
+                ungraded |= {issue['key'] for iid, issue in self.issues.items()
+                             if board_sprints & self.member_now(iid, entries)}
+        return values, ungraded
+
+    def dosing_optimum(self) -> Dict:
+        """The fewest background points (SPEC §2.1 costs) an app spends over the scored hours: the agile reads (board
+        list, one configuration and one sprint page per scrum board), ONE backfill over the ledger's issues with the
+        bulk endpoints (an ids search, 1 + 1 per 50; changelog bulkfetch, 2 per 1,000 issues), one read per relevant
+        change delivered as an event, an hourly reconcile search (1, plus a bulkfetch when a dropped change needs
+        healing that hour), and the field writes in bulk each hour (requests of <= 200 updates, 1 + 1 per 50). A
+        floor to report beside the measured points and a feasibility proof — no app can be dosed if it exceeds the
+        background share of the scored hours (PackDefect) — never a graded target."""
+        self._need_v2()
+        ledger = set(self._numbers)
+        earliest = min((self._start(sid) for sid in ledger), default=None)
+        install_entries = self._entries('none')
+        touched = {str(e['issueId']) for e in self.history if earliest and self._created(e) > earliest}
+        touched |= {iid for iid in self.issues if self.member_now(iid, install_entries) & ledger}
+        n = len(touched)
+        agile = 1 + 2 * len(self.scrum_boards())
+        backfill = (1 + math.ceil(n / SEARCH_ISSUES_PER_POINT)) + BULKFETCH_POINTS * max(1, math.ceil(n / BULKFETCH_ISSUES_MAX))
+        events = sum(1 for e in self.relevant_live() if not (e.get('delivery') or {}).get('dropped'))
+        marks = [self.checkpoint_mark(c) for c in CHECKPOINTS[:-1]]
+        reconcile = 0
+        lower = self.upgrade_at
+        for upper in marks:
+            healing = any((e.get('delivery') or {}).get('dropped') and lower < self._created(e) <= upper
+                          for e in self.relevant_live())
+            reconcile += 1 + (BULKFETCH_POINTS if healing else 0)
+            lower = upper
+        writes, previous = [], {}
+        for c in CHECKPOINTS[:-1]:
+            values, _ungraded = self.field_values(c)
+            current = {k: min(v) for k, v in values.items()}
+            changed = sum(1 for k, v in current.items() if v != previous.get(k, ''))
+            previous = current
+            full, rest = divmod(changed, FIELD_UPDATES_MAX)
+            pts = full * (1 + FIELD_UPDATES_MAX // FIELD_UPDATES_PER_POINT)
+            pts += (1 + math.ceil(rest / FIELD_UPDATES_PER_POINT)) if rest else 0
+            writes.append(pts)
+        total = agile + backfill + events + reconcile + sum(writes)
+        cap = QUOTA_POINTS * BACKGROUND_SHARE_PCT // 100
+        if total > cap * SCORED_HOURS:
+            raise PackDefect(f'the dosing optimum ({total} points) exceeds {SCORED_HOURS} hours of the background '
+                             f'share ({cap} each): no app could be dosed on this pack')
+        return {'points': total, 'background_cap_per_hour': cap, 'issues_backfilled': n,
+                'parts': {'agile': agile, 'backfill': backfill, 'events': events, 'reconcile': reconcile,
+                          'field_writes': sum(writes)}, 'field_writes_by_hour': writes}
+
+    def leak_terms_for(self, issue_ids: Iterable[str]) -> Dict[str, List[str]]:
+        """What must not show for these issues: their keys, and their summaries that no OTHER issue shares (the
+        generator repeats summaries across ~1,000 issues, so a shared one proves nothing)."""
+        chosen = set(issue_ids)
+        others = {i.get('summary') for iid, i in self.issues.items() if iid not in chosen}
+        return {'keys': sorted(self.issues[i]['key'] for i in chosen),
+                'summaries': sorted({self.issues[i].get('summary') for i in chosen
+                                     if self.issues[i].get('summary') and self.issues[i].get('summary') not in others})}
 
 
 def synthetic_pack(seed: str = '00000000000000aa') -> Dict:
@@ -575,6 +1066,57 @@ def synthetic_pack(seed: str = '00000000000000aa') -> Dict:
             'users': users, 'fields': fields, 'sprintFieldId': sf, 'projects': projects, 'boards': boards,
             'sprints': sprints, 'issues': issues, 'history': history, 'live': live, 'faults': faults,
             'limits': limits}
+
+
+def synthetic_pack_v2(seed: str = '00000000000000bb') -> Dict:
+    """The 1.0 synthetic pack in the 2.0 shape the scoring site builds (module docstring: fixtures.cjs `v1Preload`,
+    world.cjs `world.events`): the upgrade (`now`) at 09:30, every world class once with a change that tells the right
+    reading from the wrong one, and the v1 rows of each active sprint's first two days (SPEC §2.3). The selftest
+    fixture of forge2_checks.py; deterministic, every value written out."""
+    pack = synthetic_pack(seed)
+    sf = pack['sprintFieldId']
+    for e in pack['live']:
+        e['delivery'].pop('liveUi', None)       # the selftest grades the scored hours only
+
+    def move(cid, iid, created, frm, to, slot):
+        return {'changelogId': cid, 'issueId': iid, 'created': created, 'authorId': 'u-ana',
+                'items': [{'field': 'Sprint', 'fieldtype': 'custom', 'fieldId': sf, 'from': frm, 'fromString': '',
+                           'to': to, 'toString': ''}],
+                'delivery': {'slot': slot, 'duplicates': [], 'dropped': False}}
+    pack['live'] += [
+        move('9301', '200', '2026-10-01T12:00:00.000Z', '21', '11', 9),           # PAY-1: board 2 -> board 1
+        move('9302', '101', '2026-10-01T12:20:00.000Z', '11, 12', '11, 12, 21', 10),  # after board 2's switch: 5, not 8
+    ]
+    pack['live'].sort(key=lambda e: e['created'])
+    base = Oracle(pack)
+    v1 = []
+    for sid in base.ledger_sprints():
+        start = base.numbers(sid).start
+        for ch in base.numbers(sid).changes:
+            if ch.phase == 'history' and ch.at < start + timedelta(days=2):
+                v1.append({'key': f'{ch.change_id}:{sid}', 'value': {
+                    'sprintId': sid, 'changeId': ch.change_id, 'at': epoch_ms(ch.at), 'created': ch.at_text,
+                    'issueId': ch.issue_id, 'issueKey': ch.issue_key, 'kind': ch.kind, 'authorId': ch.by,
+                    'authorName': ch.by_name, 'source': 'event'}})
+
+    def at(hours: float) -> str:
+        return (instant('2026-10-01T09:30:00.000Z') + timedelta(hours=hours)).isoformat().replace('+00:00', 'Z')
+    pack.update({
+        'now': '2026-10-01T09:30:00.000Z',
+        'v1Preload': {'entities': {'scope-change': v1}},
+        'world': {'window': {'start': at(0), 'end': at(6)}, 'injection': None, 'events': [
+            {'id': 'world-bb-1', 'class': 'issue-move', 'at': at(2.5), 'issueId': '200', 'issueKey': 'PAY-1',
+             'fromSprintId': 21, 'toSprintId': 11, 'fromBoardId': 2, 'toBoardId': 1, 'changelogId': '9301',
+             'viaLive': True},
+            {'id': 'world-bb-2', 'class': 'estimation-field', 'at': at(2.75), 'boardId': 2,
+             'fromFieldId': 'customfield_10028', 'toFieldId': 'customfield_10016'},
+            {'id': 'world-bb-3', 'class': 'sprint-close', 'at': at(3.5), 'sprintId': 12, 'boardId': 1},
+            {'id': 'world-bb-4', 'class': 'issue-delete', 'at': at(3.8), 'issueId': '201', 'issueKey': 'PAY-2',
+             'authorId': 'u-ana'},
+            {'id': 'world-bb-5', 'class': 'browse-revoke', 'at': at(4.5), 'accountId': 'u-bob', 'projectKey': 'PAY'},
+        ]},
+    })
+    return pack
 
 
 def iter_leaves(value, depth: int = 0) -> Iterable:

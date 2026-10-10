@@ -1,3 +1,58 @@
+# Forge 2.0 golden (P10, 2026-10-09): what the v2 golden decides where SPEC §1-§2 leaves room
+
+Built from `forge2/SPEC.md` §1-§2 and the verified research only (P6's contract text was not read). Each line is
+an interpretation the contract (P6), the oracle (P8) and the probe (P9) must match, or the golden must change.
+
+- **R7 field API: `POST /rest/api/3/app/field/value`**, not the `PUT` SPEC §1/§2.1 name. The shipped OpenAPI
+  (`forge2/kit/openapi/jira.json`) has the bulk update as POST (`MultipleCustomFieldValuesUpdateDetails`:
+  `{updates:[{customField, issueIds:[int], value}]}`); PUT exists only as `/app/field/{fieldIdOrKey}/value`. The
+  golden sends `?generateChangelog=false&generateAppEvents=false`, ≤ 200 issue updates per request, empty = `null`.
+- **R7 field discovery:** `GET /rest/api/3/field`, the field whose `schema.custom` ends `/scope-status` (the extension
+  ARI `…/static/scope-status`) or whose `key` ends `__scope-status`. None found = logged, statuses not written.
+- **R7 values:** `committed` / `added +<points>` (the points of the change that last added it: the current value of
+  the field its board used at that change, contract §1/§15) for the active sprint the issue is in; `removed` when it
+  left an active sprint after its start and is in none now; empty otherwise (incl. after its sprint closed). Deleted
+  issues are not written.
+- **R4 deleted issue:** rows get `deleted: true`; the membership keeps its last state with `deleted: true`, and the
+  issue counts nowhere (contract §1: a deleted issue has no value). Its rows are listed to nobody and counted as
+  hidden for nobody (contract §1).
+- **R4 closed sprint:** no row with a change time after `completeDate`; the event path reads each sprint and board
+  fresh (one agile GET each per invocation), so closes and estimation-field switches apply at once. A change made
+  BEFORE the close whose delivery is handed over after it (the gate, 2026-10-10: deliveries retried for half an hour
+  around the close) still counts: its member is written as it stood at the close (membership and values now, with
+  every later change undone from the changelog). A change made before the close whose event never arrived is healed
+  by the first scheduled run after the close, which treats a sprint closed since the last run once more as at its
+  close (rows up to `completeDate`, members settled the same way); 20 of 300 scoring packs hold such a change after
+  the last hourly run before the close.
+- **R4 estimation-field switch** (settled by contract §1, 2026-10-10): rows keep the estimate they were written
+  with; the totals use the board's current field; a change's points (the modal's points column, the Rovo action,
+  `added +<points>`) are the current value of the field its row records (`estimateField`, the field the board used
+  at the change). Members carry every estimation field's current value (`estimates`, JSON) for that. A closed
+  sprint's members stop updating, so its numbers and points stay as at the close (§12). "Every estimation field" is
+  every field a board of the app's sprints has USED (`cfg.estimateFields`), not only those the active boards use now:
+  once a board switches away from a field and the last active sprint using it closes, the rows recorded under it still
+  read it and the trigger still hands its updates to the queue.
+- **R1:** the v1 key (`<changeId>:<sprintId>`) is the v2 key, so copies are exactly-once by construction. Migrated
+  rows: estimate = the issue's current value of the sprint's board field (v1 stored none), `deleted` if Jira no
+  longer has the issue. Progress text: `Migrated <n> of <total> v1 rows`, `… — complete`, before the first step
+  `Migration has not started yet`. Starts on `avi:forge:upgraded:app` and on every scheduled run.
+- **R2 dose:** each background invocation records its spend under KVS `dose:<hour>:<invocation>` and sums the
+  hour's keys; it stops (consumer: `InvocationError`; scheduled: a delayed queue continuation) before a request
+  that would pass `floor(2400 × share / 100)`. A quota 429 writes `dose-paused-until`. Needs `Date.now()` virtual.
+- **R6:** static web trigger, outputs `accepted` 202 / `duplicate` 200 / `unauthorized` 401 / `invalid` 400 (a
+  signed but malformed body). The handler returns `{outputKey}` AND the dynamic shape (`statusCode`, `body`,
+  `headers`) so either host reads it. "Deployed to <env>" = `deployedEnvs` on every ledger row of the issue, shown in
+  the sprint ledger's extra column `th[data-col="deployed"]`. A valid event before the migration completes is
+  queued (still 202) and applied by the consumer once it has. "Rows written later for that issue carry it too"
+  (contract §14; the gate, 2026-10-10: 128 of 300 scoring packs write such a row): each deployment is kept per issue
+  under `deployed:<issueId>:<environment>`, set before the issue's rows are marked and read by every later row.
+- **R8:** an LLM 429 (the SDK exposes no Retry-After) backs off 20 s, 40 s, … server-side; the page gets an error
+  with `retryAfter`, never an auto-retry. Cache key = the exact prompt input (viewer-visible data only), 10 minutes.
+- **R9:** `index.js` (bridge + plain DOM, ~97 KB) + `index.css` paint the first data after one invoke; React
+  `app.js` is requested on the next frame and starts from `window.__scopeBoot` (no second invoke).
+- **R5 labels:** each control is `<Label labelFor=id>` + the control with that `id`; buttons by their text; the
+  migration status is a read-only Textfield labelled `Migration` plus the same text as a Text node.
+
 # Contract gaps found while building the golden (WP3, 2026-10-02)
 
 The golden was built from `forge/public/{spec-build-forge.md, FORGE-CONTRACT.md, STARTER.md}`, the installed

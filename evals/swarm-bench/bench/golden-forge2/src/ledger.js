@@ -1,55 +1,194 @@
 import { kvs } from '@forge/kvs';
 import { jiraJson, route, postJson } from './jira';
-import { toMicro, creepTenths } from './numbers';
+import { toMicro, creepTenths, formatPoints } from './numbers';
 
-export const CHANGES = 'scope-change';
+// v2 keeps the ledger in `scope-ledger`; v1's `scope-change` rows are copied into it by the migration
+// (migrate.js) and are never changed. `sprint-issue` (membership + current estimate) is carried over as is.
+export const LEDGER = 'scope-ledger';
+export const V1_CHANGES = 'scope-change';
 export const MEMBERS = 'sprint-issue';
+export const MIGRATION_KEY = 'migration';
 
-// A change is keyed by changelog id + sprint (§1): one changelog entry moving an issue between two
-// sprints is two rows.
+// A change is keyed by changelog id + sprint: one changelog entry moving an issue between two sprints is
+// two rows. v1 used the same key, so a v1 change and its v2 copy can never be two rows.
 export const changeKey = (changeId, sprintId) => `${changeId}:${sprintId}`;
 export const memberKey = (sprintId, issueId) => `${sprintId}:${issueId}`;
 
-async function queryAll(entityName, indexName, partition) {
+// Index queries miss writes younger than 5 virtual seconds (contract §3); key reads and transaction conditions never
+// do. A writer whose readers find its rows by query (the widget after a realtime announcement, the reads that follow a
+// completed migration) lets that much time pass first.
+export const QUERY_LAG_MS = 5000;
+export const untilQueryable = () => new Promise((resolve) => setTimeout(resolve, QUERY_LAG_MS));
+
+// [{key, value}] of one index partition, every page.
+async function queryEntries(entityName, indexName, partition) {
   const out = [];
   let cursor;
   do {
     let q = kvs.entity(entityName).query().index(indexName, { partition }).limit(100);
     if (cursor) q = q.cursor(cursor);
     const page = await q.getMany();
-    out.push(...page.results.map((r) => r.value));
+    out.push(...page.results);
     cursor = page.nextCursor;
   } while (cursor);
   return out;
 }
 
-export const changesOfSprint = (sprintId) => queryAll(CHANGES, 'by-sprint', [String(sprintId)]);
+const queryAll = async (entityName, indexName, partition) => (await queryEntries(entityName, indexName, partition)).map((r) => r.value);
+
+export const ledgerRowsOfSprint = (sprintId) => queryAll(LEDGER, 'by-sprint', [String(sprintId)]);
+export const ledgerRowsOfIssue = (issueId) => queryAll(LEDGER, 'by-issue', [String(issueId)]);
+export const v1RowsOfSprint = (sprintId) => queryAll(V1_CHANGES, 'by-sprint', [String(sprintId)]);
 export const membersOfSprint = (sprintId) => queryAll(MEMBERS, 'by-sprint', [String(sprintId)]);
 export const membersOfIssue = (issueId) => queryAll(MEMBERS, 'by-issue', [String(issueId)]);
 
-// Exactly one row per change, whatever the delivery history: the first writer wins and keeps its
-// `source`. Returns true when this call created the row. `known` skips the read when the caller has
-// already listed the sprint's rows; FAIL_IF_EXISTS still settles a race between two writers.
-export async function recordChange(row, known = false) {
-  const key = changeKey(row.changeId, row.sprintId);
-  if (!known && (await kvs.entity(CHANGES).get(key))) return false;
+export const migrationComplete = async () => (await kvs.get(MIGRATION_KEY))?.complete === true;
+
+// A v1 row in the v2 shape. `extra` carries what v1 never stored: the estimate, the board and its
+// estimation field, and whether the issue still exists.
+export function fromV1(v1, extra) {
+  return {
+    sprintId: String(v1.sprintId),
+    at: v1.at,
+    changeId: String(v1.changeId),
+    kind: v1.kind,
+    issueId: String(v1.issueId),
+    issueKey: v1.issueKey ?? '',
+    estimate: extra.estimate,
+    boardId: extra.boardId,
+    estimateField: extra.estimateField,
+    deleted: extra.deleted,
+    deployedEnvs: '',
+    authorId: v1.authorId ?? '',
+    authorName: v1.authorName ?? '',
+    source: v1.source ?? '',
+  };
+}
+
+// The ledger of one sprint: its v2 rows plus, until the migration is complete, the v1 rows not copied yet
+// (so v1's numbers stay whole while the copy runs). Pending v1 rows carry no v2 extras; nothing reads them.
+export async function changesOfSprint(sprintId) {
+  const rows = await ledgerRowsOfSprint(sprintId);
+  if (await migrationComplete()) return rows;
+  const have = new Set(rows.map((r) => changeKey(r.changeId, r.sprintId)));
+  for (const v1 of await v1RowsOfSprint(sprintId)) {
+    if (!have.has(changeKey(v1.changeId, v1.sprintId))) rows.push(fromV1(v1, { estimate: 0, boardId: '', estimateField: '', deleted: false }));
+  }
+  return rows;
+}
+
+// One issue's rows (all sprints), plus — until the migration is complete — its v1 rows not copied yet in
+// the given sprints.
+export async function rowsOfIssue(issueId, sprintIds) {
+  const rows = await ledgerRowsOfIssue(issueId);
+  if (await migrationComplete()) return rows;
+  const have = new Set(rows.map((r) => changeKey(r.changeId, r.sprintId)));
+  for (const sprintId of new Set(sprintIds)) {
+    for (const v1 of await v1RowsOfSprint(sprintId)) {
+      if (String(v1.issueId) === String(issueId) && !have.has(changeKey(v1.changeId, v1.sprintId))) {
+        rows.push(fromV1(v1, { estimate: 0, boardId: '', estimateField: '', deleted: false }));
+      }
+    }
+  }
+  return rows;
+}
+
+// The row's key is claimed atomically (FAIL_IF_EXISTS): two deliveries of one change running at the same time
+// (contract §3) both find no row and both write; exactly one write lands (409 KEY_CONFLICT for the other).
+async function createRow(key, value) {
   try {
-    await kvs.entity(CHANGES).set(key, row, { keyPolicy: 'FAIL_IF_EXISTS' });
+    await kvs.entity(LEDGER).set(key, value, { keyPolicy: 'FAIL_IF_EXISTS' });
     return true;
   } catch (e) {
-    if (await kvs.entity(CHANGES).get(key)) return false;
+    if (await kvs.entity(LEDGER).get(key)) return false;
     throw e;
   }
 }
 
-const sameMember = (a, b) =>
-  a && b && a.inSprint === b.inSprint && a.estimate === b.estimate && a.issueKey === b.issueKey;
+// Exactly one row per change, whatever the delivery history: the first writer wins and keeps its
+// `source`. A change v1 already recorded keeps v1's time, author and source (the event path can reach it
+// before the migration does). `known` skips the v2 read when the caller has listed the sprint's rows. A row written
+// after a deployment reached its issue carries that deployment too (contract §14).
+export async function recordChange(row, known = false) {
+  const key = changeKey(row.changeId, row.sprintId);
+  if (!known && (await kvs.entity(LEDGER).get(key))) return false;
+  const v1 = await kvs.entity(V1_CHANGES).get(key);
+  const value = v1 ? { ...row, at: v1.at, kind: v1.kind, authorId: v1.authorId ?? '', authorName: v1.authorName ?? '', source: v1.source ?? row.source } : row;
+  return createRow(key, { ...value, deployedEnvs: await deployedEnvsOf(row.issueId) });
+}
+
+export const copyV1 = (v1, extra) => createRow(changeKey(v1.changeId, v1.sprintId), fromV1(v1, extra));
+
+export const sameMember = (a, b) =>
+  a && b && a.inSprint === b.inSprint && a.estimate === b.estimate && a.estimates === b.estimates && a.issueKey === b.issueKey && (a.deleted === true) === (b.deleted === true);
+
+// A change's points (contract §1): the issue's current value of the estimation field its sprint's board used at the
+// time of the change, the field its row records — a later switch of the board's field leaves it alone. The member
+// row carries every estimation field's current value (`estimates`, JSON); a row without a field (a v1 row not copied
+// yet) reads the board's.
+export function changePoints(member, fieldId) {
+  if (!member) return 0;
+  const values = member.estimates ? JSON.parse(member.estimates) : {};
+  return fieldId && Object.hasOwn(values, fieldId) ? values[fieldId] : member.estimate ?? 0;
+}
 
 // Writes the member row only when it differs from what is stored, so a run with nothing new writes nothing.
 export async function writeMember(next, stored) {
   if (sameMember(next, stored)) return false;
   await kvs.entity(MEMBERS).set(memberKey(next.sprintId, next.issueId), next);
   return true;
+}
+
+// A deleted issue: its rows stay as history marked `deleted`, and its memberships are marked `deleted`
+// (keeping the last known membership and estimate), so it no longer counts in current scope and leaves it
+// as a removal. Its v1 rows not copied yet are marked by the migration, which finds the issue gone. Each row is
+// rewritten under the key it was read from, after the index has caught up with every write made before the deletion
+// reached here (a row the migration copied, or a deployment marked, seconds earlier).
+export async function markIssueDeleted(issueId) {
+  const sprintIds = new Set();
+  await untilQueryable();
+  for (const { key, value: row } of await queryEntries(LEDGER, 'by-issue', [String(issueId)])) {
+    if (row.deleted) continue;
+    await kvs.entity(LEDGER).set(key, { ...row, deleted: true });
+    sprintIds.add(row.sprintId);
+  }
+  for (const m of await membersOfIssue(issueId)) {
+    if (m.deleted === true) continue;
+    await kvs.entity(MEMBERS).set(memberKey(m.sprintId, m.issueId), { ...m, deleted: true });
+    sprintIds.add(m.sprintId);
+  }
+  return [...sprintIds];
+}
+
+// The environments a CI deployment can name (contract §14), in the order `deployedEnvs` lists them.
+export const DEPLOY_ENVIRONMENTS = ['production', 'staging'];
+const deployedKey = (issueId, environment) => `deployed:${issueId}:${environment}`;
+
+// The environments deployed for one issue so far: key reads, so a row written right after a deployment sees it.
+async function deployedEnvsOf(issueId) {
+  const envs = [];
+  for (const environment of DEPLOY_ENVIRONMENTS) if (await kvs.get(deployedKey(issueId, environment))) envs.push(environment);
+  return envs.join(',');
+}
+
+// A CI deployment reached these issues: every ledger row of each names the environment, rewritten under the key it
+// was read from. Idempotent. The rows written later carry it too (contract §14): the deployment is first kept per issue
+// under its own key (recordChange reads it), then — once the index has caught up with the rows written just before
+// that — the issue's rows are marked.
+export async function markDeployed(issueIds, environment) {
+  const sprintIds = new Set();
+  for (const issueId of issueIds) await kvs.set(deployedKey(issueId, environment), true);
+  await untilQueryable();
+  for (const issueId of issueIds) {
+    for (const { key, value: row } of await queryEntries(LEDGER, 'by-issue', [String(issueId)])) {
+      const envs = new Set(row.deployedEnvs ? row.deployedEnvs.split(',') : []);
+      if (envs.has(environment)) continue;
+      envs.add(environment);
+      await kvs.entity(LEDGER).set(key, { ...row, deployedEnvs: [...envs].sort().join(',') });
+      sprintIds.add(row.sprintId);
+    }
+  }
+  return [...sprintIds];
 }
 
 const isNumeric = (s) => /^\d+$/.test(s);
@@ -64,13 +203,22 @@ export function compareIds(a, b) {
 
 export const byTime = (a, b) => a.at - b.at || compareIds(a.changeId, b.changeId);
 
-// §1, reconstructed from the ledger: membership at startDate is the opposite of the first recorded
-// change after it (an issue whose first change is `added` was not in S at start), or the current
-// membership when nothing changed.
+// Membership of one issue in one sprint: at startDate it was the opposite of its first recorded change
+// after it (an issue whose first change is `added` was not in S at start), or its last known membership
+// when nothing changed. A deleted issue is in no sprint now.
+export function issueInSprint(history, member) {
+  const sorted = [...history].sort(byTime);
+  const lastKnown = member?.inSprint === true;
+  const inNow = lastKnown && member?.deleted !== true;
+  const inAtStart = sorted.length ? sorted[0].kind === 'removed' : lastKnown;
+  const everInAfterStart = inAtStart || sorted.some((c) => c.kind === 'added');
+  return { inNow, inAtStart, everInAfterStart };
+}
+
 export function computeTotals(changes, members) {
   const memberByIssue = new Map(members.map((m) => [m.issueId, m]));
   const changesByIssue = new Map();
-  for (const c of [...changes].sort(byTime)) {
+  for (const c of changes) {
     if (!changesByIssue.has(c.issueId)) changesByIssue.set(c.issueId, []);
     changesByIssue.get(c.issueId).push(c);
   }
@@ -80,16 +228,33 @@ export function computeTotals(changes, members) {
   let removed = 0;
   for (const issueId of issueIds) {
     const member = memberByIssue.get(issueId);
-    const history = changesByIssue.get(issueId) ?? [];
-    const inNow = member?.inSprint === true;
-    const inAtStart = history.length ? history[0].kind === 'removed' : inNow;
-    const everInAfterStart = inAtStart || history.some((c) => c.kind === 'added');
-    const estimate = toMicro(member?.estimate);
+    const { inNow, inAtStart, everInAfterStart } = issueInSprint(changesByIssue.get(issueId) ?? [], member);
+    // Contract §1: a deleted issue has no value — it counts nowhere.
+    const estimate = member?.deleted === true ? 0 : toMicro(member?.estimate);
     if (inAtStart) committed += estimate;
     if (inNow && !inAtStart) added += estimate;
     if (everInAfterStart && !inNow) removed += estimate;
   }
   return { committed, added, removed, creepTenths: creepTenths(added, committed) };
+}
+
+// The `scope-status` value of one issue (R7): `committed` or `added +<points>` (the points of the change that
+// last added it) in the active sprint it is in now, `removed` when it left an active sprint after its start,
+// empty otherwise. `activeSprintIds` are the active sprints; members and rows are this issue's.
+export function scopeStatus(activeSprintIds, members, rows) {
+  let removed = false;
+  for (const m of members) {
+    if (!activeSprintIds.has(m.sprintId)) continue;
+    const history = rows.filter((r) => r.sprintId === m.sprintId);
+    const { inNow, inAtStart, everInAfterStart } = issueInSprint(history, m);
+    if (inNow) {
+      if (inAtStart) return 'committed';
+      const lastAdd = history.filter((r) => r.kind === 'added').sort(byTime).at(-1);
+      return `added +${formatPoints(toMicro(changePoints(m, lastAdd?.estimateField)))}`;
+    }
+    if (everInAfterStart) removed = true;
+  }
+  return removed ? 'removed' : '';
 }
 
 export async function sprintTotals(sprintId) {
@@ -99,11 +264,11 @@ export async function sprintTotals(sprintId) {
 
 // Which of these issues can the invoking person browse? Read as them: issue bulkfetch leaves out issues
 // that "aren't found or that the user doesn't have permission to view". Returns issueId -> current key.
-export async function visibleIssues(issueIds, policy) {
+export async function visibleIssues(issueIds, work) {
   const visible = new Map();
   const ids = [...new Set(issueIds)];
   for (let i = 0; i < ids.length; i += 100) {
-    const page = await jiraJson('user', route`/rest/api/3/issue/bulkfetch`, postJson({ issueIdsOrKeys: ids.slice(i, i + 100), fields: ['key'] }), policy);
+    const page = await jiraJson('user', route`/rest/api/3/issue/bulkfetch`, postJson({ issueIdsOrKeys: ids.slice(i, i + 100), fields: ['key'] }), work);
     for (const issue of page.issues ?? []) visible.set(String(issue.id), issue.key);
   }
   return visible;

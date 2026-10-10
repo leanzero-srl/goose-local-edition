@@ -1,15 +1,16 @@
-"""forge-1.0 controls (DESIGN §13.4 items 5, 6, 9): one-defect mutants and the idle-app controls.
+"""forge-2.0 controls (forge2/SPEC.md §5): the golden, one-defect mutants, the untouched starter and the idle app.
 
-    python3 forge_controls.py --seed <16 hex> [--only m_gadget] [--out controls.json]
+    python3 forge2_controls.py --seed <16 hex> [--only m_x] [--out controls.json]
 
-For every `forge/mutants/<id>.patch` with its `<id>.expect.json` (`{"loses": [checks], "critical": bool,
-"max_final": n}`, authored by WP3 from DESIGN's check table — interface I4): copy `bench/golden-forge`, apply
-the patch, rebuild the Custom UI when the golden carries a build script, score it SERIALLY with score_forge.py at
-the same seed as the golden, and compare. A mutant passes only when it loses exactly its declared rows (plus
-rows ROOT_BLOCKS attributes to a declared root, never anything else), fires a critical exactly when declared,
-lands at or below `max_final`, and scored with no unavailable row and no harness_missing (the lint double-run
-included). The empty starter and the one-function app (a trigger that does nothing) must be SCORED — never
-refused — at or below 0.05.
+For every `forge2/mutants/<id>.patch` with its `<id>.expect.json` (`{"loses": [checks], "critical": bool | class,
+"max_final": n}`): copy `bench/golden-forge2`, apply the patch, rebuild the Custom UI when the golden carries a build
+script, score it SERIALLY with score_forge2.py at the same seed as the golden, and compare. A mutant passes only when
+it loses exactly its declared rows (plus rows ROOT_BLOCKS attributes to a declared root, never anything else), fires a
+critical exactly when declared (`critical` naming a SPEC §4 class must fire THAT class), lands at or below
+`max_final`, and scored with no unavailable row and no harness_missing. SPEC §5's gate, checked here: the golden passes
+the reference gate (1.000), every v2 family R1..R9 has a passing mutant that loses one of its rows, the starter as
+handed out (Scope Ledger v1) scores at or below 0.30, and an idle app (the starter's app id with one no-op trigger)
+is SCORED — never refused — at or below 0.05.
 
 Nothing here edits the golden or the mutants; every candidate is a disposable copy.
 """
@@ -28,10 +29,11 @@ from typing import Dict, List, Optional
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
-GOLDEN = HERE / 'golden-forge'
-MUTANTS = ROOT / 'forge' / 'mutants'
-STARTER = ROOT / 'forge' / 'starter'
-IDLE_MAX = 0.05  # DESIGN §8.6 (6) / §13.4 item 6
+GOLDEN = HERE / 'golden-forge2'
+MUTANTS = ROOT / 'forge2' / 'mutants'
+STARTER = ROOT / 'forge2' / 'starter'
+IDLE_MAX = 0.05     # DESIGN §8.6 (6) / §13.4 item 6
+STARTER_MAX = 0.30  # SPEC §5: "starter untouched <= 0.30"
 
 
 KEEP = None  # a directory where every verdict is kept (--keep)
@@ -67,11 +69,11 @@ def _wait_quiet() -> None:
 def score(tree: Path, seed: str, out: Path) -> Dict:
     """One serial scoring through the real CLI (it takes the host lock itself)."""
     _wait_quiet()
-    cmd = [sys.executable, '-B', str(HERE / 'score_forge.py'), '--tree', str(tree), '--seed', seed, '--single-seed',
+    cmd = [sys.executable, '-B', str(HERE / 'score_forge2.py'), '--tree', str(tree), '--seed', seed, '--single-seed',
            '--json-out', str(out)]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0 or not out.is_file():
-        raise RuntimeError(f'score_forge.py exited {proc.returncode} on {tree.name}: {proc.stderr.strip()[-600:]}')
+        raise RuntimeError(f'score_forge2.py exited {proc.returncode} on {tree.name}: {proc.stderr.strip()[-600:]}')
     if KEEP:
         shutil.copy2(out, KEEP / out.name)
         if (tree / 'forge-observations.json').is_file():
@@ -104,9 +106,12 @@ def judge(golden: Dict, mutant: Dict, expect: Dict, root_blocks: Dict[str, tuple
         attributed |= nxt
         frontier = nxt & lost
     # A row the mutant left VACUOUS (its precondition unmet: the surface was never exercised) is the shadow of the
-    # declared defect, priced 0 with no multiplier of its own — attributed whenever a declared row was lost.
+    # declared defect, priced 0 with no critical of its own (its 0 counts in its reliability group like any score) —
+    # attributed whenever a declared row was lost.
     if declared & lost:
-        attributed |= {n for n, row in m.items() if (row.get('parts') or {}).get('vacuous_root', '').startswith('precondition')}
+        # (score_forge2 marks a row its app's own manifest fault left unopened `manifest:`, §17.8 G — the same shadow)
+        attributed |= {n for n, row in m.items()
+                       if (row.get('parts') or {}).get('vacuous_root', '').startswith(('precondition', 'manifest'))}
     missing = sorted(declared - lost)
     # Calibration-owned economy rows are ratios any code change moves; they are reported, never a mutant's defect.
     extra = sorted(lost - declared - attributed - set(calibration_owned))
@@ -115,11 +120,22 @@ def judge(golden: Dict, mutant: Dict, expect: Dict, root_blocks: Dict[str, tuple
     if extra:
         fails.append(f'undeclared losses: {extra}')
     fired = bool((mutant.get('critical') or {}).get('unsuppressed'))
-    if 'critical' in expect and bool(expect['critical']) != fired:
-        fails.append(f"critical expected {bool(expect['critical'])}, fired {mutant['critical'].get('unsuppressed')}")
+    classes = (mutant.get('critical') or {}).get('classes') or []
+    want = expect.get('critical')
+    if isinstance(want, str):
+        if want not in classes:
+            fails.append(f"critical class {want!r} expected, fired classes {classes}")
+    elif 'critical' in expect and bool(want) != fired:
+        fails.append(f"critical expected {bool(want)}, fired {mutant['critical'].get('unsuppressed')}")
     if 'max_final' in expect and mutant['score'] > float(expect['max_final']) + 1e-9:
         fails.append(f"final {mutant['score']} > max_final {expect['max_final']}")
     return fails
+
+
+def family_gaps(mutants: Dict[str, Dict], tier_of: Dict[str, str], families) -> List[str]:
+    """SPEC §5: "one mutant per R-family loses its rows" — the families with no PASSING mutant that lost a row of it."""
+    covered = {tier_of.get(n) for entry in mutants.values() if not entry.get('fails') for n in entry.get('lost') or []}
+    return [fam for fam in families if fam not in covered]
 
 
 def _materialise(src: Path, dest: Path) -> None:
@@ -141,14 +157,17 @@ def _rebuild(tree: Path, app_modules: Optional[str]) -> Optional[str]:
     return None if proc.returncode == 0 else f'npm run build failed: {proc.stderr.strip()[-400:]}'
 
 
-def empty_starter(dest: Path) -> None:
-    """The starter exactly as run_build hands it out: its .gitkeep placeholders stripped (STARTER.md: empty)."""
-    shutil.copytree(STARTER, dest, ignore=shutil.ignore_patterns('.gitkeep', '__pycache__', '.DS_Store'))
+def starter_untouched(dest: Path) -> None:
+    """The starter exactly as run_build hands it out: Scope Ledger v1 (forge2/starter), placeholders stripped."""
+    shutil.copytree(STARTER, dest, ignore=shutil.ignore_patterns('.gitkeep', '__pycache__', '.DS_Store', 'node_modules'))
 
 
 def one_function_app(dest: Path) -> None:
-    """The starter plus one trigger whose handler does nothing (DESIGN §8.6 (6))."""
-    empty_starter(dest)
+    """An idle app: the starter's app id and runtime with ONE trigger whose handler does nothing (DESIGN §8.6 (6)) —
+    the v2 rows must not pay it for the failures it never had the chance to make (quota, limits, leaks)."""
+    starter_untouched(dest)
+    for sub in ('src', 'static', 'skills'):
+        shutil.rmtree(dest / sub, ignore_errors=True)
     manifest = (STARTER / 'manifest.yml').read_text()
     app_id = re.search(r'^\s*id:\s*(\S+)', manifest, re.M)
     runtime = re.search(r'^\s*name:\s*(nodejs\S+)', manifest, re.M)
@@ -181,17 +200,17 @@ def main(argv=None) -> int:
     if len(a.seed) != 16 or any(c not in '0123456789abcdefABCDEF' for c in a.seed):
         ap.error('--seed must be 16 hex characters')
     if not GOLDEN.is_dir():
-        print(f'REFUSED: {GOLDEN} does not exist (WP3 deliverable)', file=sys.stderr)
+        print(f'REFUSED: {GOLDEN} does not exist (P10 deliverable)', file=sys.stderr)
         return 2
-    import score_forge
-    kit, why = score_forge._kit()  # noqa: SLF001 — one kit-discovery path for scorer and controls
+    import score_forge2
+    kit, why = score_forge2._kit()  # noqa: SLF001 — one kit-discovery path for scorer and controls
     if kit is None:
         print(f'REFUSED: {why}', file=sys.stderr)
         return 3
     app_modules = kit['app_modules']
     report: Dict = {'seed': a.seed, 'mutants': {}, 'controls': {}}
     failed = False
-    with tempfile.TemporaryDirectory(prefix='forge-controls-') as tmp:
+    with tempfile.TemporaryDirectory(prefix='forge2-controls-') as tmp:
         tmp = Path(tmp)
         # The golden is materialised and rebuilt exactly as every mutant is, so the comparison is like for like.
         _materialise(GOLDEN, tmp / 'golden')
@@ -201,7 +220,7 @@ def main(argv=None) -> int:
             return 3
         golden = score(tmp / 'golden', a.seed, tmp / 'golden.json')
         report['golden'] = {'score': golden['score'], 'status': golden['status']}
-        gfails = score_forge.reference_failures(golden)
+        gfails = score_forge2.reference_failures(golden)
         if gfails:
             report['golden']['reference_failures'] = gfails
             failed = True
@@ -229,7 +248,7 @@ def main(argv=None) -> int:
                 entry = {'score': verdict['score'], 'lost': sorted(
                     n for n, r in _rows(verdict).items() if r['score'] < _rows(golden)[n]['score'] - 1e-9),
                     'criticals': verdict['critical'].get('unsuppressed'),
-                    'fails': judge(golden, verdict, expect, score_forge.ROOT_BLOCKS, score_forge.CALIBRATION_OWNED)}
+                    'fails': judge(golden, verdict, expect, score_forge2.ROOT_BLOCKS, score_forge2.CALIBRATION_OWNED)}
             except Exception as error:
                 entry = {'fails': [f'{type(error).__name__}: {error}']}
             failed |= bool(entry['fails'])
@@ -239,15 +258,20 @@ def main(argv=None) -> int:
             print(f"{mid}: {entry.get('score')} {'PASS' if not entry['fails'] else 'FAIL ' + '; '.join(entry['fails'])}",
                   file=sys.stderr, flush=True)
         if not patches:
-            report['mutants_missing'] = f'no *.patch under {MUTANTS} (WP3 deliverable)'
+            report['mutants_missing'] = f'no *.patch under {MUTANTS} (SPEC §5: one mutant per R-family)'
             failed = True
-        for label, build in (('empty_starter', empty_starter), ('one_function', one_function_app)):
+        if not a.only:
+            uncovered = family_gaps(report['mutants'], score_forge2.TIER_OF, tuple(score_forge2.FAMILY_WEIGHT))
+            report['family_coverage'] = {'uncovered': uncovered}
+            failed |= bool(uncovered)
+        for label, build, cap in (('starter_untouched', starter_untouched, STARTER_MAX),
+                                  ('one_function', one_function_app, IDLE_MAX)):
             try:
                 tree = tmp / label
                 build(tree)
                 verdict = score(tree, a.seed, tmp / f'{label}.json')
-                fails = [] if verdict['status'] == 'scored' and verdict['score'] <= IDLE_MAX else \
-                    [f"{verdict['status']} at {verdict['score']} (must be scored at <= {IDLE_MAX})"]
+                fails = [] if verdict['status'] == 'scored' and verdict['score'] <= cap else \
+                    [f"{verdict['status']} at {verdict['score']} (must be scored at <= {cap})"]
                 report['controls'][label] = {'score': verdict['score'], 'fails': fails}
             except Exception as error:
                 report['controls'][label] = {'fails': [f'{type(error).__name__}: {error}']}

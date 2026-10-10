@@ -8,6 +8,7 @@
 const SPRINT_FIELD = 'customfield_10020';
 const EST_OPS = 'customfield_10016'; // "Story point estimate" (board 1)
 const EST_WEB = 'customfield_10028'; // "Story Points" (board 2)
+const SCOPE_FIELD = 'customfield_10100'; // the app's own jira:customField scope-status
 const DAY = 86400000;
 const HOUR = 3600000;
 
@@ -24,14 +25,17 @@ function rng(seed) {
 
 const jiraTime = (ms) => new Date(ms).toISOString().replace('Z', '+0000');
 
-function createSite({ seed = 7, scopes = null } = {}) {
+function createSite({ seed = 7, scopes = null, clock: vclock = null } = {}) {
   const rand = rng(seed);
   const pick = (arr) => arr[Math.floor(rand() * arr.length)];
   const NOW = Date.parse('2026-10-02T12:00:00.000Z');
-  let clock = NOW;
+  // The site's "now": the shared virtual clock when the bed installs one, else its own.
+  let ownClock = NOW;
+  const now = () => (vclock ? vclock.now() : ownClock);
+  const advance = (ms) => (vclock ? vclock.advance(ms) : (ownClock += ms));
 
   const users = {
-    alice: { accountId: '557058:alice', displayName: 'Alice Admin', browse: () => true },
+    alice: { accountId: '557058:alice', displayName: 'Alice Admin', browse: () => true, admin: true },
     bob: { accountId: '557058:bob', displayName: 'Bob Builder', browse: (i) => i.project === 'OPS' && !i.restricted },
     carol: { accountId: '557058:carol', displayName: 'Carol Coach', browse: () => true },
     dave: { accountId: '557058:dave', displayName: 'Dave Dev', browse: (i) => i.project === 'OPS' },
@@ -62,6 +66,7 @@ function createSite({ seed = 7, scopes = null } = {}) {
   const comments = [];
   const requests = [];
   const rateLimits = [];
+  const fieldWrites = [];
 
   function newIssue(project, n) {
     const id = String((project === 'OPS' ? 10000 : 20000) + n);
@@ -78,7 +83,7 @@ function createSite({ seed = 7, scopes = null } = {}) {
       updated: created,
       initialSprints: [],
       sprints: [],
-      fields: { [est]: estimate, summary: `${project} work item ${n}` },
+      fields: { [est]: estimate, summary: `${project} work item ${n}`, [SCOPE_FIELD]: null },
       estField: est,
       changelog: [],
     };
@@ -188,11 +193,12 @@ function createSite({ seed = 7, scopes = null } = {}) {
   const userJson = (u) => ({ accountId: u.accountId, displayName: u.displayName, active: true, accountType: 'atlassian' });
 
   function fieldValue(issue, f) {
-    if (f === SPRINT_FIELD) return issue.sprints.length ? issue.sprints.map((s) => { const sp = sprintJson(sprintById.get(s)); return { id: sp.id, name: sp.name, state: sp.state, boardId: sp.originBoardId, startDate: sp.startDate, endDate: sp.endDate }; }) : null;
+    // As Jira (and the benchmark's site) render it: a closed sprint carries its completeDate on the issue too.
+    if (f === SPRINT_FIELD) return issue.sprints.length ? issue.sprints.map((s) => { const sp = sprintJson(sprintById.get(s)); return { id: sp.id, name: sp.name, state: sp.state, boardId: sp.originBoardId, startDate: sp.startDate, endDate: sp.endDate, ...(sp.completeDate ? { completeDate: sp.completeDate } : {}) }; }) : null;
     if (f === 'updated') return jiraTime(issue.updated);
     if (f === 'created') return jiraTime(issue.created);
     if (f === 'project') return { key: issue.project };
-    if (f === EST_OPS || f === EST_WEB || f === 'summary') return issue.fields[f] ?? null;
+    if (f === EST_OPS || f === EST_WEB || f === 'summary' || f === SCOPE_FIELD) return issue.fields[f] ?? null;
     return undefined;
   }
   function issueJson(issue, fields) {
@@ -226,6 +232,9 @@ function createSite({ seed = 7, scopes = null } = {}) {
           conj.push((i) => i.sprints.some((s) => ids.includes(s)));
         } else if ((m = clause.match(/^sprint\s+in\s+openSprints\(\)$/i))) {
           conj.push((i) => i.sprints.some((s) => sprintById.get(s).state === 'active'));
+        } else if ((m = clause.match(/^updated\s*>=\s*-(\d+)m$/i))) {
+          const t = now() - Number(m[1]) * 60000;
+          conj.push((i) => i.updated >= t);
         } else if ((m = clause.match(/^updated\s*>=\s*"(\d{4}-\d{2}-\d{2})"$/i))) {
           const t = Date.parse(`${m[1]}T00:00:00.000Z`);
           conj.push((i) => i.updated >= t);
@@ -253,15 +262,18 @@ function createSite({ seed = 7, scopes = null } = {}) {
     [/^GET \/rest\/api\/3\/issue\/[^/]+$/, 'read:jira-work'],
     [/^POST \/rest\/api\/3\/issue\/bulkfetch$/, 'read:jira-work'],
     [/^POST \/rest\/api\/3\/issue\/[^/]+\/comment$/, 'write:jira-work'],
+    [/^POST \/rest\/api\/3\/app\/field\/value$/, 'storage:app'],
+    [/^GET \/rest\/api\/3\/mypermissions$/, 'read:jira-work'],
+    [/^GET \/rest\/api\/3\/myself$/, 'read:jira-user'],
   ];
 
   // as: 'app' | 'user'; accountId for user calls.
-  function handle({ as, accountId, method, path, body }) {
+  function handle({ as, accountId, method, path, body, kind }) {
     const url = new URL(path, 'https://site.example');
     const p = url.pathname;
     const q = url.searchParams;
     const route = `${method} ${p}`;
-    const entry = { at: Date.now(), as, accountId, method, path: p + url.search, body };
+    const entry = { at: now(), as, accountId, method, path: p + url.search, body, kind };
     requests.push(entry);
     const send = (status, json, headers = {}) => ({ status, json, headers });
     const rl = rateLimits.find((r) => r.times > 0 && r.match(method, p, body, as));
@@ -272,7 +284,7 @@ function createSite({ seed = 7, scopes = null } = {}) {
         return send(rl.status, rl.json ?? { errorMessages: ['scripted failure'] });
       }
       entry.status = 429;
-      return send(429, { errorMessages: ['Rate limit exceeded.'] }, { 'Retry-After': String(rl.retryAfter), 'RateLimit-Reason': 'jira-burst-based' });
+      return send(429, { errorMessages: ['Rate limit exceeded'] }, { 'Retry-After': String(rl.retryAfter), 'RateLimit-Reason': rl.reason ?? 'jira-burst-based' });
     }
     if (p === '/rest/api/3/search' || p === '/rest/api/2/search') return send(410, { errorMessages: ['The requested API has been removed. Please migrate to the /rest/api/3/search/jql API.'] });
     const scope = SCOPES.find(([re]) => re.test(route));
@@ -280,7 +292,7 @@ function createSite({ seed = 7, scopes = null } = {}) {
     if (scopes && !scopes.includes(scope[1])) return send(401, { code: 401, message: 'Unauthorized; scope does not match' });
     const user = as === 'user' ? byAccount[accountId] : null;
     if (as === 'user' && !user) return send(401, { errorMessages: ['no user'] });
-    const canSee = (i) => as === 'app' || user.browse(i);
+    const canSee = (i) => !i.deleted && (as === 'app' || user.browse(i));
     let m;
 
     if (route === 'GET /rest/api/3/field') {
@@ -289,7 +301,32 @@ function createSite({ seed = 7, scopes = null } = {}) {
         { id: SPRINT_FIELD, key: SPRINT_FIELD, name: 'Sprint', custom: true, schema: { type: 'array', items: 'json', custom: 'com.pyxis.greenhopper.jira:gh-sprint', customId: 10020 } },
         { id: EST_OPS, key: EST_OPS, name: 'Story point estimate', custom: true, schema: { type: 'number', custom: 'com.pyxis.greenhopper.jira:jsw-story-points', customId: 10016 } },
         { id: EST_WEB, key: EST_WEB, name: 'Story Points', custom: true, schema: { type: 'number', custom: 'com.atlassian.jira.plugin.system.customfieldtypes:float', customId: 10028 } },
+        { id: SCOPE_FIELD, key: 'b7a3c1d2-0000-4000-8000-000000000000__DEVELOPMENT__scope-status', name: 'Scope status', custom: true, schema: { type: 'string', custom: 'ari:cloud:ecosystem::extension/b7a3c1d2-0000-4000-8000-000000000000/0f1e2d3c-0000-4000-8000-000000000000/static/scope-status', customId: 10100 } },
       ]);
+    }
+    if (route === 'GET /rest/api/3/myself') return send(200, userJson(user));
+    if (route === 'GET /rest/api/3/mypermissions') {
+      const keys = (q.get('permissions') ?? '').split(',').filter(Boolean);
+      if (!keys.length) return send(400, { errorMessages: ['The permissions query parameter is required.'] });
+      const permissions = {};
+      for (const k of keys) permissions[k] = { key: k, havePermission: k === 'ADMINISTER' ? user?.admin === true : true };
+      return send(200, { permissions });
+    }
+    if (route === 'POST /rest/api/3/app/field/value') {
+      if (as !== 'app') return send(403, { errorMessages: ['Only the app that owns the field can update its values.'] });
+      const updates = body?.updates ?? [];
+      const n = updates.reduce((k, u) => k + (u.issueIds?.length ?? 0), 0);
+      if (!n || n > 200) return send(400, { errorMessages: ['1 to 200 issue updates per request'] });
+      for (const u of updates) {
+        if (u.customField !== SCOPE_FIELD) return send(404, { errorMessages: [`field ${u.customField} not found`] });
+        if (!(u.value === null || typeof u.value === 'string')) return send(400, { errorMessages: ['string field: value must be a string'] });
+        for (const id of u.issueIds) if (!issueById.get(String(id)) || issueById.get(String(id)).deleted) return send(404, { errorMessages: [`issue ${id} not found`] });
+      }
+      for (const u of updates) for (const id of u.issueIds) {
+        issueById.get(String(id)).fields[SCOPE_FIELD] = u.value;
+        fieldWrites.push({ at: now(), issueId: String(id), value: u.value });
+      }
+      return send(204);
     }
     if (route === 'GET /rest/agile/1.0/board') {
       const list = boards.filter((b) => !q.get('type') || b.type === q.get('type'));
@@ -325,6 +362,7 @@ function createSite({ seed = 7, scopes = null } = {}) {
       const start = body.nextPageToken ? Number(Buffer.from(body.nextPageToken, 'base64url').toString()) : 0;
       const max = Math.min(Number(body.maxResults ?? 50), 50);
       const page = list.slice(start, start + max);
+      entry.returned = page.length;
       const isLast = start + page.length >= list.length;
       const issuesOut = page.map((i) => (fields.length === 1 && fields[0] === 'id' ? { id: i.id } : issueJson(i, fields)));
       return send(200, { issues: issuesOut, isLast, ...(isLast ? {} : { nextPageToken: Buffer.from(String(start + page.length)).toString('base64url') }) });
@@ -374,15 +412,21 @@ function createSite({ seed = 7, scopes = null } = {}) {
       const doc = body?.body;
       if (!doc || typeof doc !== 'object' || doc.type !== 'doc' || doc.version !== 1 || !Array.isArray(doc.content)) return send(400, { errorMessages: ['Operation value must be an Atlassian Document (see the Atlassian Document Format)'] });
       if (as !== 'user') return send(400, { errorMessages: ['test site: comments must be posted as the person'] });
-      const c = { id: String(comments.length + 1), issueId: i.id, issueKey: i.key, author: user.accountId, body: doc, at: Date.now() };
+      const c = { id: String(comments.length + 1), issueId: i.id, issueKey: i.key, author: user.accountId, body: doc, visibility: body.visibility ?? null, at: now() };
       comments.push(c);
-      return send(201, { id: c.id, author: userJson(user), body: doc, created: jiraTime(clock) });
+      return send(201, { id: c.id, author: userJson(user), body: doc, created: jiraTime(now()) });
     }
     if ((m = p.match(/^\/rest\/api\/3\/issue\/([^/]+)$/)) && method === 'GET') {
       const i = issueById.get(m[1]) ?? issueByKey.get(m[1]);
       if (!i || !canSee(i)) return send(404, { errorMessages: ['Issue does not exist or you do not have permission to see it.'] });
       const fields = q.get('fields') ? q.get('fields').split(',') : ['summary', SPRINT_FIELD, EST_OPS, EST_WEB, 'updated'];
-      return send(200, issueJson(i, fields));
+      const out = issueJson(i, fields);
+      // expand=changelog embeds the most recent page of the changelog (at most 100 histories).
+      if ((q.get('expand') ?? '').split(',').includes('changelog')) {
+        const histories = i.changelog.slice(-100).map((h) => historyJson(h, null));
+        out.changelog = { startAt: 0, maxResults: histories.length, total: i.changelog.length, histories };
+      }
+      return send(200, out);
     }
     return send(404, { errorMessages: [`mock site has no ${route}`] });
   }
@@ -390,12 +434,12 @@ function createSite({ seed = 7, scopes = null } = {}) {
   // ---- live updates: change the site and return the product event ----
   function update(key, change, authorName = 'carol') {
     const issue = issueByKey.get(key);
-    clock += 7 * 60000;
+    advance(7 * 60000);
     const author = users[authorName];
     let entry;
-    if (change.sprints) entry = setSprints(issue, change.sprints, clock, author);
-    else if ('estimate' in change) entry = setEstimate(issue, change.estimate, clock, author);
-    else entry = setSummary(issue, change.summary, clock, author);
+    if (change.sprints) entry = setSprints(issue, change.sprints, now(), author);
+    else if ('estimate' in change) entry = setEstimate(issue, change.estimate, now(), author);
+    else entry = setSummary(issue, change.summary, now(), author);
     return {
       eventType: 'avi:jira:updated:issue',
       selfGenerated: false,
@@ -405,14 +449,39 @@ function createSite({ seed = 7, scopes = null } = {}) {
     };
   }
 
-  return { SPRINT_FIELD, users, boards, sprints, sprintById, issues, issueByKey, issueById, comments, requests, rateLimits, handle, update };
+  // ---- world changes (R4) ----
+  function deleteIssue(key) {
+    const issue = issueByKey.get(key);
+    advance(60000);
+    issue.deleted = true;
+    return { eventType: 'avi:jira:deleted:issue', issue: { id: issue.id, key: issue.key } };
+  }
+  function closeSprint(id) {
+    advance(60000);
+    const s = sprintById.get(id);
+    s.state = 'closed';
+    s.complete = now();
+  }
+  function setBoardField(boardId, fieldId) {
+    advance(60000);
+    const board = boards.find((b) => b.id === boardId);
+    // Kept so the oracle knows the field a change was made under (contract §1: a change keeps it).
+    board.switches = [...(board.switches ?? []), { at: now(), from: board.estimateField, to: fieldId }];
+    board.estimateField = fieldId;
+  }
+
+  return { SPRINT_FIELD, SCOPE_FIELD, users, boards, sprints, sprintById, issues, issueByKey, issueById, comments, requests, rateLimits, fieldWrites, handle, update, deleteIssue, closeSprint, setBoardField, now };
 }
 
 // Ground truth for the active sprints, computed FORWARD from each issue's initial sprints and full
 // history (the app reconstructs it backwards from the ledger, so this is an independent derivation).
 function oracle(site) {
   const out = {};
-  const ests = (i) => i.fields[i.estField] ?? 0;
+  const perIssue = new Map(); // issueId -> [{ sprintId, atStart, everAfter, inNow, e, addedE }]
+  // Contract §1: no value counts as 0 and a deleted issue has no value; a change's points read the field its board
+  // used at the time of the change.
+  const valueOf = (i, field) => (i.deleted ? 0 : i.fields[field] ?? 0);
+  const fieldAt = (board, t) => (board.switches ?? []).reduce((f, s) => (s.at <= t ? s.to : f), board.switches?.[0]?.from ?? board.estimateField);
   for (const s of site.sprints.filter((x) => x.state === 'active')) {
     const changes = [];
     let committed = 0;
@@ -443,9 +512,13 @@ function oracle(site) {
         atStart = members.has(s.id);
         everAfter = atStart;
       }
-      const inNow = i.sprints.includes(s.id);
+      const inNow = !i.deleted && i.sprints.includes(s.id);
       const board = site.boards.find((b) => b.id === s.board);
-      const e = board.estimateField === i.estField ? ests(i) : i.fields[board.estimateField] ?? 0;
+      const e = valueOf(i, board.estimateField);
+      const lastAdd = changes.filter((c) => c.issueId === i.id && c.kind === 'added').at(-1);
+      const addedE = lastAdd ? valueOf(i, fieldAt(board, lastAdd.at)) : e;
+      if (!perIssue.has(i.id)) perIssue.set(i.id, []);
+      perIssue.get(i.id).push({ sprintId: s.id, atStart, everAfter, inNow, e, addedE });
       if (atStart) committed += e;
       if (inNow && !atStart) added += e;
       if (everAfter && !inNow) removed += e;
@@ -455,6 +528,15 @@ function oracle(site) {
     const creep = committed === 0 ? null : Math.sign(added) * Math.round(Math.abs((100 * added) / committed) * 10 + 1e-9) / 10;
     out[s.id] = { sprint: s, changes, committed: r6(committed), added: r6(added), removed: r6(removed), creep };
   }
+  // R7: the scope status each (existing) issue must show.
+  const status = new Map();
+  for (const i of site.issues) {
+    if (i.deleted) continue;
+    const per = perIssue.get(i.id) ?? [];
+    const now = per.find((x) => x.inNow);
+    status.set(i.id, now ? (now.atStart ? 'committed' : `added +${Math.round(now.addedE * 1e6) / 1e6}`) : per.some((x) => x.everAfter) ? 'removed' : '');
+  }
+  Object.defineProperty(out, 'status', { value: status, enumerable: false });
   return out;
 }
 

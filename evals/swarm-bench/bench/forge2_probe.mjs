@@ -1,14 +1,38 @@
-// forge-1.0 probe: drive WP1's emulator (interface I2) through the scoring sequence of forge/DESIGN.md §8.7 and
-// write the I5 evidence `forge-observations.json` that bench/score_forge.py grades. It probes ONLY the hooks
-// FORGE-CONTRACT.md names (I3) and calls nothing of the emulator but I2.
+// forge-2.0 probe (forge2/SPEC.md §3 P9): Forge 1.0's scoring drive (forge/DESIGN.md §8.7) on the forge2 site,
+// extended into the 2.0 upgrade drive. The site and emulator start with Scope Ledger v1's KVS content (the preload),
+// the entrant's v2 app takes over (the upgrade), and six virtual hours run as one ordered agenda: the site's delivery
+// plan, its world schedule, the hourly scheduled triggers, the CI web-trigger sequence and the admin's UI Kit panel;
+// then 1.0's heal/rerun/Rovo/UI lanes, the Custom UI boot counts and the Forge LLM cases; with the Custom UI shots it
+// leaves pictures of the admin panel, drawn from the trees the admin saw (forge2_uikit_shot.mjs). It writes the evidence
+// bench/score_forge2.py (P7) and bench/forge2_checks.py (P8) grade: 1.0's keys plus the 2.0 contract keys (rate,
+// invocations, migration, world, webtrigger, admin, field, llm_v2, boot) and `clock` (the upgrade and checkpoint times).
 //
-//   node forge_probe.mjs --app <clone> --kit <kit dir> --seed <16 hex> --out obs.json --shots <dir>
-//                        --runtime wrapper|shim --repo <evals/swarm-bench>
-//   node forge_probe.mjs --preflight
+//   node forge2_probe.mjs --app <clone> --kit <kit dir> --seed <16 hex> --out obs.json --shots <dir>
+//                         --runtime wrapper|shim --repo <evals/swarm-bench> [--media <dir>]
+//   node forge2_probe.mjs --preflight
+//   node forge2_probe.mjs --selftest      the 2.0 drive's agenda and evidence helpers against fakes (no site, no browser)
 //
-// Harness failures (the site or emulator cannot start, Chromium cannot launch, an I2 call this probe needs is
+// Harness failures (the site or emulator cannot start, Chromium cannot launch, an interface this probe needs is
 // absent) land in `sectionErrors[section]` — the scorer makes those rows UNAVAILABLE, never app zeros. App
-// failures (a missing hook, a thrown resolver, a console error) are evidence and are recorded as such.
+// failures (a missing hook, a thrown resolver, a console error, a missing v2 module) are evidence and are recorded.
+//
+// The other packages' interfaces this probe calls (SPEC §3). Each absence is a named `i2Gaps` entry plus the
+// sectionErrors of the contract keys it feeds:
+//   P4 site.pack.v1Preload             {entities: {<name>: [{key, value}]}, keys: [{key, value}]}: v1's KVS content
+//   P4 site.pack.admin                 the accountId holding Jira's global ADMINISTER (pack.viewer is a non-admin)
+//   P4 site.state.plan / .st.cursor    the delivery plan (1.0's): the next delivery's change and its `created` time
+//   P4 site.control.ratelog({since})   {entries: [{t_ms, invocation, kind, method, path_tpl, cost, status, reason,
+//                                       retry_after_s}], next}: every /rest request the rate model priced; site.log
+//                                       holds the same requests (with their paths) and rate.cjs writtenRefs what each writes
+//   P5 site.control.world({until})     {applied: [{t_ms, class, detail}]}: applies the world schedule through `until`
+//   P5 site.control.fieldvalues()      {values: {<issueKey>: string}}: the app's scope-status values on the site now
+//   P5 emu.llm.phase(<name>)           restarts the scripted model on a named script (LLM_V2_CASES)
+//   P1 emu.drainQueues({until}), emu.runScheduled(key, {until})   only deliveries due by `until` (virtual ms)
+//   P1 emu.invokeResolver(moduleKey, functionKey, payload, context, asUser)   req.context built from `context`
+//   P1 emu.webtriggerUrl(moduleKey)    the URL of the ingress P3 mounts at POST /x/webtrigger/<moduleKey>
+//   P2 <kit>/lib/uikit-host/index.cjs  render({appDir, moduleKey, context, invoke}) -> {tree(), text(),
+//                                       findByLabel(l), setValue(l, v), click(l), waitIdle(), invokes}
+//   P3 <repo>/forge2/site/ci.cjs       scoringSequence({secret, issueKeys, nowSeconds}) -> [{case, headers, body}]
 import { createRequire } from 'module';
 import { execSync, spawnSync } from 'child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs';
@@ -20,8 +44,9 @@ const opt = (name, fallback = null) => {
   const i = args.indexOf(`--${name}`);
   return i >= 0 && i + 1 < args.length ? args[i + 1] : fallback;
 };
-const log = (...a) => console.error('[forge-probe]', ...a);
+const log = (...a) => console.error('[forge2-probe]', ...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const SELFTEST = args.includes('--selftest');
 
 function loadPlaywright() {
   const attempts = [];
@@ -60,27 +85,44 @@ if (args.includes('--preflight')) {
   }
 }
 
-const appDir = resolve(opt('app'));
-const kitDir = resolve(opt('kit'));
-const repo = resolve(opt('repo'));
+const appDir = SELFTEST ? null : resolve(opt('app'));
+const kitDir = SELFTEST ? null : resolve(opt('kit'));
+const repo = SELFTEST ? null : resolve(opt('repo'));
 const seed = opt('seed');
-const outPath = resolve(opt('out'));
-const shotsDir = resolve(opt('shots'));
+const outPath = SELFTEST ? null : resolve(opt('out'));
+const shotsDir = SELFTEST ? null : resolve(opt('shots'));
 const runtime = opt('runtime', 'wrapper');
 // The graded browser recording (owner, 2026-10-03: Forge results carry video like SB7.2): every graded surface page
 // is recorded and the pages are joined, in the order they were graded, into one clip under <tree>/bench-media.
 const mediaDir = opt('media') ? resolve(opt('media')) : null;
 const RECORD_SIZE = { width: 1280, height: 800 };   // SB7.1's recording frame (product_probe_sb71.mjs)
 let recording = null;                               // { context, pages: [{page, label, openedAt}] }
-mkdirSync(shotsDir, { recursive: true });
+if (!SELFTEST) mkdirSync(shotsDir, { recursive: true });
 
 const obs = {
-  schema: 'forge-observations/1', runtime, seed, manifest: null, manifestError: null, kit: {}, lint: { runs: [] },
+  schema: 'forge2-observations/1', runtime, seed, manifest: null, manifestError: null, kit: {}, lint: { runs: [] },
   build: { functions: [] }, phases: {}, rovo: { calls: [] }, comments: [], ui: { surfaces: [], calls: [] },
   harnessMissing: [], sectionErrors: {}, shots: [], i2Gaps: [],
+  // ── the 2.0 contract (P9 ↔ P8); checkpoints are 'h1'..'h6' (virtual-hour marks after the upgrade) and 'final' ──
+  clock: { upgrade_t_ms: null, checkpoints: {} },
+  rate: { requests: [], hours: [] },
+  invocations: [],
+  migration: { v1_rows: [], v2_by_checkpoint: {}, v1_final: [], panel_by_checkpoint: {}, preload: null },
+  world: [],
+  webtrigger: [],
+  admin: { actions: [], tree_text: '', secret_leaks: [] },
+  field: { writes: [], values_by_checkpoint: {} },
+  llm_v2: [],
+  boot: {},
+  checkpoints: {},
+  upgrade: null,
+  person_reads: [],
+  // SPEC §2.8: the batches the drive held (and the ones it could not), the kit's concurrent groups, and the live-UI
+  // step's read-after-write window (the widget re-reads at the app's own realtime publish).
+  concurrency: { query_lag_ms: null, max_concurrent: null, batches: [], groups: [], same_event: 0, same_issue: 0, read_after_write: [] },
 };
 const save = () => writeFileSync(outPath, JSON.stringify(obs, null, 1));
-// An I2 surface this probe needs and the emulator lacks: a harness gap, so the sections it feeds are unavailable.
+// An interface this probe needs and the harness lacks: a harness gap, so the sections it feeds are unavailable.
 const gap = (what, ...sections) => {
   if (!obs.i2Gaps.includes(what)) obs.i2Gaps.push(what);
   for (const s of sections) obs.sectionErrors[s] = obs.sectionErrors[s] || `I2 gap: ${what}`;
@@ -153,7 +195,7 @@ const NODE_BUILTINS = new Set(require('module').builtinModules);
 // ── I2 normalisation (WP1's log -> the I5 call/invocation shapes score_forge.py reads) ────
 
 const KIND = { trigger: 'trigger', consumer: 'consumer', scheduledTrigger: 'scheduled', action: 'action',
-  'dashboards:widget': 'resolver', 'jira:sprintAction': 'resolver' };
+  'dashboards:widget': 'resolver', 'jira:sprintAction': 'resolver', 'jira:adminPage': 'resolver', webtrigger: 'webtrigger' };
 
 // Scopes an operation whose CHOSEN OAuth2 alternative is empty (e.g. POST /rest/api/3/permissions/check: Current
 // [] while its description names Classic read:jira-work, Granular read:permission:jira) still tolerates: every
@@ -197,6 +239,9 @@ function normCall(e) {
     scopeMismatch: service === 'jira' && e.status === 401 && !alt && !e.needsAuthentication ? (e.op ?? path) : undefined,
     needsAuthentication: Boolean(e.needsAuthentication), missingScope: e.missingScope ?? null,
     fault: e.fault ?? null, earlyRetry: e.earlyRetry === true ? e.fault : (e.earlyRetry || null), limitError: e.limitError ?? null,
+    // The code Forge storage answered a refused request with (the kit's proxy records it): the scorer tells §9's
+    // optimistic-lock answer (400 CONDITIONAL_CHECK_FAILED) from a type or limit refusal by it.
+    kvsCode: e.kvsError?.code ?? null,
   };
 }
 
@@ -210,13 +255,263 @@ function normInvocation(r, kind, moduleKey) {
   };
 }
 
+// Each call an invocation made carries that invocation's lineage, which the kit's queue push hands to the consumer it
+// starts: the product event (`originChange`) or the scheduled run (`scheduledRun`) its chain began with. 2.0 drains
+// several chains in one phase (a backfill continuation beside an event's consumer), so the economy rows attribute calls
+// by it. A kit without the invocation records stamps nothing, and the rows say they fell back.
+const lineageOf = (emu, inv) => {
+  const rec = inv && emu.invocations instanceof Map ? emu.invocations.get(inv) : null;
+  return rec ? { originChange: rec.originChange ?? null, scheduledRun: rec.scheduledRun ?? null } : {};
+};
 let logCursor = 0;
 const takeCalls = (emu) => {
   const all = emu.log || [];
-  const fresh = all.slice(logCursor).map(normCall);
+  const fresh = all.slice(logCursor).map((e) => {
+    const call = normCall(e);
+    return call.inv ? { ...call, ...lineageOf(emu, call.inv) } : call;
+  });
   logCursor = all.length;
   return fresh;
 };
+
+// ── Forge 2.0: the numbers and the evidence helpers (pure; --selftest covers them) ───────────
+
+const H = 3_600_000;
+const HOURS = 6;                     // SPEC §2.3: 6 virtual hours scored after the upgrade
+// policy: the CI sequence runs half way through hour 2: after the admin rotated the secret at the upgrade, while the
+// background work of the migration and the backfill runs.
+const CI_AT_MS = 1.5 * H;
+// policy: the admin reads the Migration line 5 virtual minutes before each hour mark, a person-facing request made
+// when the hour's background work has run (in the quota wall's hour, before the wall: readsAt).
+const PANEL_BEFORE_MS = 5 * 60_000;
+// SPEC §1 R8: identical explanation requests within 10 virtual minutes come from the cache. v1's scripted explain
+// steps and each LLM case are separate requests, so the probe lets that window pass before each one.
+const EXPLAIN_GAP_MS = 11 * 60_000;
+// SPEC §2.6: the probe finds the admin panel's controls by these visible labels.
+const LABELS = { share: 'Background share (%)', ai: 'AI explanations enabled', budget: 'Daily AI token budget',
+  group: 'Comment group', rotate: 'Rotate CI secret', migration: 'Migration', audit: 'Recent admin changes', save: 'Save settings' };
+// The admin's own save sets the budget to ADMIN_BUDGET (not the 200000 default, so the save is observable); a replayed
+// save carries FORGED_BUDGET in its place, so a replay that lands changes the stored state.
+const ADMIN_BUDGET = 150000;
+const FORGED_BUDGET = 777777;
+// The app's ledger data; an admin action is judged on the rest of the app's storage (settings, secrets, cursors).
+const DATA_ENTITIES = new Set(['scope-ledger', 'scope-change', 'sprint-issue']);
+const LEDGER_ATTRS = ['sprintId', 'at', 'changeId', 'kind', 'issueId', 'issueKey', 'estimate', 'boardId', 'estimateField',
+  'deleted', 'deployedEnvs'];
+// SPEC §1 R8, one entry per scripted model case (P5's site/llm.cjs names the scripts): `clicks` explain requests on one
+// open sprint modal; `admin` switches a panel setting for the case and back after it.
+// `steps`: the scripted model's answers for the phase (site/llm.cjs kinds; then `clean` for every later call).
+const LLM_V2_CASES = [
+  { case: 'tool-injection', script: 'v2-tool-injection', steps: ['injected'], clicks: 1 },
+  { case: 'rate-limited-no-retry-after', script: 'v2-429-no-retry-after', steps: ['ratelimited'], clicks: 1 },
+  { case: 'no-finish-reason', script: 'v2-no-finish-reason', steps: ['unfinished'], clicks: 1 },
+  { case: 'cache', script: 'v2-cache', steps: ['clean'], clicks: 2 },
+  { case: 'kill-switch', script: 'v2-cache', steps: ['clean'], clicks: 1, admin: { label: LABELS.ai, value: false, restore: true } },
+  { case: 'token-budget', script: 'v2-cache', steps: ['clean'], clicks: 1, admin: { label: LABELS.budget, value: 1, restore: ADMIN_BUDGET } },
+];
+
+// A request that changes something: a KVS/secret/entity write, a queue push, a Jira write (POSTs that only read excluded).
+const READ_POST = /\/(search(\/jql)?|changelog\/bulkfetch|issue\/bulkfetch|permissions\/check|jql\/match|expression\/eval(uate)?)$/;
+function isWrite(e) {
+  if (!(Number(e.status) < 400)) return false;
+  const path = String(e.path ?? e.target ?? '').split('?')[0];
+  if (e.service === 'kvs') return /\/(set|delete|transaction)$/.test(path);
+  if (e.service === 'queue') return Boolean(e.body && typeof e.body === 'object' && 'payload' in e.body);
+  if (e.service !== undefined && e.service !== 'jira') return false;
+  if (['PUT', 'DELETE', 'PATCH'].includes(e.method)) return true;
+  return e.method === 'POST' && !READ_POST.test(path);
+}
+
+// Issue references of a Jira request: the path's issue segment and the bulk bodies' issue ids.
+function issueRefs(e) {
+  const refs = [];
+  const m = String(e.path ?? '').split('?')[0].match(/\/issue\/([^/]+)/);
+  if (m && m[1] !== 'bulkfetch') refs.push(decodeURIComponent(m[1]));
+  const b = e.body && typeof e.body === 'object' ? e.body : {};
+  for (const u of Array.isArray(b.updates) ? b.updates : []) for (const id of u?.issueIds ?? []) refs.push(String(id));
+  for (const id of b.issueIdsOrKeys ?? b.issueIds ?? []) refs.push(String(id));
+  for (const v of [b.value, ...(Array.isArray(e.body) ? e.body.map((x) => x?.value) : [])]) {
+    if (v && typeof v === 'object') for (const k of ['issueKey', 'issueId']) if (v[k] !== undefined && v[k] !== null) refs.push(String(v[k]));
+  }
+  return refs;
+}
+
+// Background vs person-facing quota per quota hour (SPEC §2.1: the quota resets at the top of each virtual hour).
+// `hour` counts from the quota hour holding the upgrade (1) on.
+function hoursOf(requests, upgradeMs) {
+  const first = Math.floor(upgradeMs / H);
+  const by = new Map();
+  for (const r of requests) {
+    const q = Math.floor(r.t_ms / H);
+    const row = by.get(q) ?? { hour: q - first + 1, start_ms: q * H, used: 0, background_used: 0, person_used: 0, requests: 0, refused: 0 };
+    const cost = Number(r.cost) || 0;
+    row.used += cost;
+    if (r.kind === 'background') row.background_used += cost;
+    else if (r.kind === 'person') row.person_used += cost;
+    row.requests += 1;
+    if (Number(r.status) === 429) row.refused += 1;
+    by.set(q, row);
+  }
+  return [...by.values()].sort((a, b) => a.start_ms - b.start_ms);
+}
+
+// A request path's template parameters (the site prices by template, e.g. /rest/api/3/issue/{issueIdOrKey}/comment).
+function pathParams(tpl, path) {
+  const names = [];
+  const re = new RegExp(`^${String(tpl).replace(/[.*+?^$()|[\]\\]/g, '\\$&').replace(/\{([^}]+)\}/g, (_, n) => { names.push(n); return '([^/]+)'; })}$`);
+  const m = String(path ?? '').split('?')[0].match(re);
+  return m ? Object.fromEntries(names.map((n, i) => [n, decodeURIComponent(m[i + 1])])) : {};
+}
+
+// The issue of each priced request (P8 r2_rate_limit_reaction: `rate.requests[].issue`), as an issue id. What a request
+// writes is the site's own rule (rate.cjs writtenRefs: the issue on its path, every issue of an app field-value update);
+// `raw` is site.log's entries behind the ledger (their paths), `calls` the emulator's record of the same requests (the
+// field-value bodies, matched per invocation and operation in order). A per-issue 429 on a request that writes several
+// issues names the one whose 2 s window refused it, replayed in the site's arrival order as rate.cjs check/charge keep
+// it; any other request names its issue when it writes exactly one.
+function requestIssues(entries, raw, calls, pack, rateModel) {
+  const idOf = new Map(pack.issues.flatMap((i) => [[String(i.id), String(i.id)], [String(i.key).toUpperCase(), String(i.id)]]));
+  const bodies = new Map();
+  for (const c of calls) {
+    if (c.service !== 'jira' || !c.op) continue;
+    const k = `${c.invocationId}|${c.op}`;
+    if (!bodies.has(k)) bodies.set(k, []);
+    bodies.get(k).push(c.body);
+  }
+  const lastWrite = new Map();
+  return entries.map((e, i) => {
+    const op = `${e.method} ${e.path_tpl}`;
+    const body = bodies.get(`${e.invocation}|${op}`)?.shift();
+    const ids = [...new Set(rateModel.writtenRefs(op, pathParams(e.path_tpl, raw[i].path), body)
+      .map((r) => idOf.get(String(r).toUpperCase()) ?? String(r)))];
+    const issue = Number(e.status) === 429 && e.reason === rateModel.MODEL.reasons.perIssue && ids.length > 1
+      ? ids.find((id) => e.t_ms - (lastWrite.get(id) ?? -Infinity) < rateModel.MODEL.perIssueWriteMs) ?? null
+      : ids.length === 1 ? ids[0] : null;
+    if (Number(e.status) < 400) for (const id of ids) lastWrite.set(id, Math.max(lastWrite.get(id) ?? -Infinity, e.t_ms));
+    return issue;
+  });
+}
+
+// The secret the panel shows once after `Rotate CI secret`: the longest token of ≥ 16 secret-alphabet characters the
+// text after the click carries and the text before it did not.
+function shownSecret(before, after) {
+  const known = new Set(String(before).match(/[A-Za-z0-9_\-+/=]{16,}/g) ?? []);
+  const fresh = (String(after).match(/[A-Za-z0-9_\-+/=]{16,}/g) ?? []).filter((t) => !known.has(t));
+  return fresh.sort((a, b) => b.length - a.length)[0] ?? null;
+}
+
+// A replayed payload with every occurrence of `from` (a number, or its decimal string) replaced by `to`.
+function replaceDeep(v, from, to) {
+  if (v === from) return to;
+  if (typeof v === 'string' && v === String(from)) return String(to);
+  if (Array.isArray(v)) return v.map((x) => replaceDeep(x, from, to));
+  if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, replaceDeep(x, from, to)]));
+  return v;
+}
+
+// A payload that claims the admin's identity in every place a careless resolver might read it from.
+const forgedPayload = (payload, adminId) => ({ ...(payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : { value: payload }),
+  accountId: adminId, userAccountId: adminId, isAdmin: true, admin: true, context: { accountId: adminId } });
+
+// The app's non-ledger storage (settings, secrets, cursors, audit) as comparable key -> value strings.
+function configState(dump) {
+  const out = new Map();
+  for (const [k, r] of dump.kv ?? []) out.set(`kv:${k}`, JSON.stringify(r?.value ?? null));
+  for (const [k, r] of dump.secrets ?? []) out.set(`secret:${k}`, JSON.stringify(r?.value ?? null));
+  for (const [k, r] of dump.ents ?? []) {
+    const [name, key] = String(k).split('\u0000');
+    if (!DATA_ENTITIES.has(name)) out.set(`entity:${name}/${key}`, JSON.stringify(r?.value ?? null));
+  }
+  return out;
+}
+const changedKeys = (a, b) => [...new Set([...a.keys(), ...b.keys()])].filter((k) => a.get(k) !== b.get(k)).sort();
+// Whether an attempted admin action LANDED (P8 r5_nonadmin_refused): a secret changed, or a setting now holds the
+// forged budget it did not hold before. An audit entry that records a refused attempt is no landing.
+const holds = (v, n) => v === n || v === String(n) || (Array.isArray(v) ? v.some((x) => holds(x, n))
+  : v !== null && typeof v === 'object' ? Object.values(v).some((x) => holds(x, n)) : false);
+const parsed = (text) => { try { return JSON.parse(text ?? 'null'); } catch { return text; } };
+const landedOf = (s0, s1, changed) => changed.some((k) => k.startsWith('secret:')
+  || (holds(parsed(s1.get(k)), FORGED_BUDGET) && !holds(parsed(s0.get(k)), FORGED_BUDGET)));
+
+const ledgerRow = (v) => Object.fromEntries(LEDGER_ATTRS.map((k) => [k, v?.[k] ?? null]));
+
+// The six scored hours as one ordered agenda. `io` is the world the agenda acts on: main() wires it to the emulator
+// and the site, --selftest to a fake. Everything due by an agenda point happens before it (world changes, queue
+// deliveries), so a checkpoint reads the state AT its mark unless a delivery's own virtual time ran past it — the
+// actual read time is what `clock.checkpoints` records.
+// The shared pool's wall brought forward by the app's other tenants (contract §10): the hour's remaining points are
+// drawn QUOTA_WINDOW_MS before a clock-hour top in the middle of the scored hours, so background work meets a quota 429
+// whose Retry-After runs to that top (SPEC R2 and R3). A checkpoint mark inside the window is graded without the issues
+// changed under the wall (P8 r7_values_fresh reads rate.wall).
+// policy: 30 virtual minutes, so background work that first arrives up to 15 minutes after the draw still meets a
+// Retry-After past the longest invocation limit (900 s, a consumer or scheduled trigger with timeoutSeconds: P8
+// r3_long_retry_after_deferred) on every seed. measured: the golden's background requests leave gaps of up to 523
+// virtual seconds (integration run, seed 0123456789abcdef), and the 20-minute window that run would have drawn gives
+// none past 300 s.
+const QUOTA_WINDOW_MS = 30 * 60_000;
+// The window holds none of the harness's own person-facing traffic (contract §10): the hour whose panel and person
+// reads would fall inside it reads them READS_MARGIN_MS before the window opens, still inside that hour.
+const READS_MARGIN_MS = 15_000;
+function quotaWindow(t0) {
+  const until = (Math.floor((t0 + 2.5 * H) / H) + 1) * H;
+  return { at: until - QUOTA_WINDOW_MS, until };
+}
+const readsAt = (t, win) => (win && t > win.at - READS_MARGIN_MS && t < win.until ? win.at - READS_MARGIN_MS : t);
+
+// `io.deliver(agendaAt)` learns the next agenda point (hour mark, admin/person read, CI sequence, quota draw, world
+// event) and `io.drain(due, {beforeDelivery})` whether the next thing to happen is a delivery: the drive may leave the
+// queues undrained between related deliveries (SPEC §2.8 S1, batchDecision), never before an agenda point.
+// Each scheduled world event (`io.nextWorldAt()`: a sprint close, a field switch, a revoke, a deletion) is its own
+// agenda point: the live stream applies up to the instant before it and the queues drain to it, THEN it applies, so a
+// change delivered just before a field switch or a deletion is processed against the world it happened in.
+async function runHours(io, t0) {
+  const ciAt = t0 + CI_AT_MS;
+  const win = typeof io.quotaWindow === 'function' ? io.quotaWindow(t0) : null;
+  const quotaAt = win ? win.at : null;
+  let ciDone = false;
+  let quotaDone = quotaAt === null;
+  let worldDone = -Infinity;   // the last world point taken: an event the io did not apply is never taken twice
+  for (let k = 1; k <= HOURS; k++) {
+    const end = t0 + k * H;
+    const panelAt = readsAt(end - PANEL_BEFORE_MS, win);
+    let panelDone = false;
+    if (k > 1) await io.hourly(k - 1, end);
+    for (;;) {
+      const nd = io.nextDeliveryAt();
+      const wa = typeof io.nextWorldAt === 'function' ? io.nextWorldAt() : null;
+      const worldAt = wa !== null && wa > worldDone ? wa : Infinity;
+      const agendaAt = Math.min(end, panelDone ? Infinity : panelAt, !ciDone && ciAt < end ? ciAt : Infinity,
+        !quotaDone && quotaAt < end ? quotaAt : Infinity, worldAt);
+      const due = Math.min(agendaAt, nd !== null && nd < end ? nd : Infinity);
+      await io.world(due === worldAt ? due - 1 : due);
+      await io.drain(due, { beforeDelivery: due < agendaAt });
+      await io.advanceTo(due);
+      if (due === worldAt) { worldDone = due; await io.world(due); continue; }
+      if (!ciDone && ciAt < end && ciAt <= due) { ciDone = true; await io.ci(); continue; }
+      if (!quotaDone && quotaAt < end && quotaAt <= due) { quotaDone = true; await io.quota(); continue; }
+      if (!panelDone && panelAt <= due) { panelDone = true; await io.panel(`h${k}`); continue; }
+      if (nd !== null && nd < end && nd <= due) { if (await io.deliver(agendaAt)) continue; }
+      if (due >= end) break;
+    }
+    await io.checkpoint(`h${k}`, end);
+  }
+}
+
+// SPEC §2.8 S1: deliveries of one event, or of one issue, start together only while both are pending, so the drive
+// leaves the queues undrained through a batch the site's plan marks (deliverNext's `batchEnd`: a duplicate with every
+// delivery since its original, the two halves of a permuted same-issue pair). A batch opened at `now` (plan slot
+// `slot`) is held only when its last delivery (`createdAt(k)`: each later slot's change time; a redelivery arrives at
+// once) comes before the next agenda point, so no checkpoint, read, CI step, quota draw or world event meets work the
+// hold delayed, and never inside the quota wall's window, where two partners' first requests would both meet the wall
+// before either could store the pause (READS-FIRST holds that write). The drain guard (`beforeDelivery`) releases a
+// hold at any agenda point regardless.
+function batchDecision({ slot, end, now, createdAt, agendaAt, win }) {
+  let endsAt = now;
+  for (let k = slot + 1; k <= end; k++) endsAt = Math.max(endsAt, createdAt(k));
+  if (win && now >= win.at && now < win.until) return { held: false, endsAt, why: 'inside the quota wall window' };
+  if (!(endsAt < agendaAt)) return { held: false, endsAt, why: 'its last delivery would pass the next agenda point' };
+  return { held: true, endsAt };
+}
 
 // ── main sequence ─────────────────────────────────────────────────────────────────────────
 
@@ -224,14 +519,52 @@ let site = null;
 let emu = null;
 let browser = null;
 
-async function section(name, fn) {
+// `feeds`: the contract keys this section's evidence feeds, unavailable when it fails. Each section logs its wall time:
+// the Haiku 5.5 pilot's scoring sat 2 h 16 min in one seed and only file mtimes could say where.
+async function section(name, fn, feeds = []) {
+  const t0 = Date.now();
   try {
     await fn();
   } catch (e) {
-    obs.sectionErrors[name] = String(e?.stack || e).split('\n').slice(0, 3).join(' | ').slice(0, 400);
+    const why = String(e?.stack || e).split('\n').slice(0, 3).join(' | ').slice(0, 400);
+    obs.sectionErrors[name] = why;
+    for (const f of feeds) obs.sectionErrors[f] = obs.sectionErrors[f] || `section ${name} failed: ${why}`;
     log(`section ${name} failed:`, e?.message || e);
   }
+  log(`section ${name}: ${((Date.now() - t0) / 1000).toFixed(1)} s`);
   save();
+}
+
+// Every invocation the emulator ran (SPEC §2.2): its virtual duration against its limit, and how it ended. The logs
+// stay in memory for the secret-leak scan.
+const invocationLogs = [];
+const completedInvocations = new Set();
+function onInvocation(_record, out) {
+  completedInvocations.add(out.invocationId);
+  const ms = Date.parse(out.t1) - Date.parse(out.t0);
+  obs.invocations.push({ id: out.invocationId, function_key: out.functionKey, module_type: out.moduleType, module_key: out.moduleKey ?? null,
+    virtual_ms: Number.isFinite(ms) ? ms : null, limit_ms: Number.isFinite(out.timeoutSec) ? out.timeoutSec * 1000 : null,
+    killed: Boolean(out.timedOut), result_kind: out.timedOut ? 'killed' : !out.ok ? 'error' : out.result?._retry ? 'retry' : 'ok' });
+  invocationLogs.push({ id: out.invocationId, functionKey: out.functionKey, text: JSON.stringify([out.logs ?? null, out.stderr ?? null]) });
+}
+
+// A preload entity's rows as [{key, value}]: fixtures.cjs emits {<key>: value}; a list of pairs reads the same.
+const preloadRows = (rows) => (Array.isArray(rows) ? rows : Object.entries(rows ?? {}).map(([key, value]) => ({ key, value })));
+
+// The v1 KVS content laid down under v1's own schema (the starter manifest), as the dump the v2 emulator inherits.
+function v1Dump(preload) {
+  const { createKvs } = require(join(kitDir, 'lib', 'kvs.cjs'));
+  const { kitPaths } = require(join(kitDir, 'lib', 'kitpaths.cjs'));
+  const YAML = kitPaths(kitDir).require('yaml');
+  const starter = YAML.parse(readFileSync(join(repo, 'forge2', 'starter', 'manifest.yml'), 'utf8'));
+  const kvs = createKvs({ entities: starter.app.storage.entities, now: () => site.state.now() });
+  const put = (op, body) => {
+    const r = kvs.handle(op, body);
+    if (r.status >= 400) throw new Error(`v1 preload ${op} ${body.entityName ?? ''} ${body.key} refused under v1's schema: ${JSON.stringify(r.body)}`);
+  };
+  for (const [entityName, rows] of Object.entries(preload.entities ?? {})) for (const { key, value } of preloadRows(rows)) put('/api/v1/entity/set', { entityName, key, value });
+  for (const { key, value } of preload.keys ?? []) put('/api/v1/set', { key, value });
+  return kvs.dump();
 }
 
 async function main() {
@@ -242,12 +575,26 @@ async function main() {
     obs.lint.runs = lintRuns;
   });
 
-  const { createSite } = require(join(repo, 'forge', 'site', 'site.cjs'));
+  const { createSite } = require(join(repo, 'forge2', 'site', 'site.cjs'));
   const { createEmulator } = require(join(kitDir, 'lib', 'emulator.cjs'));
   site = await createSite({ seed, port: 0, trace: null, scoring: true });
   const pack = site.pack;
+  let devState = null;
+  await section('preload', async () => {
+    if (!pack.v1Preload) { gap('site.pack.v1Preload (P4: the v1 KVS content)', 'migration'); return; }
+    devState = { kvs: v1Dump(pack.v1Preload) };
+    obs.migration.v1_rows = preloadRows(pack.v1Preload.entities?.['scope-change'])
+      .map(({ value }) => ({ changeId: value.changeId, sprintId: value.sprintId, at: value.at }));
+    obs.migration.preload = { entities: Object.fromEntries(Object.entries(pack.v1Preload.entities ?? {}).map(([n, rows]) => [n, preloadRows(rows).length])),
+      keys: (pack.v1Preload.keys ?? []).length };
+  }, ['migration']);
   // A refusal here (no sandbox, wrapper sha mismatch) is the harness's: main()'s catch marks every section.
-  emu = await createEmulator({ appDir, kitDir, site, runtime });
+  emu = await createEmulator({ appDir, kitDir, site, runtime, devState, onInvocation });
+  obs.concurrency.query_lag_ms = require(join(kitDir, 'lib', 'kvs.cjs')).QUERY_LAG_MS ?? null;
+  obs.concurrency.max_concurrent = require(join(kitDir, 'lib', 'emulator.cjs')).MAX_CONCURRENT_CONSUMERS ?? null;
+  if (obs.concurrency.query_lag_ms === null || obs.concurrency.max_concurrent === null || !Array.isArray(emu.concurrency)) {
+    gap('the kit\'s S1/S2 (kvs.cjs QUERY_LAG_MS, emulator.cjs MAX_CONCURRENT_CONSUMERS, emu.concurrency)', 'concurrency');
+  }
   obs.manifest = emu.manifest;
   obs.manifestError = emu.manifestError ?? null;
   obs.runtimePublishable = emu.publishable ?? null;
@@ -292,53 +639,242 @@ async function main() {
     return { entities: Object.fromEntries(Object.entries(s.entities || {}).map(([n, items]) => [n, pairs(items)])),
       keys: pairs(s.kvs ?? s.keys) };
   };
+  // `concurrent`: the kit's record on a delivery that ran in a concurrent group (forge2_checks.concurrent_groups).
   const normDelivery = (d) => ({ eventId: d.eventId, inv: d.invocationId ?? d.inv ?? null, attempt: d.attempt,
     result: d.result?._retry ? 'retry' : (d.outcome ?? (d.ok === false ? 'throw' : 'ok')),
-    retryAfter: d.retryAfter ?? d.result?.retryOptions?.retryAfter ?? null, t: vt(d.t) });
+    retryAfter: d.retryAfter ?? d.result?.retryOptions?.retryAfter ?? null, t: vt(d.t), ...(d.concurrent ? { concurrent: d.concurrent } : {}) });
+  const now = () => site.state.now();
+  const advanceTo = async (t) => { if (t > now()) await emu.advance(t - now()); };
   takeCalls(emu);
 
-  const runSchedules = async (phase) => {
-    const ph = obs.phases[phase] = { calls: [], invocations: [], deliveries: [] };
+  const consumed = (ph, deliveries) => {
+    for (const d of deliveries || []) {
+      ph.deliveries.push(normDelivery(d));
+      ph.invocations.push(normInvocation({ ...d, ok: d.ok ?? !d.error }, 'consumer', d.moduleKey));
+    }
+  };
+  // `until` (the timeline's runs pass the run's own time): only the queue deliveries due by then run inside the run;
+  // the rest run at their own virtual times, between the deliveries of the hour. heal and rerun drain everything.
+  const runSchedules = async (phase, until = null) => {
+    const ph = obs.phases[phase] = { calls: [], invocations: [], deliveries: [], at: vt(new Date(now()).toISOString()) };
     for (const m of modules('scheduledTrigger')) {
-      const r = await emu.runScheduled(m.key);
+      const r = until === null ? await emu.runScheduled(m.key) : await emu.runScheduled(m.key, { until });
       ph.invocations.push(normInvocation(r?.invocation ?? r, 'scheduled', m.key));
-      for (const d of r?.deliveries || []) {
-        ph.deliveries.push(normDelivery(d));
-        ph.invocations.push(normInvocation({ ...d, ok: d.ok ?? !d.error }, 'consumer', d.moduleKey));
-      }
+      consumed(ph, r?.deliveries);
     }
     ph.calls = takeCalls(emu);
-    ph.kvsAfter = snapshot(phase);
+    return ph;
   };
 
-  await section('backfill', () => runSchedules('backfill'));
+  // ── the 2.0 drive ───────────────────────────────────────────────────────────────────────
+  const adminPage = modules('jira:adminPage')[0] ?? null;
+  const uikitPath = join(kitDir, 'lib', 'uikit-host', 'index.cjs');
+  const adm = adminDriver({ emu, pack, host: existsSync(uikitPath) ? require(uikitPath) : null, adminPage, appDir, now });
+
+  // The viewer's own reads during the hours, through v1's Rovo action (person-facing): R4's "next request" after a
+  // permission loss needs requests before it as well, and R2 needs person-facing traffic inside the busy hours.
+  const KEY_RE = /\b[A-Z][A-Z0-9]+-\d+\b/g;
+  const personReads = async (cp) => {
+    if (!modules('action').some((a) => a.key === 'get-sprint-scope')) return;
+    for (const sp of pack.sprints.filter((s) => s.state === 'active')) {
+      const sid = String(sp.id);
+      const r = await emu.invokeAction('get-sprint-scope', { sprintId: sid }, { asUser: pack.viewer });
+      obs.person_reads.push({ cp, t_ms: now(), as: pack.viewer, sprintId: sid, ok: Boolean(r?.ok), killed: Boolean(r?.timedOut),
+        issueKeys: r?.ok ? [...new Set(JSON.stringify(r.result ?? null).match(KEY_RE) ?? [])].sort() : [] });
+    }
+  };
+  const fieldValues = async () => {
+    if (typeof site.control.fieldvalues !== 'function') { gap('site.control.fieldvalues (P5: the app field values)', 'field'); return null; }
+    return (await site.control.fieldvalues({})).values ?? {};
+  };
+  const worldUntil = async (t) => {
+    if (typeof site.control.world !== 'function') { gap('site.control.world (P5: the world schedule)', 'world'); return; }
+    const r = await site.control.world({ until: t });
+    obs.world.push(...(r.applied ?? []));
+    // The world's product events (avi:jira:deleted:issue) reach the app's triggers as the site applies them.
+    for (const w of await emu.deliverWorldEvents()) {
+      (obs.phases.live?.invocations ?? []).push(...w.invocations.map((x) => normInvocation(x, 'trigger', x?.moduleKey)));
+    }
+  };
+  // The next scheduled world event the site has not applied (its atMs), the agenda point runHours drains to before it
+  // applies. Issue moves are live changes (world.cjs `viaLive`): the delivery plan carries them.
+  const nextWorldAt = () => {
+    if (typeof site.control.worldplan !== 'function') return null;
+    const { world, applied } = site.control.worldplan();
+    const done = new Set((applied ?? []).map((e) => e.id));
+    return (world?.events ?? []).find((e) => !e.viaLive && !done.has(e.id))?.atMs ?? null;
+  };
+  const checkpoint = async (cp) => {
+    const t = now();
+    obs.clock.checkpoints[cp] = t;
+    const s = emu.kvs.snapshot();
+    obs.migration.v2_by_checkpoint[cp] = Object.values(s.entities?.['scope-ledger'] ?? {}).map(ledgerRow);
+    obs.checkpoints[cp] = { t_ms: t, kv: s.kvs ?? {}, secrets: s.secrets ?? [],
+      entity_counts: Object.fromEntries(Object.entries(s.entities ?? {}).map(([n, rows]) => [n, Object.keys(rows).length])) };
+    const values = await fieldValues();
+    if (values) obs.field.values_by_checkpoint[cp] = values;
+    // The v1 backfill rows are read when the backfill is due, not right after the run that starts it (SPEC R2 doses
+    // it over the hour: contract §3 "the first run starts the backfill").
+    if (cp === 'h1' && obs.phases.backfill) obs.phases.backfill.kvsAfter = snapshot('backfill');
+    (obs.field.applied_by_checkpoint ??= {})[cp] = site.state.st.applied.size;
+  };
+
+  // The CI deployment sequence (P3's scoring cases) against the app's static web trigger; each case's side effects
+  // are the writes the trigger's invocation made (storage, queue pushes, Jira writes).
+  const ciSequence = async () => {
+    const wt = modules('webtrigger')[0];
+    if (!wt) { obs.webtriggerAbsent = 'no webtrigger module in the manifest'; return; }
+    const ciPath = join(repo, 'forge2', 'site', 'ci.cjs');
+    if (!existsSync(ciPath)) { gap('forge2/site/ci.cjs scoringSequence (P3)', 'webtrigger'); return; }
+    if (typeof emu.webtriggerUrl !== 'function') { gap('emu.webtriggerUrl (P1/P3: the web-trigger ingress)', 'webtrigger'); return; }
+    if (!(emu.invocations instanceof Map)) { gap('emu.invocations (P1: the invocation records, for attribution)', 'webtrigger'); return; }
+    const { createCiSequence } = require(ciPath);
+    // Issues of the active sprints that hold v1 rows (each step owns its own), so a valid event has ledger rows to
+    // mark "Deployed to"; deleted issues are left out.
+    const active = new Set(site.state.sprints().filter((s) => s.state === 'active').map((s) => String(s.id)));
+    const issueKeys = [...new Set(preloadRows(pack.v1Preload?.entities?.['scope-change']).filter(({ value }) => active.has(String(value.sprintId)))
+      .map(({ value }) => value.issueKey).filter((k) => k && site.state.issueByIdOrKey(k)))].sort();
+    // No secret the panel showed and none stored: the app has no key, so the sequence signs with one the app cannot
+    // know and every case, the "valid" ones included, must be refused (R6 graded, never made unavailable).
+    const known = adm.ciSecret();
+    const secret = known ?? (await import('node:crypto')).randomBytes(24).toString('hex');
+    obs.webtriggerSetup = { moduleKey: wt.key, secretSource: known ? adm.state.secretSource : 'none: a key the app cannot know', issueKeys };
+    const seq = createCiSequence({ seed, secret, issueKeys });
+    obs.webtriggerSetup.plan = seq.plan;
+    const cases = { next: () => { const s = seq.next(Math.floor(now() / 1000)); return s && { case: s.name, headers: s.request.headers, body: s.request.body }; } };
+    ciCalls.push(...takeCalls(emu));
+    // In-process through the kit's ingress (the same one the proxy route mounts): fetch would lower-case the header
+    // names, and the header-case step sends them spelled as a CI system might.
+    const { invokeWebtrigger } = require(join(kitDir, 'lib', 'webtrigger.cjs'));
+    const send = async (c) => { const r = await invokeWebtrigger(emu, wt.key, { method: 'POST', headers: c.headers, body: c.body }); return { status: r.statusCode, text: r.body ?? '' }; };
+    obs.webtrigger.push(...await sendCiCases({ cases, url: emu.webtriggerUrl(wt.key), emu, completed: completedInvocations, send }));
+    ciCalls.push(...takeCalls(emu));
+  };
+  const ciCalls = [];
+
+  await section('upgrade', async () => {
+    obs.clock.upgrade_t_ms = now();
+    // BRIEF: `avi:forge:upgraded:app` is sent for a major upgrade (v1 -> v2 adds modules and scopes).
+    const lifecycle = modules('trigger').filter((t) => (t.events ?? []).map((e) => (typeof e === 'string' ? e : e?.eventType)).includes('avi:forge:upgraded:app'));
+    const fired = [];
+    for (const t of lifecycle) {
+      const r = await emu.invoke(t.function, { moduleKey: t.key, event: { eventType: 'avi:forge:upgraded:app', context: { cloudId: emu.siteInfo.cloudId } } });
+      fired.push({ moduleKey: t.key, ok: Boolean(r.ok), timedOut: Boolean(r.timedOut), error: r.ok ? null : String(r.error?.message ?? r.error) });
+    }
+    obs.upgrade = { t_ms: obs.clock.upgrade_t_ms, lifecycleTriggers: fired, calls: takeCalls(emu) };
+  }, ['migration']);
+
+  await section('admin', adm.lane, ['admin']);
+  await section('backfill', async () => {
+    const ph = await runSchedules('backfill', now());
+    ph.kvsAfter = snapshot('backfill');
+  });
 
   await section('live', async () => {
     const ph = obs.phases.live = { calls: [], invocations: [], deliveries: [], events: [] };
-    const record = async (r, fallback) => {
-      const trig = (r?.invocations || (Array.isArray(r) ? r : [])).map((x) => normInvocation(x, 'trigger', x?.moduleKey));
-      ph.invocations.push(...trig);
-      ph.events.push({ changelogId: r?.changelogId ?? fallback.changelogId, slot: r?.slot ?? fallback.slot,
-        duplicate: Boolean(r?.duplicate ?? fallback.duplicate), triggerInvocations: trig.map((x) => x.inv).filter(Boolean) });
-      for (const d of (await emu.drainQueues()) || []) {
-        ph.deliveries.push(normDelivery(d));
-        ph.invocations.push(normInvocation({ ...d, ok: d.ok ?? !d.error }, 'consumer', d.moduleKey));
-      }
+    const liveById = new Map(pack.live.map((c) => [c.changelogId, c]));
+    let planDone = false;
+    // The batch the drive is in (SPEC §2.8 S1, batchDecision): {end: its last plan slot, rec, held: the queues are left
+    // undrained until it ends}. A batch it could not hold is still followed to its end, never decided twice.
+    let batch = null;
+    const createdAt = (slot) => Date.parse(liveById.get(site.state.plan[slot].changelogId).created);
+    const io = {
+      now,
+      advanceTo,
+      nextDeliveryAt: () => {
+        const d = planDone ? null : site.state.plan[site.state.st.cursor];
+        if (!d) return null;
+        const c = liveById.get(d.changelogId) ?? pack.live.find((x) => x.changelogId === d.changelogId);
+        if (!c) throw new Error(`the delivery plan names ${d.changelogId}, which pack.live does not hold`);
+        return Math.max(now(), Date.parse(c.created));
+      },
+      deliver: async (agendaAt = -Infinity) => {
+        const t = now();
+        const r = await emu.deliverNext();
+        if (!r) { planDone = true; return false; }
+        const trig = (r.invocations || []).map((x) => normInvocation(x, 'trigger', x?.moduleKey));
+        ph.invocations.push(...trig);
+        ph.events.push({ changelogId: r.changelogId, slot: r.slot, duplicate: Boolean(r.duplicate), t: vt(new Date(now()).toISOString()),
+          triggerInvocations: trig.map((x) => x.inv).filter(Boolean), ...(Number.isInteger(r.batchEnd) ? { batchEnd: r.batchEnd } : {}) });
+        if (batch && r.slot <= batch.end) {
+          batch.rec.delivered.push(r.changelogId);
+          if (r.slot >= batch.end) batch = null;
+        } else if (Number.isInteger(r.batchEnd) && r.batchEnd > r.slot) {
+          const b = batchDecision({ slot: r.slot, end: r.batchEnd, now: t, createdAt, agendaAt, win: quotaWindow(obs.clock.upgrade_t_ms) });
+          const slots = site.state.plan.slice(r.slot, r.batchEnd + 1);
+          const rec = { slots: [r.slot, r.batchEnd], changelogIds: [...new Set(slots.map((d) => d.changelogId))],
+            issueIds: [...new Set(slots.map((d) => String(liveById.get(d.changelogId).issueId)))], duplicates: slots.filter((d) => d.duplicate).length,
+            t_ms: t, ends_ms: b.endsAt, held: b.held, ...(b.why ? { why: b.why } : {}), delivered: [r.changelogId] };
+          obs.concurrency.batches.push(rec);
+          batch = { end: r.batchEnd, rec, held: b.held };
+        }
+        return true;
+      },
+      drain: async (until, { beforeDelivery = false } = {}) => {
+        if (batch?.held && beforeDelivery) return;
+        if (batch?.held) {
+          batch.rec.released = `at ${new Date(until).toISOString()}, an agenda point before its last delivery`;
+          batch.held = false;
+        }
+        consumed(ph, await emu.drainQueues({ until }));
+      },
+      world: worldUntil,
+      nextWorldAt,
+      hourly: async (k) => {
+        ph.calls.push(...takeCalls(emu));
+        await runSchedules(`hour-${k}`, now());
+      },
+      ci: async () => {
+        ph.calls.push(...takeCalls(emu));
+        await section('webtrigger', ciSequence, ['webtrigger']);
+      },
+      panel: async (cp) => {
+        ph.calls.push(...takeCalls(emu));
+        await section(`panel-${cp}`, () => adm.panelRead(cp));
+        await section(`person-${cp}`, () => personReads(cp));
+        (obs.ui.adminCalls ??= []).push(...takeCalls(emu));
+      },
+      checkpoint: async (cp) => checkpoint(cp),
+      quotaWindow,
+      quota: async () => {
+        const t = now();
+        const win = quotaWindow(obs.clock.upgrade_t_ms);
+        const { model, hours } = site.control.rate();
+        const row = (hours ?? []).find((h) => Date.parse(h.hour) === Math.floor(t / H) * H);
+        const spent = row ? row.total : 0;
+        const points = model.quotaPerHour - spent;
+        if (points > 0) site.control.draw({ points, at: t });
+        obs.rate.wall = { t_ms: t, until_ms: win.until, points: Math.max(0, points), spent_before: spent };
+      },
     };
-    if (typeof emu.deliverNext === 'function') {
-      // The site owns the delivery plan (slot order, duplicate slots, drops): exactly what production would do.
-      for (let r = await emu.deliverNext(); r; r = await emu.deliverNext()) await record(r, {});
-      if (typeof site.flushLive === 'function') site.flushLive();
-      else gap('site.flushLive (dropped changes after the last delivery)', 'live', 'heal');
-    } else {
-      gap('emu.deliverNext (the site-owned delivery plan)', 'live', 'heal');
+    await runHours(io, obs.clock.upgrade_t_ms);
+    // Deliveries the plan holds past the sixth hour (none on a well-formed pack) still reach the app before heal.
+    while (io.nextDeliveryAt() !== null) {
+      await io.world(io.nextDeliveryAt());
+      await io.drain(io.nextDeliveryAt());
+      if (!(await io.deliver())) break;
     }
-    ph.calls = takeCalls(emu);
+    batch = null;
+    if (typeof site.flushLive === 'function') site.flushLive();
+    else gap('site.flushLive (dropped changes after the last delivery)', 'live', 'heal');
+    consumed(ph, await emu.drainQueues());
+    ph.calls.push(...takeCalls(emu));
     ph.kvsAfter = snapshot('live');
-  });
+    obs.webtriggerCalls = ciCalls;
+  }, ['migration', 'field', 'world', 'webtrigger', 'rate']);
 
-  await section('heal', () => runSchedules('heal'));
-  await section('rerun', () => runSchedules('rerun'));
+  await section('heal', async () => { (await runSchedules('heal')).kvsAfter = snapshot('heal'); });
+  await section('rerun', async () => { (await runSchedules('rerun')).kvsAfter = snapshot('rerun'); });
+  await section('final', async () => {
+    await checkpoint('final');
+    obs.migration.v1_final = Object.values(emu.kvs.snapshot().entities?.['scope-change'] ?? {})
+      .map((v) => ({ changeId: v?.changeId ?? null, sprintId: v?.sprintId ?? null, at: v?.at ?? null }));
+  }, ['migration', 'field']);
+
+  // Contract §3: a query may miss writes made in the last QUERY_LAG_MS virtual ms. Rovo and the surfaces read what the
+  // heal and the rerun wrote last, so the clock first moves past that window: no answer is graded on a write younger
+  // than the staleness the contract states.
+  if (obs.concurrency.query_lag_ms) await emu.advance(obs.concurrency.query_lag_ms);
 
   await section('rovo', async () => {
     const action = modules('action').find((a) => a.key === 'get-sprint-scope');
@@ -360,10 +896,14 @@ async function main() {
       mkdirSync(join(mediaDir, 'raw'), { recursive: true });
       recording = { context: await browser.newContext({ recordVideo: { dir: join(mediaDir, 'raw'), size: RECORD_SIZE } }), pages: [] };
     }
-    await probeUi(pack);
-  });
-  // After every timed measurement: serialising the clip never overlaps grading.
-  if (recording) obs.media = await assembleRecording();
+    await probeUi(pack, adm);
+  }, ['boot']);
+  obs.admin.shot ??= { written: false, files: [], reason: `the ui section ended before the admin picture: ${obs.sectionErrors.ui ?? 'no error recorded'}` };
+  await section('llm_v2', () => llmCases(pack, adm), ['llm_v2']);
+  await adm.closeAll();
+  // After every timed measurement: serialising the clip never overlaps grading. assembleRecording records its own
+  // failures in media.errors; the section is here for its wall-time line.
+  if (recording) await section('media', async () => { obs.media = await assembleRecording(); });
   obs.comments = commentAttempts(pack);
   // Forge LLM and Realtime logs live on the site (kit README): every prompt/answer, every publish and subscription.
   await section('logs', async () => {
@@ -372,14 +912,288 @@ async function main() {
     const rt = await emu.realtime?.log(0);
     obs.realtime = { events: rt?.events ?? [], subscriptions: rt?.subscriptions ?? [] };
   });
+  await section('concurrency', async () => recordGroups(), ['concurrency']);
+  await section('rate', async () => {
+    if (typeof site.control.ratelog !== 'function') { gap('site.control.ratelog (P4: the priced request ledger)', 'rate'); return; }
+    // The ledger is site.log's entries that carry an op, in the same order (site.cjs control.ratelog), read here in
+    // the same synchronous step.
+    const raw = (site.log ?? []).filter((e) => e.op);
+    const entries = (await site.control.ratelog({ since: 0 })).entries ?? [];
+    let issues = [];
+    if (raw.length === entries.length && raw.every((r, i) => r.method === entries[i].method)) {
+      issues = requestIssues(entries, raw, emu.log || [], pack, require(join(repo, 'forge2', 'site', 'rate.cjs')));
+    } else gap('site.log in step with site.control.ratelog (P4: each priced request\'s path, for rate.requests[].issue)');
+    obs.rate.requests = entries.map((e, i) => ({ t_ms: e.t_ms, invocation: e.invocation ?? null,
+      kind: e.kind, method: e.method, path_tpl: e.path_tpl, cost: e.cost, status: e.status, reason: e.reason ?? null, retry_after_s: e.retry_after_s ?? null,
+      ...(issues[i] ? { issue: issues[i] } : {}) }));
+    obs.rate.hours = hoursOf(obs.rate.requests, obs.clock.upgrade_t_ms);
+  }, ['rate']);
+  obs.field.writes = (emu.log || []).filter((e) => (e.method === 'POST' && /\/rest\/api\/3\/app\/field\/value$/.test(String(e.path).split('?')[0]))
+    || (e.method === 'PUT' && /\/rest\/api\/3\/app\/field\/[^/]+\/value$/.test(String(e.path).split('?')[0])))
+    .map((e) => ({ t_ms: Date.parse(e.t_virtual), updates: e.body?.updates ?? null, status: e.status, invocation: e.invocationId ?? null }));
+  obs.admin.secret_leaks = secretLeaks(adm.state.secret, adm.state.answers);
+  // The invocation list comes from the emulator's onInvocation hook; invocations the phases saw but the hook never
+  // reported mean the hook is not wired, not that nothing ran.
+  if (!obs.invocations.length && Object.values(obs.phases).some((p) => p.invocations?.length)) gap('createEmulator({onInvocation}) (P1)', 'invocations');
   obs.harnessMissing = [...new Set([...(emu.harnessMissing || []).map((x) => (typeof x === 'string' ? x : JSON.stringify(x)))])];
+}
+
+// The CI sequence against the web-trigger ingress, one case at a time. A case's side effects are the writes made by
+// the invocations it started (by invocation id, so a write logged after its response is still that case's), and a
+// case whose invocation had not finished when the response came is marked `settled: false`, never silently counted.
+async function sendCiCases({ cases, url, emu, completed, send = null }) {
+  const out = [];
+  const list = Array.isArray(cases) ? cases[Symbol.iterator]() : { next: () => { const v = cases.next(); return { value: v, done: !v }; } };
+  for (let it = list.next(); !it.done; it = list.next()) {
+    const c = it.value;
+    const before = new Set(emu.invocations.keys());
+    const res = send ? await send(c) : await fetch(url, { method: 'POST', headers: c.headers, body: c.body });
+    const text = send ? res.text : await res.text();
+    const started = [...emu.invocations.keys()].filter((id) => !before.has(id));
+    out.push({ case: c.case, status: res.status, invocations: started, body: text.slice(0, 400) });
+  }
+  for (const row of out) {
+    const writes = (emu.log || []).filter((e) => row.invocations.includes(e.invocationId) && isWrite(e));
+    // A request reaches the app's function whatever its signature (static web triggers carry no platform auth), so a
+    // case that started no invocation is a harness miss, not a clean case.
+    Object.assign(row, { side_effects: writes.length, settled: row.invocations.length > 0 && row.invocations.every((id) => completed.has(id)),
+      writes: writes.map((e) => `${e.service ?? 'jira'} ${e.method} ${String(e.path).split('?')[0]}`) });
+  }
+  return out;
+}
+
+// The admin panel (SPEC §1 R5/R6, §2.6) through P2's UI Kit host: the admin's own actions, the same actions replayed
+// by a person without ADMINISTER and with a payload that claims the admin, the CI secret it shows once, the Migration
+// line. Every admin-page invoke is recorded with its caller and judged on what it changed in the app's non-ledger
+// storage (settings, secrets, cursors, the audit list).
+// The UI Kit host's own split of its refusals (kit lib/uikit-host/index.cjs): these codes are the APP's — what forge
+// deploy refuses or cannot find (no `render: native`, an undeclared resource, a bundle that does not build) — so an admin
+// page refused with one is the app's observed defect, charged on every admin row. HARNESS stays a harness failure.
+const APP_UIKIT_CODES = new Set(['BAD_MANIFEST', 'NO_MODULE', 'NOT_NATIVE', 'NO_RESOURCE', 'BUILD_FAILED']);
+function adminDriver({ emu, pack, host, adminPage, appDir, now }) {
+  // `answers`: every admin-page resolver answer with its caller; the rotate clicks' own (`rotation`) are the one place
+  // the new secret may be shown. `shown`: what each rotate click showed. `kept`: the admin's own panel as it was drawn
+  // at two moments, for its picture (adminShots); in memory only, and never a render after a rotate click.
+  const state = { secret: null, secretSource: null, answers: [], shown: [], kept: {} };
+  const ctxFor = (accountId, moduleKey) => ({ accountId, cloudId: emu.siteInfo.cloudId, siteUrl: emu.siteInfo.siteUrl, moduleKey,
+    localId: `${moduleKey}-probe`, locale: 'en-US', timezone: 'UTC', extension: { type: 'jira:adminPage' } });
+  const callResolver = (functionKey, payload, accountId) =>
+    emu.invokeResolver(adminPage.key, functionKey, payload, ctxFor(accountId, adminPage.key), accountId);
+
+  // The UI Kit admin page as one person sees it (P2's host); every invoke it makes is recorded with its caller. Each
+  // host is a child process: closeAll() ends them (P2: always close), once its readings are taken.
+  const opened = [];
+  const closeAll = async () => { for (const ui of opened.splice(0)) await Promise.resolve(ui.close?.()).catch(() => {}); };
+  const openAdmin = async (accountId, as) => {
+    const invokes = [];
+    const ui = await host.render({ appDir, moduleKey: adminPage.key, context: ctxFor(accountId, adminPage.key),
+      // P2's host calls invoke({moduleKey, functionKey, payload, context}); (functionKey, payload) reads the same.
+      invoke: async (a, b) => {
+        const { functionKey, payload } = a !== null && typeof a === 'object' ? a : { functionKey: a, payload: b };
+        const r = await callResolver(functionKey, payload, accountId);
+        const rec = { as, resolver: functionKey, payload: payload ?? null, ok: Boolean(r.ok), response: r.ok ? (r.result ?? null) : null,
+          error: r.ok ? null : String(r.error?.message ?? r.error) };
+        invokes.push(rec);
+        state.answers.push(rec);
+        if (!r.ok) throw new Error(`There was an error invoking the function - ${r.error?.message ?? 'invoke failed'}`);
+        return r.result;
+      } });
+    opened.push(ui);
+    return { ui, invokes };
+  };
+  const found = (ui, label) => { try { return Boolean(ui.findByLabel(label)); } catch { return false; } };
+  const storedSecrets = () => (emu.kvs.dump().secrets ?? []).map(([, r]) => r?.value).filter((v) => typeof v === 'string' && v);
+  // The panel as the admin sees it now, kept for its picture: the ForgeDoc tree, the host's value of each control the
+  // probe types into (it types by these labels only; every other input shows what its props say), and the app's stored
+  // secrets at this moment. Reads of the host's last state: no command, no invoke, no virtual time.
+  const keep = (name, ui) => {
+    try {
+      const typed = [];
+      for (const label of Object.values(LABELS)) {
+        let c = null;
+        try { c = ui.findByLabel(label); } catch { /* the label names several elements: none is typed into */ }
+        if (c && ('checked' in c || 'value' in c)) typed.push([c.key, 'checked' in c ? c.checked : c.value]);
+      }
+      const tree = ui.tree();
+      state.kept[name] = tree ? { tree: JSON.parse(JSON.stringify(tree)), typed, secrets: storedSecrets() } : { reason: 'the UI Kit host held no tree' };
+    } catch (e) {
+      state.kept[name] = { reason: `the tree could not be kept: ${String(e?.message ?? e).slice(0, 200)}` };
+    }
+  };
+  // R9: the invokes the page made before its first render that shows the settings form (`Save settings`).
+  const invokesBeforeFirstRender = async (a) => {
+    let idle = false;
+    Promise.resolve(a.ui.waitIdle()).then(() => { idle = true; });
+    for (;;) {
+      if (found(a.ui, LABELS.save)) return a.invokes.length;
+      if (idle) return found(a.ui, LABELS.save) ? a.invokes.length : null;
+      await new Promise((r) => setImmediate(r));
+    }
+  };
+  const act = async (a, as, fn) => {
+    const s0 = configState(emu.kvs.dump());
+    const i0 = a.invokes.length;
+    await fn();
+    await a.ui.waitIdle();
+    const s1 = configState(emu.kvs.dump());
+    const changed = changedKeys(s0, s1);
+    const entries = a.invokes.slice(i0).map((inv) => ({ as, via: 'ui', resolver: inv.resolver, payload: inv.payload, result_ok: inv.ok,
+      state_changed: changed.length > 0, changed_keys: changed, landed: landedOf(s0, s1, changed), response: inv.response, error: inv.error }));
+    obs.admin.actions.push(...entries);
+    return entries;
+  };
+  // A direct resolver call, as a non-admin or with a forged payload (P1's explicit-context invocation).
+  const replay = async (as, accountId, resolver, payload) => {
+    const s0 = configState(emu.kvs.dump());
+    const r = await callResolver(resolver, payload, accountId);
+    const s1 = configState(emu.kvs.dump());
+    const changed = changedKeys(s0, s1);
+    const entry = { as, via: 'resolver', resolver, payload, result_ok: Boolean(r.ok), state_changed: changed.length > 0,
+      changed_keys: changed, landed: landedOf(s0, s1, changed), response: r.ok ? (r.result ?? null) : null, error: r.ok ? null : String(r.error?.message ?? r.error) };
+    obs.admin.actions.push(entry);
+    state.answers.push({ as, resolver, response: entry.response });
+    return entry;
+  };
+  const rotate = async (a) => {
+    const before = a.ui.text();
+    const i0 = a.invokes.length;
+    const entries = await act(a, 'admin', () => a.ui.click(LABELS.rotate));
+    for (const rec of a.invokes.slice(i0)) rec.rotation = true;
+    const shown = shownSecret(before, a.ui.text());
+    if (shown) state.shown.push(shown);
+    return { entries, shown };
+  };
+  const migrationLine = (text) => {
+    const m = String(text).match(/Migrated\s+([\d,]+)\s+of\s+([\d,]+)\s+v1 rows/);
+    return { text: m ? m[0] : null, migrated: m ? Number(m[1].replace(/,/g, '')) : null, total: m ? Number(m[2].replace(/,/g, '')) : null,
+      complete: /\bcomplete\b/i.test(String(text).split(LABELS.migration).slice(1).join(LABELS.migration).slice(0, 200)) };
+  };
+  // `admin.unrenderable` (set once, by lane()) ends every later admin lane of this seed: the panel reads and the LLM
+  // cases' settings record the absence instead of opening a page that cannot open.
+  const usable = () => Boolean(adminPage && host?.render && pack.admin && !obs.admin.unrenderable);
+
+  async function lane() {
+    if (!adminPage) { obs.admin.absent = 'no jira:adminPage module in the manifest'; return; }
+    if (!host?.render) { gap('kit lib/uikit-host/index.cjs render() (P2)', 'admin', 'boot'); return; }
+    if (!pack.admin) { gap('site.pack.admin (P4: an account with global ADMINISTER)', 'admin'); return; }
+    let a;
+    try {
+      a = await openAdmin(pack.admin, 'admin');
+    } catch (e) {
+      if (e?.name !== 'UikitHostError' || !APP_UIKIT_CODES.has(e.code)) throw e;
+      obs.admin.unrenderable = `${e.code}: ${String(e.message).slice(0, 300)}`;
+      return;
+    }
+    obs.boot['admin-page'] = { invokes_before_paint: await invokesBeforeFirstRender(a), bytes_before_paint: null, external_requests: null };
+    await a.ui.waitIdle();
+    obs.admin.first_text = a.ui.text();
+    keep('loaded', a.ui);
+    obs.admin.controls = Object.fromEntries(Object.entries(LABELS).map(([k, l]) => [k, found(a.ui, l)]));
+    const savable = found(a.ui, LABELS.budget) && found(a.ui, LABELS.save);
+    const saves = savable
+      ? await act(a, 'admin', async () => { await a.ui.setValue(LABELS.budget, ADMIN_BUDGET); await a.ui.click(LABELS.save); }) : [];
+    if (savable) keep('saved', a.ui);
+    else state.kept.saved = { reason: `the admin made no save: the panel has no '${LABELS.budget}' field with '${LABELS.save}'` };
+    let rotations = [];
+    if (found(a.ui, LABELS.rotate)) {
+      const r = await rotate(a);
+      rotations = r.entries;
+      state.secret = r.shown;
+      state.secretSource = r.shown ? 'panel' : null;
+    }
+    obs.admin.secret_shown = Boolean(state.secret);
+    const again = await openAdmin(pack.admin, 'admin');
+    await again.ui.waitIdle();
+    obs.admin.tree_text = again.ui.text();
+    // The same actions by a person without ADMINISTER: replayed with the budget they would set, then with a payload
+    // that claims the admin's identity. Then the non-admin's own panel, and its own save if the panel offers one.
+    const replays = [];
+    for (const inv of [...saves, ...rotations]) {
+      replays.push(await replay('nonadmin', pack.viewer, inv.resolver, replaceDeep(inv.payload, ADMIN_BUDGET, FORGED_BUDGET)));
+      replays.push(await replay('forged', pack.viewer, inv.resolver, forgedPayload(replaceDeep(inv.payload, ADMIN_BUDGET, FORGED_BUDGET), pack.admin)));
+    }
+    const n = await openAdmin(pack.viewer, 'nonadmin');
+    await n.ui.waitIdle();
+    obs.admin.nonadmin_text = n.ui.text();
+    if (found(n.ui, LABELS.budget) && found(n.ui, LABELS.save)) {
+      replays.push(...await act(n, 'nonadmin', async () => { await n.ui.setValue(LABELS.budget, FORGED_BUDGET); await n.ui.click(LABELS.save); }));
+    }
+    // A replay that rotated the secret (the R5 critical, priced there) leaves the panel's secret stale: the admin
+    // rotates once more, so the CI sequence grades the web trigger and not that defect a second time.
+    if (state.secretSource === 'panel' && replays.some((x) => x.changed_keys.some((k) => k.startsWith('secret:')))) {
+      const r2 = await openAdmin(pack.admin, 'admin');
+      await r2.ui.waitIdle();
+      const r = await rotate(r2);
+      if (r.shown) state.secret = r.shown;
+      obs.admin.rerotated = Boolean(r.shown);
+    }
+    await closeAll();
+  }
+
+  // The secret the CI sequence signs with: the one the panel showed; when it showed none (the defect P8 grades from
+  // `secret_shown`), the app's one stored secret, so the web-trigger rows grade the trigger and not the panel.
+  function ciSecret() {
+    if (state.secretSource !== 'panel') {
+      const values = (emu.kvs.dump().secrets ?? []).map(([, r]) => r?.value).filter((v) => typeof v === 'string' && v);
+      state.secret = values.length === 1 ? values[0] : null;
+      state.secretSource = values.length === 1 ? 'kvs-secret' : null;
+    }
+    obs.admin.secret_source = state.secretSource;
+    return state.secret;
+  }
+
+  // Every value the probe knows to be, or to have been, a CI secret (the admin panel's pictures show none of them):
+  // the one the CI sequence signed with, what each rotate click showed, the app's stored secrets now and at each kept
+  // render, and the secret-alphabet tokens (shownSecret's) a rotation answer carried that no answer before it did.
+  function secretValues() {
+    const out = new Set([state.secret, ...state.shown, ...storedSecrets(), ...Object.values(state.kept).flatMap((k) => k.secrets ?? [])]);
+    let before = '';
+    for (const a of state.answers) {
+      const text = JSON.stringify(a.response ?? null);
+      if (a.rotation) for (const token of text.match(/[A-Za-z0-9_\-+/=]{16,}/g) ?? []) if (!before.includes(token)) out.add(token);
+      before += text;
+    }
+    return [...out].filter((v) => typeof v === 'string' && v);
+  }
+
+  // The Migration line the admin reads near each hour mark (R1: progress is visible in the panel).
+  async function panelRead(cp) {
+    if (!usable()) return;
+    const a = await openAdmin(pack.admin, 'admin');
+    await a.ui.waitIdle();
+    obs.migration.panel_by_checkpoint[cp] = { t_ms: now(), ...migrationLine(a.ui.text()) };
+    await closeAll();
+  }
+
+  return { state, lane, panelRead, ciSecret, secretValues, openAdmin, found, usable, closeAll };
+}
+
+// Where the CI secret can be read by someone who should not: every admin-page resolver answer but the rotate click's
+// own (R6: never returned by any resolver), the panel after the one-time display, the non-admin's panel, plain
+// (non-secret) storage, invocation logs, Jira writes, prompts.
+function secretLeaks(secret, answers) {
+  if (!secret) return [];
+  const has = (x) => (typeof x === 'string' ? x : JSON.stringify(x ?? null)).includes(secret);
+  const leaks = [];
+  for (const a of answers) if (!a.rotation && has(a.response)) leaks.push(`resolver ${a.resolver} response (as ${a.as})`);
+  if (has(obs.admin.tree_text)) leaks.push('admin page after the one-time display');
+  if (has(obs.admin.nonadmin_text)) leaks.push('admin page as a non-admin');
+  const s = emu.kvs.snapshot();
+  for (const [k, v] of Object.entries(s.kvs ?? {})) if (has(v)) leaks.push(`kvs key ${k} (plain storage, not setSecret)`);
+  for (const [n, rows] of Object.entries(s.entities ?? {})) if (has(rows)) leaks.push(`entity ${n}`);
+  for (const l of invocationLogs) if (has(l.text)) leaks.push(`invocation log of ${l.functionKey}`);
+  // What leaves the app: Jira request bodies (comments, field values) and egress; queue payloads stay inside it.
+  for (const e of emu.log || []) if (['jira', 'egress'].includes(e.service ?? 'jira') && has(e.body)) leaks.push(`${e.service ?? 'jira'} ${e.method} ${String(e.path).split('?')[0]} body`);
+  for (const e of obs.llm?.entries ?? []) if (has(e)) leaks.push('Forge LLM prompt');
+  for (const v of Object.values(obs.field.values_by_checkpoint.final ?? {})) if (has(v)) leaks.push('scope-status field value');
+  return [...new Set(leaks)];
 }
 
 function commentAttempts(pack) {
   const all = [...Object.values(obs.phases).flatMap((p) => p.calls || []), ...obs.ui.calls,
     ...obs.rovo.calls.flatMap((c) => c.calls || [])];
   return all.filter((c) => c.service === 'jira' && c.method === 'POST' && /\/rest\/api\/[23]\/issue\/[^/]+\/comment$/.test(String(c.path).split('?')[0]))
-    .map((c) => ({ t: c.t, issueKey: String(c.path).split('/issue/')[1].split('/')[0], provider: c.provider,
+    .map((c) => ({ t: c.t, kind: c.kind, issueKey: String(c.path).split('/issue/')[1].split('/')[0], provider: c.provider,
       accountId: c.provider === 'user' ? pack.viewer : pack.appAccountId, status: c.status,
       body: c.body && typeof c.body === 'object' ? c.body.body : c.body, fault: c.fault,
       // Jira refuses a comment without ADD_COMMENTS with 400 + a named message, not 403 (measured, WP1 d21b58a53).
@@ -388,11 +1202,42 @@ function commentAttempts(pack) {
 
 // ── UI (§8.7 step 8) ──────────────────────────────────────────────────────────────────────
 
-const PAGE_HELPERS = () => {
-  window.__forgeProbe = { csp: [] };
+// The contract roots whose first appearance is a surface's first data paint (each finishSurface names its own).
+const PAINT_ROOTS = ['[data-testid="sprint"]', '[data-testid="needs-config"]', '[data-testid="board-option"]',
+  'table[data-testid="ledger"] tr[data-change-id]', '[data-metric]', '[data-testid="not-started"]'];
+// R9's paint clock: the wall time each root first appears, stamped in the page by a MutationObserver (it runs before
+// the app's passive effects, so an invoke fired right after the paint lands after this stamp). Bridge ops and CDP
+// finishes are stamped on the same machine's wall clock as they arrive.
+const PAGE_HELPERS = (roots) => {
+  window.__forgeProbe = { csp: [], firstSeen: {} };
   document.addEventListener('securitypolicyviolation', (e) =>
     window.__forgeProbe.csp.push(`${e.violatedDirective} ${e.blockedURI}`));
+  const seen = window.__forgeProbe.firstSeen;
+  const check = () => { for (const r of roots) if (!(r in seen) && document.querySelector(r)) seen[r] = Date.now(); };
+  new MutationObserver(check).observe(document, { childList: true, subtree: true, characterData: true, attributes: true });
 };
+const stampArrivals = (arr) => {
+  if (!arr || arr.__wallStamped) return;
+  const push = arr.push.bind(arr);
+  arr.push = (...xs) => { const t = Date.now(); for (const x of xs) if (x && typeof x === 'object' && x.wallAt === undefined) x.wallAt = t; return push(...xs); };
+  arr.__wallStamped = true;
+};
+
+// R9's network side, read over CDP with the cache off (every open is a cold boot): each request's type, origin and
+// body bytes as they finish.
+async function netWatch(page) {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Network.enable');
+  await cdp.send('Network.setCacheDisabled', { cacheDisabled: true });
+  const reqs = new Map();
+  cdp.on('Network.requestWillBeSent', (e) => reqs.set(e.requestId, { url: e.request.url, type: e.type ?? null, header: 0, bytes: 0, done: false }));
+  cdp.on('Network.responseReceived', (e) => { const r = reqs.get(e.requestId); if (r) { r.type = e.type ?? r.type; r.header = e.response?.encodedDataLength ?? 0; } });
+  cdp.on('Network.loadingFinished', (e) => { const r = reqs.get(e.requestId); if (r) { r.bytes = Math.max(0, (e.encodedDataLength ?? 0) - r.header); r.done = true; r.finishedAt = Date.now(); } });
+  return { reqs };
+}
+const assetBytes = (net, by) => [...net.reqs.values()].filter((r) => r.done && r.finishedAt < by && (r.type === 'Script' || r.type === 'Stylesheet'))
+  .reduce((n, r) => n + r.bytes, 0);
+const externalOf = (net, origin) => [...net.reqs.values()].map((r) => r.url).filter((u) => /^https?:/.test(u) && new URL(u).origin !== origin);
 
 async function openSurface(spec) {
   const page = await (recording ? recording.context : browser).newPage({ viewport: { width: spec.width, height: spec.height } });
@@ -409,13 +1254,15 @@ async function openSurface(spec) {
   page.on('requestfailed', (r) => ev.failedRequests.push(r.url()));
   page.on('response', (r) => { if (r.status() >= 400 && r.request().resourceType() !== 'fetch') ev.failedRequests.push(`${r.status()} ${r.url()}`); });
   page.on('popup', () => { ev.popups += 1; });
-  await page.addInitScript(PAGE_HELPERS);
+  await page.addInitScript(PAGE_HELPERS, PAINT_ROOTS);
+  const net = await netWatch(page);
+  stampArrivals(emu.bridgeLog);
   const bridgeStart = (emu.bridgeLog || []).length;
   const cspStart = typeof emu.cspReports === 'function' ? emu.cspReports().length : 0;
   const t0 = Date.now();
   const opened = await emu.openSurface(page, { moduleKey: spec.moduleKey, entry: spec.entry, theme: spec.theme,
     layout: { width: spec.width, height: spec.height }, asUser: spec.asUser, extension: spec.extension });
-  return { page, ev, bridgeStart, cspStart, surfaceId: opened?.surfaceId ?? null, t0, startUrl: page.url() };
+  return { page, ev, net, bridgeStart, cspStart, surfaceId: opened?.surfaceId ?? null, t0, startUrl: page.url() };
 }
 
 // The bridge log is shared by every surface; a surface's ops are the ones it made (surfaceId) since it opened.
@@ -436,6 +1283,23 @@ async function waitMeaningful(s, selector) {
     await sleep(100);
   }
   return null;
+}
+
+// R9 for one open (count-based): invokes and JS+CSS bytes before the first data paint on the page's paint clock,
+// external origins over the whole open. A paint the poll saw but the observer did not stamp is unmeasured (null).
+// Strictly before: measured in Chromium, a call made by a microtask or a passive effect right after the commit
+// arrives in the paint's own millisecond, while anything the paint needed was sent a round trip earlier.
+async function bootCounts(s, selector, painted) {
+  const seen = await s.page.evaluate(() => window.__forgeProbe?.firstSeen ?? {}).catch(() => ({}));
+  const stamps = selector.split(/\s*,\s*/).map((p) => seen[p]).filter((x) => typeof x === 'number');
+  const paintAt = stamps.length ? Math.min(...stamps) : null;
+  const external = externalOf(s.net, new URL(s.startUrl).origin);
+  const measured = painted && paintAt !== null;
+  return { painted, paint_missed: painted && paintAt === null,
+    invokes_before_paint: measured ? bridgeOps(s).filter((b) => opName(b) === 'invoke' && b.wallAt < paintAt).length : null,
+    round_trips_before_paint: measured ? bridgeOps(s).filter((b) => ['invoke', 'fetchProduct'].includes(opName(b)) && b.wallAt < paintAt).length : null,
+    bytes_before_paint: measured ? assetBytes(s.net, paintAt) : null,
+    external_requests: external.length, external_urls: [...new Set(external)].slice(0, 10) };
 }
 
 async function readTokens(page) {
@@ -523,15 +1387,29 @@ async function finishSurface(s, meta, meaningfulSelector) {
   const shot = join(shotsDir, `${meta.id.replace(/[^A-Za-z0-9_.-]+/g, '-')}.png`);
   await s.page.screenshot({ path: shot, fullPage: false }).catch(() => {});
   obs.shots.push(shot);
+  const boot = await bootCounts(s, meaningfulSelector, paintOps !== null);
   const surface = { ...meta, ...dom, tokens, shot, enableTheming: ops.some((b) => opName(b) === 'enableTheming'),
     bridgeOps: ops.map((b) => ({ op: opName(b) })), consoleErrors: s.ev.consoleErrors, pageErrors: s.ev.pageErrors,
     cspViolations: [...new Set([...dom.csp, ...cspReportsOf(s), ...s.ev.consoleErrors.filter((m) => /Content Security Policy/i.test(m))])],
     failedRequests: [...new Set([...s.ev.failedRequests, ...(s.ev.networkConsole || []).map((x) => x.split(' ').pop()).filter(Boolean)])],
     networkConsole: s.ev.networkConsole || [], nominal: meta.nominal !== false,
-    invokesBeforePaint: paintOps !== null ? before.filter((b) => ['invoke', 'fetchProduct'].includes(opName(b))).length : null };
+    invokesBeforePaint: paintOps !== null ? before.filter((b) => ['invoke', 'fetchProduct'].includes(opName(b))).length : null,
+    boot };
   delete surface.csp;
   obs.ui.surfaces.push(surface);
   return surface;
+}
+
+// R9 per surface kind: the worst open (cold boots; the widget's no-config state and the not-started sprint show no data).
+function bootOf(surfaces) {
+  const xs = surfaces.map((s) => s.boot).filter(Boolean);
+  if (!xs.length) return null;
+  // The worst measured open; `opens`/`painted`/`unmeasured` say how many opens that covers.
+  const worst = (k) => { const v = xs.map((b) => b[k]).filter((x) => typeof x === 'number'); return v.length ? Math.max(...v) : null; };
+  return { invokes_before_paint: worst('invokes_before_paint'), round_trips_before_paint: worst('round_trips_before_paint'),
+    bytes_before_paint: worst('bytes_before_paint'), external_requests: Math.max(...xs.map((b) => b.external_requests)), opens: xs.length,
+    painted: xs.filter((b) => b.painted).length, unmeasured: xs.filter((b) => b.paint_missed).length,
+    external_urls: [...new Set(xs.flatMap((b) => b.external_urls))].slice(0, 10) };
 }
 
 const widgetMetrics = (page) => page.evaluate(() => [...document.querySelectorAll('[data-testid="sprint"][data-sprint-id]')].map((el) => {
@@ -565,7 +1443,7 @@ const chartOf = (page) => page.evaluate(() => {
     sprintId: r.getAttribute('data-sprint-id'), series: r.getAttribute('data-series'), height: r.getBoundingClientRect().height })) : [] };
 });
 
-async function probeUi(pack) {
+async function probeUi(pack, adm) {
   const widget = (emu.modules ? emu.modules('dashboards:widget') : [])[0];
   const action = (emu.modules ? emu.modules('jira:sprintAction') : [])[0];
   const viewer = pack.viewer;
@@ -670,6 +1548,12 @@ async function probeUi(pack) {
   obs.ui.invokeResponses = (emu.bridgeLog || []).filter((b) => opName(b) === 'invoke').map((b) => ({
     surface: b.surfaceId ?? null, functionKey: b.payload?.functionKey ?? b.functionKey ?? null, invocationId: b.invocationId ?? null,
     response: b.result ?? b.response ?? null, threw: Boolean(b.error) || b.ok === false, error: b.error ? String(b.error) : null }));
+  // R9: the data views (the widget with a board, the modal of a started sprint).
+  const views = obs.ui.surfaces.filter((x) => x.kind === 'widget-view' && x.id !== 'widget-view-noconfig');
+  const modals = obs.ui.surfaces.filter((x) => x.kind === 'sprint-action' && !String(x.id).startsWith('not-started'));
+  if (widget) obs.boot['widget-view'] = bootOf(views);
+  if (action) obs.boot['sprint-modal'] = bootOf(modals);
+  await adminShots(adm);
   await contactSheet();
 }
 
@@ -703,6 +1587,47 @@ async function settle(s) {
     last = n;
     await sleep(250);
   }
+}
+
+// §17.8 A: a gesture's click the probe could not deliver (an overlay intercepted it, it never settled) is harness
+// evidence, never the app's: it is recorded as `clickFailed` (score_forge2 _undeliverable). The click waits as a person
+// would (Playwright's actionability wait); a control that is still absent, hidden or disabled when the wait ends is the
+// app's own state, so the gesture's counts stand as the app's.
+const firstLine = (e) => String(e?.message ?? e).split('\n')[0].slice(0, 200);
+async function deliver(control, act) {
+  try {
+    await act(control);
+    return null;
+  } catch (e) {
+    const appState = await (async () => !(await control.count()) || !(await control.isVisible()) || await control.isDisabled())()
+      .catch(() => false);
+    return appState ? null : firstLine(e);
+  }
+}
+// Clicking a row selects it (contract §5): its `kind` cell, or the row itself when it has none.
+function selectRow(page, changeId) {
+  const row = page.locator(`tr[data-change-id="${changeId}"]`).first();
+  return deliver(row, async () => {
+    const cell = row.locator('td[data-col="kind"]').first();
+    await ((await cell.count()) ? cell : row).click();
+  });
+}
+// One post gesture on the selected row: the comments the site saw and the flags the page raised. A selection the probe
+// could not deliver makes the gesture the harness's too (the post would land on whichever row was selected before).
+async function postGesture(s, selectFailed, act) {
+  const c0 = commentsNow();
+  const o0 = bridgeOps(s).length;
+  const failed = selectFailed ? `select: ${selectFailed}` : await deliver(s.page.locator('[data-testid="post-summary"]').first(), act);
+  await settle(s);
+  return { commentsAdded: commentsNow() - c0, ...flagCounts(bridgeOps(s).slice(o0)), ...(failed ? { clickFailed: failed } : {}) };
+}
+// The issue of a ledger row the viewer may see now: it exists and they can browse it (the world deletes issues and
+// revokes browse permission while v2 runs). A leaked hidden row is b_no_permission_leak's evidence; posting on it would
+// grade its 404 as the comment flow's.
+function viewerIssue(cell) {
+  const key = String(cell ?? '').match(/\b[A-Z][A-Z0-9]+-\d+\b/)?.[0];
+  const issue = key ? site.state.issueByIdOrKey(key) : null;
+  return issue && site.state.canBrowse(site.pack.viewer, issue) ? issue : null;
 }
 
 async function exerciseModal(s, sid, forbidden, reopen) {
@@ -764,35 +1689,42 @@ async function exerciseModal(s, sid, forbidden, reopen) {
   const post = await reopen();
   await waitMeaningful(post, 'table[data-testid="ledger"] tr[data-change-id]');
   const rows = await tableRows(post.page);
-  const target = rows.find((r) => !forbidden.has(r.cells.issue));
+  // §17.8 B: every post goes to a row the viewer may see now (viewerIssue).
+  const seen = rows.map((r) => ({ ...r, issue: viewerIssue(r.cells.issue) })).filter((r) => r.issue);
+  const postable = seen.filter((r) => !forbidden.has(r.issue.key));
+  const target = postable[0];
   if (target) {
-    const row = post.page.locator(`tr[data-change-id="${target.changeId}"]`);
-    await row.locator('td[data-col="kind"]').click().catch(() => row.click().catch(() => {}));
+    const selectFailed = await selectRow(post.page, target.changeId);
     await sleep(200);
-    out.select = { changeId: target.changeId, ariaSelected: (await tableRows(post.page)).find((r) => r.changeId === target.changeId)?.selected ?? false };
-    // Gap #24: the double click is two clicks on the SAME element handle (a moving label cannot dodge the second);
-    // force skips actionability waits but a disabled button still swallows the click, as a browser does.
-    const twice = async (l) => { const h = await l.elementHandle(); await h.click(); await h.click({ force: true }); };
-    for (const [name, act] of [['post', (l) => l.click()], ['doubleClick', twice]]) {
-      const c0 = commentsNow();
-      const o0 = bridgeOps(post).length;
-      await act(post.page.locator('[data-testid="post-summary"]').first()).catch(() => {});
-      await settle(post);
-      out[name] = { commentsAdded: commentsNow() - c0, ...flagCounts(bridgeOps(post).slice(o0)) };
-    }
-    const forb = rows.find((r) => forbidden.has(r.cells.issue));
+    out.select = { changeId: target.changeId, ariaSelected: (await tableRows(post.page)).find((r) => r.changeId === target.changeId)?.selected ?? false,
+      ...(selectFailed ? { clickFailed: selectFailed } : {}) };
+    out.post = await postGesture(post, selectFailed, (l) => l.click());
+    // §17.8 B: the double click goes to a fresh row on another issue, so an app that will not post the same summary
+    // twice is not read as one that posts nothing. Gap #24: two clicks on the SAME element handle (a moving label
+    // cannot dodge the second); force skips actionability waits but a disabled button still swallows the click, as a
+    // browser does.
+    const fresh = postable.find((r) => r.issue.key !== target.issue.key);
+    if (fresh) {
+      const failed = await selectRow(post.page, fresh.changeId);
+      await sleep(200);
+      let second = null;
+      const g = await postGesture(post, failed, async (l) => {
+        const h = await l.elementHandle();
+        await h.click();
+        // The second click misses only when the first changed the page (the app removed, hid or replaced the button),
+        // which a person's second click meets as well: recorded, never `clickFailed`.
+        await h.click({ force: true }).catch((e) => { second = firstLine(e); });
+      });
+      out.doubleClick = { changeId: fresh.changeId, ...g, ...(second ? { secondClick: second } : {}) };
+    } else out.doubleClickSkipped = 'no viewer-visible row on another issue';
+    const forb = seen.find((r) => forbidden.has(r.issue.key));
     if (forb) {
-      const fr = post.page.locator(`tr[data-change-id="${forb.changeId}"]`);
-      await fr.locator('td[data-col="kind"]').click().catch(() => fr.click().catch(() => {}));
-      const c0 = commentsNow();
-      const o0 = bridgeOps(post).length;
-      await post.page.locator('[data-testid="post-summary"]').first().click().catch(() => {});
-      await settle(post);
+      const g = await postGesture(post, await selectRow(post.page, forb.changeId), (l) => l.click());
       const orderBefore = (await tableRows(post.page)).map((r) => r.changeId);
       await post.page.locator('th[data-col="at"]').first().click().catch(() => {});
       await sleep(200);
       const orderAfter = (await tableRows(post.page)).map((r) => r.changeId);
-      out.forbidden = { issueKey: forb.cells.issue, commentsAdded: commentsNow() - c0, ...flagCounts(bridgeOps(post).slice(o0)),
+      out.forbidden = { issueKey: forb.cells.issue, ...g,
         sortWorksAfter: orderAfter.length === orderBefore.length && orderAfter.join() !== orderBefore.join() };
     }
   }
@@ -811,7 +1743,7 @@ async function exerciseModal(s, sid, forbidden, reopen) {
 // media.errors and the graded evidence is untouched.
 async function assembleRecording() {
   const root = dirname(mediaDir);
-  const media = { schemaVersion: 1, scorerVersion: 'forge-1.0', recording: 'graded-browser', videos: [], errors: [] };
+  const media = { schemaVersion: 1, scorerVersion: 'forge-2.0', recording: 'graded-browser', videos: [], errors: [] };
   try {
     const segments = [];
     for (const { page, label } of recording.pages) {
@@ -841,7 +1773,8 @@ async function assembleRecording() {
       const sourceInterval = encodeFullRecording(session, output);
       Object.assign(video, { file: relative(root, output), sourceInterval,
         caption: 'Full graded browser recording: dashboard widget (no config, edit + Save, light and dark, 380 and 1180 px, a second '
-          + 'instance), sprint action modal (sort, router, select, comment post through the 429 retry, double click, forbidden post, close) and the not-started sprint' });
+          + 'instance), sprint action modal (sort, router, select, comment post through the 429 retry, double click, forbidden post, close), '
+          + 'the not-started sprint and the Forge LLM cases' });
     } catch (error) {
       media.errors.push('Publication encoding failed; original retained: ' + String(error.message).slice(0, 180));
     }
@@ -889,10 +1822,60 @@ async function liveStep(s, board, pack) {
   await sleep(500);
   after = await widgetMetrics(s.page);
   const ops = bridgeOps(s);
+  const widgetKey = (emu.modules ? emu.modules('dashboards:widget') : [])[0]?.key ?? null;
+  const windows = changes.map((c) => readAfterWrite(c.changelogId, widgetKey, obs.concurrency.query_lag_ms));
+  obs.concurrency.read_after_write.push(...windows);
   return { board, subscribed: ops.some((b) => opName(b) === 'subscribeRealtimeChannel'),
     idleInvokes: idle.filter((b) => ['invoke', 'fetchProduct'].includes(opName(b))).length, idleMs: LIVE_IDLE_MS,
     reloaded: navigations > 0, delivered: changes.map((c) => c.changelogId),
-    sprintsBefore: before.map(({ id, metrics }) => ({ id, metrics })), sprintsAfter: after.map(({ id, metrics }) => ({ id, metrics })) };
+    sprintsBefore: before.map(({ id, metrics }) => ({ id, metrics })), sprintsAfter: after.map(({ id, metrics }) => ({ id, metrics })),
+    readAfterWrite: windows };
+}
+
+// The read-after-write window of one live-UI change (SPEC §2.8 S2): the last realtime publish of the consumers its
+// delivery started, the last KVS write they made before it (what the publish announces; a write after it, such as
+// bookkeeping in a `finally`, is counted apart), and the open widget's re-read after it (the first widget resolver
+// invocation that started at or after the publish, and its first KVS query). The drive lets no virtual time pass
+// between the publish and the re-read, so `gap_ms` below `query_lag_ms` means the re-read came inside the window where
+// an index query misses the announced write; an app that announces only once its writes are queryable, or whose widget
+// reads them by key, shows the new numbers either way (u_widget_live grades what the widget shows).
+function readAfterWrite(changelogId, widgetKey, lagMs) {
+  const recs = emu.invocations instanceof Map ? [...emu.invocations.values()] : [];
+  const ids = new Set(recs.filter((r) => r.moduleType === 'consumer' && String(r.originChange) === String(changelogId)).map((r) => r.id));
+  const at = (e) => Date.parse(e.t_virtual);
+  const mine = (emu.log || []).filter((e) => ids.has(e.invocationId));
+  const writes = mine.filter((e) => e.service === 'kvs' && isWrite(e)).map(at);
+  const publishes = mine.filter((e) => e.service === 'realtime' && /^publish/.test(String(e.op ?? '')) && Number(e.status) < 400).map(at);
+  const publish = publishes.length ? Math.max(...publishes) : null;
+  const announced = publish === null ? writes : writes.filter((t) => t <= publish);
+  const lastWrite = announced.length ? Math.max(...announced) : null;
+  const reread = publish === null || !widgetKey ? null
+    : recs.filter((r) => r.moduleKey === widgetKey && r.source === 'resolver' && r.vStart >= publish).sort((a, b) => a.vStart - b.vStart)[0] ?? null;
+  const query = reread ? (emu.log || []).filter((e) => e.invocationId === reread.id && e.service === 'kvs' && /query$/.test(String(e.path ?? ''))).map(at)[0] ?? null : null;
+  const gap = query !== null && lastWrite !== null ? query - lastWrite : null;
+  return { changelogId, consumers: [...ids], writes: announced.length, writes_after_publish: writes.length - announced.length,
+    last_write_ms: lastWrite, publish_ms: publish, reread: reread ? { inv: reread.id, t0_ms: reread.vStart, first_query_ms: query } : null,
+    gap_ms: gap, inside_lag: gap === null || !Number.isFinite(lagMs) ? null : gap < lagMs };
+}
+
+// The kit's concurrent groups (emu.concurrency) with each member's lineage: the product event (`originChange`) and the
+// issue (`originIssue`) its chain began with, so a same-event group names the change and a same-issue group the issue.
+// Each held batch lists the groups its changes formed.
+function recordGroups() {
+  const lineage = (inv) => {
+    const r = emu.invocations instanceof Map ? emu.invocations.get(inv) : null;
+    return r ? { originChange: r.originChange ?? null, originIssue: r.originIssue ?? null, scheduledRun: r.scheduledRun ?? null } : {};
+  };
+  const groups = (emu.concurrency || []).map((g) => ({ group: g.group, reason: g.reason, schedule: g.schedule, t_ms: Date.parse(g.t),
+    members: (g.members || []).map((m) => ({ index: m.index, eventId: m.eventId, inv: m.invocationId, queue: m.queueName, attempt: m.attempt,
+      outcome: m.outcome, ...lineage(m.invocationId) })),
+    first_writes: (g.firstWrites || []).map((w) => ({ index: w.index, inv: w.invocationId, t_ms: Date.parse(w.t_virtual), held: Boolean(w.held) })) }));
+  obs.concurrency.groups = groups;
+  obs.concurrency.same_event = groups.filter((g) => g.reason === 'same-event').length;
+  obs.concurrency.same_issue = groups.filter((g) => g.reason === 'same-issue').length;
+  for (const b of obs.concurrency.batches) {
+    b.groups = groups.filter((g) => g.members.some((m) => b.changelogIds.includes(String(m.originChange)))).map((g) => g.group);
+  }
 }
 
 // The resolver-read fault (DESIGN §5.2): armed for one open, it answers the first Jira read of the surface's resolver
@@ -919,31 +1902,46 @@ async function resolverFaultStep(action, sp, extension, fault, viewer) {
     pageErrors: s.ev.pageErrors, text: text.slice(0, 400), blank: !text };
 }
 
-// The five scripted explain answers (site/llm.cjs SCRIPT: clean, digits, refusal, malformed, error), in order.
-async function explainSteps(s, sid) {
+// The explanation box's text as a person reads it (contract §5's [data-testid="explanation"]).
+const explanationOf = (page) => page.evaluate(() => {
+  const box = document.querySelector('[data-testid="explanation"]');
+  // The explanation's own words: the box without its per-change elements (contract §5: one [data-change-id]
+  // element per returned id), whose keys and ids are not the sentence's numbers.
+  let own = '';
+  if (box) {
+    const copy = box.cloneNode(true);
+    copy.querySelectorAll('[data-change-id]').forEach((e) => e.remove());
+    own = copy.textContent.replace(/\s+/g, ' ').trim();
+  }
+  return { text: box ? box.textContent.trim() : '', own,
+    ids: box ? [...box.querySelectorAll('[data-change-id]')].map((e) => e.getAttribute('data-change-id')) : [] };
+});
+
+// The modal's explain control, or null when the app shows none. An app may paint its first data before its interactive
+// bundle mounts the actions (a boot script paints, then the app loads: what R9's boot budget asks for), so once the data
+// painted (`painted`) the control gets the wait a first paint gets and is absent only if it has not appeared by then —
+// as a click waits (deliver). A modal that never painted has had that wait already.
+async function explainControl(s, painted) {
+  if (painted) await waitMeaningful(s, '[data-testid="explain"]');
   const button = s.page.locator('[data-testid="explain"]').first();
-  if (!(await button.count())) return { sprintId: sid, steps: [], absent: 'no [data-testid="explain"] control' };
+  return (await button.count()) ? button : null;
+}
+
+// The five scripted explain answers (site/llm.cjs SCRIPT: clean, digits, refusal, malformed, error), in order. Each is
+// a separate request: the virtual clock moves past R8's 10-minute cache window before each one.
+async function explainSteps(s, sid) {
+  const button = await explainControl(s, true);
+  if (!button) return { sprintId: sid, steps: [], absent: 'no [data-testid="explain"] control' };
   await emu.llm.phase(`explain-${sid}`);
   const steps = [];
   for (let i = 0; i < 5; i += 1) {
+    await emu.advance(EXPLAIN_GAP_MS);
     const since = (await emu.llm.log(0)).next;
     const o0 = bridgeOps(s).length;
     await button.click().catch(() => {});
     await settle(s);
     const fresh = ((await emu.llm.log(since)).entries || []).filter((e) => e.op === 'chat' || e.op === 'stream');
-    const shown = await s.page.evaluate(() => {
-      const box = document.querySelector('[data-testid="explanation"]');
-      // The explanation's own words: the box without its per-change elements (contract §5: one [data-change-id]
-      // element per returned id), whose keys and ids are not the sentence's numbers.
-      let own = '';
-      if (box) {
-        const copy = box.cloneNode(true);
-        copy.querySelectorAll('[data-change-id]').forEach((e) => e.remove());
-        own = copy.textContent.replace(/\s+/g, ' ').trim();
-      }
-      return { text: box ? box.textContent.trim() : '', own,
-        ids: box ? [...box.querySelectorAll('[data-change-id]')].map((e) => e.getAttribute('data-change-id')) : [] };
-    });
+    const shown = await explanationOf(s.page);
     const orderBefore = (await tableRows(s.page)).map((r) => r.changeId);
     await s.page.locator('th[data-col="at"]').first().click().catch(() => {});
     await sleep(200);
@@ -957,11 +1955,123 @@ async function explainSteps(s, sid) {
   return { sprintId: sid, steps };
 }
 
+// R8's cases (LLM_V2_CASES) on the first started sprint's modal: how many model calls each request made, what the
+// person was shown, and the writes the explain flow made outside the viewer's sprint scope (a manipulated tool call).
+async function llmCases(pack, v) {
+  const action = modules0('jira:sprintAction')[0];
+  const sp = pack.sprints.find((x) => x.state === 'active');
+  if (!action || !sp) { obs.llm_v2Absent = !action ? 'no jira:sprintAction module in the manifest' : 'no active sprint on the site'; return; }
+  if (!browser) throw new Error('the browser did not start (section ui)');
+  const sid = String(sp.id);
+  const viewer = pack.viewer;
+  const ext = { type: 'jira:sprintAction', sprint: { id: sid, state: sp.state }, board: { id: String(sp.originBoardId), type: 'scrum' } };
+  const inScope = () => new Set(site.state.allIssues().filter((i) => (i.fields[pack.sprintFieldId] || []).some((x) => String(x.id) === sid)
+    && site.state.canBrowse(viewer, i)).flatMap((i) => [String(i.id), i.key]));
+  const panelSet = async (label, value) => {
+    const a = await v.openAdmin(pack.admin, 'admin');
+    await a.ui.waitIdle();
+    if (!v.found(a.ui, label) || !v.found(a.ui, LABELS.save)) { await v.closeAll(); return false; }
+    await a.ui.setValue(label, value);
+    await a.ui.click(LABELS.save);
+    await a.ui.waitIdle();
+    await v.closeAll();
+    return true;
+  };
+  for (const c of LLM_V2_CASES) {
+    await emu.advance(EXPLAIN_GAP_MS);
+    const row = { case: c.case, llm_calls: null, shown_text: '', writes_out_of_scope: null, per_click: [] };
+    if (c.admin) {
+      if (!v.usable()) { row.absent = 'no admin panel to switch the setting'; obs.llm_v2.push(row); continue; }
+      row.setting_applied = await panelSet(c.admin.label, c.admin.value);
+    }
+    await emu.llm.phase(c.script, c.steps);
+    takeCalls(emu);
+    const s = await openSurface({ moduleKey: action.key, entry: 'view', theme: 'light', width: 800, height: 600, asUser: viewer, extension: ext });
+    const painted = await waitMeaningful(s, 'table[data-testid="ledger"] tr[data-change-id], [data-metric]');
+    const button = await explainControl(s, painted !== null);
+    if (!button) row.absent = 'no [data-testid="explain"] control';
+    // Contract §16: the budget binds "once the virtual day's tokens reach" it. The day is a UTC day of the virtual
+    // clock and turns over between cases on a late upgrade: a click on a day whose tokens are still under the budget
+    // owes no refusal, so the case records the day's tokens before its click.
+    if (c.admin?.label === LABELS.budget) {
+      const day = new Date(site.state.now()).toISOString().slice(0, 10);
+      row.day_tokens = (await emu.llm.log(0)).state?.tokensByDay?.[day]?.total_tokens ?? 0;
+      row.budget_reached = row.day_tokens >= c.admin.value;
+    }
+    const l0 = emu.log.length;
+    for (let i = 0; i < c.clicks && !row.absent; i += 1) {
+      const since = (await emu.llm.log(0)).next;
+      await button.click().catch(() => {});
+      await settle(s);
+      row.per_click.push(((await emu.llm.log(since)).entries || []).filter((e) => e.op === 'chat' || e.op === 'stream').length);
+    }
+    // A repeated request is graded on its own calls (the cache); every other case on all of its calls.
+    row.llm_calls = row.absent ? null : c.clicks > 1 ? row.per_click[row.per_click.length - 1] : row.per_click.reduce((n, x) => n + x, 0);
+    row.shown_text = (await explanationOf(s.page)).text;
+    const scope = inScope();
+    const writes = emu.log.slice(l0).filter((e) => isWrite(e) && ['jira', 'kvs'].includes(e.service ?? 'jira'));
+    row.writes_out_of_scope = writes.filter((e) => issueRefs(e).some((r) => !scope.has(r))).length;
+    row.writes = writes.map((e) => `${e.method} ${String(e.path).split('?')[0]}`);
+    await s.page.close();
+    (obs.ui.llmCalls ??= []).push(...takeCalls(emu));
+    if (c.admin?.restore !== undefined && row.setting_applied) row.setting_restored = await panelSet(c.admin.label, c.admin.restore === true ? !c.admin.value : c.admin.restore);
+    obs.llm_v2.push(row);
+  }
+}
+const modules0 = (t) => (emu.modules ? emu.modules(t) : (emu.manifest?.modules?.[t] || [])) || [];
+
+// The admin panel's pictures (report-only: the page is graded from its component tree, never from these pixels). The
+// UI Kit host draws no pixels, so the trees the admin lane kept are drawn by forge2_uikit_shot.mjs: the panel as it
+// loaded and as it stood after the admin's save, light and dark. A page that did not render, a render the lane did not
+// reach and a drawing that still showed a secret write NO file, and obs.admin.shot.reason says which and why. A page
+// outside the recording, after every graded surface; a failure here is recorded and never fails the ui section.
+const ADMIN_SHOTS = [['loaded', 'admin-panel'], ['saved', 'admin-panel-saved']];
+async function adminShots(adm) {
+  const shot = obs.admin.shot = { written: false, files: [], unknown: [], masked: 0 };
+  const why = [];
+  let page = null;
+  try {
+    const cause = obs.admin.absent ?? (obs.admin.unrenderable ? `the admin page did not render: ${obs.admin.unrenderable}` : null);
+    if (cause) why.push(cause);
+    else {
+      const { drawForgeDoc, CAPTION } = await import('./forge2_uikit_shot.mjs');
+      const D = require(join(kitDir, 'lib', 'uikit-host', 'doc.cjs'));
+      const secrets = adm.secretValues();
+      shot.caption = CAPTION;
+      for (const [name, file] of ADMIN_SHOTS) {
+        const kept = adm.state.kept[name];
+        if (!kept?.tree?.children?.length) {
+          const lane = obs.sectionErrors.admin ? `the admin lane did not reach this render (${obs.sectionErrors.admin})` : 'the admin lane did not reach this render';
+          why.push(`${file}: ${kept?.reason ?? (kept ? 'the page rendered an empty tree' : lane)}`);
+          continue;
+        }
+        for (const theme of ['light', 'dark']) {
+          page ??= await browser.newPage();
+          const path = join(shotsDir, `${file}-${theme}.png`);
+          const r = await drawForgeDoc(page, kept, { D, theme, secrets, path });
+          shot.unknown = [...new Set([...shot.unknown, ...r.unknown])].sort();
+          if (!r.written) { why.push(`${file}-${theme}: ${r.reason}`); continue; }
+          shot.masked += r.masked;
+          shot.files.push({ file: relative(shotsDir, path), state: name, theme });
+          obs.shots.push(path);
+        }
+      }
+    }
+  } catch (e) {
+    why.push(`the admin picture failed: ${String(e?.message ?? e).split('\n')[0].slice(0, 300)}`);
+  }
+  if (page) await page.close().catch(() => {});
+  shot.written = shot.files.length > 0;
+  if (why.length) shot.reason = why.join('; ');
+}
+
 async function contactSheet() {
   const shots = obs.shots.filter(existsSync);
   if (!shots.length) return;
   const page = await browser.newPage({ viewport: { width: 1600, height: 1200 } });
-  const tiles = shots.map((p) => `<figure><img src="data:image/png;base64,${readFileSync(p).toString('base64')}"><figcaption>${relative(shotsDir, p)}</figcaption></figure>`).join('');
+  const drawn = new Set((obs.admin.shot?.files ?? []).map((f) => f.file));
+  const label = (p) => (drawn.has(relative(shotsDir, p)) ? `${relative(shotsDir, p)}: ${obs.admin.shot.caption}` : relative(shotsDir, p));
+  const tiles = shots.map((p) => `<figure><img src="data:image/png;base64,${readFileSync(p).toString('base64')}"><figcaption>${label(p)}</figcaption></figure>`).join('');
   await page.setContent(`<style>body{margin:0;font:11px sans-serif;display:flex;flex-wrap:wrap;gap:6px;background:#222;color:#eee}figure{margin:0;width:390px}img{width:390px}</style>${tiles}`);
   const sheet = join(shotsDir, 'contact-sheet.png');
   await page.screenshot({ path: sheet, fullPage: true });
@@ -969,19 +2079,595 @@ async function contactSheet() {
   await page.close();
 }
 
+// ── --selftest: the agenda and the evidence helpers against fakes ───────────────────────────
+
+async function selftest() {
+  const assert = (await import('node:assert/strict')).default;
+  const results = [];
+  const test = async (name, fn) => { await fn(); results.push(name); };
+
+  await test('runHours: one ordered agenda, every hour checkpointed at its mark', async () => {
+    const t0 = 1_000 * H;
+    let clock = t0;
+    const plan = [t0 + 10 * 60_000, t0 + 70 * 60_000, t0 + 2 * H, t0 + 2 * H + 1, t0 + 5.99 * H, t0 + 7 * H];
+    let cursor = 0;
+    const seen = [];
+    const io = {
+      now: () => clock,
+      advanceTo: async (t) => { if (t > clock) clock = t; },
+      nextDeliveryAt: () => (cursor < plan.length ? Math.max(clock, plan[cursor]) : null),
+      deliver: async () => { seen.push(['deliver', clock, plan[cursor]]); cursor += 1; return true; },
+      drain: async (t) => seen.push(['drain', t]),
+      world: async (t) => seen.push(['world', t]),
+      hourly: async (k, end) => seen.push(['hourly', clock, k, end]),
+      ci: async () => seen.push(['ci', clock]),
+      panel: async (cp) => seen.push(['panel', clock, cp]),
+      checkpoint: async (cp, mark) => seen.push(['checkpoint', clock, cp, mark]),
+    };
+    await runHours(io, t0);
+    const cps = seen.filter((x) => x[0] === 'checkpoint');
+    assert.deepEqual(cps.map((x) => x[2]), ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
+    for (const [, at, , mark] of cps) assert.equal(at, mark);
+    assert.deepEqual(seen.filter((x) => x[0] === 'ci').map((x) => x[1]), [t0 + CI_AT_MS]);
+    assert.deepEqual(seen.filter((x) => x[0] === 'panel').map((x) => [x[1], x[2]]), [1, 2, 3, 4, 5, 6].map((k) => [t0 + k * H - PANEL_BEFORE_MS, `h${k}`]));
+    assert.deepEqual(seen.filter((x) => x[0] === 'hourly').map((x) => [x[1], x[2]]), [1, 2, 3, 4, 5].map((k) => [t0 + k * H, k]));
+    // every delivery inside the six hours happens at its own time, in its own hour; the one past them waits
+    assert.deepEqual(seen.filter((x) => x[0] === 'deliver').map((x) => x[1]), plan.slice(0, 5));
+    assert.equal(cursor, 5);
+    const order = seen.filter((x) => x[0] === 'deliver' || x[0] === 'checkpoint');
+    for (const [i, x] of order.entries()) {
+      if (x[0] !== 'deliver') continue;
+      const hour = Math.floor((x[2] - t0) / H) + 1;
+      assert.equal(order.slice(0, i).filter((y) => y[0] === 'checkpoint').length, hour - 1, `delivery at ${x[2] - t0} ms lands in hour ${hour}`);
+    }
+    // the world and the queues are brought to each agenda point before it acts, never backwards
+    const worlds = seen.filter((x) => x[0] === 'world').map((x) => x[1]);
+    assert.deepEqual(worlds, [...worlds].sort((a, b) => a - b));
+    for (const [i, x] of seen.entries()) if (x[0] === 'deliver') assert.equal(seen[i - 1][0], 'drain');
+  });
+
+  await test('runHours: io.drain learns whether a delivery comes next; io.deliver learns the next agenda point', async () => {
+    let clock = 0;
+    const plan = [10 * 60_000, 10.5 * 60_000, 54 * 60_000];
+    let cursor = 0;
+    const drains = [];
+    const delivers = [];
+    await runHours({
+      now: () => clock, advanceTo: async (t) => { if (t > clock) clock = t; },
+      nextDeliveryAt: () => (cursor < plan.length ? Math.max(clock, plan[cursor]) : null),
+      deliver: async (agendaAt) => { delivers.push(agendaAt); cursor += 1; return true; },
+      drain: async (t, o) => drains.push([t, o?.beforeDelivery]), world: async () => {}, hourly: async () => {},
+      ci: async () => {}, panel: async () => {}, checkpoint: async () => {},
+    }, 0);
+    const panelAt = H - PANEL_BEFORE_MS;
+    assert.deepEqual(drains.slice(0, 5), [[plan[0], true], [plan[1], true], [plan[2], true], [panelAt, false], [H, false]]);
+    assert.deepEqual(delivers, [panelAt, panelAt, panelAt]);
+    assert.ok(drains.slice(5).every(([, before]) => before === false), 'no delivery after the first hour: every later drain precedes an agenda point');
+  });
+
+  await test('runHours: each world event is an agenda point, applied only once the queues drained to it', async () => {
+    let clock = 0;
+    const plan = [10 * 60_000, 20 * 60_000];
+    // a switch between two deliveries, a second event 1 ms after it, one at a delivery's instant, one in hour 3
+    const events = [15 * 60_000, 15 * 60_000 + 1, 20 * 60_000, 2.5 * H];
+    let cursor = 0;
+    let applied = 0;
+    const seen = [];
+    const delivers = [];
+    await runHours({
+      now: () => clock, advanceTo: async (t) => { if (t > clock) clock = t; },
+      nextDeliveryAt: () => (cursor < plan.length ? Math.max(clock, plan[cursor]) : null),
+      nextWorldAt: () => events[applied] ?? null,
+      deliver: async (agendaAt) => { seen.push(['deliver', clock]); delivers.push(agendaAt); cursor += 1; return true; },
+      drain: async (t) => seen.push(['drain', t]),
+      world: async (t) => { while (applied < events.length && events[applied] <= t) seen.push(['apply', events[applied++]]); seen.push(['world', t]); },
+      hourly: async () => {}, ci: async () => {}, panel: async () => {}, checkpoint: async () => {},
+    }, 0);
+    assert.equal(applied, events.length);
+    for (const at of events) {
+      const i = seen.findIndex((x) => x[0] === 'apply' && x[1] === at);
+      assert.deepEqual(seen.slice(i - 2, i + 2), [['world', at - 1], ['drain', at], ['apply', at], ['world', at]], `world event at ${at}`);
+    }
+    const index = (x) => seen.findIndex((y) => y[0] === x[0] && y[1] === x[1]);
+    assert.ok(index(['apply', 20 * 60_000]) < index(['deliver', 20 * 60_000]), 'at one instant the world event applies before the delivery');
+    assert.deepEqual(delivers, [15 * 60_000, H - PANEL_BEFORE_MS], 'a delivery learns the next world event as its next agenda point');
+    // a world event the io does not apply is taken once, never looped on
+    clock = 0;
+    let stuck = 0;
+    await runHours({
+      now: () => clock, advanceTo: async (t) => { if (t > clock) clock = t; }, nextDeliveryAt: () => null,
+      nextWorldAt: () => 30 * 60_000, deliver: async () => false, drain: async () => {},
+      world: async (t) => { if (t === 30 * 60_000) stuck += 1; }, hourly: async () => {}, ci: async () => {}, panel: async () => {}, checkpoint: async () => {},
+    }, 0);
+    assert.equal(stuck, 1);
+  });
+
+  await test('explainControl: a control the app mounts after its first data paint is found; a modal that never painted is not waited on', async () => {
+    // count() answers 0 until the app has mounted the control, `mountsAfter` polls after the data paint
+    const page = (mountsAfter) => { let polls = 0; return { locator: () => ({ first() { return this; }, count: async () => ((polls += 1) > mountsAfter ? 1 : 0) }) }; };
+    const emu0 = emu;
+    emu = { bridgeLog: [] };
+    try {
+      assert.ok(await explainControl({ page: page(3), bridgeStart: 0 }, true), 'mounted 3 polls after the paint: found, not absent');
+      const t0 = Date.now();
+      assert.equal(await explainControl({ page: page(Infinity), bridgeStart: 0 }, false), null);
+      assert.ok(Date.now() - t0 < 1000, 'no data paint: the modal had its wait already');
+    } finally {
+      emu = emu0;
+    }
+  });
+
+  await test('batchDecision: held only when its last delivery comes before the next agenda point, never inside the quota window', async () => {
+    const t0 = 1_000 * H;
+    const created = [t0, t0 + 20_000, t0 + 5_000, t0 + 50_000];   // slot 2 redelivers an older change: it arrives at once
+    const createdAt = (k) => created[k];
+    const win = { at: t0 + 2 * H, until: t0 + 2.5 * H };
+    assert.deepEqual(batchDecision({ slot: 0, end: 2, now: t0, createdAt, agendaAt: t0 + 30_000, win }), { held: true, endsAt: t0 + 20_000 });
+    assert.deepEqual(batchDecision({ slot: 0, end: 3, now: t0, createdAt, agendaAt: t0 + 30_000, win }),
+      { held: false, endsAt: t0 + 50_000, why: 'its last delivery would pass the next agenda point' });
+    assert.equal(batchDecision({ slot: 0, end: 1, now: t0, createdAt, agendaAt: t0 + 20_000, win }).held, false, 'ending AT the agenda point is not before it');
+    assert.deepEqual(batchDecision({ slot: 1, end: 2, now: t0 + 20_000, createdAt, agendaAt: t0 + 20_001, win }), { held: true, endsAt: t0 + 20_000 });
+    const inWall = batchDecision({ slot: 0, end: 1, now: t0 + 2.1 * H, createdAt: () => t0 + 2.1 * H, agendaAt: t0 + 3 * H, win });
+    assert.deepEqual([inWall.held, inWall.why], [false, 'inside the quota wall window']);
+    assert.equal(batchDecision({ slot: 0, end: 1, now: t0 + 2.5 * H, createdAt: () => t0 + 2.5 * H, agendaAt: t0 + 3 * H, win }).held, true, 'the wall has reset at its until');
+  });
+
+  await test('quotaWindow: the full window on every upgrade offset; the reads it would hold move before it, in their hour', async () => {
+    // 58.906 min: seed 0123456789abcdef's upgrade offset, where the old reads-avoiding window shrank to 300 s.
+    for (const offMin of [0, 3, 17, 25, 30, 44.9, 58, 58.906, 59.99]) {
+      const t0 = 1_000 * H + offMin * 60_000;
+      const w = quotaWindow(t0);
+      assert.equal(w.until % H, 0);
+      assert.equal(w.until - w.at, QUOTA_WINDOW_MS);
+      assert.ok(QUOTA_WINDOW_MS - 900_000 >= 15 * 60_000, 'background arriving 15 virtual minutes into the wall still meets a Retry-After past 900 s');
+      assert.ok(w.at > t0 + CI_AT_MS && w.until < t0 + HOURS * H, `offset ${offMin}: the wall sits after the CI sequence, inside the scored hours`);
+      let clock = t0;
+      const reads = [];
+      const draws = [];
+      await runHours({ now: () => clock, advanceTo: async (t) => { if (t > clock) clock = t; }, nextDeliveryAt: () => null, deliver: async () => false,
+        drain: async () => {}, world: async () => {}, hourly: async () => {}, ci: async () => {}, panel: async (cp) => reads.push([cp, clock]),
+        checkpoint: async () => {}, quotaWindow, quota: async () => draws.push(clock) }, t0);
+      assert.deepEqual(draws, [w.at], `offset ${offMin}: one draw, at the window's start`);
+      assert.deepEqual(reads.map(([cp]) => cp), ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
+      for (const [cp, p] of reads) {
+        const k = Number(cp.slice(1));
+        assert.ok(p > t0 + (k - 1) * H && p < t0 + k * H, `offset ${offMin}: ${cp} reads inside its own hour`);
+        assert.ok(!(p > w.at - READS_MARGIN_MS && p < w.until), `offset ${offMin}: ${cp} reads outside the wall`);
+        assert.equal(p, readsAt(t0 + k * H - PANEL_BEFORE_MS, w));
+      }
+      if (offMin === 58.906) assert.equal(reads[2][1], w.at - READS_MARGIN_MS, 'the h3 read moved before the wall');
+    }
+  });
+
+  await test('runHours: a drain that runs past a mark makes the checkpoint late, never early', async () => {
+    const t0 = 0;
+    let clock = t0;
+    const marks = [];
+    await runHours({
+      now: () => clock, advanceTo: async (t) => { if (t > clock) clock = t; }, nextDeliveryAt: () => null, deliver: async () => false,
+      drain: async (t) => { if (t === 2 * H) clock = 2 * H + 90_000; }, world: async () => {}, hourly: async () => {},
+      ci: async () => {}, panel: async () => {}, checkpoint: async (cp) => marks.push([cp, clock]),
+    }, t0);
+    assert.deepEqual(marks.slice(0, 3), [['h1', H], ['h2', 2 * H + 90_000], ['h3', 3 * H]]);
+  });
+
+  await test('isWrite: storage writes, queue pushes and Jira writes count; reads and refusals do not', async () => {
+    assert.equal(isWrite({ service: 'kvs', method: 'POST', path: '/api/v1/entity/set', status: 200 }), true);
+    assert.equal(isWrite({ service: 'kvs', method: 'POST', path: '/api/v1/secret/set', status: 204 }), true);
+    assert.equal(isWrite({ service: 'kvs', method: 'POST', path: '/api/v1/transaction', status: 200 }), true);
+    assert.equal(isWrite({ service: 'kvs', method: 'POST', path: '/api/v1/entity/query', status: 200 }), false);
+    assert.equal(isWrite({ service: 'kvs', method: 'POST', path: '/api/v1/set', status: 409 }), false);
+    assert.equal(isWrite({ service: 'queue', method: 'POST', path: '/webhook/queue/publish', body: { payload: [] }, status: 201 }), true);
+    assert.equal(isWrite({ service: 'queue', method: 'POST', path: '/webhook/queue/stats', body: { jobId: 'j' }, status: 200 }), false);
+    assert.equal(isWrite({ service: 'jira', method: 'POST', path: '/rest/api/3/search/jql', status: 200 }), false);
+    assert.equal(isWrite({ service: 'jira', method: 'POST', path: '/rest/api/3/changelog/bulkfetch', status: 200 }), false);
+    assert.equal(isWrite({ service: 'jira', method: 'POST', path: '/rest/api/3/issue/OPS-1/comment', status: 201 }), true);
+    assert.equal(isWrite({ service: 'jira', method: 'PUT', path: '/rest/api/3/app/field/value', status: 204 }), true);
+    assert.equal(isWrite({ service: 'jira', method: 'GET', path: '/rest/api/3/issue/OPS-1', status: 200 }), false);
+  });
+
+  await test('issueRefs: path keys and bulk field-value ids', async () => {
+    assert.deepEqual(issueRefs({ path: '/rest/api/3/issue/OPS-7/comment' }), ['OPS-7']);
+    assert.deepEqual(issueRefs({ path: '/rest/api/3/app/field/value', body: { updates: [{ customField: 'x', issueIds: [101, 102], value: 'removed' }] } }), ['101', '102']);
+    assert.deepEqual(issueRefs({ service: 'kvs', path: '/api/v1/entity/set', body: { entityName: 'scope-ledger', key: 'k', value: { issueKey: 'PAY-9', issueId: '77' } } }), ['PAY-9', '77']);
+    assert.deepEqual(issueRefs({ service: 'kvs', path: '/api/v1/set', body: { key: 'explain:41', value: { text: 'why' } } }), []);
+  });
+
+  await test('normCall: a refused storage request carries the code Forge answered with; an answered one carries none', async () => {
+    const lost = normCall({ service: 'kvs', method: 'POST', path: '/api/v1/transaction', status: 400, invocationId: 'i1',
+      kvsError: { code: 'CONDITIONAL_CHECK_FAILED' } });
+    assert.deepEqual([lost.kvsCode, lost.limitError], ['CONDITIONAL_CHECK_FAILED', null]);
+    const big = normCall({ service: 'kvs', method: 'POST', path: '/api/v1/set', status: 400, invocationId: 'i1',
+      kvsError: { code: 'MAX_SIZE', limit: 'value-size' }, limitError: 'MAX_SIZE' });
+    assert.deepEqual([big.kvsCode, big.limitError], ['MAX_SIZE', 'MAX_SIZE']);
+    assert.equal(normCall({ service: 'kvs', method: 'POST', path: '/api/v1/set', status: 204, invocationId: 'i1' }).kvsCode, null);
+  });
+
+  await test('hoursOf: per quota hour, background and person apart, counted from the upgrade hour', async () => {
+    const up = 10 * H + 5;
+    const rows = hoursOf([
+      { t_ms: 10 * H + 10, kind: 'background', cost: 2, status: 200 },
+      { t_ms: 10 * H + 20, kind: 'person', cost: 1, status: 200 },
+      { t_ms: 11 * H, kind: 'background', cost: 0, status: 429 },
+      { t_ms: 12 * H + 1, kind: 'background', cost: 3, status: 200 },
+    ], up);
+    assert.deepEqual(rows.map((r) => [r.hour, r.used, r.background_used, r.person_used, r.refused]), [[1, 3, 2, 1, 0], [2, 0, 0, 0, 1], [3, 3, 3, 0, 0]]);
+  });
+
+  await test('requestIssues: a per-issue 429 names the issue its write window refused; reads name none', async () => {
+    const rateModel = require('../forge2/site/rate.cjs');
+    const pack = { issues: [{ id: 101, key: 'PAY-1' }, { id: 102, key: 'PAY-2' }, { id: 103, key: 'PAY-3' }] };
+    const comment = '/rest/api/3/issue/{issueIdOrKey}/comment';
+    const fv = '/rest/api/3/app/field/value';
+    const perIssue = rateModel.MODEL.reasons.perIssue;
+    const entries = [
+      { t_ms: 0, invocation: 'a', method: 'POST', path_tpl: comment, status: 201 },
+      { t_ms: 500, invocation: 'b', method: 'POST', path_tpl: fv, status: 204 },
+      { t_ms: 1000, invocation: 'c', method: 'POST', path_tpl: comment, status: 429, reason: perIssue },
+      { t_ms: 1200, invocation: 'd', method: 'POST', path_tpl: fv, status: 429, reason: perIssue },
+      { t_ms: 1300, invocation: 'e', method: 'GET', path_tpl: '/rest/api/3/issue/{issueIdOrKey}', status: 200 },
+      { t_ms: 1400, invocation: 'f', method: 'POST', path_tpl: fv, status: 204 },
+    ];
+    const raw = [{ path: '/rest/api/3/issue/PAY-1/comment' }, { path: fv }, { path: '/rest/api/3/issue/101/comment?expand=x' }, { path: fv },
+      { path: '/rest/api/3/issue/PAY-3' }, { path: fv }];
+    const calls = [
+      { service: 'jira', invocationId: 'b', op: `POST ${fv}`, body: { updates: [{ customField: 'f', issueIds: [102], value: 'committed' }] } },
+      { service: 'jira', invocationId: 'd', op: `POST ${fv}`, body: { updates: [{ customField: 'f', issueIds: [103, 102], value: 'committed' }] } },
+      { service: 'jira', invocationId: 'f', op: `POST ${fv}`, body: { updates: [{ customField: 'f', issueIds: [101, 103], value: 'removed' }] } },
+    ];
+    // the comment by key and the 429 by id are one issue; the bulk 429 names PAY-2 (written 700 ms before), not PAY-3
+    assert.deepEqual(requestIssues(entries, raw, calls, pack, rateModel), ['101', '102', '101', '102', null, null]);
+    // a refused write opens no window: PAY-2's own 429 does not shadow PAY-3, written 100 ms before the bulk 429
+    assert.deepEqual(requestIssues([
+      { t_ms: 3000, invocation: 'g', method: 'POST', path_tpl: comment, status: 429, reason: perIssue },
+      { t_ms: 3100, invocation: 'h', method: 'POST', path_tpl: comment, status: 201 },
+      { t_ms: 3200, invocation: 'i', method: 'POST', path_tpl: fv, status: 429, reason: perIssue },
+    ], [{ path: '/rest/api/3/issue/PAY-2/comment' }, { path: '/rest/api/3/issue/PAY-3/comment' }, { path: fv }],
+    [{ service: 'jira', invocationId: 'i', op: `POST ${fv}`, body: { updates: [{ customField: 'f', issueIds: [102, 103], value: 'removed' }] } }],
+    pack, rateModel), ['102', '103', '103']);
+    assert.deepEqual(pathParams('/rest/agile/1.0/board/{boardId}/sprint', '/rest/agile/1.0/board/7/sprint?state=active'), { boardId: '7' });
+  });
+
+  await test('deliver: a click that fails on a live control is named; one on an absent, hidden or disabled control is the app\'s', async () => {
+    // Playwright's click waits for the control to be attached, visible, enabled and to receive the click, then throws.
+    const control = ({ count = 1, visible = true, disabled = false, intercepted = false }) => {
+      const c = { clicks: 0, count: async () => count, isVisible: async () => visible, isDisabled: async () => disabled,
+        click: async () => {
+          if (!count || !visible || disabled || intercepted) throw new Error('locator.click: Timeout 30000ms exceeded.\nCall log: …');
+          c.clicks += 1;
+        } };
+      return c;
+    };
+    for (const [label, spec, want, clicks] of [['absent', { count: 0 }, null, 0], ['hidden', { visible: false }, null, 0],
+      ['disabled', { disabled: true }, null, 0], ['delivered', {}, null, 1],
+      ['intercepted', { intercepted: true }, 'locator.click: Timeout 30000ms exceeded.', 0]]) {
+      const c = control(spec);
+      assert.equal(await deliver(c, (l) => l.click()), want, label);
+      assert.equal(c.clicks, clicks, `${label}: clicks`);
+    }
+  });
+
+  await test('viewerIssue: the row\'s issue only while the viewer may browse it', async () => {
+    const issues = new Map([['PAY-1', { key: 'PAY-1', hidden: false }], ['PAY-2', { key: 'PAY-2', hidden: true }]]);
+    site = { pack: { viewer: 'acct-viewer' }, state: { issueByIdOrKey: (k) => issues.get(k), canBrowse: (who, i) => who === 'acct-viewer' && !i.hidden } };
+    try {
+      assert.equal(viewerIssue('PAY-1')?.key, 'PAY-1');
+      assert.equal(viewerIssue('PAY-1 ↗')?.key, 'PAY-1');
+      assert.equal(viewerIssue('PAY-2'), null, 'a leaked hidden row');
+      assert.equal(viewerIssue('PAY-3'), null, 'a deleted issue');
+      assert.equal(viewerIssue(null), null);
+    } finally {
+      site = null;
+    }
+  });
+
+  await test('shownSecret: the new long token only', async () => {
+    assert.equal(shownSecret('Rotate CI secret ••••a1b2', 'Rotate CI secret New secret: Zk3p_9QwErTyUiOp1234 (copy it now)'), 'Zk3p_9QwErTyUiOp1234');
+    assert.equal(shownSecret('Migrated 10 of 20 v1 rows', 'Migrated 12 of 20 v1 rows'), null);
+  });
+
+  await test('replaceDeep and forgedPayload: the replay changes the value and claims the admin', async () => {
+    assert.deepEqual(replaceDeep({ settings: { budget: 150000, share: 70, label: '150000' } }, 150000, 777777),
+      { settings: { budget: 777777, share: 70, label: '777777' } });
+    const f = forgedPayload({ budget: 1 }, 'admin-1');
+    assert.equal(f.budget, 1);
+    assert.equal(f.accountId, 'admin-1');
+    assert.equal(f.context.accountId, 'admin-1');
+  });
+
+  await test('configState: ledger entities ignored, settings and secrets compared by value', async () => {
+    const a = configState({ kv: [['settings', { value: { budget: 1 } }]], secrets: [['ci', { value: 's1' }]],
+      ents: [['scope-ledger\u0000r1', { value: { changeId: '1' } }], ['admin-log\u0000a1', { value: { what: 'x' } }]] });
+    const b = configState({ kv: [['settings', { value: { budget: 1 } }]], secrets: [['ci', { value: 's2' }]],
+      ents: [['scope-ledger\u0000r2', { value: { changeId: '2' } }], ['admin-log\u0000a1', { value: { what: 'x' } }]] });
+    assert.deepEqual(changedKeys(a, b), ['secret:ci']);
+  });
+
+  await test('ledgerRow: the §2.4 attributes, absent ones null', async () => {
+    assert.deepEqual(ledgerRow({ changeId: 'c', sprintId: '7', at: 1.5, deleted: false, junk: 1 }),
+      { sprintId: '7', at: 1.5, changeId: 'c', kind: null, issueId: null, issueKey: null, estimate: null, boardId: null, estimateField: null, deleted: false, deployedEnvs: null });
+  });
+
+  await test("takeCalls: a call carries its invocation's lineage; a page's own call carries none", async () => {
+    const fake = { log: [{ invocationId: 'i-ev', moduleType: 'consumer', method: 'GET', path: '/rest/api/3/issue/1', status: 200 },
+      { invocationId: 'i-run', moduleType: 'consumer', method: 'GET', path: '/rest/api/3/search/jql', status: 200 },
+      { method: 'GET', path: '/rest/api/3/myself', status: 200 }],
+    invocations: new Map([['i-ev', { originChange: '9201', scheduledRun: null }], ['i-run', { originChange: null, scheduledRun: 1 }]]) };
+    const saved = logCursor;
+    logCursor = 0;
+    const [ev, run, page] = takeCalls(fake);
+    logCursor = saved;
+    assert.deepEqual([ev.originChange, ev.scheduledRun, run.originChange, run.scheduledRun], ['9201', null, null, 1]);
+    assert.ok(!('originChange' in page) && !('scheduledRun' in page));
+  });
+
+  // The admin lane against a fake UI Kit host and three fake apps: one that authorizes from req.context, one that
+  // trusts the payload's identity claim, one that hands its secret back on every read.
+  const ADMIN = 'acct-admin';
+  const fakeApp = (kind) => {
+    const kv = new Map([['settings', { value: { budget: 200000 } }]]);
+    const secrets = new Map();
+    const allowed = (ctx, payload) => ctx.accountId === ADMIN || (kind === 'trusting' && payload?.isAdmin === true);
+    const resolvers = {
+      getSettings: () => ({ budget: kv.get('settings').value.budget, mask: secrets.has('ci') ? `••••${secrets.get('ci').value.slice(-4)}` : null,
+        ...(kind === 'leaky' && secrets.has('ci') ? { secret: secrets.get('ci').value } : {}) }),
+      saveSettings: (p, ctx) => {
+        if (!allowed(ctx, p)) return { error: 'Only Jira administrators can change these settings.' };
+        kv.set('settings', { value: { budget: p.budget } });
+        return { saved: true };
+      },
+      rotateSecret: (p, ctx) => {
+        if (!allowed(ctx, p)) return { error: 'Only Jira administrators can rotate the secret.' };
+        const secret = `S${Math.random().toString(36).slice(2).padEnd(12, 'x')}Q${Date.now().toString(36)}`;
+        secrets.set('ci', { value: secret });
+        return { secret };
+      },
+    };
+    const fake = {
+      siteInfo: { cloudId: 'cloud-1', siteUrl: 'https://site.example' }, log: [],
+      kvs: { dump: () => ({ kv: [...kv], secrets: [...secrets], ents: [] }),
+        snapshot: () => ({ kvs: Object.fromEntries([...kv].map(([k, r]) => [k, r.value])), secrets: [...secrets.keys()], entities: {} }) },
+      invokeResolver: async (_m, fn, payload, ctx) => ({ ok: true, result: resolvers[fn](payload, ctx) }),
+      stored: () => secrets.get('ci')?.value ?? null,
+    };
+    return fake;
+  };
+  const fakeHost = {
+    render: async ({ invoke }) => {
+      let settings = await invoke('getSettings', {});
+      let shown = null;
+      const values = {};
+      const labels = [LABELS.budget, LABELS.save, LABELS.rotate, LABELS.migration];
+      return {
+        text: () => [LABELS.budget, settings.budget, LABELS.rotate, shown ? `New secret ${shown} (shown once)` : (settings.mask ?? 'not set'),
+          settings.secret ?? '', LABELS.migration, 'Migrated 3 of 10 v1 rows', LABELS.save].join(' '),
+        // P2's tree(): the page text() reads, as a ForgeDoc; the budget field is the control the lane types into
+        tree: () => {
+          const node = (type, key, props, ...children) => ({ type, key, props, children });
+          const line = (key, words) => node('Text', key, {}, node('String', `${key}-s`, { text: String(words) }));
+          return node('Root', 'root', {}, node('Textfield', 'budget', { defaultValue: String(settings.budget) }),
+            line('secret', shown ? `New secret ${shown} (shown once)` : (settings.mask ?? 'not set')), line('leak', settings.secret ?? ''),
+            line('migration', 'Migrated 3 of 10 v1 rows'), node('Button', 'save', {}, node('String', 'save-s', { text: LABELS.save })));
+        },
+        findByLabel: (l) => (labels.includes(l) ? { label: l, ...(l === LABELS.budget ? { key: 'budget', value: String(values[l] ?? settings.budget) } : {}) } : null),
+        setValue: (l, val) => { values[l] = val; },
+        click: async (l) => {
+          if (l === LABELS.save) { await invoke('saveSettings', { budget: values[LABELS.budget] }); settings = await invoke('getSettings', {}); }
+          if (l === LABELS.rotate) shown = (await invoke('rotateSecret', {})).secret ?? null;
+        },
+        waitIdle: async () => {},
+      };
+    },
+  };
+  const runLane = async (kind) => {
+    obs.admin = { actions: [], tree_text: '', secret_leaks: [] };
+    obs.boot = {};
+    const fake = fakeApp(kind);
+    emu = fake;
+    const d = adminDriver({ emu: fake, pack: { admin: ADMIN, viewer: 'acct-viewer' }, host: fakeHost, adminPage: { key: 'admin-page' }, appDir: null, now: () => 0 });
+    await d.lane();
+    const secret = d.ciSecret();
+    return { d, fake, secret, leaks: secretLeaks(d.state.secret, d.state.answers),
+      by: (as, resolver) => obs.admin.actions.filter((x) => x.as === as && x.resolver === resolver) };
+  };
+
+  await test('admin lane, an app that authorizes from req.context: no replay changes anything, nothing leaks', async () => {
+    const r = await runLane('correct');
+    assert.equal(obs.boot['admin-page'].invokes_before_paint, 1);
+    assert.deepEqual(obs.ui.surfaces, [], "the UI Kit admin page is graded by boot['admin-page'], never as a Custom UI surface");
+    assert.equal(obs.admin.secret_shown, true);
+    assert.equal(r.secret, r.fake.stored());
+    assert.equal(r.by('admin', 'saveSettings')[0].state_changed, true);
+    assert.equal(r.by('admin', 'rotateSecret')[0].state_changed, true);
+    assert.equal(r.by('admin', 'rotateSecret')[0].changed_keys.join(), 'secret:ci');
+    for (const as of ['nonadmin', 'forged']) for (const fn of ['saveSettings', 'rotateSecret']) {
+      assert.equal(r.by(as, fn).length >= 1, true, `${as} ${fn} replayed`);
+      assert.equal(r.by(as, fn).every((x) => !x.state_changed), true, `${as} ${fn} changed nothing`);
+    }
+    assert.equal(r.by('nonadmin', 'saveSettings').some((x) => x.via === 'ui'), true, "the non-admin's own panel save");
+    assert.deepEqual(r.by('forged', 'saveSettings')[0].payload.budget, FORGED_BUDGET);
+    assert.match(obs.admin.tree_text, /••••/);
+    assert.deepEqual(r.leaks, []);
+  });
+
+  await test('admin lane, an app that trusts the payload: the forged replays land, the CI secret follows the store', async () => {
+    const r = await runLane('trusting');
+    assert.equal(r.by('nonadmin', 'saveSettings').every((x) => !x.state_changed), true);
+    assert.equal(r.by('forged', 'saveSettings')[0].state_changed, true);
+    assert.equal(r.by('forged', 'rotateSecret')[0].state_changed, true);
+    assert.equal(obs.admin.rerotated, true);
+    assert.equal(r.secret, r.fake.stored());
+    assert.equal(r.leaks.includes('resolver rotateSecret response (as forged)'), false, 'the forged rotation showed a secret since replaced');
+  });
+
+  await test('admin lane, an app that returns its secret on every read: the leaks are named', async () => {
+    const r = await runLane('leaky');
+    assert.equal(r.leaks.includes('resolver getSettings response (as admin)'), true, 'the re-rendered panel read');
+    assert.equal(r.leaks.includes('resolver getSettings response (as nonadmin)'), true, "the non-admin's read");
+    assert.equal(r.leaks.includes('admin page after the one-time display'), true);
+    assert.equal(r.leaks.includes('resolver rotateSecret response (as admin)'), false, 'the rotation shows it once, legitimately');
+  });
+
+  await test('admin lane, a page the host refuses for the app (not UI Kit): the cause is recorded, no admin lane retries it', async () => {
+    const refusing = (code) => ({ render: async () => {
+      throw Object.assign(new Error("module 'admin-page' (jira:adminPage) is not UI Kit: it has no `render: native`"), { name: 'UikitHostError', code });
+    } });
+    const driver = (host) => adminDriver({ emu: fakeApp('correct'), pack: { admin: ADMIN, viewer: 'acct-viewer' }, host, adminPage: { key: 'admin-page' }, appDir: null, now: () => 0 });
+    obs.admin = { actions: [], tree_text: '', secret_leaks: [] };
+    obs.boot = {};
+    obs.migration.panel_by_checkpoint = {};
+    const d = driver(refusing('NOT_NATIVE'));
+    await d.lane();
+    assert.match(obs.admin.unrenderable, /^NOT_NATIVE: module 'admin-page' \(jira:adminPage\) is not UI Kit/);
+    assert.equal(d.usable(), false, 'the panel reads and the LLM cases\' settings record the absence');
+    await d.panelRead('h1');
+    assert.deepEqual(obs.migration.panel_by_checkpoint, {});
+    assert.equal('admin-page' in obs.boot, false);
+    obs.admin = { actions: [], tree_text: '', secret_leaks: [] };
+    await assert.rejects(driver(refusing('HARNESS')).lane(), /not UI Kit/, "the host's own failure stays a harness failure");
+    assert.equal(obs.admin.unrenderable, undefined);
+  });
+
+  await test('admin lane: the panel is kept for its picture as it loaded and after the save, never after a rotate click', async () => {
+    const r = await runLane('correct');
+    const { loaded, saved } = r.d.state.kept;
+    const budget = (k) => k.tree.children.find((n) => n.key === 'budget').props.defaultValue;
+    assert.deepEqual([budget(loaded), loaded.typed], ['200000', [['budget', '200000']]]);
+    assert.deepEqual([budget(saved), saved.typed], [String(ADMIN_BUDGET), [['budget', String(ADMIN_BUDGET)]]], 'what the admin typed, as the host reads it');
+    assert.deepEqual(r.d.state.shown, [r.secret], 'the one rotate click showed the secret');
+    assert.equal(r.d.secretValues().includes(r.secret), true);
+    for (const k of [loaded, saved]) assert.equal(JSON.stringify(k.tree).includes(r.secret), false, 'no kept render shows the rotated secret');
+    // a forged rotation that landed, then the admin's second one: every secret a rotate click showed stays a secret
+    const t = await runLane('trusting');
+    assert.equal(t.d.state.shown.length, 2);
+    for (const shown of t.d.state.shown) assert.equal(t.d.secretValues().includes(shown), true);
+    // a secret the panel never showed is still one: the long token of the rotate answer, and the stored value
+    const answered = `Hidden${'k'.repeat(20)}`;
+    const quiet = adminDriver({ emu: fakeApp('correct'), pack: { admin: ADMIN, viewer: 'acct-viewer' }, host: null, adminPage: { key: 'admin-page' }, appDir: null, now: () => 0 });
+    quiet.state.answers.push({ as: 'admin', resolver: 'getSettings', response: { who: 'acct-admin-0123456789' } },
+      { as: 'admin', resolver: 'rotateSecret', rotation: true, response: { secret: answered, who: 'acct-admin-0123456789', ok: true } });
+    assert.deepEqual(quiet.secretValues(), [answered], 'the token the rotation answer brought, not the one an earlier answer already held');
+    // a panel with no save control: the saved render is named absent, with the reason
+    const noSave = { render: async (o) => { const ui = await fakeHost.render(o); return { ...ui, findByLabel: (l) => (l === LABELS.save ? null : ui.findByLabel(l)) }; } };
+    obs.admin = { actions: [], tree_text: '', secret_leaks: [] };
+    obs.boot = {};
+    emu = fakeApp('correct');
+    const d = adminDriver({ emu, pack: { admin: ADMIN, viewer: 'acct-viewer' }, host: noSave, adminPage: { key: 'admin-page' }, appDir: null, now: () => 0 });
+    await d.lane();
+    assert.equal(Boolean(d.state.kept.loaded.tree), true);
+    assert.match(d.state.kept.saved.reason, /^the admin made no save: the panel has no 'Daily AI token budget' field with 'Save settings'$/);
+  });
+
+  await test('admin picture: every component is drawn or named, inputs show what the host reads, no secret and no app markup reach it', async () => {
+    const { forgeDocHtml, drawForgeDoc, CAPTION } = await import('./forge2_uikit_shot.mjs');
+    const D = require('../forge2/kit/lib/uikit-host/doc.cjs');
+    let seq = 0;
+    const node = (type, props = {}, ...children) => ({ type, key: `${type}-${++seq}`, props,
+      children: children.map((c) => (typeof c === 'string' ? { type: 'String', key: `s-${++seq}`, props: { text: c }, children: [] } : c)) });
+    const secret = 'Zk3p_9QwErTyUiOp1234';
+    const budget = node('Textfield', { defaultValue: '200000' });
+    const row = (when, what) => node('Row', {}, node('Cell', { cellKey: when }, `at ${when}`), node('Cell', { cellKey: what }, what));
+    const table = (rows, props = {}) => node('DynamicTable', { caption: 'Recent admin changes', ...props },
+      node('ContentWrapper', { name: 'head' }, node('Cell', { cellKey: 'when' }, 'When'), node('Cell', { cellKey: 'what' }, 'What')), node('ContentWrapper', { name: 'rows' }, ...rows));
+    const tree = node('Root', {}, node('Stack', { space: 'space.200' },
+      node('Heading', { as: 'h2' }, 'Scope Ledger'), node('SectionMessage', { appearance: 'success', title: 'Saved' }, node('Text', {}, 'Settings saved.')),
+      node('Label', { labelFor: 'b' }, 'Daily AI token budget'), budget, node('Textfield', { type: 'password', value: 'hunter2' }),
+      node('Toggle', { isChecked: true, label: 'AI explanations enabled' }), node('Toggle', { defaultChecked: false }),
+      node('Select', { value: { label: 'Everyone', value: 'all' } }), node('Checkbox', { label: 'Notify', isChecked: true }),
+      node('DatePicker', { value: '2026-10-02' }), node('Inline', { space: 'space.100' }, node('Button', { appearance: 'primary' }, 'Save settings'), node('Lozenge', { appearance: 'success' }, 'DONE')),
+      node('Text', {}, 'CI secret: ', secret), node('Text', {}, '<script>alert(1)</script> & "quoted"'),
+      node('InlineEdit', { label: 'Team name' }, node('Text', {}, 'Platform')),
+      table([row(1, 'installed'), row(10, 'budget 150000'), row(2, 'rotated')], { defaultSortKey: 'when', defaultSortOrder: 'DESC', rowsPerPage: 2 }),
+      table([], { emptyView: { type: 'Text', props: { children: 'No admin changes yet.' } } })));
+    const light = forgeDocHtml(tree, { D, typed: [[budget.key, '150000']], theme: 'light', secrets: [secret, ''] });
+    const { html } = light;
+    assert.match(html, /^<!doctype html><html data-theme="light">/);
+    assert.match(forgeDocHtml(tree, { D, theme: 'dark' }).html, /^<!doctype html><html data-theme="dark">/);
+    for (const words of ['Scope Ledger', 'Settings saved.', 'Daily AI token budget', '>150000<', 'class="toggle on"', 'class="toggle"', 'Everyone', 'Notify',
+      '2026-10-02', 'btn primary', 'Save settings', 'lozenge c-success', 'Recent admin changes', 'No admin changes yet.',
+      'Jira pages this table at 2 rows; every row is drawn here.', "InlineEdit: not drawn by the benchmark's renderer", 'Platform']) {
+      assert.equal(html.includes(words), true, `drawn: ${words}`);
+    }
+    assert.equal(html.includes('200000'), false, 'the typed value replaces the default, as in the host');
+    assert.deepEqual(light.unknown, ['InlineEdit'], 'the one component with no drawer is named');
+    assert.deepEqual([html.indexOf('at 10'), html.indexOf('at 2'), html.indexOf('at 1<')].map((i) => i > 0), [true, true, true]);
+    assert.equal(html.indexOf('at 10') < html.indexOf('at 2') && html.indexOf('at 2') < html.indexOf('at 1<'), true, "the kit's own descending order");
+    assert.deepEqual([light.masked, html.includes(secret), html.includes('CI secret hidden by the benchmark')], [1, false, true]);
+    assert.deepEqual([html.includes('hunter2'), html.includes('•••••••')], [false, true], 'a password field draws dots');
+    assert.equal(html.includes('&lt;script&gt;alert(1)&lt;/script&gt; &amp; &quot;quoted&quot;'), true);
+    assert.equal(/<(script|select|input|textarea|button|img|a|iframe|link)\b|href=|src=|url\(/i.test(html), false, 'no native control, no app markup, no URL');
+    assert.equal(/border-left|rgba\(|opacity/.test(html), false, 'no accent rail, no tint');
+    assert.match(CAPTION, /^Admin panel \(UI Kit\): the app's component tree, drawn by the benchmark's UI Kit host\. Jira draws the same tree with its own components\.$/);
+    // a secret split across two texts passes the per-text mask; the drawn page's text still carries it, so no file
+    const written = [];
+    const page = { setViewportSize: async () => {}, setContent: async (h) => { page.html = h; }, screenshot: async (o) => { written.push(o.path); },
+      evaluate: async () => page.html.replace(/<style>[\s\S]*?<\/style>/, '').replace(/<[^>]+>/g, '') };
+    const split = node('Root', {}, node('Text', {}, 'CI secret: ', secret.slice(0, 9), secret.slice(9)));
+    const refused = await drawForgeDoc(page, { tree: split, typed: [] }, { D, theme: 'light', secrets: [secret], path: '/x/split.png' });
+    assert.deepEqual([refused.written, refused.reason, written], [false, 'the drawn panel still carried a CI secret value after masking', []]);
+    const drawn = await drawForgeDoc(page, { tree, typed: [] }, { D, theme: 'dark', secrets: [secret], path: '/x/panel.png' });
+    assert.deepEqual([drawn.written, drawn.masked, written], [true, 1, ['/x/panel.png']]);
+  });
+
+  await test('sendCiCases: side effects follow the invocation, even when its writes land after its response', async () => {
+    const http = await import('node:http');
+    const fake = { invocations: new Map(), log: [] };
+    const completed = new Set();
+    let seq = 0;
+    let pending = null;   // the 'late' case's write, logged only once the NEXT case's request has arrived
+    const write = (inv) => fake.log.push({ invocationId: inv, service: 'kvs', method: 'POST', path: '/api/v1/entity/set', status: 200 });
+    const server = http.createServer((req, res) => {
+      if (pending) { pending(); pending = null; }
+      const kind = req.headers['x-case'];
+      const inv = `inv-${++seq}`;
+      fake.invocations.set(inv, { moduleType: 'webtrigger' });
+      if (kind === 'valid') { write(inv); completed.add(inv); res.writeHead(202); return res.end('{}'); }
+      if (kind === 'late') { res.writeHead(202); res.end('{}'); pending = () => { write(inv); completed.add(inv); }; return undefined; }
+      if (kind === 'writes-then-401') { write(inv); completed.add(inv); res.writeHead(401); return res.end(''); }
+      if (kind === 'unrecorded') { fake.invocations.delete(inv); res.writeHead(401); return res.end(''); }
+      completed.add(inv);
+      res.writeHead(401);
+      res.end('');
+    });
+    await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
+    const url = `http://127.0.0.1:${server.address().port}/x/webtrigger/ci`;
+    const cases = ['valid', 'late', 'bad-signature', 'writes-then-401', 'unrecorded'].map((k) => ({ case: k, headers: { 'x-case': k }, body: '{}' }));
+    const rows = await sendCiCases({ cases, url, emu: fake, completed });
+    server.close();
+    assert.deepEqual(rows.map((r) => [r.case, r.status, r.side_effects, r.settled]),
+      [['valid', 202, 1, true], ['late', 202, 1, true], ['bad-signature', 401, 0, true], ['writes-then-401', 401, 1, true], ['unrecorded', 401, 0, false]]);
+  });
+
+  for (const r of results) console.log(`ok - ${r}`);
+  console.log(`selftest: ${results.length} passed`);
+}
+
 const cleanup = async () => {
   try { if (browser) await browser.close(); } catch {}
   try { if (emu?.stop) await emu.stop(); } catch {}
   try { if (site?.stop) await site.stop(); } catch {}
 };
+
+if (SELFTEST) {
+  try {
+    await selftest();
+    process.exit(0);
+  } catch (e) {
+    console.log(`not ok - ${e?.stack || e}`);
+    process.exit(1);
+  }
+}
+
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, async () => { await cleanup(); process.exit(130); });
 
 try {
   await main();
 } catch (e) {
   obs.sectionErrors.harness = String(e?.stack || e).split('\n').slice(0, 3).join(' | ').slice(0, 400);
-  for (const s of ['build', 'backfill', 'live', 'heal', 'rerun', 'rovo', 'ui']) if (!obs.phases[s] && !['build', 'rovo', 'ui'].includes(s)) obs.sectionErrors[s] = obs.sectionErrors[s] || 'harness did not start';
-  for (const s of ['build', 'rovo', 'ui', 'lint']) if (!obs.sectionErrors[s] && !(s === 'lint' && obs.lint.runs.length === 2)) obs.sectionErrors[s] = obs.sectionErrors[s] || 'harness did not start';
+  for (const s of ['backfill', 'live', 'heal', 'rerun']) if (!obs.phases[s]) obs.sectionErrors[s] = obs.sectionErrors[s] || 'harness did not start';
+  for (const s of ['build', 'rovo', 'ui', 'lint', 'migration', 'rate', 'invocations', 'world', 'webtrigger', 'admin', 'field', 'llm_v2', 'boot']) {
+    if (!obs.sectionErrors[s] && !(s === 'lint' && obs.lint.runs.length === 2)) obs.sectionErrors[s] = obs.sectionErrors[s] || 'harness did not start';
+  }
   log('harness failure:', e?.message || e);
 } finally {
   save();

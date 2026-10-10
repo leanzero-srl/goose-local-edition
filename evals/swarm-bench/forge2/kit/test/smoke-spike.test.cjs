@@ -6,7 +6,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const { FORGE, ensureKit, playwright, scratch, copyDir } = require('./helpers.cjs');
+const { FORGE, SPIKE, ensureKit, playwright, scratch, copyDir } = require('./helpers.cjs');
 
 test('spike fixture app runs through the kit (backend, queue, unmodelled policy, Custom UI light/dark)', { timeout: 240_000 }, async () => {
   const kit = ensureKit();
@@ -14,7 +14,7 @@ test('spike fixture app runs through the kit (backend, queue, unmodelled policy,
   const { createEmulator } = require(path.join(FORGE, 'kit', 'lib', 'emulator.cjs'));
   const { kitPaths } = require(path.join(FORGE, 'kit', 'lib', 'kitpaths.cjs'));
   const appDir = path.join(scratch('spike'), 'app');
-  copyDir(path.join(FORGE, 'spike', 'app'), appDir, new Set(['node_modules', 'build']));
+  copyDir(path.join(SPIKE, 'app'), appDir, new Set(['node_modules', 'build']));
   // The entrant builds Custom UI themselves; this is the spike panel's build with the kit's esbuild.
   const paths = kitPaths(path.join(FORGE, 'kit'));
   const out = path.join(appDir, 'static', 'panel', 'build');

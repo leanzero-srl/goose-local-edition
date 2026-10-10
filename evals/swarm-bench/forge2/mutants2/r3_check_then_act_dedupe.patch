@@ -1,0 +1,31 @@
+diff --git a/src/ledger.js b/src/ledger.js
+--- a/src/ledger.js
++++ b/src/ledger.js
+@@ -1,4 +1,5 @@
+ import { kvs } from '@forge/kvs';
++import { randomUUID } from 'node:crypto';
+ import { jiraJson, route, postJson } from './jira';
+ import { toMicro, creepTenths, formatPoints } from './numbers';
+ 
+@@ -93,16 +94,12 @@ export async function rowsOfIssue(issueId, sprintIds) {
+   return rows;
+ }
+ 
+-// The row's key is claimed atomically (FAIL_IF_EXISTS): two deliveries of one change running at the same time
+-// (contract §3) both find no row and both write; exactly one write lands (409 KEY_CONFLICT for the other).
++// Each recording gets its own row key; a `recorded:` marker dedupes the change: checked, then set.
+ async function createRow(key, value) {
+-  try {
+-    await kvs.entity(LEDGER).set(key, value, { keyPolicy: 'FAIL_IF_EXISTS' });
+-    return true;
+-  } catch (e) {
+-    if (await kvs.entity(LEDGER).get(key)) return false;
+-    throw e;
+-  }
++  if (await kvs.get(`recorded:${key}`)) return false;
++  await kvs.set(`recorded:${key}`, true);
++  await kvs.entity(LEDGER).set(`${key}:${randomUUID()}`, value);
++  return true;
+ }
+ 
+ // Exactly one row per change, whatever the delivery history: the first writer wins and keeps its

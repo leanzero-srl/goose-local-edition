@@ -1,0 +1,24 @@
+diff --git a/static/widget/src/boot.js b/static/widget/src/boot.js
+--- a/static/widget/src/boot.js
++++ b/static/widget/src/boot.js
+@@ -1,3 +1,4 @@
++import { invoke } from '@forge/bridge';
+ import { bootFirstPaint, el, metrics, METRIC_LABELS } from '../../shared/boot';
+ import '../../shared/base.css';
+ import './widget.css';
+@@ -41,7 +42,8 @@ function chart(sprints) {
+ 
+ const boardOf = (context) => context?.extension?.config?.boardId;
+ 
+-bootFirstPaint({
++// The board list first, so the widget can name its board.
++invoke('boards').then(() => bootFirstPaint({
+   request: (context) => {
+     const boardId = boardOf(context);
+     return boardId === undefined || boardId === null || boardId === '' ? null : { key: 'widget', payload: { boardId: String(boardId) } };
+@@ -57,4 +59,4 @@ bootFirstPaint({
+     }
+     root.replaceChildren(widget);
+   },
+-});
++}));

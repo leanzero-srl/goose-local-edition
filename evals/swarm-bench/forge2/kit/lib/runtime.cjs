@@ -7,8 +7,11 @@
 //    Bare imports from app code resolve ONLY from the pristine kit modules, never the workdir's.
 //  - invoke: one fresh Node process per invocation running Atlassian's wrapper (runtime 'wrapper',
 //    sha-verified against runtime-pin.json) or the in-repo shim (runtime 'shim': unpublishable).
-//    The process runs under a deny-default sandbox-exec profile (fence 'sandbox'); a timed-out
-//    child is killed by pid (gate 4: never a process group).
+//    The process runs under a deny-default sandbox-exec profile (fence 'sandbox') with the virtual-time
+//    agent preloaded (clock.cjs): its clock starts at `vStart`, the module's limit is enforced on VIRTUAL
+//    elapsed time inside the process, and the final clock comes back on fd 4. The module's limit in REAL
+//    seconds stays as a guard for a process that never yields (CPU-bound or hung): it is killed by pid (gate 4:
+//    never a process group) and reported as `realTimeout`, distinct from a virtual-time kill.
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -79,6 +82,7 @@ async function bundle({ appDir, outDir, manifest, paths }) {
 
 function prepareBundleDir(outDir, paths, runtime) {
   fs.copyFileSync(path.join(__dirname, 'runner.cjs'), path.join(outDir, '__forge_runner__.cjs'));
+  fs.copyFileSync(path.join(__dirname, 'clock.cjs'), path.join(outDir, '__forge_clock__.cjs'));
   if (runtime === 'wrapper') {
     fs.copyFileSync(path.join(paths.wrapperDir, 'loader.js'), path.join(outDir, '__forge__.cjs'));
     fs.copyFileSync(path.join(paths.wrapperDir, 'wrapper.js'), path.join(outDir, '__forge_wrapper__.cjs'));
@@ -118,45 +122,60 @@ function fakeJwt(claims) {
   return `${b({ alg: 'none', typ: 'JWT' })}.${b(claims)}.`;
 }
 
-// -> {result, logs, stderr, ms, timedOut, crash}
-function runInvocation({ bundleDir, lambdaEvent, timeoutSec, clockOffsetMs, runtime, fence, proxyPort, node = process.execPath, extra = {} }) {
+// -> {result, logs, stderr, ms, timedOut, killedAtLimit, realTimeout, vEnd, crash}
+//    vEnd: the invocation's virtual clock when it ended (null when the process died without reporting it).
+function runInvocation({ bundleDir, lambdaEvent, timeoutSec, vStart, runtime, fence, proxyPort, node = process.execPath, extra = {} }) {
+  if (!Number.isFinite(vStart)) throw new Error(`REFUSED: runInvocation needs the invocation's virtual start time (vStart), got ${vStart}`);
   bundleDir = fs.realpathSync(bundleDir);
   const runner = path.join(bundleDir, '__forge_runner__.cjs');
+  const agent = ['--require', path.join(bundleDir, '__forge_clock__.cjs')];
   let cmd;
   let args;
   if (fence === 'sandbox') {
     cmd = '/usr/bin/sandbox-exec';
-    args = ['-p', sandboxProfile({ bundleDir, proxyPort, node }), node, runner];
+    args = ['-p', sandboxProfile({ bundleDir, proxyPort, node }), node, ...agent, runner];
   } else if (fence === 'node-permission') {
     cmd = node;
     // Dev only (nested sandbox-exec is refused inside the workspace sandbox): Node's permission model
     // keeps file reads to the bundle and forbids child processes; it does not fence the network.
-    args = ['--permission', `--allow-fs-read=${bundleDir}`, runner];
+    args = ['--permission', `--allow-fs-read=${bundleDir}`, ...agent, runner];
   } else {
     throw new Error(`REFUSED: unknown fence ${fence}`);
   }
+  const deadline = vStart + timeoutSec * 1000;
   const env = { PATH: '/usr/bin:/bin', TZ: 'UTC', LANG: 'C', _HANDLER: '__forge__.main', LAMBDA_TASK_ROOT: bundleDir,
-    FORGE_EFS_RUNTIME_PATH: bundleDir, FORGE_CUSTOM_WRAPPER_FILE_NAME: '__forge_wrapper__.cjs' };
+    FORGE_EFS_RUNTIME_PATH: bundleDir, FORGE_CUSTOM_WRAPPER_FILE_NAME: '__forge_wrapper__.cjs',
+    FORGE_VCLOCK_START: String(vStart), FORGE_VCLOCK_DEADLINE: String(deadline) };
   const started = Date.now();
   return new Promise((resolve) => {
-    const child = spawn(cmd, args, { cwd: bundleDir, env, stdio: ['pipe', 'pipe', 'pipe', 'pipe'] });
+    const child = spawn(cmd, args, { cwd: bundleDir, env, stdio: ['pipe', 'pipe', 'pipe', 'pipe', 'pipe'] });
     let out = '';
     let err = '';
     let res = '';
-    let timedOut = false;
+    let vclock = '';
+    let realTimeout = false;
     child.stdout.on('data', (d) => (out += d));
     child.stderr.on('data', (d) => (err += d));
     child.stdio[3].on('data', (d) => (res += d));
-    const timer = setTimeout(() => { timedOut = true; process.kill(child.pid, 'SIGKILL'); }, timeoutSec * 1000);
+    child.stdio[4].on('data', (d) => (vclock += d));
+    const guard = setTimeout(() => { realTimeout = true; process.kill(child.pid, 'SIGKILL'); }, timeoutSec * 1000);
     child.on('close', () => {
-      clearTimeout(timer);
+      clearTimeout(guard);
+      const reports = vclock.split('\n').filter(Boolean).map((line) => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean);
+      const last = reports[reports.length - 1] ?? null;
+      const killedAtLimit = reports.some((r) => r.killed === 'limit');
+      const timedOut = killedAtLimit || realTimeout;
       let parsed = null;
       try { parsed = res ? JSON.parse(res) : null; } catch { parsed = { crash: { message: `unparseable runner output: ${res.slice(0, 200)}` } }; }
       const logs = out.split('\n').filter(Boolean).map((line) => { try { return JSON.parse(line); } catch { return { raw: line }; } });
-      resolve({ result: parsed?.result ?? null, crash: parsed?.crash ?? (parsed ? null : { message: timedOut ? 'timed out' : `invocation process ended without a result: ${err.slice(-400)}` }),
-        logs, stderr: err, ms: Date.now() - started, timedOut });
+      const why = killedAtLimit ? `killed at the ${timeoutSec} s limit (virtual time)` : realTimeout ? `killed after ${timeoutSec} s of real time without finishing (CPU-bound or hung)` : null;
+      resolve({ result: timedOut ? null : parsed?.result ?? null,
+        crash: timedOut ? { message: why } : parsed?.crash ?? (parsed ? null : { message: `invocation process ended without a result: ${err.slice(-400)}` }),
+        logs, stderr: err, ms: Date.now() - started, timedOut, killedAtLimit, realTimeout,
+        vEnd: killedAtLimit || realTimeout ? deadline : Number.isFinite(last?.vnow) ? last.vnow : null });
     });
-    child.stdin.end(JSON.stringify({ mode: runtime, lambdaEvent, deadline: Date.now() + clockOffsetMs + timeoutSec * 1000, clockOffsetMs, ...extra }));
+    // clockOffsetMs 0: the agent owns `Date`; the runner's own clock shift must stay off.
+    child.stdin.end(JSON.stringify({ mode: runtime, lambdaEvent, deadline, clockOffsetMs: 0, ...extra }));
   });
 }
 

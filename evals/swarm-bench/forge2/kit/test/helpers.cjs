@@ -1,5 +1,5 @@
 'use strict';
-// Shared test plumbing: the materialised kit (bench/forge_kit.py ensure), Playwright, a scratch dir.
+// Shared test plumbing: the materialised forge-2.0 kit (bench/forge2_kit.py ensure), Playwright, a scratch dir.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -7,12 +7,14 @@ const { execFileSync, execSync } = require('child_process');
 const { createRequire } = require('module');
 
 const REPO = path.resolve(__dirname, '..', '..', '..');          // evals/swarm-bench
-const FORGE = path.join(REPO, 'forge');
+const FORGE = path.join(REPO, 'forge2');
+// The kit's fixture app (DESIGN §4 spike) is 1.0's: forge2 forked the kit, not the spike.
+const SPIKE = path.join(REPO, 'forge', 'spike');
 let kit = null;
 
 function ensureKit() {
   if (kit) return kit;
-  const out = execFileSync('python3', [path.join(REPO, 'bench', 'forge_kit.py'), 'ensure'], { encoding: 'utf8' });
+  const out = execFileSync('python3', [path.join(REPO, 'bench', 'forge2_kit.py'), 'ensure'], { encoding: 'utf8' });
   kit = JSON.parse(out);
   process.env.FORGE_KIT_MODULES = kit.modules_dir;
   return kit;
@@ -43,4 +45,4 @@ function copyDir(src, dst, skip = new Set(['node_modules'])) {
   }
 }
 
-module.exports = { REPO, FORGE, ensureKit, playwright, scratch, copyDir };
+module.exports = { REPO, FORGE, SPIKE, ensureKit, playwright, scratch, copyDir };

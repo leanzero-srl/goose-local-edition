@@ -130,7 +130,8 @@ function pageBridge() {
 async function main() {
   const outDir = process.argv[2] ?? path.join(os.tmpdir(), 'golden-forge-ui');
   fs.mkdirSync(outDir, { recursive: true });
-  const site = createSite({ seed: 11 });
+  // Browser waits are real here, so the site's clock is the real one (the app reads Date.now() too).
+  const site = createSite({ seed: 11, clock: { now: () => Date.now(), advance: () => {} } });
   const platform = createPlatform({ site });
   await platform.build(path.join(outDir, 'bundle'));
   await platform.invoke('reconcile', {}, { moduleKey: 'scope-reconcile' });
@@ -146,7 +147,17 @@ async function main() {
 
   async function open({ resource, moduleType, moduleKey, extension, aaid = alice.accountId, theme = 'light', width = 800, height = 700, shot }) {
     const page = await browser.newPage({ viewport: { width, height } });
-    const log = { ops: [], flags: [], navigations: [], closes: 0, updates: [], saved: [], console: [], pending: 0, lastSettled: Date.now(), subscriptions: [], invokes: [] };
+    const log = { ops: [], flags: [], navigations: [], closes: 0, updates: [], saved: [], console: [], pending: 0, lastSettled: Date.now(), subscriptions: [], invokes: [], requests: [], firstPaintAt: null };
+    // R9: every request with its time, and the moment the first data appears in the DOM.
+    page.on('request', (r) => log.requests.push({ url: r.url(), type: r.resourceType(), at: Date.now() }));
+    await page.addInitScript(() => {
+      const shown = () => document.querySelector('[data-metric], [data-testid="not-started"], [data-testid="needs-config"]');
+      new MutationObserver((_, obs) => {
+        if (!shown()) return;
+        obs.disconnect();
+        window.__paintAt = performance.now();
+      }).observe(document, { childList: true, subtree: true });
+    });
     page.on('console', (m) => (m.type() === 'error' || m.type() === 'warning') && log.console.push(`${m.type()}: ${m.text()}`));
     page.on('pageerror', (e) => log.console.push(`pageerror: ${e}`));
     const context = { accountId: aaid, cloudId: 'golden', siteUrl: 'https://golden.atlassian.net', localId: `${moduleKey}-1`, moduleKey, environmentType: 'DEVELOPMENT', locale: 'en-US', timezone: 'Europe/Bucharest', theme: { colorMode: theme }, extension };
@@ -357,8 +368,8 @@ async function main() {
     const first = vis[0];
     const firstRow = await s.page.$eval(`tr[data-change-id="${first.changeId}"]`, (tr) => Object.fromEntries([...tr.querySelectorAll('td[data-col]')].map((td) => [td.getAttribute('data-col'), td.getAttribute('data-col') === 'at' ? td.querySelector('time').getAttribute('datetime') : td.textContent])));
     const issue = site.issueById.get(first.issueId);
-    eq(firstRow, { issue: first.issueKey, points: fmtPoints(issue.fields[issue.estField] ?? 0), kind: first.kind, by: first.by, at: new Date(first.at).toISOString(), source: 'reconcile' }, `${label}: cells of the first row`);
-    eq(await s.page.$$eval('th[data-col]', (els) => els.map((e) => e.getAttribute('data-col'))), ['issue', 'points', 'kind', 'by', 'at', 'source'], `${label}: headers`);
+    eq(firstRow, { issue: first.issueKey, points: fmtPoints(issue.fields[issue.estField] ?? 0), kind: first.kind, by: first.by, at: new Date(first.at).toISOString(), source: 'reconcile', deployed: '' }, `${label}: cells of the first row`);
+    eq(await s.page.$$eval('th[data-col]', (els) => els.map((e) => e.getAttribute('data-col'))), ['issue', 'points', 'kind', 'by', 'at', 'source', 'deployed'], `${label}: headers`);
     await audit(s.page, label);
     await s.shot();
     if (who === 'alice') {
@@ -432,6 +443,8 @@ async function main() {
       const exIds = await s.page.$$eval('[data-testid="explanation"] [data-change-id]', (els) => els.map((e) => e.getAttribute('data-change-id')));
       const exText = await s.page.textContent('[data-testid="explanation"] p');
       ok(exIds.length > 0 && exIds.every((id) => visIds.has(id)) && !/\d/.test(exText), `explain: summary without digits + ${exIds.length} visible change elements`);
+      // R8 answers identical requests from its cache for 10 minutes: let them expire.
+      for (const k of [...platform.kvs.plain.keys()]) if (k.startsWith('explain:')) platform.kvs.plain.delete(k);
       platform.llm.script.push(() => ({ choices: [{ finish_reason: 'end_turn', message: { role: 'assistant', content: [{ type: 'text', text: 'No.' }] } }] }));
       const ef = s.log.flags.filter((f) => f.type === 'error').length;
       await s.page.click('[data-testid="explain"]');
@@ -452,6 +465,29 @@ async function main() {
   await ns.shot();
   clean(ns.log, 'not-started');
   await ns.page.close();
+
+  // ---------- R9: the boot budget of the widget view and the sprint modal ----------
+  for (const [label, spec] of [
+    ['widget', { resource: 'widget', moduleType: 'dashboards:widget', moduleKey: 'scope-widget', extension: widgetExt({ boardId: '1' }) }],
+    ['sprint modal', { resource: 'sprint', moduleType: 'jira:sprintAction', moduleKey: 'scope-sprint-ledger', extension: sprintExt(11, 'active') }],
+  ]) {
+    const b = await open(spec);
+    await b.page.waitForFunction(() => document.querySelector('[data-metric]'));
+    await b.page.waitForTimeout(300);
+    // Page-side order: resources whose request started before the first data appeared in the DOM.
+    const t = await b.page.evaluate(() => ({ paintAt: window.__paintAt, offset: performance.timeOrigin, resources: performance.getEntriesByType('resource').map((e) => ({ url: e.name, start: e.startTime })) }));
+    const paint = t.offset + t.paintAt;
+    // The app's own files (the bed's host injects its token stylesheet, as the product injects its scripts).
+    const own = (url) => path.join(APP, 'static', spec.resource, 'build', path.basename(new URL(url).pathname));
+    const assets = t.resources.filter((r) => r.start <= t.paintAt && /\.(js|css)$/.test(new URL(r.url).pathname) && fs.existsSync(own(r.url))).map((r) => r.url);
+    const bytes = assets.reduce((n, url) => n + fs.statSync(own(url)).size, 0);
+    const invokes = b.log.invokes.filter((i) => i.at <= paint).length;
+    const origin = new URL(servers[spec.resource].url).origin;
+    ok(t.paintAt && invokes <= 1, `R9 ${label}: ${invokes} invoke(s) before the first data paint`);
+    ok(t.paintAt && bytes <= 150 * 1024, `R9 ${label}: ${bytes} bytes of JS+CSS before the first data paint (${assets.map((u) => path.basename(new URL(u).pathname)).join(', ')})`);
+    ok(b.log.requests.every((r) => r.url.startsWith(origin) || r.url.startsWith('data:')), `R9 ${label}: no external origin requested`);
+    await b.page.close();
+  }
 
   await browser.close();
   for (const s of Object.values(servers)) s.srv.close();

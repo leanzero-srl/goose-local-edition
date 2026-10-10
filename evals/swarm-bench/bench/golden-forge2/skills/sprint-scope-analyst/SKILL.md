@@ -37,8 +37,8 @@ The action returns a JSON object:
 - `hiddenChanges`: how many changes exist on issues the person cannot browse. These are counted in the
   totals but not listed. Mention the number when it is not 0, and never speculate about those issues.
 - `changes`: the changes the person can see, oldest first. Each has `issueKey`, `kind` (`added` or
-  `removed`), `points` (the issue's current estimate), `by` (who made the change) and `at` (an ISO-8601
-  UTC time).
+  `removed`), `points` (the issue's current points in the estimation field its board used when the change
+  happened), `by` (who made the change) and `at` (an ISO-8601 UTC time).
 
 Points use the board's estimation field; an issue with no estimate counts as 0. The totals are the same
 for everyone; only the list of changes depends on what the person can browse.

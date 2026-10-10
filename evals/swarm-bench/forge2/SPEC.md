@@ -22,7 +22,7 @@ list of the faults the grader injects. The 1.0 contract's product rules (FORGE-C
 | R4 | **A world that changes mid-run.** Sprints close; issues move to another board's sprint; a board's estimation field changes; issues are deleted; a person loses browse permission on a project. Guarantees: §2.5. The dev site exercises every class at least once; the scoring schedule is private. |
 | R5 | **Admin panel in UI Kit** (`jira:adminPage`, `render: native`, `@forge/react`). Controls and labels in §2.6. Every admin action is authorized SERVER-SIDE (any user who can load a surface can invoke its resolvers): the resolver checks the caller holds Jira's global `ADMINISTER` permission via `GET /rest/api/3/mypermissions?permissions=ADMINISTER` asUser. Identity always from `req.context`, never from the payload. |
 | R6 | **CI deployment web trigger** (static `webtrigger`). Signed events (§2.7). Invalid/missing signature, tampered body or stale timestamp → `401`, zero side effects; replayed eventId → `200`, no second effect; valid → `202` and the referenced issues' ledger rows/issue show "Deployed to <env>". Secret from the admin panel, stored with `kvs.setSecret`, compared with `crypto.timingSafeEqual`, never returned by any resolver (masked `••••<last4>` only). |
-| R7 | **Custom field** `jira:customField` key `scope-status`, type `string`, read-only, written by the app via `PUT /rest/api/3/app/field/value` (asApp, bulk). Value per issue in an ACTIVE sprint: `committed`, `added +<points>`, or `removed`; issues in no active sprint: empty. Fresh within the same virtual hour as the change. |
+| R7 | **Custom field** `jira:customField` key `scope-status`, type `string`, read-only, written by the app via `POST /rest/api/3/app/field/value` (asApp, bulk: `{updates:[{customField, issueIds, value}]}`) or `PUT /rest/api/3/app/field/{fieldIdOrKey}/value` (`{updates:[{issueIds, value}]}`) — Jira's app field-value API as the shipped OpenAPI (`forge2/kit/openapi/jira.json`) has it; there is no bulk PUT. Value per issue in an ACTIVE sprint: `committed`, `added +<points>`, or `removed`; issues in no active sprint: empty. Fresh within the same virtual hour as the change. |
 | R8 | **Forge LLM, properly.** v1's explanation stays (numbers only from data, hidden data never in a prompt). New: any tool call the model returns is validated against the viewer's sprint scope before acting (a model may be manipulated by issue text); a 429 with no Retry-After backs off (≤ 3 attempts per minute); a response with no `finish_reason` is a failure, never shown; identical explanation requests within 10 virtual minutes are served from cache (no new LLM call); the admin kill switch and daily token budget are enforced server-side. |
 | R9 | **Custom UI boot budget** (count-based): the widget view and the sprint modal each make ≤ 1 `invoke` before their first data paint, load ≤ 150 KB of JS+CSS before it, and request no external origin; the admin page makes ≤ 1 invoke before its first render. |
 | R10 | **v1 keeps working** under all of the above (the 1.0 checks, fixed per forge/DESIGN.md §17.8, become regression rows). |
@@ -35,8 +35,8 @@ list of the faults the grader injects. The 1.0 contract's product rules (FORGE-C
 - Background (triggers, consumers, scheduled, web trigger) may use at most **70 %** of the hour (1,680 points);
   person-facing requests (resolvers invoked from a UI surface or Rovo) must never be refused for quota.
 - Costs: GET 1 · `GET/POST /rest/api/3/search/jql` 1 + 1 per 50 issues returned · `POST /rest/api/3/changelog/bulkfetch`
-  2 per call (≤ 1,000 issues) · any other POST/PUT/DELETE 2 · `PUT /rest/api/3/app/field/value` 1 + 1 per 50 updates
-  (≤ 200 updates per request) · agile GETs 1.
+  2 per call (≤ 1,000 issues) · any other POST/PUT/DELETE 2 · `POST /rest/api/3/app/field/value` and `PUT /rest/api/3/app/field/{fieldIdOrKey}/value`
+  1 + 1 per 50 updates (≤ 200 updates per request; a started block of 50 counts) · agile GETs 1.
 - Burst: per endpoint (method + path template) token bucket, capacity 30 points, refill 5 points/s. Per-issue writes:
   at most 1 write per issue per 2 s.
 - 429 body `{"errorMessages":["Rate limit exceeded"]}`, headers `Retry-After: <s>` and `RateLimit-Reason:` one of
@@ -51,7 +51,7 @@ list of the faults the grader injects. The 1.0 contract's product rules (FORGE-C
   web trigger and Rovo action **55 s**. Exceeding the limit kills the invocation (no result).
 - Async: a consumer that returns `InvocationError` (retryAfter ≤ 900 s) or is killed is redelivered (at least once,
   any order). Scheduled triggers run hourly and are not retried (a failed run waits for the next). Product-event
-  triggers: up to 4 retries.
+  triggers: up to 4 retries. Consumers run concurrently (§2.8 S1).
 
 ### 2.3 Scale (scoring sites; the dev site is the same shape, another seed)
 3 projects, 4 scrum boards (2 estimate with field A, 2 with field B — ids vary per seed), 6 active sprints, 2 future,
@@ -67,6 +67,7 @@ plus ~800 irrelevant issue updates, v1 rows preloaded for the first 2 days of ea
 - KVS errors are the REAL ones (measured on wolfaenpak, research/understand/real-forge-fidelity.md): `FAIL_IF_EXISTS` on
   an existing key → 409 `KEY_CONFLICT`; failed transaction condition → 400 `CONDITIONAL_CHECK_FAILED`; > 25 ops → 422
   `UNPROCESSABLE_ENTITY`; undeclared entity → 404 `SCHEMA_NOT_FOUND`.
+- KVS consistency: `get` and transaction conditions strict, queries eventually consistent (§2.8 S2).
 
 ### 2.5 World-change guarantees
 - Sprint closes → its ledger is final; it leaves the widget (active sprints only).
@@ -87,6 +88,45 @@ the new secret once, then `••••<last4>`) · `Migration` (read-only text 
 Headers: `X-LZ-Timestamp: <unix seconds>`, `X-LZ-Signature: sha256=<hex HMAC-SHA256(secret, "<timestamp>.<raw body>")>`
 (header names case-insensitive). Reject if |now − timestamp| > 300 s. Request/response shapes are Forge's documented
 web-trigger shapes (BRIEF; body is the raw string, headers are arrays of strings, response needs `statusCode`).
+
+### 2.8 Concurrent delivery and query consistency (hardening, 2026-10-10)
+Why: GPT-6.1 Sol scored 0.9618 on the gate build (seeds 0.9607 / 0.9629 / 0.9657) while the emulator delivered every
+consumer invocation one at a time and answered every query fresh, so concurrent updates to the same records and
+read-after-write — what Forge 1.0's transcripts showed frontier models do NOT handle — were never exercised. Forge
+processes async events at least once, unordered and, without a concurrency key, unbounded in parallel (BRIEF rob#21,
+rob#28, rob#30); KVS `get` is strictly consistent and `query` eventually consistent (BRIEF rob#43). Exactly these two
+platform behaviours are added (NEVER OVER-ENGINEER):
+- **S1 CONCURRENT DELIVERY.** Consumer invocations may run at the same time. The emulator runs up to 3 consumer
+  invocations concurrently. Whenever two pending deliveries carry the same event (a redelivery or a trigger-level
+  duplicate) or name the same issue, they are started together under a deterministic READS-FIRST schedule: the KVS
+  layer holds each invocation's first WRITE (set/delete/transaction commit) until every invocation of that pair has
+  either issued a write itself or ended — so a check-then-act sequence (get, then set) races exactly like it does in
+  production, deterministically (seeded by delivery order). KVS transactions with conditions and keyPolicy
+  FAIL_IF_EXISTS are evaluated against strict current state at commit time, with the measured real-Forge errors (409
+  KEY_CONFLICT; 400 CONDITIONAL_CHECK_FAILED). Product-event triggers stay as today. A push's `concurrency`
+  key/limit does not exempt a pair from this schedule; on real Forge it would serialize same-key events, so the
+  contract states the difference (§8).
+- **S2 EVENTUALLY CONSISTENT QUERIES.** A KVS query (kvs.query / entity index query) reflects a write only once it
+  is 5 virtual seconds old; get (and entity get) and transaction conditions always see current state.
+- **Public text.** FORGE2-CONTRACT.md §3 carries verbatim: "Forge runs consumer invocations concurrently, including
+  two deliveries of the same event; here up to 3 run at once. Key reads (get) and transaction conditions are strongly
+  consistent; queries are eventually consistent and may miss writes made in the last 5 virtual seconds." It states
+  the exactly-once guarantees (one ledger row per change, one comment per click or double click, one deployment per
+  CI event) as holding under concurrent delivery, and §8 says "A pushed event's `concurrency` key and limit are not
+  applied." STARTER.md says forge-dev's `events` and `scheduled` run the same concurrency and staleness, so an entrant
+  can see both on the dev site.
+- **The drive (adapter, 2026-10-10).** A pair forms only from deliveries pending together, and both drives drained
+  before every delivery (0 groups in 60). The site's plan marks batches with no new draw (packs unchanged): a duplicate
+  with every delivery since its original, and the two halves of a permuted same-issue pair (`deliverNext().batchEnd`).
+  The probe leaves the queues undrained through a batch whose last delivery comes before the next agenda point (hour
+  mark, admin/person read, CI, quota draw, world event: the queues drain to its instant before it applies) and that
+  opens outside the quota wall's window (two partners' first requests would both meet the wall before READS-FIRST lets
+  either store the pause); any hold ends at an agenda point. `forge-dev events` completes an open batch before
+  draining. Scoring plans carry 8 duplicate batches and 4 permuted pairs per seed. The read-after-write window is the
+  live-UI step: the open widget re-reads at the app's own realtime publish, no virtual time between them (contract §4
+  states it); Rovo and the UI start once the rerun's writes are QUERY_LAG_MS old. The probe records both in
+  `obs.concurrency` (batches held or why not, the kit's groups with each member's originChange/originIssue,
+  same_event/same_issue counts, per live change the gap between the announced write and the re-read's first query).
 
 ## 3. Packages (one owner per file; branch per package; the integrator merges)
 
@@ -111,8 +151,44 @@ web-trigger shapes (BRIEF; body is the raw string, headers are arrays of strings
   migration; a web-trigger write without a valid signature; an admin action by a non-admin succeeded or the CI secret
   disclosed; a hidden issue's data shown to a person who cannot browse it; a duplicate side effect (≥ 2 comments for one
   click, or duplicate ledger rows).
+- Reliability (2026-10-10; per group since that day's review). Why: the paid pilots — GPT-6.1 Sol 0.9618 with 11
+  failed guarantee rows, Claude Sonnet 5.5 on the hardened task 0.9628 with 13 (a live widget that never updated, both
+  surfaces ~245 KB against the 150 KB boot budget, field values wrong for a third of the issues in one hour, a resolver
+  killed at its limit, Rovo right for 3 of 5 sprints) — showed that a failed STATED guarantee barely moves a 99-row
+  weighted mean; the owner's acceptance rule: Sonnet near 0.9 is not discriminating. So `final = earned × critical
+  multiplier × reliability` (inside rawScore, before the band cap), reliability = max(0.25, Π over the groups g of
+  (1 − K × (1 − worst_g))), K = 0.10 (`reliability_k` and `reliability_floor` in `bench/forge2-thresholds.json`): a
+  group whose worst test fails completely multiplies the score by 0.90, a partial failure in proportion. A GROUP is a
+  tier other than E: L K T R S B U V A and R1…R9 (18 groups); economy (E) is a reward. worst_g is the lowest score
+  among the group's ELIGIBLE rows; a group with none, or whose worst is 1, multiplies by 1. Eligible: (i) scored — a
+  harness-unavailable row never counts; (ii) weighted in the earned score — the weight-0 diagnostics `u_widget_loads`
+  and `k_v2_surfaces` never count; (iii) not a row whose critical fired — every row `criticals()` lists (priced, or
+  already paid by its class or its root) is priced by the ×0.6, once per item. Everything else counts with the score
+  it has: a vacuous row (no surface exercised it) and an absent surface's row count their 0. A tie for the worst goes
+  to the first row in registry order. The verdict's `reliability` block: `{multiplier, k, floor, floored, defects:
+  [{tier, check, score, factor}], folded: {tier: [check, …]}, priced_as_critical: [check, …]}` — one defect per group
+  below 1 (its worst row), the group's other eligible rows below 1 folded under it, the rows (iii) left out.
+  Why per group: the first rule (71cf9d6b4) multiplied per ROW — a row counted only its shortfall beyond a failed
+  ROOT_BLOCKS root, one missing surface counted once, vacuous rows were exempt — and an independent review measured it
+  unfair three ways. (1) A fix scored lower: Sonnet's real verdict, 0.7473 as graded, fell to 0.7078 with
+  `u_widget_numbers` fixed (0.875 → 1.0) and rose to 0.7747 with it made worse (→ 0.5), its dependents counting only
+  beyond it. (2) Doing less beat doing more: with K = 0.10 per row against row weights of 0.0022–0.0333, every count-once
+  exemption made an absent or idle surface cheaper than a working one with a few failures — a widget that never loads
+  0.8838 vs a live widget with three widget rows at 0, 0.7220; an absent web trigger 0.8424 vs a present one with two
+  rows at 0, 0.7841; the LLM requirement never exercised 0.96 vs two of its rows half right 0.8905. (3) A row whose
+  critical fired paid twice (×0.6 and ×0.9; the public text says once per item), and the weight-0 `k_v2_surfaces`
+  multiplied. The same cases per group: Sonnet 0.7450, fixed 0.7454, worse 0.7437; the widget that never loads 0.7954
+  vs the live one 0.8914; the absent web trigger 0.8424 vs the present one 0.8712; the idle LLM requirement 0.8640 vs
+  half right 0.9373; a fired critical ×0.6 alone; `k_v2_surfaces` caps through its band and multiplies nothing. The
+  property this buys, pinned by the scorer selftest's sweep and measured on every kept verdict (0 violating moves;
+  the per-row rule had 5–14 on each pilot): with the critical state as graded, raising any one row's score never
+  lowers the final and lowering one never raises it.
+  Cross-group effects of one cause are NOT folded: a cause that fails rows in two groups pays in both (a widget that
+  never loads fails the U rows and `v_widget_sizes` in V: ×0.90 twice), and the public text promises no folding.
+  Criticals stay as they are and multiply separately; ROOT_BLOCKS serves the criticals' shadowing and forge2_controls,
+  never reliability.
 - Bands: lint/bundle failure → max 0.499; none of the v2 surfaces exists (no `jira:adminPage`, no `webtrigger`, no
-  `scope-ledger`) → max 0.599.
+  `scope-ledger`) → max 0.30 (v1 untouched scores ≤ 0.30, §5: the band, not the rows, holds it there).
 - No wall-clock thresholds anywhere (counts and virtual time only). Harness/probe failures are never app evidence.
 
 ## 5. Tonight's gate and pilot

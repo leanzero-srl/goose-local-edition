@@ -9,15 +9,38 @@
 //   entities-errorhandling: EMPTY_KEY INVALID_KEY KEY_TOO_LONG NOT_FOUND MAX_SIZE MAX_DEPTH
 //   INVALID_ENTITY_TYPE INVALID_ENTITY_VALUE INVALID_ENTITY_INDEX COMPLEX_QUERY_PAGE_LIMIT_NOT_IN_RANGE
 //   EMPTY_FILTER_OPERATOR INVALID_FILTER_OPERATORS_COMBINATION INSUFFICIENT_FILTER_VALUES.
-// UNCONFIRMED (no docs page names them; chosen so an app's catch sees a ForgeKvsAPIError):
-//   a failed FAIL_IF_EXISTS set and a failed transaction condition answer 409 CONDITIONAL_CHECK_FAILED;
-//   a batch over 25 keys answers 400 MAX_BATCH_SIZE; an undeclared entity answers 400 INVALID_ENTITY_TYPE;
-//   also TOO_MANY_OPERATIONS (transaction over 25), DUPLICATE_KEY (a key twice in one transaction), INVALID_TTL,
-//   INVALID_REQUEST, INVALID_CONDITION and KEY_NOT_FOUND (404) are harness names for documented refusals.
+// MEASURED on real Forge (wolfaenpak, 2026-10-09, @forge/kvs 2.0.7; forge2/research/understand/
+// real-forge-fidelity.md §3.1, the 24-case probe) — status, code and message as the platform answered:
+//   FAIL_IF_EXISTS on an existing key        409 KEY_CONFLICT "Provided key already exists and cannot be overwritten"
+//   transaction condition false / key absent 400 CONDITIONAL_CHECK_FAILED "Request failed due to conditional check
+//                                                specified or optimistic locking" (atomic: nothing lands)
+//   transaction of 26 operations             422 UNPROCESSABLE_ENTITY "Request cannot be processed due to one or more
+//                                                semantic errors"
+//   the same key twice in one transaction    400 KEY_DUPLICATION_ERROR "Duplicate key found in request"
+//   batchSet of 26 items                     400 TOO_MANY_BATCH_ENTITIES "Number of entities to set was 26, but you can
+//                                                only set a maximum of 25 entities at a time."
+//   batchGet of a missing key                failedKeys[].error {code: KEY_NOT_FOUND, message: "Provided key does not exist"}
+//   an undeclared entity                     404 SCHEMA_NOT_FOUND "The schema provided does not exist"
+//   ttl {value: 0}                           400 INVALID_TTL "TTL value must be a positive integer, received: 0"
+//   integer attribute 2^31 or "5"            400 INCORRECT_PROPERTY_TYPE 'Data type for property "n" is defined as "integer"'
+// UNMEASURED (harness names for documented refusals): batchGet/batchDelete over 25 (same code as batchSet, its verb),
+//   INVALID_REQUEST, INVALID_CONDITION, INCORRECT_PROPERTY_TYPE for non-integer attribute types, and a plain get/
+//   delete of a missing key answering 404 KEY_NOT_FOUND (the SDK turns it into undefined / a no-op, as measured).
+//
+// CONSISTENCY (contract S2). kvs and storage-api-custom-entities: "The kvs.query method used by the Key-Value Store is
+// eventually consistent. This means that the method returns data that may be slightly out of date." / "The kvs.get
+// method, on the other hand, is strictly consistent. It will always return current data." (the same for entity().query
+// and entity().get; forge2/research/robustness.md §10.1). So kvs.query and entity queries see a write only once it is
+// QUERY_LAG_MS old in virtual time (until then the value before it, or no row), dated by its request's virtual send
+// time (`handle(op, body, {t})`); get, batchGet, transaction conditions and FAIL_IF_EXISTS read the current state.
+// A write the harness makes outside any invocation (no `t`: the v1 preload, test setup) is settled at once.
 
 const KEY_RE = /^(?!\s+$)[a-zA-Z0-9:._\s\-#]+$/;
 const LIMITS = { keyLength: 500, valueBytes: 240 * 1024, depth: 31, transactionOps: 25, batchKeys: 25, pageDefault: 10, pageMax: 100 };
 const TTL_UNIT = { SECONDS: 1000, MINUTES: 60_000, HOURS: 3_600_000, DAYS: 86_400_000 };
+// The docs give no size for "slightly out of date" (robustness.md §17 q10): 5 virtual seconds is the harness's policy,
+// stated in the contract.
+const QUERY_LAG_MS = 5_000;
 
 class KvsError extends Error {
   constructor(status, code, message, extra = {}) { super(message); this.status = status; this.code = code; this.extra = extra; }
@@ -30,11 +53,50 @@ function depth(v) {
   return d + 1;
 }
 
-function createKvs({ entities: declared = [], now = () => Date.now() } = {}) {
+// `floor()`: the earliest virtual time any later request can carry (the oldest running invocation's start, else `now`);
+// a version older than the newest one a query at the floor sees is unreachable and dropped.
+function createKvs({ entities: declared = [], now = () => Date.now(), floor = now } = {}) {
   let kv = new Map();
   let secrets = new Map();
   let ents = new Map(); // `${entity}\u0000${key}` -> record
+  // What the query index has not caught up with, per kv / entity record id: {base: the record before the first write
+  // still in flight, versions: [{at, rec}] in write order (rec undefined = deleted)}. Absent = the index is current.
+  let kvHist = new Map();
+  let entHist = new Map();
+  let at = null; // the virtual send time of the request being handled; null = a harness write, settled at once
   const entityDefs = new Map(declared.map((e) => [e.name, e]));
+  const histOf = (map) => (map === kv ? kvHist : map === ents ? entHist : null);
+  // Drop the versions no query at or after the floor can see: everything older than the newest version visible there.
+  const settle = (hist, id, h) => {
+    const f = floor();
+    for (let i = h.versions.length - 1; i >= 0; i--) {
+      if (h.versions[i].at + QUERY_LAG_MS > f) continue;
+      if (i === h.versions.length - 1) hist.delete(id);
+      else { h.base = h.versions[i].rec; h.versions = h.versions.slice(i + 1); }
+      return;
+    }
+  };
+  const track = (map, id, before, after) => {
+    const hist = histOf(map);
+    if (!hist) return;
+    if (at === null) { hist.delete(id); return; }
+    let h = hist.get(id);
+    if (!h) hist.set(id, (h = { base: before, versions: [] }));
+    h.versions.push({ at, rec: after });
+    settle(hist, id, h);
+  };
+  const put = (map, id, rec) => { track(map, id, map.get(id), rec); map.set(id, rec); };
+  const drop = (map, id) => { if (!map.has(id)) return; track(map, id, map.get(id), undefined); map.delete(id); };
+  // The record a query sent at `tq` sees: the newest write at least QUERY_LAG_MS old, else what preceded them all.
+  const indexed = (map, id, tq) => {
+    const hist = histOf(map);
+    const h = hist.get(id);
+    if (!h) return map.get(id);
+    if (h.versions[h.versions.length - 1].at + QUERY_LAG_MS <= floor()) { hist.delete(id); return map.get(id); }
+    for (let i = h.versions.length - 1; i >= 0; i--) if (h.versions[i].at + QUERY_LAG_MS <= tq) return h.versions[i].rec;
+    return h.base;
+  };
+  const indexedIds = (map) => new Set([...map.keys(), ...histOf(map).keys()]);
 
   const checkKey = (key) => {
     if (key === undefined || key === null || key === '') throw new KvsError(400, 'EMPTY_KEY', 'Key cannot be empty.');
@@ -48,7 +110,7 @@ function createKvs({ entities: declared = [], now = () => Date.now() } = {}) {
   };
   const entityDef = (name) => {
     const def = entityDefs.get(name);
-    if (!def) throw new KvsError(400, 'INVALID_ENTITY_TYPE', `Entity '${name}' is not declared under app.storage.entities in the manifest.`);
+    if (!def) throw new KvsError(404, 'SCHEMA_NOT_FOUND', 'The schema provided does not exist');
     return def;
   };
   const TYPE_OK = {
@@ -63,13 +125,8 @@ function createKvs({ entities: declared = [], now = () => Date.now() } = {}) {
     for (const [attr, spec] of Object.entries(def.attributes ?? {})) {
       if (value[attr] === undefined || value[attr] === null) continue;
       const ok = TYPE_OK[spec.type];
-      if (ok && !ok(value[attr])) {
-        // The documented integer range (storage-reference/storage-api-custom-entities: "Must be a 32-bit signed
-        // integer") is named in the error so an out-of-range value is diagnosable (DESIGN §17.1 0b).
-        const why = spec.type === 'integer' ? 'a 32-bit signed integer (-2,147,483,648 to 2,147,483,647)'
-          : spec.type === 'float' ? 'a finite number' : `of type ${spec.type}`;
-        throw new KvsError(400, 'INVALID_ENTITY_VALUE', `Attribute '${attr}' must be ${why}; got ${JSON.stringify(value[attr])}.`);
-      }
+      // Measured for `integer` (2^31 and "5" both answer this); the documented range is a 32-bit signed integer.
+      if (ok && !ok(value[attr])) throw new KvsError(400, 'INCORRECT_PROPERTY_TYPE', `Data type for property "${attr}" is defined as "${spec.type}"`);
     }
   };
   const alive = (rec) => rec && !(rec.expireAt && rec.expireAt <= now());
@@ -78,11 +135,11 @@ function createKvs({ entities: declared = [], now = () => Date.now() } = {}) {
     const t = now();
     const prev = map.get(key);
     const live = alive(prev) ? prev : undefined;
-    if (options.keyPolicy === 'FAIL_IF_EXISTS' && live) throw new KvsError(409, 'CONDITIONAL_CHECK_FAILED', `Key '${key}' already exists.`);
+    if (options.keyPolicy === 'FAIL_IF_EXISTS' && live) throw new KvsError(409, 'KEY_CONFLICT', 'Provided key already exists and cannot be overwritten');
     const ttl = options.ttl ? options.ttl.value * (TTL_UNIT[options.ttl.unit] ?? NaN) : null;
-    if (ttl !== null && !(ttl > 0)) throw new KvsError(400, 'INVALID_TTL', 'TTL must be a positive value with unit SECONDS, MINUTES, HOURS or DAYS.');
+    if (ttl !== null && !(ttl > 0)) throw new KvsError(400, 'INVALID_TTL', `TTL value must be a positive integer, received: ${options.ttl?.value}`);
     const rec = { value, createdAt: live?.createdAt ?? t, updatedAt: t, expireAt: ttl ? t + ttl : null };
-    map.set(key, rec);
+    put(map, key, rec);
     if (options.returnValue === 'PREVIOUS') return live ? meta(key, live) : undefined;
     if (options.returnValue === 'LATEST') return meta(key, rec);
     return undefined;
@@ -142,13 +199,16 @@ function createKvs({ entities: declared = [], now = () => Date.now() } = {}) {
   const ops = {
     '/api/v1/get': (b) => { checkKey(b.key); return meta(b.key, read(kv, b.key)); },
     '/api/v1/set': (b) => { checkKey(b.key); checkValue(b.value); return write(kv, b.key, b.value, b.options); },
-    '/api/v1/delete': (b) => { checkKey(b.key); read(kv, b.key); kv.delete(b.key); return undefined; },
+    '/api/v1/delete': (b) => { checkKey(b.key); read(kv, b.key); drop(kv, b.key); return undefined; },
     '/api/v1/secret/get': (b) => { checkKey(b.key); return meta(b.key, read(secrets, b.key)); },
     '/api/v1/secret/set': (b) => { checkKey(b.key); checkValue(b.value); return write(secrets, b.key, b.value, b.options); },
-    '/api/v1/secret/delete': (b) => { checkKey(b.key); read(secrets, b.key); secrets.delete(b.key); return undefined; },
+    '/api/v1/secret/delete': (b) => { checkKey(b.key); read(secrets, b.key); drop(secrets, b.key); return undefined; },
     '/api/v1/query': (b) => {
       const limit = pageSize(b.limit);
-      let keys = [...kv.keys()].filter((k) => alive(kv.get(k))).sort();
+      const tq = at ?? now();
+      const view = new Map();
+      for (const k of indexedIds(kv)) { const rec = indexed(kv, k, tq); if (alive(rec)) view.set(k, rec); }
+      let keys = [...view.keys()].sort();
       const w = b.where?.[0];
       if (b.where && b.where.length > 1) throw new KvsError(400, 'INVALID_CONDITION', 'There may only be a single where condition for a query.');
       if (w) {
@@ -159,7 +219,7 @@ function createKvs({ entities: declared = [], now = () => Date.now() } = {}) {
       if (after !== null) keys = keys.filter((k) => k > after);
       const page = keys.slice(0, limit);
       const more = keys.length > page.length;
-      return { data: page.map((k) => ({ key: k, value: kv.get(k).value })), ...(more ? { cursor: encodeCursor(page[page.length - 1]) } : {}) };
+      return { data: page.map((k) => ({ key: k, value: view.get(k).value })), ...(more ? { cursor: encodeCursor(page[page.length - 1]) } : {}) };
     },
     '/api/v1/entity/get': (b) => { entityDef(b.entityName); checkKey(b.key); return meta(b.key, read(ents, ekey(b.entityName, b.key))); },
     '/api/v1/entity/set': (b) => {
@@ -167,15 +227,17 @@ function createKvs({ entities: declared = [], now = () => Date.now() } = {}) {
       checkKey(b.key); checkValue(b.value); checkEntityValue(def, b.value);
       return write(ents, ekey(b.entityName, b.key), b.value, b.options);
     },
-    '/api/v1/entity/delete': (b) => { entityDef(b.entityName); checkKey(b.key); read(ents, ekey(b.entityName, b.key)); ents.delete(ekey(b.entityName, b.key)); return undefined; },
+    '/api/v1/entity/delete': (b) => { entityDef(b.entityName); checkKey(b.key); read(ents, ekey(b.entityName, b.key)); drop(ents, ekey(b.entityName, b.key)); return undefined; },
     '/api/v1/entity/query': (b) => {
       const def = entityDef(b.entityName);
       const ix = indexOf(def, b.indexName);
       const limit = pageSize(b.limit);
       const part = b.partition ?? [];
       if (ix.partition.length && part.length !== ix.partition.length) throw new KvsError(400, 'INVALID_PARTITION', `Index '${ix.name}' needs a partition of ${ix.partition.length} value(s).`);
+      const tq = at ?? now();
       const rows = [];
-      for (const [k, rec] of ents) {
+      for (const k of indexedIds(ents)) {
+        const rec = indexed(ents, k, tq);
         const [name, key] = k.split('\u0000');
         if (name !== b.entityName || !alive(rec)) continue;
         const v = rec.value;
@@ -199,20 +261,20 @@ function createKvs({ entities: declared = [], now = () => Date.now() } = {}) {
       const more = start + page.length < rows.length;
       return { data: page.map((r) => ({ key: r.key, value: r.rec.value })), ...(more ? { cursor: encodeCursor(page[page.length - 1].key) } : {}) };
     },
-    '/api/v1/batch/set': (items) => batch(items, (it) => {
+    '/api/v1/batch/set': (items) => batch(items, 'set', (it) => {
       if (it.entityName) { const def = entityDef(it.entityName); checkKey(it.key); checkValue(it.value); checkEntityValue(def, it.value); write(ents, ekey(it.entityName, it.key), it.value, it.options); }
       else { checkKey(it.key); checkValue(it.value); write(kv, it.key, it.value, it.options); }
       return { key: it.key, ...(it.entityName ? { entityName: it.entityName } : {}) };
     }),
-    '/api/v1/batch/delete': (items) => batch(items, (it) => {
+    '/api/v1/batch/delete': (items) => batch(items, 'delete', (it) => {
       checkKey(it.key);
-      if (it.entityName) { entityDef(it.entityName); ents.delete(ekey(it.entityName, it.key)); } else kv.delete(it.key);
+      if (it.entityName) { entityDef(it.entityName); drop(ents, ekey(it.entityName, it.key)); } else drop(kv, it.key);
       return { key: it.key, ...(it.entityName ? { entityName: it.entityName } : {}) };
     }),
-    '/api/v1/batch/get': (items) => batch(items, (it) => {
+    '/api/v1/batch/get': (items) => batch(items, 'get', (it) => {
       checkKey(it.key);
       const rec = it.entityName ? (entityDef(it.entityName), ents.get(ekey(it.entityName, it.key))) : kv.get(it.key);
-      if (!alive(rec)) throw new KvsError(404, 'KEY_NOT_FOUND', `Key '${it.key}' not found.`);
+      if (!alive(rec)) throw new KvsError(404, 'KEY_NOT_FOUND', 'Provided key does not exist');
       return { key: it.key, ...(it.entityName ? { entityName: it.entityName } : {}), value: rec.value, createdAt: rec.createdAt, updatedAt: rec.updatedAt };
     }),
     '/api/v1/transaction': (b) => {
@@ -220,11 +282,11 @@ function createKvs({ entities: declared = [], now = () => Date.now() } = {}) {
       const dels = b.delete ?? [];
       const checks = b.check ?? [];
       const n = sets.length + dels.length + checks.length;
-      if (n > LIMITS.transactionOps) throw new KvsError(400, 'TOO_MANY_OPERATIONS', `Each transaction can contain a maximum of ${LIMITS.transactionOps} operations.`, { limit: 'transaction-ops' });
+      if (n > LIMITS.transactionOps) throw new KvsError(422, 'UNPROCESSABLE_ENTITY', 'Request cannot be processed due to one or more semantic errors', { limit: 'transaction-ops' });
       const seen = new Set();
       for (const op of [...sets, ...dels, ...checks]) {
         const id = `${op.entityName ?? ''}\u0000${op.key}`;
-        if (seen.has(id)) throw new KvsError(400, 'DUPLICATE_KEY', 'Each key can only be used once in a transaction.');
+        if (seen.has(id)) throw new KvsError(400, 'KEY_DUPLICATION_ERROR', 'Duplicate key found in request');
         seen.add(id);
         checkKey(op.key);
       }
@@ -235,20 +297,22 @@ function createKvs({ entities: declared = [], now = () => Date.now() } = {}) {
       };
       for (const op of [...sets, ...dels, ...checks]) {
         if (op.entityName) entityDef(op.entityName);
-        if (!conditionHolds(op)) throw new KvsError(409, 'CONDITIONAL_CHECK_FAILED', `Transaction condition failed for key '${op.key}'.`);
+        if (!conditionHolds(op)) throw new KvsError(400, 'CONDITIONAL_CHECK_FAILED', 'Request failed due to conditional check specified or optimistic locking');
       }
       for (const op of sets) {
         checkValue(op.value);
         if (op.entityName) { checkEntityValue(entityDef(op.entityName), op.value); write(ents, ekey(op.entityName, op.key), op.value, op.options); }
         else write(kv, op.key, op.value, op.options);
       }
-      for (const op of dels) (op.entityName ? ents : kv).delete(op.entityName ? ekey(op.entityName, op.key) : op.key);
+      for (const op of dels) drop(op.entityName ? ents : kv, op.entityName ? ekey(op.entityName, op.key) : op.key);
       return undefined;
     },
   };
-  function batch(items, fn) {
+  function batch(items, verb, fn) {
     if (!Array.isArray(items)) throw new KvsError(400, 'INVALID_REQUEST', 'Batch requests take an array of items.');
-    if (items.length > LIMITS.batchKeys) throw new KvsError(400, 'MAX_BATCH_SIZE', `Each batch operation can contain a maximum of ${LIMITS.batchKeys} keys.`, { limit: 'batch-keys' });
+    if (items.length > LIMITS.batchKeys) {
+      throw new KvsError(400, 'TOO_MANY_BATCH_ENTITIES', `Number of entities to ${verb} was ${items.length}, but you can only ${verb} a maximum of ${LIMITS.batchKeys} entities at a time.`, { limit: 'batch-keys' });
+    }
     const successfulKeys = [];
     const failedKeys = [];
     for (const it of items) {
@@ -260,17 +324,18 @@ function createKvs({ entities: declared = [], now = () => Date.now() } = {}) {
     return { successfulKeys, failedKeys };
   }
 
-  // -> {status, body, error?}
-  const handle = (op, body) => {
+  // -> {status, body, error?}. `t`: the request's virtual send time (an invocation's; absent for the harness's own writes).
+  const handle = (op, body, { t = null } = {}) => {
     const fn = ops[op];
     if (!fn) return { status: 501, body: { code: 'EMULATOR_NOT_MODELLED', message: `KVS ${op} is not modelled` }, notModelled: true };
+    at = Number.isFinite(t) ? t : null;
     try {
       const out = fn(body ?? {});
       return out === undefined ? { status: 204, body: undefined } : { status: 200, body: out };
     } catch (e) {
       if (e instanceof KvsError) return { status: e.status, body: { code: e.code, message: e.message }, error: { code: e.code, ...e.extra } };
       throw e;
-    }
+    } finally { at = null; }
   };
   const snapshot = () => ({
     kvs: Object.fromEntries([...kv].filter(([, r]) => alive(r)).map(([k, r]) => [k, r.value])),
@@ -281,10 +346,15 @@ function createKvs({ entities: declared = [], now = () => Date.now() } = {}) {
       return acc;
     }, {}),
   });
-  const dump = () => ({ kv: [...kv], secrets: [...secrets], ents: [...ents] });
-  const load = (d) => { kv = new Map(d.kv); secrets = new Map(d.secrets); ents = new Map(d.ents); };
-  const clear = () => { kv = new Map(); secrets = new Map(); ents = new Map(); };
+  // `index`: the writes the query index has not caught up with (forge-dev carries them from one process to the next). A
+  // dump without it was written outside any invocation (the v1 preload): settled, nothing in flight.
+  const dump = () => ({ kv: [...kv], secrets: [...secrets], ents: [...ents], index: { kv: [...kvHist], ents: [...entHist] } });
+  const load = (d) => {
+    kv = new Map(d.kv); secrets = new Map(d.secrets); ents = new Map(d.ents);
+    kvHist = new Map(d.index?.kv ?? []); entHist = new Map(d.index?.ents ?? []);
+  };
+  const clear = () => { kv = new Map(); secrets = new Map(); ents = new Map(); kvHist = new Map(); entHist = new Map(); };
   return { handle, snapshot, dump, load, clear, LIMITS, ops: Object.keys(ops) };
 }
 
-module.exports = { createKvs, LIMITS };
+module.exports = { createKvs, LIMITS, QUERY_LAG_MS };

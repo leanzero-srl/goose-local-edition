@@ -1,8 +1,8 @@
 {
   "name": "scope-ledger",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "Scope Ledger — forge-1.0 golden reference app",
+  "description": "Scope Ledger — forge-2.0 golden reference app (v2: scope-ledger, admin page, CI trigger, scope-status)",
   "scripts": {
     "build": "node build.mjs",
     "lint": "node \"$FORGE_KIT/bin/lint.cjs\""
@@ -15,6 +15,7 @@
     "@forge/hooks": "2.0.0",
     "@forge/kvs": "2.0.7",
     "@forge/llm": "1.0.7",
+    "@forge/react": "12.3.0",
     "@forge/realtime": "1.0.1",
     "@forge/resolver": "2.0.0",
     "react": "18.3.1",

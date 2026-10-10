@@ -1,0 +1,92 @@
+[
+  {
+    "name": "r1_skips_parallel_sprint",
+    "family": "R1",
+    "patch": "r1_skips_parallel_sprint.patch",
+    "loses": ["r1_progress_visible"],
+    "may_lose": ["r1_v1_rows_migrated", "r_pagination"],
+    "critical": false,
+    "why": "The migration plan keeps one active sprint per board (the first listed) instead of every active and closed sprint, so the v1 rows of every parallel active sprint are never copied (seed 0123: boards 26 and 181 run two active sprints each) and the panel's total leaves them out: `Migrated <n> of <total>` names the wrong total at every read. The ledger rows come back through the golden's own backfill: the first scheduled run migrates first, then re-derives every history change of the active sprints the ledger lacks once the migration reports complete, with v1's time (recordChange), so r1_v1_rows_migrated holds unless that backfill lands after the 2-hour mark. v1's entity is untouched: the migration critical must not fire. Measured 2026-10-10 (seed 0123, identical on forge2/gate-fix and forge2/hardened): r_pagination 0.9298 too — the plan now lists each board's `state=active` sprints, the request the same scheduled run's discovery makes again, so 4 of 25 board-sprint walks read a page twice (boards 26, 126, ...)."
+  },
+  {
+    "name": "r2_syncs_past_quota_wall",
+    "family": "R2",
+    "patch": "r2_syncs_past_quota_wall.patch",
+    "loses": ["r2_rate_limit_reaction"],
+    "may_lose": ["u_ledger_table"],
+    "critical": false,
+    "why": "A quota 429 stops only the invocation that drew it: the shared pause is never stored, so the rest of the background keeps syncing into the wall until the reset (seed 0123: three consumer deliveries reach Jira inside the first quota 429's Retry-After). Not the brief's literal 'ignores the 70 % cap': deleting the share check is an equivalent mutant on these sites, because the golden's busiest background hour spends 228 of the 1,680-point share (seed 0123), so no row can see the cap. Measured 2026-10-10 (seed 0123, identical on forge2/gate-fix and forge2/hardened): u_ledger_table 5.98/6 too — with no stored pause the change 1325994 (sprint 1253, 11:59:44, inside the wall) keeps meeting the wall until the hour's scheduled run records it first, so its row's source is `reconcile` where the oracle has `event`."
+  },
+  {
+    "name": "r3_waits_out_retry_after",
+    "family": "R3",
+    "patch": "r3_waits_out_retry_after.patch",
+    "loses": ["r3_long_retry_after_deferred", "r3_never_killed"],
+    "may_lose": [],
+    "critical": false,
+    "why": "A quota 429 still pauses the rest of the background, but the invocation that drew it sleeps until the reset in-function instead of returning InvocationError, so a Retry-After longer than the time left kills the consumer at its 900 s limit. Requires the probe's quota wall to outlast that limit (INTEGRATION fix list): on seed 0123 the wall was 300 s and its 429 carried 178 s, which fits, so both R3 rows are vacuous for the golden and the mutant alike there."
+  },
+  {
+    "name": "r3_check_then_act_dedupe",
+    "family": "R3",
+    "patch": "r3_check_then_act_dedupe.patch",
+    "loses": ["r3_no_duplicate_rows", "t_no_double_count"],
+    "may_lose": ["e_event_economy"],
+    "critical": "duplicate",
+    "why": "The race mutant (SPEC §2.8 S1). Each recording gets its own row key (`<changeId>:<sprintId>:<uuid>`) and the change is deduped by a `recorded:` marker that is read, then set: get-then-set, no conditional claim. One delivery at a time the marker dedupes every duplicate, redelivery, reconcile and migration copy, so nothing differs off the race; two deliveries of one change started together (a same-event pair: READS-FIRST holds the first marker write until the partner has written) both read no marker and both write a row: duplicate ledger rows, the duplicate critical. Seed 0123456789abcdef: 8 same-event groups raced, 7 of them on sprint changes, 9 (changeId, sprintId) doubled at the final checkpoint, every one a raced group's change (e.g. ('1318506', '1115')); score 0.9907 -> 0.5623, t_no_double_count fired. The doubled rows show twice in the sprint ledger, the Rovo action and the hidden count: the change-list rows, t_event_rows and t_multi_sprint_parse are ROOT_BLOCKS of t_no_double_count; e_event_economy (calibration-owned) is not credited on inexact event rows. Rows keyed by changelog id + sprint, as the golden keys them, make the same get-then-set race land on one key (equivalent mutant), so the key per recording is part of the defect."
+  },
+  {
+    "name": "r4_deletion_unflagged",
+    "family": "R4",
+    "patch": "r4_deletion_unflagged.patch",
+    "loses": ["r4_deleted_history", "b_hidden_count"],
+    "may_lose": ["a_action_result", "r2_backfill_complete"],
+    "critical": false,
+    "why": "A deleted issue's memberships are still marked deleted (it leaves current scope; the totals do not move) but its ledger rows never get deleted: true. r4_deleted_history loses every such row. The person view leaves out only flagged rows, so the deleted issue's changes count as hidden for everyone (Jira no longer returns the issue): b_hidden_count (a_action_permissions follows by ROOT_BLOCKS), and a_action_result where that sprint was otherwise answered right (seed 0123: sprint 850 holds both deleted issues' rows and the golden answers it right, so it is lost there). Measured 2026-10-10 (seed 0123, identical on forge2/gate-fix and forge2/hardened): r2_backfill_complete 110/111 too — the backfilled row ('1313902', '850') belongs to a deleted issue and stays unflagged."
+  },
+  {
+    "name": "r5_save_unguarded",
+    "family": "R5",
+    "patch": "r5_save_unguarded.patch",
+    "loses": ["r5_nonadmin_refused"],
+    "may_lose": [],
+    "critical": "admin",
+    "why": "saveSettings is registered without the ADMINISTER guard (the page shows the form to admins only, so the resolver trusts that): the non-admin's replayed save stores the forged budget. getAdmin and rotateSecret stay guarded, so the labels, the admin's own actions and the secret are unaffected."
+  },
+  {
+    "name": "r6_bad_signature_accepted",
+    "family": "R6",
+    "patch": "r6_bad_signature_accepted.patch",
+    "loses": ["r6_unsigned_no_effect", "r6_status_codes"],
+    "may_lose": [],
+    "critical": "webtrigger",
+    "why": "`&&` became `||` in the signature comparison: any signature of the right length passes, so the bad-signature and tampered events are answered 202 and applied. Unsigned and stale events are still refused before the comparison, the replay still dedupes and the valid events still apply."
+  },
+  {
+    "name": "r7_field_event_only",
+    "family": "R7",
+    "patch": "r7_field_event_only.patch",
+    "loses": ["r7_values_fresh"],
+    "may_lose": [],
+    "critical": false,
+    "why": "The field is written one issue per request from the event path only: the scheduled run computes the statuses but never bulk-writes them, so every issue no event touched (the backfill's issues, a closed sprint's issues, a board's field switch) keeps a stale or empty value. The event path's writes are still accepted, so r7_writes_accepted holds. Not the brief's literal per-issue bulk writer: that one is equivalent on these sites (values stay fresh and accepted, 2 points per issue stay far inside the share and the burst bucket), and only the e_* economy rows count requests, which are calibration-owned and never a mutant's defect."
+  },
+  {
+    "name": "r8_unfinished_shown",
+    "family": "R8",
+    "patch": "r8_unfinished_shown.patch",
+    "loses": ["r8_failure_handling"],
+    "may_lose": [],
+    "critical": false,
+    "why": "readAnswer checks that a choice exists, not its finish_reason: the unfinished answer's report_scope call (its summary is the site's PARTIAL_TEXT) is shown as complete, failing 1 of the 2 failure cases. The probe spaces its cases 11 virtual minutes apart, past the 10-minute cache, so the cached unfinished answer reaches no other case."
+  },
+  {
+    "name": "r9_widget_double_invoke",
+    "family": "R9",
+    "patch": "r9_widget_double_invoke.patch",
+    "loses": ["r9_widget_boot"],
+    "may_lose": [],
+    "critical": false,
+    "why": "The widget's boot script asks the `boards` resolver before its own first-paint invoke: 2 invokes before the first data paint against a budget of 1. Its bytes do not grow (the boot bundle already carries @forge/bridge's invoke); the sprint modal and the admin page are untouched."
+  }
+]

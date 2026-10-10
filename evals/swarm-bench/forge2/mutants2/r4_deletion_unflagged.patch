@@ -1,0 +1,15 @@
+diff --git a/src/ledger.js b/src/ledger.js
+--- a/src/ledger.js
++++ b/src/ledger.js
+@@ -146,11 +146,6 @@ export async function writeMember(next, stored) {
+ export async function markIssueDeleted(issueId) {
+   const sprintIds = new Set();
+   await untilQueryable();
+-  for (const { key, value: row } of await queryEntries(LEDGER, 'by-issue', [String(issueId)])) {
+-    if (row.deleted) continue;
+-    await kvs.entity(LEDGER).set(key, { ...row, deleted: true });
+-    sprintIds.add(row.sprintId);
+-  }
+   for (const m of await membersOfIssue(issueId)) {
+     if (m.deleted === true) continue;
+     await kvs.entity(MEMBERS).set(memberKey(m.sprintId, m.issueId), { ...m, deleted: true });

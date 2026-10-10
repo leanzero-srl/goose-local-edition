@@ -1,0 +1,84 @@
+{
+  "name": "forge-2.0 rate model",
+  "about": "The benchmark's own Jira rate world. Atlassian publishes no per-endpoint costs; the dev and scoring sites charge exactly this. Times are virtual (FORGE2-CONTRACT.md §11).",
+  "quota": {
+    "pointsPerHour": 2400,
+    "scope": "per installation, per virtual hour: a clock hour of the virtual clock (minute :00 to :00), not counted from the upgrade or from a scheduled run",
+    "reset": "at the top of each virtual hour (minute :00); nothing carries over",
+    "wall": "hard: once the hour's points are spent, every request the quota charges is answered 429 until the reset (a Custom UI page's own requestJira is never charged)",
+    "why": "the app's fair share of its 65,000-point Tier 1 hourly pool, which every tenant of the app shares (about 27 tenants)"
+  },
+  "background": {
+    "maxSharePercent": 70,
+    "maxPointsPerHour": 1680,
+    "is": ["product event triggers", "async event consumers", "scheduled triggers", "web triggers"],
+    "rule": "background requests may use at most 70 % of any virtual hour's quota (the admin setting Background share (%) moves this limit, 10-90)"
+  },
+  "personFacing": {
+    "is": ["resolvers invoked from a UI surface (Custom UI or UI Kit)", "the Rovo action"],
+    "rule": "a person-facing request is never refused for quota"
+  },
+  "costs": [
+    { "request": "GET (any path not named below)", "points": 1 },
+    { "request": "GET /rest/agile/1.0/... (Jira Software GETs)", "points": 1 },
+    {
+      "request": "GET /rest/api/3/search/jql, POST /rest/api/3/search/jql",
+      "points": "1 + 1 per 50 issues returned",
+      "base": 1,
+      "plus": 1,
+      "per": 50,
+      "of": "issues returned",
+      "counting": "every started block of 50 counts: 0 issues = 1 point, 1-50 = 2, 51-100 = 3"
+    },
+    {
+      "request": "POST /rest/api/3/changelog/bulkfetch",
+      "points": 2,
+      "per": "call",
+      "maxIssuesPerCall": 1000
+    },
+    {
+      "request": "POST /rest/api/3/app/field/value, PUT /rest/api/3/app/field/{fieldIdOrKey}/value",
+      "points": "1 + 1 per 50 updates",
+      "base": 1,
+      "plus": 1,
+      "per": 50,
+      "of": "updates (one update = one issue's value)",
+      "counting": "every started block of 50 counts: 1-50 updates = 2 points, 51-100 = 3",
+      "maxUpdatesPerRequest": 200
+    },
+    { "request": "any other POST, PUT or DELETE", "points": 2 }
+  ],
+  "burst": {
+    "bucket": "one token bucket per endpoint: method + path template (for example GET /rest/api/3/issue/{issueIdOrKey})",
+    "capacityPoints": 30,
+    "refillPointsPerSecond": 5,
+    "rule": "a request draws its points from its endpoint's bucket; a request the bucket cannot pay for is answered 429 jira-burst-based. As on real shared Jira, a request the bucket could pay for is sometimes refused the same way too: that 429 carries a Retry-After like any other, honoured the same way"
+  },
+  "perIssueWrites": {
+    "maxWritesPerIssue": 1,
+    "windowSeconds": 2,
+    "rule": "at most 1 write per issue per 2 s; another write to the same issue inside the window is answered 429 jira-per-issue-on-write"
+  },
+  "responses": {
+    "everyResponse": { "X-RateLimit-Limit": "2400" },
+    "nearLimit": {
+      "when": "fewer than 20 % of the hour's points (480) remain",
+      "headers": { "X-RateLimit-Remaining": "<points left this hour>", "X-RateLimit-NearLimit": "true" }
+    },
+    "429": {
+      "body": { "errorMessages": ["Rate limit exceeded"] },
+      "headers": { "Retry-After": "<seconds>", "RateLimit-Reason": "<one of the reasons below>" },
+      "reasons": {
+        "jira-quota-tenant-based": "the hour's quota is spent; Retry-After = seconds to the next virtual hour",
+        "jira-burst-based": "the endpoint's burst bucket is empty, or the site refused a burst it could pay for (burst.rule)",
+        "jira-per-issue-on-write": "a second write to one issue inside its 2 s window"
+      }
+    }
+  },
+  "reactions": {
+    "jira-quota-tenant-based": "pause ALL background requests until the reset",
+    "jira-burst-based": "slow down that endpoint only",
+    "jira-per-issue-on-write": "delay writes to that issue only",
+    "always": "never send the next attempt before Retry-After has passed"
+  }
+}

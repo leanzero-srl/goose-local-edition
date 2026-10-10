@@ -1,22 +1,40 @@
-"""forge-1.0 — grade a built Scope Ledger Forge app (forge/DESIGN.md §8–§9) by RUNNING it.
+"""forge-2.0 — grade a built Scope Ledger v2 Forge app (forge2/SPEC.md §4) by RUNNING it.
 
-    score_forge.py --tree <run tree> --seed <fixture_seed> --json-out v.json [--reference] [--runtime shim]
+    score_forge2.py --tree <run tree> --seed <fixture_seed> --json-out v.json [--reference] [--runtime shim]
+    score_forge2.py --selftest     (the composition and the §17.8 fixes, no tree, no probe)
+    score_forge2.py --recompose <verdict.json> [--json-out v.json]   (a kept verdict's stored rows through today's
+                                   composition: no tree, no probe, the rows exactly as they were graded)
 
-Mirrors the SB scorer machinery (score_sb7.py) with forge's own registry, nothing imported from it:
-`@check(name, tier, pre=…)` registry with PRECONDITIONS (G5: a row whose surface was never exercised scores 0
-as `vacuous_root`, priced 0, no multiplier of its own — an idle app cannot collect "nothing went wrong"
-credit), `compose_from_rows` (`earned = (0.88·inner + 0.12·gate·e_mean) × critical multiplier`, floor 0.6),
-the 7-member CRITICAL registry with per-critical severity transforms, ROOT_BLOCKS attribution + multiplier
-dedup, the four ADMISSION bands (`final = min(earned, ceilings)`; passing awards nothing), the proportional
-EXCELLENCE gate, `severity_selftest()` (wired into every run and into `--reference`), the `--reference`
-freeze gate, and the calibration pin (`CALIB_SHA256` over forge-thresholds.json).
+Forge 1.0's machinery (score_forge.py, forked) with the 2.0 composition (SPEC §4):
+  earned = (0.25 · v1 + Σ_family w_family · mean(family rows)) × critical multiplier × reliability
+  v1     = 0.88 · inner(1.0 tiers L..A) + 0.12 · excellence gate · e_mean      (the 1.0 rows, now regression rows)
+  family = R1 0.12 · R2 0.13 · R3 0.08 · R4 0.10 · R5 0.10 · R6 0.08 · R7 0.05 · R8 0.04 · R9 0.05 (P8's rows,
+           imported from bench/forge2_checks.py, each weighted inside its family)
+  criticals: five CLASSES, ×0.6 each, a class fires at most once (each root priced once) and only on an observed
+           defect — never on a vacuous, absent, unavailable or manifest-fault row
+  reliability: max(floor, Π over the 18 groups — every tier but E — of (1 − K × the shortfall of the group's worst
+           eligible row)), K and the floor from the thresholds file (reliability())
+  bands: lint/bundle failure → max 0.499; none of jira:adminPage, webtrigger, scope-ledger → max 0.30.
+The §17.8 fixes: B (the duplicate critical needs >= 2 comments for one gesture; zero comments or a missing flag
+is u_comment_flow's), F (both economy rows continuous), G (vacuous / manifest-fault rows never fire a critical,
+a vacuous root counts as charged), H (u_widget_live grades the outcome on the moved sprints; polling scores 0).
 
-Evidence is interface I5: `forge_probe.mjs` drives WP1's emulator (I2) through §8.7's scoring sequence and
-writes `forge-observations.json`; this module grades it against forge_oracle.py on the run's own pack (I1).
-`evaluate(ctx)` is PURE over (observations, pack): the unit tests and the severity selftest push synthetic
-observations through the real checks.
+P8's module (bench/forge2_checks.py) — what this module imports, validates at import, and refuses to score without:
+  ROWS      entries (objects or dicts) with name, family ('R1'..'R9'; `tier` also read) and critical (None, a class
+            key, or its consequence text — mapped to exactly one class by CLASS_OF_TEXT, else refused);
+  WEIGHTS   {name: weight} (a row's share; only the proportions inside a family matter; 0 = diagnostic);
+  evaluate(obs, oracle) -> [{check, score, detail, parts?, unavailable?}]   run once per scoring site with the
+            observations and forge2_oracle.Oracle(pack, include_live_ui=True); vacuous = parts.vacuous_root, absent =
+            parts.absent_surface, harness gap = unavailable; a critical row scores < 1 ONLY on an observed defect;
+  optional  ROOT_BLOCKS {root: (rows it explains)}; idle_observations(oracle) (the selftest's idle app).
+  forge2_checks must not import this module at its top level (this module imports it).
+PRECONDITIONS (G5) stay: a row whose surface was never exercised scores 0 as `vacuous_root` — an idle app cannot
+collect "nothing went wrong" credit. Evidence is interface I5: `forge2_probe.mjs` drives the forge2 emulator and
+writes `forge-observations.json`; this module grades it against forge2_oracle.py on the run's own pack.
+`evaluate(ctx)` is PURE over (observations, pack).
 
-I5 — forge-observations.json, the fields this scorer reads (the probe normalises WP1's logs into it):
+I5 — forge-observations.json, the 1.0 fields the v1 rows read (2.0's added keys — rate, invocations, migration,
+world, webtrigger, admin, field, llm_v2, boot — are read by forge2_checks.py):
   manifest (parsed manifest.yml | null), manifestError, kit {pins {pkg: version}, lockSha256, wrapperSha256},
   lint {runs: [{counts {errors, warnings}, problems [{sev, message, file, line, linter}], stageReached,
         stagesTotal, crashed}]}  (two runs; must be identical),
@@ -28,11 +46,18 @@ I5 — forge-observations.json, the fields this scorer reads (the probe normalis
     call = {t (virtual s), inv, kind (trigger|consumer|scheduled|resolver|action|ui), moduleKey, provider
             (app|user|none), service (jira|kvs|queue|egress), method, path, body, status, response,
             scopes {classic [..], granular [..]} (jira: the endpoint's OAuth2 alternatives), fault (id of the
-            scripted fault that answered), earlyRetry (fault id when retried inside its window), limitError}
+            scripted fault that answered), earlyRetry (fault id when retried inside its window), limitError,
+            kvsCode (the code storage refused a request with, e.g. CONDITIONAL_CHECK_FAILED; null when answered),
+            originChange / scheduledRun (the invocation's lineage: the product event or the scheduled run its chain
+            began with, handed on by every queue push — the economy rows and the scheduled run's rows read it)}
     inv  = {inv, kind, moduleKey, functionKey, t0, t1, ok, threw, error, errorName, timedOut, retryAfter}
-    delivery = {eventId, inv, attempt, result (ok|retry|throw|timeout), retryAfter, t}
+    delivery = {eventId, inv, attempt, result (ok|retry|throw|timeout), retryAfter, t, concurrent? (the kit's group
+            record when the delivery ran in a concurrent group: forge2_checks.concurrent_groups)}
   rovo {calls: [{as, label (sprint|unknown|missing), sprintId, threw, result, error}]},
-  comments [{t, issueKey, provider, accountId, status, body, fault}]   (every comment POST the site saw),
+  comments [{t, issueKey, provider, accountId, status, body, fault, kind}]   (every comment POST the site saw; `kind`
+        the invoking module kind — a web-trigger/background comment never feeds the v1 comment rows),
+  ui.sprintAction[].{select {changeId}, post, doubleClick {changeId, commentsAdded, successFlags, clickFailed?}}:
+        the double click goes to a FRESH viewer-visible row; `clickFailed` names a gesture the probe could not deliver,
   ui {surfaces [surface], widget {noConfig, views, secondInstance}, edit {options, picks, reopen},
       sprintAction [render], notStarted, invokeResponses [{surface, functionKey, response, threw, undefined}]},
   harnessMissing [str], sectionErrors {section: reason}, shots [paths].
@@ -40,7 +65,10 @@ I5 — forge-observations.json, the fields this scorer reads (the probe normalis
 from __future__ import annotations
 
 import argparse
+from collections import Counter
+import contextlib
 import copy
+from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 import fcntl
 import hashlib
@@ -59,18 +87,20 @@ import time
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 import zlib
 
-import forge_oracle as fo
+import forge2_oracle as fo
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
-PROBE_SCRIPT = HERE / 'forge_probe.mjs'
-SPEC = 'forge/public/spec-build-forge.md'
-CONTRACT = 'forge/public/FORGE-CONTRACT.md'
+PROBE_SCRIPT = HERE / 'forge2_probe.mjs'
+SPEC = 'forge2/public/spec-build-forge2.md'
+CONTRACT = 'forge2/public/FORGE2-CONTRACT.md'
+OPENAPI_DIR = ROOT / 'forge2' / 'kit' / 'openapi'
+FIXTURES = ROOT / 'forge2' / 'site' / 'fixtures.cjs'
 
 # ── calibration-owned thresholds ─────────────────────────────────────────────────────────────
 
-THRESHOLDS_FILE = HERE / 'forge-thresholds.json'
-CALIB_SHA256 = 'e5d7f98e283a0183c6e1f872f6f65471b05012233452b13554da9c91b0c485d5'  # refrozen 2026-10-04: golden x5 on the stringency scoring site (forge-thresholds.json calibration.seeds)
+THRESHOLDS_FILE = HERE / 'forge2-thresholds.json'
+CALIB_SHA256 = '34550b5db10c9f76788a2db45925ce6a1bf94c7bb98842ba2c8cd3a7c01efeec'   # the golden v2 x5 calibration (calibrate(), --calibrate, 7ed584279) + reliability_k/floor (SPEC §4), 2026-10-10
 
 
 def _load_thresholds() -> Dict:
@@ -78,81 +108,69 @@ def _load_thresholds() -> Dict:
     try:
         data = json.loads(raw)
     except ValueError:
-        raise SystemExit(f'forge-thresholds.json is unparsable — refusing to score: {THRESHOLDS_FILE}')
+        raise SystemExit(f'{THRESHOLDS_FILE.name} is unparsable — refusing to score: {THRESHOLDS_FILE}')
     if data.get('calibrated'):
         digest = hashlib.sha256(raw).hexdigest()
         if CALIB_SHA256 == 'TBD-AT-FREEZE' or digest != CALIB_SHA256:
-            raise SystemExit('forge-thresholds.json claims calibrated=true but its sha256 does not match the pin '
-                             f'in score_forge.py ({digest[:16]}… vs {CALIB_SHA256[:16]}…) — refusing to score.')
-    for name in ('critical_multiplier_floor', 'economy_rungs', 'event_economy_top', 'ui_round_trip_rungs',
-                 'idempotent_rerun_rungs',
-                 'contrast_min', 'chart_tolerance_px', 'color_tolerance'):
+            raise SystemExit(f'{THRESHOLDS_FILE.name} claims calibrated=true but its sha256 does not match the pin '
+                             f'in score_forge2.py ({digest[:16]}… vs {CALIB_SHA256[:16]}…) — refusing to score.')
+    for name in ('critical_multiplier_floor', 'reliability_k', 'reliability_floor', 'reconcile_economy_top',
+                 'event_economy_top', 'ui_round_trip_rungs', 'idempotent_rerun_rungs',
+                 'contrast_min', 'chart_tolerance_px', 'color_tolerance', 'blank_share'):
         if name not in data:
-            raise SystemExit(f'forge-thresholds.json lacks {name!r} — refusing to score on a silent default')
+            raise SystemExit(f'{THRESHOLDS_FILE.name} lacks {name!r} — refusing to score on a silent default')
     return data
 
 
 TH = _load_thresholds()
 CALIBRATED = bool(TH.get('calibrated'))
-VERSION = 'forge-1.0' if CALIBRATED else 'forge-1.0-rc'
-UNCALIBRATED_BANNER = ('FORGE-1.0 UNCALIBRATED — forge-thresholds.json carries rc defaults (no CALIB pin); '
-                       'scores are rc-grade (forge-1.0-rc), never board-grade.')
+VERSION = 'forge-2.0' if CALIBRATED else 'forge-2.0-rc'
+UNCALIBRATED_BANNER = ('FORGE-2.0 UNCALIBRATED — forge2-thresholds.json carries rc defaults (no CALIB pin); '
+                       'scores are rc-grade (forge-2.0-rc), never board-grade.')
 
-# ── weights (DESIGN §8.1, asserted) ──────────────────────────────────────────────────────────
+# ── weights (SPEC §4, asserted) ──────────────────────────────────────────────────────────────
 
+# v1 (the 1.0 rows, now regression rows, R10): 1.0's own composition inside a 0.25 share.
 TIER_WEIGHT = {'L': .08, 'K': .10, 'T': .16, 'R': .14, 'S': .08, 'B': .12, 'U': .16, 'V': .08, 'A': .08}
 E_WEIGHT = 0.12
 INNER_WEIGHT = 1.0 - E_WEIGHT
 assert abs(sum(TIER_WEIGHT.values()) - 1.0) < 1e-9
-TIER_ORDER = ('L', 'K', 'T', 'R', 'S', 'B', 'U', 'V', 'A', 'E')
+V1_WEIGHT = 0.25
+# v2: P8's rows (bench/forge2_checks.py), one family per stated requirement R1..R9.
+FAMILY_WEIGHT = {'R1': .12, 'R2': .13, 'R3': .08, 'R4': .10, 'R5': .10, 'R6': .08, 'R7': .05, 'R8': .04, 'R9': .05}
+assert abs(V1_WEIGHT + sum(FAMILY_WEIGHT.values()) - 1.0) < 1e-9
+TIER_ORDER = ('L', 'K', 'T', 'R', 'S', 'B', 'U', 'V', 'A', 'E', *FAMILY_WEIGHT)
 
-DIAGNOSTIC = {'u_widget_loads'}
+DIAGNOSTIC = {'u_widget_loads', 'k_v2_surfaces'}
 CALIBRATION_OWNED = {'e_reconcile_economy', 'e_event_economy', 'e_ui_round_trips'}
 
-CRITICAL_CHECKS = {
-    'l_deployable': 'deploy blocked — lint errors',
-    'l_bundles_load': 'crash — the app does not run',
-    't_no_double_count': 'wrong numbers — a change counted twice',
-    'r_backfill_complete': 'data loss — changes silently missing',
-    'b_no_permission_leak': 'data leak — hidden issues shown to a person',
-    'b_comment_exactly_once': "duplicate side effect on a customer's Jira",
-    'u_widget_loads': 'dead primary flow — no data on the dashboard',
+# SPEC §4: the five criticals. Each is a CLASS: it fires at most once (×floor) however many rows observe it, and
+# only on an observed defect (a row that ran, was not vacuous, absent or a manifest fault, and scored below 1).
+CRITICAL_CLASSES = {
+    'migration': 'v1 rows lost or corrupted by the migration',
+    'webtrigger': 'a web-trigger write without a valid signature',
+    'admin': 'an admin action by a non-admin succeeded, or the CI secret disclosed',
+    'leak': "a hidden issue's data shown to a person who cannot browse it",
+    'duplicate': 'a duplicate side effect (>= 2 comments for one click, or duplicate ledger rows)',
 }
-assert not set(CRITICAL_CHECKS) & CALIBRATION_OWNED
+V1_CRITICAL = {'b_no_permission_leak': 'leak', 'b_comment_exactly_once': 'duplicate', 't_no_double_count': 'duplicate'}
 
-# ADMISSION (DESIGN §8.5): the four maxima the prompt's "Score bands" states in words (parity-tested).
+# ADMISSION (SPEC §4): `final = min(earned, ceilings)`; passing awards nothing. Ascending by cap. The v2-surfaces cap
+# is 0.30 so the untouched v1 starter stays <= 0.30 (SPEC §5): its v1 rows alone earn ~0.22 and a well-built v1 app
+# passes several v2 rows by doing little (background share, never killed, tool-call scope), 0.37 measured at 0.599.
 ADMISSION_BANDS = (
+    (0.30, 'v2 surfaces', ('k_v2_surfaces',)),
     (0.499, 'deployable', ('l_deployable', 'l_bundles_load')),
-    (0.699, 'working ledger', ('u_widget_loads', 't_event_rows', 'r_backfill_complete', 's_storage_scope',
-                               's_entity_index_used')),
-    (0.799, 'current platform, complete surfaces', ('k_dashboard_widget', 'k_widget_edit_bridge', 'k_rovo_skill',
-                                                    'u_widget_edit_config', 'u_ledger_table', 'a_action_result',
-                                                    'v_theme_tokens', 'v_dark_mode')),
-    # The prompt's list, word by word: "Any duplicate, ordering, rate-limit, pagination, permission, policy, console,
-    # LLM or realtime defect". Ordering is the table's sort and the index's change-time order as well as delivery
-    # order; permission is every per-person outcome (the hidden count, the Rovo action's per-person list) and the
-    # scopes the app asks for; LLM is the model the app names as well as the explanation (2026-10-03 stringency).
-    (0.899, 'production robustness', ('t_no_double_count', 't_out_of_order', 't_retry_after_honoured',
-                                      'r_heal_dropped', 'r_rate_limit', 'r_pagination', 'b_no_permission_leak',
-                                      'b_comment_exactly_once', 'b_realtime_payload_clean', 'u_llm_explain',
-                                      'u_widget_live', 'v_csp_clean', 'v_console_clean',
-                                      'u_ledger_sort', 's_index_order', 'b_hidden_count', 'a_action_permissions',
-                                      'l_scopes', 'k_llm_model_current')),
 )
-# The graded band (DESIGN §8.5, 2006de559): with n of its rows failing the ceiling is max(floor, top - step·(n-1)).
-# Single source: admit() reads it, and leanzero.net's sync (scripts/sync-forge-public.py) re-derives the caps from it.
-GRADED_BAND = ('production robustness', 0.899, 0.03, 0.799)
-assert GRADED_BAND[0] == ADMISSION_BANDS[-1][1] and GRADED_BAND[1] == ADMISSION_BANDS[-1][0]
-assert GRADED_BAND[3] == ADMISSION_BANDS[-2][0]   # never undercuts the band above it
+V2_SURFACE_ENTITY = 'scope-ledger'
 
 
 # Owner rule 2026-10-03 22:4x: a final never sits exactly on a band cap ("two models at exactly 0.899 is a big red
 # flag"). A capped run keeps its own earned gradient below the cap: final = min(earned, cap - BAND_PULL·(1 - earned)).
 # Continuous and monotone in earned, equal to the cap only at earned = 1, and a no-op when nothing caps (cap 1.0).
-# The largest pull below a cap, BAND_PULL·(1 - cap) at earned = cap (0.00505 at 0.899), stays under the graded
-# band's 0.03 step, so one more band defect always costs more than any earned difference.
+# The largest pull below a cap stays under the gap between the two bands, so the lower band always holds lower.
 BAND_PULL = 0.05   # policy ratio: the share of the earned shortfall a capped final keeps (owner rule above)
-assert BAND_PULL * (1 - ADMISSION_BANDS[0][0]) < GRADED_BAND[2]
+assert BAND_PULL * (1 - ADMISSION_BANDS[0][0]) < ADMISSION_BANDS[1][0] - ADMISSION_BANDS[0][0]
 
 
 def capped_final(earned: float, ceiling: float) -> float:
@@ -161,18 +179,11 @@ def capped_final(earned: float, ceiling: float) -> float:
 
 def published_score(final: float, ceiling: float) -> float:
     """Four decimals. A final strictly below its cap is never printed AS the cap: a near-perfect capped run (earned
-    0.9999, pull 0.000005) would round back onto 0.899 — the tie the owner rule forbids — so it is truncated instead."""
+    0.9999, pull 0.000005) would round back onto the cap — the tie the owner rule forbids — so it is truncated."""
     shown = round(final, 4)
     if ceiling < 1.0 and final < ceiling - 1e-12 and shown >= ceiling:
         shown = math.floor(final * 1e4) / 1e4
     return shown
-
-
-def band_ceiling(limit: float, label: str, failed: int) -> float:
-    if label == GRADED_BAND[0]:
-        _l, top, step, floor = GRADED_BAND
-        return round(max(floor, top - step * (failed - 1)), 4)
-    return limit
 
 EXCELLENCE_VALUED = ('t_event_rows', 'r_heal_dropped', 'u_widget_numbers', 'u_ledger_table', 'b_comment_adf_as_user')
 EXCELLENCE_BINARY = ('v_console_clean', 'v_csp_clean', 'l_lint_warnings')
@@ -233,15 +244,19 @@ class Ctx:
         self.dev_seed = dev_seed
         self.runtime = runtime
         self.oracle_error = None
+        # The run's observed timing, for the oracle's one switched-field allowance (forge2_oracle._switch_unseen).
+        deliveries, wall = observed_timing(self)
         try:
-            self.oracle = fo.Oracle(pack)
+            self.oracle = fo.Oracle(pack, event_deliveries=deliveries, quota_wall=wall)
             # The site after the live-UI slot (DESIGN §8.7 step 8): what every surface opened after the live step shows.
-            self.oracle_ui = fo.Oracle(pack, include_live_ui=True)
+            self.oracle_ui = fo.Oracle(pack, include_live_ui=True, event_deliveries=deliveries, quota_wall=wall)
         except fo.PackDefect as error:
             self.oracle, self.oracle_ui, self.oracle_error = None, None, str(error)
         self.manifest = self.obs.get('manifest') if isinstance(self.obs.get('manifest'), dict) else None
         self.harness_missing = list(self.obs.get('harnessMissing') or [])
         self._row_cache: Dict = {}
+        self._redelivered_late: Optional[set] = None
+        self._scheduled_work: Optional[Tuple[List[float], Dict[str, float]]] = None
 
     def oracle_for(self, after_live: bool):
         return self.oracle_ui if after_live else self.oracle
@@ -274,11 +289,19 @@ class Ctx:
     def phase(self, name: str) -> Dict:
         return ((self.obs.get('phases') or {}).get(name)) or {}
 
-    def calls(self, phases: Iterable[str] = ('backfill', 'live', 'heal', 'rerun'), service: Optional[str] = None,
+    def background_phases(self) -> Tuple[str, ...]:
+        """1.0's four phases plus 2.0's hourly scheduled runs: the probe records each hour's run, and the queue
+        deliveries due by its start, as its own phase `hour-<k>` (forge2_probe.mjs runSchedules) — work no 1.0 phase
+        holds, so a row reading only the four never saw six of the nine scheduled runs."""
+        hourly = sorted((p for p in (self.obs.get('phases') or {}) if re.fullmatch(r'hour-\d+', str(p))),
+                        key=lambda p: int(p.split('-')[1]))
+        return ('backfill', *hourly, 'live', 'heal', 'rerun')
+
+    def calls(self, phases: Optional[Iterable[str]] = None, service: Optional[str] = None,
               kinds: Optional[Iterable[str]] = None) -> List[Dict]:
         out = []
         kinds = set(kinds) if kinds else None
-        for ph in phases:
+        for ph in self.background_phases() if phases is None else phases:
             for call in self.phase(ph).get('calls') or []:
                 if service and call.get('service') != service:
                     continue
@@ -298,18 +321,31 @@ class Ctx:
                 out.append({**call, '_phase': 'ui'})
         return out
 
-    def invocations(self, phases=('backfill', 'live', 'heal', 'rerun')) -> List[Dict]:
-        return [{**inv, '_phase': ph} for ph in phases for inv in self.phase(ph).get('invocations') or []]
+    def invocations(self, phases: Optional[Iterable[str]] = None) -> List[Dict]:
+        return [{**inv, '_phase': ph} for ph in (self.background_phases() if phases is None else phases)
+                for inv in self.phase(ph).get('invocations') or []]
 
     def kvs_rows(self, phase: str) -> List[Tuple[set, Dict]]:
+        """The ledger rows the v1 regression rows grade. A v2 app keeps its ledger in `scope-ledger` while v1's
+        preloaded `scope-change` stays intact (SPEC R1), so once the manifest declares the v2 entity only that entity
+        is the ledger — reading both would count every migrated change twice. A v1-shaped app (the starter) keeps
+        1.0's reading: every entity and key."""
         snap = self.phase(phase).get('kvsAfter') or {}
+        entities = snap.get('entities') or {}
         out = []
-        for _entity, items in (snap.get('entities') or {}).items():
+        if self.declares_v2_ledger():
+            for item in entities.get(V2_SURFACE_ENTITY) or []:
+                out.append((_tokens(item), item))
+            return out
+        for _entity, items in entities.items():
             for item in items or []:
                 out.append((_tokens(item), item))
         for item in snap.get('keys') or []:
             out.append((_tokens(item), item))
         return out
+
+    def declares_v2_ledger(self) -> bool:
+        return any(e.get('name') == V2_SURFACE_ENTITY for e in _entities(self))
 
     def ui(self) -> Dict:
         return self.obs.get('ui') or {}
@@ -400,6 +436,90 @@ def row_correct(tokens: set, change: fo.Change, sources: Iterable[str]) -> bool:
     return (change.kind in tokens and (change.issue_id in tokens or change.issue_key in tokens)
             and (change.by in tokens or (change.by_name and change.by_name in tokens))
             and change.at in _instants(tokens) and any(s in tokens for s in sources))
+
+
+def observed_timing(c: Ctx) -> Tuple[Dict[str, List[datetime]], Optional[Tuple[datetime, datetime]]]:
+    """({live changelog id: the instants the run delivered that change's event work}, (start, end) of the quota wall the
+    probe drew or None): what the oracle's switched-field allowance reads (forge2_oracle.Oracle `event_deliveries`,
+    `quota_wall`). A change's event work is its product event (each delivery the live phase recorded) and the queue
+    deliveries whose invocation's calls carry its lineage (originChange, as _redelivered_after_next_run matches them)."""
+    def at(seconds):
+        return fo.instant(round(seconds * 1000)) if isinstance(seconds, (int, float)) and math.isfinite(seconds) else None
+    out: Dict[str, List[datetime]] = {}
+    for ev in c.phase('live').get('events') or []:
+        when = at(ev.get('t')) if isinstance(ev, dict) else None
+        if when is not None:
+            out.setdefault(str(ev.get('changelogId')), []).append(when)
+    phases = c.background_phases()
+    origin = {x['inv']: str(x['originChange']) for x in c.calls(phases) if x.get('inv') and x.get('originChange')}
+    for ph in phases:
+        for d in c.phase(ph).get('deliveries') or []:
+            when = at(d.get('t')) if isinstance(d, dict) and d.get('inv') in origin else None
+            if when is not None:
+                out.setdefault(origin[d['inv']], []).append(when)
+    wall = (c.obs.get('rate') or {}).get('wall') if isinstance(c.obs.get('rate'), dict) else None
+    bounds = (fo.instant(wall.get('t_ms')), fo.instant(wall.get('until_ms'))) if isinstance(wall, dict) else (None, None)
+    return out, (bounds if None not in bounds else None)
+
+
+def sources_for(c: Ctx, change: fo.Change) -> Tuple[str, ...]:
+    """The paths a change's row may name, for EVERY row that judges a source (contract §3: a row keeps the path that
+    recorded it first): the oracle's, plus `reconcile` for a live change made under the shared pool's wall (rate.wall,
+    contract §10) — background pauses there, so the next reconcile may record the change before its event's consumer
+    runs. t_event_rows carried this alone (ebb949907); the same change then failed t_multi_sprint_parse and
+    u_ledger_table (gate 2026-10-10, seed ca72f2358777d98c: 1089939, made 14:33:15 under the 14:30-15:00 wall, recorded
+    by the deferred hourly run at 15:02:58, its own delivery handled at 15:03:33). So may a live change whose event
+    work was redelivered only after the next scheduled run (_redelivered_after_next_run, 0a7849bf9), and one a
+    scheduled run's work began on between the change and its event work's success (_scheduled_work_between)."""
+    if change.phase != 'live':
+        return tuple(change.sources)
+    wall = (c.obs.get('rate') or {}).get('wall') or {}
+    walled = (wall.get('t_ms') is not None and wall.get('until_ms') is not None
+              and wall['t_ms'] <= change.at.timestamp() * 1000 <= wall['until_ms'])
+    if walled or change.change_id in _redelivered_after_next_run(c) or _scheduled_work_between(c, change):
+        return tuple(dict.fromkeys((*change.sources, 'reconcile')))
+    return tuple(change.sources)
+
+
+def _scheduled_work_between(c: Ctx, change: fo.Change) -> bool:
+    """A scheduled run's work began after the live change was made and before the change's event work succeeded, so the
+    run may have recorded it first (contract §3: a row keeps the path that recorded it first). The run's work is the run
+    itself (its phase's start) and every invocation its chain's lineage names (`scheduledRun` on the invocation's calls:
+    a continuation a run handed to the queue starts at its delivery) — the run itself is not enough: the hourly run
+    whose mark fell inside the quota wall hands its work on to after the wall, and that continuation records changes
+    made after the run started (gate 2026-10-10: seed aef272018835b2e3, 1157004 made 1790967501.358 under the wall
+    after its hourly run started at 1790967478.237, recorded by the run's continuation that began at 1790967623.479,
+    before the change's own consumer succeeded at 1790967680.639; a change made just after a wall, before that
+    continuation, is the same case). The event work succeeded at its first queue delivery with result ok (matched
+    through lineage like _redelivered_after_next_run); if every delivery of it failed it never did; if no delivery
+    carries its lineage nothing is known and this route does not apply."""
+    if c._scheduled_work is None:
+        phases = c.background_phases()
+        calls = c.calls(phases)
+        origin = {x['inv']: str(x['originChange']) for x in calls if x.get('inv') and x.get('originChange')}
+        run_of = {x['inv'] for x in calls if x.get('inv') and x.get('scheduledRun') is not None}
+        deliveries = [d for ph in phases for d in c.phase(ph).get('deliveries') or [] if isinstance(d, dict)]
+        started = {t for t in (c.phase(p).get('at') for p in phases) if isinstance(t, (int, float))}
+        began: Dict[str, float] = {}
+        for x in calls:   # a chain invocation's first call, unless a queue delivery dates its start
+            if x.get('inv') in run_of and isinstance(x.get('t'), (int, float)):
+                began[x['inv']] = min(began.get(x['inv'], x['t']), x['t'])
+        for d in deliveries:
+            if d.get('inv') in run_of and isinstance(d.get('t'), (int, float)):
+                began[d['inv']] = d['t']
+        succeeded: Dict[str, float] = {}
+        change_of = {d['eventId']: origin[d['inv']] for d in deliveries if d.get('eventId') and d.get('inv') in origin}
+        for d in deliveries:   # every attempt of a queue event is its change's, whether or not that attempt made a call
+            cid = origin.get(d.get('inv')) or change_of.get(d.get('eventId'))
+            if cid is None or not isinstance(d.get('t'), (int, float)):
+                continue
+            t = d['t'] if d.get('result') == 'ok' else math.inf
+            succeeded[cid] = min(succeeded.get(cid, math.inf), t)
+        c._scheduled_work = (sorted(started | set(began.values())), succeeded)
+    starts, succeeded = c._scheduled_work
+    end = succeeded.get(change.change_id)
+    made = change.at.timestamp()
+    return end is not None and any(made < s < end for s in starts)
 
 
 def _num(text) -> Optional[Decimal]:
@@ -608,7 +728,8 @@ def pre_paginated(c):
 
 
 def pre_scheduled_read(c):
-    return (bool(c.calls(service='jira', kinds=('scheduled',))), '>= 1 scheduled-run Jira read')
+    calls, scope = scheduled_chain_calls(c)
+    return (bool(calls), f'>= 1 Jira read of {scope}')
 
 
 def pre_kvs_call(c):
@@ -637,8 +758,18 @@ def pre_person_list(c):
     return (listed, '>= 1 person-facing change list returned or rendered')
 
 
+BACKGROUND_COMMENT_KINDS = ('webtrigger', 'trigger', 'consumer', 'scheduled')
+
+
+def person_comments(c) -> List[Dict]:
+    """The comment POSTs a person's click made. 2.0's web trigger may mark an issue "Deployed to <env>" with a comment
+    of its own (SPEC R6), asApp and with no sprint in it: the v1 comment rows never grade those. The probe tags each
+    comment with the invoking module kind; an untagged comment (1.0 evidence) is a person's, as 1.0 graded it."""
+    return [x for x in c.obs.get('comments') or [] if x.get('kind') not in BACKGROUND_COMMENT_KINDS]
+
+
 def pre_comment_post(c):
-    return (bool(c.obs.get('comments')), '>= 1 comment POST')
+    return (bool(person_comments(c)), '>= 1 comment POST')
 
 
 def pre_modal_rendered(c):
@@ -732,7 +863,12 @@ def _(c):
 @check('l_manifest_rules', 'L', pre=pre_resource_and_function, needs=('build',))
 def _(c):
     rules: Dict[str, bool] = {}
-    paths = [str(r.get('path') or '') for r in c.resources()]
+    # A UI Kit resource (`render: native`, SPEC R5's admin page) is the frontend SOURCE file the CLI bundles, so the
+    # Custom UI rules (a built folder with index.html, outside src/) never apply to it.
+    native = {str(m.get('resource')) for t in c.module_types() for m in c.modules(t) if m.get('render') == 'native'}
+    native |= {str(m['edit'].get('resource')) for t in c.module_types() for m in c.modules(t)
+               if isinstance(m.get('edit'), dict) and m['edit'].get('render') == 'native'}
+    paths = [str(r.get('path') or '') for r in c.resources() if str(r.get('key')) not in native]
     rules['resource_has_index_html'] = all(c.read_tree(os.path.join(p, 'index.html')) is not None for p in paths)
     rules['resource_not_under_src'] = all(not p.strip('./').startswith('src/') and p.strip('./') != 'src' for p in paths)
     every = [e for t in c.module_types() for e in c.modules(t)]
@@ -1017,13 +1153,24 @@ def _(c):
              'the ledger has no sprint index')
 
 
+# SPEC §4 band: "none of the v2 surfaces exists (no jira:adminPage, no webtrigger, no scope-ledger) -> max 0.30".
+# Diagnostic (no weight): it only feeds the band, so compose_from_rows stays pure over the rows.
+@check('k_v2_surfaces', 'K')
+def _(c):
+    have = {'jira:adminPage': bool(c.modules('jira:adminPage')), 'webtrigger': bool(c.modules('webtrigger')),
+            V2_SURFACE_ENTITY: c.declares_v2_ledger()}
+    present = [k for k, v in have.items() if v]
+    return g(1 if present else 0, f'v2 surfaces declared: {present or "none"}', 'the app is still v1', parts=have)
+
+
 # ══ Deploy readiness: the manifest, the module wiring, the scopes and the predicted runtime failures ════════
 # Owner, 2026-10-03: "make sure the scorer is extra judicious and has the capability to judge the manifest, judge
 # the module usage, understand where it would fail or not". Deterministic, from the manifest, the app's sources, the
 # built resources, the shipped OpenAPI and the run's own call log. Every rule cites the platform page it encodes.
 # Each finding is labelled `would fail` (on real Forge: deploy refused, a call refused, a surface blocked, data
-# missed) or `poor practice` (works, but against the documented guidance), and is PRICED ONCE: a finding another
-# row already grades names that row in `graded_by` and costs nothing here (one defect, not N).
+# missed) or `poor practice` (works, but against the documented guidance). A would-fail finding is PRICED ONCE: one
+# another row already grades names that row in `graded_by` and costs nothing here (one defect, not N). A
+# poor-practice finding is reported and never priced by the two rows (_priced).
 
 DOCS = {
     'trigger': 'https://developer.atlassian.com/platform/forge/manifest-reference/modules/trigger/',
@@ -1074,7 +1221,7 @@ def openapi_ops() -> List[Dict]:
     if _OPENAPI_OPS is None:
         ops = []
         for name in ('jira.json', 'jsw.json'):
-            spec = json.loads((ROOT / 'forge' / 'kit' / 'openapi' / name).read_text())
+            spec = json.loads((OPENAPI_DIR / name).read_text())
             for template, item in spec['paths'].items():
                 regex = re.compile('^' + '/'.join('[^/]+' if re.fullmatch(r'\{.+\}', seg) else re.escape(seg)
                                                   for seg in template.split('/')) + '/?$')
@@ -1160,8 +1307,12 @@ def _ui_html(c: Ctx) -> Dict[str, str]:
 
 
 def _row_score(c: Ctx, name: str) -> Optional[float]:
+    """A vacuous row already priced its 0 in its tier (§17.8 G: one root, priced once), so it counts as charged; only
+    a row the harness could not run (unavailable) or did not run grades nothing."""
     r = c._row_cache.get(name)
-    return None if r is None or r.get('unavailable') or (r.get('parts') or {}).get('vacuous_root') else r['score']
+    if r is None or r.get('unavailable'):
+        return None
+    return 0.0 if (r.get('parts') or {}).get('vacuous_root') else r['score']
 
 
 def _charged(c: Ctx, *names: str) -> Optional[str]:
@@ -1271,14 +1422,18 @@ def deploy_findings(c: Ctx) -> List[Dict]:
                     ent_problems.append(f"{e.get('name')}.{i.get('name')}: {an} is not a declared attribute")
                 elif isinstance(attrs.get(an), dict) and attrs[an].get('type') == 'any':
                     ent_problems.append(f"{e.get('name')}.{i.get('name')}: {an} is type any (not indexable)")
+    # Two range attributes are refused by `forge lint` and `forge deploy` (measured on wolfaenpak, §17.8 E) and the
+    # forge2 kit's lint pack refuses them too: when lint already charged it, l_deployable prices it (once).
+    only_range = bool(ent_problems) and all('range has' in p for p in ent_problems)
     rule('M7 KVS entity indexes name declared attributes within the documented limits', 'manifest', bool(entities),
          not ent_problems, 'would_fail', 'an index over an undeclared attribute or past the limits is refused', 'entities',
-         '; '.join(ent_problems[:4]))
-    native = [f'{t}:{m.get("key")}' for t, ms in mods.items() for m in ms
+         '; '.join(ent_problems[:4]), graded_by='l_deployable' if only_range and _lint_mentions(c, 'range attribute') else None)
+    # SPEC R5: the admin page is UI Kit (`render: native`); the person-facing surfaces stay Custom UI (R9).
+    native = [f'{t}:{m.get("key")}' for t, ms in mods.items() if t != 'jira:adminPage' for m in ms
               if m.get('render') == 'native' or (isinstance(m.get('edit'), dict) and m['edit'].get('render') == 'native')]
-    rule('M8 Custom UI only (no render: native)', 'manifest', bool(mods), not native, 'would_fail',
-         'UI Kit surfaces earn nothing in this task (contract §2) and need @forge/react, which is not installed',
-         'uikit', ', '.join(native))
+    rule('M8 Custom UI on the person-facing surfaces (render: native only on jira:adminPage)', 'manifest', bool(mods),
+         not native, 'would_fail', 'the widget and the sprint modal are Custom UI surfaces (contract R9); a UI Kit one '
+         'is not the graded surface', 'uikit', ', '.join(native))
     gadget = bool(c.modules('jira:dashboardGadget'))
     rule('M9 no legacy jira:dashboardGadget', 'manifest', bool(mods), not gadget, 'poor_practice',
          'dashboards:widget replaces it ("will be deprecated by 17 May 2027", CDAC 102826)', 'uikit',
@@ -1369,7 +1524,9 @@ def deploy_findings(c: Ctx) -> List[Dict]:
             body = _function_body(src, fn) or ''
             if re.search(r'\basUser\s*\(', body):
                 bg_user.append(f'{t}:{m.get("key")} ({handler})')
-    runtime_user = _charged(c, 't_no_user_in_async') is not None
+    measured = c._row_cache.get('t_no_user_in_async') or {}
+    runtime_user = (isinstance(measured.get('score'), (int, float)) and measured['score'] < 1.0 - 1e-9
+                    and not measured.get('unavailable') and not (measured.get('parts') or {}).get('vacuous_root'))
     rule('R2 no asUser() in trigger, consumer or scheduled work', 'runtime', bool(texts) and any(c.modules(t) for t in BACKGROUND_TYPES),
          not bg_user and not runtime_user, 'would_fail',
          'asUser needs a user in the invocation; product and async events have none (NeedsAuthenticationError)', 'asuser',
@@ -1424,10 +1581,16 @@ def deploy_findings(c: Ctx) -> List[Dict]:
     rule('R12 LLM requests follow the documented sampling rules', 'runtime', bool(_llm_calls(c)), not sampling, 'would_fail',
          "LLM API reference 'Validation rules': temperature and top_p never together; neither on claude-opus-4-7/-4-8/-5 "
          'and claude-sonnet-5', 'llm', f'{len(sampling)} request(s) refused', graded_by=_charged(c, 'u_llm_explain'))
-    kvs_err = [x for x in c.all_calls('kvs') if x.get('limitError') or x.get('status') in (400, 413)]
+    # Contract §9 names a failed transaction condition's 400 CONDITIONAL_CHECK_FAILED as storage's optimistic-lock answer
+    # (the 2.0 kit answers it as real Forge does; 1.0's answered 409, which this rule never counted, like KEY_CONFLICT):
+    # a compare-and-set that lost a race broke no type or limit. Any other 400, and a 400 whose code the observations do
+    # not carry, still counts.
+    kvs_err = [x for x in c.all_calls('kvs') if x.get('limitError') or x.get('status') == 413
+               or (x.get('status') == 400 and x.get('kvsCode') != 'CONDITIONAL_CHECK_FAILED')]
     rule('R9 KVS writes fit the documented types and limits', 'runtime', bool(c.all_calls('kvs')), not kvs_err, 'would_fail',
          'a value, key or integer past the KVS limits is refused', 'kvs',
-         ', '.join(str(x.get('limitError') or x.get('status')) for x in kvs_err[:3]),
+         ', '.join(' '.join(str(v) for v in (x.get('status'), x.get('kvsCode') or x.get('limitError')) if v)
+                   for x in kvs_err[:3]),
          graded_by=_charged(c, 's_limits'))
     return out
 
@@ -1453,8 +1616,11 @@ def deploy_readiness(c: Ctx) -> Dict:
 
 
 def _priced(c: Ctx, area_prefixes: Tuple[str, ...]) -> Tuple[float, List[Dict], int]:
+    """A poor-practice finding is reported, never priced here, pass or fail: M3 (a consumer no code pushes to) is no
+    rule the contract states, and the two it does state are their own rows (M9 k_dashboard_widget, contract §2's
+    "the legacy `jira:dashboardGadget` earns nothing"; P3 l_scopes, "Request only the scopes your calls need")."""
     rows = [f for f in deploy_findings(c) if f['rule'].startswith(area_prefixes) and f['status'] != 'n/a']
-    priced = [f for f in rows if not f.get('graded_by')]
+    priced = [f for f in rows if f['kind'] == 'would_fail' and not f.get('graded_by')]
     failed = [f for f in priced if f['status'] == 'fail']
     return (1 - len(failed) / len(priced) if priced else 1.0), failed, len(rows)
 
@@ -1520,6 +1686,34 @@ def _irrelevant_row_ids(c: Ctx) -> set:
     return {str(e['changelogId']) for e in c.oracle.live if not c.oracle._sprint_items(e)}
 
 
+def _redelivered_after_next_run(c: Ctx) -> set:
+    """The delivered changes whose event work was redelivered (a delivery attempt >= 1, matched to the change through
+    its queue event's lineage) only after the first scheduled run that followed the change's delivery: that run may
+    record the change first, and the row keeps the path that recorded it first (contract §3)."""
+    if c._redelivered_late is not None:
+        return c._redelivered_late
+    phases = c.background_phases()
+    origin = {x['inv']: str(x['originChange']) for x in c.calls(phases) if x.get('inv') and x.get('originChange')}
+    deliveries = [d for ph in phases for d in c.phase(ph).get('deliveries') or [] if isinstance(d, dict)]
+    change_of = {d.get('eventId'): origin[d['inv']] for d in deliveries if d.get('inv') in origin}
+    runs = sorted(t for t in (c.phase(p).get('at') for p in phases) if isinstance(t, (int, float)))
+    delivered: Dict[str, float] = {}
+    for ev in c.phase('live').get('events') or []:
+        if isinstance(ev.get('t'), (int, float)):
+            delivered.setdefault(str(ev.get('changelogId')), ev['t'])
+    out = set()
+    for d in deliveries:
+        cid = change_of.get(d.get('eventId'))
+        t, at = d.get('t'), delivered.get(cid)
+        if not (d.get('attempt') or 0) or not isinstance(t, (int, float)) or at is None:
+            continue
+        nxt = next((r for r in runs if r > at), None)
+        if nxt is not None and t > nxt:
+            out.add(cid)
+    c._redelivered_late = out
+    return out
+
+
 @check('t_event_rows', 'T', needs=('live',))
 def _(c):
     if not c.modules('consumer') and not c.modules('trigger'):
@@ -1531,7 +1725,7 @@ def _(c):
     tp, fp = 0, 0
     for ch in expected:
         found = rows_for(rows, ch)
-        if len(found) >= 1 and row_correct(found[0][0], ch, ('event',)) and len(found) == 1:
+        if len(found) >= 1 and row_correct(found[0][0], ch, sources_for(c, ch)) and len(found) == 1:
             tp += 1
         fp += max(0, len(found) - 1)
     irrelevant = _irrelevant_row_ids(c)
@@ -1543,6 +1737,8 @@ def _(c):
              'the event path loses or invents ledger rows', parts={'tp': tp, 'fp': fp, 'expected': len(expected)})
 
 
+# Concurrent delivery (contract): a duplicate row is the app's defect whether or not its group raced; a group the
+# harness did not run whole is no evidence the app survives the race, so the pass it would buy is unavailable.
 @check('t_no_double_count', 'T', pre=pre_ledger_row, needs=('live', 'heal', 'rerun'))
 def _(c):
     doubled = []
@@ -1552,9 +1748,14 @@ def _(c):
             n = len(rows_for(rows, ch))
             if n > 1:
                 doubled.append(f'{ph}:{ch.change_id}/{ch.sprint_id}x{n}')
+    whole, broken = V2.concurrent_groups(c.obs)
+    raced = V2.raced(whole)
     if doubled:
-        return g(0, f'changes counted more than once: {sorted(set(doubled))[:6]}', CRITICAL_CHECKS['t_no_double_count'])
-    return g(1, 'every change holds at most one ledger row in every phase (duplicated deliveries included)')
+        return g(0, f'changes counted more than once: {sorted(set(doubled))[:6]}{raced}', CRITICAL_CLASSES['duplicate'])
+    if broken:
+        return unavail(f'no change counted twice, but {len(broken)} concurrent group(s) were not run whole '
+                       f'({"; ".join(broken[:2])}): a race the harness never ran is no evidence the app survives it')
+    return g(1, f'every change holds at most one ledger row in every phase (duplicated deliveries included){raced}')
 
 
 def _person_numbers(c: Ctx, sid: str) -> List[Tuple[Dict, object]]:
@@ -1600,7 +1801,7 @@ def _(c):
     if not involved:
         return unavail('the pack has no permuted pair touching an active sprint')
     rows = c.kvs_rows('live')
-    ok_rows = sum(1 for ch in involved if len(rows_for(rows, ch)) == 1 and row_correct(rows_for(rows, ch)[0][0], ch, ch.sources))
+    ok_rows = sum(1 for ch in involved if len(rows_for(rows, ch)) == 1 and row_correct(rows_for(rows, ch)[0][0], ch, sources_for(c, ch)))
     sprints = sorted({ch.sprint_id for ch in involved})
     ok_nums = sum(1 for sid in sprints if _sprint_numbers_right(c, sid))
     score = (ok_rows + ok_nums) / (len(involved) + len(sprints))
@@ -1619,7 +1820,7 @@ def _(c):
     if not involved:
         return unavail('the pack has no multi-id Sprint change in an active sprint')
     rows = c.kvs_rows('rerun')
-    ok = sum(1 for ch in involved if len(rows_for(rows, ch)) == 1 and row_correct(rows_for(rows, ch)[0][0], ch, ch.sources))
+    ok = sum(1 for ch in involved if len(rows_for(rows, ch)) == 1 and row_correct(rows_for(rows, ch)[0][0], ch, sources_for(c, ch)))
     return g(ok / len(involved), f'{ok}/{len(involved)} multi-id Sprint changes recorded exactly',
              'the Sprint `to` list parsed as one id')
 
@@ -1630,8 +1831,11 @@ def _(c):
     if not moved:
         return unavail('the pack has no live estimate change in an active sprint')
     ok = [sid for sid in moved if _sprint_numbers_right(c, sid)]
+    # Both directions fail it: an active sprint's numbers that miss its estimate changes, and a closed sprint's that are
+    # not its numbers at the close (§12) — moved by a change after the close, or missing one made before it.
     return g(len(ok) / len(moved), f'{len(ok)}/{len(moved)} re-estimated sprints show the oracle numbers',
-             'estimate changes do not move the numbers')
+             "the numbers do not follow estimate changes: an active sprint's miss them, or a closed sprint's are not "
+             'its numbers at the close (moved after it, or missing changes made before it)')
 
 
 def _fault(c: Ctx, scope: str) -> Optional[Dict]:
@@ -1717,16 +1921,28 @@ def _(c):
 
 # ══ R: reconcile ═════════════════════════════════════════════════════════════════════════════
 
+# 2.0 doses the backfill (SPEC R2): the probe reads it one virtual hour after the upgrade, when issue events have run
+# too, and a row records the path that recorded it first (contract §3) — event work may record a historical change.
+BACKFILL_SOURCES = ('reconcile', 'event')
+
+
+def backfill_changes(c: Ctx) -> List[fo.Change]:
+    """The pre-upgrade changes the backfill owes at the one-hour read (contract §3): every history change but v1's
+    own rows, which the migration has until the 2-hour mark to copy (§9; R1 grades them there)."""
+    v1 = c.oracle.v1_keys()
+    return [ch for ch in c.oracle.changes('backfill') if ch.key not in v1]
+
+
 @check('r_backfill_complete', 'R', needs=('backfill',))
 def _(c):
     if not c.modules('scheduledTrigger'):
         return absent('scheduledTrigger module')
-    expected = c.oracle.changes('backfill')
+    expected = backfill_changes(c)
     rows = c.kvs_rows('backfill')
-    ok = [ch for ch in expected if rows_for(rows, ch) and row_correct(rows_for(rows, ch)[0][0], ch, ('reconcile',))]
-    return g(len(ok) / len(expected) if expected else 0, f'{len(ok)}/{len(expected)} historical changes recorded '
-             'exactly after the first scheduled run', CRITICAL_CHECKS['r_backfill_complete'],
-             parts={'missing': [ch.key for ch in expected if ch not in ok][:12]})
+    ok = [ch for ch in expected if rows_for(rows, ch) and row_correct(rows_for(rows, ch)[0][0], ch, BACKFILL_SOURCES)]
+    return g(len(ok) / len(expected) if expected else 0, f'{len(ok)}/{len(expected)} historical changes v1 never '
+             'recorded, recorded one virtual hour after the upgrade (the backfill is dosed; v1 rows are R1\'s, at 2 h)',
+             'data loss — changes silently missing', parts={'missing': [ch.key for ch in expected if ch not in ok][:12]})
 
 
 @check('r_removals_found', 'R', needs=('backfill',))
@@ -1736,11 +1952,11 @@ def _(c):
         for item in c.oracle._sprint_items(e):
             if fo.sprint_ids(item.get('from')) and not fo.sprint_ids(item.get('to')):
                 gone.add(str(e['changelogId']))
-    expected = [ch for ch in c.oracle.changes('backfill') if ch.change_id in gone and ch.kind == 'removed']
+    expected = [ch for ch in backfill_changes(c) if ch.change_id in gone and ch.kind == 'removed']
     if not expected:
-        return unavail('the pack has no removed-to-backlog change after an active start')
+        return unavail('the pack has no removed-to-backlog change after an active start that v1 never recorded')
     rows = c.kvs_rows('backfill')
-    ok = sum(1 for ch in expected if rows_for(rows, ch) and row_correct(rows_for(rows, ch)[0][0], ch, ('reconcile',)))
+    ok = sum(1 for ch in expected if rows_for(rows, ch) and row_correct(rows_for(rows, ch)[0][0], ch, BACKFILL_SOURCES))
     return g(ok / len(expected), f'{ok}/{len(expected)} removed-to-backlog changes found',
              'issues that left every sprint are missed')
 
@@ -1751,7 +1967,7 @@ def _(c):
     if not dropped:
         return unavail('the pack drops no live sprint change')
     before, after = c.kvs_rows('live'), c.kvs_rows('heal')
-    ok = sum(1 for ch in dropped if len(rows_for(after, ch)) == 1 and row_correct(rows_for(after, ch)[0][0], ch, ch.sources))
+    ok = sum(1 for ch in dropped if len(rows_for(after, ch)) == 1 and row_correct(rows_for(after, ch)[0][0], ch, sources_for(c, ch)))
     dropped_keys = {ch.key for ch in dropped}
     extra = 0
     for ch in c.oracle.changes('final'):
@@ -1789,18 +2005,33 @@ def _query(call: Dict) -> Dict[str, str]:
     return dict(parse_qsl(q, keep_blank_values=True))
 
 
+def _walk_key(call: Dict) -> tuple:
+    """(invocation, path, query and body without the paging parameters): one walk of one list by one invocation."""
+    q = {k: v for k, v in _query(call).items() if k not in ('nextPageToken', 'startAt')}
+    body = call.get('body') if isinstance(call.get('body'), dict) else {}
+    b = {k: v for k, v in body.items() if k not in ('nextPageToken', 'startAt')}
+    return (call.get('inv'), str(call.get('path')).split('?')[0], json.dumps(q, sort_keys=True),
+            json.dumps(b, sort_keys=True, default=str))
+
+
+def _resumes(call: Dict) -> bool:
+    """The request asks for a page after the first: a nextPageToken, or a startAt past 0."""
+    q, body = _query(call), call.get('body') if isinstance(call.get('body'), dict) else {}
+    if q.get('nextPageToken') or body.get('nextPageToken'):
+        return True
+    try:
+        return int(q.get('startAt') or body.get('startAt') or 0) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 def _walks(calls: List[Dict]) -> Dict[tuple, List[Dict]]:
     walks: Dict[tuple, List[Dict]] = {}
     for call in calls:
         style = _page_style(call)
         if not style or call.get('status') != 200:
             continue
-        q = {k: v for k, v in _query(call).items() if k not in ('nextPageToken', 'startAt')}
-        body = call.get('body') if isinstance(call.get('body'), dict) else {}
-        b = {k: v for k, v in body.items() if k not in ('nextPageToken', 'startAt')}
-        key = (call.get('inv'), str(call.get('path')).split('?')[0], json.dumps(q, sort_keys=True),
-               json.dumps(b, sort_keys=True, default=str))
-        walks.setdefault(key, []).append(call)
+        walks.setdefault(_walk_key(call), []).append(call)
     return walks
 
 
@@ -1889,6 +2120,48 @@ def _paged_walks(c: Ctx) -> Tuple[List[Dict], Dict[tuple, List[Dict]], Dict[tupl
     return legacy, walks, paged
 
 
+def _handed_off(c: Ctx, walks: Dict[tuple, List[Dict]], incomplete: List[tuple]) -> set:
+    """The incomplete walks a consumer handed back to its queue at a 429 and the SAME queue event's redelivery read to
+    the end (contract §11: a Retry-After longer than the function waits is never waited out inside it — the consumer
+    returns an InvocationError with retryAfter, as the starter's does; work that cannot finish in one invocation
+    continues in the next). No page was skipped there. A walk is one only when all three hold:
+      (1) every Jira call its invocation made after the walk's last answered page asked for the walk's next page (same
+          path, same query and body but the paging parameters) and was answered 429 — nothing was read from the
+          partial list;
+      (2) the invocation returned the InvocationError (its retryAfter, or a delivery result 'retry'; _retry_verdict's
+          evidence);
+      (3) a later attempt of the same queue event (equal eventId, higher attempt) walked the same list to its end.
+    Never "a later invocation walked the same list": the hourly runs, the heal and the UI re-walk the same lists, so that
+    arm would excuse a swallowed 429 that carries on with the partial list (fairness audit 2026-10-10: three mutants of
+    Sol's run, a swallowed 429 with and without a redelivery and a hand-off whose redelivery never re-walks, stay
+    graded)."""
+    if not incomplete:
+        return set()
+    by_inv: Dict[object, List[Dict]] = {}
+    for x in c.all_calls('jira'):
+        by_inv.setdefault(x.get('inv'), []).append(x)
+    deliveries = [d for ph in c.background_phases() for d in c.phase(ph).get('deliveries') or [] if isinstance(d, dict)]
+    returned_retry = ({i.get('inv') for i in c.invocations() if i.get('retryAfter') is not None}
+                      | {d.get('inv') for d in deliveries if d.get('result') == 'retry'})
+    out = set()
+    for key in incomplete:
+        inv, last_t = key[0], walks[key][-1].get('t')
+        mine = by_inv.get(inv, [])
+        if inv is None or inv not in returned_retry or not isinstance(last_t, (int, float)) \
+                or any(not isinstance(x.get('t'), (int, float)) for x in mine):
+            continue
+        after = [x for x in mine if x['t'] > last_t]
+        if not after or any(x.get('status') != 429 or _walk_key(x) != key for x in after):
+            continue
+        attempts = [(d.get('eventId'), d.get('attempt') or 0) for d in deliveries if d.get('inv') == inv and d.get('eventId')]
+        redelivered = {d.get('inv') for d in deliveries for event, n in attempts
+                       if d.get('eventId') == event and (d.get('attempt') or 0) > n}
+        if any((nxt, *key[1:]) in walks and _walk_complete(_page_style(walks[(nxt, *key[1:])][0]), walks[(nxt, *key[1:])])[0]
+               for nxt in redelivered):
+            out.add(key)
+    return out
+
+
 @check('r_pagination', 'R', pre=pre_paginated, needs=('backfill', 'live', 'heal', 'rerun', 'ui', 'rovo'))
 def _(c):
     legacy, walks, paged = _paged_walks(c)
@@ -1896,86 +2169,142 @@ def _(c):
             all(not isinstance(w[-1].get('response'), dict) for w in walks.values()):
         return unavail('no paginated response bodies were recorded')
     # The scoring site serves every list of >= 2 items in >= 2 pages (pack.paging, forge/site/limits.cjs): a
-    # one-page answer holding two or more items means the site did not page it, a harness gap, never the app's.
+    # one-page answer holding two or more items means the site did not page it, a harness gap, never the app's. A walk
+    # that starts past the first page (a redelivery resuming at the page a 429 refused) is the end of a list, not one.
     if (c.pack.get('paging') or {}).get('rule') == 'half':
-        unpaged = sorted({_endpoint(p[0]) for k, p in walks.items() if k not in paged
+        unpaged = sorted({_endpoint(p[0]) for k, p in walks.items() if k not in paged and not _resumes(p[0])
                           and isinstance(p[0].get('response'), dict) and _page_items(p[0]['response']) >= 2})
         if unpaged:
             return unavail(f'the scoring site served a list of >= 2 items in one page on {unpaged}')
+    verdicts = {key: _walk_complete(_page_style(pages[0]), pages) for key, pages in paged.items()}
+    handed = _handed_off(c, walks, [key for key, (complete, _why) in verdicts.items() if not complete])
     done, bad = 0, []
     types: Dict[str, List[int]] = {}
     for key, pages in paged.items():
-        complete, why = _walk_complete(_page_style(pages[0]), pages)
+        if key in handed:
+            continue
+        complete, why = verdicts[key]
         done += complete
         tally = types.setdefault(_endpoint(pages[0]), [0, 0])
         tally[0] += complete
         tally[1] += 1
         if not complete:
             bad.append(f'{key[1]}: {why}')
-    total = len(paged) + len(legacy)
+    total = len(paged) - len(handed) + len(legacy)
     single = len(walks) - len(paged)
-    return g(done / total if total else 0, f'{done}/{total} reads the site served in two or more pages walked to their '
+    # nothing left to grade but hand-offs (a redelivery that resumed at the refused page is a one-page walk): each of
+    # those lists was still read to its end
+    return g(done / total if total else float(bool(handed)),
+             f'{done}/{total} reads the site served in two or more pages walked to their '
              'end, each page once, continuing where the site left off ('
              + ', '.join(f'{ep} {ok}/{n}' for ep, (ok, n) in sorted(types.items())) + ')'
              + (f'; {single} one-page read(s), nothing to walk, not graded' if single else '')
+             + (f'; {len(handed)} walk(s) handed back to the queue at a 429 and read to the end by the same event\'s '
+                f'redelivery, not graded ({sorted({k[1] for k in handed})})' if handed else '')
              + (f'; {len(legacy)} call(s) to the removed /rest/api/3/search' if legacy else '')
              + (f'; {bad[:3]}' if bad else ''), 'pages silently skipped',
              parts={'paged_walks': len(paged), 'one_page_walks': single, 'legacy_calls': len(legacy),
+                    'handed_off_walks': len(handed),
                     'by_endpoint': {ep: {'complete': ok, 'walks': n} for ep, (ok, n) in sorted(types.items())}})
 
 
-# The scheduled run each scripted fault targets (pack faults' match.run: 1 = the backfill, 2 = the heal).
-SCHEDULED_RUN_PHASE = {1: 'backfill', 2: 'heal'}
+def scheduled_runs(c: Ctx) -> List[Tuple[str, Dict]]:
+    """(phase, invocation) of every scheduled-trigger run in the order the probe ran them. The site numbers runs the
+    same way — the emulator counts each runScheduled (one per scheduledTrigger module per round) into the
+    `x-forge-scheduled-run` a pack fault's `match.run` names — so run k is the k-th: with one module, run 1 is the
+    backfill and run 2 the first hour's (2.0 runs hourly; 1.0's run 2 was the heal)."""
+    return [(ph, inv) for ph in c.background_phases() for inv in c.phase(ph).get('invocations') or []
+            if inv.get('kind') == 'scheduled']
 
 
-@check('r_rate_limit', 'R', pre=pre_scheduled_fault, needs=('backfill', 'heal'))
+@check('r_rate_limit', 'R', pre=pre_scheduled_fault, needs=('backfill', 'live', 'heal'))
 def _(c):
     # Every scheduled-run 429 that fired: the dev site's (the backfill's 2nd request) and the scoring site's (the
-    # backfill's first continuation page, the heal's 2nd request — 2026-10-03 stringency, F7), each retried after its
-    # Retry-After with its run completing.
-    fired = {call.get('fault') for call in c.all_calls('jira')}
+    # backfill's first continuation page, the next run's 2nd request — 2026-10-03 stringency, F7), each retried after
+    # its Retry-After with its run completing. A fault fires in its run's own invocation or in a queue continuation the
+    # run started, which the probe records in whichever phase drained it: the verdict reads the phase that holds it.
+    runs = scheduled_runs(c)
     verdicts = []
     for fault in c.pack.get('faults') or []:
         match = fault.get('match') or {}
-        phase = SCHEDULED_RUN_PHASE.get(match.get('run', 1))
-        if match.get('scope') != 'scheduled-run' or fault['id'] not in fired or phase is None:
+        if match.get('scope') != 'scheduled-run':
             continue
-        score, why = _retry_verdict(c, fault, (phase,))
-        sched = [i for i in c.invocations((phase,)) if i.get('kind') == 'scheduled']
-        if score and not any(i.get('ok') for i in sched):
-            score, why = 0.0, why + f'; the {phase} run did not complete'
+        hit = next((ph for ph in c.background_phases()
+                    if any(x.get('fault') == fault['id'] for x in c.phase(ph).get('calls') or [])), None)
+        if hit is None:
+            continue
+        k = match.get('run', 1)
+        run_phase, run_inv = runs[k - 1]
+        score, why = _retry_verdict(c, fault, (hit,))
+        if score and not run_inv.get('ok'):
+            score, why = 0.0, why + f'; scheduled run {k} ({run_phase}) did not complete'
         where = 'continuation page' if match.get('continuation') else f"request {match.get('nth')}"
-        verdicts.append((score, f'{phase} {where}: {why}'))
+        verdicts.append((score, f'run {k} ({run_phase}) {where}: {why}'))
     return g(sum(v for v, _w in verdicts) / len(verdicts), '; '.join(w for _v, w in verdicts),
              'the reconcile ignores Retry-After', parts={'faults': len(verdicts)})
 
 
-@check('r_as_app', 'R', pre=pre_scheduled_read, needs=('backfill', 'heal', 'rerun'))
+CHAIN_SCOPE = 'the scheduled runs and their queue continuations'
+UNTRACED_SCOPE = 'the scheduled runs alone (the probe recorded no call lineage)'
+
+
+def scheduled_chain_calls(c: Ctx) -> Tuple[List[Dict], str]:
+    """The Jira calls of the scheduled runs' chains — each run's own and its queue continuations' — by the lineage the
+    probe stamps on every call (`scheduledRun`, which a queue push hands to the consumer it starts, kit emulator), in
+    every phase that drained them. The behaviour is graded, not the invocation kind: an app that hands its reconcile to
+    a consumer reads Jira there (both rows were vacuous for it — Pareto on Forge 1.0, Sol on 2.0). Observations without
+    lineage keep 1.0's reading, the scheduled invocations' own calls, named as such in the row."""
+    every = c.calls(None, 'jira')
+    if traced(every):
+        return [x for x in every if x.get('scheduledRun') is not None], CHAIN_SCOPE
+    return [x for x in every if x.get('kind') == 'scheduled'], UNTRACED_SCOPE
+
+
+def scheduled_chain_invocations(c: Ctx) -> Tuple[List[Dict], str]:
+    """The scheduled runs and the invocations of their chains: every invocation whose calls carry a run's lineage (all
+    of one invocation's calls carry its own). An invocation that made no call carries no recorded lineage; it cannot
+    reach its virtual-time limit either (only calls advance an invocation's clock), and r3_never_killed grades every
+    function."""
+    invs = c.invocations()
+    if scheduled_chain_calls(c)[1] != CHAIN_SCOPE:
+        return [i for i in invs if i.get('kind') == 'scheduled'], UNTRACED_SCOPE
+    in_chain = {x['inv'] for x in c.calls(None, None) if x.get('inv') and x.get('scheduledRun') is not None}
+    return [i for i in invs if i.get('kind') == 'scheduled' or i.get('inv') in in_chain], CHAIN_SCOPE
+
+
+# The hourly runs and the continuations drained between issue events are recorded inside the probe's live section.
+@check('r_as_app', 'R', pre=pre_scheduled_read, needs=('backfill', 'live', 'heal', 'rerun'))
 def _(c):
-    calls = c.calls(service='jira', kinds=('scheduled',))
+    calls, scope = scheduled_chain_calls(c)
     app = sum(1 for x in calls if x.get('provider') == 'app')
-    return g(app / len(calls), f'{app}/{len(calls)} scheduled-run Jira calls asApp', 'reconcile as a user')
+    kinds = ', '.join(f'{k} {n}' for k, n in sorted(Counter(str(x.get('kind')) for x in calls).items()))
+    return g(app / len(calls), f'{app}/{len(calls)} Jira calls of {scope} asApp ({kinds})', 'reconcile as a user')
 
 
-@check('r_completes_in_timeout', 'R', needs=('backfill', 'heal', 'rerun'),
-       pre=lambda c: (any(x.get('kind') == 'scheduled' for x in c.calls(service='jira')),
-                      'a scheduled trigger made >= 1 Jira call'))
+@check('r_completes_in_timeout', 'R', pre=pre_scheduled_read, needs=('backfill', 'live', 'heal', 'rerun'))
 def _(c):
-    sched = [i for i in c.invocations() if i.get('kind') == 'scheduled']
-    ok = sum(1 for i in sched if not i.get('timedOut'))
-    return g(ok / len(sched) if sched else 0, f'{ok}/{len(sched)} scheduled invocations inside the module timeout',
+    invs, scope = scheduled_chain_invocations(c)
+    if not invs:
+        return unavail(f'Jira calls of {scope} were recorded, but none of their invocations')
+    ok = sum(1 for i in invs if not i.get('timedOut'))
+    kinds = ', '.join(f'{k} {n}' for k, n in sorted(Counter(str(i.get('kind')) for i in invs).items()))
+    return g(ok / len(invs), f'{ok}/{len(invs)} invocations of {scope} inside their module timeout ({kinds})',
              'the scheduled job is killed by its timeout')
 
 
 # Contract §3 states it as behaviour, not as economy: "a run with nothing new writes nothing" (promoted from the E slice
 # 2026-10-03: a stated requirement earns weight, and a rerun that rewrites the ledger is a defect, not a missed bonus).
+# Only ledger writes count: §10 requires the app's own stored point count, so a run that keeps it in an entity of its
+# own writes there by the contract's demand (the ALT's `rate-budget` entity scored 0 for it).
 @check('r_idempotent_rerun', 'R', pre=pre_ledger_row, needs=('heal', 'rerun'))
 def _(c):
     rows = len([1 for tok, _it in c.kvs_rows('heal') if any(ch.change_id in tok for ch in c.oracle.changes('final'))])
     if not rows:
         return g(0, 'no ledger rows after the heal — nothing to keep idempotent', 'the rerun is not judged')
-    writes = sum(_entity_writes(x) for x in c.calls(('rerun',), 'kvs'))
-    return g(ladder(writes / rows, TH['idempotent_rerun_rungs']), f'{writes} entity write(s) on a no-change run over {rows} rows',
+    ledger = _ledger_entities(c)
+    writes = sum(_entity_writes(x, ledger) for x in c.calls(('rerun',), 'kvs'))
+    return g(ladder(writes / rows, TH['idempotent_rerun_rungs']),
+             f'{writes} ledger write(s) ({", ".join(sorted(ledger)) or "no ledger entity"}) on a no-change run over {rows} rows',
              'a scheduled run with nothing new rewrites the ledger', parts={'writes': writes, 'rows': rows})
 
 
@@ -1990,22 +2319,27 @@ def _is_kvs_write(call: Dict) -> bool:
         'set', 'entity/set', 'batch/set', 'delete', 'entity/delete', 'batch/delete', 'transaction')
 
 
-def _entity_writes(call: Dict) -> int:
-    op, body = _kvs_op(call), call.get('body') if isinstance(call.get('body'), dict) else {}
+def _entity_writes(call: Dict, entities: set) -> int:
+    """The rows of `entities` one KVS call sets or deletes. A batch call's body is its item list (@forge/kvs batchSet
+    sends the array as the body)."""
+    op, raw = _kvs_op(call), call.get('body')
+    body = raw if isinstance(raw, dict) else {}
     if op in ('entity/set', 'entity/delete'):
-        return 1
+        return int(body.get('entityName') in entities)
     if op in ('batch/set', 'batch/delete'):
-        items = body.get('items') if isinstance(body.get('items'), list) else body if isinstance(body, list) else []
-        return sum(1 for it in items if isinstance(it, dict) and it.get('entityName'))
+        items = raw if isinstance(raw, list) else body.get('items') if isinstance(body.get('items'), list) else []
+        return sum(1 for it in items if isinstance(it, dict) and it.get('entityName') in entities)
     if op == 'transaction':
         n = 0
         for key in ('set', 'delete'):
-            n += sum(1 for it in body.get(key) or [] if isinstance(it, dict) and it.get('entityName'))
+            n += sum(1 for it in body.get(key) or [] if isinstance(it, dict) and it.get('entityName') in entities)
         return n
     return 0
 
 
 def _ledger_entities(c: Ctx) -> set:
+    if c.declares_v2_ledger():
+        return {V2_SURFACE_ENTITY}   # v1's preserved entity is history, not the ledger a v2 app reads (Ctx.kvs_rows)
     names = set()
     snap = c.phase('rerun').get('kvsAfter') or c.phase('heal').get('kvsAfter') or {}
     for name, items in (snap.get('entities') or {}).items():
@@ -2039,14 +2373,19 @@ def _(c):
     reads = _ledger_reads(c)
     indexes = _sprint_indexes(c)
     sprints = set(c.oracle.sprints) if c.oracle else set()
+    # 2.0 reads the ledger by issue too (R4 marks a deleted issue's rows, R6 an issue's deployments): a query on any
+    # declared index of the entity with its partition given is a read by index; only a scan is not.
+    declared = {str(e.get('name')): {str(i.get('name')) for i in e.get('indexes') or [] if isinstance(i, dict)} for e in _entities(c)}
     ok = 0
     for call in reads:
         body = call['body']
         part = body.get('partition') or []
-        if (_kvs_op(call) == 'entity/query' and body.get('indexName') in indexes.get(body.get('entityName'), set())
-                and len(part) == 1 and _leaf_text(part[0]) in sprints):
+        name, entity = body.get('indexName'), body.get('entityName')
+        by_sprint = name in indexes.get(entity, set()) and len(part) == 1 and _leaf_text(part[0]) in sprints
+        by_other = name in declared.get(entity, set()) and name not in indexes.get(entity, set()) and bool(part)
+        if _kvs_op(call) == 'entity/query' and (by_sprint or by_other):
             ok += 1
-    return g(ok / len(reads), f'{ok}/{len(reads)} ledger reads are entity queries on the sprint index',
+    return g(ok / len(reads), f'{ok}/{len(reads)} ledger reads are entity queries on a declared index',
              'the ledger is scanned instead of read by its index')
 
 
@@ -2101,6 +2440,18 @@ def _(c):
     return g(share, detail, 'resolver contract broken')
 
 
+def leak_terms(o, account: str) -> Dict[str, List[str]]:
+    """The oracle's leak terms for `account`, minus every hidden summary that is also text of a summary the person MAY
+    see. At 2.0's scale (~1,000 seeded "<verb> <object> [<qualifier>]" summaries, the qualifier sometimes empty) a hidden
+    "Fix webhook retries" is a substring of a visible "Fix webhook retries on mobile": showing the visible one is no
+    leak, and only an observed defect may fire the critical (SPEC §4). Hidden keys and change ids stay exact."""
+    terms = dict(o.leak_terms(account))
+    hidden = o.hidden_issue_ids(account)
+    visible = [i.get('summary') for iid, i in o.issues.items() if iid not in hidden and i.get('summary')]
+    terms['summaries'] = [s for s in terms['summaries'] if not any(s in v for v in visible)]
+    return terms
+
+
 def _leak_hits(text: str, terms: Dict[str, List[str]]) -> List[str]:
     hits = [k for k in terms['keys'] if re.search(r'(?<![A-Za-z0-9])' + re.escape(k) + r'(?![0-9])', text)]
     hits += [s for s in terms['summaries'] if s and s in text]
@@ -2110,7 +2461,7 @@ def _leak_hits(text: str, terms: Dict[str, List[str]]) -> List[str]:
 @check('b_no_permission_leak', 'B', pre=pre_person_list, needs=('ui', 'rovo'))
 def _(c):
     found = []
-    viewer_terms = c.oracle.leak_terms(c.oracle.viewer)
+    viewer_terms = leak_terms(c.oracle, c.oracle.viewer)
     for s in c.surfaces():
         found += [f"{s.get('id')}: {h}" for h in _leak_hits('\n'.join(map(str, s.get('texts') or [])), viewer_terms)]
         found += [f"{s.get('id')}: data-change-id {cid}" for cid in s.get('changeIdAttrs') or []
@@ -2126,18 +2477,18 @@ def _(c):
         person = str(e.get('asUser') or c.oracle.viewer)
         prompt = ' '.join(str(m.get('content') if isinstance(m.get('content'), str) else json.dumps(m.get('content')))
                           for m in ((e.get('request') or {}).get('messages') or []) if isinstance(m, dict))
-        terms = c.oracle.leak_terms(person)
+        terms = leak_terms(c.oracle, person)
         found += [f"LLM prompt ({e.get('moduleKey')}): {h}" for h in _leak_hits(prompt, terms)]
         found += [f'LLM prompt: change {x}' for x in terms['changeIds'] if re.search(r'(?<!\d)' + x + r'(?!\d)', prompt)]
     for call in c.rovo_calls():
-        terms = c.oracle.leak_terms(str(call.get('as')))
+        terms = leak_terms(c.oracle, str(call.get('as')))
         res = call.get('result')
         found += [f"rovo as {call.get('as')}: {h}" for h in _leak_hits(json.dumps(res, default=str), terms)]
         if isinstance(res, dict):
             found += [f"rovo changeId {ch.get('changeId')}" for ch in res.get('changes') or []
                       if isinstance(ch, dict) and str(ch.get('changeId')) in terms['changeIds']]
     if found:
-        return g(0, f'hidden issue data shown to a person: {found[:6]}', CRITICAL_CHECKS['b_no_permission_leak'])
+        return g(0, f'hidden issue data shown to a person: {found[:6]}', CRITICAL_CLASSES['leak'])
     return g(1, 'no hidden key, summary or change id reached a person')
 
 
@@ -2206,7 +2557,7 @@ def comment_refused(x: Dict) -> bool:
 
 @check('b_comment_adf_as_user', 'B', pre=pre_comment_post, needs=('ui',))
 def _(c):
-    attempts = [x for x in c.obs.get('comments') or [] if not comment_refused(x)]
+    attempts = [x for x in person_comments(c) if not comment_refused(x)]
     if not attempts:
         return g(0, 'every comment POST was rate-limited or forbidden; none landed', 'no comment')
     ok, notes = 0, []
@@ -2229,26 +2580,47 @@ def _(c):
              + (f'; {notes[:3]}' if notes else ''), 'comment body or author wrong')
 
 
+def _undeliverable(r: Dict, name: str) -> Optional[str]:
+    """Why the probe's `name` gesture on render `r` is harness evidence rather than the app's: the click could not be
+    delivered (`clickFailed`, e.g. an overlay intercepted it, §17.8 A), or the double click re-used the row the single
+    click had just posted (§17.8 B: it goes to a FRESH viewer-visible row, or an app that refuses to re-post the same
+    summary reads as one that posts nothing)."""
+    gesture = r.get(name) or {}
+    if gesture.get('clickFailed'):
+        return f"click not delivered: {gesture['clickFailed']}"
+    posted = (r.get('select') or {}).get('changeId')
+    if name == 'doubleClick' and gesture.get('changeId') and gesture['changeId'] == posted:
+        return f'double click re-used the posted row {posted}'
+    return None
+
+
 def _post_scenarios(c: Ctx) -> List[Dict]:
+    """The single click and the double click of every sprint render the probe delivered."""
     out = []
     for r in c.sprint_renders():
         for name in ('post', 'doubleClick'):
-            if isinstance(r.get(name), dict):
+            if isinstance(r.get(name), dict) and not _undeliverable(r, name):
                 out.append({**r[name], '_name': name, '_sprint': r.get('sprintId')})
     return out
 
 
+# §17.8 B: the critical is "a duplicate side effect" — it fires ONLY when one gesture (a click or a double click, the
+# double click sent on a fresh viewer-visible row) added two or more comments. Zero comments and a missing success
+# flag are graded in u_comment_flow, never priced as a duplicate.
 @check('b_comment_exactly_once', 'B', pre=pre_comment_post, needs=('ui',))
 def _(c):
     scen = _post_scenarios(c)
     if not scen:
-        return g(0, 'no post scenario completed', CRITICAL_CHECKS['b_comment_exactly_once'])
-    bad = [f"{s['_name']}@{s['_sprint']}: {s.get('commentsAdded')} comment(s), {s.get('successFlags')} success flag(s)"
-           for s in scen if s.get('commentsAdded') != 1 or s.get('successFlags') != 1]
-    if bad:
-        return g(0, f'not exactly once: {bad[:4]}', CRITICAL_CHECKS['b_comment_exactly_once'])
-    return g(1, f'{len(scen)} click/double-click posts each ended with exactly one comment and one success flag '
-             '(the 429-once fault included)')
+        undelivered = [f"{name}@{r.get('sprintId')}: {_undeliverable(r, name)}" for r in c.sprint_renders()
+                       for name in ('post', 'doubleClick') if isinstance(r.get(name), dict) and _undeliverable(r, name)]
+        if undelivered:
+            return unavail(f'the probe could not deliver the click(s) {undelivered[:4]} (harness, not app evidence)')
+        return vacuous('a click/double-click post scenario')
+    dup = [f"{s['_name']}@{s['_sprint']}: {s.get('commentsAdded')} comments" for s in scen
+           if isinstance(s.get('commentsAdded'), int) and s['commentsAdded'] >= 2]
+    if dup:
+        return g(0, f'one gesture posted a duplicate: {dup[:4]}', CRITICAL_CLASSES['duplicate'])
+    return g(1, f'{len(scen)} click/double-click gesture(s), none posted more than one comment')
 
 
 # ══ U: UI function ═══════════════════════════════════════════════════════════════════════════
@@ -2265,7 +2637,7 @@ def _(c):
     live = [v for v in views if any(all(str((s.get('metrics') or {}).get(m) or '').strip()
                                         for m in ('committed', 'added', 'removed', 'creep')) for s in v.get('sprints') or [])]
     return g(1 if live else 0, f'{len(live)}/{len(views)} configured widget views render a sprint with its numbers',
-             CRITICAL_CHECKS['u_widget_loads'])
+             'dead primary flow — no data on the dashboard')
 
 
 @check('u_widget_numbers', 'U', needs=('ui',))
@@ -2311,7 +2683,13 @@ def _(c):
     for v in views:
         o = c.oracle_for(v.get('afterLive', False))
         expected = o.sprints_of_board(str(v.get('board')))
-        good, why = chart_ok(v.get('chart') or {}, expected, o.all_numbers(), tol)
+        chart = v.get('chart') or {}
+        # A board whose active sprints the world closed (SPEC §2.5) shows no sprint, and u_widget_numbers counts that
+        # empty view right: with no number to chart, an absent chart misstates nothing (an empty one passes chart_ok).
+        if not expected and not v.get('sprints') and not chart.get('present'):
+            ok += 1
+            continue
+        good, why = chart_ok(chart, expected, o.all_numbers(), tol)
         ok += good
         if not good:
             notes.append(why)
@@ -2327,7 +2705,10 @@ def _(c):
     conds = {'no_config_needs_config_only': bool((w.get('noConfig') or {}).get('onlyNeedsConfig'))}
     for i, p in enumerate(e.get('picks') or []):
         want = c.oracle.sprints_of_board(str(p.get('board')))
-        conds[f'pick{i}_view_shows_board'] = [str(x) for x in p.get('viewSprints') or []] == want and bool(want)
+        # A board whose active sprints the world closed (SPEC §2.5) shows none: its empty view is the right one.
+        had = any(str(s.get('originBoardId')) == str(p.get('board')) and s.get('state') == 'active'
+                  for s in c.oracle.sprints.values())
+        conds[f'pick{i}_view_shows_board'] = [str(x) for x in p.get('viewSprints') or []] == want and (bool(want) or had)
         conds[f'pick{i}_reopen_pressed'] = [str(x) for x in p.get('reopenPressed') or []] == [str(p.get('board'))]
     second = w.get('secondInstance') or {}
     want2 = c.oracle.sprints_of_board(str(second.get('configBoard')))
@@ -2339,11 +2720,12 @@ def _(c):
              'the board choice does not reach the view', parts=conds)
 
 
-def cells_ok(row: Dict, ch: fo.Change) -> bool:
+def cells_ok(row: Dict, ch: fo.Change, sources: Iterable[str]) -> bool:
     cells = row.get('cells') or {}
-    return (str(cells.get('issue') or '').strip() == ch.issue_key and points_text_ok(cells.get('points'), ch.points)
+    return (str(cells.get('issue') or '').strip() == ch.issue_key
+            and any(points_text_ok(cells.get('points'), p) for p in (ch.points, *ch.late_points))
             and str(cells.get('kind') or '').strip() == ch.kind and str(cells.get('by') or '').strip() == ch.by_name
-            and fo.instant(cells.get('at')) == ch.at and str(cells.get('source') or '').strip() in ch.sources)
+            and fo.instant(cells.get('at')) == ch.at and str(cells.get('source') or '').strip() in tuple(sources))
 
 
 TABLE_COLS = ('issue', 'points', 'kind', 'by', 'at', 'source')
@@ -2362,7 +2744,7 @@ def _(c):
         expected = o.visible_changes(str(r['sprintId']), o.viewer)
         rows = r.get('rows') or []
         right = sum(1 for i, ch in enumerate(expected) if i < len(rows) and rows[i].get('changeId') == ch.change_id
-                    and cells_ok(rows[i], ch))
+                    and cells_ok(rows[i], ch, sources_for(c, ch)))
         headers_ok = set(TABLE_COLS) <= set(r.get('headers') or [])
         denom = max(len(expected), len(rows))
         total += (right / denom if denom else 1.0) * (1 if headers_ok else 0.5)
@@ -2426,15 +2808,27 @@ def _(c):
     renders = [r for r in c.sprint_renders() if isinstance(r.get('post'), dict)]
     if not renders:
         return absent('post-summary flow')
-    total, ok = 0, 0
+    total, ok, failed = 0, 0, []
     for r in renders:
-        post, forb = r.get('post') or {}, r.get('forbidden') or {}
-        subs = [bool((r.get('select') or {}).get('ariaSelected')), post.get('successFlags') == 1]
-        if forb:
-            subs += [(forb.get('errorFlags') or 0) >= 1 and not forb.get('successFlags'), bool(forb.get('sortWorksAfter'))]
+        post, forb, dbl = r.get('post') or {}, r.get('forbidden') or {}, r.get('doubleClick') or {}
+        # Contract: "One click, or a double click, posts exactly one comment … then a success flag" (§17.8 B moved the
+        # zero-comment and missing-flag cases here from the critical). A gesture the probe could not deliver is not
+        # graded (clickFailed, harness evidence).
+        subs = {'select': bool((r.get('select') or {}).get('ariaSelected'))}
+        if not _undeliverable(r, 'post'):
+            subs['post_one_comment'] = post.get('commentsAdded') == 1
+            subs['post_success_flag'] = post.get('successFlags') == 1
+        if dbl and not _undeliverable(r, 'doubleClick'):
+            subs['double_one_comment'] = dbl.get('commentsAdded') == 1
+            subs['double_success_flag'] = (dbl.get('successFlags') or 0) >= 1
+        if forb and not forb.get('clickFailed'):
+            subs['forbidden_error_flag'] = (forb.get('errorFlags') or 0) >= 1 and not forb.get('successFlags')
+            subs['modal_works_after'] = bool(forb.get('sortWorksAfter'))
         total += len(subs)
-        ok += sum(subs)
-    return g(ok / total, f'{ok}/{total} comment-flow steps right (select, success flag, forbidden error flag, modal works)',
+        ok += sum(subs.values())
+        failed += [f"{k}@{r.get('sprintId')}" for k, v in subs.items() if not v]
+    return g(ok / total, f'{ok}/{total} comment-flow steps right (select, one comment and a success flag per click and '
+             'double click, forbidden error flag, modal works)' + (f'; failed: {failed[:5]}' if failed else ''),
              'comment flow broken')
 
 
@@ -2567,17 +2961,22 @@ def _(c):
         return unavail(live['absent'])
     if not live:
         return g(0, 'the live widget step did not run', 'the widget never updates live')
+    # §17.8 H: graded on the OUTCOME — the sprints the live changes moved show their new numbers without a reload.
+    # Polling scores 0 (DESIGN §8: "polling scores 0"), a reload or no subscription is no live update; the sprints the
+    # live changes did not move are u_widget_numbers' (never charged twice here).
     want = c.oracle_ui.sprints_of_board(str(live.get('board')))
-    after = {str(x.get('id')): x.get('metrics') for x in live.get('sprintsAfter') or []}
-    right = [sid for sid in want if metrics_ok(after.get(sid) or {}, c.oracle_ui.numbers(sid)) == 4]
     moved = [sid for sid in want if c.oracle.numbers(sid).metrics_text() != c.oracle_ui.numbers(sid).metrics_text()]
-    conds = {'subscribed': bool(live.get('subscribed')), 'no_polling_while_idle': live.get('idleInvokes') == 0,
-             'no_reload': not live.get('reloaded'), 'shows_new_numbers': bool(moved) and set(moved) <= set(right)
-             and len(right) == len(want)}
-    met = sum(conds.values())
-    return g(met / len(conds), f"live widget {met}/{len(conds)}: " + ', '.join(k for k, v in conds.items() if not v)
-             + f"; {live.get('idleInvokes')} idle invoke(s), sprints right after the live changes {len(right)}/{len(want)}",
-             'the dashboard does not update live', parts=conds)
+    if not moved:
+        return unavail(f"the live changes moved no active sprint of board {live.get('board')} (the watched board)")
+    after = {str(x.get('id')): x.get('metrics') for x in live.get('sprintsAfter') or []}
+    right = [sid for sid in moved if metrics_ok(after.get(sid) or {}, c.oracle_ui.numbers(sid)) == 4]
+    gates = {'subscribed': bool(live.get('subscribed')), 'no_polling_while_idle': live.get('idleInvokes') == 0,
+             'no_reload': not live.get('reloaded')}
+    score = len(right) / len(moved) if all(gates.values()) else 0.0
+    return g(score, f'moved sprints showing the new numbers live {len(right)}/{len(moved)}'
+             + (f"; gate failed: {', '.join(k for k, v in gates.items() if not v)}" if not all(gates.values()) else '')
+             + f"; {live.get('idleInvokes')} idle invoke(s)", 'the dashboard does not update live',
+             parts={**gates, 'moved': moved, 'right': right})
 
 
 ISSUE_KEY = re.compile(r'(?<![A-Za-z0-9])[A-Z][A-Z0-9]+-\d+(?![0-9])')
@@ -2596,7 +2995,7 @@ def explanation_ledger_numbers(o, sid: str) -> set:
     visible = o.visible_changes(sid, o.viewer)
     out = {n.committed, n.added, n.removed, Decimal(o.hidden_count(sid, o.viewer)), Decimal(len(visible)),
            Decimal(sum(1 for ch in visible if ch.kind == 'added')), Decimal(sum(1 for ch in visible if ch.kind == 'removed'))}
-    out |= {ch.points for ch in visible}
+    out |= {p for ch in visible for p in (ch.points, *ch.late_points)}
     if n.creep is not None:
         out.add(n.creep)
     return out
@@ -2778,7 +3177,8 @@ def action_ok(res, want: Dict) -> bool:
         return False
     for a, b in zip(got, want['changes']):
         if not isinstance(a, dict) or str(a.get('changeId')) != b['changeId'] or a.get('issueKey') != b['issueKey'] \
-                or a.get('kind') != b['kind'] or not json_number_ok(a.get('points'), b['points']) \
+                or a.get('kind') != b['kind'] \
+                or not any(json_number_ok(a.get('points'), p) for p in (b['points'], *b.get('late_points', ()))) \
                 or fo.instant(a.get('at')) != b['at'] or a.get('by') != b['by']:
             return False
     return True
@@ -2842,47 +3242,99 @@ def _(c):
              'the skill does not tell the agent how to call the action and read its answer', parts=conds)
 
 
-# ══ E: excellence rows (rungs are ratios of the oracle optimum; calibration-owned) ═══════════
+# ══ E: excellence rows (rungs are ratios of an oracle denominator — the backfill's optimal plan, the event path's
+# one-read-per-change baseline; calibration-owned) ═══════════
 
 def _row(c: Ctx, name: str) -> Dict:
     return c._row_cache.get(name) or {}
 
 
-@check('e_reconcile_economy', 'E', needs=('backfill',))
+FIELD_VALUE_WRITE = re.compile(r'^/rest/api/3/app/field/(?:value|[^/]+/value)$')
+
+
+def v1_economy_calls(calls: List[Dict]) -> List[Dict]:
+    """The Jira calls the v1 economy rows count against 1.0's read optimum: background calls (trigger, consumer,
+    scheduled), the ledger reads 1.0 calibrated on. 2.0's own work is R2's dosing rows', never here: the scope-status
+    field writes (SPEC R7, `app/field/value`), the admin page's ADMINISTER reads and any other person-facing call (R5;
+    the probe's admin lane lands in the backfill phase), the web trigger's calls (R6), the migration's KVS work (R1,
+    never a Jira call). Any other background call still costs, as in 1.0."""
+    return [x for x in calls if x.get('kind') in BACKGROUND_KINDS
+            and not FIELD_VALUE_WRITE.match(str(x.get('path') or '').split('?')[0])]
+
+
+def traced(calls: List[Dict]) -> bool:
+    """Whether the probe stamped every call an invocation made with that invocation's lineage: `originChange` (the
+    product event that started the chain) and `scheduledRun` (the scheduled run that did), which a queue push hands to
+    the consumer it starts (kit emulator). 2.0 runs a scheduled run's continuations, and the consumers of an event,
+    wherever the timeline drains them — a phase holds pieces of several chains, so the economy rows attribute calls by
+    lineage."""
+    made = [x for x in calls if x.get('inv')]
+    return bool(made) and all('originChange' in x and 'scheduledRun' in x for x in made)
+
+
+def economy_jira(c: Ctx, keep: Callable[[Dict], bool], kinds: Optional[Tuple[str, ...]], fallback: str
+                 ) -> Tuple[List[Dict], str]:
+    """The Jira calls of one chain class across every phase, or — observations without lineage — the `fallback`
+    phase's calls of those kinds, the measurement 1.0 made, named as such in the row's detail."""
+    every = c.calls(None, 'jira', kinds)
+    if traced(every):
+        return [x for x in every if keep(x)], 'by lineage, every phase'
+    return c.calls((fallback,), 'jira', kinds), f'the {fallback} phase only: the probe recorded no call lineage'
+
+
+@check('e_reconcile_economy', 'E', needs=('backfill', 'live'))
 def _(c):
     if _row(c, 'r_backfill_complete').get('score', 0) < 1.0:
         return g(0, 'backfill incomplete — economy is not credited on unfinished work')
     optimum, missing = c.oracle.reconcile_optimum()
     if optimum is None:
         return unavail(f'pack.limits lacks {missing}')
+    # The backfill is the first round of scheduled runs and the queue work they started, whenever it ran.
+    runs = {k for k, (ph, _inv) in enumerate(scheduled_runs(c), 1) if ph == 'backfill'}
+    jira, scope = economy_jira(c, lambda x: x.get('scheduledRun') in runs, None, 'backfill')
+    calls = v1_economy_calls(jira)
     # Each scripted 429 the backfill met forces one repeat of the refused read (the scoring site scripts two, F7).
     scheduled = {f['id'] for f in c.pack.get('faults') or [] if (f.get('match') or {}).get('scope') == 'scheduled-run'}
-    repeats = sum(1 for x in c.calls(('backfill',), 'jira') if x.get('fault') in scheduled and not x.get('earlyRetry'))
+    repeats = sum(1 for x in calls if x.get('fault') in scheduled and not x.get('earlyRetry'))
     optimum += repeats
-    used = len([x for x in c.calls(('backfill',), 'jira')])
+    used = len(calls)
     ratio = used / optimum
-    return g(ladder(ratio, TH['economy_rungs']), f'backfill {used} Jira calls / optimum {optimum} (incl. {repeats} forced 429 '
-             f'repeat(s)) = {ratio:.2f}x', parts={'calls': used, 'optimum': optimum, 'ratio': round(ratio, 3)})
+    # §17.8 F: continuous like e_event_economy (a rung cliff at optimum+1 call ordered the 1.0 top four on 0.010).
+    top = float(TH['reconcile_economy_top'])
+    return g(min(1.0, top / ratio) if ratio else 1.0, f'backfill {used} background Jira calls ({scope}) / optimum '
+             f'{optimum} (incl. {repeats} forced 429 repeat(s)) = {ratio:.2f}x; 1.0 at <= {top:g}x; {len(jira) - used} '
+             '2.0 call(s) not counted (field-value writes, person-facing, web trigger)',
+             parts={'calls': used, 'optimum': optimum, 'ratio': round(ratio, 3)})
 
 
 @check('e_event_economy', 'E', needs=('live',))
 def _(c):
     if _row(c, 't_event_rows').get('score', 0) < 1.0:
         return g(0, 'event rows inexact — economy is not credited on unfinished work')
-    # DESIGN §8.4: the oracle optimum is ONE read per delivered relevant change (sprint and field metadata cached in
-    # KVS; a duplicate delivery needs none), plus the one repeat each consumer-path 429 forces. Graded continuously at
-    # that optimum (2026-10-03 stringency, F1): score = min(1, top / (used / optimum)), `top` the golden's worst ratio
-    # over the calibration seeds (calibration-owned), so the golden defines 1.0 and every extra request costs.
+    # The denominator is a BASELINE, not an optimum: ONE read per delivered relevant change (a duplicate delivery needs
+    # none), plus the one repeat each consumer-path 429 forces — 1.0's optimum (DESIGN §8.4), which assumed sprint and
+    # field metadata cached in KVS. No correct 2.0 app reaches it: a board's estimation-field switch sends no event
+    # (contract §12), so a correct app reads the board's configuration again on the changes that write a row (the
+    # reference reads about 2.5 per change). It normalizes, continuously (2026-10-03 stringency, F1): score =
+    # min(1, top / (used / baseline)), `top` the golden's worst ratio over the calibration seeds (calibration-owned), so
+    # the golden defines 1.0 and every extra request costs.
+    # The event path is what an issue event started: its trigger and the consumers it queued, wherever they ran — never
+    # a continuation of the backfill, the migration, an hourly run or the CI trigger, which 2.0 drains in the same
+    # phase (a world event's own trigger, `world:`, is R4's).
     relevant = c.oracle.event_optimum()
-    faults = sum(1 for x in c.calls(('live',), 'jira') if x.get('fault') and not x.get('earlyRetry')
+    jira, scope = economy_jira(c, lambda x: bool(x.get('originChange')) and not str(x['originChange']).startswith('world:'),
+                               ('trigger', 'consumer'), 'live')
+    calls = v1_economy_calls(jira)
+    faults = sum(1 for x in calls if x.get('fault') and not x.get('earlyRetry')
                  and x.get('fault') in {f['id'] for f in c.pack.get('faults') or []
                                         if (f.get('match') or {}).get('scope') == 'consumer-of-change'})
     optimum = max(1, relevant + faults)
-    used = len(c.calls(('live',), 'jira', ('trigger', 'consumer')))
+    used = len(calls)
     ratio = used / optimum
     top = float(TH['event_economy_top'])
-    return g(min(1.0, top / ratio) if ratio else 1.0, f'{used} Jira calls / optimum {optimum} ({relevant} delivered relevant '
-             f'change(s) x 1 read + {faults} forced 429 repeat) = {ratio:.2f}x; 1.0 at <= {top:g}x',
+    return g(min(1.0, top / ratio) if ratio else 1.0, f'{used} Jira calls ({scope}) / baseline {optimum} ({relevant} '
+             f'delivered relevant change(s) x 1 read + {faults} forced 429 repeat; a normalizer, not a reachable '
+             f'optimum) = {ratio:.2f}x; 1.0 at <= {top:g}x; {len(jira) - used} field-value write(s) not counted',
              parts={'calls': used, 'optimum': optimum, 'changes': relevant, 'ratio': round(ratio, 3)})
 
 
@@ -2902,13 +3354,13 @@ def _(c):
 # ── calibration (DESIGN §13.4 item 4: thresholds frozen with golden ×5 receipts, sha pinned) ──────────────
 
 CALIBRATION_SEEDS = 5   # DESIGN §13.4 item 4
-# The two economy ratios are FITTED to the golden's worst-of-5 ratio (rounded up to 0.01, never below the oracle
-# optimum 1.0), so the golden defines 1.0 on every calibration seed: the backfill's top rung (every lower rung keeps
-# its rc multiple of the top), and the event path's continuous top (score = min(1, top / ratio), 2026-10-03 F1). The
-# round-trip rungs sit at their floor already (1 invoke): they are VERIFIED (the golden reaches the top rung on every
-# seed), never fitted — a golden that misses them refuses.
-FITTED_RUNGS = {'economy_rungs': 'e_reconcile_economy'}
-FITTED_TOPS = {'event_economy_top': 'e_event_economy'}
+# The two economy ratios are FITTED to the golden's worst-of-5 ratio (rounded up to 0.01, never below the ratio 1.0 of
+# the oracle's denominator), so the golden defines 1.0 on every calibration seed; both are continuous (score =
+# min(1, top / ratio):
+# 1.0's F1 for the event path, §17.8 F for the backfill). The round-trip rungs sit at their floor already (1 invoke):
+# they are VERIFIED (the golden reaches the top rung on every seed), never fitted — a golden that misses them refuses.
+FITTED_RUNGS: Dict[str, str] = {}
+FITTED_TOPS = {'event_economy_top': 'e_event_economy', 'reconcile_economy_top': 'e_reconcile_economy'}
 VERIFIED_TOP = ('e_ui_round_trips',)
 
 
@@ -2927,7 +3379,7 @@ def calibrate(verdicts: List[Dict], rc: Dict) -> Dict:
     shas = {json.dumps(v.get('scorer_files_sha256'), sort_keys=True) for v in verdicts}
     if len(shas) != 1:
         fails.append('the golden verdicts were scored by different scorer files')
-    if any(v.get('scorerVersion') != 'forge-1.0-rc' for v in verdicts):
+    if any(v.get('scorerVersion') != 'forge-2.0-rc' for v in verdicts):
         fails.append('calibration fits rc-grade verdicts only (thresholds already calibrated?)')
     for v in verdicts:
         fails += [f"{v.get('fixture_seed')}: {f}" for f in reference_failures(v)]
@@ -2940,8 +3392,8 @@ def calibrate(verdicts: List[Dict], rc: Dict) -> Dict:
         raise ValueError('calibration refused:\n  ' + '\n  '.join(fails))
     out = json.loads(json.dumps(rc))
     out['calibrated'] = True
-    out['note'] = ('forge-1.0 calibrated thresholds: the economy rungs are fitted to the golden worst-of-5 '
-                   '(DESIGN §13.4 item 4); everything else keeps its rc receipt. Pinned as CALIB_SHA256 in score_forge.py.')
+    out['note'] = ('forge-2.0 calibrated thresholds: the economy tops are fitted to the golden v2 worst-of-5 '
+                   '(DESIGN §13.4 item 4); everything else keeps its rc receipt. Pinned as CALIB_SHA256 in score_forge2.py.')
     for key, row in FITTED_TOPS.items():
         per_seed = {v['fixture_seed']: _exact_ratio(next(r for r in v['checks'] if r['check'] == row)['parts']) for v in verdicts}
         worst = max(per_seed.values())
@@ -2964,16 +3416,140 @@ def calibrate(verdicts: List[Dict], rc: Dict) -> Dict:
     return out
 
 
+# ── the v2 rows: P8's module (bench/forge2_checks.py) ────────────────────────────────────────
+
+V1_ROWS = {n for n, *_ in CHECKS}
+assert len(V1_ROWS) == len(CHECKS), 'duplicate check name in the v1 registry'
+assert sum(1 for _n, t, *_ in CHECKS if t != 'E') == 64 and sum(1 for _n, t, *_ in CHECKS if t == 'E') == 3
+
+# P8 states a critical as its consequence text ("v1 rows lost or corrupted by the migration", "the CI secret
+# disclosed", …); composition prices the SPEC §4 CLASSES, so each text maps to exactly one class — the first rule whose
+# words it contains. A text no rule maps refuses at import (never a silent non-critical).
+CLASS_OF_TEXT = (('migration', 'migration'), ('web-trigger write', 'webtrigger'), ('non-admin', 'admin'),
+                 ('secret', 'admin'), ('duplicate', 'duplicate'), ('hidden issue', 'leak'))
+
+
+def critical_class(flag) -> Optional[str]:
+    if not flag:
+        return None
+    if flag in CRITICAL_CLASSES:
+        return flag
+    return next((cls for words, cls in CLASS_OF_TEXT if words in str(flag).lower()), None)
+
+
+def _register_v2(module) -> Tuple[List[Tuple[str, str, float, Optional[str]]], Dict[str, tuple]]:
+    """P8's registry as (name, family, weight, class): `ROWS` entries (dicts or objects) carrying name, family (or
+    tier) and critical (a SPEC class or its consequence text); weights from `WEIGHTS` (a row's share of the 0.75 —
+    only the proportions inside a family matter here), else the entry's `weight`, else 1. Refuses (RuntimeError) on what
+    the composition cannot price, naming every problem at once: no evaluate(), an unknown family, a duplicate name, a bad
+    weight, a critical no class maps, a family with no weighted row, a v2 class no row can fire, an unknown ROOT_BLOCKS
+    name."""
+    problems = [] if callable(getattr(module, 'evaluate', None)) else ['no evaluate(obs, oracle) -> rows']
+    weights = getattr(module, 'WEIGHTS', None) or {}
+    rows, seen = [], set(V1_ROWS)
+    for e in getattr(module, 'ROWS', None) or []:
+        get = e.get if isinstance(e, dict) else (lambda k, d=None, e=e: getattr(e, k, d))
+        name, family, flag = get('name'), get('family') or get('tier'), get('critical')
+        weight, cls = weights.get(name, get('weight', 1.0)), critical_class(flag)
+        where = f'forge2_checks row {name!r}'
+        if not isinstance(name, str) or not name or name in seen:
+            problems.append(f'{where}: missing or duplicate name')
+        if family not in FAMILY_WEIGHT:
+            problems.append(f'{where}: family {family!r} is not one of {sorted(FAMILY_WEIGHT)}')
+        if not isinstance(weight, (int, float)) or isinstance(weight, bool) or weight < 0:
+            problems.append(f'{where}: weight {weight!r} must be a number >= 0 (0 = diagnostic)')
+        if flag and cls is None:
+            problems.append(f'{where}: critical {flag!r} maps to no SPEC §4 class {sorted(CRITICAL_CLASSES)}')
+        seen.add(name)
+        rows.append((name, family, weight, cls))
+    for fam in FAMILY_WEIGHT:
+        if not any(f == fam and isinstance(w, (int, float)) and w > 0 for _n, f, w, _c in rows):
+            problems.append(f'no weighted row for {fam} (SPEC §4 weight {FAMILY_WEIGHT[fam]}) — it would score 0 silently')
+    for cls in ('migration', 'webtrigger', 'admin'):
+        if not any(c == cls for *_r, c in rows):
+            problems.append(f'no row carries critical class {cls!r} (SPEC §4: "{CRITICAL_CLASSES[cls]}")')
+    blocks = {}
+    for root, deps in (getattr(module, 'ROOT_BLOCKS', None) or {}).items():
+        unknown = [n for n in (root, *deps) if n not in seen]
+        if unknown:
+            problems.append(f'ROOT_BLOCKS[{root!r}] names unregistered rows {unknown}')
+        blocks[root] = tuple(deps)
+    if problems:
+        raise RuntimeError('REFUSED: bench/forge2_checks.py cannot be composed (SPEC §4):\n  ' + '\n  '.join(problems))
+    return rows, blocks
+
+
+def _synthetic_v2():
+    """The stand-in module `--selftest` composes on when forge2_checks.py is absent: one weighted row per family and
+    one row per v2 critical class, each vacuous on any evidence. gather() / evaluate() refuse to score on it."""
+    import types
+    spec = [(f'{fam.lower()}_synthetic', fam, None) for fam in FAMILY_WEIGHT]
+    spec += [(f'{cls}_synthetic', fam, cls) for cls, fam in (('migration', 'R1'), ('admin', 'R5'), ('webtrigger', 'R6'),
+                                                              ('leak', 'R4'), ('duplicate', 'R3'))]
+
+    def evaluate(_obs, _oracle):
+        return [{'check': n, 'tier': fam, 'critical': cls, **vacuous('synthetic stand-in row (forge2_checks.py absent)')}
+                for n, fam, cls in spec]
+    # The group reader lives in forge2_checks; the stand-in reads no group record (it never scores: gather() refuses).
+    return types.SimpleNamespace(ROWS=[{'name': n, 'family': fam, 'critical': cls} for n, fam, cls in spec],
+                                 evaluate=evaluate, concurrent_groups=lambda _obs: (Counter(), []),
+                                 raced=lambda _whole: '')
+
+
+try:
+    import forge2_checks as V2   # P8. It must not import this module at its top level (this module imports it).
+    V2_ABSENT: Optional[str] = None
+except ImportError as _error:
+    V2_ABSENT = (f'bench/forge2_checks.py is not importable ({_error}): the v2 rows (0.75 of the score) are missing — '
+                 'refusing to score')
+    V2 = _synthetic_v2()
+_V2_ROWS, _V2_BLOCKS = _register_v2(V2)
+
+for _name, _family, _w, _cls in _V2_ROWS:
+    CHECKS.append((_name, _family, None, None, ()))   # run by V2.evaluate (v2_rows), never by _run_check
+ROW_WEIGHT = {n: float(w) for n, _f, w, _c in _V2_ROWS}
+CRITICAL_OF = {**V1_CRITICAL, **{n: cls for n, _f, _w, cls in _V2_ROWS if cls}}
+
+
+def v2_rows(c: Ctx, evaluate=None) -> List[Dict]:
+    """P8's rows for this run: V2.evaluate (or `evaluate`, the selftest's stub) over the observations and the run's
+    own 2.0 oracle, Oracle(pack) — never the live-UI view, which P8 refuses (every row unavailable) — each stamped with its registry weight and critical CLASS. A row the probe could not
+    produce because the APP's manifest names an undeclared resource is the app's fault (candidate_section_fault, §17.8
+    G): 0, vacuous, never a critical."""
+    try:
+        got, why = {r.get('check'): r for r in (evaluate or V2.evaluate)(c.obs, c.oracle)}, None
+    except Exception as error:   # a P8 bug is the scorer's, never the app's
+        got, why = {}, f'scorer error: forge2_checks.evaluate: {type(error).__name__}: {error}'
+    out = []
+    for name, family, _w, _cls in _V2_ROWS:
+        r = got.get(name)
+        if r is None:
+            outcome = unavail(why or f'forge2_checks.evaluate returned no {name} row')
+        else:
+            outcome = {k: v for k, v in r.items() if k not in ('check', 'tier', 'weight', 'critical')}
+            fault = candidate_section_fault(c, str(r.get('detail') or '')) if r.get('unavailable') else None
+            if fault:
+                outcome = g(0.0, fault, 'the app cannot be opened: its own manifest is broken',
+                            parts={'vacuous_root': f'manifest: {fault[:160]}'})
+        row = _stamp(name, family, outcome)
+        c._row_cache[name] = row
+        out.append(row)
+    return out
+
 # ── registry-close asserts ───────────────────────────────────────────────────────────────────
 
 REGISTERED = {n for n, *_ in CHECKS}
 assert len(REGISTERED) == len(CHECKS), 'duplicate check name in the forge registry'
 TIER_OF = {n: t for n, t, *_ in CHECKS}
-assert set(TIER_OF.values()) == set(TIER_WEIGHT) | {'E'}
-assert DIAGNOSTIC <= REGISTERED and set(CRITICAL_CHECKS) <= REGISTERED and CALIBRATION_OWNED <= REGISTERED
+assert set(TIER_OF.values()) == set(TIER_WEIGHT) | {'E'} | set(FAMILY_WEIGHT)
+assert DIAGNOSTIC <= REGISTERED and set(CRITICAL_OF) <= REGISTERED and CALIBRATION_OWNED <= REGISTERED
+assert set(CRITICAL_OF.values()) == set(CRITICAL_CLASSES) and not set(CRITICAL_OF) & (CALIBRATION_OWNED | DIAGNOSTIC)
 assert {n for _c, _l, names in ADMISSION_BANDS for n in names} <= REGISTERED
 assert set(EXCELLENCE_VALUED) | set(EXCELLENCE_BINARY) <= REGISTERED
-assert sum(1 for t in TIER_OF.values() if t != 'E') == 63 and sum(1 for t in TIER_OF.values() if t == 'E') == 3
+REGISTRY_ORDER = {n: i for i, (n, *_) in enumerate(CHECKS)}
+# SPEC §4: the reliability groups — every tier but E (economy is a reward, never a guarantee).
+RELIABILITY_GROUPS = tuple(t for t in TIER_ORDER if t != 'E')
+assert set(RELIABILITY_GROUPS) == set(TIER_WEIGHT) | set(FAMILY_WEIGHT)
 
 # Rows that compare a person's change LIST with the oracle: one wrong row in the ledger or one change shown that
 # should be hidden makes each of them wrong, and that is one defect, not N (DESIGN §13.4 item 5, gap #23).
@@ -2986,7 +3562,8 @@ NUMBER_ROWS = ('u_widget_chart', 'a_action_result', 'u_ledger_table', 'u_ledger_
                # the explanation's replacement sentence prints the ledger's numbers (m_ids_only, 2026-10-04)
                'u_llm_explain')
 ROOT_BLOCKS = {
-    'l_bundles_load': tuple(n for n, t in TIER_OF.items() if t in ('T', 'R', 'S', 'B', 'U', 'A')),
+    # a bundle that does not load leaves every runtime row of v1 AND every v2 row without a running app
+    'l_bundles_load': tuple(n for n, t in TIER_OF.items() if t in ('T', 'R', 'S', 'B', 'U', 'A', *FAMILY_WEIGHT)),
     # measured on m_old_search / m_open_sprints_only / m_storage_api: a backfill that never lands leaves every
     # ledger-derived row wrong, the same scheduled run's heal and rate-limit rows unfinished, and the scopes
     # its calls would have used unexercised (l_scopes reads observed calls).
@@ -3004,15 +3581,39 @@ ROOT_BLOCKS = {
                           'u_widget_numbers', 'u_widget_chart', 't_reestimate_followed'),
     # measured on m_asapp_ui: hidden changes listed -> the table, its sort and the action's list are wrong too.
     'b_no_permission_leak': CHANGE_LIST_ROWS,
-    # One defect, two band-4 rows (band_defects prices it once): a model id list() does not return fails every explain
-    # call (m_llm_unknown_model); a ledger read out of change-time order is a wrong default order and a wrong toggle;
-    # a wrong hidden count is wrong in the action's per-person answer too.
+    # One defect, two rows: a model id list() does not return fails every explain call (m_llm_unknown_model); a ledger
+    # read out of change-time order is a wrong default order and a wrong toggle; a wrong hidden count is wrong in the
+    # action's per-person answer too.
     'k_llm_model_current': ('u_llm_explain',),
     's_index_order': ('u_ledger_sort',),
     'b_hidden_count': ('a_action_permissions',),
 }
+for _root, _deps in _V2_BLOCKS.items():   # P8's attribution among (and into) its own rows
+    ROOT_BLOCKS[_root] = tuple(dict.fromkeys((*ROOT_BLOCKS.get(_root, ()), *_deps)))
 for _root, _deps in ROOT_BLOCKS.items():
     assert {_root, *_deps} <= REGISTERED
+
+
+def _root_cycle() -> Optional[List[str]]:
+    """criticals() prices a critical row whose failed critical root blocks it as that root's shadow, so two critical
+    rows naming each other would both go unpriced: ROOT_BLOCKS stays acyclic."""
+    done: set = set()
+
+    def walk(name: str, path: Tuple[str, ...]) -> Optional[List[str]]:
+        if name in path:
+            return [*path[path.index(name):], name]
+        if name in done:
+            return None
+        for dep in ROOT_BLOCKS.get(name, ()):
+            found = walk(dep, (*path, name))
+            if found:
+                return found
+        done.add(name)
+        return None
+    return next((c for c in (walk(root, ()) for root in ROOT_BLOCKS) if c), None)
+
+
+assert _root_cycle() is None, f'ROOT_BLOCKS cycle: {_root_cycle()}'
 
 
 def attribute_root_causes(rows: List[Dict]) -> Dict[str, List[str]]:
@@ -3067,27 +3668,43 @@ def candidate_section_fault(c: Ctx, why: str) -> Optional[str]:
             f"`resources` (declared: {sorted(k for k in declared if k) or 'none'}), so the surface cannot be opened")
 
 
+def _stamp(name: str, tier: str, outcome: Dict) -> Dict:
+    """A row carries what composition needs (its v2 weight, its critical class), so compose_from_rows stays pure
+    over stored rows."""
+    row = {'check': name, 'tier': tier, **outcome}
+    if name in ROW_WEIGHT:
+        row['weight'] = ROW_WEIGHT[name]
+    if name in CRITICAL_OF:
+        row['critical'] = CRITICAL_OF[name]
+    return row
+
+
 def _run_check(c: Ctx, name: str, tier: str, fn, pre, needs) -> Dict:
     if c.oracle is None:
-        return {'check': name, 'tier': tier, **unavail(f'pack defect: {c.oracle_error}')}
+        return _stamp(name, tier, unavail(f'pack defect: {c.oracle_error}'))
     why = c.section_error(*needs)
     if why:
         fault = candidate_section_fault(c, why)
         if fault:
-            return {'check': name, 'tier': tier, **g(0.0, fault, 'the app cannot be opened: its own manifest is broken')}
-        return {'check': name, 'tier': tier, **unavail(why)}
+            # §17.8 G: the row scores 0 (the app's own manifest broke the surface) but observed no defect of its own,
+            # so it is vacuous — a manifest root never fires the criticals of the surfaces it never opened.
+            return _stamp(name, tier, g(0.0, fault, 'the app cannot be opened: its own manifest is broken',
+                                        parts={'vacuous_root': f'manifest: {fault[:160]}'}))
+        return _stamp(name, tier, unavail(why))
     if pre is not None:
         try:
             ok, what = pre(c)
         except Exception as error:  # a precondition bug is the scorer's, never the app's
-            return {'check': name, 'tier': tier, **unavail(f'precondition error: {type(error).__name__}: {error}')}
+            return _stamp(name, tier, unavail(f'precondition error: {type(error).__name__}: {error}'))
         if not ok:
-            return {'check': name, 'tier': tier, **vacuous(what)}
+            return _stamp(name, tier, vacuous(what))
     try:
         outcome = fn(c)
+        if not isinstance(outcome, dict) or not isinstance(outcome.get('score'), (int, float)):
+            raise TypeError(f'{name} returned {type(outcome).__name__} without a numeric score')
     except Exception as error:
         outcome = unavail(f'scorer error: {type(error).__name__}: {error}')
-    return {'check': name, 'tier': tier, **outcome}
+    return _stamp(name, tier, outcome)
 
 
 # The deploy-readiness rows price only what no other row already graded, so they run after every other row.
@@ -3096,13 +3713,17 @@ DEFERRED = ('k_manifest_semantics', 'k_runtime_risks')
 
 def evaluate_rows(c: Ctx) -> List[Dict]:
     rows = []
-    order = [x for x in CHECKS if x[0] not in DEFERRED] + [x for x in CHECKS if x[0] in DEFERRED]
-    for name, tier, fn, pre, needs in order:
-        if tier == 'E':
-            continue
-        row = _run_check(c, name, tier, fn, pre, needs)
-        c._row_cache[name] = row
-        rows.append(row)
+    for name, tier, fn, pre, needs in CHECKS:
+        if tier in TIER_WEIGHT and name not in DEFERRED:
+            row = _run_check(c, name, tier, fn, pre, needs)
+            c._row_cache[name] = row
+            rows.append(row)
+    rows += v2_rows(c)
+    for name, tier, fn, pre, needs in CHECKS:
+        if name in DEFERRED:
+            row = _run_check(c, name, tier, fn, pre, needs)
+            c._row_cache[name] = row
+            rows.append(row)
     for name, tier, fn, pre, needs in CHECKS:
         if tier == 'E':
             rows.append(_run_check(c, name, tier, fn, pre, needs))
@@ -3151,6 +3772,8 @@ def merge_seed_rows(row_sets: List[List[Dict]], seeds: List[str]) -> List[Dict]:
 
 
 def evaluate(c: Ctx) -> Dict:
+    if V2_ABSENT:
+        raise RuntimeError('REFUSED: ' + V2_ABSENT)
     extra = list(getattr(c, 'seed_ctxs', None) or [])
     rows = evaluate_rows(c)
     seed_scores = None
@@ -3172,11 +3795,16 @@ def evaluate(c: Ctx) -> Dict:
     result.update({'kit_lock_sha256': kit.get('lock_sha256') or (c.obs.get('kit') or {}).get('lockSha256'),
                    'wrapper_sha256': kit.get('wrapper_sha256') or (c.obs.get('kit') or {}).get('wrapperSha256'),
                    'scorer_seconds': getattr(c, 'scorer_seconds', None), 'shots': list(c.obs.get('shots') or []),
-                   'scorer_files_sha256': {n: hashlib.sha256((HERE / n).read_bytes()).hexdigest()
-                                           for n in ('score_forge.py', 'forge_oracle.py', 'forge_probe.mjs',
-                                                     THRESHOLDS_FILE.name)},
+                   'scorer_files_sha256': scorer_files_sha256(),
                    'spec_sha256': hashlib.sha256((ROOT / SPEC).read_bytes()).hexdigest()})
     return result
+
+
+def scorer_files_sha256() -> Dict[str, str]:
+    """The files that produced a verdict (calibrate() refuses golden verdicts scored by different ones)."""
+    return {n: hashlib.sha256(p.read_bytes()).hexdigest() for n, p in (
+        ('score_forge2.py', HERE / 'score_forge2.py'), ('forge2_checks.py', Path(V2.__file__)),
+        ('forge2_oracle.py', Path(fo.__file__)), ('forge2_probe.mjs', PROBE_SCRIPT), (THRESHOLDS_FILE.name, THRESHOLDS_FILE))}
 
 
 def media_block(c: Ctx) -> Dict:
@@ -3201,35 +3829,84 @@ def recall_trace(root) -> Dict:
             'reason': 'the isolated goose session database is not captured beside the tree (DESIGN §8.8)'}
 
 
-# ── severity: transforms, multiplier + dedup, excellence, admission ──────────────────────────
+# ── severity: criticals by class, excellence, admission ──────────────────────────────────────
 
 def passed(row: Optional[Dict]) -> bool:
     return bool(row and isinstance(row.get('score'), (int, float)) and abs(row['score'] - 1.0) < 1e-12
                 and not row.get('unavailable') and not (row.get('parts') or {}).get('vacuous_root'))
 
 
-def critical_severity_input(r: Dict) -> float:
-    s = max(0.0, min(1.0, r['score']))
-    if (r.get('parts') or {}).get('absent_surface'):
-        return 0.0
-    if s >= 1.0 - 1e-9:
-        return 1.0
-    name = r['check']
-    if name == 'l_deployable':
-        return 0.0
-    if name == 'l_bundles_load':
-        return 0.0 if s < 0.4 else 1.0
-    if name == 'r_backfill_complete':
-        return min(s, 0.5)
-    if name == 'u_widget_loads':
-        return 0.0 if s == 0.0 else 1.0
-    return 0.0   # t_no_double_count, b_no_permission_leak, b_comment_exactly_once: cliffs
+def observed_defect(r: Dict) -> bool:
+    """SPEC §4: a critical fires ONLY on an observed defect — a row that ran (not unavailable), was exercised (not
+    vacuous, which covers the manifest-fault rows, §17.8 G), whose surface exists (not absent) and scored below 1."""
+    parts = r.get('parts') or {}
+    return (isinstance(r.get('score'), (int, float)) and r['score'] < 1.0 - 1e-9 and not r.get('unavailable')
+            and not parts.get('vacuous_root') and not parts.get('absent_surface'))
+
+
+def criticals(rows: List[Dict]) -> Tuple[float, List[Dict]]:
+    """(multiplier, the critical rows that observed a defect). Each SPEC class multiplies by the floor at most once
+    (one root, priced once); a row whose ROOT_BLOCKS root is itself an observed critical defect is that root's shadow."""
+    floor = float(TH['critical_multiplier_floor'])
+    failed = {r['check']: r for r in rows if r.get('critical') in CRITICAL_CLASSES and observed_defect(r)}
+    mult, out, priced = 1.0, [], {}
+    for name, r in failed.items():
+        cls = r['critical']
+        entry = {'check': name, 'class': cls, 'score': r['score'], 'why': CRITICAL_CLASSES[cls]}
+        root = next((root for root, deps in ROOT_BLOCKS.items() if root != name and name in deps and root in failed), None)
+        if root:
+            out.append({**entry, 'factor': 1.0, 'suppressed': f'root:{root}'})
+        elif cls in priced:
+            out.append({**entry, 'factor': 1.0, 'suppressed': f'class:{cls} priced by {priced[cls]}'})
+        else:
+            priced[cls] = name
+            mult *= floor
+            out.append({**entry, 'factor': floor})
+    return mult, out
+
+
+def carries_weight(r: Dict) -> bool:
+    """The earned score weighs the row: the v1 diagnostics and a weight-0 v2 row weigh nothing (a row with no stamped
+    weight, a synthetic scenario row, weighs 1)."""
+    return r['check'] not in DIAGNOSTIC and r.get('weight', 1.0) > 0
+
+
+def reliability(rows: List[Dict]) -> Tuple[float, Dict]:
+    """SPEC §4: final = earned × critical multiplier × RELIABILITY, RELIABILITY = max(floor, Π over the groups g of
+    (1 − K × (1 − worst_g))). A group is a tier other than E (RELIABILITY_GROUPS); worst_g is the lowest score among
+    its ELIGIBLE rows, and a group with none, or whose worst is 1, multiplies by 1. Eligible: a row that was scored (an
+    unavailable row is the harness's failure), that the earned score weighs (carries_weight) and whose critical did not
+    fire (criticals() lists it: priced, or already paid by its class or its root — the multiplier prices that defect,
+    once per item of the list). Every other row counts with the score it has: a vacuous row (no surface exercised it)
+    and an absent surface's row count their 0.
+    Per GROUP: the worst row pays for its group, the group's other failed rows are folded under it, and one cause that
+    fails rows in two groups pays in both. Raising one row's score therefore never lowers the final — the per-row rule
+    with its count-once exemptions let doing less beat doing more (SPEC §4's three receipts)."""
+    k, floor = float(TH['reliability_k']), float(TH['reliability_floor'])
+    priced = {x['check'] for x in criticals(rows)[1]}
+    scored = [r for r in rows if r['tier'] in RELIABILITY_GROUPS and not r.get('unavailable') and carries_weight(r)]
+    as_critical = sorted((r['check'] for r in scored if r['check'] in priced), key=REGISTRY_ORDER.__getitem__)
+    product, defects, folded = 1.0, [], {}
+    for tier in RELIABILITY_GROUPS:
+        below = sorted((r for r in scored if r['tier'] == tier and r['check'] not in priced and r['score'] < 1.0 - 1e-9),
+                       key=lambda r: (r['score'], REGISTRY_ORDER[r['check']]))
+        if not below:
+            continue
+        worst = below[0]
+        factor = 1.0 - k * (1.0 - worst['score'])
+        product *= factor
+        defects.append({'tier': tier, 'check': worst['check'], 'score': worst['score'], 'factor': round(factor, 4)})
+        if below[1:]:
+            folded[tier] = sorted((r['check'] for r in below[1:]), key=REGISTRY_ORDER.__getitem__)
+    multiplier = max(floor, product)
+    return multiplier, {'multiplier': round(multiplier, 4), 'k': k, 'floor': floor, 'floored': product < floor,
+                        'defects': defects, 'folded': folded, 'priced_as_critical': as_critical}
 
 
 def excellence(rows: List[Dict]) -> Tuple[float, float, List[Dict]]:
     by = {r['check']: r for r in rows}
     conds = []
-    for n in EXCELLENCE_VALUED + tuple(sorted(n for n, t in TIER_OF.items() if t == 'K')):
+    for n in EXCELLENCE_VALUED + tuple(sorted(n for n, t in TIER_OF.items() if t == 'K' and n not in DIAGNOSTIC)):
         r = by.get(n) or {}
         v = 0.0 if (r.get('parts') or {}).get('vacuous_root') or r.get('unavailable') else float(r.get('score') or 0)
         conds.append({'name': n, 'ok': passed(r), 'share': max(0.0, min(1.0, v))})
@@ -3241,34 +3918,22 @@ def excellence(rows: List[Dict]) -> Tuple[float, float, List[Dict]]:
     return fraction, e_mean, conds
 
 
-def band_defects(label: str, failed: List[str]) -> List[str]:
-    """The graded band counts DEFECTS ("minus 0.03 for each further such defect"), not rows: a failed row that
-    ROOT_BLOCKS attributes to another failed row of the same band is that row's shadow (asApp in the UI leaks AND
-    miscounts the hidden changes AND lists them in the action — one defect), priced once. Only a root inside the
-    band absorbs a row, so a defect is never dropped from the band by a root the band does not charge."""
-    if label != GRADED_BAND[0]:
-        return failed
-    defects = [n for n in failed if not any(n in ROOT_BLOCKS.get(root, ()) for root in failed if root != n)]
-    return defects or failed[:1]
-
-
 def admit(rows: List[Dict]) -> Dict:
     by = {r['check']: r for r in rows}
     ceiling, reasons, failed_by_band = 1.0, [], []
     for limit, label, names in ADMISSION_BANDS:
         failed = [n for n in names if not passed(by.get(n))]
         if failed:
-            defects = band_defects(label, failed)
-            cap = band_ceiling(limit, label, len(defects))
-            ceiling = min(ceiling, cap)
-            entry = {'ceiling': cap, 'band': label, 'checks': failed}
-            shadows = [n for n in failed if n not in defects]
-            if shadows:
-                entry['priced_once'] = shadows
-            failed_by_band.append(entry)
-            reasons.append(f'{label}: {", ".join(failed)} (maximum {cap:.3f}'
-                           + (f'; {", ".join(shadows)} priced with their root' if shadows else '') + ')')
+            ceiling = min(ceiling, limit)
+            failed_by_band.append({'ceiling': limit, 'band': label, 'checks': failed})
+            reasons.append(f'{label}: {", ".join(failed)} (maximum {limit:.3f})')
     return {'ceiling': ceiling, 'reasons': reasons, 'failedChecksByBand': failed_by_band}
+
+
+def _mean(rows: List[Dict], weight=lambda r: 1.0) -> Tuple[float, int]:
+    avail = [r for r in rows if not r.get('unavailable')]
+    den = sum(weight(r) for r in avail)
+    return (sum(weight(r) * max(0.0, min(1.0, r['score'])) for r in avail) / den if den else 0.0), len(avail)
 
 
 def compose_from_rows(rows: List[Dict], c: Optional[Ctx] = None) -> Dict:
@@ -3276,49 +3941,34 @@ def compose_from_rows(rows: List[Dict], c: Optional[Ctx] = None) -> Dict:
     vacuous_rows = {r['check']: (r.get('parts') or {}).get('vacuous_root') for r in rows
                     if (r.get('parts') or {}).get('vacuous_root')}
     tiers: Dict[str, Dict] = {}
-    inner = 0.0
+    inner_v1 = 0.0
     for tier, w in TIER_WEIGHT.items():
-        sub = [r for r in rows if r['tier'] == tier and r['check'] not in DIAGNOSTIC]
-        avail = [r for r in sub if not r.get('unavailable')]
-        mean = sum(max(0.0, min(1.0, r['score'])) for r in avail) / len(avail) if avail else 0.0
-        tiers[tier] = {'mean': round(mean, 4), 'checks': len(avail), 'weight': w}
-        if len(avail) != len(sub):
+        sub = [r for r in rows if r['tier'] == tier and carries_weight(r)]
+        mean, n = _mean(sub)
+        tiers[tier] = {'mean': round(mean, 4), 'checks': n, 'weight': round(w * V1_WEIGHT * INNER_WEIGHT, 4)}
+        if n != len(sub):
             tiers[tier]['unavailable'] = [r['check'] for r in sub if r.get('unavailable')]
-        inner += mean * w
+        inner_v1 += mean * w
     fraction, e_mean, conds = excellence(rows)
-    pre_severity = INNER_WEIGHT * inner + E_WEIGHT * fraction * e_mean
-
+    v1 = INNER_WEIGHT * inner_v1 + E_WEIGHT * fraction * e_mean
+    tiers['E'] = {'mean': round(fraction * e_mean, 4), 'gate': fraction >= 1.0, 'gate_fraction': round(fraction, 4),
+                  'weight': round(V1_WEIGHT * E_WEIGHT, 4)}
+    v2 = 0.0
+    for fam, w in FAMILY_WEIGHT.items():
+        sub = [r for r in rows if r['tier'] == fam and carries_weight(r)]
+        mean, n = _mean(sub, lambda r: float(r.get('weight', 1.0)))
+        tiers[fam] = {'mean': round(mean, 4), 'checks': n, 'weight': w}
+        if n != len(sub):
+            tiers[fam]['unavailable'] = [r['check'] for r in sub if r.get('unavailable')]
+        v2 += mean * w
+    pre_severity = V1_WEIGHT * v1 + v2
     floor = float(TH['critical_multiplier_floor'])
-    sev = {r['check']: critical_severity_input(r) for r in rows
-           if r['check'] in CRITICAL_CHECKS and not r.get('unavailable')}
-    suppressed: Dict[str, str] = {}
-    for name in sev:
-        if name in vacuous_rows:
-            suppressed[name] = f'vacuous:{vacuous_rows[name]}'
-            continue
-        for root, deps in ROOT_BLOCKS.items():
-            if (root != name and name in deps and root in sev and sev[root] < 1.0 - 1e-9
-                    and root not in vacuous_rows):
-                suppressed[name] = f'root:{root}'
-                break
-    mult, crit_rows = 1.0, []
-    for r in rows:
-        name = r['check']
-        if name not in sev or sev[name] >= 1.0 - 1e-9:
-            continue
-        entry = {'check': name, 'score': r['score'], 'severity_input': round(sev[name], 4), 'why': CRITICAL_CHECKS[name]}
-        if name in suppressed:
-            crit_rows.append({**entry, 'factor': 1.0, 'suppressed': suppressed[name]})
-            continue
-        factor = floor + (1.0 - floor) * sev[name]
-        mult *= factor
-        crit_rows.append({**entry, 'factor': round(factor, 4)})
-    earned = pre_severity * mult
+    mult, crit_rows = criticals(rows)
+    reliable, reliability_block = reliability(rows)
+    earned = pre_severity * mult * reliable
     admission = admit(rows)
     admission['final_rule'] = f'final = min(earned, ceiling - {BAND_PULL:g} * (1 - earned))'
     final = capped_final(earned, admission['ceiling'])
-    tiers['E'] = {'mean': round(fraction * e_mean, 4), 'gate': fraction >= 1.0, 'gate_fraction': round(fraction, 4),
-                  'weight': E_WEIGHT}
     harness_missing = list(c.harness_missing) if c is not None else []
     runtime = c.runtime if c is not None else 'wrapper'
     unpublishable = []
@@ -3329,12 +3979,16 @@ def compose_from_rows(rows: List[Dict], c: Optional[Ctx] = None) -> Dict:
     status = 'held' if harness_missing else 'scored'
     return {
         'status': status, 'score': published_score(final, admission['ceiling']), 'rawScore': round(earned, 4),
-        'inner': round(inner, 4),
+        'inner': round(pre_severity, 4),
+        'v1': {'weight': V1_WEIGHT, 'score': round(v1, 4), 'inner': round(inner_v1, 4)},
+        'v2': {'weight': round(sum(FAMILY_WEIGHT.values()), 4), 'score': round(v2, 4)},
         'scorerVersion': VERSION, 'scorer_version': VERSION, 'family': 'forge',
         'fixture_seed': c.fixture_seed if c is not None else None, 'dev_seed': c.dev_seed if c is not None else None,
         'critical': {'floor': floor, 'multiplier': round(mult, 4), 'pre_severity_score': round(pre_severity, 4),
                      'rows': crit_rows,
-                     'unsuppressed': [x['check'] for x in crit_rows if not x.get('suppressed')]},
+                     'unsuppressed': [x['check'] for x in crit_rows if not x.get('suppressed')],
+                     'classes': sorted({x['class'] for x in crit_rows if not x.get('suppressed')})},
+        'reliability': reliability_block,
         'admission': admission,
         'excellence': {'fraction': round(fraction, 4), 'e_mean': round(e_mean, 4), 'gate': fraction >= 1.0,
                        'conditions': conds},
@@ -3353,10 +4007,32 @@ def compose_from_rows(rows: List[Dict], c: Optional[Ctx] = None) -> Dict:
     }
 
 
-# ── severity selftest (DESIGN §8.6) ──────────────────────────────────────────────────────────
+def recompose(kept: Dict, source: str = '') -> Dict:
+    """A kept verdict's stored rows through today's composition. NOT a rescore: every row is the one its own scorer
+    graded (`recomposed_from` names that scorer's files), only weights, criticals, reliability and bands are applied
+    again. The per-seed scores are not carried: a verdict keeps the merged rows, not each scoring site's. Refuses
+    (ValueError) a verdict of another scorer family or one whose rows are not this registry's: weights over other rows
+    would be a number nobody graded."""
+    version, names = str(kept.get('scorerVersion')), [r.get('check') for r in kept.get('checks') or []]
+    if version.removesuffix('-rc') != VERSION.removesuffix('-rc'):
+        raise ValueError(f'the verdict was scored by {version}, not {VERSION.removesuffix("-rc")}')
+    if set(names) != REGISTERED or len(names) != len(REGISTERED):
+        raise ValueError(f'the verdict holds {len(names)} rows, the registry {len(REGISTERED)}; missing '
+                         f'{sorted(REGISTERED - set(names))[:6]}, unknown {sorted(set(names) - REGISTERED)[:6]}')
+    ctx = argparse.Namespace(fixture_seed=kept.get('fixture_seed'), dev_seed=kept.get('dev_seed'),
+                             runtime=kept.get('runtime', 'wrapper'), harness_missing=list(kept.get('harness_missing') or []))
+    result = compose_from_rows(kept['checks'], ctx)
+    result['fixture_seeds'] = kept.get('fixture_seeds')
+    result['recomposed_from'] = {'verdict': source, 'score': kept.get('score'), 'rawScore': kept.get('rawScore'),
+                                 'scorer_files_sha256': kept.get('scorer_files_sha256'),
+                                 'spec_sha256': kept.get('spec_sha256'), 'composed_by': scorer_files_sha256()}
+    return result
+
+
+# ── severity selftest (DESIGN §8.6, SPEC §4) ─────────────────────────────────────────────────
 
 def _perfect_rows() -> List[Dict]:
-    return [{'check': n, 'tier': t, 'score': 1.0, 'detail': 'synthetic'} for n, t, *_ in CHECKS]
+    return [_stamp(n, t, {'score': 1.0, 'detail': 'synthetic'}) for n, t, *_ in CHECKS]
 
 
 def _scenario(overrides: Dict[str, float], parts: Optional[Dict[str, Dict]] = None) -> List[Dict]:
@@ -3370,8 +4046,8 @@ def _scenario(overrides: Dict[str, float], parts: Optional[Dict[str, Dict]] = No
 
 
 def selftest_empty_observations(pack: Dict, one_function: bool = False) -> Dict:
-    """The observations an empty starter (manifest with no modules) or a one-function app (a trigger that
-    does nothing) produces: lint clean, nothing else exercised. Run through the REAL checks by the selftest."""
+    """The observations an empty app (manifest with no modules) or a one-function app (a trigger that does nothing)
+    produces: lint clean, nothing else exercised. Run through the REAL checks by the selftest."""
     if one_function:
         manifest = {'app': {'id': 'ari:cloud:ecosystem::app/00000000-0000-0000-0000-000000000000',
                             'runtime': {'name': 'nodejs22.x'}},
@@ -3389,12 +4065,22 @@ def selftest_empty_observations(pack: Dict, one_function: bool = False) -> Dict:
         build, live_events, invs = {'functions': []}, [], []
     lint_run = {'counts': {'errors': 0, 'warnings': 0}, 'problems': [], 'stageReached': 3, 'stagesTotal': 3}
     empty_phase = {'calls': [], 'invocations': [], 'deliveries': [], 'kvsAfter': {'entities': {}, 'keys': []}}
+    # 2.0's added keys as the probe writes them for an app that did nothing (the P8/P9 observations contract): present
+    # and empty, so a v2 row reads "nothing happened" — never "the probe did not run". P8 states that shape for its own
+    # rows (idle_observations on a 2.0 pack); its keys win when it does.
+    idle_v2 = {'rate': {'requests': [], 'hours': []}, 'invocations': [],
+               'migration': {'v1_rows': [], 'v2_by_checkpoint': {}}, 'world': [], 'webtrigger': [],
+               'admin': {'actions': [], 'tree_text': '', 'secret_leaks': []},
+               'field': {'writes': [], 'values_by_checkpoint': {}}, 'llm_v2': [], 'boot': {}}
+    if callable(getattr(V2, 'idle_observations', None)):
+        idle = V2.idle_observations(fo.Oracle(pack))
+        idle_v2.update({k: idle[k] for k in idle_v2 if k in idle})
     return {'manifest': manifest, 'kit': {'pins': {'@forge/api': '8.2.0'}},
             'lint': {'runs': [lint_run, copy.deepcopy(lint_run)]}, 'build': build,
             'phases': {'backfill': dict(empty_phase), 'live': {**empty_phase, 'events': live_events, 'invocations': invs},
                        'heal': dict(empty_phase), 'rerun': dict(empty_phase)},
             'rovo': {'calls': []}, 'comments': [], 'ui': {'surfaces': [], 'sprintAction': []},
-            'harnessMissing': [], 'sectionErrors': {}}
+            'harnessMissing': [], 'sectionErrors': {}, **idle_v2}
 
 
 def single_defect_costs() -> Dict[str, float]:
@@ -3412,13 +4098,20 @@ def severity_selftest() -> List[str]:
     def score(rows):
         return compose_from_rows(rows)
 
+    floor = float(TH['critical_multiplier_floor'])
     base = score(_perfect_rows())
     expect(abs(base['score'] - 1.0) < 1e-9, f"all-perfect must compose to 1.0 (got {base['score']})")
     # (1) every weighted row earns
     for n, t, *_ in CHECKS:
-        if n in DIAGNOSTIC:
+        if n in DIAGNOSTIC or ROW_WEIGHT.get(n, 1.0) == 0:
             continue
         expect(score(_scenario({n: 0.0}))['rawScore'] < 1.0, f'(1) row {n} earns no weight')
+    # (1b) the SPEC §4 shares: v1 at 0 keeps exactly the v2 0.75; one family at 0 loses exactly its weight
+    v1_zero = score(_scenario({n: 0.0 for n, t, *_ in CHECKS if t in TIER_WEIGHT or t == 'E'}))
+    expect(abs(v1_zero['inner'] - (1 - V1_WEIGHT)) < 1e-4, f"(1b) v1 at 0 must keep the v2 share 0.75 (got {v1_zero['inner']})")
+    for fam, w in FAMILY_WEIGHT.items():
+        fam_zero = score(_scenario({n: 0.0 for n, t, *_ in CHECKS if t == fam}))
+        expect(abs(fam_zero['inner'] - (1 - w)) < 1e-4, f"(1b) {fam} at 0 must lose exactly {w} (got {fam_zero['inner']})")
     # (2) one lint warning costs points and never caps
     warn = score(_scenario({'l_lint_warnings': 0.8}))
     expect(warn['score'] < 1.0 and warn['admission']['ceiling'] == 1.0, '(2) a lint warning must cost and never cap')
@@ -3426,52 +4119,644 @@ def severity_selftest() -> List[str]:
     leak = score(_scenario({'b_no_permission_leak': 0.0}))['score']
     chart = score(_scenario({'u_widget_chart': 0.0}))['score']
     expect(leak < chart, f'(3) leak ({leak}) must score below a missing chart ({chart})')
-    # (4) a duplicate comment scores below a missing comment
-    dup = score(_scenario({'b_comment_exactly_once': 0.0}))['score']
-    vac = {'vacuous_root': 'precondition: >= 1 comment POST'}
-    missing = score(_scenario({'b_comment_exactly_once': 0.0, 'b_comment_adf_as_user': 0.0, 'u_comment_flow': 0.0},
-                              parts={'b_comment_exactly_once': vac, 'b_comment_adf_as_user': vac}))['score']
-    expect(dup < missing, f'(4) duplicate comment ({dup}) must score below a missing comment ({missing})')
-    # (5) gadget instead of widget is held at 0.799
-    gadget = score(_scenario({'k_dashboard_widget': 0.0}))
-    expect(gadget['score'] <= 0.799, f"(5) a gadget app must be held at 0.799 (got {gadget['score']})")
-    # (6) empty starter and one-function app: scored through the REAL checks, final <= 0.05
-    pack = fo.synthetic_pack()
-    for label, one in (('empty starter', False), ('one-function app', True)):
-        ctx = Ctx(None, selftest_empty_observations(pack, one), pack, fixture_seed=pack['seed'])
-        v = compose_from_rows(evaluate_rows(ctx), ctx)
+    # (4) §17.8 B: a duplicate comment scores below a MEASURED zero comment, and the zero fires no critical
+    dup = score(_scenario({'b_comment_exactly_once': 0.0}))
+    zero = score(_scenario({'u_comment_flow': 0.6}))   # post + double click posted nothing: 2 of 5 steps
+    expect(dup['score'] < zero['score'], f"(4) duplicate ({dup['score']}) must score below a measured zero comment "
+           f"({zero['score']})")
+    expect(not zero['critical']['unsuppressed'], f"(4) a zero-comment post fired {zero['critical']['unsuppressed']}")
+    # (5) each class prices once: two rows of one class at 0 multiply by the floor once
+    for cls in CRITICAL_CLASSES:
+        members = [n for n, c in CRITICAL_OF.items() if c == cls]
+        v = score(_scenario({n: 0.0 for n in members}))
+        expect(abs(v['critical']['multiplier'] - floor) < 1e-9,
+               f"(5) class {cls} ({members}) must multiply once by {floor} (got {v['critical']['multiplier']})")
+    every = score(_scenario({n: 0.0 for n in CRITICAL_OF}))
+    expect(abs(every['critical']['multiplier'] - round(floor ** len(CRITICAL_CLASSES), 4)) < 1e-9,
+           f"(5) the five classes compound to {floor ** len(CRITICAL_CLASSES):.4f} (got {every['critical']['multiplier']})")
+    # (6) empty app and one-function app: scored through the REAL checks (v1 rows and P8's), final <= 0.05 — on the
+    # oracle's 2.0 synthetic pack when it has one (P8's rows need a 2.0 pack; a 1.0 pack leaves them unavailable)
+    pack = (getattr(fo, 'synthetic_pack_v2', None) or fo.synthetic_pack)()
+    for label, one in (('empty app', False), ('one-function app', True)):
+        try:
+            ctx = Ctx(None, selftest_empty_observations(pack, one), pack, fixture_seed=pack['seed'])
+            v = compose_from_rows(evaluate_rows(ctx), ctx)
+        except Exception as error:   # the oracle or P8's idle shape broke: a failed selftest, named, never a crash
+            expect(False, f'(6) {label}: could not be scored: {type(error).__name__}: {error}')
+            continue
         expect(v['status'] == 'scored' and v['score'] <= 0.05, f"(6) {label} must be scored at <= 0.05 (got {v['score']})")
         expect(not v['probe_unavailable'], f"(6) {label}: rows unavailable {v['probe_unavailable']}")
-    # (7) a dead bundle multiplies once and lands <= 0.30
+        expect(not v['critical']['unsuppressed'], f"(6) {label}: an idle app fired {v['critical']['unsuppressed']}")
+    # (7) a dead bundle fires no critical (it observed nothing) and lands <= 0.30
     deps = ROOT_BLOCKS['l_bundles_load']
     over = {n: 0.0 for n in deps}
     over.update({'l_bundles_load': 0.0, 'l_lint_warnings': 0.0, 'l_scopes': 0.0, 'k_widget_edit_bridge': 0.0,
                  'k_current_apis': 0.0})
-    parts = {n: {'vacuous_root': 'l_bundles_load'} for n in deps if n in CRITICAL_CHECKS}
+    parts = {n: {'vacuous_root': 'precondition: >= 1 function loads'} for n in deps if n in CRITICAL_OF}
     dead = score(_scenario(over, parts))
-    fired = [r for r in dead['critical']['rows'] if not r.get('suppressed')]
-    expect(len(fired) == 1, f'(7) a dead bundle must multiply once (fired {len(fired)})')
+    expect(not dead['critical']['unsuppressed'], f"(7) a dead bundle fired {dead['critical']['unsuppressed']}")
     expect(dead['score'] <= 0.30, f"(7) a dead bundle must land <= 0.30 (got {dead['score']})")
-    # (8) a 0.9 backfill multiplies by exactly 0.8
-    b9 = score(_scenario({'r_backfill_complete': 0.9}))
-    expect(abs(b9['critical']['multiplier'] - 0.8) < 1e-9, f"(8) 0.9 backfill must multiply by 0.8 ({b9['critical']['multiplier']})")
+    # (8) §17.8 G: a vacuous, absent or manifest-fault critical row never fires
+    for label, p in (('vacuous', {'vacuous_root': 'precondition: >= 1 comment POST'}),
+                     ('manifest fault', {'vacuous_root': "manifest: resource 'widget' is not declared"}),
+                     ('absent', {'absent_surface': 'webtrigger'})):
+        v = score(_scenario({n: 0.0 for n in CRITICAL_OF}, {n: p for n in CRITICAL_OF}))
+        expect(abs(v['critical']['multiplier'] - 1.0) < 1e-9, f"(8) {label} critical rows fired {v['critical']['unsuppressed']}")
     # (9) dominance: every band failure lands at or below its ceiling
     for limit, label, names in ADMISSION_BANDS:
         for n in names:
             v = score(_scenario({n: 0.0}))
             expect(v['score'] <= limit + 1e-9, f'(9) {n} failing must hold {label} at {limit} (got {v["score"]})')
-    # (11) band 4's graded ceiling at n = 1, 2, 3, 4, 5 and every failed row (DESIGN §8.5)
-    # Rows no other band row is the root of, so k failed rows are k defects (band_defects prices a shadow once).
-    band4 = [n for n in ADMISSION_BANDS[-1][2] if not any(n in ROOT_BLOCKS.get(r, ()) for r in ADMISSION_BANDS[-1][2])]
-    for k, want in ((1, 0.899), (2, 0.869), (3, 0.839), (4, 0.809), (5, 0.799), (len(band4), 0.799)):
-        got = admit(_scenario({n: 0.0 for n in band4[:k]}))['ceiling']
-        expect(abs(got - want) < 1e-9, f'(11) band 4 with {k} failed row(s) must cap at {want} (got {got})')
-    # severity ordering: every critical costs more than any single non-critical defect
+    # (10) reliability (SPEC §4): each group (a tier other than E) x (1 - K x the shortfall of its worst eligible row)
+    k, rel_floor = float(TH['reliability_k']), float(TH['reliability_floor'])
+    banded = {x for _l, _b, names in ADMISSION_BANDS for x in names}
+    plain: Dict[str, List[str]] = {}   # per group, in registry order: weighted, not critical, not banded
+    for n, t, *_ in CHECKS:
+        if t != 'E' and n not in DIAGNOSTIC and n not in CRITICAL_OF and n not in banded and ROW_WEIGHT.get(n, 1.0) > 0:
+            plain.setdefault(t, []).append(n)
+    pair_tier = next(t for t in RELIABILITY_GROUPS if len(plain.get(t, ())) >= 2)
+    first, second = plain[pair_tier][:2]
+    other = next(names[0] for t, names in plain.items() if t != pair_tier)
+    crit = next(n for n in CRITICAL_OF if plain.get(TIER_OF[n]))
+    beside = plain[TIER_OF[crit]][0]
+    v2_row = next(names[0] for t, names in plain.items() if t in FAMILY_WEIGHT)
+    spare = next(n for names in plain.values() for n in names if n not in (first, second, other, beside, v2_row))
+    vac, gone = {'vacuous_root': 'precondition: synthetic'}, {'absent_surface': 'webtrigger (SPEC R6)'}
+
+    def rel(overrides, parts=None, unavailable=(), weightless=(), reverse=False):
+        rows = _scenario(overrides, parts)
+        for r in rows:
+            if r['check'] in unavailable:
+                r.update(unavail('synthetic harness failure'))
+            if r['check'] in weightless:
+                r['weight'] = 0.0
+        return score(rows[::-1] if reverse else rows)
+
+    def expect_rel(label, v, want, defects=None, folded=None, as_critical=()):
+        got = v['reliability']
+        expect(abs(got['multiplier'] - round(want, 4)) < 1e-9, f"(10) {label}: reliability {got['multiplier']} "
+               f"(want {round(want, 4)}); defects {got['defects']}; folded {got['folded']}")
+        # `inner` is itself printed to four decimals, so the product is compared to two units of the last one
+        expect(abs(v['rawScore'] - v['inner'] * v['critical']['multiplier'] * want) < 2e-4,
+               f"(10) {label}: earned {v['rawScore']} is not tests {v['inner']} x criticals x reliability {want}")
+        if defects is not None:
+            expect([(d['tier'], d['check'], d['score'], d['factor']) for d in got['defects']] == defects,
+                   f"(10) {label}: defects {got['defects']} (want {defects})")
+        if folded is not None:
+            expect(got['folded'] == folded, f"(10) {label}: folded {got['folded']} (want {folded})")
+        expect(got['priced_as_critical'] == list(as_critical),
+               f"(10) {label}: priced_as_critical {got['priced_as_critical']} (want {list(as_critical)})")
+
+    expect_rel('all perfect', base, 1.0, defects=[], folded={})
+    expect_rel('one test failed completely', rel({first: 0.0}), 1 - k, defects=[(pair_tier, first, 0.0, round(1 - k, 4))])
+    expect_rel('one test half failed', rel({first: 0.5}), 1 - k / 2)
+    expect_rel('two groups failed', rel({first: 0.0, other: 0.0}), (1 - k) ** 2)
+    pair = rel({first: 0.5, second: 0.0})
+    expect_rel('two failed tests of one group: the worst pays', pair, 1 - k,
+               defects=[(pair_tier, second, 0.0, round(1 - k, 4))], folded={pair_tier: [first]})
+    # ties: the first in registry order, whatever order the verdict lists its rows in (deferred rows come last)
+    expect_rel('a tie in one group', rel({first: 0.5, second: 0.5}, reverse=True), 1 - k / 2,
+               defects=[(pair_tier, first, 0.5, round(1 - k / 2, 4))], folded={pair_tier: [second]})
+    expect_rel('(i) harness-unavailable rows', rel({}, unavailable=(first, other)), 1.0, defects=[])
+    expect_rel('(ii) the weight-0 diagnostics', rel({n: 0.0 for n in DIAGNOSTIC}), 1.0, defects=[])
+    expect_rel('(ii) a weight-0 v2 row', rel({v2_row: 0.0}, weightless=(v2_row,)), 1.0, defects=[])
+    fired = rel({crit: 0.0})
+    expect_rel('(iii) a critical that fired is priced by the multiplier alone', fired, 1.0, defects=[],
+               as_critical=(crit,))
+    expect(abs(fired['critical']['multiplier'] - floor) < 1e-9, f"(10) (iii) {crit} must fire: {fired['critical']}")
+    expect_rel('(iii) its group still pays for its other tests', rel({crit: 0.0, beside: 0.5}), 1 - k / 2,
+               defects=[(TIER_OF[crit], beside, 0.5, round(1 - k / 2, 4))], as_critical=(crit,))
+    members = sorted((n for n, c in CRITICAL_OF.items() if c == CRITICAL_OF[crit]), key=REGISTRY_ORDER.__getitem__)
+    expect_rel('(iii) a class priced once leaves every row it observed out', rel({n: 0.0 for n in members}), 1.0,
+               defects=[], as_critical=members)
+    expect_rel('a vacuous test counts its 0', rel({first: 0.0}, {first: vac}), 1 - k)
+    expect_rel("an absent surface's test counts its 0", rel({first: 0.0}, {first: gone}), 1 - k)
+    expect_rel('a vacuous critical row fires nothing and counts its 0', rel({crit: 0.0}, {crit: vac}), 1 - k,
+               defects=[(TIER_OF[crit], crit, 0.0, round(1 - k, 4))])
+    expect_rel('an E-tier shortfall', rel({n: 0.0 for n, t, *_ in CHECKS if t == 'E'}), 1.0, defects=[])
+    everything = rel({n: 0.0 for n, t, *_ in CHECKS if t != 'E'})
+    expect_rel('the floor', everything, rel_floor, as_critical=sorted(CRITICAL_OF, key=REGISTRY_ORDER.__getitem__))
+    expect(everything['reliability']['floored'] and len(everything['reliability']['defects']) == len(RELIABILITY_GROUPS),
+           f"(10) the floor must be recorded as reached, one defect per group: {everything['reliability']}")
+    again = compose_from_rows(pair['checks'])
+    expect((again['score'], again['reliability']) == (pair['score'], pair['reliability']),
+           '(10) a verdict recomposed from its own stored rows must not move')
+    # The property per-group buys: with the critical state held (parts as graded), raising any one row never lowers
+    # the final and lowering one never raises it — swept over every non-E row of a set that fails in several ways,
+    # among them a partly failed ROOT_BLOCKS root beside a dependent that failed worse (Sonnet 5.5's u_widget_numbers
+    # 0.875 and u_widget_live 0: the per-row fold paid more once the root was fixed).
+    unpriced = {n for names in plain.values() for n in names}
+    root, dep = next((x, d) for x, deps in ROOT_BLOCKS.items() if x in unpriced for d in deps if d in unpriced)
+    graded = _scenario({first: 0.5, second: 0.75, other: 0.0, beside: 0.9, crit: 0.5, 'u_widget_loads': 0.0,
+                        v2_row: 0.0, root: 0.875, dep: 0.0}, {other: vac, v2_row: gone})
+    for r in graded:
+        if r['check'] == spare:
+            r.update(unavail('synthetic harness failure'))
+    for r in graded:
+        if r['tier'] == 'E':
+            continue
+        points = []
+        for value in sorted({r['score'], 0.0, 0.25, 0.5, 0.75, 0.9, 1.0}):
+            moved = [{**x, 'score': value} if x is r else x for x in graded]
+            v = compose_from_rows(moved)
+            points.append((value, reliability(moved)[0] * criticals(moved)[0], v['rawScore'], v['score']))
+        for (lo, *at_lo), (hi, *at_hi) in zip(points, points[1:]):
+            expect(all(b >= a - 1e-12 for a, b in zip(at_lo, at_hi)),
+                   f"(10) monotonicity: {r['check']} {lo} -> {hi} moved (reliability x criticals, earned, final) "
+                   f"{at_lo} -> {at_hi}")
+    # severity ordering: every critical costs more than any single unbanded defect
     costs = single_defect_costs()
-    worst_plain = min(v for n, v in costs.items() if n not in CRITICAL_CHECKS and n not in DIAGNOSTIC
-                      and n not in {x for _l, _b, names in ADMISSION_BANDS for x in names})
-    for n in CRITICAL_CHECKS:
+    worst_plain = min(v for n, v in costs.items() if n not in CRITICAL_OF and n not in DIAGNOSTIC and n not in banded)
+    for n in CRITICAL_OF:
         expect(costs[n] < worst_plain, f'a critical ({n} {costs[n]}) must cost more than any unbanded defect ({worst_plain})')
+    return fails
+
+
+def defect_selftest() -> List[str]:
+    """The §17.8 B, F and H fixes through the REAL rows on synthetic evidence (no tree, no probe)."""
+    fails: List[str] = []
+
+    def expect(cond, msg):
+        if not cond:
+            fails.append(msg)
+
+    pack = fo.synthetic_pack()
+
+    def row(name: str, obs: Dict) -> Dict:
+        ctx = Ctx(None, obs, pack, fixture_seed=pack['seed'])
+        fn, pre, needs = next((f, p, x) for n, _t, f, p, x in CHECKS if n == name)
+        return _run_check(ctx, name, TIER_OF[name], fn, pre, needs)
+
+    def comments(n):
+        return [{'t': i, 'issueKey': 'X-1', 'provider': 'user', 'status': 201, 'body': {}} for i in range(n)]
+
+    def renders(post, dbl):
+        return [{'sprintId': '1', 'select': {'ariaSelected': True}, 'post': post, 'doubleClick': dbl,
+                 'forbidden': {'errorFlags': 1, 'sortWorksAfter': True}}]
+
+    # B: one comment per gesture passes; zero comments and no flag do not fire; two comments for one gesture do
+    for label, post, dbl, want in (
+            ('exactly once', {'commentsAdded': 1, 'successFlags': 1}, {'commentsAdded': 1, 'successFlags': 1}, 1.0),
+            ('zero comments, no flag', {'commentsAdded': 1, 'successFlags': 1}, {'commentsAdded': 0, 'successFlags': 0}, 1.0),
+            ('double click duplicate', {'commentsAdded': 1, 'successFlags': 1}, {'commentsAdded': 2, 'successFlags': 2}, 0.0),
+            ('undeliverable click', {'commentsAdded': 1, 'successFlags': 1}, {'clickFailed': 'intercepted'}, 1.0)):
+        obs = {'comments': comments(3), 'ui': {'sprintAction': renders(post, dbl)}}
+        got = row('b_comment_exactly_once', obs)
+        expect(got['score'] == want and got.get('critical') == 'duplicate',
+               f"B b_comment_exactly_once on {label}: {got['score']} (want {want}) — {got.get('detail')}")
+    flow = row('u_comment_flow', {'ui': {'sprintAction': renders({'commentsAdded': 1, 'successFlags': 1},
+                                                                   {'commentsAdded': 0, 'successFlags': 0})}})
+    expect(abs(flow['score'] - 5 / 7) < 1e-3, f"B u_comment_flow must charge the zero-comment double click 2 of 7 steps "
+           f"(got {flow['score']}: {flow.get('detail')})")
+    # B: a double click the probe sent to the row the single click had just posted is not the app's evidence
+    reused = renders({'commentsAdded': 1, 'successFlags': 1}, {'changeId': 'c1', 'commentsAdded': 0, 'successFlags': 1})
+    reused[0]['select']['changeId'] = 'c1'
+    flow = row('u_comment_flow', {'ui': {'sprintAction': reused}})
+    expect(flow['score'] == 1.0, f"B a re-used row's double click must not be graded (got {flow['score']}: {flow.get('detail')})")
+    # v2 storage: a change kept in v1's entity AND migrated into scope-ledger is one row; two in scope-ledger are two
+    ch = Ctx(None, {}, pack).oracle.changes('final')[0]
+    item = {'key': f'r-{ch.change_id}', 'value': {'changeId': ch.change_id, 'sprintId': ch.sprint_id}}
+    v2_manifest = {'app': {'storage': {'entities': [{'name': 'scope-change'}, {'name': V2_SURFACE_ENTITY}]}}}
+    for label, entities, want in (('migrated beside v1', {'scope-change': [item], V2_SURFACE_ENTITY: [item]}, 1.0),
+                                  ('duplicated in scope-ledger', {V2_SURFACE_ENTITY: [item, item]}, 0.0)):
+        phases = {ph: {'kvsAfter': {'entities': entities, 'keys': []}} for ph in ('live', 'heal', 'rerun')}
+        got = row('t_no_double_count', {'manifest': v2_manifest, 'phases': phases})
+        expect(got['score'] == want, f"v2 ledger t_no_double_count {label}: {got['score']} (want {want}) — {got.get('detail')}")
+    # r_idempotent_rerun counts ledger writes only: the no-change run's own point count (§10) in an entity of its own
+    # is no rewrite; a ledger row set alone or inside a batch (whose body is the item list) is one
+    def kvs_write(path, body):
+        return {'service': 'kvs', 'method': 'POST', 'path': path, 'status': 200, 'body': body}
+    for label, calls, want in (
+            ('a point count in its own entity', [kvs_write('/api/v1/entity/set', {'entityName': 'rate-budget', 'key': 'h1', 'value': {}}),
+                                                 kvs_write('/api/v1/batch/set', [{'entityName': 'rate-budget', 'key': 'h2', 'value': {}}])], 1.0),
+            ('a ledger row set', [kvs_write('/api/v1/entity/set', {'entityName': V2_SURFACE_ENTITY, **item})], 0.0),
+            ('a ledger row in a batch', [kvs_write('/api/v1/batch/set', [{'entityName': V2_SURFACE_ENTITY, **item}])], 0.0)):
+        phases = {'heal': {'kvsAfter': {'entities': {V2_SURFACE_ENTITY: [item]}, 'keys': []}}, 'rerun': {'calls': calls}}
+        got = row('r_idempotent_rerun', {'manifest': v2_manifest, 'phases': phases})
+        expect(got['score'] == want, f"r_idempotent_rerun on {label}: {got['score']} (want {want}) — {got.get('detail')}")
+    # t_event_rows: a delivered change's row records `event` (§3's first writer) unless the next scheduled run came
+    # before its event work succeeded (redelivered after the run, or never successful), which may record it first:
+    # then `reconcile` is right too; never when its event work succeeded before that run
+    delivered = [c for c in Ctx(None, {}, pack).oracle.changes('live') if c.phase == 'live']
+    target = next(c for c in delivered if sum(d.change_id == c.change_id for d in delivered) == 1)
+    t_ev = target.at.timestamp()
+    ev_manifest = {**v2_manifest, 'modules': {'trigger': [{'key': 't'}], 'consumer': [{'key': 'c'}]}}
+    for label, source, redelivered, want in (('event, no redelivery', 'event', None, True),
+                                             ('reconcile, never succeeded: the next run came first', 'reconcile', None, True),
+                                             ('reconcile, redelivered before the next run', 'reconcile', t_ev + 1700, False),
+                                             ('reconcile, redelivered after the next run', 'reconcile', t_ev + 1900, True)):
+        items = [{'key': f'{c.change_id}:{c.sprint_id}', 'value': {
+            'changeId': c.change_id, 'sprintId': c.sprint_id, 'issueId': c.issue_id, 'kind': c.kind,
+            'at': int(c.at.timestamp() * 1000), 'authorId': c.by, 'source': source if c is target else 'event'}}
+            for c in delivered]
+        live = {'kvsAfter': {'entities': {V2_SURFACE_ENTITY: items}, 'keys': []},
+                'events': [{'changelogId': target.change_id, 't': t_ev}],
+                'calls': [{'t': t_ev + 1, 'inv': 'i0', 'kind': 'consumer', 'service': 'jira', 'status': 429,
+                           'originChange': target.change_id, 'scheduledRun': None}],
+                'deliveries': [{'eventId': 'q1', 'inv': 'i0', 'attempt': 0, 'result': 'retry', 't': t_ev + 1}]
+                + ([{'eventId': 'q1', 'inv': 'i1', 'attempt': 1, 'result': 'ok', 't': redelivered}] if redelivered else [])}
+        got = row('t_event_rows', {'manifest': ev_manifest, 'phases': {'live': live, 'hour-1': {'at': t_ev + 1800}}})
+        expect((got['score'] == 1.0) == want, f"t_event_rows on {label}: {got['score']} (want {'1.0' if want else '< 1'}) "
+               f"— {got.get('detail')}")
+    # One source rule for every row that judges a source: a live change made under the wall may name `reconcile` in the
+    # ledger table's cell exactly as in its ledger row; after the wall, and with no wall, only its event.
+    walled = next(x for x in Ctx(None, {}, pack).oracle.changes('final') if x.phase == 'live' and not x.dropped)
+    at_ms = walled.at.timestamp() * 1000
+    cells = {'issue': walled.issue_key, 'points': str(walled.points), 'kind': walled.kind, 'by': walled.by_name,
+             'at': walled.at_text, 'source': 'reconcile'}
+    for label, wall, want in (('under the wall', {'t_ms': at_ms - 1, 'until_ms': at_ms + 1}, ('event', 'reconcile')),
+                              ('after the wall', {'t_ms': at_ms - 2, 'until_ms': at_ms - 1}, ('event',)),
+                              ('no wall drawn', None, ('event',))):
+        ctx = Ctx(None, {'rate': {'wall': wall}} if wall else {}, pack)
+        got = sources_for(ctx, walled)
+        expect(got == want and cells_ok({'cells': cells}, walled, got) == ('reconcile' in want)
+               and row_correct({walled.kind, walled.issue_key, walled.by_name, str(int(at_ms)), 'reconcile'}, walled, got) == ('reconcile' in want),
+               f'source rule {label}: sources {got} (want {want}), one answer for the ledger row and the table cell')
+    # ... and with no wall: `reconcile` too when a scheduled run's work — the run, or a continuation its chain's lineage
+    # names, as the hourly run whose mark fell in the wall hands on — began between the change and its event work's
+    # success; never when the event work succeeded before any later scheduled work began, or when no delivery carries
+    # the change's lineage (nothing is known)
+    t_at = walled.at.timestamp()
+
+    def timeline(run_at=None, continuation_at=None, ok_at=None, failed_at=None, lineage=True):
+        calls = [{'inv': 'k1', 't': t, 'service': 'kvs', 'originChange': walled.change_id if lineage else None,
+                  'scheduledRun': None} for t in (ok_at, failed_at) if t is not None]
+        deliveries = ([{'eventId': 'e#0', 'inv': 'k1', 'attempt': 0, 'result': 'ok', 't': ok_at}] if ok_at else []) \
+            + ([{'eventId': 'e#0', 'inv': 'k1', 'attempt': 0, 'result': 'retry', 't': failed_at}] if failed_at else [])
+        if continuation_at is not None:
+            calls.append({'inv': 's2', 't': continuation_at + 0.2, 'service': 'jira', 'originChange': None, 'scheduledRun': 2})
+            deliveries.append({'eventId': 'r#0', 'inv': 's2', 'attempt': 0, 'result': 'ok', 't': continuation_at})
+        phases = {'live': {'calls': calls, 'deliveries': deliveries}}
+        if run_at is not None:
+            phases['hour-1'] = {'at': run_at, 'calls': [], 'deliveries': []}
+        return {'phases': phases}
+    for label, obs, want in (
+            ('a run started between the change and its success', timeline(run_at=t_at + 5, ok_at=t_at + 60), True),
+            ('a continuation of an earlier run began between them', timeline(run_at=t_at - 30, continuation_at=t_at + 5,
+                                                                             ok_at=t_at + 60), True),
+            ('its event work never succeeded', timeline(run_at=t_at + 5, failed_at=t_at + 1), True),
+            ('its event work succeeded before any later scheduled work', timeline(run_at=t_at + 90, continuation_at=t_at - 5,
+                                                                                ok_at=t_at + 60), False),
+            ('no delivery carries its lineage', timeline(run_at=t_at + 5, ok_at=t_at + 60, lineage=False), False)):
+        got = sources_for(Ctx(None, obs, pack), walled)
+        expect(('reconcile' in got) == want, f'source rule, {label}: sources {got} (want reconcile {want})')
+    # Concurrent delivery: a duplicate row is the app's whether or not its group raced; a group the harness did not run
+    # whole buys no pass — the row is unavailable, neither 1.0 nor a fired critical (the group reader is forge2_checks')
+    def member(group, index, invs, size=2):
+        return {'eventId': f'e#{group}', 'inv': invs[index], 'concurrent': {
+            'group': group, 'reason': 'same-event', 'schedule': 'reads-first', 'size': size, 'index': index,
+            'with': [{'index': 1 - index, 'eventId': f'e#{group}', 'invocationId': invs[1 - index]}]}}
+    raced_pair = [member('c1', j, ['k1', 'k2']) for j in range(2)]
+    half_pair = [member('c2', 0, ['k3', None])]
+    for label, ledger, deliveries, want in (() if V2_ABSENT else (
+            ('a raced pair, one row', [item], raced_pair, 1.0),
+            ('a raced pair wrote a duplicate', [item, item], raced_pair, 0.0),
+            ('a pair not run whole, one row', [item], raced_pair + half_pair, None),
+            ('a pair not run whole beside a duplicate', [item, item], half_pair, 0.0))):
+        phases = {ph: {'kvsAfter': {'entities': {V2_SURFACE_ENTITY: ledger}, 'keys': []}} for ph in ('live', 'heal', 'rerun')}
+        phases['live']['deliveries'] = deliveries
+        got = row('t_no_double_count', {'manifest': v2_manifest, 'phases': phases})
+        fired = criticals([got])[0] < 1.0
+        ok = (bool(got.get('unavailable')) and not fired) if want is None else (got['score'] == want and fired == (want == 0.0))
+        expect(ok, f"concurrent t_no_double_count on {label}: {got['score']} (want {'unavailable' if want is None else want}), "
+               f"critical fired {fired} — {got.get('detail')}")
+    # leak at scale: a hidden summary that is text of a visible summary is no leak; the hidden key still is one
+    shared = copy.deepcopy(pack)
+    hidden_issue = next(i for i in shared['issues'] if i.get('hiddenFrom'))
+    visible_issue = next(i for i in shared['issues'] if not i.get('hiddenFrom'))
+    visible_issue['summary'] = f"{hidden_issue['summary']} on mobile"
+    for label, text, want in (('visible superstring', visible_issue['summary'], 1.0),
+                              ('hidden key', f"{visible_issue['summary']} {hidden_issue['key']}", 0.0)):
+        sctx = Ctx(None, {'ui': {'surfaces': [{'id': 'widget', 'texts': [text]}],
+                                 'sprintAction': [{'sprintId': '1', 'rows': [{'changeId': 'x'}]}]}},
+                   shared, fixture_seed=pack['seed'])
+        fn, pre, needs = next((f, p, x) for n, _t, f, p, x in CHECKS if n == 'b_no_permission_leak')
+        got = _run_check(sctx, 'b_no_permission_leak', 'B', fn, pre, needs)
+        expect(got['score'] == want, f"leak on a {label}: {got['score']} (want {want}) — {got.get('detail')}")
+    # P8's rows through v2_rows: stamped with the registry's weight and class; a manifest-fault unavailable row turns
+    # vacuous (no critical); an evaluate() that raises or forgets a row leaves it unavailable, never scored
+    names = [n for n, *_ in _V2_ROWS]
+    wt = next(n for n, _f, _w, cls in _V2_ROWS if cls == 'webtrigger')
+    fault_obs = {'manifest': {'modules': {'webtrigger': [{'key': 'ci', 'resource': 'ci-page'}]}},
+                 'sectionErrors': {'webtrigger': "resource 'ci-page' is not declared under resources"}}
+    stub = lambda obs, _o: [{'check': n, **(unavail(f"webtrigger: {obs['sectionErrors']['webtrigger']}") if n == wt
+                                            else {'score': 1.0, 'detail': 'ok'})} for n in names]
+    got = {r['check']: r for r in v2_rows(Ctx(None, fault_obs, pack, fixture_seed=pack['seed']), stub)}
+    expect(str((got[wt].get('parts') or {}).get('vacuous_root', '')).startswith('manifest:') and not got[wt].get('unavailable')
+           and got[wt]['critical'] == 'webtrigger' and got[wt]['weight'] == ROW_WEIGHT[wt]
+           and criticals(list(got.values()))[0] == 1.0, f'v2_rows manifest fault: {got[wt]}')
+
+    def raises(_obs, _o):
+        raise KeyError('rate')
+    for label, fn, gone in (('raises', raises, names), ('forgets a row', lambda _obs, _o: [], names[:1])):
+        got = {r['check']: r for r in v2_rows(Ctx(None, {}, pack, fixture_seed=pack['seed']), fn)}
+        expect(all(got[n].get('unavailable') for n in gone), f'v2_rows when evaluate() {label}: {got[gone[0]]}')
+    # G: a UI section that failed on the app's own undeclared resource scores 0 but fires no critical
+    broken = {'manifest': {'modules': {'dashboards:widget': [{'key': 'w', 'resource': 'widget'}]}},
+              'comments': comments(1), 'sectionErrors': {'ui': "resource 'widget' is not declared under resources"}}
+    for name in ('b_no_permission_leak', 'b_comment_exactly_once'):
+        got = row(name, broken)
+        fired = criticals([got])[0]
+        expect(got['score'] == 0 and str((got.get('parts') or {}).get('vacuous_root', '')).startswith('manifest:')
+               and fired == 1.0, f"G {name} on a manifest fault: score {got['score']}, parts {got.get('parts')}, "
+               f'multiplier {fired}')
+    # H: polling scores 0; a subscriber that updates the moved sprints scores 1; one that never updates scores 0
+    o, oui = Ctx(None, {}, pack).oracle, Ctx(None, {}, pack).oracle_ui
+    board = next((b for b in oui.boards if any(o.numbers(s).metrics_text() != oui.numbers(s).metrics_text()
+                                               for s in oui.sprints_of_board(b))), None)
+    expect(board is not None, 'H the synthetic pack moves no sprint live (cannot test u_widget_live)')
+    if board is not None:
+        sids = oui.sprints_of_board(board)
+
+        def shown(oracle):
+            return [{'id': s, 'metrics': {'committed': fo.format_points(oracle.numbers(s).committed),
+                                          'added': fo.format_points(oracle.numbers(s).added),
+                                          'removed': fo.format_points(oracle.numbers(s).removed),
+                                          'creep': fo.format_creep(oracle.numbers(s).creep)}} for s in sids]
+        view = {'views': [{'board': board, 'sprints': shown(o)}]}
+        for label, live, want in (
+                ('live update', {'board': board, 'subscribed': True, 'idleInvokes': 0, 'sprintsAfter': shown(oui)}, 1.0),
+                ('polling', {'board': board, 'subscribed': False, 'idleInvokes': 3, 'sprintsAfter': shown(oui)}, 0.0),
+                ('never updates', {'board': board, 'subscribed': True, 'idleInvokes': 0, 'sprintsAfter': shown(o)}, 0.0)):
+            got = row('u_widget_live', {'ui': {'widget': view, 'live': live}})
+            expect(got['score'] == want, f"H u_widget_live on {label}: {got['score']} (want {want}) — {got.get('detail')}")
+    # U: the emptied board (SPEC §2.5) shows no sprint and u_widget_numbers counts it right, so an absent chart there
+    # misstates nothing; a bar on the emptied board and a missing chart on a live board stay wrong (gate 2026-10-10).
+    empty_board = next((b for b in o.boards if not o.sprints_of_board(b)), None)
+    live_board = next((b for b in o.boards if o.sprints_of_board(b)), None)
+    expect(empty_board is not None and live_board is not None, 'U the synthetic pack lacks an emptied and a live board')
+    if empty_board is not None and live_board is not None:
+        live_sids = o.sprints_of_board(live_board)
+        bar = {'present': True, 'count': 1, 'rects': [{'sprintId': live_sids[0], 'series': 'committed', 'height': 10}]}
+        for label, view, want in (
+                ('emptied board, no chart', {'board': empty_board, 'sprints': [], 'chart': {'present': False, 'count': 0}}, 1.0),
+                ('emptied board, an empty chart', {'board': empty_board, 'sprints': [],
+                                                   'chart': {'present': True, 'count': 1, 'rects': []}}, 1.0),
+                ('emptied board, a bar', {'board': empty_board, 'sprints': [], 'chart': bar}, 0.0),
+                ('live board, no chart', {'board': live_board, 'sprints': [{'id': s} for s in live_sids],
+                                          'chart': {'present': False, 'count': 0}}, 0.0)):
+            got = row('u_widget_chart', {'ui': {'widget': {'views': [view]}}})
+            expect(got['score'] == want, f"U u_widget_chart on {label}: {got['score']} (want {want}) — {got.get('detail')}")
+    # F: the backfill economy is continuous — one call over the top costs a little, never a rung
+    top = float(TH['reconcile_economy_top'])
+    optimum, missing = Ctx(None, {}, pack).oracle.reconcile_optimum()
+    expect(optimum is not None, f'F the synthetic pack has no reconcile optimum ({missing})')
+    if optimum is not None:
+        for used in (optimum, optimum + 1, 2 * optimum):
+            ctx = Ctx(None, {'phases': {'backfill': {'calls': [{'service': 'jira', 'kind': 'scheduled'}] * used}}},
+                      pack, fixture_seed=pack['seed'])
+            ctx._row_cache['r_backfill_complete'] = {'score': 1.0}
+            fn = next(f for n, _t, f, _p, _x in CHECKS if n == 'e_reconcile_economy')
+            got, want = fn(ctx)['score'], round(min(1.0, top / (used / optimum)), 4)
+            expect(got == want, f'F e_reconcile_economy at {used}/{optimum} calls: {got} (want {want}, continuous)')
+        # 2.0's own work is not v1's economy: R7's field writes, the admin page's ADMINISTER reads (person-facing), the
+        # web trigger's calls; a background read beyond the optimum still costs
+        fn = next(f for n, _t, f, _p, _x in CHECKS if n == 'e_reconcile_economy')
+        reads = [{'service': 'jira', 'kind': 'scheduled'}] * optimum
+        for label, extra, want in (
+                ('R7 field writes', [{'service': 'jira', 'kind': 'scheduled', 'method': 'POST',
+                                      'path': '/rest/api/3/app/field/value'}] * 3, round(min(1.0, top), 4)),
+                ('admin reads', [{'service': 'jira', 'kind': 'resolver', 'method': 'GET',
+                                  'path': '/rest/api/3/mypermissions?permissions=ADMINISTER'}] * 3, round(min(1.0, top), 4)),
+                ('web-trigger calls', [{'service': 'jira', 'kind': 'webtrigger', 'method': 'POST',
+                                        'path': '/rest/api/3/issue/bulkfetch'}] * 3, round(min(1.0, top), 4)),
+                ('background reads beyond the optimum', [{'service': 'jira', 'kind': 'consumer', 'method': 'GET',
+                                                          'path': '/rest/api/3/issue/1'}] * (2 * optimum),
+                 round(min(1.0, top / 3), 4))):
+            ctx = Ctx(None, {'phases': {'backfill': {'calls': reads + extra}}}, pack, fixture_seed=pack['seed'])
+            ctx._row_cache['r_backfill_complete'] = {'score': 1.0}
+            got = fn(ctx)['score']
+            expect(got == want, f'F e_reconcile_economy with {label}: {got} (want {want})')
+    # F: the event economy counts the background event path only, never R7's field writes
+    event_top = float(TH['event_economy_top'])
+    relevant = Ctx(None, {}, pack).oracle.event_optimum()
+    expect(relevant > 0, 'F the synthetic pack delivers no relevant live change (cannot test e_event_economy)')
+    fn = next(f for n, _t, f, _p, _x in CHECKS if n == 'e_event_economy')
+    read = {'service': 'jira', 'kind': 'consumer', 'method': 'GET', 'path': '/rest/api/3/issue/1'}
+    for label, extra, want in (
+            ('R7 field writes', [{**read, 'method': 'POST', 'path': '/rest/api/3/app/field/value'}] * 3,
+             round(min(1.0, event_top), 4)),
+            ('consumer reads beyond the optimum', [read] * (2 * relevant), round(min(1.0, event_top / 3), 4))):
+        ctx = Ctx(None, {'phases': {'live': {'calls': [read] * relevant + extra}}}, pack, fixture_seed=pack['seed'])
+        ctx._row_cache['t_event_rows'] = {'score': 1.0}
+        got = fn(ctx)['score']
+        expect(relevant == 0 or got == want, f'F e_event_economy with {label}: {got} (want {want})')
+    # 2.0 lineage: the event economy counts what an issue event started, in any phase, never a scheduled run's
+    # continuation or a world event's trigger drained beside it; the backfill economy counts its run's continuations
+    def lined(call, inv, origin=None, run=None):
+        return {**call, 'inv': inv, 'originChange': origin, 'scheduledRun': run}
+    event = [lined(read, 'e1', '9201')] * relevant
+    noise = [lined(read, 'k1', run=1)] * (2 * relevant) + [lined({**read, 'kind': 'trigger'}, 'w1', 'world:5')] * 3
+    for label, phases in (('beside continuations', {'live': {'calls': event + noise}}),
+                          ('drained in an hourly run', {'hour-1': {'calls': event}, 'live': {'calls': noise}})):
+        ctx = Ctx(None, {'phases': phases}, pack, fixture_seed=pack['seed'])
+        ctx._row_cache['t_event_rows'] = {'score': 1.0}
+        got, want = fn(ctx)['score'], round(min(1.0, event_top), 4)
+        expect(relevant == 0 or got == want, f'F e_event_economy by lineage {label}: {got} (want {want})')
+    if optimum is not None:
+        fn = next(f for n, _t, f, _p, _x in CHECKS if n == 'e_reconcile_economy')
+        sched = {'service': 'jira', 'kind': 'scheduled', 'method': 'GET', 'path': '/rest/agile/1.0/board'}
+        phases = {'backfill': {'invocations': [{'inv': 's1', 'kind': 'scheduled', 'ok': True}],
+                               'calls': [lined(sched, 's1', run=1)] * optimum
+                               + [lined({**sched, 'kind': 'resolver'}, 'r1')] * 3},
+                  'live': {'calls': [lined({**sched, 'kind': 'consumer'}, 'k1', run=1)] * optimum + event}}
+        ctx = Ctx(None, {'phases': phases}, pack, fixture_seed=pack['seed'])
+        ctx._row_cache['r_backfill_complete'] = {'score': 1.0}
+        got, want = fn(ctx)['score'], round(min(1.0, top / 2), 4)
+        expect(got == want, f'F e_reconcile_economy by lineage (its continuations in live): {got} (want {want})')
+    # 2.0 runs hourly: a run-2 fault fires in the first hour's run (phase hour-1), a run-1 continuation fault in a
+    # consumer the live phase drained — each is graded where it fired (1.0 mapped run 2 to the heal and crashed on both)
+    faulted = copy.deepcopy(pack)
+    faulted['faults'] = [{'id': 'f-run2', 'match': {'scope': 'scheduled-run', 'run': 2, 'nth': 2}, 'retryAfter': 2},
+                         {'id': 'f-cont', 'match': {'scope': 'scheduled-run', 'run': 1, 'continuation': True, 'nth': 1},
+                          'retryAfter': 2}]
+    q = {'service': 'jira', 'method': 'GET', 'path': '/rest/api/3/search/jql'}
+    for label, gap, want in (('retried after Retry-After', 2.5, 1.0), ('retried early', 1.0, 0.0)):
+        phases = {'backfill': {'invocations': [{'inv': 's1', 'kind': 'scheduled', 'ok': True}], 'calls': []},
+                  'hour-1': {'invocations': [{'inv': 's2', 'kind': 'scheduled', 'ok': True}],
+                             'calls': [{**q, 'kind': 'scheduled', 'inv': 's2', 't': 10.0, 'fault': 'f-run2', 'status': 429},
+                                       {**q, 'kind': 'scheduled', 'inv': 's2', 't': 10.0 + gap, 'status': 200}]},
+                  'live': {'invocations': [{'inv': 'c1', 'kind': 'consumer', 'ok': True}],
+                           'calls': [{**q, 'kind': 'consumer', 'inv': 'c1', 't': 99.0, 'fault': 'f-cont', 'status': 429},
+                                     {**q, 'kind': 'consumer', 'inv': 'c1', 't': 99.0 + gap, 'status': 200}]}}
+        fctx = Ctx(None, {'phases': phases}, faulted, fixture_seed=pack['seed'])
+        fn, pre, needs = next((f, p, x) for n, _t, f, p, x in CHECKS if n == 'r_rate_limit')
+        got = _run_check(fctx, 'r_rate_limit', 'R', fn, pre, needs)
+        expect(got['score'] == want and not got.get('unavailable') and got.get('parts', {}).get('faults') == 2,
+               f"r_rate_limit {label} in hour-1 and in a live continuation: {got['score']} (want {want}) — {got.get('detail')}")
+    # S3: the scheduled run's rows grade its chain. A run that only pushes and hands its reconcile to a consumer is not
+    # vacuous (Pareto 1.0, Sol 2.0); the continuation's asUser read or timeout costs; an issue event's consumer is not
+    # the run's; observations without lineage keep 1.0's reading (the scheduled invocations' own calls), named as such.
+    board_read = {'service': 'jira', 'method': 'GET', 'path': '/rest/agile/1.0/board'}
+    queue_push = {'service': 'queue', 'method': 'POST', 'path': '/webhook/queue/publish', 'status': 201}
+
+    def delegated(cont='app', killed=False, untraced=False, run_reads=False):
+        own = [lined({**board_read, 'kind': 'scheduled', 'provider': 'app'}, 's1', run=1)] if run_reads else []
+        calls = {'backfill': own + [lined({**queue_push, 'kind': 'scheduled', 'provider': 'app'}, 's1', run=1)],
+                 'live': [lined({**board_read, 'kind': 'consumer', 'provider': cont}, 'k1', run=1),
+                          lined({**board_read, 'kind': 'consumer', 'provider': 'app'}, 'k1', run=1),
+                          lined({**board_read, 'kind': 'consumer', 'provider': 'user'}, 'e1', origin='9201')]}
+        if untraced:
+            calls = {ph: [{k: v for k, v in x.items() if k not in ('originChange', 'scheduledRun')} for x in xs]
+                     for ph, xs in calls.items()}
+        return {'phases': {
+            'backfill': {'invocations': [{'inv': 's1', 'kind': 'scheduled', 'ok': True, 'timedOut': False}],
+                         'calls': calls['backfill']},
+            'live': {'invocations': [{'inv': 'k1', 'kind': 'consumer', 'ok': not killed, 'timedOut': killed},
+                                     {'inv': 'e1', 'kind': 'consumer', 'ok': True, 'timedOut': False}],
+                     'calls': calls['live']}}}
+    for label, obs, as_app, in_time in (
+            ('a reconcile handed to a consumer', delegated(), 1.0, 1.0),
+            ('a continuation reading as a user', delegated(cont='user'), 0.5, 1.0),
+            ('the run reading asApp beside its continuation reading as a user', delegated(cont='user', run_reads=True),
+             round(2 / 3, 4), 1.0),
+            ('a continuation killed by its timeout', delegated(killed=True), 1.0, 0.5),
+            ('no lineage recorded: the scheduled invocation made no Jira call', delegated(untraced=True), None, None)):
+        for name, want in (('r_as_app', as_app), ('r_completes_in_timeout', in_time)):
+            got = row(name, obs)
+            vac = (got.get('parts') or {}).get('vacuous_root')
+            ok = bool(vac) if want is None else (got['score'] == want and not vac and not got.get('unavailable'))
+            expect(ok, f"S3 {name} on {label}: {got['score']} (want {'vacuous' if want is None else want}) — {got.get('detail')}")
+    untraced_run = delegated(untraced=True)
+    untraced_run['phases']['backfill']['calls'].append({**board_read, 'kind': 'scheduled', 'provider': 'app', 'inv': 's1'})
+    got = row('r_as_app', untraced_run)
+    expect(got['score'] == 1.0 and UNTRACED_SCOPE in str(got.get('detail')),
+           f"S3 r_as_app without lineage reads the scheduled invocations' own calls and says so: {got.get('detail')}")
+    # 2.0's backfill read (one hour after the upgrade) owes the history changes v1 never recorded; v1's own rows are R1's
+    # at the 2-hour mark (contract §9), so a v2 ledger holding every other history change is complete at that read
+    pack2 = fo.synthetic_pack_v2()
+    o2 = fo.Oracle(pack2)
+    v1 = o2.v1_keys()
+    owed = [ch for ch in o2.changes('backfill') if ch.key not in v1]
+    items = [{'key': f'{ch.change_id}:{ch.sprint_id}', 'value': {
+        'changeId': ch.change_id, 'sprintId': ch.sprint_id, 'kind': ch.kind, 'issueId': ch.issue_id, 'authorId': ch.by,
+        'at': fo.epoch_ms(ch.at), 'source': 'reconcile'}} for ch in owed]
+    v2_obs = {'manifest': {'modules': {'scheduledTrigger': [{'key': 'hourly'}]},
+                           'app': {'storage': {'entities': [{'name': 'scope-change'}, {'name': V2_SURFACE_ENTITY}]}}},
+              'phases': {'backfill': {'kvsAfter': {'entities': {V2_SURFACE_ENTITY: items}, 'keys': []}}}}
+    bctx = Ctx(None, v2_obs, pack2, fixture_seed=pack2['seed'])
+    fn, pre, needs = next((f, p, x) for n, _t, f, p, x in CHECKS if n == 'r_backfill_complete')
+    got = _run_check(bctx, 'r_backfill_complete', 'R', fn, pre, needs)
+    expect(bool(v1) and bool(owed) and got['score'] == 1.0,
+           f"r_backfill_complete must not owe v1's rows at the one-hour read: {got['score']} — {got.get('detail')}")
+    # R9 (k_runtime_risks): contract §9's optimistic-lock answer, 400 CONDITIONAL_CHECK_FAILED, is a lost race and no
+    # limit refused; a type refusal, a limit refusal and a 400 whose code the observations do not carry still fail it
+    kvs_ok = {'service': 'kvs', 'method': 'POST', 'path': '/api/v1/get', 'status': 200}
+    kvs400 = {'service': 'kvs', 'method': 'POST', 'path': '/api/v1/transaction', 'status': 400}
+    for label, call, want, shown in (
+            ('a lost compare-and-set', {**kvs400, 'kvsCode': 'CONDITIONAL_CHECK_FAILED'}, 'pass', ''),
+            ('a type refusal', {**kvs400, 'kvsCode': 'INCORRECT_PROPERTY_TYPE'}, 'fail', '400 INCORRECT_PROPERTY_TYPE'),
+            ('a 400 with no code recorded', kvs400, 'fail', '400'),
+            ('a limit refusal', {**kvs400, 'path': '/api/v1/set', 'kvsCode': 'MAX_SIZE', 'limitError': 'MAX_SIZE'}, 'fail',
+             '400 MAX_SIZE')):
+        r9 = next(f for f in deploy_findings(Ctx(None, {'phases': {'live': {'calls': [kvs_ok, call]}}}, pack))
+                  if f['rule'].startswith('R9 '))
+        expect(r9['status'] == want and r9['where'] == shown,
+               f"R9 on {label}: {r9['status']} [{r9['where']}] (want {want} [{shown}])")
+    # r_pagination: a consumer that meets a 429 on a walk's next page and hands the job back (contract §11's
+    # InvocationError) skipped nothing when the same queue event's redelivery reads the list to its end; a swallowed
+    # 429 that carries on, a hand-off nothing re-walks, and a list another invocation walks stay graded
+    def page(inv, start, ids, last, t, status=200):
+        call = {'service': 'jira', 'method': 'GET', 'kind': 'consumer', 'inv': inv, 't': t, 'status': status,
+                'path': f'/rest/agile/1.0/board?type=scrum&startAt={start}&maxResults=50'}
+        if status == 200:
+            call['response'] = {'startAt': start, 'maxResults': 2, 'total': 4, 'isLast': last,
+                                'values': [{'id': i} for i in ids]}
+        return call
+
+    def walked(swallowed=False, rewalk=True, other_walk=False):
+        first = [page('q0', 0, [1, 2], False, 10.0), page('q0', 2, [], False, 10.5, 429)]
+        if swallowed:
+            first.append({'service': 'jira', 'method': 'GET', 'kind': 'consumer', 'inv': 'q0', 't': 11.0, 'status': 200,
+                          'path': '/rest/agile/1.0/board/1/configuration', 'response': {'id': 1}})
+        again = ([page('q1', 0, [1, 2], False, 13.0), page('q1', 2, [3, 4], True, 13.5)] if rewalk else
+                 [{'service': 'jira', 'method': 'GET', 'kind': 'consumer', 'inv': 'q1', 't': 13.0, 'status': 200,
+                   'path': '/rest/api/3/field', 'response': []}])
+        hourly = ([{**page('s1', 0, [1, 2], False, 20.0), 'kind': 'scheduled'},
+                   {**page('s1', 2, [3, 4], True, 20.5), 'kind': 'scheduled'}] if other_walk else [])
+        retry = not swallowed
+        return {'phases': {'live': {
+            'calls': first + again + hourly,
+            'invocations': [{'inv': 'q0', 'kind': 'consumer', 'ok': True, 'retryAfter': 2 if retry else None},
+                            {'inv': 'q1', 'kind': 'consumer', 'ok': True, 'retryAfter': None}],
+            'deliveries': [{'eventId': 'ev#0', 'inv': 'q0', 'attempt': 1, 'result': 'retry' if retry else 'ok', 't': 10.0},
+                           {'eventId': 'ev#0', 'inv': 'q1', 'attempt': 2, 'result': 'ok', 't': 13.0}]}}}
+    resumed = walked(rewalk=False)   # the redelivery asks for the refused page only: a one-page walk ending the list
+    resumed['phases']['live']['calls'] = [x for x in resumed['phases']['live']['calls'] if x['inv'] != 'q1'] \
+        + [page('q1', 2, [3, 4], True, 13.0)]
+    half = {**pack, 'paging': {'rule': 'half'}}   # the scoring site's page rule (its harness-gap check is on)
+    fn, pre, needs = next((f, p, x) for n, _t, f, p, x in CHECKS if n == 'r_pagination')
+    for label, obs, want, excused in (
+            ('a hand-off the redelivery reads to the end', walked(), 1.0, True),
+            ('a hand-off the redelivery resumes at the refused page', resumed, 1.0, True),
+            ('a swallowed 429 that carries on', walked(swallowed=True), 0.5, False),
+            ('a hand-off whose redelivery never re-walks', walked(rewalk=False), 0.0, False),
+            ('a hand-off only another invocation re-walks', walked(rewalk=False, other_walk=True), 0.5, False)):
+        got = _run_check(Ctx(None, obs, half, fixture_seed=pack['seed']), 'r_pagination', 'R', fn, pre, needs)
+        expect(got['score'] == want and not got.get('unavailable') and ('handed back' in str(got.get('detail'))) == excused,
+               f"r_pagination on {label}: {got['score']} (want {want}, excused {excused}) — {got.get('detail')}")
+    # The oracle's one switched-field allowance (forge2_oracle._switch_unseen), wired from the observations by
+    # observed_timing: a change no app could read its board for before a later switch — made under the observed quota
+    # wall with the switch no later than its first delivery after the wall, or first delivered at or after the switch —
+    # may be valued in the field switched to. A change delivered before the switch may not, and no change after the
+    # switch ever may: an app that keeps the old field cached forever still fails those rows.
+    o_plain = Ctx(None, {}, pack2).oracle
+    switch_at, new_field = o_plain.field_switches['2'][0]
+    early = next(ch for ch in o_plain.changes('final') if ch.board_id == '2' and ch.phase == 'live' and ch.at < switch_at
+                 and not ch.moved_to_board)
+    late_change = next(ch for ch in o_plain.changes('final') if ch.board_id == '2' and ch.phase == 'live'
+                       and ch.at > switch_at)
+    new_value = o_plain.estimate_of(early.issue_id, new_field, o_plain._entries('all'))
+    minute = timedelta(minutes=1)
+    wall = (early.at - 5 * minute, early.at + 15 * minute)
+
+    def timing(product, consumer=(), drawn=None):
+        lineage = [{'inv': f'k{i}', 'service': 'kvs', 'originChange': early.change_id, 't': t.timestamp()}
+                   for i, t in enumerate(consumer)]
+        obs = {'phases': {'live': {'events': [{'changelogId': early.change_id, 't': t.timestamp()} for t in product],
+                                   'calls': lineage,
+                                   'deliveries': [{'eventId': 'q#0', 'inv': f'k{i}', 'attempt': i, 't': t.timestamp(),
+                                                   'result': 'ok' if i == len(consumer) - 1 else 'retry'}
+                                                  for i, t in enumerate(consumer)]}}}
+        if drawn:
+            obs['rate'] = {'wall': {'t_ms': drawn[0].timestamp() * 1000, 'until_ms': drawn[1].timestamp() * 1000}}
+        return obs
+    expect(early.points != new_value and wall[1] + minute < switch_at, 'the synthetic switch does not tell its fields apart')
+    allow = None
+    for label, obs, want in (
+            ('made under the wall, first delivered after it at the switch or later',
+             timing([early.at + minute], [early.at + minute, switch_at + minute], wall), True),
+            ('made under the wall, first delivered after it before the switch',
+             timing([early.at + minute], [early.at + minute, wall[1] + minute], wall), False),
+            ('first delivered at the switch', timing([switch_at]), True),
+            ('delivered before the switch, redelivered after it', timing([switch_at - minute], [switch_at - minute,
+                                                                                               switch_at + minute]), False),
+            ('no delivery observed', {}, False)):
+        o = Ctx(None, obs, pack2).oracle
+        ch = next(x for x in o.changes('final') if x.key == early.key)
+        expect((new_field in ch.late_fields and new_value in ch.late_points) == want
+               and not next(x for x in o.changes('final') if x.key == late_change.key).late_fields,
+               f'switched-field allowance on a change {label}: late fields {ch.late_fields} (want {want})')
+        allow = allow or (o if want else None)
+    if not V2_ABSENT and allow is not None:
+        r4 = next(r for r in V2.ROWS if r.name == 'r4_field_switch').fn
+
+        def graded(oracle, values):
+            obs = V2.perfect_observations(oracle)
+            for r in obs['migration']['v2_by_checkpoint']['final']:
+                if (r['changeId'], r['sprintId']) in values:
+                    r['estimate'] = float(values[(r['changeId'], r['sprintId'])])
+            return r4(V2.Ev(obs, oracle))
+        old_field = o_plain.field_in_force('2', switch_at - fo.JUST_BEFORE)
+        cached = {early.key: new_value, late_change.key: o_plain.estimate_of(late_change.issue_id, old_field,
+                                                                              o_plain._entries('all'))}
+        for label, oracle, values, want in (
+                ('the switched-to field on an unknowable earlier row', allow, {early.key: new_value}, 1.0),
+                ('the switched-to field on a knowable earlier row', o_plain, {early.key: new_value}, None),
+                ('the old field cached past the switch', allow, cached, None)):
+            got = graded(oracle, values)
+            expect(got['score'] == want if want is not None else got['score'] < 1.0,
+                   f"r4_field_switch with {label}: {got['score']} (want {want or '< 1'}) — {got.get('detail')}")
     return fails
 
 
@@ -3487,14 +4772,21 @@ def reference_failures(result: Dict) -> List[str]:
         if (r.get('parts') or {}).get('vacuous_root'):
             fails.append(f'{n}: vacuous on the golden — its contract hook produced no evidence')
             continue
-        if n in CALIBRATION_OWNED or n in DIAGNOSTIC and n not in CRITICAL_CHECKS:
+        if n in CALIBRATION_OWNED:
             continue
-        if n in CRITICAL_CHECKS and r['score'] < 1.0 - 1e-9:
+        # the diagnostic rows too: u_widget_loads is no longer a critical and k_v2_surfaces feeds a band
+        if n in CRITICAL_OF and r['score'] < 1.0 - 1e-9:
             fails.append(f"{n}: CRITICAL {r['score']} != 1.0 — criticals are facts the golden achieves")
         elif r['score'] < 1.0 - 1e-9:
             fails.append(f"{n}: {r['score']} < 1.0 — {str(r.get('detail'))[:100]}")
+    # rc thresholds are not fitted to the golden yet (the economy rows above are exempt so calibration can run)
+    if CALIBRATED and result.get('score') != 1.0:
+        fails.append(f"final {result.get('score')} != 1.000 (SPEC §5: the golden v2 scores 1.000)")
     if result.get('harness_missing'):
         fails.append(f"harness_missing: {result['harness_missing'][:6]}")
+    if reliability(result['checks'])[0] != 1.0:   # from the rows: a golden verdict kept before the rule has no block
+        fails.append(f"reliability {round(reliability(result['checks'])[0], 4)} != 1 — the golden fails no group: "
+                     f"{[(d['tier'], d['check'], d['score']) for d in reliability(result['checks'])[1]['defects']]}")
     if not result.get('excellence_gate'):
         fails.append('E gate shut on the golden')
     if result.get('runtime') != 'wrapper':
@@ -3505,14 +4797,27 @@ def reference_failures(result: Dict) -> List[str]:
 
 # ── report ───────────────────────────────────────────────────────────────────────────────────
 
+def _reliability_lines(rel: Dict) -> List[str]:
+    counted = ', '.join(f"{d['tier']} {d['check']} {d['score']} x{d['factor']}" for d in rel['defects'])
+    return [f"Reliability {rel['multiplier']}{' (the floor)' if rel['floored'] else ''}: {len(rel['defects'])} failed "
+            f"group(s), each x (1 - {rel['k']:g} x its worst test's shortfall)" + (f': {counted}' if counted else ''),
+            *(f"  {tier}, paid by its worst test: {', '.join(names)}" for tier, names in rel['folded'].items()),
+            *([f"  priced as criticals, not here: {', '.join(rel['priced_as_critical'])}"]
+              if rel['priced_as_critical'] else [])]
+
+
 def format_report(result: Dict, title: str = '') -> str:
-    t, crit = result['tiers'], result['critical']
+    # A verdict kept from before the reliability rule carries no such block: it renders as it always did.
+    t, crit, rel = result['tiers'], result['critical'], result.get('reliability')
     lines = [f"{title} {result['scorerVersion']}: {result['score']:.4f} [{result['status']}]"
              f"{'' if result['publishable'] else ' UNPUBLISHABLE: ' + '; '.join(result['unpublishable_reasons'])}",
-             f"Earned {result['rawScore']:.4f} = (0.88 x inner {result['inner']:.4f} + 0.12 x excellence "
-             f"{t['E']['mean']:.4f}) x critical multiplier {crit['multiplier']}; admission ceiling "
-             f"{result['admission']['ceiling']:.3f}",
-             'Unsuppressed criticals: ' + (', '.join(crit['unsuppressed']) or 'none'),
+             f"Earned {result['rawScore']:.4f} = ({V1_WEIGHT:g} x v1 {result['v1']['score']:.4f} [0.88 x inner "
+             f"{result['v1']['inner']:.4f} + 0.12 x excellence {t['E']['mean']:.4f}] + v2 {result['v2']['score']:.4f}) "
+             f"x critical multiplier {crit['multiplier']}" + (f" x reliability {rel['multiplier']}" if rel else '')
+             + f"; admission ceiling {result['admission']['ceiling']:.3f}",
+             'Unsuppressed criticals: ' + (', '.join(f"{x['check']} ({x['class']})" for x in crit['rows']
+                                                    if not x.get('suppressed')) or 'none'),
+             *(_reliability_lines(rel) if rel else []),
              *result['admission']['reasons'],
              '  '.join(f"{k} {100 * t[k]['mean']:.0f}%" for k in TIER_ORDER if k in t),
              f"seed {result.get('fixture_seed')} (dev {result.get('dev_seed')}), runtime {result.get('runtime')}"]
@@ -3535,7 +4840,7 @@ def format_report(result: Dict, title: str = '') -> str:
     return '\n'.join(lines)
 
 
-# ── gathering (I2 through forge_probe.mjs) and the hermetic CLI ──────────────────────────────
+# ── gathering (I2 through forge2_probe.mjs) and the hermetic CLI ──────────────────────────────
 
 _CHILDREN: List[subprocess.Popen] = []
 
@@ -3583,14 +4888,14 @@ def _probe_preflight() -> Optional[str]:
 
 def _kit() -> Tuple[Optional[Dict], Optional[str]]:
     try:
-        import forge_kit  # WP1 (DESIGN §10)
+        import forge2_kit  # P11 (SPEC §3)
     except ImportError:
-        return None, 'bench/forge_kit.py is not present (WP1 deliverable) — no pinned kit to score against'
+        return None, 'bench/forge2_kit.py is not present (P11 deliverable) — no pinned kit to score against'
     try:
-        info = forge_kit.ensure()
+        info = forge2_kit.ensure()
     except Exception as error:
-        return None, f'forge_kit.ensure() refused: {error}'
-    # forge_kit.ensure() -> {kit_dir, modules_dir, kit_lock_sha256, kit_code_sha256, wrapper_sha256}
+        return None, f'forge2_kit.ensure() refused: {error}'
+    # forge2_kit.ensure() -> {kit_dir, modules_dir, kit_lock_sha256, kit_code_sha256, wrapper_sha256}
     return {**info, 'dir': info['kit_dir'], 'lock_sha256': info['kit_lock_sha256'],
             'wrapper_sha256': info.get('wrapper_sha256'),
             'app_modules': str(Path(info['modules_dir']) / 'app-modules' / 'node_modules')}, None
@@ -3607,11 +4912,10 @@ def _trace_header(tree: Path) -> Dict:
 
 
 def build_pack(seed: str, out: Path) -> Dict:
-    fixtures = ROOT / 'forge' / 'site' / 'fixtures.cjs'
-    if not fixtures.is_file():
-        raise RuntimeError('forge/site/fixtures.cjs is not present (WP1, interface I1)')
+    if not FIXTURES.is_file():
+        raise RuntimeError(f'{FIXTURES.relative_to(ROOT)} is not present (P4, interface I1)')
     node = _render_node()
-    proc = subprocess.run([node, str(fixtures), '--seed', seed, '--out', str(out), '--scoring'], capture_output=True, text=True)
+    proc = subprocess.run([node, str(FIXTURES), '--seed', seed, '--out', str(out), '--scoring'], capture_output=True, text=True)
     if proc.returncode != 0:
         raise RuntimeError(f'fixtures.cjs failed: {proc.stderr[-400:]}')
     return json.loads(out.read_text())
@@ -3626,7 +4930,7 @@ def clone_tree(src: Path, dest: Path) -> None:
 def _probe_one(root: Path, seed: str, kit: Dict, runtime: str, shots: Path, media_dir: Optional[Path],
                obs_copy: Path) -> Tuple[Dict, Dict]:
     """One scoring site: a fresh clone of the tree, the site seeded with `seed`, the probe; returns (observations, pack)."""
-    with tempfile.TemporaryDirectory(prefix='forge-score-') as tmp:
+    with tempfile.TemporaryDirectory(prefix='forge2-score-') as tmp:
         tmp = Path(tmp)
         app = tmp / 'app'
         clone_tree(Path(root), app)
@@ -3641,7 +4945,7 @@ def _probe_one(root: Path, seed: str, kit: Dict, runtime: str, shots: Path, medi
         _CHILDREN.append(proc)
         code = proc.wait()
         if not obs_path.is_file():
-            raise RuntimeError(f'REFUSED: forge_probe.mjs exited {code} without observations (seed {seed})')
+            raise RuntimeError(f'REFUSED: forge2_probe.mjs exited {code} without observations (seed {seed})')
         obs = json.loads(obs_path.read_text())
         # Pixels are read once, here, into the observations, so evaluate() stays pure over (tree, observations,
         # pack) and a kept observation file rescored later grades v_dark_mode the same way.
@@ -3658,38 +4962,73 @@ def _probe_one(root: Path, seed: str, kit: Dict, runtime: str, shots: Path, medi
     return obs, pack
 
 
+# One forge scoring per host, whoever scores: the CLI and run_build's in-process scoring both go through gather(). The
+# probe's timed rows (boot counts, paint clocks, settle windows) run on this machine's wall clock, so two probes at once
+# distort each other. The path is fixed per host, never $TMPDIR, which differs between callers (an app-launched
+# run_build, an agent's shell): two lock files lock nothing.
+LOCK_FILE = Path('/tmp/goose-forge-score.lock')
+# The frozen Forge 1.0 scorer (score_forge.py, its bytes pinned by forge/'s manifest) locks the same name under the
+# caller's temp dir instead — /var/folders/… on macOS, never /tmp — computed exactly so, and the desktop app still
+# re-scores saved 1.0 sessions: a 2.0 scoring takes that lock too, so neither era's timed rows run beside the other's.
+FORGE1_LOCK_FILE = Path(tempfile.gettempdir()) / 'goose-forge-score.lock'
+
+
+def score_lock_files() -> List[Path]:
+    """The locks a 2.0 scoring holds, in the one order every 2.0 scorer takes them (so two cannot deadlock; a 1.0
+    scorer takes only its own): LOCK_FILE, then FORGE1_LOCK_FILE — once, when both name one file (a $TMPDIR of /tmp),
+    since a second flock of one file in one process waits on itself."""
+    return [LOCK_FILE] + ([FORGE1_LOCK_FILE] if os.path.realpath(FORGE1_LOCK_FILE) != os.path.realpath(LOCK_FILE) else [])
+
+
+@contextlib.contextmanager
+def score_lock():
+    """Every lock of score_lock_files(), taken in order and released in reverse on every exit path (the ExitStack
+    closes each file, which drops its flock)."""
+    with contextlib.ExitStack() as held:
+        for path in score_lock_files():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            lock = held.enter_context(path.open('w'))
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                print(f'waiting for {path}: another forge scoring holds it', file=sys.stderr, flush=True)
+                fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+
+
 def gather(root: Path, _port, _db_dir, trace_path: Optional[Path] = None, mark_phase=None, seed: Optional[str] = None,
            runtime: str = 'wrapper', single_seed: bool = False) -> Ctx:
     """run_build's interface: clone the tree, start the scoring site with `seed`, run the probe, load I5 — on the
     run's own seed and, unless `single_seed` (the controls and the calibration, which name their seeds), on the two
     derived scoring sites (SCORING_SEEDS). The run's own seed keeps the published shots, recording and
-    forge-observations.json; the derived sites' evidence lands under forge-shots/seeds/<seed>/."""
+    forge-observations.json; the derived sites' evidence lands under forge-shots/seeds/<seed>/. The probes run under
+    score_lock()."""
     if not seed:
-        raise RuntimeError('REFUSED: score_forge.gather needs the fixture seed')
+        raise RuntimeError('REFUSED: score_forge2.gather needs the fixture seed')
+    if V2_ABSENT:
+        raise RuntimeError('REFUSED: ' + V2_ABSENT)
     kit, why = _kit()
     if kit is None:
         raise RuntimeError('REFUSED: ' + why)
     header = _trace_header(Path(root))
-    started = time.monotonic()
-    seeds = [seed.lower()] if single_seed else scoring_seeds(seed, header.get('dev_seed'))
-    shots = Path(root) / 'forge-shots'
-    shutil.rmtree(shots, ignore_errors=True)
-    media_dir = Path(root).resolve() / 'bench-media'
-    shutil.rmtree(media_dir, ignore_errors=True)
-    ctxs = []
-    for i, s in enumerate(seeds):
-        where = shots if i == 0 else shots / 'seeds' / s
-        obs, pack = _probe_one(root, s, kit, runtime, where, media_dir if i == 0 else None,
-                               Path(root) / 'forge-observations.json' if i == 0 else where / 'forge-observations.json')
-        ctxs.append(Ctx(Path(root), obs, pack, fixture_seed=s, dev_seed=header.get('dev_seed'), runtime=runtime))
-    ctx = ctxs[0]
-    ctx.seed_ctxs = ctxs[1:]
-    ctx.scorer_seconds = round(time.monotonic() - started, 3)
-    ctx.kit = kit
+    with score_lock():
+        started = time.monotonic()
+        seeds = [seed.lower()] if single_seed else scoring_seeds(seed, header.get('dev_seed'))
+        shots = Path(root) / 'forge-shots'
+        shutil.rmtree(shots, ignore_errors=True)
+        media_dir = Path(root).resolve() / 'bench-media'
+        shutil.rmtree(media_dir, ignore_errors=True)
+        ctxs = []
+        for i, s in enumerate(seeds):
+            where = shots if i == 0 else shots / 'seeds' / s
+            obs, pack = _probe_one(root, s, kit, runtime, where, media_dir if i == 0 else None,
+                                   Path(root) / 'forge-observations.json' if i == 0 else where / 'forge-observations.json')
+            ctxs.append(Ctx(Path(root), obs, pack, fixture_seed=s, dev_seed=header.get('dev_seed'), runtime=runtime))
+        ctx = ctxs[0]
+        ctx.seed_ctxs = ctxs[1:]
+        ctx.scorer_seconds = round(time.monotonic() - started, 3)
+        ctx.kit = kit
     return ctx
-
-
-LOCK_FILE = Path(tempfile.gettempdir()) / 'goose-forge-score.lock'
 
 
 def main(argv=None) -> int:
@@ -3698,14 +5037,32 @@ def main(argv=None) -> int:
     ap.add_argument('--seed')
     ap.add_argument('--json-out', type=Path)
     ap.add_argument('--calibrate', type=Path, nargs='+', metavar='GOLDEN_VERDICT',
-                    help='fit forge-thresholds.json from >= 5 reference-passing golden verdicts; prints the sha to pin')
+                    help='fit forge2-thresholds.json from >= 5 reference-passing golden verdicts; prints the sha to pin')
     ap.add_argument('--reference', action='store_true')
+    ap.add_argument('--selftest', action='store_true',
+                    help='run the composition selftest and the §17.8 defect selftest on synthetic evidence, then exit')
+    ap.add_argument('--recompose', type=Path, metavar='VERDICT',
+                    help="compose a kept verdict's stored rows again: no tree, no probe, the rows as they were graded")
     ap.add_argument('--runtime', choices=('wrapper', 'shim'), default='wrapper')
     ap.add_argument('--port', type=int, help='accepted for the rescorer; forge binds ephemeral ports')
     ap.add_argument('--single-seed', action='store_true',
                     help='score on --seed alone (the controls and the calibration name their seeds); the default grades '
                          f'{SCORING_SEEDS} scoring sites (contract §8), the worst per correctness row')
     a = ap.parse_args(argv)
+    if a.selftest:
+        if V2_ABSENT:
+            print(f'NOTE: {V2_ABSENT}; the selftest composes on the synthetic stand-in registry', file=sys.stderr)
+        fails = severity_selftest() + defect_selftest()
+        if not V2_ABSENT:   # the verdict's provenance block (evaluate() writes it on every scoring)
+            try:
+                scorer_files_sha256()
+            except Exception as error:
+                fails.append(f'scorer_files_sha256: {type(error).__name__}: {error}')
+        families =', '.join(f'{fam} {sum(1 for t in TIER_OF.values() if t == fam)}' for fam in FAMILY_WEIGHT)
+        print(f'{VERSION}: {len(CHECKS)} rows ({len(V1_ROWS)} v1; v2 per family: {families}); '
+              f'{len(CRITICAL_OF)} critical rows in {len(CRITICAL_CLASSES)} classes')
+        print('SELFTEST: ' + ('PASS' if not fails else 'FAIL\n  ' + '\n  '.join(fails)))
+        return 1 if fails else 0
     if a.calibrate:
         try:
             fitted = calibrate([json.loads(p.read_text()) for p in a.calibrate], TH)
@@ -3717,14 +5074,27 @@ def main(argv=None) -> int:
             text = re.sub(r'("%s": )\[[\s\S]*?\n  \]' % re.escape(key), lambda m, k=key: m.group(1) + json.dumps(fitted[k]), text)
         raw = (text + '\n').encode()
         THRESHOLDS_FILE.write_bytes(raw)
-        print(f"wrote {THRESHOLDS_FILE.name}; pin CALIB_SHA256 = '{hashlib.sha256(raw).hexdigest()}' in score_forge.py")
+        print(f"wrote {THRESHOLDS_FILE.name}; pin CALIB_SHA256 = '{hashlib.sha256(raw).hexdigest()}' in score_forge2.py")
         return 0
-    if not a.tree or not a.json_out:
+    if not a.recompose and (not a.tree or not a.json_out):
         ap.error('--tree and --json-out are required to score')
     fails = severity_selftest()
     if fails:
         print('REFUSED: severity_selftest() failed — the gradient is inverted:\n  ' + '\n  '.join(fails), file=sys.stderr)
         return 4
+    if a.recompose:
+        try:
+            result = recompose(json.loads(a.recompose.read_text()), str(a.recompose))
+        except ValueError as error:
+            print(f'REFUSED: {a.recompose}: {error}', file=sys.stderr)
+            return 2
+        if a.json_out:
+            a.json_out.write_text(json.dumps(result, indent=2, default=str))
+        was = result['recomposed_from']
+        print(format_report(result, a.recompose.parent.name))
+        print(f"RECOMPOSED from stored rows (no probe; graded by score_forge2.py "
+              f"{str((was['scorer_files_sha256'] or {}).get('score_forge2.py'))[:12]}): {was['score']} -> {result['score']}")
+        return 0
     if not a.seed:
         print('REFUSED: no --seed. A tree is scored against the fixture_seed its run was fed (trace.jsonl header).',
               file=sys.stderr)
@@ -3739,7 +5109,7 @@ def main(argv=None) -> int:
         print('REFUSED: --seed equals the tree\'s dev_seed — the scoring site must differ from the site the entrant '
               'developed against (DESIGN §5.1)', file=sys.stderr)
         return 2
-    why = _probe_preflight()
+    why = V2_ABSENT or _probe_preflight()
     if why is None:
         _kit_info, why = _kit()
     if why:
@@ -3749,11 +5119,8 @@ def main(argv=None) -> int:
     atexit.register(_reap_children)
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_x: (_reap_children(), sys.exit(130)))
-    LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with LOCK_FILE.open('w') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)   # serial: one forge scoring per host
-        ctx = gather(tree, None, None, seed=seed, runtime=a.runtime, single_seed=a.single_seed)
-        result = evaluate(ctx)
+    ctx = gather(tree, None, None, seed=seed, runtime=a.runtime, single_seed=a.single_seed)   # serial: score_lock()
+    result = evaluate(ctx)
     a.json_out.write_text(json.dumps(result, indent=2, default=str))
     print(format_report(result, tree.name))
     if a.reference:

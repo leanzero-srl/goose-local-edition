@@ -62,6 +62,52 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
 
 ## Line state
 
+- 2026-10-10 13:34 RELIABILITY v2, PER GROUP (branch `forge2/final` = forge2/severity + the hardening gate; not merged,
+  not pushed). The per-row rule below was proven unfair by an independent review and reproduced on Sonnet's verdict:
+  0.7473 as graded, 0.7078 with `u_widget_numbers` FIXED, 0.7747 with it made worse; count-once exemptions let an
+  absent or idle surface beat a working one with failures; a fired critical paid twice; weight-0 `k_v2_surfaces`
+  multiplied. Now (SPEC §4): reliability = max(0.25, Π over the 18 groups — every tier but E — of (1 − 0.10 × the
+  shortfall of the group's worst eligible row)); eligible = scored, weighted, critical not fired; vacuous and absent
+  rows count their 0; no ROOT_BLOCKS folding (it stays for the criticals and forge2_controls); cross-group effects of
+  one cause are not folded. Verdict block `{multiplier, k, floor, floored, defects [{tier, check, score, factor}],
+  folded {tier: [check]}, priced_as_critical}`. Recomposed (old per-row -> per group): Sol hardened 0.8247 -> 0.8248,
+  Sonnet hardened 0.7473 -> 0.7450, Sol lean 0.7564 -> 0.6990 (its two vacuous R rows now count), Haiku 0.0845 ->
+  0.0998 (off the floor, 14 groups); the six g3 reference verdicts keep reliability 1. Monotonicity sweep (every
+  non-E row over 0/.25/.5/.75/.9/1): 0 violating moves on all ten verdicts, the per-row rule 10/14/11/5 on the
+  pilots. Fixtures for the desktop and the site: scratchpad `sev2-out/recomposed-<name>.json` (the earlier `sev-out/`
+  ones carry the retired block). Also: deploy-readiness poor-practice findings are no longer priced in
+  k_manifest_semantics (M3 "every consumer queue is pushed to" is not in the contract; M9/P3 are, and stay priced by
+  k_dashboard_widget / l_scopes) — no kept verdict moves (M3 passes on all ten).
+- 2026-10-10 13:5x ADMIN PICTURE (branch `forge2/admin-shot` off `forge2/severity` dab70b928; not merged, not pushed).
+  Every scored run now carries pictures of its UI Kit admin panel (report-only, never graded): the admin lane keeps the
+  ForgeDoc tree as the panel loaded and after the admin's save (never a render after a rotate click), and the ui
+  section draws them with `bench/forge2_uikit_shot.mjs` into `forge-shots/admin-panel-{light,dark}.png` and
+  `admin-panel-saved-{light,dark}.png`, listed in `verdict.json` `shots` and the contact sheet. Caption: "Admin panel (UI
+  Kit): the app's component tree, drawn by the benchmark's UI Kit host. Jira draws the same tree with its own
+  components." `obs.admin.shot` = {written, files, unknown (component types drawn as labelled boxes), masked, caption,
+  reason}. No image (and the reason) when the page did not render. Golden on 0123456789abcdef: 0.9907 before and after,
+  99/99 rows identical in every field. Open for the desktop (not edited here): `benchShots.ts` FORGE_PICKS has no
+  admin pick, so only the contact sheet carries the panel until it gains `^admin-panel(-saved)?-(light|dark)\.png$`.
+- 2026-10-10 12:17 RELIABILITY (branch `forge2/severity`, off `forge2/prerun` 9ac3ed765; not merged, not pushed). Owner's
+  acceptance rule: Sonnet 5.5 near 0.9 (0.9628 with 13 failed guarantee rows) is not discriminating. SPEC §4 now:
+  `final = earned × critical multiplier × reliability`, reliability = max(0.25, Π (1 − 0.10 × counted shortfall)) over
+  the scored rows outside E below 1; unavailable and vacuous rows never count; a row counts only the shortfall beyond
+  its failed ROOT_BLOCKS root's; one missing surface counts once. Kept verdicts recomposed from their stored rows
+  (`score_forge2.py --recompose <verdict.json>`, no probe): Sol 0.9618 -> 0.7564, Sonnet-hardened 0.9628 -> 0.7473,
+  Haiku 0.3378 -> 0.0845 (the floor), the reference's kept verdict 0.9907 -> 0.9907 (reliability 1). Sol and Haiku were
+  graded by the pre-hardening scorer and probe: their rows are not the hardened scorer's. A run scored by an app
+  bundle that predates this branch composes by the old rule: recompose its verdict. Open (panel work, not done here):
+  the desktop's ScoringDetail prints the recorded composition inputs (inner, excellence, critical multiplier) and no
+  reliability, so a 0.96 inner beside a 0.75 final reads unexplained until it shows the verdict's `reliability`
+  block. `rawScore` carries reliability, so `score` is still the capped `rawScore` (the site's side of a publish was
+  not read here).
+- 2026-10-10 01:2x INTEGRATED on branch `forge2/integrate` (11 package branches merged, every integration note applied
+  or listed in the integrator's report). Golden v2 on scoring seed 0123456789abcdef: 0.6649 -> 0.9573 (no critical; v2
+  0.7229 of 0.75), scoring wall ~436 s per seed alone. Untouched starter: 0.3716 under the old 0.599 band -> band
+  lowered to 0.30 (SPEC §4/§5 conflict) -> 0.2694 through `run_build --forge2` (e2e: 5/6 PASS; the 6th compared a
+  contract I edited mid-run). Open: golden 'added +<points>' after a field switch (contract wording), v1 economy
+  optimums without 2.0 work, R3's 900 s stimulus blocked by the panel read on some seeds, 2.0 mutants, 3-seed gate,
+  calibration, sb7.x/forge manifests to refreeze after P11's shared bench edits.
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
 - 17:3x SITE WORDING FIXES: forge2-era 85bc900 + 7893de4 + 315f905 + f002ad7 (58 findings = 36 defects, 35 applied; the one

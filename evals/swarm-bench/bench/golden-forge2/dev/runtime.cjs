@@ -32,19 +32,41 @@ async function bundle(outDir) {
 
 function createKvs(manifest) {
   const plain = new Map();
+  const secrets = new Map();
   const entities = new Map(); // name -> Map(key -> value)
   const defs = Object.fromEntries((manifest.app.storage?.entities ?? []).map((e) => [e.name, e]));
   const ops = [];
   const typeOk = (t, v) => (t === 'any' ? true : t === 'string' ? typeof v === 'string' : t === 'boolean' ? typeof v === 'boolean' : t === 'integer' ? Number.isInteger(v) && v >= -2147483648 && v <= 2147483647 : t === 'float' ? typeof v === 'number' : false);
   const err = (status, code, message) => ({ status, json: { code, message } });
+  const faults = []; // { match(op, body), times }: the next matching op fails with 500 (a cut-off invocation)
   function handle(op, body) {
     ops.push({ op, body });
+    const fault = faults.find((f) => f.times > 0 && f.match(op, body));
+    if (fault) {
+      fault.times -= 1;
+      return err(500, 'INTERNAL_SERVER_ERROR', 'scripted storage failure');
+    }
     switch (op) {
       case '/api/v1/get':
         return plain.has(body.key) ? { status: 200, json: { key: body.key, value: plain.get(body.key) } } : err(404, 'KEY_NOT_FOUND', 'not found');
       case '/api/v1/set':
+        if (body.options?.keyPolicy === 'FAIL_IF_EXISTS' && plain.has(body.key)) return err(409, 'KEY_CONFLICT', `${body.key} exists`);
         plain.set(body.key, body.value);
         return { status: 204 };
+      case '/api/v1/secret/get':
+        return secrets.has(body.key) ? { status: 200, json: { key: body.key, value: secrets.get(body.key) } } : err(404, 'KEY_NOT_FOUND', 'not found');
+      case '/api/v1/secret/set':
+        secrets.set(body.key, body.value);
+        return { status: 204 };
+      case '/api/v1/query': {
+        const w = body.where?.[0];
+        let rows = [...plain].filter(([k]) => !w || (w.condition === 'BEGINS_WITH' ? k.startsWith(w.values[0]) : true)).sort(([a], [b]) => (a < b ? -1 : 1));
+        const start = body.cursor ? Number(body.cursor) : 0;
+        const limit = Math.min(body.limit ?? 10, 100);
+        const page = rows.slice(start, start + limit);
+        const more = start + page.length < rows.length;
+        return { status: 200, json: { data: page.map(([key, value]) => ({ key, value })), ...(more ? { cursor: String(start + page.length) } : {}) } };
+      }
       case '/api/v1/delete':
         return plain.delete(body.key) ? { status: 204 } : err(404, 'KEY_NOT_FOUND', 'not found');
       case '/api/v1/entity/get': {
@@ -60,7 +82,7 @@ function createKvs(manifest) {
         }
         if (!entities.has(body.entityName)) entities.set(body.entityName, new Map());
         const m = entities.get(body.entityName);
-        if (body.options?.keyPolicy === 'FAIL_IF_EXISTS' && m.has(body.key)) return err(409, 'KEY_ALREADY_EXISTS', `${body.key} exists`);
+        if (body.options?.keyPolicy === 'FAIL_IF_EXISTS' && m.has(body.key)) return err(409, 'KEY_CONFLICT', `${body.key} exists`);
         m.set(body.key, body.value);
         return { status: 204 };
       }
@@ -90,7 +112,8 @@ function createKvs(manifest) {
     }
   }
   const writes = () => ops.filter((o) => /\/(set|delete|transaction)$|batch\/(set|delete)/.test(o.op));
-  return { plain, entities, ops, writes, handle };
+  const entityWrites = () => ops.filter((o) => /^\/api\/v1\/entity\/(set|delete)$/.test(o.op));
+  return { plain, secrets, entities, ops, writes, entityWrites, faults, handle };
 }
 
 // Default scripted model: explains with words only and names the first three changes it was sent.
@@ -118,7 +141,7 @@ function defaultLlmReply(req) {
   };
 }
 
-function createPlatform({ site, manifest = loadManifest() }) {
+function createPlatform({ site, manifest = loadManifest(), clock = null }) {
   const kvs = createKvs(manifest);
   // Forge LLM (scripted, like the dev site's): models the list() answer, then each chat() takes the next
   // scripted reply (a function of the request) or a default that calls report_scope.
@@ -176,13 +199,13 @@ function createPlatform({ site, manifest = loadManifest() }) {
       return toResponse({ status: 200, json: { data: { ecosystem: { publishRealtimeChannel: { eventId: String(realtime.published.length), eventTimestamp: new Date().toISOString() } } } } });
     }
     if (target.type === 'fpp' && target.remote === 'stargate' && p.startsWith('/webhook/queue/publish/')) {
-      for (const e of body.payload) queue.push({ queueName: body.queueName, jobId: body.jobId, eventId: crypto.randomUUID(), body: e.body });
+      for (const e of body.payload) queue.push({ queueName: body.queueName, jobId: body.jobId, eventId: crypto.randomUUID(), body: e.body, notBefore: Date.now() + (e.delayInSeconds ?? 0) * 1000 });
       queuePushes.push(body);
       return toResponse({ status: 201, json: {} });
     }
     if (target.type === 'fpp' && target.remote === 'jira') {
       if (target.provider === 'user' && !store?.aaid) return toResponse({ status: 401, json: { code: 'NEEDS_AUTHENTICATION_ERR', message: 'asUser() has no user in this invocation' } });
-      return toResponse(site.handle({ as: target.provider === 'user' ? 'user' : 'app', accountId: store?.aaid, method: (init.method ?? 'GET').toUpperCase(), path: p, body }));
+      return toResponse(site.handle({ as: target.provider === 'user' ? 'user' : 'app', accountId: store?.aaid, method: (init.method ?? 'GET').toUpperCase(), path: p, body, kind: store?.moduleType }));
     }
     return toResponse({ status: 501, json: { code: 'NOT_MODELLED', message: `${JSON.stringify(target)} ${p}` } });
   };
@@ -233,7 +256,11 @@ function createPlatform({ site, manifest = loadManifest() }) {
     let guard = 0;
     while (queue.length) {
       if ((guard += 1) > 5000) throw new Error('queue never drained');
+      // Deliver the earliest due event; a retry request or a delayed push is due after its wait, and the
+      // virtual clock jumps over it (as the benchmark's kit does).
+      queue.sort((a, b) => (a.notBefore ?? 0) - (b.notBefore ?? 0));
       const ev = queue.shift();
+      if ((ev.notBefore ?? 0) > Date.now()) clock?.set(ev.notBefore);
       const attempt = (ev.attempt ?? 0) + 1;
       const event = { body: ev.body, queueName: ev.queueName, jobId: ev.jobId, eventId: ev.eventId, ...(attempt > 1 ? { retryContext: { retryCount: attempt - 1, retryReason: ev.retryReason } } : {}) };
       let result;
@@ -246,8 +273,8 @@ function createPlatform({ site, manifest = loadManifest() }) {
       const d = { eventId: ev.eventId, attempt, body: ev.body, result, error: error?.message };
       deliveries.push(d);
       onDeliver?.(d);
-      if (result && result._retry) queue.push({ ...ev, attempt, retryReason: result.retryOptions.retryReason, retryAfter: result.retryOptions.retryAfter });
-      else if (error) queue.push({ ...ev, attempt });
+      if (result && result._retry) queue.push({ ...ev, attempt, retryReason: result.retryOptions.retryReason, retryAfter: result.retryOptions.retryAfter, notBefore: Date.now() + result.retryOptions.retryAfter * 1000 });
+      else if (error) queue.push({ ...ev, attempt, notBefore: Date.now() + 60000 });
     }
     return deliveries;
   }
