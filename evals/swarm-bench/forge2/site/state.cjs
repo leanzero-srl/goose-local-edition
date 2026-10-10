@@ -18,6 +18,36 @@ function deliveryPlan(pack) {
   return seq.sort((a, b) => a.slot - b.slot);
 }
 
+// The deliveries the drive leaves queued together (SPEC §2.8 S1: deliveries of one event, or of one issue, run
+// concurrently only while both are pending): a duplicate with every delivery since its original, and the two halves of
+// a permuted same-issue pair (the later change delivered first). Per plan index, the index of its batch's last delivery
+// (null outside every batch). Derived from the plan alone, with no draw, so every pack stays as it was.
+function deliveryBatches(plan, liveById) {
+  const spans = [];
+  const original = new Map();
+  let previous = null;
+  plan.forEach((d, i) => {
+    if (d.duplicate) {
+      if (original.has(d.changelogId)) spans.push([original.get(d.changelogId), i]);
+      return;
+    }
+    original.set(d.changelogId, i);
+    const a = previous === null ? null : liveById.get(plan[previous].changelogId);
+    const b = liveById.get(d.changelogId);
+    if (a && a.issueId === b.issueId && Date.parse(a.created) > Date.parse(b.created)) spans.push([previous, i]);
+    previous = i;
+  });
+  const end = plan.map(() => null);
+  let open = null;
+  const close = () => { if (open) for (let k = open[0]; k <= open[1]; k++) end[k] = open[1]; };
+  for (const s of spans.sort((x, y) => x[0] - y[0] || x[1] - y[1])) {
+    if (open && s[0] <= open[1]) open[1] = Math.max(open[1], s[1]);
+    else { close(); open = [...s]; }
+  }
+  close();
+  return end;
+}
+
 function createState(pack) {
   const base = Date.parse(pack.now);
   const statusById = new Map(pack.statuses.map((s) => [s.id, s]));
@@ -26,6 +56,7 @@ function createState(pack) {
   const liveIndex = new Map(liveOrder.map((id, i) => [id, i]));
   const liveById = new Map(pack.live.map((c) => [c.changelogId, c]));
   const plan = deliveryPlan(pack);
+  const batchEnd = deliveryBatches(plan, liveById);
   // Changelog entries the world writes take ids above every pack id: unique, and increasing among themselves.
   const worldIdBase = (Math.floor(Math.max(0, ...[...pack.history, ...pack.live].map((h) => Number(h.changelogId))) / 1_000_000) + 1) * 1_000_000;
 
@@ -137,9 +168,10 @@ function createState(pack) {
   };
   const nextDelivery = () => {
     if (st.cursor >= plan.length) return null;
-    const d = plan[st.cursor++];
+    const i = st.cursor++;
+    const d = plan[i];
     const applied = applyThrough(d.changelogId);
-    return { ...d, applied, change: liveById.get(d.changelogId), issue: st.issues.get(liveById.get(d.changelogId).issueId), remaining: plan.length - st.cursor };
+    return { ...d, batchEnd: batchEnd[i], applied, change: liveById.get(d.changelogId), issue: st.issues.get(liveById.get(d.changelogId).issueId), remaining: plan.length - st.cursor };
   };
 
   const canBrowse = (accountId, issue) => accountId === pack.appAccountId
@@ -272,7 +304,7 @@ function createState(pack) {
   };
 
   return {
-    pack, st, plan, statusById, userById,
+    pack, st, plan, batchEnd, statusById, userById,
     now, advance, advanceTo, reset, applyThrough, applyUntil, flush, nextDelivery, cached, setWorldHook,
     issueByIdOrKey: (k) => st.issues.get(String(k)) ?? st.byKey.get(String(k).toUpperCase()),
     allIssues: () => [...st.issues.values()],
@@ -289,4 +321,4 @@ function createState(pack) {
   };
 }
 
-module.exports = { createState, deliveryPlan };
+module.exports = { createState, deliveryPlan, deliveryBatches };

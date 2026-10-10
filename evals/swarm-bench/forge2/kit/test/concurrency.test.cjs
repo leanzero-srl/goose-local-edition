@@ -3,8 +3,9 @@
 // pinned runtime wrapper, the sandbox fence, the forge2 site) plus the pure schedule and KVS index underneath:
 //   S1  consumer deliveries that carry the same event or name the same issue run at the same time under the proxy's
 //       READS-FIRST schedule: a check-then-act consumer double-posts, a FAIL_IF_EXISTS claim posts once; the pair is
-//       visible in the delivery records, the invocation results, emu.concurrency and the KVS call log; concurrency
-//       keys and unrelated deliveries keep one at a time; the interleaving is the same on every run.
+//       visible in the delivery records, the invocation results, emu.concurrency and the KVS call log; unrelated
+//       deliveries keep one at a time, a concurrency key exempts no pair; the interleaving is the same on every run;
+//       the site's plan marks the batches the drives leave queued together (deliverNext's batchEnd).
 //   S2  kvs.query / entity queries miss a write younger than 5 virtual s (get, transaction conditions and FAIL_IF_EXISTS
 //       see it at once); after 5 virtual s the query sees it.
 // Run: node --test evals/swarm-bench/forge2/kit/test/concurrency.test.cjs
@@ -15,7 +16,8 @@ const path = require('path');
 const { ensureKit, scratch } = require('./helpers.cjs');
 
 const KIT = path.resolve(__dirname, '..');
-const SITE = path.resolve(__dirname, '..', '..', 'site', 'site.cjs');
+const SITE_DIR = path.resolve(__dirname, '..', '..', 'site');
+const SITE = path.join(SITE_DIR, 'site.cjs');
 const SEED = '0123456789abcdef';
 const APP_ID = 'ari:cloud:ecosystem::app/00000000-0000-0000-0000-000000000000';
 const { createKvs, QUERY_LAG_MS } = require(path.join(KIT, 'lib', 'kvs.cjs'));
@@ -354,7 +356,7 @@ test('S1: a FAIL_IF_EXISTS claim posts exactly once under the same duplicate pai
   assert.strictEqual(commentsOn(w.site, issueId, `claim ${changelogId}`).length, 1);
 });
 
-test('S1: two changes of one issue pair as same-issue; deliveries of different issues and a concurrency key of 1 stay one at a time', { timeout: 180_000 }, async () => {
+test('S1: two changes of one issue pair as same-issue; deliveries of different issues stay one at a time; a concurrency key of 1 exempts no pair', { timeout: 180_000 }, async () => {
   const w = await world();
   const issues = plan(w.site);
   const [, two] = issues.slice(2).find(([, ids]) => ids.length >= 2);
@@ -369,14 +371,56 @@ test('S1: two changes of one issue pair as same-issue; deliveries of different i
   const apart = await w.emu.drainQueues();
   assert.deepStrictEqual(apart.map((d) => d.concurrent ?? null), [null, null]);
   assert.ok(Date.parse(apart[1].t) >= Date.parse(apart[0].t1), JSON.stringify(apart.map((d) => [d.t, d.t1])));
-  // A duplicate pair whose pushes share a concurrency key of limit 1: one at a time, so even check-then-act posts once.
+  // A duplicate pair whose pushes share a concurrency key of limit 1 still starts together (SPEC §2.8: the key is not
+  // applied, contract §8), so the check-then-act consumer posts twice; only a conditional claim makes it exactly-once.
   const [dupIssue, [dupChange]] = issues[12];
   setMode(w.emu, { queue: 'cc-naive', concurrency: { key: 'cc', limit: 1 } });
   await w.emu.deliverProductEvent(dupChange);
   await w.emu.deliverProductEvent(dupChange);
   const keyed = await w.emu.drainQueues();
-  assert.deepStrictEqual(keyed.map((d) => [d.concurrent ?? null, d.result]), [[null, { posted: true }], [null, { skipped: true }]]);
-  assert.strictEqual(commentsOn(w.site, dupIssue, `naive ${dupChange}`).length, 1);
+  assert.deepStrictEqual(keyed.map((d) => [d.concurrent?.reason, d.result]), [['same-event', { posted: true }], ['same-event', { posted: true }]]);
+  assert.strictEqual(commentsOn(w.site, dupIssue, `naive ${dupChange}`).length, 2);
+});
+
+test('the site plan batches a duplicate with its original and a permuted same-issue pair; deliverNext carries batchEnd', () => {
+  const { facts } = require(path.join(SITE_DIR, 'fixtures.cjs'));
+  const { deliveryPlan, deliveryBatches } = require(path.join(SITE_DIR, 'state.cjs'));
+  const pack = facts(SEED, { scoring: true });
+  const plan = deliveryPlan(pack);
+  const liveById = new Map(pack.live.map((c) => [c.changelogId, c]));
+  const end = deliveryBatches(plan, liveById);
+  assert.strictEqual(end.length, plan.length);
+  const starts = end.map((e, i) => (e !== null && (i === 0 || end[i - 1] !== e) ? i : null)).filter((i) => i !== null);
+  for (const s of starts) for (let k = s; k <= end[s]; k++) assert.strictEqual(end[k], end[s], `slot ${k} belongs to the batch ending at ${end[s]}`);
+  // Every duplicate sits in the batch of its original.
+  const original = new Map();
+  plan.forEach((d, i) => { if (!d.duplicate) original.set(d.changelogId, i); });
+  for (const [i, d] of plan.entries()) {
+    if (!d.duplicate) continue;
+    const o = original.get(d.changelogId);
+    assert.ok(end[o] !== null && end[o] === end[i], `duplicate at ${i} batched with its original at ${o}`);
+  }
+  // Every permuted pair (consecutive non-duplicate deliveries out of creation order, as score_forge2's t_out_of_order
+  // reads them) is one batch, and names one issue.
+  const firsts = plan.map((d, i) => [d, i]).filter(([d]) => !d.duplicate);
+  let permuted = 0;
+  for (const [[a, i], [b, j]] of firsts.slice(1).map((x, k) => [firsts[k], x])) {
+    const ca = liveById.get(a.changelogId);
+    const cb = liveById.get(b.changelogId);
+    if (Date.parse(ca.created) <= Date.parse(cb.created)) continue;
+    permuted += 1;
+    assert.strictEqual(ca.issueId, cb.issueId);
+    assert.ok(end[i] !== null && end[i] === end[j], `permuted pair ${i},${j} batched`);
+  }
+  assert.ok(permuted >= 4 && starts.length >= permuted, `scoring plan: ${permuted} permuted pairs, ${starts.length} batches`);
+  // Outside a batch nothing is held.
+  assert.ok(end.filter((e) => e === null).length > plan.length / 2);
+  // The site's delivery carries it: the first batch's opening delivery names the batch's last slot.
+  const { createState } = require(path.join(SITE_DIR, 'state.cjs'));
+  const state = createState(pack);
+  let d = null;
+  for (let k = 0; k <= starts[0]; k++) d = state.nextDelivery();
+  assert.deepStrictEqual([d.slot, d.batchEnd], [starts[0], end[starts[0]]]);
 });
 
 test('S1: the interleaving is the same on every run (two fresh worlds, one seed)', { timeout: 240_000 }, async () => {

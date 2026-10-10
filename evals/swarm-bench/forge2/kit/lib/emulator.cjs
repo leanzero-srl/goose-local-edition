@@ -21,12 +21,14 @@
 // MAX_CONCURRENT_CONSUMERS. When drainQueues starts a consumer delivery, every other pending consumer delivery due by
 // then that carries the same event (a copy of the same queue event, or work pushed for the same product event: a
 // trigger-level duplicate) or names the same issue (its chain began with a product event of that issue) starts with
-// it, in delivery order, as far as the deliveries' own `concurrency: {key, limit}` allow. The group runs under the
-// proxy's deterministic READS-FIRST schedule (proxy.cjs). Each member's delivery record, invocation result and
-// invocation record carry `concurrent: {group, reason: 'same-event'|'same-issue', schedule, size, index, with:
-// [{index, eventId, invocationId}]}`; `emu.concurrency` lists every group with its first writes in commit order; a KVS
-// call the schedule held is logged `heldReadsFirst: true`. Unrelated deliveries and product-event triggers run one at
-// a time, as before. KVS queries are eventually consistent (S2, kvs.cjs).
+// it, in delivery order. A push's `concurrency: {key, limit}` does not exempt a pair (SPEC §2.8; contract §8 states
+// the difference from production, where a key would serialize them). The group runs under the proxy's deterministic
+// READS-FIRST schedule (proxy.cjs). Each member's delivery record, invocation result and invocation record carry
+// `concurrent: {group, reason: 'same-event'|'same-issue', schedule, size, index, with: [{index, eventId,
+// invocationId}]}`; `emu.concurrency` lists every group with its first writes in commit order; a KVS call the schedule
+// held is logged `heldReadsFirst: true`. Unrelated deliveries and product-event triggers run one at a time, as before.
+// A pair forms only from deliveries pending together: deliverNext's `batchEnd` (the site's plan) names the delivery
+// up to which the drive leaves the queues undrained. KVS queries are eventually consistent (S2, kvs.cjs).
 //   await emu.openSurface(page, { moduleKey, entry, theme, layout, asUser, extension })   (bridge-host.cjs)
 //   await emu.hostSave(page)
 //   emu.kvs.snapshot(); emu.log; emu.bridgeLog; emu.harnessMissing; emu.close()
@@ -441,24 +443,14 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     const issue = a.lineage?.originIssue;
     return issue && issue === b.lineage?.originIssue ? 'same-issue' : null;
   };
-  // async-events-api: `concurrency: {key, limit}` "limits the number of events that can be processed concurrently".
-  const keysAllow = (group) => {
-    const limits = new Map();
-    for (const e of group) {
-      const key = e.concurrency?.key;
-      if (key === undefined || key === null) continue;
-      if (!limits.has(key)) limits.set(key, []);
-      limits.get(key).push(Number(e.concurrency.limit));
-    }
-    return [...limits.values()].every((l) => l.length <= Math.min(...l));
-  };
   const runnable = (e) => e.kind !== 'trigger' && functions.some((f) => f.key === consumerFunction(consumerFor(e.queueName)));
-  // The deliveries that start with `ev`: due by `dueBy` and related to it, in delivery order (the list is sorted).
+  // The deliveries that start with `ev`: due by `dueBy` and related to it, in delivery order (the list is sorted). Their
+  // `concurrency` keys are not consulted (SPEC §2.8: a key does not exempt a pair; contract §8).
   function partnersOf(ev, dueBy) {
     const group = [ev];
     for (const p of queueState.pending) {
       if (group.length >= MAX_CONCURRENT_CONSUMERS || p.readyAt > dueBy) break;
-      if (runnable(p) && relation(ev, p) && keysAllow([...group, p])) group.push(p);
+      if (runnable(p) && relation(ev, p)) group.push(p);
     }
     return group.slice(1);
   }
@@ -532,7 +524,10 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
       changelog: { id: change.id, items: change.items }, associatedUsers: [{ accountId: change.authorId }],
     };
     const results = await runTriggers(event, { originChange: change.id, originIssue: issueOf(delivery.issue) });
-    return { changelogId: change.id, duplicate: Boolean(delivery.duplicate), slot: delivery.slot, event, triggers: results, invocations: results };
+    // `batchEnd`: the plan slot up to which the drive leaves the queues undrained, so this delivery's queue work and a
+    // later duplicate or permuted same-issue partner are pending together (S1); null outside a batch.
+    return { changelogId: change.id, duplicate: Boolean(delivery.duplicate), slot: delivery.slot, batchEnd: delivery.batchEnd ?? null,
+      event, triggers: results, invocations: results };
   }
   // The issue a product event names (S1 relates the queue work it leads to by it).
   const issueOf = (issue) => (issue?.id === undefined || issue?.id === null ? null : String(issue.id));

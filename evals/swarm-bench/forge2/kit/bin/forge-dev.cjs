@@ -19,7 +19,9 @@ const USAGE = `forge-dev <command>   (run from the app directory; $FORGE_SITE_UR
         user-led: --as defaults to the dev viewer). For a trigger, consumer or action, --payload is the
         event JSON (a consumer gets it as the AsyncEvent body, an action as its inputs).
   events [--limit N]          deliver the dev site's next N issue updates (default 1) to your trigger(s),
-                              then drain the queues
+                              then drain the queues; a redelivery or a second change of one issue that arrives
+                              before the first one's queue work ran is delivered with it (past N), and their
+                              consumers run concurrently, as on the scoring site
   scheduled <moduleKey>       run a scheduled trigger once, then drain the queues
   serve <moduleKey> [--edit] [--sprint <id>] [--config <json>] [--theme light|dark] [--as <accountId>]
         serve a Custom UI module with the bridge and dashboard host; prints its URL and runs until stopped.
@@ -357,9 +359,26 @@ async function main() {
     }
     if (cmd === 'events') {
       const limit = Number(opt('limit') ?? 1);
-      for (let i = 0; i < limit; i++) {
+      const drain = async () => {
+        const ds = await emu.drainQueues();
+        for (const x of ds) consumed.add(x.eventId);
+        printDeliveries(ds);
+        for (const id of [...new Set(ds.map((x) => x.invocationId).filter(Boolean))]) {
+          const calls = emu.log.filter((c) => c.invocationId === id);
+          if (calls.length) { console.log(`   calls of ${id}:`); printCalls(calls); }
+        }
+      };
+      // An update whose queue work the scoring drive leaves pending until a later, related update (a redelivery, or the
+      // other half of a pair of changes to one issue) is followed by the rest of that batch before the queues drain, so
+      // their consumers run together as they do on the scoring site — past --limit when the batch is still open.
+      let open = false;
+      for (let i = 0; i < limit || open; i++) {
         const d = await emu.deliverNext();
-        if (!d) { console.log('no more issue updates on the dev site (`reset` replays them)'); break; }
+        if (!d) {
+          console.log('no more issue updates on the dev site (`reset` replays them)');
+          if (open) await drain();
+          break;
+        }
         for (const w of d.world ?? []) {
           console.log(`### ${w.event.eventType} ${w.event.issue?.key ?? ''}`);
           for (const t of w.invocations) printInvocation(t, 'trigger');
@@ -368,13 +387,9 @@ async function main() {
         console.log(`### update ${d.event.issue.key} changelog ${d.changelogId}${d.duplicate ? ' (redelivery)' : ''}: ${items}`);
         if (!d.triggers.length) console.log('   no trigger subscribes to avi:jira:updated:issue');
         for (const t of d.triggers) printInvocation(t, 'trigger');
-        const ds = await emu.drainQueues();
-        for (const x of ds) consumed.add(x.eventId);
-        printDeliveries(ds);
-        for (const id of [...new Set(ds.map((x) => x.invocationId).filter(Boolean))]) {
-          const calls = emu.log.filter((c) => c.invocationId === id);
-          if (calls.length) { console.log(`   calls of ${id}:`); printCalls(calls); }
-        }
+        open = Number.isInteger(d.batchEnd) && d.batchEnd > d.slot;
+        if (open) { console.log('   queued: the next update arrives before this one\'s queue work runs; their consumers run concurrently'); continue; }
+        await drain();
       }
       await saveState(emu, consumed);
       return 0;

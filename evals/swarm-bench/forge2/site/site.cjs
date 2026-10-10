@@ -231,7 +231,7 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
       project: render.fieldValue('project', f.project), reporter: userRef(f.reporter), assignee: userRef(f.assignee),
       updated: render.jiraDate(f.updated), status: render.fieldValue('status', f.status) } };
   };
-  const delivery = (d) => d && ({ slot: d.slot, duplicate: d.duplicate, remaining: d.remaining, applied: d.applied,
+  const delivery = (d) => d && ({ slot: d.slot, duplicate: d.duplicate, batchEnd: d.batchEnd ?? null, remaining: d.remaining, applied: d.applied,
     change: { id: d.change.changelogId, created: d.change.created, authorId: d.change.authorId,
       items: d.change.items.map(({ field, fieldId, from, fromString, to, toString }) => ({ field, fieldId, from: from === '' ? null : from, fromString: fromString === '' ? null : fromString, to: to === '' ? null : to, toString: toString === '' ? null : toString })) },
     issue: eventSnapshot(d.issue) });
