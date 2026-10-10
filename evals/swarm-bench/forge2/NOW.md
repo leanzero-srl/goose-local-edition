@@ -110,6 +110,18 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
   calibration, sb7.x/forge manifests to refreeze after P11's shared bench edits.
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 20:55 SECOND SESSION LIMIT (reset 20:30) cost ~1.5 h: I was not invoked between ~19:05 and 20:52. MAP: (a) APP 3.0.109
+  BUILT + NOTARIZED at 19:21 (~/Projects/goose-rel/ui/desktop/out/make/Goose-Swarm-3.0.109.dmg, log ">>> DONE") — NOT
+  yet installed, no GitHub release yet; (b) SITE agent died at the screenshot step with forge2-era clean at 380c6d05
+  (6910a9a3 = synced at the FINAL scorer a9aa59a4e + real desktop bodies as the fixture; 81223c9f; 380c6d05 = its
+  refuter's five corrections), both builds green, servers left up (pids 27249, 30698, 32585) -> resumed by SendMessage
+  to finish screenshots + give the master/deploy/register commands; (c) nothing pushed to site master, nothing
+  registered, queue still blocked, no chain running. NEXT, in order: install 3.0.109 (quit by pid, rm old bundle, ditto,
+  relaunch with LEANZERO_BENCH_PUBLISH_URL=http://127.0.0.1:8973 + CDP 9897), verify version + bundled forge-2.0 scorer,
+  GitHub release v3.0.109; site -> master -> deploy -> `register-forge2 add --live`; restart catalog_proxy from
+  loop-state/tools with FORGE_CURRENT=forge-2.0; unblock Sonnet only, `start_chain.sh`, 10-min vigil; after its publish
+  verify the run page, flip --promote-run, post the 1.0 note (scratchpad/refuter-note/corrected-note.txt), unblock the
+  other 25.
 - 18:5x FINAL GATE COMPLETE on ee4dd033d (= main's forge2 payload; nothing committed, calibration did NOT move: the five
   ratios are call-for-call the 7ed584279 ones, tops stay 2.58 / 2.0, CALIB 34550b5d…): reference 1.0000 x5 + --reference
   multi-seed PASS; starter 0.1304; MUTANTS 10/10 judge PASS (r1 .8666, r2 .9147, r3-wait .8733, r3-race .4182 crit, r4
