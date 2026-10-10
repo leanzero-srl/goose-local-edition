@@ -33,7 +33,7 @@ export function validateSettings(input) {
   if (share === null || share < 10 || share > 90) return { error: 'Background share (%) must be a whole number from 10 to 90.' };
   const budget = wholeNumber(input?.tokenBudget);
   if (budget === null) return { error: 'Daily AI token budget must be a whole number of 0 or more.' };
-  const ai = input?.aiEnabled;
+  const ai = input?.aiEnabled === 'true' ? true : input?.aiEnabled === 'false' ? false : input?.aiEnabled;
   if (typeof ai !== 'boolean') return { error: 'AI explanations enabled must be on or off.' };
   const group = input?.commentGroup === undefined || input?.commentGroup === null ? '' : String(input.commentGroup).trim();
   return { settings: { backgroundShare: share, aiEnabled: ai, tokenBudget: budget, commentGroup: group } };
