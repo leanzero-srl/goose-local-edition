@@ -227,6 +227,9 @@ function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clo
     req.on('end', async () => {
       const raw = Buffer.concat(chunks).toString('utf8');
       let timing = {};
+      // The group's turn (S1) is freed when this handler is done, whether or not the caller is still there to read the
+      // answer: a process killed at its limit closes the socket before its queued request is served.
+      let turn = null;
       const send = (status, body, headers = {}) => {
         res.writeHead(status, { 'content-type': 'application/json', ...timing, ...headers });
         res.end(body === undefined ? '' : typeof body === 'string' ? body : JSON.stringify(body));
@@ -265,13 +268,12 @@ function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clo
         clock.observe(tv);
         timing = { [VCLOCK_HEADER]: String(tv + vcostMs) };
         const seat = inv.seat;
-        const turn = seat ? await seat.group.turn(seat.member, { tv, write: route === KVS_ROUTE && !KVS_READS.has(target) }) : null;
+        if (seat) turn = await seat.group.turn(seat.member, { tv, write: route === KVS_ROUTE && !KVS_READS.has(target) });
         if (turn?.dropped) {
           record({ invocationId: inv.id, moduleType: inv.moduleType, moduleKey: inv.moduleKey, service: route === KVS_ROUTE ? 'kvs' : 'platform', provider: 'app',
             method: req.method, path: target ?? route, status: 503, droppedAtEnd: 'the invocation ended before its turn' }, tv);
           return send(503, { code: 'INVOCATION_ENDED', message: 'the invocation ended before this request was served' });
         }
-        if (turn) { res.once('finish', turn.done); res.once('close', turn.done); }
         if ((m = route.match(/^\/fpp\/provider\/(app|user|none)\/remote\/(jira|confluence|bitbucket|stargate)(?:\/account\/(.+))?$/))) {
           const [, provider, remote] = m;
           if (remote === 'stargate') {
@@ -360,6 +362,8 @@ function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clo
         return send(501, { code: 'EMULATOR_NOT_MODELLED', message: `proxy route ${route}` });
       } catch (e) {
         send(500, { code: 'PROXY_CRASH', message: String(e.message) });
+      } finally {
+        turn?.done();
       }
     });
   });
