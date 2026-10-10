@@ -43,7 +43,9 @@ an interpretation the contract (P6), the oracle (P8) and the probe (P9) must mat
   signed but malformed body). The handler returns `{outputKey}` AND the dynamic shape (`statusCode`, `body`,
   `headers`) so either host reads it. "Deployed to <env>" = `deployedEnvs` on every ledger row of the issue, shown in
   the sprint ledger's extra column `th[data-col="deployed"]`. A valid event before the migration completes is
-  queued (still 202) and applied by the consumer once it has.
+  queued (still 202) and applied by the consumer once it has. "Rows written later for that issue carry it too"
+  (contract §14; the gate, 2026-10-10: 128 of 300 scoring packs write such a row): each deployment is kept per issue
+  under `deployed:<issueId>:<environment>`, set before the issue's rows are marked and read by every later row.
 - **R8:** an LLM 429 (the SDK exposes no Retry-After) backs off 20 s, 40 s, … server-side; the page gets an error
   with `retryAfter`, never an auto-retry. Cache key = the exact prompt input (viewer-visible data only), 10 minutes.
 - **R9:** `index.js` (bridge + plain DOM, ~97 KB) + `index.css` paint the first data after one invoke; React

@@ -291,6 +291,11 @@ async function main() {
   const ts2 = now();
   const res2 = await ci({ 'X-Lz-Timestamp': [ts2], 'X-LZ-SIGNATURE': [sign(secret, ts2, b2)] }, b2);
   ok(res2.statusCode === 202 && [...ledger(platform).values()].filter((r) => r.issueId === target.issueId).every((r) => r.deployedEnvs === 'production,staging'), 'case-varied header names are accepted');
+  // contract §14: "rows written later for that issue carry it too"
+  const deployed = site.issueById.get(target.issueId);
+  const laterEv = site.update(deployed.key, { sprints: deployed.sprints.includes(11) ? deployed.sprints.filter((s) => s !== 11) : [...deployed.sprints, 11] });
+  await deliver(laterEv);
+  eq([...ledger(platform).values()].find((r) => r.changeId === laterEv.changelog.id && r.sprintId === '11')?.deployedEnvs, 'production,staging', `a row written after the deployments carries them too (${deployed.key})`);
 
   // ===== R8: Forge LLM ==============================================================================
   const explain = (user) => platform.resolver('jira:sprintAction', 'scope-sprint-ledger', 'explain', {}, { aaid: user.accountId, extension: sprintExt('11') });
