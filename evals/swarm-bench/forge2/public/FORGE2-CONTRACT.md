@@ -8,10 +8,9 @@ The harness upgrades the installation from v1 to your v2 over v1's stored data (
 virtual hours on a seeded site (events, queues, scheduled runs, every surface as different people, Rovo, CI, admin
 actions, a changing world) and grades it by running it. Nothing is deployed.
 
-**Scale** (scoring sites; the dev site has the same shape and another seed): 3 projects; 4 scrum boards, 2 estimating
-with one field and 2 with another (field ids vary per seed); 6 active sprints, 2 future, 6 closed; about 1,000
-issues, about 300 of them in active sprints; about 200 relevant changes and about 800 irrelevant issue updates over the
-6 scored hours.
+**Scale**: 3 projects; 4 scrum boards, 2 estimating with one field and 2 with another (field ids vary per seed); 6
+active sprints, 2 future, 6 closed; about 1,000 issues, about 300 of them in active sprints; about 200 relevant changes
+and about 800 irrelevant issue updates over the 6 scored hours.
 
 ## 1. The numbers
 
@@ -62,11 +61,10 @@ action earns nothing.
 
 ## 3. Backend behaviour
 
-- v1's ledger holds the changes of each active sprint's first 2 days (§9). After the upgrade the harness runs your
-  scheduled triggers at virtual hour 0, before any update, then once per virtual hour. The first run starts the
-  backfill of every change since each active sprint started that the ledger lacks, including changes of issues that
-  have since left every sprint; by the first virtual hour mark `scope-ledger` holds them all (v1's own rows: by §9's
-  2-hour mark).
+- After the upgrade the harness runs your scheduled triggers at virtual hour 0, before any update, then once per
+  virtual hour. The first run starts the backfill of every change since each active sprint started that the ledger
+  lacks, including changes of issues that have since left every sprint; by the first virtual hour mark `scope-ledger`
+  holds them all (v1's own rows: by §9's 2-hour mark).
 - Issue updates keep the ledger current: sprint changes add ledger rows; estimate changes move the numbers. Updates
   that touch neither do no Jira or queue work (storage reads are fine).
 - Product events can arrive more than once and out of order, and some never arrive. Forge runs consumer invocations
@@ -101,11 +99,13 @@ context (two widgets on one dashboard can show different boards):
 - At 380 px wide nothing scrolls horizontally and no number is clipped or truncated (long names may end in an
   ellipsis).
 - Live: after ledger rows are written, an open widget shows the new numbers without a reload, through Forge Realtime
-  (`@forge/realtime` in the backend, the bridge's `realtime` in the widget) — no polling. A `publishGlobal` reaches the
-  `subscribeGlobal` subscriptions on its channel; a `publish` reaches `subscribe` subscriptions of the same module
-  context and is accepted only from resolvers (never from background work, §10). Channel names are yours; realtime
-  tokens are optional, but an event reaches a subscription only when neither has a token or both have tokens with the
-  same claims. Global channels reach every user of the app, so payloads carry sprint ids only.
+  (`@forge/realtime` in the backend, the bridge's `realtime` in the widget) — no polling. No virtual time passes
+  between a publish and the widget's re-read: announce writes once they are 5 virtual seconds old (§3), or read them by
+  key. A `publishGlobal` reaches the `subscribeGlobal` subscriptions on its channel; a `publish` reaches `subscribe`
+  subscriptions of the same module context and is accepted only from resolvers (never from background work, §10).
+  Channel names are yours; realtime tokens are optional, but an event reaches a subscription only when neither has a
+  token or both have tokens with the same claims. Global channels reach every user of the app, so payloads carry sprint
+  ids only.
 
 ## 5. Sprint action (modal)
 
