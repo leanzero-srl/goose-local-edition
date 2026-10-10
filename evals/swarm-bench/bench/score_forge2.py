@@ -1932,18 +1932,33 @@ def _query(call: Dict) -> Dict[str, str]:
     return dict(parse_qsl(q, keep_blank_values=True))
 
 
+def _walk_key(call: Dict) -> tuple:
+    """(invocation, path, query and body without the paging parameters): one walk of one list by one invocation."""
+    q = {k: v for k, v in _query(call).items() if k not in ('nextPageToken', 'startAt')}
+    body = call.get('body') if isinstance(call.get('body'), dict) else {}
+    b = {k: v for k, v in body.items() if k not in ('nextPageToken', 'startAt')}
+    return (call.get('inv'), str(call.get('path')).split('?')[0], json.dumps(q, sort_keys=True),
+            json.dumps(b, sort_keys=True, default=str))
+
+
+def _resumes(call: Dict) -> bool:
+    """The request asks for a page after the first: a nextPageToken, or a startAt past 0."""
+    q, body = _query(call), call.get('body') if isinstance(call.get('body'), dict) else {}
+    if q.get('nextPageToken') or body.get('nextPageToken'):
+        return True
+    try:
+        return int(q.get('startAt') or body.get('startAt') or 0) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 def _walks(calls: List[Dict]) -> Dict[tuple, List[Dict]]:
     walks: Dict[tuple, List[Dict]] = {}
     for call in calls:
         style = _page_style(call)
         if not style or call.get('status') != 200:
             continue
-        q = {k: v for k, v in _query(call).items() if k not in ('nextPageToken', 'startAt')}
-        body = call.get('body') if isinstance(call.get('body'), dict) else {}
-        b = {k: v for k, v in body.items() if k not in ('nextPageToken', 'startAt')}
-        key = (call.get('inv'), str(call.get('path')).split('?')[0], json.dumps(q, sort_keys=True),
-               json.dumps(b, sort_keys=True, default=str))
-        walks.setdefault(key, []).append(call)
+        walks.setdefault(_walk_key(call), []).append(call)
     return walks
 
 
@@ -2032,6 +2047,48 @@ def _paged_walks(c: Ctx) -> Tuple[List[Dict], Dict[tuple, List[Dict]], Dict[tupl
     return legacy, walks, paged
 
 
+def _handed_off(c: Ctx, walks: Dict[tuple, List[Dict]], incomplete: List[tuple]) -> set:
+    """The incomplete walks a consumer handed back to its queue at a 429 and the SAME queue event's redelivery read to
+    the end (contract §11: a Retry-After longer than the function waits is never waited out inside it — the consumer
+    returns an InvocationError with retryAfter, as the starter's does; work that cannot finish in one invocation
+    continues in the next). No page was skipped there. A walk is one only when all three hold:
+      (1) every Jira call its invocation made after the walk's last answered page asked for the walk's next page (same
+          path, same query and body but the paging parameters) and was answered 429 — nothing was read from the
+          partial list;
+      (2) the invocation returned the InvocationError (its retryAfter, or a delivery result 'retry'; _retry_verdict's
+          evidence);
+      (3) a later attempt of the same queue event (equal eventId, higher attempt) walked the same list to its end.
+    Never "a later invocation walked the same list": the hourly runs, the heal and the UI re-walk the same lists, so that
+    arm would excuse a swallowed 429 that carries on with the partial list (fairness audit 2026-10-10: three mutants of
+    Sol's run, a swallowed 429 with and without a redelivery and a hand-off whose redelivery never re-walks, stay
+    graded)."""
+    if not incomplete:
+        return set()
+    by_inv: Dict[object, List[Dict]] = {}
+    for x in c.all_calls('jira'):
+        by_inv.setdefault(x.get('inv'), []).append(x)
+    deliveries = [d for ph in c.background_phases() for d in c.phase(ph).get('deliveries') or [] if isinstance(d, dict)]
+    returned_retry = ({i.get('inv') for i in c.invocations() if i.get('retryAfter') is not None}
+                      | {d.get('inv') for d in deliveries if d.get('result') == 'retry'})
+    out = set()
+    for key in incomplete:
+        inv, last_t = key[0], walks[key][-1].get('t')
+        mine = by_inv.get(inv, [])
+        if inv is None or inv not in returned_retry or not isinstance(last_t, (int, float)) \
+                or any(not isinstance(x.get('t'), (int, float)) for x in mine):
+            continue
+        after = [x for x in mine if x['t'] > last_t]
+        if not after or any(x.get('status') != 429 or _walk_key(x) != key for x in after):
+            continue
+        attempts = [(d.get('eventId'), d.get('attempt') or 0) for d in deliveries if d.get('inv') == inv and d.get('eventId')]
+        redelivered = {d.get('inv') for d in deliveries for event, n in attempts
+                       if d.get('eventId') == event and (d.get('attempt') or 0) > n}
+        if any((nxt, *key[1:]) in walks and _walk_complete(_page_style(walks[(nxt, *key[1:])][0]), walks[(nxt, *key[1:])])[0]
+               for nxt in redelivered):
+            out.add(key)
+    return out
+
+
 @check('r_pagination', 'R', pre=pre_paginated, needs=('backfill', 'live', 'heal', 'rerun', 'ui', 'rovo'))
 def _(c):
     legacy, walks, paged = _paged_walks(c)
@@ -2039,31 +2096,42 @@ def _(c):
             all(not isinstance(w[-1].get('response'), dict) for w in walks.values()):
         return unavail('no paginated response bodies were recorded')
     # The scoring site serves every list of >= 2 items in >= 2 pages (pack.paging, forge/site/limits.cjs): a
-    # one-page answer holding two or more items means the site did not page it, a harness gap, never the app's.
+    # one-page answer holding two or more items means the site did not page it, a harness gap, never the app's. A walk
+    # that starts past the first page (a redelivery resuming at the page a 429 refused) is the end of a list, not one.
     if (c.pack.get('paging') or {}).get('rule') == 'half':
-        unpaged = sorted({_endpoint(p[0]) for k, p in walks.items() if k not in paged
+        unpaged = sorted({_endpoint(p[0]) for k, p in walks.items() if k not in paged and not _resumes(p[0])
                           and isinstance(p[0].get('response'), dict) and _page_items(p[0]['response']) >= 2})
         if unpaged:
             return unavail(f'the scoring site served a list of >= 2 items in one page on {unpaged}')
+    verdicts = {key: _walk_complete(_page_style(pages[0]), pages) for key, pages in paged.items()}
+    handed = _handed_off(c, walks, [key for key, (complete, _why) in verdicts.items() if not complete])
     done, bad = 0, []
     types: Dict[str, List[int]] = {}
     for key, pages in paged.items():
-        complete, why = _walk_complete(_page_style(pages[0]), pages)
+        if key in handed:
+            continue
+        complete, why = verdicts[key]
         done += complete
         tally = types.setdefault(_endpoint(pages[0]), [0, 0])
         tally[0] += complete
         tally[1] += 1
         if not complete:
             bad.append(f'{key[1]}: {why}')
-    total = len(paged) + len(legacy)
+    total = len(paged) - len(handed) + len(legacy)
     single = len(walks) - len(paged)
-    return g(done / total if total else 0, f'{done}/{total} reads the site served in two or more pages walked to their '
+    # nothing left to grade but hand-offs (a redelivery that resumed at the refused page is a one-page walk): each of
+    # those lists was still read to its end
+    return g(done / total if total else float(bool(handed)),
+             f'{done}/{total} reads the site served in two or more pages walked to their '
              'end, each page once, continuing where the site left off ('
              + ', '.join(f'{ep} {ok}/{n}' for ep, (ok, n) in sorted(types.items())) + ')'
              + (f'; {single} one-page read(s), nothing to walk, not graded' if single else '')
+             + (f'; {len(handed)} walk(s) handed back to the queue at a 429 and read to the end by the same event\'s '
+                f'redelivery, not graded ({sorted({k[1] for k in handed})})' if handed else '')
              + (f'; {len(legacy)} call(s) to the removed /rest/api/3/search' if legacy else '')
              + (f'; {bad[:3]}' if bad else ''), 'pages silently skipped',
              parts={'paged_walks': len(paged), 'one_page_walks': single, 'legacy_calls': len(legacy),
+                    'handed_off_walks': len(handed),
                     'by_endpoint': {ep: {'complete': ok, 'walks': n} for ep, (ok, n) in sorted(types.items())}})
 
 
@@ -4478,6 +4546,48 @@ def defect_selftest() -> List[str]:
                   if f['rule'].startswith('R9 '))
         expect(r9['status'] == want and r9['where'] == shown,
                f"R9 on {label}: {r9['status']} [{r9['where']}] (want {want} [{shown}])")
+    # r_pagination: a consumer that meets a 429 on a walk's next page and hands the job back (contract §11's
+    # InvocationError) skipped nothing when the same queue event's redelivery reads the list to its end; a swallowed
+    # 429 that carries on, a hand-off nothing re-walks, and a list another invocation walks stay graded
+    def page(inv, start, ids, last, t, status=200):
+        call = {'service': 'jira', 'method': 'GET', 'kind': 'consumer', 'inv': inv, 't': t, 'status': status,
+                'path': f'/rest/agile/1.0/board?type=scrum&startAt={start}&maxResults=50'}
+        if status == 200:
+            call['response'] = {'startAt': start, 'maxResults': 2, 'total': 4, 'isLast': last,
+                                'values': [{'id': i} for i in ids]}
+        return call
+
+    def walked(swallowed=False, rewalk=True, other_walk=False):
+        first = [page('q0', 0, [1, 2], False, 10.0), page('q0', 2, [], False, 10.5, 429)]
+        if swallowed:
+            first.append({'service': 'jira', 'method': 'GET', 'kind': 'consumer', 'inv': 'q0', 't': 11.0, 'status': 200,
+                          'path': '/rest/agile/1.0/board/1/configuration', 'response': {'id': 1}})
+        again = ([page('q1', 0, [1, 2], False, 13.0), page('q1', 2, [3, 4], True, 13.5)] if rewalk else
+                 [{'service': 'jira', 'method': 'GET', 'kind': 'consumer', 'inv': 'q1', 't': 13.0, 'status': 200,
+                   'path': '/rest/api/3/field', 'response': []}])
+        hourly = ([{**page('s1', 0, [1, 2], False, 20.0), 'kind': 'scheduled'},
+                   {**page('s1', 2, [3, 4], True, 20.5), 'kind': 'scheduled'}] if other_walk else [])
+        retry = not swallowed
+        return {'phases': {'live': {
+            'calls': first + again + hourly,
+            'invocations': [{'inv': 'q0', 'kind': 'consumer', 'ok': True, 'retryAfter': 2 if retry else None},
+                            {'inv': 'q1', 'kind': 'consumer', 'ok': True, 'retryAfter': None}],
+            'deliveries': [{'eventId': 'ev#0', 'inv': 'q0', 'attempt': 1, 'result': 'retry' if retry else 'ok', 't': 10.0},
+                           {'eventId': 'ev#0', 'inv': 'q1', 'attempt': 2, 'result': 'ok', 't': 13.0}]}}}
+    resumed = walked(rewalk=False)   # the redelivery asks for the refused page only: a one-page walk ending the list
+    resumed['phases']['live']['calls'] = [x for x in resumed['phases']['live']['calls'] if x['inv'] != 'q1'] \
+        + [page('q1', 2, [3, 4], True, 13.0)]
+    half = {**pack, 'paging': {'rule': 'half'}}   # the scoring site's page rule (its harness-gap check is on)
+    fn, pre, needs = next((f, p, x) for n, _t, f, p, x in CHECKS if n == 'r_pagination')
+    for label, obs, want, excused in (
+            ('a hand-off the redelivery reads to the end', walked(), 1.0, True),
+            ('a hand-off the redelivery resumes at the refused page', resumed, 1.0, True),
+            ('a swallowed 429 that carries on', walked(swallowed=True), 0.5, False),
+            ('a hand-off whose redelivery never re-walks', walked(rewalk=False), 0.0, False),
+            ('a hand-off only another invocation re-walks', walked(rewalk=False, other_walk=True), 0.5, False)):
+        got = _run_check(Ctx(None, obs, half, fixture_seed=pack['seed']), 'r_pagination', 'R', fn, pre, needs)
+        expect(got['score'] == want and not got.get('unavailable') and ('handed back' in str(got.get('detail'))) == excused,
+               f"r_pagination on {label}: {got['score']} (want {want}, excused {excused}) — {got.get('detail')}")
     return fails
 
 
