@@ -64,6 +64,9 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
 
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 16:0x OWNER: "deepseek pro and next 2.5 pro also I don't care as they're worthless" -> forge2/chain ee08007: both
+  dropped too. FORGE 2.0 QUEUE = 30 MODELS, none named Pro (Sonnet 5.5 first, Sol second). Rule saved (memory): never
+  queue any model named Pro.
 - 15:5x OWNER: "oh yeah don't do any of the pro variants please!" -> loop-state forge2/chain da00935: gpt-6.1-sol-pro and
   gpt-6-luna-pro DROPPED from the forge-2.0 queue; 32 to run (Sonnet 5.5, Sol, ... ). nex-n2.5-pro and
   deepseek-pro-latest (a lab's only/flagship entry, not a Pro tier of another queued model) KEPT but moved last and
