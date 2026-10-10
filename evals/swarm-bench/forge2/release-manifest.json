@@ -23,7 +23,7 @@
     "bench/probes/vendor_trace.py": "11a25b8b41dc612de2c551a279b6ff24cf3d2974e82807c24e0256ed404bb159",
     "bench/run_build.py": "3532ae0603e3b7e210b3a1faaba76157711d00fb52895f095f522e1bf6cd05f4",
     "bench/score_build.py": "3c1fe96b5d43be3cb58cf8e6faca38ef0012062e1ce0dbca03c02c8d1cb59500",
-    "bench/score_forge2.py": "38979227bdc5cf7d90c92c6589fd570619e8ddb81240e21309398599be3a0f9e",
+    "bench/score_forge2.py": "64d9942c4241e997904c392ddd457f8ed2cb21237e3f5384da4fbd55ab2b2862",
     "bench/vendor_service.py": "a0d255dfa5dc37af3d6039902f0c883d66fb218623e09a97df521754bb28dd3f",
     "forge2/kit/FOLLOWUPS.md": "d52f60d8b53330ca358a552a667dd07cccc6aff1028a82aca09be3ebe7c94dd2",
     "forge2/kit/README.md": "949e7bee758b6fc68de09a04dc9e69e31765f68b2b6937a90fa2dedac3c55a2c",
@@ -142,5 +142,5 @@
     "forge2/starter/static/widget/src/index.jsx": "05e6bff92998b3598b69682c69a47a3f28ea5f053b645890a5da5e17007d1f89",
     "forge2/starter/static/widget/src/widget.css": "6c13a7cd365e348c60d658b8f3eb75b45173c1cb6493db3bb75df06032f39ddf"
   },
-  "sourceCommit": "369e6d57d"
+  "sourceCommit": "5a67ecdcd"
 }
