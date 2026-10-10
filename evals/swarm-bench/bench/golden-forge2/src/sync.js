@@ -13,6 +13,7 @@ import {
   memberKey,
   markIssueDeleted,
   scopeStatus,
+  compareIds,
 } from './ledger';
 import { estimateOf } from './estimate';
 import { writeStatuses, currentStatus } from './status';
@@ -42,7 +43,12 @@ export function sprintMoves(history, sprintFieldId) {
   return moves;
 }
 
-export const estimateFieldIds = (cfg) => [...new Set(Object.values(cfg.sprints).map((s) => s.estimateFieldId).filter(Boolean))];
+// Every estimation field a board of the app's sprints has used (cfg.estimateFields, kept by config.js), not only those
+// the active sprints' boards use now: a change keeps the field its board used at the change (contract §1), so once a
+// board switches away from a field and the last active sprint using it closes, the changes recorded under it still show
+// its value, and an update of it still moves them.
+export const estimateFieldIds = (cfg) =>
+  [...new Set([...(cfg.estimateFields ?? []), ...Object.values(cfg.sprints).map((s) => s.estimateFieldId)].filter(Boolean))];
 
 export const issueFields = (cfg) => [cfg.sprintFieldId, ...estimateFieldIds(cfg), ...(cfg.scopeFieldId ? [cfg.scopeFieldId] : [])];
 
@@ -110,6 +116,40 @@ export function memberRow(cfg, sprintId, issue, currentSprintIds) {
   };
 }
 
+// Each field's value just after `atMs`: its value now with every change made later undone, newest first. The issue read
+// carries its newest changelog entries; when they do not reach back to `atMs`, those fields' full changelog is read.
+async function valuesAt(issue, fieldIds, atMs, work) {
+  const log = issue.changelog ?? {};
+  let histories = log.histories ?? [];
+  if ((log.total ?? 0) > histories.length && !histories.some((h) => instantOf(h.created) <= atMs)) {
+    histories = (await fieldHistories([String(issue.id)], fieldIds, work)).get(String(issue.id)) ?? [];
+  }
+  const values = Object.fromEntries(fieldIds.map((f) => [f, issue.fields?.[f]]));
+  const later = histories
+    .filter((h) => instantOf(h.created) > atMs)
+    .sort((a, b) => instantOf(b.created) - instantOf(a.created) || compareIds(String(b.id), String(a.id)));
+  for (const h of later) for (const item of h.items ?? []) if (Object.hasOwn(values, item.fieldId)) values[item.fieldId] = item.fromString ?? item.from;
+  return values;
+}
+
+// A sprint that closed before this delivery was handled (the rate limits can hold a delivery back past the close) still
+// takes the changes made before its close, and its numbers stay as they stood at the close (contract §12). A closed
+// sprint takes no adds or removes and stays on its issues' Sprint value, so the issue's membership then is its membership
+// now, and each estimation field's value then is its value now with every later change undone. Only a sprint this app
+// tracks (a stored member, or a row this change records), never an older closed sprint the Sprint value still lists;
+// and only when the issue moved since its stored member, so an unchanged issue costs no read.
+async function memberAtClose(cfg, sprintId, issue, currentIds, stored, recorded, resolve, work) {
+  if (!stored && !recorded) return null;
+  const fields = estimateFieldIds(cfg).sort();
+  const inSprint = currentIds.has(sprintId);
+  const estimatesOf = (values) => JSON.stringify(Object.fromEntries(fields.map((f) => [f, estimateOf(values, f)])));
+  if (stored && stored.inSprint === inSprint && stored.estimates === estimatesOf(issue.fields) && stored.issueKey === (issue.key ?? '')) return null;
+  const sprint = await resolve(sprintId);
+  if (!sprint?.completeMs) return null;
+  const values = await valuesAt(issue, fields, sprint.completeMs, work);
+  return { sprintId, issueId: String(issue.id), issueKey: issue.key ?? '', inSprint, estimate: estimateOf(values, sprint.estimateFieldId), estimates: estimatesOf(values) };
+}
+
 // ---- event path ------------------------------------------------------------------------------
 
 // One delivered issue update: record the rows of exactly this changelog entry (first writer keeps
@@ -141,7 +181,7 @@ export async function applyIssueEvent(cfg, { issueId, changelogId, sprintChange 
     histories = embedded.filter((h) => String(h.id) === String(changelogId));
     // The embedded changelog is the most recent page only; an entry older than it is read in full.
     if (!histories.length && (issue.changelog?.total ?? 0) > embedded.length) {
-      const all = (await sprintHistories([String(issueId)], cfg.sprintFieldId, work)).get(String(issueId)) ?? [];
+      const all = (await fieldHistories([String(issueId)], [cfg.sprintFieldId], work)).get(String(issueId)) ?? [];
       histories = all.filter((h) => String(h.id) === String(changelogId));
     }
   }
@@ -169,16 +209,17 @@ export async function applyIssueEvent(cfg, { issueId, changelogId, sprintChange 
   }
 
   const currentIds = new Set(current.map((s) => s.id));
-  const touched = new Set([...currentIds, ...rows.map((r) => r.sprintId), ...stored.keys()]);
+  const recorded = new Set(rows.map((r) => r.sprintId));
+  const touched = new Set([...currentIds, ...recorded, ...stored.keys()]);
   const issueMembers = new Map(stored);
   let members = 0;
   for (const sprintId of touched) {
-    if (!cfg.sprints[sprintId]) continue;
-    const next = memberRow(cfg, sprintId, issue, currentIds);
+    let next = cfg.sprints[sprintId] ? memberRow(cfg, sprintId, issue, currentIds) : null;
     // A sprint the issue left may have closed since (a close sends no event): read it before its member moves, so a
     // closed sprint's numbers stay as they stood at the close (contract §12).
-    if (!currentIds.has(sprintId) && !sameMember(next, stored.get(sprintId))) await resolve(sprintId);
-    if (!cfg.sprints[sprintId]) continue;
+    if (next && !currentIds.has(sprintId) && !sameMember(next, stored.get(sprintId))) await resolve(sprintId);
+    if (!cfg.sprints[sprintId]) next = await memberAtClose(cfg, sprintId, issue, currentIds, stored.get(sprintId), recorded.has(sprintId), resolve, work);
+    if (!next) continue;
     issueMembers.set(sprintId, next);
     if (await writeMember(next, stored.get(sprintId))) {
       members += 1;
@@ -231,12 +272,12 @@ export async function searchCandidates(cfg, sinceMs, work) {
   return issues;
 }
 
-export async function sprintHistories(issueIds, sprintFieldId, work) {
+export async function fieldHistories(issueIds, fieldIds, work) {
   const byIssue = new Map();
   for (let i = 0; i < issueIds.length; i += 1000) {
     let nextPageToken;
     do {
-      const body = { issueIdsOrKeys: issueIds.slice(i, i + 1000), fieldIds: [sprintFieldId], maxResults: 1000 };
+      const body = { issueIdsOrKeys: issueIds.slice(i, i + 1000), fieldIds, maxResults: 1000 };
       if (nextPageToken) body.nextPageToken = nextPageToken;
       const page = await jiraJson('app', route`/rest/api/3/changelog/bulkfetch`, postJson(body), work);
       for (const log of page.issueChangeLogs ?? []) {
@@ -307,7 +348,7 @@ export async function reconcileAll(cfg, previous, work) {
   const fields = Object.fromEntries(Object.values(cfg.sprints).map((s) => [s.boardId, s.estimateFieldId ?? null]));
   const switched = Object.entries(fields).some(([b, f]) => last?.fields?.[b] !== undefined && last.fields[b] !== f);
   const issues = sprintIds.length ? await searchCandidates(cfg, last && knewAll && !switched ? last.startedAt : null, work) : [];
-  const histories = issues.length ? await sprintHistories(issues.map((i) => String(i.id)), cfg.sprintFieldId, work) : new Map();
+  const histories = issues.length ? await fieldHistories(issues.map((i) => String(i.id)), [cfg.sprintFieldId], work) : new Map();
 
   const storedRows = new Set();
   const rowsBySprintIssue = new Map();

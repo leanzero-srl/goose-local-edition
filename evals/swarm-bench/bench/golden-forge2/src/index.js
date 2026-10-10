@@ -1,7 +1,7 @@
 import Resolver from '@forge/resolver';
 import { Queue, InvocationError, InvocationErrorCode } from '@forge/events';
 import { JiraError, RateLimited, Background } from './jira';
-import { loadConfig, saveConfig, discoverConfig } from './config';
+import { loadConfig, saveConfig, discoverConfig, withEstimateFields } from './config';
 import { applyIssueEvent, estimateFieldIds, reconcileAll, settleClosedSprints } from './sync';
 import { boardsView, widgetView, getSprint, personView, postSummary } from './views';
 import { announce, CHANNEL } from './realtime';
@@ -71,7 +71,7 @@ export async function onAppUpgraded() {
 
 async function issueEvent(body, work) {
   const previous = await loadConfig();
-  const cfg = isV2Config(previous) ? structuredClone(previous) : await discoverConfig(work);
+  const cfg = isV2Config(previous) ? structuredClone(previous) : withEstimateFields(await discoverConfig(work), previous);
   const closedBefore = new Set(cfg.closed ?? []);
   const result = await applyIssueEvent(cfg, body, work, async (issueId) => ({ rows: 0, members: 0, sprintIds: await markIssueDeleted(issueId) }));
   await settleClosedSprints(cfg, (cfg.closed ?? []).filter((id) => !closedBefore.has(id)), work, new Set([String(body.issueId)]));
@@ -103,7 +103,7 @@ async function runReconcile(work) {
   const migration = await migrateSome(work);
   if (!migration.complete) await enqueue({ type: 'migrate' });
   const previous = await loadConfig();
-  const cfg = await discoverConfig(work);
+  const cfg = withEstimateFields(await discoverConfig(work), previous);
   const result = await reconcileAll(cfg, isV2Config(previous) ? previous : null, work);
   await saveConfig(cfg, previous);
   await announce(result.sprintIds);
