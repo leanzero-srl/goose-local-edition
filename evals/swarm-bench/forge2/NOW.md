@@ -64,6 +64,15 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
 
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 05:0x SOL PROVISIONAL RESULT: 0.9618 (seeds 0.9607/0.9629/0.9657), no critical — NOT CHALLENGED (owner's acceptance
+  test failed). v2 rows ~0.74 of 0.75: busiest background hour 339 of 1,680 points (optimum 262), boot ~40 KB of 150 KB,
+  migration 86/86, all forged webhooks/admin attempts refused. Losses: UI details, Rovo action exactness, and the
+  queue-delegation scorer artifact (r_as_app / r_completes_in_timeout vacuous — Pareto's 1.0 defect class, still in 2.0).
+  Verdict: /Volumes/AI-workhorse/runs/forge2-pilot/20261010-0357-sol/openrouter-forge2-sol-r0/verdict.json.
+- 05:1x HAIKU 5.5 launched on the same (lean) version as a second data point (~$1-2). Calibration run stopped (would go
+  stale). wf forge2-harden: S1 concurrent deliveries under a deterministic reads-first schedule (check-then-act races),
+  S2 eventually consistent KVS queries (5 virtual s), S3 lineage-based scheduled-run rows; golden adapted; race mutant;
+  gate + calibration on branch forge2/hardened; then Sol reruns on the hardened version.
 - 04:3x SOL FINISHED its build on its own: 176 of 300 calls, ~36 min, $2.90 billed (99 % cached). Its own stated
   limitation: "silent estimation-field switch times are inferred when first observed; the board API provides no
   historical switch timestamp." run_build is auto-scoring (pre-calibration scorer = provisional).
