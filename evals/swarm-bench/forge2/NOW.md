@@ -110,6 +110,17 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
   calibration, sb7.x/forge manifests to refreeze after P11's shared bench edits.
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 20:57 FIRST IN-APP FORGE 2.0 RUN IS LIVE: 3.0.109 installed 20:53 (notarized, bundles forge2 with CALIB 34550b5d…; the
+  Forge tile reads "Forge 2.0 · Scope Ledger 2", kit ready 663bf851ac7b, 300-call budget — seen in the running app),
+  catalog proxy restarted from loop-state/tools with FORGE_CURRENT=forge-2.0 (eb4a851: it also NAMES the era while the
+  site does not list it yet, so the app can launch; POSTs still go to the real site), Sonnet 5.5 unblocked and launched
+  by the chain from the Benchmark view: run openrouter-cloud-0d90c6d3-…, `run_build.py … --model
+  anthropic/claude-sonnet-5.5 --forge2`, no dollar stop, tray "Benchmark · claude-sonnet-5.5 · 4/300". Vigil cron every
+  10 min (this session). THE SITE IS NOT READY YET: origin/master moved 225 commits (another session's mobile/hero
+  rework; conflicts in BoardPage.tsx + RunsLeaderboard.tsx) -> the site agent is merging master into forge2-era, then
+  suites + build + screenshots + the push/register commands. Until `register-forge2 add --live`, a publish is refused
+  by the site — the build and its score are kept and published after. GitHub release v3.0.109 waits for this run to
+  prove the app end to end (then release, flip, 1.0 note, unblock the other 25).
 - 20:55 SECOND SESSION LIMIT (reset 20:30) cost ~1.5 h: I was not invoked between ~19:05 and 20:52. MAP: (a) APP 3.0.109
   BUILT + NOTARIZED at 19:21 (~/Projects/goose-rel/ui/desktop/out/make/Goose-Swarm-3.0.109.dmg, log ">>> DONE") — NOT
   yet installed, no GitHub release yet; (b) SITE agent died at the screenshot step with forge2-era clean at 380c6d05
