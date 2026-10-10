@@ -47,6 +47,7 @@ world, webtrigger, admin, field, llm_v2, boot — are read by forge2_checks.py):
             (app|user|none), service (jira|kvs|queue|egress), method, path, body, status, response,
             scopes {classic [..], granular [..]} (jira: the endpoint's OAuth2 alternatives), fault (id of the
             scripted fault that answered), earlyRetry (fault id when retried inside its window), limitError,
+            kvsCode (the code storage refused a request with, e.g. CONDITIONAL_CHECK_FAILED; null when answered),
             originChange / scheduledRun (the invocation's lineage: the product event or the scheduled run its chain
             began with, handed on by every queue push — the economy rows and the scheduled run's rows read it)}
     inv  = {inv, kind, moduleKey, functionKey, t0, t1, ok, threw, error, errorName, timedOut, retryAfter}
@@ -1510,10 +1511,16 @@ def deploy_findings(c: Ctx) -> List[Dict]:
     rule('R12 LLM requests follow the documented sampling rules', 'runtime', bool(_llm_calls(c)), not sampling, 'would_fail',
          "LLM API reference 'Validation rules': temperature and top_p never together; neither on claude-opus-4-7/-4-8/-5 "
          'and claude-sonnet-5', 'llm', f'{len(sampling)} request(s) refused', graded_by=_charged(c, 'u_llm_explain'))
-    kvs_err = [x for x in c.all_calls('kvs') if x.get('limitError') or x.get('status') in (400, 413)]
+    # Contract §9 names a failed transaction condition's 400 CONDITIONAL_CHECK_FAILED as storage's optimistic-lock answer
+    # (the 2.0 kit answers it as real Forge does; 1.0's answered 409, which this rule never counted, like KEY_CONFLICT):
+    # a compare-and-set that lost a race broke no type or limit. Any other 400, and a 400 whose code the observations do
+    # not carry, still counts.
+    kvs_err = [x for x in c.all_calls('kvs') if x.get('limitError') or x.get('status') == 413
+               or (x.get('status') == 400 and x.get('kvsCode') != 'CONDITIONAL_CHECK_FAILED')]
     rule('R9 KVS writes fit the documented types and limits', 'runtime', bool(c.all_calls('kvs')), not kvs_err, 'would_fail',
          'a value, key or integer past the KVS limits is refused', 'kvs',
-         ', '.join(str(x.get('limitError') or x.get('status')) for x in kvs_err[:3]),
+         ', '.join(' '.join(str(v) for v in (x.get('status'), x.get('kvsCode') or x.get('limitError')) if v)
+                   for x in kvs_err[:3]),
          graded_by=_charged(c, 's_limits'))
     return out
 
@@ -4457,6 +4464,20 @@ def defect_selftest() -> List[str]:
     got = _run_check(bctx, 'r_backfill_complete', 'R', fn, pre, needs)
     expect(bool(v1) and bool(owed) and got['score'] == 1.0,
            f"r_backfill_complete must not owe v1's rows at the one-hour read: {got['score']} — {got.get('detail')}")
+    # R9 (k_runtime_risks): contract §9's optimistic-lock answer, 400 CONDITIONAL_CHECK_FAILED, is a lost race and no
+    # limit refused; a type refusal, a limit refusal and a 400 whose code the observations do not carry still fail it
+    kvs_ok = {'service': 'kvs', 'method': 'POST', 'path': '/api/v1/get', 'status': 200}
+    kvs400 = {'service': 'kvs', 'method': 'POST', 'path': '/api/v1/transaction', 'status': 400}
+    for label, call, want, shown in (
+            ('a lost compare-and-set', {**kvs400, 'kvsCode': 'CONDITIONAL_CHECK_FAILED'}, 'pass', ''),
+            ('a type refusal', {**kvs400, 'kvsCode': 'INCORRECT_PROPERTY_TYPE'}, 'fail', '400 INCORRECT_PROPERTY_TYPE'),
+            ('a 400 with no code recorded', kvs400, 'fail', '400'),
+            ('a limit refusal', {**kvs400, 'path': '/api/v1/set', 'kvsCode': 'MAX_SIZE', 'limitError': 'MAX_SIZE'}, 'fail',
+             '400 MAX_SIZE')):
+        r9 = next(f for f in deploy_findings(Ctx(None, {'phases': {'live': {'calls': [kvs_ok, call]}}}, pack))
+                  if f['rule'].startswith('R9 '))
+        expect(r9['status'] == want and r9['where'] == shown,
+               f"R9 on {label}: {r9['status']} [{r9['where']}] (want {want} [{shown}])")
     return fails
 
 

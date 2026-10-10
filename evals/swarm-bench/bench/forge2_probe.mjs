@@ -239,6 +239,9 @@ function normCall(e) {
     scopeMismatch: service === 'jira' && e.status === 401 && !alt && !e.needsAuthentication ? (e.op ?? path) : undefined,
     needsAuthentication: Boolean(e.needsAuthentication), missingScope: e.missingScope ?? null,
     fault: e.fault ?? null, earlyRetry: e.earlyRetry === true ? e.fault : (e.earlyRetry || null), limitError: e.limitError ?? null,
+    // The code Forge storage answered a refused request with (the kit's proxy records it): the scorer tells §9's
+    // optimistic-lock answer (400 CONDITIONAL_CHECK_FAILED) from a type or limit refusal by it.
+    kvsCode: e.kvsError?.code ?? null,
   };
 }
 
@@ -2268,6 +2271,16 @@ async function selftest() {
     assert.deepEqual(issueRefs({ path: '/rest/api/3/app/field/value', body: { updates: [{ customField: 'x', issueIds: [101, 102], value: 'removed' }] } }), ['101', '102']);
     assert.deepEqual(issueRefs({ service: 'kvs', path: '/api/v1/entity/set', body: { entityName: 'scope-ledger', key: 'k', value: { issueKey: 'PAY-9', issueId: '77' } } }), ['PAY-9', '77']);
     assert.deepEqual(issueRefs({ service: 'kvs', path: '/api/v1/set', body: { key: 'explain:41', value: { text: 'why' } } }), []);
+  });
+
+  await test('normCall: a refused storage request carries the code Forge answered with; an answered one carries none', async () => {
+    const lost = normCall({ service: 'kvs', method: 'POST', path: '/api/v1/transaction', status: 400, invocationId: 'i1',
+      kvsError: { code: 'CONDITIONAL_CHECK_FAILED' } });
+    assert.deepEqual([lost.kvsCode, lost.limitError], ['CONDITIONAL_CHECK_FAILED', null]);
+    const big = normCall({ service: 'kvs', method: 'POST', path: '/api/v1/set', status: 400, invocationId: 'i1',
+      kvsError: { code: 'MAX_SIZE', limit: 'value-size' }, limitError: 'MAX_SIZE' });
+    assert.deepEqual([big.kvsCode, big.limitError], ['MAX_SIZE', 'MAX_SIZE']);
+    assert.equal(normCall({ service: 'kvs', method: 'POST', path: '/api/v1/set', status: 204, invocationId: 'i1' }).kvsCode, null);
   });
 
   await test('hoursOf: per quota hour, background and person apart, counted from the upgrade hour', async () => {
