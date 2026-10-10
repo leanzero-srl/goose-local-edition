@@ -64,6 +64,9 @@ export function projectBenchScore(v: {
       ...(v.provenance && typeof v.provenance === 'object' ? { provenance: v.provenance } : {}),
       // Forge verdicts (score_forge.py) carry their publishability and runtime identity beside the
       // score; kept only for that family so an SB row stores exactly what it always stored.
+      // `reliability` is score_forge2.py's block (forge-2.0: the failed tests that multiply the score):
+      // the stored row keeps it whole, because the publish body and the score view read it and neither
+      // may compute it.
       ...(v.family === 'forge'
         ? Object.fromEntries(
             [
@@ -78,6 +81,7 @@ export function projectBenchScore(v: {
               'wrapper_sha256',
               'reasoning_effort',
               'shots',
+              'reliability',
             ]
               .filter((key) => key in v)
               .map((key) => [key, v[key]])

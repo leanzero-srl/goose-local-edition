@@ -1,0 +1,1798 @@
+{
+ "status": "scored",
+ "score": 0.745,
+ "rawScore": 0.745,
+ "inner": 0.9628,
+ "v1": {
+  "weight": 0.25,
+  "score": 0.9451,
+  "inner": 0.9667
+ },
+ "v2": {
+  "weight": 0.75,
+  "score": 0.7266
+ },
+ "scorerVersion": "forge-2.0-rc",
+ "scorer_version": "forge-2.0-rc",
+ "family": "forge",
+ "fixture_seed": "3a4b754f5de53bd1",
+ "dev_seed": "a1050ce4a133527e",
+ "critical": {
+  "floor": 0.6,
+  "multiplier": 1.0,
+  "pre_severity_score": 0.9628,
+  "rows": [],
+  "unsuppressed": [],
+  "classes": []
+ },
+ "reliability": {
+  "multiplier": 0.7738,
+  "k": 0.1,
+  "floor": 0.25,
+  "floored": false,
+  "defects": [
+   {
+    "tier": "T",
+    "check": "t_reestimate_followed",
+    "score": 0.8333,
+    "factor": 0.9833
+   },
+   {
+    "tier": "B",
+    "check": "b_comment_adf_as_user",
+    "score": 0.8333,
+    "factor": 0.9833
+   },
+   {
+    "tier": "U",
+    "check": "u_widget_live",
+    "score": 0.0,
+    "factor": 0.9
+   },
+   {
+    "tier": "A",
+    "check": "a_action_result",
+    "score": 0.6,
+    "factor": 0.96
+   },
+   {
+    "tier": "R3",
+    "check": "r3_never_killed",
+    "score": 0.8333,
+    "factor": 0.9833
+   },
+   {
+    "tier": "R5",
+    "check": "r5_panel_labels",
+    "score": 0.9,
+    "factor": 0.99
+   },
+   {
+    "tier": "R7",
+    "check": "r7_values_fresh",
+    "score": 0.842,
+    "factor": 0.9842
+   },
+   {
+    "tier": "R9",
+    "check": "r9_widget_boot",
+    "score": 0.6667,
+    "factor": 0.9667
+   }
+  ],
+  "folded": {
+   "U": [
+    "u_widget_numbers",
+    "u_widget_chart",
+    "u_ledger_table"
+   ],
+   "R7": [
+    "r7_writes_accepted"
+   ],
+   "R9": [
+    "r9_sprint_boot"
+   ]
+  },
+  "priced_as_critical": []
+ },
+ "admission": {
+  "ceiling": 1.0,
+  "reasons": [],
+  "failedChecksByBand": [],
+  "final_rule": "final = min(earned, ceiling - 0.05 * (1 - earned))"
+ },
+ "excellence": {
+  "fraction": 0.9822,
+  "e_mean": 0.8006,
+  "gate": false,
+  "conditions": [
+   {
+    "name": "t_event_rows",
+    "ok": true,
+    "share": 1.0
+   },
+   {
+    "name": "r_heal_dropped",
+    "ok": true,
+    "share": 1.0
+   },
+   {
+    "name": "u_widget_numbers",
+    "ok": false,
+    "share": 0.875
+   },
+   {
+    "name": "u_ledger_table",
+    "ok": false,
+    "share": 0.9712
+   },
+   {
+    "name": "b_comment_adf_as_user",
+    "ok": false,
+    "share": 0.8333
+   },
+   {
+    "name": "k_consumer_shape",
+    "ok": true,
+    "share": 1.0
+   },
+   {
+    "name": "k_current_apis",
+    "ok": true,
+    "share": 1.0
+   },
+   {
+    "name": "k_dashboard_widget",
+    "ok": true,
+    "share": 1.0
+   },
+   {
+    "name": "k_entity_declared",
+    "ok": true,
+    "share": 1.0
+   },
+   {
+    "name": "k_llm_model_current",
+    "ok": true,
+    "share": 1.0
+   },
+   {
+    "name": "k_manifest_semantics",
+    "ok": true,
+    "share": 1.0
+   },
+   {
+    "name": "k_rovo_mcp",
+    "ok": true,
+    "share": 1.0
+   },
+   {
+    "name": "k_rovo_skill",
+    "ok": true,
+    "share": 1.0
+   },
+   {
+    "name": "k_runtime_risks",
+    "ok": true,
+    "share": 1.0
+   },
+   {
+    "name": "k_widget_edit_bridge",
+    "ok": true,
+    "share": 1.0
+   },
+   {
+    "name": "v_console_clean",
+    "ok": true,
+    "share": 1.0
+   },
+   {
+    "name": "v_csp_clean",
+    "ok": true,
+    "share": 1.0
+   },
+   {
+    "name": "l_lint_warnings",
+    "ok": true,
+    "share": 1.0
+   }
+  ]
+ },
+ "excellence_gate": false,
+ "tiers": {
+  "L": {
+   "mean": 1.0,
+   "checks": 6,
+   "weight": 0.0176
+  },
+  "K": {
+   "mean": 1.0,
+   "checks": 10,
+   "weight": 0.022
+  },
+  "T": {
+   "mean": 0.9792,
+   "checks": 8,
+   "weight": 0.0352
+  },
+  "R": {
+   "mean": 1.0,
+   "checks": 8,
+   "weight": 0.0308
+  },
+  "S": {
+   "mean": 1.0,
+   "checks": 4,
+   "weight": 0.0176
+  },
+  "B": {
+   "mean": 0.9722,
+   "checks": 6,
+   "weight": 0.0264
+  },
+  "U": {
+   "mean": 0.8837,
+   "checks": 11,
+   "weight": 0.0352
+  },
+  "V": {
+   "mean": 1.0,
+   "checks": 5,
+   "weight": 0.0176
+  },
+  "A": {
+   "mean": 0.9,
+   "checks": 4,
+   "weight": 0.0176
+  },
+  "E": {
+   "mean": 0.7863,
+   "gate": false,
+   "gate_fraction": 0.9822,
+   "weight": 0.03
+  },
+  "R1": {
+   "mean": 1.0,
+   "checks": 4,
+   "weight": 0.12
+  },
+  "R2": {
+   "mean": 1.0,
+   "checks": 4,
+   "weight": 0.13
+  },
+  "R3": {
+   "mean": 0.9444,
+   "checks": 3,
+   "weight": 0.08
+  },
+  "R4": {
+   "mean": 1.0,
+   "checks": 5,
+   "weight": 0.1
+  },
+  "R5": {
+   "mean": 0.9667,
+   "checks": 3,
+   "weight": 0.1
+  },
+  "R6": {
+   "mean": 1.0,
+   "checks": 5,
+   "weight": 0.08
+  },
+  "R7": {
+   "mean": 0.909,
+   "checks": 2,
+   "weight": 0.05
+  },
+  "R8": {
+   "mean": 1.0,
+   "checks": 3,
+   "weight": 0.04
+  },
+  "R9": {
+   "mean": 0.7778,
+   "checks": 3,
+   "weight": 0.05
+  }
+ },
+ "checks": [
+  {
+   "check": "l_deployable",
+   "tier": "L",
+   "score": 1.0,
+   "detail": "lint: 0 errors, every stage reached",
+   "consequence": "",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "l_bundles_load",
+   "tier": "L",
+   "score": 1.0,
+   "detail": "6/6 functions bundle, load and export their handler",
+   "consequence": "the app does not run",
+   "parts": {
+    "failing": {}
+   },
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "l_lint_warnings",
+   "tier": "L",
+   "score": 1.0,
+   "detail": "0 distinct lint warning(s): []",
+   "consequence": "warnings cost points, never cap",
+   "parts": {
+    "warnings": []
+   },
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "l_real_packages",
+   "tier": "L",
+   "score": 1.0,
+   "detail": "6/6 bundles resolve @forge/* at the kit pins only",
+   "consequence": "packages outside the kit",
+   "parts": {
+    "bad": []
+   },
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "l_manifest_rules",
+   "tier": "L",
+   "score": 1.0,
+   "detail": "6/6 manifest rules met: ",
+   "consequence": "a rule lint misses",
+   "parts": {
+    "resource_has_index_html": true,
+    "resource_not_under_src": true,
+    "no_layout_basic": true,
+    "keys_unique": true,
+    "referenced_functions_exist_and_export": true,
+    "storage_app_with_kvs": true
+   },
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "l_scopes",
+   "tier": "L",
+   "score": 1.0,
+   "detail": "scopes: missing [], extra []",
+   "consequence": "scopes beyond the calls",
+   "parts": {
+    "declared": [
+     "read:board-scope.admin:jira-software",
+     "read:board-scope:jira-software",
+     "read:jira-user",
+     "read:jira-work",
+     "read:project:jira",
+     "read:sprint:jira-software",
+     "storage:app",
+     "write:jira-work"
+    ],
+    "used": [
+     "read:board-scope.admin:jira-software",
+     "read:board-scope:jira-software",
+     "read:jira-work",
+     "read:project:jira",
+     "read:sprint:jira-software",
+     "storage:app",
+     "write:jira-work"
+    ],
+    "missing": [],
+    "extra": [],
+    "tolerated": [
+     "read:board-scope.admin:jira-software",
+     "read:board-scope:jira-software",
+     "read:jira-user",
+     "read:jira-work",
+     "read:project:jira",
+     "read:sprint:jira-software",
+     "write:jira-work"
+    ]
+   },
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "k_dashboard_widget",
+   "tier": "K",
+   "score": 1.0,
+   "detail": "dashboards:widget 2/2: {'custom_ui_resource': True, 'edit_resource': True}",
+   "consequence": "widget not wired",
+   "parts": {
+    "custom_ui_resource": true,
+    "edit_resource": true
+   },
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "k_widget_edit_bridge",
+   "tier": "K",
+   "score": 1.0,
+   "detail": "4/4 board picks reached the dashboard through the widget edit API (updateConfig/onProductSave)",
+   "consequence": "config never reaches the dashboard",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "k_rovo_skill",
+   "tier": "K",
+   "score": 1.0,
+   "detail": "rovo:skill 7/7: ",
+   "consequence": "the skill is not valid or not wired",
+   "parts": {
+    "source_dir_has_skill_md": true,
+    "name_equals_dir": true,
+    "description_50_1024": true,
+    "allowed_tools_has_action": true,
+    "dependencies_tools_is_action": true,
+    "allowed_tools_cover_dependencies": true,
+    "agent_lists_skill": true
+   },
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "k_current_apis",
+   "tier": "K",
+   "score": 1.0,
+   "detail": "current APIs 5/5: ",
+   "consequence": "stale platform knowledge",
+   "parts": {
+    "no_api_storage": true,
+    "no_forge_ui": true,
+    "no_old_search": true,
+    "route_everywhere": true,
+    "current_runtime": true
+   },
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "k_consumer_shape",
+   "tier": "K",
+   "score": 1.0,
+   "detail": "consumer shape 3/3",
+   "consequence": "consumer wired wrongly",
+   "parts": {
+    "function_shape": true,
+    "serves_no_resolver": true,
+    "timeout_only_on_async": true
+   },
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "k_entity_declared",
+   "tier": "K",
+   "score": 1.0,
+   "detail": "entities with a sprint-partitioned, ranged index: ['scope-change', 'scope-ledger', 'sprint-issue']",
+   "consequence": "the ledger has no sprint index",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "k_v2_surfaces",
+   "tier": "K",
+   "score": 1.0,
+   "detail": "v2 surfaces declared: ['jira:adminPage', 'webtrigger', 'scope-ledger']",
+   "consequence": "the app is still v1",
+   "parts": {
+    "jira:adminPage": true,
+    "webtrigger": true,
+    "scope-ledger": true
+   },
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "t_trigger_handoff",
+   "tier": "T",
+   "score": 1.0,
+   "detail": "1036/1036 deliveries handed off correctly",
+   "consequence": "trigger does product or queue work it should not",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "t_event_rows",
+   "tier": "T",
+   "score": 1.0,
+   "detail": "event rows: 174/174 exact (precision 1.00, recall 1.00)",
+   "consequence": "the event path loses or invents ledger rows",
+   "parts": {
+    "tp": 174,
+    "fp": 0,
+    "expected": 174
+   },
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "t_no_double_count",
+   "tier": "T",
+   "score": 1.0,
+   "detail": "every change holds at most one ledger row in every phase (duplicated deliveries included); 11 concurrent group(s) raced (same-event 8, same-issue 3)",
+   "consequence": "",
+   "critical": "duplicate",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "t_out_of_order",
+   "tier": "T",
+   "score": 1.0,
+   "detail": "permuted deliveries: 9/9 rows exact, 4/4 sprints with oracle numbers",
+   "consequence": "membership follows delivery order instead of change time",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "t_multi_sprint_parse",
+   "tier": "T",
+   "score": 1.0,
+   "detail": "119/119 multi-id Sprint changes recorded exactly",
+   "consequence": "the Sprint `to` list parsed as one id",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "t_reestimate_followed",
+   "tier": "T",
+   "score": 0.8333,
+   "detail": "worst of 3 scoring sites (seed ed11b8bccd12b9d2): 5/6 re-estimated sprints show the oracle numbers",
+   "consequence": "estimate changes do not move the numbers",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 0.8333
+   }
+  },
+  {
+   "check": "t_retry_after_honoured",
+   "tier": "T",
+   "score": 1.0,
+   "detail": "InvocationError retryAfter 30s >= 30s",
+   "consequence": "the consumer ignores Retry-After",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "t_no_user_in_async",
+   "tier": "T",
+   "score": 1.0,
+   "detail": "background work is asApp only",
+   "consequence": "",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r_backfill_complete",
+   "tier": "R",
+   "score": 1.0,
+   "detail": "147/147 historical changes v1 never recorded, recorded one virtual hour after the upgrade (the backfill is dosed; v1 rows are R1's, at 2 h)",
+   "consequence": "data loss — changes silently missing",
+   "parts": {
+    "missing": []
+   },
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r_removals_found",
+   "tier": "R",
+   "score": 1.0,
+   "detail": "26/26 removed-to-backlog changes found",
+   "consequence": "issues that left every sprint are missed",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r_heal_dropped",
+   "tier": "R",
+   "score": 1.0,
+   "detail": "4/4 dropped changes healed exactly once; 0 other row(s) added",
+   "consequence": "the stream is trusted; what it missed stays missing",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r_pagination",
+   "tier": "R",
+   "score": 1.0,
+   "detail": "55/55 reads the site served in two or more pages walked to their end, each page once, continuing where the site left off (/rest/agile/1.0/board 16/16, /rest/agile/1.0/board/{id}/sprint 23/23, /rest/api/3/changelog/bulkfetch 8/8, /rest/api/3/search/jql 8/8); 20 one-page read(s), nothing to walk, not graded",
+   "consequence": "pages silently skipped",
+   "parts": {
+    "paged_walks": 55,
+    "one_page_walks": 20,
+    "legacy_calls": 0,
+    "by_endpoint": {
+     "/rest/agile/1.0/board": {
+      "complete": 16,
+      "walks": 16
+     },
+     "/rest/agile/1.0/board/{id}/sprint": {
+      "complete": 23,
+      "walks": 23
+     },
+     "/rest/api/3/changelog/bulkfetch": {
+      "complete": 8,
+      "walks": 8
+     },
+     "/rest/api/3/search/jql": {
+      "complete": 8,
+      "walks": 8
+     }
+    }
+   },
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r_rate_limit",
+   "tier": "R",
+   "score": 1.0,
+   "detail": "run 1 (backfill) request 2: waited 2.4 virtual s in-invocation; run 1 (backfill) continuation page: waited 2.7 virtual s in-invocation; run 2 (hour-1) request 2: waited 2.4 virtual s in-invocation",
+   "consequence": "the reconcile ignores Retry-After",
+   "parts": {
+    "faults": 3
+   },
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r_as_app",
+   "tier": "R",
+   "score": 1.0,
+   "detail": "182/182 Jira calls of the scheduled runs and their queue continuations asApp (scheduled 182)",
+   "consequence": "reconcile as a user",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r_completes_in_timeout",
+   "tier": "R",
+   "score": 1.0,
+   "detail": "9/9 invocations of the scheduled runs and their queue continuations inside their module timeout (consumer 1, scheduled 8)",
+   "consequence": "the scheduled job is killed by its timeout",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r_idempotent_rerun",
+   "tier": "R",
+   "score": 1.0,
+   "detail": "0 ledger write(s) (scope-ledger) on a no-change run over 392 rows",
+   "consequence": "a scheduled run with nothing new rewrites the ledger",
+   "parts": {
+    "writes": 0,
+    "rows": 392
+   },
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "s_storage_scope",
+   "tier": "S",
+   "score": 1.0,
+   "detail": "KVS used, no 403 from the KVS proxy",
+   "consequence": "",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "s_entity_index_used",
+   "tier": "S",
+   "score": 1.0,
+   "detail": "324/324 ledger reads are entity queries on a declared index",
+   "consequence": "the ledger is scanned instead of read by its index",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "s_index_order",
+   "tier": "S",
+   "score": 1.0,
+   "detail": "6/6 tables list changes in change-time order",
+   "consequence": "index order lost",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "s_limits",
+   "tier": "S",
+   "score": 1.0,
+   "detail": "no KVS limit errors",
+   "consequence": "",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "b_invoke_contract",
+   "tier": "B",
+   "score": 1.0,
+   "detail": "57/57 invokes returned a defined, structured result; a Jira 500 on sprintLedger's read: handled",
+   "consequence": "resolver contract broken",
+   "parts": {
+    "invoke_share": 1.0,
+    "jira_error": {
+     "returned_a_value": true,
+     "surface_shows_it": true
+    }
+   },
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "b_no_permission_leak",
+   "tier": "B",
+   "score": 1.0,
+   "detail": "no hidden key, summary or change id reached a person",
+   "consequence": "",
+   "critical": "leak",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "b_hidden_count",
+   "tier": "B",
+   "score": 1.0,
+   "detail": "18/18 hidden counts equal the oracle",
+   "consequence": "hidden counts wrong",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "b_comment_adf_as_user",
+   "tier": "B",
+   "score": 0.8333,
+   "detail": "worst of 3 scoring sites (seed ed11b8bccd12b9d2): 10/12 comments are ADF as the viewer naming key, sprint and creep; ['37427 status 201 via user', '35457 status 201 via user']",
+   "consequence": "comment body or author wrong",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 0.8333
+   }
+  },
+  {
+   "check": "b_comment_exactly_once",
+   "tier": "B",
+   "score": 1.0,
+   "detail": "12 click/double-click gesture(s), none posted more than one comment",
+   "consequence": "",
+   "critical": "duplicate",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "u_widget_loads",
+   "tier": "U",
+   "score": 1.0,
+   "detail": "6/8 configured widget views render a sprint with its numbers",
+   "consequence": "dead primary flow — no data on the dashboard",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "u_widget_numbers",
+   "tier": "U",
+   "score": 0.875,
+   "detail": "worst of 3 scoring sites (seed 3a4b754f5de53bd1): widget numbers: 7.00/8 views exact (sprints by startDate, four §1 numbers each)",
+   "consequence": "wrong numbers on the dashboard",
+   "seeds": {
+    "3a4b754f5de53bd1": 0.875,
+    "3d2bca1ae1c9b961": 0.875,
+    "ed11b8bccd12b9d2": 0.9375
+   }
+  },
+  {
+   "check": "u_widget_chart",
+   "tier": "U",
+   "score": 0.875,
+   "detail": "7/8 charts on one linear scale within 1px; ['worst bar off its linear scale by 1.66px']",
+   "consequence": "the chart misstates the numbers",
+   "seeds": {
+    "3a4b754f5de53bd1": 0.875,
+    "3d2bca1ae1c9b961": 0.875,
+    "ed11b8bccd12b9d2": 0.875
+   }
+  },
+  {
+   "check": "u_widget_edit_config",
+   "tier": "U",
+   "score": 1.0,
+   "detail": "edit/config 10/10: ",
+   "consequence": "the board choice does not reach the view",
+   "parts": {
+    "no_config_needs_config_only": true,
+    "pick0_view_shows_board": true,
+    "pick0_reopen_pressed": true,
+    "pick1_view_shows_board": true,
+    "pick1_reopen_pressed": true,
+    "pick2_view_shows_board": true,
+    "pick2_reopen_pressed": true,
+    "pick3_view_shows_board": true,
+    "pick3_reopen_pressed": true,
+    "second_instance_own_board": true
+   },
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "u_ledger_table",
+   "tier": "U",
+   "score": 0.9712,
+   "detail": "worst of 3 scoring sites (seed 3a4b754f5de53bd1): ledger tables: 5.83/6 exact (rows, cells, default order)",
+   "consequence": "the sprint ledger is wrong",
+   "seeds": {
+    "3a4b754f5de53bd1": 0.9712,
+    "3d2bca1ae1c9b961": 0.9807,
+    "ed11b8bccd12b9d2": 0.9845
+   }
+  },
+  {
+   "check": "u_ledger_sort",
+   "tier": "U",
+   "score": 1.0,
+   "detail": "18/18 at-toggle states ordered with aria-sort (6 after another sort was active)",
+   "consequence": "sorting broken",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "u_issue_router",
+   "tier": "U",
+   "score": 1.0,
+   "detail": "6/6 issue keys open /browse/<KEY> through the Forge router",
+   "consequence": "links escape the router",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "u_comment_flow",
+   "tier": "U",
+   "score": 1.0,
+   "detail": "32/32 comment-flow steps right (select, one comment and a success flag per click and double click, forbidden error flag, modal works)",
+   "consequence": "comment flow broken",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "u_modal_close",
+   "tier": "U",
+   "score": 1.0,
+   "detail": "6/6 close clicks reached bridge close",
+   "consequence": "the modal cannot be closed",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "u_not_started",
+   "tier": "U",
+   "score": 1.0,
+   "detail": "future sprint shows not-started only",
+   "consequence": "not-started state wrong",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "k_rovo_mcp",
+   "tier": "K",
+   "score": 1.0,
+   "detail": "rovo:mcp 4/4: ",
+   "consequence": "the MCP server is not valid or does not expose the action",
+   "parts": {
+    "exactly_one": true,
+    "name_1_30": true,
+    "exposes_action": true,
+    "tools_are_action_keys": true
+   },
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "k_llm_model_current",
+   "tier": "K",
+   "score": 1.0,
+   "detail": "10 LLM call(s); model ids list() does not return: []; llm module with claude: True",
+   "consequence": "a hard-coded model id the platform does not offer (DESIGN §17.4)",
+   "parts": {
+    "llm_module_with_claude": true,
+    "every_call_names_a_listed_model": true
+   },
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "b_realtime_payload_clean",
+   "tier": "B",
+   "score": 1.0,
+   "detail": "192/192 realtime payloads hold sprint ids only",
+   "consequence": "issue data broadcast on a channel that does not enforce permissions",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "u_widget_live",
+   "tier": "U",
+   "score": 0.0,
+   "detail": "moved sprints showing the new numbers live 0/2; 0 idle invoke(s)",
+   "consequence": "the dashboard does not update live",
+   "parts": {
+    "subscribed": true,
+    "no_polling_while_idle": true,
+    "no_reload": true,
+    "moved": [
+     "773",
+     "947"
+    ],
+    "right": []
+   },
+   "seeds": {
+    "3a4b754f5de53bd1": 0.0,
+    "3d2bca1ae1c9b961": 0.0,
+    "ed11b8bccd12b9d2": 0.0
+   }
+  },
+  {
+   "check": "u_llm_explain",
+   "tier": "U",
+   "score": 1.0,
+   "detail": "explain 23/23 over 5 scripted answers: ",
+   "consequence": "the explanation trusts or mishandles the model",
+   "parts": {
+    "0:clean:report_scope_forced": true,
+    "0:clean:ids_are_cited_visible_ones": true,
+    "0:clean:summary_shown": true,
+    "0:clean:every_number_is_a_ledger_number": true,
+    "0:clean:no_error_flag": true,
+    "1:digits:report_scope_forced": true,
+    "1:digits:ids_are_cited_visible_ones": true,
+    "1:digits:no_model_digits": true,
+    "1:digits:every_number_is_a_ledger_number": true,
+    "1:digits:own_sentence_has_a_ledger_number": true,
+    "1:digits:no_error_flag": true,
+    "2:refusal:report_scope_forced": true,
+    "2:refusal:resolver_answered_refusal": true,
+    "2:refusal:error_flag": true,
+    "2:refusal:modal_still_sorts": true,
+    "3:malformed:report_scope_forced": true,
+    "3:malformed:resolver_answered_malformed": true,
+    "3:malformed:error_flag": true,
+    "3:malformed:modal_still_sorts": true,
+    "4:error:report_scope_forced": true,
+    "4:error:resolver_answered_error": true,
+    "4:error:error_flag": true,
+    "4:error:modal_still_sorts": true
+   },
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "v_theme_tokens",
+   "tier": "V",
+   "score": 1.0,
+   "detail": "31/31 surfaces themed with --ds-text* at >= 4.5:1",
+   "consequence": "unreadable in one mode",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "v_dark_mode",
+   "tier": "V",
+   "score": 1.0,
+   "detail": "31/31 surfaces paint a --ds-surface* background in their mode",
+   "consequence": "dark mode broken",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "v_csp_clean",
+   "tier": "V",
+   "score": 1.0,
+   "detail": "0 CSP violation(s), 0 failed asset request(s)",
+   "consequence": "blocked by the Forge CSP",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "v_console_clean",
+   "tier": "V",
+   "score": 1.0,
+   "detail": "0 console/page error(s) on nominal scenarios: []",
+   "consequence": "console errors",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "v_widget_sizes",
+   "tier": "V",
+   "score": 1.0,
+   "detail": "6/6 widget sizes without horizontal overflow, every sprint visible, no number clipped",
+   "consequence": "clips at some width",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "a_action_result",
+   "tier": "A",
+   "score": 0.6,
+   "detail": "3/5 active sprints answered exactly",
+   "consequence": "the Rovo action answers wrongly",
+   "seeds": {
+    "3a4b754f5de53bd1": 0.6,
+    "3d2bca1ae1c9b961": 0.6,
+    "ed11b8bccd12b9d2": 0.6
+   }
+  },
+  {
+   "check": "a_action_errors",
+   "tier": "A",
+   "score": 1.0,
+   "detail": "2/2 bad sprintId inputs return {error} without throwing",
+   "consequence": "the action throws",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "a_action_permissions",
+   "tier": "A",
+   "score": 1.0,
+   "detail": "12/12 per-person answers list exactly what that person may browse",
+   "consequence": "per-person visibility wrong",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "a_skill_instructions",
+   "tier": "A",
+   "score": 1.0,
+   "detail": "SKILL.md body 5/5: result fields named ['sprintName', 'committed', 'added', 'removed', 'creepPercent', 'hiddenChanges', 'changes']",
+   "consequence": "the skill does not tell the agent how to call the action and read its answer",
+   "parts": {
+    "body_le_500_lines": true,
+    "names_action": true,
+    "names_sprintId": true,
+    "reads_the_result": true,
+    "says_what_to_do_with_an_error": true
+   },
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r1_v1_rows_migrated",
+   "tier": "R1",
+   "score": 1.0,
+   "detail": "h2: 67 of 67 v1 rows in scope-ledger with their changeId and time",
+   "consequence": "v1 history missing from the v2 ledger after the 2-hour migration window",
+   "weight": 0.03,
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r1_v1_rows_intact",
+   "tier": "R1",
+   "score": 1.0,
+   "detail": "all 67 v1 rows intact in scope-change after 67 were migrated",
+   "consequence": "",
+   "weight": 0.03,
+   "critical": "migration",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r1_events_during_migration",
+   "tier": "R1",
+   "score": 1.0,
+   "detail": "65 of 65 changes made while the migration ran are in scope-ledger at the end",
+   "consequence": "changes lost while the migration ran",
+   "weight": 0.03,
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r1_progress_visible",
+   "tier": "R1",
+   "score": 1.0,
+   "detail": "6 of 6 panel reads show the migration right (total 67; complete after the h2 read)",
+   "consequence": "migration progress invisible to the admin",
+   "weight": 0.03,
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r2_background_share",
+   "tier": "R2",
+   "score": 1.0,
+   "detail": "9 of 9 hours kept background within 70 % (1680 points; the contract default; the probe recorded no change); busiest hour 214; dosing optimum for the whole run 256",
+   "consequence": "background work starves person-facing requests",
+   "weight": 0.0325,
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r2_person_never_quota_refused",
+   "tier": "R2",
+   "score": 1.0,
+   "detail": "0 of 267 person-facing requests refused for quota",
+   "consequence": "a person was refused because background work spent the quota",
+   "weight": 0.0325,
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r2_rate_limit_reaction",
+   "tier": "R2",
+   "score": 1.0,
+   "detail": "14 of 14 429s answered by their reason (quota: all background paused; burst: the endpoint; per-issue: the issue)",
+   "consequence": "retries into a rate limit",
+   "weight": 0.0325,
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r2_backfill_complete",
+   "tier": "R2",
+   "score": 1.0,
+   "detail": "147 of 147 pre-upgrade changes v1 never recorded are in scope-ledger, right",
+   "consequence": "the ledger at scale is incomplete",
+   "weight": 0.0325,
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r3_never_killed",
+   "tier": "R3",
+   "score": 0.8333,
+   "detail": "5 of 6 functions never exceeded their limit; killed: ui-resolver (1 of 93)",
+   "consequence": "work cut off mid-way by the invocation limit",
+   "weight": 0.02666666666666667,
+   "seeds": {
+    "3a4b754f5de53bd1": 0.8333,
+    "3d2bca1ae1c9b961": 0.8333,
+    "ed11b8bccd12b9d2": 0.8333
+   }
+  },
+  {
+   "check": "r3_long_retry_after_deferred",
+   "tier": "R3",
+   "score": 1.0,
+   "detail": "1 of 1 invocations handed a Retry-After longer than their limit stopped and resumed later (results: retry)",
+   "consequence": "a long Retry-After waited out in-function",
+   "weight": 0.02666666666666667,
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r3_no_duplicate_rows",
+   "tier": "R3",
+   "score": 1.0,
+   "detail": "every (changeId, sprintId) appears once at each of 7 checkpoints; 11 concurrent group(s) raced (same-event 8, same-issue 3)",
+   "consequence": "",
+   "weight": 0.02666666666666667,
+   "critical": "duplicate",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r4_sprint_close_final",
+   "tier": "R4",
+   "score": 1.0,
+   "detail": "1 of 1 closed sprints kept exactly their final ledger",
+   "consequence": "a closed sprint loses or gains history",
+   "weight": 0.02,
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r4_move_new_board",
+   "tier": "R4",
+   "score": 1.0,
+   "detail": "15 of 15 cross-board moves recorded with the new board's estimate",
+   "consequence": "a moved issue carries the old board's estimate",
+   "weight": 0.02,
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r4_field_switch",
+   "tier": "R4",
+   "score": 1.0,
+   "detail": "27 of 27 rows after the switch use the new field; 34 of 34 earlier rows keep their estimate",
+   "consequence": "estimates read from the wrong field after the board switched",
+   "weight": 0.02,
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r4_deleted_history",
+   "tier": "R4",
+   "score": 1.0,
+   "detail": "2 of 2 rows of deleted issues kept as history with deleted: true",
+   "consequence": "deleted issues erase history or keep counting",
+   "weight": 0.02,
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r4_permission_revoked",
+   "tier": "R4",
+   "score": 1.0,
+   "detail": "5 answer(s) after a browse revoke showed ledger data and none of the newly hidden issues",
+   "consequence": "",
+   "weight": 0.02,
+   "critical": "leak",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r5_panel_labels",
+   "tier": "R5",
+   "score": 0.9,
+   "detail": "7 of 8 §2.6 controls found by label; new secret shown once: yes; then masked ••••<last4>: yes; missing migration",
+   "consequence": "the admin cannot find a control",
+   "weight": 0.03333333333333333,
+   "seeds": {
+    "3a4b754f5de53bd1": 0.9,
+    "3d2bca1ae1c9b961": 0.9,
+    "ed11b8bccd12b9d2": 0.9
+   }
+  },
+  {
+   "check": "r5_admin_actions_apply",
+   "tier": "R5",
+   "score": 1.0,
+   "detail": "2 of 2 admin-page invokes of the admin's save and rotate applied",
+   "consequence": "the admin panel does not work for admins",
+   "weight": 0.03333333333333333,
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r5_nonadmin_refused",
+   "tier": "R5",
+   "score": 1.0,
+   "detail": "4 non-admin/forged admin actions changed nothing — judged on the attempted effect landed in storage",
+   "consequence": "",
+   "weight": 0.03333333333333333,
+   "critical": "admin",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r6_unsigned_no_effect",
+   "tier": "R6",
+   "score": 1.0,
+   "detail": "5 invalid events (bad-signature, stale, stale-future, tampered, unsigned) had no effect",
+   "consequence": "",
+   "weight": 0.016,
+   "critical": "webtrigger",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r6_replay_once",
+   "tier": "R6",
+   "score": 1.0,
+   "detail": "1 replay(s) made no Jira write and doubled no deployment; bookkeeping writes 0",
+   "consequence": "",
+   "weight": 0.016,
+   "critical": "duplicate",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r6_status_codes",
+   "tier": "R6",
+   "score": 1.0,
+   "detail": "8 of 8 cases answered with their status",
+   "consequence": "CI cannot tell what happened",
+   "weight": 0.016,
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r6_valid_applies",
+   "tier": "R6",
+   "score": 1.0,
+   "detail": "2 of 2 validly signed events accepted (202) and recorded as `Deployed to <env>` on every ledger row of the issues they name",
+   "consequence": "deployments never reach the ledger",
+   "weight": 0.016,
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r6_secret_never_disclosed",
+   "tier": "R6",
+   "score": 1.0,
+   "detail": "the CI secret (panel) never appeared outside its one-time display",
+   "consequence": "",
+   "weight": 0.016,
+   "critical": "admin",
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r7_values_fresh",
+   "tier": "R7",
+   "score": 0.842,
+   "detail": "worst of 3 scoring sites (seed 3d2bca1ae1c9b961): mean over 7 checkpoints; worst h4: 191 of 286 issues right; CORE-243 'committed' (want ); CORE-245 'committed' (want )",
+   "consequence": "the field shows stale or wrong scope status",
+   "weight": 0.025,
+   "seeds": {
+    "3a4b754f5de53bd1": 0.8923,
+    "3d2bca1ae1c9b961": 0.842,
+    "ed11b8bccd12b9d2": 0.9931
+   }
+  },
+  {
+   "check": "r7_writes_accepted",
+   "tier": "R7",
+   "score": 0.9759,
+   "detail": "worst of 3 scoring sites (seed 3d2bca1ae1c9b961): 162 of 166 bulk field writes accepted; refused: 400; 11 rate-limited (429, R2's)",
+   "consequence": "field writes refused (over 200 updates, wrong shape)",
+   "weight": 0.025,
+   "seeds": {
+    "3a4b754f5de53bd1": 0.9766,
+    "3d2bca1ae1c9b961": 0.9759,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r8_tool_call_scope",
+   "tier": "R8",
+   "score": 1.0,
+   "detail": "1 of 1 manipulated tool calls validated against the viewer's sprint scope before acting",
+   "consequence": "a prompt-injected tool call writes outside the viewer's scope",
+   "weight": 0.013333333333333334,
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r8_failure_handling",
+   "tier": "R8",
+   "score": 1.0,
+   "detail": "2 of 2 LLM failures handled",
+   "consequence": "retry storms or truncated answers shown as complete",
+   "weight": 0.013333333333333334,
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r8_cost_controls",
+   "tier": "R8",
+   "score": 1.0,
+   "detail": "3 of 3 cache/kill-switch/budget cases made no model call",
+   "consequence": "AI spend the admin switched off or capped",
+   "weight": 0.013333333333333334,
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "r9_widget_boot",
+   "tier": "R9",
+   "score": 0.6667,
+   "detail": "widget-view: 1 invoke(s) before first paint (<= 1), 244622 bytes of JS+CSS (<= 153600), 0 external request(s)",
+   "consequence": "a slow or leaky first paint",
+   "parts": {
+    "invokes": 1,
+    "bytes": 0,
+    "external": 1
+   },
+   "weight": 0.016666666666666666,
+   "seeds": {
+    "3a4b754f5de53bd1": 0.6667,
+    "3d2bca1ae1c9b961": 0.6667,
+    "ed11b8bccd12b9d2": 0.6667
+   }
+  },
+  {
+   "check": "r9_sprint_boot",
+   "tier": "R9",
+   "score": 0.6667,
+   "detail": "sprint-modal: 1 invoke(s) before first paint (<= 1), 248499 bytes of JS+CSS (<= 153600), 0 external request(s)",
+   "consequence": "a slow or leaky first paint",
+   "parts": {
+    "invokes": 1,
+    "bytes": 0,
+    "external": 1
+   },
+   "weight": 0.016666666666666666,
+   "seeds": {
+    "3a4b754f5de53bd1": 0.6667,
+    "3d2bca1ae1c9b961": 0.6667,
+    "ed11b8bccd12b9d2": 0.6667
+   }
+  },
+  {
+   "check": "r9_admin_boot",
+   "tier": "R9",
+   "score": 1.0,
+   "detail": "admin-page: 1 invoke(s) before first paint (<= 1)",
+   "consequence": "a slow or leaky first paint",
+   "parts": {
+    "invokes": 1
+   },
+   "weight": 0.016666666666666666,
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "k_manifest_semantics",
+   "tier": "K",
+   "score": 1.0,
+   "detail": "deploy readiness, manifest + permissions: 17 rules checked, none failing here",
+   "consequence": "the manifest or its permissions would fail on real Forge",
+   "parts": {
+    "failed": []
+   },
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "k_runtime_risks",
+   "tier": "K",
+   "score": 1.0,
+   "detail": "deploy readiness, predicted runtime failures: 12 rules checked, none failing here",
+   "consequence": "code that would fail on real Forge",
+   "parts": {
+    "failed": []
+   },
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  },
+  {
+   "check": "e_reconcile_economy",
+   "tier": "E",
+   "score": 0.9091,
+   "detail": "mean over 3 scoring sites: backfill 22 background Jira calls (by lineage, every phase) / optimum 20 (incl. 2 forced 429 repeat(s)) = 1.10x; 1.0 at <= 1x; 2 2.0 call(s) not counted (field-value writes, person-facing, web trigger)",
+   "consequence": "",
+   "parts": {
+    "calls": 22,
+    "optimum": 20,
+    "ratio": 1.1
+   },
+   "seeds": {
+    "3a4b754f5de53bd1": 0.9091,
+    "3d2bca1ae1c9b961": 0.9091,
+    "ed11b8bccd12b9d2": 0.9091
+   }
+  },
+  {
+   "check": "e_event_economy",
+   "tier": "E",
+   "score": 0.4926,
+   "detail": "mean over 3 scoring sites: 584 Jira calls (by lineage, every phase) / optimum 202 (201 delivered relevant change(s) x 1 read + 1 forced 429 repeat) = 2.89x; 1.0 at <= 1.46x; 170 field-value write(s) not counted",
+   "consequence": "",
+   "parts": {
+    "calls": 584,
+    "optimum": 202,
+    "changes": 201,
+    "ratio": 2.891
+   },
+   "seeds": {
+    "3a4b754f5de53bd1": 0.505,
+    "3d2bca1ae1c9b961": 0.4924,
+    "ed11b8bccd12b9d2": 0.4805
+   }
+  },
+  {
+   "check": "e_ui_round_trips",
+   "tier": "E",
+   "score": 1.0,
+   "detail": "mean over 3 scoring sites: round trips before first paint: {'widget-view': 0, 'widget-edit': 1, 'sprint-action': 1}",
+   "consequence": "",
+   "parts": {
+    "widget-view": 1.0,
+    "widget-edit": 1.0,
+    "sprint-action": 1.0
+   },
+   "seeds": {
+    "3a4b754f5de53bd1": 1.0,
+    "3d2bca1ae1c9b961": 1.0,
+    "ed11b8bccd12b9d2": 1.0
+   }
+  }
+ ],
+ "probe_unavailable": [],
+ "vacuous": {},
+ "harness_missing": [],
+ "hold": null,
+ "publishable": true,
+ "unpublishable_reasons": [],
+ "runtime": "wrapper",
+ "calibration": "UNCALIBRATED — rc defaults",
+ "root_causes": {
+  "u_widget_numbers": [
+   "u_widget_chart",
+   "a_action_result",
+   "u_ledger_table",
+   "b_comment_adf_as_user",
+   "t_reestimate_followed",
+   "u_widget_live"
+  ]
+ },
+ "fixture_seeds": [
+  "3a4b754f5de53bd1",
+  "3d2bca1ae1c9b961",
+  "ed11b8bccd12b9d2"
+ ],
+ "recomposed_from": {
+  "verdict": "/private/tmp/claude-501/-Users-workhorse-Projects-goose/0570f02f-1f0b-4ad8-b216-ced5871b4923/scratchpad/sev2-in/sonnet-hardened.json",
+  "score": 0.9628,
+  "rawScore": 0.9628,
+  "scorer_files_sha256": {
+   "score_forge2.py": "07bcfd377b33eb7e78466e24d3666e437f6994997899d0d35425bf73b0787a4b",
+   "forge2_checks.py": "daf4e10cfa8533d32c001098e141d9cc5a8fd00a93e1a095ffb6f2d5203de69c",
+   "forge2_oracle.py": "82c39f143c2452b1e6a5161f28eba5d40f504afffa8c2bbdeead7e18e7d82f0e",
+   "forge2_probe.mjs": "fe054594bc4b55c72c87553704aa874e5ac849ed4ce61a03100277547e01cb27",
+   "forge2-thresholds.json": "348c4ff6dab05b338eced053395f336ed2d2b40edde54e399162adbad3d247c4"
+  },
+  "spec_sha256": "9ceadbb1c8d7b5017006838c306aa966433e779b159de069bb85a62644b53dae",
+  "composed_by": {
+   "score_forge2.py": "3bc9d9b48961c11f33e4f128ccd139b4329315a36cccd8036978d5e23b7bf9b4",
+   "forge2_checks.py": "daf4e10cfa8533d32c001098e141d9cc5a8fd00a93e1a095ffb6f2d5203de69c",
+   "forge2_oracle.py": "82c39f143c2452b1e6a5161f28eba5d40f504afffa8c2bbdeead7e18e7d82f0e",
+   "forge2_probe.mjs": "fe054594bc4b55c72c87553704aa874e5ac849ed4ce61a03100277547e01cb27",
+   "forge2-thresholds.json": "be15094a2bc8dcc48294bf816673fdf7e825670dcab05f8ed856d78458ddbee5"
+  }
+ }
+}

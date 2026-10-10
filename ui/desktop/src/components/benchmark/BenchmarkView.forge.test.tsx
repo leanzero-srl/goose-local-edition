@@ -7,6 +7,7 @@ import { projectBenchScore } from '../../benchScoreProjection';
 import { FORGE_ERA_TIER_ORDER } from './baselines';
 import forgeVerdict from './forge-alt.fixture.json';
 import forge2Verdict from './forge2-pilot.fixture.json';
+import forge2Sonnet from './forge2-sonnet-reliability.fixture.json';
 
 /**
  * THE FORGE FAMILY ON THE BENCHMARK VIEW. The app bundles forge-2.0; forge-1.0 is a frozen era whose
@@ -286,6 +287,48 @@ describe('Benchmark view — the Gauntlet | Forge switch', () => {
     expect(screen.getByRole('button', { name: 'Publish' })).toBeDisabled();
     // Every class the Forge card, the switch and the kit panel emit compiles (a dead utility is
     // invisible in the running app). lucide's identifiers are names, not utilities.
+    const classes = allClasses(document.body).filter((c) => !c.startsWith('lucide'));
+    expect(await missingUtilities(classes)).toEqual([]);
+  });
+
+  it('explains a forge-2.0 score under the reliability rule on the run card: tests × criticals × reliability = final, one line per group', async () => {
+    // Sonnet 5.5 on the hardened task, recomposed under the group rule (the scorer's whole verdict).
+    const ruled = projectBenchScore(forge2Sonnet as never);
+    const mine = { ...MINE, score: forge2Sonnet.score, tiers: ruled.tiers, verdict: ruled.verdict };
+    mockElectron({
+      mine,
+      sessions: [
+        { ...SESSION, score: forge2Sonnet.score, tiers: ruled.tiers },
+        SESSION_10,
+        SB_SESSION,
+      ],
+    });
+    (electron().benchmarkRunResult as ReturnType<typeof vi.fn>).mockImplementation(
+      async (key: string) => (key === SESSION.runId ? mine : null)
+    );
+    mount();
+    const stepsRegion = await screen.findByRole('region', { name: 'Score steps' });
+    const shown = within(stepsRegion)
+      .getAllByTestId('forge-step')
+      .map((step) => step.querySelector('dd')?.textContent);
+    expect(shown).toEqual([
+      forge2Sonnet.critical.pre_severity_score.toFixed(4),
+      forge2Sonnet.critical.multiplier.toFixed(4),
+      forge2Sonnet.reliability.multiplier.toFixed(4),
+      forge2Sonnet.score.toFixed(4),
+    ]);
+    const lines = within(stepsRegion).getAllByTestId('reliability-line');
+    expect(lines.map((row) => row.getAttribute('data-tier'))).toEqual(
+      forge2Sonnet.reliability.defects.map((defect) => defect.tier)
+    );
+    // The headline number is the same final.
+    expect(
+      screen.getByText(`${(forge2Sonnet.score * 100).toFixed(1)}%`, { selector: 'div' })
+    ).toBeInTheDocument();
+    // An rc result is still refused at publish in its scorer's words.
+    expect(screen.getByTestId('forge-publish-refusal')).toHaveTextContent(
+      /^Scored by forge-2\.0-rc: the Forge thresholds are not frozen yet/
+    );
     const classes = allClasses(document.body).filter((c) => !c.startsWith('lucide'));
     expect(await missingUtilities(classes)).toEqual([]);
   });

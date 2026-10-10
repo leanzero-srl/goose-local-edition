@@ -111,6 +111,19 @@ const FAMILY_ERA: Record<BenchFamily, RegExp> = {
   forge: /^forge-\d+(?:\.\d+)*$/,
 };
 
+/** Whether era `a` is an earlier release than era `b` of one family (`forge-1.0` before `forge-2.0`). */
+function eraBefore(a: string, b: string): boolean {
+  const parts = (era: string) =>
+    era
+      .replace(/^[a-z]+-/, '')
+      .split('.')
+      .map(Number);
+  const [x, y] = [parts(a), parts(b)];
+  for (let i = 0; i < Math.max(x.length, y.length); i++)
+    if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) < (y[i] ?? 0);
+  return false;
+}
+
 export function defaultBenchmarkTier(family: BenchFamily = 'sb'): BenchTier {
   return BENCH_FAMILY_DEFAULT[family];
 }
@@ -150,6 +163,15 @@ export function benchmarkLaunchProblem(
   );
   if (family === 'forge' && current.length === 0)
     return 'leanzero.net lists no current Forge benchmark yet, so a Forge run cannot be verified. Refresh once the Forge board opens.';
+  // The app is ahead of the site (integration.md §10 D7): the site's current era is an EARLIER one than
+  // the bundle — open or already frozen for its successor. No update can help, so it is not asked for.
+  if (
+    current.length === 1 &&
+    FAMILY_ERA[family].test(current[0].scorerVersion) &&
+    FAMILY_ERA[family].test(bundled) &&
+    eraBefore(current[0].scorerVersion, bundled)
+  )
+    return `leanzero.net has not opened ${eraDisplayName(bundled)} yet: its current benchmark is still ${eraDisplayName(current[0].scorerVersion)}. Refresh once it opens.`;
   if (
     current.length !== 1 ||
     !FAMILY_ERA[family].test(current[0].scorerVersion) ||

@@ -54,7 +54,13 @@ import { benchmarkPythonLaunch } from './benchPython';
 import { uploadBenchmarkVideo } from './benchVideoUpload';
 import { publishableClip, type ClipTools } from './benchEvidenceClip';
 import { BenchMediaServer, readBenchMedia } from './benchMedia';
-import { pickBenchShots, limitBenchShotsForPublish, type BenchShot } from './benchShots';
+import {
+  pickBenchShots,
+  limitBenchShotsForPublish,
+  readBenchShotsSnapshot,
+  writeBenchShotsSnapshot,
+  type BenchShot,
+} from './benchShots';
 import { projectBenchScore, recoverStoredSb8Score } from './benchScoreProjection';
 import type {
   MenuItemConstructorOptions,
@@ -4546,14 +4552,7 @@ const persistBenchmarkResult = async ({
   try {
     const snapDir = path.join(BENCH_DIR, 'shots-snapshot');
     await fs.rm(snapDir, { recursive: true, force: true });
-    await fs.mkdir(snapDir, { recursive: true });
-    const picked = await pickBenchShots(evidenceWorkdir ?? workdir);
-    for (const shot of picked) {
-      await fs.writeFile(
-        path.join(snapDir, `${shot.name}.json`),
-        JSON.stringify({ caption: shot.caption, b64: shot.b64 })
-      );
-    }
+    await writeBenchShotsSnapshot(snapDir, await pickBenchShots(evidenceWorkdir ?? workdir));
   } catch {
     // No snapshot is a degraded publish (falls back to the live workdir), never a failed run.
   }
@@ -5460,25 +5459,10 @@ ipcMain.handle('benchmark-publish', async (_event, args?: { title?: string; runK
   // Prefer the frozen snapshot written WITH the result row — the workdir is reused and wiped
   // by the next run, so reading it at publish time can attach another run's screenshots to
   // this row's score.
-  const snapshotShots = await (async (): Promise<BenchShot[]> => {
-    // The snapshot belongs to result.json's run only; any other run reads its own tree.
-    if (!storedIsLatest) return [];
-    const snapDir = path.join(BENCH_DIR, 'shots-snapshot');
-    const entries = await fs.readdir(snapDir).catch(() => [] as string[]);
-    const out: BenchShot[] = [];
-    for (const f of entries) {
-      if (!f.endsWith('.json')) continue;
-      try {
-        const parsed = JSON.parse(await fs.readFile(path.join(snapDir, f), 'utf8'));
-        if (typeof parsed?.b64 === 'string' && typeof parsed?.caption === 'string') {
-          out.push({ name: f.slice(0, -5), caption: parsed.caption, b64: parsed.b64 });
-        }
-      } catch {
-        // an unreadable snapshot entry is skipped, not fatal
-      }
-    }
-    return out;
-  })();
+  // The snapshot belongs to result.json's run only; any other run reads its own tree.
+  const snapshotShots: BenchShot[] = storedIsLatest
+    ? await readBenchShotsSnapshot(path.join(BENCH_DIR, 'shots-snapshot'))
+    : [];
   const screenshots = limitBenchShotsForPublish(
     snapshotShots.length
       ? snapshotShots

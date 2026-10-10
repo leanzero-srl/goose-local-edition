@@ -135,8 +135,14 @@ it('allows only one fresh available current stable release matching the bundled 
   expect(benchmarkLaunchProblem([stable], false, 'sb-7.0-rc')).toMatch(/history only/);
   // An SB7.1 session cannot be re-scored once SB7.2 is the stable release.
   expect(benchmarkLaunchProblem([stable], false, 'sb-7.1')).toMatch(/history only/);
+  // The site still on SB7.1 while this app bundles SB7.2: the app is AHEAD of the site, so no update
+  // can help — it says what it waits for (integration.md §10 D7), and asks for an update only when the
+  // site's era is the newer one.
   expect(benchmarkLaunchProblem([{ ...stable, scorerVersion: 'sb-7.1' }])).toBe(
-    'Update Goose to run the latest stable benchmark (Gauntlet 7.1). This app bundles Gauntlet 7.2.'
+    'leanzero.net has not opened Gauntlet 7.2 yet: its current benchmark is still Gauntlet 7.1. Refresh once it opens.'
+  );
+  expect(benchmarkLaunchProblem([{ ...stable, scorerVersion: 'sb-8.0' }])).toBe(
+    'Update Goose to run the latest stable benchmark (Gauntlet 8.0). This app bundles Gauntlet 7.2.'
   );
 });
 
@@ -185,7 +191,11 @@ describe('the Forge family has its own bundled era and its own launch gate (forg
     expect(benchmarkLaunchProblem([stable], false, undefined, 'forge')).toMatch(
       /no current Forge benchmark/
     );
-    // Before the flip: forge-1.0 is still the family's current era but frozen — nothing to run.
+    // Before the flip (integration.md §7 steps 3–6): forge-1.0 is still the family's current era, frozen,
+    // with forge-2.0 listed beside it but not current. The app is ahead of the site and says so (§10 D7)
+    // — not "update Goose", and not a catalog fault.
+    const notOpened =
+      'leanzero.net has not opened Forge 2.0 yet: its current benchmark is still Forge 1.0. Refresh once it opens.';
     expect(
       benchmarkLaunchProblem(
         [stable, { ...forge10, familyCurrent: true }, { ...forge, familyCurrent: false }],
@@ -193,7 +203,11 @@ describe('the Forge family has its own bundled era and its own launch gate (forg
         undefined,
         'forge'
       )
-    ).toMatch(/no single available Forge/);
+    ).toBe(notOpened);
+    // The same when forge-1.0 is current and still open, and for a re-score of a forge-1.0 session then.
+    const open10 = [stable, { ...forge10, familyCurrent: true, frozen: false }];
+    expect(benchmarkLaunchProblem(open10, false, undefined, 'forge')).toBe(notOpened);
+    expect(benchmarkLaunchProblem(open10, false, 'forge-1.0', 'forge')).toBe(notOpened);
     // A newer Forge era on the site: update, naming the family's bundle.
     expect(
       benchmarkLaunchProblem(

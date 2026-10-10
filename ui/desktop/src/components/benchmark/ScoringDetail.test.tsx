@@ -385,3 +385,247 @@ describe('a forge-2.0 verdict reads its v1 tiers AND its v2 families R1–R9 (sc
     expect(await missingUtilities(utilitiesOf(allClasses(view.container)))).toEqual([]);
   });
 });
+
+import forge2Haiku from './forge2-haiku-reliability.fixture.json';
+import forge2Reference from './forge2-reference-reliability.fixture.json';
+import forge2Sol from './forge2-sol-reliability.fixture.json';
+import forge2Sonnet from './forge2-sonnet-reliability.fixture.json';
+describe('a forge-2.0 verdict shows reliability as its own step, one line per group of tests that multiplies (score_forge2.py reliability())', () => {
+  // score_forge2.py recompose() output under the group rule (forge2/final), each the scorer's whole object:
+  // Sonnet 5.5 and GPT-6.1 Sol on the hardened task, and Haiku. The numbers each states, listed once.
+  const CASES = {
+    sonnet: { verdict: forge2Sonnet, inner: 0.9628, reliability: 0.7738, final: 0.745 },
+    sol: { verdict: forge2Sol, inner: 0.9793, reliability: 0.8422, final: 0.8248 },
+    haiku: { verdict: forge2Haiku, inner: 0.3378, reliability: 0.2954, final: 0.0998 },
+  } as const;
+  const show = (
+    verdict: { score: number },
+    scorerVersion = 'forge-2.0-rc',
+    score = verdict.score
+  ) =>
+    render(
+      <ScoringDetail
+        verdict={projectBenchScore(verdict as never).verdict as unknown as VerdictDetail}
+        score={score}
+        scorerVersion={scorerVersion}
+      />
+    );
+  type View = ReturnType<typeof render>;
+  /** The steps as a person reads them: each label with the number under it. */
+  const steps = (view: View) =>
+    within(view.getByRole('region', { name: 'Score steps' }))
+      .getAllByTestId('forge-step')
+      .map((step) => ({
+        label: step.querySelector('dt')?.textContent,
+        shown: step.querySelector('dd')?.textContent ?? '',
+        value: parseFloat(step.querySelector('dd')?.textContent ?? ''),
+      }));
+  /** The group lines as shown: group, worst test (and what sits under it), its score, the factor. */
+  const lines = (view: View) =>
+    within(view.getByRole('table', { name: 'Groups of tests that multiply the score' }))
+      .getAllByTestId('reliability-line')
+      .map((row) => {
+        const [group, test, score, factor] = [...row.querySelectorAll('td')];
+        return {
+          tier: row.getAttribute('data-tier'),
+          group: group.textContent,
+          test: test.firstChild?.textContent,
+          under: test.querySelector('[data-testid="reliability-folded"]')?.textContent ?? null,
+          score: score.textContent,
+          factor: parseFloat((factor.textContent ?? '').replace('× ', '')),
+        };
+      });
+  const product = (factors: number[]) => factors.reduce((p, f) => p * f, 1);
+  /** Each line is shown to four decimals, so n lines agree with the shown product to n half-units. */
+  const rounding = (n: number) => 5e-5 * (n + 1);
+  const words = (name: string) => {
+    const t = name.replace(/_/g, ' ');
+    return t.charAt(0).toUpperCase() + t.slice(1);
+  };
+
+  it.each(Object.entries(CASES))(
+    '%s: the group lines multiply to the shown reliability and the steps to the shown final',
+    (_name, { verdict, inner, reliability, final }) => {
+      const view = show(verdict);
+      const shown = steps(view);
+      expect(shown.map((step) => step.label)).toEqual([
+        'Tests earned',
+        '× Critical multiplier',
+        '× Reliability',
+        '= Final score',
+      ]);
+      expect(shown.map((step) => step.value)).toEqual([inner, 1, reliability, final]);
+      expect(
+        Math.abs(shown[0].value * shown[1].value * shown[2].value - shown[3].value)
+      ).toBeLessThan(rounding(3));
+      // One line per group the scorer counted, in its order: the group, its worst test, that test's
+      // score and the group's factor — and the group's other failed tests under it.
+      const shownLines = lines(view);
+      expect(shownLines).toEqual(
+        verdict.reliability.defects.map((defect) => {
+          const others =
+            (verdict.reliability.folded as Record<string, string[]>)[defect.tier] ?? [];
+          return {
+            tier: defect.tier,
+            group: `${defect.tier} ${FORGE_TIERS[defect.tier].name}`,
+            test: words(defect.check),
+            under: others.length
+              ? `Already counted in this group: ${others.map(words).join(', ')}`
+              : null,
+            score: `${(defect.score * 100).toFixed(1)}%`,
+            factor: defect.factor,
+          };
+        })
+      );
+      expect(
+        Math.abs(product(shownLines.map((line) => line.factor)) - shown[2].value)
+      ).toBeLessThan(rounding(shownLines.length));
+      // The table's last row and the step state one reliability.
+      expect(view.getByTestId('reliability-total')).toHaveTextContent(
+        `Reliability× ${reliability.toFixed(4)}`
+      );
+      // The same final the admission block above states (three decimals there).
+      const admission = view.getByRole('region', { name: 'Admission bands' });
+      expect(within(admission).getByText('Final score').nextElementSibling).toHaveTextContent(
+        final.toFixed(3)
+      );
+      expect(view.queryByTestId('reliability-floor')).toBeNull();
+      expect(view.queryByText('at the floor')).toBeNull();
+      expect(view.queryByTestId('reliability-critical')).toBeNull();
+      // The rule in plain words, its two numbers read from the verdict.
+      view.getByText(
+        /Failed tests also multiply the score\. Each group of tests multiplies the score by its worst test: 0\.90 when that test fails completely, in proportion when it fails partly\. The group’s other failed tests are already counted by its worst one\. The excellence tier never multiplies, and together the groups never take the score below 0\.25 of what the tests earned\./
+      );
+      // No scorer jargon in the explanation (the check rows below quote the scorer's evidence verbatim,
+      // by design, so only this section is held to it).
+      expect(view.getByRole('region', { name: 'Score steps' }).textContent).not.toMatch(
+        /ROOT_BLOCKS|vacuous|shortfall|priced_as_critical|folded|root/
+      );
+    }
+  );
+
+  it('Sonnet: the widget group is one line, its worst test, with the group’s other failed tests quietly under it', async () => {
+    const view = show(forge2Sonnet);
+    const widget = lines(view).find((line) => line.tier === 'U');
+    expect(widget).toEqual({
+      tier: 'U',
+      group: 'U UI function',
+      test: 'U widget live',
+      under: 'Already counted in this group: U widget numbers, U widget chart, U ledger table',
+      score: '0.0%',
+      factor: 0.9,
+    });
+    // Each group once.
+    const tiers = lines(view).map((line) => line.tier);
+    expect(new Set(tiers).size).toBe(tiers.length);
+    assertStudioClean(view.container);
+    expect(await missingUtilities(utilitiesOf(allClasses(view.container)))).toEqual([]);
+  });
+
+  it('names the tests a critical defect priced instead, when there are any', () => {
+    // SYNTHETIC: Sonnet's real block with one test moved to the critical list — none of the recomposed
+    // verdicts fired a critical, so the line is proven on this patch only.
+    const verdict = {
+      ...forge2Sonnet,
+      reliability: { ...forge2Sonnet.reliability, priced_as_critical: ['b_comment_adf_as_user'] },
+    };
+    const view = show(verdict);
+    expect(view.getByTestId('reliability-critical')).toHaveTextContent(
+      'Priced as a critical defect instead, so no group counts them: B comment adf as user.'
+    );
+  });
+
+  it('at the floor: said on the step, on the total and in a sentence', () => {
+    // SYNTHETIC: every group of Haiku's rows failing completely (18 × 0.90 = 0.150, below the 0.25 floor),
+    // because no recomposed verdict reaches the floor under the group rule. The block and the earned
+    // score are patched together so the steps still multiply.
+    const tiers = Object.keys(forge2Haiku.tiers).filter((tier) => tier !== 'E');
+    const defects = tiers.map((tier) => ({
+      tier,
+      check: forge2Haiku.checks.find((row) => row.tier === tier)!.check,
+      score: 0,
+      factor: 0.9,
+    }));
+    const earned = Math.round(forge2Haiku.inner * 0.25 * 1e4) / 1e4;
+    const verdict = {
+      ...forge2Haiku,
+      score: earned,
+      rawScore: earned,
+      reliability: {
+        ...forge2Haiku.reliability,
+        multiplier: 0.25,
+        floored: true,
+        defects,
+        folded: {},
+      },
+    };
+    const view = show(verdict);
+    const shown = steps(view);
+    expect(shown[2].shown).toBe('0.2500at the floor');
+    expect(
+      Math.abs(shown[0].value * shown[1].value * shown[2].value - shown[3].value)
+    ).toBeLessThan(rounding(3));
+    // The lines multiply to LESS than the shown reliability: the floor is what holds it.
+    expect(lines(view)).toHaveLength(18);
+    expect(product(lines(view).map((line) => line.factor))).toBeLessThan(0.25);
+    expect(view.getByTestId('reliability-total')).toHaveTextContent(
+      'Reliability — at the floor× 0.2500'
+    );
+    expect(view.getByTestId('reliability-floor')).toHaveTextContent(
+      'The groups above multiply to less than 0.25. Failed tests never take the score below 0.25 of what the tests earned, so reliability stays at 0.25.'
+    );
+  });
+
+  it('the reference app: reliability 1.0000 and no line, said in words', () => {
+    const view = show(forge2Reference);
+    expect(steps(view).map((step) => [step.label, step.shown])).toEqual([
+      ['Tests earned', '0.9907'],
+      ['× Critical multiplier', '1.0000'],
+      ['× Reliability', '1.0000'],
+      ['= Final score', '0.9907'],
+    ]);
+    view.getByText('No group of tests multiplied the score');
+    expect(
+      view.queryByRole('table', { name: 'Groups of tests that multiply the score' })
+    ).toBeNull();
+    expect(view.queryAllByTestId('reliability-line')).toHaveLength(0);
+    expect(view.queryByTestId('reliability-folded')).toBeNull();
+    expect(view.queryByTestId('reliability-critical')).toBeNull();
+  });
+
+  it('names the result of the steps for what it is when an admission ceiling still applies to it', () => {
+    // The same verdict shown under a final below its earned score — what a failed band leaves.
+    const view = show(forge2Sonnet, 'forge-2.0', 0.499);
+    expect(steps(view).map((step) => [step.label, step.shown])[3]).toEqual([
+      '= Earned before the ceiling',
+      CASES.sonnet.final.toFixed(4),
+    ]);
+  });
+
+  it('a forge-2.0 verdict scored before the rule says so, and shows no step it never recorded', () => {
+    const view = show(forge2Verdict);
+    expect(view.queryByRole('region', { name: 'Score steps' })).toBeNull();
+    expect(view.getByTestId('forge-verdict-facts')).toHaveTextContent(
+      'Scored before failed tests multiplied the score: this result carries no reliability record, so its number leaves that step out. Re-score the saved build to see it under the current rule.'
+    );
+  });
+
+  it('a forge-1.0 verdict shows none of it: no step, no line, no absence note', () => {
+    const view = render(
+      <ScoringDetail
+        verdict={
+          {
+            ...projectBenchScore(forgeVerdict as never).verdict,
+            // Even a block that strayed onto a 1.0 row is not 1.0's rule.
+            reliability: forge2Sonnet.reliability,
+          } as unknown as VerdictDetail
+        }
+        score={0.799}
+        scorerVersion="forge-1.0"
+      />
+    );
+    expect(view.queryByRole('region', { name: 'Score steps' })).toBeNull();
+    expect(view.queryAllByTestId('reliability-line')).toHaveLength(0);
+    expect(view.container.textContent).not.toMatch(/reliab|Failed tests also multiply/i);
+  });
+});

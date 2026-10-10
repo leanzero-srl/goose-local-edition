@@ -3,8 +3,14 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { pickBenchShots, limitBenchShotsForPublish } from './benchShots';
+import {
+  pickBenchShots,
+  limitBenchShotsForPublish,
+  readBenchShotsSnapshot,
+  writeBenchShotsSnapshot,
+} from './benchShots';
 import { forgePublishBody, forgePublishProblem, forgePublishTiers } from './benchForgePublish';
+import { forgeHasReliability, readForgeReliability } from './benchForgeReliability';
 import {
   FORGE_KIT_MODULE,
   FORGE_KIT_STATUS_SCRIPT,
@@ -24,10 +30,19 @@ import {
 } from './components/benchmark/baselines';
 import forgeVerdict from './components/benchmark/forge-alt.fixture.json';
 import forge2Verdict from './components/benchmark/forge2-pilot.fixture.json';
+import forge2Haiku from './components/benchmark/forge2-haiku-reliability.fixture.json';
+import forge2Reference from './components/benchmark/forge2-reference-reliability.fixture.json';
+import forge2Sol from './components/benchmark/forge2-sol-reliability.fixture.json';
+import forge2Sonnet from './components/benchmark/forge2-sonnet-reliability.fixture.json';
 
 /** The main-side Forge seams, each against a real verdict: score_forge.py's for the forge-1.0 alt golden app
  *  (forge-1.0-rc 0.799), and score_forge2.py's for the GPT-6.1 Sol pilot on forge-2.0 (2026-10-10, three
- *  scoring seeds, forge-2.0-rc 0.9618). */
+ *  scoring seeds, forge-2.0-rc 0.9618) — kept as scored BEFORE the reliability rule, so it carries no
+ *  `reliability` block. The four `*-reliability` fixtures are score_forge2.py recompose() output under the
+ *  group rule (branch forge2/final, score_forge2.py sha256 3bc9d9b48961…), each the scorer's whole object:
+ *  Sonnet 5.5 on the hardened task (0.9628 → 0.745), GPT-6.1 Sol on the hardened task (0.9793 → 0.8248),
+ *  Haiku (0.3378 → 0.0998, unpublishable) and the reference app at seed 0123456789abcdef (0.9907,
+ *  reliability 1). */
 const BENCH_DIR = path.resolve(__dirname, '..', '..', '..', 'evals', 'swarm-bench', 'bench');
 
 const dirs: string[] = [];
@@ -127,6 +142,128 @@ describe('forge screenshots', () => {
       'forge-sprint-dark',
       'forge-edit',
     ]);
+    // No admin-panel file, no admin-panel picture: nothing stands in for it.
+    expect(shots.some((shot) => /admin/i.test(shot.name + shot.caption))).toBe(false);
+  });
+
+  // The Sol pilot's forge-shots/ again, plus the three pictures the harness adds when the UI Kit admin page
+  // rendered (forge2/admin-shot). Each file holds its own name so a pick can be told apart.
+  const SOL_SHOTS = [
+    'contact-sheet.png',
+    'not-started-1340.png',
+    'sprint-action-1173-dark-800x600.png',
+    'sprint-action-1173-light-800x600.png',
+    'widget-edit-129-light.png',
+    'widget-view-129-dark-380x480.png',
+    'widget-view-129-light-380x480.png',
+    'widget-view-noconfig.png',
+  ];
+  const ADMIN_SHOTS = [
+    'admin-panel-dark.png',
+    'admin-panel-light.png',
+    'admin-panel-saved-light.png',
+  ];
+  async function shotsDir(files: string[]) {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'forge2-admin-shots-test-'));
+    dirs.push(dir);
+    await fs.mkdir(path.join(dir, 'forge-shots'));
+    for (const name of files) await fs.writeFile(path.join(dir, 'forge-shots', name), name);
+    return dir;
+  }
+  const NOTE =
+    "the app's component tree, drawn by the benchmark's UI Kit host. Jira draws the same tree with its own components.";
+
+  it('shows the UI Kit admin panel after the widget and sprint leads, and publishes it in light and dark within the site’s five', async () => {
+    const shots = await pickBenchShots(await shotsDir([...SOL_SHOTS, ...ADMIN_SHOTS]));
+    const file = (b64: string) => Buffer.from(b64, 'base64').toString();
+    expect(shots.map((shot) => [shot.name, file(shot.b64)])).toEqual([
+      ['forge-widget-light', 'widget-view-129-light-380x480.png'],
+      ['forge-widget-dark', 'widget-view-129-dark-380x480.png'],
+      ['forge-sprint-light', 'sprint-action-1173-light-800x600.png'],
+      ['forge-sprint-dark', 'sprint-action-1173-dark-800x600.png'],
+      ['forge-admin-light', 'admin-panel-light.png'],
+      ['forge-admin-dark', 'admin-panel-dark.png'],
+      ['forge-admin-saved', 'admin-panel-saved-light.png'],
+      ['forge-edit', 'widget-edit-129-light.png'],
+      ['forge-noconfig', 'widget-view-noconfig.png'],
+      ['forge-not-started', 'not-started-1340.png'],
+      ['forge-contact-sheet', 'contact-sheet.png'],
+    ]);
+    // The caption (the picture's alt text too) says what the picture is: the benchmark's host drew it.
+    expect(
+      shots.filter((shot) => shot.name.startsWith('forge-admin')).map((s) => s.caption)
+    ).toEqual([
+      `Admin panel (UI Kit) · light: ${NOTE}`,
+      `Admin panel (UI Kit) · dark: ${NOTE}`,
+      `Admin panel (UI Kit) · after saving: ${NOTE}`,
+    ]);
+    // leanzero.net's route takes five pictures, a filename-safe name and a caption of at most 200
+    // characters each: one of every surface, the admin panel in both themes.
+    const published = limitBenchShotsForPublish(shots);
+    expect(published.map((shot) => shot.name)).toEqual([
+      'forge-widget-light',
+      'forge-widget-dark',
+      'forge-sprint-light',
+      'forge-admin-light',
+      'forge-admin-dark',
+    ]);
+    for (const shot of shots) {
+      expect(shot.caption.length).toBeLessThanOrEqual(200);
+      expect(shot.name).toMatch(/^[a-z0-9][a-z0-9._-]{0,59}$/i);
+    }
+  });
+
+  it('shows and publishes nothing for the admin panel when the run has no admin-panel file', async () => {
+    const shots = await pickBenchShots(await shotsDir(SOL_SHOTS));
+    expect(shots.map((shot) => shot.name)).toEqual([
+      'forge-widget-light',
+      'forge-widget-dark',
+      'forge-sprint-light',
+      'forge-sprint-dark',
+      'forge-edit',
+      'forge-noconfig',
+      'forge-not-started',
+      'forge-contact-sheet',
+    ]);
+    expect(limitBenchShotsForPublish(shots).map((shot) => shot.name)).toEqual([
+      'forge-widget-light',
+      'forge-widget-dark',
+      'forge-sprint-light',
+      'forge-sprint-dark',
+      'forge-edit',
+    ]);
+  });
+
+  it('keeps the pick order through the result row’s snapshot, so the latest run publishes its leads too', async () => {
+    const dir = await shotsDir([...SOL_SHOTS, ...ADMIN_SHOTS]);
+    const shots = await pickBenchShots(dir);
+    const names = shots.map((shot) => shot.name);
+    // The hazard: by name the contact sheet and the edit view come before every lead.
+    expect(names.slice().sort()).not.toEqual(names);
+    const snapshot = path.join(dir, 'shots-snapshot');
+    await writeBenchShotsSnapshot(snapshot, shots);
+    const read = await readBenchShotsSnapshot(snapshot);
+    expect(read).toEqual(shots);
+    expect(limitBenchShotsForPublish(read)).toEqual(limitBenchShotsForPublish(shots));
+    // A snapshot an earlier build wrote records no order: its Forge picks still publish as the leads.
+    const legacy = path.join(dir, 'legacy-snapshot');
+    await fs.mkdir(legacy);
+    for (const shot of shots)
+      await fs.writeFile(
+        path.join(legacy, `${shot.name}.json`),
+        JSON.stringify({ caption: shot.caption, b64: shot.b64 })
+      );
+    const old = await readBenchShotsSnapshot(legacy);
+    expect(old.map((shot) => shot.name).sort()).toEqual(names.slice().sort());
+    expect(limitBenchShotsForPublish(old).map((shot) => shot.name)).toEqual([
+      'forge-widget-light',
+      'forge-widget-dark',
+      'forge-sprint-light',
+      'forge-admin-light',
+      'forge-admin-dark',
+    ]);
+    // No snapshot at all is an empty read (the publisher then reads the run's own tree), never a throw.
+    expect(await readBenchShotsSnapshot(path.join(dir, 'absent'))).toEqual([]);
   });
 });
 
@@ -211,7 +348,10 @@ describe('forge publishing', () => {
     expect(forgePublishProblem(stored2)).toBe(
       'Scored by forge-2.0-rc: the Forge thresholds are not frozen yet, so the result is not board-grade. Forge results publish once the forge-2.0 freeze pins them.'
     );
-    expect(forgePublishProblem({ ...stored2, scorerVersion: 'forge-2.0' })).toBeNull();
+    // The frozen era's identity publishes a verdict scored under the era's current rule (Sol on the hardened
+    // task, recomposed with its reliability block); the pre-rule verdict is refused further down.
+    const ruled = projectBenchScore(forge2Sol as never);
+    expect(forgePublishProblem({ scorerVersion: 'forge-2.0', verdict: ruled.verdict })).toBeNull();
     expect(forgePublishProblem({ ...stored2, scorerVersion: 'forge-2.1' })).toBe(
       'forge-2.1 is not a Forge benchmark this app knows, so it cannot publish from here.'
     );
@@ -315,25 +455,25 @@ describe('the forge publish body (INTEGRATION.md, as implemented on the site)', 
     expect(forgePublishProblem(stored)).toBeNull();
   });
 
-  it('builds a forge-2.0 body from the REAL Sol verdict: nineteen tier means and every row, R1–R9 included', () => {
-    const projected2 = projectBenchScore(forge2Verdict as never);
+  it('builds a forge-2.0 body from a REAL Sol verdict: nineteen tier means and every row, R1–R9 included', () => {
+    const projected2 = projectBenchScore(forge2Sol as never);
     const body = forgePublishBody({
       scorerVersion: 'forge-2.0',
       tiers: projected2.tiers,
       verdict: projected2.verdict,
     });
     expect(Object.keys(body.tiers as object)).toEqual(FORGE_ERA_TIER_ORDER['forge-2.0']);
-    expect((body.tiers as Record<string, number>).R2).toBe(forge2Verdict.tiers.R2.mean);
+    expect((body.tiers as Record<string, number>).R2).toBe(forge2Sol.tiers.R2.mean);
     // Not one scorer row is dropped: the v2 families ride under their own letters.
     const rows = body.checksSummary as Array<{ check: string; tier: string; score: number }>;
     expect(rows.map((r) => [r.check, r.tier, r.score])).toEqual(
-      forge2Verdict.checks.map((c) => [c.check, c.tier, c.score])
+      forge2Sol.checks.map((c) => [c.check, c.tier, c.score])
     );
     expect(rows.filter((r) => /^R\d$/.test(r.tier))).toHaveLength(32);
     expect(rows.find((r) => r.check === 'r5_nonadmin_refused')).toMatchObject({ tier: 'R5' });
     expect(body.admission).toEqual({ ceiling: 1, reasons: [], failedChecksByBand: [] });
-    expect(body.rawScore).toBe(forge2Verdict.rawScore);
-    expect(body.scoreInner).toBe(forge2Verdict.inner);
+    expect(body.rawScore).toBe(forge2Sol.rawScore);
+    expect(body.scoreInner).toBe(forge2Sol.inner);
     expect(body.criticalMultiplier).toBe(1);
   });
 
@@ -347,6 +487,196 @@ describe('the forge publish body (INTEGRATION.md, as implemented on the site)', 
           verdict: { ...projected.verdict, [drop]: drop === 'checks' ? [] : undefined },
         })
       ).toMatch(/lacks its admission record, earned score or check rows/);
+  });
+});
+
+// The numbers each recomposed verdict states (read from the fixture files; listed once so a re-composition
+// changes one table). `final` is the verdict's score, which for these four is its earned score (no ceiling).
+const RELIABILITY_CASES = {
+  sonnet: { verdict: forge2Sonnet, inner: 0.9628, reliability: 0.7738, final: 0.745, groups: 8 },
+  sol: { verdict: forge2Sol, inner: 0.9793, reliability: 0.8422, final: 0.8248, groups: 9 },
+  haiku: { verdict: forge2Haiku, inner: 0.3378, reliability: 0.2954, final: 0.0998, groups: 14 },
+  reference: { verdict: forge2Reference, inner: 0.9907, reliability: 1, final: 0.9907, groups: 0 },
+} as const;
+
+describe('forge-2.0 publishes the scorer’s reliability evidence (score_forge2.py reliability(); the site’s route v2.9)', () => {
+  const stored20 = (verdict: unknown) => {
+    const projected = projectBenchScore(verdict as never);
+    return { scorerVersion: 'forge-2.0', tiers: projected.tiers, verdict: projected.verdict };
+  };
+  type Defect = { tier: string; check: string; score: number; factor: number };
+
+  it('keeps the scorer’s block whole on the stored row, and knows which eras carry the rule', () => {
+    for (const { verdict } of Object.values(RELIABILITY_CASES))
+      expect(
+        (projectBenchScore(verdict as never).verdict as { reliability?: unknown }).reliability
+      ).toEqual(verdict.reliability);
+    expect(readForgeReliability(forge2Sonnet.reliability)).toEqual(forge2Sonnet.reliability);
+    expect(forgeHasReliability('forge-2.0')).toBe(true);
+    expect(forgeHasReliability('forge-2.0-rc')).toBe(true);
+    for (const other of ['forge-1.0', 'forge-1.0-rc', 'sb-7.2', undefined])
+      expect(forgeHasReliability(other)).toBe(false);
+    // Not the scorer's shape is not a record — never half-read. The per-row shape the rule had before
+    // (root, root_score, unexercised; no tier, no priced_as_critical) is refused too.
+    const block = forge2Sonnet.reliability;
+    const { priced_as_critical: _priced, ...withoutPriced } = block;
+    for (const broken of [
+      undefined,
+      null,
+      1,
+      { multiplier: 1 },
+      { ...block, multiplier: '0.7738' },
+      { ...block, defects: [{ check: 'u_widget_live', score: 0, factor: 0.9 }] },
+      { ...block, defects: [{ tier: 'U', check: 'u_widget_live', score: 0 }] },
+      { ...block, folded: { U: 'u_widget_chart' } },
+      withoutPriced,
+      { ...withoutPriced, unexercised: [] },
+    ])
+      expect(readForgeReliability(broken)).toBeNull();
+  });
+
+  it.each(Object.entries(RELIABILITY_CASES).filter(([name]) => name !== 'haiku'))(
+    'posts what the route requires for %s, each field the verdict’s own',
+    (_name, { verdict, inner, reliability, final, groups }) => {
+      const stored = stored20(verdict);
+      expect(forgePublishProblem(stored)).toBeNull();
+      const body = forgePublishBody(stored);
+      // Exactly these keys: the route refuses any other (and the block's k, floor, folded and
+      // priced_as_critical lists are the site's own to derive from the posted rows, never posted).
+      expect(Object.keys(body).sort()).toEqual(
+        [
+          'admission',
+          'checksSummary',
+          'criticalFloor',
+          'criticalMultiplier',
+          'criticalRows',
+          'excellenceEMean',
+          'excellenceFraction',
+          'gateConditions',
+          'preSeverityScore',
+          'rawScore',
+          'reliability',
+          'reliabilityDefects',
+          'scoreInner',
+          'tiers',
+        ].sort()
+      );
+      expect(body.criticalMultiplier).toBe(verdict.critical.multiplier);
+      expect(body.rawScore).toBe(verdict.rawScore);
+      expect(body.rawScore).toBe(final);
+      expect(body.scoreInner).toBe(inner);
+      expect(body.reliability).toBe(verdict.reliability.multiplier);
+      expect(body.reliability).toBe(reliability);
+      // The scorer's defects passed through: one per group that multiplies, in its order, its four keys.
+      const defects = body.reliabilityDefects as Defect[];
+      expect(defects).toEqual(verdict.reliability.defects);
+      expect(defects).toHaveLength(groups);
+      for (const defect of defects)
+        expect(Object.keys(defect)).toEqual(['tier', 'check', 'score', 'factor']);
+      // The rows carry the scorer's detail from its first character, cut only at the route's 220-character
+      // limit; a group's worst test is a posted row with that score.
+      const rows = body.checksSummary as Array<{ check: string; score: number; detail?: string }>;
+      expect(rows).toHaveLength(verdict.checks.length);
+      rows.forEach((row, i) => {
+        expect(row.check).toBe(verdict.checks[i].check);
+        expect(row.detail).toBe(verdict.checks[i].detail.slice(0, 220));
+      });
+      for (const defect of defects)
+        expect(rows.find((row) => row.check === defect.check)?.score).toBe(defect.score);
+      // The route's own equation on the posted numbers: weighted tier means × critical multiplier ×
+      // reliability is the earned score it ties the final to (its tolerance, 2e-4).
+      const tiers = body.tiers as Record<string, number>;
+      const weights = verdict.tiers as Record<string, { weight: number }>;
+      const tests = Object.keys(tiers).reduce((sum, t) => sum + tiers[t] * weights[t].weight, 0);
+      expect(Math.abs(tests - inner)).toBeLessThan(1e-3);
+      expect(
+        Math.abs(tests * (body.criticalMultiplier as number) * reliability - final)
+      ).toBeLessThan(2e-4);
+    }
+  );
+
+  it('posts Sonnet’s widget group once, by its worst test — the group’s other failed tests are not posted again', () => {
+    const defects = forgePublishBody(stored20(forge2Sonnet)).reliabilityDefects as Defect[];
+    const widget = defects.filter((d) => d.tier === 'U');
+    expect(widget).toHaveLength(1);
+    expect(widget[0]).toEqual(forge2Sonnet.reliability.defects.find((d) => d.tier === 'U'));
+    for (const other of forge2Sonnet.reliability.folded.U ?? [])
+      expect(defects.some((d) => d.check === other)).toBe(false);
+    // One entry per group: no tier twice, and none for the excellence tier.
+    expect(new Set(defects.map((d) => d.tier)).size).toBe(defects.length);
+    expect(defects.some((d) => d.tier === 'E')).toBe(false);
+  });
+
+  it('refuses a forge-2.0 verdict without `reliability`, naming the field — and never builds a body with a default factor', () => {
+    // The pilot verdict as scored before the rule: publishable by its scorer, no reliability block.
+    const before = stored20(forge2Verdict);
+    expect(before.verdict).not.toHaveProperty('reliability');
+    expect(forgePublishProblem(before)).toBe(
+      'This Forge 2.0 result has no `reliability` record: it was scored before failed tests multiplied the score. Re-score the saved build to publish it.'
+    );
+    expect(() => forgePublishBody(before)).toThrow(/has no `reliability` record/);
+    // The same refusal for a ruled verdict that lost its block, a block that is not the scorer's shape,
+    // and a verdict without the critical multiplier the route requires beside it.
+    const ruled = stored20(forge2Sonnet);
+    const without = (patch: Record<string, unknown>) => ({
+      ...ruled,
+      verdict: { ...ruled.verdict, ...patch },
+    });
+    expect(forgePublishProblem(without({ reliability: undefined }))).toMatch(
+      /has no `reliability` record/
+    );
+    expect(forgePublishProblem(without({ reliability: { multiplier: 1 } }))).toBe(
+      "This Forge 2.0 result's `reliability` record is not what its scorer writes (the multiplier, and each group's worst test with its factor). Re-score the saved build to publish it."
+    );
+    expect(() => forgePublishBody(without({ reliability: { multiplier: 1 } }))).toThrow(
+      /is not what its scorer writes/
+    );
+    expect(forgePublishProblem(without({ critical: { floor: 0.6 } }))).toMatch(
+      /has no `critical\.multiplier`, which leanzero\.net requires/
+    );
+    expect(() => forgePublishBody(without({ critical: { floor: 0.6 } }))).toThrow(
+      /critical\.multiplier/
+    );
+    // An rc result is refused as rc first: a re-score under an rc scorer stays rc.
+    expect(forgePublishProblem({ ...before, scorerVersion: 'forge-2.0-rc' })).toMatch(
+      /^Scored by forge-2\.0-rc: the Forge thresholds are not frozen yet/
+    );
+    expect(() => forgePublishBody({ ...before, scorerVersion: 'forge-2.0-rc' })).toThrow(
+      /has no `reliability` record/
+    );
+  });
+
+  it('refuses Haiku in its scorer’s own words (rows the harness could not run)', () => {
+    expect(forgePublishProblem(stored20(forge2Haiku))).toBe(
+      `The scorer marked this Forge result unpublishable: ${forge2Haiku.unpublishable_reasons.join('; ')}.`
+    );
+    expect(forge2Haiku.unpublishable_reasons).toEqual(['9 unavailable row(s)']);
+  });
+
+  it('posts no reliability key for forge-1.0, which has no such rule (the site refuses them there)', () => {
+    const projected = projectBenchScore(forgeVerdict as never);
+    const body = forgePublishBody({
+      scorerVersion: 'forge-1.0',
+      tiers: projected.tiers,
+      verdict: { ...projected.verdict, reliability: forge2Sonnet.reliability },
+    });
+    expect(body).not.toHaveProperty('reliability');
+    expect(body).not.toHaveProperty('reliabilityDefects');
+    expect(
+      forgePublishProblem({ scorerVersion: 'forge-1.0', verdict: projected.verdict })
+    ).toBeNull();
+  });
+
+  it('omits a row’s detail when the scorer wrote none — the route refuses an empty one', () => {
+    const ruled = stored20(forge2Reference);
+    const checks = (ruled.verdict.checks as Array<Record<string, unknown>>).map((row, i) =>
+      i === 0 ? { ...row, detail: '' } : i === 1 ? { ...row, detail: undefined } : row
+    );
+    const rows = forgePublishBody({ ...ruled, verdict: { ...ruled.verdict, checks } })
+      .checksSummary as Array<Record<string, unknown>>;
+    expect(rows[0]).toEqual({ check: 'l_deployable', tier: 'L', score: 1 });
+    expect(rows[1]).not.toHaveProperty('detail');
+    expect(rows[2]).toHaveProperty('detail');
   });
 });
 

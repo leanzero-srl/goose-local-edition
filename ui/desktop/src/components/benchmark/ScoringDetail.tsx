@@ -11,6 +11,7 @@ import {
   isolatedPaymentsTier,
 } from './baselines';
 import { sb8CompositionSchema } from '../../sb8ScoreSchema';
+import { forgeHasReliability, readForgeReliability } from '../../benchForgeReliability';
 import { summarizeParts, type PartLeaf } from './partSummary';
 import { Check, ChevronDown, ChevronRight, X, XCircle } from 'lucide-react';
 import {
@@ -59,6 +60,9 @@ interface LegacyVerdictDetail {
     rows: Array<{ check: string; factor?: number; why?: string; suppressed?: string }>;
   };
   excellence?: { fraction: number; e_mean: number; conditions: Record<string, unknown> };
+  /** Forge 2.0 (score_forge2.py): the failed tests that multiply the score — read through
+   *  readForgeReliability, never trusted as typed. */
+  reliability?: unknown;
   /** Forge (score_forge.py): the verdict's own publishability, runtime and calibration identity. */
   status?: string;
   publishable?: boolean;
@@ -592,6 +596,13 @@ function ForgeVerdictFacts({
       tone: 'warn',
       text: `${scorerVersion ?? 'This scorer'} is uncalibrated (rc thresholds): a measurement, not a board result.`,
     });
+  // A Forge 2.0 verdict kept from before the reliability rule: its number has no such step, and saying
+  // nothing would read as "no test failed".
+  if (forgeHasReliability(scorerVersion) && !readForgeReliability(verdict.reliability))
+    facts.push({
+      tone: 'warn',
+      text: 'Scored before failed tests multiplied the score: this result carries no reliability record, so its number leaves that step out. Re-score the saved build to see it under the current rule.',
+    });
   if (facts.length === 0) return null;
   return (
     <div className="flex flex-col gap-2" data-testid="forge-verdict-facts">
@@ -678,6 +689,157 @@ function ForgeAdmission({
         The final score is the lower of earned credit and the ceiling of the lowest band a required
         check failed. Passing a band adds no points.
       </p>
+    </section>
+  );
+}
+
+/**
+ * Forge 2.0's steps from what the tests earned to the score the ceiling applies to — tests earned × critical
+ * multiplier × reliability — and the groups of tests that make up the reliability factor: one line per group
+ * that multiplies the score (its worst test, that test's score, the group's factor), the group's other failed
+ * tests under it as already counted, and the tests a critical defect priced instead. Every number is the
+ * verdict's (`critical.pre_severity_score`, `critical.multiplier`, `reliability`, `rawScore`); nothing is
+ * multiplied here, so the lines read as the scorer wrote them. Forge 1.0 has no such rule and renders none of
+ * this; a Forge 2.0 verdict without the record is named in ForgeVerdictFacts.
+ */
+function ForgeReliability({
+  verdict,
+  score,
+  scorerVersion,
+}: {
+  verdict: LegacyVerdictDetail;
+  score: number;
+  scorerVersion?: string;
+}) {
+  const reliability = forgeHasReliability(scorerVersion)
+    ? readForgeReliability(verdict.reliability)
+    : null;
+  const tests = verdict.critical?.pre_severity_score;
+  const critical = verdict.critical?.multiplier;
+  const earned = verdict.rawScore;
+  if (
+    !reliability ||
+    typeof tests !== 'number' ||
+    typeof critical !== 'number' ||
+    typeof earned !== 'number'
+  )
+    return null;
+  // With no admission ceiling in the way the earned score IS the final one; otherwise the ceiling above
+  // still applies to it.
+  const isFinal = Math.abs(score - earned) < 5e-5;
+  const steps = [
+    { key: 'tests', label: 'Tests earned', value: tests },
+    { key: 'critical', label: '× Critical multiplier', value: critical },
+    { key: 'reliability', label: '× Reliability', value: reliability.multiplier },
+    {
+      key: 'earned',
+      label: isFinal ? '= Final score' : '= Earned before the ceiling',
+      value: earned,
+    },
+  ];
+  const cell = cx('border px-2 py-1 align-top', SURFACE.hairline);
+  const floor = reliability.floor.toFixed(2);
+  const groupName = (tier: string) => `${tier} ${FORGE_TIERS[tier]?.name ?? ''}`.trim();
+  // A group's other failed tests sit under its line; a group the scorer listed there with no line of its own
+  // is still shown, never dropped.
+  const lined = new Set(reliability.defects.map((defect) => defect.tier));
+  const unlined = Object.entries(reliability.folded).filter(
+    ([tier, names]) => !lined.has(tier) && names.length > 0
+  );
+  return (
+    <section className="flex flex-col gap-3" aria-label="Score steps">
+      <dl className={cx('grid grid-cols-2 gap-3 sm:grid-cols-4', TNUM)}>
+        {steps.map((step) => (
+          <div key={step.key} data-testid="forge-step" data-step={step.key}>
+            <dt className={TYPE.meta}>{step.label}</dt>
+            <dd
+              className={cx(
+                'flex flex-wrap items-center gap-2',
+                TYPE.h2,
+                step.key === 'earned' && isFinal && TONE_TEXT.accent
+              )}
+            >
+              {step.value.toFixed(4)}
+              {step.key === 'reliability' && reliability.floored && (
+                <Chip tone="warn">at the floor</Chip>
+              )}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      <p className={cx('max-w-[80ch]', TYPE.bodyMuted)}>
+        Failed tests also multiply the score. Each group of tests multiplies the score by its worst
+        test: {(1 - reliability.k).toFixed(2)} when that test fails completely, in proportion when
+        it fails partly. The group&rsquo;s other failed tests are already counted by its worst one.
+        The excellence tier never multiplies, and together the groups never take the score below{' '}
+        {floor} of what the tests earned.
+      </p>
+      {reliability.defects.length === 0 ? (
+        <div>
+          <Chip tone="ok" icon={<Check />}>
+            No group of tests multiplied the score
+          </Chip>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table
+            aria-label="Groups of tests that multiply the score"
+            className={cx('w-full border-collapse text-lz-body text-lz-ink', TNUM)}
+          >
+            <thead>
+              <tr className="text-left">
+                <th className={cell}>Group</th>
+                <th className={cell}>Its worst test</th>
+                <th className={cell}>That test&rsquo;s score</th>
+                <th className={cell}>Multiplies the score by</th>
+              </tr>
+            </thead>
+            <tbody>
+              {reliability.defects.map((defect) => {
+                const others = reliability.folded[defect.tier] ?? [];
+                return (
+                  <tr key={defect.tier} data-testid="reliability-line" data-tier={defect.tier}>
+                    <td className={cx(cell, WEIGHT.medium)}>{groupName(defect.tier)}</td>
+                    <td className={cell}>
+                      {humanize(defect.check)}
+                      {others.length > 0 && (
+                        <div data-testid="reliability-folded" className={cx('mt-0.5', TYPE.meta)}>
+                          Already counted in this group: {others.map(humanize).join(', ')}
+                        </div>
+                      )}
+                    </td>
+                    <td className={cell}>{pct(defect.score, 1)}</td>
+                    <td className={cell}>× {defect.factor.toFixed(4)}</td>
+                  </tr>
+                );
+              })}
+              <tr data-testid="reliability-total">
+                <td className={cx(cell, WEIGHT.semibold)} colSpan={3}>
+                  Reliability{reliability.floored ? ' — at the floor' : ''}
+                </td>
+                <td className={cx(cell, WEIGHT.semibold)}>× {reliability.multiplier.toFixed(4)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+      {reliability.floored && (
+        <p data-testid="reliability-floor" className={TYPE.body}>
+          The groups above multiply to less than {floor}. Failed tests never take the score below{' '}
+          {floor} of what the tests earned, so reliability stays at {floor}.
+        </p>
+      )}
+      {unlined.map(([tier, names]) => (
+        <p key={tier} data-testid="reliability-folded" className={TYPE.bodyMuted}>
+          Already counted in {groupName(tier)}: {names.map(humanize).join(', ')}.
+        </p>
+      ))}
+      {reliability.priced_as_critical.length > 0 && (
+        <p data-testid="reliability-critical" className={TYPE.bodyMuted}>
+          Priced as a critical defect instead, so no group counts them:{' '}
+          {reliability.priced_as_critical.map(humanize).join(', ')}.
+        </p>
+      )}
     </section>
   );
 }
@@ -773,16 +935,15 @@ export function ScoringDetail({
   score: number;
   scorerVersion?: string;
 }) {
-  const sb8 = isSb8(
-    scorerVersion ?? ('scorerVersion' in rawVerdict ? rawVerdict.scorerVersion : '')
-  );
+  // The scorer the caller names, else the one the verdict recorded: every family test below reads it.
+  const version =
+    scorerVersion ?? ('scorerVersion' in rawVerdict ? rawVerdict.scorerVersion : undefined);
+  const sb8 = isSb8(version ?? '');
   const sb8Verdict = sb8 ? (rawVerdict as Sb8VerdictDetail) : null;
   const paymentsTier =
     isolatedPaymentsTier(scorerVersion) ??
     isolatedPaymentsTier('scorerVersion' in rawVerdict ? rawVerdict.scorerVersion : undefined);
-  const forge = isForge(
-    scorerVersion ?? ('scorerVersion' in rawVerdict ? rawVerdict.scorerVersion : undefined)
-  );
+  const forge = isForge(version);
   const verdict: LegacyVerdictDetail = useMemo(
     () =>
       sb8Verdict
@@ -839,12 +1000,13 @@ export function ScoringDetail({
           <Sb8Composition verdict={sb8Verdict} score={score} />
         ) : forge ? (
           <>
-            <ForgeVerdictFacts verdict={verdict} scorerVersion={scorerVersion} />
+            <ForgeVerdictFacts verdict={verdict} scorerVersion={version} />
             <ForgeAdmission
               admission={verdict.admission}
               rawScore={verdict.rawScore}
               score={score}
             />
+            <ForgeReliability verdict={verdict} score={score} scorerVersion={version} />
             <ForgeComposition verdict={verdict} />
           </>
         ) : paymentsTier ? (
