@@ -62,6 +62,22 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
 
 ## Line state
 
+- 2026-10-10 13:34 RELIABILITY v2, PER GROUP (branch `forge2/final` = forge2/severity + the hardening gate; not merged,
+  not pushed). The per-row rule below was proven unfair by an independent review and reproduced on Sonnet's verdict:
+  0.7473 as graded, 0.7078 with `u_widget_numbers` FIXED, 0.7747 with it made worse; count-once exemptions let an
+  absent or idle surface beat a working one with failures; a fired critical paid twice; weight-0 `k_v2_surfaces`
+  multiplied. Now (SPEC §4): reliability = max(0.25, Π over the 18 groups — every tier but E — of (1 − 0.10 × the
+  shortfall of the group's worst eligible row)); eligible = scored, weighted, critical not fired; vacuous and absent
+  rows count their 0; no ROOT_BLOCKS folding (it stays for the criticals and forge2_controls); cross-group effects of
+  one cause are not folded. Verdict block `{multiplier, k, floor, floored, defects [{tier, check, score, factor}],
+  folded {tier: [check]}, priced_as_critical}`. Recomposed (old per-row -> per group): Sol hardened 0.8247 -> 0.8248,
+  Sonnet hardened 0.7473 -> 0.7450, Sol lean 0.7564 -> 0.6990 (its two vacuous R rows now count), Haiku 0.0845 ->
+  0.0998 (off the floor, 14 groups); the six g3 reference verdicts keep reliability 1. Monotonicity sweep (every
+  non-E row over 0/.25/.5/.75/.9/1): 0 violating moves on all ten verdicts, the per-row rule 10/14/11/5 on the
+  pilots. Fixtures for the desktop and the site: scratchpad `sev2-out/recomposed-<name>.json` (the earlier `sev-out/`
+  ones carry the retired block). Also: deploy-readiness poor-practice findings are no longer priced in
+  k_manifest_semantics (M3 "every consumer queue is pushed to" is not in the contract; M9/P3 are, and stay priced by
+  k_dashboard_widget / l_scopes) — no kept verdict moves (M3 passes on all ten).
 - 2026-10-10 12:17 RELIABILITY (branch `forge2/severity`, off `forge2/prerun` 9ac3ed765; not merged, not pushed). Owner's
   acceptance rule: Sonnet 5.5 near 0.9 (0.9628 with 13 failed guarantee rows) is not discriminating. SPEC §4 now:
   `final = earned × critical multiplier × reliability`, reliability = max(0.25, Π (1 − 0.10 × counted shortfall)) over

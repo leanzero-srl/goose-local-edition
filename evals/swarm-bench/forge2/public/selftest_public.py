@@ -214,11 +214,18 @@ class Prompt(unittest.TestCase):
         thresholds = json.loads((FORGE2.parent / 'bench' / 'forge2-thresholds.json').read_text())
         self.assertEqual((thresholds['reliability_k'], thresholds['reliability_floor']), (k, floor))
         self.assertIn(f'multiplies the score by {1 - k:.2f}', scoring)
-        self.assertIn(f'each test that fails completely multiplies it by {1 - k:.2f}, a partial failure in proportion', body)
+        self.assertIn(f'A group multiplies the score by 1 − {k:.2f} × the shortfall of its worst test, so one whose worst '
+                      f'test fails completely multiplies it by {1 - k:.2f}', body)
         self.assertEqual(floor, 0.25)
-        self.assertIn('never take the score below a quarter of what the tests earned', body)
-        self.assertIn('a test that fails only because another one did is not counted again', body)
+        self.assertIn('together the groups never take the score below a quarter of what the tests earned', body)
         self.assertIn('The excellence share never multiplies', body)
+        self.assertIn('a defect from the list below is priced there instead', body)
+        # the groups: SPEC §4's 18 = each v2 requirement plus v1's nine; nothing is folded across groups, so the
+        # prompt promises no "counted once" for a test another one failed
+        groups = re.search(r'A GROUP is a tier other than E: ((?:[A-Z]\d? )+)and R1…R9 \((\d+) groups\)', scoring)
+        self.assertEqual((len(groups.group(1).split()), int(groups.group(2))), (9, 18))
+        self.assertIn("each v2 requirement above is a group of tests and v1's behaviours make nine more", body)
+        self.assertNotIn('not counted again', body)
         weights = dict(re.findall(r'(R\d) (0\.\d+)', scoring))
         self.assertAlmostEqual(sum(float(w) for w in weights.values()) + 0.25, 1.0)
         names = {'R1': 'migration', 'R2': 'dosing', 'R3': 'time limits', 'R4': 'the changing world',

@@ -106,7 +106,8 @@ def judge(golden: Dict, mutant: Dict, expect: Dict, root_blocks: Dict[str, tuple
         attributed |= nxt
         frontier = nxt & lost
     # A row the mutant left VACUOUS (its precondition unmet: the surface was never exercised) is the shadow of the
-    # declared defect, priced 0 with no multiplier of its own — attributed whenever a declared row was lost.
+    # declared defect, priced 0 with no critical of its own (its 0 counts in its reliability group like any score) —
+    # attributed whenever a declared row was lost.
     if declared & lost:
         # (score_forge2 marks a row its app's own manifest fault left unopened `manifest:`, §17.8 G — the same shadow)
         attributed |= {n for n, row in m.items()

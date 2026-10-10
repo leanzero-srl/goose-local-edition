@@ -151,22 +151,42 @@ platform behaviours are added (NEVER OVER-ENGINEER):
   migration; a web-trigger write without a valid signature; an admin action by a non-admin succeeded or the CI secret
   disclosed; a hidden issue's data shown to a person who cannot browse it; a duplicate side effect (≥ 2 comments for one
   click, or duplicate ledger rows).
-- Reliability (2026-10-10). Why: the paid pilots — GPT-6.1 Sol 0.9618 with 11 failed guarantee rows, Claude Sonnet
-  5.5 on the hardened task 0.9628 with 13 (a live widget that never updated, both surfaces ~245 KB against the 150 KB
-  boot budget, field values wrong for a third of the issues in one hour, a resolver killed at its limit, Rovo right
-  for 3 of 5 sprints) — showed that a failed STATED guarantee barely moves a 99-row weighted mean; the owner's
-  acceptance rule: Sonnet near 0.9 is not discriminating. So `final = earned × critical multiplier × reliability`,
-  reliability = max(0.25, Π over the failed guarantees of (1 − K × counted shortfall)), K = 0.10 (`reliability_k` and
-  `reliability_floor` in `bench/forge2-thresholds.json`): a guarantee that fails completely multiplies the score by
-  0.90, a partial failure in proportion. A failed guarantee is a scored row outside the E tier (economy is a reward)
-  whose score is below 1. Never one: a row unavailable for a harness reason, and a vacuous row (its surface was never
-  exercised, so nothing was seen to fail — its 0 is its price, as for the criticals). One root cause counts once: a
-  row counts only the shortfall beyond its failed ROOT_BLOCKS root's (a root at 0 absorbs every row it blocks; a row
-  that failed worse than a partly failed root pays the difference), and the rows one missing surface zeroes count
-  that surface once. Attribution reaches as far as ROOT_BLOCKS declares (9 roots, none among the R1-R9 rows): rows
-  one bug moves that it does not relate each count, so the public text promises only that a test failing because
-  another one did is not counted again. Criticals stay as they are and multiply separately. The verdict's
-  `reliability` block lists every counted row (score, factor), the rows counted with a root, and the unexercised rows.
+- Reliability (2026-10-10; per group since that day's review). Why: the paid pilots — GPT-6.1 Sol 0.9618 with 11
+  failed guarantee rows, Claude Sonnet 5.5 on the hardened task 0.9628 with 13 (a live widget that never updated, both
+  surfaces ~245 KB against the 150 KB boot budget, field values wrong for a third of the issues in one hour, a resolver
+  killed at its limit, Rovo right for 3 of 5 sprints) — showed that a failed STATED guarantee barely moves a 99-row
+  weighted mean; the owner's acceptance rule: Sonnet near 0.9 is not discriminating. So `final = earned × critical
+  multiplier × reliability` (inside rawScore, before the band cap), reliability = max(0.25, Π over the groups g of
+  (1 − K × (1 − worst_g))), K = 0.10 (`reliability_k` and `reliability_floor` in `bench/forge2-thresholds.json`): a
+  group whose worst test fails completely multiplies the score by 0.90, a partial failure in proportion. A GROUP is a
+  tier other than E: L K T R S B U V A and R1…R9 (18 groups); economy (E) is a reward. worst_g is the lowest score
+  among the group's ELIGIBLE rows; a group with none, or whose worst is 1, multiplies by 1. Eligible: (i) scored — a
+  harness-unavailable row never counts; (ii) weighted in the earned score — the weight-0 diagnostics `u_widget_loads`
+  and `k_v2_surfaces` never count; (iii) not a row whose critical fired — every row `criticals()` lists (priced, or
+  already paid by its class or its root) is priced by the ×0.6, once per item. Everything else counts with the score
+  it has: a vacuous row (no surface exercised it) and an absent surface's row count their 0. A tie for the worst goes
+  to the first row in registry order. The verdict's `reliability` block: `{multiplier, k, floor, floored, defects:
+  [{tier, check, score, factor}], folded: {tier: [check, …]}, priced_as_critical: [check, …]}` — one defect per group
+  below 1 (its worst row), the group's other eligible rows below 1 folded under it, the rows (iii) left out.
+  Why per group: the first rule (71cf9d6b4) multiplied per ROW — a row counted only its shortfall beyond a failed
+  ROOT_BLOCKS root, one missing surface counted once, vacuous rows were exempt — and an independent review measured it
+  unfair three ways. (1) A fix scored lower: Sonnet's real verdict, 0.7473 as graded, fell to 0.7078 with
+  `u_widget_numbers` fixed (0.875 → 1.0) and rose to 0.7747 with it made worse (→ 0.5), its dependents counting only
+  beyond it. (2) Doing less beat doing more: with K = 0.10 per row against row weights of 0.0022–0.0333, every count-once
+  exemption made an absent or idle surface cheaper than a working one with a few failures — a widget that never loads
+  0.8838 vs a live widget with three widget rows at 0, 0.7220; an absent web trigger 0.8424 vs a present one with two
+  rows at 0, 0.7841; the LLM requirement never exercised 0.96 vs two of its rows half right 0.8905. (3) A row whose
+  critical fired paid twice (×0.6 and ×0.9; the public text says once per item), and the weight-0 `k_v2_surfaces`
+  multiplied. The same cases per group: Sonnet 0.7450, fixed 0.7454, worse 0.7437; the widget that never loads 0.7954
+  vs the live one 0.8914; the absent web trigger 0.8424 vs the present one 0.8712; the idle LLM requirement 0.8640 vs
+  half right 0.9373; a fired critical ×0.6 alone; `k_v2_surfaces` caps through its band and multiplies nothing. The
+  property this buys, pinned by the scorer selftest's sweep and measured on every kept verdict (0 violating moves;
+  the per-row rule had 5–14 on each pilot): with the critical state as graded, raising any one row's score never
+  lowers the final and lowering one never raises it.
+  Cross-group effects of one cause are NOT folded: a cause that fails rows in two groups pays in both (a widget that
+  never loads fails the U rows and `v_widget_sizes` in V: ×0.90 twice), and the public text promises no folding.
+  Criticals stay as they are and multiply separately; ROOT_BLOCKS serves the criticals' shadowing and forge2_controls,
+  never reliability.
 - Bands: lint/bundle failure → max 0.499; none of the v2 surfaces exists (no `jira:adminPage`, no `webtrigger`, no
   `scope-ledger`) → max 0.30 (v1 untouched scores ≤ 0.30, §5: the band, not the rows, holds it there).
 - No wall-clock thresholds anywhere (counts and virtual time only). Harness/probe failures are never app evidence.

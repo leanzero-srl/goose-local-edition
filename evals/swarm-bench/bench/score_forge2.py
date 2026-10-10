@@ -12,8 +12,8 @@ Forge 1.0's machinery (score_forge.py, forked) with the 2.0 composition (SPEC §
            imported from bench/forge2_checks.py, each weighted inside its family)
   criticals: five CLASSES, ×0.6 each, a class fires at most once (each root priced once) and only on an observed
            defect — never on a vacuous, absent, unavailable or manifest-fault row
-  reliability: max(floor, Π over failed guarantees (1 − K × counted shortfall)), K and the floor from the thresholds
-           file — every scored row outside E below 1 multiplies the whole score, one root cause once (reliability())
+  reliability: max(floor, Π over the 18 groups — every tier but E — of (1 − K × the shortfall of the group's worst
+           eligible row)), K and the floor from the thresholds file (reliability())
   bands: lint/bundle failure → max 0.499; none of jira:adminPage, webtrigger, scope-ledger → max 0.30.
 The §17.8 fixes: B (the duplicate critical needs >= 2 comments for one gesture; zero comments or a missing flag
 is u_comment_flow's), F (both economy rows continuous), G (vacuous / manifest-fault rows never fire a critical,
@@ -1097,8 +1097,9 @@ def _(c):
 # the module usage, understand where it would fail or not". Deterministic, from the manifest, the app's sources, the
 # built resources, the shipped OpenAPI and the run's own call log. Every rule cites the platform page it encodes.
 # Each finding is labelled `would fail` (on real Forge: deploy refused, a call refused, a surface blocked, data
-# missed) or `poor practice` (works, but against the documented guidance), and is PRICED ONCE: a finding another
-# row already grades names that row in `graded_by` and costs nothing here (one defect, not N).
+# missed) or `poor practice` (works, but against the documented guidance). A would-fail finding is PRICED ONCE: one
+# another row already grades names that row in `graded_by` and costs nothing here (one defect, not N). A
+# poor-practice finding is reported and never priced by the two rows (_priced).
 
 DOCS = {
     'trigger': 'https://developer.atlassian.com/platform/forge/manifest-reference/modules/trigger/',
@@ -1538,8 +1539,11 @@ def deploy_readiness(c: Ctx) -> Dict:
 
 
 def _priced(c: Ctx, area_prefixes: Tuple[str, ...]) -> Tuple[float, List[Dict], int]:
+    """A poor-practice finding is reported, never priced here, pass or fail: M3 (a consumer no code pushes to) is no
+    rule the contract states, and the two it does state are their own rows (M9 k_dashboard_widget, contract §2's
+    "the legacy `jira:dashboardGadget` earns nothing"; P3 l_scopes, "Request only the scopes your calls need")."""
     rows = [f for f in deploy_findings(c) if f['rule'].startswith(area_prefixes) and f['status'] != 'n/a']
-    priced = [f for f in rows if not f.get('graded_by')]
+    priced = [f for f in rows if f['kind'] == 'would_fail' and not f.get('graded_by')]
     failed = [f for f in priced if f['status'] == 'fail']
     return (1 - len(failed) / len(priced) if priced else 1.0), failed, len(rows)
 
@@ -3389,6 +3393,10 @@ assert DIAGNOSTIC <= REGISTERED and set(CRITICAL_OF) <= REGISTERED and CALIBRATI
 assert set(CRITICAL_OF.values()) == set(CRITICAL_CLASSES) and not set(CRITICAL_OF) & (CALIBRATION_OWNED | DIAGNOSTIC)
 assert {n for _c, _l, names in ADMISSION_BANDS for n in names} <= REGISTERED
 assert set(EXCELLENCE_VALUED) | set(EXCELLENCE_BINARY) <= REGISTERED
+REGISTRY_ORDER = {n: i for i, (n, *_) in enumerate(CHECKS)}
+# SPEC §4: the reliability groups — every tier but E (economy is a reward, never a guarantee).
+RELIABILITY_GROUPS = tuple(t for t in TIER_ORDER if t != 'E')
+assert set(RELIABILITY_GROUPS) == set(TIER_WEIGHT) | set(FAMILY_WEIGHT)
 
 # Rows that compare a person's change LIST with the oracle: one wrong row in the ledger or one change shown that
 # should be hidden makes each of them wrong, and that is one defect, not N (DESIGN §13.4 item 5, gap #23).
@@ -3434,8 +3442,8 @@ for _root, _deps in ROOT_BLOCKS.items():
 
 
 def _root_cycle() -> Optional[List[str]]:
-    """reliability() lets a failed root account for the rows it blocks, so two rows naming each other would both count
-    for nothing: ROOT_BLOCKS stays acyclic."""
+    """criticals() prices a critical row whose failed critical root blocks it as that root's shadow, so two critical
+    rows naming each other would both go unpriced: ROOT_BLOCKS stays acyclic."""
     done: set = set()
 
     def walk(name: str, path: Tuple[str, ...]) -> Optional[List[str]]:
@@ -3704,42 +3712,42 @@ def criticals(rows: List[Dict]) -> Tuple[float, List[Dict]]:
     return mult, out
 
 
+def carries_weight(r: Dict) -> bool:
+    """The earned score weighs the row: the v1 diagnostics and a weight-0 v2 row weigh nothing (a row with no stamped
+    weight, a synthetic scenario row, weighs 1)."""
+    return r['check'] not in DIAGNOSTIC and r.get('weight', 1.0) > 0
+
+
 def reliability(rows: List[Dict]) -> Tuple[float, Dict]:
-    """SPEC §4: final = earned × critical multiplier × RELIABILITY, RELIABILITY = max(floor, Π (1 − K × counted)) over
-    the failed guarantees: every scored row outside the E tier (economy is a reward, never a guarantee) below 1.
-    Never one: an unavailable row (the harness's failure) and a vacuous row (its surface was never exercised, so nothing
-    was seen to fail; its 0 is its price, as for the criticals).
-    One root cause counts once. A row counts its shortfall only beyond what a failed ROOT_BLOCKS root already accounts
-    for — `root score − score`, never below 0: a root at 0 absorbs every row it blocks, a row that failed no worse than
-    its root counts nothing, and one that failed worse than a partly failed root counts the difference (Sonnet 5.5,
-    2026-10-10: u_widget_numbers 0.875 must not hide u_widget_live 0, the widget that never updated). The rows one
-    missing surface zeroes (`absent_surface`, which leads with the surface's name) count that surface once."""
+    """SPEC §4: final = earned × critical multiplier × RELIABILITY, RELIABILITY = max(floor, Π over the groups g of
+    (1 − K × (1 − worst_g))). A group is a tier other than E (RELIABILITY_GROUPS); worst_g is the lowest score among
+    its ELIGIBLE rows, and a group with none, or whose worst is 1, multiplies by 1. Eligible: a row that was scored (an
+    unavailable row is the harness's failure), that the earned score weighs (carries_weight) and whose critical did not
+    fire (criticals() lists it: priced, or already paid by its class or its root — the multiplier prices that defect,
+    once per item of the list). Every other row counts with the score it has: a vacuous row (no surface exercised it)
+    and an absent surface's row count their 0.
+    Per GROUP: the worst row pays for its group, the group's other failed rows are folded under it, and one cause that
+    fails rows in two groups pays in both. Raising one row's score therefore never lowers the final — the per-row rule
+    with its count-once exemptions let doing less beat doing more (SPEC §4's three receipts)."""
     k, floor = float(TH['reliability_k']), float(TH['reliability_floor'])
-    below = [r for r in rows if r['tier'] != 'E' and not r.get('unavailable') and r['score'] < 1.0 - 1e-9]
-    failed = {r['check']: r['score'] for r in below if not (r.get('parts') or {}).get('vacuous_root')}
-    product, defects, folded, unexercised, surfaces = 1.0, [], {}, [], {}
-    for r in below:
-        name, parts = r['check'], r.get('parts') or {}
-        root = min((x for x, deps in ROOT_BLOCKS.items() if x in failed and name in deps), key=failed.get, default=None)
-        if parts.get('vacuous_root'):
-            (folded.setdefault(root, []) if root else unexercised).append(name)
+    priced = {x['check'] for x in criticals(rows)[1]}
+    scored = [r for r in rows if r['tier'] in RELIABILITY_GROUPS and not r.get('unavailable') and carries_weight(r)]
+    as_critical = sorted((r['check'] for r in scored if r['check'] in priced), key=REGISTRY_ORDER.__getitem__)
+    product, defects, folded = 1.0, [], {}
+    for tier in RELIABILITY_GROUPS:
+        below = sorted((r for r in scored if r['tier'] == tier and r['check'] not in priced and r['score'] < 1.0 - 1e-9),
+                       key=lambda r: (r['score'], REGISTRY_ORDER[r['check']]))
+        if not below:
             continue
-        counted = (failed[root] if root else 1.0) - r['score']
-        surface = str(parts.get('absent_surface') or '').split(' ')[0]
-        if surface and counted > 1e-9:
-            first = surfaces.setdefault(surface, name)
-            if first != name:
-                root, counted = first, 0.0
-        if counted <= 1e-9:
-            folded.setdefault(root, []).append(name)
-            continue
-        factor = 1.0 - k * counted
+        worst = below[0]
+        factor = 1.0 - k * (1.0 - worst['score'])
         product *= factor
-        defects.append({'check': name, 'score': r['score'], 'factor': round(factor, 4),
-                        **({'root': root, 'root_score': failed[root]} if root else {})})
+        defects.append({'tier': tier, 'check': worst['check'], 'score': worst['score'], 'factor': round(factor, 4)})
+        if below[1:]:
+            folded[tier] = sorted((r['check'] for r in below[1:]), key=REGISTRY_ORDER.__getitem__)
     multiplier = max(floor, product)
     return multiplier, {'multiplier': round(multiplier, 4), 'k': k, 'floor': floor, 'floored': product < floor,
-                        'defects': defects, 'folded': folded, 'unexercised': unexercised}
+                        'defects': defects, 'folded': folded, 'priced_as_critical': as_critical}
 
 
 def excellence(rows: List[Dict]) -> Tuple[float, float, List[Dict]]:
@@ -3782,7 +3790,7 @@ def compose_from_rows(rows: List[Dict], c: Optional[Ctx] = None) -> Dict:
     tiers: Dict[str, Dict] = {}
     inner_v1 = 0.0
     for tier, w in TIER_WEIGHT.items():
-        sub = [r for r in rows if r['tier'] == tier and r['check'] not in DIAGNOSTIC]
+        sub = [r for r in rows if r['tier'] == tier and carries_weight(r)]
         mean, n = _mean(sub)
         tiers[tier] = {'mean': round(mean, 4), 'checks': n, 'weight': round(w * V1_WEIGHT * INNER_WEIGHT, 4)}
         if n != len(sub):
@@ -3794,8 +3802,7 @@ def compose_from_rows(rows: List[Dict], c: Optional[Ctx] = None) -> Dict:
                   'weight': round(V1_WEIGHT * E_WEIGHT, 4)}
     v2 = 0.0
     for fam, w in FAMILY_WEIGHT.items():
-        # weight 0 = a diagnostic v2 row; a row with no stamped weight (a synthetic scenario row) weighs 1
-        sub = [r for r in rows if r['tier'] == fam and r.get('weight', 1.0) > 0]
+        sub = [r for r in rows if r['tier'] == fam and carries_weight(r)]
         mean, n = _mean(sub, lambda r: float(r.get('weight', 1.0)))
         tiers[fam] = {'mean': round(mean, 4), 'checks': n, 'weight': w}
         if n != len(sub):
@@ -4007,60 +4014,105 @@ def severity_selftest() -> List[str]:
         for n in names:
             v = score(_scenario({n: 0.0}))
             expect(v['score'] <= limit + 1e-9, f'(9) {n} failing must hold {label} at {limit} (got {v["score"]})')
-    # (10) reliability (SPEC §4): every failed guarantee multiplies the whole score, one root cause once
+    # (10) reliability (SPEC §4): each group (a tier other than E) x (1 - K x the shortfall of its worst eligible row)
     k, rel_floor = float(TH['reliability_k']), float(TH['reliability_floor'])
-    linked = set(ROOT_BLOCKS) | {d for deps in ROOT_BLOCKS.values() for d in deps}
-    lone = [n for n, t, *_ in CHECKS if t != 'E' and n not in linked and n not in DIAGNOSTIC and n not in CRITICAL_OF
-            and n not in {x for _l, _b, names in ADMISSION_BANDS for x in names}]
+    banded = {x for _l, _b, names in ADMISSION_BANDS for x in names}
+    plain: Dict[str, List[str]] = {}   # per group, in registry order: weighted, not critical, not banded
+    for n, t, *_ in CHECKS:
+        if t != 'E' and n not in DIAGNOSTIC and n not in CRITICAL_OF and n not in banded and ROW_WEIGHT.get(n, 1.0) > 0:
+            plain.setdefault(t, []).append(n)
+    pair_tier = next(t for t in RELIABILITY_GROUPS if len(plain.get(t, ())) >= 2)
+    first, second = plain[pair_tier][:2]
+    other = next(names[0] for t, names in plain.items() if t != pair_tier)
+    crit = next(n for n in CRITICAL_OF if plain.get(TIER_OF[n]))
+    beside = plain[TIER_OF[crit]][0]
+    v2_row = next(names[0] for t, names in plain.items() if t in FAMILY_WEIGHT)
+    spare = next(n for names in plain.values() for n in names if n not in (first, second, other, beside, v2_row))
+    vac, gone = {'vacuous_root': 'precondition: synthetic'}, {'absent_surface': 'webtrigger (SPEC R6)'}
 
-    def rel(overrides, parts=None, unavailable=()):
+    def rel(overrides, parts=None, unavailable=(), weightless=(), reverse=False):
         rows = _scenario(overrides, parts)
         for r in rows:
             if r['check'] in unavailable:
                 r.update(unavail('synthetic harness failure'))
-        return score(rows)
+            if r['check'] in weightless:
+                r['weight'] = 0.0
+        return score(rows[::-1] if reverse else rows)
 
-    def expect_rel(label, v, want):
+    def expect_rel(label, v, want, defects=None, folded=None, as_critical=()):
         got = v['reliability']
         expect(abs(got['multiplier'] - round(want, 4)) < 1e-9, f"(10) {label}: reliability {got['multiplier']} "
                f"(want {round(want, 4)}); defects {got['defects']}; folded {got['folded']}")
         # `inner` is itself printed to four decimals, so the product is compared to two units of the last one
         expect(abs(v['rawScore'] - v['inner'] * v['critical']['multiplier'] * want) < 2e-4,
                f"(10) {label}: earned {v['rawScore']} is not tests {v['inner']} x criticals x reliability {want}")
+        if defects is not None:
+            expect([(d['tier'], d['check'], d['score'], d['factor']) for d in got['defects']] == defects,
+                   f"(10) {label}: defects {got['defects']} (want {defects})")
+        if folded is not None:
+            expect(got['folded'] == folded, f"(10) {label}: folded {got['folded']} (want {folded})")
+        expect(got['priced_as_critical'] == list(as_critical),
+               f"(10) {label}: priced_as_critical {got['priced_as_critical']} (want {list(as_critical)})")
 
-    expect(base['reliability']['multiplier'] == 1.0 and not base['reliability']['defects'], '(10) all-perfect reliability != 1')
-    expect_rel('one guarantee failed completely', rel({lone[0]: 0.0}), 1 - k)
-    expect_rel('one guarantee half failed', rel({lone[0]: 0.5}), 1 - k / 2)
-    expect_rel('two independent guarantees failed', rel({lone[0]: 0.0, lone[1]: 0.0}), (1 - k) ** 2)
-    blocked = ('u_widget_chart', 'u_widget_edit_config', 'v_widget_sizes')
-    once = rel({'u_widget_loads': 0.0, **{n: 0.0 for n in blocked}})
-    expect_rel('a root with three blocked dependents', once, 1 - k)
-    expect(once['reliability']['folded'] == {'u_widget_loads': list(blocked)},
-           f"(10) the blocked rows must be recorded under their root: {once['reliability']['folded']}")
-    expect_rel('a dependent that failed no worse than its partly failed root',
-               rel({'u_widget_numbers': 0.5, 'u_widget_chart': 0.5, 'u_ledger_table': 0.9}), 1 - k / 2)
-    expect_rel('a dependent that failed worse than its partly failed root pays the difference',
-               rel({'u_widget_numbers': 0.8, 'u_widget_live': 0.3}), (1 - k * 0.2) * (1 - k * 0.5))
-    expect_rel('an E-tier shortfall', rel({n: 0.0 for n, t, *_ in CHECKS if t == 'E'}), 1.0)
-    expect_rel('a harness-unavailable row', rel({}, unavailable=(lone[0], 'u_widget_live')), 1.0)
-    idle = rel({lone[0]: 0.0, 'u_widget_live': 0.0}, {lone[0]: {'vacuous_root': 'precondition: synthetic'},
-                                                     'u_widget_live': {'vacuous_root': 'precondition: synthetic'}})
-    expect_rel('a vacuous row (nothing exercised, nothing seen to fail)', idle, 1.0)
-    expect(sorted(idle['reliability']['unexercised']) == sorted((lone[0], 'u_widget_live')),
-           f"(10) vacuous rows must be named unexercised: {idle['reliability']}")
-    surface = {n: {'absent_surface': 'webtrigger (SPEC R6)'} for n in lone[:3]}
-    expect_rel('three rows one missing surface zeroes', rel({n: 0.0 for n in lone[:3]}, surface), 1 - k)
-    surface[lone[2]] = {'absent_surface': 'jira:adminPage (where the CI secret is rotated)'}
-    expect_rel('two missing surfaces', rel({n: 0.0 for n in lone[:3]}, surface), (1 - k) ** 2)
+    expect_rel('all perfect', base, 1.0, defects=[], folded={})
+    expect_rel('one test failed completely', rel({first: 0.0}), 1 - k, defects=[(pair_tier, first, 0.0, round(1 - k, 4))])
+    expect_rel('one test half failed', rel({first: 0.5}), 1 - k / 2)
+    expect_rel('two groups failed', rel({first: 0.0, other: 0.0}), (1 - k) ** 2)
+    pair = rel({first: 0.5, second: 0.0})
+    expect_rel('two failed tests of one group: the worst pays', pair, 1 - k,
+               defects=[(pair_tier, second, 0.0, round(1 - k, 4))], folded={pair_tier: [first]})
+    # ties: the first in registry order, whatever order the verdict lists its rows in (deferred rows come last)
+    expect_rel('a tie in one group', rel({first: 0.5, second: 0.5}, reverse=True), 1 - k / 2,
+               defects=[(pair_tier, first, 0.5, round(1 - k / 2, 4))], folded={pair_tier: [second]})
+    expect_rel('(i) harness-unavailable rows', rel({}, unavailable=(first, other)), 1.0, defects=[])
+    expect_rel('(ii) the weight-0 diagnostics', rel({n: 0.0 for n in DIAGNOSTIC}), 1.0, defects=[])
+    expect_rel('(ii) a weight-0 v2 row', rel({v2_row: 0.0}, weightless=(v2_row,)), 1.0, defects=[])
+    fired = rel({crit: 0.0})
+    expect_rel('(iii) a critical that fired is priced by the multiplier alone', fired, 1.0, defects=[],
+               as_critical=(crit,))
+    expect(abs(fired['critical']['multiplier'] - floor) < 1e-9, f"(10) (iii) {crit} must fire: {fired['critical']}")
+    expect_rel('(iii) its group still pays for its other tests', rel({crit: 0.0, beside: 0.5}), 1 - k / 2,
+               defects=[(TIER_OF[crit], beside, 0.5, round(1 - k / 2, 4))], as_critical=(crit,))
+    members = sorted((n for n, c in CRITICAL_OF.items() if c == CRITICAL_OF[crit]), key=REGISTRY_ORDER.__getitem__)
+    expect_rel('(iii) a class priced once leaves every row it observed out', rel({n: 0.0 for n in members}), 1.0,
+               defects=[], as_critical=members)
+    expect_rel('a vacuous test counts its 0', rel({first: 0.0}, {first: vac}), 1 - k)
+    expect_rel("an absent surface's test counts its 0", rel({first: 0.0}, {first: gone}), 1 - k)
+    expect_rel('a vacuous critical row fires nothing and counts its 0', rel({crit: 0.0}, {crit: vac}), 1 - k,
+               defects=[(TIER_OF[crit], crit, 0.0, round(1 - k, 4))])
+    expect_rel('an E-tier shortfall', rel({n: 0.0 for n, t, *_ in CHECKS if t == 'E'}), 1.0, defects=[])
     everything = rel({n: 0.0 for n, t, *_ in CHECKS if t != 'E'})
-    expect_rel('the floor', everything, rel_floor)
-    expect(everything['reliability']['floored'], '(10) the floor must be recorded as reached')
-    again = compose_from_rows(once['checks'])
-    expect((again['score'], again['reliability']) == (once['score'], once['reliability']),
+    expect_rel('the floor', everything, rel_floor, as_critical=sorted(CRITICAL_OF, key=REGISTRY_ORDER.__getitem__))
+    expect(everything['reliability']['floored'] and len(everything['reliability']['defects']) == len(RELIABILITY_GROUPS),
+           f"(10) the floor must be recorded as reached, one defect per group: {everything['reliability']}")
+    again = compose_from_rows(pair['checks'])
+    expect((again['score'], again['reliability']) == (pair['score'], pair['reliability']),
            '(10) a verdict recomposed from its own stored rows must not move')
+    # The property per-group buys: with the critical state held (parts as graded), raising any one row never lowers
+    # the final and lowering one never raises it — swept over every non-E row of a set that fails in several ways,
+    # among them a partly failed ROOT_BLOCKS root beside a dependent that failed worse (Sonnet 5.5's u_widget_numbers
+    # 0.875 and u_widget_live 0: the per-row fold paid more once the root was fixed).
+    unpriced = {n for names in plain.values() for n in names}
+    root, dep = next((x, d) for x, deps in ROOT_BLOCKS.items() if x in unpriced for d in deps if d in unpriced)
+    graded = _scenario({first: 0.5, second: 0.75, other: 0.0, beside: 0.9, crit: 0.5, 'u_widget_loads': 0.0,
+                        v2_row: 0.0, root: 0.875, dep: 0.0}, {other: vac, v2_row: gone})
+    for r in graded:
+        if r['check'] == spare:
+            r.update(unavail('synthetic harness failure'))
+    for r in graded:
+        if r['tier'] == 'E':
+            continue
+        points = []
+        for value in sorted({r['score'], 0.0, 0.25, 0.5, 0.75, 0.9, 1.0}):
+            moved = [{**x, 'score': value} if x is r else x for x in graded]
+            v = compose_from_rows(moved)
+            points.append((value, reliability(moved)[0] * criticals(moved)[0], v['rawScore'], v['score']))
+        for (lo, *at_lo), (hi, *at_hi) in zip(points, points[1:]):
+            expect(all(b >= a - 1e-12 for a, b in zip(at_lo, at_hi)),
+                   f"(10) monotonicity: {r['check']} {lo} -> {hi} moved (reliability x criticals, earned, final) "
+                   f"{at_lo} -> {at_hi}")
     # severity ordering: every critical costs more than any single unbanded defect
     costs = single_defect_costs()
-    banded = {x for _l, _b, names in ADMISSION_BANDS for x in names}
     worst_plain = min(v for n, v in costs.items() if n not in CRITICAL_OF and n not in DIAGNOSTIC and n not in banded)
     for n in CRITICAL_OF:
         expect(costs[n] < worst_plain, f'a critical ({n} {costs[n]}) must cost more than any unbanded defect ({worst_plain})')
@@ -4433,7 +4485,8 @@ def reference_failures(result: Dict) -> List[str]:
     if result.get('harness_missing'):
         fails.append(f"harness_missing: {result['harness_missing'][:6]}")
     if reliability(result['checks'])[0] != 1.0:   # from the rows: a golden verdict kept before the rule has no block
-        fails.append(f"reliability {round(reliability(result['checks'])[0], 4)} != 1 — the golden fails no guarantee")
+        fails.append(f"reliability {round(reliability(result['checks'])[0], 4)} != 1 — the golden fails no group: "
+                     f"{[(d['tier'], d['check'], d['score']) for d in reliability(result['checks'])[1]['defects']]}")
     if not result.get('excellence_gate'):
         fails.append('E gate shut on the golden')
     if result.get('runtime') != 'wrapper':
@@ -4445,12 +4498,12 @@ def reference_failures(result: Dict) -> List[str]:
 # ── report ───────────────────────────────────────────────────────────────────────────────────
 
 def _reliability_lines(rel: Dict) -> List[str]:
-    counted = ', '.join(f"{d['check']} {d['score']} x{d['factor']}"
-                        + (f" (beyond {d['root']} {d['root_score']})" if d.get('root') else '') for d in rel['defects'])
+    counted = ', '.join(f"{d['tier']} {d['check']} {d['score']} x{d['factor']}" for d in rel['defects'])
     return [f"Reliability {rel['multiplier']}{' (the floor)' if rel['floored'] else ''}: {len(rel['defects'])} failed "
-            f"guarantee(s), each x (1 - {rel['k']:g} x its shortfall)" + (f': {counted}' if counted else ''),
-            *(f"  counted with `{root}`: {', '.join(names)}" for root, names in rel['folded'].items()),
-            *([f"  never exercised, not counted: {', '.join(rel['unexercised'])}"] if rel['unexercised'] else [])]
+            f"group(s), each x (1 - {rel['k']:g} x its worst test's shortfall)" + (f': {counted}' if counted else ''),
+            *(f"  {tier}, paid by its worst test: {', '.join(names)}" for tier, names in rel['folded'].items()),
+            *([f"  priced as criticals, not here: {', '.join(rel['priced_as_critical'])}"]
+              if rel['priced_as_critical'] else [])]
 
 
 def format_report(result: Dict, title: str = '') -> str:

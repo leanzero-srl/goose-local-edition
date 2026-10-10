@@ -14,8 +14,8 @@
   "blank_share": 0.995,
   "receipts": {
     "critical_multiplier_floor": "SPEC §4: x0.6 per critical class",
-    "reliability_k": "SPEC §4, policy ratio (owner 2026-10-10: Sonnet 5.5 near 0.9 with 13 failed guarantee rows is not discriminating): a guarantee that fails completely multiplies the score by 1 - K = 0.90, a partial failure in proportion; the 2026-10-10 pilots' stored rows recompose to Sol 0.9618 -> 0.7564 and Sonnet 0.9628 -> 0.7473, the reference app's reliability is 1",
-    "reliability_floor": "SPEC §4, policy ratio: the failed guarantees together never take the score below a quarter of what the tests earned",
+    "reliability_k": "SPEC §4, policy ratio (owner 2026-10-10: Sonnet 5.5 near 0.9 with 13 failed guarantee rows is not discriminating): each of the 18 groups (a tier other than E) multiplies the score by 1 - K x the shortfall of its worst eligible row, so a group whose worst row fails completely by 0.90; the 2026-10-10 pilots' stored rows recompose (per group) to Sol hardened 0.9793 -> 0.8248, Sonnet hardened 0.9628 -> 0.7450, Sol lean 0.9618 -> 0.6990, Haiku 0.3378 -> 0.0998; the six hardened reference verdicts keep reliability 1",
+    "reliability_floor": "SPEC §4, policy ratio: the groups together never take the score below a quarter of what the tests earned; reached only when 14 or more of the 18 groups fail completely (0.90^13 = 0.254, 0.90^14 = 0.229) — no kept verdict reaches it (Haiku 0.2954 with 14 groups, several partly)",
     "reconcile_economy_top": "rc: the oracle optimum itself (the 1.0 golden ran at 0.9333x of it on all 5 calibration seeds, so its fitted top was clamped to 1.0); score = min(1, top / ratio), continuous (forge/DESIGN.md §17.8 F); refitted on the golden v2 x5",
     "event_economy_top": "rc: Forge 1.0's fitted value (golden worst-of-5 ratio 1.4545); score = min(1, top / ratio), continuous; refitted on the golden v2 x5",
     "ui_round_trip_rungs": "DESIGN §8.4: 1 invoke before first paint 1.0, 2 .75, <=4 .5",
