@@ -2434,7 +2434,13 @@ def _(c):
     for v in views:
         o = c.oracle_for(v.get('afterLive', False))
         expected = o.sprints_of_board(str(v.get('board')))
-        good, why = chart_ok(v.get('chart') or {}, expected, o.all_numbers(), tol)
+        chart = v.get('chart') or {}
+        # A board whose active sprints the world closed (SPEC §2.5) shows no sprint, and u_widget_numbers counts that
+        # empty view right: with no number to chart, an absent chart misstates nothing (an empty one passes chart_ok).
+        if not expected and not v.get('sprints') and not chart.get('present'):
+            ok += 1
+            continue
+        good, why = chart_ok(chart, expected, o.all_numbers(), tol)
         ok += good
         if not good:
             notes.append(why)
@@ -3937,6 +3943,23 @@ def defect_selftest() -> List[str]:
                 ('never updates', {'board': board, 'subscribed': True, 'idleInvokes': 0, 'sprintsAfter': shown(o)}, 0.0)):
             got = row('u_widget_live', {'ui': {'widget': view, 'live': live}})
             expect(got['score'] == want, f"H u_widget_live on {label}: {got['score']} (want {want}) — {got.get('detail')}")
+    # U: the emptied board (SPEC §2.5) shows no sprint and u_widget_numbers counts it right, so an absent chart there
+    # misstates nothing; a bar on the emptied board and a missing chart on a live board stay wrong (gate 2026-10-10).
+    empty_board = next((b for b in o.boards if not o.sprints_of_board(b)), None)
+    live_board = next((b for b in o.boards if o.sprints_of_board(b)), None)
+    expect(empty_board is not None and live_board is not None, 'U the synthetic pack lacks an emptied and a live board')
+    if empty_board is not None and live_board is not None:
+        live_sids = o.sprints_of_board(live_board)
+        bar = {'present': True, 'count': 1, 'rects': [{'sprintId': live_sids[0], 'series': 'committed', 'height': 10}]}
+        for label, view, want in (
+                ('emptied board, no chart', {'board': empty_board, 'sprints': [], 'chart': {'present': False, 'count': 0}}, 1.0),
+                ('emptied board, an empty chart', {'board': empty_board, 'sprints': [],
+                                                   'chart': {'present': True, 'count': 1, 'rects': []}}, 1.0),
+                ('emptied board, a bar', {'board': empty_board, 'sprints': [], 'chart': bar}, 0.0),
+                ('live board, no chart', {'board': live_board, 'sprints': [{'id': s} for s in live_sids],
+                                          'chart': {'present': False, 'count': 0}}, 0.0)):
+            got = row('u_widget_chart', {'ui': {'widget': {'views': [view]}}})
+            expect(got['score'] == want, f"U u_widget_chart on {label}: {got['score']} (want {want}) — {got.get('detail')}")
     # F: the backfill economy is continuous — one call over the top costs a little, never a rung
     top = float(TH['reconcile_economy_top'])
     optimum, missing = Ctx(None, {}, pack).oracle.reconcile_optimum()
