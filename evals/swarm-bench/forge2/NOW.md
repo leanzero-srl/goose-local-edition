@@ -64,6 +64,23 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
 
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 14:0x v2 LANDED on forge2/final: df9387c0e (rule, selftests, public text, SPEC §4, receipts, poor_practice) +
+  de79a9841 (manifest refrozen, --check clean). Monotonicity sweep (every non-E row over {0,.25,.5,.75,.9,1}): 0
+  violating moves on all ten kept verdicts (old rule: 10/14/11/5 on the four pilots); 16 mutated rules each fail the
+  selftest. Recomposed (scratchpad/sev2-out): SOL-HARDENED 0.8248 (rel 0.8422, 9 groups) vs SONNET-HARDENED 0.7450
+  (rel 0.7738, 8 groups); Sol-lean 0.6990 (its two vacuous R rows now count 0 — pre-S3 scorer artefact, lean task, never
+  published); Haiku 0.0998 (rel 0.2954, not floored); reference g3 x6 reliability 1.0. Rule (iii) = every row the
+  critical list carries (critical.rows, not `unsuppressed`). poor_practice: M3 ("every consumer queue is pushed to") was
+  UNSTATED yet priced inside k_manifest_semantics -> _priced() now prices only would-fail findings (M9/P3 stay priced by
+  their own stated rows); no kept verdict moves. Public sentence: "Failed tests also multiply the whole score, by
+  group: each v2 requirement above is a group of tests and v1's behaviours make nine more. A group multiplies the
+  score by 1 - 0.10 x the shortfall of its worst test ..." DESKTOP forge2/desktop 93276c26b: publish body passes the
+  block through (reliability, reliabilityDefects [{tier,check,score,factor}], criticalMultiplier), refuses a 2.0 verdict
+  without it; ScoringDetail one line per group; publish pictures widget L/D, sprint L/D, admin light; fixed a real bug
+  (the saved snapshot published pictures in name order -> the contact sheet, never the widget); obsolete "Update Goose"
+  banner deleted (launch gate refuses mismatches first; helper read the SB-only flag); 172/172 bench tests; typecheck
+  blocked by the stale shared SDK build (667 errors, none in touched files) -> FRESH SDK BUILD BEFORE THE RELEASE.
+  SITE: v2 mirror dispatched on forge2-era (from b4e3c06, which mirrors v1).
 - 13:4x RELIABILITY RULE v1 REFUTED -> v2 (my decision; owner 13:3x asked "I assume that it is still all very fair
   correct?" — answered: not yet proven, fixing). The severity workflow's Attack returned FIX-THEN-SHIP: D1 the partial
   root fold INVERTS the gradient (I reproduced it with --recompose on Sonnet's verdict: as graded 0.7473; u_widget_numbers
