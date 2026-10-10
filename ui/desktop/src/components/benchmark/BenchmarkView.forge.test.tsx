@@ -224,10 +224,14 @@ describe('Benchmark view — the Gauntlet | Forge switch', () => {
       'aria-checked',
       'false'
     );
-    expect(screen.getByTestId('family-intro').textContent).toMatch(
-      /^Forge 2\.0 · Scope Ledger 2 runs one model in goose: it ships v2 of a working Atlassian Forge app/
+    // The whole intro: the app by its name, three sentences a person can take in, the model called "the model".
+    expect(screen.getByTestId('family-intro').textContent).toBe(
+      'Forge 2.0 · Scope Ledger 2 runs one model in Goose Swarm: it ships v2 of a working Atlassian Forge app installed on a large seeded Jira site. The requirements include a live data migration, a points quota, invocation time limits, a world that changes mid-run, a signed CI web trigger and a UI Kit admin panel. The result is graded offline over six virtual hours, with no deploy and no internet for the model. Forge sessions stay separate from Gauntlet.'
     );
     expect(await screen.findByTestId('forge-kit-ready')).toHaveTextContent('Forge kit ready');
+    expect(
+      screen.getByText(/Neither ships in Goose Swarm: preparing the kit downloads them once/)
+    ).toBeInTheDocument();
     expect(screen.getByText('forge-2.0 runtime')).toBeInTheDocument();
     expect(screen.getByTestId('forge-run-policy')).toHaveTextContent(
       'One model · 300-call budget · reasoning effort medium'
@@ -243,7 +247,7 @@ describe('Benchmark view — the Gauntlet | Forge switch', () => {
     fireEvent.click(chooser);
     expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual([
       'Forge 2.0 · Scope Ledger 2',
-      'Forge 2.0 rc (history)',
+      'Forge 2.0 pilot (history)',
       'Forge 1.0 · Scope Ledger (frozen)',
     ]);
     fireEvent.keyDown(chooser, { key: 'Escape' });
@@ -253,26 +257,42 @@ describe('Benchmark view — the Gauntlet | Forge switch', () => {
   it('renders a forge-2.0 verdict: the v1 tiers and R1–R9, no band, screenshots, and no publish', async () => {
     mockElectron();
     mount();
-    expect(await screen.findByRole('heading', { name: 'Forge 2.0 rc' })).toBeInTheDocument();
-    // The rc of the current era is that benchmark before its freeze — never "an earlier benchmark".
-    expect(screen.getByText('uncalibrated')).toBeInTheDocument();
-    expect(screen.getByTestId('era-note').textContent).toMatch(
-      /Scored by Forge 2\.0 rc, the uncalibrated scorer of Forge 2\.0 · Scope Ledger 2/
+    // A result scored before the era's thresholds were final is its "pilot" (leanzero.net's word) — that
+    // benchmark, never "an earlier benchmark", and never "rc" or "uncalibrated" in what a person reads.
+    expect(await screen.findByRole('heading', { name: 'Forge 2.0 pilot' })).toBeInTheDocument();
+    expect(screen.getByText('pilot')).toBeInTheDocument();
+    expect(screen.getByTestId('era-note').textContent).toBe(
+      'Scored before Forge 2.0’s thresholds were final: a measurement of this benchmark, not a board result.'
     );
     // Every one of the era's nineteen letters, each named, with the weight THIS verdict recorded.
     for (const tier of FORGE_ERA_TIER_ORDER['forge-2.0'])
       expect(screen.getByTestId(`tier-cell-${tier}`)).toBeInTheDocument();
     expect(screen.getByTestId('tier-cell-R5')).toHaveTextContent('Admin panel');
-    expect(screen.getByTestId('tier-cell-R5')).toHaveTextContent('R5 93%');
+    // A group's mean is a score: four decimals on a Forge 2.0 screen, like every other score on it.
+    expect(screen.getByTestId('tier-cell-R5')).toHaveTextContent('R5 0.9333');
     expect(screen.getByTestId('tier-cell-R5')).toHaveTextContent('weight 10%');
+    // The site's names for the two v1 groups it named differently, and a weight that adds up: 1.76%, not 2%.
+    expect(screen.getByTestId('tier-cell-L')).toHaveTextContent('Lint and bundles');
+    expect(screen.getByTestId('tier-cell-L')).toHaveTextContent('weight 1.76%');
+    expect(screen.getByTestId('tier-cell-B')).toHaveTextContent('Resolvers and permissions');
+    expect(screen.getByTestId('tier-cell-B')).toHaveTextContent('weight 2.64%');
     expect(screen.getByTestId('tier-cell-R')).toHaveTextContent('Reconcile');
-    expect(screen.getByTestId('tier-cell-R')).toHaveTextContent('R 75%');
-    // No band capped it — said, not left blank.
-    expect(await screen.findByText('Every admission band passed — no ceiling')).toBeInTheDocument();
+    expect(screen.getByTestId('tier-cell-R')).toHaveTextContent('R 0.7480');
+    // No cap applied — said, not left blank.
+    expect(await screen.findByText('No cap applies')).toBeInTheDocument();
     expect(screen.queryByTestId('forge-failed-band')).toBeNull();
     expect(screen.getByTestId('forge-verdict-facts')).toHaveTextContent(
-      'forge-2.0-rc is uncalibrated (rc thresholds)'
+      "Scored before Forge 2.0's thresholds were final: a measurement, not a board result."
     );
+    // The score in ONE format on the whole screen — four decimals, as leanzero.net prints it: the headline,
+    // the outcome chip, the board row and the final-score line all read 0.9618, and no percent copy exists.
+    const score = forge2Verdict.score.toFixed(4);
+    expect(screen.getByText(score, { selector: 'div' })).toBeInTheDocument();
+    expect(screen.getByTestId('session-header')).toHaveTextContent(`Finished · ${score}`);
+    expect(
+      within(screen.getByRole('table', { name: 'Benchmark board' })).getByText(score)
+    ).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain(`${(forge2Verdict.score * 100).toFixed(1)}%`);
     // Screenshots from forge-shots/, under the forge captions.
     expect(screen.getByText('Dashboard widget · light')).toBeInTheDocument();
     expect(screen.getByText('Sprint action · dark')).toBeInTheDocument();
@@ -280,10 +300,16 @@ describe('Benchmark view — the Gauntlet | Forge switch', () => {
     expect(
       screen.getByText('Finished on its own after 176 of 300 model calls')
     ).toBeInTheDocument();
-    // Publishing refuses what the scorer marked not board-grade, in its era's words, before any POST.
+    // Publishing refuses what the scorer marked not board-grade — what happened, then the next step —
+    // before any POST.
     expect(screen.getByTestId('forge-publish-refusal')).toHaveTextContent(
-      'Scored by forge-2.0-rc: the Forge thresholds are not frozen yet, so the result is not board-grade. Forge results publish once the forge-2.0 freeze pins them.'
+      "Scored before Forge 2.0's thresholds were final, so this result is a measurement, not a board result. Run the benchmark again to publish."
     );
+    // The publish panel and the score panel say "test" on a Forge result.
+    expect(
+      screen.getByText(/Posts your score, the test-by-test breakdown and graded app evidence/)
+    ).toBeInTheDocument();
+    expect(screen.getByText(/the exact tests it ran, what each one saw/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Publish' })).toBeDisabled();
     // Every class the Forge card, the switch and the kit panel emit compiles (a dead utility is
     // invisible in the running app). lucide's identifiers are names, not utilities.
@@ -317,17 +343,29 @@ describe('Benchmark view — the Gauntlet | Forge switch', () => {
       forge2Sonnet.reliability.multiplier.toFixed(4),
       forge2Sonnet.score.toFixed(4),
     ]);
-    const lines = within(stepsRegion).getAllByTestId('reliability-line');
+    // The steps by the names every Forge surface uses, in order.
+    expect(
+      within(stepsRegion)
+        .getAllByTestId('forge-step')
+        .map((step) => step.querySelector('dt')?.textContent)
+    ).toEqual(['Tests earned', '× Critical defects', '× Reliability', '= Final score']);
+    const lines = within(screen.getByRole('region', { name: 'Reliability' })).getAllByTestId(
+      'reliability-line'
+    );
     expect(lines.map((row) => row.getAttribute('data-tier'))).toEqual(
       forge2Sonnet.reliability.defects.map((defect) => defect.tier)
     );
-    // The headline number is the same final.
+    // The headline number is the same final, in the same four decimals — never "74.5%".
     expect(
-      screen.getByText(`${(forge2Sonnet.score * 100).toFixed(1)}%`, { selector: 'div' })
+      screen.getByText(forge2Sonnet.score.toFixed(4), { selector: 'div' })
     ).toBeInTheDocument();
-    // An rc result is still refused at publish in its scorer's words.
+    expect(document.body.textContent).not.toContain('74.5%');
+    // Sonnet's verdict lists a root with six dependents: nothing on the card claims one zeroed another.
+    expect(screen.queryByText('Root-cause attribution')).toBeNull();
+    expect(document.body.textContent).not.toMatch(/failed at the root|zeroed|one defect, not/);
+    // A result scored before the thresholds were final is still refused at publish, in plain words.
     expect(screen.getByTestId('forge-publish-refusal')).toHaveTextContent(
-      /^Scored by forge-2\.0-rc: the Forge thresholds are not frozen yet/
+      /^Scored before Forge 2\.0's thresholds were final/
     );
     const classes = allClasses(document.body).filter((c) => !c.startsWith('lucide'));
     expect(await missingUtilities(classes)).toEqual([]);
@@ -352,11 +390,15 @@ describe('Benchmark view — the Gauntlet | Forge switch', () => {
     expect(screen.getByTestId('tier-cell-K')).toHaveTextContent('Platform currency');
     expect(screen.getByTestId('tier-cell-K')).toHaveTextContent('K 83%');
     expect(screen.queryByTestId('tier-cell-R1')).toBeNull();
-    // The band its own verdict recorded, with the check that held it — read, not restated.
+    // The cap its own verdict recorded, with the test that set it — read, not restated.
     const band = await screen.findByTestId('forge-failed-band');
-    expect(band).toHaveTextContent('Capped at 0.799');
+    expect(band).toHaveTextContent('Maximum 0.799');
     expect(band).toHaveTextContent('current platform, complete surfaces');
-    expect(within(band).getByText('k_widget_edit_bridge')).toBeInTheDocument();
+    expect(within(band).getByText('K widget edit bridge')).toBeInTheDocument();
+    // Frozen history keeps the percent its sessions were always shown in.
+    expect(
+      screen.getByText(`${(forgeVerdict.score * 100).toFixed(1)}%`, { selector: 'div' })
+    ).toBeInTheDocument();
     expect(screen.getByText('Stopped at the 150-call budget')).toBeInTheDocument();
     // The site froze the era: publishing is closed, said in words.
     expect(screen.getByText('Benchmark frozen — submissions closed.')).toBeInTheDocument();
@@ -457,6 +499,13 @@ describe('Benchmark view — the Gauntlet | Forge switch', () => {
     electron().benchmarkRun = swarm;
     mount();
     await screen.findByTestId('forge-kit-ready');
+    // With no Forge run yet the card says what a result will carry, in a person's words — no "tier
+    // letters", no "admission bands".
+    expect(
+      await screen.findByText(
+        'Prepare the Forge kit, choose a provider and model, and run — the result lands here with its score, the tests behind it, its screenshots and the graded browser recording.'
+      )
+    ).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Model provider' })).toBeEnabled()
     );

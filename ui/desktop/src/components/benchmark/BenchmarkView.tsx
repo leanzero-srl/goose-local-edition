@@ -54,6 +54,7 @@ import {
   isForge,
   isIsolatedPaymentsScorer,
   isSb8,
+  scoreText,
   TIER_LABELS,
   type BenchFamily,
   type BenchmarkRow,
@@ -415,7 +416,7 @@ function boardColumns(own: {
       numeric: true,
       cell: (r) => (
         <span className={cx(WEIGHT.semibold, r.mine && TONE_TEXT.accent)}>
-          {(r.score * 100).toFixed(1)}%
+          {scoreText(r.score, r.scorerVersion)}
         </span>
       ),
     },
@@ -599,12 +600,13 @@ function SessionHeader({
         ) : era === 'frozen' ? (
           <Chip tone="warn">FROZEN</Chip>
         ) : era === 'rc' ? (
-          // The current era's own uncalibrated scorer — not an earlier benchmark.
+          // The current era's own scorer before its thresholds were final — not an earlier benchmark.
+          // "pilot" is leanzero.net's word for it.
           <Chip
             tone="warn"
-            title="Scored before the thresholds froze — a measurement, not a board result"
+            title="Scored before the thresholds were final — a measurement, not a board result"
           >
-            uncalibrated
+            pilot
           </Chip>
         ) : (
           // Not the benchmark a run enters today — said on the headline itself, so an older era's
@@ -814,7 +816,9 @@ function SessionDetail({
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatCell
           label="Score"
-          value={session.score != null ? `${(session.score * 100).toFixed(1)}%` : 'missing'}
+          value={
+            session.score != null ? scoreText(session.score, session.scorerVersion) : 'missing'
+          }
           tone={session.score != null ? 'accent' : 'err'}
         />
         {mineMatched && mine?.wallSecs != null ? (
@@ -938,8 +942,9 @@ function SessionDetail({
         {mineMatched && mine?.verdict ? (
           <>
             <p className={cx('mb-4 max-w-[80ch]', TYPE.bodyMuted)}>
-              Every number below is scorer evidence from YOUR run — the exact checks it ran, what
-              each one saw, and what the misses cost.
+              Every number below is scorer evidence from YOUR run — the exact{' '}
+              {isForge(session.scorerVersion) ? 'tests' : 'checks'} it ran, what each one saw, and
+              what the misses cost.
             </p>
             <ScoringDetail
               key={sessionKey(session)}
@@ -950,8 +955,9 @@ function SessionDetail({
           </>
         ) : mineMatched ? (
           <p className={TYPE.bodyMuted}>
-            This stored result predates the detailed verdict — the full check-by-check breakdown
-            appears from your next run.
+            This stored result predates the detailed verdict — the full{' '}
+            {isForge(session.scorerVersion) ? 'test-by-test' : 'check-by-check'} breakdown appears
+            from your next run.
           </p>
         ) : (
           <p className={TYPE.bodyMuted}>
@@ -1701,7 +1707,7 @@ export default function BenchmarkView() {
       ? forgePublishProblem({ scorerVersion: shownRow.scorerVersion, verdict: shownRow.verdict })
       : null;
   const publishWhy = !publishable
-    ? 'Run the benchmark (v2) first'
+    ? 'Run the benchmark again to publish'
     : running
       ? 'Publishing waits for the run in progress to finish'
       : selectedFrozen
@@ -1734,7 +1740,7 @@ export default function BenchmarkView() {
           <BadgeCheck />
           <span>
             Live on leanzero.net — &ldquo;{selectedSession.published.title}&rdquo; ·{' '}
-            {(selectedSession.published.score * 100).toFixed(1)}%
+            {scoreText(selectedSession.published.score, selectedSession.scorerVersion)}
             {selectedSession.published.url
               ? ` · ${publishedUrlText(selectedSession.published.url)}`
               : ''}
@@ -1744,15 +1750,16 @@ export default function BenchmarkView() {
     ) : (
       <Panel title="Publish to leanzero.net">
         <p className={cx('max-w-[70ch]', TYPE.bodyMuted)}>
-          Posts your score, the check-by-check breakdown and graded app evidence under the title you
-          choose. The result appears on the leanzero.net board immediately.
+          Posts your score, the {forge ? 'test-by-test' : 'check-by-check'} breakdown and graded app
+          evidence under the title you choose. The result appears on the leanzero.net board
+          immediately.
         </p>
         {selectedSession.published && (
           // Posted before, re-scored since: the board still shows the old result for this build.
           <p data-testid="republish-note" className={cx('mt-3', TYPE.body, WEIGHT.semibold)}>
             Re-scored since it was posted (&ldquo;{selectedSession.published.title}&rdquo; ·{' '}
-            {(selectedSession.published.score * 100).toFixed(1)}%). Publishing replaces that board
-            entry with this result.
+            {scoreText(selectedSession.published.score, selectedSession.scorerVersion)}). Publishing
+            replaces that board entry with this result.
           </p>
         )}
         <div className="mt-4 flex flex-col gap-4">
@@ -1841,7 +1848,8 @@ export default function BenchmarkView() {
         )}
         {!publishable && (
           <p className={cx('mt-3', TYPE.meta)}>
-            This result predates the v2 publisher — run the benchmark again to publish.
+            This result was saved by an older version of the app and is missing the run record
+            publishing needs — run the benchmark again to publish.
           </p>
         )}
         {/* The publish outcome — a solid saturated state block, never a gray status line.
@@ -1858,7 +1866,8 @@ export default function BenchmarkView() {
             >
               <BadgeCheck />
               <span>
-                Live on leanzero.net — &ldquo;{pub.title}&rdquo; · {(pub.score * 100).toFixed(1)}%
+                Live on leanzero.net — &ldquo;{pub.title}&rdquo; ·{' '}
+                {scoreText(pub.score, selectedSession.scorerVersion)}
                 {pub.url ? ` · leanzero.net${pub.url}` : ''}
               </span>
             </div>
@@ -1934,7 +1943,7 @@ export default function BenchmarkView() {
 
           <p className={TYPE.bodyMuted} data-testid="family-intro">
             {forge
-              ? `${BENCH_FAMILY_NAME.forge} runs one model in goose: ${FORGE_ERA_COPY[FORGE_BENCHMARK_TIER].task} Forge sessions stay separate from Gauntlet.`
+              ? `${BENCH_FAMILY_NAME.forge} runs one model in Goose Swarm: ${FORGE_ERA_COPY[FORGE_BENCHMARK_TIER].task} Forge sessions stay separate from Gauntlet.`
               : `${BENCH_FAMILY_NAME.sb} runs with Swarm or a single model. Swarm nodes can mix local and cloud providers. Earlier benchmarks remain separate in your session history.`}
           </p>
 
@@ -2130,9 +2139,8 @@ export default function BenchmarkView() {
                 )}
                 {selectedIsCurrentRc && currentEra && (
                   <p data-testid="era-note" className={TYPE.bodyMuted}>
-                    Scored by {eraDisplayName(selectedEra.scorerVersion)}, the uncalibrated scorer
-                    of {eraLabel(currentEra.scorerVersion, currentEra.title)}: a measurement of this
-                    benchmark, not a board result.
+                    Scored before {eraDisplayName(currentEra.scorerVersion)}&rsquo;s thresholds were
+                    final: a measurement of this benchmark, not a board result.
                   </p>
                 )}
                 {!selectedEra.current && !selectedIsCurrentRc && currentEra && (
@@ -2199,7 +2207,7 @@ export default function BenchmarkView() {
               <EmptyState
                 icon={<Gauge />}
                 title="No Forge runs on this machine yet"
-                body="Prepare the Forge kit, choose a provider and model, and run — the result lands here with its tier letters, admission bands and screenshots."
+                body="Prepare the Forge kit, choose a provider and model, and run — the result lands here with its score, the tests behind it, its screenshots and the graded browser recording."
               />
             </Panel>
           ) : null}
@@ -2223,8 +2231,8 @@ export default function BenchmarkView() {
           <footer className={cx('border-t pt-4 text-lz-body text-lz-ink-2', SURFACE.hairline)}>
             Comparison rows are retrieved from leanzero.net&rsquo;s published board for each
             benchmark — nothing is baked into the app, so a shipped number can never outlive the
-            board it came from. Each result uses the checks and formula of its recorded scorer
-            version.
+            board it came from. Each result uses the {forge ? 'tests' : 'checks'} and formula of its
+            recorded scorer version.
           </footer>
         </div>
       </div>
@@ -2247,7 +2255,7 @@ export default function BenchmarkView() {
           deleteTarget
             ? `Started ${fmtWhen(deleteTarget.startedAt) ?? deleteTarget.startedAt} · ${OUTCOME_WORDS[deleteTarget.outcome]}${
                 deleteTarget.outcome === 'finished' && deleteTarget.score != null
-                  ? ` at ${(deleteTarget.score * 100).toFixed(1)}%`
+                  ? ` at ${scoreText(deleteTarget.score, deleteTarget.scorerVersion)}`
                   : ''
               }. The session and its stored result are removed from this machine — anything already published stays on the board.`
             : ''

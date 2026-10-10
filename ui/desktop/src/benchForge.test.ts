@@ -170,8 +170,9 @@ describe('forge screenshots', () => {
     for (const name of files) await fs.writeFile(path.join(dir, 'forge-shots', name), name);
     return dir;
   }
-  const NOTE =
-    "the app's component tree, drawn by the benchmark's UI Kit host. Jira draws the same tree with its own components.";
+  // Whose drawing it is — the benchmark's, not Jira's — and nothing about a "UI Kit host" drawing it: the
+  // host prints text, a separate drawer makes the picture. leanzero.net prints the same words.
+  const NOTE = "drawn by the benchmark from the app's component tree, not by Jira.";
 
   it('shows the UI Kit admin panel after the widget and sprint leads, and publishes its light picture within the site’s five', async () => {
     const shots = await pickBenchShots(await shotsDir([...SOL_SHOTS, ...ADMIN_SHOTS]));
@@ -189,7 +190,7 @@ describe('forge screenshots', () => {
       ['forge-not-started', 'not-started-1340.png'],
       ['forge-contact-sheet', 'contact-sheet.png'],
     ]);
-    // The caption (the picture's alt text too) says what the picture is: the benchmark's host drew it.
+    // The caption (the picture's alt text too) says what the picture is: the benchmark drew it.
     expect(
       shots.filter((shot) => shot.name.startsWith('forge-admin')).map((s) => s.caption)
     ).toEqual([
@@ -199,8 +200,8 @@ describe('forge screenshots', () => {
     ]);
     // leanzero.net's route takes five pictures, a filename-safe name and a caption of at most 200
     // characters each: the widget and the sprint action in both themes (each dark capture is the entrant's
-    // own dark-mode CSS), then the admin panel in light. Its dark picture is the benchmark's UI Kit host
-    // drawing the same tree in its own dark theme, so it stays in the local view and is not sent.
+    // own dark-mode CSS), then the admin panel in light. Its dark picture is the benchmark drawing the
+    // same tree in its own dark theme, so it stays in the local view and is not sent.
     const published = limitBenchShotsForPublish(shots);
     expect(published.map((shot) => shot.name)).toEqual([
       'forge-widget-light',
@@ -295,10 +296,11 @@ describe('forge publishing', () => {
     expect(sb.verdict).not.toHaveProperty('publishable');
   });
 
-  it('refuses what the scorer marks not board-grade, in its own words — and nothing else', () => {
-    // The real verdict is rc: a measurement until the thresholds freeze.
+  it('refuses what the scorer marks not board-grade, in plain words with the next step — and nothing else', () => {
+    // The real verdict was scored before its era's thresholds were final: a measurement. No "rc", no
+    // promise that waiting or a re-score publishes it (a re-score refuses a build whose task text moved).
     expect(forgePublishProblem(stored)).toBe(
-      'Scored by forge-1.0-rc: the Forge thresholds are not frozen yet, so the result is not board-grade. Forge results publish once the forge-1.0 freeze pins them.'
+      "Scored before Forge 1.0's thresholds were final, so this result is a measurement, not a board result. Run the benchmark again to publish."
     );
     const frozen = { ...stored, scorerVersion: 'forge-1.0' };
     expect(forgePublishProblem(frozen)).toBeNull();
@@ -311,17 +313,50 @@ describe('forge publishing', () => {
           unpublishable_reasons: ['3 unavailable row(s)'],
         },
       })
-    ).toBe('The scorer marked this Forge result unpublishable: 3 unavailable row(s).');
-    expect(
+    ).toBe(
+      "This Forge result cannot be published: the scorer could not run 3 of its tests, which is a scoring problem and not the model's. Re-score the saved build; if the same tests still cannot run, it takes a Goose Swarm update that fixes the scorer."
+    );
+    // Each reason the scorer records is its own sentence; one in a form this app does not know is quoted.
+    const refusal = (unpublishable_reasons: string[]) =>
       forgePublishProblem({
         ...frozen,
-        verdict: { ...projected.verdict, status: 'held', harness_missing: ['GET /x', 'GET /y'] },
-      })
-    ).toMatch(/^This Forge result is held: the emulator met 2 calls it does not model/);
-    // A verdict with no publishability at all is not assumed publishable.
-    expect(forgePublishProblem({ scorerVersion: 'forge-1.0', verdict: {} })).toMatch(
-      /carries no publishability verdict/
+        verdict: { ...projected.verdict, publishable: false, unpublishable_reasons },
+      });
+    expect(refusal(['runtime shim (the in-repo shim, not the pinned Forge wrapper)'])).toBe(
+      "This Forge result cannot be published: it was scored on the shim runtime, not Atlassian's pinned Forge runtime. Run the benchmark again with the Forge kit prepared to publish."
     );
+    expect(refusal(['1 unavailable row(s)', 'a reason of a later scorer'])).toBe(
+      'This Forge result cannot be published: the scorer could not run 1 of its tests, which is a scoring problem and not the model\'s. Re-score the saved build; if the same tests still cannot run, it takes a Goose Swarm update that fixes the scorer. Also: the scorer\'s reason reads "a reason of a later scorer". Re-scoring the saved build or a new run may clear it.'
+    );
+    expect(refusal([])).toBe(
+      'This Forge result cannot be published: its scorer recorded no reason. Run the benchmark again to publish.'
+    );
+    const held = (harness_missing: unknown) =>
+      forgePublishProblem({
+        ...frozen,
+        verdict: { ...projected.verdict, status: 'held', harness_missing },
+      });
+    expect(held(['GET /x', 'GET /y'])).toBe(
+      "This Forge result is on hold: the built app uses 2 Forge or Jira calls that the benchmark's simulated platform does not support yet. It cannot be published as it is. When a Goose Swarm update supports those calls, re-score the saved build."
+    );
+    expect(held(['GET /x'])).toMatch(
+      /uses 1 Forge or Jira call that .* When a Goose Swarm update supports that call, re-score the saved build\.$/
+    );
+    // A count the verdict does not carry is "some", never a number.
+    expect(held(undefined)).toMatch(/uses some Forge or Jira calls that /);
+    // A verdict with no publishability at all is not assumed publishable.
+    expect(forgePublishProblem({ scorerVersion: 'forge-1.0', verdict: {} })).toBe(
+      'This Forge result was saved without its scorer saying whether it may be published. Run the benchmark again to publish.'
+    );
+    // No scorer-internal word reaches the person in any of them.
+    for (const text of [
+      forgePublishProblem(stored),
+      refusal(['3 unavailable row(s)']),
+      refusal([]),
+      held(['GET /x']),
+      forgePublishProblem({ scorerVersion: 'forge-1.0', verdict: {} }),
+    ])
+      expect(text).not.toMatch(/\brc\b|\brows?\b|emulator|admission|unpublishable|board-grade|`/);
   });
 
   it('publishes every forge-1.0 tier letter, L K T R S B U V A and E', () => {
@@ -350,12 +385,12 @@ describe('forge publishing', () => {
     expect(forgePublishTiers({ L: 0.5 }, 'forge-2.0')).toMatchObject({ L: 0.5, R1: 0, R9: 0 });
   });
 
-  it('refuses a forge-2.0 rc result in its own era’s words, and a scorer naming no era this app knows', () => {
+  it('refuses a forge-2.0 result scored before its thresholds were final in its own era’s words, and a scorer naming no era this app knows', () => {
     const projected2 = projectBenchScore(forge2Verdict as never);
     const stored2 = { scorerVersion: projected2.scorerVersion, verdict: projected2.verdict };
     expect(projected2.scorerVersion).toBe('forge-2.0-rc');
     expect(forgePublishProblem(stored2)).toBe(
-      'Scored by forge-2.0-rc: the Forge thresholds are not frozen yet, so the result is not board-grade. Forge results publish once the forge-2.0 freeze pins them.'
+      "Scored before Forge 2.0's thresholds were final, so this result is a measurement, not a board result. Run the benchmark again to publish."
     );
     // The frozen era's identity publishes a verdict scored under the era's current rule (Sol on the hardened
     // task, recomposed with its reliability block); the pre-rule verdict is refused further down.
@@ -495,7 +530,9 @@ describe('the forge publish body (INTEGRATION.md, as implemented on the site)', 
           ...base,
           verdict: { ...projected.verdict, [drop]: drop === 'checks' ? [] : undefined },
         })
-      ).toMatch(/lacks its admission record, earned score or check rows/);
+      ).toBe(
+        'This Forge result is missing its score caps, its earned score or its test results. Run the benchmark again to publish.'
+      );
   });
 });
 
@@ -616,14 +653,14 @@ describe('forge-2.0 publishes the scorer’s reliability evidence (score_forge2.
     expect(defects.some((d) => d.tier === 'E')).toBe(false);
   });
 
-  it('refuses a forge-2.0 verdict without `reliability`, naming the field — and never builds a body with a default factor', () => {
+  it('refuses a forge-2.0 verdict without its reliability step, in plain words — and never builds a body with a default factor', () => {
     // The pilot verdict as scored before the rule: publishable by its scorer, no reliability block.
     const before = stored20(forge2Verdict);
     expect(before.verdict).not.toHaveProperty('reliability');
     expect(forgePublishProblem(before)).toBe(
-      'This Forge 2.0 result has no `reliability` record: it was scored before failed tests multiplied the score. Re-score the saved build to publish it.'
+      'This Forge 2.0 result was scored before failed tests multiplied the score, so it has no reliability step. Re-score the saved build to publish it.'
     );
-    expect(() => forgePublishBody(before)).toThrow(/has no `reliability` record/);
+    expect(() => forgePublishBody(before)).toThrow(/has no reliability step/);
     // The same refusal for a ruled verdict that lost its block, a block that is not the scorer's shape,
     // and a verdict without the critical multiplier the route requires beside it.
     const ruled = stored20(forge2Sonnet);
@@ -632,34 +669,35 @@ describe('forge-2.0 publishes the scorer’s reliability evidence (score_forge2.
       verdict: { ...ruled.verdict, ...patch },
     });
     expect(forgePublishProblem(without({ reliability: undefined }))).toMatch(
-      /has no `reliability` record/
+      /has no reliability step/
     );
     expect(forgePublishProblem(without({ reliability: { multiplier: 1 } }))).toBe(
-      "This Forge 2.0 result's `reliability` record is not what its scorer writes (the multiplier, and each group's worst test with its factor). Re-score the saved build to publish it."
+      "This Forge 2.0 result's reliability step is not in the form its scorer writes (the multiplier, and each group's worst test with its factor), so it cannot be checked. Re-score the saved build to publish it."
     );
     expect(() => forgePublishBody(without({ reliability: { multiplier: 1 } }))).toThrow(
-      /is not what its scorer writes/
+      /is not in the form its scorer writes/
     );
-    expect(forgePublishProblem(without({ critical: { floor: 0.6 } }))).toMatch(
-      /has no `critical\.multiplier`, which leanzero\.net requires/
+    expect(forgePublishProblem(without({ critical: { floor: 0.6 } }))).toBe(
+      'This Forge 2.0 result does not record its critical-defect multiplier, which leanzero.net requires beside the reliability step. Re-score the saved build to publish it.'
     );
     expect(() => forgePublishBody(without({ critical: { floor: 0.6 } }))).toThrow(
-      /critical\.multiplier/
+      /critical-defect multiplier/
     );
-    // An rc result is refused as rc first: a re-score under an rc scorer stays rc.
+    // A result scored before the thresholds were final is refused as that first: its next step is a new
+    // run, not the re-score the missing step would ask for.
     expect(forgePublishProblem({ ...before, scorerVersion: 'forge-2.0-rc' })).toMatch(
-      /^Scored by forge-2\.0-rc: the Forge thresholds are not frozen yet/
+      /^Scored before Forge 2\.0's thresholds were final/
     );
     expect(() => forgePublishBody({ ...before, scorerVersion: 'forge-2.0-rc' })).toThrow(
-      /has no `reliability` record/
+      /has no reliability step/
     );
   });
 
-  it('refuses Haiku in its scorer’s own words (rows the harness could not run)', () => {
-    expect(forgePublishProblem(stored20(forge2Haiku))).toBe(
-      `The scorer marked this Forge result unpublishable: ${forge2Haiku.unpublishable_reasons.join('; ')}.`
-    );
+  it('refuses Haiku for what happened — tests the harness could not run — with the next step', () => {
     expect(forge2Haiku.unpublishable_reasons).toEqual(['9 unavailable row(s)']);
+    expect(forgePublishProblem(stored20(forge2Haiku))).toBe(
+      "This Forge result cannot be published: the scorer could not run 9 of its tests, which is a scoring problem and not the model's. Re-score the saved build; if the same tests still cannot run, it takes a Goose Swarm update that fixes the scorer."
+    );
   });
 
   it('posts no reliability key for forge-1.0, which has no such rule (the site refuses them there)', () => {

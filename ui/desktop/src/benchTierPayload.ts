@@ -88,7 +88,7 @@ export const FORGE_ERA_COPY: Record<ForgeEra, { product: string; task: string }>
   },
   'forge-2.0': {
     product: 'Scope Ledger 2',
-    task: 'it ships v2 of a working Atlassian Forge app installed on a large seeded Jira site — a live data migration, a points quota, invocation time limits, a world that changes mid-run, a signed CI web trigger and a UI Kit admin panel among the requirements — graded offline over six virtual hours, with no deploy and no internet for the entrant.',
+    task: 'it ships v2 of a working Atlassian Forge app installed on a large seeded Jira site. The requirements include a live data migration, a points quota, invocation time limits, a world that changes mid-run, a signed CI web trigger and a UI Kit admin panel. The result is graded offline over six virtual hours, with no deploy and no internet for the model.',
   },
 };
 
@@ -178,10 +178,10 @@ export function benchmarkLaunchProblem(
     current[0].frozen !== false
   )
     return family === 'forge'
-      ? 'The catalog has no single available Forge benchmark. Refresh before running.'
+      ? 'leanzero.net has no single Forge benchmark open for new runs right now, so a Forge run cannot start or be re-scored until one opens.'
       : 'The catalog has no single available stable benchmark. Refresh before running.';
   if (current[0].scorerVersion !== bundled)
-    return `Update Goose to run the latest stable benchmark (${eraDisplayName(current[0].scorerVersion)}). This app bundles ${eraDisplayName(bundled)}.`;
+    return `Update Goose Swarm to run the latest stable benchmark (${eraDisplayName(current[0].scorerVersion)}). This app bundles ${eraDisplayName(bundled)}.`;
   if (wanted !== current[0].scorerVersion)
     return 'This benchmark is history only. Only the latest stable benchmark can be run or re-scored.';
   return null;

@@ -6,11 +6,15 @@ import {
   SB8_TIERS,
   VERDICT_TIER_INFO as TIER_INFO,
   VERDICT_TIER_ORDER as TIER_ORDER,
+  eraDisplayName,
   isForge,
   isSb8,
   isolatedPaymentsTier,
+  scoresAsDecimals,
+  weightText,
 } from './baselines';
 import { sb8CompositionSchema } from '../../sb8ScoreSchema';
+import { forgeHeldWords, forgeUnpublishableWords } from '../../benchForgePublish';
 import { forgeHasReliability, readForgeReliability } from '../../benchForgeReliability';
 import { summarizeParts, type PartLeaf } from './partSummary';
 import { Check, ChevronDown, ChevronRight, X, XCircle } from 'lucide-react';
@@ -57,9 +61,16 @@ interface LegacyVerdictDetail {
     multiplier: number;
     floor?: number;
     pre_severity_score?: number;
-    rows: Array<{ check: string; factor?: number; why?: string; suppressed?: string }>;
+    rows: Array<{
+      check: string;
+      /** score_forge2.py: the kind of critical defect the test observed (`duplicate`, `leak`, …). */
+      class?: string;
+      factor?: number;
+      why?: string;
+      suppressed?: string;
+    }>;
   };
-  excellence?: { fraction: number; e_mean: number; conditions: Record<string, unknown> };
+  excellence?: { fraction: number; e_mean: number; conditions: unknown };
   /** Forge 2.0 (score_forge2.py): the failed tests that multiply the score — read through
    *  readForgeReliability, never trusted as typed. */
   reliability?: unknown;
@@ -120,7 +131,9 @@ const humanize = (s: string) => {
 
 const pct = (v: number, digits = 0) => `${(v * 100).toFixed(digits)}%`;
 
-function ScoreChip({ score }: { score: number }) {
+/** A group's mean or a test's score. Forge 2.0 prints every score as leanzero.net does — four decimals — so
+ *  the chip on a test reads the same digits as the reliability line that names it; the other eras keep 0–100. */
+function ScoreChip({ score, decimals = false }: { score: number; decimals?: boolean }) {
   return (
     <span
       data-testid="score-chip"
@@ -133,7 +146,7 @@ function ScoreChip({ score }: { score: number }) {
         TONE_FILL[scoreTone(score)]
       )}
     >
-      {Math.round(score * 100)}
+      {decimals ? score.toFixed(4) : Math.round(score * 100)}
     </span>
   );
 }
@@ -173,7 +186,8 @@ export function PartChips({ parts }: { parts: Record<string, unknown> }) {
           key={group.key}
           data-testid="part-group"
           data-part={group.key}
-          className="flex flex-wrap items-center gap-1">
+          className="flex flex-wrap items-center gap-1"
+        >
           {group.ok == null ? (
             <span className={cx('mr-0.5 font-mono text-lz-mono text-lz-ink-2', WEIGHT.semibold)}>
               {group.key}
@@ -193,10 +207,10 @@ export function PartChips({ parts }: { parts: Record<string, unknown> }) {
   );
 }
 
-function CheckRow({ check }: { check: VerdictCheck }) {
+function CheckRow({ check, decimals }: { check: VerdictCheck; decimals: boolean }) {
   return (
     <div className={cx('flex items-start gap-3 border-t px-3 py-2.5', SURFACE.hairline)}>
-      <ScoreChip score={check.score} />
+      <ScoreChip score={check.score} decimals={decimals} />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <span className={cx(TYPE.body, WEIGHT.semibold)}>{humanize(check.check)}</span>
@@ -233,6 +247,7 @@ function TierGroup({
   onToggle,
   sb8 = false,
   forge = false,
+  decimals = false,
 }: {
   tier: string;
   checks: VerdictCheck[];
@@ -243,11 +258,15 @@ function TierGroup({
   onToggle: () => void;
   sb8?: boolean;
   forge?: boolean;
+  /** Scores print as four decimals (Forge 2.0), not 0–100. */
+  decimals?: boolean;
 }) {
   const info = (sb8 ? SB8_TIERS[tier] : forge ? FORGE_TIERS[tier] : TIER_INFO[tier]) ?? {
     name: tier,
     desc: '',
   };
+  // Forge surfaces say "test", the word of its task text and of leanzero.net; the Gauntlet eras keep "check".
+  const unit = (count: number) => (forge ? 'test' : 'check') + (count === 1 ? '' : 's');
   const lost = checks.filter((c) => c.score < 1).length;
   return (
     <div className={cx(SURFACE.card, 'overflow-hidden')}>
@@ -274,20 +293,25 @@ function TierGroup({
           <span className={cx('ml-2 hidden sm:inline', TYPE.meta)}>{info.desc}</span>
         </span>
         {lost > 0 && (
+          // A count of tests, never of points: three tests at 0.99 are three, and cost far less than three.
           <Chip tone="err">
-            {lost} lost point{lost > 1 ? 's' : ''}
+            {lost} {unit(lost)} below full marks
           </Chip>
         )}
         <span className={cx('shrink-0', TYPE.meta, TNUM)}>
-          {checks.length} checks
-          {admissionOnly ? ' · admission gate' : weight != null ? ` · weight ${pct(weight)}` : ''}
+          {checks.length} {forge ? unit(checks.length) : 'checks'}
+          {admissionOnly
+            ? ' · admission gate'
+            : weight != null
+              ? ` · weight ${weightText(weight)}`
+              : ''}
         </span>
-        {mean != null && <ScoreChip score={mean} />}
+        {mean != null && <ScoreChip score={mean} decimals={decimals} />}
       </button>
       {open && (
         <div>
           {checks.map((c) => (
-            <CheckRow key={c.check} check={c} />
+            <CheckRow key={c.check} check={c} decimals={decimals} />
           ))}
         </div>
       )}
@@ -554,11 +578,13 @@ function Sb8Composition({ verdict, score }: { verdict: Sb8VerdictDetail; score: 
   );
 }
 
-/** score_forge.py's admission record: the ceiling, its reasons, and every band that failed. */
+/** score_forge*.py's cap record: the lowest cap that applies, its reasons, every cap whose tests failed and —
+ *  since the scorers pull a capped final below its cap — the rule the final score was computed by. */
 export interface ForgeAdmissionRecord {
   ceiling: number;
   reasons: string[];
   failedChecksByBand: Array<{ ceiling: number; band: string; checks: string[] }>;
+  final_rule?: string;
 }
 
 const isForgeAdmission = (value: unknown): value is ForgeAdmissionRecord =>
@@ -567,7 +593,28 @@ const isForgeAdmission = (value: unknown): value is ForgeAdmissionRecord =>
   typeof (value as ForgeAdmissionRecord).ceiling === 'number' &&
   Array.isArray((value as ForgeAdmissionRecord).failedChecksByBand);
 
-/** The facts a Forge verdict states about itself before any number: held, unpublishable, rc, shim. */
+/**
+ * Forge 2.0's caps and critical defects in the words of its task text's Score section (the text the model
+ * receives, and the words leanzero.net prints), keyed by the scorer's own label and class. A label or class
+ * the task text does not word is shown as the scorer recorded it. The scorer's own string for `duplicate`
+ * leaves out the replayed CI event, although r6_replay_once is charged to that class.
+ */
+const FORGE2_CAP_WORDS: Record<string, string> = {
+  deployable: 'Lint errors, or manifest functions that do not bundle and load.',
+  'v2 surfaces':
+    'None of the v2 surfaces exists: no jira:adminPage, no webtrigger and no scope-ledger entity.',
+};
+const FORGE2_CRITICAL_WORDS: Record<string, string> = {
+  migration: 'v1 rows lost or corrupted by the migration',
+  webtrigger: 'a web-trigger write without a valid signature',
+  admin: 'an admin action by a non-admin that succeeded, or the CI secret disclosed',
+  leak: "a hidden issue's data shown to a person who cannot browse it",
+  duplicate:
+    'a duplicate side effect: two or more comments for one click, duplicate ledger rows, or a replayed CI event applied twice',
+};
+
+/** The facts a Forge verdict states about itself before any number: on hold, unpublishable, scored before
+ *  its thresholds were final, another runtime — in plain words, the same ones the publish refusal uses. */
 function ForgeVerdictFacts({
   verdict,
   scorerVersion,
@@ -576,26 +623,31 @@ function ForgeVerdictFacts({
   scorerVersion?: string;
 }) {
   const facts: Array<{ tone: Tone; text: string }> = [];
-  if (verdict.status === 'held')
-    facts.push({
-      tone: 'warn',
-      text: `Held for rescore — the emulator met ${verdict.harness_missing?.length ?? 0} call(s) it does not model. Never zeroed, never published as is.`,
-    });
-  if (verdict.publishable === false)
-    facts.push({
-      tone: 'err',
-      text: `Not publishable: ${(verdict.unpublishable_reasons ?? []).join('; ') || 'the scorer gave no reason'}.`,
-    });
-  if (verdict.runtime && verdict.runtime !== 'wrapper')
+  const held = verdict.status === 'held';
+  if (held) facts.push({ tone: 'warn', text: forgeHeldWords(verdict).sentence });
+  // A held verdict is unpublishable BECAUSE it is held: the scorer lists no further reason, and "no reason
+  // recorded" under the hold would contradict the line above it.
+  if (verdict.publishable === false && !(held && !verdict.unpublishable_reasons?.length))
     facts.push({
       tone: 'err',
-      text: `Scored on the ${verdict.runtime} runtime, not Atlassian's pinned wrapper.`,
+      text: `Cannot be published: ${forgeUnpublishableWords(verdict)
+        .map(({ what }) => what)
+        .join(' Also: ')}`,
     });
-  if (/-rc$/.test(scorerVersion ?? '') || /uncalibrated/i.test(verdict.calibration ?? ''))
+  // The scorer lists another runtime among its unpublishable reasons; a verdict that names one without
+  // that list still says so.
+  else if (verdict.runtime && verdict.runtime !== 'wrapper')
+    facts.push({
+      tone: 'err',
+      text: `Scored on the ${verdict.runtime} runtime, not Atlassian's pinned Forge runtime.`,
+    });
+  if (/-rc$/.test(scorerVersion ?? '') || /uncalibrated/i.test(verdict.calibration ?? '')) {
+    const era = scorerVersion ? `${eraDisplayName(scorerVersion.replace(/-rc$/, ''))}'s` : 'the';
     facts.push({
       tone: 'warn',
-      text: `${scorerVersion ?? 'This scorer'} is uncalibrated (rc thresholds): a measurement, not a board result.`,
+      text: `Scored before ${era} thresholds were final: a measurement, not a board result.`,
     });
+  }
   // A Forge 2.0 verdict kept from before the reliability rule: its number has no such step, and saying
   // nothing would read as "no test failed".
   if (forgeHasReliability(scorerVersion) && !readForgeReliability(verdict.reliability))
@@ -624,46 +676,74 @@ function ForgeVerdictFacts({
   );
 }
 
+/** The pull a capped final keeps below its cap, as the verdict's own rule states it
+ *  (`final = min(earned, ceiling - 0.05 * (1 - earned))` → "0.05") — read, never typed here. */
+const capPull = (rule: string | undefined) =>
+  /^final = min\(earned, ceiling - ([0-9.]+) \* \(1 - earned\)\)$/.exec(rule ?? '')?.[1] ?? null;
+
 /**
- * Forge's admission ladder as the verdict recorded it: the earned score, the ceiling the failed bands set,
- * and each failed band with the checks that held it there. The band limits are the scorer's (read from
- * the record, never restated here); passing admission adds no points.
+ * Forge's caps and final score as the verdict recorded them: the earned score, the lowest cap that applies,
+ * the final score, each cap with the tests that set it, and the rule that takes the first two to the third.
+ *
+ * THE RULE IS THE VERDICT'S, PER VERDICT. Since 2026-10-03 both Forge scorers pull a capped final below its
+ * cap (capped_final: min(earned, cap − pull × (1 − earned))) and write `admission.final_rule`; a verdict
+ * scored before that has no such field and its final is the lower of the earned score and the cap. Stating
+ * the older rule under a pulled final contradicted the three numbers printed above it (earned 0.7000, cap
+ * 0.499, final 0.4840: neither), so the sentence follows the field. The worked line prints the recorded
+ * numbers only, and only when the rule applied to them gives the recorded final to the digit shown — the
+ * arithmetic is checked here, never used as the score.
  */
 function ForgeAdmission({
   admission,
   rawScore,
   score,
+  forge2,
 }: {
   admission: unknown;
   rawScore?: number;
   score: number;
+  forge2: boolean;
 }) {
   if (!isForgeAdmission(admission) || typeof rawScore !== 'number')
     return (
       <p role="status" className={TYPE.bodyMuted}>
-        This result is missing its admission evidence.
+        This result is missing its record of score caps.
       </p>
     );
+  // Forge 2.0 prints a score to four decimals everywhere; Forge 1.0's history keeps its three here.
+  const digits = forge2 ? 4 : 3;
+  const capped = admission.ceiling < 1;
+  const pull = capPull(admission.final_rule);
+  const worked =
+    capped &&
+    pull != null &&
+    Math.min(rawScore, admission.ceiling - Number(pull) * (1 - rawScore)).toFixed(4) ===
+      score.toFixed(4)
+      ? `Here: min(${rawScore.toFixed(4)}, ${admission.ceiling.toFixed(3)} − ${pull} × (1 − ${rawScore.toFixed(4)})) = ${score.toFixed(4)}.`
+      : null;
   return (
-    <section className="flex flex-col gap-3" aria-label="Admission bands">
+    <section className="flex flex-col gap-3" aria-label="Final score">
+      {forge2 && <SectionHeader as="h3" title="Final score" />}
       <dl className={cx('grid grid-cols-3 gap-3', TNUM)}>
         <div>
-          <dt className={TYPE.meta}>Earned before the ceiling</dt>
-          <dd className={TYPE.h2}>{rawScore.toFixed(3)}</dd>
+          <dt className={TYPE.meta}>Earned score</dt>
+          <dd className={TYPE.h2}>{rawScore.toFixed(digits)}</dd>
         </div>
         <div>
-          <dt className={TYPE.meta}>Admission ceiling</dt>
-          <dd className={TYPE.h2}>{admission.ceiling.toFixed(3)}</dd>
+          <dt className={TYPE.meta}>Cap</dt>
+          <dd className={TYPE.h2}>{capped ? admission.ceiling.toFixed(3) : 'none'}</dd>
         </div>
         <div>
           <dt className={TYPE.meta}>Final score</dt>
-          <dd className={cx(TYPE.h2, TONE_TEXT.accent)}>{score.toFixed(3)}</dd>
+          <dd className={cx(TYPE.h2, TONE_TEXT.accent)}>{score.toFixed(digits)}</dd>
         </div>
       </dl>
       {admission.failedChecksByBand.length === 0 ? (
-        <Chip tone="ok" icon={<Check />}>
-          Every admission band passed — no ceiling
-        </Chip>
+        <div>
+          <Chip tone="ok" icon={<Check />}>
+            No cap applies
+          </Chip>
+        </div>
       ) : (
         admission.failedChecksByBand.map((band) => (
           <div
@@ -673,36 +753,60 @@ function ForgeAdmission({
           >
             <div className="flex flex-wrap items-center gap-2">
               <Chip tone="err" icon={<X />}>
-                Capped at {band.ceiling.toFixed(3)}
+                Maximum {band.ceiling.toFixed(3)}
               </Chip>
-              <span className={cx(TYPE.body, WEIGHT.semibold)}>{band.band}</span>
+              <span className={cx(TYPE.body, WEIGHT.semibold)}>
+                {(forge2 ? FORGE2_CAP_WORDS[band.band] : undefined) ?? band.band}
+              </span>
             </div>
-            <div className="flex flex-wrap gap-1">
+            <div className="flex flex-wrap items-center gap-1">
+              <span className={TYPE.meta}>
+                Failed {band.checks.length === 1 ? 'test' : 'tests'}:
+              </span>
               {band.checks.map((check) => (
-                <Chip key={check}>{check}</Chip>
+                <Chip key={check}>{humanize(check)}</Chip>
               ))}
             </div>
           </div>
         ))
       )}
-      <p className={TYPE.bodyMuted}>
-        The final score is the lower of earned credit and the ceiling of the lowest band a required
-        check failed. Passing a band adds no points.
+      <p data-testid="forge-cap-rule" className={cx('max-w-[80ch]', TYPE.bodyMuted)}>
+        {pull != null
+          ? `Under a cap the final score is min(earned, cap − ${pull} × (1 − earned)): below the cap, and closer to it the more the run earned. When more than one cap applies, the lowest counts. With no cap the final score is the earned score. Avoiding a cap adds no points.`
+          : admission.final_rule
+            ? `The scorer recorded its rule for the final score as: ${admission.final_rule}. Avoiding a cap adds no points.`
+            : 'The final score is the lower of the earned score and the lowest cap that applies. Avoiding a cap adds no points.'}
+        {worked ? ` ${worked}` : ''}
       </p>
     </section>
   );
 }
 
+/** What a Forge 2.0 verdict records of its steps, or null when it carries no reliability record (a verdict
+ *  scored before the rule: named in ForgeVerdictFacts, and no step it never recorded is drawn). */
+function forgeSteps(verdict: LegacyVerdictDetail, scorerVersion: string | undefined) {
+  const reliability = forgeHasReliability(scorerVersion)
+    ? readForgeReliability(verdict.reliability)
+    : null;
+  const tests = verdict.critical?.pre_severity_score;
+  const critical = verdict.critical?.multiplier;
+  const earned = verdict.rawScore;
+  return reliability &&
+    typeof tests === 'number' &&
+    typeof critical === 'number' &&
+    typeof earned === 'number'
+    ? { reliability, tests, critical, earned }
+    : null;
+}
+
 /**
- * Forge 2.0's steps from what the tests earned to the score the ceiling applies to — tests earned × critical
- * multiplier × reliability — and the groups of tests that make up the reliability factor: one line per group
- * that multiplies the score (its worst test, that test's score, the group's factor), the group's other failed
- * tests under it as already counted, and the tests a critical defect priced instead. Every number is the
- * verdict's (`critical.pre_severity_score`, `critical.multiplier`, `reliability`, `rawScore`); nothing is
- * multiplied here, so the lines read as the scorer wrote them. Forge 1.0 has no such rule and renders none of
- * this; a Forge 2.0 verdict without the record is named in ForgeVerdictFacts.
+ * Forge 2.0's score in one line, in the order and by the names every Forge surface uses: Tests earned ×
+ * Critical defects × Reliability = Final score. The sections under it explain each step in the same order.
+ * Every number is the verdict's (`critical.pre_severity_score`, `critical.multiplier`,
+ * `reliability.multiplier`, `rawScore`); nothing is multiplied here. Under a cap the product is the earned
+ * score, and the Final score section takes it from there.
  */
-function ForgeReliability({
+function ForgeScoreSteps({
   verdict,
   score,
   scorerVersion,
@@ -711,43 +815,22 @@ function ForgeReliability({
   score: number;
   scorerVersion?: string;
 }) {
-  const reliability = forgeHasReliability(scorerVersion)
-    ? readForgeReliability(verdict.reliability)
-    : null;
-  const tests = verdict.critical?.pre_severity_score;
-  const critical = verdict.critical?.multiplier;
-  const earned = verdict.rawScore;
-  if (
-    !reliability ||
-    typeof tests !== 'number' ||
-    typeof critical !== 'number' ||
-    typeof earned !== 'number'
-  )
-    return null;
-  // With no admission ceiling in the way the earned score IS the final one; otherwise the ceiling above
-  // still applies to it.
+  const recorded = forgeSteps(verdict, scorerVersion);
+  if (!recorded) return null;
+  const { reliability, tests, critical, earned } = recorded;
   const isFinal = Math.abs(score - earned) < 5e-5;
   const steps = [
     { key: 'tests', label: 'Tests earned', value: tests },
-    { key: 'critical', label: '× Critical multiplier', value: critical },
+    { key: 'critical', label: '× Critical defects', value: critical },
     { key: 'reliability', label: '× Reliability', value: reliability.multiplier },
     {
       key: 'earned',
-      label: isFinal ? '= Final score' : '= Earned before the ceiling',
+      label: isFinal ? '= Final score' : '= Earned score, before the cap',
       value: earned,
     },
   ];
-  const cell = cx('border px-2 py-1 align-top', SURFACE.hairline);
-  const floor = reliability.floor.toFixed(2);
-  const groupName = (tier: string) => `${tier} ${FORGE_TIERS[tier]?.name ?? ''}`.trim();
-  // A group's other failed tests sit under its line; a group the scorer listed there with no line of its own
-  // is still shown, never dropped.
-  const lined = new Set(reliability.defects.map((defect) => defect.tier));
-  const unlined = Object.entries(reliability.folded).filter(
-    ([tier, names]) => !lined.has(tier) && names.length > 0
-  );
   return (
-    <section className="flex flex-col gap-3" aria-label="Score steps">
+    <section aria-label="Score steps">
       <dl className={cx('grid grid-cols-2 gap-3 sm:grid-cols-4', TNUM)}>
         {steps.map((step) => (
           <div key={step.key} data-testid="forge-step" data-step={step.key}>
@@ -767,12 +850,173 @@ function ForgeReliability({
           </div>
         ))}
       </dl>
+    </section>
+  );
+}
+
+/**
+ * Step one, Forge 2.0: what the tests earned — every group of tests with the mean of its tests, its weight
+ * and what the two add to the score, closing on the verdict's own "Tests earned" (`critical.pre_severity_score`,
+ * the number the steps start from). Weights are the verdict's, printed at the precision that adds to 100%.
+ * The lines are on the score's own scale and to its four decimals, so the table and the step above it state
+ * one number one way; the total is the recorded one, never the sum of the rounded lines.
+ */
+function ForgeTestsEarned({ verdict }: { verdict: LegacyVerdictDetail }) {
+  const rows = FORGE_TIER_ORDER.flatMap((tier) => {
+    const entry = verdict.tiers[tier];
+    return entry && typeof entry.mean === 'number' && Number.isFinite(entry.weight)
+      ? [{ tier, ...entry }]
+      : [];
+  });
+  const cell = cx('border px-2 py-1', SURFACE.hairline);
+  const tests = verdict.critical?.pre_severity_score;
+  const excellence = verdict.excellence;
+  const conditions = Array.isArray(excellence?.conditions) ? excellence.conditions.length : null;
+  return (
+    <section className="flex flex-col gap-2" aria-label="Tests earned">
+      <SectionHeader as="h3" title="Tests earned" />
       <p className={cx('max-w-[80ch]', TYPE.bodyMuted)}>
-        Failed tests also multiply the score. Each group of tests multiplies the score by its worst
-        test: {(1 - reliability.k).toFixed(2)} when that test fails completely, in proportion when
-        it fails partly. The group&rsquo;s other failed tests are already counted by its worst one.
-        The excellence tier never multiplies, and together the groups never take the score below{' '}
-        {floor} of what the tests earned.
+        Tests earn the score. Each group of tests adds the mean of its tests × its weight; added up,
+        the groups are what the tests earned.
+      </p>
+      <div className="overflow-x-auto">
+        <table className={cx('w-full border-collapse text-lz-body text-lz-ink', TNUM)}>
+          <thead>
+            <tr className="text-left">
+              <th className={cell}>Group</th>
+              <th className={cell}>Mean of its tests</th>
+              <th className={cell}>Weight</th>
+              <th className={cell}>Adds to the score</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.tier} data-testid="forge-group-line" data-tier={row.tier}>
+                <td className={cell}>
+                  {row.tier} {FORGE_TIERS[row.tier]?.name ?? ''}
+                </td>
+                <td className={cell}>{row.mean.toFixed(4)}</td>
+                <td className={cell}>{weightText(row.weight)}</td>
+                <td className={cell}>{(row.mean * row.weight).toFixed(4)}</td>
+              </tr>
+            ))}
+            {typeof tests === 'number' && (
+              <tr data-testid="forge-tests-earned">
+                <td className={cx(cell, WEIGHT.semibold)} colSpan={2}>
+                  Tests earned
+                </td>
+                <td className={cx(cell, WEIGHT.semibold)}>
+                  {weightText(rows.reduce((sum, row) => sum + row.weight, 0))}
+                </td>
+                <td className={cx(cell, WEIGHT.semibold)}>{tests.toFixed(4)}</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      {typeof tests === 'number' ? (
+        <p className={cx('max-w-[80ch]', TYPE.bodyMuted)}>
+          {excellence
+            ? `E ${FORGE_TIERS.E.name} is the excellence gate ${excellence.fraction.toFixed(4)}${conditions ? ` (the average of its ${conditions} conditions)` : ''} × the mean of its tests ${excellence.e_mean.toFixed(4)}. `
+            : ''}
+          Each line is rounded to four decimals, so added up they can differ from the total in the
+          last digit.
+        </p>
+      ) : (
+        <p role="status" className={TYPE.bodyMuted}>
+          This result did not record what its tests earned.
+        </p>
+      )}
+    </section>
+  );
+}
+
+type ForgeCriticalRow = NonNullable<LegacyVerdictDetail['critical']>['rows'][number];
+
+/** One critical-defect line in plain words: the test that observed the defect and what it cost, or why it
+ *  cost nothing more. The scorer's notes (`class:duplicate priced by t_no_double_count`, `root:<test>`) are
+ *  read, never printed; a note in a form this view does not know is quoted as recorded. */
+function criticalLine(row: ForgeCriticalRow): string {
+  const name = humanize(row.check);
+  const words = (row.class ? FORGE2_CRITICAL_WORDS[row.class] : undefined) ?? row.why;
+  const sameKind = /^class:\S+ priced by (\S+)$/.exec(row.suppressed ?? '');
+  if (sameKind)
+    return `${name}: no additional penalty. ${humanize(sameKind[1])} already multiplied the score for this kind of defect, and each kind multiplies it once.`;
+  const sameDefect = /^root:(\S+)$/.exec(row.suppressed ?? '');
+  if (sameDefect)
+    return `${name}: no additional penalty. The scorer counts it as the same defect as ${humanize(sameDefect[1])}, which already multiplied the score.`;
+  if (row.suppressed)
+    return `${name}: no additional penalty (the scorer's note: ${row.suppressed}).`;
+  if (typeof row.factor !== 'number')
+    return `${name}: the scorer recorded no factor${words ? ` (${words})` : ''}.`;
+  return `${name} × ${row.factor.toFixed(2)}${words ? `: ${words}` : ''}.`;
+}
+
+/** Step two, Forge 2.0: the critical defects — the rule with the verdict's own factor, and one line per test
+ *  that observed one. */
+function ForgeCriticalDefects({ verdict }: { verdict: LegacyVerdictDetail }) {
+  const critical = verdict.critical;
+  if (!critical) return null;
+  const rows = critical.rows ?? [];
+  const factor = typeof critical.floor === 'number' ? ` by ${critical.floor.toFixed(2)}` : '';
+  return (
+    <section className="flex flex-col gap-2" aria-label="Critical defects">
+      <SectionHeader as="h3" title="× Critical defects" />
+      <p className={cx('max-w-[80ch]', TYPE.bodyMuted)}>
+        Each kind of critical defect that is observed multiplies the whole score{factor}, at most
+        once however many tests observe it.
+      </p>
+      {rows.length === 0 && critical.multiplier === 1 && (
+        <div>
+          <Chip tone="ok" icon={<Check />}>
+            No critical defect was observed
+          </Chip>
+        </div>
+      )}
+      {rows.map((row) => (
+        <p key={row.check} data-testid="critical-line" className={TYPE.body}>
+          {criticalLine(row)}
+        </p>
+      ))}
+    </section>
+  );
+}
+
+/**
+ * Step three, Forge 2.0: reliability — the rule in the task text's one sentence (its two numbers read from the
+ * verdict) and the groups of tests that make up the factor: one line per group that multiplies the score (its
+ * worst test, that test's score, the group's factor), the group's other failed tests under it as already
+ * counted, and the tests a critical defect priced instead. Nothing is multiplied here, so the lines read as
+ * the scorer wrote them. The floor is on the groups' product only: a critical defect multiplies on top of it.
+ */
+function ForgeReliability({
+  verdict,
+  scorerVersion,
+}: {
+  verdict: LegacyVerdictDetail;
+  scorerVersion?: string;
+}) {
+  const reliability = forgeSteps(verdict, scorerVersion)?.reliability;
+  if (!reliability) return null;
+  const cell = cx('border px-2 py-1 align-top', SURFACE.hairline);
+  const floor = reliability.floor.toFixed(2);
+  const groupName = (tier: string) => `${tier} ${FORGE_TIERS[tier]?.name ?? ''}`.trim();
+  // A group's other failed tests sit under its line; a group the scorer listed there with no line of its own
+  // is still shown, never dropped.
+  const lined = new Set(reliability.defects.map((defect) => defect.tier));
+  const unlined = Object.entries(reliability.folded).filter(
+    ([tier, names]) => !lined.has(tier) && names.length > 0
+  );
+  return (
+    <section className="flex flex-col gap-3" aria-label="Reliability">
+      <SectionHeader as="h3" title="× Reliability" />
+      <p data-testid="reliability-rule" className={cx('max-w-[80ch]', TYPE.bodyMuted)}>
+        Each group of tests multiplies the score by 1 − {reliability.k.toFixed(2)} × the shortfall
+        of its worst test: by {(1 - reliability.k).toFixed(2)} when that test fails completely, by 1
+        when every test in the group passes. The group&rsquo;s other failed tests are already
+        counted by its worst one. E {FORGE_TIERS.E.name} never multiplies. Together the groups never
+        take the score below {floor} of what the tests earned; a critical defect still multiplies on
+        top.
       </p>
       {reliability.defects.length === 0 ? (
         <div>
@@ -808,7 +1052,7 @@ function ForgeReliability({
                         </div>
                       )}
                     </td>
-                    <td className={cell}>{pct(defect.score, 1)}</td>
+                    <td className={cell}>{defect.score.toFixed(4)}</td>
                     <td className={cell}>× {defect.factor.toFixed(4)}</td>
                   </tr>
                 );
@@ -825,8 +1069,9 @@ function ForgeReliability({
       )}
       {reliability.floored && (
         <p data-testid="reliability-floor" className={TYPE.body}>
-          The groups above multiply to less than {floor}. Failed tests never take the score below{' '}
-          {floor} of what the tests earned, so reliability stays at {floor}.
+          The groups above multiply to less than {floor}. Together they never take the score below{' '}
+          {floor} of what the tests earned, so reliability stays at {floor}. A critical defect still
+          multiplies on top.
         </p>
       )}
       {unlined.map(([tier, names]) => (
@@ -844,7 +1089,9 @@ function ForgeReliability({
   );
 }
 
-/** Forge's weighted tiers (L…A) and the E slice, from the verdict — weights read, never restated. */
+/** Forge 1.0's weighted tiers (L…A) and the E slice, from the verdict — weights read, never restated. Frozen
+ *  history: its table and its recorded-inputs line stay as that era was released (there "inner score" and
+ *  "before criticals" are two numbers; Forge 2.0, where they are one, has ForgeTestsEarned instead). */
 function ForgeComposition({ verdict }: { verdict: LegacyVerdictDetail }) {
   const rows = FORGE_TIER_ORDER.flatMap((tier) => {
     const entry = verdict.tiers[tier];
@@ -873,7 +1120,7 @@ function ForgeComposition({ verdict }: { verdict: LegacyVerdictDetail }) {
                   {row.tier} {FORGE_TIERS[row.tier]?.name ?? ''}
                 </td>
                 <td className={cell}>{pct(row.mean, 1)}</td>
-                <td className={cell}>{pct(row.weight)}</td>
+                <td className={cell}>{weightText(row.weight)}</td>
                 <td className={cell}>{(row.mean * row.weight * 100).toFixed(1)}</td>
               </tr>
             ))}
@@ -944,6 +1191,9 @@ export function ScoringDetail({
     isolatedPaymentsTier(scorerVersion) ??
     isolatedPaymentsTier('scorerVersion' in rawVerdict ? rawVerdict.scorerVersion : undefined);
   const forge = isForge(version);
+  // Forge 2.0 (the reliability era) explains its score top-down under its own step names; Forge 1.0 is
+  // frozen history and keeps the layout it was released with.
+  const forge2 = forgeHasReliability(version);
   const verdict: LegacyVerdictDetail = useMemo(
     () =>
       sb8Verdict
@@ -998,6 +1248,22 @@ export function ScoringDetail({
       <>
         {sb8Verdict ? (
           <Sb8Composition verdict={sb8Verdict} score={score} />
+        ) : forge2 ? (
+          // The line of steps, then each step explained in the same order: what the tests earned, the two
+          // multipliers, then the cap and the final score.
+          <>
+            <ForgeVerdictFacts verdict={verdict} scorerVersion={version} />
+            <ForgeScoreSteps verdict={verdict} score={score} scorerVersion={version} />
+            <ForgeTestsEarned verdict={verdict} />
+            <ForgeCriticalDefects verdict={verdict} />
+            <ForgeReliability verdict={verdict} scorerVersion={version} />
+            <ForgeAdmission
+              admission={verdict.admission}
+              rawScore={verdict.rawScore}
+              score={score}
+              forge2
+            />
+          </>
         ) : forge ? (
           <>
             <ForgeVerdictFacts verdict={verdict} scorerVersion={version} />
@@ -1005,8 +1271,8 @@ export function ScoringDetail({
               admission={verdict.admission}
               rawScore={verdict.rawScore}
               score={score}
+              forge2={false}
             />
-            <ForgeReliability verdict={verdict} score={score} scorerVersion={version} />
             <ForgeComposition verdict={verdict} />
           </>
         ) : paymentsTier ? (
@@ -1101,17 +1367,37 @@ export function ScoringDetail({
         </div>
       )}
 
-      {rootCauses.length > 0 && (
+      {/* `root_causes` means a different thing per scorer, so each family gets only what is true of it.
+          The sb-5 lineage zeroed a root's dependents and counted the root once — its sentence stays.
+          A Forge scorer lists a root and its dependents whenever each scored below 1 (not failed, not
+          zeroed), and every one of them still counts at its own score: Forge 1.0's history says exactly
+          that. Forge 2.0 says nothing: under its per-group reliability a root explains no number on this
+          screen (ROOT_BLOCKS only shadows one critical defect under another, which the critical-defect
+          lines state), and leanzero.net shows no such block either. */}
+      {rootCauses.length > 0 && !forge2 && (
         <section className={cx(SURFACE.card, SPACE.card)}>
-          <SectionHeader as="h3" title="Root-cause attribution" />
-          {rootCauses.map(([root, downstream]) => (
-            <p key={root} className={cx('mt-2', TYPE.body)}>
-              <span className={cx(WEIGHT.semibold, TONE_TEXT.err)}>{humanize(root)}</span> failed at
-              the root and zeroed {downstream.length} downstream check
-              {downstream.length === 1 ? '' : 's'}: {downstream.map(humanize).join(', ')} — one
-              defect, not {downstream.length + 1}.
-            </p>
-          ))}
+          <SectionHeader
+            as="h3"
+            title={forge ? 'Tests that can share a cause' : 'Root-cause attribution'}
+          />
+          {rootCauses.map(([root, downstream]) => {
+            // The Forge scorer repeats a name a root reaches by two routes.
+            const names = [...new Set(downstream)];
+            return forge ? (
+              <p key={root} className={cx('mt-2', TYPE.body)}>
+                <span className={WEIGHT.semibold}>{humanize(root)}</span> scored below full marks,
+                and so did {names.length} test{names.length === 1 ? '' : 's'} that the same fault
+                can fail: {names.map(humanize).join(', ')}. Each keeps its own score.
+              </p>
+            ) : (
+              <p key={root} className={cx('mt-2', TYPE.body)}>
+                <span className={cx(WEIGHT.semibold, TONE_TEXT.err)}>{humanize(root)}</span> failed
+                at the root and zeroed {downstream.length} downstream check
+                {downstream.length === 1 ? '' : 's'}: {downstream.map(humanize).join(', ')} — one
+                defect, not {downstream.length + 1}.
+              </p>
+            );
+          })}
         </section>
       )}
 
@@ -1122,6 +1408,7 @@ export function ScoringDetail({
             tier={g.tier}
             sb8={sb8}
             forge={forge}
+            decimals={scoresAsDecimals(version)}
             checks={g.checks}
             mean={g.mean}
             weight={g.weight}

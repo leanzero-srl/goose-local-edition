@@ -142,7 +142,7 @@ it('allows only one fresh available current stable release matching the bundled 
     'leanzero.net has not opened Gauntlet 7.2 yet: its current benchmark is still Gauntlet 7.1. Refresh once it opens.'
   );
   expect(benchmarkLaunchProblem([{ ...stable, scorerVersion: 'sb-8.0' }])).toBe(
-    'Update Goose to run the latest stable benchmark (Gauntlet 8.0). This app bundles Gauntlet 7.2.'
+    'Update Goose Swarm to run the latest stable benchmark (Gauntlet 8.0). This app bundles Gauntlet 7.2.'
   );
 });
 
@@ -217,7 +217,7 @@ describe('the Forge family has its own bundled era and its own launch gate (forg
         'forge'
       )
     ).toBe(
-      'Update Goose to run the latest stable benchmark (Forge 2.1). This app bundles Forge 2.0.'
+      'Update Goose Swarm to run the latest stable benchmark (Forge 2.1). This app bundles Forge 2.0.'
     );
     // An rc identity is never a runnable era; a frozen one is closed; two currents are ambiguous.
     for (const rows of [
@@ -225,8 +225,9 @@ describe('the Forge family has its own bundled era and its own launch gate (forg
       [stable, { ...forge, frozen: true }],
       [stable, forge, { ...forge, scorerVersion: 'forge-2.1' }],
     ])
-      expect(benchmarkLaunchProblem(rows, false, undefined, 'forge')).toMatch(
-        /no single available Forge/
+      // True of all three (a refresh cannot open a closed era), and it says what cannot happen until one opens.
+      expect(benchmarkLaunchProblem(rows, false, undefined, 'forge')).toBe(
+        'leanzero.net has no single Forge benchmark open for new runs right now, so a Forge run cannot start or be re-scored until one opens.'
       );
     expect(benchmarkLaunchProblem([stable, forge], true, undefined, 'forge')).toMatch(/Connect/);
     // A forge-1.0 session cannot be re-scored once forge-2.0 is the bundled era.
@@ -269,7 +270,15 @@ describe('the Forge family has its own bundled era and its own launch gate (forg
 });
 
 import { BENCH_FAMILY_NAME, FORGE_BENCHMARK_TIER, FORGE_ERA_COPY } from './benchTierPayload';
-import { FORGE_ERAS, eraDisplayName, eraLabel } from './components/benchmark/baselines';
+import {
+  FORGE_ERAS,
+  FORGE_ERA_TIER_ORDER,
+  FORGE_TIERS,
+  eraDisplayName,
+  eraLabel,
+  scoreText,
+  weightText,
+} from './components/benchmark/baselines';
 it('names eras for people — Gauntlet and Forge — while every id stays sb-* / forge-*', () => {
   expect(BENCH_FAMILY_NAME).toEqual({
     sb: 'Gauntlet 7.2 · payments',
@@ -279,12 +288,56 @@ it('names eras for people — Gauntlet and Forge — while every id stays sb-* /
   expect(FORGE_ERA_COPY['forge-1.0'].product).toBe('Scope Ledger');
   expect(FORGE_ERA_COPY[FORGE_BENCHMARK_TIER].product).toBe('Scope Ledger 2');
   for (const era of FORGE_ERAS) expect(FORGE_ERA_COPY[era].task).toMatch(/^it .+\.$/);
-  expect(eraDisplayName('forge-2.0-rc')).toBe('Forge 2.0 rc');
+  // A Forge era scored before its thresholds were final is its "pilot", leanzero.net's word — never "rc".
+  expect(eraDisplayName('forge-2.0-rc')).toBe('Forge 2.0 pilot');
   expect(eraLabel('forge-2.0', 'Forge 2.0 — Scope Ledger 2')).toBe('Forge 2.0 · Scope Ledger 2');
   expect(eraDisplayName('sb-7.2')).toBe('Gauntlet 7.2');
   expect(eraDisplayName('sb-7.0-rc')).toBe('Gauntlet 7.0 rc');
-  expect(eraDisplayName('forge-1.0-rc')).toBe('Forge 1.0 rc');
+  expect(eraDisplayName('forge-1.0-rc')).toBe('Forge 1.0 pilot');
   expect(eraDisplayName('custom-era')).toBe('custom-era');
+  // The 19 Forge 2.0 group names are ONE set for the app and leanzero.net: L…E as the site's Forge 1.0
+  // brief names them, R1–R9 as the task text's Score section names its requirements.
+  expect(
+    FORGE_ERA_TIER_ORDER['forge-2.0'].map((tier) => `${tier} ${FORGE_TIERS[tier].name}`)
+  ).toEqual([
+    'L Lint and bundles',
+    'K Platform currency',
+    'T Event pipeline',
+    'R Reconcile',
+    'S Storage',
+    'B Resolvers and permissions',
+    'U UI function',
+    'V Visual',
+    'A Rovo',
+    'E Excellence',
+    'R1 Migration',
+    'R2 Dosing',
+    'R3 Time limits',
+    'R4 Changing world',
+    'R5 Admin panel',
+    'R6 CI web trigger',
+    'R7 Custom field',
+    'R8 Forge LLM',
+    'R9 Boot budget',
+  ]);
+  // Tier A grades the Rovo action and its SKILL.md; no Rovo agent is run or graded.
+  expect(FORGE_TIERS.A.desc).not.toMatch(/agent answer/);
+  // A score has one format per era: Forge 2.0's is the site's four decimals, on every surface.
+  expect(scoreText(0.745, 'forge-2.0')).toBe('0.7450');
+  expect(scoreText(0.7454, 'forge-2.0-rc')).toBe('0.7454');
+  expect(scoreText(0.799, 'forge-1.0')).toBe('79.9%');
+  expect(scoreText(0.412, 'sb-7.2')).toBe('41.2%');
+  expect(scoreText(0.5, undefined)).toBe('50.0%');
+  // A weight prints at the precision that adds to 100%, a whole percent as it always did.
+  expect([0.0176, 0.022, 0.0352, 0.03, 0.13, 0.1, 0.25].map(weightText)).toEqual([
+    '1.76%',
+    '2.2%',
+    '3.52%',
+    '3%',
+    '13%',
+    '10%',
+    '25%',
+  ]);
   expect(eraLabel('sb-7.2', 'SB7.2 payments')).toBe('Gauntlet 7.2 · payments');
   expect(eraLabel('sb-6.0', 'VendorSync Pro')).toBe('Gauntlet 6.0 · VendorSync Pro');
   expect(eraLabel('forge-1.0', 'Forge 1.0 — Scope Ledger')).toBe('Forge 1.0 · Scope Ledger');

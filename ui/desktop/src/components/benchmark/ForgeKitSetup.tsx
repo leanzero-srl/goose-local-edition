@@ -86,8 +86,8 @@ export function ForgeKitSetup({
     >
       <p className={cx('max-w-[75ch]', TYPE.bodyMuted)}>
         Forge apps run on Atlassian&rsquo;s own runtime wrapper and the pinned Forge packages.
-        Neither ships in Goose: preparing the kit downloads them once, checks every file against its
-        pinned hash, and refuses anything that differs.
+        Neither ships in Goose Swarm: preparing the kit downloads them once, checks every file
+        against its pinned hash, and refuses anything that differs.
       </p>
       {ready ? (
         <p

@@ -70,7 +70,7 @@ it('offers the same retry to a Forge session with its own forge-1.0 receipt — 
   expect(
     retryScoringEligibility({ ...row, scorerVersion: 'forge-1.0-rc' }, forgeReceipt).reason
   ).toBe(
-    'Only Gauntlet 7.1, Gauntlet 7.2, Forge 1.0 and Forge 2.0 runs can be rescored; this run is Forge 1.0 rc.'
+    'Only Gauntlet 7.1, Gauntlet 7.2, Forge 1.0 and Forge 2.0 runs can be rescored; this run is Forge 1.0 pilot.'
   );
 });
 
@@ -80,7 +80,7 @@ it('re-scores a FINISHED Forge run only for a missing clip — its rc row agains
   expect(retryScoringEligibility(finished, forgeReceipt, true)).toEqual({ ready: true });
   // Without the clip fact a finished rc row is no rescorable identity at all.
   expect(retryScoringEligibility(finished, forgeReceipt).reason).toBe(
-    'Only Gauntlet 7.1, Gauntlet 7.2, Forge 1.0 and Forge 2.0 runs can be rescored; this run is Forge 1.0 rc.'
+    'Only Gauntlet 7.1, Gauntlet 7.2, Forge 1.0 and Forge 2.0 runs can be rescored; this run is Forge 1.0 pilot.'
   );
   // The exemption is Forge's alone: a finished Gauntlet run is never re-scored this way.
   expect(

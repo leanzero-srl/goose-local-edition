@@ -5420,7 +5420,8 @@ ipcMain.handle('benchmark-publish', async (_event, args?: { title?: string; runK
   if (!runMeta) {
     return {
       ok: false,
-      error: 'this result predates the v2 publisher — run the benchmark again to publish',
+      error:
+        'this result was saved by an older version of the app and is missing the run record publishing needs — run the benchmark again to publish',
     };
   }
   // Frozen gate, from the CACHED catalog: the same refusal the server would return, without

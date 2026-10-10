@@ -183,10 +183,10 @@ describe('BenchmarkSection', () => {
       within(screen.getByTestId('bench-era-sb-7.1')).getByText('Gauntlet 7.1')
     ).toBeInTheDocument();
     expect(
-      within(screen.getByTestId('bench-era-forge-1.0-rc')).getByText('Forge 1.0 rc')
+      within(screen.getByTestId('bench-era-forge-1.0-rc')).getByText('Forge 1.0 pilot')
     ).toBeInTheDocument();
     // The link still names the run by its id.
-    fireEvent.click(screen.getByText('Forge 1.0 rc'));
+    fireEvent.click(screen.getByText('Forge 1.0 pilot'));
     fireEvent.click(await screen.findByTestId('bench-run-cloud-forge'));
     expect(nav.navigate).toHaveBeenCalledWith(benchRunHref('forge-1.0-rc', 'cloud-forge'));
   });

@@ -1,6 +1,6 @@
 import { billedCostLine } from './benchBilledCost';
 import type { BenchmarkPhase } from './benchPhase';
-import { eraDisplayName } from './components/benchmark/baselines';
+import { eraDisplayName, scoreText } from './components/benchmark/baselines';
 
 /**
  * The menu-bar tray's benchmark presence (owner 2026-10-03: "when benchmarks run the status bar of
@@ -85,12 +85,8 @@ function callsProgress(run: BenchTrayRun): string | null {
     : `${run.callsUsed} call${run.callsUsed === 1 ? '' : 's'}`;
 }
 
-function scoreText(score: number): string {
-  return `${(score * 100).toFixed(1)}%`;
-}
-
 function endText(last: BenchTrayLast): string {
-  if (last.end === 'scored' && last.score != null) return scoreText(last.score);
+  if (last.end === 'scored' && last.score != null) return scoreText(last.score, last.scorerVersion);
   const what = last.end === 'cancelled' ? 'cancelled' : 'did not finish';
   return last.rescore ? `scoring ${what}` : what;
 }

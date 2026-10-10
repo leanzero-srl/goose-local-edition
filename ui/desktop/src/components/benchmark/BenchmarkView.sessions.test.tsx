@@ -712,7 +712,7 @@ it.each([
   [
     'newer stable release',
     { ...CATALOG, benchmarks: [{ ...CATALOG.benchmarks[0], scorerVersion: 'sb-8.0' }] },
-    /Update Goose to run/,
+    /Update Goose Swarm to run/,
   ],
   ['cached catalog', { ...CATALOG, stale: true }, /Connect to leanzero.net/],
   [

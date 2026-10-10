@@ -1,4 +1,5 @@
 import { Chip, RADIUS, TNUM, cx, type Tone } from '../lz';
+import { scoreText } from './baselines';
 import type { BenchSession, SessionOutcome } from './bridge';
 
 /** The session's start stamp, short; null when the stamp is unreadable. */
@@ -41,7 +42,9 @@ export function OutcomeChip({ session }: { session: BenchSession }) {
       {OUTCOME_WORDS[session.outcome]}
       {session.outcome === 'finished' && (
         <span className={TNUM}>
-          {session.score != null ? ` · ${(session.score * 100).toFixed(1)}%` : ' · score missing'}
+          {session.score != null
+            ? ` · ${scoreText(session.score, session.scorerVersion)}`
+            : ' · score missing'}
         </span>
       )}
     </Chip>

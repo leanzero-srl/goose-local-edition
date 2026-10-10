@@ -18,19 +18,79 @@ function forgeReliabilityProblem(version: string, verdict: Record<string, unknow
   if (!forgeHasReliability(version)) return null;
   const era = eraDisplayName(forgeEra(version) ?? version);
   if (verdict.reliability === undefined)
-    return `This ${era} result has no \`reliability\` record: it was scored before failed tests multiplied the score. Re-score the saved build to publish it.`;
+    return `This ${era} result was scored before failed tests multiplied the score, so it has no reliability step. Re-score the saved build to publish it.`;
   if (!readForgeReliability(verdict.reliability))
-    return `This ${era} result's \`reliability\` record is not what its scorer writes (the multiplier, and each group's worst test with its factor). Re-score the saved build to publish it.`;
+    return `This ${era} result's reliability step is not in the form its scorer writes (the multiplier, and each group's worst test with its factor), so it cannot be checked. Re-score the saved build to publish it.`;
   if (typeof (verdict.critical as { multiplier?: unknown } | undefined)?.multiplier !== 'number')
-    return `This ${era} result has no \`critical.multiplier\`, which leanzero.net requires beside the reliability factor. Re-score the saved build to publish it.`;
+    return `This ${era} result does not record its critical-defect multiplier, which leanzero.net requires beside the reliability step. Re-score the saved build to publish it.`;
   return null;
+}
+
+/** "3 Forge or Jira calls", "1 Forge or Jira call"; an unreadable count is "some", never a number. */
+const heldCalls = (count: number) =>
+  `${count || 'some'} Forge or Jira call${count === 1 ? '' : 's'}`;
+
+/**
+ * A held Forge verdict in plain words (score_forge*.py: status `held`, `harness_missing` — the built app used
+ * calls the benchmark's simulated Forge platform does not model; the score is kept, never zeroed, and the
+ * saved build is re-scored once the platform models them). `sentence` is what the score view states; `refusal`
+ * is the whole publish refusal, with the next step.
+ */
+export function forgeHeldWords(verdict: { harness_missing?: unknown }): {
+  sentence: string;
+  refusal: string;
+} {
+  const count = Array.isArray(verdict.harness_missing) ? verdict.harness_missing.length : 0;
+  const what = `the built app uses ${heldCalls(count)} that the benchmark's simulated platform does not support yet`;
+  return {
+    sentence: `On hold: ${what}. The score is not zeroed and cannot be published as it is.`,
+    refusal: `This Forge result is on hold: ${what}. It cannot be published as it is. When a Goose Swarm update supports ${count === 1 ? 'that call' : 'those calls'}, re-score the saved build.`,
+  };
+}
+
+/**
+ * Why a Forge scorer marked its verdict unpublishable, per reason it records (compose_from_rows:
+ * `N unavailable row(s)` — tests the harness itself could not run — and `runtime <name> (…)` — scored on a
+ * runtime other than Atlassian's pinned one): `what` happened in plain words, and the `next` step. The score
+ * view states what happened; the publish refusal adds the step. A reason in a form this app does not know is
+ * quoted as the scorer wrote it, never dropped; no reason at all is said as that.
+ */
+export function forgeUnpublishableWords(verdict: {
+  unpublishable_reasons?: unknown;
+}): Array<{ what: string; next: string }> {
+  const reasons = Array.isArray(verdict.unpublishable_reasons)
+    ? verdict.unpublishable_reasons.map(String).filter(Boolean)
+    : [];
+  if (reasons.length === 0)
+    return [
+      { what: 'its scorer recorded no reason.', next: 'Run the benchmark again to publish.' },
+    ];
+  return reasons.map((reason) => {
+    const tests = /^(\d+) unavailable row\(s\)$/.exec(reason);
+    if (tests)
+      return {
+        what: `the scorer could not run ${tests[1]} of its tests, which is a scoring problem and not the model's.`,
+        next: 'Re-score the saved build; if the same tests still cannot run, it takes a Goose Swarm update that fixes the scorer.',
+      };
+    const runtime = /^runtime (\S+) \(/.exec(reason);
+    if (runtime)
+      return {
+        what: `it was scored on the ${runtime[1]} runtime, not Atlassian's pinned Forge runtime.`,
+        next: 'Run the benchmark again with the Forge kit prepared to publish.',
+      };
+    return {
+      what: `the scorer's reason reads "${reason}".`,
+      next: 'Re-scoring the saved build or a new run may clear it.',
+    };
+  });
 }
 
 /**
  * The Forge half of benchmark-publish (forge/INTEGRATION.md: same routes, same envelope, the result's own
  * scorerVersion and its era's tier letters — forge-1.0's L K T R S B U V A + E, forge-2.0's ten plus R1–R9).
  * The server validates per era and stays the authority; these refuse locally what the era's scorer itself
- * marks as not board-grade, in its own words.
+ * marks as not board-grade — in plain words: what happened, then the next step. No scorer field name, id or
+ * internal term ("rc", "row", "admission") reaches the person.
  */
 export function forgePublishProblem(stored: {
   scorerVersion?: unknown;
@@ -45,18 +105,13 @@ export function forgePublishProblem(stored: {
     unpublishable_reasons?: unknown;
     harness_missing?: unknown;
   };
-  if (verdict.status === 'held') {
-    const missing = Array.isArray(verdict.harness_missing) ? verdict.harness_missing.length : 0;
-    return `This Forge result is held: the emulator met ${missing || 'some'} call${missing === 1 ? '' : 's'} it does not model. It is rescored once they are modelled, never published as is.`;
-  }
-  if (verdict.publishable === false) {
-    const reasons = Array.isArray(verdict.unpublishable_reasons)
-      ? verdict.unpublishable_reasons.map(String).filter(Boolean)
-      : [];
-    return `The scorer marked this Forge result unpublishable${reasons.length ? `: ${reasons.join('; ')}` : ''}.`;
-  }
+  if (verdict.status === 'held') return forgeHeldWords(verdict).refusal;
+  if (verdict.publishable === false)
+    return `This Forge result cannot be published: ${forgeUnpublishableWords(verdict)
+      .map(({ what, next }) => `${what} ${next}`)
+      .join(' Also: ')}`;
   if (verdict.publishable !== true)
-    return 'This Forge result carries no publishability verdict from its scorer — run the benchmark again to publish.';
+    return 'This Forge result was saved without its scorer saying whether it may be published. Run the benchmark again to publish.';
   // The site recomputes the caps from the posted rows and refuses a body without them (INTEGRATION.md).
   const full = verdict as { admission?: unknown; rawScore?: unknown; checks?: unknown };
   const admission = full.admission as
@@ -71,11 +126,12 @@ export function forgePublishProblem(stored: {
     !Array.isArray(full.checks) ||
     full.checks.length === 0
   )
-    return 'This Forge result lacks its admission record, earned score or check rows — run the benchmark again to publish.';
-  // An rc result is refused as rc whatever else it lacks: a re-score under an rc scorer stays rc, so the
-  // missing-reliability sentence (which a re-score does fix) is for a frozen era's result.
+    return 'This Forge result is missing its score caps, its earned score or its test results. Run the benchmark again to publish.';
+  // A result scored before its era's thresholds were final is refused as that, whatever else it lacks. The
+  // next step is a new run, never a re-score: bench_rescore.py refuses a build whose task text differs from
+  // the installed one, and the task text moved after every pre-final scorer.
   if (/-rc$/.test(version))
-    return `Scored by ${version}: the Forge thresholds are not frozen yet, so the result is not board-grade. Forge results publish once the ${version.replace(/-rc$/, '')} freeze pins them.`;
+    return `Scored before ${eraDisplayName(version.replace(/-rc$/, ''))}'s thresholds were final, so this result is a measurement, not a board result. Run the benchmark again to publish.`;
   return forgeReliabilityProblem(version, verdict as Record<string, unknown>);
 }
 

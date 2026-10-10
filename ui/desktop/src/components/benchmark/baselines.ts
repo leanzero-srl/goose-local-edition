@@ -122,13 +122,40 @@ export const isFamilyCurrent = (entry: {
 export const FAMILY_WORD: Record<BenchFamily, string> = { sb: 'Gauntlet', forge: 'Forge' };
 
 /** An era as people read it: `sb-7.2` → "Gauntlet 7.2", `forge-1.0` → "Forge 1.0", `sb-7.0-rc` →
- *  "Gauntlet 7.0 rc". Anything else is shown as recorded, never guessed. */
+ *  "Gauntlet 7.0 rc". A Forge era scored before its thresholds were final (`forge-2.0-rc`) is its "pilot",
+ *  leanzero.net's word for it (scorerDisplayName), so the app and the site name one result one way.
+ *  Anything else is shown as recorded, never guessed. */
 export function eraDisplayName(scorerVersion: string): string {
   const match = /^(sb|forge)-(\d+(?:\.\d+)*)(?:-(.+))?$/.exec(scorerVersion);
   if (!match) return scorerVersion;
-  const word = FAMILY_WORD[match[1] === 'forge' ? 'forge' : 'sb'];
-  return `${word} ${match[2]}${match[3] ? ` ${match[3]}` : ''}`;
+  const forge = match[1] === 'forge';
+  const suffix = forge && match[3] === 'rc' ? 'pilot' : match[3];
+  return `${FAMILY_WORD[forge ? 'forge' : 'sb']} ${match[2]}${suffix ? ` ${suffix}` : ''}`;
 }
+
+/** The eras whose scores print as leanzero.net prints them: four decimals, the precision its board ranks by
+ *  (0.7450 and 0.7454 are two places; "74.5%" is one). */
+const DECIMAL_SCORE_ERAS: readonly ForgeEra[] = ['forge-2.0'];
+
+/** Whether an era's scores — the run's, a group's mean, a test's — print as four decimals. */
+export function scoresAsDecimals(scorerVersion: string | undefined): boolean {
+  const era = forgeEra(scorerVersion);
+  return era !== null && DECIMAL_SCORE_ERAS.includes(era);
+}
+
+/**
+ * A run's score as text — ONE format per era, used by every surface that prints it (the result card, the
+ * board, the bars, the outcome chip, the publish lines, the tray), so a screen never shows one number three
+ * ways. Forge 2.0: `0.7450`. Every other era keeps the one-decimal percent its sessions were always shown in.
+ */
+export function scoreText(score: number, scorerVersion: string | undefined): string {
+  return scoresAsDecimals(scorerVersion) ? score.toFixed(4) : `${(score * 100).toFixed(1)}%`;
+}
+
+/** A tier's weight as text: up to two decimals, trailing zeros dropped — leanzero.net's formatter, so both
+ *  surfaces print one string. Forge 2.0's ten Forge 1.0 tiers weigh 1.76%–3.52% each; whole percents made
+ *  them read 2, 2, 4, 3… and add to 102%. A whole-percent weight prints as it always did ("10%"). */
+export const weightText = (weight: number): string => `${Number((weight * 100).toFixed(2))}%`;
 
 /** The era's name with the catalog's description, its own version prefix ("SB7.2", "Forge 1.0 —")
  *  stripped: "Gauntlet 7.2 · payments", "Forge 1.0 · Scope Ledger". */
@@ -159,10 +186,15 @@ export const FORGE_TIER_ORDER: readonly string[] = [
   ...new Set(FORGE_ERAS.flatMap((era) => FORGE_ERA_TIER_ORDER[era])),
 ];
 
-/** The Forge tiers (forge/DESIGN.md §8.1–§8.2; R1–R9 are forge-2.0's requirements under the names its
- *  public prompt scores them by). The letters overlap SB's; the meanings do not. */
+/**
+ * The Forge groups of tests, ONE set of names for the app and leanzero.net: L…E exactly as the site's Forge 1.0
+ * brief names them (its FORGE10_TIERS), R1–R9 exactly as the task text's Score section names forge-2.0's
+ * requirements ("migration 0.12, dosing 0.13, time limits 0.08, the changing world 0.10, …"). A name changed
+ * here changes on the site in the same release, or a result reads two ways. The letters overlap SB's; the
+ * meanings do not.
+ */
 export const FORGE_TIERS: Record<string, { name: string; desc: string }> = {
-  L: { name: 'Lint', desc: 'Forge lint clean, every function bundles and loads' },
+  L: { name: 'Lint and bundles', desc: 'Forge lint clean, every function bundles and loads' },
   K: {
     name: 'Platform currency',
     desc: 'The newest modules and APIs: dashboards widget, Rovo skill',
@@ -170,14 +202,23 @@ export const FORGE_TIERS: Record<string, { name: string; desc: string }> = {
   T: { name: 'Event pipeline', desc: 'Trigger → queue → consumer: duplicates, order, retries' },
   R: { name: 'Reconcile', desc: 'Scheduled backfill and heal: pagination, rate limits' },
   S: { name: 'Storage', desc: 'KVS custom entities, indexes and scope' },
-  B: { name: 'Resolvers', desc: 'Backend resolvers: permissions and exactly-once side effects' },
+  B: {
+    name: 'Resolvers and permissions',
+    desc: 'Backend resolvers: permissions and exactly-once side effects',
+  },
   U: {
     name: 'UI function',
     desc: 'The widget, its edit view and the sprint action, driven in a browser',
   },
   V: { name: 'Visual', desc: 'Theme tokens, dark mode, CSP and console' },
-  A: { name: 'Rovo', desc: 'The Rovo action and agent answer with the right numbers' },
-  E: { name: 'Excellence', desc: 'Economy and polish, gated by the core' },
+  A: {
+    name: 'Rovo',
+    desc: 'The Rovo action: right numbers per person, errors returned not thrown; SKILL.md says how to use it',
+  },
+  E: {
+    name: 'Excellence',
+    desc: 'Few Jira requests and surfaces that paint after one round trip, paid in proportion to the excellence gate',
+  },
   R1: {
     name: 'Migration',
     desc: 'Every v1 row moves to the new ledger exactly once, live and across invocation limits',

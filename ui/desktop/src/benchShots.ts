@@ -52,9 +52,12 @@ const PAYMENTS_INSPECT = new RegExp(`^(?:${PAYMENTS_SHOT_PREFIXES.join('|')})-in
  * The UI Kit admin panel (forge-2.0, R5) follows the two Custom UI leads: `admin-panel-light.png`,
  * `admin-panel-dark.png` and `admin-panel-saved-light.png`, which the harness writes only when the admin page
  * rendered. A run without them shows and publishes no admin picture — there is no placeholder to pick.
+ *
+ * Each admin caption says whose drawing it is: the benchmark's (forge2_uikit_shot.mjs draws the component tree
+ * the admin page produced; the UI Kit host itself prints text and never pixels), not Jira's, so the picture
+ * is never read as a browser capture of the app. leanzero.net shows the same words under the same picture.
  */
-const ADMIN_PANEL_NOTE =
-  "the app's component tree, drawn by the benchmark's UI Kit host. Jira draws the same tree with its own components.";
+const ADMIN_PANEL_NOTE = "drawn by the benchmark from the app's component tree, not by Jira.";
 const FORGE_PICKS: Array<{ name: string; caption: string; match: RegExp }> = [
   {
     name: 'forge-widget-light',
@@ -248,8 +251,8 @@ export async function readBenchShotsSnapshot(dir: string): Promise<BenchShot[]> 
  * leanzero.net stores at most five pictures of a run (benchmark-runs route: MAX_SCREENSHOTS 5, 1.5 MB each,
  * 3.5 MB together). A Forge run sends its two Custom UI surfaces in both themes — the widget and the sprint
  * action, each dark capture being the entrant's own dark-mode CSS — and, when the admin page rendered, the
- * admin panel in light. Its dark picture is not sent: the benchmark's UI Kit host draws both themes from the
- * same component tree, so the second theme shows nothing more of the entrant's work (it stays in the local
+ * admin panel in light. Its dark picture is not sent: the benchmark draws both themes from the same
+ * component tree, so the second theme shows nothing more of the entrant's work (it stays in the local
  * view). Every other pick follows in pick order, so a run without the admin panel sends what it always sent
  * (widget and sprint action in both themes, the edit view), and so does a snapshot that recorded no order.
  */

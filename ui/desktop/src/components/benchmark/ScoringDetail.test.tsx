@@ -82,14 +82,18 @@ describe('ScoringDetail', () => {
   });
 
   it('marks hard-block checks and tells the repair story', () => {
-    const { getByText, getAllByText } = render(<ScoringDetail verdict={verdict} score={0.8645} />);
+    const { getByText, getAllByText, queryByText } = render(
+      <ScoringDetail verdict={verdict} score={0.8645} />
+    );
     getByText(/Findings that held/);
     getByText('the served page renders NO data rows in a real browser');
     getByText('Round 0 · 2 findings');
     getByText('Round 2 · 0 findings');
-    // Root-cause attribution names the root and the count it zeroed.
+    // Root-cause attribution names the root and the count it zeroed (true of this scorer lineage).
     getByText(/failed at the root and zeroed 2 downstream check/);
-    expect(getAllByText(/lost point/).length).toBeGreaterThan(0);
+    // The chip counts checks below full marks — it never called them points.
+    expect(getAllByText(/^\d+ checks? below full marks$/).length).toBeGreaterThan(0);
+    expect(queryByText(/lost point/)).toBeNull();
   });
 
   it('scores read as the status triad (full ok, partial warn, nothing err) on Studio tokens only — no node hue, no hex', async () => {
@@ -304,7 +308,7 @@ it('keeps SB7.1 S/Q/M as admission gates — no weight row, no 0% tier — and i
 });
 
 import forgeVerdict from './forge-alt.fixture.json';
-describe('a Forge verdict reads its own tiers, bands and publishability (score_forge.py)', () => {
+describe('a Forge 1.0 verdict reads its own tiers, caps and publishability (score_forge.py)', () => {
   const projected = projectBenchScore(forgeVerdict as never).verdict as unknown as VerdictDetail;
 
   it('groups checks under the Forge tier names, never the Gauntlet letters they share', async () => {
@@ -312,29 +316,59 @@ describe('a Forge verdict reads its own tiers, bands and publishability (score_f
       <ScoringDetail verdict={projected} score={0.799} scorerVersion="forge-1.0-rc" />
     );
     for (const name of [
-      'Lint',
+      'Lint and bundles',
       'Platform currency',
       'Event pipeline',
       'Reconcile',
       'Storage',
-      'Resolvers',
+      'Resolvers and permissions',
       'UI function',
       'Visual',
       'Rovo',
       'Excellence',
     ])
       expect(view.getAllByText(name).length).toBeGreaterThan(0);
-    // B is Resolvers here, not Gauntlet's Behaviour; A is Rovo, not Structure.
+    // B is Resolvers and permissions here, not Gauntlet's Behaviour; A is Rovo, not Structure.
     expect(view.queryByText('Behaviour')).toBeNull();
     expect(view.queryByText('Structure')).toBeNull();
+    // Frozen history: in Forge 1.0 "inner score" and "before criticals" are two numbers, so its line stays.
     view.getByText(
       /Recorded composition inputs: inner score 0\.9833 .* before criticals 0\.9768 · critical multiplier 1\.0000/
     );
+    // Its weights print exactly, and a group counts tests: 0.08 × 0.88 is 7.04%, never "7%".
+    expect(view.getAllByText(/^\d+ tests? · weight 8%$/).length).toBeGreaterThan(0);
     assertStudioClean(view.container);
     expect(await missingUtilities(utilitiesOf(allClasses(view.container)))).toEqual([]);
   });
 
-  it('a verdict with no failed band says no ceiling applied; an unpublishable one says why', () => {
+  it('a verdict scored before the pull states the rule it was scored by: the lower of earned and cap', () => {
+    // forge-alt is a Forge 1.0 verdict from before 2026-10-03: no `final_rule`, and its final sits ON its cap.
+    const view = render(
+      <ScoringDetail verdict={projected} score={0.799} scorerVersion="forge-1.0" />
+    );
+    const cap = view.getByRole('region', { name: 'Final score' });
+    expect(
+      [...cap.querySelectorAll('dl > div')].map((cell) => [
+        cell.querySelector('dt')?.textContent,
+        cell.querySelector('dd')?.textContent,
+      ])
+    ).toEqual([
+      ['Earned score', '0.977'],
+      ['Cap', '0.799'],
+      ['Final score', '0.799'],
+    ]);
+    const band = view.getByTestId('forge-failed-band');
+    expect(band).toHaveTextContent('Maximum 0.799');
+    // Forge 1.0's caps keep the scorer's own label; the failed test is named as every test is.
+    expect(band).toHaveTextContent('current platform, complete surfaces');
+    expect(band).toHaveTextContent('Failed test:K widget edit bridge');
+    expect(view.getByTestId('forge-cap-rule')).toHaveTextContent(
+      /^The final score is the lower of the earned score and the lowest cap that applies\. Avoiding a cap adds no points\.$/
+    );
+    expect(cap.textContent).not.toMatch(/admission|ceiling|band|Here:/i);
+  });
+
+  it('a verdict with no failed cap says no cap applies; an unpublishable one says why', () => {
     const passing = {
       ...projected,
       admission: { ceiling: 1, reasons: [], failedChecksByBand: [] },
@@ -345,13 +379,18 @@ describe('a Forge verdict reads its own tiers, bands and publishability (score_f
     const view = render(
       <ScoringDetail verdict={passing} score={0.9925} scorerVersion="forge-1.0" />
     );
-    view.getByText('Every admission band passed — no ceiling');
+    view.getByText('No cap applies');
+    // No cap is the word "none", never a cap of 1.000.
+    expect(view.getByText('Cap').nextElementSibling).toHaveTextContent(/^none$/);
     expect(view.queryByTestId('forge-failed-band')).toBeNull();
+    // What happened, in plain words and once — the next step belongs to the publish refusal, and a frozen
+    // era has none.
     const facts = view.getByTestId('forge-verdict-facts');
     expect(facts).toHaveTextContent(
-      'Not publishable: runtime shim (the in-repo shim, not the pinned Forge wrapper).'
+      "Cannot be published: it was scored on the shim runtime, not Atlassian's pinned Forge runtime."
     );
-    expect(facts).toHaveTextContent("Scored on the shim runtime, not Atlassian's pinned wrapper.");
+    expect(facts.textContent?.match(/shim runtime/g)).toHaveLength(1);
+    expect(facts.textContent).not.toMatch(/Run the benchmark again|wrapper|unavailable row/);
   });
 });
 
@@ -361,26 +400,67 @@ describe('a forge-2.0 verdict reads its v1 tiers AND its v2 families R1–R9 (sc
   // The REAL GPT-6.1 Sol pilot verdict: v1 rows a quarter of the score, R1–R9 the other three quarters.
   const projected = projectBenchScore(forge2Verdict as never).verdict as unknown as VerdictDetail;
 
-  it('groups every row under its own tier and composes all nineteen, so the table adds up to the score', async () => {
+  it('lists every group under its own name and adds all nineteen up to what the tests earned', async () => {
     const view = render(
       <ScoringDetail verdict={projected} score={forge2Verdict.score} scorerVersion="forge-2.0-rc" />
     );
     // No family is dropped for being new: each letter's group is named.
     for (const tier of FORGE_ERA_TIER_ORDER['forge-2.0'])
       expect(view.getAllByText(FORGE_TIERS[tier].name).length).toBeGreaterThan(0);
-    const composition = view.getByRole('region', { name: 'Earned score composition' });
-    const rows = within(composition).getAllByRole('row').slice(1);
-    expect(rows.map((row) => row.firstElementChild?.textContent?.split(' ')[0])).toEqual(
+    const earned = view.getByRole('region', { name: 'Tests earned' });
+    expect(
+      within(earned)
+        .getAllByRole('columnheader')
+        .map((th) => th.textContent)
+    ).toEqual(['Group', 'Mean of its tests', 'Weight', 'Adds to the score']);
+    const lines = within(earned).getAllByTestId('forge-group-line');
+    expect(lines.map((row) => row.getAttribute('data-tier'))).toEqual(
       FORGE_ERA_TIER_ORDER['forge-2.0']
     );
-    expect(within(composition).getByText('R5 Admin panel')).toBeInTheDocument();
-    // The points column sums to the recorded earned score (each cell rounded to 0.1 point) — a 1.0-only
-    // table would stop at the v1 quarter (21.9 points of 96.2).
-    const points = rows.reduce((sum, row) => sum + Number(row.lastElementChild?.textContent), 0);
-    expect(Math.abs(points - forge2Verdict.critical.pre_severity_score * 100)).toBeLessThan(
-      0.05 * rows.length
+    expect(within(earned).getByText('R5 Admin panel')).toBeInTheDocument();
+    const cells = (row: Element) => [...row.querySelectorAll('td')].map((td) => td.textContent);
+    // Each line is the verdict's own mean and weight, and what the two add — on the score's scale, to its
+    // four decimals.
+    const tiers = forge2Verdict.tiers as Record<string, { mean: number; weight: number }>;
+    for (const row of lines) {
+      const tier = row.getAttribute('data-tier')!;
+      expect(cells(row)).toEqual([
+        `${tier} ${FORGE_TIERS[tier].name}`,
+        tiers[tier].mean.toFixed(4),
+        `${Number((tiers[tier].weight * 100).toFixed(2))}%`,
+        (tiers[tier].mean * tiers[tier].weight).toFixed(4),
+      ]);
+    }
+    // The weights print at the precision that adds to 100%: 1.76% is never "2%" (whole percents add to 102%).
+    expect(lines.map((row) => cells(row)[2])).toEqual([
+      ...['1.76%', '2.2%', '3.52%', '3.08%', '1.76%', '2.64%', '3.52%', '1.76%', '1.76%', '3%'],
+      ...['12%', '13%', '8%', '10%', '10%', '8%', '5%', '4%', '5%'],
+    ]);
+    const hundredths = lines.reduce(
+      (sum, row) => sum + Math.round(parseFloat(cells(row)[2]) * 100),
+      0
     );
-    view.getByText('Every admission band passed — no ceiling');
+    expect(hundredths).toBe(10000);
+    // The closing line is the verdict's own "Tests earned", and the lines add up to it (each rounded to four
+    // decimals) — a 1.0-only table would stop at the v1 quarter.
+    expect(cells(within(earned).getByTestId('forge-tests-earned'))).toEqual([
+      'Tests earned',
+      '100%',
+      forge2Verdict.critical.pre_severity_score.toFixed(4),
+    ]);
+    const added = lines.reduce((sum, row) => sum + Number(cells(row)[3]), 0);
+    expect(Math.abs(added - forge2Verdict.critical.pre_severity_score)).toBeLessThan(
+      5e-5 * (lines.length + 1)
+    );
+    // The E line is explained from the verdict's own two numbers, and the rounding is owned up to.
+    expect(earned).toHaveTextContent(
+      `E Excellence is the excellence gate ${forge2Verdict.excellence.fraction.toFixed(4)} (the average of its ${forge2Verdict.excellence.conditions.length} conditions) × the mean of its tests ${forge2Verdict.excellence.e_mean.toFixed(4)}. Each line is rounded to four decimals, so added up they can differ from the total in the last digit.`
+    );
+    // One name for one number: on a Forge 2.0 result "inner score" and "before criticals" ARE "Tests earned".
+    expect(view.container.textContent).not.toMatch(/inner score|before criticals|Points of 100/);
+    view.getByText('No cap applies');
+    // A group's header counts tests and prints the same weight as the table.
+    expect(view.getAllByText(/^\d+ tests · weight 1\.76%$/, { selector: 'span' })).toHaveLength(4);
     assertStudioClean(view.container);
     expect(await missingUtilities(utilitiesOf(allClasses(view.container)))).toEqual([]);
   });
@@ -390,7 +470,7 @@ import forge2Haiku from './forge2-haiku-reliability.fixture.json';
 import forge2Reference from './forge2-reference-reliability.fixture.json';
 import forge2Sol from './forge2-sol-reliability.fixture.json';
 import forge2Sonnet from './forge2-sonnet-reliability.fixture.json';
-describe('a forge-2.0 verdict shows reliability as its own step, one line per group of tests that multiplies (score_forge2.py reliability())', () => {
+describe('a forge-2.0 verdict explains its score top-down: tests earned, × critical defects, × reliability, final score (score_forge2.py)', () => {
   // score_forge2.py recompose() output under the group rule (forge2/final), each the scorer's whole object:
   // Sonnet 5.5 and GPT-6.1 Sol on the hardened task, and Haiku. The numbers each states, listed once.
   const CASES = {
@@ -399,7 +479,7 @@ describe('a forge-2.0 verdict shows reliability as its own step, one line per gr
     haiku: { verdict: forge2Haiku, inner: 0.3378, reliability: 0.2954, final: 0.0998 },
   } as const;
   const show = (
-    verdict: { score: number },
+    verdict: { score: number; [key: string]: unknown },
     scorerVersion = 'forge-2.0-rc',
     score = verdict.score
   ) =>
@@ -411,6 +491,25 @@ describe('a forge-2.0 verdict shows reliability as its own step, one line per gr
       />
     );
   type View = ReturnType<typeof render>;
+  /** Every section of the explanation, in the order the card draws them. */
+  const SECTIONS = [
+    'Score steps',
+    'Tests earned',
+    'Critical defects',
+    'Reliability',
+    'Final score',
+  ];
+  /** A section's own words: its text without the cells and lines that quote a test's name (a test is
+   *  named after what it tests — "R3 no duplicate rows" — so those are not the explanation's vocabulary). */
+  const prose = (view: View, name: string) => {
+    const copy = view.getByRole('region', { name }).cloneNode(true) as HTMLElement;
+    copy
+      .querySelectorAll(
+        'td, [data-testid="reliability-folded"], [data-testid="reliability-critical"]'
+      )
+      .forEach((quoted) => quoted.remove());
+    return copy.textContent ?? '';
+  };
   /** The steps as a person reads them: each label with the number under it. */
   const steps = (view: View) =>
     within(view.getByRole('region', { name: 'Score steps' }))
@@ -448,12 +547,24 @@ describe('a forge-2.0 verdict shows reliability as its own step, one line per gr
     (_name, { verdict, inner, reliability, final }) => {
       const view = show(verdict);
       const shown = steps(view);
+      // ONE vocabulary, in this order, on every Forge surface.
       expect(shown.map((step) => step.label)).toEqual([
         'Tests earned',
-        '× Critical multiplier',
+        '× Critical defects',
         '× Reliability',
         '= Final score',
       ]);
+      // …and the sections under the line explain the steps in that same order.
+      const regions = view
+        .getAllByRole('region')
+        .map((region) => region.getAttribute('aria-label'))
+        .filter((label) => SECTIONS.includes(label ?? ''));
+      expect(regions).toEqual(SECTIONS);
+      expect(
+        within(view.getByRole('region', { name: 'Critical defects' })).getByText(
+          'No critical defect was observed'
+        )
+      ).toBeInTheDocument();
       expect(shown.map((step) => step.value)).toEqual([inner, 1, reliability, final]);
       expect(
         Math.abs(shown[0].value * shown[1].value * shown[2].value - shown[3].value)
@@ -472,7 +583,8 @@ describe('a forge-2.0 verdict shows reliability as its own step, one line per gr
             under: others.length
               ? `Already counted in this group: ${others.map(words).join(', ')}`
               : null,
-            score: `${(defect.score * 100).toFixed(1)}%`,
+            // A score is four decimals everywhere on a Forge 2.0 screen, as leanzero.net prints it.
+            score: defect.score.toFixed(4),
             factor: defect.factor,
           };
         })
@@ -484,23 +596,35 @@ describe('a forge-2.0 verdict shows reliability as its own step, one line per gr
       expect(view.getByTestId('reliability-total')).toHaveTextContent(
         `Reliability× ${reliability.toFixed(4)}`
       );
-      // The same final the admission block above states (three decimals there).
-      const admission = view.getByRole('region', { name: 'Admission bands' });
-      expect(within(admission).getByText('Final score').nextElementSibling).toHaveTextContent(
-        final.toFixed(3)
-      );
+      // The Final score section below states the same final, in the same four decimals, and no cap.
+      const last = view.getByRole('region', { name: 'Final score' });
+      expect(
+        [...last.querySelectorAll('dl > div')].map((cell) => [
+          cell.querySelector('dt')?.textContent,
+          cell.querySelector('dd')?.textContent,
+        ])
+      ).toEqual([
+        ['Earned score', final.toFixed(4)],
+        ['Cap', 'none'],
+        ['Final score', final.toFixed(4)],
+      ]);
+      // No three-decimal or percent copy of a score in the steps, the reliability lines or the final.
+      for (const name of ['Score steps', 'Reliability', 'Final score'])
+        expect(view.getByRole('region', { name }).textContent).not.toMatch(/\d%|\b\d\.\d{3}\b/);
       expect(view.queryByTestId('reliability-floor')).toBeNull();
       expect(view.queryByText('at the floor')).toBeNull();
       expect(view.queryByTestId('reliability-critical')).toBeNull();
-      // The rule in plain words, its two numbers read from the verdict.
-      view.getByText(
-        /Failed tests also multiply the score\. Each group of tests multiplies the score by its worst test: 0\.90 when that test fails completely, in proportion when it fails partly\. The group’s other failed tests are already counted by its worst one\. The excellence tier never multiplies, and together the groups never take the score below 0\.25 of what the tests earned\./
+      // The rule in the task text's one sentence, its numbers read from the verdict; the floor is the
+      // groups' — a critical defect multiplies on top of it.
+      expect(view.getByTestId('reliability-rule')).toHaveTextContent(
+        'Each group of tests multiplies the score by 1 − 0.10 × the shortfall of its worst test: by 0.90 when that test fails completely, by 1 when every test in the group passes. The group’s other failed tests are already counted by its worst one. E Excellence never multiplies. Together the groups never take the score below 0.25 of what the tests earned; a critical defect still multiplies on top.'
       );
-      // No scorer jargon in the explanation (the check rows below quote the scorer's evidence verbatim,
-      // by design, so only this section is held to it).
-      expect(view.getByRole('region', { name: 'Score steps' }).textContent).not.toMatch(
-        /ROOT_BLOCKS|vacuous|shortfall|priced_as_critical|folded|root/
-      );
+      // No scorer-internal word in the explanation (the test rows below quote the scorer's evidence
+      // verbatim, by design, so only these sections are held to it).
+      for (const name of SECTIONS)
+        expect(prose(view, name)).not.toMatch(
+          /ROOT_BLOCKS|vacuous|priced_as_critical|folded|\broot|\brc\b|\brows?\b|tier letter|admission|ceiling|\bband|\bchecks?\b|inner score|before criticals|suppressed/i
+        );
     }
   );
 
@@ -512,7 +636,7 @@ describe('a forge-2.0 verdict shows reliability as its own step, one line per gr
       group: 'U UI function',
       test: 'U widget live',
       under: 'Already counted in this group: U widget numbers, U widget chart, U ledger table',
-      score: '0.0%',
+      score: '0.0000',
       factor: 0.9,
     });
     // Each group once.
@@ -571,8 +695,9 @@ describe('a forge-2.0 verdict shows reliability as its own step, one line per gr
     expect(view.getByTestId('reliability-total')).toHaveTextContent(
       'Reliability — at the floor× 0.2500'
     );
+    // The floor is on the groups' product only: "failed tests never take the score below" overstated it.
     expect(view.getByTestId('reliability-floor')).toHaveTextContent(
-      'The groups above multiply to less than 0.25. Failed tests never take the score below 0.25 of what the tests earned, so reliability stays at 0.25.'
+      'The groups above multiply to less than 0.25. Together they never take the score below 0.25 of what the tests earned, so reliability stays at 0.25. A critical defect still multiplies on top.'
     );
   });
 
@@ -580,7 +705,7 @@ describe('a forge-2.0 verdict shows reliability as its own step, one line per gr
     const view = show(forge2Reference);
     expect(steps(view).map((step) => [step.label, step.shown])).toEqual([
       ['Tests earned', '0.9907'],
-      ['× Critical multiplier', '1.0000'],
+      ['× Critical defects', '1.0000'],
       ['× Reliability', '1.0000'],
       ['= Final score', '0.9907'],
     ]);
@@ -593,11 +718,11 @@ describe('a forge-2.0 verdict shows reliability as its own step, one line per gr
     expect(view.queryByTestId('reliability-critical')).toBeNull();
   });
 
-  it('names the result of the steps for what it is when an admission ceiling still applies to it', () => {
-    // The same verdict shown under a final below its earned score — what a failed band leaves.
+  it('names the result of the steps for what it is when a cap still applies to it', () => {
+    // The same verdict shown under a final below its earned score — what a cap leaves.
     const view = show(forge2Sonnet, 'forge-2.0', 0.499);
     expect(steps(view).map((step) => [step.label, step.shown])[3]).toEqual([
-      '= Earned before the ceiling',
+      '= Earned score, before the cap',
       CASES.sonnet.final.toFixed(4),
     ]);
   });
@@ -627,5 +752,280 @@ describe('a forge-2.0 verdict shows reliability as its own step, one line per gr
     expect(view.queryByRole('region', { name: 'Score steps' })).toBeNull();
     expect(view.queryAllByTestId('reliability-line')).toHaveLength(0);
     expect(view.container.textContent).not.toMatch(/reliab|Failed tests also multiply/i);
+  });
+
+  /** The Final score section as read: its three numbers, and its rule. */
+  const finalScore = (view: View) => {
+    const section = within(view.container).getByRole('region', { name: 'Final score' });
+    return {
+      section,
+      numbers: [...section.querySelectorAll('dl > div')].map((cell) => [
+        cell.querySelector('dt')?.textContent,
+        cell.querySelector('dd')?.textContent,
+      ]),
+      rule: within(view.container).getByTestId('forge-cap-rule').textContent,
+    };
+  };
+  /** The facts banner of ONE render (a test that renders twice reads each by its own container). */
+  const facts = (view: View) => within(view.container).getByTestId('forge-verdict-facts');
+  /** score_forge2.py capped_final, written out — the test's own arithmetic, to hold the screen to it. */
+  const cappedFinal = (earned: number, cap: number) => Math.min(earned, cap - 0.05 * (1 - earned));
+  const RULE =
+    'Under a cap the final score is min(earned, cap − 0.05 × (1 − earned)): below the cap, and closer to it the more the run earned. When more than one cap applies, the lowest counts. With no cap the final score is the earned score. Avoiding a cap adds no points.';
+  /** A real verdict with its build failing to bundle: the 0.499 cap, and the final the scorer's rule gives. */
+  const underCap = (verdict: typeof forge2Sol | typeof forge2Haiku) => ({
+    ...verdict,
+    score: Number(cappedFinal(verdict.rawScore, 0.499).toFixed(4)),
+    admission: {
+      ...verdict.admission,
+      ceiling: 0.499,
+      reasons: ['deployable: l_deployable, l_bundles_load (maximum 0.499)'],
+      failedChecksByBand: [
+        { ceiling: 0.499, band: 'deployable', checks: ['l_deployable', 'l_bundles_load'] },
+      ],
+    },
+  });
+
+  it('under a cap: the rule shown is the one the final was computed by, and the three numbers on screen agree with it', () => {
+    // SYNTHETIC cap on Sol's real verdict (no recomposed verdict is capped): earned 0.8248 under 0.499.
+    const verdict = underCap(forge2Sol);
+    const final = cappedFinal(forge2Sol.rawScore, 0.499);
+    expect(final).toBeCloseTo(0.49024, 10);
+    const view = show(verdict, 'forge-2.0');
+    const shown = finalScore(view);
+    // The final is neither the earned score nor the cap — which is why "the lower of earned and the
+    // ceiling" was false here.
+    expect(shown.numbers).toEqual([
+      ['Earned score', '0.8248'],
+      ['Cap', '0.499'],
+      ['Final score', '0.4902'],
+    ]);
+    // The rule, its pull read from the verdict's own `final_rule`, then the worked numbers.
+    expect(shown.rule).toBe(`${RULE} Here: min(0.8248, 0.499 − 0.05 × (1 − 0.8248)) = 0.4902.`);
+    const [earned, cap, shownFinal] = shown.numbers.map(([, value]) => Number(value));
+    expect(cappedFinal(earned, cap).toFixed(4)).toBe(shownFinal.toFixed(4));
+    // The steps end on the earned score, named as that; the cap section takes it from there.
+    expect(steps(view).map((step) => [step.label, step.shown])[3]).toEqual([
+      '= Earned score, before the cap',
+      '0.8248',
+    ]);
+    // The cap in the task text's own words, with the tests that set it — no scorer label, no raw id.
+    const band = view.getByTestId('forge-failed-band');
+    expect(band).toHaveTextContent('Maximum 0.499');
+    expect(band).toHaveTextContent(
+      'Lint errors, or manifest functions that do not bundle and load.'
+    );
+    expect(band).toHaveTextContent('Failed tests:L deployableL bundles load');
+    expect(band.textContent).not.toMatch(/deployable:|l_deployable|Capped at/);
+    expect(view.queryByText('No cap applies')).toBeNull();
+    expect(shown.section.textContent).not.toMatch(
+      /admission|ceiling|\bband|earned credit|\bchecks?\b/i
+    );
+  });
+
+  it('under a cap that does not bind: the final is the earned score, and the worked numbers say so', () => {
+    // Haiku's real 0.0998 under the same cap: 0.499 − 0.05 × 0.9002 is far above it.
+    const view = show(underCap(forge2Haiku), 'forge-2.0');
+    const shown = finalScore(view);
+    expect(shown.numbers).toEqual([
+      ['Earned score', '0.0998'],
+      ['Cap', '0.499'],
+      ['Final score', '0.0998'],
+    ]);
+    expect(shown.rule).toBe(`${RULE} Here: min(0.0998, 0.499 − 0.05 × (1 − 0.0998)) = 0.0998.`);
+    expect(steps(view)[3].label).toBe('= Final score');
+  });
+
+  it('prints no worked numbers the rule does not reproduce, and quotes a rule it cannot read', () => {
+    // A final that is not what the rule gives (here: left on the cap) gets the rule and no "Here:".
+    const off = show({ ...underCap(forge2Sol), score: 0.499 }, 'forge-2.0');
+    expect(finalScore(off).rule).toBe(RULE);
+    // The pull is read from the verdict, never typed: another rule's number is the one shown…
+    const other = underCap(forge2Sol);
+    const pulled = show(
+      {
+        ...other,
+        score: Number(Math.min(0.8248, 0.499 - 0.1 * (1 - 0.8248)).toFixed(4)),
+        admission: {
+          ...other.admission,
+          final_rule: 'final = min(earned, ceiling - 0.1 * (1 - earned))',
+        },
+      },
+      'forge-2.0'
+    );
+    expect(finalScore(pulled).rule).toContain('min(earned, cap − 0.1 × (1 − earned))');
+    expect(finalScore(pulled).rule).toContain(
+      'Here: min(0.8248, 0.499 − 0.1 × (1 − 0.8248)) = 0.4815.'
+    );
+    // …and a rule in a form this view does not know is quoted as recorded, with no arithmetic of ours.
+    const unknown = show(
+      {
+        ...other,
+        admission: { ...other.admission, final_rule: 'final = earned * ceiling' },
+      },
+      'forge-2.0'
+    );
+    expect(finalScore(unknown).rule).toBe(
+      'The scorer recorded its rule for the final score as: final = earned * ceiling. Avoiding a cap adds no points.'
+    );
+  });
+
+  it('says nothing of roots on a Forge 2.0 result: every test counts at its own score and each group multiplies', () => {
+    // Sonnet's real verdict carries root_causes (u_widget_numbers 0.875 over six tests scoring 0–0.97).
+    expect(Object.keys(forge2Sonnet.root_causes)).toEqual(['u_widget_numbers']);
+    const view = show(forge2Sonnet, 'forge-2.0');
+    expect(view.queryByText('Root-cause attribution')).toBeNull();
+    expect(view.queryByText('Tests that can share a cause')).toBeNull();
+    expect(view.container.textContent).not.toMatch(
+      /failed at the root|zeroed|one defect, not|downstream/
+    );
+    // What IS true of those tests is on the screen: four groups each multiply for them.
+    expect(
+      lines(view).filter((line) => ['T', 'B', 'U', 'A'].includes(line.tier ?? ''))
+    ).toHaveLength(4);
+  });
+
+  it('a Forge 1.0 result lists tests that can share a cause without claiming one failed or zeroed another', () => {
+    const view = render(
+      <ScoringDetail
+        verdict={
+          {
+            ...projectBenchScore(forgeVerdict as never).verdict,
+            // The Forge scorers list a root with its dependents whenever each scored below 1, and repeat a
+            // name reached by two routes.
+            root_causes: {
+              u_widget_numbers: ['u_widget_chart', 'a_action_result', 'u_widget_chart'],
+              b_hidden_count: ['a_action_permissions'],
+            },
+          } as unknown as VerdictDetail
+        }
+        score={0.799}
+        scorerVersion="forge-1.0"
+      />
+    );
+    view.getByText('Tests that can share a cause');
+    expect(view.queryByText('Root-cause attribution')).toBeNull();
+    const text = view.container.textContent ?? '';
+    expect(text).toContain(
+      'U widget numbers scored below full marks, and so did 2 tests that the same fault can fail: U widget chart, A action result. Each keeps its own score.'
+    );
+    expect(text).toContain(
+      'B hidden count scored below full marks, and so did 1 test that the same fault can fail: A action permissions. Each keeps its own score.'
+    );
+    expect(text).not.toMatch(/failed at the root|zeroed|one defect, not|downstream/);
+  });
+
+  it('states each critical defect in the task text’s words, and a test that cost nothing more as that', () => {
+    // SYNTHETIC rows in score_forge2.py criticals()' own shape (no recomposed verdict fired a critical):
+    // one charged test, one of the same kind, one the scorer counts under another, one note unknown here.
+    const why = 'a duplicate side effect (>= 2 comments for one click, or duplicate ledger rows)';
+    const rows = [
+      { check: 't_no_double_count', class: 'duplicate', score: 0, why, factor: 0.6 },
+      {
+        check: 'r6_replay_once',
+        class: 'duplicate',
+        score: 0,
+        why,
+        factor: 1,
+        suppressed: 'class:duplicate priced by t_no_double_count',
+      },
+      {
+        check: 'b_comment_exactly_once',
+        class: 'duplicate',
+        score: 0,
+        why,
+        factor: 1,
+        suppressed: 'root:t_no_double_count',
+      },
+      { check: 'r1_v1_rows_intact', class: 'migration', score: 0, why: 'x', factor: 0.6 },
+      {
+        check: 'r5_admin_only',
+        class: 'future',
+        score: 0,
+        why: 'a new kind',
+        factor: 1,
+        suppressed: 'held',
+      },
+    ];
+    const view = show(
+      { ...forge2Sonnet, critical: { ...forge2Sonnet.critical, multiplier: 0.36, rows } },
+      'forge-2.0'
+    );
+    const section = view.getByRole('region', { name: 'Critical defects' });
+    expect(section).toHaveTextContent(
+      'Each kind of critical defect that is observed multiplies the whole score by 0.60, at most once however many tests observe it.'
+    );
+    expect(
+      within(section)
+        .getAllByTestId('critical-line')
+        .map((line) => line.textContent)
+    ).toEqual([
+      // The replayed CI event is in the words: the scorer's own string for this kind leaves it out.
+      'T no double count × 0.60: a duplicate side effect: two or more comments for one click, duplicate ledger rows, or a replayed CI event applied twice.',
+      'R6 replay once: no additional penalty. T no double count already multiplied the score for this kind of defect, and each kind multiplies it once.',
+      'B comment exactly once: no additional penalty. The scorer counts it as the same defect as T no double count, which already multiplied the score.',
+      'R1 v1 rows intact × 0.60: v1 rows lost or corrupted by the migration.',
+      'R5 admin only: no additional penalty (the scorer’s note: held).'.replace('’', "'"),
+    ]);
+    expect(within(section).queryByText('No critical defect was observed')).toBeNull();
+    // The scorer's raw record never reaches the person.
+    expect(section.textContent).not.toMatch(
+      /class:|priced by|root:|suppressed|factor|>= 2|t_no_double/
+    );
+  });
+
+  it('a group’s header counts tests below full marks, never "lost points"', () => {
+    const view = show(forge2Sonnet, 'forge-2.0');
+    // Sonnet's U group: four of its tests scored below 1 (u_widget_live 0, three partly).
+    const header = view.getByRole('button', { name: /UI function/ });
+    expect(header).toHaveTextContent('4 tests below full marks');
+    expect(header).toHaveTextContent('tests · weight 3.52%');
+    // The group's mean and each test's score are four decimals, the digits the reliability line names:
+    // "U widget live 0.0000" there, "0.0000" on its own row here — never "88" beside "0.8837".
+    const chip = (element: Element) =>
+      element.querySelector('[data-testid="score-chip"]')?.textContent;
+    expect(chip(header)).toBe(forge2Sonnet.tiers.U.mean.toFixed(4));
+    fireEvent.click(header);
+    const rows = [...(header.parentElement?.querySelectorAll('[data-testid="score-chip"]') ?? [])]
+      .slice(1)
+      .map((element) => element.textContent);
+    expect(rows).toContain('0.0000');
+    expect(rows.every((text) => /^[01]\.\d{4}$/.test(text ?? ''))).toBe(true);
+    // One test is "1 test".
+    expect(view.getByRole('button', { name: /R5 Admin panel|Admin panel/ })).toHaveTextContent(
+      '1 test below full marks'
+    );
+    expect(view.container.textContent).not.toMatch(/lost point/);
+  });
+
+  it('says in plain words why a result is on hold, cannot be published, or is a measurement', () => {
+    const held = show(
+      { ...forge2Sonnet, status: 'held', publishable: false, harness_missing: ['a', 'b', 'c'] },
+      'forge-2.0'
+    );
+    expect(facts(held)).toHaveTextContent(
+      'On hold: the built app uses 3 Forge or Jira calls that the benchmark’s simulated platform does not support yet. The score is not zeroed and cannot be published as it is.'.replace(
+        '’',
+        "'"
+      )
+    );
+    // The hold IS the reason: no second line saying the scorer gave none.
+    expect(facts(held).textContent).not.toMatch(/Cannot be published|no reason/);
+    const unrun = show(
+      { ...forge2Sonnet, publishable: false, unpublishable_reasons: ['2 unavailable row(s)'] },
+      'forge-2.0'
+    );
+    expect(facts(unrun)).toHaveTextContent(
+      "Cannot be published: the scorer could not run 2 of its tests, which is a scoring problem and not the model's."
+    );
+    // Scored before the thresholds were final: said without "rc" or "uncalibrated".
+    const early = show(forge2Sonnet, 'forge-2.0-rc');
+    expect(facts(early)).toHaveTextContent(
+      "Scored before Forge 2.0's thresholds were final: a measurement, not a board result."
+    );
+    for (const view of [held, unrun, early])
+      expect(facts(view).textContent).not.toMatch(
+        /\brc\b|uncalibrated|emulator|unavailable row|Held for rescore/i
+      );
   });
 });
