@@ -16,8 +16,8 @@ its own seeded site; nothing else is scored:
 
 1. `npm run lint` reports no errors and no warnings; every manifest function bundles and loads, and so does the admin
    page.
-2. v1 keeps working throughout: backfill and reconciliation, exactly one ledger row per change, the widget, the sprint
-   action, Rovo, privacy and the Custom UI policy (§1–§8, §18).
+2. v1 keeps working throughout: backfill and reconciliation, exactly one ledger row per change under concurrent
+   delivery, the widget, the sprint action, Rovo, privacy and the Custom UI policy (§1–§8, §18).
 3. Every v1 row moves to `scope-ledger` exactly once, while events flow and across invocation limits, within 2 virtual
    hours, with its progress in the admin panel (§9).
 4. Background work stays inside its share of the 2,400-point hour, no person-facing request meets a quota 429, and

@@ -115,6 +115,17 @@ platform behaviours are added (NEVER OVER-ENGINEER):
   CI event) as holding under concurrent delivery, and §8 says "A pushed event's `concurrency` key and limit are not
   applied." STARTER.md says forge-dev's `events` and `scheduled` run the same concurrency and staleness, so an entrant
   can see both on the dev site.
+- **The drive (adapter, 2026-10-10).** A pair forms only from deliveries pending together, and both drives drained
+  before every delivery (0 groups in 60). The site's plan marks batches with no new draw (packs unchanged): a
+  duplicate with every delivery since its original, and the two halves of a permuted same-issue pair
+  (`deliverNext().batchEnd`). The probe leaves the queues undrained through a batch whose last delivery comes before
+  the next agenda point (hour mark, admin/person read, CI, quota draw) and that opens outside the quota wall's window
+  (two partners' first requests would both meet the wall before READS-FIRST lets either store the pause); any hold
+  ends at an agenda point. `forge-dev events` completes an open batch before draining. Scoring plans carry 8
+  duplicate batches and 4 permuted pairs per seed. The read-after-write window is the live-UI step: the open widget
+  re-reads at the app's own realtime publish, no virtual time between them. The probe records both in
+  `obs.concurrency` (batches held or why not, the kit's groups with each member's originChange/originIssue,
+  same_event/same_issue counts, per live change the gap between the announced write and the re-read's first query).
 
 ## 3. Packages (one owner per file; branch per package; the integrator merges)
 

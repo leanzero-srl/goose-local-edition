@@ -38,6 +38,11 @@ reads exactly them; checkpoints are 'h1'..'h6' — virtual-hour marks after the 
               size, index, with: [{index, eventId, invocationId}]}: the kit emulator's record on each delivery it ran
               as a member of a concurrent group, passed through by the probe (concurrent_groups; a group not run whole
               is never app evidence). A member the kit cannot start throws, a section error, never a record.
+  concurrency {query_lag_ms, max_concurrent, batches: [{slots, changelogIds, issueIds, duplicates, held[, why]
+              [, released], groups}], groups: [{group, reason, members: [{eventId, inv, originChange, originIssue,
+              outcome}], first_writes}], same_event, same_issue, read_after_write: [{changelogId, last_write_ms,
+              publish_ms, reread: {inv, t0_ms, first_query_ms}, gap_ms, inside_lag}]}: SPEC §2.8's evidence that the
+              drive ran the pairs and the read-after-write window (recorded, graded by no row of its own).
 Three keys the probe must add for its rows to grade exactly (until then each row says so in its detail):
 `rate.requests[].issue` (the issue a per-issue 429 names; without it those 429s are named as not graded),
 `field.applied_by_checkpoint` (without it r7_values_fresh is unavailable), and `admin.actions[].landed` on non-admin

@@ -27,6 +27,15 @@
     "why": "A quota 429 still pauses the rest of the background, but the invocation that drew it sleeps until the reset in-function instead of returning InvocationError, so a Retry-After longer than the time left kills the consumer at its 900 s limit. Requires the probe's quota wall to outlast that limit (INTEGRATION fix list): on seed 0123 the wall was 300 s and its 429 carried 178 s, which fits, so both R3 rows are vacuous for the golden and the mutant alike there."
   },
   {
+    "name": "r3_check_then_act_dedupe",
+    "family": "R3",
+    "patch": "r3_check_then_act_dedupe.patch",
+    "loses": ["r3_no_duplicate_rows", "t_no_double_count"],
+    "may_lose": ["e_event_economy"],
+    "critical": "duplicate",
+    "why": "The race mutant (SPEC §2.8 S1). Each recording gets its own row key (`<changeId>:<sprintId>:<uuid>`) and the change is deduped by a `recorded:` marker that is read, then set: get-then-set, no conditional claim. One delivery at a time the marker dedupes every duplicate, redelivery, reconcile and migration copy, so nothing differs off the race; two deliveries of one change started together (a same-event pair: READS-FIRST holds the first marker write until the partner has written) both read no marker and both write a row: duplicate ledger rows, the duplicate critical. Seed 0123456789abcdef: 8 same-event groups raced, 7 of them on sprint changes, 9 (changeId, sprintId) doubled at the final checkpoint, every one a raced group's change (e.g. ('1318506', '1115')); score 0.9907 -> 0.5623, t_no_double_count fired. The doubled rows show twice in the sprint ledger, the Rovo action and the hidden count: the change-list rows, t_event_rows and t_multi_sprint_parse are ROOT_BLOCKS of t_no_double_count; e_event_economy (calibration-owned) is not credited on inexact event rows. Rows keyed by changelog id + sprint, as the golden keys them, make the same get-then-set race land on one key (equivalent mutant), so the key per recording is part of the defect."
+  },
+  {
     "name": "r4_deletion_unflagged",
     "family": "R4",
     "patch": "r4_deletion_unflagged.patch",
