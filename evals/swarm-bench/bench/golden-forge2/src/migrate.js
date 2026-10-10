@@ -1,7 +1,7 @@
 import { kvs } from '@forge/kvs';
 import { jiraJson, route, postJson } from './jira';
 import { listScrumBoards, listSprints, boardEstimateField, loadConfig } from './config';
-import { V1_CHANGES, MIGRATION_KEY, copyV1, compareIds } from './ledger';
+import { V1_CHANGES, MIGRATION_KEY, copyV1, compareIds, untilQueryable } from './ledger';
 import { estimateOf } from './estimate';
 
 const PAGE = 100;
@@ -89,6 +89,9 @@ export async function migrateSome(work) {
       ? { ...state, cursor: page.nextCursor, done: state.done + rows.length }
       : { ...state, index: state.index + 1, cursor: null, done: 0 };
     if (state.index >= state.sprints.length) state = { ...state, complete: true };
+    // Readers stop adding the v1 rows not copied yet once `complete` is stored, and find the copies by index query:
+    // the last page's copies must be queryable first.
+    if (state.complete) await untilQueryable();
     await kvs.set(MIGRATION_KEY, state);
     if (!state.complete && !work.hasTimeFor(2 * (Date.now() - t0))) break;
   }

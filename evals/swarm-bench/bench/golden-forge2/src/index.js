@@ -74,7 +74,7 @@ async function issueEvent(body, work) {
   const cfg = isV2Config(previous) ? structuredClone(previous) : await discoverConfig(work);
   const closedBefore = new Set(cfg.closed ?? []);
   const result = await applyIssueEvent(cfg, body, work, async (issueId) => ({ rows: 0, members: 0, sprintIds: await markIssueDeleted(issueId) }));
-  await settleClosedSprints(cfg, (cfg.closed ?? []).filter((id) => !closedBefore.has(id)), work);
+  await settleClosedSprints(cfg, (cfg.closed ?? []).filter((id) => !closedBefore.has(id)), work, new Set([String(body.issueId)]));
   await saveConfig(cfg, previous);
   await announce(result.sprintIds);
   return result;

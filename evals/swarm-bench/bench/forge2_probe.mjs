@@ -752,8 +752,9 @@ async function main() {
     const ph = obs.phases.live = { calls: [], invocations: [], deliveries: [], events: [] };
     const liveById = new Map(pack.live.map((c) => [c.changelogId, c]));
     let planDone = false;
-    // The batch the drive is holding the queues for (SPEC §2.8 S1, batchDecision): {end: its last plan slot, rec}.
-    let hold = null;
+    // The batch the drive is in (SPEC §2.8 S1, batchDecision): {end: its last plan slot, rec, held: the queues are left
+    // undrained until it ends}. A batch it could not hold is still followed to its end, never decided twice.
+    let batch = null;
     const createdAt = (slot) => Date.parse(liveById.get(site.state.plan[slot].changelogId).created);
     const io = {
       now,
@@ -773,9 +774,9 @@ async function main() {
         ph.invocations.push(...trig);
         ph.events.push({ changelogId: r.changelogId, slot: r.slot, duplicate: Boolean(r.duplicate), t: vt(new Date(now()).toISOString()),
           triggerInvocations: trig.map((x) => x.inv).filter(Boolean), ...(Number.isInteger(r.batchEnd) ? { batchEnd: r.batchEnd } : {}) });
-        if (hold) {
-          hold.rec.delivered.push(r.changelogId);
-          if (r.slot >= hold.end) hold = null;
+        if (batch && r.slot <= batch.end) {
+          batch.rec.delivered.push(r.changelogId);
+          if (r.slot >= batch.end) batch = null;
         } else if (Number.isInteger(r.batchEnd) && r.batchEnd > r.slot) {
           const b = batchDecision({ slot: r.slot, end: r.batchEnd, now: t, createdAt, agendaAt, win: quotaWindow(obs.clock.upgrade_t_ms) });
           const slots = site.state.plan.slice(r.slot, r.batchEnd + 1);
@@ -783,15 +784,15 @@ async function main() {
             issueIds: [...new Set(slots.map((d) => String(liveById.get(d.changelogId).issueId)))], duplicates: slots.filter((d) => d.duplicate).length,
             t_ms: t, ends_ms: b.endsAt, held: b.held, ...(b.why ? { why: b.why } : {}), delivered: [r.changelogId] };
           obs.concurrency.batches.push(rec);
-          if (b.held) hold = { end: r.batchEnd, rec };
+          batch = { end: r.batchEnd, rec, held: b.held };
         }
         return true;
       },
       drain: async (until, { beforeDelivery = false } = {}) => {
-        if (hold && beforeDelivery) return;
-        if (hold) {
-          hold.rec.released = `at ${new Date(until).toISOString()}, an agenda point before its last delivery`;
-          hold = null;
+        if (batch?.held && beforeDelivery) return;
+        if (batch?.held) {
+          batch.rec.released = `at ${new Date(until).toISOString()}, an agenda point before its last delivery`;
+          batch.held = false;
         }
         consumed(ph, await emu.drainQueues({ until }));
       },
@@ -830,7 +831,7 @@ async function main() {
       await io.drain(io.nextDeliveryAt());
       if (!(await io.deliver())) break;
     }
-    hold = null;
+    batch = null;
     if (typeof site.flushLive === 'function') site.flushLive();
     else gap('site.flushLive (dropped changes after the last delivery)', 'live', 'heal');
     consumed(ph, await emu.drainQueues());
@@ -1748,12 +1749,13 @@ async function liveStep(s, board, pack) {
     readAfterWrite: windows };
 }
 
-// The read-after-write window of one live-UI change (SPEC §2.8 S2): the last KVS write of the consumers its delivery
-// started, their last realtime publish, and the open widget's re-read after it (the first widget resolver invocation
-// that started at or after the publish, and its first KVS query). The drive lets no virtual time pass between the
-// publish and the re-read, so `gap_ms` below `query_lag_ms` means the re-read came inside the window where an index
-// query misses that write; an app that publishes only once its writes are queryable, or reads them by key, shows the
-// new numbers either way (u_widget_live grades what the widget shows).
+// The read-after-write window of one live-UI change (SPEC §2.8 S2): the last realtime publish of the consumers its
+// delivery started, the last KVS write they made before it (what the publish announces; a write after it, such as
+// bookkeeping in a `finally`, is counted apart), and the open widget's re-read after it (the first widget resolver
+// invocation that started at or after the publish, and its first KVS query). The drive lets no virtual time pass
+// between the publish and the re-read, so `gap_ms` below `query_lag_ms` means the re-read came inside the window where
+// an index query misses the announced write; an app that announces only once its writes are queryable, or whose widget
+// reads them by key, shows the new numbers either way (u_widget_live grades what the widget shows).
 function readAfterWrite(changelogId, widgetKey, lagMs) {
   const recs = emu.invocations instanceof Map ? [...emu.invocations.values()] : [];
   const ids = new Set(recs.filter((r) => r.moduleType === 'consumer' && String(r.originChange) === String(changelogId)).map((r) => r.id));
@@ -1761,14 +1763,15 @@ function readAfterWrite(changelogId, widgetKey, lagMs) {
   const mine = (emu.log || []).filter((e) => ids.has(e.invocationId));
   const writes = mine.filter((e) => e.service === 'kvs' && isWrite(e)).map(at);
   const publishes = mine.filter((e) => e.service === 'realtime' && /^publish/.test(String(e.op ?? '')) && Number(e.status) < 400).map(at);
-  const lastWrite = writes.length ? Math.max(...writes) : null;
   const publish = publishes.length ? Math.max(...publishes) : null;
+  const announced = publish === null ? writes : writes.filter((t) => t <= publish);
+  const lastWrite = announced.length ? Math.max(...announced) : null;
   const reread = publish === null || !widgetKey ? null
     : recs.filter((r) => r.moduleKey === widgetKey && r.source === 'resolver' && r.vStart >= publish).sort((a, b) => a.vStart - b.vStart)[0] ?? null;
   const query = reread ? (emu.log || []).filter((e) => e.invocationId === reread.id && e.service === 'kvs' && /query$/.test(String(e.path ?? ''))).map(at)[0] ?? null : null;
   const gap = query !== null && lastWrite !== null ? query - lastWrite : null;
-  return { changelogId, consumers: [...ids], writes: writes.length, last_write_ms: lastWrite, publish_ms: publish,
-    reread: reread ? { inv: reread.id, t0_ms: reread.vStart, first_query_ms: query } : null,
+  return { changelogId, consumers: [...ids], writes: announced.length, writes_after_publish: writes.length - announced.length,
+    last_write_ms: lastWrite, publish_ms: publish, reread: reread ? { inv: reread.id, t0_ms: reread.vStart, first_query_ms: query } : null,
     gap_ms: gap, inside_lag: gap === null || !Number.isFinite(lagMs) ? null : gap < lagMs };
 }
 

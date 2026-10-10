@@ -14,18 +14,27 @@ export const MIGRATION_KEY = 'migration';
 export const changeKey = (changeId, sprintId) => `${changeId}:${sprintId}`;
 export const memberKey = (sprintId, issueId) => `${sprintId}:${issueId}`;
 
-async function queryAll(entityName, indexName, partition) {
+// Index queries miss writes younger than 5 virtual seconds (contract §3); key reads and transaction conditions never
+// do. A writer whose readers find its rows by query (the widget after a realtime announcement, the reads that follow a
+// completed migration) lets that much time pass first.
+export const QUERY_LAG_MS = 5000;
+export const untilQueryable = () => new Promise((resolve) => setTimeout(resolve, QUERY_LAG_MS));
+
+// [{key, value}] of one index partition, every page.
+async function queryEntries(entityName, indexName, partition) {
   const out = [];
   let cursor;
   do {
     let q = kvs.entity(entityName).query().index(indexName, { partition }).limit(100);
     if (cursor) q = q.cursor(cursor);
     const page = await q.getMany();
-    out.push(...page.results.map((r) => r.value));
+    out.push(...page.results);
     cursor = page.nextCursor;
   } while (cursor);
   return out;
 }
+
+const queryAll = async (entityName, indexName, partition) => (await queryEntries(entityName, indexName, partition)).map((r) => r.value);
 
 export const ledgerRowsOfSprint = (sprintId) => queryAll(LEDGER, 'by-sprint', [String(sprintId)]);
 export const ledgerRowsOfIssue = (issueId) => queryAll(LEDGER, 'by-issue', [String(issueId)]);
@@ -84,6 +93,8 @@ export async function rowsOfIssue(issueId, sprintIds) {
   return rows;
 }
 
+// The row's key is claimed atomically (FAIL_IF_EXISTS): two deliveries of one change running at the same time
+// (contract §3) both find no row and both write; exactly one write lands (409 KEY_CONFLICT for the other).
 async function createRow(key, value) {
   try {
     await kvs.entity(LEDGER).set(key, value, { keyPolicy: 'FAIL_IF_EXISTS' });
@@ -129,12 +140,15 @@ export async function writeMember(next, stored) {
 
 // A deleted issue: its rows stay as history marked `deleted`, and its memberships are marked `deleted`
 // (keeping the last known membership and estimate), so it no longer counts in current scope and leaves it
-// as a removal. Its v1 rows not copied yet are marked by the migration, which finds the issue gone.
+// as a removal. Its v1 rows not copied yet are marked by the migration, which finds the issue gone. Each row is
+// rewritten under the key it was read from, after the index has caught up with every write made before the deletion
+// reached here (a row the migration copied, or a deployment marked, seconds earlier).
 export async function markIssueDeleted(issueId) {
   const sprintIds = new Set();
-  for (const row of await ledgerRowsOfIssue(issueId)) {
+  await untilQueryable();
+  for (const { key, value: row } of await queryEntries(LEDGER, 'by-issue', [String(issueId)])) {
     if (row.deleted) continue;
-    await kvs.entity(LEDGER).set(changeKey(row.changeId, row.sprintId), { ...row, deleted: true });
+    await kvs.entity(LEDGER).set(key, { ...row, deleted: true });
     sprintIds.add(row.sprintId);
   }
   for (const m of await membersOfIssue(issueId)) {
@@ -145,15 +159,16 @@ export async function markIssueDeleted(issueId) {
   return [...sprintIds];
 }
 
-// A CI deployment reached these issues: every ledger row of each names the environment. Idempotent.
+// A CI deployment reached these issues: every ledger row of each names the environment, rewritten under the key it
+// was read from. Idempotent.
 export async function markDeployed(issueIds, environment) {
   const sprintIds = new Set();
   for (const issueId of issueIds) {
-    for (const row of await ledgerRowsOfIssue(issueId)) {
+    for (const { key, value: row } of await queryEntries(LEDGER, 'by-issue', [String(issueId)])) {
       const envs = new Set(row.deployedEnvs ? row.deployedEnvs.split(',') : []);
       if (envs.has(environment)) continue;
       envs.add(environment);
-      await kvs.entity(LEDGER).set(changeKey(row.changeId, row.sprintId), { ...row, deployedEnvs: [...envs].sort().join(',') });
+      await kvs.entity(LEDGER).set(key, { ...row, deployedEnvs: [...envs].sort().join(',') });
       sprintIds.add(row.sprintId);
     }
   }

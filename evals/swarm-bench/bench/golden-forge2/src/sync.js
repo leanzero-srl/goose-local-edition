@@ -116,16 +116,17 @@ export function memberRow(cfg, sprintId, issue, currentSprintIds) {
 // `source`), refresh the issue's membership and estimate in every active sprint it touches, and its
 // scope status. Sprints and boards are read fresh, so a sprint that closed or a board whose estimation
 // field changed is honoured at once. Reads current Jira state, so duplicates and reordering converge.
-// A 404 is a deleted issue: `onDeleted` handles it.
+// A 404 is a deleted issue: `onDeleted` handles it. Two deliveries of one issue can run at the same time (contract
+// §3), so the scope status is computed from what is strongly consistent: the issue as read now, its changelog, and
+// what this invocation wrote — never from an index query alone, which misses writes younger than 5 virtual seconds
+// (this invocation's own, and a concurrent delivery's).
 export async function applyIssueEvent(cfg, { issueId, changelogId, sprintChange }, work, onDeleted) {
   const resolve = sprintReader(cfg, work);
   const wantsLog = Boolean(sprintChange && changelogId);
+  // The changelog rides along (a GET costs the same with it): its recent page feeds the scope status.
   const getIssue = () => {
     const fields = issueFields(cfg).join(',');
-    const path = wantsLog
-      ? route`/rest/api/3/issue/${issueId}?fields=${fields}&expand=changelog`
-      : route`/rest/api/3/issue/${issueId}?fields=${fields}`;
-    return jiraJson('app', path, undefined, work).catch((e) => {
+    return jiraJson('app', route`/rest/api/3/issue/${issueId}?fields=${fields}&expand=changelog`, undefined, work).catch((e) => {
       if (e.status === 404) return null;
       throw e;
     });
@@ -169,6 +170,7 @@ export async function applyIssueEvent(cfg, { issueId, changelogId, sprintChange 
 
   const currentIds = new Set(current.map((s) => s.id));
   const touched = new Set([...currentIds, ...rows.map((r) => r.sprintId), ...stored.keys()]);
+  const issueMembers = new Map(stored);
   let members = 0;
   for (const sprintId of touched) {
     if (!cfg.sprints[sprintId]) continue;
@@ -177,6 +179,7 @@ export async function applyIssueEvent(cfg, { issueId, changelogId, sprintChange 
     // closed sprint's numbers stay as they stood at the close (contract §12).
     if (!currentIds.has(sprintId) && !sameMember(next, stored.get(sprintId))) await resolve(sprintId);
     if (!cfg.sprints[sprintId]) continue;
+    issueMembers.set(sprintId, next);
     if (await writeMember(next, stored.get(sprintId))) {
       members += 1;
       changed.add(sprintId);
@@ -185,8 +188,14 @@ export async function applyIssueEvent(cfg, { issueId, changelogId, sprintChange 
 
   let statuses = 0;
   if (cfg.scopeFieldId) {
-    const issueMembers = await membersOfIssue(issue.id);
-    const value = scopeStatus(new Set(Object.keys(cfg.sprints)), issueMembers, await rowsOfIssue(issue.id, issueMembers.map((m) => m.sprintId)));
+    // Rows: the ledger's (each keeps the estimation field its board used at the change), then this invocation's,
+    // then the changes of the active sprints the issue's changelog shows and neither holds yet — a concurrent
+    // delivery's, recorded with the board's current field exactly as that delivery records it.
+    const active = new Set(Object.keys(cfg.sprints));
+    const recent = await rowsOf(cfg, issue, issue.changelog?.histories ?? [], 'event', async (id) => (active.has(id) ? cfg.sprints[id] : null));
+    const byKey = new Map();
+    for (const r of [...recent, ...rows, ...(await rowsOfIssue(issue.id, [...issueMembers.keys()]))]) byKey.set(changeKey(r.changeId, r.sprintId), r);
+    const value = scopeStatus(active, [...issueMembers.values()], [...byKey.values()]);
     if (currentStatus(issue.fields, cfg.scopeFieldId) !== value) statuses = await writeStatuses(cfg.scopeFieldId, new Map([[String(issue.id), value]]), work);
   }
   return { rows: written, members, statuses, sprintIds: [...changed] };
@@ -270,10 +279,11 @@ async function closedSprintStatuses(active, sprintIds, skip) {
 }
 
 // A sprint the event path found closed: its issues' statuses are rewritten at once, so they are fresh
-// within the hour of the close rather than at the next scheduled run.
-export async function settleClosedSprints(cfg, sprintIds, work) {
+// within the hour of the close rather than at the next scheduled run. `decided`: the event's own issue, whose status
+// the event path just computed from what it holds (an index query would miss the memberships it just wrote).
+export async function settleClosedSprints(cfg, sprintIds, work, decided = new Set()) {
   if (!cfg.scopeFieldId || !sprintIds.length) return 0;
-  const values = await closedSprintStatuses(new Set(Object.keys(cfg.sprints)), sprintIds, new Set());
+  const values = await closedSprintStatuses(new Set(Object.keys(cfg.sprints)), sprintIds, decided);
   return values.size ? writeStatuses(cfg.scopeFieldId, values, work) : 0;
 }
 
