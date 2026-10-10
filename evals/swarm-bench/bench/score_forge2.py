@@ -2096,13 +2096,17 @@ def _(c):
 
 # Contract §3 states it as behaviour, not as economy: "a run with nothing new writes nothing" (promoted from the E slice
 # 2026-10-03: a stated requirement earns weight, and a rerun that rewrites the ledger is a defect, not a missed bonus).
+# Only ledger writes count: §10 requires the app's own stored point count, so a run that keeps it in an entity of its
+# own writes there by the contract's demand (the ALT's `rate-budget` entity scored 0 for it).
 @check('r_idempotent_rerun', 'R', pre=pre_ledger_row, needs=('heal', 'rerun'))
 def _(c):
     rows = len([1 for tok, _it in c.kvs_rows('heal') if any(ch.change_id in tok for ch in c.oracle.changes('final'))])
     if not rows:
         return g(0, 'no ledger rows after the heal — nothing to keep idempotent', 'the rerun is not judged')
-    writes = sum(_entity_writes(x) for x in c.calls(('rerun',), 'kvs'))
-    return g(ladder(writes / rows, TH['idempotent_rerun_rungs']), f'{writes} entity write(s) on a no-change run over {rows} rows',
+    ledger = _ledger_entities(c)
+    writes = sum(_entity_writes(x, ledger) for x in c.calls(('rerun',), 'kvs'))
+    return g(ladder(writes / rows, TH['idempotent_rerun_rungs']),
+             f'{writes} ledger write(s) ({", ".join(sorted(ledger)) or "no ledger entity"}) on a no-change run over {rows} rows',
              'a scheduled run with nothing new rewrites the ledger', parts={'writes': writes, 'rows': rows})
 
 
@@ -2117,17 +2121,20 @@ def _is_kvs_write(call: Dict) -> bool:
         'set', 'entity/set', 'batch/set', 'delete', 'entity/delete', 'batch/delete', 'transaction')
 
 
-def _entity_writes(call: Dict) -> int:
-    op, body = _kvs_op(call), call.get('body') if isinstance(call.get('body'), dict) else {}
+def _entity_writes(call: Dict, entities: set) -> int:
+    """The rows of `entities` one KVS call sets or deletes. A batch call's body is its item list (@forge/kvs batchSet
+    sends the array as the body)."""
+    op, raw = _kvs_op(call), call.get('body')
+    body = raw if isinstance(raw, dict) else {}
     if op in ('entity/set', 'entity/delete'):
-        return 1
+        return int(body.get('entityName') in entities)
     if op in ('batch/set', 'batch/delete'):
-        items = body.get('items') if isinstance(body.get('items'), list) else body if isinstance(body, list) else []
-        return sum(1 for it in items if isinstance(it, dict) and it.get('entityName'))
+        items = raw if isinstance(raw, list) else body.get('items') if isinstance(body.get('items'), list) else []
+        return sum(1 for it in items if isinstance(it, dict) and it.get('entityName') in entities)
     if op == 'transaction':
         n = 0
         for key in ('set', 'delete'):
-            n += sum(1 for it in body.get(key) or [] if isinstance(it, dict) and it.get('entityName'))
+            n += sum(1 for it in body.get(key) or [] if isinstance(it, dict) and it.get('entityName') in entities)
         return n
     return 0
 
@@ -3929,6 +3936,18 @@ def defect_selftest() -> List[str]:
         phases = {ph: {'kvsAfter': {'entities': entities, 'keys': []}} for ph in ('live', 'heal', 'rerun')}
         got = row('t_no_double_count', {'manifest': v2_manifest, 'phases': phases})
         expect(got['score'] == want, f"v2 ledger t_no_double_count {label}: {got['score']} (want {want}) — {got.get('detail')}")
+    # r_idempotent_rerun counts ledger writes only: the no-change run's own point count (§10) in an entity of its own
+    # is no rewrite; a ledger row set alone or inside a batch (whose body is the item list) is one
+    def kvs_write(path, body):
+        return {'service': 'kvs', 'method': 'POST', 'path': path, 'status': 200, 'body': body}
+    for label, calls, want in (
+            ('a point count in its own entity', [kvs_write('/api/v1/entity/set', {'entityName': 'rate-budget', 'key': 'h1', 'value': {}}),
+                                                 kvs_write('/api/v1/batch/set', [{'entityName': 'rate-budget', 'key': 'h2', 'value': {}}])], 1.0),
+            ('a ledger row set', [kvs_write('/api/v1/entity/set', {'entityName': V2_SURFACE_ENTITY, **item})], 0.0),
+            ('a ledger row in a batch', [kvs_write('/api/v1/batch/set', [{'entityName': V2_SURFACE_ENTITY, **item}])], 0.0)):
+        phases = {'heal': {'kvsAfter': {'entities': {V2_SURFACE_ENTITY: [item]}, 'keys': []}}, 'rerun': {'calls': calls}}
+        got = row('r_idempotent_rerun', {'manifest': v2_manifest, 'phases': phases})
+        expect(got['score'] == want, f"r_idempotent_rerun on {label}: {got['score']} (want {want}) — {got.get('detail')}")
     # Concurrent delivery: a duplicate row is the app's whether or not its group raced; a group the harness did not run
     # whole buys no pass — the row is unavailable, neither 1.0 nor a fired critical (the group reader is forge2_checks')
     def member(group, index, invs, size=2):
