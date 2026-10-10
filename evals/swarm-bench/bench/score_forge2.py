@@ -93,7 +93,7 @@ FIXTURES = ROOT / 'forge2' / 'site' / 'fixtures.cjs'
 # ── calibration-owned thresholds ─────────────────────────────────────────────────────────────
 
 THRESHOLDS_FILE = HERE / 'forge2-thresholds.json'
-CALIB_SHA256 = 'TBD-AT-FREEZE'   # pinned when the golden v2 x5 calibration lands (calibrate(), --calibrate)
+CALIB_SHA256 = '72acca75424a3bdee2f86e7354afbe24d2d4f8fad5d8a5c16306f9e285ca5998'   # the golden v2 x5 calibration (calibrate(), --calibrate), 2026-10-10
 
 
 def _load_thresholds() -> Dict:
