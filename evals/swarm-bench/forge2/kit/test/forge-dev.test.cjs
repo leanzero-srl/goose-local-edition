@@ -124,3 +124,57 @@ export const onUpdate = async (event) => {
     process.kill(site.pid, 'SIGTERM');
   }
 });
+
+// SPEC §2.8: `events` follows the dev site's plan batches — an update whose queue work the scoring drive leaves
+// pending until a later, related update (here a redelivery three slots on: dev seed fbc67de4b35a45e8 opens its first
+// batch at slot 3 and closes it at slot 6) is followed by the rest of the batch before the queues drain, past --limit,
+// so the two consumer deliveries of that change run concurrently, as on the scoring site.
+test('forge-dev: events completes an open batch before draining; the redelivery runs beside its original', { timeout: 300_000 }, async () => {
+  const kit = ensureKit();
+  const app = path.join(scratch('forgedev-batch'), 'app');
+  fs.mkdirSync(path.join(app, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(app, 'src', 'index.js'), `import { Queue } from '@forge/events';
+export const trig = async (event) => { await new Queue({ key: 'work' }).push({ body: { changelogId: String(event.changelog.id) } }); };
+export const work = async (event) => ({ seen: event.body.changelogId });
+`);
+  fs.writeFileSync(path.join(app, 'manifest.yml'), `modules:
+  trigger:
+    - key: b-trigger
+      function: b-trig
+      events:
+        - avi:jira:updated:issue
+  consumer:
+    - key: b-work
+      queue: work
+      function: b-work
+  function:
+    - key: b-trig
+      handler: index.trig
+    - key: b-work
+      handler: index.work
+permissions:
+  scopes:
+    - read:jira-work
+app:
+  id: ari:cloud:ecosystem::app/00000000-0000-0000-0000-000000000000
+  runtime:
+    name: nodejs22.x
+`);
+  const token = 'cd'.repeat(12);
+  const site = spawn(process.execPath, [path.join(FORGE, 'site', 'site.cjs'), '--seed', 'fbc67de4b35a45e8', '--token', token], { stdio: ['ignore', 'pipe', 'inherit'] });
+  const started = await new Promise((r) => site.stdout.once('data', (d) => r(JSON.parse(String(d)))));
+  const env = { ...process.env, FORGE_KIT: kit.kit_dir, FORGE_SITE_URL: started.url.replace('http://', `http://admin:${token}@`) };
+  try {
+    const ev = await run([path.join(kit.kit_dir, 'bin', 'forge-dev.cjs'), 'events', '--limit', '4'], { cwd: app, env });
+    assert.strictEqual(ev.code, 0, ev.stdout + ev.stderr);
+    const updates = [...ev.stdout.matchAll(/^### update \S+ changelog (\d+)( \(redelivery\))?/gm)];
+    assert.strictEqual(updates.length, 7, 'slots 0-3 asked for, 4-6 delivered to close the batch opened at slot 3');
+    assert.strictEqual((ev.stdout.match(/^ {3}queued: /gm) ?? []).length, 3, 'slots 3, 4 and 5 leave their queue work pending');
+    const redelivered = updates.find((m) => m[2])[1];
+    assert.strictEqual(updates[3][1], redelivered, 'the batch opens on the change it ends by redelivering');
+    const paired = [...ev.stdout.matchAll(/^ {3}ran at the same time as event \S+ \((same-event|same-issue)\)/gm)].map((m) => m[1]);
+    assert.deepStrictEqual(paired, ['same-event', 'same-event'], 'the original and its redelivery, each naming the other');
+  } finally {
+    process.kill(site.pid, 'SIGTERM');
+  }
+});
