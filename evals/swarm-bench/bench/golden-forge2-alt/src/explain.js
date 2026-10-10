@@ -2,13 +2,16 @@ import { chat, list } from '@forge/llm';
 import { createHash } from 'node:crypto';
 import { kvs, Filter } from '@forge/kvs';
 import { loadSettings } from './settings';
-import { sleep, utcDay } from './time';
+import { remainingMs, sleep, utcDay } from './time';
 import { isKvsCode } from './budget';
 
 const USAGE = 'llm-usage';
 const CACHE_MS = 10 * 60 * 1000; // §16: an identical request within 10 virtual minutes of a success is served from cache
-const MODEL_CACHE_MS = 10 * 60 * 1000;
-const BACKOFF_MS = [2000, 4000]; // between the 3 attempts a 429 allows (never at once, at most 3 a virtual minute)
+const MODEL_CACHE_MS = 2 * 60 * 60 * 1000; // refreshed by every hourly run
+// A 429 carries no Retry-After: a click backs off between attempts (never at once) and makes at most 3 attempts, all
+// inside one virtual minute and inside the resolver's own limit, then shows the error flag.
+const BACKOFF_MS = [3000, 6000];
+const RESOLVER_MARGIN_MS = 3000;
 
 const TOOL = {
   type: 'function',
@@ -33,15 +36,20 @@ const SYSTEM = [
   'because the app shows the exact numbers next to your text. In changeIds, list only changeId values from the input.',
 ].join(' ');
 
-// Whichever model the platform reports active, never a hard-coded name; remembered for a few minutes.
-async function activeModel() {
-  const cached = await kvs.get('llm-model');
-  if (cached && Date.now() - cached.at < MODEL_CACHE_MS) return cached.model;
+// Whichever model list() reports active, never a hard-coded name. The hourly run asks list() and remembers the answer,
+// so a click sends exactly one Forge LLM request: the chat.
+export async function refreshModel() {
   const { models } = await list();
   const active = (models ?? []).filter((m) => m.status === 'active').map((m) => m.model);
   const model = active.find((m) => /sonnet/i.test(m)) ?? active[0] ?? null;
-  if (model) await kvs.set('llm-model', { model, at: Date.now() });
+  await kvs.set('llm-model', { model, at: Date.now() });
   return model;
+}
+
+async function activeModel() {
+  const known = await kvs.get('llm-model');
+  if (known?.model && Date.now() - known.at < MODEL_CACHE_MS) return known.model;
+  return refreshModel();
 }
 
 async function tokensToday() {
@@ -122,7 +130,7 @@ export async function explainSprint(view) {
       });
       break;
     } catch (e) {
-      if (isRateLimited(e) && attempt < BACKOFF_MS.length) {
+      if (isRateLimited(e) && attempt < BACKOFF_MS.length && remainingMs() - BACKOFF_MS[attempt] > RESOLVER_MARGIN_MS) {
         await sleep(BACKOFF_MS[attempt]);
         continue;
       }

@@ -7,7 +7,7 @@ import { applyIssueEvent, markDeleted, reconcileAll, closeSprint, OutOfTime } fr
 import { runMigration } from './migrate';
 import { boardsView, widgetView, getSprint, personView, postSummary } from './views';
 import { announce, CHANNEL } from './realtime';
-import { explainSprint } from './explain';
+import { explainSprint, refreshModel } from './explain';
 import { handleDeployment } from './ci';
 import { adminLoad, adminSave, adminRotate } from './admin';
 import { remainingMs } from './time';
@@ -92,6 +92,7 @@ async function scheduledWork(policy) {
     };
     const result = await reconcileAll(cfg, policy, { marginMs: policy.marginMs, migrate: (byId) => runMigration(cfg, policy, byId, checkTime) });
     await announce([...result.sprintIds, ...closed]);
+    await refreshModel().catch((e) => console.error(`reconcile: Forge LLM model list failed: ${e.message}`));
     console.log(`reconcile: ${Object.keys(cfg.sprints).length} active sprints, ${result.issues} issues read, ${result.rows} rows, ${result.members} members, ${result.statuses} field values written; closed ${closed.length}`);
   } catch (e) {
     if (e instanceof OutOfTime) {
@@ -122,13 +123,24 @@ export async function reconcile() {
 // again. Every resolver answers; none throws.
 const UI = personPolicy(5000);
 
+function jiraMessage(e) {
+  try {
+    const body = JSON.parse(e.body);
+    const messages = [...(body.errorMessages ?? []), ...Object.values(body.errors ?? {})].filter(Boolean);
+    if (messages.length) return `Jira refused the request (${e.status}): ${messages.join(' ')}`;
+  } catch {
+    // not a JSON error body
+  }
+  return `Jira refused the request (${e.status}).`;
+}
+
 const answer = (fn) => async (req) => {
   try {
     return await fn(req);
   } catch (e) {
     if (e instanceof RateLimited) return { rateLimited: true, retryAfter: e.retryAfterSeconds };
     console.error(`resolver ${req?.call?.functionKey ?? ''} failed: ${e?.message ?? e}`);
-    return { ok: false, error: e instanceof JiraError ? `Jira refused the request (${e.status}).` : `The request failed: ${e?.message ?? e}` };
+    return { ok: false, error: e instanceof JiraError ? jiraMessage(e) : `The request failed: ${e?.message ?? e}` };
   }
 };
 

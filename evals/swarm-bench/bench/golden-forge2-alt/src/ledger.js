@@ -107,31 +107,53 @@ export async function recordRow(row, v1Row) {
 }
 
 // Member rows hold an issue's membership of one sprint and its current values of every tracked estimation field.
-// The fresher Jira read wins: a write based on an older read than the stored one is dropped.
+// The fresher Jira read wins: a write based on an older read than the stored one is dropped. Returns 'written',
+// 'same' (storage already says this) or 'stale' (storage holds a fresher read that differs).
 export async function writeMember(next, stored) {
-  if (stored && sameMember(next, stored)) return false;
+  if (stored && sameMember(next, stored)) return 'same';
   const key = memberKey(next.sprintId, next.issueId);
   if (!stored) {
     try {
       await kvs.entity(MEMBERS).set(key, next, { keyPolicy: 'FAIL_IF_EXISTS' });
-      return true;
+      return 'written';
     } catch (e) {
       if (!isKvsCode(e, 'KEY_CONFLICT')) throw e;
     }
     // The index had not caught up with an existing row: compare with the row itself.
     const current = await kvs.entity(MEMBERS).get(key);
-    if (current && (sameMember(next, current) || current.syncedAt >= next.syncedAt)) return false;
+    if (current && sameMember(next, current)) return 'same';
+    if (current && current.syncedAt >= next.syncedAt) return 'stale';
   }
   try {
     await kvs
       .transact()
       .set(key, next, { entityName: MEMBERS, conditions: new Filter().and('syncedAt', { condition: 'LESS_THAN', values: [next.syncedAt] }) })
       .execute();
-    return true;
+    return 'written';
   } catch (e) {
-    if (isKvsCode(e, 'CONDITIONAL_CHECK_FAILED')) return false;
-    throw e;
+    if (!isKvsCode(e, 'CONDITIONAL_CHECK_FAILED')) throw e;
+    const current = await kvs.entity(MEMBERS).get(key);
+    return current && sameMember(next, current) ? 'same' : 'stale';
   }
+}
+
+// Is any of these member rows based on a Jira read newer than `readAt`? (strongly consistent reads)
+export async function fresherThan(memberKeys, readAt) {
+  for (const key of memberKeys) {
+    const row = await kvs.entity(MEMBERS).get(key);
+    if (row && row.syncedAt > readAt) return true;
+  }
+  return false;
+}
+
+// Strongly consistent reads of many keys, 25 a request: Map(`${entityName ?? ''}|${key}` -> value).
+export async function getMany(items) {
+  const out = new Map();
+  for (let i = 0; i < items.length; i += 25) {
+    const res = await kvs.batchGet(items.slice(i, i + 25));
+    for (const r of res.successfulKeys ?? []) out.set(`${r.entityName ?? ''}|${r.key}`, r.value);
+  }
+  return out;
 }
 
 const sameMember = (a, b) =>

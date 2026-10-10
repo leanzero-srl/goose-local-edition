@@ -13,10 +13,13 @@ import {
   memberKey,
   tombstoneKey,
   LEDGER,
+  MEMBERS,
   envString,
   envList,
   DEPLOYS,
   queryAll,
+  fresherThan,
+  getMany,
 } from './ledger';
 import { freezeSprint } from './scope';
 import { statusFor, writtenStatus, writtenStatuses, writeStatuses, keysWithPrefix } from './status';
@@ -160,7 +163,7 @@ export async function markDeleted(issueIds) {
     }
     for (const member of await membersOfIssue(id)) {
       if (member.deleted) continue;
-      if (await writeMember({ ...member, inSprint: false, deleted: true, estimates: '{}', syncedAt: Date.now() }, member)) changed.add(member.sprintId);
+      if ((await writeMember({ ...member, inSprint: false, deleted: true, estimates: '{}', syncedAt: Date.now() }, member)) === 'written') changed.add(member.sprintId);
     }
   }
   return [...changed];
@@ -199,25 +202,23 @@ function groupRows(rows) {
 }
 
 // One delivered issue update. Reads current Jira state, so duplicates, reordering and concurrent deliveries converge:
-// rows are created once (first writer keeps `source`), member rows keep the fresher read, and the field value follows
-// what storage then says. Records every Sprint change of the issue's embedded changelog the ledger lacks (event work
-// may record siblings whose own event was lost). Returns the sprints whose numbers may have moved.
+// rows are created once (first writer keeps `source`), member rows keep the fresher read, and the field value is
+// written only by the freshest read. The issue's changes come from its own changelog (one GET, the same cost with
+// expand=changelog) and each row is looked up by key, so nothing here depends on an index query that may not show a
+// write of the last seconds. Records every Sprint change the ledger lacks (event work may record siblings whose own
+// event was lost). Returns the sprints whose numbers may have moved.
 export async function applyIssueEvent(cfg, body, policy) {
   const issueId = String(body.issueId);
-  const withLog = Boolean(body.sprintChange);
   let tracked = trackedFields(cfg);
   const readAt = Date.now();
-  let issue = await getIssue(issueId, [cfg.sprintFieldId, ...tracked].join(','), withLog, policy);
+  let issue = await getIssue(issueId, [cfg.sprintFieldId, ...tracked].join(','), true, policy);
   if (!issue) return { sprintIds: await markDeleted([issueId]), rows: 0, deleted: true };
 
-  let histories = [];
-  if (withLog) {
-    const embedded = issue.changelog?.histories ?? [];
-    histories = embedded.filter((h) => (h.items ?? []).some((i) => isSprintItem(i, cfg.sprintFieldId)));
-    const named = body.changelogId && embedded.some((h) => String(h.id) === String(body.changelogId));
-    if (body.changelogId && !named && (issue.changelog?.total ?? 0) > embedded.length) {
-      histories = (await sprintHistories([issueId], cfg.sprintFieldId, policy)).get(issueId) ?? [];
-    }
+  const embedded = issue.changelog?.histories ?? [];
+  let histories = embedded.filter((h) => (h.items ?? []).some((i) => isSprintItem(i, cfg.sprintFieldId)));
+  if ((issue.changelog?.total ?? 0) > embedded.length) {
+    // The embedded changelog is the most recent page only: read the issue's Sprint changelog in full.
+    histories = (await sprintHistories([issueId], cfg.sprintFieldId, policy)).get(issueId) ?? [];
   }
 
   const current = sprintsOfField(issue.fields?.[cfg.sprintFieldId]);
@@ -235,9 +236,15 @@ export async function applyIssueEvent(cfg, body, policy) {
   };
   for (const s of current) await resolve(s.id, s.state);
 
-  const [storedRows, storedMembers] = await Promise.all([ledgerOfIssue(issueId), membersOfIssue(issueId)]);
-  const have = new Set(storedRows.map((r) => rowKey(r.changeId, r.sprintId)));
-  const found = (await candidateRows(cfg, issue, histories, 'event', resolve)).filter((c) => !have.has(rowKey(String(c.history.id), c.sprint.id)));
+  const candidates = await candidateRows(cfg, issue, histories, 'event', resolve);
+  const known = [];
+  const found = [];
+  for (const c of candidates) {
+    const row = await kvs.entity(LEDGER).get(rowKey(String(c.history.id), c.sprint.id));
+    if (row) known.push(row);
+    else found.push(c);
+  }
+  const storedMembers = await membersOfIssue(issueId);
 
   // A new row's estimation field is the one its board used at the change; Jira sends no event when a board switches
   // fields, so the board is read now, when a change needs it.
@@ -254,7 +261,6 @@ export async function applyIssueEvent(cfg, body, policy) {
 
   const changed = new Set();
   const newRows = [];
-  const seenRows = [];
   for (const c of found) {
     const row = buildRow(cfg, c.sprint, c.history, issue, c.kind, 'event');
     const written = await recordRow(row);
@@ -262,18 +268,19 @@ export async function applyIssueEvent(cfg, body, policy) {
       newRows.push(written);
       changed.add(written.sprintId);
     } else {
-      // A concurrent delivery wrote it moments ago (too fresh for the index): read it by key.
+      // A concurrent delivery wrote it in between: read it by key.
       const existing = await kvs.entity(LEDGER).get(rowKey(row.changeId, row.sprintId));
-      if (existing) seenRows.push(existing);
+      if (existing) known.push(existing);
     }
   }
 
-  const rowsBySprint = groupRows([...storedRows, ...newRows, ...seenRows]);
+  const rowsBySprint = groupRows([...known, ...newRows]);
   const currentIds = new Set(current.map((s) => s.id));
   const storedBySprint = new Map(storedMembers.map((m) => [m.sprintId, m]));
   const touched = new Set([...currentIds, ...rowsBySprint.keys(), ...storedBySprint.keys()]);
   const estimates = estimatesJson(issue.fields, tracked);
   const members = new Map();
+  let superseded = false;
   for (const sprintId of touched) {
     if (!cfg.sprints[sprintId]) continue;
     const stored = storedBySprint.get(sprintId);
@@ -281,7 +288,7 @@ export async function applyIssueEvent(cfg, body, policy) {
     // Left the sprint with no Sprint change recorded: a sprint close moves unfinished issues out without a changelog
     // entry. Ask Jira before touching a sprint that may have closed.
     if (stored?.inSprint && !inSprint) {
-      const last = (rowsBySprint.get(sprintId) ?? []).sort((a, b) => a.at - b.at).pop();
+      const last = [...(rowsBySprint.get(sprintId) ?? [])].sort((a, b) => a.at - b.at).at(-1);
       if (!last || last.kind !== 'removed') {
         const sprint = await getSprintFromJira(sprintId, policy);
         if (!sprint || sprint.state === 'closed') {
@@ -293,19 +300,24 @@ export async function applyIssueEvent(cfg, body, policy) {
     }
     const next = { sprintId, issueId, issueKey: issue.key ?? '', inSprint, estimates, deleted: false, syncedAt: readAt };
     members.set(sprintId, next);
-    if (await writeMember(next, stored)) changed.add(sprintId);
+    const outcome = await writeMember(next, stored);
+    if (outcome === 'written') changed.add(sprintId);
+    if (outcome === 'stale') superseded = true;
   }
 
-  await updateStatus(cfg, issueId, members, rowsBySprint, policy);
+  // A delivery that read Jira later owns the field value; only the freshest read writes it.
+  if (!superseded) await updateStatus(cfg, issueId, members, rowsBySprint, readAt, policy);
   return { sprintIds: [...changed], rows: newRows.length };
 }
 
-// The issue's field value from what this invocation knows (its own writes included), written only when it changed.
-async function updateStatus(cfg, issueId, members, rowsBySprint, policy) {
+// The issue's field value from what this invocation knows (its own writes included), written only when it changed
+// and when no fresher read of the issue has been stored meanwhile.
+async function updateStatus(cfg, issueId, members, rowsBySprint, readAt, policy) {
   const entries = [];
   for (const [sprintId, member] of members) if (cfg.sprints[sprintId]) entries.push({ member, rows: rowsBySprint.get(sprintId) ?? [] });
   const value = statusFor(entries);
   if (value === null || value === (await writtenStatus(issueId))) return;
+  if (await fresherThan([...members.keys()].map((s) => memberKey(s, issueId)), readAt)) return;
   await writeStatuses(cfg, new Map([[issueId, value]]), policy);
 }
 
@@ -398,12 +410,15 @@ export async function reconcileAll(cfg, policy, { marginMs, migrate }) {
         consumerFresh.add(issueId);
         continue;
       }
-      if (await writeMember(next, stored)) {
+      const outcome = await writeMember(next, stored);
+      if (outcome === 'stale') {
+        consumerFresh.add(issueId); // a delivery read the issue after this run did and owns it
+        continue;
+      }
+      memberState.set(key, next);
+      if (outcome === 'written') {
         members += 1;
         changed.add(sprintId);
-        memberState.set(key, next);
-      } else if (!stored || stored.inSprint !== next.inSprint || stored.estimates !== next.estimates || stored.deleted) {
-        consumerFresh.add(issueId); // a fresher read won the write
       }
     }
   }
@@ -420,14 +435,14 @@ export async function reconcileAll(cfg, policy, { marginMs, migrate }) {
   }
   checkTime(marginMs);
 
-  const statuses = await syncStatuses(cfg, [...memberState.values()], [...allRows.values()], consumerFresh, policy);
+  const statuses = await syncStatuses(cfg, [...memberState.values()], [...allRows.values()], consumerFresh, (id) => byId.get(id)?.readAt, policy);
   await healDeployments([...allRows.values()]);
   return { issues: issues.length, rows, members, statuses, sprintIds: [...changed] };
 }
 
-// Every issue's scope-status from storage's view of the active sprints; issues a consumer refreshed after this run's
-// read are left to that consumer.
-async function syncStatuses(cfg, memberRows, rows, skip, policy) {
+// Every issue's scope-status from this run's view of the active sprints. An issue a delivery has read after this run
+// did is left to that delivery: checked by key just before the write.
+async function syncStatuses(cfg, memberRows, rows, skip, readAtOf, policy) {
   const written = await writtenStatuses();
   for (const issueId of (await keysWithPrefix('deleted:')).keys()) skip.add(issueId); // never compared
   const membersByIssue = new Map();
@@ -443,13 +458,26 @@ async function syncStatuses(cfg, memberRows, rows, skip, policy) {
     if (!rowsByIssueSprint.has(k)) rowsByIssueSprint.set(k, []);
     rowsByIssueSprint.get(k).push(r);
   }
-  const changes = new Map();
+  const candidates = new Map();
   for (const issueId of new Set([...membersByIssue.keys(), ...written.keys()])) {
     if (skip.has(issueId)) continue;
     const entries = (membersByIssue.get(issueId) ?? []).map((member) => ({ member, rows: rowsByIssueSprint.get(`${issueId}|${member.sprintId}`) ?? [] }));
     const value = statusFor(entries);
-    if (value === null) continue;
-    if (value !== (written.get(issueId) ?? '')) changes.set(issueId, value);
+    if (value !== null && value !== (written.get(issueId) ?? '')) candidates.set(issueId, value);
+  }
+  // Read by key what the index may not show yet: a value written, or a member refreshed, in the last seconds.
+  const items = [];
+  for (const issueId of candidates.keys()) {
+    items.push({ key: `status:${issueId}` });
+    for (const m of membersByIssue.get(issueId) ?? []) items.push({ entityName: MEMBERS, key: memberKey(m.sprintId, issueId) });
+  }
+  const now = await getMany(items);
+  const changes = new Map();
+  for (const [issueId, value] of candidates) {
+    if (value === (now.get(`|status:${issueId}`)?.v ?? '')) continue;
+    const readAt = readAtOf(issueId);
+    const fresher = (membersByIssue.get(issueId) ?? []).some((m) => (now.get(`${MEMBERS}|${memberKey(m.sprintId, issueId)}`)?.syncedAt ?? 0) > (readAt ?? Infinity));
+    if (!fresher) changes.set(issueId, value);
   }
   return writeStatuses(cfg, changes, policy);
 }
