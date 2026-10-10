@@ -1872,11 +1872,21 @@ const explanationOf = (page) => page.evaluate(() => {
     ids: box ? [...box.querySelectorAll('[data-change-id]')].map((e) => e.getAttribute('data-change-id')) : [] };
 });
 
+// The modal's explain control, or null when the app shows none. An app may paint its first data before its interactive
+// bundle mounts the actions (a boot script paints, then the app loads: what R9's boot budget asks for), so once the data
+// painted (`painted`) the control gets the wait a first paint gets and is absent only if it has not appeared by then —
+// as a click waits (deliver). A modal that never painted has had that wait already.
+async function explainControl(s, painted) {
+  if (painted) await waitMeaningful(s, '[data-testid="explain"]');
+  const button = s.page.locator('[data-testid="explain"]').first();
+  return (await button.count()) ? button : null;
+}
+
 // The five scripted explain answers (site/llm.cjs SCRIPT: clean, digits, refusal, malformed, error), in order. Each is
 // a separate request: the virtual clock moves past R8's 10-minute cache window before each one.
 async function explainSteps(s, sid) {
-  const button = s.page.locator('[data-testid="explain"]').first();
-  if (!(await button.count())) return { sprintId: sid, steps: [], absent: 'no [data-testid="explain"] control' };
+  const button = await explainControl(s, true);
+  if (!button) return { sprintId: sid, steps: [], absent: 'no [data-testid="explain"] control' };
   await emu.llm.phase(`explain-${sid}`);
   const steps = [];
   for (let i = 0; i < 5; i += 1) {
@@ -1932,9 +1942,9 @@ async function llmCases(pack, v) {
     await emu.llm.phase(c.script, c.steps);
     takeCalls(emu);
     const s = await openSurface({ moduleKey: action.key, entry: 'view', theme: 'light', width: 800, height: 600, asUser: viewer, extension: ext });
-    await waitMeaningful(s, 'table[data-testid="ledger"] tr[data-change-id], [data-metric]');
-    const button = s.page.locator('[data-testid="explain"]').first();
-    if (!(await button.count())) row.absent = 'no [data-testid="explain"] control';
+    const painted = await waitMeaningful(s, 'table[data-testid="ledger"] tr[data-change-id], [data-metric]');
+    const button = await explainControl(s, painted !== null);
+    if (!button) row.absent = 'no [data-testid="explain"] control';
     // Contract §16: the budget binds "once the virtual day's tokens reach" it. The day is a UTC day of the virtual
     // clock and turns over between cases on a late upgrade: a click on a day whose tokens are still under the budget
     // owes no refusal, so the case records the day's tokens before its click.
@@ -2078,6 +2088,21 @@ async function selftest() {
       world: async (t) => { if (t === 30 * 60_000) stuck += 1; }, hourly: async () => {}, ci: async () => {}, panel: async () => {}, checkpoint: async () => {},
     }, 0);
     assert.equal(stuck, 1);
+  });
+
+  await test('explainControl: a control the app mounts after its first data paint is found; a modal that never painted is not waited on', async () => {
+    // count() answers 0 until the app has mounted the control, `mountsAfter` polls after the data paint
+    const page = (mountsAfter) => { let polls = 0; return { locator: () => ({ first() { return this; }, count: async () => ((polls += 1) > mountsAfter ? 1 : 0) }) }; };
+    const emu0 = emu;
+    emu = { bridgeLog: [] };
+    try {
+      assert.ok(await explainControl({ page: page(3), bridgeStart: 0 }, true), 'mounted 3 polls after the paint: found, not absent');
+      const t0 = Date.now();
+      assert.equal(await explainControl({ page: page(Infinity), bridgeStart: 0 }, false), null);
+      assert.ok(Date.now() - t0 < 1000, 'no data paint: the modal had its wait already');
+    } finally {
+      emu = emu0;
+    }
   });
 
   await test('batchDecision: held only when its last delivery comes before the next agenda point, never inside the quota window', async () => {
