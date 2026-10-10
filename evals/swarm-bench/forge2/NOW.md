@@ -118,8 +118,8 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
   BOARD: Sol 0.8111, Sonnet 0.7698. OWNER 23:1x: "from here on out you got this right? you'll run on rails each and
   every model we have queued up" -> yes; told him the ONE thing that needs him: OPENROUTER BALANCE $15.77 (total 530)
   against ~$130-200 for the queue; cheap models next (Luna, MiMo Flash, Omni Flash, DeepSeek Flash), then Opus 5.5 is
-  where it runs out unless auto top-up is on — he has not answered that yet. If the balance cannot cover the next run:
-  touch sb72-chain.HOLD before it launches (never let a run die on a 402) and tell him.
+  where it would run out — OWNER 23:2x: "it will automatically top up" -> NO hold before Opus; keep reading the balance
+  at each tick and only if a top-up visibly failed (balance near zero before an expensive run) HOLD and tell him.
 - 22:27 GITHUB RELEASE v3.0.109 PUBLISHED (https://github.com/leanzero-srl/goose-local-edition/releases/tag/v3.0.109; DMG +
   two zips + latest-mac.yml; target 16501c639; corrected notes). The release sequence is COMPLETE; what remains is the
   queue: Sol running, 24 more after it, vigil every 10 min; at queue end: board_audit.sh, skill changelog, scores +
