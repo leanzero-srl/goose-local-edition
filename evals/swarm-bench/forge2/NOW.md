@@ -64,6 +64,15 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
 
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 17:1x DESKTOP WORDING FIXES: forge2/desktop 90f4f198f (33 findings = 18 defects, all applied; 4860 tests pass, tsc 0,
+  eslint clean). Cap rule shown from the verdict's admission.final_rule with a "Here:" line that prints only when it
+  reproduces the recorded final; reliability step in the shared sentence; Forge 2.0 renders no root wording; own
+  recording caption (benchMedia.ts FORGE2_RECORDING_CAPTION); four decimals; "Goose Swarm". NOT SEEN RENDERED (no app
+  launched): the reordered Forge 2.0 card, four-decimal chips, the 148px tier grid -> the screenshot pass on the
+  installed build. SOURCE-SIDE STRINGS still wrong, to fix in ONE post-gate strings-only commit + refreeze + one
+  confirming single-seed golden scoring: forge2_probe.mjs:1775-1777 (video caption), forge2_uikit_shot.mjs:21 (contact
+  sheet caption), score_forge2.py:154 (duplicate class omits the CI replay). Left: scorer-verbatim evidence text
+  ("oracle", "§2.6"), the sidebar "ask about this run" percent.
 - 16:3x COPY REVIEW DONE (wf_8e4008f2-e57, 107 agents): 103 findings, 100 CONFIRMED by a refuter each (site 58: 4 high;
   desktop 33: 4 high; the 1.0 note draft 9: 1 high) -> scratchpad/copyreview/review-result.json. The highs: Gauntlet's
   payments copy printed above every Forge recording; Forge board/run meta descriptions + structured data describe Forge
