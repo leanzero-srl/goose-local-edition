@@ -110,7 +110,11 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
   calibration, sb7.x/forge manifests to refreeze after P11's shared bench edits.
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
-- 22:35 FORGE 2.0 IS THE CURRENT FORGE BENCHMARK ON leanzero.net: `register-forge2 flip --promote-run brun-c084f7ac-… --live`
+- 22:27 GITHUB RELEASE v3.0.109 PUBLISHED (https://github.com/leanzero-srl/goose-local-edition/releases/tag/v3.0.109; DMG +
+  two zips + latest-mac.yml; target 16501c639; corrected notes). The release sequence is COMPLETE; what remains is the
+  queue: Sol running, 24 more after it, vigil every 10 min; at queue end: board_audit.sh, skill changelog, scores +
+  per-run cost to the owner, delete the cron. Skill updated with the order that worked and the traps.
+- 22:2x FORGE 2.0 IS THE CURRENT FORGE BENCHMARK ON leanzero.net: `register-forge2 flip --promote-run brun-c084f7ac-… --live`
   (33 of 33 checks: catalog + board + all 31 forge-1.0 run pages agree; live catalog forge-2.0 familyCurrent true,
   forge-1.0 frozen and not current). THE FORGE 1.0 NOTE (the refuter's corrected 989-char text) is live on 31 of 31
   forge-1.0 run pages. Catalog proxy restarted WITHOUT FORGE_CURRENT (the site itself names forge-2.0 now). RELEASE
