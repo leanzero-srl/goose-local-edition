@@ -1582,6 +1582,31 @@ def _irrelevant_row_ids(c: Ctx) -> set:
     return {str(e['changelogId']) for e in c.oracle.live if not c.oracle._sprint_items(e)}
 
 
+def _redelivered_after_next_run(c: Ctx) -> set:
+    """The delivered changes whose event work was redelivered (a delivery attempt >= 1, matched to the change through
+    its queue event's lineage) only after the first scheduled run that followed the change's delivery: that run may
+    record the change first, and the row keeps the path that recorded it first (contract §3)."""
+    phases = c.background_phases()
+    origin = {x['inv']: str(x['originChange']) for x in c.calls(phases) if x.get('inv') and x.get('originChange')}
+    deliveries = [d for ph in phases for d in c.phase(ph).get('deliveries') or [] if isinstance(d, dict)]
+    change_of = {d.get('eventId'): origin[d['inv']] for d in deliveries if d.get('inv') in origin}
+    runs = sorted(t for t in (c.phase(p).get('at') for p in phases) if isinstance(t, (int, float)))
+    delivered: Dict[str, float] = {}
+    for ev in c.phase('live').get('events') or []:
+        if isinstance(ev.get('t'), (int, float)):
+            delivered.setdefault(str(ev.get('changelogId')), ev['t'])
+    out = set()
+    for d in deliveries:
+        cid = change_of.get(d.get('eventId'))
+        t, at = d.get('t'), delivered.get(cid)
+        if not (d.get('attempt') or 0) or not isinstance(t, (int, float)) or at is None:
+            continue
+        nxt = next((r for r in runs if r > at), None)
+        if nxt is not None and t > nxt:
+            out.add(cid)
+    return out
+
+
 @check('t_event_rows', 'T', needs=('live',))
 def _(c):
     if not c.modules('consumer') and not c.modules('trigger'):
@@ -1591,14 +1616,17 @@ def _(c):
         return unavail('the pack delivers no live sprint change')
     rows = c.kvs_rows('live')
     # Under the shared pool's wall (rate.wall, contract §10) background pauses: a change made there may be recorded
-    # first by the next reconcile, and the row keeps that path (contract §3).
+    # first by the next reconcile, and the row keeps that path (contract §3). So may a change whose event work was
+    # redelivered only after the next scheduled run.
     wall = (c.obs.get('rate') or {}).get('wall') or {}
     walled = lambda ch: (wall.get('t_ms') is not None and wall.get('until_ms') is not None  # noqa: E731
                          and wall['t_ms'] <= ch.at.timestamp() * 1000 <= wall['until_ms'])
+    late = _redelivered_after_next_run(c)
     tp, fp = 0, 0
     for ch in expected:
         found = rows_for(rows, ch)
-        if len(found) >= 1 and row_correct(found[0][0], ch, ('event', 'reconcile') if walled(ch) else ('event',)) and len(found) == 1:
+        sources = ('event', 'reconcile') if walled(ch) or ch.change_id in late else ('event',)
+        if len(found) >= 1 and row_correct(found[0][0], ch, sources) and len(found) == 1:
             tp += 1
         fp += max(0, len(found) - 1)
     irrelevant = _irrelevant_row_ids(c)
@@ -3948,6 +3976,29 @@ def defect_selftest() -> List[str]:
         phases = {'heal': {'kvsAfter': {'entities': {V2_SURFACE_ENTITY: [item]}, 'keys': []}}, 'rerun': {'calls': calls}}
         got = row('r_idempotent_rerun', {'manifest': v2_manifest, 'phases': phases})
         expect(got['score'] == want, f"r_idempotent_rerun on {label}: {got['score']} (want {want}) — {got.get('detail')}")
+    # t_event_rows: a delivered change's row records `event` (§3's first writer) unless its event work was redelivered
+    # only after the next scheduled run, which may record it first: then `reconcile` is right too
+    delivered = [c for c in Ctx(None, {}, pack).oracle.changes('live') if c.phase == 'live']
+    target = next(c for c in delivered if sum(d.change_id == c.change_id for d in delivered) == 1)
+    t_ev = target.at.timestamp()
+    ev_manifest = {**v2_manifest, 'modules': {'trigger': [{'key': 't'}], 'consumer': [{'key': 'c'}]}}
+    for label, source, redelivered, want in (('event, no redelivery', 'event', None, True),
+                                             ('reconcile, no redelivery', 'reconcile', None, False),
+                                             ('reconcile, redelivered before the next run', 'reconcile', t_ev + 1700, False),
+                                             ('reconcile, redelivered after the next run', 'reconcile', t_ev + 1900, True)):
+        items = [{'key': f'{c.change_id}:{c.sprint_id}', 'value': {
+            'changeId': c.change_id, 'sprintId': c.sprint_id, 'issueId': c.issue_id, 'kind': c.kind,
+            'at': int(c.at.timestamp() * 1000), 'authorId': c.by, 'source': source if c is target else 'event'}}
+            for c in delivered]
+        live = {'kvsAfter': {'entities': {V2_SURFACE_ENTITY: items}, 'keys': []},
+                'events': [{'changelogId': target.change_id, 't': t_ev}],
+                'calls': [{'t': t_ev + 1, 'inv': 'i0', 'kind': 'consumer', 'service': 'jira', 'status': 429,
+                           'originChange': target.change_id, 'scheduledRun': None}],
+                'deliveries': [{'eventId': 'q1', 'inv': 'i0', 'attempt': 0, 'result': 'retry', 't': t_ev + 1}]
+                + ([{'eventId': 'q1', 'inv': 'i1', 'attempt': 1, 'result': 'ok', 't': redelivered}] if redelivered else [])}
+        got = row('t_event_rows', {'manifest': ev_manifest, 'phases': {'live': live, 'hour-1': {'at': t_ev + 1800}}})
+        expect((got['score'] == 1.0) == want, f"t_event_rows on {label}: {got['score']} (want {'1.0' if want else '< 1'}) "
+               f"— {got.get('detail')}")
     # Concurrent delivery: a duplicate row is the app's whether or not its group raced; a group the harness did not run
     # whole buys no pass — the row is unavailable, neither 1.0 nor a fired critical (the group reader is forge2_checks')
     def member(group, index, invs, size=2):
