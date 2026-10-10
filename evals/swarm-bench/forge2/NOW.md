@@ -64,6 +64,15 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
 
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 11:55 SONNET 5.5 ON THE HARDENED TASK: 0.9628 provisional (seeds 0.966/0.965/0.967), no critical, 39 of 300 calls,
+  $2.22 — by the owner's rule NOT GOOD (Sonnet in the 0.9s). But it has 13 defect rows (u_widget_live 0 = the S2
+  staleness trap; r9 boot ~245 KB of 153,600 on both surfaces; r7_values_fresh 0.84 (191/286 in the worst hour);
+  r3 one resolver killed; a_action_result 3/5; t_reestimate 5/6 ...): the 99-row weighted mean is too lenient.
+  Offline recompute with a per-defect multiplier: K=0.10 -> Sol(lean) 0.76, Sonnet(hardened) 0.70, golden 1.000.
+- 12:0x DECISION (mine; owner: "decide on your own stuff"; his 1.0 rule "more aggressive without making it unfair"):
+  final = earned x criticals x RELIABILITY, RELIABILITY = max(0.25, prod over defects (1 - 0.10 x (1 - s))), one root
+  cause once, E tier excluded, stated in the prompt's Score section. wf forge2-severity (branch forge2/severity from
+  forge2/prerun; site mirror on forge2-era; refuter). SOL RERUN on the hardened task launched 11:57 (sol-hardened 8855).
 - 11:0x HARDENED TASK READY: branch forge2/prerun 9ac3ed765 (worktree scratchpad/wt-prerun) = forge2/hardened + pilot
   fixes + fairness review (43 alt-app notes: 39 fine, 1 must-fix contract sentence in §4 Live, 4 check/probe fixes) +
   a probe wall-clock race fixed (explain button counted the instant data painted; 4 of 25 golden scorings mis-scored).
