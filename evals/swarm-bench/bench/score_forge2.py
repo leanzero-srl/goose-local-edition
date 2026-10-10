@@ -427,6 +427,20 @@ def row_correct(tokens: set, change: fo.Change, sources: Iterable[str]) -> bool:
             and change.at in _instants(tokens) and any(s in tokens for s in sources))
 
 
+def sources_for(c: Ctx, change: fo.Change) -> Tuple[str, ...]:
+    """The paths a change's row may name, for EVERY row that judges a source (contract §3: a row keeps the path that
+    recorded it first): the oracle's, plus `reconcile` for a live change made under the shared pool's wall (rate.wall,
+    contract §10) — background pauses there, so the next reconcile may record the change before its event's consumer
+    runs. t_event_rows carried this alone (ebb949907); the same change then failed t_multi_sprint_parse and
+    u_ledger_table (gate 2026-10-10, seed ca72f2358777d98c: 1089939, made 14:33:15 under the 14:30-15:00 wall, recorded
+    by the deferred hourly run at 15:02:58, its own delivery handled at 15:03:33)."""
+    wall = (c.obs.get('rate') or {}).get('wall') or {}
+    if (change.phase == 'live' and wall.get('t_ms') is not None and wall.get('until_ms') is not None
+            and wall['t_ms'] <= change.at.timestamp() * 1000 <= wall['until_ms']):
+        return tuple(dict.fromkeys((*change.sources, 'reconcile')))
+    return tuple(change.sources)
+
+
 def _num(text) -> Optional[Decimal]:
     if isinstance(text, bool) or text is None:
         return None
@@ -1589,15 +1603,10 @@ def _(c):
     if not expected:
         return unavail('the pack delivers no live sprint change')
     rows = c.kvs_rows('live')
-    # Under the shared pool's wall (rate.wall, contract §10) background pauses: a change made there may be recorded
-    # first by the next reconcile, and the row keeps that path (contract §3).
-    wall = (c.obs.get('rate') or {}).get('wall') or {}
-    walled = lambda ch: (wall.get('t_ms') is not None and wall.get('until_ms') is not None  # noqa: E731
-                         and wall['t_ms'] <= ch.at.timestamp() * 1000 <= wall['until_ms'])
     tp, fp = 0, 0
     for ch in expected:
         found = rows_for(rows, ch)
-        if len(found) >= 1 and row_correct(found[0][0], ch, ('event', 'reconcile') if walled(ch) else ('event',)) and len(found) == 1:
+        if len(found) >= 1 and row_correct(found[0][0], ch, sources_for(c, ch)) and len(found) == 1:
             tp += 1
         fp += max(0, len(found) - 1)
     irrelevant = _irrelevant_row_ids(c)
@@ -1673,7 +1682,7 @@ def _(c):
     if not involved:
         return unavail('the pack has no permuted pair touching an active sprint')
     rows = c.kvs_rows('live')
-    ok_rows = sum(1 for ch in involved if len(rows_for(rows, ch)) == 1 and row_correct(rows_for(rows, ch)[0][0], ch, ch.sources))
+    ok_rows = sum(1 for ch in involved if len(rows_for(rows, ch)) == 1 and row_correct(rows_for(rows, ch)[0][0], ch, sources_for(c, ch)))
     sprints = sorted({ch.sprint_id for ch in involved})
     ok_nums = sum(1 for sid in sprints if _sprint_numbers_right(c, sid))
     score = (ok_rows + ok_nums) / (len(involved) + len(sprints))
@@ -1692,7 +1701,7 @@ def _(c):
     if not involved:
         return unavail('the pack has no multi-id Sprint change in an active sprint')
     rows = c.kvs_rows('rerun')
-    ok = sum(1 for ch in involved if len(rows_for(rows, ch)) == 1 and row_correct(rows_for(rows, ch)[0][0], ch, ch.sources))
+    ok = sum(1 for ch in involved if len(rows_for(rows, ch)) == 1 and row_correct(rows_for(rows, ch)[0][0], ch, sources_for(c, ch)))
     return g(ok / len(involved), f'{ok}/{len(involved)} multi-id Sprint changes recorded exactly',
              'the Sprint `to` list parsed as one id')
 
@@ -1836,7 +1845,7 @@ def _(c):
     if not dropped:
         return unavail('the pack drops no live sprint change')
     before, after = c.kvs_rows('live'), c.kvs_rows('heal')
-    ok = sum(1 for ch in dropped if len(rows_for(after, ch)) == 1 and row_correct(rows_for(after, ch)[0][0], ch, ch.sources))
+    ok = sum(1 for ch in dropped if len(rows_for(after, ch)) == 1 and row_correct(rows_for(after, ch)[0][0], ch, sources_for(c, ch)))
     dropped_keys = {ch.key for ch in dropped}
     extra = 0
     for ch in c.oracle.changes('final'):
@@ -2514,12 +2523,12 @@ def _(c):
              'the board choice does not reach the view', parts=conds)
 
 
-def cells_ok(row: Dict, ch: fo.Change) -> bool:
+def cells_ok(row: Dict, ch: fo.Change, sources: Iterable[str]) -> bool:
     cells = row.get('cells') or {}
     return (str(cells.get('issue') or '').strip() == ch.issue_key
             and any(points_text_ok(cells.get('points'), p) for p in (ch.points, *ch.late_points))
             and str(cells.get('kind') or '').strip() == ch.kind and str(cells.get('by') or '').strip() == ch.by_name
-            and fo.instant(cells.get('at')) == ch.at and str(cells.get('source') or '').strip() in ch.sources)
+            and fo.instant(cells.get('at')) == ch.at and str(cells.get('source') or '').strip() in tuple(sources))
 
 
 TABLE_COLS = ('issue', 'points', 'kind', 'by', 'at', 'source')
@@ -2538,7 +2547,7 @@ def _(c):
         expected = o.visible_changes(str(r['sprintId']), o.viewer)
         rows = r.get('rows') or []
         right = sum(1 for i, ch in enumerate(expected) if i < len(rows) and rows[i].get('changeId') == ch.change_id
-                    and cells_ok(rows[i], ch))
+                    and cells_ok(rows[i], ch, sources_for(c, ch)))
         headers_ok = set(TABLE_COLS) <= set(r.get('headers') or [])
         denom = max(len(expected), len(rows))
         total += (right / denom if denom else 1.0) * (1 if headers_ok else 0.5)
@@ -3928,6 +3937,20 @@ def defect_selftest() -> List[str]:
         phases = {ph: {'kvsAfter': {'entities': entities, 'keys': []}} for ph in ('live', 'heal', 'rerun')}
         got = row('t_no_double_count', {'manifest': v2_manifest, 'phases': phases})
         expect(got['score'] == want, f"v2 ledger t_no_double_count {label}: {got['score']} (want {want}) — {got.get('detail')}")
+    # One source rule for every row that judges a source: a live change made under the wall may name `reconcile` in the
+    # ledger table's cell exactly as in its ledger row; after the wall, and with no wall, only its event.
+    walled = next(x for x in Ctx(None, {}, pack).oracle.changes('final') if x.phase == 'live' and not x.dropped)
+    at_ms = walled.at.timestamp() * 1000
+    cells = {'issue': walled.issue_key, 'points': str(walled.points), 'kind': walled.kind, 'by': walled.by_name,
+             'at': walled.at_text, 'source': 'reconcile'}
+    for label, wall, want in (('under the wall', {'t_ms': at_ms - 1, 'until_ms': at_ms + 1}, ('event', 'reconcile')),
+                              ('after the wall', {'t_ms': at_ms - 2, 'until_ms': at_ms - 1}, ('event',)),
+                              ('no wall drawn', None, ('event',))):
+        ctx = Ctx(None, {'rate': {'wall': wall}} if wall else {}, pack)
+        got = sources_for(ctx, walled)
+        expect(got == want and cells_ok({'cells': cells}, walled, got) == ('reconcile' in want)
+               and row_correct({walled.kind, walled.issue_key, walled.by_name, str(int(at_ms)), 'reconcile'}, walled, got) == ('reconcile' in want),
+               f'source rule {label}: sources {got} (want {want}), one answer for the ledger row and the table cell')
     # Concurrent delivery: a duplicate row is the app's whether or not its group raced; a group the harness did not run
     # whole buys no pass — the row is unavailable, neither 1.0 nor a fired critical (the group reader is forge2_checks')
     def member(group, index, invs, size=2):
