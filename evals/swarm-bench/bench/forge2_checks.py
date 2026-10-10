@@ -34,6 +34,10 @@ reads exactly them; checkpoints are 'h1'..'h6' — virtual-hour marks after the 
                [, day_tokens, budget_reached]}] (LLM_TOOL/FAILURE/COST; the last two on the token-budget case)
   boot        {'widget-view'|'sprint-modal'|'admin-page': {invokes_before_paint, bytes_before_paint,
                external_requests}} (null = the surface never painted)
+  phases.<phase>.deliveries[].concurrent  {group, reason ('same-event'|'same-issue'), schedule ('reads-first'),
+              size, index, with: [{index, eventId, invocationId}]}: the kit emulator's record on each delivery it ran
+              as a member of a concurrent group, passed through by the probe (concurrent_groups; a group not run whole
+              is never app evidence). A member the kit cannot start throws, a section error, never a record.
 Three keys the probe must add for its rows to grade exactly (until then each row says so in its detail):
 `rate.requests[].issue` (the issue a per-issue 429 names; without it those 429s are named as not graded),
 `field.applied_by_checkpoint` (without it r7_values_fresh is unavailable), and `admin.actions[].landed` on non-admin
@@ -211,6 +215,48 @@ class Ev:
         if not isinstance(reqs, list):
             return None, 'rate.requests is not a list'
         return sorted((r for r in reqs if isinstance(r, dict)), key=lambda r: num(r.get('t_ms')) or 0), None
+
+
+def concurrent_groups(obs: Dict) -> Tuple[Counter, List[str]]:
+    """Concurrent delivery (contract: deliveries of one event, or naming one issue, start together): (the groups the
+    harness ran whole, counted by reason; the groups it did not, each with what is missing) from every phase's
+    `deliveries[].concurrent`, the kit emulator's group record. A group ran whole when each of its `size` members has a
+    delivery recorded in it and every partner it names started (an invocation id). An exactly-once row prices a duplicate
+    whether or not its group raced — the app wrote it — but a group the harness did not run whole is no evidence that the
+    app survives the race (r3_no_duplicate_rows here, t_no_double_count in score_forge2). The kit throws (a probe section
+    error) when a member cannot start, so an incomplete group is a recording gap. Observations that predate concurrent
+    delivery carry no record: (Counter(), [])."""
+    groups: Dict[str, Dict] = {}
+    phases = obs.get('phases') if isinstance(obs.get('phases'), dict) else {}
+    for phase in phases.values():
+        for d in (phase or {}).get('deliveries') or []:
+            rec = d.get('concurrent') if isinstance(d, dict) else None
+            if not isinstance(rec, dict):
+                continue
+            g = groups.setdefault(str(rec.get('group')), {'reason': rec.get('reason'), 'size': rec.get('size'),
+                                                          'ran': set(), 'gaps': []})
+            g['ran'].add(rec.get('index'))
+            g['gaps'] += [f'member {w.get("index")} never started' for w in rec.get('with') or []
+                          if isinstance(w, dict) and not w.get('invocationId')]
+    whole, broken = Counter(), []
+    for gid, g in groups.items():
+        gaps = list(dict.fromkeys(g['gaps']))
+        size = count(g['size'])
+        if size is None:
+            gaps.append('no size recorded')
+        elif len(g['ran']) < size:
+            gaps.append(f'{len(g["ran"])} of {size} members recorded')
+        if gaps:
+            broken.append(f'{gid} ({", ".join(gaps)})')
+        else:
+            whole[str(g['reason'])] += 1
+    return whole, broken
+
+
+def raced(whole: Counter) -> str:
+    """The detail clause naming the concurrent groups that raced, by reason ('' when none did)."""
+    n = sum(whole.values())
+    return f'; {n} concurrent group(s) raced ({", ".join(f"{k} {v}" for k, v in sorted(whole.items()))})' if n else ''
 
 
 def key(r: Dict) -> Tuple[str, str]:
@@ -525,11 +571,15 @@ def _(ev: Ev) -> Dict:
             dups[cp] = twice
     if not seen:
         return vacuous('no scope-ledger row was observed')
+    whole, broken = concurrent_groups(ev.obs)
     if dups:
         cp = next(iter(dups))
-        return g(0.0, f'duplicate (changeId, sprintId) rows at {sample(dups)}; {cp}: {sample(dups[cp])}',
+        return g(0.0, f'duplicate (changeId, sprintId) rows at {sample(dups)}; {cp}: {sample(dups[cp])}{raced(whole)}',
                  'duplicate side effect: duplicate ledger rows')
-    return g(1.0, f'every (changeId, sprintId) appears once at each of {len(by)} checkpoints')
+    if broken:
+        return unavail(f'no duplicate row, but {len(broken)} concurrent group(s) were not run whole ({sample(broken, 2)}): '
+                       'a race the harness never ran is no evidence the app survives it')
+    return g(1.0, f'every (changeId, sprintId) appears once at each of {len(by)} checkpoints{raced(whole)}')
 
 
 # ── R4 a world that changes mid-run ──────────────────────────────────────────────────────────
@@ -1369,6 +1419,29 @@ def perfect_observations(o: fo.Oracle) -> Dict:
     }
 
 
+SELFTEST_GROUPS = ('whole', 'unstarted', 'unrecorded', 'no size')
+
+
+def selftest_groups(*shapes: str) -> Callable[[Dict], None]:
+    """Injects one concurrent pair per shape into the live phase's deliveries, recorded as the kit records them: 'whole'
+    (both members ran and are recorded), 'unstarted' (a member names a partner with no invocation id), 'unrecorded' (the
+    partner's delivery is missing), 'no size'."""
+    assert set(shapes) <= set(SELFTEST_GROUPS)
+
+    def inject(obs: Dict) -> None:
+        rows = []
+        for i, shape in enumerate(shapes):
+            invs = [f'inv-g{i}a', f'inv-g{i}b']
+            for j in ((0,) if shape == 'unrecorded' else (0, 1)):
+                started = not (shape == 'unstarted' and j == 0)
+                partner = {'index': 1 - j, 'eventId': f'evt#{i}', 'invocationId': invs[1 - j] if started else None}
+                rows.append({'eventId': f'evt#{i}', 'inv': invs[j], 'attempt': 0, 'result': 'ok', 'concurrent': {
+                    'group': f'c{i}', 'reason': 'same-event', 'schedule': 'reads-first',
+                    **({} if shape == 'no size' else {'size': 2}), 'index': j, 'with': [partner]}})
+        obs.setdefault('phases', {}).setdefault('live', {})['deliveries'] = rows
+    return inject
+
+
 def idle_observations(o: fo.Oracle) -> Dict:
     """The starter's surfaces with nothing done: every section present, nothing exercised."""
     obs = perfect_observations(o)
@@ -1414,6 +1487,14 @@ def _mutants(o: fo.Oracle) -> Dict[str, Tuple[Callable[[Dict], None], Dict[str, 
     def duplicate_row(obs):
         rows = obs['migration']['v2_by_checkpoint']['h3']
         rows.append(dict(rows[0]))
+
+    def raced_duplicate(obs):
+        selftest_groups('whole')(obs)
+        duplicate_row(obs)
+
+    def broken_group_duplicate(obs):
+        selftest_groups('unrecorded')(obs)
+        duplicate_row(obs)
 
     def purge_closed_sprint(obs):
         rows = obs['migration']['v2_by_checkpoint']['final']
@@ -1496,6 +1577,15 @@ def _mutants(o: fo.Oracle) -> Dict[str, Tuple[Callable[[Dict], None], Dict[str, 
         'R2 hot hour': (hot_hour, {'r2_background_share': round(5 / 6, 4)}, ()),
         'R2 retry inside Retry-After': (retry_inside_window, {'r2_rate_limit_reaction': round(2 / 3, 4)}, ()),
         'R3 duplicate row': (duplicate_row, {'r3_no_duplicate_rows': 0.0}, ('r3_no_duplicate_rows',)),
+        # Concurrent delivery: a duplicate is the app's whether or not its group raced; raced groups with every row once
+        # pass; a group the harness did not run whole buys no pass (unavailable, asserted in selftest()), fires nothing.
+        'R3 raced pairs, every row once': (selftest_groups('whole', 'whole'), {}, ()),
+        'R3 a raced pair writes a duplicate row': (raced_duplicate, {'r3_no_duplicate_rows': 0.0},
+                                                   ('r3_no_duplicate_rows',)),
+        'R3 a pair the harness did not run whole': (selftest_groups('whole', 'unrecorded'), {'r3_no_duplicate_rows': 0.0},
+                                                    ()),
+        'R3 a pair not run whole beside a duplicate row': (broken_group_duplicate, {'r3_no_duplicate_rows': 0.0},
+                                                           ('r3_no_duplicate_rows',)),
         # A purged ledger also loses the live and backfilled rows those rows grade at the end (priced in each).
         'R4 closed sprint purged': (purge_closed_sprint, {'r4_sprint_close_final': 0.0, 'r1_events_during_migration': None,
                                                           'r2_backfill_complete': None}, ()),
@@ -1590,6 +1680,20 @@ def selftest() -> List[str]:
                 r = {x['check']: x for x in evaluate(obs, nested)}['r4_permission_revoked']
                 if r['score'] != want or critical_fired(r) != (want == 0.0):
                     failures.append(f'leak on a {label}: {r["score"]} fired={critical_fired(r)} — {r["detail"]}')
+            # concurrent delivery: the no-duplicate pass of a run whose harness did not run a group whole is unavailable —
+            # neither 1.0 nor a fired critical; raced groups pass and say so
+            for label, shapes, gap in (('raced pairs', ('whole', 'whole'), None),
+                                       ('a pair whose partner never started', ('whole', 'unstarted'), 'member 1 never started'),
+                                       ("a pair missing its partner's delivery", ('whole', 'unrecorded'), '1 of 2 members recorded'),
+                                       ('a pair recorded without its size', ('whole', 'no size'), 'no size recorded')):
+                obs = perfect_observations(o)
+                selftest_groups(*shapes)(obs)
+                r = {x['check']: x for x in evaluate(obs, o)}['r3_no_duplicate_rows']
+                ok = (r['score'] == 1.0 and '2 concurrent group(s) raced (same-event 2)' in r['detail']) if gap is None \
+                    else (bool(r.get('unavailable')) and not critical_fired(r) and f'c1 ({gap})' in r['detail'])
+                if not ok:
+                    failures.append(f'r3_no_duplicate_rows on {label}: {r["score"]} unavailable={r.get("unavailable")} '
+                                    f'fired={critical_fired(r)} — {r["detail"]}')
             no_v2 = evaluate(perfect_observations(o), fo.Oracle(fo.synthetic_pack()))
             if not all(r.get('unavailable') for r in no_v2):
                 failures.append('a 1.0 pack must leave every v2 row unavailable')
