@@ -64,6 +64,16 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
 
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 15:40 SESSION LIMIT (429) KILLED THE FINAL-GATE AGENT at ~15:35; owner re-logged in 15:39 ("continue and retry").
+  MAP: its queue runner SURVIVED as a plain shell process (scratchpad/fgate/run_jobs.sh jobs1.txt -> score.sh, serial,
+  load-gated; log jobs1.txt.log): reference x5 on the final scorer ee4dd033d — g-0123 1.0000 and g-a0c4 1.0000 (forge-2.0,
+  every row 1.0 incl. both E rows, reliability 1.0; ~450 s each), g-c4cd running, g-5eed and g-fedc queued (~15:57).
+  wt-final clean at ee4dd033d. Its helpers: fgate/{ratios.py, rows.py, judge.py, rescore_kept.py, light_suites.sh},
+  rsynced sources fgate/src-sol, src-sonnet. STILL TO RUN after jobs1: calibration check (ratios vs tops 2.58/2.0),
+  --reference multi-seed, starter, Sol + Sonnet re-probed on their own seeds, alt app, 10 mutants + judge, rsync to
+  /Volumes/AI-workhorse/runs/forge2-final-gate/. RESUME: SendMessage the same agent id (context intact); if that fails,
+  a fresh bench-scorer agent with this map. The copy-review workflow wf_8e4008f2-e57 had its draft done and three
+  lens agents in flight at the kill — resume with Workflow({scriptPath, resumeFromRunId}).
 - 15:3x FAIRNESS FIXES LANDED on forge2/final: 8c87d4047 R9 ignores §9's CONDITIONAL_CHECK_FAILED (probe records kvsCode),
   27692e551 r_pagination excuses a hand-off finished by the same event's redelivery (refuter's mutants still graded),
   71f5613c3 oracle field-switch allowance (observed wall + delivery times), 2ad6f0913 r7 carry after an in-wall mark,
