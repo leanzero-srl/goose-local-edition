@@ -110,6 +110,16 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
   calibration, sb7.x/forge manifests to refreeze after P11's shared bench edits.
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 22:35 FORGE 2.0 IS THE CURRENT FORGE BENCHMARK ON leanzero.net: `register-forge2 flip --promote-run brun-c084f7ac-… --live`
+  (33 of 33 checks: catalog + board + all 31 forge-1.0 run pages agree; live catalog forge-2.0 familyCurrent true,
+  forge-1.0 frozen and not current). THE FORGE 1.0 NOTE (the refuter's corrected 989-char text) is live on 31 of 31
+  forge-1.0 run pages. Catalog proxy restarted WITHOUT FORGE_CURRENT (the site itself names forge-2.0 now). RELEASE
+  NOTES went through an independent refuter BEFORE publishing: FIX-THEN-PUBLISH, five corrections applied (c3ed220d0:
+  seven tests judged unfair from six causes — five fixed, the sixth (closed-sprint numbers under the quota) kept with
+  its reason; worst-of-three vs the excellence average; pictures only of surfaces that rendered; the exact re-pinned
+  files; the independent app's 0.7467 stated) and the order changed to FLIP FIRST (the notes say the Forge family runs
+  2.0, true only after the flip). GitHub release v3.0.109 uploading (target 16501c639, draft until the four assets are
+  up; log ~/goose-builds/loop-state/gh-release-3.0.109.log). Sol at 34/300 in the app.
 - 22:15 FIRST FORGE 2.0 RESULT PUBLISHED FROM THE APP: anthropic/claude-sonnet-5.5 = 0.7698 (brun-c084f7ac-818b-4040-9a17-
   93b448577db4; in-app scoring on 3.0.109 at load ~2-5; 52 of 300 calls, $4.62, finished itself in ~54 min; tests earned
   0.9635 x critical 1.0 x reliability 0.7990; groups T t_reestimate_followed .8333, R r_heal_dropped .75, B
