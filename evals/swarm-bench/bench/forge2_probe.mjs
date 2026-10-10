@@ -867,6 +867,11 @@ async function main() {
       .map((v) => ({ changeId: v?.changeId ?? null, sprintId: v?.sprintId ?? null, at: v?.at ?? null }));
   }, ['migration', 'field']);
 
+  // Contract §3: a query may miss writes made in the last QUERY_LAG_MS virtual ms. Rovo and the surfaces read what the
+  // heal and the rerun wrote last, so the clock first moves past that window: no answer is graded on a write younger
+  // than the staleness the contract states.
+  if (obs.concurrency.query_lag_ms) await emu.advance(obs.concurrency.query_lag_ms);
+
   await section('rovo', async () => {
     const action = modules('action').find((a) => a.key === 'get-sprint-scope');
     if (!action) return;
