@@ -1,14 +1,13 @@
 # Scope Ledger 2 — Forge app contract (forge-2.0)
 
-Scope Ledger v1 is installed on a large Jira Cloud site and has been in use for days: agile coaches see on a
-dashboard, from the sprint itself and from Rovo what entered a sprint after it started, who added it and how many
-story points it carried. This workspace is v1's source (`STARTER.md`). Ship v2: everything v1 does (§1–§8, which
-keep their rules unless a later section changes them) plus the guarantees of §9–§18.
+Scope Ledger v1, in use for days on a large Jira Cloud site, shows agile coaches (on a dashboard, in the sprint and
+through Rovo) what entered a sprint after it started, who added it and its story points. This workspace is v1's source
+(`STARTER.md`). Ship v2: everything v1 does (§1–§8, which keep their rules unless a later section changes them) plus
+the guarantees of §9–§18.
 
-The harness upgrades the installation from v1 to your v2 over v1's stored data — that instant is virtual hour 0 —
-and runs it for 6 virtual hours on a seeded site: product events, queue deliveries, scheduled runs, resolver calls
-from every surface as different people, the Rovo action, CI deployment events, admin actions, and changes to sprints,
-boards, issues and permissions. It grades the app by running it. Nothing is deployed.
+The harness upgrades the installation from v1 to your v2 over v1's stored data (virtual hour 0), runs it for 6
+virtual hours on a seeded site (events, queues, scheduled runs, every surface as different people, Rovo, CI, admin
+actions, a changing world) and grades it by running it. Nothing is deployed.
 
 **Scale** (scoring sites; the dev site has the same shape and another seed): 3 projects; 4 scrum boards, 2 estimating
 with one field and 2 with another (field ids vary per seed); 6 active sprints, 2 future, 6 closed; about 1,000
@@ -41,7 +40,7 @@ totals and are the same for everyone. Changes of deleted issues are listed to no
 
 | module | requirement |
 |---|---|
-| `trigger` | on `avi:jira:updated:issue`; hands relevant work to a queue and returns |
+| `trigger` | on `avi:jira:updated:issue`; hands relevant work to a queue and returns (no trigger writes storage) |
 | `consumer` | Forge async events queue consumer; performs the ledger writes |
 | `scheduledTrigger` | `interval: hour`; backfill and reconciliation (§3) |
 | `dashboards:widget` | Custom UI view + `edit` (§4); the legacy `jira:dashboardGadget` earns nothing |
@@ -57,18 +56,18 @@ totals and are the same for everyone. Changes of deleted issues are listed to no
 
 Resolvers use `@forge/resolver`. Every resolver returns a value and never throws: a failure (a Jira error, storage,
 Forge LLM, a refused permission) returns a value describing it, e.g. `{ "error": "…" }`, and the surface shows it.
-Storage is Forge KVS: the v2 ledger lives in the custom entity `scope-ledger` (§9), indexed by sprint (partition) and
-change time (range), and is read back through that index. Request only the scopes your calls need: per call, the
-OAuth2 scopes the shipped OpenAPI lists for it (the classic scope where one exists, else the whole granular set). The
-linter does not see every call. The widget and the sprint action are Custom UI; the admin page is UI Kit; a UI Kit
-widget or sprint action earns nothing.
+Storage is Forge KVS: the v2 ledger lives in the custom entity `scope-ledger` (§9), read back through its index.
+Request only the scopes your calls need: per call, the OAuth2 scopes the shipped OpenAPI lists for it (the classic
+scope where one exists, else the whole granular set). The linter does not see every call. A UI Kit widget or sprint
+action earns nothing.
 
 ## 3. Backend behaviour
 
-- The site existed long before v2. v1's ledger holds the changes of each active sprint's first 2 days (§9). After
+- v1's ledger holds the changes of each active sprint's first 2 days (§9). After
   the upgrade the harness runs your scheduled triggers once, at virtual hour 0, before it delivers any update, then
   once per virtual hour. The first run starts the backfill of every change since each active sprint started that
-  the ledger lacks, including changes of issues that have since left every sprint.
+  the ledger lacks, including changes of issues that have since left every sprint; by the first virtual hour mark
+  `scope-ledger` holds them all (v1's own rows: by §9's 2-hour mark).
 - Issue updates keep the ledger current: sprint changes add ledger rows; estimate changes move the numbers. Updates
   that touch neither do no Jira or queue work (storage reads are fine).
 - Product events can arrive more than once and out of order, and some never arrive. The ledger holds **exactly one
@@ -87,8 +86,8 @@ widget edit API (`@forge/dashboards-bridge`). The dashboard's own Save calls you
 `updateConfig` value (the stored config if none was sent) and stores what it returns (`null` stores nothing); with no
 handler registered it stores the last `updateConfig` value. Reopening edit shows the stored board selected.
 
-**View** (`resource`), root `[data-testid="scope-widget"]`. It takes its board from the widget configuration in its
-context, so two widgets on one dashboard can show different boards:
+**View** (`resource`), root `[data-testid="scope-widget"]`. Its board comes from the widget configuration in its
+context (two widgets on one dashboard can show different boards):
 - No stored board: `[data-testid="needs-config"]`, nothing else.
 - Otherwise one `[data-testid="sprint"][data-sprint-id="<id>"]` per active sprint of that board, ordered by
   `startDate` (ties by sprint id), each holding `[data-metric="committed"]`, `[data-metric="added"]`,
@@ -101,15 +100,16 @@ context, so two widgets on one dashboard can show different boards:
 - Live: after ledger rows are written, an open widget shows the new numbers without a reload, through Forge Realtime
   (`@forge/realtime` in the backend, the bridge's `realtime` in the widget) — no polling. A `publishGlobal` reaches the
   `subscribeGlobal` subscriptions on its channel; a `publish` reaches `subscribe` subscriptions of the same module
-  context and is accepted only from functions invoked from the frontend (resolvers), not from async events,
-  scheduled runs or web triggers. Channel names are yours to choose; realtime tokens are optional (with tokens, an
-  event reaches only subscriptions whose token carries the same claims). Global channels reach every user of the
-  app, so payloads carry sprint ids only.
+  context and is accepted only from resolvers (never from triggers, async events, scheduled runs or web triggers).
+  Channel names are yours; realtime tokens are optional, but an event reaches a subscription only when neither has a
+  token or both have tokens with the same claims. Global channels reach every user of the app, so payloads carry
+  sprint ids only.
 
 ## 5. Sprint action (modal)
 
-The sprint comes from the module context; the harness opens active and future sprints. A sprint that has not started
-shows `[data-testid="not-started"]` (and optionally close) and nothing else. Otherwise:
+The sprint comes from the module context; the harness opens every sprint active at the upgrade (one closed since
+shows its ledger as at its close, §12) and a future one. A sprint that has not started shows
+`[data-testid="not-started"]` (and optionally close) and nothing else. Otherwise:
 
 - Team totals as in §4 (`[data-metric]`, same four), and `[data-testid="hidden-count"]` = number of this sprint's
   changes hidden from the viewer.
@@ -132,8 +132,9 @@ shows `[data-testid="not-started"]` (and optionally close) and nothing else. Oth
   arguments `{ "summary": string, "changeIds": string[] }` (force it with `tool_choice`); send it only what the viewer
   may see. `[data-testid="explanation"]` shows the summary only if it holds no digits (otherwise your own sentence
   with the ledger's numbers), plus one `[data-change-id]` element per returned id that is a visible change of this
-  sprint (others dropped). A refusal (no tool call), malformed arguments or an LLM error shows an error flag and
-  leaves the modal working. §16 adds to these rules.
+  sprint (others dropped). Each click sends exactly one Forge LLM request unless it meets a 429 (§16): a refusal (no
+  tool call), malformed arguments or another LLM error is not retried; it shows an error flag and leaves the modal
+  working.
 - `[data-testid="close"]` closes the modal.
 
 ## 6. Rovo
@@ -149,14 +150,14 @@ returns a JSON object:
 ```
 
 `creepPercent` is rounded as creep (§1) and `null` when committed is 0; `changeId` is the changelog id, `points` the
-change's points; `changes` are the visible ones in table order (§5); `at` is compared as an instant. An unknown or
-missing `sprintId` returns `{ "error": "<message>" }` and does not throw.
+change's points; `changes` are the visible ones in table order (§5); `at` is compared as an instant. A sprint closed
+since the upgrade answers as at its close (§12). An unknown or missing `sprintId` returns
+`{ "error": "<message>" }` and does not throw.
 
-`skills/sprint-scope-analyst/SKILL.md`: YAML frontmatter `name` equal to the directory name (1–64 characters:
-lowercase letters, digits, single hyphens, no leading or trailing hyphen), `description` (50–1,024 characters: what it
-does and when to use it), `allowed-tools` (space separated, including `get-sprint-scope`); then at most 500 lines of
-Markdown telling the agent when and how to call `get-sprint-scope`, what `sprintId` is, how to read the result, and
-what to do with an error.
+`skills/sprint-scope-analyst/SKILL.md`: YAML frontmatter `name` = the directory name (1–64 characters: lowercase
+letters, digits, single hyphens, none leading or trailing), `description` (50–1,024 characters: what it does, when to
+use it), `allowed-tools` (space separated, with `get-sprint-scope`); then at most 500 lines of Markdown on when and how
+to call `get-sprint-scope`, what `sprintId` is, how to read the result and what to do with an error.
 
 ## 7. Custom UI
 
@@ -167,39 +168,36 @@ browser console stays free of errors. Surfaces render inside the default Forge C
 inline `<script>` in `index.html` only as static content (the platform hashes it), no inline event handlers or `eval`,
 no `<style>` elements or `style` attributes in markup, no external scripts, styles or fonts, assets referenced
 relatively. Declaring `unsafe-inline` in `permissions.content.styles` is allowed; script relaxations count as unneeded
-permissions. §17 budgets how the widget and the sprint action boot.
+permissions.
 
 ## 8. What the harness does differently from production
 
-- Custom UI resources are served exactly as committed, uncompressed: build them yourself into
-  `static/<name>/build/`. A UI Kit resource is bundled by the harness from its source file the way `forge deploy`
-  does (the classic JSX transform: `import React` in every `.jsx` file). Backend source is bundled from `src/` the
-  way `forge deploy` does.
-- Every function invocation runs in a fresh Node process of the Forge runtime, on the virtual clock of §11.
+- Custom UI resources are served exactly as committed, uncompressed (you build `static/<name>/build/`); a UI Kit
+  resource's source and `src/` are bundled the way `forge deploy` does (the classic JSX transform: `import React` in
+  every `.jsx` file).
+- Every invocation runs in a fresh Node process of the Forge runtime, on §11's virtual clock.
 - Trigger `filter.expression` is not evaluated: the handler receives every issue-updated event.
 - A consumer that throws or is killed is redelivered after 1, 2, 4 and 8 virtual minutes, then every 15, for 24
   virtual hours; a retry request (`InvocationError`) is redelivered after its `retryAfter`.
-- Jira requests made from Custom UI (`requestJira`) cost no points (as on Forge); they still count in their
-  endpoint's burst bucket (§10).
-- The scoring site uses a different seed than the dev site: ids, keys, custom field ids, users, groups, sprint names
-  and dates all differ.
-- The widget runs at the dashboard layout the harness chooses; the sprint action in a modal; the admin page in the
-  harness's UI Kit host, which renders your `@forge/react` tree (no pixels are graded).
+- A Custom UI page's own `requestJira` costs no points (as on Forge) but counts in its endpoint's burst bucket
+  (§10).
+- The scoring site's seed differs from the dev site's: ids, keys, custom field ids, users, groups, sprint names and
+  dates.
+- The widget runs at a layout the harness chooses; the admin page in its UI Kit host (no pixels are graded).
 
 ## 9. The v2 ledger and the live migration
 
-v1 keeps its ledger in entity `scope-change` (see `manifest.yml`): one row per change, keyed `<changeId>:<sprintId>`,
-holding `sprintId`, `changeId`, `at` (the change time, epoch milliseconds), `created` (the same instant, ISO-8601),
-`issueId`, `issueKey`, `kind`, `authorId`, `authorName` and `source`. On the sites it holds the changes of each active
-sprint's first 2 days.
+v1 keeps its ledger in entity `scope-change` (`manifest.yml`; row layout in `STARTER.md`): on the sites, the changes
+of each active sprint's first 2 days.
 
 v2 keeps its ledger in a NEW entity `scope-ledger`:
 - Attributes (at least): `sprintId` string, `at` float, `changeId` string, `kind` string, `issueId` string,
   `issueKey` string, `estimate` float, `boardId` string, `estimateField` string, `deleted` boolean, `deployedEnvs`
   string; index `by-sprint`, partition `[sprintId]`, range `[at]`. A named index takes exactly ONE range attribute:
-  Forge refuses more at lint and at deploy. Add attributes and indexes as you need; row keys are yours to choose.
-- Per row: `at` the change time in epoch milliseconds; `kind` `added` or `removed`; `estimate` the issue's points
-  when the row is written, in the estimation field the sprint's board used at the change (no value = 0);
+  Forge refuses more at lint and at deploy. Add attributes and indexes as needed; row keys are yours.
+- Per row: `at` the change time in epoch milliseconds; `kind` `added` or `removed`; the change's author (account id
+  or display name) and `source` (§3); `estimate` the issue's points when the row is written, in the estimation field
+  the sprint's board used at the change (no value = 0);
   `estimateField` that field's id; `boardId` that board's id; `deleted` true once the issue is deleted (§12);
   `deployedEnvs` the environments the issue was deployed to (§14), comma-separated, each once (empty when none).
   Once written, a row's `estimate`, `estimateField` and `boardId` never change.
@@ -208,13 +206,13 @@ Migration guarantees (graded):
 - Every `scope-change` row appears in `scope-ledger` exactly once: the same change (changelog id + sprint) with its
   original `at`. Its kind, issue, author and `source` stay as v1 recorded them (§3, §5).
 - `scope-change` stays declared exactly as in v1's manifest, and its rows are never changed or deleted.
-- It runs while events keep flowing: a change v1 recorded that arrives again through events or reconciliation is still
-  one row.
+- It runs while events keep flowing: a change v1 recorded that arrives again (event or reconcile) is still one row.
 - It survives being cut off by time limits: a killed or retried invocation resumes where it stopped and leaves no
   duplicate.
 - It is complete within the first 2 virtual hours after the upgrade, and surfaces show correct numbers while it runs.
-- The admin panel's `Migration` text reads `Migrated <n> of <total> v1 rows` — `<total>` the number of v1 rows, `<n>`
-  how many of them are in `scope-ledger` — and also contains `complete` once all are.
+- The admin panel's `Migration` text reads `Migrated <n> of <total> v1 rows` — `<total>` the rows v1 left in
+  `scope-change` at the upgrade, `<n>` how many of them are in `scope-ledger` — and also contains `complete` once all
+  are.
 
 Storage answers with Forge's real errors: `FAIL_IF_EXISTS` on an existing key → 409 `KEY_CONFLICT`; a failed
 transaction condition → 400 `CONDITIONAL_CHECK_FAILED`; a transaction of more than 25 operations → 422
@@ -222,11 +220,11 @@ transaction condition → 400 `CONDITIONAL_CHECK_FAILED`; a transaction of more 
 
 ## 10. Points, bursts and dosing
 
-`RATE-MODEL.json` is the rate model both sites enforce on every Jira request; its numbers are binding:
-- **Quota:** 2,400 points per installation per virtual hour, reset at the top of each virtual hour, nothing carried
-  over; a hard wall: once spent, every request is answered 429 until the reset. It is the app's fair share of its
-  65,000-point Tier 1 pool, shared by every tenant of the app: in a busy hour the others can bring the wall forward,
-  before your own 2,400 points are spent.
+`RATE-MODEL.json` is the rate model both sites enforce on every Jira request (binding):
+- **Quota:** 2,400 points per installation per virtual hour, a clock hour of the virtual clock (reset at minute :00,
+  not at the upgrade's minute), nothing carried over; a hard wall: once spent, every request the quota charges (a
+  page's own `requestJira` never is, §8) is answered 429 until the reset. It is the app's fair share of its
+  65,000-point Tier 1 pool, shared by every tenant of the app: in a busy hour the others can bring the wall forward.
 - **Background** = product event triggers, async event consumers, scheduled triggers, the web trigger.
   **Person-facing** = resolvers invoked from a UI surface (Custom UI or UI Kit) and the Rovo action. Every Jira
   request counts, `asApp` and `asUser` alike.
@@ -242,7 +240,7 @@ transaction condition → 400 `CONDITIONAL_CHECK_FAILED`; a transaction of more 
   `jira-quota-tenant-based` (Retry-After = seconds to the next virtual hour), `jira-burst-based`,
   `jira-per-issue-on-write`.
 
-Guarantees (graded; the site's own accounting per virtual hour and per invocation is what is measured):
+Guarantees (graded on the site's own accounting):
 - Background work never takes more than `Background share (%)` of any virtual hour's quota (default 70 % = 1,680
   points). Until fewer than 480 points remain no response shows the spend, so the app keeps its own count.
 - No person-facing request is ever answered with a quota 429. The harness's own person-facing traffic in any hour stays
@@ -250,8 +248,9 @@ Guarantees (graded; the site's own accounting per virtual hour and per invocatio
 - The backfill and every reconciliation finish correctly inside that budget (§3).
 - Retry-After is honoured, and the reason decides the reaction: `jira-quota-tenant-based` → no background request at
   all until the next virtual hour; `jira-burst-based` → slow that endpoint only (nothing to it before Retry-After);
-  `jira-per-issue-on-write` → delay writes to that issue only. Each request sent before its Retry-After passed counts
-  against you.
+  `jira-per-issue-on-write` → delay writes to that issue only (on a bulk field-value request it names no issue:
+  resend the request after its Retry-After). Each request sent before its Retry-After passed counts against you,
+  whichever invocation sends it.
 
 ## 11. Virtual time and invocation limits
 
@@ -264,6 +263,7 @@ function makes advances its invocation's clock: a GET 120 ms, a search page 300 
 | invocation | limit |
 |---|---|
 | UI resolver (Custom UI or UI Kit) | 25 s |
+| trigger (product or lifecycle event) | 25 s |
 | async event consumer, scheduled trigger | 55 s by default, up to 900 s with `timeoutSeconds` |
 | web trigger, Rovo action | 55 s |
 
@@ -271,8 +271,11 @@ Exceeding the limit kills the invocation: it returns no result, and what it alre
 that returns an `InvocationError` (`retryAfter` ≤ 900 s) or is killed is redelivered, at least once and in any order.
 Scheduled triggers run once per virtual hour and are not retried: a failed or killed run waits for the next. Product
 event triggers are retried up to 4 times (after 1, 2, 4 and 8 virtual minutes, or the `retryAfter` they asked for).
+A push to a consumer with `timeoutSeconds` above 55 carries at most 100 KB (413), and continuation chains stop at
+depth 1,000 (405).
 
 Guarantees (graded):
+- No invocation is killed: each function watches its time left and hands the rest to the next invocation in time.
 - Work that cannot finish in one invocation continues in the next (a queue continuation, the next scheduled run).
 - A Retry-After longer than the time left is never waited out inside the function: a consumer returns an
   `InvocationError` with `retryAfter`; a scheduled run stops and resumes from a later run.
@@ -280,9 +283,8 @@ Guarantees (graded):
 
 ## 12. A world that changes
 
-While v2 runs, sprints close, issues move to another board's sprint, a board's estimation field changes, issues are
-deleted, and people lose browse permission on a project. The dev site exercises every one of these at least once; the
-scoring schedule is private. Guarantees (graded):
+While v2 runs, the world changes as below. The dev site exercises every one of these at least once; the scoring
+schedule is private. Guarantees (graded):
 - **A sprint closes:** its ledger is final (no change after the close is recorded for it; its numbers and points
   stay as at the close) and it leaves the widget, which shows active sprints only.
 - **An issue moves to another board's sprint:** recorded as `removed` from the old sprint and `added` to the new one;
@@ -298,25 +300,29 @@ entry), a board's field switch and a permission change send none.
 
 ## 13. The admin panel (UI Kit)
 
-A `jira:adminPage` module with `render: native`, built with `@forge/react`. The harness finds its controls by these
-visible labels, exactly:
+A `jira:adminPage` module (`render: native`, `@forge/react`). The harness finds its controls by these visible
+labels, exactly:
 
 | label | control |
 |---|---|
 | `Background share (%)` | number 10–90, default 70 (§10) |
 | `AI explanations enabled` | toggle, default on (§16) |
 | `Daily AI token budget` | number, default 200000 (§16) |
-| `Comment group` | text: a Jira group name; empty = everyone who can browse the issue may post the summary (§5) |
+| `Comment group` | text: a Jira group name; empty = whoever can browse the issue may post the summary (§5) |
 | `Save settings` | button: saves the four settings above |
 | `Rotate CI secret` | button: makes a new CI secret (§14) and shows it once |
 | `Migration` | read-only text (§9) |
 | `Recent admin changes` | table, columns `when`, `who`, `what`: the last 20 admin changes, newest first |
 
+A label binds through a `Label` whose `labelFor` is the control's `id`, the control's own `label`, `title` or
+`caption`, or a button's text, never through a `Heading` or `Text` beside it.
+
 - `Save settings` stores the four values together. A value outside its range (share not a whole number 10–90, budget
   not a whole number ≥ 0) is refused: nothing is saved and the panel shows an error. A Save that changes nothing adds
   no row.
 - After `Rotate CI secret` the panel shows `CI secret: <secret>` once; from then on (later renders, reloads, every
-  resolver answer) only `CI secret: ••••<last4>`. A secret is at least 32 characters, with no spaces.
+  resolver answer) only `CI secret: ••••<last4>`. A secret is at least 32 ASCII letters, digits or `-_+/=`
+  (hex or base64 will do).
 - `Recent admin changes`: one row per Save that changed something and per rotation; `when` an ISO-8601 instant, `who`
   the acting person (account id or display name), `what` names each changed setting by its label (a rotation reads
   `Rotate CI secret`) and never holds a secret.
@@ -367,18 +373,18 @@ Value per issue (graded), from the facts of §1:
 - any other issue: empty (no value), including the issues of a sprint once it closes.
 
 Fresh within the same virtual hour as the change: the harness compares every issue's value with the site's state at
-the end of each scored hour.
+the end of each scored hour, except an issue whose change that hour sent no event (a lost event, a sprint close, a
+field switch) or met a spent quota (compared an hour later) and a deleted issue (never compared).
 
 ## 16. Forge LLM, properly
 
 §5's explanation rules stay: numbers only from your ledger, nothing hidden from the viewer in any prompt,
 `report_scope` forced. In addition (graded):
-- **Model output is untrusted.** Issue text can carry instructions, so a returned tool call may be manipulated. Before
-  acting on any tool call, validate it against the viewer's sprint scope: only `report_scope` is accepted, and only
-  its `changeIds` that are visible changes of this sprint for this viewer are shown. No tool call makes the app do
-  anything but show that validated explanation.
-- **429:** Forge LLM answers 429 (body `{"code":"TOO_MANY_REQUESTS"}`) without a Retry-After. Back off between attempts (never retry at once), at most 3
-  attempts per virtual minute, then show the error flag.
+- **Model output is untrusted** (issue text can carry instructions): validate every tool call against the viewer's
+  sprint scope. Only `report_scope` is accepted, only its `changeIds` that are visible changes of this sprint for
+  this viewer are shown, and no tool call makes the app do anything else.
+- **429:** Forge LLM answers 429 (body `{"code":"TOO_MANY_REQUESTS"}`) without a Retry-After. Back off between
+  attempts (never retry at once), at most 3 attempts per virtual minute, then show the error flag.
 - **Incomplete answers:** a response or stream whose final choice has no `finish_reason` is a failure: show the error
   flag, never its content.
 - **Cache:** an identical explanation request (same sprint, same content sent to the model for what this viewer may
@@ -393,14 +399,13 @@ the end of each scored hour.
 
 Counted, never timed (graded):
 - The widget view and the sprint action each make at most 1 `invoke` before their first data paint, load at most 150
-  KB (153,600 bytes) of JavaScript and CSS before it, and never request another origin. First data paint: the first moment the
-  surface shows its `[data-metric]` numbers, or `[data-testid="needs-config"]` (widget) or
+  KB (153,600 bytes) of JavaScript and CSS before it, and never request another origin. First data paint: the first
+  moment the surface shows its `[data-metric]` numbers, or `[data-testid="needs-config"]` (widget) or
   `[data-testid="not-started"]` (sprint action). Bytes: your own `.js` and `.css` files as served, uncompressed; the
   platform's injected scripts and the Atlassian design-token stylesheets do not count.
 - The admin page makes at most 1 `invoke` before its first render that shows the stored settings.
 
 ## 18. v1 keeps working
 
-Everything in §1–§8 holds throughout the 6 scored hours: during the migration, under the quota, through the world
-changes. The harness reads every surface at several points of the scored window, from the end of the first scheduled
-run on, and compares it with the site's state at that point.
+Everything in §1–§8 holds throughout the 6 scored hours. The harness reads every surface at several points of the
+scored window, from the first virtual hour mark on, and compares it with the site's state at that point.

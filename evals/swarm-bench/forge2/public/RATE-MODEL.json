@@ -3,9 +3,9 @@
   "about": "The benchmark's own Jira rate world. Atlassian publishes no per-endpoint costs; the dev and scoring sites charge exactly this. Times are virtual (FORGE2-CONTRACT.md §11).",
   "quota": {
     "pointsPerHour": 2400,
-    "scope": "per installation, per virtual hour",
-    "reset": "at the top of each virtual hour; nothing carries over",
-    "wall": "hard: once the hour's points are spent, every request is answered 429 until the reset",
+    "scope": "per installation, per virtual hour: a clock hour of the virtual clock (minute :00 to :00), not counted from the upgrade or from a scheduled run",
+    "reset": "at the top of each virtual hour (minute :00); nothing carries over",
+    "wall": "hard: once the hour's points are spent, every request the quota charges is answered 429 until the reset (a Custom UI page's own requestJira is never charged)",
     "why": "the app's fair share of its 65,000-point Tier 1 hourly pool, which every tenant of the app shares (about 27 tenants)"
   },
   "background": {

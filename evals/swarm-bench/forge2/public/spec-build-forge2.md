@@ -37,20 +37,23 @@ its own seeded site; nothing else is scored:
 
 Tests earn the score. v1's behaviours (§1–§8) are a quarter of it; the v2 requirements share the rest: migration
 0.12, dosing 0.13, time limits 0.08, the changing world 0.10, the admin panel 0.10, the CI web trigger 0.08, the custom
-field 0.05, Forge LLM 0.04, the boot budget 0.05. Lint warnings cost points but never cap.
+field 0.05, Forge LLM 0.04, the boot budget 0.05. Inside v1's quarter, a small excellence share rewards few Jira
+requests (in the first scheduled run, and in triggers and consumers per relevant change) and surfaces that paint
+after one round trip. Lint warnings cost points but never cap.
 
 Conditions also cap it:
 
 - Lint errors, or manifest functions that do not bundle and load: maximum 0.499.
 - None of the v2 surfaces exists (no `jira:adminPage`, no `webtrigger` and no `scope-ledger` entity): maximum 0.30.
 
-Each of these defects, when observed, multiplies the score by 0.6, once per root cause:
+Each of these defects, when observed, multiplies the score by 0.6, at most once per item of this list:
 
 - v1 rows lost or corrupted by the migration;
 - a web-trigger write without a valid signature;
 - an admin action by a non-admin that succeeded, or the CI secret disclosed;
 - a hidden issue's data shown to a person who cannot browse it;
-- a duplicate side effect: two or more comments for one click, or duplicate ledger rows.
+- a duplicate side effect: two or more comments for one click, or duplicate ledger rows, or a replayed CI event applied
+  twice.
 
 Time is virtual: nothing is graded on wall-clock time. The harness keeps screenshots of every Custom UI surface and the
 rendered tree of the admin page.
