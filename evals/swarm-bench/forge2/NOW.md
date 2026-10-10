@@ -64,6 +64,13 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
 
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 07:5x HAIKU 5.5 (lean version): QUIT ITSELF after 18 of 300 calls ($0.49) with stubs — its words: "The core v2 work is
+  still ahead, and I'm fairly deep into this session's budget" / "I can't finish all eight inside the remaining budget at
+  the detail this takes"; admin page built in Custom UI, not UI Kit. Not a harness fault: goose showed "context: 4,342 of
+  1,000,000 tokens used (0%)" and the prompt states the 300-call budget (same self-misjudgment as its 1.0 run). Its
+  scoring took 2.5 h+ (a stub app makes every UI section wait out its timeout over 6 virtual hours x 3 seeds) — HARNESS
+  TODO: bound scoring time for a non-functional app (abort a lane once its surface is proven absent).
+- HARNESS TODO: run_build's in-process forge2 scoring does not take the per-host score lock the CLI takes.
 - 05:0x SOL PROVISIONAL RESULT: 0.9618 (seeds 0.9607/0.9629/0.9657), no critical — NOT CHALLENGED (owner's acceptance
   test failed). v2 rows ~0.74 of 0.75: busiest background hour 339 of 1,680 points (optimum 262), boot ~40 KB of 150 KB,
   migration 86/86, all forged webhooks/admin attempts refused. Losses: UI details, Rovo action exactness, and the
