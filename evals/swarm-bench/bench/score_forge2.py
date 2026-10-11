@@ -258,6 +258,8 @@ class Ctx:
         self._row_cache: Dict = {}
         self._redelivered_late: Optional[set] = None
         self._scheduled_work: Optional[Tuple[List[float], Dict[str, float]]] = None
+        self._first_sources: Dict[tuple, Optional[str]] = {}
+        self._source_trace: Optional[tuple] = None
 
     def oracle_for(self, after_live: bool):
         return self.oracle_ui if after_live else self.oracle
@@ -389,6 +391,7 @@ class Tokens(set):
     the leaves stored under a sprint-named field: when a row has one, the sprint is matched THERE, so a stored
     estimate of 8 never reads as sprint 8."""
     sprint: set
+    source: Optional[str]
 
 
 def _walk(value, under_sprint: bool, out: Tokens, depth: int = 0) -> None:
@@ -411,6 +414,8 @@ def _walk(value, under_sprint: bool, out: Tokens, depth: int = 0) -> None:
 def _tokens(item: Dict) -> Tokens:
     out = Tokens()
     out.sprint = set()
+    value = item.get('value')
+    out.source = value.get('source') if isinstance(value, dict) and isinstance(value.get('source'), str) else None
     _walk(item.get('value'), False, out)
     out |= {t for t in re.split(r'[^A-Za-z0-9]+', str(item.get('key') or '')) if t}
     return out
@@ -434,9 +439,10 @@ def rows_for(rows: List[Tuple[set, Dict]], change: fo.Change) -> List[Tuple[set,
 
 
 def row_correct(tokens: set, change: fo.Change, sources: Iterable[str]) -> bool:
+    source_ok = tokens.source in tuple(sources) if isinstance(tokens, Tokens) else any(s in tokens for s in sources)
     return (change.kind in tokens and (change.issue_id in tokens or change.issue_key in tokens)
             and (change.by in tokens or (change.by_name and change.by_name in tokens))
-            and change.at in _instants(tokens) and any(s in tokens for s in sources))
+            and change.at in _instants(tokens) and source_ok)
 
 
 def observed_timing(c: Ctx) -> Tuple[Dict[str, List[datetime]], Optional[Tuple[datetime, datetime]]]:
@@ -465,13 +471,17 @@ def observed_timing(c: Ctx) -> Tuple[Dict[str, List[datetime]], Optional[Tuple[d
 
 def sources_for(c: Ctx, change: fo.Change) -> Tuple[str, ...]:
     """The paths a change's row may name, for EVERY row that judges a source (contract §3: a row keeps the path that
-    recorded it first): the oracle's, plus `reconcile` for a live change made under the shared pool's wall (rate.wall,
+    recorded it first): a proved native first path is a singleton. When that path is unproved, retain the oracle's
+    sources plus `reconcile` for a live change made under the shared pool's wall (rate.wall,
     contract §10) — background pauses there, so the next reconcile may record the change before its event's consumer
     runs. t_event_rows carried this alone (ebb949907); the same change then failed t_multi_sprint_parse and
     u_ledger_table (gate 2026-10-10, seed ca72f2358777d98c: 1089939, made 14:33:15 under the 14:30-15:00 wall, recorded
     by the deferred hourly run at 15:02:58, its own delivery handled at 15:03:33). So may a live change whose event
     work was redelivered only after the next scheduled run (_redelivered_after_next_run, 0a7849bf9), and one a
     scheduled run's work began on between the change and its event work's success (_scheduled_work_between)."""
+    first = _first_recorded_source(c, change)
+    if first is not None:
+        return (first,)
     if change.phase != 'live':
         return tuple(change.sources)
     wall = (c.obs.get('rate') or {}).get('wall') or {}
@@ -480,6 +490,251 @@ def sources_for(c: Ctx, change: fo.Change) -> Tuple[str, ...]:
     if walled or change.change_id in _redelivered_after_next_run(c) or _scheduled_work_between(c, change):
         return tuple(dict.fromkeys((*change.sources, 'reconcile')))
     return tuple(change.sources)
+
+
+def _source_time(call: Dict) -> Optional[float]:
+    value = call.get('t')
+    return value if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) else None
+
+
+def _ledger_mutations(call: Dict) -> List[Tuple[Dict, str]]:
+    """Native target operations, with observed success, failure or unknown per-item outcome.
+
+    KVS batch HTTP 200 is not item success. The current proxy omits its response, so those items
+    remain unknown. Failed transactions also remain unknown: older kit versions could apply a
+    prefix before refusing a later value. Neither may disappear when choosing the first write.
+    """
+    if call.get('service') != 'kvs' or call.get('method') != 'POST':
+        return []
+    op, raw, status = _kvs_op(call), call.get('body'), call.get('status')
+    body = raw if isinstance(raw, dict) else {}
+    entries = []
+    if op in ('entity/set', 'entity/delete'):
+        entries = [(body, 'delete' if op.endswith('delete') else 'set')]
+    elif op == 'transaction':
+        entries = [(item, verb) for verb in ('set', 'delete') for item in body.get(verb) or []
+                   if isinstance(item, dict)]
+    elif op in ('batch/set', 'batch/delete'):
+        entries = [(item, 'delete' if op.endswith('delete') else 'set') for item in
+                   (raw if isinstance(raw, list) else body.get('items') or []) if isinstance(item, dict)]
+    out = []
+    for item, verb in entries:
+        if item.get('entityName') != V2_SURFACE_ENTITY:
+            continue
+        outcome = 'unknown'
+        if op.startswith('batch/'):
+            response = call.get('response')
+            if status == 200 and isinstance(response, dict) and all(
+                    isinstance(response.get(key), list) for key in ('successfulKeys', 'failedKeys')):
+                identity = (item.get('entityName'), item.get('key'))
+                matches = lambda key: [x for x in response[key] if isinstance(x, dict)
+                                      and (x.get('entityName'), x.get('key')) == identity]
+                good, bad = matches('successfulKeys'), matches('failedKeys')
+                if len(good) == 1 and not bad:
+                    outcome = verb
+                elif len(bad) == 1 and not good:
+                    outcome = 'failed'
+        elif status == 204 or (status == 200 and op != 'transaction'):
+            outcome = verb
+        elif isinstance(status, int) and status >= 400 and op != 'transaction':
+            outcome = 'failed'
+        out.append((item, 'unknown-delete' if outcome == 'unknown' and verb == 'delete' else outcome))
+    return out
+
+
+def _source_trace(c: Ctx) -> tuple:
+    if c._source_trace is not None:
+        return c._source_trace
+    calls = c.all_calls()
+    mutations = [(call, item, outcome) for call in calls for item, outcome in _ledger_mutations(call)]
+    publications: Dict[str, List[Dict]] = {}
+    for call in calls:
+        body = call.get('body')
+        if (call.get('service') == 'queue' and call.get('provider') == 'app' and call.get('status') == 201
+                and call.get('method') == 'POST' and re.match(r'^/webhook/queue/publish/', str(call.get('path')))
+                and isinstance(body, dict) and isinstance(body.get('jobId'), str)):
+            publications.setdefault(body['jobId'], []).append(call)
+    deliveries: Dict[str, List[Dict]] = {}
+    for ph in c.background_phases():
+        for delivery in c.phase(ph).get('deliveries') or []:
+            if isinstance(delivery, dict) and delivery.get('inv'):
+                deliveries.setdefault(delivery['inv'], []).append(delivery)
+    parents = {}
+    for inv, delivered in deliveries.items():
+        if len(delivered) != 1:
+            continue
+        delivery = delivered[0]
+        match = re.fullmatch(r'(.+)#(\d+)', str(delivery.get('eventId') or ''))
+        offered = publications.get(match[1], []) if match else []
+        if len(offered) != 1:
+            continue
+        publication = offered[0]
+        payload = publication['body'].get('payload')
+        pt, dt = _source_time(publication), _source_time(delivery)
+        if (isinstance(payload, list) and int(match[2]) < len(payload) and publication.get('inv')
+                and pt is not None and dt is not None and pt < dt):
+            parents[inv] = (publication, delivery)
+    c._source_trace = calls, mutations, parents
+    return c._source_trace
+
+
+def _source_reads(c: Ctx, first: Dict, calls: List[Dict], parents: Dict) -> List[Dict]:
+    """Reads completed before the write, or before a uniquely observed ancestor published the continuation."""
+    inv, end = first.get('inv'), _source_time(first)
+    bounds = {}
+    while inv and inv not in bounds and end is not None:
+        bounds[inv] = end
+        link = parents.get(inv)
+        if link is None:
+            break
+        publication, delivery = link
+        if _source_time(delivery) >= end:
+            break
+        # Queue payload assertions are irrelevant; this is the lineage the platform copied.
+        if any(publication.get(key) != first.get(key) for key in ('originChange', 'scheduledRun')):
+            break
+        inv, end = publication.get('inv'), _source_time(publication)
+    return [call for call in calls if call.get('inv') in bounds and _source_time(call) is not None
+            and call['t'] < bounds[call['inv']] and call.get('service') == 'jira' and call.get('provider') == 'app'
+            and call.get('kind') in ('consumer', 'scheduled') and call.get('status') == 200
+            and call.get('method') in ('GET', 'POST') and isinstance(call.get('response'), dict)
+            and all(call.get(key) == first.get(key) for key in ('originChange', 'scheduledRun'))]
+
+
+def _read_histories(call: Dict, change: fo.Change) -> List[Dict]:
+    path, response = str(call.get('path') or '').split('?')[0], call['response']
+    histories = []
+    if _issue_collection(call):
+        for issue in response.get('issues') or []:
+            if isinstance(issue, dict) and str(issue.get('id')) == change.issue_id:
+                log = issue.get('changelog')
+                histories += (log.get('histories') or []) if isinstance(log, dict) else []
+    elif path == '/rest/api/3/changelog/bulkfetch':
+        for log in response.get('issueChangeLogs') or []:
+            if isinstance(log, dict) and str(log.get('issueId')) == change.issue_id:
+                histories += log.get('changeHistories') or []
+    else:
+        match = re.fullmatch(r'/rest/api/3/issue/([^/]+)(/changelog)?', path)
+        if match and match[1] in (change.issue_id, change.issue_key):
+            if match[2]:
+                histories += response.get('values') or response.get('histories') or []
+            elif str(response.get('id')) == change.issue_id:
+                log = response.get('changelog')
+                histories += (log.get('histories') or []) if isinstance(log, dict) else []
+    return [history for history in histories if isinstance(history, dict)]
+
+
+def _issue_collection(call: Dict) -> bool:
+    path = str(call.get('path') or '').split('?')[0]
+    return (path == '/rest/api/3/search/jql' or bool(re.fullmatch(
+        r'/rest/(?:agile|software)/1\.0/(?:board/[^/]+/(?:issue|backlog)|sprint/[^/]+/issue)', path)))
+
+
+def _history_covers(history: Dict, change: fo.Change, sprint_field: str) -> bool:
+    author = history.get('author')
+    if (str(history.get('id')) != change.change_id or fo.instant(history.get('created')) != change.at
+            or not isinstance(author, dict) or str(author.get('accountId')) != change.by):
+        return False
+    for item in history.get('items') or []:
+        if not isinstance(item, dict) or str(item.get('fieldId')) != sprint_field:
+            continue
+        before, after = fo.sprint_ids(item.get('from')), fo.sprint_ids(item.get('to'))
+        if change.sprint_id in (after - before if change.kind == 'added' else before - after):
+            return True
+    return False
+
+
+def _single_issue_history_read(read: Dict, change: fo.Change) -> bool:
+    """A history read scoped to the originating issue can prove event work; multiscope alone cannot."""
+    path, response = str(read.get('path') or '').split('?')[0], read['response']
+    if _issue_collection(read):
+        issues = response.get('issues')
+        return isinstance(issues, list) and bool(issues) and all(
+            isinstance(issue, dict) and str(issue.get('id')) == change.issue_id for issue in issues)
+    if path == '/rest/api/3/changelog/bulkfetch':
+        logs = response.get('issueChangeLogs')
+        return isinstance(logs, list) and bool(logs) and all(
+            isinstance(log, dict) and str(log.get('issueId')) == change.issue_id for log in logs)
+    return bool(re.fullmatch(r'/rest/api/3/issue/[^/]+(?:/changelog)?', path))
+
+
+def _collection_covers(reads: List[Dict], change: fo.Change, history_at: float) -> bool:
+    """Broader scope comes from returned issue IDs in one native page or its actual cursor walk.
+
+    A single issue JQL lookup is also valid event work (§3), regardless of its query or job label.
+    Only connected response pages count together; an unrelated second lookup lends no scope.
+    """
+    walks = {}
+    for read in reads:
+        issues = read['response'].get('issues')
+        if _issue_collection(read) and isinstance(issues, list):
+            walks.setdefault(_walk_key(read)[1:], []).append(read)
+    for pages in walks.values():
+        for start in pages:
+            chain, visited = [start], {id(start)}
+            while True:
+                marker, error = _next_page_marker(_page_style(chain[-1]), chain[-1])
+                following = [page for page in pages if id(page) not in visited and page['t'] > chain[-1]['t']
+                             and _page_marker(_page_style(page), page) == marker]
+                if marker is None or error or not following:
+                    break
+                page = min(following, key=lambda page: page['t'])
+                chain.append(page)
+                visited.add(id(page))
+            ids = {str(issue['id']) for page in chain for issue in page['response']['issues']
+                   if isinstance(issue, dict) and issue.get('id') is not None}
+            if len(ids) > 1 and any(page['t'] <= history_at and any(
+                    isinstance(issue, dict) and str(issue.get('id')) == change.issue_id
+                    for issue in page['response']['issues']) for page in chain):
+                return True
+    return False
+
+
+def _first_recorded_source(c: Ctx, change: fo.Change) -> Optional[str]:
+    """Prove the first path from successful native reads and the earliest logical target mutation.
+
+    Unsupported/ambiguous evidence leaves the legacy timing allowances intact. A conclusive
+    first path is a singleton: later source overwrites cannot relabel it. Deletes/recreations,
+    unknown earlier batches/transactions and malformed initial rows cannot prove a first path.
+    """
+    if change.key in c._first_sources:
+        return c._first_sources[change.key]
+    c._first_sources[change.key] = None
+    if c.oracle is None or not c.declares_v2_ledger() or change.key in c.oracle.v1_keys():
+        return None  # migration preserves v1's source, not the migration invocation's path
+    calls, mutations, parents = _source_trace(c)
+    matches = lambda item: bool(rows_for([(_tokens(item), item)], change))
+    keys = {item['key'] for _call, item, outcome in mutations
+            if outcome != 'failed' and isinstance(item.get('key'), str) and matches(item)}
+    keys.update(item.get('key') for phase in c.background_phases() for _tokens_, item in c.kvs_rows(phase)
+                if isinstance(item.get('key'), str) and matches(item))
+    target = [(call, item, outcome) for call, item, outcome in mutations
+              if outcome != 'failed' and ((isinstance(item.get('key'), str) and item['key'] in keys) or matches(item))]
+    if not target or any(_source_time(call) is None for call, _item, _outcome in target):
+        return None
+    target.sort(key=lambda entry: entry[0]['t'])
+    first, item, outcome = target[0]
+    if (outcome != 'set' or any(state in ('delete', 'unknown-delete') for _call, _item, state in target)
+            or len([entry for entry in target if entry[0]['t'] == first['t']]) != 1
+            or first.get('kind') not in ('consumer', 'scheduled') or first.get('provider') != 'app'
+            or not first.get('inv') or not isinstance(item.get('value'), dict)
+            or (item.get('options') is not None and not isinstance(item['options'], dict))
+            or (item.get('options') or {}).get('ttl') or not matches(item)
+            or not row_correct(_tokens(item), change, LEDGER_SOURCES)):
+        return None
+    reads = _source_reads(c, first, calls, parents)
+    covered = [read for read in reads if any(_history_covers(history, change, c.oracle.sprint_field)
+                                            for history in _read_histories(read, change))]
+    source = None
+    if any(_collection_covers(reads, change, read['t']) for read in covered):
+        source = 'reconcile'
+    elif any(_single_issue_history_read(read, change) for read in covered) and first.get('scheduledRun') is None:
+        origin = str(first.get('originChange'))
+        if any(str(entry.get('changelogId')) == origin and str(entry.get('issueId')) == change.issue_id
+               for entry in c.oracle.history + c.oracle.live):
+            source = 'event'
+    c._first_sources[change.key] = source
+    return c._first_sources[change.key]
 
 
 def _scheduled_work_between(c: Ctx, change: fo.Change) -> bool:
