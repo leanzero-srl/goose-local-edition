@@ -9,6 +9,7 @@ import sys
 import time
 
 import isolated_tiers
+import bench_budget
 
 ROOT = Path(__file__).resolve().parent.parent
 # Harness-owned evidence is outside the declared candidate source inventory.
@@ -66,6 +67,9 @@ def write_completion(tree, destination, agent, *, run_id, started_at, seed, port
                      tier=isolated_tiers.SB71, kit=None):
     if destination.resolve().is_relative_to(tree.resolve()):
         raise ValueError('Completion receipt must be outside the candidate tree')
+    resource_abort = bench_budget.publication_abort(agent, tier)
+    if resource_abort:
+        raise ValueError('No Forge 2.0 completion receipt: ' + resource_abort)
     evidence = completion_evidence(agent)
     if evidence is None:
         raise ValueError('No completion receipt: model process did not exit successfully')
@@ -102,6 +106,9 @@ def validate_receipt(receipt, tree, run_id):
     if receipt.get('runId') != run_id:
         raise ValueError('Completion receipt identity does not match this session')
     agent = receipt.get('agent', {})
+    resource_abort = bench_budget.publication_abort(agent, tier)
+    if resource_abort:
+        raise ValueError('Forge 2.0 resource interruption cannot be retried as a completed build: ' + resource_abort)
     if completion_evidence(agent) is None:
         raise ValueError('Completed model build is not proven')
     if type(agent.get('secs')) not in (int, float) or not math.isfinite(agent['secs']) or agent['secs'] < 0:

@@ -118,6 +118,7 @@ class WalletGuard(threading.Thread):
         self.offset = 0
         self.billed: dict[str, Decimal] = {}
         self.unbilled: dict[str, str] = {}
+        self.billing_attempts: dict[str, int] = {}
         self.tripped: dict | None = None
         self.error: str | None = None
 
@@ -140,19 +141,26 @@ class WalletGuard(threading.Thread):
         for gen, (data, failure) in zip(pending, answers):
             if data is None:
                 self.unbilled[gen] = failure
+                self.billing_attempts[gen] = self.billing_attempts.get(gen, 0) + 1
+                if self.billing_attempts[gen] > len(bench_cost.LATE_RECORD_BACKOFF):
+                    raise RuntimeError(f'Billing unavailable for {gen} after the late-record retry policy: {failure}')
             else:
-                self.billed[gen] = Decimal(data['usage'])
+                cost = Decimal(data['usage'])
+                if not cost.is_finite() or cost < 0:
+                    raise RuntimeError(f'Invalid billed usage for {gen}')
+                self.billed[gen] = cost
                 del self.unbilled[gen]
+                self.billing_attempts.pop(gen, None)
 
-    def _stop_entrant(self) -> None:
+    def _stop_entrant(self, cause: str = 'limit_reached') -> None:
         if self.process.poll() is not None:
             return  # it ended on its own first; the guard stopped nothing
         pid = self.process.pid
         spent = self.spent()
         print(f'WALLET GUARD: OpenRouter billed ${spent} of the ${self.limit} limit; '
-              f'stopping entrant pid {pid} (SIGTERM)', file=sys.stderr, flush=True)
+              f'stopping entrant pid {pid} (SIGTERM; {cause})', file=sys.stderr, flush=True)
         self.tripped = {'spent_usd': float(spent), 'calls_billed': len(self.billed),
-                        'signalled_pid': pid, 'signal': 'SIGTERM', 'at': time.time()}
+                        'signalled_pid': pid, 'signal': 'SIGTERM', 'cause': cause, 'at': time.time()}
         os.kill(pid, signal.SIGTERM)
         waited, step = 0.0, self.grace_seconds / 100  # ratio: one hundredth of the grace per check
         while waited < self.grace_seconds and self.process.poll() is None:
@@ -175,7 +183,8 @@ class WalletGuard(threading.Thread):
         except Exception as error:  # the guard's failure is named in the record, never a silent no-guard
             reason = f'{type(error).__name__}: {error}'.replace(self.key, '[REDACTED]')
             self.error = reason
-            print(f'WALLET GUARD FAILED (the run continues unguarded): {reason}', file=sys.stderr, flush=True)
+            print(f'WALLET GUARD FAILED: {reason}; stopping the entrant', file=sys.stderr, flush=True)
+            self._stop_entrant('billing_failure')
 
     def stop(self) -> None:
         """Called once the entrant has exited: one last read bills its final calls."""
@@ -183,7 +192,7 @@ class WalletGuard(threading.Thread):
         self.join()
 
     def record(self) -> dict:
-        result = {'status': 'tripped' if self.tripped else 'failed' if self.error else 'armed',
+        result = {'status': 'failed' if self.error else 'tripped' if self.tripped else 'armed',
                   'provider': 'openrouter', 'max_usd': float(self.limit),
                   'spent_usd_seen': float(self.spent()), 'calls_billed': len(self.billed)}
         if self.tripped:
@@ -225,6 +234,8 @@ def entrant_calls(telemetry: Path, model: str | None) -> dict:
 
 
 def stopped_by(agent: dict, wallet: dict | None) -> str:
+    if wallet and wallet.get('status') == 'failed' and wallet.get('tripped'):
+        return 'wallet_accounting_failure'
     if wallet and wallet.get('status') == 'tripped':
         return 'wallet_guard'
     if agent.get('exit') == 0 and agent.get('tail', '').rstrip().endswith(MAX_TURNS_MESSAGE):
@@ -238,3 +249,18 @@ def stopped_by(agent: dict, wallet: dict | None) -> str:
 def is_harness_stop(agent: dict) -> bool:
     """A budget stop is the run's scored end, never a provider failure to refuse."""
     return (agent.get('budget') or {}).get('stopped_by') in ('call_budget', 'wallet_guard')
+
+
+def publication_abort(agent: dict, tier) -> str | None:
+    """A resource-interrupted Forge 2.0 session is not model-capability evidence."""
+    if tier is None or tier.version != 'forge-2.0':
+        return None
+    budget = agent.get('budget') or {}
+    wallet = budget.get('wallet')
+    if budget.get('stopped_by') in ('wallet_guard', 'wallet_accounting_failure'):
+        return 'operator wallet limit or billing failure interrupted the build'
+    if isinstance(wallet, dict) and wallet.get('status') in ('failed', 'unavailable'):
+        return 'the requested wallet guard was not available throughout the build'
+    if isinstance(wallet, dict) and wallet.get('unbilled'):
+        return 'generation billing remains unresolved under the requested wallet guard'
+    return None

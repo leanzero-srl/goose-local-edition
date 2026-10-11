@@ -314,6 +314,8 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
         elif not env.get("OPENROUTER_API_KEY"):
             wallet = bench_budget.wallet_unavailable(wallet_limit, provider,
                                                      "OPENROUTER_API_KEY is absent from the run's credentials")
+    if tier and tier.version == "forge-2.0" and wallet is not None:
+        raise RuntimeError("REFUSED: Forge 2.0 wallet guard is unavailable; no paid build started")
     try:
         with console.open("w+", buffering=1, errors="replace") as fh:
             if provider or snapshot is not None:
@@ -1096,7 +1098,12 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
     try:
         print('BENCH_PHASE ' + json.dumps({'phase': 'build'}), flush=True)
         agent = invoke(entrant, workdir, port, credentials, timeout, provider, model, snapshot)
-        # A budget stop (the call budget or the operator's wallet guard) is the run's SCORED end: the
+        resource_abort = bench_budget.publication_abort(agent, tier)
+        if resource_abort:
+            agent['resource_abort'] = resource_abort
+            (workdir / 'incomplete-agent.json').write_text(json.dumps(agent, indent=2))
+            raise RuntimeError(f'REFUSED: Forge 2.0 resource interruption is unscored: {resource_abort}')
+        # A budget stop (the call budget or a legacy tier's wallet guard) is the run's SCORED end: the
         # harness ended it, so neither refusal below may read its console as a provider failure.
         harness_stop = bench_budget.is_harness_stop(agent)
         if provider and not harness_stop and \
