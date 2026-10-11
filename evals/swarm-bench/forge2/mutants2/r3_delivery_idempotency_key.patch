@@ -1,0 +1,18 @@
+diff --git a/src/ledger.js b/src/ledger.js
+--- a/src/ledger.js
++++ b/src/ledger.js
+@@ -1,4 +1,5 @@
+ import { kvs } from '@forge/kvs';
++import { randomUUID } from 'node:crypto';
+ import { jiraJson, route, postJson } from './jira';
+ import { toMicro, creepTenths, formatPoints } from './numbers';
+ 
+@@ -114,7 +115,7 @@
+   if (!known && (await kvs.entity(LEDGER).get(key))) return false;
+   const v1 = await kvs.entity(V1_CHANGES).get(key);
+   const value = v1 ? { ...row, at: v1.at, kind: v1.kind, authorId: v1.authorId ?? '', authorName: v1.authorName ?? '', source: v1.source ?? row.source } : row;
+-  return createRow(key, { ...value, deployedEnvs: await deployedEnvsOf(row.issueId) });
++  return createRow(`${key}:${randomUUID()}`, { ...value, deployedEnvs: await deployedEnvsOf(row.issueId) });
+ }
+ 
+ export const copyV1 = (v1, extra) => createRow(changeKey(v1.changeId, v1.sprintId), fromV1(v1, extra));

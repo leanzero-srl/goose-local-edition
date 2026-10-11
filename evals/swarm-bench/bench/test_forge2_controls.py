@@ -2,6 +2,7 @@
 from contextlib import redirect_stdout
 from io import StringIO
 import json
+import subprocess
 from pathlib import Path
 import tempfile
 import unittest
@@ -136,6 +137,96 @@ class FamilyCoverageTests(unittest.TestCase):
             (directory / 'r1.patch').write_text('not applied in catalog discovery')
             with self.assertRaisesRegex(RuntimeError, 'no registered controls'):
                 controls.candidates(controls.MUTANTS, catalog)
+
+
+class IdempotencyMutationTests(unittest.TestCase):
+    NODE_PROBE = r"""
+const fs = require('node:fs');
+const vm = require('node:vm');
+const paths = JSON.parse(fs.readFileSync(0, 'utf8'));
+async function exercise(path, mode) {
+  const entities = new Map();
+  const writes = [];
+  let uuid = 0;
+  const table = (name) => {
+    if (!entities.has(name)) entities.set(name, new Map());
+    return entities.get(name);
+  };
+  const kvs = {
+    get: async () => undefined,
+    entity: (name) => ({
+      get: async (key) => table(name).get(key),
+      set: async (key, value, options) => {
+        writes.push({ name, key, conditional: options?.keyPolicy === 'FAIL_IF_EXISTS' });
+        if (options?.keyPolicy === 'FAIL_IF_EXISTS' && table(name).has(key)) throw new Error('KEY_CONFLICT');
+        table(name).set(key, JSON.parse(JSON.stringify(value)));
+      },
+    }),
+  };
+  const source = fs.readFileSync(path, 'utf8').replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
+  const context = vm.createContext({ kvs, randomUUID: () => `delivery-${++uuid}`, setTimeout });
+  vm.runInContext(source, context, { filename: path });
+  const row = { changeId: '314', sprintId: '72', issueId: '91', issueKey: 'TEST-91',
+    at: 1234, kind: 'added', source: 'event', authorId: 'viewer', authorName: 'Viewer' };
+  let result;
+  if (mode === 'concurrent') {
+    context.row = row;
+    result = await vm.runInContext('Promise.all([recordChange(row), recordChange(row)])', context);
+  } else if (mode === 'migration') {
+    context.row = row;
+    context.extra = { estimate: 5, boardId: '12', estimateField: 'points', deleted: false };
+    result = await vm.runInContext('(async () => [await copyV1(row, extra), await copyV1(row, extra)])()', context);
+  } else if (mode === 'v1-attributes') {
+    table('scope-change').set('314:72', { ...row, at: 1200, source: 'v1-event', authorName: 'Original author' });
+    context.row = row;
+    result = await vm.runInContext('recordChange(row)', context);
+  } else {
+    context.row = row;
+    context.next = { ...row, changeId: mode === 'distinct' ? '315' : row.changeId };
+    result = await vm.runInContext('(async () => [await recordChange(row), await recordChange(next)])()', context);
+  }
+  return { result, rows: [...table('scope-ledger').values()], writes };
+}
+(async () => {
+  const result = {};
+  for (const [name, path] of Object.entries(paths)) {
+    result[name] = {};
+    for (const mode of ['sequential', 'concurrent', 'migration', 'v1-attributes', 'distinct']) {
+      result[name][mode] = await exercise(path, mode);
+    }
+  }
+  process.stdout.write(JSON.stringify(result));
+})().catch((error) => { process.stderr.write(error.stack); process.exitCode = 1; });
+"""
+
+    def test_delivery_uuid_keys_duplicate_real_recording_without_disabling_atomic_storage(self):
+        candidate = next(entry for entry in controls.candidates() if entry['name'] == 'r3_delivery_idempotency_key')
+        with tempfile.TemporaryDirectory() as tmp:
+            tree = Path(tmp) / candidate['name']
+            controls.materialise_control(tree, patch=candidate['patch'])
+            proc = subprocess.run(['node', '-e', self.NODE_PROBE], input=json.dumps({
+                'golden': str(controls.GOLDEN / 'src' / 'ledger.js'),
+                'mutant': str(tree / 'src' / 'ledger.js'),
+            }), capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        got = json.loads(proc.stdout)
+        for mode in ('sequential', 'concurrent'):
+            with self.subTest(mode=mode):
+                self.assertEqual(len(got['golden'][mode]['rows']), 1)
+                self.assertEqual(sum(got['golden'][mode]['result']), 1)
+                self.assertEqual(len(got['mutant'][mode]['rows']), 2)
+                self.assertEqual(got['mutant'][mode]['result'], [True, True])
+                self.assertEqual({(row['changeId'], row['sprintId']) for row in got['mutant'][mode]['rows']},
+                                 {('314', '72')})
+        for name in ('golden', 'mutant'):
+            self.assertEqual(got[name]['migration']['result'], [True, False])
+            self.assertEqual(len(got[name]['migration']['rows']), 1)
+            self.assertEqual(len(got[name]['distinct']['rows']), 2)
+            self.assertEqual(got[name]['v1-attributes']['rows'][0]['at'], 1200)
+            self.assertEqual(got[name]['v1-attributes']['rows'][0]['authorName'], 'Original author')
+            self.assertEqual(got[name]['v1-attributes']['rows'][0]['source'], 'v1-event')
+            for scenario in got[name].values():
+                self.assertTrue(all(write['conditional'] for write in scenario['writes']))
 
 
 class SourceReceiptTests(unittest.TestCase):

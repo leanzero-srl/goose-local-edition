@@ -39,9 +39,9 @@
     "why": "A quota 429 still pauses the rest of the background, but the invocation that drew it sleeps until the reset in-function instead of returning InvocationError, so a Retry-After longer than the time left kills the consumer at its 900 s limit. Requires the probe's quota wall to outlast that limit (INTEGRATION fix list): on seed 0123 the wall was 300 s and its 429 carried 178 s, which fits, so both R3 rows are vacuous for the golden and the mutant alike there. Updated for the request-publication gate reference (2026-10-11): after releasing the short request gate, the quota-limited invocation sleeps for the full Retry-After and continues before the invocation-budget check; other work still sees the correctly published shared cooldown."
   },
   {
-    "name": "r3_check_then_act_dedupe",
+    "name": "r3_delivery_idempotency_key",
     "family": "R3",
-    "patch": "r3_check_then_act_dedupe.patch",
+    "patch": "r3_delivery_idempotency_key.patch",
     "loses": [
       "r3_no_duplicate_rows",
       "t_no_double_count"
@@ -50,7 +50,7 @@
       "e_event_economy"
     ],
     "critical": "duplicate",
-    "why": "The race mutant (SPEC \u00a72.8 S1). Each recording gets its own row key (`<changeId>:<sprintId>:<uuid>`) and the change is deduped by a `recorded:` marker that is read, then set: get-then-set, no conditional claim. One delivery at a time the marker dedupes every duplicate, redelivery, reconcile and migration copy, so nothing differs off the race; two deliveries of one change started together (a same-event pair: READS-FIRST holds the first marker write until the partner has written) both read no marker and both write a row: duplicate ledger rows, the duplicate critical. Seed 0123456789abcdef: 8 same-event groups raced, 7 of them on sprint changes, 9 (changeId, sprintId) doubled at the final checkpoint, every one a raced group's change (e.g. ('1318506', '1115')); score 0.9907 -> 0.5623, t_no_double_count fired. The doubled rows show twice in the sprint ledger, the Rovo action and the hidden count: the change-list rows, t_event_rows and t_multi_sprint_parse are ROOT_BLOCKS of t_no_double_count; e_event_economy (calibration-owned) is not credited on inexact event rows. Rows keyed by changelog id + sprint, as the golden keys them, make the same get-then-set race land on one key (equivalent mutant), so the key per recording is part of the defect."
+    "why": "The live recording path keys its atomic FAIL_IF_EXISTS write by changeId + sprintId + a fresh delivery UUID instead of the stable business change key. Canonical reads and the v1 lookup still use changeId + sprintId; migration copyV1 and every preserved v1 attribute are untouched. Replaying one new change or delivering it concurrently therefore writes separate ledger rows even when the shared Jira request gate serializes those deliveries. This is one incorrect idempotency-identity defect, not a disabled platform protection. The doubled changes flow to the ledger table, Rovo action, hidden count and event exactness; those dependents are attributed by the existing t_no_double_count ROOT_BLOCKS graph. Economy changes are calibration-owned. The prior checked-marker race control is retained in the archived seed 3c04f61f28a4a511 receipt as a failed control at source 592136c7d: the first concurrent KVS writes claim the Jira request gate, whose conditional failure delays the second delivery past the marker write. A latent race that did not create a duplicate was correctly refused by the qualifier; this replacement must earn qualification from actual native observations."
   },
   {
     "name": "r4_deletion_unflagged",
