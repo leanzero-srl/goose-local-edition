@@ -8,6 +8,7 @@ import { FORGE_ERA_TIER_ORDER } from './baselines';
 import forgeVerdict from './forge-alt.fixture.json';
 import forge2Verdict from './forge2-pilot.fixture.json';
 import forge2Sonnet from './forge2-sonnet-reliability.fixture.json';
+import { forge2Synthetic } from './forge2Synthetic.fixture';
 
 /**
  * THE FORGE FAMILY ON THE BENCHMARK VIEW. The app bundles forge-2.0; forge-1.0 is a frozen era whose
@@ -265,7 +266,7 @@ describe('Benchmark view — the Gauntlet | Forge switch', () => {
       'Scored before Forge 2.0’s thresholds were final: a measurement of this benchmark, not a board result.'
     );
     // Every one of the era's nineteen letters, each named, with the weight THIS verdict recorded.
-    for (const tier of FORGE_ERA_TIER_ORDER['forge-2.0'])
+    for (const tier of Object.keys(forge2Verdict.tiers))
       expect(screen.getByTestId(`tier-cell-${tier}`)).toBeInTheDocument();
     expect(screen.getByTestId('tier-cell-R5')).toHaveTextContent('Admin panel');
     // A group's mean is a score: four decimals on a Forge 2.0 screen, like every other score on it.
@@ -315,6 +316,45 @@ describe('Benchmark view — the Gauntlet | Forge switch', () => {
     // invisible in the running app). lucide's identifiers are names, not utilities.
     const classes = allClasses(document.body).filter((c) => !c.startsWith('lucide'));
     expect(await missingUtilities(classes)).toEqual([]);
+  });
+
+  it('renders every current tier and the recorded Native JQL mean and weight from a SYNTHETIC composition', async () => {
+    const verdict = forge2Synthetic.verdicts.jql_membership;
+    const ruled = projectBenchScore(verdict);
+    const mine = {
+      ...MINE,
+      label: 'SYNTHETIC carrier control',
+      scorerVersion: ruled.scorerVersion,
+      score: verdict.score,
+      tiers: ruled.tiers,
+      verdict: ruled.verdict,
+    };
+    mockElectron({
+      mine,
+      sessions: [
+        {
+          ...SESSION,
+          scorerVersion: ruled.scorerVersion,
+          score: verdict.score,
+          tiers: ruled.tiers,
+        },
+      ],
+    });
+    (electron().benchmarkRunResult as ReturnType<typeof vi.fn>).mockImplementation(
+      async () => mine
+    );
+    mount();
+    const jql = await screen.findByTestId('tier-cell-R10');
+    expect(jql).toHaveTextContent('Native JQL');
+    expect(jql).toHaveTextContent(`R10 ${verdict.tiers.R10.mean.toFixed(4)}`);
+    expect(jql).toHaveTextContent(`weight ${verdict.tiers.R10.weight * 100}%`);
+    for (const tier of forge2Synthetic.tierOrder)
+      expect(screen.getByTestId(`tier-cell-${tier}`)).toBeInTheDocument();
+    expect(screen.getAllByTestId(/^tier-cell-/)).toHaveLength(forge2Synthetic.tierOrder.length);
+    expect(screen.getByRole('heading', { name: 'Forge 2.0 · Scope Ledger 2' })).toBeInTheDocument();
+    expect(screen.getByTestId('session-header')).toHaveTextContent(
+      `Finished · ${verdict.score.toFixed(4)}`
+    );
   });
 
   it('explains a forge-2.0 score under the reliability rule on the run card: tests × criticals × reliability = final, one line per group', async () => {

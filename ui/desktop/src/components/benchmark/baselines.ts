@@ -172,23 +172,23 @@ const FORGE_V1_TIERS = ['L', 'K', 'T', 'R', 'S', 'B', 'U', 'V', 'A', 'E'];
 
 /**
  * Each Forge era's tier letters in its scorer's TIER_ORDER. score_forge2.py (forge-2.0) keeps 1.0's ten as
- * its v1 regression rows and adds one family per v2 requirement, R1–R9. A publish carries exactly its
+ * its v1 regression rows and adds one family per v2 requirement, R1–R10. A publish carries exactly its
  * era's letters; the site validates them per era.
  */
 export const FORGE_ERA_TIER_ORDER: Record<ForgeEra, readonly string[]> = {
   'forge-1.0': FORGE_V1_TIERS,
-  'forge-2.0': [...FORGE_V1_TIERS, 'R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7', 'R8', 'R9'],
+  'forge-2.0': [...FORGE_V1_TIERS, 'R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7', 'R8', 'R9', 'R10'],
 };
 
 /** Every Forge era's letters in order — what a view lists, filtered to the tiers a result recorded, so a
- *  forge-1.0 session shows its ten and a forge-2.0 session its nineteen. */
+ *  forge-1.0 session shows its ten and a forge-2.0 session its twenty. */
 export const FORGE_TIER_ORDER: readonly string[] = [
   ...new Set(FORGE_ERAS.flatMap((era) => FORGE_ERA_TIER_ORDER[era])),
 ];
 
 /**
  * The Forge groups of tests, ONE set of names for the app and leanzero.net: L…E exactly as the site's Forge 1.0
- * brief names them (its FORGE10_TIERS), R1–R9 exactly as the task text's Score section names forge-2.0's
+ * brief names them (its FORGE10_TIERS), R1–R10 exactly as the task text's Score section names forge-2.0's
  * requirements ("migration 0.12, dosing 0.13, time limits 0.08, the changing world 0.10, …"). A name changed
  * here changes on the site in the same release, or a result reads two ways. The letters overlap SB's; the
  * meanings do not.
@@ -254,6 +254,10 @@ export const FORGE_TIERS: Record<string, { name: string; desc: string }> = {
   R9: {
     name: 'Boot budget',
     desc: 'The widget and the sprint action boot within budget, the admin page with one invoke',
+  },
+  R10: {
+    name: 'Native JQL',
+    desc: 'Precomputed membership stays fresh across lifecycle changes, with shared permissions and validated arguments',
   },
 };
 

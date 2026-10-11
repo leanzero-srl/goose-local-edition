@@ -395,7 +395,8 @@ describe('a Forge 1.0 verdict reads its own tiers, caps and publishability (scor
 });
 
 import forge2Verdict from './forge2-pilot.fixture.json';
-import { FORGE_ERA_TIER_ORDER, FORGE_TIERS } from './baselines';
+import { FORGE_TIERS } from './baselines';
+import { forge2Synthetic } from './forge2Synthetic.fixture';
 describe('a forge-2.0 verdict reads its v1 tiers AND its v2 families R1–R9 (score_forge2.py)', () => {
   // The REAL GPT-6.1 Sol pilot verdict: v1 rows a quarter of the score, R1–R9 the other three quarters.
   const projected = projectBenchScore(forge2Verdict as never).verdict as unknown as VerdictDetail;
@@ -405,7 +406,7 @@ describe('a forge-2.0 verdict reads its v1 tiers AND its v2 families R1–R9 (sc
       <ScoringDetail verdict={projected} score={forge2Verdict.score} scorerVersion="forge-2.0-rc" />
     );
     // No family is dropped for being new: each letter's group is named.
-    for (const tier of FORGE_ERA_TIER_ORDER['forge-2.0'])
+    for (const tier of Object.keys(forge2Verdict.tiers))
       expect(view.getAllByText(FORGE_TIERS[tier].name).length).toBeGreaterThan(0);
     const earned = view.getByRole('region', { name: 'Tests earned' });
     expect(
@@ -415,7 +416,7 @@ describe('a forge-2.0 verdict reads its v1 tiers AND its v2 families R1–R9 (sc
     ).toEqual(['Group', 'Mean of its tests', 'Weight', 'Adds to the score']);
     const lines = within(earned).getAllByTestId('forge-group-line');
     expect(lines.map((row) => row.getAttribute('data-tier'))).toEqual(
-      FORGE_ERA_TIER_ORDER['forge-2.0']
+      Object.keys(forge2Verdict.tiers)
     );
     expect(within(earned).getByText('R5 Admin panel')).toBeInTheDocument();
     const cells = (row: Element) => [...row.querySelectorAll('td')].map((td) => td.textContent);
@@ -1028,4 +1029,48 @@ describe('a forge-2.0 verdict explains its score top-down: tests earned, × crit
         /\brc\b|uncalibrated|emulator|unavailable row|Held for rescore/i
       );
   });
+});
+
+it('shows all current earned groups, six JQL rows and the R10 reliability diagnosis from a SYNTHETIC composition', () => {
+  const verdict = forge2Synthetic.verdicts.jql_membership;
+  const view = render(
+    <ScoringDetail
+      verdict={projectBenchScore(verdict).verdict as unknown as VerdictDetail}
+      score={verdict.score}
+      scorerVersion={verdict.scorerVersion}
+    />
+  );
+  const earned = view.getByRole('region', { name: 'Tests earned' });
+  const lines = within(earned).getAllByTestId('forge-group-line');
+  expect(lines.map((row) => row.getAttribute('data-tier'))).toEqual(forge2Synthetic.tierOrder);
+  const jql = lines.find((row) => row.getAttribute('data-tier') === 'R10')!;
+  expect([...jql.querySelectorAll('td')].map((cell) => cell.textContent)).toEqual([
+    'R10 Native JQL',
+    verdict.tiers.R10.mean.toFixed(4),
+    `${verdict.tiers.R10.weight * 100}%`,
+    (verdict.tiers.R10.mean * verdict.tiers.R10.weight).toFixed(4),
+  ]);
+  const header = view.getByRole('button', { name: /Native JQL/ });
+  expect(header).toHaveTextContent('6 tests · weight 10%');
+  expect(header).toHaveTextContent('2 tests below full marks');
+  if (header.getAttribute('aria-expanded') !== 'true') fireEvent.click(header);
+  const group = header.parentElement!;
+  for (const row of verdict.checks.filter((row) => row.tier === 'R10'))
+    expect(
+      within(group).getByText(row.check.replace(/_/g, ' ').replace(/^r/, 'R'))
+    ).toBeInTheDocument();
+  const defect = verdict.reliability.defects.find((row) => row.tier === 'R10')!;
+  const reliable = within(view.getByRole('region', { name: 'Reliability' })).getAllByTestId(
+    'reliability-line'
+  );
+  const failure = reliable.find((row) => row.getAttribute('data-tier') === 'R10')!;
+  expect([...failure.querySelectorAll('td')].map((cell) => cell.textContent)).toEqual([
+    'R10 Native JQL',
+    'R10 shared permissionsAlready counted in this group: R10 initial membership',
+    defect.score.toFixed(4),
+    `× ${defect.factor.toFixed(4)}`,
+  ]);
+  expect(within(earned).getByTestId('forge-tests-earned')).toHaveTextContent(
+    verdict.inner.toFixed(4)
+  );
 });
