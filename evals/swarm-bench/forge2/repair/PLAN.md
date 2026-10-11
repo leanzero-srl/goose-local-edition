@@ -21,4 +21,8 @@ Work order (statuses survive compaction)
 
 Known evidence as of initialization: same scorer/kit/contract on all six published runs; MiMo cost $0.309667596 (232 model calls, ~99.23% cache reads), Sol $1.467193 (69 model calls + session auxiliary call, ~98.00% cache reads). Different scoring seeds and one build each cannot establish model superiority. Synthetic audit found suppressed observed admin/webtrigger/migration violations, cache credit with no successful explanation, and an unstressed share limit (reference background 228 versus share1680). These are findings to verify, not permission to tune results.
 
-Next action: reproduce auditor findings, delegate isolated fixes, and specify task augmentation from current Forge docs before any spend.
+Current action: integrate 105-row scorer, native JQL app precomputation lifecycle with dev/scoring parity, simultaneous CI replay, current rate tariff and atomic/resumable known-good dosing. No new OpenRouter spend yet. Old website board is frozen with repair notice; archive-aware clearing/deployment underway from workhorse.
+
+Owner clarification: Sol >=0.90 means the task must be deepened before final campaign freeze. This is a prospective task-calibration gate, never permission to fiddle score weights or force a winner. A close MiMo/Sol comparison stays unresolved until repeated matched builds explain a capability difference. Build noise and fixture diversity are separate: use repeated independent builds on common scoring seeds and publish episode range/evidence, rather than calling one build a model ranking. All 26 members retained; infrastructure or spend stops are unscored.
+
+Current weight policy fixed before paidtests: v1 .15; existing R1–R9 unchanged; functional JQL R10 .10. ReviewedcurrentSDKs are fresh; notablefalsefidelity was ignored queue concurrency, invented cheap read tariffs, weak security gates and omitted CI race.

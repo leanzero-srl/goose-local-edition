@@ -74,7 +74,7 @@ FORGE10 = IsolatedTier('BENCH_FORGE10', 'forge-1.0', 'score_forge', 'forge/publi
                        reasoning_effort='medium', own_scoring_site=True)
 FORGE20 = IsolatedTier('BENCH_FORGE20', 'forge-2.0', 'score_forge2', 'forge2/public/spec-build-forge2.md', '',
                        'forge2/starter',
-                       ('score_forge2.py', 'forge2_checks.py', 'forge2_oracle.py', 'forge2_probe.mjs',
+                       ('score_forge2.py', 'forge2_checks.py', 'forge2_jql_checks.py', 'forge2_oracle.py', 'forge2_probe.mjs',
                         'forge2-thresholds.json', 'forge2_site.py', 'forge2_kit.py', 'media_sb71.mjs', 'forge2_uikit_shot.mjs'),
                        (('FORGE2-CONTRACT.md', 'forge2/public/FORGE2-CONTRACT.md'),
                         ('STARTER.md', 'forge2/public/STARTER.md'),

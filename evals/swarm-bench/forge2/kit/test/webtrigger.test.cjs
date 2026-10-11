@@ -83,6 +83,12 @@ function stubEmu(handler, { response = STATIC_RESPONSE, appSeconds = 0 } = {}) {
         return { ok: false, error: { name: e.name, message: e.message }, invocationId: `inv-${events.length}` };
       }
     },
+    invokeWebtriggerGroup: async (moduleKey, requests) => Promise.all(requests.map(async (event, i) => {
+      events.push({ fnKey: 'ci', moduleKey, event });
+      try { return { ok: true, result: await handler(event, Math.floor(now / 1000)), invocationId: `pair-${i}` }; } catch (e) {
+        return { ok: false, error: { name: e.name, message: e.message }, invocationId: `pair-${i}` };
+      }
+    })),
     drainQueues: async () => [],
   };
 }
@@ -102,7 +108,7 @@ test('ingress: undeclared module 404, missing function and thrown or timed-out f
 test('sequence: seeded, refuses missing inputs, every step built exactly as named', () => {
   assert.throws(() => createCiSequence({ seed: 'nope', secret: SECRET, issueKeys: KEYS }), /16 lowercase hex/);
   assert.throws(() => createCiSequence({ seed: SEED, secret: '', issueKeys: KEYS }), /secret/);
-  assert.throws(() => createCiSequence({ seed: SEED, secret: SECRET, issueKeys: KEYS.slice(0, 7) }), /needs 8 distinct issue keys, got 7/);
+  assert.throws(() => createCiSequence({ seed: SEED, secret: SECRET, issueKeys: KEYS.slice(0, 7) }), /needs 9 distinct issue keys, got 7/);
   const a = createCiSequence({ seed: SEED, secret: SECRET, issueKeys: KEYS });
   const b = createCiSequence({ seed: SEED, secret: SECRET, issueKeys: [...KEYS].reverse() });
   const c = createCiSequence({ seed: '1111222233334444', secret: SECRET, issueKeys: KEYS });
@@ -110,8 +116,8 @@ test('sequence: seeded, refuses missing inputs, every step built exactly as name
   assert.notDeepStrictEqual(a.plan.map((s) => s.eventId), c.plan.map((s) => s.eventId));
   assert.ok(!JSON.stringify(a.plan).includes(SECRET), 'the plan never carries the secret');
   assert.deepStrictEqual(a.plan.map((s) => `${s.name}:${s.expect.status}`),
-    ['valid:202', 'replay:200', 'bad-signature:401', 'unsigned:401', 'tampered:401', 'stale:401', 'stale-future:401', 'header-case:202']);
-  const own = a.plan.filter((s) => s.name !== 'replay').flatMap((s) => s.issueKeys);
+    ['valid:202', 'replay:200', 'bad-signature:401', 'unsigned:401', 'tampered:401', 'stale:401', 'stale-future:401', 'header-case:202', 'concurrent-valid:202', 'concurrent-replay:200']);
+  const own = a.plan.filter((s) => !['replay', 'concurrent-replay'].includes(s.name)).flatMap((s) => s.issueKeys);
   assert.strictEqual(new Set(own).size, own.length, 'every step owns its issues');
 
   const now = 1_760_000_000;
@@ -127,6 +133,8 @@ test('sequence: seeded, refuses missing inputs, every step built exactly as name
   assert.deepStrictEqual(valid.request.headers.map(([n]) => n), ['Content-Type', 'X-LZ-Timestamp', 'X-LZ-Signature']);
   assert.deepStrictEqual(sent.replay.request, valid.request, 'the replay is the valid request byte for byte');
   assert.ok(sent.replay.at - valid.at < 300);
+  assert.deepStrictEqual(sent['concurrent-valid'].request, sent['concurrent-replay'].request);
+  assert.strictEqual(sent['concurrent-valid'].concurrentGroup, sent['concurrent-replay'].concurrentGroup);
   assert.notStrictEqual(sig(sent['bad-signature']), hmac(SECRET, ts(sent['bad-signature']), sent['bad-signature'].request.body));
   assert.strictEqual(sig(sent.unsigned), undefined);
   const tampered = sent.tampered;
@@ -179,7 +187,9 @@ function contractApp(bug = null) {
 async function grade(bug, appSeconds) {
   const app = contractApp(bug);
   const run = await runCiSequence(stubEmu(app.handler, { appSeconds }), { moduleKey: 'ci-deploy', seed: SEED, secret: SECRET, issueKeys: KEYS });
-  const failed = run.steps.filter((s) => s.statusCode !== s.expect.status).map((s) => s.name);
+  const pair = run.steps.filter((s) => s.concurrentGroup);
+  const pairOk = JSON.stringify(pair.map((s) => s.statusCode).sort()) === JSON.stringify([200, 202]);
+  const failed = run.steps.filter((s) => s.concurrentGroup ? !pairOk : s.statusCode !== s.expect.status).map((s) => s.name);
   const wanted = run.plan.filter((s) => s.expect.effect).map((s) => s.expect.effect);
   return { failed, effectsOk: JSON.stringify(app.effects) === JSON.stringify(wanted), run };
 }
@@ -193,8 +203,8 @@ test('sequence discriminates: the contract app passes every step even at 54 s pe
     ['canonical-names', ['header-case']],
     ['signature-optional', ['unsigned']],
     ['past-only-window', ['stale-future']],
-    ['no-replay-claim', ['replay']],
-    ['reserialised-body', ['valid', 'replay', 'header-case']],
+    ['no-replay-claim', ['replay', 'concurrent-valid', 'concurrent-replay']],
+    ['reserialised-body', ['valid', 'replay', 'header-case', 'concurrent-valid', 'concurrent-replay']],
   ]) {
     const r = await grade(bug, 54);
     assert.deepStrictEqual(r.failed, steps, bug);
@@ -275,7 +285,13 @@ test('end to end through the runtime wrapper: the CI sequence, the HTTP mount, e
 
     const issueKeys = site.pack.issues.map((i) => i.key);
     const run = await runCiSequence(emu, { moduleKey: 'ci-deploy', seed: SEED, secret: SECRET, issueKeys });
-    assert.deepStrictEqual(run.steps.map((s) => `${s.name}:${s.statusCode}`), run.plan.map((s) => `${s.name}:${s.expect.status}`), JSON.stringify(run.steps.map((s) => s.error)));
+    assert.deepStrictEqual(run.steps.filter((s) => !s.concurrentGroup).map((s) => `${s.name}:${s.statusCode}`),
+      run.plan.filter((s) => !s.concurrentGroup).map((s) => `${s.name}:${s.expect.status}`));
+    assert.deepStrictEqual(run.steps.filter((s) => s.concurrentGroup).map((s) => s.statusCode).sort(), [200, 202]);
+    const paired = run.steps.filter((s) => s.concurrentGroup);
+    assert.strictEqual(paired[0].request.body, paired[1].request.body);
+    assert.notStrictEqual(paired[0].invocation.invocationId, paired[1].invocation.invocationId);
+    assert.ok(emu.concurrency.some((g) => g.reason === 'webtrigger-replay' && g.members.length === 2));
     const deployed = Object.entries(emu.kvs.snapshot().kvs).filter(([k]) => k.startsWith('deployed:')).map(([k, v]) => `${k.slice(9)}=${v}`).sort();
     const wanted = run.plan.filter((s) => s.expect.effect).flatMap((s) => s.expect.effect.issueKeys.map((k) => `${k}=${s.expect.effect.environment}`)).sort();
     assert.deepStrictEqual(deployed, wanted, 'effects only where the plan expects them');

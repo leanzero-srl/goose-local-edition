@@ -772,7 +772,9 @@ if (require.main === module) {
 // The pack a site serves and the oracle grades: the facts plus the world that changes mid-run (world.cjs, SPEC §2.5).
 function worldPack(seed, { scoring = false } = {}) {
   const { withWorld } = require('./world.cjs');
-  return withWorld(facts(seed, { scoring }), { scoring });
+  const pack = withWorld(facts(seed, { scoring }), { scoring });
+  pack.rateQuotaScope = parseInt(String(seed).slice(-1), 16) % 2 ? 'tenant' : 'global';
+  return pack;
 }
 
 module.exports = { facts, worldPack, sprintMoves, V1_WINDOW };

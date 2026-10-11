@@ -43,10 +43,11 @@ including the bulk endpoints, their pagination and errors, and the rate model of
 dates are ISO-8601 strings as the OpenAPI types them. JQL: fields `project`, `key`, `sprint`, `updated`, `created`,
 `status`, `statusCategory`, `issuetype`, `labels`, `assignee`, `reporter`, `cf[id]`; operators
 `= != in not in > >= < <= is is not ~`, `AND OR NOT`, parentheses, `ORDER BY`; functions `openSprints()`,
-`closedSprints()`, `futureSprints()`, `currentUser()`, `now()`, `startOfDay()`; relative dates like `-14d`. Its update
+`closedSprints()`, `futureSprints()`, `currentUser()`, `now()`, `startOfDay()`; your declared `scopeChanged()`
+function and its shared precomputation lifecycle (contract §19); relative dates like `-14d`. Its update
 stream also carries the world changes of contract §12, each kind at least once. Invocations run on its virtual clock
 with the contract's limits (§11) and with the scoring site's concurrency and staleness (§3): up to 3 consumer
-invocations run at once, two deliveries of the same event included, and a KVS query (`kvs.query` or an entity index
+invocations run at once, subject to installation-wide queue concurrency keys and limits, two deliveries of the same event included, and a KVS query (`kvs.query` or an entity index
 query) misses writes younger than 5 virtual seconds, while `get` and transaction conditions always see current state.
 Forge LLM answers with a scripted model. You never call the site directly; your app reaches it through the Forge
 runtime. `users` lists the dev users: the first line is the default viewer; it marks who holds Jira's `ADMINISTER`

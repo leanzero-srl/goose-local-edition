@@ -6,13 +6,13 @@
                                    composition: no tree, no probe, the rows exactly as they were graded)
 
 Forge 1.0's machinery (score_forge.py, forked) with the 2.0 composition (SPEC §4):
-  earned = (0.25 · v1 + Σ_family w_family · mean(family rows)) × critical multiplier × reliability
+  earned = (0.15 · v1 + Σ_family w_family · mean(family rows)) × critical multiplier × reliability
   v1     = 0.88 · inner(1.0 tiers L..A) + 0.12 · excellence gate · e_mean      (the 1.0 rows, now regression rows)
-  family = R1 0.12 · R2 0.13 · R3 0.08 · R4 0.10 · R5 0.10 · R6 0.08 · R7 0.05 · R8 0.04 · R9 0.05 (P8's rows,
+  family = R1 0.12 · R2 0.13 · R3 0.08 · R4 0.10 · R5 0.10 · R6 0.08 · R7 0.05 · R8 0.04 · R9 0.05 · R10 0.10 (JQL; P8's rows,
            imported from bench/forge2_checks.py, each weighted inside its family)
   criticals: five CLASSES, ×0.6 each, a class fires at most once (each root priced once) and only on an observed
            defect — never on a vacuous, absent, unavailable or manifest-fault row
-  reliability: max(floor, Π over the 18 groups — every tier but E — of (1 − K × the shortfall of the group's worst
+  reliability: max(floor, Π over the 19 groups — every tier but E — of (1 − K × the shortfall of the group's worst
            eligible row)), K and the floor from the thresholds file (reliability())
   bands: lint/bundle failure → max 0.499; none of jira:adminPage, webtrigger, scope-ledger → max 0.30.
 The §17.8 fixes: B (the duplicate critical needs >= 2 comments for one gesture; zero comments or a missing flag
@@ -20,7 +20,7 @@ is u_comment_flow's), F (both economy rows continuous), G (vacuous / manifest-fa
 a vacuous root counts as charged), H (u_widget_live grades the outcome on the moved sprints; polling scores 0).
 
 P8's module (bench/forge2_checks.py) — what this module imports, validates at import, and refuses to score without:
-  ROWS      entries (objects or dicts) with name, family ('R1'..'R9'; `tier` also read) and critical (None, a class
+  ROWS      entries (objects or dicts) with name, family ('R1'..'R10'; `tier` also read) and critical (None, a class
             key, or its consequence text — mapped to exactly one class by CLASS_OF_TEXT, else refused);
   WEIGHTS   {name: weight} (a row's share; only the proportions inside a family matter; 0 = diagnostic);
   evaluate(obs, oracle) -> [{check, score, detail, parts?, unavailable?}]   run once per scoring site with the
@@ -100,7 +100,7 @@ FIXTURES = ROOT / 'forge2' / 'site' / 'fixtures.cjs'
 # ── calibration-owned thresholds ─────────────────────────────────────────────────────────────
 
 THRESHOLDS_FILE = HERE / 'forge2-thresholds.json'
-CALIB_SHA256 = '34550b5db10c9f76788a2db45925ce6a1bf94c7bb98842ba2c8cd3a7c01efeec'   # the golden v2 x5 calibration (calibrate(), --calibrate, 7ed584279) + reliability_k/floor (SPEC §4), 2026-10-10
+CALIB_SHA256 = 'TBD-AT-FREEZE'   # Fresh reference calibration must pass before repaired Forge 2.0 is publishable.
 
 
 def _load_thresholds() -> Dict:
@@ -130,14 +130,14 @@ UNCALIBRATED_BANNER = ('FORGE-2.0 UNCALIBRATED — forge2-thresholds.json carrie
 
 # ── weights (SPEC §4, asserted) ──────────────────────────────────────────────────────────────
 
-# v1 (the 1.0 rows, now regression rows, R10): 1.0's own composition inside a 0.25 share.
+# v1 regression retains its internal composition inside a 0.15 share.
 TIER_WEIGHT = {'L': .08, 'K': .10, 'T': .16, 'R': .14, 'S': .08, 'B': .12, 'U': .16, 'V': .08, 'A': .08}
 E_WEIGHT = 0.12
 INNER_WEIGHT = 1.0 - E_WEIGHT
 assert abs(sum(TIER_WEIGHT.values()) - 1.0) < 1e-9
-V1_WEIGHT = 0.25
-# v2: P8's rows (bench/forge2_checks.py), one family per stated requirement R1..R9.
-FAMILY_WEIGHT = {'R1': .12, 'R2': .13, 'R3': .08, 'R4': .10, 'R5': .10, 'R6': .08, 'R7': .05, 'R8': .04, 'R9': .05}
+V1_WEIGHT = 0.15
+# v2: the stated requirements R1..R9 plus functional native JQL (R10).
+FAMILY_WEIGHT = {'R1': .12, 'R2': .13, 'R3': .08, 'R4': .10, 'R5': .10, 'R6': .08, 'R7': .05, 'R8': .04, 'R9': .05, 'R10': .10}
 assert abs(V1_WEIGHT + sum(FAMILY_WEIGHT.values()) - 1.0) < 1e-9
 TIER_ORDER = ('L', 'K', 'T', 'R', 'S', 'B', 'U', 'V', 'A', 'E', *FAMILY_WEIGHT)
 
@@ -3498,12 +3498,19 @@ def _synthetic_v2():
 
 try:
     import forge2_checks as V2   # P8. It must not import this module at its top level (this module imports it).
+    import forge2_jql_checks as JQL
     V2_ABSENT: Optional[str] = None
 except ImportError as _error:
     V2_ABSENT = (f'bench/forge2_checks.py is not importable ({_error}): the v2 rows (0.75 of the score) are missing — '
                  'refusing to score')
     V2 = _synthetic_v2()
-_V2_ROWS, _V2_BLOCKS = _register_v2(V2)
+if V2_ABSENT:
+    _V2_ROWS, _V2_BLOCKS = _register_v2(V2)
+else:
+    import types
+    _registry = types.SimpleNamespace(ROWS=[*V2.ROWS, *JQL.ROWS], WEIGHTS=getattr(V2, 'WEIGHTS', {}),
+                                     ROOT_BLOCKS=getattr(V2, 'ROOT_BLOCKS', {}), evaluate=V2.evaluate)
+    _V2_ROWS, _V2_BLOCKS = _register_v2(_registry)
 
 for _name, _family, _w, _cls in _V2_ROWS:
     CHECKS.append((_name, _family, None, None, ()))   # run by V2.evaluate (v2_rows), never by _run_check
@@ -3517,7 +3524,8 @@ def v2_rows(c: Ctx, evaluate=None) -> List[Dict]:
     produce because the APP's manifest names an undeclared resource is the app's fault (candidate_section_fault, §17.8
     G): 0, vacuous, never a critical."""
     try:
-        got, why = {r.get('check'): r for r in (evaluate or V2.evaluate)(c.obs, c.oracle)}, None
+        got, why = {r.get('check'): r for r in (evaluate(c.obs, c.oracle) if evaluate else
+                      [*V2.evaluate(c.obs, c.oracle), *JQL.evaluate(c.obs, c.oracle)])}, None
     except Exception as error:   # a P8 bug is the scorer's, never the app's
         got, why = {}, f'scorer error: forge2_checks.evaluate: {type(error).__name__}: {error}'
     out = []
@@ -3804,7 +3812,7 @@ def scorer_files_sha256() -> Dict[str, str]:
     """The files that produced a verdict (calibrate() refuses golden verdicts scored by different ones)."""
     return {n: hashlib.sha256(p.read_bytes()).hexdigest() for n, p in (
         ('score_forge2.py', HERE / 'score_forge2.py'), ('forge2_checks.py', Path(V2.__file__)),
-        ('forge2_oracle.py', Path(fo.__file__)), ('forge2_probe.mjs', PROBE_SCRIPT), (THRESHOLDS_FILE.name, THRESHOLDS_FILE))}
+        ('forge2_jql_checks.py', Path(JQL.__file__)), ('forge2_oracle.py', Path(fo.__file__)), ('forge2_probe.mjs', PROBE_SCRIPT), (THRESHOLDS_FILE.name, THRESHOLDS_FILE))}
 
 
 def media_block(c: Ctx) -> Dict:
@@ -3840,6 +3848,8 @@ def observed_defect(r: Dict) -> bool:
     """SPEC §4: a critical fires ONLY on an observed defect — a row that ran (not unavailable), was exercised (not
     vacuous, which covers the manifest-fault rows, §17.8 G), whose surface exists (not absent) and scored below 1."""
     parts = r.get('parts') or {}
+    if r.get('check') == 'r10_shared_permissions' and parts.get('critical_observed') is not True:
+        return False
     return (isinstance(r.get('score'), (int, float)) and r['score'] < 1.0 - 1e-9 and not r.get('unavailable')
             and not parts.get('vacuous_root') and not parts.get('absent_surface'))
 
@@ -4040,6 +4050,9 @@ def _scenario(overrides: Dict[str, float], parts: Optional[Dict[str, Dict]] = No
     for r in rows:
         if r['check'] in overrides:
             r['score'] = overrides[r['check']]
+            if r['check'] == 'r10_shared_permissions':
+                r['parts'] = {'critical_observed': True, 'observed_hidden_issue_ids': ['synthetic-observed-hidden-issue']}
+                r['detail'] = 'JQL disclosure observed: synthetic-observed-hidden-issue'
         if parts and r['check'] in parts:
             r['parts'] = parts[r['check']]
     return rows

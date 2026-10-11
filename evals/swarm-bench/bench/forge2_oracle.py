@@ -65,9 +65,7 @@ WORLD_FIELDS = {'sprint-close': ('sprintId',), 'issue-move': ('changelogId',),
                 'browse-revoke': ('accountId', 'projectKey')}
 QUOTA_POINTS = 2400                                 # §2.1 per installation per virtual hour
 BACKGROUND_SHARE_PCT = 70                           # §2.1 / §2.6 default
-SEARCH_ISSUES_PER_POINT = 50                        # §2.1 search/jql: 1 + 1 per 50 issues returned
-BULKFETCH_POINTS, BULKFETCH_ISSUES_MAX = 2, 1000    # §2.1 changelog bulkfetch: 2 per call, <= 1,000 issues
-FIELD_UPDATES_PER_POINT, FIELD_UPDATES_MAX = 50, 200  # §2.1 app/field/value: 1 + 1 per 50 updates, <= 200
+FIELD_UPDATES_MAX = 200                              # §2.1: at most 200 issue updates per field-value request
 EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 JUST_BEFORE = timedelta(microseconds=1)
 
@@ -555,6 +553,30 @@ class Oracle:
         hidden = self.hidden_issue_ids(account_id)
         return [c for c in self.numbers(sprint_id).changes if c.issue_id not in hidden and c.issue_id not in self.deleted_at]
 
+    def jql_issue_ids(self, sprint_id: str, account_id: str, t_ms, applied: int,
+                      operator: str = 'in') -> Set[str]:
+        """Custom-function membership from changelog facts, then Jira's current browse filter.
+
+        Precomputations are app-wide. The native search result is viewer-specific and excludes
+        deleted issues; NOT IN complements against all issues that this viewer can browse.
+        """
+        if operator not in ('in', 'not in'):
+            raise ValueError(f'unsupported JQL operator {operator}')
+        mark = instant(t_ms)
+        if mark is None:
+            raise PackDefect('JQL observation has no virtual query instant')
+        full_live = list(self.pack['live'])
+        if not isinstance(applied, int) or not 0 <= applied <= len(full_live):
+            raise PackDefect(f'JQL applied prefix {applied} is outside the live plan')
+        applied_ids = {str(e['changelogId']) for e in full_live[:applied]}
+        gone = {iid for iid, when in self.deleted_at.items() if when <= mark}
+        hidden = self.hidden_issue_ids(str(account_id), mark)
+        universe = set(self.issues) - gone - hidden
+        changed = {ch.issue_id for ch in self.changes('final')
+                   if ch.sprint_id == str(sprint_id) and ch.at <= mark
+                   and (ch.phase == 'history' or ch.change_id in applied_ids)}
+        return universe & changed if operator == 'in' else universe - changed
+
     def hidden_count(self, sprint_id: str, account_id: str) -> int:
         hidden = self.hidden_issue_ids(account_id)
         return sum(1 for c in self.numbers(sprint_id).changes if c.issue_id in hidden and c.issue_id not in self.deleted_at)
@@ -908,49 +930,26 @@ class Oracle:
         return values, ungraded
 
     def dosing_optimum(self) -> Dict:
-        """The fewest background points (SPEC §2.1 costs) an app spends over the scored hours: the agile reads (board
-        list, one configuration and one sprint page per scrum board), ONE backfill over the ledger's issues with the
-        bulk endpoints (an ids search, 1 + 1 per 50; changelog bulkfetch, 2 per 1,000 issues), one read per relevant
-        change delivered as an event, an hourly reconcile search (1, plus a bulkfetch when a dropped change needs
-        healing that hour), and the field writes in bulk each hour (requests of <= 200 updates, 1 + 1 per 50). A
-        floor to report beside the measured points and a feasibility proof — no app can be dosed if it exceeds the
-        background share of the scored hours (PackDefect) — never a graded target."""
+        """A strict, deliberately incomplete lower bound under the current write tariff.
+
+        Field values that change must be written at least once, in requests of at most 200 issues.
+        The migration itself can use only storage. Read costs depend on selected collections,
+        page sizes, existing cache and continuation strategy, so they cannot be called a minimum
+        from the pack alone. Actual feasibility is proved by the reference runtime, not this floor.
+        """
         self._need_v2()
-        ledger = set(self._numbers)
-        earliest = min((self._start(sid) for sid in ledger), default=None)
-        install_entries = self._entries('none')
-        touched = {str(e['issueId']) for e in self.history if earliest and self._created(e) > earliest}
-        touched |= {iid for iid in self.issues if self.member_now(iid, install_entries) & ledger}
-        n = len(touched)
-        agile = 1 + 2 * len(self.scrum_boards())
-        backfill = (1 + math.ceil(n / SEARCH_ISSUES_PER_POINT)) + BULKFETCH_POINTS * max(1, math.ceil(n / BULKFETCH_ISSUES_MAX))
-        events = sum(1 for e in self.relevant_live() if not (e.get('delivery') or {}).get('dropped'))
-        marks = [self.checkpoint_mark(c) for c in CHECKPOINTS[:-1]]
-        reconcile = 0
-        lower = self.upgrade_at
-        for upper in marks:
-            healing = any((e.get('delivery') or {}).get('dropped') and lower < self._created(e) <= upper
-                          for e in self.relevant_live())
-            reconcile += 1 + (BULKFETCH_POINTS if healing else 0)
-            lower = upper
         writes, previous = [], {}
-        for c in CHECKPOINTS[:-1]:
-            values, _ungraded = self.field_values(c)
-            current = {k: min(v) for k, v in values.items()}
-            changed = sum(1 for k, v in current.items() if v != previous.get(k, ''))
+        for checkpoint in CHECKPOINTS[:-1]:
+            values, _ = self.field_values(checkpoint)
+            current = {key: min(options) for key, options in values.items()}
+            changed = sum(value != previous.get(key, '') for key, value in current.items())
             previous = current
-            full, rest = divmod(changed, FIELD_UPDATES_MAX)
-            pts = full * (1 + FIELD_UPDATES_MAX // FIELD_UPDATES_PER_POINT)
-            pts += (1 + math.ceil(rest / FIELD_UPDATES_PER_POINT)) if rest else 0
-            writes.append(pts)
-        total = agile + backfill + events + reconcile + sum(writes)
+            writes.append(math.ceil(changed / FIELD_UPDATES_MAX))
         cap = QUOTA_POINTS * BACKGROUND_SHARE_PCT // 100
-        if total > cap * SCORED_HOURS:
-            raise PackDefect(f'the dosing optimum ({total} points) exceeds {SCORED_HOURS} hours of the background '
-                             f'share ({cap} each): no app could be dosed on this pack')
-        return {'points': total, 'background_cap_per_hour': cap, 'issues_backfilled': n,
-                'parts': {'agile': agile, 'backfill': backfill, 'events': events, 'reconcile': reconcile,
-                          'field_writes': sum(writes)}, 'field_writes_by_hour': writes}
+        return {'points': sum(writes), 'background_cap_per_hour': cap,
+                'parts': {'field_writes': sum(writes)}, 'field_writes_by_hour': writes,
+                'bound': 'minimum field-write points only; reads and JQL refresh are additional',
+                'feasibility': 'requires measured known-good runtime; this bound cannot prove feasibility'}
 
     def leak_terms_for(self, issue_ids: Iterable[str]) -> Dict[str, List[str]]:
         """What must not show for these issues: their keys, and their summaries that no OTHER issue shares (the

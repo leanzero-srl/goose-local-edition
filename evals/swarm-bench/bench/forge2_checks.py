@@ -464,7 +464,7 @@ def _(ev: Ev) -> Dict:
     return g((len(used) - len(over)) / len(used),
              f'{len(used) - len(over)} of {len(used)} hours kept background within {pct} % ({cap} points; {source}); '
              f'busiest hour {busiest}' + (f'; over in hours {sample(h for h, _u in over)}' if over else '')
-             + f'; dosing optimum for the whole run {optimum}', 'background work starves person-facing requests')
+             + f'; mandatory field-write lower bound {optimum} (reads additional)', 'background work starves person-facing requests')
 
 
 @row('r2_person_never_quota_refused', 'R2')

@@ -10,8 +10,10 @@ import { migrateSome } from './migrate';
 import { markIssueDeleted, migrationComplete } from './ledger';
 import { loadSettings } from './settings';
 import { handleCiEvent, applyDeployment } from './ci';
+import { refreshScopePrecomputations } from './jql';
 
 export { adminResolver } from './admin';
+export { scopeChanged } from './jql';
 
 const QUEUE_KEY = 'scope-ledger';
 const MAX_RETRY_AFTER = 900; // @forge/events: InvocationError retryAfter and push delay are at most 900 s
@@ -77,6 +79,7 @@ async function issueEvent(body, work) {
   await settleClosedSprints(cfg, (cfg.closed ?? []).filter((id) => !closedBefore.has(id)), work, new Set([String(body.issueId)]));
   await saveConfig(cfg, previous);
   await announce(result.sprintIds);
+  if (result.sprintIds?.length) await enqueue({ type: 'jql-refresh', sprintIds: result.sprintIds }, 5);
   return result;
 }
 
@@ -94,6 +97,7 @@ async function deployment(body, work) {
   }
   const result = await applyDeployment(body, work);
   await announce(result.sprintIds);
+  if (result.sprintIds?.length) await enqueue({ type: 'jql-refresh', sprintIds: result.sprintIds }, 5);
   return result;
 }
 
@@ -107,6 +111,7 @@ async function runReconcile(work) {
   const result = await reconcileAll(cfg, isV2Config(previous) ? previous : null, work);
   await saveConfig(cfg, previous);
   await announce(result.sprintIds);
+  await enqueue({ type: 'jql-refresh', sprintIds: [...Object.keys(cfg.sprints), ...(cfg.closed ?? [])] }, 5);
   console.log(
     `reconcile: ${Object.keys(cfg.sprints).length} active sprints, ${result.issues} issues read, ${result.rows} rows, ${result.members} memberships, ${result.statuses} statuses, ${result.deleted} deleted`,
   );
@@ -122,9 +127,11 @@ export async function consumeChange(event) {
     if (body.type === 'migrate') return await continueMigration(work);
     if (body.type === 'reconcile') return await runReconcile(work);
     if (body.type === 'deploy') return await deployment(body, work);
+    if (body.type === 'jql-refresh') return await refreshScopePrecomputations(body.sprintIds ?? [], work);
     if (body.type === 'deleted') {
       const sprintIds = await markIssueDeleted(body.issueId);
       await announce(sprintIds);
+      await enqueue({ type: 'jql-refresh', sprintIds }, 5);
       return { sprintIds };
     }
     return await issueEvent(body, work);
