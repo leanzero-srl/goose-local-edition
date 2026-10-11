@@ -585,13 +585,16 @@ class Oracle:
             raise PackDefect('JQL observation has no virtual query instant')
         if not isinstance(applied, int) or not 0 <= applied <= len(self.pack['live']):
             raise PackDefect(f'JQL applied prefix {applied} is outside the live plan')
-        windows = self.freshness_deadline_windows(checkpoint, {**applied_by_checkpoint, checkpoint: applied}, wall)
+        sprint_changes = [ch for ch in self.changes('final') if ch.sprint_id == str(sprint_id)]
+        windows_by_change = self.freshness_deadline_windows(
+            checkpoint, {**applied_by_checkpoint, checkpoint: applied}, wall,
+            {ch.change_id for ch in sprint_changes})
         applied_ids = {str(e['changelogId']) for e in self.pack['live'][:applied]}
-        changes = [ch for ch in self.changes('final') if ch.sprint_id == str(sprint_id) and ch.at <= mark
+        changes = [ch for ch in sprint_changes if ch.at <= mark
                    and (ch.phase == 'history' or ch.change_id in applied_ids)]
         changed = {ch.issue_id for ch in changes}
         required = {ch.issue_id for ch in changes if ch.phase == 'history'
-                    or ch.issue_id not in windows or ch.at <= windows[ch.issue_id]}
+                    or ch.change_id not in windows_by_change or ch.at <= windows_by_change[ch.change_id]}
         gone = {iid for iid, when in self.deleted_at.items() if when <= mark}
         universe = set(self.issues) - self.hidden_issue_ids(str(account_id), mark) - gone
         return universe & (changed - required)
@@ -882,27 +885,35 @@ class Oracle:
         return min(mark, self.upgrade_at if live_applied == 0 else instant(order[live_applied - 1]['created']))
 
     def freshness_deadline_windows(self, checkpoint: str, applied_by_checkpoint: Dict[str, int],
-                                   wall=None) -> Dict[str, datetime]:
+                                   wall=None, relevant_change_ids: Optional[Set[str]] = None) -> Dict[str, datetime]:
         """Bounded §15/§19 recovery windows; app allocation exhaustion never creates a grace period.
 
-        A window defers only the issue's changes strictly after its lower bound. Old JQL membership
-        remains required even when a newer change of that same issue can legitimately arrive later.
+        Field windows are issue-keyed. Supplying relevant changelog IDs produces change-keyed windows
+        for those actual contributions: only dropped changes or changes inside the native quota wall.
+        An unrelated world change or a later lost event cannot defer an earlier delivered JQL change.
         """
         if checkpoint not in CHECKPOINTS:
             raise PackDefect(f'Unknown freshness checkpoint {checkpoint}')
         wall = wall or {}
         wall_at, wall_until = wall.get('t_ms'), wall.get('until_ms')
-        cache_key = (checkpoint, tuple(sorted(applied_by_checkpoint.items())), wall_at, wall_until)
+        relevant = None if relevant_change_ids is None else frozenset(relevant_change_ids)
+        cache_key = (checkpoint, tuple(sorted(applied_by_checkpoint.items())), wall_at, wall_until, relevant)
         if cache_key in self._freshness_windows:
             return dict(self._freshness_windows[cache_key])
 
         def own(cp):
             if cp != 'final' and not isinstance(applied_by_checkpoint.get(cp), int):
                 raise PackDefect(f'Freshness checkpoint {cp} lacks its applied live prefix')
-            _, keys = self.field_values(cp, None if cp == 'final' else applied_by_checkpoint[cp])
+            prefix = None if cp == 'final' else applied_by_checkpoint[cp]
             mark = self.checkpoint_mark(cp)
             lower = max(self.upgrade_at, mark - timedelta(hours=1)) if mark else self.checkpoint_mark(CHECKPOINTS[-2])
-            return {str(self.issue_by_key[key]['id']): lower for key in keys}
+            if relevant is None:
+                _, keys = self.field_values(cp, prefix)
+                return {str(self.issue_by_key[key]['id']): lower for key in keys}
+            cut = self.applied_cut(cp, prefix)
+            return {str(event['changelogId']): lower for event in self.relevant_live()
+                    if str(event['changelogId']) in relevant and (event.get('delivery') or {}).get('dropped')
+                    and self._created(event) > lower and (cut is None or self._created(event) <= cut)}
 
         windows = own(checkpoint)
         mark = self.checkpoint_mark(checkpoint)
@@ -910,10 +921,11 @@ class Oracle:
             at, until, mark_ms = int(wall_at), int(wall_until), epoch_ms(mark)
             if at <= mark_ms <= until:
                 for event in self.relevant_live():
-                    if at <= epoch_ms(self._created(event)) <= mark_ms:
-                        iid = str(event['issueId'])
+                    if (relevant is None or str(event['changelogId']) in relevant) \
+                            and at <= epoch_ms(self._created(event)) <= mark_ms:
+                        unit = str(event['issueId'] if relevant is None else event['changelogId'])
                         lower = instant(at) - JUST_BEFORE
-                        windows[iid] = min(windows.get(iid, lower), lower)
+                        windows[unit] = min(windows.get(unit, lower), lower)
             position = CHECKPOINTS.index(checkpoint)
             previous = CHECKPOINTS[position - 1] if position else None
             previous_mark = self.checkpoint_mark(previous) if previous else None
@@ -922,8 +934,9 @@ class Oracle:
             if previous_mark and at <= epoch_ms(previous_mark) < until:
                 for iid, lower in own(previous).items():
                     windows[iid] = min(windows.get(iid, lower), lower)
-        gone = {iid for iid, when in self.deleted_at.items() if mark is None or when <= mark}
-        windows = {iid: lower for iid, lower in windows.items() if iid not in gone}
+        if relevant is None:
+            gone = {iid for iid, when in self.deleted_at.items() if mark is None or when <= mark}
+            windows = {iid: lower for iid, lower in windows.items() if iid not in gone}
         self._freshness_windows[cache_key] = windows
         return dict(windows)
 

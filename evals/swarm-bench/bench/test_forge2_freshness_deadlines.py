@@ -88,6 +88,73 @@ class Deadlines(unittest.TestCase):
         row = grade(oracle, observation(oracle, applied, 'h4', sorted(expected - {'900'})))
         self.assertEqual(row['score'], 0, row)
 
+    def test_unrelated_no_event_world_change_does_not_excuse_delivered_membership(self):
+        for world_class in ('sprint-close', 'estimation-field'):
+            oracle, applied = fixture(dropped=False)
+            h4 = oracle.checkpoint_mark('h4')
+            event = {'id': 'unrelated-world', 'class': world_class,
+                     'at': (h4 - timedelta(minutes=3)).isoformat(), 'boardId': 1}
+            if world_class == 'sprint-close':
+                event['sprintId'] = 11
+            else:
+                event.update(fromFieldId='customfield_10016', toFieldId='customfield_10028')
+            oracle.pack['world']['events'].append(event)
+            oracle.pack['live'].append({'changelogId': '9402', 'issueId': '900',
+                                       'created': (h4 - timedelta(minutes=1)).isoformat(), 'authorId': 'u-ana',
+                                       'items': [{'field': 'summary', 'fieldtype': 'jira', 'fieldId': 'summary',
+                                                  'from': None, 'fromString': 'Before', 'to': None, 'toString': 'After'}],
+                                       'delivery': {'slot': 12, 'dropped': False, 'duplicates': []}})
+            oracle.pack['live'].sort(key=lambda change: change['created'])
+            oracle = fo.Oracle(oracle.pack)
+            applied['h4'] = applied['h5'] = applied['h6'] = applied['final'] = len(oracle.pack['live'])
+            at = fo.epoch_ms(h4)
+            self.assertIn('900', oracle.freshness_deadline_windows('h4', applied), world_class)
+            self.assertNotIn('900', oracle.jql_deferred_issue_ids('11', 'u-viewer', at, applied['h4'], 'h4', applied))
+            for operator in ('in', 'not in'):
+                expected = oracle.jql_issue_ids('11', 'u-viewer', at, applied['h4'], operator)
+                stale = expected - {'900'} if operator == 'in' else expected | {'900'}
+                row = grade(oracle, observation(oracle, applied, 'h4', sorted(stale), operator))
+                self.assertEqual(row['score'], 0, (world_class, operator, row))
+
+    def test_dropped_estimate_change_does_not_excuse_delivered_sprint_membership(self):
+        oracle, applied = fixture(dropped=False)
+        h4 = oracle.checkpoint_mark('h4')
+        oracle.pack['live'].append({'changelogId': '9402', 'issueId': '900',
+                                   'created': (h4 - timedelta(minutes=3)).isoformat(), 'authorId': 'u-ana',
+                                   'items': [{'field': 'Story Points', 'fieldtype': 'custom',
+                                              'fieldId': 'customfield_10016', 'from': '13', 'to': '14'}],
+                                   'delivery': {'slot': None, 'dropped': True, 'duplicates': []}})
+        oracle.pack['live'].sort(key=lambda change: change['created'])
+        oracle = fo.Oracle(oracle.pack)
+        applied['h4'] = applied['h5'] = applied['h6'] = applied['final'] = len(oracle.pack['live'])
+        at = fo.epoch_ms(h4)
+        self.assertIn('900', oracle.freshness_deadline_windows('h4', applied))
+        self.assertNotIn('900', oracle.jql_deferred_issue_ids('11', 'u-viewer', at, applied['h4'], 'h4', applied))
+        stale = oracle.jql_issue_ids('11', 'u-viewer', at, applied['h4']) - {'900'}
+        self.assertEqual(grade(oracle, observation(oracle, applied, 'h4', sorted(stale)))['score'], 0)
+
+    def test_each_delivered_contribution_establishes_membership_despite_another_lost_change(self):
+        for first_dropped in (False, True):
+            oracle, applied = fixture(dropped=first_dropped)
+            h4 = oracle.checkpoint_mark('h4')
+            oracle.pack['live'].append({'changelogId': '9402', 'issueId': '900',
+                                       'created': (h4 - timedelta(minutes=3)).isoformat(), 'authorId': 'u-ana',
+                                       'items': [{'field': 'Sprint', 'fieldtype': 'custom', 'fieldId': oracle.pack['sprintFieldId'],
+                                                  'from': '11', 'to': ''}],
+                                       'delivery': {'slot': 12 if first_dropped else None,
+                                                    'dropped': not first_dropped, 'duplicates': []}})
+            oracle.pack['live'].sort(key=lambda change: change['created'])
+            oracle = fo.Oracle(oracle.pack)
+            applied['h4'] = applied['h5'] = applied['h6'] = applied['final'] = len(oracle.pack['live'])
+            at = fo.epoch_ms(h4)
+            self.assertIn('900', oracle.freshness_deadline_windows('h4', applied))
+            self.assertNotIn('900', oracle.jql_deferred_issue_ids('11', 'u-viewer', at, applied['h4'], 'h4', applied))
+            for operator in ('in', 'not in'):
+                expected = oracle.jql_issue_ids('11', 'u-viewer', at, applied['h4'], operator)
+                stale = expected - {'900'} if operator == 'in' else expected | {'900'}
+                row = grade(oracle, observation(oracle, applied, 'h4', sorted(stale), operator))
+                self.assertEqual(row['score'], 0, (first_dropped, operator, row))
+
     def test_native_quota_wall_carries_only_one_lost_event_deadline(self):
         oracle, applied = fixture(hour=2)
         h2 = oracle.checkpoint_mark('h2')
