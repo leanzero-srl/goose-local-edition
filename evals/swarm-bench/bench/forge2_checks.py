@@ -454,6 +454,58 @@ def _(ev: Ev) -> Dict:
 
 # ── R2 Tier 1 dosing at scale ────────────────────────────────────────────────────────────────
 
+def complete_empty_rate_accounting(ev: Ev, rate: Dict) -> bool:
+    errors = ev.obs.get('sectionErrors')
+    if not isinstance(errors, dict):
+        return False
+    if rate.get('hours') != [] or rate.get('requests') != [] or ev.obs.get('harnessMissing') != []:
+        return False
+    clock, clock_error = ev.section('clock')
+    phases, phase_error = ev.section('phases')
+    if clock_error or phase_error:
+        return False
+    upgrade = num(clock.get('upgrade_t_ms'))
+    cps = clock.get('checkpoints')
+    marks = [num(cps.get(cp)) for cp in fo.CHECKPOINTS] if isinstance(cps, dict) else []
+    if upgrade is None or not upgrade.is_finite() or not marks or any(t is None or not t.is_finite() for t in marks):
+        return False
+    if any(t < upgrade + (n + 1) * 3_600_000 for n, t in enumerate(marks[:-1])) or marks != sorted(marks):
+        return False
+    required = ('backfill', 'live', *(f'hour-{n}' for n in range(1, fo.SCORED_HOURS)), 'heal', 'rerun')
+    for name in required:
+        phase = phases.get(name)
+        calls = phase.get('calls') if isinstance(phase, dict) else None
+        if errors.get(name) or not isinstance(calls, list):
+            return False
+    upgrade_record, ui, rovo = (ev.obs.get(name) for name in ('upgrade', 'ui', 'rovo'))
+    if not all(isinstance(value, dict) for value in (upgrade_record, ui, rovo)):
+        return False
+    upgrade_calls = upgrade_record.get('calls')
+    rovo_calls = rovo.get('calls')
+    captured = [*(p.get('calls') for p in phases.values() if isinstance(p, dict)), upgrade_calls,
+                ui.get('calls'), ev.obs.get('webtriggerCalls')]
+    if not isinstance(rovo_calls, list) or any(not isinstance(r, dict) for r in rovo_calls):
+        return False
+    captured.extend(r.get('calls') for r in rovo_calls)
+    captured.extend(ui[name] for name in ('adminCalls', 'llmCalls') if name in ui)
+    if any(errors.get(name) for name in ('upgrade', 'ui', 'admin', 'rovo', 'webtrigger', 'llm_v2')):
+        return False
+
+    def uncharged(call):
+        if not isinstance(call, dict) or not isinstance(call.get('service'), str):
+            return False
+        if call['service'] != 'jira':
+            return bool(call['service'])
+        if call.get('op') is not None:
+            return False
+        # These two recorded proxy refusals return before forwarding to the priced site.
+        if call.get('status') == 404 and isinstance(call.get('path'), str) and not call['path'].startswith('/rest/'):
+            return True
+        return call.get('status') == 401 and call.get('provider') == 'user' and call.get('needsAuthentication') is True
+
+    return all(isinstance(calls, list) and all(uncharged(c) for c in calls) for calls in captured)
+
+
 @row('r2_background_share', 'R2')
 def _(ev: Ev) -> Dict:
     rate, why = ev.section('rate')
@@ -461,6 +513,8 @@ def _(ev: Ev) -> Dict:
         return unavail(why)
     hours = [h for h in rate.get('hours') or [] if isinstance(h, dict)]
     if not hours:
+        if complete_empty_rate_accounting(ev, rate):
+            return vacuous('no background Jira points were spent')
         return unavail('rate.hours is empty')
     pct = rate.get('background_share_pct')
     source = 'set by the probe in the admin panel'
