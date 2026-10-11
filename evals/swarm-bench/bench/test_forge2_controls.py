@@ -58,6 +58,39 @@ class JudgeTests(unittest.TestCase):
         self.assertTrue(any('unavailable rows' in fail for fail in fails))
         self.assertTrue(any('harness_missing' in fail for fail in fails))
 
+    def test_unrelated_vacuous_loss_requires_an_explicit_causal_root_or_named_secondary(self):
+        mutant = verdict({'primary': 0.0, 'secondary': 1.0, 'other': 0.0})
+        mutant['checks'][-1]['parts'] = {'vacuous_root': 'precondition: unrelated native JQL evidence absent'}
+        fails = controls.judge(self.golden, mutant, self.expect, {})
+        self.assertTrue(any("undeclared losses: ['other']" in fail for fail in fails))
+        self.assertEqual(controls.judge(self.golden, mutant, self.expect, {'primary': ('other',)}), [])
+        explained = {**self.expect, 'may_lose': ['secondary', 'other'],
+                     'why': 'The declared root prevents the named downstream surface from being exercised.'}
+        self.assertEqual(controls.judge(self.golden, mutant, explained, {}), [])
+
+    def test_runtime_status_and_unavailable_rows_refuse_even_without_aggregate_flags(self):
+        mutant = verdict({'primary': 0.0, 'secondary': 1.0, 'other': 1.0})
+        for status in ('held', 'unavailable', None):
+            with self.subTest(status=status):
+                mutant['status'] = status
+                self.assertTrue(any('runtime status' in fail for fail in controls.judge(self.golden, mutant, self.expect, {})))
+        mutant['status'] = 'scored'
+        mutant['checks'][0]['unavailable'] = True
+        self.assertTrue(any('row-level unavailable' in fail for fail in controls.judge(self.golden, mutant, self.expect, {})))
+
+    def test_starter_and_idle_cap_controls_cannot_pass_on_unavailable_or_held_runtime(self):
+        control = verdict({'primary': 0.0})
+        control['score'] = 0.01
+        self.assertEqual(controls.capped_control_failures(control, controls.IDLE_MAX), [])
+        control['checks'][0]['unavailable'] = True
+        self.assertTrue(controls.capped_control_failures(control, controls.IDLE_MAX))
+        control['checks'][0].pop('unavailable')
+        control['harness_missing'] = ['GET /unmodelled']
+        self.assertTrue(controls.capped_control_failures(control, controls.STARTER_MAX))
+        control['harness_missing'] = []
+        control['status'] = 'held'
+        self.assertTrue(controls.capped_control_failures(control, controls.IDLE_MAX))
+
     def test_one_declared_critical_cannot_hide_an_unrelated_critical(self):
         mutant = verdict({'primary': 0.0, 'secondary': 1.0, 'other': 1.0}, classes=['duplicate', 'leak'])
         fails = controls.judge(self.golden, mutant, {**self.expect, 'critical': 'duplicate'}, {})

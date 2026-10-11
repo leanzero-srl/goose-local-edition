@@ -95,14 +95,32 @@ def _rows(verdict: Dict) -> Dict[str, Dict]:
     return {r['check']: r for r in verdict['checks']}
 
 
+def runtime_failures(verdict: Dict) -> List[str]:
+    """Runtime controls cannot qualify on a held result or unavailable evidence, even if summary flags are missing."""
+    fails = []
+    if verdict.get('status') != 'scored':
+        fails.append(f"runtime status {verdict.get('status')!r} is not scored")
+    if verdict.get('probe_unavailable'):
+        fails.append(f"unavailable rows {verdict['probe_unavailable']} (the lint double-run included) — harness defect")
+    if verdict.get('harness_missing'):
+        fails.append(f"harness_missing {verdict['harness_missing'][:4]} — the emulator must model the control's calls")
+    unavailable = [row.get('check') for row in verdict.get('checks') or [] if row.get('unavailable')]
+    if unavailable:
+        fails.append(f'row-level unavailable evidence {unavailable} — harness defect')
+    return fails
+
+
+def capped_control_failures(verdict: Dict, cap: float) -> List[str]:
+    fails = runtime_failures(verdict)
+    if verdict['score'] > cap:
+        fails.append(f"{verdict['status']} at {verdict['score']} (must be scored at <= {cap})")
+    return fails
+
+
 def judge(golden: Dict, mutant: Dict, expect: Dict, root_blocks: Dict[str, tuple], calibration_owned=()) -> List[str]:
     """Failures (empty = the mutant behaves as declared)."""
-    fails: List[str] = []
+    fails = runtime_failures(mutant)
     g, m = _rows(golden), _rows(mutant)
-    if mutant.get('probe_unavailable'):
-        fails.append(f"unavailable rows {mutant['probe_unavailable']} (the lint double-run included) — harness defect")
-    if mutant.get('harness_missing'):
-        fails.append(f"harness_missing {mutant['harness_missing'][:4]} — the emulator must model the mutant's calls")
     lost = {n for n, row in m.items() if n in g and row['score'] < g[n]['score'] - 1e-9}
     declared = set(expect.get('loses') or [])
     optional = set(expect.get('may_lose') or [])
@@ -124,13 +142,6 @@ def judge(golden: Dict, mutant: Dict, expect: Dict, root_blocks: Dict[str, tuple
         nxt = {d for root in frontier for d in root_blocks.get(root, ())} - attributed
         attributed |= nxt
         frontier = nxt & lost
-    # A row the mutant left VACUOUS (its precondition unmet: the surface was never exercised) is the shadow of the
-    # declared defect, priced 0 with no critical of its own (its 0 counts in its reliability group like any score) —
-    # attributed whenever a declared row was lost.
-    if declared & lost:
-        # (score_forge2 marks a row its app's own manifest fault left unopened `manifest:`, §17.8 G — the same shadow)
-        attributed |= {n for n, row in m.items()
-                       if (row.get('parts') or {}).get('vacuous_root', '').startswith(('precondition', 'manifest'))}
     missing = sorted(declared - lost)
     # Calibration-owned economy rows are ratios any code change moves; they are reported, never a mutant's defect.
     extra = sorted(lost - declared - optional - attributed - set(calibration_owned))
@@ -432,7 +443,7 @@ def main(argv=None) -> int:
             return 1 if failed else 0
         golden = score(tmp / 'golden', a.seed, tmp / 'golden.json')
         report['golden'] = {'score': golden['score'], 'status': golden['status']}
-        gfails = score_forge2.reference_failures(golden)
+        gfails = runtime_failures(golden) + score_forge2.reference_failures(golden)
         if gfails:
             report['golden']['reference_failures'] = gfails
             failed = True
@@ -471,8 +482,7 @@ def main(argv=None) -> int:
                 tree = tmp / label
                 build(tree)
                 verdict = score(tree, a.seed, tmp / f'{label}.json')
-                fails = [] if verdict['status'] == 'scored' and verdict['score'] <= cap else \
-                    [f"{verdict['status']} at {verdict['score']} (must be scored at <= {cap})"]
+                fails = capped_control_failures(verdict, cap)
                 report['controls'][label] = {'score': verdict['score'], 'fails': fails}
             except Exception as error:
                 report['controls'][label] = {'fails': [f'{type(error).__name__}: {error}']}
