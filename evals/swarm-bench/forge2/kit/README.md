@@ -1,4 +1,4 @@
-# forge-1.0 kit (WP1)
+# Forge 2.0 kit
 
 The Forge platform the benchmark runs apps on: Atlassian's own runtime wrapper, a private seeded Jira
 Cloud site, the Custom UI / dashboards host, and the offline dev tools. The scorer and the entrant's
@@ -6,16 +6,17 @@ Cloud site, the Custom UI / dashboards host, and the offline dev tools. The scor
 
 ## Materialise
 
-`python3 bench/forge_kit.py ensure` prints `{kit_dir, modules_dir, kit_lock_sha256, kit_code_sha256,
+`python3 bench/forge2_kit.py ensure` prints `{kit_dir, modules_dir, kit_lock_sha256, kit_code_sha256,
 wrapper_sha256}`. It runs `npm ci --ignore-scripts` for `package-lock.json` (app-modules: the entrant's
 `node_modules`) and `lint/package-lock.json` (lint-modules), fetches the runtime wrapper and loader and
 refuses unless both match `runtime-pin.json` by sha256 and size, copies the manifest schema out of
 `@forge/manifest`, and stages `kit-<code_sha256[:16]>/` (`bin lib openapi runtime-pin.json` plus links).
-Concurrent calls are serialised by an flock. Any change under `bin/ lib/ openapi/` makes a new kit dir:
+Concurrent calls are serialised by an flock. Any change under `bin/ lib/ openapi/ lint-pack/` or to
+`runtime-pin.json` makes a new kit dir:
 re-run `ensure` and use its `kit_dir` as `$FORGE_KIT`. `install-modules <workdir>` clones app-modules
 into a workspace (APFS clone; refuses on other filesystems).
 
-The wrapper is never committed. `forge_kit.py repin` re-reads the CDN index the way `@forge/bundler`'s
+The wrapper is never committed. `forge2_kit.py repin` re-reads the CDN index the way `@forge/bundler`'s
 NetworkWrapperProvider does (first `<script src>` containing `wrapper` / `loader`) and rewrites the pin;
 re-pinning is deliberate and means rescoring the golden.
 
@@ -50,20 +51,21 @@ clamped to 1..900 s. The real wrapper throws on an `InvocationError` without `re
 
 Forge 2.0 hardening (contract S1, S2):
 
-- Concurrent delivery. `drainQueues` starts a consumer delivery together with every other pending consumer
-  delivery due by then that carries the same event (a copy of the queue event, or work pushed for the same
-  product event, e.g. by a trigger-level duplicate) or names the same issue (its chain began with a product
-  event of that issue): at most 3, in delivery order. A push's `concurrency: {key, limit}` does not exempt a pair
-  (SPEC §2.8; contract §8 states this difference from production, where the key would serialize them).
+- Concurrent delivery. `drainQueues` groups up to three due consumer deliveries in delivery order,
+  including independent work and duplicate or same-issue work. A push's `concurrency: {key, limit}`
+  constrains admission across all queues of this installation, as Forge's Async Events API specifies.
+  Saturated keys do not block independent keys or unkeyed events. The three-member bound and deterministic
+  interleaving are benchmark controls, not claims about Forge's production scheduler.
   The proxy serves the group's requests one at a time — each when every running member has one waiting,
   earliest virtual send time first, ties by delivery order — and holds each member's first KVS write until every
   other running member has issued a write or ended (READS-FIRST). The interleaving is the same on every run.
-  The pair shows in each delivery record, invocation result and record (`concurrent: {group, reason, index,
+  The group shows in each delivery record and invocation result (`concurrent: {group, reason, index,
   with}`), in `emu.concurrency` (members, first writes in commit order) and in the KVS call log
-  (`heldReadsFirst`). Pairs form only from deliveries pending together: the site's plan marks batches
+  (`heldReadsFirst`). Groups form only from deliveries pending together: the site's plan marks batches
   (`deliverNext().batchEnd`: a duplicate with every delivery since its original, the two halves of a permuted
   same-issue pair), and the drives — the scoring probe and `forge-dev events` — leave the queues undrained until a
-  batch's last delivery. Unrelated deliveries and product-event triggers run one at a time.
+  batch's last delivery. Product-event triggers run one at a time; consumer deliveries may overlap even
+  when they are unrelated.
 - Eventually consistent queries. `kvs.query` and entity queries see a write once it is 5 virtual seconds old
   (until then the value before it, or no row); `get`, `batchGet`, transaction conditions and `FAIL_IF_EXISTS`
   read the current state. Writes the harness makes outside an invocation (the v1 preload) are settled at once;
@@ -147,6 +149,6 @@ on this issue."],"errors":{}}` — measured on Jira Cloud 2026-10-03 without ADD
 
 ## Tests
 
-`node --test forge/kit/test/*.test.cjs` (fixtures, site, kit, widget, forge-dev, forge-dev-live, llm-realtime,
+From `evals/swarm-bench`, run `node --test forge2/kit/test/*.test.cjs` (fixtures, site, kit, widget, forge-dev, forge-dev-live, llm-realtime,
 smoke-spike) and
-`python3 -m unittest forge/kit/test/test_entrant_fence.py`.
+`python3 -m unittest forge2/kit/test/test_entrant_fence.py`.

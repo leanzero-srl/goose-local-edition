@@ -18,8 +18,10 @@ the telemetry file recorded) can exceed max_calls by exactly those resends.
 WALLET GUARD (operator safety, optional): BENCH_MAX_USD arms it. While an OpenRouter entrant runs, the
 guard reads each new generation id from the run's telemetry sink, bills it through OpenRouter's
 /api/v1/generation (bench_cost's reader), and when the billed sum reaches the limit it sends SIGTERM to
-the entrant's own pid (gate 4: never a group signal) and the harness scores what exists. The bill can
-pass the limit by the call in flight when it trips.
+the entrant's own pid (gate 4: never a group signal). Forge 2.0 treats wallet/accounting interruptions
+as unscored capability evidence; historical tiers retain their stated budget-stop treatment. Telemetry
+arrives after a call ends and billing can lag while later calls proceed, so one in-flight call is not a
+proven overrun bound. Missing or invalid bills stop the entrant and remain explicitly unresolved.
 """
 from __future__ import annotations
 
