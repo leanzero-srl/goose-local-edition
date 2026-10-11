@@ -1,4 +1,5 @@
 import { kvs } from '@forge/kvs';
+import { randomUUID } from 'node:crypto';
 import { jiraJson, route, postJson, RateLimited } from './jira';
 import { sprintReader } from './config';
 import {
@@ -278,10 +279,10 @@ export async function searchCandidates(cfg, sinceMs, work) {
 
 export async function fieldHistories(issueIds, fieldIds, work) {
   const byIssue = new Map();
-  for (let i = 0; i < issueIds.length; i += 1000) {
+  for (let i = 0; i < issueIds.length; i += 100) {
     let nextPageToken;
     do {
-      const body = { issueIdsOrKeys: issueIds.slice(i, i + 1000), fieldIds, maxResults: 1000 };
+      const body = { issueIdsOrKeys: issueIds.slice(i, i + 100), fieldIds, maxResults: 100 };
       if (nextPageToken) body.nextPageToken = nextPageToken;
       const page = await jiraJson('app', route`/rest/api/3/changelog/bulkfetch`, postJson(body), work);
       for (const log of page.issueChangeLogs ?? []) {
@@ -353,28 +354,32 @@ async function sprintsClosedSince(cfg, previous, work) {
   return closed;
 }
 
-// Backfill and heal: compute every change and membership of every active sprint from Jira, then write
-// only what the ledger does not hold yet, then the scope statuses that differ from what Jira shows. A run
-// with nothing new writes nothing. `previous` is the config before this run's discovery: its sprints that
-// are no longer active have closed, and their issues' statuses are recomputed. A sprint that closed since the last
-// run is healed once more, as at its close (contract §12): the changes made before the close that no delivery brought
-// (a lost event) are recorded, and its members are settled with memberAtClose.
-export async function reconcileAll(cfg, previous, work) {
-  const startedAt = Date.now();
+const PASS_KEY = 'reconcile-progress';
+const PASS_LEASE = 'reconcile-lease';
+
+function candidateJql(cfg, sinceMs) {
+  const sprints = Object.values(cfg.sprints);
+  const since = sinceMs ?? Math.min(...sprints.map((s) => s.startMs)) - 24 * 3600 * 1000;
+  // Keep the literal query fixed while following its opaque pagination token.
+  return `sprint in (${sprints.map((s) => s.id).join(', ')}) OR updated >= "${jqlDate(since)}" ORDER BY id ASC`;
+}
+
+async function reconcilePass(cfg, previous, work) {
   const sprintIds = Object.keys(cfg.sprints);
   const active = new Set(sprintIds);
   const closedSince = await sprintsClosedSince(cfg, previous, work);
   const last = await kvs.get(RECONCILE_KEY);
   const knewAll = sprintIds.every((id) => previous?.sprints?.[id]);
-  // A board that switched estimation fields since the last pass sends no event (SPEC §2.5): every member of its
-  // sprints is re-read, so the totals use the field the board uses now (contract §1).
   const fields = Object.fromEntries(Object.values(cfg.sprints).map((s) => [s.boardId, s.estimateFieldId ?? null]));
   const switched = Object.entries(fields).some(([b, f]) => last?.fields?.[b] !== undefined && last.fields[b] !== f);
-  const issues = sprintIds.length ? await searchCandidates(cfg, last && knewAll && !switched ? last.startedAt : null, work) : [];
-  // Settling a closed sprint's members needs the estimation fields' changes too (the ones made after its close).
-  const logFields = closedSince.size ? [cfg.sprintFieldId, ...estimateFieldIds(cfg)] : [cfg.sprintFieldId];
-  const histories = issues.length ? await fieldHistories(issues.map((i) => String(i.id)), logFields, work) : new Map();
-
+  const signature = JSON.stringify({ fields, sprintIds, closed: [...closedSince.keys()].sort(), issueFields: issueFields(cfg) });
+  let pass = await kvs.get(PASS_KEY);
+  if (!pass || pass.signature !== signature) {
+    pass = { id: randomUUID(), signature, startedAt: Date.now(), fields, jql: sprintIds.length ? candidateJql(cfg, last && knewAll && !switched ? last.startedAt : null) : null,
+      page: 0, nextPageToken: null, searchDone: !sprintIds.length, candidateIds: [], rows: 0, members: 0, statuses: 0, changed: [] };
+    await kvs.set(PASS_KEY, pass);
+  }
+  const changed = new Set(pass.changed);
   const storedRows = new Set();
   const rowsBySprintIssue = new Map();
   const membersNow = new Map();
@@ -386,70 +391,137 @@ export async function reconcileAll(cfg, previous, work) {
     }
     for (const m of await membersOfSprint(sprintId)) (active.has(sprintId) ? membersNow : membersAtClose).set(memberKey(m.sprintId, m.issueId), m);
   }
-
-  const resolve = async (sprintId) => cfg.sprints[sprintId] ?? closedSince.get(sprintId) ?? null;
-  const changed = new Set();
-  let rows = 0;
-  let members = 0;
-  for (const issue of issues) {
-    // Out of time: stop here; the caller hands the rest to the queue (every write so far stays valid).
-    if (!work.hasTimeFor(0)) throw new RateLimited(1, 'time');
-    const issueRows = await rowsOf(cfg, issue, histories.get(String(issue.id)) ?? [], 'reconcile', resolve);
-    for (const row of issueRows) {
-      const key = changeKey(row.changeId, row.sprintId);
-      if (storedRows.has(key)) continue;
-      if (await recordChange(row, true)) {
-        rows += 1;
-        changed.add(row.sprintId);
-      }
-      storedRows.add(key);
-      push(rowsBySprintIssue, memberKey(row.sprintId, row.issueId), row);
+  const resolve = async (id) => cfg.sprints[id] ?? closedSince.get(id) ?? null;
+  const logFields = closedSince.size ? [cfg.sprintFieldId, ...estimateFieldIds(cfg)] : [cfg.sprintFieldId];
+  while (!pass.searchDone) {
+    const key = `reconcile:${pass.id}:${pass.page}`;
+    let page = await kvs.get(key);
+    const resumed = Boolean(page);
+    if (!page) {
+      const request = { jql: pass.jql, fields: issueFields(cfg), maxResults: 100 };
+      if (pass.nextPageToken) request.nextPageToken = pass.nextPageToken;
+      const found = await jiraJson('app', route`/rest/api/3/search/jql`, postJson(request), work);
+      page = { issues: found.issues ?? [], nextPageToken: found.isLast ? null : found.nextPageToken ?? null, historyPage: 0, historyToken: null, historyDone: !(found.issues?.length), processed: 0 };
+      await kvs.set(key, page);
     }
-    const currentIds = new Set(sprintsOfField(issue.fields?.[cfg.sprintFieldId]).map((s) => s.id));
-    const touched = new Set([...currentIds, ...issueRows.map((r) => r.sprintId)]);
-    for (const sprintId of sprintIds) if (membersNow.has(memberKey(sprintId, issue.id))) touched.add(sprintId);
-    for (const sprintId of closedSince.keys()) if (membersAtClose.has(memberKey(sprintId, issue.id))) touched.add(sprintId);
-    for (const sprintId of touched) {
-      if (closedSince.has(sprintId)) {
-        const next = memberAtClose(cfg, closedSince.get(sprintId), issue, currentIds, histories.get(String(issue.id)) ?? []);
-        if (await writeMember(next, membersAtClose.get(memberKey(sprintId, issue.id)))) {
-          members += 1;
-          changed.add(sprintId);
+    // A paid, incomplete page may survive an hour boundary. Refresh just that page, rather than
+    // replaying the completed prefix or writing memberships from its older search snapshot.
+    if (resumed && page.processed < page.issues.length) {
+      const fresh = await jiraJson('app', route`/rest/api/3/issue/bulkfetch`, postJson({ issueIdsOrKeys: page.issues.map((i) => String(i.id)), fields: issueFields(cfg) }), work);
+      const byId = new Map((fresh.issues ?? []).map((i) => [String(i.id), i]));
+      page.issues = page.issues.map((i) => byId.get(String(i.id)) ?? { ...i, missing: true });
+      page.historyPage = 0;
+      page.historyToken = null;
+      page.historyDone = !page.issues.some((i) => !i.missing);
+      await kvs.set(key, page);
+    }
+    while (!page.historyDone) {
+      const request = { issueIdsOrKeys: page.issues.filter((i) => !i.missing).map((i) => String(i.id)), fieldIds: logFields, maxResults: 100 };
+      if (page.historyToken) request.nextPageToken = page.historyToken;
+      const logs = await jiraJson('app', route`/rest/api/3/changelog/bulkfetch`, postJson(request), work);
+      await kvs.set(`${key}:history:${page.historyPage}`, logs.issueChangeLogs ?? []);
+      page.historyPage += 1;
+      page.historyToken = logs.nextPageToken ?? null;
+      page.historyDone = !page.historyToken;
+      await kvs.set(key, page);
+    }
+    const histories = new Map();
+    for (let n = 0; n < page.historyPage; n += 1) {
+      const logs = await kvs.get(`${key}:history:${n}`);
+      if (!logs) throw new Error(`Missing persisted changelog page ${key}:${n}`);
+      for (const log of logs) {
+        const id = String(log.issueId);
+        if (!histories.has(id)) histories.set(id, []);
+        histories.get(id).push(...(log.changeHistories ?? []));
+      }
+    }
+    for (; page.processed < page.issues.length; ) {
+      if (!work.hasTimeFor(0)) throw new RateLimited(1, 'time');
+      const issue = page.issues[page.processed];
+      if (issue.missing) {
+        for (const id of await markIssueDeleted(String(issue.id))) changed.add(id);
+      } else {
+        const issueRows = await rowsOf(cfg, issue, histories.get(String(issue.id)) ?? [], 'reconcile', resolve);
+        for (const row of issueRows) {
+          const rowKey = changeKey(row.changeId, row.sprintId);
+          if (storedRows.has(rowKey)) continue;
+          if (await recordChange(row, true)) { pass.rows += 1; changed.add(row.sprintId); }
+          storedRows.add(rowKey);
+          push(rowsBySprintIssue, memberKey(row.sprintId, row.issueId), row);
         }
-        continue;
+        const currentIds = new Set(sprintsOfField(issue.fields?.[cfg.sprintFieldId]).map((s) => s.id));
+        const touched = new Set([...currentIds, ...issueRows.map((r) => r.sprintId)]);
+        for (const id of sprintIds) if (membersNow.has(memberKey(id, issue.id))) touched.add(id);
+        for (const id of closedSince.keys()) if (membersAtClose.has(memberKey(id, issue.id))) touched.add(id);
+        for (const id of touched) {
+          let next;
+          let stored;
+          if (closedSince.has(id)) {
+            next = memberAtClose(cfg, closedSince.get(id), issue, currentIds, histories.get(String(issue.id)) ?? []);
+            stored = membersAtClose.get(memberKey(id, issue.id));
+            membersAtClose.set(memberKey(id, issue.id), next);
+          } else if (active.has(id)) {
+            next = memberRow(cfg, id, issue, currentIds);
+            stored = membersNow.get(memberKey(id, issue.id));
+            membersNow.set(memberKey(id, issue.id), next);
+          } else continue;
+          if (await writeMember(next, stored)) { pass.members += 1; changed.add(id); }
+        }
       }
-      if (!active.has(sprintId)) continue;
-      const next = memberRow(cfg, sprintId, issue, currentIds);
-      if (await writeMember(next, membersNow.get(memberKey(sprintId, issue.id)))) {
-        members += 1;
-        changed.add(sprintId);
-      }
-      membersNow.set(memberKey(sprintId, issue.id), next);
+      page.processed += 1;
+      pass.changed = [...changed];
+      await kvs.set(key, page);
+      await kvs.set(PASS_KEY, pass);
     }
+    if (cfg.scopeFieldId) {
+      const values = new Map();
+      for (const issue of page.issues) {
+        if (issue.missing) continue;
+        const id = String(issue.id);
+        const issueMembers = sprintIds.map((s) => membersNow.get(memberKey(s, id))).filter(Boolean);
+        const issueRows = sprintIds.flatMap((s) => rowsBySprintIssue.get(memberKey(s, id)) ?? []);
+        const value = scopeStatus(active, issueMembers, issueRows);
+        if (currentStatus(issue.fields, cfg.scopeFieldId) !== value) values.set(id, value);
+      }
+      if (values.size) pass.statuses += await writeStatuses(cfg.scopeFieldId, values, work);
+    }
+    pass.candidateIds.push(...page.issues.map((i) => String(i.id)));
+    pass.nextPageToken = page.nextPageToken;
+    pass.searchDone = !page.nextPageToken;
+    pass.page += 1;
+    pass.changed = [...changed];
+    await kvs.set(PASS_KEY, pass);
+    // The cursor is already durable; discarded pages cannot cause a paid prefix to be replayed.
+    for (let n = 0; n < page.historyPage; n += 1) await kvs.delete(`${key}:history:${n}`);
+    await kvs.delete(key);
   }
-
-  // Every issue in an active sprint is a candidate, so a member still "in" a sprint that the search did
-  // not return has either left it unseen or been deleted: Jira says which.
-  const candidateIds = new Set(issues.map((i) => String(i.id)));
+  const candidateIds = new Set(pass.candidateIds);
   const orphans = [...new Set([...membersNow.values()].filter((m) => m.inSprint && m.deleted !== true && !candidateIds.has(m.issueId)).map((m) => m.issueId))];
   const deleted = orphans.length ? await missingIssues(orphans, work) : [];
-  for (const issueId of deleted) for (const sprintId of await markIssueDeleted(issueId)) changed.add(sprintId);
-
-  let statuses = 0;
+  for (const issueId of deleted) for (const id of await markIssueDeleted(issueId)) changed.add(id);
   if (cfg.scopeFieldId) {
-    const values = new Map();
-    for (const issue of issues) {
-      const id = String(issue.id);
-      const issueMembers = sprintIds.map((s) => membersNow.get(memberKey(s, id))).filter(Boolean);
-      const issueRows = sprintIds.flatMap((s) => rowsBySprintIssue.get(memberKey(s, id)) ?? []);
-      const value = scopeStatus(active, issueMembers, issueRows);
-      if (currentStatus(issue.fields, cfg.scopeFieldId) !== value) values.set(id, value);
-    }
     const closed = [...new Set([...Object.keys(previous?.sprints ?? {}), ...(previous?.closed ?? [])])];
-    const skip = new Set([...candidateIds, ...values.keys(), ...deleted]);
-    for (const [id, value] of await closedSprintStatuses(active, closed, skip)) values.set(id, value);
-    if (values.size) statuses = await writeStatuses(cfg.scopeFieldId, values, work);
+    const values = await closedSprintStatuses(active, closed, new Set([...candidateIds, ...deleted]));
+    if (values.size) pass.statuses += await writeStatuses(cfg.scopeFieldId, values, work);
   }
-  await kvs.set(RECONCILE_KEY, { startedAt, fields });
-  return { issues: issues.length, rows, members, statuses, deleted: deleted.length, sprintIds: [...changed] };
+  await kvs.set(RECONCILE_KEY, { startedAt: pass.startedAt, fields });
+  await kvs.delete(PASS_KEY);
+  return { issues: candidateIds.size, rows: pass.rows, members: pass.members, statuses: pass.statuses, deleted: deleted.length, sprintIds: [...changed] };
+}
+
+export async function reconcileAll(cfg, previous, work) {
+  const owner = randomUUID();
+  const until = Date.now() + work.timeLeftMs();
+  try {
+    await kvs.set(PASS_LEASE, { owner, until }, { keyPolicy: 'FAIL_IF_EXISTS', ttl: { value: Math.ceil(work.timeLeftMs() / 1000) + 1, unit: 'SECONDS' } });
+  } catch (e) {
+    if (e.code !== 'KEY_CONFLICT') throw e;
+    const lease = await kvs.get(PASS_LEASE);
+    throw new RateLimited(Math.max(1, Math.ceil(((lease?.until ?? Date.now()) - Date.now()) / 1000)), 'reconcile-busy');
+  }
+  try {
+    return await reconcilePass(cfg, previous, work);
+  } finally {
+    if ((await kvs.get(PASS_LEASE))?.owner === owner) await kvs.delete(PASS_LEASE);
+  }
 }

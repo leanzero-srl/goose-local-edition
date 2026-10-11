@@ -178,6 +178,12 @@ app:
     name: nodejs22.x
   storage:
     entities:
+      - name: rate-dose
+        attributes:
+          spent:
+            type: float
+          pausedUntil:
+            type: float
       - name: scope-ledger
         attributes:
           sprintId:

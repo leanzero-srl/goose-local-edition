@@ -29,7 +29,13 @@ export async function saveConfig(next, previous) {
 // The Sprint field, and this app's own read-only `scope-status` field. Jira lists a Forge custom field with
 // schema.custom = the extension ARI (…/static/<module key>) and a key ending in __<module key>.
 export async function discoverFields(work) {
-  const fields = await jiraJson('app', route`/rest/api/3/field`, undefined, work);
+  const fields = [];
+  for (let startAt = 0; ; ) {
+    const page = await jiraJson('app', route`/rest/api/3/field/search?type=custom&startAt=${startAt}&maxResults=50`, undefined, work);
+    fields.push(...(page.values ?? []));
+    if (page.isLast || !page.values?.length) break;
+    startAt += page.values.length;
+  }
   const sprint = fields.find((f) => f.schema?.custom === SPRINT_FIELD_TYPE);
   if (!sprint) throw new Error(`no field with schema.custom ${SPRINT_FIELD_TYPE} on this site`);
   const mine = (f) => String(f.schema?.custom ?? '').endsWith(`/${SCOPE_FIELD_MODULE}`) || String(f.key ?? '').endsWith(`__${SCOPE_FIELD_MODULE}`);
