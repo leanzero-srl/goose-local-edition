@@ -7,7 +7,7 @@ const assert = require('node:assert');
 const path = require('node:path');
 const SITE = path.join(__dirname, '..', '..', 'site');
 const { createSite } = require(path.join(SITE, 'site.cjs'));
-const { createRate, costOf, kindOf, writtenRefs, MODEL } = require(path.join(SITE, 'rate.cjs'));
+const { createRate, costOf, returnedObjects, kindOf, writtenRefs, MODEL } = require(path.join(SITE, 'rate.cjs'));
 
 const SCOPES = ['read:jira-work', 'write:jira-work', 'read:jira-user', 'read:board-scope:jira-software', 'read:sprint:jira-software',
   'read:issue-details:jira', 'read:jql:jira', 'read:project:jira', 'read:board-scope.admin:jira-software', 'read:issue:jira-software'];
@@ -31,18 +31,24 @@ async function withSite(fn, opts = {}) {
   try { await fn(site, call); } finally { await site.stop(); }
 }
 
-test('the SPEC §2.1 cost table, kinds and written issues', () => {
-  assert.strictEqual(costOf('GET /rest/api/3/issue/{issueIdOrKey}', undefined), 1);
-  assert.strictEqual(costOf('GET /rest/agile/1.0/board/{boardId}/sprint', undefined), 1);
-  for (const [n, pts] of [[0, 1], [1, 2], [50, 2], [51, 3], [100, 3], [5000, 101]]) assert.strictEqual(costOf('POST /rest/api/3/search/jql', {}, n), pts, `search ${n}`);
-  assert.strictEqual(costOf('GET /rest/api/3/search/jql', undefined, 100), 3);
-  assert.strictEqual(costOf('POST /rest/api/3/changelog/bulkfetch', { issueIdsOrKeys: Array(1000).fill('1') }), 2);
-  const updates = (n) => ({ updates: [{ customField: 'customfield_1', issueIds: Array.from({ length: n }, (_, i) => i + 1), value: 'committed' }] });
-  assert.strictEqual(costOf('POST /rest/api/3/app/field/value', updates(1)), 2);
-  assert.strictEqual(costOf('POST /rest/api/3/app/field/value', updates(200)), 5);
-  assert.strictEqual(costOf('PUT /rest/api/3/app/field/{fieldIdOrKey}/value', updates(51)), 3);
-  assert.strictEqual(costOf('POST /rest/api/3/issue/{issueIdOrKey}/comment', {}), 2);
-  assert.strictEqual(costOf('POST /rest/api/3/issue/bulkfetch', {}), 2);
+test('documented object cost classes price actual response records and read-like POSTs', () => {
+  const issue = 'GET /rest/api/3/issue/{issueIdOrKey}';
+  assert.strictEqual(costOf(issue, undefined, { id: '1', fields: { summary: 'x', assignee: { accountId: 'a' } } }), 2);
+  assert.strictEqual(costOf(issue, undefined, { errorMessages: ['Not found'] }), 1);
+  for (const n of [0, 1, 50, 51, 100]) {
+    const response = { issues: Array(n).fill({ id: '1' }), isLast: true, maxResults: 100 };
+    for (const method of ['GET', 'POST']) assert.strictEqual(costOf(`${method} /rest/api/3/search/jql`, {}, response), 1 + n);
+  }
+  assert.strictEqual(costOf('POST /rest/api/3/changelog/bulkfetch', {}, { issueChangeLogs: [{ issueId: '1', changeHistories: [1, 2] }, { issueId: '2', changeHistories: [3] }] }), 3);
+  assert.strictEqual(costOf('POST /rest/api/3/issue/bulkfetch', {}, { issues: [{ id: '1' }, { id: '2' }] }), 3);
+  assert.strictEqual(costOf('GET /rest/api/3/group/member', {}, { values: Array(8).fill({ accountId: 'a' }) }), 17);
+  assert.strictEqual(costOf('GET /rest/api/3/mypermissions', {}, { permissions: { ADMINISTER: {}, BROWSE_PROJECTS: {} } }), 5);
+  assert.strictEqual(costOf('POST /rest/api/3/permissions/check', {}, { globalPermissions: ['ADMINISTER'], projectPermissions: [{ id: '1' }] }), 5);
+  const updates = (n) => ({ updates: [{ customField: 'f', issueIds: Array.from({ length: n }, (_, i) => i + 1), value: 'committed' }] });
+  assert.strictEqual(costOf('POST /rest/api/3/app/field/value', updates(200)), 1);
+  assert.strictEqual(costOf('PUT /rest/api/3/app/field/{fieldIdOrKey}/value', updates(51)), 1);
+  assert.strictEqual(costOf('POST /rest/api/3/issue/{issueIdOrKey}/comment', {}, { id: '123' }), 1);
+  assert.strictEqual(returnedObjects({ values: [], total: 1000 }), 0, 'pagination metadata is not a returned domain record');
   assert.strictEqual(kindOf({ source: 'resolver', moduleType: 'jira:adminPage' }), 'person');
   assert.strictEqual(kindOf({ source: 'frontend', moduleType: 'dashboards:widget' }), 'person');
   assert.strictEqual(kindOf({ source: 'function', moduleType: 'action' }), 'person');
@@ -50,98 +56,117 @@ test('the SPEC §2.1 cost table, kinds and written issues', () => {
   assert.strictEqual(kindOf({ source: 'function', moduleType: null }), 'unlabelled');
   assert.deepStrictEqual(writtenRefs('POST /rest/api/3/issue/{issueIdOrKey}/comment', { issueIdOrKey: 'A-1' }, {}), ['A-1']);
   assert.deepStrictEqual(writtenRefs('POST /rest/api/3/issue/{issueIdOrKey}/changelog/list', { issueIdOrKey: 'A-1' }, {}), []);
-  assert.deepStrictEqual(writtenRefs('GET /rest/api/3/issue/{issueIdOrKey}', { issueIdOrKey: 'A-1' }, {}), []);
+  assert.deepStrictEqual(writtenRefs(issue, { issueIdOrKey: 'A-1' }, {}), []);
   assert.deepStrictEqual(writtenRefs('POST /rest/api/3/app/field/value', {}, updates(2)), ['1', '2']);
 });
 
-test('the wall, the burst bucket and the per-issue window, in virtual time', () => {
+test('burst tokens count requests independently of points and endpoints', () => {
   const rate = createRate();
-  const t0 = Date.UTC(2026, 9, 20, 10, 59, 0);
-  // Burst: 30 points at one instant, the 31st point refused until 1 token refills (Retry-After rounds up to 1 s).
-  for (let i = 0; i < 30; i++) {
-    assert.strictEqual(rate.check({ t: t0, endpoint: 'GET x', kind: 'background', cost: 1 }), null);
-    rate.charge({ t: t0, endpoint: 'GET x', kind: 'background', cost: 1 });
+  const t = Date.UTC(2026, 9, 20, 10, 0, 0);
+  const endpoint = 'POST /rest/api/3/search/jql';
+  for (let i = 0; i < 100; i++) {
+    assert.strictEqual(rate.check({ t, endpoint, kind: 'background' }), null);
+    rate.charge({ t, endpoint, kind: 'background', cost: 10 });
   }
-  assert.deepStrictEqual(rate.check({ t: t0, endpoint: 'GET x', kind: 'background', cost: 1 }), { reason: 'jira-burst-based', retryAfter: 1 });
-  assert.strictEqual(rate.check({ t: t0, endpoint: 'GET y', kind: 'background', cost: 1 }), null, 'another endpoint has its own bucket');
-  assert.strictEqual(rate.check({ t: t0 + 200, endpoint: 'GET x', kind: 'background', cost: 1 }), null, '200 ms refill 1 point');
-  // Per issue: one write per issue per 2 s.
-  rate.charge({ t: t0, endpoint: 'POST c', kind: 'person', cost: 2, issues: ['10'] });
-  assert.deepStrictEqual(rate.check({ t: t0 + 1500, endpoint: 'POST c', kind: 'person', cost: 2, issues: ['10'] }), { reason: 'jira-per-issue-on-write', retryAfter: 1 });
-  assert.strictEqual(rate.check({ t: t0 + 1500, endpoint: 'POST c', kind: 'person', cost: 2, issues: ['11'] }), null);
-  assert.strictEqual(rate.check({ t: t0 + 2000, endpoint: 'POST c', kind: 'person', cost: 2, issues: ['10'] }), null);
-  // Headers: the limit always; remaining + near-limit only below 20 % of the hour left.
-  assert.deepStrictEqual(rate.headers(t0), { 'X-RateLimit-Limit': '2400' });
-  rate.draw({ t: t0, points: 1900 });
-  assert.deepStrictEqual(rate.headers(t0), { 'X-RateLimit-Limit': '2400', 'X-RateLimit-Remaining': '468', 'X-RateLimit-NearLimit': 'true' });
-  // The wall: spent >= 2,400 refuses everything, person-facing included, until the top of the hour.
-  rate.draw({ t: t0, points: 468 });
-  assert.deepStrictEqual(rate.check({ t: t0 + 30_000, endpoint: 'GET z', kind: 'person', cost: 1 }), { reason: 'jira-quota-tenant-based', retryAfter: 30 });
-  assert.strictEqual(rate.check({ t: Date.UTC(2026, 9, 20, 11, 0, 0), endpoint: 'GET z', kind: 'person', cost: 1 }), null, 'reset at the top of the hour');
-  const [h] = rate.summary();
-  assert.strictEqual(h.hour, '2026-10-20T10:00:00.000Z');
-  assert.deepStrictEqual([h.background, h.person, h.external, h.total], [30, 2, 2368, 2400]);
-  assert.deepStrictEqual(h.refused, { background: { 'jira-burst-based': 1 }, person: { 'jira-per-issue-on-write': 1, 'jira-quota-tenant-based': 1 } });
-  assert.throws(() => rate.draw({ t: t0, points: 0 }), /positive/);
+  assert.deepStrictEqual(rate.check({ t, endpoint, kind: 'background' }), { reason: 'jira-burst-based', retryAfter: 1 });
+  assert.strictEqual(rate.check({ t, endpoint: 'GET /rest/api/3/project', kind: 'background' }), null);
+  assert.strictEqual(rate.check({ t: t + 10, endpoint, kind: 'background' }), null, '100RPS refills one request in10ms');
+  assert.strictEqual(rate.summary()[0].background, 1000, 'ten-point replies still consumed one burst token each');
 });
 
-test('the site: every response carries the limit; refusals carry Jira\'s 429 shape and are logged with kind and reason', () => withSite(async (site, call) => {
+test('both issue windows protect every issue of a bulk write and refused writes consume no window', () => {
+  const rate = createRate();
+  const endpoint = 'POST /rest/api/3/app/field/value';
+  const t = Date.UTC(2026, 9, 20, 10, 0, 0);
+  const req = (at, issues) => ({ t: at, endpoint, kind: 'background', cost: 1, issues });
+  for (let burst = 0; burst < 5; burst++) {
+    const at = t + burst * 2000;
+    for (let n = 0; n < 20; n++) {
+      assert.strictEqual(rate.check(req(at, ['10'])), null);
+      rate.charge(req(at, ['10', '10']));
+    }
+    const blocked = rate.check(req(at, ['11', '10']));
+    assert.deepStrictEqual(blocked, { reason: 'jira-per-issue-on-write', retryAfter: burst < 4 ? 2 : 22 });
+    assert.strictEqual(rate.check(req(at, ['11'])), null, 'another issue remains writable');
+  }
+  assert.deepStrictEqual(rate.check(req(t + 10_000, ['10'])), { reason: 'jira-per-issue-on-write', retryAfter: 20 }, '100/30s persists beyond2s');
+  assert.strictEqual(rate.check(req(t + 30_000, ['10'])), null, 'the oldest20 writes leave the long window');
+  rate.charge(req(t + 30_000, ['10']));
+  assert.strictEqual(rate.summary()[0].background, 101, 'only served operations are charged once, even with repeated issue IDs');
+});
+
+test('global and tenant quota reasons reset on UTC hours; point headers are separate from request headers', () => {
+  const t = Date.UTC(2026, 9, 20, 10, 59, 0);
+  const endpoint = 'GET /rest/api/3/issue/{issueIdOrKey}';
+  for (const quotaScope of ['global', 'tenant']) {
+    const rate = createRate({ ...MODEL, quotaScope });
+    const policy = `${quotaScope}-app-quota`;
+    assert.deepStrictEqual(rate.headers(t, endpoint), { 'RateLimit-Policy': `"${policy}";q=2400;w=3600`, 'RateLimit': `"${policy}";t=60`,
+      'X-RateLimit-Limit': '150', 'X-RateLimit-Remaining': '150' });
+    rate.draw({ t, points: 2000 });
+    assert.strictEqual(rate.headers(t, endpoint).RateLimit, `"${policy}";r=400;t=60`);
+    assert.strictEqual(rate.headers(t, endpoint)['X-RateLimit-NearLimit'], 'true');
+    rate.draw({ t, points: 400 });
+    const req = { t: t + 30_000, endpoint, kind: 'person' };
+    assert.deepStrictEqual(rate.check(req), { reason: `jira-quota-${quotaScope}-based`, retryAfter: 30 });
+    assert.strictEqual(rate.check({ ...req, charged: false }), null, 'frontend bridge traffic is outside app quota');
+    assert.strictEqual(rate.check({ ...req, t: t + 60_000 }), null, 'quota resets at top ofUTC hour');
+    assert.throws(() => rate.draw({ t, points: 0 }), /positive/);
+  }
+});
+
+test('site responses expose request capacity, structured quota and accurate response costs', () => withSite(async (site, call) => {
   const vt = site.state.now();
   const iss = site.pack.issues.find((i) => !i.hiddenFrom.length);
-  const ok = await call('GET', `/rest/api/3/issue/${iss.id}?fields=summary`, { moduleType: 'consumer', vt });
+  const p = `/rest/api/3/issue/${iss.id}?fields=summary`;
+  const ok = await call('GET', p, { moduleType: 'consumer', vt });
   assert.strictEqual(ok.status, 200);
-  assert.strictEqual(ok.headers.get('x-ratelimit-limit'), '2400');
-  assert.strictEqual(ok.headers.get('x-ratelimit-nearlimit'), null);
-  // 29 more GETs on the same endpoint at the same instant empty the bucket; the 31st is refused.
-  for (let i = 0; i < 29; i++) assert.strictEqual((await call('GET', `/rest/api/3/issue/${iss.id}?fields=summary`, { moduleType: 'consumer', vt })).status, 200);
-  const refused = await call('GET', `/rest/api/3/issue/${iss.id}?fields=summary`, { moduleType: 'consumer', vt });
-  assert.strictEqual(refused.status, 429);
-  assert.deepStrictEqual(refused.body, { errorMessages: ['Rate limit exceeded'] });
-  assert.strictEqual(refused.headers.get('ratelimit-reason'), 'jira-burst-based');
-  assert.strictEqual(refused.headers.get('retry-after'), '1');
-  assert.strictEqual(refused.headers.get('x-ratelimit-limit'), '2400');
-  // The same endpoint 1 s later: refilled.
-  assert.strictEqual((await call('GET', `/rest/api/3/issue/${iss.id}?fields=summary`, { moduleType: 'consumer', vt: vt + 1000 })).status, 200);
-  const last = site.log.slice(-2);
-  assert.deepStrictEqual(last.map((e) => [e.kind, e.points, e.status, e.rateLimited ?? null]), [['background', 0, 429, 'jira-burst-based'], ['background', 1, 200, null]]);
-  assert.strictEqual(site.log.at(-1).t, new Date(vt + 1000).toISOString(), 'the log carries the request\'s virtual instant');
-  // A search page is charged 1 + 1 per started 50 issues returned.
-  const project = site.pack.projects[0].key;
-  const s = await call('POST', '/rest/api/3/search/jql', { body: { jql: `project = ${project}`, fields: ['summary'], maxResults: 120 }, source: 'resolver', moduleType: 'jira:adminPage', vt: vt + 2000 });
+  assert.strictEqual(ok.headers.get('x-ratelimit-limit'), '150');
+  assert.strictEqual(ok.headers.get('x-ratelimit-remaining'), '149');
+  assert.strictEqual(ok.headers.get('ratelimit-policy'), '"global-app-quota";q=2400;w=3600');
+  assert.strictEqual(ok.headers.get('x-ratelimit-reset'), null, 'reset timestamp is only returned with429');
+  assert.strictEqual(site.log.at(-1).points, 2);
+  for (let i = 0; i < 149; i++) assert.strictEqual((await call('GET', p, { moduleType: 'consumer', vt })).status, 200);
+  const refused = await call('GET', p, { moduleType: 'consumer', vt });
+  assert.deepStrictEqual([refused.status, refused.body, refused.headers.get('ratelimit-reason'), refused.headers.get('retry-after')],
+    [429, { errorMessages: ['Rate limit exceeded'] }, 'jira-burst-based', '1']);
+  assert.strictEqual(refused.headers.get('x-ratelimit-reset'), new Date(vt + 1000).toISOString());
+  assert.strictEqual((await call('GET', p, { moduleType: 'consumer', vt: vt + 1000 })).status, 200);
+  assert.deepStrictEqual(site.log.slice(-2).map((e) => [e.kind, e.points, e.status]), [['background', 0, 429], ['background', 2, 200]]);
+  const s = await call('POST', '/rest/api/3/search/jql', { body: { jql: `project = ${site.pack.projects[0].key}`, fields: ['summary'], maxResults: 120 }, source: 'resolver', moduleType: 'jira:adminPage', vt: vt + 2000 });
   assert.strictEqual(s.status, 200);
-  assert.strictEqual(s.body.issues.length, 100, 'fielded pages cap at 100');
-  assert.deepStrictEqual([site.log.at(-1).kind, site.log.at(-1).points], ['person', 3]);
-  // Per-issue writes: a second comment on the same issue within 2 s is refused; another issue is not.
-  const adf = { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: 'x' }] }] };
-  assert.strictEqual((await call('POST', `/rest/api/3/issue/${iss.key}/comment`, { body: { body: adf }, moduleType: 'consumer', vt: vt + 3000 })).status, 201);
-  const again = await call('POST', `/rest/api/3/issue/${iss.id}/comment`, { body: { body: adf }, moduleType: 'consumer', vt: vt + 4000 });
-  assert.deepStrictEqual([again.status, again.headers.get('ratelimit-reason'), again.headers.get('retry-after')], [429, 'jira-per-issue-on-write', '1']);
-  assert.strictEqual(site.comments.length, 1);
-  const hours = site.control.rate().hours;
-  const total = (k) => hours.reduce((n, h) => n + h[k], 0);
-  // 31 GETs served (1 point each) and one comment (2); the refused GET and comment cost nothing.
-  assert.deepStrictEqual([total('background'), total('person')], [31 + 2, 3]);
-  assert.strictEqual(hours.reduce((n, h) => n + (h.refused.background?.['jira-burst-based'] ?? 0), 0), 1);
+  assert.strictEqual(s.body.issues.length, 100);
+  assert.deepStrictEqual([site.log.at(-1).kind, site.log.at(-1).points], ['person', 101]);
 }));
 
-test('the wall: a draw on the hour refuses person-facing requests too, until the top of the virtual hour', () => withSite(async (site, call) => {
+test('site rejects the21st issue write in2s without posting it, then admits afterRetryAfter', () => withSite(async (site, call) => {
+  const vt = site.state.now();
+  const iss = site.pack.issues.find((i) => !i.hiddenFrom.length);
+  const body = { body: { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: 'rate-test' }] }] } };
+  for (let n = 0; n < 20; n++) assert.strictEqual((await call('POST', `/rest/api/3/issue/${iss.key}/comment`, { body, moduleType: 'consumer', vt })).status, 201);
+  const blocked = await call('POST', `/rest/api/3/issue/${iss.id}/comment`, { body, moduleType: 'consumer', vt: vt + 1000 });
+  assert.deepStrictEqual([blocked.status, blocked.headers.get('ratelimit-reason'), blocked.headers.get('retry-after')], [429, 'jira-per-issue-on-write', '1']);
+  assert.strictEqual(site.comments.length, 20);
+  assert.strictEqual((await call('POST', `/rest/api/3/issue/${iss.id}/comment`, { body, moduleType: 'consumer', vt: vt + 2000 })).status, 201);
+  assert.strictEqual(site.comments.length, 21);
+  assert.strictEqual(site.control.rate().hours[0].background, 21);
+}));
+
+test('quota exhaustion refuses person requests; bridge traffic remains exempt untilUTC reset', () => withSite(async (site, call) => {
   const t = site.state.now();
   const next = (Math.floor(t / HOUR) + 1) * HOUR;
   site.control.draw({ points: 2400 });
   const r = await call('GET', '/rest/api/3/myself', { as: site.pack.viewer, source: 'resolver', moduleType: 'dashboards:widget' });
   assert.strictEqual(r.status, 429);
-  assert.strictEqual(r.headers.get('ratelimit-reason'), 'jira-quota-tenant-based');
+  assert.strictEqual(r.headers.get('ratelimit-reason'), 'jira-quota-global-based');
   assert.strictEqual(Number(r.headers.get('retry-after')), Math.ceil((next - t) / 1000));
-  assert.strictEqual(r.headers.get('x-ratelimit-remaining'), '0');
-  // The page's own bridge request costs no points and never meets the wall (BRIEF §0 fact 5); it still drains the bucket.
+  assert.ok(r.headers.get('ratelimit').includes(';r=0;'));
   const bridge = await call('GET', '/rest/api/3/myself', { as: site.pack.viewer, source: 'frontend', moduleType: 'dashboards:widget' });
   assert.strictEqual(bridge.status, 200);
   assert.deepStrictEqual([site.log.at(-1).kind, site.log.at(-1).points], ['person', 0]);
   site.state.advanceTo(next);
   assert.strictEqual((await call('GET', '/rest/api/3/myself', { as: site.pack.viewer, source: 'resolver', moduleType: 'dashboards:widget' })).status, 200);
-  assert.strictEqual(site.log[0].kind, 'person');
-  const [h] = site.control.rate().hours;
-  assert.deepStrictEqual(h.refused, { person: { 'jira-quota-tenant-based': 1 } });
+  assert.deepStrictEqual(site.control.rate().hours[0].refused, { person: { 'jira-quota-global-based': 1 } });
 }));
 
 test('the clock is virtual: it moves only when advanced', async () => {
@@ -309,7 +334,8 @@ test('a page walk slices one cached hit list; a live change applied between page
   assert.ok(second.includes(add.issueId));
 }));
 
-test('the rate model the contract publishes', () => {
-  assert.deepStrictEqual([MODEL.quotaPerHour, MODEL.backgroundShare, MODEL.burst.capacity, MODEL.burst.refillPerSecond, MODEL.perIssueWriteMs],
-    [2400, 0.7, 30, 5, 2000]);
+test('the disclosed normalized quota and documented request/write limits', () => {
+  assert.deepStrictEqual([MODEL.quotaPerHour, MODEL.backgroundShare, MODEL.burst.capacitySeconds], [2400, 0.7, 1]);
+  assert.deepStrictEqual(MODEL.burst.requestsPerSecond, { GET: 100, POST: 100, PUT: 50, PATCH: 50, DELETE: 50 });
+  assert.deepStrictEqual(MODEL.perIssueWrites, [{ maxWrites: 20, windowMs: 2000 }, { maxWrites: 100, windowMs: 30_000 }]);
 });

@@ -17,18 +17,12 @@
 // face value), it is killed when that clock passes the module's limit, and when it ends the site's clock moves to its
 // end. Each result carries t0/t1 (virtual ISO), vms (virtual ms) and ms (real ms, never a grading input).
 //
-// CONCURRENT DELIVERY (contract S1). Forge runs consumer invocations at the same time; here up to
-// MAX_CONCURRENT_CONSUMERS. When drainQueues starts a consumer delivery, every other pending consumer delivery due by
-// then that carries the same event (a copy of the same queue event, or work pushed for the same product event: a
-// trigger-level duplicate) or names the same issue (its chain began with a product event of that issue) starts with
-// it, in delivery order. A push's `concurrency: {key, limit}` does not exempt a pair (SPEC §2.8; contract §8 states
-// the difference from production, where a key would serialize them). The group runs under the proxy's deterministic
-// READS-FIRST schedule (proxy.cjs). Each member's delivery record, invocation result and invocation record carry
-// `concurrent: {group, reason: 'same-event'|'same-issue', schedule, size, index, with: [{index, eventId,
-// invocationId}]}`; `emu.concurrency` lists every group with its first writes in commit order; a KVS call the schedule
-// held is logged `heldReadsFirst: true`. Unrelated deliveries and product-event triggers run one at a time, as before.
-// A pair forms only from deliveries pending together: deliverNext's `batchEnd` (the site's plan) names the delivery
-// up to which the drive leaves the queues undrained. KVS queries are eventually consistent (S2, kvs.cjs).
+// CONCURRENT DELIVERY (contract S1). Up to MAX_CONCURRENT_CONSUMERS due deliveries share a deterministic
+// READS-FIRST schedule (proxy.cjs), including unrelated work. Queue.push concurrency counters are installation-scoped
+// across all queues: the same key can have no more than its declared limit in flight. Distinct keys and unkeyed events
+// may overlap. The bound and schedule are benchmark controls, not Forge's production scheduler. Each group's delivery
+// records, invocation results and emu.concurrency carry its membership and first writes; held KVS calls are marked
+// heldReadsFirst. A pending batch is named by deliverNext's batchEnd. KVS queries are eventually consistent (S2).
 //   await emu.openSurface(page, { moduleKey, entry, theme, layout, asUser, extension })   (bridge-host.cjs)
 //   await emu.hostSave(page)
 //   emu.kvs.snapshot(); emu.log; emu.bridgeLog; emu.harnessMissing; emu.close()
@@ -67,6 +61,26 @@ const TRIGGER_MAX_RETRIES = 4;
 // async-events-api: without a concurrency key "Event processing will be unbounded and limited only by the general
 // per-installation invocation limits" (robustness.md §5.5). The harness's own bound, stated in the contract (S1).
 const MAX_CONCURRENT_CONSUMERS = 3;
+
+// Admission is shared across queues of one installed emulator, as Forge's Async Events API specifies. Traversing
+// past a saturated key lets independent work run; a key does not become a global lock for the installation.
+function consumerBatch(events, { dueBy, runnable, active = new Map(), max = MAX_CONCURRENT_CONSUMERS }) {
+  const counters = new Map([...active].map(([key, value]) => [key, { ...value }]));
+  const members = [];
+  for (const ev of events) {
+    if (members.length >= max) break;
+    if (ev.readyAt > dueBy || !runnable(ev)) continue;
+    if (ev.concurrency) {
+      const { key, limit } = ev.concurrency;
+      const counter = counters.get(key) ?? { count: 0, limit };
+      const bound = Math.min(counter.limit, limit);
+      if (counter.count >= bound) continue;
+      counters.set(key, { count: counter.count + 1, limit: bound });
+    }
+    members.push(ev);
+  }
+  return members;
+}
 
 function siteClient(site) {
   if (site.control) {
@@ -161,6 +175,21 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
   const harnessMissing = [];
   const bridgeLog = [];
   const queueState = { pending: [], jobs: new Map(), seq: 0 };
+  const consumerCounters = new Map();
+  let queueDrains = Promise.resolve();
+  const reserveConsumers = (members) => {
+    for (const ev of members) if (ev.concurrency) {
+      const { key, limit } = ev.concurrency;
+      const current = consumerCounters.get(key) ?? { count: 0, limit };
+      consumerCounters.set(key, { count: current.count + 1, limit: Math.min(current.limit, limit) });
+    }
+    return () => {
+      for (const ev of members) if (ev.concurrency) {
+        const current = consumerCounters.get(ev.concurrency.key);
+        if (--current.count === 0) consumerCounters.delete(ev.concurrency.key);
+      }
+    };
+  };
   const users = functionUsers(manifest);
   const functions = (manifest?.modules?.function ?? []).filter((f) => f && typeof f.key === 'string');
   const modules = (type) => (Array.isArray(manifest?.modules?.[type]) ? manifest.modules[type] : []);
@@ -283,7 +312,7 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     return built;
   }
 
-  // `seat` {group, member}: a member of a concurrent consumer group (S1). It joins the group before its process starts,
+  // `seat` {group, member}: a member of a deterministic concurrent invocation group (S1 / CI replay). It joins the group before its process starts,
   // the proxy schedules its requests, and the group as a whole (not each member) runs inside aroundInvocation.
   async function invokeFunction(fnKey, { moduleKey, moduleType, event, asUser, lineage = {}, source = 'function', seat = null } = {}) {
     if (!built) await build();
@@ -444,20 +473,15 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     return issue && issue === b.lineage?.originIssue ? 'same-issue' : null;
   };
   const runnable = (e) => e.kind !== 'trigger' && functions.some((f) => f.key === consumerFunction(consumerFor(e.queueName)));
-  // The deliveries that start with `ev`: due by `dueBy` and related to it, in delivery order (the list is sorted). Their
-  // `concurrency` keys are not consulted (SPEC §2.8: a key does not exempt a pair; contract §8).
+  // All due runnable work may overlap, subject to the installation's shared key counters.
   function partnersOf(ev, dueBy) {
-    const group = [ev];
-    for (const p of queueState.pending) {
-      if (group.length >= MAX_CONCURRENT_CONSUMERS || p.readyAt > dueBy) break;
-      if (runnable(p) && relation(ev, p)) group.push(p);
-    }
-    return group.slice(1);
+    return consumerBatch([ev, ...queueState.pending], { dueBy, runnable, active: consumerCounters }).slice(1);
   }
 
   async function deliverGroup(members) {
     const partners = members.slice(1);
-    const reason = partners.every((p) => relation(members[0], p) === 'same-event') ? 'same-event' : 'same-issue';
+    const reason = partners.every((p) => relation(members[0], p) === 'same-event') ? 'same-event'
+      : partners.every((p) => relation(members[0], p) === 'same-issue') ? 'same-issue' : 'independent';
     const group = createConcurrentGroup({ id: `c${++groupSeq}`, reason, members: members.map((e) => ({ eventId: e.eventId })) });
     const started = [];
     for (const e of members) started.push(await startConsumer(e));
@@ -475,7 +499,7 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
   }
 
   // `until` (virtual ms): only the deliveries due by then; the rest stay pending for a later drain.
-  async function drainQueues({ until = null } = {}) {
+  async function drainQueueBatch({ until = null } = {}) {
     const deliveries = [];
     for (;;) {
       if (!queueState.pending.length) break;
@@ -493,13 +517,25 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
       const partners = runnable(ev) ? partnersOf(ev, Math.min(clock.now(), until ?? Infinity)) : [];
       if (partners.length) {
         queueState.pending = queueState.pending.filter((p) => !partners.includes(p));
-        deliveries.push(...await deliverGroup([ev, ...partners]));
+        const release = reserveConsumers([ev, ...partners]);
+        try { deliveries.push(...await deliverGroup([ev, ...partners])); } finally { release(); }
         continue;
       }
-      const s = await startConsumer(ev);
-      deliveries.push(finishConsumer(s, await invokeFunction(s.fnKey, { moduleKey: s.consumer.key, moduleType: 'consumer', event: s.event, lineage: ev.lineage })));
+      const release = reserveConsumers([ev]);
+      try {
+        const s = await startConsumer(ev);
+        deliveries.push(finishConsumer(s, await invokeFunction(s.fnKey, { moduleKey: s.consumer.key, moduleType: 'consumer', event: s.event, lineage: ev.lineage })));
+      } finally { release(); }
     }
     return deliveries;
+  }
+
+  // One installation scheduler owns removal/admission from pending. Concurrent drain callers share it, while each
+  // admitted batch still runs its independent invocations in parallel.
+  function drainQueues(opts = {}) {
+    const run = queueDrains.then(() => drainQueueBatch(opts));
+    queueDrains = run.catch(() => {});
+    return run;
   }
 
   // Every trigger subscribed to `event.eventType` runs once (retries scheduled as for any trigger).
@@ -611,6 +647,25 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     return invokeFunction(m.function, { moduleKey, moduleType: 'webtrigger', event: request, source: 'webtrigger' });
   }
 
+  async function invokeWebtriggerGroup(moduleKey, requests) {
+    const m = modules('webtrigger').find((x) => x.key === moduleKey);
+    if (!m?.function) throw new Error(`no web trigger '${moduleKey}' with a function in the manifest`);
+    if (!Array.isArray(requests) || requests.length < 2) throw new Error('webtrigger replay group needs at least two requests');
+    if (!built) await build();
+    const reason = 'webtrigger-replay';
+    const group = createConcurrentGroup({ id: `c${++groupSeq}`, reason, members: requests.map((_, i) => ({ eventId: `webtrigger:${moduleKey}#${i}` })) });
+    const t = new Date(clock.now()).toISOString();
+    const run = () => Promise.allSettled(requests.map((request, member) => invokeFunction(m.function,
+      { moduleKey, moduleType: 'webtrigger', event: request, source: 'webtrigger', seat: { group, member } })));
+    const settled = aroundInvocation ? await aroundInvocation(run) : await run();
+    const failed = settled.find((x) => x.status === 'rejected');
+    if (failed) throw failed.reason;
+    const out = settled.map((x) => x.value);
+    concurrency.push({ group: group.id, reason, schedule: 'reads-first', t,
+      members: group.members().map((member, i) => ({ ...member, moduleKey, outcome: out[i].ok ? 'ok' : 'error' })), firstWrites: group.firstWrites });
+    return out;
+  }
+
   const emu = {
     get manifest() { return manifest; },
     manifestError,
@@ -622,6 +677,7 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     invokeResolver,
     callResolver,
     invokeWebtrigger,
+    invokeWebtriggerGroup,
     webtriggerUrl: (moduleKey) => `${proxyAddr.url}/x/webtrigger/${encodeURIComponent(moduleKey)}`,
     deliverProductEvent,
     deliverNext,
@@ -666,7 +722,18 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     log: (since = 0) => client.call('rtlog', { since }),
     deliveries: () => host.realtimeDeliveries(emu),
   };
+  // The precomputation REST API documents this extension ARI (app/environment/static/module), while appContext
+  // supplies the emulator's synthetic environment. Native Jira search invokes the real app function through it.
+  for (const m of modules('jira:jqlFunction')) {
+    if (typeof site.registerJqlFunction !== 'function') {
+      harnessMissing.push({ what: `native JQL registration for ${m.key}`, at: new Date(clock.now()).toISOString(), moduleType: 'jira:jqlFunction' });
+      continue;
+    }
+    site.registerJqlFunction({ moduleKey: m.key, name: m.name,
+      functionKey: `ari:cloud:ecosystem::extension/${appId}/emulator-env/static/${m.key}`,
+      invoke: (request) => invokeFunction(m.function, { moduleKey: m.key, moduleType: 'jira:jqlFunction', event: request, source: 'jql-precomputation' }) });
+  }
   return emu;
 }
 
-module.exports = { createEmulator, functionUsers, TIMEOUTS, TRIGGER_MAX_RETRIES, MAX_CONCURRENT_CONSUMERS };
+module.exports = { createEmulator, consumerBatch, functionUsers, TIMEOUTS, TRIGGER_MAX_RETRIES, MAX_CONCURRENT_CONSUMERS };

@@ -172,7 +172,7 @@ function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clo
           : Array.isArray(parsed.histories) ? parsed.histories.length : null };
     }
     const out = {};
-    for (const h of ['content-type', 'retry-after', 'ratelimit-reason', 'x-ratelimit-limit', 'x-ratelimit-remaining', 'x-ratelimit-nearlimit']) if (r.headers.get(h)) out[h] = r.headers.get(h);
+    for (const h of ['content-type', 'retry-after', 'ratelimit-reason', 'ratelimit-policy', 'ratelimit', 'x-ratelimit-limit', 'x-ratelimit-remaining', 'x-ratelimit-reset', 'x-ratelimit-nearlimit']) if (r.headers.get(h)) out[h] = r.headers.get(h);
     return { status: r.status, headers: out, body: text };
   }
 

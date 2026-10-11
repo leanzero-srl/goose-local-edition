@@ -1,76 +1,78 @@
 'use strict';
-// The benchmark's rate model (SPEC §2.1; RATE-MODEL.json must carry these numbers): a points quota per installation
-// per virtual hour with a hard wall until the top of the next hour, a burst token bucket per endpoint (method + path
-// template), a per-issue write window, the 429 shape and the X-RateLimit headers. Pure over virtual time: every call
-// passes the request's instant; nothing here reads a clock.
-//   const rate = createRate();
-//   rate.check({ t, endpoint, kind, cost, issues })  -> null, or { reason, retryAfter } (the request is refused)
-//   rate.charge({ t, endpoint, kind, cost, issues }) after a request was served
-//   rate.headers(t)  the X-RateLimit headers every response carries
-//   rate.draw({ t, points })  points drawn from this installation's hour by anything but the app (a world event)
-//   rate.summary()  per virtual hour: points by kind, requests, refusals by kind and reason
-//   node forge2/site/rate.cjs --model   (prints MODEL as JSON)
+// Jira's published cost classes and rate-limit semantics, on the benchmark's virtual clock. The 2,400-point
+// installation allowance and one-second burst-buffer capacities are benchmark workloads, not Atlassian quotas.
+// https://developer.atlassian.com/cloud/jira/platform/rate-limiting/ (verified 2026-10-11)
 const HOUR_MS = 3_600_000;
 
 const MODEL = {
   quotaPerHour: 2400,
-  // Background (triggers, consumers, scheduled triggers, the web trigger) may use at most this share of an hour; it is
-  // graded from the log, never enforced here.
+  quotaScope: 'global',
   backgroundShare: 0.7,
-  // Below this share of the hour's quota left, responses also carry X-RateLimit-Remaining and X-RateLimit-NearLimit.
   nearLimitShare: 0.2,
-  burst: { capacity: 30, refillPerSecond: 5 },
-  perIssueWriteMs: 2000,
+  burst: {
+    requestsPerSecond: { GET: 100, POST: 100, PUT: 50, PATCH: 50, DELETE: 50 },
+    endpointRequestsPerSecond: {
+      'GET /rest/api/3/issue/{issueIdOrKey}': 150,
+      'GET /rest/api/3/issue/{issueIdOrKey}/changelog': 200,
+    },
+    // Atlassian publishes refill rates, not bucket capacities. The harness gives one second of initial capacity.
+    capacitySeconds: 1,
+  },
+  perIssueWrites: [{ maxWrites: 20, windowMs: 2000 }, { maxWrites: 100, windowMs: 30_000 }],
   fieldUpdatesPerRequest: 200,
-  // GET 1 · search/jql 1 + 1 per 50 issues returned (each started 50) · changelog/bulkfetch 2 · app field values
-  // 1 + 1 per 50 updates (each started 50) · any other POST/PUT/DELETE 2. Agile and software GETs are GETs.
-  costs: { get: 1, write: 2, bulkChangelog: 2, searchBase: 1, fieldValueBase: 1, perBlock: 50 },
-  // SPEC §2.2: the virtual time one proxied request takes (the proxy advances the invocation's clock by it).
+  costs: { base: 1, coreObject: 1, identityObject: 2, write: 1 },
   latencyMs: { get: 120, search: 300, bulkfetch: 600, write: 200 },
   body429: { errorMessages: ['Rate limit exceeded'] },
-  reasons: { quota: 'jira-quota-tenant-based', burst: 'jira-burst-based', perIssue: 'jira-per-issue-on-write' },
+  reasons: { quota: 'jira-quota-global-based', quotaGlobal: 'jira-quota-global-based', quotaTenant: 'jira-quota-tenant-based',
+    burst: 'jira-burst-based', perIssue: 'jira-per-issue-on-write' },
 };
 
 const SEARCH = new Set(['GET /rest/api/3/search/jql', 'POST /rest/api/3/search/jql']);
 const BULK_CHANGELOG = 'POST /rest/api/3/changelog/bulkfetch';
-// The shipped OpenAPI's app field-value writes (SPEC R7 names the bulk one; it is a POST in jira.json).
 const FIELD_VALUES = new Set(['POST /rest/api/3/app/field/value', 'PUT /rest/api/3/app/field/{fieldIdOrKey}/value']);
-// POSTs on an issue path that read rather than write.
-const READ_POSTS = new Set(['POST /rest/api/3/issue/{issueIdOrKey}/changelog/list']);
+const READ_POSTS = new Set([...SEARCH, BULK_CHANGELOG, 'POST /rest/api/3/issue/bulkfetch',
+  'POST /rest/api/3/issue/{issueIdOrKey}/changelog/list', 'POST /rest/api/3/permissions/check',
+  'POST /rest/api/3/permissions/project', 'POST /rest/api/3/jql/match']);
 const BACKGROUND = new Set(['trigger', 'consumer', 'scheduledTrigger', 'webtrigger']);
-
 const methodOf = (opKey) => opKey.slice(0, opKey.indexOf(' '));
+const isRead = (opKey) => methodOf(opKey) === 'GET' || READ_POSTS.has(opKey);
 const fieldUpdateIssues = (body) => (Array.isArray(body?.updates) ? body.updates : [])
   .flatMap((u) => (Array.isArray(u?.issueIds) ? u.issueIds : []));
+const identityRead = (opKey) => / \/rest\/api\/3\/(?:myself(?:$|\/)|user(?:$|\/)|group(?:$|\/)|mypermissions(?:$|\/)|permissions(?:$|\/)|project\/[^/]+\/role(?:$|\/))/.test(opKey);
 
-// Points one request costs; `returned` is the number of issues a search page served.
-function costOf(opKey, body, returned = 0) {
-  const c = MODEL.costs;
-  if (SEARCH.has(opKey)) return c.searchBase + Math.ceil(returned / c.perBlock);
-  if (opKey === BULK_CHANGELOG) return c.bulkChangelog;
-  if (FIELD_VALUES.has(opKey)) return c.fieldValueBase + Math.ceil(fieldUpdateIssues(body).length / c.perBlock);
-  return methodOf(opKey) === 'GET' ? c.get : c.write;
+// Count returned domain records, not nested fields, changelog items, pagination metadata or the request envelope.
+// Atlassian's catalogue gives cost classes rather than a complete endpoint tariff; this count is the disclosed
+// benchmark interpretation of those classes. Read-like POST operations are reads, irrespective of their HTTP verb.
+function returnedObjects(response) {
+  if (Number.isInteger(response) && response >= 0) return response;
+  if (Array.isArray(response)) return response.length;
+  if (!response || typeof response !== 'object' || response.errorMessages || response.errors) return 0;
+  for (const key of ['issues', 'values', 'issueChangeLogs', 'comments', 'histories', 'users', 'groups', 'projects']) {
+    if (Array.isArray(response[key])) return response[key].length;
+  }
+  if (response.permissions && typeof response.permissions === 'object') return Object.keys(response.permissions).length;
+  if (Array.isArray(response.globalPermissions) || Array.isArray(response.projectPermissions)) {
+    return (response.globalPermissions?.length ?? 0) + (response.projectPermissions?.length ?? 0);
+  }
+  return Object.keys(response).length ? 1 : 0;
 }
 
-// The issue references a request writes (the per-issue window): a POST/PUT/DELETE on an issue path, and every issue
-// of an app field-value update. The caller resolves them to issue ids.
+function costOf(opKey, _request, response = 0) {
+  const c = MODEL.costs;
+  return isRead(opKey) ? c.base + returnedObjects(response) * (identityRead(opKey) ? c.identityObject : c.coreObject) : c.write;
+}
+
 function writtenRefs(opKey, params, body) {
   if (FIELD_VALUES.has(opKey)) return fieldUpdateIssues(body).map(String);
-  if (methodOf(opKey) !== 'GET' && params.issueIdOrKey !== undefined && !READ_POSTS.has(opKey)) return [String(params.issueIdOrKey)];
+  if (!isRead(opKey) && params.issueIdOrKey !== undefined) return [String(params.issueIdOrKey)];
   return [];
 }
 
-// The emulator's labels on a proxied request (x-forge-source, x-forge-module-type): a resolver invoked from a UI
-// surface, the page's own bridge request or a Rovo action is person-facing; triggers, consumers, scheduled triggers and
-// the web trigger are background (SPEC §2.1). An unlabelled request is reported as such, never guessed.
 function kindOf(caller) {
   if (caller.source === 'resolver' || caller.source === 'frontend' || caller.moduleType === 'action') return 'person';
   if (BACKGROUND.has(caller.moduleType)) return 'background';
   return 'unlabelled';
 }
-
-// A Custom UI page's own `@forge/bridge` requestJira costs no points and never meets the wall; it still meets the
-// burst buckets and the per-issue window (BRIEF §0 fact 5: staff, twice; tiers#24,25).
 const quotaCharged = (caller) => caller.source !== 'frontend';
 
 function latencyOf(opKey) {
@@ -79,11 +81,20 @@ function latencyOf(opKey) {
   return methodOf(opKey) === 'GET' ? MODEL.latencyMs.get : MODEL.latencyMs.write;
 }
 
+function issueWriteWait(history, t, windows = MODEL.perIssueWrites) {
+  let waitMs = 0;
+  for (const w of windows) {
+    const recent = history.filter((at) => at <= t && t - at < w.windowMs).sort((a, b) => a - b);
+    if (recent.length >= w.maxWrites) waitMs = Math.max(waitMs, recent[recent.length - w.maxWrites] + w.windowMs - t);
+  }
+  return waitMs;
+}
+
 function createRate(model = MODEL) {
   let hours;
   let buckets;
-  let lastWrite;
-  const reset = () => { hours = new Map(); buckets = new Map(); lastWrite = new Map(); };
+  let writes;
+  const reset = () => { hours = new Map(); buckets = new Map(); writes = new Map(); };
   reset();
   const hourOf = (t) => Math.floor(t / HOUR_MS);
   const hour = (t) => {
@@ -92,10 +103,13 @@ function createRate(model = MODEL) {
     return hours.get(h);
   };
   const spent = (h) => h.person + h.background + h.unlabelled + h.external;
-  // Tokens refill continuously; a request older than the bucket's last update refills nothing.
+  const refillRate = (endpoint) => model.burst.endpointRequestsPerSecond[endpoint] ?? model.burst.requestsPerSecond[methodOf(endpoint)];
   const bucket = (endpoint, t) => {
-    const b = buckets.get(endpoint) ?? { tokens: model.burst.capacity, at: t };
-    return { tokens: Math.min(model.burst.capacity, b.tokens + (Math.max(0, t - b.at) / 1000) * model.burst.refillPerSecond), at: Math.max(b.at, t) };
+    const refill = refillRate(endpoint);
+    if (!(refill > 0)) throw new Error(`No burst request rate for ${endpoint}`);
+    const capacity = refill * model.burst.capacitySeconds;
+    const b = buckets.get(endpoint) ?? { tokens: capacity, at: t };
+    return { tokens: Math.min(capacity, b.tokens + (Math.max(0, t - b.at) / 1000) * refill), at: Math.max(b.at, t), refill };
   };
   const refuse = (h, kind, reason, seconds) => {
     const byKind = (h.refused[kind] ??= {});
@@ -103,18 +117,19 @@ function createRate(model = MODEL) {
     return { reason, retryAfter: Math.max(1, Math.ceil(seconds)) };
   };
 
-  // Quota first (the wall refuses everything the quota charges), then the endpoint's bucket, then the per-issue
-  // window. `cost` is what is known before serving (a search's per-issue points are charged after it). `charged: false`
-  // is a request the quota does not charge (the page's own bridge request): only the bucket and the window apply.
-  const check = ({ t, endpoint, kind, cost, issues = [], charged = true }) => {
+  const check = ({ t, endpoint, kind, issues = [], charged = true }) => {
     const h = hour(t);
-    if (charged && spent(h) >= model.quotaPerHour) return refuse(h, kind, model.reasons.quota, ((hourOf(t) + 1) * HOUR_MS - t) / 1000);
-    const b = bucket(endpoint, t);
-    if (b.tokens < cost) return refuse(h, kind, model.reasons.burst, (cost - b.tokens) / model.burst.refillPerSecond);
-    for (const id of issues) {
-      const last = lastWrite.get(id);
-      if (last !== undefined && t - last < model.perIssueWriteMs) return refuse(h, kind, model.reasons.perIssue, (model.perIssueWriteMs - (t - last)) / 1000);
+    if (charged && spent(h) >= model.quotaPerHour) {
+      const reason = model.quotaScope === 'tenant' ? model.reasons.quotaTenant : model.reasons.quotaGlobal;
+      return refuse(h, kind, reason, ((hourOf(t) + 1) * HOUR_MS - t) / 1000);
     }
+    const b = bucket(endpoint, t);
+    if (b.tokens < 1) return refuse(h, kind, model.reasons.burst, (1 - b.tokens) / b.refill);
+    let waitMs = 0;
+    for (const id of new Set(issues)) {
+      waitMs = Math.max(waitMs, issueWriteWait(writes.get(id) ?? [], t, model.perIssueWrites));
+    }
+    if (waitMs > 0) return refuse(h, kind, model.reasons.perIssue, waitMs / 1000);
     return null;
   };
   const charge = ({ t, endpoint, kind, cost, issues = [], charged = true }) => {
@@ -122,13 +137,26 @@ function createRate(model = MODEL) {
     if (charged) h[kind] += cost;
     h.requests += 1;
     const b = bucket(endpoint, t);
-    buckets.set(endpoint, { tokens: b.tokens - cost, at: b.at });
-    for (const id of issues) lastWrite.set(id, Math.max(lastWrite.get(id) ?? -Infinity, t));
+    buckets.set(endpoint, { tokens: b.tokens - 1, at: b.at });
+    for (const id of new Set(issues)) {
+      const history = writes.get(id) ?? [];
+      history.push(t);
+      history.sort((a, b) => a - b);
+      writes.set(id, history);
+    }
   };
-  const headers = (t) => {
-    const remaining = model.quotaPerHour - spent(hour(t));
-    return { 'X-RateLimit-Limit': String(model.quotaPerHour),
-      ...(remaining < model.quotaPerHour * model.nearLimitShare ? { 'X-RateLimit-Remaining': String(Math.max(0, remaining)), 'X-RateLimit-NearLimit': 'true' } : {}) };
+  const headers = (t, endpoint = null) => {
+    const remaining = Math.max(0, model.quotaPerHour - spent(hour(t)));
+    const until = Math.ceil(((hourOf(t) + 1) * HOUR_MS - t) / 1000);
+    const policy = model.quotaScope === 'tenant' ? 'tenant-app-quota' : 'global-app-quota';
+    const near = remaining < model.quotaPerHour * model.nearLimitShare;
+    return {
+      'RateLimit-Policy': `"${policy}";q=${model.quotaPerHour};w=3600`,
+      'RateLimit': `"${policy}";${near ? `r=${remaining};` : ''}t=${until}`,
+      ...(near ? { 'X-RateLimit-NearLimit': 'true' } : {}),
+      ...(endpoint ? { 'X-RateLimit-Limit': String(refillRate(endpoint)),
+        'X-RateLimit-Remaining': String(Math.max(0, Math.floor(bucket(endpoint, t).tokens))) } : {}),
+    };
   };
   const draw = ({ t, points }) => {
     if (!(Number.isFinite(points) && points > 0)) throw new Error(`draw needs a positive number of points, got ${points}`);
@@ -144,5 +172,4 @@ function createRate(model = MODEL) {
 }
 
 if (require.main === module && process.argv.includes('--model')) process.stdout.write(JSON.stringify(MODEL, null, 1) + '\n');
-
-module.exports = { MODEL, createRate, costOf, writtenRefs, kindOf, quotaCharged, latencyOf, HOUR_MS };
+module.exports = { MODEL, createRate, costOf, returnedObjects, issueWriteWait, writtenRefs, kindOf, quotaCharged, latencyOf, HOUR_MS };
