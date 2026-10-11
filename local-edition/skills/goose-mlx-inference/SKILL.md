@@ -21,6 +21,13 @@ workload: the SWARM (N concurrent long-context tool-calling agents). Plan of rec
 - Before ANY model mount or bench: `python3 local-edition/mlx/gates.py mount --model-path <dir> --port <p>`
   — exit 1 = BLOCKED, stop. Session start: `gates.py snapshot`; session end: `gates.py verify-fleet`.
 - Sidecar ports: never 1234/11434. Models live in ONE configurable `models_dir` (default `~/.goose/models`).
+- WHERE THE WEIGHTS PHYSICALLY ARE (2026-10-11): on BOTH Macs they live on the workhorse's AI-workhorse SSD
+  (`/Volumes/AI-workhorse/models/goose/{rapid-mlx,Mihai-LeanZero}`). Workhorse: `~/.goose/models/<publisher>` are
+  symlinks there. Laptop: `~/.goose/models` is an SMB mount (read-only share `goose-models`, over Thunderbolt
+  192.168.0.2 only) kept by LaunchAgent net.leanzero.models-mount (machine-sync/models-mount.sh). No cable = empty
+  models dir = "model not found" on the laptop, by design (on the road is cloud). Load is bounded by the SSD
+  (~950 MB/s); MLX keeps no fd/mmap of the safetensors after load, so inference speed is unaffected. Downloads to
+  the laptop fail (read-only): download on the workhorse. list_local_models follows symlinks since a20f78b5b.
 - Engine changes in `swarm.rs` go through the `swarm-surgeon` agent (see `.claude/agents/`); the six
   swarm invariants and development gates apply unchanged. The knob-turning skill's "never touch
   crates/goose/**" rule does NOT block this branch's sanctioned feature work — but swarm gates do run.
