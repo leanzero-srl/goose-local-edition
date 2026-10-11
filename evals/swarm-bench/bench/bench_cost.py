@@ -39,6 +39,7 @@ import urllib.parse
 import urllib.request
 
 GENERATION_ID = re.compile(r'gen-[0-9]+-[A-Za-z0-9]+')
+MODEL_ID = re.compile(r'[^/\s]+/[^/\s]+')
 # policy: OpenRouter writes the generation record after the stream ends; ids still unknown are
 # re-asked on a doubling backoff (2+4+8+16+32 s) before they are published as missing.
 LATE_RECORD_BACKOFF = (2, 4, 8, 16, 32)
@@ -114,12 +115,20 @@ def telemetry_calls(workdir: Path | None) -> dict:
     if not recorded:
         return {'status': 'predates_response_id' if calls else 'empty', 'path': str(path),
                 'lines': len(calls), 'unparseable_lines': unparseable}
-    ended, native_usage = {}, {}
+    ended, native_usage, models = {}, {}, {}
     invalid_usage, conflicting_usage = set(), set()
+    invalid_models, conflicting_models = set(), set()
     without_id = 0
     for call in recorded:
         gen = call.get('response_id')
         if isinstance(gen, str) and GENERATION_ID.fullmatch(gen):
+            model = call.get('model')
+            if not isinstance(model, str) or MODEL_ID.fullmatch(model) is None:
+                invalid_models.add(gen)
+            elif gen in models and models[gen] != model:
+                conflicting_models.add(gen)
+            else:
+                models[gen] = model
             # A completed record wins over an earlier dropped stream for the same generation.
             if ended.get(gen) != 'completed':
                 ended[gen] = call['ended']
@@ -137,6 +146,8 @@ def telemetry_calls(workdir: Path | None) -> dict:
     return {'status': 'recorded', 'path': str(path), 'calls': len(recorded), 'ended': ended,
             'native_usage_by_id': native_usage, 'invalid_native_usage_ids': sorted(invalid_usage),
             'conflicting_native_usage_ids': sorted(conflicting_usage),
+            'model_by_id': models, 'invalid_model_ids': sorted(invalid_models),
+            'conflicting_model_ids': sorted(conflicting_models),
             'calls_without_response_id': without_id, 'calls_without_end_marker': len(calls) - len(recorded),
             'unparseable_lines': unparseable}
 
@@ -259,8 +270,52 @@ def _telemetry_native_proof(ids: list[str], found: dict, telemetry: dict | None)
             'reasons': failures}
 
 
+def _cached_auxiliary_proof(ids: list[str], found: dict, telemetry: dict, counters: dict,
+                            unattributed: dict, model: str) -> dict:
+    """A model partition proves cached auxiliary usage only when every session counter matches."""
+    proof = _telemetry_native_proof(ids, found, telemetry)
+    reasons = list(proof['reasons'])
+    if not isinstance(model, str) or MODEL_ID.fullmatch(model) is None:
+        reasons.append('the explicit entrant model identity is unavailable')
+    models = telemetry.get('model_by_id', {})
+    if telemetry.get('invalid_model_ids') or telemetry.get('conflicting_model_ids'):
+        reasons.append('telemetry model identities are invalid or conflicting')
+    if set(ids) != set(telemetry.get('ended', {})) or len(ids) != len(set(ids)):
+        reasons.append('generation ids do not exactly cover authoritative telemetry')
+    if any(not isinstance(models.get(gen), str) or MODEL_ID.fullmatch(models[gen]) is None for gen in ids):
+        reasons.append('a generation lacks its authoritative telemetry model identity')
+    if any(gen not in found for gen in ids):
+        reasons.append('a generation lacks its provider bill')
+    if any(type(value) is not int or value < 0 for value in counters.values()) \
+            or counters['cached'] > counters['prompt']:
+        reasons.append('session token counters are invalid')
+    completed = [gen for gen in ids if telemetry.get('ended', {}).get(gen) == 'completed' and gen in found]
+    if any(type(found[gen].get(TOKEN_FIELDS[name])) is not int or found[gen][TOKEN_FIELDS[name]] < 0
+           for gen in completed for name in GOOSE_COUNTERS) or any(
+               found[gen].get(TOKEN_FIELDS['cached'], 0) > found[gen].get(TOKEN_FIELDS['prompt'], 0)
+               for gen in completed):
+        reasons.append('completed provider bills have invalid native token counts')
+    entrant = [gen for gen in completed if models.get(gen) == model]
+    auxiliary = [gen for gen in completed if models.get(gen) != model]
+    if not entrant or not auxiliary:
+        reasons.append('completed entrant and auxiliary model partitions are both required')
+    if not reasons:
+        entrant_tokens = {name: sum(found[gen][field] for gen in entrant)
+                          for name, field in TOKEN_FIELDS.items() if name in GOOSE_COUNTERS}
+        auxiliary_tokens = {name: sum(found[gen][field] for gen in auxiliary)
+                            for name, field in TOKEN_FIELDS.items() if name in GOOSE_COUNTERS}
+        if entrant_tokens != counters:
+            reasons.append('entrant native token sums do not exactly match session counters')
+        if auxiliary_tokens != {name: -value for name, value in unattributed.items()}:
+            reasons.append('auxiliary native token sums do not exactly explain the session residual')
+        proof.update(entrant_native_tokens=entrant_tokens, auxiliary_native_tokens=auxiliary_tokens)
+    proof.update(status='matched' if not reasons else 'unproven', reasons=reasons,
+                 entrant_model=model, entrant_generation_ids=entrant, auxiliary_generation_ids=auxiliary)
+    return proof
+
+
 def summarize(ids: list[str], found: dict, late: list[str], failures: dict, usage: dict | None,
-              telemetry: dict | None = None) -> dict:
+              telemetry: dict | None = None, model: str = '') -> dict:
     records = [found[gen] for gen in ids if gen in found]
     tokens = _token_sums(records)
     hosts: dict[str, int] = {}
@@ -270,6 +325,11 @@ def summarize(ids: list[str], found: dict, late: list[str], failures: dict, usag
     missing = [{'id': gen, 'reason': failures.get(gen, 'not fetched')} for gen in ids if gen not in found]
     ended = (telemetry or {}).get('ended', {})
     incomplete_ids = [gen for gen in ids if ended.get(gen) == 'incomplete']
+    invalid_cached_ids = [gen for gen in ids if gen in found and gen not in incomplete_ids and
+                          (type(found[gen].get(TOKEN_FIELDS['cached'])) is not int or
+                           found[gen][TOKEN_FIELDS['cached']] < 0 or
+                           (type(found[gen].get(TOKEN_FIELDS['prompt'])) is int and
+                            found[gen][TOKEN_FIELDS['cached']] > found[gen][TOKEN_FIELDS['prompt']]))]
     counters = _goose_counters(usage)
     if counters is None:
         reconciliation = {'status': 'unavailable',
@@ -293,12 +353,22 @@ def summarize(ids: list[str], found: dict, late: list[str], failures: dict, usag
                 reconciliation['status'] = 'billed_calls_outside_session_counters'
                 reconciliation['billed_tokens_outside_session_counters'] = {
                     name: -value for name, value in unattributed.items()}
+        elif all(value <= 0 for value in unattributed.values()) and unattributed['cached'] < 0:
+            proof = _cached_auxiliary_proof(ids, found, telemetry or {}, counters, unattributed, model)
+            reconciliation['telemetry_native_proof'] = proof
+            if proof['status'] == 'matched':
+                reconciliation['status'] = 'billed_calls_outside_session_counters'
+                reconciliation['billed_tokens_outside_session_counters'] = {
+                    name: -value for name, value in unattributed.items()}
     without_id = (telemetry or {}).get('calls_without_response_id', 0)
     reasons = []
     if missing:
         reasons.append(f'{len(missing)} generation id(s) have no billed record')
     if without_id:
         reasons.append(f'{without_id} telemetry call(s) carried no response id to bill')
+    if invalid_cached_ids:
+        reasons.append('completed provider bills have missing or invalid native cached token counts: '
+                       + ', '.join(invalid_cached_ids))
     if unattributed is None:
         reasons.append(reconciliation['reason'])
     elif any(unattributed.values()) and reconciliation['status'] != 'billed_calls_outside_session_counters':
@@ -306,7 +376,7 @@ def summarize(ids: list[str], found: dict, late: list[str], failures: dict, usag
                      if any(value > 0 for value in unattributed.values()) else
                      'recovered native tokens exceed session counters without complete per-call proof: ')
         reasons.append(direction
-                       + ', '.join(f'{name} {value:+d}' for name, value in unattributed.items() if value))
+                       + ', '.join(f'{name} {value:+}' for name, value in unattributed.items() if value))
     complete = bool(records) and not reasons
     billed = sum((Decimal(record['usage']) for record in records), Decimal(0))
     incomplete_billed = sum((Decimal(found[gen]['usage']) for gen in incomplete_ids if gen in found), Decimal(0))
@@ -345,7 +415,7 @@ def record(provider: str | None, model: str | None, credentials: dict, runtime: 
             host = credentials.get('OPENROUTER_HOST') or 'https://openrouter.ai'
             ids, sources, telemetry = collect_generation_ids(runtime, workdir)
             telemetry_summary = {key: value for key, value in telemetry.items()
-                                 if key not in ('ended', 'native_usage_by_id')}
+                                 if key not in ('ended', 'native_usage_by_id', 'model_by_id')}
             if not ids:
                 result = unavailable(provider, 'the run kept no OpenRouter generation id '
                                                '(telemetry, sessions.db message ids, request logs)')
@@ -360,7 +430,7 @@ def record(provider: str | None, model: str | None, credentials: dict, runtime: 
                     telemetry_summary['ids_outside_telemetry'] = outside
                 result = {'provider': provider,
                           'source': host.rstrip('/') + '/api/v1/generation (usage per generation id)',
-                          **summarize(ids, found, late, failures, usage, telemetry),
+                          **summarize(ids, found, late, failures, usage, telemetry, model=model),
                           'generation_id_sources': sources,
                           'telemetry': telemetry_summary}
         result['model'] = model

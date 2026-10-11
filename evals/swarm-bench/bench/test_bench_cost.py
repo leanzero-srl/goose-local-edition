@@ -32,6 +32,34 @@ GENERATIONS = {
 }
 IDS = list(GENERATIONS)
 
+# Native usage copied from the retained seven-call Sol qualification, unit896902fb2203-qualification-2.
+# The test bill amounts are inert; these counters and generation identities are the actual fixture.
+SOL_MODEL = 'openai/gpt-6.1-sol'
+SOL_TITLE_MODEL = 'google/gemini-2.5-flash'
+SOL_USAGE = (
+    ('gen-1791744994-X3TvW9jjrHMRU5scpEjO', 16158, 15905, 203, SOL_MODEL),
+    ('gen-1791744992-dzoSg74ySeX9iQv5G6b2', 15908, 15325, 47, SOL_MODEL),
+    ('gen-1791744990-TVuJsuuuATrv6nqW940r', 15328, 14171, 47, SOL_MODEL),
+    ('gen-1791744988-hTYOFGSODadk2QhJE4wp', 14174, 13686, 47, SOL_MODEL),
+    ('gen-1791744986-Xtsvg5EMzuDTRQt3fYe8', 13689, 13342, 47, SOL_MODEL),
+    ('gen-1791744984-n7sFqUKmdQF4gkAnhseg', 13313, 13271, 346, SOL_TITLE_MODEL),
+    ('gen-1791744984-hbL5fzTQWnpbEOWwlS4f', 13345, 0, 47, SOL_MODEL),
+)
+
+
+def sol_fixture():
+    found = {gen: {'id': gen, 'usage': '0.001', 'native_tokens_prompt': prompt,
+                   'native_tokens_cached': cached, 'native_tokens_completion': completion,
+                   'native_tokens_reasoning': 340 if model == SOL_TITLE_MODEL else 0,
+                   'provider_name': 'Google' if model == SOL_TITLE_MODEL else 'OpenAI'}
+             for gen, prompt, cached, completion, model in SOL_USAGE}
+    lines = [{'response_id': gen, 'model': model, 'ended': 'completed', 'usage': True,
+              'prompt_tokens': prompt, 'completion_tokens': completion}
+             for gen, prompt, cached, completion, model in SOL_USAGE]
+    usage = {'status': 'recorded', 'sessions': [{'accumulated_input_tokens': 88602,
+             'accumulated_cache_read_tokens': 72429, 'accumulated_output_tokens': 438}]}
+    return list(found), found, lines, usage
+
 
 def counters(ids):
     return {'status': 'recorded', 'sessions': [{
@@ -255,6 +283,156 @@ class BilledCostTests(unittest.TestCase):
         self.assertEqual(result['status'], 'incomplete')
         self.assertEqual(result['reconciliation']['unattributed_tokens']['completion'], 1)
         self.assertTrue(any('goose counted tokens' in reason for reason in result['incomplete_reasons']))
+
+    def sol_summary(self, ids, found, lines, usage, model=SOL_MODEL):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_telemetry(Path(tmp), lines)
+            telemetry = bench_cost.telemetry_calls(Path(tmp))
+        return bench_cost.summarize(ids, found, [], {}, usage, telemetry, model=model)
+
+    def test_actual_sol_cached_title_residual_is_proven_without_retained_request_logs(self):
+        result = self.sol_summary(*sol_fixture())
+        self.assertEqual(result['status'], 'complete', result)
+        self.assertEqual(result['request_count'], 7)
+        self.assertEqual(result['billed_usd'], 0.007)  # Inert bill fixture, not measured campaign cost.
+        self.assertEqual(result['tokens'], {'prompt': 101915, 'cached': 85700, 'completion': 784, 'reasoning': 340})
+        self.assertEqual(result['hosts'], {'OpenAI': 6, 'Google': 1})
+        self.assertEqual(result['reconciliation']['unattributed_tokens'],
+                         {'prompt': -13313, 'cached': -13271, 'completion': -346})
+        proof = result['reconciliation']['telemetry_native_proof']
+        self.assertEqual(proof['status'], 'matched')
+        self.assertEqual(proof['completed_native_counts_matched'], 7)
+        self.assertEqual(proof['entrant_native_tokens'], {'prompt': 88602, 'cached': 72429, 'completion': 438})
+        self.assertEqual(proof['auxiliary_native_tokens'], {'prompt': 13313, 'cached': 13271, 'completion': 346})
+        self.assertEqual(proof['auxiliary_generation_ids'], [SOL_USAGE[5][0]])
+        self.assertEqual(len(proof['entrant_generation_ids']), 6)
+        self.assertFalse(result['billed_usd_is_lower_bound'])
+
+    def test_cached_title_record_passes_explicit_launch_model_to_native_summary(self):
+        ids, found, lines, usage = sol_fixture()
+
+        def fake(request, timeout):
+            gen = urllib.parse.parse_qs(urllib.parse.urlsplit(request.full_url).query)['id'][0]
+            data = dict(found[gen], usage=0.001)
+            return contextlib.closing(io.BytesIO(json.dumps({'data': data}).encode()))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = runtime_with(Path(tmp), ids[-1:], [])
+            self.write_telemetry(root, lines)
+            result = bench_cost.record('openrouter', SOL_MODEL, {'OPENROUTER_API_KEY': KEY}, root,
+                                       root, usage, urlopen=fake, sleep=lambda _: None)
+            self.assertEqual(result, json.loads((root / 'model-cost.json').read_text()))
+        self.assertEqual(result['status'], 'complete', result)
+        self.assertEqual(result['model'], SOL_MODEL)
+        self.assertEqual(result['generation_id_sources']['request_logs'], 0)
+        self.assertNotIn('model_by_id', result['telemetry'])
+
+    def test_cached_auxiliary_proof_covers_long_build_without_request_log_retention(self):
+        ids, found, lines = [], {}, []
+        for index in range(300):
+            gen = f'gen-{index + 1}-InertEntrant'
+            ids.append(gen)
+            found[gen] = {'id': gen, 'usage': '0.001', 'native_tokens_prompt': 100,
+                          'native_tokens_cached': 90, 'native_tokens_completion': 10}
+            lines.append({'response_id': gen, 'model': SOL_MODEL, 'ended': 'completed',
+                          'usage': True, 'prompt_tokens': 100, 'completion_tokens': 10})
+        title = 'gen-301-InertTitle'
+        ids.append(title)
+        found[title] = {'id': title, 'usage': '0.002', 'native_tokens_prompt': 50,
+                        'native_tokens_cached': 40, 'native_tokens_completion': 5}
+        lines.append({'response_id': title, 'model': SOL_TITLE_MODEL, 'ended': 'completed',
+                      'usage': True, 'prompt_tokens': 50, 'completion_tokens': 5})
+        usage = {'status': 'recorded', 'sessions': [{'accumulated_input_tokens': 30000,
+                 'accumulated_cache_read_tokens': 27000, 'accumulated_output_tokens': 3000}]}
+        result = self.sol_summary(ids, found, lines, usage)
+        self.assertEqual(result['status'], 'complete', result)
+        self.assertEqual(result['request_count'], 301)
+        self.assertEqual(result['billed_usd'], 0.302)
+        self.assertEqual(result['reconciliation']['telemetry_native_proof']['completed_native_counts_matched'], 301)
+
+    def test_cached_auxiliary_proof_keeps_original_missing_model_callers_incomplete(self):
+        self.assertEqual(self.sol_summary(*sol_fixture(), model='')['status'], 'incomplete')
+        self.assertEqual(self.sol_summary(*sol_fixture(), model='unknown')['status'], 'incomplete')
+        self.assertEqual(self.sol_summary(*sol_fixture(), model='openai/wrong-model')['status'], 'incomplete')
+
+    def test_cached_auxiliary_proof_refuses_missing_invalid_and_conflicting_evidence(self):
+        for defect in ('missing_bill', 'missing_telemetry_id', 'extra_telemetry_id', 'duplicate_id',
+                       'wrong_bill_id', 'missing_usage', 'invalid_usage', 'conflicting_usage', 'missing_model',
+                       'invalid_model', 'wrong_entrant_model', 'wrong_auxiliary_model', 'conflicting_model',
+                       'missing_cache', 'negative_cache', 'boolean_cache', 'float_cache', 'cache_exceeds_prompt',
+                       'wrong_entrant_cache', 'wrong_session_cache', 'wrong_session_prompt',
+                       'wrong_session_completion', 'invalid_session_cache', 'positive_residual',
+                       'unmarked', 'no_response_id'):
+            with self.subTest(defect=defect):
+                ids, found, lines, usage = sol_fixture()
+                first, title = ids[0], ids[5]
+                if defect == 'missing_bill':
+                    found.pop(first)
+                elif defect == 'missing_telemetry_id':
+                    lines.pop(0)
+                elif defect == 'extra_telemetry_id':
+                    lines.append(dict(lines[0], response_id='gen-1-Extra'))
+                elif defect == 'duplicate_id':
+                    ids.append(first)
+                elif defect == 'wrong_bill_id':
+                    found[first]['id'] = 'gen-1-Wrong'
+                elif defect == 'missing_usage':
+                    lines[0].pop('prompt_tokens')
+                elif defect == 'invalid_usage':
+                    lines[0]['usage'] = False
+                elif defect == 'conflicting_usage':
+                    lines.append(dict(lines[0], completion_tokens=1))
+                elif defect == 'missing_model':
+                    lines[0].pop('model')
+                elif defect == 'invalid_model':
+                    lines[0]['model'] = 'unknown'
+                elif defect == 'wrong_entrant_model':
+                    lines[0]['model'] = 'openai/wrong-model'
+                elif defect == 'wrong_auxiliary_model':
+                    lines[5]['model'] = SOL_MODEL
+                elif defect == 'conflicting_model':
+                    lines.append(dict(lines[0], model=SOL_TITLE_MODEL))
+                elif defect == 'missing_cache':
+                    found[title].pop('native_tokens_cached')
+                elif defect == 'negative_cache':
+                    found[title]['native_tokens_cached'] = -1
+                elif defect == 'boolean_cache':
+                    found[title]['native_tokens_cached'] = True
+                elif defect == 'float_cache':
+                    found[title]['native_tokens_cached'] = 13271.0
+                elif defect == 'cache_exceeds_prompt':
+                    found[title]['native_tokens_cached'] = found[title]['native_tokens_prompt'] + 1
+                elif defect == 'wrong_entrant_cache':
+                    found[first]['native_tokens_cached'] -= 1
+                elif defect.startswith('wrong_session_'):
+                    column = {'wrong_session_cache': 'accumulated_cache_read_tokens',
+                              'wrong_session_prompt': 'accumulated_input_tokens',
+                              'wrong_session_completion': 'accumulated_output_tokens'}[defect]
+                    usage['sessions'][0][column] -= 1
+                elif defect == 'invalid_session_cache':
+                    usage['sessions'][0]['accumulated_cache_read_tokens'] = True
+                elif defect == 'positive_residual':
+                    usage['sessions'][0]['accumulated_output_tokens'] = 785
+                elif defect == 'unmarked':
+                    lines.append({'model': SOL_MODEL, 'prompt_tokens': 1})
+                elif defect == 'no_response_id':
+                    lines.append({'model': SOL_MODEL, 'response_id': None, 'ended': 'incomplete'})
+                result = self.sol_summary(ids, found, lines, usage)
+                self.assertEqual(result['status'], 'incomplete', result)
+                self.assertTrue(result['billed_usd_is_lower_bound'])
+
+    def test_cached_title_proof_keeps_dropped_generation_bill_and_excludes_its_usage(self):
+        ids, found, lines, usage = sol_fixture()
+        dropped = 'gen-1-Dropped'
+        ids.append(dropped)
+        found[dropped] = {'id': dropped, 'usage': '0.002', 'native_tokens_prompt': 2,
+                         'native_tokens_cached': 1, 'native_tokens_completion': 3}
+        lines.append({'response_id': dropped, 'model': SOL_MODEL, 'ended': 'incomplete', 'usage': False})
+        result = self.sol_summary(ids, found, lines, usage)
+        self.assertEqual(result['status'], 'complete', result)
+        self.assertEqual(result['billed_usd'], 0.009)
+        self.assertEqual(result['incomplete_calls']['ids'], [dropped])
+        self.assertEqual(result['tokens']['cached'], 85701)
 
     def test_a_telemetry_call_without_a_response_id_keeps_the_bill_incomplete(self):
         with tempfile.TemporaryDirectory() as tmp:
