@@ -34,6 +34,7 @@ import forge2Haiku from './components/benchmark/forge2-haiku-reliability.fixture
 import forge2Reference from './components/benchmark/forge2-reference-reliability.fixture.json';
 import forge2Sol from './components/benchmark/forge2-sol-reliability.fixture.json';
 import forge2Sonnet from './components/benchmark/forge2-sonnet-reliability.fixture.json';
+import { forge2Synthetic } from './components/benchmark/forge2Synthetic.fixture';
 
 /** The main-side Forge seams, each against a real verdict: score_forge.py's for the forge-1.0 alt golden app
  *  (forge-1.0-rc 0.799), and score_forge2.py's for the GPT-6.1 Sol pilot on forge-2.0 (2026-10-10, three
@@ -375,14 +376,19 @@ describe('forge publishing', () => {
     expect(forgePublishTiers({ L: 0.5 }, 'forge-1.0')).toMatchObject({ L: 0.5, K: 0, E: 0 });
   });
 
-  it('publishes exactly forge-2.0’s nineteen letters — the v1 ten and R1–R9 — never dropping a v2 family', () => {
+  it('preserves historical tier values when projecting to the current Forge 2.0 vocabulary', () => {
     const projected2 = projectBenchScore(forge2Verdict as never);
     const tiers = forgePublishTiers(projected2.tiers, 'forge-2.0');
     expect(Object.keys(tiers)).toEqual(FORGE_ERA_TIER_ORDER['forge-2.0']);
     expect(tiers).toMatchObject({ R: 0.748, E: 0.5039, R1: 1, R5: 0.9333, R7: 0.9889 });
     // A forge-1.0 result never carries a 2.0 letter (the site refuses unknown letters per era).
     expect(Object.keys(forgePublishTiers(projected2.tiers, 'forge-1.0'))).not.toContain('R1');
-    expect(forgePublishTiers({ L: 0.5 }, 'forge-2.0')).toMatchObject({ L: 0.5, R1: 0, R9: 0 });
+    expect(forgePublishTiers({ L: 0.5 }, 'forge-2.0')).toMatchObject({
+      L: 0.5,
+      R1: 0,
+      R9: 0,
+      R10: 0,
+    });
   });
 
   it('refuses a forge-2.0 result scored before its thresholds were final in its own era’s words, and a scorer naming no era this app knows', () => {
@@ -418,9 +424,12 @@ describe('the Forge eras this app knows', () => {
       expect(forgeEra(other)).toBeNull();
   });
 
-  it('carries each era’s tier letters exactly as its real scorer recorded them, every letter named', () => {
+  it('keeps historical recorded tiers readable as subsets of the current era, every letter named', () => {
     expect(Object.keys(forgeVerdict.tiers)).toEqual(FORGE_ERA_TIER_ORDER['forge-1.0']);
-    expect(Object.keys(forge2Verdict.tiers)).toEqual(FORGE_ERA_TIER_ORDER['forge-2.0']);
+    expect(FORGE_ERA_TIER_ORDER['forge-2.0'].filter((tier) => tier in forge2Verdict.tiers)).toEqual(
+      Object.keys(forge2Verdict.tiers)
+    );
+    expect(forge2Verdict.tiers).not.toHaveProperty('R10');
     for (const [verdict, era] of [
       [forgeVerdict, 'forge-1.0'],
       [forge2Verdict, 'forge-2.0'],
@@ -499,7 +508,7 @@ describe('the forge publish body (INTEGRATION.md, as implemented on the site)', 
     expect(forgePublishProblem(stored)).toBeNull();
   });
 
-  it('builds a forge-2.0 body from a REAL Sol verdict: nineteen tier means and every row, R1–R9 included', () => {
+  it('preserves every row of the historical Sol verdict without inventing JQL grades', () => {
     const projected2 = projectBenchScore(forge2Sol as never);
     const body = forgePublishBody({
       scorerVersion: 'forge-2.0',
@@ -513,7 +522,7 @@ describe('the forge publish body (INTEGRATION.md, as implemented on the site)', 
     expect(rows.map((r) => [r.check, r.tier, r.score])).toEqual(
       forge2Sol.checks.map((c) => [c.check, c.tier, c.score])
     );
-    expect(rows.filter((r) => /^R\d$/.test(r.tier))).toHaveLength(32);
+    expect(rows.filter((r) => /^R\d+$/.test(r.tier))).toHaveLength(32);
     expect(rows.find((r) => r.check === 'r5_nonadmin_refused')).toMatchObject({ tier: 'R5' });
     expect(body.admission).toEqual({ ceiling: 1, reasons: [], failedChecksByBand: [] });
     expect(body.rawScore).toBe(forge2Sol.rawScore);
@@ -633,7 +642,7 @@ describe('forge-2.0 publishes the scorer’s reliability evidence (score_forge2.
       // reliability is the earned score it ties the final to (its tolerance, 2e-4).
       const tiers = body.tiers as Record<string, number>;
       const weights = verdict.tiers as Record<string, { weight: number }>;
-      const tests = Object.keys(tiers).reduce((sum, t) => sum + tiers[t] * weights[t].weight, 0);
+      const tests = Object.keys(weights).reduce((sum, t) => sum + tiers[t] * weights[t].weight, 0);
       expect(Math.abs(tests - inner)).toBeLessThan(1e-3);
       expect(
         Math.abs(tests * (body.criticalMultiplier as number) * reliability - final)
@@ -779,5 +788,70 @@ describe('the Forge kit status', () => {
     // A malformed answer is an error — never "ready".
     expect(parseForgeKitStatus('Traceback (most recent call last)').state).toBe('error');
     expect(parseForgeKitStatus('{"missing": []}').state).toBe('error');
+  });
+});
+
+describe('current Forge 2.0 carrier over SYNTHETIC scorer compositions, no native or model run', () => {
+  it('tracks the actual scorer registry, including names for every tier', () => {
+    expect(forge2Synthetic.nativeScoringPerformed).toBe(false);
+    expect(forge2Synthetic.paidModelCalls).toBe(0);
+    expect(forge2Synthetic.registry).toHaveLength(105);
+    expect(FORGE_ERA_TIER_ORDER['forge-2.0']).toEqual(forge2Synthetic.tierOrder);
+    expect(FORGE_TIER_ORDER).toEqual(forge2Synthetic.tierOrder);
+    expect(new Set(forge2Synthetic.registry.map((row) => row.tier))).toEqual(
+      new Set(forge2Synthetic.tierOrder)
+    );
+    for (const tier of forge2Synthetic.tierOrder) {
+      expect(FORGE_TIERS[tier]?.name).toBeTruthy();
+      expect(FORGE_TIERS[tier]?.desc).toBeTruthy();
+    }
+    expect(FORGE_TIERS.R10.name).toBe('Native JQL');
+  });
+
+  it.each(Object.entries(forge2Synthetic.verdicts))(
+    '%s: preserves all registered checks, tier means and composition inputs through publication',
+    (_name, verdict) => {
+      const before = structuredClone(verdict);
+      const stored = { ...projectBenchScore(verdict), score: verdict.score };
+      expect(forgePublishProblem(stored)).toBeNull();
+      const body = forgePublishBody(stored);
+      const rows = body.checksSummary as Array<{ check: string; tier: string; score: number }>;
+      expect(rows.map(({ check, tier }) => ({ check, tier }))).toEqual(forge2Synthetic.registry);
+      expect(rows.map(({ check, tier, score }) => ({ check, tier, score }))).toEqual(
+        verdict.checks.map(({ check, tier, score }) => ({ check, tier, score }))
+      );
+      expect(body.tiers).toEqual(
+        Object.fromEntries(Object.entries(verdict.tiers).map(([tier, entry]) => [tier, entry.mean]))
+      );
+      expect(rows.filter((row) => row.tier === 'R10')).toHaveLength(6);
+      expect(body.rawScore).toBe(verdict.rawScore);
+      expect(body.scoreInner).toBe(verdict.inner);
+      expect(body.preSeverityScore).toBe(verdict.critical.pre_severity_score);
+      expect(body.criticalMultiplier).toBe(verdict.critical.multiplier);
+      expect(body.reliability).toBe(verdict.reliability.multiplier);
+      expect(body.reliabilityDefects).toEqual(verdict.reliability.defects);
+      expect(stored.score).toBe(verdict.score);
+      expect(verdict).toEqual(before);
+    }
+  );
+
+  it('keeps a partial JQL membership result and an ordinary zero without erasing their diagnosis', () => {
+    const verdict = forge2Synthetic.verdicts.jql_membership;
+    const body = forgePublishBody(projectBenchScore(verdict));
+    expect(body.tiers).toMatchObject({ R10: verdict.tiers.R10.mean });
+    expect(verdict.tiers.R10.mean).toBe(0.75);
+    const rows = body.checksSummary as Array<{ check: string; tier: string; score: number }>;
+    expect(rows.find((row) => row.check === 'r10_initial_membership')).toMatchObject({
+      tier: 'R10',
+      score: 0.5,
+    });
+    expect(rows.find((row) => row.check === 'r10_shared_permissions')).toMatchObject({
+      tier: 'R10',
+      score: 0,
+    });
+    expect(body.reliabilityDefects).toContainEqual(
+      verdict.reliability.defects.find((row) => row.tier === 'R10')
+    );
+    expect(body.criticalMultiplier).toBe(1);
   });
 });
