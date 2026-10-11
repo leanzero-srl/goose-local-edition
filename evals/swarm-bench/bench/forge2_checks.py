@@ -51,8 +51,8 @@ and forged attempts (the forged budget stored or a `secret:` key rotated; withou
 `state_changed`, which also counts an audit entry recording the refusal).
 
 `python3 forge2_checks.py` runs the selftest: observations built from the oracle score 1.0 on every row, an idle app
-earns 0 with no critical fired, and one injected defect per family costs exactly the rows it should — and fires no
-critical once the v2 surface its row is gated on is gone from the manifest.
+earns 0 with no critical fired, and one injected defect per family costs exactly the rows it should. Independently
+recorded source damage or secret leakage remains critical even when the v2 surface is absent.
 """
 from __future__ import annotations
 
@@ -353,9 +353,6 @@ def _(ev: Ev) -> Dict:
 
 @row('r1_v1_rows_intact', 'R1', critical='v1 rows lost or corrupted by the migration')
 def _(ev: Ev) -> Dict:
-    gate = ledger_gate(ev)
-    if gate:
-        return gate
     expected = migration_originals(ev)
     if not expected:
         return vacuous('no v1 row was preloaded')
@@ -363,27 +360,41 @@ def _(ev: Ev) -> Dict:
     if why:
         return unavail(why)
     v1 = mig.get('v1_final')
+    if isinstance(v1, list):
+        have = index([r for r in v1 if isinstance(r, dict)])
+        lost = [k for k in expected if k not in have]
+        changed = [k for k, e in expected.items() if k in have
+                   and not any(preserved_fields(r, e) for r in have[k])]
+        if lost or changed:
+            found = [f'{label} {len(ks)} (e.g. {sample(ks)})' for label, ks in
+                     (('v1 rows lost:', lost), ('v1 rows rewritten:', changed)) if ks]
+            return g(0.0, '; '.join(found), 'v1 rows lost or corrupted by the migration')
+    by = mig.get('v2_by_checkpoint')
+    corrupted = []
+    if isinstance(by, dict):
+        for cp, rows in by.items():
+            if isinstance(rows, list):
+                corrupted += [(cp, key(r)) for r in rows if isinstance(r, dict) and key(r) in expected
+                              and not preserved_fields(r, expected[key(r)], V1_COPY_FIELDS)]
+    if corrupted:
+        return g(0.0, f'migrated v1 payload corrupted at {len(corrupted)} checkpoint row(s) '
+                 f'(e.g. {sample(corrupted)})', 'v1 rows lost or corrupted by the migration')
+    # A missing declaration cannot erase source damage or a corrupt copy already observed.
+    gate = ledger_gate(ev)
+    if gate:
+        return gate
     if not isinstance(v1, list):
         return unavail('migration.v1_final (the v1 entity at the end) is not a list')
-    have = index([r for r in v1 if isinstance(r, dict)])
-    lost = [k for k in expected if k not in have]
-    changed = [k for k, e in expected.items() if k in have
-               and not any(preserved_fields(r, e) for r in have[k])]
-    if lost or changed:
-        found = [f'{label} {len(ks)} (e.g. {sample(ks)})' for label, ks in
-                 (('v1 rows lost:', lost), ('v1 rows rewritten:', changed)) if ks]
-        return g(0.0, '; '.join(found), 'v1 rows lost or corrupted by the migration')
-    final, why = ev.v2('final')
-    if why:
-        return unavail(why)
-    copies = [r for r in final if key(r) in expected]
-    corrupted = [key(r) for r in copies if not preserved_fields(r, expected[key(r)], V1_COPY_FIELDS)]
-    if corrupted:
-        return g(0.0, f'migrated v1 payload corrupted on {len(corrupted)} rows (e.g. {sample(corrupted)})',
-                 'v1 rows lost or corrupted by the migration')
+    if not isinstance(by, dict):
+        return unavail('migration.v2_by_checkpoint is not an object')
+    missing = [cp for cp in fo.CHECKPOINTS if not isinstance(by.get(cp), list)]
+    if missing:
+        return unavail(f'migration.v2_by_checkpoint has no row list for {sample(missing)}')
+    copies = [r for r in by['final'] if isinstance(r, dict) and key(r) in expected]
     if not copies:
         return vacuous('v1 source is intact but no v1 row reached scope-ledger')
-    return g(1.0, f'all {len(expected)} v1 source rows intact; {len(copies)} copies preserve recorded v1 attributes')
+    return g(1.0, f'all {len(expected)} v1 source rows intact; {len(copies)} final copies preserve recorded '
+             f'v1 attributes at every observed checkpoint')
 
 
 @row('r1_events_during_migration', 'R1')
@@ -1088,19 +1099,19 @@ def _(ev: Ev) -> Dict:
 
 @row('r6_secret_never_disclosed', 'R6', critical='the CI secret disclosed')
 def _(ev: Ev) -> Dict:
-    gate = admin_gate(ev, ' (where the CI secret is rotated)')
-    if gate:
-        return gate
     admin, why = ev.section('admin')
     if why:
         return unavail(why)
     leaks = admin.get('secret_leaks')
+    if isinstance(leaks, list) and leaks and admin.get('secret_source'):
+        return g(0.0, f'the CI secret appeared in {sample(leaks, 2)}', 'the CI secret disclosed')
+    gate = admin_gate(ev, ' (where the CI secret is rotated)')
+    if gate:
+        return gate
     if not isinstance(leaks, list):
         return unavail('admin.secret_leaks is not a list')
     if not admin.get('secret_source'):
         return vacuous('no CI secret existed to leak (the panel showed none and storage holds no single secret)')
-    if leaks:
-        return g(0.0, f'the CI secret appeared in {sample(leaks, 2)}', 'the CI secret disclosed')
     return g(1.0, f'the CI secret ({admin["secret_source"]}) never appeared outside its one-time display')
 
 
@@ -1855,15 +1866,14 @@ def _mutants(o: fo.Oracle) -> Dict[str, Tuple[Callable[[Dict], None], Dict[str, 
     }
 
 
-# Critical rows no v2 surface gates: duplicates are judged on the scope-ledger rows themselves (an undeclared entity
-# holds none: the KVS refuses it, SCHEMA_NOT_FOUND) and the revoke on v1's Rovo action.
-UNGATED_CRITICALS = {'r3_no_duplicate_rows', 'r4_permission_revoked'}
+# These criticals read independently observed damage or disclosure; a missing v2 surface cannot hide it.
+UNGATED_CRITICALS = {'r1_v1_rows_intact', 'r3_no_duplicate_rows', 'r4_permission_revoked', 'r6_secret_never_disclosed'}
 
 
 def selftest() -> List[str]:
     """Perfect observations score 1.0 on every row (0.75 weighted); an idle app scores 0 with no critical fired; each
-    one-defect mutant moves exactly its row(s) by exactly the expected amount and fires exactly its critical, and none
-    once the v2 surfaces are gone from the manifest."""
+    one-defect mutant moves exactly its row(s) by exactly the expected amount and fires exactly its critical.
+    Removing a v2 surface does not suppress independently recorded source damage or disclosure."""
     global SITE_LLM
     failures = []
     real_site = SITE_LLM
@@ -1895,8 +1905,7 @@ def selftest() -> List[str]:
                 moved = [n for n, r in rows.items() if n not in want and r['score'] != 1.0]
                 if moved:
                     failures.append(f'{name}: rows beyond the defect moved: {moved}')
-                # absent beats evidence (SPEC §4): with the v2 surfaces gone from the manifest (the starter's), a
-                # critical row gated on one of them is absent and fires nothing, whatever its observations hold
+                # An unopened surface earns nothing, but independently observed harm survives its absence.
                 obs['manifest']['modules'] = {k: v for k, v in obs['manifest']['modules'].items()
                                               if k not in ('jira:adminPage', 'webtrigger')}
                 obs['manifest']['app']['storage']['entities'] = [{'name': 'scope-change'}]
@@ -1904,8 +1913,11 @@ def selftest() -> List[str]:
                 ungated = sorted(n for n in set(fires) - UNGATED_CRITICALS
                                  if not (rows[n].get('parts') or {}).get('absent_surface'))
                 fired = sorted(n for n in set(rows) - UNGATED_CRITICALS if critical_fired(rows[n]))
-                if ungated or fired:
-                    failures.append(f'{name} without the v2 surfaces: not absent {ungated}, fired {fired}')
+                retained = sorted(n for n in UNGATED_CRITICALS if critical_fired(rows[n]))
+                wanted_retained = sorted(set(fires) & UNGATED_CRITICALS)
+                if ungated or fired or retained != wanted_retained:
+                    failures.append(f'{name} without the v2 surfaces: not absent {ungated}, fired {fired}, '
+                                    f'retained {retained} (want {wanted_retained})')
             # leak at scale: a newly hidden summary that is text of a summary the person still browses is no leak; the
             # newly hidden key still is one
             pack = fo.synthetic_pack_v2()

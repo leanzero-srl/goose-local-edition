@@ -43,6 +43,53 @@ class CompoundControls(unittest.TestCase):
         self.obs['migration']['v2_by_checkpoint']['final'] = []
         self.critical('r1_v1_rows_intact')
 
+    def test_missing_v2_entity_does_not_hide_deleted_or_rewritten_v1_source(self):
+        for mutation in ('delete', 'rewrite'):
+            with self.subTest(mutation=mutation):
+                saved = copy.deepcopy(self.obs)
+                self.obs['manifest']['app']['storage']['entities'] = [{'name': 'scope-change'}]
+                self.obs['migration']['v2_by_checkpoint'] = {cp: [] for cp in fo.CHECKPOINTS}
+                if mutation == 'delete':
+                    self.obs['migration']['v1_final'] = []
+                else:
+                    self.obs['migration']['v1_final'][0]['created'] = 'corrupted'
+                self.critical('r1_v1_rows_intact')
+                self.obs = saved
+
+    def test_copy_corruption_observed_at_any_checkpoint_survives_later_repair(self):
+        original = self.obs['migration']['v1_rows'][0]
+        for cp in fo.CHECKPOINTS[:-1]:
+            with self.subTest(checkpoint=cp):
+                saved = copy.deepcopy(self.obs)
+                target = next(r for r in self.obs['migration']['v2_by_checkpoint'][cp] if fc.key(r) == fc.key(original))
+                target['kind'] = 'corrupted'
+                self.critical('r1_v1_rows_intact')
+                self.assertTrue(fc.preserved_fields(
+                    next(r for r in self.obs['migration']['v2_by_checkpoint']['final'] if fc.key(r) == fc.key(original)),
+                    original, fc.V1_COPY_FIELDS))
+                self.obs = saved
+
+    def test_late_copy_is_a_completion_failure_without_invented_corruption(self):
+        self.obs['migration']['v2_by_checkpoint']['h2'].pop(0)
+        self.assertLess(self.result('r1_v1_rows_migrated')['score'], 1)
+        r = self.result('r1_v1_rows_intact')
+        self.assertEqual(r['score'], 1)
+        self.assertFalse(fc.critical_fired(r), r)
+
+    def test_missing_checkpoint_cannot_prove_preservation(self):
+        del self.obs['migration']['v2_by_checkpoint']['h2']
+        r = self.result('r1_v1_rows_intact')
+        self.assertTrue(r.get('unavailable'), r)
+        self.assertFalse(fc.critical_fired(r), r)
+
+    def test_absent_v2_with_intact_source_is_unearned_without_data_loss(self):
+        self.obs['manifest']['app']['storage']['entities'] = [{'name': 'scope-change'}]
+        self.obs['migration']['v2_by_checkpoint'] = {cp: [] for cp in fo.CHECKPOINTS}
+        r = self.result('r1_v1_rows_intact')
+        self.assertEqual(r['score'], 0)
+        self.assertTrue((r.get('parts') or {}).get('absent_surface'), r)
+        self.assertFalse(fc.critical_fired(r), r)
+
     def test_no_migration_with_intact_source_is_unearned_but_not_data_loss(self):
         self.obs['migration']['v2_by_checkpoint']['final'] = []
         r = self.result('r1_v1_rows_intact')
@@ -73,6 +120,39 @@ class CompoundControls(unittest.TestCase):
         for name in ('v1_rows', 'v1_final'):
             self.obs['migration'][name] = [{k: r[k] for k in ('changeId', 'sprintId', 'at')} for r in self.obs['migration'][name]]
         self.assertEqual(self.result('r1_v1_rows_intact')['score'], 1)
+
+    def test_known_secret_disclosure_survives_absent_or_unrenderable_admin(self):
+        for surface in ('renderable', 'absent', 'unrenderable'):
+            with self.subTest(surface=surface):
+                saved = copy.deepcopy(self.obs)
+                self.obs['admin'].update(secret_source='kvs-secret', secret_leaks=['kvs key debug-copy (plain storage)'])
+                if surface == 'absent':
+                    del self.obs['manifest']['modules']['jira:adminPage']
+                elif surface == 'unrenderable':
+                    self.obs['admin']['unrenderable'] = 'NOT_NATIVE: admin module is not UI Kit'
+                self.critical('r6_secret_never_disclosed')
+                self.obs = saved
+
+    def test_admin_presentation_failure_without_disclosure_fires_no_secret_critical(self):
+        for surface in ('absent', 'unrenderable'):
+            with self.subTest(surface=surface):
+                saved = copy.deepcopy(self.obs)
+                self.obs['admin'].update(secret_source='kvs-secret', secret_leaks=[])
+                if surface == 'absent':
+                    del self.obs['manifest']['modules']['jira:adminPage']
+                else:
+                    self.obs['admin']['unrenderable'] = 'NOT_NATIVE: admin module is not UI Kit'
+                r = self.result('r6_secret_never_disclosed')
+                self.assertEqual(r['score'], 0)
+                self.assertTrue((r.get('parts') or {}).get('absent_surface'), r)
+                self.assertFalse(fc.critical_fired(r), r)
+                self.obs = saved
+
+    def test_secret_disclosure_needs_known_secret_evidence(self):
+        self.obs['admin'].update(secret_source=None, secret_leaks=['unproven string in a log'])
+        r = self.result('r6_secret_never_disclosed')
+        self.assertEqual(r['score'], 0)
+        self.assertFalse(fc.critical_fired(r), r)
 
     def test_cache_no_calls_with_no_successful_first_answer_gets_no_cache_credit(self):
         c = self.case('cache')
