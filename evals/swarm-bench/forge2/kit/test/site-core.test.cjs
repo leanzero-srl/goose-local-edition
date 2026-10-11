@@ -44,6 +44,7 @@ test('documented object cost classes price actual response records and read-like
   assert.strictEqual(costOf('GET /rest/api/3/group/member', {}, { values: Array(8).fill({ accountId: 'a' }) }), 17);
   assert.strictEqual(costOf('GET /rest/api/3/mypermissions', {}, { permissions: { ADMINISTER: {}, BROWSE_PROJECTS: {} } }), 5);
   assert.strictEqual(costOf('POST /rest/api/3/permissions/check', {}, { globalPermissions: ['ADMINISTER'], projectPermissions: [{ id: '1' }] }), 5);
+  assert.strictEqual(costOf('POST /rest/api/3/jql/function/computation/search', {}, { precomputations: [{ id: '1' }, { id: '2' }] }), 3);
   const updates = (n) => ({ updates: [{ customField: 'f', issueIds: Array.from({ length: n }, (_, i) => i + 1), value: 'committed' }] });
   assert.strictEqual(costOf('POST /rest/api/3/app/field/value', updates(200)), 1);
   assert.strictEqual(costOf('PUT /rest/api/3/app/field/{fieldIdOrKey}/value', updates(51)), 1);
@@ -52,6 +53,8 @@ test('documented object cost classes price actual response records and read-like
   assert.strictEqual(kindOf({ source: 'resolver', moduleType: 'jira:adminPage' }), 'person');
   assert.strictEqual(kindOf({ source: 'frontend', moduleType: 'dashboards:widget' }), 'person');
   assert.strictEqual(kindOf({ source: 'function', moduleType: 'action' }), 'person');
+  assert.strictEqual(kindOf({ source: 'jql-precomputation', moduleType: 'jira:jqlFunction' }), 'person');
+  assert.strictEqual(kindOf({ source: 'function', moduleType: 'jira:jqlFunction' }), 'person');
   for (const m of ['trigger', 'consumer', 'scheduledTrigger', 'webtrigger']) assert.strictEqual(kindOf({ source: 'function', moduleType: m }), 'background', m);
   assert.strictEqual(kindOf({ source: 'function', moduleType: null }), 'unlabelled');
   assert.deepStrictEqual(writtenRefs('POST /rest/api/3/issue/{issueIdOrKey}/comment', { issueIdOrKey: 'A-1' }, {}), ['A-1']);
@@ -123,7 +126,7 @@ test('site responses expose request capacity, structured quota and accurate resp
   assert.strictEqual(ok.status, 200);
   assert.strictEqual(ok.headers.get('x-ratelimit-limit'), '150');
   assert.strictEqual(ok.headers.get('x-ratelimit-remaining'), '149');
-  assert.strictEqual(ok.headers.get('ratelimit-policy'), '"global-app-quota";q=2400;w=3600');
+  assert.strictEqual(ok.headers.get('ratelimit-policy'), `"${site.pack.rateQuotaScope ?? 'global'}-app-quota";q=2400;w=3600`);
   assert.strictEqual(ok.headers.get('x-ratelimit-reset'), null, 'reset timestamp is only returned with429');
   assert.strictEqual(site.log.at(-1).points, 2);
   for (let i = 0; i < 149; i++) assert.strictEqual((await call('GET', p, { moduleType: 'consumer', vt })).status, 200);
@@ -155,10 +158,11 @@ test('site rejects the21st issue write in2s without posting it, then admits afte
 test('quota exhaustion refuses person requests; bridge traffic remains exempt untilUTC reset', () => withSite(async (site, call) => {
   const t = site.state.now();
   const next = (Math.floor(t / HOUR) + 1) * HOUR;
+  const reason = `jira-quota-${site.pack.rateQuotaScope ?? 'global'}-based`;
   site.control.draw({ points: 2400 });
   const r = await call('GET', '/rest/api/3/myself', { as: site.pack.viewer, source: 'resolver', moduleType: 'dashboards:widget' });
   assert.strictEqual(r.status, 429);
-  assert.strictEqual(r.headers.get('ratelimit-reason'), 'jira-quota-global-based');
+  assert.strictEqual(r.headers.get('ratelimit-reason'), reason);
   assert.strictEqual(Number(r.headers.get('retry-after')), Math.ceil((next - t) / 1000));
   assert.ok(r.headers.get('ratelimit').includes(';r=0;'));
   const bridge = await call('GET', '/rest/api/3/myself', { as: site.pack.viewer, source: 'frontend', moduleType: 'dashboards:widget' });
@@ -166,7 +170,7 @@ test('quota exhaustion refuses person requests; bridge traffic remains exempt un
   assert.deepStrictEqual([site.log.at(-1).kind, site.log.at(-1).points], ['person', 0]);
   site.state.advanceTo(next);
   assert.strictEqual((await call('GET', '/rest/api/3/myself', { as: site.pack.viewer, source: 'resolver', moduleType: 'dashboards:widget' })).status, 200);
-  assert.deepStrictEqual(site.control.rate().hours[0].refused, { person: { 'jira-quota-global-based': 1 } });
+  assert.deepStrictEqual(site.control.rate().hours[0].refused, { person: { [reason]: 1 } });
 }));
 
 test('the clock is virtual: it moves only when advanced', async () => {

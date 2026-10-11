@@ -19,6 +19,7 @@ const crypto = require('crypto');
 const { worldPack } = require('./fixtures.cjs');
 const { createWorld } = require('./world.cjs');
 const fieldsRest = require('./rest/fields.cjs');
+const jqlRest = require('./rest/jql-functions.cjs');
 const { createState } = require('./state.cjs');
 const { createOpenApi } = require('./openapi.cjs');
 const { createRenderer } = require('./rest/render.cjs');
@@ -51,13 +52,42 @@ function json(res, status, body, headers = {}) {
 async function createSite({ seed, port = 0, trace = null, token = crypto.randomBytes(12).toString('hex'), openapiDir, pack: givenPack, scoring = false } = {}) {
   const pack = givenPack ?? worldPack(seed, { scoring });
   const state = createState(pack);
-  const rate = rateModel.createRate();
+  const rate = rateModel.createRate({ ...rateModel.MODEL, quotaScope: pack.rateQuotaScope ?? 'global' });
   const render = createRenderer(state);
   const openapi = createOpenApi(openapiDir);
   const log = [];
   const harnessMissing = [];
   const faultLog = [];
   const signals = [];
+  const jqlFunctions = Object.create(null);
+  const registerJqlFunction = ({ moduleKey, name, functionKey, invoke }) => {
+    if (!/^[a-zA-Z0-9_-]+$/.test(moduleKey ?? '') || typeof name !== 'string' || !name.trim()
+        || typeof functionKey !== 'string' || !functionKey.endsWith(`/static/${moduleKey}`) || typeof invoke !== 'function') {
+      throw Object.assign(new Error('Invalid installed JQL function binding.'), { statusCode: 400 });
+    }
+    jqlFunctions[name] = { moduleKey, functionKey, invoke };
+    return { registered: name };
+  };
+  const registerRemoteJqlFunction = ({ callbackUrl, nonce, ...binding }) => {
+    let url;
+    try { url = new URL(callbackUrl); } catch { throw Object.assign(new Error('Invalid JQL callback URL.'), { statusCode: 400 }); }
+    if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !url.port || url.username || url.password || url.search || url.hash
+        || url.pathname !== `/x/jql-evaluate/${encodeURIComponent(binding.moduleKey)}` || !/^[a-f0-9]{64}$/.test(nonce ?? '')) {
+      throw Object.assign(new Error('JQL callbacks require the private loopback route and nonce.'), { statusCode: 400 });
+    }
+    return registerJqlFunction({ ...binding, invoke: async (request) => {
+      let response;
+      try {
+        response = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-forge-jql-nonce': nonce }, body: JSON.stringify(request) });
+      } catch (e) {
+        missing(`native JQL callback unreachable for ${binding.moduleKey}`, { moduleType: 'jira:jqlFunction' });
+        throw new Error(`Native JQL callback for ${binding.moduleKey} failed: ${e.message}`);
+      }
+      const result = await response.json();
+      if (!response.ok) throw new Error(`Native JQL callback for ${binding.moduleKey} refused: ${response.status} ${result.error ?? ''}`);
+      return result;
+    } });
+  };
   let faults;
   const traceLine = (o) => { if (trace) fs.appendFileSync(trace, JSON.stringify({ t: new Date(state.now()).toISOString(), ...o }) + '\n'); };
   const resetFaults = () => {
@@ -122,7 +152,7 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
   // site's clock (a request outside any invocation's clock).
   const instantOf = (h) => (/^\d+$/.test(h['x-forge-vtime'] ?? '') ? Number(h['x-forge-vtime']) : state.now());
 
-  const handleProduct = (req, res, raw) => {
+  const handleProduct = async (req, res, raw) => {
     const url = new URL(req.url, 'http://site');
     const method = req.method;
     const caller = callerOf(req.headers);
@@ -140,7 +170,7 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
       if (entry.scopeAlternative) internal['x-forge-site-scopes'] = JSON.stringify(entry.scopeAlternative);
       if (entry.op) { internal['x-forge-site-op'] = entry.op; internal['x-forge-site-latency-ms'] = String(rateModel.latencyOf(entry.op)); }
       internal['x-forge-site-points'] = String(entry.points);
-      json(res, status, body, { ...rate.headers(t), ...headers, ...internal });
+      json(res, status, body, { ...rate.headers(t, entry.op ?? null), ...(status === 429 && headers['Retry-After'] ? { 'X-RateLimit-Reset': new Date(t + Number(headers['Retry-After']) * 1000).toISOString() } : {}), ...headers, ...internal });
     };
     if (!caller) return send(401, { errorMessages: ['Client must be authenticated to access this resource.'], errors: {} });
     if (!caller.accountId) return send(401, { code: 401, message: 'Unauthorized; no user or app identity on this request' });
@@ -178,7 +208,7 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
     // request is not charged to the quota (rate.cjs quotaCharged).
     const written = [...new Set(rateModel.writtenRefs(opKey, m.params, body).map((k) => state.issueByIdOrKey(k)?.id).filter(Boolean))];
     const charged = rateModel.quotaCharged(caller);
-    const refusal = rate.check({ t, endpoint: opKey, kind, cost: rateModel.costOf(opKey, body, 0), issues: written, charged });
+    const refusal = rate.check({ t, endpoint: opKey, kind, issues: written, charged });
     if (refusal) {
       entry.rateLimited = refusal.reason;
       entry.retryAfter = refusal.retryAfter;
@@ -205,13 +235,23 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
     // Every served request is charged (a refused one never is); a write counts in its issues' window only when it
     // succeeded. `points` is what the quota was charged (0 for a bridge request, whose cost still drains the bucket).
     const serve = (out) => {
-      const cost = rateModel.costOf(opKey, body, Array.isArray(out.body?.issues) ? out.body.issues.length : 0);
+      const cost = rateModel.costOf(opKey, body, out.status < 400 ? out.body : 0);
       entry.points = charged ? cost : 0;
       rate.charge({ t, endpoint: opKey, kind, cost, issues: out.status < 400 ? written : [], charged });
       send(out.status, out.body, out.headers);
     };
     try {
-      serve(handler(ctx));
+      if (['GET /rest/api/3/search/jql', 'POST /rest/api/3/search/jql'].includes(opKey)) {
+        const source = method === 'GET' ? url.searchParams.get('jql') : body?.jql;
+        if (typeof source === 'string' && source.trim()) {
+          const expanded = await jqlRest.expand(state, source, jqlFunctions);
+          entry.jqlExpansion = { source, ...expanded };
+          if (expanded.error) return serve({ status: 400, body: { errorMessages: [expanded.error], errors: {} } });
+          if (method === 'GET') ctx.req.query.set('jql', expanded.jql);
+          else ctx.req.body = { ...body, jql: expanded.jql };
+        }
+      }
+      serve(await handler(ctx));
     } catch (e) {
       if (e instanceof NotModelledError) {
         missing(e.message, { method, path: pathname });
@@ -266,6 +306,7 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
   const llm = createLlm({ pack, now: () => state.now() });
   const realtime = createRealtime({ now: () => state.now(), secret: crypto.createHash('sha256').update(`realtime:${token}`).digest() });
   const control = {
+    jqlregister: registerRemoteJqlFunction,
     llm: (req) => llm.handle(req),
     llmphase: ({ phase, script }) => llm.phase(phase, script),
     llmlog: ({ since = 0 }) => ({ entries: llm.log.slice(Number(since)), next: llm.log.length, state: llm.state(), models: llm.models() }),
@@ -371,26 +412,28 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
     comments: () => ({ comments: state.st.comments }),
     users: () => control.info().users,
   };
-  const handleControl = (req, res, raw, op) => {
+  const handleControl = async (req, res, raw, op) => {
     const fn = control[op];
     if (!fn) return json(res, 404, { error: `no control op ${op}` });
     const url = new URL(req.url, 'http://site');
-    const args = raw ? JSON.parse(raw) : Object.fromEntries(url.searchParams);
-    try { json(res, 200, fn(args)); } catch (e) { json(res, 500, { error: String(e.message) }); }
+    try {
+      const args = raw ? JSON.parse(raw) : Object.fromEntries(url.searchParams);
+      json(res, 200, await fn(args));
+    } catch (e) { json(res, e.statusCode ?? 500, { error: String(e.message) }); }
   };
 
   const server = http.createServer((req, res) => {
     let raw = '';
     req.setEncoding('utf8');
     req.on('data', (c) => (raw += c));
-    req.on('end', () => {
+    req.on('end', async () => {
       const pathname = new URL(req.url, 'http://site').pathname;
       const ctl = pathname.match(/^\/__site\/([0-9a-f]+)\/([a-z]+)$/);
       if (ctl) {
         if (ctl[1] !== token) return json(res, 404, { errorMessages: [`No resource matches ${req.method} ${pathname}`], errors: {} });
-        return handleControl(req, res, raw, ctl[2]);
+        return await handleControl(req, res, raw, ctl[2]);
       }
-      handleProduct(req, res, raw);
+      try { await handleProduct(req, res, raw); } catch (e) { json(res, 500, { errorMessages: [`site request failed: ${e.message}`], errors: {} }); }
     });
   });
   await new Promise((ok) => server.listen(port, '127.0.0.1', ok));
@@ -410,6 +453,7 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
     signals,
     harnessMissing,
     control,
+    registerJqlFunction,
     llm,
     realtime,
     // A live change that happens in Jira without its event reaching the app (a dropped delivery).

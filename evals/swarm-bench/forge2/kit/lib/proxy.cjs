@@ -28,10 +28,12 @@
 // can interleave them. The held write is applied when served, so FAIL_IF_EXISTS and transaction conditions meet the
 // state at that moment.
 const http = require('http');
+const crypto = require('crypto');
 const { costOf, VCLOCK_HEADER, KVS_READS } = require('./clock.cjs');
 
 const KVS_ROUTE = '/fpp/as/app/provider/atlassian/capability/kvs';
 const WEBTRIGGER_ROUTE = /^\/x\/webtrigger\/([^/]+)$/;
+const JQL_CALLBACK_ROUTE = /^\/x\/jql-evaluate\/([^/]+)$/;
 
 const STREAM_READ_GAP_MS = 20; // transport: a pause long enough for two writes to arrive as two socket reads
 const REQUEST_STATS = /^\/webhook\/queue\/stats\//;
@@ -101,8 +103,9 @@ function createConcurrentGroup({ id, reason, members }) {
   };
 }
 
-function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clock, log = [], harnessMissing = [], webtrigger = null }) {
+function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clock, log = [], harnessMissing = [], webtrigger = null, jqlEvaluate = null, jqlNonce = null }) {
   const llmModules = manifest?.modules?.llm ?? [];
+  const jqlKeys = new Set((manifest?.modules?.['jira:jqlFunction'] ?? []).map((m) => m?.key).filter(Boolean));
   const webtriggerKeys = new Set((manifest?.modules?.webtrigger ?? []).map((w) => w?.key).filter(Boolean));
   const scopes = manifest?.permissions?.scopes ?? [];
   const egressAllow = (manifest?.permissions?.external?.fetch?.backend ?? []).map((e) => (typeof e === 'string' ? e : e?.address)).filter(Boolean);
@@ -238,6 +241,19 @@ function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clo
         const url = new URL(req.url, 'http://proxy');
         const route = url.pathname;
         let m;
+        if ((m = route.match(JQL_CALLBACK_ROUTE))) {
+          const supplied = String(req.headers['x-forge-jql-nonce'] ?? '');
+          const expected = String(jqlNonce ?? '');
+          const local = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
+          if (!local || !/^[a-f0-9]{64}$/.test(supplied) || !expected || supplied.length !== expected.length
+              || !crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(expected))) return send(403, { error: 'Invalid private JQL callback credential.' });
+          const moduleKey = decodeURIComponent(m[1]);
+          if (req.method !== 'POST') return send(405, { error: 'JQL evaluation requires POST.' });
+          if (!jqlKeys.has(moduleKey) || !jqlEvaluate) return send(400, { error: 'Unknown installed JQL function.' });
+          const request = parseMaybe(raw);
+          if (!request || typeof request !== 'object' || Array.isArray(request)) return send(400, { error: 'JQL evaluation requires a request object.' });
+          return send(200, await jqlEvaluate(moduleKey, request));
+        }
         if ((m = route.match(WEBTRIGGER_ROUTE))) {
           const moduleKey = decodeURIComponent(m[1]);
           if (!webtrigger) {

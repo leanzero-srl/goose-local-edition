@@ -255,7 +255,15 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     if (typeof ingress.handle !== 'function') throw new Error('lib/webtrigger.cjs exports no handle(emu, moduleKey, request)');
     return ingress.handle(emu, moduleKey, request);
   };
-  const proxy = createProxy({ siteUrl: client.url, siteCall: client.call, manifest, kvs, queue, invocations, clock, log, harnessMissing, webtrigger: webtriggerIngress });
+  const jqlNonce = crypto.randomBytes(32).toString('hex');
+  const evaluateJql = async (moduleKey, request) => {
+    const m = modules('jira:jqlFunction').find((entry) => entry.key === moduleKey);
+    if (!m?.function) return { error: `Unknown installed JQL function '${moduleKey}'.` };
+    const result = await invokeFunction(m.function, { moduleKey, moduleType: 'jira:jqlFunction', event: request, source: 'jql-precomputation', nested: running.size > 0 });
+    if (!result.ok) return { error: `JQL function failed: ${result.error?.message ?? 'invocation returned no result'}` };
+    return result.result;
+  };
+  const proxy = createProxy({ siteUrl: client.url, siteCall: client.call, manifest, kvs, queue, invocations, clock, log, harnessMissing, webtrigger: webtriggerIngress, jqlEvaluate: evaluateJql, jqlNonce });
   const proxyAddr = await proxy.listen();
   const ownWorkDir = !workDir;
   const work = workDir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'forge-emu-'));
@@ -314,7 +322,7 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
 
   // `seat` {group, member}: a member of a deterministic concurrent invocation group (S1 / CI replay). It joins the group before its process starts,
   // the proxy schedules its requests, and the group as a whole (not each member) runs inside aroundInvocation.
-  async function invokeFunction(fnKey, { moduleKey, moduleType, event, asUser, lineage = {}, source = 'function', seat = null } = {}) {
+  async function invokeFunction(fnKey, { moduleKey, moduleType, event, asUser, lineage = {}, source = 'function', seat = null, nested = false } = {}) {
     if (!built) await build();
     const fnDef = functions.find((f) => f.key === fnKey);
     if (!fnDef) return { ok: false, error: errorOf({ errorType: 'EmulatorError', errorMessage: `no function '${fnKey}' in the manifest` }), logs: [], ms: 0, calls: [] };
@@ -362,7 +370,7 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
         },
       };
       const exec = () => rt.runInvocation({ bundleDir, lambdaEvent, timeoutSec, vStart, runtime, fence: fenceMode, proxyPort: proxyAddr.port });
-      const r = aroundInvocation && !seat ? await aroundInvocation(exec) : await exec();
+      const r = aroundInvocation && !seat && !nested ? await aroundInvocation(exec) : await exec();
       seat?.group.end(seat.member);
       // The clock the process reported; a process that died without one ends at the last completion the proxy answered.
       const vEnd = Math.max(r.vEnd ?? record.vnow, vStart);
@@ -725,13 +733,13 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
   // The precomputation REST API documents this extension ARI (app/environment/static/module), while appContext
   // supplies the emulator's synthetic environment. Native Jira search invokes the real app function through it.
   for (const m of modules('jira:jqlFunction')) {
-    if (typeof site.registerJqlFunction !== 'function') {
-      harnessMissing.push({ what: `native JQL registration for ${m.key}`, at: new Date(clock.now()).toISOString(), moduleType: 'jira:jqlFunction' });
-      continue;
+    const binding = { moduleKey: m.key, name: m.name,
+      functionKey: `ari:cloud:ecosystem::extension/${appId}/emulator-env/static/${m.key}` };
+    if (typeof site.registerJqlFunction === 'function') {
+      site.registerJqlFunction({ ...binding, invoke: (request) => evaluateJql(m.key, request) });
+    } else {
+      await client.call('jqlregister', { ...binding, callbackUrl: `${proxyAddr.url}/x/jql-evaluate/${encodeURIComponent(m.key)}`, nonce: jqlNonce });
     }
-    site.registerJqlFunction({ moduleKey: m.key, name: m.name,
-      functionKey: `ari:cloud:ecosystem::extension/${appId}/emulator-env/static/${m.key}`,
-      invoke: (request) => invokeFunction(m.function, { moduleKey: m.key, moduleType: 'jira:jqlFunction', event: request, source: 'jql-precomputation' }) });
   }
   return emu;
 }

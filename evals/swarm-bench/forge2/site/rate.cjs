@@ -32,7 +32,7 @@ const BULK_CHANGELOG = 'POST /rest/api/3/changelog/bulkfetch';
 const FIELD_VALUES = new Set(['POST /rest/api/3/app/field/value', 'PUT /rest/api/3/app/field/{fieldIdOrKey}/value']);
 const READ_POSTS = new Set([...SEARCH, BULK_CHANGELOG, 'POST /rest/api/3/issue/bulkfetch',
   'POST /rest/api/3/issue/{issueIdOrKey}/changelog/list', 'POST /rest/api/3/permissions/check',
-  'POST /rest/api/3/permissions/project', 'POST /rest/api/3/jql/match']);
+  'POST /rest/api/3/permissions/project', 'POST /rest/api/3/jql/match', 'POST /rest/api/3/jql/function/computation/search']);
 const BACKGROUND = new Set(['trigger', 'consumer', 'scheduledTrigger', 'webtrigger']);
 const methodOf = (opKey) => opKey.slice(0, opKey.indexOf(' '));
 const isRead = (opKey) => methodOf(opKey) === 'GET' || READ_POSTS.has(opKey);
@@ -47,7 +47,7 @@ function returnedObjects(response) {
   if (Number.isInteger(response) && response >= 0) return response;
   if (Array.isArray(response)) return response.length;
   if (!response || typeof response !== 'object' || response.errorMessages || response.errors) return 0;
-  for (const key of ['issues', 'values', 'issueChangeLogs', 'comments', 'histories', 'users', 'groups', 'projects']) {
+  for (const key of ['issues', 'values', 'issueChangeLogs', 'comments', 'histories', 'users', 'groups', 'projects', 'precomputations']) {
     if (Array.isArray(response[key])) return response[key].length;
   }
   if (response.permissions && typeof response.permissions === 'object') return Object.keys(response.permissions).length;
@@ -69,7 +69,7 @@ function writtenRefs(opKey, params, body) {
 }
 
 function kindOf(caller) {
-  if (caller.source === 'resolver' || caller.source === 'frontend' || caller.moduleType === 'action') return 'person';
+  if (['resolver', 'frontend', 'jql-precomputation'].includes(caller.source) || ['action', 'jira:jqlFunction'].includes(caller.moduleType)) return 'person';
   if (BACKGROUND.has(caller.moduleType)) return 'background';
   return 'unlabelled';
 }
