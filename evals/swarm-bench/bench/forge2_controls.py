@@ -21,11 +21,14 @@ through the same runtime as patch mutants. --materialise-runtime <id> --tree <pa
 without scoring, for the focused HTTP tests.
 
 --prepare-families applies, rebuilds and lints all catalog and native family controls without any scoring or model
-calls. Nothing here edits the golden or the mutants; every candidate is a disposable copy.
+calls. --keep also saves pre-score SHA256 source inventories and exact mutation diffs, including rebuilt bundles,
+so disposable candidate bytes remain attributable after scoring. Nothing here edits the golden or the mutants.
 """
 from __future__ import annotations
 
 import argparse
+import difflib
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -324,6 +327,69 @@ def offline_lint(tree: Path, kit_dir: str) -> Dict:
             'warnings': sorted(p.get('message') for p in problems if p.get('sev') == 'warning')}
 
 
+SOURCE_EXCLUDED_DIRS = {'node_modules', '.forge-dev', 'forge-shots', '__pycache__', 'bench-media'}
+SOURCE_EXCLUDED_FILES = {'forge-observations.json', '.DS_Store'}
+
+
+def source_inventory(tree: Path) -> Dict:
+    """Hash actual prepared bytes, including rebuilt bundles; runtime caches and verdicts have no source identity."""
+    files = []
+    for directory, subdirs, names in os.walk(tree, followlinks=False):
+        subdirs[:] = sorted(name for name in subdirs if name not in SOURCE_EXCLUDED_DIRS)
+        for name in subdirs:
+            if (Path(directory) / name).is_symlink():
+                raise RuntimeError(f'prepared source contains an unexpected directory symlink: {Path(directory) / name}')
+        for name in sorted(names):
+            if name in SOURCE_EXCLUDED_FILES or (name.startswith('verdict') and name.endswith('.json')):
+                continue
+            path = Path(directory) / name
+            if path.is_symlink():
+                raise RuntimeError(f'prepared source contains an unexpected file symlink: {path}')
+            data = path.read_bytes()
+            files.append({'path': path.relative_to(tree).as_posix(), 'bytes': len(data),
+                          'sha256': hashlib.sha256(data).hexdigest()})
+    files.sort(key=lambda entry: entry['path'])
+    canonical = json.dumps(files, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
+    return {'sha256': hashlib.sha256(canonical).hexdigest(), 'files': files,
+            'excluded_dirs': sorted(SOURCE_EXCLUDED_DIRS), 'excluded_files': sorted(SOURCE_EXCLUDED_FILES),
+            'excluded_patterns': ['verdict*.json']}
+
+
+def source_receipt(tree: Path, reference: Optional[Path] = None, candidate: Optional[Dict] = None) -> Dict:
+    """Retain exact tested mutation, not merely its name, before disposable candidates disappear."""
+    inventory = source_inventory(tree)
+    receipt = {'control': tree.name, 'inventory': inventory, 'mutation': {}, 'diffs': {}}
+    if candidate:
+        receipt['mutation'] = {key: candidate[key] for key in ('name', 'family', 'origin', 'runtime_id', 'expect')
+                               if key in candidate}
+        patch = candidate.get('patch')
+        if patch:
+            receipt['mutation']['patch'] = str(patch.relative_to(ROOT))
+            receipt['mutation']['patch_sha256'] = hashlib.sha256(patch.read_bytes()).hexdigest()
+    if reference is not None:
+        baseline = source_inventory(reference)
+        receipt['reference_inventory_sha256'] = baseline['sha256']
+        before = {entry['path']: entry for entry in baseline['files']}
+        after = {entry['path']: entry for entry in inventory['files']}
+        for name in sorted(set(before) | set(after)):
+            if before.get(name) == after.get(name):
+                continue
+            left, right = reference / name, tree / name
+            try:
+                old = left.read_bytes().decode('utf-8') if name in before else ''
+                new = right.read_bytes().decode('utf-8') if name in after else ''
+                receipt['diffs'][name] = ''.join(difflib.unified_diff(
+                    old.splitlines(keepends=True), new.splitlines(keepends=True),
+                    fromfile=f'golden/{name}', tofile=f'{tree.name}/{name}'))
+            except UnicodeError:
+                receipt['diffs'][name] = {'binary': True, 'before': before.get(name), 'after': after.get(name)}
+    if KEEP:
+        path = KEEP / f'{tree.name}-source.json'
+        path.write_text(json.dumps(receipt, indent=2))
+        return {'inventory_sha256': inventory['sha256'], 'file_count': len(inventory['files']), 'receipt': str(path)}
+    return receipt
+
+
 def lost_rows(golden: Dict, mutant: Dict) -> List[str]:
     g = _rows(golden)
     return sorted(name for name, row in _rows(mutant).items()
@@ -415,9 +481,10 @@ def main(argv=None) -> int:
         tmp = Path(tmp)
         # The golden is materialised and rebuilt exactly as every mutant is, so the comparison is like for like.
         prepare_control(tmp / 'golden', app_modules)
+        golden_source = source_receipt(tmp / 'golden', candidate={'origin': 'reference'})
         if a.prepare_families:
             base = offline_lint(tmp / 'golden', kit['kit_dir'])
-            report['golden'] = {'lint': base}
+            report['golden'] = {'lint': base, 'source': golden_source}
             failed = bool(base['errors'])
             for candidate in registered:
                 mid = candidate['name']
@@ -427,6 +494,7 @@ def main(argv=None) -> int:
                 try:
                     tree = tmp / mid
                     prepare_control(tree, app_modules, candidate.get('patch'), candidate.get('runtime_id'))
+                    entry['source'] = source_receipt(tree, tmp / 'golden', candidate)
                     got = offline_lint(tree, kit['kit_dir'])
                     extra_warnings = [warning for warning in got['warnings'] if warning not in base['warnings']]
                     entry.update(lint=got, new_warnings=extra_warnings, fails=got['errors'] + extra_warnings)
@@ -442,7 +510,7 @@ def main(argv=None) -> int:
             print(json.dumps(report, indent=2))
             return 1 if failed else 0
         golden = score(tmp / 'golden', a.seed, tmp / 'golden.json')
-        report['golden'] = {'score': golden['score'], 'status': golden['status']}
+        report['golden'] = {'score': golden['score'], 'status': golden['status'], 'source': golden_source}
         gfails = runtime_failures(golden) + score_forge2.reference_failures(golden)
         if gfails:
             report['golden']['reference_failures'] = gfails
@@ -456,6 +524,7 @@ def main(argv=None) -> int:
             try:
                 tree = tmp / mid
                 prepare_control(tree, app_modules, candidate.get('patch'), candidate.get('runtime_id'))
+                entry['source'] = source_receipt(tree, tmp / 'golden', candidate)
                 verdict = score(tree, a.seed, tmp / f'{mid}.json')
                 lost = lost_rows(golden, verdict)
                 entry.update(score=verdict['score'], lost=lost,
@@ -481,9 +550,10 @@ def main(argv=None) -> int:
             try:
                 tree = tmp / label
                 build(tree)
+                source = source_receipt(tree, tmp / 'golden', {'name': label, 'origin': 'starter-or-idle'})
                 verdict = score(tree, a.seed, tmp / f'{label}.json')
                 fails = capped_control_failures(verdict, cap)
-                report['controls'][label] = {'score': verdict['score'], 'fails': fails}
+                report['controls'][label] = {'score': verdict['score'], 'source': source, 'fails': fails}
             except Exception as error:
                 report['controls'][label] = {'fails': [f'{type(error).__name__}: {error}']}
             failed |= bool(report['controls'][label]['fails'])

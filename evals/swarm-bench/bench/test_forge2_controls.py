@@ -138,6 +138,49 @@ class FamilyCoverageTests(unittest.TestCase):
                 controls.candidates(controls.MUTANTS, catalog)
 
 
+class SourceReceiptTests(unittest.TestCase):
+    def test_actual_source_and_rebuilt_bundles_are_hashed_but_runtime_caches_are_excluded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tree = Path(tmp)
+            (tree / 'src').mkdir()
+            (tree / 'static').mkdir()
+            (tree / '.forge-dev').mkdir()
+            (tree / 'src' / 'index.js').write_text('export const run = () => 1;\n')
+            (tree / 'static' / 'bundle.js').write_text('const rebuilt=1;\n')
+            (tree / '.forge-dev' / 'state.json').write_text('first runtime cache')
+            (tree / 'forge-observations.json').write_text('first observations')
+            first = controls.source_inventory(tree)
+            self.assertEqual([entry['path'] for entry in first['files']], ['src/index.js', 'static/bundle.js'])
+            (tree / '.forge-dev' / 'state.json').write_text('later runtime cache')
+            (tree / 'forge-observations.json').write_text('later observations')
+            self.assertEqual(controls.source_inventory(tree), first)
+            (tree / 'static' / 'bundle.js').write_text('const rebuilt=2;\n')
+            self.assertNotEqual(controls.source_inventory(tree)['sha256'], first['sha256'])
+
+    def test_native_control_receipt_preserves_tested_manifest_and_source_diffs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            golden, mutant, keep = directory / 'golden', directory / 'native', directory / 'keep'
+            for tree in (golden, mutant, keep):
+                tree.mkdir()
+            for tree in (golden, mutant):
+                (tree / 'src').mkdir()
+                (tree / 'manifest.yml').write_text('modules: native-jql\n')
+                (tree / 'src' / 'jql.js').write_text('export const refresh = () => update();\n')
+            (mutant / 'manifest.yml').write_text('modules: no-jql\n')
+            (mutant / 'src' / 'jql.js').write_text('export const refresh = () => {};\n')
+            with patch.object(controls, 'KEEP', keep):
+                summary = controls.source_receipt(mutant, golden,
+                    {'name': 'native', 'origin': 'native-jql', 'runtime_id': 'native'})
+            got = json.loads(Path(summary['receipt']).read_text())
+            self.assertEqual(got['mutation']['runtime_id'], 'native')
+            self.assertEqual(set(got['diffs']), {'manifest.yml', 'src/jql.js'})
+            self.assertIn('-modules: native-jql', got['diffs']['manifest.yml'])
+            self.assertIn('+export const refresh = () => {};', got['diffs']['src/jql.js'])
+            self.assertEqual(got['reference_inventory_sha256'], controls.source_inventory(golden)['sha256'])
+            self.assertEqual(summary['inventory_sha256'], controls.source_inventory(mutant)['sha256'])
+
+
 class CommonPathTests(unittest.TestCase):
     def test_catalog_mutant_reaches_the_same_scoring_and_judging_loop(self):
         import score_forge2
