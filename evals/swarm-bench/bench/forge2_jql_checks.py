@@ -92,6 +92,8 @@ def check_group(name, cases, oracle):
     graded = result(good / len(selected), f'{good}/{len(selected)} {name.removeprefix("r10_")} cases correct'
                     + ('; ' + '; '.join(notes[:2]) if notes else ''))
     if name == 'r10_shared_permissions':
+        prefix = 'JQL disclosure observed: ' if leaks else 'JQL disclosure not observed: '
+        graded['detail'] = (prefix + graded['detail'])[:400]
         graded['critical'] = 'hidden issue data disclosed by a shared JQL precomputation' if leaks else None
         graded['parts'] = {'critical_observed': bool(leaks), 'observed_hidden_issue_ids': sorted(set(leaks))}
     return graded

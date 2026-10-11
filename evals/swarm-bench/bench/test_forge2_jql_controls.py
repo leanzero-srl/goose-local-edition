@@ -66,6 +66,8 @@ class Controls(unittest.TestCase):
         row = scores(obs)['r10_shared_permissions']
         self.assertEqual(row['score'], 0)
         self.assertIsNone(row['critical'])
+        self.assertTrue(row['detail'].startswith('JQL disclosure not observed: '))
+        self.assertEqual(row['parts']['critical_observed'], False)
 
     def test_observed_hidden_issue_is_critical_even_when_other_jql_cases_fail(self):
         obs = fixture()
@@ -75,6 +77,7 @@ class Controls(unittest.TestCase):
         row = scores(obs)['r10_shared_permissions']
         self.assertEqual(row['score'], 0)
         self.assertTrue(row['critical'])
+        self.assertTrue(row['detail'].startswith('JQL disclosure observed: '))
         self.assertEqual(row['parts']['observed_hidden_issue_ids'], ['2'])
 
     def test_missing_probe_is_unavailable_and_absent_module_cannot_earn(self):
