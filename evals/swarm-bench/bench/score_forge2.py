@@ -2083,43 +2083,53 @@ def _offered_more(style: str, page: Dict) -> bool:
     return isinstance(total, int) and (_page_start(page) or 0) + _page_items(response) < total
 
 
-def _walk_complete(style: str, pages: List[Dict]) -> Tuple[bool, str]:
-    marks = []
-    for p in pages:
-        q, body = _query(p), p.get('body') if isinstance(p.get('body'), dict) else {}
-        marks.append(q.get('nextPageToken') or body.get('nextPageToken') or q.get('startAt') or body.get('startAt') or '')
-    if len(set(marks)) != len(marks):
-        return False, 'a page was read twice'
-    # Each page must continue where the site's previous answer left off: the token it handed out, or the offset
-    # right after the items it served. Advancing by the REQUESTED maxResults skips items whenever the site serves
-    # fewer, which Jira may ("API may return fewer items per page").
-    for before, page in zip(pages, pages[1:]):
-        prev = before.get('response') if isinstance(before.get('response'), dict) else None
-        if prev is None:
-            continue
-        if style == 'token':
-            body = page.get('body') if isinstance(page.get('body'), dict) else {}
-            sent = _query(page).get('nextPageToken') or body.get('nextPageToken')
-            if prev.get('nextPageToken') and sent != prev.get('nextPageToken'):
-                return False, 'a page did not continue from the nextPageToken the site handed out'
-        else:
-            want = (_page_start(before) or 0) + _page_items(prev)
-            if _page_start(page) != want:
-                return False, f'a page started at {_page_start(page)}, the previous page ended at {want} (items skipped)'
-    last = pages[-1].get('response')
-    if not isinstance(last, dict):
-        return False, 'no response body was recorded for the last page'
+def _page_marker(style: str, page: Dict) -> str:
+    q, body = _query(page), page.get('body') if isinstance(page.get('body'), dict) else {}
     if style == 'token':
-        return (not last.get('nextPageToken')), 'stopped with a nextPageToken outstanding'
-    if last.get('isLast') is True:
-        return True, ''
-    if last.get('isLast') is False:
-        return False, 'stopped on isLast=false'
-    values = last.get('values') or last.get('issues') or last.get('histories') or []
-    total, start = last.get('total'), last.get('startAt') or 0
+        return str(q.get('nextPageToken') or body.get('nextPageToken') or '')
+    return str(_page_start(page))
+
+
+def _next_page_marker(style: str, page: Dict) -> Tuple[Optional[str], str]:
+    response = page.get('response')
+    if not isinstance(response, dict):
+        return None, 'no response body was recorded for the page'
+    if style == 'token':
+        token = response.get('nextPageToken')
+        return (str(token) if token else None), ''
+    if response.get('isLast') is True:
+        return None, ''
+    start = _page_start(page)
+    if start is None:
+        return None, 'the page has no observed start offset'
+    end = start + _page_items(response)
+    if response.get('isLast') is False:
+        return str(end), ''
+    total = response.get('total')
     if isinstance(total, int):
-        return (start + len(values) >= total), f'stopped at {start + len(values)}/{total}'
-    return False, 'the page carries neither isLast nor total'
+        return (str(end) if end < total else None), ''
+    return None, 'the page carries neither isLast nor total'
+
+
+def _walk_complete(style: str, pages: List[Dict]) -> Tuple[bool, str]:
+    # Re-reading an answered page is request cost, not lost data. Follow the actual responses'
+    # cursor links: a requested offset/size never substitutes for the next page the site offered.
+    if not pages:
+        return False, 'no pages were recorded'
+    answered = {_page_marker(style, page): page for page in pages}
+    marker, visited = _page_marker(style, pages[0]), set()
+    while marker is not None:
+        if marker in visited:
+            return False, 'the answered pages leave a cursor cycle outstanding'
+        visited.add(marker)
+        page = answered.get(marker)
+        if page is None:
+            return False, ('stopped with a nextPageToken outstanding' if style == 'token'
+                           else f"stopped before the site's next offset {marker}")
+        marker, error = _next_page_marker(style, page)
+        if error:
+            return False, error
+    return True, ''
 
 
 def _endpoint(call: Dict) -> str:
@@ -2148,10 +2158,10 @@ def _handed_off(c: Ctx, walks: Dict[tuple, List[Dict]], incomplete: List[tuple])
       (2) the invocation returned the InvocationError (its retryAfter, or a delivery result 'retry'; _retry_verdict's
           evidence);
       (3) a later attempt of the same queue event (equal eventId, higher attempt) walked the same list to its end.
-    Never "a later invocation walked the same list": the hourly runs, the heal and the UI re-walk the same lists, so that
-    arm would excuse a swallowed 429 that carries on with the partial list (fairness audit 2026-10-10: three mutants of
-    Sol's run, a swallowed 429 with and without a redelivery and a hand-off whose redelivery never re-walks, stay
-    graded)."""
+    This narrower handoff proof never substitutes an unrelated later read for the observed retry. A later background
+    restart has its own outcome proof in _superseded_walks: the actual first-hour deadline and final exactly-once
+    complete ledger must hold. A swallowed 429 without either completed path remains incomplete; rate-reaction rows
+    independently grade the Retry-After/reason and request-economy rows retain every request."""
     if not incomplete:
         return set()
     by_inv: Dict[object, List[Dict]] = {}
@@ -2179,42 +2189,87 @@ def _handed_off(c: Ctx, walks: Dict[tuple, List[Dict]], incomplete: List[tuple])
     return out
 
 
+def _walk_lineage(pages: List[Dict]) -> Optional[tuple]:
+    if any(p.get('kind') not in BACKGROUND_KINDS or not isinstance(p.get('t'), (int, float)) for p in pages):
+        return None
+    identities = {('scheduled', p['scheduledRun']) if p.get('scheduledRun') is not None
+                  else ('event', p['originChange']) if p.get('originChange') is not None else None for p in pages}
+    return next(iter(identities)) if len(identities) == 1 and None not in identities else None
+
+
 def _continued_walks(walks: Dict[tuple, List[Dict]]) -> Dict[tuple, Tuple[List[Dict], List[tuple]]]:
     """Join persisted background page walks only within one observed event/scheduled lineage.
 
     A dosed consumer can stop before sending the next page and enqueue its continuation without a
-    Jira 429. The resumed request must use the previous response's exact cursor; a new hourly run,
-    a restarted first page, a duplicated page or an unfinished continuation cannot excuse the stop.
+    Jira 429. Join only the exact offered cursor in the same observed lineage. Restarts are separate
+    walks; _superseded_walks proves their completion against the actual required ledger outcome.
     """
-    def lineage(pages):
-        if any(p.get('kind') not in BACKGROUND_KINDS or not isinstance(p.get('t'), (int, float)) for p in pages):
-            return None
-        identities = {('scheduled', p['scheduledRun']) if p.get('scheduledRun') is not None
-                      else ('event', p['originChange']) if p.get('originChange') is not None else None for p in pages}
-        return next(iter(identities)) if len(identities) == 1 and None not in identities else None
 
     used, joined = set(), {}
     for key, pages in sorted(walks.items(), key=lambda entry: entry[1][0].get('t') or 0):
-        identity = lineage(pages)
+        identity = _walk_lineage(pages)
         if key in used or identity is None or _walk_complete(_page_style(pages[0]), pages)[0]:
             continue
         following = sorted(((other, chunk) for other, chunk in walks.items() if other != key and other not in used
-                            and other[1:] == key[1:] and lineage(chunk) == identity
+                            and other[1:] == key[1:] and _walk_lineage(chunk) == identity
                             and (chunk[0].get('t') or 0) > (pages[-1].get('t') or 0)),
                            key=lambda entry: entry[1][0].get('t') or 0)
         combined, members = list(pages), [key]
         for other, chunk in following:
+            want, error = _next_page_marker(_page_style(combined[-1]), combined[-1])
+            if error or want is None or _page_marker(_page_style(chunk[0]), chunk[0]) != want:
+                break
             trial = combined + chunk
             complete, why = _walk_complete(_page_style(pages[0]), trial)
             if not complete and why != 'stopped with a nextPageToken outstanding' and not why.startswith('stopped '):
                 break
-            # _walk_complete names the unfinished last page only after checking every earlier boundary.
+            # The join preserves the boundary; the combined responses must reach the final page.
             combined, members = trial, members + [other]
             if complete:
                 joined[key] = (combined, members)
                 used.update(members)
                 break
     return joined
+
+
+def _reconcile_outcome_complete(c: Ctx) -> bool:
+    if c.oracle is None:
+        return False
+    for phase, required, sources in (
+            ('backfill', backfill_changes(c), lambda _change: BACKFILL_SOURCES),
+            ('heal', c.oracle.changes('final'), lambda change: sources_for(c, change))):
+        if not isinstance(c.phase(phase).get('kvsAfter'), dict):
+            return False
+        rows = c.kvs_rows(phase)
+        for change in required:
+            matches = rows_for(rows, change)
+            if len(matches) != 1 or not row_correct(matches[0][0], change, sources(change)):
+                return False
+    return bool(c.oracle.changes('final'))
+
+
+def _superseded_walks(c: Ctx, walks: Dict[tuple, List[Dict]], incomplete: List[tuple]) -> Dict[tuple, tuple]:
+    """A correct reconcile may restart rather than retain a cursor, including after its filter changes.
+
+    Contract §§3/11 require completed work by its deadlines, not a particular resume implementation.
+    Accept a later background first-to-last walk only with the actual complete, exactly-once ledger;
+    independent user reads and unfinished/skipped replacements prove no background completion.
+    """
+    if not incomplete or not _reconcile_outcome_complete(c):
+        return {}
+    out = {}
+    for key in incomplete:
+        pages = walks[key]
+        if _walk_lineage(pages) is None:
+            continue
+        for other, replacement in sorted(walks.items(), key=lambda item: item[1][0].get('t') or 0):
+            if (other[1] != key[1] or _walk_lineage(replacement) is None or _resumes(replacement[0])
+                    or replacement[0]['t'] <= pages[-1]['t']):
+                continue
+            if _walk_complete(_page_style(replacement[0]), replacement)[0]:
+                out[key] = other
+                break
+    return out
 
 
 @check('r_pagination', 'R', pre=pre_paginated, needs=('backfill', 'live', 'heal', 'rerun', 'ui', 'rovo'))
@@ -2238,11 +2293,13 @@ def _(c):
         for member in members[1:]:
             paged.pop(member, None)
     verdicts = {key: _walk_complete(_page_style(pages[0]), pages) for key, pages in paged.items()}
-    handed = _handed_off(c, walks, [key for key, (complete, _why) in verdicts.items() if not complete])
+    incomplete = [key for key, (complete, _why) in verdicts.items() if not complete]
+    handed = _handed_off(c, walks, incomplete)
+    superseded = _superseded_walks(c, {**walks, **paged}, [key for key in incomplete if key not in handed])
     done, bad = 0, []
     types: Dict[str, List[int]] = {}
     for key, pages in paged.items():
-        if key in handed:
+        if key in handed or key in superseded:
             continue
         complete, why = verdicts[key]
         done += complete
@@ -2251,21 +2308,26 @@ def _(c):
         tally[1] += 1
         if not complete:
             bad.append(f'{key[1]}: {why}')
-    total = len(paged) - len(handed) + len(legacy)
-    # nothing left to grade but hand-offs (a redelivery that resumed at the refused page is a one-page walk): each of
-    # those lists was still read to its end
-    return g(done / total if total else float(bool(handed)),
+    total = len(paged) - len(handed) - len(superseded) + len(legacy)
+    # A handoff may end in a one-page tail, or a correct restart's current filter may fit on one page.
+    # Their separate evidence proves completion even when no multi-page walk remains to tally.
+    return g(done / total if total else float(bool(handed or superseded)),
              f'{done}/{total} reads the site served in two or more pages walked to their '
-             'end, each page once, continuing where the site left off ('
+             'end through the cursors the site offered ('
              + ', '.join(f'{ep} {ok}/{n}' for ep, (ok, n) in sorted(types.items())) + ')'
              + (f'; {single} one-page read(s), nothing to walk, not graded' if single else '')
              + (f'; {len(handed)} walk(s) handed back to the queue at a 429 and read to the end by the same event\'s '
                 f'redelivery, not graded ({sorted({k[1] for k in handed})})' if handed else '')
              + (f'; {len(continued)} persisted walk(s) resumed at the exact cursor in the same background lineage' if continued else '')
+             + (f'; {len(superseded)} paused background walk(s) superseded by a complete first-to-last restart; '
+                'first-hour backfill and final required ledger complete exactly once' if superseded else '')
              + (f'; {len(legacy)} call(s) to the removed /rest/api/3/search' if legacy else '')
              + (f'; {bad[:3]}' if bad else ''), 'pages silently skipped',
              parts={'paged_walks': len(paged), 'one_page_walks': single, 'legacy_calls': len(legacy),
                     'handed_off_walks': len(handed), **({'persisted_continuations': len(continued)} if continued else {}),
+                    **({'completed_restarts': len(superseded),
+                        'restart_pairs': [{'paused_inv': key[0], 'completed_inv': replacement[0], 'endpoint': key[1]}
+                                          for key, replacement in superseded.items()]} if superseded else {}),
                     'by_endpoint': {ep: {'complete': ok, 'walks': n} for ep, (ok, n) in sorted(types.items())}})
 
 
