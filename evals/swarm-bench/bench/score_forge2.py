@@ -3851,6 +3851,7 @@ def evaluate(c: Ctx) -> Dict:
     result['deploy_readiness'] = deploy_readiness(c)
     kit = getattr(c, 'kit', None) or {}
     result.update({'kit_lock_sha256': kit.get('lock_sha256') or (c.obs.get('kit') or {}).get('lockSha256'),
+                   'kit_code_sha256': kit.get('kit_code_sha256'),
                    'wrapper_sha256': kit.get('wrapper_sha256') or (c.obs.get('kit') or {}).get('wrapperSha256'),
                    'scorer_seconds': getattr(c, 'scorer_seconds', None), 'shots': list(c.obs.get('shots') or []),
                    'scorer_files_sha256': scorer_files_sha256(),

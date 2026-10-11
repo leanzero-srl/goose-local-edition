@@ -12,7 +12,7 @@ from pathlib import Path
 from statistics import median
 
 COHORT_FIELDS = ('scorerVersion', 'scorer_files_sha256', 'spec_sha256', 'kit_lock_sha256', 'wrapper_sha256',
-                 'fixture_seeds')
+                 'kit_code_sha256', 'dev_seed', 'input_manifest', 'reasoning_effort', 'fixture_seeds')
 
 
 def numeric(value, label):
@@ -48,6 +48,7 @@ def compare(builds):
         identity = {k: v.get(k) for k in COHORT_FIELDS}
         if any(value is None or value == {} or value == [] for value in identity.values()):
             raise ValueError('Frozen task/kit/scorer/fixture identity is incomplete')
+        identity['input_manifest'] = {k: v for k, v in identity['input_manifest'].items() if k != 'model-limits.json'}
         if len(set(identity['fixture_seeds'])) != 3 or set(v.get('seed_scores', {})) != set(identity['fixture_seeds']):
             raise ValueError('Three common fixture results are required')
         if not isinstance(build.get('engine_sha256'), str) or not build['engine_sha256'] or not isinstance(build.get('settings'), dict):
