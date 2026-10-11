@@ -26,7 +26,7 @@ const FilterConditions = { equalTo: (x) => ({ condition: 'EQUAL_TO', values: [x]
 
 function fixture() {
   let now = Date.parse('2026-10-11T12:00:00Z');
-  const storage = createKvs({ entities: [{ name: 'rate-dose', attributes: { spent: { type: 'float' }, pausedUntil: { type: 'float' } }, indexes: [] }], now: () => now, floor: () => now });
+  const storage = createKvs({ entities: [{ name: 'rate-dose', attributes: { spent: { type: 'float' }, pausedUntil: { type: 'float' } }, indexes: [{ name: 'by-spent', range: ['spent'] }] }], now: () => now, floor: () => now });
   const wire = async (op, body) => {
     const result = storage.handle(op, body, { t: now });
     if (result.status === 404 && op.endsWith('/get')) return undefined;
@@ -65,8 +65,12 @@ test('concurrent invocations cannot overbook an hour hidden by the query index',
   assert.equal(result.filter((r) => r.status === 'rejected' && r.reason.reason === 'background-share').length, 24);
   const records = f.storage.snapshot().entities['rate-dose'];
   assert.equal(records[String(f.hourOf(f.now()))].spent, 1616);
-  const delayedIndex = f.storage.handle('/api/v1/query', { where: [{ property: 'key', condition: 'BEGINS_WITH', values: ['dose:'] }] }, { t: f.now() });
+  const delayedIndex = f.storage.handle('/api/v1/entity/query', { entityName: 'rate-dose', indexName: 'by-spent', partition: [] }, { t: f.now() });
+  assert.equal(delayedIndex.status, 200);
   assert.deepEqual(delayedIndex.body.data, []);
+  f.advance(5000);
+  const settledIndex = f.storage.handle('/api/v1/entity/query', { entityName: 'rate-dose', indexName: 'by-spent', partition: [] }, { t: f.now() });
+  assert.equal(settledIndex.body.data[0].value.spent, 1616);
 });
 
 test('an empty response refunds its reservation before the next independent invocation', async () => {
