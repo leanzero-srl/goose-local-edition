@@ -110,6 +110,16 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
   calibration, sb7.x/forge manifests to refreeze after P11's shared bench edits.
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 05:55 (Oct 11) OPENROUTER BALANCE NOT TOPPING UP: $15.8 at 23:1x -> $4.02 at 05:54 under the Opus 5.5 run (40 calls,
+  $9.33 after 70 min, slow deliberate planning calls of up to ~$1 each); total credits still 530 = NO auto top-up,
+  although the owner said 23:2x "it will automatically top up". He is asleep; a terminal notification was sent 05:53
+  (mobile push not delivered: Remote Control inactive). SAFETY NET STARTED: ~/goose-builds/loop-state/tools/
+  credit_guard.py (pid at start 18937, log tools/credit_guard.log, loop-state afc3582) polls the balance every 45 s:
+  below $3 it writes sb72-chain.HOLD (no new launch into an empty balance — otherwise the chain would feed every
+  remaining model to a 402), below $1.20 it SIGSTOPs the entrant goose process (pause, never kill; an in-flight call
+  may be resent after the thaw), at >= $3 it SIGCONTs, at >= $5 it removes its own HOLD. Stop it with `kill <pid>`
+  (it thaws on exit). AT EACH TICK: read tools/credit_guard.log; if it froze the run, say so plainly to the owner; when
+  credit returns confirm the thaw and that the chain moved on.
 - 04:41 (Oct 11) DEEPSEEK v4.1 FLASH PUBLISHED: 0.7979 (brun-3ebd7df0-b683-4b41-a67b-4c995b673d48; 263 of 300 calls, $0.39,
   finished itself in ~50 min; tests earned 0.9663 x reliability 0.8257; groups T .8333, B .8333, U u_issue_router
   .6667, R2 r2_rate_limit_reaction .3019, R6 r6_valid_applies .5, R7 .9962). OPUS 5.5 launched 04:41. BOARD: MiMo Flash
