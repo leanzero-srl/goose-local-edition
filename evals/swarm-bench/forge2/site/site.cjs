@@ -245,7 +245,14 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
     const ctx = { state, render, limits: pack.limits, paging: pack.paging, caller, params: m.params, t,
       req: { method, pathname, query: url.searchParams, body },
       canBrowse: (iss) => state.canBrowse(caller.accountId, iss), canComment: (iss) => state.canComment(caller.accountId, iss),
-      canBrowseProject: (key) => state.canBrowseProject(caller.accountId, key) };
+      canBrowseProject: (key) => state.canBrowseProject(caller.accountId, key),
+      expandJql: async (source) => {
+        const expanded = await jqlRest.expand(state, source, jqlFunctions);
+        const evidence = { source, ...expanded };
+        if (opKey === 'POST /rest/api/3/jql/match') (entry.jqlExpansions ??= []).push(evidence);
+        else entry.jqlExpansion = evidence;
+        return expanded;
+      } };
     // Every served request is charged (a refused one never is); a write counts in its issues' window only when it
     // succeeded. `points` is what the quota was charged (0 for a bridge request, whose cost still drains the bucket).
     const serve = (out) => {
@@ -258,8 +265,7 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
       if (['GET /rest/api/3/search/jql', 'POST /rest/api/3/search/jql'].includes(opKey)) {
         const source = method === 'GET' ? url.searchParams.get('jql') : body?.jql;
         if (typeof source === 'string' && source.trim()) {
-          const expanded = await jqlRest.expand(state, source, jqlFunctions);
-          entry.jqlExpansion = { source, ...expanded };
+          const expanded = await ctx.expandJql(source);
           if (expanded.error) return serve({ status: 400, body: { errorMessages: [expanded.error], errors: {} } });
           if (method === 'GET') ctx.req.query.set('jql', expanded.jql);
           else ctx.req.body = { ...body, jql: expanded.jql };
