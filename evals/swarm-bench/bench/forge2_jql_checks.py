@@ -93,8 +93,7 @@ def check_group(name, cases, oracle):
                     + ('; ' + '; '.join(notes[:2]) if notes else ''))
     if name == 'r10_shared_permissions':
         graded['critical'] = 'hidden issue data disclosed by a shared JQL precomputation' if leaks else None
-        if leaks:
-            graded['parts'] = {'observed_hidden_issue_ids': sorted(set(leaks))}
+        graded['parts'] = {'critical_observed': bool(leaks), 'observed_hidden_issue_ids': sorted(set(leaks))}
     return graded
 
 
