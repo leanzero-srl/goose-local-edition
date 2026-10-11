@@ -1,50 +1,156 @@
 {
-  "calibrated": false,
-  "note": "Forge 2.0 repair candidate: historical economy thresholds are provisional. Fresh reference calibration and frozen fingerprint are required before publication.",
+  "calibrated": true,
+  "note": "forge-2.0 calibrated thresholds: the economy tops are fitted to the golden v2 worst-of-5 (DESIGN §13.4 item 4); everything else keeps its rc receipt. Pinned as CALIB_SHA256 in score_forge2.py.",
   "critical_multiplier_floor": 0.6,
   "reliability_k": 0.1,
   "reliability_floor": 0.25,
-  "reconcile_economy_top": 2.0,
-  "event_economy_top": 2.58,
-  "ui_round_trip_rungs": [
-    [
-      1.0,
-      1
-    ],
-    [
-      0.75,
-      2
-    ],
-    [
-      0.5,
-      4
-    ]
-  ],
-  "idempotent_rerun_rungs": [
-    [
-      1.0,
-      0
-    ],
-    [
-      0.5,
-      0.01
-    ]
-  ],
+  "reconcile_economy_top": 2.45,
+  "event_economy_top": 2.86,
+  "ui_round_trip_rungs": [[1.0, 1], [0.75, 2], [0.5, 4]],
+  "idempotent_rerun_rungs": [[1.0, 0], [0.5, 0.01]],
   "contrast_min": 4.5,
   "chart_tolerance_px": 1.0,
   "color_tolerance": 2,
   "blank_share": 0.995,
   "receipts": {
-    "critical_multiplier_floor": "SPEC \u00a74: x0.6 per critical class",
+    "critical_multiplier_floor": "SPEC §4: x0.6 per critical class",
     "reliability_k": "SPEC section 4: fixed policy ratio 0.10 per group shortfall, 19 non-economy groups after functional JQL R10; frozen before paid model observations. Historical calibration is archived in git.",
     "reliability_floor": "SPEC section 4: fixed policy floor 0.25; historical rationale archived in git. This is a scoring policy, not a confidence estimate.",
-    "reconcile_economy_top": "golden worst-of-5 e_reconcile_economy ratio 2.0 (per seed {'0123456789abcdef': 2.0, 'a0c445a9139f794d': 2.0, 'c4cdf82f9e11f4a1': 2.0, '5eed0123456789ab': 2.0, 'fedcba9876543210': 2.0}) -> top 2.0; score = min(1, top / ratio), continuous (no rungs)",
-    "event_economy_top": "golden worst-of-5 e_event_economy ratio 2.5714 (per seed {'0123456789abcdef': 2.5528, 'a0c445a9139f794d': 2.4049, 'c4cdf82f9e11f4a1': 2.5714, '5eed0123456789ab': 2.4676, 'fedcba9876543210': 2.4673}) -> top 2.58; score = min(1, top / ratio), continuous (no rungs)",
-    "ui_round_trip_rungs": "DESIGN \u00a78.4: 1 invoke before first paint 1.0, 2 .75, <=4 .5",
-    "idempotent_rerun_rungs": "DESIGN \u00a78.4: 0 writes 1.0, <=1% of rows .5, else 0 (r_idempotent_rerun, contract \u00a73)",
-    "contrast_min": "FORGE-CONTRACT.md \u00a77: contrast at least 4.5:1",
-    "chart_tolerance_px": "FORGE-CONTRACT.md \u00a74: rendered height proportional within 1 px",
+    "reconcile_economy_top": "golden worst-of-5 e_reconcile_economy ratio 2.45 (per seed {'3c04f61f28a4a511': 2.4, '936027a50d545ae6': 2.4, 'bac25cab1aed9e26': 2.45, 'c299c14673c45358': 2.45, '1ff91b71737b133e': 2.45}) -> top 2.45; score = min(1, top / ratio), continuous (no rungs)",
+    "event_economy_top": "golden worst-of-5 e_event_economy ratio 2.8551 (per seed {'3c04f61f28a4a511': 2.8551, '936027a50d545ae6': 2.7884, 'bac25cab1aed9e26': 2.7477, 'c299c14673c45358': 2.7766, '1ff91b71737b133e': 2.8134}) -> top 2.86; score = min(1, top / ratio), continuous (no rungs)",
+    "ui_round_trip_rungs": "DESIGN §8.4: 1 invoke before first paint 1.0, 2 .75, <=4 .5",
+    "idempotent_rerun_rungs": "DESIGN §8.4: 0 writes 1.0, <=1% of rows .5, else 0 (r_idempotent_rerun, contract §3)",
+    "contrast_min": "FORGE-CONTRACT.md §7: contrast at least 4.5:1",
+    "chart_tolerance_px": "FORGE-CONTRACT.md §4: rendered height proportional within 1 px",
     "color_tolerance": "8-bit rounding of token colours through computed styles and PNG encoding",
     "blank_share": "a surface whose dominant colour covers >= 99.5% of its pixels shows nothing"
+  },
+  "calibration": {
+    "seeds": [
+      "1ff91b71737b133e",
+      "3c04f61f28a4a511",
+      "936027a50d545ae6",
+      "bac25cab1aed9e26",
+      "c299c14673c45358"
+    ],
+    "scorer_files_sha256": {
+      "score_forge2.py": "2ac2a49c9b575018785eeb1152cf89a72dd28adeff21f18d0725378dd758df18",
+      "forge2_checks.py": "c2130db38014ae8538e9d9c121b02d58cff1dc62bdd101222a99b0e718a1b648",
+      "forge2_jql_checks.py": "cf0cf6c5e270708b5ac6613c1d08561cb25ad5577c0c2c2c92d8c3ebc210404c",
+      "forge2_oracle.py": "a0a404d3329de98b08ed8842c1a2d267e787289b856a73451dbbc26ca0a4de41",
+      "forge2_seed_policy.py": "44ef23eeab02499fad2221d067ea6d1400740de7516ea5cfc6825f5735b8299c",
+      "forge2_probe.mjs": "12453c23a1fc83ac4e5248b4322c1c57578945e5ebc950121938c7980995de6f",
+      "forge2-thresholds.json": "49a17c85300b5f79b2b1707b3bfcf470cb0b5a76ddb6921ae0cb5d0a64b3c682"
+    },
+    "spec_sha256": "5dc0f7b3dbb6ce0138df9dad1beef4ab04eadf1b8751b90228f0b567d3dbccaf",
+    "kit_lock_sha256": "663bf851ac7b8fadc8bd1bd385d3439f90579279e9e61f3751e895eb41c03640",
+    "kit_code_sha256": "29e3a2779c5edb8a18e711934b9d16f092d791ff606751996686faf56db2fd68",
+    "wrapper_sha256": "4f8170e0fb4adb6deb28e3daf2035d42438984a71a76e1a7d5f93ea419e6c45a",
+    "evaluation_inputs": {
+      "candidate": {
+        ".gitignore": "a06ee68719ab75684e0ac82cf3da75aaf23bf98dadbeb91a4700711f58cbb5b1",
+        "CONTRACT-GAPS.md": "23649b5add286e6d47145177e300ec24c4fc03eeb87b7540637955e54d3d09d3",
+        "build.mjs": "9484f0f097320cf735cc028994928ce8b4667a0e062485aec190329a5bcaddac",
+        "manifest.yml": "21a5e4d9b64c423f89ccd2654622b028561cd7807c16808bb8e443653aa61d33",
+        "package-lock.json": "44dcaf0d1d5047eac49f315f7e826db2bde35b6b2d807c49bf66f753aba7a99d",
+        "package.json": "771d2fa44eba7264dc0110d96cc93fa848cfd1c4e13e3422fbbb76bf90db7b2b",
+        "dev/bundle-sizes.mjs": "60fc8a99c13822e9bca18bcb6693e9e457f2816f134e03d792d16c5c258aaa30",
+        "dev/clock.cjs": "139ac5d87a912f5ed3d7a5da66615cedd630683ef71e0bb30f5d0d56fdfc5c7d",
+        "dev/runtime.cjs": "6d5bed41ef45b54892ebff98c46be3fcc9423d60a209bff12178066528d9438f",
+        "dev/site.cjs": "705868749bd67871544150c2c4a56c38ded4342a5ff722e095e22b18a3a28e7a",
+        "dev/test-admin-ui.cjs": "ec2316b03bec617b4dcf6ab9ac8aac8d7925c2c2515655b4278f48ea9dd28131",
+        "dev/test-backend.cjs": "f94be8575e81fc42471a4baba02f542b6cfe33c66d00e5e66815fd7ab8539c99",
+        "dev/test-ui.cjs": "319b0e5a18ca1d8e2c248335fed8835d312a11bb68d9365394eccbe4eaded2e6",
+        "dev/test-v2.cjs": "8c076c78e002074a427cc5d352c05adec4c042e7ee736dc511d911f529237a0e",
+        "skills/sprint-scope-analyst/SKILL.md": "61e770ded7c68b37c1a5afe25e1aac378b1758b37dc99c25e7174523024e7054",
+        "src/admin.js": "1228f9b87e1f5945db203d1f21928f51ee298d2ebb06b04070c478b354a59873",
+        "src/ci.js": "8e3951f4005985b6f025bedb5b24c8c38fe415e86e800989dbc954eee71baf88",
+        "src/config.js": "f908bfdd8b243611bd69e2c52bf0e7c8c589f923fd9b906ea5aa8c7eba899de1",
+        "src/estimate.js": "ef9276fa619b53c2018886e6d4439b318295f26cc9ba972fd9e8bf616372359a",
+        "src/explain.js": "6d45f86914aa2b7c0b0dc82b7bb53d2df8d44a92d0a1e4955fccffbd91b226d7",
+        "src/index.js": "0c5e4663f7cf9a40865a4b3d16f634da0ac12ee85dcbfb800aa74d63d111b295",
+        "src/jira.js": "fe93c10bd15db42f60d9f085fac3b20a5c2fe7dd071aa24144aa630d8fefd98b",
+        "src/jql.js": "980f8bbcd92f863076b31ac9efb875fcba9860445cf84506782eb147dcfc0bfc",
+        "src/ledger.js": "f1ca0b8bae410e80910fc0c33b55f02ed2fc1e416fb2f948db98c1cc5297f3ab",
+        "src/migrate.js": "0660710027f630855466a7e5ec16b33bc4f52d01ddda79545724e7993940ca00",
+        "src/numbers.js": "506b923b29a659434436c94ea4842e550177607071e0d62fd713fb8c2fc60b1f",
+        "src/realtime.js": "71b8d2a27629979c74d203cfac398ce504d9406508aa2a5ec887dca36659ebf3",
+        "src/settings.js": "ddfc06682227896151cece53d475d8b5de93d9a56393acbf8aebe2f7685598b0",
+        "src/status.js": "770a7be67282e89ddab65bc44b9791bf5629d96951156f7d58b2ae6f990a8514",
+        "src/sync.js": "55d572181f83fdb3fdeca27c85267c7cfc3d4920c94da0a5793fd5846a642a6c",
+        "src/views.js": "f05d6373f7ff3a3a585eca73317bc1b50fdef928461c13da7114ca43c6b9b042",
+        "src/frontend/admin.jsx": "e16176de5ed1562f9b8880055880c9a39579ecfb7fbbf726b2d85aa5997008a7",
+        "static/shared/base.css": "21635225d1cc2120c8d0588fc20f2b452a380ec4a91e7eca98d09b5191bc8da5",
+        "static/shared/boot.js": "6ca1ba40424904cfddc4874aeac5981a8204a98937a8213208080aab472d1f5c",
+        "static/shared/bridge.js": "1f69d006c9cb863fae7e5bf67b283f937a97e51189050a052c49d390bf79b38f",
+        "static/sprint/index.html": "4931147c712b1140d23aa5a4b4c79afc250eabf9af01b3b120fe806b21c5782d",
+        "static/sprint/build/app.js": "6e63e35dcfc972634bba227edcf020906f280065553b7dc03124717a4c4220fd",
+        "static/sprint/build/index.css": "08d2b8b80e40e25ff9df61ad93bc0d3ce8e44d0fca97cae78f3ad176ab3b58d2",
+        "static/sprint/build/index.html": "4931147c712b1140d23aa5a4b4c79afc250eabf9af01b3b120fe806b21c5782d",
+        "static/sprint/build/index.js": "4e88c96f5f00bf6dedff5db348c4a19a54066efa5506949c77743357dbb16601",
+        "static/sprint/src/boot.js": "51682eb6fc591f24f4c3bbca9ebf889dc096610abc0558af82bde76438788b52",
+        "static/sprint/src/index.jsx": "3e73700d6e1c5ba55fb1c98cc33cf0709aa1e94b019d855fa4179807224fb218",
+        "static/sprint/src/sprint.css": "8f914ea3dd173f4e17e8caf4e6cd6dbc6ad7ada0214737588499a8167896c803",
+        "static/widget/index.html": "529c60bd4bb0c1ecae5932a16c4d34acf67b4625e19a024e5013bbbdc7a46f24",
+        "static/widget/build/app.js": "b4aaace24e7afc98909886f3a5c0ab66f6f4079bdc7899f2cc6154ab7640ef95",
+        "static/widget/build/index.css": "03dbc079f8459a49a8acb89594d5a48bc0a4dce65aa0d9e3c715ac367d8f5c36",
+        "static/widget/build/index.html": "529c60bd4bb0c1ecae5932a16c4d34acf67b4625e19a024e5013bbbdc7a46f24",
+        "static/widget/build/index.js": "e6fb98b2d696c6b5b3f9d2cdbdaf9c259b1d4ec2276b5e9e64ac12f538781837",
+        "static/widget/src/boot.js": "5b4c16ca59817590a5b59074e0a143c2b662a949849c5bbdfb716f1a7294f665",
+        "static/widget/src/index.jsx": "a249b9ccbefa76b7a9e3093d179987beb40c8c61b0f45f4be1c21ad63ef146f5",
+        "static/widget/src/widget.css": "6c13a7cd365e348c60d658b8f3eb75b45173c1cb6493db3bb75df06032f39ddf",
+        "static/widget-edit/index.html": "048f353a3ea14d8189b07e804a607ca360b95d484ec91e832c2bb83c568886e2",
+        "static/widget-edit/build/index.css": "5e9d989d85b0d64e0f860c156fa5f91f8aad288d4e19f9062a08026f1443ec28",
+        "static/widget-edit/build/index.html": "048f353a3ea14d8189b07e804a607ca360b95d484ec91e832c2bb83c568886e2",
+        "static/widget-edit/build/index.js": "7dacbaf29d138ff95b1fef9b49a481e6e4afe31a119fd6b43909247ff5cd5ea7",
+        "static/widget-edit/src/edit.css": "361d313683d930ff402e10828935b959aee14fa396c1bfdabfedc4bf9c411732",
+        "static/widget-edit/src/index.jsx": "0b324b9cc729eaf658a407631a505ebc2fca82b9ad0c3177fe051c347f980fe7"
+      },
+      "site": {
+        "ci.cjs": "43ed6d2bde4242aa4652f5b5ae12e2c9915507971e630cd6df340dbee2502dc8",
+        "fixtures.cjs": "4226b33e457c0b5afb8bce67ca9bd49be977110206a112bfa01ed53763c0e55c",
+        "jql.cjs": "992a2e4c11d15e56ab391c4f202e4ddaa8af469630929ada62e9f3b035a51a98",
+        "jql.test.cjs": "a19024be16f1f304f8b2f581bc005ffaa88e87b27b8d8c2399e2d84934ae3b12",
+        "limits.cjs": "0b41d6cf77a68b7077a686a9a34aca5c5b3af4b91e3aaffa3a85fb5055a0bcf0",
+        "llm.cjs": "620b96698510969f01623ea60333de126a7724427931da539c6824e05159fc56",
+        "llm.test.cjs": "303664669b897b95293dcd9cfa411a2c7b6a670c45fec4a2ace7bc2055a95ba3",
+        "openapi.cjs": "62102156ef5cbd5954f48c5a3f06ce10a3ad7fe9ca48c21ac06bb9c7105df1e1",
+        "platform-time.test.cjs": "f977abef43bc0e8928127deb8955c6797e076e552c420c9b60993160098f3127",
+        "rate.cjs": "c98d98fc25457906cd97b65e2b800dca26b460c5acc757e4fe6bcc2ca3a71084",
+        "realtime.cjs": "49cd541aea8cbe56d3af193c65246fa7203a931a77e6e50ce5422c3a50d1402c",
+        "request-time.cjs": "96c112362a5c4e3b37cf828c4c11f6c3eb8be2f832dd338c9636acf19c33f7bb",
+        "rng.cjs": "989a288158ae2bfea10fa99dae4f47e7d83077345daeabbb1223a5bb6adf4e7f",
+        "site.cjs": "bb525e7287954df2cdf43df8c1d80bcffd95287f2c44446166eae46425f38a34",
+        "state.cjs": "e49cb509e609163edd64fe992df36dc78c56d91f29498dc127dbd319bbc30c59",
+        "world-time.test.cjs": "9886a4fa4f4c40d3ea5fda43a2c76632aa41d8c66983eccfe5d41b0b185e9152",
+        "world.cjs": "5ae96fbf470a2d9fb83ce185aa045407e94718fb65edebb0d0b515b99b594242",
+        "world.test.cjs": "4d9e51f551fe5aaa11ad12cba56058d8c07053d5422aeef521c82bbf279afa4d",
+        "rest/agile.cjs": "1995841de9d2115ff27bca39ce1375e90db34367877cde00a89adf36bb2e14fc",
+        "rest/agile.test.cjs": "396ee238bd31e66b639f1f26c82f6da5bf8afd22100cd240ff9e8869cca53b41",
+        "rest/fields.cjs": "50db2f82bf72f5f13b44d4d9df72118377cf57e8ad03edeb4a507c8665892d42",
+        "rest/fields.test.cjs": "9c042d25031fc7e14fa049befe5f2cb261f64db4ae6a7c517a3df2bd7d0e3ac8",
+        "rest/groups.cjs": "6cef65a6f294e4a106f3968907ee656a70885fb0b8615dfad50d86767f0462fa",
+        "rest/groups.test.cjs": "3f6f5283c975aa05a70457920bc231a4d51d4888b771beaf925ac055d5f524ba",
+        "rest/jql-functions.cjs": "f05c4f8e00fe3c7329636a72e592f2a0cc1743c337f755527f141ab7b2b64926",
+        "rest/jql-functions.test.cjs": "1cfe0f8c37c6f06a66da2539a57ef6533ae504523141c61d9e3d0497fd8321fc",
+        "rest/jql-match.cjs": "1c66780fd1f96c48ded432d2566de5814fa78002d9b93e4b4f34bf8b86d6f593",
+        "rest/platform.cjs": "cb359b316ef58a7b27a4c69b5c704fea4cd721b3cfe6ea7b085e6c5e72f0373d",
+        "rest/render.cjs": "040d4a8674e4cfd4ebff10b9dc73d2e438cafb43a3314df1ccc6184e38d8bd23"
+      },
+      "public": {
+        "BROWSER-TESTING.md": "a82ccf6019da0498c5f2008b57085219c6250449ad5313c9074c7dbba1e7de05",
+        "FORGE2-CONTRACT.md": "447415d4836fc5e1b6d3fc10c2706cd6d24e91b529d8185233f5fd805ee39db2",
+        "RATE-MODEL.json": "c2f73d8646499de25eb6bafec8582739d4a14ee17347a46031ecb33ba42c4b8a",
+        "STARTER.md": "c5a6862a49daef5c42d16dce4b71e963f5eca6130a82c09928a7087049b04c64",
+        "selftest_public.py": "95c592971cdf2a1ddd8b1ef02ee7564307c3dcae88e83dfc6be117c7b22f5bf7",
+        "spec-build-forge2.md": "5dc0f7b3dbb6ce0138df9dad1beef4ab04eadf1b8751b90228f0b567d3dbccaf"
+      },
+      "v1_schema": {
+        "manifest.yml": "77c374084c413ee6421715dfa6e4493af6729d07f68594c5a887c79038f486ea"
+      }
+    },
+    "verified_top": {
+      "e_ui_round_trips": "golden 1.0 on every seed"
+    }
   }
 }

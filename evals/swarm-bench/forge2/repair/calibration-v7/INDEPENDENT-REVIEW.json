@@ -1,0 +1,281 @@
+{
+  "status": "PASS",
+  "verdict": "PASS",
+  "scope": "proposed calibration bytes and retained stored-evidence derivations only",
+  "frozen_receipt_sha256": "d9eb6bfade526f7f07aab1a8de814bf29221fbcd574803de705ce24aeaaa94d7",
+  "staged_receipt_sha256": "22dbeceeda6fb84833654f353e838c6e7910916ec60f8ed8cf6687b1dbdac873",
+  "staged_calibration_sha256": "22dbeceeda6fb84833654f353e838c6e7910916ec60f8ed8cf6687b1dbdac873",
+  "final_scorer_sha256": "cff34edc2e16db48b16fe3ee8e24c51e0ff4812a3efb031d737a499a48ce873d",
+  "final_thresholds_sha256": "2cf44ecfa253f457fd25ead89a720ffc41220c7a0f471de9c8c1154bfab52d17",
+  "source_revision": "3afd0b726a8904c9d92a736d414e2b7cc998d07f",
+  "native_runs_reviewed": 8,
+  "registered_rows_per_verdict": 105,
+  "only_two_economy_tops_fitted_from_original_five": true,
+  "independent_exact_ratio_fit": {
+    "event_economy_top": {
+      "per_seed_exact_ratio": {
+        "3c04f61f28a4a511": 2.8551401869158877,
+        "936027a50d545ae6": 2.7883597883597884,
+        "bac25cab1aed9e26": 2.7476635514018692,
+        "c299c14673c45358": 2.7766497461928936,
+        "1ff91b71737b133e": 2.813397129186603
+      },
+      "worst_exact_ratio": 2.8551401869158877,
+      "top": 2.86
+    },
+    "reconcile_economy_top": {
+      "per_seed_exact_ratio": {
+        "3c04f61f28a4a511": 2.4,
+        "936027a50d545ae6": 2.4,
+        "bac25cab1aed9e26": 2.45,
+        "c299c14673c45358": 2.45,
+        "1ff91b71737b133e": 2.45
+      },
+      "worst_exact_ratio": 2.45,
+      "top": 2.45
+    }
+  },
+  "numeric_threshold_changes": {
+    "event_economy_top": {
+      "old": 2.58,
+      "new": 2.86
+    },
+    "reconcile_economy_top": {
+      "old": 2.0,
+      "new": 2.45
+    }
+  },
+  "independent_ast_proof": {
+    "only_added_helper": "admit_registered_rows",
+    "only_changed_existing_nodes": [
+      "CALIB_SHA256",
+      "recompose",
+      "reference_failures"
+    ],
+    "all_existing_numeric_and_scoring_policy_ast_identical": true
+  },
+  "guard_controls": {
+    "full_actual_registry_rows": 105,
+    "individual_structural_controls": 315,
+    "functional_invalid_score_controls": {
+      "nan": [
+        "reference_failures",
+        "calibrate",
+        "recompose"
+      ],
+      "positive_inf": [
+        "reference_failures",
+        "calibrate",
+        "recompose"
+      ],
+      "negative_inf": [
+        "reference_failures",
+        "calibrate",
+        "recompose"
+      ],
+      "true": [
+        "reference_failures",
+        "calibrate",
+        "recompose"
+      ],
+      "false": [
+        "reference_failures",
+        "calibrate",
+        "recompose"
+      ],
+      "missing": [
+        "reference_failures",
+        "calibrate",
+        "recompose"
+      ],
+      "string": [
+        "reference_failures",
+        "calibrate",
+        "recompose"
+      ],
+      "above_one": [
+        "reference_failures",
+        "calibrate",
+        "recompose"
+      ],
+      "negative": [
+        "reference_failures",
+        "calibrate",
+        "recompose"
+      ],
+      "extreme_integer": [
+        "reference_failures",
+        "calibrate",
+        "recompose"
+      ]
+    },
+    "native_app_executed": false
+  },
+  "native_input_receipts": {
+    "reference-1": {
+      "seed": "3c04f61f28a4a511",
+      "verdict_sha256": "dc364ce3332cd6ef8c8f328da10b116393b2bf47fa0b0e232701cf45c16e1f86",
+      "receipt_sha256": "7b46babd2a506900b77460a9a088c9d9a1e125f0e89646d6506286a9d166cf3e",
+      "observations_sha256": "e2eb4469604a25a9c7587bf0ca31e15a3a8debe218884898242d6477a50bb01b"
+    },
+    "reference-2": {
+      "seed": "936027a50d545ae6",
+      "verdict_sha256": "7a2b03681558bc9919efa9bde65ee43715737b1db59f640ad494021a7f5294a2",
+      "receipt_sha256": "b8cb1f38b4c541f3a32b1610e30369c04b796d8344cddce38f5a529d730c140b",
+      "observations_sha256": "5b6a625e442ea2d8acceec1ff76943998faf61a63677e4e47dff6b3930d3dd46"
+    },
+    "reference-3": {
+      "seed": "bac25cab1aed9e26",
+      "verdict_sha256": "b12382db005f1f65fc6f6aeef930ba07beaeb36765a06a8063f58a4f918ab489",
+      "receipt_sha256": "53d0d0efaae96e21c161bbf357bbc5793b8bd7b87745d092bc3226b1058ed4b4",
+      "observations_sha256": "c18db1ef18e718f9dbe7670965a40c15712ba5be2dd7624d6b8eccbc7273017d"
+    },
+    "reference-4": {
+      "seed": "c299c14673c45358",
+      "verdict_sha256": "3ef8922d998fac16d4674ca7cc2bf1a75cfb130f738afbab6437a89991e1bee7",
+      "receipt_sha256": "be0706643379a07fd50dc1048ae2a68e112d9d19c0b563e96580587fdcf60e06",
+      "observations_sha256": "78a591abdacb6b00004c07ac09b0b228a4d1dc26b563fd7d67a8b3696040a474"
+    },
+    "reference-5": {
+      "seed": "1ff91b71737b133e",
+      "verdict_sha256": "4b627975a3b3caf826831716c4f103fb3e9823fee18fe8b6b478303ba37e0d58",
+      "receipt_sha256": "b8982d87418a7d780f2515569e68bc53f6ffcec52bedf1c436a34d195afb550a",
+      "observations_sha256": "3b6bfa6f82333996252fb73c6b23176d72a9a002621fe9117c9415f3e360f1ce"
+    },
+    "reference-repeat": {
+      "seed": "3c04f61f28a4a511",
+      "verdict_sha256": "a0cef4fb330d88ac3734f5f384d4069b6a3f237503abcfe10c0cbbe1388396f5",
+      "receipt_sha256": "009f0869872afd6b8f8c4565b3376a94ca1893ea5390ff9554482c03e787a57c",
+      "observations_sha256": "f242c7c5b4af4a3e84387b7edb1e29c32e8e7e6cefc9b6a4625b75c037d947e3"
+    },
+    "reference-paid-site-1": {
+      "seed": "3aaa6d6b73d37669",
+      "verdict_sha256": "9376da93aca7674ff5bb285f8a7d20f8cde07455d606497b19c6dd6184eec8c8",
+      "receipt_sha256": "1629fc893ca8efeaf0f34a204983af79e39a36ef85db5e0fabc282c0c3220d0e",
+      "observations_sha256": "ebcdf67fc135e25f370a8674e06a772ac44785c08d10879d2222b07c2b4a6521"
+    },
+    "reference-paid-site-2": {
+      "seed": "d031c3ee22136508",
+      "verdict_sha256": "34bb3fed201feffe01e098897f7c37456778a37e40d18005f1c98cbc34465211",
+      "receipt_sha256": "6cb5ed7207fc9d3e8d9558e24930fc0c81f2293f52b7cc0b465dd9efcc28f25c",
+      "observations_sha256": "a00aff2a3fdc1389097a4b547c97ee97f401432dc504a956b31aa220d6e0b74f"
+    }
+  },
+  "derivations": {
+    "reference-1": {
+      "score": 1.0,
+      "inner": 1.0,
+      "critical_multiplier": 1.0,
+      "unsuppressed": [],
+      "reliability_multiplier": 1.0
+    },
+    "reference-2": {
+      "score": 1.0,
+      "inner": 1.0,
+      "critical_multiplier": 1.0,
+      "unsuppressed": [],
+      "reliability_multiplier": 1.0
+    },
+    "reference-3": {
+      "score": 1.0,
+      "inner": 1.0,
+      "critical_multiplier": 1.0,
+      "unsuppressed": [],
+      "reliability_multiplier": 1.0
+    },
+    "reference-4": {
+      "score": 1.0,
+      "inner": 1.0,
+      "critical_multiplier": 1.0,
+      "unsuppressed": [],
+      "reliability_multiplier": 1.0
+    },
+    "reference-5": {
+      "score": 1.0,
+      "inner": 1.0,
+      "critical_multiplier": 1.0,
+      "unsuppressed": [],
+      "reliability_multiplier": 1.0
+    },
+    "reference-repeat": {
+      "score": 1.0,
+      "inner": 1.0,
+      "critical_multiplier": 1.0,
+      "unsuppressed": [],
+      "reliability_multiplier": 1.0
+    },
+    "reference-paid-site-1": {
+      "score": 1.0,
+      "inner": 1.0,
+      "critical_multiplier": 1.0,
+      "unsuppressed": [],
+      "reliability_multiplier": 1.0
+    },
+    "reference-paid-site-2": {
+      "score": 0.9998,
+      "inner": 0.9998,
+      "critical_multiplier": 1.0,
+      "unsuppressed": [],
+      "reliability_multiplier": 1.0
+    }
+  },
+  "actual_extra_site_economy_coverage_gap": [
+    "reference-paid-site-2"
+  ],
+  "before_after_reviewed_files_sha256": {
+    "/Users/workhorse/goose-builds/forge2-reference-qualification-v7/frozen.json": "d9eb6bfade526f7f07aab1a8de814bf29221fbcd574803de705ce24aeaaa94d7",
+    "/Users/workhorse/goose-builds/forge2-reference-qualification-v7/completed-run.json": "36d2c8a517b507ad78446ec3d67c506062833d25b3a2faad36d77f3a8cf11f77",
+    "/Users/workhorse/goose-builds/forge2-reference-qualification-v7/actual-paid-sites-plan.json": "2244709640eae959754bfced9dff5fbeab72abc9a7c377128c1052ca4431fc8d",
+    "/Users/workhorse/goose-builds/forge2-reference-qualification-v7/deterministic-replay-receipt.json": "958291aacb9581a4e6f6167b0bc5025ef6cee6dba424f4921a7f94503f67cc63",
+    "/Users/workhorse/goose-builds/forge2-economy-calibration-v7/staged-after-pass/STAGED-CALIBRATION.json": "22dbeceeda6fb84833654f353e838c6e7910916ec60f8ed8cf6687b1dbdac873",
+    "/Users/workhorse/goose-builds/forge2-economy-calibration-v7/staged-after-pass/forge2-thresholds.final.json": "2cf44ecfa253f457fd25ead89a720ffc41220c7a0f471de9c8c1154bfab52d17",
+    "/Users/workhorse/goose-builds/forge2-economy-calibration-v7/staged-after-pass/score_forge2.final.py": "cff34edc2e16db48b16fe3ee8e24c51e0ff4812a3efb031d737a499a48ce873d",
+    "/Users/workhorse/goose-builds/forge2-reference-qualification-v7/reference-1.json": "dc364ce3332cd6ef8c8f328da10b116393b2bf47fa0b0e232701cf45c16e1f86",
+    "/Users/workhorse/goose-builds/forge2-reference-qualification-v7/reference-1-receipt.json": "7b46babd2a506900b77460a9a088c9d9a1e125f0e89646d6506286a9d166cf3e",
+    "/Users/workhorse/goose-builds/forge2-reference-qualification-v7/reference-1-observations.json": "e2eb4469604a25a9c7587bf0ca31e15a3a8debe218884898242d6477a50bb01b",
+    "/Users/workhorse/goose-builds/forge2-reference-qualification-v7/reference-2.json": "7a2b03681558bc9919efa9bde65ee43715737b1db59f640ad494021a7f5294a2",
+    "/Users/workhorse/goose-builds/forge2-reference-qualification-v7/reference-2-receipt.json": "b8cb1f38b4c541f3a32b1610e30369c04b796d8344cddce38f5a529d730c140b",
+    "/Users/workhorse/goose-builds/forge2-reference-qualification-v7/reference-2-observations.json": "5b6a625e442ea2d8acceec1ff76943998faf61a63677e4e47dff6b3930d3dd46",
+    "/Users/workhorse/goose-builds/forge2-reference-qualification-v7/reference-3.json": "b12382db005f1f65fc6f6aeef930ba07beaeb36765a06a8063f58a4f918ab489",
+    "/Users/workhorse/goose-builds/forge2-reference-qualification-v7/reference-3-receipt.json": "53d0d0efaae96e21c161bbf357bbc5793b8bd7b87745d092bc3226b1058ed4b4",
+    "/Users/workhorse/goose-builds/forge2-reference-qualification-v7/reference-3-observations.json": "c18db1ef18e718f9dbe7670965a40c15712ba5be2dd7624d6b8eccbc7273017d",
+    "/Users/workhorse/goose-builds/forge2-reference-qualification-v7/reference-4.json": "3ef8922d998fac16d4674ca7cc2bf1a75cfb130f738afbab6437a89991e1bee7",
+    "/Users/workhorse/goose-builds/forge2-reference-qualification-v7/reference-4-receipt.json": "be0706643379a07fd50dc1048ae2a68e112d9d19c0b563e96580587fdcf60e06",
+    "/Users/workhorse/goose-builds/forge2-reference-qualification-v7/reference-4-observations.json": "78a591abdacb6b00004c07ac09b0b228a4d1dc26b563fd7d67a8b3696040a474",
+    "/Users/workhorse/goose-builds/forge2-reference-qualification-v7/reference-5.json": "4b627975a3b3caf826831716c4f103fb3e9823fee18fe8b6b478303ba37e0d58",
+    "/Users/workhorse/goose-builds/forge2-reference-qualification-v7/reference-5-receipt.json": "b8982d87418a7d780f2515569e68bc53f6ffcec52bedf1c436a34d195afb550a",
+    "/Users/workhorse/goose-builds/forge2-reference-qualification-v7/reference-5-observations.json": "3b6bfa6f82333996252fb73c6b23176d72a9a002621fe9117c9415f3e360f1ce",
+    "/Users/workhorse/goose-builds/forge2-reference-qualification-v7/reference-repeat.json": "a0cef4fb330d88ac3734f5f384d4069b6a3f237503abcfe10c0cbbe1388396f5",
+    "/Users/workhorse/goose-builds/forge2-reference-qualification-v7/reference-repeat-receipt.json": "009f0869872afd6b8f8c4565b3376a94ca1893ea5390ff9554482c03e787a57c",
+    "/Users/workhorse/goose-builds/forge2-reference-qualification-v7/reference-repeat-observations.json": "f242c7c5b4af4a3e84387b7edb1e29c32e8e7e6cefc9b6a4625b75c037d947e3",
+    "/Users/workhorse/goose-builds/forge2-reference-qualification-v7/reference-paid-site-1.json": "9376da93aca7674ff5bb285f8a7d20f8cde07455d606497b19c6dd6184eec8c8",
+    "/Users/workhorse/goose-builds/forge2-reference-qualification-v7/reference-paid-site-1-receipt.json": "1629fc893ca8efeaf0f34a204983af79e39a36ef85db5e0fabc282c0c3220d0e",
+    "/Users/workhorse/goose-builds/forge2-reference-qualification-v7/reference-paid-site-1-observations.json": "ebcdf67fc135e25f370a8674e06a772ac44785c08d10879d2222b07c2b4a6521",
+    "/Users/workhorse/goose-builds/forge2-reference-qualification-v7/reference-paid-site-2.json": "34bb3fed201feffe01e098897f7c37456778a37e40d18005f1c98cbc34465211",
+    "/Users/workhorse/goose-builds/forge2-reference-qualification-v7/reference-paid-site-2-receipt.json": "6cb5ed7207fc9d3e8d9558e24930fc0c81f2293f52b7cc0b465dd9efcc28f25c",
+    "/Users/workhorse/goose-builds/forge2-reference-qualification-v7/reference-paid-site-2-observations.json": "a00aff2a3fdc1389097a4b547c97ee97f401432dc504a956b31aa220d6e0b74f",
+    "/Users/workhorse/goose-builds/forge2-economy-calibration-v7/staged-after-pass/reference-1.derived-economy.json": "4d1441605be1e15f33c87e397743bab79b080faf0631be84b92d83a222fa9b2c",
+    "/Users/workhorse/goose-builds/forge2-economy-calibration-v7/staged-after-pass/reference-2.derived-economy.json": "4901e05ee6db3e56a982c419aac6e35587764651b4e704d62acc2c957ff5121c",
+    "/Users/workhorse/goose-builds/forge2-economy-calibration-v7/staged-after-pass/reference-3.derived-economy.json": "8c65c3742107198760dbc8bd3395ac5a63f614a701a6c2b129c3d88de3ee479a",
+    "/Users/workhorse/goose-builds/forge2-economy-calibration-v7/staged-after-pass/reference-4.derived-economy.json": "b20b1e52238c903217d64da8f7c6ac45c06800ccdc8f46a3e774bd6b712c1d5c",
+    "/Users/workhorse/goose-builds/forge2-economy-calibration-v7/staged-after-pass/reference-5.derived-economy.json": "219877abf7d778e87b2c8e0c181c95577a8bdbdca151ef25fa9fc81a1ada602e",
+    "/Users/workhorse/goose-builds/forge2-economy-calibration-v7/staged-after-pass/reference-repeat.derived-economy.json": "d319098ed4836613585a136559a6868beb3c21b314843c787ff498f719981b46",
+    "/Users/workhorse/goose-builds/forge2-economy-calibration-v7/staged-after-pass/reference-paid-site-1.derived-economy.json": "9702440f82b87e624d00d775cf36fb74b7b83afabb880287244e04cfff97a553",
+    "/Users/workhorse/goose-builds/forge2-economy-calibration-v7/staged-after-pass/reference-paid-site-2.derived-economy.json": "c25ddcc8010a58f03d0650e9513aae55849844e11bbabab6224402d0a0a42b67",
+    "/Users/workhorse/Projects/goose-forge2-repair/evals/swarm-bench/bench/score_forge2.py": "2ac2a49c9b575018785eeb1152cf89a72dd28adeff21f18d0725378dd758df18",
+    "/Users/workhorse/Projects/goose-forge2-repair/evals/swarm-bench/bench/forge2_checks.py": "c2130db38014ae8538e9d9c121b02d58cff1dc62bdd101222a99b0e718a1b648",
+    "/Users/workhorse/Projects/goose-forge2-repair/evals/swarm-bench/bench/forge2_jql_checks.py": "cf0cf6c5e270708b5ac6613c1d08561cb25ad5577c0c2c2c92d8c3ebc210404c",
+    "/Users/workhorse/Projects/goose-forge2-repair/evals/swarm-bench/bench/forge2_oracle.py": "a0a404d3329de98b08ed8842c1a2d267e787289b856a73451dbbc26ca0a4de41",
+    "/Users/workhorse/Projects/goose-forge2-repair/evals/swarm-bench/bench/forge2_seed_policy.py": "44ef23eeab02499fad2221d067ea6d1400740de7516ea5cfc6825f5735b8299c",
+    "/Users/workhorse/Projects/goose-forge2-repair/evals/swarm-bench/bench/forge2_probe.mjs": "12453c23a1fc83ac4e5248b4322c1c57578945e5ebc950121938c7980995de6f",
+    "/Users/workhorse/Projects/goose-forge2-repair/evals/swarm-bench/bench/forge2-thresholds.json": "49a17c85300b5f79b2b1707b3bfcf470cb0b5a76ddb6921ae0cb5d0a64b3c682",
+    "/Users/workhorse/goose-builds/forge2-economy-calibration-v7/score_forge2.guard-preview.py": "8224007fe4752462a68f6d897e562099597e7dabb70f005c2e8112ba7e1ad578",
+    "/Users/workhorse/goose-builds/forge2-economy-calibration-v7/guard-preview-identity.json": "77e399b3b77db55982cafadd5d1162ae839606166fc0b684980b7fdab51e23be"
+  },
+  "before_after_source_inputs_identical": true,
+  "native_scoring_launched": false,
+  "model_calls": false,
+  "benchmark_source_modified": false,
+  "fresh_final_runtime_defect_matrix_required": true,
+  "independent_app_qualification_unclaimed": true
+}

@@ -101,7 +101,7 @@ FIXTURES = ROOT / 'forge2' / 'site' / 'fixtures.cjs'
 # ── calibration-owned thresholds ─────────────────────────────────────────────────────────────
 
 THRESHOLDS_FILE = HERE / 'forge2-thresholds.json'
-CALIB_SHA256 = 'TBD-AT-FREEZE'   # Fresh reference calibration must pass before repaired Forge 2.0 is publishable.
+CALIB_SHA256 = '2cf44ecfa253f457fd25ead89a720ffc41220c7a0f471de9c8c1154bfab52d17'   # Fresh reference calibration must pass before repaired Forge 2.0 is publishable.
 
 
 def _load_thresholds() -> Dict:
@@ -4242,12 +4242,10 @@ def recompose(kept: Dict, source: str = '') -> Dict:
     again. The per-seed scores are not carried: a verdict keeps the merged rows, not each scoring site's. Refuses
     (ValueError) a verdict of another scorer family or one whose rows are not this registry's: weights over other rows
     would be a number nobody graded."""
-    version, names = str(kept.get('scorerVersion')), [r.get('check') for r in kept.get('checks') or []]
+    version = str(kept.get('scorerVersion'))
     if version.removesuffix('-rc') != VERSION.removesuffix('-rc'):
         raise ValueError(f'the verdict was scored by {version}, not {VERSION.removesuffix("-rc")}')
-    if set(names) != REGISTERED or len(names) != len(REGISTERED):
-        raise ValueError(f'the verdict holds {len(names)} rows, the registry {len(REGISTERED)}; missing '
-                         f'{sorted(REGISTERED - set(names))[:6]}, unknown {sorted(set(names) - REGISTERED)[:6]}')
+    admit_registered_rows(kept)
     ctx = argparse.Namespace(fixture_seed=kept.get('fixture_seed'), dev_seed=kept.get('dev_seed'),
                              runtime=kept.get('runtime', 'wrapper'), harness_missing=list(kept.get('harness_missing') or []))
     result = compose_from_rows(kept['checks'], ctx)
@@ -4994,7 +4992,30 @@ def defect_selftest() -> List[str]:
 
 # ── reference gate (DESIGN §13.4 items 1–4) ──────────────────────────────────────────────────
 
+def admit_registered_rows(result: Dict) -> List[Dict]:
+    rows = result.get('checks')
+    if not isinstance(rows, list) or any(not isinstance(r, dict) or not isinstance(r.get('check'), str) for r in rows):
+        raise ValueError('scored registry refused: checks must be a list of named row objects')
+    names = [r['check'] for r in rows]
+    counts = Counter(names)
+    registry_errors = []
+    missing, unknown = sorted(REGISTERED - set(names)), sorted(set(names) - REGISTERED)
+    duplicates = sorted(n for n, count in counts.items() if count > 1)
+    wrong_tiers = [f"{r['check']} {r.get('tier')!r} != {TIER_OF[r['check']]!r}" for r in rows
+                   if r['check'] in REGISTERED and r.get('tier') != TIER_OF[r['check']]]
+    invalid_scores = sorted(r['check'] for r in rows if type(r.get('score')) not in (int, float)
+                            or not 0 <= r['score'] <= 1 or not math.isfinite(r['score']))
+    for label, values in (('missing', missing), ('unknown', unknown), ('duplicate', duplicates),
+                          ('tier mismatch', wrong_tiers), ('invalid score', invalid_scores)):
+        if values:
+            registry_errors.append(f'{label}: {", ".join(values)}')
+    if registry_errors:
+        raise ValueError('scored registry refused: ' + '; '.join(registry_errors))
+    return rows
+
+
 def reference_failures(result: Dict) -> List[str]:
+    admit_registered_rows(result)
     fails = []
     for r in result['checks']:
         n = r['check']
