@@ -16,7 +16,7 @@
     "bench/forge2_jql_checks.py": "cf0cf6c5e270708b5ac6613c1d08561cb25ad5577c0c2c2c92d8c3ebc210404c",
     "bench/forge2_kit.py": "68597fe2369d0732d0c3d6792495f00b4882f1636d4db80935a0085169793343",
     "bench/forge2_oracle.py": "a0a404d3329de98b08ed8842c1a2d267e787289b856a73451dbbc26ca0a4de41",
-    "bench/forge2_probe.mjs": "12453c23a1fc83ac4e5248b4322c1c57578945e5ebc950121938c7980995de6f",
+    "bench/forge2_probe.mjs": "6adfb4c0fa4d404db78ac43919f6f698203b2332da935131e16374df598c9494",
     "bench/forge2_seed_policy.py": "44ef23eeab02499fad2221d067ea6d1400740de7516ea5cfc6825f5735b8299c",
     "bench/forge2_site.py": "93fc58939fbb5f4977a961df8a043f3972f03178e76867a9fb1b6adfd4c256bc",
     "bench/forge2_uikit_shot.mjs": "e6f2f8e494a6cf2255f078be6424368bbd3f265ea9055beb88cf546750d65489",
@@ -27,7 +27,7 @@
     "bench/probes/vendor_trace.py": "11a25b8b41dc612de2c551a279b6ff24cf3d2974e82807c24e0256ed404bb159",
     "bench/run_build.py": "8ecbb127c64ad995811729d13b09e8f21abe01e91ccb87709116fefd142577aa",
     "bench/score_build.py": "3c1fe96b5d43be3cb58cf8e6faca38ef0012062e1ce0dbca03c02c8d1cb59500",
-    "bench/score_forge2.py": "d44c512dfd72272aaf0ad2a6c475410b1d1d0ed3ef212d2d63b4aaf0d313f01c",
+    "bench/score_forge2.py": "e28ed7f60b9f4f336d9c52d61da7498edeb3705f1f580c373ca9a8b76e7e65d7",
     "bench/vendor_service.py": "a0d255dfa5dc37af3d6039902f0c883d66fb218623e09a97df521754bb28dd3f",
     "forge2/kit/FOLLOWUPS.md": "d52f60d8b53330ca358a552a667dd07cccc6aff1028a82aca09be3ebe7c94dd2",
     "forge2/kit/README.md": "31523cee1efd63997d410757215218b28d22fd570cc8fefbf1d5809359a44482",
@@ -160,5 +160,5 @@
     "forge2/starter/static/widget/src/index.jsx": "05e6bff92998b3598b69682c69a47a3f28ea5f053b645890a5da5e17007d1f89",
     "forge2/starter/static/widget/src/widget.css": "6c13a7cd365e348c60d658b8f3eb75b45173c1cb6493db3bb75df06032f39ddf"
   },
-  "sourceCommit": "b05deefba3f9bdc5df7955a8b09496bedebd3770"
+  "sourceCommit": "666f634cdc65c313c5dd6ad01fa1a63691e9bf28"
 }
