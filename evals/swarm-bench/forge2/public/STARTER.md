@@ -68,6 +68,8 @@ command prints every flag):
 | `llm` / `realtime` | the dev site's Forge LLM (model list, scripted answers, every call) / every Realtime publish and subscription |
 | `kvs` / `users` / `reset` | dump stored keys and entities / list dev users / return the dev storage, queues and update stream to the upgrade instant (v1's rows in place) |
 
+Test the native JQL path with `node $FORGE_KIT/bin/forge-dev.cjs jql 'issue in scopeChanged("123", "added")' [--as app|<accountId>]` (replace the sprint id with one from your dev site). It searches one page of up to 100 issues as the default viewer, or the specified identity, invoking your installed `jira:jqlFunction` when its shared precomputation is absent. Cached clauses are reused across identities, and Jira filters the expanded result for the querying user. The command prints native function calls and saves the full search response to `.forge-dev/last-result.json`; malformed queries return an error.
+
 Screenshot a served Custom UI surface with the bundled browser (`BROWSER-TESTING.md`). Build Custom UI into
 `static/<name>/build/` (an `index.html` plus assets) with the installed esbuild; the harness never builds it for you.
 A UI Kit resource is different: point its `path` at the source file (for example `src/frontend/admin.jsx`) and the

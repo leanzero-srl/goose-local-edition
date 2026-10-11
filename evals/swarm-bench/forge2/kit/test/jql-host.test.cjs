@@ -3,6 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawn } = require('node:child_process');
 const { ensureKit, scratch } = require('./helpers.cjs');
 const { createSite } = require('../../site/site.cjs');
 const { createEmulator } = require('../lib/emulator.cjs');
@@ -76,7 +77,7 @@ async function rig(remote) {
   const search = (query, method = 'GET', as = site.pack.viewer) => method === 'GET'
     ? call('GET', '/rest/api/3/search/jql?' + new URLSearchParams({ jql: query, fields: 'summary', maxResults: '100' }), undefined, as)
     : call('POST', '/rest/api/3/search/jql', { jql: query, fields: ['summary'], maxResults: 100 }, as);
-  return { site, emu, outputs, setIds, call, search, hooks: () => outerHooks,
+  return { dir, site, emu, outputs, setIds, call, search, hooks: () => outerHooks,
     close: async () => { await emu.close(); await site.stop(); fs.rmSync(dir, { recursive: true, force: true }); } };
 }
 for (const remote of [false, true]) test(`native JQL ${remote ? 'remote dev callback' : 'in-process scoring'}: HTTP search/cache/refresh/visibility and actual Forge handler`, { timeout: 120_000 }, async () => {
@@ -135,5 +136,50 @@ for (const remote of [false, true]) test(`native JQL ${remote ? 'remote dev call
         body: JSON.stringify({ moduleKey: 'host-scoped', name: 'hostScoped', functionKey: mapping.body.values[0].functionKey, callbackUrl: 'https://example.com/x/jql-evaluate/host-scoped', nonce: 'a'.repeat(64) }) });
       assert.equal(invalid.status, 400, 'site cannot register an external callback');
     }
+  } finally { await w.close(); }
+});
+
+test('forge-dev jql runs native HTTP search in a child command, preserves shared cache and saves full result', { timeout: 120_000 }, async () => {
+  const w = await rig(true);
+  try {
+    const viewer = w.site.pack.viewer;
+    const hidden = w.site.pack.issues.find((i) => i.hiddenFrom.includes(viewer));
+    const visible = w.site.pack.issues.find((i) => !i.hiddenFrom.includes(viewer));
+    w.setIds([hidden.id, visible.id]);
+    const stateDir = path.join(w.dir, '.forge-dev');
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(path.join(stateDir, 'state.json'), JSON.stringify({ kvs: w.emu.kvs.dump() }));
+    const kit = ensureKit();
+    const cli = async (args) => await new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, [path.join(__dirname, '..', 'bin', 'forge-dev.cjs'), 'jql', ...args], {
+        cwd: w.dir, env: { ...process.env, FORGE_KIT: kit.kit_dir,
+          FORGE_SITE_URL: w.site.url.replace('://', `://admin:${new URL(w.site.adminUrl).pathname.split('/')[2]}@`) },
+      });
+      let stdout = '', stderr = '';
+      child.stdout.on('data', (chunk) => { stdout += chunk; });
+      child.stderr.on('data', (chunk) => { stderr += chunk; });
+      child.on('error', reject); child.on('close', (code) => resolve({ code, stdout, stderr }));
+    });
+    const first = await cli(['issue in hostScoped("123")']);
+    assert.equal(first.code, 0, first.stdout + first.stderr);
+    assert.match(first.stdout, /native JQL/);
+    let result = JSON.parse(fs.readFileSync(path.join(stateDir, 'last-result.json'), 'utf8'));
+    assert.deepEqual(result.issues.map((i) => i.id), [visible.id]);
+    assert.equal(result.issues[0].key, visible.key);
+    assert.equal(result.issues[0].fields.summary, visible.summary);
+    const persisted = JSON.parse(fs.readFileSync(path.join(stateDir, 'state.json'), 'utf8'));
+    const lastRequest = new Map(persisted.kvs.kv).get('last-jql-request').value;
+    assert.deepEqual(lastRequest.request.clause.arguments, ['123'], 'actual native handler request persisted through the dev-state lock');
+    assert.equal(lastRequest.principal, null);
+    const shared = await cli(['issue in hostScoped("123")', '--as', 'app']);
+    assert.equal(shared.code, 0, shared.stdout + shared.stderr);
+    result = JSON.parse(fs.readFileSync(path.join(stateDir, 'last-result.json'), 'utf8'));
+    assert.deepEqual(result.issues.map((i) => i.id).sort(), [hidden.id, visible.id].sort());
+    assert.equal(w.site.log.filter((e) => e.jqlExpansion?.calls[0]?.invoked).length, 1, 'second CLI identity reuses the shared native precomputation');
+    const bad = await cli(['issue in unknownCliFunction("123")']);
+    assert.equal(bad.code, 1, bad.stdout + bad.stderr);
+    result = JSON.parse(fs.readFileSync(path.join(stateDir, 'last-result.json'), 'utf8'));
+    assert.match(result.errorMessages[0], /unknown/i);
+    assert.deepEqual(w.site.harnessMissing, []);
   } finally { await w.close(); }
 });
