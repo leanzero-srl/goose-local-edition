@@ -141,3 +141,20 @@ test('a phase script with an unknown kind is refused; a CLI string is accepted; 
   llm.reset();
   assert.deepStrictEqual(llm.state().script, ['clean', 'digits', 'refusal', 'malformed', 'error']);
 });
+
+
+test('wrongtool preserves successful chat/stream shapes but calls an unsolicited function', () => {
+  for (const stream of [false, true]) {
+    const { llm, ask, visible } = rig();
+    llm.phase('wrong-function', ['wrongtool']);
+    const result = ask({ stream });
+    assert.strictEqual(result.status, 200);
+    assert.strictEqual(result.body.choices[0].finish_reason, 'tool_use');
+    assert.strictEqual(result.body.choices[0].message.tool_calls[0].function.name, 'ignore_scope');
+    assert.deepStrictEqual(args(result).changeIds, visible);
+    if (stream) {
+      assert.ok(result.stream.flatMap((c) => c.choices[0].message.tool_calls ?? []).every((c) => c.function.name === 'ignore_scope'));
+      assert.strictEqual(result.stream.at(-1).choices[0].finish_reason, 'tool_use');
+    }
+  }
+});

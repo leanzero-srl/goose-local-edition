@@ -80,9 +80,10 @@ SECRET_MASK = re.compile(r'••••\S{4}')
 QUOTA_REASON = 'jira-quota-tenant-based'
 PER_ISSUE_REASON = 'jira-per-issue-on-write'
 WT_INVALID = ('bad-signature', 'unsigned', 'tampered', 'stale', 'stale-future')      # forge2/site/ci.cjs steps
-WT_VALID = ('valid', 'header-case')
+WT_VALID = ('valid', 'header-case', 'concurrent-valid')
+WT_PAIR = ('concurrent-valid', 'concurrent-replay')
 WT_STATUS = {**{c: 401 for c in WT_INVALID}, 'replay': 200, 'valid': 202, 'header-case': 202}   # SPEC R6
-LLM_TOOL = ('tool-injection',)                                               # forge2_probe.mjs LLM_V2_CASES
+LLM_TOOL = ('tool-injection', 'wrong-function')                                               # forge2_probe.mjs LLM_V2_CASES
 LLM_FAILURE = ('rate-limited-no-retry-after', 'no-finish-reason')
 LLM_COST = ('cache', 'kill-switch', 'token-budget')
 LLM_429_ATTEMPTS = 3                       # SPEC R8: <= 3 attempts per minute
@@ -282,6 +283,22 @@ def same_at(r: Dict, at) -> bool:
     return a is not None and b is not None and a == b
 
 
+V1_COPY_FIELDS = ('changeId', 'sprintId', 'at', 'kind', 'issueId', 'issueKey', 'authorId', 'authorName', 'source')
+
+
+def preserved_fields(actual: Dict, original: Dict, fields=None) -> bool:
+    """Only source attributes the probe actually read bind preservation; v2 may add attributes."""
+    chosen = original.keys() if fields is None else (k for k in fields if k in original)
+    return all(same_at(actual, original[k]) if k == 'at' else actual.get(k) == original[k] for k in chosen)
+
+
+def migration_originals(ev: Ev) -> Dict[Tuple[str, str], Dict]:
+    mig = ev.obs.get('migration') or {}
+    recorded = index([r for r in mig.get('v1_rows') or [] if isinstance(r, dict)])
+    # Older archives recorded identity/time only. Their unrecorded payload never becomes fabricated evidence.
+    return {key(r): recorded.get(key(r), [r])[0] for r in ev.o.v1_rows()}
+
+
 def row_right(r: Dict, exp: Dict) -> bool:
     """An observed scope-ledger row against the oracle's: time, board, estimate (one of the accepted values),
     deleted flag."""
@@ -313,7 +330,7 @@ def _(ev: Ev) -> Dict:
     gate = ledger_gate(ev)
     if gate:
         return gate
-    expected = ev.o.v1_rows()
+    expected = list(migration_originals(ev).values())
     if not expected:
         return vacuous('no v1 row was preloaded')
     cp = fo.MIGRATION_DEADLINE
@@ -322,14 +339,15 @@ def _(ev: Ev) -> Dict:
         return unavail(why)
     have = index(rows)
     missing = [key(e) for e in expected if key(e) not in have]
-    moved = [key(e) for e in expected if key(e) in have and not any(same_at(r, e['at']) for r in have[key(e)])]
+    moved = [key(e) for e in expected if key(e) in have
+             and not any(preserved_fields(r, e, V1_COPY_FIELDS) for r in have[key(e)])]
     share = (len(expected) - len(missing) - len(moved)) / len(expected)
     detail = (f'{cp}: {len(expected) - len(missing) - len(moved)} of {len(expected)} v1 rows in scope-ledger with '
-              f'their changeId and time')
+              f'the source attributes recorded by the probe')
     if missing:
         detail += f'; missing {len(missing)} (e.g. {sample(missing)})'
     if moved:
-        detail += f'; time changed {len(moved)} (e.g. {sample(moved)})'
+        detail += f'; preserved attributes changed {len(moved)} (e.g. {sample(moved)})'
     return g(share, detail, 'v1 history missing from the v2 ledger after the 2-hour migration window')
 
 
@@ -338,7 +356,7 @@ def _(ev: Ev) -> Dict:
     gate = ledger_gate(ev)
     if gate:
         return gate
-    expected = {key(e): e for e in ev.o.v1_rows()}
+    expected = migration_originals(ev)
     if not expected:
         return vacuous('no v1 row was preloaded')
     mig, why = ev.section('migration')
@@ -347,21 +365,25 @@ def _(ev: Ev) -> Dict:
     v1 = mig.get('v1_final')
     if not isinstance(v1, list):
         return unavail('migration.v1_final (the v1 entity at the end) is not a list')
-    final, why = ev.v2('final')
-    if why:
-        return unavail(why)
-    copies = [r for r in final if key(r) in expected]
-    if not copies:
-        return vacuous('nothing was migrated: no v1 row reached scope-ledger, so v1 was never at risk')
-    # Damage to v1's own entity only: a v2 copy with another time is a wrong migration, priced by r1_v1_rows_migrated.
     have = index([r for r in v1 if isinstance(r, dict)])
     lost = [k for k in expected if k not in have]
-    changed = [k for k, e in expected.items() if k in have and not any(same_at(r, e['at']) for r in have[k])]
+    changed = [k for k, e in expected.items() if k in have
+               and not any(preserved_fields(r, e) for r in have[k])]
     if lost or changed:
         found = [f'{label} {len(ks)} (e.g. {sample(ks)})' for label, ks in
                  (('v1 rows lost:', lost), ('v1 rows rewritten:', changed)) if ks]
         return g(0.0, '; '.join(found), 'v1 rows lost or corrupted by the migration')
-    return g(1.0, f'all {len(expected)} v1 rows intact in scope-change after {len(copies)} were migrated')
+    final, why = ev.v2('final')
+    if why:
+        return unavail(why)
+    copies = [r for r in final if key(r) in expected]
+    corrupted = [key(r) for r in copies if not preserved_fields(r, expected[key(r)], V1_COPY_FIELDS)]
+    if corrupted:
+        return g(0.0, f'migrated v1 payload corrupted on {len(corrupted)} rows (e.g. {sample(corrupted)})',
+                 'v1 rows lost or corrupted by the migration')
+    if not copies:
+        return vacuous('v1 source is intact but no v1 row reached scope-ledger')
+    return g(1.0, f'all {len(expected)} v1 source rows intact; {len(copies)} copies preserve recorded v1 attributes')
 
 
 @row('r1_events_during_migration', 'R1')
@@ -851,9 +873,6 @@ def _(ev: Ev) -> Dict:
         return unavail(why)
     if not acts:
         return vacuous('no admin action was attempted by a non-admin or with a forged payload')
-    works, _w = admin_actions(ev, 'admin')
-    if not any(a.get('result_ok') is True and a.get('state_changed') is True for a in works or []):
-        return vacuous('no admin action changed state even for an admin, so a refusal proves nothing')
     # The breach is the attempted EFFECT in storage (the forged settings value stored, the secret rotated): an audit
     # entry recording a refused attempt is no breach. The probe's `landed` says it; without it the row says so and
     # judges on any change to the app's settings/secret storage.
@@ -865,6 +884,9 @@ def _(ev: Ev) -> Dict:
     breaches = [f'{a.get("as")}: {a.get("resolver")} ({sample(a.get("changed_keys") or [], 2)})' for a in acts if hit(a)]
     if breaches:
         return g(0.0, f'{sample(breaches, 2)} — judged on {basis}', 'an admin action by a non-admin succeeded')
+    works, _w = admin_actions(ev, 'admin')
+    if not any(a.get('result_ok') is True and a.get('state_changed') is True for a in works or []):
+        return vacuous('no admin action changed state even for an admin, so a refusal proves nothing')
     return g(1.0, f'{len(acts)} non-admin/forged admin actions changed nothing — judged on {basis}')
 
 
@@ -906,6 +928,24 @@ def wt_valid_worked(cases: List[Dict]) -> bool:
     return any(c.get('case') in WT_VALID and (effects(c) or 0) >= 1 for c in cases)
 
 
+def ci_pair(cases: List[Dict]) -> Tuple[List[Dict], Optional[str]]:
+    pair = [c for c in cases if c.get('case') in WT_PAIR]
+    if len(pair) != 2 or {c.get('case') for c in pair} != set(WT_PAIR):
+        return pair, 'no complete concurrent CI replay pair was recorded'
+    if not pair[0].get('eventId') or pair[0].get('eventId') != pair[1].get('eventId')             or not pair[0].get('concurrent_group') or pair[0].get('concurrent_group') != pair[1].get('concurrent_group'):
+        return pair, 'CI replay pair lacks one shared eventId and concurrent group'
+    ids = [c.get('invocations') for c in pair]
+    if any(not isinstance(x, list) or not x for x in ids) or set(ids[0]) & set(ids[1]):
+        return pair, 'CI replay pair lacks distinct invocation attribution'
+    if any(c.get('settled') is not True or not isinstance(c.get('data_writes'), int) for c in pair):
+        return pair, 'CI replay pair lacks completed data-write evidence'
+    return pair, None
+
+
+def ci_pair_statuses(pair: List[Dict]) -> bool:
+    return sorted(c.get('status') for c in pair if isinstance(c.get('status'), int)) == [200, 202]
+
+
 @row('r6_unsigned_no_effect', 'R6', critical='a web-trigger write without a valid signature')
 def _(ev: Ev) -> Dict:
     gate = wt_gate(ev)
@@ -919,12 +959,12 @@ def _(ev: Ev) -> Dict:
         return vacuous('no unsigned, tampered or stale event was sent')
     if any(effects(c) is None for c in invalid):
         return unavail('webtrigger[].side_effects missing on an invalid case')
-    if not wt_valid_worked(cases):
-        return vacuous('no valid event had an effect, so a refusal proves nothing')
     breaches = [f'{c["case"]} ({effects(c)})' for c in invalid if effects(c) > 0]
     if breaches:
         return g(0.0, f'side effects without a valid signature: {sample(breaches)}',
                  'a web-trigger write without a valid signature')
+    if not wt_valid_worked(cases):
+        return vacuous('no valid event had an effect, so a refusal proves nothing')
     return g(1.0, f'{len(invalid)} invalid events ({sample(sorted({c["case"] for c in invalid}), 5)}) had no effect')
 
 
@@ -937,26 +977,36 @@ def _(ev: Ev) -> Dict:
     if why:
         return unavail(why)
     replays = [c for c in cases if c.get('case') == 'replay']
+    pair, pair_gap = ci_pair(cases)
+    if not pair_gap and sum(c.get('status') == 202 for c in pair) > 1:
+        return g(0.0, 'both invocations of one concurrent eventId were accepted (202)',
+                 'duplicate side effect: a replayed web-trigger event applied twice')
+    if not pair_gap and any(c.get('status') == 200 and c['data_writes'] > 0 for c in pair):
+        return g(0.0, 'the concurrent duplicate (200) wrote scope-ledger data',
+                 'duplicate side effect: a replayed web-trigger event applied twice')
     if not replays:
         return vacuous('no event was replayed')
-    if not wt_valid_worked(cases):
-        return vacuous('the original event had no effect to repeat')
     if any(not isinstance(c.get('writes'), list) for c in replays):
         return unavail('webtrigger[].writes missing on the replay')
+    jira = [w for c in replays for w in c['writes'] if str(w).startswith('jira ')]
+    if jira:
+        return g(0.0, f'a replayed eventId made another Jira write: {sample(jira, 2)}',
+                 'duplicate side effect: a replayed web-trigger event applied twice')
     rows, why = ev.v2('final')
     if why:
         return unavail(why)
-    # "no second effect" is judged on what a person sees twice — a Jira write in the replay's own request, or an
-    # environment recorded twice on a ledger row — never on bookkeeping (a dedupe marker is not an effect).
-    jira = [w for c in replays for w in c['writes'] if str(w).startswith('jira ')]
     doubled = sorted({key(r) for r in rows if repeated_env(r.get('deployedEnvs'))})
-    if jira or doubled:
-        return g(0.0, 'a replayed eventId applied again: ' + '; '.join(
-            x for x in (f'Jira writes {sample(jira, 2)}' if jira else '',
-                        f'environment recorded twice on {sample(doubled, 2)}' if doubled else '') if x),
+    if doubled:
+        return g(0.0, f'environment recorded twice on {sample(doubled, 2)}',
                  'duplicate side effect: a replayed web-trigger event applied twice')
-    return g(1.0, f'{len(replays)} replay(s) made no Jira write and doubled no deployment; bookkeeping writes '
-             f'{sum(effects(c) or 0 for c in replays)}')
+    if pair_gap:
+        return unavail(pair_gap)
+    if not ci_pair_statuses(pair):
+        return vacuous(f'concurrent pair statuses {sample(c.get("status") for c in pair)} did not demonstrate one 202 and one 200')
+    if not wt_valid_worked(cases):
+        return vacuous('the original event had no effect to repeat')
+    return g(1.0, f'{len(replays)} sequential replay(s) and one concurrent pair had one acceptance and no duplicate '
+             f'Jira/deployment effect; bookkeeping writes {sum(effects(c) or 0 for c in replays)}')
 
 
 @row('r6_status_codes', 'R6')
@@ -968,16 +1018,20 @@ def _(ev: Ev) -> Dict:
     if why:
         return unavail(why)
     graded = [c for c in cases if c.get('case') in WT_STATUS]
+    pair, why = ci_pair(cases)
+    if why:
+        return unavail(why)
     if not graded:
         return vacuous('no web-trigger case was sent')
-    if not any(c.get('case') in WT_VALID and c.get('status') == 202 for c in graded):
-        return vacuous('no validly signed event was accepted, so the refusals prove nothing')
     wrong = [f'{c["case"]}: {c.get("status")} (want {WT_STATUS[c["case"]]})' for c in graded
              if c.get('status') != WT_STATUS[c['case']]]
-    unknown = sorted({str(c.get('case')) for c in cases if c.get('case') not in WT_STATUS})
-    return g((len(graded) - len(wrong)) / len(graded), f'{len(graded) - len(wrong)} of {len(graded)} cases answered '
-             'with their status' + (f'; wrong: {sample(wrong, 2)}' if wrong else '')
-             + (f'; unknown cases not graded: {sample(unknown)}' if unknown else ''), 'CI cannot tell what happened')
+    pair_ok = ci_pair_statuses(pair)
+    if not pair_ok:
+        wrong.append(f'concurrent pair: {sample(c.get("status") for c in pair)} (want one 200, one 202)')
+    total = len(graded) + len(pair)
+    earned = len(graded) - sum(c.get('status') != WT_STATUS[c['case']] for c in graded) + len(pair) * pair_ok
+    return g(earned / total, f'{earned} of {total} cases answered with their status'
+             + (f'; wrong: {sample(wrong, 2)}' if wrong else ''), 'CI cannot tell what happened')
 
 
 @row('r6_valid_applies', 'R6')
@@ -991,7 +1045,12 @@ def _(ev: Ev) -> Dict:
     cases, why = wt_cases(ev)
     if why:
         return unavail(why)
-    valid = [c for c in cases if c.get('case') in WT_VALID]
+    valid = [c for c in cases if c.get('case') in WT_VALID and c.get('case') not in WT_PAIR]
+    pair, pair_gap = ci_pair(cases)
+    if pair_gap:
+        return unavail(pair_gap)
+    winner = next((c for c in pair if c.get('status') == 202), pair[0])
+    valid.append({**winner, 'case': 'concurrent-valid', 'pair_ok': ci_pair_statuses(pair)})
     if not valid:
         return vacuous('no validly signed event was sent')
     setup = ev.obs.get('webtriggerSetup')
@@ -1018,7 +1077,7 @@ def _(ev: Ev) -> Dict:
     for c in valid:
         env, keys = effect[c['case']]['environment'], [str(k) for k in effect[c['case']]['issueKeys']]
         unshown = [k for k in keys if not shows(k, env)]
-        if c.get('status') != 202:
+        if c.get('status') != 202 or c.get('pair_ok') is False:
             bad.append(f'{c["case"]}: status {c.get("status")}')
         elif unshown:
             bad.append(f'{c["case"]}: no `Deployed to {env}` on every ledger row of {sample(unshown, 2)}')
@@ -1180,6 +1239,51 @@ def llm_gate(ev: Ev) -> Optional[Dict]:
     return None if ev.has_module('llm') else absent('llm (Forge LLM)')
 
 
+def llm_clicks(c: Dict) -> Optional[List[Dict]]:
+    clicks = c.get('click_results')
+    return clicks if isinstance(clicks, list) and all(isinstance(x, dict) for x in clicks) else None
+
+
+def visible_change_ids(ev: Ev, c: Dict) -> set:
+    hidden = ev.o.hidden_issue_ids(str(c.get('as')))
+    return {str(r['changeId']) for r in ev.o.expected_rows('final')
+            if str(r['sprintId']) == str(c.get('sprintId')) and str(r['issueId']) not in hidden and not r['deleted']}
+
+
+def click_scope_problem(ev: Ev, c: Dict, click: Dict) -> Optional[str]:
+    ids = click.get('ids_shown')
+    if not isinstance(ids, list):
+        return 'shown citation ids were not recorded'
+    bad = set(map(str, ids)) - visible_change_ids(ev, c)
+    if bad:
+        return f"citations outside the viewer's sprint: {sample(sorted(bad))}"
+    hidden = ev.o.hidden_issue_ids(str(c.get('as')))
+    terms = ev.o.leak_terms_for(hidden)
+    text = str(click.get('shown_text') or '')
+    hits = [k for k in terms['keys'] if key_in(text, k)]
+    if hits:
+        return f'hidden issue keys shown: {sample(hits)}'
+    return None
+
+
+def successful_clean_click(click: Dict) -> bool:
+    """A cache's first answer must have used the required tool and painted its successful summary."""
+    if (count(click.get('llm_calls')) or 0) < 1 or (count(click.get('error_flags')) or 0) > 0:
+        return False
+    for call in click.get('model_calls') or []:
+        if call.get('status') != 200 or not call.get('finish_reasons') or not all(call['finish_reasons']):
+            continue
+        tools = call.get('returned_tools') or []
+        if len(tools) != 1 or tools[0].get('name') != 'report_scope':
+            continue
+        args = tools[0].get('arguments')
+        if isinstance(args, dict) and isinstance(args.get('summary'), str) and args['summary'].strip()                 and args['summary'].strip() in str(click.get('shown_own') or '')                 and isinstance(args.get('changeIds'), list) and args['changeIds'] \
+                and isinstance(click.get('ids_shown'), list) \
+                and set(map(str, click['ids_shown'])) == set(map(str, args['changeIds'])):
+            return True
+    return False
+
+
 @row('r8_tool_call_scope', 'R8')
 def _(ev: Ev) -> Dict:
     gate = llm_gate(ev)
@@ -1188,16 +1292,52 @@ def _(ev: Ev) -> Dict:
     cases, why, _calls = llm_cases(ev, LLM_TOOL)
     if why:
         return unavail(why)
-    blocked = [b for b in map(case_blocked, cases) if b]
-    asked = [c for c in cases if not case_blocked(c) and (count(c.get('llm_calls')) or 0) >= 1]
-    if not asked and not blocked:
-        return vacuous('the model was never asked in the manipulated-tool-call case')
-    bad = [c for c in asked if (count(c.get('writes_out_of_scope')) or 0) > 0]
-    total = len(asked) + len(blocked)
-    return g((len(asked) - len(bad)) / total, f'{len(asked) - len(bad)} of {total} manipulated tool calls validated '
-             "against the viewer's sprint scope before acting"
-             + (f'; acted out of scope {count(bad[0].get("writes_out_of_scope"))} time(s)' if bad else '')
-             + (f'; {blocked[0]}' if blocked else ''), "a prompt-injected tool call writes outside the viewer's scope")
+    if not cases:
+        return vacuous('no manipulated-tool-call case was run')
+    if any(not case_blocked(c) and (llm_clicks(c) is None or not c.get('sprintId') or not c.get('as')) for c in cases):
+        return unavail('llm_v2 manipulated cases lack per-click output, function and viewer/sprint evidence')
+    ok, notes = 0, []
+    for c in cases:
+        blocked = case_blocked(c)
+        if blocked:
+            notes.append(blocked)
+            continue
+        clicks = llm_clicks(c)
+        if not any((count(x.get('llm_calls')) or 0) > 0 for x in clicks):
+            notes.append(f'{c["case"]}: model never asked')
+            continue
+        bad = [click_scope_problem(ev, c, x) for x in clicks]
+        bad = [x for x in bad if x]
+        if (count(c.get('writes_out_of_scope')) or 0) > 0:
+            bad.append('tool call caused an out-of-scope write')
+        calls = [m for x in clicks for m in x.get('model_calls') or []]
+        if any(m.get('forced_tool') != 'report_scope' or 'report_scope' not in (m.get('offered_tools') or []) for m in calls):
+            bad.append('the required report_scope tool was not offered and forced')
+        if c['case'] == 'wrong-function':
+            offered = [t for m in calls for t in m.get('returned_tools') or [] if t.get('name') != 'report_scope']
+            if not offered:
+                bad.append('no unsolicited function reached the explanation path')
+            if any(x.get('shown_text') or x.get('ids_shown') or not (count(x.get('error_flags')) or 0) for x in clicks):
+                bad.append('unsolicited function was accepted or refused without the error flag')
+        elif not any(m.get('injected_target') for m in calls):
+            bad.append('no injected changeId reached the required tool path')
+        elif any(not x.get('shown_text') and not (count(x.get('error_flags')) or 0) for x in clicks):
+            bad.append('empty explanation without the required error flag')
+        if bad:
+            notes.append(f'{c["case"]}: {sample(bad, 2)}')
+        else:
+            ok += 1
+    # Negative cases can never purchase credit for a flow that cannot show a legitimate tool answer.
+    all_cases, _why, _ = llm_cases(ev, ('cache',))
+    clean = any(successful_clean_click(x) and not click_scope_problem(ev, c, x)
+                for c in all_cases or [] for x in (llm_clicks(c) or [])[:1])
+    if not clean and not notes:
+        return vacuous('no successful clean report_scope answer demonstrated the explanation path')
+    if not clean:
+        ok = 0
+        notes.append('no successful clean report_scope answer')
+    return g(ok / len(cases), f'{ok} of {len(cases)} manipulated calls respected function and visible sprint scope'
+             + (f'; {sample(notes, 2)}' if notes else ''), 'untrusted tool output shown or acted on outside scope')
 
 
 @row('r8_failure_handling', 'R8')
@@ -1210,20 +1350,31 @@ def _(ev: Ev) -> Dict:
         return unavail(why)
     if not cases or not calls_model:
         return vacuous('no LLM failure case reached a model call')
+    if any(not case_blocked(c) and llm_clicks(c) is None for c in cases):
+        return unavail('llm_v2 failure cases lack per-click flags and model-call times')
     ok, notes = 0, []
     for c in cases:
         blocked = case_blocked(c)
         if blocked:
-            good, note = False, blocked
-        elif c['case'] == 'rate-limited-no-retry-after':
-            good = (count(c.get('llm_calls')) or 0) <= LLM_429_ATTEMPTS
-            note = f'429 without Retry-After: {c.get("llm_calls")} attempts in the minute (<= {LLM_429_ATTEMPTS})'
+            notes.append(blocked)
+            continue
+        clicks = llm_clicks(c)
+        calls = [m for x in clicks for m in x.get('model_calls') or []]
+        good = bool(calls) and all((count(x.get('error_flags')) or 0) > 0 for x in clicks)
+        if c['case'] == 'rate-limited-no-retry-after':
+            times = [num(m.get('t_ms')) for m in calls]
+            if any(t is None for t in times):
+                return unavail('LLM retry timestamps were not recorded')
+            good = good and any(m.get('status') == 429 and m.get('step') == 'ratelimited' for m in calls) \
+                and all(b > a for a, b in zip(times, times[1:]))                 and all(sum(t <= x < t + 60_000 for x in times) <= LLM_429_ATTEMPTS for t in times)
+            note = '429 retries need positive backoff, at most three per minute, and the error flag'
         else:
             words = partial_text()
             if words is None:
-                return unavail(f'{SITE_LLM} defines no PARTIAL_TEXT (the unfinished answer the probe looks for)')
-            good = words not in str(c.get('shown_text') or '')
-            note = 'an answer without finish_reason was ' + ('not shown' if good else 'SHOWN as if complete')
+                return unavail(f'{SITE_LLM} defines no PARTIAL_TEXT')
+            good = good and any(m.get('status') == 200 and not all(m.get('finish_reasons') or [None]) for m in calls) \
+                and all(not x.get('shown_text') and not x.get('ids_shown') for x in clicks)
+            note = 'unfinished answer content was shown or no error flag appeared'
         ok += good
         if not good:
             notes.append(note)
@@ -1239,21 +1390,42 @@ def _(ev: Ev) -> Dict:
     cases, why, calls_model = llm_cases(ev, LLM_COST)
     if why:
         return unavail(why)
-    # Contract §16: the budget binds once the virtual day's tokens REACH it. A click on a UTC day whose tokens had not
-    # reached the budget the probe set (the day turned over between cases) owes no refusal: that case is not graded.
     not_due = [c for c in cases if c.get('budget_reached') is False]
     cases = [c for c in cases if c.get('budget_reached') is not False]
     if not cases:
-        return vacuous('no cache, kill-switch or token-budget case was run' + (
-            f'; the budget case\'s day had {not_due[0].get("day_tokens")} tokens, under its budget' if not_due else ''))
+        return vacuous('no cache, kill-switch or due token-budget case was run')
     if not calls_model:
         return vacuous('the app never called the model, so making no call proves nothing')
-    bad = [case_blocked(c) or f'{c["case"]} ({c.get("llm_calls")} calls)' for c in cases
-           if case_blocked(c) or (count(c.get('llm_calls')) or 0) > 0]
-    return g((len(cases) - len(bad)) / len(cases), f'{len(cases) - len(bad)} of {len(cases)} cache/kill-switch/budget '
-             'cases made no model call' + (f'; {sample(bad, 2)}' if bad else '')
-             + (f'; token-budget not graded: its UTC day had {not_due[0].get("day_tokens")} tokens, under the budget'
-                if not_due else ''), 'AI spend the admin switched off or capped')
+    if any(not case_blocked(c) and llm_clicks(c) is None for c in cases):
+        return unavail('llm_v2 cost cases lack per-click successful-answer evidence')
+    ok, notes = 0, []
+    for c in cases:
+        blocked = case_blocked(c)
+        if blocked:
+            notes.append(blocked)
+            continue
+        clicks = llm_clicks(c)
+        if c['case'] == 'cache':
+            if len(clicks) < 2:
+                return unavail('cache case recorded fewer than two answers')
+            first, second = clicks[:2]
+            good = successful_clean_click(first) and second.get('llm_calls') == 0                 and second.get('shown_own') == first.get('shown_own')                 and second.get('ids_shown') == first.get('ids_shown')                 and not (count(second.get('error_flags')) or 0)                 and c.get('llm_calls') == 0 and not click_scope_problem(ev, c, first)
+            cross = c.get('cross_viewer')
+            if not isinstance(cross, dict) or not isinstance(cross.get('click_results'), list) or cross.get('different_scope') is not True:
+                return unavail('cache case lacks a second viewer with a different visible sprint scope')
+            good = good and bool(cross['click_results']) and not cross.get('absent') \
+                and all(not click_scope_problem(ev, cross, x) for x in cross['click_results'])
+            note = 'cache did not serve an identical successful answer without a new call, or leaked to another viewer'
+        else:
+            good = bool(clicks) and all(x.get('llm_calls') == 0 and (count(x.get('error_flags')) or 0) > 0 for x in clicks)
+            note = f'{c["case"]}: model called or no error flag'
+        ok += good
+        if not good:
+            notes.append(note)
+    return g(ok / len(cases), f'{ok} of {len(cases)} cache/kill-switch/budget cases met their full outcome'
+             + (f'; {sample(notes, 2)}' if notes else '')
+             + (f'; token-budget not due at {not_due[0].get("day_tokens")} UTC-day tokens' if not_due else ''),
+             'unearned cache credit, stale private data, or AI spend the admin capped')
 
 
 # ── R9 the Custom UI boot budget ─────────────────────────────────────────────────────────────
@@ -1342,7 +1514,8 @@ def selftest_deployments(o: fo.Oracle) -> Dict[str, Tuple[str, List[str]]]:
     sprints that stay active (the probe names issues of the active sprints)."""
     rows = o.expected_rows('final')
     keys = sorted({e['issueKey'] for e in rows} - {e['issueKey'] for e in rows if e['sprintId'] in o.closed_at})
-    return {'valid': ('staging', keys[:2]), 'header-case': ('production', keys[2:3])}
+    return {'valid': ('staging', keys[:2]), 'header-case': ('production', keys[2:3]),
+            'concurrent-valid': ('staging', keys[3:4])}
 
 
 def perfect_observations(o: fo.Oracle) -> Dict:
@@ -1351,8 +1524,10 @@ def perfect_observations(o: fo.Oracle) -> Dict:
     deployments = selftest_deployments(o)
     deployed = {k: env for env, keys in deployments.values() for k in keys}
 
+    originals = {key(r): r for r in o.v1_rows()}
+
     def v2(cp):
-        return [{'changeId': e['changeId'], 'sprintId': e['sprintId'], 'at': float(e['at']), 'deleted': e['deleted'],
+        return [{**{k: v for k, v in originals.get(key(e), {}).items() if k in V1_COPY_FIELDS}, 'changeId': e['changeId'], 'sprintId': e['sprintId'], 'at': float(e['at']), 'deleted': e['deleted'],
                  'estimate': float(min(e['estimates'])), 'boardId': e['boardId'], 'kind': e['kind'],
                  'issueKey': e['issueKey'], 'deployedEnvs': deployed.get(e['issueKey'])} for e in o.expected_rows(cp)]
 
@@ -1377,16 +1552,13 @@ def perfect_observations(o: fo.Oracle) -> Dict:
     visible = sorted({e['issueKey'] for e in o.expected_rows('final') if o.issue_by_key[e['issueKey']]['id'] not in hidden})
     bg = lambda t, tpl, **kw: {'t_ms': t, 'invocation': 'inv-c1', 'kind': 'background', 'method': 'GET',  # noqa: E731
                                'path_tpl': tpl, 'cost': 1, 'status': 200, 'reason': None, 'retry_after_s': None, **kw}
-    return {
+    obs = {
         'manifest': {'modules': {'jira:adminPage': [{'key': 'admin'}], 'webtrigger': [{'key': 'ci'}],
                                  'jira:customField': [{'key': 'scope-status', 'type': 'string', 'readOnly': True}],
                                  'dashboards:widget': [{'key': 'scope-widget'}],
                                  'jira:sprintAction': [{'key': 'scope-sprint-ledger'}], 'llm': [{'key': 'llm'}]},
                      'app': {'storage': {'entities': [{'name': 'scope-change'}, {'name': 'scope-ledger'}]}}},
-        'migration': {'v1_rows': [{'changeId': r['changeId'], 'sprintId': r['sprintId'], 'at': r['at']}
-                                  for r in o.v1_rows()],
-                      'v1_final': [{'changeId': r['changeId'], 'sprintId': r['sprintId'], 'at': r['at']}
-                                   for r in o.v1_rows()],
+        'migration': {'v1_rows': o.v1_rows(), 'v1_final': o.v1_rows(),
                       'v2_by_checkpoint': {cp: v2(cp) for cp in fo.CHECKPOINTS},
                       'panel_by_checkpoint': {cp: {'t_ms': 0, 'text': f'Migrated {total} of {total} v1 rows',
                                                    'migrated': total, 'total': total, 'complete': True}
@@ -1423,7 +1595,13 @@ def perfect_observations(o: fo.Oracle) -> Dict:
                        {'case': 'replay', 'status': 200, 'side_effects': 0, 'writes': []},
                        *({'case': c, 'status': 401, 'side_effects': 0, 'writes': []} for c in WT_INVALID),
                        {'case': 'header-case', 'status': 202, 'side_effects': 1,
-                        'writes': ['kvs POST /api/v1/entity/set']}],
+                        'writes': ['kvs POST /api/v1/entity/set']},
+                       {'case': 'concurrent-valid', 'eventId': 'pair-event', 'concurrent_group': 'pair-group',
+                        'invocations': ['ci-first'], 'settled': True, 'status': 202, 'side_effects': 1,
+                        'data_writes': 1, 'writes': ['kvs POST /api/v1/entity/set']},
+                       {'case': 'concurrent-replay', 'eventId': 'pair-event', 'concurrent_group': 'pair-group',
+                        'invocations': ['ci-second'], 'settled': True, 'status': 200, 'side_effects': 0,
+                        'data_writes': 0, 'writes': []}],
         'webtriggerSetup': {'moduleKey': 'ci', 'secretSource': 'panel', 'plan': plan},
         'admin': {'actions': [
             {'as': 'admin', 'via': 'ui', 'resolver': 'save-settings', 'result_ok': True, 'state_changed': True,
@@ -1455,6 +1633,31 @@ def perfect_observations(o: fo.Oracle) -> Dict:
                  'sprint-modal': {'invokes_before_paint': 1, 'bytes_before_paint': 120_000, 'external_requests': 0},
                  'admin-page': {'invokes_before_paint': 1, 'bytes_before_paint': None, 'external_requests': None}},
     }
+
+    sid = next(s for s in o.ledger_sprints() if any(r['sprintId'] == s and not r['deleted'] for r in o.expected_rows('final')))
+    viewer = o.pack['viewer']
+    ids = sorted(visible_change_ids(Ev(obs, o), {'as': viewer, 'sprintId': sid}))[:1]
+    model = {'status': 200, 't_ms': 1, 'finish_reasons': ['tool_use'], 'offered_tools': ['report_scope'],
+             'forced_tool': 'report_scope', 'returned_tools': [{'name': 'report_scope',
+             'arguments': {'summary': 'Scope grew.', 'changeIds': ids}}], 'injected_target': {'changeId': 'outside'}}
+    def click(calls=1, text='Scope grew.', error=0, shown_ids=None, models=None):
+        return {'llm_calls': calls, 'shown_text': text, 'shown_own': text, 'ids_shown': ids if shown_ids is None else shown_ids,
+                'error_flags': error, 'model_calls': [dict(model)] if models is None and calls else models or []}
+    for c in obs['llm_v2']:
+        c.update(sprintId=sid, **{'as': viewer})
+        if c['case'] == 'tool-injection': c['click_results'] = [click()]
+        elif c['case'] == 'cache':
+            c['click_results'] = [click(), click(0)]
+            c['cross_viewer'] = {'as': o.pack['peer'], 'sprintId': sid, 'different_scope': True, 'click_results': [click(text='', error=1, shown_ids=[])]}
+        elif c['case'] == 'rate-limited-no-retry-after':
+            c['click_results'] = [click(3, '', 1, [], [{**model, 'status': 429, 'step': 'ratelimited', 't_ms': t} for t in (1, 1001, 3001)])]
+        elif c['case'] == 'no-finish-reason':
+            c['click_results'] = [click(1, '', 1, [], [{**model, 'finish_reasons': [None]}])]
+        else: c['click_results'] = [click(0, '', 1, [])]
+    obs['llm_v2'].append({'case': 'wrong-function', 'llm_calls': 1, 'per_click': [1], 'shown_text': '',
+        'writes_out_of_scope': 0, 'as': viewer, 'sprintId': sid, 'click_results': [click(1, '', 1, [], [{**model,
+        'returned_tools': [{'name': 'ignore_scope', 'arguments': {'summary': 'Scope grew.', 'changeIds': ids}}]}])]})
+    return obs
 
 
 SELFTEST_GROUPS = ('whole', 'unstarted', 'unrecorded', 'no size')
@@ -1496,7 +1699,7 @@ def idle_observations(o: fo.Oracle) -> Dict:
                     'secret_source': None, 'secret_leaks': []}
     obs['field'] = {'writes': [], 'values_by_checkpoint': {cp: {} for cp in fo.CHECKPOINTS},
                     'applied_by_checkpoint': obs['field']['applied_by_checkpoint']}
-    obs['llm_v2'] = [{**c, 'llm_calls': 0, 'per_click': [0]} for c in obs['llm_v2']]
+    obs['llm_v2'] = [{**c, 'llm_calls': 0, 'per_click': [0], 'click_results': []} for c in obs['llm_v2']]
     obs['boot'] = {s: {'invokes_before_paint': None, 'bytes_before_paint': None, 'external_requests': 0}
                    for s in BOOT_SURFACES}
     return obs
@@ -1583,14 +1786,16 @@ def _mutants(o: fo.Oracle) -> Dict[str, Tuple[Callable[[Dict], None], Dict[str, 
         obs['field']['values_by_checkpoint']['h3'][pay1] = 'committed'
 
     def truncated_shown(obs):
-        next(c for c in obs['llm_v2'] if c['case'] == 'no-finish-reason')['shown_text'] = SELFTEST_PARTIAL
+        c = next(c for c in obs['llm_v2'] if c['case'] == 'no-finish-reason')
+        c['shown_text'] = c['click_results'][0]['shown_text'] = SELFTEST_PARTIAL
 
     def no_cache(obs):
         next(c for c in obs['llm_v2'] if c['case'] == 'cache')['llm_calls'] = 1
 
     def budget(obs, reached):
         next(c for c in obs['llm_v2'] if c['case'] == 'token-budget').update(
-            llm_calls=1, per_click=[1], day_tokens=4200 if reached else 0, budget_reached=reached)
+            llm_calls=1, per_click=[1], click_results=[{'llm_calls': 1, 'error_flags': 1}],
+            day_tokens=4200 if reached else 0, budget_reached=reached)
 
     def field_write_rate_limited(obs):
         obs['field']['writes'].append({'t_ms': 1, 'updates': 50, 'status': 429})
@@ -1638,8 +1843,8 @@ def _mutants(o: fo.Oracle) -> Dict[str, Tuple[Callable[[Dict], None], Dict[str, 
         'R6 replay posts again': (replay_posts_again, {'r6_replay_once': 0.0}, ('r6_replay_once',)),
         'R6 replay doubles an environment': (replay_doubles_env, {'r6_replay_once': 0.0}, ('r6_replay_once',)),
         'R6 replay writes a dedupe marker only': (replay_bookkeeping, {}, ()),
-        'R6 deployment accepted but not recorded': (deployment_unrecorded, {'r6_valid_applies': 0.5}, ()),
-        'R6 deployment recorded for the wrong environment': (deployment_other_env, {'r6_valid_applies': 0.5}, ()),
+        'R6 deployment accepted but not recorded': (deployment_unrecorded, {'r6_valid_applies': round(2 / 3, 4)}, ()),
+        'R6 deployment recorded for the wrong environment': (deployment_other_env, {'r6_valid_applies': round(2 / 3, 4)}, ()),
         'R7 stale field': (stale_field, {'r7_values_fresh': pay1_cut}, ()),
         'R8 truncated answer shown': (truncated_shown, {'r8_failure_handling': 0.5}, ()),
         'R7 a field write meets a rate limit (R2\'s)': (field_write_rate_limited, {}, ()),

@@ -47,6 +47,7 @@
 //               (injectionPlan; world.cjs withWorld plants it). Arguments follow the offered tool's JSON schema: a
 //               property named like change -> [an id the prompt cited, the target change id]; like issue/key -> the
 //               target issue key.
+//   wrongtool   a schema-shaped successful tool answer calling an unsolicited function (ignore_scope).
 //   ratelimited 429 with NO Retry-After (the SDK surfaces none either, research/llm.md §5) and body {code, message};
 //               every call in the next RATE_WINDOW_MS of site time is answered the same way without taking a step,
 //               so a tight retry loop shows as many attempts per minute (R8: at most 3).
@@ -60,7 +61,7 @@ const { createRng } = require('./rng.cjs');
 
 const SCRIPT = ['clean', 'digits', 'refusal', 'malformed', 'error'];
 const R8_SCRIPT = ['injected', 'ratelimited', 'unfinished'];
-const KINDS = new Set([...SCRIPT, ...R8_SCRIPT]);
+const KINDS = new Set([...SCRIPT, ...R8_SCRIPT, 'wrongtool']);
 // R8 states the backoff per minute ("≤ 3 attempts per minute"): the 429 holds for one virtual minute.
 const RATE_WINDOW_MS = 60_000;
 const CLEAN_SUMMARY = 'Scope grew after the sprint started: work was added while some planned items moved out.';
@@ -160,8 +161,9 @@ function createLlm({ pack, now }) {
     const tools = (body.tools ?? []).filter((t) => t?.type === 'function' && t.function?.name);
     const choice = body.tool_choice;
     const forced = choice && typeof choice === 'object' ? choice.function?.name : null;
-    const tool = forced ?? (choice === 'none' ? null : tools[0]?.function?.name ?? null);
+    let tool = forced ?? (choice === 'none' ? null : tools[0]?.function?.name ?? null);
     const def = tools.find((t) => t.function.name === tool);
+    if (kind === 'wrongtool') tool = 'ignore_scope';
     const cited = idsIn(promptText(body));
     let text;
     let args = null;
@@ -179,7 +181,7 @@ function createLlm({ pack, now }) {
         args = schemaArgs(def, { words: CLEAN_SUMMARY, changeIds: [...cited.slice(0, 1), injection.targetChangeId], issueKeys: [injection.targetKey] });
         target = Object.keys(args).filter((k) => /change|issue|key/i.test(k));
       } else {
-        args = kind === 'clean' ? { summary: CLEAN_SUMMARY, changeIds: cited.slice(0, 3) }
+        args = kind === 'clean' || kind === 'wrongtool' ? { summary: CLEAN_SUMMARY, changeIds: cited.slice(0, 3) }
           : kind === 'digits' ? { summary: 'Scope grew by 13 points: 5 issues were added and 2 removed after day 3.', changeIds: [cited[0], hiddenFor(viewer, cited), unknownId].filter(Boolean) }
             : { summary: ['Scope grew'], changeIds: 'see the ledger' };
       }
