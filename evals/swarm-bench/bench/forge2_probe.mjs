@@ -35,7 +35,9 @@
 //   P3 <repo>/forge2/site/ci.cjs       scoringSequence({secret, issueKeys, nowSeconds}) -> [{case, headers, body}]
 import { createRequire } from 'module';
 import { execSync, spawnSync } from 'child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs';
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from 'fs';
+import { randomUUID } from 'node:crypto';
+import { types } from 'node:util';
 import { dirname, join, relative, resolve } from 'path';
 
 const require = createRequire(import.meta.url);
@@ -122,7 +124,94 @@ const obs = {
   // step's read-after-write window (the widget re-reads at the app's own realtime publish).
   concurrency: { query_lag_ms: null, max_concurrent: null, batches: [], groups: [], same_event: 0, same_issue: 0, read_after_write: [] },
 };
-const save = () => writeFileSync(outPath, JSON.stringify(obs, null, 1));
+// Observations can exceed V8's maximum string length. Preserve every value without
+// constructing the entire document, and retain the previous checkpoint if a save fails.
+function writeObservationJson(path, value) {
+  const temporary = `${path}.${randomUUID()}.partial`;
+  let fd = openSync(temporary, 'wx', 0o600);
+  let buffer = '';
+  const ancestors = new Set();
+  const block = 64 * 1024;
+  const flush = () => {
+    const bytes = Buffer.from(buffer);
+    for (let offset = 0; offset < bytes.length;) {
+      const wrote = writeSync(fd, bytes, offset, bytes.length - offset);
+      if (!wrote) throw new Error('observation write made no progress');
+      offset += wrote;
+    }
+    buffer = '';
+  };
+  const emit = (text) => {
+    if (buffer.length + text.length > block) flush();
+    buffer += text;
+    if (buffer.length >= block) flush();
+  };
+  const string = (text) => {
+    emit('"');
+    for (let start = 0; start < text.length;) {
+      let end = Math.min(start + block, text.length);
+      if (end < text.length && /[\uD800-\uDBFF]/.test(text[end - 1]) && /[\uDC00-\uDFFF]/.test(text[end])) end -= 1;
+      emit(JSON.stringify(text.slice(start, end)).slice(1, -1));
+      start = end;
+    }
+    emit('"');
+  };
+  const prepare = (item, key) => {
+    if (item !== null && (typeof item === 'object' || typeof item === 'bigint') && typeof item.toJSON === 'function') item = item.toJSON(key);
+    if (types.isNumberObject(item)) return Number(item);
+    if (types.isStringObject(item)) return String(item);
+    if (types.isBooleanObject(item)) return Boolean.prototype.valueOf.call(item);
+    if (types.isBigIntObject(item)) return BigInt.prototype.valueOf.call(item);
+    return item;
+  };
+  const omitted = (item) => item === undefined || typeof item === 'function' || typeof item === 'symbol';
+  const encode = (item, depth) => {
+    if (typeof item === 'string') { string(item); return; }
+    if (item === null || typeof item !== 'object') { emit(JSON.stringify(item)); return; }
+    if (ancestors.has(item)) throw new TypeError('circular observation cannot be serialized');
+    ancestors.add(item);
+    const array = Array.isArray(item);
+    emit(array ? '[' : '{');
+    let count = 0;
+    const member = (key, prepared) => {
+      emit(`${count++ ? ',' : ''}\n${' '.repeat(depth + 1)}`);
+      if (!array) { string(key); emit(': '); }
+      encode(prepared, depth + 1);
+    };
+    if (array) {
+      const length = item.length;
+      for (let i = 0; i < length; i++) {
+        const prepared = prepare(item[i], String(i));
+        member(String(i), omitted(prepared) ? null : prepared);
+      }
+    } else {
+      for (const key of Object.keys(item)) {
+        const prepared = prepare(item[key], key);
+        if (!omitted(prepared)) member(key, prepared);
+      }
+    }
+    if (count) emit(`\n${' '.repeat(depth)}`);
+    emit(array ? ']' : '}');
+    ancestors.delete(item);
+  };
+  try {
+    const prepared = prepare(value, '');
+    if (omitted(prepared)) throw new TypeError('observation root cannot be serialized');
+    encode(prepared, 0);
+    flush();
+    fsyncSync(fd);
+    closeSync(fd);
+    fd = null;
+    renameSync(temporary, path);
+  } finally {
+    if (fd !== null) closeSync(fd);
+    if (existsSync(temporary)) unlinkSync(temporary);
+  }
+}
+const save = () => writeObservationJson(outPath, obs);
+async function saveAndCleanup(persist, cleanup) {
+  try { persist(); } finally { await cleanup(); }
+}
 // An interface this probe needs and the harness lacks: a harness gap, so the sections it feeds are unavailable.
 const gap = (what, ...sections) => {
   if (!obs.i2Gaps.includes(what)) obs.i2Gaps.push(what);
@@ -2233,6 +2322,37 @@ async function selftest() {
   const results = [];
   const test = async (name, fn) => { await fn(); results.push(name); };
 
+  await test('observation save retains native JSON semantics and failed checkpoint custody', async () => {
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const dir = mkdtempSync(join(tmpdir(), 'forge2-json-selftest-'));
+    const path = join(dir, 'obs.json');
+    try {
+      const shared = { changeId: 'abc', fields: [true, null, 0, -0, NaN, Infinity] };
+      const value = { phases: [shared, shared], empty: {}, nested: [], number: new Number(4),
+        bool: new Boolean(false), text: new String('scope'), date: new Date('2026-10-11T00:00:00Z'),
+        omissions: { a: undefined, b: Symbol('x'), c: () => 0 }, holes: [, undefined, Symbol('x'), () => 0],
+        escaped: '"\\\n\t\u0000😀\uD800', long: 'x'.repeat(65535) + '😀' + '\n'.repeat(80000),
+        toJSONKey: { toJSON(key) { return { key }; } } };
+      writeObservationJson(path, value);
+      const original = readFileSync(path, 'utf8');
+      assert.equal(original, JSON.stringify(value, null, 1));
+      assert.deepEqual(JSON.parse(original), JSON.parse(JSON.stringify(value)));
+      for (const broken of [{ impossible: 1n }, { late: { toJSON() { throw Error('refuse'); } } }]) {
+        assert.throws(() => writeObservationJson(path, broken));
+        assert.equal(readFileSync(path, 'utf8'), original);
+        assert.deepEqual(readdirSync(dir), ['obs.json']);
+      }
+      const circular = {}; circular.self = circular;
+      assert.throws(() => writeObservationJson(path, circular), /circular/);
+      assert.equal(readFileSync(path, 'utf8'), original);
+      let cleaned = false;
+      await assert.rejects(saveAndCleanup(() => { throw Error('save failed'); }, async () => { cleaned = true; }), /save failed/);
+      assert.equal(cleaned, true);
+      assert.deepEqual(readdirSync(dir), ['obs.json']);
+    } finally { rmSync(dir, { recursive: true }); }
+  });
+
   await test('runHours: one ordered agenda, every hour checkpointed at its mark', async () => {
     const t0 = 1_000 * H;
     let clock = t0;
@@ -2886,7 +3006,6 @@ try {
   }
   log('harness failure:', e?.message || e);
 } finally {
-  save();
-  await cleanup();
+  await saveAndCleanup(save, cleanup);
 }
 process.exit(0);
