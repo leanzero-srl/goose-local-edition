@@ -157,8 +157,8 @@ function writeObservationJson(path, value) {
     emit('"');
   };
   const prepare = (item, key) => {
-    if (item !== null && (typeof item === 'object' || typeof item === 'bigint') && typeof item.toJSON === 'function') item = item.toJSON(key);
-    if (types.isNumberObject(item)) return Number(item);
+    if (item !== null && ['object', 'function', 'bigint'].includes(typeof item) && typeof item.toJSON === 'function') item = item.toJSON(key);
+    if (types.isNumberObject(item)) return +item;
     if (types.isStringObject(item)) return String(item);
     if (types.isBooleanObject(item)) return Boolean.prototype.valueOf.call(item);
     if (types.isBigIntObject(item)) return BigInt.prototype.valueOf.call(item);
@@ -2329,7 +2329,8 @@ async function selftest() {
     const path = join(dir, 'obs.json');
     try {
       const shared = { changeId: 'abc', fields: [true, null, 0, -0, NaN, Infinity] };
-      const value = { phases: [shared, shared], empty: {}, nested: [], number: new Number(4),
+      const callable = Object.assign(() => 0, { toJSON(key) { return { key, called: true }; } });
+      const value = { phases: [shared, shared], empty: {}, nested: [], number: new Number(4), callable,
         bool: new Boolean(false), text: new String('scope'), date: new Date('2026-10-11T00:00:00Z'),
         omissions: { a: undefined, b: Symbol('x'), c: () => 0 }, holes: [, undefined, Symbol('x'), () => 0],
         escaped: '"\\\n\t\u0000😀\uD800', long: 'x'.repeat(65535) + '😀' + '\n'.repeat(80000),
@@ -2338,7 +2339,8 @@ async function selftest() {
       const original = readFileSync(path, 'utf8');
       assert.equal(original, JSON.stringify(value, null, 1));
       assert.deepEqual(JSON.parse(original), JSON.parse(JSON.stringify(value)));
-      for (const broken of [{ impossible: 1n }, { late: { toJSON() { throw Error('refuse'); } } }]) {
+      const impossibleNumber = new Number(4); impossibleNumber.valueOf = () => 1n;
+      for (const broken of [{ impossible: 1n }, { number: impossibleNumber }, { late: { toJSON() { throw Error('refuse'); } } }]) {
         assert.throws(() => writeObservationJson(path, broken));
         assert.equal(readFileSync(path, 'utf8'), original);
         assert.deepEqual(readdirSync(dir), ['obs.json']);
