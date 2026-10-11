@@ -164,6 +164,11 @@ import {
 } from './benchForgeKit';
 import { forgePublishBody, forgePublishProblem } from './benchForgePublish';
 import {
+  forgeTaskFingerprint,
+  forgeTaskPublicationFields,
+  forgeTaskPublicationProblem,
+} from './benchForgeTask';
+import {
   benchRunKey,
   clipAbsence,
   parsePublishedIndex,
@@ -4447,6 +4452,9 @@ const buildBenchResultRow = async ({
     ...(modelFields ? { modelFields } : {}),
     mine: true,
     scorerVersion: scoring.scorerVersion,
+    ...(scoring.scorerVersion === 'forge-2.0' && typeof v.taskFingerprint === 'string'
+      ? { taskFingerprint: v.taskFingerprint }
+      : {}),
     // sb-4 additions — the site's endpoint stores these when present and older
     // scorers simply omit them (the allowlist tolerates absence, never unknowns).
     ...(typeof v.hard === 'number' ? { hard: v.hard } : {}),
@@ -5446,6 +5454,22 @@ ipcMain.handle('benchmark-publish', async (_event, args?: { title?: string; runK
   // marked the verdict not board-grade (held, unpublishable, or an rc scorer).
   const forgeResult =
     typeof stored.scorerVersion === 'string' && familyOfScorer(stored.scorerVersion) === 'forge';
+  if (stored.scorerVersion === 'forge-2.0') {
+    let installedFingerprint: string;
+    try {
+      installedFingerprint = forgeTaskFingerprint(
+        await fs.readFile(path.join(resolveBenchPayloadDir(), 'forge2', 'release-manifest.json'))
+      );
+    } catch {
+      return {
+        ok: false,
+        error:
+          'The installed Forge 2.0 task receipt could not be read. Reinstall the current Goose Swarm release before publishing.',
+      };
+    }
+    const taskProblem = forgeTaskPublicationProblem(stored, installedFingerprint);
+    if (taskProblem) return { ok: false, error: taskProblem };
+  }
   if (forgeResult) {
     const problem = forgePublishProblem(stored);
     if (problem) return { ok: false, error: problem };
@@ -5607,7 +5631,7 @@ ipcMain.handle('benchmark-publish', async (_event, args?: { title?: string; runK
         repairRounds?: Array<{ round?: unknown; findings?: unknown }>;
       }
     | undefined;
-  if (forgeResult) Object.assign(payload, forgePublishBody(stored));
+  if (forgeResult) Object.assign(payload, forgePublishBody(stored), forgeTaskPublicationFields(stored));
   else if (verdict) {
     Object.assign(payload, publicScoreDetails(verdict));
     if (verdict.admission) payload.admission = verdict.admission;
