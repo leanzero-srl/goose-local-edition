@@ -5515,6 +5515,11 @@ def _probe_one(root: Path, seed: str, kit: Dict, runtime: str, shots: Path, medi
         proc = subprocess.Popen(cmd, cwd=tmp)
         _CHILDREN.append(proc)
         code = proc.wait()
+        if code:
+            if obs_path.is_file():
+                obs_copy.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(obs_path, obs_copy)
+            raise RuntimeError(f'REFUSED: forge2_probe.mjs exited {code}; retained checkpoint is not a completed site (seed {seed})')
         if not obs_path.is_file():
             raise RuntimeError(f'REFUSED: forge2_probe.mjs exited {code} without observations (seed {seed})')
         obs = json.loads(obs_path.read_text())
@@ -5535,7 +5540,8 @@ def _probe_one(root: Path, seed: str, kit: Dict, runtime: str, shots: Path, medi
                 surface['dominant'] = list(measured[0])
                 surface['dominantShare'] = round(measured[1], 4)
                 surface['blank'] = measured[1] >= float(TH['blank_share'])
-        obs_path.write_text(json.dumps(obs))
+        with obs_path.open('w') as handle:
+            json.dump(obs, handle)
         obs_copy.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(obs_path, obs_copy)
     return obs, pack

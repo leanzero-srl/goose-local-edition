@@ -101,12 +101,18 @@ class CalibrationProvenance(unittest.TestCase):
                     (kit / 'bin/runtime').write_text('changed during probe')
                 elif mutation == 'scorer':
                     sources['source'] = 'b' * 64
-                return type('Process', (), {'wait': lambda _self: 0})()
+                return type('Process', (), {'wait': lambda _self: 1 if mutation == 'failed_probe' else 0})()
             with patch.object(s, 'ROOT', repo), patch.object(s, '_LOADED_SCORER_FILES', copy.deepcopy(sources)), \
                     patch.object(s, 'scorer_files_sha256', side_effect=lambda: copy.deepcopy(sources)), \
                     patch.object(s, 'build_pack', return_value={}), patch.object(s, '_render_node', return_value='node'), \
                     patch.object(s.subprocess, 'Popen', side_effect=launch):
                 if mutation == 'preloaded': sources['source'] = 'b' * 64
+                if mutation == 'failed_probe':
+                    with self.assertRaisesRegex(RuntimeError, 'retained checkpoint is not a completed site'):
+                        s._probe_one(app, '0' * 16, {'dir': str(kit), 'kit_code_sha256': code}, 'wrapper',
+                                     base / 'shots', None, base / 'observations.json')
+                    self.assertEqual((base / 'observations.json').read_text(), '{}')
+                    return
                 return s._probe_one(app, '0' * 16, {'dir': str(kit), 'kit_code_sha256': code}, 'wrapper',
                                     base / 'shots', None, base / 'observations.json')[0]
 
@@ -116,6 +122,9 @@ class CalibrationProvenance(unittest.TestCase):
         self.assertEqual(obs['evaluationInputs']['candidate'],
                          {'manifest.yml': hashlib.sha256(b'tested app').hexdigest()})
         self.assertEqual(obs['scorerFilesSha256'], {'source': 'a' * 64})
+
+    def test_nonzero_probe_exit_preserves_last_checkpoint_but_cannot_stamp_it_complete(self):
+        self.probe('failed_probe')
 
     def test_changed_inputs_or_loaded_scorer_cannot_get_current_stamp(self):
         for mutation in ('candidate', 'site', 'public', 'v1_schema', 'sdk', 'scorer', 'preloaded'):
