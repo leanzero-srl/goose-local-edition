@@ -295,3 +295,80 @@ test('a cooldown published while another admission waits is rechecked and refund
   assert.equal(f.storage.snapshot().entities['rate-dose'][String(f.hourOf(f.now()))].spent, 0);
   assert.equal(f.requests.length, 0);
 });
+
+
+test('a background request gate publishes a burst pause before a concurrent caller can dispatch', async () => {
+  const f = fixture();
+  let answer;
+  f.replies.push(new Promise((resolve) => { answer = resolve; }), f.response(200, { id: '3' }));
+  const first = f.jiraJson('app', '/rest/api/3/issue/TEST-1', undefined, new f.Background({ sharePercent: 70, limitSeconds: 25 }));
+  while (!f.requests.length) await Promise.resolve();
+  const second = f.jiraJson('app', '/rest/api/3/issue/TEST-2', undefined, new f.Background({ sharePercent: 70, limitSeconds: 900 }));
+  answer(f.response(429, { errorMessages: ['Rate limit exceeded'] }, { 'retry-after': '30', 'ratelimit-reason': 'jira-burst-based' }));
+  const results = await Promise.allSettled([first, second]);
+  assert.deepEqual(results.map((r) => [r.status, r.reason?.reason]), [['rejected', 'jira-burst-based'], ['rejected', 'jira-burst-based']]);
+  assert.equal(f.requests.length, 1);
+  assert.equal(f.storage.snapshot().entities['rate-dose'][String(f.hourOf(f.now()))].spent, 0);
+  assert.equal(f.storage.snapshot().entities['rate-dose']['request-gate'].pausedUntil, 0);
+  await f.jiraJson('app', '/rest/api/3/issue/TEST-2/changelog', undefined, new f.Background({ sharePercent: 70, limitSeconds: 900 }));
+  assert.equal(f.requests.length, 2);
+});
+
+test('a request gate expires at the owning invocation limit and an old owner cannot release its successor', async () => {
+  const f = fixture();
+  const first = new f.Background({ sharePercent: 70, limitSeconds: 25 });
+  const old = await first.acquireRequestGate();
+  assert.equal(f.storage.snapshot().entities['rate-dose']['request-gate'].pausedUntil, f.now() + 25_000);
+  f.advance(25_000);
+  const next = new f.Background({ sharePercent: 70, limitSeconds: 55 });
+  const current = await next.acquireRequestGate();
+  assert.ok(current > old);
+  await first.releaseRequestGate(old);
+  assert.equal(f.storage.snapshot().entities['rate-dose']['request-gate'].pausedUntil, f.now() + 55_000);
+  await next.releaseRequestGate(current);
+  assert.equal(f.storage.snapshot().entities['rate-dose']['request-gate'].pausedUntil, 0);
+});
+
+test('waiting for a request gate returns before the callers invocation limit', async () => {
+  const f = fixture();
+  const owner = new f.Background({ sharePercent: 70, limitSeconds: 900 });
+  await owner.acquireRequestGate();
+  const waiting = new f.Background({ sharePercent: 70, limitSeconds: 1 });
+  await assert.rejects(waiting.acquireRequestGate(), (e) => e.reason === 'time');
+  assert.equal(f.now(), waiting.startedAt);
+});
+
+test('a global quota pause reaches a different endpoint before its dispatch and never blocks a person', async () => {
+  const f = fixture();
+  let answer;
+  f.replies.push(new Promise((resolve) => { answer = resolve; }), f.response(200, { id: 'viewer' }));
+  const first = f.jiraJson('app', '/rest/api/3/issue/TEST-1', undefined, new f.Background({ sharePercent: 70, limitSeconds: 25 }));
+  while (!f.requests.length) await Promise.resolve();
+  const other = f.jiraJson('app', '/rest/api/3/myself', undefined, new f.Background({ sharePercent: 70, limitSeconds: 900 }));
+  answer(f.response(429, { errorMessages: ['Rate limit exceeded'] }, { 'retry-after': '30', 'ratelimit-reason': 'jira-quota-global-based' }));
+  const results = await Promise.allSettled([first, other]);
+  assert.deepEqual(results.map((r) => [r.status, r.reason?.reason]), [['rejected', 'jira-quota-global-based'], ['rejected', 'paused']]);
+  assert.equal(f.requests.length, 1);
+  const owner = new f.Background({ sharePercent: 70, limitSeconds: 900 });
+  const held = await owner.acquireRequestGate();
+  assert.equal((await f.jiraJson('user', '/rest/api/3/myself', undefined, { maxWaitSeconds: 5 })).id, 'viewer');
+  assert.equal(f.requests.length, 2);
+  assert.equal(f.requests[1].as, 'user');
+  assert.equal(f.storage.snapshot().entities['rate-dose'][String(f.hourOf(f.now()))].spent, 0);
+  await owner.releaseRequestGate(held);
+});
+
+test('overlapping quota and endpoint pauses retain the longer reason while unrelated endpoints recover', async () => {
+  const f = fixture();
+  const first = new f.Background({ sharePercent: 70, limitSeconds: 900 });
+  await first.delayEndpoint('GET /rest/api/3/issue/{id}', 60);
+  await first.pause(30);
+  const later = () => new f.Background({ sharePercent: 70, limitSeconds: 900 });
+  await assert.rejects(later().admit('GET', '/rest/api/3/myself'), (e) => e.reason === 'paused' && e.retryAfterSeconds === 30);
+  await assert.rejects(later().admit('GET', '/rest/api/3/issue/TEST-1'), (e) => e.reason === 'jira-burst-based' && e.retryAfterSeconds === 60);
+  f.advance(30_000);
+  await later().admit('GET', '/rest/api/3/myself');
+  await assert.rejects(later().admit('GET', '/rest/api/3/issue/123'), (e) => e.reason === 'jira-burst-based' && e.retryAfterSeconds === 30);
+  f.advance(30_000);
+  await later().admit('GET', '/rest/api/3/issue/123');
+});

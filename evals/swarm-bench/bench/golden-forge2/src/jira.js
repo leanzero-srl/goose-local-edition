@@ -151,6 +151,25 @@ export class Background {
     }
   }
 
+  async acquireRequestGate() {
+    for (;;) {
+      try {
+        const held = await this.mutateDose('request-gate', (current) => {
+          if (!this.hasTimeFor(0)) throw new RateLimited(1, 'time');
+          if (current.pausedUntil > Date.now()) throw new RateLimited(1, 'request-in-flight');
+          return { spent: current.spent + 1, pausedUntil: this.startedAt + this.limitMs };
+        });
+        return held.spent;
+      } catch (e) {
+        if (!(e instanceof RateLimited) || e.reason !== 'request-in-flight') throw e;
+        await this.wait(e.retryAfterSeconds * 1000, 'time');
+      }
+    }
+  }
+  async releaseRequestGate(generation) {
+    await this.mutateDose('request-gate', (current) => current.spent === generation ? { ...current, pausedUntil: 0 } : current);
+  }
+
   async settle(reservation, actual) {
     if (actual > reservation.points) throw new Error(`Jira returned more records than the admitted bound (${actual} > ${reservation.points})`);
     const refund = reservation.points - actual;
@@ -239,31 +258,37 @@ export async function jira(who, path, init = {}, work = { maxWaitSeconds: Infini
   const client = who === 'user' ? api.asUser() : api.asApp();
   const method = (init.method ?? 'GET').toUpperCase();
   for (let attempt = 0; ; attempt += 1) {
-    const reservation = work.background ? await work.admit(method, path, init) : null;
-    const res = await client.requestJira(path, init);
-    if (res.status !== 429) {
-      if (reservation) {
-        const body = res.status === 204 ? undefined : await res.json();
-        bodies.set(res, body);
-        await work.settle(reservation, actualPoints(method, path, body));
+    // Publish rate state before another background request can dispatch. The consumers still run
+    // concurrently; this lease ends before a Retry-After wait and expires at its owner's invocation limit.
+    const generation = work.background ? await work.acquireRequestGate() : null;
+    let wait, reason;
+    try {
+      const reservation = work.background ? await work.admit(method, path, init) : null;
+      const res = await client.requestJira(path, init);
+      if (res.status !== 429) {
+        if (reservation) {
+          const body = res.status === 204 ? undefined : await res.json();
+          bodies.set(res, body);
+          await work.settle(reservation, actualPoints(method, path, body));
+        }
+        return res;
       }
-      return res;
+      wait = retryAfterSeconds(res, attempt);
+      reason = res.headers.get('ratelimit-reason') ?? '';
+      if (work.background) {
+        if (QUOTA_REASONS.has(reason)) await work.pause(wait);
+        if (reason === BURST_REASON) {
+          const endpoint = endpointOf(method, path);
+          work.slow(endpoint);
+          await work.delayEndpoint(endpoint, wait);
+        }
+        if (reason === ISSUE_REASON) await work.delayIssues(writtenIssues(method, path, init), wait);
+      }
+      if (reservation) await work.settle(reservation, 0);
+    } finally {
+      if (generation !== null) await work.releaseRequestGate(generation);
     }
-    if (reservation) await work.settle(reservation, 0);
-    const wait = retryAfterSeconds(res, attempt);
-    const reason = res.headers.get('ratelimit-reason') ?? '';
-    if (work.background) {
-      if (QUOTA_REASONS.has(reason)) {
-        await work.pause(wait);
-        throw new RateLimited(wait, reason);
-      }
-      if (reason === BURST_REASON) {
-        const endpoint = endpointOf(method, path);
-        work.slow(endpoint);
-        await work.delayEndpoint(endpoint, wait);
-      }
-      if (reason === ISSUE_REASON) await work.delayIssues(writtenIssues(method, path, init), wait);
-    }
+    if (work.background && QUOTA_REASONS.has(reason)) throw new RateLimited(wait, reason);
     if (wait > work.maxWaitSeconds) throw new RateLimited(wait, reason);
     await sleep(wait * 1000 + 50);
   }
