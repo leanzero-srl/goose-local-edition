@@ -84,6 +84,18 @@ for (const variant of ['golden', 'm_jql_stale_precomputation']) test(`${variant}
       assert.deepEqual(ids(after), ids(first), 'the mutant really leaves the shared native mapping stale');
       assert.equal(w.site.log.filter((entry) => entry.op === 'POST /rest/api/3/jql/function/computation').length, 0);
     }
+    const viewerAfter = await w.search(w.viewer);
+    assert.equal(viewerAfter.expansion.calls[0].precomputationId, first.expansion.calls[0].precomputationId);
+    assert.equal(viewerAfter.expansion.calls[0].invoked, false);
+    assert.deepEqual(ids(viewerAfter), variant === 'golden' ? [w.visible.id, w.next.id].sort() : [w.visible.id]);
+    assert.ok(!ids(viewerAfter).includes(w.hidden.id), 'the same stale clause still goes through Jira Browse permissions');
+    w.site.control.closesprint({ sprintId: w.sprint.id });
+    assert.equal(w.site.state.sprint(w.sprint.id).state, 'closed');
+    const closed = await w.search(w.peer);
+    assert.equal(closed.expansion.calls[0].precomputationId, first.expansion.calls[0].precomputationId);
+    assert.equal(closed.expansion.calls[0].invoked, false);
+    assert.deepEqual(ids(closed), variant === 'golden' ? [w.hidden.id, w.visible.id, w.next.id].sort() : ids(first),
+      'the closed sprint uses the same native clause and inherits its stale membership');
     assert.deepEqual(w.emu.harnessMissing, []);
   } finally { await w.close(); }
 });
@@ -115,6 +127,25 @@ for (const variant of ['golden', 'm_jql_user_baked_cache']) test(`${variant}: na
     assert.equal(peerResult.expansion.calls[0].invoked, false);
     assert.deepEqual(ids(peerResult), variant === 'golden' ? [w.visible.id, w.hidden.id].sort() : [w.visible.id]);
     assert.deepEqual(ids(await w.search(w.viewer)), [w.visible.id], 'Jira still enforces viewer browse permission; this defect loses membership without inventing a leak');
+    assert.deepEqual(w.emu.harnessMissing, []);
+  } finally { await w.close(); }
+});
+
+for (const variant of ['golden', 'm_jql_user_baked_cache']) test(`${variant}: initial JQL after a different viewer seeded the actual person view`, { timeout: 120000 }, async () => {
+  const w = await rig(variant);
+  try {
+    const action = await w.emu.invokeAction('get-sprint-scope', { sprintId: String(w.sprint.id) }, { asUser: w.viewer });
+    assert.equal(action.ok, true, JSON.stringify(action.error));
+    assert.deepEqual(action.result.changes.map((change) => change.issueKey), [w.visible.key]);
+    const first = await w.search(w.peer);
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    assert.equal(first.expansion.calls[0].invoked, true, 'this caller is doing the first native function evaluation');
+    assert.deepEqual(ids(first), variant === 'golden' ? [w.hidden.id, w.visible.id].sort() : [w.visible.id],
+      'a viewer-filtered stored list already omits a visible member for another caller at initial evaluation');
+    const other = await w.search(w.viewer);
+    assert.equal(other.expansion.calls[0].precomputationId, first.expansion.calls[0].precomputationId);
+    assert.equal(other.expansion.calls[0].invoked, false);
+    assert.deepEqual(ids(other), [w.visible.id], 'Jira applies the same-object Browse boundary in both variants');
     assert.deepEqual(w.emu.harnessMissing, []);
   } finally { await w.close(); }
 });

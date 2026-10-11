@@ -185,10 +185,18 @@ RUNTIME_MUTANTS = {
                                      'r10_shared_permissions', 'r10_empty_and_closed', 'r10_invalid_arguments'],
                              'critical': False, 'family': 'R10',
                              'why': 'The native JQL module is absent, so Jira cannot invoke scopeChanged.'},
-    'm_jql_stale_precomputation': {'loses': ['r10_precomputation_refresh'], 'critical': False, 'family': 'R10',
-                                 'why': 'The refresh handler returns before updating existing shared precomputations.'},
-    'm_jql_user_baked_cache': {'loses': ['r10_shared_permissions'], 'critical': False, 'family': 'R10',
-                             'why': "A shared precomputation uses the last viewer's permitted IDs; another viewer loses visible members."},
+    'm_jql_stale_precomputation': {'loses': ['r10_precomputation_refresh'],
+                                 'may_lose': ['r10_shared_permissions', 'r10_empty_and_closed'],
+                                 'critical': False, 'family': 'R10',
+                                 'why': 'The refresh handler returns before updating existing shared precomputations. '
+                                        'Other viewers and a sprint that closes reuse those same native IDs without '
+                                        'invoking the function, so their cached searches also miss later ledger members. '
+                                        "Jira still applies each caller's Browse permissions; this does not disclose hidden issues."},
+    'm_jql_user_baked_cache': {'loses': ['r10_shared_permissions'], 'may_lose': ['r10_initial_membership'],
+                             'critical': False, 'family': 'R10',
+                             'why': "A person view stores the last viewer's permitted IDs. A different caller's first "
+                                    'native JQL evaluation can already consume that list and omit its visible members; '
+                                    'later shared queries reuse the incorrect clause. Jira still applies Browse permissions.'},
 }
 
 
