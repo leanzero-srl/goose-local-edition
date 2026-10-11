@@ -86,6 +86,8 @@ function sprintEntry(sprint, boardId, estimateFieldId) {
 // board, each with the estimation field of the board that owns it (originBoardId).
 export async function discoverConfig(work) {
   const { sprintFieldId, scopeFieldId } = await discoverFields(work);
+  const caller = await jiraJson('app', route`/rest/api/3/myself`, undefined, work);
+  if (!caller.timeZone) throw new Error('The app caller has no Jira time zone for an incremental JQL watermark.');
   const boards = await listScrumBoards(work);
   const found = new Map();
   for (const board of boards) {
@@ -100,7 +102,7 @@ export async function discoverConfig(work) {
     if (!estimateFields.has(String(boardId))) estimateFields.set(String(boardId), await boardEstimateField(boardId, work));
     sprints[id] = sprintEntry(sprint, boardId, estimateFields.get(String(boardId)));
   }
-  return { sprintFieldId, scopeFieldId, sprints };
+  return { sprintFieldId, scopeFieldId, sprints, jiraTimeZone: caller.timeZone };
 }
 
 // The sprints one event touches, as they are now: a sprint the issue's own Sprint field carries (state,

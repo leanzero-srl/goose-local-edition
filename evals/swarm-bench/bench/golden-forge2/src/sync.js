@@ -249,10 +249,10 @@ export async function applyIssueEvent(cfg, { issueId, changelogId, sprintChange 
 
 // ---- scheduled path --------------------------------------------------------------------------
 
-function jqlDate(ms) {
-  const d = new Date(ms);
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+function jqlDate(ms, timeZone) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(ms)).map((p) => [p.type, p.value]));
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
 }
 
 // Every issue that can hold a change of an active sprint: those in one now, and every issue updated since
@@ -260,11 +260,7 @@ function jqlDate(ms) {
 // since). The first run, and a run that finds a sprint the previous one did not know, reads everything
 // updated since the earliest start (one day early, so the site's JQL time zone cannot cut it).
 export async function searchCandidates(cfg, sinceMs, work) {
-  const sprints = Object.values(cfg.sprints);
-  const updated = sinceMs
-    ? `updated >= -${Math.ceil((Date.now() - sinceMs) / 60000) + 1}m`
-    : `updated >= "${jqlDate(Math.min(...sprints.map((s) => s.startMs)) - 24 * 3600 * 1000)}"`;
-  const jql = `sprint in (${sprints.map((s) => s.id).join(', ')}) OR ${updated}`;
+  const jql = candidateJql(cfg, sinceMs ?? null);
   const issues = [];
   let nextPageToken;
   do {
@@ -360,8 +356,10 @@ const PASS_LEASE = 'reconcile-lease';
 function candidateJql(cfg, sinceMs) {
   const sprints = Object.values(cfg.sprints);
   const since = sinceMs ?? Math.min(...sprints.map((s) => s.startMs)) - 24 * 3600 * 1000;
-  // Keep the literal query fixed while following its opaque pagination token.
-  return `sprint in (${sprints.map((s) => s.id).join(', ')}) OR updated >= "${jqlDate(since)}" ORDER BY id ASC`;
+  // A fixed minute watermark overlaps the preceding minute without re-reading every unchanged
+  // sprint issue or moving the cutoff during opaque pagination and queue continuation.
+  const updated = `updated >= "${jqlDate(since, cfg.jiraTimeZone)}"`;
+  return `${sinceMs === null ? `sprint in (${sprints.map((s) => s.id).join(', ')}) OR ` : ''}${updated} ORDER BY id ASC`;
 }
 
 async function reconcilePass(cfg, previous, work) {
@@ -369,7 +367,7 @@ async function reconcilePass(cfg, previous, work) {
   const active = new Set(sprintIds);
   const closedSince = await sprintsClosedSince(cfg, previous, work);
   const last = await kvs.get(RECONCILE_KEY);
-  const knewAll = sprintIds.every((id) => previous?.sprints?.[id]);
+  const knewAll = sprintIds.every((id) => last?.sprintIds?.includes(id));
   const fields = Object.fromEntries(Object.values(cfg.sprints).map((s) => [s.boardId, s.estimateFieldId ?? null]));
   const switched = Object.entries(fields).some(([b, f]) => last?.fields?.[b] !== undefined && last.fields[b] !== f);
   const signature = JSON.stringify({ fields, sprintIds, closed: [...closedSince.keys()].sort(), issueFields: issueFields(cfg) });
@@ -504,7 +502,7 @@ async function reconcilePass(cfg, previous, work) {
     const values = await closedSprintStatuses(active, closed, new Set([...candidateIds, ...deleted]));
     if (values.size) pass.statuses += await writeStatuses(cfg.scopeFieldId, values, work);
   }
-  await kvs.set(RECONCILE_KEY, { startedAt: pass.startedAt, fields });
+  await kvs.set(RECONCILE_KEY, { startedAt: pass.startedAt, fields, sprintIds });
   await kvs.delete(PASS_KEY);
   return { issues: candidateIds.size, rows: pass.rows, members: pass.members, statuses: pass.statuses, deleted: deleted.length, sprintIds: [...changed] };
 }

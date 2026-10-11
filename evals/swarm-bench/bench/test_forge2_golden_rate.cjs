@@ -134,7 +134,7 @@ test('a quota-cut reconciliation advances its persisted page instead of buying t
   const f = fixture();
   let stopped = false;
   const requests = [];
-  const cfg = { sprintFieldId: 'sprint', scopeFieldId: null, estimateFields: [], sprints: { '11': { id: '11', startMs: f.now() - 86_400_000, boardId: '1' } } };
+  const cfg = { jiraTimeZone: 'UTC', sprintFieldId: 'sprint', scopeFieldId: null, estimateFields: [], sprints: { '11': { id: '11', startMs: f.now() - 86_400_000, boardId: '1' } } };
   const jiraJson = async (_as, url, init) => {
     const body = JSON.parse(init.body);
     requests.push({ url, body });
@@ -161,4 +161,52 @@ test('a quota-cut reconciliation advances its persisted page instead of buying t
   assert.equal(requests.filter((r) => r.url.includes('/search/jql') && !r.body.nextPageToken).length, 1);
   assert.equal(requests.filter((r) => r.url.includes('/changelog/bulkfetch') && r.body.issueIdsOrKeys.includes('1')).length, 1);
   assert.equal(await f.kvs.get('reconcile-progress'), undefined);
+});
+
+
+test('incremental reconciliation uses a fixed minute watermark in the app caller time zone', () => {
+  const f = fixture();
+  const sync = sourceModule('sync.js', { ...f.bindings }, ['candidateJql']);
+  const cfg = { jiraTimeZone: 'America/New_York', sprints: { '11': { id: '11', startMs: f.now() - 86_400_000 } } };
+  const watermark = Date.parse('2026-10-11T11:31:59.000Z');
+  assert.equal(sync.candidateJql(cfg, watermark), 'updated >= "2026-10-11 07:31" ORDER BY id ASC');
+  f.advance(3_600_000);
+  assert.equal(sync.candidateJql(cfg, watermark), 'updated >= "2026-10-11 07:31" ORDER BY id ASC');
+  assert.match(sync.candidateJql(cfg, null), /^sprint in \(11\) OR updated >= "/);
+});
+
+
+test('admission that crosses the hour while persisting its reservation rebooks before Jira is sent', async () => {
+  const f = fixture();
+  f.advance(3_599_000);
+  const work = new f.Background({ sharePercent: 70, limitSeconds: 900 });
+  const original = work.mutateDose.bind(work);
+  let crossed = false;
+  work.mutateDose = async (hour, update) => {
+    const result = await original(hour, update);
+    if (!crossed) { crossed = true; f.advance(2000); }
+    return result;
+  };
+  const reservation = await work.admit('POST', '/rest/api/3/search/jql', f.postJson({ maxResults: 100 }));
+  assert.equal(reservation.hour, f.hourOf(f.now()));
+  const doses = f.storage.snapshot().entities['rate-dose'];
+  assert.equal(doses[String(reservation.hour - 1)].spent, 0);
+  assert.equal(doses[String(reservation.hour)].spent, 101);
+});
+
+
+test('incremental JQL selects the changed record and excludes unchanged active-sprint issues', () => {
+  const f = fixture();
+  const sync = sourceModule('sync.js', { ...f.bindings }, ['candidateJql']);
+  const { compile } = require('../forge2/site/jql.cjs');
+  const cfg = { jiraTimeZone: 'UTC', sprints: { '11': { id: '11', startMs: f.now() - 86_400_000 } } };
+  const model = { now: f.now, fields: [], sprints: [{ id: 11, state: 'active' }], projects: [], statuses: [], issueTypes: [], sprintFieldId: 'sprint' };
+  const cut = f.now() - 3_600_000;
+  const query = compile(sync.candidateJql(cfg, cut), model);
+  const untouched = { id: '1', key: 'TEST-1', fields: { updated: new Date(cut - 60_000).toISOString(), sprint: [{ id: 11 }] } };
+  const changed = { id: '2', key: 'TEST-2', fields: { updated: new Date(cut + 1000).toISOString(), sprint: [] } };
+  assert.equal(query.matches(untouched), false);
+  assert.equal(query.matches(changed), true);
+  f.advance(3_600_000);
+  assert.equal(query.matches(changed), true);
 });

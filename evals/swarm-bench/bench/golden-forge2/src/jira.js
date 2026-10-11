@@ -123,16 +123,21 @@ export class Background {
   async admit(method, path, init) {
     await this.pace(endpointOf(method, path), method);
     await this.spaceWrites(writtenIssues(method, path, init));
-    const hour = hourOf(Date.now());
     const points = pointsOf(method, path, init);
-    await this.mutateDose(hour, (current) => {
-      const now = Date.now();
-      if (!this.hasTimeFor(0)) throw new RateLimited(1, 'time');
-      if (current.pausedUntil > now) throw new RateLimited(Math.ceil((current.pausedUntil - now) / 1000), 'paused');
-      if (current.spent + points > this.cap) throw new RateLimited(secondsToNextHour(now), 'background-share');
-      return { ...current, spent: current.spent + points };
-    });
-    return { hour, points };
+    for (;;) {
+      const hour = hourOf(Date.now());
+      await this.mutateDose(hour, (current) => {
+        const now = Date.now();
+        if (!this.hasTimeFor(0)) throw new RateLimited(1, 'time');
+        if (current.pausedUntil > now) throw new RateLimited(Math.ceil((current.pausedUntil - now) / 1000), 'paused');
+        if (current.spent + points > this.cap) throw new RateLimited(secondsToNextHour(now), 'background-share');
+        return { ...current, spent: current.spent + points };
+      });
+      const reservation = { hour, points };
+      if (hour === hourOf(Date.now())) return reservation;
+      // Storage waits can cross the quota reset before the Jira request has been sent.
+      await this.settle(reservation, 0);
+    }
   }
 
   async settle(reservation, actual) {

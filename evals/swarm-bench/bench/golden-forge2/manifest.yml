@@ -127,9 +127,9 @@ modules:
       operators:
         - in
         - not in
-      function: scope-changed
+      function: scope-changed-function
   function:
-    - key: scope-changed
+    - key: scope-changed-function
       handler: index.scopeChanged
     - key: on-issue-updated
       handler: index.onIssueUpdated
