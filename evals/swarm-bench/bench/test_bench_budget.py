@@ -5,6 +5,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shlex
 import signal
 import sys
 import tempfile
@@ -55,8 +56,11 @@ elif mode == 'spend':
 
 def _engine(root: Path) -> Path:
     engine = root / 'engine'
-    engine.write_text('#!' + sys.executable + '\n' + FAKE_ENGINE % {
+    script = root / 'engine.py'
+    script.write_text(FAKE_ENGINE % {
         'title': TITLE_MODEL, 'model': MODEL, 'closing': bench_budget.MAX_TURNS_MESSAGE})
+    engine.write_text('#!/bin/sh\nexec ' + shlex.quote(sys.executable) + ' '
+                      + shlex.quote(str(script)) + ' "$@"\n')
     engine.chmod(0o700)
     return engine
 
@@ -80,7 +84,7 @@ class IsolatedInvoke(unittest.TestCase):
     """invoke() under an isolated tier, with the sandbox replaced by a plain runtime directory."""
 
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(prefix='bench fixture ')
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.engine = _engine(self.root)
