@@ -27,7 +27,7 @@
     "bench/probes/vendor_trace.py": "11a25b8b41dc612de2c551a279b6ff24cf3d2974e82807c24e0256ed404bb159",
     "bench/run_build.py": "8ecbb127c64ad995811729d13b09e8f21abe01e91ccb87709116fefd142577aa",
     "bench/score_build.py": "3c1fe96b5d43be3cb58cf8e6faca38ef0012062e1ce0dbca03c02c8d1cb59500",
-    "bench/score_forge2.py": "67536afda42b223c2f63888c22da1fca25a5602944cef2cb82e7f5e5cb31ca20",
+    "bench/score_forge2.py": "d44c512dfd72272aaf0ad2a6c475410b1d1d0ed3ef212d2d63b4aaf0d313f01c",
     "bench/vendor_service.py": "a0d255dfa5dc37af3d6039902f0c883d66fb218623e09a97df521754bb28dd3f",
     "forge2/kit/FOLLOWUPS.md": "d52f60d8b53330ca358a552a667dd07cccc6aff1028a82aca09be3ebe7c94dd2",
     "forge2/kit/README.md": "31523cee1efd63997d410757215218b28d22fd570cc8fefbf1d5809359a44482",
@@ -41,7 +41,7 @@
     "forge2/kit/lib/csp.cjs": "5705afed38a144efb6e8aa9d372df477f4a242a70adc93fb33dfdaf7e96a6c17",
     "forge2/kit/lib/emulator.cjs": "56a873818fcf8a0c26e6d0a9a3b66fcaf7c84b61207251a1aecaf439cc53328d",
     "forge2/kit/lib/kitpaths.cjs": "0a10ff5dfffcb1c137ba343dee06314aed09e7f8e70ba0f82f26adac7d574521",
-    "forge2/kit/lib/kvs.cjs": "80328da2aa7f35412763c27b828dd4c1ed0f28b281b961cde5ea4329200b76c9",
+    "forge2/kit/lib/kvs.cjs": "402150d26fb4c88087c2f2b67747b5a83c1367ec937b2c62477cbc3b9adb3281",
     "forge2/kit/lib/native-jql.cjs": "b8b5d09d7a421deff54e0ac8098761e0d328c998e2713721ebcd0846a8aebd50",
     "forge2/kit/lib/proxy.cjs": "cb34cd7e9b18f2e53fea73f388b49d8a91ef7467af9d521603155eebc92fe34b",
     "forge2/kit/lib/runner.cjs": "33bb60ad049f70637ce17fd6b1f15b1a55ff887ed16023b95851a11997a20b7d",
@@ -75,6 +75,7 @@
     "forge2/kit/test/jql-runtime-controls.test.cjs": "3d60f10ead12f61dbf9c594e0b11817d8a2892ee919c6a7f06776bf6ecacefc8",
     "forge2/kit/test/kit-core.test.cjs": "97b2853b784473b770c04778837652d13fa36ef99f25aaec80520455db60acb7",
     "forge2/kit/test/kit.test.cjs": "3075ddca8f6bd66e6c83b351d8cb323f0e7199886885fa5b62bbeca6666bcd96",
+    "forge2/kit/test/kvs-transaction-atomic.test.cjs": "1c96bd594c95dbe5e66e06f88b30a128bce0e22f99b054ddacd3fe9e0d830f09",
     "forge2/kit/test/llm-realtime.test.cjs": "27010e7b613685917a1687fe7527128b511d6392b645da33369109f7685e0bff",
     "forge2/kit/test/native-jql.test.cjs": "f90fc487129285508358e99eda4c62e416d50c4ee5cd7b51ceb68f97ecdfc59c",
     "forge2/kit/test/platform-clock.test.cjs": "3c4e9596447ca214134a11fba92494bbf4cf8330b8ee86a952688e40c8baabf3",
@@ -159,5 +160,5 @@
     "forge2/starter/static/widget/src/index.jsx": "05e6bff92998b3598b69682c69a47a3f28ea5f053b645890a5da5e17007d1f89",
     "forge2/starter/static/widget/src/widget.css": "6c13a7cd365e348c60d658b8f3eb75b45173c1cb6493db3bb75df06032f39ddf"
   },
-  "sourceCommit": "303fd1c63504930fddeb9ccd6e85429d7cd1a8c9"
+  "sourceCommit": "b05deefba3f9bdc5df7955a8b09496bedebd3770"
 }
