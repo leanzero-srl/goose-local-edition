@@ -413,6 +413,18 @@ class HistoryAndResumeControls(unittest.TestCase):
             self.assertEqual(unit['status'], 'stopped-unscored')
             self.assertEqual(unit['stop_receipt']['pids'], [123])
 
+    def test_ui_timeout_and_malformed_reply_enter_owned_stop_fallback(self):
+        config = {'node': '/native/node', 'engine': '/installed/goose'}
+        for outcome in (subprocess.TimeoutExpired(['node', 'dispatch'], 90), SimpleNamespace(returncode=0, stdout='invalid JSON')):
+            unit = {'key': 'pilot', 'kind': 'build', 'status': 'running', 'runId': 'original', 'workdir': '/original-tree'}
+            side_effect = outcome if isinstance(outcome, Exception) else None
+            result = None if side_effect else outcome
+            with tempfile.TemporaryDirectory() as directory, patch.object(campaign.subprocess, 'run', side_effect=side_effect, return_value=result), patch.object(campaign, 'stop_build_pids', return_value={'runId': 'original', 'pids': [123]}) as stop:
+                state = {'units': [unit], 'ledger': {}}
+                campaign.abort_active(Path(directory), state, unit, config, 'accounting hold')
+                stop.assert_called_once_with(unit, config)
+                self.assertEqual(unit['status'], 'stopped-unscored')
+
     def test_per_pid_stop_reaches_children_in_their_own_process_sessions(self):
         with tempfile.TemporaryDirectory() as directory:
             private = Path(directory)

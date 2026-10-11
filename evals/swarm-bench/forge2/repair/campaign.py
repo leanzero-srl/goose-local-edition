@@ -39,11 +39,14 @@ def plan(roster):
 
 
 def ui(config, command, *arguments):
-    result = subprocess.run([config['node'], str(HERE / 'dispatch.mjs'), command, *arguments],
-                            capture_output=True, text=True, timeout=90)
-    if result.returncode:
-        raise Hold('Installed Benchmark UI transport/control failed; launch state preserved')
-    return json.loads(result.stdout)
+    try:
+        result = subprocess.run([config['node'], str(HERE / 'dispatch.mjs'), command, *arguments],
+                                capture_output=True, text=True, timeout=90)
+        if result.returncode:
+            raise Hold('Installed Benchmark UI transport/control failed; launch state preserved')
+        return json.loads(result.stdout)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        raise Hold('Installed Benchmark UI transport/reply failed; launch state preserved') from None
 
 
 def save(state_dir, state):
