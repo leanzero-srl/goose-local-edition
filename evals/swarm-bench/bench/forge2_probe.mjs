@@ -2067,7 +2067,8 @@ async function explainSteps(s, sid) {
 function llmAnswerEvidence(e) {
   const choices = e.response?.choices ?? [];
   const choice = e.request?.tool_choice;
-  return { t_ms: Date.parse(e.t), status: e.status, step: e.step,
+  return { t_ms: Date.parse(e.t), ...(e.completed_ms === undefined ? {} : { completed_ms: e.completed_ms }),
+    status: e.status, step: e.step,
     offered_tools: (e.request?.tools ?? []).map((t) => t.function?.name).filter(Boolean),
     forced_tool: choice && typeof choice === 'object' ? choice.function?.name ?? null : null,
     finish_reasons: choices.map((c) => c.finish_reason ?? null),
@@ -2848,6 +2849,9 @@ async function selftest() {
     assert.deepEqual(sample.finish_reasons, [null]);
     assert.deepEqual(sample.returned_tools, [{ name: 'ignore_scope', arguments: { changeIds: ['bad'] } }]);
     assert.equal(sample.t_ms, Date.parse('2026-10-01T12:00:00.000Z'));
+    assert.equal(Object.hasOwn(sample, 'completed_ms'), false, 'archived evidence omits unknown completion');
+    const timed = llmAnswerEvidence({ t: '2026-10-01T12:00:00.000Z', completed_ms: 1790856000200 });
+    assert.equal(timed.completed_ms, 1790856000200);
   });
 
   for (const r of results) console.log(`ok - ${r}`);

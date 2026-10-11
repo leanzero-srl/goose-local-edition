@@ -1357,10 +1357,14 @@ def _(ev: Ev) -> Dict:
         good = bool(calls) and all((count(x.get('error_flags')) or 0) > 0 for x in clicks)
         if c['case'] == 'rate-limited-no-retry-after':
             times = [num(m.get('t_ms')) for m in calls]
-            if any(t is None for t in times):
-                return unavail('LLM retry timestamps were not recorded')
+            completions = [num(m.get('completed_ms')) for m in calls]
+            if any(t is None or not t.is_finite() for t in times + completions):
+                return unavail('LLM retry send/completion timestamps were not recorded')
+            if any(done < sent for sent, done in zip(times, completions)):
+                return unavail('LLM completion precedes its request send')
             good = good and any(m.get('status') == 429 and m.get('step') == 'ratelimited' for m in calls) \
-                and all(b > a for a, b in zip(times, times[1:]))                 and all(sum(t <= x < t + 60_000 for x in times) <= LLM_429_ATTEMPTS for t in times)
+                and all(sent > done for done, sent in zip(completions, times[1:])) \
+                and all(sum(t <= x < t + 60_000 for x in times) <= LLM_429_ATTEMPTS for t in times)
             note = '429 retries need positive backoff, at most three per minute, and the error flag'
         else:
             words = partial_text()
@@ -1644,7 +1648,7 @@ def perfect_observations(o: fo.Oracle) -> Dict:
             c['click_results'] = [click(), click(0)]
             c['cross_viewer'] = {'as': o.pack['peer'], 'sprintId': sid, 'different_scope': True, 'click_results': [click(text='', error=1, shown_ids=[])]}
         elif c['case'] == 'rate-limited-no-retry-after':
-            c['click_results'] = [click(3, '', 1, [], [{**model, 'status': 429, 'step': 'ratelimited', 't_ms': t} for t in (1, 1001, 3001)])]
+            c['click_results'] = [click(3, '', 1, [], [{**model, 'status': 429, 'step': 'ratelimited', 't_ms': t, 'completed_ms': t + 200} for t in (1, 1201, 3401)])]
         elif c['case'] == 'no-finish-reason':
             c['click_results'] = [click(1, '', 1, [], [{**model, 'finish_reasons': [None]}])]
         else: c['click_results'] = [click(0, '', 1, [])]

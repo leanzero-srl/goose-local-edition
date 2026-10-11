@@ -115,6 +115,11 @@ function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clo
   const record = (entry, tv) => { const e = { t_virtual: iso(tv), ...entry }; log.push(e); return e; };
   const missing = (what, inv) => harnessMissing.push({ what, at: iso(), invocationId: inv?.id ?? null, moduleType: inv?.moduleType ?? null });
 
+  async function platformCall(op, args, tv, vcostMs) {
+    await clock.advanceTo(tv);
+    return siteCall(op, { ...args, atMs: tv, completedAtMs: tv + vcostMs });
+  }
+
   // One product request (Jira), shared by the wrapper route and the Custom UI host's fetchProduct.
   async function productFetch({ inv, provider, product, method, path, headers = {}, body, tv, vcostMs }) {
     const entry = record({ invocationId: inv?.id ?? null, moduleType: inv?.moduleType ?? null, moduleKey: inv?.moduleKey ?? null,
@@ -316,7 +321,7 @@ function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clo
             entry.refused = 'no llm module';
             return send(403, { code: 'LLM_MODULE_NOT_DEFINED', message: "LLM package is used but 'llm' module is not defined in the manifest" });
           }
-          const r = await siteCall('llm', { method: req.method, model, body, caller: { invocationId: inv.id, moduleType: inv.moduleType, moduleKey: inv.moduleKey, functionKey: inv.functionKey, asUser: inv.aaid ?? null } });
+          const r = await platformCall('llm', { method: req.method, model, body, caller: { invocationId: inv.id, moduleType: inv.moduleType, moduleKey: inv.moduleKey, functionKey: inv.functionKey, asUser: inv.aaid ?? null } }, tv, vcostMs);
           Object.assign(entry, { status: r.status, response: r.body });
           if (Array.isArray(r.stream) && r.status === 200) {
             // Newline-delimited ChatResponse chunks (site/llm.cjs STREAMING). The tool-call line is cut in two writes,
@@ -346,8 +351,8 @@ function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clo
             let overrides = null;
             try { overrides = v.context ? JSON.parse(v.context).contextOverrides ?? null : null; } catch { overrides = null; }
             const contextToken = req.headers['x-forge-context-token'];
-            const r = await siteCall('rtpublish', { channelName: v.name, payload: v.payload, isGlobal: Boolean(v.isGlobal), token: v.token ?? null,
-              contextToken, contextOverrides: overrides, origin });
+            const r = await platformCall('rtpublish', { channelName: v.name, payload: v.payload, isGlobal: Boolean(v.isGlobal), token: v.token ?? null,
+              contextToken, contextOverrides: overrides, origin }, tv, vcostMs);
             record({ ...origin, service: 'realtime', provider: 'app', method: 'POST', path: route, op: v.isGlobal ? 'publishGlobal' : 'publish',
               body: { channel: v.name, payload: v.payload, isGlobal: Boolean(v.isGlobal), token: Boolean(v.token), contextToken: contextToken ?? null, contextOverrides: overrides },
               status: 200, response: r, vcostMs }, tv);
@@ -355,7 +360,7 @@ function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clo
             return send(200, { data: { ecosystem: { publishRealtimeChannel: { eventId: r.eventId, eventTimestamp: r.eventTimestamp } } } });
           }
           if (/\bsignRealtimeToken\b/.test(query)) {
-            const r = await siteCall('rtsign', { channelName: v.channelName, claims: v.claims, permissions: v.permissions ?? null });
+            const r = await platformCall('rtsign', { channelName: v.channelName, claims: v.claims, permissions: v.permissions ?? null }, tv, vcostMs);
             record({ ...origin, service: 'realtime', provider: 'app', method: 'POST', path: route, op: 'signRealtimeToken', body: v, status: 200, response: { expiresAt: r.expiresAt }, vcostMs }, tv);
             return send(200, { data: { ecosystem: { signRealtimeToken: { errors: null, forgeRealtimeToken: { jwt: r.jwt, expiresAt: r.expiresAt }, success: true } } } });
           }

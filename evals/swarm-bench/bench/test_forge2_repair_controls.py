@@ -303,7 +303,40 @@ class CompoundControls(unittest.TestCase):
     def test_immediate_retry_storm_fails_even_with_only_three_calls(self):
         c = self.case('rate-limited-no-retry-after')
         for m in c['click_results'][0]['model_calls']:
-            m['t_ms'] = 1
+            m.update(t_ms=1, completed_ms=201)
+        self.assertEqual(self.result('r8_failure_handling')['score'], .5)
+
+    def test_llm_transport_cost_alone_is_not_retry_backoff(self):
+        calls = self.case('rate-limited-no-retry-after')['click_results'][0]['model_calls']
+        for i, call in enumerate(calls):
+            call.update(t_ms=1 + i*200, completed_ms=201 + i*200)
+        self.assertEqual(self.result('r8_failure_handling')['score'], .5)
+
+    def test_llm_any_positive_idle_is_valid_without_an_unstated_minimum(self):
+        calls = self.case('rate-limited-no-retry-after')['click_results'][0]['model_calls']
+        for i, call in enumerate(calls):
+            call.update(t_ms=1 + i*201, completed_ms=201 + i*201)
+        self.assertEqual(self.result('r8_failure_handling')['score'], 1)
+
+    def test_llm_missing_or_impossible_completion_is_unavailable(self):
+        calls = self.case('rate-limited-no-retry-after')['click_results'][0]['model_calls']
+        for invalid in ('missing', 'earlier', 'nonfinite'):
+            with self.subTest(invalid=invalid):
+                saved = copy.deepcopy(calls)
+                if invalid == 'missing':
+                    calls[0].pop('completed_ms')
+                elif invalid == 'earlier':
+                    calls[0]['completed_ms'] = calls[0]['t_ms'] - 1
+                else:
+                    calls[0]['completed_ms'] = 'NaN'
+                r = self.result('r8_failure_handling')
+                self.assertTrue(r.get('unavailable'), r)
+                self.assertFalse(fc.critical_fired(r), r)
+                calls[:] = saved
+
+    def test_llm_positive_wait_does_not_excuse_more_than_three_attempts(self):
+        calls = self.case('rate-limited-no-retry-after')['click_results'][0]['model_calls']
+        calls.append({**calls[-1], 't_ms': 5001, 'completed_ms': 5201})
         self.assertEqual(self.result('r8_failure_handling')['score'], .5)
 
     def test_concurrent_ci_seat_winner_is_unspecified(self):
