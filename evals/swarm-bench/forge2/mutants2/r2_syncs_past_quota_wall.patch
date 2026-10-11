@@ -1,10 +1,10 @@
 diff --git a/src/jira.js b/src/jira.js
 --- a/src/jira.js
 +++ b/src/jira.js
-@@ -249,7 +249,6 @@ export async function jira(who, path, init = {}, work = { maxWaitSeconds: Infini
+@@ -225,7 +225,6 @@
      const reason = res.headers.get('ratelimit-reason') ?? '';
      if (work.background) {
-       if (reason === QUOTA_REASON) {
+       if (QUOTA_REASONS.has(reason)) {
 -        await work.pause(wait);
          throw new RateLimited(wait, reason);
        }
