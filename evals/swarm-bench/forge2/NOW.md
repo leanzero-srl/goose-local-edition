@@ -110,6 +110,18 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
   calibration, sb7.x/forge manifests to refreeze after P11's shared bench edits.
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 07:43 (Oct 11) JEV ROUTER LOST TO OPENROUTER'S CREDIT CHECK (unscored, ~$17.5): at call 59 of 300, 57 min in, its
+  requests were refused 3 of 3 with "This request would exceed your available credits given your current in-flight
+  requests" while the balance was $3.5-4.3 (guard log 07:38 4.26, 07:44 3.48) — ABOVE the ~$2 auto top-up trigger, so
+  no top-up came and the credit guard (hold < $0.80) saw nothing wrong. The chain logged `no_verdict` and launched
+  GLM-5.3 at 07:44 (pin z-ai); the top-up fired at 07:50 (2.10 -> 26.76, total 580). READ: the cut is the ROUTER's —
+  its catalog price is "-1" (variable), so OpenRouter cannot size one request and holds back more; Opus 5.5 ($20/M
+  out, worst single request $2.56) ran down to a $2.04 balance and was never refused. One evidence point, so the five
+  priced-high models (Muse Spark, Ember, Grok 4.7, Qwen Max Prime, GLM Prime) were moved behind the cheap ones as a
+  precaution (loop-state 0a08fab, 8a3e1d3). Jev's retry is in the queue as `blocked`: it dies the same way unless the
+  account's top-up trigger is raised above ~$5 (asked the owner 08:0x: trigger $10, amount $50). Tree kept:
+  build/openrouter-cloud-12aeebd2-74f8-438f-a6d7-7f746a7705d6-r0 (incomplete-agent.json carries the refusal).
+  Spend so far: $23.71 published + $0.73 (Omni Flash cut) + ~$17.5 (Jev cut).
 - 06:46 (Oct 11) OPUS 5.5 PUBLISHED: anthropic/claude-opus-5.5 = 0.8100 (brun-d9647653-66f2-460d-b4be-c26100d2f04b; 111 of
   300 calls, $16.29, finished itself in ~1 h 45; tests earned 0.9685 x reliability 0.8363; groups T .8333, B .8182, U
   u_ledger_sort .8333, A a_action_result .8, R4 r4_sprint_close_final 0 (x0.9), R7 .9877). Jev Router launched 06:46.
