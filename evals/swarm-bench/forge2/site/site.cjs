@@ -60,13 +60,27 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
   const faultLog = [];
   const signals = [];
   const jqlFunctions = Object.create(null);
+  const jqlRegistrations = new Map();
   const registerJqlFunction = ({ moduleKey, name, functionKey, invoke }) => {
     if (!/^[a-zA-Z0-9_-]+$/.test(moduleKey ?? '') || typeof name !== 'string' || !name.trim()
         || typeof functionKey !== 'string' || !functionKey.endsWith(`/static/${moduleKey}`) || typeof invoke !== 'function') {
       throw Object.assign(new Error('Invalid installed JQL function binding.'), { statusCode: 400 });
     }
-    jqlFunctions[name] = { moduleKey, functionKey, invoke };
-    return { registered: name };
+    const registrationId = crypto.randomBytes(16).toString('hex');
+    const entry = { moduleKey, functionKey, invoke, registrationId };
+    const entries = jqlRegistrations.get(name) ?? [];
+    entries.push(entry); jqlRegistrations.set(name, entries);
+    jqlFunctions[name] = entry;
+    return { registered: name, registrationId };
+  };
+  const unregisterJqlFunction = ({ name, registrationId }) => {
+    const entries = jqlRegistrations.get(name) ?? [];
+    const index = entries.findIndex((entry) => entry.registrationId === registrationId);
+    if (index < 0) return { removed: false };
+    entries.splice(index, 1);
+    if (entries.length) jqlFunctions[name] = entries.at(-1);
+    else { jqlRegistrations.delete(name); delete jqlFunctions[name]; }
+    return { removed: true };
   };
   const registerRemoteJqlFunction = ({ callbackUrl, nonce, ...binding }) => {
     let url;
@@ -307,6 +321,7 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
   const realtime = createRealtime({ now: () => state.now(), secret: crypto.createHash('sha256').update(`realtime:${token}`).digest() });
   const control = {
     jqlregister: registerRemoteJqlFunction,
+    jqlunregister: unregisterJqlFunction,
     llm: (req) => llm.handle(req),
     llmphase: ({ phase, script }) => llm.phase(phase, script),
     llmlog: ({ since = 0 }) => ({ entries: llm.log.slice(Number(since)), next: llm.log.length, state: llm.state(), models: llm.models() }),
@@ -454,6 +469,7 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
     harnessMissing,
     control,
     registerJqlFunction,
+    unregisterJqlFunction,
     llm,
     realtime,
     // A live change that happens in Jira without its event reaching the app (a dropped delivery).

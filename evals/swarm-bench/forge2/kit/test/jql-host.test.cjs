@@ -180,6 +180,36 @@ test('forge-dev jql runs native HTTP search in a child command, preserves shared
     assert.equal(bad.code, 1, bad.stdout + bad.stderr);
     result = JSON.parse(fs.readFileSync(path.join(stateDir, 'last-result.json'), 'utf8'));
     assert.match(result.errorMessages[0], /unknown/i);
+    const restored = await w.search('issue in hostScoped("789")');
+    assert.equal(restored.status, 200, JSON.stringify(restored.body));
+    assert.deepEqual(restored.body.issues.map((issue) => issue.id), [visible.id]);
+    assert.deepEqual(w.outputs.filter((out) => out.moduleType === 'jira:jqlFunction').at(-1).result, { jql: `id in (${hidden.id},${visible.id})` },
+      'after each child command exits, a fresh query returns to the still-running original host');
     assert.deepEqual(w.site.harnessMissing, []);
   } finally { await w.close(); }
+});
+
+
+test('remote JQL host registration closes by ownership and restores earlier hosts across out-of-order process exits', { timeout: 120000 }, async () => {
+  const w = await rig(true);
+  let second, third;
+  try {
+    const [one, two, three] = w.site.pack.issues.filter((issue) => !issue.hiddenFrom.includes(w.site.pack.viewer)).slice(0, 3);
+    w.setIds([one.id]);
+    second = await createEmulator({ appDir: w.dir, site: { url: w.site.url, adminUrl: w.site.adminUrl } });
+    assert.equal(second.kvs.handle('/api/v1/set', { key: 'selected-ids', value: [two.id] }).status, 204);
+    third = await createEmulator({ appDir: w.dir, site: { url: w.site.url, adminUrl: w.site.adminUrl } });
+    assert.equal(third.kvs.handle('/api/v1/set', { key: 'selected-ids', value: [three.id] }).status, 204);
+    const current = await w.search('issue in hostScoped("101")');
+    assert.equal(current.status, 200, JSON.stringify(current.body));
+    assert.deepEqual(current.body.issues.map((issue) => issue.id), [three.id]);
+    await second.close(); second = null;
+    assert.deepEqual((await w.search('issue in hostScoped("102")')).body.issues.map((issue) => issue.id), [three.id],
+      'closing a superseded host must not remove the active callback');
+    await third.close(); third = null;
+    const restored = await w.search('issue in hostScoped("103")');
+    assert.equal(restored.status, 200, JSON.stringify(restored.body));
+    assert.deepEqual(restored.body.issues.map((issue) => issue.id), [one.id]);
+    assert.deepEqual(w.site.harnessMissing, []);
+  } finally { if (second) await second.close(); if (third) await third.close(); await w.close(); }
 });

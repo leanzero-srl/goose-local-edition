@@ -256,6 +256,7 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     return ingress.handle(emu, moduleKey, request);
   };
   const jqlNonce = crypto.randomBytes(32).toString('hex');
+  const jqlRegistrations = [];
   const evaluateJql = async (moduleKey, request) => {
     const m = modules('jira:jqlFunction').find((entry) => entry.key === moduleKey);
     if (!m?.function) return { error: `Unknown installed JQL function '${moduleKey}'.` };
@@ -712,7 +713,18 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     appDir,
     queueState,
     dumpState: () => ({ kvs: kvs.dump(), queue: queueState.pending }),
-    close: async () => { await host.closeHost(emu); await proxy.close(); if (ownWorkDir) fs.rmSync(work, { recursive: true, force: true }); },
+    close: async () => {
+      await host.closeHost(emu);
+      try {
+        for (const binding of jqlRegistrations.splice(0)) {
+          if (typeof site.unregisterJqlFunction === 'function') site.unregisterJqlFunction(binding);
+          else await client.call('jqlunregister', binding);
+        }
+      } finally {
+        await proxy.close();
+        if (ownWorkDir) fs.rmSync(work, { recursive: true, force: true });
+      }
+    },
   };
   emu.stop = emu.close;
   emu.openSurface = (page, opts) => host.openSurface(emu, page, opts);
@@ -736,9 +748,11 @@ async function createEmulator({ appDir, kitDir, site, runtime = 'wrapper', fence
     const binding = { moduleKey: m.key, name: m.name,
       functionKey: `ari:cloud:ecosystem::extension/${appId}/emulator-env/static/${m.key}` };
     if (typeof site.registerJqlFunction === 'function') {
-      site.registerJqlFunction({ ...binding, invoke: (request) => evaluateJql(m.key, request) });
+      const registered = site.registerJqlFunction({ ...binding, invoke: (request) => evaluateJql(m.key, request) });
+      jqlRegistrations.push({ name: m.name, registrationId: registered.registrationId });
     } else {
-      await client.call('jqlregister', { ...binding, callbackUrl: `${proxyAddr.url}/x/jql-evaluate/${encodeURIComponent(m.key)}`, nonce: jqlNonce });
+      const registered = await client.call('jqlregister', { ...binding, callbackUrl: `${proxyAddr.url}/x/jql-evaluate/${encodeURIComponent(m.key)}`, nonce: jqlNonce });
+      jqlRegistrations.push({ name: m.name, registrationId: registered.registrationId });
     }
   }
   return emu;
