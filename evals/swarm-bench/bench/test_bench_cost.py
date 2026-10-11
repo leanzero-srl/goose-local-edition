@@ -166,6 +166,96 @@ class BilledCostTests(unittest.TestCase):
         self.assertEqual(result['telemetry']['calls'], 4)
         self.assertNotIn('ids_outside_telemetry', result['telemetry'])
 
+    def native_telemetry(self, ids):
+        return [{'model': 'm', 'usage': True, 'response_id': gen, 'ended': 'completed',
+                 'prompt_tokens': GENERATIONS[gen]['native_tokens_prompt'],
+                 'completion_tokens': GENERATIONS[gen]['native_tokens_completion']} for gen in ids]
+
+    def test_billed_auxiliary_call_exceeding_session_counters_has_exact_native_proof(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = runtime_with(Path(tmp), IDS[:1], [])
+            self.write_telemetry(root, self.native_telemetry(IDS))
+            result, _ = self.record(root, FakeOpenRouter(), counters(IDS[:3]))
+        self.assertEqual(result['status'], 'complete', result['incomplete_reasons'])
+        self.assertEqual(result['billed_usd'], 0.301437156)
+        self.assertFalse(result['billed_usd_is_lower_bound'])
+        self.assertEqual(result['reconciliation']['status'], 'billed_calls_outside_session_counters')
+        self.assertEqual(result['reconciliation']['billed_tokens_outside_session_counters'],
+                         {'prompt': 28219, 'cached': 0, 'completion': 400})
+        proof = result['reconciliation']['telemetry_native_proof']
+        self.assertEqual(proof['status'], 'matched')
+        self.assertEqual(proof['completed_native_counts_matched'], 4)
+        self.assertEqual(proof['reasons'], [])
+        self.assertNotIn('native_usage_by_id', result['telemetry'])
+
+    def test_negative_residual_without_complete_native_telemetry_is_not_proof(self):
+        for defect in ('absent', 'missing_counts', 'invalid_counts', 'conflict', 'no_id',
+                       'unparseable', 'unmarked', 'outside', 'cached_residual'):
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as tmp:
+                root = runtime_with(Path(tmp), IDS, [])
+                lines = self.native_telemetry(IDS)
+                usage = counters(IDS[:3])
+                if defect == 'missing_counts':
+                    lines[-1].pop('prompt_tokens')
+                elif defect == 'invalid_counts':
+                    lines[-1]['completion_tokens'] = True
+                elif defect == 'conflict':
+                    lines.append(dict(lines[-1], prompt_tokens=1))
+                elif defect == 'no_id':
+                    lines.append({'ended': 'incomplete', 'response_id': None})
+                elif defect == 'unmarked':
+                    lines.append({'model': 'm', 'usage': True, 'prompt_tokens': 100})
+                elif defect == 'outside':
+                    lines.pop()
+                elif defect == 'cached_residual':
+                    usage['sessions'][0]['accumulated_cache_read_tokens'] -= 1
+                if defect != 'absent':
+                    self.write_telemetry(root, lines)
+                if defect == 'unparseable':
+                    with (root / '.swarm' / 'telemetry.jsonl').open('a') as stream:
+                        stream.write('broken line\n')
+                result, _ = self.record(root, FakeOpenRouter(), usage)
+                self.assertEqual(result['status'], 'incomplete', result)
+                self.assertTrue(result['billed_usd_is_lower_bound'])
+                self.assertTrue(any('without complete per-call proof' in reason
+                                    for reason in result['incomplete_reasons']))
+
+    def test_native_counts_must_match_each_bill_even_when_mismatches_cancel_in_the_sum(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = runtime_with(Path(tmp), IDS, [])
+            lines = self.native_telemetry(IDS)
+            lines[0]['prompt_tokens'] += 1
+            lines[1]['prompt_tokens'] -= 1
+            self.write_telemetry(root, lines)
+            result, _ = self.record(root, FakeOpenRouter(), counters(IDS[:3]))
+        self.assertEqual(result['status'], 'incomplete')
+        proof = result['reconciliation']['telemetry_native_proof']
+        self.assertEqual(proof['mismatched_generation_ids'], IDS[:2])
+        self.assertEqual(proof['status'], 'unproven')
+
+    def test_missing_bill_cannot_be_hidden_by_a_larger_billed_auxiliary_call(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = runtime_with(Path(tmp), IDS, [])
+            self.write_telemetry(root, self.native_telemetry(IDS))
+            # The absent call is smaller than the auxiliary call. Its remaining residual is negative.
+            usage = counters(IDS[:3])
+            usage['sessions'][0]['accumulated_cache_read_tokens'] -= GENERATIONS[IDS[0]]['native_tokens_cached']
+            result, _ = self.record(root, FakeOpenRouter(absent=[IDS[0]]), usage)
+        self.assertEqual(result['status'], 'incomplete')
+        self.assertEqual(result['missing'], [{'id': IDS[0], 'reason': 'HTTP 404'}])
+        self.assertTrue(result['billed_usd_is_lower_bound'])
+
+    def test_complete_native_telemetry_cannot_clear_positive_unattributed_tokens(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = runtime_with(Path(tmp), IDS, [])
+            self.write_telemetry(root, self.native_telemetry(IDS))
+            usage = counters(IDS)
+            usage['sessions'][0]['accumulated_output_tokens'] += 1
+            result, _ = self.record(root, FakeOpenRouter(), usage)
+        self.assertEqual(result['status'], 'incomplete')
+        self.assertEqual(result['reconciliation']['unattributed_tokens']['completion'], 1)
+        self.assertTrue(any('goose counted tokens' in reason for reason in result['incomplete_reasons']))
+
     def test_a_telemetry_call_without_a_response_id_keeps_the_bill_incomplete(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = runtime_with(Path(tmp), [], [])
