@@ -220,6 +220,143 @@ class WalletGuardTests(IsolatedInvoke):
                 bench_budget.wallet_limit({'BENCH_MAX_USD': raw})
 
 
+class WalletLagTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.sink = Path(self.temp.name) / 'telemetry.jsonl'
+        self.gen = 'gen-1791746664-delayed'
+        self.sink.write_text(json.dumps({'response_id': self.gen}) + '\n')
+        self.now = 0.0
+        self.seen = []
+        self.process = SimpleNamespace(pid=12345, poll=lambda: None)
+        self.guard = bench_budget.WalletGuard(self.process, self.sink, Decimal('1'), 'inert-key',
+                                             'https://router.test')
+        self.addCleanup(patch.stopall)
+        patch.object(bench_budget.time, 'monotonic', side_effect=lambda: self.now).start()
+        patch.object(bench_budget.time, 'sleep', side_effect=self.advance).start()
+
+    def advance(self, seconds):
+        self.now += seconds
+
+    def fetch(self, *args):
+        self.seen.append(self.now)
+        return None, 'HTTP 404'
+
+    def poll_at(self, seconds):
+        self.now = seconds
+        self.guard._poll()
+
+    def test_sixth_404_uses_shared_cumulative_schedule_instead_of_six_two_second_polls(self):
+        due = [0]
+        for delay in bench_cost.LATE_RECORD_BACKOFF:
+            due.append(due[-1] + delay)
+        with patch.object(bench_cost, '_fetch', side_effect=self.fetch):
+            for index, instant in enumerate(due[:-1]):
+                self.poll_at(instant)
+                self.poll_at(instant + min(bench_cost.LATE_RECORD_BACKOFF[index] / 2, 1))
+                self.assertEqual(len(self.seen), index + 1)
+            with self.assertRaisesRegex(RuntimeError, 'late-record retry policy: HTTP 404'):
+                self.poll_at(due[-1])
+        self.assertEqual(self.seen, due)
+        self.assertEqual(self.guard.billing_attempts[self.gen], 6)
+        self.assertIn(self.gen, self.guard.unbilled)
+
+    def test_invoice_arriving_after_sixteen_seconds_is_not_killed_at_the_old_sixth_poll(self):
+        def eventually(*args):
+            self.seen.append(self.now)
+            return ({'usage': Decimal('0.001')}, None) if self.now >= 16 else (None, 'HTTP 404')
+        with patch.object(bench_cost, '_fetch', side_effect=eventually):
+            for instant in range(0, 32, 2):
+                self.poll_at(instant)
+        self.assertEqual(self.seen, [0, 2, 6, 14, 30])
+        self.assertEqual(self.guard.spent(), Decimal('0.001'))
+        self.assertEqual(self.guard.unbilled, {})
+        self.assertEqual(self.guard.billing_next_attempt, {})
+        self.assertIsNone(self.guard.tripped)
+
+    def test_each_new_generation_has_its_own_due_schedule(self):
+        with patch.object(bench_cost, '_fetch', side_effect=self.fetch):
+            self.poll_at(0)
+            self.poll_at(2)
+            with self.sink.open('a') as stream:
+                stream.write(json.dumps({'response_id': 'gen-2-new'}) + '\n')
+            self.poll_at(3)
+        self.assertEqual(self.seen, [0, 2, 3])
+        self.assertEqual(self.guard.billing_attempts, {self.gen: 2, 'gen-2-new': 1})
+        self.assertEqual(self.guard.billing_next_attempt, {self.gen: 6, 'gen-2-new': 5})
+
+    def test_budget_stop_is_checked_even_when_a_missing_invoice_is_not_due(self):
+        self.guard.unbilled[self.gen] = 'HTTP 404'
+        self.guard.billing_next_attempt[self.gen] = sum(bench_cost.LATE_RECORD_BACKOFF)
+        self.guard.billed['gen-2-paid'] = Decimal('1')
+        def wait(seconds):
+            self.advance(seconds)
+            return False
+        self.guard.finished = SimpleNamespace(wait=wait, is_set=lambda: False)
+        with patch.object(bench_cost, '_fetch', side_effect=AssertionError('invoice is not due')), \
+                patch.object(self.guard, '_stop_entrant') as stop:
+            self.guard.run()
+        stop.assert_called_once_with()
+        self.assertEqual(self.now, bench_budget.WALLET_POLL_SECONDS)
+
+    def test_permanent_404_still_fails_closed_after_the_shared_policy(self):
+        def wait(seconds):
+            self.advance(seconds)
+            return False
+        self.guard.finished = SimpleNamespace(wait=wait, is_set=lambda: False)
+        with patch.object(bench_cost, '_fetch', side_effect=self.fetch), \
+                patch.object(self.guard, '_stop_entrant') as stop, \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.guard.run()
+        stop.assert_called_once_with('billing_failure')
+        self.assertEqual(self.seen, [2, 4, 8, 16, 32, 64])
+        self.assertEqual(self.guard.record()['status'], 'failed')
+        self.assertIn('HTTP 404', self.guard.record()['reason'])
+
+    def test_authorization_and_invalid_bills_still_fail_closed(self):
+        for result in ((None, 'HTTP 401'), (None, 'HTTP 403'), ({'usage': Decimal('-1')}, None),
+                       ({'usage': Decimal('NaN')}, None)):
+            with self.subTest(result=result):
+                self.guard.unbilled.clear()
+                self.guard.billing_attempts.clear()
+                self.guard.billing_next_attempt.clear()
+                self.guard.offset = 0
+                self.now = 0
+                with patch.object(bench_cost, '_fetch', return_value=result), self.assertRaises(RuntimeError):
+                    self.guard._poll()
+                self.assertEqual(self.guard.billed, {})
+
+    def test_final_stop_drains_due_invoices_without_stopping_finished_model(self):
+        self.process.poll = lambda: 0
+        self.guard.finished.set()
+        def eventually(*args):
+            self.seen.append(self.now)
+            return ({'usage': Decimal('0.001')}, None) if self.now >= 16 else (None, 'HTTP 404')
+        with patch.object(bench_cost, '_fetch', side_effect=eventually), \
+                patch.object(self.guard, '_stop_entrant') as stop:
+            self.guard.run()
+        self.assertEqual(self.seen, [0, 2, 6, 14, 30])
+        stop.assert_not_called()
+        self.assertEqual(self.guard.record()['status'], 'armed')
+        self.assertEqual(self.guard.record()['calls_billed'], 1)
+        self.assertNotIn('unbilled', self.guard.record())
+
+    def test_final_stop_keeps_genuinely_missing_bill_unpublishable_after_finite_drain(self):
+        self.process.poll = lambda: 0
+        self.guard.finished.set()
+        with patch.object(bench_cost, '_fetch', side_effect=self.fetch), \
+                patch.object(bench_budget.os, 'kill', side_effect=AssertionError('finished model must not be signalled')), \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.guard.run()
+        self.assertEqual(self.seen, [0, 2, 6, 14, 30, 62])
+        self.assertEqual(self.guard.record()['status'], 'failed')
+        self.assertIsNone(self.guard.tripped)
+        self.assertIn('unbilled', self.guard.record())
+        self.assertIsNotNone(bench_budget.publication_abort(
+            {'budget': {'wallet': self.guard.record(), 'stopped_by': 'model_finished'}}, isolated_tiers.FORGE20))
+
+
 class BudgetStopIsScoredTests(unittest.TestCase):
     """run(): a budget stop is the run's scored end; the same console without one is still refused."""
 

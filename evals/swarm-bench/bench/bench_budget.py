@@ -121,6 +121,7 @@ class WalletGuard(threading.Thread):
         self.billed: dict[str, Decimal] = {}
         self.unbilled: dict[str, str] = {}
         self.billing_attempts: dict[str, int] = {}
+        self.billing_next_attempt: dict[str, float] = {}
         self.tripped: dict | None = None
         self.error: str | None = None
 
@@ -133,7 +134,8 @@ class WalletGuard(threading.Thread):
             gen = entry.get('response_id')
             if isinstance(gen, str) and bench_cost.GENERATION_ID.fullmatch(gen) and gen not in self.billed:
                 self.unbilled.setdefault(gen, 'not fetched')
-        pending = list(self.unbilled)
+        now = time.monotonic()
+        pending = [gen for gen in self.unbilled if now >= self.billing_next_attempt.get(gen, now)]
         if not pending:
             return
         fetch = lambda gen: bench_cost._fetch(self.base + urllib.parse.quote(gen), self.key,  # noqa: E731,SLF001
@@ -144,8 +146,12 @@ class WalletGuard(threading.Thread):
             if data is None:
                 self.unbilled[gen] = failure
                 self.billing_attempts[gen] = self.billing_attempts.get(gen, 0) + 1
-                if self.billing_attempts[gen] > len(bench_cost.LATE_RECORD_BACKOFF):
+                attempt = self.billing_attempts[gen]
+                if failure in ('HTTP 401', 'HTTP 403'):
+                    raise RuntimeError(f'Billing authorization unavailable for {gen}: {failure}')
+                if attempt > len(bench_cost.LATE_RECORD_BACKOFF):
                     raise RuntimeError(f'Billing unavailable for {gen} after the late-record retry policy: {failure}')
+                self.billing_next_attempt[gen] = time.monotonic() + bench_cost.LATE_RECORD_BACKOFF[attempt - 1]
             else:
                 cost = Decimal(data['usage'])
                 if not cost.is_finite() or cost < 0:
@@ -153,6 +159,15 @@ class WalletGuard(threading.Thread):
                 self.billed[gen] = cost
                 del self.unbilled[gen]
                 self.billing_attempts.pop(gen, None)
+                self.billing_next_attempt.pop(gen, None)
+
+    def _settle_pending(self) -> None:
+        while self.unbilled:
+            now = time.monotonic()
+            wait = min(self.billing_next_attempt.get(gen, now) for gen in self.unbilled) - now
+            if wait > 0:
+                time.sleep(wait)
+            self._poll()
 
     def _stop_entrant(self, cause: str = 'limit_reached') -> None:
         if self.process.poll() is not None:
@@ -177,7 +192,8 @@ class WalletGuard(threading.Thread):
             while True:
                 exited = self.finished.wait(self.poll_seconds)
                 self._poll()
-                if exited:
+                if exited or self.finished.is_set():
+                    self._settle_pending()
                     return
                 if self.spent() >= self.limit:
                     self._stop_entrant()
@@ -189,7 +205,7 @@ class WalletGuard(threading.Thread):
             self._stop_entrant('billing_failure')
 
     def stop(self) -> None:
-        """Called once the entrant has exited: one last read bills its final calls."""
+        """Called once the entrant has exited: settle its final calls with the same finite retry policy."""
         self.finished.set()
         self.join()
 
