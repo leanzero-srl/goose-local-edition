@@ -96,8 +96,9 @@ def compare(builds):
             direction = a
         elif summaries[b]['min'] > summaries[a]['max']:
             direction = b
-    cohort_sha = hashlib.sha256(json.dumps(cohort, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
-    return {'era': 'forge-2.0', 'comparisonCohortSha': cohort_sha, 'cohort': cohort, 'models': summaries, 'billed_usd': spent,
+    canonical = json.dumps(cohort, sort_keys=True, separators=(',', ':'), allow_nan=False)
+    cohort_sha = hashlib.sha256(canonical.encode()).hexdigest()
+    return {'era': 'forge-2.0', 'comparisonCohortSha': cohort_sha, 'cohortCanonicalJson': canonical, 'cohort': cohort, 'models': summaries, 'billed_usd': spent,
             'screening_direction': direction,
             'conclusion': ('Repeated-build screening signal; this is not a model-population confidence interval.'
                            if direction else 'Unresolved comparison: insufficient independent builds or overlapping episode ranges.'),

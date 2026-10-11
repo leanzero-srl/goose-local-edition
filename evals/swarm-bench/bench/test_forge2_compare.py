@@ -1,4 +1,6 @@
 import copy
+import hashlib
+import json
 import unittest
 from forge2_compare import compare
 
@@ -51,7 +53,10 @@ class IndependentComparison(unittest.TestCase):
 
     def test_cohort_digest_ignores_episode_order_but_changes_with_engine_settings(self):
         a, b = build('mimo', 1, .8), build('sol', 1, .7)
-        first = compare([a, b])['comparisonCohortSha']
+        report = compare([a, b])
+        first = report['comparisonCohortSha']
+        self.assertEqual(report['cohort'], json.loads(report['cohortCanonicalJson']))
+        self.assertEqual(first, hashlib.sha256(report['cohortCanonicalJson'].encode()).hexdigest())
         self.assertEqual(first, compare([b, a])['comparisonCohortSha'])
         changed = copy.deepcopy([a, b])
         for item in changed:
