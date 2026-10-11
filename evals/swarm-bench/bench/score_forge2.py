@@ -1753,7 +1753,7 @@ def _(c):
 
 # Concurrent delivery (contract): a duplicate row is the app's defect whether or not its group raced; a group the
 # harness did not run whole is no evidence the app survives the race, so the pass it would buy is unavailable.
-@check('t_no_double_count', 'T', pre=pre_ledger_row, needs=('live', 'heal', 'rerun'))
+@check('t_no_double_count', 'T')
 def _(c):
     doubled = []
     for ph in ('live', 'heal', 'rerun'):
@@ -1766,6 +1766,9 @@ def _(c):
     raced = V2.raced(whole)
     if doubled:
         return g(0, f'changes counted more than once: {sorted(set(doubled))[:6]}{raced}', CRITICAL_CLASSES['duplicate'])
+    gate = _evidence_gate(c, pre_ledger_row, ('live', 'heal', 'rerun'))
+    if gate:
+        return gate
     if broken:
         return unavail(f'no change counted twice, but {len(broken)} concurrent group(s) were not run whole '
                        f'({"; ".join(broken[:2])}): a race the harness never ran is no evidence the app survives it')
@@ -2644,19 +2647,22 @@ def _post_scenarios(c: Ctx) -> List[Dict]:
 # §17.8 B: the critical is "a duplicate side effect" — it fires ONLY when one gesture (a click or a double click, the
 # double click sent on a fresh viewer-visible row) added two or more comments. Zero comments and a missing success
 # flag are graded in u_comment_flow, never priced as a duplicate.
-@check('b_comment_exactly_once', 'B', pre=pre_comment_post, needs=('ui',))
+@check('b_comment_exactly_once', 'B')
 def _(c):
     scen = _post_scenarios(c)
+    dup = [f"{s['_name']}@{s['_sprint']}: {s.get('commentsAdded')} comments" for s in scen
+           if isinstance(s.get('commentsAdded'), int) and s['commentsAdded'] >= 2]
+    if dup:
+        return g(0, f'one gesture posted a duplicate: {dup[:4]}', CRITICAL_CLASSES['duplicate'])
+    gate = _evidence_gate(c, pre_comment_post, ('ui',))
+    if gate:
+        return gate
     if not scen:
         undelivered = [f"{name}@{r.get('sprintId')}: {_undeliverable(r, name)}" for r in c.sprint_renders()
                        for name in ('post', 'doubleClick') if isinstance(r.get(name), dict) and _undeliverable(r, name)]
         if undelivered:
             return unavail(f'the probe could not deliver the click(s) {undelivered[:4]} (harness, not app evidence)')
         return vacuous('a click/double-click post scenario')
-    dup = [f"{s['_name']}@{s['_sprint']}: {s.get('commentsAdded')} comments" for s in scen
-           if isinstance(s.get('commentsAdded'), int) and s['commentsAdded'] >= 2]
-    if dup:
-        return g(0, f'one gesture posted a duplicate: {dup[:4]}', CRITICAL_CLASSES['duplicate'])
     return g(1, f'{len(scen)} click/double-click gesture(s), none posted more than one comment')
 
 
@@ -3724,25 +3730,32 @@ def _stamp(name: str, tier: str, outcome: Dict) -> Dict:
     return row
 
 
-def _run_check(c: Ctx, name: str, tier: str, fn, pre, needs) -> Dict:
-    if c.oracle is None:
-        return _stamp(name, tier, unavail(f'pack defect: {c.oracle_error}'))
+def _evidence_gate(c: Ctx, pre, needs) -> Optional[Dict]:
     why = c.section_error(*needs)
     if why:
         fault = candidate_section_fault(c, why)
         if fault:
             # §17.8 G: the row scores 0 (the app's own manifest broke the surface) but observed no defect of its own,
             # so it is vacuous — a manifest root never fires the criticals of the surfaces it never opened.
-            return _stamp(name, tier, g(0.0, fault, 'the app cannot be opened: its own manifest is broken',
-                                        parts={'vacuous_root': f'manifest: {fault[:160]}'}))
-        return _stamp(name, tier, unavail(why))
+            return g(0.0, fault, 'the app cannot be opened: its own manifest is broken',
+                                        parts={'vacuous_root': f'manifest: {fault[:160]}'})
+        return unavail(why)
     if pre is not None:
         try:
             ok, what = pre(c)
         except Exception as error:  # a precondition bug is the scorer's, never the app's
-            return _stamp(name, tier, unavail(f'precondition error: {type(error).__name__}: {error}'))
+            return unavail(f'precondition error: {type(error).__name__}: {error}')
         if not ok:
-            return _stamp(name, tier, vacuous(what))
+            return vacuous(what)
+    return None
+
+
+def _run_check(c: Ctx, name: str, tier: str, fn, pre, needs) -> Dict:
+    if c.oracle is None:
+        return _stamp(name, tier, unavail(f'pack defect: {c.oracle_error}'))
+    gate = _evidence_gate(c, pre, needs)
+    if gate:
+        return _stamp(name, tier, gate)
     try:
         outcome = fn(c)
         if not isinstance(outcome, dict) or not isinstance(outcome.get('score'), (int, float)):

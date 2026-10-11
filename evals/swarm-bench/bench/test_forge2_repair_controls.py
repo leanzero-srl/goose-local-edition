@@ -4,6 +4,7 @@ import unittest
 
 import forge2_checks as fc
 import forge2_oracle as fo
+import score_forge2 as sf
 
 
 class CompoundControls(unittest.TestCase):
@@ -33,10 +34,106 @@ class CompoundControls(unittest.TestCase):
         self.obs['admin']['actions'][-1].update(landed=True, state_changed=True)
         self.critical('r5_nonadmin_refused')
 
+    def test_observed_nonadmin_effect_survives_absent_and_unrenderable_panel(self):
+        for surface in ('absent', 'unrenderable'):
+            with self.subTest(surface=surface):
+                saved = copy.deepcopy(self.obs)
+                self.obs['admin']['actions'][-1].update(landed=True, state_changed=True)
+                if surface == 'absent':
+                    del self.obs['manifest']['modules']['jira:adminPage']
+                else:
+                    self.obs['admin']['unrenderable'] = 'NOT_NATIVE: panel cannot render'
+                self.critical('r5_nonadmin_refused')
+                self.obs = saved
+
+    def test_unknown_nonadmin_effect_cannot_turn_refusal_audit_into_a_critical(self):
+        action = self.obs['admin']['actions'][-1]
+        action.pop('landed')
+        action.update(state_changed=True, changed_keys=['kv:admin-audit'])
+        r = self.result('r5_nonadmin_refused')
+        self.assertTrue(r.get('unavailable'), r)
+        self.assertFalse(fc.critical_fired(r), r)
+
+    def test_known_refusal_audit_is_allowed_and_does_not_land_the_attempted_change(self):
+        action = self.obs['admin']['actions'][-1]
+        action.update(landed=False, state_changed=True, changed_keys=['kv:admin-audit'])
+        r = self.result('r5_nonadmin_refused')
+        self.assertEqual(r['score'], 1)
+        self.assertFalse(fc.critical_fired(r), r)
+
+    def test_known_nonadmin_effect_survives_another_attempt_with_unknown_effect(self):
+        acts = [a for a in self.obs['admin']['actions'] if a['as'] in ('nonadmin', 'forged')]
+        acts[0].pop('landed')
+        acts[-1].update(landed=True, state_changed=True)
+        self.critical('r5_nonadmin_refused')
+
     def test_unsigned_write_fires_even_when_valid_requests_have_no_effect(self):
         for c in self.obs['webtrigger']:
             c['side_effects'] = int(c['case'] == 'unsigned')
         self.critical('r6_unsigned_no_effect')
+
+    def test_known_unsigned_write_survives_unknown_other_case_and_absent_declaration(self):
+        next(c for c in self.obs['webtrigger'] if c['case'] == 'unsigned')['side_effects'] = 1
+        next(c for c in self.obs['webtrigger'] if c['case'] == 'tampered').pop('side_effects')
+        del self.obs['manifest']['modules']['webtrigger']
+        self.critical('r6_unsigned_no_effect')
+
+    def test_unknown_invalid_effect_with_no_observed_write_is_unavailable_not_critical(self):
+        next(c for c in self.obs['webtrigger'] if c['case'] == 'unsigned').pop('side_effects')
+        r = self.result('r6_unsigned_no_effect')
+        self.assertTrue(r.get('unavailable'), r)
+        self.assertFalse(fc.critical_fired(r), r)
+
+    def test_repeated_deployment_observed_before_final_survives_missing_replay_and_declaration(self):
+        self.obs['webtrigger'] = [c for c in self.obs['webtrigger'] if c['case'] != 'replay']
+        self.obs['migration']['v2_by_checkpoint']['h2'][0]['deployedEnvs'] = 'staging,staging'
+        del self.obs['manifest']['modules']['webtrigger']
+        self.critical('r6_replay_once')
+
+    def test_known_sequential_replay_write_survives_unknown_other_replay(self):
+        replay = next(c for c in self.obs['webtrigger'] if c['case'] == 'replay')
+        replay['writes'] = ['jira POST /rest/api/3/issue/OPS-1/comment']
+        self.obs['webtrigger'].append({'case': 'replay', 'status': 200})
+        self.critical('r6_replay_once')
+
+    def test_unknown_deployment_checkpoint_proves_no_replay_safety_and_no_harm(self):
+        del self.obs['migration']['v2_by_checkpoint']['h2']
+        r = self.result('r6_replay_once')
+        self.assertTrue(r.get('unavailable'), r)
+        self.assertFalse(fc.critical_fired(r), r)
+
+    def test_duplicate_comment_harm_survives_later_ui_failure(self):
+        pack = fo.synthetic_pack_v2()
+        obs = sf.selftest_empty_observations(pack)
+        obs['ui'] = {'sprintAction': [{'sprintId': '41', 'post': {'commentsAdded': 2}}]}
+        obs['comments'] = [{'kind': 'ui', 'status': 201}]
+        entry = next(e for e in sf.CHECKS if e[0] == 'b_comment_exactly_once')
+        for failure in ({}, {'ui': 'later surface failed'}):
+            obs['sectionErrors'] = failure
+            row = sf._run_check(sf.Ctx(None, obs, pack), *entry)
+            self.assertTrue(sf.observed_defect(row), row)
+
+    def test_no_observed_duplicate_with_failed_ui_remains_unavailable(self):
+        pack = fo.synthetic_pack_v2()
+        obs = sf.selftest_empty_observations(pack)
+        obs['ui'] = {'sprintAction': [{'sprintId': '41', 'post': {'commentsAdded': 1}}]}
+        obs['comments'] = [{'kind': 'ui', 'status': 201}]
+        obs['sectionErrors'] = {'ui': 'later surface failed'}
+        entry = next(e for e in sf.CHECKS if e[0] == 'b_comment_exactly_once')
+        row = sf._run_check(sf.Ctx(None, obs, pack), *entry)
+        self.assertTrue(row.get('unavailable'), row)
+        self.assertFalse(sf.observed_defect(row), row)
+
+    def test_duplicate_ledger_harm_survives_later_phase_failure(self):
+        pack = fo.synthetic_pack_v2()
+        obs = sf.selftest_empty_observations(pack)
+        value = fc.perfect_observations(fo.Oracle(pack))['migration']['v2_by_checkpoint']['final'][0]
+        obs['phases']['live']['kvsAfter'] = {'entities': {'scope-ledger': [
+            {'key': 'first-key', 'value': value}, {'key': 'second-key', 'value': value}]}, 'keys': []}
+        obs['sectionErrors'] = {'heal': 'later phase failed'}
+        entry = next(e for e in sf.CHECKS if e[0] == 't_no_double_count')
+        row = sf._run_check(sf.Ctx(None, obs, pack), *entry)
+        self.assertTrue(sf.observed_defect(row), row)
 
     def test_deleted_v1_source_fires_even_when_no_copy_was_migrated(self):
         self.obs['migration']['v1_final'] = []

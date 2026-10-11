@@ -876,29 +876,25 @@ def _(ev: Ev) -> Dict:
 
 @row('r5_nonadmin_refused', 'R5', critical='an admin action by a non-admin succeeded')
 def _(ev: Ev) -> Dict:
-    gate = admin_gate(ev)
-    if gate:
-        return gate
     acts, why = admin_actions(ev, 'nonadmin', 'forged')
     if why:
         return unavail(why)
+    breaches = [f'{a.get("as")}: {a.get("resolver")} ({sample(a.get("changed_keys") or [], 2)})'
+                for a in acts if a.get('landed') is True]
+    if breaches:
+        return g(0.0, f'{sample(breaches, 2)} — the attempted effect landed in storage',
+                 'an admin action by a non-admin succeeded')
+    gate = admin_gate(ev)
+    if gate:
+        return gate
     if not acts:
         return vacuous('no admin action was attempted by a non-admin or with a forged payload')
-    # The breach is the attempted EFFECT in storage (the forged settings value stored, the secret rotated): an audit
-    # entry recording a refused attempt is no breach. The probe's `landed` says it; without it the row says so and
-    # judges on any change to the app's settings/secret storage.
-    if all('landed' in a for a in acts):
-        hit, basis = (lambda a: a['landed'] is True), 'the attempted effect landed in storage'
-    else:
-        hit = lambda a: a.get('state_changed') is True  # noqa: E731
-        basis = 'any change to settings/secret storage (the probe recorded no `landed`: a refusal audit entry counts)'
-    breaches = [f'{a.get("as")}: {a.get("resolver")} ({sample(a.get("changed_keys") or [], 2)})' for a in acts if hit(a)]
-    if breaches:
-        return g(0.0, f'{sample(breaches, 2)} — judged on {basis}', 'an admin action by a non-admin succeeded')
+    if any(not isinstance(a.get('landed'), bool) for a in acts):
+        return unavail('admin.actions[].landed missing on a non-admin/forged attempt; audit writes do not prove its effect')
     works, _w = admin_actions(ev, 'admin')
     if not any(a.get('result_ok') is True and a.get('state_changed') is True for a in works or []):
         return vacuous('no admin action changed state even for an admin, so a refusal proves nothing')
-    return g(1.0, f'{len(acts)} non-admin/forged admin actions changed nothing — judged on {basis}')
+    return g(1.0, f'{len(acts)} non-admin/forged admin actions landed no attempted effect in storage')
 
 
 # ── R6 the CI deployment web trigger ─────────────────────────────────────────────────────────
@@ -959,21 +955,21 @@ def ci_pair_statuses(pair: List[Dict]) -> bool:
 
 @row('r6_unsigned_no_effect', 'R6', critical='a web-trigger write without a valid signature')
 def _(ev: Ev) -> Dict:
-    gate = wt_gate(ev)
-    if gate:
-        return gate
     cases, why = wt_cases(ev)
     if why:
         return unavail(why)
     invalid = [c for c in cases if c.get('case') in WT_INVALID]
+    breaches = [f'{c["case"]} ({effects(c)})' for c in invalid if (effects(c) or 0) > 0]
+    if breaches:
+        return g(0.0, f'side effects without a valid signature: {sample(breaches)}',
+                 'a web-trigger write without a valid signature')
+    gate = wt_gate(ev)
+    if gate:
+        return gate
     if not invalid:
         return vacuous('no unsigned, tampered or stale event was sent')
     if any(effects(c) is None for c in invalid):
         return unavail('webtrigger[].side_effects missing on an invalid case')
-    breaches = [f'{c["case"]} ({effects(c)})' for c in invalid if effects(c) > 0]
-    if breaches:
-        return g(0.0, f'side effects without a valid signature: {sample(breaches)}',
-                 'a web-trigger write without a valid signature')
     if not wt_valid_worked(cases):
         return vacuous('no valid event had an effect, so a refusal proves nothing')
     return g(1.0, f'{len(invalid)} invalid events ({sample(sorted({c["case"] for c in invalid}), 5)}) had no effect')
@@ -981,32 +977,37 @@ def _(ev: Ev) -> Dict:
 
 @row('r6_replay_once', 'R6', critical='duplicate side effect: a replayed web-trigger event applied twice')
 def _(ev: Ev) -> Dict:
-    gate = wt_gate(ev)
-    if gate:
-        return gate
-    cases, why = wt_cases(ev)
-    if why:
-        return unavail(why)
-    replays = [c for c in cases if c.get('case') == 'replay']
-    pair, pair_gap = ci_pair(cases)
+    cases, cases_gap = wt_cases(ev)
+    replays = [c for c in cases or [] if c.get('case') == 'replay']
+    pair, pair_gap = ci_pair(cases or [])
     if not pair_gap and all(c['data_writes'] > 0 for c in pair):
         return g(0.0, 'both invocations of one concurrent eventId wrote scope-ledger data',
                  'duplicate side effect: a replayed web-trigger event applied twice')
+    jira = [w for c in replays if isinstance(c.get('writes'), list) for w in c['writes']
+            if str(w).startswith('jira ')]
+    if jira:
+        return g(0.0, f'a replayed eventId made another Jira write: {sample(jira, 2)}',
+                 'duplicate side effect: a replayed web-trigger event applied twice')
+    mig, migration_gap = ev.section('migration')
+    by = mig.get('v2_by_checkpoint') if isinstance(mig, dict) else None
+    doubled = [(cp, key(r)) for cp, rows in (by or {}).items() if isinstance(rows, list)
+               for r in rows if isinstance(r, dict) and repeated_env(r.get('deployedEnvs'))] if isinstance(by, dict) else []
+    if doubled:
+        return g(0.0, f'environment recorded twice at checkpoint/row {sample(doubled, 2)}',
+                 'duplicate side effect: a replayed web-trigger event applied twice')
+    gate = wt_gate(ev)
+    if gate:
+        return gate
+    if cases_gap:
+        return unavail(cases_gap)
     if not replays:
         return vacuous('no event was replayed')
     if any(not isinstance(c.get('writes'), list) for c in replays):
         return unavail('webtrigger[].writes missing on the replay')
-    jira = [w for c in replays for w in c['writes'] if str(w).startswith('jira ')]
-    if jira:
-        return g(0.0, f'a replayed eventId made another Jira write: {sample(jira, 2)}',
-                 'duplicate side effect: a replayed web-trigger event applied twice')
-    rows, why = ev.v2('final')
-    if why:
-        return unavail(why)
-    doubled = sorted({key(r) for r in rows if repeated_env(r.get('deployedEnvs'))})
-    if doubled:
-        return g(0.0, f'environment recorded twice on {sample(doubled, 2)}',
-                 'duplicate side effect: a replayed web-trigger event applied twice')
+    if migration_gap:
+        return unavail(migration_gap)
+    if not isinstance(by, dict) or any(not isinstance(by.get(cp), list) for cp in fo.CHECKPOINTS):
+        return unavail('migration.v2_by_checkpoint lacks complete replay/deployment checkpoint evidence')
     if pair_gap:
         return unavail(pair_gap)
     if not ci_pair_statuses(pair):
@@ -1014,7 +1015,7 @@ def _(ev: Ev) -> Dict:
     if not wt_valid_worked(cases):
         return vacuous('the original event had no effect to repeat')
     return g(1.0, f'{len(replays)} sequential replay(s) and one concurrent pair had one acceptance and no duplicate '
-             f'Jira/deployment effect; bookkeeping writes {sum(effects(c) or 0 for c in replays)}')
+             f'Jira/deployment effect at any checkpoint; bookkeeping writes {sum(effects(c) or 0 for c in replays)}')
 
 
 @row('r6_status_codes', 'R6')
@@ -1864,7 +1865,7 @@ def _mutants(o: fo.Oracle) -> Dict[str, Tuple[Callable[[Dict], None], Dict[str, 
 
 
 # These criticals read independently observed damage or disclosure; a missing v2 surface cannot hide it.
-UNGATED_CRITICALS = {'r1_v1_rows_intact', 'r3_no_duplicate_rows', 'r4_permission_revoked', 'r6_secret_never_disclosed'}
+UNGATED_CRITICALS = set(CRITICAL)
 
 
 def selftest() -> List[str]:
