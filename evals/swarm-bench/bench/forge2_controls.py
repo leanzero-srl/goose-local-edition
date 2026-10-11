@@ -285,50 +285,32 @@ def main(argv=None) -> int:
             report['golden']['reference_failures'] = gfails
             failed = True
         patches = sorted(MUTANTS.glob('*.patch')) if MUTANTS.is_dir() else []
-        for patch in patches:
-            mid = patch.stem
+        candidates = [(patch.stem, patch, None) for patch in patches] + [(mid, None, expect) for mid, expect in RUNTIME_MUTANTS.items()]
+        for mid, patch, runtime_expect in candidates:
             if a.only and mid not in a.only:
                 continue
-            expect_path = patch.with_suffix('.expect.json')
             entry: Dict = {}
             try:
-                if not expect_path.is_file():
-                    raise RuntimeError(f'{expect_path.name} is missing')
-                expect = json.loads(expect_path.read_text())
                 tree = tmp / mid
-                _materialise(GOLDEN, tree)
-                proc = subprocess.run(['git', 'apply', '--whitespace=nowarn', str(patch)], cwd=tree,
-                                      capture_output=True, text=True)
-                if proc.returncode:
-                    raise RuntimeError(f'patch does not apply: {proc.stderr.strip()[-300:]}')
+                if patch is None:
+                    expect = runtime_expect
+                    runtime_mutant(tree, mid)
+                else:
+                    expect_path = patch.with_suffix('.expect.json')
+                    if not expect_path.is_file():
+                        raise RuntimeError(f'{expect_path.name} is missing')
+                    expect = json.loads(expect_path.read_text())
+                    _materialise(GOLDEN, tree)
+                    proc = subprocess.run(['git', 'apply', '--whitespace=nowarn', str(patch)], cwd=tree,
+                                          capture_output=True, text=True)
+                    if proc.returncode:
+                        raise RuntimeError(f'patch does not apply: {proc.stderr.strip()[-300:]}')
                 why = _rebuild(tree, app_modules)
                 if why:
                     raise RuntimeError(why)
                 verdict = score(tree, a.seed, tmp / f'{mid}.json')
                 entry = {'score': verdict['score'], 'lost': sorted(
                     n for n, r in _rows(verdict).items() if r['score'] < _rows(golden)[n]['score'] - 1e-9),
-                    'criticals': verdict['critical'].get('unsuppressed'),
-                    'fails': judge(golden, verdict, expect, score_forge2.ROOT_BLOCKS, score_forge2.CALIBRATION_OWNED)}
-            except Exception as error:
-                entry = {'fails': [f'{type(error).__name__}: {error}']}
-            failed |= bool(entry['fails'])
-            report['mutants'][mid] = entry
-            if a.out:
-                a.out.write_text(json.dumps(report, indent=2))
-            print(f"{mid}: {entry.get('score')} {'PASS' if not entry['fails'] else 'FAIL ' + '; '.join(entry['fails'])}",
-                  file=sys.stderr, flush=True)
-        for mid, expect in RUNTIME_MUTANTS.items():
-            if a.only and mid not in a.only:
-                continue
-            try:
-                tree = tmp / mid
-                runtime_mutant(tree, mid)
-                why = _rebuild(tree, app_modules)
-                if why:
-                    raise RuntimeError(why)
-                verdict = score(tree, a.seed, tmp / f'{mid}.json')
-                entry = {'score': verdict['score'], 'lost': sorted(
-                    n for n, row in _rows(verdict).items() if row['score'] < _rows(golden)[n]['score'] - 1e-9),
                     'criticals': verdict['critical'].get('unsuppressed'),
                     'fails': judge(golden, verdict, expect, score_forge2.ROOT_BLOCKS, score_forge2.CALIBRATION_OWNED)}
             except Exception as error:
