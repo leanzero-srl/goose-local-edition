@@ -88,6 +88,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Tuple
 import zlib
 
 import forge2_oracle as fo
+import forge2_seed_policy as seed_policy
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -3756,24 +3757,37 @@ def scoring_seeds(seed: str, dev_seed: Optional[str], n: int = SCORING_SEEDS) ->
 
 
 def merge_seed_rows(row_sets: List[List[Dict]], seeds: List[str]) -> List[Dict]:
+    if not row_sets or len(row_sets) != len(seeds) or len(set(seeds)) != len(seeds):
+        raise ValueError('Scoring sites need distinct seeds and one row set each')
     by_seed = [{r['check']: r for r in rows} for rows in row_sets]
+    names = set(by_seed[0])
+    if any(set(rows) != names for rows in by_seed):
+        raise ValueError('Scoring sites returned different check registries')
     merged = []
     for row in row_sets[0]:
         name = row['check']
-        rs = [b[name] for b in by_seed if name in b]
-        scores = {seed: b[name]['score'] for seed, b in zip(seeds, by_seed) if name in b}
-        gone = [(seed, b[name]) for seed, b in zip(seeds, by_seed) if name in b and b[name].get('unavailable')]
+        entries = [(seed, rows[name]) for seed, rows in zip(seeds, by_seed)]
+        scores = {seed: r['score'] for seed, r in entries}
+        gone = [(seed, r) for seed, r in entries if r.get('unavailable')]
+        harm = [(seed, r) for seed, r in entries if r.get('critical') in CRITICAL_CLASSES and observed_defect(r)]
         if gone:
-            seed, r = gone[0]
-            out = {**r, 'detail': f'seed {seed}: {r["detail"]}'[:400]}
+            seed, missing = gone[0]
+            out = {**missing, 'detail': f'seed {seed}: {missing["detail"]}'[:400]}
         elif row['tier'] == 'E':
-            out = {**row, 'score': round(sum(r['score'] for r in rs) / len(rs), 4),
-                   'detail': f'mean over {len(rs)} scoring sites: {row["detail"]}'[:400]}
+            out = {**row, 'score': round(sum(scores.values()) / len(entries), 4),
+                   'detail': f'mean over {len(entries)} scoring sites: {row["detail"]}'[:400]}
         else:
-            worst_seed, worst = min(zip(seeds, rs), key=lambda sr: sr[1]['score'])
-            out = {**worst, 'detail': (f'worst of {len(rs)} scoring sites (seed {worst_seed}): ' if len(set(scores.values())) > 1
-                                       else '') + str(worst.get('detail'))}
+            worst_seed, worst = min(entries, key=lambda sr: sr[1]['score'])
+            # Numeric worst-case and observed harm are separate: an absent row on one site cannot erase
+            # a measured disclosure or side effect on another, including when their scores tie.
+            evidence_seed, evidence = harm[0] if harm else (worst_seed, worst)
+            out = {**evidence, 'score': worst['score'],
+                   'detail': (f'worst of {len(entries)} scoring sites (seed {evidence_seed}): '
+                              if len(set(scores.values())) > 1 or harm else '') + str(evidence.get('detail'))}
             out['detail'] = out['detail'][:400]
+            out['score_seed'] = worst_seed
+        if harm:
+            out['critical_observations'] = [{'seed': seed, 'row': copy.deepcopy(r)} for seed, r in harm]
         out['seeds'] = scores
         merged.append(out)
     return merged
@@ -3812,7 +3826,8 @@ def scorer_files_sha256() -> Dict[str, str]:
     """The files that produced a verdict (calibrate() refuses golden verdicts scored by different ones)."""
     return {n: hashlib.sha256(p.read_bytes()).hexdigest() for n, p in (
         ('score_forge2.py', HERE / 'score_forge2.py'), ('forge2_checks.py', Path(V2.__file__)),
-        ('forge2_jql_checks.py', Path(JQL.__file__)), ('forge2_oracle.py', Path(fo.__file__)), ('forge2_probe.mjs', PROBE_SCRIPT), (THRESHOLDS_FILE.name, THRESHOLDS_FILE))}
+        ('forge2_jql_checks.py', Path(JQL.__file__)), ('forge2_oracle.py', Path(fo.__file__)),
+        ('forge2_seed_policy.py', Path(seed_policy.__file__)), ('forge2_probe.mjs', PROBE_SCRIPT), (THRESHOLDS_FILE.name, THRESHOLDS_FILE))}
 
 
 def media_block(c: Ctx) -> Dict:
@@ -3847,6 +3862,9 @@ def passed(row: Optional[Dict]) -> bool:
 def observed_defect(r: Dict) -> bool:
     """SPEC §4: a critical fires ONLY on an observed defect — a row that ran (not unavailable), was exercised (not
     vacuous, which covers the manifest-fault rows, §17.8 G), whose surface exists (not absent) and scored below 1."""
+    recorded = r.get('critical_observations')
+    if recorded:
+        return any(observed_defect(item['row']) for item in recorded)
     parts = r.get('parts') or {}
     if r.get('check') == 'r10_shared_permissions' and parts.get('critical_observed') is not True:
         return False
@@ -3863,6 +3881,8 @@ def criticals(rows: List[Dict]) -> Tuple[float, List[Dict]]:
     for name, r in failed.items():
         cls = r['critical']
         entry = {'check': name, 'class': cls, 'score': r['score'], 'why': CRITICAL_CLASSES[cls]}
+        if r.get('critical_observations'):
+            entry['observed_seeds'] = [item['seed'] for item in r['critical_observations']]
         root = next((root for root, deps in ROOT_BLOCKS.items() if root != name and name in deps and root in failed), None)
         if root:
             out.append({**entry, 'factor': 1.0, 'suppressed': f'root:{root}'})
@@ -4868,7 +4888,7 @@ def _reap_children(*_a) -> None:
 
 
 def _draw_seed() -> str:
-    return os.urandom(8).hex()
+    return seed_policy.site_seed('scoring')
 
 
 def _port_holder(port: int) -> Optional[str]:
@@ -5015,7 +5035,7 @@ def gather(root: Path, _port, _db_dir, trace_path: Optional[Path] = None, mark_p
     run's own seed and, unless `single_seed` (the controls and the calibration, which name their seeds), on the two
     derived scoring sites (SCORING_SEEDS). The run's own seed keeps the published shots, recording and
     forge-observations.json; the derived sites' evidence lands under forge-shots/seeds/<seed>/. The probes run under
-    score_lock()."""
+    score_lock(). Single-site free controls retain browser evidence without encoding report-only video."""
     if not seed:
         raise RuntimeError('REFUSED: score_forge2.gather needs the fixture seed')
     if V2_ABSENT:
@@ -5034,7 +5054,7 @@ def gather(root: Path, _port, _db_dir, trace_path: Optional[Path] = None, mark_p
         ctxs = []
         for i, s in enumerate(seeds):
             where = shots if i == 0 else shots / 'seeds' / s
-            obs, pack = _probe_one(root, s, kit, runtime, where, media_dir if i == 0 else None,
+            obs, pack = _probe_one(root, s, kit, runtime, where, media_dir if i == 0 and not single_seed else None,
                                    Path(root) / 'forge-observations.json' if i == 0 else where / 'forge-observations.json')
             ctxs.append(Ctx(Path(root), obs, pack, fixture_seed=s, dev_seed=header.get('dev_seed'), runtime=runtime))
         ctx = ctxs[0]
