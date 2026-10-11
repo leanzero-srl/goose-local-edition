@@ -254,14 +254,20 @@ def live_credit_evidence(modules, urlopen=urllib.request.urlopen):
         if not all(v.is_finite() and v >= 0 for v in (total, usage)):
             raise ValueError('invalid account totals')
         account_remaining = total - usage
-        raw_limit, raw_remaining = values['key'].get('limit'), values['key'].get('limit_remaining')
+        raw_limit, raw_remaining = (values['key'][field] for field in ('limit', 'limit_remaining'))
         if raw_limit is None and raw_remaining is None:
             key_remaining = None
         else:
             limit, key_remaining = Decimal(str(raw_limit)), Decimal(str(raw_remaining))
             if not all(v.is_finite() and v >= 0 for v in (limit, key_remaining)):
                 raise ValueError('invalid key limit')
-        effective = account_remaining if key_remaining is None else min(account_remaining, key_remaining)
+        effective_budget = values['key'].get('effective_budget')
+        budget_remaining = None if effective_budget is None else Decimal(str(effective_budget['remaining_usd']))
+        if budget_remaining is not None and (not budget_remaining.is_finite() or budget_remaining < 0):
+            raise ValueError('invalid effective key budget')
+        available = [account_remaining, *([key_remaining] if key_remaining is not None else []),
+                     *([budget_remaining] if budget_remaining is not None else [])]
+        effective = min(available)
         if not effective.is_finite() or effective <= 0:
             raise ValueError('no current credit headroom')
     except (ArithmeticError, KeyError, TypeError, ValueError):
@@ -269,6 +275,7 @@ def live_credit_evidence(modules, urlopen=urllib.request.urlopen):
     return {'captured_at': time.time(), 'sources': [host + '/api/v1/credits', host + '/api/v1/key'],
             'total_credits': str(total), 'total_usage': str(usage), 'account_remaining_usd': str(account_remaining),
             'key_limit_remaining_usd': str(key_remaining) if key_remaining is not None else None,
+            'effective_key_budget_remaining_usd': str(budget_remaining) if budget_remaining is not None else None,
             'effective_remaining_usd': str(effective), 'policy': 'No top-up/key mutation; current balance only tightens original cumulative allowances.'}
 
 

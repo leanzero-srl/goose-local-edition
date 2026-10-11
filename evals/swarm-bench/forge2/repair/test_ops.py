@@ -94,6 +94,27 @@ class AccountingControls(unittest.TestCase):
         with self.assertRaises(Hold):
             live_credit_evidence((None, None, None, None, installed), Mock(side_effect=OSError('unavailable')))
 
+    def test_missing_key_limit_is_not_unlimited_and_effective_budget_can_only_tighten(self):
+        installed = SimpleNamespace(entrant_config=lambda _provider: {}, cloud_env=lambda _provider, _snapshot: {'OPENROUTER_API_KEY': 'test-only'})
+        def evidence(key):
+            opener = Mock(side_effect=[io.BytesIO(b'{"data":{"total_credits":22,"total_usage":3}}'),
+                                      io.BytesIO(json.dumps({'data': key}).encode())])
+            return live_credit_evidence((None, None, None, None, installed), opener)
+        for key in ({}, {'limit': None}, {'limit_remaining': None}):
+            with self.assertRaises(Hold):
+                evidence(key)
+        self.assertEqual(evidence({'limit': None, 'limit_remaining': None})['effective_remaining_usd'], '19')
+        bounded = evidence({'limit': 20, 'limit_remaining': 12,
+                            'effective_budget': {'remaining_usd': '3.25', 'guardrail_id': 'do-not-persist'}})
+        self.assertEqual(bounded['effective_remaining_usd'], '3.25')
+        self.assertEqual(bounded['effective_key_budget_remaining_usd'], '3.25')
+        self.assertNotIn('do-not-persist', json.dumps(bounded))
+        for budget in ({}, {'remaining_usd': 'NaN'}, {'remaining_usd': '-1'}, {'remaining_usd': 0}):
+            with self.assertRaises(Hold):
+                evidence({'limit': None, 'limit_remaining': None, 'effective_budget': budget})
+        self.assertEqual(evidence({'limit': None, 'limit_remaining': None,
+                                  'effective_budget': {'remaining_usd': 99}})['effective_remaining_usd'], '19')
+
     def test_cache_zero_missing_and_invalid_are_not_passes(self):
         receipts = [bill_receipt(f'gen-{i}-aa', self.native(f'gen-{i}-aa', cached=0), self.route(), self.row()) for i in range(6)]
         self.assertEqual(cache_status(receipts)['status'], 'no-native-cache-hit')
