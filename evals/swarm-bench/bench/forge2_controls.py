@@ -327,8 +327,8 @@ def offline_lint(tree: Path, kit_dir: str) -> Dict:
             'warnings': sorted(p.get('message') for p in problems if p.get('sev') == 'warning')}
 
 
-SOURCE_EXCLUDED_DIRS = {'node_modules', '.forge-dev', 'forge-shots', '__pycache__', 'bench-media'}
-SOURCE_EXCLUDED_FILES = {'forge-observations.json', '.DS_Store'}
+SOURCE_EXCLUDED_DIRS = {'node_modules', '.forge-dev', 'forge-shots', '__pycache__', 'bench-media', '.swarm', '.git'}
+SOURCE_EXCLUDED_FILES = {'forge-observations.json', '.DS_Store', 'forge-reference-pass.json', 'trace.jsonl', 'engine-console.log'}
 
 
 def source_inventory(tree: Path) -> Dict:
