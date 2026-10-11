@@ -1,0 +1,659 @@
+{
+  "result": "PASS",
+  "sprintId": "791",
+  "closeMs": 1795448951360,
+  "nativeIssuesCompared": 93,
+  "fieldValueComparisons": 186,
+  "missingNativeRecords": [],
+  "displayedRowsCompared": 77,
+  "closedTotals": {
+    "committed": 212.5,
+    "added": 99.0,
+    "removed": 132.0
+  },
+  "postCloseEstimateContrasts": [
+    {
+      "issueKey": "WEB-298",
+      "field": "customfield_13387",
+      "atClose": 0.5,
+      "nativeCurrent": 3.0
+    },
+    {
+      "issueKey": "WEB-433",
+      "field": "customfield_13387",
+      "atClose": 2,
+      "nativeCurrent": 8.0
+    },
+    {
+      "issueKey": "WEB-467",
+      "field": "customfield_13387",
+      "atClose": 0.5,
+      "nativeCurrent": 13.0
+    }
+  ],
+  "removedBeforeCloseStatusChecks": [
+    {
+      "issueKey": "WEB-294",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-298",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-303",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-304",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-315",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-322",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-325",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-328",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-338",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-340",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-341",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-344",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-346",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-349",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-354",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-357",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-368",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-373",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-375",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-378",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-380",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-408",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-428",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-429",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-435",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-439",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-440",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-449",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-461",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-463",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-464",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-481",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-482",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-488",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-511",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-516",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-523",
+      "nativeStatus": null
+    },
+    {
+      "issueKey": "WEB-527",
+      "nativeStatus": null
+    }
+  ],
+  "allCohortStatusChecks": [
+    {
+      "issueKey": "WEB-294",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-296",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-298",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-303",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-304",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-308",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-312",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-314",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-315",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-317",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-322",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-324",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-325",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-327",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-328",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-330",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-333",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-337",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-338",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-340",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-341",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-343",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-344",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-346",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-348",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-349",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-350",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-354",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-355",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-357",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-364",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-365",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-368",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-373",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-375",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-378",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-380",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-384",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-393",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-396",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-398",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-399",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-407",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-408",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-409",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-414",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-420",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-422",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-423",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-428",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-429",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-433",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-435",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-439",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-440",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-442",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-446",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-447",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-448",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-449",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-450",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-451",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-458",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-461",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-462",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-463",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-464",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-467",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-473",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-478",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-481",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-482",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-487",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-488",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-490",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-491",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-494",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-499",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-500",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-501",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-502",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-505",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-508",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-511",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-514",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-516",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-517",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-523",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-527",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-528",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-533",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-534",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "issueKey": "WEB-537",
+      "expected": null,
+      "actual": null
+    }
+  ],
+  "membershipBasis": "Native Sprint changelog through close; where no Sprint history exists, the previously observed pre-close membership. Deleted pre-close records have retained zero estimates.",
+  "creepPercent": 46.6,
+  "closedRowsAtOrBeforeClose": 85,
+  "immutableRowsAcrossClose": 276
+}

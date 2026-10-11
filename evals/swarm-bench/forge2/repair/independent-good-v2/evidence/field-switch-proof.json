@@ -1,0 +1,386 @@
+{
+  "result": "PASS",
+  "nativeProbeTiming": "After reconciliation; no public issue events were delivered between before-state and native read. Reconciliation writes only Scope status, not estimation fields.",
+  "removedContributorSample": 16,
+  "memberComparisons": 24,
+  "staleBeforeNativeContrasts": 20,
+  "immutableRowsCompared": 275,
+  "newBoardFieldRows": [
+    {
+      "changeId": "1146555",
+      "sprintId": "810",
+      "issueKey": "AUTH-289",
+      "estimateField": "customfield_13387",
+      "boardId": "60"
+    },
+    {
+      "changeId": "1146904",
+      "sprintId": "995",
+      "issueKey": "AUTH-408",
+      "estimateField": "customfield_13387",
+      "boardId": "60"
+    },
+    {
+      "changeId": "1146978",
+      "sprintId": "995",
+      "issueKey": "AUTH-193",
+      "estimateField": "customfield_13387",
+      "boardId": "60"
+    },
+    {
+      "changeId": "1146978",
+      "sprintId": "810",
+      "issueKey": "AUTH-193",
+      "estimateField": "customfield_13387",
+      "boardId": "60"
+    },
+    {
+      "changeId": "1147918",
+      "sprintId": "995",
+      "issueKey": "AUTH-376",
+      "estimateField": "customfield_13387",
+      "boardId": "60"
+    },
+    {
+      "changeId": "1147918",
+      "sprintId": "810",
+      "issueKey": "AUTH-376",
+      "estimateField": "customfield_13387",
+      "boardId": "60"
+    },
+    {
+      "changeId": "1148064",
+      "sprintId": "995",
+      "issueKey": "AUTH-305",
+      "estimateField": "customfield_13387",
+      "boardId": "60"
+    },
+    {
+      "changeId": "1148269",
+      "sprintId": "995",
+      "issueKey": "AUTH-347",
+      "estimateField": "customfield_13387",
+      "boardId": "60"
+    },
+    {
+      "changeId": "1148371",
+      "sprintId": "810",
+      "issueKey": "AUTH-159",
+      "estimateField": "customfield_13387",
+      "boardId": "60"
+    },
+    {
+      "changeId": "1148586",
+      "sprintId": "995",
+      "issueKey": "AUTH-408",
+      "estimateField": "customfield_13387",
+      "boardId": "60"
+    },
+    {
+      "changeId": "1148836",
+      "sprintId": "995",
+      "issueKey": "AUTH-145",
+      "estimateField": "customfield_13387",
+      "boardId": "60"
+    },
+    {
+      "changeId": "1148836",
+      "sprintId": "810",
+      "issueKey": "AUTH-145",
+      "estimateField": "customfield_13387",
+      "boardId": "60"
+    }
+  ],
+  "checks": [
+    {
+      "sprintId": "810",
+      "issueKey": "AUTH-157",
+      "removedFromAllActive": true,
+      "beforeEstimate": 5,
+      "afterEstimate": 3,
+      "nativeBoardField": "customfield_13387",
+      "nativeValue": 3,
+      "nativeStatus": "removed"
+    },
+    {
+      "sprintId": "810",
+      "issueKey": "AUTH-163",
+      "removedFromAllActive": true,
+      "beforeEstimate": 0.5,
+      "afterEstimate": 13,
+      "nativeBoardField": "customfield_13387",
+      "nativeValue": 13,
+      "nativeStatus": "removed"
+    },
+    {
+      "sprintId": "810",
+      "issueKey": "AUTH-201",
+      "removedFromAllActive": true,
+      "beforeEstimate": 0,
+      "afterEstimate": 5,
+      "nativeBoardField": "customfield_13387",
+      "nativeValue": 5,
+      "nativeStatus": "removed"
+    },
+    {
+      "sprintId": "810",
+      "issueKey": "AUTH-218",
+      "removedFromAllActive": true,
+      "beforeEstimate": 3,
+      "afterEstimate": 0,
+      "nativeBoardField": "customfield_13387",
+      "nativeValue": 0,
+      "nativeStatus": "removed"
+    },
+    {
+      "sprintId": "810",
+      "issueKey": "AUTH-220",
+      "removedFromAllActive": true,
+      "beforeEstimate": 8,
+      "afterEstimate": 0,
+      "nativeBoardField": "customfield_13387",
+      "nativeValue": 0,
+      "nativeStatus": "removed"
+    },
+    {
+      "sprintId": "810",
+      "issueKey": "AUTH-230",
+      "removedFromAllActive": true,
+      "beforeEstimate": 5,
+      "afterEstimate": 13,
+      "nativeBoardField": "customfield_13387",
+      "nativeValue": 13,
+      "nativeStatus": "removed"
+    },
+    {
+      "sprintId": "810",
+      "issueKey": "AUTH-247",
+      "removedFromAllActive": true,
+      "beforeEstimate": 0,
+      "afterEstimate": 0,
+      "nativeBoardField": "customfield_13387",
+      "nativeValue": 0,
+      "nativeStatus": "removed"
+    },
+    {
+      "sprintId": "810",
+      "issueKey": "AUTH-273",
+      "removedFromAllActive": true,
+      "beforeEstimate": 2,
+      "afterEstimate": 0,
+      "nativeBoardField": "customfield_13387",
+      "nativeValue": 0,
+      "nativeStatus": "removed"
+    },
+    {
+      "sprintId": "810",
+      "issueKey": "AUTH-289",
+      "removedFromAllActive": true,
+      "beforeEstimate": 0,
+      "afterEstimate": 0,
+      "nativeBoardField": "customfield_13387",
+      "nativeValue": 0,
+      "nativeStatus": "removed"
+    },
+    {
+      "sprintId": "810",
+      "issueKey": "AUTH-295",
+      "removedFromAllActive": true,
+      "beforeEstimate": 5,
+      "afterEstimate": 8,
+      "nativeBoardField": "customfield_13387",
+      "nativeValue": 8,
+      "nativeStatus": "removed"
+    },
+    {
+      "sprintId": "810",
+      "issueKey": "AUTH-318",
+      "removedFromAllActive": true,
+      "beforeEstimate": 0,
+      "afterEstimate": 0,
+      "nativeBoardField": "customfield_13387",
+      "nativeValue": 0,
+      "nativeStatus": "removed"
+    },
+    {
+      "sprintId": "810",
+      "issueKey": "AUTH-332",
+      "removedFromAllActive": true,
+      "beforeEstimate": 3,
+      "afterEstimate": 5,
+      "nativeBoardField": "customfield_13387",
+      "nativeValue": 5,
+      "nativeStatus": "removed"
+    },
+    {
+      "sprintId": "810",
+      "issueKey": "AUTH-340",
+      "removedFromAllActive": true,
+      "beforeEstimate": 3,
+      "afterEstimate": 13,
+      "nativeBoardField": "customfield_13387",
+      "nativeValue": 13,
+      "nativeStatus": "removed"
+    },
+    {
+      "sprintId": "810",
+      "issueKey": "AUTH-353",
+      "removedFromAllActive": true,
+      "beforeEstimate": 8,
+      "afterEstimate": 0,
+      "nativeBoardField": "customfield_13387",
+      "nativeValue": 0,
+      "nativeStatus": "removed"
+    },
+    {
+      "sprintId": "810",
+      "issueKey": "AUTH-358",
+      "removedFromAllActive": true,
+      "beforeEstimate": 13,
+      "afterEstimate": 0,
+      "nativeBoardField": "customfield_13387",
+      "nativeValue": 0,
+      "nativeStatus": "removed"
+    },
+    {
+      "sprintId": "810",
+      "issueKey": "AUTH-453",
+      "removedFromAllActive": true,
+      "beforeEstimate": 3,
+      "afterEstimate": 1,
+      "nativeBoardField": "customfield_13387",
+      "nativeValue": 1,
+      "nativeStatus": "removed"
+    },
+    {
+      "sprintId": "810",
+      "issueKey": "AUTH-456",
+      "removedFromAllActive": false,
+      "beforeEstimate": 13,
+      "afterEstimate": 0,
+      "nativeBoardField": "customfield_13387",
+      "nativeValue": 0,
+      "nativeStatus": "added +13"
+    },
+    {
+      "sprintId": "810",
+      "issueKey": "AUTH-430",
+      "removedFromAllActive": false,
+      "beforeEstimate": 5,
+      "afterEstimate": 0.5,
+      "nativeBoardField": "customfield_13387",
+      "nativeValue": 0.5,
+      "nativeStatus": "added +5"
+    },
+    {
+      "sprintId": "810",
+      "issueKey": "AUTH-416",
+      "removedFromAllActive": false,
+      "beforeEstimate": 5,
+      "afterEstimate": 0,
+      "nativeBoardField": "customfield_13387",
+      "nativeValue": 0,
+      "nativeStatus": "added +5"
+    },
+    {
+      "sprintId": "810",
+      "issueKey": "AUTH-407",
+      "removedFromAllActive": false,
+      "beforeEstimate": 5,
+      "afterEstimate": 13,
+      "nativeBoardField": "customfield_13387",
+      "nativeValue": 13,
+      "nativeStatus": "added +5"
+    },
+    {
+      "sprintId": "810",
+      "issueKey": "AUTH-395",
+      "removedFromAllActive": false,
+      "beforeEstimate": 0.5,
+      "afterEstimate": 0,
+      "nativeBoardField": "customfield_13387",
+      "nativeValue": 0,
+      "nativeStatus": "added +0.5"
+    },
+    {
+      "sprintId": "810",
+      "issueKey": "AUTH-394",
+      "removedFromAllActive": false,
+      "beforeEstimate": 8,
+      "afterEstimate": 1,
+      "nativeBoardField": "customfield_13387",
+      "nativeValue": 1,
+      "nativeStatus": "added +8"
+    },
+    {
+      "sprintId": "810",
+      "issueKey": "AUTH-359",
+      "removedFromAllActive": false,
+      "beforeEstimate": 0.5,
+      "afterEstimate": 0,
+      "nativeBoardField": "customfield_13387",
+      "nativeValue": 0,
+      "nativeStatus": "added +0.5"
+    },
+    {
+      "sprintId": "810",
+      "issueKey": "AUTH-350",
+      "removedFromAllActive": false,
+      "beforeEstimate": 8,
+      "afterEstimate": 8,
+      "nativeBoardField": "customfield_13387",
+      "nativeValue": 8,
+      "nativeStatus": "added +8"
+    }
+  ],
+  "activeScopeStatusChecks": [
+    {
+      "issueKey": "AUTH-456",
+      "sprintId": "810",
+      "expected": "added +13",
+      "actual": "added +13"
+    },
+    {
+      "issueKey": "AUTH-430",
+      "sprintId": "810",
+      "expected": "added +5",
+      "actual": "added +5"
+    },
+    {
+      "issueKey": "AUTH-416",
+      "sprintId": "810",
+      "expected": "added +5",
+      "actual": "added +5"
+    },
+    {
+      "issueKey": "AUTH-407",
+      "sprintId": "810",
+      "expected": "added +5",
+      "actual": "added +5"
+    },
+    {
+      "issueKey": "AUTH-395",
+      "sprintId": "810",
+      "expected": "added +0.5",
+      "actual": "added +0.5"
+    },
+    {
+      "issueKey": "AUTH-394",
+      "sprintId": "810",
+      "expected": "added +8",
+      "actual": "added +8"
+    },
+    {
+      "issueKey": "AUTH-359",
+      "sprintId": "810",
+      "expected": "added +0.5",
+      "actual": "added +0.5"
+    },
+    {
+      "issueKey": "AUTH-350",
+      "sprintId": "810",
+      "expected": "added +8",
+      "actual": "added +8"
+    }
+  ]
+}

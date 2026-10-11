@@ -1,0 +1,12 @@
+{
+  "appRoot": "app",
+  "evidenceRoot": "evidence",
+  "appFileCount": 40,
+  "sourceTreeSha256": "bf678ca63b783155c17d013e3f554943c07de36ee41af40a3c363592756d9cb0",
+  "proofFileCount": 20,
+  "evidenceTreeSha256": "4aa92d7f87011e2da6695f1a8626c3c17ba7732f628210f88bf5b8e03e3c8508",
+  "sourceInventorySha256": "5070521e5c4113e74a2faeabe5ebf5f048aa170d51de82afc6dec0772991e8d1",
+  "evidenceInventorySha256": "7d9fc20270af137724fbf2ae3a4a26d345ca89801417452eb857d8bab455f3cf",
+  "externalQualification": "not performed by author",
+  "authorship": "independent alternative after public-only requirement feedback"
+}

@@ -1,0 +1,26 @@
+{
+  "kind": "widget",
+  "errors": [],
+  "geometry": {
+    "width": 380,
+    "scrollWidth": 380,
+    "clippedNumbers": 0,
+    "sprints": [
+      "810",
+      "995"
+    ],
+    "bars": 6,
+    "chartCount": 1
+  },
+  "metrics": [
+    "101.5",
+    "87",
+    "88.5",
+    "85.7%",
+    "92",
+    "44.5",
+    "51",
+    "48.4%"
+  ],
+  "sameOriginScriptStyleBytes": 109050
+}

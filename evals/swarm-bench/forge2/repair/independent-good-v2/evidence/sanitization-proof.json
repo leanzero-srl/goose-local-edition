@@ -1,0 +1,20 @@
+{
+  "result": "PASS",
+  "appFiles": 40,
+  "original39FilesUnchanged": true,
+  "runtimeCredentialAndUrlAbsent": true,
+  "archiveRoots": [
+    "app",
+    "evidence"
+  ],
+  "excluded": [
+    "node_modules",
+    ".forge-dev",
+    "private",
+    "runtime environment",
+    "raw native responses",
+    "raw storage state",
+    "CI secrets"
+  ],
+  "notes": "Actual private URL and password were checked in memory and are never printed or stored in this receipt."
+}

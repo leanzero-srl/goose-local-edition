@@ -1,0 +1,280 @@
+modules:
+  trigger:
+    - key: scope-issue-updated
+      function: on-issue-updated
+      events:
+        - avi:jira:updated:issue
+    - key: scope-issue-deleted
+      function: on-issue-deleted
+      events:
+        - avi:jira:deleted:issue
+  consumer:
+    - key: scope-ledger-consumer
+      queue: scope-ledger
+      function: consume-change
+  scheduledTrigger:
+    - key: scope-reconcile
+      function: reconcile
+      interval: hour
+  dashboards:widget:
+    - key: scope-widget
+      title: Sprint scope creep
+      description: Committed, added and removed story points and scope creep for the active sprints of one scrum board.
+      thumbnail: https://developer.atlassian.com/platform/forge/images/icons/issue-panel-icon.svg
+      resource: widget
+      resolver:
+        function: ui-resolver
+      edit:
+        resource: widget-edit
+  jira:sprintAction:
+    - key: scope-sprint-ledger
+      title: Scope ledger
+      actionType: modal
+      viewportSize: large
+      resource: sprint
+      resolver:
+        function: ui-resolver
+  action:
+    - key: get-sprint-scope
+      name: Get sprint scope
+      function: rovo-get-sprint-scope
+      actionVerb: GET
+      description: Returns the scope ledger of one Jira sprint for the asking person - committed, added and removed story points, scope creep, and the sprint changes they can see.
+      inputs:
+        sprintId:
+          title: Sprint ID
+          type: string
+          required: true
+          description: The numeric id of the Jira Software sprint, for example 41.
+  rovo:skill:
+    - key: sprint-scope-analyst
+      source:
+        dir: skills/sprint-scope-analyst
+      dependencies:
+        tools:
+          - get-sprint-scope
+  rovo:agent:
+    - key: scope-ledger-agent
+      name: Scope Ledger
+      description: Explains what entered or left a sprint after it started, who changed it and what it did to the sprint's scope.
+      prompt: >
+        You help agile coaches and teams understand sprint scope creep. When someone asks what changed in a
+        sprint after it started, how much scope was added or removed, or who changed it, use the
+        sprint-scope-analyst skill. Report numbers exactly as the action returns them and never invent changes.
+      skills:
+        - sprint-scope-analyst
+      actions:
+        - get-sprint-scope
+      conversationStarters:
+        - What entered sprint 41 after it started?
+        - How much scope creep does my sprint have?
+  rovo:mcp:
+    - key: scope-ledger-mcp
+      name: Scope Ledger
+      tools:
+        - get-sprint-scope
+  llm:
+    - key: scope-ledger-llm
+      model:
+        - claude
+  jira:adminPage:
+    - key: scope-admin
+      title: Scope Ledger administration
+      resource: admin
+      render: native
+      resolver:
+        function: ui-resolver
+  jira:customField:
+    - key: scope-status
+      name: Scope status
+      description: Current sprint scope classification recorded by Scope Ledger.
+      type: string
+      readOnly: true
+  jira:jqlFunction:
+    - key: scope-changed
+      name: scopeChanged
+      function: scope-jql-handler
+      arguments:
+        - name: sprintId
+          required: true
+      types:
+        - issue
+      operators:
+        - in
+        - not in
+  webtrigger:
+    - key: scope-ci
+      function: ci-deployment
+      response:
+        type: static
+        outputs:
+          - key: unauthorized
+            statusCode: 401
+            contentType: application/json
+            body: '{"error":"Unauthorized"}'
+          - key: duplicate
+            statusCode: 200
+            contentType: application/json
+            body: '{"status":"Already accepted"}'
+          - key: accepted
+            statusCode: 202
+            contentType: application/json
+            body: '{"status":"Accepted"}'
+  function:
+    - key: on-issue-updated
+      handler: index.onIssueUpdated
+    - key: consume-change
+      handler: index.consumeChange
+      timeoutSeconds: 900
+    - key: reconcile
+      handler: index.reconcile
+      timeoutSeconds: 900
+    - key: ui-resolver
+      handler: index.uiResolver
+    - key: rovo-get-sprint-scope
+      handler: index.getSprintScope
+    - key: on-issue-deleted
+      handler: index.onIssueDeleted
+    - key: ci-deployment
+      handler: index.ciDeployment
+    - key: scope-jql-handler
+      handler: index.scopeChanged
+resources:
+  - key: admin
+    path: src/frontend/admin.jsx
+  - key: widget
+    path: static/widget/build
+  - key: widget-edit
+    path: static/widget-edit/build
+  - key: sprint
+    path: static/sprint/build
+permissions:
+  scopes:
+    - read:jira-work
+    - write:jira-work
+    - storage:app
+    - read:board-scope:jira-software
+    - read:board-scope.admin:jira-software
+    - read:sprint:jira-software
+    - read:project:jira
+    - read:jira-user
+    - read:app-data:jira
+    - write:app-data:jira
+app:
+  id: ari:cloud:ecosystem::app/00000000-0000-0000-0000-000000000000
+  runtime:
+    name: nodejs22.x
+  storage:
+    entities:
+      - name: scope-change
+        attributes:
+          sprintId:
+            type: string
+          changeId:
+            type: string
+          at:
+            type: float
+          created:
+            type: string
+          issueId:
+            type: string
+          issueKey:
+            type: string
+          kind:
+            type: string
+          authorId:
+            type: string
+          authorName:
+            type: string
+          source:
+            type: string
+        indexes:
+          - name: by-sprint
+            partition:
+              - sprintId
+            range:
+              - at
+      - name: sprint-issue
+        attributes:
+          sprintId:
+            type: string
+          issueId:
+            type: string
+          issueKey:
+            type: string
+          inSprint:
+            type: boolean
+          estimate:
+            type: float
+        indexes:
+          - name: by-sprint
+            partition:
+              - sprintId
+            range:
+              - issueId
+          - name: by-issue
+            partition:
+              - issueId
+            range:
+              - sprintId
+      - name: scope-ledger
+        attributes:
+          sprintId:
+            type: string
+          at:
+            type: float
+          changeId:
+            type: string
+          kind:
+            type: string
+          issueId:
+            type: string
+          issueKey:
+            type: string
+          estimate:
+            type: float
+          boardId:
+            type: string
+          estimateField:
+            type: string
+          deleted:
+            type: boolean
+          deployedEnvs:
+            type: string
+          created:
+            type: string
+          authorId:
+            type: string
+          authorName:
+            type: string
+          source:
+            type: string
+        indexes:
+          - name: by-sprint
+            partition:
+              - sprintId
+            range:
+              - at
+          - name: by-issue
+            partition:
+              - issueId
+            range:
+              - at
+      - name: ci-deployment
+        attributes:
+          eventId:
+            type: string
+          at:
+            type: float
+          environment:
+            type: string
+          issueKeys:
+            type: string
+          state:
+            type: string
+        indexes:
+          - name: by-state
+            partition:
+              - state
+            range:
+              - at

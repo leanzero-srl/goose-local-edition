@@ -1,0 +1,17 @@
+{
+  "kind": "edit",
+  "errors": [],
+  "options": 4,
+  "boardId": "41",
+  "save": {
+    "config": {
+      "boardId": "41"
+    },
+    "stored": {
+      "boardId": "41"
+    },
+    "via": "onProductSave"
+  },
+  "reopened": "41",
+  "sameOriginScriptStyleBytes": 113783
+}

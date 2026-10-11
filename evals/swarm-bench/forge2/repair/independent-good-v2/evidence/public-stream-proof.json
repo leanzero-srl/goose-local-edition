@@ -1,0 +1,46 @@
+{
+  "result": "PASS",
+  "publicEventCommandCounts": [
+    30,
+    30,
+    30,
+    100,
+    300,
+    300
+  ],
+  "requestedEvents": 790,
+  "deliveredHeadersPerBatch": [
+    30,
+    30,
+    30,
+    100,
+    300,
+    301
+  ],
+  "deliveredHeaders": 791,
+  "migration": {
+    "complete": true,
+    "migratedRows": 88,
+    "originalMetadataPreservedForEveryRow": true,
+    "bootstrapLedgerRows": 195
+  },
+  "unrelatedNumericEventsCompared": 133,
+  "allUnrelatedNumericEventsNoJiraOrQueue": true,
+  "sampleNegativeControl": {
+    "field": "Original story points",
+    "issueKey": "WEB-293",
+    "changelogId": "1139292",
+    "from": "\u2205",
+    "to": "1",
+    "jiraCalls": 0,
+    "queueCalls": 0
+  },
+  "sprintPositiveControls": 113,
+  "samplePositiveControl": {
+    "issueKey": "WEB-296",
+    "changelogId": "1139305",
+    "queueCalls": 1,
+    "jiraCalls": 5
+  },
+  "limitations": "Public development stream only. An extra delivered header in the final batch was retained; no timing or external scoring claim."
+}

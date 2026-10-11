@@ -1,0 +1,32 @@
+{
+  "command": "native SDK public-probe + invoke rovo-get-sprint-scope + sprintLedger resolver",
+  "checks": [
+    {
+      "issueKey": "WEB-344",
+      "changeId": "1136554",
+      "snapshot": 3,
+      "nativeCurrent": 5,
+      "rovo": [
+        5
+      ],
+      "tableResolver": [
+        5
+      ],
+      "nativeStatus": "removed"
+    },
+    {
+      "issueKey": "WEB-303",
+      "changeId": "1135173",
+      "snapshot": 13,
+      "nativeCurrent": 1,
+      "rovo": [
+        1
+      ],
+      "tableResolver": [
+        1
+      ],
+      "nativeStatus": "removed"
+    }
+  ],
+  "result": "PASS"
+}

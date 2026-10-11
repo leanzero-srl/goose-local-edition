@@ -1,0 +1,24 @@
+{
+  "kind": "sprint",
+  "errors": [],
+  "rows": 77,
+  "pointsMatchFreshResolver": true,
+  "descendingIsExactReverse": true,
+  "columns": [
+    "issue",
+    "points",
+    "kind",
+    "by",
+    "at",
+    "source",
+    "deployed"
+  ],
+  "selectedRows": 1,
+  "metrics": [
+    "212.5",
+    "99",
+    "132",
+    "46.6%"
+  ],
+  "sameOriginScriptStyleBytes": 112921
+}

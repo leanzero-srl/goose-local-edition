@@ -1,0 +1,20 @@
+{
+  "result": "PASS",
+  "initialInvokes": 1,
+  "migration": {
+    "labelFor": "forge-app-b7e1b-migration",
+    "controlId": "forge-app-b7e1b-migration",
+    "isReadOnly": true,
+    "value": "Migrated 88 of 88 v1 rows \u00b7 complete"
+  },
+  "table": {
+    "label": "Recent admin changes",
+    "caption": "Recent admin changes",
+    "columns": [
+      "when",
+      "who",
+      "what"
+    ]
+  },
+  "errors": []
+}
