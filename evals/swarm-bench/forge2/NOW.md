@@ -110,6 +110,11 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
   calibration, sb7.x/forge manifests to refreeze after P11's shared bench edits.
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 06:46 (Oct 11) OPUS 5.5 PUBLISHED: anthropic/claude-opus-5.5 = 0.8100 (brun-d9647653-66f2-460d-b4be-c26100d2f04b; 111 of
+  300 calls, $16.29, finished itself in ~1 h 45; tests earned 0.9685 x reliability 0.8363; groups T .8333, B .8182, U
+  u_ledger_sort .8333, A a_action_result .8, R4 r4_sprint_close_final 0 (x0.9), R7 .9877). Jev Router launched 06:46.
+  BOARD: MiMo Flash 0.8461, Sol 0.8111, Opus 0.8100, DeepSeek Flash 0.7979, Sonnet 0.7698, Luna 0.6250. Spend: $23.71
+  published + $0.73 cut = $24.44 for six results. Balance $19.77 (total 555).
 - 06:08 (Oct 11) THE AUTO TOP-UP WORKS — MY ALARM WAS EARLY: it fired when the balance crossed about $2 (guard log: 2.04 at
   06:06:49 -> 26.92 at 06:08:19, total 530 -> 555 = +$25). The guard's HOLD (written at 2.78) was removed by the guard
   itself; Opus was never paused. LESSON: this account tops up at ~$2 by $25 — do not alarm the owner above that; the
