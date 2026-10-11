@@ -3457,15 +3457,52 @@ def _exact_ratio(parts: Dict) -> float:
     return parts['calls'] / den if isinstance(parts.get('calls'), int) and den else parts['ratio']
 
 
+CALIBRATION_IDENTITY_FIELDS = ('scorer_files_sha256', 'spec_sha256', 'kit_lock_sha256',
+                               'kit_code_sha256', 'wrapper_sha256', 'evaluation_inputs')
+
+
+def _sha256(value) -> bool:
+    return isinstance(value, str) and bool(re.fullmatch(r'[0-9a-f]{64}', value))
+
+
+def _flat_sha_map(value) -> bool:
+    return isinstance(value, dict) and bool(value) and all(
+        isinstance(key, str) and bool(key) and _sha256(item) for key, item in value.items())
+
+
+def calibration_identity(verdicts: List[Dict]) -> Dict:
+    """A reference calibration cannot mix tested app, site, contract or SDK bytes."""
+    identities = []
+    for verdict in verdicts:
+        identity = {name: verdict.get(name) for name in CALIBRATION_IDENTITY_FIELDS}
+        invalid = [name for name, value in identity.items() if name not in ('scorer_files_sha256', 'evaluation_inputs')
+                   and not _sha256(value)]
+        if not _flat_sha_map(identity.get('scorer_files_sha256')):
+            invalid.append('scorer_files_sha256')
+        inputs = identity.get('evaluation_inputs')
+        if (not isinstance(inputs, dict) or set(inputs) != {'candidate', 'site', 'public', 'v1_schema'}
+                or any(not _flat_sha_map(part) for part in inputs.values())):
+            invalid.append('evaluation_inputs sections')
+        if invalid:
+            raise ValueError('calibration provenance is missing or malformed: ' + ', '.join(invalid))
+        identities.append(identity)
+    if not identities:
+        raise ValueError('calibration provenance requires actual reference verdicts')
+    if any(identity != identities[0] for identity in identities[1:]):
+        raise ValueError('calibration reference verdicts used different app, site, contract, scorer or SDK bytes')
+    return copy.deepcopy(identities[0])
+
+
 def calibrate(verdicts: List[Dict], rc: Dict) -> Dict:
     """The calibrated thresholds from >= 5 reference-passing golden verdicts on distinct seeds; refuses otherwise."""
     fails = []
     seeds = [v.get('fixture_seed') for v in verdicts]
     if len(set(seeds)) < CALIBRATION_SEEDS or None in seeds:
         fails.append(f'{CALIBRATION_SEEDS} distinct fixture seeds needed, got {seeds}')
-    shas = {json.dumps(v.get('scorer_files_sha256'), sort_keys=True) for v in verdicts}
-    if len(shas) != 1:
-        fails.append('the golden verdicts were scored by different scorer files')
+    try:
+        identity = calibration_identity(verdicts)
+    except ValueError as error:
+        fails.append(str(error))
     if any(v.get('scorerVersion') != 'forge-2.0-rc' for v in verdicts):
         fails.append('calibration fits rc-grade verdicts only (thresholds already calibrated?)')
     for v in verdicts:
@@ -3497,8 +3534,7 @@ def calibrate(verdicts: List[Dict], rc: Dict) -> Dict:
         shown = {seed: round(r, 4) for seed, r in per_seed.items()}
         out['receipts'][key] = (f'golden worst-of-{len(per_seed)} {row} ratio {round(worst, 4)} (per seed {shown}) -> top rung '
                                 f'{top}; lower rungs keep the rc multiples of the top ({rc[key]})')
-    out['calibration'] = {'seeds': sorted(seeds), 'scorer_files_sha256': verdicts[0].get('scorer_files_sha256'),
-                          'kit_lock_sha256': verdicts[0].get('kit_lock_sha256'), 'wrapper_sha256': verdicts[0].get('wrapper_sha256'),
+    out['calibration'] = {'seeds': sorted(seeds), **identity,
                           'verified_top': {n: 'golden 1.0 on every seed' for n in VERIFIED_TOP}}
     return out
 
@@ -3899,6 +3935,11 @@ def evaluate(c: Ctx) -> Dict:
         for x in extra:
             c.harness_missing += [h for h in x.harness_missing if h not in c.harness_missing]
         rows = merge_seed_rows(sets, seeds)
+    if c.obs.get('scorerFilesSha256') and c.obs['scorerFilesSha256'] != scorer_files_sha256():
+        raise RuntimeError('REFUSED: scorer bytes changed before composing its recorded observations')
+    inputs = c.obs.get('evaluationInputs')
+    if any(x.obs.get('evaluationInputs') != inputs for x in extra):
+        raise RuntimeError('REFUSED: scoring sites used different candidate or environment bytes')
     result = compose_from_rows(rows, c)
     if seed_scores is not None:
         result['fixture_seeds'] = list(seed_scores)
@@ -3911,8 +3952,10 @@ def evaluate(c: Ctx) -> Dict:
                    'kit_code_sha256': kit.get('kit_code_sha256'),
                    'wrapper_sha256': kit.get('wrapper_sha256') or (c.obs.get('kit') or {}).get('wrapperSha256'),
                    'scorer_seconds': getattr(c, 'scorer_seconds', None), 'shots': list(c.obs.get('shots') or []),
-                   'scorer_files_sha256': scorer_files_sha256(),
-                   'spec_sha256': hashlib.sha256((ROOT / SPEC).read_bytes()).hexdigest()})
+                   'scorer_files_sha256': c.obs.get('scorerFilesSha256') or scorer_files_sha256(),
+                   'spec_sha256': ((c.obs.get('evaluationInputs') or {}).get('public', {}).get(Path(SPEC).name)
+                                   or hashlib.sha256((ROOT / SPEC).read_bytes()).hexdigest()),
+                   'evaluation_inputs': c.obs.get('evaluationInputs')})
     return result
 
 
@@ -5051,7 +5094,21 @@ def build_pack(seed: str, out: Path) -> Dict:
 def clone_tree(src: Path, dest: Path) -> None:
     shutil.copytree(src, dest, symlinks=False, ignore=shutil.ignore_patterns(
         'node_modules', '.forge-dev', 'forge-shots', 'bench-media', '.swarm', '__pycache__', 'trace.jsonl', 'verdict.json',
-        'engine-console.log', 'forge-observations.json'))
+        'engine-console.log', 'forge-observations.json', 'forge-reference-pass.json'))
+
+
+def input_file_hashes(root: Path) -> Dict[str, str]:
+    """Path-sensitive provenance of actual scorer inputs, before the probe changes its disposable clone."""
+    hashes = {}
+    excluded = {'node_modules', '.forge-dev', 'forge-shots', 'bench-media', '.swarm', '__pycache__', '.git'}
+    for directory, subdirs, names in os.walk(root, followlinks=False):
+        subdirs[:] = sorted(name for name in subdirs if name not in excluded)
+        for name in sorted(names):
+            path = Path(directory) / name
+            hashes[path.relative_to(root).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+    if not hashes:
+        raise RuntimeError(f'REFUSED: source provenance is empty: {root}')
+    return hashes
 
 
 def _probe_one(root: Path, seed: str, kit: Dict, runtime: str, shots: Path, media_dir: Optional[Path],
@@ -5061,6 +5118,15 @@ def _probe_one(root: Path, seed: str, kit: Dict, runtime: str, shots: Path, medi
         tmp = Path(tmp)
         app = tmp / 'app'
         clone_tree(Path(root), app)
+        sources = scorer_files_sha256()
+        if sources != _LOADED_SCORER_FILES:
+            raise RuntimeError('REFUSED: scorer files changed after this scoring process loaded them')
+        import forge2_kit
+        if forge2_kit.code_sha256(Path(kit['dir'])) != kit['kit_code_sha256']:
+            raise RuntimeError('REFUSED: materialized SDK code differs from its kit identity')
+        inputs = {'candidate': input_file_hashes(app), 'site': input_file_hashes(ROOT / 'forge2/site'),
+                  'public': input_file_hashes(ROOT / 'forge2/public'),
+                  'v1_schema': {'manifest.yml': hashlib.sha256((ROOT / 'forge2/starter/manifest.yml').read_bytes()).hexdigest()}}
         pack = build_pack(seed, tmp / 'pack.json')
         obs_path = tmp / 'forge-observations.json'
         shots.mkdir(parents=True, exist_ok=True)
@@ -5074,6 +5140,14 @@ def _probe_one(root: Path, seed: str, kit: Dict, runtime: str, shots: Path, medi
         if not obs_path.is_file():
             raise RuntimeError(f'REFUSED: forge2_probe.mjs exited {code} without observations (seed {seed})')
         obs = json.loads(obs_path.read_text())
+        if (inputs['candidate'] != input_file_hashes(app) or inputs['site'] != input_file_hashes(ROOT / 'forge2/site')
+                or inputs['public'] != input_file_hashes(ROOT / 'forge2/public')
+                or inputs['v1_schema']['manifest.yml'] != hashlib.sha256((ROOT / 'forge2/starter/manifest.yml').read_bytes()).hexdigest()):
+            raise RuntimeError('REFUSED: candidate, site or public contract bytes changed while scoring')
+        if sources != scorer_files_sha256() or forge2_kit.code_sha256(Path(kit['dir'])) != kit['kit_code_sha256']:
+            raise RuntimeError('REFUSED: scorer or materialized SDK bytes changed while scoring')
+        obs['evaluationInputs'] = inputs
+        obs['scorerFilesSha256'] = sources
         # Pixels are read once, here, into the observations, so evaluate() stays pure over (tree, observations,
         # pack) and a kept observation file rescored later grades v_dark_mode the same way.
         for surface in (obs.get('ui') or {}).get('surfaces') or []:
@@ -5261,6 +5335,9 @@ def main(argv=None) -> int:
         (tree / 'forge-reference-pass.json').write_text(json.dumps(marker, indent=2))
         print('REFERENCE GATE: PASS')
     return 0
+
+
+_LOADED_SCORER_FILES = scorer_files_sha256()
 
 
 if __name__ == '__main__':
