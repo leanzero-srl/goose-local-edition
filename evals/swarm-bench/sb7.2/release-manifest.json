@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "scorerVersion": "sb-7.2",
-  "sourceCommit": "b05deefba3f9bdc5df7955a8b09496bedebd3770",
+  "sourceCommit": "f0d0a78c125771fbd172e7926bb32b185669bee5",
   "sourceCommitScope": "Benchmark implementation snapshot for SB7.2 (scorer sb-7.2): SB7.1's Meridian product, SB7 contract, starter (sb7.1/starter), fixtures and vendor with a 3D-weighted scorer (score_sb72.py wraps score_sb71.py), the framed default camera and overview legibility (product_probe_sb72.mjs = product_probe_sb71.mjs under the SB7.2 profile), public excellence rungs and a 180 ms stream-apply rung (sb72-thresholds.json), and run_build.py --sb72 through isolated_tiers.py. Release metadata and the validation receipt are added by the manifest commit. Call budget and wallet guard (5ae66cd5e, owner-approved 2026-10-02): run_build.py passes --max-turns bench_budget.CALL_BUDGET (150) to every isolated single-model entrant's goose run (swarm entrants unbudgeted), records budget{max_calls, calls_used, stopped_by} in agent, verdict and model-cost.json, scores a call-budget or wallet-guard stop instead of refusing it, and with BENCH_MAX_USD set SIGTERMs an OpenRouter entrant's pid once its billed generations reach the limit; bench_budget.py and test_bench_budget.py are new, bench_cost.py and bench_rescore.py changed with it; scorer bytes unchanged. SB7.2 public contract trim (2026-10-02, f202fcaab): isolated_tiers.py gains a per-tier `public` table that run_build.py renders into the workdir; SB7.1 still renders spec-build-sb7.md and sb7.1/VISUAL-CONTRACT.md (receipt contract tuple unchanged, test-pinned); SB7.2 renders its own sb7.2/SB7-CONTRACT.md, sb7.2/VISUAL-CONTRACT.md and sb7.2/STARTER.md (72,107 -> 35,848 bytes; three refuter-found measured requirements restored: newest-first notifications, /api/events seq > after ascending, /api/drafts?state= filter) and its prompt gains a definition of done and the 150-call budget; score_sb72.py hashes the SB7.2 contract files; release_manifest.py pins the two new files. Scoring bytes (probes, thresholds, check logic) unchanged. Harness refreeze 2026-10-10 for the app that also bundles Forge 2.0: bench_budget.py, isolated_tiers.py, run_build.py, release_manifest.py and test_bench_budget.py moved for the FORGE20 tier only (call budget 300 on that tier; this tier stays at 150) - scorer, probe, spec, fixtures and thresholds bytes unchanged; run_build.invoke() proven byte-identical for this tier on both sides. Harness refreeze 2026-10-11 for repaired Forge 2.0: current shared budget, billing, preserved-build rescore and task/build identity support files and their tests are pinned from this source. SB7.2 scorer, probes, fixtures, thresholds and public contract remain byte-identical to their prior manifest. Historical validation/limitations above remain historical; this payload refresh does not claim new SB7.2 runtime acceptance.",
   "validation": {
     "status": "passed",
@@ -26,8 +26,8 @@
   },
   "files": {
     "bench/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "bench/bench_budget.py": "b94b9d0256d499ed514bec824be7d8af9e01161c75e84bfdd0d1479f57cdb012",
-    "bench/bench_cost.py": "c7abd947c4ee16702d0aab644c8aa7746d4a4ac592896f3237544bf50aa8292a",
+    "bench/bench_budget.py": "74754ea09bb956abfaed5f11cae4872e4784bfee05f0aff46cd51ad97ae0e615",
+    "bench/bench_cost.py": "c65974277b6cbdb082c61a553eef579ebafa21b44543d1c7b26e7d765c74378a",
     "bench/bench_isolation.py": "7683df6e10d4be903cc265315bbfd0e2b300c88bc0eaf81cdff7df87f39a0930",
     "bench/bench_rescore.py": "36d9eb6bc86428a7452000773981e394b40a1b80b4330ad194436ca82d1c8ce1",
     "bench/bench_task_identity.py": "ccd58cd9311ab57c3d78ba3dc749421d00ef479159ba93343bb41250a201718e",
@@ -80,8 +80,8 @@
     "bench/score_sb8.py": "852efbfbe3227c26fd7b603896e869c8d89a4f4c810945979664226fcb39a987",
     "bench/sweep.py": "3078af8d02281d3af16df40b8633af23015cf24e1db1c2668222cb0c953db4c0",
     "bench/test_bench_browser.py": "3a10fd54ed7415474d6547377f942e8668d9ec118f5443dd0dac51e46cbc88c8",
-    "bench/test_bench_budget.py": "8900448f88b525619d8fe2a1edca70d4b6a797c3ef04e457a46af72df203aad2",
-    "bench/test_bench_cost.py": "b04490933b30938639558d55904c9281ad8724d06d412f23d900f2a0f5c30c92",
+    "bench/test_bench_budget.py": "5d069ff2ae8090ab2d654b1957c4ac76ebbe2ec0017315a1e68ad8067617beac",
+    "bench/test_bench_cost.py": "2b278061aeda0a0615d999f53971f29c5009205edd4609405475436ec692f6f3",
     "bench/test_bench_isolation.py": "613de4275dc0db0844471f4adcd07ea8ba012c8552de2ec42ab7fe96a2be522b",
     "bench/test_bench_rescore.py": "aeeee67935f70e05c520bc85c7007936af6a5f583d1a8d2cec120371156159be",
     "bench/test_bench_task_identity.py": "8fa960d9b035251e42cf091c2b2c9a42fcc3bffd053075742828d57fd0201c92",
