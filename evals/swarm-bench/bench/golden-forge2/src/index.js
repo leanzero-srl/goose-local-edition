@@ -10,7 +10,7 @@ import { migrateSome } from './migrate';
 import { markIssueDeleted, migrationComplete } from './ledger';
 import { loadSettings } from './settings';
 import { handleCiEvent, applyDeployment } from './ci';
-import { refreshScopePrecomputations } from './jql';
+import { refreshScopePrecomputations, queueScopeRefresh } from './jql';
 
 export { adminResolver } from './admin';
 export { scopeChanged } from './jql';
@@ -79,7 +79,7 @@ async function issueEvent(body, work) {
   await settleClosedSprints(cfg, (cfg.closed ?? []).filter((id) => !closedBefore.has(id)), work, new Set([String(body.issueId)]));
   await saveConfig(cfg, previous);
   await announce(result.sprintIds);
-  if (result.sprintIds?.length) await enqueue({ type: 'jql-refresh', sprintIds: result.sprintIds }, 5);
+  if (result.sprintIds?.length) await queueScopeRefresh(result.sprintIds);
   return result;
 }
 
@@ -97,7 +97,7 @@ async function deployment(body, work) {
   }
   const result = await applyDeployment(body, work);
   await announce(result.sprintIds);
-  if (result.sprintIds?.length) await enqueue({ type: 'jql-refresh', sprintIds: result.sprintIds }, 5);
+  if (result.sprintIds?.length) await queueScopeRefresh(result.sprintIds);
   return result;
 }
 
@@ -111,7 +111,7 @@ async function runReconcile(work) {
   const result = await reconcileAll(cfg, isV2Config(previous) ? previous : null, work);
   await saveConfig(cfg, previous);
   await announce(result.sprintIds);
-  await enqueue({ type: 'jql-refresh', sprintIds: [...Object.keys(cfg.sprints), ...(cfg.closed ?? [])] }, 5);
+  await queueScopeRefresh([...Object.keys(cfg.sprints), ...(cfg.closed ?? [])]);
   console.log(
     `reconcile: ${Object.keys(cfg.sprints).length} active sprints, ${result.issues} issues read, ${result.rows} rows, ${result.members} memberships, ${result.statuses} statuses, ${result.deleted} deleted`,
   );
@@ -131,7 +131,7 @@ export async function consumeChange(event) {
     if (body.type === 'deleted') {
       const sprintIds = await markIssueDeleted(body.issueId);
       await announce(sprintIds);
-      await enqueue({ type: 'jql-refresh', sprintIds }, 5);
+      await queueScopeRefresh(sprintIds);
       return { sprintIds };
     }
     return await issueEvent(body, work);
