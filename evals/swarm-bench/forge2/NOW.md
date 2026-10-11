@@ -110,6 +110,10 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
   calibration, sb7.x/forge manifests to refreeze after P11's shared bench edits.
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 04:41 (Oct 11) DEEPSEEK v4.1 FLASH PUBLISHED: 0.7979 (brun-3ebd7df0-b683-4b41-a67b-4c995b673d48; 263 of 300 calls, $0.39,
+  finished itself in ~50 min; tests earned 0.9663 x reliability 0.8257; groups T .8333, B .8333, U u_issue_router
+  .6667, R2 r2_rate_limit_reaction .3019, R6 r6_valid_applies .5, R7 .9962). OPUS 5.5 launched 04:41. BOARD: MiMo Flash
+  0.8461, Sol 0.8111, DeepSeek Flash 0.7979, Sonnet 0.7698, Luna 0.6250. Spend: $7.42 published + $0.73 cut = $8.15.
 - 03:39 (Oct 11) OMNI FLASH PROVIDER-CUT, NOT SCORED: qwen/qwen3.8-omni-flash died at call 147 of 300 after 62 min ($0.73) —
   its host (Alibaba, 137 of 138 requests) answered "Server error: Provider returned error" 3 of 3 (earlier episodes at
   console lines 17546-17712 had recovered on the second attempt); the harness wrote incomplete-agent.json and no
