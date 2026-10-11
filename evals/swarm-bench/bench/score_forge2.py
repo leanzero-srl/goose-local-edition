@@ -3624,7 +3624,7 @@ def critical_class(flag) -> Optional[str]:
 
 def _register_v2(module) -> Tuple[List[Tuple[str, str, float, Optional[str]]], Dict[str, tuple]]:
     """P8's registry as (name, family, weight, class): `ROWS` entries (dicts or objects) carrying name, family (or
-    tier) and critical (a SPEC class or its consequence text); weights from `WEIGHTS` (a row's share of the 0.75 —
+    tier) and critical (a SPEC class or its consequence text); weights from `WEIGHTS` (a row's share of its family —
     only the proportions inside a family matter here), else the entry's `weight`, else 1. Refuses (RuntimeError) on what
     the composition cannot price, naming every problem at once: no evaluate(), an unknown family, a duplicate name, a bad
     weight, a critical no class maps, a family with no weighted row, a v2 class no row can fire, an unknown ROOT_BLOCKS
@@ -4338,9 +4338,9 @@ def severity_selftest() -> List[str]:
         if n in DIAGNOSTIC or ROW_WEIGHT.get(n, 1.0) == 0:
             continue
         expect(score(_scenario({n: 0.0}))['rawScore'] < 1.0, f'(1) row {n} earns no weight')
-    # (1b) the SPEC §4 shares: v1 at 0 keeps exactly the v2 0.75; one family at 0 loses exactly its weight
+    # (1b) the SPEC §4 shares: v1 at 0 keeps exactly the configured v2 share; one family at 0 loses exactly its weight
     v1_zero = score(_scenario({n: 0.0 for n, t, *_ in CHECKS if t in TIER_WEIGHT or t == 'E'}))
-    expect(abs(v1_zero['inner'] - (1 - V1_WEIGHT)) < 1e-4, f"(1b) v1 at 0 must keep the v2 share 0.75 (got {v1_zero['inner']})")
+    expect(abs(v1_zero['inner'] - (1 - V1_WEIGHT)) < 1e-4, f"(1b) v1 at 0 must keep the v2 share {1 - V1_WEIGHT} (got {v1_zero['inner']})")
     for fam, w in FAMILY_WEIGHT.items():
         fam_zero = score(_scenario({n: 0.0 for n, t, *_ in CHECKS if t == fam}))
         expect(abs(fam_zero['inner'] - (1 - w)) < 1e-4, f"(1b) {fam} at 0 must lose exactly {w} (got {fam_zero['inner']})")
