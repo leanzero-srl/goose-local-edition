@@ -12,6 +12,9 @@ class Oracle:
         hidden = self.hidden_issue_ids(account_id)
         return (all_ids - matching if operator == 'not in' else matching) - hidden
 
+    def jql_deferred_issue_ids(self, *arguments):
+        return set()
+
     def hidden_issue_ids(self, account_id, mark=None):
         return {'2'} if account_id == 'viewer' else set()
 
@@ -29,7 +32,7 @@ def fixture():
              case('shared-user', account='peer'), case('refresh', at=2000), case('empty', sprint='42'),
              case('future', sprint='43'), case('closed', at=2000),
              case('invalid', sprint='bad', error='A numeric sprint ID is required.', issue_ids=[], search_ok=False)]
-    return {'manifest': manifest, 'jql': {'cases': cases}}
+    return {'manifest': manifest, 'jql': {'cases': cases}, 'clock': {'checkpoints': {'h1': 1000, 'h4': 2000}}}
 
 
 def scores(obs):

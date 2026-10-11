@@ -50,7 +50,7 @@ def clause_key(case):
     return (str(case.get('sprintId')), case.get('operator', 'in'))
 
 
-def check_group(name, cases, oracle):
+def check_group(name, cases, oracle, obs):
     kinds = GROUPS[name]
     selected = [c for c in cases if c.get('kind') in kinds]
     absent = set(kinds) - {c.get('kind') for c in selected}
@@ -70,11 +70,21 @@ def check_group(name, cases, oracle):
             expected = set(map(str, oracle.jql_issue_ids(str(case['sprintId']), case['accountId'], case['t_ms'],
                                                        case.get('applied'), case.get('operator', 'in'))))
             actual = list(map(str, case['issue_ids']))
+            marks = (obs.get('clock') or {}).get('checkpoints') or {}
+            prior_marks = [(at, cp) for cp, at in marks.items() if isinstance(at, (int, float)) and at <= case['t_ms']]
+            if not prior_marks or not callable(getattr(oracle, 'jql_deferred_issue_ids', None)):
+                return unavailable(f'{kind}: canonical freshness checkpoint/deadline oracle is missing')
+            checkpoint = max(prior_marks)[1]
+            applied_by_checkpoint = (obs.get('field') or {}).get('applied_by_checkpoint') or {}
+            deferred = oracle.jql_deferred_issue_ids(str(case['sprintId']), case['accountId'], case['t_ms'],
+                                                    case.get('applied'), checkpoint, applied_by_checkpoint,
+                                                    (obs.get('rate') or {}).get('wall'))
             if name == 'r10_shared_permissions':
                 mark = datetime.fromtimestamp(case['t_ms'] / 1000, timezone.utc)
                 hidden = oracle.hidden_issue_ids(case['accountId'], mark)
                 leaks.extend(sorted(set(actual) & set(map(str, hidden))))
-            passed = case.get('search_ok') is True and not case.get('error') and set(actual) == expected and len(actual) == len(set(actual))
+            passed = (case.get('search_ok') is True and not case.get('error')
+                      and set(actual) - deferred == expected - deferred and len(actual) == len(set(actual)))
             if kind == 'initial':
                 passed = passed and case.get('invoked') == 1 and bool(case.get('precomputationId'))
             elif kind in ('cache', 'refresh', 'shared-user'):
@@ -82,8 +92,8 @@ def check_group(name, cases, oracle):
                 passed = passed and first is not None and first.get('invoked') == 1 and case.get('invoked') == 0 \
                     and bool(case.get('precomputationId')) and case['precomputationId'] == first.get('precomputationId')
             if not passed:
-                missing = sorted(expected - set(actual))[:3]
-                extra = sorted(set(actual) - expected)[:3]
+                missing = sorted(expected - set(actual) - deferred)[:3]
+                extra = sorted(set(actual) - expected - deferred)[:3]
                 notes.append(f'{kind}: missing={missing}, extra={extra}, invoked={case.get("invoked")}')
         if passed:
             good += 1
@@ -117,7 +127,7 @@ def evaluate(obs: Dict, oracle) -> List[Dict]:
             graded = unavailable('oracle.jql_issue_ids is missing')
         else:
             try:
-                graded = check_group(name, cases, oracle)
+                graded = check_group(name, cases, oracle, obs)
             except Exception as exc:
                 graded = unavailable(f'jql scorer error: {type(exc).__name__}: {exc}')
         out.append({**base, **graded})

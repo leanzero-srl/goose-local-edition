@@ -268,6 +268,7 @@ class Oracle:
         # lookups stop scanning every changelog entry for every issue.
         self._t = {str(e['changelogId']): instant(e['created']) for e in history + live}
         self._live_ids = {str(e['changelogId']) for e in self.live}
+        self._freshness_windows: Dict[Tuple, Dict[str, datetime]] = {}
         self._entry_cache: Dict[str, List[Dict]] = {}
         self._issue_index: Dict[int, Tuple[List[Dict], Dict[str, List[Dict]]]] = {}
         self._series_cache: Dict[Tuple[int, str], Tuple[List[Dict], List[Tuple[datetime, Set[str], Set[str]]]]] = {}
@@ -577,6 +578,24 @@ class Oracle:
                    and (ch.phase == 'history' or ch.change_id in applied_ids)}
         return universe & changed if operator == 'in' else universe - changed
 
+    def jql_deferred_issue_ids(self, sprint_id: str, account_id: str, t_ms, applied: int,
+                               checkpoint: str, applied_by_checkpoint: Dict[str, int], wall=None) -> Set[str]:
+        mark = instant(t_ms)
+        if mark is None:
+            raise PackDefect('JQL observation has no virtual query instant')
+        if not isinstance(applied, int) or not 0 <= applied <= len(self.pack['live']):
+            raise PackDefect(f'JQL applied prefix {applied} is outside the live plan')
+        windows = self.freshness_deadline_windows(checkpoint, {**applied_by_checkpoint, checkpoint: applied}, wall)
+        applied_ids = {str(e['changelogId']) for e in self.pack['live'][:applied]}
+        changes = [ch for ch in self.changes('final') if ch.sprint_id == str(sprint_id) and ch.at <= mark
+                   and (ch.phase == 'history' or ch.change_id in applied_ids)]
+        changed = {ch.issue_id for ch in changes}
+        required = {ch.issue_id for ch in changes if ch.phase == 'history'
+                    or ch.issue_id not in windows or ch.at <= windows[ch.issue_id]}
+        gone = {iid for iid, when in self.deleted_at.items() if when <= mark}
+        universe = set(self.issues) - self.hidden_issue_ids(str(account_id), mark) - gone
+        return universe & (changed - required)
+
     def hidden_count(self, sprint_id: str, account_id: str) -> int:
         hidden = self.hidden_issue_ids(account_id)
         return sum(1 for c in self.numbers(sprint_id).changes if c.issue_id in hidden and c.issue_id not in self.deleted_at)
@@ -861,6 +880,52 @@ class Oracle:
         if not 0 <= live_applied <= len(order):
             raise PackDefect(f'{live_applied} live changes applied at {checkpoint}, but the pack scripts {len(order)}')
         return min(mark, self.upgrade_at if live_applied == 0 else instant(order[live_applied - 1]['created']))
+
+    def freshness_deadline_windows(self, checkpoint: str, applied_by_checkpoint: Dict[str, int],
+                                   wall=None) -> Dict[str, datetime]:
+        """Bounded §15/§19 recovery windows; app allocation exhaustion never creates a grace period.
+
+        A window defers only the issue's changes strictly after its lower bound. Old JQL membership
+        remains required even when a newer change of that same issue can legitimately arrive later.
+        """
+        if checkpoint not in CHECKPOINTS:
+            raise PackDefect(f'Unknown freshness checkpoint {checkpoint}')
+        wall = wall or {}
+        wall_at, wall_until = wall.get('t_ms'), wall.get('until_ms')
+        cache_key = (checkpoint, tuple(sorted(applied_by_checkpoint.items())), wall_at, wall_until)
+        if cache_key in self._freshness_windows:
+            return dict(self._freshness_windows[cache_key])
+
+        def own(cp):
+            if cp != 'final' and not isinstance(applied_by_checkpoint.get(cp), int):
+                raise PackDefect(f'Freshness checkpoint {cp} lacks its applied live prefix')
+            _, keys = self.field_values(cp, None if cp == 'final' else applied_by_checkpoint[cp])
+            mark = self.checkpoint_mark(cp)
+            lower = max(self.upgrade_at, mark - timedelta(hours=1)) if mark else self.checkpoint_mark(CHECKPOINTS[-2])
+            return {str(self.issue_by_key[key]['id']): lower for key in keys}
+
+        windows = own(checkpoint)
+        mark = self.checkpoint_mark(checkpoint)
+        if wall_at is not None and wall_until is not None and mark is not None:
+            at, until, mark_ms = int(wall_at), int(wall_until), epoch_ms(mark)
+            if at <= mark_ms <= until:
+                for event in self.relevant_live():
+                    if at <= epoch_ms(self._created(event)) <= mark_ms:
+                        iid = str(event['issueId'])
+                        lower = instant(at) - JUST_BEFORE
+                        windows[iid] = min(windows.get(iid, lower), lower)
+            position = CHECKPOINTS.index(checkpoint)
+            previous = CHECKPOINTS[position - 1] if position else None
+            previous_mark = self.checkpoint_mark(previous) if previous else None
+            # The hourly run at a mark inside the native wall could not heal its no-event changes.
+            # Carry only that mark's own recovery set once; live events under the wall do not carry.
+            if previous_mark and at <= epoch_ms(previous_mark) < until:
+                for iid, lower in own(previous).items():
+                    windows[iid] = min(windows.get(iid, lower), lower)
+        gone = {iid for iid, when in self.deleted_at.items() if mark is None or when <= mark}
+        windows = {iid: lower for iid, lower in windows.items() if iid not in gone}
+        self._freshness_windows[cache_key] = windows
+        return dict(windows)
 
     def field_values(self, checkpoint: str, live_applied: Optional[int] = None
                      ) -> Tuple[Dict[str, FrozenSet[str]], Set[str]]:

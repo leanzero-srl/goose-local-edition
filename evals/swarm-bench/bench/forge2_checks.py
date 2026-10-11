@@ -1156,27 +1156,9 @@ def _(ev: Ev) -> Dict:
     rate, _why = ev.section('rate')
     wall = (rate or {}).get('wall') if isinstance(rate, dict) else None
     shares, worst = [], None
-    # The hourly run at a mark inside the wall can make no request (§11: a scheduled run stops and resumes from a later
-    # run; §15 compares a quota-hit change an hour later), and the probe reads each mark BEFORE that mark's hourly run,
-    # so what only that run could refresh — the issues field_values leaves to the next mark (a dropped change, a sprint
-    # close, a field switch in the hour) — is first refreshable after the next mark: those issues are carried one more
-    # mark. Its OWN set only: an issue changed live under the wall has its event redelivered once the wall ends, before
-    # the next mark. At `until` the quota has reset, so a mark there is not inside (fairness audit 2026-10-10: Sonnet's
-    # site 3d2bca1ae1c9b961, 93 issues of sprint 854 graded at h4 that no run was allowed to refresh).
-    carry, prev_inside = set(), False
     for cp in cps:
         values, ungraded = ev.o.field_values(cp, None if cp == 'final' else applied[cp])
-        own, inside = set(ungraded), False
-        mark = ev.o.checkpoint_mark(cp)
-        if wall and mark is not None and wall.get('t_ms') is not None and wall.get('until_ms') is not None:
-            at, mark_ms = int(wall['t_ms']), int(mark.timestamp() * 1000)
-            if at <= mark_ms <= int(wall['until_ms']):
-                ungraded = set(ungraded) | {key_of[str(e['issueId'])] for e in ev.o.relevant_live()
-                                            if at <= int(ev.o._created(e).timestamp() * 1000) <= mark_ms}
-            inside = at <= mark_ms < int(wall['until_ms'])
-        if prev_inside:
-            ungraded = set(ungraded) | carry
-        carry, prev_inside = own, inside
+        ungraded = set(ungraded) | {key_of[iid] for iid in ev.o.freshness_deadline_windows(cp, applied, wall)}
         observed = {key_of.get(str(k), str(k)): v for k, v in by[cp].items()}
         graded = ({k for k, v in values.items() if v != frozenset({''})}
                   | {k for k, v in observed.items() if str(v or '').strip()}) - ungraded
