@@ -65,6 +65,8 @@ def verify_installed(config, modules):
     pins = config.get('support_sha256')
     if not isinstance(pins, dict) or set(pins) != set(SUPPORT_FILES) or any(sha(Path(__file__).resolve().parent / name) != pins[name] for name in SUPPORT_FILES):
         raise Hold('Campaign support code differs from the frozen executable/config roster pins')
+    if not Path(config['python']).is_file() or not Path(config['node']).is_file():
+        raise Hold('Frozen native Python/Node runtime is unavailable')
     bundle = Path(config['app_bundle']).resolve()
     resources = bundle / 'Contents/Resources'
     if Path(config['payload']).resolve() != resources / 'swarm-bench' or Path(config['engine']).resolve() != resources / 'bin/goose':
@@ -117,7 +119,7 @@ def ensure_config(snapshot, model, wallet=None):
     if isinstance(fields, str):
         fields = json.loads(fields)
     saved = fields.get('openrouter', {}).get(model, {})
-    if any(key != 'effort' for key in saved):
+    if saved:
         raise Hold('Non-default model fields remain in the actual engine snapshot')
     if config.get('GOOSE_MAX_TOKENS') not in (None, ''):
         raise Hold('Saved output-token override would change the model treatment')

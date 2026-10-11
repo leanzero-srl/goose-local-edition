@@ -7,6 +7,7 @@ and installs the release. No wallet reset, legacy chain, scorer subprocess or pu
 import argparse
 from decimal import Decimal
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -312,6 +313,62 @@ def stop_qualification(unit, private, engine):
     return stopped
 
 
+def build_owned_pids(snapshot, unit, config):
+    run_id = unit.get('runId')
+    if not run_id:
+        return []
+    runner = str(Path(config['payload']) / 'bench/run_build.py')
+    prefix = str(config['python']) + ' -B -u ' + runner
+    patterns = (r'--entrant\s+openrouter-' + re.escape(run_id) + r'(?:\s|$)',
+                r'--provider\s+openrouter(?:\s|$)',
+                r'--model\s+' + re.escape(unit['model']) + r'(?:\s|$)', r'--forge2(?:\s|$)')
+    roots = [pid for pid, row in snapshot.items() if row['args'].startswith(prefix)
+             and all(re.search(pattern, row['args']) for pattern in patterns)]
+    if len(roots) > 1:
+        raise Hold('Multiple native runners claim the original build identity; stop ownership is ambiguous')
+    # A runner may have exited before its independently sessioned engine. Only previously
+    # attested descendants with an unchanged argv hash may recover that original ownership.
+    roots.extend(row['pid'] for row in unit.get('owned_processes', []) if row['pid'] in snapshot
+                 and hashlib.sha256(snapshot[row['pid']]['args'].encode()).hexdigest() == row['args_sha256'])
+    owned = list(dict.fromkeys(roots))
+    while True:
+        added = [pid for pid, row in snapshot.items() if row['parent'] in owned and pid not in owned and pid != os.getpid()]
+        if not added:
+            break
+        owned.extend(added)
+    return [pid for pid in owned if pid != os.getpid()]
+
+
+def attest_build_processes(unit, config):
+    snapshot = process_rows()
+    owned = build_owned_pids(snapshot, unit, config)
+    unit['owned_processes'] = [{'pid': pid, 'args_sha256': hashlib.sha256(snapshot[pid]['args'].encode()).hexdigest()} for pid in owned]
+
+
+def stop_build_pids(unit, config):
+    original = process_rows()
+    owned = build_owned_pids(original, unit, config)
+    if not owned and not unit.get('owned_processes'):
+        raise Hold('Native cancellation transport failed and no attested original runner remains')
+    native = [pid for pid in owned if original[pid]['args'].startswith(config['engine'] + ' run ')]
+    ordered = native + [pid for pid in reversed(owned) if pid not in native]
+    stopped = []
+    for pid in ordered:
+        current = process_rows().get(pid)
+        if current is None:
+            continue
+        if current['args'] != original[pid]['args']:
+            raise Hold('Native build process changed identity before owned shutdown')
+        try:
+            os.kill(pid, signal.SIGKILL)
+            stopped.append(pid)
+        except ProcessLookupError:
+            pass
+    if any(alive(pid) for pid in owned):
+        raise Hold('Attested original native build process remains live after per-PID shutdown')
+    return {'runId': unit['runId'], 'surface': 'attested original app runner/descendants per-PID shutdown', 'pids': stopped}
+
+
 def abort_active(state_dir, state, unit, config, reason):
     unit.update(abort_reason=reason, reason=reason, status='stopping-unscored')
     save(state_dir, state)  # Durable before any stop; no crash can authorize a replacement launch.
@@ -328,7 +385,10 @@ def abort_active(state_dir, state, unit, config, reason):
             unit.update(additions[0])
             if unit.get('dataDir'):
                 unit['workdir'] = unit['dataDir']
-        unit['stop_receipt'] = ui(config, 'cancel', '--execute-mutations', 'run=' + unit['runId'])
+        try:
+            unit['stop_receipt'] = ui(config, 'cancel', '--execute-mutations', 'run=' + unit['runId'])
+        except Hold:
+            unit['stop_receipt'] = stop_build_pids(unit, config)
     unit['status'] = 'stopped-unscored'
     save(state_dir, state)
 
@@ -348,6 +408,8 @@ def observe(state_dir, state, unit, config, modules):
         if not (private / 'qualification.json').exists() and not (private / 'qualification-failure.json').exists():
             raise Hold('Qualification process vanished without a durable outcome; paid restart refused')
     else:
+        attest_build_processes(unit, config)
+        save(state_dir, state)
         observed = ui(config, 'inspect')['sessions']
         if not unit.get('runId'):
             additions = [row for row in observed if row['runId'] not in unit['baseline_run_ids']]
@@ -412,6 +474,17 @@ def start(state_dir, state, unit, config, modules):
     else:
         wallet = min(wallet, Decimal(config['qualification_wallet_usd']))
     unit['wallet'] = str(wallet)
+    ui(config, 'configure', '--execute-mutations', 'model=' + unit['model'], 'wallet=' + unit['wallet'])
+    # Saving fields is async. Verify the common native treatment before either paid dispatch.
+    end = time.monotonic() + 60
+    while True:
+        try:
+            ensure_config(modules[4].entrant_config('openrouter'), unit['model'], unit['wallet'])
+            break
+        except Hold:
+            if time.monotonic() > end:
+                raise
+            time.sleep(.25)  # Local config transport; no model work has started.
     if unit['kind'] == 'qualification':
         unit['workdir'] = str(private / 'workspace')
         write(private / 'unit.json', unit)
@@ -423,36 +496,27 @@ def start(state_dir, state, unit, config, modules):
                                     stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
         unit.update(pid=proc.pid, status='running')
     else:
-        ui(config, 'configure', '--execute-mutations', 'model=' + unit['model'], 'wallet=' + unit['wallet'])
-        # Saving model/wallet fields is async. Verify the installed engine's actual config before the click.
-        end = time.monotonic() + 60
-        while True:
-            try:
-                ensure_config(modules[4].entrant_config('openrouter'), unit['model'], unit['wallet'])
-                break
-            except Hold:
-                if time.monotonic() > end:
-                    raise
-                time.sleep(.25)  # Local config transport; no model work has started.
         unit.update(status='armed', baseline_run_ids=[row['runId'] for row in inspection['sessions']])
         save(state_dir, state)
         launched = ui(config, 'launch', '--execute-paid', 'model=' + unit['model'], 'wallet=' + unit['wallet'])
         unit.update(status='running', runId=launched['runId'], workdir=launched.get('dataDir'))
+        attest_build_processes(unit, config)
     save(state_dir, state)
 
 
 def run(state_dir):
-    config = read(state_dir / 'config.json')
-    modules = load_installed(config['payload'], config['engine'])
-    verify_installed(config, modules)
     with (state_dir / 'controller.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         state = read(state_dir / 'state.json')
-        if state.get('launch_blocked'):
-            raise Hold(state['launch_blocked'] + '; no paid resume is authorized on this task')
+        config = read(state_dir / 'config.json')
+        modules = None
         state.update(controller_pid=os.getpid(), status='running', hold_reason=None)
         save(state_dir, state)
         try:
+            modules = load_installed(config['payload'], config['engine'])
+            verify_installed(config, modules)
+            if state.get('launch_blocked'):
+                raise Hold(state['launch_blocked'] + '; no paid resume is authorized on this task')
             while True:
                 active = next((unit for unit in state['units'] if unit['status'] in ('armed', 'running', 'stopping-unscored', 'stopped-unscored')), None)
                 if active:
@@ -483,14 +547,16 @@ def run(state_dir):
                     abort_active(state_dir, state, active, config, reason)
                     # Capture IDs after stopped streams close. Missing bills remain explicit and
                     # the original unit is observed/billed on resume, never relaunched.
-                    reconcile(state_dir, state, active, config, modules, final=True)
-                    active['status'] = 'unscored'
+                    if modules is not None:
+                        reconcile(state_dir, state, active, config, modules, final=True)
+                        active['status'] = 'unscored'
                 except Exception as stop_error:
                     active['stop_error'] = str(stop_error) if isinstance(stop_error, Hold) else type(stop_error).__name__
                     reason += '; owned stop/billing requires recovery: ' + active['stop_error']
             state.update(status='held', hold_reason=reason)
             try:
-                export(state_dir, state, config, modules)
+                if modules is not None:
+                    export(state_dir, state, config, modules)
             except Exception as export_error:
                 state['comparison_error'] = str(export_error) if isinstance(export_error, Hold) else type(export_error).__name__
         finally:

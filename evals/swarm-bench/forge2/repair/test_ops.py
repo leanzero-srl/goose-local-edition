@@ -196,7 +196,7 @@ class AccountingControls(unittest.TestCase):
             write(release, {'appVersion': '3.0.110', 'sourceCommit': 'a' * 40,
                             'engineSha256': sha(engine), 'taskFingerprint': fingerprint})
             write(registration, {'scorerVersion': 'forge-2.0', 'releaseManifestSha256': fingerprint})
-            config = {'app_bundle': str(bundle), 'app_version': '3.0.110', 'source_commit': 'a' * 40,
+            config = {'python': sys.executable, 'node': sys.executable, 'app_bundle': str(bundle), 'app_version': '3.0.110', 'source_commit': 'a' * 40,
                       'payload': str(payload), 'engine': str(engine), 'engine_sha256': sha(engine),
                       'taskFingerprint': fingerprint, 'release_receipt': str(release),
                       'release_receipt_sha256': sha(release), 'registration_receipt': str(registration),
@@ -217,7 +217,8 @@ class AccountingControls(unittest.TestCase):
         snapshot = {'config': {'BENCH_MAX_USD': '.5'}, 'secrets': {'OPENROUTER_API_KEY': 'test-only'}, 'providers': ['openrouter']}
         ensure_config(snapshot, 'exact/model', '.5')
         for changed in [{'BENCH_MAX_USD': '.4'}, {'OPENROUTER_PARAMETERS': {'provider': {'order': ['host']}}},
-                        {'GOOSE_MODEL_FIELDS': {'openrouter': {'exact/model': {'temperature': 0}}}}, {'GOOSE_MAX_TOKENS': 4096}]:
+                        {'GOOSE_MODEL_FIELDS': {'openrouter': {'exact/model': {'temperature': 0}}}},
+                        {'GOOSE_MODEL_FIELDS': {'openrouter': {'exact/model': {'effort': 'low'}}}}, {'GOOSE_MAX_TOKENS': 4096}]:
             with self.assertRaises(Hold):
                 ensure_config({**snapshot, 'config': {**snapshot['config'], **changed}}, 'exact/model', '.5')
 
@@ -261,8 +262,8 @@ class HistoryAndResumeControls(unittest.TestCase):
 
     def test_ambiguous_click_recovery_never_starts_another_paid_unit(self):
         unit = {'key': 'unit', 'kind': 'build', 'status': 'armed', 'baseline_run_ids': ['old']}
-        state = {'units': [unit]}
-        with tempfile.TemporaryDirectory() as directory, patch.object(campaign, 'ui', return_value={'sessions': []}) as mocked:
+        state = {'units': [unit], 'ledger': {}}
+        with tempfile.TemporaryDirectory() as directory, patch.object(campaign, 'attest_build_processes'), patch.object(campaign, 'ui', return_value={'sessions': []}) as mocked:
             with self.assertRaises(Hold):
                 campaign.observe(Path(directory), state, unit, {}, ())
             mocked.assert_called_once_with({}, 'inspect')
@@ -322,10 +323,10 @@ class HistoryAndResumeControls(unittest.TestCase):
                    'input_json_bytes': 10000, 'max_tokens_sent': None, 'native_tokens_prompt': 2000,
                    'native_tokens_completion': 100, 'billed_usd': '.10', 'stage': 'pilot'}
         state = {'units': [qualification, unit], 'ledger': {'gen-1-aa': receipt}, 'starting_credits_usd': '5'}
-        config = {'initial_headroom_usd': '.5'}
+        config = {'initial_headroom_usd': '.5', 'python': '/native/python', 'payload': '/installed/payload'}
         snapshot = {'config': {}, 'secrets': {}}
         module = type('Installed', (), {'entrant_config': lambda _self, _provider: snapshot})()
-        with tempfile.TemporaryDirectory() as directory, patch.object(campaign, 'verify_installed'), patch.object(campaign, 'live_credit_evidence', return_value={'effective_remaining_usd': '5'}), patch.object(campaign, 'catalog', return_value=({model: row}, 'hash')), patch.object(campaign, 'ensure_config'), patch.object(campaign, 'ui', side_effect=[{'form': {'running': False}, 'sessions': []}, {}, {'runId': 'original', 'dataDir': '/tmp/retained'}]):
+        with tempfile.TemporaryDirectory() as directory, patch.object(campaign, 'process_rows', return_value={}), patch.object(campaign, 'verify_installed'), patch.object(campaign, 'live_credit_evidence', return_value={'effective_remaining_usd': '5'}), patch.object(campaign, 'catalog', return_value=({model: row}, 'hash')), patch.object(campaign, 'ensure_config'), patch.object(campaign, 'ui', side_effect=[{'form': {'running': False}, 'sessions': []}, {}, {'runId': 'original', 'dataDir': '/tmp/retained'}]):
             campaign.start(Path(directory), state, unit, config, (None, None, None, None, module))
         self.assertEqual(unit['status'], 'running')
         self.assertEqual(unit['runId'], 'original')
@@ -349,6 +350,68 @@ class HistoryAndResumeControls(unittest.TestCase):
             self.assertEqual(state['ledger'], ledger)
             self.assertEqual(state['units'][0]['status'], 'unscored')
             self.assertEqual(state['units'][0]['workdir'], '/retained-original-tree')
+
+    def test_qualification_defaults_readback_precedes_owned_paid_dispatch(self):
+        model = 'xiaomi/mimo-v2.6-flash'
+        unit = {'key': 'probe', 'model': model, 'stage': 'pilot', 'kind': 'qualification', 'status': 'pending'}
+        state = {'units': [unit], 'ledger': {}, 'starting_credits_usd': '5'}
+        config = {'initial_headroom_usd': '.5', 'qualification_wallet_usd': '.5'}
+        module = SimpleNamespace(entrant_config=lambda _provider: {'config': 'actual snapshot'})
+        events = []
+        def control(_config, command, *arguments):
+            if command == 'inspect':
+                return {'form': {'running': False}, 'sessions': []}
+            events.append((command, arguments))
+        def readback(snapshot, route, wallet):
+            events.append(('engine-readback', route, wallet, snapshot))
+        def spawn(*_args, **_kwargs):
+            events.append(('paid-dispatch',))
+            return SimpleNamespace(pid=123)
+        with tempfile.TemporaryDirectory() as directory, patch.object(campaign, 'verify_installed'), patch.object(campaign, 'live_credit_evidence', return_value={'effective_remaining_usd': '5'}), patch.object(campaign, 'catalog', return_value=({model: {'id': model}}, 'hash')), patch.object(campaign, 'ensure_config', side_effect=readback), patch.object(campaign, 'ui', side_effect=control), patch.object(campaign.subprocess, 'Popen', side_effect=spawn):
+            campaign.start(Path(directory), state, unit, config, (None, None, None, None, module))
+        self.assertEqual([event[0] for event in events], ['configure', 'engine-readback', 'paid-dispatch'])
+        self.assertEqual(events[1][1:3], (model, '0.5'))
+        self.assertEqual(unit['status'], 'running')
+
+    def test_restart_install_mismatch_stops_original_before_any_new_paid_work(self):
+        unit = {'key': 'pilot', 'kind': 'build', 'status': 'running', 'runId': 'original',
+                'model': 'openai/gpt-6.1-sol', 'stage': 'pilot', 'workdir': '/original-tree'}
+        with tempfile.TemporaryDirectory() as directory:
+            state_dir = Path(directory)
+            config = {'payload': '/installed/payload', 'engine': '/installed/engine'}
+            write(state_dir / 'config.json', config)
+            write(state_dir / 'state.json', {'units': [unit], 'ledger': {}})
+            with patch.object(campaign, 'load_installed', return_value=()), patch.object(campaign, 'verify_installed', side_effect=Hold('installed task changed')), patch.object(campaign, 'reconcile'), patch.object(campaign, 'ui', return_value={'runId': 'original', 'status': 'cancelled'}) as control, patch.object(campaign, 'start') as new_paid:
+                campaign.run(state_dir)
+                control.assert_called_once_with(config, 'cancel', '--execute-mutations', 'run=original')
+                new_paid.assert_not_called()
+            state = read(state_dir / 'state.json')
+            self.assertEqual(state['units'][0]['status'], 'unscored')
+            self.assertIn('installed task changed', state['hold_reason'])
+
+    def test_build_runner_identity_and_attested_orphan_ancestry_are_specific(self):
+        import hashlib
+        config = {'python': '/native/python', 'payload': '/installed/payload', 'engine': '/installed/goose'}
+        unit = {'runId': 'cloud-original', 'model': 'exact/model'}
+        args = '/native/python -B -u /installed/payload/bench/run_build.py --entrant openrouter-cloud-original --provider openrouter --model exact/model --forge2'
+        snapshot = {111: {'parent': 1, 'args': args}, 112: {'parent': 111, 'args': '/installed/goose run --model exact/model'},
+                    113: {'parent': 112, 'args': 'tool'}, 999: {'parent': 1, 'args': args.replace('cloud-original', 'cloud-neighbor')}}
+        self.assertEqual(set(campaign.build_owned_pids(snapshot, unit, config)), {111, 112, 113})
+        orphan = {'runId': 'cloud-original', 'model': 'exact/model', 'owned_processes': [{'pid': 112, 'args_sha256': hashlib.sha256(snapshot[112]['args'].encode()).hexdigest()}]}
+        del snapshot[111]
+        snapshot[112]['parent'] = 1
+        self.assertEqual(set(campaign.build_owned_pids(snapshot, orphan, config)), {112, 113})
+        snapshot[112]['args'] = 'unrelated reused pid'
+        self.assertEqual(campaign.build_owned_pids(snapshot, orphan, config), [])
+
+    def test_lost_cdp_cancel_uses_attested_owned_pid_fallback(self):
+        unit = {'key': 'pilot', 'kind': 'build', 'status': 'running', 'runId': 'original', 'workdir': '/original-tree'}
+        with tempfile.TemporaryDirectory() as directory, patch.object(campaign, 'ui', side_effect=Hold('CDP unavailable')), patch.object(campaign, 'stop_build_pids', return_value={'runId': 'original', 'pids': [123], 'surface': 'owned fallback'}) as stop:
+            state = {'units': [unit], 'ledger': {}}
+            campaign.abort_active(Path(directory), state, unit, {'engine': '/installed/goose'}, 'budget')
+            stop.assert_called_once_with(unit, {'engine': '/installed/goose'})
+            self.assertEqual(unit['status'], 'stopped-unscored')
+            self.assertEqual(unit['stop_receipt']['pids'], [123])
 
     def test_per_pid_stop_reaches_children_in_their_own_process_sessions(self):
         with tempfile.TemporaryDirectory() as directory:

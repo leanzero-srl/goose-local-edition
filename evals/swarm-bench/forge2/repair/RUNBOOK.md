@@ -26,15 +26,42 @@ open -n '/Applications/Goose Swarm.app' --args --remote-debugging-port=9897
 Set task-specific shell variables; do not alter HOME or CODEX_HOME:
 
 ```sh
-FORGE_OPS='/Applications/Goose Swarm.app/Contents/Resources/swarm-bench/forge2/repair'
+FORGE_OPS='/Users/workhorse/goose-builds/forge2-repair-ops'
 FORGE_PYTHON='/Users/workhorse/Library/Application Support/Goose/benchmark/runtime/python/bin/python3'
 FORGE_NODE='/Users/workhorse/Library/Application Support/Goose/benchmark/runtime/node/bin/node'
 FORGE_STATE='/Users/workhorse/goose-builds/forge2-repair-campaign'
 FORGE_INPUTS='/Users/workhorse/goose-builds/forge2-repair-campaign-inputs'
+```
+
+The installed benchmark payload intentionally does not ship `repair/`. Keep this controller in the private external directory above. Export the exact committed support files from the release source; do not point this directory at an editable checkout or copy an old campaign directory. The owner supplies the verified source checkout and `release.json` before this export. This reads Git objects only and does not modify the installed app or start a call:
+
+```sh
+FORGE_SOURCE='/Users/workhorse/Projects/goose'
+"$FORGE_PYTHON" - "$FORGE_SOURCE" "$FORGE_OPS" "$FORGE_INPUTS/release.json" <<'EXPORT'
+import json, os, re, subprocess, sys
+from pathlib import Path
+source, support, release = map(Path, sys.argv[1:])
+commit = json.loads(release.read_text())['sourceCommit']
+if re.fullmatch('[0-9a-f]{40}', commit) is None:
+    raise SystemExit('Full verified release source commit is required')
+files = ('campaign.py', 'cache_probe.py', 'dispatch.mjs', 'ops.py', 'ROSTER.json', 'test_ops.py', 'RUNBOOK.md')
+contents = {name: subprocess.check_output(['git', '-C', str(source), 'show', commit + ':evals/swarm-bench/forge2/repair/' + name]) for name in files}
+if support.exists() and any((support / name).exists() and (support / name).read_bytes() != data for name, data in contents.items()):
+    raise SystemExit('Existing private support differs; recover its original campaign before replacing it')
+support.mkdir(parents=True, exist_ok=True, mode=0o700)
+os.chmod(support, 0o700)
+for name, data in contents.items():
+    path = support / name
+    path.write_bytes(data)
+    os.chmod(path, 0o700 if name in ('campaign.py', 'cache_probe.py', 'dispatch.mjs') else 0o600)
+print('Private committed controller, exact roster and free controls exported; no generation requested.')
+EXPORT
 "$FORGE_PYTHON" -m unittest discover -s "$FORGE_OPS" -p test_ops.py -q
 "$FORGE_NODE" --check "$FORGE_OPS/dispatch.mjs"
 "$FORGE_NODE" "$FORGE_OPS/dispatch.mjs" inspect
 ```
+
+The frozen config pins all five executable/config `SUPPORT_FILES`, including `ROSTER.json`, in this external directory. `test_ops.py` and this runbook are copied from the same committed source for review. The executable harness, engine and task remain bound to the actual installed app through `load_installed`; the external controller cannot substitute its own scorer or task.
 
 `inspect` only reads the actual form and saved app sessions. It makes no host test or generation request. The model form must be the installed Forge2 view; native effort is medium, native call budget300, OpenRouter, Any host, and all editable sampling fields use native defaults. Full builds retain the current native context treatment and send no added output cap. A blank wallet is never accepted for launch.
 
@@ -57,7 +84,7 @@ write(inputs / 'initial-credit-readback.json', credit)
 config = {'app_bundle': str(bundle), 'app_version': receipt['appVersion'],
           'source_commit': receipt['sourceCommit'], 'payload': str(payload), 'engine': str(engine),
           'engine_sha256': receipt['engineSha256'], 'taskFingerprint': receipt['taskFingerprint'],
-          'node': node, 'release_receipt': str(release), 'release_receipt_sha256': sha(release),
+          'node': node, 'python': sys.executable, 'release_receipt': str(release), 'release_receipt_sha256': sha(release),
           'registration_receipt': str(registration), 'registration_receipt_sha256': sha(registration),
           'support_sha256': {name: sha(support / name) for name in SUPPORT_FILES},
           'starting_credits_usd': credit['effective_remaining_usd'],
@@ -92,7 +119,7 @@ Sol completing at or above0.90 permanently blocks further launches on that froze
 
 The native WalletGuard polls **ended-call telemetry** and retries late native bills while the entrant may advance. One in-flight call is therefore not a proven overrun bound. Before each unit, the controller reads current credits and key limits, subtracts existing campaign/pilot bills and reserves actual observed request envelopes, at least two delayed completed-call envelopes, and auxiliary requests. JSON request bytes/native output parameters and current advertised uncached/write prices inform the active-call screening reserve; ended native prompt/completion counts inform pending completed bills. No model context or output treatment is reduced to make the reservation pass.
 
-During a run it retains every observed generation, delayed bill and pre-ID request envelope, including titles. It only finalizes generation bills after end telemetry or teardown. Native spend plus unresolved/in-flight reservations crossing the cumulative allowance cancels the **owned original** app run through its native Cancel dialog, or stops every verified private qualification descendant by PID. Identity/accounting failures invoke the same owned stop. Saved candidate files, original launch identity and the ledger remain. The unit is unscored. A transport/ownership stop failure remains explicitly `stopping-unscored`; it cannot authorize another paid launch and must be recovered before proceeding.
+During a run it retains every observed generation, delayed bill and pre-ID request envelope, including titles. It only finalizes generation bills after end telemetry or teardown. Native spend plus unresolved/in-flight reservations crossing the cumulative allowance cancels the **owned original** app run through its native Cancel dialog, or stops every verified private qualification descendant by PID. Identity/accounting failures invoke the same owned stop. Saved candidate files, original launch identity and the ledger remain. The unit is unscored. If native UI transport fails, the fallback verifies the exact installed runner argv, original cloud runId/model/tier and previously attested descendant argv hashes, then stops those owned PIDs. A transport/ownership stop failure remains explicitly `stopping-unscored`; it cannot authorize another paid launch and must be recovered before proceeding.
 
 This is a stop ceiling plus conservative observed reserves, **not a hard billing guarantee**. Future contexts, provider tokenization/omitted output caps and billing lag can exceed the observations. Current prepaid credit and key limits add external containment; no top-up is performed. Unresolved bills or missing coverage are lower bounds, never free calls. All support calls, titles and failed generations count; a cache discount is never guessed from SDK metadata.
 
