@@ -1338,7 +1338,10 @@ pub fn list_local_models(models_dir: &Path) -> Result<Vec<LocalModel>> {
         .with_context(|| format!("reading {}", models_dir.display()))?;
     for publisher in publishers {
         let publisher = publisher?;
-        if !publisher.file_type()?.is_dir() {
+        // path().is_dir() follows symlinks: weights moved to the AI-workhorse SSD are
+        // linked back as `publisher -> /Volumes/...`, and DirEntry::file_type() would
+        // report the link itself and hide the model (engine then says "download it first").
+        if !publisher.path().is_dir() {
             continue;
         }
         let publisher_name = publisher.file_name().to_string_lossy().into_owned();
@@ -1346,10 +1349,10 @@ pub fn list_local_models(models_dir: &Path) -> Result<Vec<LocalModel>> {
             .with_context(|| format!("reading {}", publisher.path().display()))?;
         for entry in entries {
             let entry = entry?;
-            if !entry.file_type()?.is_dir() {
+            let dir = entry.path();
+            if !dir.is_dir() {
                 continue;
             }
-            let dir = entry.path();
             if !dir.join("config.json").is_file() {
                 continue;
             }
@@ -1533,6 +1536,35 @@ mod tests {
             "no safetensors must mark incomplete"
         );
         assert_eq!(by_id("pub/no-weights").missing_files, 1);
+    }
+
+    /// Weights moved to the AI-workhorse SSD are linked back into models_dir, at the
+    /// publisher level (`rapid-mlx -> /Volumes/.../rapid-mlx`) or the model level. Both
+    /// must still list, or the engine refuses to start a model that is on disk.
+    #[cfg(unix)]
+    #[test]
+    fn list_local_models_follows_symlinked_publisher_and_model_dirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = tmp.path().join("ssd");
+        let root = tmp.path().join("models");
+        make_model(
+            &store,
+            "linkedpub/a",
+            &[("config.json", 10), ("model.safetensors", 100)],
+        );
+        make_model(
+            &store,
+            "other/b",
+            &[("config.json", 10), ("model.safetensors", 100)],
+        );
+        std::fs::create_dir_all(root.join("realpub")).unwrap();
+        std::os::unix::fs::symlink(store.join("linkedpub"), root.join("linkedpub")).unwrap();
+        std::os::unix::fs::symlink(store.join("other/b"), root.join("realpub/b")).unwrap();
+
+        let models = list_local_models(&root).unwrap();
+        let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, ["linkedpub/a", "realpub/b"]);
+        assert!(models.iter().all(|m| m.complete && m.size_bytes == 110));
     }
 
     /// The owner's cancel test left multi-shard repos on disk whose finished shards
