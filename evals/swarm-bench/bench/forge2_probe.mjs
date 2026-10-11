@@ -157,7 +157,10 @@ function writeObservationJson(path, value) {
     emit('"');
   };
   const prepare = (item, key) => {
-    if (item !== null && ['object', 'function', 'bigint'].includes(typeof item) && typeof item.toJSON === 'function') item = item.toJSON(key);
+    if (item !== null && ['object', 'function', 'bigint'].includes(typeof item)) {
+      const toJSON = item.toJSON;
+      if (typeof toJSON === 'function') item = toJSON.call(item, key);
+    }
     if (types.isNumberObject(item)) return +item;
     if (types.isStringObject(item)) return String(item);
     if (types.isBooleanObject(item)) return Boolean.prototype.valueOf.call(item);
@@ -2339,6 +2342,13 @@ async function selftest() {
       const original = readFileSync(path, 'utf8');
       assert.equal(original, JSON.stringify(value, null, 1));
       assert.deepEqual(JSON.parse(original), JSON.parse(JSON.stringify(value)));
+      const getterValue = () => {
+        let reads = 0;
+        return { value: { get toJSON() { if (++reads > 1) throw Error('read twice'); return () => 7; } } };
+      };
+      writeObservationJson(path, getterValue());
+      assert.equal(readFileSync(path, 'utf8'), JSON.stringify(getterValue(), null, 1));
+      writeObservationJson(path, value);
       const impossibleNumber = new Number(4); impossibleNumber.valueOf = () => 1n;
       for (const broken of [{ impossible: 1n }, { number: impossibleNumber }, { late: { toJSON() { throw Error('refuse'); } } }]) {
         assert.throws(() => writeObservationJson(path, broken));
