@@ -10,6 +10,7 @@ import time
 
 import isolated_tiers
 import bench_budget
+import bench_task_identity
 
 ROOT = Path(__file__).resolve().parent.parent
 # Harness-owned evidence is outside the declared candidate source inventory.
@@ -64,7 +65,7 @@ def completion_evidence(agent):
 
 
 def write_completion(tree, destination, agent, *, run_id, started_at, seed, port, provider, model,
-                     tier=isolated_tiers.SB71, kit=None):
+                     tier=isolated_tiers.SB71, kit=None, launch_identity=None):
     if destination.resolve().is_relative_to(tree.resolve()):
         raise ValueError('Completion receipt must be outside the candidate tree')
     resource_abort = bench_budget.publication_abort(agent, tier)
@@ -82,6 +83,11 @@ def write_completion(tree, destination, agent, *, run_id, started_at, seed, port
                'agent': agent, 'sourceInventory': inventory(tree, tier),
                'contracts': {name: sha(ROOT / name) for name in tier.contracts},
                'scorerFiles': {name: sha(ROOT / 'bench' / name) for name in tier.scorer_files}}
+    if tier.version == "forge-2.0":
+        if not isinstance(launch_identity, dict) or launch_identity.get("buildId") != run_id:
+            raise ValueError("No completion receipt: Forge 2.0 launch build identity is missing")
+        bench_task_identity.require_fingerprint(launch_identity.get("taskFingerprint"))
+        receipt["launchIdentity"] = launch_identity
     if tier.kit:
         # forge/DESIGN.md §12: the kit and the Forge runtime wrapper are graded inputs like the scorer files.
         if not kit or not kit.get('lock_sha256'):
@@ -170,6 +176,8 @@ def main():
                        'vendor_port': receipt['vendor_port'], 'scoring': {'secs': round(time.monotonic() - started, 3)},
                        'scoring_attempt': {'receiptSha256': sha(args.receipt), 'runId': args.run_id,
                                            'originalContracts': receipt['contracts'], 'originalScorerFiles': receipt['scorerFiles']}})
+        if tier.version == "forge-2.0":
+            bench_task_identity.preserve(receipt, result)
         report.write_text(json.dumps(result, indent=2))
         attempt['status'] = 'finished'
     except Exception as error:

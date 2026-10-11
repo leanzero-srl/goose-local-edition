@@ -6,12 +6,15 @@ No builds, scores or publications are launched. Mixed tasks/settings, unresolved
 build episodes and infrastructure-interrupted results are refused.
 """
 import argparse
+import hashlib
 import json
 import math
 from pathlib import Path
 from statistics import median
 
-COHORT_FIELDS = ('scorerVersion', 'scorer_files_sha256', 'spec_sha256', 'kit_lock_sha256', 'wrapper_sha256',
+from bench_task_identity import require_fingerprint
+
+COHORT_FIELDS = ('taskFingerprint', 'scorerVersion', 'scorer_files_sha256', 'spec_sha256', 'kit_lock_sha256', 'wrapper_sha256',
                  'kit_code_sha256', 'dev_seed', 'input_manifest', 'reasoning_effort', 'fixture_seeds')
 
 
@@ -26,6 +29,7 @@ def compare(builds):
         raise ValueError('No completed builds to compare')
     cohort = None
     seen = set()
+    build_ids = set()
     models = {}
     spent = 0
     for build in builds:
@@ -36,6 +40,11 @@ def compare(builds):
             raise ValueError('Duplicate independent build episode: ' + model)
         seen.add((model, episode))
         v, cost = build['verdict'], build['cost']
+        build_id = v.get('buildId')
+        if not isinstance(build_id, str) or not build_id or build_id in build_ids:
+            raise ValueError('Missing or repeated independent build identity')
+        build_ids.add(build_id)
+        require_fingerprint(v.get('taskFingerprint'))
         if v.get('scorerVersion') != 'forge-2.0' or v.get('status') != 'scored' or v.get('publishable') is not True:
             raise ValueError('Only frozen, fully observed completed Forge 2.0 builds are comparable: ' + model)
         if v.get('model') is not None and v['model'] != model:
@@ -71,7 +80,7 @@ def compare(builds):
         if prompt <= 0 or not 0 <= cached <= prompt:
             raise ValueError('Native cache accounting is invalid')
         spent += bill
-        models.setdefault(model, []).append({'episode': episode, 'score': score, 'seed_scores': v['seed_scores'],
+        models.setdefault(model, []).append({'episode': episode, 'buildId': build_id, 'score': score, 'seed_scores': v['seed_scores'],
             'critical_classes': (v.get('critical') or {}).get('classes', []), 'billed_usd': bill,
             'cached_input_fraction': cached / prompt,
             'failed_checks': {r['check']: r['score'] for r in v['checks'] if r['score'] < 1}})
@@ -87,7 +96,8 @@ def compare(builds):
             direction = a
         elif summaries[b]['min'] > summaries[a]['max']:
             direction = b
-    return {'era': 'forge-2.0', 'cohort': cohort, 'models': summaries, 'billed_usd': spent,
+    cohort_sha = hashlib.sha256(json.dumps(cohort, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+    return {'era': 'forge-2.0', 'comparisonCohortSha': cohort_sha, 'cohort': cohort, 'models': summaries, 'billed_usd': spent,
             'screening_direction': direction,
             'conclusion': ('Repeated-build screening signal; this is not a model-population confidence interval.'
                            if direction else 'Unresolved comparison: insufficient independent builds or overlapping episode ranges.'),

@@ -26,6 +26,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import bench_budget  # noqa: E402
 import bench_cost  # noqa: E402
+import bench_task_identity  # noqa: E402
 import isolated_tiers  # noqa: E402
 import score_build  # noqa: E402
 import vendor_service  # noqa: E402
@@ -921,6 +922,8 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
     tier = isolated_tiers.active()
     # A malformed wallet limit refuses here, before a tree, a vendor or a model call exists.
     bench_budget.wallet_limit()
+    launch_identity = (bench_task_identity.capture(ROOT, os.environ.get("BENCH_RUN_ID"))
+                       if tier and tier.version == "forge-2.0" else None)
     kit = None
     if tier and tier.kit:
         kit, why = _regime()[0]._kit()  # noqa: SLF001 — the scorer owns kit discovery (one path for both)
@@ -1042,6 +1045,8 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
             manifest = {str(path.relative_to(workdir)): hashlib.sha256(path.read_bytes()).hexdigest()
                         for path in workdir.rglob('*') if path.is_file()}
         (workdir / "input-manifest.json").write_text(json.dumps(manifest, indent=2))
+        if launch_identity is not None:
+            launch_identity.update(input_manifest=manifest, reasoning_effort=effort)
     trace = out_root / f"trace-{entrant}-r{rep}.jsonl"
 
     scorer, vendor, _spec = _regime()
@@ -1132,6 +1137,7 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
                 write_completion(workdir, Path(completion_path), agent, run_id=run_id,
                                  started_at=os.environ.get("BENCH_STARTED_AT"), seed=seed,
                                  port=port, provider=provider, model=model, tier=tier,
+                                 launch_identity=launch_identity,
                                  **({"kit": kit_identity(kit)} if tier.kit else {}))
             except (ValueError, OSError, KeyError) as error:
                 print(f"Scoring retry unavailable: {error}", file=sys.stderr, flush=True)
@@ -1169,6 +1175,8 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
             pass
 
     verdict = scorer.evaluate(ctx)
+    if launch_identity is not None:
+        verdict.update(taskFingerprint=launch_identity["taskFingerprint"], buildId=launch_identity["buildId"])
     verdict["scorer_seconds"] = scoring_seconds
     verdict["scoring"] = {"secs": scoring_seconds}
     if tier:
