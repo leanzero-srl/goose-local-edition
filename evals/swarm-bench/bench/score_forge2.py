@@ -753,8 +753,21 @@ def pre_invoke(c):
     return (bool(_invokes(c)), '>= 1 invoke observed')
 
 
+def _llm_displays(c):
+    for case in c.obs.get('llm_v2') or []:
+        if not isinstance(case, dict):
+            continue
+        for output in (case, case.get('cross_viewer')):
+            if not isinstance(output, dict) or not isinstance(output.get('as'), str):
+                continue
+            for click in output.get('click_results') or []:
+                if isinstance(click, dict):
+                    yield str(output['as']), str(case.get('case')), click
+
+
 def pre_person_list(c):
-    listed = any(r.get('rows') for r in c.sprint_renders()) or bool(_llm_calls(c)) or any(
+    listed = any(click.get('shown_text') or click.get('shown_own') or click.get('ids_shown')
+                 for _person, _case, click in _llm_displays(c)) or any(r.get('rows') for r in c.sprint_renders()) or bool(_llm_calls(c)) or any(
         isinstance(r.get('result'), dict) and r['result'].get('changes') for r in c.rovo_calls())
     return (listed, '>= 1 person-facing change list returned or rendered')
 
@@ -2459,7 +2472,7 @@ def _leak_hits(text: str, terms: Dict[str, List[str]]) -> List[str]:
     return hits
 
 
-@check('b_no_permission_leak', 'B', pre=pre_person_list, needs=('ui', 'rovo'))
+@check('b_no_permission_leak', 'B')
 def _(c):
     found = []
     viewer_terms = leak_terms(c.oracle, c.oracle.viewer)
@@ -2488,8 +2501,31 @@ def _(c):
         if isinstance(res, dict):
             found += [f"rovo changeId {ch.get('changeId')}" for ch in res.get('changes') or []
                       if isinstance(ch, dict) and str(ch.get('changeId')) in terms['changeIds']]
+    for person, case, click in _llm_displays(c):
+        terms = leak_terms(c.oracle, person)
+        text = '\n'.join(str(click.get(k) or '') for k in ('shown_text', 'shown_own'))
+        found += [f'LLM display {case} as {person}: {h}' for h in _leak_hits(text, terms)]
+        found += [f'LLM display {case} as {person}: change {cid}' for cid in click.get('ids_shown') or []
+                  if str(cid) in terms['changeIds']]
     if found:
         return g(0, f'hidden issue data shown to a person: {found[:6]}', CRITICAL_CLASSES['leak'])
+    unknown = [str(case.get('case')) for case in c.obs.get('llm_v2') or [] if isinstance(case, dict)
+               for output in (case, case.get('cross_viewer')) if isinstance(output, dict)
+               and output.get('click_results') and not isinstance(output.get('as'), str)]
+    if unknown:
+        return unavail(f'LLM display evidence lacks its actual viewer: {unknown[:4]}')
+    # An independently recorded disclosure survives an earlier surface failure; no-harm credit still
+    # requires the original presentation evidence and an exercised person-facing result.
+    why = c.section_error('ui', 'rovo')
+    if why:
+        fault = candidate_section_fault(c, why)
+        if fault:
+            return g(0.0, fault, 'the app cannot be opened: its own manifest is broken',
+                     parts={'vacuous_root': f'manifest: {fault[:160]}'})
+        return unavail(why)
+    exercised, what = pre_person_list(c)
+    if not exercised:
+        return vacuous(what)
     return g(1, 'no hidden key, summary or change id reached a person')
 
 
