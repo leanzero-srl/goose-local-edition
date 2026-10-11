@@ -161,6 +161,9 @@ async function expand(state, source, registeredfuncs) {
       if (n.e) return `(NOT ${await render(n.e)})`;
       const fn = n.val?.kind === 'fn' ? n.val : n.vals?.length === 1 && n.vals[0].kind === 'fn' ? n.vals[0] : null;
       const entry = fn && registered.get(fn.name.toLowerCase());
+      if (fn && !entry && ['key', 'issue', 'issuekey', 'id'].includes(n.field.name.toLowerCase())) {
+        throw new JqlError(`Unable to find installed JQL function '${fn.name}()'.`);
+      }
       if (entry) {
         const clause = { field: n.field.name, type: ['issue'], operator: n.op === 'notin' ? 'not in' : n.op,
           functionName: entry.name, arguments: fn.args.map(String) };

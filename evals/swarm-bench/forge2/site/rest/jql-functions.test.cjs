@@ -130,6 +130,11 @@ test('AST expansion preserves full query composition and never re-invokes a shar
   const builtIn = await jql.expand(state, 'sprint in openSprints()', registered);
   assert.equal(builtIn.calls.length, 0);
   assert.equal(evaluate(builtIn.jql, pack.viewer).length, evaluate('sprint in openSprints()', pack.viewer).length);
+  const unknown = await jql.expand(state, 'issue in missingScope(123)', registered);
+  assert.match(unknown.error, /Unable to find installed JQL function/);
+  assert.equal(unknown.calls.length, 0);
+  const undeclared = await jql.expand(state, 'key in scopeChanged(123)', {});
+  assert.match(undeclared.error, /Unable to find installed JQL function/);
   const invalid = await jql.expand(state, `issue in scopeChanged("not numeric")`, { scopeChanged: { functionKey: KEY, invoke: async () => ({ error: 'Invalid sprint' }) } });
   assert.equal(invalid.error, 'Invalid sprint');
 });
