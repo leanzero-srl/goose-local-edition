@@ -110,6 +110,11 @@ Tier 1, robust under bursts · 10. good Forge LLM usage · 11. judicious checkin
   calibration, sb7.x/forge manifests to refreeze after P11's shared bench edits.
 - Forge 1.0 queue entries: stopped/blocked (owner 19:2x). Gauntlet continues (Mistral Large 4 running 19:30).
 - DONE 2026-10-09 23:55: Forge 1.0 FROZEN with the reviewed 654-char note (site af5162c on master; `register-forge.mjs freeze --live`: bstate-forge-1-0 frozen:true + note, still forge familyCurrent until the 2.0 flip; 32/32 pages render it; POST 409). Installed apps show "no single available Forge benchmark" for Forge until a 2.0 app ships. Rewrite the note in the past tense at the 2.0 flip (`register-forge.mjs note`).
+- 06:08 (Oct 11) THE AUTO TOP-UP WORKS — MY ALARM WAS EARLY: it fired when the balance crossed about $2 (guard log: 2.04 at
+  06:06:49 -> 26.92 at 06:08:19, total 530 -> 555 = +$25). The guard's HOLD (written at 2.78) was removed by the guard
+  itself; Opus was never paused. LESSON: this account tops up at ~$2 by $25 — do not alarm the owner above that; the
+  guard now acts only when a top-up has visibly FAILED (hold < $0.80, pause < $0.40; a hold above the trigger could
+  deadlock an idle queue, since no spending means no trigger). loop-state 6f6eafa. Opus at 70/300, $13.27.
 - 05:55 (Oct 11) OPENROUTER BALANCE NOT TOPPING UP: $15.8 at 23:1x -> $4.02 at 05:54 under the Opus 5.5 run (40 calls,
   $9.33 after 70 min, slow deliberate planning calls of up to ~$1 each); total credits still 530 = NO auto top-up,
   although the owner said 23:2x "it will automatically top up". He is asleep; a terminal notification was sent 05:53
