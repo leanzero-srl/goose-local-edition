@@ -116,7 +116,21 @@ modules:
     - key: scope-ledger-llm
       model:
         - claude
+  jira:jqlFunction:
+    - key: scope-changed
+      name: scopeChanged
+      arguments:
+        - name: sprintId
+          required: true
+      types:
+        - issue
+      operators:
+        - in
+        - not in
+      function: scope-changed
   function:
+    - key: scope-changed
+      handler: index.scopeChanged
     - key: on-issue-updated
       handler: index.onIssueUpdated
     - key: on-issue-deleted
@@ -156,6 +170,8 @@ permissions:
     - read:sprint:jira-software
     - read:project:jira
     - read:jira-user
+    - read:app-data:jira
+    - write:app-data:jira
 app:
   id: ari:cloud:ecosystem::app/00000000-0000-0000-0000-000000000000
   runtime:
