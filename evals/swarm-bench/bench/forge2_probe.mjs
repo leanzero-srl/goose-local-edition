@@ -508,6 +508,14 @@ async function runHours(io, t0) {
   }
 }
 
+// Native cache freshness has the ledger/custom-field deadline. Panel reads reserve quota before the
+// hour ends; they cannot decide freshness before the remaining queue work is due.
+async function checkpointWithJql(cp, capture, query) {
+  await capture(cp);
+  const stage = cp === 'h1' ? 'initial' : cp === 'h4' ? 'refresh' : null;
+  if (stage) await query(stage);
+}
+
 // SPEC §2.8 S1: deliveries of one event, or of one issue, start together only while both are pending, so the drive
 // leaves the queues undrained through a batch the site's plan marks (deliverNext's `batchEnd`: a duplicate with every
 // delivery since its original, the two halves of a permuted same-issue pair). A batch opened at `now` (plan slot
@@ -911,14 +919,12 @@ async function main() {
         await section('webtrigger', ciSequence, ['webtrigger']);
       },
       panel: async (cp) => {
-        if (cp === 'h1') await section('jql', () => probeJql('initial'), ['jql']);
-        if (cp === 'h4') await section('jql', () => probeJql('refresh'), ['jql']);
         ph.calls.push(...takeCalls(emu));
         await section(`panel-${cp}`, () => adm.panelRead(cp));
         await section(`person-${cp}`, () => personReads(cp));
         (obs.ui.adminCalls ??= []).push(...takeCalls(emu));
       },
-      checkpoint: async (cp) => checkpoint(cp),
+      checkpoint: (cp) => checkpointWithJql(cp, checkpoint, (stage) => section('jql', () => probeJql(stage), ['jql'])),
       quotaWindow,
       quota: async () => {
         const t = now();
@@ -2265,6 +2271,51 @@ async function selftest() {
     assert.deepEqual(worlds, [...worlds].sort((a, b) => a - b));
     for (const [i, x] of seen.entries()) if (x[0] === 'deliver') assert.equal(seen[i - 1][0], 'drain');
   });
+
+  for (const refreshes of [true, false]) await test(
+    `native JQL freshness: end-hour deadline ${refreshes ? 'admits a queued refresh' : 'still rejects a stale cache'}`, async () => {
+      let clock = 0;
+      const plan = [H - PANEL_BEFORE_MS - 10_000, 4 * H - PANEL_BEFORE_MS - 10_000];
+      let cursor = 0;
+      let pending = null;
+      let expected = [];
+      let cached = [];
+      const panels = [];
+      const captures = [];
+      const queries = [];
+      await runHours({
+        now: () => clock,
+        advanceTo: async (t) => { clock = Math.max(clock, t); },
+        nextDeliveryAt: () => cursor < plan.length ? Math.max(clock, plan[cursor]) : null,
+        deliver: async () => {
+          expected = [String(++cursor)];
+          pending = { at: clock + 20_000, ids: [...expected] };
+          return true;
+        },
+        drain: async (t) => {
+          if (pending && pending.at <= t) {
+            if (refreshes) cached = pending.ids;
+            pending = null;
+          }
+        },
+        world: async () => {}, hourly: async () => {}, ci: async () => {},
+        panel: async (cp) => {
+          if (cp === 'h1' || cp === 'h4') {
+            panels.push({ cp, fresh: JSON.stringify(cached) === JSON.stringify(expected) });
+            clock += 60_000; // The native HTTP page latency does not execute a delayed consumer.
+          }
+        },
+        checkpoint: (cp, mark) => checkpointWithJql(cp, async () => {
+          captures.push({ cp, at: clock, mark });
+        }, async (stage) => {
+          assert.equal(captures.at(-1).at, captures.at(-1).mark, 'capture follows the normal end-hour drain');
+          queries.push({ stage, fresh: JSON.stringify(cached) === JSON.stringify(expected) });
+        }),
+      }, 0);
+      assert.deepEqual(panels, [{ cp: 'h1', fresh: false }, { cp: 'h4', fresh: false }]);
+      assert.deepEqual(queries, [{ stage: 'initial', fresh: refreshes }, { stage: 'refresh', fresh: refreshes }]);
+      assert.equal(cursor, 2);
+    });
 
   await test('runHours: io.drain learns whether a delivery comes next; io.deliver learns the next agenda point', async () => {
     let clock = 0;
