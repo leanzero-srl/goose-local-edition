@@ -159,7 +159,7 @@ function writeObservationJson(path, value) {
   const prepare = (item, key) => {
     if (item !== null && ['object', 'function', 'bigint'].includes(typeof item)) {
       const toJSON = item.toJSON;
-      if (typeof toJSON === 'function') item = toJSON.call(item, key);
+      if (typeof toJSON === 'function') item = Reflect.apply(toJSON, item, [key]);
     }
     if (types.isNumberObject(item)) return +item;
     if (types.isStringObject(item)) return String(item);
@@ -2348,6 +2348,11 @@ async function selftest() {
       };
       writeObservationJson(path, getterValue());
       assert.equal(readFileSync(path, 'utf8'), JSON.stringify(getterValue(), null, 1));
+      const method = (key) => ({ key, native: true });
+      method.call = () => 'shadowed';
+      const shadowed = { method: { toJSON: method } };
+      writeObservationJson(path, shadowed);
+      assert.equal(readFileSync(path, 'utf8'), JSON.stringify(shadowed, null, 1));
       writeObservationJson(path, value);
       const impossibleNumber = new Number(4); impossibleNumber.valueOf = () => 1n;
       for (const broken of [{ impossible: 1n }, { number: impossibleNumber }, { late: { toJSON() { throw Error('refuse'); } } }]) {
