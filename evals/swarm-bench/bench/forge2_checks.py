@@ -989,11 +989,8 @@ def _(ev: Ev) -> Dict:
         return unavail(why)
     replays = [c for c in cases if c.get('case') == 'replay']
     pair, pair_gap = ci_pair(cases)
-    if not pair_gap and sum(c.get('status') == 202 for c in pair) > 1:
-        return g(0.0, 'both invocations of one concurrent eventId were accepted (202)',
-                 'duplicate side effect: a replayed web-trigger event applied twice')
-    if not pair_gap and any(c.get('status') == 200 and c['data_writes'] > 0 for c in pair):
-        return g(0.0, 'the concurrent duplicate (200) wrote scope-ledger data',
+    if not pair_gap and all(c['data_writes'] > 0 for c in pair):
+        return g(0.0, 'both invocations of one concurrent eventId wrote scope-ledger data',
                  'duplicate side effect: a replayed web-trigger event applied twice')
     if not replays:
         return vacuous('no event was replayed')

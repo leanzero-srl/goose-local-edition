@@ -216,11 +216,33 @@ class CompoundControls(unittest.TestCase):
         for check in ('r6_replay_once', 'r6_status_codes', 'r6_valid_applies'):
             self.assertEqual(self.result(check)['score'], 1, self.result(check))
 
-    def test_concurrent_ci_double_acceptance_fires_with_last_writer_wins_and_no_other_success(self):
+    def test_concurrent_ci_double_acceptance_without_business_effects_is_unearned_not_critical(self):
+        for c in self.obs['webtrigger']:
+            c.update(side_effects=0, data_writes=0, writes=[])
+            if c['case'] in fc.WT_PAIR:
+                c['status'] = 202
+        for rows in self.obs['migration']['v2_by_checkpoint'].values():
+            for r in rows:
+                r['deployedEnvs'] = ''
+        replay = self.result('r6_replay_once')
+        self.assertEqual(replay['score'], 0)
+        self.assertFalse(fc.critical_fired(replay), replay)
+        self.assertLess(self.result('r6_status_codes')['score'], 1)
+        self.assertEqual(self.result('r6_valid_applies')['score'], 0)
+
+    def test_concurrent_ci_one_business_application_with_wrong_status_has_no_duplicate_critical(self):
+        pair = [c for c in self.obs['webtrigger'] if c['case'] in fc.WT_PAIR]
+        for statuses in ((202, 202), (200, 202), (202, 200)):
+            with self.subTest(statuses=statuses):
+                pair[0].update(status=statuses[0], data_writes=1)
+                pair[1].update(status=statuses[1], data_writes=0)
+                self.assertFalse(fc.critical_fired(self.result('r6_replay_once')))
+
+    def test_concurrent_ci_double_business_application_fires_with_last_writer_wins_and_no_other_success(self):
         for c in self.obs['webtrigger']:
             c['side_effects'] = 0
             if c['case'] in fc.WT_PAIR:
-                c['status'] = 202
+                c.update(status=202, data_writes=1)
         self.critical('r6_replay_once')
 
     def test_concurrent_ci_duplicate_data_write_fires_with_one_acceptance(self):
