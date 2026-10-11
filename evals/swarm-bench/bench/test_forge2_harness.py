@@ -152,7 +152,6 @@ class Forge20Workspace(unittest.TestCase):
 
             def gather(root, port, db, trace_path, mark_phase=None, seed=None):
                 seen['gather'] = (seed, seen.get('dev_site_stopped'))
-                release.write_text('{}')  # A later installed manifest cannot relabel this build.
                 return {}
 
             def build(entrant, workdir, port, env, *args):

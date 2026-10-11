@@ -1126,6 +1126,8 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
             print(f"ENDED ON PROVIDER ERROR (not scored): {ended_on}", flush=True)
             raise RuntimeError("REFUSED: the session ended on a provider error, not on the model's "
                                f"finished work: {ended_on.splitlines()[0]}")
+        if launch_identity is not None:
+            bench_task_identity.validate_unchanged(ROOT, launch_identity)
         completion_path = os.environ.get("BENCH_COMPLETION_RECEIPT")
         if tier and completion_path and (agent.get("exit") == 0 or
                                          (agent.get("budget") or {}).get("stopped_by") == "wallet_guard"):
@@ -1175,6 +1177,8 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
             pass
 
     verdict = scorer.evaluate(ctx)
+    if launch_identity is not None:
+        bench_task_identity.validate_unchanged(ROOT, launch_identity)
     if launch_identity is not None:
         verdict.update(taskFingerprint=launch_identity["taskFingerprint"], buildId=launch_identity["buildId"])
     verdict["scorer_seconds"] = scoring_seconds

@@ -34,6 +34,12 @@ def capture(root: Path, run_id: str):
     return {'taskFingerprint': hashlib.sha256(raw).hexdigest(), 'buildId': run_id}
 
 
+def validate_unchanged(root, launch):
+    current = capture(root, launch['buildId'])
+    if current['taskFingerprint'] != launch['taskFingerprint']:
+        raise ValueError('Forge 2.0 installed task changed during this build; candidate retained, result unscored')
+
+
 def preserve(receipt, result):
     """Only the launch receipt can restore publication identity after free scoring retries."""
     result.pop('taskFingerprint', None)

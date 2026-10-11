@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from bench_task_identity import capture, preserve
+from bench_task_identity import capture, preserve, validate_unchanged
 
 
 class LaunchTaskIdentity(unittest.TestCase):
@@ -50,6 +50,17 @@ class LaunchTaskIdentity(unittest.TestCase):
         self.assertEqual(result['buildId'], 'build')
         self.assertEqual(result['input_manifest'], {'task.md': 'before'})
         self.assertEqual(result['reasoning_effort'], {'value': 'medium'})
+
+    def test_payload_changes_during_a_build_refuse_capability_scoring(self):
+        launch = capture(self.root, 'build')
+        validate_unchanged(self.root, launch)
+        self.path.write_text(json.dumps(self.manifest, indent=2))
+        with self.assertRaisesRegex(ValueError, 'changed during this build'):
+            validate_unchanged(self.root, launch)
+        self.path.write_text(json.dumps(self.manifest))
+        (self.root / 'task.md').write_text('different runtime')
+        with self.assertRaisesRegex(ValueError, 'installed payload differs'):
+            validate_unchanged(self.root, launch)
 
     def test_legacy_receipt_can_be_scored_but_cannot_acquire_current_identity(self):
         result = {'publishable': True, 'taskFingerprint': 'f' * 64, 'buildId': 'manufactured'}
