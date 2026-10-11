@@ -1,0 +1,2 @@
+export const escaped=(value)=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+export const metrics=text=>`<div class="metrics-host"><dl class="metrics">${['committed','added','removed','creep'].map(k=>`<div class="metric metric-${k}"><dt>${k[0].toUpperCase()+k.slice(1)}</dt><dd data-metric="${k}">${escaped(text[k])}</dd></div>`).join('')}</dl></div>`;

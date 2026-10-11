@@ -1,0 +1,12 @@
+{
+  "label": "PUBLIC-FEEDBACK V3 REVISION OF SEPARATE IMPLEMENTATION; NOT BLIND; NATIVE QUALIFICATION PENDING",
+  "author_commit": "f81a568c4bf107da5c96d306bd9fd05d1362e9be",
+  "author_inventory_raw_sha256": "65eb3151a6fb8123abc0a2286aaca8c76be7dc58836c1328ea03ec2bde7ffe1c",
+  "file_count": 41,
+  "public_review_commit": "7c305b277b4e704d5a74efef9a690730977a5ce1",
+  "public_review_sha256": "b0ce41ed4b37b8713fd640e942be2ae45ff452127328ab7a724b0fbe0205b86c",
+  "native_public_scope": "Transactions, budget deferral, retry refresh POST, no duplicate mutation and browser fields; changed cached membership NOT proven for selected native event",
+  "fresh_common_three_plus_repeat_required": true,
+  "hidden_author_feedback": false,
+  "source_archive_sha256": "2e1e7df062ed97f4a27626475a931c79a82176573961d2d64acd344a624924c0"
+}
