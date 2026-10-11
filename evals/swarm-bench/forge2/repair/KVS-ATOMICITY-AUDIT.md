@@ -1,0 +1,21 @@
+# Forge 2.0 transaction fidelity repair
+
+The emulator committed earlier operations before validating later transaction values, attribute types, TTL and key policy. A transaction that returned an error could therefore leave values and eventually consistent query-index versions behind. Forge documents transactions as all-or-nothing: [KVS transactions](https://developer.atlassian.com/platform/forge/storage-reference/kvs-transactions/), [custom entity transactions](https://developer.atlassian.com/platform/forge/storage-reference/entities-transactions/), [transaction REST API](https://developer.atlassian.com/platform/forge/rest/v1/api-group-transaction/). These primary sources were checked on 2026-10-11.
+
+The cut prepares every set, including its conditional key policy and metadata, before publishing any set or delete. Existing condition and duplicate-key validation remains ahead of publication. Single writes still use the same preparation and publication, including PREVIOUS/LATEST results. Batch writes remain independent per item. No scorer weights, task requirements or model settings change.
+
+## Actual local evidence
+
+The new tests exercise `createKvs` itself, its status/error bodies, strong reads, full dump including metadata and query history, and reads after the documented five-second virtual query lag. Before the cut, nine controls produced three passes and six failures. Late type, conflict, TTL, size, depth and serialization failures left earlier writes behind. After the cut, all nine pass. Three additional positive controls for single KV, entity and secret writes also pass, verifying PREVIOUS/LATEST results, preserved creation/update/expiry metadata, conflict without mutation and reuse after expiry: twelve focused controls pass in total. The success case exercises mixed KV/entity writes and deletes, with stale queries before the visibility boundary and committed values afterward. The batch control verifies a successful first item and a separately failed second item.
+
+Six existing pure KVS/consistency tests also passed using the actual bundled Node 24 runtime: `node --test --test-name-pattern='^(KVS:|S2:(?! inside an invocation))' kit/test/kit-core.test.cjs kit/test/concurrency.test.cjs`. A first broader pattern included a native invocation test whose `forge2_kit.ensure` was blocked on the shared cache `.ensure.lock` by the sandbox before a cache mutation. That native test has not passed here; it must run during fresh final native qualification after active proofs release their frozen resources. No cache, SDK, installed application or running proof inputs were changed.
+
+## Trace and limits
+
+Before: transaction sets `row:first={n:2}` and `pending={sprints:['new']}`; its final `row:second={n:'invalid'}` returns 400 INCORRECT_PROPERTY_TYPE after the first two values and their query versions have landed. After: the same final type check fails while preparing the set list, before the first `put`. Would have changed this reproduced outcome: YES, no transaction effect remains. Late FAIL_IF_EXISTS similarly returns 409 KEY_CONFLICT before any publication. This is a net for the demonstrated fidelity defect, not a claim that any archived model's score changes.
+
+The independently examined native source-attribution case used an actual successful conditional entity set returning 204, not this malformed transaction branch. Its original native artifacts remain immutable. All final source/runtime manifests and native qualification must be refreshed after integration; old qualification cannot be relabelled as proof of this cut.
+
+## Independent review
+
+Independent reviewer `/root/website_current_fixture_proof` issued PASS for production KVS SHA-256 `402150d26fb4c88087c2f2b67747b5a83c1367ec937b2c62477cbc3b9adb3281`. Its actual old/new reproduction preserves the old prefix-commit failure, verifies eleven full rollback refusal cases and 115 unchanged single/batch/condition/metadata/query outcomes, and independently reruns all twelve focused tests. Private receipt `/private/tmp/forge2-two-fix-review/ATOMIC-RECEIPT.json`, raw SHA-256 `64617c6e2d1a42d0573710f080850042b24ff5b151520f90431912cfb947a519`, remains a pure review, not fresh native qualification.
