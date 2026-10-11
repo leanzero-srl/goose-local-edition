@@ -8,9 +8,14 @@ script, score it SERIALLY with score_forge2.py at the same seed as the golden, a
 it loses exactly its declared rows (plus rows ROOT_BLOCKS attributes to a declared root, never anything else), fires a
 critical exactly when declared (`critical` naming a SPEC §4 class must fire THAT class), lands at or below
 `max_final`, and scored with no unavailable row and no harness_missing. SPEC §5's gate, checked here: the golden passes
-the reference gate (1.000), every v2 family R1..R9 has a passing mutant that loses one of its rows, the starter as
+the reference gate (1.000), every v2 family R1..R10 has a passing mutant that loses one of its rows, the starter as
 handed out (Scope Ledger v1) scores at or below 0.30, and an idle app (the starter's app id with one no-op trigger)
 is SCORED — never refused — at or below 0.05.
+
+Native JQL controls are generated from the current golden's real implementation: remove the installed module,
+leave native precomputations stale, or incorrectly share the last person's visible IDs. They are built and scored
+through the same runtime as patch mutants. --materialise-runtime <id> --tree <path> creates one disposable control
+without scoring, for the focused HTTP tests.
 
 Nothing here edits the golden or the mutants; every candidate is a disposable copy.
 """
@@ -143,6 +148,52 @@ def _materialise(src: Path, dest: Path) -> None:
                                                              'verdict*.json', 'forge-observations.json'))
 
 
+RUNTIME_MUTANTS = {
+    'm_jql_missing_module': {'loses': ['r10_manifest', 'r10_initial_membership', 'r10_precomputation_refresh',
+                                     'r10_shared_permissions', 'r10_empty_and_closed', 'r10_invalid_arguments'],
+                             'critical': False},
+    'm_jql_stale_precomputation': {'loses': ['r10_precomputation_refresh'], 'critical': False},
+    'm_jql_user_baked_cache': {'loses': ['r10_shared_permissions'], 'critical': False},
+}
+
+
+def _replace_once(tree: Path, relative: str, before: str, after: str) -> None:
+    path = tree / relative
+    text = path.read_text()
+    count = text.count(before)
+    if count != 1:
+        raise RuntimeError(f'{relative}: runtime control anchor occurs {count} times: {before[:100]!r}')
+    path.write_text(text.replace(before, after, 1))
+
+
+def runtime_mutant(dest: Path, mutant_id: str) -> None:
+    """One real code defect, copied from the current golden; observations and scoring are never patched."""
+    if mutant_id not in RUNTIME_MUTANTS:
+        raise ValueError(f'Unknown runtime mutant {mutant_id!r}')
+    _materialise(GOLDEN, dest)
+    if mutant_id == 'm_jql_missing_module':
+        path = dest / 'manifest.yml'
+        text, count = re.subn(r'(?ms)^  jira:jqlFunction:\n.*?(?=^  [^\s]|\Z)', '', path.read_text())
+        if count != 1:
+            raise RuntimeError(f'Installed JQL module anchor occurs {count} times')
+        path.write_text(text)
+    elif mutant_id == 'm_jql_stale_precomputation':
+        _replace_once(dest, 'src/jql.js', 'export async function refreshScopePrecomputations(sprintIds, work) {',
+                      'export async function refreshScopePrecomputations(sprintIds, work) {\n  return { skipped: true };')
+    elif mutant_id == 'm_jql_user_baked_cache':
+        _replace_once(dest, 'src/views.js', "import { jiraJson, route, postJson } from './jira';",
+                      "import { kvs } from '@forge/kvs';\nimport { jiraJson, route, postJson } from './jira';")
+        _replace_once(dest, 'src/views.js', '  return { sprint, ...totalsView(totals), hiddenCount: changes.length - rows.length, changes: rows };',
+                      "  await kvs.set(`scope-jql-visible:${sprint.id}`, rows.map((row) => row.issueId));\n"
+                      '  return { sprint, ...totalsView(totals), hiddenCount: changes.length - rows.length, changes: rows };')
+        _replace_once(dest, 'src/jql.js', "import { changesOfSprint } from './ledger';",
+                      "import { kvs } from '@forge/kvs';\nimport { changesOfSprint } from './ledger';")
+        _replace_once(dest, 'src/jql.js',
+                      '    return { jql: fragment(await changedIds(sprintId, { maxWaitSeconds: 0 }), request.clause.operator) };',
+                      '    const ids = await kvs.get(`scope-jql-visible:${sprintId}`) ?? await changedIds(sprintId, { maxWaitSeconds: 0 });\n'
+                      '    return { jql: fragment(ids, request.clause.operator) };')
+
+
 def _rebuild(tree: Path, app_modules: Optional[str]) -> Optional[str]:
     pkg = tree / 'package.json'
     if not pkg.is_file() or 'build' not in (json.loads(pkg.read_text()).get('scripts') or {}):
@@ -183,7 +234,9 @@ def one_function_app(dest: Path) -> None:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
-    ap.add_argument('--seed', required=True)
+    ap.add_argument('--seed')
+    ap.add_argument('--materialise-runtime', choices=tuple(RUNTIME_MUTANTS))
+    ap.add_argument('--tree', type=Path, help='disposable destination for --materialise-runtime; must not exist')
     ap.add_argument('--only', action='append', default=[])
     ap.add_argument('--out', type=Path)
     ap.add_argument('--keep', type=Path, help='keep every verdict JSON here')
@@ -191,6 +244,13 @@ def main(argv=None) -> int:
     ap.add_argument('--yield-to', action='append', default=[], metavar='PATTERN',
                     help='wait before each scoring while `pgrep -f PATTERN` finds another scorer (repeatable)')
     a = ap.parse_args(argv)
+    if a.materialise_runtime:
+        if not a.tree:
+            ap.error('--materialise-runtime requires --tree')
+        runtime_mutant(a.tree, a.materialise_runtime)
+        return 0
+    if not a.seed:
+        ap.error('--seed is required for scoring controls')
     global KEEP, QUIET_LOAD, YIELD_TO
     QUIET_LOAD = a.quiet_load
     YIELD_TO = a.yield_to
@@ -247,6 +307,28 @@ def main(argv=None) -> int:
                 verdict = score(tree, a.seed, tmp / f'{mid}.json')
                 entry = {'score': verdict['score'], 'lost': sorted(
                     n for n, r in _rows(verdict).items() if r['score'] < _rows(golden)[n]['score'] - 1e-9),
+                    'criticals': verdict['critical'].get('unsuppressed'),
+                    'fails': judge(golden, verdict, expect, score_forge2.ROOT_BLOCKS, score_forge2.CALIBRATION_OWNED)}
+            except Exception as error:
+                entry = {'fails': [f'{type(error).__name__}: {error}']}
+            failed |= bool(entry['fails'])
+            report['mutants'][mid] = entry
+            if a.out:
+                a.out.write_text(json.dumps(report, indent=2))
+            print(f"{mid}: {entry.get('score')} {'PASS' if not entry['fails'] else 'FAIL ' + '; '.join(entry['fails'])}",
+                  file=sys.stderr, flush=True)
+        for mid, expect in RUNTIME_MUTANTS.items():
+            if a.only and mid not in a.only:
+                continue
+            try:
+                tree = tmp / mid
+                runtime_mutant(tree, mid)
+                why = _rebuild(tree, app_modules)
+                if why:
+                    raise RuntimeError(why)
+                verdict = score(tree, a.seed, tmp / f'{mid}.json')
+                entry = {'score': verdict['score'], 'lost': sorted(
+                    n for n, row in _rows(verdict).items() if row['score'] < _rows(golden)[n]['score'] - 1e-9),
                     'criticals': verdict['critical'].get('unsuppressed'),
                     'fails': judge(golden, verdict, expect, score_forge2.ROOT_BLOCKS, score_forge2.CALIBRATION_OWNED)}
             except Exception as error:
