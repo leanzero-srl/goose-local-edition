@@ -1,4 +1,4 @@
-"""forge-2.0 controls (forge2/SPEC.md §5): the golden, one-defect mutants, the untouched starter and the idle app.
+"""forge-2.0 controls (forge2/SPEC.md §4): the golden, one-defect mutants, the untouched starter and the idle app.
 
     python3 forge2_controls.py --seed <16 hex> [--only m_x] [--out controls.json]
 
@@ -10,8 +10,8 @@ Copy `bench/golden-forge2`, apply the patch, rebuild the Custom UI when the gold
 it loses its required rows and no undeclared rows (optional named secondary losses require a documented cause,
 plus rows ROOT_BLOCKS attributes to a declared root), fires a
 critical exactly when declared (`critical` naming a SPEC §4 class must fire THAT class), lands at or below
-`max_final`, and scored with no unavailable row and no harness_missing. SPEC §5's gate, checked here: the golden passes
-the reference gate (1.000), every v2 family R1..R10 has a passing mutant that loses one of its rows, the starter as
+`max_final`, and scored with no unavailable row and no harness_missing. SPEC §4's gate, checked here: the golden meets every functional guarantee and
+the verified UI budget; event/reconcile economy remains measured against the frozen five-site fit, every v2 family R1..R10 has a passing mutant that loses one of its rows, the starter as
 handed out (Scope Ledger v1) scores at or below 0.30, and an idle app (the starter's app id with one no-op trigger)
 is SCORED — never refused — at or below 0.05.
 
@@ -46,7 +46,7 @@ MUTANTS = ROOT / 'forge2' / 'mutants'
 FAMILY_CATALOG = ROOT / 'forge2' / 'mutants2' / 'MUTANTS.json'
 STARTER = ROOT / 'forge2' / 'starter'
 IDLE_MAX = 0.05     # DESIGN §8.6 (6) / §13.4 item 6
-STARTER_MAX = 0.30  # SPEC §5: "starter untouched <= 0.30"
+STARTER_MAX = 0.30  # SPEC §4: "starter untouched <= 0.30"
 
 
 KEEP = None  # a directory where every verdict is kept (--keep)
@@ -169,7 +169,7 @@ def judge(golden: Dict, mutant: Dict, expect: Dict, root_blocks: Dict[str, tuple
 
 
 def family_gaps(mutants: Dict[str, Dict], tier_of: Dict[str, str], families) -> List[str]:
-    """SPEC §5: "one mutant per R-family loses its rows" — the families with no PASSING mutant that lost a row of it."""
+    """SPEC §4: "one mutant per R-family loses its rows" — the families with no PASSING mutant that lost a row of it."""
     covered = {entry['family'] for entry in mutants.values() if entry.get('family') and not entry.get('fails')
                for n in entry.get('required_losses') or [] if tier_of.get(n) == entry['family']}
     return [fam for fam in families if fam not in covered]

@@ -3466,7 +3466,7 @@ def _(c):
     # (contract §12), so a correct app reads the board's configuration again on the changes that write a row (the
     # reference reads about 2.5 per change). It normalizes, continuously (2026-10-03 stringency, F1): score =
     # min(1, top / (used / baseline)), `top` the golden's worst ratio over the calibration seeds (calibration-owned), so
-    # the golden defines 1.0 and every extra request costs.
+    # the golden defines 1.0 on the fitting seeds; extra requests on heldouts still cost.
     # The event path is what an issue event started: its trigger and the consumers it queued, wherever they ran — never
     # a continuation of the backfill, the migration, an hourly run or the CI trigger, which 2.0 drains in the same
     # phase (a world event's own trigger, `world:`, is R4's).
@@ -5014,27 +5014,67 @@ def admit_registered_rows(result: Dict) -> List[Dict]:
     return rows
 
 
+REFERENCE_COMPOSITION_FIELDS = (
+    'score', 'rawScore', 'inner', 'v1', 'v2', 'critical', 'reliability', 'tiers', 'admission',
+    'excellence', 'excellence_gate', 'status', 'runtime', 'publishable', 'hold', 'unpublishable_reasons',
+    'harness_missing', 'probe_unavailable', 'vacuous', 'root_causes',
+)
+
+
+def reference_composition_matches(actual, expected) -> bool:
+    """JSON numeric roundtrips may change int to float, but bool is never a score or multiplier."""
+    if type(expected) in (int, float):
+        return type(actual) in (int, float) and actual == expected
+    if isinstance(expected, dict):
+        return (isinstance(actual, dict) and set(actual) == set(expected)
+                and all(reference_composition_matches(actual[key], value) for key, value in expected.items()))
+    if isinstance(expected, list):
+        return (isinstance(actual, list) and len(actual) == len(expected)
+                and all(reference_composition_matches(a, e) for a, e in zip(actual, expected)))
+    return type(actual) is type(expected) and actual == expected
+
+
 def reference_failures(result: Dict) -> List[str]:
+    """SPEC §4: complete functional correctness, verified UI budget and honest stored composition.
+
+    The original five fit event/reconcile economy; heldout request-efficiency losses stay in the score.
+    This checks a native verdict, not the provenance of a derived diagnostic or a model result.
+    """
     admit_registered_rows(result)
     fails = []
     for r in result['checks']:
         n = r['check']
+        if not reference_composition_matches(r.get('weight', 1.0), ROW_WEIGHT.get(n, 1.0)):
+            fails.append(f'{n}: reference row weight differs from its registry stamp')
+        if r.get('critical') != CRITICAL_OF.get(n):
+            fails.append(f'{n}: reference critical class differs from its registry stamp')
+    if fails:
+        return fails
+    for r in result['checks']:
+        n = r['check']
+        if n in VERIFIED_TOP and r['score'] != 1.0:
+            fails.append(f"{n}: {r['score']} != 1.0 — the fixed UI budget is required")
         if r.get('unavailable'):
             fails.append(f'{n}: UNAVAILABLE — a harness defect blocks the freeze')
             continue
         if (r.get('parts') or {}).get('vacuous_root'):
             fails.append(f'{n}: vacuous on the golden — its contract hook produced no evidence')
             continue
-        if n in CALIBRATION_OWNED:
+        if n in CALIBRATION_OWNED and n not in VERIFIED_TOP:
             continue
         # the diagnostic rows too: u_widget_loads is no longer a critical and k_v2_surfaces feeds a band
-        if n in CRITICAL_OF and r['score'] < 1.0 - 1e-9:
+        if n in CRITICAL_OF and r['score'] != 1.0:
             fails.append(f"{n}: CRITICAL {r['score']} != 1.0 — criticals are facts the golden achieves")
-        elif r['score'] < 1.0 - 1e-9:
+        elif r['score'] != 1.0:
             fails.append(f"{n}: {r['score']} < 1.0 — {str(r.get('detail'))[:100]}")
-    # rc thresholds are not fitted to the golden yet (the economy rows above are exempt so calibration can run)
-    if CALIBRATED and result.get('score') != 1.0:
-        fails.append(f"final {result.get('score')} != 1.000 (SPEC §5: the golden v2 scores 1.000)")
+    recomposed = recompose(result)
+    if recomposed['critical']['multiplier'] != 1.0 or recomposed['critical']['unsuppressed']:
+        fails.append(f"observed critical harm on the reference: {recomposed['critical']['unsuppressed']}")
+    for field in REFERENCE_COMPOSITION_FIELDS:
+        if field not in result or not reference_composition_matches(result[field], recomposed[field]):
+            fails.append(f'reference composition mismatch: {field}')
+    if result.get('status') != 'scored' or result.get('publishable') is not True or result.get('hold') is not None:
+        fails.append('the reference must be scored and publishable, with no hold')
     if result.get('harness_missing'):
         fails.append(f"harness_missing: {result['harness_missing'][:6]}")
     if reliability(result['checks'])[0] != 1.0:   # from the rows: a golden verdict kept before the rule has no block
