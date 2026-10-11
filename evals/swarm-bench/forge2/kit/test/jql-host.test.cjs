@@ -213,3 +213,61 @@ test('remote JQL host registration closes by ownership and restores earlier host
     assert.deepEqual(w.site.harnessMissing, []);
   } finally { if (second) await second.close(); if (third) await third.close(); await w.close(); }
 });
+
+test('cached native frontend searches consume burst tokens at a fixed virtual instant; request latency refills them', { timeout: 120000 }, async () => {
+  const w = await rig(false);
+  try {
+    const visible = w.site.pack.issues.find((issue) => !issue.hiddenFrom.includes(w.site.pack.viewer));
+    w.setIds([visible.id]);
+    const query = 'issue in hostScoped("123")';
+    assert.equal((await w.search(query, 'POST')).status, 200);
+    const instant = w.site.state.now();
+    for (let n = 0; n < 100; n++) assert.equal((await w.search(query, 'POST')).status, 200);
+    assert.equal(w.site.state.now(), instant, 'raw frontend fetches alone do not consume virtual request latency');
+    const refused = await w.search(query, 'POST');
+    assert.equal(refused.status, 429);
+    const entry = w.site.log.at(-1);
+    assert.equal(entry.rateLimited, 'jira-burst-based');
+    assert.equal(entry.retryAfter, 1);
+    assert.equal(entry.jqlExpansion, undefined, 'rate admission precedes expansion; a 429 without expansion is real rate evidence');
+    const { latencyOf } = require('../../site/rate.cjs');
+    for (let n = 0; n < 100; n++) {
+      await w.emu.advance(latencyOf('POST /rest/api/3/search/jql'));
+      assert.equal((await w.search(query, 'POST')).status, 200);
+    }
+    assert.equal(w.outputs.filter((out) => out.moduleType === 'jira:jqlFunction').length, 1, 'every successful cached page reuses the original native expansion');
+    assert.deepEqual(w.site.harnessMissing, []);
+  } finally { await w.close(); }
+});
+
+test('native JQL transport walks the real seeded NOTIN result beyond 100 pages without producing burst harness gaps', { timeout: 120000 }, async () => {
+  const w = await rig(false);
+  try {
+    const viewer = w.site.pack.viewer;
+    const visible = w.site.pack.issues.find((issue) => !issue.hiddenFrom.includes(viewer));
+    w.setIds([visible.id]);
+    const { searchNativeJql } = require('../lib/native-jql.cjs');
+    const { MODEL } = require('../../site/rate.cjs');
+    const pages = [];
+    for (let pass = 0; pass < 12; pass++) {
+      const result = await searchNativeJql({ siteUrl: w.site.url, jql: 'issue not in hostScoped("123")', accountId: viewer,
+        scopes: w.emu.manifest.permissions.scopes, now: () => w.site.state.now(), advance: w.emu.advance,
+        latencyMs: MODEL.latencyMs.search, rateReasons: Object.values(MODEL.reasons),
+        onPage: ({ response, t_ms }) => { pages.push(t_ms); assert.equal(response.status, 200); } });
+      assert.equal(result.search_ok, true, result.error);
+      const expected = w.site.pack.issues.filter((issue) => !issue.hiddenFrom.includes(viewer) && issue.id !== visible.id).map((issue) => issue.id).sort();
+      assert.deepEqual(result.issue_ids.sort(), expected);
+      assert.deepEqual(result.refusals, []);
+    }
+    assert.ok(pages.length > 100, 'real permission-filtered NOTIN pagination crosses the original 100-request burst capacity');
+    assert.ok(pages.every((at, index) => index === 0 || at >= pages[index - 1] + MODEL.latencyMs.search));
+    assert.equal(w.outputs.filter((out) => out.moduleType === 'jira:jqlFunction').length, 1);
+    const refused = await searchNativeJql({ siteUrl: w.site.url, jql: 'issue in unknownTransportFunction("123")', accountId: viewer,
+      scopes: w.emu.manifest.permissions.scopes, now: () => w.site.state.now(), advance: w.emu.advance,
+      latencyMs: MODEL.latencyMs.search, rateReasons: Object.values(MODEL.reasons) });
+    assert.equal(refused.search_ok, false);
+    assert.match(refused.error, /unknown|unable to find installed/i);
+    assert.deepEqual(refused.issue_ids, []);
+    assert.deepEqual(w.site.harnessMissing, []);
+  } finally { await w.close(); }
+});

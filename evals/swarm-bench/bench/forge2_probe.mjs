@@ -771,34 +771,30 @@ async function main() {
       const source = `key ${operator} scopeChanged(${argumentsList.map((v) => JSON.stringify(v)).join(',')}) ORDER BY key`;
       const record = { kind, sprintId: String(sid), operator, accountId, t_ms: now(), applied: site.state.st.applied.size,
         query: source, issue_ids: [], error: null, search_ok: true, invoked: 0, precomputationId: null, expanded_jql: null, calls: [] };
-      let nextPageToken;
-      const seenTokens = new Set();
-      do {
-        const logStart = site.log.length;
-        const response = await fetch(new URL('/rest/api/3/search/jql', site.url), { method: 'POST', headers: {
-          'content-type': 'application/json', 'x-forge-as': 'user', 'x-forge-account': accountId,
-          'x-forge-scopes': JSON.stringify(emu.manifest?.permissions?.scopes ?? []), 'x-forge-source': 'frontend',
-          'x-forge-module-type': 'jira:sprintAction',
-        }, body: JSON.stringify({ jql: source, maxResults: 100, fields: ['summary'], ...(nextPageToken ? { nextPageToken } : {}) }) });
-        const body = await response.json();
-        const entry = site.log.slice(logStart).find((e) => e.source === 'frontend' && e.accountId === accountId
-          && e.path.split('?')[0] === '/rest/api/3/search/jql');
-        if (!entry?.jqlExpansion) throw new Error('Native JQL search recorded no precomputation expansion evidence');
-        record.calls.push(...entry.jqlExpansion.calls);
-        record.invoked += entry.jqlExpansion.calls.filter((c) => c.invoked).length;
-        record.precomputationId ??= entry.jqlExpansion.calls[0]?.precomputationId ?? null;
-        record.expanded_jql = entry.jqlExpansion.jql ?? null;
-        if (!response.ok) {
-          record.search_ok = false;
-          record.error = (body.errorMessages ?? []).join('; ') || `Native search returned HTTP ${response.status}`;
-          break;
-        }
-        if (!Array.isArray(body.issues)) throw new Error('Native JQL search response omitted issues');
-        record.issue_ids.push(...body.issues.map((i) => String(i.id)));
-        nextPageToken = body.nextPageToken;
-        if (nextPageToken && seenTokens.has(nextPageToken)) throw new Error('Native JQL pagination token repeated');
-        if (nextPageToken) seenTokens.add(nextPageToken);
-      } while (nextPageToken);
+      record.http = [];
+      const { searchNativeJql } = require(join(kitDir, 'lib', 'native-jql.cjs'));
+      const { MODEL } = require(join(repo, 'forge2', 'site', 'rate.cjs'));
+      let logStart = site.log.length;
+      const result = await searchNativeJql({ siteUrl: site.url, jql: source, accountId,
+        scopes: emu.manifest?.permissions?.scopes ?? [], now, advance: emu.advance,
+        latencyMs: MODEL.latencyMs.search, rateReasons: Object.values(MODEL.reasons),
+        onPage: ({ response, t_ms }) => {
+          const entry = site.log.slice(logStart).find((e) => e.source === 'frontend' && e.accountId === accountId
+            && e.path.split('?')[0] === '/rest/api/3/search/jql');
+          logStart = site.log.length;
+          record.http.push({ t_ms, status: response.status, reason: response.headers.get('ratelimit-reason'),
+            retry_after: response.headers.get('retry-after'), latency_ms: MODEL.latencyMs.search });
+          if (response.ok && (!entry?.jqlExpansion || !Array.isArray(entry.jqlExpansion.calls))) {
+            throw new Error('Native JQL search recorded no precomputation expansion evidence');
+          }
+          if (Array.isArray(entry?.jqlExpansion?.calls)) {
+            record.calls.push(...entry.jqlExpansion.calls);
+            record.invoked += entry.jqlExpansion.calls.filter((c) => c.invoked).length;
+            record.precomputationId ??= entry.jqlExpansion.calls[0]?.precomputationId ?? null;
+            record.expanded_jql = entry.jqlExpansion.jql ?? null;
+          }
+        } });
+      Object.assign(record, result);
       obs.jql.cases.push(record);
       return record;
     };
