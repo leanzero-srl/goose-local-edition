@@ -1,0 +1,49 @@
+unsigned == ci unsigned: POST /x/webtrigger/scope-ci
+  Content-Type: application/json
+  X-LZ-Timestamp: 1795439043
+  body (128 bytes, raw): "{\n  \"eventId\": \"independent-unsigned\",\n  \"sentAt\": 1795439043,\n  \"environment\": \"staging\",\n  \"issueKeys\": [\n    \"FIN-774\"\n  ]\n}\n"
+-> 401  [Content-Type: application/json]  body: "{\"error\":\"Unauthorized\"}"
+== web trigger scope-ci: ci-deployment (webtrigger scope-ci) as app -> ok 120 ms virtual (limit 55 s; 91 ms real)
+result: {
+  "outputKey": "unauthorized"
+bad == ci bad-signature: POST /x/webtrigger/scope-ci
+  Content-Type: application/json
+  X-LZ-Timestamp: 1795439043
+  X-LZ-Signature: sha256=96e8948f436a243e497792da029aaa9474cf96f97929fc18168919b80280e027
+  body (123 bytes, raw): "{\n  \"eventId\": \"independent-bad\",\n  \"sentAt\": 1795439043,\n  \"environment\": \"staging\",\n  \"issueKeys\": [\n    \"FIN-774\"\n  ]\n}\n"
+-> 401  [Content-Type: application/json]  body: "{\"error\":\"Unauthorized\"}"
+== web trigger scope-ci: ci-deployment (webtrigger scope-ci) as app -> ok 120 ms virtual (limit 55 s; 94 ms real)
+result: {
+tampered (signed for environment staging; the body sent says production)
+== ci tamper: POST /x/webtrigger/scope-ci
+  Content-Type: application/json
+  X-LZ-Timestamp: 1795439043
+  X-LZ-Signature: sha256=c575c01532e229e1c01dcad9ad82e4329fc5a4cf80898286af445590c074d23d
+  body (131 bytes, raw): "{\n  \"eventId\": \"independent-tampered\",\n  \"sentAt\": 1795439043,\n  \"environment\": \"production\",\n  \"issueKeys\": [\n    \"FIN-774\"\n  ]\n}\n"
+-> 401  [Content-Type: application/json]  body: "{\"error\":\"Unauthorized\"}"
+== web trigger scope-ci: ci-deployment (webtrigger scope-ci) as app -> ok 120 ms virtual (limit 55 s; 93 ms real)
+stale == ci stale: POST /x/webtrigger/scope-ci
+  Content-Type: application/json
+  X-LZ-Timestamp: 1795438443
+  X-LZ-Signature: sha256=00fd2f381aacfd3ef9e5648272e3e544113bfc416ed3bcd77d493184eb0f3c1a
+  body (125 bytes, raw): "{\n  \"eventId\": \"independent-stale\",\n  \"sentAt\": 1795438443,\n  \"environment\": \"staging\",\n  \"issueKeys\": [\n    \"FIN-774\"\n  ]\n}\n"
+-> 401  [Content-Type: application/json]  body: "{\"error\":\"Unauthorized\"}"
+== web trigger scope-ci: ci-deployment (webtrigger scope-ci) as app -> ok 120 ms virtual (limit 55 s; 92 ms real)
+result: {
+header-case == ci header-case: POST /x/webtrigger/scope-ci
+  Content-Type: application/json
+  x-Lz-Timestamp: 1795439043
+  X-lz-SIGNATURE: sha256=4b22024ae78e48c137ba4fac432b259cf7d9702f7c9e4a096b6a0434a024f624
+  body (131 bytes, raw): "{\n  \"eventId\": \"independent-header-case\",\n  \"sentAt\": 1795439043,\n  \"environment\": \"staging\",\n  \"issueKeys\": [\n    \"FIN-774\"\n  ]\n}\n"
+-> 202  [Content-Type: application/json]  body: "{\"status\":\"Accepted\"}"
+== web trigger scope-ci: ci-deployment (webtrigger scope-ci) as app -> ok 520 ms virtual (limit 55 s; 115 ms real)
+result: {
+valid-replay == ci first delivery: POST /x/webtrigger/scope-ci
+  Content-Type: application/json
+  X-LZ-Timestamp: 1795439047
+  X-LZ-Signature: sha256=b99e04d60832ad17157db435cc55b56603d1bdfa790301118312a0d0f6958a7d
+  body (132 bytes, raw): "{\n  \"eventId\": \"independent-valid-replay\",\n  \"sentAt\": 1795439047,\n  \"environment\": \"staging\",\n  \"issueKeys\": [\n    \"FIN-774\"\n  ]\n}\n"
+-> 202  [Content-Type: application/json]  body: "{\"status\":\"Accepted\"}"
+== web trigger scope-ci: ci-deployment (webtrigger scope-ci) as app -> ok 520 ms virtual (limit 55 s; 111 ms real)
+result: {
+deployed readback {'issue': 'FIN-774', 'rows': 1, 'allCarryStaging': True}

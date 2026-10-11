@@ -1,0 +1,26 @@
+{
+  "errors": [],
+  "geometry": {
+    "width": 380,
+    "scrollWidth": 380,
+    "clippedNumbers": 0,
+    "sprints": [
+      "791"
+    ],
+    "bars": 3,
+    "chartCount": 1
+  },
+  "before": [
+    "189.5",
+    "88.5",
+    "95",
+    "46.7%"
+  ],
+  "after": [
+    "191.5",
+    "85.5",
+    "100",
+    "44.6%"
+  ],
+  "changedWithoutReload": true
+}

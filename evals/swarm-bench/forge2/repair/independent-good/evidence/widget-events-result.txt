@@ -1,0 +1,690 @@
+### update FIN-463 changelog 1139852: Sprint: ∅ -> FIN Sprint 41
+== trigger: on-issue-updated (trigger scope-issue-updated) as app -> ok 320 ms virtual (limit 25 s; 104 ms real)
+result: null
+calls:
+  kvs         POST /api/v1/get -> 200
+  queue       POST /webhook/queue/publish/{contextAri}/{environmentId}/{appId}/{appVersion} -> 201
+-- queue scope-ledger event cd9f28ab-b487-45c1-8901-e042987f95cd#0 attempt 0: ok
+   calls of inv-00002-066c36:
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/api/3/issue/41179?fields=customfield_14859%2Ccustomfield_13496%2Ccustomfield_13387%2Ccustomfield_11349%2Ccustomfield_13104%2Ccustomfield_17238%2Ccustomfield_15796%2Ccustomfield_12016%2Ccustomfield_16036%2Ccustomfield_14207&expand=changelog -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/agile/1.0/sprint/1086 -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/agile/1.0/board/41/configuration -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 404
+  kvs         POST /api/v1/entity/get -> 404
+  kvs         POST /api/v1/entity/get -> 404
+  kvs         POST /api/v1/entity/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/entity/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  PUT /rest/api/3/app/field/customfield_14207/value -> 204
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 404
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/api/3/jql/function/computation?startAt=0&maxResults=100 -> 200
+  kvs         POST /api/v1/set -> 204
+  realtime      POST /fpp/as/app/provider/atlassian/capability/realtime -> 200
+         publishGlobal 'scope-ledger-updates' payload {"sprintIds":["1086"]} -> delivered (event dab444df-4dff-4c0f-9a45-46431a81e10b)
+### update FIN-701 changelog 1139873: summary: Retry alert routing in staging first -> Retry the sprint report behind a flag
+== trigger: on-issue-updated (trigger scope-issue-updated) as app -> ok 120 ms virtual (limit 25 s; 84 ms real)
+result: null
+calls:
+  kvs         POST /api/v1/get -> 200
+### update AUTH-154 changelog 1139894: priority: Medium -> High
+== trigger: on-issue-updated (trigger scope-issue-updated) as app -> ok 120 ms virtual (limit 25 s; 82 ms real)
+result: null
+calls:
+  kvs         POST /api/v1/get -> 200
+### update AUTH-240 changelog 1139927: Sprint: AUTH Platform Sprint 4 -> AUTH Sprint 14
+== trigger: on-issue-updated (trigger scope-issue-updated) as app -> ok 320 ms virtual (limit 25 s; 97 ms real)
+result: null
+calls:
+  kvs         POST /api/v1/get -> 200
+  queue       POST /webhook/queue/publish/{contextAri}/{environmentId}/{appId}/{appVersion} -> 201
+-- queue scope-ledger event 97c9f9d7-f4a1-4d58-a2b1-495e0a9b504b#0 attempt 0: ok
+   calls of inv-00006-56de37:
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/api/3/issue/41250?fields=customfield_14859%2Ccustomfield_13496%2Ccustomfield_13387%2Ccustomfield_11349%2Ccustomfield_13104%2Ccustomfield_17238%2Ccustomfield_15796%2Ccustomfield_12016%2Ccustomfield_16036%2Ccustomfield_14207&expand=changelog -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/agile/1.0/sprint/810 -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/agile/1.0/sprint/995 -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/agile/1.0/board/60/configuration -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 404
+  kvs         POST /api/v1/entity/get -> 404
+  kvs         POST /api/v1/entity/get -> 404
+  kvs         POST /api/v1/entity/set -> 204
+  kvs         POST /api/v1/entity/get -> 404
+  kvs         POST /api/v1/entity/get -> 404
+  kvs         POST /api/v1/entity/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/entity/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  PUT /rest/api/3/app/field/customfield_14207/value -> 204
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/api/3/jql/function/computation?startAt=0&maxResults=100 -> 200
+  kvs         POST /api/v1/set -> 204
+  realtime      POST /fpp/as/app/provider/atlassian/capability/realtime -> 200
+         publishGlobal 'scope-ledger-updates' payload {"sprintIds":["810","995"]} -> delivered (event f62cd5eb-936f-4769-82e4-052e984e4fc2)
+### update AUTH-352 changelog 1139940: labels: ∅ -> incident-followup
+== trigger: on-issue-updated (trigger scope-issue-updated) as app -> ok 120 ms virtual (limit 25 s; 83 ms real)
+result: null
+calls:
+  kvs         POST /api/v1/get -> 200
+### update AUTH-400 changelog 1139976: Sprint: AUTH Sprint 15 -> AUTH Sprint 14
+== trigger: on-issue-updated (trigger scope-issue-updated) as app -> ok 320 ms virtual (limit 25 s; 99 ms real)
+result: null
+calls:
+  kvs         POST /api/v1/get -> 200
+  queue       POST /webhook/queue/publish/{contextAri}/{environmentId}/{appId}/{appVersion} -> 201
+-- queue scope-ledger event 85bfc18f-3f4a-4590-b7f4-41036f223a44#0 attempt 0: ok
+   calls of inv-00009-66a957:
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/api/3/issue/43063?fields=customfield_14859%2Ccustomfield_13496%2Ccustomfield_13387%2Ccustomfield_11349%2Ccustomfield_13104%2Ccustomfield_17238%2Ccustomfield_15796%2Ccustomfield_12016%2Ccustomfield_16036%2Ccustomfield_14207&expand=changelog -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/agile/1.0/sprint/1368 -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/agile/1.0/sprint/810 -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/agile/1.0/board/60/configuration -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 404
+  kvs         POST /api/v1/entity/get -> 404
+  kvs         POST /api/v1/entity/get -> 404
+  kvs         POST /api/v1/entity/set -> 204
+  kvs         POST /api/v1/entity/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  PUT /rest/api/3/app/field/customfield_14207/value -> 204
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/api/3/jql/function/computation?startAt=0&maxResults=100 -> 200
+  kvs         POST /api/v1/set -> 204
+  realtime      POST /fpp/as/app/provider/atlassian/capability/realtime -> 200
+         publishGlobal 'scope-ledger-updates' payload {"sprintIds":["810"]} -> delivered (event be256605-f514-43dc-a13e-81585c333b97)
+### update AUTH-151 changelog 1139998: Sprint: AUTH Platform Sprint 4 -> ∅
+== trigger: on-issue-updated (trigger scope-issue-updated) as app -> ok 320 ms virtual (limit 25 s; 97 ms real)
+result: null
+calls:
+  kvs         POST /api/v1/get -> 200
+  queue       POST /webhook/queue/publish/{contextAri}/{environmentId}/{appId}/{appVersion} -> 201
+-- queue scope-ledger event 7a33e74a-a1c7-4f9c-b30d-ec5bf072bde9#0 attempt 0: ok
+   calls of inv-00011-e64f62:
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/api/3/issue/40307?fields=customfield_14859%2Ccustomfield_13496%2Ccustomfield_13387%2Ccustomfield_11349%2Ccustomfield_13104%2Ccustomfield_17238%2Ccustomfield_15796%2Ccustomfield_12016%2Ccustomfield_16036%2Ccustomfield_14207&expand=changelog -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/agile/1.0/sprint/995 -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/agile/1.0/board/60/configuration -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 404
+  kvs         POST /api/v1/entity/get -> 404
+  kvs         POST /api/v1/entity/get -> 404
+  kvs         POST /api/v1/entity/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  PUT /rest/api/3/app/field/customfield_14207/value -> 204
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/api/3/jql/function/computation?startAt=0&maxResults=100 -> 200
+  kvs         POST /api/v1/set -> 204
+  realtime      POST /fpp/as/app/provider/atlassian/capability/realtime -> 200
+         publishGlobal 'scope-ledger-updates' payload {"sprintIds":["995"]} -> delivered (event cc42b572-d3e4-427e-a70f-e66c49d1b13a)
+### update FIN-619 changelog 1140025: priority: Low -> High
+== trigger: on-issue-updated (trigger scope-issue-updated) as app -> ok 120 ms virtual (limit 25 s; 82 ms real)
+result: null
+calls:
+  kvs         POST /api/v1/get -> 200
+### update FIN-507 changelog 1140046: Sprint: FIN Sprint 41 -> ∅
+== trigger: on-issue-updated (trigger scope-issue-updated) as app -> ok 320 ms virtual (limit 25 s; 99 ms real)
+result: null
+calls:
+  kvs         POST /api/v1/get -> 200
+  queue       POST /webhook/queue/publish/{contextAri}/{environmentId}/{appId}/{appVersion} -> 201
+   queued: the next update arrives before this one's queue work runs; their consumers run concurrently
+### update FIN-507 changelog 1140045: Sprint: ∅ -> FIN Sprint 41
+== trigger: on-issue-updated (trigger scope-issue-updated) as app -> ok 320 ms virtual (limit 25 s; 101 ms real)
+result: null
+calls:
+  kvs         POST /api/v1/get -> 200
+  queue       POST /webhook/queue/publish/{contextAri}/{environmentId}/{appId}/{appVersion} -> 201
+-- queue scope-ledger event 8ac08d31-3d72-4ae8-9e6b-9eea9e8b3c7e#0 attempt 0: ok
+-- queue scope-ledger event 5934e742-e1e6-4be6-ab41-c3bceabc44bd#0 attempt 0: ok
+   calls of inv-00015-66211c:
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/api/3/issue/41417?fields=customfield_14859%2Ccustomfield_13496%2Ccustomfield_13387%2Ccustomfield_11349%2Ccustomfield_13104%2Ccustomfield_17238%2Ccustomfield_15796%2Ccustomfield_12016%2Ccustomfield_16036%2Ccustomfield_14207&expand=changelog -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/agile/1.0/sprint/1086 -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/agile/1.0/board/41/configuration -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 404
+  kvs         POST /api/v1/entity/get -> 404
+  kvs         POST /api/v1/entity/get -> 404
+  kvs         POST /api/v1/entity/set -> 204
+  kvs         POST /api/v1/entity/get -> 404
+  kvs         POST /api/v1/entity/get -> 404
+  kvs         POST /api/v1/entity/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  PUT /rest/api/3/app/field/customfield_14207/value -> 204
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 404
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/api/3/jql/function/computation?startAt=0&maxResults=100 -> 200
+  kvs         POST /api/v1/set -> 204
+  realtime      POST /fpp/as/app/provider/atlassian/capability/realtime -> 200
+         publishGlobal 'scope-ledger-updates' payload {"sprintIds":["1086"]} -> delivered (event b58376a7-5df6-4244-97b3-dbd289ad90de)
+   calls of inv-00016-6c9c49:
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/api/3/issue/41417?fields=customfield_14859%2Ccustomfield_13496%2Ccustomfield_13387%2Ccustomfield_11349%2Ccustomfield_13104%2Ccustomfield_17238%2Ccustomfield_15796%2Ccustomfield_12016%2Ccustomfield_16036%2Ccustomfield_14207&expand=changelog -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/agile/1.0/sprint/1086 -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/agile/1.0/board/41/configuration -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 404
+  kvs         POST /api/v1/entity/get -> 200
+  kvs         POST /api/v1/entity/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+### update AUTH-408 changelog 1140073: Locked forms: ∅ -> 8
+== trigger: on-issue-updated (trigger scope-issue-updated) as app -> ok 320 ms virtual (limit 25 s; 98 ms real)
+result: null
+calls:
+  kvs         POST /api/v1/get -> 200
+  queue       POST /webhook/queue/publish/{contextAri}/{environmentId}/{appId}/{appVersion} -> 201
+-- queue scope-ledger event 201fae1e-e456-4e84-98e1-4c22cbed7217#0 attempt 0: ok
+   calls of inv-00018-852769:
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/api/3/issue/43164?fields=customfield_14859%2Ccustomfield_13496%2Ccustomfield_13387%2Ccustomfield_11349%2Ccustomfield_13104%2Ccustomfield_17238%2Ccustomfield_15796%2Ccustomfield_12016%2Ccustomfield_16036%2Ccustomfield_14207&expand=changelog -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 404
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 404
+  kvs         POST /api/v1/set -> 204
+### update FIN-340 changelog 1140106: summary: Validate the payout scheduler -> Refactor the backup job in the admin console
+== trigger: on-issue-updated (trigger scope-issue-updated) as app -> ok 120 ms virtual (limit 25 s; 86 ms real)
+result: null
+calls:
+  kvs         POST /api/v1/get -> 200
+### update FIN-718 changelog 1140112: Total forms: ∅ -> 13
+== trigger: on-issue-updated (trigger scope-issue-updated) as app -> ok 320 ms virtual (limit 25 s; 99 ms real)
+result: null
+calls:
+  kvs         POST /api/v1/get -> 200
+  queue       POST /webhook/queue/publish/{contextAri}/{environmentId}/{appId}/{appVersion} -> 201
+-- queue scope-ledger event 7f8af201-5930-4af7-8579-f7fe9a0789c0#0 attempt 0: ok
+   calls of inv-00021-fe5c65:
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/api/3/issue/43141?fields=customfield_14859%2Ccustomfield_13496%2Ccustomfield_13387%2Ccustomfield_11349%2Ccustomfield_13104%2Ccustomfield_17238%2Ccustomfield_15796%2Ccustomfield_12016%2Ccustomfield_16036%2Ccustomfield_14207&expand=changelog -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/agile/1.0/sprint/770 -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/agile/1.0/sprint/1086 -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/agile/1.0/board/41/configuration -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 404
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/set -> 204
+### update FIN-323 changelog 1140117: priority: Medium -> High
+== trigger: on-issue-updated (trigger scope-issue-updated) as app -> ok 120 ms virtual (limit 25 s; 81 ms real)
+result: null
+calls:
+  kvs         POST /api/v1/get -> 200
+### update WEB-344 changelog 1140123: Story Points: 3 -> 5
+== trigger: on-issue-updated (trigger scope-issue-updated) as app -> ok 320 ms virtual (limit 25 s; 97 ms real)
+result: null
+calls:
+  kvs         POST /api/v1/get -> 200
+  queue       POST /webhook/queue/publish/{contextAri}/{environmentId}/{appId}/{appVersion} -> 201
+-- queue scope-ledger event 5c904cf0-f099-47d7-90a2-73658698acc5#0 attempt 0: ok
+   calls of inv-00024-c18502:
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/api/3/issue/40272?fields=customfield_14859%2Ccustomfield_13496%2Ccustomfield_13387%2Ccustomfield_11349%2Ccustomfield_13104%2Ccustomfield_17238%2Ccustomfield_15796%2Ccustomfield_12016%2Ccustomfield_16036%2Ccustomfield_14207&expand=changelog -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/agile/1.0/sprint/791 -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/agile/1.0/board/205/configuration -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 404
+  kvs         POST /api/v1/entity/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/api/3/jql/function/computation?startAt=0&maxResults=100 -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/entity/query -> 200
+  kvs         POST /api/v1/entity/query -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  POST /rest/api/3/jql/function/computation -> 204
+  kvs         POST /api/v1/set -> 204
+  realtime      POST /fpp/as/app/provider/atlassian/capability/realtime -> 200
+         publishGlobal 'scope-ledger-updates' payload {"sprintIds":["791"]} -> delivered (event c1dd0d40-ed74-46a1-bee7-24437ae9c159)
+### update WEB-475 changelog 1140143: Submitted forms: ∅ -> 1
+== trigger: on-issue-updated (trigger scope-issue-updated) as app -> ok 320 ms virtual (limit 25 s; 97 ms real)
+result: null
+calls:
+  kvs         POST /api/v1/get -> 200
+  queue       POST /webhook/queue/publish/{contextAri}/{environmentId}/{appId}/{appVersion} -> 201
+-- queue scope-ledger event 7b5d3941-c8b1-40bc-9159-2e86a99d7cc1#0 attempt 0: ok
+   calls of inv-00026-dc9cd3:
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/api/3/issue/42379?fields=customfield_14859%2Ccustomfield_13496%2Ccustomfield_13387%2Ccustomfield_11349%2Ccustomfield_13104%2Ccustomfield_17238%2Ccustomfield_15796%2Ccustomfield_12016%2Ccustomfield_16036%2Ccustomfield_14207&expand=changelog -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 404
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 404
+  kvs         POST /api/v1/set -> 204
+### update FIN-372 changelog 1140171: summary: Retry the PDF renderer in staging first -> Fix the backup job
+== trigger: on-issue-updated (trigger scope-issue-updated) as app -> ok 120 ms virtual (limit 25 s; 81 ms real)
+result: null
+calls:
+  kvs         POST /api/v1/get -> 200
+### update WEB-340 changelog 1140178: Sprint: WEB Sprint 16 -> ∅
+== trigger: on-issue-updated (trigger scope-issue-updated) as app -> ok 320 ms virtual (limit 25 s; 96 ms real)
+result: null
+calls:
+  kvs         POST /api/v1/get -> 200
+  queue       POST /webhook/queue/publish/{contextAri}/{environmentId}/{appId}/{appVersion} -> 201
+-- queue scope-ledger event 093a433f-6a98-41cf-971f-3d869d5b9a5b#0 attempt 0: ok
+   calls of inv-00029-9fefef:
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/api/3/issue/40229?fields=customfield_14859%2Ccustomfield_13496%2Ccustomfield_13387%2Ccustomfield_11349%2Ccustomfield_13104%2Ccustomfield_17238%2Ccustomfield_15796%2Ccustomfield_12016%2Ccustomfield_16036%2Ccustomfield_14207&expand=changelog -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/agile/1.0/sprint/791 -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/agile/1.0/board/205/configuration -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 404
+  kvs         POST /api/v1/entity/get -> 404
+  kvs         POST /api/v1/entity/get -> 404
+  kvs         POST /api/v1/entity/set -> 204
+  kvs         POST /api/v1/entity/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  PUT /rest/api/3/app/field/customfield_14207/value -> 204
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/api/3/jql/function/computation?startAt=0&maxResults=100 -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/entity/query -> 200
+  kvs         POST /api/v1/entity/query -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  POST /rest/api/3/jql/function/computation -> 204
+  kvs         POST /api/v1/set -> 204
+  realtime      POST /fpp/as/app/provider/atlassian/capability/realtime -> 200
+         publishGlobal 'scope-ledger-updates' payload {"sprintIds":["791"]} -> delivered (event c1d097c3-c186-451c-8393-25dedf12ebb3)
+### update FIN-307 changelog 1140202: status: In Review -> Done
+== trigger: on-issue-updated (trigger scope-issue-updated) as app -> ok 120 ms virtual (limit 25 s; 92 ms real)
+result: null
+calls:
+  kvs         POST /api/v1/get -> 200
+### update AUTH-356 changelog 1140239: status: In Progress -> In Review
+== trigger: on-issue-updated (trigger scope-issue-updated) as app -> ok 120 ms virtual (limit 25 s; 85 ms real)
+result: null
+calls:
+  kvs         POST /api/v1/get -> 200
+### update AUTH-121 changelog 1140266: Estimate (days): 13 -> 5
+== trigger: on-issue-updated (trigger scope-issue-updated) as app -> ok 320 ms virtual (limit 25 s; 99 ms real)
+result: null
+calls:
+  kvs         POST /api/v1/get -> 200
+  queue       POST /webhook/queue/publish/{contextAri}/{environmentId}/{appId}/{appVersion} -> 201
+-- queue scope-ledger event 67da42b3-27ca-472c-87e5-02594bc1a267#0 attempt 0: ok
+   calls of inv-00033-30d218:
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/api/3/issue/39977?fields=customfield_14859%2Ccustomfield_13496%2Ccustomfield_13387%2Ccustomfield_11349%2Ccustomfield_13104%2Ccustomfield_17238%2Ccustomfield_15796%2Ccustomfield_12016%2Ccustomfield_16036%2Ccustomfield_14207&expand=changelog -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/agile/1.0/sprint/810 -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/agile/1.0/board/60/configuration -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 404
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/set -> 204
+### update AUTH-253 changelog 1140303: priority: Highest -> Low
+== trigger: on-issue-updated (trigger scope-issue-updated) as app -> ok 120 ms virtual (limit 25 s; 86 ms real)
+result: null
+calls:
+  kvs         POST /api/v1/get -> 200
+### update AUTH-376 changelog 1140323: status: In Review -> To Do
+== trigger: on-issue-updated (trigger scope-issue-updated) as app -> ok 120 ms virtual (limit 25 s; 82 ms real)
+result: null
+calls:
+  kvs         POST /api/v1/get -> 200
+### update AUTH-252 changelog 1140325: priority: High -> Highest
+== trigger: on-issue-updated (trigger scope-issue-updated) as app -> ok 120 ms virtual (limit 25 s; 83 ms real)
+result: null
+calls:
+  kvs         POST /api/v1/get -> 200
+### update WEB-324 changelog 1140336: Original story points: 8 -> 0.5
+== trigger: on-issue-updated (trigger scope-issue-updated) as app -> ok 320 ms virtual (limit 25 s; 97 ms real)
+result: null
+calls:
+  kvs         POST /api/v1/get -> 200
+  queue       POST /webhook/queue/publish/{contextAri}/{environmentId}/{appId}/{appVersion} -> 201
+-- queue scope-ledger event 8c5120ec-dca3-4d9e-9315-7330b18cfcde#0 attempt 0: ok
+   calls of inv-00038-53683b:
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/api/3/issue/40089?fields=customfield_14859%2Ccustomfield_13496%2Ccustomfield_13387%2Ccustomfield_11349%2Ccustomfield_13104%2Ccustomfield_17238%2Ccustomfield_15796%2Ccustomfield_12016%2Ccustomfield_16036%2Ccustomfield_14207&expand=changelog -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 404
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 404
+  kvs         POST /api/v1/set -> 204
+### update FIN-398 changelog 1140371: priority: High -> Medium
+== trigger: on-issue-updated (trigger scope-issue-updated) as app -> ok 120 ms virtual (limit 25 s; 88 ms real)
+result: null
+calls:
+  kvs         POST /api/v1/get -> 200
+### update AUTH-397 changelog 1140379: Sprint: AUTH Sprint 13 -> AUTH Sprint 13, AUTH Sprint 14
+== trigger: on-issue-updated (trigger scope-issue-updated) as app -> ok 320 ms virtual (limit 25 s; 98 ms real)
+result: null
+calls:
+  kvs         POST /api/v1/get -> 200
+  queue       POST /webhook/queue/publish/{contextAri}/{environmentId}/{appId}/{appVersion} -> 201
+-- queue scope-ledger event ab18d2a3-e8b6-4da8-aaf0-9bcd242078eb#0 attempt 0: ok
+   calls of inv-00041-5f4ab7:
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/api/3/issue/43030?fields=customfield_14859%2Ccustomfield_13496%2Ccustomfield_13387%2Ccustomfield_11349%2Ccustomfield_13104%2Ccustomfield_17238%2Ccustomfield_15796%2Ccustomfield_12016%2Ccustomfield_16036%2Ccustomfield_14207&expand=changelog -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/agile/1.0/sprint/810 -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/agile/1.0/board/60/configuration -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 404
+  kvs         POST /api/v1/entity/get -> 404
+  kvs         POST /api/v1/entity/get -> 404
+  kvs         POST /api/v1/entity/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/entity/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  PUT /rest/api/3/app/field/customfield_14207/value -> 204
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/set -> 204
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/api/3/jql/function/computation?startAt=0&maxResults=100 -> 200
+  kvs         POST /api/v1/set -> 204
+  realtime      POST /fpp/as/app/provider/atlassian/capability/realtime -> 200
+         publishGlobal 'scope-ledger-updates' payload {"sprintIds":["810"]} -> delivered (event 07db1fa4-898b-403a-855e-398d9b4f7769)
+### update WEB-406 changelog 1140415: priority: High -> Highest
+== trigger: on-issue-updated (trigger scope-issue-updated) as app -> ok 120 ms virtual (limit 25 s; 89 ms real)
+result: null
+calls:
+  kvs         POST /api/v1/get -> 200
+### update FIN-525 changelog 1140418: priority: Highest -> High
+== trigger: on-issue-updated (trigger scope-issue-updated) as app -> ok 120 ms virtual (limit 25 s; 82 ms real)
+result: null
+calls:
+  kvs         POST /api/v1/get -> 200
+### update FIN-564 changelog 1140439: labels: a11y -> a11y incident-followup
+== trigger: on-issue-updated (trigger scope-issue-updated) as app -> ok 120 ms virtual (limit 25 s; 83 ms real)
+result: null
+calls:
+  kvs         POST /api/v1/get -> 200

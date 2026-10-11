@@ -1,0 +1,10 @@
+JQL as 712020:107bc827-b174-48ee-8da3-0babaa878249 -> 400: {
+  "errorMessages": [
+    "scopeChanged requires one numeric sprintId."
+  ],
+  "errors": {}
+}
+== native JQL: scope-jql-handler (jira:jqlFunction scope-changed) as app -> ok 0 ms virtual (limit 25 s; 74 ms real)
+result: {
+  "error": "scopeChanged requires one numeric sprintId."
+}

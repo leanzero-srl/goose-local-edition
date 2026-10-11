@@ -1,0 +1,24 @@
+{
+  "errors": [],
+  "metrics": {
+    "committed": "189.5",
+    "added": "88.5",
+    "removed": "95",
+    "creep": "46.7%"
+  },
+  "hiddenCount": "7",
+  "columns": [
+    "issue",
+    "points",
+    "kind",
+    "by",
+    "at",
+    "source",
+    "deployed"
+  ],
+  "rows": 65,
+  "descendingIsExactReverse": true,
+  "selectedRows": 1,
+  "explanation": "Why the scope changedScope grew after the sprint started: work was added while some planned items moved out.WEB-355 WEB-449 WEB-439",
+  "ownAssetBytes": 112921
+}

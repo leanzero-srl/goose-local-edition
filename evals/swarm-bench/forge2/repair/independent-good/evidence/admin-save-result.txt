@@ -1,0 +1,78 @@
+uikit scope-admin (jira:adminPage) as 712020:c7f96f64-fe61-4735-b0c8-164af4892afe: 8 commit(s), 2 invoke(s), virtual time 0 ms
+> set "AI explanations enabled" = "false" -> {"changed":true}
+> set "Daily AI token budget" = "100000" -> {"changed":true}
+> click "Save settings" -> {"clicked":true,"submitted":false}
+== screen
+Scope Ledger administration
+Background share (%)
+[70]
+AI explanations enabled
+[ ]
+Daily AI token budget
+[100000]
+Comment group
+[ ]
+[Save settings]
+[Rotate CI secret]
+CI secret: ••••6920
+Migration
+Migrated 88 of 88 v1 rows · complete
+Recent admin changes
+when | who | what
+2026-11-23T13:04:00.125Z | 712020:c7f96f64-fe61-4735-b0c8-164af4892afe | AI explanations enabled, Daily AI token budget
+2026-11-23T13:03:56.245Z | 712020:c7f96f64-fe61-4735-b0c8-164af4892afe | Rotate CI secret
+== tree
+Root
+  Stack space="space.200"
+    Heading
+      "Scope Ledger administration"
+    Label labelFor="forge-app-2e50b-background-share"
+      "Background share (%)"
+    Textfield id="forge-app-2e50b-background-share" type="number" value="70" onChange=fn
+    Label labelFor="forge-app-2e50b-ai-enabled"
+      "AI explanations enabled"
+    Toggle id="forge-app-2e50b-ai-enabled" isChecked=false onChange=fn
+    Label labelFor="forge-app-2e50b-token-budget"
+      "Daily AI token budget"
+    Textfield id="forge-app-2e50b-token-budget" type="number" value="100000" onChange=fn
+    Label labelFor="forge-app-2e50b-comment-group"
+      "Comment group"
+    Textfield id="forge-app-2e50b-comment-group" type="text" value="" onChange=fn
+    Button onClick=fn
+      "Save settings"
+    Button onClick=fn
+      "Rotate CI secret"
+    Text
+      "CI secret: ••••6920"
+    Heading size="small"
+      "Migration"
+    Text
+      "Migrated 88 of 88 v1 rows · complete"
+    Heading size="small"
+      "Recent admin changes"
+    DynamicTable
+      ContentWrapper name="head"
+        Cell cellKey="when"
+          "when"
+        Cell cellKey="who"
+          "who"
+        Cell cellKey="what"
+          "what"
+      ContentWrapper name="rows"
+        Row rowKey="0"
+          Cell
+            "2026-11-23T13:04:00.125Z"
+          Cell
+            "712020:c7f96f64-fe61-4735-b0c8-164af4892afe"
+          Cell
+            "AI explanations enabled, Daily AI token budget"
+        Row rowKey="1"
+          Cell
+            "2026-11-23T13:03:56.245Z"
+          Cell
+            "712020:c7f96f64-fe61-4735-b0c8-164af4892afe"
+          Cell
+            "Rotate CI secret"
+== invokes
+  adminLoad() after 1 commit(s) -> ok {"settings":{"share":70,"aiEnabled":true,"tokenBudget":200000,"commentGroup":""},"migration":"Migrated 88 of 88 v1 rows · complete","secret":"CI secret: ••••6920","audit":[{"when":"2026-11-23T13:03:56.245Z","who":"712020:c7f96f64-fe61-4735-b0c8-164af4892afe","what":"Rotate CI secret"}]}
+  adminSave({"share":70,"aiEnabled":false,"tokenBudget":"100000","commentGroup":""}) after 6 commit(s) -> ok {"settings":{"share":70,"aiEnabled":false,"tokenBudget":100000,"commentGroup":""},"migration":"Migrated 88 of 88 v1 rows · complete","secret":"CI secret: ••••6920","audit":[{"when":"2026-11-23T13:04:00.125Z","who":"712020:c7f96f64-fe61-4735-b0c8-164af4892afe","what":"AI explanations enabled, Daily A… (432 chars)

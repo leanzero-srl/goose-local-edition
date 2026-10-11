@@ -1,0 +1,119 @@
+JQL as 712020:107bc827-b174-48ee-8da3-0babaa878249 -> 200: {
+  "issues": [
+    {
+      "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+      "id": "43662",
+      "self": "<development URL omitted>",
+      "key": "FIN-779",
+      "fields": {
+        "summary": "Harden the permission matrix on mobile"
+      }
+    },
+    {
+      "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+      "id": "43657",
+      "self": "<development URL omitted>",
+      "key": "WEB-542",
+      "fields": {
+        "summary": "Split dark-mode tokens"
+      }
+    },
+    {
+      "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+      "id": "43653",
+      "self": "<development URL omitted>",
+      "key": "FIN-778",
+      "fields": {
+        "summary": "Localise dependency upgrades without downtime"
+      }
+    },
+    {
+      "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+      "id": "43645",
+      "self": "<development URL omitted>",
+      "key": "AUTH-471",
+      "fields": {
+        "summary": "Audit dependency upgrades for the partner API"
+      }
+    },
+    {
+      "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+      "id": "43644",
+      "self": "<development URL omitted>",
+      "key": "AUTH-470",
+      "fields": {
+        "summary": "Localise the refund queue after the outage"
+      }
+    },
+    {
+      "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+      "id": "43641",
+      "self": "<development URL omitted>",
+      "key": "FIN-777",
+      "fields": {
+        "summary": "Deprecate error budgets for the partner API"
+      }
+    },
+    {
+      "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+      "id": "43640",
+      "self": "<development URL omitted>",
+      "key": "FIN-776",
+      "fields": {
+        "summary": "Throttle the GraphQL gateway for the partner API"
+      }
+    },
+    {
+      "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+      "id": "43628",
+      "self": "<development URL omitted>",
+      "key": "WEB-541",
+      "fields": {
+        "summary": "Refactor the sprint report behind a flag"
+      }
+    },
+    {
+      "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+      "id": "43616",
+      "self": "<development URL omitted>",
+      "key": "FIN-775",
+      "fields": {
+        "summary": "Expose the customer timeline for EU tenants"
+      }
+    },
+    {
+      "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+      "id": "43613",
+      "self": "<development URL omitted>",
+      "key": "FIN-774",
+      "fields": {
+        "summary": "Validate the onboarding wizard"
+      }
+    },
+    {
+      "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+      "id": "43612",
+      "self": "<development URL omitted>",
+      "key": "FIN-773",
+      "fields": {
+        "summary": "Retry webhook retries before the audit"
+      }
+    },
+    {
+      "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+      "id": "43610",
+      "self": "<development URL omitted>",
+      "key": "FIN-772",
+      "fields": {
+        "summary": "Add alert routing on mobile"
+      }
+    },
+    {
+      "expand": "renderedFields,names,schema,operations,edi… (32843 chars)
+== native JQL: scope-jql-handler (jira:jqlFunction scope-changed) as app -> ok 240 ms virtual (limit 25 s; 103 ms real)
+result: {
+  "jql": "(issue not in (39796,39836,39864,39897,39919,39949,39999,40027,40037,40069,40104,40140,40220,40229,40239,40272,40351,40374,40376,40440,40451,40519,40664,40706,40737,40766,40792,41069,41154,41186,41378,41416,41435,41546,41596,41731,41772,41791,41976,42018,42023,42154,42157,42167,42170,42219,42471,42479,42555,42559,42677,42775,42817,42917,43029,43221,43287,43398,43466,43559))"
+}
+calls:
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/entity/query -> 200

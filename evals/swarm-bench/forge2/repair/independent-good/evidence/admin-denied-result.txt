@@ -1,0 +1,8 @@
+== invoke: ui-resolver (jira:adminPage scope-admin) as 712020:107bc827-b174-48ee-8da3-0babaa878249 -> ok 240 ms virtual (limit 25 s; 113 ms real)
+result: {
+  "ok": false,
+  "error": "Jira ADMINISTER permission is required."
+}
+calls:
+  kvs         POST /api/v1/get -> 200
+  jira   user GET /rest/api/3/mypermissions?permissions=ADMINISTER -> 200

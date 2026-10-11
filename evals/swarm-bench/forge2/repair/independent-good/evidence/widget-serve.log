@@ -1,0 +1,24 @@
+<development URL omitted>
+serving scope-widget (view) as 712020:107bc827-b174-48ee-8da3-0babaa878249; stop with: kill 88097
+widget config: {"boardId":"205"} (--config)
+bridge enableTheming
+bridge getContext
+bridge invoke widget
+bridge subscribeRealtimeChannel global 'scope-ledger-updates'
+bridge on
+bridge realtimeEvent 'scope-ledger-updates' delivered to the page: {"sprintIds":["1086"]}
+bridge invoke widget
+bridge realtimeEvent 'scope-ledger-updates' delivered to the page: {"sprintIds":["810","995"]}
+bridge invoke widget
+bridge realtimeEvent 'scope-ledger-updates' delivered to the page: {"sprintIds":["810"]}
+bridge invoke widget
+bridge realtimeEvent 'scope-ledger-updates' delivered to the page: {"sprintIds":["995"]}
+bridge invoke widget
+bridge realtimeEvent 'scope-ledger-updates' delivered to the page: {"sprintIds":["1086"]}
+bridge invoke widget
+bridge realtimeEvent 'scope-ledger-updates' delivered to the page: {"sprintIds":["791"]}
+bridge invoke widget
+bridge realtimeEvent 'scope-ledger-updates' delivered to the page: {"sprintIds":["791"]}
+bridge invoke widget
+bridge realtimeEvent 'scope-ledger-updates' delivered to the page: {"sprintIds":["810"]}
+bridge invoke widget

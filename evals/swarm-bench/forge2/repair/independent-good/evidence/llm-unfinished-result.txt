@@ -1,0 +1,20 @@
+== invoke: ui-resolver (jira:sprintAction scope-sprint-ledger) as 712020:107bc827-b174-48ee-8da3-0babaa878249 -> ok 1560 ms virtual (limit 25 s; 120 ms real)
+result: {
+  "ok": false,
+  "error": "The model returned an incomplete answer."
+}
+calls:
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/agile/1.0/sprint/852 -> 200
+  kvs         POST /api/v1/entity/query -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   user POST /rest/api/3/issue/bulkfetch -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 404
+  llm         GET /llm/ -> 200
+         models: claude-haiku-4-5-20251001 (active), claude-sonnet-4-5-20250929 (active), claude-sonnet-4-6 (active), claude-sonnet-5 (active), claude-opus-4-6 (active), claude-opus-4-7 (active), claude-opus-4-8 (active), claude-opus-5 (active)
+  llm         POST /llm/claude-sonnet-4-5-20250929 -> 200
+         model claude-sonnet-4-5-20250929: finish_reason undefined, tool report_scope({"summary":"Scope grew after the sprint started because the team pulled in","changeIds":["1136272"]})
+  kvs         POST /api/v1/set -> 204

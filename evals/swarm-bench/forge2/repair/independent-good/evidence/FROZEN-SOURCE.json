@@ -1,0 +1,202 @@
+{
+  "candidate": "app",
+  "fileCount": 39,
+  "sourceTreeSha256": "ecce77a4355636711c5fbf6f9176a5e5c7b05fe3d27702308c4e86ea61641977",
+  "files": [
+    {
+      "path": "build.mjs",
+      "bytes": 1127,
+      "sha256": "ef2a8bb6bb18926eb0bed331b18cec4aacfdd2ab68003f3b27459d8b7c216683"
+    },
+    {
+      "path": "manifest.yml",
+      "bytes": 7451,
+      "sha256": "bc3b401751ef9380400b2c7c8d635c786c40d0f6aae5addf59e462d203088429"
+    },
+    {
+      "path": "package-lock.json",
+      "bytes": 245547,
+      "sha256": "dc9d11b9fd474a7e3d51c0ab21822fd493ebe68cdf0aebfd24fbd91032b49a83"
+    },
+    {
+      "path": "package.json",
+      "bytes": 686,
+      "sha256": "c67e93bdf957eba99eb0031f32e56d28b812d36defa1ee7a81010f6f2d853aee"
+    },
+    {
+      "path": "skills/sprint-scope-analyst/SKILL.md",
+      "bytes": 3191,
+      "sha256": "89865c30aa3f1373b12f4af3c9d0d227970b1e70a919eda4442f10e8a7593a33"
+    },
+    {
+      "path": "src/admin.js",
+      "bytes": 2623,
+      "sha256": "1ab6c2406a742216c0dda79ccb9746277b926c0cb19588387fc60235fb564038"
+    },
+    {
+      "path": "src/ci.js",
+      "bytes": 1702,
+      "sha256": "cc47dd23983fa8a16326af7e5053f312bddbb81b28c3dd3d960c6ed938a27c44"
+    },
+    {
+      "path": "src/config.js",
+      "bytes": 3401,
+      "sha256": "f9803d7222c7d9ce00cd971f86b4ef472b21fed84dce3a31d6f8612329f319c1"
+    },
+    {
+      "path": "src/explain.js",
+      "bytes": 5504,
+      "sha256": "042640427f7aea00f2d8ef8370f9aa92574f11690e6eb1f19637c38cb4ce6a74"
+    },
+    {
+      "path": "src/frontend/admin.jsx",
+      "bytes": 2430,
+      "sha256": "7775e1188dec16c289b99744b3656be7a1030af739b074616cdf7e6bc210ad6e"
+    },
+    {
+      "path": "src/index.js",
+      "bytes": 4316,
+      "sha256": "adca6ba83f6eaa97766d873f6d6069c1c56e2337a6932e327cff35197b25f8c3"
+    },
+    {
+      "path": "src/jira.js",
+      "bytes": 4505,
+      "sha256": "4731c291e12a9604da711647b9535ff3e6109d3a9bff3468d9dbf922a3166581"
+    },
+    {
+      "path": "src/ledger.js",
+      "bytes": 2749,
+      "sha256": "99a1fb0d29af1304e0d1e53d75b5023d60a89c5b51b22eaa4f921a1c8dee1d62"
+    },
+    {
+      "path": "src/numbers.js",
+      "bytes": 1461,
+      "sha256": "506b923b29a659434436c94ea4842e550177607071e0d62fd713fb8c2fc60b1f"
+    },
+    {
+      "path": "src/realtime.js",
+      "bytes": 1194,
+      "sha256": "a8e6127b889ec5400b1a9b480069908a45afccf2083f8de3326416b1c68bc1a7"
+    },
+    {
+      "path": "src/search.js",
+      "bytes": 1973,
+      "sha256": "9e1c525c64d3a4c7229d6fc5d353f0adf37d26cbb7d63c83a000fd89292ea2de"
+    },
+    {
+      "path": "src/sync.js",
+      "bytes": 11739,
+      "sha256": "7f1e9a5cc60f1572f641b57b311894a5122b1335d211575e406f54480f47b05e"
+    },
+    {
+      "path": "src/views.js",
+      "bytes": 5186,
+      "sha256": "6c3f906f4d703d86663be5f9c4ae3c494915c924578165da2818b4fa0de9d7b3"
+    },
+    {
+      "path": "static/shared/base.css",
+      "bytes": 2916,
+      "sha256": "21635225d1cc2120c8d0588fc20f2b452a380ec4a91e7eca98d09b5191bc8da5"
+    },
+    {
+      "path": "static/shared/bridge.js",
+      "bytes": 1120,
+      "sha256": "1f69d006c9cb863fae7e5bf67b283f937a97e51189050a052c49d390bf79b38f"
+    },
+    {
+      "path": "static/shared/dom.js",
+      "bytes": 414,
+      "sha256": "d17d9326fbbad106183e88708eb42e3caa4d71167e6ec03cc8d389f1847b50ca"
+    },
+    {
+      "path": "static/sprint/build/index.css",
+      "bytes": 4126,
+      "sha256": "08d2b8b80e40e25ff9df61ad93bc0d3ce8e44d0fca97cae78f3ad176ab3b58d2"
+    },
+    {
+      "path": "static/sprint/build/index.html",
+      "bytes": 343,
+      "sha256": "4931147c712b1140d23aa5a4b4c79afc250eabf9af01b3b120fe806b21c5782d"
+    },
+    {
+      "path": "static/sprint/build/index.js",
+      "bytes": 100099,
+      "sha256": "72bcd77bc319078f946ee79c7224027224433609183907b5e1009312b33e3ca8"
+    },
+    {
+      "path": "static/sprint/index.html",
+      "bytes": 343,
+      "sha256": "4931147c712b1140d23aa5a4b4c79afc250eabf9af01b3b120fe806b21c5782d"
+    },
+    {
+      "path": "static/sprint/src/index.jsx",
+      "bytes": 5088,
+      "sha256": "eb4340e26fce25baf42f318c2e37fc39b152b8cc52396209b22ed0f2ae16200c"
+    },
+    {
+      "path": "static/sprint/src/sprint.css",
+      "bytes": 2167,
+      "sha256": "8f914ea3dd173f4e17e8caf4e6cd6dbc6ad7ada0214737588499a8167896c803"
+    },
+    {
+      "path": "static/widget/build/index.css",
+      "bytes": 3045,
+      "sha256": "03dbc079f8459a49a8acb89594d5a48bc0a4dce65aa0d9e3c715ac367d8f5c36"
+    },
+    {
+      "path": "static/widget/build/index.html",
+      "bytes": 336,
+      "sha256": "529c60bd4bb0c1ecae5932a16c4d34acf67b4625e19a024e5013bbbdc7a46f24"
+    },
+    {
+      "path": "static/widget/build/index.js",
+      "bytes": 97309,
+      "sha256": "fecb1343853e2de1e9405d47987bf00275e4747285f9a2d77274b3430ba95b84"
+    },
+    {
+      "path": "static/widget/index.html",
+      "bytes": 336,
+      "sha256": "529c60bd4bb0c1ecae5932a16c4d34acf67b4625e19a024e5013bbbdc7a46f24"
+    },
+    {
+      "path": "static/widget/src/index.jsx",
+      "bytes": 2189,
+      "sha256": "784c17d955ff8a89a3bd7882cf5a4cbd4a66c2249e7046e78b6426905e8caee3"
+    },
+    {
+      "path": "static/widget/src/widget.css",
+      "bytes": 857,
+      "sha256": "6c13a7cd365e348c60d658b8f3eb75b45173c1cb6493db3bb75df06032f39ddf"
+    },
+    {
+      "path": "static/widget-edit/build/index.css",
+      "bytes": 3325,
+      "sha256": "5e9d989d85b0d64e0f860c156fa5f91f8aad288d4e19f9062a08026f1443ec28"
+    },
+    {
+      "path": "static/widget-edit/build/index.html",
+      "bytes": 345,
+      "sha256": "048f353a3ea14d8189b07e804a607ca360b95d484ec91e832c2bb83c568886e2"
+    },
+    {
+      "path": "static/widget-edit/build/index.js",
+      "bytes": 101762,
+      "sha256": "e181ddc9495bf20962205d78f792afa40172ae7b40f223216f4dc975271c9dec"
+    },
+    {
+      "path": "static/widget-edit/index.html",
+      "bytes": 345,
+      "sha256": "048f353a3ea14d8189b07e804a607ca360b95d484ec91e832c2bb83c568886e2"
+    },
+    {
+      "path": "static/widget-edit/src/edit.css",
+      "bytes": 1153,
+      "sha256": "361d313683d930ff402e10828935b959aee14fa396c1bfdabfedc4bf9c411732"
+    },
+    {
+      "path": "static/widget-edit/src/index.jsx",
+      "bytes": 1324,
+      "sha256": "a958863f3598bea75744280256302f2edcb6c9c43180742fff0d4b0b29a86b92"
+    }
+  ]
+}

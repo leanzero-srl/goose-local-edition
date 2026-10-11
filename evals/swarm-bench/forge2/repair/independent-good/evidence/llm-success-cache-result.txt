@@ -1,0 +1,33 @@
+== invoke: ui-resolver (jira:sprintAction scope-sprint-ledger) as 712020:107bc827-b174-48ee-8da3-0babaa878249 -> ok 1040 ms virtual (limit 25 s; 105 ms real)
+result: {
+  "ok": true,
+  "model": "claude-sonnet-4-5-20250929",
+  "summary": "Scope grew after the sprint started: work was added while some planned items moved out.",
+  "changes": [
+    {
+      "changeId": "1134853",
+      "issueKey": "AUTH-332",
+      "kind": "added"
+    },
+    {
+      "changeId": "1134882",
+      "issueKey": "AUTH-205",
+      "kind": "added"
+    },
+    {
+      "changeId": "1134977",
+      "issueKey": "AUTH-201",
+      "kind": "removed"
+    }
+  ]
+}
+calls:
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/agile/1.0/sprint/810 -> 200
+  kvs         POST /api/v1/entity/query -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   user POST /rest/api/3/issue/bulkfetch -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200

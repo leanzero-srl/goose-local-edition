@@ -1,0 +1,24 @@
+== invoke: ui-resolver (jira:sprintAction scope-sprint-ledger) as 712020:107bc827-b174-48ee-8da3-0babaa878249 -> ok 4760 ms virtual (limit 25 s; 133 ms real)
+result: {
+  "ok": false,
+  "error": "Forge LLM could not explain this sprint: Too Many Requests: the Forge LLMs rate limit for this installation was exceeded."
+}
+  [50] explain: Forge LLM call failed (claude-sonnet-4-5-20250929): Too Many Requests: the Forge LLMs rate limit for this installation was exceeded.
+calls:
+  kvs         POST /api/v1/get -> 200
+  jira   app  GET /rest/agile/1.0/sprint/810 -> 200
+  kvs         POST /api/v1/entity/query -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  jira   user POST /rest/api/3/issue/bulkfetch -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 200
+  kvs         POST /api/v1/get -> 404
+  llm         GET /llm/ -> 200
+         models: claude-haiku-4-5-20251001 (active), claude-sonnet-4-5-20250929 (active), claude-sonnet-4-6 (active), claude-sonnet-5 (active), claude-opus-4-6 (active), claude-opus-4-7 (active), claude-opus-4-8 (active), claude-opus-5 (active)
+  llm         POST /llm/claude-sonnet-4-5-20250929 -> 429
+         error 429 TOO_MANY_REQUESTS: Too Many Requests: the Forge LLMs rate limit for this installation was exceeded.
+  llm         POST /llm/claude-sonnet-4-5-20250929 -> 429
+         error 429 TOO_MANY_REQUESTS: Too Many Requests: the Forge LLMs rate limit for this installation was exceeded.
+  llm         POST /llm/claude-sonnet-4-5-20250929 -> 429
+         error 429 TOO_MANY_REQUESTS: Too Many Requests: the Forge LLMs rate limit for this installation was exceeded.

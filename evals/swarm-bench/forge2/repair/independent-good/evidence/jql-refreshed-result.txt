@@ -1,0 +1,112 @@
+JQL as 712020:107bc827-b174-48ee-8da3-0babaa878249 -> 200: {
+  "issues": [
+    {
+      "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+      "id": "43559",
+      "self": "<development URL omitted>",
+      "key": "WEB-537",
+      "fields": {
+        "summary": "Speed up the backup job in the admin console"
+      }
+    },
+    {
+      "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+      "id": "43466",
+      "self": "<development URL omitted>",
+      "key": "WEB-533",
+      "fields": {
+        "summary": "Cache error budgets in staging first"
+      }
+    },
+    {
+      "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+      "id": "43398",
+      "self": "<development URL omitted>",
+      "key": "WEB-527",
+      "fields": {
+        "summary": "Localise the invoice export"
+      }
+    },
+    {
+      "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+      "id": "43287",
+      "self": "<development URL omitted>",
+      "key": "WEB-523",
+      "fields": {
+        "summary": "Refactor error budgets"
+      }
+    },
+    {
+      "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+      "id": "43221",
+      "self": "<development URL omitted>",
+      "key": "WEB-516",
+      "fields": {
+        "summary": "Expose the invoice export in the admin console"
+      }
+    },
+    {
+      "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+      "id": "43029",
+      "self": "<development URL omitted>",
+      "key": "WEB-511",
+      "fields": {
+        "summary": "Throttle the customer timeline in the admin console"
+      }
+    },
+    {
+      "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+      "id": "42917",
+      "self": "<development URL omitted>",
+      "key": "WEB-508",
+      "fields": {
+        "summary": "Backfill card tokenisation for EU tenants"
+      }
+    },
+    {
+      "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+      "id": "42817",
+      "self": "<development URL omitted>",
+      "key": "WEB-505",
+      "fields": {
+        "summary": "Throttle the refund queue after the outage"
+      }
+    },
+    {
+      "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+      "id": "42775",
+      "self": "<development URL omitted>",
+      "key": "WEB-501",
+      "fields": {
+        "summary": "Fix tenant isolation"
+      }
+    },
+    {
+      "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+      "id": "42677",
+      "self": "<development URL omitted>",
+      "key": "WEB-494",
+      "fields": {
+        "summary": "Refactor the PDF renderer after the outage"
+      }
+    },
+    {
+      "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+      "id": "42559",
+      "self": "<development URL omitted>",
+      "key": "WEB-488",
+      "fields": {
+        "summary": "Instrument the refund queue on mobile"
+      }
+    },
+    {
+      "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+      "id": "42555",
+      "self": "<development URL omitted>",
+      "key": "WEB-487",
+      "fields": {
+        "summary": "Throttle dependency upgrades behind a flag"
+      }
+    },
+    {
+      "expand": "renderedFields,names,schema,operations,editmeta,changel… (18542 chars)
