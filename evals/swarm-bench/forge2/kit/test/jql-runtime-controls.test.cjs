@@ -7,6 +7,7 @@ const { execFileSync } = require('node:child_process');
 const { ensureKit, scratch, REPO } = require('./helpers.cjs');
 const { createSite } = require('../../site/site.cjs');
 const { createEmulator } = require('../lib/emulator.cjs');
+const { QUERY_LAG_MS } = require('../lib/kvs.cjs');
 const GOLDEN = path.join(REPO, 'bench', 'golden-forge2');
 const CONTROLS = path.join(REPO, 'bench', 'forge2_controls.py');
 
@@ -26,7 +27,10 @@ export const refresh = async (event) => refreshScopePrecomputations(event.sprint
   const site = await createSite({ seed: '0123456789abcdef' });
   const outputs = [];
   const emu = await createEmulator({ appDir: dir, site, onInvocation: (_, out) => outputs.push(out) });
-  try { assert.ok((await emu.build()).functions.every((f) => f.loaded), JSON.stringify(emu.harnessMissing)); }
+  try {
+    const built = await emu.build();
+    assert.ok(built.functions.every((f) => f.loaded), JSON.stringify(built.functions));
+  }
   catch (error) { await emu.close(); await site.stop(); fs.rmSync(scratchDir, { recursive: true, force: true }); throw error; }
   const viewer = site.pack.viewer;
   const hidden = site.pack.issues.find((issue) => issue.hiddenFrom.includes(viewer));
@@ -66,6 +70,7 @@ for (const variant of ['golden', 'm_jql_stale_precomputation']) test(`${variant}
     const cached = await w.search(w.peer);
     assert.deepEqual(ids(cached), ids(first));
     assert.equal(cached.expansion.calls[0].invoked, false);
+    await w.emu.advance(QUERY_LAG_MS);
     const out = await w.refresh();
     assert.equal(out.ok, true, JSON.stringify(out.error));
     const after = await w.search(w.peer);
@@ -74,7 +79,7 @@ for (const variant of ['golden', 'm_jql_stale_precomputation']) test(`${variant}
     assert.equal(after.expansion.calls[0].invoked, false, 'refresh updates the existing native mapping without reinvoking the function');
     if (variant === 'golden') {
       assert.deepEqual(ids(after), [w.hidden.id, w.visible.id, w.next.id].sort());
-      assert.ok(w.site.log.some((entry) => entry.op === 'POST /rest/api/3/jql/function/computation' && entry.status === 204));
+      assert.ok(w.site.log.some((entry) => entry.op === 'POST /rest/api/3/jql/function/computation' && entry.status === 200));
     } else {
       assert.deepEqual(ids(after), ids(first), 'the mutant really leaves the shared native mapping stale');
       assert.equal(w.site.log.filter((entry) => entry.op === 'POST /rest/api/3/jql/function/computation').length, 0);

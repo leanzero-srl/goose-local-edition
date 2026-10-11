@@ -220,12 +220,10 @@ def _apply_runtime_mutant(dest: Path, mutant_id: str) -> None:
         _replace_once(dest, 'src/views.js', '  return { sprint, ...totalsView(totals), hiddenCount: changes.length - rows.length, changes: rows };',
                       "  await kvs.set(`scope-jql-visible:${sprint.id}`, rows.map((row) => row.issueId));\n"
                       '  return { sprint, ...totalsView(totals), hiddenCount: changes.length - rows.length, changes: rows };')
-        _replace_once(dest, 'src/jql.js', "import { changesOfSprint } from './ledger';",
-                      "import { kvs } from '@forge/kvs';\nimport { changesOfSprint } from './ledger';")
         _replace_once(dest, 'src/jql.js',
-                      '    return { jql: fragment(await changedIds(sprintId, { maxWaitSeconds: 0 }), request.clause.operator) };',
+                      '    const value = fragment(await changedIds(sprintId, { maxWaitSeconds: 0 }), request.clause.operator);',
                       '    const ids = await kvs.get(`scope-jql-visible:${sprintId}`) ?? await changedIds(sprintId, { maxWaitSeconds: 0 });\n'
-                      '    return { jql: fragment(ids, request.clause.operator) };')
+                      '    const value = fragment(ids, request.clause.operator);')
 
 
 def _rebuild(tree: Path, app_modules: Optional[str]) -> Optional[str]:
