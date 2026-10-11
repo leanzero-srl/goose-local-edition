@@ -375,6 +375,50 @@ class CompoundControls(unittest.TestCase):
         self.case('cache')['cross_viewer']['absent'] = 'no explain control'
         self.assertLess(self.result('r8_cost_controls')['score'], 1)
 
+    def test_global_quota_refusals_charge_person_and_pause_all_background(self):
+        for request in self.obs['rate']['requests']:
+            if request.get('reason') == fc.QUOTA_REASON:
+                request['reason'] = 'jira-quota-global-based'
+        self.assertEqual(self.result('r2_rate_limit_reaction')['score'], 1)
+        self.obs['rate']['requests'].append({'t_ms': 8500, 'kind': 'background', 'method': 'GET',
+            'path_tpl': '/unrelated', 'status': 200, 'cost': 1})
+        self.assertLess(self.result('r2_rate_limit_reaction')['score'], 1)
+        self.obs['rate']['requests'].append({'t_ms': 9000, 'kind': 'person', 'method': 'GET',
+            'path_tpl': '/unrelated', 'status': 429, 'reason': 'jira-quota-global-based', 'cost': 0})
+        self.assertEqual(self.result('r2_person_never_quota_refused')['score'], 0)
+
+    def test_per_issue_retry_window_covers_every_issue_of_a_bulk_write(self):
+        self.assertEqual(self.result('r2_rate_limit_reaction')['score'], 1)
+        self.obs['rate']['requests'].append({'t_ms': 5100, 'kind': 'background', 'method': 'POST',
+            'path_tpl': '/rest/api/3/app/field/value', 'status': 204, 'cost': 1, 'issues': ['PAY-3', 'PAY-1']})
+        self.assertLess(self.result('r2_rate_limit_reaction')['score'], 1)
+        self.obs['rate']['requests'][-1]['issues'] = ['PAY-3', 'PAY-4']
+        self.assertEqual(self.result('r2_rate_limit_reaction')['score'], 1)
+
+    def test_persisted_page_walk_requires_same_lineage_and_exact_cursor_to_its_end(self):
+        def page(inv, t, token=None, more=None, run=4):
+            return {'inv': inv, 't': t, 'kind': 'consumer', 'scheduledRun': run, 'originChange': None,
+                'service': 'jira', 'method': 'POST', 'path': '/rest/api/3/search/jql', 'status': 200,
+                'body': {'jql': 'project = TEST', 'maxResults': 100, **({'nextPageToken': token} if token else {})},
+                'response': {'issues': [{'id': str(t)}], **({'nextPageToken': more} if more else {})}}
+        calls = [page('first', 1, more='100'), page('first', 2, token='100', more='200'),
+                 page('resume', 3, token='200', more='300'), page('resume', 4, token='300')]
+        walks = sf._walks(calls)
+        joined = sf._continued_walks(walks)
+        self.assertEqual(len(joined), 1)
+        self.assertEqual(len(next(iter(joined.values()))[0]), 4)
+        for label, mutate in (
+                ('other hourly run', lambda xs: xs[2].update(scheduledRun=5)),
+                ('untraced resume', lambda xs: xs[2].pop('scheduledRun')),
+                ('wrong cursor', lambda xs: xs[2]['body'].update(nextPageToken='400')),
+                ('restarted list', lambda xs: xs[2]['body'].pop('nextPageToken')),
+                ('duplicate page', lambda xs: xs[2]['body'].update(nextPageToken='100')),
+                ('unfinished continuation', lambda xs: xs[-1]['response'].update(nextPageToken='400'))):
+            with self.subTest(label=label):
+                bad = copy.deepcopy(calls)
+                mutate(bad)
+                self.assertEqual(sf._continued_walks(sf._walks(bad)), {})
+
     def test_legacy_missing_llm_evidence_is_unavailable_not_an_app_failure(self):
         for c in self.obs['llm_v2']:
             del c['click_results']

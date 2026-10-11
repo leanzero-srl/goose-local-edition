@@ -78,6 +78,7 @@ ADMIN_LABELS = ('Background share (%)', 'AI explanations enabled', 'Daily AI tok
                 'Rotate CI secret', 'Migration', 'Recent admin changes', 'Save settings')       # SPEC §2.6
 SECRET_MASK = re.compile(r'••••\S{4}')
 QUOTA_REASON = 'jira-quota-tenant-based'
+QUOTA_REASONS = {QUOTA_REASON, 'jira-quota-global-based'}
 PER_ISSUE_REASON = 'jira-per-issue-on-write'
 WT_INVALID = ('bad-signature', 'unsigned', 'tampered', 'stale', 'stale-future')      # forge2/site/ci.cjs steps
 WT_VALID = ('valid', 'header-case', 'concurrent-valid')
@@ -486,16 +487,18 @@ def _(ev: Ev) -> Dict:
     person = [r for r in reqs if r.get('kind') == 'person']
     if not person:
         return vacuous('no person-facing Jira request was observed')
-    refused = [r for r in person if r.get('status') == 429 and r.get('reason') == QUOTA_REASON]
+    refused = [r for r in person if r.get('status') == 429 and r.get('reason') in QUOTA_REASONS]
     return g(0.0 if refused else 1.0,
              f'{len(refused)} of {len(person)} person-facing requests refused for quota'
              + (f' (e.g. {sample(r.get("path_tpl") for r in refused)})' if refused else ''),
              'a person was refused because background work spent the quota')
 
 
-def _issue(r: Dict) -> Optional[str]:
-    value = r.get('issue')
-    return str(value) if value not in (None, '') else None
+def _issues(r: Dict) -> set:
+    values = list(r.get('issues') or [])
+    if r.get('issue') not in (None, ''):
+        values.append(r['issue'])
+    return {str(value) for value in values if value not in (None, '')}
 
 
 @row('r2_rate_limit_reaction', 'R2')
@@ -514,13 +517,13 @@ def _(ev: Ev) -> Dict:
         within = [r for r in bg if r is not h and lo < (num(r.get('t_ms')) or Decimal(0)) < hi]
         reason = h.get('reason')
         endpoint = (h.get('method'), h.get('path_tpl'))
-        if reason == QUOTA_REASON:
+        if reason in QUOTA_REASONS:
             bad = within                                   # pause ALL background until the reset
         elif reason == PER_ISSUE_REASON:
-            if _issue(h) is None:
+            if not _issues(h):
                 ungraded.append(f'{endpoint[0]} {endpoint[1]}')
                 continue
-            bad = [r for r in within if r.get('method') != 'GET' and _issue(r) == _issue(h)]
+            bad = [r for r in within if r.get('method') != 'GET' and bool(_issues(r) & _issues(h))]
         else:
             bad = [r for r in within if (r.get('method'), r.get('path_tpl')) == endpoint]   # burst: that endpoint
         if bad:

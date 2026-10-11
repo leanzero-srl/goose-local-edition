@@ -6,7 +6,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { createKvs } = require('../forge2/kit/lib/kvs.cjs');
 const { costOf } = require('../forge2/site/rate.cjs');
-const { randomUUID } = require('node:crypto');
+const { randomUUID, createHash } = require('node:crypto');
 
 function sourceModule(name, bindings, exports) {
   const source = fs.readFileSync(path.join(__dirname, 'golden-forge2/src', name), 'utf8')
@@ -51,7 +51,7 @@ function fixture() {
     asUser: () => ({ requestJira: async (url, init) => { requests.push({ as: 'user', url, init }); return replies.shift(); } }) };
   const FakeDate = class extends Date { static now() { return now; } };
   const timer = (resolve, ms) => { now += ms; resolve(); };
-  const module = sourceModule('jira.js', { kvs, api, Filter, FilterConditions, Date: FakeDate, setTimeout: timer, route: String.raw },
+  const module = sourceModule('jira.js', { kvs, api, Filter, FilterConditions, createHash, Date: FakeDate, setTimeout: timer, route: String.raw },
     ['Background', 'RateLimited', 'pointsOf', 'actualPoints', 'postJson', 'hourOf', 'jiraJson']);
   const response = (status, body, headers = {}) => ({ status, ok: status >= 200 && status < 300, headers: new Headers(headers), json: async () => body, text: async () => JSON.stringify(body) });
   return { ...module, storage, kvs, requests, replies, response, bindings: { kvs, randomUUID, Date: FakeDate, setTimeout: timer, route: String.raw }, advance(ms) { now += ms; }, now: () => now };
@@ -209,4 +209,89 @@ test('incremental JQL selects the changed record and excludes unchanged active-s
   assert.equal(query.matches(changed), true);
   f.advance(3_600_000);
   assert.equal(query.matches(changed), true);
+});
+
+
+test('a burst Retry-After reaches independent invocations only on that endpoint', async () => {
+  const f = fixture();
+  f.replies.push(f.response(429, { errorMessages: ['Rate limit exceeded'] }, { 'retry-after': '30', 'ratelimit-reason': 'jira-burst-based' }));
+  await assert.rejects(f.jiraJson('app', '/rest/api/3/issue/TEST-1', undefined, new f.Background({ sharePercent: 70, limitSeconds: 25 })), (e) => e.reason === 'jira-burst-based');
+  await assert.rejects(new f.Background({ sharePercent: 70, limitSeconds: 900 }).admit('GET', '/rest/api/3/issue/TEST-2'), (e) => e.reason === 'jira-burst-based');
+  await assert.rejects(new f.Background({ sharePercent: 70, limitSeconds: 900 }).admit('GET', '/rest/api/3/issue/123'), (e) => e.reason === 'jira-burst-based');
+  await new f.Background({ sharePercent: 70, limitSeconds: 900 }).admit('GET', '/rest/api/3/issue/TEST-2/changelog');
+  f.advance(30_000);
+  await new f.Background({ sharePercent: 70, limitSeconds: 900 }).admit('GET', '/rest/api/3/issue/TEST-2');
+});
+
+test('a per-issue Retry-After prevents a later bulk write while unrelated writes remain available', async () => {
+  const f = fixture();
+  f.replies.push(f.response(429, { errorMessages: ['Rate limit exceeded'] }, { 'retry-after': '30', 'ratelimit-reason': 'jira-per-issue-on-write' }));
+  await assert.rejects(f.jiraJson('app', '/rest/api/3/issue/TEST-1', { method: 'PUT', body: '{}' }, new f.Background({ sharePercent: 70, limitSeconds: 25 })), (e) => e.reason === 'jira-per-issue-on-write');
+  const bulk = (ids) => f.postJson({ updates: [{ issueIds: ids }] });
+  await assert.rejects(new f.Background({ sharePercent: 70, limitSeconds: 900 }).admit('POST', '/rest/api/3/app/field/value', bulk(['TEST-2', 'TEST-1'])), (e) => e.reason === 'jira-per-issue-on-write');
+  await new f.Background({ sharePercent: 70, limitSeconds: 900 }).admit('POST', '/rest/api/3/app/field/value', bulk(['TEST-2']));
+  f.advance(30_000);
+  await new f.Background({ sharePercent: 70, limitSeconds: 900 }).admit('POST', '/rest/api/3/app/field/value', bulk(['TEST-1']));
+});
+
+test('a quota cooldown remains visible after an hour boundary until its Retry-After passes', async () => {
+  const f = fixture();
+  f.advance(3_599_000);
+  await new f.Background({ sharePercent: 70, limitSeconds: 900 }).pause(30);
+  f.advance(2000);
+  await assert.rejects(new f.Background({ sharePercent: 70, limitSeconds: 900 }).admit('GET', '/rest/api/3/myself'), (e) => e.reason === 'paused');
+  f.advance(28_000);
+  await new f.Background({ sharePercent: 70, limitSeconds: 900 }).admit('GET', '/rest/api/3/myself');
+});
+
+
+test('fresh viewer JQL matches preserve every history key and immediately exclude revoked access', async () => {
+  const f = fixture();
+  const calls = [];
+  let revoked = false;
+  const jiraJson = async (who, url, init) => {
+    const body = JSON.parse(init.body);
+    calls.push({ who, url, body });
+    assert.equal(who, 'user');
+    assert.equal(url, '/rest/api/3/jql/match');
+    assert.ok(body.issueIds.length <= 50);
+    assert.equal(body.jqls[0], `issue in (${body.issueIds.join(',')})`);
+    return { matches: [{ matchedIssues: body.issueIds.filter((id) => id !== 52 && (!revoked || id !== 1)), errors: [] }] };
+  };
+  const ledger = sourceModule('ledger.js', { ...f.bindings, jiraJson, postJson: f.postJson }, ['visibleIssues']);
+  const refs = Array.from({ length: 101 }, (_, i) => ({ issueId: String(i + 1), issueKey: `TEST-${i + 1}` }));
+  const first = await ledger.visibleIssues(refs, {});
+  assert.equal(first.size, 100);
+  for (const ref of refs) assert.equal(first.get(ref.issueId), ref.issueId === '52' ? undefined : ref.issueKey);
+  revoked = true;
+  const second = await ledger.visibleIssues(refs, {});
+  assert.equal(second.size, 99);
+  assert.equal(second.has('1'), false);
+  assert.equal(second.has('52'), false);
+  assert.equal(second.get('101'), 'TEST-101');
+  assert.equal(calls.length, 6);
+});
+
+test('an absent or erroneous JQL match response cannot impersonate an empty permission result', async () => {
+  const f = fixture();
+  for (const reply of [{}, { matches: [{ errors: [], matchedIssues: ['999'] }] }, { matches: [{ errors: ['Invalid JQL'], matchedIssues: [] }] }]) {
+    const ledger = sourceModule('ledger.js', { ...f.bindings, jiraJson: async () => reply, postJson: f.postJson }, ['visibleIssues']);
+    await assert.rejects(ledger.visibleIssues([{ issueId: '1', issueKey: 'TEST-1' }], {}));
+  }
+});
+
+
+test('a cooldown published while another admission waits is rechecked and refunds its unsent request', async () => {
+  const f = fixture();
+  const first = new f.Background({ sharePercent: 70, limitSeconds: 900 });
+  const pending = new f.Background({ sharePercent: 70, limitSeconds: 900 });
+  const mutate = pending.mutateDose.bind(pending);
+  pending.mutateDose = async (key, update) => {
+    const result = await mutate(key, update);
+    if (key === f.hourOf(f.now())) await first.delayEndpoint('GET /rest/api/3/issue/{id}', 30);
+    return result;
+  };
+  await assert.rejects(pending.admit('GET', '/rest/api/3/issue/TEST-2'), (e) => e.reason === 'jira-burst-based');
+  assert.equal(f.storage.snapshot().entities['rate-dose'][String(f.hourOf(f.now()))].spent, 0);
+  assert.equal(f.requests.length, 0);
 });

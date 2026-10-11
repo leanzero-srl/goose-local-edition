@@ -1,4 +1,5 @@
 import api, { route } from '@forge/api';
+import { createHash } from 'node:crypto';
 import { kvs, Filter, FilterConditions } from '@forge/kvs';
 
 export { route };
@@ -73,7 +74,7 @@ export function pointsOf(method, path, init) {
   return 1 + objects * (identityRead(p) ? 2 : 1);
 }
 
-const endpointOf = (method, path) => `${method} ${pathOf(path).replace(/\/[A-Z][A-Z0-9_]*-\d+(?=\/|$)/g, '/{key}').replace(/\/\d+(?=\/|$)/g, '/{id}')}`;
+const endpointOf = (method, path) => `${method} ${pathOf(path).replace(/\/[A-Z][A-Z0-9_]*-\d+(?=\/|$)/g, '/{id}').replace(/(?<!\/api)\/\d+(?=\/|$)/g, '/{id}')}`;
 function writtenIssues(method, path, init) {
   const p = pathOf(path);
   if (isRead(method, p)) return [];
@@ -81,6 +82,7 @@ function writtenIssues(method, path, init) {
   const m = p.match(/^\/rest\/api\/3\/issue\/([^/]+)(?:\/|$)/);
   return m ? [m[1]] : [];
 }
+const endpointKey = (endpoint) => `endpoint:${createHash('sha256').update(endpoint).digest('hex')}`;
 const isConflict = (e) => e.code === 'KEY_CONFLICT' || e.code === 'CONDITIONAL_CHECK_FAILED';
 
 // A conditional transaction on a strongly read entity is the admission boundary. Query indexes can
@@ -122,7 +124,9 @@ export class Background {
 
   async admit(method, path, init) {
     await this.pace(endpointOf(method, path), method);
-    await this.spaceWrites(writtenIssues(method, path, init));
+    const issues = writtenIssues(method, path, init);
+    await this.spaceWrites(issues);
+    await this.checkCooldowns(endpointOf(method, path), issues);
     const points = pointsOf(method, path, init);
     for (;;) {
       const hour = hourOf(Date.now());
@@ -134,6 +138,13 @@ export class Background {
         return { ...current, spent: current.spent + points };
       });
       const reservation = { hour, points };
+      try {
+        // A concurrent request may publish its 429 while this reservation waits on its conditional write.
+        await this.checkCooldowns(endpointOf(method, path), issues);
+      } catch (e) {
+        await this.settle(reservation, 0);
+        throw e;
+      }
       if (hour === hourOf(Date.now())) return reservation;
       // Storage waits can cross the quota reset before the Jira request has been sent.
       await this.settle(reservation, 0);
@@ -187,9 +198,27 @@ export class Background {
     if (ready > now) await this.wait(ready - now, 'time');
     for (const id of new Set(ids)) this.writes.get(id).push(Date.now());
   }
-  delayIssues(ids, seconds) { for (const id of ids) this.delayedIssues.set(id, Date.now() + seconds * 1000); }
+  async checkCooldowns(endpoint, ids) {
+    const keys = [['quota-pause', 'paused'], [endpointKey(endpoint), BURST_REASON],
+      ...[...new Set(ids)].map((id) => [`issue:${id}`, ISSUE_REASON])];
+    const states = await Promise.all(keys.map(async ([key, reason]) => ({ reason, state: await kvs.entity(DOSE_ENTITY).get(key) })));
+    const active = states.filter(({ state }) => state?.pausedUntil > Date.now()).sort((a, b) => b.state.pausedUntil - a.state.pausedUntil);
+    if (active.length) throw new RateLimited(Math.ceil((active[0].state.pausedUntil - Date.now()) / 1000), active[0].reason);
+  }
+  async setCooldown(key, seconds) {
+    const until = Date.now() + seconds * 1000;
+    await this.mutateDose(key, (current) => ({ ...current, pausedUntil: Math.max(current.pausedUntil, until) }));
+  }
+  async delayEndpoint(endpoint, seconds) { await this.setCooldown(endpointKey(endpoint), seconds); }
+  async delayIssues(ids, seconds) {
+    for (const id of new Set(ids)) {
+      this.delayedIssues.set(id, Date.now() + seconds * 1000);
+      await this.setCooldown(`issue:${id}`, seconds);
+    }
+  }
   async pause(seconds) {
     const until = Date.now() + seconds * 1000;
+    await this.setCooldown('quota-pause', seconds);
     await this.mutateDose(hourOf(Date.now()), (current) => ({ ...current, pausedUntil: Math.max(current.pausedUntil, until) }));
   }
 }
@@ -228,8 +257,12 @@ export async function jira(who, path, init = {}, work = { maxWaitSeconds: Infini
         await work.pause(wait);
         throw new RateLimited(wait, reason);
       }
-      if (reason === BURST_REASON) work.slow(endpointOf(method, path));
-      if (reason === ISSUE_REASON) work.delayIssues(writtenIssues(method, path, init), wait);
+      if (reason === BURST_REASON) {
+        const endpoint = endpointOf(method, path);
+        work.slow(endpoint);
+        await work.delayEndpoint(endpoint, wait);
+      }
+      if (reason === ISSUE_REASON) await work.delayIssues(writtenIssues(method, path, init), wait);
     }
     if (wait > work.maxWaitSeconds) throw new RateLimited(wait, reason);
     await sleep(wait * 1000 + 50);

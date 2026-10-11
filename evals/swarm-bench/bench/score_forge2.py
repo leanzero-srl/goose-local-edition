@@ -2179,6 +2179,44 @@ def _handed_off(c: Ctx, walks: Dict[tuple, List[Dict]], incomplete: List[tuple])
     return out
 
 
+def _continued_walks(walks: Dict[tuple, List[Dict]]) -> Dict[tuple, Tuple[List[Dict], List[tuple]]]:
+    """Join persisted background page walks only within one observed event/scheduled lineage.
+
+    A dosed consumer can stop before sending the next page and enqueue its continuation without a
+    Jira 429. The resumed request must use the previous response's exact cursor; a new hourly run,
+    a restarted first page, a duplicated page or an unfinished continuation cannot excuse the stop.
+    """
+    def lineage(pages):
+        if any(p.get('kind') not in BACKGROUND_KINDS or not isinstance(p.get('t'), (int, float)) for p in pages):
+            return None
+        identities = {('scheduled', p['scheduledRun']) if p.get('scheduledRun') is not None
+                      else ('event', p['originChange']) if p.get('originChange') is not None else None for p in pages}
+        return next(iter(identities)) if len(identities) == 1 and None not in identities else None
+
+    used, joined = set(), {}
+    for key, pages in sorted(walks.items(), key=lambda entry: entry[1][0].get('t') or 0):
+        identity = lineage(pages)
+        if key in used or identity is None or _walk_complete(_page_style(pages[0]), pages)[0]:
+            continue
+        following = sorted(((other, chunk) for other, chunk in walks.items() if other != key and other not in used
+                            and other[1:] == key[1:] and lineage(chunk) == identity
+                            and (chunk[0].get('t') or 0) > (pages[-1].get('t') or 0)),
+                           key=lambda entry: entry[1][0].get('t') or 0)
+        combined, members = list(pages), [key]
+        for other, chunk in following:
+            trial = combined + chunk
+            complete, why = _walk_complete(_page_style(pages[0]), trial)
+            if not complete and why != 'stopped with a nextPageToken outstanding' and not why.startswith('stopped '):
+                break
+            # _walk_complete names the unfinished last page only after checking every earlier boundary.
+            combined, members = trial, members + [other]
+            if complete:
+                joined[key] = (combined, members)
+                used.update(members)
+                break
+    return joined
+
+
 @check('r_pagination', 'R', pre=pre_paginated, needs=('backfill', 'live', 'heal', 'rerun', 'ui', 'rovo'))
 def _(c):
     legacy, walks, paged = _paged_walks(c)
@@ -2193,6 +2231,12 @@ def _(c):
                           and isinstance(p[0].get('response'), dict) and _page_items(p[0]['response']) >= 2})
         if unpaged:
             return unavail(f'the scoring site served a list of >= 2 items in one page on {unpaged}')
+    single = len(walks) - len(paged)
+    continued = _continued_walks(walks)
+    for key, (pages, members) in continued.items():
+        paged[key] = pages
+        for member in members[1:]:
+            paged.pop(member, None)
     verdicts = {key: _walk_complete(_page_style(pages[0]), pages) for key, pages in paged.items()}
     handed = _handed_off(c, walks, [key for key, (complete, _why) in verdicts.items() if not complete])
     done, bad = 0, []
@@ -2208,7 +2252,6 @@ def _(c):
         if not complete:
             bad.append(f'{key[1]}: {why}')
     total = len(paged) - len(handed) + len(legacy)
-    single = len(walks) - len(paged)
     # nothing left to grade but hand-offs (a redelivery that resumed at the refused page is a one-page walk): each of
     # those lists was still read to its end
     return g(done / total if total else float(bool(handed)),
@@ -2218,10 +2261,11 @@ def _(c):
              + (f'; {single} one-page read(s), nothing to walk, not graded' if single else '')
              + (f'; {len(handed)} walk(s) handed back to the queue at a 429 and read to the end by the same event\'s '
                 f'redelivery, not graded ({sorted({k[1] for k in handed})})' if handed else '')
+             + (f'; {len(continued)} persisted walk(s) resumed at the exact cursor in the same background lineage' if continued else '')
              + (f'; {len(legacy)} call(s) to the removed /rest/api/3/search' if legacy else '')
              + (f'; {bad[:3]}' if bad else ''), 'pages silently skipped',
              parts={'paged_walks': len(paged), 'one_page_walks': single, 'legacy_calls': len(legacy),
-                    'handed_off_walks': len(handed),
+                    'handed_off_walks': len(handed), **({'persisted_continuations': len(continued)} if continued else {}),
                     'by_endpoint': {ep: {'complete': ok, 'walks': n} for ep, (ok, n) in sorted(types.items())}})
 
 
