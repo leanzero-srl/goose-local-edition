@@ -1,0 +1,83 @@
+{
+  "purpose": "Sanitized two-call regression extracted from the immutable native common-site-3 trace; identifiers and instants retained, author and request list sanitized; not qualification evidence.",
+  "sprintField": "customfield_18703",
+  "calls": [
+    {
+      "t": 1791903722.815,
+      "inv": "test-first-writer",
+      "kind": "consumer",
+      "provider": "app",
+      "service": "jira",
+      "method": "POST",
+      "path": "/rest/api/3/search/jql",
+      "body": {
+        "jql": "project = TEST",
+        "expand": "changelog"
+      },
+      "status": 200,
+      "response": {
+        "issues": [
+          {
+            "id": "25104",
+            "key": "WEB-159",
+            "changelog": {
+              "histories": [
+                {
+                  "id": "1357449",
+                  "author": {
+                    "accountId": "test-author"
+                  },
+                  "created": "2026-10-13T14:38:56.588+0000",
+                  "items": [
+                    {
+                      "field": "Sprint",
+                      "fieldtype": "custom",
+                      "fieldId": "customfield_18703",
+                      "from": "795",
+                      "to": "1383"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "25240"
+          }
+        ]
+      },
+      "originChange": "test-origin",
+      "scheduledRun": null
+    },
+    {
+      "t": 1791903746.155,
+      "inv": "test-first-writer",
+      "kind": "consumer",
+      "provider": "app",
+      "service": "kvs",
+      "method": "POST",
+      "path": "/api/v1/entity/set",
+      "body": {
+        "entityName": "scope-ledger",
+        "key": "1357449:795",
+        "value": {
+          "sprintId": "795",
+          "changeId": "1357449",
+          "at": 1791902336588,
+          "kind": "removed",
+          "issueId": "25104",
+          "issueKey": "WEB-159",
+          "authorId": "test-author",
+          "authorName": "Test Author",
+          "source": "reconcile"
+        },
+        "options": {
+          "keyPolicy": "FAIL_IF_EXISTS"
+        }
+      },
+      "status": 204,
+      "originChange": "test-origin",
+      "scheduledRun": null
+    }
+  ]
+}
