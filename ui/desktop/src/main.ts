@@ -136,6 +136,13 @@ import {
 } from './utils/runningElsewhere';
 import { benchmarkCancellationPids } from './utils/benchReap';
 import { BenchPublicationOwner } from './benchPublicationOwner';
+import {
+  freezeBenchProvider,
+  frozenBenchProviderProblem,
+  parseBenchProviderSnapshot,
+  type BenchProviderSnapshot,
+  type FrozenBenchProvider,
+} from './benchSeriesProvider';
 import started from 'electron-squirrel-startup';
 import path from 'node:path';
 import os from 'node:os';
@@ -4668,7 +4675,11 @@ const runSingleBenchmark = async (
     tier: CloudBenchmarkTier;
     modelFields?: BenchModelFields;
   },
-  seriesBuild?: { series: BenchSeriesSnapshot; build: BenchSeriesSnapshot['builds'][number] }
+  seriesBuild?: {
+    series: BenchSeriesSnapshot;
+    build: BenchSeriesSnapshot['builds'][number];
+    provider: FrozenBenchProvider;
+  }
 ) => {
   if (activeBenchRun || benchmarkLaunchPending || (activeBenchSeries && !seriesBuild)) {
     throw new Error('a benchmark run is already in progress');
@@ -4802,14 +4813,17 @@ const runSingleBenchmark = async (
     if (
       seriesBuild &&
       cloud &&
-      (await benchmarkSeriesInputHash(cloud, seriesBuild.series.modelFields)) !==
-        seriesBuild.series.inputHash
+      (await benchmarkSeriesInputHash(
+        cloud,
+        seriesBuild.series.modelFields,
+        seriesBuild.provider
+      )) !== seriesBuild.series.inputHash
     )
       throw new Error('The selected benchmark inputs changed before this build could start.');
     if (seriesBuild?.series.cancelled) throw new Error('Two-build sequence cancelled.');
     return await new Promise<BenchSeriesResult>((resolvePromise, reject) => {
       const python: { args: string[]; env: NodeJS.ProcessEnv } = benchmarkPythonLaunch(runner, [], {
-        ...process.env,
+        ...(seriesBuild?.provider.env ?? process.env),
         ...runtime.env,
       });
       if (family === 'forge') delete python.env.BENCH_MAX_USD;
@@ -4841,7 +4855,7 @@ const runSingleBenchmark = async (
               BENCH_COMPLETION_RECEIPT: completionReceipt,
               BENCH_STARTED_AT: startedAt,
               ...(cloudRunId ? { BENCH_RUN_ID: cloudRunId } : {}),
-              GOOSE_PATH_ROOT: resolveGoosePathRoot(),
+              GOOSE_PATH_ROOT: seriesBuild?.provider.root ?? resolveGoosePathRoot(),
               // A benchmark run is by definition unattended: nobody is sitting in front of the app
               // waiting to answer a clarify question. Without this the engine gives the human 5 minutes
               // before a node answers, and those 5 minutes are three idle machines.
@@ -5158,11 +5172,12 @@ const benchmarkFileSha = async (file: string): Promise<string> => {
   return hash.digest('hex');
 };
 
-/** Re-read the engine's own selected-provider snapshot; secret bytes only enter a private hash. */
-const benchmarkProviderBinding = async (
+/** Export the engine's selected configuration privately; only its binding enters series records. */
+const benchmarkProviderSnapshot = async (
   cloud: { provider: string; model: string },
-  fields: BenchModelFieldsRecord
-): Promise<string> => {
+  fields: BenchModelFieldsRecord,
+  environment: NodeJS.ProcessEnv
+): Promise<BenchProviderSnapshot> => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'goose-benchmark-series-'));
   const output = path.join(directory, 'selected.json');
   try {
@@ -5176,8 +5191,7 @@ const benchmarkProviderBinding = async (
         ['benchmark-config', '--provider', cloud.provider, '--output', output],
         {
           env: {
-            ...process.env,
-            GOOSE_PATH_ROOT: resolveGoosePathRoot(),
+            ...environment,
             ...modelFieldsLaunchEnv(cloud.provider, cloud.model, fields.sent),
           },
         },
@@ -5191,14 +5205,10 @@ const benchmarkProviderBinding = async (
             : resolve()
       );
     });
-    const selected: unknown = JSON.parse(await fs.readFile(output, 'utf8'));
-    if (
-      !selected ||
-      typeof selected !== 'object' ||
-      (selected as { version?: unknown }).version !== 1
-    )
-      throw new Error('The selected benchmark provider configuration is not supported.');
-    return benchIdentityHash(selected);
+    return parseBenchProviderSnapshot(
+      JSON.parse(await fs.readFile(output, 'utf8')),
+      cloud.provider
+    );
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }
@@ -5206,8 +5216,12 @@ const benchmarkProviderBinding = async (
 
 const benchmarkSeriesInputHash = async (
   cloud: { provider: string; model: string; tier: CloudBenchmarkTier },
-  fields: BenchModelFieldsRecord
+  fields: BenchModelFieldsRecord,
+  provider: FrozenBenchProvider
 ): Promise<string> => {
+  const actualProvider = await benchmarkProviderSnapshot(cloud, fields, provider.env);
+  const providerProblem = frozenBenchProviderProblem(provider, actualProvider);
+  if (providerProblem) throw new Error(providerProblem);
   const payload = resolveBenchPayloadDir();
   const manifestBytes = await fs.readFile(path.join(payload, 'forge2', 'release-manifest.json'));
   const manifest = JSON.parse(manifestBytes.toString('utf8')) as {
@@ -5248,7 +5262,7 @@ const benchmarkSeriesInputHash = async (
     modelFields: fields,
     taskFingerprint: forgeTaskFingerprint(manifestBytes),
     engineSha256: await benchmarkFileSha(engine),
-    providerBinding: await benchmarkProviderBinding(cloud, fields),
+    providerBinding: provider.snapshotHash,
   });
 };
 
@@ -5364,6 +5378,7 @@ ipcMain.handle(
       summary: { count: 0, provisional: true },
     };
     activeBenchSeries = series;
+    let providerDirectory: string | undefined;
     try {
       await writeBenchSeries(benchSeriesRoot(), series);
       broadcastToWindows(
@@ -5371,11 +5386,15 @@ ipcMain.handle(
         'benchmark-series',
         globalThis.structuredClone(series)
       );
-      series.inputHash = await benchmarkSeriesInputHash(entrant, fields);
+      const environment = { ...process.env, GOOSE_PATH_ROOT: resolveGoosePathRoot() };
+      const selected = await benchmarkProviderSnapshot(entrant, fields, environment);
+      providerDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'goose-benchmark-provider-'));
+      const provider = await freezeBenchProvider(providerDirectory, selected, environment);
+      series.inputHash = await benchmarkSeriesInputHash(entrant, fields, provider);
       const last = await runBenchSeries(series, {
         save: (snapshot) => writeBenchSeries(benchSeriesRoot(), snapshot),
-        inputHash: () => benchmarkSeriesInputHash(entrant, fields),
-        run: (build) => runSingleBenchmark(1, undefined, entrant, { series, build }),
+        inputHash: () => benchmarkSeriesInputHash(entrant, fields, provider),
+        run: (build) => runSingleBenchmark(1, undefined, entrant, { series, build, provider }),
         changed: (snapshot, row) => {
           const current = globalThis.structuredClone(snapshot);
           broadcastToWindows(BrowserWindow.getAllWindows(), 'benchmark-series', current);
@@ -5422,6 +5441,7 @@ ipcMain.handle(
       throw error;
     } finally {
       if (activeBenchSeries === series) activeBenchSeries = null;
+      if (providerDirectory) await fs.rm(providerDirectory, { recursive: true, force: true });
       renderBenchTray();
     }
   }
