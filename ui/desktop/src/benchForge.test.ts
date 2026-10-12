@@ -811,7 +811,7 @@ describe('current Forge 2.0 carrier over SYNTHETIC scorer compositions, no nativ
   it.each(Object.entries(forge2Synthetic.verdicts))(
     '%s: preserves all registered checks, tier means and composition inputs through publication',
     (_name, verdict) => {
-      const before = structuredClone(verdict);
+      const before = globalThis.structuredClone(verdict);
       const stored = { ...projectBenchScore(verdict), score: verdict.score };
       expect(forgePublishProblem(stored)).toBeNull();
       const body = forgePublishBody(stored);

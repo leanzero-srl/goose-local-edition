@@ -1540,5 +1540,11 @@
       "afterSha256": "190bab2c20cff02c2eb57d3d1cc4fcb3f7ccfaf21775c91f5c43694cc5fc5afb"
     }
   ],
-  "testFixtureNotActualEntrantResult": true
+  "testFixtureNotActualEntrantResult": true,
+  "desktopTestEnvironmentAdaptation": {
+    "file": "ui/desktop/src/benchForge.test.ts",
+    "change": "Qualify structuredClone with globalThis for existing no-undef lint rule; test behavior unchanged.",
+    "sha256": "5b3b0f471a7a2fc2823a5d9bc04f02bcc85fc8f42ef93c0817b9fcd5a2e23a4a",
+    "nativeReleaseManifestChanged": false
+  }
 }
