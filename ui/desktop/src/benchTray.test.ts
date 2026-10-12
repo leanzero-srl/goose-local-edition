@@ -32,6 +32,17 @@ describe('benchmark tray title', () => {
     expect(benchTrayTitle(cloudRun())).toBe('Benchmark · gpt-6.1-sol · 64/150');
   });
 
+  it('names the actual independent build while main keeps the parent sequence active', () => {
+    const run = cloudRun({
+      scorerVersion: 'forge-2.0',
+      buildIndex: 2,
+      totalBuilds: 2,
+      callBudget: 300,
+    });
+    expect(benchTrayTitle(run)).toBe('Benchmark · gpt-6.1-sol · build 2/2 · 64/300');
+    expect(benchTrayLines(run, START)).toContain('Build: 2 of 2');
+  });
+
   it('states calls without a budget it does not know', () => {
     expect(benchTrayTitle(cloudRun({ callBudget: null }))).toBe(
       'Benchmark · gpt-6.1-sol · 64 calls'

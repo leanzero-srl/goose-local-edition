@@ -14,11 +14,12 @@
  */
 
 import path from 'node:path';
+import type { BenchSeriesMembership } from './benchSeries';
 import type { BenchModelFieldsRecord } from './benchModelFields';
 
 export type BenchSessionOutcome = 'running' | 'finished' | 'did_not_finish' | 'did_not_start';
 
-export interface BenchSessionRow {
+export interface BenchSessionRow extends Partial<BenchSeriesMembership> {
   /** null until `<slot>/.swarm/current-run.json` appears — the engine writes it before any phase. */
   runId: string | null;
   scorerVersion: string;
@@ -105,6 +106,10 @@ export const upsertArchivedRow = (
     ...(prior?.nodes != null ? { nodes: prior.nodes } : {}),
     ...(prior?.completionReceipt ? { completionReceipt: prior.completionReceipt } : {}),
     ...(prior?.scoringError ? { scoringError: prior.scoringError } : {}),
+    ...(prior?.modelFields ? { modelFields: prior.modelFields } : {}),
+    ...(prior?.seriesId && prior.buildIndex
+      ? { seriesId: prior.seriesId, buildIndex: prior.buildIndex }
+      : {}),
     slot: false,
   };
   const next = rows.slice();
