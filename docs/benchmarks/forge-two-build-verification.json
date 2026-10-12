@@ -1,0 +1,66 @@
+{
+  "schema": "forge-desktop-series-verification-v1",
+  "testedSourceCommit": "9905aa5b07aa228d4844c25590887baccad421c1",
+  "fullDesktopTests": {
+    "filesPassed": 529,
+    "testsPassed": 4931,
+    "testsSkipped": 3,
+    "exitCode": 0,
+    "logSha256": "a9de24d9f48d9f503765ee52b213e16d846ca3cc151b35ba98fdbd569f04e422"
+  },
+  "qualifiedForgePythonControls": {
+    "passed": 215,
+    "exitCode": 0
+  },
+  "qualifiedReleasePins": {
+    "forgeFiles": 156,
+    "gauntletFiles": 118,
+    "match": true
+  },
+  "independentSourceReview": {
+    "verdict": "SOURCE_GO",
+    "controls": 12,
+    "reportSha256": "e443922986b2880af866de81ad7051e012ae0c123d45f9341ff5e2b6f4ba1974"
+  },
+  "actualIsolatedDesktop": {
+    "checks": [
+      "actual Forge Run2 setup",
+      "two child cards with separate actual retained raw scores",
+      "forged persisted .9999 median rejected",
+      "view remount preserves parent and children",
+      "changed raw kit identity refuses count2 while preserving both scores",
+      "restored raw bytes recover pair"
+    ],
+    "noModelCalls": true,
+    "noPublication": true,
+    "historicalVerdictFixtureMembershipNotActualNewRun": true,
+    "readbackSha256": "606ef9f6b345dce542d26f1d4b08d7773c91b5b9f1a546cc480669ef04c32a1a",
+    "screenshotSha256": "f279cc054dab7f329021d75fc7889668f8203bcbb3e4ac59a8f0de21e1c342d3"
+  },
+  "nativeProviderExport": {
+    "twoSnapshotsEqualOriginal": true,
+    "hostChanges": "A/B/A",
+    "inertCredentials": true,
+    "providerCalls": 0,
+    "modelCalls": 0,
+    "receiptSha256": "84ec1784304f887003089e742e3c94370da6ac7a685c35b3d7499fe9305c02e7"
+  },
+  "activeWorkhorseCarrierUnchanged": true,
+  "installedPaidAppOwnedPair": "NOT_YET_EXERCISED",
+  "publicPush": "PENDING_WORKHORSE",
+  "fullDesktopLint": {
+    "exitCode": 0,
+    "includes": [
+      "TypeScript",
+      "ESLint",
+      "all15localeICUvalidation"
+    ],
+    "messages": 3880,
+    "logSha256": "c3471032c6328783e56dcfeed7a1edeb241878c5cdaadee4f17b11057bb4ac5d"
+  },
+  "lastTestOnlyChange": {
+    "commit": "9905aa5b0",
+    "targetedTestsPassed": 31,
+    "runtimeChange": false
+  }
+}
