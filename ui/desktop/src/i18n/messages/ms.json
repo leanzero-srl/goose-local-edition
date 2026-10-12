@@ -11524,5 +11524,119 @@
   },
   "engineGlanceSettings.showAgain": {
     "defaultMessage": "Paparkan semula"
+  },
+  "benchmarkSection.build": {
+    "defaultMessage": "Binaan {index}"
+  },
+  "benchmarkSection.twoBuilds": {
+    "defaultMessage": "2 binaan"
+  },
+  "forgeSeries.between": {
+    "defaultMessage": "Binaan 1 selesai. Menyediakan binaan 2."
+  },
+  "forgeSeries.build": {
+    "defaultMessage": "Binaan {index} daripada 2"
+  },
+  "forgeSeries.callBudget": {
+    "defaultMessage": "{calls} panggilan setiap binaan"
+  },
+  "forgeSeries.cancelDetail": {
+    "defaultMessage": "Menghentikan binaan aktif dan menghalang binaan berikutnya daripada bermula. Skor dan bukti yang telah selesai dikekalkan; pembatalan tidak menerbitkan apa-apa."
+  },
+  "forgeSeries.cancelTitle": {
+    "defaultMessage": "Batalkan penanda aras dua binaan ini?"
+  },
+  "forgeSeries.cancelled": {
+    "defaultMessage": "Urutan dua binaan dibatalkan"
+  },
+  "forgeSeries.cancelledStatus": {
+    "defaultMessage": "Urutan dua binaan dibatalkan."
+  },
+  "forgeSeries.checking": {
+    "defaultMessage": "Menyemak kedua-dua binaan…"
+  },
+  "forgeSeries.childCancelled": {
+    "defaultMessage": "Dibatalkan"
+  },
+  "forgeSeries.childFailed": {
+    "defaultMessage": "Tidak selesai"
+  },
+  "forgeSeries.completeStatus": {
+    "defaultMessage": "Dua binaan selesai."
+  },
+  "forgeSeries.continuePublish": {
+    "defaultMessage": "Terbitkan binaan yang tinggal"
+  },
+  "forgeSeries.failed": {
+    "defaultMessage": "Urutan dua binaan tidak selesai"
+  },
+  "forgeSeries.failedStatus": {
+    "defaultMessage": "Urutan dua binaan tidak selesai."
+  },
+  "forgeSeries.finished": {
+    "defaultMessage": "Kedua-dua binaan selesai"
+  },
+  "forgeSeries.interrupted": {
+    "defaultMessage": "Aplikasi ditutup sebelum kedua-dua binaan selesai. Bukti tersimpan dikekalkan."
+  },
+  "forgeSeries.intro": {
+    "defaultMessage": "Satu tindakan Jalankan memulakan dua binaan bebas dalam aplikasi ini. Binaan kedua bermula selepas yang pertama dinilai; setiap satu menyimpan buktinya sendiri."
+  },
+  "forgeSeries.live": {
+    "defaultMessage": "Diterbitkan di leanzero.net"
+  },
+  "forgeSeries.median": {
+    "defaultMessage": "Median tempatan {median} · julat {min}–{max}"
+  },
+  "forgeSeries.noResponse": {
+    "defaultMessage": "Tiada respons penerbitan"
+  },
+  "forgeSeries.noScore": {
+    "defaultMessage": "Belum ada binaan yang dinilai."
+  },
+  "forgeSeries.preparing": {
+    "defaultMessage": "Menyediakan binaan {index} daripada 2"
+  },
+  "forgeSeries.provisional": {
+    "defaultMessage": "Satu binaan yang dinilai bersifat sementara. Median dua binaan belum tersedia."
+  },
+  "forgeSeries.publish": {
+    "defaultMessage": "Terbitkan 2 binaan"
+  },
+  "forgeSeries.publishTitle": {
+    "defaultMessage": "Tajuk penerbitan"
+  },
+  "forgeSeries.publishing": {
+    "defaultMessage": "Menerbitkan binaan {index} daripada 2…"
+  },
+  "forgeSeries.queued": {
+    "defaultMessage": "Menunggu untuk bermula"
+  },
+  "forgeSeries.run": {
+    "defaultMessage": "Jalankan 2 binaan"
+  },
+  "forgeSeries.running": {
+    "defaultMessage": "Binaan {index} daripada 2 sedang berjalan"
+  },
+  "forgeSeries.scored": {
+    "defaultMessage": "Dinilai"
+  },
+  "forgeSeries.settings": {
+    "defaultMessage": "Aplikasi menjalankan dua binaan baharu secara berturutan dengan model, tugas dan tetapan yang sama. Setiap satu menyimpan skor dan buktinya sendiri."
+  },
+  "forgeSeries.skipped": {
+    "defaultMessage": "Tidak bermula"
+  },
+  "forgeSeries.title": {
+    "defaultMessage": "Dua binaan bebas"
+  },
+  "forgeSeries.unreadable": {
+    "defaultMessage": "Bukti tersimpan bagi dua binaan tidak dapat dibaca. Binaan individu masih tersedia."
+  },
+  "forgeSeries.view": {
+    "defaultMessage": "Buka bukti binaan {index}"
+  },
+  "forgeSeries.waitingPublish": {
+    "defaultMessage": "Penerbitan memerlukan dua binaan lengkap yang boleh dibandingkan bersama bukti asalnya."
   }
 }

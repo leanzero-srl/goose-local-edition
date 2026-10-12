@@ -11524,5 +11524,119 @@
   },
   "engineGlanceSettings.showAgain": {
     "defaultMessage": "Hiện lại"
+  },
+  "benchmarkSection.build": {
+    "defaultMessage": "Bản dựng {index}"
+  },
+  "benchmarkSection.twoBuilds": {
+    "defaultMessage": "2 bản dựng"
+  },
+  "forgeSeries.between": {
+    "defaultMessage": "Bản dựng 1 đã hoàn tất. Đang chuẩn bị bản dựng 2."
+  },
+  "forgeSeries.build": {
+    "defaultMessage": "Bản dựng {index} trong 2"
+  },
+  "forgeSeries.callBudget": {
+    "defaultMessage": "{calls} lần gọi cho mỗi bản dựng"
+  },
+  "forgeSeries.cancelDetail": {
+    "defaultMessage": "Dừng bản dựng đang chạy và ngăn bản dựng tiếp theo bắt đầu. Điểm và bằng chứng đã hoàn tất được giữ lại; việc hủy không công bố gì."
+  },
+  "forgeSeries.cancelTitle": {
+    "defaultMessage": "Hủy bài đánh giá gồm hai bản dựng này?"
+  },
+  "forgeSeries.cancelled": {
+    "defaultMessage": "Chuỗi hai bản dựng đã bị hủy"
+  },
+  "forgeSeries.cancelledStatus": {
+    "defaultMessage": "Chuỗi hai bản dựng đã bị hủy."
+  },
+  "forgeSeries.checking": {
+    "defaultMessage": "Đang kiểm tra hai bản dựng…"
+  },
+  "forgeSeries.childCancelled": {
+    "defaultMessage": "Đã hủy"
+  },
+  "forgeSeries.childFailed": {
+    "defaultMessage": "Chưa hoàn tất"
+  },
+  "forgeSeries.completeStatus": {
+    "defaultMessage": "Hai bản dựng đã hoàn tất."
+  },
+  "forgeSeries.continuePublish": {
+    "defaultMessage": "Công bố bản dựng còn lại"
+  },
+  "forgeSeries.failed": {
+    "defaultMessage": "Chuỗi hai bản dựng chưa hoàn tất"
+  },
+  "forgeSeries.failedStatus": {
+    "defaultMessage": "Chuỗi hai bản dựng chưa hoàn tất."
+  },
+  "forgeSeries.finished": {
+    "defaultMessage": "Cả hai bản dựng đã hoàn tất"
+  },
+  "forgeSeries.interrupted": {
+    "defaultMessage": "Ứng dụng đã đóng trước khi hai bản dựng hoàn tất. Bằng chứng đã lưu được giữ lại."
+  },
+  "forgeSeries.intro": {
+    "defaultMessage": "Một thao tác Chạy khởi động hai bản dựng độc lập trong ứng dụng này. Bản thứ hai bắt đầu sau khi bản thứ nhất được chấm điểm; mỗi bản giữ bằng chứng riêng."
+  },
+  "forgeSeries.live": {
+    "defaultMessage": "Đã công bố trên leanzero.net"
+  },
+  "forgeSeries.median": {
+    "defaultMessage": "Trung vị cục bộ {median} · khoảng {min}–{max}"
+  },
+  "forgeSeries.noResponse": {
+    "defaultMessage": "Không có phản hồi công bố"
+  },
+  "forgeSeries.noScore": {
+    "defaultMessage": "Chưa có bản dựng nào được chấm điểm."
+  },
+  "forgeSeries.preparing": {
+    "defaultMessage": "Đang chuẩn bị bản dựng {index} trong 2"
+  },
+  "forgeSeries.provisional": {
+    "defaultMessage": "Một bản dựng được chấm điểm chỉ là kết quả tạm thời. Chưa có trung vị của hai bản dựng."
+  },
+  "forgeSeries.publish": {
+    "defaultMessage": "Công bố 2 bản dựng"
+  },
+  "forgeSeries.publishTitle": {
+    "defaultMessage": "Tiêu đề công bố"
+  },
+  "forgeSeries.publishing": {
+    "defaultMessage": "Đang công bố bản dựng {index} trong 2…"
+  },
+  "forgeSeries.queued": {
+    "defaultMessage": "Đang chờ bắt đầu"
+  },
+  "forgeSeries.run": {
+    "defaultMessage": "Chạy 2 bản dựng"
+  },
+  "forgeSeries.running": {
+    "defaultMessage": "Bản dựng {index} trong 2 đang chạy"
+  },
+  "forgeSeries.scored": {
+    "defaultMessage": "Đã chấm điểm"
+  },
+  "forgeSeries.settings": {
+    "defaultMessage": "Ứng dụng chạy tuần tự hai bản dựng mới với cùng mô hình, tác vụ và cài đặt. Mỗi bản giữ điểm và bằng chứng riêng."
+  },
+  "forgeSeries.skipped": {
+    "defaultMessage": "Chưa bắt đầu"
+  },
+  "forgeSeries.title": {
+    "defaultMessage": "Hai bản dựng độc lập"
+  },
+  "forgeSeries.unreadable": {
+    "defaultMessage": "Không đọc được bằng chứng đã lưu của hai bản dựng. Các bản dựng riêng lẻ vẫn có sẵn."
+  },
+  "forgeSeries.view": {
+    "defaultMessage": "Mở bằng chứng của bản dựng {index}"
+  },
+  "forgeSeries.waitingPublish": {
+    "defaultMessage": "Cần hai bản dựng hoàn tất, có thể so sánh và bằng chứng gốc của chúng để công bố."
   }
 }

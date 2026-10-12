@@ -1,0 +1,180 @@
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+import { IntlTestWrapper } from '../../i18n/test-utils';
+import { ForgeBuildSeries } from './ForgeBuildSeries';
+import { seriesFixture, completedSeriesFixture, sessionsFixture } from './series.fixture';
+import type { BenchSeriesSnapshot } from '../../benchSeries';
+import type { BenchSession } from './bridge';
+
+function mount(series: BenchSeriesSnapshot, sessions = sessionsFixture(series)) {
+  Object.assign(window.electron, { benchmarkSeries: vi.fn(async () => series) });
+  const open = vi.fn();
+  const refresh = vi.fn(async () => {});
+  render(
+    <IntlTestWrapper>
+      <ForgeBuildSeries
+        series={series}
+        sessions={sessions}
+        disabled={series.running}
+        onOpenBuild={open}
+        onPublished={refresh}
+      />
+    </IntlTestWrapper>
+  );
+  return { open, refresh };
+}
+
+describe('Forge two-build presentation and publication', () => {
+  it('shows separate actual build states, with no score or median for queued work', () => {
+    const series = seriesFixture();
+    mount(series);
+    expect(screen.getAllByText('Build 1 of 2 is running')).toHaveLength(2);
+    expect(screen.getByTestId('forge-series-build-2')).toHaveTextContent('Waiting to start');
+    expect(screen.getByTestId('forge-series-summary')).toHaveTextContent('No scored build');
+    expect(screen.getByRole('button', { name: 'Publish 2 builds' })).toBeDisabled();
+    expect(screen.queryByText('0.0000')).toBeNull();
+  });
+  it('keeps one genuine score provisional after a second-build failure', () => {
+    const base = completedSeriesFixture();
+    const failed: BenchSeriesSnapshot = {
+      ...base,
+      stage: 'failed',
+      builds: [
+        base.builds[0],
+        { ...base.builds[1], outcome: 'failed', score: undefined, error: 'Native grading failed' },
+      ],
+      summary: { count: 1, provisional: true, reason: 'Only the first build was graded.' },
+    };
+    mount(failed);
+    expect(screen.getByTestId('forge-series-build-1')).toHaveTextContent('0.6000');
+    expect(screen.getByTestId('forge-series-build-2')).toHaveTextContent('Native grading failed');
+    expect(screen.getByTestId('forge-series-summary')).toHaveTextContent(
+      'One scored build is provisional'
+    );
+    expect(screen.queryByText(/Median /)).toBeNull();
+  });
+  it('shows canonical median/range and opens each actual individual evidence card', () => {
+    const series = completedSeriesFixture();
+    const { open } = mount(series);
+    expect(screen.getByTestId('forge-series-summary')).toHaveTextContent(
+      'Local median 0.7000 · range 0.6000–0.8000'
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Open build 1 evidence' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open build 2 evidence' }));
+    expect(open.mock.calls).toEqual(series.builds.map((build) => [build.runId]));
+  });
+  it('retains a first accepted link and retries only the unaccepted second build', async () => {
+    const series = completedSeriesFixture();
+    let sessions: BenchSession[] = sessionsFixture(series);
+    const post = vi.fn(async ({ runKey }: { runKey: string }) => {
+      if (runKey === series.builds[0].runId) {
+        sessions = sessions.map((session) =>
+          session.runId === runKey
+            ? {
+                ...session,
+                publishable: false,
+                published: {
+                  url: '/first',
+                  title: 'Fixture pair',
+                  score: 0.6,
+                  publishedAt: '2026-10-12T11:00:00Z',
+                  source: 'app',
+                },
+              }
+            : session
+        );
+        return { ok: true, url: '/first' };
+      }
+      return post.mock.calls.length === 2
+        ? { ok: false, error: 'Server refused second build' }
+        : { ok: true, url: '/second' };
+    });
+    Object.assign(window.electron, {
+      benchmarkSessions: vi.fn(async () => ({ sessions })),
+      benchmarkPublish: post,
+    });
+    mount(series);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Publication title' }), {
+      target: { value: 'Fixture pair' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Publish 2 builds' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Server refused second build');
+    expect(
+      within(screen.getByTestId('forge-series-build-1')).getByRole('link', {
+        name: 'Live on leanzero.net',
+      })
+    ).toHaveAttribute('href', 'https://leanzero.net/first');
+    fireEvent.click(screen.getByRole('button', { name: 'Publish remaining build' }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(3));
+    expect(post.mock.calls.map(([args]) => args.runKey)).toEqual([
+      series.builds[0].runId,
+      series.builds[1].runId,
+      series.builds[1].runId,
+    ]);
+    await waitFor(() =>
+      expect(screen.getAllByRole('link', { name: 'Live on leanzero.net' })).toHaveLength(2)
+    );
+  });
+  it('refuses a disappearing child index instead of declaring a partial publication complete', async () => {
+    const series = completedSeriesFixture();
+    const post = vi.fn();
+    Object.assign(window.electron, {
+      benchmarkSessions: vi.fn(async () => ({ sessions: [] })),
+      benchmarkPublish: post,
+    });
+    mount(series);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Publication title' }), {
+      target: { value: 'Fixture' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Publish 2 builds' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Publishing waits for two complete');
+    expect(post).not.toHaveBeenCalled();
+  });
+  it('reserves publication synchronously before a delayed history read so rapid clicks cannot duplicate either child', async () => {
+    const series = completedSeriesFixture();
+    let release: ((value: { sessions: BenchSession[] }) => void) | undefined;
+    const pending = new Promise<{ sessions: BenchSession[] }>((resolve) => {
+      release = resolve;
+    });
+    const history = vi.fn(() => pending);
+    const post = vi.fn(async ({ runKey }: { runKey: string }) => ({ ok: true, url: `/${runKey}` }));
+    Object.assign(window.electron, { benchmarkSessions: history, benchmarkPublish: post });
+    mount(series);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Publication title' }), {
+      target: { value: 'Fixture pair' },
+    });
+    const button = screen.getByRole('button', { name: 'Publish 2 builds' });
+    act(() => {
+      button.click();
+      button.click();
+    });
+    expect(history).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Checking the two builds…' })).toBeDisabled();
+    await act(async () => release?.({ sessions: sessionsFixture(series) }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    expect(post.mock.calls.map(([args]) => args.runKey)).toEqual(
+      series.builds.map((build) => build.runId)
+    );
+  });
+  it('refuses a formerly comparable pair when the fresh canonical series no longer has two comparable scores', async () => {
+    const series = completedSeriesFixture();
+    const post = vi.fn();
+    Object.assign(window.electron, {
+      benchmarkSessions: vi.fn(async () => ({ sessions: sessionsFixture(series) })),
+      benchmarkPublish: post,
+    });
+    mount(series);
+    Object.assign(window.electron, {
+      benchmarkSeries: vi.fn(async () => ({
+        ...series,
+        summary: { count: 0, provisional: true, reason: 'Comparison inputs changed' },
+      })),
+    });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Publication title' }), {
+      target: { value: 'Fixture pair' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Publish 2 builds' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Publishing waits for two complete');
+    expect(post).not.toHaveBeenCalled();
+  });
+});

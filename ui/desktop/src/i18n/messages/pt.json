@@ -11524,5 +11524,119 @@
   },
   "engineGlanceSettings.showAgain": {
     "defaultMessage": "Mostrar de novo"
+  },
+  "benchmarkSection.build": {
+    "defaultMessage": "Build {index}"
+  },
+  "benchmarkSection.twoBuilds": {
+    "defaultMessage": "2 builds"
+  },
+  "forgeSeries.between": {
+    "defaultMessage": "O build 1 foi concluído. A preparar o build 2."
+  },
+  "forgeSeries.build": {
+    "defaultMessage": "Build {index} de 2"
+  },
+  "forgeSeries.callBudget": {
+    "defaultMessage": "{calls} chamadas por build"
+  },
+  "forgeSeries.cancelDetail": {
+    "defaultMessage": "Para o build ativo e impede o início do seguinte. As pontuações e evidências concluídas são preservadas; cancelar não publica nada."
+  },
+  "forgeSeries.cancelTitle": {
+    "defaultMessage": "Cancelar este benchmark de dois builds?"
+  },
+  "forgeSeries.cancelled": {
+    "defaultMessage": "A sequência de dois builds foi cancelada"
+  },
+  "forgeSeries.cancelledStatus": {
+    "defaultMessage": "Sequência de dois builds cancelada."
+  },
+  "forgeSeries.checking": {
+    "defaultMessage": "A verificar os dois builds…"
+  },
+  "forgeSeries.childCancelled": {
+    "defaultMessage": "Cancelado"
+  },
+  "forgeSeries.childFailed": {
+    "defaultMessage": "Não concluído"
+  },
+  "forgeSeries.completeStatus": {
+    "defaultMessage": "Dois builds concluídos."
+  },
+  "forgeSeries.continuePublish": {
+    "defaultMessage": "Publicar o build restante"
+  },
+  "forgeSeries.failed": {
+    "defaultMessage": "A sequência de dois builds não foi concluída"
+  },
+  "forgeSeries.failedStatus": {
+    "defaultMessage": "A sequência de dois builds não foi concluída."
+  },
+  "forgeSeries.finished": {
+    "defaultMessage": "Ambos os builds foram concluídos"
+  },
+  "forgeSeries.interrupted": {
+    "defaultMessage": "A aplicação fechou antes de concluir os dois builds. As evidências guardadas são preservadas."
+  },
+  "forgeSeries.intro": {
+    "defaultMessage": "Uma única ação Executar inicia dois builds independentes nesta aplicação. O segundo começa após a avaliação do primeiro; cada um mantém as suas próprias evidências."
+  },
+  "forgeSeries.live": {
+    "defaultMessage": "Publicado no leanzero.net"
+  },
+  "forgeSeries.median": {
+    "defaultMessage": "Mediana local {median} · intervalo {min}–{max}"
+  },
+  "forgeSeries.noResponse": {
+    "defaultMessage": "Sem resposta à publicação"
+  },
+  "forgeSeries.noScore": {
+    "defaultMessage": "Ainda não há nenhum build avaliado disponível."
+  },
+  "forgeSeries.preparing": {
+    "defaultMessage": "A preparar o build {index} de 2"
+  },
+  "forgeSeries.provisional": {
+    "defaultMessage": "Um único build avaliado é provisório. Não há uma mediana de dois builds disponível."
+  },
+  "forgeSeries.publish": {
+    "defaultMessage": "Publicar 2 builds"
+  },
+  "forgeSeries.publishTitle": {
+    "defaultMessage": "Título da publicação"
+  },
+  "forgeSeries.publishing": {
+    "defaultMessage": "A publicar o build {index} de 2…"
+  },
+  "forgeSeries.queued": {
+    "defaultMessage": "A aguardar o início"
+  },
+  "forgeSeries.run": {
+    "defaultMessage": "Executar 2 builds"
+  },
+  "forgeSeries.running": {
+    "defaultMessage": "O build {index} de 2 está em execução"
+  },
+  "forgeSeries.scored": {
+    "defaultMessage": "Avaliado"
+  },
+  "forgeSeries.settings": {
+    "defaultMessage": "A aplicação executa dois novos builds em sequência com o mesmo modelo, tarefa e definições. Cada um mantém a sua própria pontuação e evidências."
+  },
+  "forgeSeries.skipped": {
+    "defaultMessage": "Não iniciado"
+  },
+  "forgeSeries.title": {
+    "defaultMessage": "Dois builds independentes"
+  },
+  "forgeSeries.unreadable": {
+    "defaultMessage": "Não foi possível ler as evidências guardadas dos dois builds. Os builds individuais continuam disponíveis."
+  },
+  "forgeSeries.view": {
+    "defaultMessage": "Abrir as evidências do build {index}"
+  },
+  "forgeSeries.waitingPublish": {
+    "defaultMessage": "A publicação requer dois builds concluídos e comparáveis com as respetivas evidências nativas."
   }
 }

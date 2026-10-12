@@ -11524,5 +11524,119 @@
   },
   "engineGlanceSettings.showAgain": {
     "defaultMessage": "Yeniden göster"
+  },
+  "benchmarkSection.build": {
+    "defaultMessage": "Derleme {index}"
+  },
+  "benchmarkSection.twoBuilds": {
+    "defaultMessage": "2 derleme"
+  },
+  "forgeSeries.between": {
+    "defaultMessage": "Derleme 1 tamamlandı. Derleme 2 hazırlanıyor."
+  },
+  "forgeSeries.build": {
+    "defaultMessage": "Derleme {index} / 2"
+  },
+  "forgeSeries.callBudget": {
+    "defaultMessage": "Derleme başına {calls} çağrı"
+  },
+  "forgeSeries.cancelDetail": {
+    "defaultMessage": "Etkin derlemeyi durdurur ve sonraki derlemenin başlamasını engeller. Tamamlanan puanlar ve kanıtlar korunur; iptal hiçbir şey yayımlamaz."
+  },
+  "forgeSeries.cancelTitle": {
+    "defaultMessage": "İki derlemeli bu karşılaştırma testini iptal etmek istiyor musunuz?"
+  },
+  "forgeSeries.cancelled": {
+    "defaultMessage": "İki derlemelik sıra iptal edildi"
+  },
+  "forgeSeries.cancelledStatus": {
+    "defaultMessage": "İki derlemelik sıra iptal edildi."
+  },
+  "forgeSeries.checking": {
+    "defaultMessage": "İki derleme kontrol ediliyor…"
+  },
+  "forgeSeries.childCancelled": {
+    "defaultMessage": "İptal edildi"
+  },
+  "forgeSeries.childFailed": {
+    "defaultMessage": "Tamamlanmadı"
+  },
+  "forgeSeries.completeStatus": {
+    "defaultMessage": "İki derleme tamamlandı."
+  },
+  "forgeSeries.continuePublish": {
+    "defaultMessage": "Kalan derlemeyi yayımla"
+  },
+  "forgeSeries.failed": {
+    "defaultMessage": "İki derlemelik sıra tamamlanmadı"
+  },
+  "forgeSeries.failedStatus": {
+    "defaultMessage": "İki derlemelik sıra tamamlanmadı."
+  },
+  "forgeSeries.finished": {
+    "defaultMessage": "Her iki derleme de tamamlandı"
+  },
+  "forgeSeries.interrupted": {
+    "defaultMessage": "İki derleme tamamlanmadan uygulama kapandı. Kaydedilen kanıtlar korunur."
+  },
+  "forgeSeries.intro": {
+    "defaultMessage": "Bu uygulamada tek bir Çalıştır işlemi iki bağımsız derleme başlatır. İlk derleme puanlandıktan sonra ikincisi başlar; her biri kendi kanıtlarını saklar."
+  },
+  "forgeSeries.live": {
+    "defaultMessage": "leanzero.net üzerinde yayımlandı"
+  },
+  "forgeSeries.median": {
+    "defaultMessage": "Yerel medyan {median} · aralık {min}–{max}"
+  },
+  "forgeSeries.noResponse": {
+    "defaultMessage": "Yayımlama yanıtı yok"
+  },
+  "forgeSeries.noScore": {
+    "defaultMessage": "Henüz puanlanmış derleme yok."
+  },
+  "forgeSeries.preparing": {
+    "defaultMessage": "Derleme {index} / 2 hazırlanıyor"
+  },
+  "forgeSeries.provisional": {
+    "defaultMessage": "Tek bir puanlanmış derleme geçici sonuçtur. İki derlemelik medyan mevcut değildir."
+  },
+  "forgeSeries.publish": {
+    "defaultMessage": "2 derlemeyi yayımla"
+  },
+  "forgeSeries.publishTitle": {
+    "defaultMessage": "Yayın başlığı"
+  },
+  "forgeSeries.publishing": {
+    "defaultMessage": "Derleme {index} / 2 yayımlanıyor…"
+  },
+  "forgeSeries.queued": {
+    "defaultMessage": "Başlamayı bekliyor"
+  },
+  "forgeSeries.run": {
+    "defaultMessage": "2 derlemeyi çalıştır"
+  },
+  "forgeSeries.running": {
+    "defaultMessage": "Derleme {index} / 2 çalışıyor"
+  },
+  "forgeSeries.scored": {
+    "defaultMessage": "Puanlandı"
+  },
+  "forgeSeries.settings": {
+    "defaultMessage": "Uygulama aynı model, görev ve ayarlarla iki yeni derlemeyi sırayla çalıştırır. Her biri kendi puanını ve kanıtlarını saklar."
+  },
+  "forgeSeries.skipped": {
+    "defaultMessage": "Başlamadı"
+  },
+  "forgeSeries.title": {
+    "defaultMessage": "İki bağımsız derleme"
+  },
+  "forgeSeries.unreadable": {
+    "defaultMessage": "İki derlemenin kaydedilen kanıtları okunamadı. Tekil derlemeler kullanılabilir durumda."
+  },
+  "forgeSeries.view": {
+    "defaultMessage": "Derleme {index} kanıtlarını aç"
+  },
+  "forgeSeries.waitingPublish": {
+    "defaultMessage": "Yayımlama için tamamlanmış, karşılaştırılabilir iki derleme ve bunların özgün kanıtları gerekir."
   }
 }

@@ -11524,5 +11524,119 @@
   },
   "engineGlanceSettings.showAgain": {
     "defaultMessage": "Mostrarla de nuevo"
+  },
+  "benchmarkSection.build": {
+    "defaultMessage": "Compilación {index}"
+  },
+  "benchmarkSection.twoBuilds": {
+    "defaultMessage": "2 compilaciones"
+  },
+  "forgeSeries.between": {
+    "defaultMessage": "La compilación 1 ha terminado. Preparando la compilación 2."
+  },
+  "forgeSeries.build": {
+    "defaultMessage": "Compilación {index} de 2"
+  },
+  "forgeSeries.callBudget": {
+    "defaultMessage": "{calls} llamadas por compilación"
+  },
+  "forgeSeries.cancelDetail": {
+    "defaultMessage": "Detiene la compilación activa e impide que comience la siguiente. Se conservan las puntuaciones y evidencias completadas; cancelar no publica nada."
+  },
+  "forgeSeries.cancelTitle": {
+    "defaultMessage": "¿Cancelar este benchmark de dos compilaciones?"
+  },
+  "forgeSeries.cancelled": {
+    "defaultMessage": "Se canceló la secuencia de dos compilaciones"
+  },
+  "forgeSeries.cancelledStatus": {
+    "defaultMessage": "Secuencia de dos compilaciones cancelada."
+  },
+  "forgeSeries.checking": {
+    "defaultMessage": "Comprobando las dos compilaciones…"
+  },
+  "forgeSeries.childCancelled": {
+    "defaultMessage": "Cancelada"
+  },
+  "forgeSeries.childFailed": {
+    "defaultMessage": "No terminó"
+  },
+  "forgeSeries.completeStatus": {
+    "defaultMessage": "Dos compilaciones completadas."
+  },
+  "forgeSeries.continuePublish": {
+    "defaultMessage": "Publicar la compilación restante"
+  },
+  "forgeSeries.failed": {
+    "defaultMessage": "La secuencia de dos compilaciones no terminó"
+  },
+  "forgeSeries.failedStatus": {
+    "defaultMessage": "La secuencia de dos compilaciones no terminó."
+  },
+  "forgeSeries.finished": {
+    "defaultMessage": "Ambas compilaciones han terminado"
+  },
+  "forgeSeries.interrupted": {
+    "defaultMessage": "La aplicación se cerró antes de completar las dos compilaciones. Se conservan las evidencias guardadas."
+  },
+  "forgeSeries.intro": {
+    "defaultMessage": "Una acción Ejecutar inicia dos compilaciones independientes en esta aplicación. La segunda empieza después de puntuar la primera; cada una conserva sus propias evidencias."
+  },
+  "forgeSeries.live": {
+    "defaultMessage": "Publicado en leanzero.net"
+  },
+  "forgeSeries.median": {
+    "defaultMessage": "Mediana local {median} · intervalo {min}–{max}"
+  },
+  "forgeSeries.noResponse": {
+    "defaultMessage": "Sin respuesta a la publicación"
+  },
+  "forgeSeries.noScore": {
+    "defaultMessage": "Todavía no hay ninguna compilación puntuada."
+  },
+  "forgeSeries.preparing": {
+    "defaultMessage": "Preparando la compilación {index} de 2"
+  },
+  "forgeSeries.provisional": {
+    "defaultMessage": "Una sola compilación puntuada es provisional. No hay una mediana de dos compilaciones disponible."
+  },
+  "forgeSeries.publish": {
+    "defaultMessage": "Publicar 2 compilaciones"
+  },
+  "forgeSeries.publishTitle": {
+    "defaultMessage": "Título de publicación"
+  },
+  "forgeSeries.publishing": {
+    "defaultMessage": "Publicando la compilación {index} de 2…"
+  },
+  "forgeSeries.queued": {
+    "defaultMessage": "Esperando para comenzar"
+  },
+  "forgeSeries.run": {
+    "defaultMessage": "Ejecutar 2 compilaciones"
+  },
+  "forgeSeries.running": {
+    "defaultMessage": "La compilación {index} de 2 está en curso"
+  },
+  "forgeSeries.scored": {
+    "defaultMessage": "Puntuada"
+  },
+  "forgeSeries.settings": {
+    "defaultMessage": "La aplicación ejecuta dos compilaciones nuevas en secuencia con el mismo modelo, tarea y configuración. Cada una conserva su propia puntuación y evidencias."
+  },
+  "forgeSeries.skipped": {
+    "defaultMessage": "No comenzó"
+  },
+  "forgeSeries.title": {
+    "defaultMessage": "Dos compilaciones independientes"
+  },
+  "forgeSeries.unreadable": {
+    "defaultMessage": "No se pudieron leer las evidencias guardadas de las dos compilaciones. Las compilaciones individuales siguen disponibles."
+  },
+  "forgeSeries.view": {
+    "defaultMessage": "Abrir evidencias de la compilación {index}"
+  },
+  "forgeSeries.waitingPublish": {
+    "defaultMessage": "La publicación requiere dos compilaciones completas y comparables con sus evidencias nativas."
   }
 }

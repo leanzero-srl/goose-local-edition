@@ -389,6 +389,9 @@
   "benchmarkSection.askAbout": {
     "defaultMessage": "Start an AI session about this run"
   },
+  "benchmarkSection.build": {
+    "defaultMessage": "Build {index}"
+  },
   "benchmarkSection.cannotDeleteNoId": {
     "defaultMessage": "This session has no run id yet — it appears moments after launch"
   },
@@ -430,6 +433,9 @@
   },
   "benchmarkSection.title": {
     "defaultMessage": "Benchmark"
+  },
+  "benchmarkSection.twoBuilds": {
+    "defaultMessage": "2 builds"
   },
   "bottomMenuExtensionSelection.extensionUpdated": {
     "defaultMessage": "Extension Updated"
@@ -2626,6 +2632,114 @@
   },
   "externalBackendSection.useExternalServerDescription": {
     "defaultMessage": "Connect to an ACP-compatible backend running elsewhere."
+  },
+  "forgeSeries.between": {
+    "defaultMessage": "Build 1 is complete. Preparing build 2."
+  },
+  "forgeSeries.build": {
+    "defaultMessage": "Build {index} of 2"
+  },
+  "forgeSeries.callBudget": {
+    "defaultMessage": "{calls}-call budget per build"
+  },
+  "forgeSeries.cancelDetail": {
+    "defaultMessage": "Stops the active build and prevents the next build from starting. Completed scores and evidence are preserved; nothing is published by cancelling."
+  },
+  "forgeSeries.cancelTitle": {
+    "defaultMessage": "Cancel this two-build benchmark?"
+  },
+  "forgeSeries.cancelled": {
+    "defaultMessage": "The two-build sequence was cancelled"
+  },
+  "forgeSeries.cancelledStatus": {
+    "defaultMessage": "Two-build sequence cancelled."
+  },
+  "forgeSeries.checking": {
+    "defaultMessage": "Checking the two builds…"
+  },
+  "forgeSeries.childCancelled": {
+    "defaultMessage": "Cancelled"
+  },
+  "forgeSeries.childFailed": {
+    "defaultMessage": "Did not finish"
+  },
+  "forgeSeries.completeStatus": {
+    "defaultMessage": "Two builds complete."
+  },
+  "forgeSeries.continuePublish": {
+    "defaultMessage": "Publish remaining build"
+  },
+  "forgeSeries.failed": {
+    "defaultMessage": "The two-build sequence did not finish"
+  },
+  "forgeSeries.failedStatus": {
+    "defaultMessage": "Two-build sequence did not finish."
+  },
+  "forgeSeries.finished": {
+    "defaultMessage": "Both builds are complete"
+  },
+  "forgeSeries.interrupted": {
+    "defaultMessage": "The app ended before the two-build sequence finished. Saved evidence is preserved."
+  },
+  "forgeSeries.intro": {
+    "defaultMessage": "One Run action starts two independent builds in this app. The second starts after the first is scored; each retains its own evidence."
+  },
+  "forgeSeries.live": {
+    "defaultMessage": "Live on leanzero.net"
+  },
+  "forgeSeries.median": {
+    "defaultMessage": "Local median {median} · range {min}–{max}"
+  },
+  "forgeSeries.noResponse": {
+    "defaultMessage": "No publication response"
+  },
+  "forgeSeries.noScore": {
+    "defaultMessage": "No scored build is available yet."
+  },
+  "forgeSeries.preparing": {
+    "defaultMessage": "Preparing build {index} of 2"
+  },
+  "forgeSeries.provisional": {
+    "defaultMessage": "One scored build is provisional. A two-build median is not available."
+  },
+  "forgeSeries.publish": {
+    "defaultMessage": "Publish 2 builds"
+  },
+  "forgeSeries.publishTitle": {
+    "defaultMessage": "Publication title"
+  },
+  "forgeSeries.publishing": {
+    "defaultMessage": "Publishing build {index} of 2…"
+  },
+  "forgeSeries.queued": {
+    "defaultMessage": "Waiting to start"
+  },
+  "forgeSeries.run": {
+    "defaultMessage": "Run 2 builds"
+  },
+  "forgeSeries.running": {
+    "defaultMessage": "Build {index} of 2 is running"
+  },
+  "forgeSeries.scored": {
+    "defaultMessage": "Scored"
+  },
+  "forgeSeries.settings": {
+    "defaultMessage": "The app runs two fresh builds in sequence with the same model, task and settings. Each keeps its own score and evidence."
+  },
+  "forgeSeries.skipped": {
+    "defaultMessage": "Did not start"
+  },
+  "forgeSeries.title": {
+    "defaultMessage": "Two independent builds"
+  },
+  "forgeSeries.unreadable": {
+    "defaultMessage": "Saved two-build evidence could not be read. Individual builds remain available."
+  },
+  "forgeSeries.view": {
+    "defaultMessage": "Open build {index} evidence"
+  },
+  "forgeSeries.waitingPublish": {
+    "defaultMessage": "Publishing waits for two complete, comparable builds and their native evidence."
   },
   "formingPanel.callChars": {
     "defaultMessage": "{chars} chars"

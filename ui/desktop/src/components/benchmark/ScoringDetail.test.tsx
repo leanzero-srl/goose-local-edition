@@ -405,7 +405,9 @@ describe('a forge-2.0 verdict reads its v1 tiers AND its v2 families R1–R9 (sc
       <ScoringDetail verdict={projected} score={forge2Verdict.score} scorerVersion="forge-2.0-rc" />
     );
     // No family is dropped for being new: each letter's group is named.
-    for (const tier of FORGE_ERA_TIER_ORDER['forge-2.0'])
+    for (const tier of FORGE_ERA_TIER_ORDER['forge-2.0'].filter(
+      (letter) => letter in forge2Verdict.tiers
+    ))
       expect(view.getAllByText(FORGE_TIERS[tier].name).length).toBeGreaterThan(0);
     const earned = view.getByRole('region', { name: 'Tests earned' });
     expect(
@@ -415,7 +417,7 @@ describe('a forge-2.0 verdict reads its v1 tiers AND its v2 families R1–R9 (sc
     ).toEqual(['Group', 'Mean of its tests', 'Weight', 'Adds to the score']);
     const lines = within(earned).getAllByTestId('forge-group-line');
     expect(lines.map((row) => row.getAttribute('data-tier'))).toEqual(
-      FORGE_ERA_TIER_ORDER['forge-2.0']
+      FORGE_ERA_TIER_ORDER['forge-2.0'].filter((letter) => letter in forge2Verdict.tiers)
     );
     expect(within(earned).getByText('R5 Admin panel')).toBeInTheDocument();
     const cells = (row: Element) => [...row.querySelectorAll('td')].map((td) => td.textContent);

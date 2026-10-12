@@ -11524,5 +11524,119 @@
   },
   "engineGlanceSettings.showAgain": {
     "defaultMessage": "다시 표시"
+  },
+  "benchmarkSection.build": {
+    "defaultMessage": "빌드 {index}"
+  },
+  "benchmarkSection.twoBuilds": {
+    "defaultMessage": "빌드 2회"
+  },
+  "forgeSeries.between": {
+    "defaultMessage": "빌드 1이 완료되었습니다. 빌드 2를 준비하고 있습니다."
+  },
+  "forgeSeries.build": {
+    "defaultMessage": "빌드 {index}/2"
+  },
+  "forgeSeries.callBudget": {
+    "defaultMessage": "빌드당 호출 {calls}회"
+  },
+  "forgeSeries.cancelDetail": {
+    "defaultMessage": "현재 빌드를 중지하고 다음 빌드의 시작을 막습니다. 완료된 점수와 증거는 보존되며 취소로 게시되는 내용은 없습니다."
+  },
+  "forgeSeries.cancelTitle": {
+    "defaultMessage": "이 두 빌드 벤치마크를 취소할까요?"
+  },
+  "forgeSeries.cancelled": {
+    "defaultMessage": "두 빌드의 연속 실행이 취소되었습니다"
+  },
+  "forgeSeries.cancelledStatus": {
+    "defaultMessage": "두 빌드의 연속 실행이 취소되었습니다."
+  },
+  "forgeSeries.checking": {
+    "defaultMessage": "두 빌드 확인 중…"
+  },
+  "forgeSeries.childCancelled": {
+    "defaultMessage": "취소됨"
+  },
+  "forgeSeries.childFailed": {
+    "defaultMessage": "완료되지 않음"
+  },
+  "forgeSeries.completeStatus": {
+    "defaultMessage": "두 빌드가 완료되었습니다."
+  },
+  "forgeSeries.continuePublish": {
+    "defaultMessage": "남은 빌드 게시"
+  },
+  "forgeSeries.failed": {
+    "defaultMessage": "두 빌드의 연속 실행이 완료되지 않았습니다"
+  },
+  "forgeSeries.failedStatus": {
+    "defaultMessage": "두 빌드의 연속 실행이 완료되지 않았습니다."
+  },
+  "forgeSeries.finished": {
+    "defaultMessage": "두 빌드가 모두 완료되었습니다"
+  },
+  "forgeSeries.interrupted": {
+    "defaultMessage": "두 빌드가 완료되기 전에 앱이 종료되었습니다. 저장된 증거는 보존됩니다."
+  },
+  "forgeSeries.intro": {
+    "defaultMessage": "이 앱에서 실행을 한 번 누르면 독립적인 빌드 두 개가 시작됩니다. 첫 번째 채점 후 두 번째가 시작되며 각각의 증거가 보존됩니다."
+  },
+  "forgeSeries.live": {
+    "defaultMessage": "leanzero.net에 게시됨"
+  },
+  "forgeSeries.median": {
+    "defaultMessage": "로컬 중앙값 {median} · 범위 {min}–{max}"
+  },
+  "forgeSeries.noResponse": {
+    "defaultMessage": "게시 응답 없음"
+  },
+  "forgeSeries.noScore": {
+    "defaultMessage": "아직 채점된 빌드가 없습니다."
+  },
+  "forgeSeries.preparing": {
+    "defaultMessage": "빌드 {index}/2 준비 중"
+  },
+  "forgeSeries.provisional": {
+    "defaultMessage": "채점된 빌드가 하나뿐이면 잠정 결과입니다. 두 빌드의 중앙값은 제공되지 않습니다."
+  },
+  "forgeSeries.publish": {
+    "defaultMessage": "빌드 2개 게시"
+  },
+  "forgeSeries.publishTitle": {
+    "defaultMessage": "게시 제목"
+  },
+  "forgeSeries.publishing": {
+    "defaultMessage": "빌드 {index}/2 게시 중…"
+  },
+  "forgeSeries.queued": {
+    "defaultMessage": "시작 대기 중"
+  },
+  "forgeSeries.run": {
+    "defaultMessage": "빌드 2개 실행"
+  },
+  "forgeSeries.running": {
+    "defaultMessage": "빌드 {index}/2 실행 중"
+  },
+  "forgeSeries.scored": {
+    "defaultMessage": "채점됨"
+  },
+  "forgeSeries.settings": {
+    "defaultMessage": "앱은 동일한 모델, 작업, 설정으로 새 빌드 두 개를 차례로 실행합니다. 각각의 점수와 증거가 보존됩니다."
+  },
+  "forgeSeries.skipped": {
+    "defaultMessage": "시작되지 않음"
+  },
+  "forgeSeries.title": {
+    "defaultMessage": "독립적인 빌드 두 개"
+  },
+  "forgeSeries.unreadable": {
+    "defaultMessage": "저장된 두 빌드의 증거를 읽을 수 없습니다. 개별 빌드는 계속 사용할 수 있습니다."
+  },
+  "forgeSeries.view": {
+    "defaultMessage": "빌드 {index} 증거 열기"
+  },
+  "forgeSeries.waitingPublish": {
+    "defaultMessage": "게시하려면 비교 가능한 완료된 빌드 두 개와 각각의 네이티브 증거가 필요합니다."
   }
 }
