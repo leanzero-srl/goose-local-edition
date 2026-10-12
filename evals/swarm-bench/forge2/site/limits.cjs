@@ -4,6 +4,8 @@
 // named operation's text); `measured` receipts were read on a Jira Cloud site on 2026-10-02.
 // The rate limits (points quota, burst bucket, per-issue writes) are the benchmark's own model: rate.cjs MODEL.
 const LIMITS = {
+  jqlMatchIssues: { value: 50, receipt: { openapi: 'jira.json components.schemas.IssuesAndJQLQueries.issueIds', quote: 'A list of up to 50 issue IDs.' } },
+  jqlMatchQueries: { value: 10, receipt: { openapi: 'jira.json components.schemas.IssuesAndJQLQueries.jqls', quote: 'A list of up to 10 JQL queries.' } },
   searchJqlDefault: { value: 50, receipt: { openapi: 'jira.json GET /rest/api/3/search/jql maxResults', quote: '"default":50' } },
   searchJqlIdsOnlyMax: { value: 5000, receipt: { openapi: 'jira.json GET /rest/api/3/search/jql maxResults', quote: 'The greatest number of items returned per page is achieved when requesting `id` or `key` only. It returns max 5000 issues.' } },
   searchJqlFieldsMax: { value: 100, receipt: { openapi: 'jira.json GET /rest/api/3/search/jql maxResults', quote: 'API may return fewer items per page where a large number of fields or properties are requested', measured: 'maxResults=5000&fields=summary returned 100 issues and a nextPageToken; fields=id or key returned 5000' } },

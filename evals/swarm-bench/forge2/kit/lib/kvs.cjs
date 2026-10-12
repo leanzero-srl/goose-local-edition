@@ -131,7 +131,7 @@ function createKvs({ entities: declared = [], now = () => Date.now(), floor = no
   };
   const alive = (rec) => rec && !(rec.expireAt && rec.expireAt <= now());
   const meta = (key, rec, extra = {}) => ({ key, value: rec.value, createdAt: rec.createdAt, updatedAt: rec.updatedAt, ...(rec.expireAt ? { expireTime: new Date(rec.expireAt).toISOString() } : {}), ...extra });
-  const write = (map, key, value, options = {}) => {
+  const prepareWrite = (map, key, value, options = {}) => {
     const t = now();
     const prev = map.get(key);
     const live = alive(prev) ? prev : undefined;
@@ -139,6 +139,10 @@ function createKvs({ entities: declared = [], now = () => Date.now(), floor = no
     const ttl = options.ttl ? options.ttl.value * (TTL_UNIT[options.ttl.unit] ?? NaN) : null;
     if (ttl !== null && !(ttl > 0)) throw new KvsError(400, 'INVALID_TTL', `TTL value must be a positive integer, received: ${options.ttl?.value}`);
     const rec = { value, createdAt: live?.createdAt ?? t, updatedAt: t, expireAt: ttl ? t + ttl : null };
+    return { rec, live };
+  };
+  const write = (map, key, value, options = {}) => {
+    const { rec, live } = prepareWrite(map, key, value, options);
     put(map, key, rec);
     if (options.returnValue === 'PREVIOUS') return live ? meta(key, live) : undefined;
     if (options.returnValue === 'LATEST') return meta(key, rec);
@@ -299,11 +303,15 @@ function createKvs({ entities: declared = [], now = () => Date.now(), floor = no
         if (op.entityName) entityDef(op.entityName);
         if (!conditionHolds(op)) throw new KvsError(400, 'CONDITIONAL_CHECK_FAILED', 'Request failed due to conditional check specified or optimistic locking');
       }
-      for (const op of sets) {
+      // Validate every write before publishing any value or query-index version.
+      const prepared = sets.map((op) => {
         checkValue(op.value);
-        if (op.entityName) { checkEntityValue(entityDef(op.entityName), op.value); write(ents, ekey(op.entityName, op.key), op.value, op.options); }
-        else write(kv, op.key, op.value, op.options);
-      }
+        if (op.entityName) checkEntityValue(entityDef(op.entityName), op.value);
+        const map = op.entityName ? ents : kv;
+        const key = op.entityName ? ekey(op.entityName, op.key) : op.key;
+        return { map, key, rec: prepareWrite(map, key, op.value, op.options).rec };
+      });
+      for (const op of prepared) put(op.map, op.key, op.rec);
       for (const op of dels) drop(op.entityName ? ents : kv, op.entityName ? ekey(op.entityName, op.key) : op.key);
       return undefined;
     },

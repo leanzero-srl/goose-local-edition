@@ -9,6 +9,7 @@ lock). They fail until those packages are merged, and each failure names what is
 import contextlib
 import dataclasses
 import fcntl
+import hashlib
 import io
 import json
 import os
@@ -124,6 +125,11 @@ class Forge20Workspace(unittest.TestCase):
                 sources.append((name, str(public / name)))
             spec = public / 'spec.md'
             spec.write_text('Upgrade v1 at {BASE_URL}. You have a budget of 300 model calls.\n')
+            (tmp / 'forge2').mkdir()
+            release = tmp / 'forge2/release-manifest.json'
+            release.write_text(json.dumps({'schemaVersion': 1, 'family': 'forge', 'scorerVersion': 'forge-2.0',
+                                          'files': {'public/spec.md': hashlib.sha256(spec.read_bytes()).hexdigest()}}))
+            launch_fingerprint = hashlib.sha256(release.read_bytes()).hexdigest()
             tier = dataclasses.replace(FORGE20, spec=str(spec), starter=str(starter), public=tuple(sources))
             modules = tmp / 'kit' / 'app-modules' / 'node_modules'
             (modules / '@forge' / 'react').mkdir(parents=True)
@@ -156,8 +162,9 @@ class Forge20Workspace(unittest.TestCase):
                                            _probe_preflight=lambda: None, _draw_seed=lambda: SEED, gather=gather,
                                            evaluate=lambda ctx: {'score': 0.1, 'scorerVersion': 'forge-2.0'})
             snapshot = {'version': 1, 'providers': [], 'config': {}, 'secrets': {}, 'custom_providers': {}}
-            with patch.dict(os.environ, {'BENCH_FORGE20': '1', 'BENCH_SPEC': str(spec)}, clear=True), \
+            with patch.dict(os.environ, {'BENCH_FORGE20': '1', 'BENCH_SPEC': str(spec), 'BENCH_RUN_ID': 'controlled-forge-build'}, clear=True), \
                     patch.object(isolated_tiers, 'active', return_value=tier), \
+                    patch.object(run_build, 'ROOT', tmp), \
                     patch.object(run_build, '_regime', return_value=(scorer, site, tier.spec)), \
                     patch.object(run_build, 'entrant_config', return_value=snapshot), \
                     patch.object(run_build, 'invoke', side_effect=build), \
@@ -181,6 +188,8 @@ class Forge20Workspace(unittest.TestCase):
             self.assertTrue((work / run_build.BUILD_VENDOR_TRACE).is_file())
             self.assertEqual(verdict['kit'], {'lock_sha256': 'k' * 64, 'wrapper_sha256': 'w' * 64, 'dir': kit['dir']})
             self.assertEqual(verdict['reasoning_effort']['source'], 'forge-2.0 pin')
+            self.assertEqual(verdict['taskFingerprint'], launch_fingerprint)
+            self.assertEqual(verdict['buildId'], 'controlled-forge-build')
 
 
 class ScoreLockTests(unittest.TestCase):

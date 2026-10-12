@@ -3,13 +3,13 @@ entrant's tools talk to — forge2/site/site.cjs, which carries the dev world sc
 
     server = forge2_site.serve(port, trace, seed=fixture_seed)
     server.url           FORGE_SITE_URL for the entrant: http://admin:<token>@127.0.0.1:<port>
-    server.dev_seed      the dev site's own seed, drawn here, never equal to fixture_seed
+    server.dev_seed      the task's common dev seed, never equal to fixture_seed
     server.shutdown(); server.server_close()      stops the node process by pid (gate 4)
     forge2_site.mark_phase(name)                  appends a phase marker to the trace
 
 The trace's first line is the header the scorer reads: {trace_header, tier, fixture_seed, dev_seed,
 kit_lock_sha256}. `fixture_seed` is only recorded here — the dev site serves `dev_seed`, so nothing the
-entrant can observe derives from the scoring seed. The scoring site is started by forge2_probe.mjs itself.
+entrant can observe is the scoring fixture. Common fixtures are frozen before model observations. The scoring site is started by forge2_probe.mjs itself.
 """
 from __future__ import annotations
 
@@ -25,6 +25,8 @@ import subprocess
 import sys
 import threading
 import time
+
+import forge2_seed_policy as seed_policy
 
 HERE = Path(__file__).resolve().parent
 SITE_JS = HERE.parent / 'forge2' / 'site' / 'site.cjs'
@@ -44,10 +46,10 @@ def _node() -> str:
 
 
 def draw_dev_seed(fixture_seed: str | None) -> str:
-    while True:
-        seed = secrets.token_hex(8)
-        if seed != fixture_seed:
-            return seed
+    seed = seed_policy.site_seed('development')
+    if seed == fixture_seed:
+        raise ValueError('Scoring fixture equals the common development site; choose a distinct control seed')
+    return seed
 
 
 class DevSite:

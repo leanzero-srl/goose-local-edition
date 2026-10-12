@@ -178,7 +178,8 @@ permissions.
   resource's source and `src/` are bundled the way `forge deploy` does (the classic JSX transform: `import React` in
   every `.jsx` file).
 - Every invocation runs in a fresh Node process of the Forge runtime, on §11's virtual clock.
-- A pushed event's `concurrency` key and limit are not applied.
+- A pushed event's `concurrency` key and limit apply across all queues in this installation. A shared key
+  serializes work when its limit is 1; unkeyed consumers may run concurrently. The harness uses up to 3 workers.
 - Trigger `filter.expression` is not evaluated: the handler receives every issue-updated event.
 - A Custom UI page's own `requestJira` costs no points (as on Forge) but counts in its endpoint's burst bucket
   (§10).
@@ -229,17 +230,21 @@ transaction condition → 400 `CONDITIONAL_CHECK_FAILED`; a transaction of more 
 - **Background** = product event triggers, async event consumers, scheduled triggers, the web trigger.
   **Person-facing** = resolvers invoked from a UI surface (Custom UI or UI Kit) and the Rovo action. Every Jira
   request counts, `asApp` and `asUser` alike.
-- **Costs:** GET 1 · Jira Software GETs 1 · `GET`/`POST /rest/api/3/search/jql` 1 + 1 per 50 issues returned ·
-  `POST /rest/api/3/changelog/bulkfetch` 2 per call (≤ 1,000 issues) · the app field-value API (§15) 1 + 1 per 50
-  updates (≤ 200 updates per request) · any other POST, PUT or DELETE 2. Every started block of 50 counts.
-- **Bursts:** each endpoint (method + path template) has a token bucket of 30 points, refilled at 5 points per virtual
-  second. Per-issue writes: at most 1 write per issue per 2 virtual seconds (a comment, an edit and a field value are
-  all writes to that issue).
-- **Responses:** every response carries `X-RateLimit-Limit: 2400`; when fewer than 20 % of the hour's points (480)
-  remain, also `X-RateLimit-Remaining` and `X-RateLimit-NearLimit: true`. A 429 has the body
-  `{"errorMessages":["Rate limit exceeded"]}`, `Retry-After: <seconds>` and `RateLimit-Reason`, one of
-  `jira-quota-tenant-based` (Retry-After = seconds to the next virtual hour), `jira-burst-based`,
-  `jira-per-issue-on-write`.
+- **Costs:** read operations cost a base point plus one point for each top-level domain object returned.
+  Identity/access operations charge two points per returned object. Single-object reads include that object; lists
+  count each returned item, not nested fields. `POST` search, bulkfetch and precomputation search are reads too.
+  Mutating operations cost one point regardless of payload size. `RATE-MODEL.json` lists the response collections.
+- **Bursts:** per endpoint (method + path template), measured in requests, independently of quota points. Default
+  GET/POST allowance is 100 requests per second; PUT/DELETE 50; issue GET 150; changelog GET 200. The harness uses
+  a one-second token buffer, since Jira's production buffer capacity is not public.
+  Per-issue writes: at most 20 in 2 seconds AND 100 in 30 seconds, including bulk field-value writes.
+- **Responses:** `X-RateLimit-Limit` and `X-RateLimit-Remaining` describe the endpoint request bucket, never hourly
+  points. `RateLimit-Policy: "global-app-quota";q=2400;w=3600` (or `"tenant-app-quota"`) and
+  `RateLimit: "global-app-quota";t=<seconds to reset>` describe the hourly policy. When fewer than 20% of the
+  quota remain, `RateLimit` also includes `r=<points remaining>` and `X-RateLimit-NearLimit: true`.
+  A 429 has body `{"errorMessages":["Rate limit exceeded"]}`, `Retry-After: <seconds>`,
+  `X-RateLimit-Reset: <ISO UTC>` and `RateLimit-Reason`: `jira-quota-global-based` or `jira-quota-tenant-based`
+  (seconds to the next virtual hour), `jira-burst-based`, or `jira-per-issue-on-write`.
 
 Guarantees (graded on the site's own accounting):
 - Background work never takes more than `Background share (%)` of any virtual hour's quota (default 70 % = 1,680
@@ -247,7 +252,7 @@ Guarantees (graded on the site's own accounting):
 - No person-facing request is ever answered with a quota 429. The harness's own person-facing traffic in any hour stays
   below the share your background leaves free.
 - The backfill and every reconciliation finish correctly inside that budget (§3).
-- Retry-After is honoured, and the reason decides the reaction: `jira-quota-tenant-based` → no background request at
+- Retry-After is honoured, and the reason decides the reaction: `jira-quota-global-based` or `jira-quota-tenant-based` → no background request at
   all until the next virtual hour; `jira-burst-based` → slow that endpoint only (nothing to it before Retry-After);
   `jira-per-issue-on-write` → delay writes to that issue only (on a bulk field-value request it names no issue:
   resend the request after its Retry-After). Each request sent before its Retry-After passed counts against you,
@@ -407,3 +412,27 @@ Counted, never timed (graded):
 
 Everything in §1–§8 holds throughout the 6 scored hours. The harness reads every surface at several points of the
 scored window, from the first virtual hour mark on, and compares it with the site's state at that point.
+
+## 19. Ledger-backed JQL search
+
+Add a `jira:jqlFunction` named `scopeChanged` with one required string argument `sprintId`, return type `issue`,
+and operators `in` and `not in`. A user can search `key in scopeChanged("<sprintId>")`: it returns each
+non-deleted issue that has an added or removed ledger change for that sprint, once each. Committed issues with no
+change are excluded. The complement operator returns all browse-visible issues outside that set. Active and closed
+sprints retain their history; a future sprint has no changes. Missing, unknown or non-numeric arguments return a
+clear error, not an unconstrained query.
+
+The invocation receives `{precomputationId, clause: {field, operator, functionName, arguments}}` and returns
+`{jql: "<native JQL fragment>"}` or `{error: "<message>"}`. Validate arguments and never interpolate arbitrary input.
+Fragments contain at most 1,000 right-hand-side values and no ORDER BY. The function runs as the app, with a 25-second
+invocation limit. Precomputations are shared by argument/clause across users. Return the complete app-visible set;
+Jira applies each user's browse permissions when evaluating the expanded native query.
+
+Jira caches an expansion and does not invoke the function again when its ledger changes. Refresh relevant stored
+precomputations after migration, new changes, deletion and reconciliation, within the same freshness guarantees as
+the ledger/custom field. A closed sprint's final expansion stays valid. Use the documented APIs:
+`GET /rest/api/3/jql/function/computation` (paginated `values`) and
+`POST /rest/api/3/jql/function/computation` with `{values:[{id, value:"<new native fragment>"}]}`.
+The cache lasts 7 days since last use. An error is cached only when `storeErrorAsPrecomputation: true` is returned.
+Dev-site search requests exercise the same shared precomputation cache as scoring; declaration without functional
+search and refresh earns nothing.

@@ -19,17 +19,13 @@ MUTANTS.json, one entry per mutant:
   why                   the defect and why those rows
 """
 import json
-import os
 from pathlib import Path
-import shutil
-import subprocess
 import sys
 
 HERE = Path(__file__).resolve().parent
 BENCH = HERE.parent.parent / 'bench'
-GOLDEN = BENCH / 'golden-forge2'
-IGNORE = shutil.ignore_patterns('node_modules', '.forge-dev', 'forge-shots', 'bench-media', '__pycache__', 'verdict*.json',
-                                'forge-observations.json')
+sys.path.insert(0, str(BENCH))
+import forge2_controls as controls
 
 
 def mutants():
@@ -42,43 +38,18 @@ def kit():
     return forge2_kit.ensure()
 
 
-def run(cmd, cwd, env=None):
-    p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, env={**os.environ, **(env or {})})
-    return p.returncode, (p.stdout + p.stderr).strip()
-
-
 def materialise(patch: Path, target: Path, info=None) -> None:
     """Golden copy + patch (+ the Custom UI rebuilt when `info`, the kit, is given). Raises on any failure."""
-    if target.exists() and any(target.iterdir()):
-        raise RuntimeError(f'{target} is not empty')
-    if target.exists():
-        target.rmdir()
-    shutil.copytree(GOLDEN, target, ignore=IGNORE)
-    if patch is not None:
-        code, out = run(['git', 'apply', '--whitespace=nowarn', str(patch)], target)
-        if code:
-            raise RuntimeError(f'{patch.name} does not apply: {out[-400:]}')
-    if info is None or 'build' not in (json.loads((target / 'package.json').read_text()).get('scripts') or {}):
-        return
-    link = target / 'node_modules'
-    link.symlink_to(Path(info['modules_dir']) / 'app-modules' / 'node_modules')
-    try:
-        code, out = run(['npm', 'run', 'build'], target)
-    finally:
-        link.unlink()
-    if code:
-        raise RuntimeError(f'npm run build failed: {out[-400:]}')
+    controls.materialise_control(target, patch=patch)
+    if info is not None:
+        why = controls._rebuild(target, str(Path(info['modules_dir']) / 'app-modules' / 'node_modules'))
+        if why:
+            raise RuntimeError(why)
 
 
 def lint(target: Path, info) -> dict:
     """The kit's offline lint (the probe's runLint): {errors, warnings: [message]}."""
-    _code, out = run(['node', str(Path(info['kit_dir']) / 'bin' / 'lint.cjs'), '--json'], target, {'FORGE_KIT': info['kit_dir']})
-    line = next((l.removeprefix('LINT_JSON ') for l in reversed(out.splitlines()) if l.removeprefix('LINT_JSON ').startswith('{')), None)
-    if line is None:
-        raise RuntimeError(f'lint crashed: {out[-400:]}')
-    problems = json.loads(line).get('problems') or []
-    return {'errors': [p.get('message') for p in problems if p.get('sev') == 'error'],
-            'warnings': sorted(p.get('message') for p in problems if p.get('sev') == 'warning')}
+    return controls.offline_lint(target, info['kit_dir'])
 
 
 def patch_of(arg: str) -> Path:

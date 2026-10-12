@@ -20,7 +20,7 @@ parameters:
     input_type: string
     requirement: optional
     default: "all"
-    description: "Which test phases to run: all, basic, extensions, mcp_setup, provider_connections, openai_compat, delegation, advanced"
+    description: "Which test phases to run: all, basic, extensions, mcp_setup, provider_connections, benchmark_series, openai_compat, delegation, advanced"
 
   - key: test_depth
     input_type: string
@@ -477,6 +477,26 @@ prompt: |
   in Benchmark or Add node, and their settings must remain available for correction.
   Never print secrets or claim vendor-account success from mocked transport tests. Record
   unavailable credentials as unverified; do not substitute another account.
+  {% endif %}
+
+  {% if test_phases == "benchmark_series" %}
+  ## Forge two-build desktop sequence
+  Use the desktop Benchmark view with Forge 2.0 selected. One Run action must create a
+  durable parent and two different native child run IDs. Verify Build 1 of 2 and Build 2 of 2
+  reflect the actual runner stage, including the gap between children and after leaving and
+  returning to Benchmark. The second child must start only after the first naturally ends.
+  Read both raw verdicts: each fixture site belongs to its own build, not an independent run.
+  Show count two, median and observed range only when both completed children share the
+  same task, scorer, fixtures and selected provider settings. Changed treatment must keep
+  individual scores and explain why the pair cannot be compared. Cancel must preserve the
+  first completed child and prevent the pending second child from starting; do not replay
+  cancelled or interrupted work on restart. Publish each actual child once, retaining any
+  accepted first publication if the second fails. Rapid repeated publish clicks must not
+  create duplicate requests. Never launch extra paid work for this self-test unless that
+  actual model run is authorized; free lifecycle fixtures prove controls, not model scores.
+  Record real UI, raw child identities and the publication receipts in
+  {{ workspace_dir }}/benchmark_series.md. Mark paid native verification pending when the
+  test uses fixtures. Do not replace the installed carrier during an active campaign.
   {% endif %}
 
   ## 🎯 META-TESTING NOTES

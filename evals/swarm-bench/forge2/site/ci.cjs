@@ -19,11 +19,11 @@
 // whatever the app's first invocation cost) · bad-signature · unsigned · tampered (signed for staging, sent as
 // production) · stale (timestamp in the past) · stale-future · header-case (header names spelled off-canonical).
 // Each step owns its issues and its eventId, so any effect is attributable to exactly one step.
-// Not here, on purpose: a concurrent duplicate — two invocations' KVS calls interleave by OS scheduling in the
-// emulator, so that row would not be identical on every machine.
+// The final byte-identical replay pair shares a deterministic reads-first invocation group. Atomic claims
+// decide one winner; read-then-write claims race reproducibly on every scoring machine.
 const crypto = require('crypto');
 const { createRng, SEED_RE } = require('./rng.cjs');
-const { CI, ciSignature, encodeCiEvent, invokeWebtrigger } = require('../kit/lib/webtrigger.cjs');
+const { CI, ciSignature, encodeCiEvent, invokeWebtrigger, webtriggerRequest, responseFor, webtriggerModules } = require('../kit/lib/webtrigger.cjs');
 
 // A stale timestamp sits off the window by more than a whole web-trigger invocation twice over, so it stays stale
 // even when the app reads its clock at the end of its run (the future side shrinks by that much).
@@ -33,7 +33,7 @@ const STALE_MAX_S = 6 * CI.windowSeconds; // ratio: half a virtual hour
 // Neither the contract's spelling, nor all-lower, nor all-upper: a lookup that only knows one of those fails here,
 // and the same way on every seed.
 const CASED_NAMES = ['x-Lz-Timestamp', 'X-lz-SIGNATURE'];
-const KEYS_PER_STEP = { valid: 2, 'bad-signature': 1, unsigned: 1, tampered: 1, stale: 1, 'stale-future': 1, 'header-case': 1 };
+const KEYS_PER_STEP = { valid: 2, 'bad-signature': 1, unsigned: 1, tampered: 1, stale: 1, 'stale-future': 1, 'header-case': 1, 'concurrent-valid': 1 };
 
 function createCiSequence({ seed, secret, issueKeys }) {
   if (!SEED_RE.test(String(seed))) throw new Error(`ci sequence: seed must be 16 lowercase hex chars, got ${JSON.stringify(seed)}`);
@@ -63,6 +63,12 @@ function createCiSequence({ seed, secret, issueKeys }) {
   const cased = event('production', 1);
   steps.push({ name: 'header-case', ...cased, skew: 0, names: CASED_NAMES, expect: { status: 202, effect: { environment: cased.environment, issueKeys: cased.issueKeys } } });
 
+  const concurrent = event('production', 1);
+  steps.push({ name: 'concurrent-valid', ...concurrent, skew: 0, concurrentGroup: concurrent.eventId,
+    expect: { status: 202, effect: { environment: concurrent.environment, issueKeys: concurrent.issueKeys } } });
+  steps.push({ name: 'concurrent-replay', ...concurrent, replayOf: 'concurrent-valid', concurrentGroup: concurrent.eventId,
+    expect: { status: 200, effect: null } });
+
   const rendered = new Map();
   function render(step, now) {
     if (step.replayOf) {
@@ -83,27 +89,46 @@ function createCiSequence({ seed, secret, issueKeys }) {
 
   let cursor = 0;
   return {
-    plan: steps.map(({ name, eventId, environment, issueKeys: k, expect }) => ({ name, eventId, environment, issueKeys: k, expect })),
+    plan: steps.map(({ name, eventId, environment, issueKeys: k, expect, concurrentGroup }) => ({ name, eventId, environment, issueKeys: k, expect, concurrentGroup })),
     next(nowSeconds) {
       if (!Number.isInteger(nowSeconds)) throw new Error(`ci sequence: next() takes the virtual clock in whole unix seconds, got ${nowSeconds}`);
       const step = steps[cursor];
       if (!step) return null;
       cursor += 1;
-      return { name: step.name, eventId: step.eventId, request: render(step, nowSeconds), expect: step.expect };
+      return { name: step.name, eventId: step.eventId, concurrentGroup: step.concurrentGroup, request: render(step, nowSeconds), expect: step.expect };
     },
   };
 }
 
-// Drives the sequence in-process through the same ingress the emulator mounts, one step at a time, at the emulator's
+// Drives the sequence in-process through the same ingress the emulator mounts at the emulator's
 // virtual clock. It does not drain queues: an app may finish the work in a consumer, and the probe drains in its phase.
 async function runCiSequence(emu, { moduleKey, seed, secret, issueKeys }) {
   const seq = createCiSequence({ seed, secret, issueKeys });
   const steps = [];
   for (let s = seq.next(Math.floor(emu.clock.now() / 1000)); s; s = seq.next(Math.floor(emu.clock.now() / 1000))) {
-    const r = await invokeWebtrigger(emu, moduleKey, s.request);
-    steps.push({ name: s.name, eventId: s.eventId, expect: s.expect, request: s.request, statusCode: r.statusCode, body: r.body, error: r.error, invocation: r.invocation });
+    const batch = s.concurrentGroup ? [s, seq.next(Math.floor(emu.clock.now() / 1000))] : [s];
+    if (batch.some((x) => !x || x.concurrentGroup !== s.concurrentGroup)) throw new Error('CI replay pair is incomplete');
+    const replies = s.concurrentGroup ? await invokeCiGroup(emu, moduleKey, batch.map((x) => x.request))
+      : [await invokeWebtrigger(emu, moduleKey, s.request)];
+    batch.forEach((x, i) => { const r = replies[i];
+      steps.push({ name: x.name, eventId: x.eventId, concurrentGroup: x.concurrentGroup, expect: x.expect, request: x.request,
+        statusCode: r.statusCode, body: r.body, error: r.error, invocation: r.invocation });
+    });
   }
   return { plan: seq.plan, steps };
 }
 
-module.exports = { createCiSequence, runCiSequence };
+async function invokeCiGroup(emu, moduleKey, requests) {
+  const module = webtriggerModules(emu.manifest).find((m) => m.key === moduleKey);
+  if (!module?.function) throw new Error(`CI replay: web trigger '${moduleKey}' names no function`);
+  if (typeof emu.invokeWebtriggerGroup !== 'function') throw new Error('CI replay: emulator has no concurrent web-trigger ingress');
+  const events = requests.map((http) => webtriggerRequest(moduleKey, http));
+  const invocations = await emu.invokeWebtriggerGroup(moduleKey, events);
+  return invocations.map((invocation, i) => ({
+    ...(invocation.ok ? responseFor(module, invocation.result) : { statusCode: 500, body: '',
+      error: invocation.timedOut ? 'web trigger invocation timed out' : String(invocation.error?.message ?? invocation.error) }),
+    request: events[i], invocation,
+  }));
+}
+
+module.exports = { createCiSequence, runCiSequence, invokeCiGroup };

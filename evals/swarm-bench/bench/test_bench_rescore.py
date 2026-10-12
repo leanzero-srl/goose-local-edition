@@ -156,6 +156,33 @@ Path(a.json_out).write_text(json.dumps({'score':.4,'scorerVersion':'sb-7.1','fix
         self.assertEqual(actual['fixture_seed'], '0123456789abcdef')
         retry.validate_receipt(actual, self.root / 'runs/controlled-r0', 'completed-before-crash')
 
+    def test_forge2_receipt_retry_preserves_launch_fingerprint_and_build_id(self):
+        tier = retry.isolated_tiers.FORGE20
+        launch = {'taskFingerprint': 'a' * 64, 'buildId': 'forge-build',
+                  'input_manifest': {'contract.md': 'original'}, 'reasoning_effort': {'value': 'medium'}}
+        receipt_path = self.root / 'private/forge2.json'
+        receipt = retry.write_completion(self.tree, receipt_path, self.agent,
+            run_id='forge-build', started_at='2026-10-11T00:00:00Z', seed='0123456789abcdef',
+            port=8850, provider='openrouter', model='m', tier=tier,
+            kit={'lock_sha256': 'b' * 64}, launch_identity=launch)
+        self.assertEqual(receipt['launchIdentity'], launch)
+        output = self.root / 'forge2-attempt'
+        def score(command):
+            report = Path(command[command.index('--json-out')+1])
+            report.write_text(json.dumps({'score': .7, 'scorerVersion': 'forge-2.0',
+                'fixture_seed': '0123456789abcdef', 'kit_lock_sha256': 'b' * 64,
+                'taskFingerprint': 'f' * 64, 'buildId': 'wrong-scorer-identity'}))
+            return 0
+        with patch.object(sys, 'argv', ['retry', '--receipt', str(receipt_path), '--tree', str(self.tree),
+                                       '--run-id', 'forge-build', '--out', str(output)]), \
+             patch.object(retry.subprocess, 'call', side_effect=score):
+            self.assertEqual(retry.main(), 0)
+        result = json.loads((output / 'verdict.json').read_text())
+        self.assertEqual(result['taskFingerprint'], launch['taskFingerprint'])
+        self.assertEqual(result['buildId'], launch['buildId'])
+        self.assertEqual(result['input_manifest'], launch['input_manifest'])
+        self.assertEqual(result['reasoning_effort'], launch['reasoning_effort'])
+
     def test_failed_scorer_records_failure_without_installing_a_result(self):
         output = self.root / 'failed-attempt'
         with patch.object(sys, 'argv', ['retry', '--receipt', str(self.receipt_path), '--tree', str(self.tree), '--run-id', 'cloud-test', '--out', str(output)]), patch.object(retry.subprocess, 'call', return_value=2), self.assertRaisesRegex(RuntimeError, 'code 2'):

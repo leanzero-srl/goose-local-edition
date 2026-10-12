@@ -45,6 +45,7 @@
 // INFERRED (R6, not measured): that a non-global publish without a frontend context fails with the documented
 // publish error (logged `rejected: PUBLISH_WITHOUT_FRONTEND_CONTEXT`), and the token lifetime.
 const crypto = require('crypto');
+const { requestTime } = require('./request-time.cjs');
 
 const TOKEN_TTL_S = 3600; // harness policy: no doc states a realtime token's lifetime; one hour outlives any graded session
 const PRODUCT_CONTEXT = ['board', 'issue', 'project', 'content', 'space', 'repository', 'pullRequest'];
@@ -68,13 +69,13 @@ function createRealtime({ now, secret }) {
     const body = b64(payload);
     return `${head}.${body}.${crypto.createHmac('sha256', secret).update(`${head}.${body}`).digest('base64url')}`;
   };
-  const verify = (token, channelName, need) => {
+  const verify = (token, channelName, need, atMs = now()) => {
     const parts = String(token).split('.');
     if (parts.length !== 3) return { error: 'INVALID_TOKEN' };
     const mac = crypto.createHmac('sha256', secret).update(`${parts[0]}.${parts[1]}`).digest('base64url');
     if (mac !== parts[2]) return { error: 'INVALID_TOKEN' };
     const p = JSON.parse(Buffer.from(parts[1], 'base64url').toString());
-    if (p.exp <= now() / 1000) return { error: 'TOKEN_EXPIRED' };
+    if (p.exp <= atMs / 1000) return { error: 'TOKEN_EXPIRED' };
     if (p.channel?.name !== channelName) return { error: 'CHANNEL_NAME_MISMATCH' };
     if (p.permissions && !p.permissions.includes(need)) return { error: 'MISSING_PERMISSION' };
     return { claims: p.claims };
@@ -94,8 +95,8 @@ function createRealtime({ now, secret }) {
     return token;
   };
 
-  function signToken({ channelName, claims, permissions }) {
-    const exp = Math.floor(now() / 1000) + TOKEN_TTL_S;
+  function signToken({ channelName, claims, permissions, atMs }) {
+    const exp = Math.floor(requestTime(now, atMs) / 1000) + TOKEN_TTL_S;
     const perms = permissions && permissions.length ? permissions : null;
     return { jwt: sign({ channel: { name: channelName }, claims: claims ?? null, ...(perms ? { permissions: perms } : {}), exp }), expiresAt: exp };
   }
@@ -121,23 +122,23 @@ function createRealtime({ now, secret }) {
 
   const matches = (sub, e) => sub.channelName === e.channel && sub.isGlobal === e.isGlobal && sub.claims === e.claims
     && sub.hasToken === e.hasToken && (sub.isGlobal || sub.context === e.context);
-  const deliver = (sub, e) => {
-    const d = { seq: ++seq, subscriptionId: sub.id, origin: sub.origin, eventId: e.eventId, channel: e.channel, payload: parsePayload(e.payload), wire: e.payload, at: new Date(now()).toISOString() };
+  const deliver = (sub, e, atMs = now()) => {
+    const d = { seq: ++seq, subscriptionId: sub.id, origin: sub.origin, eventId: e.eventId, channel: e.channel, payload: parsePayload(e.payload), wire: e.payload, at: new Date(atMs).toISOString() };
     deliveries.push(d);
     for (const fn of listeners) fn(d);
     return d;
   };
 
   // {channelName, payload: string, isGlobal, token, contextToken, contextOverrides, origin} -> PublishResult
-  function publish({ channelName, payload, isGlobal = false, token, contextToken, contextOverrides, origin = {} }) {
-    const t = now();
+  function publish({ channelName, payload, isGlobal = false, token, contextToken, contextOverrides, origin = {}, atMs }) {
+    const t = requestTime(now, atMs);
     const e = { seq: ++eventSeq, ms: t, at: new Date(t).toISOString(), channel: channelName, isGlobal: Boolean(isGlobal), payload,
       origin, hasToken: Boolean(token), claims: stable(null), context: null, delivered: [], eventId: null, eventTimestamp: null };
     events.push(e);
     const fail = (reason, message) => { e.rejected = reason; e.errors = [{ message, extensions: { errorType: reason } }]; return { eventId: null, eventTimestamp: null, errors: e.errors }; };
     if (typeof channelName !== 'string' || !channelName) return fail('INVALID_CHANNEL_NAME', 'A realtime channel name must be a non-empty string.');
     if (token) {
-      const v = verify(token, channelName, 'publish');
+      const v = verify(token, channelName, 'publish', t);
       if (v.error) return fail(v.error, `Realtime token validation failed: ${v.error}`);
       e.claims = stable(v.claims);
     }
@@ -150,7 +151,7 @@ function createRealtime({ now, secret }) {
     }
     const targets = [...subscriptions.values()].filter((sub) => matches(sub, e));
     if (targets.length) { e.eventId = crypto.randomUUID(); e.eventTimestamp = String(t); }
-    for (const sub of targets) e.delivered.push(deliver(sub, e).subscriptionId);
+    for (const sub of targets) e.delivered.push(deliver(sub, e, t).subscriptionId);
     return { eventId: e.eventId, eventTimestamp: e.eventTimestamp };
   }
 

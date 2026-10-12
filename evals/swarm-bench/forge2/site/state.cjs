@@ -87,6 +87,8 @@ function createState(pack) {
   const now = () => base + st.skipped;
   const advance = (ms) => { if (ms > 0) { st.skipped += ms; st.version++; } return now(); };
   const advanceTo = (t) => { const n = now(); if (t > n) { st.skipped += t - n; st.version++; } return now(); };
+  // A queued mutation keeps its creation instant even when processing has already advanced the observation clock.
+  const mutationTime = (at) => { const t = Number(at); advanceTo(t); return t; };
 
   // Results computed from the state (search hits, board lists) are reused until the state or the clock changes, so a
   // page walk does not re-filter and re-sort every issue per page.
@@ -226,7 +228,7 @@ function createState(pack) {
     const prev = sprintIds(issue);
     const open = prev.find((id) => mustSprint(id).state !== 'closed') ?? null;
     if (open === to.id) throw new Error(`issue ${issue.key} is already in sprint ${to.id}`);
-    const t = advanceTo(at);
+    const t = mutationTime(at);
     const items = [sprintItem(prev, [...prev.filter((id) => id !== open), to.id])];
     if (estimate !== undefined) {
       const fieldId = st.boards.get(to.originBoardId).estimationFieldId;
@@ -240,7 +242,7 @@ function createState(pack) {
     const issue = mustIssue(ref);
     const pending = liveRemainingFor(issue.id);
     if (pending) throw new Error(`issue ${issue.key} still has ${pending} live change(s) to apply; delete an issue whose live script is done`);
-    const t = advanceTo(at);
+    const t = mutationTime(at);
     st.issues.delete(issue.id);
     st.byKey.delete(issue.key);
     st.deleted.set(issue.id, { issue, at: iso(t) });
@@ -254,7 +256,7 @@ function createState(pack) {
     const target = carryTo === null ? null : mustSprint(carryTo);
     if (target && target.state === 'closed') throw new Error(`cannot carry issues into closed sprint ${target.id}`);
     if (target) mustAuthor(authorId);
-    const t = advanceTo(at);
+    const t = mutationTime(at);
     s.state = 'closed';
     s.completeDate = iso(t);
     const carried = [];
@@ -272,7 +274,7 @@ function createState(pack) {
     if (!b || b.type !== 'scrum') throw new Error(`no scrum board ${boardId}`);
     if (!isNumberField(fieldId)) throw new Error(`${fieldId} is not a number custom field of this site`);
     if (b.estimationFieldId === fieldId) throw new Error(`board ${b.id} already estimates with ${fieldId}`);
-    const t = advanceTo(at);
+    const t = mutationTime(at);
     const from = b.estimationFieldId;
     b.estimationFieldId = fieldId;
     return record('setBoardEstimationField', t, { boardId: b.id, from, to: fieldId });
@@ -281,7 +283,7 @@ function createState(pack) {
   const revokeBrowse = (accountId, projectKey, { at = now() } = {}) => {
     if (!userById.has(accountId)) throw new Error(`no user ${accountId}`);
     if (!pack.projects.some((p) => p.key === projectKey)) throw new Error(`no project ${projectKey}`);
-    const t = advanceTo(at);
+    const t = mutationTime(at);
     if (!st.revoked.has(accountId)) st.revoked.set(accountId, new Set());
     st.revoked.get(accountId).add(projectKey);
     return record('revokeBrowse', t, { accountId, projectKey });

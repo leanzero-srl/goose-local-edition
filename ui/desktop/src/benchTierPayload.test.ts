@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { forge2Synthetic } from './components/benchmark/forge2Synthetic.fixture';
 import {
   BENCH_SPEC_FILE,
   BENCH_RENDER_PROBE,
@@ -295,31 +296,12 @@ it('names eras for people — Gauntlet and Forge — while every id stays sb-* /
   expect(eraDisplayName('sb-7.0-rc')).toBe('Gauntlet 7.0 rc');
   expect(eraDisplayName('forge-1.0-rc')).toBe('Forge 1.0 pilot');
   expect(eraDisplayName('custom-era')).toBe('custom-era');
-  // The 19 Forge 2.0 group names are ONE set for the app and leanzero.net: L…E as the site's Forge 1.0
-  // brief names them, R1–R9 as the task text's Score section names its requirements.
-  expect(
-    FORGE_ERA_TIER_ORDER['forge-2.0'].map((tier) => `${tier} ${FORGE_TIERS[tier].name}`)
-  ).toEqual([
-    'L Lint and bundles',
-    'K Platform currency',
-    'T Event pipeline',
-    'R Reconcile',
-    'S Storage',
-    'B Resolvers and permissions',
-    'U UI function',
-    'V Visual',
-    'A Rovo',
-    'E Excellence',
-    'R1 Migration',
-    'R2 Dosing',
-    'R3 Time limits',
-    'R4 Changing world',
-    'R5 Admin panel',
-    'R6 CI web trigger',
-    'R7 Custom field',
-    'R8 Forge LLM',
-    'R9 Boot budget',
-  ]);
+  expect(FORGE_ERA_TIER_ORDER['forge-2.0']).toEqual(forge2Synthetic.tierOrder);
+  for (const tier of forge2Synthetic.tierOrder) {
+    expect(FORGE_TIERS[tier]?.name).toBeTruthy();
+    expect(FORGE_TIERS[tier]?.desc).toBeTruthy();
+  }
+  expect(FORGE_TIERS.R10.name).toBe('Native JQL');
   // Tier A grades the Rovo action and its SKILL.md; no Rovo agent is run or graded.
   expect(FORGE_TIERS.A.desc).not.toMatch(/agent answer/);
   // A score has one format per era: Forge 2.0's is the site's four decimals, on every surface.

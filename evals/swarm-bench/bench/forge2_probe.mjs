@@ -35,7 +35,9 @@
 //   P3 <repo>/forge2/site/ci.cjs       scoringSequence({secret, issueKeys, nowSeconds}) -> [{case, headers, body}]
 import { createRequire } from 'module';
 import { execSync, spawnSync } from 'child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs';
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from 'fs';
+import { randomUUID } from 'node:crypto';
+import { types } from 'node:util';
 import { dirname, join, relative, resolve } from 'path';
 
 const require = createRequire(import.meta.url);
@@ -114,6 +116,7 @@ const obs = {
   field: { writes: [], values_by_checkpoint: {} },
   llm_v2: [],
   boot: {},
+  jql: { cases: [], precomputations: [] },
   checkpoints: {},
   upgrade: null,
   person_reads: [],
@@ -121,7 +124,97 @@ const obs = {
   // step's read-after-write window (the widget re-reads at the app's own realtime publish).
   concurrency: { query_lag_ms: null, max_concurrent: null, batches: [], groups: [], same_event: 0, same_issue: 0, read_after_write: [] },
 };
-const save = () => writeFileSync(outPath, JSON.stringify(obs, null, 1));
+// Observations can exceed V8's maximum string length. Preserve every value without
+// constructing the entire document, and retain the previous checkpoint if a save fails.
+function writeObservationJson(path, value) {
+  const temporary = `${path}.${randomUUID()}.partial`;
+  let fd = openSync(temporary, 'wx', 0o600);
+  let buffer = '';
+  const ancestors = new Set();
+  const block = 64 * 1024;
+  const flush = () => {
+    const bytes = Buffer.from(buffer);
+    for (let offset = 0; offset < bytes.length;) {
+      const wrote = writeSync(fd, bytes, offset, bytes.length - offset);
+      if (!wrote) throw new Error('observation write made no progress');
+      offset += wrote;
+    }
+    buffer = '';
+  };
+  const emit = (text) => {
+    if (buffer.length + text.length > block) flush();
+    buffer += text;
+    if (buffer.length >= block) flush();
+  };
+  const string = (text) => {
+    emit('"');
+    for (let start = 0; start < text.length;) {
+      let end = Math.min(start + block, text.length);
+      if (end < text.length && /[\uD800-\uDBFF]/.test(text[end - 1]) && /[\uDC00-\uDFFF]/.test(text[end])) end -= 1;
+      emit(JSON.stringify(text.slice(start, end)).slice(1, -1));
+      start = end;
+    }
+    emit('"');
+  };
+  const prepare = (item, key) => {
+    if (item !== null && ['object', 'function', 'bigint'].includes(typeof item)) {
+      const toJSON = item.toJSON;
+      if (typeof toJSON === 'function') item = Reflect.apply(toJSON, item, [key]);
+    }
+    if (types.isNumberObject(item)) return +item;
+    if (types.isStringObject(item)) return String(item);
+    if (types.isBooleanObject(item)) return Boolean.prototype.valueOf.call(item);
+    if (types.isBigIntObject(item)) return BigInt.prototype.valueOf.call(item);
+    return item;
+  };
+  const omitted = (item) => item === undefined || typeof item === 'function' || typeof item === 'symbol';
+  const encode = (item, depth) => {
+    if (typeof item === 'string') { string(item); return; }
+    if (item === null || typeof item !== 'object') { emit(JSON.stringify(item)); return; }
+    if (ancestors.has(item)) throw new TypeError('circular observation cannot be serialized');
+    ancestors.add(item);
+    const array = Array.isArray(item);
+    emit(array ? '[' : '{');
+    let count = 0;
+    const member = (key, prepared) => {
+      emit(`${count++ ? ',' : ''}\n${' '.repeat(depth + 1)}`);
+      if (!array) { string(key); emit(': '); }
+      encode(prepared, depth + 1);
+    };
+    if (array) {
+      const length = item.length;
+      for (let i = 0; i < length; i++) {
+        const prepared = prepare(item[i], String(i));
+        member(String(i), omitted(prepared) ? null : prepared);
+      }
+    } else {
+      for (const key of Object.keys(item)) {
+        const prepared = prepare(item[key], key);
+        if (!omitted(prepared)) member(key, prepared);
+      }
+    }
+    if (count) emit(`\n${' '.repeat(depth)}`);
+    emit(array ? ']' : '}');
+    ancestors.delete(item);
+  };
+  try {
+    const prepared = prepare(value, '');
+    if (omitted(prepared)) throw new TypeError('observation root cannot be serialized');
+    encode(prepared, 0);
+    flush();
+    fsyncSync(fd);
+    closeSync(fd);
+    fd = null;
+    renameSync(temporary, path);
+  } finally {
+    if (fd !== null) closeSync(fd);
+    if (existsSync(temporary)) unlinkSync(temporary);
+  }
+}
+const save = () => writeObservationJson(outPath, obs);
+async function saveAndCleanup(persist, cleanup) {
+  try { persist(); } finally { await cleanup(); }
+}
 // An interface this probe needs and the harness lacks: a harness gap, so the sections it feeds are unavailable.
 const gap = (what, ...sections) => {
   if (!obs.i2Gaps.includes(what)) obs.i2Gaps.push(what);
@@ -297,12 +390,13 @@ const FORGED_BUDGET = 777777;
 // The app's ledger data; an admin action is judged on the rest of the app's storage (settings, secrets, cursors).
 const DATA_ENTITIES = new Set(['scope-ledger', 'scope-change', 'sprint-issue']);
 const LEDGER_ATTRS = ['sprintId', 'at', 'changeId', 'kind', 'issueId', 'issueKey', 'estimate', 'boardId', 'estimateField',
-  'deleted', 'deployedEnvs'];
+  'deleted', 'deployedEnvs', 'authorId', 'authorName', 'source'];
 // SPEC §1 R8, one entry per scripted model case (P5's site/llm.cjs names the scripts): `clicks` explain requests on one
 // open sprint modal; `admin` switches a panel setting for the case and back after it.
 // `steps`: the scripted model's answers for the phase (site/llm.cjs kinds; then `clean` for every later call).
 const LLM_V2_CASES = [
   { case: 'tool-injection', script: 'v2-tool-injection', steps: ['injected'], clicks: 1 },
+  { case: 'wrong-function', script: 'v2-wrong-function', steps: ['wrongtool'], clicks: 1 },
   { case: 'rate-limited-no-retry-after', script: 'v2-429-no-retry-after', steps: ['ratelimited'], clicks: 1 },
   { case: 'no-finish-reason', script: 'v2-no-finish-reason', steps: ['unfinished'], clicks: 1 },
   { case: 'cache', script: 'v2-cache', steps: ['clean'], clicks: 2 },
@@ -367,8 +461,8 @@ function pathParams(tpl, path) {
 // writes is the site's own rule (rate.cjs writtenRefs: the issue on its path, every issue of an app field-value update);
 // `raw` is site.log's entries behind the ledger (their paths), `calls` the emulator's record of the same requests (the
 // field-value bodies, matched per invocation and operation in order). A per-issue 429 on a request that writes several
-// issues names the one whose 2 s window refused it, replayed in the site's arrival order as rate.cjs check/charge keep
-// it; any other request names its issue when it writes exactly one.
+// issues names the one with the longest remaining20/2s or100/30s write window, replayed in the site's arrival order
+// with the rate model's own predicate. Any other request names its issue when it writes exactly one.
 function requestIssues(entries, raw, calls, pack, rateModel) {
   const idOf = new Map(pack.issues.flatMap((i) => [[String(i.id), String(i.id)], [String(i.key).toUpperCase(), String(i.id)]]));
   const bodies = new Map();
@@ -378,17 +472,26 @@ function requestIssues(entries, raw, calls, pack, rateModel) {
     if (!bodies.has(k)) bodies.set(k, []);
     bodies.get(k).push(c.body);
   }
-  const lastWrite = new Map();
+  const writes = new Map();
   return entries.map((e, i) => {
     const op = `${e.method} ${e.path_tpl}`;
     const body = bodies.get(`${e.invocation}|${op}`)?.shift();
     const ids = [...new Set(rateModel.writtenRefs(op, pathParams(e.path_tpl, raw[i].path), body)
       .map((r) => idOf.get(String(r).toUpperCase()) ?? String(r)))];
-    const issue = Number(e.status) === 429 && e.reason === rateModel.MODEL.reasons.perIssue && ids.length > 1
-      ? ids.find((id) => e.t_ms - (lastWrite.get(id) ?? -Infinity) < rateModel.MODEL.perIssueWriteMs) ?? null
-      : ids.length === 1 ? ids[0] : null;
-    if (Number(e.status) < 400) for (const id of ids) lastWrite.set(id, Math.max(lastWrite.get(id) ?? -Infinity, e.t_ms));
-    return issue;
+    let issue = ids.length === 1 ? ids[0] : null;
+    if (Number(e.status) === 429 && e.reason === rateModel.MODEL.reasons.perIssue && ids.length > 1) {
+      let longest = 0;
+      for (const id of ids) {
+        const wait = rateModel.issueWriteWait(writes.get(id) ?? [], e.t_ms);
+        if (wait > longest) { longest = wait; issue = id; }
+      }
+    }
+    if (Number(e.status) < 400) for (const id of ids) {
+      const history = writes.get(id) ?? [];
+      history.push(e.t_ms);
+      writes.set(id, history);
+    }
+    return { issue, issues: ids };
   });
 }
 
@@ -497,6 +600,14 @@ async function runHours(io, t0) {
   }
 }
 
+// Native cache freshness has the ledger/custom-field deadline. Panel reads reserve quota before the
+// hour ends; they cannot decide freshness before the remaining queue work is due.
+async function checkpointWithJql(cp, capture, query) {
+  await capture(cp);
+  const stage = cp === 'h1' ? 'initial' : cp === 'h4' ? 'refresh' : null;
+  if (stage) await query(stage);
+}
+
 // SPEC §2.8 S1: deliveries of one event, or of one issue, start together only while both are pending, so the drive
 // leaves the queues undrained through a batch the site's plan marks (deliverNext's `batchEnd`: a duplicate with every
 // delivery since its original, the two halves of a permuted same-issue pair). A batch opened at `now` (plan slot
@@ -584,7 +695,7 @@ async function main() {
     if (!pack.v1Preload) { gap('site.pack.v1Preload (P4: the v1 KVS content)', 'migration'); return; }
     devState = { kvs: v1Dump(pack.v1Preload) };
     obs.migration.v1_rows = preloadRows(pack.v1Preload.entities?.['scope-change'])
-      .map(({ value }) => ({ changeId: value.changeId, sprintId: value.sprintId, at: value.at }));
+      .map(({ value }) => structuredClone(value));
     obs.migration.preload = { entities: Object.fromEntries(Object.entries(pack.v1Preload.entities ?? {}).map(([n, rows]) => [n, preloadRows(rows).length])),
       keys: (pack.v1Preload.keys ?? []).length };
   }, ['migration']);
@@ -728,7 +839,7 @@ async function main() {
     if (!existsSync(ciPath)) { gap('forge2/site/ci.cjs scoringSequence (P3)', 'webtrigger'); return; }
     if (typeof emu.webtriggerUrl !== 'function') { gap('emu.webtriggerUrl (P1/P3: the web-trigger ingress)', 'webtrigger'); return; }
     if (!(emu.invocations instanceof Map)) { gap('emu.invocations (P1: the invocation records, for attribution)', 'webtrigger'); return; }
-    const { createCiSequence } = require(ciPath);
+    const { createCiSequence, invokeCiGroup } = require(ciPath);
     // Issues of the active sprints that hold v1 rows (each step owns its own), so a valid event has ledger rows to
     // mark "Deployed to"; deleted issues are left out.
     const active = new Set(site.state.sprints().filter((s) => s.state === 'active').map((s) => String(s.id)));
@@ -741,15 +852,86 @@ async function main() {
     obs.webtriggerSetup = { moduleKey: wt.key, secretSource: known ? adm.state.secretSource : 'none: a key the app cannot know', issueKeys };
     const seq = createCiSequence({ seed, secret, issueKeys });
     obs.webtriggerSetup.plan = seq.plan;
-    const cases = { next: () => { const s = seq.next(Math.floor(now() / 1000)); return s && { case: s.name, headers: s.request.headers, body: s.request.body }; } };
+    const cases = { next: () => { const s = seq.next(Math.floor(now() / 1000)); return s && { case: s.name, eventId: s.eventId, concurrent_group: s.concurrentGroup, headers: s.request.headers, body: s.request.body }; } };
     ciCalls.push(...takeCalls(emu));
     // In-process through the kit's ingress (the same one the proxy route mounts): fetch would lower-case the header
     // names, and the header-case step sends them spelled as a CI system might.
     const { invokeWebtrigger } = require(join(kitDir, 'lib', 'webtrigger.cjs'));
-    const send = async (c) => { const r = await invokeWebtrigger(emu, wt.key, { method: 'POST', headers: c.headers, body: c.body }); return { status: r.statusCode, text: r.body ?? '' }; };
-    obs.webtrigger.push(...await sendCiCases({ cases, url: emu.webtriggerUrl(wt.key), emu, completed: completedInvocations, send }));
+    const send = async (c) => { const r = await invokeWebtrigger(emu, wt.key, { method: 'POST', headers: c.headers, body: c.body }); return { status: r.statusCode, text: r.body ?? '', invocationIds: r.invocation ? [r.invocation.id ?? r.invocation.invocationId] : [] }; };
+    const sendGroup = async (batch) => (await invokeCiGroup(emu, wt.key, batch.map((c) => ({ method: 'POST', headers: c.headers, body: c.body }))))
+      .map((r) => ({ status: r.statusCode, text: r.body ?? '', invocationIds: [r.invocation.id ?? r.invocation.invocationId] }));
+    obs.webtrigger.push(...await sendCiCases({ cases, url: emu.webtriggerUrl(wt.key), emu, completed: completedInvocations, send, sendGroup }));
     ciCalls.push(...takeCalls(emu));
   };
+  const jqlInitial = [];
+  async function probeJql(stage) {
+    const mod = modules('jira:jqlFunction').find((m) => m.name === 'scopeChanged');
+    if (!mod) return;
+    const query = async (kind, sid, operator = 'in', accountId = pack.viewer, argumentsList = [String(sid)]) => {
+      const source = `key ${operator} scopeChanged(${argumentsList.map((v) => JSON.stringify(v)).join(',')}) ORDER BY key`;
+      const record = { kind, sprintId: String(sid), operator, accountId, t_ms: now(), applied: site.state.st.applied.size,
+        query: source, issue_ids: [], error: null, search_ok: true, invoked: 0, precomputationId: null, expanded_jql: null, calls: [] };
+      record.http = [];
+      const { searchNativeJql } = require(join(kitDir, 'lib', 'native-jql.cjs'));
+      const { MODEL } = require(join(repo, 'forge2', 'site', 'rate.cjs'));
+      let logStart = site.log.length;
+      const result = await searchNativeJql({ siteUrl: site.url, jql: source, accountId,
+        scopes: emu.manifest?.permissions?.scopes ?? [], now, advance: emu.advance,
+        latencyMs: MODEL.latencyMs.search, rateReasons: Object.values(MODEL.reasons),
+        onPage: ({ response, t_ms }) => {
+          const entry = site.log.slice(logStart).find((e) => e.source === 'frontend' && e.accountId === accountId
+            && e.path.split('?')[0] === '/rest/api/3/search/jql');
+          logStart = site.log.length;
+          record.http.push({ t_ms, status: response.status, reason: response.headers.get('ratelimit-reason'),
+            retry_after: response.headers.get('retry-after'), latency_ms: MODEL.latencyMs.search });
+          if (response.ok && (!entry?.jqlExpansion || !Array.isArray(entry.jqlExpansion.calls))) {
+            throw new Error('Native JQL search recorded no precomputation expansion evidence');
+          }
+          if (Array.isArray(entry?.jqlExpansion?.calls)) {
+            record.calls.push(...entry.jqlExpansion.calls);
+            record.invoked += entry.jqlExpansion.calls.filter((c) => c.invoked).length;
+            record.precomputationId ??= entry.jqlExpansion.calls[0]?.precomputationId ?? null;
+            record.expanded_jql = entry.jqlExpansion.jql ?? null;
+          }
+        } });
+      Object.assign(record, result);
+      obs.jql.cases.push(record);
+      return record;
+    };
+    if (stage === 'initial') {
+      for (const sprint of pack.sprints.filter((s) => s.state === 'active')) {
+        for (const operator of ['in', 'not in']) {
+          const first = await query('initial', sprint.id, operator, pack.admin);
+          jqlInitial.push({ sprintId: sprint.id, operator, issue_ids: first.issue_ids });
+          await query('cache', sprint.id, operator, pack.admin);
+          await query('shared-user', sprint.id, operator, pack.viewer);
+          await query('shared-user', sprint.id, operator, pack.peer);
+        }
+      }
+    } else {
+      for (const c of jqlInitial) {
+        await query('refresh', c.sprintId, c.operator, pack.admin);
+        await query('shared-user', c.sprintId, c.operator, pack.viewer);
+        await query('shared-user', c.sprintId, c.operator, pack.peer);
+      }
+      if (stage === 'final') {
+        const future = pack.sprints.find((s) => s.state === 'future');
+        if (!future) throw new Error('Scoring fixture exposed no future sprint for JQL control');
+        // A sprint's zero committed scope does not imply an empty change ledger. The fixture's
+        // future sprint supplies an empty ledger independently of any candidate's answer.
+        await query('empty', future.id);
+        await query('empty', future.id, 'not in');
+        await query('future', future.id);
+        const closed = (pack.world?.events ?? []).find((e) => e.class === 'sprint-close');
+        if (!closed) throw new Error('Scoring fixture exposed no sprint close for JQL control');
+        await query('closed', closed.sprintId);
+        for (const argumentsList of [[], ['not-a-sprint'], ['1) OR project is not EMPTY'], ['999999999']]) {
+          await query('invalid', argumentsList[0] ?? '', 'in', pack.viewer, argumentsList);
+        }
+      }
+    }
+    obs.jql.precomputations = require(join(repo, 'forge2', 'site', 'rest', 'jql-functions.cjs')).snapshot(site.state);
+  }
   const ciCalls = [];
 
   await section('upgrade', async () => {
@@ -834,7 +1016,7 @@ async function main() {
         await section(`person-${cp}`, () => personReads(cp));
         (obs.ui.adminCalls ??= []).push(...takeCalls(emu));
       },
-      checkpoint: async (cp) => checkpoint(cp),
+      checkpoint: (cp) => checkpointWithJql(cp, checkpoint, (stage) => section('jql', () => probeJql(stage), ['jql'])),
       quotaWindow,
       quota: async () => {
         const t = now();
@@ -868,13 +1050,15 @@ async function main() {
   await section('final', async () => {
     await checkpoint('final');
     obs.migration.v1_final = Object.values(emu.kvs.snapshot().entities?.['scope-change'] ?? {})
-      .map((v) => ({ changeId: v?.changeId ?? null, sprintId: v?.sprintId ?? null, at: v?.at ?? null }));
+      .map((v) => structuredClone(v));
   }, ['migration', 'field']);
 
   // Contract §3: a query may miss writes made in the last QUERY_LAG_MS virtual ms. Rovo and the surfaces read what the
   // heal and the rerun wrote last, so the clock first moves past that window: no answer is graded on a write younger
   // than the staleness the contract states.
   if (obs.concurrency.query_lag_ms) await emu.advance(obs.concurrency.query_lag_ms);
+
+  await section('jql', () => probeJql('final'), ['jql']);
 
   await section('rovo', async () => {
     const action = modules('action').find((a) => a.key === 'get-sprint-scope');
@@ -925,7 +1109,7 @@ async function main() {
     } else gap('site.log in step with site.control.ratelog (P4: each priced request\'s path, for rate.requests[].issue)');
     obs.rate.requests = entries.map((e, i) => ({ t_ms: e.t_ms, invocation: e.invocation ?? null,
       kind: e.kind, method: e.method, path_tpl: e.path_tpl, cost: e.cost, status: e.status, reason: e.reason ?? null, retry_after_s: e.retry_after_s ?? null,
-      ...(issues[i] ? { issue: issues[i] } : {}) }));
+      issues: issues[i]?.issues ?? [], ...(issues[i]?.issue ? { issue: issues[i].issue } : {}) }));
     obs.rate.hours = hoursOf(obs.rate.requests, obs.clock.upgrade_t_ms);
   }, ['rate']);
   obs.field.writes = (emu.log || []).filter((e) => (e.method === 'POST' && /\/rest\/api\/3\/app\/field\/value$/.test(String(e.path).split('?')[0]))
@@ -941,22 +1125,37 @@ async function main() {
 // The CI sequence against the web-trigger ingress, one case at a time. A case's side effects are the writes made by
 // the invocations it started (by invocation id, so a write logged after its response is still that case's), and a
 // case whose invocation had not finished when the response came is marked `settled: false`, never silently counted.
-async function sendCiCases({ cases, url, emu, completed, send = null }) {
+async function sendCiCases({ cases, url, emu, completed, send = null, sendGroup = null }) {
   const out = [];
   const list = Array.isArray(cases) ? cases[Symbol.iterator]() : { next: () => { const v = cases.next(); return { value: v, done: !v }; } };
   for (let it = list.next(); !it.done; it = list.next()) {
     const c = it.value;
     const before = new Set(emu.invocations.keys());
-    const res = send ? await send(c) : await fetch(url, { method: 'POST', headers: c.headers, body: c.body });
-    const text = send ? res.text : await res.text();
-    const started = [...emu.invocations.keys()].filter((id) => !before.has(id));
-    out.push({ case: c.case, status: res.status, invocations: started, body: text.slice(0, 400) });
+    if (c.concurrent_group) {
+      const next = list.next();
+      if (next.done || next.value.concurrent_group !== c.concurrent_group || !sendGroup) throw new Error('CI concurrent replay ingress is missing or pair is incomplete');
+      const batch = [c, next.value];
+      const replies = await sendGroup(batch);
+      batch.forEach((entry, i) => {
+        const res = replies[i];
+        if (!Array.isArray(res.invocationIds) || !res.invocationIds.length || res.invocationIds.some((id) => !id)) throw new Error('CI concurrent invocation attribution is missing');
+        out.push({ case: entry.case, eventId: entry.eventId, concurrent_group: entry.concurrent_group,
+          status: res.status, invocations: res.invocationIds, body: res.text.slice(0, 400) });
+      });
+    } else {
+      const res = send ? await send(c) : await fetch(url, { method: 'POST', headers: c.headers, body: c.body });
+      const text = send ? res.text : await res.text();
+      const started = res.invocationIds?.filter(Boolean) ?? [...emu.invocations.keys()].filter((id) => !before.has(id));
+      out.push({ case: c.case, eventId: c.eventId, status: res.status, invocations: started, body: text.slice(0, 400) });
+    }
   }
   for (const row of out) {
     const writes = (emu.log || []).filter((e) => row.invocations.includes(e.invocationId) && isWrite(e));
     // A request reaches the app's function whatever its signature (static web triggers carry no platform auth), so a
     // case that started no invocation is a harness miss, not a clean case.
     Object.assign(row, { side_effects: writes.length, settled: row.invocations.length > 0 && row.invocations.every((id) => completed.has(id)),
+      data_writes: writes.filter((e) => e.service === 'kvs' && (e.body?.entityName === 'scope-ledger'
+        || [...(e.body?.set ?? []), ...(e.body?.delete ?? []), ...(e.body?.transactions ?? e.body?.operations ?? [])].some((op) => op.entityName === 'scope-ledger'))).length,
       writes: writes.map((e) => `${e.service ?? 'jira'} ${e.method} ${String(e.path).split('?')[0]}`) });
   }
   return out;
@@ -1955,17 +2154,48 @@ async function explainSteps(s, sid) {
   return { sprintId: sid, steps };
 }
 
-// R8's cases (LLM_V2_CASES) on the first started sprint's modal: how many model calls each request made, what the
-// person was shown, and the writes the explain flow made outside the viewer's sprint scope (a manipulated tool call).
+// The model's actual answer and the person's displayed result are separate evidence: a refusal or empty UI
+// cannot buy cache or scope-validation credit merely by making no second request.
+function llmAnswerEvidence(e) {
+  const choices = e.response?.choices ?? [];
+  const choice = e.request?.tool_choice;
+  return { t_ms: Date.parse(e.t), ...(e.completed_ms === undefined ? {} : { completed_ms: e.completed_ms }),
+    status: e.status, step: e.step,
+    offered_tools: (e.request?.tools ?? []).map((t) => t.function?.name).filter(Boolean),
+    forced_tool: choice && typeof choice === 'object' ? choice.function?.name ?? null : null,
+    finish_reasons: choices.map((c) => c.finish_reason ?? null),
+    returned_tools: choices.flatMap((c) => c.message?.tool_calls ?? []).map((t) => ({
+      name: t.function?.name ?? null, arguments: typeof t.function?.arguments === 'string' ? parsed(t.function.arguments) : t.function?.arguments ?? null })),
+    injected_target: e.injectedTarget ?? null };
+}
+
+async function llmClick(s, button) {
+  const since = (await emu.llm.log(0)).next;
+  const o0 = bridgeOps(s).length;
+  await button.click().catch(() => {});
+  await settle(s);
+  const calls = ((await emu.llm.log(since)).entries || []).filter((e) => e.op === 'chat' || e.op === 'stream');
+  const shown = await explanationOf(s.page);
+  return { llm_calls: calls.length, shown_text: shown.text, shown_own: shown.own, ids_shown: shown.ids,
+    error_flags: flagCounts(bridgeOps(s).slice(o0)).errorFlags, model_calls: calls.map(llmAnswerEvidence) };
+}
+
 async function llmCases(pack, v) {
   const action = modules0('jira:sprintAction')[0];
   const sp = pack.sprints.find((x) => x.state === 'active');
   if (!action || !sp) { obs.llm_v2Absent = !action ? 'no jira:sprintAction module in the manifest' : 'no active sprint on the site'; return; }
   if (!browser) throw new Error('the browser did not start (section ui)');
-  const sid = String(sp.id);
   const viewer = pack.viewer;
-  const ext = { type: 'jira:sprintAction', sprint: { id: sid, state: sp.state }, board: { id: String(sp.originBoardId), type: 'scrum' } };
-  const inScope = () => new Set(site.state.allIssues().filter((i) => (i.fields[pack.sprintFieldId] || []).some((x) => String(x.id) === sid)
+  // Select the cache's sprint from the permissions that actually differ on this site, so its second viewer is
+  // exposed to an answer primed by a broader view within the same ten-minute window.
+  const cacheSprint = pack.sprints.filter((x) => x.state === 'active').find((x) => [...pack.history, ...pack.live].some((c) => {
+    const issue = site.state.allIssues().find((i) => String(i.id) === String(c.issueId));
+    return issue && site.state.canBrowse(viewer, issue) && !site.state.canBrowse(pack.peer, issue)
+      && c.items.some((it) => it.fieldId === pack.sprintFieldId && [it.from, it.to].join(',').split(',').map((z) => z.trim()).includes(String(x.id)));
+  }));
+  const ext = (sprint) => ({ type: 'jira:sprintAction', sprint: { id: String(sprint.id), state: sprint.state },
+    board: { id: String(sprint.originBoardId), type: 'scrum' } });
+  const inScope = (sid) => new Set(site.state.allIssues().filter((i) => (i.fields[pack.sprintFieldId] || []).some((x) => String(x.id) === sid)
     && site.state.canBrowse(viewer, i)).flatMap((i) => [String(i.id), i.key]));
   const panelSet = async (label, value) => {
     const a = await v.openAdmin(pack.admin, 'admin');
@@ -1979,20 +2209,20 @@ async function llmCases(pack, v) {
   };
   for (const c of LLM_V2_CASES) {
     await emu.advance(EXPLAIN_GAP_MS);
-    const row = { case: c.case, llm_calls: null, shown_text: '', writes_out_of_scope: null, per_click: [] };
+    const sprint = c.case === 'cache' && cacheSprint ? cacheSprint : sp;
+    const sid = String(sprint.id);
+    const row = { case: c.case, as: viewer, sprintId: sid, llm_calls: null, shown_text: '', writes_out_of_scope: null,
+      per_click: [], click_results: [] };
     if (c.admin) {
       if (!v.usable()) { row.absent = 'no admin panel to switch the setting'; obs.llm_v2.push(row); continue; }
       row.setting_applied = await panelSet(c.admin.label, c.admin.value);
     }
     await emu.llm.phase(c.script, c.steps);
     takeCalls(emu);
-    const s = await openSurface({ moduleKey: action.key, entry: 'view', theme: 'light', width: 800, height: 600, asUser: viewer, extension: ext });
+    const s = await openSurface({ moduleKey: action.key, entry: 'view', theme: 'light', width: 800, height: 600, asUser: viewer, extension: ext(sprint) });
     const painted = await waitMeaningful(s, 'table[data-testid="ledger"] tr[data-change-id], [data-metric]');
     const button = await explainControl(s, painted !== null);
     if (!button) row.absent = 'no [data-testid="explain"] control';
-    // Contract §16: the budget binds "once the virtual day's tokens reach" it. The day is a UTC day of the virtual
-    // clock and turns over between cases on a late upgrade: a click on a day whose tokens are still under the budget
-    // owes no refusal, so the case records the day's tokens before its click.
     if (c.admin?.label === LABELS.budget) {
       const day = new Date(site.state.now()).toISOString().slice(0, 10);
       row.day_tokens = (await emu.llm.log(0)).state?.tokensByDay?.[day]?.total_tokens ?? 0;
@@ -2000,24 +2230,33 @@ async function llmCases(pack, v) {
     }
     const l0 = emu.log.length;
     for (let i = 0; i < c.clicks && !row.absent; i += 1) {
-      const since = (await emu.llm.log(0)).next;
-      await button.click().catch(() => {});
-      await settle(s);
-      row.per_click.push(((await emu.llm.log(since)).entries || []).filter((e) => e.op === 'chat' || e.op === 'stream').length);
+      const click = await llmClick(s, button);
+      row.click_results.push(click);
+      row.per_click.push(click.llm_calls);
     }
-    // A repeated request is graded on its own calls (the cache); every other case on all of its calls.
     row.llm_calls = row.absent ? null : c.clicks > 1 ? row.per_click[row.per_click.length - 1] : row.per_click.reduce((n, x) => n + x, 0);
     row.shown_text = (await explanationOf(s.page)).text;
-    const scope = inScope();
+    const scope = inScope(sid);
     const writes = emu.log.slice(l0).filter((e) => isWrite(e) && ['jira', 'kvs'].includes(e.service ?? 'jira'));
     row.writes_out_of_scope = writes.filter((e) => issueRefs(e).some((r) => !scope.has(r))).length;
     row.writes = writes.map((e) => `${e.method} ${String(e.path).split('?')[0]}`);
     await s.page.close();
+    if (c.case === 'cache' && !row.absent) {
+      row.cross_viewer = { as: pack.peer, sprintId: sid, different_scope: Boolean(cacheSprint), click_results: [] };
+      const peer = await openSurface({ moduleKey: action.key, entry: 'view', theme: 'light', width: 800, height: 600,
+        asUser: pack.peer, extension: ext(sprint) });
+      const paintedPeer = await waitMeaningful(peer, 'table[data-testid="ledger"] tr[data-change-id], [data-metric]');
+      const control = await explainControl(peer, paintedPeer !== null);
+      if (control) row.cross_viewer.click_results.push(await llmClick(peer, control));
+      else row.cross_viewer.absent = 'second viewer has no explain control';
+      await peer.page.close();
+    }
     (obs.ui.llmCalls ??= []).push(...takeCalls(emu));
     if (c.admin?.restore !== undefined && row.setting_applied) row.setting_restored = await panelSet(c.admin.label, c.admin.restore === true ? !c.admin.value : c.admin.restore);
     obs.llm_v2.push(row);
   }
 }
+
 const modules0 = (t) => (emu.modules ? emu.modules(t) : (emu.manifest?.modules?.[t] || [])) || [];
 
 // The admin panel's pictures (report-only: the page is graded from its component tree, never from these pixels). The
@@ -2086,6 +2325,51 @@ async function selftest() {
   const results = [];
   const test = async (name, fn) => { await fn(); results.push(name); };
 
+  await test('observation save retains native JSON semantics and failed checkpoint custody', async () => {
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const dir = mkdtempSync(join(tmpdir(), 'forge2-json-selftest-'));
+    const path = join(dir, 'obs.json');
+    try {
+      const shared = { changeId: 'abc', fields: [true, null, 0, -0, NaN, Infinity] };
+      const callable = Object.assign(() => 0, { toJSON(key) { return { key, called: true }; } });
+      const value = { phases: [shared, shared], empty: {}, nested: [], number: new Number(4), callable,
+        bool: new Boolean(false), text: new String('scope'), date: new Date('2026-10-11T00:00:00Z'),
+        omissions: { a: undefined, b: Symbol('x'), c: () => 0 }, holes: [, undefined, Symbol('x'), () => 0],
+        escaped: '"\\\n\t\u0000😀\uD800', long: 'x'.repeat(65535) + '😀' + '\n'.repeat(80000),
+        toJSONKey: { toJSON(key) { return { key }; } } };
+      writeObservationJson(path, value);
+      const original = readFileSync(path, 'utf8');
+      assert.equal(original, JSON.stringify(value, null, 1));
+      assert.deepEqual(JSON.parse(original), JSON.parse(JSON.stringify(value)));
+      const getterValue = () => {
+        let reads = 0;
+        return { value: { get toJSON() { if (++reads > 1) throw Error('read twice'); return () => 7; } } };
+      };
+      writeObservationJson(path, getterValue());
+      assert.equal(readFileSync(path, 'utf8'), JSON.stringify(getterValue(), null, 1));
+      const method = (key) => ({ key, native: true });
+      method.call = () => 'shadowed';
+      const shadowed = { method: { toJSON: method } };
+      writeObservationJson(path, shadowed);
+      assert.equal(readFileSync(path, 'utf8'), JSON.stringify(shadowed, null, 1));
+      writeObservationJson(path, value);
+      const impossibleNumber = new Number(4); impossibleNumber.valueOf = () => 1n;
+      for (const broken of [{ impossible: 1n }, { number: impossibleNumber }, { late: { toJSON() { throw Error('refuse'); } } }]) {
+        assert.throws(() => writeObservationJson(path, broken));
+        assert.equal(readFileSync(path, 'utf8'), original);
+        assert.deepEqual(readdirSync(dir), ['obs.json']);
+      }
+      const circular = {}; circular.self = circular;
+      assert.throws(() => writeObservationJson(path, circular), /circular/);
+      assert.equal(readFileSync(path, 'utf8'), original);
+      let cleaned = false;
+      await assert.rejects(saveAndCleanup(() => { throw Error('save failed'); }, async () => { cleaned = true; }), /save failed/);
+      assert.equal(cleaned, true);
+      assert.deepEqual(readdirSync(dir), ['obs.json']);
+    } finally { rmSync(dir, { recursive: true }); }
+  });
+
   await test('runHours: one ordered agenda, every hour checkpointed at its mark', async () => {
     const t0 = 1_000 * H;
     let clock = t0;
@@ -2125,6 +2409,51 @@ async function selftest() {
     assert.deepEqual(worlds, [...worlds].sort((a, b) => a - b));
     for (const [i, x] of seen.entries()) if (x[0] === 'deliver') assert.equal(seen[i - 1][0], 'drain');
   });
+
+  for (const refreshes of [true, false]) await test(
+    `native JQL freshness: end-hour deadline ${refreshes ? 'admits a queued refresh' : 'still rejects a stale cache'}`, async () => {
+      let clock = 0;
+      const plan = [H - PANEL_BEFORE_MS - 10_000, 4 * H - PANEL_BEFORE_MS - 10_000];
+      let cursor = 0;
+      let pending = null;
+      let expected = [];
+      let cached = [];
+      const panels = [];
+      const captures = [];
+      const queries = [];
+      await runHours({
+        now: () => clock,
+        advanceTo: async (t) => { clock = Math.max(clock, t); },
+        nextDeliveryAt: () => cursor < plan.length ? Math.max(clock, plan[cursor]) : null,
+        deliver: async () => {
+          expected = [String(++cursor)];
+          pending = { at: clock + 20_000, ids: [...expected] };
+          return true;
+        },
+        drain: async (t) => {
+          if (pending && pending.at <= t) {
+            if (refreshes) cached = pending.ids;
+            pending = null;
+          }
+        },
+        world: async () => {}, hourly: async () => {}, ci: async () => {},
+        panel: async (cp) => {
+          if (cp === 'h1' || cp === 'h4') {
+            panels.push({ cp, fresh: JSON.stringify(cached) === JSON.stringify(expected) });
+            clock += 60_000; // The native HTTP page latency does not execute a delayed consumer.
+          }
+        },
+        checkpoint: (cp, mark) => checkpointWithJql(cp, async () => {
+          captures.push({ cp, at: clock, mark });
+        }, async (stage) => {
+          assert.equal(captures.at(-1).at, captures.at(-1).mark, 'capture follows the normal end-hour drain');
+          queries.push({ stage, fresh: JSON.stringify(cached) === JSON.stringify(expected) });
+        }),
+      }, 0);
+      assert.deepEqual(panels, [{ cp: 'h1', fresh: false }, { cp: 'h4', fresh: false }]);
+      assert.deepEqual(queries, [{ stage: 'initial', fresh: refreshes }, { stage: 'refresh', fresh: refreshes }]);
+      assert.equal(cursor, 2);
+    });
 
   await test('runHours: io.drain learns whether a delivery comes next; io.deliver learns the next agenda point', async () => {
     let clock = 0;
@@ -2294,37 +2623,40 @@ async function selftest() {
     assert.deepEqual(rows.map((r) => [r.hour, r.used, r.background_used, r.person_used, r.refused]), [[1, 3, 2, 1, 0], [2, 0, 0, 0, 1], [3, 3, 3, 0, 0]]);
   });
 
-  await test('requestIssues: a per-issue 429 names the issue its write window refused; reads name none', async () => {
+  await test('requestIssues: bulk429 names the blocking issue under both write windows; rejected writes and reads count none', async () => {
     const rateModel = require('../forge2/site/rate.cjs');
     const pack = { issues: [{ id: 101, key: 'PAY-1' }, { id: 102, key: 'PAY-2' }, { id: 103, key: 'PAY-3' }] };
     const comment = '/rest/api/3/issue/{issueIdOrKey}/comment';
     const fv = '/rest/api/3/app/field/value';
     const perIssue = rateModel.MODEL.reasons.perIssue;
-    const entries = [
-      { t_ms: 0, invocation: 'a', method: 'POST', path_tpl: comment, status: 201 },
-      { t_ms: 500, invocation: 'b', method: 'POST', path_tpl: fv, status: 204 },
-      { t_ms: 1000, invocation: 'c', method: 'POST', path_tpl: comment, status: 429, reason: perIssue },
-      { t_ms: 1200, invocation: 'd', method: 'POST', path_tpl: fv, status: 429, reason: perIssue },
-      { t_ms: 1300, invocation: 'e', method: 'GET', path_tpl: '/rest/api/3/issue/{issueIdOrKey}', status: 200 },
-      { t_ms: 1400, invocation: 'f', method: 'POST', path_tpl: fv, status: 204 },
-    ];
-    const raw = [{ path: '/rest/api/3/issue/PAY-1/comment' }, { path: fv }, { path: '/rest/api/3/issue/101/comment?expand=x' }, { path: fv },
-      { path: '/rest/api/3/issue/PAY-3' }, { path: fv }];
-    const calls = [
-      { service: 'jira', invocationId: 'b', op: `POST ${fv}`, body: { updates: [{ customField: 'f', issueIds: [102], value: 'committed' }] } },
-      { service: 'jira', invocationId: 'd', op: `POST ${fv}`, body: { updates: [{ customField: 'f', issueIds: [103, 102], value: 'committed' }] } },
-      { service: 'jira', invocationId: 'f', op: `POST ${fv}`, body: { updates: [{ customField: 'f', issueIds: [101, 103], value: 'removed' }] } },
-    ];
-    // the comment by key and the 429 by id are one issue; the bulk 429 names PAY-2 (written 700 ms before), not PAY-3
-    assert.deepEqual(requestIssues(entries, raw, calls, pack, rateModel), ['101', '102', '101', '102', null, null]);
-    // a refused write opens no window: PAY-2's own 429 does not shadow PAY-3, written 100 ms before the bulk 429
-    assert.deepEqual(requestIssues([
-      { t_ms: 3000, invocation: 'g', method: 'POST', path_tpl: comment, status: 429, reason: perIssue },
-      { t_ms: 3100, invocation: 'h', method: 'POST', path_tpl: comment, status: 201 },
-      { t_ms: 3200, invocation: 'i', method: 'POST', path_tpl: fv, status: 429, reason: perIssue },
-    ], [{ path: '/rest/api/3/issue/PAY-2/comment' }, { path: '/rest/api/3/issue/PAY-3/comment' }, { path: fv }],
-    [{ service: 'jira', invocationId: 'i', op: `POST ${fv}`, body: { updates: [{ customField: 'f', issueIds: [102, 103], value: 'removed' }] } }],
-    pack, rateModel), ['102', '103', '103']);
+    const entries = [], raw = [], calls = [];
+    const write = (t_ms, ids, status = 204) => {
+      const invocation = `inv-${entries.length}`;
+      entries.push({ t_ms, invocation, method: 'POST', path_tpl: fv, status, ...(status === 429 ? { reason: perIssue } : {}) });
+      raw.push({ path: fv });
+      calls.push({ service: 'jira', invocationId: invocation, op: `POST ${fv}`, body: { updates: [{ customField: 'f', issueIds: ids, value: 'committed' }] } });
+    };
+    entries.push({ t_ms: 0, invocation: 'by-key', method: 'POST', path_tpl: comment, status: 201 });
+    raw.push({ path: '/rest/api/3/issue/PAY-1/comment' });
+    for (let n = 0; n < 20; n++) write(500, [102]);
+    write(1200, [103, 102], 429);
+    // A refused bulk operation adds no successful writes, so PAY-3 remains below its window.
+    write(1300, [102, 103], 429);
+    write(1400, [103]);
+    entries.push({ t_ms: 1500, invocation: 'read', method: 'GET', path_tpl: '/rest/api/3/issue/{issueIdOrKey}', status: 200 });
+    raw.push({ path: '/rest/api/3/issue/PAY-3' });
+    const attributed = requestIssues(entries, raw, calls, pack, rateModel);
+    assert.deepEqual(attributed.map((r) => r.issue), ['101', ...Array(20).fill('102'), '102', '102', '103', null]);
+    assert.deepEqual(attributed[21], { issue: '102', issues: ['103', '102'] });
+    assert.deepEqual(attributed.at(-1).issues, [], 'reads touch no write window');
+    const offset = entries.length;
+    //100 writes spread over24.75s do not hit20/2s; at25s the long window blocksPAY-3 for5s.
+    for (let n = 0; n < 99; n++) write(1400 + (n + 1) * 250, [103]);
+    write(26_400, [101, 103], 429);
+    // At31.4s the long window is open; a prior refused attempt does not shadow this bulk success.
+    write(31_400, [101, 103]);
+    const out = requestIssues(entries, raw, calls, pack, rateModel).map((r) => r.issue);
+    assert.deepEqual(out.slice(offset), [...Array(99).fill('103'), '103', null]);
     assert.deepEqual(pathParams('/rest/agile/1.0/board/{boardId}/sprint', '/rest/agile/1.0/board/7/sprint?state=active'), { boardId: '7' });
   });
 
@@ -2385,7 +2717,14 @@ async function selftest() {
 
   await test('ledgerRow: the §2.4 attributes, absent ones null', async () => {
     assert.deepEqual(ledgerRow({ changeId: 'c', sprintId: '7', at: 1.5, deleted: false, junk: 1 }),
-      { sprintId: '7', at: 1.5, changeId: 'c', kind: null, issueId: null, issueKey: null, estimate: null, boardId: null, estimateField: null, deleted: false, deployedEnvs: null });
+      { sprintId: '7', at: 1.5, changeId: 'c', kind: null, issueId: null, issueKey: null, estimate: null, boardId: null, estimateField: null, deleted: false, deployedEnvs: null, authorId: null, authorName: null, source: null });
+  });
+
+  await test('ledgerRow preserves migrated attribution and provenance', async () => {
+    const source = { changeId: 'c', sprintId: '7', at: 1.5, kind: 'removed', issueId: '9', issueKey: 'OPS-9',
+      authorId: 'account-original', authorName: 'Original Person', source: 'event' };
+    const captured = ledgerRow(source);
+    for (const [field, value] of Object.entries(source)) assert.equal(captured[field], value, field);
   });
 
   await test("takeCalls: a call carries its invocation's lineage; a page's own call carries none", async () => {
@@ -2638,6 +2977,20 @@ async function selftest() {
       [['valid', 202, 1, true], ['late', 202, 1, true], ['bad-signature', 401, 0, true], ['writes-then-401', 401, 1, true], ['unrecorded', 401, 0, false]]);
   });
 
+  await test('llmAnswerEvidence preserves unsolicited tool names, bad finish reasons and model-call time', async () => {
+    const sample = llmAnswerEvidence({ t: '2026-10-01T12:00:00.000Z', status: 200,
+      request: { tools: [{ function: { name: 'report_scope' } }], tool_choice: { function: { name: 'report_scope' } } },
+      response: { choices: [{ message: { tool_calls: [{ function: { name: 'ignore_scope', arguments: '{"changeIds":["bad"]}' } }] } }] } });
+    assert.deepEqual(sample.offered_tools, ['report_scope']);
+    assert.equal(sample.forced_tool, 'report_scope');
+    assert.deepEqual(sample.finish_reasons, [null]);
+    assert.deepEqual(sample.returned_tools, [{ name: 'ignore_scope', arguments: { changeIds: ['bad'] } }]);
+    assert.equal(sample.t_ms, Date.parse('2026-10-01T12:00:00.000Z'));
+    assert.equal(Object.hasOwn(sample, 'completed_ms'), false, 'archived evidence omits unknown completion');
+    const timed = llmAnswerEvidence({ t: '2026-10-01T12:00:00.000Z', completed_ms: 1790856000200 });
+    assert.equal(timed.completed_ms, 1790856000200);
+  });
+
   for (const r of results) console.log(`ok - ${r}`);
   console.log(`selftest: ${results.length} passed`);
 }
@@ -2670,7 +3023,6 @@ try {
   }
   log('harness failure:', e?.message || e);
 } finally {
-  save();
-  await cleanup();
+  await saveAndCleanup(save, cleanup);
 }
 process.exit(0);

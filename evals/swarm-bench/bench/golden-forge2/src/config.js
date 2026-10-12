@@ -29,7 +29,13 @@ export async function saveConfig(next, previous) {
 // The Sprint field, and this app's own read-only `scope-status` field. Jira lists a Forge custom field with
 // schema.custom = the extension ARI (…/static/<module key>) and a key ending in __<module key>.
 export async function discoverFields(work) {
-  const fields = await jiraJson('app', route`/rest/api/3/field`, undefined, work);
+  const fields = [];
+  for (let startAt = 0; ; ) {
+    const page = await jiraJson('app', route`/rest/api/3/field/search?type=custom&startAt=${startAt}&maxResults=50`, undefined, work);
+    fields.push(...(page.values ?? []));
+    if (page.isLast || !page.values?.length) break;
+    startAt += page.values.length;
+  }
   const sprint = fields.find((f) => f.schema?.custom === SPRINT_FIELD_TYPE);
   if (!sprint) throw new Error(`no field with schema.custom ${SPRINT_FIELD_TYPE} on this site`);
   const mine = (f) => String(f.schema?.custom ?? '').endsWith(`/${SCOPE_FIELD_MODULE}`) || String(f.key ?? '').endsWith(`__${SCOPE_FIELD_MODULE}`);
@@ -80,6 +86,8 @@ function sprintEntry(sprint, boardId, estimateFieldId) {
 // board, each with the estimation field of the board that owns it (originBoardId).
 export async function discoverConfig(work) {
   const { sprintFieldId, scopeFieldId } = await discoverFields(work);
+  const caller = await jiraJson('app', route`/rest/api/3/myself`, undefined, work);
+  if (!caller.timeZone) throw new Error('The app caller has no Jira time zone for an incremental JQL watermark.');
   const boards = await listScrumBoards(work);
   const found = new Map();
   for (const board of boards) {
@@ -94,7 +102,7 @@ export async function discoverConfig(work) {
     if (!estimateFields.has(String(boardId))) estimateFields.set(String(boardId), await boardEstimateField(boardId, work));
     sprints[id] = sprintEntry(sprint, boardId, estimateFields.get(String(boardId)));
   }
-  return { sprintFieldId, scopeFieldId, sprints };
+  return { sprintFieldId, scopeFieldId, sprints, jiraTimeZone: caller.timeZone };
 }
 
 // The sprints one event touches, as they are now: a sprint the issue's own Sprint field carries (state,

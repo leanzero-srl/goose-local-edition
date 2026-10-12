@@ -1,0 +1,69 @@
+{
+  "obs_sha256": "394bdad8a8b99217cd09d6e60c25d25f9577c05d9aa6d0f46e10aed71ae6d7ae",
+  "observation": {
+    "rate": {
+      "requests": [],
+      "hours": [],
+      "wall": {
+        "t_ms": 1793277000000,
+        "until_ms": 1793278800000,
+        "points": 2400,
+        "spent_before": 0
+      }
+    },
+    "clock": {
+      "upgrade_t_ms": 1793268940190,
+      "checkpoints": {
+        "h1": 1793272540190,
+        "h2": 1793276140190,
+        "h3": 1793279740190,
+        "h4": 1793283340190,
+        "h5": 1793286940190,
+        "h6": 1793290540190,
+        "final": 1793290835710
+      }
+    },
+    "sectionErrors": {},
+    "harnessMissing": [],
+    "phases": {
+      "backfill": {
+        "calls": []
+      },
+      "live": {
+        "calls": []
+      },
+      "hour-1": {
+        "calls": []
+      },
+      "hour-2": {
+        "calls": []
+      },
+      "hour-3": {
+        "calls": []
+      },
+      "hour-4": {
+        "calls": []
+      },
+      "hour-5": {
+        "calls": []
+      },
+      "heal": {
+        "calls": []
+      },
+      "rerun": {
+        "calls": []
+      }
+    },
+    "upgrade": {
+      "calls": []
+    },
+    "ui": {
+      "calls": [],
+      "adminCalls": []
+    },
+    "rovo": {
+      "calls": []
+    },
+    "webtriggerCalls": []
+  }
+}
