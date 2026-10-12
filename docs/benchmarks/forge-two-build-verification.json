@@ -47,7 +47,12 @@
   },
   "activeWorkhorseCarrierUnchanged": true,
   "installedPaidAppOwnedPair": "NOT_YET_EXERCISED",
-  "publicPush": "PENDING_WORKHORSE",
+  "publicPush": {
+    "status": "WORKHORSE_PUBLIC_SOURCE_BRANCH_VERIFIED",
+    "sourceCommit": "dfbf24578b7db8df0bf59a7cde5641d836e29131",
+    "branch": "codex/forge-two-build-in-app",
+    "binaryRelease": false
+  },
   "fullDesktopLint": {
     "exitCode": 0,
     "includes": [
@@ -62,5 +67,25 @@
     "commit": "9905aa5b0",
     "targetedTestsPassed": 31,
     "runtimeChange": false
+  },
+  "actualSignedPackage": {
+    "packagedSourceCommit": "dfbf24578b7db8df0bf59a7cde5641d836e29131",
+    "workhorsePackageReceiptSha256": "0261a6ff2ff28503f12ca70a0e2603fabfc01239803d355374e1041f456c588e",
+    "extractedVerificationSha256": "febea7f0c41111cd676da1d5dccd998b420ceb8da7c9de448b101c4787a84a8b",
+    "verifiedInventoryEntries": 16026,
+    "strictDeepSignature": true,
+    "engineUnchanged": true,
+    "taskUnchanged": true,
+    "actualPackagedElectronUi": true,
+    "readbackSha256": "512ce9f28b172a14291191766a6df45cc2b0c00e8d7e6a8d7acb22af36b0f693",
+    "setupReadbackSha256": "95ab8ce1a827730d49fffef5bfb13931651d98e2370674db5fb38610a0d5f78e",
+    "screenshotSha256": "f279cc054dab7f329021d75fc7889668f8203bcbb3e4ac59a8f0de21e1c342d3",
+    "proofCommit": "df4dce7bd2237ebbd87ca57cbf6e3334be098f87",
+    "fixtureMembershipNotActualNewPaidPair": true,
+    "noModelOrPublicationCalls": true,
+    "defaultInstalledAppReplaced": false,
+    "runtimeToolsNotInstalledInPrivateProfile": true,
+    "priorSandboxTrustFailurePreserved": "a09f95c601c338bcd9f8d3b5e80313785e1a1a1c:EXTRACTED-APP-VERIFICATION.json",
+    "subsequentNormalHostStrictVerification": "PASS"
   }
 }
