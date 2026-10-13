@@ -11524,5 +11524,119 @@
   },
   "engineGlanceSettings.showAgain": {
     "defaultMessage": "Tampilkan lagi"
+  },
+  "benchmarkSection.build": {
+    "defaultMessage": "Build {index}"
+  },
+  "benchmarkSection.twoBuilds": {
+    "defaultMessage": "2 build"
+  },
+  "forgeSeries.between": {
+    "defaultMessage": "Build 1 selesai. Menyiapkan build 2."
+  },
+  "forgeSeries.build": {
+    "defaultMessage": "Build {index} dari 2"
+  },
+  "forgeSeries.callBudget": {
+    "defaultMessage": "{calls} panggilan per build"
+  },
+  "forgeSeries.cancelDetail": {
+    "defaultMessage": "Menghentikan build aktif dan mencegah build berikutnya dimulai. Skor dan bukti yang sudah selesai tetap disimpan; pembatalan tidak menerbitkan apa pun."
+  },
+  "forgeSeries.cancelTitle": {
+    "defaultMessage": "Batalkan benchmark dua build ini?"
+  },
+  "forgeSeries.cancelled": {
+    "defaultMessage": "Urutan dua build dibatalkan"
+  },
+  "forgeSeries.cancelledStatus": {
+    "defaultMessage": "Urutan dua build dibatalkan."
+  },
+  "forgeSeries.checking": {
+    "defaultMessage": "Memeriksa kedua build…"
+  },
+  "forgeSeries.childCancelled": {
+    "defaultMessage": "Dibatalkan"
+  },
+  "forgeSeries.childFailed": {
+    "defaultMessage": "Tidak selesai"
+  },
+  "forgeSeries.completeStatus": {
+    "defaultMessage": "Dua build selesai."
+  },
+  "forgeSeries.continuePublish": {
+    "defaultMessage": "Terbitkan build yang tersisa"
+  },
+  "forgeSeries.failed": {
+    "defaultMessage": "Urutan dua build tidak selesai"
+  },
+  "forgeSeries.failedStatus": {
+    "defaultMessage": "Urutan dua build tidak selesai."
+  },
+  "forgeSeries.finished": {
+    "defaultMessage": "Kedua build selesai"
+  },
+  "forgeSeries.interrupted": {
+    "defaultMessage": "Aplikasi ditutup sebelum kedua build selesai. Bukti yang disimpan tetap tersedia."
+  },
+  "forgeSeries.intro": {
+    "defaultMessage": "Satu tindakan Jalankan memulai dua build independen dalam aplikasi ini. Build kedua dimulai setelah build pertama dinilai; masing-masing menyimpan buktinya sendiri."
+  },
+  "forgeSeries.live": {
+    "defaultMessage": "Diterbitkan di leanzero.net"
+  },
+  "forgeSeries.median": {
+    "defaultMessage": "Median lokal {median} · rentang {min}–{max}"
+  },
+  "forgeSeries.noResponse": {
+    "defaultMessage": "Tidak ada respons penerbitan"
+  },
+  "forgeSeries.noScore": {
+    "defaultMessage": "Belum ada build yang dinilai."
+  },
+  "forgeSeries.preparing": {
+    "defaultMessage": "Menyiapkan build {index} dari 2"
+  },
+  "forgeSeries.provisional": {
+    "defaultMessage": "Satu build yang dinilai masih bersifat sementara. Median dua build belum tersedia."
+  },
+  "forgeSeries.publish": {
+    "defaultMessage": "Terbitkan 2 build"
+  },
+  "forgeSeries.publishTitle": {
+    "defaultMessage": "Judul penerbitan"
+  },
+  "forgeSeries.publishing": {
+    "defaultMessage": "Menerbitkan build {index} dari 2…"
+  },
+  "forgeSeries.queued": {
+    "defaultMessage": "Menunggu dimulai"
+  },
+  "forgeSeries.run": {
+    "defaultMessage": "Jalankan 2 build"
+  },
+  "forgeSeries.running": {
+    "defaultMessage": "Build {index} dari 2 sedang berjalan"
+  },
+  "forgeSeries.scored": {
+    "defaultMessage": "Dinilai"
+  },
+  "forgeSeries.settings": {
+    "defaultMessage": "Aplikasi menjalankan dua build baru secara berurutan dengan model, tugas, dan pengaturan yang sama. Masing-masing menyimpan skor dan buktinya sendiri."
+  },
+  "forgeSeries.skipped": {
+    "defaultMessage": "Tidak dimulai"
+  },
+  "forgeSeries.title": {
+    "defaultMessage": "Dua build independen"
+  },
+  "forgeSeries.unreadable": {
+    "defaultMessage": "Bukti tersimpan dari kedua build tidak dapat dibaca. Build individual tetap tersedia."
+  },
+  "forgeSeries.view": {
+    "defaultMessage": "Buka bukti build {index}"
+  },
+  "forgeSeries.waitingPublish": {
+    "defaultMessage": "Penerbitan memerlukan dua build lengkap yang dapat dibandingkan beserta bukti aslinya."
   }
 }

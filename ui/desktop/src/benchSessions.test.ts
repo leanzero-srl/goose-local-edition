@@ -83,6 +83,29 @@ describe('upsertArchivedRow — archiving a slot folds into the index without du
     expect(next[0].score).toBe(0.7);
   });
 
+  it('preserves the two-build owner and selected treatment when its native slot is archived', () => {
+    const modelFields = { sent: { top_k: 40 }, pinnedByTier: ['effort'] };
+    const next = upsertArchivedRow(
+      [
+        provisional({
+          runId: 'cloud-child',
+          seriesId: 'forge-series-parent',
+          buildIndex: 2,
+          modelFields,
+        }),
+      ],
+      {
+        runId: 'cloud-child',
+        slotDir: SLOT,
+        startedAt: '2026-08-31T10:00:00.000Z',
+        outcome: 'finished',
+        endedAt: '2026-08-31T12:00:00.000Z',
+        score: 0.7,
+      }
+    );
+    expect(next[0]).toMatchObject({ seriesId: 'forge-series-parent', buildIndex: 2, modelFields });
+  });
+
   it('appends a fresh row for a pre-sessions-era slot with no row at all', () => {
     const next = upsertArchivedRow([], {
       runId: 'run-old',

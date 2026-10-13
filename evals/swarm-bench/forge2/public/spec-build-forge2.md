@@ -33,11 +33,14 @@ its own seeded site; nothing else is scored:
     budget (§16).
 11. The widget and the sprint action boot within budget, and the admin page with one invoke (§17).
 
+12. Ledger-backed `scopeChanged` JQL search works for IN/NOT IN, cached expansions stay fresh, shared
+    precomputations respect final viewer permissions, and invalid inputs return errors (§19).
+
 ## Score
 
-Tests earn the score. v1's behaviours (§1–§8) are a quarter of it; the v2 requirements share the rest: migration
+Tests earn the score. v1's behaviours (§1–§8) are 0.15 of it; the v2 requirements share the rest: migration
 0.12, dosing 0.13, time limits 0.08, the changing world 0.10, the admin panel 0.10, the CI web trigger 0.08, the custom
-field 0.05, Forge LLM 0.04, the boot budget 0.05. Inside v1's quarter, a small excellence share rewards few Jira
+field 0.05, Forge LLM 0.04, the boot budget 0.05, ledger-backed JQL 0.10. Inside v1's share, a small excellence share rewards few Jira
 requests (in the first scheduled run, and in triggers and consumers per relevant change) and surfaces that paint
 after one round trip. Lint warnings cost points but never cap.
 

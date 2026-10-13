@@ -1,3 +1,5 @@
+import type { BenchBuildIndex, BenchSeriesSnapshot } from '../../benchSeries';
+
 /**
  * Named types for the benchmark catalog/session IPC contract, as SHIPPED by main.ts/preload.ts
  * (802ce86d3). preload's ElectronAPI declares the same shapes inline; these named copies exist so
@@ -45,6 +47,9 @@ export interface BenchSession {
   /** null while the engine has not yet written .swarm/current-run.json (reconciles ~2s after
    *  launch) — the view keys such a row by its startedAt and refuses to delete it. */
   runId: string | null;
+  seriesId?: string;
+  buildIndex?: BenchBuildIndex;
+  series?: BenchSeriesSnapshot;
   /** The run's folder on disk (the live-run slot or sessions/<runId>) — present only when main
    *  found it there, so a prompt may state it as a fact. */
   dataDir?: string;

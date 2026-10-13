@@ -57,7 +57,7 @@ export async function personView(sprint, policy) {
   const { changes: all, members, totals } = await sprintTotals(sprint.id);
   // Contract §1: changes of deleted issues are listed to nobody and counted as hidden for nobody.
   const changes = all.filter((c) => c.deleted !== true);
-  const visible = changes.length ? await visibleIssues(changes.map((c) => c.issueId), policy) : new Map();
+  const visible = changes.length ? await visibleIssues(changes, policy) : new Map();
   const memberOf = new Map(members.map((m) => [memberKey(m.sprintId, m.issueId), m]));
   const rows = changes
     .filter((c) => visible.has(c.issueId))
@@ -104,7 +104,7 @@ export async function postSummary(sprint, changeId, policy, commentGroup) {
   const { changes, totals } = await sprintTotals(sprint.id);
   const change = changes.find((c) => c.changeId === String(changeId));
   if (!change) return { ok: false, error: `Change ${changeId} is not in sprint ${sprint.name}.` };
-  const visible = await visibleIssues([change.issueId], policy);
+  const visible = await visibleIssues([change], policy);
   if (!visible.has(change.issueId)) return { ok: false, error: 'You cannot browse this issue.' };
   const issueKey = visible.get(change.issueId);
   const view = totalsView(totals);

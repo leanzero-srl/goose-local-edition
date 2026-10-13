@@ -1,3 +1,4 @@
+import type { BenchSeriesSnapshot, BenchBuildIndex } from './benchSeries';
 import type { BenchmarkActivity } from './benchActivity';
 import type { BenchmarkRuntimeStatus } from './benchRuntimeTypes';
 import type { ForgeKitStatus } from './benchForgeKitTypes';
@@ -174,8 +175,9 @@ type ElectronAPI = {
   benchmarkForgeKitStatus: () => Promise<ForgeKitStatus>;
   /** The kit module's ensure (forge2_kit.py): npm ci from the pinned lockfiles + Atlassian's runtime wrapper by sha256. */
   benchmarkForgeKitPrepare: () => Promise<ForgeKitStatus>;
-  /** `modelFields`: the model's saved custom fields (effort, sampling) — main sends the ones the
-   *  tier does not pin and records both on the result. */
+  /** Forge starts the app-owned two-build sequence; other tiers keep one build. Resolves after the
+   *  sequence ends. Child lifecycle events carry its series snapshot. `modelFields` are the model's
+   *  saved custom fields — main sends the ones the tier does not pin and records both on the result. */
   benchmarkRunCloud: (
     provider: string,
     model: string,
@@ -202,6 +204,9 @@ type ElectronAPI = {
   benchmarkSessions: () => Promise<{
     sessions: Array<{
       runId: string | null;
+      seriesId?: string;
+      buildIndex?: BenchBuildIndex;
+      series?: BenchSeriesSnapshot;
       /** The run's folder on disk — present only when it exists. */
       dataDir?: string;
       scorerVersion: string;
@@ -231,6 +236,8 @@ type ElectronAPI = {
   /** One finished run's own scored result row (verdict, breakdown, evidence dir), by its session key —
    *  its stored row, or rebuilt from the verdict in its own tree; null when neither can be read. */
   benchmarkRunResult: (runKey: string) => Promise<unknown | null>;
+  /** The app-owned Forge pair, read without launching or replaying paid work. */
+  benchmarkSeries: (seriesId?: string) => Promise<BenchSeriesSnapshot | null>;
   /** Delete one session's data and its index row. Refuses the running session; never touches the
    *  operator-renamed archive siblings beside the live-run slot. */
   benchmarkDeleteSession: (runId: string) => Promise<{ ok: boolean; error?: string }>;
@@ -270,6 +277,7 @@ type ElectronAPI = {
   /** The in-flight run, if any — lets a remounted view re-attach to the live panel. */
   benchmarkStatus: () => Promise<{
     running: boolean;
+    series?: BenchSeriesSnapshot;
     phase?: 'boot' | 'build' | 'score' | 'done';
     provider?: string;
     workdir?: string;
@@ -627,6 +635,7 @@ const electronAPI: ElectronAPI = {
   benchmarkPublish: (args?: { title?: string; runKey?: string }) =>
     ipcRenderer.invoke('benchmark-publish', args),
   benchmarkRunResult: (runKey: string) => ipcRenderer.invoke('benchmark-run-result', runKey),
+  benchmarkSeries: (seriesId?: string) => ipcRenderer.invoke('benchmark-series', seriesId),
   fleetStatus: () => ipcRenderer.invoke('fleet-status'),
   fleetProbe: (endpoint: string) => ipcRenderer.invoke('fleet-probe', endpoint),
   mlxLiveStatus: (baseUrl: string) => ipcRenderer.invoke('mlx-live-status', baseUrl),

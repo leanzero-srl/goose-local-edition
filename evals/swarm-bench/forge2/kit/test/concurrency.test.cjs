@@ -3,8 +3,8 @@
 // pinned runtime wrapper, the sandbox fence, the forge2 site) plus the pure schedule and KVS index underneath:
 //   S1  consumer deliveries that carry the same event or name the same issue run at the same time under the proxy's
 //       READS-FIRST schedule: a check-then-act consumer double-posts, a FAIL_IF_EXISTS claim posts once; the pair is
-//       visible in the delivery records, the invocation results, emu.concurrency and the KVS call log; unrelated
-//       deliveries keep one at a time, a concurrency key exempts no pair; the interleaving is the same on every run;
+//       visible in every log; installation-scoped concurrency keys bound events across queues, distinct keys and
+//       unkeyed unrelated work can overlap; the interleaving is the same on every run;
 //       the site's plan marks the batches the drives leave queued together (deliverNext's batchEnd).
 //   S2  kvs.query / entity queries miss a write younger than 5 virtual s (get, transaction conditions and FAIL_IF_EXISTS
 //       see it at once); after 5 virtual s the query sees it.
@@ -22,6 +22,7 @@ const SEED = '0123456789abcdef';
 const APP_ID = 'ari:cloud:ecosystem::app/00000000-0000-0000-0000-000000000000';
 const { createKvs, QUERY_LAG_MS } = require(path.join(KIT, 'lib', 'kvs.cjs'));
 const { createConcurrentGroup } = require(path.join(KIT, 'lib', 'proxy.cjs'));
+const { consumerBatch } = require(path.join(KIT, 'lib', 'emulator.cjs'));
 
 // ── S2: the query index, pure ────────────────────────────────────────────────────────────────────────────────────
 
@@ -173,13 +174,24 @@ test('S1 schedule: a request still waiting when its member ends (a killed proces
   t.done();
 });
 
+test('S1 admission: shared keys span queues; saturated keys do not block unrelated ready work; limit2 admits2', () => {
+  const ev = (seq, queueName, key, limit = 1, readyAt = T0) => ({ seq, queueName, readyAt, ...(key ? { concurrency: { key, limit } } : {}) });
+  const a = ev(0, 'q1', 'same'), b = ev(1, 'q2', 'same'), c = ev(2, 'q2', 'other'), d = ev(3, 'q3');
+  const opts = { dueBy: T0, runnable: () => true };
+  assert.deepStrictEqual(consumerBatch([a, b, c, d], opts), [a, c, d]);
+  assert.deepStrictEqual(consumerBatch([a, b, c, d], { ...opts, active: new Map([['same', { count: 1, limit: 1 }]]) }), [c, d]);
+  const two = [ev(0, 'q1', 'same', 2), ev(1, 'q2', 'same', 2), ev(2, 'q2', 'same', 2), d];
+  assert.deepStrictEqual(consumerBatch(two, opts), [two[0], two[1], d]);
+  assert.deepStrictEqual(consumerBatch([ev(0, 'q1', null, 1, T0 + 1), d], opts), [d]);
+});
+
 // ── the real thing: the pinned wrapper, the sandbox fence, the forge2 site ──────────────────────────────────────
 
 const SOURCE = `import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
 import { Queue } from '@forge/events';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-// A comment honouring Retry-After (a second write to the issue within 2 virtual s meets jira-per-issue-on-write).
+// A comment honouring Retry-After when an issue window is saturated.
 async function comment(issueId, text) {
   for (let i = 0; i < 5; i++) {
     const r = await api.asApp().requestJira(route\`/rest/api/3/issue/\${issueId}/comment\`, { method: 'POST', headers: { 'content-type': 'application/json' },
@@ -210,6 +222,18 @@ export const claim = async (event) => {
   }
   await comment(issueId, 'claim ' + changelogId);
   return { posted: true };
+};
+export const web = async (request) => {
+  const { issueId, eventId, atomic } = JSON.parse(request.body);
+  const key = 'web:' + eventId;
+  if (atomic) {
+    try { await kvs.set(key, true, { keyPolicy: 'FAIL_IF_EXISTS' }); } catch { return { statusCode: 409, body: 'replay' }; }
+  } else {
+    if (await kvs.get(key)) return { statusCode: 409, body: 'replay' };
+    await kvs.set(key, true);
+  }
+  await comment(issueId, 'web ' + eventId);
+  return { statusCode: 201, body: 'accepted' };
 };
 export const sched = async () => {
   const t0 = Date.now();
@@ -243,6 +267,11 @@ function writeApp(dir) {
     - key: cc-claim
       queue: cc-claim
       function: cc-claim
+  webtrigger:
+    - key: cc-web
+      function: cc-web
+      response:
+        type: dynamic
   scheduledTrigger:
     - key: cc-hourly
       function: cc-sched
@@ -256,6 +285,8 @@ function writeApp(dir) {
       handler: index.claim
     - key: cc-sched
       handler: index.sched
+    - key: cc-web
+      handler: index.web
 permissions:
   scopes:
     - read:jira-work
@@ -291,8 +322,10 @@ async function freshWorld(name) {
   const site = await createSite({ seed: SEED });
   const invocations = [];
   const emu = await createEmulator({ appDir, site, runtime: 'wrapper', onInvocation: (_rec, out) => invocations.push(out) });
-  const built = await emu.build();
-  assert.ok(built.functions.every((f) => f.loaded), JSON.stringify(built.functions));
+  try {
+    const built = await emu.build();
+    assert.ok(built.functions.every((f) => f.loaded), JSON.stringify(built.functions));
+  } catch (e) { await emu.close(); await site.stop(); throw e; }
   return { site, emu, invocations, close: async () => { await emu.close(); await site.stop(); } };
 }
 let shared = null;
@@ -356,7 +389,7 @@ test('S1: a FAIL_IF_EXISTS claim posts exactly once under the same duplicate pai
   assert.strictEqual(commentsOn(w.site, issueId, `claim ${changelogId}`).length, 1);
 });
 
-test('S1: two changes of one issue pair as same-issue; deliveries of different issues stay one at a time; a concurrency key of 1 exempts no pair', { timeout: 180_000 }, async () => {
+test('S1: same-issue and unrelated unkeyed deliveries overlap; shared limit1 serializes duplicate check-then-act', { timeout: 180_000 }, async () => {
   const w = await world();
   const issues = plan(w.site);
   const [, two] = issues.slice(2).find(([, ids]) => ids.length >= 2);
@@ -364,22 +397,67 @@ test('S1: two changes of one issue pair as same-issue; deliveries of different i
   for (const id of two.slice(0, 2)) await w.emu.deliverProductEvent(id);
   const same = await w.emu.drainQueues();
   assert.deepStrictEqual(same.map((d) => [d.concurrent?.reason, d.concurrent?.index, d.result.posted]), [['same-issue', 0, true], ['same-issue', 1, true]]);
-  // Different issues: no group, the second starts when the first has ended.
   const [x, y] = issues.slice(10, 12).map(([, ids]) => ids[0]);
   await w.emu.deliverProductEvent(x);
   await w.emu.deliverProductEvent(y);
   const apart = await w.emu.drainQueues();
-  assert.deepStrictEqual(apart.map((d) => d.concurrent ?? null), [null, null]);
-  assert.ok(Date.parse(apart[1].t) >= Date.parse(apart[0].t1), JSON.stringify(apart.map((d) => [d.t, d.t1])));
-  // A duplicate pair whose pushes share a concurrency key of limit 1 still starts together (SPEC §2.8: the key is not
-  // applied, contract §8), so the check-then-act consumer posts twice; only a conditional claim makes it exactly-once.
+  assert.deepStrictEqual(apart.map((d) => [d.concurrent.reason, d.concurrent.index]), [['independent', 0], ['independent', 1]]);
+  assert.strictEqual(apart[0].t, apart[1].t, 'unkeyed work starts together despite unrelated issues');
   const [dupIssue, [dupChange]] = issues[12];
   setMode(w.emu, { queue: 'cc-naive', concurrency: { key: 'cc', limit: 1 } });
   await w.emu.deliverProductEvent(dupChange);
   await w.emu.deliverProductEvent(dupChange);
   const keyed = await w.emu.drainQueues();
-  assert.deepStrictEqual(keyed.map((d) => [d.concurrent?.reason, d.result]), [['same-event', { posted: true }], ['same-event', { posted: true }]]);
-  assert.strictEqual(commentsOn(w.site, dupIssue, `naive ${dupChange}`).length, 2);
+  assert.deepStrictEqual(keyed.map((d) => [d.concurrent ?? null, d.result]), [[null, { posted: true }], [null, { skipped: true }]]);
+  assert.ok(Date.parse(keyed[1].t) >= Date.parse(keyed[0].t1));
+  assert.strictEqual(commentsOn(w.site, dupIssue, `naive ${dupChange}`).length, 1);
+});
+
+test('S1: one key spans different queues while a different key overlaps; limit2 and distinct keys permit duplicate races', { timeout: 180_000 }, async () => {
+  const w = await world();
+  const issues = plan(w.site);
+  for (const [index, mode] of [[13, { queue: 'cc-naive', concurrency: { key: 'cross-queue', limit: 1 } }],
+    [14, { queue: 'cc-claim', concurrency: { key: 'cross-queue', limit: 1 } }],
+    [15, { queue: 'cc-claim', concurrency: { key: 'independent', limit: 1 } }]]) {
+    setMode(w.emu, mode);
+    await w.emu.deliverProductEvent(issues[index][1][0]);
+  }
+  const ds = await w.emu.drainQueues();
+  assert.deepStrictEqual(ds.map((d) => [d.queueName, d.concurrent?.index ?? null]), [['cc-naive', 0], ['cc-claim', 1], ['cc-claim', null]]);
+  assert.strictEqual(ds[0].t, ds[1].t);
+  assert.ok(Date.parse(ds[2].t) >= Math.max(Date.parse(ds[0].t1), Date.parse(ds[1].t1)), 'same key in another queue starts after shared counter releases');
+  for (const [index, keys] of [[16, ['two', 'two']], [17, ['left', 'right']]]) {
+    const [issueId, [change]] = issues[index];
+    for (const key of keys) {
+      setMode(w.emu, { queue: 'cc-naive', concurrency: { key, limit: keys[0] === keys[1] ? 2 : 1 } });
+      await w.emu.deliverProductEvent(change);
+    }
+    const pair = await w.emu.drainQueues();
+    assert.deepStrictEqual(pair.map((d) => [d.concurrent?.reason, d.result]), [['same-event', { posted: true }], ['same-event', { posted: true }]]);
+    assert.strictEqual(commentsOn(w.site, issueId, `naive ${change}`).length, 2);
+  }
+});
+
+test('simultaneous webtrigger replays run under deterministic reads-first: naive2 effects, atomic1 effect', { timeout: 180_000 }, async () => {
+  const w = await world();
+  const { webtriggerRequest } = require(path.join(KIT, 'lib', 'webtrigger.cjs'));
+  const [issueId] = plan(w.site)[18];
+  for (const atomic of [false, true]) {
+    const eventId = `ci-${atomic}`;
+    const request = webtriggerRequest('cc-web', { body: JSON.stringify({ issueId, eventId, atomic }) });
+    const before = w.emu.concurrency.length;
+    const pair = await w.emu.invokeWebtriggerGroup('cc-web', [request, request]);
+    assert.ok(pair.every((r) => r.ok && r.invocationId), JSON.stringify(pair.map((r) => r.error)));
+    assert.deepStrictEqual(pair.map((r) => r.result.statusCode), atomic ? [201, 409] : [201, 201]);
+    assert.strictEqual(pair[0].t0, pair[1].t0);
+    assert.strictEqual(commentsOn(w.site, issueId, `web ${eventId}`).length, atomic ? 1 : 2);
+    assert.strictEqual(w.emu.concurrency.length, before + 1);
+    const group = w.emu.concurrency.at(-1);
+    assert.deepStrictEqual([group.reason, group.schedule, group.members.map((m) => m.invocationId)], ['webtrigger-replay', 'reads-first', pair.map((r) => r.invocationId)]);
+    assert.deepStrictEqual(pair.map((r) => r.concurrent.index), [0, 1]);
+    const headers = pair[0].calls.find((c) => c.service === 'jira');
+    assert.ok(headers, 'real wrapper actually reached seeded Jira for side effects');
+  }
 });
 
 test('the site plan batches a duplicate with its original and a permuted same-issue pair; deliverNext carries batchEnd', () => {

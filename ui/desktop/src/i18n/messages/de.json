@@ -11524,5 +11524,119 @@
   },
   "engineGlanceSettings.showAgain": {
     "defaultMessage": "Wieder anzeigen"
+  },
+  "benchmarkSection.build": {
+    "defaultMessage": "Build {index}"
+  },
+  "benchmarkSection.twoBuilds": {
+    "defaultMessage": "2 Builds"
+  },
+  "forgeSeries.between": {
+    "defaultMessage": "Build 1 ist abgeschlossen. Build 2 wird vorbereitet."
+  },
+  "forgeSeries.build": {
+    "defaultMessage": "Build {index} von 2"
+  },
+  "forgeSeries.callBudget": {
+    "defaultMessage": "{calls} Aufrufe pro Build"
+  },
+  "forgeSeries.cancelDetail": {
+    "defaultMessage": "Stoppt den aktiven Build und verhindert den Start des nächsten. Abgeschlossene Bewertungen und Nachweise bleiben erhalten; durch Abbrechen wird nichts veröffentlicht."
+  },
+  "forgeSeries.cancelTitle": {
+    "defaultMessage": "Diesen Benchmark mit zwei Builds abbrechen?"
+  },
+  "forgeSeries.cancelled": {
+    "defaultMessage": "Die Folge aus zwei Builds wurde abgebrochen"
+  },
+  "forgeSeries.cancelledStatus": {
+    "defaultMessage": "Folge aus zwei Builds abgebrochen."
+  },
+  "forgeSeries.checking": {
+    "defaultMessage": "Beide Builds werden geprüft…"
+  },
+  "forgeSeries.childCancelled": {
+    "defaultMessage": "Abgebrochen"
+  },
+  "forgeSeries.childFailed": {
+    "defaultMessage": "Nicht abgeschlossen"
+  },
+  "forgeSeries.completeStatus": {
+    "defaultMessage": "Zwei Builds abgeschlossen."
+  },
+  "forgeSeries.continuePublish": {
+    "defaultMessage": "Verbleibenden Build veröffentlichen"
+  },
+  "forgeSeries.failed": {
+    "defaultMessage": "Die Folge aus zwei Builds wurde nicht abgeschlossen"
+  },
+  "forgeSeries.failedStatus": {
+    "defaultMessage": "Folge aus zwei Builds nicht abgeschlossen."
+  },
+  "forgeSeries.finished": {
+    "defaultMessage": "Beide Builds sind abgeschlossen"
+  },
+  "forgeSeries.interrupted": {
+    "defaultMessage": "Die App wurde beendet, bevor beide Builds abgeschlossen waren. Gespeicherte Nachweise bleiben erhalten."
+  },
+  "forgeSeries.intro": {
+    "defaultMessage": "Eine Ausführen-Aktion startet zwei unabhängige Builds in dieser App. Der zweite startet nach der Bewertung des ersten; jeder behält seine eigenen Nachweise."
+  },
+  "forgeSeries.live": {
+    "defaultMessage": "Auf leanzero.net veröffentlicht"
+  },
+  "forgeSeries.median": {
+    "defaultMessage": "Lokaler Median {median} · Bereich {min}–{max}"
+  },
+  "forgeSeries.noResponse": {
+    "defaultMessage": "Keine Antwort auf die Veröffentlichung"
+  },
+  "forgeSeries.noScore": {
+    "defaultMessage": "Noch kein bewerteter Build verfügbar."
+  },
+  "forgeSeries.preparing": {
+    "defaultMessage": "Build {index} von 2 wird vorbereitet"
+  },
+  "forgeSeries.provisional": {
+    "defaultMessage": "Ein einzelner bewerteter Build ist vorläufig. Ein Median aus zwei Builds ist nicht verfügbar."
+  },
+  "forgeSeries.publish": {
+    "defaultMessage": "2 Builds veröffentlichen"
+  },
+  "forgeSeries.publishTitle": {
+    "defaultMessage": "Veröffentlichungstitel"
+  },
+  "forgeSeries.publishing": {
+    "defaultMessage": "Build {index} von 2 wird veröffentlicht…"
+  },
+  "forgeSeries.queued": {
+    "defaultMessage": "Wartet auf den Start"
+  },
+  "forgeSeries.run": {
+    "defaultMessage": "2 Builds ausführen"
+  },
+  "forgeSeries.running": {
+    "defaultMessage": "Build {index} von 2 läuft"
+  },
+  "forgeSeries.scored": {
+    "defaultMessage": "Bewertet"
+  },
+  "forgeSeries.settings": {
+    "defaultMessage": "Die App führt zwei neue Builds nacheinander mit demselben Modell, derselben Aufgabe und denselben Einstellungen aus. Jeder behält seine eigene Bewertung und seine Nachweise."
+  },
+  "forgeSeries.skipped": {
+    "defaultMessage": "Nicht gestartet"
+  },
+  "forgeSeries.title": {
+    "defaultMessage": "Zwei unabhängige Builds"
+  },
+  "forgeSeries.unreadable": {
+    "defaultMessage": "Gespeicherte Nachweise der beiden Builds konnten nicht gelesen werden. Die einzelnen Builds bleiben verfügbar."
+  },
+  "forgeSeries.view": {
+    "defaultMessage": "Nachweise für Build {index} öffnen"
+  },
+  "forgeSeries.waitingPublish": {
+    "defaultMessage": "Für die Veröffentlichung sind zwei abgeschlossene, vergleichbare Builds und ihre nativen Nachweise erforderlich."
   }
 }

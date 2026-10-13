@@ -11524,5 +11524,119 @@
   },
   "engineGlanceSettings.showAgain": {
     "defaultMessage": "Mostrala di nuovo"
+  },
+  "benchmarkSection.build": {
+    "defaultMessage": "Build {index}"
+  },
+  "benchmarkSection.twoBuilds": {
+    "defaultMessage": "2 build"
+  },
+  "forgeSeries.between": {
+    "defaultMessage": "Il build 1 è completo. Preparazione del build 2."
+  },
+  "forgeSeries.build": {
+    "defaultMessage": "Build {index} di 2"
+  },
+  "forgeSeries.callBudget": {
+    "defaultMessage": "{calls} chiamate per build"
+  },
+  "forgeSeries.cancelDetail": {
+    "defaultMessage": "Interrompe il build attivo e impedisce l’avvio del successivo. I punteggi e le prove completati restano salvati; l’annullamento non pubblica nulla."
+  },
+  "forgeSeries.cancelTitle": {
+    "defaultMessage": "Annullare questo benchmark di due build?"
+  },
+  "forgeSeries.cancelled": {
+    "defaultMessage": "La sequenza di due build è stata annullata"
+  },
+  "forgeSeries.cancelledStatus": {
+    "defaultMessage": "Sequenza di due build annullata."
+  },
+  "forgeSeries.checking": {
+    "defaultMessage": "Verifica dei due build…"
+  },
+  "forgeSeries.childCancelled": {
+    "defaultMessage": "Annullato"
+  },
+  "forgeSeries.childFailed": {
+    "defaultMessage": "Non completato"
+  },
+  "forgeSeries.completeStatus": {
+    "defaultMessage": "Due build completati."
+  },
+  "forgeSeries.continuePublish": {
+    "defaultMessage": "Pubblica il build rimanente"
+  },
+  "forgeSeries.failed": {
+    "defaultMessage": "La sequenza di due build non è stata completata"
+  },
+  "forgeSeries.failedStatus": {
+    "defaultMessage": "La sequenza di due build non è stata completata."
+  },
+  "forgeSeries.finished": {
+    "defaultMessage": "Entrambi i build sono completi"
+  },
+  "forgeSeries.interrupted": {
+    "defaultMessage": "L’app si è chiusa prima del completamento dei due build. Le prove salvate sono conservate."
+  },
+  "forgeSeries.intro": {
+    "defaultMessage": "Una sola azione Esegui avvia due build indipendenti in questa app. Il secondo parte dopo la valutazione del primo; ognuno conserva le proprie prove."
+  },
+  "forgeSeries.live": {
+    "defaultMessage": "Pubblicato su leanzero.net"
+  },
+  "forgeSeries.median": {
+    "defaultMessage": "Mediana locale {median} · intervallo {min}–{max}"
+  },
+  "forgeSeries.noResponse": {
+    "defaultMessage": "Nessuna risposta alla pubblicazione"
+  },
+  "forgeSeries.noScore": {
+    "defaultMessage": "Nessun build valutato è ancora disponibile."
+  },
+  "forgeSeries.preparing": {
+    "defaultMessage": "Preparazione del build {index} di 2"
+  },
+  "forgeSeries.provisional": {
+    "defaultMessage": "Un solo build valutato è provvisorio. La mediana di due build non è disponibile."
+  },
+  "forgeSeries.publish": {
+    "defaultMessage": "Pubblica 2 build"
+  },
+  "forgeSeries.publishTitle": {
+    "defaultMessage": "Titolo della pubblicazione"
+  },
+  "forgeSeries.publishing": {
+    "defaultMessage": "Pubblicazione del build {index} di 2…"
+  },
+  "forgeSeries.queued": {
+    "defaultMessage": "In attesa dell’avvio"
+  },
+  "forgeSeries.run": {
+    "defaultMessage": "Esegui 2 build"
+  },
+  "forgeSeries.running": {
+    "defaultMessage": "Il build {index} di 2 è in esecuzione"
+  },
+  "forgeSeries.scored": {
+    "defaultMessage": "Valutato"
+  },
+  "forgeSeries.settings": {
+    "defaultMessage": "L’app esegue due nuovi build in sequenza con gli stessi modello, attività e impostazioni. Ognuno conserva il proprio punteggio e le prove."
+  },
+  "forgeSeries.skipped": {
+    "defaultMessage": "Non avviato"
+  },
+  "forgeSeries.title": {
+    "defaultMessage": "Due build indipendenti"
+  },
+  "forgeSeries.unreadable": {
+    "defaultMessage": "Impossibile leggere le prove salvate dei due build. I singoli build restano disponibili."
+  },
+  "forgeSeries.view": {
+    "defaultMessage": "Apri le prove del build {index}"
+  },
+  "forgeSeries.waitingPublish": {
+    "defaultMessage": "La pubblicazione richiede due build completi e confrontabili con le rispettive prove native."
   }
 }

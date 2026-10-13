@@ -3,6 +3,7 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { ChevronDown, ChevronRight, Gauge, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { Button, Chip, FAMILY_FILL, RADIUS, SectionHeader, TNUM, TYPE, WEIGHT, cx } from '../lz';
+import { groupBenchmarkHistory } from '../benchmark/seriesPresentation';
 import type { BenchSession, CatalogBenchmark } from '../benchmark/bridge';
 import {
   BENCH_FAMILIES,
@@ -31,6 +32,8 @@ import { defineMessages, useIntl } from '../../i18n';
 import { useStartChatAbout } from './useStartChatAbout';
 
 const i18n = defineMessages({
+  build: { id: 'benchmarkSection.build', defaultMessage: 'Build {index}' },
+  twoBuilds: { id: 'benchmarkSection.twoBuilds', defaultMessage: '2 builds' },
   title: { id: 'benchmarkSection.title', defaultMessage: 'Benchmark' },
   newRun: { id: 'benchmarkSection.newRun', defaultMessage: 'New benchmark run' },
   empty: {
@@ -200,7 +203,11 @@ const RunLeafRow: React.FC<{
       >
         {/* The date yields, never the outcome: a "Finished · 42.1%" chip beside a full stamp was wider
             than the sidebar and scrolled the whole tree sideways. The row's title keeps the full stamp. */}
-        <span className={cx('min-w-0 truncate text-lz-body text-lz-ink', TNUM)}>{when}</span>
+        <span className={cx('min-w-0 truncate text-lz-body text-lz-ink', TNUM)}>
+          {run.buildIndex
+            ? `${intl.formatMessage(i18n.build, { index: run.buildIndex })} · ${when}`
+            : when}
+        </span>
         <span className="ml-auto shrink-0">
           <OutcomeChip session={run} />
         </span>
@@ -272,6 +279,7 @@ export const BenchmarkSection: React.FC<{ className?: string }> = ({ className }
 
   const onBenchmark = location.pathname === BENCHMARK_PATH;
   const activeRun = onBenchmark ? params.get('run') : null;
+  const activeSeries = onBenchmark ? params.get('series') : null;
 
   const refresh = useCallback(async () => {
     try {
@@ -361,10 +369,12 @@ export const BenchmarkSection: React.FC<{ className?: string }> = ({ className }
               const familyStart = index === 0 || eras[index - 1].family !== era.family;
               const defaultOpen =
                 era.current ||
-                (activeRun != null && era.sessions.some((r) => benchRunKey(r) === activeRun));
+                (activeRun != null && era.sessions.some((r) => benchRunKey(r) === activeRun)) ||
+                (activeSeries != null && era.sessions.some((r) => r.seriesId === activeSeries));
               const expanded = toggled.has(era.scorerVersion) ? !defaultOpen : defaultOpen;
               const all = showAll.has(era.scorerVersion);
-              const shown = all ? era.sessions : era.sessions.slice(0, TREE_PREVIEW_COUNT);
+              const groups = groupBenchmarkHistory(era.sessions);
+              const shown = all ? groups : groups.slice(0, TREE_PREVIEW_COUNT);
               return (
                 <div key={era.scorerVersion} data-testid={`bench-era-${era.scorerVersion}`}>
                   {familyStart && (
@@ -420,20 +430,59 @@ export const BenchmarkSection: React.FC<{ className?: string }> = ({ className }
                   </button>
                   {expanded && (
                     <TreeChildren>
-                      {shown.map((run) => (
-                        <RunLeafRow
-                          key={benchRunKey(run)}
-                          era={era}
-                          run={run}
-                          active={activeRun === benchRunKey(run)}
-                          onOpen={() => navigate(benchRunHref(era.scorerVersion, benchRunKey(run)))}
-                          onAsk={() => void startChat(askAboutRunPrompt(era, run))}
-                          onDelete={() => void remove(run)}
-                        />
-                      ))}
+                      {shown.map((group) => {
+                        const rows = group.sessions.map((run) => (
+                          <RunLeafRow
+                            key={benchRunKey(run)}
+                            era={era}
+                            run={run}
+                            active={activeRun === benchRunKey(run)}
+                            onOpen={() =>
+                              navigate(benchRunHref(era.scorerVersion, benchRunKey(run)))
+                            }
+                            onAsk={() => void startChat(askAboutRunPrompt(era, run))}
+                            onDelete={() => void remove(run)}
+                          />
+                        ));
+                        if (group.kind === 'run') return rows[0];
+                        const series = group.sessions.find((run) => run.series)?.series;
+                        return (
+                          <div key={group.key} data-testid={`bench-series-${group.key}`}>
+                            <button
+                              className={cx(
+                                treeParentClass,
+                                activeSeries === group.key && 'ring-2 ring-inset ring-lz-accent'
+                              )}
+                              onClick={() =>
+                                navigate(
+                                  `${BENCHMARK_PATH}?era=${encodeURIComponent(era.scorerVersion)}&series=${encodeURIComponent(group.key)}`
+                                )
+                              }
+                              aria-current={activeSeries === group.key ? 'true' : undefined}
+                            >
+                              <ChevronDown className="size-3.5 shrink-0 text-lz-ink-3" />
+                              <span className="min-w-0 truncate text-lz-body text-lz-ink">
+                                {series?.model ?? intl.formatMessage(i18n.twoBuilds)}
+                              </span>
+                              <Chip
+                                tone={
+                                  series?.running
+                                    ? 'accent'
+                                    : series?.stage === 'finished'
+                                      ? 'ok'
+                                      : 'warn'
+                                }
+                              >
+                                {intl.formatMessage(i18n.twoBuilds)}
+                              </Chip>
+                            </button>
+                            <TreeChildren>{rows}</TreeChildren>
+                          </div>
+                        );
+                      })}
                       {era.sessions.length === 0 ? (
                         <div className={treeStateRowClass}>{intl.formatMessage(i18n.noRuns)}</div>
-                      ) : era.sessions.length > shown.length ? (
+                      ) : groups.length > shown.length ? (
                         <Button
                           variant="ghost"
                           size="sm"
@@ -442,7 +491,7 @@ export const BenchmarkSection: React.FC<{ className?: string }> = ({ className }
                         >
                           {intl.formatMessage(i18n.showMore)}
                         </Button>
-                      ) : all && era.sessions.length > TREE_PREVIEW_COUNT ? (
+                      ) : all && groups.length > TREE_PREVIEW_COUNT ? (
                         <Button
                           variant="ghost"
                           size="sm"

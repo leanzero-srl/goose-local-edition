@@ -1,0 +1,103 @@
+{
+  "sourceVerdictSha256": "b547e0a857668ba299fb61b2df941382be4147ba0acee8145fff9c41d3c51362",
+  "scorerVersion": "forge-2.0",
+  "score": 0.7294,
+  "tiers": {
+    "R10": {
+      "mean": 0.912,
+      "checks": 6,
+      "weight": 0.1
+    }
+  },
+  "checks": [
+    {
+      "check": "r10_manifest",
+      "tier": "R10",
+      "score": 1,
+      "detail": "scopeChanged manifest declares issue IN/NOT IN, required sprintId, and bound function",
+      "consequence": "",
+      "weight": 1.0,
+      "score_seed": "3c04f61f28a4a511",
+      "seeds": {
+        "3c04f61f28a4a511": 1,
+        "3aaa6d6b73d37669": 1,
+        "d031c3ee22136508": 1
+      }
+    },
+    {
+      "check": "r10_initial_membership",
+      "tier": "R10",
+      "score": 1.0,
+      "detail": "24/24 initial_membership cases correct",
+      "consequence": "",
+      "weight": 1.0,
+      "score_seed": "3c04f61f28a4a511",
+      "seeds": {
+        "3c04f61f28a4a511": 1.0,
+        "3aaa6d6b73d37669": 1.0,
+        "d031c3ee22136508": 1.0
+      }
+    },
+    {
+      "check": "r10_precomputation_refresh",
+      "tier": "R10",
+      "score": 0.8333,
+      "detail": "worst of 3 scoring sites (seed 3aaa6d6b73d37669): 20/24 precomputation_refresh cases correct; refresh: missing=['25036', '27166'], extra=[], invoked=0; refresh: missing=[], extra=['25036', '27166'], invoked=0",
+      "consequence": "",
+      "weight": 1.0,
+      "score_seed": "3aaa6d6b73d37669",
+      "seeds": {
+        "3c04f61f28a4a511": 1.0,
+        "3aaa6d6b73d37669": 0.8333,
+        "d031c3ee22136508": 1.0
+      }
+    },
+    {
+      "check": "r10_shared_permissions",
+      "tier": "R10",
+      "score": 0.8889,
+      "detail": "worst of 3 scoring sites (seed 3aaa6d6b73d37669): JQL disclosure not observed: 64/72 shared_permissions cases correct; shared-user: missing=['25036', '27166'], extra=[], invoked=0; shared-user: missing=['25036', '27166'], extra=[], invoked=0",
+      "consequence": "",
+      "parts": {
+        "critical_observed": false,
+        "observed_hidden_issue_ids": []
+      },
+      "weight": 1.0,
+      "critical": "leak",
+      "score_seed": "3aaa6d6b73d37669",
+      "seeds": {
+        "3c04f61f28a4a511": 1.0,
+        "3aaa6d6b73d37669": 0.8889,
+        "d031c3ee22136508": 1.0
+      }
+    },
+    {
+      "check": "r10_empty_and_closed",
+      "tier": "R10",
+      "score": 0.75,
+      "detail": "worst of 3 scoring sites (seed 3aaa6d6b73d37669): 3/4 empty_and_closed cases correct; closed: missing=['25036', '27166'], extra=[], invoked=0",
+      "consequence": "",
+      "weight": 1.0,
+      "score_seed": "3aaa6d6b73d37669",
+      "seeds": {
+        "3c04f61f28a4a511": 1.0,
+        "3aaa6d6b73d37669": 0.75,
+        "d031c3ee22136508": 1.0
+      }
+    },
+    {
+      "check": "r10_invalid_arguments",
+      "tier": "R10",
+      "score": 1.0,
+      "detail": "4/4 invalid_arguments cases correct",
+      "consequence": "",
+      "weight": 1.0,
+      "score_seed": "3c04f61f28a4a511",
+      "seeds": {
+        "3c04f61f28a4a511": 1.0,
+        "3aaa6d6b73d37669": 1.0,
+        "d031c3ee22136508": 1.0
+      }
+    }
+  ]
+}

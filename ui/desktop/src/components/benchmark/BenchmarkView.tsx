@@ -1,3 +1,7 @@
+import type { BenchSeriesSnapshot } from '../../benchSeries';
+import { acceptsSeriesUpdate } from './seriesPresentation';
+import { ForgeBuildSeries } from './ForgeBuildSeries';
+import { defineMessages, useIntl } from '../../i18n';
 import { appendBenchmarkActivity, emptyBenchmarkActivity } from '../../benchActivity';
 import { BenchmarkActivityPanel } from './BenchmarkActivityPanel';
 import { benchmarkModelIdProblem } from '../../benchModelIdentity';
@@ -105,6 +109,39 @@ import {
   type Tone,
 } from '../lz';
 
+const seriesMessages = defineMessages({
+  run: { id: 'forgeSeries.run', defaultMessage: 'Run 2 builds' },
+  completeStatus: { id: 'forgeSeries.completeStatus', defaultMessage: 'Two builds complete.' },
+  cancelledStatus: {
+    id: 'forgeSeries.cancelledStatus',
+    defaultMessage: 'Two-build sequence cancelled.',
+  },
+  failedStatus: {
+    id: 'forgeSeries.failedStatus',
+    defaultMessage: 'Two-build sequence did not finish.',
+  },
+  cancelTitle: {
+    id: 'forgeSeries.cancelTitle',
+    defaultMessage: 'Cancel this two-build benchmark?',
+  },
+  cancelDetail: {
+    id: 'forgeSeries.cancelDetail',
+    defaultMessage:
+      'Stops the active build and prevents the next build from starting. Completed scores and evidence are preserved; nothing is published by cancelling.',
+  },
+  unreadable: {
+    id: 'forgeSeries.unreadable',
+    defaultMessage:
+      'Saved two-build evidence could not be read. Individual builds remain available.',
+  },
+  callBudget: { id: 'forgeSeries.callBudget', defaultMessage: '{calls}-call budget per build' },
+  intro: {
+    id: 'forgeSeries.intro',
+    defaultMessage:
+      'One Run action starts two independent builds in this app. The second starts after the first is scored; each retains its own evidence.',
+  },
+});
+
 const NODE_CHOICES = [1, 2, 3] as const;
 type NodeChoice = (typeof NODE_CHOICES)[number];
 
@@ -169,6 +206,9 @@ interface MineRow extends BenchmarkRow {
   /** The engine's run id main stamps at close (null when .swarm/current-run.json never appeared) —
    *  the exact mine↔session join. Absent on rows written by builds before the stamp landed. */
   runId?: string | null;
+  seriesId?: string;
+  buildIndex?: 1 | 2;
+  series?: BenchSeriesSnapshot;
 }
 
 interface BenchShot {
@@ -979,14 +1019,16 @@ function SessionDetail({
 
 /**
  * The bundled Forge tier's run policy, read from the payload (its call_budget and reasoning_effort in
- * isolated_tiers): one model, the call budget, the pinned reasoning effort. No default spend limit exists
- * (owner 2026-10-02); the form's "Stop a run at $" is the only stop, empty = none. A number the kit status
- * could not read is left out, never restated from memory.
+ * isolated_tiers): one model, each build's call budget and the pinned reasoning effort.
+ * A number the kit status could not read is left out, never restated from memory.
  */
 function ForgeRunPolicy({ kit }: { kit: ForgeKitStatus | null }) {
+  const intl = useIntl();
   const parts = [
     'One model',
-    ...(kit?.callBudget != null ? [`${kit.callBudget}-call budget`] : []),
+    ...(kit?.callBudget != null
+      ? [intl.formatMessage(seriesMessages.callBudget, { calls: kit.callBudget })]
+      : []),
     ...(kit?.reasoningEffort ? [`reasoning effort ${kit.reasoningEffort}`] : []),
   ];
   return (
@@ -1032,6 +1074,13 @@ const sessionKey = (s: BenchSession): string => s.runId ?? `start-${s.startedAt}
  * baselines.
  */
 export default function BenchmarkView() {
+  const intl = useIntl();
+  const [activeSeries, setActiveSeries] = useState<BenchSeriesSnapshot | null>(null);
+  const activeSeriesRef = useRef<BenchSeriesSnapshot | null>(null);
+  const rememberSeries = useCallback((series: BenchSeriesSnapshot) => {
+    activeSeriesRef.current = series;
+    setActiveSeries(series);
+  }, []);
   const [runtimeReady, setRuntimeReady] = useState(false);
   const [entrant, setEntrant] = useState<'swarm' | 'cloud'>('swarm');
   const [cloudProvider, setCloudProvider] = useState('');
@@ -1176,14 +1225,15 @@ export default function BenchmarkView() {
     const activityAtRequest = activityRevision.current;
     void window.electron.benchmarkStatus?.().then((s) => {
       if (lifecycleRevision.current !== lifecycleAtRequest) return;
-      if (s?.running && s.workdir) {
+      if (s?.series) rememberSeries(s.series);
+      if (s?.running && (s.workdir || s.series)) {
         setRunning(true);
         if (activityRevision.current === activityAtRequest) setHarnessStage(s.phase ?? 'boot');
         if (s.provider) {
           setEntrant('cloud');
           setCloudProvider(s.provider);
         }
-        setActiveWorkdir(s.workdir);
+        setActiveWorkdir(s.workdir ?? null);
         setRunStartedAt(s.startedAt ? Date.parse(s.startedAt) : Date.now());
         // main.ts kept the launched knobs with the run — the strip shows the truth, not this
         // mount's defaults.
@@ -1203,7 +1253,7 @@ export default function BenchmarkView() {
         setStatus(null);
       }
     });
-  }, [loadExisting, loadCatalog, loadSessions]);
+  }, [loadExisting, loadCatalog, loadSessions, rememberSeries]);
 
   // Stream the harness's lifecycle from main: workdir on start, stdout/stderr lines, terminal row.
   useEffect(() => {
@@ -1216,7 +1266,10 @@ export default function BenchmarkView() {
         phase?: BenchPhase;
         provider?: string;
         scorerVersion?: string;
+        series?: BenchSeriesSnapshot;
       };
+      if (!acceptsSeriesUpdate(activeSeriesRef.current, p.series)) return;
+      if (p.series) rememberSeries(p.series);
       if (p?.workdir) {
         lifecycleRevision.current++;
         setRunning(true);
@@ -1245,7 +1298,10 @@ export default function BenchmarkView() {
         activity?: ReturnType<typeof emptyBenchmarkActivity>;
         scored?: boolean;
         phase?: BenchPhase;
+        series?: BenchSeriesSnapshot;
       };
+      if (!acceptsSeriesUpdate(activeSeriesRef.current, p.series)) return;
+      if (p.series) rememberSeries(p.series);
       if (p.phase) setHarnessStage(p.phase);
       if (p.activity) setActivity(p.activity);
       else if (typeof p.line === 'string')
@@ -1256,13 +1312,48 @@ export default function BenchmarkView() {
     };
     const onFinished = (_e: unknown, payload: unknown) => {
       lifecycleRevision.current++;
-      const p = payload as { row?: MineRow; error?: string; details?: string; cancelled?: boolean };
+      const p = payload as {
+        row?: MineRow;
+        error?: string;
+        details?: string;
+        cancelled?: boolean;
+        series?: BenchSeriesSnapshot;
+      };
+      if (!acceptsSeriesUpdate(activeSeriesRef.current, p.series)) return;
+      if (p.series) rememberSeries(p.series);
+      if (p.series?.running) {
+        if (p.row) setMine(p.row);
+        setRunning(true);
+        setHarnessStage('boot');
+        setScored(false);
+        setActiveWorkdir(null);
+        setActivity(emptyBenchmarkActivity());
+        void loadSessions();
+        return;
+      }
       setRunning(false);
       setCancelling(false);
       setActiveWorkdir(null);
       setRunStartedAt(null);
       setLaunchedSampling(null);
-      if (p?.cancelled) {
+      if (p.series) {
+        setStatus(
+          intl.formatMessage(
+            seriesMessages[
+              p.series.stage === 'finished'
+                ? 'completeStatus'
+                : p.series.stage === 'cancelled'
+                  ? 'cancelledStatus'
+                  : 'failedStatus'
+            ]
+          )
+        );
+        setFailureDetails(p.series.error ?? p.details ?? p.error ?? null);
+        if (p.row) {
+          setMine(p.row);
+          void loadShots(p.row.workdir);
+        }
+      } else if (p?.cancelled) {
         setStatus('Run cancelled.');
       } else if (p?.row) {
         setMine(p.row);
@@ -1277,15 +1368,49 @@ export default function BenchmarkView() {
       // outcome, never linger because only a feed line changed.
       void loadSessions();
     };
+    const onSeries = (_e: unknown, payload: unknown) => {
+      const series = payload as BenchSeriesSnapshot;
+      if (!acceptsSeriesUpdate(activeSeriesRef.current, series)) return;
+      lifecycleRevision.current++;
+      rememberSeries(series);
+      setRunning(series.running);
+      if (!series.running) {
+        setStatus(
+          intl.formatMessage(
+            seriesMessages[
+              series.stage === 'finished'
+                ? 'completeStatus'
+                : series.stage === 'cancelled'
+                  ? 'cancelledStatus'
+                  : 'failedStatus'
+            ]
+          )
+        );
+        setFailureDetails(series.error ?? null);
+        setCancelling(false);
+        setActiveWorkdir(null);
+        setRunStartedAt(null);
+        setLaunchedSampling(null);
+      }
+      if (series.stage === 'between-builds' || series.stage === 'preparing') {
+        setHarnessStage('boot');
+        setScored(false);
+        setActiveWorkdir(null);
+        setActivity(emptyBenchmarkActivity());
+      }
+      void loadSessions();
+    };
+    window.electron.on('benchmark-series', onSeries);
     window.electron.on('benchmark-started', onStarted);
     window.electron.on('benchmark-log', onLog);
     window.electron.on('benchmark-finished', onFinished);
     return () => {
+      window.electron.off('benchmark-series', onSeries);
       window.electron.off('benchmark-started', onStarted);
       window.electron.off('benchmark-log', onLog);
       window.electron.off('benchmark-finished', onFinished);
     };
-  }, [loadShots, loadSessions]);
+  }, [loadShots, loadSessions, rememberSeries, intl]);
 
   // Elapsed ticker while a run is live — and the safety net for a window recreated mid-run: the
   // 'benchmark-finished' event went to the old (destroyed) window, so also poll main's status and
@@ -1295,8 +1420,21 @@ export default function BenchmarkView() {
     if (!running) return;
     const iv = setInterval(() => {
       setNow(Date.now());
-      if (!activeWorkdir) return;
+      if (!activeWorkdir && !activeSeriesRef.current) return;
+      const revisionAtRequest = lifecycleRevision.current;
+      const activityAtRequest = activityRevision.current;
       void window.electron.benchmarkStatus?.().then((s) => {
+        if (lifecycleRevision.current !== revisionAtRequest) return;
+        if (s?.series && !acceptsSeriesUpdate(activeSeriesRef.current, s.series)) return;
+        if (s?.series) rememberSeries(s.series);
+        if (s?.running && s.series) {
+          setActiveWorkdir(s.workdir ?? null);
+          if (activityRevision.current === activityAtRequest) {
+            setHarnessStage(s.phase ?? 'boot');
+            setScored(s.scored === true);
+            if (s.activity) setActivity(s.activity);
+          }
+        }
         if (s && !s.running) {
           setRunning(false);
           setCancelling(false);
@@ -1309,7 +1447,7 @@ export default function BenchmarkView() {
       });
     }, 1000);
     return () => clearInterval(iv);
-  }, [running, activeWorkdir, loadExisting, loadSessions]);
+  }, [running, activeWorkdir, loadExisting, loadSessions, rememberSeries]);
 
   const phase: BenchPhase = useMemo(() => {
     if (scored) return 'done';
@@ -1364,6 +1502,7 @@ export default function BenchmarkView() {
   // one list, in the sidebar.
   const query = useHashQuery();
   const queryRun = query.get('run');
+  const querySeries = query.get('series');
   const queryEra = query.get('era');
   const queryFamily = query.get('family');
   const wantsNew = query.get('new') === '1';
@@ -1378,12 +1517,13 @@ export default function BenchmarkView() {
   );
   const family: BenchFamily = useMemo(() => {
     if (isBenchFamily(queryFamily)) return queryFamily;
+    if (querySeries) return 'forge';
     const named = queryRun ? sessions.find((s) => sessionKey(s) === queryRun) : undefined;
     if (named) return eraFamily(named.scorerVersion);
     if (queryEra) return eraFamily(queryEra);
     const live = sessions.find((s) => s.outcome === 'running');
     return live ? eraFamily(live.scorerVersion) : 'sb';
-  }, [queryFamily, queryRun, queryEra, sessions, eraFamily]);
+  }, [queryFamily, queryRun, querySeries, queryEra, sessions, eraFamily]);
   const forge = family === 'forge';
   const chooseFamily = useCallback((next: BenchFamily) => {
     // A new hash, so the family, its eras and its sessions all follow the URL (the sidebar reads it too).
@@ -1408,6 +1548,13 @@ export default function BenchmarkView() {
   // A deleted selection falls through the same chain. Whatever it lands on, the headline names
   // that run's OWN era (see the history chip and the current-era line below).
   const selectedSession = useMemo(() => {
+    if (querySeries) {
+      const children = sessions.filter((session) => session.seriesId === querySeries);
+      const child =
+        children.find((session) => session.outcome === 'running') ??
+        children.slice().sort((a, b) => (b.buildIndex ?? 0) - (a.buildIndex ?? 0))[0];
+      if (child) return child;
+    }
     if (queryRun) {
       const named = sessions.find((s) => sessionKey(s) === queryRun);
       if (named) return named;
@@ -1418,7 +1565,7 @@ export default function BenchmarkView() {
     if (wantsNew) return null;
     const pool = queryEra ? inFamily.filter((s) => s.scorerVersion === queryEra) : inFamily;
     return pool.slice().sort((a, b) => startMs(b) - startMs(a))[0] ?? null;
-  }, [sessions, queryRun, queryEra, wantsNew, family, eraFamily]);
+  }, [sessions, queryRun, querySeries, queryEra, wantsNew, family, eraFamily]);
   const familySessions = useMemo(
     () => sessions.filter((s) => eraFamily(s.scorerVersion) === family),
     [sessions, family, eraFamily]
@@ -1475,6 +1622,52 @@ export default function BenchmarkView() {
   // from the verdict in its own tree — result.json is only the latest run. Keyed by the session, so a
   // reply for a run no longer selected is dropped rather than shown under the wrong headline.
   const selectedKey = selectedSession ? sessionKey(selectedSession) : null;
+  const selectedSeriesId =
+    querySeries ??
+    (queryRun
+      ? selectedSession?.seriesId
+      : !wantsNew
+        ? (activeSeries?.id ?? selectedSession?.seriesId)
+        : undefined);
+  const [savedSeries, setSavedSeries] = useState<BenchSeriesSnapshot | null>(null);
+  const [seriesReadError, setSeriesReadError] = useState<{ id: string; message: string } | null>(
+    null
+  );
+  useEffect(() => {
+    if (!selectedSeriesId || !window.electron.benchmarkSeries) return;
+    let alive = true;
+    void window.electron
+      .benchmarkSeries(selectedSeriesId)
+      .then((series) => {
+        if (!alive) return;
+        setSavedSeries(series);
+        setSeriesReadError(
+          series
+            ? null
+            : { id: selectedSeriesId, message: intl.formatMessage(seriesMessages.unreadable) }
+        );
+      })
+      .catch((failure: unknown) => {
+        if (alive)
+          setSeriesReadError({
+            id: selectedSeriesId,
+            message: `${intl.formatMessage(seriesMessages.unreadable)} ${failure instanceof Error ? failure.message : String(failure)}`,
+          });
+      });
+    return () => {
+      alive = false;
+    };
+  }, [selectedSeriesId, sessions, activeSeries, intl]);
+  const shownSeries =
+    activeSeries != null &&
+    activeSeries.id === selectedSeriesId &&
+    (activeSeries.running || savedSeries?.id !== selectedSeriesId || savedSeries.running)
+      ? activeSeries
+      : savedSeries?.id === selectedSeriesId
+        ? savedSeries
+        : activeSeries?.id === selectedSeriesId
+          ? activeSeries
+          : null;
   const selectedFinished = selectedSession?.outcome === 'finished';
   const [runResult, setRunResult] = useState<{
     key: string;
@@ -1518,6 +1711,9 @@ export default function BenchmarkView() {
   }, [selectedKey]);
 
   const run = useCallback(async () => {
+    if (forge) window.location.hash = '#/benchmark?family=forge';
+    activeSeriesRef.current = null;
+    setActiveSeries(null);
     setRunning(true);
     setHarnessStage('boot');
     setScored(false);
@@ -1525,7 +1721,7 @@ export default function BenchmarkView() {
     setFailureDetails(null);
     setLaunchedSampling(sampling);
     try {
-      // Both SB entrant modes use the same bundled stable benchmark; Forge runs one model on its own era.
+      // Main owns the Forge pair; one renderer invocation starts the complete sequence.
       const result = forge
         ? await window.electron.benchmarkRunCloud(
             cloudProvider,
@@ -1542,10 +1738,24 @@ export default function BenchmarkView() {
             )
           : await window.electron.benchmarkRun?.(nodes, sampling);
       if (result) {
-        setMine(result as MineRow);
-        setStatus('Run complete.');
-        setFailureDetails(null);
-        void loadShots((result as MineRow).workdir);
+        const row = result as MineRow;
+        if (row.series) rememberSeries(row.series);
+        if (typeof row.score === 'number') setMine(row);
+        setStatus(
+          row.series
+            ? intl.formatMessage(
+                seriesMessages[
+                  row.series.stage === 'finished'
+                    ? 'completeStatus'
+                    : row.series.stage === 'cancelled'
+                      ? 'cancelledStatus'
+                      : 'failedStatus'
+                ]
+              )
+            : 'Run complete.'
+        );
+        setFailureDetails(row.series?.error ?? null);
+        if (row.workdir) void loadShots(row.workdir);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -1569,6 +1779,8 @@ export default function BenchmarkView() {
     cloudModelFields,
     loadShots,
     loadSessions,
+    rememberSeries,
+    intl,
   ]);
 
   // ONE path re-grades a saved build: a retry for scoring that did not finish, or a re-score of a
@@ -1931,7 +2143,7 @@ export default function BenchmarkView() {
                     ((forge || entrant === 'cloud') && (!cloudProvider || !cloudModel.trim()))
                   }
                 >
-                  Run benchmark
+                  {forge ? intl.formatMessage(seriesMessages.run) : 'Run benchmark'}
                 </Button>
               )
             }
@@ -2012,7 +2224,10 @@ export default function BenchmarkView() {
               />
             </div>
             {forge ? (
-              <ForgeRunPolicy kit={forgeKit} />
+              <div className="flex flex-col gap-2">
+                <ForgeRunPolicy kit={forgeKit} />
+                <p className={TYPE.bodyMuted}>{intl.formatMessage(seriesMessages.intro)}</p>
+              </div>
             ) : (
               <Segmented
                 as="buttons"
@@ -2044,7 +2259,7 @@ export default function BenchmarkView() {
                   pinned={forge ? forgeEffortPin(forgeKit?.reasoningEffort) : undefined}
                   onValuesChange={setCloudModelFields}
                 />
-                <WalletLimit disabled={running} />
+                {!forge && <WalletLimit disabled={running} />}
               </>
             ) : (
               <>
@@ -2097,6 +2312,27 @@ export default function BenchmarkView() {
             </div>
           )}
 
+          {forge &&
+            seriesReadError &&
+            seriesReadError.id === selectedSeriesId &&
+            !shownSeries?.running && (
+              <p role="alert" className="text-lz-err text-lz-body break-words">
+                {seriesReadError.message}
+              </p>
+            )}
+          {shownSeries && forge && (
+            <ForgeBuildSeries
+              key={shownSeries.id}
+              series={shownSeries}
+              sessions={sessions}
+              disabled={running}
+              onPublished={loadSessions}
+              onOpenBuild={(runKey) => {
+                window.location.hash = `#/benchmark?era=${encodeURIComponent(shownSeries.scorerVersion)}&run=${encodeURIComponent(runKey)}`;
+              }}
+            />
+          )}
+
           {running && (
             <section className="flex flex-col gap-4">
               <BenchmarkActivityPanel
@@ -2106,7 +2342,7 @@ export default function BenchmarkView() {
                 startedAt={runStartedAt}
                 workdir={activeWorkdir}
               />
-              <SwarmRunPanel workingDir={activeWorkdir ?? undefined} run={swarm} />
+              {activeWorkdir && <SwarmRunPanel workingDir={activeWorkdir} run={swarm} />}
             </section>
           )}
 
@@ -2239,8 +2475,16 @@ export default function BenchmarkView() {
 
       <ConfirmationModal
         isOpen={confirmCancel}
-        title="Cancel this benchmark run?"
-        message="The engine, the vendor sim and the scorer are all stopped. No result is published. Saved build files and earlier scoring evidence are preserved."
+        title={
+          activeSeries?.running
+            ? intl.formatMessage(seriesMessages.cancelTitle)
+            : 'Cancel this benchmark run?'
+        }
+        message={
+          activeSeries?.running
+            ? intl.formatMessage(seriesMessages.cancelDetail)
+            : 'The engine, the vendor sim and the scorer are all stopped. No result is published. Saved build files and earlier scoring evidence are preserved.'
+        }
         confirmLabel="Cancel the run"
         cancelLabel="Keep running"
         confirmVariant="destructive"

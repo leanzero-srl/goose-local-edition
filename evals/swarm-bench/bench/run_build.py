@@ -26,6 +26,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import bench_budget  # noqa: E402
 import bench_cost  # noqa: E402
+import bench_task_identity  # noqa: E402
 import isolated_tiers  # noqa: E402
 import score_build  # noqa: E402
 import vendor_service  # noqa: E402
@@ -314,6 +315,8 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
         elif not env.get("OPENROUTER_API_KEY"):
             wallet = bench_budget.wallet_unavailable(wallet_limit, provider,
                                                      "OPENROUTER_API_KEY is absent from the run's credentials")
+    if tier and tier.version == "forge-2.0" and wallet is not None:
+        raise RuntimeError("REFUSED: Forge 2.0 wallet guard is unavailable; no paid build started")
     try:
         with console.open("w+", buffering=1, errors="replace") as fh:
             if provider or snapshot is not None:
@@ -919,6 +922,8 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
     tier = isolated_tiers.active()
     # A malformed wallet limit refuses here, before a tree, a vendor or a model call exists.
     bench_budget.wallet_limit()
+    launch_identity = (bench_task_identity.capture(ROOT, os.environ.get("BENCH_RUN_ID"))
+                       if tier and tier.version == "forge-2.0" else None)
     kit = None
     if tier and tier.kit:
         kit, why = _regime()[0]._kit()  # noqa: SLF001 — the scorer owns kit discovery (one path for both)
@@ -1040,6 +1045,8 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
             manifest = {str(path.relative_to(workdir)): hashlib.sha256(path.read_bytes()).hexdigest()
                         for path in workdir.rglob('*') if path.is_file()}
         (workdir / "input-manifest.json").write_text(json.dumps(manifest, indent=2))
+        if launch_identity is not None:
+            launch_identity.update(input_manifest=manifest, reasoning_effort=effort)
     trace = out_root / f"trace-{entrant}-r{rep}.jsonl"
 
     scorer, vendor, _spec = _regime()
@@ -1096,7 +1103,12 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
     try:
         print('BENCH_PHASE ' + json.dumps({'phase': 'build'}), flush=True)
         agent = invoke(entrant, workdir, port, credentials, timeout, provider, model, snapshot)
-        # A budget stop (the call budget or the operator's wallet guard) is the run's SCORED end: the
+        resource_abort = bench_budget.publication_abort(agent, tier)
+        if resource_abort:
+            agent['resource_abort'] = resource_abort
+            (workdir / 'incomplete-agent.json').write_text(json.dumps(agent, indent=2))
+            raise RuntimeError(f'REFUSED: Forge 2.0 resource interruption is unscored: {resource_abort}')
+        # A budget stop (the call budget or a legacy tier's wallet guard) is the run's SCORED end: the
         # harness ended it, so neither refusal below may read its console as a provider failure.
         harness_stop = bench_budget.is_harness_stop(agent)
         if provider and not harness_stop and \
@@ -1114,6 +1126,8 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
             print(f"ENDED ON PROVIDER ERROR (not scored): {ended_on}", flush=True)
             raise RuntimeError("REFUSED: the session ended on a provider error, not on the model's "
                                f"finished work: {ended_on.splitlines()[0]}")
+        if launch_identity is not None:
+            bench_task_identity.validate_unchanged(ROOT, launch_identity)
         completion_path = os.environ.get("BENCH_COMPLETION_RECEIPT")
         if tier and completion_path and (agent.get("exit") == 0 or
                                          (agent.get("budget") or {}).get("stopped_by") == "wallet_guard"):
@@ -1125,6 +1139,7 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
                 write_completion(workdir, Path(completion_path), agent, run_id=run_id,
                                  started_at=os.environ.get("BENCH_STARTED_AT"), seed=seed,
                                  port=port, provider=provider, model=model, tier=tier,
+                                 launch_identity=launch_identity,
                                  **({"kit": kit_identity(kit)} if tier.kit else {}))
             except (ValueError, OSError, KeyError) as error:
                 print(f"Scoring retry unavailable: {error}", file=sys.stderr, flush=True)
@@ -1162,6 +1177,10 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
             pass
 
     verdict = scorer.evaluate(ctx)
+    if launch_identity is not None:
+        bench_task_identity.validate_unchanged(ROOT, launch_identity)
+    if launch_identity is not None:
+        verdict.update(taskFingerprint=launch_identity["taskFingerprint"], buildId=launch_identity["buildId"])
     verdict["scorer_seconds"] = scoring_seconds
     verdict["scoring"] = {"secs": scoring_seconds}
     if tier:

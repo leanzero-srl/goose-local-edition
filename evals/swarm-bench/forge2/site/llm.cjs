@@ -47,20 +47,23 @@
 //               (injectionPlan; world.cjs withWorld plants it). Arguments follow the offered tool's JSON schema: a
 //               property named like change -> [an id the prompt cited, the target change id]; like issue/key -> the
 //               target issue key.
+//   wrongtool   a schema-shaped successful tool answer calling an unsolicited function (ignore_scope).
 //   ratelimited 429 with NO Retry-After (the SDK surfaces none either, research/llm.md §5) and body {code, message};
 //               every call in the next RATE_WINDOW_MS of site time is answered the same way without taking a step,
 //               so a tight retry loop shows as many attempts per minute (R8: at most 3).
 //   unfinished  the answer without its finish_reason: chat() has no `finish_reason` key on the choice; stream() ends
 //               without the final chunk (and so without usage) — the errors page's documented incomplete-stream test.
-// The log carries what R8's checks count: `atMs` (site virtual time), `requestHash` (identical explanation requests
+// The log carries what R8's checks count: `t` (the exact invocation virtual send time), `completed_ms`
+// (its transport completion when supplied), `requestHash` (identical explanation requests
 // served within 10 virtual minutes must not reach here twice), the usage each answer reported; `state().tokensByDay`
 // sums reported usage per UTC day of virtual time (the daily token budget is enforced by the APP against these).
 const crypto = require('crypto');
 const { createRng } = require('./rng.cjs');
+const { requestTime, completionTime } = require('./request-time.cjs');
 
 const SCRIPT = ['clean', 'digits', 'refusal', 'malformed', 'error'];
 const R8_SCRIPT = ['injected', 'ratelimited', 'unfinished'];
-const KINDS = new Set([...SCRIPT, ...R8_SCRIPT]);
+const KINDS = new Set([...SCRIPT, ...R8_SCRIPT, 'wrongtool']);
 // R8 states the backoff per minute ("≤ 3 attempts per minute"): the 429 holds for one virtual minute.
 const RATE_WINDOW_MS = 60_000;
 const CLEAN_SUMMARY = 'Scope grew after the sprint started: work was added while some planned items moved out.';
@@ -125,7 +128,8 @@ function createLlm({ pack, now }) {
   let script = SCRIPT;
   let step = 0;
   let rateUntil = null;
-  const limited = () => rateUntil !== null && now() < rateUntil;
+  const rateWindows = [];
+  const limited = (atMs = now()) => rateWindows.some(({ start, end }) => start <= atMs && atMs < end);
 
   const text = (content) => (typeof content === 'string' ? content : Array.isArray(content) ? content.map((p) => p?.text ?? '').join(' ') : '');
   const promptText = (body) => (body.messages ?? []).map((m) => text(m.content)).join('\n');
@@ -160,8 +164,9 @@ function createLlm({ pack, now }) {
     const tools = (body.tools ?? []).filter((t) => t?.type === 'function' && t.function?.name);
     const choice = body.tool_choice;
     const forced = choice && typeof choice === 'object' ? choice.function?.name : null;
-    const tool = forced ?? (choice === 'none' ? null : tools[0]?.function?.name ?? null);
+    let tool = forced ?? (choice === 'none' ? null : tools[0]?.function?.name ?? null);
     const def = tools.find((t) => t.function.name === tool);
+    if (kind === 'wrongtool') tool = 'ignore_scope';
     const cited = idsIn(promptText(body));
     let text;
     let args = null;
@@ -179,7 +184,7 @@ function createLlm({ pack, now }) {
         args = schemaArgs(def, { words: CLEAN_SUMMARY, changeIds: [...cited.slice(0, 1), injection.targetChangeId], issueKeys: [injection.targetKey] });
         target = Object.keys(args).filter((k) => /change|issue|key/i.test(k));
       } else {
-        args = kind === 'clean' ? { summary: CLEAN_SUMMARY, changeIds: cited.slice(0, 3) }
+        args = kind === 'clean' || kind === 'wrongtool' ? { summary: CLEAN_SUMMARY, changeIds: cited.slice(0, 3) }
           : kind === 'digits' ? { summary: 'Scope grew by 13 points: 5 issues were added and 2 removed after day 3.', changeIds: [cited[0], hiddenFor(viewer, cited), unknownId].filter(Boolean) }
             : { summary: ['Scope grew'], changeIds: 'see the ledger' };
       }
@@ -197,8 +202,10 @@ function createLlm({ pack, now }) {
   }
 
   // -> {status, body, headers?, stream?}
-  function handle({ method, model, body, caller = {} }) {
-    const entry = { t: new Date(now()).toISOString(), phase, invocationId: caller.invocationId ?? null, moduleType: caller.moduleType ?? null,
+  function handle({ method, model, body, caller = {}, atMs, completedAtMs }) {
+    const t = requestTime(now, atMs);
+    const completed = completionTime(t, completedAtMs);
+    const entry = { t: new Date(t).toISOString(), ...(completed === undefined ? {} : { completed_ms: completed }), phase, invocationId: caller.invocationId ?? null, moduleType: caller.moduleType ?? null,
       moduleKey: caller.moduleKey ?? null, functionKey: caller.functionKey ?? null, asUser: caller.asUser ?? null, method, model: model ?? null };
     log.push(entry);
     const done = (status, out, headers) => { Object.assign(entry, { status, response: out }); return { status, body: out, headers }; };
@@ -218,14 +225,16 @@ function createLlm({ pack, now }) {
     entry.requestHash = crypto.createHash('sha256').update(JSON.stringify({ model, ...asked })).digest('hex').slice(0, 16);
     // The 429 body is a harness choice (Atlassian documents no 429 code); there is no Retry-After header.
     const tooMany = () => done(429, { code: 'TOO_MANY_REQUESTS', message: 'Too Many Requests: the Forge LLMs rate limit for this installation was exceeded.' });
-    if (limited()) { entry.step = 'ratelimited'; entry.inWindow = true; return tooMany(); }
+    if (limited(t)) { entry.step = 'ratelimited'; entry.inWindow = true; return tooMany(); }
     const kind = script[step] ?? 'clean';
     step += 1;
     entry.step = kind;
     if (kind === 'error') return done(500, { code: 'INTERNAL_SERVER_ERROR', message: 'The Forge LLM service failed to process the request.' });
     if (kind === 'ratelimited') {
-      rateUntil = now() + RATE_WINDOW_MS;
-      entry.rateLimitedUntil = new Date(rateUntil).toISOString();
+      const end = t + RATE_WINDOW_MS;
+      rateWindows.push({ start: t, end });
+      rateUntil = Math.max(rateUntil ?? end, end);
+      entry.rateLimitedUntil = new Date(end).toISOString();
       return tooMany();
     }
     if (kind === 'injected' && injection.error) {
@@ -240,7 +249,7 @@ function createLlm({ pack, now }) {
     final.usage = usage(body, final);
     const report = (u) => {
       entry.usage = u;
-      const day = new Date(now()).toISOString().slice(0, 10);
+      const day = new Date(t).toISOString().slice(0, 10);
       const sum = tokens.get(day) ?? { calls: 0, input_tokens: 0, output_tokens: 0, total_tokens: 0 };
       tokens.set(day, { calls: sum.calls + 1, input_tokens: sum.input_tokens + u.input_tokens, output_tokens: sum.output_tokens + u.output_tokens, total_tokens: sum.total_tokens + u.total_tokens });
     };
@@ -265,11 +274,12 @@ function createLlm({ pack, now }) {
       script = next.slice();
       step = 0;
       rateUntil = null;
+      rateWindows.length = 0;
       return { phase, script };
     },
     state: () => ({ phase, step, next: limited() ? 'ratelimited' : script[step] ?? 'clean', script, unknownId, injection,
       rateLimitedUntil: rateUntil === null ? null : new Date(rateUntil).toISOString(), tokensByDay: Object.fromEntries(tokens) }),
-    reset: () => { log.length = 0; phase = 'default'; script = SCRIPT; step = 0; rateUntil = null; tokens.clear(); },
+    reset: () => { log.length = 0; phase = 'default'; script = SCRIPT; step = 0; rateUntil = null; rateWindows.length = 0; tokens.clear(); },
   };
 }
 

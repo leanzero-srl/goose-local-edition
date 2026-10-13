@@ -18,6 +18,9 @@ const USAGE = `forge-dev <command>   (run from the app directory; $FORGE_SITE_UR
         references it. --resolver calls that resolver key with --payload as its payload (resolvers are
         user-led: --as defaults to the dev viewer). For a trigger, consumer or action, --payload is the
         event JSON (a consumer gets it as the AsyncEvent body, an action as its inputs).
+  jql '<expression>' [--as app|<accountId>]
+        Run one native Jira search page (100 issues) as the dev viewer or chosen identity, expanding your
+        installed JQL function through its shared precomputation. Prints the result and native invocation calls.
   events [--limit N]          deliver the dev site's next N issue updates (default 1) to your trigger(s),
                               then drain the queues; a redelivery or a second change of one issue that arrives
                               before the first one's queue work ran is delivered with it (past N), and their
@@ -312,6 +315,22 @@ async function main() {
   const consumed = new Set();
   let serving = false;
   try {
+    if (cmd === 'jql') {
+      const query = positional[0];
+      if (!query) throw new Error("jql '<expression>' [--as app|<accountId>]");
+      const asUser = opt('as') ?? info.viewer;
+      const response = await fetch(emu.site.url + '/rest/api/3/search/jql', { method: 'POST', headers: {
+        'content-type': 'application/json', 'x-forge-as': asUser === 'app' ? 'app' : 'user',
+        'x-forge-account': asUser === 'app' ? info.appAccountId : asUser,
+        'x-forge-scopes': JSON.stringify(emu.manifest?.permissions?.scopes ?? []), 'x-forge-source': 'frontend',
+      }, body: JSON.stringify({ jql: query, fields: ['summary'], maxResults: 100 }) });
+      const body = await response.json();
+      console.log(`JQL as ${asUser} -> ${response.status}: ${short(body)}`);
+      for (const out of finished) printInvocation(out, 'native JQL');
+      fs.writeFileSync(path.join(stateDir, 'last-result.json'), JSON.stringify(body, null, 2) + '\n');
+      await saveState(emu, consumed);
+      return response.ok ? 0 : 1;
+    }
     if (cmd === 'uikit') {
       // P2's command (bin/uikit.cjs): parses its own --as/--set/--click/--advance/--json, always closes its host process.
       const code = await require('./uikit.cjs').main({ emu, argv: argv.slice(1) });

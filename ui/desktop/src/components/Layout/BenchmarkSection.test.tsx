@@ -5,6 +5,7 @@ import { IntlProvider } from 'react-intl';
 import { BenchmarkSection, benchRunHref, deriveEras } from './BenchmarkSection';
 import type { BenchSession, CatalogBenchmark } from '../benchmark/bridge';
 import { resolvedPaint, studioToken } from '../lz/resolvedPaint';
+import { completedSeriesFixture, sessionsFixture } from '../benchmark/series.fixture';
 
 const nav = vi.hoisted(() => ({ navigate: vi.fn(), startChat: vi.fn() }));
 vi.mock('react-router-dom', async (orig) => ({
@@ -189,6 +190,43 @@ describe('BenchmarkSection', () => {
     fireEvent.click(screen.getByText('Forge 1.0 pilot'));
     fireEvent.click(await screen.findByTestId('bench-run-cloud-forge'));
     expect(nav.navigate).toHaveBeenCalledWith(benchRunHref('forge-1.0-rc', 'cloud-forge'));
+  });
+
+  it('keeps two real Forge children under their parent with ordered evidence routes', async () => {
+    const series = completedSeriesFixture();
+    const children = sessionsFixture(series);
+    const m = mocks();
+    m.benchmarkSessions.mockResolvedValue({ sessions: [...children].reverse() });
+    m.benchmarkCatalog.mockResolvedValue({
+      ok: true,
+      benchmarks: [
+        {
+          scorerVersion: 'forge-2.0',
+          title: 'Forge 2.0',
+          family: 'forge',
+          familyCurrent: true,
+          current: false,
+          frozen: false,
+          baselines: [],
+        },
+      ],
+    });
+    renderSection();
+    const parent = await screen.findByTestId(`bench-series-${series.id}`);
+    expect(within(parent).getByText(series.model)).toBeInTheDocument();
+    expect(within(parent).getByText('2 builds')).toBeInTheDocument();
+    const rows = within(parent).getAllByTestId(/^bench-run-/);
+    expect(rows.map((row) => row.getAttribute('data-testid'))).toEqual(
+      children.map((child) => `bench-run-${child.runId}`)
+    );
+    expect(rows[0]).toHaveTextContent('Build 1');
+    expect(rows[1]).toHaveTextContent('Build 2');
+    fireEvent.click(within(parent).getByText(series.model));
+    expect(nav.navigate).toHaveBeenLastCalledWith(`/benchmark?era=forge-2.0&series=${series.id}`);
+    fireEvent.click(rows[1]);
+    expect(nav.navigate).toHaveBeenLastCalledWith(
+      `/benchmark?era=forge-2.0&run=${children[1].runId}`
+    );
   });
 
   it('deriveEras: the current era first, runs newest first, unknown eras from runs alone', () => {

@@ -262,14 +262,23 @@ export async function sprintTotals(sprintId) {
   return { changes, members, totals: computeTotals(changes, members) };
 }
 
-// Which of these issues can the invoking person browse? Read as them: issue bulkfetch leaves out issues
-// that "aren't found or that the user doesn't have permission to view". Returns issueId -> current key.
-export async function visibleIssues(issueIds, work) {
+// Check access as the invoking person on every request, including issue security, without downloading
+// every issue again. The key is the recorded history key; JQL matching supplies only the fresh visibility.
+export async function visibleIssues(issueRefs, work) {
   const visible = new Map();
-  const ids = [...new Set(issueIds)];
-  for (let i = 0; i < ids.length; i += 100) {
-    const page = await jiraJson('user', route`/rest/api/3/issue/bulkfetch`, postJson({ issueIdsOrKeys: ids.slice(i, i + 100), fields: ['key'] }), work);
-    for (const issue of page.issues ?? []) visible.set(String(issue.id), issue.key);
+  const refs = new Map(issueRefs.map((issue) => [String(issue.issueId), issue.issueKey]));
+  const ids = [...refs.keys()];
+  if (ids.some((id) => !/^\d+$/.test(id) || !Number.isSafeInteger(Number(id)))) throw new Error('The ledger contains an invalid Jira issue id.');
+  for (let i = 0; i < ids.length; i += 50) {
+    const batch = ids.slice(i, i + 50);
+    const page = await jiraJson('user', route`/rest/api/3/jql/match`, postJson({ issueIds: batch.map(Number), jqls: [`issue in (${batch.join(',')})`] }), work);
+    const match = page.matches?.[0];
+    if (!match || !Array.isArray(match.matchedIssues) || !Array.isArray(match.errors)) throw new Error('Jira returned an incomplete visibility check.');
+    if (match.errors.length) throw new Error(`Jira could not check visibility: ${match.errors.join('; ')}`);
+    for (const id of match.matchedIssues.map(String)) {
+      if (!refs.has(id) || !batch.includes(id)) throw new Error('Jira returned an issue outside the visibility check.');
+      visible.set(id, refs.get(id));
+    }
   }
   return visible;
 }

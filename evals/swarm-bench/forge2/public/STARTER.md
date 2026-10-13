@@ -43,10 +43,11 @@ including the bulk endpoints, their pagination and errors, and the rate model of
 dates are ISO-8601 strings as the OpenAPI types them. JQL: fields `project`, `key`, `sprint`, `updated`, `created`,
 `status`, `statusCategory`, `issuetype`, `labels`, `assignee`, `reporter`, `cf[id]`; operators
 `= != in not in > >= < <= is is not ~`, `AND OR NOT`, parentheses, `ORDER BY`; functions `openSprints()`,
-`closedSprints()`, `futureSprints()`, `currentUser()`, `now()`, `startOfDay()`; relative dates like `-14d`. Its update
+`closedSprints()`, `futureSprints()`, `currentUser()`, `now()`, `startOfDay()`; your declared `scopeChanged()`
+function and its shared precomputation lifecycle (contract §19); relative dates like `-14d`. Its update
 stream also carries the world changes of contract §12, each kind at least once. Invocations run on its virtual clock
 with the contract's limits (§11) and with the scoring site's concurrency and staleness (§3): up to 3 consumer
-invocations run at once, two deliveries of the same event included, and a KVS query (`kvs.query` or an entity index
+invocations run at once, subject to installation-wide queue concurrency keys and limits, two deliveries of the same event included, and a KVS query (`kvs.query` or an entity index
 query) misses writes younger than 5 virtual seconds, while `get` and transaction conditions always see current state.
 Forge LLM answers with a scripted model. You never call the site directly; your app reaches it through the Forge
 runtime. `users` lists the dev users: the first line is the default viewer; it marks who holds Jira's `ADMINISTER`
@@ -67,6 +68,8 @@ command prints every flag):
 | `ci send` | signs a deployment event the way CI does (contract §14) with the secret you give it, posts it to your web trigger and prints the answer |
 | `llm` / `realtime` | the dev site's Forge LLM (model list, scripted answers, every call) / every Realtime publish and subscription |
 | `kvs` / `users` / `reset` | dump stored keys and entities / list dev users / return the dev storage, queues and update stream to the upgrade instant (v1's rows in place) |
+
+Test the native JQL path with `node $FORGE_KIT/bin/forge-dev.cjs jql 'issue in scopeChanged("123")' [--as app|<accountId>]` (replace the sprint id with one from your dev site). It searches one page of up to 100 issues as the default viewer, or the specified identity, invoking your installed `jira:jqlFunction` when its shared precomputation is absent. Cached clauses are reused across identities, and Jira filters the expanded result for the querying user. The command prints native function calls and saves the full search response to `.forge-dev/last-result.json`; malformed queries return an error.
 
 Screenshot a served Custom UI surface with the bundled browser (`BROWSER-TESTING.md`). Build Custom UI into
 `static/<name>/build/` (an `index.html` plus assets) with the installed esbuild; the harness never builds it for you.

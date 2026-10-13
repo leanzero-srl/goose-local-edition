@@ -1,13 +1,9 @@
 import api, { route } from '@forge/api';
-import { kvs, WhereConditions } from '@forge/kvs';
-import { randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
+import { kvs, Filter, FilterConditions } from '@forge/kvs';
 
 export { route };
 
-// Raised instead of making (or repeating) a request: Jira answered 429, or background work must not spend
-// now. `reason` is Jira's RateLimit-Reason, or one of the app's own: `background-share` (this hour's
-// background points are spent), `paused` (a quota 429 paused all background work), `time` (the wait does
-// not fit in what is left of this invocation).
 export class RateLimited extends Error {
   constructor(retryAfterSeconds, reason = '') {
     super(`Jira rate limit (${reason || 'no reason'}): retry after ${retryAfterSeconds}s`);
@@ -24,207 +20,228 @@ export class JiraError extends Error {
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-// ---- the rate model (RATE-MODEL.json) ---------------------------------------------------------------
-
-export const QUOTA = 2400; // points per installation per hour, reset at the top of the hour
+export const QUOTA = 2400;
 const HOUR_MS = 3_600_000;
-const BUCKET_CAPACITY = 30; // per endpoint (method + path template)
-const BUCKET_REFILL = 5; // points per second
-const PER_ISSUE_WRITE_MS = 2000; // at most one write per issue per 2 s
-const QUOTA_REASON = 'jira-quota-tenant-based';
+const DOSE_ENTITY = 'rate-dose';
+const QUOTA_REASONS = new Set(['jira-quota-global-based', 'jira-quota-tenant-based']);
 const BURST_REASON = 'jira-burst-based';
 const ISSUE_REASON = 'jira-per-issue-on-write';
+const WRITE_WINDOWS = [{ count: 20, ms: 2000 }, { count: 100, ms: 30_000 }];
+const READ_POSTS = new Set(['/rest/api/3/search/jql', '/rest/api/3/changelog/bulkfetch', '/rest/api/3/issue/bulkfetch',
+  '/rest/api/3/permissions/check', '/rest/api/3/permissions/project', '/rest/api/3/jql/match']);
 
 export const hourOf = (ms) => Math.floor(ms / HOUR_MS);
 export const secondsToNextHour = (ms = Date.now()) => Math.max(1, Math.ceil(((hourOf(ms) + 1) * HOUR_MS - ms) / 1000));
-
 const pathOf = (path) => String(path?.value ?? path).split('?')[0];
 const queryOf = (path) => new URLSearchParams(String(path?.value ?? path).split('?')[1] ?? '');
+const bodyOf = (init) => init?.body ? JSON.parse(init.body) : undefined;
+const isRead = (method, p) => method === 'GET' || READ_POSTS.has(p) || /^\/rest\/api\/3\/issue\/[^/]+\/changelog\/list$/.test(p);
+const identityRead = (p) => /^\/rest\/api\/3\/(?:myself(?:$|\/)|user(?:$|\/)|group(?:$|\/)|mypermissions(?:$|\/)|permissions(?:$|\/)|project\/[^/]+\/role(?:$|\/))/.test(p);
 
-function bodyOf(init) {
-  try {
-    return init?.body ? JSON.parse(init.body) : undefined;
-  } catch {
-    return undefined;
+export function returnedObjects(body) {
+  if (Array.isArray(body)) return body.length;
+  if (!body || typeof body !== 'object' || body.errorMessages || body.errors) return 0;
+  for (const key of ['issues', 'values', 'issueChangeLogs', 'comments', 'histories', 'users', 'groups', 'projects']) {
+    if (Array.isArray(body[key])) return body[key].length;
   }
+  if (body.permissions && typeof body.permissions === 'object') return Object.keys(body.permissions).length;
+  if (Array.isArray(body.globalPermissions) || Array.isArray(body.projectPermissions)) return (body.globalPermissions?.length ?? 0) + (body.projectPermissions?.length ?? 0);
+  return Object.keys(body).length ? 1 : 0;
 }
 
-// The points a request costs. For a search page this is the most it can cost (maxResults issues); the
-// real cost is known once the page is read (chargeSearchPage).
+export function actualPoints(method, path, body) {
+  const p = pathOf(path);
+  return isRead(method, p) ? 1 + returnedObjects(body) * (identityRead(p) ? 2 : 1) : 1;
+}
+
+// Reserve the bounded response before sending, then settle against the records Jira actually returned.
+// Unpaginated collection APIs need a caller-provided bound; a one-object default would undercharge them.
 export function pointsOf(method, path, init) {
   const p = pathOf(path);
-  if (p === '/rest/api/3/search/jql') {
-    const max = Number(method === 'GET' ? queryOf(path).get('maxResults') : bodyOf(init)?.maxResults) || 50;
-    return 1 + Math.ceil(max / 50);
-  }
-  if (p === '/rest/api/3/changelog/bulkfetch') return 2;
-  if (p === '/rest/api/3/app/field/value') {
-    const updates = (bodyOf(init)?.updates ?? []).reduce((n, u) => n + (u.issueIds?.length ?? 0), 0);
-    return 1 + Math.ceil(updates / 50);
-  }
-  return method === 'GET' ? 1 : 2;
+  if (!isRead(method, p)) return 1;
+  const body = bodyOf(init);
+  const q = queryOf(path);
+  let objects = 1;
+  if (p === '/rest/api/3/search/jql') objects = Number(method === 'GET' ? q.get('maxResults') : body?.maxResults) || 50;
+  else if (p === '/rest/api/3/changelog/bulkfetch') objects = Math.min(body?.issueIdsOrKeys?.length ?? 0, body?.maxResults ?? 1000);
+  else if (p === '/rest/api/3/issue/bulkfetch') objects = body?.issueIdsOrKeys?.length ?? 0;
+  else if (/\/changelog\/list$/.test(p)) objects = body?.changelogIds?.length ?? 0;
+  else if (p === '/rest/api/3/permissions/check') objects = (body?.globalPermissions?.length ?? 0) + (body?.projectPermissions ?? []).reduce((n, x) => n + (x.permissions?.length ?? 0), 0);
+  else if (p === '/rest/api/3/mypermissions') objects = (q.get('permissions') ?? '').split(',').filter(Boolean).length;
+  else if (q.has('maxResults')) objects = Number(q.get('maxResults'));
+  else if (p === '/rest/api/3/field' || /\/user\/groups$/.test(p)) throw new Error(`Background read ${p} has no response bound; use a paginated API.`);
+  if (!(Number.isInteger(objects) && objects >= 0)) throw new Error(`Invalid background response bound on ${p}`);
+  return 1 + objects * (identityRead(p) ? 2 : 1);
 }
 
-const endpointOf = (method, path) =>
-  `${method} ${pathOf(path)
-    .replace(/\/[A-Z][A-Z0-9_]*-\d+(?=\/|$)/g, '/{key}')
-    .replace(/\/\d+(?=\/|$)/g, '/{id}')}`;
-
-// Issues a write touches, for the per-issue write limit.
+const endpointOf = (method, path) => `${method} ${pathOf(path).replace(/\/[A-Z][A-Z0-9_]*-\d+(?=\/|$)/g, '/{id}').replace(/(?<!\/api)\/\d+(?=\/|$)/g, '/{id}')}`;
 function writtenIssues(method, path, init) {
-  if (method === 'GET') return [];
   const p = pathOf(path);
-  if (p === '/rest/api/3/app/field/value') return (bodyOf(init)?.updates ?? []).flatMap((u) => (u.issueIds ?? []).map(String));
-  const m = p.match(/^\/rest\/api\/3\/issue\/([^/]+)\/(comment|properties)/);
+  if (isRead(method, p)) return [];
+  if (p === '/rest/api/3/app/field/value' || /^\/rest\/api\/3\/app\/field\/[^/]+\/value$/.test(p)) return (bodyOf(init)?.updates ?? []).flatMap((u) => (u.issueIds ?? []).map(String));
+  const m = p.match(/^\/rest\/api\/3\/issue\/([^/]+)(?:\/|$)/);
   return m ? [m[1]] : [];
 }
+const endpointKey = (endpoint) => `endpoint:${createHash('sha256').update(endpoint).digest('hex')}`;
+const isConflict = (e) => e.code === 'KEY_CONFLICT' || e.code === 'CONDITIONAL_CHECK_FAILED';
 
-// ---- the background dose ------------------------------------------------------------------------------
-
-const SPEND_PREFIX = 'dose:';
-const PAUSED_KEY = 'dose-paused-until';
-
-// Each background invocation records its own spend under dose:<hour>:<invocation>, so invocations running
-// at the same time never overwrite each other's numbers; the hour's spend is the sum of those keys.
-async function spentThisHour(hour, ownKey) {
-  let total = 0;
-  let cursor;
-  do {
-    let q = kvs.query().where('key', WhereConditions.beginsWith(`${SPEND_PREFIX}${hour}:`)).limit(100);
-    if (cursor) q = q.cursor(cursor);
-    const page = await q.getMany();
-    for (const r of page.results) if (r.key !== ownKey) total += Number(r.value) || 0;
-    cursor = page.nextCursor;
-  } while (cursor);
-  return total;
-}
-
-// One per background invocation: the hourly share (settings.backgroundShare % of the quota), the pause a
-// quota 429 sets, the per-endpoint pacing and the per-issue write spacing, and the invocation's own time
-// limit (no wait is started that would not end before it).
+// A conditional transaction on a strongly read entity is the admission boundary. Query indexes can
+// lag five seconds; concurrent invocations cannot reserve against a query-summed spend.
 export class Background {
   constructor({ sharePercent, limitSeconds }) {
     this.cap = Math.floor((QUOTA * sharePercent) / 100);
     this.limitMs = limitSeconds * 1000;
     this.startedAt = Date.now();
     this.reserveMs = this.limitMs / 10;
-    this.id = randomUUID();
-    this.hour = null;
-    this.others = 0;
-    this.mine = 0;
-    this.flushedMine = 0;
-    this.pausedUntil = 0;
     this.buckets = new Map();
-    this.lastWrite = new Map();
+    this.writes = new Map();
+    this.delayedIssues = new Map();
     this.background = true;
   }
+  timeLeftMs() { return this.limitMs - (Date.now() - this.startedAt); }
+  get maxWaitSeconds() { return Math.max(0, Math.floor((this.timeLeftMs() - this.reserveMs) / 1000)); }
+  hasTimeFor(ms) { return this.timeLeftMs() - this.reserveMs > ms; }
+  async flush() {}
 
-  timeLeftMs() {
-    return this.limitMs - (Date.now() - this.startedAt);
-  }
-
-  // Seconds this invocation may still spend waiting in-function.
-  get maxWaitSeconds() {
-    return Math.max(0, Math.floor((this.timeLeftMs() - this.reserveMs) / 1000));
-  }
-
-  hasTimeFor(ms) {
-    return this.timeLeftMs() - this.reserveMs > ms;
-  }
-
-  key() {
-    return `${SPEND_PREFIX}${this.hour}:${this.id}`;
-  }
-
-  async sync() {
-    const hour = hourOf(Date.now());
-    if (this.hour !== hour) {
-      if (this.hour !== null) await this.flush();
-      this.hour = hour;
-      this.mine = 0;
-      this.flushedMine = 0;
+  async mutateDose(hour, update) {
+    const key = String(hour);
+    for (;;) {
+      const stored = await kvs.entity(DOSE_ENTITY).get(key);
+      const current = stored ?? { spent: 0, pausedUntil: 0 };
+      const next = update(current);
+      try {
+        if (!stored) await kvs.entity(DOSE_ENTITY).set(key, next, { keyPolicy: 'FAIL_IF_EXISTS' });
+        else {
+          const conditions = new Filter().and('spent', FilterConditions.equalTo(current.spent)).and('pausedUntil', FilterConditions.equalTo(current.pausedUntil));
+          await kvs.transact().set(key, next, { entityName: DOSE_ENTITY, conditions }).execute();
+        }
+        return next;
+      } catch (e) {
+        if (!isConflict(e)) throw e;
+      }
     }
-    this.others = await spentThisHour(hour, this.key());
-    this.pausedUntil = Number(await kvs.get(PAUSED_KEY)) || 0;
-  }
-
-  async flush() {
-    if (this.hour === null || this.mine === this.flushedMine) return;
-    await kvs.set(this.key(), this.mine, { ttl: { value: 1, unit: 'DAYS' } });
-    this.flushedMine = this.mine;
   }
 
   async admit(method, path, init) {
-    if (this.hour !== hourOf(Date.now()) || this.mine - this.flushedMine >= 50) {
-      await this.flush();
-      await this.sync();
+    await this.pace(endpointOf(method, path), method);
+    const issues = writtenIssues(method, path, init);
+    await this.spaceWrites(issues);
+    await this.checkCooldowns(endpointOf(method, path), issues);
+    const points = pointsOf(method, path, init);
+    for (;;) {
+      const hour = hourOf(Date.now());
+      await this.mutateDose(hour, (current) => {
+        const now = Date.now();
+        if (!this.hasTimeFor(0)) throw new RateLimited(1, 'time');
+        if (current.pausedUntil > now) throw new RateLimited(Math.ceil((current.pausedUntil - now) / 1000), 'paused');
+        if (current.spent + points > this.cap) throw new RateLimited(secondsToNextHour(now), 'background-share');
+        return { ...current, spent: current.spent + points };
+      });
+      const reservation = { hour, points };
+      try {
+        // A concurrent request may publish its 429 while this reservation waits on its conditional write.
+        await this.checkCooldowns(endpointOf(method, path), issues);
+      } catch (e) {
+        await this.settle(reservation, 0);
+        throw e;
+      }
+      if (hour === hourOf(Date.now())) return reservation;
+      // Storage waits can cross the quota reset before the Jira request has been sent.
+      await this.settle(reservation, 0);
     }
-    const now = Date.now();
-    if (this.pausedUntil > now) throw new RateLimited(Math.ceil((this.pausedUntil - now) / 1000), 'paused');
-    const cost = pointsOf(method, path, init);
-    if (this.others + this.mine + cost > this.cap) throw new RateLimited(secondsToNextHour(now), 'background-share');
-    await this.pace(endpointOf(method, path), cost);
-    await this.spaceWrites(writtenIssues(method, path, init));
-    this.mine += cost;
-    return cost;
   }
 
-  refund(points) {
-    this.mine = Math.max(0, this.mine - points);
+  async acquireRequestGate() {
+    for (;;) {
+      try {
+        const held = await this.mutateDose('request-gate', (current) => {
+          if (!this.hasTimeFor(0)) throw new RateLimited(1, 'time');
+          if (current.pausedUntil > Date.now()) throw new RateLimited(1, 'request-in-flight');
+          return { spent: current.spent + 1, pausedUntil: this.startedAt + this.limitMs };
+        });
+        return held.spent;
+      } catch (e) {
+        if (!(e instanceof RateLimited) || e.reason !== 'request-in-flight') throw e;
+        await this.wait(e.retryAfterSeconds * 1000, 'time');
+      }
+    }
+  }
+  async releaseRequestGate(generation) {
+    await this.mutateDose('request-gate', (current) => current.spent === generation ? { ...current, pausedUntil: 0 } : current);
+  }
+
+  async settle(reservation, actual) {
+    if (actual > reservation.points) throw new Error(`Jira returned more records than the admitted bound (${actual} > ${reservation.points})`);
+    const refund = reservation.points - actual;
+    if (refund) await this.mutateDose(reservation.hour, (current) => ({ ...current, spent: current.spent - refund }));
   }
 
   async wait(ms, reason) {
     if (!this.hasTimeFor(ms)) throw new RateLimited(Math.max(1, Math.ceil(ms / 1000)), reason);
     await sleep(ms);
   }
-
-  // A local mirror of Jira's per-endpoint token bucket: wait for the tokens instead of drawing a burst 429.
-  async pace(endpoint, cost) {
+  async pace(endpoint, method) {
+    const rate = ['PUT', 'PATCH', 'DELETE'].includes(method) ? 50 : 100;
     const now = Date.now();
-    const b = this.buckets.get(endpoint) ?? { tokens: BUCKET_CAPACITY, at: now, rate: BUCKET_REFILL };
-    b.tokens = Math.min(BUCKET_CAPACITY, b.tokens + ((now - b.at) / 1000) * b.rate);
+    const b = this.buckets.get(endpoint) ?? { tokens: rate, at: now, rate };
+    b.tokens = Math.min(rate, b.tokens + ((now - b.at) / 1000) * b.rate);
     b.at = now;
     this.buckets.set(endpoint, b);
-    if (b.tokens < cost) {
-      await this.wait(Math.ceil(((cost - b.tokens) / b.rate) * 1000), 'time');
-      b.tokens = cost;
+    if (b.tokens < 1) {
+      await this.wait(Math.ceil(((1 - b.tokens) / b.rate) * 1000), 'time');
+      b.tokens = 1;
       b.at = Date.now();
     }
-    b.tokens -= cost;
+    b.tokens -= 1;
   }
-
   slow(endpoint) {
-    const b = this.buckets.get(endpoint) ?? { tokens: 0, at: Date.now(), rate: BUCKET_REFILL };
-    b.rate = Math.max(b.rate / 2, BUCKET_REFILL / 10);
+    const b = this.buckets.get(endpoint) ?? { tokens: 0, at: Date.now(), rate: 100 };
+    b.rate /= 2;
     b.tokens = 0;
     b.at = Date.now();
     this.buckets.set(endpoint, b);
   }
-
-  async spaceWrites(issueIds) {
-    if (!issueIds.length) return;
+  async spaceWrites(ids) {
+    if (!ids.length) return;
     const now = Date.now();
-    const ready = Math.max(...issueIds.map((id) => (this.lastWrite.get(id) ?? -Infinity) + PER_ISSUE_WRITE_MS));
+    let ready = now;
+    for (const id of new Set(ids)) {
+      const times = (this.writes.get(id) ?? []).filter((at) => now - at < WRITE_WINDOWS.at(-1).ms);
+      for (const w of WRITE_WINDOWS) {
+        const recent = times.filter((at) => now - at < w.ms);
+        if (recent.length >= w.count) ready = Math.max(ready, recent[recent.length - w.count] + w.ms);
+      }
+      ready = Math.max(ready, this.delayedIssues.get(id) ?? now);
+      this.writes.set(id, times);
+    }
     if (ready > now) await this.wait(ready - now, 'time');
-    for (const id of issueIds) this.lastWrite.set(id, Date.now());
+    for (const id of new Set(ids)) this.writes.get(id).push(Date.now());
   }
-
-  delayIssues(issueIds, seconds) {
+  async checkCooldowns(endpoint, ids) {
+    const keys = [['quota-pause', 'paused'], [endpointKey(endpoint), BURST_REASON],
+      ...[...new Set(ids)].map((id) => [`issue:${id}`, ISSUE_REASON])];
+    const states = await Promise.all(keys.map(async ([key, reason]) => ({ reason, state: await kvs.entity(DOSE_ENTITY).get(key) })));
+    const active = states.filter(({ state }) => state?.pausedUntil > Date.now()).sort((a, b) => b.state.pausedUntil - a.state.pausedUntil);
+    if (active.length) throw new RateLimited(Math.ceil((active[0].state.pausedUntil - Date.now()) / 1000), active[0].reason);
+  }
+  async setCooldown(key, seconds) {
     const until = Date.now() + seconds * 1000;
-    for (const id of issueIds) this.lastWrite.set(id, until - PER_ISSUE_WRITE_MS);
+    await this.mutateDose(key, (current) => ({ ...current, pausedUntil: Math.max(current.pausedUntil, until) }));
   }
-
+  async delayEndpoint(endpoint, seconds) { await this.setCooldown(endpointKey(endpoint), seconds); }
+  async delayIssues(ids, seconds) {
+    for (const id of new Set(ids)) {
+      this.delayedIssues.set(id, Date.now() + seconds * 1000);
+      await this.setCooldown(`issue:${id}`, seconds);
+    }
+  }
   async pause(seconds) {
-    this.pausedUntil = Date.now() + seconds * 1000;
-    await kvs.set(PAUSED_KEY, this.pausedUntil);
+    const until = Date.now() + seconds * 1000;
+    await this.setCooldown('quota-pause', seconds);
+    await this.mutateDose(hourOf(Date.now()), (current) => ({ ...current, pausedUntil: Math.max(current.pausedUntil, until) }));
   }
 }
 
-// ---- requests -----------------------------------------------------------------------------------------
-
-// Retry-After is either delta-seconds or an HTTP-date (RFC 9110 §10.2.3). Without the header we back off
-// exponentially from one second, never retrying immediately.
 export function retryAfterSeconds(res, attempt) {
   const header = res.headers.get('retry-after');
   if (header !== null && header.trim() !== '') {
@@ -236,44 +253,52 @@ export function retryAfterSeconds(res, attempt) {
   return 2 ** Math.min(attempt, 6);
 }
 
-// `work` is a Background (background work: dosed, paced, bounded by the invocation's time) or a plain
-// { maxWaitSeconds } for person-facing requests, which are never held back for the background share.
+const bodies = new WeakMap();
 export async function jira(who, path, init = {}, work = { maxWaitSeconds: Infinity }) {
   const client = who === 'user' ? api.asUser() : api.asApp();
   const method = (init.method ?? 'GET').toUpperCase();
   for (let attempt = 0; ; attempt += 1) {
-    if (work.background) await work.admit(method, path, init);
-    const res = await client.requestJira(path, init);
-    if (res.status !== 429) return res;
-    const wait = retryAfterSeconds(res, attempt);
-    const reason = res.headers.get('ratelimit-reason') ?? '';
-    if (work.background) {
-      if (reason === QUOTA_REASON) {
-        await work.pause(wait);
-        throw new RateLimited(wait, reason);
+    // Publish rate state before another background request can dispatch. The consumers still run
+    // concurrently; this lease ends before a Retry-After wait and expires at its owner's invocation limit.
+    const generation = work.background ? await work.acquireRequestGate() : null;
+    let wait, reason;
+    try {
+      const reservation = work.background ? await work.admit(method, path, init) : null;
+      const res = await client.requestJira(path, init);
+      if (res.status !== 429) {
+        if (reservation) {
+          const body = res.status === 204 ? undefined : await res.json();
+          bodies.set(res, body);
+          await work.settle(reservation, actualPoints(method, path, body));
+        }
+        return res;
       }
-      if (reason === BURST_REASON) work.slow(endpointOf(method, path));
-      if (reason === ISSUE_REASON) work.delayIssues(writtenIssues(method, path, init), wait);
+      wait = retryAfterSeconds(res, attempt);
+      reason = res.headers.get('ratelimit-reason') ?? '';
+      if (work.background) {
+        if (QUOTA_REASONS.has(reason)) await work.pause(wait);
+        if (reason === BURST_REASON) {
+          const endpoint = endpointOf(method, path);
+          work.slow(endpoint);
+          await work.delayEndpoint(endpoint, wait);
+        }
+        if (reason === ISSUE_REASON) await work.delayIssues(writtenIssues(method, path, init), wait);
+      }
+      if (reservation) await work.settle(reservation, 0);
+    } finally {
+      if (generation !== null) await work.releaseRequestGate(generation);
     }
+    if (work.background && QUOTA_REASONS.has(reason)) throw new RateLimited(wait, reason);
     if (wait > work.maxWaitSeconds) throw new RateLimited(wait, reason);
-    // Strictly more than the header asks for, so "at least that long" holds on any clock granularity.
     await sleep(wait * 1000 + 50);
   }
 }
 
 export async function jiraJson(who, path, init, work) {
   const res = await jira(who, path, init, work);
-  if (!res.ok) throw new JiraError(res.status, path.value ?? String(path), await res.text());
-  const body = res.status === 204 ? undefined : await res.json();
-  // A search page costs 1 + 1 per 50 issues returned: give back what the worst case over-reserved.
-  if (work?.background && pathOf(path) === '/rest/api/3/search/jql') {
-    work.refund(pointsOf((init?.method ?? 'GET').toUpperCase(), path, init) - (1 + Math.ceil((body?.issues?.length ?? 0) / 50)));
-  }
-  return body;
+  const cached = bodies.has(res);
+  const body = cached ? bodies.get(res) : undefined;
+  if (!res.ok) throw new JiraError(res.status, path.value ?? String(path), cached ? JSON.stringify(body) : await res.text());
+  return cached ? body : res.status === 204 ? undefined : res.json();
 }
-
-export const postJson = (body) => ({
-  method: 'POST',
-  headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-  body: JSON.stringify(body),
-});
+export const postJson = (body) => ({ method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify(body) });

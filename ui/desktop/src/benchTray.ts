@@ -23,6 +23,8 @@ export interface BenchTrayRun {
   callsUsed: number | null;
   /** The harness's call budget for this tier (isolated_tiers call_budget), known only for a budgeted entrant. */
   callBudget: number | null;
+  buildIndex?: number;
+  totalBuilds?: number;
 }
 
 export type BenchTrayEnd = 'scored' | 'did_not_finish' | 'cancelled';
@@ -94,7 +96,9 @@ function endText(last: BenchTrayLast): string {
 /** The menu-bar title while a run is live: the build shows its calls when they are counted. */
 export function benchTrayTitle(run: BenchTrayRun): string {
   const progress = run.phase === 'build' ? callsProgress(run) : null;
-  return `Benchmark · ${entrantName(run.model, run.nodes)} · ${progress ?? PHASE_WORD[run.phase]}`;
+  const build =
+    run.buildIndex && run.totalBuilds ? ` · build ${run.buildIndex}/${run.totalBuilds}` : '';
+  return `Benchmark · ${entrantName(run.model, run.nodes)}${build} · ${progress ?? PHASE_WORD[run.phase]}`;
 }
 
 /** The title a just-ended run holds before the engine's status returns. */
@@ -110,6 +114,8 @@ export function benchTrayLines(run: BenchTrayRun, nowMs: number): string[] {
     `Phase: ${PHASE_LABEL[run.phase]}`,
     `Elapsed: ${benchElapsed(nowMs - run.startedAtMs)}`,
   ];
+  if (run.buildIndex && run.totalBuilds)
+    lines.splice(2, 0, `Build: ${run.buildIndex} of ${run.totalBuilds}`);
   if (run.callsUsed != null)
     lines.push(
       run.callBudget != null

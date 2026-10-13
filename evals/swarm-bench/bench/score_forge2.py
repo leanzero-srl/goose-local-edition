@@ -6,13 +6,13 @@
                                    composition: no tree, no probe, the rows exactly as they were graded)
 
 Forge 1.0's machinery (score_forge.py, forked) with the 2.0 composition (SPEC §4):
-  earned = (0.25 · v1 + Σ_family w_family · mean(family rows)) × critical multiplier × reliability
+  earned = (0.15 · v1 + Σ_family w_family · mean(family rows)) × critical multiplier × reliability
   v1     = 0.88 · inner(1.0 tiers L..A) + 0.12 · excellence gate · e_mean      (the 1.0 rows, now regression rows)
-  family = R1 0.12 · R2 0.13 · R3 0.08 · R4 0.10 · R5 0.10 · R6 0.08 · R7 0.05 · R8 0.04 · R9 0.05 (P8's rows,
+  family = R1 0.12 · R2 0.13 · R3 0.08 · R4 0.10 · R5 0.10 · R6 0.08 · R7 0.05 · R8 0.04 · R9 0.05 · R10 0.10 (JQL; P8's rows,
            imported from bench/forge2_checks.py, each weighted inside its family)
   criticals: five CLASSES, ×0.6 each, a class fires at most once (each root priced once) and only on an observed
            defect — never on a vacuous, absent, unavailable or manifest-fault row
-  reliability: max(floor, Π over the 18 groups — every tier but E — of (1 − K × the shortfall of the group's worst
+  reliability: max(floor, Π over the 19 groups — every tier but E — of (1 − K × the shortfall of the group's worst
            eligible row)), K and the floor from the thresholds file (reliability())
   bands: lint/bundle failure → max 0.499; none of jira:adminPage, webtrigger, scope-ledger → max 0.30.
 The §17.8 fixes: B (the duplicate critical needs >= 2 comments for one gesture; zero comments or a missing flag
@@ -20,7 +20,7 @@ is u_comment_flow's), F (both economy rows continuous), G (vacuous / manifest-fa
 a vacuous root counts as charged), H (u_widget_live grades the outcome on the moved sprints; polling scores 0).
 
 P8's module (bench/forge2_checks.py) — what this module imports, validates at import, and refuses to score without:
-  ROWS      entries (objects or dicts) with name, family ('R1'..'R9'; `tier` also read) and critical (None, a class
+  ROWS      entries (objects or dicts) with name, family ('R1'..'R10'; `tier` also read) and critical (None, a class
             key, or its consequence text — mapped to exactly one class by CLASS_OF_TEXT, else refused);
   WEIGHTS   {name: weight} (a row's share; only the proportions inside a family matter; 0 = diagnostic);
   evaluate(obs, oracle) -> [{check, score, detail, parts?, unavailable?}]   run once per scoring site with the
@@ -88,6 +88,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Tuple
 import zlib
 
 import forge2_oracle as fo
+import forge2_seed_policy as seed_policy
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -100,7 +101,7 @@ FIXTURES = ROOT / 'forge2' / 'site' / 'fixtures.cjs'
 # ── calibration-owned thresholds ─────────────────────────────────────────────────────────────
 
 THRESHOLDS_FILE = HERE / 'forge2-thresholds.json'
-CALIB_SHA256 = '34550b5db10c9f76788a2db45925ce6a1bf94c7bb98842ba2c8cd3a7c01efeec'   # the golden v2 x5 calibration (calibrate(), --calibrate, 7ed584279) + reliability_k/floor (SPEC §4), 2026-10-10
+CALIB_SHA256 = '2cf44ecfa253f457fd25ead89a720ffc41220c7a0f471de9c8c1154bfab52d17'   # Fresh reference calibration must pass before repaired Forge 2.0 is publishable.
 
 
 def _load_thresholds() -> Dict:
@@ -130,14 +131,14 @@ UNCALIBRATED_BANNER = ('FORGE-2.0 UNCALIBRATED — forge2-thresholds.json carrie
 
 # ── weights (SPEC §4, asserted) ──────────────────────────────────────────────────────────────
 
-# v1 (the 1.0 rows, now regression rows, R10): 1.0's own composition inside a 0.25 share.
+# v1 regression retains its internal composition inside a 0.15 share.
 TIER_WEIGHT = {'L': .08, 'K': .10, 'T': .16, 'R': .14, 'S': .08, 'B': .12, 'U': .16, 'V': .08, 'A': .08}
 E_WEIGHT = 0.12
 INNER_WEIGHT = 1.0 - E_WEIGHT
 assert abs(sum(TIER_WEIGHT.values()) - 1.0) < 1e-9
-V1_WEIGHT = 0.25
-# v2: P8's rows (bench/forge2_checks.py), one family per stated requirement R1..R9.
-FAMILY_WEIGHT = {'R1': .12, 'R2': .13, 'R3': .08, 'R4': .10, 'R5': .10, 'R6': .08, 'R7': .05, 'R8': .04, 'R9': .05}
+V1_WEIGHT = 0.15
+# v2: the stated requirements R1..R9 plus functional native JQL (R10).
+FAMILY_WEIGHT = {'R1': .12, 'R2': .13, 'R3': .08, 'R4': .10, 'R5': .10, 'R6': .08, 'R7': .05, 'R8': .04, 'R9': .05, 'R10': .10}
 assert abs(V1_WEIGHT + sum(FAMILY_WEIGHT.values()) - 1.0) < 1e-9
 TIER_ORDER = ('L', 'K', 'T', 'R', 'S', 'B', 'U', 'V', 'A', 'E', *FAMILY_WEIGHT)
 
@@ -257,6 +258,8 @@ class Ctx:
         self._row_cache: Dict = {}
         self._redelivered_late: Optional[set] = None
         self._scheduled_work: Optional[Tuple[List[float], Dict[str, float]]] = None
+        self._first_sources: Dict[tuple, Optional[str]] = {}
+        self._source_trace: Optional[tuple] = None
 
     def oracle_for(self, after_live: bool):
         return self.oracle_ui if after_live else self.oracle
@@ -388,6 +391,7 @@ class Tokens(set):
     the leaves stored under a sprint-named field: when a row has one, the sprint is matched THERE, so a stored
     estimate of 8 never reads as sprint 8."""
     sprint: set
+    source: Optional[str]
 
 
 def _walk(value, under_sprint: bool, out: Tokens, depth: int = 0) -> None:
@@ -410,6 +414,8 @@ def _walk(value, under_sprint: bool, out: Tokens, depth: int = 0) -> None:
 def _tokens(item: Dict) -> Tokens:
     out = Tokens()
     out.sprint = set()
+    value = item.get('value')
+    out.source = value.get('source') if isinstance(value, dict) and isinstance(value.get('source'), str) else None
     _walk(item.get('value'), False, out)
     out |= {t for t in re.split(r'[^A-Za-z0-9]+', str(item.get('key') or '')) if t}
     return out
@@ -433,9 +439,10 @@ def rows_for(rows: List[Tuple[set, Dict]], change: fo.Change) -> List[Tuple[set,
 
 
 def row_correct(tokens: set, change: fo.Change, sources: Iterable[str]) -> bool:
+    source_ok = tokens.source in tuple(sources) if isinstance(tokens, Tokens) else any(s in tokens for s in sources)
     return (change.kind in tokens and (change.issue_id in tokens or change.issue_key in tokens)
             and (change.by in tokens or (change.by_name and change.by_name in tokens))
-            and change.at in _instants(tokens) and any(s in tokens for s in sources))
+            and change.at in _instants(tokens) and source_ok)
 
 
 def observed_timing(c: Ctx) -> Tuple[Dict[str, List[datetime]], Optional[Tuple[datetime, datetime]]]:
@@ -464,13 +471,17 @@ def observed_timing(c: Ctx) -> Tuple[Dict[str, List[datetime]], Optional[Tuple[d
 
 def sources_for(c: Ctx, change: fo.Change) -> Tuple[str, ...]:
     """The paths a change's row may name, for EVERY row that judges a source (contract §3: a row keeps the path that
-    recorded it first): the oracle's, plus `reconcile` for a live change made under the shared pool's wall (rate.wall,
+    recorded it first): a proved native first path is a singleton. When that path is unproved, retain the oracle's
+    sources plus `reconcile` for a live change made under the shared pool's wall (rate.wall,
     contract §10) — background pauses there, so the next reconcile may record the change before its event's consumer
     runs. t_event_rows carried this alone (ebb949907); the same change then failed t_multi_sprint_parse and
     u_ledger_table (gate 2026-10-10, seed ca72f2358777d98c: 1089939, made 14:33:15 under the 14:30-15:00 wall, recorded
     by the deferred hourly run at 15:02:58, its own delivery handled at 15:03:33). So may a live change whose event
     work was redelivered only after the next scheduled run (_redelivered_after_next_run, 0a7849bf9), and one a
     scheduled run's work began on between the change and its event work's success (_scheduled_work_between)."""
+    first = _first_recorded_source(c, change)
+    if first is not None:
+        return (first,)
     if change.phase != 'live':
         return tuple(change.sources)
     wall = (c.obs.get('rate') or {}).get('wall') or {}
@@ -479,6 +490,251 @@ def sources_for(c: Ctx, change: fo.Change) -> Tuple[str, ...]:
     if walled or change.change_id in _redelivered_after_next_run(c) or _scheduled_work_between(c, change):
         return tuple(dict.fromkeys((*change.sources, 'reconcile')))
     return tuple(change.sources)
+
+
+def _source_time(call: Dict) -> Optional[float]:
+    value = call.get('t')
+    return value if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) else None
+
+
+def _ledger_mutations(call: Dict) -> List[Tuple[Dict, str]]:
+    """Native target operations, with observed success, failure or unknown per-item outcome.
+
+    KVS batch HTTP 200 is not item success. The current proxy omits its response, so those items
+    remain unknown. Failed transactions also remain unknown: older kit versions could apply a
+    prefix before refusing a later value. Neither may disappear when choosing the first write.
+    """
+    if call.get('service') != 'kvs' or call.get('method') != 'POST':
+        return []
+    op, raw, status = _kvs_op(call), call.get('body'), call.get('status')
+    body = raw if isinstance(raw, dict) else {}
+    entries = []
+    if op in ('entity/set', 'entity/delete'):
+        entries = [(body, 'delete' if op.endswith('delete') else 'set')]
+    elif op == 'transaction':
+        entries = [(item, verb) for verb in ('set', 'delete') for item in body.get(verb) or []
+                   if isinstance(item, dict)]
+    elif op in ('batch/set', 'batch/delete'):
+        entries = [(item, 'delete' if op.endswith('delete') else 'set') for item in
+                   (raw if isinstance(raw, list) else body.get('items') or []) if isinstance(item, dict)]
+    out = []
+    for item, verb in entries:
+        if item.get('entityName') != V2_SURFACE_ENTITY:
+            continue
+        outcome = 'unknown'
+        if op.startswith('batch/'):
+            response = call.get('response')
+            if status == 200 and isinstance(response, dict) and all(
+                    isinstance(response.get(key), list) for key in ('successfulKeys', 'failedKeys')):
+                identity = (item.get('entityName'), item.get('key'))
+                matches = lambda key: [x for x in response[key] if isinstance(x, dict)
+                                      and (x.get('entityName'), x.get('key')) == identity]
+                good, bad = matches('successfulKeys'), matches('failedKeys')
+                if len(good) == 1 and not bad:
+                    outcome = verb
+                elif len(bad) == 1 and not good:
+                    outcome = 'failed'
+        elif status == 204 or (status == 200 and op != 'transaction'):
+            outcome = verb
+        elif isinstance(status, int) and status >= 400 and op != 'transaction':
+            outcome = 'failed'
+        out.append((item, 'unknown-delete' if outcome == 'unknown' and verb == 'delete' else outcome))
+    return out
+
+
+def _source_trace(c: Ctx) -> tuple:
+    if c._source_trace is not None:
+        return c._source_trace
+    calls = c.all_calls()
+    mutations = [(call, item, outcome) for call in calls for item, outcome in _ledger_mutations(call)]
+    publications: Dict[str, List[Dict]] = {}
+    for call in calls:
+        body = call.get('body')
+        if (call.get('service') == 'queue' and call.get('provider') == 'app' and call.get('status') == 201
+                and call.get('method') == 'POST' and re.match(r'^/webhook/queue/publish/', str(call.get('path')))
+                and isinstance(body, dict) and isinstance(body.get('jobId'), str)):
+            publications.setdefault(body['jobId'], []).append(call)
+    deliveries: Dict[str, List[Dict]] = {}
+    for ph in c.background_phases():
+        for delivery in c.phase(ph).get('deliveries') or []:
+            if isinstance(delivery, dict) and delivery.get('inv'):
+                deliveries.setdefault(delivery['inv'], []).append(delivery)
+    parents = {}
+    for inv, delivered in deliveries.items():
+        if len(delivered) != 1:
+            continue
+        delivery = delivered[0]
+        match = re.fullmatch(r'(.+)#(\d+)', str(delivery.get('eventId') or ''))
+        offered = publications.get(match[1], []) if match else []
+        if len(offered) != 1:
+            continue
+        publication = offered[0]
+        payload = publication['body'].get('payload')
+        pt, dt = _source_time(publication), _source_time(delivery)
+        if (isinstance(payload, list) and int(match[2]) < len(payload) and publication.get('inv')
+                and pt is not None and dt is not None and pt < dt):
+            parents[inv] = (publication, delivery)
+    c._source_trace = calls, mutations, parents
+    return c._source_trace
+
+
+def _source_reads(c: Ctx, first: Dict, calls: List[Dict], parents: Dict) -> List[Dict]:
+    """Reads completed before the write, or before a uniquely observed ancestor published the continuation."""
+    inv, end = first.get('inv'), _source_time(first)
+    bounds = {}
+    while inv and inv not in bounds and end is not None:
+        bounds[inv] = end
+        link = parents.get(inv)
+        if link is None:
+            break
+        publication, delivery = link
+        if _source_time(delivery) >= end:
+            break
+        # Queue payload assertions are irrelevant; this is the lineage the platform copied.
+        if any(publication.get(key) != first.get(key) for key in ('originChange', 'scheduledRun')):
+            break
+        inv, end = publication.get('inv'), _source_time(publication)
+    return [call for call in calls if call.get('inv') in bounds and _source_time(call) is not None
+            and call['t'] < bounds[call['inv']] and call.get('service') == 'jira' and call.get('provider') == 'app'
+            and call.get('kind') in ('consumer', 'scheduled') and call.get('status') == 200
+            and call.get('method') in ('GET', 'POST') and isinstance(call.get('response'), dict)
+            and all(call.get(key) == first.get(key) for key in ('originChange', 'scheduledRun'))]
+
+
+def _read_histories(call: Dict, change: fo.Change) -> List[Dict]:
+    path, response = str(call.get('path') or '').split('?')[0], call['response']
+    histories = []
+    if _issue_collection(call):
+        for issue in response.get('issues') or []:
+            if isinstance(issue, dict) and str(issue.get('id')) == change.issue_id:
+                log = issue.get('changelog')
+                histories += (log.get('histories') or []) if isinstance(log, dict) else []
+    elif path == '/rest/api/3/changelog/bulkfetch':
+        for log in response.get('issueChangeLogs') or []:
+            if isinstance(log, dict) and str(log.get('issueId')) == change.issue_id:
+                histories += log.get('changeHistories') or []
+    else:
+        match = re.fullmatch(r'/rest/api/3/issue/([^/]+)(/changelog)?', path)
+        if match and match[1] in (change.issue_id, change.issue_key):
+            if match[2]:
+                histories += response.get('values') or response.get('histories') or []
+            elif str(response.get('id')) == change.issue_id:
+                log = response.get('changelog')
+                histories += (log.get('histories') or []) if isinstance(log, dict) else []
+    return [history for history in histories if isinstance(history, dict)]
+
+
+def _issue_collection(call: Dict) -> bool:
+    path = str(call.get('path') or '').split('?')[0]
+    return (path == '/rest/api/3/search/jql' or bool(re.fullmatch(
+        r'/rest/(?:agile|software)/1\.0/(?:board/[^/]+/(?:issue|backlog)|sprint/[^/]+/issue)', path)))
+
+
+def _history_covers(history: Dict, change: fo.Change, sprint_field: str) -> bool:
+    author = history.get('author')
+    if (str(history.get('id')) != change.change_id or fo.instant(history.get('created')) != change.at
+            or not isinstance(author, dict) or str(author.get('accountId')) != change.by):
+        return False
+    for item in history.get('items') or []:
+        if not isinstance(item, dict) or str(item.get('fieldId')) != sprint_field:
+            continue
+        before, after = fo.sprint_ids(item.get('from')), fo.sprint_ids(item.get('to'))
+        if change.sprint_id in (after - before if change.kind == 'added' else before - after):
+            return True
+    return False
+
+
+def _single_issue_history_read(read: Dict, change: fo.Change) -> bool:
+    """A history read scoped to the originating issue can prove event work; multiscope alone cannot."""
+    path, response = str(read.get('path') or '').split('?')[0], read['response']
+    if _issue_collection(read):
+        issues = response.get('issues')
+        return isinstance(issues, list) and bool(issues) and all(
+            isinstance(issue, dict) and str(issue.get('id')) == change.issue_id for issue in issues)
+    if path == '/rest/api/3/changelog/bulkfetch':
+        logs = response.get('issueChangeLogs')
+        return isinstance(logs, list) and bool(logs) and all(
+            isinstance(log, dict) and str(log.get('issueId')) == change.issue_id for log in logs)
+    return bool(re.fullmatch(r'/rest/api/3/issue/[^/]+(?:/changelog)?', path))
+
+
+def _collection_covers(reads: List[Dict], change: fo.Change, history_at: float) -> bool:
+    """Broader scope comes from returned issue IDs in one native page or its actual cursor walk.
+
+    A single issue JQL lookup is also valid event work (§3), regardless of its query or job label.
+    Only connected response pages count together; an unrelated second lookup lends no scope.
+    """
+    walks = {}
+    for read in reads:
+        issues = read['response'].get('issues')
+        if _issue_collection(read) and isinstance(issues, list):
+            walks.setdefault(_walk_key(read)[1:], []).append(read)
+    for pages in walks.values():
+        for start in pages:
+            chain, visited = [start], {id(start)}
+            while True:
+                marker, error = _next_page_marker(_page_style(chain[-1]), chain[-1])
+                following = [page for page in pages if id(page) not in visited and page['t'] > chain[-1]['t']
+                             and _page_marker(_page_style(page), page) == marker]
+                if marker is None or error or not following:
+                    break
+                page = min(following, key=lambda page: page['t'])
+                chain.append(page)
+                visited.add(id(page))
+            ids = {str(issue['id']) for page in chain for issue in page['response']['issues']
+                   if isinstance(issue, dict) and issue.get('id') is not None}
+            if len(ids) > 1 and any(page['t'] <= history_at and any(
+                    isinstance(issue, dict) and str(issue.get('id')) == change.issue_id
+                    for issue in page['response']['issues']) for page in chain):
+                return True
+    return False
+
+
+def _first_recorded_source(c: Ctx, change: fo.Change) -> Optional[str]:
+    """Prove the first path from successful native reads and the earliest logical target mutation.
+
+    Unsupported/ambiguous evidence leaves the legacy timing allowances intact. A conclusive
+    first path is a singleton: later source overwrites cannot relabel it. Deletes/recreations,
+    unknown earlier batches/transactions and malformed initial rows cannot prove a first path.
+    """
+    if change.key in c._first_sources:
+        return c._first_sources[change.key]
+    c._first_sources[change.key] = None
+    if c.oracle is None or not c.declares_v2_ledger() or change.key in c.oracle.v1_keys():
+        return None  # migration preserves v1's source, not the migration invocation's path
+    calls, mutations, parents = _source_trace(c)
+    matches = lambda item: bool(rows_for([(_tokens(item), item)], change))
+    keys = {item['key'] for _call, item, outcome in mutations
+            if outcome != 'failed' and isinstance(item.get('key'), str) and matches(item)}
+    keys.update(item.get('key') for phase in c.background_phases() for _tokens_, item in c.kvs_rows(phase)
+                if isinstance(item.get('key'), str) and matches(item))
+    target = [(call, item, outcome) for call, item, outcome in mutations
+              if outcome != 'failed' and ((isinstance(item.get('key'), str) and item['key'] in keys) or matches(item))]
+    if not target or any(_source_time(call) is None for call, _item, _outcome in target):
+        return None
+    target.sort(key=lambda entry: entry[0]['t'])
+    first, item, outcome = target[0]
+    if (outcome != 'set' or any(state in ('delete', 'unknown-delete') for _call, _item, state in target)
+            or len([entry for entry in target if entry[0]['t'] == first['t']]) != 1
+            or first.get('kind') not in ('consumer', 'scheduled') or first.get('provider') != 'app'
+            or not first.get('inv') or not isinstance(item.get('value'), dict)
+            or (item.get('options') is not None and not isinstance(item['options'], dict))
+            or (item.get('options') or {}).get('ttl') or not matches(item)
+            or not row_correct(_tokens(item), change, LEDGER_SOURCES)):
+        return None
+    reads = _source_reads(c, first, calls, parents)
+    covered = [read for read in reads if any(_history_covers(history, change, c.oracle.sprint_field)
+                                            for history in _read_histories(read, change))]
+    source = None
+    if any(_collection_covers(reads, change, read['t']) for read in covered):
+        source = 'reconcile'
+    elif any(_single_issue_history_read(read, change) for read in covered) and first.get('scheduledRun') is None:
+        origin = str(first.get('originChange'))
+        if any(str(entry.get('changelogId')) == origin and str(entry.get('issueId')) == change.issue_id
+               for entry in c.oracle.history + c.oracle.live):
+            source = 'event'
+    c._first_sources[change.key] = source
+    return c._first_sources[change.key]
 
 
 def _scheduled_work_between(c: Ctx, change: fo.Change) -> bool:
@@ -752,8 +1008,21 @@ def pre_invoke(c):
     return (bool(_invokes(c)), '>= 1 invoke observed')
 
 
+def _llm_displays(c):
+    for case in c.obs.get('llm_v2') or []:
+        if not isinstance(case, dict):
+            continue
+        for output in (case, case.get('cross_viewer')):
+            if not isinstance(output, dict) or not isinstance(output.get('as'), str):
+                continue
+            for click in output.get('click_results') or []:
+                if isinstance(click, dict):
+                    yield str(output['as']), str(case.get('case')), click
+
+
 def pre_person_list(c):
-    listed = any(r.get('rows') for r in c.sprint_renders()) or bool(_llm_calls(c)) or any(
+    listed = any(click.get('shown_text') or click.get('shown_own') or click.get('ids_shown')
+                 for _person, _case, click in _llm_displays(c)) or any(r.get('rows') for r in c.sprint_renders()) or bool(_llm_calls(c)) or any(
         isinstance(r.get('result'), dict) and r['result'].get('changes') for r in c.rovo_calls())
     return (listed, '>= 1 person-facing change list returned or rendered')
 
@@ -1739,7 +2008,7 @@ def _(c):
 
 # Concurrent delivery (contract): a duplicate row is the app's defect whether or not its group raced; a group the
 # harness did not run whole is no evidence the app survives the race, so the pass it would buy is unavailable.
-@check('t_no_double_count', 'T', pre=pre_ledger_row, needs=('live', 'heal', 'rerun'))
+@check('t_no_double_count', 'T')
 def _(c):
     doubled = []
     for ph in ('live', 'heal', 'rerun'):
@@ -1752,6 +2021,9 @@ def _(c):
     raced = V2.raced(whole)
     if doubled:
         return g(0, f'changes counted more than once: {sorted(set(doubled))[:6]}{raced}', CRITICAL_CLASSES['duplicate'])
+    gate = _evidence_gate(c, pre_ledger_row, ('live', 'heal', 'rerun'))
+    if gate:
+        return gate
     if broken:
         return unavail(f'no change counted twice, but {len(broken)} concurrent group(s) were not run whole '
                        f'({"; ".join(broken[:2])}): a race the harness never ran is no evidence the app survives it')
@@ -2066,43 +2338,53 @@ def _offered_more(style: str, page: Dict) -> bool:
     return isinstance(total, int) and (_page_start(page) or 0) + _page_items(response) < total
 
 
-def _walk_complete(style: str, pages: List[Dict]) -> Tuple[bool, str]:
-    marks = []
-    for p in pages:
-        q, body = _query(p), p.get('body') if isinstance(p.get('body'), dict) else {}
-        marks.append(q.get('nextPageToken') or body.get('nextPageToken') or q.get('startAt') or body.get('startAt') or '')
-    if len(set(marks)) != len(marks):
-        return False, 'a page was read twice'
-    # Each page must continue where the site's previous answer left off: the token it handed out, or the offset
-    # right after the items it served. Advancing by the REQUESTED maxResults skips items whenever the site serves
-    # fewer, which Jira may ("API may return fewer items per page").
-    for before, page in zip(pages, pages[1:]):
-        prev = before.get('response') if isinstance(before.get('response'), dict) else None
-        if prev is None:
-            continue
-        if style == 'token':
-            body = page.get('body') if isinstance(page.get('body'), dict) else {}
-            sent = _query(page).get('nextPageToken') or body.get('nextPageToken')
-            if prev.get('nextPageToken') and sent != prev.get('nextPageToken'):
-                return False, 'a page did not continue from the nextPageToken the site handed out'
-        else:
-            want = (_page_start(before) or 0) + _page_items(prev)
-            if _page_start(page) != want:
-                return False, f'a page started at {_page_start(page)}, the previous page ended at {want} (items skipped)'
-    last = pages[-1].get('response')
-    if not isinstance(last, dict):
-        return False, 'no response body was recorded for the last page'
+def _page_marker(style: str, page: Dict) -> str:
+    q, body = _query(page), page.get('body') if isinstance(page.get('body'), dict) else {}
     if style == 'token':
-        return (not last.get('nextPageToken')), 'stopped with a nextPageToken outstanding'
-    if last.get('isLast') is True:
-        return True, ''
-    if last.get('isLast') is False:
-        return False, 'stopped on isLast=false'
-    values = last.get('values') or last.get('issues') or last.get('histories') or []
-    total, start = last.get('total'), last.get('startAt') or 0
+        return str(q.get('nextPageToken') or body.get('nextPageToken') or '')
+    return str(_page_start(page))
+
+
+def _next_page_marker(style: str, page: Dict) -> Tuple[Optional[str], str]:
+    response = page.get('response')
+    if not isinstance(response, dict):
+        return None, 'no response body was recorded for the page'
+    if style == 'token':
+        token = response.get('nextPageToken')
+        return (str(token) if token else None), ''
+    if response.get('isLast') is True:
+        return None, ''
+    start = _page_start(page)
+    if start is None:
+        return None, 'the page has no observed start offset'
+    end = start + _page_items(response)
+    if response.get('isLast') is False:
+        return str(end), ''
+    total = response.get('total')
     if isinstance(total, int):
-        return (start + len(values) >= total), f'stopped at {start + len(values)}/{total}'
-    return False, 'the page carries neither isLast nor total'
+        return (str(end) if end < total else None), ''
+    return None, 'the page carries neither isLast nor total'
+
+
+def _walk_complete(style: str, pages: List[Dict]) -> Tuple[bool, str]:
+    # Re-reading an answered page is request cost, not lost data. Follow the actual responses'
+    # cursor links: a requested offset/size never substitutes for the next page the site offered.
+    if not pages:
+        return False, 'no pages were recorded'
+    answered = {_page_marker(style, page): page for page in pages}
+    marker, visited = _page_marker(style, pages[0]), set()
+    while marker is not None:
+        if marker in visited:
+            return False, 'the answered pages leave a cursor cycle outstanding'
+        visited.add(marker)
+        page = answered.get(marker)
+        if page is None:
+            return False, ('stopped with a nextPageToken outstanding' if style == 'token'
+                           else f"stopped before the site's next offset {marker}")
+        marker, error = _next_page_marker(style, page)
+        if error:
+            return False, error
+    return True, ''
 
 
 def _endpoint(call: Dict) -> str:
@@ -2131,10 +2413,10 @@ def _handed_off(c: Ctx, walks: Dict[tuple, List[Dict]], incomplete: List[tuple])
       (2) the invocation returned the InvocationError (its retryAfter, or a delivery result 'retry'; _retry_verdict's
           evidence);
       (3) a later attempt of the same queue event (equal eventId, higher attempt) walked the same list to its end.
-    Never "a later invocation walked the same list": the hourly runs, the heal and the UI re-walk the same lists, so that
-    arm would excuse a swallowed 429 that carries on with the partial list (fairness audit 2026-10-10: three mutants of
-    Sol's run, a swallowed 429 with and without a redelivery and a hand-off whose redelivery never re-walks, stay
-    graded)."""
+    This narrower handoff proof never substitutes an unrelated later read for the observed retry. A later background
+    restart has its own outcome proof in _superseded_walks: the actual first-hour deadline and final exactly-once
+    complete ledger must hold. A swallowed 429 without either completed path remains incomplete; rate-reaction rows
+    independently grade the Retry-After/reason and request-economy rows retain every request."""
     if not incomplete:
         return set()
     by_inv: Dict[object, List[Dict]] = {}
@@ -2162,6 +2444,89 @@ def _handed_off(c: Ctx, walks: Dict[tuple, List[Dict]], incomplete: List[tuple])
     return out
 
 
+def _walk_lineage(pages: List[Dict]) -> Optional[tuple]:
+    if any(p.get('kind') not in BACKGROUND_KINDS or not isinstance(p.get('t'), (int, float)) for p in pages):
+        return None
+    identities = {('scheduled', p['scheduledRun']) if p.get('scheduledRun') is not None
+                  else ('event', p['originChange']) if p.get('originChange') is not None else None for p in pages}
+    return next(iter(identities)) if len(identities) == 1 and None not in identities else None
+
+
+def _continued_walks(walks: Dict[tuple, List[Dict]]) -> Dict[tuple, Tuple[List[Dict], List[tuple]]]:
+    """Join persisted background page walks only within one observed event/scheduled lineage.
+
+    A dosed consumer can stop before sending the next page and enqueue its continuation without a
+    Jira 429. Join only the exact offered cursor in the same observed lineage. Restarts are separate
+    walks; _superseded_walks proves their completion against the actual required ledger outcome.
+    """
+
+    used, joined = set(), {}
+    for key, pages in sorted(walks.items(), key=lambda entry: entry[1][0].get('t') or 0):
+        identity = _walk_lineage(pages)
+        if key in used or identity is None or _walk_complete(_page_style(pages[0]), pages)[0]:
+            continue
+        following = sorted(((other, chunk) for other, chunk in walks.items() if other != key and other not in used
+                            and other[1:] == key[1:] and _walk_lineage(chunk) == identity
+                            and (chunk[0].get('t') or 0) > (pages[-1].get('t') or 0)),
+                           key=lambda entry: entry[1][0].get('t') or 0)
+        combined, members = list(pages), [key]
+        for other, chunk in following:
+            want, error = _next_page_marker(_page_style(combined[-1]), combined[-1])
+            if error or want is None or _page_marker(_page_style(chunk[0]), chunk[0]) != want:
+                break
+            trial = combined + chunk
+            complete, why = _walk_complete(_page_style(pages[0]), trial)
+            if not complete and why != 'stopped with a nextPageToken outstanding' and not why.startswith('stopped '):
+                break
+            # The join preserves the boundary; the combined responses must reach the final page.
+            combined, members = trial, members + [other]
+            if complete:
+                joined[key] = (combined, members)
+                used.update(members)
+                break
+    return joined
+
+
+def _reconcile_outcome_complete(c: Ctx) -> bool:
+    if c.oracle is None:
+        return False
+    for phase, required, sources in (
+            ('backfill', backfill_changes(c), lambda _change: BACKFILL_SOURCES),
+            ('heal', c.oracle.changes('final'), lambda change: sources_for(c, change))):
+        if not isinstance(c.phase(phase).get('kvsAfter'), dict):
+            return False
+        rows = c.kvs_rows(phase)
+        for change in required:
+            matches = rows_for(rows, change)
+            if len(matches) != 1 or not row_correct(matches[0][0], change, sources(change)):
+                return False
+    return bool(c.oracle.changes('final'))
+
+
+def _superseded_walks(c: Ctx, walks: Dict[tuple, List[Dict]], incomplete: List[tuple]) -> Dict[tuple, tuple]:
+    """A correct reconcile may restart rather than retain a cursor, including after its filter changes.
+
+    Contract §§3/11 require completed work by its deadlines, not a particular resume implementation.
+    Accept a later background first-to-last walk only with the actual complete, exactly-once ledger;
+    independent user reads and unfinished/skipped replacements prove no background completion.
+    """
+    if not incomplete or not _reconcile_outcome_complete(c):
+        return {}
+    out = {}
+    for key in incomplete:
+        pages = walks[key]
+        if _walk_lineage(pages) is None:
+            continue
+        for other, replacement in sorted(walks.items(), key=lambda item: item[1][0].get('t') or 0):
+            if (other[1] != key[1] or _walk_lineage(replacement) is None or _resumes(replacement[0])
+                    or replacement[0]['t'] <= pages[-1]['t']):
+                continue
+            if _walk_complete(_page_style(replacement[0]), replacement)[0]:
+                out[key] = other
+                break
+    return out
+
+
 @check('r_pagination', 'R', pre=pre_paginated, needs=('backfill', 'live', 'heal', 'rerun', 'ui', 'rovo'))
 def _(c):
     legacy, walks, paged = _paged_walks(c)
@@ -2176,12 +2541,20 @@ def _(c):
                           and isinstance(p[0].get('response'), dict) and _page_items(p[0]['response']) >= 2})
         if unpaged:
             return unavail(f'the scoring site served a list of >= 2 items in one page on {unpaged}')
+    single = len(walks) - len(paged)
+    continued = _continued_walks(walks)
+    for key, (pages, members) in continued.items():
+        paged[key] = pages
+        for member in members[1:]:
+            paged.pop(member, None)
     verdicts = {key: _walk_complete(_page_style(pages[0]), pages) for key, pages in paged.items()}
-    handed = _handed_off(c, walks, [key for key, (complete, _why) in verdicts.items() if not complete])
+    incomplete = [key for key, (complete, _why) in verdicts.items() if not complete]
+    handed = _handed_off(c, walks, incomplete)
+    superseded = _superseded_walks(c, {**walks, **paged}, [key for key in incomplete if key not in handed])
     done, bad = 0, []
     types: Dict[str, List[int]] = {}
     for key, pages in paged.items():
-        if key in handed:
+        if key in handed or key in superseded:
             continue
         complete, why = verdicts[key]
         done += complete
@@ -2190,21 +2563,26 @@ def _(c):
         tally[1] += 1
         if not complete:
             bad.append(f'{key[1]}: {why}')
-    total = len(paged) - len(handed) + len(legacy)
-    single = len(walks) - len(paged)
-    # nothing left to grade but hand-offs (a redelivery that resumed at the refused page is a one-page walk): each of
-    # those lists was still read to its end
-    return g(done / total if total else float(bool(handed)),
+    total = len(paged) - len(handed) - len(superseded) + len(legacy)
+    # A handoff may end in a one-page tail, or a correct restart's current filter may fit on one page.
+    # Their separate evidence proves completion even when no multi-page walk remains to tally.
+    return g(done / total if total else float(bool(handed or superseded)),
              f'{done}/{total} reads the site served in two or more pages walked to their '
-             'end, each page once, continuing where the site left off ('
+             'end through the cursors the site offered ('
              + ', '.join(f'{ep} {ok}/{n}' for ep, (ok, n) in sorted(types.items())) + ')'
              + (f'; {single} one-page read(s), nothing to walk, not graded' if single else '')
              + (f'; {len(handed)} walk(s) handed back to the queue at a 429 and read to the end by the same event\'s '
                 f'redelivery, not graded ({sorted({k[1] for k in handed})})' if handed else '')
+             + (f'; {len(continued)} persisted walk(s) resumed at the exact cursor in the same background lineage' if continued else '')
+             + (f'; {len(superseded)} paused background walk(s) superseded by a complete first-to-last restart; '
+                'first-hour backfill and final required ledger complete exactly once' if superseded else '')
              + (f'; {len(legacy)} call(s) to the removed /rest/api/3/search' if legacy else '')
              + (f'; {bad[:3]}' if bad else ''), 'pages silently skipped',
              parts={'paged_walks': len(paged), 'one_page_walks': single, 'legacy_calls': len(legacy),
-                    'handed_off_walks': len(handed),
+                    'handed_off_walks': len(handed), **({'persisted_continuations': len(continued)} if continued else {}),
+                    **({'completed_restarts': len(superseded),
+                        'restart_pairs': [{'paused_inv': key[0], 'completed_inv': replacement[0], 'endpoint': key[1]}
+                                          for key, replacement in superseded.items()]} if superseded else {}),
                     'by_endpoint': {ep: {'complete': ok, 'walks': n} for ep, (ok, n) in sorted(types.items())}})
 
 
@@ -2458,7 +2836,7 @@ def _leak_hits(text: str, terms: Dict[str, List[str]]) -> List[str]:
     return hits
 
 
-@check('b_no_permission_leak', 'B', pre=pre_person_list, needs=('ui', 'rovo'))
+@check('b_no_permission_leak', 'B')
 def _(c):
     found = []
     viewer_terms = leak_terms(c.oracle, c.oracle.viewer)
@@ -2487,8 +2865,31 @@ def _(c):
         if isinstance(res, dict):
             found += [f"rovo changeId {ch.get('changeId')}" for ch in res.get('changes') or []
                       if isinstance(ch, dict) and str(ch.get('changeId')) in terms['changeIds']]
+    for person, case, click in _llm_displays(c):
+        terms = leak_terms(c.oracle, person)
+        text = '\n'.join(str(click.get(k) or '') for k in ('shown_text', 'shown_own'))
+        found += [f'LLM display {case} as {person}: {h}' for h in _leak_hits(text, terms)]
+        found += [f'LLM display {case} as {person}: change {cid}' for cid in click.get('ids_shown') or []
+                  if str(cid) in terms['changeIds']]
     if found:
         return g(0, f'hidden issue data shown to a person: {found[:6]}', CRITICAL_CLASSES['leak'])
+    unknown = [str(case.get('case')) for case in c.obs.get('llm_v2') or [] if isinstance(case, dict)
+               for output in (case, case.get('cross_viewer')) if isinstance(output, dict)
+               and output.get('click_results') and not isinstance(output.get('as'), str)]
+    if unknown:
+        return unavail(f'LLM display evidence lacks its actual viewer: {unknown[:4]}')
+    # An independently recorded disclosure survives an earlier surface failure; no-harm credit still
+    # requires the original presentation evidence and an exercised person-facing result.
+    why = c.section_error('ui', 'rovo')
+    if why:
+        fault = candidate_section_fault(c, why)
+        if fault:
+            return g(0.0, fault, 'the app cannot be opened: its own manifest is broken',
+                     parts={'vacuous_root': f'manifest: {fault[:160]}'})
+        return unavail(why)
+    exercised, what = pre_person_list(c)
+    if not exercised:
+        return vacuous(what)
     return g(1, 'no hidden key, summary or change id reached a person')
 
 
@@ -2607,19 +3008,22 @@ def _post_scenarios(c: Ctx) -> List[Dict]:
 # §17.8 B: the critical is "a duplicate side effect" — it fires ONLY when one gesture (a click or a double click, the
 # double click sent on a fresh viewer-visible row) added two or more comments. Zero comments and a missing success
 # flag are graded in u_comment_flow, never priced as a duplicate.
-@check('b_comment_exactly_once', 'B', pre=pre_comment_post, needs=('ui',))
+@check('b_comment_exactly_once', 'B')
 def _(c):
     scen = _post_scenarios(c)
+    dup = [f"{s['_name']}@{s['_sprint']}: {s.get('commentsAdded')} comments" for s in scen
+           if isinstance(s.get('commentsAdded'), int) and s['commentsAdded'] >= 2]
+    if dup:
+        return g(0, f'one gesture posted a duplicate: {dup[:4]}', CRITICAL_CLASSES['duplicate'])
+    gate = _evidence_gate(c, pre_comment_post, ('ui',))
+    if gate:
+        return gate
     if not scen:
         undelivered = [f"{name}@{r.get('sprintId')}: {_undeliverable(r, name)}" for r in c.sprint_renders()
                        for name in ('post', 'doubleClick') if isinstance(r.get(name), dict) and _undeliverable(r, name)]
         if undelivered:
             return unavail(f'the probe could not deliver the click(s) {undelivered[:4]} (harness, not app evidence)')
         return vacuous('a click/double-click post scenario')
-    dup = [f"{s['_name']}@{s['_sprint']}: {s.get('commentsAdded')} comments" for s in scen
-           if isinstance(s.get('commentsAdded'), int) and s['commentsAdded'] >= 2]
-    if dup:
-        return g(0, f'one gesture posted a duplicate: {dup[:4]}', CRITICAL_CLASSES['duplicate'])
     return g(1, f'{len(scen)} click/double-click gesture(s), none posted more than one comment')
 
 
@@ -3317,7 +3721,7 @@ def _(c):
     # (contract §12), so a correct app reads the board's configuration again on the changes that write a row (the
     # reference reads about 2.5 per change). It normalizes, continuously (2026-10-03 stringency, F1): score =
     # min(1, top / (used / baseline)), `top` the golden's worst ratio over the calibration seeds (calibration-owned), so
-    # the golden defines 1.0 and every extra request costs.
+    # the golden defines 1.0 on the fitting seeds; extra requests on heldouts still cost.
     # The event path is what an issue event started: its trigger and the consumers it queued, wherever they ran — never
     # a continuation of the backfill, the migration, an hourly run or the CI trigger, which 2.0 drains in the same
     # phase (a world event's own trigger, `world:`, is R4's).
@@ -3370,15 +3774,52 @@ def _exact_ratio(parts: Dict) -> float:
     return parts['calls'] / den if isinstance(parts.get('calls'), int) and den else parts['ratio']
 
 
+CALIBRATION_IDENTITY_FIELDS = ('scorer_files_sha256', 'spec_sha256', 'kit_lock_sha256',
+                               'kit_code_sha256', 'wrapper_sha256', 'evaluation_inputs')
+
+
+def _sha256(value) -> bool:
+    return isinstance(value, str) and bool(re.fullmatch(r'[0-9a-f]{64}', value))
+
+
+def _flat_sha_map(value) -> bool:
+    return isinstance(value, dict) and bool(value) and all(
+        isinstance(key, str) and bool(key) and _sha256(item) for key, item in value.items())
+
+
+def calibration_identity(verdicts: List[Dict]) -> Dict:
+    """A reference calibration cannot mix tested app, site, contract or SDK bytes."""
+    identities = []
+    for verdict in verdicts:
+        identity = {name: verdict.get(name) for name in CALIBRATION_IDENTITY_FIELDS}
+        invalid = [name for name, value in identity.items() if name not in ('scorer_files_sha256', 'evaluation_inputs')
+                   and not _sha256(value)]
+        if not _flat_sha_map(identity.get('scorer_files_sha256')):
+            invalid.append('scorer_files_sha256')
+        inputs = identity.get('evaluation_inputs')
+        if (not isinstance(inputs, dict) or set(inputs) != {'candidate', 'site', 'public', 'v1_schema'}
+                or any(not _flat_sha_map(part) for part in inputs.values())):
+            invalid.append('evaluation_inputs sections')
+        if invalid:
+            raise ValueError('calibration provenance is missing or malformed: ' + ', '.join(invalid))
+        identities.append(identity)
+    if not identities:
+        raise ValueError('calibration provenance requires actual reference verdicts')
+    if any(identity != identities[0] for identity in identities[1:]):
+        raise ValueError('calibration reference verdicts used different app, site, contract, scorer or SDK bytes')
+    return copy.deepcopy(identities[0])
+
+
 def calibrate(verdicts: List[Dict], rc: Dict) -> Dict:
     """The calibrated thresholds from >= 5 reference-passing golden verdicts on distinct seeds; refuses otherwise."""
     fails = []
     seeds = [v.get('fixture_seed') for v in verdicts]
     if len(set(seeds)) < CALIBRATION_SEEDS or None in seeds:
         fails.append(f'{CALIBRATION_SEEDS} distinct fixture seeds needed, got {seeds}')
-    shas = {json.dumps(v.get('scorer_files_sha256'), sort_keys=True) for v in verdicts}
-    if len(shas) != 1:
-        fails.append('the golden verdicts were scored by different scorer files')
+    try:
+        identity = calibration_identity(verdicts)
+    except ValueError as error:
+        fails.append(str(error))
     if any(v.get('scorerVersion') != 'forge-2.0-rc' for v in verdicts):
         fails.append('calibration fits rc-grade verdicts only (thresholds already calibrated?)')
     for v in verdicts:
@@ -3410,8 +3851,7 @@ def calibrate(verdicts: List[Dict], rc: Dict) -> Dict:
         shown = {seed: round(r, 4) for seed, r in per_seed.items()}
         out['receipts'][key] = (f'golden worst-of-{len(per_seed)} {row} ratio {round(worst, 4)} (per seed {shown}) -> top rung '
                                 f'{top}; lower rungs keep the rc multiples of the top ({rc[key]})')
-    out['calibration'] = {'seeds': sorted(seeds), 'scorer_files_sha256': verdicts[0].get('scorer_files_sha256'),
-                          'kit_lock_sha256': verdicts[0].get('kit_lock_sha256'), 'wrapper_sha256': verdicts[0].get('wrapper_sha256'),
+    out['calibration'] = {'seeds': sorted(seeds), **identity,
                           'verified_top': {n: 'golden 1.0 on every seed' for n in VERIFIED_TOP}}
     return out
 
@@ -3439,7 +3879,7 @@ def critical_class(flag) -> Optional[str]:
 
 def _register_v2(module) -> Tuple[List[Tuple[str, str, float, Optional[str]]], Dict[str, tuple]]:
     """P8's registry as (name, family, weight, class): `ROWS` entries (dicts or objects) carrying name, family (or
-    tier) and critical (a SPEC class or its consequence text); weights from `WEIGHTS` (a row's share of the 0.75 —
+    tier) and critical (a SPEC class or its consequence text); weights from `WEIGHTS` (a row's share of its family —
     only the proportions inside a family matter here), else the entry's `weight`, else 1. Refuses (RuntimeError) on what
     the composition cannot price, naming every problem at once: no evaluate(), an unknown family, a duplicate name, a bad
     weight, a critical no class maps, a family with no weighted row, a v2 class no row can fire, an unknown ROOT_BLOCKS
@@ -3498,12 +3938,19 @@ def _synthetic_v2():
 
 try:
     import forge2_checks as V2   # P8. It must not import this module at its top level (this module imports it).
+    import forge2_jql_checks as JQL
     V2_ABSENT: Optional[str] = None
 except ImportError as _error:
     V2_ABSENT = (f'bench/forge2_checks.py is not importable ({_error}): the v2 rows (0.75 of the score) are missing — '
                  'refusing to score')
     V2 = _synthetic_v2()
-_V2_ROWS, _V2_BLOCKS = _register_v2(V2)
+if V2_ABSENT:
+    _V2_ROWS, _V2_BLOCKS = _register_v2(V2)
+else:
+    import types
+    _registry = types.SimpleNamespace(ROWS=[*V2.ROWS, *JQL.ROWS], WEIGHTS=getattr(V2, 'WEIGHTS', {}),
+                                     ROOT_BLOCKS=getattr(V2, 'ROOT_BLOCKS', {}), evaluate=V2.evaluate)
+    _V2_ROWS, _V2_BLOCKS = _register_v2(_registry)
 
 for _name, _family, _w, _cls in _V2_ROWS:
     CHECKS.append((_name, _family, None, None, ()))   # run by V2.evaluate (v2_rows), never by _run_check
@@ -3517,7 +3964,8 @@ def v2_rows(c: Ctx, evaluate=None) -> List[Dict]:
     produce because the APP's manifest names an undeclared resource is the app's fault (candidate_section_fault, §17.8
     G): 0, vacuous, never a critical."""
     try:
-        got, why = {r.get('check'): r for r in (evaluate or V2.evaluate)(c.obs, c.oracle)}, None
+        got, why = {r.get('check'): r for r in (evaluate(c.obs, c.oracle) if evaluate else
+                      [*V2.evaluate(c.obs, c.oracle), *JQL.evaluate(c.obs, c.oracle)])}, None
     except Exception as error:   # a P8 bug is the scorer's, never the app's
         got, why = {}, f'scorer error: forge2_checks.evaluate: {type(error).__name__}: {error}'
     out = []
@@ -3679,25 +4127,32 @@ def _stamp(name: str, tier: str, outcome: Dict) -> Dict:
     return row
 
 
-def _run_check(c: Ctx, name: str, tier: str, fn, pre, needs) -> Dict:
-    if c.oracle is None:
-        return _stamp(name, tier, unavail(f'pack defect: {c.oracle_error}'))
+def _evidence_gate(c: Ctx, pre, needs) -> Optional[Dict]:
     why = c.section_error(*needs)
     if why:
         fault = candidate_section_fault(c, why)
         if fault:
             # §17.8 G: the row scores 0 (the app's own manifest broke the surface) but observed no defect of its own,
             # so it is vacuous — a manifest root never fires the criticals of the surfaces it never opened.
-            return _stamp(name, tier, g(0.0, fault, 'the app cannot be opened: its own manifest is broken',
-                                        parts={'vacuous_root': f'manifest: {fault[:160]}'}))
-        return _stamp(name, tier, unavail(why))
+            return g(0.0, fault, 'the app cannot be opened: its own manifest is broken',
+                                        parts={'vacuous_root': f'manifest: {fault[:160]}'})
+        return unavail(why)
     if pre is not None:
         try:
             ok, what = pre(c)
         except Exception as error:  # a precondition bug is the scorer's, never the app's
-            return _stamp(name, tier, unavail(f'precondition error: {type(error).__name__}: {error}'))
+            return unavail(f'precondition error: {type(error).__name__}: {error}')
         if not ok:
-            return _stamp(name, tier, vacuous(what))
+            return vacuous(what)
+    return None
+
+
+def _run_check(c: Ctx, name: str, tier: str, fn, pre, needs) -> Dict:
+    if c.oracle is None:
+        return _stamp(name, tier, unavail(f'pack defect: {c.oracle_error}'))
+    gate = _evidence_gate(c, pre, needs)
+    if gate:
+        return _stamp(name, tier, gate)
     try:
         outcome = fn(c)
         if not isinstance(outcome, dict) or not isinstance(outcome.get('score'), (int, float)):
@@ -3748,24 +4203,37 @@ def scoring_seeds(seed: str, dev_seed: Optional[str], n: int = SCORING_SEEDS) ->
 
 
 def merge_seed_rows(row_sets: List[List[Dict]], seeds: List[str]) -> List[Dict]:
+    if not row_sets or len(row_sets) != len(seeds) or len(set(seeds)) != len(seeds):
+        raise ValueError('Scoring sites need distinct seeds and one row set each')
     by_seed = [{r['check']: r for r in rows} for rows in row_sets]
+    names = set(by_seed[0])
+    if any(set(rows) != names for rows in by_seed):
+        raise ValueError('Scoring sites returned different check registries')
     merged = []
     for row in row_sets[0]:
         name = row['check']
-        rs = [b[name] for b in by_seed if name in b]
-        scores = {seed: b[name]['score'] for seed, b in zip(seeds, by_seed) if name in b}
-        gone = [(seed, b[name]) for seed, b in zip(seeds, by_seed) if name in b and b[name].get('unavailable')]
+        entries = [(seed, rows[name]) for seed, rows in zip(seeds, by_seed)]
+        scores = {seed: r['score'] for seed, r in entries}
+        gone = [(seed, r) for seed, r in entries if r.get('unavailable')]
+        harm = [(seed, r) for seed, r in entries if r.get('critical') in CRITICAL_CLASSES and observed_defect(r)]
         if gone:
-            seed, r = gone[0]
-            out = {**r, 'detail': f'seed {seed}: {r["detail"]}'[:400]}
+            seed, missing = gone[0]
+            out = {**missing, 'detail': f'seed {seed}: {missing["detail"]}'[:400]}
         elif row['tier'] == 'E':
-            out = {**row, 'score': round(sum(r['score'] for r in rs) / len(rs), 4),
-                   'detail': f'mean over {len(rs)} scoring sites: {row["detail"]}'[:400]}
+            out = {**row, 'score': round(sum(scores.values()) / len(entries), 4),
+                   'detail': f'mean over {len(entries)} scoring sites: {row["detail"]}'[:400]}
         else:
-            worst_seed, worst = min(zip(seeds, rs), key=lambda sr: sr[1]['score'])
-            out = {**worst, 'detail': (f'worst of {len(rs)} scoring sites (seed {worst_seed}): ' if len(set(scores.values())) > 1
-                                       else '') + str(worst.get('detail'))}
+            worst_seed, worst = min(entries, key=lambda sr: sr[1]['score'])
+            # Numeric worst-case and observed harm are separate: an absent row on one site cannot erase
+            # a measured disclosure or side effect on another, including when their scores tie.
+            evidence_seed, evidence = harm[0] if harm else (worst_seed, worst)
+            out = {**evidence, 'score': worst['score'],
+                   'detail': (f'worst of {len(entries)} scoring sites (seed {evidence_seed}): '
+                              if len(set(scores.values())) > 1 or harm else '') + str(evidence.get('detail'))}
             out['detail'] = out['detail'][:400]
+            out['score_seed'] = worst_seed
+        if harm:
+            out['critical_observations'] = [{'seed': seed, 'row': copy.deepcopy(r)} for seed, r in harm]
         out['seeds'] = scores
         merged.append(out)
     return merged
@@ -3784,6 +4252,11 @@ def evaluate(c: Ctx) -> Dict:
         for x in extra:
             c.harness_missing += [h for h in x.harness_missing if h not in c.harness_missing]
         rows = merge_seed_rows(sets, seeds)
+    if c.obs.get('scorerFilesSha256') and c.obs['scorerFilesSha256'] != scorer_files_sha256():
+        raise RuntimeError('REFUSED: scorer bytes changed before composing its recorded observations')
+    inputs = c.obs.get('evaluationInputs')
+    if any(x.obs.get('evaluationInputs') != inputs for x in extra):
+        raise RuntimeError('REFUSED: scoring sites used different candidate or environment bytes')
     result = compose_from_rows(rows, c)
     if seed_scores is not None:
         result['fixture_seeds'] = list(seed_scores)
@@ -3793,10 +4266,13 @@ def evaluate(c: Ctx) -> Dict:
     result['deploy_readiness'] = deploy_readiness(c)
     kit = getattr(c, 'kit', None) or {}
     result.update({'kit_lock_sha256': kit.get('lock_sha256') or (c.obs.get('kit') or {}).get('lockSha256'),
+                   'kit_code_sha256': kit.get('kit_code_sha256'),
                    'wrapper_sha256': kit.get('wrapper_sha256') or (c.obs.get('kit') or {}).get('wrapperSha256'),
                    'scorer_seconds': getattr(c, 'scorer_seconds', None), 'shots': list(c.obs.get('shots') or []),
-                   'scorer_files_sha256': scorer_files_sha256(),
-                   'spec_sha256': hashlib.sha256((ROOT / SPEC).read_bytes()).hexdigest()})
+                   'scorer_files_sha256': c.obs.get('scorerFilesSha256') or scorer_files_sha256(),
+                   'spec_sha256': ((c.obs.get('evaluationInputs') or {}).get('public', {}).get(Path(SPEC).name)
+                                   or hashlib.sha256((ROOT / SPEC).read_bytes()).hexdigest()),
+                   'evaluation_inputs': c.obs.get('evaluationInputs')})
     return result
 
 
@@ -3804,7 +4280,8 @@ def scorer_files_sha256() -> Dict[str, str]:
     """The files that produced a verdict (calibrate() refuses golden verdicts scored by different ones)."""
     return {n: hashlib.sha256(p.read_bytes()).hexdigest() for n, p in (
         ('score_forge2.py', HERE / 'score_forge2.py'), ('forge2_checks.py', Path(V2.__file__)),
-        ('forge2_oracle.py', Path(fo.__file__)), ('forge2_probe.mjs', PROBE_SCRIPT), (THRESHOLDS_FILE.name, THRESHOLDS_FILE))}
+        ('forge2_jql_checks.py', Path(JQL.__file__)), ('forge2_oracle.py', Path(fo.__file__)),
+        ('forge2_seed_policy.py', Path(seed_policy.__file__)), ('forge2_probe.mjs', PROBE_SCRIPT), (THRESHOLDS_FILE.name, THRESHOLDS_FILE))}
 
 
 def media_block(c: Ctx) -> Dict:
@@ -3839,7 +4316,12 @@ def passed(row: Optional[Dict]) -> bool:
 def observed_defect(r: Dict) -> bool:
     """SPEC §4: a critical fires ONLY on an observed defect — a row that ran (not unavailable), was exercised (not
     vacuous, which covers the manifest-fault rows, §17.8 G), whose surface exists (not absent) and scored below 1."""
+    recorded = r.get('critical_observations')
+    if recorded:
+        return any(observed_defect(item['row']) for item in recorded)
     parts = r.get('parts') or {}
+    if r.get('check') == 'r10_shared_permissions' and parts.get('critical_observed') is not True:
+        return False
     return (isinstance(r.get('score'), (int, float)) and r['score'] < 1.0 - 1e-9 and not r.get('unavailable')
             and not parts.get('vacuous_root') and not parts.get('absent_surface'))
 
@@ -3853,6 +4335,8 @@ def criticals(rows: List[Dict]) -> Tuple[float, List[Dict]]:
     for name, r in failed.items():
         cls = r['critical']
         entry = {'check': name, 'class': cls, 'score': r['score'], 'why': CRITICAL_CLASSES[cls]}
+        if r.get('critical_observations'):
+            entry['observed_seeds'] = [item['seed'] for item in r['critical_observations']]
         root = next((root for root, deps in ROOT_BLOCKS.items() if root != name and name in deps and root in failed), None)
         if root:
             out.append({**entry, 'factor': 1.0, 'suppressed': f'root:{root}'})
@@ -4013,12 +4497,10 @@ def recompose(kept: Dict, source: str = '') -> Dict:
     again. The per-seed scores are not carried: a verdict keeps the merged rows, not each scoring site's. Refuses
     (ValueError) a verdict of another scorer family or one whose rows are not this registry's: weights over other rows
     would be a number nobody graded."""
-    version, names = str(kept.get('scorerVersion')), [r.get('check') for r in kept.get('checks') or []]
+    version = str(kept.get('scorerVersion'))
     if version.removesuffix('-rc') != VERSION.removesuffix('-rc'):
         raise ValueError(f'the verdict was scored by {version}, not {VERSION.removesuffix("-rc")}')
-    if set(names) != REGISTERED or len(names) != len(REGISTERED):
-        raise ValueError(f'the verdict holds {len(names)} rows, the registry {len(REGISTERED)}; missing '
-                         f'{sorted(REGISTERED - set(names))[:6]}, unknown {sorted(set(names) - REGISTERED)[:6]}')
+    admit_registered_rows(kept)
     ctx = argparse.Namespace(fixture_seed=kept.get('fixture_seed'), dev_seed=kept.get('dev_seed'),
                              runtime=kept.get('runtime', 'wrapper'), harness_missing=list(kept.get('harness_missing') or []))
     result = compose_from_rows(kept['checks'], ctx)
@@ -4040,6 +4522,9 @@ def _scenario(overrides: Dict[str, float], parts: Optional[Dict[str, Dict]] = No
     for r in rows:
         if r['check'] in overrides:
             r['score'] = overrides[r['check']]
+            if r['check'] == 'r10_shared_permissions':
+                r['parts'] = {'critical_observed': True, 'observed_hidden_issue_ids': ['synthetic-observed-hidden-issue']}
+                r['detail'] = 'JQL disclosure observed: synthetic-observed-hidden-issue'
         if parts and r['check'] in parts:
             r['parts'] = parts[r['check']]
     return rows
@@ -4106,9 +4591,9 @@ def severity_selftest() -> List[str]:
         if n in DIAGNOSTIC or ROW_WEIGHT.get(n, 1.0) == 0:
             continue
         expect(score(_scenario({n: 0.0}))['rawScore'] < 1.0, f'(1) row {n} earns no weight')
-    # (1b) the SPEC §4 shares: v1 at 0 keeps exactly the v2 0.75; one family at 0 loses exactly its weight
+    # (1b) the SPEC §4 shares: v1 at 0 keeps exactly the configured v2 share; one family at 0 loses exactly its weight
     v1_zero = score(_scenario({n: 0.0 for n, t, *_ in CHECKS if t in TIER_WEIGHT or t == 'E'}))
-    expect(abs(v1_zero['inner'] - (1 - V1_WEIGHT)) < 1e-4, f"(1b) v1 at 0 must keep the v2 share 0.75 (got {v1_zero['inner']})")
+    expect(abs(v1_zero['inner'] - (1 - V1_WEIGHT)) < 1e-4, f"(1b) v1 at 0 must keep the v2 share {1 - V1_WEIGHT} (got {v1_zero['inner']})")
     for fam, w in FAMILY_WEIGHT.items():
         fam_zero = score(_scenario({n: 0.0 for n, t, *_ in CHECKS if t == fam}))
         expect(abs(fam_zero['inner'] - (1 - w)) < 1e-4, f"(1b) {fam} at 0 must lose exactly {w} (got {fam_zero['inner']})")
@@ -4762,26 +5247,89 @@ def defect_selftest() -> List[str]:
 
 # ── reference gate (DESIGN §13.4 items 1–4) ──────────────────────────────────────────────────
 
+def admit_registered_rows(result: Dict) -> List[Dict]:
+    rows = result.get('checks')
+    if not isinstance(rows, list) or any(not isinstance(r, dict) or not isinstance(r.get('check'), str) for r in rows):
+        raise ValueError('scored registry refused: checks must be a list of named row objects')
+    names = [r['check'] for r in rows]
+    counts = Counter(names)
+    registry_errors = []
+    missing, unknown = sorted(REGISTERED - set(names)), sorted(set(names) - REGISTERED)
+    duplicates = sorted(n for n, count in counts.items() if count > 1)
+    wrong_tiers = [f"{r['check']} {r.get('tier')!r} != {TIER_OF[r['check']]!r}" for r in rows
+                   if r['check'] in REGISTERED and r.get('tier') != TIER_OF[r['check']]]
+    invalid_scores = sorted(r['check'] for r in rows if type(r.get('score')) not in (int, float)
+                            or not 0 <= r['score'] <= 1 or not math.isfinite(r['score']))
+    for label, values in (('missing', missing), ('unknown', unknown), ('duplicate', duplicates),
+                          ('tier mismatch', wrong_tiers), ('invalid score', invalid_scores)):
+        if values:
+            registry_errors.append(f'{label}: {", ".join(values)}')
+    if registry_errors:
+        raise ValueError('scored registry refused: ' + '; '.join(registry_errors))
+    return rows
+
+
+REFERENCE_COMPOSITION_FIELDS = (
+    'score', 'rawScore', 'inner', 'v1', 'v2', 'critical', 'reliability', 'tiers', 'admission',
+    'excellence', 'excellence_gate', 'status', 'runtime', 'publishable', 'hold', 'unpublishable_reasons',
+    'harness_missing', 'probe_unavailable', 'vacuous', 'root_causes',
+)
+
+
+def reference_composition_matches(actual, expected) -> bool:
+    """JSON numeric roundtrips may change int to float, but bool is never a score or multiplier."""
+    if type(expected) in (int, float):
+        return type(actual) in (int, float) and actual == expected
+    if isinstance(expected, dict):
+        return (isinstance(actual, dict) and set(actual) == set(expected)
+                and all(reference_composition_matches(actual[key], value) for key, value in expected.items()))
+    if isinstance(expected, list):
+        return (isinstance(actual, list) and len(actual) == len(expected)
+                and all(reference_composition_matches(a, e) for a, e in zip(actual, expected)))
+    return type(actual) is type(expected) and actual == expected
+
+
 def reference_failures(result: Dict) -> List[str]:
+    """SPEC §4: complete functional correctness, verified UI budget and honest stored composition.
+
+    The original five fit event/reconcile economy; heldout request-efficiency losses stay in the score.
+    This checks a native verdict, not the provenance of a derived diagnostic or a model result.
+    """
+    admit_registered_rows(result)
     fails = []
     for r in result['checks']:
         n = r['check']
+        if not reference_composition_matches(r.get('weight', 1.0), ROW_WEIGHT.get(n, 1.0)):
+            fails.append(f'{n}: reference row weight differs from its registry stamp')
+        if r.get('critical') != CRITICAL_OF.get(n):
+            fails.append(f'{n}: reference critical class differs from its registry stamp')
+    if fails:
+        return fails
+    for r in result['checks']:
+        n = r['check']
+        if n in VERIFIED_TOP and r['score'] != 1.0:
+            fails.append(f"{n}: {r['score']} != 1.0 — the fixed UI budget is required")
         if r.get('unavailable'):
             fails.append(f'{n}: UNAVAILABLE — a harness defect blocks the freeze')
             continue
         if (r.get('parts') or {}).get('vacuous_root'):
             fails.append(f'{n}: vacuous on the golden — its contract hook produced no evidence')
             continue
-        if n in CALIBRATION_OWNED:
+        if n in CALIBRATION_OWNED and n not in VERIFIED_TOP:
             continue
         # the diagnostic rows too: u_widget_loads is no longer a critical and k_v2_surfaces feeds a band
-        if n in CRITICAL_OF and r['score'] < 1.0 - 1e-9:
+        if n in CRITICAL_OF and r['score'] != 1.0:
             fails.append(f"{n}: CRITICAL {r['score']} != 1.0 — criticals are facts the golden achieves")
-        elif r['score'] < 1.0 - 1e-9:
+        elif r['score'] != 1.0:
             fails.append(f"{n}: {r['score']} < 1.0 — {str(r.get('detail'))[:100]}")
-    # rc thresholds are not fitted to the golden yet (the economy rows above are exempt so calibration can run)
-    if CALIBRATED and result.get('score') != 1.0:
-        fails.append(f"final {result.get('score')} != 1.000 (SPEC §5: the golden v2 scores 1.000)")
+    recomposed = recompose(result)
+    if recomposed['critical']['multiplier'] != 1.0 or recomposed['critical']['unsuppressed']:
+        fails.append(f"observed critical harm on the reference: {recomposed['critical']['unsuppressed']}")
+    for field in REFERENCE_COMPOSITION_FIELDS:
+        if field not in result or not reference_composition_matches(result[field], recomposed[field]):
+            fails.append(f'reference composition mismatch: {field}')
+    if result.get('status') != 'scored' or result.get('publishable') is not True or result.get('hold') is not None:
+        fails.append('the reference must be scored and publishable, with no hold')
     if result.get('harness_missing'):
         fails.append(f"harness_missing: {result['harness_missing'][:6]}")
     if reliability(result['checks'])[0] != 1.0:   # from the rows: a golden verdict kept before the rule has no block
@@ -4855,7 +5403,7 @@ def _reap_children(*_a) -> None:
 
 
 def _draw_seed() -> str:
-    return os.urandom(8).hex()
+    return seed_policy.site_seed('scoring')
 
 
 def _port_holder(port: int) -> Optional[str]:
@@ -4924,7 +5472,21 @@ def build_pack(seed: str, out: Path) -> Dict:
 def clone_tree(src: Path, dest: Path) -> None:
     shutil.copytree(src, dest, symlinks=False, ignore=shutil.ignore_patterns(
         'node_modules', '.forge-dev', 'forge-shots', 'bench-media', '.swarm', '__pycache__', 'trace.jsonl', 'verdict.json',
-        'engine-console.log', 'forge-observations.json'))
+        'engine-console.log', 'forge-observations.json', 'forge-reference-pass.json'))
+
+
+def input_file_hashes(root: Path) -> Dict[str, str]:
+    """Path-sensitive provenance of actual scorer inputs, before the probe changes its disposable clone."""
+    hashes = {}
+    excluded = {'node_modules', '.forge-dev', 'forge-shots', 'bench-media', '.swarm', '__pycache__', '.git'}
+    for directory, subdirs, names in os.walk(root, followlinks=False):
+        subdirs[:] = sorted(name for name in subdirs if name not in excluded)
+        for name in sorted(names):
+            path = Path(directory) / name
+            hashes[path.relative_to(root).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+    if not hashes:
+        raise RuntimeError(f'REFUSED: source provenance is empty: {root}')
+    return hashes
 
 
 def _probe_one(root: Path, seed: str, kit: Dict, runtime: str, shots: Path, media_dir: Optional[Path],
@@ -4934,6 +5496,15 @@ def _probe_one(root: Path, seed: str, kit: Dict, runtime: str, shots: Path, medi
         tmp = Path(tmp)
         app = tmp / 'app'
         clone_tree(Path(root), app)
+        sources = scorer_files_sha256()
+        if sources != _LOADED_SCORER_FILES:
+            raise RuntimeError('REFUSED: scorer files changed after this scoring process loaded them')
+        import forge2_kit
+        if forge2_kit.code_sha256(Path(kit['dir'])) != kit['kit_code_sha256']:
+            raise RuntimeError('REFUSED: materialized SDK code differs from its kit identity')
+        inputs = {'candidate': input_file_hashes(app), 'site': input_file_hashes(ROOT / 'forge2/site'),
+                  'public': input_file_hashes(ROOT / 'forge2/public'),
+                  'v1_schema': {'manifest.yml': hashlib.sha256((ROOT / 'forge2/starter/manifest.yml').read_bytes()).hexdigest()}}
         pack = build_pack(seed, tmp / 'pack.json')
         obs_path = tmp / 'forge-observations.json'
         shots.mkdir(parents=True, exist_ok=True)
@@ -4944,9 +5515,22 @@ def _probe_one(root: Path, seed: str, kit: Dict, runtime: str, shots: Path, medi
         proc = subprocess.Popen(cmd, cwd=tmp)
         _CHILDREN.append(proc)
         code = proc.wait()
+        if code:
+            if obs_path.is_file():
+                obs_copy.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(obs_path, obs_copy)
+            raise RuntimeError(f'REFUSED: forge2_probe.mjs exited {code}; retained checkpoint is not a completed site (seed {seed})')
         if not obs_path.is_file():
             raise RuntimeError(f'REFUSED: forge2_probe.mjs exited {code} without observations (seed {seed})')
         obs = json.loads(obs_path.read_text())
+        if (inputs['candidate'] != input_file_hashes(app) or inputs['site'] != input_file_hashes(ROOT / 'forge2/site')
+                or inputs['public'] != input_file_hashes(ROOT / 'forge2/public')
+                or inputs['v1_schema']['manifest.yml'] != hashlib.sha256((ROOT / 'forge2/starter/manifest.yml').read_bytes()).hexdigest()):
+            raise RuntimeError('REFUSED: candidate, site or public contract bytes changed while scoring')
+        if sources != scorer_files_sha256() or forge2_kit.code_sha256(Path(kit['dir'])) != kit['kit_code_sha256']:
+            raise RuntimeError('REFUSED: scorer or materialized SDK bytes changed while scoring')
+        obs['evaluationInputs'] = inputs
+        obs['scorerFilesSha256'] = sources
         # Pixels are read once, here, into the observations, so evaluate() stays pure over (tree, observations,
         # pack) and a kept observation file rescored later grades v_dark_mode the same way.
         for surface in (obs.get('ui') or {}).get('surfaces') or []:
@@ -4956,7 +5540,8 @@ def _probe_one(root: Path, seed: str, kit: Dict, runtime: str, shots: Path, medi
                 surface['dominant'] = list(measured[0])
                 surface['dominantShare'] = round(measured[1], 4)
                 surface['blank'] = measured[1] >= float(TH['blank_share'])
-        obs_path.write_text(json.dumps(obs))
+        with obs_path.open('w') as handle:
+            json.dump(obs, handle)
         obs_copy.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(obs_path, obs_copy)
     return obs, pack
@@ -5002,7 +5587,7 @@ def gather(root: Path, _port, _db_dir, trace_path: Optional[Path] = None, mark_p
     run's own seed and, unless `single_seed` (the controls and the calibration, which name their seeds), on the two
     derived scoring sites (SCORING_SEEDS). The run's own seed keeps the published shots, recording and
     forge-observations.json; the derived sites' evidence lands under forge-shots/seeds/<seed>/. The probes run under
-    score_lock()."""
+    score_lock(). Single-site free controls retain browser evidence without encoding report-only video."""
     if not seed:
         raise RuntimeError('REFUSED: score_forge2.gather needs the fixture seed')
     if V2_ABSENT:
@@ -5021,7 +5606,7 @@ def gather(root: Path, _port, _db_dir, trace_path: Optional[Path] = None, mark_p
         ctxs = []
         for i, s in enumerate(seeds):
             where = shots if i == 0 else shots / 'seeds' / s
-            obs, pack = _probe_one(root, s, kit, runtime, where, media_dir if i == 0 else None,
+            obs, pack = _probe_one(root, s, kit, runtime, where, media_dir if i == 0 and not single_seed else None,
                                    Path(root) / 'forge-observations.json' if i == 0 else where / 'forge-observations.json')
             ctxs.append(Ctx(Path(root), obs, pack, fixture_seed=s, dev_seed=header.get('dev_seed'), runtime=runtime))
         ctx = ctxs[0]
@@ -5134,6 +5719,9 @@ def main(argv=None) -> int:
         (tree / 'forge-reference-pass.json').write_text(json.dumps(marker, indent=2))
         print('REFERENCE GATE: PASS')
     return 0
+
+
+_LOADED_SCORER_FILES = scorer_files_sha256()
 
 
 if __name__ == '__main__':

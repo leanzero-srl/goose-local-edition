@@ -11524,5 +11524,119 @@
   },
   "engineGlanceSettings.showAgain": {
     "defaultMessage": "फिर से दिखाएँ"
+  },
+  "benchmarkSection.build": {
+    "defaultMessage": "बिल्ड {index}"
+  },
+  "benchmarkSection.twoBuilds": {
+    "defaultMessage": "2 बिल्ड"
+  },
+  "forgeSeries.between": {
+    "defaultMessage": "बिल्ड 1 पूरा हो गया है। बिल्ड 2 तैयार किया जा रहा है।"
+  },
+  "forgeSeries.build": {
+    "defaultMessage": "2 में से बिल्ड {index}"
+  },
+  "forgeSeries.callBudget": {
+    "defaultMessage": "प्रति बिल्ड {calls} कॉल"
+  },
+  "forgeSeries.cancelDetail": {
+    "defaultMessage": "सक्रिय बिल्ड रोकता है और अगला बिल्ड शुरू होने से रोकता है। पूरे हो चुके स्कोर और साक्ष्य सुरक्षित रहते हैं; रद्द करने से कुछ भी प्रकाशित नहीं होता।"
+  },
+  "forgeSeries.cancelTitle": {
+    "defaultMessage": "क्या दो बिल्ड वाला यह बेंचमार्क रद्द करें?"
+  },
+  "forgeSeries.cancelled": {
+    "defaultMessage": "दो बिल्ड का क्रम रद्द किया गया"
+  },
+  "forgeSeries.cancelledStatus": {
+    "defaultMessage": "दो बिल्ड का क्रम रद्द किया गया।"
+  },
+  "forgeSeries.checking": {
+    "defaultMessage": "दोनों बिल्ड की जाँच हो रही है…"
+  },
+  "forgeSeries.childCancelled": {
+    "defaultMessage": "रद्द किया गया"
+  },
+  "forgeSeries.childFailed": {
+    "defaultMessage": "पूरा नहीं हुआ"
+  },
+  "forgeSeries.completeStatus": {
+    "defaultMessage": "दो बिल्ड पूरे हुए।"
+  },
+  "forgeSeries.continuePublish": {
+    "defaultMessage": "शेष बिल्ड प्रकाशित करें"
+  },
+  "forgeSeries.failed": {
+    "defaultMessage": "दो बिल्ड का क्रम पूरा नहीं हुआ"
+  },
+  "forgeSeries.failedStatus": {
+    "defaultMessage": "दो बिल्ड का क्रम पूरा नहीं हुआ।"
+  },
+  "forgeSeries.finished": {
+    "defaultMessage": "दोनों बिल्ड पूरे हो गए हैं"
+  },
+  "forgeSeries.interrupted": {
+    "defaultMessage": "दो बिल्ड का क्रम पूरा होने से पहले ऐप बंद हो गया। सहेजे गए साक्ष्य सुरक्षित हैं।"
+  },
+  "forgeSeries.intro": {
+    "defaultMessage": "इस ऐप में एक बार चलाएँ दबाने से दो स्वतंत्र बिल्ड शुरू होते हैं। पहले का स्कोर मिलने के बाद दूसरा शुरू होता है; दोनों के अपने साक्ष्य सुरक्षित रहते हैं।"
+  },
+  "forgeSeries.live": {
+    "defaultMessage": "leanzero.net पर प्रकाशित"
+  },
+  "forgeSeries.median": {
+    "defaultMessage": "स्थानीय माध्यिका {median} · सीमा {min}–{max}"
+  },
+  "forgeSeries.noResponse": {
+    "defaultMessage": "प्रकाशन का कोई जवाब नहीं"
+  },
+  "forgeSeries.noScore": {
+    "defaultMessage": "अभी कोई स्कोर किया गया बिल्ड उपलब्ध नहीं है।"
+  },
+  "forgeSeries.preparing": {
+    "defaultMessage": "2 में से बिल्ड {index} तैयार किया जा रहा है"
+  },
+  "forgeSeries.provisional": {
+    "defaultMessage": "एक स्कोर किया गया बिल्ड अस्थायी परिणाम है। दो बिल्ड की माध्यिका उपलब्ध नहीं है।"
+  },
+  "forgeSeries.publish": {
+    "defaultMessage": "2 बिल्ड प्रकाशित करें"
+  },
+  "forgeSeries.publishTitle": {
+    "defaultMessage": "प्रकाशन शीर्षक"
+  },
+  "forgeSeries.publishing": {
+    "defaultMessage": "2 में से बिल्ड {index} प्रकाशित किया जा रहा है…"
+  },
+  "forgeSeries.queued": {
+    "defaultMessage": "शुरू होने की प्रतीक्षा"
+  },
+  "forgeSeries.run": {
+    "defaultMessage": "2 बिल्ड चलाएँ"
+  },
+  "forgeSeries.running": {
+    "defaultMessage": "2 में से बिल्ड {index} चल रहा है"
+  },
+  "forgeSeries.scored": {
+    "defaultMessage": "स्कोर किया गया"
+  },
+  "forgeSeries.settings": {
+    "defaultMessage": "ऐप समान मॉडल, कार्य और सेटिंग के साथ दो नए बिल्ड क्रम से चलाता है। दोनों का अपना स्कोर और साक्ष्य सुरक्षित रहता है।"
+  },
+  "forgeSeries.skipped": {
+    "defaultMessage": "शुरू नहीं हुआ"
+  },
+  "forgeSeries.title": {
+    "defaultMessage": "दो स्वतंत्र बिल्ड"
+  },
+  "forgeSeries.unreadable": {
+    "defaultMessage": "दो बिल्ड के सहेजे गए साक्ष्य पढ़े नहीं जा सके। अलग-अलग बिल्ड अभी भी उपलब्ध हैं।"
+  },
+  "forgeSeries.view": {
+    "defaultMessage": "बिल्ड {index} के साक्ष्य खोलें"
+  },
+  "forgeSeries.waitingPublish": {
+    "defaultMessage": "प्रकाशन के लिए दो पूरे, तुलना योग्य बिल्ड और उनके मूल साक्ष्य आवश्यक हैं।"
   }
 }

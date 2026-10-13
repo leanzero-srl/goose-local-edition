@@ -11524,5 +11524,119 @@
   },
   "engineGlanceSettings.showAgain": {
     "defaultMessage": "重新显示"
+  },
+  "benchmarkSection.build": {
+    "defaultMessage": "构建 {index}"
+  },
+  "benchmarkSection.twoBuilds": {
+    "defaultMessage": "2 次构建"
+  },
+  "forgeSeries.between": {
+    "defaultMessage": "构建 1 已完成。正在准备构建 2。"
+  },
+  "forgeSeries.build": {
+    "defaultMessage": "构建 {index} / 2"
+  },
+  "forgeSeries.callBudget": {
+    "defaultMessage": "每次构建可调用 {calls} 次"
+  },
+  "forgeSeries.cancelDetail": {
+    "defaultMessage": "停止当前构建并阻止下一次构建启动。已完成的评分和证据会保留；取消不会发布任何内容。"
+  },
+  "forgeSeries.cancelTitle": {
+    "defaultMessage": "取消这项包含两次构建的基准测试？"
+  },
+  "forgeSeries.cancelled": {
+    "defaultMessage": "两次构建的连续执行已取消"
+  },
+  "forgeSeries.cancelledStatus": {
+    "defaultMessage": "两次构建的连续执行已取消。"
+  },
+  "forgeSeries.checking": {
+    "defaultMessage": "正在检查两次构建…"
+  },
+  "forgeSeries.childCancelled": {
+    "defaultMessage": "已取消"
+  },
+  "forgeSeries.childFailed": {
+    "defaultMessage": "未完成"
+  },
+  "forgeSeries.completeStatus": {
+    "defaultMessage": "两次构建已完成。"
+  },
+  "forgeSeries.continuePublish": {
+    "defaultMessage": "发布剩余构建"
+  },
+  "forgeSeries.failed": {
+    "defaultMessage": "两次构建的连续执行未完成"
+  },
+  "forgeSeries.failedStatus": {
+    "defaultMessage": "两次构建的连续执行未完成。"
+  },
+  "forgeSeries.finished": {
+    "defaultMessage": "两次构建均已完成"
+  },
+  "forgeSeries.interrupted": {
+    "defaultMessage": "应用在两次构建完成前已退出。已保存的证据会保留。"
+  },
+  "forgeSeries.intro": {
+    "defaultMessage": "在本应用中点击一次运行即可启动两次独立构建。第一次评分后开始第二次；每次都保留自己的证据。"
+  },
+  "forgeSeries.live": {
+    "defaultMessage": "已在 leanzero.net 发布"
+  },
+  "forgeSeries.median": {
+    "defaultMessage": "本地中位数 {median} · 范围 {min}–{max}"
+  },
+  "forgeSeries.noResponse": {
+    "defaultMessage": "发布未收到响应"
+  },
+  "forgeSeries.noScore": {
+    "defaultMessage": "目前还没有已评分的构建。"
+  },
+  "forgeSeries.preparing": {
+    "defaultMessage": "正在准备构建 {index} / 2"
+  },
+  "forgeSeries.provisional": {
+    "defaultMessage": "只有一次已评分构建时结果为暂定结果。无法提供两次构建的中位数。"
+  },
+  "forgeSeries.publish": {
+    "defaultMessage": "发布 2 次构建"
+  },
+  "forgeSeries.publishTitle": {
+    "defaultMessage": "发布标题"
+  },
+  "forgeSeries.publishing": {
+    "defaultMessage": "正在发布构建 {index} / 2…"
+  },
+  "forgeSeries.queued": {
+    "defaultMessage": "等待启动"
+  },
+  "forgeSeries.run": {
+    "defaultMessage": "运行 2 次构建"
+  },
+  "forgeSeries.running": {
+    "defaultMessage": "构建 {index} / 2 正在运行"
+  },
+  "forgeSeries.scored": {
+    "defaultMessage": "已评分"
+  },
+  "forgeSeries.settings": {
+    "defaultMessage": "应用使用相同模型、任务和设置连续执行两次全新构建。每次保留自己的评分和证据。"
+  },
+  "forgeSeries.skipped": {
+    "defaultMessage": "未启动"
+  },
+  "forgeSeries.title": {
+    "defaultMessage": "两次独立构建"
+  },
+  "forgeSeries.unreadable": {
+    "defaultMessage": "无法读取已保存的两次构建证据。各次构建仍可单独查看。"
+  },
+  "forgeSeries.view": {
+    "defaultMessage": "打开构建 {index} 的证据"
+  },
+  "forgeSeries.waitingPublish": {
+    "defaultMessage": "发布需要两次已完成且可比较的构建，以及各自的原生证据。"
   }
 }

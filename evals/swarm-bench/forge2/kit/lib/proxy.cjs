@@ -28,10 +28,12 @@
 // can interleave them. The held write is applied when served, so FAIL_IF_EXISTS and transaction conditions meet the
 // state at that moment.
 const http = require('http');
+const crypto = require('crypto');
 const { costOf, VCLOCK_HEADER, KVS_READS } = require('./clock.cjs');
 
 const KVS_ROUTE = '/fpp/as/app/provider/atlassian/capability/kvs';
 const WEBTRIGGER_ROUTE = /^\/x\/webtrigger\/([^/]+)$/;
+const JQL_CALLBACK_ROUTE = /^\/x\/jql-evaluate\/([^/]+)$/;
 
 const STREAM_READ_GAP_MS = 20; // transport: a pause long enough for two writes to arrive as two socket reads
 const REQUEST_STATS = /^\/webhook\/queue\/stats\//;
@@ -101,8 +103,9 @@ function createConcurrentGroup({ id, reason, members }) {
   };
 }
 
-function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clock, log = [], harnessMissing = [], webtrigger = null }) {
+function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clock, log = [], harnessMissing = [], webtrigger = null, jqlEvaluate = null, jqlNonce = null }) {
   const llmModules = manifest?.modules?.llm ?? [];
+  const jqlKeys = new Set((manifest?.modules?.['jira:jqlFunction'] ?? []).map((m) => m?.key).filter(Boolean));
   const webtriggerKeys = new Set((manifest?.modules?.webtrigger ?? []).map((w) => w?.key).filter(Boolean));
   const scopes = manifest?.permissions?.scopes ?? [];
   const egressAllow = (manifest?.permissions?.external?.fetch?.backend ?? []).map((e) => (typeof e === 'string' ? e : e?.address)).filter(Boolean);
@@ -111,6 +114,11 @@ function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clo
   // `tv`: the virtual time the call was made (an invocation's send time); frontend calls use the emulator's clock.
   const record = (entry, tv) => { const e = { t_virtual: iso(tv), ...entry }; log.push(e); return e; };
   const missing = (what, inv) => harnessMissing.push({ what, at: iso(), invocationId: inv?.id ?? null, moduleType: inv?.moduleType ?? null });
+
+  async function platformCall(op, args, tv, vcostMs) {
+    await clock.advanceTo(tv);
+    return siteCall(op, { ...args, atMs: tv, completedAtMs: tv + vcostMs });
+  }
 
   // One product request (Jira), shared by the wrapper route and the Custom UI host's fetchProduct.
   async function productFetch({ inv, provider, product, method, path, headers = {}, body, tv, vcostMs }) {
@@ -172,7 +180,7 @@ function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clo
           : Array.isArray(parsed.histories) ? parsed.histories.length : null };
     }
     const out = {};
-    for (const h of ['content-type', 'retry-after', 'ratelimit-reason', 'x-ratelimit-limit', 'x-ratelimit-remaining', 'x-ratelimit-nearlimit']) if (r.headers.get(h)) out[h] = r.headers.get(h);
+    for (const h of ['content-type', 'retry-after', 'ratelimit-reason', 'ratelimit-policy', 'ratelimit', 'x-ratelimit-limit', 'x-ratelimit-remaining', 'x-ratelimit-reset', 'x-ratelimit-nearlimit']) if (r.headers.get(h)) out[h] = r.headers.get(h);
     return { status: r.status, headers: out, body: text };
   }
 
@@ -238,6 +246,19 @@ function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clo
         const url = new URL(req.url, 'http://proxy');
         const route = url.pathname;
         let m;
+        if ((m = route.match(JQL_CALLBACK_ROUTE))) {
+          const supplied = String(req.headers['x-forge-jql-nonce'] ?? '');
+          const expected = String(jqlNonce ?? '');
+          const local = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
+          if (!local || !/^[a-f0-9]{64}$/.test(supplied) || !expected || supplied.length !== expected.length
+              || !crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(expected))) return send(403, { error: 'Invalid private JQL callback credential.' });
+          const moduleKey = decodeURIComponent(m[1]);
+          if (req.method !== 'POST') return send(405, { error: 'JQL evaluation requires POST.' });
+          if (!jqlKeys.has(moduleKey) || !jqlEvaluate) return send(400, { error: 'Unknown installed JQL function.' });
+          const request = parseMaybe(raw);
+          if (!request || typeof request !== 'object' || Array.isArray(request)) return send(400, { error: 'JQL evaluation requires a request object.' });
+          return send(200, await jqlEvaluate(moduleKey, request));
+        }
         if ((m = route.match(WEBTRIGGER_ROUTE))) {
           const moduleKey = decodeURIComponent(m[1]);
           if (!webtrigger) {
@@ -300,7 +321,7 @@ function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clo
             entry.refused = 'no llm module';
             return send(403, { code: 'LLM_MODULE_NOT_DEFINED', message: "LLM package is used but 'llm' module is not defined in the manifest" });
           }
-          const r = await siteCall('llm', { method: req.method, model, body, caller: { invocationId: inv.id, moduleType: inv.moduleType, moduleKey: inv.moduleKey, functionKey: inv.functionKey, asUser: inv.aaid ?? null } });
+          const r = await platformCall('llm', { method: req.method, model, body, caller: { invocationId: inv.id, moduleType: inv.moduleType, moduleKey: inv.moduleKey, functionKey: inv.functionKey, asUser: inv.aaid ?? null } }, tv, vcostMs);
           Object.assign(entry, { status: r.status, response: r.body });
           if (Array.isArray(r.stream) && r.status === 200) {
             // Newline-delimited ChatResponse chunks (site/llm.cjs STREAMING). The tool-call line is cut in two writes,
@@ -330,8 +351,8 @@ function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clo
             let overrides = null;
             try { overrides = v.context ? JSON.parse(v.context).contextOverrides ?? null : null; } catch { overrides = null; }
             const contextToken = req.headers['x-forge-context-token'];
-            const r = await siteCall('rtpublish', { channelName: v.name, payload: v.payload, isGlobal: Boolean(v.isGlobal), token: v.token ?? null,
-              contextToken, contextOverrides: overrides, origin });
+            const r = await platformCall('rtpublish', { channelName: v.name, payload: v.payload, isGlobal: Boolean(v.isGlobal), token: v.token ?? null,
+              contextToken, contextOverrides: overrides, origin }, tv, vcostMs);
             record({ ...origin, service: 'realtime', provider: 'app', method: 'POST', path: route, op: v.isGlobal ? 'publishGlobal' : 'publish',
               body: { channel: v.name, payload: v.payload, isGlobal: Boolean(v.isGlobal), token: Boolean(v.token), contextToken: contextToken ?? null, contextOverrides: overrides },
               status: 200, response: r, vcostMs }, tv);
@@ -339,7 +360,7 @@ function createProxy({ siteUrl, siteCall, manifest, kvs, queue, invocations, clo
             return send(200, { data: { ecosystem: { publishRealtimeChannel: { eventId: r.eventId, eventTimestamp: r.eventTimestamp } } } });
           }
           if (/\bsignRealtimeToken\b/.test(query)) {
-            const r = await siteCall('rtsign', { channelName: v.channelName, claims: v.claims, permissions: v.permissions ?? null });
+            const r = await platformCall('rtsign', { channelName: v.channelName, claims: v.claims, permissions: v.permissions ?? null }, tv, vcostMs);
             record({ ...origin, service: 'realtime', provider: 'app', method: 'POST', path: route, op: 'signRealtimeToken', body: v, status: 200, response: { expiresAt: r.expiresAt }, vcostMs }, tv);
             return send(200, { data: { ecosystem: { signRealtimeToken: { errors: null, forgeRealtimeToken: { jwt: r.jwt, expiresAt: r.expiresAt }, success: true } } } });
           }

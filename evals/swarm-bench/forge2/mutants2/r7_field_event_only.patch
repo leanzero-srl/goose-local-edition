@@ -1,11 +1,19 @@
 diff --git a/src/sync.js b/src/sync.js
 --- a/src/sync.js
 +++ b/src/sync.js
-@@ -353,7 +353,6 @@ export async function reconcileAll(cfg, previous, work) {
+@@ -481,7 +481,6 @@
+         const value = scopeStatus(active, issueMembers, issueRows);
+         if (currentStatus(issue.fields, cfg.scopeFieldId) !== value) values.set(id, value);
+       }
+-      if (values.size) pass.statuses += await writeStatuses(cfg.scopeFieldId, values, work);
+     }
+     pass.candidateIds.push(...page.issues.map((i) => String(i.id)));
+     pass.nextPageToken = page.nextPageToken;
+@@ -500,7 +499,6 @@
+   if (cfg.scopeFieldId) {
      const closed = [...new Set([...Object.keys(previous?.sprints ?? {}), ...(previous?.closed ?? [])])];
-     const skip = new Set([...candidateIds, ...values.keys(), ...deleted]);
-     for (const [id, value] of await closedSprintStatuses(active, closed, skip)) values.set(id, value);
--    if (values.size) statuses = await writeStatuses(cfg.scopeFieldId, values, work);
+     const values = await closedSprintStatuses(active, closed, new Set([...candidateIds, ...deleted]));
+-    if (values.size) pass.statuses += await writeStatuses(cfg.scopeFieldId, values, work);
    }
-   await kvs.set(RECONCILE_KEY, { startedAt, fields });
-   return { issues: issues.length, rows, members, statuses, deleted: deleted.length, sprintIds: [...changed] };
+   await kvs.set(RECONCILE_KEY, { startedAt: pass.startedAt, fields, sprintIds });
+   await kvs.delete(PASS_KEY);

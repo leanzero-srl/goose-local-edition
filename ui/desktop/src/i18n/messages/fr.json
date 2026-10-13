@@ -11524,5 +11524,119 @@
   },
   "engineGlanceSettings.showAgain": {
     "defaultMessage": "L’afficher à nouveau"
+  },
+  "benchmarkSection.build": {
+    "defaultMessage": "Build {index}"
+  },
+  "benchmarkSection.twoBuilds": {
+    "defaultMessage": "2 builds"
+  },
+  "forgeSeries.between": {
+    "defaultMessage": "Le build 1 est terminé. Préparation du build 2."
+  },
+  "forgeSeries.build": {
+    "defaultMessage": "Build {index} sur 2"
+  },
+  "forgeSeries.callBudget": {
+    "defaultMessage": "{calls} appels par build"
+  },
+  "forgeSeries.cancelDetail": {
+    "defaultMessage": "Arrête le build actif et empêche le suivant de démarrer. Les scores et preuves obtenus sont conservés ; annuler ne publie rien."
+  },
+  "forgeSeries.cancelTitle": {
+    "defaultMessage": "Annuler ce benchmark à deux builds ?"
+  },
+  "forgeSeries.cancelled": {
+    "defaultMessage": "La séquence de deux builds a été annulée"
+  },
+  "forgeSeries.cancelledStatus": {
+    "defaultMessage": "Séquence de deux builds annulée."
+  },
+  "forgeSeries.checking": {
+    "defaultMessage": "Vérification des deux builds…"
+  },
+  "forgeSeries.childCancelled": {
+    "defaultMessage": "Annulé"
+  },
+  "forgeSeries.childFailed": {
+    "defaultMessage": "Non terminé"
+  },
+  "forgeSeries.completeStatus": {
+    "defaultMessage": "Deux builds terminés."
+  },
+  "forgeSeries.continuePublish": {
+    "defaultMessage": "Publier le build restant"
+  },
+  "forgeSeries.failed": {
+    "defaultMessage": "La séquence de deux builds ne s’est pas terminée"
+  },
+  "forgeSeries.failedStatus": {
+    "defaultMessage": "La séquence de deux builds ne s’est pas terminée."
+  },
+  "forgeSeries.finished": {
+    "defaultMessage": "Les deux builds sont terminés"
+  },
+  "forgeSeries.interrupted": {
+    "defaultMessage": "L’application s’est fermée avant la fin des deux builds. Les preuves enregistrées sont conservées."
+  },
+  "forgeSeries.intro": {
+    "defaultMessage": "Une seule action Exécuter lance deux builds indépendants dans cette application. Le second démarre après l’évaluation du premier ; chacun conserve ses propres preuves."
+  },
+  "forgeSeries.live": {
+    "defaultMessage": "Publié sur leanzero.net"
+  },
+  "forgeSeries.median": {
+    "defaultMessage": "Médiane locale {median} · plage {min}–{max}"
+  },
+  "forgeSeries.noResponse": {
+    "defaultMessage": "Aucune réponse à la publication"
+  },
+  "forgeSeries.noScore": {
+    "defaultMessage": "Aucun build évalué n’est encore disponible."
+  },
+  "forgeSeries.preparing": {
+    "defaultMessage": "Préparation du build {index} sur 2"
+  },
+  "forgeSeries.provisional": {
+    "defaultMessage": "Un seul build évalué est provisoire. La médiane de deux builds n’est pas disponible."
+  },
+  "forgeSeries.publish": {
+    "defaultMessage": "Publier 2 builds"
+  },
+  "forgeSeries.publishTitle": {
+    "defaultMessage": "Titre de publication"
+  },
+  "forgeSeries.publishing": {
+    "defaultMessage": "Publication du build {index} sur 2…"
+  },
+  "forgeSeries.queued": {
+    "defaultMessage": "En attente du démarrage"
+  },
+  "forgeSeries.run": {
+    "defaultMessage": "Exécuter 2 builds"
+  },
+  "forgeSeries.running": {
+    "defaultMessage": "Le build {index} sur 2 est en cours"
+  },
+  "forgeSeries.scored": {
+    "defaultMessage": "Évalué"
+  },
+  "forgeSeries.settings": {
+    "defaultMessage": "L’application exécute deux nouveaux builds successifs avec les mêmes modèle, tâche et paramètres. Chacun conserve son propre score et ses preuves."
+  },
+  "forgeSeries.skipped": {
+    "defaultMessage": "Non démarré"
+  },
+  "forgeSeries.title": {
+    "defaultMessage": "Deux builds indépendants"
+  },
+  "forgeSeries.unreadable": {
+    "defaultMessage": "Les preuves enregistrées des deux builds n’ont pas pu être lues. Les builds individuels restent disponibles."
+  },
+  "forgeSeries.view": {
+    "defaultMessage": "Ouvrir les preuves du build {index}"
+  },
+  "forgeSeries.waitingPublish": {
+    "defaultMessage": "La publication nécessite deux builds terminés et comparables, ainsi que leurs preuves natives."
   }
 }

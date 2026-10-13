@@ -234,12 +234,12 @@ describe('Benchmark view — the Gauntlet | Forge switch', () => {
     ).toBeInTheDocument();
     expect(screen.getByText('forge-2.0 runtime')).toBeInTheDocument();
     expect(screen.getByTestId('forge-run-policy')).toHaveTextContent(
-      'One model · 300-call budget · reasoning effort medium'
+      'One model · 300-call budget per build · reasoning effort medium'
     );
     // No Swarm entrant for Forge; the single-model provider, model and spend limit are the form.
     expect(screen.queryByRole('button', { name: 'Swarm' })).toBeNull();
     expect(screen.getByRole('textbox', { name: 'Model ID' })).toBeInTheDocument();
-    expect(screen.getByLabelText('Stop a run at (US dollars, OpenRouter)')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Stop a run at (US dollars, OpenRouter)')).toBeNull();
     // The era picker lists only Forge's eras — Gauntlet's are another family — the bundled one
     // runnable, forge-1.0 kept as frozen history.
     const chooser = screen.getByRole('combobox', { name: 'Benchmark' });
@@ -265,7 +265,9 @@ describe('Benchmark view — the Gauntlet | Forge switch', () => {
       'Scored before Forge 2.0’s thresholds were final: a measurement of this benchmark, not a board result.'
     );
     // Every one of the era's nineteen letters, each named, with the weight THIS verdict recorded.
-    for (const tier of FORGE_ERA_TIER_ORDER['forge-2.0'])
+    for (const tier of FORGE_ERA_TIER_ORDER['forge-2.0'].filter(
+      (letter) => projected.tiers[letter as keyof typeof projected.tiers] !== undefined
+    ))
       expect(screen.getByTestId(`tier-cell-${tier}`)).toBeInTheDocument();
     expect(screen.getByTestId('tier-cell-R5')).toHaveTextContent('Admin panel');
     // A group's mean is a score: four decimals on a Forge 2.0 screen, like every other score on it.
@@ -444,7 +446,7 @@ describe('Benchmark view — the Gauntlet | Forge switch', () => {
       await screen.findByText('Not prepared yet: Forge app packages, Atlassian runtime wrapper.')
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Prepare Forge kit' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Run benchmark' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Run 2 builds' })).toBeDisabled();
   });
 
   it('offers Retry scoring for a Forge build whose scoring did not finish — the saved build, no model run', async () => {
@@ -511,18 +513,16 @@ describe('Benchmark view — the Gauntlet | Forge switch', () => {
     );
     fireEvent.keyDown(screen.getByRole('button', { name: 'Model provider' }), { key: 'ArrowDown' });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'OpenRouter' }));
-    expect(screen.getByRole('button', { name: 'Run benchmark' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Run 2 builds' })).toBeDisabled();
     fireEvent.change(screen.getByRole('textbox', { name: 'Model ID' }), {
       target: { value: 'openai/gpt-6-luna' },
     });
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Run benchmark' })).toBeEnabled()
-    );
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Run 2 builds' })).toBeEnabled());
     // The model's saved effort rides to main (which records it as pinned and never sends it);
     // the form shows the tier's pin on the row.
     const effortRow = await screen.findByTestId('model-field-row-effort');
     expect(effortRow.textContent).toContain('Pinned for this run: Forge runs every model');
-    fireEvent.click(screen.getByRole('button', { name: 'Run benchmark' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Run 2 builds' }));
     await waitFor(() =>
       expect(cloud).toHaveBeenCalledWith('openrouter', 'openai/gpt-6-luna', 'forge-2.0', {
         effort: 'low',

@@ -11524,5 +11524,119 @@
   },
   "engineGlanceSettings.showAgain": {
     "defaultMessage": "再表示"
+  },
+  "benchmarkSection.build": {
+    "defaultMessage": "ビルド {index}"
+  },
+  "benchmarkSection.twoBuilds": {
+    "defaultMessage": "2 回のビルド"
+  },
+  "forgeSeries.between": {
+    "defaultMessage": "ビルド 1 が完了しました。ビルド 2 を準備しています。"
+  },
+  "forgeSeries.build": {
+    "defaultMessage": "ビルド {index} / 2"
+  },
+  "forgeSeries.callBudget": {
+    "defaultMessage": "ビルドごとに {calls} 回の呼び出し"
+  },
+  "forgeSeries.cancelDetail": {
+    "defaultMessage": "実行中のビルドを停止し、次のビルドの開始を防ぎます。完了したスコアと証拠は保持され、キャンセルによって公開されることはありません。"
+  },
+  "forgeSeries.cancelTitle": {
+    "defaultMessage": "この 2 回のビルドのベンチマークをキャンセルしますか？"
+  },
+  "forgeSeries.cancelled": {
+    "defaultMessage": "2 回のビルドの連続実行がキャンセルされました"
+  },
+  "forgeSeries.cancelledStatus": {
+    "defaultMessage": "2 回のビルドの連続実行がキャンセルされました。"
+  },
+  "forgeSeries.checking": {
+    "defaultMessage": "2 回のビルドを確認中…"
+  },
+  "forgeSeries.childCancelled": {
+    "defaultMessage": "キャンセル済み"
+  },
+  "forgeSeries.childFailed": {
+    "defaultMessage": "未完了"
+  },
+  "forgeSeries.completeStatus": {
+    "defaultMessage": "2 回のビルドが完了しました。"
+  },
+  "forgeSeries.continuePublish": {
+    "defaultMessage": "残りのビルドを公開"
+  },
+  "forgeSeries.failed": {
+    "defaultMessage": "2 回のビルドの連続実行が完了しませんでした"
+  },
+  "forgeSeries.failedStatus": {
+    "defaultMessage": "2 回のビルドの連続実行が完了しませんでした。"
+  },
+  "forgeSeries.finished": {
+    "defaultMessage": "両方のビルドが完了しました"
+  },
+  "forgeSeries.interrupted": {
+    "defaultMessage": "両方のビルドが完了する前にアプリが終了しました。保存済みの証拠は保持されています。"
+  },
+  "forgeSeries.intro": {
+    "defaultMessage": "このアプリで一度「実行」を押すと、独立したビルドを 2 回開始します。最初の採点後に 2 回目が始まり、それぞれの証拠が保持されます。"
+  },
+  "forgeSeries.live": {
+    "defaultMessage": "leanzero.net で公開済み"
+  },
+  "forgeSeries.median": {
+    "defaultMessage": "ローカル中央値 {median} · 範囲 {min}–{max}"
+  },
+  "forgeSeries.noResponse": {
+    "defaultMessage": "公開への応答がありません"
+  },
+  "forgeSeries.noScore": {
+    "defaultMessage": "採点済みのビルドはまだありません。"
+  },
+  "forgeSeries.preparing": {
+    "defaultMessage": "ビルド {index} / 2 を準備中"
+  },
+  "forgeSeries.provisional": {
+    "defaultMessage": "採点済みのビルドが 1 回だけの場合は暫定結果です。2 回のビルドの中央値は利用できません。"
+  },
+  "forgeSeries.publish": {
+    "defaultMessage": "2 回のビルドを公開"
+  },
+  "forgeSeries.publishTitle": {
+    "defaultMessage": "公開タイトル"
+  },
+  "forgeSeries.publishing": {
+    "defaultMessage": "ビルド {index} / 2 を公開中…"
+  },
+  "forgeSeries.queued": {
+    "defaultMessage": "開始待ち"
+  },
+  "forgeSeries.run": {
+    "defaultMessage": "2 回のビルドを実行"
+  },
+  "forgeSeries.running": {
+    "defaultMessage": "ビルド {index} / 2 を実行中"
+  },
+  "forgeSeries.scored": {
+    "defaultMessage": "採点済み"
+  },
+  "forgeSeries.settings": {
+    "defaultMessage": "アプリは同じモデル、タスク、設定で新しいビルドを 2 回連続して実行します。それぞれのスコアと証拠が保持されます。"
+  },
+  "forgeSeries.skipped": {
+    "defaultMessage": "未開始"
+  },
+  "forgeSeries.title": {
+    "defaultMessage": "2 回の独立したビルド"
+  },
+  "forgeSeries.unreadable": {
+    "defaultMessage": "保存済みの 2 回のビルドの証拠を読み込めませんでした。個別のビルドは引き続き利用できます。"
+  },
+  "forgeSeries.view": {
+    "defaultMessage": "ビルド {index} の証拠を開く"
+  },
+  "forgeSeries.waitingPublish": {
+    "defaultMessage": "公開には、比較可能な 2 回の完了済みビルドと、それぞれのネイティブな証拠が必要です。"
   }
 }

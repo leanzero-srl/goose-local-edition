@@ -11524,5 +11524,119 @@
   },
   "engineGlanceSettings.showAgain": {
     "defaultMessage": "Показать снова"
+  },
+  "benchmarkSection.build": {
+    "defaultMessage": "Сборка {index}"
+  },
+  "benchmarkSection.twoBuilds": {
+    "defaultMessage": "2 сборки"
+  },
+  "forgeSeries.between": {
+    "defaultMessage": "Сборка 1 завершена. Подготовка сборки 2."
+  },
+  "forgeSeries.build": {
+    "defaultMessage": "Сборка {index} из 2"
+  },
+  "forgeSeries.callBudget": {
+    "defaultMessage": "{calls} вызовов на сборку"
+  },
+  "forgeSeries.cancelDetail": {
+    "defaultMessage": "Останавливает текущую сборку и предотвращает запуск следующей. Готовые оценки и доказательства сохраняются; отмена ничего не публикует."
+  },
+  "forgeSeries.cancelTitle": {
+    "defaultMessage": "Отменить этот бенчмарк из двух сборок?"
+  },
+  "forgeSeries.cancelled": {
+    "defaultMessage": "Последовательность из двух сборок отменена"
+  },
+  "forgeSeries.cancelledStatus": {
+    "defaultMessage": "Последовательность из двух сборок отменена."
+  },
+  "forgeSeries.checking": {
+    "defaultMessage": "Проверка двух сборок…"
+  },
+  "forgeSeries.childCancelled": {
+    "defaultMessage": "Отменена"
+  },
+  "forgeSeries.childFailed": {
+    "defaultMessage": "Не завершена"
+  },
+  "forgeSeries.completeStatus": {
+    "defaultMessage": "Две сборки завершены."
+  },
+  "forgeSeries.continuePublish": {
+    "defaultMessage": "Опубликовать оставшуюся сборку"
+  },
+  "forgeSeries.failed": {
+    "defaultMessage": "Последовательность из двух сборок не завершилась"
+  },
+  "forgeSeries.failedStatus": {
+    "defaultMessage": "Последовательность из двух сборок не завершилась."
+  },
+  "forgeSeries.finished": {
+    "defaultMessage": "Обе сборки завершены"
+  },
+  "forgeSeries.interrupted": {
+    "defaultMessage": "Приложение закрылось до завершения двух сборок. Сохранённые доказательства остаются доступны."
+  },
+  "forgeSeries.intro": {
+    "defaultMessage": "Одно действие «Запустить» запускает две независимые сборки в этом приложении. Вторая начинается после оценки первой; у каждой сохраняются собственные доказательства."
+  },
+  "forgeSeries.live": {
+    "defaultMessage": "Опубликовано на leanzero.net"
+  },
+  "forgeSeries.median": {
+    "defaultMessage": "Локальная медиана {median} · диапазон {min}–{max}"
+  },
+  "forgeSeries.noResponse": {
+    "defaultMessage": "Нет ответа на публикацию"
+  },
+  "forgeSeries.noScore": {
+    "defaultMessage": "Оценённых сборок пока нет."
+  },
+  "forgeSeries.preparing": {
+    "defaultMessage": "Подготовка сборки {index} из 2"
+  },
+  "forgeSeries.provisional": {
+    "defaultMessage": "Одна оценённая сборка даёт предварительный результат. Медиана двух сборок недоступна."
+  },
+  "forgeSeries.publish": {
+    "defaultMessage": "Опубликовать 2 сборки"
+  },
+  "forgeSeries.publishTitle": {
+    "defaultMessage": "Заголовок публикации"
+  },
+  "forgeSeries.publishing": {
+    "defaultMessage": "Публикация сборки {index} из 2…"
+  },
+  "forgeSeries.queued": {
+    "defaultMessage": "Ожидание запуска"
+  },
+  "forgeSeries.run": {
+    "defaultMessage": "Запустить 2 сборки"
+  },
+  "forgeSeries.running": {
+    "defaultMessage": "Сборка {index} из 2 выполняется"
+  },
+  "forgeSeries.scored": {
+    "defaultMessage": "Оценена"
+  },
+  "forgeSeries.settings": {
+    "defaultMessage": "Приложение последовательно выполняет две новые сборки с одинаковыми моделью, задачей и настройками. У каждой сохраняются собственная оценка и доказательства."
+  },
+  "forgeSeries.skipped": {
+    "defaultMessage": "Не запущена"
+  },
+  "forgeSeries.title": {
+    "defaultMessage": "Две независимые сборки"
+  },
+  "forgeSeries.unreadable": {
+    "defaultMessage": "Не удалось прочитать сохранённые доказательства двух сборок. Отдельные сборки остаются доступны."
+  },
+  "forgeSeries.view": {
+    "defaultMessage": "Открыть доказательства сборки {index}"
+  },
+  "forgeSeries.waitingPublish": {
+    "defaultMessage": "Для публикации нужны две завершённые сопоставимые сборки и их собственные доказательства."
   }
 }

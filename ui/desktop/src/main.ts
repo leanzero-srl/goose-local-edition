@@ -1,4 +1,23 @@
 import './utils/userDataPath';
+import { benchIdentityHash, forgeSeriesComparison } from './benchSeriesComparison';
+import {
+  forgeTaskFingerprint,
+  forgeTaskPublicationProblem,
+  forgeTaskPublicationFields,
+} from './benchForgeTask';
+import {
+  benchSeriesSummary,
+  interruptedBenchSeries,
+  type BenchSeriesSnapshot,
+  type BenchSeriesMembership,
+} from './benchSeries';
+import {
+  readBenchSeries,
+  writeBenchSeries,
+  runBenchSeries,
+  benchSeriesResultProblem,
+  type BenchSeriesResult,
+} from './benchSeriesRunner';
 import { benchmarkResultTransaction } from './benchResultTransaction';
 import {
   publishRunMeta,
@@ -116,6 +135,14 @@ import {
   turnHolderOf,
 } from './utils/runningElsewhere';
 import { benchmarkCancellationPids } from './utils/benchReap';
+import { BenchPublicationOwner } from './benchPublicationOwner';
+import {
+  freezeBenchProvider,
+  frozenBenchProviderProblem,
+  parseBenchProviderSnapshot,
+  type BenchProviderSnapshot,
+  type FrozenBenchProvider,
+} from './benchSeriesProvider';
 import started from 'electron-squirrel-startup';
 import path from 'node:path';
 import os from 'node:os';
@@ -2637,7 +2664,21 @@ let benchTrayEndHold: ReturnType<typeof setTimeout> | null = null;
 
 const benchTrayRun = (): BenchTrayRun | null => {
   const run = activeBenchRun;
-  if (!run) return null;
+  if (!run)
+    return activeBenchSeries
+      ? {
+          scorerVersion: activeBenchSeries.scorerVersion,
+          model: activeBenchSeries.model,
+          nodes: 1,
+          phase: 'boot',
+          rescore: false,
+          startedAtMs: Date.parse(activeBenchSeries.startedAt),
+          callsUsed: null,
+          callBudget: null,
+          buildIndex: activeBenchSeries.currentBuild,
+          totalBuilds: 2,
+        }
+      : null;
   return {
     scorerVersion: run.tray.scorerVersion,
     model: run.tray.model,
@@ -2647,6 +2688,7 @@ const benchTrayRun = (): BenchTrayRun | null => {
     startedAtMs: Date.parse(run.activityStartedAt ?? run.startedAt),
     callsUsed: run.tray.callsUsed,
     callBudget: run.tray.callBudget,
+    ...(activeBenchSeries ? { buildIndex: activeBenchSeries.currentBuild, totalBuilds: 2 } : {}),
   };
 };
 
@@ -3527,7 +3569,7 @@ const benchWorkRoot = (): string => path.join(app.getPath('userData'), 'benchmar
 let benchmarkRuntimeInstallation: Promise<void> | null = null;
 ipcMain.handle('benchmark-runtime-status', () => inspectBenchmarkRuntime(benchWorkRoot()));
 ipcMain.handle('benchmark-runtime-install', async () => {
-  if (activeBenchRun)
+  if (activeBenchRun || activeBenchSeries || benchmarkLaunchPending)
     throw new Error('Wait for the active benchmark to finish before changing its tools.');
   if (!benchmarkRuntimeInstallation) {
     benchmarkRuntimeInstallation = installBenchmarkRuntime(benchWorkRoot(), (progress) => {
@@ -3557,7 +3599,7 @@ const forgeKitStatus = async (): Promise<ForgeKitStatus> => {
 };
 ipcMain.handle('benchmark-forge-kit-status', () => forgeKitStatus());
 ipcMain.handle('benchmark-forge-kit-prepare', async () => {
-  if (activeBenchRun || benchmarkLaunchPending)
+  if (activeBenchRun || activeBenchSeries || benchmarkLaunchPending)
     throw new Error('Wait for the active benchmark to finish before preparing the Forge kit.');
   if (benchmarkRuntimeInstallation)
     throw new Error('Wait for Benchmark tools installation to finish.');
@@ -3626,8 +3668,11 @@ interface ActiveBenchRun {
   runId: string | null;
   /** What the menu-bar tray says about this run (benchTray.ts). */
   tray: BenchTrayFacts;
+  seriesMembership?: BenchSeriesMembership;
 }
 let activeBenchRun: ActiveBenchRun | null = null;
+let activeBenchSeries: BenchSeriesSnapshot | null = null;
+const benchSeriesRoot = () => path.join(benchWorkRoot(), 'series');
 let benchmarkLaunchPending = false;
 let benchmarkResultCommitInProgress = false;
 
@@ -4168,6 +4213,13 @@ ipcMain.handle('benchmark-sessions', async () => {
       })
     )
   );
+  const seriesById = new Map(
+    await Promise.all(
+      [...new Set(rows.flatMap((row) => (row.seriesId ? [row.seriesId] : [])))].map(
+        async (id) => [id, await resolvedBenchmarkSeries(id)] as const
+      )
+    )
+  );
   const sessions = rows
     .slice()
     .sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1))
@@ -4184,6 +4236,13 @@ ipcMain.handle('benchmark-sessions', async () => {
         ? { rescoredAt: rescoredAtByStart.get(r.startedAt)! }
         : {}),
       ...(r.scoringError ? { scoringError: r.scoringError } : {}),
+      ...(r.seriesId && r.buildIndex
+        ? {
+            seriesId: r.seriesId,
+            buildIndex: r.buildIndex,
+            series: seriesById.get(r.seriesId) ?? undefined,
+          }
+        : {}),
       ...(r.score != null ? { score: r.score } : {}),
       ...(r.tiers ? { tiers: r.tiers } : {}),
       ...(r.nodes != null ? { nodes: r.nodes } : {}),
@@ -4211,6 +4270,8 @@ ipcMain.handle('benchmark-delete-session', async (_event, runId: string) => {
   const idx = rows.findIndex((r) => r.runId === runId);
   if (idx < 0) return { ok: false, error: `no session ${runId}` };
   const row = rows[idx];
+  if (activeBenchSeries && row.seriesId === activeBenchSeries.id)
+    return { ok: false, error: 'This build belongs to the active two-build sequence.' };
   const active = activeBenchRun;
   if (
     active &&
@@ -4237,7 +4298,18 @@ ipcMain.handle('benchmark-delete-session', async (_event, runId: string) => {
 // Lets the view re-attach to a run in progress after navigation/remount — a run takes hours and
 // must not become invisible because the page unmounted.
 ipcMain.handle('benchmark-status', async () => {
-  if (!activeBenchRun) return { running: false };
+  if (!activeBenchRun)
+    return activeBenchSeries
+      ? {
+          running: true,
+          phase: 'boot',
+          nodes: 1,
+          startedAt: activeBenchSeries.startedAt,
+          scored: false,
+          lastLine: null,
+          series: globalThis.structuredClone(activeBenchSeries),
+        }
+      : { running: false };
   const {
     workdir,
     nodes,
@@ -4262,6 +4334,7 @@ ipcMain.handle('benchmark-status', async () => {
     phase,
     provider,
     activity,
+    ...(activeBenchSeries ? { series: globalThis.structuredClone(activeBenchSeries) } : {}),
   };
 });
 
@@ -4364,6 +4437,9 @@ const resolveRunResult = async (
         finishedAt: row.endedAt ?? row.startedAt,
         sessionRunId: row.runId,
         modelFields: row.modelFields,
+        ...(row.seriesId && row.buildIndex
+          ? { seriesId: row.seriesId, buildIndex: row.buildIndex }
+          : {}),
       });
     }
   }
@@ -4419,6 +4495,8 @@ const buildBenchResultRow = async ({
   sessionRunId,
   rescoredAt,
   modelFields,
+  seriesId,
+  buildIndex,
 }: {
   v: ReturnType<typeof JSON.parse>;
   workdir: string;
@@ -4433,6 +4511,8 @@ const buildBenchResultRow = async ({
   /** The run's custom fields as its session row recorded them at launch. Local-only:
    *  benchmark-publish builds its allowlisted payload key by key and never carries it. */
   modelFields?: BenchModelFieldsRecord;
+  seriesId?: string;
+  buildIndex?: 1 | 2;
 }) => {
   const counts = await benchRunCounts(workdir);
   const scoring = projectBenchScore(v);
@@ -4441,10 +4521,13 @@ const buildBenchResultRow = async ({
       ? `${cloud.model} · single agent`
       : `Your fleet · ${v.actual_nodes ?? nodes} node${(v.actual_nodes ?? nodes) > 1 ? 's' : ''}`,
     score: v.score,
+    ...(typeof v.taskFingerprint === 'string' ? { taskFingerprint: v.taskFingerprint } : {}),
+    ...(seriesId ? { seriesComparison: forgeSeriesComparison(v), nativeBuildId: v.buildId } : {}),
     tiers: scoring.tiers,
     nodes: v.actual_nodes ?? nodes,
     ...(cloud ? { provider: cloud.provider } : {}),
     ...(modelFields ? { modelFields } : {}),
+    ...(seriesId && buildIndex ? { seriesId, buildIndex } : {}),
     mine: true,
     scorerVersion: scoring.scorerVersion,
     // sb-4 additions — the site's endpoint stores these when present and older
@@ -4519,6 +4602,8 @@ const persistBenchmarkResult = async ({
   launchKey,
   rescoredAt,
   modelFields,
+  seriesId,
+  buildIndex,
 }: {
   v: ReturnType<typeof JSON.parse>;
   workdir: string;
@@ -4531,6 +4616,8 @@ const persistBenchmarkResult = async ({
   launchKey: { startedAt: string; slotDir: string; runId?: string };
   rescoredAt?: string;
   modelFields?: BenchModelFieldsRecord;
+  seriesId?: string;
+  buildIndex?: 1 | 2;
 }) => {
   const row = await buildBenchResultRow({
     v,
@@ -4543,6 +4630,8 @@ const persistBenchmarkResult = async ({
     sessionRunId,
     rescoredAt,
     modelFields,
+    seriesId,
+    buildIndex,
   });
   await fs.mkdir(BENCH_DIR, { recursive: true });
   // Snapshot the screenshots NOW, next to the result row. The workdir is reused by the
@@ -4577,6 +4666,672 @@ const persistBenchmarkResult = async ({
   return row;
 };
 
+const runSingleBenchmark = async (
+  nodes: number,
+  sampling?: RunSampling,
+  cloud?: {
+    provider: string;
+    model: string;
+    tier: CloudBenchmarkTier;
+    modelFields?: BenchModelFields;
+  },
+  seriesBuild?: {
+    series: BenchSeriesSnapshot;
+    build: BenchSeriesSnapshot['builds'][number];
+    provider: FrozenBenchProvider;
+  }
+) => {
+  if (activeBenchRun || benchmarkLaunchPending || (activeBenchSeries && !seriesBuild)) {
+    throw new Error('a benchmark run is already in progress');
+  }
+  benchmarkLaunchPending = true;
+  try {
+    if (benchmarkRuntimeInstallation)
+      throw new Error('Wait for Benchmark tools installation to finish.');
+    if (cloud && !validCloudEntrant(cloud)) {
+      throw new Error('Choose a configured provider and provide a valid model ID.');
+    }
+    if (cloud?.modelFields !== undefined && !validBenchModelFields(cloud.modelFields)) {
+      throw new Error("The model's settings are not valid field values.");
+    }
+    if (cloud) nodes = 1;
+    const cloudRunId = cloud ? (seriesBuild?.build.runId ?? `cloud-${crypto.randomUUID()}`) : null;
+    const runSampling = cleanSampling(cloud ? undefined : sampling);
+    const tier = benchmarkLaunchTier(cloud);
+    // The SELECTED family's current era against this app's bundled one (forge/INTEGRATION.md).
+    const family = familyOfScorer(benchmarkScorer(tier));
+    const launchProblem = benchmarkLaunchProblem(
+      (await fetchBenchCatalog()).benchmarks,
+      false,
+      undefined,
+      family
+    );
+    if (launchProblem) throw new Error(launchProblem);
+    // Forge is a single-model benchmark (forge/DESIGN.md: one model in goose, the tier's call budget).
+    if (family === 'forge' && !cloud)
+      throw new Error('Forge runs one model: choose a provider and model ID.');
+    // Forge pins one reasoning effort for every entrant (the tier's reasoning_effort in isolated_tiers,
+    // forge/DESIGN.md §11): the model's saved effort is recorded as pinned and never sent, so it cannot
+    // displace the tier's.
+    const runModelFields =
+      seriesBuild?.series.modelFields ??
+      (cloud ? modelFieldsForRun(cloud.modelFields ?? {}, family === 'forge') : null);
+    const regimeFlag = BENCH_RUN_FLAG[tier];
+    const isolated =
+      (ISOLATED_PAYMENTS_TIERS as readonly string[]).includes(tier) || family === 'forge';
+    const payloadDir = resolveBenchPayloadDir();
+    const runner = path.join(payloadDir, 'bench', 'run_build.py');
+    const runtime = isolated
+      ? await resolveBenchmarkRuntime(benchWorkRoot())
+      : { python: 'python3', node: undefined, env: {} };
+    if (family === 'forge' && runtime.node) {
+      const kit = await readForgeKitStatus(
+        payloadDir,
+        { python: runtime.python, node: runtime.node, env: runtime.env },
+        forgeKitCache(benchWorkRoot())
+      );
+      if (kit.state !== 'ready')
+        throw new Error(
+          kit.state === 'missing'
+            ? `Prepare the Forge kit before running (missing: ${(kit.missing ?? []).join(', ')}).`
+            : `The Forge kit could not be checked: ${kit.error ?? kit.state}`
+        );
+    }
+    const benchNode = await resolveBenchNode(tier, runtime.node);
+    const browserEnv = await bundledBrowserEnv();
+    // The operator's OpenRouter spend limit (Benchmark view → goose config BENCH_MAX_USD). run_build's
+    // wallet guard stops a single-model run at it and scores what exists; a swarm run is not guarded.
+    const walletEnv = cloud && family !== 'forge' ? await benchMaxUsdEnv() : {};
+    // The engine the run measures: the exact binary this app ships (or the dev build), never a PATH
+    // lookup. run_build.py honors BENCH_GOOSE for the engine path.
+    const engineBinary = findGooseBinaryPath({
+      isPackaged: app.isPackaged,
+      resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
+    });
+    await ensureBenchIdentity();
+    const workRoot = benchWorkRoot();
+    const outRoot = path.join(workRoot, 'runs', 'build');
+    await fs.mkdir(outRoot, { recursive: true });
+    const entrant = cloud ? `${cloud.provider}-${cloudRunId}` : `swarm-${nodes}node`;
+    const workdir = path.join(outRoot, `${entrant}-r0`);
+    // The previous run is a SESSION, not garbage: move it out of the slot (with its honest outcome
+    // stamped into the index) before anything wipes. Only then clear whatever remains —
+    // run_build.py wipes the workdir itself, but only once it gets that far; a runner that dies
+    // before then (bad python, import error) would leave the PREVIOUS run's verdict in place and
+    // the close handler would report it as this run's success. A cleared slot keeps a missing
+    // verdict the truthful failure signal.
+    await archiveBenchSlot(workdir);
+    await fs.rm(workdir, { recursive: true, force: true });
+    if (seriesBuild?.series.cancelled) throw new Error('Two-build sequence cancelled.');
+    const startedAt = new Date().toISOString();
+    if (seriesBuild) seriesBuild.build.startedAt = startedAt;
+    // The provisional session row for THIS launch. runId is unknown until the engine writes
+    // .swarm/current-run.json; the poll below reconciles it. 'running' here is provisional by
+    // construction — benchmark-sessions asserts 'running' only from activeBenchRun, never this row.
+    const launchKey = { startedAt, slotDir: workdir };
+    const completionReceipt = path.join(workRoot, 'completions', `${crypto.randomUUID()}.json`);
+    await fs.mkdir(path.dirname(completionReceipt), { recursive: true });
+    {
+      const rows = await readBenchSessionRows();
+      rows.push({
+        runId: cloudRunId,
+        scorerVersion: benchmarkScorer(tier),
+        startedAt,
+        outcome: 'running',
+        nodes,
+        slot: true,
+        slotDir: workdir,
+        completionReceipt,
+        ...(runModelFields ? { modelFields: runModelFields } : {}),
+        ...(seriesBuild
+          ? { seriesId: seriesBuild.series.id, buildIndex: seriesBuild.build.index }
+          : {}),
+      });
+      await writeBenchSessionRows(rows);
+    }
+    const sendSafe = (channel: string, payload: unknown) => {
+      // BROADCAST, never the sender captured at run time. A benchmark run outlives windows: after a
+      // mid-run window recreation the closed-over sender.isDestroyed() was true forever, so every
+      // benchmark-log and the terminal benchmark-finished were silently dropped — a status-restored
+      // strip with no live line, and a finished run the view learned about only via the 1s poll.
+      try {
+        const decorated =
+          seriesBuild && payload && typeof payload === 'object'
+            ? {
+                ...payload,
+                series: globalThis.structuredClone(seriesBuild.series),
+                runId: cloudRunId,
+                buildIndex: seriesBuild.build.index,
+              }
+            : payload;
+        broadcastToWindows(BrowserWindow.getAllWindows(), channel, decorated);
+      } catch {
+        /* no window at all — the run continues headless */
+      }
+    };
+
+    if (
+      seriesBuild &&
+      cloud &&
+      (await benchmarkSeriesInputHash(
+        cloud,
+        seriesBuild.series.modelFields,
+        seriesBuild.provider
+      )) !== seriesBuild.series.inputHash
+    )
+      throw new Error('The selected benchmark inputs changed before this build could start.');
+    if (seriesBuild?.series.cancelled) throw new Error('Two-build sequence cancelled.');
+    return await new Promise<BenchSeriesResult>((resolvePromise, reject) => {
+      const python: { args: string[]; env: NodeJS.ProcessEnv } = benchmarkPythonLaunch(runner, [], {
+        ...(seriesBuild?.provider.env ?? process.env),
+        ...runtime.env,
+      });
+      if (family === 'forge') delete python.env.BENCH_MAX_USD;
+      const { child, releasePower } = spawnBenchmarkWithPower(powerSaveBlocker, () =>
+        spawn(
+          runtime.python,
+          // --timeout 0 is the UNCAPPED regime, and it is the only regime the engine has now: every
+          // wall-clock cap was removed, so a hard-coded 16200 here would put one back through the front
+          // door and cut a run the engine itself would never have stopped.
+          [
+            ...python.args,
+            '--entrant',
+            entrant,
+            '--only-rep',
+            '0',
+            '--timeout',
+            '0',
+            '--out',
+            outRoot,
+            ...(cloud ? ['--provider', cloud.provider, '--model', cloud.model] : []),
+            ...(regimeFlag ? [regimeFlag] : []),
+          ],
+          {
+            cwd: workRoot,
+            detached: true,
+            env: {
+              ...python.env,
+              BENCH_GOOSE: engineBinary,
+              BENCH_COMPLETION_RECEIPT: completionReceipt,
+              BENCH_STARTED_AT: startedAt,
+              ...(cloudRunId ? { BENCH_RUN_ID: cloudRunId } : {}),
+              GOOSE_PATH_ROOT: seriesBuild?.provider.root ?? resolveGoosePathRoot(),
+              // A benchmark run is by definition unattended: nobody is sitting in front of the app
+              // waiting to answer a clarify question. Without this the engine gives the human 5 minutes
+              // before a node answers, and those 5 minutes are three idle machines.
+              GOOSE_SWARM_BENCHMARK: '1',
+              BENCH_MEDIA_DIR: path.join(workdir, 'bench-media'),
+              GOOSE_SWARM_RENDER_NODE: benchNode,
+              ...browserEnv,
+              ...walletEnv,
+              ...(cloud && runModelFields
+                ? modelFieldsLaunchEnv(cloud.provider, cloud.model, runModelFields.sent)
+                : {}),
+              // Forge: the kit run_build verifies (same cache the view prepared) and the browser
+              // aliases its probe reads.
+              ...(family === 'forge'
+                ? { FORGE_KIT_CACHE: forgeKitCache(workRoot), ...forgeBrowserEnv(browserEnv) }
+                : {}),
+              // NOT pinned any more (VA-048/051): GOOSE_SWARM_TAIL_REVIEW, GOOSE_SWARM_PREREVIEW,
+              // GOOSE_SWARM_PREREVIEW_DIMS and GOOSE_SWARM_JUDGE. The r3 supervision-off arm (P1-10)
+              // switched four env-only, default-ON layers off here. Every one of those layers is DELETED
+              // now — the tail idle-fill and the idle-model judge in 2c S6, the M5 pre-review in 2a D1b —
+              // so the engine reads none of the names: TAIL_REVIEW only to echo it under
+              // levers_resolved.retired_levers, the other three nowhere at all. A pin on a dead reader
+              // certifies a regime the binary cannot run (the stale-config class, see SPLIT_FAT below);
+              // the tick proves the layers' state by the ABSENCE of their events, which needs no pin.
+              // The render gate is inert without the probe path, and without the gate there are no
+              // repair rounds and no screenshots — the product story of the run.
+              GOOSE_SWARM_RENDER_PROBE: path.join(payloadDir, 'bench', BENCH_RENDER_PROBE[tier]),
+              // sb-5.2 comparability rail: the baked baselines are v2-spec product-regime numbers, so
+              // a user run must be scored by the same scorer against the same spec or the board
+              // cannot hold both.
+              BENCH_PRODUCT: '1',
+              // BENCH_SPEC OVERRIDES THE REGIME, so a tier missing from this ternary does not fall back to
+              // its own spec — it runs someone else's. There was no sb-7 branch here, so every sb-7 run
+              // started from `spec-build-v2.md`: the app dutifully passed `--sb7`, run_build dutifully set
+              // BENCH_SB7, and `build_prompt` read BENCH_SPEC FIRST and threw the regime away.
+              //
+              // MEASURED 2026-08-28: a run started from the Benchmark view with sb-7 selected received a
+              // 6,278-character prompt beginning "# Build `vendorsync`" and produced slices called
+              // meridian-client / local-store / http-api. The sb-7 spec is 54,146 characters and asks for
+              // ledgerd, notifierd, webhooks, an outbox, an event ledger and a 3D field. None of it was
+              // present, and the run looked completely healthy while building the wrong product.
+              BENCH_SPEC: path.join(payloadDir, BENCH_SPEC_FILE[tier]),
+              // The FULL tuned regime (REGIME.env parity, minus harness-only keys, resolved paths and
+              // retired levers): a user's benchmark must run the same engine configuration the baked
+              // baselines and the campaign's numbers ran, or the board compares different swarms.
+              // NOT pinned, deliberately: GOOSE_SWARM_SPLIT_FAT and GOOSE_SWARM_FIX_SCHED. The engine reads
+              // neither (split_fat_modules is #[cfg(test)] since b0dd68eac; the fix_sched scheduler died in
+              // P1-9) and levers_resolved lists split_fat under `retired_levers`. A pin on a dead reader
+              // certifies a regime the binary cannot run — the stale-config class, from the other side.
+              GOOSE_SWARM_PROBE_ADVERTISED_POST: '1',
+              GOOSE_SWARM_SHIP_BEST: '1',
+              // WHY '0' — r2: testgen calls wrote poisoned root files past the guard (test_interfaces.py
+              // mtime 20:02:25Z imports task ids as modules), 0/3 generated suites landed, and the sink
+              // burned 17 of its first 26 calls on them (II-5/P1-10). Reader survives until the r4 deletion.
+              GOOSE_SWARM_TESTGEN: '0',
+              // F876: the scouts DO fetch the vendor's protocol docs (grounded 3/3, measured), but the
+              // channel that forwards those verbatim facts to the worker writing the vendor client was
+              // off — so it invented pagination/429/ETag/idempotency and nine Tier-B checks collapsed.
+              GOOSE_SWARM_DOC_PREFETCH: '1',
+              GOOSE_SWARM_DIVERSE_PLAN: '1',
+              // Run-window sampling knobs. ALL FIVE now ride only when set, so an untouched knob stays at
+              // the config/model default. Env beats config engine-side, so an explicit knob pins this run.
+              ...samplingEnv(runSampling),
+              // NO HARDCODED TEMPERATURE. This was `runSampling.temperature ?? 0.2`, and the config ships
+              // `temperature: null`, so EVERY desktop run forced 0.2 onto the engine and overrode the
+              // per-model setting in LM Studio — Mihai runs 0.7 there deliberately, and a 27B at 0.2 is a
+              // duller model than the one he configured. Omit the variable when nothing is set, exactly as
+              // the sibling block above already does, so the engine sends no temperature and LM Studio's
+              // own value applies. An explicit setting still wins.
+              ...(runSampling.temperature != null
+                ? { GOOSE_SWARM_TEMP: String(runSampling.temperature) }
+                : {}),
+            },
+          }
+        )
+      );
+      const harnessConsole = fsSync.createWriteStream(
+        completionReceipt.replace(/\.json$/, '.log'),
+        { flags: 'wx' }
+      );
+      harnessConsole.on('error', (error) =>
+        log.error('Benchmark console could not be saved:', error)
+      );
+      activeBenchRun = {
+        activity: emptyBenchmarkActivity(),
+        releasePower,
+        phase: 'boot',
+        ...(cloud ? { provider: cloud.provider } : {}),
+        child,
+        workdir,
+        nodes,
+        startedAt,
+        cancelled: false,
+        sampling: runSampling,
+        scored: false,
+        lastLine: null,
+        runId: cloudRunId,
+        ...(seriesBuild
+          ? {
+              seriesMembership: {
+                seriesId: seriesBuild.series.id,
+                buildIndex: seriesBuild.build.index,
+              },
+            }
+          : {}),
+        tray: {
+          scorerVersion: benchmarkScorer(tier),
+          model: cloud ? cloud.model : null,
+          rescore: false,
+          callsUsed: null,
+          callBudget: null,
+          callsFinal: false,
+          // A swarm's calls are spread across its nodes and are not budgeted: its tray shows phase.
+          counter: cloud
+            ? new BenchTelemetryCounter(benchTelemetryCandidates(workdir), cloud.model)
+            : null,
+        },
+      };
+      const trayFacts = activeBenchRun.tray;
+      startBenchTray();
+      // run_build budgets exactly the single-model entrant of an isolated tier (`budgeted` there);
+      // the number is the payload's own call_budget of THIS tier (isolated_tiers), never restated here.
+      if (cloud && isolated) {
+        void readBenchCallBudget(
+          runtime.python,
+          path.join(payloadDir, 'bench'),
+          { ...process.env, ...runtime.env },
+          benchmarkScorer(tier)
+        ).then((budget) => {
+          if (budget == null || trayFacts.callsFinal) return;
+          trayFacts.callBudget = budget;
+          if (activeBenchRun?.tray === trayFacts) renderBenchTray();
+        });
+      }
+      // Reconcile the session row's runId the moment the engine publishes current-run.json (written
+      // before any phase starts). A cheap local-file poll, cleared on first hit and on run end.
+      let reconcileInFlight = false;
+      const reconcileRunId = setInterval(() => {
+        if (reconcileInFlight) return;
+        reconcileInFlight = true;
+        void (async () => {
+          try {
+            const id = await readCurrentRunId(workdir);
+            if (id) {
+              clearInterval(reconcileRunId);
+              if (activeBenchRun && activeBenchRun.workdir === workdir) activeBenchRun.runId = id;
+              await stampBenchLaunchRow(launchKey, { runId: id });
+            }
+          } finally {
+            reconcileInFlight = false;
+          }
+        })();
+      }, 2000);
+      // Two-phase: hand the renderer the workdir IMMEDIATELY so it can point the live swarm panel
+      // at the run, then resolve with the scored row on completion as before. scored/lastLine ride
+      // along so a view (re)mounting off either payload restores the same facts the status poll serves.
+      sendSafe('benchmark-started', {
+        phase: 'boot',
+        ...(cloud ? { provider: cloud.provider } : {}),
+        workdir,
+        nodes,
+        startedAt,
+        sampling: runSampling,
+        scored: false,
+        lastLine: null,
+        tier,
+        family,
+        scorerVersion: benchmarkScorer(tier),
+      });
+
+      // Every end the view hears is the end the tray shows.
+      const finishBench = (payload: BenchFinishedPayload) => {
+        if (!seriesBuild) {
+          endBenchTray(trayFacts, nodes, payload);
+          sendSafe('benchmark-finished', payload);
+        }
+      };
+      let tail = '';
+      const buffers: Record<string, string> = { stdout: '', stderr: '' };
+      const onData = (stream: 'stdout' | 'stderr') => (d: Buffer | string) => {
+        harnessConsole.write(d);
+        tail = (tail + d.toString()).slice(-4000);
+        buffers[stream] += d.toString();
+        const lines = buffers[stream].split('\n');
+        buffers[stream] = lines.pop() ?? '';
+        for (const line of lines) {
+          // Console text reports observations; only the canonical verdict read below asserts scored.
+          if (activeBenchRun?.child === child) {
+            if (line.trim()) activeBenchRun.lastLine = line;
+            activeBenchRun.activity = appendBenchmarkActivity(
+              activeBenchRun.activity,
+              line,
+              stream,
+              Date.now()
+            );
+            const nextPhase = stream === 'stdout' ? harnessPhase(line) : null;
+            if (nextPhase) activeBenchRun.phase = nextPhase;
+            const budgetLine =
+              stream === 'stdout' && benchTrayHarnessLine(activeBenchRun.tray, line);
+            if (nextPhase || budgetLine) renderBenchTray();
+          }
+        }
+        if (lines.length) {
+          sendSafe('benchmark-log', {
+            line: activeBenchRun?.lastLine,
+            stream,
+            activity: activeBenchRun?.activity,
+            scored: activeBenchRun?.scored === true,
+            phase: activeBenchRun?.phase,
+          });
+        }
+      };
+      child.stdout?.on('data', onData('stdout'));
+      child.stderr?.on('data', onData('stderr'));
+      let spawnFailure: Error | null = null;
+      child.on('error', (error) => {
+        spawnFailure = error;
+      });
+      child.on('close', async () => {
+        harnessConsole.end();
+        // Keep activeBenchRun set until the result is ON DISK — a status poll that sees
+        // "not running" must find the fresh row, never the previous one.
+        clearInterval(reconcileRunId);
+        if (spawnFailure) {
+          try {
+            await stampBenchLaunchRow(launchKey, {
+              outcome: 'did_not_start',
+              endedAt: new Date().toISOString(),
+              scoringError: spawnFailure.message,
+            });
+          } catch (error) {
+            log.error('Benchmark launch failure could not be recorded:', error);
+          }
+          if (activeBenchRun?.child === child) activeBenchRun = null;
+          finishBench({ error: spawnFailure.message });
+          reject(new Error(`Could not start the benchmark runner: ${spawnFailure.message}`));
+          return;
+        }
+        const wasCancelled = activeBenchRun?.child === child && activeBenchRun.cancelled;
+        const finishedAt = new Date().toISOString();
+        // The session row's runId: the reconcile poll's hit if it landed, else one final read now.
+        const sessionRunId =
+          (activeBenchRun?.child === child ? activeBenchRun.runId : cloudRunId) ??
+          (await readCurrentRunId(workdir));
+        if (wasCancelled) {
+          if (activeBenchRun?.child === child) activeBenchRun = null;
+          // A cancelled run started and did not finish — that is its honest state.
+          try {
+            await stampBenchLaunchRow(launchKey, {
+              ...(sessionRunId ? { runId: sessionRunId } : {}),
+              outcome: 'did_not_finish',
+              endedAt: finishedAt,
+            });
+          } catch (error) {
+            log.error('Benchmark cancellation could not be recorded:', error);
+          }
+          finishBench({ cancelled: true });
+          reject(new Error('run cancelled'));
+          return;
+        }
+        try {
+          const verdictPath = path.join(workdir, 'verdict.json');
+          const v = JSON.parse(await fs.readFile(verdictPath, 'utf8'));
+          if (!hasScoredVerdict(v)) throw new Error('Verdict has no valid score');
+          if (activeBenchRun?.child === child) activeBenchRun.scored = true;
+          const row = await persistBenchmarkResult({
+            v,
+            workdir,
+            nodes,
+            cloud,
+            startedAt,
+            finishedAt,
+            sessionRunId,
+            launchKey,
+            ...(runModelFields ? { modelFields: runModelFields } : {}),
+            ...(seriesBuild
+              ? { seriesId: seriesBuild.series.id, buildIndex: seriesBuild.build.index }
+              : {}),
+          });
+          if (activeBenchRun?.child === child) activeBenchRun = null;
+          finishBench({ row });
+          resolvePromise(row);
+        } catch {
+          if (activeBenchRun?.child === child) activeBenchRun = null;
+          // No verdict. The slot decides between did_not_finish (engine events exist) and
+          // did_not_start (the run never reached OPEN) — the same rule archival applies.
+          try {
+            const derived = await deriveSlotOutcome(workdir, !!cloud);
+            await stampBenchLaunchRow(launchKey, {
+              ...(sessionRunId ? { runId: sessionRunId } : {}),
+              outcome: derived.outcome,
+              endedAt: finishedAt,
+              scoringError: tail.slice(-4000),
+            });
+          } catch (error) {
+            const message = `Run evidence could not be read: ${String(error)}`;
+            finishBench({ error: message });
+            reject(new Error(message));
+            return;
+          }
+          finishBench({ error: `no verdict produced. ${tail.slice(-400)}` });
+          reject(new Error(`no verdict produced. ${tail.slice(-400)}`));
+        }
+      });
+    });
+  } finally {
+    benchmarkLaunchPending = false;
+  }
+};
+
+const benchmarkFileSha = async (file: string): Promise<string> => {
+  const hash = crypto.createHash('sha256');
+  for await (const chunk of fsSync.createReadStream(file)) hash.update(chunk);
+  return hash.digest('hex');
+};
+
+/** Export the engine's selected configuration privately; only its binding enters series records. */
+const benchmarkProviderSnapshot = async (
+  cloud: { provider: string; model: string },
+  fields: BenchModelFieldsRecord,
+  environment: NodeJS.ProcessEnv
+): Promise<BenchProviderSnapshot> => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'goose-benchmark-series-'));
+  const output = path.join(directory, 'selected.json');
+  try {
+    const engine = findGooseBinaryPath({
+      isPackaged: app.isPackaged,
+      resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
+    });
+    await new Promise<void>((resolve, reject) => {
+      execFile(
+        engine,
+        ['benchmark-config', '--provider', cloud.provider, '--output', output],
+        {
+          env: {
+            ...environment,
+            ...modelFieldsLaunchEnv(cloud.provider, cloud.model, fields.sent),
+          },
+        },
+        (error) =>
+          error
+            ? reject(
+                new Error(
+                  'The selected benchmark provider configuration could not be verified. Check Settings.'
+                )
+              )
+            : resolve()
+      );
+    });
+    return parseBenchProviderSnapshot(
+      JSON.parse(await fs.readFile(output, 'utf8')),
+      cloud.provider
+    );
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+};
+
+const benchmarkSeriesInputHash = async (
+  cloud: { provider: string; model: string; tier: CloudBenchmarkTier },
+  fields: BenchModelFieldsRecord,
+  provider: FrozenBenchProvider
+): Promise<string> => {
+  const actualProvider = await benchmarkProviderSnapshot(cloud, fields, provider.env);
+  const providerProblem = frozenBenchProviderProblem(provider, actualProvider);
+  if (providerProblem) throw new Error(providerProblem);
+  const payload = resolveBenchPayloadDir();
+  const manifestBytes = await fs.readFile(path.join(payload, 'forge2', 'release-manifest.json'));
+  const manifest = JSON.parse(manifestBytes.toString('utf8')) as {
+    schemaVersion?: unknown;
+    scorerVersion?: unknown;
+    family?: unknown;
+    files?: unknown;
+  };
+  if (
+    manifest.schemaVersion !== 1 ||
+    manifest.scorerVersion !== 'forge-2.0' ||
+    manifest.family !== 'forge' ||
+    !manifest.files ||
+    typeof manifest.files !== 'object' ||
+    Array.isArray(manifest.files)
+  )
+    throw new Error('The installed Forge task receipt is not valid.');
+  const pins = Object.entries(manifest.files as Record<string, unknown>);
+  if (!pins.length) throw new Error('The installed Forge task receipt has no payload pins.');
+  for (const [name, expected] of pins) {
+    if (
+      path.isAbsolute(name) ||
+      name.split(/[\\/]/).includes('..') ||
+      typeof expected !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(expected) ||
+      (await benchmarkFileSha(path.join(payload, name))) !== expected
+    )
+      throw new Error('The installed Forge benchmark does not match its task receipt.');
+  }
+  const engine = findGooseBinaryPath({
+    isPackaged: app.isPackaged,
+    resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
+  });
+  return benchIdentityHash({
+    provider: cloud.provider,
+    model: cloud.model,
+    tier: cloud.tier,
+    modelFields: fields,
+    taskFingerprint: forgeTaskFingerprint(manifestBytes),
+    engineSha256: await benchmarkFileSha(engine),
+    providerBinding: provider.snapshotHash,
+  });
+};
+
+const resolvedBenchmarkSeries = async (id?: string): Promise<BenchSeriesSnapshot | null> => {
+  if (activeBenchSeries && (!id || id === activeBenchSeries.id))
+    return globalThis.structuredClone(activeBenchSeries);
+  const saved = await readBenchSeries(benchSeriesRoot(), id);
+  if (!saved) return null;
+  const rows = await readBenchSessionRows();
+  for (const build of saved.builds) {
+    const session = rows.find(
+      (row) =>
+        row.runId === build.runId && row.seriesId === saved.id && row.buildIndex === build.index
+    );
+    if (!session) {
+      if (build.outcome === 'scored')
+        build.comparisonProblem = 'The saved native build result is no longer available.';
+      continue;
+    }
+    const dataDir = benchRunDataDir(session, benchSessionsRoot());
+    if (session.outcome === 'running' && dataDir) {
+      const facts = await deriveSlotOutcome(dataDir, true);
+      if (facts.outcome === 'finished') Object.assign(session, facts);
+    }
+    const result = await resolveRunResult(session);
+    if (result) {
+      const row = result.result as BenchSeriesResult;
+      try {
+        if (!dataDir) throw new Error('No native evidence directory.');
+        const canonical = JSON.parse(await fs.readFile(path.join(dataDir, 'verdict.json'), 'utf8'));
+        if (
+          canonical.score !== row.score ||
+          canonical.buildId !== build.runId ||
+          canonical.model !== saved.model
+        )
+          throw new Error('The saved result no longer matches its raw canonical verdict.');
+        row.seriesComparison = forgeSeriesComparison(canonical);
+        row.nativeBuildId = canonical.buildId;
+      } catch (error) {
+        row.seriesComparison = { problem: error instanceof Error ? error.message : String(error) };
+      }
+      const problem = benchSeriesResultProblem(saved, build, row);
+      build.outcome = 'scored';
+      build.runKey = build.runId;
+      if (typeof row.score === 'number') build.score = row.score;
+      const comparison = row.seriesComparison as
+        | { identity?: Record<string, unknown>; problem?: string }
+        | undefined;
+      build.comparisonHash = comparison?.identity
+        ? benchIdentityHash(comparison.identity)
+        : undefined;
+      build.comparisonProblem = problem ?? comparison?.problem;
+      build.endedAt = session.endedAt;
+    } else if (build.outcome === 'scored') {
+      build.comparisonProblem = 'The saved native build result could not be verified.';
+    }
+  }
+  const recovered = interruptedBenchSeries(saved);
+  recovered.summary = benchSeriesSummary(recovered.builds);
+  if (recovered.summary.count === 2 && !recovered.cancelled) {
+    recovered.stage = 'finished';
+    recovered.error = undefined;
+  }
+  await writeBenchSeries(benchSeriesRoot(), recovered);
+  return recovered;
+};
+
+ipcMain.handle('benchmark-series', async (_event, id?: string) => resolvedBenchmarkSeries(id));
+
 ipcMain.handle(
   'benchmark-run',
   async (
@@ -4590,446 +5345,104 @@ ipcMain.handle(
       modelFields?: BenchModelFields;
     }
   ) => {
-    if (activeBenchRun || benchmarkLaunchPending) {
-      throw new Error('a benchmark run is already in progress');
-    }
-    benchmarkLaunchPending = true;
+    if (activeBenchRun || activeBenchSeries || benchmarkLaunchPending)
+      throw new Error('A benchmark run is already in progress.');
+    const tier = benchmarkLaunchTier(cloud);
+    if (familyOfScorer(benchmarkScorer(tier)) !== 'forge')
+      return runSingleBenchmark(nodes, sampling, cloud);
+    if (!cloud || !validCloudEntrant(cloud))
+      throw new Error('Choose a configured provider and provide a valid model ID.');
+    if (cloud.modelFields !== undefined && !validBenchModelFields(cloud.modelFields))
+      throw new Error("The model's settings are not valid field values.");
+    const entrant = globalThis.structuredClone(cloud);
+    const fields = modelFieldsForRun(entrant.modelFields ?? {}, true);
+    const series: BenchSeriesSnapshot = {
+      schemaVersion: 1,
+      id: `forge-series-${crypto.randomUUID()}`,
+      totalBuilds: 2,
+      provider: entrant.provider,
+      model: entrant.model,
+      scorerVersion: benchmarkScorer(tier),
+      inputHash: '',
+      modelFields: fields,
+      startedAt: new Date().toISOString(),
+      running: true,
+      cancelled: false,
+      stage: 'preparing',
+      currentBuild: 1,
+      builds: [1, 2].map((index) => ({
+        index,
+        runId: `cloud-${crypto.randomUUID()}`,
+        outcome: 'queued',
+      })) as BenchSeriesSnapshot['builds'],
+      summary: { count: 0, provisional: true },
+    };
+    activeBenchSeries = series;
+    let providerDirectory: string | undefined;
     try {
-      if (benchmarkRuntimeInstallation)
-        throw new Error('Wait for Benchmark tools installation to finish.');
-      if (cloud && !validCloudEntrant(cloud)) {
-        throw new Error('Choose a configured provider and provide a valid model ID.');
-      }
-      if (cloud?.modelFields !== undefined && !validBenchModelFields(cloud.modelFields)) {
-        throw new Error("The model's settings are not valid field values.");
-      }
-      if (cloud) nodes = 1;
-      const cloudRunId = cloud ? `cloud-${crypto.randomUUID()}` : null;
-      const runSampling = cleanSampling(cloud ? undefined : sampling);
-      const tier = benchmarkLaunchTier(cloud);
-      // The SELECTED family's current era against this app's bundled one (forge/INTEGRATION.md).
-      const family = familyOfScorer(benchmarkScorer(tier));
-      const launchProblem = benchmarkLaunchProblem(
-        (await fetchBenchCatalog()).benchmarks,
-        false,
-        undefined,
-        family
+      await writeBenchSeries(benchSeriesRoot(), series);
+      broadcastToWindows(
+        BrowserWindow.getAllWindows(),
+        'benchmark-series',
+        globalThis.structuredClone(series)
       );
-      if (launchProblem) throw new Error(launchProblem);
-      // Forge is a single-model benchmark (forge/DESIGN.md: one model in goose, the tier's call budget).
-      if (family === 'forge' && !cloud)
-        throw new Error('Forge runs one model: choose a provider and model ID.');
-      // Forge pins one reasoning effort for every entrant (the tier's reasoning_effort in isolated_tiers,
-      // forge/DESIGN.md §11): the model's saved effort is recorded as pinned and never sent, so it cannot
-      // displace the tier's.
-      const runModelFields = cloud
-        ? modelFieldsForRun(cloud.modelFields ?? {}, family === 'forge')
-        : null;
-      const regimeFlag = BENCH_RUN_FLAG[tier];
-      const isolated =
-        (ISOLATED_PAYMENTS_TIERS as readonly string[]).includes(tier) || family === 'forge';
-      const payloadDir = resolveBenchPayloadDir();
-      const runner = path.join(payloadDir, 'bench', 'run_build.py');
-      const runtime = isolated
-        ? await resolveBenchmarkRuntime(benchWorkRoot())
-        : { python: 'python3', node: undefined, env: {} };
-      if (family === 'forge' && runtime.node) {
-        const kit = await readForgeKitStatus(
-          payloadDir,
-          { python: runtime.python, node: runtime.node, env: runtime.env },
-          forgeKitCache(benchWorkRoot())
-        );
-        if (kit.state !== 'ready')
-          throw new Error(
-            kit.state === 'missing'
-              ? `Prepare the Forge kit before running (missing: ${(kit.missing ?? []).join(', ')}).`
-              : `The Forge kit could not be checked: ${kit.error ?? kit.state}`
-          );
-      }
-      const benchNode = await resolveBenchNode(tier, runtime.node);
-      const browserEnv = await bundledBrowserEnv();
-      // The operator's OpenRouter spend limit (Benchmark view → goose config BENCH_MAX_USD). run_build's
-      // wallet guard stops a single-model run at it and scores what exists; a swarm run is not guarded.
-      const walletEnv = cloud ? await benchMaxUsdEnv() : {};
-      // The engine the run measures: the exact binary this app ships (or the dev build), never a PATH
-      // lookup. run_build.py honors BENCH_GOOSE for the engine path.
-      const engineBinary = findGooseBinaryPath({
-        isPackaged: app.isPackaged,
-        resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
-      });
-      await ensureBenchIdentity();
-      const workRoot = benchWorkRoot();
-      const outRoot = path.join(workRoot, 'runs', 'build');
-      await fs.mkdir(outRoot, { recursive: true });
-      const entrant = cloud ? `${cloud.provider}-${cloudRunId}` : `swarm-${nodes}node`;
-      const workdir = path.join(outRoot, `${entrant}-r0`);
-      // The previous run is a SESSION, not garbage: move it out of the slot (with its honest outcome
-      // stamped into the index) before anything wipes. Only then clear whatever remains —
-      // run_build.py wipes the workdir itself, but only once it gets that far; a runner that dies
-      // before then (bad python, import error) would leave the PREVIOUS run's verdict in place and
-      // the close handler would report it as this run's success. A cleared slot keeps a missing
-      // verdict the truthful failure signal.
-      await archiveBenchSlot(workdir);
-      await fs.rm(workdir, { recursive: true, force: true });
-      const startedAt = new Date().toISOString();
-      // The provisional session row for THIS launch. runId is unknown until the engine writes
-      // .swarm/current-run.json; the poll below reconciles it. 'running' here is provisional by
-      // construction — benchmark-sessions asserts 'running' only from activeBenchRun, never this row.
-      const launchKey = { startedAt, slotDir: workdir };
-      const completionReceipt = path.join(workRoot, 'completions', `${crypto.randomUUID()}.json`);
-      await fs.mkdir(path.dirname(completionReceipt), { recursive: true });
-      {
-        const rows = await readBenchSessionRows();
-        rows.push({
-          runId: cloudRunId,
-          scorerVersion: benchmarkScorer(tier),
-          startedAt,
-          outcome: 'running',
-          nodes,
-          slot: true,
-          slotDir: workdir,
-          completionReceipt,
-          ...(runModelFields ? { modelFields: runModelFields } : {}),
-        });
-        await writeBenchSessionRows(rows);
-      }
-      const sendSafe = (channel: string, payload: unknown) => {
-        // BROADCAST, never the sender captured at run time. A benchmark run outlives windows: after a
-        // mid-run window recreation the closed-over sender.isDestroyed() was true forever, so every
-        // benchmark-log and the terminal benchmark-finished were silently dropped — a status-restored
-        // strip with no live line, and a finished run the view learned about only via the 1s poll.
-        try {
-          broadcastToWindows(BrowserWindow.getAllWindows(), channel, payload);
-        } catch {
-          /* no window at all — the run continues headless */
-        }
-      };
-
-      return await new Promise((resolvePromise, reject) => {
-        const python = benchmarkPythonLaunch(runner, [], { ...process.env, ...runtime.env });
-        const { child, releasePower } = spawnBenchmarkWithPower(powerSaveBlocker, () =>
-          spawn(
-            runtime.python,
-            // --timeout 0 is the UNCAPPED regime, and it is the only regime the engine has now: every
-            // wall-clock cap was removed, so a hard-coded 16200 here would put one back through the front
-            // door and cut a run the engine itself would never have stopped.
-            [
-              ...python.args,
-              '--entrant',
-              entrant,
-              '--only-rep',
-              '0',
-              '--timeout',
-              '0',
-              '--out',
-              outRoot,
-              ...(cloud ? ['--provider', cloud.provider, '--model', cloud.model] : []),
-              ...(regimeFlag ? [regimeFlag] : []),
-            ],
-            {
-              cwd: workRoot,
-              detached: true,
-              env: {
-                ...python.env,
-                BENCH_GOOSE: engineBinary,
-                BENCH_COMPLETION_RECEIPT: completionReceipt,
-                BENCH_STARTED_AT: startedAt,
-                ...(cloudRunId ? { BENCH_RUN_ID: cloudRunId } : {}),
-                GOOSE_PATH_ROOT: resolveGoosePathRoot(),
-                // A benchmark run is by definition unattended: nobody is sitting in front of the app
-                // waiting to answer a clarify question. Without this the engine gives the human 5 minutes
-                // before a node answers, and those 5 minutes are three idle machines.
-                GOOSE_SWARM_BENCHMARK: '1',
-                BENCH_MEDIA_DIR: path.join(workdir, 'bench-media'),
-                GOOSE_SWARM_RENDER_NODE: benchNode,
-                ...browserEnv,
-                ...walletEnv,
-                ...(cloud && runModelFields
-                  ? modelFieldsLaunchEnv(cloud.provider, cloud.model, runModelFields.sent)
-                  : {}),
-                // Forge: the kit run_build verifies (same cache the view prepared) and the browser
-                // aliases its probe reads.
-                ...(family === 'forge'
-                  ? { FORGE_KIT_CACHE: forgeKitCache(workRoot), ...forgeBrowserEnv(browserEnv) }
-                  : {}),
-                // NOT pinned any more (VA-048/051): GOOSE_SWARM_TAIL_REVIEW, GOOSE_SWARM_PREREVIEW,
-                // GOOSE_SWARM_PREREVIEW_DIMS and GOOSE_SWARM_JUDGE. The r3 supervision-off arm (P1-10)
-                // switched four env-only, default-ON layers off here. Every one of those layers is DELETED
-                // now — the tail idle-fill and the idle-model judge in 2c S6, the M5 pre-review in 2a D1b —
-                // so the engine reads none of the names: TAIL_REVIEW only to echo it under
-                // levers_resolved.retired_levers, the other three nowhere at all. A pin on a dead reader
-                // certifies a regime the binary cannot run (the stale-config class, see SPLIT_FAT below);
-                // the tick proves the layers' state by the ABSENCE of their events, which needs no pin.
-                // The render gate is inert without the probe path, and without the gate there are no
-                // repair rounds and no screenshots — the product story of the run.
-                GOOSE_SWARM_RENDER_PROBE: path.join(payloadDir, 'bench', BENCH_RENDER_PROBE[tier]),
-                // sb-5.2 comparability rail: the baked baselines are v2-spec product-regime numbers, so
-                // a user run must be scored by the same scorer against the same spec or the board
-                // cannot hold both.
-                BENCH_PRODUCT: '1',
-                // BENCH_SPEC OVERRIDES THE REGIME, so a tier missing from this ternary does not fall back to
-                // its own spec — it runs someone else's. There was no sb-7 branch here, so every sb-7 run
-                // started from `spec-build-v2.md`: the app dutifully passed `--sb7`, run_build dutifully set
-                // BENCH_SB7, and `build_prompt` read BENCH_SPEC FIRST and threw the regime away.
-                //
-                // MEASURED 2026-08-28: a run started from the Benchmark view with sb-7 selected received a
-                // 6,278-character prompt beginning "# Build `vendorsync`" and produced slices called
-                // meridian-client / local-store / http-api. The sb-7 spec is 54,146 characters and asks for
-                // ledgerd, notifierd, webhooks, an outbox, an event ledger and a 3D field. None of it was
-                // present, and the run looked completely healthy while building the wrong product.
-                BENCH_SPEC: path.join(payloadDir, BENCH_SPEC_FILE[tier]),
-                // The FULL tuned regime (REGIME.env parity, minus harness-only keys, resolved paths and
-                // retired levers): a user's benchmark must run the same engine configuration the baked
-                // baselines and the campaign's numbers ran, or the board compares different swarms.
-                // NOT pinned, deliberately: GOOSE_SWARM_SPLIT_FAT and GOOSE_SWARM_FIX_SCHED. The engine reads
-                // neither (split_fat_modules is #[cfg(test)] since b0dd68eac; the fix_sched scheduler died in
-                // P1-9) and levers_resolved lists split_fat under `retired_levers`. A pin on a dead reader
-                // certifies a regime the binary cannot run — the stale-config class, from the other side.
-                GOOSE_SWARM_PROBE_ADVERTISED_POST: '1',
-                GOOSE_SWARM_SHIP_BEST: '1',
-                // WHY '0' — r2: testgen calls wrote poisoned root files past the guard (test_interfaces.py
-                // mtime 20:02:25Z imports task ids as modules), 0/3 generated suites landed, and the sink
-                // burned 17 of its first 26 calls on them (II-5/P1-10). Reader survives until the r4 deletion.
-                GOOSE_SWARM_TESTGEN: '0',
-                // F876: the scouts DO fetch the vendor's protocol docs (grounded 3/3, measured), but the
-                // channel that forwards those verbatim facts to the worker writing the vendor client was
-                // off — so it invented pagination/429/ETag/idempotency and nine Tier-B checks collapsed.
-                GOOSE_SWARM_DOC_PREFETCH: '1',
-                GOOSE_SWARM_DIVERSE_PLAN: '1',
-                // Run-window sampling knobs. ALL FIVE now ride only when set, so an untouched knob stays at
-                // the config/model default. Env beats config engine-side, so an explicit knob pins this run.
-                ...samplingEnv(runSampling),
-                // NO HARDCODED TEMPERATURE. This was `runSampling.temperature ?? 0.2`, and the config ships
-                // `temperature: null`, so EVERY desktop run forced 0.2 onto the engine and overrode the
-                // per-model setting in LM Studio — Mihai runs 0.7 there deliberately, and a 27B at 0.2 is a
-                // duller model than the one he configured. Omit the variable when nothing is set, exactly as
-                // the sibling block above already does, so the engine sends no temperature and LM Studio's
-                // own value applies. An explicit setting still wins.
-                ...(runSampling.temperature != null
-                  ? { GOOSE_SWARM_TEMP: String(runSampling.temperature) }
-                  : {}),
+      const environment = { ...process.env, GOOSE_PATH_ROOT: resolveGoosePathRoot() };
+      const selected = await benchmarkProviderSnapshot(entrant, fields, environment);
+      providerDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'goose-benchmark-provider-'));
+      const provider = await freezeBenchProvider(providerDirectory, selected, environment);
+      series.inputHash = await benchmarkSeriesInputHash(entrant, fields, provider);
+      const last = await runBenchSeries(series, {
+        save: (snapshot) => writeBenchSeries(benchSeriesRoot(), snapshot),
+        inputHash: () => benchmarkSeriesInputHash(entrant, fields, provider),
+        run: (build) => runSingleBenchmark(1, undefined, entrant, { series, build, provider }),
+        changed: (snapshot, row) => {
+          const current = globalThis.structuredClone(snapshot);
+          broadcastToWindows(BrowserWindow.getAllWindows(), 'benchmark-series', current);
+          if (row || !snapshot.running)
+            broadcastToWindows(BrowserWindow.getAllWindows(), 'benchmark-finished', {
+              ...(row ? { row: { ...row, series: current } } : {}),
+              series: current,
+              ...(snapshot.cancelled ? { cancelled: true } : {}),
+              ...(snapshot.error ? { error: snapshot.error } : {}),
+            });
+          if (!snapshot.running) {
+            endBenchTray(
+              {
+                scorerVersion: snapshot.scorerVersion,
+                model: snapshot.model,
+                rescore: false,
+                callsUsed: null,
+                callBudget: null,
+                callsFinal: true,
+                counter: null,
               },
-            }
-          )
-        );
-        const harnessConsole = fsSync.createWriteStream(
-          completionReceipt.replace(/\.json$/, '.log'),
-          { flags: 'wx' }
-        );
-        harnessConsole.on('error', (error) =>
-          log.error('Benchmark console could not be saved:', error)
-        );
-        activeBenchRun = {
-          activity: emptyBenchmarkActivity(),
-          releasePower,
-          phase: 'boot',
-          ...(cloud ? { provider: cloud.provider } : {}),
-          child,
-          workdir,
-          nodes,
-          startedAt,
-          cancelled: false,
-          sampling: runSampling,
-          scored: false,
-          lastLine: null,
-          runId: cloudRunId,
-          tray: {
-            scorerVersion: benchmarkScorer(tier),
-            model: cloud ? cloud.model : null,
-            rescore: false,
-            callsUsed: null,
-            callBudget: null,
-            callsFinal: false,
-            // A swarm's calls are spread across its nodes and are not budgeted: its tray shows phase.
-            counter: cloud
-              ? new BenchTelemetryCounter(benchTelemetryCandidates(workdir), cloud.model)
-              : null,
-          },
-        };
-        const trayFacts = activeBenchRun.tray;
-        startBenchTray();
-        // run_build budgets exactly the single-model entrant of an isolated tier (`budgeted` there);
-        // the number is the payload's own call_budget of THIS tier (isolated_tiers), never restated here.
-        if (cloud && isolated) {
-          void readBenchCallBudget(
-            runtime.python,
-            path.join(payloadDir, 'bench'),
-            { ...process.env, ...runtime.env },
-            benchmarkScorer(tier)
-          ).then((budget) => {
-            if (budget == null || trayFacts.callsFinal) return;
-            trayFacts.callBudget = budget;
-            if (activeBenchRun?.tray === trayFacts) renderBenchTray();
-          });
-        }
-        // Reconcile the session row's runId the moment the engine publishes current-run.json (written
-        // before any phase starts). A cheap local-file poll, cleared on first hit and on run end.
-        let reconcileInFlight = false;
-        const reconcileRunId = setInterval(() => {
-          if (reconcileInFlight) return;
-          reconcileInFlight = true;
-          void (async () => {
-            try {
-              const id = await readCurrentRunId(workdir);
-              if (id) {
-                clearInterval(reconcileRunId);
-                if (activeBenchRun && activeBenchRun.workdir === workdir) activeBenchRun.runId = id;
-                await stampBenchLaunchRow(launchKey, { runId: id });
+              1,
+              {
+                ...(snapshot.stage === 'finished' && row ? { row } : {}),
+                ...(snapshot.cancelled ? { cancelled: true } : {}),
               }
-            } finally {
-              reconcileInFlight = false;
-            }
-          })();
-        }, 2000);
-        // Two-phase: hand the renderer the workdir IMMEDIATELY so it can point the live swarm panel
-        // at the run, then resolve with the scored row on completion as before. scored/lastLine ride
-        // along so a view (re)mounting off either payload restores the same facts the status poll serves.
-        sendSafe('benchmark-started', {
-          phase: 'boot',
-          ...(cloud ? { provider: cloud.provider } : {}),
-          workdir,
-          nodes,
-          startedAt,
-          sampling: runSampling,
-          scored: false,
-          lastLine: null,
-          tier,
-          family,
-          scorerVersion: benchmarkScorer(tier),
-        });
-
-        // Every end the view hears is the end the tray shows.
-        const finishBench = (payload: BenchFinishedPayload) => {
-          endBenchTray(trayFacts, nodes, payload);
-          sendSafe('benchmark-finished', payload);
-        };
-        let tail = '';
-        const buffers: Record<string, string> = { stdout: '', stderr: '' };
-        const onData = (stream: 'stdout' | 'stderr') => (d: Buffer | string) => {
-          harnessConsole.write(d);
-          tail = (tail + d.toString()).slice(-4000);
-          buffers[stream] += d.toString();
-          const lines = buffers[stream].split('\n');
-          buffers[stream] = lines.pop() ?? '';
-          for (const line of lines) {
-            // Console text reports observations; only the canonical verdict read below asserts scored.
-            if (activeBenchRun?.child === child) {
-              if (line.trim()) activeBenchRun.lastLine = line;
-              activeBenchRun.activity = appendBenchmarkActivity(
-                activeBenchRun.activity,
-                line,
-                stream,
-                Date.now()
-              );
-              const nextPhase = stream === 'stdout' ? harnessPhase(line) : null;
-              if (nextPhase) activeBenchRun.phase = nextPhase;
-              const budgetLine =
-                stream === 'stdout' && benchTrayHarnessLine(activeBenchRun.tray, line);
-              if (nextPhase || budgetLine) renderBenchTray();
-            }
+            );
           }
-          if (lines.length) {
-            sendSafe('benchmark-log', {
-              line: activeBenchRun?.lastLine,
-              stream,
-              activity: activeBenchRun?.activity,
-              scored: activeBenchRun?.scored === true,
-              phase: activeBenchRun?.phase,
-            });
-          }
-        };
-        child.stdout?.on('data', onData('stdout'));
-        child.stderr?.on('data', onData('stderr'));
-        let spawnFailure: Error | null = null;
-        child.on('error', (error) => {
-          spawnFailure = error;
-        });
-        child.on('close', async () => {
-          harnessConsole.end();
-          // Keep activeBenchRun set until the result is ON DISK — a status poll that sees
-          // "not running" must find the fresh row, never the previous one.
-          clearInterval(reconcileRunId);
-          if (spawnFailure) {
-            try {
-              await stampBenchLaunchRow(launchKey, {
-                outcome: 'did_not_start',
-                endedAt: new Date().toISOString(),
-                scoringError: spawnFailure.message,
-              });
-            } catch (error) {
-              log.error('Benchmark launch failure could not be recorded:', error);
-            }
-            if (activeBenchRun?.child === child) activeBenchRun = null;
-            finishBench({ error: spawnFailure.message });
-            reject(new Error(`Could not start the benchmark runner: ${spawnFailure.message}`));
-            return;
-          }
-          const wasCancelled = activeBenchRun?.child === child && activeBenchRun.cancelled;
-          const finishedAt = new Date().toISOString();
-          // The session row's runId: the reconcile poll's hit if it landed, else one final read now.
-          const sessionRunId =
-            (activeBenchRun?.child === child ? activeBenchRun.runId : cloudRunId) ??
-            (await readCurrentRunId(workdir));
-          if (wasCancelled) {
-            if (activeBenchRun?.child === child) activeBenchRun = null;
-            // A cancelled run started and did not finish — that is its honest state.
-            try {
-              await stampBenchLaunchRow(launchKey, {
-                ...(sessionRunId ? { runId: sessionRunId } : {}),
-                outcome: 'did_not_finish',
-                endedAt: finishedAt,
-              });
-            } catch (error) {
-              log.error('Benchmark cancellation could not be recorded:', error);
-            }
-            finishBench({ cancelled: true });
-            reject(new Error('run cancelled'));
-            return;
-          }
-          try {
-            const verdictPath = path.join(workdir, 'verdict.json');
-            const v = JSON.parse(await fs.readFile(verdictPath, 'utf8'));
-            if (!hasScoredVerdict(v)) throw new Error('Verdict has no valid score');
-            if (activeBenchRun?.child === child) activeBenchRun.scored = true;
-            const row = await persistBenchmarkResult({
-              v,
-              workdir,
-              nodes,
-              cloud,
-              startedAt,
-              finishedAt,
-              sessionRunId,
-              launchKey,
-              ...(runModelFields ? { modelFields: runModelFields } : {}),
-            });
-            if (activeBenchRun?.child === child) activeBenchRun = null;
-            finishBench({ row });
-            resolvePromise(row);
-          } catch {
-            if (activeBenchRun?.child === child) activeBenchRun = null;
-            // No verdict. The slot decides between did_not_finish (engine events exist) and
-            // did_not_start (the run never reached OPEN) — the same rule archival applies.
-            try {
-              const derived = await deriveSlotOutcome(workdir, !!cloud);
-              await stampBenchLaunchRow(launchKey, {
-                ...(sessionRunId ? { runId: sessionRunId } : {}),
-                outcome: derived.outcome,
-                endedAt: finishedAt,
-                scoringError: tail.slice(-4000),
-              });
-            } catch (error) {
-              const message = `Run evidence could not be read: ${String(error)}`;
-              finishBench({ error: message });
-              reject(new Error(message));
-              return;
-            }
-            finishBench({ error: `no verdict produced. ${tail.slice(-400)}` });
-            reject(new Error(`no verdict produced. ${tail.slice(-400)}`));
-          }
-        });
+          renderBenchTray();
+        },
       });
+      return { ...(last ?? {}), series: globalThis.structuredClone(series) };
+    } catch (error) {
+      series.running = false;
+      series.stage = series.cancelled ? 'cancelled' : 'failed';
+      series.error = error instanceof Error ? error.message : String(error);
+      series.endedAt = new Date().toISOString();
+      for (const build of series.builds) if (build.outcome === 'queued') build.outcome = 'skipped';
+      await writeBenchSeries(benchSeriesRoot(), series);
+      broadcastToWindows(BrowserWindow.getAllWindows(), 'benchmark-finished', {
+        error: series.error,
+        series: globalThis.structuredClone(series),
+      });
+      throw error;
     } finally {
-      benchmarkLaunchPending = false;
+      if (activeBenchSeries === series) activeBenchSeries = null;
+      if (providerDirectory) await fs.rm(providerDirectory, { recursive: true, force: true });
+      renderBenchTray();
     }
   }
 );
@@ -5038,7 +5451,8 @@ ipcMain.handle(
 // a scoring retry for a run whose scoring did not finish, and — `mode: 'rescore'` — a re-score of a
 // FINISHED run with this app's scorer, which replaces the stored result only when it succeeds.
 ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string, mode?: 'rescore') => {
-  if (activeBenchRun || benchmarkLaunchPending) throw new Error('A benchmark is already running.');
+  if (activeBenchRun || activeBenchSeries || benchmarkLaunchPending)
+    throw new Error('A benchmark is already running.');
   benchmarkLaunchPending = true;
   try {
     if (benchmarkRuntimeInstallation)
@@ -5291,6 +5705,9 @@ ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string, mode?: '
                 launchKey,
                 ...(regrade ? { rescoredAt: scoredAt } : {}),
                 modelFields: session.modelFields,
+                ...(session.seriesId && session.buildIndex
+                  ? { seriesId: session.seriesId, buildIndex: session.buildIndex }
+                  : {}),
               });
               return row;
             }
@@ -5346,8 +5763,32 @@ ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string, mode?: '
 // the time this returns. The `ps` scan is one execFileSync (its 4s timeout is transport, not model
 // work) and every kill is `process.kill(pid)`.
 const cancelActiveBenchRun = (why: string): { ok: boolean; error?: string } => {
+  const series = activeBenchSeries;
+  let markerError: string | undefined;
+  if (series) {
+    series.cancelled = true;
+    try {
+      fsSync.mkdirSync(benchSeriesRoot(), { recursive: true });
+      fsSync.writeFileSync(
+        path.join(benchSeriesRoot(), `${series.id}.cancel.json`),
+        JSON.stringify({
+          id: series.id,
+          cancelled: true,
+          requestedAt: new Date().toISOString(),
+          why,
+        })
+      );
+    } catch (error) {
+      markerError = `Cancellation could not be recorded: ${String(error)}`;
+    }
+  }
   const run = activeBenchRun;
-  if (!run) return { ok: false, error: 'no benchmark run is active' };
+  if (!run)
+    return series
+      ? markerError
+        ? { ok: false, error: markerError }
+        : { ok: true }
+      : { ok: false, error: 'no benchmark run is active' };
   const pid = run.child.pid;
   if (!pid) return { ok: false, error: 'The benchmark runner has no process id' };
   let snapshot: string;
@@ -5381,319 +5822,340 @@ const cancelActiveBenchRun = (why: string): { ok: boolean; error?: string } => {
       error: `Some benchmark processes could not be stopped: ${errors.join('; ')}`,
     };
   run.releasePower();
-  return { ok: true };
+  return markerError ? { ok: false, error: markerError } : { ok: true };
 };
 
 ipcMain.handle('benchmark-cancel', async () => cancelActiveBenchRun('cancel requested'));
 
-ipcMain.handle('benchmark-publish', async (_event, args?: { title?: string; runKey?: string }) => {
-  if (activeBenchRun || benchmarkLaunchPending)
-    return { ok: false, error: 'Wait for the benchmark to finish before publishing.' };
-  // ANY finished run publishes from its OWN result row (runKey); without a key, the latest result as
-  // before. A run this machine already posted is not posted twice.
-  let stored: Record<string, unknown>;
-  let storedIsLatest = true;
-  let runKey: string | null = null;
-  if (typeof args?.runKey === 'string' && args.runKey) {
-    const row = (await readBenchSessionRows()).find((r) => benchRunKey(r) === args.runKey);
-    if (!row) return { ok: false, error: 'this run is no longer in the session list' };
-    const resolved = await resolveRunResult(row);
-    if (!resolved)
-      return { ok: false, error: "this run's scored result could not be read from its folder" };
-    // Posted and not re-scored since: the board already shows exactly this result.
-    const rescoredAt = (resolved.result.runMeta as Partial<StoredRunMeta> | undefined)?.rescoredAt;
-    if (publishedIsCurrent((await readPublished())[args.runKey], rescoredAt))
-      return { ok: false, error: 'this run is already live on leanzero.net' };
-    stored = resolved.result;
-    storedIsLatest = resolved.latest;
-    runKey = args.runKey;
-  } else {
-    try {
-      stored = JSON.parse(await fs.readFile(BENCH_RESULT, 'utf8')) as Record<string, unknown>;
-    } catch {
-      return { ok: false, error: 'no benchmark result to publish — run the benchmark first' };
-    }
-  }
-  // Key by key for both families: the build's id and, after a re-score, rescoredAt — what lets the
-  // site replace the entry it already shows for this build instead of adding a second one.
-  const runMeta = publishRunMeta(stored);
-  if (!runMeta) {
-    return {
-      ok: false,
-      error:
-        'this result was saved by an older version of the app and is missing the run record publishing needs — run the benchmark again to publish',
-    };
-  }
-  // Frozen gate, from the CACHED catalog: the same refusal the server would return, without
-  // burning the POST. The server stays the authority — it refuses frozen benchmarks too.
-  const frozenRefusal = frozenPublishRefusal(
-    (await readBenchCatalogCache())?.benchmarks,
-    typeof stored.scorerVersion === 'string' ? stored.scorerVersion : ''
-  );
-  if (frozenRefusal) return frozenRefusal;
-  // `model` is ENGINE TRUTH only (v2.4): the renderer stopped sending one, so a user-editable
-  // value can no longer publish a lie. A result whose run recorded no usable pool_resolved id
-  // refuses loudly with the reason — never a substitute.
-  const model = (typeof stored.modelId === 'string' ? stored.modelId : '').trim();
-  if (benchmarkModelIdProblem(model)) {
-    return {
-      ok: false,
-      error:
-        'this result carries no usable model id from the engine — run the benchmark again to publish',
-    };
-  }
-  // Forge (forge/INTEGRATION.md): the same route and envelope, refused here when score_forge.py itself
-  // marked the verdict not board-grade (held, unpublishable, or an rc scorer).
-  const forgeResult =
-    typeof stored.scorerVersion === 'string' && familyOfScorer(stored.scorerVersion) === 'forge';
-  if (forgeResult) {
-    const problem = forgePublishProblem(stored);
-    if (problem) return { ok: false, error: problem };
-  }
-  const identity = await ensureBenchIdentity();
-  // The title is the USER'S name for the run (v2.4, Mihai 2026-08-30: the auto-generated
-  // handle is not a title) — required, refused here with the reason, never defaulted.
-  const title = typeof args?.title === 'string' ? args.title.trim().slice(0, 80) : '';
-  if (!title) {
-    return { ok: false, error: 'a title is required — name this run before publishing' };
-  }
-  // Prefer the frozen snapshot written WITH the result row — the workdir is reused and wiped
-  // by the next run, so reading it at publish time can attach another run's screenshots to
-  // this row's score.
-  // The snapshot belongs to result.json's run only; any other run reads its own tree.
-  const snapshotShots: BenchShot[] = storedIsLatest
-    ? await readBenchShotsSnapshot(path.join(BENCH_DIR, 'shots-snapshot'))
-    : [];
-  const screenshots = limitBenchShotsForPublish(
-    snapshotShots.length
-      ? snapshotShots
-      : typeof stored.workdir === 'string'
-        ? await pickBenchShots(stored.workdir)
-        : []
-  );
-  const tiers = (stored.tiers ?? {}) as Record<string, unknown>;
-  // STRICT allowlist per the contract — unknown keys reject the whole payload, so the payload
-  // is built key by key (never a spread of the stored row, which carries mine/workdir).
-  // v2.3 card hygiene: the PUBLIC label is neutral — "<N>-node Swarm", never the in-app
-  // first-person "Your fleet · N nodes".
-  const cloudEntrant =
-    typeof stored.provider === 'string' ||
-    (typeof stored.runId === 'string' && stored.runId.startsWith('cloud-'));
-  const nodeCount = !cloudEntrant && typeof stored.nodes === 'number' ? stored.nodes : null;
-  const payload: Record<string, unknown> = {
-    label: cloudEntrant
-      ? `${model} · single agent`
-      : nodeCount != null
-        ? `${nodeCount}-node Swarm`
-        : 'Swarm',
-    score: stored.score,
-    // Forge's tiers (L…E) come with forgePublishBody below; this is Gauntlet's A–D envelope.
-    tiers: { A: tiers.A ?? 0, B: tiers.B ?? 0, C: tiers.C ?? 0, D: tiers.D ?? 0 },
-    ...(nodeCount != null ? { nodes: nodeCount } : {}),
-    ...(typeof stored.hard === 'number' ? { hard: stored.hard } : {}),
-    ...(typeof stored.excellent === 'boolean' ? { excellent: stored.excellent } : {}),
-    ...(typeof stored.wallSecs === 'number' ? { wallSecs: stored.wallSecs } : {}),
-    ...(typeof stored.scorerVersion === 'string' ? { scorerVersion: stored.scorerVersion } : {}),
-    title,
-    model,
-    ...(typeof stored.provider === 'string' ? { provider: stored.provider } : {}),
-    poster: { installId: identity.installId, handle: identity.handle },
-    ...(screenshots.length > 0 ? { screenshots } : {}),
-    runMeta,
-    ...(stored.telemetry && typeof stored.telemetry === 'object'
-      ? { telemetry: stored.telemetry }
-      : {}),
-  };
-  // Forge's graded browser recording (score_forge.py, SB7.x's media shape) rides like Gauntlet's. Without
-  // a verified clip it publishes ONLY when the four visual rows are the scorer's own "no surface rendered
-  // app content" vacuous zeros (clipAbsence = the site's rule); anything else is refused.
-  if (forgeResult) {
-    const media =
-      typeof stored.workdir === 'string'
-        ? await readBenchMedia(stored.workdir)
-        : { videos: [], error: 'no run directory' };
-    const clipless =
-      media.videos.length !== 1 || media.error
-        ? clipAbsence(
-            stored.scorerVersion as string,
-            (stored.verdict as { checks?: unknown })?.checks
-          )
-        : null;
-    // Surfaces rendered (or the probe failed) but no verified clip: a SCORING problem, never a clip-less
-    // post — the card offers Retry scoring on the saved build (forgeClipMissing).
-    if (!clipless && (media.error || media.videos.length !== 1))
-      return {
-        ok: false,
-        error: `${stored.scorerVersion} publication requires its graded browser clip, and none could be verified although the app's surfaces were graded (${media.error ?? 'clip count mismatch'}). Retry scoring re-grades the saved build and records it.`,
-      };
-    if (clipless) payload.noRecording = true;
-    else {
+const benchmarkPublicationOwner = new BenchPublicationOwner();
+ipcMain.handle('benchmark-publish', (_event, args?: { title?: string; runKey?: string }) =>
+  benchmarkPublicationOwner.run(async () => {
+    if (activeBenchRun || activeBenchSeries || benchmarkLaunchPending)
+      return { ok: false, error: 'Wait for the benchmark to finish before publishing.' };
+    // ANY finished run publishes from its OWN result row (runKey); without a key, the latest result as
+    // before. A run this machine already posted is not posted twice.
+    let stored: Record<string, unknown>;
+    let storedIsLatest = true;
+    let runKey: string | null = null;
+    if (typeof args?.runKey === 'string' && args.runKey) {
+      const row = (await readBenchSessionRows()).find((r) => benchRunKey(r) === args.runKey);
+      if (!row) return { ok: false, error: 'this run is no longer in the session list' };
+      const resolved = await resolveRunResult(row);
+      if (!resolved)
+        return { ok: false, error: "this run's scored result could not be read from its folder" };
+      // Posted and not re-scored since: the board already shows exactly this result.
+      const rescoredAt = (resolved.result.runMeta as Partial<StoredRunMeta> | undefined)
+        ?.rescoredAt;
+      if (publishedIsCurrent((await readPublished())[args.runKey], rescoredAt))
+        return { ok: false, error: 'this run is already live on leanzero.net' };
+      stored = resolved.result;
+      storedIsLatest = resolved.latest;
+      runKey = args.runKey;
+    } else {
       try {
-        const clip = await publishableClip(
-          stored.workdir as string,
-          media.videos[0],
-          benchClipTools
-        );
-        payload.videoReceipt = await uploadBenchmarkVideo(
-          clip.video,
-          BENCH_PUBLISH_URL,
-          identity.installId,
-          stored.scorerVersion as string
-        );
-      } catch (error) {
-        return { ok: false, error: error instanceof Error ? error.message : String(error) };
+        stored = JSON.parse(await fs.readFile(BENCH_RESULT, 'utf8')) as Record<string, unknown>;
+      } catch {
+        return { ok: false, error: 'no benchmark result to publish — run the benchmark first' };
       }
     }
-  }
-  if (typeof stored.scorerVersion === 'string' && isolatedPaymentsTier(stored.scorerVersion)) {
-    if (typeof stored.workdir !== 'string')
-      return { ok: false, error: `${stored.scorerVersion} recording has no run directory` };
-    const media = await readBenchMedia(stored.workdir);
-    // With its one verified clip: uploaded as always. Without one, ONLY when the scorer's own rows say
-    // the app never served a page (clipAbsence = the site's rule, website 9c371d7): the payload simply
-    // carries no videoReceipt and the posted checksSummary rows are the proof. Otherwise refused.
-    const clipless =
-      media.videos.length !== 1 || media.error
-        ? clipAbsence(stored.scorerVersion, (stored.verdict as { checks?: unknown })?.checks)
-        : null;
-    // The site accepts noRecording only when it equals its own absence computed from the posted rows.
-    if (clipless) payload.noRecording = true;
-    else {
-      if (media.error || media.videos.length !== 1)
+    // Key by key for both families: the build's id and, after a re-score, rescoredAt — what lets the
+    // site replace the entry it already shows for this build instead of adding a second one.
+    const runMeta = publishRunMeta(stored);
+    if (!runMeta) {
+      return {
+        ok: false,
+        error:
+          'this result was saved by an older version of the app and is missing the run record publishing needs — run the benchmark again to publish',
+      };
+    }
+    // Frozen gate, from the CACHED catalog: the same refusal the server would return, without
+    // burning the POST. The server stays the authority — it refuses frozen benchmarks too.
+    const frozenRefusal = frozenPublishRefusal(
+      (await readBenchCatalogCache())?.benchmarks,
+      typeof stored.scorerVersion === 'string' ? stored.scorerVersion : ''
+    );
+    if (frozenRefusal) return frozenRefusal;
+    // `model` is ENGINE TRUTH only (v2.4): the renderer stopped sending one, so a user-editable
+    // value can no longer publish a lie. A result whose run recorded no usable pool_resolved id
+    // refuses loudly with the reason — never a substitute.
+    const model = (typeof stored.modelId === 'string' ? stored.modelId : '').trim();
+    if (benchmarkModelIdProblem(model)) {
+      return {
+        ok: false,
+        error:
+          'this result carries no usable model id from the engine — run the benchmark again to publish',
+      };
+    }
+    // Forge (forge/INTEGRATION.md): the same route and envelope, refused here when score_forge.py itself
+    // marked the verdict not board-grade (held, unpublishable, or an rc scorer).
+    const forgeResult =
+      typeof stored.scorerVersion === 'string' && familyOfScorer(stored.scorerVersion) === 'forge';
+    if (stored.scorerVersion === 'forge-2.0') {
+      let installedFingerprint: string;
+      try {
+        installedFingerprint = forgeTaskFingerprint(
+          await fs.readFile(path.join(resolveBenchPayloadDir(), 'forge2', 'release-manifest.json'))
+        );
+      } catch {
         return {
           ok: false,
-          error: `${stored.scorerVersion} publication requires one verified graded browser clip: ${media.error ?? 'clip count mismatch'}`,
+          error:
+            'The installed Forge 2.0 task receipt could not be read. Reinstall the current Goose Swarm release before publishing.',
         };
-      try {
-        const clip = await publishableClip(stored.workdir, media.videos[0], benchClipTools);
-        payload.videoReceipt = await uploadBenchmarkVideo(
-          clip.video,
-          BENCH_PUBLISH_URL,
-          identity.installId,
-          stored.scorerVersion
-        );
-      } catch (error) {
-        return { ok: false, error: error instanceof Error ? error.message : String(error) };
       }
+      const taskProblem = forgeTaskPublicationProblem(stored, installedFingerprint);
+      if (taskProblem) return { ok: false, error: taskProblem };
     }
-  }
-  // v2.3: per-node detail from the persisted pool_resolved devices — omitted entirely when
-  // the run's log had no pool_resolved (legacy results store no poolDevices).
-  const poolDevices = (Array.isArray(stored.poolDevices) ? stored.poolDevices : []) as Array<{
-    id?: unknown;
-    modelId?: unknown;
-  }>;
-  const nodesDetail = poolDevices
-    .filter((d) => typeof d?.modelId === 'string' && d.modelId.length > 0)
-    .slice(0, 8)
-    .map((d) => ({
-      name: benchNodeName(typeof d.id === 'string' ? d.id : ''),
-      model: (d.modelId as string).slice(0, 120),
-    }))
-    .filter((n) => n.name.length > 0);
-  if (nodesDetail.length > 0) payload.nodesDetail = nodesDetail;
-  // v2.1 scoring depth (contract addition 2026-08-17): the same "How this score was built"
-  // story the desktop shows, on the site's run card. Built key-by-key from the persisted
-  // verdict — never a spread — and each field omitted entirely for legacy results without one.
-  const verdict = stored.verdict as
-    | {
-        checks?: Array<{ check?: unknown; tier?: unknown; score?: unknown; detail?: unknown }>;
-        tiers?: Record<string, { mean?: unknown } | undefined>;
-        core?: unknown;
-        admission?: unknown;
-        rawScore?: unknown;
-        hard?: unknown;
-        findingsHeld?: unknown;
-        repairRounds?: Array<{ round?: unknown; findings?: unknown }>;
-      }
-    | undefined;
-  if (forgeResult) Object.assign(payload, forgePublishBody(stored));
-  else if (verdict) {
-    Object.assign(payload, publicScoreDetails(verdict));
-    if (verdict.admission) payload.admission = verdict.admission;
-    if (typeof verdict.rawScore === 'number') payload.rawScore = verdict.rawScore;
-    const checksSummary = (Array.isArray(verdict.checks) ? verdict.checks : [])
-      .filter(
-        (c) =>
-          typeof c?.check === 'string' &&
-          typeof c?.tier === 'string' &&
-          typeof c?.score === 'number'
-      )
-      .map((c) => ({
-        check: (c.check as string).slice(0, 60),
-        tier: c.tier as string,
-        score: c.score as number,
-        detail: (typeof c.detail === 'string' ? c.detail : '').slice(0, 220),
-      }));
-    if (checksSummary.length > 0) payload.checksSummary = checksSummary;
-
-    const num = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined);
-    const composition = {
-      core: num(verdict.core),
-      journey: num(verdict.tiers?.J?.mean),
-      visual: num(verdict.tiers?.V?.mean),
-      perf: num(verdict.tiers?.P?.mean),
-      hard: num(verdict.hard),
-    };
-    // All five or none — a partial object (an sb-4-era verdict without J/V/P) would trip the
-    // server's strict validation for no gain.
-    if (Object.values(composition).every((v) => typeof v === 'number')) {
-      payload.composition = composition;
+    if (forgeResult) {
+      const problem = forgePublishProblem(stored);
+      if (problem) return { ok: false, error: problem };
     }
-
-    const repairRounds = (Array.isArray(verdict.repairRounds) ? verdict.repairRounds : [])
-      .filter((r) => typeof r?.round === 'number' && typeof r?.findings === 'number')
-      .map((r) => ({ round: r.round as number, findings: r.findings as number }));
-    if (repairRounds.length > 0) payload.repairRounds = repairRounds;
-
-    const findingsHeld = (Array.isArray(verdict.findingsHeld) ? verdict.findingsHeld : [])
-      .filter((f): f is string => typeof f === 'string')
-      .slice(0, 12)
-      .map((f) => f.slice(0, 400));
-    if (findingsHeld.length > 0) payload.findingsHeld = findingsHeld;
-  }
-  try {
-    const res = await fetch(BENCH_SITE_API, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) {
-      // 422 = the server's consistency gates fired; surface ITS message, not a bare status.
-      const body = await res.text().catch(() => '');
-      let serverMessage = '';
-      try {
-        const parsed = JSON.parse(body) as { error?: unknown; message?: unknown };
-        serverMessage = String(parsed.error ?? parsed.message ?? '');
-      } catch {
-        serverMessage = body.slice(0, 300);
-      }
-      return {
-        ok: false,
-        status: res.status,
-        error: serverMessage ? `HTTP ${res.status}: ${serverMessage}` : `HTTP ${res.status}`,
-      };
+    const identity = await ensureBenchIdentity();
+    // The title is the USER'S name for the run (v2.4, Mihai 2026-08-30: the auto-generated
+    // handle is not a title) — required, refused here with the reason, never defaulted.
+    const title = typeof args?.title === 'string' ? args.title.trim().slice(0, 80) : '';
+    if (!title) {
+      return { ok: false, error: 'a title is required — name this run before publishing' };
     }
-    const accepted = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-    // The run is now live: remembered per run so its card says so and it is never posted twice.
-    const publishedKey =
-      runKey ??
-      benchRunKey({
-        runId: typeof stored.runId === 'string' ? stored.runId : null,
-        startedAt: runMeta.startedAt,
-      });
-    await recordPublished(publishedKey, {
-      url: typeof accepted.url === 'string' ? accepted.url : null,
+    // Prefer the frozen snapshot written WITH the result row — the workdir is reused and wiped
+    // by the next run, so reading it at publish time can attach another run's screenshots to
+    // this row's score.
+    // The snapshot belongs to result.json's run only; any other run reads its own tree.
+    const snapshotShots: BenchShot[] = storedIsLatest
+      ? await readBenchShotsSnapshot(path.join(BENCH_DIR, 'shots-snapshot'))
+      : [];
+    const screenshots = limitBenchShotsForPublish(
+      snapshotShots.length
+        ? snapshotShots
+        : typeof stored.workdir === 'string'
+          ? await pickBenchShots(stored.workdir)
+          : []
+    );
+    const tiers = (stored.tiers ?? {}) as Record<string, unknown>;
+    // STRICT allowlist per the contract — unknown keys reject the whole payload, so the payload
+    // is built key by key (never a spread of the stored row, which carries mine/workdir).
+    // v2.3 card hygiene: the PUBLIC label is neutral — "<N>-node Swarm", never the in-app
+    // first-person "Your fleet · N nodes".
+    const cloudEntrant =
+      typeof stored.provider === 'string' ||
+      (typeof stored.runId === 'string' && stored.runId.startsWith('cloud-'));
+    const nodeCount = !cloudEntrant && typeof stored.nodes === 'number' ? stored.nodes : null;
+    const payload: Record<string, unknown> = {
+      label: cloudEntrant
+        ? `${model} · single agent`
+        : nodeCount != null
+          ? `${nodeCount}-node Swarm`
+          : 'Swarm',
+      score: stored.score,
+      // Forge's tiers (L…E) come with forgePublishBody below; this is Gauntlet's A–D envelope.
+      tiers: { A: tiers.A ?? 0, B: tiers.B ?? 0, C: tiers.C ?? 0, D: tiers.D ?? 0 },
+      ...(nodeCount != null ? { nodes: nodeCount } : {}),
+      ...(typeof stored.hard === 'number' ? { hard: stored.hard } : {}),
+      ...(typeof stored.excellent === 'boolean' ? { excellent: stored.excellent } : {}),
+      ...(typeof stored.wallSecs === 'number' ? { wallSecs: stored.wallSecs } : {}),
+      ...(typeof stored.scorerVersion === 'string' ? { scorerVersion: stored.scorerVersion } : {}),
       title,
-      score: typeof stored.score === 'number' ? stored.score : 0,
-      publishedAt: new Date().toISOString(),
-      source: 'app',
-    }).catch((error) => log.error('Published run could not be recorded:', error));
-    return { ok: true, ...accepted };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
-});
+      model,
+      ...(typeof stored.provider === 'string' ? { provider: stored.provider } : {}),
+      poster: { installId: identity.installId, handle: identity.handle },
+      ...(screenshots.length > 0 ? { screenshots } : {}),
+      runMeta,
+      ...(stored.telemetry && typeof stored.telemetry === 'object'
+        ? { telemetry: stored.telemetry }
+        : {}),
+    };
+    // Forge's graded browser recording (score_forge.py, SB7.x's media shape) rides like Gauntlet's. Without
+    // a verified clip it publishes ONLY when the four visual rows are the scorer's own "no surface rendered
+    // app content" vacuous zeros (clipAbsence = the site's rule); anything else is refused.
+    if (forgeResult) {
+      const media =
+        typeof stored.workdir === 'string'
+          ? await readBenchMedia(stored.workdir)
+          : { videos: [], error: 'no run directory' };
+      const clipless =
+        media.videos.length !== 1 || media.error
+          ? clipAbsence(
+              stored.scorerVersion as string,
+              (stored.verdict as { checks?: unknown })?.checks
+            )
+          : null;
+      // Surfaces rendered (or the probe failed) but no verified clip: a SCORING problem, never a clip-less
+      // post — the card offers Retry scoring on the saved build (forgeClipMissing).
+      if (!clipless && (media.error || media.videos.length !== 1))
+        return {
+          ok: false,
+          error: `${stored.scorerVersion} publication requires its graded browser clip, and none could be verified although the app's surfaces were graded (${media.error ?? 'clip count mismatch'}). Retry scoring re-grades the saved build and records it.`,
+        };
+      if (clipless) payload.noRecording = true;
+      else {
+        try {
+          const clip = await publishableClip(
+            stored.workdir as string,
+            media.videos[0],
+            benchClipTools
+          );
+          payload.videoReceipt = await uploadBenchmarkVideo(
+            clip.video,
+            BENCH_PUBLISH_URL,
+            identity.installId,
+            stored.scorerVersion as string
+          );
+        } catch (error) {
+          return { ok: false, error: error instanceof Error ? error.message : String(error) };
+        }
+      }
+    }
+    if (typeof stored.scorerVersion === 'string' && isolatedPaymentsTier(stored.scorerVersion)) {
+      if (typeof stored.workdir !== 'string')
+        return { ok: false, error: `${stored.scorerVersion} recording has no run directory` };
+      const media = await readBenchMedia(stored.workdir);
+      // With its one verified clip: uploaded as always. Without one, ONLY when the scorer's own rows say
+      // the app never served a page (clipAbsence = the site's rule, website 9c371d7): the payload simply
+      // carries no videoReceipt and the posted checksSummary rows are the proof. Otherwise refused.
+      const clipless =
+        media.videos.length !== 1 || media.error
+          ? clipAbsence(stored.scorerVersion, (stored.verdict as { checks?: unknown })?.checks)
+          : null;
+      // The site accepts noRecording only when it equals its own absence computed from the posted rows.
+      if (clipless) payload.noRecording = true;
+      else {
+        if (media.error || media.videos.length !== 1)
+          return {
+            ok: false,
+            error: `${stored.scorerVersion} publication requires one verified graded browser clip: ${media.error ?? 'clip count mismatch'}`,
+          };
+        try {
+          const clip = await publishableClip(stored.workdir, media.videos[0], benchClipTools);
+          payload.videoReceipt = await uploadBenchmarkVideo(
+            clip.video,
+            BENCH_PUBLISH_URL,
+            identity.installId,
+            stored.scorerVersion
+          );
+        } catch (error) {
+          return { ok: false, error: error instanceof Error ? error.message : String(error) };
+        }
+      }
+    }
+    // v2.3: per-node detail from the persisted pool_resolved devices — omitted entirely when
+    // the run's log had no pool_resolved (legacy results store no poolDevices).
+    const poolDevices = (Array.isArray(stored.poolDevices) ? stored.poolDevices : []) as Array<{
+      id?: unknown;
+      modelId?: unknown;
+    }>;
+    const nodesDetail = poolDevices
+      .filter((d) => typeof d?.modelId === 'string' && d.modelId.length > 0)
+      .slice(0, 8)
+      .map((d) => ({
+        name: benchNodeName(typeof d.id === 'string' ? d.id : ''),
+        model: (d.modelId as string).slice(0, 120),
+      }))
+      .filter((n) => n.name.length > 0);
+    if (nodesDetail.length > 0) payload.nodesDetail = nodesDetail;
+    // v2.1 scoring depth (contract addition 2026-08-17): the same "How this score was built"
+    // story the desktop shows, on the site's run card. Built key-by-key from the persisted
+    // verdict — never a spread — and each field omitted entirely for legacy results without one.
+    const verdict = stored.verdict as
+      | {
+          checks?: Array<{ check?: unknown; tier?: unknown; score?: unknown; detail?: unknown }>;
+          tiers?: Record<string, { mean?: unknown } | undefined>;
+          core?: unknown;
+          admission?: unknown;
+          rawScore?: unknown;
+          hard?: unknown;
+          findingsHeld?: unknown;
+          repairRounds?: Array<{ round?: unknown; findings?: unknown }>;
+        }
+      | undefined;
+    if (forgeResult)
+      Object.assign(payload, forgePublishBody(stored), forgeTaskPublicationFields(stored));
+    else if (verdict) {
+      Object.assign(payload, publicScoreDetails(verdict));
+      if (verdict.admission) payload.admission = verdict.admission;
+      if (typeof verdict.rawScore === 'number') payload.rawScore = verdict.rawScore;
+      const checksSummary = (Array.isArray(verdict.checks) ? verdict.checks : [])
+        .filter(
+          (c) =>
+            typeof c?.check === 'string' &&
+            typeof c?.tier === 'string' &&
+            typeof c?.score === 'number'
+        )
+        .map((c) => ({
+          check: (c.check as string).slice(0, 60),
+          tier: c.tier as string,
+          score: c.score as number,
+          detail: (typeof c.detail === 'string' ? c.detail : '').slice(0, 220),
+        }));
+      if (checksSummary.length > 0) payload.checksSummary = checksSummary;
+
+      const num = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined);
+      const composition = {
+        core: num(verdict.core),
+        journey: num(verdict.tiers?.J?.mean),
+        visual: num(verdict.tiers?.V?.mean),
+        perf: num(verdict.tiers?.P?.mean),
+        hard: num(verdict.hard),
+      };
+      // All five or none — a partial object (an sb-4-era verdict without J/V/P) would trip the
+      // server's strict validation for no gain.
+      if (Object.values(composition).every((v) => typeof v === 'number')) {
+        payload.composition = composition;
+      }
+
+      const repairRounds = (Array.isArray(verdict.repairRounds) ? verdict.repairRounds : [])
+        .filter((r) => typeof r?.round === 'number' && typeof r?.findings === 'number')
+        .map((r) => ({ round: r.round as number, findings: r.findings as number }));
+      if (repairRounds.length > 0) payload.repairRounds = repairRounds;
+
+      const findingsHeld = (Array.isArray(verdict.findingsHeld) ? verdict.findingsHeld : [])
+        .filter((f): f is string => typeof f === 'string')
+        .slice(0, 12)
+        .map((f) => f.slice(0, 400));
+      if (findingsHeld.length > 0) payload.findingsHeld = findingsHeld;
+    }
+    try {
+      const res = await fetch(BENCH_SITE_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        // 422 = the server's consistency gates fired; surface ITS message, not a bare status.
+        const body = await res.text().catch(() => '');
+        let serverMessage = '';
+        try {
+          const parsed = JSON.parse(body) as { error?: unknown; message?: unknown };
+          serverMessage = String(parsed.error ?? parsed.message ?? '');
+        } catch {
+          serverMessage = body.slice(0, 300);
+        }
+        return {
+          ok: false,
+          status: res.status,
+          error: serverMessage ? `HTTP ${res.status}: ${serverMessage}` : `HTTP ${res.status}`,
+        };
+      }
+      const accepted = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      // The run is now live: remembered per run so its card says so and it is never posted twice.
+      const publishedKey =
+        runKey ??
+        benchRunKey({
+          runId: typeof stored.runId === 'string' ? stored.runId : null,
+          startedAt: runMeta.startedAt,
+        });
+      await recordPublished(publishedKey, {
+        url: typeof accepted.url === 'string' ? accepted.url : null,
+        title,
+        score: typeof stored.score === 'number' ? stored.score : 0,
+        publishedAt: new Date().toISOString(),
+        source: 'app',
+      }).catch((error) => log.error('Published run could not be recorded:', error));
+      return { ok: true, ...accepted };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  })
+);
 
 // One watch set per renderer, armed by that renderer's own reads and dropped when it goes away.
 const swarmWatchers = new SwarmWatchRegistry();
@@ -6697,7 +7159,8 @@ const refuseShortcutDuringRun = (
   triggeredByAccelerator: boolean
 ): boolean => {
   const focused = BrowserWindow.getFocusedWindow();
-  const benchmarkRunning = activeBenchRun !== null;
+  const benchmarkRunning =
+    activeBenchRun !== null || activeBenchSeries !== null || benchmarkLaunchPending;
   const refused = shouldRefuseShortcut({
     action,
     benchmarkRunning,
@@ -7705,7 +8168,7 @@ app.on('will-quit', (event) => {
     mlxMonitor.stop();
     // A benchmark run cannot outlive the app that owns it: the same per-pid cancel as the button,
     // synchronous so it lands before Electron finishes quitting (U-M8).
-    if (activeBenchRun !== null) {
+    if (activeBenchRun !== null || activeBenchSeries !== null) {
       cancelActiveBenchRun('app quitting');
       activeBenchRun?.releasePower();
     }

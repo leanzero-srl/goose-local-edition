@@ -1,22 +1,34 @@
-"""forge-2.0 controls (forge2/SPEC.md §5): the golden, one-defect mutants, the untouched starter and the idle app.
+"""forge-2.0 controls (forge2/SPEC.md §4): the golden, one-defect mutants, the untouched starter and the idle app.
 
     python3 forge2_controls.py --seed <16 hex> [--only m_x] [--out controls.json]
 
-For every `forge2/mutants/<id>.patch` with its `<id>.expect.json` (`{"loses": [checks], "critical": bool | class,
-"max_final": n}`): copy `bench/golden-forge2`, apply the patch, rebuild the Custom UI when the golden carries a build
-script, score it SERIALLY with score_forge2.py at the same seed as the golden, and compare. A mutant passes only when
-it loses exactly its declared rows (plus rows ROOT_BLOCKS attributes to a declared root, never anything else), fires a
+The explicit R1..R9 catalog in `forge2/mutants2/MUTANTS.json` and native R10 controls qualify Forge 2.0.
+Optional v1 regression patches in `forge2/mutants` require --legacy-regression: old patches may no longer apply
+to the v2 reference and their actual failures are reported. All sources share one copy/apply/rebuild/score/judge path. Their expectations (`{"loses": [checks],
+"may_lose": [checks], "why": cause, "critical": bool | class, "max_final": n}`) are compared against the golden.
+Copy `bench/golden-forge2`, apply the patch, rebuild the Custom UI when the golden carries a build script, score it SERIALLY with score_forge2.py at the same seed as the golden, and compare. A mutant passes only when
+it loses its required rows and no undeclared rows (optional named secondary losses require a documented cause,
+plus rows ROOT_BLOCKS attributes to a declared root), fires a
 critical exactly when declared (`critical` naming a SPEC §4 class must fire THAT class), lands at or below
-`max_final`, and scored with no unavailable row and no harness_missing. SPEC §5's gate, checked here: the golden passes
-the reference gate (1.000), every v2 family R1..R9 has a passing mutant that loses one of its rows, the starter as
+`max_final`, and scored with no unavailable row and no harness_missing. SPEC §4's gate, checked here: the golden meets every functional guarantee and
+the verified UI budget; event/reconcile economy remains measured against the frozen five-site fit, every v2 family R1..R10 has a passing mutant that loses one of its rows, the starter as
 handed out (Scope Ledger v1) scores at or below 0.30, and an idle app (the starter's app id with one no-op trigger)
 is SCORED — never refused — at or below 0.05.
 
-Nothing here edits the golden or the mutants; every candidate is a disposable copy.
+Native JQL controls are generated from the current golden's real implementation: remove the installed module,
+leave native precomputations stale, or incorrectly share the last person's visible IDs. They are built and scored
+through the same runtime as patch mutants. --materialise-runtime <id> --tree <path> creates one disposable control
+without scoring, for the focused HTTP tests.
+
+--prepare-families applies, rebuilds and lints all catalog and native family controls without any scoring or model
+calls. --keep also saves pre-score SHA256 source inventories and exact mutation diffs, including rebuilt bundles,
+so disposable candidate bytes remain attributable after scoring. Nothing here edits the golden or the mutants.
 """
 from __future__ import annotations
 
 import argparse
+import difflib
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -31,9 +43,10 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 GOLDEN = HERE / 'golden-forge2'
 MUTANTS = ROOT / 'forge2' / 'mutants'
+FAMILY_CATALOG = ROOT / 'forge2' / 'mutants2' / 'MUTANTS.json'
 STARTER = ROOT / 'forge2' / 'starter'
 IDLE_MAX = 0.05     # DESIGN §8.6 (6) / §13.4 item 6
-STARTER_MAX = 0.30  # SPEC §5: "starter untouched <= 0.30"
+STARTER_MAX = 0.30  # SPEC §4: "starter untouched <= 0.30"
 
 
 KEEP = None  # a directory where every verdict is kept (--keep)
@@ -85,17 +98,44 @@ def _rows(verdict: Dict) -> Dict[str, Dict]:
     return {r['check']: r for r in verdict['checks']}
 
 
+def runtime_failures(verdict: Dict) -> List[str]:
+    """Runtime controls cannot qualify on a held result or unavailable evidence, even if summary flags are missing."""
+    fails = []
+    if verdict.get('status') != 'scored':
+        fails.append(f"runtime status {verdict.get('status')!r} is not scored")
+    if verdict.get('probe_unavailable'):
+        fails.append(f"unavailable rows {verdict['probe_unavailable']} (the lint double-run included) — harness defect")
+    if verdict.get('harness_missing'):
+        fails.append(f"harness_missing {verdict['harness_missing'][:4]} — the emulator must model the control's calls")
+    unavailable = [row.get('check') for row in verdict.get('checks') or [] if row.get('unavailable')]
+    if unavailable:
+        fails.append(f'row-level unavailable evidence {unavailable} — harness defect')
+    return fails
+
+
+def capped_control_failures(verdict: Dict, cap: float) -> List[str]:
+    fails = runtime_failures(verdict)
+    if verdict['score'] > cap:
+        fails.append(f"{verdict['status']} at {verdict['score']} (must be scored at <= {cap})")
+    return fails
+
+
 def judge(golden: Dict, mutant: Dict, expect: Dict, root_blocks: Dict[str, tuple], calibration_owned=()) -> List[str]:
     """Failures (empty = the mutant behaves as declared)."""
-    fails: List[str] = []
+    fails = runtime_failures(mutant)
     g, m = _rows(golden), _rows(mutant)
-    if mutant.get('probe_unavailable'):
-        fails.append(f"unavailable rows {mutant['probe_unavailable']} (the lint double-run included) — harness defect")
-    if mutant.get('harness_missing'):
-        fails.append(f"harness_missing {mutant['harness_missing'][:4]} — the emulator must model the mutant's calls")
     lost = {n for n, row in m.items() if n in g and row['score'] < g[n]['score'] - 1e-9}
     declared = set(expect.get('loses') or [])
-    unknown = declared - set(g)
+    optional = set(expect.get('may_lose') or [])
+    if optional and not str(expect.get('why') or '').strip():
+        fails.append('may_lose requires a documented causal explanation in why')
+        optional = set()
+    if declared & optional:
+        fails.append(f'checks cannot be both required and optional: {sorted(declared & optional)}')
+    absent = set(g) - set(m)
+    if absent:
+        fails.append(f'mutant verdict omits registered checks {sorted(absent)}')
+    unknown = (declared | optional) - set(g)
     if unknown:
         fails.append(f'expect.json names unregistered checks {sorted(unknown)}')
     # ROOT_BLOCKS attribution is transitive: a declared root that lost attributes its dependents, and a dependent
@@ -105,16 +145,9 @@ def judge(golden: Dict, mutant: Dict, expect: Dict, root_blocks: Dict[str, tuple
         nxt = {d for root in frontier for d in root_blocks.get(root, ())} - attributed
         attributed |= nxt
         frontier = nxt & lost
-    # A row the mutant left VACUOUS (its precondition unmet: the surface was never exercised) is the shadow of the
-    # declared defect, priced 0 with no critical of its own (its 0 counts in its reliability group like any score) —
-    # attributed whenever a declared row was lost.
-    if declared & lost:
-        # (score_forge2 marks a row its app's own manifest fault left unopened `manifest:`, §17.8 G — the same shadow)
-        attributed |= {n for n, row in m.items()
-                       if (row.get('parts') or {}).get('vacuous_root', '').startswith(('precondition', 'manifest'))}
     missing = sorted(declared - lost)
     # Calibration-owned economy rows are ratios any code change moves; they are reported, never a mutant's defect.
-    extra = sorted(lost - declared - attributed - set(calibration_owned))
+    extra = sorted(lost - declared - optional - attributed - set(calibration_owned))
     if missing:
         fails.append(f'declared losses that did not happen: {missing}')
     if extra:
@@ -125,6 +158,9 @@ def judge(golden: Dict, mutant: Dict, expect: Dict, root_blocks: Dict[str, tuple
     if isinstance(want, str):
         if want not in classes:
             fails.append(f"critical class {want!r} expected, fired classes {classes}")
+        unexpected = set(classes) - {want}
+        if unexpected:
+            fails.append(f'unexpected critical classes {sorted(unexpected)}')
     elif 'critical' in expect and bool(want) != fired:
         fails.append(f"critical expected {bool(want)}, fired {mutant['critical'].get('unsuppressed')}")
     if 'max_final' in expect and mutant['score'] > float(expect['max_final']) + 1e-9:
@@ -133,14 +169,69 @@ def judge(golden: Dict, mutant: Dict, expect: Dict, root_blocks: Dict[str, tuple
 
 
 def family_gaps(mutants: Dict[str, Dict], tier_of: Dict[str, str], families) -> List[str]:
-    """SPEC §5: "one mutant per R-family loses its rows" — the families with no PASSING mutant that lost a row of it."""
-    covered = {tier_of.get(n) for entry in mutants.values() if not entry.get('fails') for n in entry.get('lost') or []}
+    """SPEC §4: "one mutant per R-family loses its rows" — the families with no PASSING mutant that lost a row of it."""
+    covered = {entry['family'] for entry in mutants.values() if entry.get('family') and not entry.get('fails')
+               for n in entry.get('required_losses') or [] if tier_of.get(n) == entry['family']}
     return [fam for fam in families if fam not in covered]
 
 
 def _materialise(src: Path, dest: Path) -> None:
     shutil.copytree(src, dest, ignore=shutil.ignore_patterns('node_modules', '.forge-dev', 'forge-shots', '__pycache__',
-                                                             'verdict*.json', 'forge-observations.json'))
+                                                             'verdict*.json', 'forge-observations.json', 'bench-media'))
+
+
+RUNTIME_MUTANTS = {
+    'm_jql_missing_module': {'loses': ['r10_manifest', 'r10_initial_membership', 'r10_precomputation_refresh',
+                                     'r10_shared_permissions', 'r10_empty_and_closed', 'r10_invalid_arguments'],
+                             'critical': False, 'family': 'R10',
+                             'why': 'The native JQL module is absent, so Jira cannot invoke scopeChanged.'},
+    'm_jql_stale_precomputation': {'loses': ['r10_precomputation_refresh'],
+                                 'may_lose': ['r10_shared_permissions', 'r10_empty_and_closed'],
+                                 'critical': False, 'family': 'R10',
+                                 'why': 'The refresh handler returns before updating existing shared precomputations. '
+                                        'Other viewers and a sprint that closes reuse those same native IDs without '
+                                        'invoking the function, so their cached searches also miss later ledger members. '
+                                        "Jira still applies each caller's Browse permissions; this does not disclose hidden issues."},
+    'm_jql_user_baked_cache': {'loses': ['r10_shared_permissions'], 'may_lose': ['r10_initial_membership'],
+                             'critical': False, 'family': 'R10',
+                             'why': "A person view stores the last viewer's permitted IDs. A different caller's first "
+                                    'native JQL evaluation can already consume that list and omit its visible members; '
+                                    'later shared queries reuse the incorrect clause. Jira still applies Browse permissions.'},
+}
+
+
+def _replace_once(tree: Path, relative: str, before: str, after: str) -> None:
+    path = tree / relative
+    text = path.read_text()
+    count = text.count(before)
+    if count != 1:
+        raise RuntimeError(f'{relative}: runtime control anchor occurs {count} times: {before[:100]!r}')
+    path.write_text(text.replace(before, after, 1))
+
+
+def _apply_runtime_mutant(dest: Path, mutant_id: str) -> None:
+    """One real code defect; observations and scoring are never patched."""
+    if mutant_id not in RUNTIME_MUTANTS:
+        raise ValueError(f'Unknown runtime mutant {mutant_id!r}')
+    if mutant_id == 'm_jql_missing_module':
+        path = dest / 'manifest.yml'
+        text, count = re.subn(r'(?ms)^  jira:jqlFunction:\n.*?(?=^  [^\s]|\Z)', '', path.read_text())
+        if count != 1:
+            raise RuntimeError(f'Installed JQL module anchor occurs {count} times')
+        path.write_text(text)
+    elif mutant_id == 'm_jql_stale_precomputation':
+        _replace_once(dest, 'src/jql.js', 'export async function refreshScopePrecomputations(sprintIds, work) {',
+                      'export async function refreshScopePrecomputations(sprintIds, work) {\n  return { skipped: true };')
+    elif mutant_id == 'm_jql_user_baked_cache':
+        _replace_once(dest, 'src/views.js', "import { jiraJson, route, postJson } from './jira';",
+                      "import { kvs } from '@forge/kvs';\nimport { jiraJson, route, postJson } from './jira';")
+        _replace_once(dest, 'src/views.js', '  return { sprint, ...totalsView(totals), hiddenCount: changes.length - rows.length, changes: rows };',
+                      "  await kvs.set(`scope-jql-visible:${sprint.id}`, rows.map((row) => row.issueId));\n"
+                      '  return { sprint, ...totalsView(totals), hiddenCount: changes.length - rows.length, changes: rows };')
+        _replace_once(dest, 'src/jql.js',
+                      '    const value = fragment(await changedIds(sprintId, { maxWaitSeconds: 0 }), request.clause.operator);',
+                      '    const ids = await kvs.get(`scope-jql-visible:${sprintId}`) ?? await changedIds(sprintId, { maxWaitSeconds: 0 });\n'
+                      '    const value = fragment(ids, request.clause.operator);')
 
 
 def _rebuild(tree: Path, app_modules: Optional[str]) -> Optional[str]:
@@ -150,11 +241,172 @@ def _rebuild(tree: Path, app_modules: Optional[str]) -> Optional[str]:
     if not app_modules:
         return 'the golden has a build script but no kit app-modules are available to run it'
     link = tree / 'node_modules'
-    if not link.exists():
+    created = not link.exists()
+    if created:
         os.symlink(app_modules, link)
-    proc = subprocess.run(['npm', 'run', 'build'], cwd=tree, capture_output=True, text=True)
-    link.unlink()
+    try:
+        proc = subprocess.run(['npm', 'run', 'build'], cwd=tree, capture_output=True, text=True)
+    finally:
+        if created:
+            link.unlink()
     return None if proc.returncode == 0 else f'npm run build failed: {proc.stderr.strip()[-400:]}'
+
+
+def candidates(patch_dir: Path = MUTANTS, catalog: Path = FAMILY_CATALOG, include_legacy: bool = False) -> List[Dict]:
+    """Every registered control, with explicit family ownership rather than inferred incidental losses."""
+    result = []
+    for patch in sorted(patch_dir.glob('*.patch')) if include_legacy else []:
+        expect_path = patch.with_suffix('.expect.json')
+        if not expect_path.is_file():
+            raise RuntimeError(f'{expect_path} is missing')
+        result.append({'name': patch.stem, 'patch': patch, 'expect': json.loads(expect_path.read_text()),
+                       'family': None, 'origin': 'v1-regression'})
+    if include_legacy and not result:
+        raise RuntimeError(f'no v1 regression patches under {patch_dir}')
+    rows = json.loads(catalog.read_text())
+    if not isinstance(rows, list) or not rows:
+        raise RuntimeError(f'{catalog} must contain the R1..R9 mutant list')
+    covered = set()
+    for entry in rows:
+        family = entry.get('family')
+        if family not in {f'R{i}' for i in range(1, 10)}:
+            raise RuntimeError(f"{entry.get('name')}: invalid requirement family {family!r}")
+        patch = (catalog.parent / entry['patch']).resolve()
+        if patch.parent != catalog.parent.resolve() or not patch.is_file():
+            raise RuntimeError(f"{entry['name']}: missing local catalog patch {entry['patch']!r}")
+        if not entry.get('loses') or not str(entry.get('why') or '').strip():
+            raise RuntimeError(f"{entry['name']}: requires named losses and a causal explanation")
+        covered.add(family)
+        result.append({'name': entry['name'], 'patch': patch, 'expect': entry, 'family': family,
+                       'origin': 'v2-catalog'})
+    missing = {f'R{i}' for i in range(1, 10)} - covered
+    if missing:
+        raise RuntimeError(f'catalog has no registered controls for {sorted(missing)}')
+    result.extend({'name': name, 'runtime_id': name, 'expect': expect, 'family': expect['family'],
+                   'origin': 'native-jql'} for name, expect in RUNTIME_MUTANTS.items())
+    names = [entry['name'] for entry in result]
+    if len(names) != len(set(names)):
+        raise RuntimeError('duplicate control names across the three control sources')
+    return result
+
+
+def materialise_control(dest: Path, patch: Optional[Path] = None, runtime_id: Optional[str] = None) -> None:
+    """The only golden copy/mutation path, shared by the scorer and the standalone patch builder."""
+    if patch is not None and runtime_id is not None:
+        raise ValueError('a control can have one patch or one runtime mutation')
+    if dest.exists():
+        if any(dest.iterdir()):
+            raise RuntimeError(f'{dest} is not empty')
+        dest.rmdir()
+    _materialise(GOLDEN, dest)
+    if patch is not None:
+        proc = subprocess.run(['git', 'apply', '--whitespace=nowarn', str(patch.resolve())], cwd=dest,
+                              capture_output=True, text=True)
+        if proc.returncode:
+            raise RuntimeError(f'{patch.name} does not apply: {proc.stderr.strip()[-400:]}')
+    elif runtime_id is not None:
+        _apply_runtime_mutant(dest, runtime_id)
+
+
+def runtime_mutant(dest: Path, mutant_id: str) -> None:
+    materialise_control(dest, runtime_id=mutant_id)
+
+
+def prepare_control(dest: Path, app_modules: Optional[str], patch: Optional[Path] = None,
+                    runtime_id: Optional[str] = None) -> None:
+    materialise_control(dest, patch, runtime_id)
+    why = _rebuild(dest, app_modules)
+    if why:
+        raise RuntimeError(why)
+
+
+def offline_lint(tree: Path, kit_dir: str) -> Dict:
+    proc = subprocess.run(['node', str(Path(kit_dir) / 'bin' / 'lint.cjs'), '--json'], cwd=tree,
+                          capture_output=True, text=True, env={**os.environ, 'FORGE_KIT': kit_dir})
+    out = proc.stdout + proc.stderr
+    line = next((line.removeprefix('LINT_JSON ') for line in reversed(out.splitlines())
+                 if line.removeprefix('LINT_JSON ').startswith('{')), None)
+    if line is None:
+        raise RuntimeError(f'lint crashed: {out.strip()[-400:]}')
+    problems = json.loads(line).get('problems') or []
+    return {'errors': [p.get('message') for p in problems if p.get('sev') == 'error'],
+            'warnings': sorted(p.get('message') for p in problems if p.get('sev') == 'warning')}
+
+
+SOURCE_EXCLUDED_DIRS = {'node_modules', '.forge-dev', 'forge-shots', '__pycache__', 'bench-media', '.swarm', '.git'}
+SOURCE_EXCLUDED_FILES = {'forge-observations.json', '.DS_Store', 'forge-reference-pass.json', 'trace.jsonl', 'engine-console.log'}
+
+
+def source_inventory(tree: Path) -> Dict:
+    """Hash actual prepared bytes, including rebuilt bundles; runtime caches and verdicts have no source identity."""
+    files = []
+    for directory, subdirs, names in os.walk(tree, followlinks=False):
+        subdirs[:] = sorted(name for name in subdirs if name not in SOURCE_EXCLUDED_DIRS)
+        for name in subdirs:
+            if (Path(directory) / name).is_symlink():
+                raise RuntimeError(f'prepared source contains an unexpected directory symlink: {Path(directory) / name}')
+        for name in sorted(names):
+            if name in SOURCE_EXCLUDED_FILES or (name.startswith('verdict') and name.endswith('.json')):
+                continue
+            path = Path(directory) / name
+            if path.is_symlink():
+                raise RuntimeError(f'prepared source contains an unexpected file symlink: {path}')
+            data = path.read_bytes()
+            files.append({'path': path.relative_to(tree).as_posix(), 'bytes': len(data),
+                          'sha256': hashlib.sha256(data).hexdigest()})
+    files.sort(key=lambda entry: entry['path'])
+    canonical = json.dumps(files, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
+    return {'sha256': hashlib.sha256(canonical).hexdigest(), 'files': files,
+            'excluded_dirs': sorted(SOURCE_EXCLUDED_DIRS), 'excluded_files': sorted(SOURCE_EXCLUDED_FILES),
+            'excluded_patterns': ['verdict*.json']}
+
+
+def source_receipt(tree: Path, reference: Optional[Path] = None, candidate: Optional[Dict] = None) -> Dict:
+    """Retain exact tested mutation, not merely its name, before disposable candidates disappear."""
+    inventory = source_inventory(tree)
+    receipt = {'control': tree.name, 'inventory': inventory, 'mutation': {}, 'diffs': {}}
+    if candidate:
+        receipt['mutation'] = {key: candidate[key] for key in ('name', 'family', 'origin', 'runtime_id', 'expect')
+                               if key in candidate}
+        patch = candidate.get('patch')
+        if patch:
+            receipt['mutation']['patch'] = str(patch.relative_to(ROOT))
+            receipt['mutation']['patch_sha256'] = hashlib.sha256(patch.read_bytes()).hexdigest()
+    if reference is not None:
+        baseline = source_inventory(reference)
+        receipt['reference_inventory_sha256'] = baseline['sha256']
+        before = {entry['path']: entry for entry in baseline['files']}
+        after = {entry['path']: entry for entry in inventory['files']}
+        for name in sorted(set(before) | set(after)):
+            if before.get(name) == after.get(name):
+                continue
+            left, right = reference / name, tree / name
+            try:
+                old = left.read_bytes().decode('utf-8') if name in before else ''
+                new = right.read_bytes().decode('utf-8') if name in after else ''
+                receipt['diffs'][name] = ''.join(difflib.unified_diff(
+                    old.splitlines(keepends=True), new.splitlines(keepends=True),
+                    fromfile=f'golden/{name}', tofile=f'{tree.name}/{name}'))
+            except UnicodeError:
+                receipt['diffs'][name] = {'binary': True, 'before': before.get(name), 'after': after.get(name)}
+    if KEEP:
+        path = KEEP / f'{tree.name}-source.json'
+        path.write_text(json.dumps(receipt, indent=2))
+        return {'inventory_sha256': inventory['sha256'], 'file_count': len(inventory['files']), 'receipt': str(path)}
+    return receipt
+
+
+def lost_rows(golden: Dict, mutant: Dict) -> List[str]:
+    g = _rows(golden)
+    return sorted(name for name, row in _rows(mutant).items()
+                  if name in g and row['score'] < g[name]['score'] - 1e-9)
+
+
+def loss_evidence(golden: Dict, mutant: Dict, expect: Dict) -> Dict:
+    """Only observed optional losses are recorded, with the named cause and both actual scored rows."""
+    g, m = _rows(golden), _rows(mutant)
+    optional_lost = set(lost_rows(golden, mutant)) & set(expect.get('may_lose') or [])
+    return {name: {'cause': expect['why'], 'golden': g[name], 'mutant': m[name]} for name in sorted(optional_lost)}
 
 
 def starter_untouched(dest: Path) -> None:
@@ -183,7 +435,13 @@ def one_function_app(dest: Path) -> None:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
-    ap.add_argument('--seed', required=True)
+    ap.add_argument('--seed')
+    ap.add_argument('--legacy-regression', action='store_true',
+                    help='also score optional old Forge 1 regression patches against the v2 reference; report failures')
+    ap.add_argument('--prepare-families', action='store_true',
+                    help='apply/build/lint R1..R10 controls without scoring or model calls')
+    ap.add_argument('--materialise-runtime', choices=tuple(RUNTIME_MUTANTS))
+    ap.add_argument('--tree', type=Path, help='disposable destination for --materialise-runtime; must not exist')
     ap.add_argument('--only', action='append', default=[])
     ap.add_argument('--out', type=Path)
     ap.add_argument('--keep', type=Path, help='keep every verdict JSON here')
@@ -191,13 +449,22 @@ def main(argv=None) -> int:
     ap.add_argument('--yield-to', action='append', default=[], metavar='PATTERN',
                     help='wait before each scoring while `pgrep -f PATTERN` finds another scorer (repeatable)')
     a = ap.parse_args(argv)
+    if a.prepare_families and a.legacy_regression:
+        ap.error('--prepare-families qualifies modern families; --legacy-regression is an explicit scoring lane')
+    if a.materialise_runtime:
+        if not a.tree:
+            ap.error('--materialise-runtime requires --tree')
+        runtime_mutant(a.tree, a.materialise_runtime)
+        return 0
+    if not a.seed and not a.prepare_families:
+        ap.error('--seed is required for scoring controls')
     global KEEP, QUIET_LOAD, YIELD_TO
     QUIET_LOAD = a.quiet_load
     YIELD_TO = a.yield_to
     if a.keep:
         a.keep.mkdir(parents=True, exist_ok=True)
         KEEP = a.keep
-    if len(a.seed) != 16 or any(c not in '0123456789abcdefABCDEF' for c in a.seed):
+    if a.seed and (len(a.seed) != 16 or any(c not in '0123456789abcdefABCDEF' for c in a.seed)):
         ap.error('--seed must be 16 hex characters')
     if not GOLDEN.is_dir():
         print(f'REFUSED: {GOLDEN} does not exist (P10 deliverable)', file=sys.stderr)
@@ -207,59 +474,79 @@ def main(argv=None) -> int:
     if kit is None:
         print(f'REFUSED: {why}', file=sys.stderr)
         return 3
+    registered = candidates(include_legacy=a.legacy_regression)
+    unknown = set(a.only) - {entry['name'] for entry in registered}
+    if unknown:
+        ap.error(f'unknown control names {sorted(unknown)}')
+    if a.prepare_families:
+        registered = [entry for entry in registered if entry['family']]
     app_modules = kit['app_modules']
-    report: Dict = {'seed': a.seed, 'mutants': {}, 'controls': {}}
+    report: Dict = {'seed': a.seed, 'legacy_regression_included': a.legacy_regression, 'mutants': {}, 'controls': {}}
     failed = False
     with tempfile.TemporaryDirectory(prefix='forge2-controls-') as tmp:
         tmp = Path(tmp)
         # The golden is materialised and rebuilt exactly as every mutant is, so the comparison is like for like.
-        _materialise(GOLDEN, tmp / 'golden')
-        why = _rebuild(tmp / 'golden', app_modules)
-        if why:
-            print(f'REFUSED: the golden does not rebuild: {why}', file=sys.stderr)
-            return 3
+        prepare_control(tmp / 'golden', app_modules)
+        golden_source = source_receipt(tmp / 'golden', candidate={'origin': 'reference'})
+        if a.prepare_families:
+            base = offline_lint(tmp / 'golden', kit['kit_dir'])
+            report['golden'] = {'lint': base, 'source': golden_source}
+            failed = bool(base['errors'])
+            for candidate in registered:
+                mid = candidate['name']
+                if a.only and mid not in a.only:
+                    continue
+                entry = {'family': candidate['family'], 'origin': candidate['origin']}
+                try:
+                    tree = tmp / mid
+                    prepare_control(tree, app_modules, candidate.get('patch'), candidate.get('runtime_id'))
+                    entry['source'] = source_receipt(tree, tmp / 'golden', candidate)
+                    got = offline_lint(tree, kit['kit_dir'])
+                    extra_warnings = [warning for warning in got['warnings'] if warning not in base['warnings']]
+                    entry.update(lint=got, new_warnings=extra_warnings, fails=got['errors'] + extra_warnings)
+                except Exception as error:
+                    entry['fails'] = [f'{type(error).__name__}: {error}']
+                failed |= bool(entry['fails'])
+                report['mutants'][mid] = entry
+                print(f"{mid}: {'PASS' if not entry['fails'] else 'FAIL ' + '; '.join(entry['fails'])}",
+                      file=sys.stderr, flush=True)
+            report['mode'] = 'apply-build-lint-only'
+            if a.out:
+                a.out.write_text(json.dumps(report, indent=2))
+            print(json.dumps(report, indent=2))
+            return 1 if failed else 0
         golden = score(tmp / 'golden', a.seed, tmp / 'golden.json')
-        report['golden'] = {'score': golden['score'], 'status': golden['status']}
-        gfails = score_forge2.reference_failures(golden)
+        report['golden'] = {'score': golden['score'], 'status': golden['status'], 'source': golden_source}
+        gfails = runtime_failures(golden) + score_forge2.reference_failures(golden)
         if gfails:
             report['golden']['reference_failures'] = gfails
             failed = True
-        patches = sorted(MUTANTS.glob('*.patch')) if MUTANTS.is_dir() else []
-        for patch in patches:
-            mid = patch.stem
+        for candidate in registered:
+            mid, expect = candidate['name'], candidate['expect']
             if a.only and mid not in a.only:
                 continue
-            expect_path = patch.with_suffix('.expect.json')
-            entry: Dict = {}
+            entry: Dict = {'family': candidate['family'], 'origin': candidate['origin'],
+                           'declared_cause': expect.get('why'), 'required_checks': expect.get('loses') or []}
             try:
-                if not expect_path.is_file():
-                    raise RuntimeError(f'{expect_path.name} is missing')
-                expect = json.loads(expect_path.read_text())
                 tree = tmp / mid
-                _materialise(GOLDEN, tree)
-                proc = subprocess.run(['git', 'apply', '--whitespace=nowarn', str(patch)], cwd=tree,
-                                      capture_output=True, text=True)
-                if proc.returncode:
-                    raise RuntimeError(f'patch does not apply: {proc.stderr.strip()[-300:]}')
-                why = _rebuild(tree, app_modules)
-                if why:
-                    raise RuntimeError(why)
+                prepare_control(tree, app_modules, candidate.get('patch'), candidate.get('runtime_id'))
+                entry['source'] = source_receipt(tree, tmp / 'golden', candidate)
                 verdict = score(tree, a.seed, tmp / f'{mid}.json')
-                entry = {'score': verdict['score'], 'lost': sorted(
-                    n for n, r in _rows(verdict).items() if r['score'] < _rows(golden)[n]['score'] - 1e-9),
-                    'criticals': verdict['critical'].get('unsuppressed'),
-                    'fails': judge(golden, verdict, expect, score_forge2.ROOT_BLOCKS, score_forge2.CALIBRATION_OWNED)}
+                lost = lost_rows(golden, verdict)
+                entry.update(score=verdict['score'], lost=lost,
+                             required_losses=sorted(set(lost) & set(expect.get('loses') or [])),
+                             secondary_losses=loss_evidence(golden, verdict, expect),
+                             criticals=verdict['critical'].get('unsuppressed'),
+                             fails=judge(golden, verdict, expect, score_forge2.ROOT_BLOCKS,
+                                         score_forge2.CALIBRATION_OWNED))
             except Exception as error:
-                entry = {'fails': [f'{type(error).__name__}: {error}']}
+                entry['fails'] = [f'{type(error).__name__}: {error}']
             failed |= bool(entry['fails'])
             report['mutants'][mid] = entry
             if a.out:
                 a.out.write_text(json.dumps(report, indent=2))
             print(f"{mid}: {entry.get('score')} {'PASS' if not entry['fails'] else 'FAIL ' + '; '.join(entry['fails'])}",
                   file=sys.stderr, flush=True)
-        if not patches:
-            report['mutants_missing'] = f'no *.patch under {MUTANTS} (SPEC §5: one mutant per R-family)'
-            failed = True
         if not a.only:
             uncovered = family_gaps(report['mutants'], score_forge2.TIER_OF, tuple(score_forge2.FAMILY_WEIGHT))
             report['family_coverage'] = {'uncovered': uncovered}
@@ -269,10 +556,10 @@ def main(argv=None) -> int:
             try:
                 tree = tmp / label
                 build(tree)
+                source = source_receipt(tree, tmp / 'golden', {'name': label, 'origin': 'starter-or-idle'})
                 verdict = score(tree, a.seed, tmp / f'{label}.json')
-                fails = [] if verdict['status'] == 'scored' and verdict['score'] <= cap else \
-                    [f"{verdict['status']} at {verdict['score']} (must be scored at <= {cap})"]
-                report['controls'][label] = {'score': verdict['score'], 'fails': fails}
+                fails = capped_control_failures(verdict, cap)
+                report['controls'][label] = {'score': verdict['score'], 'source': source, 'fails': fails}
             except Exception as error:
                 report['controls'][label] = {'fails': [f'{type(error).__name__}: {error}']}
             failed |= bool(report['controls'][label]['fails'])

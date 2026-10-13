@@ -11524,5 +11524,119 @@
   },
   "engineGlanceSettings.showAgain": {
     "defaultMessage": "重新顯示"
+  },
+  "benchmarkSection.build": {
+    "defaultMessage": "建置 {index}"
+  },
+  "benchmarkSection.twoBuilds": {
+    "defaultMessage": "2 次建置"
+  },
+  "forgeSeries.between": {
+    "defaultMessage": "建置 1 已完成。正在準備建置 2。"
+  },
+  "forgeSeries.build": {
+    "defaultMessage": "建置 {index} / 2"
+  },
+  "forgeSeries.callBudget": {
+    "defaultMessage": "每次建置可呼叫 {calls} 次"
+  },
+  "forgeSeries.cancelDetail": {
+    "defaultMessage": "停止目前的建置並阻止下一次建置啟動。已完成的評分和證據會保留；取消不會發布任何內容。"
+  },
+  "forgeSeries.cancelTitle": {
+    "defaultMessage": "取消這項包含兩次建置的基準測試？"
+  },
+  "forgeSeries.cancelled": {
+    "defaultMessage": "兩次建置的連續執行已取消"
+  },
+  "forgeSeries.cancelledStatus": {
+    "defaultMessage": "兩次建置的連續執行已取消。"
+  },
+  "forgeSeries.checking": {
+    "defaultMessage": "正在檢查兩次建置…"
+  },
+  "forgeSeries.childCancelled": {
+    "defaultMessage": "已取消"
+  },
+  "forgeSeries.childFailed": {
+    "defaultMessage": "未完成"
+  },
+  "forgeSeries.completeStatus": {
+    "defaultMessage": "兩次建置已完成。"
+  },
+  "forgeSeries.continuePublish": {
+    "defaultMessage": "發布剩餘建置"
+  },
+  "forgeSeries.failed": {
+    "defaultMessage": "兩次建置的連續執行未完成"
+  },
+  "forgeSeries.failedStatus": {
+    "defaultMessage": "兩次建置的連續執行未完成。"
+  },
+  "forgeSeries.finished": {
+    "defaultMessage": "兩次建置均已完成"
+  },
+  "forgeSeries.interrupted": {
+    "defaultMessage": "應用程式在兩次建置完成前已結束。已儲存的證據會保留。"
+  },
+  "forgeSeries.intro": {
+    "defaultMessage": "在本應用程式中按一次執行即可啟動兩次獨立建置。第一次評分後開始第二次；每次都保留自己的證據。"
+  },
+  "forgeSeries.live": {
+    "defaultMessage": "已在 leanzero.net 發布"
+  },
+  "forgeSeries.median": {
+    "defaultMessage": "本機中位數 {median} · 範圍 {min}–{max}"
+  },
+  "forgeSeries.noResponse": {
+    "defaultMessage": "發布未收到回應"
+  },
+  "forgeSeries.noScore": {
+    "defaultMessage": "目前還沒有已評分的建置。"
+  },
+  "forgeSeries.preparing": {
+    "defaultMessage": "正在準備建置 {index} / 2"
+  },
+  "forgeSeries.provisional": {
+    "defaultMessage": "只有一次已評分建置時結果為暫定結果。無法提供兩次建置的中位數。"
+  },
+  "forgeSeries.publish": {
+    "defaultMessage": "發布 2 次建置"
+  },
+  "forgeSeries.publishTitle": {
+    "defaultMessage": "發布標題"
+  },
+  "forgeSeries.publishing": {
+    "defaultMessage": "正在發布建置 {index} / 2…"
+  },
+  "forgeSeries.queued": {
+    "defaultMessage": "等待啟動"
+  },
+  "forgeSeries.run": {
+    "defaultMessage": "執行 2 次建置"
+  },
+  "forgeSeries.running": {
+    "defaultMessage": "建置 {index} / 2 正在執行"
+  },
+  "forgeSeries.scored": {
+    "defaultMessage": "已評分"
+  },
+  "forgeSeries.settings": {
+    "defaultMessage": "應用程式使用相同模型、任務和設定連續執行兩次全新建置。每次保留自己的評分和證據。"
+  },
+  "forgeSeries.skipped": {
+    "defaultMessage": "未啟動"
+  },
+  "forgeSeries.title": {
+    "defaultMessage": "兩次獨立建置"
+  },
+  "forgeSeries.unreadable": {
+    "defaultMessage": "無法讀取已儲存的兩次建置證據。各次建置仍可單獨查看。"
+  },
+  "forgeSeries.view": {
+    "defaultMessage": "開啟建置 {index} 的證據"
+  },
+  "forgeSeries.waitingPublish": {
+    "defaultMessage": "發布需要兩次已完成且可比較的建置，以及各自的原生證據。"
   }
 }
