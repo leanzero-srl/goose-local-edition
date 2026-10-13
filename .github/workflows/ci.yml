@@ -5,10 +5,13 @@ name: CI
 # compile always yields to a swarm/benchmark run on the same box. Re-register with
 # `gh api -X POST repos/leanzero-srl/goose-local-edition/actions/runners/registration-token`.
 #
-# THIS REPO IS PUBLIC, so a self-hosted job must never run code from someone else's fork: every
-# workhorse job hangs off `changes`, which fork pull requests skip, and the repo requires
-# approval for every outside contributor's workflow run. Only the Windows build stays on a
-# GitHub-hosted runner (it cannot run on a Mac; hosted minutes are free on a public repo).
+# THIS REPO IS PUBLIC, so a self-hosted job must never run code from someone else's fork. A pull
+# request runs the workflow file from ITS OWN branch, so a guard in this file cannot hold one back:
+# the triggers are push (main) and workflow_dispatch ONLY, every workhorse job carries the repository
+# guard, checkout keeps no credentials on the persistent machine, and the repo requires approval for
+# every outside contributor's workflow run (a fork PR that adds its own workflow waits for a person).
+# Only the Windows build stays on a GitHub-hosted runner (it cannot run on a Mac; hosted minutes are
+# free on a public repo). Same standard as Sentinel Vault (leanzero-forge-app-baseline ci-pipeline.md).
 #
 # macOS, not Ubuntu: no apt/gnome-keyring. Tests run with GOOSE_DISABLE_KEYRING=1 and a throwaway
 # HOME so they never touch the workhorse's keychain or the Goose app's real config and sessions.
@@ -21,44 +24,19 @@ on:
   push:
     branches:
       - main
-  pull_request:
-    branches:
-      - main
-  merge_group:
-    branches:
-      - main
   workflow_dispatch:
 
 jobs:
-  changes:
-    runs-on: [self-hosted, goose]
-    # Fork pull requests never reach the workhorse; every other job `needs` this one, so they skip too.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    outputs:
-      docs-only: ${{ steps.filter.outputs.docs-only }}
-      code: ${{ steps.filter.outputs.code }}
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
-
-      - name: Check for file changes
-        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # pin@v3
-        id: filter
-        with:
-          filters: |
-            docs-only:
-              - 'documentation/**'
-            code:
-              - '!documentation/**'
 
   rust-format:
     name: Check Rust Code Format
     runs-on: [self-hosted, goose]
-    needs: changes
-    if: needs.changes.outputs.code == 'true' || github.event_name != 'pull_request'
+    if: github.repository == 'leanzero-srl/goose-local-edition'
     steps:
       - name: Checkout Code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
 
       - name: Workhorse environment
         run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
@@ -69,11 +47,12 @@ jobs:
   rust-build-and-test:
     name: Build and Test Rust Project
     runs-on: [self-hosted, goose]
-    needs: changes
-    if: needs.changes.outputs.code == 'true' || github.event_name != 'pull_request'
+    if: github.repository == 'leanzero-srl/goose-local-edition'
     steps:
       - name: Checkout Code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
 
       - name: Workhorse environment
         run: ./.github/workhorse-env.sh "${{ github.job }}"
@@ -95,6 +74,8 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
 
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4  # v2.9.1
@@ -115,10 +96,11 @@ jobs:
   rust-msrv:
     name: Check MSRV
     runs-on: [self-hosted, goose]
-    needs: changes
-    if: needs.changes.outputs.code == 'true' || github.event_name != 'pull_request'
+    if: github.repository == 'leanzero-srl/goose-local-edition'
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
 
       - name: Read MSRV from Cargo.toml
         id: msrv
@@ -145,10 +127,11 @@ jobs:
   rust-lint:
     name: Lint Rust Code
     runs-on: [self-hosted, goose]
-    needs: changes
-    if: needs.changes.outputs.code == 'true' || github.event_name != 'pull_request'
+    if: github.repository == 'leanzero-srl/goose-local-edition'
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
 
       - name: Workhorse environment
         run: ./.github/workhorse-env.sh "${{ github.job }}"
@@ -161,11 +144,12 @@ jobs:
   schema-check:
     name: Check Generated Schemas are Up-to-Date
     runs-on: [self-hosted, goose]
-    needs: changes
-    if: needs.changes.outputs.code == 'true' || github.event_name != 'pull_request'
+    if: github.repository == 'leanzero-srl/goose-local-edition'
     steps:
       - name: Checkout Code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
 
       - name: Workhorse environment
         run: ./.github/workhorse-env.sh "${{ github.job }}"
@@ -191,11 +175,12 @@ jobs:
   desktop-lint:
     name: Test and Lint Electron Desktop App
     runs-on: [self-hosted, goose]
-    needs: changes
-    if: needs.changes.outputs.code == 'true' || github.event_name != 'pull_request'
+    if: github.repository == 'leanzero-srl/goose-local-edition'
     steps:
       - name: Checkout Code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
 
       - name: Install Dependencies
         run: source ../../bin/activate-hermit && pnpm install --frozen-lockfile
