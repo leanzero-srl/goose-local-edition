@@ -1,5 +1,22 @@
 name: CI
 
+# RUNS ON THE SELF-HOSTED WORKHORSE RUNNER (Mac Studio, label `goose`), like LeanZero's Forge apps.
+# Runner: ~/actions-runner-goose on the workhorse, a launchd agent started at nice 10 so a CI
+# compile always yields to a swarm/benchmark run on the same box. Re-register with
+# `gh api -X POST repos/leanzero-srl/goose-local-edition/actions/runners/registration-token`.
+#
+# THIS REPO IS PUBLIC, so a self-hosted job must never run code from someone else's fork: every
+# workhorse job hangs off `changes`, which fork pull requests skip, and the repo requires
+# approval for every outside contributor's workflow run. Only the Windows build stays on a
+# GitHub-hosted runner (it cannot run on a Mac; hosted minutes are free on a public repo).
+#
+# macOS, not Ubuntu: no apt/gnome-keyring. Tests run with GOOSE_DISABLE_KEYRING=1 and a throwaway
+# HOME so they never touch the workhorse's keychain or the Goose app's real config and sessions.
+# No rust-cache: the runner is a persistent machine, so each job keeps its own target dir under
+# ~/ci-tools/goose-target (wiped past 60 GB — cargo never garbage-collects target/).
+#
+# UPSTREAM INGEST: keep THIS file over block/goose's ci.yml when merging upstream.
+
 on:
   push:
     branches:
@@ -14,7 +31,9 @@ on:
 
 jobs:
   changes:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, goose]
+    # Fork pull requests never reach the workhorse; every other job `needs` this one, so they skip too.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     outputs:
       docs-only: ${{ steps.filter.outputs.docs-only }}
       code: ${{ steps.filter.outputs.code }}
@@ -34,47 +53,40 @@ jobs:
 
   rust-format:
     name: Check Rust Code Format
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, goose]
     needs: changes
     if: needs.changes.outputs.code == 'true' || github.event_name != 'pull_request'
     steps:
       - name: Checkout Code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
 
-      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+      - name: Workhorse environment
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Run cargo fmt
         run: cargo fmt --check
 
   rust-build-and-test:
     name: Build and Test Rust Project
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, goose]
     needs: changes
     if: needs.changes.outputs.code == 'true' || github.event_name != 'pull_request'
     steps:
       - name: Checkout Code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
 
-      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
-
-      - name: Install Dependencies
-        run: |
-          sudo apt update -y
-          sudo apt install -y libdbus-1-dev gnome-keyring libxcb1-dev
-
-      - name: Cache Cargo artifacts
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4  # v2.9.1
+      - name: Workhorse environment
+        run: ./.github/workhorse-env.sh "${{ github.job }}"
 
       - name: Build and Test
         run: |
-          gnome-keyring-daemon --components=secrets --daemonize --unlock <<< 'foobar'
+          export HOME="$ISOLATED_HOME"
           export CARGO_INCREMENTAL=0
           cargo test -- --skip scenario_tests::scenarios::tests
           cargo test --jobs 1 scenario_tests::scenarios::tests
         working-directory: crates
         env:
           RUST_MIN_STACK: 8388608
-
 
   rust-build-windows:
     name: Build Rust Project on Windows
@@ -102,7 +114,7 @@ jobs:
 
   rust-msrv:
     name: Check MSRV
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, goose]
     needs: changes
     if: needs.changes.outputs.code == 'true' || github.event_name != 'pull_request'
     steps:
@@ -119,63 +131,44 @@ jobs:
           echo "msrv=$msrv" >> "$GITHUB_OUTPUT"
           echo "MSRV: $msrv"
 
-      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659  # v1
-        with:
-          toolchain: ${{ steps.msrv.outputs.msrv }}
+      - name: Workhorse environment
+        run: ./.github/workhorse-env.sh "${{ github.job }}"
 
-      - name: Install Dependencies
-        run: |
-          sudo apt update -y
-          sudo apt install -y libdbus-1-dev libxcb1-dev
-
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4  # v2.9.1
-        with:
-          key: msrv
+      - name: Install the MSRV toolchain
+        run: rustup toolchain install "${{ steps.msrv.outputs.msrv }}" --profile minimal
 
       - name: Check with MSRV toolchain
-        run: cargo check --workspace --locked --all-targets
+        run: cargo +${{ steps.msrv.outputs.msrv }} check --workspace --locked --all-targets
         env:
           CARGO_INCREMENTAL: "0"
 
   rust-lint:
     name: Lint Rust Code
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, goose]
     needs: changes
     if: needs.changes.outputs.code == 'true' || github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
 
-      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
-
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4  # v2.9.1
+      - name: Workhorse environment
+        run: ./.github/workhorse-env.sh "${{ github.job }}"
 
       - name: Lint
         run: |
-          source ./bin/activate-hermit
-          # use the non-hermit rust toolchain because the rust-cache action does not
-          # play nicely with hermit-managed rust
-          hermit uninstall rustup
           export CARGO_INCREMENTAL=0
           cargo clippy --workspace --all-targets --exclude v8 -- -D warnings
 
   schema-check:
     name: Check Generated Schemas are Up-to-Date
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, goose]
     needs: changes
     if: needs.changes.outputs.code == 'true' || github.event_name != 'pull_request'
     steps:
       - name: Checkout Code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
 
-      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
-
-      - name: Install Dependencies
-        run: |
-          sudo apt update -y
-          sudo apt install -y libdbus-1-dev libxcb1-dev
-
-      - name: Cache Cargo artifacts
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4  # v2.9.1
+      - name: Workhorse environment
+        run: ./.github/workhorse-env.sh "${{ github.job }}"
 
       - name: Install Node.js Dependencies
         run: |
@@ -197,25 +190,12 @@ jobs:
 
   desktop-lint:
     name: Test and Lint Electron Desktop App
-    runs-on: macos-latest
+    runs-on: [self-hosted, goose]
     needs: changes
     if: needs.changes.outputs.code == 'true' || github.event_name != 'pull_request'
     steps:
       - name: Checkout Code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
-
-      # Temporarily disabled due to GitHub Actions bug on macOS runners
-      # https://github.com/actions/runner-images/issues/13341
-      # https://github.com/actions/runner/issues/4134
-      # - name: Cache pnpm dependencies
-      #   uses: actions/cache@8b402f58fbc84540c8b491a91e594a4576fec3d7  # v5.0.2
-      #   with:
-      #     path: |
-      #       ui/desktop/node_modules
-      #       .hermit/node/cache
-      #     key: ci-pnpm-cache-v1-${{ runner.os }}-${{ hashFiles('ui/pnpm-lock.yaml') }}
-      #     restore-keys: |
-      #       ci-pnpm-cache-v1-${{ runner.os }}-
 
       - name: Install Dependencies
         run: source ../../bin/activate-hermit && pnpm install --frozen-lockfile
