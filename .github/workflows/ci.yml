@@ -60,6 +60,9 @@ jobs:
       - name: Build and Test
         run: |
           export HOME="$ISOLATED_HOME"
+          # launchd starts the runner at macOS's 256 open files (ubuntu-latest: 65536); the
+          # leanzero-link proxy/manager tests open more than that and fail with EMFILE.
+          ulimit -n 65536
           export CARGO_INCREMENTAL=0
           cargo test -- --skip scenario_tests::scenarios::tests
           cargo test --jobs 1 scenario_tests::scenarios::tests
