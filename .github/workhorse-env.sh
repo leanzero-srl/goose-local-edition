@@ -8,8 +8,12 @@ job="${1:?job id}"
 echo "CARGO_HOME=$HOME/.cargo" >> "$GITHUB_ENV"
 echo "RUSTUP_HOME=$HOME/.rustup" >> "$GITHUB_ENV"
 echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-# cmake (llama-cpp-sys-2 builds llama.cpp with it) lives in Homebrew.
-echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
+# cmake (llama-cpp-sys-2 builds llama.cpp with it) from a dir that holds ONLY cmake: all of
+# /opt/homebrew/bin would put the `claude` CLI on PATH, and tests/providers.rs runs an agentic
+# provider's live test whenever `which` finds its binary (ubuntu-latest has none, so they skip).
+mkdir -p "$HOME/ci-tools/goose-bin"
+[ -e "$HOME/ci-tools/goose-bin/cmake" ] || ln -s /opt/homebrew/bin/cmake "$HOME/ci-tools/goose-bin/cmake"
+echo "$HOME/ci-tools/goose-bin" >> "$GITHUB_PATH"
 
 # Persistent target dir per job. cargo never garbage-collects target/, so a dir past 60 GB is
 # started over (an exact path under ~/ci-tools, never a glob).
