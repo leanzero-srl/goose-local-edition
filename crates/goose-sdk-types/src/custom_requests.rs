@@ -2709,7 +2709,8 @@ pub struct MlxMountFitDto {
     pub model_id: String,
     /// "allow" | "warn" | "block".
     pub verdict: String,
-    /// `weightsBytes + kvBytes`.
+    /// `weightsBytes + kvBytes` + the sequence's recurrent state + one floor prefill step's
+    /// transient at `contextTokens` (goose-sidecar `fit::SingleEngineCost`).
     pub need_bytes: u64,
     /// The model directory's bytes on disk.
     pub weights_bytes: u64,
@@ -5432,8 +5433,15 @@ pub struct MlxNodeFitDto {
 #[serde(rename_all = "camelCase")]
 pub struct MlxPlacementFitDto {
     pub status: MlxFitStatusDto,
+    /// The context this placement runs at: for a single engine, what the DEVICE holds (the
+    /// engine's own Metal cap, not the free memory of the moment) — or, for the placement serving
+    /// now, the window its engine reports (`max_model_len`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<u64>,
+    /// `context` is the serving engine's figure from measured step peaks (its memory guard
+    /// calibrated); false = goose's estimate, or the engine's own prior.
+    #[serde(default)]
+    pub context_measured: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub short_bytes: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

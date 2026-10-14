@@ -160,6 +160,41 @@ pub fn with_overhead(planned_bytes: u64) -> u64 {
     (planned_bytes as f64 * RUNTIME_OVERHEAD_RATIO).ceil() as u64
 }
 
+/// A hybrid model's linear-attention (GatedDeltaNet) geometry: what its fixed-size state is sized
+/// from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LinearAttention {
+    pub layers: u64,
+    pub key_heads: u64,
+    pub value_heads: u64,
+    pub key_head_dim: u64,
+    pub value_head_dim: u64,
+    pub conv_kernel: u64,
+}
+
+/// Conv + recurrent state one sequence costs on one of `ranks` ranks (context-independent): the
+/// conv buffer at the activation width, the recurrent state in float32 (gated_delta.py). The one
+/// formula the tensor split and the single engine's cost (`crate::fit::SingleEngineCost`) charge.
+pub fn linear_state_bytes(linear: &LinearAttention, act_bytes: u64, ranks: u64) -> u64 {
+    let key_dim = linear.key_heads * linear.key_head_dim;
+    let value_dim = linear.value_heads * linear.value_head_dim;
+    let conv = linear.conv_kernel.saturating_sub(1) * (2 * key_dim + value_dim) / ranks * act_bytes;
+    let recurrent = linear.value_heads / ranks
+        * linear.value_head_dim
+        * linear.key_head_dim
+        * RECURRENT_STATE_BYTES;
+    linear.layers * (conv + recurrent)
+}
+
+/// Bytes one row's prefill chunk token costs per context token on one of `ranks` ranks, in the
+/// full-attention layer being computed: the rank's query heads' scores at the activation width
+/// and the batch's boolean mask (one byte). The one score term the tensor split
+/// (`TensorModelFacts::prefill_pair_bytes`, measured exactly this product on its ranks, Q-104) and
+/// the single engine's cost share.
+pub fn prefill_pair_bytes(query_heads: u64, act_bytes: u64, ranks: u64) -> u64 {
+    query_heads / ranks * act_bytes + 1
+}
+
 /// What the tensor arithmetic needs from a qwen3_5 checkpoint.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TensorModelFacts {
@@ -397,14 +432,18 @@ impl TensorModelFacts {
 
     /// Conv + recurrent state one sequence costs on one rank (context-independent).
     pub fn linear_state_bytes(&self, ranks: u64) -> u64 {
-        let key_dim = self.linear_key_heads * self.linear_key_head_dim;
-        let value_dim = self.linear_value_heads * self.linear_value_head_dim;
-        let conv = (self.conv_kernel - 1) * (2 * key_dim + value_dim) / ranks * self.act_bytes;
-        let recurrent = self.linear_value_heads / ranks
-            * self.linear_value_head_dim
-            * self.linear_key_head_dim
-            * RECURRENT_STATE_BYTES;
-        self.linear_layers * (conv + recurrent)
+        linear_state_bytes(
+            &LinearAttention {
+                layers: self.linear_layers,
+                key_heads: self.linear_key_heads,
+                value_heads: self.linear_value_heads,
+                key_head_dim: self.linear_key_head_dim,
+                value_head_dim: self.linear_value_head_dim,
+                conv_kernel: self.conv_kernel,
+            },
+            self.act_bytes,
+            ranks,
+        )
     }
 
     pub fn weights_per_rank(&self, ranks: u64) -> u64 {
@@ -425,7 +464,7 @@ impl TensorModelFacts {
     /// the row's KV − the chunk's other transients = 0.604 → 6.644 GB of scores, the product
     /// exactly.
     pub fn prefill_pair_bytes(&self, ranks: u64) -> u64 {
-        self.attention_heads / ranks * self.act_bytes + 1
+        prefill_pair_bytes(self.attention_heads, self.act_bytes, ranks)
     }
 
     /// The workspace one row's `chunk`-token prefill step needs at `context` on one rank.

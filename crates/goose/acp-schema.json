@@ -7502,7 +7502,7 @@
         },
         "needBytes": {
           "type": "integer",
-          "description": "`weightsBytes + kvBytes`.",
+          "description": "`weightsBytes + kvBytes` + the sequence's recurrent state + one floor prefill step's\ntransient at `contextTokens` (goose-sidecar `fit::SingleEngineCost`).",
           "minimum": 0
         },
         "weightsBytes": {
@@ -8095,7 +8095,13 @@
             "integer",
             "null"
           ],
+          "description": "The context this placement runs at: for a single engine, what the DEVICE holds (the\nengine's own Metal cap, not the free memory of the moment) — or, for the placement serving\nnow, the window its engine reports (`max_model_len`).",
           "minimum": 0
+        },
+        "contextMeasured": {
+          "type": "boolean",
+          "description": "`context` is the serving engine's figure from measured step peaks (its memory guard\ncalibrated); false = goose's estimate, or the engine's own prior.",
+          "default": false
         },
         "shortBytes": {
           "type": [

@@ -267,7 +267,7 @@ mod tests {
     fn the_recorded_file_cache_case_flips_the_gate_from_block_to_allow() {
         let fit = |available_bytes| {
             judge(
-                Need::single_engine(QWEN_27B_Q8, Ok(0), 0),
+                Need::weights(QWEN_27B_Q8),
                 NodeMemoryFacts {
                     available_bytes,
                     total_bytes: M4_MAX_TOTAL,

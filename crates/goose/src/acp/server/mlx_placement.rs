@@ -28,7 +28,8 @@ mod imp {
     use goose_sidecar::placement::chip::{self, ChipIdentity};
     use goose_sidecar::placement::model::{read_model_facts, ModelFacts};
     use goose_sidecar::placement::planner::{
-        self, ClusterInput, Goal, NodeInput, NodeMemory, PipelineFitInput, PlanInput, SwitchFrees,
+        self, ClusterInput, Goal, NodeInput, NodeMemory, PipelineFitInput, PlanInput, Running,
+        SwitchFrees,
     };
     use goose_sidecar::placement::predict::Calibration;
     use goose_sidecar::placement::store::{
@@ -583,8 +584,8 @@ mod imp {
     /// What is serving on this Mac right now, so the planner neither calls the running model
     /// "short" (its memory is in use) nor forgets that every other placement gets that memory back.
     pub(super) struct Serving {
-        /// (model id, candidate id, context window) of the running placement.
-        pub running: Vec<(String, String, Option<u64>)>,
+        /// (model id, the running placement with the window its engine serves).
+        pub running: Vec<(String, Running)>,
         /// The single engine's resident bytes when a model is mounted here, and whose.
         pub single_footprint: Option<(String, u64)>,
         /// What a start of this Mac's single engine gets back — the tile's and the mount gate's
@@ -679,8 +680,11 @@ mod imp {
         if let (true, Some(model)) = (single.state == "running", single.model_id.clone()) {
             out.running.push((
                 model,
-                PlacementKey::single(LOCAL).id(),
-                single.context_window,
+                Running {
+                    id: PlacementKey::single(LOCAL).id(),
+                    context: single.context_window,
+                    context_measured: single.context_calibrated,
+                },
             ));
         }
         if let StartFrees::Mounted { model_id, bytes } = this_mac_start {
@@ -709,8 +713,14 @@ mod imp {
                         .collect(),
                     link: Some(backend_name(config.backend).to_string()),
                 };
-                out.running
-                    .push((model.clone(), key.id(), dist.context_limit));
+                out.running.push((
+                    model.clone(),
+                    Running {
+                        id: key.id(),
+                        context: dist.context_limit,
+                        context_measured: false,
+                    },
+                ));
                 let (frees, gaps) = split_frees(&model, &dist.nodes);
                 out.notes.extend(gaps);
                 out.split_footprint = Some((model, frees));
@@ -734,8 +744,14 @@ mod imp {
                     route.peer_name()
                 )),
             }
-            out.running
-                .push((route.model_id, PlacementKey::single(&node).id(), None));
+            out.running.push((
+                route.model_id,
+                Running {
+                    id: PlacementKey::single(&node).id(),
+                    context: None,
+                    context_measured: false,
+                },
+            ));
         }
         out
     }
@@ -870,8 +886,8 @@ mod imp {
                 .serving
                 .running
                 .iter()
-                .find(|(model, _, _)| model == model_id)
-                .map(|(_, id, context)| (id.clone(), *context)),
+                .find(|(model, _)| model == model_id)
+                .map(|(_, running)| running.clone()),
             this_mac_start: Some(&ctx.serving.this_mac_start),
         }))
     }

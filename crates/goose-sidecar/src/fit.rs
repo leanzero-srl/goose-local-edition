@@ -134,56 +134,186 @@ pub fn budget_bytes(available_bytes: u64, total_bytes: u64, ceiling_bytes: u64) 
         .min(ceiling_bytes)
 }
 
-/// What a single engine asks of its Mac: the weights, plus the KV cache for `context_tokens` when
-/// the model's KV can be sized (`kv_gap` says why not, and then only the weights are charged).
+/// What one sequence costs a single engine at a context — ONE model for the mount gate, the
+/// placement planner's single-engine fit and its no-fork pipeline estimate.
+///
+/// At `context` tokens the engine holds the weights, the KV (rounded up to the cache's growth
+/// step), the linear-attention state, and — at the last prefill chunk — the step's transient: the
+/// attention scores of a `floor_chunk_tokens` chunk against the whole context
+/// (`prefill_score_bytes_per_pair` per chunk token × context token), plus the KV buffer being
+/// extended, copied once (`kv_growth_bytes_per_token`: one full-attention layer's KV). The floor
+/// chunk is the smallest the engine's memory guard halves a prefill step down to, so the largest
+/// context is the one whose floor step still fits. Prefix-cache entries and MLX's allocator
+/// cache are NOT charged: the engine's guard evicts the one and caps the other before a step.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SingleEngineCost {
+    pub weights_bytes: u64,
+    pub kv_bytes_per_token: u64,
+    pub kv_growth_bytes_per_token: u64,
+    pub sequence_state_bytes: u64,
+    pub prefill_score_bytes_per_pair: u64,
+    pub floor_chunk_tokens: u64,
+    /// The KV buffer's growth step: a context costs its size rounded up to it.
+    pub kv_step_tokens: u64,
+    /// The model's own window; no context above it is offered.
+    pub max_position: Option<u64>,
+    /// What could not be sized and is charged as 0, each naming why.
+    pub gaps: Vec<String>,
+}
+
+impl SingleEngineCost {
+    pub fn kv_bytes(&self, context: u64) -> u64 {
+        context.div_ceil(self.kv_step_tokens.max(1))
+            * self.kv_step_tokens.max(1)
+            * self.kv_bytes_per_token
+    }
+
+    /// The floor prefill step's transient at `context`: its scores and the KV growth copy.
+    pub fn prefill_bytes(&self, context: u64) -> u64 {
+        self.floor_chunk_tokens.min(context) * context * self.prefill_score_bytes_per_pair
+            + context * self.kv_growth_bytes_per_token
+    }
+
+    pub fn bytes_at(&self, context: u64) -> u64 {
+        self.weights_bytes
+            + self.kv_bytes(context)
+            + self.sequence_state_bytes
+            + self.prefill_bytes(context)
+    }
+
+    /// The largest context (a multiple of the KV step, at most the model's window) whose cost plus
+    /// `margin_bytes` stays within `budget_bytes`; 0 when not even one step fits. `None` when
+    /// nothing grows with the context (no KV, no scores): every context costs the same.
+    pub fn max_context(&self, budget_bytes: u64, margin_bytes: u64) -> Option<u64> {
+        let step = self.kv_step_tokens.max(1);
+        let per_token = self.kv_bytes_per_token
+            + self.kv_growth_bytes_per_token
+            + self.prefill_score_bytes_per_pair;
+        if per_token == 0 {
+            return None;
+        }
+        let fits =
+            |context: u64| self.bytes_at(context).saturating_add(margin_bytes) <= budget_bytes;
+        let upper = self
+            .max_position
+            .unwrap_or(budget_bytes / per_token + step)
+            .div_ceil(step);
+        if upper == 0 || !fits(step) {
+            return Some(0);
+        }
+        let (mut low, mut high) = (1u64, upper);
+        while low < high {
+            let middle = (low + high).div_ceil(2);
+            if fits(middle * step) {
+                low = middle;
+            } else {
+                high = middle - 1;
+            }
+        }
+        Some(match self.max_position {
+            Some(max) => (low * step).min(max),
+            None => low * step,
+        })
+    }
+}
+
+/// What a single engine asks of its Mac at `context_tokens`: [`SingleEngineCost`]'s terms, or the
+/// weights alone when the model's cost cannot be sized (`kv_gap` says why).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Need {
     pub weights_bytes: u64,
     pub kv_bytes: u64,
+    /// The linear-attention state and the floor prefill step's transient at the context.
+    pub state_bytes: u64,
+    pub prefill_bytes: u64,
     pub context_tokens: u64,
     pub kv_gap: Option<String>,
+    /// A term of the cost that could not be sized and is charged as 0, each naming why.
+    pub gaps: Vec<String>,
 }
 
 impl Need {
+    pub fn at(cost: &SingleEngineCost, context_tokens: u64) -> Self {
+        Need {
+            weights_bytes: cost.weights_bytes,
+            kv_bytes: cost.kv_bytes(context_tokens),
+            state_bytes: cost.sequence_state_bytes,
+            prefill_bytes: cost.prefill_bytes(context_tokens),
+            context_tokens,
+            kv_gap: None,
+            gaps: cost.gaps.clone(),
+        }
+    }
+
+    /// The weights alone, nothing missing: a model whose cost grows with nothing else.
+    pub fn weights(weights_bytes: u64) -> Self {
+        Need {
+            weights_bytes,
+            kv_bytes: 0,
+            state_bytes: 0,
+            prefill_bytes: 0,
+            context_tokens: 0,
+            kv_gap: None,
+            gaps: Vec::new(),
+        }
+    }
+
+    pub fn weights_only(weights_bytes: u64, gap: String) -> Self {
+        Need {
+            weights_bytes,
+            kv_bytes: 0,
+            state_bytes: 0,
+            prefill_bytes: 0,
+            context_tokens: 0,
+            kv_gap: Some(gap),
+            gaps: Vec::new(),
+        }
+    }
+
     pub fn single_engine(
         weights_bytes: u64,
-        kv_bytes_per_token: Result<u64, String>,
+        cost: Result<SingleEngineCost, String>,
         context_tokens: u64,
     ) -> Self {
-        match kv_bytes_per_token {
-            Ok(per_token) => Need {
-                weights_bytes,
-                kv_bytes: per_token.saturating_mul(context_tokens),
-                context_tokens,
-                kv_gap: None,
-            },
-            Err(gap) => Need {
-                weights_bytes,
-                kv_bytes: 0,
-                context_tokens,
-                kv_gap: Some(gap),
-            },
+        match cost {
+            Ok(cost) => Need::at(&cost, context_tokens),
+            Err(gap) => Need::weights_only(weights_bytes, gap),
         }
     }
 
     pub fn total_bytes(&self) -> u64 {
-        self.weights_bytes.saturating_add(self.kv_bytes)
+        self.weights_bytes
+            .saturating_add(self.kv_bytes)
+            .saturating_add(self.state_bytes)
+            .saturating_add(self.prefill_bytes)
     }
 
     fn describe(&self) -> String {
-        match &self.kv_gap {
-            None => format!(
+        let gaps: String = self.gaps.iter().map(|g| format!("; {g}")).collect();
+        let terms = match &self.kv_gap {
+            None if self.state_bytes == 0 && self.prefill_bytes == 0 => format!(
                 "{} ({} of weights + {} of KV for {} tokens)",
                 gb(self.total_bytes()),
                 gb(self.weights_bytes),
                 gb(self.kv_bytes),
                 self.context_tokens
             ),
+            None => format!(
+                "{} ({} of weights + {} of KV + {} of recurrent state + {} for a prefill step, for \
+                 {} tokens)",
+                gb(self.total_bytes()),
+                gb(self.weights_bytes),
+                gb(self.kv_bytes),
+                gb(self.state_bytes),
+                gb(self.prefill_bytes),
+                self.context_tokens
+            ),
             Some(gap) => format!(
                 "{} of weights (KV not sized: {gap})",
                 gb(self.weights_bytes)
             ),
-        }
+        };
+        format!("{terms}{gaps}")
     }
 }
 
@@ -312,7 +442,21 @@ mod tests {
     }
 
     fn weights_only(bytes: u64) -> Need {
-        Need::single_engine(bytes, Ok(0), 0)
+        Need::weights(bytes)
+    }
+
+    fn cost(weights: u64, kv_per_token: u64) -> SingleEngineCost {
+        SingleEngineCost {
+            weights_bytes: weights,
+            kv_bytes_per_token: kv_per_token,
+            kv_growth_bytes_per_token: 0,
+            sequence_state_bytes: 0,
+            prefill_score_bytes_per_pair: 0,
+            floor_chunk_tokens: 0,
+            kv_step_tokens: 1,
+            max_position: None,
+            gaps: Vec::new(),
+        }
     }
 
     /// The owner's 3.0.25 refusal: Flash-Next-4bit (97.5 GiB on disk) on the M4 Max with 93.0 GiB
@@ -395,7 +539,7 @@ mod tests {
 
     #[test]
     fn the_kv_for_the_context_is_charged_and_an_unsized_kv_is_named() {
-        let need = Need::single_engine(gib_f(30.0), Ok(65_536), 4_608);
+        let need = Need::single_engine(gib_f(30.0), Ok(cost(gib_f(30.0), 65_536)), 4_608);
         assert_eq!(need.kv_bytes, 65_536 * 4_608);
         let gap = Need::single_engine(gib_f(30.0), Err("no config.json".into()), 4_608);
         assert_eq!(gap.total_bytes(), gib_f(30.0));

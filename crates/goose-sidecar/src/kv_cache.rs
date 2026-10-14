@@ -15,6 +15,8 @@ use std::path::Path;
 use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::distributed::plan::{linear_state_bytes, LinearAttention};
+
 /// The engine's default `--kv-cache-quantization-group-size` (cli.py); goose passes none.
 const ENGINE_GROUP_SIZE: u64 = 64;
 /// `mx.quantize` (affine) accepts only these group sizes; the engine takes the largest one
@@ -61,8 +63,15 @@ pub struct KvCacheFacts {
     /// Bounded sliding-window layers: capped at their window, kept bf16 by the engine.
     pub sliding_layers: u64,
     pub kv_heads: u64,
+    /// Query heads (`num_attention_heads`): a prefill step's attention scores are one per query
+    /// head × chunk token × context token.
+    pub query_heads: u64,
     pub head_dim: u64,
     pub activation_bytes: u64,
+    /// The linear-attention layers' conv + recurrent state one sequence holds whatever its
+    /// length (`distributed::plan::linear_state_bytes`); 0 for a model without such layers, `Err`
+    /// naming the config key a hybrid model lacks.
+    pub sequence_state_bytes: Result<u64, String>,
     /// The quantization group the engine will use; `None` = no supported group divides
     /// `head_dim`, so the engine cannot quantize this model's KV.
     pub group_size: Option<u64>,
@@ -103,6 +112,29 @@ fn engine_group_size(head_dim: u64) -> Option<u64> {
 /// and one bias per `group` elements (both in the activation dtype).
 fn quantized_bytes_per_token(elements_per_token: u64, bits: u64, group: u64, act: u64) -> u64 {
     elements_per_token * bits / 8 + 2 * (elements_per_token / group) * act
+}
+
+/// A hybrid model's linear-attention geometry from its config (qwen3_5 / qwen3_next key names).
+fn linear_attention(
+    text: &serde_json::Value,
+    layers: u64,
+) -> std::result::Result<LinearAttention, String> {
+    let key = |name: &str| {
+        u64_field(text, name).ok_or_else(|| {
+            format!(
+                "config.json has no integer `{name}`, so the {layers} linear-attention layers' \
+                 state cannot be sized"
+            )
+        })
+    };
+    Ok(LinearAttention {
+        layers,
+        key_heads: key("linear_num_key_heads")?,
+        value_heads: key("linear_num_value_heads")?,
+        key_head_dim: key("linear_key_head_dim")?,
+        value_head_dim: key("linear_value_head_dim")?,
+        conv_kernel: key("linear_conv_kernel_dim")?,
+    })
 }
 
 /// Read the KV facts from a checkpoint's config.json (a multimodal wrapper's `text_config` wins).
@@ -169,6 +201,10 @@ pub fn kv_cache_facts(model_dir: &Path) -> Result<KvCacheFacts> {
         attention = layers;
     }
 
+    let sequence_state_bytes = match state {
+        0 => Ok(0),
+        layers => linear_attention(text, layers).map(|linear| linear_state_bytes(&linear, act, 1)),
+    };
     let elements_per_token = attention * 2 * kv_heads * head_dim;
     let group = engine_group_size(head_dim);
     let quantized = |mode: KvCacheMode| {
@@ -179,8 +215,10 @@ pub fn kv_cache_facts(model_dir: &Path) -> Result<KvCacheFacts> {
         state_layers: state,
         sliding_layers: sliding,
         kv_heads,
+        query_heads: attention_heads.filter(|h| *h > 0).unwrap_or(kv_heads),
         head_dim,
         activation_bytes: act,
+        sequence_state_bytes,
         group_size: group,
         bf16_bytes_per_token: elements_per_token * act,
         int8_bytes_per_token: quantized(KvCacheMode::Int8),
@@ -279,7 +317,10 @@ mod tests {
             "text_config": {
                 "num_hidden_layers": 64, "num_attention_heads": 24, "num_key_value_heads": 4,
                 "head_dim": 256, "hidden_size": 5120, "full_attention_interval": 4,
-                "layer_types": layer_types, "dtype": "bfloat16"
+                "layer_types": layer_types, "dtype": "bfloat16",
+                "linear_num_key_heads": 16, "linear_num_value_heads": 48,
+                "linear_key_head_dim": 128, "linear_value_head_dim": 128,
+                "linear_conv_kernel_dim": 4
             }
         })
     }
@@ -295,6 +336,23 @@ mod tests {
         // Same figures the fork's admission estimator prices (test_kv_quant_admission_estimate).
         assert_eq!(facts.int8_bytes_per_token, Some(34_816));
         assert_eq!(facts.int4_bytes_per_token, Some(18_432));
+        assert_eq!(facts.query_heads, 24);
+        // 48 layers × (conv 3 × (2 × 2,048 + 6,144) × 2 B + recurrent 48 × 128 × 128 × 4 B):
+        // the tensor split's own figure at one rank.
+        assert_eq!(facts.sequence_state_bytes, Ok(48 * (61_440 + 3_145_728)));
+    }
+
+    #[test]
+    fn a_hybrid_model_without_its_linear_geometry_names_the_missing_key() {
+        let mut config = qwen3_5_27b();
+        config["text_config"]
+            .as_object_mut()
+            .unwrap()
+            .remove("linear_value_head_dim");
+        let facts = kv_cache_facts(model_dir(config).path()).unwrap();
+        assert_eq!(facts.bf16_bytes_per_token, 65_536, "the KV is still sized");
+        let gap = facts.sequence_state_bytes.unwrap_err();
+        assert!(gap.contains("`linear_value_head_dim`"), "{gap}");
     }
 
     #[test]

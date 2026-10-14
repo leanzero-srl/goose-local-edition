@@ -3322,6 +3322,7 @@ export const zMlxPlacementFitDto = z.object({
         z.number().int().gte(0),
         z.null()
     ]).optional(),
+    contextMeasured: z.boolean().optional().default(false),
     shortBytes: z.union([
         z.number().int().gte(0),
         z.null()
