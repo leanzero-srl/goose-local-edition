@@ -30,7 +30,10 @@ Every line below has file:line evidence in the T12 plan's "Local bake-off REDESI
   - MTP via `--speculative-config {"method":"mtp","model":<dir>,"num_speculative_tokens":3}` whenever
     `mtp.safetensors` sits in the model folder. The `[mtp]` extra only installs deps. MTP needs real MTP weights:
     `mlx convert --q-mtp` defaults to OFF, so a home-made Q8 has none unless converted with `--q-mtp`.
-  - No `--timeout` (engine default 1800 s) and no `max_tokens` (engine default 32,768 out).
+  - No `--timeout` and no `max_tokens` (engine default 32,768 out). The engine's 1800 s default applies only to
+    NON-streaming requests (`routes/chat.py` `_wait_with_disconnect`) and the multimodal lane's first chunk; the app
+    streams on the text lane, so no request cap applies, and goose's client has only a connect timeout. A
+    non-streaming proxy brings the 30-min 504 back (the T12 pilot did exactly that).
 - **Providers:**
   - Chat = `swarm` (SwarmProvider). Its router sends MLX-engine turns through `omlx` (`swarm_router.rs:189,228`).
   - omlx/lmstudio are registered but never offered; an active one is migrated once to swarm.
