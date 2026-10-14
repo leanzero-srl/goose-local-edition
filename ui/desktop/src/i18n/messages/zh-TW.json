@@ -5432,6 +5432,36 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} 在這台 Mac 上需要 {need} GB，現在可供它使用的空閒為 {free} GB — 還差 {short} GB。"
   },
+  "mlxPrefixCache.clear": {
+    "defaultMessage": "清除"
+  },
+  "mlxPrefixCache.clearTitle": {
+    "defaultMessage": "清除 — 恢復 goose 的預設占比"
+  },
+  "mlxPrefixCache.decrease": {
+    "defaultMessage": "降低前綴快取占比"
+  },
+  "mlxPrefixCache.defaultNote": {
+    "defaultMessage": "留空 = 預設：模型載入後可用記憶體的 {percent}。"
+  },
+  "mlxPrefixCache.defaultValue": {
+    "defaultMessage": "預設 {percent}"
+  },
+  "mlxPrefixCache.explain": {
+    "defaultMessage": "單一長工作階段（一次基準測試執行）只有在其一份快照能放進這裡時才會保留快取的歷史；提高占比是以記憶體換取重複使用。變更會重新啟動引擎：於下次掛載時生效。"
+  },
+  "mlxPrefixCache.increase": {
+    "defaultMessage": "提高前綴快取占比"
+  },
+  "mlxPrefixCache.invalid": {
+    "defaultMessage": "請輸入 0 到 1 之間的占比（例如 0.45），或清除以使用預設值。在此之前無法儲存。"
+  },
+  "mlxPrefixCache.label": {
+    "defaultMessage": "前綴快取占比"
+  },
+  "mlxPrefixCache.setNote": {
+    "defaultMessage": "此模型使用載入後可用記憶體的 {percent} 作為快取（預設 {default}）。"
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "取消"
   },

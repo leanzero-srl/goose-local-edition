@@ -5432,6 +5432,36 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} braucht {need} GB auf diesem Mac, und {free} GB sind jetzt dafür frei — {short} GB zu wenig."
   },
+  "mlxPrefixCache.clear": {
+    "defaultMessage": "Leeren"
+  },
+  "mlxPrefixCache.clearTitle": {
+    "defaultMessage": "Leeren — zurück zum Standardanteil von goose"
+  },
+  "mlxPrefixCache.decrease": {
+    "defaultMessage": "Anteil des Präfix-Cache verringern"
+  },
+  "mlxPrefixCache.defaultNote": {
+    "defaultMessage": "Leer = der Standard: {percent} des Speichers, der nach dem Laden des Modells frei ist."
+  },
+  "mlxPrefixCache.defaultValue": {
+    "defaultMessage": "Standard {percent}"
+  },
+  "mlxPrefixCache.explain": {
+    "defaultMessage": "Eine lange einzelne Sitzung (ein Benchmark-Lauf) behält ihren Verlauf nur im Cache, solange ein Snapshot davon hier hineinpasst; ein höherer Anteil tauscht Speicher gegen Wiederverwendung. Eine Änderung startet die Engine neu: Sie gilt ab dem nächsten Mount."
+  },
+  "mlxPrefixCache.increase": {
+    "defaultMessage": "Anteil des Präfix-Cache erhöhen"
+  },
+  "mlxPrefixCache.invalid": {
+    "defaultMessage": "Gib einen Anteil zwischen 0 und 1 ein (zum Beispiel 0,45) oder leere das Feld für den Standard. Bis dahin bleibt Speichern aus."
+  },
+  "mlxPrefixCache.label": {
+    "defaultMessage": "Anteil des Präfix-Cache"
+  },
+  "mlxPrefixCache.setNote": {
+    "defaultMessage": "Dieses Modell cacht in {percent} des Speichers, der nach dem Laden frei ist (Standard {default})."
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "Abbrechen"
   },

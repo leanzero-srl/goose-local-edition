@@ -58,6 +58,7 @@ import {
 import { mlxErrorMessage } from './mlxErrorMessage';
 import { MlxThinkingFields } from './MlxThinkingFields';
 import { MlxKvCacheFields } from './MlxKvCacheFields';
+import { MlxPrefixCacheField, readPrefixCacheShare } from './MlxPrefixCacheField';
 import {
   mlxEngineBrowse,
   mlxEngineBrowseFilters,
@@ -84,7 +85,14 @@ import {
   formatGb,
 } from './primitives';
 import { FilterCombobox } from './FilterCombobox';
-import { INPUT, StudioSelect, StudioSwitch, ToneBanner, type StudioSelectOption } from './studio';
+import {
+  INPUT,
+  STEP_BUTTON,
+  StudioSelect,
+  StudioSwitch,
+  ToneBanner,
+  type StudioSelectOption,
+} from './studio';
 import { ModelCardModal } from './ModelCardModal';
 import { ModelMatrix, matrixRowCount } from './ModelMatrix';
 import { SELF_KEY, macTarget, peerRefuses, routePeerName, type Mac } from './macs';
@@ -300,11 +308,14 @@ export type LaneSettingKey = 'speculative' | 'adapterPath' | 'textOnly';
 export type ThinkingSettingKey = 'thinking' | 'reasoningEffort';
 /** `kvCache` is '' (off — the engine's bf16 cache) | 'int8' | 'int4'. */
 export type KvCacheSettingKey = 'kvCache';
+/** `prefixCacheShare` is '' (goose's default share) | a number strictly between 0 and 1. */
+export type PrefixCacheSettingKey = 'prefixCacheShare';
 export type ProfileDraftKey =
   | NumericSettingKey
   | LaneSettingKey
   | ThinkingSettingKey
-  | KvCacheSettingKey;
+  | KvCacheSettingKey
+  | PrefixCacheSettingKey;
 
 export type NumericDrafts = Record<ProfileDraftKey, string>;
 
@@ -318,6 +329,7 @@ const PROFILE_KEYS: ProfileDraftKey[] = [
   ...LANE_KEYS,
   ...THINKING_KEYS,
   'kvCache',
+  'prefixCacheShare',
 ];
 
 export function draftsFromProfile(profile: MlxModelProfile | undefined): NumericDrafts {
@@ -332,10 +344,15 @@ export function draftsFromProfile(profile: MlxModelProfile | undefined): Numeric
   drafts.thinking = profile?.thinking ?? '';
   drafts.reasoningEffort = profile?.reasoningEffort ?? '';
   drafts.kvCache = profile?.kvCache ?? '';
+  drafts.prefixCacheShare =
+    profile?.prefixCacheShare == null ? '' : String(profile.prefixCacheShare);
   return drafts;
 }
 
-/** A blank draft leaves its key ABSENT (engine default); a "0" draft sends the number 0. */
+/**
+ * A blank draft leaves its key ABSENT (engine default); a "0" draft sends the number 0. A prefix
+ * cache share outside 0 < share < 1 is never sent: `profileDraftsInvalid` keeps Save shut on it.
+ */
 export function profileFromDrafts(drafts: NumericDrafts): MlxModelProfile {
   const profile: MlxModelProfile = {};
   for (const key of NUMERIC_KEYS) {
@@ -355,7 +372,14 @@ export function profileFromDrafts(drafts: NumericDrafts): MlxModelProfile {
   const effort = drafts.reasoningEffort.trim();
   if (effort !== '') profile.reasoningEffort = effort;
   if (drafts.kvCache === 'int8' || drafts.kvCache === 'int4') profile.kvCache = drafts.kvCache;
+  const share = readPrefixCacheShare(drafts.prefixCacheShare);
+  if (share.kind === 'share') profile.prefixCacheShare = share.share;
   return profile;
+}
+
+/** A draft the backend would refuse at mount, held back on the client with the same range. */
+export function profileDraftsInvalid(drafts: NumericDrafts): boolean {
+  return readPrefixCacheShare(drafts.prefixCacheShare).kind === 'invalid';
 }
 
 export function profileHasValues(profile: MlxModelProfile): boolean {
@@ -547,14 +571,6 @@ function DiskBar({ availableBytes, totalBytes }: { availableBytes: number; total
     </div>
   );
 }
-
-const STEP_BUTTON = cx(
-  'flex size-7 shrink-0 items-center justify-center bg-lz-surface text-lz-ink-2 hover:bg-lz-surface-2 hover:text-lz-ink [&_svg]:size-3.5',
-  SURFACE.outline,
-  RADIUS.control,
-  FOCUS,
-  MOTION
-);
 
 /**
  * One row of the sampling form — label | control — with an honest "engine default" state:
@@ -1314,6 +1330,7 @@ function SamplingSection(props: SamplingSectionProps) {
   const intl = useIntl();
 
   const dirty = drafts != null && savedDrafts != null && !draftsEqual(drafts, savedDrafts);
+  const invalid = drafts != null && profileDraftsInvalid(drafts);
   const profileIds = Object.keys(settings?.modelProfiles ?? {});
   const selectedRole = selectedModelId != null ? modelRoleOn(summary, selectedModelId) : null;
   // A split (or a part of one) serves the model: said as the Mac's own line, never "no model
@@ -1369,7 +1386,7 @@ function SamplingSection(props: SamplingSectionProps) {
               size="sm"
               variant="primary"
               onClick={onSaveSettings}
-              disabled={!dirty || saving || !settings || !selectedModelId}
+              disabled={!dirty || invalid || saving || !settings || !selectedModelId}
               icon={saving ? <Loader2 className="animate-spin" /> : undefined}
             >
               Save
@@ -1417,6 +1434,10 @@ function SamplingSection(props: SamplingSectionProps) {
                 model={models.find((m) => m.id === selectedModelId)}
                 drafts={drafts}
                 setDraft={setDraft}
+              />
+              <MlxPrefixCacheField
+                text={drafts.prefixCacheShare}
+                onText={(v) => setDraft('prefixCacheShare', v)}
               />
             </div>
           )}
@@ -2979,7 +3000,7 @@ function MlxEngineViewBody({ tab: routedTab, onTabChange, onOpenNodes }: MlxEngi
     if (!samplingSettings || !samplingModelId) return;
     const k = draftKey(samplingMac, samplingModelId);
     const drafts = profileDrafts[k];
-    if (!drafts) return;
+    if (!drafts || profileDraftsInvalid(drafts)) return;
     void (async () => {
       setSaving(true);
       setSaveError(null);

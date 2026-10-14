@@ -5432,6 +5432,36 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} нужно {need} ГБ на этом Mac, а свободно для неё сейчас {free} ГБ — не хватает {short} ГБ."
   },
+  "mlxPrefixCache.clear": {
+    "defaultMessage": "Очистить"
+  },
+  "mlxPrefixCache.clearTitle": {
+    "defaultMessage": "Очистить — вернуться к доле goose по умолчанию"
+  },
+  "mlxPrefixCache.decrease": {
+    "defaultMessage": "Уменьшить долю кэша префиксов"
+  },
+  "mlxPrefixCache.defaultNote": {
+    "defaultMessage": "Пусто = по умолчанию: {percent} памяти, свободной после загрузки модели."
+  },
+  "mlxPrefixCache.defaultValue": {
+    "defaultMessage": "по умолчанию {percent}"
+  },
+  "mlxPrefixCache.explain": {
+    "defaultMessage": "Один длинный сеанс (прогон бенчмарка) держит историю в кэше, только пока сюда помещается один её снимок; большая доля меняет память на повторное использование. Изменение перезапускает движок: оно применяется при следующем монтировании."
+  },
+  "mlxPrefixCache.increase": {
+    "defaultMessage": "Увеличить долю кэша префиксов"
+  },
+  "mlxPrefixCache.invalid": {
+    "defaultMessage": "Введите долю от 0 до 1 (например, 0.45) или очистите поле для значения по умолчанию. До этого сохранение недоступно."
+  },
+  "mlxPrefixCache.label": {
+    "defaultMessage": "Доля кэша префиксов"
+  },
+  "mlxPrefixCache.setNote": {
+    "defaultMessage": "Эта модель кэширует в {percent} памяти, свободной после загрузки (по умолчанию {default})."
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "Отмена"
   },

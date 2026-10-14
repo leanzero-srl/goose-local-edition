@@ -5570,6 +5570,36 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} needs {need} GB on this Mac and {free} GB is free for it now — {short} GB short."
   },
+  "mlxPrefixCache.clear": {
+    "defaultMessage": "Clear"
+  },
+  "mlxPrefixCache.clearTitle": {
+    "defaultMessage": "Clear — fall back to goose's default share"
+  },
+  "mlxPrefixCache.decrease": {
+    "defaultMessage": "Decrease prefix cache share"
+  },
+  "mlxPrefixCache.defaultNote": {
+    "defaultMessage": "Blank = the default: {percent} of the memory free after the model loads."
+  },
+  "mlxPrefixCache.defaultValue": {
+    "defaultMessage": "default {percent}"
+  },
+  "mlxPrefixCache.explain": {
+    "defaultMessage": "A long single session (a benchmark run) keeps its history cached only while one snapshot of it fits here; raising the share trades memory for re-use. A change restarts the engine: it applies at the next mount."
+  },
+  "mlxPrefixCache.increase": {
+    "defaultMessage": "Increase prefix cache share"
+  },
+  "mlxPrefixCache.invalid": {
+    "defaultMessage": "Enter a share between 0 and 1 (for example 0.45), or clear it for the default. Save stays off until then."
+  },
+  "mlxPrefixCache.label": {
+    "defaultMessage": "Prefix cache share"
+  },
+  "mlxPrefixCache.setNote": {
+    "defaultMessage": "This model caches in {percent} of the memory free after it loads (default {default})."
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "Cancel"
   },

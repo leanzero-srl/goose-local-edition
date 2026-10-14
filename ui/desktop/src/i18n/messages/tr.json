@@ -5432,6 +5432,36 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} bu Mac'te {need} GB istiyor ve şu an onun için {free} GB boş — {short} GB eksik."
   },
+  "mlxPrefixCache.clear": {
+    "defaultMessage": "Temizle"
+  },
+  "mlxPrefixCache.clearTitle": {
+    "defaultMessage": "Temizle — goose varsayılan payına dön"
+  },
+  "mlxPrefixCache.decrease": {
+    "defaultMessage": "Önek önbelleği payını azalt"
+  },
+  "mlxPrefixCache.defaultNote": {
+    "defaultMessage": "Boş = varsayılan: model yüklendikten sonra boş kalan belleğin {percent} kadarı."
+  },
+  "mlxPrefixCache.defaultValue": {
+    "defaultMessage": "varsayılan {percent}"
+  },
+  "mlxPrefixCache.explain": {
+    "defaultMessage": "Tek bir uzun oturum (bir benchmark çalıştırması) geçmişini yalnızca bir anlık görüntüsü buraya sığdığı sürece önbellekte tutar; payı artırmak belleği yeniden kullanımla takas eder. Bir değişiklik motoru yeniden başlatır: bir sonraki bağlamada uygulanır."
+  },
+  "mlxPrefixCache.increase": {
+    "defaultMessage": "Önek önbelleği payını artır"
+  },
+  "mlxPrefixCache.invalid": {
+    "defaultMessage": "0 ile 1 arasında bir pay girin (örneğin 0.45) ya da varsayılan için temizleyin. O zamana kadar Kaydet kapalı kalır."
+  },
+  "mlxPrefixCache.label": {
+    "defaultMessage": "Önek önbelleği payı"
+  },
+  "mlxPrefixCache.setNote": {
+    "defaultMessage": "Bu model, yüklendikten sonra boş kalan belleğin {percent} kadarında önbellek tutar (varsayılan {default})."
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "İptal"
   },

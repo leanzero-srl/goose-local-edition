@@ -5432,6 +5432,36 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} perlukan {need} GB pada Mac ini dan kini {free} GB kosong untuknya — kurang {short} GB."
   },
+  "mlxPrefixCache.clear": {
+    "defaultMessage": "Kosongkan"
+  },
+  "mlxPrefixCache.clearTitle": {
+    "defaultMessage": "Kosongkan — kembali ke bahagian lalai goose"
+  },
+  "mlxPrefixCache.decrease": {
+    "defaultMessage": "Kurangkan bahagian cache awalan"
+  },
+  "mlxPrefixCache.defaultNote": {
+    "defaultMessage": "Kosong = lalai: {percent} daripada memori yang bebas selepas model dimuatkan."
+  },
+  "mlxPrefixCache.defaultValue": {
+    "defaultMessage": "lalai {percent}"
+  },
+  "mlxPrefixCache.explain": {
+    "defaultMessage": "Satu sesi panjang (satu larian penanda aras) menyimpan sejarahnya dalam cache hanya selagi satu syot kilatnya muat di sini; menaikkan bahagian menukar memori dengan guna semula. Perubahan memulakan semula enjin: ia berkuat kuasa pada mount seterusnya."
+  },
+  "mlxPrefixCache.increase": {
+    "defaultMessage": "Tambah bahagian cache awalan"
+  },
+  "mlxPrefixCache.invalid": {
+    "defaultMessage": "Masukkan bahagian antara 0 dan 1 (contohnya 0.45), atau kosongkan untuk lalai. Simpan kekal mati sehingga itu."
+  },
+  "mlxPrefixCache.label": {
+    "defaultMessage": "Bahagian cache awalan"
+  },
+  "mlxPrefixCache.setNote": {
+    "defaultMessage": "Model ini menyimpan cache dalam {percent} daripada memori yang bebas selepas dimuatkan (lalai {default})."
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "Batal"
   },

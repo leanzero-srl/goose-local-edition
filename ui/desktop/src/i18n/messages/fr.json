@@ -5432,6 +5432,36 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} a besoin de {need} Go sur ce Mac et {free} Go sont libres pour lui maintenant — il manque {short} Go."
   },
+  "mlxPrefixCache.clear": {
+    "defaultMessage": "Effacer"
+  },
+  "mlxPrefixCache.clearTitle": {
+    "defaultMessage": "Effacer — revenir à la part par défaut de goose"
+  },
+  "mlxPrefixCache.decrease": {
+    "defaultMessage": "Diminuer la part du cache de préfixes"
+  },
+  "mlxPrefixCache.defaultNote": {
+    "defaultMessage": "Vide = la valeur par défaut : {percent} de la mémoire libre après le chargement du modèle."
+  },
+  "mlxPrefixCache.defaultValue": {
+    "defaultMessage": "par défaut {percent}"
+  },
+  "mlxPrefixCache.explain": {
+    "defaultMessage": "Une longue session unique (une exécution de benchmark) ne garde son historique en cache que tant qu'un instantané de celui-ci tient ici ; augmenter la part échange de la mémoire contre de la réutilisation. Un changement redémarre le moteur : il s'applique au prochain montage."
+  },
+  "mlxPrefixCache.increase": {
+    "defaultMessage": "Augmenter la part du cache de préfixes"
+  },
+  "mlxPrefixCache.invalid": {
+    "defaultMessage": "Saisissez une part entre 0 et 1 (par exemple 0.45), ou effacez-la pour la valeur par défaut. L'enregistrement reste désactivé d'ici là."
+  },
+  "mlxPrefixCache.label": {
+    "defaultMessage": "Part du cache de préfixes"
+  },
+  "mlxPrefixCache.setNote": {
+    "defaultMessage": "Ce modèle met en cache dans {percent} de la mémoire libre après son chargement (par défaut {default})."
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "Annuler"
   },

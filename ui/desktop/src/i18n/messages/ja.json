@@ -5432,6 +5432,36 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} はこの Mac で {need} GB を必要とし、今使える空きは {free} GB です。{short} GB 不足しています。"
   },
+  "mlxPrefixCache.clear": {
+    "defaultMessage": "クリア"
+  },
+  "mlxPrefixCache.clearTitle": {
+    "defaultMessage": "クリア — goose の既定の割合に戻す"
+  },
+  "mlxPrefixCache.decrease": {
+    "defaultMessage": "プレフィックスキャッシュの割合を減らす"
+  },
+  "mlxPrefixCache.defaultNote": {
+    "defaultMessage": "空欄 = 既定値: モデル読み込み後の空きメモリの {percent}。"
+  },
+  "mlxPrefixCache.defaultValue": {
+    "defaultMessage": "既定 {percent}"
+  },
+  "mlxPrefixCache.explain": {
+    "defaultMessage": "長い単一セッション (ベンチマーク実行) は、そのスナップショットが 1 つここに収まる間だけ履歴をキャッシュに保持します。割合を上げるとメモリと引き換えに再利用が増えます。変更するとエンジンが再起動します: 次回のマウント時に適用されます。"
+  },
+  "mlxPrefixCache.increase": {
+    "defaultMessage": "プレフィックスキャッシュの割合を増やす"
+  },
+  "mlxPrefixCache.invalid": {
+    "defaultMessage": "0 と 1 の間の割合 (例: 0.45) を入力するか、既定値にするにはクリアしてください。それまで保存はできません。"
+  },
+  "mlxPrefixCache.label": {
+    "defaultMessage": "プレフィックスキャッシュの割合"
+  },
+  "mlxPrefixCache.setNote": {
+    "defaultMessage": "このモデルは読み込み後の空きメモリの {percent} をキャッシュに使います (既定 {default})。"
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "キャンセル"
   },
