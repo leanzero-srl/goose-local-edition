@@ -1,6 +1,6 @@
 ---
 name: goose-mlx-inference
-description: Operate and evolve goose Local Edition's in-house MLX inference engine (the supervised sidecar living NEXT TO LM Studio, never replacing it). Use when working on branch goose/mlx-inferencing, running the engine bake-off, mounting/benching MLX models, patching the engine fork, touching crates/goose-sidecar or the MLX desktop window, or when an experiment/finding about local MLX inference needs recording. Also the home of goose's DISTRIBUTED engine (one model split across the two Macs over JACCL/ring, the qwen4_exp pipeline fork, Flash, rank launcher/supervisor, hang/watchdog rules) and REMOTE SINGLE (the engine on a LeanZero Link peer) — their dated record is in references/. The raw two-Mac MLX/JACCL layer underneath is the mlx-jaccl-cluster skill.
+description: THE source of truth for running ANY local model through goose with the LeanZero MLX engine (Rapid-MLX fork; current pin = ENGINE_LAUNCHER in crates/goose-sidecar/src/engine.rs) on the laptop, the workhorse or Gabee's Mac — which provider (swarm/omlx for chat, built-in openai at the loopback endpoint for benchmarks; never a custom provider or proxy), the app's engine argv (--text-only, MTP, prefix cache), thinking/effort, long-context caching. LOAD IT BEFORE launching rapid-mlx by hand, writing a proxy or custom provider, or running Gauntlet / Forge 1.0 / Forge 2.0 against a local, candidate or fine-tuned model. Also: operate and evolve the engine itself (crates/goose-sidecar, the MLX window, the fork, the engine bake-off), goose's DISTRIBUTED engine (JACCL/ring split, qwen4_exp pipeline, Flash, rank launcher/supervisor) and REMOTE SINGLE (the engine on a LeanZero Link peer); dated record in references/. The raw two-Mac MLX/JACCL layer underneath is the mlx-jaccl-cluster skill.
 ---
 
 # goose-mlx-inference
@@ -10,6 +10,62 @@ Add an in-house open-source MLX engine that goose supervises as a sidecar — be
 which stays permanently. It supersedes only `crates/goose-local-inference` (the FFI path). Primary
 workload: the SWARM (N concurrent long-context tool-calling agents). Plan of record:
 `~/.claude/plans/i-want-you-to-enumerated-hejlsberg.md`. Campaign state: `local-edition/mlx/NOW.md`.
+
+## RUNNING A LOCAL MODEL — ground truth (read this FIRST; 2026-10-14)
+Written after a session ran the T12 Forge 2.0 bake-off on Gabee's Mac HEADLESSLY without loading this skill: it tried
+provider `omlx` (refused by the bench fence), hand-launched Rapid-MLX with its own flags, wrote a custom provider and a
+request-rewriting "think_proxy", and then spent a night fixing problems it had created (lost tool calls, 30-min 504s,
+prefix snapshots silently skipped → 7-14 min per turn). Owner 2026-10-14: "Headless is not my preferred way honestly!"
+Every line below has file:line evidence in the T12 plan's "Local bake-off REDESIGN" section
+(~/.claude/plans/let-s-study-what-went-sparkling-papert.md).
+
+- **Engine pin:** read it, never remember it — `ENGINE_LAUNCHER` in `crates/goose-sidecar/src/engine.rs` (2026-10-14:
+  `rapid-mlx[mtp] @ …Rapid-MLX@v0.14.3-lz.10`). The installed app's pin:
+  `strings "/Applications/Goose Swarm.app/Contents/Resources/bin/goose" | grep -o 'Rapid-MLX@[^ "]*'`.
+- **The engine is mounted BY THE APP, never typed.** `build_serve_command` (engine.rs ~651-750) passes:
+  - `--text-only` for any vision-declared checkpoint (every Qwen3.8 hybrid). Without it the model lands on the multimodal
+    lane: 1 sequence, `--cache-memory-*` ignored, snapshots over `APC_MEMORY_MAX_GB` (default 5.2 GiB on 64 GB)
+    silently skipped.
+  - `--max-concurrent-requests 8`, `--enable-prefix-cache --cache-memory-percent 0.35 --hybrid-cache-entries 24`.
+  - MTP via `--speculative-config {"method":"mtp","model":<dir>,"num_speculative_tokens":3}` whenever
+    `mtp.safetensors` sits in the model folder. The `[mtp]` extra only installs deps. MTP needs real MTP weights:
+    `mlx convert --q-mtp` defaults to OFF, so a home-made Q8 has none unless converted with `--q-mtp`.
+  - No `--timeout` (engine default 1800 s) and no `max_tokens` (engine default 32,768 out).
+- **Providers:**
+  - Chat = `swarm` (SwarmProvider). Its router sends MLX-engine turns through `omlx` (`swarm_router.rs:189,228`).
+  - omlx/lmstudio are registered but never offered; an active one is migrated once to swarm.
+  - Only `omlx` gets `rapid_mlx_transient_tail` and thinking-off on helper calls (`goose-providers/src/openai.rs:377,427-489`).
+- **Benchmarks (Gauntlet / Forge 1.0 / Forge 2.0) on a local model:**
+  - Launch ONLY from the app's Benchmark view (goose AGENTS.md GATE 3), driven over CDP when unattended
+    (`--remote-debugging-port=9897` + `~/goose-builds/loop-state/` cdp tools / `bench_dispatch.mjs`).
+  - Entrant "Single model", provider **`openai`** with its host at the engine's loopback endpoint (`bench_isolation.py:141-143`,
+    `run_build.py:614-616`).
+  - `swarm` and `omlx` are REFUSED by the fence ("no relay endpoint is known"), and custom providers cannot be picked in
+    the form (`CloudEntrant.tsx:61`).
+- **KNOWN GAP (open, T12 G1):** the tier's effort pin (`GOOSE_THINKING_EFFORT`, Forge = medium) reaches only OpenAI
+  Responses models (`formats/openai.rs:2179-2189`). Rapid-MLX turns thinking OFF on tool-bearing requests unless
+  `chat_template_kwargs` is set. So a local entrant run through the app today is NOT at the cohort's effort.
+  - Fix it in goose (capability-probed `chat_template_kwargs` on agent turns), never with a proxy.
+  - Verify in the rendered prompt.
+- **Long single sessions (100k+ tokens):** a 27B hybrid prefix snapshot is 64 KiB/token + ~151 MB of DeltaNet state.
+  - Text lane: the budget = `--cache-memory-*` (env `RAPID_MLX_PREFIX_CACHE_MAX_BYTES` wins), and an oversize entry logs
+    "Cache entry too large".
+  - Multimodal lane: env `APC_MEMORY_MAX_GB` + `RAPID_MLX_PREFIX_CACHE_MAX_BYTES`, and the skip is silent.
+  - Diagnose with the per-call `prompt_tokens`/`total_ms` in the run's `telemetry.jsonl` vs `[mllm_apc] … HIT` lines.
+    A 60-token reply taking minutes = a full re-prefill.
+  - Realistic reuse ceiling on a 64 GB Mac: 120-150k tokens.
+- **NEVER, for anything that will be compared or published:**
+  - a hand-typed `rapid-mlx serve`;
+  - a custom provider or a request-rewriting proxy;
+  - `run_build.py` headless;
+  - editing the model's chat template (`pin_medium.py` was a pilot hack; restore `*.orig-xhigh`).
+  If the app cannot do it, the fix is in goose or the fork, released and installed.
+- **Before any local-model run, write down:**
+  - the app version;
+  - the engine argv from `ps`;
+  - whether `mtp.safetensors` exists;
+  - the provider + host in the Benchmark form;
+  - one rendered prompt showing the effort.
 
 ## Hard rules (Mihai's, verbatim intent)
 - **Git identity on this repo is ALWAYS leanzero: `leanzero.srl <office@leanzero.net>`** (repo-local
@@ -39,7 +95,7 @@ across runs 8.0→7.3s; omlx degraded 7.7→13.1→11.7s non-recovering), workin
 cache (hit −26% TTFT, fidelity held), lower RSS (4.4 vs 6.5 GB). Both engines: fidelity 1.0, zero
 errors — the June DeltaNet prefix-cache footgun (omlx #825/mlx-lm #980) is dead in CURRENT
 versions, but every new engine version re-runs the bench `prefix_probe` before adoption.
-- Pinned launch (proven): `uvx --from git+https://github.com/leanzero-srl/Rapid-MLX@v0.13.4-lz.1 rapid-mlx serve <models_dir>/<model> --port 8090 --served-model-name <id> --enable-prefix-cache --max-concurrent-requests 8`
+- Pinned launch: HISTORICAL (2026-08-31, v0.13.4-lz.1, superseded). The live pin is `ENGINE_LAUNCHER` in engine.rs and the app builds the argv (`build_serve_command`); see "RUNNING A LOCAL MODEL — ground truth" above. Never copy a launch line from this file.
 - Upstream draw runbook: in ~/Projects/Rapid-MLX: `git fetch upstream && git merge --ff-only upstream/main && git push origin main --tags`, then tag the head `vX.Y.Z-lz.N` and push the tag. New pin = bump `ENGINE_LAUNCHER` in crates/goose-sidecar/src/engine.rs AND append the OLD launcher to `SUPERSEDED_ENGINE_LAUNCHERS` there — `EngineSettings::migrate_launcher` moves every persisted default-following config to the new pin on load (2026-09-05; before it, existing installs ran the first pin forever). Prove it before adopting: `uvx --from git+…@<tag> rapid-mlx serve --help` shows the flags, `/v1/status` still has num_running+num_waiting, and the ignored live test `cargo test -p goose-sidecar -- --ignored live_mount_of_the_real_engine` with GOOSE_SIDECAR_LIVE_MODELS_DIR/MODEL_ID set mounts and unmounts clean. Last draw: 2026-09-05, v0.13.1 → v0.13.4-lz.1 (upstream head, 89 commits), live mount 13.3 s. The crate picks its TLS backend from the consumer, so the HF live tests (`hf::tests::live_*`) need `--features rustls-tls` when run as `-p goose-sidecar` alone — without it every one fails in 0.00 s with "invalid URL, scheme is not http" (not a network fault; curl to huggingface.co answers 200).
 - Facts that void old assumptions: serves arbitrary local model dirs directly; TTL exists (`--resident-model-idle-ttl`); presence/frequency penalty per-request IS plumbed (frequency proven to bite at temp 0; presence same path, flat penalty needs margin); accepts `max_completion_tokens` (no remap entry needed); auto-config picks hermes+qwen3 for dense qwen3.5 and documents why dense DeltaNet must not take the hybrid scheduler path.
 - oMLX default is thinking ON — if it is ever re-benched, disable via `chat_template_kwargs {enable_thinking:false}` first or the numbers are 2x-wall unfair.
