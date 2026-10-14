@@ -20,6 +20,7 @@ use crate::openai_compatible::{
     handle_response_openai_compat, handle_status, stream_responses_compat,
 };
 use crate::request_log::{start_log, LoggerHandleExt};
+use crate::served_window::ServedWindow;
 use crate::thinking::ThinkingEffort;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -144,8 +145,9 @@ pub struct OpenAiProvider {
     dynamic_models: Option<bool>,
     skip_canonical_filtering: bool,
     preserve_thinking_context: bool,
+    /// Per configured model name: the window last probed and the model the server answered for.
     #[serde(skip)]
-    n_ctx_cache: Arc<Mutex<HashMap<String, Option<usize>>>>,
+    n_ctx_cache: Arc<Mutex<HashMap<String, CachedWindow>>>,
     /// Per model: whether the endpoint's `/v1/models` entry declared
     /// `request_extensions: ["rapid_mlx_transient_tail"]`. Only answered probes are cached.
     #[serde(skip)]
@@ -768,22 +770,30 @@ impl OpenAiProvider {
     /// endpoint said so the caller can log WHY it is falling to the default — r6f's opener was
     /// compacted at 107,199 tokens and r6h's data-stream lane compressed its code against
     /// "~11k remaining" because this probe missed LM Studio's shape and nothing said so.
-    async fn probe_context_window(&self, model_name: &str) -> Result<usize, String> {
+    ///
+    /// An engine whose entry carries `max_model_len` (the LeanZero Rapid-MLX fork, vLLM, SGLang)
+    /// is read by the one served-window rule (`goose_provider_types::served_window`):
+    /// `min(max_model_len, context_window)`, bounded further by `meta.n_ctx` when both are
+    /// listed. An entry with a `context_window` and no `max_model_len` keeps today's chain and is
+    /// named once (`served_window_unreported`).
+    async fn probe_context_window(&self, model_name: &str) -> Result<ProbedWindow, String> {
         let models_path =
             Self::map_base_path(&self.base_path, "models", OPEN_AI_DEFAULT_MODELS_PATH);
         let v1_miss = match self.fetch_models_json(&models_path).await {
-            Ok(json) => match parse_n_ctx_from_models(&json, model_name) {
-                Some(n_ctx) => {
+            Ok(json) => match window_from_models(&json, model_name) {
+                Some(probed) => {
                     tracing::info!(
                         model = %model_name,
-                        context_window = n_ctx,
-                        "context window from {} meta.n_ctx",
-                        models_path
+                        served = ?probed.served,
+                        context_window = probed.window,
+                        "context window from {} ({})",
+                        models_path,
+                        probed.source
                     );
-                    return Ok(n_ctx);
+                    return Ok(probed);
                 }
                 None => format!(
-                    "{models_path}: no meta.n_ctx for {model_name} ({})",
+                    "{models_path}: no meta.n_ctx or max_model_len for {model_name} ({})",
                     describe_listing(&json)
                 ),
             },
@@ -799,7 +809,11 @@ impl OpenAiProvider {
                         "context window from {} loaded_context_length",
                         LM_STUDIO_NATIVE_MODELS_PATH
                     );
-                    return Ok(loaded);
+                    return Ok(ProbedWindow {
+                        window: loaded,
+                        served: Some(model_name.to_string()),
+                        source: "loaded_context_length",
+                    });
                 }
                 Err(miss) => format!("{LM_STUDIO_NATIVE_MODELS_PATH}: {miss}"),
             },
@@ -891,6 +905,61 @@ fn describe_listing(json: &serde_json::Value) -> String {
 }
 
 /// Extract `meta.n_ctx` for `model_name` from a `/v1/models` response body.
+/// A window the probe read, and the model the server answered for: the id of the `/v1/models`
+/// entry that carried it (the sole entry may serve under another id), or the LM Studio entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProbedWindow {
+    window: usize,
+    served: Option<String>,
+    source: &'static str,
+}
+
+/// What `get_context_limit` remembers per configured model name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CachedWindow {
+    /// `None` = the probe missed (the default stood in, said once).
+    window: Option<usize>,
+    served: Option<String>,
+}
+
+impl CachedWindow {
+    /// The cache is keyed by the model the server SERVES: a window read off the sole entry of a
+    /// single-model server under another id is not reused — that server can swap what it serves
+    /// under the same URL (a Q8 for a Q6) and the window with it — so such a name is probed again.
+    fn holds_for(&self, model_name: &str) -> bool {
+        match &self.served {
+            Some(served) => served == model_name,
+            None => true,
+        }
+    }
+}
+
+/// The window a `/v1/models` listing gives for `model_name`: llama.cpp/Ollama `meta.n_ctx` and the
+/// served-window rule's memory bound, the smaller when both are present.
+fn window_from_models(json: &serde_json::Value, model_name: &str) -> Option<ProbedWindow> {
+    let entry = served_entry(json, model_name)?;
+    let served = entry.get("id").and_then(|v| v.as_str()).map(str::to_string);
+    let window = ServedWindow::of_entry(entry);
+    let bounded = window
+        .memory_bounded()
+        .map(|w| usize::try_from(w).unwrap_or(usize::MAX));
+    if bounded.is_none() && window.native.is_some() {
+        window.warn_once_if_unbounded("openai /v1/models", served.as_deref().unwrap_or(model_name));
+    }
+    let n_ctx = parse_n_ctx_from_models(json, model_name);
+    let (window, source) = match (n_ctx, bounded) {
+        (Some(n), Some(b)) => (n.min(b), "meta.n_ctx and max_model_len"),
+        (Some(n), None) => (n, "meta.n_ctx"),
+        (None, Some(b)) => (b, "max_model_len"),
+        (None, None) => return None,
+    };
+    Some(ProbedWindow {
+        window,
+        served,
+        source,
+    })
+}
+
 fn parse_n_ctx_from_models(json: &serde_json::Value, model_name: &str) -> Option<usize> {
     let data = json.get("data")?.as_array()?;
 
@@ -1042,9 +1111,9 @@ impl Provider for OpenAiProvider {
     /// Resolve the effective context limit. When the config carries an explicit
     /// limit (GOOSE_CONTEXT_LIMIT, a session override, or a known/canonical
     /// value) it is used as-is. Otherwise probe the server for the window it has
-    /// loaded (`probe_context_window`: llama.cpp/Ollama `meta.n_ctx`, then LM Studio
-    /// `loaded_context_length`) — the number the compaction guard and the per-turn
-    /// context line run on. A miss falls to DEFAULT_CONTEXT_LIMIT LOUDLY: one warn per
+    /// loaded (`probe_context_window`: llama.cpp/Ollama `meta.n_ctx` and an engine's
+    /// memory-bounded `max_model_len`, then LM Studio `loaded_context_length`) — the number
+    /// the compaction guard and the per-turn context line run on. A miss falls to DEFAULT_CONTEXT_LIMIT LOUDLY: one warn per
     /// model naming the host, both endpoints and their reasons, never quietly. The probe
     /// is bounded by a short timeout so a hung endpoint can't stall the caller.
     async fn get_context_limit(&self, model_config: &ModelConfig) -> Result<usize, ProviderError> {
@@ -1052,14 +1121,17 @@ impl Provider for OpenAiProvider {
             return Ok(self.apply_local_context_cap(limit));
         }
 
-        if let Some(cached) = self
-            .n_ctx_cache
-            .lock()
-            .ok()
-            .and_then(|cache| cache.get(&model_config.model_name).copied())
-        {
-            return Ok(self
-                .apply_local_context_cap(cached.unwrap_or_else(|| model_config.context_limit())));
+        if let Some(cached) = self.n_ctx_cache.lock().ok().and_then(|cache| {
+            cache
+                .get(&model_config.model_name)
+                .filter(|c| c.holds_for(&model_config.model_name))
+                .cloned()
+        }) {
+            return Ok(self.apply_local_context_cap(
+                cached
+                    .window
+                    .unwrap_or_else(|| model_config.context_limit()),
+            ));
         }
 
         const N_CTX_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
@@ -1069,14 +1141,14 @@ impl Provider for OpenAiProvider {
         )
         .await
         {
-            Ok(Ok(window)) => Some(window),
+            Ok(Ok(probed)) => Some(probed),
             Ok(Err(reason)) => {
                 tracing::warn!(
                     host = %sanitize_url(self.api_client.host()),
                     model = %model_config.model_name,
                     default_context_limit = model_config.context_limit(),
                     reason = %reason,
-                    "context_window_probe_missed: no meta.n_ctx or loaded_context_length for this \
+                    "context_window_probe_missed: no meta.n_ctx, max_model_len or loaded_context_length for this \
                      model; the compaction guard and the per-turn context line run on the default"
                 );
                 None
@@ -1093,11 +1165,18 @@ impl Provider for OpenAiProvider {
             }
         };
 
+        let window = probed.as_ref().map(|p| p.window);
         if let Ok(mut cache) = self.n_ctx_cache.lock() {
-            cache.insert(model_config.model_name.clone(), probed);
+            cache.insert(
+                model_config.model_name.clone(),
+                CachedWindow {
+                    window,
+                    served: probed.and_then(|p| p.served),
+                },
+            );
         }
 
-        Ok(self.apply_local_context_cap(probed.unwrap_or_else(|| model_config.context_limit())))
+        Ok(self.apply_local_context_cap(window.unwrap_or_else(|| model_config.context_limit())))
     }
 
     async fn fetch_supported_models(&self) -> Result<Vec<String>, ProviderError> {
@@ -2504,6 +2583,88 @@ mod tests {
             ]
         });
         assert_eq!(parse_n_ctx_from_models(&body, "model-c"), None);
+    }
+
+    /// The `openai` provider pointed at goose's Rapid-MLX engine: the listing carries neither
+    /// `meta.n_ctx` nor LM Studio's `loaded_context_length`, so goose compacted against the
+    /// 128,000 default. The guarded engine's `max_model_len` is the window, and a listing of the
+    /// native window alone still runs on today's chain (here: the default).
+    async fn context_limit_from(models: serde_json::Value, model: &str) -> (usize, usize) {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(models))
+            .mount(&server)
+            .await;
+        let mut provider = make_provider("openai");
+        provider.api_client =
+            ApiClient::new_with_tls(server.uri(), AuthMethod::NoAuth, None).unwrap();
+        let config = ModelConfig::new(model);
+        let first = provider.get_context_limit(&config).await.unwrap();
+        let again = provider.get_context_limit(&config).await.unwrap();
+        assert_eq!(first, again);
+        let probes = server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| r.url.path() == "/v1/models")
+            .count();
+        (first, probes)
+    }
+
+    #[tokio::test]
+    async fn rapid_mlx_max_model_len_is_the_window() {
+        let (window, probes) = context_limit_from(
+            json!({"object": "list", "data": [{
+                "id": "AREX-2-Q8-mlx", "context_window": 262_144, "max_model_len": 158_464
+            }]}),
+            "AREX-2-Q8-mlx",
+        )
+        .await;
+        assert_eq!(window, 158_464);
+        assert_eq!(probes, 1, "the served model is the named one: cached");
+
+        let (native_only, _) = context_limit_from(
+            json!({"object": "list", "data": [{
+                "id": "AREX-2-Q8-mlx", "context_window": 262_144
+            }]}),
+            "AREX-2-Q8-mlx",
+        )
+        .await;
+        assert_eq!(
+            native_only,
+            crate::model::DEFAULT_CONTEXT_LIMIT,
+            "no memory bound: today's chain (no n_ctx, no LM Studio listing) and the named warning"
+        );
+    }
+
+    /// A single-model server answering under another id can swap what it serves behind one URL,
+    /// so its window is probed again rather than read from the name's cache.
+    #[tokio::test]
+    async fn a_window_read_off_another_served_id_is_probed_again() {
+        let (window, probes) = context_limit_from(
+            json!({"object": "list", "data": [{
+                "id": "AREX-2-Q6-mlx", "context_window": 262_144, "max_model_len": 201_000
+            }]}),
+            "local-27b",
+        )
+        .await;
+        assert_eq!(window, 201_000);
+        assert_eq!(probes, 2);
+    }
+
+    #[test]
+    fn n_ctx_and_max_model_len_take_the_smaller() {
+        let body = json!({"data": [{
+            "id": "m", "meta": {"n_ctx": 65_536}, "context_window": 262_144, "max_model_len": 90_000
+        }]});
+        let probed = window_from_models(&body, "m").unwrap();
+        assert_eq!(probed.window, 65_536);
+        assert_eq!(probed.served.as_deref(), Some("m"));
     }
 
     /// The live LM Studio `/api/v0/models` body from the local node, 2026-09-02: three loaded

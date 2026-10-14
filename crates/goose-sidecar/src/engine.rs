@@ -27,6 +27,7 @@ use crate::{
     measure, port_has_listener, sidecar_marker, Ensured, MemoryReading, PortHolder,
     RestartLoadFailed, Sidecar, SidecarConfig, StartCancel, StartCancelled, StartupWatch, GIB,
 };
+use goose_provider_types::served_window::ServedWindow;
 
 /// Milliseconds a load spent in each phase the engine showed. A phase it never showed is absent.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -1117,7 +1118,16 @@ pub struct EngineStatus {
     pub model_id: Option<String>,
     pub base_url: Option<String>,
     pub pid: Option<u32>,
+    /// The window the engine serves (`goose_provider_types::served_window`): `min(max_model_len,
+    /// context_window)` from `/v1/models`, else `/v1/status`'s `memory_guard.max_context_idle`
+    /// bounding the native window, else the native window alone (said once,
+    /// `served_window_unreported`).
     pub context_window: Option<u64>,
+    /// Whether the engine's memory guard derived `context_window` from MEASURED step peaks
+    /// (`memory_guard` `source: calibrated`); false while it runs on its analytic prior, or when
+    /// it reports no guard at all.
+    #[serde(default)]
+    pub context_calibrated: bool,
     pub tool_call_parser: Option<String>,
     /// The id the live engine actually serves (from /v1/models) — differs from `model_id`
     /// (the HF directory) whenever `served_model_name` aliases it. Chat must use THIS id.
@@ -2150,6 +2160,7 @@ impl MlxEngineManager {
             base_url: None,
             pid: None,
             context_window: None,
+            context_calibrated: false,
             tool_call_parser: None,
             served_model_id: None,
             probe_error: None,
@@ -2298,19 +2309,24 @@ impl MlxEngineManager {
                 }
             };
             let base_url = status.base_url.as_deref().expect("set for running state");
-            let (model_info, active_requests) = tokio::join!(
+            let (model_info, engine_status) = tokio::join!(
                 self.probe_model_info(base_url),
-                self.probe_active_requests(base_url)
+                self.probe_engine_status(base_url)
             );
+            let guard = engine_status
+                .as_ref()
+                .ok()
+                .and_then(|body| parse_memory_guard(body));
             match model_info {
-                Ok((served_model_id, context_window, tool_call_parser)) => {
-                    status.served_model_id = served_model_id;
-                    status.context_window = context_window;
-                    status.tool_call_parser = tool_call_parser;
+                Ok(info) => {
+                    status.context_window = engine_window(&info, guard.as_ref());
+                    status.context_calibrated = guard.as_ref().is_some_and(|g| g.calibrated);
+                    status.served_model_id = info.served_model_id;
+                    status.tool_call_parser = info.tool_call_parser;
                 }
                 Err(e) => status.probe_error = Some(format!("{e:#}")),
             }
-            match active_requests {
+            match engine_status.and_then(|body| parse_active_requests(&body)) {
                 Ok(count) => status.active_requests = Some(count),
                 Err(e) => status.active_requests_error = Some(format!("{e:#}")),
             }
@@ -2321,7 +2337,7 @@ impl MlxEngineManager {
     /// GET `/v1/status` — Rapid-MLX 0.13.1 `routes/health.py:304`, on the router that is
     /// auth-gated only when the engine was given an API key (the serve argv passes none).
     /// The same probe client and cadence as `/v1/models`; no clock of its own.
-    async fn probe_active_requests(&self, base_url: &str) -> Result<u32> {
+    async fn probe_engine_status(&self, base_url: &str) -> Result<String> {
         let url = format!("{base_url}/v1/status");
         let resp = self
             .probe_client
@@ -2332,14 +2348,10 @@ impl MlxEngineManager {
         let status = resp.status();
         let body = resp.text().await.context("reading /v1/status body")?;
         ensure!(status.is_success(), "GET {url} returned HTTP {status}");
-        parse_active_requests(&body)
+        Ok(body)
     }
 
-    #[allow(clippy::type_complexity)]
-    async fn probe_model_info(
-        &self,
-        base_url: &str,
-    ) -> Result<(Option<String>, Option<u64>, Option<String>)> {
+    async fn probe_model_info(&self, base_url: &str) -> Result<ModelInfo> {
         let url = format!("{base_url}/v1/models");
         let resp = self
             .probe_client
@@ -2350,28 +2362,104 @@ impl MlxEngineManager {
         let status = resp.status();
         let body = resp.text().await.context("reading /v1/models body")?;
         ensure!(status.is_success(), "GET {url} returned HTTP {status}");
-        parse_model_info(&body)
+        parse_model_entry(&body)
     }
 }
 
-/// The first `/v1/models` entry as (served id, context_window, tool_call_parser) — the sidecar
-/// serves one model, so the first entry is the model. Shared with every out-of-process reader of
-/// the same catalog (the swarm chat router), so one parse rule describes the engine.
-pub fn parse_model_info(body: &str) -> Result<(Option<String>, Option<u64>, Option<String>)> {
+/// The first `/v1/models` entry as the engine describes it — the sidecar serves one model, so the
+/// first entry is the model.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelInfo {
+    pub served_model_id: Option<String>,
+    pub window: ServedWindow,
+    pub tool_call_parser: Option<String>,
+}
+
+pub fn parse_model_entry(body: &str) -> Result<ModelInfo> {
     let parsed: serde_json::Value =
         serde_json::from_str(body).context("parsing /v1/models body")?;
     let model = parsed
         .get("data")
         .and_then(|d| d.get(0))
         .with_context(|| format!("/v1/models returned no data entries: {body}"))?;
-    Ok((
-        model.get("id").and_then(|v| v.as_str()).map(str::to_string),
-        model.get("context_window").and_then(|v| v.as_u64()),
-        model
+    Ok(ModelInfo {
+        served_model_id: model.get("id").and_then(|v| v.as_str()).map(str::to_string),
+        window: ServedWindow::of_entry(model),
+        tool_call_parser: model
             .get("tool_call_parser")
             .and_then(|v| v.as_str())
             .map(str::to_string),
+    })
+}
+
+const MODELS_ORIGIN: &str = "goose MLX engine /v1/models";
+
+/// The first `/v1/models` entry as (served id, served window, tool_call_parser). The window is the
+/// one served-window rule (`ServedWindow::tokens`: `min(max_model_len, context_window)`), and an
+/// engine that bounds nothing is said once per model (`served_window_unreported`). Shared with
+/// every out-of-process reader of the same catalog (the swarm chat router, the remote single, the
+/// split's owner, residency), so one parse rule describes the engine.
+pub fn parse_model_info(body: &str) -> Result<(Option<String>, Option<u64>, Option<String>)> {
+    let info = parse_model_entry(body)?;
+    info.window.warn_once_if_unbounded(
+        MODELS_ORIGIN,
+        info.served_model_id.as_deref().unwrap_or("(unnamed)"),
+    );
+    Ok((
+        info.served_model_id,
+        info.window.tokens(),
+        info.tool_call_parser,
     ))
+}
+
+/// What the engine's memory guard says in `/v1/status` (LeanZero Rapid-MLX: `memory_guard`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GuardWindow {
+    /// `max_context_idle`: the largest context one sequence holds on this device, idle.
+    pub max_context_idle: Option<u64>,
+    /// `source: calibrated` — the guard's step-peak model runs on measured peaks, not its prior.
+    pub calibrated: bool,
+}
+
+/// `None` = the body names no enabled guard (an engine without one, or with it switched off).
+pub fn parse_memory_guard(body: &str) -> Option<GuardWindow> {
+    let parsed: serde_json::Value = serde_json::from_str(body).ok()?;
+    let guard = parsed.get("memory_guard")?;
+    if guard.get("enabled").and_then(|v| v.as_bool()) != Some(true) {
+        return None;
+    }
+    let source = ["coefficients", "peak_model"]
+        .iter()
+        .filter_map(|k| guard.get(*k))
+        .chain(std::iter::once(guard))
+        .find_map(|block| block.get("source").and_then(|v| v.as_str()));
+    Some(GuardWindow {
+        max_context_idle: guard
+            .get("max_context_idle")
+            .and_then(|v| v.as_u64())
+            .filter(|v| *v > 0),
+        calibrated: source == Some("calibrated"),
+    })
+}
+
+/// The engine's honest window: `max_model_len` when `/v1/models` carries it, else the guard's
+/// idle figure bounding the native window, else the native window — and then the absence is said.
+fn engine_window(info: &ModelInfo, guard: Option<&GuardWindow>) -> Option<u64> {
+    let window = match (
+        info.window.max_model_len,
+        guard.and_then(|g| g.max_context_idle),
+    ) {
+        (None, Some(idle)) => ServedWindow {
+            max_model_len: Some(idle),
+            ..info.window
+        },
+        _ => info.window,
+    };
+    window.warn_once_if_unbounded(
+        MODELS_ORIGIN,
+        info.served_model_id.as_deref().unwrap_or("(unnamed)"),
+    );
+    window.tokens()
 }
 
 impl Default for MlxEngineManager {
@@ -3575,6 +3663,55 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         );
         let not_json = format!("{:#}", parse_active_requests("<html>").unwrap_err());
         assert!(not_json.contains("parsing /v1/status body"), "{not_json}");
+    }
+
+    /// Gabee's 64 GB M3 Max (2026-10-14): the 27B listed `context_window` 262,144 and goose
+    /// compacted at 0.8 × that ≈ 210k while the Q8 hit a Metal OOM on every prefill from ~64k.
+    /// The guarded engine's `max_model_len` is the window every reader of `/v1/models` gets.
+    #[test]
+    fn max_model_len_bounds_the_served_window() {
+        let body = r#"{"object":"list","data":[{"id":"AREX-2-Q8-mlx","context_window":262144,
+            "max_model_len":158464,"tool_call_parser":"qwen3_coder"}]}"#;
+        let (served, window, parser) = parse_model_info(body).unwrap();
+        assert_eq!(served.as_deref(), Some("AREX-2-Q8-mlx"));
+        assert_eq!(window, Some(158_464));
+        assert_eq!(parser.as_deref(), Some("qwen3_coder"));
+        let info = parse_model_entry(body).unwrap();
+        assert_eq!(engine_window(&info, None), Some(158_464));
+    }
+
+    /// An engine whose `/v1/models` bounds nothing keeps the native window (today's reading) —
+    /// unless its `/v1/status` memory guard reports the idle window, which then bounds it.
+    #[test]
+    fn an_unbounded_listing_keeps_the_native_window_unless_the_guard_bounds_it() {
+        let body = r#"{"data":[{"id":"m","context_window":262144,"max_model_len":null}]}"#;
+        assert_eq!(parse_model_info(body).unwrap().1, Some(262_144));
+        let info = parse_model_entry(body).unwrap();
+        assert_eq!(info.window.memory_bounded(), None);
+        assert_eq!(engine_window(&info, None), Some(262_144));
+        let status = r#"{"num_running":0,"num_waiting":0,"memory_guard":{"enabled":true,
+            "max_context_idle":201000,"ceiling_bytes":55662788608,"floor_chunk_tokens":256,
+            "coefficients":{"source":"calibrated","observations":12}}}"#;
+        let guard = parse_memory_guard(status).unwrap();
+        assert_eq!(
+            guard,
+            GuardWindow {
+                max_context_idle: Some(201_000),
+                calibrated: true
+            }
+        );
+        assert_eq!(engine_window(&info, Some(&guard)), Some(201_000));
+        let prior = parse_memory_guard(
+            r#"{"memory_guard":{"enabled":true,"max_context_idle":190000,
+                "peak_model":{"source":"prior"}}}"#,
+        )
+        .unwrap();
+        assert!(!prior.calibrated);
+        assert_eq!(
+            parse_memory_guard(r#"{"memory_guard":{"enabled":false}}"#),
+            None
+        );
+        assert_eq!(parse_memory_guard(r#"{"num_running":0}"#), None);
     }
 
     /// Q1: the status carries the engine's own in-flight count when it reports one, and an
