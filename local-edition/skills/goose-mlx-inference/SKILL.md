@@ -70,6 +70,70 @@ Every line below has file:line evidence in the T12 plan's "Local bake-off REDESI
   - the provider + host in the Benchmark form;
   - one rendered prompt showing the effort.
 
+## MEMORY GUARD — OOM-proof, cache-invisible, device-aware (T12, 2026-10-14; fork branch `lz/memory-guard`)
+Owner asks, verbatim:
+- "the cache share or cache hitting needs to be invisible, it should just work";
+- "make sure that OOMs are not possible";
+- "halving to occur only under duress with weaker devices … a device with a lot of memory this halving should not happen. All of your implementations must be aware, you should not build hard coded solutions" (memory `device-aware-never-hard-coded`).
+
+The full record is in the T12 plan, section "MEMORY GUARD design" (`~/.claude/plans/let-s-study-what-went-sparkling-papert.md`).
+
+- **lz.10 OOMs on a 64 GB Mac** (Gabee, M3 Max, Metal working set 55.66 GB), on a single growing goose session (the pilot's 98–116k history), at the app's argv:
+  - Q8 (30 GB): every prefill from ~64k.
+  - Q6 (24 GB): from ~76k.
+  - Q4 (18 GB): from ~94k.
+  - A smaller quant moves the wall; it never removes it.
+  - lz.10 also empties the prefix cache under pressure, which costs 6–10 min full re-prefills.
+- **Cause:** head_dim-256 attention has no fused SDPA kernel when q < k on M3 Max. Each prefill chunk therefore materialises heads × chunk × ctx score tensors that nothing charged for.
+  - Measured on M3 Max, mlx 0.32.3: head_dims 64, 80, 96 and 128 hold no score tensor; 192 and 256 hold ~1.
+  - Other uncharged terms: the MLX allocator cache, decode KV growth, the first-chunk copy of a fetched entry, and the padded multi-row prompt batch.
+  - lz.10's `max_model_len` is upstream's KV-only figure, so 262,144 on an engine that OOMs at 64k. Never treat it as a memory bound unless `/v1/status memory_guard.enabled`.
+- **The guard** (fork commits from `27479031c` onward; head at 17:00 = `244d8de5c`):
+  - A per-step plan before every prefill chunk, decode growth and batch join. It counts weights, KV, allocator cache, the calibrated attention coefficient, the copy term and the join padding.
+  - When a step won't fit, it acts in this order: clear the allocator cache → evict by the one policy → reduce the chunk → defer the latest arrival (feasibility decided before any eviction) → 400 `context_length_exceeded` only if the request cannot fit ALONE.
+  - Each session's newest entry is protected only while it is live, queued or the most recent.
+  - End-of-turn handoff: the entry takes ownership of the finished request's KV instead of copying it.
+  - It yields to macOS memory pressure.
+  - The window is stable (it never rises mid-process) and comes from the device ceiling.
+  - `/v1/status memory_guard`: `max_context_idle`, `ceiling_bytes`, coefficients, `actions`, `max_step_peak_mb`, `steps_over_ceiling`, `backstop_firings`, `plan_exhausted`. A constants table sits at the top of `memory_guard.py`.
+- **goose side** (branch `t12/local-bench-fidelity`):
+  - served window = min(max_model_len, context_window), a device bound only from a guarded engine;
+  - one `SingleEngineCost` with the context derived from the device ceiling;
+  - `engine_profile.rs` declares how each pin prefills (Guarded / unguarded 2048);
+  - no `--cache-memory-percent` for a Guarded pin. Measured: the 0.35 share capped the prefix ledger at 9.9 GB, and hits stopped at ~half the window.
+  - The pin bump needs a `Guarded` row, or `the_pinned_engine_declares_its_memory_profile` fails.
+- **THE LIVE PROOF (the only acceptance):**
+  1. On the target Mac, through the APP: quit the app, set `mlx_engine.spawn_command` in `~/.config/goose/config.yaml` to `["/bin/sh","~/t12-bench/engine-wrap.sh"]`.
+     - That test launcher `exec`s the app's bundled `uvx --from "rapid-mlx[mtp] @ git+…Rapid-MLX@<full sha>"` and drops `--cache-memory-percent`, exactly as goose will for a Guarded pin.
+     - Back up the config first: `~/t12-bench.noindex/config.yaml.before-memguard-*`.
+     - Use the FULL sha.
+     - Verify the engine's `direct_url.json` `commit_id`.
+  2. Relaunch with `--remote-debugging-port=9897`, start the node from the Nodes page over CDP, and wait for `/v1/status` to show `memory_guard`.
+  3. Run `~/t12-bench/mem_ladder_v3.py memlab/history-106.jsonl memlab/<out>.jsonl 8090 10 4`, detached, with `LADDER_SIDE=1`.
+     - The side request is a concurrent ~21k-token subagent-shaped request.
+     - v3's `wall_s` excludes waiting for the side request; v2's did not.
+  4. PASS = all of these:
+     - `steps_over_ceiling == 0`;
+     - `backstop_firings == 0`;
+     - 0 `Insufficient Memory` in `~/.local/state/goose/logs/mlx-engine/mlx-engine-*.log`;
+     - the main session HITS every turn after the first;
+     - the side request is never refused while it fits alone.
+  5. Then the BIG-MAC arm: the same ladder on a 96 or 128 GB Mac must show ZERO protective actions unless a guard-off run would cross the cap.
+- **Traps that cost hours:**
+  - **Reading the wrong number:** a 2 s `/v1/status` sample misses the step peak, so read the engine's `max_step_peak_mb`.
+  - **Timestamps:** engine log timestamps are UTC (Gabee is EEST, so subtract 3 h).
+  - **cdpmain.mjs clicks:** its `click "text=Start"` picks the LAST matching button. Target the card's own button with `eval`.
+  - **Void ladder rows:** quitting the app while a ladder runs voids the rows from that step on.
+  - **Results that misled:**
+    - Live calibration was poisoned by the fetched entry's first-write copy: a 3.5× coefficient spike that swung the window 207k→103k.
+    - The admission-handoff busy loop exhausted the planner, so steps ran UNPLANNED (`shape=None` = an unplanned step). That caused the 64c1f288b OOMs at k=38/42.
+    - Evict-then-defer destroyed the deferred request's own prefix.
+    - A wrong 400 claimed "maximum context here is 0 tokens" for a 21k prompt beside a running request.
+- **Status 2026-10-14 17:00:**
+  - 4ac506f7d passed the concurrent Q8 ladder to 81k+: 0 over the ceiling, 0 backstop, main hits every turn.
+  - 244d8de5c is under review 4, then gets the live proof.
+  - After that: tag lz.11 → `ENGINE_LAUNCHER` bump + `Guarded` row + `SUPERSEDED_ENGINE_LAUNCHERS` → live mount test → notarized prerelease.
+
 ## Hard rules (Mihai's, verbatim intent)
 - **Git identity on this repo is ALWAYS leanzero: `leanzero.srl <office@leanzero.net>`** (repo-local
   `git config`; set on 2026-08-30, matches the other LeanZero repos). Never the client or
