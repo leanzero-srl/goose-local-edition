@@ -532,17 +532,37 @@ impl OpenAiProvider {
         Ok(accepted)
     }
 
-    /// Whether this request goes to goose's own MLX engine on this machine through the
-    /// benchmark route (see [`Self::PROVIDERS_REACHING_A_LOCAL_ENGINE`]). A failed probe is loud:
-    /// the request then leaves without the run's thinking effort.
+    /// Whether this request, which carries a thinking effort, goes to goose's own MLX engine on
+    /// this machine through the benchmark route (see
+    /// [`Self::PROVIDERS_REACHING_A_LOCAL_ENGINE`]). Only asked when there is an effort to carry,
+    /// so an `openai` provider pointed at any other local server (llama.cpp, vLLM, Ollama's /v1)
+    /// with no effort configured is never probed. Both ways of NOT sending the effort are loud: a
+    /// failed probe on every request, and an endpoint that answers without the fork's declaration
+    /// once per model (the answer is cached).
     async fn reaches_local_leanzero_engine(&self, model_name: &str) -> bool {
         if !Self::PROVIDERS_REACHING_A_LOCAL_ENGINE.contains(&self.name.as_str())
             || !is_loopback_endpoint(self.api_client.host())
         {
             return false;
         }
+        let first_answer = self
+            .transient_tail_cache
+            .lock()
+            .ok()
+            .is_some_and(|cache| !cache.contains_key(model_name));
         match self.declares_leanzero_engine(model_name).await {
-            Ok(declared) => declared,
+            Ok(declared) => {
+                if !declared && first_answer {
+                    tracing::warn!(
+                        host = %sanitize_url(self.api_client.host()),
+                        model = %model_name,
+                        "local_engine_undeclared: this loopback endpoint does not declare \
+                         {RAPID_MLX_TRANSIENT_TAIL} for the model (not the LeanZero engine, or no \
+                         entry by this name), so the run's thinking effort is NOT sent to it"
+                    );
+                }
+                declared
+            }
             Err(e) => {
                 tracing::warn!(
                     host = %sanitize_url(self.api_client.host()),
@@ -561,12 +581,17 @@ impl OpenAiProvider {
     /// only for OpenAI Responses models, so without this a local entrant ran at whatever the
     /// engine chose: Rapid-MLX switches thinking OFF on a tool-bearing request that carries no
     /// reasoning preference, while the cloud cohort of the same tier ran at `medium`. The engine
-    /// maps the value onto the template's own vocabulary (Qwen3.8 validates `xhigh`/`medium`/`low`;
-    /// `high` rounds up to `xhigh`) and treats it as reasoning intent, so tool turns keep their
-    /// thinking (rapid_mlx/service/helpers.py `maybe_apply_reasoning_effort`,
-    /// `maybe_auto_disable_thinking_for_tools`). A helper call's Off becomes `none`, which the engine
-    /// turns into `enable_thinking: false`. A request that already names a reasoning control keeps
-    /// it.
+    /// treats the value as reasoning intent, so tool turns keep their thinking
+    /// (rapid_mlx/service/helpers.py `maybe_apply_reasoning_effort`,
+    /// `maybe_auto_disable_thinking_for_tools`), and applies it one of two ways: a template that
+    /// validates its own levels (Qwen3.8: `xhigh`/`medium`/`low`) gets the nearest level in its
+    /// prompt (`high` rounds up to `xhigh`); any other template gets a thinking-token CAP instead
+    /// (`OPENAI_REASONING_EFFORT_TO_MAX_TOKENS`: low 512, medium 2048, high 8192, xhigh 24000).
+    /// The cap is still closer to the tier's intent than the engine's thinking-off, but it is a
+    /// limit a cloud model may not have, so a non-Qwen3.8 local score carries that caveat. A
+    /// helper call's Off becomes `none`, which the engine turns into `enable_thinking: false`. A
+    /// request that already names a reasoning control keeps it. The request log
+    /// (`llm_request.*.jsonl`) records the value that actually went out.
     fn carry_effort_to_local_engine(
         model_config: &ModelConfig,
         payload: &mut serde_json::Value,
@@ -1177,9 +1202,10 @@ impl Provider for OpenAiProvider {
                 .await?;
             let mut payload = self.sanitize_request_for_compat(payload);
             self.carry_thinking_off_to_mlx(model_config, &mut payload)?;
-            if self
-                .reaches_local_leanzero_engine(&model_config.model_name)
-                .await
+            if model_config.thinking_effort().is_some()
+                && self
+                    .reaches_local_leanzero_engine(&model_config.model_name)
+                    .await
             {
                 Self::carry_effort_to_local_engine(model_config, &mut payload)?;
             }
@@ -1985,11 +2011,15 @@ mod tests {
         }
 
         let medium = ModelConfig::new("served").with_thinking_effort(ThinkingEffort::Medium);
-        let (body, _) =
+        let (body, probes) =
             local_engine_body("openai", declared.clone(), &ModelConfig::new("served")).await;
         assert!(
             body.get("reasoning_effort").is_none(),
             "no effort configured, none sent"
+        );
+        assert_eq!(
+            probes, 0,
+            "with no effort to carry, a local openai endpoint is never probed"
         );
 
         let (body, _) = local_engine_body(
