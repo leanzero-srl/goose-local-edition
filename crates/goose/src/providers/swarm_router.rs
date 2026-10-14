@@ -48,12 +48,13 @@ use crate::nodes::{
 use goose_providers::errors::ProviderError;
 use goose_providers::model::ModelConfig;
 use goose_providers::redact::redact_relay_capability;
+use goose_providers::served_window::{MemoryGuard, ServedWindow};
 use goose_sdk_types::custom_requests::{
     BackgroundWorkKind, MlxPlacementKeyDto, MlxPlacementKindDto, NodeEnsureServing,
     NodeIfServingOther, NodeLoadRefusalCode, NodeServedTurnDto, NodeServingOtherDto, NodeTriedDto,
     NodesServingKind,
 };
-use goose_sidecar::engine::{served_model_id, EngineSettings, EngineStatus};
+use goose_sidecar::engine::{served_model_id, EngineSettings, EngineStatus, WindowReader};
 
 const SWARM_CONFIG_KEY: &str = "swarm";
 const LMSTUDIO_HOST_ENV: &str = "LMSTUDIO_HOST";
@@ -469,9 +470,13 @@ impl LiveProbe {
             .iter()
             .find(|m| m.get("id").and_then(serde_json::Value::as_str) == Some(model_id))
             .ok_or_else(|| format!("model '{model_id}' is not listed by {url}"))?;
-        let mut context_window = ["context_window", "max_context_length"]
-            .iter()
-            .find_map(|key| entry.get(key).and_then(serde_json::Value::as_u64));
+        let mut context_window = ServedWindow::of_entry(entry, None)
+            .served(None)
+            .or_else(|| {
+                entry
+                    .get("max_context_length")
+                    .and_then(serde_json::Value::as_u64)
+            });
         if context_window.is_none() {
             let native = format!("{host}/api/v0/models");
             match self.get_json(&native, Self::lm_api_token()).await {
@@ -516,15 +521,18 @@ impl LiveProbe {
             mlx_distributed_owner::read(),
         )? {
             DistributedTarget::At { base, diagnostic } => {
-                return judge_mlx_node(node, self.probe_mlx_at(&base, &diagnostic).await?);
+                return judge_mlx_node(
+                    node,
+                    self.probe_mlx_at(&base, &diagnostic, MlxEngineAt::Split)
+                        .await?,
+                );
             }
             DistributedTarget::None { stale } => stale,
         };
         let local = goose_sidecar::engine::global_manager().status().await;
-        let base = mlx_base_url(
-            &local,
-            Config::global().get_param::<EngineSettings>(MLX_ENGINE_CONFIG_KEY),
-        )?;
+        let settings = Config::global().get_param::<EngineSettings>(MLX_ENGINE_CONFIG_KEY);
+        let estimate_with = settings.as_ref().ok().cloned();
+        let base = mlx_base_url(&local, settings)?;
         let mut diagnostic = match (&local.state, &local.last_error) {
             (state, Some(err)) => format!("this process's manager: {state}, {err}"),
             (state, None) => format!("this process's manager: {state}"),
@@ -533,12 +541,28 @@ impl LiveProbe {
             diagnostic.push_str("; ");
             diagnostic.push_str(&stale);
         }
-        judge_mlx_node(node, self.probe_mlx_at(&base, &diagnostic).await?)
+        judge_mlx_node(
+            node,
+            self.probe_mlx_at(
+                &base,
+                &diagnostic,
+                MlxEngineAt::ThisMac(estimate_with.as_ref()),
+            )
+            .await?,
+        )
     }
 
     /// The engine at `base` as it answers: servable facts with `serves` = the id `/v1/models`
-    /// lists. Whether a node may take it is [`judge_mlx_node`]'s.
-    async fn probe_mlx_at(&self, base: &str, local_diagnostic: &str) -> Result<Servable, String> {
+    /// lists. Whether a node may take it is [`judge_mlx_node`]'s. The window is the one
+    /// served-window rule over its `/v1/models` and `/v1/status`: a memory-guarded engine's figure;
+    /// for this Mac's unguarded engine, goose's own estimate for this Mac (`local_window_estimate`);
+    /// for goose's split, the context its runner was planned for.
+    async fn probe_mlx_at(
+        &self,
+        base: &str,
+        local_diagnostic: &str,
+        at: MlxEngineAt<'_>,
+    ) -> Result<Servable, String> {
         let models_url = format!("{base}/v1/models");
         let resp = self.http.get(&models_url).send().await.map_err(|e| {
             format!(
@@ -553,20 +577,22 @@ impl LiveProbe {
             .text()
             .await
             .map_err(|e| format!("GET {models_url} body unreadable ({e})"))?;
-        let (served, context_window, _parser) =
+        let (served, _, _parser) =
             goose_sidecar::engine::parse_model_info(&body).map_err(|e| format!("{e:#}"))?;
         let served = served.ok_or_else(|| {
             format!("MLX engine on {base} lists a model without an id in {models_url}")
         })?;
         let status_url = format!("{base}/v1/status");
-        let live_in_flight = match self.http.get(&status_url).send().await {
-            Ok(resp) => match resp.text().await {
-                Ok(body) => goose_sidecar::engine::parse_active_requests(&body)
-                    .map_err(|e| format!("{e:#}")),
-                Err(e) => Err(format!("GET {status_url} body unreadable ({e})")),
-            },
+        let status_body = match self.http.get(&status_url).send().await {
+            Ok(resp) => resp
+                .text()
+                .await
+                .map_err(|e| format!("GET {status_url} body unreadable ({e})")),
             Err(e) => Err(format!("GET {status_url} failed ({e})")),
         };
+        let live_in_flight = status_body.as_ref().map_err(Clone::clone).and_then(|body| {
+            goose_sidecar::engine::parse_active_requests(body).map_err(|e| format!("{e:#}"))
+        });
         let live_in_flight = match live_in_flight {
             Ok(n) => Some(n),
             Err(err) => {
@@ -578,10 +604,39 @@ impl LiveProbe {
                 None
             }
         };
+        let status_body = status_body.ok();
+        let guarded = status_body
+            .as_deref()
+            .and_then(MemoryGuard::of_status_body)
+            .is_some();
+        let (reader, estimate) = match at {
+            MlxEngineAt::Split => (WindowReader::PlannedSplit, None),
+            MlxEngineAt::ThisMac(settings) => (
+                WindowReader::Sizing("swarm route, this Mac's MLX engine"),
+                settings.filter(|_| !guarded).and_then(|settings| {
+                    goose_sidecar::engine::local_window_estimate(
+                        settings,
+                        &goose_sidecar::model_identity::served_repo(settings, &served),
+                        &goose_sidecar::engine_profile::profile_of_mounted(
+                            None,
+                            &settings.spawn_command,
+                        ),
+                    )
+                    .ok()
+                }),
+            ),
+        };
+        let window = goose_sidecar::engine::engine_served_window(
+            &body,
+            status_body.as_deref(),
+            estimate,
+            reader,
+        )
+        .map_err(|e| format!("{e:#}"))?;
         align_host_env(OMLX_HOST_ENV, &OMLX_HOST_USER_OWNED, base);
         Ok(Servable {
             live_in_flight,
-            context_window,
+            context_window: window.tokens,
             serves: Some(served),
             follows: None,
         })
@@ -622,7 +677,7 @@ impl LiveProbe {
         let models = get("v1/models")
             .await
             .map_err(|e| format!("{peer}'s MLX engine is not serving through Link — {e}"))?;
-        let (served, context_window, _parser) =
+        let (served, _, _parser) =
             goose_sidecar::engine::parse_model_info(&models).map_err(|e| format!("{e:#}"))?;
         match served.as_deref() {
             Some(served) if served == model_id => {}
@@ -633,7 +688,18 @@ impl LiveProbe {
             }
             None => return Err(format!("{peer}'s MLX engine lists a model without an id")),
         }
-        let live_in_flight = match get("v1/status").await.and_then(|body| {
+        let status = get("v1/status").await;
+        // The peer's window by the one rule: its memory guard's figure, else the bound its engine
+        // lists (goose has no estimate of another Mac here), said once when unguarded.
+        let context_window = goose_sidecar::engine::engine_served_window(
+            &models,
+            status.as_deref().ok(),
+            None,
+            WindowReader::Sizing("swarm route, a peer's MLX engine"),
+        )
+        .map_err(|e| format!("{e:#}"))?
+        .tokens;
+        let live_in_flight = match status.and_then(|body| {
             goose_sidecar::engine::parse_active_requests(&body).map_err(|e| format!("{e:#}"))
         }) {
             Ok(n) => Some(n),
@@ -653,6 +719,15 @@ impl LiveProbe {
             ..Servable::default()
         })
     }
+}
+
+/// Which MLX engine a probe reads, for the window rule: goose's split (its runner's planned
+/// context is its bound) or this Mac's single engine (goose's own estimate stands in where the
+/// engine bounds nothing; `None` = the settings could not be read, so there is no estimate).
+#[derive(Clone, Copy)]
+enum MlxEngineAt<'a> {
+    Split,
+    ThisMac(Option<&'a EngineSettings>),
 }
 
 /// The node against what its engine serves, read against this Mac's live `mlx_engine` block and
@@ -4474,7 +4549,10 @@ devices:
             http: reqwest::Client::new(),
             providers: Arc::new(LiveProviders::new()),
         };
-        let facts = probe.probe_mlx_at(&engine.uri(), "stopped").await.unwrap();
+        let facts = probe
+            .probe_mlx_at(&engine.uri(), "stopped", MlxEngineAt::ThisMac(None))
+            .await
+            .unwrap();
         assert_eq!(facts.live_in_flight, Some(3));
         assert_eq!(facts.context_window, Some(262_144));
         assert_eq!(
@@ -4488,7 +4566,11 @@ devices:
             format!("http://127.0.0.1:{}", l.local_addr().unwrap().port())
         };
         let down = probe
-            .probe_mlx_at(&dead, "this process's manager: stopped")
+            .probe_mlx_at(
+                &dead,
+                "this process's manager: stopped",
+                MlxEngineAt::ThisMac(None),
+            )
             .await
             .unwrap_err();
         assert!(down.contains("MLX engine is not listening on"), "{down}");
@@ -4925,7 +5007,10 @@ devices:
             let repo = goose_sidecar::model_identity::served_repo(&settings, served);
             mlx_node_verdict("mihai-mlx", NODE_MODEL, served, &repo, intent)
         };
-        let facts = probe.probe_mlx_at(&engine.uri(), OWNER).await.unwrap();
+        let facts = probe
+            .probe_mlx_at(&engine.uri(), OWNER, MlxEngineAt::Split)
+            .await
+            .unwrap();
         assert_eq!(facts.context_window, Some(65_536));
         assert_eq!(facts.live_in_flight, Some(0));
         let served = facts.serves.unwrap();
@@ -4941,7 +5026,7 @@ devices:
             .mount(&before)
             .await;
         let served = probe
-            .probe_mlx_at(&before.uri(), OWNER)
+            .probe_mlx_at(&before.uri(), OWNER, MlxEngineAt::Split)
             .await
             .unwrap()
             .serves
@@ -4976,7 +5061,7 @@ devices:
             .mount(&flash)
             .await;
         let served = probe
-            .probe_mlx_at(&flash.uri(), OWNER)
+            .probe_mlx_at(&flash.uri(), OWNER, MlxEngineAt::Split)
             .await
             .unwrap()
             .serves

@@ -1580,7 +1580,12 @@ fn parse_streaming_chunk(line: &str) -> Result<Option<StreamingChunk>, ProviderE
             .and_then(|m| m.as_str())
             .unwrap_or("Unknown server error");
         if stream_error_is_context_length_exceeded(error) {
-            return Err(ProviderError::ContextLengthExceeded(message.to_string()));
+            return Err(ProviderError::ContextLengthExceeded(
+                crate::served_window::tag_overflow(
+                    message,
+                    crate::served_window::error_n_ctx(error),
+                ),
+            ));
         }
         return Err(ProviderError::ServerError(message.to_string()));
     }
@@ -5746,7 +5751,9 @@ data: [DONE]"#;
             r#"{"error":{"message":"needs 61 GB, this Mac holds 50","code":"context_length_exceeded","n_prompt_tokens":120000,"n_ctx":98000}}"#,
         );
         assert!(
-            matches!(coded, Err(ProviderError::ContextLengthExceeded(ref m)) if m.contains("this Mac holds 50")),
+            matches!(coded, Err(ProviderError::ContextLengthExceeded(ref m))
+                if m.contains("this Mac holds 50")
+                    && crate::served_window::overflow_n_ctx(m) == Some(98_000)),
             "{coded:?}"
         );
         let counted = parse_streaming_chunk(

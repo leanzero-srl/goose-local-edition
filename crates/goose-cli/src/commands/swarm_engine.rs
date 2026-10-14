@@ -1259,8 +1259,11 @@ fn classify_v1_models_output(url: &str, out: &std::process::Output) -> Result<se
     })
 }
 
-/// (served id, context_window) per entry of a catalog answer that parsed. An answer with no `data`
-/// list is the engine answering that it serves nothing: a proven negative, empty.
+/// (served id, window) per entry of a catalog answer that parsed — the window by the one
+/// served-window rule as a catalog reader without `/v1/status` reads it: the engine's own upper
+/// bound, `min(context_window, max_model_len)` (byte-identical on lz.10, which lists both at the
+/// model's window). An answer with no `data` list is the engine answering that it serves nothing:
+/// a proven negative, empty.
 fn catalog_entries(json: &serde_json::Value) -> Vec<(String, Option<u64>)> {
     let Some(arr) = json.get("data").and_then(|v| v.as_array()) else {
         return Vec::new();
@@ -1268,7 +1271,10 @@ fn catalog_entries(json: &serde_json::Value) -> Vec<(String, Option<u64>)> {
     arr.iter()
         .filter_map(|m| {
             let id = m.get("id").and_then(|v| v.as_str())?.to_string();
-            Some((id, m.get("context_window").and_then(|v| v.as_u64())))
+            Some((
+                id,
+                goose_provider_types::served_window::ServedWindow::of_entry(m, None).served(None),
+            ))
         })
         .collect()
 }
