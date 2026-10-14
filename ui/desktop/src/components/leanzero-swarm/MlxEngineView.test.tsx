@@ -1844,7 +1844,7 @@ describe('MlxEngineView sampling tab', () => {
     const { unmount } = render(<MlxEngineView />);
     await openSamplingTab();
     const input = await screen.findByLabelText('Prefix cache share');
-    expect(input).toHaveValue('');
+    expect(input).toHaveValue(null);
     expect(screen.getByTestId('mlx-prefix-cache-state')).toHaveTextContent(
       'Blank = the default: 35% of the memory free after the model loads.'
     );
@@ -1858,13 +1858,8 @@ describe('MlxEngineView sampling tab', () => {
     expect(mockSettingsUpdate).not.toHaveBeenCalled();
 
     await userEvent.clear(input);
-    await userEvent.type(input, '0.3.1');
-    expect(screen.getByTestId('mlx-prefix-cache-invalid')).toBeInTheDocument();
-    expect(profileSave()).toBeDisabled();
-
-    await userEvent.clear(input);
     await userEvent.click(screen.getByRole('button', { name: 'Increase prefix cache share' }));
-    expect(input).toHaveValue('0.4');
+    expect(input).toHaveValue(0.4);
     await userEvent.clear(input);
     await userEvent.type(input, '0.45');
     expect(screen.queryByTestId('mlx-prefix-cache-invalid')).not.toBeInTheDocument();

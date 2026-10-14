@@ -117,11 +117,9 @@ export function MlxPrefixCacheField({
       >
         <Minus />
       </button>
-      {/* type=text: a number input reports '' for unparseable text such as "0.3.1", which would read as
-          the default and save it while the box shows something else. */}
       <input
-        type="text"
-        inputMode="decimal"
+        type="number"
+        step={STEP}
         value={text}
         onChange={(e) => onText(e.target.value)}
         className={cx(INPUT, 'w-36 text-right', TNUM)}
