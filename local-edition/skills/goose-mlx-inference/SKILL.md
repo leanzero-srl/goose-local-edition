@@ -129,9 +129,16 @@ The full record is in the T12 plan, section "MEMORY GUARD design" (`~/.claude/pl
     - The admission-handoff busy loop exhausted the planner, so steps ran UNPLANNED (`shape=None` = an unplanned step). That caused the 64c1f288b OOMs at k=38/42.
     - Evict-then-defer destroyed the deferred request's own prefix.
     - A wrong 400 claimed "maximum context here is 0 tokens" for a 21k prompt beside a running request.
-- **Status 2026-10-14 17:00:**
-  - 4ac506f7d passed the concurrent Q8 ladder to 81k+: 0 over the ceiling, 0 backstop, main hits every turn.
-  - 244d8de5c is under review 4, then gets the live proof.
+- **Session identity (review 5, b06acd8ea):**
+  - A conversation ("line") is goose's `agent-session-id` header plus the frame end measured by the chat template. With no header, it is the frame plus the first message.
+  - The OLD identity (the first 256-token KV block) was false on tools-first templates: main and its subagents share 400–577 tokens, so main lost its head on every subagent call.
+  - Goose sends the header on both the openai-loopback and the swarm/omlx routes (`session_context.rs`). Subagents get their own id. Helper calls (title, summary) use MAIN's id with a different frame.
+  - Ladder v6 (`~/t12-bench/mem_ladder_v6.py`) sends the header per logical session. `LADDER_HELPER_AT` sends a title-style helper call under main's id. Without the header, a ladder cannot show this class.
+  - Open: raw prompts with no header and no messages still collapse into one conversation.
+- **Engine restart without restarting the app:** on the Nodes page, the card's own Stop, then the card's own Start (`~/t12-bench/cdp_q.sh "<js>"` wraps cdpmain eval). The app respawns via `spawn_command`, so a new wrapper REV takes effect. Verify with `direct_url.json`.
+- **Status 2026-10-14 21:20:**
+  - 45e157bab PASSED the full acceptance ladder (31 steps to 115.7k): 0 over ceiling, 0 backstop, 0 OOM, main hits every turn, side never refused, peak 47,600/47,776 MB.
+  - b06acd8ea (review-5 fix) is on Gabee under ladder v6.
   - After that: tag lz.11 → `ENGINE_LAUNCHER` bump + `Guarded` row + `SUPERSEDED_ENGINE_LAUNCHERS` → live mount test → notarized prerelease.
 
 ## Hard rules (Mihai's, verbatim intent)
