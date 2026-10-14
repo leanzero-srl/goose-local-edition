@@ -3593,13 +3593,6 @@ export type MlxModelProfileDto = {
      * head_dim; the engine: a cache layout it cannot quantize — both name the reason).
      */
     kvCache?: MlxKvCacheModeDto | null;
-    /**
-     * The prefix cache's share of the memory free once the weights are loaded, passed as
-     * `--cache-memory-percent` (0 < share < 1). Absent = goose's swarm default (0.35). One long
-     * session (a Forge benchmark run) keeps its whole history cached only while one snapshot
-     * (~64 KiB per token on a 27B hybrid) fits in this share. A change restarts the engine.
-     */
-    prefixCacheShare?: number | null;
 };
 
 export type MlxThinkingModeDto = 'on' | 'off';
