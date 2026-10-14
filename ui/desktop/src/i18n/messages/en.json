@@ -7154,9 +7154,6 @@
   "nodes.newFilterModels": {
     "defaultMessage": "Filter models"
   },
-  "nodes.newFitOn": {
-    "defaultMessage": "{mac}: needs {need} GB, {budget} GB free"
-  },
   "nodes.newGetModels": {
     "defaultMessage": "Get one in Models"
   },
@@ -7168,6 +7165,9 @@
   },
   "nodes.newKeepLoaded": {
     "defaultMessage": "Keep loaded: never stop it for another node"
+  },
+  "nodes.newLoadsIn": {
+    "defaultMessage": "{mac}: loads in {need} GB · {budget} GB free now"
   },
   "nodes.newModelsFailed": {
     "defaultMessage": "{provider} did not list its models ({error}); these are the models goose knows for it."
@@ -8012,6 +8012,18 @@
   "placementCard.contextBelowChats": {
     "defaultMessage": "fits only {context} tokens of context — your chats here reach about {need}"
   },
+  "placementCard.contextEstimatedTitle": {
+    "defaultMessage": "goose’s estimate of the context this Mac holds; the engine measures it once the model runs"
+  },
+  "placementCard.contextMeasuredTitle": {
+    "defaultMessage": "The context the running engine measured it can hold on this Mac"
+  },
+  "placementCard.contextUpToHere": {
+    "defaultMessage": "context up to {tokens} on this Mac"
+  },
+  "placementCard.contextUpToOn": {
+    "defaultMessage": "context up to {tokens} on {name}"
+  },
   "placementCard.copyFirst": {
     "defaultMessage": "{kind,select,thunderbolt{Copy to {name} first · Thunderbolt} other{Copy to {name} first · network}}"
   },
@@ -8077,6 +8089,9 @@
   },
   "placementCard.measured": {
     "defaultMessage": "{runs,plural,one{measured · # run} other{measured · # runs}}"
+  },
+  "placementCard.measuredPlain": {
+    "defaultMessage": "measured"
   },
   "placementCard.measuredResult": {
     "defaultMessage": "Measured: {decode} tok/s writing, {prefill} tok/s reading"

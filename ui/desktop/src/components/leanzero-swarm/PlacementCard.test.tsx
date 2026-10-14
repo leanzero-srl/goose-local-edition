@@ -499,7 +499,9 @@ describe('Run it on the real 27B plan', () => {
     expect(within(peer).getByText('Best')).toBeInTheDocument();
     expect(within(peer).getByText('~21.9 tok/s writing')).toBeInTheDocument();
     expect(within(peer).getByText('20.8–23.0')).toBeInTheDocument();
-    expect(within(peer).getByText('262,144 context')).toBeInTheDocument();
+    expect(
+      within(peer).getByText('context up to 262,144 on Work’s Mac Studio')
+    ).toBeInTheDocument();
 
     const split = screen.getByTestId('placement-way-split');
     expect(within(split).getByText('Run across both Macs')).toBeInTheDocument();
@@ -565,7 +567,8 @@ describe('Run it on the real 27B plan', () => {
       renderCard();
       const peer = await screen.findByTestId('placement-way-peer');
       expect(within(peer).getByText('20.8–23.0')).toBeInTheDocument();
-      expect(within(peer).getByText('estimated')).toBeInTheDocument();
+      // The speed figure's source and the context's (T12 G-a): both goose's estimates here.
+      expect(within(peer).getAllByText('estimated')).toHaveLength(2);
     });
   });
 

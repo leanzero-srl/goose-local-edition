@@ -116,7 +116,10 @@ const i18n = defineMessages({
     id: 'nodes.newNoWays',
     defaultMessage: 'goose found no way to run this model on your Macs.',
   },
-  fitOn: { id: 'nodes.newFitOn', defaultMessage: '{mac}: needs {need} GB, {budget} GB free' },
+  loadsIn: {
+    id: 'nodes.newLoadsIn',
+    defaultMessage: '{mac}: loads in {need} GB · {budget} GB free now',
+  },
   whichProvider: { id: 'nodes.newWhichProvider', defaultMessage: 'Which provider?' },
   providerModels: { id: 'nodes.newProviderModels', defaultMessage: 'Model' },
   modelsReading: {
@@ -708,10 +711,10 @@ function NewNodeDialogBody({
             return (
               <>
                 {(c.fit.nodes ?? []).length > 0 && (
-                  <p className={cx('break-words', TYPE.meta, TNUM)}>
+                  <p className={cx('break-words', TYPE.meta, TNUM)} data-testid="new-node-loads-in">
                     {(c.fit.nodes ?? [])
                       .map((n) =>
-                        intl.formatMessage(i18n.fitOn, {
+                        intl.formatMessage(i18n.loadsIn, {
                           mac: n.name,
                           need: intl.formatNumber(n.needBytes / 1024 ** 3, {
                             minimumFractionDigits: 1,
@@ -723,7 +726,7 @@ function NewNodeDialogBody({
                           }),
                         })
                       )
-                      .join(' · ')}
+                      .join('; ')}
                   </p>
                 )}
                 {c.action.kind === 'unavailable' && (
