@@ -266,7 +266,7 @@ describe('New node · on your Macs', () => {
    */
   it('a single way says the context this Mac holds and what loading takes, never need = free', async () => {
     macsNow.macs = [SELF_MAC];
-    const q8 = (contextMeasured: boolean): PlacementCandidate => {
+    const q8 = (contextSource: PlacementCandidate['fit']['contextSource']): PlacementCandidate => {
       const c = candidate({
         kind: 'single',
         nodes: ['local'],
@@ -276,17 +276,17 @@ describe('New node · on your Macs', () => {
         status: 'smallerContext',
         context: 151_808,
       });
-      return { ...c, fit: { ...c.fit, contextMeasured } };
+      return { ...c, fit: { ...c.fit, contextSource } };
     };
-    let measured = false;
+    let source: PlacementCandidate['fit']['contextSource'] = 'estimate';
     mockPlan.mockImplementation(async (goal: PlacementPlan['goal']) => ({
       plans: [
         {
           modelId: MODEL_27B,
           goal,
-          candidates: [q8(measured)],
-          best: q8(measured).id,
-          bestAvailable: q8(measured).id,
+          candidates: [q8(source)],
+          best: q8(source).id,
+          bestAvailable: q8(source).id,
           notes: [],
         } satisfies PlacementPlan,
       ],
@@ -308,11 +308,20 @@ describe('New node · on your Macs', () => {
     expect(row).not.toHaveTextContent('needs');
 
     cleanup();
-    measured = true;
+    source = 'engineCalibrated';
     renderDialog({ kind: 'pin', model: MODEL_27B });
     const served = await screen.findByTestId('placement-way-local');
     expect(served).toHaveTextContent('context up to 151,808 on this Mac');
-    expect(served).toHaveTextContent('measured');
+    expect(within(served).getByText('calibrated')).toHaveAttribute(
+      'title',
+      'The engine on this Mac sized this context from prefill steps it measured'
+    );
+
+    cleanup();
+    source = 'unbounded';
+    renderDialog({ kind: 'pin', model: MODEL_27B });
+    const unchecked = await screen.findByTestId('placement-way-local');
+    expect(unchecked).toHaveTextContent('not checked against memory');
   });
 
   it('a plan that measured nothing shows its notes; the goal plans again', async () => {

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import type { IntlShape } from 'react-intl';
 import { Chip, RADIUS, SURFACE, TNUM, TONE_TEXT, TYPE, WEIGHT, cx, type EnginePhase } from '../lz';
 import { defineMessages, useIntl } from '../../i18n';
+import type { MlxContextSourceDto } from '@aaif/goose-sdk';
 import {
   goalFigure,
   linkPeerOf,
@@ -56,19 +57,32 @@ const i18n = defineMessages({
     id: 'placementCard.contextUpToHere',
     defaultMessage: 'context up to {tokens} on this Mac',
   },
+  thisMac: { id: 'placementCard.thisMac', defaultMessage: 'this Mac' },
   contextUpToOn: {
     id: 'placementCard.contextUpToOn',
     defaultMessage: 'context up to {tokens} on {name}',
   },
-  measuredPlain: { id: 'placementCard.measuredPlain', defaultMessage: 'measured' },
-  contextMeasuredTitle: {
-    id: 'placementCard.contextMeasuredTitle',
-    defaultMessage: 'The context the running engine measured it can hold on this Mac',
+  contextCalibrated: { id: 'placementCard.contextCalibrated', defaultMessage: 'calibrated' },
+  contextCalibratedTitle: {
+    id: 'placementCard.contextCalibratedTitle',
+    defaultMessage: 'The engine on {mac} sized this context from prefill steps it measured',
   },
-  contextEstimatedTitle: {
-    id: 'placementCard.contextEstimatedTitle',
+  contextEnginePriorTitle: {
+    id: 'placementCard.contextEnginePriorTitle',
     defaultMessage:
-      'goose’s estimate of the context this Mac holds; the engine measures it once the model runs',
+      'The engine’s own estimate for {mac}, before it has measured a prefill step there',
+  },
+  contextEstimateTitle: {
+    id: 'placementCard.contextEstimateTitle',
+    defaultMessage: 'goose’s estimate of the context {mac} holds',
+  },
+  contextUnbounded: {
+    id: 'placementCard.contextUnbounded',
+    defaultMessage: 'not checked against memory',
+  },
+  contextUnboundedTitle: {
+    id: 'placementCard.contextUnboundedTitle',
+    defaultMessage: 'The model’s own window: nothing has checked it against the memory of {mac}',
   },
   measured: {
     id: 'placementCard.measured',
@@ -179,46 +193,62 @@ function FigureRange({ figure }: { figure: SpeedFigure }) {
   );
 }
 
-/**
- * Measured or estimated: a speed figure's runs, or — for a context — whether the serving engine
- * derived it from measured steps (`fit.contextMeasured`) rather than goose's or its own estimate.
- */
-function SourceChip({
-  measured,
-  runs,
-  lastMeasuredMs,
-  title,
-}: {
-  measured: boolean;
-  runs?: number;
-  lastMeasuredMs?: number | null;
-  title?: string;
-}) {
+function SourceChip({ figure }: { figure: SpeedFigure }) {
   const intl = useIntl();
-  if (!measured) {
-    return (
-      <Chip tone="secondary" title={title}>
-        {intl.formatMessage(i18n.estimated)}
-      </Chip>
-    );
-  }
-  return (
+  return figure.measured ? (
     <Chip
       tone="ok"
-      title={title ?? (lastMeasuredMs ? new Date(lastMeasuredMs).toLocaleString() : undefined)}
+      title={figure.lastMeasuredMs ? new Date(figure.lastMeasuredMs).toLocaleString() : undefined}
     >
-      {runs == null
-        ? intl.formatMessage(i18n.measuredPlain)
-        : intl.formatMessage(i18n.measured, { runs })}
+      {intl.formatMessage(i18n.measured, { runs: figure.runs })}
     </Chip>
+  ) : (
+    <Chip tone="secondary">{intl.formatMessage(i18n.estimated)}</Chip>
   );
 }
 
 /**
- * The context chip. A single engine's context is what that Mac's DEVICE holds — never the free
- * memory of the moment (T12 G-a: Gabee's dialog showed Q4 at 141,395 under Q6's 206,928 because
- * the free memory moved between two picks) — so it reads "context up to N on <Mac>", with its
- * source. A split keeps the planner's words for the context its runner planned.
+ * Who sized a context, in the words the speed figure's chip uses: "calibrated" only when the
+ * serving engine's memory guard measured its prefill steps; "estimated" for goose's estimate or
+ * the engine's prior; and a window nothing checked against the Mac's memory says so. The title
+ * names the Mac the row is about — never "this Mac" on a peer's row.
+ */
+function ContextSourceChip({ source, mac }: { source: MlxContextSourceDto; mac: string }) {
+  const intl = useIntl();
+  switch (source) {
+    case 'engineCalibrated':
+      return (
+        <Chip tone="ok" title={intl.formatMessage(i18n.contextCalibratedTitle, { mac })}>
+          {intl.formatMessage(i18n.contextCalibrated)}
+        </Chip>
+      );
+    case 'unbounded':
+      return (
+        <Chip tone="warn" title={intl.formatMessage(i18n.contextUnboundedTitle, { mac })}>
+          {intl.formatMessage(i18n.contextUnbounded)}
+        </Chip>
+      );
+    case 'enginePrior':
+      return (
+        <Chip tone="secondary" title={intl.formatMessage(i18n.contextEnginePriorTitle, { mac })}>
+          {intl.formatMessage(i18n.estimated)}
+        </Chip>
+      );
+    default:
+      return (
+        <Chip tone="secondary" title={intl.formatMessage(i18n.contextEstimateTitle, { mac })}>
+          {intl.formatMessage(i18n.estimated)}
+        </Chip>
+      );
+  }
+}
+
+/**
+ * The context chip. A single engine's context is what that Mac's DEVICE holds run the way its
+ * engine prefills — never the free memory of the moment (T12 G-a: Gabee's dialog showed Q4 at
+ * 141,395 under Q6's 206,928 because the free memory moved between two picks) — so it reads
+ * "context up to N on <Mac>", with who sized it. A split keeps the planner's words for the
+ * context its runner planned.
  */
 function ContextChips({ candidate: c }: { candidate: PlacementCandidate }) {
   const intl = useIntl();
@@ -237,20 +267,19 @@ function ContextChips({ candidate: c }: { candidate: PlacementCandidate }) {
     );
   }
   const here = c.key.nodes[0] === 'local';
+  const name = c.nodeNames[0] ?? '—';
   return (
     <>
       <Chip>
         <span data-testid="placement-context">
           {here
             ? intl.formatMessage(i18n.contextUpToHere, { tokens })
-            : intl.formatMessage(i18n.contextUpToOn, { tokens, name: c.nodeNames[0] ?? '—' })}
+            : intl.formatMessage(i18n.contextUpToOn, { tokens, name })}
         </span>
       </Chip>
-      <SourceChip
-        measured={c.fit.contextMeasured ?? false}
-        title={intl.formatMessage(
-          c.fit.contextMeasured ? i18n.contextMeasuredTitle : i18n.contextEstimatedTitle
-        )}
+      <ContextSourceChip
+        source={c.fit.contextSource ?? 'estimate'}
+        mac={here ? intl.formatMessage(i18n.thisMac) : name}
       />
     </>
   );
@@ -585,11 +614,7 @@ export function CandidateFigures({
             {goalFigureText(intl, goal, figure, c)}
           </span>
           <FigureRange figure={figure} />
-          <SourceChip
-            measured={figure.measured}
-            runs={figure.runs}
-            lastMeasuredMs={figure.lastMeasuredMs}
-          />
+          <SourceChip figure={figure} />
         </>
       )}
       <ContextChips candidate={c} />

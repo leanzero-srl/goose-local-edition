@@ -567,8 +567,14 @@ describe('Run it on the real 27B plan', () => {
       renderCard();
       const peer = await screen.findByTestId('placement-way-peer');
       expect(within(peer).getByText('20.8–23.0')).toBeInTheDocument();
-      // The speed figure's source and the context's (T12 G-a): both goose's estimates here.
-      expect(within(peer).getAllByText('estimated')).toHaveLength(2);
+      // The speed figure's source and the context's (T12 G-a): both goose's estimates here, and the
+      // context's names the peer it is about, never "this Mac".
+      const estimated = within(peer).getAllByText('estimated');
+      expect(estimated).toHaveLength(2);
+      expect(estimated[1]).toHaveAttribute(
+        'title',
+        'goose’s estimate of the context Work’s Mac Studio holds'
+      );
     });
   });
 

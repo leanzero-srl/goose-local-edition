@@ -8012,11 +8012,23 @@
   "placementCard.contextBelowChats": {
     "defaultMessage": "fits only {context} tokens of context — your chats here reach about {need}"
   },
-  "placementCard.contextEstimatedTitle": {
-    "defaultMessage": "goose’s estimate of the context this Mac holds; the engine measures it once the model runs"
+  "placementCard.contextCalibrated": {
+    "defaultMessage": "calibrated"
   },
-  "placementCard.contextMeasuredTitle": {
-    "defaultMessage": "The context the running engine measured it can hold on this Mac"
+  "placementCard.contextCalibratedTitle": {
+    "defaultMessage": "The engine on {mac} sized this context from prefill steps it measured"
+  },
+  "placementCard.contextEnginePriorTitle": {
+    "defaultMessage": "The engine’s own estimate for {mac}, before it has measured a prefill step there"
+  },
+  "placementCard.contextEstimateTitle": {
+    "defaultMessage": "goose’s estimate of the context {mac} holds"
+  },
+  "placementCard.contextUnbounded": {
+    "defaultMessage": "not checked against memory"
+  },
+  "placementCard.contextUnboundedTitle": {
+    "defaultMessage": "The model’s own window: nothing has checked it against the memory of {mac}"
   },
   "placementCard.contextUpToHere": {
     "defaultMessage": "context up to {tokens} on this Mac"
@@ -8089,9 +8101,6 @@
   },
   "placementCard.measured": {
     "defaultMessage": "{runs,plural,one{measured · # run} other{measured · # runs}}"
-  },
-  "placementCard.measuredPlain": {
-    "defaultMessage": "measured"
   },
   "placementCard.measuredResult": {
     "defaultMessage": "Measured: {decode} tok/s writing, {prefill} tok/s reading"
