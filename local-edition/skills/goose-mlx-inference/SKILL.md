@@ -112,7 +112,21 @@ The full record is in the T12 plan, section "MEMORY GUARD design" (`~/.claude/pl
   - TRAP (killed the first dispatch at call 3; the same one voided an episode on 10-13): AREX-2 calls a tool goose does NOT offer (`read`; this goose offers edit / read_image / shell / tree / write).
     - The engine's xml split (`tool_calling.py` `valid_names=declared_tools`) recognises calls only to declared names. The calls stream as plain TEXT with finish_reason stop, goose ends the turn, and the build dies with a meaningless score.
     - Read the WORDS: `engine-console.log` in the run dir shows raw `<tool_call><function=…>` text. `llm_request.*.jsonl` in `.<run>-runtime/goose/state/logs/` lists the offered tools.
-    - Fix: branch `lz/toolcall-undeclared`. A top-level undeclared call reaches the client (goose answers "tool not found"), and nesting inside a declared call's value stays protected.
+    - Fix: branch `lz/toolcall-undeclared` @ 26452cbe3 (on b06acd8ea, NOT yet in the engine pin). A top-level, `<tool_call>`-wrapped, closed undeclared call reaches the client with a `[TOOL-CALL-UNDECLARED]` WARNING in the engine log (grep it); goose answers via resolve_tool → "Tool 'x' not found. The closest tools…" (extension_manager.rs:1828) and the turn continues (agent.rs:1486, 2714, 2889). Still TEXT on purpose: tool_choice none/named, unwrapped `<function=x>` prose, unclosed calls, and an undeclared call after a declared RAW value that closed mid-line. (glm47 / hy_v3 / k2_horizon: see HARDENING below.)
+    - HARDENING (2026-10-15, branch `lz/toolcall-hardening` = 7a1d93272, c5c829f1b, 975a84f7b, c88275f9c on 26452cbe3; NOT in the engine pin yet). Two adversarial rounds; tests in `tests/test_tool_call_hardening.py` and `tests/test_tool_call_undeclared_other_parsers.py`.
+      - Nesting is STRUCTURE, read once: `tool_call_scan.call_shape` / `top_level_calls`, shared by the scanner, nemotron and qwen3_coder_xml.
+        - A raw value that opened with `\n` closes at its first LINE-START `</parameter>`.
+        - A JSON-quoted value is exact.
+        - A later header is NOT a call when the earlier call's value may still be running: off-grid close, a leftover `</parameter></function></tool_call>` after it, or a stray close.
+        - Parameters of a call quoted inside a value never join the outer call.
+      - STREAMING CONTRACT CHANGED: raw-valued calls (qwen, including a call that arrives whole in one delta) and every nemotron call when tools are declared send the HEADER first; the arguments and any later calls come from ONE end-of-stream parse (`finalize_legacy_raw_stream`; the postprocessor also emits its `content`). glm47 sends the first call at its close and the rest at the end. A cut-off call is a call with broken arguments, never text.
+      - The #1359 64 KB budget no longer releases ONE call in progress. That means exactly one offered-tool name in a call-opening shape, or the parser's `holds_call_in_progress`. Before this, every parser that withholds a call until it closes turned any call over 64 KB into text.
+      - Undeclared calls now surface in glm47, hy_v3 and k2_horizon too. An example inside markdown code (fence or inline backticks) is always text.
+      - KNOWN RESIDUALS:
+        - A write value that ENDS inside an open call on the line grid is byte-identical to write+shell (strict xfail).
+        - glm47 drops later calls when prose after them quotes `</arg_value></tool_call>`.
+        - Nemotron streams `write` with no arguments for an XML file whose content has `<parameter=a>` lines (buffered refuses it, #1541).
+    - Repro harness: route-level SSE test `tests/test_tool_call_undeclared_surfaced.py` (fake engine, special tokens whole, deepseek_r1 + qwen3_coder_xml). Character-splitting `<tool_call>` across deltas is NOT realistic and makes even declared calls stream as text.
     - Cancel an invalid series with the app's "Cancel run" → "Cancel the run". It publishes nothing.
 - **THE LIVE PROOF (the only acceptance):**
   1. On the target Mac, through the APP: quit the app, set `mlx_engine.spawn_command` in `~/.config/goose/config.yaml` to `["/bin/sh","~/t12-bench/engine-wrap.sh"]`.
