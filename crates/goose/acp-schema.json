@@ -8966,6 +8966,14 @@
             }
           ],
           "description": "Compressed live KV cache, passed as `--kv-cache-dtype`: `\"int8\"` | `\"int4\"`. Absent = off\n(the engine's bf16 cache, no flag). A change restarts the engine. The mount is refused when\nthe model's KV cannot take it (goose: no attention layers / no quantization group for its\nhead_dim; the engine: a cache layout it cannot quantize — both name the reason)."
+        },
+        "prefixCacheShare": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "description": "The prefix cache's share of the memory free once the weights are loaded, passed as\n`--cache-memory-percent` (0 < share < 1). Absent = goose's swarm default (0.35). One long\nsession (a Forge benchmark run) keeps its whole history cached only while one snapshot\n(~64 KiB per token on a 27B hybrid) fits in this share. A change restarts the engine."
         }
       },
       "description": "Per-model sampling/context profile. Sampling is per MODEL: the engine spawns each\nmounted model with the flags from ITS profile in `MlxEngineSettingsDto::model_profiles`."

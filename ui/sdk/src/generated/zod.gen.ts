@@ -3652,6 +3652,10 @@ export const zMlxModelProfileDto = z.object({
     kvCache: z.union([
         zMlxKvCacheModeDto,
         z.null()
+    ]).optional(),
+    prefixCacheShare: z.union([
+        z.number(),
+        z.null()
     ]).optional()
 });
 
