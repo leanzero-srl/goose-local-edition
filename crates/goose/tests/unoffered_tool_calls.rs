@@ -123,7 +123,12 @@ struct Turn {
 /// One user turn against `answers` with the ledger extension and an app-only frontend tool loaded.
 /// Bounded: a hidden call handed to the frontend, or put to the person for approval, waits forever,
 /// which is the failure these tests exist to catch.
-async fn run_turn(project: &Path, mode: GooseMode, answers: Vec<Message>) -> Result<Turn> {
+async fn run_turn(
+    project: &Path,
+    mode: GooseMode,
+    platform: &[&str],
+    answers: Vec<Message>,
+) -> Result<Turn> {
     let data = tempfile::tempdir()?;
     let session_manager = Arc::new(SessionManager::new(data.path().to_path_buf()));
     let agent = Agent::with_config(AgentConfig::new(
@@ -142,18 +147,20 @@ async fn run_turn(project: &Path, mode: GooseMode, answers: Vec<Message>) -> Res
             mode,
         )
         .await?;
-    agent
-        .add_extension(
-            ExtensionConfig::Platform {
-                name: "ledger".to_string(),
-                description: "Ledger".to_string(),
-                display_name: Some("Ledger".to_string()),
-                bundled: Some(true),
-                available_tools: vec![],
-            },
-            &session.id,
-        )
-        .await?;
+    for name in std::iter::once("ledger").chain(platform.iter().copied()) {
+        agent
+            .add_extension(
+                ExtensionConfig::Platform {
+                    name: name.to_string(),
+                    description: name.to_string(),
+                    display_name: None,
+                    bundled: Some(true),
+                    available_tools: vec![],
+                },
+                &session.id,
+            )
+            .await?;
+    }
     agent
         .add_extension(
             ExtensionConfig::Frontend {
@@ -285,7 +292,7 @@ async fn unoffered_calls_are_not_found_and_the_turn_goes_on() -> Result<()> {
                 ),
             ),
         );
-    let turn = run_turn(project.path(), GooseMode::Auto, vec![answer]).await?;
+    let turn = run_turn(project.path(), GooseMode::Auto, &[], vec![answer]).await?;
 
     assert_not_offered(&turn, "call_read", "read");
     assert_not_offered(&turn, "call_ghost", "ledger__ghost");
@@ -310,7 +317,7 @@ async fn unoffered_calls_are_not_found_and_the_turn_goes_on() -> Result<()> {
 async fn a_hidden_frontend_tool_is_never_handed_to_the_app() -> Result<()> {
     let project = tempfile::tempdir()?;
     let answer = Message::assistant().with_tool_request("call_secret", Ok(call("ui__secret")));
-    let turn = run_turn(project.path(), GooseMode::Auto, vec![answer]).await?;
+    let turn = run_turn(project.path(), GooseMode::Auto, &[], vec![answer]).await?;
 
     assert_not_offered(&turn, "call_secret", "ui__secret");
     assert_eq!(turn.action_required, 0, "nothing was handed out");
@@ -325,11 +332,54 @@ async fn a_hidden_call_is_never_put_to_the_person_for_approval() -> Result<()> {
     let answer = Message::assistant()
         .with_tool_request("call_ghost", Ok(call("ledger__ghost")))
         .with_tool_request("call_hidden", Ok(call("functions.hidden")));
-    let turn = run_turn(project.path(), GooseMode::Approve, vec![answer]).await?;
+    let turn = run_turn(project.path(), GooseMode::Approve, &[], vec![answer]).await?;
 
     assert_not_offered(&turn, "call_ghost", "ledger__ghost");
     assert_not_offered(&turn, "call_hidden", "functions.hidden");
     assert_eq!(turn.action_required, 0, "no approval was asked");
     assert_eq!(turn.provider_calls, 2, "the turn went on");
+    Ok(())
+}
+
+/// Review finding on e35e85bda: the same-turn tool refresh after `manage_extensions` keyed on the RAW
+/// name, so a mangled `functions.extensionmanager__manage_extensions` ran (recovered at dispatch) and
+/// enabled the extension, but the offered list stayed stale and the new extension's tools were
+/// refused for the rest of the reply. Names are now made canonical once, where requests are
+/// categorized, so the refresh (and every other name check) sees the tool that ran.
+#[tokio::test]
+async fn a_mangled_manage_extensions_call_still_refreshes_the_offered_tools() -> Result<()> {
+    for spelling in [
+        "extensionmanager__manage_extensions",
+        "functions.extensionmanager__manage_extensions",
+        "extensionmanager.manage_extensions",
+    ] {
+        let project = tempfile::tempdir()?;
+        let enable = Message::assistant().with_tool_request(
+            "call_enable",
+            Ok(CallToolRequestParams::new(spelling.to_string())
+                .with_arguments(object!({ "action": "enable", "extension_name": "todo" }))),
+        );
+        let write = Message::assistant().with_tool_request(
+            "call_todo",
+            Ok(CallToolRequestParams::new("todo__todo_write")
+                .with_arguments(object!({ "content": "Goal: ship the offer gate" }))),
+        );
+        let turn = run_turn(
+            project.path(),
+            GooseMode::Auto,
+            &["extensionmanager"],
+            vec![enable, write],
+        )
+        .await?;
+
+        result_of(&turn, "call_enable")
+            .as_ref()
+            .unwrap_or_else(|e| panic!("{spelling}: the enable ran: {e:?}"));
+        let todo = result_of(&turn, "call_todo")
+            .as_ref()
+            .unwrap_or_else(|e| panic!("{spelling}: the new extension's tool is offered: {e:?}"));
+        assert_ne!(todo.is_error, Some(true), "{spelling}: {todo:?}");
+        assert_eq!(turn.provider_calls, 3, "{spelling}: the turn went on");
+    }
     Ok(())
 }
