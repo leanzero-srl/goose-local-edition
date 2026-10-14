@@ -160,6 +160,9 @@ pub const MAX_CONCURRENT_REQUESTS: u32 = 8; // measured: 9th concurrent request 
 /// Holding two measured turns needs ≥ 0.312; staying under that line with the cache full, one
 /// prefill peak and two more live 49k sequences needs ≤ 0.389 — see
 /// `the_prefix_cache_share_holds_two_turns_under_the_pressure_line`.
+/// Passed ONLY to an engine without a memory guard (`prefix_cache_flags`): the guard takes any
+/// `--cache-memory-percent` other than its default as an operator cap, and with none it derives the
+/// budget from the device itself.
 pub const PREFIX_CACHE_SHARE_OF_FREE: f64 = 0.35; // ratio: of the engine's post-load available memory; receipt above
 
 /// Recurrent-state (GatedDeltaNet) and sliding-window caches cannot be trimmed, so Rapid-MLX
@@ -652,6 +655,38 @@ fn validated_adapter_dir(raw: &str) -> Result<Option<PathBuf>> {
 /// a compressed KV cache the model's KV layout cannot take. The engine answers to every name of
 /// the model (`ServedNames::of` over `nodes`, the swarm pool): `--served-model-name` is the id it
 /// advertises and each other name rides a `--served-model-alias` (fork v0.14.3-lz.9, Q-131).
+/// The prefix cache and admission flags for the engine `engine` describes. Prefix caching is
+/// always on and never a person's knob; who sizes it depends on the engine:
+/// - memory guard (`Guarded`): NO budget flag. The guard honours any `--cache-memory-percent`
+///   other than its default as an operator cap, and with none it derives the budget from the
+///   device's idle room. Measured on the guard (lz/memory-guard 64c1f288b, real allocator, one
+///   session to the window edge, 35 turns): with 0.35 the hits stopped at ~half the window (15
+///   full re-prefills); with no flag, 35/35 hits, peak ≤ ceiling. On Gabee the 0.35 capped the
+///   ledger at 9.9 GB, where the guard derives 17.3 GB.
+/// - no guard (lz.10), or an engine goose cannot place: `PREFIX_CACHE_SHARE_OF_FREE`, still that
+///   engine's only bound on its cache.
+///
+/// `--hybrid-cache-entries` and `--max-concurrent-requests` stay for both: neither overrides a
+/// value the guard derives from the device. The guard sizes BYTES; the hybrid count is a count
+/// (without the flag the engine falls to 8, tighter than goose's 24, so dropping it would cost
+/// hits), and the admission cap is a concurrency bound the guard's memory admission sits under.
+fn prefix_cache_flags(engine: &Result<EngineMemoryProfile, String>) -> Vec<String> {
+    let mut flags = vec!["--enable-prefix-cache".to_string()];
+    if !matches!(engine, Ok(EngineMemoryProfile::Guarded { .. })) {
+        flags.extend([
+            "--cache-memory-percent".to_string(),
+            PREFIX_CACHE_SHARE_OF_FREE.to_string(),
+        ]);
+    }
+    flags.extend([
+        "--hybrid-cache-entries".to_string(),
+        hybrid_cache_entries().to_string(),
+        "--max-concurrent-requests".to_string(),
+        MAX_CONCURRENT_REQUESTS.to_string(),
+    ]);
+    flags
+}
+
 pub fn build_serve_command(
     settings: &EngineSettings,
     model_id: &str,
@@ -671,15 +706,9 @@ pub fn build_serve_command(
     for alias in names.also {
         argv.extend(["--served-model-alias".to_string(), alias]);
     }
-    argv.extend([
-        "--enable-prefix-cache".to_string(),
-        "--cache-memory-percent".to_string(),
-        PREFIX_CACHE_SHARE_OF_FREE.to_string(),
-        "--hybrid-cache-entries".to_string(),
-        hybrid_cache_entries().to_string(),
-        "--max-concurrent-requests".to_string(),
-        MAX_CONCURRENT_REQUESTS.to_string(),
-    ]);
+    argv.extend(prefix_cache_flags(&engine_profile::profile_of_launcher(
+        &settings.spawn_command,
+    )));
     let default_profile = ModelProfile::default();
     let profile = settings
         .model_profiles
@@ -3270,6 +3299,44 @@ mod tests {
                 "--max-concurrent-requests",
                 "8",
             ]
+        );
+    }
+
+    /// A memory-guard engine sizes its own prefix cache from the device: goose passes it no
+    /// budget. An unguarded pin (lz.10) and an engine goose cannot place keep the share — the
+    /// byte-identical argv above is the lz.10 case.
+    #[test]
+    fn a_guarded_engine_gets_no_prefix_cache_budget() {
+        let guarded = prefix_cache_flags(&Ok(EngineMemoryProfile::Guarded {
+            floor_chunk_tokens: engine_profile::GUARD_FLOOR_CHUNK_TOKENS,
+        }));
+        assert_eq!(
+            guarded,
+            vec![
+                "--enable-prefix-cache",
+                "--hybrid-cache-entries",
+                "24",
+                "--max-concurrent-requests",
+                "8",
+            ]
+        );
+        assert!(!guarded.iter().any(|f| f.starts_with("--cache-memory")));
+        let with_share = [
+            "--enable-prefix-cache",
+            "--cache-memory-percent",
+            "0.35",
+            "--hybrid-cache-entries",
+            "24",
+            "--max-concurrent-requests",
+            "8",
+        ];
+        assert_eq!(
+            prefix_cache_flags(&Ok(engine_profile::UNDECLARED)),
+            with_share
+        );
+        assert_eq!(
+            prefix_cache_flags(&Err("an owner's own launcher".into())),
+            with_share
         );
     }
 
