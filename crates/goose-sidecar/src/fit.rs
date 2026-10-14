@@ -15,6 +15,11 @@
 
 use std::fmt;
 
+use goose_provider_types::served_window::WindowBound;
+use serde::{Deserialize, Serialize};
+
+use crate::engine_profile::EngineMemoryProfile;
+
 pub const GIB: u64 = 1024 * 1024 * 1024;
 
 // measured: the share of each node's RAM that stays available under a rank's full budget —
@@ -134,17 +139,45 @@ pub fn budget_bytes(available_bytes: u64, total_bytes: u64, ceiling_bytes: u64) 
         .min(ceiling_bytes)
 }
 
+/// Who sized a placement's context.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ContextSource {
+    /// goose's analytic estimate for that Mac (`single_engine_cost` against the device).
+    #[default]
+    Estimate,
+    /// The serving engine's memory guard, still on its analytic prior.
+    EnginePrior,
+    /// The serving engine's memory guard, from measured prefill steps.
+    EngineCalibrated,
+    /// Nothing that knows that Mac's memory: a window the engine serves that no guard and no
+    /// estimate bounded (the model's own window, or an engine's advisory figure).
+    Unbounded,
+}
+
+impl From<WindowBound> for ContextSource {
+    fn from(bound: WindowBound) -> Self {
+        match bound {
+            WindowBound::EngineCalibrated => ContextSource::EngineCalibrated,
+            WindowBound::EnginePrior => ContextSource::EnginePrior,
+            WindowBound::Estimate => ContextSource::Estimate,
+            WindowBound::Unbounded => ContextSource::Unbounded,
+        }
+    }
+}
+
 /// What one sequence costs a single engine at a context — ONE model for the mount gate, the
 /// placement planner's single-engine fit and its no-fork pipeline estimate.
 ///
 /// At `context` tokens the engine holds the weights, the KV (rounded up to the cache's growth
 /// step), the linear-attention state, and — at the last prefill chunk — the step's transient: the
-/// attention scores of a `floor_chunk_tokens` chunk against the whole context
-/// (`prefill_score_bytes_per_pair` per chunk token × context token), plus the KV buffer being
-/// extended, copied once (`kv_growth_bytes_per_token`: one full-attention layer's KV). The floor
-/// chunk is the smallest the engine's memory guard halves a prefill step down to, so the largest
-/// context is the one whose floor step still fits. Prefix-cache entries and MLX's allocator
-/// cache are NOT charged: the engine's guard evicts the one and caps the other before a step.
+/// attention scores of the engine's chunk (`engine.chunk_tokens()`: the memory guard's floor, or
+/// an unguarded engine's configured step) against the whole context
+/// (`prefill_score_bytes_per_pair` per chunk token × context token; 0 for a head dim MLX fuses),
+/// plus the KV buffer being extended, copied once (`kv_growth_bytes_per_token`: one full-attention
+/// layer's KV). Prefix-cache entries and MLX's allocator cache are NOT charged: the guard evicts
+/// the one and caps the other before a step (an unguarded engine's own pressure eviction does
+/// both less reliably — its chunk is what this model charges for that).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SingleEngineCost {
     pub weights_bytes: u64,
@@ -152,7 +185,9 @@ pub struct SingleEngineCost {
     pub kv_growth_bytes_per_token: u64,
     pub sequence_state_bytes: u64,
     pub prefill_score_bytes_per_pair: u64,
-    pub floor_chunk_tokens: u64,
+    /// How the engine prefills: the chunk its step takes at the context's limit and the ceiling
+    /// it plans under.
+    pub engine: EngineMemoryProfile,
     /// The KV buffer's growth step: a context costs its size rounded up to it.
     pub kv_step_tokens: u64,
     /// The model's own window; no context above it is offered.
@@ -168,9 +203,9 @@ impl SingleEngineCost {
             * self.kv_bytes_per_token
     }
 
-    /// The floor prefill step's transient at `context`: its scores and the KV growth copy.
+    /// The engine's prefill step's transient at `context`: its scores and the KV growth copy.
     pub fn prefill_bytes(&self, context: u64) -> u64 {
-        self.floor_chunk_tokens.min(context) * context * self.prefill_score_bytes_per_pair
+        self.engine.chunk_tokens().min(context) * context * self.prefill_score_bytes_per_pair
             + context * self.kv_growth_bytes_per_token
     }
 
@@ -223,7 +258,7 @@ impl SingleEngineCost {
 pub struct Need {
     pub weights_bytes: u64,
     pub kv_bytes: u64,
-    /// The linear-attention state and the floor prefill step's transient at the context.
+    /// The linear-attention state, and the engine's prefill step's transient at the context.
     pub state_bytes: u64,
     pub prefill_bytes: u64,
     pub context_tokens: u64,
@@ -452,7 +487,7 @@ mod tests {
             kv_growth_bytes_per_token: 0,
             sequence_state_bytes: 0,
             prefill_score_bytes_per_pair: 0,
-            floor_chunk_tokens: 0,
+            engine: crate::engine_profile::UNDECLARED,
             kv_step_tokens: 1,
             max_position: None,
             gaps: Vec::new(),

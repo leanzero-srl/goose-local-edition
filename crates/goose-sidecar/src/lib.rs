@@ -31,6 +31,7 @@
 #[cfg(unix)]
 pub mod distributed;
 pub mod engine;
+pub mod engine_profile;
 pub mod fit;
 pub mod hf;
 #[cfg(unix)]
