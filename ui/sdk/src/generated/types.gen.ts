@@ -3287,16 +3287,15 @@ export type MlxPlacementKindDto = 'single' | 'tensor' | 'pipeline';
 export type MlxPlacementFitDto = {
     status: MlxFitStatusDto;
     /**
-     * The context this placement runs at: for a single engine, what the DEVICE holds (the
-     * engine's own Metal cap, not the free memory of the moment) — or, for the placement serving
-     * now, the window its engine reports (`max_model_len`).
+     * The context this placement runs at: for a single engine, what the DEVICE holds run the way
+     * the engine prefills (never the free memory of the moment) — or, for the placement serving
+     * now, the window its engine's memory guard reports.
      */
     context?: number | null;
     /**
-     * `context` is the serving engine's figure from measured step peaks (its memory guard
-     * calibrated); false = goose's estimate, or the engine's own prior.
+     * Who sized `context`.
      */
-    contextMeasured?: boolean;
+    contextSource?: MlxContextSourceDto;
     shortBytes?: number | null;
     shortNode?: string | null;
     /**
@@ -3312,6 +3311,11 @@ export type MlxPlacementFitDto = {
 };
 
 export type MlxFitStatusDto = 'fits' | 'short' | 'unknown' | 'smallerContext';
+
+/**
+ * Who sized a placement's context.
+ */
+export type MlxContextSourceDto = 'estimate' | 'enginePrior' | 'engineCalibrated' | 'unbounded';
 
 export type MlxNodeFitDto = {
     name: string;
