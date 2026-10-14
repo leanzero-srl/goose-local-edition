@@ -102,6 +102,13 @@ The full record is in the T12 plan, section "MEMORY GUARD design" (`~/.claude/pl
   - `engine_profile.rs` declares how each pin prefills (Guarded / unguarded 2048);
   - no `--cache-memory-percent` for a Guarded pin. Measured: the 0.35 share capped the prefix ledger at 9.9 GB, and hits stopped at ~half the window.
   - The pin bump needs a `Guarded` row, or `the_pinned_engine_declares_its_memory_profile` fails.
+- **LOCAL FORGE 2.0 THROUGH THE APP (first real dispatch 2026-10-14 22:42, Gabee, AREX-2 Q8, guard b06acd8ea):**
+  - Tools: `~/goose-builds/loop-state/forge2-local/`: `preflight_local.sh` → `dispatch_forge2_local.mjs --dry-run` → the real dispatch → `status_forge2_local.sh`. The watcher is `~/t12-bench/bakeoff_watch.sh`.
+  - TRAP (cost 20 min): the Benchmark form offers OpenAI ONLY when its connection is "Proven", which needs `provider_default_models.openai`.
+    - 3.0.111's setup dialog will NOT pick a default while OPENAI_HOST is non-official: Connect RESETS the host to api.openai.com, so never press it.
+    - Fix: back up config.yaml, append `provider_default_models:\n  openai: <served model id>`, then press Cloud Providers → "Recheck connections". The app runs the model once and shows "Connected".
+    - App gap to fix in goose: the dialog should allow a default on a loopback host, or the form should offer the MLX node directly.
+  - The preflight `engine_flags` check now reads `/v1/status memory_guard.enabled`: a guarded engine must run WITHOUT `--cache-memory-percent`.
 - **THE LIVE PROOF (the only acceptance):**
   1. On the target Mac, through the APP: quit the app, set `mlx_engine.spawn_command` in `~/.config/goose/config.yaml` to `["/bin/sh","~/t12-bench/engine-wrap.sh"]`.
      - That test launcher `exec`s the app's bundled `uvx --from "rapid-mlx[mtp] @ git+…Rapid-MLX@<full sha>"` and drops `--cache-memory-percent`, exactly as goose will for a Guarded pin.
