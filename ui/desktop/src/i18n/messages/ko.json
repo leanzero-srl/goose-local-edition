@@ -5432,36 +5432,6 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model}은(는) 이 Mac에서 {need} GB가 필요하고 지금 쓸 수 있는 여유는 {free} GB입니다. {short} GB 부족합니다."
   },
-  "mlxPrefixCache.clear": {
-    "defaultMessage": "지우기"
-  },
-  "mlxPrefixCache.clearTitle": {
-    "defaultMessage": "지우기 — goose 기본 비율로 되돌리기"
-  },
-  "mlxPrefixCache.decrease": {
-    "defaultMessage": "프리픽스 캐시 비율 줄이기"
-  },
-  "mlxPrefixCache.defaultNote": {
-    "defaultMessage": "비워 두면 기본값: 모델을 불러온 뒤 남은 메모리의 {percent}."
-  },
-  "mlxPrefixCache.defaultValue": {
-    "defaultMessage": "기본값 {percent}"
-  },
-  "mlxPrefixCache.explain": {
-    "defaultMessage": "하나의 긴 세션(벤치마크 실행)은 그 스냅샷 하나가 여기에 들어가는 동안에만 기록을 캐시에 유지합니다. 비율을 높이면 메모리를 내주고 재사용을 얻습니다. 변경하면 엔진이 다시 시작됩니다: 다음 마운트 때 적용됩니다."
-  },
-  "mlxPrefixCache.increase": {
-    "defaultMessage": "프리픽스 캐시 비율 늘리기"
-  },
-  "mlxPrefixCache.invalid": {
-    "defaultMessage": "0과 1 사이의 비율(예: 0.45)을 입력하거나 기본값을 쓰려면 지우세요. 그때까지 저장은 꺼져 있습니다."
-  },
-  "mlxPrefixCache.label": {
-    "defaultMessage": "프리픽스 캐시 비율"
-  },
-  "mlxPrefixCache.setNote": {
-    "defaultMessage": "이 모델은 불러온 뒤 남은 메모리의 {percent}를 캐시에 씁니다 (기본값 {default})."
-  },
   "mlxReplica.cancel": {
     "defaultMessage": "취소"
   },

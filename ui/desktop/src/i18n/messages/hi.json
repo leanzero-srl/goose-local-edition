@@ -5432,36 +5432,6 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} को इस Mac पर {need} GB चाहिए और अभी इसके लिए {free} GB खाली है — {short} GB कम।"
   },
-  "mlxPrefixCache.clear": {
-    "defaultMessage": "साफ़ करें"
-  },
-  "mlxPrefixCache.clearTitle": {
-    "defaultMessage": "साफ़ करें — goose के डिफ़ॉल्ट हिस्से पर लौटें"
-  },
-  "mlxPrefixCache.decrease": {
-    "defaultMessage": "प्रीफ़िक्स कैश हिस्सा घटाएँ"
-  },
-  "mlxPrefixCache.defaultNote": {
-    "defaultMessage": "खाली = डिफ़ॉल्ट: मॉडल लोड होने के बाद खाली मेमोरी का {percent}।"
-  },
-  "mlxPrefixCache.defaultValue": {
-    "defaultMessage": "डिफ़ॉल्ट {percent}"
-  },
-  "mlxPrefixCache.explain": {
-    "defaultMessage": "एक लंबा एकल सत्र (एक बेंचमार्क रन) अपना इतिहास तभी तक कैश में रखता है जब तक उसका एक स्नैपशॉट यहाँ समा सके; हिस्सा बढ़ाने से मेमोरी के बदले पुनः उपयोग मिलता है। बदलाव इंजन को फिर से शुरू करता है: यह अगले माउंट पर लागू होता है।"
-  },
-  "mlxPrefixCache.increase": {
-    "defaultMessage": "प्रीफ़िक्स कैश हिस्सा बढ़ाएँ"
-  },
-  "mlxPrefixCache.invalid": {
-    "defaultMessage": "0 और 1 के बीच एक हिस्सा दर्ज करें (उदाहरण 0.45), या डिफ़ॉल्ट के लिए इसे साफ़ करें। तब तक सहेजना बंद रहता है।"
-  },
-  "mlxPrefixCache.label": {
-    "defaultMessage": "प्रीफ़िक्स कैश हिस्सा"
-  },
-  "mlxPrefixCache.setNote": {
-    "defaultMessage": "यह मॉडल लोड होने के बाद खाली मेमोरी के {percent} में कैश करता है (डिफ़ॉल्ट {default})।"
-  },
   "mlxReplica.cancel": {
     "defaultMessage": "रद्द करें"
   },

@@ -7,7 +7,6 @@ import { missingUtilities } from '../lz/compileStudioCss';
 import MlxEngineView, {
   draftsFromProfile,
   profileFromDrafts,
-  profileDraftsInvalid,
   profileHasValues,
   sanitizeSettingsForWrite,
   settingsWithProfile,
@@ -507,30 +506,6 @@ describe('KV cache profile field', () => {
     const junk = draftsFromProfile(undefined);
     junk.kvCache = 'int2';
     expect(profileHasValues(profileFromDrafts(junk))).toBe(false);
-  });
-});
-
-describe('prefix cache share profile field', () => {
-  it('absent drafts as blank and writes nothing; a share round-trips; out of range is refused', () => {
-    const drafts = draftsFromProfile(SETTINGS.modelProfiles[QWEN]);
-    expect(drafts.prefixCacheShare).toBe('');
-    expect('prefixCacheShare' in profileFromDrafts(drafts)).toBe(false);
-    expect(profileDraftsInvalid(drafts)).toBe(false);
-    expect(profileFromDrafts(draftsFromProfile({ prefixCacheShare: 0.45 }))).toEqual({
-      prefixCacheShare: 0.45,
-    });
-    const payload = settingsWithProfile(
-      SETTINGS,
-      HALF,
-      draftsFromProfile({ prefixCacheShare: 0.6 })
-    );
-    expect(payload.modelProfiles[HALF]).toEqual({ prefixCacheShare: 0.6 });
-    for (const bad of ['0', '1', '1.5', '-0.2', 'abc', 'Infinity', 'NaN']) {
-      const junk = draftsFromProfile(undefined);
-      junk.prefixCacheShare = bad;
-      expect(profileDraftsInvalid(junk)).toBe(true);
-      expect(profileHasValues(profileFromDrafts(junk))).toBe(false);
-    }
   });
 });
 
@@ -1838,46 +1813,6 @@ describe('MlxEngineView sampling tab', () => {
       );
     });
     second.unmount();
-  });
-
-  it('the prefix cache share saves into the profile and an out-of-range share keeps Save off', async () => {
-    const { unmount } = render(<MlxEngineView />);
-    await openSamplingTab();
-    const input = await screen.findByLabelText('Prefix cache share');
-    expect(input).toHaveValue(null);
-    expect(screen.getByTestId('mlx-prefix-cache-state')).toHaveTextContent(
-      'Blank = the default: 35% of the memory free after the model loads.'
-    );
-    expect(screen.getByTestId('mlx-prefix-cache-default')).toHaveTextContent('default 35%');
-
-    await userEvent.type(input, '1.2');
-    expect(screen.getByTestId('mlx-prefix-cache-invalid')).toHaveTextContent(/between 0 and 1/);
-    expect(input).toHaveAttribute('aria-invalid', 'true');
-    expect(profileSave()).toBeDisabled();
-    await userEvent.click(profileSave());
-    expect(mockSettingsUpdate).not.toHaveBeenCalled();
-
-    await userEvent.clear(input);
-    await userEvent.click(screen.getByRole('button', { name: 'Increase prefix cache share' }));
-    expect(input).toHaveValue(0.4);
-    await userEvent.clear(input);
-    await userEvent.type(input, '0.45');
-    expect(screen.queryByTestId('mlx-prefix-cache-invalid')).not.toBeInTheDocument();
-    expect(screen.getByTestId('mlx-prefix-cache-state')).toHaveTextContent(
-      'This model caches in 45% of the memory free after it loads (default 35%).'
-    );
-    expect(profileSave()).toBeEnabled();
-    await userEvent.click(profileSave());
-    await waitFor(() => {
-      expect(mockSettingsUpdate).toHaveBeenCalledTimes(1);
-    });
-    const payload = mockSettingsUpdate.mock.calls[0][0] as MlxEngineSettings;
-    expect(payload.modelProfiles[QWEN]).toEqual({
-      temperature: 0,
-      topK: 40,
-      prefixCacheShare: 0.45,
-    });
-    unmount();
   });
 
   it('the Sampling action in a model cell preselects that model on that Mac', async () => {

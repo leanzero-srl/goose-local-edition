@@ -5432,36 +5432,6 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} richiede {need} GB su questo Mac e ora ne sono liberi {free} GB: mancano {short} GB."
   },
-  "mlxPrefixCache.clear": {
-    "defaultMessage": "Cancella"
-  },
-  "mlxPrefixCache.clearTitle": {
-    "defaultMessage": "Cancella — torna alla quota predefinita di goose"
-  },
-  "mlxPrefixCache.decrease": {
-    "defaultMessage": "Riduci la quota della cache dei prefissi"
-  },
-  "mlxPrefixCache.defaultNote": {
-    "defaultMessage": "Vuoto = il predefinito: {percent} della memoria libera dopo il caricamento del modello."
-  },
-  "mlxPrefixCache.defaultValue": {
-    "defaultMessage": "predefinito {percent}"
-  },
-  "mlxPrefixCache.explain": {
-    "defaultMessage": "Una lunga sessione singola (un run di benchmark) mantiene la cronologia in cache solo finché un suo snapshot entra qui; alzare la quota scambia memoria con riuso. Una modifica riavvia il motore: si applica al prossimo mount."
-  },
-  "mlxPrefixCache.increase": {
-    "defaultMessage": "Aumenta la quota della cache dei prefissi"
-  },
-  "mlxPrefixCache.invalid": {
-    "defaultMessage": "Inserisci una quota tra 0 e 1 (per esempio 0.45), oppure cancellala per il predefinito. Fino ad allora Salva resta disattivato."
-  },
-  "mlxPrefixCache.label": {
-    "defaultMessage": "Quota della cache dei prefissi"
-  },
-  "mlxPrefixCache.setNote": {
-    "defaultMessage": "Questo modello usa per la cache il {percent} della memoria libera dopo il caricamento (predefinito {default})."
-  },
   "mlxReplica.cancel": {
     "defaultMessage": "Annulla"
   },

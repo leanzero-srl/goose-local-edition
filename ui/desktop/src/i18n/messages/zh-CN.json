@@ -5432,36 +5432,6 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} 在这台 Mac 上需要 {need} GB，现在可供它使用的空闲为 {free} GB — 还差 {short} GB。"
   },
-  "mlxPrefixCache.clear": {
-    "defaultMessage": "清除"
-  },
-  "mlxPrefixCache.clearTitle": {
-    "defaultMessage": "清除 — 恢复 goose 的默认占比"
-  },
-  "mlxPrefixCache.decrease": {
-    "defaultMessage": "降低前缀缓存占比"
-  },
-  "mlxPrefixCache.defaultNote": {
-    "defaultMessage": "留空 = 默认：模型加载后空闲内存的 {percent}。"
-  },
-  "mlxPrefixCache.defaultValue": {
-    "defaultMessage": "默认 {percent}"
-  },
-  "mlxPrefixCache.explain": {
-    "defaultMessage": "单个长会话（一次基准测试运行）只有在其一份快照能放进这里时才会保留缓存的历史；提高占比是用内存换取复用。更改会重启引擎：在下次挂载时生效。"
-  },
-  "mlxPrefixCache.increase": {
-    "defaultMessage": "提高前缀缓存占比"
-  },
-  "mlxPrefixCache.invalid": {
-    "defaultMessage": "请输入 0 到 1 之间的占比（例如 0.45），或清除以使用默认值。在此之前无法保存。"
-  },
-  "mlxPrefixCache.label": {
-    "defaultMessage": "前缀缓存占比"
-  },
-  "mlxPrefixCache.setNote": {
-    "defaultMessage": "此模型使用加载后空闲内存的 {percent} 作为缓存（默认 {default}）。"
-  },
   "mlxReplica.cancel": {
     "defaultMessage": "取消"
   },

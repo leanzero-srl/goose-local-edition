@@ -83,9 +83,8 @@ export function ToneBanner({ tone, label, text, action, live, testId, className 
   );
 }
 
-/** The −/+ square beside a stepped value: the weight stepper and the profile's number rows. */
-export const STEP_BUTTON = cx(
-  'flex size-7 shrink-0 items-center justify-center bg-lz-surface text-lz-ink-2 hover:bg-lz-surface-2 hover:text-lz-ink [&_svg]:size-3.5',
+const STEP_BUTTON = cx(
+  'flex size-7 items-center justify-center bg-lz-surface text-lz-ink-2 hover:bg-lz-surface-2 hover:text-lz-ink [&_svg]:size-3.5',
   SURFACE.outline,
   RADIUS.control,
   FOCUS,

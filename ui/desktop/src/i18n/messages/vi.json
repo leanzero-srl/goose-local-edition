@@ -5432,36 +5432,6 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} cần {need} GB trên Mac này và hiện có {free} GB trống cho nó — thiếu {short} GB."
   },
-  "mlxPrefixCache.clear": {
-    "defaultMessage": "Xóa"
-  },
-  "mlxPrefixCache.clearTitle": {
-    "defaultMessage": "Xóa — quay về tỷ lệ mặc định của goose"
-  },
-  "mlxPrefixCache.decrease": {
-    "defaultMessage": "Giảm tỷ lệ bộ đệm tiền tố"
-  },
-  "mlxPrefixCache.defaultNote": {
-    "defaultMessage": "Để trống = mặc định: {percent} bộ nhớ còn trống sau khi tải mô hình."
-  },
-  "mlxPrefixCache.defaultValue": {
-    "defaultMessage": "mặc định {percent}"
-  },
-  "mlxPrefixCache.explain": {
-    "defaultMessage": "Một phiên dài duy nhất (một lần chạy benchmark) chỉ giữ lịch sử trong bộ đệm khi một bản chụp của nó còn vừa ở đây; tăng tỷ lệ là đổi bộ nhớ lấy khả năng tái sử dụng. Thay đổi sẽ khởi động lại engine: áp dụng ở lần mount tiếp theo."
-  },
-  "mlxPrefixCache.increase": {
-    "defaultMessage": "Tăng tỷ lệ bộ đệm tiền tố"
-  },
-  "mlxPrefixCache.invalid": {
-    "defaultMessage": "Nhập tỷ lệ từ 0 đến 1 (ví dụ 0.45), hoặc xóa để dùng mặc định. Nút Lưu sẽ tắt cho đến lúc đó."
-  },
-  "mlxPrefixCache.label": {
-    "defaultMessage": "Tỷ lệ bộ đệm tiền tố"
-  },
-  "mlxPrefixCache.setNote": {
-    "defaultMessage": "Mô hình này lưu bộ đệm trong {percent} bộ nhớ còn trống sau khi tải (mặc định {default})."
-  },
   "mlxReplica.cancel": {
     "defaultMessage": "Hủy"
   },

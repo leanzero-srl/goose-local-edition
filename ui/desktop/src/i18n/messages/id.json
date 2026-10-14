@@ -5432,36 +5432,6 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} butuh {need} GB di Mac ini dan sekarang {free} GB tersedia untuknya — kurang {short} GB."
   },
-  "mlxPrefixCache.clear": {
-    "defaultMessage": "Hapus"
-  },
-  "mlxPrefixCache.clearTitle": {
-    "defaultMessage": "Hapus — kembali ke porsi bawaan goose"
-  },
-  "mlxPrefixCache.decrease": {
-    "defaultMessage": "Kurangi porsi cache prefiks"
-  },
-  "mlxPrefixCache.defaultNote": {
-    "defaultMessage": "Kosong = bawaan: {percent} dari memori yang bebas setelah model dimuat."
-  },
-  "mlxPrefixCache.defaultValue": {
-    "defaultMessage": "bawaan {percent}"
-  },
-  "mlxPrefixCache.explain": {
-    "defaultMessage": "Satu sesi panjang (satu run benchmark) menyimpan riwayatnya di cache hanya selama satu snapshot-nya muat di sini; menaikkan porsi menukar memori dengan penggunaan ulang. Perubahan memulai ulang mesin: berlaku pada mount berikutnya."
-  },
-  "mlxPrefixCache.increase": {
-    "defaultMessage": "Tambah porsi cache prefiks"
-  },
-  "mlxPrefixCache.invalid": {
-    "defaultMessage": "Masukkan porsi antara 0 dan 1 (misalnya 0.45), atau kosongkan untuk bawaan. Simpan tetap nonaktif sampai saat itu."
-  },
-  "mlxPrefixCache.label": {
-    "defaultMessage": "Porsi cache prefiks"
-  },
-  "mlxPrefixCache.setNote": {
-    "defaultMessage": "Model ini menyimpan cache di {percent} dari memori yang bebas setelah dimuat (bawaan {default})."
-  },
   "mlxReplica.cancel": {
     "defaultMessage": "Batal"
   },

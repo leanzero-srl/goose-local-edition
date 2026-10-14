@@ -189,13 +189,6 @@ export interface MlxModelProfile {
    * KV cannot take it.
    */
   kvCache?: MlxKvCacheMode;
-  /**
-   * This model's prefix-cache share of the memory free once the weights are loaded
-   * (`--cache-memory-percent`), 0 < share < 1. Absent = goose's default (0.35). One long session
-   * keeps its history cached only while one snapshot of it fits in this share. The mount fails,
-   * naming `prefix_cache_share`, outside the range; a change flips restart required.
-   */
-  prefixCacheShare?: number;
 }
 
 export type MlxKvCacheMode = 'int8' | 'int4';

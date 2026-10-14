@@ -5432,36 +5432,6 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} necesita {need} GB en este Mac y ahora hay {free} GB libres para él: faltan {short} GB."
   },
-  "mlxPrefixCache.clear": {
-    "defaultMessage": "Borrar"
-  },
-  "mlxPrefixCache.clearTitle": {
-    "defaultMessage": "Borrar — volver a la cuota predeterminada de goose"
-  },
-  "mlxPrefixCache.decrease": {
-    "defaultMessage": "Reducir la cuota de la caché de prefijos"
-  },
-  "mlxPrefixCache.defaultNote": {
-    "defaultMessage": "En blanco = el valor predeterminado: {percent} de la memoria libre tras cargar el modelo."
-  },
-  "mlxPrefixCache.defaultValue": {
-    "defaultMessage": "predeterminado {percent}"
-  },
-  "mlxPrefixCache.explain": {
-    "defaultMessage": "Una sesión larga única (una ejecución de benchmark) mantiene su historial en caché solo mientras una instantánea de él quepa aquí; subir la cuota cambia memoria por reutilización. Un cambio reinicia el motor: se aplica en el siguiente montaje."
-  },
-  "mlxPrefixCache.increase": {
-    "defaultMessage": "Aumentar la cuota de la caché de prefijos"
-  },
-  "mlxPrefixCache.invalid": {
-    "defaultMessage": "Introduce una cuota entre 0 y 1 (por ejemplo 0.45) o bórrala para usar el valor predeterminado. Guardar queda desactivado hasta entonces."
-  },
-  "mlxPrefixCache.label": {
-    "defaultMessage": "Cuota de la caché de prefijos"
-  },
-  "mlxPrefixCache.setNote": {
-    "defaultMessage": "Este modelo usa para caché el {percent} de la memoria libre tras cargarse (predeterminado {default})."
-  },
   "mlxReplica.cancel": {
     "defaultMessage": "Cancelar"
   },

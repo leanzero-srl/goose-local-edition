@@ -5432,36 +5432,6 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} precisa de {need} GB neste Mac e agora há {free} GB livres para ele — faltam {short} GB."
   },
-  "mlxPrefixCache.clear": {
-    "defaultMessage": "Limpar"
-  },
-  "mlxPrefixCache.clearTitle": {
-    "defaultMessage": "Limpar — voltar à fatia padrão do goose"
-  },
-  "mlxPrefixCache.decrease": {
-    "defaultMessage": "Diminuir a fatia do cache de prefixos"
-  },
-  "mlxPrefixCache.defaultNote": {
-    "defaultMessage": "Em branco = o padrão: {percent} da memória livre depois que o modelo carrega."
-  },
-  "mlxPrefixCache.defaultValue": {
-    "defaultMessage": "padrão {percent}"
-  },
-  "mlxPrefixCache.explain": {
-    "defaultMessage": "Uma sessão única longa (uma execução de benchmark) mantém o histórico em cache só enquanto um snapshot dele couber aqui; aumentar a fatia troca memória por reuso. Uma mudança reinicia o motor: vale a partir da próxima montagem."
-  },
-  "mlxPrefixCache.increase": {
-    "defaultMessage": "Aumentar a fatia do cache de prefixos"
-  },
-  "mlxPrefixCache.invalid": {
-    "defaultMessage": "Informe uma fatia entre 0 e 1 (por exemplo 0.45) ou limpe para usar o padrão. Salvar fica desligado até lá."
-  },
-  "mlxPrefixCache.label": {
-    "defaultMessage": "Fatia do cache de prefixos"
-  },
-  "mlxPrefixCache.setNote": {
-    "defaultMessage": "Este modelo usa para cache {percent} da memória livre depois de carregar (padrão {default})."
-  },
   "mlxReplica.cancel": {
     "defaultMessage": "Cancelar"
   },
