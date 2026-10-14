@@ -109,6 +109,11 @@ The full record is in the T12 plan, section "MEMORY GUARD design" (`~/.claude/pl
     - Fix: back up config.yaml, append `provider_default_models:\n  openai: <served model id>`, then press Cloud Providers → "Recheck connections". The app runs the model once and shows "Connected".
     - App gap to fix in goose: the dialog should allow a default on a loopback host, or the form should offer the MLX node directly.
   - The preflight `engine_flags` check now reads `/v1/status memory_guard.enabled`: a guarded engine must run WITHOUT `--cache-memory-percent`.
+  - TRAP (killed the first dispatch at call 3; the same one voided an episode on 10-13): AREX-2 calls a tool goose does NOT offer (`read`; this goose offers edit / read_image / shell / tree / write).
+    - The engine's xml split (`tool_calling.py` `valid_names=declared_tools`) recognises calls only to declared names. The calls stream as plain TEXT with finish_reason stop, goose ends the turn, and the build dies with a meaningless score.
+    - Read the WORDS: `engine-console.log` in the run dir shows raw `<tool_call><function=…>` text. `llm_request.*.jsonl` in `.<run>-runtime/goose/state/logs/` lists the offered tools.
+    - Fix: branch `lz/toolcall-undeclared`. A top-level undeclared call reaches the client (goose answers "tool not found"), and nesting inside a declared call's value stays protected.
+    - Cancel an invalid series with the app's "Cancel run" → "Cancel the run". It publishes nothing.
 - **THE LIVE PROOF (the only acceptance):**
   1. On the target Mac, through the APP: quit the app, set `mlx_engine.spawn_command` in `~/.config/goose/config.yaml` to `["/bin/sh","~/t12-bench/engine-wrap.sh"]`.
      - That test launcher `exec`s the app's bundled `uvx --from "rapid-mlx[mtp] @ git+…Rapid-MLX@<full sha>"` and drops `--cache-memory-percent`, exactly as goose will for a Guarded pin.
