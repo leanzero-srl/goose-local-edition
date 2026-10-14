@@ -28,8 +28,8 @@ mod imp {
     use goose_sidecar::placement::chip::{self, ChipIdentity};
     use goose_sidecar::placement::model::{read_model_facts, ModelFacts};
     use goose_sidecar::placement::planner::{
-        self, ClusterInput, Goal, NodeInput, NodeMemory, PipelineFitInput, PlanInput, Running,
-        SwitchFrees,
+        self, ClusterInput, ContextSource, Goal, NodeInput, NodeMemory, PipelineFitInput,
+        PlanInput, Running, SwitchFrees,
     };
     use goose_sidecar::placement::predict::Calibration;
     use goose_sidecar::placement::store::{
@@ -683,7 +683,7 @@ mod imp {
                 Running {
                     id: PlacementKey::single(LOCAL).id(),
                     context: single.context_window,
-                    context_measured: single.context_calibrated,
+                    source: single.context_source,
                 },
             ));
         }
@@ -718,7 +718,7 @@ mod imp {
                     Running {
                         id: key.id(),
                         context: dist.context_limit,
-                        context_measured: false,
+                        source: ContextSource::Estimate,
                     },
                 ));
                 let (frees, gaps) = split_frees(&model, &dist.nodes);
@@ -749,7 +749,7 @@ mod imp {
                 Running {
                     id: PlacementKey::single(&node).id(),
                     context: None,
-                    context_measured: false,
+                    source: ContextSource::Unbounded,
                 },
             ));
         }
@@ -889,6 +889,7 @@ mod imp {
                 .find(|(model, _)| model == model_id)
                 .map(|(_, running)| running.clone()),
             this_mac_start: Some(&ctx.serving.this_mac_start),
+            engine: goose_sidecar::engine_profile::profile_of_launcher(&ctx.settings.spawn_command),
         }))
     }
 

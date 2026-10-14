@@ -5410,6 +5410,21 @@ pub struct MlxPlacementKeyDto {
     pub link: Option<String>,
 }
 
+/// Who sized a placement's context.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum MlxContextSourceDto {
+    /// goose's estimate for that Mac (its cost model against the device).
+    #[default]
+    Estimate,
+    /// The serving engine's memory guard, on its analytic prior.
+    EnginePrior,
+    /// The serving engine's memory guard, calibrated on measured prefill steps.
+    EngineCalibrated,
+    /// Nothing that knows that Mac's memory bounded it (the model's own window).
+    Unbounded,
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum MlxFitStatusDto {
@@ -5433,15 +5448,14 @@ pub struct MlxNodeFitDto {
 #[serde(rename_all = "camelCase")]
 pub struct MlxPlacementFitDto {
     pub status: MlxFitStatusDto,
-    /// The context this placement runs at: for a single engine, what the DEVICE holds (the
-    /// engine's own Metal cap, not the free memory of the moment) — or, for the placement serving
-    /// now, the window its engine reports (`max_model_len`).
+    /// The context this placement runs at: for a single engine, what the DEVICE holds run the way
+    /// the engine prefills (never the free memory of the moment) — or, for the placement serving
+    /// now, the window its engine's memory guard reports.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<u64>,
-    /// `context` is the serving engine's figure from measured step peaks (its memory guard
-    /// calibrated); false = goose's estimate, or the engine's own prior.
+    /// Who sized `context`.
     #[serde(default)]
-    pub context_measured: bool,
+    pub context_source: MlxContextSourceDto,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub short_bytes: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
