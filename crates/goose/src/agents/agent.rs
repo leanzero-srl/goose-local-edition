@@ -22,7 +22,8 @@ use crate::action_required_manager::ElicitationOutcome;
 use crate::agents::compaction_run::{CompactionEnd, CompactionRun, CompactionStep};
 use crate::agents::extension::{ExtensionConfig, ExtensionResult, ToolInfo};
 use crate::agents::extension_manager::{
-    get_parameter_names, ExtensionManager, ExtensionManagerCapabilities,
+    get_parameter_names, not_offered_error, offered_tool_name, ExtensionManager,
+    ExtensionManagerCapabilities,
 };
 use crate::agents::final_output_tool::{FINAL_OUTPUT_CONTINUATION_MESSAGE, FINAL_OUTPUT_TOOL_NAME};
 use crate::agents::platform_extensions::CREATE_TOOL_TOOL_NAME_COMPLETE;
@@ -1081,6 +1082,7 @@ impl Agent {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn handle_approved_and_denied_tools(
         &self,
         permission_check_result: &PermissionCheckResult,
@@ -1088,6 +1090,7 @@ impl Agent {
         cancel_token: Option<tokio_util::sync::CancellationToken>,
         session: &Session,
         inspection_results: &[InspectionResult],
+        offered: &[Tool],
     ) -> Result<Vec<(String, ToolStream)>> {
         let mut tool_futures: Vec<(String, ToolStream)> = Vec::new();
 
@@ -1100,6 +1103,7 @@ impl Agent {
                         request.id.clone(),
                         cancel_token.clone(),
                         session,
+                        offered,
                     )
                     .await;
 
@@ -1350,15 +1354,44 @@ impl Agent {
         }
     }
 
-    /// Dispatch a single tool call to the appropriate client
-    #[instrument(skip(self, tool_call, request_id, cancellation_token, session), fields(input, output, session.id = %session.id))]
+    /// Dispatch a single MODEL tool call to the appropriate client. `offered` is the tool list the
+    /// model's request carried (after the visibility and code-mode filters, `prepare_tools_and_prompt`):
+    /// a call runs only if it names one of those, exactly or by a mangling `offered_tool_name`
+    /// recovers. Anything else — a tool goose hid from the model, an `ext__tool` the extension never
+    /// listed, a name that does not exist — gets RESOURCE_NOT_FOUND naming the closest offered
+    /// tools, before any hook or extension sees it, and the turn goes on. Every caller is the reply
+    /// loop (its approved and person-approved calls), which is the only model door; the app's direct
+    /// calls go to `ExtensionManager::dispatch_tool_call` instead.
+    #[instrument(skip(self, tool_call, request_id, cancellation_token, session, offered), fields(input, output, session.id = %session.id))]
     pub async fn dispatch_tool_call(
         &self,
         mut tool_call: CallToolRequestParams,
         request_id: String,
         cancellation_token: Option<CancellationToken>,
         session: &Session,
+        offered: &[Tool],
     ) -> (String, Result<ToolCallResult, ErrorData>) {
+        match offered_tool_name(&tool_call.name, offered) {
+            Some(name) => {
+                if name != tool_call.name {
+                    tool_call.name = name.into();
+                }
+            }
+            None => {
+                tracing::debug!(
+                    "refused a model call to tool `{}`: not offered on this request",
+                    tool_call.name
+                );
+                return (
+                    request_id,
+                    Ok(ToolCallResult::from(Err(not_offered_error(
+                        offered,
+                        &tool_call.name,
+                        tool_call.arguments.as_ref(),
+                    )))),
+                );
+            }
+        }
         // SWARM tool-call repair (opt-in, no-op unless a single owned file was registered): inject a missing
         // `path` on a `write`/`edit` FIRST, so the argument record + pre-tool hooks + input span all see the
         // repaired call and the turn isn't wasted on "missing field path". See `repair_swarm_tool_call`.
@@ -1478,9 +1511,10 @@ impl Agent {
         } else {
             let result = self
                 .extension_manager
-                .dispatch_tool_call(
+                .dispatch_model_tool_call(
                     &ctx,
                     tool_call.clone(),
+                    offered,
                     cancellation_token.unwrap_or_default(),
                 )
                 .await;
@@ -2348,6 +2382,12 @@ impl Agent {
 
                 let (disclosed_tools, disclosed_prompt) =
                     self.disclose_tools(&tools, &system_prompt).await;
+                // What THIS request offers the model, by name: the list built above (visibility and
+                // code-mode filters applied), whichever of the two carries it — toolshim empties
+                // `tools` into `toolshim_tools`. A model call runs only against this (see
+                // `Agent::dispatch_tool_call`); deferral sends the same names as skeletons.
+                let offered_tools: Vec<Tool> =
+                    tools.iter().chain(toolshim_tools.iter()).cloned().collect();
                 if !first_call_timed {
                     first_call_timed = true;
                     debug!(
@@ -2542,6 +2582,18 @@ impl Agent {
                                 for request in frontend_requests.iter() {
                                     let response_msg = request_to_response_map.get_mut(&request.id)
                                         .ok_or_else(|| anyhow::anyhow!("missing response entry for request {}", request.id))?;
+                                    // A frontend tool this request did not offer (app-only, or dropped
+                                    // by code mode) is never handed to the frontend to run.
+                                    if let Ok(call) = &request.tool_call {
+                                        if offered_tool_name(&call.name, &offered_tools).is_none() {
+                                            response_msg.add_tool_response_with_metadata(
+                                                request.id.clone(),
+                                                Err(not_offered_error(&offered_tools, &call.name, call.arguments.as_ref())),
+                                                request.metadata.as_ref(),
+                                            );
+                                            continue;
+                                        }
+                                    }
                                     let mut frontend_tool_stream = self.handle_frontend_tool_request(
                                         request,
                                         response_msg,
@@ -2579,7 +2631,7 @@ impl Agent {
                                         )
                                         .await?;
 
-                                    let permission_check_result = self.tool_inspection_manager
+                                    let mut permission_check_result = self.tool_inspection_manager
                                         .process_inspection_results_with_permission_inspector(
                                             &remaining_requests,
                                             &inspection_results,
@@ -2610,12 +2662,27 @@ impl Agent {
                                         }
                                     }
 
+                                    // A call to a tool this request did not offer is refused by
+                                    // `dispatch_tool_call` whatever the person answers, so never ask
+                                    // them to approve it: it goes to the dispatch that refuses it.
+                                    let (unoffered, needs_approval): (Vec<ToolRequest>, Vec<ToolRequest>) =
+                                        std::mem::take(&mut permission_check_result.needs_approval)
+                                            .into_iter()
+                                            .partition(|request| {
+                                                request.tool_call.as_ref().is_ok_and(|call| {
+                                                    offered_tool_name(&call.name, &offered_tools).is_none()
+                                                })
+                                            });
+                                    permission_check_result.needs_approval = needs_approval;
+                                    permission_check_result.approved.extend(unoffered);
+
                                     let mut tool_futures = self.handle_approved_and_denied_tools(
                                         &permission_check_result,
                                         &mut request_to_response_map,
                                         cancel_token.clone(),
                                         &session,
                                         &inspection_results,
+                                        &offered_tools,
                                     ).await?;
 
                                     {
@@ -2626,6 +2693,7 @@ impl Agent {
                                             cancel_token.clone(),
                                             &session,
                                             &inspection_results,
+                                            &offered_tools,
                                         );
 
                                         while let Some(msg) = tool_approval_stream.try_next().await? {

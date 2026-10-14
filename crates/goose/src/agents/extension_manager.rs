@@ -315,6 +315,57 @@ fn recover_mangled_tool_name<'a>(
     matched.map(|s| s.to_string())
 }
 
+/// The offered tool a MODEL's call names: the exact name, or a mangled spelling (`functions.x`,
+/// `ext.tool`, a stray space) of exactly one OFFERED name. `None` when the call names nothing the
+/// request offered — a tool goose hid from the model (MCP Apps app-only, code mode's catalog), an
+/// `ext__tool` the extension never listed, or a name that does not exist. ONE rule for every model
+/// door: `Agent::dispatch_tool_call`, the reply loop's approval and frontend paths, and
+/// `ExtensionManager::dispatch_model_tool_call`. Recovery searches the offered names only, so it can
+/// never turn a mangled name into a tool the model was not given.
+pub fn offered_tool_name(emitted: &str, offered: &[Tool]) -> Option<String> {
+    if offered.iter().any(|t| t.name == emitted) {
+        return Some(emitted.to_string());
+    }
+    recover_mangled_tool_name(emitted, offered.iter().map(|t| t.name.as_ref()))
+        .or_else(|| owner_qualified_offered_name(emitted, offered))
+}
+
+/// `ext__tool` (or `ext.tool`, `functions.ext__tool`) for an UNPREFIXED offered tool `tool` that
+/// `ext` owns — a first-class extension's tool qualified with its extension's name, which models do
+/// (the recorded code-mode replay calls `code_execution__list_functions` for `list_functions`). The
+/// old `ext__` fallback ran these by reaching the extension directly; this keeps them, among
+/// OFFERED tools only, so it can never reach one the model was not given.
+fn owner_qualified_offered_name(emitted: &str, offered: &[Tool]) -> Option<String> {
+    let trimmed = emitted.trim();
+    let stripped = trimmed
+        .strip_prefix("functions.")
+        .or_else(|| trimmed.strip_prefix("functions:"))
+        .unwrap_or(trimmed);
+    let (prefix, tool) = stripped
+        .split_once("__")
+        .or_else(|| stripped.split_once('.'))?;
+    let owner = name_to_key(prefix);
+    let mut owned = offered
+        .iter()
+        .filter(|t| t.name == tool && get_tool_owner(t).is_some_and(|o| name_to_key(&o) == owner));
+    let found = owned.next()?;
+    owned.next().is_none().then(|| found.name.to_string())
+}
+
+/// The tool result a model gets for a call to a tool its request did not offer: goose's ordinary
+/// RESOURCE_NOT_FOUND, naming the closest OFFERED tools (never a hidden one), so the turn goes on.
+pub fn not_offered_error(
+    offered: &[Tool],
+    emitted: &str,
+    arguments: Option<&JsonObject>,
+) -> ErrorData {
+    ErrorData::new(
+        ErrorCode::RESOURCE_NOT_FOUND,
+        super::tool_similarity::not_found_message(offered, emitted, arguments),
+        None,
+    )
+}
+
 fn get_tool_meta_value(tool: &Tool) -> Option<Value> {
     tool.meta.as_ref().map(|meta| Value::Object(meta.0.clone()))
 }
@@ -1749,11 +1800,17 @@ impl ExtensionManager {
         }
     }
 
+    /// `offered`: for a MODEL's call, the tools its request offered (after the visibility and
+    /// code-mode filters); the call resolves only to one of those, by `offered_tool_name`, and the
+    /// lookup below can no longer widen it — no recovery against the full list, and the `ext__tool`
+    /// fallback only for a name that was offered. `None` is a non-model caller (the app's direct
+    /// tool call, goose's own setup calls, code mode's catalog callbacks), resolved as before.
     async fn resolve_tool(
         &self,
         session_id: &str,
         tool_name: &str,
         arguments: Option<&JsonObject>,
+        offered: Option<&[Tool]>,
     ) -> Result<ResolvedTool, ErrorData> {
         let tools = self.get_all_tools_cached(session_id).await.map_err(|e| {
             ErrorData::new(
@@ -1765,6 +1822,11 @@ impl ExtensionManager {
 
         let mut name = tool_name.to_string();
         let mut recovery_attempted = false;
+        if let Some(offered) = offered {
+            name = offered_tool_name(tool_name, offered)
+                .ok_or_else(|| not_offered_error(offered, tool_name, arguments))?;
+            recovery_attempted = true;
+        }
         loop {
             if let Some(tool) = tools.iter().find(|t| *t.name == *name) {
                 let owner = get_tool_owner(tool)
@@ -1827,17 +1889,46 @@ impl ExtensionManager {
             break;
         }
 
-        Err(ErrorData::new(
-            ErrorCode::RESOURCE_NOT_FOUND,
-            super::tool_similarity::not_found_message(&tools, tool_name, arguments),
-            None,
+        Err(not_offered_error(
+            offered.unwrap_or(&tools),
+            tool_name,
+            arguments,
         ))
     }
 
+    /// A NON-model caller's tool call: the app invoking a tool directly (ACP `goose/tool/call`,
+    /// which checks app visibility itself), goose's own setup calls, and code mode's catalog
+    /// callbacks (the catalog is the model-visible list, so a callback exists only for an offered
+    /// tool). A MODEL's call goes through `dispatch_model_tool_call`, never here.
     pub async fn dispatch_tool_call(
         &self,
         ctx: &super::tool_execution::ToolCallContext,
         tool_call: CallToolRequestParams,
+        cancellation_token: CancellationToken,
+    ) -> Result<ToolCallResult> {
+        self.dispatch(ctx, tool_call, None, cancellation_token)
+            .await
+    }
+
+    /// A MODEL's tool call: it runs only if it names (exactly, or by a recoverable mangling) a tool
+    /// in `offered`, the list its request carried after the visibility and code-mode filters.
+    /// Anything else is RESOURCE_NOT_FOUND naming the closest offered tools, and nothing runs.
+    pub async fn dispatch_model_tool_call(
+        &self,
+        ctx: &super::tool_execution::ToolCallContext,
+        tool_call: CallToolRequestParams,
+        offered: &[Tool],
+        cancellation_token: CancellationToken,
+    ) -> Result<ToolCallResult> {
+        self.dispatch(ctx, tool_call, Some(offered), cancellation_token)
+            .await
+    }
+
+    async fn dispatch(
+        &self,
+        ctx: &super::tool_execution::ToolCallContext,
+        tool_call: CallToolRequestParams,
+        offered: Option<&[Tool]>,
         cancellation_token: CancellationToken,
     ) -> Result<ToolCallResult> {
         let tool_name_str = tool_call.name.to_string();
@@ -1846,6 +1937,7 @@ impl ExtensionManager {
                 &ctx.session_id,
                 &tool_name_str,
                 tool_call.arguments.as_ref(),
+                offered,
             )
             .await?;
 
@@ -2675,7 +2767,7 @@ mod tests {
             .await;
 
         let result = extension_manager
-            .resolve_tool("test-session-id", "definitely_not_a_real_tool", None)
+            .resolve_tool("test-session-id", "definitely_not_a_real_tool", None, None)
             .await;
         let err = match result {
             Ok(_) => panic!("resolve_tool should fail for an unknown name"),
@@ -2705,7 +2797,7 @@ mod tests {
             .await;
 
         let err = match extension_manager
-            .resolve_tool("test-session-id", "availabletool", None)
+            .resolve_tool("test-session-id", "availabletool", None, None)
             .await
         {
             Ok(_) => panic!("resolve_tool should fail for an unknown name"),
@@ -2824,7 +2916,7 @@ mod tests {
             .await;
 
         let resolved = extension_manager
-            .resolve_tool("test-session-id", "test_client.tool", None)
+            .resolve_tool("test-session-id", "test_client.tool", None, None)
             .await
             .expect("mangled dotted name should resolve to the real tool");
         assert_eq!(resolved.tool_name, "test_client__tool");
@@ -2840,7 +2932,7 @@ mod tests {
             .await;
 
         let resolved = extension_manager
-            .resolve_tool("test-session-id", "functions.test_client__tool", None)
+            .resolve_tool("test-session-id", "functions.test_client__tool", None, None)
             .await
             .expect("functions-prefixed name should resolve to the real tool");
         assert_eq!(resolved.tool_name, "test_client__tool");
@@ -2856,7 +2948,7 @@ mod tests {
             .await;
 
         let resolved = extension_manager
-            .resolve_tool("test-session-id", "dotted__db.query", None)
+            .resolve_tool("test-session-id", "dotted__db.query", None, None)
             .await
             .expect("exact dotted tool name must resolve");
         assert_eq!(resolved.tool_name, "dotted__db.query");
@@ -2873,7 +2965,7 @@ mod tests {
             .await;
 
         let resolved = extension_manager
-            .resolve_tool("test-session-id", "dotted.db.query", None)
+            .resolve_tool("test-session-id", "dotted.db.query", None, None)
             .await
             .expect("mangled extension separator should resolve");
         assert_eq!(resolved.tool_name, "dotted__db.query");
@@ -3444,5 +3536,459 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("does not exist"), "{err}");
+    }
+
+    /// An extension with one ordinary tool and one MCP Apps app-only tool (`_meta.ui.visibility =
+    /// ["app"]`, which `prepare_tools_and_prompt` never offers a model). Records every call it runs.
+    struct OfferGateClient {
+        calls: Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl McpClientTrait for OfferGateClient {
+        fn get_info(&self) -> Option<&InitializeResult> {
+            None
+        }
+
+        async fn list_resources(
+            &self,
+            _session_id: &str,
+            _next_cursor: Option<String>,
+            _cancellation_token: CancellationToken,
+        ) -> Result<ListResourcesResult, Error> {
+            Err(Error::TransportClosed)
+        }
+
+        async fn read_resource(
+            &self,
+            _session_id: &str,
+            _uri: &str,
+            _cancellation_token: CancellationToken,
+        ) -> Result<ReadResourceResult, Error> {
+            Err(Error::TransportClosed)
+        }
+
+        async fn list_tools(
+            &self,
+            _session_id: &str,
+            _next_cursor: Option<String>,
+            _cancellation_token: CancellationToken,
+        ) -> Result<ListToolsResult, Error> {
+            let schema = Arc::new(serde_json::json!({}).as_object().unwrap().clone());
+            let mut secret = Tool::new("secret", "An app-only tool", schema.clone());
+            let mut meta = serde_json::Map::new();
+            meta.insert("ui".into(), serde_json::json!({ "visibility": ["app"] }));
+            secret.meta = Some(rmcp::model::Meta(meta));
+            Ok(ListToolsResult {
+                tools: vec![Tool::new("tool", "An ordinary tool", schema), secret],
+                next_cursor: None,
+                meta: None,
+            })
+        }
+
+        async fn call_tool(
+            &self,
+            _ctx: &ToolCallContext,
+            name: &str,
+            _arguments: Option<JsonObject>,
+            _cancellation_token: CancellationToken,
+        ) -> Result<CallToolResult, Error> {
+            self.calls.lock().unwrap().push(name.to_string());
+            Ok(CallToolResult::success(vec![]))
+        }
+
+        async fn list_prompts(
+            &self,
+            _session_id: &str,
+            _next_cursor: Option<String>,
+            _cancellation_token: CancellationToken,
+        ) -> Result<ListPromptsResult, Error> {
+            Err(Error::TransportClosed)
+        }
+
+        async fn get_prompt(
+            &self,
+            _session_id: &str,
+            _name: &str,
+            _arguments: Value,
+            _cancellation_token: CancellationToken,
+        ) -> Result<GetPromptResult, Error> {
+            Err(Error::TransportClosed)
+        }
+
+        async fn subscribe(&self) -> mpsc::Receiver<ServerNotification> {
+            mpsc::channel(1).1
+        }
+    }
+
+    /// An extension manager holding `ext` (an `OfferGateClient`), the tools a model request offers
+    /// from it (the visibility filter `prepare_tools_and_prompt` applies), and the call record.
+    async fn offer_gate_fixture() -> (
+        tempfile::TempDir,
+        ExtensionManager,
+        Vec<Tool>,
+        Arc<std::sync::Mutex<Vec<String>>>,
+    ) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let em = ExtensionManager::new_without_provider(temp_dir.path().to_path_buf());
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        em.add_mock_extension(
+            "ext".to_string(),
+            Arc::new(OfferGateClient {
+                calls: calls.clone(),
+            }),
+        )
+        .await;
+        let offered: Vec<Tool> = em
+            .get_prefixed_tools("s", None)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(super::super::reply_parts::is_tool_visible_to_model)
+            .collect();
+        let names: Vec<&str> = offered.iter().map(|t| t.name.as_ref()).collect();
+        assert_eq!(
+            names,
+            vec!["ext__tool"],
+            "the app-only tool is never offered"
+        );
+        (temp_dir, em, offered, calls)
+    }
+
+    fn gate_ctx() -> ToolCallContext {
+        ToolCallContext::new("s".to_string(), None, Some("req".to_string()))
+    }
+
+    async fn model_call(
+        em: &ExtensionManager,
+        offered: &[Tool],
+        name: &str,
+    ) -> Result<CallToolResult, ErrorData> {
+        match em
+            .dispatch_model_tool_call(
+                &gate_ctx(),
+                CallToolRequestParams::new(name.to_string()).with_arguments(object!({})),
+                offered,
+                CancellationToken::default(),
+            )
+            .await
+        {
+            Ok(dispatched) => dispatched.result.await,
+            Err(e) => Err(e.downcast::<ErrorData>().expect("a refusal is ErrorData")),
+        }
+    }
+
+    fn assert_not_offered(result: Result<CallToolResult, ErrorData>, called: &str) {
+        let err = result.expect_err(&format!("`{called}` must be refused"));
+        assert_eq!(err.code, ErrorCode::RESOURCE_NOT_FOUND, "{err:?}");
+        let msg = err.message.to_string();
+        assert!(msg.contains(&format!("Tool '{called}' not found")), "{msg}");
+        let listed = msg.split("available tools").nth(1).unwrap_or_default();
+        assert!(
+            listed.contains("ext__tool"),
+            "names the offered tools: {msg}"
+        );
+        assert!(
+            !listed.contains("secret"),
+            "never names a hidden tool: {msg}"
+        );
+    }
+
+    /// The hole: `resolve_tool` matched against every listed tool, so a model naming an app-only
+    /// tool ran it although its request never offered it.
+    #[tokio::test]
+    async fn a_model_call_to_a_hidden_tool_is_refused_and_never_runs() {
+        let (_t, em, offered, calls) = offer_gate_fixture().await;
+        assert_not_offered(
+            model_call(&em, &offered, "ext__secret").await,
+            "ext__secret",
+        );
+        assert!(calls.lock().unwrap().is_empty(), "nothing ran");
+
+        // The app's own direct call (ACP goose/tool/call) is not a model call and still runs it.
+        em.dispatch_tool_call(
+            &gate_ctx(),
+            CallToolRequestParams::new("ext__secret").with_arguments(object!({})),
+            CancellationToken::default(),
+        )
+        .await
+        .unwrap()
+        .result
+        .await
+        .unwrap();
+        assert_eq!(*calls.lock().unwrap(), vec!["secret"]);
+    }
+
+    #[tokio::test]
+    async fn a_mangled_name_recovers_only_to_an_offered_tool() {
+        let (_t, em, offered, calls) = offer_gate_fixture().await;
+        for spelling in ["functions.ext__tool", "ext.tool", " ext__tool"] {
+            model_call(&em, &offered, spelling)
+                .await
+                .unwrap_or_else(|e| panic!("`{spelling}` names the offered ext__tool: {e:?}"));
+        }
+        assert_eq!(calls.lock().unwrap().len(), 3);
+
+        for spelling in ["functions.ext__secret", "ext.secret"] {
+            assert_not_offered(model_call(&em, &offered, spelling).await, spelling);
+        }
+        assert_eq!(calls.lock().unwrap().len(), 3, "no hidden call ran");
+    }
+
+    /// `ext__<name>` used to reach any loaded extension even when it never listed `<name>`.
+    #[tokio::test]
+    async fn an_ext_prefixed_name_the_request_did_not_offer_is_refused() {
+        let (_t, em, offered, calls) = offer_gate_fixture().await;
+        assert_not_offered(model_call(&em, &offered, "ext__ghost").await, "ext__ghost");
+        assert!(
+            calls.lock().unwrap().is_empty(),
+            "the extension was never called"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unknown_name_is_resource_not_found_naming_offered_tools() {
+        let (_t, em, offered, calls) = offer_gate_fixture().await;
+        assert_not_offered(model_call(&em, &offered, "read").await, "read");
+        assert!(calls.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn offered_tool_name_recovers_only_among_offered_names() {
+        let tool = |name: &str| {
+            Tool::new(
+                name.to_string(),
+                "t".to_string(),
+                Arc::new(serde_json::Map::new()),
+            )
+        };
+        let offered = [tool("shell"), tool("developer__write")];
+        assert_eq!(
+            offered_tool_name("functions.shell", &offered).as_deref(),
+            Some("shell")
+        );
+        assert_eq!(
+            offered_tool_name(" shell", &offered).as_deref(),
+            Some("shell")
+        );
+        assert_eq!(
+            offered_tool_name("developer.write", &offered).as_deref(),
+            Some("developer__write")
+        );
+        assert_eq!(offered_tool_name("functions.hidden", &offered), None);
+        assert_eq!(offered_tool_name("developer.shell", &offered), None);
+        assert_eq!(offered_tool_name("read", &offered), None);
+        assert_eq!(offered_tool_name("shell", &[]), None);
+
+        // A first-class (unprefixed) tool qualified with its OWNER's name recovers; with another
+        // extension's name it does not.
+        let mut owned = tool("list_functions");
+        let mut meta = serde_json::Map::new();
+        meta.insert(TOOL_EXTENSION_META_KEY.into(), "code_execution".into());
+        owned.meta = Some(rmcp::model::Meta(meta));
+        let offered = [owned, tool("shell")];
+        for spelling in [
+            "code_execution__list_functions",
+            "code_execution.list_functions",
+            "functions.code_execution__list_functions",
+        ] {
+            assert_eq!(
+                offered_tool_name(spelling, &offered).as_deref(),
+                Some("list_functions"),
+                "{spelling}"
+            );
+        }
+        assert_eq!(
+            offered_tool_name("developer__list_functions", &offered),
+            None
+        );
+        assert_eq!(
+            offered_tool_name("developer__shell", &offered),
+            None,
+            "shell has no owner"
+        );
+    }
+
+    /// The model door on the agent: a hidden tool's call gets the not-found result before any hook
+    /// or extension sees it, as a TOOL RESULT the turn carries on with — not a turn error.
+    #[tokio::test]
+    async fn the_agent_refuses_a_model_call_to_a_hidden_tool_as_a_tool_result() {
+        let agent = crate::agents::Agent::new();
+        let session = agent
+            .config
+            .session_manager
+            .create_session(
+                std::env::current_dir().unwrap(),
+                "offer-gate".to_string(),
+                crate::session::session_manager::SessionType::Hidden,
+                crate::config::GooseMode::default(),
+            )
+            .await
+            .unwrap();
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        agent
+            .extension_manager
+            .add_mock_extension(
+                "ext".to_string(),
+                Arc::new(OfferGateClient {
+                    calls: calls.clone(),
+                }),
+            )
+            .await;
+        // What `prepare_tools_and_prompt` offers, minus the provider-dependent prompt half.
+        let offered: Vec<Tool> = agent
+            .list_tools(&session.id, None)
+            .await
+            .into_iter()
+            .filter(super::super::reply_parts::is_tool_visible_to_model)
+            .collect();
+        assert!(offered.iter().any(|t| t.name == "ext__tool"));
+        assert!(!offered.iter().any(|t| t.name == "ext__secret"));
+
+        let (id, dispatched) = agent
+            .dispatch_tool_call(
+                CallToolRequestParams::new("ext__secret").with_arguments(object!({})),
+                "call_1".to_string(),
+                None,
+                &session,
+                &offered,
+            )
+            .await;
+        assert_eq!(id, "call_1");
+        let result = dispatched.expect("a refusal is a tool result").result.await;
+        assert_not_offered(result, "ext__secret");
+
+        let (_, dispatched) = agent
+            .dispatch_tool_call(
+                CallToolRequestParams::new("functions.ext__tool").with_arguments(object!({})),
+                "call_2".to_string(),
+                None,
+                &session,
+                &offered,
+            )
+            .await;
+        dispatched.unwrap().result.await.unwrap();
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec!["tool"],
+            "only the offered tool ran"
+        );
+    }
+
+    /// Code mode's model surface: the direct list keeps the agent's own owner-less tools (a
+    /// recipe's final output — no catalog can reach it, and the offer gate now refuses what the
+    /// list does not carry), and the catalog the model's TypeScript calls through never holds an
+    /// app-only tool.
+    #[cfg(feature = "code-mode")]
+    #[tokio::test]
+    async fn code_mode_offers_owner_less_tools_and_catalogs_no_hidden_tool() {
+        use crate::agents::platform_extensions::code_execution;
+
+        struct NoProvider;
+        #[async_trait::async_trait]
+        impl crate::providers::base::Provider for NoProvider {
+            fn get_name(&self) -> &str {
+                "none"
+            }
+            async fn stream(
+                &self,
+                _model_config: &goose_providers::model::ModelConfig,
+                _system: &str,
+                _messages: &[crate::conversation::message::Message],
+                _tools: &[Tool],
+            ) -> Result<crate::providers::base::MessageStream, goose_providers::errors::ProviderError>
+            {
+                unimplemented!("never called")
+            }
+        }
+
+        let agent = crate::agents::Agent::new();
+        let session = agent
+            .config
+            .session_manager
+            .create_session(
+                std::env::current_dir().unwrap(),
+                "code-mode-offer".to_string(),
+                crate::session::session_manager::SessionType::Hidden,
+                crate::config::GooseMode::default(),
+            )
+            .await
+            .unwrap();
+        agent
+            .update_provider(
+                Arc::new(NoProvider),
+                goose_providers::model::ModelConfig::new("m"),
+                &session.id,
+            )
+            .await
+            .unwrap();
+        agent
+            .add_extension(
+                ExtensionConfig::Platform {
+                    name: code_execution::EXTENSION_NAME.to_string(),
+                    description: "Code Mode".to_string(),
+                    display_name: None,
+                    bundled: Some(true),
+                    available_tools: vec![],
+                },
+                &session.id,
+            )
+            .await
+            .unwrap();
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        agent
+            .extension_manager
+            .add_mock_extension(
+                "ext".to_string(),
+                Arc::new(OfferGateClient {
+                    calls: calls.clone(),
+                }),
+            )
+            .await;
+        agent
+            .add_final_output_tool(crate::recipe::Response {
+                json_schema: Some(serde_json::json!({ "type": "object" })),
+            })
+            .await;
+
+        let (offered, _, _, _) = agent.prepare_tools_and_prompt(&session).await.unwrap();
+        let names: Vec<&str> = offered.iter().map(|t| t.name.as_ref()).collect();
+        assert!(
+            names.contains(&crate::agents::final_output_tool::FINAL_OUTPUT_TOOL_NAME),
+            "{names:?}"
+        );
+        assert!(names.contains(&"execute_typescript"), "{names:?}");
+        assert!(
+            !names.contains(&"ext__tool"),
+            "catalog style keeps outside tools in the catalog: {names:?}"
+        );
+
+        let listed = agent
+            .extension_manager
+            .dispatch_tool_call(
+                &gate_ctx_for(&session.id),
+                CallToolRequestParams::new("list_functions"),
+                CancellationToken::default(),
+            )
+            .await
+            .unwrap()
+            .result
+            .await
+            .unwrap();
+        let text: String = listed
+            .content
+            .iter()
+            .filter_map(|c| c.as_text().map(|t| t.text.clone()))
+            .collect();
+        assert!(text.contains("tool"), "{text}");
+        assert!(
+            !text.contains("secret"),
+            "the catalog holds no app-only tool: {text}"
+        );
+    }
+
+    #[cfg(feature = "code-mode")]
+    fn gate_ctx_for(session_id: &str) -> ToolCallContext {
+        ToolCallContext::new(session_id.to_string(), None, Some("req".to_string()))
     }
 }
