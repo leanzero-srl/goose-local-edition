@@ -1543,6 +1543,28 @@ impl StreamCompletion {
 /// A frame with `"choices": []` is NOT metadata — that is the standard usage-only chunk,
 /// so it still deserializes and flows through the empty-choices paths below.
 ///
+/// An in-stream error frame that says the prompt is too long for the server: OpenAI's code
+/// `context_length_exceeded`, or a prompt-token count over the stated context. The LeanZero MLX
+/// engine sends this frame when a request that already streamed cannot fit the Mac's memory; as
+/// `ContextLengthExceeded` the agent compacts and resends, where a `ServerError` would resend the
+/// same prompt into the same memory.
+fn stream_error_is_context_length_exceeded(error: &Value) -> bool {
+    let coded = error
+        .get("code")
+        .and_then(Value::as_str)
+        .is_some_and(|code| code.eq_ignore_ascii_case("context_length_exceeded"));
+    let over = match (
+        error.get("n_prompt_tokens").and_then(Value::as_f64),
+        error.get("n_ctx").and_then(Value::as_f64),
+    ) {
+        (Some(prompt_tokens), Some(context_limit)) => {
+            context_limit > 0.0 && prompt_tokens > context_limit
+        }
+        _ => false,
+    };
+    coded || over
+}
+
 /// A choice-less frame that reports an in-stream failure is NOT metadata either — see
 /// `classify_choiceless_frame`.
 fn parse_streaming_chunk(line: &str) -> Result<Option<StreamingChunk>, ProviderError> {
@@ -1557,6 +1579,9 @@ fn parse_streaming_chunk(line: &str) -> Result<Option<StreamingChunk>, ProviderE
             .get("message")
             .and_then(|m| m.as_str())
             .unwrap_or("Unknown server error");
+        if stream_error_is_context_length_exceeded(error) {
+            return Err(ProviderError::ContextLengthExceeded(message.to_string()));
+        }
         return Err(ProviderError::ServerError(message.to_string()));
     }
 
@@ -5712,6 +5737,38 @@ data: [DONE]"#;
             err.to_string().contains("rate limited"),
             "the gateway's message must reach the caller: {err}"
         );
+    }
+
+    #[test]
+    fn an_in_stream_context_overflow_is_context_length_exceeded_and_other_errors_stay_server_errors(
+    ) {
+        let coded = parse_streaming_chunk(
+            r#"{"error":{"message":"needs 61 GB, this Mac holds 50","code":"context_length_exceeded","n_prompt_tokens":120000,"n_ctx":98000}}"#,
+        );
+        assert!(
+            matches!(coded, Err(ProviderError::ContextLengthExceeded(ref m)) if m.contains("this Mac holds 50")),
+            "{coded:?}"
+        );
+        let counted = parse_streaming_chunk(
+            r#"{"error":{"message":"too long","n_prompt_tokens":10,"n_ctx":8}}"#,
+        );
+        assert!(
+            matches!(counted, Err(ProviderError::ContextLengthExceeded(_))),
+            "{counted:?}"
+        );
+        for other in [
+            r#"{"error":{"message":"Internal error during streaming"}}"#,
+            r#"{"error":{"message":"fits","n_prompt_tokens":8,"n_ctx":10}}"#,
+            r#"{"error":{"message":"x","code":"server_error"}}"#,
+        ] {
+            assert!(
+                matches!(
+                    parse_streaming_chunk(other),
+                    Err(ProviderError::ServerError(_))
+                ),
+                "{other}"
+            );
+        }
     }
 
     #[test]
