@@ -376,6 +376,14 @@ impl OpenAiProvider {
     /// sent the field.
     const PROVIDERS_FRONTING_RAPID_MLX: &[&str] = &["omlx"];
 
+    /// The provider the Benchmark view uses for a model served by goose's own MLX engine on this
+    /// machine: "Single model", `openai`, host = the engine's loopback endpoint
+    /// (`evals/swarm-bench/bench/bench_isolation.py` reaches a loopback endpoint directly; `omlx`
+    /// and `swarm` are refused there, and the form offers no custom provider). A cloud host is
+    /// never probed, and `lmstudio`/`ollama` are left alone so the swarm fleet's traffic is
+    /// unchanged.
+    const PROVIDERS_REACHING_A_LOCAL_ENGINE: &[&str] = &["openai"];
+
     /// Alibaba's Token Plan endpoint speaks a stricter dialect than the OpenAI shape it otherwise
     /// accepts: the cap must arrive as `max_completion_tokens`, `max_tokens` is rejected outright
     /// rather than ignored, and reasoning is opt-in per request through `enable_thinking` /
@@ -477,18 +485,18 @@ impl OpenAiProvider {
         if !Self::PROVIDERS_FRONTING_RAPID_MLX.contains(&self.name.as_str()) {
             return false;
         }
-        if let Some(known) = self
-            .transient_tail_cache
-            .lock()
-            .ok()
-            .and_then(|cache| cache.get(model_name).copied())
-        {
-            return known;
-        }
-        let models_path =
-            Self::map_base_path(&self.base_path, "models", OPEN_AI_DEFAULT_MODELS_PATH);
-        let json = match self.fetch_models_json(&models_path).await {
-            Ok(json) => json,
+        match self.declares_leanzero_engine(model_name).await {
+            Ok(accepted) => {
+                if !accepted {
+                    tracing::info!(
+                        host = %sanitize_url(self.api_client.host()),
+                        model = %model_name,
+                        "the engine does not declare {RAPID_MLX_TRANSIENT_TAIL}; its hybrid cache \
+                         snapshots after the per-turn context block"
+                    );
+                }
+                accepted
+            }
             Err(e) => {
                 tracing::warn!(
                     host = %sanitize_url(self.api_client.host()),
@@ -497,22 +505,95 @@ impl OpenAiProvider {
                     "transient_tail_probe_failed: the turn-context tail rides this request \
                      unmarked; the probe is retried on the next request"
                 );
-                return false;
+                false
             }
-        };
-        let accepted = declares_request_extension(&json, model_name, RAPID_MLX_TRANSIENT_TAIL);
-        if !accepted {
-            tracing::info!(
-                host = %sanitize_url(self.api_client.host()),
-                model = %model_name,
-                "the engine does not declare {RAPID_MLX_TRANSIENT_TAIL}; its hybrid cache \
-                 snapshots after the per-turn context block"
-            );
         }
+    }
+
+    /// Whether `model_name`'s `/v1/models` entry declares `rapid_mlx_transient_tail`: the
+    /// identity of the LeanZero Rapid-MLX fork (a stock Rapid-MLX or a real oMLX server never
+    /// declares it). Only answered probes are cached; a failed probe is asked again next request.
+    async fn declares_leanzero_engine(&self, model_name: &str) -> Result<bool, ProviderError> {
+        if let Some(known) = self
+            .transient_tail_cache
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(model_name).copied())
+        {
+            return Ok(known);
+        }
+        let models_path =
+            Self::map_base_path(&self.base_path, "models", OPEN_AI_DEFAULT_MODELS_PATH);
+        let json = self.fetch_models_json(&models_path).await?;
+        let accepted = declares_request_extension(&json, model_name, RAPID_MLX_TRANSIENT_TAIL);
         if let Ok(mut cache) = self.transient_tail_cache.lock() {
             cache.insert(model_name.to_string(), accepted);
         }
-        accepted
+        Ok(accepted)
+    }
+
+    /// Whether this request goes to goose's own MLX engine on this machine through the
+    /// benchmark route (see [`Self::PROVIDERS_REACHING_A_LOCAL_ENGINE`]). A failed probe is loud:
+    /// the request then leaves without the run's thinking effort.
+    async fn reaches_local_leanzero_engine(&self, model_name: &str) -> bool {
+        if !Self::PROVIDERS_REACHING_A_LOCAL_ENGINE.contains(&self.name.as_str())
+            || !is_loopback_endpoint(self.api_client.host())
+        {
+            return false;
+        }
+        match self.declares_leanzero_engine(model_name).await {
+            Ok(declared) => declared,
+            Err(e) => {
+                tracing::warn!(
+                    host = %sanitize_url(self.api_client.host()),
+                    model = %model_name,
+                    error = %e,
+                    "local_engine_probe_failed: this request leaves WITHOUT the run's thinking \
+                     effort; the probe is retried on the next request"
+                );
+                false
+            }
+        }
+    }
+
+    /// The run's thinking effort (`GOOSE_THINKING_EFFORT`; a Forge tier pins it, e.g. `medium`)
+    /// reaches the local engine as OpenAI's `reasoning_effort`. The chat format emits that field
+    /// only for OpenAI Responses models, so without this a local entrant ran at whatever the
+    /// engine chose: Rapid-MLX switches thinking OFF on a tool-bearing request that carries no
+    /// reasoning preference, while the cloud cohort of the same tier ran at `medium`. The engine
+    /// maps the value onto the template's own vocabulary (Qwen3.8 validates `xhigh`/`medium`/`low`;
+    /// `high` rounds up to `xhigh`) and treats it as reasoning intent, so tool turns keep their
+    /// thinking (rapid_mlx/service/helpers.py `maybe_apply_reasoning_effort`,
+    /// `maybe_auto_disable_thinking_for_tools`). A helper call's Off becomes `none`, which the engine
+    /// turns into `enable_thinking: false`. A request that already names a reasoning control keeps
+    /// it.
+    fn carry_effort_to_local_engine(
+        model_config: &ModelConfig,
+        payload: &mut serde_json::Value,
+    ) -> Result<(), ProviderError> {
+        let Some(effort) = model_config.thinking_effort() else {
+            return Ok(());
+        };
+        let Some(obj) = payload.as_object_mut() else {
+            return Err(ProviderError::ExecutionError(
+                "the local engine request body is not a JSON object, so the run's thinking effort cannot reach it"
+                    .to_string(),
+            ));
+        };
+        let kwargs_name_it = obj
+            .get("chat_template_kwargs")
+            .and_then(|v| v.as_object())
+            .is_some_and(|kwargs| {
+                kwargs.contains_key("enable_thinking") || kwargs.contains_key("reasoning_effort")
+            });
+        if obj.contains_key("reasoning_effort") || kwargs_name_it {
+            return Ok(());
+        }
+        obj.insert(
+            "reasoning_effort".to_string(),
+            serde_json::Value::String(engine_reasoning_effort(effort).to_string()),
+        );
+        Ok(())
     }
 
     /// Whether the engine serving `model_name` reads images, as its `/v1/models` entry declares it
@@ -707,6 +788,32 @@ impl OpenAiProvider {
         let response = self.api_client.request(path).response_get().await?;
         handle_response_openai_compat(response).await
     }
+}
+
+/// goose's thinking effort in the vocabulary Rapid-MLX validates for OpenAI's `reasoning_effort`
+/// (`none`/`minimal`/`low`/`medium`/`high`/`xhigh`).
+fn engine_reasoning_effort(effort: ThinkingEffort) -> &'static str {
+    match effort {
+        ThinkingEffort::Off => "none",
+        ThinkingEffort::Low => "low",
+        ThinkingEffort::Medium => "medium",
+        ThinkingEffort::High => "high",
+        ThinkingEffort::Max => "xhigh",
+    }
+}
+
+/// Whether `host` (a base URL) names this machine: `localhost`, `127.0.0.0/8` or `::1`.
+fn is_loopback_endpoint(host: &str) -> bool {
+    url::Url::parse(host)
+        .ok()
+        .and_then(|url| {
+            url.host().map(|h| match h {
+                url::Host::Domain(name) => name.eq_ignore_ascii_case("localhost"),
+                url::Host::Ipv4(ip) => ip.is_loopback(),
+                url::Host::Ipv6(ip) => ip.is_loopback(),
+            })
+        })
+        .unwrap_or(false)
 }
 
 /// The request field the LeanZero Rapid-MLX fork reads to snapshot a hybrid cache before the
@@ -1070,6 +1177,12 @@ impl Provider for OpenAiProvider {
                 .await?;
             let mut payload = self.sanitize_request_for_compat(payload);
             self.carry_thinking_off_to_mlx(model_config, &mut payload)?;
+            if self
+                .reaches_local_leanzero_engine(&model_config.model_name)
+                .await
+            {
+                Self::carry_effort_to_local_engine(model_config, &mut payload)?;
+            }
             if transient_tail {
                 if let Some(tail) = turn_context_tail_suffix(messages, &payload) {
                     payload[RAPID_MLX_TRANSIENT_TAIL] = serde_json::Value::String(tail);
@@ -1797,6 +1910,141 @@ mod tests {
             .find(|r| r.method.as_str() == "POST")
             .expect("the chat request was posted");
         serde_json::from_slice(&post.body).unwrap()
+    }
+
+    /// One request through `name` to a mock engine whose `/v1/models` entry declares
+    /// `request_extensions`: the POST body and how many `/v1/models` probes were made.
+    async fn local_engine_body(
+        name: &str,
+        request_extensions: serde_json::Value,
+        model_config: &ModelConfig,
+    ) -> (serde_json::Value, usize) {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "object": "list",
+                "data": [{"id": "served", "request_extensions": request_extensions}],
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"},
+                             "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            })))
+            .mount(&server)
+            .await;
+        let mut provider = make_provider(name);
+        provider.api_client =
+            ApiClient::new_with_tls(server.uri(), AuthMethod::NoAuth, None).unwrap();
+        provider.supports_streaming = false;
+        let messages = vec![Message::user().with_text("build the ledger")];
+        let mut stream = provider
+            .stream(model_config, "system", &messages, &[])
+            .await
+            .unwrap();
+        use futures::StreamExt;
+        while stream.next().await.is_some() {}
+        let requests = server.received_requests().await.unwrap();
+        let probes = requests
+            .iter()
+            .filter(|r| r.method.as_str() == "GET")
+            .count();
+        let post = requests
+            .iter()
+            .find(|r| r.method.as_str() == "POST")
+            .expect("the chat request was posted");
+        (serde_json::from_slice(&post.body).unwrap(), probes)
+    }
+
+    /// T12 G1: a benchmark's `openai` entrant on goose's own MLX engine (loopback, declaring the
+    /// fork's extension) carries the run's thinking effort as `reasoning_effort`, mapped to the
+    /// engine's vocabulary. Negative controls: no effort configured, an explicit reasoning control
+    /// in the request, a non-declaring loopback server, the swarm's `lmstudio` (never probed) and
+    /// the chat path's `omlx` all send exactly what they sent before.
+    #[tokio::test]
+    async fn the_runs_thinking_effort_reaches_a_local_leanzero_engine() {
+        let declared = json!(["rapid_mlx_transient_tail"]);
+        for (effort, wire) in [
+            (ThinkingEffort::Off, "none"),
+            (ThinkingEffort::Low, "low"),
+            (ThinkingEffort::Medium, "medium"),
+            (ThinkingEffort::High, "high"),
+            (ThinkingEffort::Max, "xhigh"),
+        ] {
+            let config = ModelConfig::new("served").with_thinking_effort(effort);
+            let (body, probes) = local_engine_body("openai", declared.clone(), &config).await;
+            assert_eq!(body["reasoning_effort"], json!(wire), "{effort}");
+            assert_eq!(probes, 1);
+        }
+
+        let medium = ModelConfig::new("served").with_thinking_effort(ThinkingEffort::Medium);
+        let (body, _) =
+            local_engine_body("openai", declared.clone(), &ModelConfig::new("served")).await;
+        assert!(
+            body.get("reasoning_effort").is_none(),
+            "no effort configured, none sent"
+        );
+
+        let (body, _) = local_engine_body(
+            "openai",
+            declared.clone(),
+            &with_profile_kwargs(medium.clone()),
+        )
+        .await;
+        assert!(
+            body.get("reasoning_effort").is_none(),
+            "an explicit template control in the request wins"
+        );
+        assert_eq!(
+            body["chat_template_kwargs"],
+            json!({"enable_thinking": true, "reasoning_effort": "low"})
+        );
+
+        let (body, probes) = local_engine_body("openai", json!([]), &medium).await;
+        assert!(
+            body.get("reasoning_effort").is_none(),
+            "a stock server gets nothing new"
+        );
+        assert_eq!(probes, 1);
+
+        let (body, probes) = local_engine_body("lmstudio", declared.clone(), &medium).await;
+        assert!(body.get("reasoning_effort").is_none());
+        assert_eq!(probes, 0, "the swarm fleet's provider is never probed");
+
+        let (body, _) = local_engine_body("omlx", declared, &medium).await;
+        assert!(
+            body.get("reasoning_effort").is_none(),
+            "the chat path keeps its model-profile thinking"
+        );
+    }
+
+    #[test]
+    fn only_this_machine_counts_as_a_local_engine() {
+        for host in [
+            "http://127.0.0.1:8091",
+            "http://127.9.9.9",
+            "http://localhost:8090/v1",
+            "http://LOCALHOST",
+            "http://[::1]:8090",
+        ] {
+            assert!(is_loopback_endpoint(host), "{host}");
+        }
+        for host in [
+            "https://api.openai.com",
+            "http://192.168.8.220:8090",
+            "http://localhost.example.com",
+            "not a url",
+            "",
+        ] {
+            assert!(!is_loopback_endpoint(host), "{host}");
+        }
     }
 
     fn with_profile_kwargs(config: ModelConfig) -> ModelConfig {
