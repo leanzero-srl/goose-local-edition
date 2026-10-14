@@ -295,7 +295,6 @@ fn profile_to_dto(profile: ModelProfile) -> MlxModelProfileDto {
         }),
         reasoning_effort: profile.reasoning_effort,
         kv_cache: profile.kv_cache.map(kv_mode_to_dto),
-        prefix_cache_share: profile.prefix_cache_share,
     }
 }
 
@@ -370,7 +369,6 @@ fn profile_from_dto(dto: MlxModelProfileDto) -> ModelProfile {
             MlxKvCacheModeDto::Int8 => KvCacheMode::Int8,
             MlxKvCacheModeDto::Int4 => KvCacheMode::Int4,
         }),
-        prefix_cache_share: dto.prefix_cache_share,
     }
 }
 

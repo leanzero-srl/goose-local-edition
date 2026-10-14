@@ -384,16 +384,6 @@ pub struct ModelProfile {
     /// engine's bf16 cache. Refused at argv build when the model's KV cannot take it
     /// (`kv_cache::check_mode_applies`); the engine refuses architectures it cannot quantize.
     pub kv_cache: Option<KvCacheMode>,
-    /// This model's prefix-cache share of post-load free memory (`--cache-memory-percent`),
-    /// 0 < share < 1. `None` = [`PREFIX_CACHE_SHARE_OF_FREE`], whose receipt is the swarm's: two
-    /// 49k turns on the 96 GB Studio. One LONG session is a different shape: it reuses its history
-    /// only while one snapshot of it fits (64 KiB per token + ~151 MB of GatedDeltaNet state on a
-    /// 27B hybrid, measured from config.json), and an entry larger than the budget is refused, so
-    /// every later turn re-prefills the whole history (T12 pilot, Gabee M3 Max 64 GB: 0.35 of
-    /// ~20.7 GB post-load free ≈ 7.2 GB → reuse ends near 107k tokens; turns past it took 7-14
-    /// min). A share is a ratio of what this Mac measures after the load, never an absolute; the
-    /// engine's own memory-pressure eviction still guards the ceiling.
-    pub prefix_cache_share: Option<f64>,
 }
 
 /// The explicit thinking choices; auto is the ABSENCE of a choice (`Option::None`), never a variant,
@@ -652,19 +642,6 @@ fn validated_adapter_dir(raw: &str) -> Result<Option<PathBuf>> {
     Ok(Some(dir))
 }
 
-/// The profile's prefix-cache share, or [`PREFIX_CACHE_SHARE_OF_FREE`] when it names none. A share
-/// is a fraction of the engine's post-load free memory, so anything outside 0 < share < 1 (or not
-/// a number) fails the mount, naming the value.
-fn prefix_cache_share(profile: &ModelProfile) -> Result<f64> {
-    match profile.prefix_cache_share {
-        None => Ok(PREFIX_CACHE_SHARE_OF_FREE),
-        Some(share) if share.is_finite() && share > 0.0 && share < 1.0 => Ok(share),
-        Some(share) => bail!(
-            "prefix_cache_share {share} is not a share of free memory (expected a number between 0 and 1, exclusive)"
-        ),
-    }
-}
-
 /// The engine argv for `model_id` under `settings`, read together with the model
 /// directory (`inspect_model_dir`). Fails only when the profile names an adapter directory
 /// that is not one, when checkpoint parser metadata cannot be read, or when the profile asks for
@@ -690,20 +667,20 @@ pub fn build_serve_command(
     for alias in names.also {
         argv.extend(["--served-model-alias".to_string(), alias]);
     }
-    let default_profile = ModelProfile::default();
-    let profile = settings
-        .model_profiles
-        .get(model_id)
-        .unwrap_or(&default_profile);
     argv.extend([
         "--enable-prefix-cache".to_string(),
         "--cache-memory-percent".to_string(),
-        prefix_cache_share(profile)?.to_string(),
+        PREFIX_CACHE_SHARE_OF_FREE.to_string(),
         "--hybrid-cache-entries".to_string(),
         hybrid_cache_entries().to_string(),
         "--max-concurrent-requests".to_string(),
         MAX_CONCURRENT_REQUESTS.to_string(),
     ]);
+    let default_profile = ModelProfile::default();
+    let profile = settings
+        .model_profiles
+        .get(model_id)
+        .unwrap_or(&default_profile);
     let float_flags = [
         ("--default-temperature", profile.temperature),
         ("--default-top-p", profile.top_p),
@@ -3185,65 +3162,6 @@ mod tests {
             );
             assert_eq!(&argv[..off.len()], &off[..], "the flag only appends");
         }
-    }
-
-    /// T12 G2: a profile's prefix-cache share replaces the swarm default in place; a profile that
-    /// names none sends the byte-identical argv (an argv diff restarts a mounted engine, so the
-    /// default must not move); a value that is not a share of free memory fails the mount by name.
-    #[test]
-    fn a_prefix_cache_share_replaces_the_default_in_place_and_a_bad_one_fails_naming_it() {
-        let (_root, mut settings) = model_dir_with(QWEN3_5_KV_CONFIG, &[]);
-        let default = build_serve_command(&settings, "pub/model", &[]).unwrap();
-        assert_eq!(
-            flag_value(&default, "--cache-memory-percent").as_deref(),
-            Some(PREFIX_CACHE_SHARE_OF_FREE.to_string().as_str())
-        );
-        settings.model_profiles.insert(
-            "pub/model".to_string(),
-            ModelProfile {
-                prefix_cache_share: Some(0.45),
-                ..Default::default()
-            },
-        );
-        let long = build_serve_command(&settings, "pub/model", &[]).unwrap();
-        assert_eq!(
-            flag_value(&long, "--cache-memory-percent").as_deref(),
-            Some("0.45")
-        );
-        let at = default
-            .iter()
-            .position(|a| a == "--cache-memory-percent")
-            .unwrap();
-        let mut expected = default.clone();
-        expected[at + 1] = "0.45".to_string();
-        assert_eq!(long, expected, "only the share's value changes");
-
-        for bad in [0.0, 1.0, 1.5, -0.1, f64::NAN, f64::INFINITY] {
-            settings.model_profiles.insert(
-                "pub/model".to_string(),
-                ModelProfile {
-                    prefix_cache_share: Some(bad),
-                    ..Default::default()
-                },
-            );
-            let err = build_serve_command(&settings, "pub/model", &[]).unwrap_err();
-            assert!(
-                format!("{err:#}").contains("prefix_cache_share"),
-                "{bad}: {err:#}"
-            );
-        }
-    }
-
-    #[test]
-    fn prefix_cache_share_round_trips_and_a_profile_without_it_keeps_the_default() {
-        let profile: ModelProfile = serde_json::from_str(r#"{"prefix_cache_share":0.45}"#).unwrap();
-        assert_eq!(profile.prefix_cache_share, Some(0.45));
-        assert_eq!(
-            serde_json::to_value(&profile).unwrap()["prefix_cache_share"],
-            serde_json::json!(0.45)
-        );
-        let legacy: ModelProfile = serde_json::from_str(r#"{"temperature":0.6}"#).unwrap();
-        assert_eq!(legacy.prefix_cache_share, None);
     }
 
     #[test]
