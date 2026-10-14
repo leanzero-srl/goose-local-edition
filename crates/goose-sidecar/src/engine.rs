@@ -1293,10 +1293,9 @@ fn single_engine_need(dir: &Path, weights_bytes: u64, kv_mode: Option<KvCacheMod
 
 #[cfg(not(unix))]
 fn single_engine_need(_dir: &Path, weights_bytes: u64, _kv_mode: Option<KvCacheMode>) -> Need {
-    Need::single_engine(
+    Need::weights_only(
         weights_bytes,
-        Err("model facts are read on macOS only".to_string()),
-        0,
+        "model facts are read on macOS only".to_string(),
     )
 }
 
