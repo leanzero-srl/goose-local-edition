@@ -86,6 +86,7 @@ impl Agent {
         cancellation_token: Option<CancellationToken>,
         session: &'a Session,
         inspection_results: &'a [crate::tool_inspection::InspectionResult],
+        offered: &'a [rmcp::model::Tool],
     ) -> BoxStream<'a, anyhow::Result<Message>> {
         try_stream! {
         for request in tool_requests.iter() {
@@ -132,7 +133,7 @@ impl Agent {
                 }
 
                 if confirmation.permission == Permission::AllowOnce || confirmation.permission == Permission::AlwaysAllow {
-                    let (req_id, tool_result) = self.dispatch_tool_call(tool_call.clone(), request.id.clone(), cancellation_token.clone(), session).await;
+                    let (req_id, tool_result) = self.dispatch_tool_call(tool_call.clone(), request.id.clone(), cancellation_token.clone(), session, offered).await;
 
                     tool_futures.push((req_id, match tool_result {
                         Ok(result) => tool_stream(

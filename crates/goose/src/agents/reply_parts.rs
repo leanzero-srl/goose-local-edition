@@ -247,8 +247,12 @@ impl Agent {
                     | pctx_code_mode::config::ToolDisclosure::Filesystem => {
                         // in catalog & filesystem styles, progressive search is handled
                         // by pctx, so we want to omit all non-first-class extensions
-                        // from the standard tool list
-                        if crate::agents::extension_manager::get_tool_owner(&t).is_some_and(|o| {
+                        // from the standard tool list. A tool with NO owning extension is
+                        // the agent's own (recipe final output, manage_schedule, a frontend
+                        // tool): the catalog cannot reach it, so it stays — a model call runs
+                        // only against this list (`Agent::dispatch_tool_call`), and dropping
+                        // them made a code-mode recipe's required final output uncallable.
+                        if crate::agents::extension_manager::get_tool_owner(&t).is_none_or(|o| {
                             crate::agents::extension_manager::is_first_class_extension(&o)
                         }) {
                             Some(t)
