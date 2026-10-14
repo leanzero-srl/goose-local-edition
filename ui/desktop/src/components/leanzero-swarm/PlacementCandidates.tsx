@@ -52,6 +52,15 @@ const i18n = defineMessages({
   range: { id: 'placementCard.range', defaultMessage: '{low}–{high}' },
   middleHalf: { id: 'placementCard.middleHalf', defaultMessage: '{low}–{high} middle half' },
   context: { id: 'placementCard.context', defaultMessage: '{tokens} context' },
+  contextUpToHere: {
+    id: 'placementCard.contextUpToHere',
+    defaultMessage: 'context up to {tokens} on this Mac',
+  },
+  contextUpToOn: {
+    id: 'placementCard.contextUpToOn',
+    defaultMessage: 'context up to {tokens} on {name}',
+  },
+  measuredPlain: { id: 'placementCard.measuredPlain', defaultMessage: 'measured' },
   measured: {
     id: 'placementCard.measured',
     defaultMessage: '{runs, plural, one {measured · # run} other {measured · # runs}}',
@@ -161,17 +170,61 @@ function FigureRange({ figure }: { figure: SpeedFigure }) {
   );
 }
 
-function SourceChip({ figure }: { figure: SpeedFigure }) {
+/**
+ * Measured or estimated: a speed figure's runs, or — for a context — whether the serving engine
+ * derived it from measured steps (`fit.contextMeasured`) rather than goose's or its own estimate.
+ */
+function SourceChip({
+  measured,
+  runs,
+  lastMeasuredMs,
+}: {
+  measured: boolean;
+  runs?: number;
+  lastMeasuredMs?: number | null;
+}) {
   const intl = useIntl();
-  return figure.measured ? (
-    <Chip
-      tone="ok"
-      title={figure.lastMeasuredMs ? new Date(figure.lastMeasuredMs).toLocaleString() : undefined}
-    >
-      {intl.formatMessage(i18n.measured, { runs: figure.runs })}
+  if (!measured) return <Chip tone="secondary">{intl.formatMessage(i18n.estimated)}</Chip>;
+  return (
+    <Chip tone="ok" title={lastMeasuredMs ? new Date(lastMeasuredMs).toLocaleString() : undefined}>
+      {runs == null
+        ? intl.formatMessage(i18n.measuredPlain)
+        : intl.formatMessage(i18n.measured, { runs })}
     </Chip>
-  ) : (
-    <Chip tone="secondary">{intl.formatMessage(i18n.estimated)}</Chip>
+  );
+}
+
+/**
+ * The context chip. A single engine's context is what that Mac's DEVICE holds — never the free
+ * memory of the moment (T12 G-a: Gabee's dialog showed Q4 at 141,395 under Q6's 206,928 because
+ * the free memory moved between two picks) — so it reads "context up to N on <Mac>", with its
+ * source. A split keeps the planner's words for the context its runner planned.
+ */
+function ContextChips({ candidate: c }: { candidate: PlacementCandidate }) {
+  const intl = useIntl();
+  if (c.fit.context == null) return null;
+  const tokens = c.fit.context.toLocaleString();
+  if (c.key.kind !== 'single') {
+    return (
+      <Chip>
+        {intl.formatMessage(c.fit.status === 'smallerContext' ? i18n.smallerContext : i18n.context, {
+          tokens,
+        })}
+      </Chip>
+    );
+  }
+  const here = c.key.nodes[0] === 'local';
+  return (
+    <>
+      <Chip>
+        <span data-testid="placement-context">
+          {here
+            ? intl.formatMessage(i18n.contextUpToHere, { tokens })
+            : intl.formatMessage(i18n.contextUpToOn, { tokens, name: c.nodeNames[0] ?? '—' })}
+        </span>
+      </Chip>
+      <SourceChip measured={c.fit.contextMeasured ?? false} />
+    </>
   );
 }
 
@@ -504,17 +557,14 @@ export function CandidateFigures({
             {goalFigureText(intl, goal, figure, c)}
           </span>
           <FigureRange figure={figure} />
-          <SourceChip figure={figure} />
+          <SourceChip
+            measured={figure.measured}
+            runs={figure.runs}
+            lastMeasuredMs={figure.lastMeasuredMs}
+          />
         </>
       )}
-      {c.fit.context != null && (
-        <Chip>
-          {intl.formatMessage(
-            c.fit.status === 'smallerContext' ? i18n.smallerContext : i18n.context,
-            { tokens: c.fit.context.toLocaleString() }
-          )}
-        </Chip>
-      )}
+      <ContextChips candidate={c} />
     </div>
   );
 }
