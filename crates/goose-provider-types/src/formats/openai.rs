@@ -779,6 +779,7 @@ pub fn format_messages_reporting_images(
     }
 
     merge_split_tool_call_messages(&mut messages_spec);
+    merge_narration_into_tool_call(&mut messages_spec);
     if let Some(text) = turn_context {
         attach_turn_context(
             &mut messages_spec,
@@ -1005,6 +1006,51 @@ fn merge_split_tool_call_messages(messages: &mut Vec<Value>) {
 
         i = insert_at + num_collected;
     }
+}
+
+/// A streamed assistant response reaches the formatter as two messages: the visible text, then the
+/// tool calls (which carry the turn's reasoning). Sent apart, the model reads its own narration as
+/// a finished turn ("Now let me write the ledger module:" then end of turn) followed by a second
+/// turn that only calls a tool, with the reasoning rendered after the text it produced. That is the
+/// exact shape local models then imitate by ending a turn on narration with no call. Two assistant
+/// messages with nothing between them can only come from one response, so they are joined back
+/// into the single message the model generated: reasoning, text, tool calls.
+fn merge_narration_into_tool_call(messages: &mut Vec<Value>) {
+    let mut i = 0;
+    while i + 1 < messages.len() {
+        let narration = &messages[i];
+        let call = &messages[i + 1];
+        let joinable = narration.get("role") == Some(&json!("assistant"))
+            && !has_tool_calls(narration)
+            && narration.get("content").and_then(|c| c.as_str()).is_some()
+            && call.get("role") == Some(&json!("assistant"))
+            && has_tool_calls(call)
+            && call
+                .get("content")
+                .is_none_or(|c| c.is_null() || c.as_str().is_some_and(|s| s.is_empty()));
+        if !joinable {
+            i += 1;
+            continue;
+        }
+        let call = messages.remove(i + 1);
+        let reasoning = [&messages[i], &call]
+            .iter()
+            .filter_map(|m| m.get("reasoning_content").and_then(|r| r.as_str()))
+            .filter(|r| !r.is_empty())
+            .fold(String::new(), |joined, r| merge_reasoning_text(&joined, r));
+        let narration = &mut messages[i];
+        narration["tool_calls"] = call["tool_calls"].clone();
+        if !reasoning.is_empty() {
+            narration["reasoning_content"] = json!(reasoning);
+        }
+        i += 1;
+    }
+}
+
+fn has_tool_calls(msg: &Value) -> bool {
+    msg.get("tool_calls")
+        .and_then(|tc| tc.as_array())
+        .is_some_and(|a| !a.is_empty())
 }
 
 /// True if `msg` is a synthetic image-only user message (content is exclusively image_url items).
@@ -5286,6 +5332,98 @@ data: [DONE]"#;
         let tool_calls = assistant_msgs[0]["tool_calls"].as_array().unwrap();
         assert_eq!(tool_calls.len(), 2);
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_narration_and_its_tool_call_render_as_one_turn() -> anyhow::Result<()> {
+        // The shape a T12 Forge 2.0 run sent (2026-10-15): the streamed text of a turn as one
+        // assistant message, then that turn's tool call carrying its reasoning as a second one.
+        let messages = vec![
+            Message::user().with_text("Build the app."),
+            Message::assistant().with_text("Now let me update the ledger module:"),
+            Message::assistant()
+                .with_content(MessageContent::thinking(
+                    "The ledger needs both entities.",
+                    "",
+                ))
+                .with_tool_request(
+                    "call_1",
+                    Ok(CallToolRequestParams::new("write").with_arguments(object!({}))),
+                ),
+            Message::user().with_tool_response(
+                "call_1",
+                Ok(rmcp::model::CallToolResult::success(vec![
+                    rmcp::model::Content::text("Wrote src/ledger.js"),
+                ])),
+            ),
+            Message::assistant().with_text("Done."),
+            Message::user().with_text("Thanks."),
+        ];
+
+        let spec = format_messages_with_options(
+            &messages,
+            &ImageFormat::OpenAi,
+            OpenAiFormatOptions {
+                preserve_thinking_context: true,
+                ..Default::default()
+            },
+        );
+
+        let roles: Vec<_> = spec.iter().map(|m| m["role"].as_str().unwrap()).collect();
+        assert_eq!(roles, ["user", "assistant", "tool", "assistant", "user"]);
+        assert_eq!(spec[1]["content"], "Now let me update the ledger module:");
+        assert_eq!(
+            spec[1]["reasoning_content"],
+            "The ledger needs both entities."
+        );
+        assert_eq!(spec[1]["tool_calls"][0]["id"], "call_1");
+        assert_eq!(spec[2]["tool_call_id"], "call_1");
+        assert_eq!(spec[3]["content"], "Done.");
+        assert!(spec[3].get("tool_calls").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_narration_merge_keeps_parallel_calls_together() -> anyhow::Result<()> {
+        let tool_result = |id: &str| {
+            Message::user().with_tool_response(
+                id,
+                Ok(rmcp::model::CallToolResult::success(vec![
+                    rmcp::model::Content::text("ok"),
+                ])),
+            )
+        };
+        let request = |id: &str| {
+            Message::assistant()
+                .with_content(MessageContent::thinking("plan", ""))
+                .with_tool_request(
+                    id,
+                    Ok(CallToolRequestParams::new("write").with_arguments(object!({}))),
+                )
+        };
+        let messages = vec![
+            Message::user().with_text("Build."),
+            Message::assistant().with_text("Writing both files:"),
+            request("a"),
+            tool_result("a"),
+            request("b"),
+            tool_result("b"),
+        ];
+
+        let spec = format_messages_with_options(
+            &messages,
+            &ImageFormat::OpenAi,
+            OpenAiFormatOptions {
+                preserve_thinking_context: true,
+                ..Default::default()
+            },
+        );
+
+        let assistant: Vec<_> = spec.iter().filter(|m| m["role"] == "assistant").collect();
+        assert_eq!(assistant.len(), 1);
+        assert_eq!(assistant[0]["content"], "Writing both files:");
+        assert_eq!(assistant[0]["tool_calls"].as_array().unwrap().len(), 2);
         Ok(())
     }
 
