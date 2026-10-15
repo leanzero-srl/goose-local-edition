@@ -179,13 +179,15 @@ def write_json(file, value):
         stream.write('\n')
 
 
-def grade(bundle, pack_dir, output, expected_canonical_sha, report_pins):
+def grade(bundle, pack_dir, output, expected_canonical_sha, expected_snapshot_sha, report_pins):
     bundle, pack_dir, output = Path(bundle), Path(pack_dir), Path(output)
     require(not output.exists(), 'OUTPUT_ALREADY_EXISTS', str(output))
     canonical_raw = regular_bytes(bundle / 'canonical.json')
     require(sha(canonical_raw) == expected_canonical_sha, 'CANONICAL_PIN_MISMATCH')
     original = json.loads(canonical_raw)
-    snapshot = json.loads(regular_bytes(bundle / 'SNAPSHOT.json'))
+    snapshot_raw = regular_bytes(bundle / 'SNAPSHOT.json')
+    require(sha(snapshot_raw) == expected_snapshot_sha, 'TRANSFER_MANIFEST_PIN_MISMATCH')
+    snapshot = json.loads(snapshot_raw)
     require(snapshot.get('originalCanonicalSha256') == expected_canonical_sha and
             snapshot.get('allSourcesVerifiedBeforeAndAfter') is True, 'TRANSFER_PROOF_MISMATCH')
     transferred = {item['archivePath']: item for item in snapshot['files']}
@@ -222,6 +224,8 @@ def grade(bundle, pack_dir, output, expected_canonical_sha, report_pins):
     for seed in seeds:
         obs_path = bundle / 'observations' / f'{seed}.json'
         obs = json.loads(regular_bytes(obs_path))
+        require(obs.get('seed') == seed and obs.get('runtime') == original['runtime'],
+                'OBSERVATION_SITE_IDENTITY_MISMATCH', seed)
         require(obs.get('scorerFilesSha256') == old_pins, 'OBSERVATION_SCORER_PROVENANCE_MISMATCH', seed)
         require(obs.get('evaluationInputs') == expected, 'OBSERVATION_INPUT_PROVENANCE_MISMATCH', seed)
         pack_path = pack_dir / f'{seed}.json'
@@ -294,10 +298,11 @@ def main():
     parser.add_argument('--packs', required=True)
     parser.add_argument('--out', required=True)
     parser.add_argument('--canonical-sha256', required=True)
+    parser.add_argument('--snapshot-sha256', required=True)
     parser.add_argument('--report-pins', required=True, help='JSON with exact reporting scorer and helper hashes')
     args = parser.parse_args()
     try:
-        report = grade(args.bundle, args.packs, args.out, args.canonical_sha256,
+        report = grade(args.bundle, args.packs, args.out, args.canonical_sha256, args.snapshot_sha256,
                        json.loads(Path(args.report_pins).read_bytes()))
         print(json.dumps(report, sort_keys=True))
     except Refused as error:
