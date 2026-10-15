@@ -706,6 +706,22 @@ place". REFUTED, deterministically. Tools: `warm-cold/` next to this file.
   - Live proof on Gabee (2026-10-15 15:33): the same 2-turn request = 496 prompt tokens with and without history
     reasoning on 26452cbe3, 496 / 549 on 1470c7834. Re-run that probe (`~/t12-bench/rh_probe.py <port> <model>`) after
     any engine bump.
+- SPLIT TURNS - THE LIKELY STOP-SHORT CAUSE (found 2026-10-15 17:00; goose 8ef97235e on t12/local-bench-fidelity,
+  engine e84498a4a on `lz/reasoning-history`). goose stores one streamed response as TWO assistant messages (the text,
+  then the tool call carrying the reasoning) and the OpenAI formatter sent them as two rows. On Qwen3.8 every past turn
+  rendered as `<think></think>Now let me write X:<|im_end|>` + a second turn `<think>R</think><tool_call>`: the model
+  saw its narration END a turn on every turn, and every T12 stop-short (pi, Smaug, AREX-2, JetBrains-blend x3) ends
+  exactly that way: narration with a colon, then end of turn, 30-90 tokens, finished normally, no call.
+  - goose fix: `merge_narration_into_tool_call` in goose-provider-types formats/openai.rs (after the parallel-call
+    merge). Needs a NEW APP BUILD to reach Gabee.
+  - engine fix (covers the installed 3.0.111 and any client): `_join_split_assistant_turns` at the top of
+    `apply_chat_template`, GATED per template by `_template_puts_narration_before_calls` (one probe render, cached):
+    Qwen3.5/3.8, Qwen3-Coder-Next, Nemotron join; Gemma 4 (text renders after the tool result) and Llama 3.2 (drops
+    tool-row text) stay split. Reasoning copied onto both rows is kept ONCE; parallel bare calls fold into the turn.
+  - Live proof: `~/t12-bench/join_probe.py <port> <model>` - split and joined requests must have EQUAL prompt_tokens
+    (494 = 494 on e84498a4a). Copies of both probes: `~/goose-builds/loop-state/t12-memguard/`.
+  - How to see it in any run: read the request log (`.<run>-runtime/goose/state/logs/llm_request.*.jsonl`, the
+    `input.messages`) - consecutive assistant rows, the first text-only, the second `content: null` + tool_calls.
 - Capability record: `goose_sidecar::thinking::model_thinking_capabilities(dir)` parses the tool-use template ONCE per
   source (minijinja `unstable_machinery` AST, a port of rapid-mlx `detect_native_reasoning_effort_levels`). ORACLE for any
   change: run the engine's own function on the fixture — `~/.cache/uv/archive-v0/<hash>/bin/python -c "from
