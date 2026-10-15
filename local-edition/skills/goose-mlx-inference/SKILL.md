@@ -731,6 +731,19 @@ place". REFUTED, deterministically. Tools: `warm-cold/` next to this file.
     (494 = 494 on e84498a4a). Copies of both probes: `~/goose-builds/loop-state/t12-memguard/`.
   - How to see it in any run: read the request log (`.<run>-runtime/goose/state/logs/llm_request.*.jsonl`, the
     `input.messages`) - consecutive assistant rows, the first text-only, the second `content: null` + tool_calls.
+- THOUGHT SPILLED INTO THE ANSWER AFTER 64 CHARS (found 2026-10-15 20:40; fix 1481b118f on `lz/reasoning-history`,
+  in RC6 as 012a4ca08). goose passes `--reasoning-parser deepseek_r1` for Qwen3.x. Qwen3.8's template opens `<think>\n`
+  in the generation prompt, so the stream has no opening tag; `DeepSeekR1ReasoningParser` had no `configure_request`,
+  never learned the prompt was primed, and its 64-char `NO_TAG_CONTENT_THRESHOLD` routed everything after char 64 to
+  CONTENT. Every turn of every T12 run: ~60 chars of reasoning, then the rest of the thought as the visible answer
+  (control: 16 thinking deltas, 10,178 text deltas, split mid-number "is at 7" | "9%"). This is the "plans whole files
+  in prose" symptom. Fix: the base parser takes `configure_request(prompt_thinking_active)` with the RENDERED priming
+  answer (`_should_start_in_thinking(rendered=True)`: does the prompt END inside an open think block; explicit
+  enable_thinking=False still wins).
+  - Live proof: `~/t12-bench/think_probe.py <port> <model>` (copy in loop-state/t12-memguard): reasoning must be far
+    over 64 chars and content only the answer (1481b118: 424 / 85, tool call emitted).
+  - How to see it in any run: count the streamed `thinking` vs `text` items in `llm_request.*.jsonl`; a thought that
+    stops at ~60 chars mid-sentence and continues in text is this bug.
 - Capability record: `goose_sidecar::thinking::model_thinking_capabilities(dir)` parses the tool-use template ONCE per
   source (minijinja `unstable_machinery` AST, a port of rapid-mlx `detect_native_reasoning_effort_levels`). ORACLE for any
   change: run the engine's own function on the fixture — `~/.cache/uv/archive-v0/<hash>/bin/python -c "from
