@@ -91,7 +91,7 @@ def _audit(event, args):
         else:
             forbidden = True
     if forbidden:
-        _AUDIT['attempts'].append({'event': event})
+        _AUDIT['attempts'].append({'event': event, **({'file': file} if event == 'open' else {})})
         raise Refused(f'FORBIDDEN_OFFLINE_OPERATION: {event}')
 
 
@@ -255,7 +255,7 @@ def grade(bundle, pack_dir, output, expected_canonical_sha, expected_snapshot_sh
             contexts[0].harness_missing += [h for h in ctx.harness_missing if h not in contexts[0].harness_missing]
         merged = scorer.merge_seed_rows(row_sets, seeds)
         composed = scorer.compose_from_rows(merged, contexts[0])
-    require(not denial['attempts'], 'FORBIDDEN_OFFLINE_OPERATION_CAUGHT_BY_SCORER')
+    require(not denial['attempts'], 'FORBIDDEN_OFFLINE_OPERATION_CAUGHT_BY_SCORER', json.dumps(denial['attempts']))
     check_numerics(original, row_sets, merged, seeds)
     require(seed_scores == original['seed_scores'], 'FIXTURE_COMPOSITION_MISMATCH')
     differences = [key for key, value in composed.items() if key != 'checks' and value != original.get(key)]
