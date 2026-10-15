@@ -5,6 +5,8 @@
 //   node forge_probe.mjs --app <clone> --kit <kit dir> --seed <16 hex> --out obs.json --shots <dir>
 //                        --runtime wrapper|shim --repo <evals/swarm-bench>
 //   node forge_probe.mjs --preflight
+//   node forge_probe.mjs --lint-only --app <clone> --kit <kit dir>   prints {runs} — the two lint runs exactly as a
+//                                        scoring run records them (a lint crash with its app parse check), nothing else
 //
 // Harness failures (the site or emulator cannot start, Chromium cannot launch, an I2 call this probe needs is
 // absent) land in `sectionErrors[section]` — the scorer makes those rows UNAVAILABLE, never app zeros. App
@@ -60,19 +62,20 @@ if (args.includes('--preflight')) {
   }
 }
 
+const LINT_ONLY = args.includes('--lint-only');
 const appDir = resolve(opt('app'));
 const kitDir = resolve(opt('kit'));
-const repo = resolve(opt('repo'));
+const repo = LINT_ONLY ? null : resolve(opt('repo'));
 const seed = opt('seed');
-const outPath = resolve(opt('out'));
-const shotsDir = resolve(opt('shots'));
+const outPath = LINT_ONLY ? null : resolve(opt('out'));
+const shotsDir = LINT_ONLY ? null : resolve(opt('shots'));
 const runtime = opt('runtime', 'wrapper');
 // The graded browser recording (owner, 2026-10-03: Forge results carry video like SB7.2): every graded surface page
 // is recorded and the pages are joined, in the order they were graded, into one clip under <tree>/bench-media.
 const mediaDir = opt('media') ? resolve(opt('media')) : null;
 const RECORD_SIZE = { width: 1280, height: 800 };   // SB7.1's recording frame (product_probe_sb71.mjs)
 let recording = null;                               // { context, pages: [{page, label, openedAt}] }
-mkdirSync(shotsDir, { recursive: true });
+if (!LINT_ONLY) mkdirSync(shotsDir, { recursive: true });
 
 const obs = {
   schema: 'forge-observations/1', runtime, seed, manifest: null, manifestError: null, kit: {}, lint: { runs: [] },
@@ -106,7 +109,7 @@ function runLint() {
   const r = spawnSync(process.execPath, [bin, '--json'], { cwd: appDir, encoding: 'utf8', maxBuffer: 64 << 20 });
   const line = (r.stdout || '').split('\n').map((l) => l.replace(/^LINT_JSON /, '')).reverse()
     .find((l) => l.trim().startsWith('{'));
-  if (!line) return { crashed: true, exit: r.status, stderr: (r.stderr || '').slice(-400) };
+  if (!line) return { crashed: true, exit: r.status, stderr: keepEnds(r.stderr || ''), appParse: appParseCheck(kitDir, appDir) };
   const j = JSON.parse(line);
   return {
     counts: j.counts ?? { errors: (j.problems || []).filter((p) => p.sev === 'error').length,
@@ -115,6 +118,67 @@ function runLint() {
       ({ sev, file: file ? relative(appDir, resolve(appDir, file)) : file, line: ln, column, message, linter })),
     stageReached: j.stageReached ?? j.stage ?? null, stagesTotal: j.stagesTotal ?? j.stages ?? null,
   };
+}
+
+// A crash's FIRST line names the error ("Error: Expression expected.") and its tail names where it was thrown; a
+// tail-only cut kept the stack and lost the error (Gabee, 2026-10-15). Both ends survive a long stream.
+const STDERR_END_CHARS = 4000;
+function keepEnds(text) {
+  if (text.length <= 2 * STDERR_END_CHARS) return text;
+  return `${text.slice(0, STDERR_END_CHARS)}\n[... ${text.length - 2 * STDERR_END_CHARS} chars elided ...]\n${text.slice(-STDERR_END_CHARS)}`;
+}
+
+// When lint.cjs prints no result, WHOSE crash it was is measured, never read off the message: the kit's own
+// @forge/lint parser (parseSourceFile + tsParser, the parse lint() runs first and throws from) is run in the kit's
+// node over the very files lint.cjs hands lint() (its walk of src/, and lint()'s tsconfig include/exclude for .ts),
+// with the app as cwd as lint.cjs chdirs. An app file it refuses is the APP's defect — `forge lint` and so
+// `forge deploy` refuse that source too. `ran: false` (the kit's parser could not even load) stays a harness fault.
+const APP_PARSE_CHECK = `'use strict';
+const fs = require('fs');
+const path = require('path');
+const kitDir = process.argv[1];
+const { kitPaths } = require(path.join(kitDir, 'lib', 'kitpaths.cjs'));
+const paths = kitPaths(kitDir);
+const req = (name) => require(require.resolve(name, { paths: [paths.lintModules] }));
+const { parseSourceFile } = req('@forge/lint');
+const { tsParser } = req('@forge/lint/out/parse');
+const { listTSConfigIncludeExclude, FileSystemReader } = req('@forge/cli-shared');
+const appDir = fs.realpathSync(process.cwd());
+const SOURCE_EXT = /\\.(jsx?|tsx?)$/;
+function walk(dir) {
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    if (e.name === 'node_modules' || e.name.startsWith('.')) return [];
+    const p = path.join(dir, e.name);
+    return e.isDirectory() ? walk(p) : SOURCE_EXT.test(e.name) ? [p] : [];
+  });
+}
+(async () => {
+  const { include, exclude } = await listTSConfigIncludeExclude(new FileSystemReader());
+  const inc = new Set(include);
+  const exc = new Set(exclude);
+  const parsed = [];
+  const failures = [];
+  for (const file of walk('src').map((f) => path.relative(appDir, f)).sort()) {
+    if (/tsx?$/.test(path.extname(file))) {
+      const abs = path.resolve('./' + file);
+      if (!((inc.has(abs) && !exc.has(abs)) || (!inc.size && !exc.size))) continue;
+    }
+    parsed.push(file);
+    try {
+      await parseSourceFile(file, tsParser);
+    } catch (e) {
+      failures.push({ file, line: e.lineNumber ?? null, column: e.column ?? null, message: String(e.message).split('\\n')[0] });
+    }
+  }
+  process.stdout.write('PARSE_JSON ' + JSON.stringify({ parsed, failures }) + '\\n');
+})().catch((e) => { process.stderr.write(String(e?.stack ?? e) + '\\n'); process.exit(2); });
+`;
+function appParseCheck(kit, app) {
+  const r = spawnSync(process.execPath, ['-e', APP_PARSE_CHECK, kit], { cwd: app, encoding: 'utf8', maxBuffer: 64 << 20 });
+  const line = (r.stdout || '').split('\n').find((l) => l.startsWith('PARSE_JSON '));
+  if (!line) return { ran: false, exit: r.status, stderr: keepEnds(r.stderr || '') };
+  return { ran: true, ...JSON.parse(line.slice('PARSE_JSON '.length)) };
 }
 
 // ── static import walk: which @forge packages a handler bundle pulls in ───────────────────
@@ -967,6 +1031,11 @@ async function contactSheet() {
   await page.screenshot({ path: sheet, fullPage: true });
   obs.shots.push(sheet);
   await page.close();
+}
+
+if (LINT_ONLY) {
+  process.stdout.write(JSON.stringify({ runs: [runLint(), runLint()] }) + '\n');
+  process.exit(0);
 }
 
 const cleanup = async () => {
