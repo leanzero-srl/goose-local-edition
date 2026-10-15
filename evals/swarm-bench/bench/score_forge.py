@@ -39,6 +39,8 @@ I5 — forge-observations.json, the fields this scorer reads (the probe normalis
 """
 from __future__ import annotations
 
+from forge_seed_reports import attach_seed_evidence
+
 import argparse
 import copy
 from decimal import Decimal, InvalidOperation
@@ -3136,15 +3138,23 @@ def merge_seed_rows(row_sets: List[List[Dict]], seeds: List[str]) -> List[Dict]:
         gone = [(seed, b[name]) for seed, b in zip(seeds, by_seed) if name in b and b[name].get('unavailable')]
         if gone:
             seed, r = gone[0]
+            evidence_seed = seed
             out = {**r, 'detail': f'seed {seed}: {r["detail"]}'[:400]}
         elif row['tier'] == 'E':
+            evidence_seed = seeds[0]
             out = {**row, 'score': round(sum(r['score'] for r in rs) / len(rs), 4),
                    'detail': f'mean over {len(rs)} scoring sites: {row["detail"]}'[:400]}
         else:
             worst_seed, worst = min(zip(seeds, rs), key=lambda sr: sr[1]['score'])
+            evidence_seed = worst_seed
+            out_score_seed = worst_seed
             out = {**worst, 'detail': (f'worst of {len(rs)} scoring sites (seed {worst_seed}): ' if len(set(scores.values())) > 1
                                        else '') + str(worst.get('detail'))}
             out['detail'] = out['detail'][:400]
+        if row['tier'] != 'E' and not gone:
+            out['score_seed'] = out_score_seed
+        entries = [(seed, b[name]) for seed, b in zip(seeds, by_seed) if name in b]
+        out = attach_seed_evidence(out, entries, evidence_seed)
         out['seeds'] = scores
         merged.append(out)
     return merged

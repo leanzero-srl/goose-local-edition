@@ -1,0 +1,22 @@
+{
+  "newScorerSha256": "d3778dd87acd433345559c6ca68b1faf7afce6a6f7f8931024852e5e0e690037",
+  "reportHelperSha256": "c71041660ea8a4e3bbf2b39fdef4b5f8b727d16e96476d2c3e10d2f7e5b90e26",
+  "results": [
+    {
+      "buildId": "cloud-387fe513-813e-4145-88db-b84121c82e53",
+      "score": 0.4682,
+      "allElevenCompositionBlocksAnd105RowsUnchanged": true
+    },
+    {
+      "buildId": "cloud-4327347a-5c6a-4086-bd5a-176b4f6747bf",
+      "score": 0.471,
+      "allElevenCompositionBlocksAnd105RowsUnchanged": true
+    },
+    {
+      "buildId": "cloud-be43d514-ca15-4b27-ae96-602f3f117eac",
+      "score": 0.5312,
+      "allElevenCompositionBlocksAnd105RowsUnchanged": true
+    }
+  ],
+  "noProcessNetworkOrProbeCalls": true
+}

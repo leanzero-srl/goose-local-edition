@@ -64,6 +64,8 @@ world, webtrigger, admin, field, llm_v2, boot — are read by forge2_checks.py):
 """
 from __future__ import annotations
 
+from forge_seed_reports import attach_seed_evidence
+
 import argparse
 from collections import Counter
 import contextlib
@@ -4218,8 +4220,10 @@ def merge_seed_rows(row_sets: List[List[Dict]], seeds: List[str]) -> List[Dict]:
         harm = [(seed, r) for seed, r in entries if r.get('critical') in CRITICAL_CLASSES and observed_defect(r)]
         if gone:
             seed, missing = gone[0]
+            evidence_seed = seed
             out = {**missing, 'detail': f'seed {seed}: {missing["detail"]}'[:400]}
         elif row['tier'] == 'E':
+            evidence_seed = seeds[0]
             out = {**row, 'score': round(sum(scores.values()) / len(entries), 4),
                    'detail': f'mean over {len(entries)} scoring sites: {row["detail"]}'[:400]}
         else:
@@ -4234,6 +4238,7 @@ def merge_seed_rows(row_sets: List[List[Dict]], seeds: List[str]) -> List[Dict]:
             out['score_seed'] = worst_seed
         if harm:
             out['critical_observations'] = [{'seed': seed, 'row': copy.deepcopy(r)} for seed, r in harm]
+        out = attach_seed_evidence(out, entries, evidence_seed)
         out['seeds'] = scores
         merged.append(out)
     return merged
@@ -4279,7 +4284,7 @@ def evaluate(c: Ctx) -> Dict:
 def scorer_files_sha256() -> Dict[str, str]:
     """The files that produced a verdict (calibrate() refuses golden verdicts scored by different ones)."""
     return {n: hashlib.sha256(p.read_bytes()).hexdigest() for n, p in (
-        ('score_forge2.py', HERE / 'score_forge2.py'), ('forge2_checks.py', Path(V2.__file__)),
+        ('score_forge2.py', HERE / 'score_forge2.py'), ('forge_seed_reports.py', HERE / 'forge_seed_reports.py'), ('forge2_checks.py', Path(V2.__file__)),
         ('forge2_jql_checks.py', Path(JQL.__file__)), ('forge2_oracle.py', Path(fo.__file__)),
         ('forge2_seed_policy.py', Path(seed_policy.__file__)), ('forge2_probe.mjs', PROBE_SCRIPT), (THRESHOLDS_FILE.name, THRESHOLDS_FILE))}
 
