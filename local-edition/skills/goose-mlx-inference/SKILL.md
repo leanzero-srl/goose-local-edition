@@ -128,6 +128,15 @@ The full record is in the T12 plan, section "MEMORY GUARD design" (`~/.claude/pl
         - Nemotron streams `write` with no arguments for an XML file whose content has `<parameter=a>` lines (buffered refuses it, #1541).
     - Repro harness: route-level SSE test `tests/test_tool_call_undeclared_surfaced.py` (fake engine, special tokens whole, deepseek_r1 + qwen3_coder_xml). Character-splitting `<tool_call>` across deltas is NOT realistic and makes even declared calls stream as text.
     - Cancel an invalid series with the app's "Cancel run" → "Cancel the run". It publishes nothing.
+- **CDP WINDOW TRAP (2026-10-15):**
+  - The app runs a second page, the 174x36 engine-glance pill (`#/engine-glance`, main.ts ~2421), on the same index.html.
+  - A CDP helper that picks "the routed page" or the first page can navigate the PILL. The Benchmark form then never renders (dispatch exit 3, "the Benchmark view did not render"), and the body reads just "0 need you".
+  - Once moved, the pill's URL no longer says engine-glance, so URL filters fail.
+  - Pick the window with the LARGEST measured `innerWidth*innerHeight`. `dispatch_forge2_local.mjs` does this now. Restore a moved pill with `location.hash='#/engine-glance'` (check `innerWidth<400`).
+  - `~/t12-bench/cdp_page.mjs <urlsub> <js>` evals in a named page.
+- **SCORER: a lint crash from the app's own syntax error is labelled a "harness defect" (2026-10-15, JetBrains-blend):**
+  - `l_deployable` was UNAVAILABLE, so the result was unpublishable, the series failed and build 2 was SKIPPED. A goose scorer fix is in progress on `t12/local-bench-fidelity`.
+  - Check by running the kit's lint on a copy: `node <kit>/bin/lint.cjs <dir>` prints `LINT_CRASH Error: …` with the line, and `node --check` shows whether it is the app's own syntax.
 - **CALIBRATION COLLAPSE (live, 2026-10-15 04:11, pi Q8 Forge 2.0 on the b06acd8ea guard):**
   - `/v1/status memory_guard.coefficients.attention_bytes_per_chunk_context` read 0.0 after 313 observations.
   - A step measured 12.45 GB against 8.53 GB projected and the log said "a=0.00->0.00", so the fit IGNORED a 4.07 GB under-plan at 95k context (peak 50.41 vs ceiling 50.10; Metal 55.66).
