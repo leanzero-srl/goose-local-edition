@@ -62,6 +62,15 @@ def recompose_comment_critical(scorer, original, observations):
     target = [row for row in rows if row['check'] == COMMENT_CHECK]
     if len(target) != 1:
         raise ValueError('ORIGINAL_COMMENT_CHECK_MISSING_OR_DUPLICATED')
+    seed_grades = target[0].get('seeds')
+    functions = [entry[2] for entry in scorer.CHECKS if entry[0] == COMMENT_CHECK]
+    if not isinstance(seed_grades, dict) or set(seed_grades) != set(seeds) or len(functions) != 1:
+        raise ValueError('ORIGINAL_COMMENT_FIXTURE_GRADES_MISSING')
+    for seed, observation in observations.items():
+        render_context = SimpleNamespace(sprint_renders=lambda obs=observation: obs['ui']['sprintAction'])
+        grade = functions[0](render_context)
+        if grade['score'] != seed_grades[seed]:
+            raise ValueError('CACHED_COMMENT_FUNCTIONAL_GRADE_MISMATCH: ' + seed)
     target[0]['critical_observed'] = observed
     target[0]['critical_evidence'] = witnesses
     severity = scorer.critical_severity_input
