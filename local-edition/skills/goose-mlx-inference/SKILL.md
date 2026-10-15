@@ -697,6 +697,15 @@ place". REFUTED, deterministically. Tools: `warm-cold/` next to this file.
     md5 519239a4); 5 of its 7 cases fail on 26452cbe3.
   - Side effect to expect: history now carries the reasoning, so prompts grow faster per turn (the intended Qwen3.8 mode),
     and the rendered history finally matches what was generated (better prefix-cache hits on the last turn).
+  - HARDENED in 645843445 after an independent review (FIX-FIRST, 5 defects). Rules that must survive:
+    reasoning is CLIENT TEXT, so the role-marker sanitiser covers `_CLIENT_TEXT_FIELDS` (content, reasoning_content,
+    reasoning); the Qwen3.5 retain pass re-inserts think text after the render, so it must read the SANITISED list;
+    non-text or blank reasoning is ABSENT (never a 422, never `''`, which stops Qwen3.5 splitting `<think>` out of
+    content); `/v1/responses` reasoning items carry plain `summary_text` here and go onto the next assistant row.
+    Test file now 14 cases (9 fail on 26452cbe3); the 6 failures in the 276-file related suite are pre-existing.
+  - Live proof on Gabee (2026-10-15 15:33): the same 2-turn request = 496 prompt tokens with and without history
+    reasoning on 26452cbe3, 496 / 549 on 1470c7834. Re-run that probe (`~/t12-bench/rh_probe.py <port> <model>`) after
+    any engine bump.
 - Capability record: `goose_sidecar::thinking::model_thinking_capabilities(dir)` parses the tool-use template ONCE per
   source (minijinja `unstable_machinery` AST, a port of rapid-mlx `detect_native_reasoning_effort_levels`). ORACLE for any
   change: run the engine's own function on the fixture — `~/.cache/uv/archive-v0/<hash>/bin/python -c "from
