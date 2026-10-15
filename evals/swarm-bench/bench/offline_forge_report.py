@@ -185,9 +185,18 @@ def grade(bundle, pack_dir, output, expected_canonical_sha, report_pins):
     canonical_raw = regular_bytes(bundle / 'canonical.json')
     require(sha(canonical_raw) == expected_canonical_sha, 'CANONICAL_PIN_MISMATCH')
     original = json.loads(canonical_raw)
+    snapshot = json.loads(regular_bytes(bundle / 'SNAPSHOT.json'))
+    require(snapshot.get('originalCanonicalSha256') == expected_canonical_sha and
+            snapshot.get('allSourcesVerifiedBeforeAndAfter') is True, 'TRANSFER_PROOF_MISMATCH')
+    transferred = {item['archivePath']: item for item in snapshot['files']}
+    for rel, item in transferred.items():
+        raw = regular_bytes(relative_file(bundle, rel))
+        require(len(raw) == item['bytes'] and sha(raw) == item['sha256'], 'TRANSFERRED_INPUT_PIN_MISMATCH', rel)
     require(original.get('scorerVersion') == 'forge-2.0', 'WRONG_BENCHMARK_FAMILY')
     expected = original['evaluation_inputs']
     seeds = original['fixture_seeds']
+    require(snapshot['nativeIdentity']['buildId'] == original.get('buildId') and
+            snapshot['nativeIdentity']['fixture_seeds'] == seeds, 'TRANSFER_IDENTITY_MISMATCH')
     require(len(seeds) == 3 and len(set(seeds)) == 3, 'MISSING_ORIGINAL_SCORING_SITES')
     here = Path(__file__).resolve().parent
     root = here.parent
@@ -221,7 +230,8 @@ def grade(bundle, pack_dir, output, expected_canonical_sha, report_pins):
         require(proof.get('seed') == seed and proof.get('sha256') == sha(raw), 'PACK_PROOF_MISMATCH', seed)
         require(proof.get('originalSourceVerifiedBeforeAndAfter') is True and
                 proof.get('twoIndependentDataOnlyReconstructionsByteEqual') is True, 'PACK_DATA_CONTROL_MISSING', seed)
-        require(all(expected['site'].get(name) == pin for name, pin in proof['sourcePins'].items()),
+        require(set(proof['sourcePins']) == {'fixtures.cjs', 'rng.cjs', 'limits.cjs', 'world.cjs', 'llm.cjs', 'request-time.cjs'} and
+                all(expected['site'].get(name) == pin for name, pin in proof['sourcePins'].items()),
                 'PACK_SOURCE_PROVENANCE_MISMATCH', seed)
         pack = json.loads(raw)
         require(pack.get('seed') == seed, 'PACK_SEED_MISMATCH', seed)
