@@ -128,6 +128,12 @@ The full record is in the T12 plan, section "MEMORY GUARD design" (`~/.claude/pl
         - Nemotron streams `write` with no arguments for an XML file whose content has `<parameter=a>` lines (buffered refuses it, #1541).
     - Repro harness: route-level SSE test `tests/test_tool_call_undeclared_surfaced.py` (fake engine, special tokens whole, deepseek_r1 + qwen3_coder_xml). Character-splitting `<tool_call>` across deltas is NOT realistic and makes even declared calls stream as text.
     - Cancel an invalid series with the app's "Cancel run" → "Cancel the run". It publishes nothing.
+- **CALIBRATION COLLAPSE (live, 2026-10-15 04:11, pi Q8 Forge 2.0 on the b06acd8ea guard):**
+  - `/v1/status memory_guard.coefficients.attention_bytes_per_chunk_context` read 0.0 after 313 observations.
+  - A step measured 12.45 GB against 8.53 GB projected and the log said "a=0.00->0.00", so the fit IGNORED a 4.07 GB under-plan at 95k context (peak 50.41 vs ceiling 50.10; Metal 55.66).
+  - Cause (same class as the ladder's 2 GB): short tail-chunk groups vote 0. Real goose traffic is MOSTLY short tool-result remainders, so the collapse is worse than on the ladder.
+  - Always read the coefficient during a long run. If it is 0 on a head_dim-256 model, the guard is planning attention as free.
+  - The fix is on RC2 (e295c5f32); its proof is the replay of this real trace's calibrate lines.
 - **THE LIVE PROOF (the only acceptance):**
   1. On the target Mac, through the APP: quit the app, set `mlx_engine.spawn_command` in `~/.config/goose/config.yaml` to `["/bin/sh","~/t12-bench/engine-wrap.sh"]`.
      - That test launcher `exec`s the app's bundled `uvx --from "rapid-mlx[mtp] @ git+…Rapid-MLX@<full sha>"` and drops `--cache-memory-percent`, exactly as goose will for a Guarded pin.
