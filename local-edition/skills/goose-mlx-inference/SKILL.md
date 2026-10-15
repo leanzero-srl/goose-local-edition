@@ -677,6 +677,20 @@ place". REFUTED, deterministically. Tools: `warm-cold/` next to this file.
   top-level `reasoning_effort`/`reasoning_max_tokens`, or `tool_choice:"none"`. NOTE: `chat_template_kwargs.reasoning_effort`
   alone does NOT stand the auto-disable down — under Auto with tools the effort level is inert (Qwen3.8 only reads it
   while thinking is on).
+- HISTORY REASONING WAS DROPPED (found 2026-10-15, T12 bake-off; fix `lz/reasoning-history` 1470c7834 on top of 26452cbe3).
+  The engine's chat `Message` model had no `reasoning_content` field, so pydantic silently dropped the reasoning goose
+  sends back on every assistant row. Qwen3.8's template has `preserve_thinking` on by default and renders EVERY history row
+  as `<think>\n{reasoning_content}\n</think>`, so every past turn showed the model an EMPTY think block: a history in which
+  it never reasoned. Every round-1 bake-off run (AREX-2, pi, JetBrains-blend, Smaug-Mini) ran under this; all stopped short.
+  The `/v1/messages` adapter dropped echoed `thinking` blocks the same way (also fixed). `/v1/responses` reasoning items
+  stay dropped on purpose (encrypted_content is opaque).
+  - Measured, not assumed: `R12-T1F` (the tool-request auto-disable) fired 0 times in the bake-off engine logs, because
+    goose pins `reasoning_effort=medium`. So thinking WAS on; only the history was hollow.
+  - How to check any engine: `Message(role='assistant', content='x', reasoning_content='T').model_dump()` must contain
+    `reasoning_content`. The proof is `tests/test_history_reasoning_reaches_template.py` (stock Qwen3.8 template fixture
+    md5 519239a4); 5 of its 7 cases fail on 26452cbe3.
+  - Side effect to expect: history now carries the reasoning, so prompts grow faster per turn (the intended Qwen3.8 mode),
+    and the rendered history finally matches what was generated (better prefix-cache hits on the last turn).
 - Capability record: `goose_sidecar::thinking::model_thinking_capabilities(dir)` parses the tool-use template ONCE per
   source (minijinja `unstable_machinery` AST, a port of rapid-mlx `detect_native_reasoning_effort_levels`). ORACLE for any
   change: run the engine's own function on the fixture — `~/.cache/uv/archive-v0/<hash>/bin/python -c "from
