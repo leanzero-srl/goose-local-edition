@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import stat
 import sys
+import urllib.parse
 
 
 class Refused(RuntimeError):
