@@ -727,6 +727,9 @@ place". REFUTED, deterministically. Tools: `warm-cold/` next to this file.
     `apply_chat_template`, GATED per template by `_template_puts_narration_before_calls` (one probe render, cached):
     Qwen3.5/3.8, Qwen3-Coder-Next, Nemotron join; Gemma 4 (text renders after the tool result) and Llama 3.2 (drops
     tool-row text) stay split. Reasoning copied onto both rows is kept ONCE; parallel bare calls fold into the turn.
+    BLANK ROWS JOIN TOO (f39d1d92, 2026-10-15 22:2x): goose 3.0.111 sends most calls as `{"content":"\n\n"}` then the
+    call row - 40/40 calls on the control. The first version skipped blank narration, so every call still rendered
+    after an EMPTY finished turn; join_probe checks both shapes now (blank split must equal blank joined, 489 = 489).
   - Live proof: `~/t12-bench/join_probe.py <port> <model>` - split and joined requests must have EQUAL prompt_tokens
     (494 = 494 on e84498a4a). Copies of both probes: `~/goose-builds/loop-state/t12-memguard/`.
   - How to see it in any run: read the request log (`.<run>-runtime/goose/state/logs/llm_request.*.jsonl`, the
