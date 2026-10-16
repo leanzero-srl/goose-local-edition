@@ -65,8 +65,8 @@ pub fn knob_bool(key: &str, default: bool) -> bool {
     }
 }
 
-/// How the summary that extends the chat reasons (`GOOSE_COMPACTION_SUMMARY_THINKING`, env > config
-/// > default: `off` where the provider says reasoning off keeps the request's prefix
+/// How the summary that extends the chat reasons (`GOOSE_COMPACTION_SUMMARY_THINKING`; the env wins
+/// over config, config over the default: `off` where the provider says reasoning off keeps the request's prefix
 /// (`Provider::reasoning_off_keeps_the_prefix`), the chat's own setting everywhere else).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SummaryThinking {

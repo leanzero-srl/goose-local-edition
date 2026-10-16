@@ -241,8 +241,7 @@ fn takes_the_next_token(token: &str) -> bool {
 fn heredoc_delimiters(line: &str) -> Vec<(String, bool)> {
     let mut found = Vec::new();
     let mut rest = line;
-    while let Some(at) = rest.find("<<") {
-        let after = &rest[at + 2..];
+    while let Some((_, after)) = rest.split_once("<<") {
         if let Some(string) = after.strip_prefix('<') {
             rest = string;
             continue;
@@ -253,7 +252,13 @@ fn heredoc_delimiters(line: &str) -> Vec<(String, bool)> {
         };
         let after = after.trim_start();
         let word: String = match after.chars().next() {
-            Some(quote @ ('\'' | '"')) => after[1..].split(quote).next().unwrap_or("").to_string(),
+            Some(quote @ ('\'' | '"')) => after
+                .strip_prefix(quote)
+                .unwrap_or(after)
+                .split(quote)
+                .next()
+                .unwrap_or("")
+                .to_string(),
             _ => after
                 .chars()
                 .take_while(|c| {
