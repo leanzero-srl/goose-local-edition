@@ -15,6 +15,8 @@ vi.mock('../../acp/mlx-engine', () => ({
 import { lmStudioFeedWanted, localSidecarNames, useFleetCorroboration } from './useFleetCorroboration';
 
 const electron = () => (window as unknown as { electron: Record<string, unknown> }).electron;
+const setLmStudioSurface = (on: boolean) =>
+  (electron().setSetting as (k: string, v: unknown) => Promise<void>)('showLmStudioFleet', on);
 
 /** The live config's shape (2026-09-01): one local sidecar device beside the LM Studio nodes. */
 const SIDECAR_CFG = {
@@ -43,11 +45,13 @@ const MIXED_NODES: Record<string, string> = {
 };
 
 /**
- * U-H2: the dead-lane corroboration must not depend on the showLmStudioFleet DISPLAY toggle, and a
- * LeanZero MLX sidecar device (never in `lms ps`) must be able to reach `reportedNodes` at all.
+ * U-H2: a LeanZero MLX sidecar device (never in `lms ps`) must be able to reach `reportedNodes` at all.
+ * The LM Studio half runs only with the showLmStudioFleet surface on (NEVER WAKE LM STUDIO, 2026-10-16),
+ * so these cases switch it on; the default-off cases are in the describe at the end.
  */
-describe('useFleetCorroboration — truth is fed regardless of display, from polls that already exist', () => {
-  beforeEach(() => {
+describe('useFleetCorroboration — the feeds, with the LM Studio surface on', () => {
+  beforeEach(async () => {
+    await setLmStudioSurface(true);
     electron().fleetStatus = vi.fn(async () => ({
       'gabee-qwen3.6-27b': 'idle',
       'mihai-qwen3.6-27b': 'generating',
@@ -55,11 +59,12 @@ describe('useFleetCorroboration — truth is fed regardless of display, from pol
     mockReadConfig.mockReset();
     mockMlxStatus.mockReset();
   });
-  afterEach(() => {
+  afterEach(async () => {
     delete electron().fleetStatus;
+    await setLmStudioSurface(false);
   });
 
-  it('reports every lms node with no visibility input at all — the hook has no toggle to be off', async () => {
+  it('reports every lms node when the surface is on', async () => {
     mockReadConfig.mockResolvedValue({ endpoint: 'http://localhost:1234', devices: [] });
     const { result } = renderHook(() => useFleetCorroboration(10_000_000));
     await waitFor(() => expect(result.current.reportedNodes).toEqual(['gabee', 'mihai']));
@@ -165,7 +170,8 @@ describe('useFleetCorroboration — truth is fed regardless of display, from pol
  * busy came from whichever feed answered last.
  */
 describe('useFleetCorroboration × the run\'s pool map — the sidecar is `workhorse-mlx`', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await setLmStudioSurface(true);
     electron().fleetStatus = vi.fn(async () => ({
       'gabee-qwen3.6-27b': 'idle',
       'workhorse-qwen3.8-27b': 'generating',
@@ -174,8 +180,9 @@ describe('useFleetCorroboration × the run\'s pool map — the sidecar is `workh
     mockMlxStatus.mockReset();
     mockReadConfig.mockResolvedValue(SIDECAR_CFG);
   });
-  afterEach(() => {
+  afterEach(async () => {
     delete electron().fleetStatus;
+    await setLmStudioSurface(false);
   });
 
   it('localSidecarNames: the map names the sidecar device; without it the prefix collides with LM Studio', () => {
@@ -282,14 +289,16 @@ describe('deriveFleet × the MLX feed', () => {
  */
 describe('useFleetCorroboration — `lms ps` is spawned only for a pool that has an LM Studio node', () => {
   const MLX_ONLY_CFG = { devices: [SIDECAR_CFG.devices[1]] };
-  beforeEach(() => {
+  beforeEach(async () => {
+    await setLmStudioSurface(true);
     electron().fleetStatus = vi.fn(async () => ({ 'gabee-qwen3.6-27b': 'idle' }));
     mockReadConfig.mockReset();
     mockMlxStatus.mockReset();
     mockMlxStatus.mockResolvedValue({ ...RUNNING, activeRequests: 0 });
   });
-  afterEach(() => {
+  afterEach(async () => {
     delete electron().fleetStatus;
+    await setLmStudioSurface(false);
   });
 
   it('lmStudioFeedWanted: false only when every enabled device is an mlx-sidecar', () => {
@@ -315,5 +324,56 @@ describe('useFleetCorroboration — `lms ps` is spawned only for a pool that has
     const { result } = renderHook(() => useFleetCorroboration(10_000_000));
     await waitFor(() => expect(result.current.reportedNodes).toEqual(['gabee', 'workhorse']));
     expect(electron().fleetStatus).toHaveBeenCalled();
+  });
+});
+
+/**
+ * NEVER WAKE LM STUDIO (2026-10-16). Measured on Gabee's Mac: during a Forge 2.0 benchmark on the app's
+ * own MLX engine, the Goose app was the parent of `~/.lmstudio/bin/lms ps --json`, and every quit of LM
+ * Studio was undone by the next 1.5 s poll — `lms ps` relaunches the service, which then held a ~35B
+ * model. The poll came from this hook: SwarmRunPanel mounts it in the Benchmark view and in every chat,
+ * and it enabled `lms ps` on `lmStudioFeedWanted` alone, which is true for an empty device list and for
+ * an unreadable config. With the surface off (the default) nothing asks main for `lms ps`.
+ */
+describe('useFleetCorroboration — the default install never asks for `lms ps`', () => {
+  beforeEach(() => {
+    electron().fleetStatus = vi.fn(async () => ({ 'gabee-qwen3.6-27b': 'idle' }));
+    mockReadConfig.mockReset();
+    mockMlxStatus.mockReset();
+    mockMlxStatus.mockResolvedValue({ ...RUNNING, activeRequests: 0 });
+  });
+  afterEach(() => {
+    delete electron().fleetStatus;
+  });
+
+  const settle = async () => {
+    await waitFor(() => expect(mockReadConfig).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+  };
+
+  it('no swarm devices (the benchmark machine: openai provider at the app engine): no `lms ps`', async () => {
+    mockReadConfig.mockResolvedValue({ devices: [] });
+    const { result } = renderHook(() => useFleetCorroboration(5));
+    await settle();
+    expect(electron().fleetStatus).not.toHaveBeenCalled();
+    expect(result.current.reportedNodes).toEqual([]);
+    expect(result.current.nodeStatus).toEqual({});
+  });
+
+  it('an unreadable swarm config: no `lms ps`', async () => {
+    mockReadConfig.mockRejectedValue(new Error('config unreadable'));
+    renderHook(() => useFleetCorroboration(5));
+    await settle();
+    expect(electron().fleetStatus).not.toHaveBeenCalled();
+  });
+
+  it('a pool WITH LM Studio devices: still no `lms ps` until the surface is switched on', async () => {
+    mockReadConfig.mockResolvedValue(SIDECAR_CFG);
+    const { result } = renderHook(() => useFleetCorroboration(5));
+    await waitFor(() => expect(result.current.mlxNodes).toEqual(['workhorse']));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(electron().fleetStatus).not.toHaveBeenCalled();
+    // The MLX half of the truth feed is untouched: the sidecar is still reported.
+    expect(result.current.reportedNodes).toEqual(['workhorse']);
   });
 });

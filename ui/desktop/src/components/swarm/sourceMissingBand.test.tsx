@@ -11,10 +11,10 @@ import { IntlTestWrapper } from '../../i18n/test-utils';
  *    and nulls the heartbeat. The panel must SAY so — a distinct band over the last state read — and
  *    the elapsed/ETA clock must stop: nothing below can advance, so a counting clock claims a run that
  *    cannot be observed. Before this the flag was rendered by nothing and the clock kept ticking.
- * 2. The dead-lane corroboration feed is TRUTH, not display: it polls LM Studio even when the
- *    'showLmStudioFleet' display setting is off (the default install), so `reportedNodes` can arm
- *    deriveFleet's demotion. Before this the feed was `useFleetStatus(1500, lmStudioVisible)`, which
- *    polled nothing on a default install and left a dead node "working" for as long as the panel stayed open.
+ * 2. The LM Studio half of the dead-lane corroboration feed polls `lms ps` only with the
+ *    'showLmStudioFleet' surface on (NEVER WAKE LM STUDIO, 2026-10-16): `lms ps` relaunches the LM
+ *    Studio service when none runs, measured on Gabee's Mac under a Forge 2.0 benchmark on the app's
+ *    MLX engine. Off (the default install), nothing is asked and LM Studio lanes are never demoted.
  */
 
 const POOL = [{ id: 'local-mihai-qwen3.6-27b', model_id: 'mihai-qwen3.6-27b', weight: 2 }];
@@ -105,7 +105,7 @@ describe('SwarmRunPanel — a vanished run gets its band and loses its clock', (
   });
 });
 
-describe('SwarmRunPanel — the dead-lane corroboration feed polls regardless of the fleet display setting', () => {
+describe('SwarmRunPanel — `lms ps` follows the LM Studio fleet surface setting', () => {
   beforeEach(() => {
     resetFoldCache();
     const e = electron();
@@ -132,17 +132,32 @@ describe('SwarmRunPanel — the dead-lane corroboration feed polls regardless of
     delete electron().fleetStatus;
   });
 
-  it('asks LM Studio for the fleet on a default install (display off), so reportedNodes can arm the demotion', async () => {
+  it('never asks for `lms ps` on a default install (surface off), and draws no LM Studio dot', async () => {
     render(
       <IntlTestWrapper>
         <SwarmRunPanel workingDir="/tmp/build" />
       </IntlTestWrapper>
     );
     await screen.findByText('vendorsync');
-    const fleetStatus = electron().fleetStatus as ReturnType<typeof vi.fn>;
-    await waitFor(() => expect(fleetStatus).toHaveBeenCalled());
-    // The DISPLAY stays gated: with the setting off, no LM Studio dot is drawn on the fleet row.
     const row = await screen.findByTestId('fleet-node');
+    await new Promise((r) => setTimeout(r, 50));
+    expect(electron().fleetStatus).not.toHaveBeenCalled();
     expect(row.querySelector('[aria-label^="LM Studio:"]')).toBeNull();
+  });
+
+  it('asks for `lms ps` once the surface is switched on', async () => {
+    await (electron().setSetting as (k: string, v: unknown) => Promise<void>)('showLmStudioFleet', true);
+    try {
+      render(
+        <IntlTestWrapper>
+          <SwarmRunPanel workingDir="/tmp/build" />
+        </IntlTestWrapper>
+      );
+      await screen.findByText('vendorsync');
+      const fleetStatus = electron().fleetStatus as ReturnType<typeof vi.fn>;
+      await waitFor(() => expect(fleetStatus).toHaveBeenCalled());
+    } finally {
+      await (electron().setSetting as (k: string, v: unknown) => Promise<void>)('showLmStudioFleet', false);
+    }
   });
 });

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { acpReadConfig } from '../../acp/config';
+import { useLmStudioFleetVisible } from '../../hooks/useLmStudioFleetVisible';
 import { useMlxEngineStatusPoll } from '../leanzero-swarm/useMlxEngineStatus';
 import { deviceEnabled, type SwarmConfig, type SwarmDeviceRow } from '../settings/swarm/golden';
 import { deviceFromModelId, useFleetStatus } from './useFleet';
@@ -16,8 +17,15 @@ import { deviceFromModelId, useFleetStatus } from './useFleet';
  *
  * Two feeds, one shape, both from polls that ALREADY exist (deriveFleet's own rule: no timer is added for
  * this — a clock is what was deleted everywhere else):
- *   - LM Studio: `useFleetStatus` (`lms ps --json` through main), ALWAYS enabled here. Every node it lists
- *     is REPORTED; generating/processingPrompt is BUSY.
+ *   - LM Studio: `useFleetStatus` (`lms ps --json` through main). Every node it lists is REPORTED;
+ *     generating/processingPrompt is BUSY. NEVER WAKE LM STUDIO (2026-10-16) narrows U-H2 for this feed:
+ *     `lms ps` relaunches the LM Studio service when none runs, so it is polled only when the pool has an
+ *     LM Studio node AND the 'showLmStudioFleet' surface is on, and main spawns it only when a service is
+ *     already up (utils/lmStudioLive.ts). Measured on Gabee's Mac: this hook, mounted by the panel in the
+ *     Benchmark view and in every chat, polled `lms ps` every 1.5 s through a Forge 2.0 run on the app's
+ *     MLX engine; each quit of LM Studio was undone and the relaunched service held a ~35B model. With the
+ *     surface off, LM Studio nodes are not reported, so deriveFleet's demotion fails SAFE for them (no
+ *     evidence, no demotion) — the price of never starting a program the user did not open.
  *   - MLX sidecar: `useMlxEngineStatusPoll` (the same status the engine surfaces already poll), armed only
  *     when the swarm config declares a LOCAL `mlx-sidecar` device — no chatter otherwise. `running` with a
  *     clean probe means the engine REPLIED, so the device is REPORTED. BUSY is the engine's OWN count
@@ -35,8 +43,7 @@ import { deviceFromModelId, useFleetStatus } from './useFleet';
  * host and the LM Studio node as ONE name.
  */
 export interface FleetCorroboration {
-  /** lms ps state by short node name — for surfaces that DISPLAY the LM Studio dot (gate those on the
-   *  showLmStudioFleet setting); the truth arrays below are derived from it and never gated. */
+  /** lms ps state by short node name; `{}` while the showLmStudioFleet surface is off. */
   nodeStatus: Record<string, string>;
   /** Every node some feed replied about this poll, idle ones included. */
   reportedNodes: string[];
@@ -112,7 +119,8 @@ export function useFleetCorroboration(
       alive = false;
     };
   }, []);
-  const nodeStatus = useFleetStatus(pollMs, lmsWanted === true, poolNodes);
+  const lmStudioVisible = useLmStudioFleetVisible();
+  const nodeStatus = useFleetStatus(pollMs, lmStudioVisible && lmsWanted === true, poolNodes);
   // The names are re-joined whenever the pool map arrives or changes (the first fold lands after the
   // config read), but the fold hands a fresh map object every tick, so the ARRAY identity is pinned to
   // its content: the memo below and the poll's `enabled` flag only move when a name actually does.
