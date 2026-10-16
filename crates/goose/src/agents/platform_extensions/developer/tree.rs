@@ -1,11 +1,15 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use ignore::WalkBuilder;
 use rmcp::model::{CallToolResult, Content};
 use schemars::JsonSchema;
 use serde::Deserialize;
+
+use super::shell::{truncate_output, truncation_notice, OUTPUT_SLOTS};
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct TreeParams {
@@ -18,11 +22,21 @@ fn default_depth() -> u32 {
     2
 }
 
-pub struct TreeTool;
+/// The listing is cut by the shell tool's rule (`OUTPUT_LIMIT_LINES` / `OUTPUT_LIMIT_BYTES`): the
+/// whole listing goes to a file here, the result shows its two ends and says where the rest is.
+/// MEASURED (Forge 2.0 run A, 2026-10-16): one `tree` result was 161,890 chars with node_modules in
+/// it — 64% of the chat's context — while a shell command's output was already cut at 50,000 bytes.
+pub struct TreeTool {
+    output_dir: tempfile::TempDir,
+    call_index: AtomicUsize,
+}
 
 impl TreeTool {
-    pub fn new() -> Self {
-        Self
+    pub fn new() -> std::io::Result<Self> {
+        Ok(Self {
+            output_dir: tempfile::tempdir()?,
+            call_index: AtomicUsize::new(0),
+        })
     }
 
     pub fn tree(&self, params: TreeParams) -> CallToolResult {
@@ -69,13 +83,24 @@ impl TreeTool {
             output.push_str("(empty directory)");
         }
 
-        CallToolResult::success(vec![Content::text(output).with_priority(0.0)])
-    }
-}
-
-impl Default for TreeTool {
-    fn default() -> Self {
-        Self::new()
+        let slot = self.call_index.fetch_add(1, Ordering::Relaxed) % OUTPUT_SLOTS;
+        let cut = match truncate_output(&output, &format!("tree-{slot}"), self.output_dir.path()) {
+            Ok(cut) => cut,
+            Err(error) => {
+                return CallToolResult::error(vec![Content::text(format!(
+                    "The tree of {} was {} bytes, over the output limit, and could not be saved \
+                     to a file to read in parts: {error}",
+                    root.display(),
+                    output.len()
+                ))
+                .with_priority(0.0)])
+            }
+        };
+        let mut content = vec![Content::text(cut.text).with_priority(0.0)];
+        if let Some(info) = &cut.truncation {
+            content.push(Content::text(truncation_notice(info)).with_priority(0.0));
+        }
+        CallToolResult::success(content)
     }
 }
 
@@ -83,6 +108,8 @@ impl Default for TreeTool {
 struct DirectoryNode {
     dirs: BTreeMap<String, DirectoryNode>,
     files: BTreeMap<String, usize>,
+    /// Dependency and build folders (`skills::should_skip_dir`) named here but not walked.
+    not_walked: BTreeSet<String>,
     total_lines: usize,
 }
 
@@ -106,6 +133,17 @@ impl DirectoryNode {
 
         let filename = components[components.len() - 1].clone();
         node.files.insert(filename, line_count);
+    }
+
+    fn insert_not_walked(&mut self, components: &[String]) {
+        let Some((name, parents)) = components.split_last() else {
+            return;
+        };
+        let mut node = self;
+        for component in parents {
+            node = node.dirs.entry(component.clone()).or_default();
+        }
+        node.not_walked.insert(name.clone());
     }
 
     fn compute_total_lines(&mut self) -> usize {
@@ -132,6 +170,13 @@ impl DirectoryNode {
             dir.render_into(depth + 1, out);
         }
 
+        for name in &self.not_walked {
+            out.push_str(&format!(
+                "{indent}{name}/  [dependency or build folder, not listed; tree it by its path to \
+                 see inside]\n"
+            ));
+        }
+
         for (name, line_count) in &self.files {
             out.push_str(&format!(
                 "{}{}  {}\n",
@@ -156,6 +201,21 @@ fn collect_tree(root: &Path, max_depth: Option<usize>) -> DirectoryNode {
         builder.max_depth(Some(depth + 1));
     }
 
+    // The folder asked for is always walked, even when it is one of these (`tree node_modules/x`).
+    let not_walked: Arc<Mutex<Vec<PathBuf>>> = Arc::default();
+    let seen = not_walked.clone();
+    builder.filter_entry(move |entry| {
+        let skip = entry.depth() > 0
+            && entry.file_type().is_some_and(|t| t.is_dir())
+            && crate::skills::should_skip_dir(entry.path());
+        if skip {
+            if let Ok(mut seen) = seen.lock() {
+                seen.push(entry.path().to_path_buf());
+            }
+        }
+        !skip
+    });
+
     let mut tree = DirectoryNode::default();
     for entry in builder.build().flatten() {
         let path = entry.path();
@@ -177,6 +237,16 @@ fn collect_tree(root: &Path, max_depth: Option<usize>) -> DirectoryNode {
             tree.insert_dir(&components);
         } else if entry.file_type().is_some_and(|t| t.is_file()) {
             tree.insert_file(&components, count_file_lines(path));
+        }
+    }
+
+    let not_walked = match not_walked.lock() {
+        Ok(paths) => paths.clone(),
+        Err(poisoned) => poisoned.into_inner().clone(),
+    };
+    for path in not_walked {
+        if let Some(components) = path.strip_prefix(root).ok().and_then(relative_components) {
+            tree.insert_not_walked(&components);
         }
     }
 
@@ -240,7 +310,7 @@ mod tests {
     #[test]
     fn tree_lists_files_and_directories() {
         let dir = setup_tree();
-        let tool = TreeTool::new();
+        let tool = TreeTool::new().unwrap();
 
         let result = tool.tree(TreeParams {
             path: dir.path().display().to_string(),
@@ -259,7 +329,7 @@ mod tests {
         fs::create_dir_all(dir.path().join("a/b/c")).unwrap();
         fs::write(dir.path().join("a/b/c/deep.rs"), "fn deep() {}\n").unwrap();
 
-        let tool = TreeTool::new();
+        let tool = TreeTool::new().unwrap();
         let result = tool.tree(TreeParams {
             path: dir.path().display().to_string(),
             depth: 1,
@@ -280,7 +350,7 @@ mod tests {
         fs::write(dir.path().join("visible.rs"), "fn visible() {}\n").unwrap();
         fs::write(dir.path().join("debug.log"), "hidden\n").unwrap();
 
-        let tool = TreeTool::new();
+        let tool = TreeTool::new().unwrap();
         let result = tool.tree(TreeParams {
             path: dir.path().display().to_string(),
             depth: 2,
@@ -290,5 +360,103 @@ mod tests {
         assert!(text.contains("visible.rs"));
         assert!(!text.contains("ignored"));
         assert!(!text.contains("debug.log"));
+    }
+
+    fn texts(result: &CallToolResult) -> Vec<&str> {
+        result
+            .content
+            .iter()
+            .map(|c| match &c.raw {
+                RawContent::Text(t) => t.text.as_str(),
+                _ => panic!("expected text"),
+            })
+            .collect()
+    }
+
+    /// A dependency folder is named with what it is, never walked — and no .gitignore is needed for
+    /// it (Forge 2.0 run A's app had none, so its node_modules filled the listing).
+    #[test]
+    fn a_dependency_folder_is_named_but_not_walked() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("node_modules/react/cjs")).unwrap();
+        fs::write(dir.path().join("node_modules/react/index.js"), "x\n").unwrap();
+        fs::create_dir_all(dir.path().join("src")).unwrap();
+        fs::write(dir.path().join("src/index.js"), "export {};\n").unwrap();
+
+        let tool = TreeTool::new().unwrap();
+        let result = tool.tree(TreeParams {
+            path: dir.path().display().to_string(),
+            depth: 0,
+        });
+        let text = extract_text(&result);
+        assert!(text.contains("src/"), "{text}");
+        assert!(text.contains("index.js"), "{text}");
+        assert!(
+            text.contains("node_modules/  [dependency or build folder, not listed"),
+            "{text}"
+        );
+        assert!(!text.contains("react"), "{text}");
+
+        let inside = tool.tree(TreeParams {
+            path: dir.path().join("node_modules").display().to_string(),
+            depth: 0,
+        });
+        let inside = extract_text(&inside);
+        assert!(
+            inside.contains("react/") && inside.contains("index.js"),
+            "the folder asked for is walked: {inside}"
+        );
+    }
+
+    /// Over the shell tool's limit the listing is cut the shell's way: its two ends, a marker for
+    /// what is left out, and a notice naming the file that holds all of it.
+    #[test]
+    fn a_listing_over_the_shell_limit_says_it_was_cut_and_where_the_rest_is() {
+        use super::super::shell::OUTPUT_LIMIT_LINES;
+        let dir = tempfile::tempdir().unwrap();
+        let files = OUTPUT_LIMIT_LINES + 10;
+        for i in 0..files {
+            fs::write(dir.path().join(format!("f{i:05}.txt")), "").unwrap();
+        }
+
+        let tool = TreeTool::new().unwrap();
+        let result = tool.tree(TreeParams {
+            path: dir.path().display().to_string(),
+            depth: 1,
+        });
+        assert_ne!(result.is_error, Some(true));
+        let texts = texts(&result);
+        assert_eq!(texts.len(), 2, "{texts:?}");
+        assert!(texts[0].starts_with("f00000.txt"), "{}", texts[0]);
+        assert!(texts[0].contains("lines omitted"), "{}", texts[0]);
+        assert!(
+            texts[0]
+                .trim_end()
+                .ends_with(&format!("f{:05}.txt  [0]", files - 1)),
+            "{}",
+            texts[0]
+        );
+        let notice = texts[1];
+        assert!(
+            notice.contains(&format!("Output exceeded {OUTPUT_LIMIT_LINES} line limit")),
+            "{notice}"
+        );
+        let saved = notice
+            .split("Full output saved to ")
+            .nth(1)
+            .and_then(|rest| rest.split(". Read it").next())
+            .expect("the notice names the file");
+        let whole = fs::read_to_string(saved).unwrap();
+        assert_eq!(whole.lines().count(), files);
+    }
+
+    #[test]
+    fn a_listing_under_the_limit_is_whole_and_carries_no_notice() {
+        let dir = setup_tree();
+        let result = TreeTool::new().unwrap().tree(TreeParams {
+            path: dir.path().display().to_string(),
+            depth: 2,
+        });
+        assert_eq!(texts(&result).len(), 1);
     }
 }

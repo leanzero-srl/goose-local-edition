@@ -117,8 +117,11 @@ pub struct KeptSources<'a> {
 impl Pillars {
     pub fn build(messages: &[Message], sources: &KeptSources<'_>, ledger: LedgerRead) -> Self {
         let mut asked = asked_of(messages);
+        // `asked` holds each message trimmed; the preserved copy is the message's text as sent.
+        // Compared untrimmed, a task prompt ending in a newline (Forge 2.0's does) never matched,
+        // so the kept block carried it beside the copy the compaction appends after it.
         if let (Some(preserved), Some(last)) = (sources.preserved, asked.last()) {
-            if last.text == preserved {
+            if last.text == preserved.trim() {
                 asked.pop();
             }
         }
@@ -619,7 +622,12 @@ fn file_line(shown: &str, file: &WrittenFile) -> String {
 /// P1: the text of every message the person wrote — user role, shown to the person, text only (a
 /// tool result is not the person's). A `/compact` command is not kept (its note is P4). The copy
 /// of the newest message a compaction appends after its summary (visible to both) repeats the
-/// original that compaction hid from the agent, and is kept once.
+/// original that compaction hid from the agent, and is kept once — and so is the chain of them:
+/// the NEXT compaction hides that copy from the agent too and appends another, so a tool loop
+/// compacted five times holds the original and four hidden copies before the visible one.
+/// MEASURED (Forge 2.0 run B, sessions.db 2295→3300): the kept block carried the 5,074-char task
+/// prompt 1, 1, 2, 3, 4 times at its five compactions, each beside the appended copy. A message
+/// that repeats the one before it while that one is hidden from the agent is such a copy.
 fn asked_of(messages: &[Message]) -> Vec<Asked> {
     let mut asked: Vec<Asked> = Vec::new();
     let mut previous_hidden_from_agent: Option<String> = None;
@@ -652,8 +660,10 @@ fn asked_of(messages: &[Message]) -> Vec<Asked> {
         if parse_slash_command(text).is_some_and(|parsed| parsed.command == "compact") {
             continue;
         }
-        if message.is_agent_visible() && previous_hidden_from_agent.as_deref() == Some(text) {
-            previous_hidden_from_agent = None;
+        if previous_hidden_from_agent.as_deref() == Some(text) {
+            if message.is_agent_visible() {
+                previous_hidden_from_agent = None;
+            }
             continue;
         }
         previous_hidden_from_agent = (!message.is_agent_visible()).then(|| text.to_string());
@@ -1107,6 +1117,44 @@ mod tests {
             kept.asked.len(),
             2,
             "an agent-only message is goose's, not the person's"
+        );
+    }
+
+    /// The chain a tool loop's compactions leave: the original and each earlier copy hidden from
+    /// the agent, the newest copy visible — one message. And the copy the compaction appends is
+    /// the message as sent, newline and all, while the block keeps it trimmed: still one message.
+    #[test]
+    fn a_chain_of_compaction_copies_is_one_message() {
+        let task = "# forge-2.0\n\nShip v2.\n";
+        let hidden = || Message::user().with_text(task).with_visibility(true, false);
+        let messages = vec![
+            hidden(),
+            hidden(),
+            hidden(),
+            Message::user().with_text(task),
+        ];
+        let kept = Pillars::build(&messages, &KeptSources::default(), entries(&[]));
+        let texts: Vec<&str> = kept.asked.iter().map(|a| a.text.as_str()).collect();
+        assert_eq!(texts, [task.trim()]);
+
+        let kept = Pillars::build(
+            &messages,
+            &KeptSources {
+                preserved: Some(task),
+                ..Default::default()
+            },
+            entries(&[]),
+        );
+        assert!(kept.asked.is_empty(), "{:?}", kept.asked);
+
+        let mut asked_again = messages.clone();
+        asked_again.push(Message::user().with_text("now the tests"));
+        asked_again.push(Message::user().with_text(task));
+        let kept = Pillars::build(&asked_again, &KeptSources::default(), entries(&[]));
+        assert_eq!(
+            kept.asked.len(),
+            3,
+            "the person asking it again later is a message of its own"
         );
     }
 
