@@ -65,6 +65,17 @@ describe('lz/Combobox', () => {
     expect(field).toHaveValue('invalid/timezone');
   });
 
+  it('a value set from outside an unfocused field opens no list (automation drivers)', () => {
+    render(<Controlled free />);
+    const field = screen.getByRole('combobox', { name: 'Timezone' });
+    fireEvent.change(field, { target: { value: 'Europe/London' } });
+    expect(screen.getByTestId('value')).toHaveTextContent('Europe/London');
+    expect(screen.queryByRole('listbox')).toBeNull();
+    field.focus();
+    fireEvent.change(field, { target: { value: 'Europe' } });
+    expect(screen.getByRole('listbox')).toBeInTheDocument();
+  });
+
   it('arrows move the highlight and a click picks', () => {
     render(<Controlled />);
     const field = screen.getByRole('combobox', { name: 'Timezone' });

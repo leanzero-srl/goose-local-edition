@@ -44,6 +44,17 @@ export function forgeEffortPin(effort: string | null | undefined): Record<string
   };
 }
 
+/** Every benchmark runs at one thinking level, so scores compare models rather than their saved
+ *  effort (owner, 2026-10-16: "for our benchmarks we should always use a medium level of
+ *  thinking"). The engine applies it to the entrant's isolated config (benchmark-config). */
+export const BENCHMARK_THINKING_EFFORT = 'medium';
+export const BENCHMARK_THINKING_LINE = 'Thinking: Medium — every benchmark runs at medium thinking.';
+
+/** The effort pin every non-Forge benchmark run shows in the model's settings. */
+export function benchmarkEffortPin(): Record<string, string> {
+  return { [EFFORT_FIELD]: `every benchmark runs at ${BENCHMARK_THINKING_EFFORT} thinking` };
+}
+
 /** Splits the saved values into what the run sends and what the tier pins. */
 export function modelFieldsForRun(
   values: BenchModelFields,

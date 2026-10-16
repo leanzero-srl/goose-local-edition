@@ -2,7 +2,10 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, expect, it, vi } from 'vitest';
 import { acpListProviderDetails } from '../../acp/providers';
 import { CloudEntrant } from './CloudEntrant';
-vi.mock('../../acp/providers', () => ({ acpListProviderDetails: vi.fn() }));
+vi.mock('../../acp/providers', () => ({
+  acpListProviderDetails: vi.fn(),
+  acpListProviderLiveModels: vi.fn(async () => []),
+}));
 afterEach(cleanup);
 const row = (name: string, configured = true) => ({
   name,
@@ -60,7 +63,7 @@ it('shows fresh-profile setup and an explicit failed-read state', async () => {
   vi.mocked(acpListProviderDetails).mockRejectedValue(new Error('backend disconnected'));
   render(<CloudEntrant provider="" model="" disabled={false} onChange={vi.fn()} />);
   expect(await screen.findByRole('alert')).toHaveTextContent('backend disconnected');
-  expect(screen.getByRole('textbox')).toBeDisabled();
+  expect(screen.getByRole('combobox', { name: 'Model ID' })).toBeDisabled();
 });
 it('names why a saved provider is not offered instead of claiming none is configured', async () => {
   const pinned = {

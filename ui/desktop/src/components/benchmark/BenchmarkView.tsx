@@ -80,6 +80,7 @@ import { ModelCustomFields } from '../modelFields/ModelCustomFields';
 import type { ModelFieldValues } from '../../acp/modelFields';
 import {
   describeRunModelFields,
+  benchmarkEffortPin,
   forgeEffortPin,
   type BenchModelFieldsRecord,
 } from '../../benchModelFields';
@@ -2256,7 +2257,8 @@ export default function BenchmarkView() {
                   providerId={cloudProvider}
                   modelId={cloudModel}
                   disabled={running}
-                  pinned={forge ? forgeEffortPin(forgeKit?.reasoningEffort) : undefined}
+                  pinned={forge ? forgeEffortPin(forgeKit?.reasoningEffort) : benchmarkEffortPin()}
+                  explainAbsence
                   onValuesChange={setCloudModelFields}
                 />
                 {!forge && <WalletLimit disabled={running} />}

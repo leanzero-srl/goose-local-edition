@@ -9,6 +9,7 @@ vi.mock('../swarm/SwarmRunPanel', () => ({
 }));
 vi.mock('../swarm/useSamplingDefaults', () => ({ useSaveSamplingDefaults: () => () => {} }));
 vi.mock('../../acp/providers', () => ({
+  acpListProviderLiveModels: vi.fn(async () => []),
   acpListProviderDetails: vi.fn(async () => [
     {
       name: 'openrouter',
@@ -277,7 +278,7 @@ describe('Forge series in the full Benchmark view', () => {
     );
     fireEvent.keyDown(screen.getByRole('button', { name: 'Model provider' }), { key: 'ArrowDown' });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'OpenRouter' }));
-    const model = await screen.findByRole('textbox', { name: 'Model ID' });
+    const model = await screen.findByRole('combobox', { name: 'Model ID' });
     fireEvent.change(model, { target: { value: series.model } });
     const button = screen.getByRole('button', { name: 'Run 2 builds' });
     await waitFor(() => expect(button).toBeEnabled());

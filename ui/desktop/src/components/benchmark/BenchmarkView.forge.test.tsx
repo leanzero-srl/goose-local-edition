@@ -42,6 +42,7 @@ vi.mock('../../acp/modelFields', () => ({
   acpSaveModelFields: vi.fn(),
 }));
 vi.mock('../../acp/providers', () => ({
+  acpListProviderLiveModels: vi.fn(async () => []),
   acpListProviderDetails: vi.fn(async () => [
     {
       name: 'openrouter',
@@ -238,7 +239,7 @@ describe('Benchmark view — the Gauntlet | Forge switch', () => {
     );
     // No Swarm entrant for Forge; the single-model provider, model and spend limit are the form.
     expect(screen.queryByRole('button', { name: 'Swarm' })).toBeNull();
-    expect(screen.getByRole('textbox', { name: 'Model ID' })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Model ID' })).toBeInTheDocument();
     expect(screen.queryByLabelText('Stop a run at (US dollars, OpenRouter)')).toBeNull();
     // The era picker lists only Forge's eras — Gauntlet's are another family — the bundled one
     // runnable, forge-1.0 kept as frozen history.
@@ -514,7 +515,7 @@ describe('Benchmark view — the Gauntlet | Forge switch', () => {
     fireEvent.keyDown(screen.getByRole('button', { name: 'Model provider' }), { key: 'ArrowDown' });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'OpenRouter' }));
     expect(screen.getByRole('button', { name: 'Run 2 builds' })).toBeDisabled();
-    fireEvent.change(screen.getByRole('textbox', { name: 'Model ID' }), {
+    fireEvent.change(screen.getByRole('combobox', { name: 'Model ID' }), {
       target: { value: 'openai/gpt-6-luna' },
     });
     await waitFor(() => expect(screen.getByRole('button', { name: 'Run 2 builds' })).toBeEnabled());

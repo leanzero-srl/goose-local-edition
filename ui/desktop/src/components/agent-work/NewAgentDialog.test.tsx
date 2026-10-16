@@ -118,6 +118,7 @@ describe("the dialog wears the app's own controls (UX audit N1)", () => {
   it('the timezone is a searchable list of real zones', () => {
     render(<NewAgentDialog onClose={vi.fn()} onCreated={vi.fn()} />);
     const tz = screen.getByRole('combobox', { name: 'Timezone' });
+    fireEvent.focus(tz);
     fireEvent.change(tz, { target: { value: 'bucharest' } });
     fireEvent.click(screen.getByRole('option', { name: /Europe\/Bucharest/ }));
     expect(tz).toHaveValue('Europe/Bucharest');

@@ -163,7 +163,10 @@ export function Combobox({
             setText(next);
             setQuery(next);
             setHighlight(0);
-            if (!open) setOpen(true);
+            // Only a person typing in the field opens the list. A value set from outside (an
+            // automation driver's native setter + input event) must not leave an open list over
+            // the controls below, where the driver's next coordinate click would land on an option.
+            if (!open && e.target === document.activeElement) setOpen(true);
             if (allowFreeText) onChange(next);
           }}
           className={cx(

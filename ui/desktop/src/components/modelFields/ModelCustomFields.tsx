@@ -55,6 +55,15 @@ const i18n = defineMessages({
     defaultMessage:
       'The provider’s model listing has no model “{model}”, so it declares no settings for it. Check the model ID.',
   },
+  awaitingModel: {
+    id: 'modelCustomFields.awaitingModel',
+    defaultMessage: 'Custom fields: choose a model ID to see the settings it takes.',
+  },
+  noFields: {
+    id: 'modelCustomFields.noFields',
+    defaultMessage:
+      'Custom fields: {provider} declares none for “{model}”, so it runs at the provider’s defaults.',
+  },
   pinned: { id: 'modelCustomFields.pinned', defaultMessage: 'Pinned for this run: {note}' },
   notANumber: { id: 'modelCustomFields.notANumber', defaultMessage: 'Enter a number.' },
   notWhole: { id: 'modelCustomFields.notWhole', defaultMessage: 'Enter a whole number.' },
@@ -224,7 +233,9 @@ function NumberControl({
 /**
  * The custom fields of `modelId` on `providerId` — reasoning effort, verbosity, sampling — as the
  * provider's own metadata declares them, each saved the moment it changes. Renders nothing for a
- * model with no fields. Self-contained: mount it wherever a model is chosen.
+ * model with no fields unless `explainAbsence` (a form whose reader must see that no field was
+ * missed: the Benchmark entrant) — then the absence is a line. Self-contained: mount it wherever a
+ * model is chosen.
  *
  * `pinned` maps a field id to why the caller fixes it (a benchmark tier that runs every entrant at
  * one effort): the row shows the reason and cannot be changed there. `onValuesChange` hears the
@@ -235,12 +246,14 @@ export function ModelCustomFields({
   modelId,
   disabled = false,
   pinned,
+  explainAbsence = false,
   onValuesChange,
 }: {
   providerId: string;
   modelId: string;
   disabled?: boolean;
   pinned?: Readonly<Record<string, string>>;
+  explainAbsence?: boolean;
   onValuesChange?: (values: ModelFieldValues) => void;
 }) {
   const intl = useIntl();
@@ -277,7 +290,14 @@ export function ModelCustomFields({
     return () => clearTimeout(timer);
   }, [providerId, model]);
 
-  if (load.state === 'idle') return null;
+  if (load.state === 'idle') {
+    return explainAbsence && providerId ? (
+      <FieldNotice
+        testId="model-custom-fields-awaiting"
+        text={intl.formatMessage(i18n.awaitingModel)}
+      />
+    ) : null;
+  }
   if (load.state === 'loading') {
     return (
       <div
@@ -305,7 +325,14 @@ export function ModelCustomFields({
       />
     );
   }
-  if (listing.fields.length === 0) return null;
+  if (listing.fields.length === 0) {
+    return explainAbsence ? (
+      <FieldNotice
+        testId="model-custom-fields-none"
+        text={intl.formatMessage(i18n.noFields, { provider: providerId, model })}
+      />
+    ) : null;
+  }
 
   const save = (id: string, value: ModelFieldValue | null) => {
     const before = listing.values;

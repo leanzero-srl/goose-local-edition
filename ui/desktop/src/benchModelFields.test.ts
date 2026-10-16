@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   MODEL_FIELDS_ENV,
   describeRunModelFields,
+  BENCHMARK_THINKING_LINE,
+  benchmarkEffortPin,
   forgeEffortPin,
   modelFieldsForRun,
   modelFieldsLaunchEnv,
@@ -26,7 +28,7 @@ describe('benchmark model fields', () => {
     }
   });
 
-  it('a single-model SB run sends every saved value', () => {
+  it('without an effort pin every saved value is sent', () => {
     expect(modelFieldsForRun({ effort: 'xhigh', top_k: 40 }, false)).toEqual({
       sent: { effort: 'xhigh', top_k: 40 },
       pinnedByTier: [],
@@ -39,6 +41,13 @@ describe('benchmark model fields', () => {
     expect(forgeEffortPin('medium')).toEqual({
       effort: 'Forge runs every model at reasoning effort medium',
     });
+  });
+
+  it('every benchmark shows one medium-thinking pin', () => {
+    expect(benchmarkEffortPin()).toEqual({ effort: 'every benchmark runs at medium thinking' });
+    expect(BENCHMARK_THINKING_LINE).toBe(
+      'Thinking: Medium — every benchmark runs at medium thinking.'
+    );
   });
 
   it('always sets the variable benchmark-config reads, {} when nothing is sent', () => {

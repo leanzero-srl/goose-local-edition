@@ -6107,6 +6107,9 @@
   "modelCustomFields.above": {
     "defaultMessage": "The highest value is {max}."
   },
+  "modelCustomFields.awaitingModel": {
+    "defaultMessage": "Custom fields: choose a model ID to see the settings it takes."
+  },
   "modelCustomFields.below": {
     "defaultMessage": "The lowest value is {min}."
   },
@@ -6124,6 +6127,9 @@
   },
   "modelCustomFields.modelDefault": {
     "defaultMessage": "Model default ({value})"
+  },
+  "modelCustomFields.noFields": {
+    "defaultMessage": "Custom fields: {provider} declares none for “{model}”, so it runs at the provider’s defaults."
   },
   "modelCustomFields.notANumber": {
     "defaultMessage": "Enter a number."

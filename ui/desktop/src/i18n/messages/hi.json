@@ -11638,5 +11638,11 @@
   },
   "forgeSeries.waitingPublish": {
     "defaultMessage": "प्रकाशन के लिए दो पूरे, तुलना योग्य बिल्ड और उनके मूल साक्ष्य आवश्यक हैं।"
+  },
+  "modelCustomFields.awaitingModel": {
+    "defaultMessage": "कस्टम फ़ील्ड: इसकी सेटिंग देखने के लिए एक मॉडल ID चुनें।"
+  },
+  "modelCustomFields.noFields": {
+    "defaultMessage": "कस्टम फ़ील्ड: {provider} “{model}” के लिए कोई फ़ील्ड घोषित नहीं करता, इसलिए यह प्रदाता के डिफ़ॉल्ट पर चलता है।"
   }
 }

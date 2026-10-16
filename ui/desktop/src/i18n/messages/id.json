@@ -11638,5 +11638,11 @@
   },
   "forgeSeries.waitingPublish": {
     "defaultMessage": "Penerbitan memerlukan dua build lengkap yang dapat dibandingkan beserta bukti aslinya."
+  },
+  "modelCustomFields.awaitingModel": {
+    "defaultMessage": "Kolom khusus: pilih ID model untuk melihat pengaturan yang diterimanya."
+  },
+  "modelCustomFields.noFields": {
+    "defaultMessage": "Kolom khusus: {provider} tidak mendeklarasikan kolom apa pun untuk “{model}”, jadi model berjalan dengan bawaan penyedia."
   }
 }

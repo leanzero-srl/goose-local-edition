@@ -11638,5 +11638,11 @@
   },
   "forgeSeries.waitingPublish": {
     "defaultMessage": "게시하려면 비교 가능한 완료된 빌드 두 개와 각각의 네이티브 증거가 필요합니다."
+  },
+  "modelCustomFields.awaitingModel": {
+    "defaultMessage": "사용자 지정 필드: 모델 ID를 선택하면 해당 모델이 받는 설정이 표시됩니다."
+  },
+  "modelCustomFields.noFields": {
+    "defaultMessage": "사용자 지정 필드: {provider}이(가) “{model}”에 대해 선언한 필드가 없으므로 공급자 기본값으로 실행됩니다."
   }
 }
