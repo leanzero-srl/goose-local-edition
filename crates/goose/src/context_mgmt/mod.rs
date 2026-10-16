@@ -22,6 +22,7 @@ use tracing::log::warn;
 
 pub mod acp;
 pub mod context_line;
+pub mod mask;
 pub mod pillars;
 pub mod state;
 pub mod working_set;
@@ -158,6 +159,11 @@ const TOOL_LOOP_CONTINUATION_TEXT: &str =
     "Your context was compacted. The previous message contains a summary of the conversation so far.
 Do not mention that you read a summary or that conversation summarization occurred.
 Continue calling tools as necessary to complete the task.";
+
+/// Stage 1's line after the conversation it masked: what changed, and where the files are. It does
+/// not open with `COMPACTED_PREFIX`: no summary precedes it (`latest_summary`, `earlier_summary`).
+const MASK_CONTINUATION_TEXT: &str =
+    "Your context was trimmed: the outputs of earlier tool calls were replaced by short stubs and earlier reasoning was dropped; everything you and the user wrote is still here. The next message, when there is one, holds the current contents of the files this conversation read or wrote. Continue the task from where you are; do not mention the compaction.";
 
 const MANUAL_COMPACT_CONTINUATION_TEXT: &str =
     "Your context was compacted at the user's request. The previous message contains a summary of the conversation so far.
@@ -495,6 +501,20 @@ async fn compact_core(
         }
     };
 
+    if let Some(chat) = chat.filter(|_| !manual_compact) {
+        if let Some(conversation) = mask_stage(messages, chat).await {
+            return Ok(ChatCompacted::Compacted {
+                conversation,
+                usage: Box::new(ProviderUsage::new(
+                    model_config.model_name.clone(),
+                    Usage::default(),
+                )),
+                note: NoteOutcome::NoNote,
+                kept: None,
+            });
+        }
+    }
+
     // Find and preserve the most recent user message for non-manual compacts
     let (preserved_user_message, preserved_idx, is_most_recent) = if !manual_compact {
         let found_msg = messages.iter().enumerate().rev().find(|(_, msg)| {
@@ -677,6 +697,114 @@ async fn compact_core(
         note,
         kept: kept.map(Box::new),
     })
+}
+
+/// Stage 1 (`mask`): an automatic compaction with no note for its summary first tries to make room
+/// by dropping old tool outputs (stubs of facts stay) and old reasoning, placing the working set,
+/// and asking for no summary. Taken only when the estimate passes `mask::accepts`; `None` (the
+/// summary runs) otherwise, each reason logged.
+async fn mask_stage(messages: &[Message], chat: &ChatCompaction) -> Option<Conversation> {
+    let CompactionTrigger::Auto {
+        used: Some(used),
+        limit: Some(limit),
+        threshold,
+    } = chat.trigger
+    else {
+        return None;
+    };
+    if chat.note.is_some() || !mask::mask_first() {
+        return None;
+    }
+    let counter = match create_token_counter().await {
+        Ok(counter) => counter,
+        Err(e) => {
+            warn!("compaction_mask_skipped: no tokenizer to estimate what it frees ({e})");
+            return None;
+        }
+    };
+    let keep_recent = kept_budget_chars(Some(limit))?;
+    let masked = mask::mask(messages, keep_recent, mask::drop_reasoning());
+    let block = chat.working_set_budget_chars.and_then(|budget| {
+        let files = working_set::touched_files(messages, Some(&chat.working_dir));
+        working_set::working_set_block(&files, budget, Some(&chat.working_dir))
+    });
+    let note = MASK_CONTINUATION_TEXT;
+    let removed = counter.count_tokens(&masked.removed);
+    let added = counter.count_tokens(&masked.added)
+        + block.as_deref().map_or(0, |b| counter.count_tokens(b))
+        + counter.count_tokens(note);
+    let after = (used + added).saturating_sub(removed);
+    if !mask::accepts(after, limit, threshold) {
+        info!(
+            used,
+            removed,
+            added,
+            after,
+            limit,
+            "compaction_mask_not_enough: dropping old outputs and reasoning would leave {after} \
+             tokens, over {:.0}% of the window; summarizing",
+            (2.0 * threshold - 1.0) * 100.0
+        );
+        return None;
+    }
+    info!(
+        used,
+        removed,
+        added,
+        after,
+        limit,
+        outputs = masked.outputs_masked,
+        reasoning = masked.reasoning_dropped,
+        working_set = block.is_some(),
+        "compaction_masked: no summary; old outputs and reasoning dropped, working set placed"
+    );
+
+    // The person's newest message, when the conversation ends on it (a compaction at a reply's
+    // start), stays the last message, as compact_core keeps it.
+    let last = messages.iter().rposition(|m| m.is_agent_visible());
+    let trailing_person = last.filter(|&i| {
+        let m = &messages[i];
+        m.role == Role::User
+            && m.is_user_visible()
+            && m.content
+                .iter()
+                .all(|c| matches!(c, MessageContent::Text(_)))
+    });
+    let mut out: Vec<Message> = messages
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            let metadata = if Some(i) == trailing_person {
+                MessageMetadata::invisible()
+            } else {
+                m.metadata.clone().with_agent_invisible()
+            };
+            m.clone().with_metadata(metadata)
+        })
+        .collect();
+    let mut copies = masked.messages;
+    let person = trailing_person.map(|_| copies.pop());
+    out.extend(copies);
+    out.push(
+        Message::assistant()
+            .with_text(note)
+            .with_metadata(MessageMetadata::agent_only()),
+    );
+    if let Some(block) = block {
+        out.push(
+            Message::user()
+                .with_text(block)
+                .with_metadata(MessageMetadata::agent_only()),
+        );
+    }
+    if let (Some(Some(_)), Some(i)) = (person, trailing_person) {
+        out.push(
+            messages[i]
+                .clone()
+                .with_metadata(MessageMetadata::default()),
+        );
+    }
+    Some(Conversation::new_unvalidated(out))
 }
 
 /// Check if messages exceed the auto-compaction threshold
@@ -2654,6 +2782,124 @@ mod tests {
             })
             .count();
         assert_eq!(blocks, 1, "one working set, the newest");
+    }
+
+    fn words(n: usize, seed: &str) -> String {
+        (0..n).map(|i| format!("{seed}{i} ")).collect()
+    }
+
+    /// Stage 1 at an automatic compaction point: no summary request, every message still there
+    /// for the agent in order (old outputs as stubs, old reasoning gone), the trim line and the
+    /// working set after them, and the person's copy of the conversation untouched. When the
+    /// estimate leaves too little room, the summary runs as before.
+    #[tokio::test]
+    async fn an_automatic_compaction_masks_first_and_summarizes_only_when_that_is_not_enough() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("sync.js"), "export const v = 2;\n").unwrap();
+        let mut stored = vec![Message::user().with_text("ship the sync")];
+        for i in 0..4 {
+            let mut params = CallToolRequestParams::new("shell");
+            params.arguments = serde_json::json!({"command": "cat sync.js"})
+                .as_object()
+                .cloned();
+            stored.push(
+                Message::assistant()
+                    .with_thinking(words(2_000, &format!("why{i}-")), "sig")
+                    .with_tool_request(format!("c{i}"), Ok(params)),
+            );
+            stored.push(Message::user().with_tool_response(
+                format!("c{i}"),
+                Ok(rmcp::model::CallToolResult::success(vec![
+                    RawContent::text(words(2_000, &format!("out{i}-"))).no_annotation(),
+                ])),
+            ));
+        }
+        let mut inputs = chat_inputs(None, false);
+        inputs.working_dir = dir.path().to_path_buf();
+        inputs.working_set_budget_chars = Some(10_000);
+        inputs.trigger = CompactionTrigger::Auto {
+            used: Some(100_000),
+            limit: Some(178_176),
+            threshold: 0.8,
+        };
+        let provider = ScriptedProvider::new("## Where we are\nsync");
+        let compact = |inputs: ChatCompaction| {
+            let stored = stored.clone();
+            let provider = &provider;
+            async move {
+                let ChatCompacted::Compacted {
+                    conversation, kept, ..
+                } = compact_chat(
+                    provider,
+                    &ModelConfig::new("scripted"),
+                    "s",
+                    &Conversation::new_unvalidated(stored),
+                    false,
+                    &frame(),
+                    &inputs,
+                )
+                .await
+                .unwrap()
+                else {
+                    panic!("never asked");
+                };
+                (conversation.messages().to_vec(), kept)
+            }
+        };
+
+        let (masked, kept) = compact(inputs.clone()).await;
+        assert!(
+            provider.requests.lock().unwrap().is_empty(),
+            "no summary asked for"
+        );
+        assert!(kept.is_none());
+        let user_side: Vec<&Message> = masked.iter().filter(|m| m.is_user_visible()).collect();
+        assert_eq!(
+            user_side.len(),
+            stored.len(),
+            "the person's copy is untouched"
+        );
+        assert!(user_side
+            .iter()
+            .zip(&stored)
+            .all(|(a, b)| a.content == b.content));
+        let agent: Vec<&Message> = masked.iter().filter(|m| m.is_agent_visible()).collect();
+        assert_eq!(
+            agent.len(),
+            stored.len() + 2,
+            "every message, the trim line, the working set"
+        );
+        let text = |m: &Message| serde_json::to_string(&m.content).unwrap();
+        assert!(
+            text(agent[2]).contains("[Output elided at compaction"),
+            "{}",
+            text(agent[2])
+        );
+        assert!(!text(agent[1]).contains("why0-"), "old reasoning dropped");
+        assert!(
+            text(agent[8]).contains("out3-1999"),
+            "the newest output whole"
+        );
+        assert!(agent[9]
+            .as_concat_text()
+            .starts_with("Your context was trimmed"));
+        assert!(agent[10].as_concat_text().contains("export const v = 2;"));
+        assert!(latest_summary(&masked).is_none(), "no summary was written");
+
+        let mut full = inputs;
+        full.trigger = CompactionTrigger::Auto {
+            used: Some(176_000),
+            limit: Some(178_176),
+            threshold: 0.8,
+        };
+        let (summarized, kept) = compact(full).await;
+        assert_eq!(
+            provider.requests.lock().unwrap().len(),
+            1,
+            "the summary ran"
+        );
+        assert!(kept.is_some());
+        assert!(latest_summary(&summarized).is_some());
     }
 
     /// Answers the first chat-shaped request with a tool call and every later one with a summary,
