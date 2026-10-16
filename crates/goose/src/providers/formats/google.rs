@@ -32,12 +32,17 @@ pub fn get_thought_signature(metadata: &Option<ProviderMetadata>) -> Option<&str
         .and_then(|v| v.as_str())
 }
 
+/// Google's start of the "current turn", whose function calls must all carry their signatures:
+/// the newest user content holding standard content that is not a functionResponse. A user
+/// message that carries tool results is still inside the loop even when text rides along with
+/// them (the turn-context block is placed right after the tool results).
 fn is_user_loop_boundary(message: &Message) -> bool {
     message.role == Role::User
-        && message
+        && !message.content.is_empty()
+        && !message
             .content
             .iter()
-            .any(|content| !matches!(content, MessageContent::ToolResponse(_)))
+            .any(|content| matches!(content, MessageContent::ToolResponse(_)))
 }
 
 fn insert_thought_signature(part: &mut Map<String, Value>, signature: &str) {
@@ -1195,6 +1200,68 @@ mod tests {
             formatted[1]["parts"][0][THOUGHT_SIGNATURE_KEY],
             SYNTHETIC_THOUGHT_SIGNATURE
         );
+    }
+
+    #[test]
+    fn test_text_beside_tool_results_does_not_end_the_signed_loop() {
+        const SIG: &str = "sig_parallel";
+        let user_prompt = set_up_text_message("Build the console", Role::User);
+        let native = response_to_message(google_response(vec![
+            json!({"functionCall": {"name": "tree", "args": {"path": "."}}, "thoughtSignature": SIG}),
+            json!({"functionCall": {"name": "shell", "args": {"command": "cat STARTER.md"}}}),
+        ]))
+        .unwrap();
+        let requests: Vec<_> = native
+            .content
+            .iter()
+            .filter_map(|c| c.as_tool_request().cloned())
+            .collect();
+        assert_eq!(requests.len(), 2);
+
+        let mut history = vec![user_prompt];
+        for (i, request) in requests.iter().enumerate() {
+            history.push(Message::assistant().with_tool_request_with_metadata(
+                request.id.clone(),
+                request.tool_call.clone(),
+                request.metadata.as_ref(),
+                None,
+            ));
+            let mut response = Message::user();
+            response.add_tool_response_with_metadata(
+                request.id.clone(),
+                Ok(tool_result("output")),
+                request.metadata.as_ref(),
+            );
+            if i == requests.len() - 1 {
+                response = response.with_text(
+                    "<turn-context>\n<current-time>2026-10-16 11:42:00</current-time>\n</turn-context>",
+                );
+            }
+            history.push(response);
+        }
+
+        let formatted = format_messages(&history);
+        assert_eq!(formatted.len(), 5);
+        for idx in [1, 3] {
+            assert_eq!(formatted[idx]["role"], "model");
+            assert!(formatted[idx]["parts"][0].get("functionCall").is_some());
+            assert_eq!(
+                formatted[idx]["parts"][0][THOUGHT_SIGNATURE_KEY], SIG,
+                "model content {idx} is inside the current turn and needs its signature"
+            );
+        }
+        assert!(formatted[4]["parts"][1]["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("<turn-context>"));
+
+        let next_turn = set_up_text_message("Now add tests", Role::User);
+        let mut later = history.clone();
+        later.push(next_turn);
+        let formatted_later = format_messages(&later);
+        assert!(formatted_later[1]["parts"][0]
+            .get(THOUGHT_SIGNATURE_KEY)
+            .is_none());
     }
 
     // Gemini ends every stream with a candidate carrying `finishReason` (the cookbook's
