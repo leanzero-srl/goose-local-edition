@@ -37,6 +37,54 @@ fn tool_pair_summarization_enabled() -> bool {
         .unwrap_or(true)
 }
 
+/// How the summary that extends the chat reasons (`GOOSE_COMPACTION_SUMMARY_THINKING`, env > config
+/// > default `off`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SummaryThinking {
+    /// Reasoning off, as every helper call is. MEASURED (Forge 2.0 runs A and B on Gabee, Qwen3.8-27B
+    /// at effort `medium` over the openai provider): the six summary calls took 214-1,280 s each with
+    /// reasoning on — longer than the cold prefill of the whole ~100k-token conversation (E2E #3p:
+    /// 97,590 tokens, 441 s) that keeping the chat's switch exists to avoid. And at `medium` it
+    /// costs no cache: Qwen3.8's template writes a reasoning line into the system block only for
+    /// `xhigh` and `low`, so a chat at `medium` (or unpinned, which the engine renders thinking-off
+    /// on a tool request, Q-135) renders byte-identical up to the generation prompt — checked by
+    /// rendering run B's own request (llm_request.0, 59 messages, 5 tools, 93,417 chars) both ways.
+    /// A chat pinned at `xhigh`/`low` on that template loses its prefix to this switch: one cold
+    /// prefill in place of the reasoning.
+    Off,
+    /// The chat's own switch (the Q-342 behaviour): the summary reasons as the chat does.
+    Chat,
+}
+
+pub const SUMMARY_THINKING_KEY: &str = "GOOSE_COMPACTION_SUMMARY_THINKING";
+
+pub fn summary_thinking() -> SummaryThinking {
+    match Config::global().get_param::<String>(SUMMARY_THINKING_KEY) {
+        Ok(value) if value.eq_ignore_ascii_case("off") => SummaryThinking::Off,
+        Ok(value) if value.eq_ignore_ascii_case("chat") => SummaryThinking::Chat,
+        Ok(value) => {
+            warn!("{SUMMARY_THINKING_KEY} is {value:?}, not `off` or `chat`; the summary is written with reasoning off");
+            SummaryThinking::Off
+        }
+        Err(crate::config::ConfigError::NotFound(_)) => SummaryThinking::Off,
+        Err(e) => {
+            warn!("{SUMMARY_THINKING_KEY} could not be read ({e}); the summary is written with reasoning off");
+            SummaryThinking::Off
+        }
+    }
+}
+
+/// The model config the chat-extending summary call is made with: the chat's, with its reasoning
+/// switched off unless `thinking` keeps the chat's.
+pub fn summary_model_config(chat: &ModelConfig, thinking: SummaryThinking) -> ModelConfig {
+    match thinking {
+        SummaryThinking::Off => chat
+            .clone()
+            .with_thinking_effort(goose_providers::thinking::ThinkingEffort::Off),
+        SummaryThinking::Chat => chat.clone(),
+    }
+}
+
 const CONVERSATION_CONTINUATION_TEXT: &str =
     "Your context was compacted. The previous message contains a summary of the conversation so far.
 Do not mention that you read a summary or that conversation summarization occurred.
@@ -860,8 +908,8 @@ fn chat_instruction(
 /// fixes every request, its kept turn-context blocks included), so these are too — which is also what places the instruction: it
 /// joins a trailing user message, as the turn-context block does, and follows tool results as a
 /// user message of its own (a strict chat template refuses two user turns in a row). The call is
-/// the chat's, not a helper's (`complete_as_the_chat`: the thinking switch can change the system
-/// block the cache holds). Q-357: the call streams, so the chat's card counts what is written and
+/// the chat's, not a helper's (`stream_as_the_chat`: its config and frame are the chat's), with
+/// its reasoning as [`SummaryThinking`] sets it — off by default. Q-357: the call streams, so the chat's card counts what is written and
 /// the note's verdict is read from the first line as it arrives — a question stops the call there.
 /// The person's note, like every fact about this chat, is in the instruction alone: the messages
 /// before it are the chat's own, byte for byte, and stay the cached prefix.
@@ -918,10 +966,11 @@ async fn summarize_as_the_chat(
         }
         true
     };
+    let summary_config = summary_model_config(model_config, summary_thinking());
     let answer = crate::model_config::stream_as_the_chat(
         crate::background_work::BackgroundWorkKind::Compaction,
         provider,
-        model_config,
+        &summary_config,
         session_id,
         &frame.system_prompt,
         sent.messages(),
@@ -1849,11 +1898,11 @@ mod tests {
             "the summary request starts with the chat's cached request, byte for byte"
         );
         assert_eq!(summary["tools"], chat["tools"], "the chat's tools, as sent");
-        assert_eq!(
-            summary.get("chat_template_kwargs"),
-            chat.get("chat_template_kwargs"),
-            "the chat's template switches: a thinking switch can change the system block"
-        );
+        // GOOSE_COMPACTION_SUMMARY_THINKING's default: the summary is written with reasoning off.
+        // The chat sent no switch, which the engine renders thinking-off on a tool-carrying
+        // request (Q-135) — the same render, so the cached system block is unchanged.
+        assert!(chat.get("chat_template_kwargs").is_none(), "{chat}");
+        assert_eq!(summary["chat_template_kwargs"], thinking_off());
         assert_eq!(
             sent[cached.len()],
             serde_json::json!({"role": "assistant", "content": "one file: notes/kickoff.md"})
@@ -1914,6 +1963,26 @@ mod tests {
             .get("tools")
             .is_none_or(|t| t.as_array().is_some_and(|t| t.is_empty())));
         assert_eq!(transcript["chat_template_kwargs"], thinking_off());
+    }
+
+    /// GOOSE_COMPACTION_SUMMARY_THINKING: `off` (the default) writes the summary with reasoning off
+    /// — and the reply path's default effort does not switch it back on — while `chat` keeps the
+    /// chat's own switch, Q-342's behaviour. Forge 2.0's chats run at `medium`.
+    #[test]
+    fn the_summary_is_written_with_reasoning_off_unless_told_to_keep_the_chats() {
+        use goose_providers::thinking::ThinkingEffort;
+        let chat = ModelConfig::new("served").with_thinking_effort(ThinkingEffort::Medium);
+        let off = summary_model_config(&chat, SummaryThinking::Off);
+        assert_eq!(off.thinking_effort(), Some(ThinkingEffort::Off));
+        assert_eq!(
+            crate::agents::reply_parts::provider_call_model_config(off.clone()).thinking_effort(),
+            Some(ThinkingEffort::Off)
+        );
+        assert_eq!(off.model_name, chat.model_name);
+        assert_eq!(
+            summary_model_config(&chat, SummaryThinking::Chat).thinking_effort(),
+            Some(ThinkingEffort::Medium)
+        );
     }
 
     /// A summary request that extends the chat and ends mid tool loop: the instruction follows the

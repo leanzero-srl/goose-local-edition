@@ -170,7 +170,10 @@ pub async fn complete_helper(
 /// to the helper path's forced Off. The measurement that licenses the call (#3p, 27B split): the
 /// transcript-shaped compaction prefilled 97,590 tokens cold for 441 s beside a conversation
 /// prefix of ~142k tokens the chat's previous call had read from the cache (138,665 of 139,503).
-/// Tagged with the chat's session and `kind` like every helper.
+/// Tagged with the chat's session and `kind` like every helper. The caller passes the config the
+/// summary is written under: the chat's, with reasoning off unless
+/// `GOOSE_COMPACTION_SUMMARY_THINKING=chat` (`context_mgmt::SummaryThinking` holds the measurement
+/// and the one case — a chat pinned at Qwen3.8's `xhigh`/`low` — where Off costs the prefix).
 ///
 /// Q-357: the call streams, as the chat's own calls do. `watch` sees each chunk's new text and
 /// reasoning, and the answer's text so far — the chat's compaction card counts what is written, and
