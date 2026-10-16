@@ -467,6 +467,10 @@ impl Agent {
             goal: self.get_goal().await,
             ledger,
             kept_budget_chars: context_mgmt::kept_budget_chars(limit),
+            working_set_budget_chars: context_mgmt::working_set::working_set_budget_chars(
+                limit,
+                context_mgmt::working_set::working_set_share(),
+            ),
             working_dir: session.working_dir.clone(),
             progress: None,
         };

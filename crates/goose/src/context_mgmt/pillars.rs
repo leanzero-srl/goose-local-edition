@@ -422,7 +422,7 @@ fn is_absolute(path: &str) -> bool {
 /// A folder as the shell reads it: absolute as written, `~` as the home folder, otherwise joined to
 /// `base`; `.` and `..` resolved. `None` when goose cannot name it: relative with no base, a
 /// variable or command substitution, `cd -`.
-fn resolve_folder(path: &str, base: Option<&Path>) -> Option<PathBuf> {
+pub(super) fn resolve_folder(path: &str, base: Option<&Path>) -> Option<PathBuf> {
     if path.is_empty() || path == "-" || path.contains(['$', '`']) {
         return None;
     }
