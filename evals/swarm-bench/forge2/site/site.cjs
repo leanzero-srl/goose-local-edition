@@ -295,7 +295,7 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
     change: { id: d.change.changelogId, created: d.change.created, authorId: d.change.authorId,
       items: d.change.items.map(({ field, fieldId, from, fromString, to, toString }) => ({ field, fieldId, from: from === '' ? null : from, fromString: fromString === '' ? null : fromString, to: to === '' ? null : to, toString: toString === '' ? null : toString })) },
     issue: eventSnapshot(d.issue) });
-  const worldEvent = (change) => delivery({ slot: null, duplicate: false, remaining: null, applied: [], change, issue: state.st.issues.get(change.issueId) });
+  const worldEvent = (change) => delivery({ slot: null, duplicate: false, remaining: null, applied: [], change, issue: state.deliveredIssue(change.issueId) });
   // Platform services the site hosts for every emulator attached to it: Forge LLM (llm.cjs) and Realtime
   // (realtime.cjs). The realtime token key derives from the control token, so only this site's emulators can sign.
   // The world that changes mid-run (world.cjs, SPEC §2.5): its scheduled events apply as the site's time reaches them
@@ -410,7 +410,7 @@ async function createSite({ seed, port = 0, trace = null, token = crypto.randomB
     event: ({ changelogId }) => {
       const applied = state.applyThrough(changelogId);
       const change = pack.live.find((c) => c.changelogId === changelogId);
-      return delivery({ slot: change.delivery.slot, duplicate: !applied.includes(changelogId), remaining: null, applied, change, issue: state.st.issues.get(change.issueId) });
+      return delivery({ slot: change.delivery.slot, duplicate: !applied.includes(changelogId), remaining: null, applied, change, issue: state.deliveredIssue(change.issueId) });
     },
     flush: () => ({ applied: state.flush() }),
     // The probe arms a resolver-read fault for one extra surface open (DESIGN §5.2): it fires on the next resolver's

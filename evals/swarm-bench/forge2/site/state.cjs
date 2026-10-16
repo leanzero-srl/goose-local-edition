@@ -168,12 +168,15 @@ function createState(pack) {
     worldDue?.(t);
     return applied;
   };
+  // An issue the world deleted after its live changes applied is still delivered as Jira sends it: the event
+  // carries the issue as it stood (st.deleted keeps it), the delete itself arrives as avi:jira:deleted:issue.
+  const deliveredIssue = (issueId) => st.issues.get(issueId) ?? st.deleted.get(issueId)?.issue;
   const nextDelivery = () => {
     if (st.cursor >= plan.length) return null;
     const i = st.cursor++;
     const d = plan[i];
     const applied = applyThrough(d.changelogId);
-    return { ...d, batchEnd: batchEnd[i], applied, change: liveById.get(d.changelogId), issue: st.issues.get(liveById.get(d.changelogId).issueId), remaining: plan.length - st.cursor };
+    return { ...d, batchEnd: batchEnd[i], applied, change: liveById.get(d.changelogId), issue: deliveredIssue(liveById.get(d.changelogId).issueId), remaining: plan.length - st.cursor };
   };
 
   const canBrowse = (accountId, issue) => accountId === pack.appAccountId
@@ -307,7 +310,7 @@ function createState(pack) {
 
   return {
     pack, st, plan, batchEnd, statusById, userById,
-    now, advance, advanceTo, reset, applyThrough, applyUntil, flush, nextDelivery, cached, setWorldHook,
+    now, advance, advanceTo, reset, applyThrough, applyUntil, flush, nextDelivery, deliveredIssue, cached, setWorldHook,
     issueByIdOrKey: (k) => st.issues.get(String(k)) ?? st.byKey.get(String(k).toUpperCase()),
     allIssues: () => [...st.issues.values()],
     sprints: () => [...st.sprints.values()],

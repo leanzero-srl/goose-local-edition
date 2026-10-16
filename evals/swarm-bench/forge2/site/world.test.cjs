@@ -146,3 +146,22 @@ test('the LLM uses the planted injection of a world pack', () => {
   const llm = createLlm({ pack, now: () => Date.parse(pack.now) });
   assert.deepStrictEqual(llm.state().injection, pack.world.injection);
 });
+
+test('a live change of an issue the world deleted before its delivery is still delivered with the issue as it stood', () => {
+  for (const seed of SEEDS.slice(0, 8)) {
+    const pack = withWorld(facts(seed), {});
+    const state = createState(pack);
+    const lastPlanned = state.plan[state.plan.length - 1].changelogId;
+    const issueId = pack.live.find((c) => c.changelogId === lastPlanned).issueId;
+    const last = pack.live.filter((c) => c.issueId === issueId).pop();
+    state.applyThrough(last.changelogId);
+    state.deleteIssue(issueId);
+    let seen = 0;
+    for (let d = state.nextDelivery(); d; d = state.nextDelivery()) {
+      if (d.change.issueId !== issueId) continue;
+      seen += 1;
+      assert.strictEqual(d.issue?.id, issueId, `${seed}: delivery ${d.changelogId} carries the deleted issue`);
+    }
+    assert.ok(seen > 0, `${seed}: the deleted issue had a delivery after its deletion`);
+  }
+});
