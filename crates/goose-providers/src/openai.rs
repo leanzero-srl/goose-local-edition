@@ -907,7 +907,7 @@ fn engine_reasoning_effort(effort: ThinkingEffort) -> &'static str {
 }
 
 /// Whether `host` (a base URL) names this machine: `localhost`, `127.0.0.0/8` or `::1`.
-fn is_loopback_endpoint(host: &str) -> bool {
+pub(crate) fn is_loopback_endpoint(host: &str) -> bool {
     url::Url::parse(host)
         .ok()
         .and_then(|url| {

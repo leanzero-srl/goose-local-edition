@@ -648,8 +648,25 @@ pub fn working_set_block(
         .collect();
     if !notes.is_empty() {
         out.push_str("\nNot shown:\n");
-        for note in notes {
-            out.push_str(&format!("- {note}\n"));
+        // The names count against the budget too: each is named while what the files left holds
+        // it, and the rest are counted in one line, never dropped unsaid.
+        let mut left = budget_chars.saturating_sub(used);
+        let mut named = 0usize;
+        for note in &notes {
+            let line = format!("- {note}\n");
+            let chars = line.chars().count();
+            if chars > left {
+                break;
+            }
+            left -= chars;
+            out.push_str(&line);
+            named += 1;
+        }
+        if named < notes.len() {
+            out.push_str(&format!(
+                "- and {} more files not shown, not named for want of room\n",
+                notes.len() - named
+            ));
         }
     }
     out.push_str(WORKING_SET_CLOSE);
@@ -810,9 +827,9 @@ mod tests {
     fn the_block_fills_newest_first_and_says_what_it_left_out() {
         let dir = tempfile::tempdir().unwrap();
         let d = dir.path();
-        std::fs::write(d.join("new.js"), "a".repeat(40)).unwrap();
-        std::fs::write(d.join("big.js"), "b".repeat(100)).unwrap();
-        std::fs::write(d.join("old.js"), "c".repeat(50)).unwrap();
+        std::fs::write(d.join("new.js"), "a".repeat(600)).unwrap();
+        std::fs::write(d.join("big.js"), "b".repeat(1_500)).unwrap();
+        std::fs::write(d.join("old.js"), "c".repeat(400)).unwrap();
         std::fs::write(d.join("run.log"), "line\n".repeat(400)).unwrap();
         std::fs::write(d.join("logo.png"), [0x89, b'P', b'N', b'G', 0, 1, 2]).unwrap();
         let files = [
@@ -826,7 +843,8 @@ mod tests {
             whole(d.join("logo.png")),
             whole(d.join("old.js")),
         ];
-        let block = working_set_block(&files, 100, Some(d)).unwrap();
+        // 2,000 chars: the two that fit take 1,000; the names of the four not shown fit in the rest.
+        let block = working_set_block(&files, 2_000, Some(d)).unwrap();
         let said = |path: &str, what: &str| {
             assert!(
                 block.contains(&format!("- {} — {what}", d.join(path).display())),
@@ -836,7 +854,7 @@ mod tests {
         assert!(block.starts_with(WORKING_SET_OPEN), "{block}");
         assert!(block.ends_with(WORKING_SET_CLOSE), "{block}");
         assert!(
-            block.contains("(2 of 6 shown in full, 90 of a 100-char budget)"),
+            block.contains("(2 of 6 shown in full, 1000 of a 2000-char budget)"),
             "{block}"
         );
         let shown = |path: &str, content: String| {
@@ -848,12 +866,12 @@ mod tests {
                 .unwrap_or_else(|| panic!("{path} whole: {block}"))
         };
         assert!(
-            shown("new.js", "a".repeat(40)) < shown("old.js", "c".repeat(50)),
+            shown("new.js", "a".repeat(600)) < shown("old.js", "c".repeat(400)),
             "newest first"
         );
-        assert!(!block.contains(&"b".repeat(100)), "never cut: {block}");
+        assert!(!block.contains(&"b".repeat(1_500)), "never cut: {block}");
         assert!(!block.contains("line\nline"), "{block}");
-        said("big.js", "100 chars, more than the budget left; not shown");
+        said("big.js", "1500 chars, more than the budget left; not shown");
         said("gone.js", "not on disk now");
         said("logo.png", "a binary file (7 bytes)");
         said("run.log", "only ever read in part (head/tail); not shown");
@@ -1001,6 +1019,28 @@ mod tests {
             .map(|t| t.path.display().to_string())
             .collect();
         assert_eq!(names, ["/w/g.js", "/w/f.js", "/w/c.js"]);
+    }
+
+    /// The "Not shown" names count against the budget: past it they are counted, not listed.
+    #[test]
+    fn the_names_of_files_not_shown_are_capped_by_the_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        let gone: Vec<Touched> = (0..20)
+            .map(|i| whole(dir.path().join(format!("gone{i:02}.js"))))
+            .collect();
+        let block = working_set_block(&gone, 150, Some(dir.path())).unwrap();
+        let named = block
+            .lines()
+            .filter(|l| l.contains("not on disk now"))
+            .count();
+        assert!((1..20).contains(&named), "{block}");
+        assert!(
+            block.contains(&format!(
+                "- and {} more files not shown, not named for want of room",
+                20 - named
+            )),
+            "{block}"
+        );
     }
 
     #[test]

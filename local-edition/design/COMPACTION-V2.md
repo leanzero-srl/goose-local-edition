@@ -222,7 +222,14 @@ Nothing changes per turn. Stage 1 and stage 2 each change the prefix once, at th
 | **phantom savings** | reasoning that the provider never rendered would have counted as freed, and stage 1 would have been accepted and then compacted again one iteration later. Fixed by bounding it with `used` minus the reasoning-free count (§3.3). |
 | **reading what the model never read** | only calls that succeeded; outside-folder, credential-like and non-regular files are named and never read (§3.4). |
 | **tool_choice none retry on an engine that ignores it** | guarded: an answer with no summary section falls back to the transcript. Whether Rapid-MLX honours `none` is NOT MEASURED. |
-| **cloud providers** | Reasoning off on the summary is NOT applied to them by default, because Anthropic's formatter drops signed thinking at Off and Anthropic invalidates its cache on a thinking change. The tool_choice retry is skipped where the format can't carry it. Stage 1 masks outputs only, by default, so on a caching cloud provider it costs one cache write per compaction instead of a summary call. The newest assistant turn keeps its thinking. A wrapper provider (swarm router or similar) that doesn't forward the two new `Provider` methods gets the conservative default: the chat's own thinking and no retry. The no-regression run is in §7. |
+| **cloud providers** | Reasoning off on the summary is NOT applied to them by default, because Anthropic's formatter drops signed thinking at Off and Anthropic invalidates its cache on a thinking change. The tool_choice retry is skipped where the format can't carry it. Stage 1 masks outputs only, by default, so on a caching cloud provider it costs one cache write per compaction instead of a summary call. The newest assistant turn keeps its thinking. Wrappers answer for themselves (round 3):
+- `SwarmProvider` asks every node its chat route may pick (`swarm_router::chat_route_kinds`) and says yes only if
+  all do. MLX here and Link peers say yes to both. LM Studio says yes to `tool_choice`, and to the prefix rule only
+  at a loopback endpoint. A cloud node says no; its registry format isn't built here. An unresolvable route says no.
+- OpenAI-compatible: `tool_choice` yes; the prefix rule only at a loopback host.
+- LiteLLM and OpenRouter: `tool_choice` yes (the OpenAI chat format copies it); the prefix rule no, since an
+  Anthropic model may be behind them.
+- Databricks: no to both, because its Claude and Responses paths vary. The no-regression run is in §7. |
 
 ## 6. Tunables (env > config > default)
 
@@ -330,3 +337,21 @@ Each finding was verified before it was fixed. All are fixed in one commit, unco
 Partly disagreed: "Qwen drops reasoning before the last user message". The Qwen3.8 fixture renders ALL
 reasoning when `preserve_thinking` is unset. The fix doesn't depend on this, because the measured bound
 covers both cases.
+
+## 10. Round 3 (2026-10-16)
+
+Built and tested on Gabee. All three gaps are closed:
+1. Wrapper providers now forward the two `Provider` methods, as listed in §5's cloud row. There is a test of
+   the per-kind answers.
+2. Room guard tests:
+   - a 32,768-token window with a 12,000-token head: the ceiling is 19,660, the working set fits under it,
+     and the verdict is `Fits`;
+   - a 22,000-token head: no working set, and the verdict is `CannotMakeRoom`.
+   There are also tests for `knob_bool`'s spellings and for the `Chat` default on a provider that doesn't
+   say the prefix holds.
+3. A working set still over the room after its one shrink is now dropped with
+   `compaction_working_set_dropped`, which is also the verdict. The "Not shown" names count against the
+   budget: past it, they are counted in one line instead of listed.
+
+Build trap found on Gabee (macOS 27): proc-macro dylibs stripped by cargo's build-override default fail
+dyld with "mis-aligned LINKEDIT string pool". Build with `CARGO_PROFILE_DEV_BUILD_OVERRIDE_STRIP=false`.

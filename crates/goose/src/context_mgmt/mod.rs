@@ -797,7 +797,7 @@ async fn compact_core(
             "{summary_text}\n{continuation_text}\n{}",
             preserved_text.as_deref().unwrap_or("")
         );
-        if let Some(block) =
+        if let (Some(block), _) =
             working_set_after_summary(chat, messages_to_compact, &fixed_text, &messages[cut..])
                 .await
         {
@@ -848,19 +848,19 @@ async fn working_set_after_summary(
     messages_to_compact: &[Message],
     fixed_text: &str,
     tail: &[Message],
-) -> Option<String> {
+) -> (Option<String>, RoomVerdict) {
     let Some(configured) = chat.working_set_budget_chars else {
         info!(
             "compaction: no working set placed after the summary (the window is unknown or {} is 0)",
             working_set::WORKING_SET_SHARE_KEY
         );
-        return None;
+        return (None, RoomVerdict::Unmeasured);
     };
     let files = working_set::touched_files(messages_to_compact, Some(&chat.working_dir));
     let block_within =
         |budget: usize| working_set::working_set_block(&files, budget, Some(&chat.working_dir));
     let Some(room) = chat.room else {
-        return block_within(configured);
+        return (block_within(configured), RoomVerdict::Unmeasured);
     };
     let counter = match create_token_counter().await {
         Ok(counter) => counter,
@@ -869,7 +869,7 @@ async fn working_set_after_summary(
                 "compaction_room_unmeasured: no tokenizer ({e}); the working set takes its \
                  configured share of the window"
             );
-            return block_within(configured);
+            return (block_within(configured), RoomVerdict::Unmeasured);
         }
     };
     let fixed = room.head_tokens
@@ -891,8 +891,19 @@ async fn working_set_after_summary(
         }
     };
     let block_tokens = block.as_deref().map_or(0, |b| counter.count_tokens(b));
+    let mut verdict = RoomVerdict::Fits;
     if block_tokens > available {
+        tracing::warn!(
+            block_tokens,
+            available,
+            "compaction_working_set_dropped: the working set is {block_tokens} tokens after its one \
+             shrink, over the {available} left under the ceiling; no working set is placed"
+        );
         block = None;
+        verdict = RoomVerdict::WorkingSetDropped {
+            tokens: block_tokens,
+            available,
+        };
     }
     let after = fixed + block.as_deref().map_or(0, |b| counter.count_tokens(b));
     if available == 0 || after > room.compaction_point() {
@@ -907,8 +918,28 @@ async fn working_set_after_summary(
              set, {fixed} without) is past the room this window leaves; the next request may \
              compact again"
         );
+        verdict = RoomVerdict::CannotMakeRoom { fixed, after };
     }
-    block
+    (block, verdict)
+}
+
+/// How the room after a summary came out. Each case but `Fits` and `Unmeasured` is also logged by
+/// its name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RoomVerdict {
+    /// No window, no head count or no tokenizer: the working set took its configured share.
+    Unmeasured,
+    Fits,
+    /// `compaction_working_set_dropped`: over the room even after its one shrink.
+    WorkingSetDropped {
+        tokens: usize,
+        available: usize,
+    },
+    /// `compaction_cannot_make_room`: no room under the ceiling, or past the compaction point.
+    CannotMakeRoom {
+        fixed: usize,
+        after: usize,
+    },
 }
 
 /// Stage 1 (`mask`): an automatic compaction with no note for its summary first tries to make room
@@ -3413,6 +3444,126 @@ mod tests {
         assert!(transcript
             .get("tools")
             .is_none_or(|t| t.as_array().is_some_and(|t| t.is_empty())));
+    }
+
+    /// knob_bool reads every spelling a person writes, and nonsense keeps the default.
+    #[test]
+    fn knob_bool_reads_every_spelling_and_keeps_the_default_on_nonsense() {
+        const KEY: &str = "GOOSE_TEST_KNOB_BOOL_SPELLINGS";
+        for (value, want) in [
+            ("off", false),
+            ("0", false),
+            ("no", false),
+            ("false", false),
+            ("on", true),
+            ("1", true),
+            ("YES", true),
+            ("true", true),
+        ] {
+            std::env::set_var(KEY, value);
+            assert_eq!(knob_bool(KEY, !want), want, "{value}");
+        }
+        std::env::set_var(KEY, "maybe");
+        assert!(knob_bool(KEY, true));
+        assert!(!knob_bool(KEY, false));
+        std::env::remove_var(KEY);
+        assert!(knob_bool(KEY, true), "unset: the default");
+    }
+
+    /// A provider that does not say reasoning-off keeps its prefix (the trait default, as for
+    /// Anthropic) gets the chat's own reasoning on the summary, not Off.
+    #[tokio::test]
+    async fn a_provider_whose_format_would_change_the_prefix_keeps_the_chats_reasoning() {
+        use goose_providers::thinking::ThinkingEffort;
+        assert_eq!(summary_thinking(false), SummaryThinking::Chat);
+        assert_eq!(summary_thinking(true), SummaryThinking::Off);
+        let provider = ToolCallOnceProvider {
+            calls: std::sync::Mutex::new(Vec::new()),
+        };
+        compact_chat(
+            &provider,
+            &ModelConfig::new("served").with_thinking_effort(ThinkingEffort::Medium),
+            "s",
+            &two_turn_chat(),
+            false,
+            &frame(),
+            &chat_inputs(None, false),
+        )
+        .await
+        .unwrap();
+        let calls = provider.calls.lock().unwrap();
+        assert_eq!(calls[0].0.thinking_effort(), Some(ThinkingEffort::Medium));
+    }
+
+    fn room_inputs(dir: &std::path::Path, head_tokens: usize) -> ChatCompaction {
+        let mut inputs = chat_inputs(None, false);
+        inputs.working_dir = dir.to_path_buf();
+        inputs.working_set_budget_chars = Some(128_000);
+        inputs.room = Some(Room {
+            limit: 32_768,
+            threshold: 0.8,
+            head_tokens,
+        });
+        inputs
+    }
+
+    /// Ten files the session read, each 4,000 chars, as a succeeded `cat`.
+    fn ten_files_read(dir: &std::path::Path) -> Vec<Message> {
+        let names: Vec<String> = (0..10).map(|i| format!("f{i}.txt")).collect();
+        for name in &names {
+            std::fs::write(dir.join(name), "alpha beta gamma delta ".repeat(174)).unwrap();
+        }
+        let mut params = CallToolRequestParams::new("shell");
+        params.arguments = serde_json::json!({"command": format!("cat {}", names.join(" "))})
+            .as_object()
+            .cloned();
+        vec![
+            Message::assistant().with_tool_request("r1", Ok(params)),
+            Message::user().with_tool_response(
+                "r1",
+                Ok(rmcp::model::CallToolResult::success(vec![
+                    RawContent::text("ok").no_annotation(),
+                ])),
+            ),
+        ]
+    }
+
+    /// A 32,768-token window with a 12,000-token head: the ceiling is 19,660; the working set is
+    /// sized so head + summary + working set stay under it (the window shares alone would place
+    /// 1/4 of the window, 8k tokens of files, on top of a ~13k context).
+    #[tokio::test]
+    async fn a_small_window_gets_a_working_set_sized_to_its_room() {
+        let dir = tempfile::tempdir().unwrap();
+        let messages = ten_files_read(dir.path());
+        let inputs = room_inputs(dir.path(), 12_000);
+        assert_eq!(inputs.room.unwrap().ceiling(), 19_660);
+        let summary = "summary ".repeat(1_000);
+        let (block, verdict) = working_set_after_summary(&inputs, &messages, &summary, &[]).await;
+        assert_eq!(verdict, RoomVerdict::Fits);
+        let block = block.expect("a working set within the room");
+        let counter = create_token_counter().await.unwrap();
+        let after = 12_000 + counter.count_tokens(&summary) + counter.count_tokens(&block);
+        assert!(after <= 19_660, "{after}");
+        assert!(block.contains("===== "), "{block}");
+        assert!(
+            block.contains("Not shown"),
+            "some files did not fit: {block}"
+        );
+    }
+
+    /// A 22,000-token head on the same window leaves no room under the ceiling: no working set,
+    /// and `compaction_cannot_make_room` is the verdict (and the logged event).
+    #[tokio::test]
+    async fn a_head_past_the_ceiling_cannot_make_room() {
+        let dir = tempfile::tempdir().unwrap();
+        let messages = ten_files_read(dir.path());
+        let inputs = room_inputs(dir.path(), 22_000);
+        let (block, verdict) = working_set_after_summary(&inputs, &messages, "summary", &[]).await;
+        assert!(block.is_none());
+        assert!(
+            matches!(verdict, RoomVerdict::CannotMakeRoom { fixed, .. } if fixed >= 22_000),
+            "{verdict:?}"
+        );
     }
 
     /// `chat` keeps the chat's effort on the retry (it is the first attempt's); an unpinned config

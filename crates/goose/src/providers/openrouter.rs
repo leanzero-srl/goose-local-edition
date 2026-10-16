@@ -485,6 +485,13 @@ impl ProviderDef for OpenRouterProvider {
 
 #[async_trait]
 impl Provider for OpenRouterProvider {
+    /// The OpenAI chat format (`create_request_reporting_images`) copies request params,
+    /// `tool_choice` among them, into the body. Reasoning-off is not claimed prefix-neutral: the
+    /// model behind may be Anthropic's.
+    fn sends_tool_choice(&self, _model_name: &str) -> bool {
+        true
+    }
+
     fn get_name(&self) -> &str {
         &self.name
     }
