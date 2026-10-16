@@ -216,9 +216,15 @@ mod tests {
         let mut resend = TransientResend::new(policy(2));
         let reset = ProviderError::stream_decode_error("connection reset");
         assert!(resend.allows(&reset));
-        assert!(matches!(resend.spend(&reset), Resend::Attempt { attempt: 1, .. }));
+        assert!(matches!(
+            resend.spend(&reset),
+            Resend::Attempt { attempt: 1, .. }
+        ));
         assert!(resend.allows(&ProviderError::ServerError("502".into())));
-        assert!(matches!(resend.spend(&reset), Resend::Attempt { attempt: 2, .. }));
+        assert!(matches!(
+            resend.spend(&reset),
+            Resend::Attempt { attempt: 2, .. }
+        ));
         assert!(
             !resend.allows(&reset),
             "the policy's two attempts are spent"
@@ -334,13 +340,19 @@ mod tests {
         assert!(resend.allows(&limited));
         resend.spend(&limited);
         resend.spend(&limited);
-        assert!(!resend.allows(&limited), "then the attempts run out as before");
+        assert!(
+            !resend.allows(&limited),
+            "then the attempts run out as before"
+        );
 
         resend.call_completed();
-        assert!(matches!(
-            resend.spend(&limited),
-            Resend::RateLimitWait { delay, .. } if delay == Duration::from_secs(5)
-        ), "a completed call starts a fresh budget");
+        assert!(
+            matches!(
+                resend.spend(&limited),
+                Resend::RateLimitWait { delay, .. } if delay == Duration::from_secs(5)
+            ),
+            "a completed call starts a fresh budget"
+        );
     }
 
     #[test]
@@ -350,7 +362,9 @@ mod tests {
         let fault = ProviderError::ServerError("Provider returned error".into());
         for n in 1..=3 {
             assert!(resend.allows(&fault));
-            assert!(matches!(resend.spend(&fault), Resend::Attempt { attempt, .. } if attempt == n));
+            assert!(
+                matches!(resend.spend(&fault), Resend::Attempt { attempt, .. } if attempt == n)
+            );
         }
         assert!(!resend.allows(&fault));
     }

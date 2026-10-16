@@ -4634,8 +4634,7 @@ mod tests {
         /// What the OpenAI-compatible stream decoder makes of that frame.
         async fn decoded_in_stream_429() -> ProviderError {
             let frames = futures::stream::iter([Ok(OPENROUTER_IN_STREAM_429.to_string())]);
-            let decoded =
-                goose_providers::formats::openai::response_to_streaming_message(frames);
+            let decoded = goose_providers::formats::openai::response_to_streaming_message(frames);
             tokio::pin!(decoded);
             let err = decoded
                 .next()
@@ -5167,10 +5166,7 @@ mod tests {
 
             let (yielded, history) = run_turn(&agent, &session_id).await?;
 
-            assert_eq!(
-                provider.calls(),
-                1 + RATE_LIMIT_WAITS + DEFAULT_MAX_RETRIES
-            );
+            assert_eq!(provider.calls(), 1 + RATE_LIMIT_WAITS + DEFAULT_MAX_RETRIES);
             let notices = resend_notices(&yielded);
             assert!(
                 notices[RATE_LIMIT_WAITS..]
