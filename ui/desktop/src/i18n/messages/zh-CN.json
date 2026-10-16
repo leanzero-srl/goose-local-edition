@@ -11638,5 +11638,11 @@
   },
   "forgeSeries.waitingPublish": {
     "defaultMessage": "发布需要两次已完成且可比较的构建，以及各自的原生证据。"
+  },
+  "modelCustomFields.awaitingModel": {
+    "defaultMessage": "自定义字段：选择一个模型 ID 以查看它接受的设置。"
+  },
+  "modelCustomFields.noFields": {
+    "defaultMessage": "自定义字段：{provider} 没有为“{model}”声明任何字段，因此它以提供商的默认值运行。"
   }
 }

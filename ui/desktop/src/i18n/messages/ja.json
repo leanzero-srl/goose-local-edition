@@ -11638,5 +11638,11 @@
   },
   "forgeSeries.waitingPublish": {
     "defaultMessage": "公開には、比較可能な 2 回の完了済みビルドと、それぞれのネイティブな証拠が必要です。"
+  },
+  "modelCustomFields.awaitingModel": {
+    "defaultMessage": "カスタムフィールド: モデル ID を選ぶと、受け付ける設定が表示されます。"
+  },
+  "modelCustomFields.noFields": {
+    "defaultMessage": "カスタムフィールド: {provider} は「{model}」に対してフィールドを宣言していないため、プロバイダーの既定値で実行されます。"
   }
 }

@@ -11638,5 +11638,11 @@
   },
   "forgeSeries.waitingPublish": {
     "defaultMessage": "Yayımlama için tamamlanmış, karşılaştırılabilir iki derleme ve bunların özgün kanıtları gerekir."
+  },
+  "modelCustomFields.awaitingModel": {
+    "defaultMessage": "Özel alanlar: kabul ettiği ayarları görmek için bir model kimliği seçin."
+  },
+  "modelCustomFields.noFields": {
+    "defaultMessage": "Özel alanlar: {provider}, “{model}” için hiçbir alan bildirmiyor; bu yüzden sağlayıcının varsayılanlarıyla çalışır."
   }
 }

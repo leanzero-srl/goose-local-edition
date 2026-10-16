@@ -11638,5 +11638,11 @@
   },
   "forgeSeries.waitingPublish": {
     "defaultMessage": "發布需要兩次已完成且可比較的建置，以及各自的原生證據。"
+  },
+  "modelCustomFields.awaitingModel": {
+    "defaultMessage": "自訂欄位：選擇一個模型 ID 以查看它接受的設定。"
+  },
+  "modelCustomFields.noFields": {
+    "defaultMessage": "自訂欄位：{provider} 沒有為「{model}」宣告任何欄位，因此它以供應商的預設值執行。"
   }
 }

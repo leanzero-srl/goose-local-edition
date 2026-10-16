@@ -3,7 +3,10 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { acpListProviderDetails } from '../../acp/providers';
 import { CloudEntrant } from './CloudEntrant';
 
-vi.mock('../../acp/providers', () => ({ acpListProviderDetails: vi.fn() }));
+vi.mock('../../acp/providers', () => ({
+  acpListProviderDetails: vi.fn(),
+  acpListProviderLiveModels: vi.fn(async () => []),
+}));
 vi.mock('../openrouter/OpenRouterHostPicker', () => ({
   OpenRouterHostPicker: ({ model, disabled }: { model: string; disabled: boolean }) => (
     <div data-testid="host-picker" data-model={model} data-disabled={String(disabled)} />
@@ -71,7 +74,7 @@ it('typing a new model id hands the picker that id', async () => {
     />
   );
   await screen.findByTestId('host-picker');
-  fireEvent.change(screen.getByRole('textbox', { name: 'Model ID' }), {
+  fireEvent.change(screen.getByRole('combobox', { name: 'Model ID' }), {
     target: { value: 'deepseek/deepseek-v4.1-flash' },
   });
   expect(change).toHaveBeenCalledWith('openrouter', 'deepseek/deepseek-v4.1-flash');

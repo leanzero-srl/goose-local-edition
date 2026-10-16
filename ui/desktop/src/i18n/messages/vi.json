@@ -11638,5 +11638,11 @@
   },
   "forgeSeries.waitingPublish": {
     "defaultMessage": "Cần hai bản dựng hoàn tất, có thể so sánh và bằng chứng gốc của chúng để công bố."
+  },
+  "modelCustomFields.awaitingModel": {
+    "defaultMessage": "Trường tùy chỉnh: chọn một ID mô hình để xem các cài đặt mà nó nhận."
+  },
+  "modelCustomFields.noFields": {
+    "defaultMessage": "Trường tùy chỉnh: {provider} không khai báo trường nào cho “{model}”, nên mô hình chạy theo mặc định của nhà cung cấp."
   }
 }

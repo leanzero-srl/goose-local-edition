@@ -16,6 +16,7 @@ vi.mock('../swarm/SwarmRunPanel', async () => {
 });
 vi.mock('../swarm/useSamplingDefaults', () => ({ useSaveSamplingDefaults: () => () => {} }));
 vi.mock('../../acp/providers', () => ({
+  acpListProviderLiveModels: vi.fn(async () => []),
   acpListProviderDetails: vi.fn(async () => [
     {
       name: 'openrouter',

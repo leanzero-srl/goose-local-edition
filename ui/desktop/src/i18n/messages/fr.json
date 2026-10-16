@@ -11638,5 +11638,11 @@
   },
   "forgeSeries.waitingPublish": {
     "defaultMessage": "La publication nécessite deux builds terminés et comparables, ainsi que leurs preuves natives."
+  },
+  "modelCustomFields.awaitingModel": {
+    "defaultMessage": "Champs personnalisés : choisissez un ID de modèle pour voir les réglages qu’il accepte."
+  },
+  "modelCustomFields.noFields": {
+    "defaultMessage": "Champs personnalisés : {provider} n’en déclare aucun pour « {model} », il s’exécute donc avec les valeurs par défaut du fournisseur."
   }
 }

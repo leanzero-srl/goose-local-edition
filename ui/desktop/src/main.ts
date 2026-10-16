@@ -4710,12 +4710,13 @@ const runSingleBenchmark = async (
     // Forge is a single-model benchmark (forge/DESIGN.md: one model in goose, the tier's call budget).
     if (family === 'forge' && !cloud)
       throw new Error('Forge runs one model: choose a provider and model ID.');
-    // Forge pins one reasoning effort for every entrant (the tier's reasoning_effort in isolated_tiers,
-    // forge/DESIGN.md §11): the model's saved effort is recorded as pinned and never sent, so it cannot
-    // displace the tier's.
+    // Every benchmark pins one reasoning effort for every entrant (Forge: the tier's reasoning_effort in
+    // isolated_tiers, forge/DESIGN.md §11; every other tier: BENCHMARK_THINKING_EFFORT, applied by
+    // benchmark-config): the model's saved effort is recorded as pinned and never sent, so it cannot
+    // displace the pin.
     const runModelFields =
       seriesBuild?.series.modelFields ??
-      (cloud ? modelFieldsForRun(cloud.modelFields ?? {}, family === 'forge') : null);
+      (cloud ? modelFieldsForRun(cloud.modelFields ?? {}, true) : null);
     const regimeFlag = BENCH_RUN_FLAG[tier];
     const isolated =
       (ISOLATED_PAYMENTS_TIERS as readonly string[]).includes(tier) || family === 'forge';

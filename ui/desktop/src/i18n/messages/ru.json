@@ -11638,5 +11638,11 @@
   },
   "forgeSeries.waitingPublish": {
     "defaultMessage": "Для публикации нужны две завершённые сопоставимые сборки и их собственные доказательства."
+  },
+  "modelCustomFields.awaitingModel": {
+    "defaultMessage": "Пользовательские поля: выберите ID модели, чтобы увидеть её настройки."
+  },
+  "modelCustomFields.noFields": {
+    "defaultMessage": "Пользовательские поля: {provider} не объявляет полей для «{model}», поэтому модель работает со значениями провайдера по умолчанию."
   }
 }

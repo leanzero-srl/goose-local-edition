@@ -11638,5 +11638,11 @@
   },
   "forgeSeries.waitingPublish": {
     "defaultMessage": "Für die Veröffentlichung sind zwei abgeschlossene, vergleichbare Builds und ihre nativen Nachweise erforderlich."
+  },
+  "modelCustomFields.awaitingModel": {
+    "defaultMessage": "Benutzerdefinierte Felder: Wähle eine Modell-ID, um ihre Einstellungen zu sehen."
+  },
+  "modelCustomFields.noFields": {
+    "defaultMessage": "Benutzerdefinierte Felder: {provider} deklariert keine für „{model}“, daher läuft es mit den Standardwerten des Anbieters."
   }
 }

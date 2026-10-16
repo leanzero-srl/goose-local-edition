@@ -11638,5 +11638,11 @@
   },
   "forgeSeries.waitingPublish": {
     "defaultMessage": "Penerbitan memerlukan dua binaan lengkap yang boleh dibandingkan bersama bukti asalnya."
+  },
+  "modelCustomFields.awaitingModel": {
+    "defaultMessage": "Medan tersuai: pilih ID model untuk melihat tetapan yang diterimanya."
+  },
+  "modelCustomFields.noFields": {
+    "defaultMessage": "Medan tersuai: {provider} tidak mengisytiharkan sebarang medan untuk “{model}”, jadi ia berjalan pada lalai penyedia."
   }
 }

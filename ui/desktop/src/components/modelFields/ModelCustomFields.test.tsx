@@ -95,6 +95,19 @@ describe('ModelCustomFields', () => {
     await waitFor(() => expect(container.textContent).toBe(''));
   });
 
+  it('with explainAbsence, a model with no fields and an unchosen model are stated lines', async () => {
+    mockList.mockResolvedValue(listing([]));
+    const { unmount } = mount({ explainAbsence: true });
+    expect(await screen.findByTestId('model-custom-fields-none')).toHaveTextContent(
+      'Custom fields: openrouter declares none for “deepseek/deepseek-v4.1-flash”, so it runs at the provider’s defaults.'
+    );
+    unmount();
+    mount({ explainAbsence: true, modelId: '' });
+    expect(screen.getByTestId('model-custom-fields-awaiting')).toHaveTextContent(
+      'Custom fields: choose a model ID to see the settings it takes.'
+    );
+  });
+
   it('says so when the listing does not carry the typed model id', async () => {
     mockList.mockResolvedValue({ fields: [], source: 'unlisted_model', values: {} });
     mount({ modelId: 'vendor/typo' });

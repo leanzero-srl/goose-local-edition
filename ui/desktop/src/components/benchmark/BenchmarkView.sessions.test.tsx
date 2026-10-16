@@ -26,6 +26,7 @@ vi.mock('../../acp/modelFields', () => ({
   acpSaveModelFields: vi.fn(),
 }));
 vi.mock('../../acp/providers', () => ({
+  acpListProviderLiveModels: vi.fn(async () => []),
   acpListProviderDetails: vi.fn(async () => [
     {
       name: 'google',
@@ -220,7 +221,7 @@ describe('the benchmark sections and their sessions', () => {
     fireEvent.keyDown(screen.getByRole('button', { name: 'Model provider' }), { key: 'ArrowDown' });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Google Gemini' }));
     expect(screen.getByRole('button', { name: 'Run benchmark' })).toBeDisabled();
-    fireEvent.change(screen.getByRole('textbox', { name: 'Model ID' }), {
+    fireEvent.change(screen.getByRole('combobox', { name: 'Model ID' }), {
       target: { value: 'gemini-3.8-flash' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Run benchmark' }));
@@ -441,7 +442,7 @@ it('can cancel a cloud run while its launch IPC promise remains pending', async 
   await waitFor(() => expect(screen.getByRole('button', { name: 'Model provider' })).toBeEnabled());
   fireEvent.keyDown(screen.getByRole('button', { name: 'Model provider' }), { key: 'ArrowDown' });
   fireEvent.click(await screen.findByRole('menuitem', { name: 'Google Gemini' }));
-  fireEvent.change(screen.getByRole('textbox', { name: 'Model ID' }), {
+  fireEvent.change(screen.getByRole('combobox', { name: 'Model ID' }), {
     target: { value: 'gemini-3.8-flash' },
   });
   fireEvent.click(screen.getByRole('button', { name: 'Run benchmark' }));

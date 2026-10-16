@@ -11638,5 +11638,11 @@
   },
   "forgeSeries.waitingPublish": {
     "defaultMessage": "La pubblicazione richiede due build completi e confrontabili con le rispettive prove native."
+  },
+  "modelCustomFields.awaitingModel": {
+    "defaultMessage": "Campi personalizzati: scegli un ID modello per vedere le impostazioni che accetta."
+  },
+  "modelCustomFields.noFields": {
+    "defaultMessage": "Campi personalizzati: {provider} non ne dichiara nessuno per «{model}», quindi funziona con i valori predefiniti del provider."
   }
 }
