@@ -82,7 +82,7 @@ impl DeveloperClient {
             info,
             shell_tool: Arc::new(ShellTool::new(context.use_login_shell_path)?),
             edit_tools: Arc::new(EditTools::new()),
-            tree_tool: Arc::new(TreeTool::new()),
+            tree_tool: Arc::new(TreeTool::new()?),
             image_tool: Arc::new(ImageTool::new()),
         })
     }

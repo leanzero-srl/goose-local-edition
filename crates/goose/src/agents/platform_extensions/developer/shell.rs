@@ -147,22 +147,22 @@ fn unix_shell() -> String {
     }
 }
 
-const OUTPUT_LIMIT_LINES: usize = 2000;
+pub(super) const OUTPUT_LIMIT_LINES: usize = 2000;
 pub const OUTPUT_LIMIT_BYTES: usize = 50_000;
 const OUTPUT_PREVIEW_LINES: usize = 50;
 
-const OUTPUT_SLOTS: usize = 8;
+pub(super) const OUTPUT_SLOTS: usize = 8;
 
-/// Result of truncating command output.
-struct TruncateResult {
+/// Result of truncating command output. The tree tool cuts its listing by the same rule.
+pub(super) struct TruncateResult {
     /// The (possibly truncated) text to display.
-    text: String,
+    pub(super) text: String,
     /// When output was truncated, the path where the full output was saved
     /// and a human-readable reason for the truncation.
-    truncation: Option<TruncationInfo>,
+    pub(super) truncation: Option<TruncationInfo>,
 }
 
-struct TruncationInfo {
+pub(super) struct TruncationInfo {
     path: PathBuf,
     reason: String,
 }
@@ -1148,7 +1148,7 @@ async fn collect_tagged_lines(
 }
 
 /// Build a human-readable truncation notice with platform-appropriate commands.
-fn truncation_notice(info: &TruncationInfo) -> String {
+pub(super) fn truncation_notice(info: &TruncationInfo) -> String {
     let path = info.path.display();
     let commands = if cfg!(windows) {
         "PowerShell commands like `Get-Content -TotalCount 200`, `Select-String`, or \
@@ -1178,7 +1178,7 @@ fn render_output(
     truncate_output(full_output, label, output_dir)
 }
 
-fn truncate_output(
+pub(super) fn truncate_output(
     full_output: &str,
     label: &str,
     output_dir: &std::path::Path,
