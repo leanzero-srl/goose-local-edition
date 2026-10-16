@@ -2046,6 +2046,56 @@ mod tests {
         })
     }
 
+    /// Forge 2.0 run B (sessions.db 2295→3300): a task prompt ending in a newline, compacted five
+    /// times inside one tool loop, was in the context five times by the fifth compaction — the
+    /// kept block carried 1, 1, 2, 3, 4 copies beside the copy each compaction appends. Three
+    /// compactions of the same loop now leave it in the agent's context exactly once.
+    #[tokio::test]
+    async fn a_task_prompt_compacted_three_times_mid_loop_is_in_the_context_once() {
+        let task = "# forge-2.0 \u{2014} Scope Ledger 2\n\nShip v2 of the Scope Ledger.\n";
+        let provider = ScriptedProvider::new("## Where we are\nbuilding\n## Next step\nsync.js");
+        let mut stored = vec![Message::user().with_text(task)];
+        for compaction in 0..3 {
+            stored.extend(create_tool_pair(
+                &format!("call{compaction}"),
+                &format!("resp{compaction}"),
+                "developer__shell",
+                "ok",
+            ));
+            let ChatCompacted::Compacted { conversation, .. } = compact_chat(
+                &provider,
+                &ModelConfig::new("scripted"),
+                "s",
+                &Conversation::new_unvalidated(stored.clone()),
+                false,
+                &frame(),
+                &chat_inputs(None, false),
+            )
+            .await
+            .unwrap() else {
+                panic!("an automatic compaction is never asked");
+            };
+            stored = conversation.messages().to_vec();
+        }
+        let task = task.trim();
+        // The kept block indents a message's later lines, so a copy is counted by one of them.
+        let line = "Ship v2 of the Scope Ledger.";
+        let in_context: usize = stored
+            .iter()
+            .filter(|m| m.is_agent_visible())
+            .map(|m| m.as_concat_text().matches(line).count())
+            .sum();
+        assert_eq!(in_context, 1, "{stored:#?}");
+        let summary = latest_summary(&stored).expect("a summary");
+        assert!(!summary.contains(line), "{summary}");
+        assert!(
+            stored
+                .last()
+                .is_some_and(|m| m.is_agent_visible() && m.as_concat_text().trim() == task),
+            "the one copy is the person's message after the summary"
+        );
+    }
+
     /// Q-357 STEER: a manual compaction under a note the conversation contradicts stops at the
     /// model's question — the stream is dropped at the first line, nothing is replaced, and the
     /// question comes back word for word for the person to answer.
