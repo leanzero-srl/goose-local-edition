@@ -314,6 +314,14 @@ import {
 } from './utils/macsTrayReport';
 import { MLX_STATUS_POLL_MS } from './components/leanzero-swarm/mlxLiveStats';
 import { findLmsBinary, resolveLmsOnce } from './utils/lmsBinary';
+import {
+  fleetStatusHandler,
+  lmStudioLiveness,
+  parseLmsPs,
+  pidAliveViaSignalZero,
+  readFileOrNull,
+  tcpAcceptsViaNet,
+} from './utils/lmStudioLive';
 import { hideDevOnlyMenuItems } from './utils/menuPolicy';
 import {
   isBenchmarkViewUrl,
@@ -2207,44 +2215,51 @@ ipcMain.handle('list-git-worktree-dirs', async (_event, dir: string) => {
 // REST /api/v0/models does NOT expose (it only reports loaded/not-loaded). `lms ps --json` carries the real
 // status per model. Returned as { identifier: 'generating' | 'processingPrompt' | 'idle' }. Empty on any error
 // (lms missing, no server, parse fail) so the caller degrades to the digest-only view. The renderer can't shell
-// this itself; it goes through main.
-// U-H2 (gate 8, 2026-09-02): useFleetCorroboration polls this every 1.5s on EVERY install, so `lms` is
-// resolved once (utils/lmsBinary.ts — the same ~/.lmstudio/bin/lms-then-PATH lookup) and an absent binary
-// answers the honest {} without spawning anything, logged once rather than a failing execFile per tick.
-ipcMain.handle('fleet-status', async (): Promise<Record<string, string>> => {
-  const bin = resolveLmsOnce(
-    () =>
-      findLmsBinary({
+// this itself; it goes through main. `lms` is resolved once (utils/lmsBinary.ts, U-H2).
+// NEVER WAKE LM STUDIO (2026-10-16): `lms ps` relaunches the LM Studio service when none is running, so it
+// is spawned only when the 'showLmStudioFleet' surface is on AND utils/lmStudioLive.ts proves a service is
+// already up from its own http-server.json (pid alive + port accepting) — no process is spawned to check.
+// Measured on Gabee's Mac: the Goose app polled `lms ps` during a Forge 2.0 benchmark on the app's MLX
+// engine, every quit of LM Studio was undone, and the relaunched service held a ~35B model.
+ipcMain.handle(
+  'fleet-status',
+  fleetStatusHandler({
+    surfaceEnabled: () => getSettings().showLmStudioFleet === true,
+    resolveBin: () =>
+      resolveLmsOnce(
+        () =>
+          findLmsBinary({
+            home: process.env.HOME || os.homedir(),
+            pathEnv: process.env.PATH,
+            platform: process.platform,
+            exists: fsSync.existsSync,
+          }),
+        () => undefined
+      ),
+    liveness: () =>
+      lmStudioLiveness({
         home: process.env.HOME || os.homedir(),
-        pathEnv: process.env.PATH,
-        platform: process.platform,
-        exists: fsSync.existsSync,
+        readFile: readFileOrNull,
+        pidAlive: pidAliveViaSignalZero((pid, signal) => process.kill(pid, signal)),
+        tcpAccepts: tcpAcceptsViaNet(500),
       }),
-    () =>
-      log.info(
-        '[fleet-status] lms not found (~/.lmstudio/bin/lms or PATH): LM Studio status feed is empty; `lms ps` will not be spawned'
-      )
-  );
-  if (!bin) return {};
-  return await new Promise<Record<string, string>>((resolve) => {
-    execFile(bin, ['ps', '--json'], { timeout: 4000 }, (error, stdout) => {
-      if (error) {
-        resolve({});
-        return;
-      }
-      try {
-        const arr = JSON.parse(stdout) as Array<{ identifier?: string; status?: string }>;
-        const map: Record<string, string> = {};
-        for (const m of arr) {
-          if (m.identifier && m.status) map[m.identifier] = m.status;
-        }
-        resolve(map);
-      } catch {
-        resolve({});
-      }
-    });
-  });
-});
+    runPs: (bin) =>
+      new Promise<Record<string, string>>((resolve) => {
+        execFile(bin, ['ps', '--json'], { timeout: 4000 }, (error, stdout) => {
+          if (error) {
+            resolve({});
+            return;
+          }
+          try {
+            resolve(parseLmsPs(stdout));
+          } catch {
+            resolve({});
+          }
+        });
+      }),
+    log: (message) => log.info(message),
+  })
+);
 
 // The fleet PROBES run here, not in the renderer (gate 8 refutation of 949d3fa6e, 2026-09-02): the
 // renderer's CSP is the intersection of index.html's static meta and the header above, and the meta
