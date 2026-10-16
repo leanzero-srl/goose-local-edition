@@ -24,6 +24,7 @@ pub mod acp;
 pub mod context_line;
 pub mod pillars;
 pub mod state;
+pub mod working_set;
 
 use pillars::{KeptSources, LedgerRead, NoteVerdict, Pillars};
 
@@ -254,6 +255,9 @@ pub struct ChatCompaction {
     pub ledger: LedgerRead,
     /// The kept block's share of the window, in chars; `None` when the window is unknown.
     pub kept_budget_chars: Option<usize>,
+    /// The working set's share of the window, in chars (`working_set`); `None` when the window
+    /// is unknown or GOOSE_COMPACTION_WORKING_SET_SHARE is 0 — then none is placed.
+    pub working_set_budget_chars: Option<usize>,
     /// The session's folder, which the kept block resolves relative paths against (Q-394).
     pub working_dir: std::path::PathBuf,
     pub progress: Option<CompactionObserver>,
@@ -459,7 +463,10 @@ async fn compact_core(
     // A chat's kept turn-context blocks are goose's, not the person's words: they are never the
     // request a compaction preserves.
     let persons_text = |c: &MessageContent| match c {
-        MessageContent::Text(text) => !crate::conversation::is_turn_context_text(&text.text),
+        MessageContent::Text(text) => {
+            !crate::conversation::is_turn_context_text(&text.text)
+                && !working_set::is_working_set_text(&text.text)
+        }
         _ => false,
     };
     let has_text_only = |msg: &Message| {
@@ -626,6 +633,32 @@ async fn compact_core(
 
     let (merged_continuation, _issues) = merge_consecutive_messages(continuation_messages);
     final_messages.extend(merged_continuation);
+
+    // The working set: right after the summary (after its continuation line, so the summary
+    // stays the message `latest_summary` reads), agent-only, before the kept tail and the
+    // person's message.
+    if let Some(chat) = chat {
+        match chat.working_set_budget_chars {
+            Some(budget) => {
+                let files =
+                    working_set::touched_files(messages_to_compact, Some(&chat.working_dir));
+                if let Some(block) =
+                    working_set::working_set_block(&files, budget, Some(&chat.working_dir))
+                {
+                    final_messages.push(
+                        Message::user()
+                            .with_text(block)
+                            .with_metadata(MessageMetadata::agent_only()),
+                    );
+                }
+            }
+            None => tracing::info!(
+                "compaction: no working set placed after the summary (the window is unknown or \
+                 {} is 0)",
+                working_set::WORKING_SET_SHARE_KEY
+            ),
+        }
+    }
 
     // K4: the kept tail returns VERBATIM after the summary, so the agent reads "summary of the
     // early conversation, then the last turns exactly as they happened" — same shape as the
@@ -2142,6 +2175,7 @@ mod tests {
             goal: None,
             ledger: LedgerRead::Entries(Vec::new()),
             kept_budget_chars: None,
+            working_set_budget_chars: None,
             working_dir: std::path::PathBuf::from("/Users/someone"),
             progress: None,
         }
@@ -2531,6 +2565,95 @@ mod tests {
                 .iter()
                 .any(|c| matches!(c, MessageContent::ToolRequest(_)))));
         }
+    }
+
+    /// The working set lands right after the summary's continuation line, agent-only, with the
+    /// file as it is on disk NOW (changed after it was read); the summary stays what
+    /// `latest_summary` reads, and the next compaction never mistakes the block for the person's
+    /// message.
+    #[tokio::test]
+    async fn the_working_set_follows_the_summary_with_the_files_as_they_are_now() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("sync.js"), "export const v = 1;\n").unwrap();
+        let mut read = vec![Message::user().with_text("ship the sync")];
+        let mut params = CallToolRequestParams::new("shell");
+        params.arguments = serde_json::json!({"command": "cat sync.js"})
+            .as_object()
+            .cloned();
+        read.push(Message::assistant().with_tool_request("c1", Ok(params)));
+        read.push(Message::user().with_tool_response(
+            "c1",
+            Ok(rmcp::model::CallToolResult::success(vec![
+                RawContent::text("export const v = 1;").no_annotation(),
+            ])),
+        ));
+        std::fs::write(dir.path().join("sync.js"), "export const v = 2;\n").unwrap();
+        let mut inputs = chat_inputs(None, false);
+        inputs.working_dir = dir.path().to_path_buf();
+        inputs.working_set_budget_chars = Some(10_000);
+        let provider = ScriptedProvider::new("## Where we are\nsync.js read");
+        let compact = |stored: Vec<Message>| {
+            let inputs = inputs.clone();
+            let provider = &provider;
+            async move {
+                match compact_chat(
+                    provider,
+                    &ModelConfig::new("scripted"),
+                    "s",
+                    &Conversation::new_unvalidated(stored),
+                    false,
+                    &frame(),
+                    &inputs,
+                )
+                .await
+                .unwrap()
+                {
+                    ChatCompacted::Compacted { conversation, .. } => {
+                        conversation.messages().to_vec()
+                    }
+                    ChatCompacted::Asked { .. } => panic!("never asked"),
+                }
+            }
+        };
+        let stored = compact(read).await;
+        let visible: Vec<&Message> = stored.iter().filter(|m| m.is_agent_visible()).collect();
+        assert_eq!(
+            visible.len(),
+            4,
+            "summary, continuation, working set, the person's message"
+        );
+        assert!(visible[1].as_concat_text().starts_with(COMPACTED_PREFIX));
+        let block = visible[2].as_concat_text();
+        assert_eq!(visible[2].role, Role::User);
+        assert!(!visible[2].is_user_visible());
+        assert!(block.starts_with(working_set::WORKING_SET_OPEN), "{block}");
+        assert!(
+            block.contains("Current file contents after compaction"),
+            "{block}"
+        );
+        assert!(
+            block.contains("export const v = 2;"),
+            "the file as it is now: {block}"
+        );
+        assert!(!block.contains("v = 1"), "{block}");
+        assert_eq!(visible[3].as_concat_text(), "ship the sync");
+        assert!(latest_summary(&stored).is_some_and(|s| !s.contains(working_set::WORKING_SET_OPEN)));
+
+        // The next compaction mid-loop keeps the person's message as the one it preserves.
+        let mut next = stored.clone();
+        next.extend(create_tool_pair("c2", "r2", "shell", "ok"));
+        let again = compact(next).await;
+        let last = again.last().unwrap();
+        assert_eq!(last.as_concat_text(), "ship the sync");
+        let blocks = again
+            .iter()
+            .filter(|m| m.is_agent_visible())
+            .filter(|m| {
+                m.as_concat_text()
+                    .starts_with(working_set::WORKING_SET_OPEN)
+            })
+            .count();
+        assert_eq!(blocks, 1, "one working set, the newest");
     }
 
     /// Answers the first chat-shaped request with a tool call and every later one with a summary,
