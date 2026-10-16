@@ -24,7 +24,7 @@ use tokio_util::io::StreamReader;
 pub(crate) const GOOGLE_PROVIDER_NAME: &str = "google";
 pub const GOOGLE_API_HOST: &str = "https://generativelanguage.googleapis.com";
 pub const GOOGLE_DEFAULT_MODEL: &str = "gemini-2.5-pro";
-pub const GOOGLE_DEFAULT_FAST_MODEL: &str = "gemini-2.5-flash";
+pub const GOOGLE_DEFAULT_FAST_MODEL: &str = "gemini-3.8-flash";
 pub const GOOGLE_KNOWN_MODELS: &[&str] = &[
     // Gemini 3 models
     "gemini-3-pro-preview",

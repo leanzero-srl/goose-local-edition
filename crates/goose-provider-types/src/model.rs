@@ -237,8 +237,7 @@ impl ModelConfig {
     }
 
     fn is_gemini3_reasoning_model_name(model_name: &str) -> bool {
-        let lower = model_name.to_lowercase();
-        lower.starts_with("gemini-3") || lower.contains("/gemini-3") || lower.contains("-gemini-3")
+        gemini_generation(model_name).is_some_and(|generation| generation >= 3)
     }
 
     pub fn max_output_tokens(&self) -> i32 {
@@ -295,6 +294,20 @@ impl ModelConfig {
             .and_then(|params| params.get(request_key))
             .and_then(|v| serde_json::from_value(v.clone()).ok())
     }
+}
+
+/// The major version of a Gemini model name ("gemini-4-argon" -> 4, "google/gemini-3.8-flash" -> 3).
+/// Matching on the number rather than a "gemini-3" prefix keeps every newer family a thinking model.
+pub fn gemini_generation(model_name: &str) -> Option<u32> {
+    let lower = model_name.to_lowercase();
+    lower.match_indices("gemini-").find_map(|(at, tag)| {
+        let boundary = at == 0 || matches!(lower.as_bytes()[at - 1], b'/' | b'-');
+        let digits: String = lower[at + tag.len()..]
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        boundary.then(|| digits.parse().ok()).flatten()
+    })
 }
 
 #[cfg(test)]
@@ -697,6 +710,9 @@ mod tests {
             assert!(ModelConfig::new("o3-mini").is_reasoning_model());
             assert!(ModelConfig::new("claude-sonnet-4").is_reasoning_model());
             assert!(ModelConfig::new("gemini-3-pro").is_reasoning_model());
+            assert!(ModelConfig::new("gemini-4-argon").is_reasoning_model());
+            assert!(ModelConfig::new("google/gemini-4-argon").is_reasoning_model());
+            assert!(!ModelConfig::new("gemini-2.5-flash").is_reasoning_model());
         }
 
         #[test]

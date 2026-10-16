@@ -2,7 +2,7 @@ use anyhow::Result;
 use goose_providers::conversation::token_usage::{ProviderUsage, Usage};
 use goose_providers::errors::ProviderError;
 use goose_providers::formats::openai::{is_valid_function_name, sanitize_function_name};
-use goose_providers::model::ModelConfig;
+use goose_providers::model::{gemini_generation, ModelConfig};
 use goose_providers::thinking::ThinkingEffort;
 use rmcp::model::{
     object, AnnotateAble, CallToolRequestParams, ErrorCode, ErrorData, RawContent, Role, Tool,
@@ -605,7 +605,7 @@ fn get_thinking_config(model_config: &ModelConfig) -> Option<ThinkingConfig> {
         return None;
     }
     let model_name = model_config.model_name.to_lowercase();
-    let is_gemini_3 = model_name.starts_with("gemini-3");
+    let is_gemini_3 = gemini_generation(&model_name).is_some_and(|generation| generation >= 3);
     let is_gemini_25 = model_name.starts_with("gemini-2.5");
     if !is_gemini_3 && !is_gemini_25 {
         return None;
@@ -1583,6 +1583,19 @@ data: [DONE]"#;
 
         let config = ModelConfig::new("gemini-2.5-pro").with_thinking_effort(ThinkingEffort::Off);
         assert!(get_thinking_config(&config).is_none());
+    }
+
+    #[test]
+    fn a_gemini_4_model_gets_the_thinking_level_it_asks_for() {
+        use goose_providers::model::ModelConfig;
+
+        let config = ModelConfig::new("gemini-4-argon").with_thinking_effort(ThinkingEffort::High);
+        let thinking_config = get_thinking_config(&config).unwrap();
+        assert!(matches!(
+            thinking_config.thinking_level,
+            Some(ThinkingLevel::High)
+        ));
+        assert!(thinking_config.include_thoughts);
     }
 
     #[test]
