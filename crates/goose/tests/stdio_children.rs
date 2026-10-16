@@ -9,11 +9,12 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
+use std::time::Instant;
 
 use goose::agents::extension::{Envs, ExtensionConfig};
 use goose::agents::extension_manager::ExtensionManager;
 use goose::agents::stdio_children;
-use goose_sidecar::{GRACE_TICK, GRACE_TICKS};
+use goose_sidecar::GRACE_TICK;
 use serial_test::serial;
 
 fn alive(pid: u32) -> bool {
@@ -34,9 +35,11 @@ fn parent_of(pid: u32) -> Option<u32> {
     String::from_utf8_lossy(&out.stdout).trim().parse().ok()
 }
 
-/// Poll through two grace windows — one for the TERM, one for the escalation to land.
+/// Poll through two grace windows — one for the TERM, one for the escalation to land — by the
+/// clock, as the teardown measures its own window.
 async fn all_gone(pids: &[u32]) -> bool {
-    for _ in 0..(2 * GRACE_TICKS) {
+    let since = Instant::now();
+    while since.elapsed() < 2 * stdio_children::grace_window() {
         if pids.iter().all(|pid| !alive(*pid)) {
             return true;
         }
@@ -183,7 +186,8 @@ fn spawn_orphan(script: &Path) -> u32 {
         .output()
         .unwrap();
     let pid: u32 = String::from_utf8_lossy(&out.stdout).trim().parse().unwrap();
-    for _ in 0..GRACE_TICKS {
+    let since = Instant::now();
+    while since.elapsed() < stdio_children::grace_window() {
         if parent_of(pid) == Some(1) {
             return pid;
         }

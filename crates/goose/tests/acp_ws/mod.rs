@@ -454,6 +454,18 @@ impl Window {
         .await;
     }
 
+    /// Streaming of THIS answer. After `session/load` the replayed history arrives as
+    /// `agent_message_chunk`s too, and a bare `until_streaming` returns on those before the new
+    /// turn exists — a cancel sent then reaches no turn (measured: CI run 38962647410).
+    pub async fn until_answer_streams(&mut self, session_id: &str, words: &str) {
+        self.notification("session/update", |p| {
+            p["sessionId"] == session_id
+                && p["update"]["sessionUpdate"] == "agent_message_chunk"
+                && p["update"]["content"]["text"] == words
+        })
+        .await;
+    }
+
     pub async fn new_chat(&mut self, work: &std::path::Path) -> String {
         self.request("session/new", json!({"cwd": work, "mcpServers": []}))
             .await["sessionId"]

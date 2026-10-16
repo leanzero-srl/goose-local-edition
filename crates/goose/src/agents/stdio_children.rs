@@ -25,11 +25,20 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use goose_sidecar::{GRACE_TICK, GRACE_TICKS};
 use serde::Deserialize;
 use sysinfo::{Pid, ProcessRefreshKind, ProcessStatus, ProcessesToUpdate, System, UpdateKind};
 use tracing::{info, warn};
+
+/// goose-sidecar's grace window as elapsed time. It is measured by the clock, never by counting
+/// `GRACE_TICK` sleeps: measured 2026-10-17 on the workhorse, a process started by launchd (the
+/// CI runner's LaunchAgent) has its 100 ms `thread::sleep` coalesced to ~240 ms, so 50 counted
+/// ticks became ~12 s and the SIGKILL landed after the caller had given up on it.
+pub fn grace_window() -> Duration {
+    GRACE_TICK * GRACE_TICKS
+}
 
 /// What a pid was when goose registered it. A later pid with a different parent or start time is a
 /// different process, and is never signalled on this record's authority.
@@ -245,7 +254,8 @@ impl Stopping {
 }
 
 fn escalate_blocking(stopping: Stopping) {
-    for _ in 0..GRACE_TICKS {
+    let termed = Instant::now();
+    while termed.elapsed() < grace_window() {
         if stopping.remaining().is_empty() {
             info!(pid = stopping.child.pid, extension = %stopping.child.name, "stdio extension exited on SIGTERM");
             return;
@@ -282,7 +292,8 @@ pub async fn teardown_all() -> String {
     let total = children.len();
     let stopping: Vec<Stopping> = children.into_iter().filter_map(Stopping::start).collect();
     let already_gone = total - stopping.len();
-    for _ in 0..GRACE_TICKS {
+    let termed = Instant::now();
+    while termed.elapsed() < grace_window() {
         if stopping.iter().all(|s| s.remaining().is_empty()) {
             break;
         }
@@ -445,7 +456,8 @@ pub async fn reap_orphans_running(scripts: &[PathBuf]) -> Vec<Reaped> {
         }
     }
     let mut pending: Vec<&GooseOrphan> = termed.iter().collect();
-    for _ in 0..GRACE_TICKS {
+    let termed_at = Instant::now();
+    while termed_at.elapsed() < grace_window() {
         pending.retain(|orphan| still_the_orphan(orphan));
         if pending.is_empty() {
             break;

@@ -394,7 +394,9 @@ async fn a_closed_window_releases_its_loops_and_the_next_window_is_offered_the_s
         )
         .await;
     let tick = submit(&mut reloaded, &again).await;
-    reloaded.until_streaming(&chat).await;
+    reloaded
+        .until_answer_streams(&chat, "Tick one on the new window")
+        .await;
     assert_eq!(stored(&chat).await.status, LoopStatus::Running);
     reloaded.cancel(&chat).await;
     assert_eq!(stop_reason(&mut reloaded, tick).await, "cancelled");
@@ -437,7 +439,9 @@ async fn a_tick_dropped_with_its_connection_ends_by_name() {
         )
         .await;
     let person = reloaded.prompt(&chat, "What happened?", None).await;
-    reloaded.until_streaming(&chat).await;
+    reloaded
+        .until_answer_streams(&chat, "The reloaded window's answer")
+        .await;
     reloaded.cancel(&chat).await;
     assert_eq!(stop_reason(&mut reloaded, person).await, "cancelled");
     reloaded.close().await;
