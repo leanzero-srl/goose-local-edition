@@ -39,8 +39,35 @@ fn tool_pair_summarization_enabled() -> bool {
         .unwrap_or(true)
 }
 
+/// A boolean tunable (env > config > `default`): true/false, on/off, yes/no and 1/0 all read as
+/// meant; anything else is warned and the default stands. (`get_param::<bool>` alone reads `0`,
+/// `off` and `no` as errors, which left a feature on.)
+pub fn knob_bool(key: &str, default: bool) -> bool {
+    let unreadable = |what: String| {
+        warn!("{key} is {what}, not on/off, true/false, yes/no or 1/0; using {default}");
+        default
+    };
+    match Config::global().get_param::<serde_json::Value>(key) {
+        Ok(serde_json::Value::Bool(on)) => on,
+        Ok(serde_json::Value::Number(n)) => match n.as_i64() {
+            Some(1) => true,
+            Some(0) => false,
+            _ => unreadable(n.to_string()),
+        },
+        Ok(serde_json::Value::String(text)) => match text.trim().to_ascii_lowercase().as_str() {
+            "true" | "on" | "yes" | "1" => true,
+            "false" | "off" | "no" | "0" => false,
+            _ => unreadable(format!("{text:?}")),
+        },
+        Ok(other) => unreadable(other.to_string()),
+        Err(crate::config::ConfigError::NotFound(_)) => default,
+        Err(e) => unreadable(format!("unreadable ({e})")),
+    }
+}
+
 /// How the summary that extends the chat reasons (`GOOSE_COMPACTION_SUMMARY_THINKING`, env > config
-/// > default `off`).
+/// > default: `off` where the provider says reasoning off keeps the request's prefix
+/// (`Provider::reasoning_off_keeps_the_prefix`), the chat's own setting everywhere else).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SummaryThinking {
     /// Reasoning off, as every helper call is. MEASURED (Forge 2.0 runs A and B on Gabee, Qwen3.8-27B
@@ -52,7 +79,9 @@ pub enum SummaryThinking {
     /// on a tool request, Q-135) renders byte-identical up to the generation prompt — checked by
     /// rendering run B's own request (llm_request.0, 59 messages, 5 tools, 93,417 chars) both ways.
     /// A chat pinned at `xhigh`/`low` on that template loses its prefix to this switch: one cold
-    /// prefill in place of the reasoning.
+    /// prefill in place of the reasoning. NOT a default where the format renders history by the
+    /// switch: Anthropic's formatter drops signed thinking blocks when effort is Off, and Anthropic
+    /// invalidates its message cache on a thinking change.
     Off,
     /// The chat's own switch (the Q-342 behaviour): the summary reasons as the chat does.
     Chat,
@@ -60,18 +89,25 @@ pub enum SummaryThinking {
 
 pub const SUMMARY_THINKING_KEY: &str = "GOOSE_COMPACTION_SUMMARY_THINKING";
 
-pub fn summary_thinking() -> SummaryThinking {
+/// `off_keeps_the_prefix`: the provider's answer for this model. Unset or unreadable, the default
+/// follows it; `off` and `chat` are the person's choice.
+pub fn summary_thinking(off_keeps_the_prefix: bool) -> SummaryThinking {
+    let default = if off_keeps_the_prefix {
+        SummaryThinking::Off
+    } else {
+        SummaryThinking::Chat
+    };
     match Config::global().get_param::<String>(SUMMARY_THINKING_KEY) {
         Ok(value) if value.eq_ignore_ascii_case("off") => SummaryThinking::Off,
         Ok(value) if value.eq_ignore_ascii_case("chat") => SummaryThinking::Chat,
         Ok(value) => {
-            warn!("{SUMMARY_THINKING_KEY} is {value:?}, not `off` or `chat`; the summary is written with reasoning off");
-            SummaryThinking::Off
+            warn!("{SUMMARY_THINKING_KEY} is {value:?}, not `off` or `chat`; using {default:?}");
+            default
         }
-        Err(crate::config::ConfigError::NotFound(_)) => SummaryThinking::Off,
+        Err(crate::config::ConfigError::NotFound(_)) => default,
         Err(e) => {
-            warn!("{SUMMARY_THINKING_KEY} could not be read ({e}); the summary is written with reasoning off");
-            SummaryThinking::Off
+            warn!("{SUMMARY_THINKING_KEY} could not be read ({e}); using {default:?}");
+            default
         }
     }
 }
@@ -96,14 +132,7 @@ pub fn summary_model_config(chat: &ModelConfig, thinking: SummaryThinking) -> Mo
 pub const SUMMARY_TOOL_CALL_RETRY_KEY: &str = "GOOSE_COMPACTION_SUMMARY_TOOL_CALL_RETRY";
 
 fn summary_tool_call_retry() -> bool {
-    match Config::global().get_param::<bool>(SUMMARY_TOOL_CALL_RETRY_KEY) {
-        Ok(retry) => retry,
-        Err(crate::config::ConfigError::NotFound(_)) => true,
-        Err(e) => {
-            warn!("{SUMMARY_TOOL_CALL_RETRY_KEY} is not a boolean ({e}); the retry stays on");
-            true
-        }
-    }
+    knob_bool(SUMMARY_TOOL_CALL_RETRY_KEY, true)
 }
 
 /// The summary config asked again after a tool call: `tool_choice: none`, and reasoning pinned off
@@ -264,9 +293,35 @@ pub struct ChatCompaction {
     /// The working set's share of the window, in chars (`working_set`); `None` when the window
     /// is unknown or GOOSE_COMPACTION_WORKING_SET_SHARE is 0 — then none is placed.
     pub working_set_budget_chars: Option<usize>,
+    /// What the compacted context must fit under; `None` when the window is unknown.
+    pub room: Option<Room>,
     /// The session's folder, which the kept block resolves relative paths against (Q-394).
     pub working_dir: std::path::PathBuf,
     pub progress: Option<CompactionObserver>,
+}
+
+/// What a compaction must leave room under: the window, the compaction point, and the system
+/// prompt + tools every request carries. The shares (working set 1/4, tail and kept block 1/16)
+/// are of the WINDOW; on a small window with a large head they would end past the compaction
+/// point and compact again on the next tool iteration — so what is placed after a summary is
+/// sized to the room under `ceiling` (COMPACTION-V2.md §5).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Room {
+    pub limit: usize,
+    pub threshold: f64,
+    pub head_tokens: usize,
+}
+
+impl Room {
+    /// `limit × (2·threshold − 1)`: the rule stage 1 is held to — the context left leaves at
+    /// least the room before the compaction point that the window has past it.
+    pub fn ceiling(&self) -> usize {
+        (self.limit as f64 * (2.0 * self.threshold - 1.0)).max(0.0) as usize
+    }
+
+    pub fn compaction_point(&self) -> usize {
+        (self.limit as f64 * self.threshold) as usize
+    }
 }
 
 // ratio: the kept block may take a sixteenth of the window — E2E #3p's model-written summary was
@@ -505,8 +560,18 @@ pub async fn compact_chat(
     request: &SummaryRequest,
     chat: &ChatCompaction,
 ) -> Result<ChatCompacted> {
-    let keep_tail = configured_keep_tail()
-        .unwrap_or_else(|| chat_tail(conversation.messages(), chat.kept_budget_chars));
+    let tail_budget = match (chat.kept_budget_chars, chat.room) {
+        (Some(share), Some(room)) => Some(share.min(
+            // ratio: the tail takes at most a quarter of the room under the ceiling after the
+            // head; the summary, the kept block and the working set share the rest.
+            (room.ceiling().saturating_sub(room.head_tokens) as f64
+                * crate::agents::platform_extensions::recall::CHARS_PER_TOKEN
+                / 4.0) as usize,
+        )),
+        (share, _) => share,
+    };
+    let keep_tail =
+        configured_keep_tail().unwrap_or_else(|| chat_tail(conversation.messages(), tail_budget));
     compact_core(
         provider,
         model_config,
@@ -571,7 +636,7 @@ async fn compact_core(
     };
 
     if let Some(chat) = chat.filter(|_| !manual_compact) {
-        if let Some(conversation) = mask_stage(messages, chat).await {
+        if let Some(conversation) = mask_stage(messages, chat, request).await {
             return Ok(ChatCompacted::Compacted {
                 conversation,
                 usage: Box::new(ProviderUsage::new(
@@ -703,6 +768,7 @@ async fn compact_core(
         final_messages.push(updated_msg);
     }
 
+    let summary_text = summary_message.as_concat_text();
     let summary_msg = summary_message.with_metadata(MessageMetadata::agent_only());
 
     let mut continuation_messages = vec![summary_msg];
@@ -727,25 +793,19 @@ async fn compact_core(
     // stays the message `latest_summary` reads), agent-only, before the kept tail and the
     // person's message.
     if let Some(chat) = chat {
-        match chat.working_set_budget_chars {
-            Some(budget) => {
-                let files =
-                    working_set::touched_files(messages_to_compact, Some(&chat.working_dir));
-                if let Some(block) =
-                    working_set::working_set_block(&files, budget, Some(&chat.working_dir))
-                {
-                    final_messages.push(
-                        Message::user()
-                            .with_text(block)
-                            .with_metadata(MessageMetadata::agent_only()),
-                    );
-                }
-            }
-            None => tracing::info!(
-                "compaction: no working set placed after the summary (the window is unknown or \
-                 {} is 0)",
-                working_set::WORKING_SET_SHARE_KEY
-            ),
+        let fixed_text = format!(
+            "{summary_text}\n{continuation_text}\n{}",
+            preserved_text.as_deref().unwrap_or("")
+        );
+        if let Some(block) =
+            working_set_after_summary(chat, messages_to_compact, &fixed_text, &messages[cut..])
+                .await
+        {
+            final_messages.push(
+                Message::user()
+                    .with_text(block)
+                    .with_metadata(MessageMetadata::agent_only()),
+            );
         }
     }
 
@@ -778,11 +838,88 @@ async fn compact_core(
     })
 }
 
+/// The working set placed after a summary, sized to the room the compaction must leave (`Room`):
+/// the head, the summary with its kept block, the continuation line, the person's message and the
+/// kept tail are fixed; the working set gets at most what is left under the ceiling. When even
+/// that leaves the context past the compaction point, it says so loudly — the next tool iteration
+/// will compact again.
+async fn working_set_after_summary(
+    chat: &ChatCompaction,
+    messages_to_compact: &[Message],
+    fixed_text: &str,
+    tail: &[Message],
+) -> Option<String> {
+    let Some(configured) = chat.working_set_budget_chars else {
+        info!(
+            "compaction: no working set placed after the summary (the window is unknown or {} is 0)",
+            working_set::WORKING_SET_SHARE_KEY
+        );
+        return None;
+    };
+    let files = working_set::touched_files(messages_to_compact, Some(&chat.working_dir));
+    let block_within =
+        |budget: usize| working_set::working_set_block(&files, budget, Some(&chat.working_dir));
+    let Some(room) = chat.room else {
+        return block_within(configured);
+    };
+    let counter = match create_token_counter().await {
+        Ok(counter) => counter,
+        Err(e) => {
+            warn!(
+                "compaction_room_unmeasured: no tokenizer ({e}); the working set takes its \
+                 configured share of the window"
+            );
+            return block_within(configured);
+        }
+    };
+    let fixed = room.head_tokens
+        + counter.count_tokens(fixed_text)
+        + counter.count_chat_tokens("", tail, &[]);
+    let available = room.ceiling().saturating_sub(fixed);
+    let mut block = if available == 0 {
+        None
+    } else {
+        let budget = configured.min(
+            (available as f64 * crate::agents::platform_extensions::recall::CHARS_PER_TOKEN)
+                as usize,
+        );
+        let first = block_within(budget);
+        // Chars per token run below the estimate on code: shrink once, by the measured overshoot.
+        match first.as_deref().map(|b| counter.count_tokens(b)) {
+            Some(tokens) if tokens > available => block_within(budget * available / tokens),
+            _ => first,
+        }
+    };
+    let block_tokens = block.as_deref().map_or(0, |b| counter.count_tokens(b));
+    if block_tokens > available {
+        block = None;
+    }
+    let after = fixed + block.as_deref().map_or(0, |b| counter.count_tokens(b));
+    if available == 0 || after > room.compaction_point() {
+        tracing::warn!(
+            fixed,
+            available,
+            after,
+            limit = room.limit,
+            head = room.head_tokens,
+            working_set = block.is_some(),
+            "compaction_cannot_make_room: the compacted context ({after} tokens with the working \
+             set, {fixed} without) is past the room this window leaves; the next request may \
+             compact again"
+        );
+    }
+    block
+}
+
 /// Stage 1 (`mask`): an automatic compaction with no note for its summary first tries to make room
 /// by dropping old tool outputs (stubs of facts stay) and old reasoning, placing the working set,
 /// and asking for no summary. Taken only when the estimate passes `mask::accepts`; `None` (the
 /// summary runs) otherwise, each reason logged.
-async fn mask_stage(messages: &[Message], chat: &ChatCompaction) -> Option<Conversation> {
+async fn mask_stage(
+    messages: &[Message],
+    chat: &ChatCompaction,
+    request: &SummaryRequest,
+) -> Option<Conversation> {
     let CompactionTrigger::Auto {
         used: Some(used),
         limit: Some(limit),
@@ -808,7 +945,18 @@ async fn mask_stage(messages: &[Message], chat: &ChatCompaction) -> Option<Conve
         working_set::working_set_block(&files, budget, Some(&chat.working_dir))
     });
     let note = MASK_CONTINUATION_TEXT;
-    let removed = counter.count_tokens(&masked.removed);
+    // Reasoning counts as freed only as far as the provider rendered it: the openai format sends
+    // it only with preserve_thinking_context, and a template may drop it before the last user
+    // message. `used` is what the provider measured; goose's count of the same request without
+    // any reasoning (`count_chat_tokens` counts none) leaves at most the reasoning it rendered.
+    let reasoning = counter.count_tokens(&masked.removed_reasoning);
+    let rendered_reasoning = match request {
+        SummaryRequest::ExtendsChat(frame) if reasoning > 0 => used.saturating_sub(
+            counter.count_chat_tokens(&frame.system_prompt, messages, &frame.tools),
+        ),
+        _ => 0,
+    };
+    let removed = counter.count_tokens(&masked.removed_outputs) + reasoning.min(rendered_reasoning);
     let added = counter.count_tokens(&masked.added)
         + block.as_deref().map_or(0, |b| counter.count_tokens(b))
         + counter.count_tokens(note);
@@ -1249,7 +1397,10 @@ async fn summarize_as_the_chat(
         }
     };
     let watch_note = kept.note.is_some() && chat.may_ask;
-    let summary_config = summary_model_config(model_config, summary_thinking());
+    let summary_config = summary_model_config(
+        model_config,
+        summary_thinking(provider.reasoning_off_keeps_the_prefix(&model_config.model_name)),
+    );
     let mut config = summary_config.clone();
     let mut retried = false;
     let (mut response, mut provider_usage) = loop {
@@ -1325,6 +1476,15 @@ async fn summarize_as_the_chat(
             return Ok(ChatSummary::NotWritten(format!(
                 "was answered with a tool call instead of the summary \
                  ({SUMMARY_TOOL_CALL_RETRY_KEY} is off)"
+            )));
+        }
+        // Only the formats that put `tool_choice` on the wire can be asked this; elsewhere the
+        // same request would come back the same way.
+        if !provider.sends_tool_choice(&model_config.model_name) {
+            return Ok(ChatSummary::NotWritten(format!(
+                "was answered with a tool call instead of the summary, and {}'s request format \
+                 cannot carry tool_choice none, so it was not asked again",
+                provider.get_name()
             )));
         }
         warn!(
@@ -2383,6 +2543,7 @@ mod tests {
             ledger: LedgerRead::Entries(Vec::new()),
             kept_budget_chars: None,
             working_set_budget_chars: None,
+            room: None,
             working_dir: std::path::PathBuf::from("/Users/someone"),
             progress: None,
         }
@@ -2746,9 +2907,10 @@ mod tests {
                 panic!("compacted");
             };
             let calls = provider.calls.lock().unwrap();
-            // A tool call is asked again once, extending the chat with tool_choice none
-            // (GOOSE_COMPACTION_SUMMARY_TOOL_CALL_RETRY); a refusal as too long is not.
-            let chat_shaped = if tool_call { 2 } else { 1 };
+            // This provider's format cannot carry tool_choice none (`sends_tool_choice` false),
+            // so a tool call is not asked again; neither is a refusal as too long.
+            let _ = tool_call;
+            let chat_shaped = 1;
             assert_eq!(calls.len(), chat_shaped + 1);
             for call in &calls[..chat_shaped] {
                 assert_eq!(call.0, "You are goose.");
@@ -2959,7 +3121,7 @@ mod tests {
             stored.push(Message::user().with_tool_response(
                 format!("c{i}"),
                 Ok(rmcp::model::CallToolResult::success(vec![
-                    RawContent::text(words(2_000, &format!("out{i}-"))).no_annotation(),
+                    RawContent::text(words(3_000, &format!("out{i}-"))).no_annotation(),
                 ])),
             ));
         }
@@ -2967,7 +3129,8 @@ mod tests {
         inputs.working_dir = dir.path().to_path_buf();
         inputs.working_set_budget_chars = Some(10_000);
         inputs.trigger = CompactionTrigger::Auto {
-            used: Some(100_000),
+            // Over the ceiling (106,905) on its own: only what masking removes admits stage 1.
+            used: Some(115_000),
             limit: Some(178_176),
             threshold: 0.8,
         };
@@ -3024,9 +3187,13 @@ mod tests {
             "{}",
             text(agent[2])
         );
-        assert!(!text(agent[1]).contains("why0-"), "old reasoning dropped");
         assert!(
-            text(agent[8]).contains("out3-1999"),
+            text(agent[1]).contains("why0-"),
+            "reasoning is kept by default: the plan lives there"
+        );
+        assert!(text(agent[6]).contains("[Output elided at compaction"));
+        assert!(
+            text(agent[8]).contains("out3-2999"),
             "the newest output whole"
         );
         assert!(agent[9]
@@ -3061,6 +3228,10 @@ mod tests {
     impl Provider for ToolCallOnceProvider {
         fn get_name(&self) -> &str {
             "tool-call-once"
+        }
+
+        fn sends_tool_choice(&self, _model_name: &str) -> bool {
+            true
         }
 
         async fn stream(
@@ -3155,6 +3326,9 @@ mod tests {
             fn get_name(&self) -> &str {
                 "scripted-retry"
             }
+            fn sends_tool_choice(&self, _model_name: &str) -> bool {
+                true
+            }
             async fn stream(
                 &self,
                 model_config: &ModelConfig,
@@ -3199,6 +3373,46 @@ mod tests {
         let summary = latest_summary(compacted.messages()).expect("a summary");
         assert!(summary.starts_with("<transcript summary>"), "{summary}");
         assert_eq!(scripted.inner.calls.lock().unwrap().len(), 1);
+    }
+
+    /// The retry as it goes on the WIRE to an MLX engine (the `omlx` definition, openai chat
+    /// format): the first summary request carries no tool_choice, the second carries
+    /// `"tool_choice": "none"` and the thinking-off switch, with the same messages and tools.
+    #[tokio::test]
+    async fn the_retry_puts_tool_choice_none_on_the_wire() {
+        use crate::model_config::mlx_endpoint::{thinking_off, MlxEndpoint, SERVED};
+        let engine = MlxEndpoint::start_answering_first_with_a_tool_call().await;
+        let ChatCompacted::Compacted { .. } = compact_chat(
+            engine.provider.as_ref(),
+            &ModelConfig::new(SERVED),
+            "s",
+            &two_turn_chat(),
+            false,
+            &frame(),
+            &chat_inputs(None, false),
+        )
+        .await
+        .unwrap() else {
+            panic!("compacted");
+        };
+        let bodies = engine.bodies().await;
+        // The mock's second answer carries no summary section, so the guard sends the summary
+        // to the transcript request: three bodies.
+        assert_eq!(
+            bodies.len(),
+            3,
+            "summary, the one retry, transcript: {bodies:?}"
+        );
+        let (first, retry, transcript) = (&bodies[0], &bodies[1], &bodies[2]);
+        assert!(first.get("tool_choice").is_none(), "{first}");
+        assert_eq!(retry["tool_choice"], serde_json::json!("none"), "{retry}");
+        assert_eq!(retry["chat_template_kwargs"], thinking_off());
+        assert_eq!(retry["messages"], first["messages"]);
+        assert_eq!(retry["tools"], first["tools"]);
+        assert!(transcript.get("tool_choice").is_none());
+        assert!(transcript
+            .get("tools")
+            .is_none_or(|t| t.as_array().is_some_and(|t| t.is_empty())));
     }
 
     /// `chat` keeps the chat's effort on the retry (it is the first attempt's); an unpinned config

@@ -23,11 +23,11 @@ pub const WORKING_SET_CLOSE: &str = "</current-files-after-compaction>";
 /// working set may take; 0 turns it off.
 pub const WORKING_SET_SHARE_KEY: &str = "GOOSE_COMPACTION_WORKING_SET_SHARE";
 
-// ratio: a quarter of the window. MEASURED: the files re-read after a compaction were 27.6k tokens
-// in run A (7.2k -> 34.8k) and 28-42k in run B, 17-26% of the 158,833-token window the engine
-// serves; a quarter (39.7k tokens there) holds A's whole re-read set and all but ~2k of B's
-// largest. What the model re-read cost those tokens anyway, plus 7-16 calls and the re-plan.
-pub const DEFAULT_WORKING_SET_SHARE: f64 = 0.25;
+// The files re-read after a compaction were 27.6k tokens in run A (7.2k -> 34.8k) and 28-42k in
+// run B, 17-26% of the 158,833-token window the engine serves; a quarter (39.7k tokens there)
+// holds A's whole re-read set and all but ~2k of B's largest. What the model re-read cost those
+// tokens anyway, plus 7-16 calls and the re-plan.
+pub const DEFAULT_WORKING_SET_SHARE: f64 = 0.25; // ratio: of the window; measured re-reads 17-26%
 
 /// The working set's budget in chars for a window of `context_limit` tokens; `None` when the window
 /// is unknown or the share is 0.
@@ -85,14 +85,30 @@ pub struct Touched {
 
 /// The files the conversation's calls read (a shell `cat`/`head`/`tail`/`nl`/`sed`/`less`/`more`
 /// at the head of a pipeline) or wrote (`write`, `edit`), absolute, newest touch first, each once.
+/// Only calls whose result came back and succeeded count: a call declined in approve mode, skipped
+/// by the repeat guard or failed read nothing, and goose must not read for it — a declined
+/// `cat ~/.aws/credentials` would otherwise be read at the compaction and sent to the provider.
 pub fn touched_files(messages: &[Message], working_dir: Option<&Path>) -> Vec<Touched> {
     let mut touched: Vec<Touched> = Vec::new();
+    let succeeded: std::collections::HashSet<&str> = messages
+        .iter()
+        .flat_map(|m| m.content.iter())
+        .filter_map(|c| match c {
+            MessageContent::ToolResponse(r) => match &r.tool_result {
+                Ok(result) if result.is_error != Some(true) => Some(r.id.as_str()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
     let calls = messages
         .iter()
         .filter(|m| m.role == Role::Assistant)
         .flat_map(|m| m.content.iter())
         .filter_map(|c| match c {
-            MessageContent::ToolRequest(req) => req.tool_call.as_ref().ok(),
+            MessageContent::ToolRequest(req) if succeeded.contains(req.id.as_str()) => {
+                req.tool_call.as_ref().ok()
+            }
             _ => None,
         });
     for call in calls {
@@ -211,11 +227,78 @@ fn is_redirection(token: &str) -> bool {
     rest.starts_with('>') || rest.starts_with('<')
 }
 
+/// A redirection operator standing alone, whose target (a file, a heredoc delimiter, a
+/// here-string) is the next token.
+fn takes_the_next_token(token: &str) -> bool {
+    matches!(
+        token.trim_start_matches(|c: char| c.is_ascii_digit()),
+        ">" | ">>" | "<" | ">|" | "&>" | "&>>" | "<<" | "<<-" | "<<<"
+    )
+}
+
+/// The heredoc delimiters a line opens (`<< EOF`, `<<'EOF'`, `<<-"END"`), in order, each with
+/// whether its closing line may be indented by tabs (`<<-`). A here-string (`<<<`) opens none.
+fn heredoc_delimiters(line: &str) -> Vec<(String, bool)> {
+    let mut found = Vec::new();
+    let mut rest = line;
+    while let Some(at) = rest.find("<<") {
+        let after = &rest[at + 2..];
+        if let Some(string) = after.strip_prefix('<') {
+            rest = string;
+            continue;
+        }
+        let (strip_tabs, after) = match after.strip_prefix('-') {
+            Some(after) => (true, after),
+            None => (false, after),
+        };
+        let after = after.trim_start();
+        let word: String = match after.chars().next() {
+            Some(quote @ ('\'' | '"')) => after[1..].split(quote).next().unwrap_or("").to_string(),
+            _ => after
+                .chars()
+                .take_while(|c| {
+                    !c.is_whitespace() && !matches!(c, ';' | '&' | '|' | '<' | '>' | ')')
+                })
+                .filter(|c| *c != '\\')
+                .collect(),
+        };
+        if !word.is_empty() {
+            found.push((word, strip_tabs));
+        }
+        rest = after;
+    }
+    found
+}
+
+/// The command with every heredoc's body taken out: the lines after a line that opens a heredoc,
+/// up to and including its delimiter line, are data, not commands.
+fn without_heredoc_bodies(command: &str) -> String {
+    let mut out = String::new();
+    let mut open: std::collections::VecDeque<(String, bool)> = Default::default();
+    for line in command.split('\n') {
+        if let Some((delimiter, strip_tabs)) = open.front() {
+            let closing = if *strip_tabs {
+                line.trim_start_matches('\t')
+            } else {
+                line
+            };
+            if closing == delimiter {
+                open.pop_front();
+            }
+            continue;
+        }
+        open.extend(heredoc_delimiters(line));
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
 /// The files one shell command prints, resolved against `base` and the `cd`s before each part.
 fn shell_reads(command: &str, base: Option<&Path>) -> Vec<Touched> {
     let mut folder = base.map(Path::to_path_buf);
     let mut reads = Vec::new();
-    for (part, heads) in simple_commands(command) {
+    for (part, heads) in simple_commands(&without_heredoc_bodies(command)) {
         let Ok(tokens) = shell_words::split(&part) else {
             continue;
         };
@@ -248,10 +331,7 @@ fn shell_reads(command: &str, base: Option<&Path>) -> Vec<Touched> {
                 continue;
             }
             if is_redirection(token) {
-                skip_next = matches!(
-                    token.trim_start_matches(|c: char| c.is_ascii_digit()),
-                    ">" | ">>" | "<"
-                );
+                skip_next = takes_the_next_token(token);
                 continue;
             }
             if token.starts_with('-') && token.len() > 1 {
@@ -339,6 +419,46 @@ enum Entry {
     DidNotFit { path: PathBuf, size: String },
     Dependency { path: PathBuf },
     ReadInPart { path: PathBuf },
+    NotRegular { path: PathBuf },
+    Outside { path: PathBuf },
+    Secret { path: PathBuf, why: &'static str },
+}
+
+/// Folders whose files hold credentials, by name.
+const SECRET_FOLDERS: [&str; 6] = [".ssh", ".aws", ".gnupg", ".kube", ".azure", ".docker"];
+
+/// Whether `path` looks like a credential: inside one of `SECRET_FOLDERS`, or a file named like an
+/// environment file, a key, a certificate bundle or a credentials store. A named exclusion — the
+/// block says why the file is not shown — never a silent one.
+fn secret_kind(path: &Path) -> Option<&'static str> {
+    if path.components().any(|c| {
+        SECRET_FOLDERS
+            .iter()
+            .any(|folder| c.as_os_str() == std::ffi::OsStr::new(folder))
+    }) {
+        return Some("inside a credentials folder");
+    }
+    let name = path.file_name()?.to_string_lossy().to_ascii_lowercase();
+    let key_like = [".pem", ".key", ".p12", ".pfx", ".keystore", ".jks"]
+        .iter()
+        .any(|ext| name.ends_with(ext))
+        || ["id_rsa", "id_ed25519", "id_ecdsa", "id_dsa"]
+            .iter()
+            .any(|key| name.starts_with(key));
+    if key_like {
+        return Some("looks like a key or certificate file");
+    }
+    if name.starts_with(".env") {
+        return Some("looks like an environment file");
+    }
+    if matches!(
+        name.as_str(),
+        ".netrc" | ".npmrc" | ".pypirc" | ".git-credentials" | "credentials"
+    ) || name.contains("secret")
+    {
+        return Some("looks like a credentials file");
+    }
+    None
 }
 
 /// Whether `path` lies inside a dependency or build folder (`skills::should_skip_dir`, the list the
@@ -355,9 +475,10 @@ fn in_dependency_folder(path: &Path, working_dir: Option<&Path>) -> bool {
 
 /// The widest a char can be in UTF-8: a file of more bytes than this many times the budget left
 /// cannot fit, and is not read to find that out.
-const UTF8_MAX_CHAR_BYTES: u64 = 4;
+const UTF8_MAX_CHAR_BYTES: u64 = 4; // measured: the UTF-8 encoding's widest char (an algorithm constant)
 
 fn read_entry(path: &Path, budget_left: usize) -> Option<Entry> {
+    use std::io::Read;
     let path_buf = path.to_path_buf();
     let meta = match std::fs::metadata(path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -370,23 +491,33 @@ fn read_entry(path: &Path, budget_left: usize) -> Option<Entry> {
             })
         }
         Ok(meta) if meta.is_dir() => return None,
+        // A device, a FIFO or a socket (`cat /dev/urandom | tr …`): reading one may never end.
+        Ok(meta) if !meta.is_file() => return Some(Entry::NotRegular { path: path_buf }),
         Ok(meta) => meta,
     };
-    if meta.len() > UTF8_MAX_CHAR_BYTES * budget_left as u64 {
+    let bound = UTF8_MAX_CHAR_BYTES * budget_left as u64;
+    if meta.len() > bound {
         return Some(Entry::DidNotFit {
             path: path_buf,
             size: format!("{} bytes", meta.len()),
         });
     }
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            return Some(Entry::Unreadable {
-                path: path_buf,
-                error: e.to_string(),
-            })
-        }
-    };
+    // Bounded even so: the file may have grown since its metadata was read.
+    let mut bytes = Vec::new();
+    let read =
+        std::fs::File::open(path).and_then(|file| file.take(bound + 1).read_to_end(&mut bytes));
+    if let Err(e) = read {
+        return Some(Entry::Unreadable {
+            path: path_buf,
+            error: e.to_string(),
+        });
+    }
+    if bytes.len() as u64 > bound {
+        return Some(Entry::DidNotFit {
+            path: path_buf,
+            size: format!("more than {bound} bytes"),
+        });
+    }
     let content = match String::from_utf8(bytes) {
         Ok(content) if !content.contains('\0') => content,
         _ => {
@@ -411,8 +542,9 @@ fn read_entry(path: &Path, budget_left: usize) -> Option<Entry> {
 
 /// The working-set block for `files` (newest first) within `budget_chars`: every text file whole
 /// while it fits, newest first; a file that does not fit is named with its size, never cut; a
-/// file no longer on disk, a binary file, an unreadable one, one only read in part and one
-/// inside a dependency folder are each said. `None` when there is no file to speak of.
+/// file no longer on disk, a binary file, an unreadable one, one only read in part, one inside a
+/// dependency folder, a non-regular file, one outside the chat's folder and one that looks like a
+/// credential are each said — the last three are never read. `None` when there is no file to speak of.
 pub fn working_set_block(
     files: &[Touched],
     budget_chars: usize,
@@ -421,7 +553,14 @@ pub fn working_set_block(
     let mut entries = Vec::new();
     let mut used = 0usize;
     for Touched { path, in_part } in files {
-        let entry = if in_dependency_folder(path, working_dir) {
+        let entry = if working_dir.is_some_and(|dir| !path.starts_with(dir)) {
+            Entry::Outside { path: path.clone() }
+        } else if let Some(why) = secret_kind(path) {
+            Entry::Secret {
+                path: path.clone(),
+                why,
+            }
+        } else if in_dependency_folder(path, working_dir) {
             Entry::Dependency { path: path.clone() }
         } else if *in_part {
             Entry::ReadInPart { path: path.clone() }
@@ -491,6 +630,15 @@ pub fn working_set_block(
                 "{} — {size}, more than the budget left; not shown",
                 path.display()
             )),
+            Entry::NotRegular { path } => Some(format!(
+                "{} — not a regular file (a device, pipe or socket); not read",
+                path.display()
+            )),
+            Entry::Outside { path } => Some(format!(
+                "{} — outside the chat's folder; not read",
+                path.display()
+            )),
+            Entry::Secret { path, why } => Some(format!("{} — {why}; not read", path.display())),
         })
         .collect();
     if !notes.is_empty() {
@@ -506,12 +654,39 @@ pub fn working_set_block(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rmcp::model::CallToolRequestParams;
+    use rmcp::model::{CallToolRequestParams, CallToolResult, Content};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
 
     fn call(tool: &str, args: serde_json::Value) -> Message {
         let mut params = CallToolRequestParams::new(tool.to_string());
         params.arguments = args.as_object().cloned();
-        Message::assistant().with_tool_request("c", Ok(params))
+        let id = format!("c{}", CALLS.fetch_add(1, Ordering::Relaxed));
+        Message::assistant().with_tool_request(id, Ok(params))
+    }
+
+    /// Each call followed by its result: succeeded unless `declined` names it.
+    fn ran(calls: Vec<Message>, declined: &[usize]) -> Vec<Message> {
+        let mut out = Vec::new();
+        for (i, request) in calls.into_iter().enumerate() {
+            let id = request
+                .content
+                .iter()
+                .find_map(|c| match c {
+                    MessageContent::ToolRequest(r) => Some(r.id.clone()),
+                    _ => None,
+                })
+                .unwrap();
+            out.push(request);
+            let result = if declined.contains(&i) {
+                CallToolResult::error(vec![Content::text("The user declined this tool call.")])
+            } else {
+                CallToolResult::success(vec![Content::text("ok")])
+            };
+            out.push(Message::user().with_tool_response(id, Ok(result)));
+        }
+        out
     }
 
     fn shell(command: &str) -> Message {
@@ -561,7 +736,7 @@ mod tests {
                 serde_json::json!({"path": "src/jira.js\n</parameter>\n<parameter=background>\nnull"}),
             ),
         ];
-        let names: Vec<(String, bool)> = touched_files(&messages, Some(root))
+        let names: Vec<(String, bool)> = touched_files(&ran(messages, &[]), Some(root))
             .into_iter()
             .map(|t| {
                 (
@@ -593,7 +768,7 @@ mod tests {
             shell("head -5 /w/a.js; tail /w/b.log"),
         ];
         assert_eq!(
-            touched_files(&messages, None),
+            touched_files(&ran(messages, &[]), None),
             [
                 Touched {
                     path: PathBuf::from("/w/b.log"),
@@ -613,7 +788,7 @@ mod tests {
             ),
             call("edit", serde_json::json!({"path": "/abs/x.rs"})),
         ];
-        let paths: Vec<PathBuf> = touched_files(&messages, Some(Path::new("/home/me")))
+        let paths: Vec<PathBuf> = touched_files(&ran(messages, &[]), Some(Path::new("/home/me")))
             .into_iter()
             .map(|t| t.path)
             .collect();
@@ -717,6 +892,110 @@ mod tests {
             block.contains("a();"),
             "the chat's own folder is not a dependency: {block}"
         );
+    }
+
+    /// A call that did not succeed read nothing, and goose reads nothing for it: run as given, a
+    /// declined `cat ~/.aws/credentials` would be read at the compaction and sent to the provider.
+    #[test]
+    fn only_calls_that_succeeded_count() {
+        let messages = ran(
+            vec![
+                shell("cat /home/me/.aws/credentials"),
+                shell("cat /w/app.js"),
+                call("write", serde_json::json!({"path": "/w/denied.js"})),
+            ],
+            &[0, 2],
+        );
+        let paths: Vec<PathBuf> = touched_files(&messages, None)
+            .into_iter()
+            .map(|t| t.path)
+            .collect();
+        assert_eq!(paths, [PathBuf::from("/w/app.js")]);
+        let unanswered = vec![shell("cat /w/never.js")];
+        assert!(
+            touched_files(&unanswered, None).is_empty(),
+            "no result, no read"
+        );
+    }
+
+    /// Outside the chat's folder, or named like a credential: named, never read.
+    #[test]
+    fn files_outside_the_folder_or_like_credentials_are_named_never_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        std::fs::create_dir_all(d.join(".aws")).unwrap();
+        std::fs::write(d.join(".aws/credentials"), "aws_secret_access_key=AKIA").unwrap();
+        std::fs::write(d.join(".env.local"), "TOKEN=abc").unwrap();
+        std::fs::write(d.join("server.pem"), "-----BEGIN").unwrap();
+        std::fs::write(d.join("app.js"), "run();").unwrap();
+        let other = tempfile::tempdir().unwrap();
+        std::fs::write(other.path().join("notes.md"), "elsewhere").unwrap();
+        let files = [
+            whole(d.join(".aws/credentials")),
+            whole(d.join(".env.local")),
+            whole(d.join("server.pem")),
+            whole(other.path().join("notes.md")),
+            whole(d.join("app.js")),
+        ];
+        let block = working_set_block(&files, 10_000, Some(d)).unwrap();
+        assert!(block.contains("run();"), "{block}");
+        for secret in ["AKIA", "TOKEN=abc", "-----BEGIN", "elsewhere"] {
+            assert!(!block.contains(secret), "{secret}: {block}");
+        }
+        assert!(
+            block.contains("credentials — inside a credentials folder; not read"),
+            "{block}"
+        );
+        assert!(
+            block.contains(".env.local — looks like an environment file; not read"),
+            "{block}"
+        );
+        assert!(
+            block.contains("server.pem — looks like a key or certificate file; not read"),
+            "{block}"
+        );
+        assert!(
+            block.contains("notes.md — outside the chat's folder; not read"),
+            "{block}"
+        );
+    }
+
+    /// `cat /dev/urandom | tr …` names a device: never opened (a read of it never ends), said.
+    #[cfg(unix)]
+    #[test]
+    fn a_device_is_named_never_read() {
+        let messages = ran(
+            vec![shell("cat /dev/urandom | tr -dc a-z | head -c 8")],
+            &[],
+        );
+        let files = touched_files(&messages, None);
+        assert_eq!(files, [whole(PathBuf::from("/dev/urandom"))]);
+        let block = working_set_block(&files, 1_000, None).unwrap();
+        assert!(
+            block
+                .contains("/dev/urandom — not a regular file (a device, pipe or socket); not read"),
+            "{block}"
+        );
+    }
+
+    /// A heredoc's delimiter is not a file and its body is not commands: `cat > a.js << 'EOF'`
+    /// writes a.js (the redirection target is skipped) and the `cat b.js` line inside the body is
+    /// data. A here-string's word is not a file either.
+    #[test]
+    fn heredoc_delimiters_and_bodies_are_not_reads() {
+        let messages = ran(
+            vec![
+                shell("cat > a.js << 'EOF'\ncat b.js\nconst x = 1;\nEOF\ncat c.js"),
+                shell("cat <<-END > d.js\n\tcat e.js\n\tEND\ncat f.js"),
+                shell("cat <<< hello; cat g.js"),
+            ],
+            &[],
+        );
+        let names: Vec<String> = touched_files(&messages, Some(Path::new("/w")))
+            .into_iter()
+            .map(|t| t.path.display().to_string())
+            .collect();
+        assert_eq!(names, ["/w/g.js", "/w/f.js", "/w/c.js"]);
     }
 
     #[test]

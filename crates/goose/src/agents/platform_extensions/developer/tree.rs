@@ -114,14 +114,7 @@ impl TreeTool {
 /// `GOOSE_TREE_BOUNDED` (env > config > default true): false lists every folder, dependency trees
 /// included, and returns the listing whole — the tool as it was before the cut.
 fn tree_bounded() -> bool {
-    match crate::config::Config::global().get_param::<bool>("GOOSE_TREE_BOUNDED") {
-        Ok(bounded) => bounded,
-        Err(crate::config::ConfigError::NotFound(_)) => true,
-        Err(e) => {
-            tracing::warn!("GOOSE_TREE_BOUNDED is not a boolean ({e}); the tree stays bounded");
-            true
-        }
-    }
+    crate::context_mgmt::knob_bool("GOOSE_TREE_BOUNDED", true)
 }
 
 #[derive(Default)]

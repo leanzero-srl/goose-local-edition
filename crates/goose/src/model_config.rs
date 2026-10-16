@@ -403,6 +403,34 @@ pub(crate) mod mlx_endpoint {
     }
 
     impl MlxEndpoint {
+        /// An engine whose FIRST chat answer is a tool call (`shell`) and every later one the
+        /// short streamed text `start` answers with — a summary request answered with a tool call.
+        pub(crate) async fn start_answering_first_with_a_tool_call() -> Self {
+            let endpoint = Self::start().await;
+            let body = format!(
+                "{}{}data: [DONE]\n\n",
+                chunk(
+                    json!({"role": "assistant", "tool_calls": [{"index": 0, "id": "t1",
+                        "type": "function", "function": {"name": "shell",
+                        "arguments": "{\"command\": \"ls\"}"}}]}),
+                    Value::Null
+                ),
+                chunk(json!({}), json!("tool_calls")),
+            );
+            Mock::given(method("POST"))
+                .and(path("/v1/chat/completions"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .insert_header("content-type", "text/event-stream")
+                        .set_body_string(body),
+                )
+                .up_to_n_times(1)
+                .with_priority(1)
+                .mount(&endpoint.server)
+                .await;
+            endpoint
+        }
+
         pub(crate) async fn start() -> Self {
             let server = MockServer::start().await;
             Mock::given(method("GET"))
