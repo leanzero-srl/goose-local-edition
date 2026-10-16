@@ -85,6 +85,69 @@ pub fn summary_model_config(chat: &ModelConfig, thinking: SummaryThinking) -> Mo
     }
 }
 
+/// `GOOSE_COMPACTION_SUMMARY_TOOL_CALL_RETRY` (env > config > default true): a chat-shaped
+/// summary request answered with a tool call is asked once more with `tool_choice: none` before
+/// the transcript fallback. MEASURED (Forge 2.0 run B, C4): the chat-shaped request read 100,658
+/// of 103,412 tokens from cache and answered with a tool call (91 tokens, 17.7 s); the transcript
+/// fallback then read 0 of 85,085 and took 568.8 s to its first token, 1,207 s in all. A retry
+/// sends the same messages and tools, so it reads the same prefix.
+pub const SUMMARY_TOOL_CALL_RETRY_KEY: &str = "GOOSE_COMPACTION_SUMMARY_TOOL_CALL_RETRY";
+
+fn summary_tool_call_retry() -> bool {
+    match Config::global().get_param::<bool>(SUMMARY_TOOL_CALL_RETRY_KEY) {
+        Ok(retry) => retry,
+        Err(crate::config::ConfigError::NotFound(_)) => true,
+        Err(e) => {
+            warn!("{SUMMARY_TOOL_CALL_RETRY_KEY} is not a boolean ({e}); the retry stays on");
+            true
+        }
+    }
+}
+
+/// The summary config asked again after a tool call: `tool_choice: none`, and reasoning pinned off
+/// when nothing pins it. A Rapid-MLX engine switches thinking off on a tool-carrying request only
+/// while tool_choice is not `none` (rank_thinking.py `resolved_thinking`), so an unpinned retry
+/// would render Qwen3.8's default — thinking on at `xhigh`, which writes a line into the cached
+/// system block. An effort already set (the chat's, under `chat`) is the first attempt's and stays.
+pub fn refusing_tool_calls(summary: &ModelConfig) -> ModelConfig {
+    let config = summary.clone().with_merged_request_params(
+        [("tool_choice".to_string(), serde_json::json!("none"))]
+            .into_iter()
+            .collect(),
+    );
+    let effective = crate::agents::reply_parts::provider_call_model_config(config.clone());
+    if effective.thinking_effort().is_some() {
+        effective
+    } else {
+        config.with_thinking_effort(goose_providers::thinking::ThinkingEffort::Off)
+    }
+}
+
+fn answered_with_a_tool_call(response: &Message) -> bool {
+    response.content.iter().any(|c| {
+        matches!(
+            c,
+            MessageContent::ToolRequest(_) | MessageContent::FrontendToolRequest(_)
+        )
+    })
+}
+
+fn tool_call_names(response: &Message) -> String {
+    let names: Vec<String> = response
+        .content
+        .iter()
+        .filter_map(|c| match c {
+            MessageContent::ToolRequest(req) => Some(match &req.tool_call {
+                Ok(call) => call.name.to_string(),
+                Err(e) => format!("unparsed: {}", excerpt(&e.message)),
+            }),
+            MessageContent::FrontendToolRequest(_) => Some("a frontend tool".to_string()),
+            _ => None,
+        })
+        .collect();
+    names.join(", ")
+}
+
 const CONVERSATION_CONTINUATION_TEXT: &str =
     "Your context was compacted. The previous message contains a summary of the conversation so far.
 Do not mention that you read a summary or that conversation summarization occurred.
@@ -946,60 +1009,97 @@ async fn summarize_as_the_chat(
         }
     };
     let watch_note = kept.note.is_some() && chat.may_ask;
-    let mut written_tokens = 0u64;
-    let mut asked: Option<String> = None;
-    let watch = |delta: &str, text: &str| {
-        if let Some(counter) = &counter {
-            written_tokens += counter.count_tokens(delta) as u64;
-        }
-        if let Some(observe) = &chat.progress {
-            observe(WritingProgress {
-                written_tokens: counter.as_ref().map(|_| written_tokens),
-                parts: pillars::written_parts(text),
-            });
-        }
-        if watch_note {
-            if let Some(NoteVerdict::Question(question)) = pillars::streaming_note_verdict(text) {
-                asked = Some(question);
-                return false;
-            }
-        }
-        true
-    };
     let summary_config = summary_model_config(model_config, summary_thinking());
-    let answer = crate::model_config::stream_as_the_chat(
-        crate::background_work::BackgroundWorkKind::Compaction,
-        provider,
-        &summary_config,
-        session_id,
-        &frame.system_prompt,
-        sent.messages(),
-        &frame.tools,
-        watch,
-    )
-    .await;
-    let (mut response, mut provider_usage) = match answer {
-        Ok((answer, _)) => answer,
-        Err(ProviderError::ContextLengthExceeded(detail)) => {
-            return Ok(ChatSummary::NotWritten(format!(
-                "was refused as too long ({detail})"
-            )))
-        }
-        Err(e) => return Err(e.into()),
-    };
-    if let Some(question) = asked {
-        return Ok(ChatSummary::Asked(question));
-    }
-    if response.content.iter().any(|c| {
-        matches!(
-            c,
-            MessageContent::ToolRequest(_) | MessageContent::FrontendToolRequest(_)
+    let mut config = summary_config.clone();
+    let mut retried = false;
+    let (mut response, mut provider_usage) = loop {
+        let mut written_tokens = 0u64;
+        let mut asked: Option<String> = None;
+        let watch = |delta: &str, text: &str| {
+            if let Some(counter) = &counter {
+                written_tokens += counter.count_tokens(delta) as u64;
+            }
+            if let Some(observe) = &chat.progress {
+                observe(WritingProgress {
+                    written_tokens: counter.as_ref().map(|_| written_tokens),
+                    parts: pillars::written_parts(text),
+                });
+            }
+            if watch_note {
+                if let Some(NoteVerdict::Question(question)) = pillars::streaming_note_verdict(text)
+                {
+                    asked = Some(question);
+                    return false;
+                }
+            }
+            true
+        };
+        let answer = crate::model_config::stream_as_the_chat(
+            crate::background_work::BackgroundWorkKind::Compaction,
+            provider,
+            &config,
+            session_id,
+            &frame.system_prompt,
+            sent.messages(),
+            &frame.tools,
+            watch,
         )
-    }) {
-        return Ok(ChatSummary::NotWritten(
-            "was answered with a tool call instead of the summary".to_string(),
-        ));
-    }
+        .await;
+        let (response, usage) = match answer {
+            Ok((answer, _)) => answer,
+            Err(ProviderError::ContextLengthExceeded(detail)) => {
+                return Ok(ChatSummary::NotWritten(format!(
+                    "was refused as too long ({detail})"
+                )))
+            }
+            Err(e) if retried => {
+                return Ok(ChatSummary::NotWritten(format!(
+                    "was answered with a tool call, and asked again with tool_choice none it \
+                     failed ({e})"
+                )))
+            }
+            Err(e) => return Err(e.into()),
+        };
+        if let Some(question) = asked {
+            return Ok(ChatSummary::Asked(question));
+        }
+        if !answered_with_a_tool_call(&response) {
+            // An engine that does not parse tool calls under tool_choice none hands the call back
+            // as text; only an answer carrying the instruction's own sections is a summary.
+            if retried && pillars::written_parts(&response.as_concat_text()).is_empty() {
+                return Ok(ChatSummary::NotWritten(format!(
+                    "was answered with a tool call, and asked again with tool_choice none it \
+                     answered without any of the summary's sections ({})",
+                    excerpt(&response.as_concat_text())
+                )));
+            }
+            break (response, usage);
+        }
+        if retried {
+            return Ok(ChatSummary::NotWritten(
+                "was answered with a tool call, and again when asked with tool_choice none"
+                    .to_string(),
+            ));
+        }
+        if !summary_tool_call_retry() {
+            return Ok(ChatSummary::NotWritten(format!(
+                "was answered with a tool call instead of the summary \
+                 ({SUMMARY_TOOL_CALL_RETRY_KEY} is off)"
+            )));
+        }
+        warn!(
+            "compaction_summary_tool_call: the summary request that extends the chat was answered \
+             with a tool call ({}) after {} input tokens; asking ONCE more with the same \
+             conversation and tool_choice none before falling back to a transcript",
+            tool_call_names(&response),
+            usage
+                .usage
+                .input_tokens
+                .map_or_else(|| "an unmeasured number of".to_string(), |n| n.to_string())
+        );
+        config = refusing_tool_calls(&summary_config);
+        retried = true;
+    };
     let note = match &kept.note {
         None => NoteOutcome::NoNote,
         Some(_) => match pillars::note_verdict(&response.as_concat_text()) {
@@ -2382,6 +2482,7 @@ mod tests {
                     .with_tool_request("t1", Ok(CallToolRequestParams::new("developer__shell"))),
             ),
         ] {
+            let tool_call = answer.is_some();
             let provider = RecordingProvider {
                 calls: std::sync::Mutex::new(Vec::new()),
                 chat_shaped_answer: answer,
@@ -2404,11 +2505,17 @@ mod tests {
                 panic!("compacted");
             };
             let calls = provider.calls.lock().unwrap();
-            assert_eq!(calls.len(), 2);
-            assert_eq!(calls[0].0, "You are goose.");
-            assert_eq!(calls[0].2, 1, "the first request extends the chat");
-            assert_eq!(calls[1].2, 0, "the second is the transcript request");
-            assert!(calls[1].0.contains("**Conversation History:**"));
+            // A tool call is asked again once, extending the chat with tool_choice none
+            // (GOOSE_COMPACTION_SUMMARY_TOOL_CALL_RETRY); a refusal as too long is not.
+            let chat_shaped = if tool_call { 2 } else { 1 };
+            assert_eq!(calls.len(), chat_shaped + 1);
+            for call in &calls[..chat_shaped] {
+                assert_eq!(call.0, "You are goose.");
+                assert_eq!(call.2, 1, "a chat-shaped request extends the chat");
+            }
+            let transcript = &calls[chat_shaped];
+            assert_eq!(transcript.2, 0, "the last is the transcript request");
+            assert!(transcript.0.contains("**Conversation History:**"));
             let visible: Vec<String> = compacted
                 .agent_visible_messages()
                 .iter()
@@ -2424,6 +2531,179 @@ mod tests {
                 .iter()
                 .any(|c| matches!(c, MessageContent::ToolRequest(_)))));
         }
+    }
+
+    /// Answers the first chat-shaped request with a tool call and every later one with a summary,
+    /// recording the config and messages each was sent.
+    struct ToolCallOnceProvider {
+        calls: std::sync::Mutex<Vec<(ModelConfig, Vec<Message>, usize)>>,
+    }
+
+    #[async_trait]
+    impl Provider for ToolCallOnceProvider {
+        fn get_name(&self) -> &str {
+            "tool-call-once"
+        }
+
+        async fn stream(
+            &self,
+            model_config: &ModelConfig,
+            _system: &str,
+            messages: &[Message],
+            tools: &[Tool],
+        ) -> Result<MessageStream, ProviderError> {
+            let mut calls = self.calls.lock().unwrap();
+            calls.push((model_config.clone(), messages.to_vec(), tools.len()));
+            let usage = ProviderUsage::new(
+                "tool-call-once".to_string(),
+                Usage::new(Some(103_412), Some(91), Some(103_503)),
+            );
+            let answer = if calls.len() == 1 {
+                Message::assistant()
+                    .with_tool_request("t1", Ok(CallToolRequestParams::new("developer__shell")))
+            } else {
+                Message::assistant().with_text("## Where we are\nsync.js written")
+            };
+            Ok(stream_from_single_message(answer, usage))
+        }
+    }
+
+    /// Forge 2.0 run B, C4: the chat-shaped summary request (100,658 of 103,412 tokens cached) was
+    /// answered with a tool call and the transcript fallback read 0 of 85,085. Now it is asked
+    /// ONCE more — the same messages and tools, `tool_choice: none`, reasoning pinned off — and
+    /// its answer is the summary; no transcript request is made.
+    #[tokio::test]
+    async fn a_summary_answered_with_a_tool_call_is_asked_once_more_refusing_tools() {
+        use goose_providers::thinking::ThinkingEffort;
+        let provider = ToolCallOnceProvider {
+            calls: std::sync::Mutex::new(Vec::new()),
+        };
+        let ChatCompacted::Compacted {
+            conversation: compacted,
+            ..
+        } = compact_chat(
+            &provider,
+            &ModelConfig::new("served"),
+            "s",
+            &two_turn_chat(),
+            false,
+            &frame(),
+            &chat_inputs(None, false),
+        )
+        .await
+        .unwrap()
+        else {
+            panic!("compacted");
+        };
+        let calls = provider.calls.lock().unwrap();
+        assert_eq!(calls.len(), 2, "no transcript request");
+        let (first, retry) = (&calls[0], &calls[1]);
+        assert_eq!(
+            retry.1, first.1,
+            "the retry sends the same messages: the same prefix"
+        );
+        assert_eq!((first.2, retry.2), (1, 1), "both carry the chat's tools");
+        assert!(first.0.request_param::<String>("tool_choice").is_none());
+        assert_eq!(
+            retry.0.request_param::<String>("tool_choice").as_deref(),
+            Some("none")
+        );
+        assert_eq!(retry.0.thinking_effort(), Some(ThinkingEffort::Off));
+        let summary = latest_summary(compacted.messages()).expect("a summary");
+        assert!(
+            summary.starts_with("## Where we are\nsync.js written"),
+            "{summary}"
+        );
+    }
+
+    /// An engine that ignores tool_choice none may hand the refused call back as text: that text
+    /// never becomes the summary — the transcript fallback runs, as before the retry existed.
+    #[tokio::test]
+    async fn a_retry_answered_with_no_summary_sections_falls_back_to_the_transcript() {
+        let provider = RecordingProvider {
+            calls: std::sync::Mutex::new(Vec::new()),
+            chat_shaped_answer: None,
+        };
+        let text_call = Message::assistant()
+            .with_text("<tool_call>\n<function=shell>\n<parameter=command>\nls\n</parameter>");
+        let tool_call = Message::assistant()
+            .with_tool_request("t1", Ok(CallToolRequestParams::new("developer__shell")));
+        struct Scripted {
+            inner: RecordingProvider,
+            answers: std::sync::Mutex<Vec<Message>>,
+        }
+        #[async_trait]
+        impl Provider for Scripted {
+            fn get_name(&self) -> &str {
+                "scripted-retry"
+            }
+            async fn stream(
+                &self,
+                model_config: &ModelConfig,
+                system: &str,
+                messages: &[Message],
+                tools: &[Tool],
+            ) -> Result<MessageStream, ProviderError> {
+                if tools.is_empty() {
+                    return self
+                        .inner
+                        .stream(model_config, system, messages, tools)
+                        .await;
+                }
+                let answer = self.answers.lock().unwrap().remove(0);
+                Ok(stream_from_single_message(
+                    answer,
+                    ProviderUsage::new("s".to_string(), Usage::default()),
+                ))
+            }
+        }
+        let scripted = Scripted {
+            inner: provider,
+            answers: std::sync::Mutex::new(vec![tool_call, text_call]),
+        };
+        let ChatCompacted::Compacted {
+            conversation: compacted,
+            ..
+        } = compact_chat(
+            &scripted,
+            &ModelConfig::new("served"),
+            "s",
+            &two_turn_chat(),
+            false,
+            &frame(),
+            &chat_inputs(None, false),
+        )
+        .await
+        .unwrap()
+        else {
+            panic!("compacted");
+        };
+        let summary = latest_summary(compacted.messages()).expect("a summary");
+        assert!(summary.starts_with("<transcript summary>"), "{summary}");
+        assert_eq!(scripted.inner.calls.lock().unwrap().len(), 1);
+    }
+
+    /// `chat` keeps the chat's effort on the retry (it is the first attempt's); an unpinned config
+    /// is pinned off, because tool_choice none lifts the engine's thinking-off for tool requests.
+    #[test]
+    fn the_retry_pins_reasoning_off_only_where_nothing_pins_it() {
+        use goose_providers::thinking::ThinkingEffort;
+        let medium = ModelConfig::new("served").with_thinking_effort(ThinkingEffort::Medium);
+        assert_eq!(
+            refusing_tool_calls(&medium).thinking_effort(),
+            Some(ThinkingEffort::Medium)
+        );
+        let off = summary_model_config(&medium, SummaryThinking::Off);
+        assert_eq!(
+            refusing_tool_calls(&off).thinking_effort(),
+            Some(ThinkingEffort::Off)
+        );
+        assert_eq!(
+            refusing_tool_calls(&off)
+                .request_param::<String>("tool_choice")
+                .as_deref(),
+            Some("none")
+        );
     }
 
     /// `compaction.md` before Q-342, verbatim: the transcript request — the swarm workers' golden
