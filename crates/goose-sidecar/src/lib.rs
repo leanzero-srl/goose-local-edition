@@ -70,6 +70,14 @@ const STDERR_TAIL_LINES: usize = 200;
 pub const GRACE_TICKS: u32 = 50;
 pub const GRACE_TICK: Duration = Duration::from_millis(100);
 
+/// The grace window as elapsed time — every loop it bounds runs until this much time has
+/// PASSED, polling every `GRACE_TICK`; none counts ticks. Measured 2026-10-17 on the workhorse:
+/// under launchd (the installed app, the CI runner's LaunchAgent) a 100 ms sleep is coalesced to
+/// ~240 ms, so 50 counted ticks became ~12 s and a SIGKILL landed long after its caller gave up.
+pub fn grace_window() -> Duration {
+    GRACE_TICK * GRACE_TICKS
+}
+
 #[derive(Debug, Clone)]
 pub struct SidecarConfig {
     pub name: String,
@@ -1196,11 +1204,15 @@ fn watch_exit(
             }
             Err(_) => return,
         };
-        for _ in 0..GRACE_TICKS {
+        let exited = Instant::now();
+        while exited.elapsed() < grace_window() {
             if *stderr_closed.borrow_and_update() {
                 break;
             }
-            let _ = tokio::time::timeout(GRACE_TICK, stderr_closed.changed()).await;
+            // A dropped sender can never report the EOF; waiting on it would only spin.
+            if let Ok(Err(_)) = tokio::time::timeout(GRACE_TICK, stderr_closed.changed()).await {
+                break;
+            }
         }
         let words_complete = *stderr_closed.borrow();
         let memory = match crate::memory::measure() {
@@ -1326,7 +1338,8 @@ async fn terminate(child: &mut Child) -> Option<u32> {
         unsafe {
             libc::kill(pid as libc::pid_t, libc::SIGTERM);
         }
-        for _ in 0..GRACE_TICKS {
+        let termed = Instant::now();
+        while termed.elapsed() < grace_window() {
             if let Ok(Some(_)) = child.try_wait() {
                 return Some(pid);
             }
@@ -1455,7 +1468,8 @@ fn residue_exited(residue: &[(u32, u64)]) -> bool {
 
 #[cfg(unix)]
 async fn residue_exited_within_grace(residue: &[(u32, u64)]) -> bool {
-    for _ in 0..GRACE_TICKS {
+    let since = Instant::now();
+    while since.elapsed() < grace_window() {
         if residue_exited(residue) {
             return true;
         }
@@ -1535,7 +1549,8 @@ pub(crate) fn port_has_listener(port: u16) -> bool {
 
 /// Poll the port for the grace window; `true` once nothing accepts on it.
 pub(crate) async fn wait_port_clear(port: u16) -> bool {
-    for _ in 0..GRACE_TICKS {
+    let since = Instant::now();
+    while since.elapsed() < grace_window() {
         if !port_has_listener(port) {
             return true;
         }
@@ -2213,7 +2228,8 @@ mod tests {
     /// crate's grace window twice over (the watch itself waits up to one for the pipe's EOF).
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     async fn exit_report_of(handle: &ChildHandle) -> String {
-        for _ in 0..2 * GRACE_TICKS {
+        let since = Instant::now();
+        while since.elapsed() < 2 * grace_window() {
             if let Some(report) = handle.exit_report.lock().unwrap().clone() {
                 return report;
             }

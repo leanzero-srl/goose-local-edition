@@ -14,7 +14,7 @@ use std::time::Instant;
 use goose::agents::extension::{Envs, ExtensionConfig};
 use goose::agents::extension_manager::ExtensionManager;
 use goose::agents::stdio_children;
-use goose_sidecar::GRACE_TICK;
+use goose_sidecar::{grace_window, GRACE_TICK};
 use serial_test::serial;
 
 fn alive(pid: u32) -> bool {
@@ -39,7 +39,7 @@ fn parent_of(pid: u32) -> Option<u32> {
 /// clock, as the teardown measures its own window.
 async fn all_gone(pids: &[u32]) -> bool {
     let since = Instant::now();
-    while since.elapsed() < 2 * stdio_children::grace_window() {
+    while since.elapsed() < 2 * grace_window() {
         if pids.iter().all(|pid| !alive(*pid)) {
             return true;
         }
@@ -187,7 +187,7 @@ fn spawn_orphan(script: &Path) -> u32 {
         .unwrap();
     let pid: u32 = String::from_utf8_lossy(&out.stdout).trim().parse().unwrap();
     let since = Instant::now();
-    while since.elapsed() < stdio_children::grace_window() {
+    while since.elapsed() < grace_window() {
         if parent_of(pid) == Some(1) {
             return pid;
         }

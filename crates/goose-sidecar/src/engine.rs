@@ -4615,7 +4615,8 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         assert_eq!(manager.status().await.state, "stopped");
         rank.stdin.take().unwrap().write_all(b"\n").unwrap();
         rank.wait().unwrap();
-        for _ in 0..crate::GRACE_TICKS {
+        let since = std::time::Instant::now();
+        while since.elapsed() < crate::grace_window() {
             if matches!(
                 machine::try_acquire(&lock, &LoadClaim::single_engine("probe", 1, 0)).unwrap(),
                 LoadLockAttempt::Acquired(_)

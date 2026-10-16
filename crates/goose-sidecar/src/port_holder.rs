@@ -967,7 +967,8 @@ mod read {
                     unsafe { libc::kill(process.pid as libc::pid_t, signal) };
                 }
             }
-            for _ in 0..crate::GRACE_TICKS {
+            let signalled = std::time::Instant::now();
+            while signalled.elapsed() < crate::grace_window() {
                 if left.iter().all(|p| !still(p)) {
                     break;
                 }

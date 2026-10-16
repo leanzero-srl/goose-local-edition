@@ -1021,12 +1021,9 @@ pub fn socket_holder(socket_path: &Path) -> std::io::Result<Option<SocketHolder>
     }
 }
 
-/// The per-pid grace a goose-owned daemon gets between SIGTERM and SIGKILL: the same
-/// 50 × 100 ms leg as goose-sidecar's `GRACE_TICKS` × `GRACE_TICK` and [`terminate_per_pid`],
-/// which the desktop's `MESH_TEARDOWN_CEILING_MS` (ui/desktop/src/gooseServe.ts) sums. It
-/// bounds process teardown, never model work.
-const PER_PID_GRACE_TICKS: u32 = 50;
-const PER_PID_GRACE_TICK: Duration = Duration::from_millis(100);
+// The per-pid grace a goose-owned daemon gets between SIGTERM and SIGKILL is goose-sidecar's
+// `grace_window()`, measured by the clock (the leg the desktop's `MESH_TEARDOWN_CEILING_MS` in
+// ui/desktop/src/gooseServe.ts sums). It bounds process teardown, never model work.
 
 /// One process as the orphan-daemon proof reads it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1244,11 +1241,12 @@ pub async fn reap_orphaned_daemon(config: &MeshConfig) -> OrphanReap {
         }
         signal = name;
         unsafe { libc::kill(pid as libc::pid_t, sig) };
-        for _ in 0..PER_PID_GRACE_TICKS {
+        let signalled = std::time::Instant::now();
+        while signalled.elapsed() < goose_sidecar::grace_window() {
             if !still_the_orphan() {
                 break;
             }
-            tokio::time::sleep(PER_PID_GRACE_TICK).await;
+            tokio::time::sleep(goose_sidecar::GRACE_TICK).await;
         }
     }
     if still_the_orphan() {
@@ -1648,11 +1646,12 @@ async fn terminate_per_pid(child: &mut Child) {
         unsafe {
             libc::kill(pid as libc::pid_t, libc::SIGTERM);
         }
-        for _ in 0..PER_PID_GRACE_TICKS {
+        let termed = std::time::Instant::now();
+        while termed.elapsed() < goose_sidecar::grace_window() {
             if let Ok(Some(_)) = child.try_wait() {
                 return;
             }
-            tokio::time::sleep(PER_PID_GRACE_TICK).await;
+            tokio::time::sleep(goose_sidecar::GRACE_TICK).await;
         }
     }
     let _ = child.start_kill();

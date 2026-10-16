@@ -41,7 +41,7 @@ use super::runner_update::{self, Preflighted, RunnerUpdate};
 use super::sampling::SamplingDefaults;
 use super::{CPU_ONLY_PHASES, HANG_MEDIAN_MULTIPLE, HANG_MIN_SAMPLES};
 use crate::model_identity::ServedNames;
-use crate::{SidecarConfig, GIB, GRACE_TICK, GRACE_TICKS};
+use crate::{grace_window, SidecarConfig, GIB, GRACE_TICK};
 
 /// The supervisor's sampling cadence (memory, pressure, rank processes, the step counter) and the
 /// rank wrapper's memory report cadence. It samples; it decides nothing by itself — the hang bound
@@ -708,7 +708,7 @@ async fn pid_alive(exec: &dyn NodeExec, host: Option<&str>, pid: u32) -> Result<
 
 async fn wait_gone(exec: &dyn NodeExec, host: Option<&str>, pid: u32) -> Result<Option<Duration>> {
     let started = Instant::now();
-    for _ in 0..GRACE_TICKS / 5 {
+    while started.elapsed() < grace_window() {
         if !pid_alive(exec, host, pid).await? {
             return Ok(Some(started.elapsed()));
         }
@@ -729,7 +729,8 @@ async fn signal_pid(exec: &dyn NodeExec, host: Option<&str>, pid: u32, signal: S
 pub(crate) async fn wait_child_exit(
     child: &mut tokio::process::Child,
 ) -> Option<std::process::ExitStatus> {
-    for _ in 0..GRACE_TICKS {
+    let since = Instant::now();
+    while since.elapsed() < grace_window() {
         if let Ok(Some(status)) = child.try_wait() {
             return Some(status);
         }

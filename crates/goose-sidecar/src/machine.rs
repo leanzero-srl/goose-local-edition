@@ -733,7 +733,8 @@ pub async fn stop_other_engine(pid: u32, started_at: u64, own_port: u16) -> Resu
                 bail!("signalling pid {pid} failed: {error}");
             }
         }
-        for _ in 0..crate::GRACE_TICKS {
+        let signalled = std::time::Instant::now();
+        while signalled.elapsed() < crate::grace_window() {
             if gone(pid) {
                 let name = if signal == libc::SIGTERM {
                     "SIGTERM"
@@ -996,13 +997,14 @@ mod tests {
             .spawn()
             .unwrap();
         let pid = stand_in.id();
-        let seen = (0..crate::GRACE_TICKS).find_map(|_| {
+        let since = std::time::Instant::now();
+        let seen = loop {
             let found = other_engines(Some(8090)).into_iter().find(|e| e.pid == pid);
-            if found.is_none() {
-                std::thread::sleep(crate::GRACE_TICK);
+            if found.is_some() || since.elapsed() >= crate::grace_window() {
+                break found;
             }
-            found
-        });
+            std::thread::sleep(crate::GRACE_TICK);
+        };
         let engine = seen.expect("the census names the stand-in engine");
         assert_eq!(engine.kind, "singleServer");
         assert_eq!(engine.port, Some(59391));

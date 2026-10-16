@@ -24,6 +24,7 @@ chrono = { workspace = true, features = ["now"] }
 dirs = { workspace = true }
 futures = { workspace = true }
 gethostname = "1.1.0"
+goose-sidecar = { path = "../goose-sidecar" }
 hmac = "0.13"
 rand.workspace = true
 reqwest = { workspace = true, features = ["json", "socks", "stream"] }
@@ -52,7 +53,6 @@ libc = "0.2"
 [dev-dependencies]
 goose-provider-types = { path = "../goose-provider-types" }
 goose-providers = { path = "../goose-providers" }
-goose-sidecar = { path = "../goose-sidecar" }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tracing-subscriber = { workspace = true, features = ["fmt"] }
