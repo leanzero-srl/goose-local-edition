@@ -3,11 +3,14 @@ use goose::config::{declarative_providers, Config, ConfigError};
 use goose::model_fields::MODEL_FIELDS_CONFIG_KEY;
 use goose::providers::base::ProviderType;
 use goose::providers::get_from_registry;
+use goose_providers::thinking::ThinkingEffort;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeSet;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
+
+const BENCHMARK_THINKING_EFFORT: ThinkingEffort = ThinkingEffort::Medium;
 
 fn optional(config: &Config, key: &str, secret: bool) -> Result<Option<Value>> {
     match config.get(key, secret) {
@@ -92,13 +95,19 @@ pub async fn export(provider: Option<&str>, output: &Path) -> Result<()> {
         "GOOSE_TEMPERATURE",
         "GOOSE_CONTEXT_LIMIT",
         "GOOSE_MAX_TOKENS",
-        "GOOSE_THINKING_EFFORT",
         "GOOSE_FAST_MODEL",
     ] {
         if let Some(value) = optional(config, key, false)? {
             params.insert(key.into(), value);
         }
     }
+    // Every entrant thinks at the same level, whatever the operator's chat setting is: a provider's
+    // default can be near-off (gemini-4-argon: 42 thought tokens on a 301k prompt), and scores across
+    // models are only comparable at one level. A per-model launcher field can still name its own.
+    params.insert(
+        "GOOSE_THINKING_EFFORT".into(),
+        json!(BENCHMARK_THINKING_EFFORT.to_string()),
+    );
     if let Some(fields) = launcher_model_fields(
         std::env::var(MODEL_FIELDS_CONFIG_KEY).ok().as_deref(),
         &providers,

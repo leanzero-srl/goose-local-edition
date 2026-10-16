@@ -301,12 +301,17 @@ impl ModelConfig {
 pub fn gemini_generation(model_name: &str) -> Option<u32> {
     let lower = model_name.to_lowercase();
     lower.match_indices("gemini-").find_map(|(at, tag)| {
-        let boundary = at == 0 || matches!(lower.as_bytes()[at - 1], b'/' | b'-');
-        let digits: String = lower[at + tag.len()..]
+        let boundary = at == 0 || matches!(lower.as_bytes().get(at - 1), Some(b'/' | b'-'));
+        let digits: String = lower
+            .get(at + tag.len()..)?
             .chars()
             .take_while(char::is_ascii_digit)
             .collect();
-        boundary.then(|| digits.parse().ok()).flatten()
+        if boundary {
+            digits.parse().ok()
+        } else {
+            None
+        }
     })
 }
 

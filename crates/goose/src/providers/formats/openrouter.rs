@@ -113,7 +113,9 @@ pub fn apply_reasoning_config(payload: &mut Value, model_config: &ModelConfig) {
         let clamped_effort = obj
             .remove("reasoning_effort")
             .and_then(|value| value.as_str().map(str::to_owned));
-        if clamped_effort.is_none() && !model_config.is_reasoning_model() {
+        // OpenRouter ignores `reasoning` on a model that cannot reason, so only a model declared
+        // non-reasoning is skipped; a name heuristic missed qwen/glm/grok and left them on defaults.
+        if clamped_effort.is_none() && model_config.reasoning == Some(false) {
             return;
         }
 
@@ -275,6 +277,17 @@ mod tests {
         apply_reasoning_config(&mut payload, &model_config);
 
         assert_eq!(payload["reasoning"], json!({ "effort": "high" }));
+    }
+
+    #[test]
+    fn an_undeclared_model_still_gets_the_requested_effort() {
+        let mut payload = json!({ "model": "qwen/qwen3.8-flash", "messages": [] });
+        let model_config =
+            ModelConfig::new("qwen/qwen3.8-flash").with_thinking_effort(ThinkingEffort::Medium);
+
+        apply_reasoning_config(&mut payload, &model_config);
+
+        assert_eq!(payload["reasoning"], json!({ "effort": "medium" }));
     }
 
     #[test]

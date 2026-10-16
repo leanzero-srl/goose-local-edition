@@ -559,6 +559,7 @@ struct GenerationConfig {
 #[serde(rename_all = "lowercase")]
 enum ThinkingLevel {
     Low,
+    Medium,
     High,
 }
 
@@ -619,9 +620,8 @@ fn get_thinking_config(model_config: &ModelConfig) -> Option<ThinkingConfig> {
             return None;
         }
         let thinking_level = match effort {
-            ThinkingEffort::Off | ThinkingEffort::Low | ThinkingEffort::Medium => {
-                ThinkingLevel::Low
-            }
+            ThinkingEffort::Off | ThinkingEffort::Low => ThinkingLevel::Low,
+            ThinkingEffort::Medium => ThinkingLevel::Medium,
             ThinkingEffort::High | ThinkingEffort::Max => ThinkingLevel::High,
         };
 
@@ -1583,6 +1583,19 @@ data: [DONE]"#;
 
         let config = ModelConfig::new("gemini-2.5-pro").with_thinking_effort(ThinkingEffort::Off);
         assert!(get_thinking_config(&config).is_none());
+    }
+
+    #[test]
+    fn medium_effort_sends_gemini_medium_not_low() {
+        use goose_providers::model::ModelConfig;
+
+        let config =
+            ModelConfig::new("gemini-4-argon").with_thinking_effort(ThinkingEffort::Medium);
+        let thinking_config = get_thinking_config(&config).unwrap();
+        assert_eq!(
+            serde_json::to_value(&thinking_config).unwrap()["thinkingLevel"],
+            "medium"
+        );
     }
 
     #[test]
