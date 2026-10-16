@@ -3034,7 +3034,8 @@ impl Agent {
                 }
                 let resending = resend_after.is_some();
                 if let Some(provider_err) = resend_after {
-                    let (attempt, attempts, delay) = resend.spend(&provider_err);
+                    let plan = resend.spend(&provider_err);
+                    let delay = plan.delay();
                     let kept = super::transient_resend::completed_tool_exchanges(
                         std::mem::take(&mut messages_to_add),
                     );
@@ -3054,17 +3055,22 @@ impl Agent {
                     last_call_usage = usage_before_call;
                     // Nothing kept: the same request goes again and is not a new turn.
                     retrying_after_transient_error = no_tools_called;
-                    warn!(
-                        "Provider call failed ({}), resending ({}/{}) after {:?}; kept {} completed tool calls",
-                        provider_err, attempt, attempts, delay, kept_tool_calls
-                    );
+                    match plan {
+                        super::transient_resend::Resend::RateLimitWait { delay, waited, budget } => warn!(
+                            "Rate limited, waiting {:?} before resending ({:?} of {:?} waited): {}; kept {} completed tool calls",
+                            delay, waited, budget, provider_err, kept_tool_calls
+                        ),
+                        super::transient_resend::Resend::Attempt { attempt, attempts, delay } => warn!(
+                            "Provider call failed ({}), resending ({}/{}) after {:?}; kept {} completed tool calls",
+                            provider_err, attempt, attempts, delay, kept_tool_calls
+                        ),
+                    }
                     yield AgentEvent::PartialDiscarded(std::mem::take(&mut attempt_partial));
                     yield AgentEvent::Message(Message::assistant().with_system_notification(
                         SystemNotificationType::InlineMessage,
                         super::transient_resend::resend_notice(
                             &provider_err,
-                            attempt,
-                            attempts,
+                            plan,
                             answer_had_started,
                             kept_tool_calls,
                         ),

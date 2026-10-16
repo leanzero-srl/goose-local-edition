@@ -26182,6 +26182,8 @@ impl GooseAgentDispatcher {
                 let transient = s.contains("stalled")
                     || s.contains("Model is unloaded")
                     || s.contains("Server error")
+                    // An in-stream 429 decoded as a server fault until 2026-10-16; it is the rate-limit class now.
+                    || s.contains("Rate limit exceeded")
                     || s.contains("model_not_found")
                     || s.contains("Invalid model identifier")
                     || s.contains("is not loaded")

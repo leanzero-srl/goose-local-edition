@@ -4613,6 +4613,7 @@ mod tests {
         use rmcp::model::{CallToolRequestParams, Role, Tool};
         use std::path::PathBuf;
         use std::sync::Mutex as StdMutex;
+        use std::time::Duration;
 
         type StreamItem = Result<(Option<Message>, Option<ProviderUsage>), ProviderError>;
 
@@ -4621,6 +4622,27 @@ mod tests {
 
         fn reset() -> ProviderError {
             ProviderError::stream_decode_error(RESET)
+        }
+
+        /// The scripted policy's rate-limit budget, in 1 ms waits — more than the quick resends.
+        const RATE_LIMIT_WAITS: usize = DEFAULT_MAX_RETRIES + 2;
+
+        /// Verbatim: the only SSE frame OpenRouter streamed (HTTP 200, host Alibaba) for run
+        /// b463bbaa's call 50 on 2026-10-16, the call that ended the run after three resends.
+        const OPENROUTER_IN_STREAM_429: &str = r#"data: {"error": {"code": 429, "message": "Provider returned error", "metadata": {"error_type": "rate_limit_exceeded", "provider_code": "limit_burst_rate"}}}"#;
+
+        /// What the OpenAI-compatible stream decoder makes of that frame.
+        async fn decoded_in_stream_429() -> ProviderError {
+            let frames = futures::stream::iter([Ok(OPENROUTER_IN_STREAM_429.to_string())]);
+            let decoded =
+                goose_providers::formats::openai::response_to_streaming_message(frames);
+            tokio::pin!(decoded);
+            let err = decoded
+                .next()
+                .await
+                .expect("the decoder yields the frame")
+                .expect_err("the frame is a failure");
+            ProviderError::from_stream_error(err)
         }
 
         /// Answers call N with script N and records what each call was handed; its retry policy is
@@ -4654,7 +4676,11 @@ mod tests {
             }
 
             fn retry_config(&self) -> RetryConfig {
-                RetryConfig::new(DEFAULT_MAX_RETRIES, 0, 1.0, 0)
+                let mut config = RetryConfig::new(DEFAULT_MAX_RETRIES, 0, 1.0, 0)
+                    .rate_limit_wait(Duration::from_millis(RATE_LIMIT_WAITS as u64));
+                config.rate_limit_initial_interval_ms = 1;
+                config.rate_limit_max_interval_ms = 1;
+                config
             }
 
             async fn stream(
@@ -5085,6 +5111,80 @@ mod tests {
                 ending[0].ends_with("Please resend your message to try again.")
                     && ending[1] == "par",
                 "the exhausted turn ends exactly as before: {ending:?}"
+            );
+            Ok(())
+        }
+
+        /// Run b463bbaa (2026-10-16): the frame above came back on four calls in a row and the three
+        /// quick resends were spent in seven seconds. A rate limit inside the stream is waited out on
+        /// the rate-limit budget, like an HTTP 429, and the turn completes.
+        #[tokio::test]
+        async fn an_in_stream_rate_limit_is_waited_out_past_the_quick_resends() -> Result<()> {
+            let limited = decoded_in_stream_429().await;
+            assert!(
+                matches!(limited, ProviderError::RateLimitExceeded { .. }),
+                "{limited:?}"
+            );
+            let mut scripts: Vec<Vec<StreamItem>> = (0..RATE_LIMIT_WAITS)
+                .map(|_| vec![Err(limited.clone())])
+                .collect();
+            scripts.push(vec![text("The whole answer.")]);
+            let provider = Arc::new(ScriptedProvider::new(scripts));
+            let (agent, session_id, _temp_dir) = agent_with_provider(provider.clone()).await?;
+
+            let (yielded, history) = run_turn(&agent, &session_id).await?;
+
+            assert_eq!(
+                provider.calls(),
+                RATE_LIMIT_WAITS + 1,
+                "more rate limits than quick resends, all waited out"
+            );
+            let notices = resend_notices(&yielded);
+            assert_eq!(notices.len(), RATE_LIMIT_WAITS, "{notices:?}");
+            assert!(
+                notices.iter().all(|n| n.contains("rate-limited")
+                    && n.contains("Provider returned error")
+                    && !n.contains("attempt")),
+                "{notices:?}"
+            );
+            assert_eq!(
+                assistant_texts(&history),
+                vec!["The whole answer.".to_string()]
+            );
+            Ok(())
+        }
+
+        /// A budget that runs out hands over to the quick resends, then the turn ends as before.
+        #[tokio::test]
+        async fn a_spent_rate_limit_budget_ends_the_turn_after_the_quick_resends() -> Result<()> {
+            let limited = decoded_in_stream_429().await;
+            let provider = Arc::new(ScriptedProvider::new(
+                (0..=RATE_LIMIT_WAITS + DEFAULT_MAX_RETRIES)
+                    .map(|_| vec![Err(limited.clone())])
+                    .collect(),
+            ));
+            let (agent, session_id, _temp_dir) = agent_with_provider(provider.clone()).await?;
+
+            let (yielded, history) = run_turn(&agent, &session_id).await?;
+
+            assert_eq!(
+                provider.calls(),
+                1 + RATE_LIMIT_WAITS + DEFAULT_MAX_RETRIES
+            );
+            let notices = resend_notices(&yielded);
+            assert!(
+                notices[RATE_LIMIT_WAITS..]
+                    .iter()
+                    .zip(1..)
+                    .all(|(n, k)| n.contains(&format!("attempt {k} of 3"))),
+                "{notices:?}"
+            );
+            let ending = assistant_texts(&history);
+            assert!(
+                ending
+                    .iter()
+                    .any(|text| text.contains("Rate limit exceeded: Provider returned error")),
+                "{ending:?}"
             );
             Ok(())
         }

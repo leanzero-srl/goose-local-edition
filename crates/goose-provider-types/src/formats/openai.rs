@@ -1490,7 +1490,41 @@ fn classify_choiceless_frame(value: &Value) -> Option<ProviderError> {
             Some(s) => format!("Gateway returned status {s} mid-stream"),
             None => "Unknown server error".to_string(),
         });
-    Some(ProviderError::ServerError(details))
+    Some(in_stream_error(value, details))
+}
+
+/// Error types gateways name a rate limit by: OpenRouter's `metadata.error_type` and OpenAI's `code`
+/// say `rate_limit_exceeded`, Anthropic-shaped gateways `rate_limit_error`.
+const RATE_LIMIT_ERROR_TYPES: &[&str] = &["rate_limit_exceeded", "rate_limit_error"];
+
+/// The class of an error a stream reported after its HTTP 200: a rate limit is the same
+/// `RateLimitExceeded` an HTTP 429 maps to, so it is waited out instead of spending the quick resends
+/// (2026-10-16, Qwen3.8 Flash on OpenRouter/Alibaba: `{"error": {"code": 429, "message": "Provider
+/// returned error", "metadata": {"error_type": "rate_limit_exceeded"}}}` as the only frame ended the
+/// run at call 50 after three resends in seven seconds). Every other report stays a server fault.
+fn in_stream_error(error: &Value, details: String) -> ProviderError {
+    let code_is_429 = ["code", "status", "statusCode"].iter().any(|key| {
+        error.get(*key).is_some_and(|raw| {
+            raw.as_i64() == Some(429) || raw.as_str().map(str::trim) == Some("429")
+        })
+    });
+    let names_rate_limit = [
+        error.get("code"),
+        error.get("type"),
+        error.get("metadata").and_then(|m| m.get("error_type")),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(Value::as_str)
+    .any(|kind| RATE_LIMIT_ERROR_TYPES.contains(&kind));
+    if code_is_429 || names_rate_limit {
+        ProviderError::RateLimitExceeded {
+            details,
+            retry_delay: None,
+        }
+    } else {
+        ProviderError::ServerError(details)
+    }
 }
 
 /// Appended when the server stopped the answer at its output-token limit. tick.py greps this
@@ -1557,7 +1591,7 @@ fn parse_streaming_chunk(line: &str) -> Result<Option<StreamingChunk>, ProviderE
             .get("message")
             .and_then(|m| m.as_str())
             .unwrap_or("Unknown server error");
-        return Err(ProviderError::ServerError(message.to_string()));
+        return Err(in_stream_error(error, message.to_string()));
     }
 
     if value.get("object").and_then(|o| o.as_str()) == Some("error") {
@@ -1565,7 +1599,7 @@ fn parse_streaming_chunk(line: &str) -> Result<Option<StreamingChunk>, ProviderE
             .get("message")
             .and_then(|m| m.as_str())
             .unwrap_or("Unknown server error");
-        return Err(ProviderError::ServerError(message.to_string()));
+        return Err(in_stream_error(&value, message.to_string()));
     }
 
     if value
@@ -5629,9 +5663,14 @@ data: [DONE]"#;
         for line in [
             r#"{"error":{"message":"upstream exploded"}}"#,
             r#"{"object":"error","message":"upstream exploded"}"#,
-            // No `error` key and no `object`: the shape Azure APIM rate-limits with, on an
-            // HTTP 200. Skipping this would report the failed turn as an empty success.
-            r#"{"statusCode":429,"message":"upstream exploded"}"#,
+            // No `error` key and no `object`: skipping this would report the failed turn as an
+            // empty success. (The 429 form of it is a rate limit — see the test below.)
+            r#"{"statusCode":500,"message":"upstream exploded"}"#,
+            // The in-stream codes that are not a rate limit stay server faults.
+            r#"{"error":{"code":402,"message":"upstream exploded"}}"#,
+            r#"{"error":{"code":408,"message":"upstream exploded"}}"#,
+            r#"{"error":{"code":502,"message":"upstream exploded","metadata":{"error_type":"provider_error"}}}"#,
+            r#"{"object":"error","message":"upstream exploded","code":500}"#,
             // Some gateways stringify the status.
             r#"{"status":"503","message":"upstream exploded"}"#,
             // FastAPI's HTTPException shape.
@@ -5652,6 +5691,51 @@ data: [DONE]"#;
                 other => panic!("expected ServerError for {line}, got {other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn test_in_stream_rate_limits_are_the_http_429_class() {
+        for line in [
+            // Verbatim: the only frame OpenRouter streamed (HTTP 200) for run b463bbaa's call 50,
+            // host Alibaba, 2026-10-16.
+            r#"{"error": {"code": 429, "message": "Provider returned error", "metadata": {"error_type": "rate_limit_exceeded", "provider_code": "limit_burst_rate"}}}"#,
+            r#"{"error":{"code":"429","message":"Provider returned error"}}"#,
+            r#"{"error":{"message":"Provider returned error","metadata":{"error_type":"rate_limit_exceeded"}}}"#,
+            r#"{"error":{"message":"Provider returned error","code":"rate_limit_exceeded"}}"#,
+            r#"{"object":"error","message":"Provider returned error","code":429}"#,
+            r#"{"statusCode":429,"message":"Provider returned error"}"#,
+        ] {
+            match parse_streaming_chunk(line) {
+                Err(ProviderError::RateLimitExceeded {
+                    details,
+                    retry_delay: None,
+                }) => assert_eq!(details, "Provider returned error", "for {line}"),
+                other => panic!("expected RateLimitExceeded for {line}, got {other:?}"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_in_stream_rate_limit_reaches_the_caller_typed() {
+        let response_lines = concat!(
+            r#"data: {"error": {"code": 429, "message": "Provider returned error", "metadata": {"error_type": "rate_limit_exceeded", "provider_code": "limit_burst_rate"}}}"#,
+            "\n",
+        );
+        let lines: Vec<String> = response_lines.lines().map(|s| s.to_string()).collect();
+        let response_stream = tokio_stream::iter(lines.into_iter().map(Ok));
+        let mut messages = std::pin::pin!(response_to_streaming_message(response_stream));
+        let err = messages
+            .next()
+            .await
+            .expect("stream should yield an item")
+            .expect_err("the rate-limit frame must fail the call");
+        assert_eq!(
+            ProviderError::from_stream_error(err),
+            ProviderError::RateLimitExceeded {
+                details: "Provider returned error".into(),
+                retry_delay: None,
+            }
+        );
     }
 
     #[tokio::test]
