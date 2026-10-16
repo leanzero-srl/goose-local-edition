@@ -26181,7 +26181,7 @@ impl GooseAgentDispatcher {
                 let s = e.to_string();
                 let transient = s.contains("stalled")
                     || s.contains("Model is unloaded")
-                    || ["Server error", "Rate limit exceeded"].iter().any(|m| s.contains(m))
+                    || s.contains("Server error")
                     || s.contains("model_not_found")
                     || s.contains("Invalid model identifier")
                     || s.contains("is not loaded")
