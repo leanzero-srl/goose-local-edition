@@ -95,7 +95,24 @@ impl GoogleProvider {
     ) -> Result<reqwest::Response, ProviderError> {
         let path = format!("v1beta/models/{}:streamGenerateContent?alt=sse", model_name);
         let response = self.api_client.response_post(&path, payload).await?;
-        handle_status(response).await
+        handle_status(response)
+            .await
+            .map_err(transient_generic_bad_request)
+    }
+}
+
+/// Google answers some valid requests with a bare 400 that names no field: Argon's Gauntlet run
+/// (2026-10-16 18:29) died on it at message 51, and the identical request replayed twice returned
+/// 200. That one message is resent like a server error; a 400 naming its cause (a missing
+/// thought_signature, an unknown field) stays permanent.
+fn transient_generic_bad_request(error: ProviderError) -> ProviderError {
+    match error {
+        ProviderError::RequestFailed(message)
+            if message == "Bad request (400): Request contains an invalid argument." =>
+        {
+            ProviderError::ServerError(message)
+        }
+        other => other,
     }
 }
 
@@ -232,5 +249,28 @@ impl Provider for GoogleProvider {
                 Some(telemetry_chunks),
             );
         }))
+    }
+}
+
+#[cfg(test)]
+mod generic_bad_request_tests {
+    use super::*;
+
+    #[test]
+    fn only_the_bare_invalid_argument_400_is_resent() {
+        let bare = ProviderError::RequestFailed(
+            "Bad request (400): Request contains an invalid argument.".into(),
+        );
+        assert!(matches!(
+            transient_generic_bad_request(bare),
+            ProviderError::ServerError(_)
+        ));
+        let named = ProviderError::RequestFailed(
+            "Bad request (400): Function call is missing a thought_signature".into(),
+        );
+        assert!(matches!(
+            transient_generic_bad_request(named),
+            ProviderError::RequestFailed(_)
+        ));
     }
 }
