@@ -236,6 +236,14 @@ The full record is in the T12 plan, section "MEMORY GUARD design" (`~/.claude/pl
     - Gabee with 12 and 16 GB of others: degradations equal to the machine-blind engine.
     - Others: hysteresis, ordered budget shrink, idle big Mac with zero actions.
     - Mutations P1-P6 all killed. Suite 1872 passed. 128 GB harness unchanged (p0 zero actions; p2 42 misses, by design).
+- **A QUEUED LOAN GIVES WAY BEFORE A REFUSAL (RC12 Gabee ladder, k=110; fix 75482d9c4 + 86fe03fd7 on `lz/memory-guard-mtp`):**
+  - Signature (`rc12-ladder-engine.log` 15:09:33): `infeasible even at floor chunk 256 ... footprint=45.59GB step=3.18GB margin=1.32GB ceiling=50.10GB`. The main's 160,332-token prompt was refused 2.5 min into its prefill, while a WAITING side held a prefix-hit loan of its 22.8k entry. A loan shares the entry's buffers, so evicting the entry freed nothing.
+  - Fix: before `_memguard_refuse`, `_memguard_release_waiting_loans` drops every queued request's loan (an SRPF-parked request's own cache is kept). The request is marked `_memguard_refetch` and re-fetches right before its insert; it re-prefills if its entry is gone. Counter: `loans_released`.
+  - Refusal message: in a close call it shows the digits that tell need and room apart, plus the shortfall ("50.103 GB ... 50.100 GB (3 MB short)").
+  - "max context 160331" is NOT lost headroom. The refusal reports min(window, prompt - 1). The advertised window was 161,077 throughout RC12 (`max_model_len` in rc12-ladder.jsonl), the same as RC9.
+  - Window edge: `single_sequence_need` now charges the KV of the context rounded up to `KV_ALLOC_STEP_TOKENS` (256, mlx-lm `KVCache.step`), so the window shrinks by up to 255 tokens.
+  - A second edge cause remains: the window is published from the peak model at one moment, and calibration during a long prefill can raise the estimate. So a prompt within about 40 tokens (at 1/100 scale) of the edge can still be refused. Not fixed; the window is a stable published figure.
+  - Test: `tests/test_memory_guard_waiting_loan.py` (FIFO order, so the side really waits). It is RED on 02ec502ac at 120/240/400 tokens from the edge. The suite is green, and the 128 GB harness is unchanged.
 - **NO-SESSION FRAME IDENTITY (RC6 review, same branch):** `_session_frame`'s `first_end` was the common prefix of two renders followed by different assistant probe rows. Qwen opens an assistant row with an empty think block, so turn 1 (whose generation prompt has no closed think block) became line ('frame', 304) and later turns ('frame', 306). It is now bounded by the first message rendered alone, so it ends at `<|im_end|>\n`. goose always sends a session id and was unaffected. Test: `tests/test_memory_guard_frame_identity.py`.
 - **THE LIVE PROOF (the only acceptance):**
   1. On the target Mac, through the APP: quit the app, set `mlx_engine.spawn_command` in `~/.config/goose/config.yaml` to `["/bin/sh","~/t12-bench/engine-wrap.sh"]`.
