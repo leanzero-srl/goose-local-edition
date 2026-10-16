@@ -538,6 +538,19 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   - Summary calls cost 214-1,280 s each (B ~83 min of 6.75 h incl. cold restarts). B C4: the chat-shaped summary request was answered with a tool call and fell back to the transcript shape (0 of 85k cached, 569 s to first token).
   - Context bloat: one `tree` result = 161,890 chars incl. node_modules (64% of A's context; `developer/tree.rs:63-72` has no cap, unlike shell's 50,000-byte cap at `shell.rs:151`). Old reasoning is kept (Qwen3.8 `preserve_thinking`): 34-43k tokens at C1-C3. Task prompt duplicated per compaction (`pillars.rs:121` vs the trimmed compare at `:648`): x5 by C5 (~25k chars).
   - Ranked fixes: (1) ship the window probe; (2) cap tree + skip node_modules; (3) re-inject the working set (on-disk content of read/written files, newest first, within a budget) after compaction; (4) drop old reasoning once at the threshold, never per turn; (5) summary call with thinking off; (6) retry a tool-call-answered summary once with tool_choice none before the cold transcript fallback; (7) dedupe the task prompt.
+- COMPACTION V2 (2026-10-16, branch `t12/compaction-fixes`, design `local-edition/design/COMPACTION-V2.md` with
+  primary-source research beside it; NOT yet adversarially reviewed or run live). Answers main's "COMPACTION IN
+  FORGE 2.0 LOCAL RUNS" analysis (fae6d42bc). Built: `GOOSE_TREE_BOUNDED` (dependency folders named, listing cut
+  the shell's way); the task prompt kept once (trimmed compare + hidden-copy chain); summary with reasoning off
+  `GOOSE_COMPACTION_SUMMARY_THINKING=off` (prefix byte-identical at `medium`, rendered on run B's own request;
+  xhigh/low write a system line); tool-call-answered summary retried once with tool_choice none
+  `GOOSE_COMPACTION_SUMMARY_TOOL_CALL_RETRY`; the WORKING SET (current on-disk content of files read/written,
+  newest first, whole or named, `GOOSE_COMPACTION_WORKING_SET_SHARE=0.25`); STAGE 1 MASK before any summary
+  (`GOOSE_COMPACTION_MASK_FIRST`, `GOOSE_COMPACTION_DROP_REASONING`: old outputs -> stubs of facts, old reasoning
+  dropped, no model call, taken only when it leaves <= limit x (2·threshold-1)); chats mid-loop keep a verbatim
+  tail (GOOSE_COMPACT_KEEP_TAIL unset). Offline replay of run B: stage 1 taken at C1 only (104.5k -> 68.3k); at
+  C2/C3 the working set gives back what masking takes. LIVE METRIC: calls and tokens until the first write after
+  each compaction (baseline B C1 37 calls and no write; C2 18 calls / 74.6 min). Replay commands: design doc §7.
 - COMPACTION IS THE CONVERSATION'S NEXT REQUEST (Q-342, 2026-09-28, E2E #3p on 3.0.69). The old summary
   request put the history as TEXT in the system message (transcript shape) → 0 of 97,590 read, 441 s of
   prefill before the first token, 678 s in all (12:21:28 → 12:32:46), while the rank still held the
