@@ -580,6 +580,8 @@ struct GoogleRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<ToolsWrapper>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    tool_config: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     generation_config: Option<GenerationConfig>,
 }
 
@@ -683,6 +685,12 @@ pub fn create_request(
             parts: [TextPart { text: system }],
         },
         contents: format_messages(messages),
+        // In the default AUTO mode gemini-4-argon sometimes emits a tool call the API rejects as a
+        // bare "400: Request contains an invalid argument." (2026-10-16: 2 of 3 replays of the call
+        // that ended its Gauntlet run); VALIDATED keeps calls inside the declared schemas (9 of 9).
+        tool_config: tools_wrapper
+            .as_ref()
+            .map(|_| serde_json::json!({"functionCallingConfig": {"mode": "VALIDATED"}})),
         tools: tools_wrapper,
         generation_config,
     };
@@ -733,6 +741,23 @@ mod tests {
                 Ok(CallToolResult::success(tool_response)),
             )],
         )
+    }
+
+    #[test]
+    fn tool_calls_are_requested_in_validated_mode() {
+        let config = ModelConfig::new("gemini-4-argon");
+        let tool = Tool::new(
+            "shell",
+            "run a command",
+            object!({"type": "object", "properties": {}}),
+        );
+        let with_tools = create_request(&config, "sys", &[], &[tool]).unwrap();
+        assert_eq!(
+            with_tools["toolConfig"],
+            json!({"functionCallingConfig": {"mode": "VALIDATED"}})
+        );
+        let without = create_request(&config, "sys", &[], &[]).unwrap();
+        assert!(without.get("toolConfig").is_none());
     }
 
     #[test]
