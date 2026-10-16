@@ -380,9 +380,76 @@ pub async fn compact_messages(
 }
 
 fn keep_tail_from_config() -> usize {
-    Config::global()
-        .get_param::<usize>("GOOSE_COMPACT_KEEP_TAIL")
-        .unwrap_or(0)
+    configured_keep_tail().unwrap_or(0)
+}
+
+/// `GOOSE_COMPACT_KEEP_TAIL` when it is set (env > config): the number of newest messages a
+/// compaction keeps word for word.
+fn configured_keep_tail() -> Option<usize> {
+    match Config::global().get_param::<usize>("GOOSE_COMPACT_KEEP_TAIL") {
+        Ok(tail) => Some(tail),
+        Err(crate::config::ConfigError::NotFound(_)) => None,
+        Err(e) => {
+            warn!("GOOSE_COMPACT_KEEP_TAIL is not a count ({e}); it is read as unset");
+            None
+        }
+    }
+}
+
+/// A chat's default kept tail when GOOSE_COMPACT_KEEP_TAIL is unset and the compaction lands inside
+/// a tool loop: the newest agent-visible messages whose text fits `budget_chars` (the kept block's share of the window, a sixteenth),
+/// never reaching back past a message an earlier compaction hid. Every system surveyed for
+/// COMPACTION-V2.md keeps the newest turns word for word (JetBrains' best window 10 turns,
+/// OpenHands half the events, Cline ~20k tokens); goose's chats kept none, and after run B's
+/// summaries the model re-planned for 800-1,150 s from the summary alone. A swarm worker's
+/// compaction never reads this (`compact_messages`).
+fn chat_tail(messages: &[Message], budget_chars: Option<usize>) -> usize {
+    let Some(budget) = budget_chars else {
+        return 0;
+    };
+    // Only inside a tool loop: at a reply's start the person's new message sets the direction,
+    // and the place the model loses (run B, every compaction) is mid-loop.
+    let mid_loop = messages
+        .iter()
+        .rev()
+        .find(|m| m.is_agent_visible())
+        .is_some_and(|m| {
+            m.content
+                .iter()
+                .any(|c| matches!(c, MessageContent::ToolResponse(_)))
+        });
+    if !mid_loop {
+        return 0;
+    }
+    let size = |m: &Message| -> usize {
+        m.content
+            .iter()
+            .map(|c| match c {
+                MessageContent::Text(t) => t.text.chars().count(),
+                MessageContent::Thinking(t) => t.thinking.chars().count(),
+                MessageContent::ToolRequest(r) => r.tool_call.as_ref().map_or(0, |call| {
+                    serde_json::to_string(&call.arguments).map_or(0, |a| a.chars().count())
+                }),
+                MessageContent::ToolResponse(r) => r.tool_result.as_ref().map_or(0, |result| {
+                    model_visible_texts(result).map(|t| t.chars().count()).sum()
+                }),
+                _ => 0,
+            })
+            .sum()
+    };
+    let mut used = 0usize;
+    let mut tail = 0usize;
+    for message in messages.iter().rev() {
+        if !message.is_agent_visible() {
+            break;
+        }
+        used += size(message);
+        if used > budget {
+            break;
+        }
+        tail += 1;
+    }
+    tail
 }
 
 /// `compact_messages` with the keep-tail injected — the testable form (no env/config read). The
@@ -438,13 +505,15 @@ pub async fn compact_chat(
     request: &SummaryRequest,
     chat: &ChatCompaction,
 ) -> Result<ChatCompacted> {
+    let keep_tail = configured_keep_tail()
+        .unwrap_or_else(|| chat_tail(conversation.messages(), chat.kept_budget_chars));
     compact_core(
         provider,
         model_config,
         session_id,
         conversation,
         manual_compact,
-        keep_tail_from_config(),
+        keep_tail,
         request,
         Some(chat),
     )
@@ -679,6 +748,16 @@ async fn compact_core(
             ),
         }
     }
+
+    // A chat's person's message goes before its kept tail: after it, it would join the tail's
+    // last tool result as one user turn. The swarm workers keep their measured order.
+    let preserved_text = match (chat.is_some(), preserved_text) {
+        (true, Some(text)) => {
+            final_messages.push(Message::user().with_text(&text));
+            None
+        }
+        (_, preserved) => preserved,
+    };
 
     // K4: the kept tail returns VERBATIM after the summary, so the agent reads "summary of the
     // early conversation, then the last turns exactly as they happened" — same shape as the
@@ -2782,6 +2861,76 @@ mod tests {
             })
             .count();
         assert_eq!(blocks, 1, "one working set, the newest");
+    }
+
+    /// A chat's default tail: the newest agent-visible messages within the budget, never past a
+    /// message an earlier compaction hid; no budget (an unknown window) keeps none.
+    #[test]
+    fn a_chats_tail_is_the_newest_messages_within_the_budget() {
+        let mut messages = vec![
+            Message::user()
+                .with_text("old")
+                .with_visibility(true, false),
+            Message::user().with_text("a".repeat(50)),
+        ];
+        messages.extend(create_tool_pair("c1", "r1", "shell", &"c".repeat(50)));
+        assert_eq!(
+            chat_tail(&messages, Some(52)),
+            1,
+            "the tool result alone fits"
+        );
+        assert_eq!(
+            chat_tail(&messages, Some(1_000)),
+            3,
+            "stops at the hidden one"
+        );
+        assert_eq!(chat_tail(&messages, None), 0);
+        messages.push(Message::user().with_text("next please"));
+        assert_eq!(
+            chat_tail(&messages, Some(1_000)),
+            0,
+            "at a reply's start the person's message leads; no tail"
+        );
+    }
+
+    /// Mid-loop, a chat keeps its newest turns word for word after the summary, the person's
+    /// message before them, the tool pair whole.
+    #[tokio::test]
+    async fn a_chat_compacted_mid_loop_keeps_its_newest_turns_after_the_persons_message() {
+        let mut stored = vec![Message::user().with_text("ship the sync")];
+        stored.extend(create_tool_pair("c1", "r1", "shell", &"old ".repeat(500)));
+        stored.extend(create_tool_pair("c2", "r2", "shell", "tests: 3 failed"));
+        let mut inputs = chat_inputs(None, false);
+        inputs.kept_budget_chars = Some(100);
+        let provider = ScriptedProvider::new("## Where we are\nsync");
+        let ChatCompacted::Compacted { conversation, .. } = compact_chat(
+            &provider,
+            &ModelConfig::new("scripted"),
+            "s",
+            &Conversation::new_unvalidated(stored),
+            false,
+            &frame(),
+            &inputs,
+        )
+        .await
+        .unwrap() else {
+            panic!("never asked");
+        };
+        let agent: Vec<String> = conversation
+            .messages()
+            .iter()
+            .filter(|m| m.is_agent_visible())
+            .map(|m| serde_json::to_string(&m.content).unwrap())
+            .collect();
+        assert_eq!(agent.len(), 5, "{agent:#?}");
+        assert!(agent[0].contains("## Where we are"));
+        assert!(agent[2].contains("ship the sync"));
+        assert!(agent[3].contains("\"c2\""), "{}", agent[3]);
+        assert!(agent[4].contains("tests: 3 failed"));
+        let summarized = provider.requests.lock().unwrap()[0].clone();
+        assert!(!serde_json::to_string(&summarized)
+            .unwrap()
+            .contains("tests: 3 failed"));
     }
 
     fn words(n: usize, seed: &str) -> String {
