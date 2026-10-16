@@ -596,6 +596,20 @@ pub trait Provider: Send + Sync {
         false
     }
 
+    /// Whether a request for `model_name` renders the conversation the same bytes with reasoning
+    /// switched off as with the chat's own reasoning setting, so a compaction's summary written
+    /// with reasoning off still reads the chat's cached prefix. False unless a provider knows its
+    /// format: Anthropic's drops signed thinking blocks from the history when effort is Off.
+    fn reasoning_off_keeps_the_prefix(&self, _model_name: &str) -> bool {
+        false
+    }
+
+    /// Whether a request for `model_name` carries `tool_choice` from the model config's request
+    /// params onto the wire, so `tool_choice: none` reaches the model.
+    fn sends_tool_choice(&self, _model_name: &str) -> bool {
+        false
+    }
+
     /// Configure OAuth authentication for this provider
     ///
     /// This method is called when a provider has configuration keys marked with oauth_flow = true.

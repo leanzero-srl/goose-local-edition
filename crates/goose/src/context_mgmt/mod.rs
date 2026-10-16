@@ -39,8 +39,35 @@ fn tool_pair_summarization_enabled() -> bool {
         .unwrap_or(true)
 }
 
+/// A boolean tunable (env > config > `default`): true/false, on/off, yes/no and 1/0 all read as
+/// meant; anything else is warned and the default stands. (`get_param::<bool>` alone reads `0`,
+/// `off` and `no` as errors, which left a feature on.)
+pub fn knob_bool(key: &str, default: bool) -> bool {
+    let unreadable = |what: String| {
+        warn!("{key} is {what}, not on/off, true/false, yes/no or 1/0; using {default}");
+        default
+    };
+    match Config::global().get_param::<serde_json::Value>(key) {
+        Ok(serde_json::Value::Bool(on)) => on,
+        Ok(serde_json::Value::Number(n)) => match n.as_i64() {
+            Some(1) => true,
+            Some(0) => false,
+            _ => unreadable(n.to_string()),
+        },
+        Ok(serde_json::Value::String(text)) => match text.trim().to_ascii_lowercase().as_str() {
+            "true" | "on" | "yes" | "1" => true,
+            "false" | "off" | "no" | "0" => false,
+            _ => unreadable(format!("{text:?}")),
+        },
+        Ok(other) => unreadable(other.to_string()),
+        Err(crate::config::ConfigError::NotFound(_)) => default,
+        Err(e) => unreadable(format!("unreadable ({e})")),
+    }
+}
+
 /// How the summary that extends the chat reasons (`GOOSE_COMPACTION_SUMMARY_THINKING`, env > config
-/// > default `off`).
+/// > default: `off` where the provider says reasoning off keeps the request's prefix
+/// (`Provider::reasoning_off_keeps_the_prefix`), the chat's own setting everywhere else).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SummaryThinking {
     /// Reasoning off, as every helper call is. MEASURED (Forge 2.0 runs A and B on Gabee, Qwen3.8-27B
@@ -52,7 +79,9 @@ pub enum SummaryThinking {
     /// on a tool request, Q-135) renders byte-identical up to the generation prompt — checked by
     /// rendering run B's own request (llm_request.0, 59 messages, 5 tools, 93,417 chars) both ways.
     /// A chat pinned at `xhigh`/`low` on that template loses its prefix to this switch: one cold
-    /// prefill in place of the reasoning.
+    /// prefill in place of the reasoning. NOT a default where the format renders history by the
+    /// switch: Anthropic's formatter drops signed thinking blocks when effort is Off, and Anthropic
+    /// invalidates its message cache on a thinking change.
     Off,
     /// The chat's own switch (the Q-342 behaviour): the summary reasons as the chat does.
     Chat,
@@ -60,18 +89,25 @@ pub enum SummaryThinking {
 
 pub const SUMMARY_THINKING_KEY: &str = "GOOSE_COMPACTION_SUMMARY_THINKING";
 
-pub fn summary_thinking() -> SummaryThinking {
+/// `off_keeps_the_prefix`: the provider's answer for this model. Unset or unreadable, the default
+/// follows it; `off` and `chat` are the person's choice.
+pub fn summary_thinking(off_keeps_the_prefix: bool) -> SummaryThinking {
+    let default = if off_keeps_the_prefix {
+        SummaryThinking::Off
+    } else {
+        SummaryThinking::Chat
+    };
     match Config::global().get_param::<String>(SUMMARY_THINKING_KEY) {
         Ok(value) if value.eq_ignore_ascii_case("off") => SummaryThinking::Off,
         Ok(value) if value.eq_ignore_ascii_case("chat") => SummaryThinking::Chat,
         Ok(value) => {
-            warn!("{SUMMARY_THINKING_KEY} is {value:?}, not `off` or `chat`; the summary is written with reasoning off");
-            SummaryThinking::Off
+            warn!("{SUMMARY_THINKING_KEY} is {value:?}, not `off` or `chat`; using {default:?}");
+            default
         }
-        Err(crate::config::ConfigError::NotFound(_)) => SummaryThinking::Off,
+        Err(crate::config::ConfigError::NotFound(_)) => default,
         Err(e) => {
-            warn!("{SUMMARY_THINKING_KEY} could not be read ({e}); the summary is written with reasoning off");
-            SummaryThinking::Off
+            warn!("{SUMMARY_THINKING_KEY} could not be read ({e}); using {default:?}");
+            default
         }
     }
 }
@@ -96,14 +132,7 @@ pub fn summary_model_config(chat: &ModelConfig, thinking: SummaryThinking) -> Mo
 pub const SUMMARY_TOOL_CALL_RETRY_KEY: &str = "GOOSE_COMPACTION_SUMMARY_TOOL_CALL_RETRY";
 
 fn summary_tool_call_retry() -> bool {
-    match Config::global().get_param::<bool>(SUMMARY_TOOL_CALL_RETRY_KEY) {
-        Ok(retry) => retry,
-        Err(crate::config::ConfigError::NotFound(_)) => true,
-        Err(e) => {
-            warn!("{SUMMARY_TOOL_CALL_RETRY_KEY} is not a boolean ({e}); the retry stays on");
-            true
-        }
-    }
+    knob_bool(SUMMARY_TOOL_CALL_RETRY_KEY, true)
 }
 
 /// The summary config asked again after a tool call: `tool_choice: none`, and reasoning pinned off
@@ -1249,7 +1278,10 @@ async fn summarize_as_the_chat(
         }
     };
     let watch_note = kept.note.is_some() && chat.may_ask;
-    let summary_config = summary_model_config(model_config, summary_thinking());
+    let summary_config = summary_model_config(
+        model_config,
+        summary_thinking(provider.reasoning_off_keeps_the_prefix(&model_config.model_name)),
+    );
     let mut config = summary_config.clone();
     let mut retried = false;
     let (mut response, mut provider_usage) = loop {
@@ -1325,6 +1357,15 @@ async fn summarize_as_the_chat(
             return Ok(ChatSummary::NotWritten(format!(
                 "was answered with a tool call instead of the summary \
                  ({SUMMARY_TOOL_CALL_RETRY_KEY} is off)"
+            )));
+        }
+        // Only the formats that put `tool_choice` on the wire can be asked this; elsewhere the
+        // same request would come back the same way.
+        if !provider.sends_tool_choice(&model_config.model_name) {
+            return Ok(ChatSummary::NotWritten(format!(
+                "was answered with a tool call instead of the summary, and {}'s request format \
+                 cannot carry tool_choice none, so it was not asked again",
+                provider.get_name()
             )));
         }
         warn!(
@@ -2746,9 +2787,10 @@ mod tests {
                 panic!("compacted");
             };
             let calls = provider.calls.lock().unwrap();
-            // A tool call is asked again once, extending the chat with tool_choice none
-            // (GOOSE_COMPACTION_SUMMARY_TOOL_CALL_RETRY); a refusal as too long is not.
-            let chat_shaped = if tool_call { 2 } else { 1 };
+            // This provider's format cannot carry tool_choice none (`sends_tool_choice` false),
+            // so a tool call is not asked again; neither is a refusal as too long.
+            let _ = tool_call;
+            let chat_shaped = 1;
             assert_eq!(calls.len(), chat_shaped + 1);
             for call in &calls[..chat_shaped] {
                 assert_eq!(call.0, "You are goose.");
@@ -3063,6 +3105,10 @@ mod tests {
             "tool-call-once"
         }
 
+        fn sends_tool_choice(&self, _model_name: &str) -> bool {
+            true
+        }
+
         async fn stream(
             &self,
             model_config: &ModelConfig,
@@ -3155,6 +3201,9 @@ mod tests {
             fn get_name(&self) -> &str {
                 "scripted-retry"
             }
+            fn sends_tool_choice(&self, _model_name: &str) -> bool {
+                true
+            }
             async fn stream(
                 &self,
                 model_config: &ModelConfig,
@@ -3199,6 +3248,43 @@ mod tests {
         let summary = latest_summary(compacted.messages()).expect("a summary");
         assert!(summary.starts_with("<transcript summary>"), "{summary}");
         assert_eq!(scripted.inner.calls.lock().unwrap().len(), 1);
+    }
+
+    /// The retry as it goes on the WIRE to an MLX engine (the `omlx` definition, openai chat
+    /// format): the first summary request carries no tool_choice, the second carries
+    /// `"tool_choice": "none"` and the thinking-off switch, with the same messages and tools.
+    #[tokio::test]
+    async fn the_retry_puts_tool_choice_none_on_the_wire() {
+        use crate::model_config::mlx_endpoint::{thinking_off, MlxEndpoint, SERVED};
+        let engine = MlxEndpoint::start_answering_first_with_a_tool_call().await;
+        let ChatCompacted::Compacted { .. } = compact_chat(
+            engine.provider.as_ref(),
+            &ModelConfig::new(SERVED),
+            "s",
+            &two_turn_chat(),
+            false,
+            &frame(),
+            &chat_inputs(None, false),
+        )
+        .await
+        .unwrap()
+        else {
+            panic!("compacted");
+        };
+        let bodies = engine.bodies().await;
+        // The mock's second answer carries no summary section, so the guard sends the summary
+        // to the transcript request: three bodies.
+        assert_eq!(bodies.len(), 3, "summary, the one retry, transcript: {bodies:?}");
+        let (first, retry, transcript) = (&bodies[0], &bodies[1], &bodies[2]);
+        assert!(first.get("tool_choice").is_none(), "{first}");
+        assert_eq!(retry["tool_choice"], serde_json::json!("none"), "{retry}");
+        assert_eq!(retry["chat_template_kwargs"], thinking_off());
+        assert_eq!(retry["messages"], first["messages"]);
+        assert_eq!(retry["tools"], first["tools"]);
+        assert!(transcript.get("tool_choice").is_none());
+        assert!(transcript
+            .get("tools")
+            .is_none_or(|t| t.as_array().is_some_and(|t| t.is_empty())));
     }
 
     /// `chat` keeps the chat's effort on the retry (it is the first attempt's); an unpinned config

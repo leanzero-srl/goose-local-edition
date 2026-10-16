@@ -18,7 +18,6 @@ use rmcp::model::Role;
 
 use super::working_set::{is_working_set_text, WORKING_SET_CLOSE, WORKING_SET_OPEN};
 use super::{outcome_and_output, RECORD_EXCERPT_CHARS};
-use crate::config::Config;
 use crate::conversation::message::{
     model_visible_texts, Message, MessageContent, MessageMetadata, ToolResponse,
 };
@@ -27,28 +26,20 @@ use crate::conversation::message::{
 /// stage 1 before asking for a summary.
 pub const MASK_FIRST_KEY: &str = "GOOSE_COMPACTION_MASK_FIRST";
 
-/// `GOOSE_COMPACTION_DROP_REASONING` (env > config > default true): stage 1 also drops the old
-/// turns' reasoning. Without it stage 1 rarely has room to give (run B: the reasoning was the
-/// larger half of what it can drop, and the working set gives back about what masking takes).
+/// `GOOSE_COMPACTION_DROP_REASONING` (env > config > default FALSE): stage 1 also drops the old
+/// turns' reasoning. Off by default because the reasoning is where the plan lives: in run B's
+/// first compaction span (B_C1) the 89 assistant messages held 555 chars of text and 250,387 of
+/// reasoning — the visible text was "The design is clear now. Time to implement." and the design
+/// itself only in the reasoning. JetBrains' measured masking kept reasoning and actions whole.
+/// When on, only the reasoning the provider actually rendered counts as freed (`mask_stage`).
 pub const DROP_REASONING_KEY: &str = "GOOSE_COMPACTION_DROP_REASONING";
 
-fn flag(key: &str) -> bool {
-    match Config::global().get_param::<bool>(key) {
-        Ok(on) => on,
-        Err(crate::config::ConfigError::NotFound(_)) => true,
-        Err(e) => {
-            tracing::warn!("{key} is not a boolean ({e}); it stays on");
-            true
-        }
-    }
-}
-
 pub fn mask_first() -> bool {
-    flag(MASK_FIRST_KEY)
+    super::knob_bool(MASK_FIRST_KEY, true)
 }
 
 pub fn drop_reasoning() -> bool {
-    flag(DROP_REASONING_KEY)
+    super::knob_bool(DROP_REASONING_KEY, false)
 }
 
 /// Whether stage 1 is enough: the context it leaves, `after` tokens, is at most
@@ -73,17 +64,22 @@ pub struct Masked {
     pub messages: Vec<Message>,
     pub outputs_masked: usize,
     pub reasoning_dropped: usize,
-    /// The text that leaves the context and the text that replaces it, for the token estimate.
-    pub removed: String,
+    /// The output text and the reasoning that leave the agent's copy, and the text that replaces
+    /// them, for the token estimate. Kept apart: an output is always rendered, reasoning only where
+    /// the provider sends it.
+    pub removed_outputs: String,
+    pub removed_reasoning: String,
     pub added: String,
 }
+
+/// How every stub opens: a stub is never masked again.
+const STUB_OPEN: &str = "[Output elided at compaction";
 
 fn stub(result: &rmcp::model::CallToolResult, chars: usize) -> String {
     let (outcome, output) = outcome_and_output(result);
     format!(
-        "[Output elided at compaction ({chars} chars): the call {outcome}. {output} Files it \
-         printed are in \"Current file contents after compaction\" when listed there; otherwise \
-         run the call again if you need its output.]"
+        "{STUB_OPEN} ({chars} chars): the call {outcome}. {output} Files it printed are in \
+         \"Current file contents after compaction\" when listed there.]"
     )
 }
 
@@ -132,12 +128,18 @@ pub fn mask(messages: &[Message], keep_recent_chars: usize, drop_reasoning: bool
             kept_from = asked;
         }
     }
+    // The newest assistant turn always keeps its reasoning, outputs or not: Anthropic requires the
+    // final tool-loop turn's thinking, and it is the model's current step.
+    if let Some(last) = visible.iter().rposition(|m| m.role == Role::Assistant) {
+        kept_from = kept_from.min(last);
+    }
 
     let mut out = Masked {
         messages: Vec::with_capacity(visible.len()),
         outputs_masked: 0,
         reasoning_dropped: 0,
-        removed: String::new(),
+        removed_outputs: String::new(),
+        removed_reasoning: String::new(),
         added: String::new(),
     };
     for (i, message) in visible.iter().enumerate() {
@@ -149,7 +151,7 @@ pub fn mask(messages: &[Message], keep_recent_chars: usize, drop_reasoning: bool
             .filter_map(|content| match content {
                 MessageContent::Thinking(t) if old && drop_reasoning => {
                     out.reasoning_dropped += 1;
-                    out.removed.push_str(&t.thinking);
+                    out.removed_reasoning.push_str(&t.thinking);
                     None
                 }
                 MessageContent::RedactedThinking(_) if old && drop_reasoning => {
@@ -164,7 +166,7 @@ pub fn mask(messages: &[Message], keep_recent_chars: usize, drop_reasoning: bool
                         && is_working_set_text(&text.text)
                         && !text.text.contains(SUPERSEDED) =>
                 {
-                    out.removed.push_str(&text.text);
+                    out.removed_outputs.push_str(&text.text);
                     let line = format!("{WORKING_SET_OPEN}{SUPERSEDED}{WORKING_SET_CLOSE}");
                     out.added.push_str(&line);
                     Some(MessageContent::text(line))
@@ -201,12 +203,12 @@ fn mask_response(response: ToolResponse, out: &mut Masked) -> ToolResponse {
     };
     let text: String = model_visible_texts(result).collect::<Vec<_>>().join("\n");
     let chars = text.chars().count();
-    if !worth_masking(chars) {
+    if !worth_masking(chars) || text.starts_with(STUB_OPEN) {
         return response;
     }
     let line = stub(result, chars);
     out.outputs_masked += 1;
-    out.removed.push_str(&text);
+    out.removed_outputs.push_str(&text);
     out.added.push_str(&line);
     let mut masked = result.clone();
     masked.content = vec![rmcp::model::Content::text(line)];
@@ -291,7 +293,9 @@ mod tests {
             .collect();
         assert_eq!(thinking, ["plan D"], "only the kept turn's reasoning stays");
         assert_eq!(masked.reasoning_dropped, 3);
-        assert!(masked.removed.contains("plan A") && masked.removed.contains(&"a".repeat(2_000)));
+        assert!(masked.removed_reasoning.contains("plan A"));
+        assert!(masked.removed_outputs.contains(&"a".repeat(2_000)));
+        assert!(!outputs[0].contains("run the call again"), "facts, no instruction");
 
         let kept_reasoning = mask(&messages, 3_000, false);
         assert_eq!(kept_reasoning.reasoning_dropped, 0);
@@ -337,6 +341,48 @@ mod tests {
         );
     }
 
+    /// A stub from an earlier stage 1 is longer than the "worth masking" floor; it is never masked
+    /// again (a stub of a stub would lose the original's facts).
+    #[test]
+    fn a_stub_is_never_masked_again() {
+        let mut messages = vec![Message::user().with_text("go")];
+        let output = format!(
+            "{}\n{}\n{}",
+            "f".repeat(150),
+            "a".repeat(2_000),
+            "l".repeat(150)
+        );
+        messages.extend(pair("a", "cat a", &output, None));
+        messages.extend(pair("b", "cat b", &"b".repeat(5_000), None));
+        let once = mask(&messages, 10, false);
+        assert_eq!(once.outputs_masked, 1);
+        let stub = outputs(&once)[0].clone();
+        assert!(stub.chars().count() > 2 * RECORD_EXCERPT_CHARS, "{stub}");
+        let twice = mask(&once.messages, 10, false);
+        assert_eq!(twice.outputs_masked, 0);
+        assert_eq!(outputs(&twice)[0], stub);
+    }
+
+    /// With no tool output at all, the newest assistant turn still keeps its reasoning.
+    #[test]
+    fn the_newest_turn_keeps_its_reasoning_when_no_output_has_text() {
+        let messages = vec![
+            Message::user().with_text("plan it"),
+            Message::assistant()
+                .with_thinking("old plan", "sig")
+                .with_text("first"),
+            Message::user().with_text("again"),
+            Message::assistant()
+                .with_thinking("current plan", "sig")
+                .with_text("second"),
+        ];
+        let masked = mask(&messages, 1_000, true);
+        assert_eq!(masked.removed_reasoning, "old plan");
+        assert!(serde_json::to_string(&masked.messages[3].content)
+            .unwrap()
+            .contains("current plan"));
+    }
+
     #[test]
     fn stage_one_is_enough_only_when_it_leaves_the_windows_own_headroom() {
         assert!(accepts(95_299, 158_833, 0.8));
@@ -378,37 +424,29 @@ mod trace {
         )
         .unwrap();
         let block = working_set::working_set_block(&files, budget, Some(&dir)).unwrap_or_default();
-        let removed = counter.count_tokens(&masked.removed);
+        let outputs = counter.count_tokens(&masked.removed_outputs);
+        let reasoning = counter.count_tokens(&masked.removed_reasoning);
         let stubs = counter.count_tokens(&masked.added);
         let set = counter.count_tokens(&block);
-        let after = (used + stubs + set).saturating_sub(removed);
-        let unmasked_reasoning = mask(&messages, keep, false);
-        let removed_without_reasoning = counter.count_tokens(&unmasked_reasoning.removed);
-        println!(
-            "window {window} used {used}: {} outputs masked, {} reasoning items dropped; removed \
-             {removed} tok (outputs alone {removed_without_reasoning}), stubs {stubs}, working set \
-             {set} -> after {after} ({:.0}% of the window); stage 1 {}; without reasoning drop \
-             after {} -> {}",
-            masked.outputs_masked,
-            masked.reasoning_dropped,
-            after as f64 * 100.0 / window as f64,
+        let kept_reasoning = (used + stubs + set).saturating_sub(outputs);
+        let dropped_too = kept_reasoning.saturating_sub(reasoning);
+        let verdict = |after: usize| {
             if accepts(after, window, 0.8) {
                 "TAKEN"
             } else {
                 "not enough -> summary"
-            },
-            (used + counter.count_tokens(&unmasked_reasoning.added) + set)
-                .saturating_sub(removed_without_reasoning),
-            if accepts(
-                (used + counter.count_tokens(&unmasked_reasoning.added) + set)
-                    .saturating_sub(removed_without_reasoning),
-                window,
-                0.8
-            ) {
-                "TAKEN"
-            } else {
-                "not enough"
             }
+        };
+        println!(
+            "window {window} used {used}: {} outputs masked ({outputs} tok), stubs {stubs}, working \
+             set {set} -> {kept_reasoning} ({:.0}%) {} [default, reasoning kept]; dropping {} \
+             reasoning items ({reasoning} tok, an upper bound on what was rendered) -> \
+             {dropped_too} {}",
+            masked.outputs_masked,
+            kept_reasoning as f64 * 100.0 / window as f64,
+            verdict(kept_reasoning),
+            masked.reasoning_dropped,
+            verdict(dropped_too),
         );
     }
 }
