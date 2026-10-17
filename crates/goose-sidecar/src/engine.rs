@@ -173,6 +173,11 @@ pub fn hybrid_cache_entries() -> u32 {
     MAX_CONCURRENT_REQUESTS * PREFIX_ENTRIES_PER_REQUEST
 }
 
+/// v0.14.3-lz.11 = lz.10 + a local LFM2/LFM2.5 folder gets the `lfm` tool parser and the
+/// `deepseek_r1_distill` reasoning parser from its config.json + template (fork lz/lfm-metadata
+/// c56728690). Aliases name only hub repos, so the app's folder mount of Liquid's 24B served
+/// every tool call as plain text.
+///
 /// v0.14.3-lz.10 = lz.9 + shortest-remaining-prefill-first on the one-row engine (fork
 /// lz/single-srpf f0a3cd07b, Q-103; `serve --singleton-prefill-order srpf`, the default). The MTP
 /// verifier decodes one request at a time and lz.9 kept that request alone for its whole life,
@@ -235,7 +240,7 @@ pub fn hybrid_cache_entries() -> u32 {
 pub const ENGINE_LAUNCHER: [&str; 4] = [
     "uvx",
     "--from",
-    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.10",
+    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.11",
     "rapid-mlx",
 ];
 
@@ -314,6 +319,12 @@ pub const SUPERSEDED_ENGINE_LAUNCHERS: &[[&str; 4]] = &[
         "uvx",
         "--from",
         "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.9",
+        "rapid-mlx",
+    ],
+    [
+        "uvx",
+        "--from",
+        "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.10",
         "rapid-mlx",
     ],
 ];
@@ -2741,7 +2752,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.10",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.11",
                 "rapid-mlx",
                 "serve",
                 "/opt/models/mlx-community/Qwen3.5-9B-MLX-4bit",
@@ -3078,7 +3089,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.10",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.11",
                 "rapid-mlx",
                 "serve",
                 &model_path.to_string_lossy(),
