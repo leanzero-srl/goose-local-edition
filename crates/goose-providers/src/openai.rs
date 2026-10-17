@@ -846,6 +846,7 @@ impl OpenAiProvider {
                             window: upper.map_or(loaded, |u| loaded.min(u)),
                             served: Some(model_name.to_string()),
                             source: "loaded_context_length",
+                            live: false,
                         }),
                         upper,
                     };
@@ -984,10 +985,14 @@ fn lower_window_on_overflow(
     };
     match overflow_n_ctx(message).map(|n| usize::try_from(n).unwrap_or(usize::MAX)) {
         Some(n_ctx) => {
+            // A guard's window lowered here holds until its next read, which takes the guard's
+            // current figure again.
             let entry = cache.entry(model_name.to_string()).or_insert(CachedWindow {
                 window: None,
                 upper: None,
                 served: None,
+                live: false,
+                read_at: None,
             });
             entry.window = Some(entry.window.map_or(n_ctx, |w| w.min(n_ctx)));
             tracing::info!(
@@ -1009,7 +1014,16 @@ struct ProbedWindow {
     window: usize,
     served: Option<String>,
     source: &'static str,
+    /// The memory guard's `max_model_len` took part, so the window moves with the machine.
+    live: bool,
 }
+
+/// How long a window that a memory guard set is reused before it is read again. The guard's
+/// `max_model_len` follows what the Mac can hold right now (busy-machine budget): on Gabee
+/// 2026-10-17 it read 117,760 at app launch, while macOS re-indexed the swapped app, and 130,286
+/// minutes later. Kept for a whole run, the launch reading moved every compaction earlier than the
+/// engine needed. A read costs two loopback GETs, so once a minute is nothing.
+const LIVE_WINDOW_REFRESH: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// What a probe read: the window, or why none; and the engine's own upper bound either way.
 struct Probe {
@@ -1025,9 +1039,22 @@ struct CachedWindow {
     /// The engine's upper bound: a default never stands above it.
     upper: Option<usize>,
     served: Option<String>,
+    /// A memory guard's window, read again after LIVE_WINDOW_REFRESH; a static one (`meta.n_ctx`,
+    /// LM Studio's loaded length, a miss) is kept.
+    live: bool,
+    read_at: Option<std::time::Instant>,
 }
 
 impl CachedWindow {
+    /// Whether this entry answers for `model_name` at `now` without probing again.
+    fn reusable(&self, model_name: &str, now: std::time::Instant) -> bool {
+        self.holds_for(model_name)
+            && (!self.live
+                || self
+                    .read_at
+                    .is_some_and(|at| now.saturating_duration_since(at) < LIVE_WINDOW_REFRESH))
+    }
+
     /// The cache is keyed by the model the server SERVES: a window read off the sole entry of a
     /// single-model server under another id is not reused — that server can swap what it serves
     /// under the same URL (a Q8 for a Q6) and the window with it — so such a name is probed again.
@@ -1070,6 +1097,7 @@ fn window_from_models(
         window,
         served,
         source,
+        live: guarded.is_some(),
     })
 }
 
@@ -1240,9 +1268,10 @@ impl Provider for OpenAiProvider {
             .lock()
             .ok()
             .and_then(|cache| cache.get(&model_config.model_name).cloned());
+        let now = std::time::Instant::now();
         if let Some(cached) = cached
             .as_ref()
-            .filter(|c| c.holds_for(&model_config.model_name))
+            .filter(|c| c.reusable(&model_config.model_name, now))
         {
             return Ok(self.apply_local_context_cap(cached.limit(default)));
         }
@@ -1267,10 +1296,14 @@ impl Provider for OpenAiProvider {
                 window: Some(probed.window),
                 upper: probe.upper,
                 served: probed.served,
+                live: probed.live,
+                read_at: Some(now),
             },
             Err(reason) => {
                 // A miss never overwrites a window this name already read: the server answered it
-                // once, and a timeout or a transient error is not news about the window.
+                // once, and a timeout or a transient error is not news about the window. The kept
+                // window waits a full refresh before the next read, so a down engine costs one
+                // probe a minute, not one per turn.
                 if let Some(kept) = cached.filter(|c| c.window.is_some()) {
                     tracing::warn!(
                         host = %sanitize_url(self.api_client.host()),
@@ -1279,7 +1312,17 @@ impl Provider for OpenAiProvider {
                         reason = %reason,
                         "context_window_probe_missed: keeping the window read before"
                     );
-                    return Ok(self.apply_local_context_cap(kept.limit(default)));
+                    let limit = kept.limit(default);
+                    if let Ok(mut cache) = self.n_ctx_cache.lock() {
+                        cache.insert(
+                            model_config.model_name.clone(),
+                            CachedWindow {
+                                read_at: Some(now),
+                                ..kept
+                            },
+                        );
+                    }
+                    return Ok(self.apply_local_context_cap(limit));
                 }
                 tracing::warn!(
                     host = %sanitize_url(self.api_client.host()),
@@ -1295,6 +1338,8 @@ impl Provider for OpenAiProvider {
                     window: None,
                     upper: probe.upper,
                     served: None,
+                    live: false,
+                    read_at: Some(now),
                 }
             }
         };
@@ -2875,6 +2920,102 @@ mod tests {
             provider.get_context_limit(&config).await.unwrap(),
             158_464,
             "forgotten, probed again"
+        );
+    }
+
+    /// Ages a cached window past LIVE_WINDOW_REFRESH, as if a minute went by.
+    fn age_cached_window(provider: &OpenAiProvider, model: &str) {
+        let mut cache = provider.n_ctx_cache.lock().unwrap();
+        let entry = cache.get_mut(model).unwrap();
+        entry.read_at = std::time::Instant::now().checked_sub(LIVE_WINDOW_REFRESH * 2);
+    }
+
+    async fn serve_models(server: &wiremock::MockServer, models: serde_json::Value) {
+        server.reset().await;
+        for (route, body) in [("/v1/models", models), ("/v1/status", guard_status())] {
+            wiremock::Mock::given(wiremock::matchers::method("GET"))
+                .and(wiremock::matchers::path(route))
+                .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(body))
+                .mount(server)
+                .await;
+        }
+    }
+
+    fn guarded_listing(max_model_len: u64) -> serde_json::Value {
+        json!({"object": "list", "data": [{
+            "id": "Qwen3.8-27B-Q8", "context_window": 262_144, "max_model_len": max_model_len
+        }]})
+    }
+
+    /// Gabee 2026-10-17: the guard read 117,760 at app launch under load and 130,286 later. A
+    /// guard's window follows the engine in both directions once its refresh is due, and is
+    /// reused until then.
+    #[tokio::test]
+    async fn a_memory_guard_window_is_read_again_and_follows_the_engine_both_ways() {
+        let server = engine_server(guarded_listing(117_760), Some(guard_status())).await;
+        let provider = provider_at(&server);
+        let config = ModelConfig::new("Qwen3.8-27B-Q8");
+        assert_eq!(provider.get_context_limit(&config).await.unwrap(), 117_760);
+
+        serve_models(&server, guarded_listing(130_286)).await;
+        assert_eq!(
+            provider.get_context_limit(&config).await.unwrap(),
+            117_760,
+            "within the refresh: reused, no probe"
+        );
+        assert_eq!(server.received_requests().await.unwrap().len(), 0);
+
+        age_cached_window(&provider, "Qwen3.8-27B-Q8");
+        assert_eq!(
+            provider.get_context_limit(&config).await.unwrap(),
+            130_286,
+            "up: the machine freed memory"
+        );
+
+        serve_models(&server, guarded_listing(64_000)).await;
+        age_cached_window(&provider, "Qwen3.8-27B-Q8");
+        assert_eq!(
+            provider.get_context_limit(&config).await.unwrap(),
+            64_000,
+            "down: the machine got busy"
+        );
+    }
+
+    /// `meta.n_ctx` is the server's loaded window, fixed for the load: never read again by age.
+    #[tokio::test]
+    async fn a_static_window_is_not_read_again_by_age() {
+        let server = engine_server(
+            json!({"data": [{"id": "qwen3", "meta": {"n_ctx": 32_768}}]}),
+            None,
+        )
+        .await;
+        let provider = provider_at(&server);
+        let config = ModelConfig::new("qwen3");
+        assert_eq!(provider.get_context_limit(&config).await.unwrap(), 32_768);
+        age_cached_window(&provider, "qwen3");
+        server.reset().await;
+        assert_eq!(provider.get_context_limit(&config).await.unwrap(), 32_768);
+        assert_eq!(server.received_requests().await.unwrap().len(), 0);
+    }
+
+    /// A due re-read that misses keeps the guard's last window AND waits a full refresh before
+    /// trying again: a down engine costs one probe a minute, not one (up to 5 s) per turn.
+    #[tokio::test]
+    async fn a_missed_re_read_keeps_the_window_and_waits_a_refresh() {
+        let server = engine_server(guarded_listing(130_286), Some(guard_status())).await;
+        let provider = provider_at(&server);
+        let config = ModelConfig::new("Qwen3.8-27B-Q8");
+        assert_eq!(provider.get_context_limit(&config).await.unwrap(), 130_286);
+        age_cached_window(&provider, "Qwen3.8-27B-Q8");
+        server.reset().await;
+        assert_eq!(provider.get_context_limit(&config).await.unwrap(), 130_286);
+        let after_miss = server.received_requests().await.unwrap().len();
+        assert!(after_miss > 0, "the due read was attempted");
+        assert_eq!(provider.get_context_limit(&config).await.unwrap(), 130_286);
+        assert_eq!(
+            server.received_requests().await.unwrap().len(),
+            after_miss,
+            "no second probe inside the refresh"
         );
     }
 
