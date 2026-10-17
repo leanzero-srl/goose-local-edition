@@ -1192,3 +1192,10 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
   MLX/JACCL layer. `scripts/link-live-test.sh` + `scripts/tailscale_identity.py` moved with it.
 - Edit this file from either Mac and COMMIT it in the goose repo; an uncommitted edit only reaches the other Mac
   as a projsync wip snapshot.
+- RC13 CONTROL, FIRST FULL LOCAL FORGE 2.0 BUILD WITH NO ENGINE INCIDENT (2026-10-17, Gabee 64 GB, Qwen3.8-27B Q8-base,
+  engine e3a92b555): build 1 scored 0.1342. That is the best local Forge score so far (previous best was JetBrains-blend at 0.0938).
+  Inner score 0.664, cut by a critical failure (CI secret echoed in the admin save/load resolver responses, x0.6) and by
+  reliability 0.337. 299 of 300 calls, 7.8 h, OOM 0, and the memory guard took no harmful action. Peak prompt 122k.
+  Model-side trap seen: it spent about 1.4 h in `sleep 480` chains waiting for the simulator's quota hour to roll so it could re-test
+  the backfill, and it read local time as UTC. Count that wait separately when comparing candidates' wall clock. The engine
+  sits idle the whole time, so it is not serving cost.
