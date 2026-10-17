@@ -85,8 +85,13 @@ impl CodeExecutionClient {
             .await
             .ok()?;
 
+        // The catalog is what code mode OFFERS the model, and a callback exists only for a catalog
+        // entry, so a tool hidden from the model (MCP Apps app-only) must not be in it.
         let mut cfgs = vec![];
-        for tool in tools {
+        for tool in tools
+            .into_iter()
+            .filter(crate::agents::reply_parts::is_tool_visible_to_model)
+        {
             let (name, namespace) = if let Some((prefix, tool_name)) = tool.name.split_once("__") {
                 (tool_name.to_string(), Some(prefix.to_string()))
             } else if let Some(owner) = get_tool_owner(&tool) {

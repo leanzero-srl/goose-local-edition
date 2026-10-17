@@ -7502,7 +7502,7 @@
         },
         "needBytes": {
           "type": "integer",
-          "description": "`weightsBytes + kvBytes`.",
+          "description": "`weightsBytes + kvBytes` + the sequence's recurrent state + one floor prefill step's\ntransient at `contextTokens` (goose-sidecar `fit::SingleEngineCost`).",
           "minimum": 0
         },
         "weightsBytes": {
@@ -8095,7 +8095,13 @@
             "integer",
             "null"
           ],
+          "description": "The context this placement runs at: for a single engine, what the DEVICE holds run the way\nthe engine prefills (never the free memory of the moment) — or, for the placement serving\nnow, the window its engine's memory guard reports.",
           "minimum": 0
+        },
+        "contextSource": {
+          "$ref": "#/$defs/MlxContextSourceDto",
+          "description": "Who sized `context`.",
+          "default": "estimate"
         },
         "shortBytes": {
           "type": [
@@ -8150,6 +8156,31 @@
           "description": "Fits only at a smaller context than wanted (`context` says which)."
         }
       ]
+    },
+    "MlxContextSourceDto": {
+      "oneOf": [
+        {
+          "type": "string",
+          "const": "estimate",
+          "description": "goose's estimate for that Mac (its cost model against the device)."
+        },
+        {
+          "type": "string",
+          "const": "enginePrior",
+          "description": "The serving engine's memory guard, on its analytic prior."
+        },
+        {
+          "type": "string",
+          "const": "engineCalibrated",
+          "description": "The serving engine's memory guard, calibrated on measured prefill steps."
+        },
+        {
+          "type": "string",
+          "const": "unbounded",
+          "description": "Nothing that knows that Mac's memory bounded it (the model's own window)."
+        }
+      ],
+      "description": "Who sized a placement's context."
     },
     "MlxNodeFitDto": {
       "type": "object",

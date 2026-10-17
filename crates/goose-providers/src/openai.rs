@@ -20,6 +20,7 @@ use crate::openai_compatible::{
     handle_response_openai_compat, handle_status, stream_responses_compat,
 };
 use crate::request_log::{start_log, LoggerHandleExt};
+use crate::served_window::{overflow_n_ctx, MemoryGuard, ServedWindow};
 use crate::thinking::ThinkingEffort;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -144,8 +145,9 @@ pub struct OpenAiProvider {
     dynamic_models: Option<bool>,
     skip_canonical_filtering: bool,
     preserve_thinking_context: bool,
+    /// Per configured model name: the window last probed and the model the server answered for.
     #[serde(skip)]
-    n_ctx_cache: Arc<Mutex<HashMap<String, Option<usize>>>>,
+    n_ctx_cache: Arc<Mutex<HashMap<String, CachedWindow>>>,
     /// Per model: whether the endpoint's `/v1/models` entry declared
     /// `request_extensions: ["rapid_mlx_transient_tail"]`. Only answered probes are cached.
     #[serde(skip)]
@@ -376,6 +378,14 @@ impl OpenAiProvider {
     /// sent the field.
     const PROVIDERS_FRONTING_RAPID_MLX: &[&str] = &["omlx"];
 
+    /// The provider the Benchmark view uses for a model served by goose's own MLX engine on this
+    /// machine: "Single model", `openai`, host = the engine's loopback endpoint
+    /// (`evals/swarm-bench/bench/bench_isolation.py` reaches a loopback endpoint directly; `omlx`
+    /// and `swarm` are refused there, and the form offers no custom provider). A cloud host is
+    /// never probed, and `lmstudio`/`ollama` are left alone so the swarm fleet's traffic is
+    /// unchanged.
+    const PROVIDERS_REACHING_A_LOCAL_ENGINE: &[&str] = &["openai"];
+
     /// Alibaba's Token Plan endpoint speaks a stricter dialect than the OpenAI shape it otherwise
     /// accepts: the cap must arrive as `max_completion_tokens`, `max_tokens` is rejected outright
     /// rather than ignored, and reasoning is opt-in per request through `enable_thinking` /
@@ -477,18 +487,18 @@ impl OpenAiProvider {
         if !Self::PROVIDERS_FRONTING_RAPID_MLX.contains(&self.name.as_str()) {
             return false;
         }
-        if let Some(known) = self
-            .transient_tail_cache
-            .lock()
-            .ok()
-            .and_then(|cache| cache.get(model_name).copied())
-        {
-            return known;
-        }
-        let models_path =
-            Self::map_base_path(&self.base_path, "models", OPEN_AI_DEFAULT_MODELS_PATH);
-        let json = match self.fetch_models_json(&models_path).await {
-            Ok(json) => json,
+        match self.declares_leanzero_engine(model_name).await {
+            Ok(accepted) => {
+                if !accepted {
+                    tracing::info!(
+                        host = %sanitize_url(self.api_client.host()),
+                        model = %model_name,
+                        "the engine does not declare {RAPID_MLX_TRANSIENT_TAIL}; its hybrid cache \
+                         snapshots after the per-turn context block"
+                    );
+                }
+                accepted
+            }
             Err(e) => {
                 tracing::warn!(
                     host = %sanitize_url(self.api_client.host()),
@@ -497,22 +507,120 @@ impl OpenAiProvider {
                     "transient_tail_probe_failed: the turn-context tail rides this request \
                      unmarked; the probe is retried on the next request"
                 );
-                return false;
+                false
             }
-        };
-        let accepted = declares_request_extension(&json, model_name, RAPID_MLX_TRANSIENT_TAIL);
-        if !accepted {
-            tracing::info!(
-                host = %sanitize_url(self.api_client.host()),
-                model = %model_name,
-                "the engine does not declare {RAPID_MLX_TRANSIENT_TAIL}; its hybrid cache \
-                 snapshots after the per-turn context block"
-            );
         }
+    }
+
+    /// Whether `model_name`'s `/v1/models` entry declares `rapid_mlx_transient_tail`: the
+    /// identity of the LeanZero Rapid-MLX fork (a stock Rapid-MLX or a real oMLX server never
+    /// declares it). Only answered probes are cached; a failed probe is asked again next request.
+    async fn declares_leanzero_engine(&self, model_name: &str) -> Result<bool, ProviderError> {
+        if let Some(known) = self
+            .transient_tail_cache
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(model_name).copied())
+        {
+            return Ok(known);
+        }
+        let models_path =
+            Self::map_base_path(&self.base_path, "models", OPEN_AI_DEFAULT_MODELS_PATH);
+        let json = self.fetch_models_json(&models_path).await?;
+        let accepted = declares_request_extension(&json, model_name, RAPID_MLX_TRANSIENT_TAIL);
         if let Ok(mut cache) = self.transient_tail_cache.lock() {
             cache.insert(model_name.to_string(), accepted);
         }
-        accepted
+        Ok(accepted)
+    }
+
+    /// Whether this request, which carries a thinking effort, goes to goose's own MLX engine on
+    /// this machine through the benchmark route (see
+    /// [`Self::PROVIDERS_REACHING_A_LOCAL_ENGINE`]). Only asked when there is an effort to carry,
+    /// so an `openai` provider pointed at any other local server (llama.cpp, vLLM, Ollama's /v1)
+    /// with no effort configured is never probed. Both ways of NOT sending the effort are loud: a
+    /// failed probe on every request, and an endpoint that answers without the fork's declaration
+    /// once per model (the answer is cached).
+    async fn reaches_local_leanzero_engine(&self, model_name: &str) -> bool {
+        if !Self::PROVIDERS_REACHING_A_LOCAL_ENGINE.contains(&self.name.as_str())
+            || !is_loopback_endpoint(self.api_client.host())
+        {
+            return false;
+        }
+        let first_answer = self
+            .transient_tail_cache
+            .lock()
+            .ok()
+            .is_some_and(|cache| !cache.contains_key(model_name));
+        match self.declares_leanzero_engine(model_name).await {
+            Ok(declared) => {
+                if !declared && first_answer {
+                    tracing::warn!(
+                        host = %sanitize_url(self.api_client.host()),
+                        model = %model_name,
+                        "local_engine_undeclared: this loopback endpoint does not declare \
+                         {RAPID_MLX_TRANSIENT_TAIL} for the model (not the LeanZero engine, or no \
+                         entry by this name), so the run's thinking effort is NOT sent to it"
+                    );
+                }
+                declared
+            }
+            Err(e) => {
+                tracing::warn!(
+                    host = %sanitize_url(self.api_client.host()),
+                    model = %model_name,
+                    error = %e,
+                    "local_engine_probe_failed: this request leaves WITHOUT the run's thinking \
+                     effort; the probe is retried on the next request"
+                );
+                false
+            }
+        }
+    }
+
+    /// The run's thinking effort (`GOOSE_THINKING_EFFORT`; a Forge tier pins it, e.g. `medium`)
+    /// reaches the local engine as OpenAI's `reasoning_effort`. The chat format emits that field
+    /// only for OpenAI Responses models, so without this a local entrant ran at whatever the
+    /// engine chose: Rapid-MLX switches thinking OFF on a tool-bearing request that carries no
+    /// reasoning preference, while the cloud cohort of the same tier ran at `medium`. The engine
+    /// treats the value as reasoning intent, so tool turns keep their thinking
+    /// (rapid_mlx/service/helpers.py `maybe_apply_reasoning_effort`,
+    /// `maybe_auto_disable_thinking_for_tools`), and applies it one of two ways: a template that
+    /// validates its own levels (Qwen3.8: `xhigh`/`medium`/`low`) gets the nearest level in its
+    /// prompt (`high` rounds up to `xhigh`); any other template gets a thinking-token CAP instead
+    /// (`OPENAI_REASONING_EFFORT_TO_MAX_TOKENS`: low 512, medium 2048, high 8192, xhigh 24000).
+    /// The cap is still closer to the tier's intent than the engine's thinking-off, but it is a
+    /// limit a cloud model may not have, so a non-Qwen3.8 local score carries that caveat. A
+    /// helper call's Off becomes `none`, which the engine turns into `enable_thinking: false`. A
+    /// request that already names a reasoning control keeps it. The request log
+    /// (`llm_request.*.jsonl`) records the value that actually went out.
+    fn carry_effort_to_local_engine(
+        model_config: &ModelConfig,
+        payload: &mut serde_json::Value,
+    ) -> Result<(), ProviderError> {
+        let Some(effort) = model_config.thinking_effort() else {
+            return Ok(());
+        };
+        let Some(obj) = payload.as_object_mut() else {
+            return Err(ProviderError::ExecutionError(
+                "the local engine request body is not a JSON object, so the run's thinking effort cannot reach it"
+                    .to_string(),
+            ));
+        };
+        let kwargs_name_it = obj
+            .get("chat_template_kwargs")
+            .and_then(|v| v.as_object())
+            .is_some_and(|kwargs| {
+                kwargs.contains_key("enable_thinking") || kwargs.contains_key("reasoning_effort")
+            });
+        if obj.contains_key("reasoning_effort") || kwargs_name_it {
+            return Ok(());
+        }
+        obj.insert(
+            "reasoning_effort".to_string(),
+            serde_json::Value::String(engine_reasoning_effort(effort).to_string()),
+        );
+        Ok(())
     }
 
     /// Whether the engine serving `model_name` reads images, as its `/v1/models` entry declares it
@@ -662,25 +770,65 @@ impl OpenAiProvider {
     /// endpoint said so the caller can log WHY it is falling to the default — r6f's opener was
     /// compacted at 107,199 tokens and r6h's data-stream lane compressed its code against
     /// "~11k remaining" because this probe missed LM Studio's shape and nothing said so.
-    async fn probe_context_window(&self, model_name: &str) -> Result<usize, String> {
+    ///
+    /// An engine's entry is read by the one served-window rule (`goose_provider_types::
+    /// served_window`): with `/v1/status` naming an enabled memory guard, its `max_model_len` is
+    /// the window (bounded further by `meta.n_ctx` when both are listed). Without one — lz.10 lists
+    /// a KV-only `max_model_len` of 262,144 on a 64 GB Mac that OOMs from ~64k — the figure is only
+    /// an upper bound: the chain below still decides, never above it, and the absence is named once
+    /// (`served_window_unguarded`).
+    async fn probe_context_window(&self, model_name: &str) -> Probe {
         let models_path =
             Self::map_base_path(&self.base_path, "models", OPEN_AI_DEFAULT_MODELS_PATH);
+        let mut upper = None;
         let v1_miss = match self.fetch_models_json(&models_path).await {
-            Ok(json) => match parse_n_ctx_from_models(&json, model_name) {
-                Some(n_ctx) => {
-                    tracing::info!(
-                        model = %model_name,
-                        context_window = n_ctx,
-                        "context window from {} meta.n_ctx",
-                        models_path
-                    );
-                    return Ok(n_ctx);
+            Ok(json) => {
+                let read = match served_entry(&json, model_name) {
+                    Some(entry) => {
+                        let listed = ServedWindow::of_entry(entry, None);
+                        let guard = match listed.upper_bound() {
+                            Some(_) => self.fetch_memory_guard(&models_path).await,
+                            None => None,
+                        };
+                        let window = ServedWindow { guard, ..listed };
+                        if window.upper_bound().is_some() {
+                            window.warn_once_if_unguarded(
+                                "openai /v1/models",
+                                entry
+                                    .get("id")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or(model_name),
+                            );
+                        }
+                        upper = window
+                            .upper_bound()
+                            .map(|w| usize::try_from(w).unwrap_or(usize::MAX));
+                        window_from_models(&json, model_name, &window)
+                    }
+                    None => None,
+                };
+                match read {
+                    Some(probed) => {
+                        tracing::info!(
+                            model = %model_name,
+                            served = ?probed.served,
+                            context_window = probed.window,
+                            "context window from {} ({})",
+                            models_path,
+                            probed.source
+                        );
+                        return Probe {
+                            found: Ok(probed),
+                            upper,
+                        };
+                    }
+                    None => format!(
+                        "{models_path}: no meta.n_ctx or memory-guarded max_model_len for \
+                         {model_name} ({})",
+                        describe_listing(&json)
+                    ),
                 }
-                None => format!(
-                    "{models_path}: no meta.n_ctx for {model_name} ({})",
-                    describe_listing(&json)
-                ),
-            },
+            }
             Err(e) => format!("{models_path}: {e}"),
         };
 
@@ -693,20 +841,83 @@ impl OpenAiProvider {
                         "context window from {} loaded_context_length",
                         LM_STUDIO_NATIVE_MODELS_PATH
                     );
-                    return Ok(loaded);
+                    return Probe {
+                        found: Ok(ProbedWindow {
+                            window: upper.map_or(loaded, |u| loaded.min(u)),
+                            served: Some(model_name.to_string()),
+                            source: "loaded_context_length",
+                        }),
+                        upper,
+                    };
                 }
                 Err(miss) => format!("{LM_STUDIO_NATIVE_MODELS_PATH}: {miss}"),
             },
             Err(e) => format!("{LM_STUDIO_NATIVE_MODELS_PATH}: {e}"),
         };
 
-        Err(format!("{v1_miss}; {native_miss}"))
+        Probe {
+            found: Err(format!("{v1_miss}; {native_miss}")),
+            upper,
+        }
+    }
+
+    /// The engine's memory guard from `/v1/status` beside `models_path`; `None` for a server that
+    /// has no such route or names no enabled guard.
+    async fn fetch_memory_guard(&self, models_path: &str) -> Option<MemoryGuard> {
+        let status_path = Self::map_base_path(models_path, "status", "v1/status");
+        self.fetch_models_json(&status_path)
+            .await
+            .ok()
+            .as_ref()
+            .and_then(MemoryGuard::of_status)
+    }
+
+    fn lower_window_on_overflow(&self, model_name: &str, error: &ProviderError) {
+        lower_window_on_overflow(&self.n_ctx_cache, model_name, error);
+    }
+
+    /// The same, for an overflow the engine sends after the stream began.
+    fn lowering_window_on_overflow(
+        &self,
+        stream: MessageStream,
+        model_name: &str,
+    ) -> MessageStream {
+        use futures::TryStreamExt;
+        let cache = Arc::clone(&self.n_ctx_cache);
+        let model_name = model_name.to_string();
+        Box::pin(stream.inspect_err(move |e| lower_window_on_overflow(&cache, &model_name, e)))
     }
 
     async fn fetch_models_json(&self, path: &str) -> Result<serde_json::Value, ProviderError> {
         let response = self.api_client.request(path).response_get().await?;
         handle_response_openai_compat(response).await
     }
+}
+
+/// goose's thinking effort in the vocabulary Rapid-MLX validates for OpenAI's `reasoning_effort`
+/// (`none`/`minimal`/`low`/`medium`/`high`/`xhigh`).
+fn engine_reasoning_effort(effort: ThinkingEffort) -> &'static str {
+    match effort {
+        ThinkingEffort::Off => "none",
+        ThinkingEffort::Low => "low",
+        ThinkingEffort::Medium => "medium",
+        ThinkingEffort::High => "high",
+        ThinkingEffort::Max => "xhigh",
+    }
+}
+
+/// Whether `host` (a base URL) names this machine: `localhost`, `127.0.0.0/8` or `::1`.
+fn is_loopback_endpoint(host: &str) -> bool {
+    url::Url::parse(host)
+        .ok()
+        .and_then(|url| {
+            url.host().map(|h| match h {
+                url::Host::Domain(name) => name.eq_ignore_ascii_case("localhost"),
+                url::Host::Ipv4(ip) => ip.is_loopback(),
+                url::Host::Ipv6(ip) => ip.is_loopback(),
+            })
+        })
+        .unwrap_or(false)
 }
 
 /// The request field the LeanZero Rapid-MLX fork reads to snapshot a hybrid cache before the
@@ -758,7 +969,110 @@ fn describe_listing(json: &serde_json::Value) -> String {
     }
 }
 
-/// Extract `meta.n_ctx` for `model_name` from a `/v1/models` response body.
+/// An overflow is the engine saying the cached window no longer holds: lower it to the engine's
+/// `n_ctx` when it named one, else forget it so the next read probes again.
+fn lower_window_on_overflow(
+    cache: &Mutex<HashMap<String, CachedWindow>>,
+    model_name: &str,
+    error: &ProviderError,
+) {
+    let ProviderError::ContextLengthExceeded(message) = error else {
+        return;
+    };
+    let Ok(mut cache) = cache.lock() else {
+        return;
+    };
+    match overflow_n_ctx(message).map(|n| usize::try_from(n).unwrap_or(usize::MAX)) {
+        Some(n_ctx) => {
+            let entry = cache.entry(model_name.to_string()).or_insert(CachedWindow {
+                window: None,
+                upper: None,
+                served: None,
+            });
+            entry.window = Some(entry.window.map_or(n_ctx, |w| w.min(n_ctx)));
+            tracing::info!(
+                model = %model_name,
+                n_ctx,
+                "context window lowered to the engine's overflow figure"
+            );
+        }
+        None => {
+            cache.remove(model_name);
+        }
+    }
+}
+
+/// A window the probe read, and the model the server answered for: the id of the `/v1/models`
+/// entry that carried it (the sole entry may serve under another id), or the LM Studio entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProbedWindow {
+    window: usize,
+    served: Option<String>,
+    source: &'static str,
+}
+
+/// What a probe read: the window, or why none; and the engine's own upper bound either way.
+struct Probe {
+    found: Result<ProbedWindow, String>,
+    upper: Option<usize>,
+}
+
+/// What `get_context_limit` remembers per configured model name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CachedWindow {
+    /// `None` = the probe missed (the default stood in, said once).
+    window: Option<usize>,
+    /// The engine's upper bound: a default never stands above it.
+    upper: Option<usize>,
+    served: Option<String>,
+}
+
+impl CachedWindow {
+    /// The cache is keyed by the model the server SERVES: a window read off the sole entry of a
+    /// single-model server under another id is not reused — that server can swap what it serves
+    /// under the same URL (a Q8 for a Q6) and the window with it — so such a name is probed again.
+    fn holds_for(&self, model_name: &str) -> bool {
+        match &self.served {
+            Some(served) => served == model_name,
+            None => true,
+        }
+    }
+
+    fn limit(&self, default: usize) -> usize {
+        self.window
+            .unwrap_or_else(|| self.upper.map_or(default, |u| default.min(u)))
+    }
+}
+
+/// The window a `/v1/models` listing gives for `model_name`: llama.cpp/Ollama `meta.n_ctx` and a
+/// memory-guarded engine's `max_model_len`, the smaller when both are present — and never above
+/// the engine's own upper bound.
+fn window_from_models(
+    json: &serde_json::Value,
+    model_name: &str,
+    window: &ServedWindow,
+) -> Option<ProbedWindow> {
+    let served = served_entry(json, model_name)
+        .and_then(|e| e.get("id"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let to_usize = |w: u64| usize::try_from(w).unwrap_or(usize::MAX);
+    let guarded = window.device_bound().map(to_usize);
+    let n_ctx = parse_n_ctx_from_models(json, model_name)
+        .map(|n| window.upper_bound().map_or(n, |u| n.min(to_usize(u))));
+    let (window, source) = match (n_ctx, guarded) {
+        (Some(n), Some(b)) => (n.min(b), "meta.n_ctx and the memory guard's max_model_len"),
+        (Some(n), None) => (n, "meta.n_ctx"),
+        (None, Some(b)) => (b, "the memory guard's max_model_len"),
+        (None, None) => return None,
+    };
+    Some(ProbedWindow {
+        window,
+        served,
+        source,
+    })
+}
+
 fn parse_n_ctx_from_models(json: &serde_json::Value, model_name: &str) -> Option<usize> {
     let data = json.get("data")?.as_array()?;
 
@@ -910,9 +1224,9 @@ impl Provider for OpenAiProvider {
     /// Resolve the effective context limit. When the config carries an explicit
     /// limit (GOOSE_CONTEXT_LIMIT, a session override, or a known/canonical
     /// value) it is used as-is. Otherwise probe the server for the window it has
-    /// loaded (`probe_context_window`: llama.cpp/Ollama `meta.n_ctx`, then LM Studio
-    /// `loaded_context_length`) — the number the compaction guard and the per-turn
-    /// context line run on. A miss falls to DEFAULT_CONTEXT_LIMIT LOUDLY: one warn per
+    /// loaded (`probe_context_window`: llama.cpp/Ollama `meta.n_ctx` and an engine's
+    /// memory-bounded `max_model_len`, then LM Studio `loaded_context_length`) — the number
+    /// the compaction guard and the per-turn context line run on. A miss falls to DEFAULT_CONTEXT_LIMIT LOUDLY: one warn per
     /// model naming the host, both endpoints and their reasons, never quietly. The probe
     /// is bounded by a short timeout so a hung endpoint can't stall the caller.
     async fn get_context_limit(&self, model_config: &ModelConfig) -> Result<usize, ProviderError> {
@@ -920,52 +1234,75 @@ impl Provider for OpenAiProvider {
             return Ok(self.apply_local_context_cap(limit));
         }
 
-        if let Some(cached) = self
+        let default = model_config.context_limit();
+        let cached = self
             .n_ctx_cache
             .lock()
             .ok()
-            .and_then(|cache| cache.get(&model_config.model_name).copied())
+            .and_then(|cache| cache.get(&model_config.model_name).cloned());
+        if let Some(cached) = cached
+            .as_ref()
+            .filter(|c| c.holds_for(&model_config.model_name))
         {
-            return Ok(self
-                .apply_local_context_cap(cached.unwrap_or_else(|| model_config.context_limit())));
+            return Ok(self.apply_local_context_cap(cached.limit(default)));
         }
 
         const N_CTX_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-        let probed = match tokio::time::timeout(
+        let probe = match tokio::time::timeout(
             N_CTX_PROBE_TIMEOUT,
             self.probe_context_window(&model_config.model_name),
         )
         .await
         {
-            Ok(Ok(window)) => Some(window),
-            Ok(Err(reason)) => {
+            Ok(probe) => probe,
+            Err(_) => Probe {
+                found: Err(format!(
+                    "context_window_probe_timed_out after {N_CTX_PROBE_TIMEOUT:?}"
+                )),
+                upper: None,
+            },
+        };
+        let fresh = match probe.found {
+            Ok(probed) => CachedWindow {
+                window: Some(probed.window),
+                upper: probe.upper,
+                served: probed.served,
+            },
+            Err(reason) => {
+                // A miss never overwrites a window this name already read: the server answered it
+                // once, and a timeout or a transient error is not news about the window.
+                if let Some(kept) = cached.filter(|c| c.window.is_some()) {
+                    tracing::warn!(
+                        host = %sanitize_url(self.api_client.host()),
+                        model = %model_config.model_name,
+                        kept_window = ?kept.window,
+                        reason = %reason,
+                        "context_window_probe_missed: keeping the window read before"
+                    );
+                    return Ok(self.apply_local_context_cap(kept.limit(default)));
+                }
                 tracing::warn!(
                     host = %sanitize_url(self.api_client.host()),
                     model = %model_config.model_name,
-                    default_context_limit = model_config.context_limit(),
+                    default_context_limit = default,
+                    engine_upper_bound = ?probe.upper,
                     reason = %reason,
-                    "context_window_probe_missed: no meta.n_ctx or loaded_context_length for this \
-                     model; the compaction guard and the per-turn context line run on the default"
+                    "context_window_probe_missed: no meta.n_ctx, memory-guarded max_model_len or \
+                     loaded_context_length for this model; the compaction guard and the per-turn \
+                     context line run on the default, never above the engine's own bound"
                 );
-                None
-            }
-            Err(_) => {
-                tracing::warn!(
-                    host = %sanitize_url(self.api_client.host()),
-                    model = %model_config.model_name,
-                    default_context_limit = model_config.context_limit(),
-                    "context_window_probe_timed_out after {:?}; running on the default",
-                    N_CTX_PROBE_TIMEOUT
-                );
-                None
+                CachedWindow {
+                    window: None,
+                    upper: probe.upper,
+                    served: None,
+                }
             }
         };
-
+        let limit = fresh.limit(default);
         if let Ok(mut cache) = self.n_ctx_cache.lock() {
-            cache.insert(model_config.model_name.clone(), probed);
+            cache.insert(model_config.model_name.clone(), fresh);
         }
-
-        Ok(self.apply_local_context_cap(probed.unwrap_or_else(|| model_config.context_limit())))
+        Ok(self.apply_local_context_cap(limit))
     }
 
     async fn fetch_supported_models(&self) -> Result<Vec<String>, ProviderError> {
@@ -1070,6 +1407,13 @@ impl Provider for OpenAiProvider {
                 .await?;
             let mut payload = self.sanitize_request_for_compat(payload);
             self.carry_thinking_off_to_mlx(model_config, &mut payload)?;
+            if model_config.thinking_effort().is_some()
+                && self
+                    .reaches_local_leanzero_engine(&model_config.model_name)
+                    .await
+            {
+                Self::carry_effort_to_local_engine(model_config, &mut payload)?;
+            }
             if transient_tail {
                 if let Some(tail) = turn_context_tail_suffix(messages, &payload) {
                     payload[RAPID_MLX_TRANSIENT_TAIL] = serde_json::Value::String(tail);
@@ -1092,6 +1436,7 @@ impl Provider for OpenAiProvider {
                 .await
                 .inspect_err(|e| {
                     let _ = log.error(e);
+                    self.lower_window_on_overflow(&model_config.model_name, e);
                 })?;
 
             let stream = if self.supports_streaming {
@@ -1129,6 +1474,7 @@ impl Provider for OpenAiProvider {
                 );
                 Ok(super::base::stream_from_single_message(message, usage))
             }?;
+            let stream = self.lowering_window_on_overflow(stream, &model_config.model_name);
             Ok(announced(stream, images_notice))
         }
     }
@@ -1799,6 +2145,145 @@ mod tests {
         serde_json::from_slice(&post.body).unwrap()
     }
 
+    /// One request through `name` to a mock engine whose `/v1/models` entry declares
+    /// `request_extensions`: the POST body and how many `/v1/models` probes were made.
+    async fn local_engine_body(
+        name: &str,
+        request_extensions: serde_json::Value,
+        model_config: &ModelConfig,
+    ) -> (serde_json::Value, usize) {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "object": "list",
+                "data": [{"id": "served", "request_extensions": request_extensions}],
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"},
+                             "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            })))
+            .mount(&server)
+            .await;
+        let mut provider = make_provider(name);
+        provider.api_client =
+            ApiClient::new_with_tls(server.uri(), AuthMethod::NoAuth, None).unwrap();
+        provider.supports_streaming = false;
+        let messages = vec![Message::user().with_text("build the ledger")];
+        let mut stream = provider
+            .stream(model_config, "system", &messages, &[])
+            .await
+            .unwrap();
+        use futures::StreamExt;
+        while stream.next().await.is_some() {}
+        let requests = server.received_requests().await.unwrap();
+        let probes = requests
+            .iter()
+            .filter(|r| r.method.as_str() == "GET")
+            .count();
+        let post = requests
+            .iter()
+            .find(|r| r.method.as_str() == "POST")
+            .expect("the chat request was posted");
+        (serde_json::from_slice(&post.body).unwrap(), probes)
+    }
+
+    /// T12 G1: a benchmark's `openai` entrant on goose's own MLX engine (loopback, declaring the
+    /// fork's extension) carries the run's thinking effort as `reasoning_effort`, mapped to the
+    /// engine's vocabulary. Negative controls: no effort configured, an explicit reasoning control
+    /// in the request, a non-declaring loopback server, the swarm's `lmstudio` (never probed) and
+    /// the chat path's `omlx` all send exactly what they sent before.
+    #[tokio::test]
+    async fn the_runs_thinking_effort_reaches_a_local_leanzero_engine() {
+        let declared = json!(["rapid_mlx_transient_tail"]);
+        for (effort, wire) in [
+            (ThinkingEffort::Off, "none"),
+            (ThinkingEffort::Low, "low"),
+            (ThinkingEffort::Medium, "medium"),
+            (ThinkingEffort::High, "high"),
+            (ThinkingEffort::Max, "xhigh"),
+        ] {
+            let config = ModelConfig::new("served").with_thinking_effort(effort);
+            let (body, probes) = local_engine_body("openai", declared.clone(), &config).await;
+            assert_eq!(body["reasoning_effort"], json!(wire), "{effort}");
+            assert_eq!(probes, 1);
+        }
+
+        let medium = ModelConfig::new("served").with_thinking_effort(ThinkingEffort::Medium);
+        let (body, probes) =
+            local_engine_body("openai", declared.clone(), &ModelConfig::new("served")).await;
+        assert!(
+            body.get("reasoning_effort").is_none(),
+            "no effort configured, none sent"
+        );
+        assert_eq!(
+            probes, 0,
+            "with no effort to carry, a local openai endpoint is never probed"
+        );
+
+        let (body, _) = local_engine_body(
+            "openai",
+            declared.clone(),
+            &with_profile_kwargs(medium.clone()),
+        )
+        .await;
+        assert!(
+            body.get("reasoning_effort").is_none(),
+            "an explicit template control in the request wins"
+        );
+        assert_eq!(
+            body["chat_template_kwargs"],
+            json!({"enable_thinking": true, "reasoning_effort": "low"})
+        );
+
+        let (body, probes) = local_engine_body("openai", json!([]), &medium).await;
+        assert!(
+            body.get("reasoning_effort").is_none(),
+            "a stock server gets nothing new"
+        );
+        assert_eq!(probes, 1);
+
+        let (body, probes) = local_engine_body("lmstudio", declared.clone(), &medium).await;
+        assert!(body.get("reasoning_effort").is_none());
+        assert_eq!(probes, 0, "the swarm fleet's provider is never probed");
+
+        let (body, _) = local_engine_body("omlx", declared, &medium).await;
+        assert!(
+            body.get("reasoning_effort").is_none(),
+            "the chat path keeps its model-profile thinking"
+        );
+    }
+
+    #[test]
+    fn only_this_machine_counts_as_a_local_engine() {
+        for host in [
+            "http://127.0.0.1:8091",
+            "http://127.9.9.9",
+            "http://localhost:8090/v1",
+            "http://LOCALHOST",
+            "http://[::1]:8090",
+        ] {
+            assert!(is_loopback_endpoint(host), "{host}");
+        }
+        for host in [
+            "https://api.openai.com",
+            "http://192.168.8.220:8090",
+            "http://localhost.example.com",
+            "not a url",
+            "",
+        ] {
+            assert!(!is_loopback_endpoint(host), "{host}");
+        }
+    }
+
     fn with_profile_kwargs(config: ModelConfig) -> ModelConfig {
         config.with_merged_request_params(HashMap::from([(
             "chat_template_kwargs".to_string(),
@@ -2226,6 +2711,188 @@ mod tests {
             ]
         });
         assert_eq!(parse_n_ctx_from_models(&body, "model-c"), None);
+    }
+
+    /// The `openai` provider pointed at goose's Rapid-MLX engine: the listing carries neither
+    /// `meta.n_ctx` nor LM Studio's `loaded_context_length`. A memory-guarded engine's
+    /// `max_model_len` is the window; lz.10's (no guard, KV-only, 262,144 on a 64 GB Mac that OOMs
+    /// from ~64k) is only a bound the default never exceeds.
+    async fn engine_server(
+        models: serde_json::Value,
+        status: Option<serde_json::Value>,
+    ) -> wiremock::MockServer {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(models))
+            .mount(&server)
+            .await;
+        if let Some(status) = status {
+            Mock::given(method("GET"))
+                .and(path("/v1/status"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(status))
+                .mount(&server)
+                .await;
+        }
+        server
+    }
+
+    fn provider_at(server: &wiremock::MockServer) -> OpenAiProvider {
+        let mut provider = make_provider("openai");
+        provider.api_client =
+            ApiClient::new_with_tls(server.uri(), AuthMethod::NoAuth, None).unwrap();
+        provider
+    }
+
+    async fn context_limit_from(
+        models: serde_json::Value,
+        status: Option<serde_json::Value>,
+        model: &str,
+    ) -> (usize, usize) {
+        let server = engine_server(models, status).await;
+        let provider = provider_at(&server);
+        let config = ModelConfig::new(model);
+        let first = provider.get_context_limit(&config).await.unwrap();
+        let again = provider.get_context_limit(&config).await.unwrap();
+        assert_eq!(first, again);
+        let probes = server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| r.url.path() == "/v1/models")
+            .count();
+        (first, probes)
+    }
+
+    fn guard_status() -> serde_json::Value {
+        json!({"num_running": 0, "num_waiting": 0, "memory_guard": {
+            "enabled": true, "max_context_idle": 158_464, "floor_chunk_tokens": 256,
+            "coefficients": {"source": "prior"}
+        }})
+    }
+
+    #[tokio::test]
+    async fn rapid_mlx_max_model_len_is_the_window() {
+        let q8 = json!({"object": "list", "data": [{
+            "id": "AREX-2-Q8-mlx", "context_window": 262_144, "max_model_len": 158_464
+        }]});
+        let (window, probes) =
+            context_limit_from(q8.clone(), Some(guard_status()), "AREX-2-Q8-mlx").await;
+        assert_eq!(window, 158_464);
+        assert_eq!(probes, 1, "the served model is the named one: cached");
+
+        // lz.10, live on Gabee: the Q6 listed max_model_len 262,144 with no memory guard.
+        let lz10 = json!({"object": "list", "data": [{
+            "id": "AREX-2-Q6-mlx", "context_window": 262_144, "max_model_len": 262_144
+        }]});
+        let (advisory, _) = context_limit_from(
+            lz10,
+            Some(json!({"num_running": 0, "num_waiting": 0})),
+            "AREX-2-Q6-mlx",
+        )
+        .await;
+        assert_eq!(
+            advisory,
+            crate::model::DEFAULT_CONTEXT_LIMIT,
+            "advisory: the chain decides (no n_ctx, no LM Studio listing → the default)"
+        );
+        let small_bound = json!({"object": "list", "data": [{
+            "id": "m", "context_window": 131_072, "max_model_len": 32_768
+        }]});
+        let (bounded, _) = context_limit_from(small_bound, None, "m").await;
+        assert_eq!(
+            bounded, 32_768,
+            "the default never stands above the engine's own bound"
+        );
+    }
+
+    /// A single-model server answering under another id can swap what it serves behind one URL,
+    /// so its window is probed again rather than read from the name's cache.
+    #[tokio::test]
+    async fn a_window_read_off_another_served_id_is_probed_again() {
+        let (window, probes) = context_limit_from(
+            json!({"object": "list", "data": [{
+                "id": "AREX-2-Q6-mlx", "context_window": 262_144, "max_model_len": 201_000
+            }]}),
+            Some(guard_status()),
+            "local-27b",
+        )
+        .await;
+        assert_eq!(window, 201_000);
+        assert_eq!(probes, 2);
+    }
+
+    /// A re-probe that misses (the engine restarting, a timeout) keeps the window read before.
+    #[tokio::test]
+    async fn a_probe_miss_never_overwrites_a_window_read_before() {
+        let server = engine_server(
+            json!({"object": "list", "data": [{
+                "id": "AREX-2-Q6-mlx", "context_window": 262_144, "max_model_len": 158_464
+            }]}),
+            Some(guard_status()),
+        )
+        .await;
+        let provider = provider_at(&server);
+        let config = ModelConfig::new("local-27b");
+        assert_eq!(provider.get_context_limit(&config).await.unwrap(), 158_464);
+        server.reset().await;
+        assert_eq!(
+            provider.get_context_limit(&config).await.unwrap(),
+            158_464,
+            "the engine's window, not the 128,000 default"
+        );
+    }
+
+    /// The guard refused a prompt and named what fits: the next read compacts against that, and
+    /// an overflow that names nothing makes the next read probe again.
+    #[tokio::test]
+    async fn an_overflow_lowers_the_cached_window_to_the_engines_figure() {
+        let server = engine_server(
+            json!({"object": "list", "data": [{
+                "id": "AREX-2-Q8-mlx", "context_window": 262_144, "max_model_len": 158_464
+            }]}),
+            Some(guard_status()),
+        )
+        .await;
+        let provider = provider_at(&server);
+        let config = ModelConfig::new("AREX-2-Q8-mlx");
+        assert_eq!(provider.get_context_limit(&config).await.unwrap(), 158_464);
+        let overflow = ProviderError::ContextLengthExceeded(crate::served_window::tag_overflow(
+            "This prompt (120000 tokens) needs 61.0 GB but this Mac can hold 50.0 GB",
+            Some(98_000),
+        ));
+        provider.lower_window_on_overflow("AREX-2-Q8-mlx", &overflow);
+        assert_eq!(provider.get_context_limit(&config).await.unwrap(), 98_000);
+        provider.lower_window_on_overflow(
+            "AREX-2-Q8-mlx",
+            &ProviderError::ContextLengthExceeded("context length exceeded".into()),
+        );
+        assert_eq!(
+            provider.get_context_limit(&config).await.unwrap(),
+            158_464,
+            "forgotten, probed again"
+        );
+    }
+
+    #[test]
+    fn n_ctx_and_a_guarded_max_model_len_take_the_smaller() {
+        let body = json!({"data": [{
+            "id": "m", "meta": {"n_ctx": 65_536}, "context_window": 262_144, "max_model_len": 90_000
+        }]});
+        let guarded =
+            ServedWindow::of_entry(&body["data"][0], MemoryGuard::of_status(&guard_status()));
+        let probed = window_from_models(&body, "m", &guarded).unwrap();
+        assert_eq!(probed.window, 65_536);
+        assert_eq!(probed.served.as_deref(), Some("m"));
+        let advisory = ServedWindow::of_entry(&body["data"][0], None);
+        assert_eq!(
+            window_from_models(&body, "m", &advisory).unwrap().window,
+            65_536
+        );
     }
 
     /// The live LM Studio `/api/v0/models` body from the local node, 2026-09-02: three loaded

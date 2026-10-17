@@ -779,6 +779,7 @@ pub fn format_messages_reporting_images(
     }
 
     merge_split_tool_call_messages(&mut messages_spec);
+    merge_narration_into_tool_call(&mut messages_spec);
     if let Some(text) = turn_context {
         attach_turn_context(
             &mut messages_spec,
@@ -1005,6 +1006,51 @@ fn merge_split_tool_call_messages(messages: &mut Vec<Value>) {
 
         i = insert_at + num_collected;
     }
+}
+
+/// A streamed assistant response reaches the formatter as two messages: the visible text, then the
+/// tool calls (which carry the turn's reasoning). Sent apart, the model reads its own narration as
+/// a finished turn ("Now let me write the ledger module:" then end of turn) followed by a second
+/// turn that only calls a tool, with the reasoning rendered after the text it produced. That is the
+/// exact shape local models then imitate by ending a turn on narration with no call. Two assistant
+/// messages with nothing between them can only come from one response, so they are joined back
+/// into the single message the model generated: reasoning, text, tool calls.
+fn merge_narration_into_tool_call(messages: &mut Vec<Value>) {
+    let mut i = 0;
+    while i + 1 < messages.len() {
+        let narration = &messages[i];
+        let call = &messages[i + 1];
+        let joinable = narration.get("role") == Some(&json!("assistant"))
+            && !has_tool_calls(narration)
+            && narration.get("content").and_then(|c| c.as_str()).is_some()
+            && call.get("role") == Some(&json!("assistant"))
+            && has_tool_calls(call)
+            && call
+                .get("content")
+                .is_none_or(|c| c.is_null() || c.as_str().is_some_and(|s| s.is_empty()));
+        if !joinable {
+            i += 1;
+            continue;
+        }
+        let call = messages.remove(i + 1);
+        let reasoning = [&messages[i], &call]
+            .iter()
+            .filter_map(|m| m.get("reasoning_content").and_then(|r| r.as_str()))
+            .filter(|r| !r.is_empty())
+            .fold(String::new(), |joined, r| merge_reasoning_text(&joined, r));
+        let narration = &mut messages[i];
+        narration["tool_calls"] = call["tool_calls"].clone();
+        if !reasoning.is_empty() {
+            narration["reasoning_content"] = json!(reasoning);
+        }
+        i += 1;
+    }
+}
+
+fn has_tool_calls(msg: &Value) -> bool {
+    msg.get("tool_calls")
+        .and_then(|tc| tc.as_array())
+        .is_some_and(|a| !a.is_empty())
 }
 
 /// True if `msg` is a synthetic image-only user message (content is exclusively image_url items).
@@ -1577,6 +1623,28 @@ impl StreamCompletion {
 /// A frame with `"choices": []` is NOT metadata — that is the standard usage-only chunk,
 /// so it still deserializes and flows through the empty-choices paths below.
 ///
+/// An in-stream error frame that says the prompt is too long for the server: OpenAI's code
+/// `context_length_exceeded`, or a prompt-token count over the stated context. The LeanZero MLX
+/// engine sends this frame when a request that already streamed cannot fit the Mac's memory; as
+/// `ContextLengthExceeded` the agent compacts and resends, where a `ServerError` would resend the
+/// same prompt into the same memory.
+fn stream_error_is_context_length_exceeded(error: &Value) -> bool {
+    let coded = error
+        .get("code")
+        .and_then(Value::as_str)
+        .is_some_and(|code| code.eq_ignore_ascii_case("context_length_exceeded"));
+    let over = match (
+        error.get("n_prompt_tokens").and_then(Value::as_f64),
+        error.get("n_ctx").and_then(Value::as_f64),
+    ) {
+        (Some(prompt_tokens), Some(context_limit)) => {
+            context_limit > 0.0 && prompt_tokens > context_limit
+        }
+        _ => false,
+    };
+    coded || over
+}
+
 /// A choice-less frame that reports an in-stream failure is NOT metadata either — see
 /// `classify_choiceless_frame`.
 fn parse_streaming_chunk(line: &str) -> Result<Option<StreamingChunk>, ProviderError> {
@@ -1591,6 +1659,14 @@ fn parse_streaming_chunk(line: &str) -> Result<Option<StreamingChunk>, ProviderE
             .get("message")
             .and_then(|m| m.as_str())
             .unwrap_or("Unknown server error");
+        if stream_error_is_context_length_exceeded(error) {
+            return Err(ProviderError::ContextLengthExceeded(
+                crate::served_window::tag_overflow(
+                    message,
+                    crate::served_window::error_n_ctx(error),
+                ),
+            ));
+        }
         return Err(in_stream_error(error, message.to_string()));
     }
 
@@ -5294,6 +5370,98 @@ data: [DONE]"#;
     }
 
     #[test]
+    fn test_narration_and_its_tool_call_render_as_one_turn() -> anyhow::Result<()> {
+        // The shape a T12 Forge 2.0 run sent (2026-10-15): the streamed text of a turn as one
+        // assistant message, then that turn's tool call carrying its reasoning as a second one.
+        let messages = vec![
+            Message::user().with_text("Build the app."),
+            Message::assistant().with_text("Now let me update the ledger module:"),
+            Message::assistant()
+                .with_content(MessageContent::thinking(
+                    "The ledger needs both entities.",
+                    "",
+                ))
+                .with_tool_request(
+                    "call_1",
+                    Ok(CallToolRequestParams::new("write").with_arguments(object!({}))),
+                ),
+            Message::user().with_tool_response(
+                "call_1",
+                Ok(rmcp::model::CallToolResult::success(vec![
+                    rmcp::model::Content::text("Wrote src/ledger.js"),
+                ])),
+            ),
+            Message::assistant().with_text("Done."),
+            Message::user().with_text("Thanks."),
+        ];
+
+        let spec = format_messages_with_options(
+            &messages,
+            &ImageFormat::OpenAi,
+            OpenAiFormatOptions {
+                preserve_thinking_context: true,
+                ..Default::default()
+            },
+        );
+
+        let roles: Vec<_> = spec.iter().map(|m| m["role"].as_str().unwrap()).collect();
+        assert_eq!(roles, ["user", "assistant", "tool", "assistant", "user"]);
+        assert_eq!(spec[1]["content"], "Now let me update the ledger module:");
+        assert_eq!(
+            spec[1]["reasoning_content"],
+            "The ledger needs both entities."
+        );
+        assert_eq!(spec[1]["tool_calls"][0]["id"], "call_1");
+        assert_eq!(spec[2]["tool_call_id"], "call_1");
+        assert_eq!(spec[3]["content"], "Done.");
+        assert!(spec[3].get("tool_calls").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_narration_merge_keeps_parallel_calls_together() -> anyhow::Result<()> {
+        let tool_result = |id: &str| {
+            Message::user().with_tool_response(
+                id,
+                Ok(rmcp::model::CallToolResult::success(vec![
+                    rmcp::model::Content::text("ok"),
+                ])),
+            )
+        };
+        let request = |id: &str| {
+            Message::assistant()
+                .with_content(MessageContent::thinking("plan", ""))
+                .with_tool_request(
+                    id,
+                    Ok(CallToolRequestParams::new("write").with_arguments(object!({}))),
+                )
+        };
+        let messages = vec![
+            Message::user().with_text("Build."),
+            Message::assistant().with_text("Writing both files:"),
+            request("a"),
+            tool_result("a"),
+            request("b"),
+            tool_result("b"),
+        ];
+
+        let spec = format_messages_with_options(
+            &messages,
+            &ImageFormat::OpenAi,
+            OpenAiFormatOptions {
+                preserve_thinking_context: true,
+                ..Default::default()
+            },
+        );
+
+        let assistant: Vec<_> = spec.iter().filter(|m| m["role"] == "assistant").collect();
+        assert_eq!(assistant.len(), 1);
+        assert_eq!(assistant[0]["content"], "Writing both files:");
+        assert_eq!(assistant[0]["tool_calls"].as_array().unwrap().len(), 2);
+        Ok(())
+    }
+
+    #[test]
     fn test_sequential_tool_calls_not_merged() -> anyhow::Result<()> {
         // Verifies that two tool calls from *different* turns are never merged,
         // even when the second call carries no fresh reasoning (the previous
@@ -5796,6 +5964,40 @@ data: [DONE]"#;
             err.to_string().contains("rate limited"),
             "the gateway's message must reach the caller: {err}"
         );
+    }
+
+    #[test]
+    fn an_in_stream_context_overflow_is_context_length_exceeded_and_other_errors_stay_server_errors(
+    ) {
+        let coded = parse_streaming_chunk(
+            r#"{"error":{"message":"needs 61 GB, this Mac holds 50","code":"context_length_exceeded","n_prompt_tokens":120000,"n_ctx":98000}}"#,
+        );
+        assert!(
+            matches!(coded, Err(ProviderError::ContextLengthExceeded(ref m))
+                if m.contains("this Mac holds 50")
+                    && crate::served_window::overflow_n_ctx(m) == Some(98_000)),
+            "{coded:?}"
+        );
+        let counted = parse_streaming_chunk(
+            r#"{"error":{"message":"too long","n_prompt_tokens":10,"n_ctx":8}}"#,
+        );
+        assert!(
+            matches!(counted, Err(ProviderError::ContextLengthExceeded(_))),
+            "{counted:?}"
+        );
+        for other in [
+            r#"{"error":{"message":"Internal error during streaming"}}"#,
+            r#"{"error":{"message":"fits","n_prompt_tokens":8,"n_ctx":10}}"#,
+            r#"{"error":{"message":"x","code":"server_error"}}"#,
+        ] {
+            assert!(
+                matches!(
+                    parse_streaming_chunk(other),
+                    Err(ProviderError::ServerError(_))
+                ),
+                "{other}"
+            );
+        }
     }
 
     #[test]

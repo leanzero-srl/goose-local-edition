@@ -272,7 +272,10 @@ pub fn map_http_error_to_provider_error(
         (StatusCode::BAD_REQUEST, None) => {
             let payload_str = extract_message();
             if is_context_length_exceeded(payload.as_ref(), &payload_str) {
-                ProviderError::ContextLengthExceeded(payload_str)
+                ProviderError::ContextLengthExceeded(crate::served_window::tag_overflow(
+                    &payload_str,
+                    payload.as_ref().and_then(crate::served_window::error_n_ctx),
+                ))
             } else {
                 ProviderError::RequestFailed(format!("Bad request (400): {}", payload_str))
             }

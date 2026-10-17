@@ -14,10 +14,12 @@ use super::model::ModelFacts;
 use super::predict::{self, Calibration, Estimate, PlacedNode};
 use super::runs::{ChatShape, WayRuns};
 use super::store::{PlacementKey, PlacementKind, RecordSource, SpeedRecord};
-use crate::distributed::plan::TensorModelFacts;
+use crate::distributed::plan::{self, TensorModelFacts};
 use crate::distributed::Runner;
 use crate::engine::StartFrees;
-use crate::fit::{self, Need, NodeMemoryFacts, Verdict};
+use crate::engine_profile::{self, EngineMemoryProfile};
+pub use crate::fit::ContextSource;
+use crate::fit::{self, Need, NodeMemoryFacts, SingleEngineCost, Verdict};
 use crate::kv_cache::KvCacheMode;
 
 /// The serving stack behind each placement kind.
@@ -131,6 +133,18 @@ pub struct PipelineFitInput {
     pub layer_shares: Vec<f64>,
 }
 
+/// The placement serving a model right now, by candidate id, with the window its engine serves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Running {
+    pub id: String,
+    /// The engine's served window (`goose_provider_types::served_window`: its memory-bounded
+    /// `max_model_len` when it reports one); it wins over goose's estimate on the row.
+    pub context: Option<u64>,
+    /// Who sized `context` (`Unbounded` when the engine serves a window nothing bounded by this
+    /// Mac's memory: the row then shows goose's estimate and says so).
+    pub source: ContextSource,
+}
+
 pub struct PlanInput<'a> {
     pub model_id: &'a str,
     pub model: &'a ModelFacts,
@@ -149,10 +163,9 @@ pub struct PlanInput<'a> {
     pub context: Option<u64>,
     pub records: &'a [SpeedRecord],
     pub calibration: &'a Calibration,
-    /// The placement serving THIS model right now (by candidate id) and its context window: it
-    /// fits by construction — its memory is already in use, so this Mac's available figure cannot
-    /// judge it.
-    pub running: Option<(String, Option<u64>)>,
+    /// The placement serving THIS model right now: it fits by construction — its memory is
+    /// already in use, so this Mac's available figure cannot judge it.
+    pub running: Option<Running>,
     /// What a start of this Mac's single engine gets back — the mount gate's and the tile's own
     /// credit (`MlxEngineManager::start_frees`). Only its `Leftover` arm is read here, and only by
     /// this Mac's single-engine fit (Q-292): goose's own engine left on the engine port is stopped
@@ -160,6 +173,9 @@ pub struct PlanInput<'a> {
     /// its memory. The engine the manager runs (`Mounted`) reaches every placement through
     /// `NodeMemory::freed_by_switch` instead, because every Run stops it first.
     pub this_mac_start: Option<&'a StartFrees>,
+    /// How the single engine goose would mount prefills (`engine_profile`): the pin's profile, or
+    /// why it is not known — the cost then charges the undeclared engine and says so.
+    pub engine: Result<EngineMemoryProfile, String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -192,6 +208,18 @@ pub struct Fit {
     pub status: FitStatus,
     /// The context this placement runs at (requested, or the largest that fits).
     pub context: Option<u64>,
+    /// Who sized `context`: goose's estimate, the serving engine's memory guard (on its prior or
+    /// calibrated), or nothing that knows this Mac's memory.
+    #[serde(default)]
+    pub context_source: ContextSource,
+    /// A single engine: the largest context the memory free NOW leaves room for (with what a
+    /// switch frees) — what decides whether this app's chats fit at this moment.
+    #[serde(skip)]
+    pub context_now: Option<u64>,
+    /// A single engine: the context the DEVICE holds, kept when the verdict is short too (the
+    /// running row reads it while the engine's own memory makes this Mac look full).
+    #[serde(skip)]
+    pub context_device: Option<u64>,
     /// How much more memory the worst node needs for the smallest useful context.
     pub short_bytes: Option<u64>,
     /// The node that is short (by name).
@@ -456,24 +484,106 @@ pub fn kv_bytes_per_token(model: &ModelFacts, kv_mode: Option<KvCacheMode>) -> R
     })
 }
 
+// Live score-tensor copies a single engine's prefill step holds at once, over the one product
+// `prefill_pair_bytes` (query heads × chunk × context at the activation width + mask). Derived from
+// Gabee's 64 GB M3 Max (Metal working set 55,662,788,608 B), AREX-2 27B on Rapid-MLX lz.10, chunk
+// 2,048, nothing cached: the Q8 (31,885,090,345 B) OOMed from ~64k tokens and the Q6
+// (25,797,450,787 B) from ~76k; working set − weights − KV − state − one layer's KV copy over
+// (2,048 × context × 49 B) = 2.98 and 3.20 copies. Checked against data it was NOT fitted to: the
+// Q4's ~94k onset solves to 3.10, and the engine's synthetic 16-layer graph held 2.1–3.2
+// (memory_guard.py, 4.27–6.39 B per head unit at 2 B). The tensor rank measured 1.0 (Q-104)
+// because rank_prefill.py evaluates one layer at a time; the single engine does not.
+const SINGLE_ENGINE_SCORE_COPIES: f64 = 3.2; // measured: Gabee lz.10 OOM onsets Q8 2.98 / Q6 3.20 copies
+
+/// Head dims whose prefill attention runs MLX's fused SDPA kernel, which materialises no score
+/// tensor (sdpa_hd.py on Gabee's M3 Max, mlx 0.32.3, 24 query / 4 KV heads, causal, q 256 and
+/// 2,048 against k 24,576–32,768: −0.26…−0.01 score tensors for 64/80/96/128, 1.03 for 192/256).
+const FUSED_SDPA_HEAD_DIMS: [u64; 4] = [64, 80, 96, 128]; // measured: sdpa_hd.py, M3 Max, mlx 0.32.3
+
+/// The single engine's cost model for `model` at the profile's KV setting, run the way `engine`
+/// prefills, or why it cannot be sized (then only the weights are charged, and the gap is named).
+pub fn single_engine_cost(
+    weights_bytes: u64,
+    model: &ModelFacts,
+    kv_mode: Option<KvCacheMode>,
+    engine: &Result<EngineMemoryProfile, String>,
+) -> Result<SingleEngineCost, String> {
+    let kv = model.kv.as_ref().map_err(Clone::clone)?;
+    let per_token = kv_bytes_per_token(model, kv_mode)?;
+    let mut gaps = Vec::new();
+    let sequence_state_bytes = kv.sequence_state_bytes.clone().unwrap_or_else(|gap| {
+        gaps.push(format!("recurrent state not charged: {gap}"));
+        0
+    });
+    let engine = engine.clone().unwrap_or_else(|gap| {
+        gaps.push(format!(
+            "{gap} — charged as an engine without a memory guard ({}-token prefill steps)",
+            engine_profile::UNDECLARED.chunk_tokens()
+        ));
+        engine_profile::UNDECLARED
+    });
+    let materialises_scores =
+        kv.attention_layers > 0 && !FUSED_SDPA_HEAD_DIMS.contains(&kv.head_dim);
+    let pair = plan::prefill_pair_bytes(kv.query_heads, kv.activation_bytes, 1);
+    Ok(SingleEngineCost {
+        weights_bytes,
+        kv_bytes_per_token: per_token,
+        kv_growth_bytes_per_token: per_token / kv.attention_layers.max(1),
+        sequence_state_bytes,
+        prefill_score_bytes_per_pair: if materialises_scores {
+            (pair as f64 * SINGLE_ENGINE_SCORE_COPIES).ceil() as u64
+        } else {
+            0
+        },
+        engine,
+        kv_step_tokens: plan::KV_CACHE_STEP,
+        max_position: model.max_context,
+        gaps,
+    })
+}
+
 /// What the single engine needs to serve the smallest useful context: the need the mount gate
 /// judges and the planner's single-engine fit — one need, so both answer alike.
 pub fn single_engine_need(
     weights_bytes: u64,
     model: Result<&ModelFacts, String>,
     kv_mode: Option<KvCacheMode>,
+    engine: &Result<EngineMemoryProfile, String>,
 ) -> Need {
     Need::single_engine(
         weights_bytes,
-        model.and_then(|m| kv_bytes_per_token(m, kv_mode)),
+        model.and_then(|m| single_engine_cost(weights_bytes, m, kv_mode, engine)),
         min_useful_context(),
     )
+}
+
+/// What the DEVICE gives one single engine to hold a context in: the fit rule's budget with every
+/// byte of RAM counted as free, under the ceiling the engine plans its steps under (the guard's
+/// own Metal cap, else the working set) less what other engines hold.
+pub fn device_budget(cost: &SingleEngineCost, facts: &NodeMemoryFacts) -> u64 {
+    let cap = cost
+        .engine
+        .ceiling_bytes(cost.weights_bytes, facts.ceiling_bytes)
+        .min(facts.ceiling_left_bytes());
+    fit::budget_bytes(facts.total_bytes, facts.total_bytes, cap)
+}
+
+/// The context a single engine on this Mac can hold, derived from the DEVICE (`device_budget`)
+/// less the derived-context drift: never from the free memory of this moment, which moved
+/// ~9.7 GiB between two picks of the same dialog on Gabee's Mac and put Q4 (141,395) under Q6
+/// (206,928). Live memory decides whether it loads now (`fit::judge`) and whether it holds this
+/// app's chats now (`Fit::context_now`).
+pub fn device_context(cost: &SingleEngineCost, facts: &NodeMemoryFacts) -> Option<u64> {
+    cost.max_context(device_budget(cost, facts), facts.tight_band_bytes())
 }
 
 fn unknown_fit(reason: String) -> Fit {
     Fit {
         status: FitStatus::Unknown,
         context: None,
+        context_now: None,
+        context_device: None,
+        context_source: ContextSource::Estimate,
         short_bytes: None,
         short_node: None,
         after_stopping: Vec::new(),
@@ -494,9 +604,13 @@ fn status_for(max_fit: u64, wanted: u64, min_useful: u64) -> (FitStatus, Option<
 }
 
 /// A single engine on one Mac: the one fit rule (`crate::fit::judge`) on the need at the smallest
-/// useful context decides whether it fits at all — the SAME verdict the mount gate reaches on
-/// that Mac — and the budget left above the weights sizes the context it can run at.
-fn single_fit(input: &PlanInput, node: &NodeInput, min_useful: u64) -> Fit {
+/// useful context decides whether it loads now — the SAME verdict the mount gate reaches on that
+/// Mac — and the single-engine cost against the DEVICE (`device_context`) sizes the context it
+/// can run at, so the context never moves with the free memory of the moment. What the free
+/// memory holds NOW is kept beside it (`Fit::context_now`): a way that cannot hold this app's
+/// chats at this moment is not Best (Q-167), and when it holds them only once a switch stops
+/// another engine, that engine is named.
+fn single_fit(input: &PlanInput, node: &NodeInput, min_useful: u64, chat_need: Option<u64>) -> Fit {
     let mut b = match node_budget(node) {
         Ok(b) => b,
         Err(reason) => return unknown_fit(reason),
@@ -512,8 +626,9 @@ fn single_fit(input: &PlanInput, node: &NodeInput, min_useful: u64) -> Fit {
         b.budget = b.facts.budget_bytes();
     }
     let weights = input.bytes_on_disk;
+    let cost = single_engine_cost(weights, input.model, input.kv_mode, &input.engine);
     let mut verdict = fit::judge(
-        single_engine_need(weights, Ok(input.model), input.kv_mode),
+        Need::single_engine(weights, cost.clone(), min_useful),
         b.facts,
     );
     if let Some(note) = leftover.and_then(StartFrees::note) {
@@ -530,6 +645,9 @@ fn single_fit(input: &PlanInput, node: &NodeInput, min_useful: u64) -> Fit {
         return Fit {
             status: FitStatus::Short,
             context: None,
+            context_now: None,
+            context_device: cost.as_ref().ok().and_then(|c| device_context(c, &b.facts)),
+            context_source: ContextSource::Estimate,
             short_bytes: verdict.short_bytes(),
             short_node: Some(node.name.clone()),
             after_stopping: Vec::new(),
@@ -537,52 +655,73 @@ fn single_fit(input: &PlanInput, node: &NodeInput, min_useful: u64) -> Fit {
             detail: format!("{}: {}", node.name, verdict.message),
         };
     }
-    let after_stopping = after_stopping_if(verdict.needs_switch(), input, &[node]);
     let model_max = input.model.max_context;
-    match kv_bytes_per_token(input.model, input.kv_mode) {
-        Ok(per_token) if per_token > 0 => {
-            let room = b.budget.saturating_sub(weights);
-            let max_fit = (room / per_token).min(model_max.unwrap_or(u64::MAX));
+    let sized = cost.as_ref().map_err(Clone::clone).and_then(|c| {
+        device_context(c, &b.facts)
+            .map(|max| (c, max))
+            .ok_or_else(|| "the model has no growing KV cache".to_string())
+    });
+    match sized {
+        Ok((cost, max_fit)) => {
             let wanted = input.context.or(model_max).unwrap_or(max_fit);
             let (status, context) = status_for(max_fit, wanted, min_useful);
+            // This app's chats are judged against what loads NOW: with the switch's memory, and —
+            // to name the engine that relies on — without it.
+            let now_in = |budget: u64| {
+                cost.max_context(budget, 0)
+                    .map_or(max_fit, |now| now.min(max_fit))
+            };
+            let context_now = now_in(b.budget);
+            let holds_chats_only_after_switch = chat_need.is_some_and(|need| {
+                context_now >= need && now_in(b.facts.budget_before_switch_bytes()) < need
+            });
+            let relies = verdict.needs_switch() || holds_chats_only_after_switch;
             Fit {
                 status,
                 context,
+                context_now: Some(context_now),
+                context_device: Some(max_fit),
+                context_source: ContextSource::Estimate,
                 short_bytes: None,
                 short_node: None,
                 after_stopping: if status.fits() {
-                    after_stopping
+                    after_stopping_if(relies, input, &[node])
                 } else {
                     Vec::new()
                 },
-                nodes: node_fit(weights + per_token * context.unwrap_or(min_useful)),
+                nodes: node_fit(verdict.need.total_bytes()),
                 detail: format!(
-                    "{}: {} of weights + {} of KV per 1k tokens; {}",
+                    "{}: context up to {max_fit} in the {} the engine plans under on this Mac (the \
+                     device, not the free memory of this moment) less the {:.0}% drift, \
+                     {context_now} in what is free now — {} of weights + {} of KV and {} for a \
+                     {}-token prefill step's scores per 1k tokens, {} of recurrent state; {}",
                     node.name,
+                    gib(device_budget(cost, &b.facts)),
+                    fit::DERIVED_CONTEXT_MARGIN_RATIO * 100.0,
                     gib(weights),
-                    gib(per_token * 1024),
+                    gib(cost.kv_bytes_per_token * 1024),
+                    gib(cost.prefill_score_bytes_per_pair * cost.engine.chunk_tokens() * 1024),
+                    cost.engine.chunk_tokens(),
+                    gib(cost.sequence_state_bytes),
                     verdict.message
                 ),
             }
         }
-        other => {
-            let reason = match other {
-                Err(e) => e,
-                Ok(_) => "the model has no growing KV cache".to_string(),
-            };
-            Fit {
-                status: FitStatus::Fits,
-                context: None,
-                short_bytes: None,
-                short_node: None,
-                after_stopping,
-                nodes: node_fit(weights),
-                detail: format!(
-                    "{}: context not sized ({reason}); {}",
-                    node.name, verdict.message
-                ),
-            }
-        }
+        Err(reason) => Fit {
+            status: FitStatus::Fits,
+            context: None,
+            context_now: None,
+            context_device: None,
+            context_source: ContextSource::Estimate,
+            short_bytes: None,
+            short_node: None,
+            after_stopping: after_stopping_if(verdict.needs_switch(), input, &[node]),
+            nodes: node_fit(weights),
+            detail: format!(
+                "{}: context not sized ({reason}); {}",
+                node.name, verdict.message
+            ),
+        },
     }
 }
 
@@ -629,6 +768,9 @@ fn tensor_fit(input: &PlanInput, facts: &TensorModelFacts, min_useful: u64) -> F
     Fit {
         status,
         context,
+        context_now: None,
+        context_device: None,
+        context_source: ContextSource::Estimate,
         short_bytes: (status == FitStatus::Short)
             .then(|| {
                 worst
@@ -692,6 +834,9 @@ fn pipeline_fit(
             let fit = Fit {
                 status,
                 context: status.fits().then_some(plan.context).flatten(),
+                context_now: None,
+                context_device: None,
+                context_source: ContextSource::Estimate,
                 short_bytes: (status == FitStatus::Short)
                     .then(|| {
                         worst
@@ -722,12 +867,20 @@ fn pipeline_fit(
             };
             let total_budget: u64 = budgets.iter().map(|b| b.budget).sum();
             let resident = input.model.resident_bytes;
-            let per_token = input
-                .model
-                .kv
-                .as_ref()
-                .map(|kv| kv.bf16_bytes_per_token * cluster.slots as u64)
-                .unwrap_or(0);
+            // The single engine's cost model, scaled to the split: every slot holds a sequence
+            // (KV, its growth copy, its state) and every Mac runs one prefill step at a time.
+            let slots = cluster.slots as u64;
+            let macs = input.nodes.len() as u64;
+            let cost =
+                single_engine_cost(resident, input.model, None, &Ok(engine_profile::UNDECLARED))
+                    .map(|c| SingleEngineCost {
+                        kv_bytes_per_token: c.kv_bytes_per_token * slots,
+                        kv_growth_bytes_per_token: c.kv_growth_bytes_per_token * slots,
+                        sequence_state_bytes: c.sequence_state_bytes * slots,
+                        prefill_score_bytes_per_pair: c.prefill_score_bytes_per_pair * macs,
+                        ..c
+                    });
+            let margin: u64 = budgets.iter().map(|b| b.facts.tight_band_bytes()).sum();
             let max_fit_of = |budget_of: fn(&Budget) -> u64| {
                 if !budgets
                     .iter()
@@ -735,15 +888,13 @@ fn pipeline_fit(
                 {
                     return 0;
                 }
-                let room = budgets
-                    .iter()
-                    .map(budget_of)
-                    .sum::<u64>()
-                    .saturating_sub(resident);
-                if per_token == 0 {
-                    input.model.max_context.unwrap_or(0)
-                } else {
-                    (room / per_token).min(input.model.max_context.unwrap_or(u64::MAX))
+                let room: u64 = budgets.iter().map(budget_of).sum();
+                match &cost {
+                    Ok(cost) => cost
+                        .max_context(room, margin)
+                        .unwrap_or_else(|| input.model.max_context.unwrap_or(0)),
+                    Err(_) if room >= resident => input.model.max_context.unwrap_or(0),
+                    Err(_) => 0,
                 }
             };
             let max_fit = max_fit_of(|b| b.budget);
@@ -754,7 +905,8 @@ fn pipeline_fit(
                     .0
                     .fits();
             let all: Vec<&NodeInput> = input.nodes.iter().collect();
-            let need = resident + per_token * context.unwrap_or(min_useful);
+            let at = context.unwrap_or(min_useful);
+            let need = cost.as_ref().map_or(resident, |c| c.bytes_at(at));
             let shares: Vec<f64> = budgets
                 .iter()
                 .map(|b| b.budget as f64 / total_budget.max(1) as f64)
@@ -762,6 +914,9 @@ fn pipeline_fit(
             let fit = Fit {
                 status,
                 context,
+                context_now: None,
+                context_device: None,
+            context_source: ContextSource::Estimate,
                 short_bytes: (status == FitStatus::Short).then(|| need.saturating_sub(total_budget)),
                 short_node: None,
                 after_stopping: after_stopping_if(relies, input, &all),
@@ -778,12 +933,17 @@ fn pipeline_fit(
                     .collect(),
                 detail: format!(
                     "estimate — the fork's planner is not provisioned on this Mac, so the split is \
-                     sized in aggregate: {} of weights + KV for {} slots against {} across the Macs \
-                     (its largest layer, {}, must fit one Mac); the planner decides at Start",
+                     sized in aggregate: {} of weights + KV, recurrent state and a prefill step for \
+                     {} slots against {} across the Macs (its largest layer, {}, must fit one \
+                     Mac){}; the planner decides at Start",
                     gib(resident),
                     cluster.slots,
                     gib(total_budget),
-                    gib(input.model.largest_layer_bytes)
+                    gib(input.model.largest_layer_bytes),
+                    match &cost {
+                        Ok(c) => c.gaps.iter().map(|g| format!("; {g}")).collect::<String>(),
+                        Err(gap) => format!("; context not sized: {gap}"),
+                    }
                 ),
             };
             (fit, Some(shares))
@@ -1053,13 +1213,14 @@ fn missing_model(nodes: &[&NodeInput]) -> Option<String> {
 pub fn plan(input: &PlanInput) -> Plan {
     let min_useful = Workload::Chat.context_needed();
     let chat = ChatShape::of(input.records);
+    let chat_need = (input.context.is_none() && chat.turns > 0).then(|| chat.context_needed());
     let mut notes = Vec::new();
     let mut candidates: Vec<Candidate> = Vec::new();
 
     for node in input.nodes {
         let key = PlacementKey::single(&node.id);
         let (id, node_names, chips, backend) = candidate_base(key.clone(), &[node]);
-        let fit = single_fit(input, node, min_useful);
+        let fit = single_fit(input, node, min_useful, chat_need);
         let action = if node.is_local() {
             match missing_model(&[node]) {
                 Some(reason) => Action::Unavailable { reason },
@@ -1215,11 +1376,25 @@ pub fn plan(input: &PlanInput) -> Plan {
         }
     }
 
-    if let Some((id, context)) = &input.running {
-        if let Some(c) = candidates.iter_mut().find(|c| &c.id == id) {
+    if let Some(running) = &input.running {
+        if let Some(c) = candidates.iter_mut().find(|c| c.id == running.id) {
+            // A window nothing bounded by this Mac's memory is never shown as what the Mac holds:
+            // goose's own estimate stands, and the row says it is one.
+            let (context, context_source) = match (running.context, running.source) {
+                (Some(window), source) if source != ContextSource::Unbounded => {
+                    (Some(window), source)
+                }
+                (window, _) => match c.fit.context_device.or(c.fit.context) {
+                    Some(estimate) => (Some(estimate), ContextSource::Estimate),
+                    None => (window, ContextSource::Unbounded),
+                },
+            };
             c.fit = Fit {
                 status: FitStatus::Fits,
-                context: context.or(c.fit.context),
+                context,
+                context_now: None,
+                context_device: c.fit.context_device,
+                context_source,
                 short_bytes: None,
                 short_node: None,
                 after_stopping: Vec::new(),
@@ -1255,7 +1430,6 @@ pub fn plan(input: &PlanInput) -> Plan {
             c.speed.turn = Some(turn);
         }
     }
-    let chat_need = (input.context.is_none() && chat.turns > 0).then(|| chat.context_needed());
     if let Some(need) = chat_need {
         notes.push(format!(
             "Your chats are about {} tokens long and their answers about {} tokens ({} {} of \
@@ -1327,7 +1501,11 @@ fn winner(candidates: &[Candidate], eligible: &[usize], goal: Goal) -> Option<us
 /// The context a fitting candidate holds when that is less than `chat_need`.
 fn below_chats(c: &Candidate, chat_need: Option<u64>) -> Option<(u64, u64)> {
     let need = chat_need?;
-    let context = c.fit.context.filter(|_| c.fit.status.fits())?;
+    let context = c
+        .fit
+        .context
+        .filter(|_| c.fit.status.fits())?
+        .min(c.fit.context_now.unwrap_or(u64::MAX));
     (context < need).then_some((context, need))
 }
 
@@ -1538,6 +1716,14 @@ mod tests {
     use crate::GIB;
     use std::collections::BTreeMap;
 
+    /// The memory-guard engine G-a ships with: steps halve to 256 tokens under its own Metal cap.
+    const GUARDED: EngineMemoryProfile = EngineMemoryProfile::Guarded {
+        floor_chunk_tokens: engine_profile::GUARD_FLOOR_CHUNK_TOKENS,
+    };
+    /// Rapid-MLX lz.10, pinned before the guard: 2,048-token steps up to the working set.
+    const LZ10: EngineMemoryProfile = EngineMemoryProfile::Unguarded {
+        prefill_chunk_tokens: 2_048,
+    };
     const M4_CEILING: u64 = 115_448_725_504;
     const M3_CEILING: u64 = 83_494_174_720;
 
@@ -1588,15 +1774,35 @@ mod tests {
         ]
     }
 
-    fn kv(attention: u64, kv_heads: u64) -> Result<KvCacheFacts, String> {
+    /// A qwen3_5 / qwen3_next KV layout: head_dim 256, linear layers of 128-dim heads, conv 4.
+    fn kv(
+        attention: u64,
+        kv_heads: u64,
+        query_heads: u64,
+        linear: (u64, u64, u64),
+    ) -> Result<KvCacheFacts, String> {
         let bf16 = attention * 2 * kv_heads * 256 * 2;
+        let (layers, key_heads, value_heads) = linear;
         Ok(KvCacheFacts {
             attention_layers: attention,
-            state_layers: 0,
+            state_layers: layers,
             sliding_layers: 0,
             kv_heads,
+            query_heads,
             head_dim: 256,
             activation_bytes: 2,
+            sequence_state_bytes: Ok(plan::linear_state_bytes(
+                &plan::LinearAttention {
+                    layers,
+                    key_heads,
+                    value_heads,
+                    key_head_dim: 128,
+                    value_head_dim: 128,
+                    conv_kernel: 4,
+                },
+                2,
+                1,
+            )),
             group_size: Some(64),
             bf16_bytes_per_token: bf16,
             int8_bytes_per_token: Some(bf16 / 2),
@@ -1618,7 +1824,7 @@ mod tests {
             lookup_bytes: 2_542_000_000,
             excluded_bytes: 921_000_000,
             largest_layer_bytes: 444_000_000,
-            kv: kv(16, 4),
+            kv: kv(16, 4, 24, (48, 16, 48)),
         }
     }
 
@@ -1660,7 +1866,7 @@ mod tests {
             lookup_bytes: gib(30.135),
             excluded_bytes: gib(1.784),
             largest_layer_bytes: gib(31.179),
-            kv: kv(12, 2),
+            kv: kv(12, 2, 16, (36, 16, 32)),
         }
     }
 
@@ -1681,7 +1887,8 @@ mod tests {
         records: Vec<SpeedRecord>,
         bytes_on_disk: u64,
         cal: Calibration,
-        running: Option<(String, Option<u64>)>,
+        running: Option<Running>,
+        engine: Result<EngineMemoryProfile, String>,
     }
 
     impl Fixture {
@@ -1705,6 +1912,7 @@ mod tests {
                 calibration: &self.cal,
                 running: self.running.clone(),
                 this_mac_start,
+                engine: self.engine.clone(),
             })
         }
     }
@@ -1720,6 +1928,7 @@ mod tests {
             bytes_on_disk: 32_800_000_000,
             cal: Calibration::fit(&BTreeMap::new()),
             running: None,
+            engine: Ok(GUARDED),
         }
     }
 
@@ -2003,6 +2212,7 @@ mod tests {
             bytes_on_disk: 104_700_000_000,
             cal: Calibration::fit(&BTreeMap::new()),
             running: None,
+            engine: Ok(GUARDED),
         };
         let plan = f.plan(Goal::Chat);
         assert_eq!(
@@ -2078,6 +2288,7 @@ mod tests {
             bytes_on_disk: gib(97.5),
             cal: Calibration::fit(&BTreeMap::new()),
             running: None,
+            engine: Ok(GUARDED),
         };
         let split = "pipeline:jaccl:local+link:worksmacstudio";
 
@@ -2135,7 +2346,10 @@ mod tests {
     /// Q-167 (3.0.57): "Run on Work's Mac Studio · Best … fits only at 38,669 context" while this
     /// app's chats read 41k–53k tokens. "Chat" was the benchmark's ~2k-token prompt, so any way
     /// that held 2,304 tokens could be Best. Now the chats goose measured size it: a way that holds
-    /// less than a typical chat turn is named for that and never Best.
+    /// less than a typical chat turn is named for that and never Best. Since T12 G-a the context
+    /// SHOWN is the device's (`device_context`), and whether the chats fit at this moment is the
+    /// free memory's (`Fit::context_now`): the Studio at 41.8 GiB free holds the 27B's whole
+    /// window as a device, but not a 53k chat right now.
     #[test]
     fn a_way_that_cannot_hold_this_apps_chats_is_never_best() {
         let studio_id = "single:link:worksmacstudio";
@@ -2144,9 +2358,10 @@ mod tests {
 
         let benchmark_sized = tight.plan(Goal::Chat);
         let studio = by_id(&benchmark_sized, studio_id);
-        let context = studio.fit.context.unwrap();
-        assert_eq!(studio.fit.status, FitStatus::SmallerContext);
-        assert!(context > 30_000 && context < 45_000, "{context}");
+        assert!(studio.fit.status.fits(), "{:?}", studio.fit);
+        assert_eq!(studio.fit.context, Some(262_144), "the device's");
+        let now = studio.fit.context_now.unwrap();
+        assert!(now > 2_304 && now < 52_976, "{now}");
         assert_eq!(
             benchmark_sized.best.as_deref(),
             Some(studio_id),
@@ -2162,7 +2377,7 @@ mod tests {
         assert_eq!(
             studio.outcome,
             Outcome::ContextBelowChats {
-                context,
+                context: now,
                 need: 52_976 + 512
             }
         );
@@ -2195,11 +2410,29 @@ mod tests {
         let switched = switching.plan(Goal::Chat);
         let studio = by_id(&switched, studio_id);
         assert!(
-            studio.fit.context.unwrap() >= 52_976 + 512,
+            studio.fit.context_now.unwrap() >= 52_976 + 512,
             "{:?}",
             studio.fit
         );
         assert_eq!(switched.best.as_deref(), Some(studio_id));
+
+        // What the switch stops is named when holding the chats relies on it.
+        let mut replacing = Fixture {
+            nodes: macs(60.0, 41.8),
+            records: tight.records.clone(),
+            ..the_27b()
+        };
+        if let Ok(memory) = replacing.nodes[1].memory.as_mut() {
+            memory.freed_by_switch = Some(SwitchFrees {
+                model_id: "other-model".into(),
+                bytes: gib(15.5),
+            });
+        }
+        let replaced = replacing.plan(Goal::Chat);
+        assert_eq!(
+            by_id(&replaced, studio_id).fit.after_stopping,
+            vec!["other-model".to_string()]
+        );
 
         let roomy = Fixture {
             nodes: macs(60.0, 74.0),
@@ -2243,6 +2476,7 @@ mod tests {
             bytes_on_disk: gib(420.0),
             cal: Calibration::fit(&BTreeMap::new()),
             running: None,
+            engine: Ok(GUARDED),
         };
         let plan = f.plan(Goal::Chat);
         assert_eq!(plan.best, None);
@@ -2302,7 +2536,11 @@ mod tests {
         });
         let before = f.plan(Goal::Chat);
         assert_eq!(by_id(&before, "single:local").fit.status, FitStatus::Short);
-        f.running = Some(("single:local".into(), Some(262_144)));
+        f.running = Some(Running {
+            id: "single:local".into(),
+            context: Some(262_144),
+            source: ContextSource::EnginePrior,
+        });
         let plan = f.plan(Goal::Chat);
         let here = by_id(&plan, "single:local");
         assert_eq!(here.fit.status, FitStatus::Fits);
@@ -2389,23 +2627,14 @@ mod tests {
         );
     }
 
+    /// A Mac whose DEVICE holds less than the model's window keeps the smaller context and shows
+    /// it: the Q8 27B on Gabee's 64 GB M3 Max, whatever is free right now.
     #[test]
     fn a_smaller_context_is_kept_and_shown() {
-        let mut f = the_27b();
-        f.nodes.truncate(1);
-        f.cluster = None;
-        // 50 GiB available on the MacBook: a budget of ~41 GiB leaves room for ~150k tokens of KV.
-        f.nodes[0].memory = Ok(NodeMemory {
-            total_bytes: gib(128.0),
-            available_bytes: gib(55.0),
-            ceiling_bytes: Ok(M4_CEILING),
-            freed_by_switch: None,
-        });
-        let plan = f.plan(Goal::Chat);
+        let plan = gabee(50.0, AREX_Q8_BYTES).plan(Goal::Chat);
         let here = &plan.candidates[0];
         assert_eq!(here.fit.status, FitStatus::SmallerContext, "{:?}", here.fit);
-        let ctx = here.fit.context.unwrap();
-        assert!(ctx > 100_000 && ctx < 262_144, "{ctx}");
+        assert_eq!(here.fit.context, Some(151_808));
         assert_eq!(plan.best.as_deref(), Some("single:local"));
     }
 
@@ -2425,12 +2654,13 @@ mod tests {
             bytes_on_disk: gib(97.5),
             cal: Calibration::fit(&BTreeMap::new()),
             running: None,
+            engine: Ok(GUARDED),
         };
         let plan = f.plan(Goal::Chat);
         let here = by_id(&plan, "single:local");
         assert_eq!(here.fit.status, FitStatus::Short);
         let gate = fit::judge(
-            single_engine_need(gib(97.5), Ok(&flash()), None),
+            single_engine_need(gib(97.5), Ok(&flash()), None, &Ok(GUARDED)),
             NodeMemoryFacts {
                 available_bytes: gib(93.0),
                 total_bytes: gib(128.0),
@@ -2475,6 +2705,7 @@ mod tests {
             bytes_on_disk: gib(97.5),
             cal: Calibration::fit(&BTreeMap::new()),
             running: None,
+            engine: Ok(GUARDED),
         };
         assert_eq!(
             macbook_view.plan(Goal::Chat).badge,
@@ -2522,6 +2753,7 @@ mod tests {
             bytes_on_disk: gib(97.5),
             cal: Calibration::fit(&BTreeMap::new()),
             running: None,
+            engine: Ok(GUARDED),
         };
         allowed.nodes[1].split_refusal = None;
         let Badge::NeedsBothMacs { needs: Some(needs) } = allowed.plan(Goal::Chat).badge else {
@@ -2536,5 +2768,202 @@ mod tests {
             allowed.plan(Goal::Chat).badge,
             Badge::TooBig { .. }
         ));
+    }
+
+    /// Gabee's MacBook (2026-10-14): 64 GB M3 Max, Metal's working set 55,662,788,608 B (read with
+    /// mlx `device_info()` on that Mac), the AREX-2 27B (qwen3_5 hybrid) in three quants.
+    const GABEE_CEILING: u64 = 55_662_788_608;
+    const AREX_Q8_BYTES: u64 = 31_885_090_345;
+
+    fn gabee(available_gib: f64, weights: u64) -> Fixture {
+        Fixture {
+            model: qwen27b(),
+            nodes: vec![NodeInput {
+                id: "local".into(),
+                name: "Gabee's MacBook".into(),
+                chip: Ok(chip("Apple M3 Max", 40)),
+                memory: Ok(NodeMemory {
+                    total_bytes: gib(64.0),
+                    available_bytes: gib(available_gib),
+                    ceiling_bytes: Ok(GABEE_CEILING),
+                    freed_by_switch: None,
+                }),
+                has_model: Ok(true),
+                remote_single: Ok(()),
+                split_refusal: None,
+            }],
+            cluster: None,
+            tensor: None,
+            pipeline: None,
+            records: Vec::new(),
+            bytes_on_disk: weights,
+            cal: Calibration::fit(&BTreeMap::new()),
+            running: None,
+            engine: Ok(GUARDED),
+        }
+    }
+
+    fn here(f: &Fixture) -> Fit {
+        by_id(&f.plan(Goal::Chat), "single:local").fit.clone()
+    }
+
+    /// The New node dialog on Gabee's Mac, two picks a moment apart: Q6 (24.07 GiB) read "fits
+    /// only at 206,928 context, needs 36.7 GB" at 42.65 GiB available, and Q4 (18.37 GiB) "fits
+    /// only at 141,395, needs 27.0 GB" at 32.95 GiB — the smaller quant showed the smaller context
+    /// because the context was (live budget − weights) / 64 KiB and the live reading moved
+    /// ~9.7 GiB between the picks. On either engine the order holds.
+    #[test]
+    fn a_smaller_quant_never_shows_a_smaller_context() {
+        for (engine, q6_expected, q4_expected) in
+            [(GUARDED, 206_848, 262_144), (LZ10, 72_192, 87_808)]
+        {
+            let mut q6 = gabee(42.65, gib(24.07));
+            let mut q4 = gabee(32.95, gib(18.37));
+            q6.engine = Ok(engine);
+            q4.engine = Ok(engine);
+            let (q6, q4) = (here(&q6), here(&q4));
+            assert!(q6.status.fits() && q4.status.fits(), "{q6:?}\n{q4:?}");
+            let (q6_context, q4_context) = (q6.context.unwrap(), q4.context.unwrap());
+            assert!(
+                q4_context >= q6_context,
+                "{engine:?}: Q4 {q4_context} < Q6 {q6_context}: the context followed the free memory"
+            );
+            assert_eq!(
+                (q6_context, q4_context),
+                (q6_expected, q4_expected),
+                "{engine:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_context_does_not_move_with_free_memory() {
+        let contexts: Vec<Option<u64>> = [42.65, 32.95, 58.0]
+            .into_iter()
+            .map(|available| here(&gabee(available, gib(24.07))).context)
+            .collect();
+        assert!(contexts.windows(2).all(|w| w[0] == w[1]), "{contexts:?}");
+        // Live memory decides only whether it loads now: 26 GiB available is short for 24 GiB.
+        let short = here(&gabee(26.0, gib(24.07)));
+        assert_eq!(short.status, FitStatus::Short, "{}", short.detail);
+        assert!(short.short_bytes.is_some());
+    }
+
+    /// The Q8 (30 GB) on Gabee's Mac. The KV-only rule against the device would offer the whole
+    /// 262,144 window. Charging the linear state, the engine's prefill step's scores and the KV
+    /// growth copy bounds it: 151,808 on the memory-guard engine (256-token floor under its 0.90
+    /// cap), 56,832 on lz.10 (2,048-token steps up to the working set) — where it OOMed from ~64k.
+    #[test]
+    fn the_single_engine_charges_prefill_scores_and_state() {
+        let f = gabee(50.0, AREX_Q8_BYTES);
+        let q8 = here(&f);
+        assert_eq!(q8.context, Some(151_808), "{}", q8.detail);
+        let facts = node_budget(&f.nodes[0]).unwrap().facts;
+        let cost = single_engine_cost(AREX_Q8_BYTES, &f.model, None, &Ok(GUARDED)).unwrap();
+        assert_eq!(cost.sequence_state_bytes, 153_944_064);
+        assert_eq!(cost.prefill_score_bytes_per_pair, 157);
+        assert_eq!(cost.kv_growth_bytes_per_token, 4_096);
+        assert_eq!(device_budget(&cost, &facts), 50_096_509_747);
+        let kv_only = (device_budget(&cost, &facts) - AREX_Q8_BYTES) / 65_536;
+        assert!(
+            kv_only > 262_144,
+            "the KV-only rule offered the whole window: {kv_only}"
+        );
+        let mut lz10 = gabee(50.0, AREX_Q8_BYTES);
+        lz10.engine = Ok(LZ10);
+        assert_eq!(here(&lz10).context, Some(56_832));
+        // What the dialog row says it loads in: the need at the chat context, not the budget.
+        let row = &q8.nodes[0];
+        assert_eq!(row.budget_bytes, facts.budget_bytes());
+        assert_eq!(
+            row.need_bytes,
+            Need::at(&cost, min_useful_context()).total_bytes()
+        );
+        assert!(row.need_bytes < row.budget_bytes);
+    }
+
+    /// SINGLE_ENGINE_SCORE_COPIES was solved from the Q8 and Q6 onsets, so predicting THOSE is
+    /// circular. The Q4 (18.37 GiB) onset, ~94k tokens on lz.10 at 2,048, was not used: the cost
+    /// with no margin against the working set must land just under it (conservative, not loose).
+    #[test]
+    fn the_score_copies_predict_an_onset_they_were_not_fitted_to() {
+        let f = gabee(50.0, gib(18.37));
+        let cost = single_engine_cost(gib(18.37), &f.model, None, &Ok(LZ10)).unwrap();
+        let predicted = cost.max_context(GABEE_CEILING, 0).unwrap();
+        assert!(
+            (88_000..94_000).contains(&predicted),
+            "{predicted} vs the measured ~94k onset"
+        );
+    }
+
+    /// MLX fuses prefill attention for head dims 64/80/96/128 (no score tensor, measured): such a
+    /// model is charged no scores, and its context follows its KV alone.
+    #[test]
+    fn a_fused_head_dim_charges_no_scores() {
+        let mut model = qwen27b();
+        if let Ok(kv) = model.kv.as_mut() {
+            kv.head_dim = 128;
+        }
+        let fused = single_engine_cost(AREX_Q8_BYTES, &model, None, &Ok(LZ10)).unwrap();
+        assert_eq!(fused.prefill_score_bytes_per_pair, 0);
+        let materialised = single_engine_cost(AREX_Q8_BYTES, &qwen27b(), None, &Ok(LZ10)).unwrap();
+        assert_eq!(materialised.prefill_score_bytes_per_pair, 157);
+    }
+
+    /// An engine goose cannot place is charged as the unguarded engine, and the gap is named.
+    #[test]
+    fn an_undeclared_engine_is_charged_conservatively_and_named() {
+        let mut f = gabee(50.0, AREX_Q8_BYTES);
+        f.engine = Err("Rapid-MLX v9.9.9 declares no prefill memory profile in goose".into());
+        let fit = here(&f);
+        assert_eq!(fit.context, Some(56_832), "the lz.10 figure");
+        assert!(
+            fit.detail
+                .contains("v9.9.9 declares no prefill memory profile"),
+            "{}",
+            fit.detail
+        );
+    }
+
+    /// Run it's row for the serving model shows the engine's own window with who bounded it; a
+    /// window nothing bounded by this Mac's memory is replaced by goose's estimate, said as such.
+    #[test]
+    fn the_running_row_shows_the_engines_window_and_its_source() {
+        let mut f = gabee(30.0, AREX_Q8_BYTES);
+        f.running = Some(Running {
+            id: "single:local".into(),
+            context: Some(149_000),
+            source: ContextSource::EngineCalibrated,
+        });
+        let fit = here(&f);
+        assert_eq!(fit.context, Some(149_000));
+        assert_eq!(fit.context_source, ContextSource::EngineCalibrated);
+        // lz.10 lists its native window and its KV-only max_model_len, 262,144: not this Mac's.
+        f.running = Some(Running {
+            id: "single:local".into(),
+            context: Some(262_144),
+            source: ContextSource::Unbounded,
+        });
+        let native = here(&f);
+        assert_eq!(
+            native.context,
+            Some(151_808),
+            "goose's estimate, though 30 GiB looks full"
+        );
+        assert_eq!(native.context_source, ContextSource::Estimate);
+        let mut unestimated = gabee(30.0, AREX_Q8_BYTES);
+        unestimated.model.kv = Err("no config.json".into());
+        unestimated.running = Some(Running {
+            id: "single:local".into(),
+            context: Some(262_144),
+            source: ContextSource::Unbounded,
+        });
+        let bare = here(&unestimated);
+        assert_eq!(bare.context, Some(262_144));
+        assert_eq!(
+            bare.context_source,
+            ContextSource::Unbounded,
+            "the absence is carried"
+        );
     }
 }

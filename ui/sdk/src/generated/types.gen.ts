@@ -2985,7 +2985,8 @@ export type MlxMountFitDto = {
      */
     verdict: string;
     /**
-     * `weightsBytes + kvBytes`.
+     * `weightsBytes + kvBytes` + the sequence's recurrent state + one floor prefill step's
+     * transient at `contextTokens` (goose-sidecar `fit::SingleEngineCost`).
      */
     needBytes: number;
     /**
@@ -3285,7 +3286,16 @@ export type MlxPlacementKindDto = 'single' | 'tensor' | 'pipeline';
 
 export type MlxPlacementFitDto = {
     status: MlxFitStatusDto;
+    /**
+     * The context this placement runs at: for a single engine, what the DEVICE holds run the way
+     * the engine prefills (never the free memory of the moment) — or, for the placement serving
+     * now, the window its engine's memory guard reports.
+     */
     context?: number | null;
+    /**
+     * Who sized `context`.
+     */
+    contextSource?: MlxContextSourceDto;
     shortBytes?: number | null;
     shortNode?: string | null;
     /**
@@ -3301,6 +3311,11 @@ export type MlxPlacementFitDto = {
 };
 
 export type MlxFitStatusDto = 'fits' | 'short' | 'unknown' | 'smallerContext';
+
+/**
+ * Who sized a placement's context.
+ */
+export type MlxContextSourceDto = 'estimate' | 'enginePrior' | 'engineCalibrated' | 'unbounded';
 
 export type MlxNodeFitDto = {
     name: string;

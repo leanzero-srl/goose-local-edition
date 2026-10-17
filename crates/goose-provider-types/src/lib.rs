@@ -13,5 +13,6 @@ pub mod permission;
 pub mod redact;
 pub mod request_log;
 pub mod retry;
+pub mod served_window;
 pub mod thinking;
 pub mod utils;

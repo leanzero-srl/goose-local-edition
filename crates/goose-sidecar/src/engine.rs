@@ -27,6 +27,10 @@ use crate::{
     measure, port_has_listener, sidecar_marker, Ensured, MemoryReading, PortHolder,
     RestartLoadFailed, Sidecar, SidecarConfig, StartCancel, StartCancelled, StartupWatch, GIB,
 };
+use goose_provider_types::served_window::{MemoryGuard, ServedWindow, WindowBound};
+
+use crate::engine_profile::{self, EngineMemoryProfile};
+use crate::fit::ContextSource;
 
 /// Milliseconds a load spent in each phase the engine showed. A phase it never showed is absent.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -156,6 +160,9 @@ pub const MAX_CONCURRENT_REQUESTS: u32 = 8; // measured: 9th concurrent request 
 /// Holding two measured turns needs ≥ 0.312; staying under that line with the cache full, one
 /// prefill peak and two more live 49k sequences needs ≤ 0.389 — see
 /// `the_prefix_cache_share_holds_two_turns_under_the_pressure_line`.
+/// Passed ONLY to an engine without a memory guard (`prefix_cache_flags`): the guard takes any
+/// `--cache-memory-percent` other than its default as an operator cap, and with none it derives the
+/// budget from the device itself.
 pub const PREFIX_CACHE_SHARE_OF_FREE: f64 = 0.35; // ratio: of the engine's post-load available memory; receipt above
 
 /// Recurrent-state (GatedDeltaNet) and sliding-window caches cannot be trimmed, so Rapid-MLX
@@ -648,6 +655,38 @@ fn validated_adapter_dir(raw: &str) -> Result<Option<PathBuf>> {
 /// a compressed KV cache the model's KV layout cannot take. The engine answers to every name of
 /// the model (`ServedNames::of` over `nodes`, the swarm pool): `--served-model-name` is the id it
 /// advertises and each other name rides a `--served-model-alias` (fork v0.14.3-lz.9, Q-131).
+/// The prefix cache and admission flags for the engine `engine` describes. Prefix caching is
+/// always on and never a person's knob; who sizes it depends on the engine:
+/// - memory guard (`Guarded`): NO budget flag. The guard honours any `--cache-memory-percent`
+///   other than its default as an operator cap, and with none it derives the budget from the
+///   device's idle room. Measured on the guard (lz/memory-guard 64c1f288b, real allocator, one
+///   session to the window edge, 35 turns): with 0.35 the hits stopped at ~half the window (15
+///   full re-prefills); with no flag, 35/35 hits, peak ≤ ceiling. On Gabee the 0.35 capped the
+///   ledger at 9.9 GB, where the guard derives 17.3 GB.
+/// - no guard (lz.10), or an engine goose cannot place: `PREFIX_CACHE_SHARE_OF_FREE`, still that
+///   engine's only bound on its cache.
+///
+/// `--hybrid-cache-entries` and `--max-concurrent-requests` stay for both: neither overrides a
+/// value the guard derives from the device. The guard sizes BYTES; the hybrid count is a count
+/// (without the flag the engine falls to 8, tighter than goose's 24, so dropping it would cost
+/// hits), and the admission cap is a concurrency bound the guard's memory admission sits under.
+fn prefix_cache_flags(engine: &Result<EngineMemoryProfile, String>) -> Vec<String> {
+    let mut flags = vec!["--enable-prefix-cache".to_string()];
+    if !matches!(engine, Ok(EngineMemoryProfile::Guarded { .. })) {
+        flags.extend([
+            "--cache-memory-percent".to_string(),
+            PREFIX_CACHE_SHARE_OF_FREE.to_string(),
+        ]);
+    }
+    flags.extend([
+        "--hybrid-cache-entries".to_string(),
+        hybrid_cache_entries().to_string(),
+        "--max-concurrent-requests".to_string(),
+        MAX_CONCURRENT_REQUESTS.to_string(),
+    ]);
+    flags
+}
+
 pub fn build_serve_command(
     settings: &EngineSettings,
     model_id: &str,
@@ -667,15 +706,9 @@ pub fn build_serve_command(
     for alias in names.also {
         argv.extend(["--served-model-alias".to_string(), alias]);
     }
-    argv.extend([
-        "--enable-prefix-cache".to_string(),
-        "--cache-memory-percent".to_string(),
-        PREFIX_CACHE_SHARE_OF_FREE.to_string(),
-        "--hybrid-cache-entries".to_string(),
-        hybrid_cache_entries().to_string(),
-        "--max-concurrent-requests".to_string(),
-        MAX_CONCURRENT_REQUESTS.to_string(),
-    ]);
+    argv.extend(prefix_cache_flags(&engine_profile::profile_of_launcher(
+        &settings.spawn_command,
+    )));
     let default_profile = ModelProfile::default();
     let profile = settings
         .model_profiles
@@ -1117,7 +1150,15 @@ pub struct EngineStatus {
     pub model_id: Option<String>,
     pub base_url: Option<String>,
     pub pid: Option<u32>,
+    /// The window the engine serves (`goose_provider_types::served_window`): `min(max_model_len,
+    /// context_window)` from `/v1/models`, else `/v1/status`'s `memory_guard.max_context_idle`
+    /// bounding the native window, else the native window alone (said once,
+    /// `served_window_unreported`).
     pub context_window: Option<u64>,
+    /// Who bounded `context_window`: the engine's memory guard (calibrated or on its prior),
+    /// goose's own estimate for this Mac (the engine bounds nothing by memory), or nothing.
+    #[serde(default)]
+    pub context_source: ContextSource,
     pub tool_call_parser: Option<String>,
     /// The id the live engine actually serves (from /v1/models) — differs from `model_id`
     /// (the HF directory) whenever `served_model_name` aliases it. Chat must use THIS id.
@@ -1270,23 +1311,34 @@ pub fn local_gpu_ceiling() -> Result<u64> {
     anyhow::bail!("the GPU ceiling is read from Metal, which exists only on macOS")
 }
 
-/// The single engine's need for `model` — the placement planner's own (`single_engine_need`).
+/// The single engine's need for `model` — the placement planner's own (`single_engine_need`), run
+/// the way the engine this mount spawns prefills.
 #[cfg(unix)]
-fn single_engine_need(dir: &Path, weights_bytes: u64, kv_mode: Option<KvCacheMode>) -> Need {
+fn single_engine_need(
+    dir: &Path,
+    weights_bytes: u64,
+    kv_mode: Option<KvCacheMode>,
+    spawn_command: &[String],
+) -> Need {
     let facts = crate::placement::model::read_model_facts(dir).map_err(|e| format!("{e:#}"));
     crate::placement::planner::single_engine_need(
         weights_bytes,
         facts.as_ref().map_err(Clone::clone),
         kv_mode,
+        &engine_profile::profile_of_launcher(spawn_command),
     )
 }
 
 #[cfg(not(unix))]
-fn single_engine_need(_dir: &Path, weights_bytes: u64, _kv_mode: Option<KvCacheMode>) -> Need {
-    Need::single_engine(
+fn single_engine_need(
+    _dir: &Path,
+    weights_bytes: u64,
+    _kv_mode: Option<KvCacheMode>,
+    _spawn_command: &[String],
+) -> Need {
+    Need::weights_only(
         weights_bytes,
-        Err("model facts are read on macOS only".to_string()),
-        0,
+        "model facts are read on macOS only".to_string(),
     )
 }
 
@@ -1590,6 +1642,7 @@ impl MlxEngineManager {
                 .model_profiles
                 .get(&model.id)
                 .and_then(|p| p.kv_cache),
+            &settings.spawn_command,
         );
         let others = self.other_engines(settings.port);
         let mut verdict = fit::judge(
@@ -2150,6 +2203,7 @@ impl MlxEngineManager {
             base_url: None,
             pid: None,
             context_window: None,
+            context_source: ContextSource::Unbounded,
             tool_call_parser: None,
             served_model_id: None,
             probe_error: None,
@@ -2298,19 +2352,43 @@ impl MlxEngineManager {
                 }
             };
             let base_url = status.base_url.as_deref().expect("set for running state");
-            let (model_info, active_requests) = tokio::join!(
+            let (model_info, engine_status) = tokio::join!(
                 self.probe_model_info(base_url),
-                self.probe_active_requests(base_url)
+                self.probe_engine_status(base_url)
             );
+            let guard = engine_status
+                .as_ref()
+                .ok()
+                .and_then(|body| MemoryGuard::of_status_body(body));
             match model_info {
-                Ok((served_model_id, context_window, tool_call_parser)) => {
-                    status.served_model_id = served_model_id;
-                    status.context_window = context_window;
-                    status.tool_call_parser = tool_call_parser;
+                Ok(info) => {
+                    let window = ServedWindow {
+                        guard,
+                        ..info.window
+                    };
+                    // goose's own device estimate stands in only where the engine bounds nothing
+                    // by memory (lz.10 lists a KV-only max_model_len).
+                    let estimate = match window.device_bound() {
+                        Some(_) => None,
+                        None => local_window_estimate(
+                            &settings,
+                            &running_model,
+                            &engine_profile::profile_of_mounted(None, &settings.spawn_command),
+                        )
+                        .ok(),
+                    };
+                    window.warn_once_if_unguarded(
+                        MODELS_ORIGIN,
+                        info.served_model_id.as_deref().unwrap_or("(unnamed)"),
+                    );
+                    status.context_window = window.served(estimate);
+                    status.context_source = window.bound(estimate).into();
+                    status.served_model_id = info.served_model_id;
+                    status.tool_call_parser = info.tool_call_parser;
                 }
                 Err(e) => status.probe_error = Some(format!("{e:#}")),
             }
-            match active_requests {
+            match engine_status.and_then(|body| parse_active_requests(&body)) {
                 Ok(count) => status.active_requests = Some(count),
                 Err(e) => status.active_requests_error = Some(format!("{e:#}")),
             }
@@ -2321,7 +2399,7 @@ impl MlxEngineManager {
     /// GET `/v1/status` — Rapid-MLX 0.13.1 `routes/health.py:304`, on the router that is
     /// auth-gated only when the engine was given an API key (the serve argv passes none).
     /// The same probe client and cadence as `/v1/models`; no clock of its own.
-    async fn probe_active_requests(&self, base_url: &str) -> Result<u32> {
+    async fn probe_engine_status(&self, base_url: &str) -> Result<String> {
         let url = format!("{base_url}/v1/status");
         let resp = self
             .probe_client
@@ -2332,14 +2410,10 @@ impl MlxEngineManager {
         let status = resp.status();
         let body = resp.text().await.context("reading /v1/status body")?;
         ensure!(status.is_success(), "GET {url} returned HTTP {status}");
-        parse_active_requests(&body)
+        Ok(body)
     }
 
-    #[allow(clippy::type_complexity)]
-    async fn probe_model_info(
-        &self,
-        base_url: &str,
-    ) -> Result<(Option<String>, Option<u64>, Option<String>)> {
+    async fn probe_model_info(&self, base_url: &str) -> Result<ModelInfo> {
         let url = format!("{base_url}/v1/models");
         let resp = self
             .probe_client
@@ -2350,29 +2424,160 @@ impl MlxEngineManager {
         let status = resp.status();
         let body = resp.text().await.context("reading /v1/models body")?;
         ensure!(status.is_success(), "GET {url} returned HTTP {status}");
-        parse_model_info(&body)
+        parse_model_entry(&body)
     }
 }
 
-/// The first `/v1/models` entry as (served id, context_window, tool_call_parser) — the sidecar
-/// serves one model, so the first entry is the model. Shared with every out-of-process reader of
-/// the same catalog (the swarm chat router), so one parse rule describes the engine.
-pub fn parse_model_info(body: &str) -> Result<(Option<String>, Option<u64>, Option<String>)> {
+/// The first `/v1/models` entry as the engine describes it — the sidecar serves one model, so the
+/// first entry is the model.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelInfo {
+    pub served_model_id: Option<String>,
+    pub window: ServedWindow,
+    pub tool_call_parser: Option<String>,
+}
+
+pub fn parse_model_entry(body: &str) -> Result<ModelInfo> {
     let parsed: serde_json::Value =
         serde_json::from_str(body).context("parsing /v1/models body")?;
     let model = parsed
         .get("data")
         .and_then(|d| d.get(0))
         .with_context(|| format!("/v1/models returned no data entries: {body}"))?;
-    Ok((
-        model.get("id").and_then(|v| v.as_str()).map(str::to_string),
-        model.get("context_window").and_then(|v| v.as_u64()),
-        model
+    Ok(ModelInfo {
+        served_model_id: model.get("id").and_then(|v| v.as_str()).map(str::to_string),
+        window: ServedWindow::of_entry(model, None),
+        tool_call_parser: model
             .get("tool_call_parser")
             .and_then(|v| v.as_str())
             .map(str::to_string),
+    })
+}
+
+/// The first `/v1/models` entry as (served id, the engine's upper bound on the window,
+/// tool_call_parser). The bound is `min(context_window, max_model_len)` — what the engine says it
+/// will not serve past, NOT what this Mac's memory holds (lz.10's `max_model_len` is a KV-only
+/// projection). A reader that sizes a conversation by the window reads it through
+/// [`engine_served_window`], which knows the engine's memory guard; the ones that need only the
+/// served id (residency, the split's liveness) read it here.
+pub fn parse_model_info(body: &str) -> Result<(Option<String>, Option<u64>, Option<String>)> {
+    let info = parse_model_entry(body)?;
+    Ok((
+        info.served_model_id,
+        info.window.upper_bound(),
+        info.tool_call_parser,
     ))
 }
+
+/// What an engine serves, read by the one served-window rule.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EngineWindow {
+    pub served_model_id: Option<String>,
+    pub tokens: Option<u64>,
+    pub bound: WindowBound,
+}
+
+/// Where a window read is for, so its absence is said where it means something.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowReader<'a> {
+    /// A reader that sizes conversations by the window: an engine whose figures no guard bounds
+    /// is named once per model under this origin (`served_window_unguarded`).
+    Sizing(&'a str),
+    /// goose's distributed split: its runner lists the context it was PLANNED for, a bound of its
+    /// own, so no guard is expected and none is asked for.
+    PlannedSplit,
+}
+
+/// The window an engine serves (`goose_provider_types::served_window`): its `/v1/models` body,
+/// its `/v1/status` body when the caller read one (the memory guard), and the reader's own device
+/// estimate when it has one (`local_window_estimate`).
+pub fn engine_served_window(
+    models_body: &str,
+    status_body: Option<&str>,
+    own_estimate: Option<u64>,
+    reader: WindowReader,
+) -> Result<EngineWindow> {
+    let info = parse_model_entry(models_body)?;
+    let window = ServedWindow {
+        guard: status_body.and_then(MemoryGuard::of_status_body),
+        ..info.window
+    };
+    if let WindowReader::Sizing(origin) = reader {
+        window.warn_once_if_unguarded(
+            origin,
+            info.served_model_id.as_deref().unwrap_or("(unnamed)"),
+        );
+    }
+    Ok(EngineWindow {
+        served_model_id: info.served_model_id,
+        tokens: window.served(own_estimate),
+        bound: match reader {
+            WindowReader::PlannedSplit => WindowBound::Estimate,
+            WindowReader::Sizing(_) => window.bound(own_estimate),
+        },
+    })
+}
+
+/// goose's own estimate of the context `model_id` holds on THIS Mac as `engine` prefills it — the
+/// placement planner's `device_context` on this Mac's RAM and Metal working set (no other engine
+/// charged, as the planner charges none). Read once per (model, KV setting, engine) for the life
+/// of the process: none of them changes while it runs. `Err` says why there is none.
+#[cfg(unix)]
+pub fn local_window_estimate(
+    settings: &EngineSettings,
+    model_id: &str,
+    engine: &Result<EngineMemoryProfile, String>,
+) -> Result<u64, String> {
+    type Key = (String, Option<KvCacheMode>, String);
+    static ESTIMATES: OnceLock<StdMutex<BTreeMap<Key, Result<u64, String>>>> = OnceLock::new();
+    let kv_mode = settings
+        .model_profiles
+        .get(model_id)
+        .and_then(|p| p.kv_cache);
+    let key = (model_id.to_string(), kv_mode, format!("{engine:?}"));
+    let cache = ESTIMATES.get_or_init(|| StdMutex::new(BTreeMap::new()));
+    if let Some(known) = cache.lock().unwrap().get(&key) {
+        return known.clone();
+    }
+    let estimate = (|| {
+        let models_dir = expand_tilde(&settings.models_dir);
+        let weights = hf::list_local_models(&models_dir)
+            .map_err(|e| format!("{e:#}"))?
+            .into_iter()
+            .find(|m| m.id == model_id)
+            .ok_or_else(|| format!("{model_id} is not in {}", models_dir.display()))?
+            .size_bytes;
+        let facts = crate::placement::model::read_model_facts(&models_dir.join(model_id))
+            .map_err(|e| format!("{e:#}"))?;
+        let reading = measure().map_err(|e| format!("{e:#}"))?;
+        let ceiling = local_gpu_ceiling().map_err(|e| format!("{e:#}"))?;
+        let cost = crate::placement::planner::single_engine_cost(weights, &facts, kv_mode, engine)?;
+        crate::placement::planner::device_context(
+            &cost,
+            &NodeMemoryFacts {
+                available_bytes: reading.available_bytes,
+                total_bytes: reading.total_bytes,
+                ceiling_bytes: ceiling,
+                other_engines_bytes: 0,
+                freed_by_switch_bytes: 0,
+            },
+        )
+        .ok_or_else(|| "the model has no growing KV cache".to_string())
+    })();
+    cache.lock().unwrap().insert(key, estimate.clone());
+    estimate
+}
+
+#[cfg(not(unix))]
+pub fn local_window_estimate(
+    _settings: &EngineSettings,
+    _model_id: &str,
+    _engine: &Result<EngineMemoryProfile, String>,
+) -> Result<u64, String> {
+    Err("model facts are read on macOS only".to_string())
+}
+
+const MODELS_ORIGIN: &str = "goose MLX engine status";
 
 impl Default for MlxEngineManager {
     fn default() -> Self {
@@ -3097,6 +3302,44 @@ mod tests {
         );
     }
 
+    /// A memory-guard engine sizes its own prefix cache from the device: goose passes it no
+    /// budget. An unguarded pin (lz.10) and an engine goose cannot place keep the share — the
+    /// byte-identical argv above is the lz.10 case.
+    #[test]
+    fn a_guarded_engine_gets_no_prefix_cache_budget() {
+        let guarded = prefix_cache_flags(&Ok(EngineMemoryProfile::Guarded {
+            floor_chunk_tokens: engine_profile::GUARD_FLOOR_CHUNK_TOKENS,
+        }));
+        assert_eq!(
+            guarded,
+            vec![
+                "--enable-prefix-cache",
+                "--hybrid-cache-entries",
+                "24",
+                "--max-concurrent-requests",
+                "8",
+            ]
+        );
+        assert!(!guarded.iter().any(|f| f.starts_with("--cache-memory")));
+        let with_share = [
+            "--enable-prefix-cache",
+            "--cache-memory-percent",
+            "0.35",
+            "--hybrid-cache-entries",
+            "24",
+            "--max-concurrent-requests",
+            "8",
+        ];
+        assert_eq!(
+            prefix_cache_flags(&Ok(engine_profile::UNDECLARED)),
+            with_share
+        );
+        assert_eq!(
+            prefix_cache_flags(&Err("an owner's own launcher".into())),
+            with_share
+        );
+    }
+
     #[test]
     fn a_persisted_profile_without_the_lane_fields_loads_as_auto() {
         let json = r#"{"temperature":0.7,"top_k":40}"#;
@@ -3575,6 +3818,76 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         );
         let not_json = format!("{:#}", parse_active_requests("<html>").unwrap_err());
         assert!(not_json.contains("parsing /v1/status body"), "{not_json}");
+    }
+
+    /// Gabee's 64 GB M3 Max (2026-10-14): the 27B listed `context_window` 262,144 and goose
+    /// compacted at 0.8 × that ≈ 210k while the Q8 hit a Metal OOM on every prefill from ~64k.
+    /// A guarded engine's `max_model_len` is the window every sizing reader gets.
+    #[test]
+    fn max_model_len_bounds_the_served_window() {
+        let models = r#"{"object":"list","data":[{"id":"AREX-2-Q8-mlx","context_window":262144,
+            "max_model_len":158464,"tool_call_parser":"qwen3_coder"}]}"#;
+        let status = r#"{"num_running":0,"num_waiting":0,"memory_guard":{"enabled":true,
+            "max_context_idle":158464,"ceiling_bytes":50096509747,"floor_chunk_tokens":256,
+            "coefficients":{"source":"calibrated","observations":12}}}"#;
+        let read = engine_served_window(
+            models,
+            Some(status),
+            Some(120_000),
+            WindowReader::Sizing("test"),
+        )
+        .unwrap();
+        assert_eq!(read.served_model_id.as_deref(), Some("AREX-2-Q8-mlx"));
+        assert_eq!(
+            read.tokens,
+            Some(158_464),
+            "the guard's figure, not goose's estimate"
+        );
+        assert_eq!(read.bound, WindowBound::EngineCalibrated);
+        let (_, upper, parser) = parse_model_info(models).unwrap();
+        assert_eq!(upper, Some(158_464));
+        assert_eq!(parser.as_deref(), Some("qwen3_coder"));
+    }
+
+    /// lz.10 on Gabee (live): the Q6 lists `max_model_len` 262,144 — a KV-only projection — and no
+    /// memory guard. It is advisory: the window is goose's estimate for this Mac, said as such; a
+    /// reader with no estimate keeps the engine's upper bound; a split's planned window is its own.
+    #[test]
+    fn an_unguarded_max_model_len_is_advisory() {
+        let models =
+            r#"{"data":[{"id":"AREX-2-Q6-mlx","context_window":262144,"max_model_len":262144}]}"#;
+        let status = r#"{"num_running":0,"num_waiting":0}"#;
+        let estimated = engine_served_window(
+            models,
+            Some(status),
+            Some(72_192),
+            WindowReader::Sizing("test"),
+        )
+        .unwrap();
+        assert_eq!(estimated.tokens, Some(72_192));
+        assert_eq!(estimated.bound, WindowBound::Estimate);
+        let bare =
+            engine_served_window(models, Some(status), None, WindowReader::Sizing("test")).unwrap();
+        assert_eq!(bare.tokens, Some(262_144));
+        assert_eq!(bare.bound, WindowBound::Unbounded);
+        let split = engine_served_window(
+            r#"{"data":[{"id":"split","context_window":65536}]}"#,
+            None,
+            None,
+            WindowReader::PlannedSplit,
+        )
+        .unwrap();
+        assert_eq!(split.tokens, Some(65_536));
+        assert_eq!(split.bound, WindowBound::Estimate);
+        let guard_without_card = engine_served_window(
+            r#"{"data":[{"id":"m","context_window":262144}]}"#,
+            Some(r#"{"memory_guard":{"enabled":true,"max_context_idle":201000,"peak_model":{"source":"prior"}}}"#),
+            None,
+            WindowReader::Sizing("test"),
+        )
+        .unwrap();
+        assert_eq!(guard_without_card.tokens, Some(201_000));
+        assert_eq!(guard_without_card.bound, WindowBound::EnginePrior);
     }
 
     /// Q1: the status carries the engine's own in-flight count when it reports one, and an
@@ -5110,6 +5423,9 @@ while True:
                 calibration: &calibration,
                 running: None,
                 this_mac_start,
+                engine: crate::engine_profile::profile_of_launcher(
+                    &manager.settings().spawn_command,
+                ),
             })
             .candidates
             .remove(0)

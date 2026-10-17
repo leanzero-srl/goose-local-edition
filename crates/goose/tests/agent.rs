@@ -4438,8 +4438,10 @@ mod tests {
             )
         }
 
-        /// Call 0 reads a file inside `sub/` (whose hints file the reply has not loaded yet);
-        /// every later call answers. Records the system prompt each call was sent.
+        /// Call 0 reads a file inside `sub/` (whose hints file the reply has not loaded yet) through
+        /// the developer extension's `tree`, a tool the request offered — a call to a tool it did
+        /// not offer is refused before it records anything; every later call answers. Records the
+        /// system prompt each call was sent.
         #[derive(Default)]
         struct ReadsIntoHintedFolder {
             system_prompts: StdMutex<Vec<String>>,
@@ -4462,7 +4464,7 @@ mod tests {
                 let message = if call == 0 {
                     Message::assistant().with_tool_request(
                         "call_q346",
-                        Ok(CallToolRequestParams::new("q346_read")
+                        Ok(CallToolRequestParams::new("tree")
                             .with_arguments(object!({"path": "sub/notes.txt"}))),
                     )
                 } else {
@@ -4518,6 +4520,18 @@ mod tests {
                 .update(&session.id)
                 .project_id(Some(slug.clone()))
                 .apply()
+                .await?;
+            agent
+                .add_extension(
+                    goose::config::ExtensionConfig::Platform {
+                        name: "developer".to_string(),
+                        description: "Developer".to_string(),
+                        display_name: None,
+                        bundled: Some(true),
+                        available_tools: vec![],
+                    },
+                    &session.id,
+                )
                 .await?;
             let provider = Arc::new(ReadsIntoHintedFolder::default());
             agent

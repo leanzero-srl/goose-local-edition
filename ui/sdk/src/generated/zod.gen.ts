@@ -3310,6 +3310,16 @@ export const zMlxFitStatusDto = z.union([
     z.literal('smallerContext')
 ]);
 
+/**
+ * Who sized a placement's context.
+ */
+export const zMlxContextSourceDto = z.union([
+    z.literal('estimate'),
+    z.literal('enginePrior'),
+    z.literal('engineCalibrated'),
+    z.literal('unbounded')
+]);
+
 export const zMlxNodeFitDto = z.object({
     name: z.string(),
     needBytes: z.number().int().gte(0),
@@ -3322,6 +3332,7 @@ export const zMlxPlacementFitDto = z.object({
         z.number().int().gte(0),
         z.null()
     ]).optional(),
+    contextSource: zMlxContextSourceDto.optional().default('estimate'),
     shortBytes: z.union([
         z.number().int().gte(0),
         z.null()

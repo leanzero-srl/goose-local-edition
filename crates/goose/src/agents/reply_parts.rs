@@ -247,8 +247,12 @@ impl Agent {
                     | pctx_code_mode::config::ToolDisclosure::Filesystem => {
                         // in catalog & filesystem styles, progressive search is handled
                         // by pctx, so we want to omit all non-first-class extensions
-                        // from the standard tool list
-                        if crate::agents::extension_manager::get_tool_owner(&t).is_some_and(|o| {
+                        // from the standard tool list. A tool with NO owning extension is
+                        // the agent's own (recipe final output, manage_schedule, a frontend
+                        // tool): the catalog cannot reach it, so it stays — a model call runs
+                        // only against this list (`Agent::dispatch_tool_call`), and dropping
+                        // them made a code-mode recipe's required final output uncallable.
+                        if crate::agents::extension_manager::get_tool_owner(&t).is_none_or(|o| {
                             crate::agents::extension_manager::is_first_class_extension(&o)
                         }) {
                             Some(t)
@@ -531,10 +535,18 @@ impl Agent {
     /// - frontend_requests: Tool requests that should be handled by the frontend
     /// - other_requests: All other tool requests (including requests to enable extensions)
     /// - filtered_message: The original message with frontend tool requests removed
+    ///
+    /// `offered`: the tools this request offered the model. A call that names one of them by a
+    /// mangled spelling (`functions.x`, `ext.tool`, …) is rewritten HERE to the offered name, once,
+    /// so everything downstream — frontend routing, the permission and repetition inspectors, the
+    /// `manage_extensions`/`create_tool` refresh, dispatch, the stored request — sees the tool that
+    /// will actually run (`offered_tool_name`, the one rule). A call naming nothing offered is left
+    /// as emitted, and `Agent::dispatch_tool_call` refuses it.
     pub(crate) async fn categorize_tool_requests(
         &self,
         response: &Message,
         tools: &[Tool],
+        offered: &[Tool],
         suppress_replayed_thinking: bool,
     ) -> (Vec<ToolRequest>, Vec<ToolRequest>, Message) {
         // First collect all tool requests with coercion applied
@@ -544,8 +556,19 @@ impl Agent {
             .filter_map(|content| {
                 if let MessageContent::ToolRequest(req) = content {
                     let mut coerced_req = req.clone();
+                    let externally_dispatched = coerced_req.is_externally_dispatched();
 
                     if let Ok(ref mut tool_call) = coerced_req.tool_call {
+                        if !externally_dispatched {
+                            if let Some(name) = crate::agents::extension_manager::offered_tool_name(
+                                &tool_call.name,
+                                offered,
+                            ) {
+                                if name != tool_call.name {
+                                    tool_call.name = name.into();
+                                }
+                            }
+                        }
                         if let Some(tool) = tools.iter().find(|t| t.name == tool_call.name) {
                             let schema_value = Value::Object(tool.input_schema.as_ref().clone());
                             tool_call.arguments =
@@ -1276,8 +1299,9 @@ mod tests {
                 Ok(rmcp::model::CallToolRequestParams::new("test_tool")),
             );
 
-        let (_frontend_requests, other_requests, filtered_message) =
-            agent.categorize_tool_requests(&response, &[], false).await;
+        let (_frontend_requests, other_requests, filtered_message) = agent
+            .categorize_tool_requests(&response, &[], &[], false)
+            .await;
 
         assert_eq!(other_requests.len(), 1);
         assert_eq!(filtered_message.content.len(), 2);
@@ -1301,8 +1325,9 @@ mod tests {
                 Ok(rmcp::model::CallToolRequestParams::new("test_tool")),
             );
 
-        let (_frontend_requests, other_requests, filtered_message) =
-            agent.categorize_tool_requests(&response, &[], true).await;
+        let (_frontend_requests, other_requests, filtered_message) = agent
+            .categorize_tool_requests(&response, &[], &[], true)
+            .await;
 
         assert_eq!(other_requests.len(), 1);
         assert_eq!(filtered_message.content.len(), 1);
@@ -1337,7 +1362,12 @@ mod tests {
         );
 
         let (frontend_requests, other_requests, filtered_message) = agent
-            .categorize_tool_requests(&response, &[registry_tool], false)
+            .categorize_tool_requests(
+                &response,
+                std::slice::from_ref(&registry_tool),
+                std::slice::from_ref(&registry_tool),
+                false,
+            )
             .await;
 
         assert!(
@@ -1390,8 +1420,9 @@ mod tests {
                 Ok(rmcp::model::CallToolRequestParams::new("third_tool")),
             );
 
-        let (_frontend_requests, other_requests, filtered_message) =
-            agent.categorize_tool_requests(&response, &[], false).await;
+        let (_frontend_requests, other_requests, filtered_message) = agent
+            .categorize_tool_requests(&response, &[], &[], false)
+            .await;
 
         let kept: Vec<(&str, &str)> = other_requests
             .iter()

@@ -365,20 +365,40 @@ async fn peer_op<Req: Serialize, Resp: DeserializeOwned>(
         .map_err(|refused| refused.refusal)
 }
 
-/// The peer engine's `/v1/models` through the relay: its context window when it serves the route's
-/// model, else why not in words.
+/// The peer engine's `/v1/models` (and `/v1/status`, its memory guard) through the relay: its
+/// context window by the one served-window rule when it serves the route's model, else why not in
+/// words.
 async fn route_models(route: &PublishedRoute) -> Result<Option<u64>, String> {
-    served_window(route, relay_get(&route.base_url, "v1/models").await)
+    let status = match relay_get(&route.base_url, "v1/status").await {
+        RelayAnswer::Ok(body) => Some(body),
+        _ => None,
+    };
+    served_window(
+        route,
+        relay_get(&route.base_url, "v1/models").await,
+        status.as_deref(),
+    )
 }
 
-fn served_window(route: &PublishedRoute, answer: RelayAnswer) -> Result<Option<u64>, String> {
+fn served_window(
+    route: &PublishedRoute,
+    answer: RelayAnswer,
+    status: Option<&str>,
+) -> Result<Option<u64>, String> {
     match answer {
-        RelayAnswer::Ok(body) => match goose_sidecar::engine::parse_model_info(&body) {
-            Ok((Some(served), window, _)) if served == route.served_model_id => Ok(window),
-            Ok((served, _, _)) => Err(format!(
+        RelayAnswer::Ok(body) => match goose_sidecar::engine::engine_served_window(
+            &body,
+            status,
+            None,
+            goose_sidecar::engine::WindowReader::Sizing("remote single over Link"),
+        ) {
+            Ok(read) if read.served_model_id.as_deref() == Some(route.served_model_id.as_str()) => {
+                Ok(read.tokens)
+            }
+            Ok(read) => Err(format!(
                 "{} now serves {:?}, the route wants '{}'",
                 route.peer_name(),
-                served,
+                read.served_model_id,
                 route.served_model_id
             )),
             Err(e) => Err(format!("{e:#}")),
@@ -477,7 +497,11 @@ async fn probe_route(
         relay_get(&route.base_url, "v1/status")
     );
     let relay_lost_peer = relay_lost_the_peer(&models);
-    let models_error = match served_window(route, models) {
+    let status_body = match &engine_status {
+        RelayAnswer::Ok(body) => Some(body.as_str()),
+        _ => None,
+    };
+    let models_error = match served_window(route, models, status_body) {
         Ok(window) => {
             status.state = "ready".to_string();
             status.context_window = window;

@@ -1402,7 +1402,7 @@ mod tests {
     fn the_last_gate_reaches_the_wire_whole() {
         use goose_sidecar::fit::{judge, Need, NodeMemoryFacts, GIB};
         let verdict = judge(
-            Need::single_engine(30 * GIB, Ok(0), 0),
+            Need::weights(30 * GIB),
             NodeMemoryFacts {
                 available_bytes: 40 * GIB,
                 total_bytes: 128 * GIB,

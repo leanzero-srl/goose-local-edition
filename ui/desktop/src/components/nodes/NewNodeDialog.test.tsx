@@ -5,7 +5,7 @@ import type { ReactNode } from 'react';
 import { IntlTestWrapper } from '../../i18n/test-utils';
 import { assertStudioClean } from '../lz/assertStudioClean';
 import type { Mac } from '../leanzero-swarm/macs';
-import type { PlacementPlan } from '../../acp/mlx-placement';
+import type { PlacementCandidate, PlacementPlan } from '../../acp/mlx-placement';
 import {
   CONFIG,
   LOCAL_FLASH,
@@ -18,6 +18,7 @@ import {
   SELF_MAC,
   STUDIO_KEY,
   TWO_MACS,
+  candidate,
   provider,
 } from './nodeGlance.fixtures';
 import type { NodesConfig, ResolvedNodeDef } from './model';
@@ -199,7 +200,7 @@ describe('New node · on your Macs', () => {
     // Q-306: the need first, then what is free — never "38.6 of 61.8 GB", which read backwards
     // when the need was the larger number.
     expect(screen.getByTestId('placement-way-split')).toHaveTextContent(
-      'Mihai Macbook: needs 38.6 GB, 61.8 GB free · Work’s Mac Studio: needs 38.6 GB, 66.2 GB free'
+      'Mihai Macbook: loads in 38.6 GB · 61.8 GB free now; Work’s Mac Studio: loads in 38.6 GB · 66.2 GB free now'
     );
     await userEvent.click(screen.getByTestId('placement-pick-split'));
     expect(screen.getByTestId('placement-pick-split')).toHaveAttribute('aria-checked', 'true');
@@ -254,6 +255,73 @@ describe('New node · on your Macs', () => {
     expect((screen.getByTestId('new-node-name-input') as HTMLInputElement).value).toBe(
       'Qwen3.8-Flash-Next-4bit · this Mac'
     );
+  });
+
+  /**
+   * T12 G-a, Gabee's 64 GB M3 Max: the row read "fits only at 206,928 context" and "needs 36.7 GB,
+   * 36.7 GB free" — the context was the free memory of the moment over 64 KiB, so the need always
+   * equalled the budget and a smaller quant could show a smaller context. Now the chip says what
+   * the Mac's device holds, with its source, and the row says what loading takes against what is
+   * free now.
+   */
+  it('a single way says the context this Mac holds and what loading takes, never need = free', async () => {
+    macsNow.macs = [SELF_MAC];
+    const q8 = (contextSource: PlacementCandidate['fit']['contextSource']): PlacementCandidate => {
+      const c = candidate({
+        kind: 'single',
+        nodes: ['local'],
+        names: ['Gabee’s MacBook'],
+        needGb: [30.4],
+        budgetGb: [36.7],
+        status: 'smallerContext',
+        context: 151_808,
+      });
+      return { ...c, fit: { ...c.fit, contextSource } };
+    };
+    let source: PlacementCandidate['fit']['contextSource'] = 'estimate';
+    mockPlan.mockImplementation(async (goal: PlacementPlan['goal']) => ({
+      plans: [
+        {
+          modelId: MODEL_27B,
+          goal,
+          candidates: [q8(source)],
+          best: q8(source).id,
+          bestAvailable: q8(source).id,
+          notes: [],
+        } satisfies PlacementPlan,
+      ],
+      nodes: [],
+      storeErrors: [],
+      probeMs: 1,
+    }));
+    renderDialog({ kind: 'pin', model: MODEL_27B });
+    const row = await screen.findByTestId('placement-way-local');
+    expect(within(row).getByTestId('placement-context')).toHaveTextContent(
+      'context up to 151,808 on this Mac'
+    );
+    expect(row).toHaveTextContent('context up to 151,808 on this Mac');
+    expect(row).toHaveTextContent('estimated');
+    expect(screen.getByTestId('new-node-loads-in')).toHaveTextContent(
+      'Gabee’s MacBook: loads in 30.4 GB · 36.7 GB free now'
+    );
+    expect(row).not.toHaveTextContent('fits only at');
+    expect(row).not.toHaveTextContent('needs');
+
+    cleanup();
+    source = 'engineCalibrated';
+    renderDialog({ kind: 'pin', model: MODEL_27B });
+    const served = await screen.findByTestId('placement-way-local');
+    expect(served).toHaveTextContent('context up to 151,808 on this Mac');
+    expect(within(served).getByText('calibrated')).toHaveAttribute(
+      'title',
+      'The engine on this Mac sized this context from prefill steps it measured'
+    );
+
+    cleanup();
+    source = 'unbounded';
+    renderDialog({ kind: 'pin', model: MODEL_27B });
+    const unchecked = await screen.findByTestId('placement-way-local');
+    expect(unchecked).toHaveTextContent('not checked against memory');
   });
 
   it('a plan that measured nothing shows its notes; the goal plans again', async () => {

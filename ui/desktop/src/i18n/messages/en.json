@@ -7160,9 +7160,6 @@
   "nodes.newFilterModels": {
     "defaultMessage": "Filter models"
   },
-  "nodes.newFitOn": {
-    "defaultMessage": "{mac}: needs {need} GB, {budget} GB free"
-  },
   "nodes.newGetModels": {
     "defaultMessage": "Get one in Models"
   },
@@ -7174,6 +7171,9 @@
   },
   "nodes.newKeepLoaded": {
     "defaultMessage": "Keep loaded: never stop it for another node"
+  },
+  "nodes.newLoadsIn": {
+    "defaultMessage": "{mac}: loads in {need} GB · {budget} GB free now"
   },
   "nodes.newModelsFailed": {
     "defaultMessage": "{provider} did not list its models ({error}); these are the models goose knows for it."
@@ -8017,6 +8017,30 @@
   },
   "placementCard.contextBelowChats": {
     "defaultMessage": "fits only {context} tokens of context — your chats here reach about {need}"
+  },
+  "placementCard.contextCalibrated": {
+    "defaultMessage": "calibrated"
+  },
+  "placementCard.contextCalibratedTitle": {
+    "defaultMessage": "The engine on {mac} sized this context from prefill steps it measured"
+  },
+  "placementCard.contextEnginePriorTitle": {
+    "defaultMessage": "The engine’s own estimate for {mac}, before it has measured a prefill step there"
+  },
+  "placementCard.contextEstimateTitle": {
+    "defaultMessage": "goose’s estimate of the context {mac} holds"
+  },
+  "placementCard.contextUnbounded": {
+    "defaultMessage": "not checked against memory"
+  },
+  "placementCard.contextUnboundedTitle": {
+    "defaultMessage": "The model’s own window: nothing has checked it against the memory of {mac}"
+  },
+  "placementCard.contextUpToHere": {
+    "defaultMessage": "context up to {tokens} on this Mac"
+  },
+  "placementCard.contextUpToOn": {
+    "defaultMessage": "context up to {tokens} on {name}"
   },
   "placementCard.copyFirst": {
     "defaultMessage": "{kind,select,thunderbolt{Copy to {name} first · Thunderbolt} other{Copy to {name} first · network}}"
