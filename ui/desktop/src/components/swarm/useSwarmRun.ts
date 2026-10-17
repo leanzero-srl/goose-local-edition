@@ -5574,8 +5574,9 @@ export function deriveFleet(args: {
   // (unreachable, or `lms ps --json` returning [] — measured, it can while reachable) still fails
   // SAFE: no evidence, no demotion. A device NO feed reports is a cloud node and is never demoted.
   //
-  // WHICH feeds (useFleetCorroboration — the TRUTH feed, never gated by the showLmStudioFleet display
-  // toggle; U-H2): `lms ps` for LM Studio nodes, and the MLX sidecar's engine status for a local
+  // WHICH feeds (useFleetCorroboration, U-H2): `lms ps` for LM Studio nodes — only while the
+  // showLmStudioFleet surface is on and an LM Studio service already runs, since `lms ps` would start
+  // one (NEVER WAKE LM STUDIO, 2026-10-16) — and the MLX sidecar's engine status for a local
   // `mlx-sidecar` device, whose `running` answer puts it in reportedNodes. Since ed409244f that status
   // also carries `activeRequests` (Rapid-MLX's /v1/status num_running + num_waiting, read on the same
   // probe), and useFleetCorroboration puts the sidecar device in busyNodes while it is > 0 — so a

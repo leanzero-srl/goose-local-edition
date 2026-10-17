@@ -8,7 +8,8 @@ import path from 'node:path';
  * on a Mac without LM Studio that was a failing execFile (ENOENT) every 1.5s for as long as a panel was
  * open. The lookup is the one the handler always had (`~/.lmstudio/bin/lms`, then PATH); what changes
  * is that an ABSENT binary is remembered, answered with the honest empty map, and logged once — no
- * spawn, no new timer. An `lms` installed after launch is seen on the next app start.
+ * spawn, no new timer. An `lms` installed after launch is seen on the next app start. A PRESENT binary
+ * is still not licence to spawn it: utils/lmStudioLive.ts gates `lms ps` on a service already running.
  */
 export interface LmsLookup {
   home: string;

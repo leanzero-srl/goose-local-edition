@@ -6041,11 +6041,11 @@ export const SwarmRunPanel: React.FC<{
   // $HOME, so everything run-relative — the pause sentinel, the notes inbox, activity file paths —
   // must target this. Passing the session dir instead writes where the engine never looks.
   const runDir = run.runDir ?? workingDir;
-  // TRUTH and DISPLAY are separate feeds (U-H2). `useFleetCorroboration` polls LM Studio (and the local
-  // MLX sidecar when one is configured) ALWAYS, because deriveFleet's dead-lane demotion is a truth and
-  // a display toggle must never switch off a truth. The 'showLmStudioFleet' setting (default off) gates
-  // only the LM Studio DOT the fleet rows display; off, `nodeStatus` is `{}` and the rows read exactly
-  // as when lms is unavailable.
+  // TRUTH and DISPLAY are separate feeds (U-H2): `useFleetCorroboration` polls the local MLX sidecar
+  // whenever one is configured. Its LM Studio half (`lms ps`) runs only with the 'showLmStudioFleet'
+  // setting on (default off) and an LM Studio service already running, because `lms ps` starts the
+  // service otherwise (NEVER WAKE LM STUDIO, 2026-10-16). Off, `nodeStatus` is `{}` and the rows read
+  // exactly as when lms is unavailable.
   const lmStudioVisible = useLmStudioFleetVisible();
   // The run's `{id | model_id → node}` map keys both feeds by the engine's canonical node names, so the
   // sidecar beside LM Studio on one host (`workhorse-mlx`) is corroborated as ITS row, not as `workhorse`.
