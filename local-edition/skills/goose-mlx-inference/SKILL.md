@@ -1215,3 +1215,16 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
     compaction to first write). Single-call timings vary 6x run to run (1,696 s vs 279 s for the same request).
   - The "turn N/M used" line already exists (moim.rs turn_budget_line, from 50% of max_turns). The model saw
     299/300 and still made a breaking last edit, so this is not a goose gap.
+- LIQUID LFM2.5 24B-A2B LOCAL (2026-10-17, engine pin v0.14.3-lz.11 = lz.10 + fork c56728690, goose 48ef631b8, app 3.0.117):
+  - Aliases match only hub names/paths, so a FOLDER mount of any LFM got no parser: calls came back as content
+    `[shell(command='ls /tmp')]`. lz.11 detects `model_type lfm2*` + a `<|tool_call_start|>` template → tool `lfm`,
+    reasoning `deepseek_r1_distill` (LFM2.5 opens `<think>` in EVERY generation prompt and has no enable_thinking
+    switch; `qwen3` streamed the thought as content whenever R12-T1F auto-disabled thinking for tools).
+  - TAG RULE: the fork's pipeline audit (tests/test_pipeline_single_line_ports_audit.py) accepts only
+    `v<x>.<y>.<z>-lz.<N>` integers; a `lz.10.1` tag fails it. lz.11 is now LFM; the memory guard release takes lz.12.
+    A pin bump also moves `PIPELINE_SINGLE_LINE_REVIEWED_THROUGH` with an n/a entry on the pipeline line (331d6231d).
+  - PLANNER GAP: "Could not plan — config.json declares 64 experts but no tensor has a leading dimension of 64" for
+    lfm2_moe (stacked layout); starting still works. Not fixed.
+  - Config for a local Gauntlet: mlx_engine.model_id = <org>/<dir>, served_model_name null (the old alias would name
+    the new model), OPENAI_HOST http://127.0.0.1:8090, provider_default_models.openai = the served id; edit with the
+    app QUIT. The engine-glance pill appears once the engine mounts: loop-state tools/mainpage.mjs picks the largest page.
