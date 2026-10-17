@@ -42,6 +42,16 @@ pub const OPENROUTER_KNOWN_MODELS: &[&str] = &[
 ];
 pub const OPENROUTER_DOC_URL: &str = "https://openrouter.ai/models";
 
+/// App attribution (openrouter.ai/docs/app-attribution): HTTP-Referer is the app's identity on
+/// OpenRouter's rankings, X-OpenRouter-Title its display name (X-Title is the legacy spelling,
+/// still read). Usage from this fork is credited to LeanZero, not to upstream goose.
+pub const OPENROUTER_ATTRIBUTION_HEADERS: &[(&str, &str)] = &[
+    ("HTTP-Referer", "https://leanzero.net"),
+    ("X-OpenRouter-Title", "LeanZero Goose"),
+    ("X-Title", "LeanZero Goose"),
+    ("X-OpenRouter-Categories", "cli-agent,programming-app"),
+];
+
 #[derive(serde::Serialize)]
 pub struct OpenRouterProvider {
     #[serde(skip)]
@@ -404,9 +414,10 @@ pub(crate) fn openrouter_api_client(
     let host: String = config
         .get_param("OPENROUTER_HOST")
         .unwrap_or_else(|_| "https://openrouter.ai".to_string());
-    ApiClient::new_with_tls(host, AuthMethod::BearerToken(api_key), tls_config)?
-        .with_header("HTTP-Referer", "https://goose-docs.ai")?
-        .with_header("X-Title", "goose")
+    OPENROUTER_ATTRIBUTION_HEADERS.iter().try_fold(
+        ApiClient::new_with_tls(host, AuthMethod::BearerToken(api_key), tls_config)?,
+        |client, (name, value)| client.with_header(name, value),
+    )
 }
 
 pub(crate) fn parse_openrouter_parameters(raw: Value) -> Result<HashMap<String, Value>> {
@@ -621,6 +632,60 @@ mod tests {
             request_params: None,
             reasoning: None,
         }
+    }
+
+    #[tokio::test]
+    async fn every_openrouter_request_credits_leanzero() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("{\"data\":[]}"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.yaml");
+        let secrets_path = dir.path().join("secrets.yaml");
+        std::fs::write(&config_path, format!("OPENROUTER_HOST: {}\n", server.uri())).unwrap();
+        std::fs::write(&secrets_path, "OPENROUTER_API_KEY: or-test\n").unwrap();
+        let config =
+            crate::config::Config::new_with_file_secrets(&config_path, secrets_path).unwrap();
+        let _env = env_lock::lock_env([
+            ("OPENROUTER_HOST", None::<&str>),
+            ("OPENROUTER_API_KEY", None::<&str>),
+        ]);
+
+        openrouter_api_client(&config, None)
+            .unwrap()
+            .response_get("api/v1/models")
+            .await
+            .unwrap();
+
+        let requests = server.received_requests().await.unwrap();
+        let sent = |name: &str| {
+            requests[0]
+                .headers
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_owned)
+        };
+        assert_eq!(
+            sent("HTTP-Referer").as_deref(),
+            Some("https://leanzero.net")
+        );
+        assert_eq!(
+            sent("X-OpenRouter-Title").as_deref(),
+            Some("LeanZero Goose")
+        );
+        assert_eq!(sent("X-Title").as_deref(), Some("LeanZero Goose"));
+        assert_eq!(
+            sent("X-OpenRouter-Categories").as_deref(),
+            Some("cli-agent,programming-app")
+        );
     }
 
     #[test]
