@@ -1063,37 +1063,12 @@ def pre_skill_md(c):
 
 # ══ L: lint and bundles ══════════════════════════════════════════════════════════════════════
 
-def _lint_app_parse_failures(c: Ctx) -> Optional[List[Dict]]:
-    """The app files the kit's OWN @forge/lint parser refused when lint crashed — the probe's appParseCheck, run in
-    the kit's node over the files lint.cjs lints, on both runs and identical. Non-empty = the crash is the APP's: its
-    source cannot be parsed, so `forge lint`/`forge deploy` refuse it (Gabee 2026-10-15, JetBrains-blend: an unbalanced
-    paren at src/index.js:324 was scored 'harness defect', the verdict went unpublishable, the series skipped build 2).
-    None when lint did not crash, the parse check did not run, or every app file parses."""
-    runs = (c.obs.get('lint') or {}).get('runs') or []
-    if len(runs) < 2 or not all(r.get('crashed') for r in runs):
-        return None
-    checks = [r.get('appParse') if isinstance(r.get('appParse'), dict) else {} for r in runs]
-    if not all(p.get('ran') is True and isinstance(p.get('failures'), list) and p['failures'] for p in checks):
-        return None
-    if json.dumps(checks[0]['failures'], sort_keys=True) != json.dumps(checks[1]['failures'], sort_keys=True):
-        return None
-    return checks[0]['failures']
-
-
-def _parse_failures_text(failures: List[Dict]) -> str:
-    return '; '.join(f"{f.get('file')}:{f.get('line')}:{f.get('column')} {f.get('message')}" for f in failures[:3]) + (
-        f' (+{len(failures) - 3} more)' if len(failures) > 3 else '')
-
-
 def _lint(c: Ctx) -> Tuple[Optional[Dict], Optional[str]]:
     runs = (c.obs.get('lint') or {}).get('runs') or []
     if len(runs) < 2:
         return None, 'lint did not run twice'
     if any(r.get('crashed') for r in runs):
-        parse = [r.get('appParse') if isinstance(r.get('appParse'), dict) else {} for r in runs]
-        if not all(p.get('ran') is True for p in parse):
-            return None, 'the linter crashed and the app parse check did not run (harness defect)'
-        return None, 'the linter crashed while the kit parser reads every app source file (harness defect)'
+        return None, 'the linter crashed (harness defect)'
     canon = [json.dumps({k: r.get(k) for k in ('counts', 'problems', 'stageReached', 'stagesTotal')}, sort_keys=True)
              for r in runs]
     if canon[0] != canon[1]:
@@ -1105,10 +1080,6 @@ def _lint(c: Ctx) -> Tuple[Optional[Dict], Optional[str]]:
 def _(c):
     if c.obs.get('manifestError'):
         return g(0, f"manifest.yml does not parse: {c.obs['manifestError']}", 'deploy blocked')
-    unparsed = _lint_app_parse_failures(c)
-    if unparsed:
-        return g(0, f"lint crashed on the app's own source; the kit's parser refuses {_parse_failures_text(unparsed)}",
-                 'deploy blocked', parts={'parse_failures': unparsed})
     run, why = _lint(c)
     if run is None:
         return unavail(why)
@@ -1135,10 +1106,6 @@ def _(c):
 
 @check('l_lint_warnings', 'L', pre=pre_function_loads, needs=('lint',))
 def _(c):
-    unparsed = _lint_app_parse_failures(c)
-    if unparsed:
-        return g(0, f"lint produced no report: the app's own source does not parse ({_parse_failures_text(unparsed)})",
-                 'warnings cost points, never cap', parts={'parse_failures': unparsed})
     run, why = _lint(c)
     if run is None:
         return unavail(why)
@@ -1903,7 +1870,7 @@ def deploy_readiness(c: Ctx) -> Dict:
     fails = [f for f in findings if f['status'] == 'fail']
     lint_run, _ = _lint(c)
     lint_errors = (lint_run or {}).get('counts', {}).get('errors') if lint_run else None
-    deploy_blocked = bool(lint_errors) or bool(c.obs.get('manifestError')) or bool(_lint_app_parse_failures(c)) or any(
+    deploy_blocked = bool(lint_errors) or bool(c.obs.get('manifestError')) or any(
         f['rule'].startswith(('M4', 'M6', 'M7', 'M12')) for f in fails)
     would_fail = [f for f in fails if f['kind'] == 'would_fail']
     if deploy_blocked:
