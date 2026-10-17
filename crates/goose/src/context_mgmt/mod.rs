@@ -786,12 +786,12 @@ async fn compact_core(
         .with_metadata(MessageMetadata::agent_only());
     continuation_messages.push(continuation_msg);
 
-    let (merged_continuation, _issues) = merge_consecutive_messages(continuation_messages);
-    final_messages.extend(merged_continuation);
-
-    // The working set: right after the summary (after its continuation line, so the summary
-    // stays the message `latest_summary` reads), agent-only, before the kept tail and the
-    // person's message.
+    // The working set goes BEFORE the summary, its own agent-only message, so the summary and its
+    // continuation line are the last goose-written words before the model continues. Placed after
+    // them (until 2026-10-17), ~128k chars of files stood between the summary and the next turn:
+    // Gabee series 8795392e C1, the summary listed every @forge/react component and the model
+    // re-derived that list over ~15 calls, citing the summary only at call ~78. The summary stays
+    // the message right before the continuation line, which is what `latest_summary` reads.
     if let Some(chat) = chat {
         let fixed_text = format!(
             "{summary_text}\n{continuation_text}\n{}",
@@ -808,6 +808,9 @@ async fn compact_core(
             );
         }
     }
+
+    let (merged_continuation, _issues) = merge_consecutive_messages(continuation_messages);
+    final_messages.extend(merged_continuation);
 
     // A chat's person's message goes before its kept tail: after it, it would join the tail's
     // last tool result as one user turn. The swarm workers keep their measured order.
@@ -2967,12 +2970,12 @@ mod tests {
         }
     }
 
-    /// The working set lands right after the summary's continuation line, agent-only, with the
-    /// file as it is on disk NOW (changed after it was read); the summary stays what
-    /// `latest_summary` reads, and the next compaction never mistakes the block for the person's
-    /// message.
+    /// The working set lands right BEFORE the summary, agent-only, with the file as it is on disk
+    /// NOW (changed after it was read); the summary and its continuation line are the last words
+    /// before the person's message, the summary stays what `latest_summary` reads, and the next
+    /// compaction never mistakes the block for the person's message.
     #[tokio::test]
-    async fn the_working_set_follows_the_summary_with_the_files_as_they_are_now() {
+    async fn the_working_set_precedes_the_summary_with_the_files_as_they_are_now() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("sync.js"), "export const v = 1;\n").unwrap();
         let mut read = vec![Message::user().with_text("ship the sync")];
@@ -3020,13 +3023,17 @@ mod tests {
         assert_eq!(
             visible.len(),
             4,
-            "summary, continuation, working set, the person's message"
+            "working set, summary, continuation, the person's message"
         );
-        assert!(visible[1].as_concat_text().starts_with(COMPACTED_PREFIX));
-        let block = visible[2].as_concat_text();
-        assert_eq!(visible[2].role, Role::User);
-        assert!(!visible[2].is_user_visible());
+        let block = visible[0].as_concat_text();
+        assert_eq!(visible[0].role, Role::User);
+        assert!(!visible[0].is_user_visible());
         assert!(block.starts_with(working_set::WORKING_SET_OPEN), "{block}");
+        let summary = visible[1].as_concat_text();
+        assert!(summary.contains("sync.js read"), "{summary}");
+        assert!(!working_set::is_working_set_text(&summary));
+        assert!(visible[2].as_concat_text().starts_with(COMPACTED_PREFIX));
+        assert_eq!(latest_summary(&stored).as_deref(), Some(summary.as_str()));
         assert!(
             block.contains("Current file contents after compaction"),
             "{block}"

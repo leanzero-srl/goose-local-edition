@@ -547,8 +547,9 @@ fn read_entry(path: &Path, budget_left: usize) -> Option<Entry> {
 
 /// The working-set block for `files` (newest first) within `budget_chars`: every text file whole
 /// while it fits, newest first; a file that does not fit is named with its size, never cut; a
-/// file no longer on disk, a binary file, an unreadable one, one only read in part, one inside a
-/// dependency folder, a non-regular file, one outside the chat's folder and one that looks like a
+/// dependency folder's file read whole is shown after the chat's own files, in the budget they
+/// leave, else named; a file no longer on disk, a binary file, an unreadable one, one only read
+/// in part, a non-regular file, one outside the chat's folder and one that looks like a
 /// credential are each said — the last three are never read. `None` when there is no file to speak of.
 pub fn working_set_block(
     files: &[Touched],
@@ -557,6 +558,10 @@ pub fn working_set_block(
 ) -> Option<String> {
     let mut entries = Vec::new();
     let mut used = 0usize;
+    // A dependency file read whole (an API's `.d.ts`) waits for the budget the chat's own files
+    // leave: Gabee series 8795392e C1 named six @forge/kvs and @forge/react `.d.ts` "not shown",
+    // and the model's next ~15 calls read those same APIs again.
+    let mut dependencies = Vec::new();
     for Touched { path, in_part } in files {
         let entry = if working_dir.is_some_and(|dir| !path.starts_with(dir)) {
             Entry::Outside { path: path.clone() }
@@ -565,10 +570,11 @@ pub fn working_set_block(
                 path: path.clone(),
                 why,
             }
-        } else if in_dependency_folder(path, working_dir) {
-            Entry::Dependency { path: path.clone() }
         } else if *in_part {
             Entry::ReadInPart { path: path.clone() }
+        } else if in_dependency_folder(path, working_dir) {
+            dependencies.push(path);
+            continue;
         } else {
             let Some(entry) = read_entry(path, budget_chars - used) else {
                 continue;
@@ -580,6 +586,16 @@ pub fn working_set_block(
         }
         entries.push(entry);
     }
+    for path in dependencies {
+        let entry = match read_entry(path, budget_chars - used) {
+            Some(Entry::Text { path, content }) => {
+                used += content.chars().count();
+                Entry::Text { path, content }
+            }
+            Some(_) | None => Entry::Dependency { path: path.clone() },
+        };
+        entries.push(entry);
+    }
     if entries.is_empty() {
         return None;
     }
@@ -589,7 +605,7 @@ pub fn working_set_block(
         .count();
     let mut out = format!(
         "{WORKING_SET_OPEN}\nCurrent file contents after compaction: the files this conversation \
-         read or wrote, as they are on disk NOW, newest first ({shown} of {} shown in full, \
+         read or wrote, as they are on disk NOW, newest first (a dependency's files after them; {shown} of {} shown in full, \
          {used} of a {budget_chars}-char budget). They supersede any earlier view of these files \
          in this conversation; read a file again only if it changes or is listed below as not \
          shown.\n",
@@ -628,7 +644,7 @@ pub fn working_set_block(
                 path.display()
             )),
             Entry::Dependency { path } => Some(format!(
-                "{} — inside a dependency or build folder; not shown",
+                "{} — inside a dependency or build folder; not shown (no budget left after this chat's own files)",
                 path.display()
             )),
             Entry::DidNotFit { path, size } => Some(format!(
@@ -877,10 +893,13 @@ mod tests {
         said("run.log", "only ever read in part (head/tail); not shown");
     }
 
-    /// A type file read under node_modules is named, never shown: Forge 2.0 run B read six of
-    /// them before its first compaction, newer than most of its own sources.
+    /// A type file read whole under node_modules waits for the budget the chat's own files leave:
+    /// Forge 2.0 run B read six of them before its first compaction, newer than most of its own
+    /// sources, so newest-first would have spent the budget on them; series 8795392e named six
+    /// "not shown" and the model spent ~15 calls reading those APIs again. Own files first, then
+    /// the dependency file when it still fits, else named.
     #[test]
-    fn a_file_inside_a_dependency_folder_is_named_not_shown() {
+    fn a_dependency_file_takes_only_the_budget_the_chats_own_files_leave() {
         let dir = tempfile::tempdir().unwrap();
         let d = dir.path();
         std::fs::create_dir_all(d.join("node_modules/@forge/llm")).unwrap();
@@ -895,11 +914,16 @@ mod tests {
             whole(d.join("index.js")),
         ];
         let block = working_set_block(&files, 1_000, Some(d)).unwrap();
-        assert!(block.contains("run();"), "{block}");
-        assert!(!block.contains("export type X"), "{block}");
+        let own = block.find("run();").expect("own file shown");
+        let dependency = block.find("export type X").expect("room left: the .d.ts shown");
+        assert!(own < dependency, "own files first, though the .d.ts is newer: {block}");
+
+        let tight = working_set_block(&files, "run();".len(), Some(d)).unwrap();
+        assert!(tight.contains("run();"), "{tight}");
+        assert!(!tight.contains("export type X"), "{tight}");
         assert!(
-            block.contains("types.d.ts — inside a dependency or build folder; not shown"),
-            "{block}"
+            tight.contains("types.d.ts — inside a dependency or build folder; not shown (no budget left"),
+            "{tight}"
         );
 
         let inside_dist = d.join("dist/app");

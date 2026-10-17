@@ -131,8 +131,9 @@ guard, or failed read nothing, so goose reads nothing for it. A read is a shell 
 - Order: newest touch first, each file once, each text file **whole or not at all** within
   `GOOSE_COMPACTION_WORKING_SET_SHARE` of the window (default 0.25).
 - Named but not shown: a file not on disk now, a binary file, an unreadable one, one too big for the budget
-  left, one only ever read with head/tail (B's 1,027-line `.dev/rec1.log`), and one inside a dependency
-  folder (B's six node_modules `.d.ts`).
+  left, and one only ever read with head/tail (B's 1,027-line `.dev/rec1.log`). A file inside a dependency
+  folder read whole (B's six node_modules `.d.ts`) comes AFTER the chat's own files, in the budget they
+  leave, and is named when none is left (V3, below).
 - Named and NEVER READ:
   - a file outside the chat's folder;
   - a file that looks like a credential, by folder (`.ssh`, `.aws`, `.gnupg`, `.kube`, `.azure`,
@@ -355,3 +356,23 @@ Built and tested on Gabee. All three gaps are closed:
 
 Build trap found on Gabee (macOS 27): proc-macro dylibs stripped by cargo's build-override default fail
 dyld with "mis-aligned LINKEDIT string pool". Build with `CARGO_PROFILE_DEV_BUILD_OVERRIDE_STRIP=false`.
+
+## 9. V3 (2026-10-17): where the summary sits, and the dependency files the model read
+
+Measured on Gabee, series 8795392e build 1 (cloud-accf5d58, V2 + live window), C1 at call 61, prompt
+105,052 -> 60,899 tokens. The summary was good: it listed every @forge/react component and said there is
+no `Number`. The request after it was [summary][continuation][working set, 135,523 chars][task prompt]
+[tail]. For ~15 calls the model re-derived the component list and re-read @forge/kvs types, and only at
+about call 78 did its reasoning say "The summary says I've already read all the sources". The working set
+had named six node_modules `.d.ts` "not shown": those APIs were what it went back to read.
+
+- The working set now goes BEFORE the summary (its own agent-only message). The summary and the
+  continuation line are the last goose-written words before the model continues, and the summary is still
+  the message right before the continuation line, which is what `latest_summary` reads.
+- A dependency folder's file read whole is no longer always named: it fills what the chat's own files
+  leave. Own files keep first claim on the budget, which was the reason for the original exclusion (run B's
+  `.d.ts` were newer than most of its own sources).
+
+Live metric, as before: calls and minutes from each compaction to the first write, against series
+62c2b668 (old compaction) and 8795392e (V2). Before a live run, replay check: send C1's own request in
+both orders to the same engine and compare the first action (research vs write).
