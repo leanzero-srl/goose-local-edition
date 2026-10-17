@@ -1199,3 +1199,19 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
   Model-side trap seen: it spent about 1.4 h in `sleep 480` chains waiting for the simulator's quota hour to roll so it could re-test
   the backfill, and it read local time as UTC. Count that wait separately when comparing candidates' wall clock. The engine
   sits idle the whole time, so it is not serving cost.
+- COMPACTION V2 LIVE + LIVE WINDOW + V3 (2026-10-17, Gabee, Qwen3.8-27B Q8-base, engine RC13):
+  - The window probe read the memory guard's `max_model_len` ONCE per process. Reading it at app launch under load
+    gave 117,760, while the engine later served 130-161k, so every compaction fired early. Fixed in df5d65d03
+    (t12/combined, also on t12/local-bench-fidelity): a guard-derived window is re-read every 60 s
+    (LIVE_WINDOW_REFRESH); a missed re-read keeps the last window and waits a refresh. Live trace: 117,760 -> 137,984
+    -> 161,014 within one run.
+  - V2 C1 (series 8795392e, at call 61, 105k -> 61k): the summary held every needed fact, yet the model re-researched
+    for 29+ calls with nothing written. It cited the summary only at about call 78. Request order was [summary][cont]
+    [working set 135k ch][task]. The six node_modules .d.ts it had read were "not shown", and those are the APIs it
+    re-read. V3 (t12/compaction-v3 76dc2744f): working set BEFORE the summary; dependency files read whole fill
+    the budget left after the chat's own files.
+  - A ONE-CALL REPLAY CANNOT SEPARATE PROMPT ORDERS here: every sample's first action was the summary's own
+    "next step" (research). The defect lives in the ~30 calls after that, so measure V3 live (calls and minutes from
+    compaction to first write). Single-call timings vary 6x run to run (1,696 s vs 279 s for the same request).
+  - The "turn N/M used" line already exists (moim.rs turn_budget_line, from 50% of max_turns). The model saw
+    299/300 and still made a breaking last edit, so this is not a goose gap.
