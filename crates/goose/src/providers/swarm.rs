@@ -683,6 +683,18 @@ impl Provider for SwarmProvider {
             .load(std::sync::atomic::Ordering::SeqCst)
     }
 
+    /// A chat's answer is the nodes': every node its route may pick
+    /// (`swarm_router::chat_reasoning_off_keeps_the_prefix`). A build manages its own context.
+    fn reasoning_off_keeps_the_prefix(&self, model_name: &str) -> bool {
+        matches!(route_for(model_name), Route::Chat)
+            && super::swarm_router::chat_reasoning_off_keeps_the_prefix(model_name)
+    }
+
+    fn sends_tool_choice(&self, model_name: &str) -> bool {
+        matches!(route_for(model_name), Route::Chat)
+            && super::swarm_router::chat_sends_tool_choice(model_name)
+    }
+
     /// Chat: the smallest reported context window of what the model routes to — the pool's for
     /// `swarm` (the last pick's, or measured now by the pick's probes when no pick has run in this
     /// goosed), the node's own for `node:<id>`, the smallest in the chain for a strategy — so

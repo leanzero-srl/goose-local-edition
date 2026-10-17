@@ -75,6 +75,17 @@ impl Provider for OpenAiCompatibleProvider {
         &self.name
     }
 
+    /// Always the chat-completions format, which renders history the same with reasoning off;
+    /// counted only for an engine on this machine, where a cold prefill costs minutes.
+    fn reasoning_off_keeps_the_prefix(&self, _model_name: &str) -> bool {
+        super::openai::is_loopback_endpoint(self.api_client.host())
+    }
+
+    /// `create_request` copies request params, `tool_choice` among them, into the body.
+    fn sends_tool_choice(&self, _model_name: &str) -> bool {
+        true
+    }
+
     async fn fetch_supported_models(&self) -> Result<Vec<String>, ProviderError> {
         let response = self.api_client.response_get("models").await.map_err(|e| {
             ProviderError::RequestFailed(super::http_status::redact_relay_capability(

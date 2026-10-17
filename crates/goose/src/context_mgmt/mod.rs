@@ -22,8 +22,10 @@ use tracing::log::warn;
 
 pub mod acp;
 pub mod context_line;
+pub mod mask;
 pub mod pillars;
 pub mod state;
+pub mod working_set;
 
 use pillars::{KeptSources, LedgerRead, NoteVerdict, Pillars};
 
@@ -37,6 +39,146 @@ fn tool_pair_summarization_enabled() -> bool {
         .unwrap_or(true)
 }
 
+/// A boolean tunable (env > config > `default`): true/false, on/off, yes/no and 1/0 all read as
+/// meant; anything else is warned and the default stands. (`get_param::<bool>` alone reads `0`,
+/// `off` and `no` as errors, which left a feature on.)
+pub fn knob_bool(key: &str, default: bool) -> bool {
+    let unreadable = |what: String| {
+        warn!("{key} is {what}, not on/off, true/false, yes/no or 1/0; using {default}");
+        default
+    };
+    match Config::global().get_param::<serde_json::Value>(key) {
+        Ok(serde_json::Value::Bool(on)) => on,
+        Ok(serde_json::Value::Number(n)) => match n.as_i64() {
+            Some(1) => true,
+            Some(0) => false,
+            _ => unreadable(n.to_string()),
+        },
+        Ok(serde_json::Value::String(text)) => match text.trim().to_ascii_lowercase().as_str() {
+            "true" | "on" | "yes" | "1" => true,
+            "false" | "off" | "no" | "0" => false,
+            _ => unreadable(format!("{text:?}")),
+        },
+        Ok(other) => unreadable(other.to_string()),
+        Err(crate::config::ConfigError::NotFound(_)) => default,
+        Err(e) => unreadable(format!("unreadable ({e})")),
+    }
+}
+
+/// How the summary that extends the chat reasons (`GOOSE_COMPACTION_SUMMARY_THINKING`; the env wins
+/// over config, config over the default: `off` where the provider says reasoning off keeps the request's prefix
+/// (`Provider::reasoning_off_keeps_the_prefix`), the chat's own setting everywhere else).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SummaryThinking {
+    /// Reasoning off, as every helper call is. MEASURED (Forge 2.0 runs A and B on Gabee, Qwen3.8-27B
+    /// at effort `medium` over the openai provider): the six summary calls took 214-1,280 s each with
+    /// reasoning on — longer than the cold prefill of the whole ~100k-token conversation (E2E #3p:
+    /// 97,590 tokens, 441 s) that keeping the chat's switch exists to avoid. And at `medium` it
+    /// costs no cache: Qwen3.8's template writes a reasoning line into the system block only for
+    /// `xhigh` and `low`, so a chat at `medium` (or unpinned, which the engine renders thinking-off
+    /// on a tool request, Q-135) renders byte-identical up to the generation prompt — checked by
+    /// rendering run B's own request (llm_request.0, 59 messages, 5 tools, 93,417 chars) both ways.
+    /// A chat pinned at `xhigh`/`low` on that template loses its prefix to this switch: one cold
+    /// prefill in place of the reasoning. NOT a default where the format renders history by the
+    /// switch: Anthropic's formatter drops signed thinking blocks when effort is Off, and Anthropic
+    /// invalidates its message cache on a thinking change.
+    Off,
+    /// The chat's own switch (the Q-342 behaviour): the summary reasons as the chat does.
+    Chat,
+}
+
+pub const SUMMARY_THINKING_KEY: &str = "GOOSE_COMPACTION_SUMMARY_THINKING";
+
+/// `off_keeps_the_prefix`: the provider's answer for this model. Unset or unreadable, the default
+/// follows it; `off` and `chat` are the person's choice.
+pub fn summary_thinking(off_keeps_the_prefix: bool) -> SummaryThinking {
+    let default = if off_keeps_the_prefix {
+        SummaryThinking::Off
+    } else {
+        SummaryThinking::Chat
+    };
+    match Config::global().get_param::<String>(SUMMARY_THINKING_KEY) {
+        Ok(value) if value.eq_ignore_ascii_case("off") => SummaryThinking::Off,
+        Ok(value) if value.eq_ignore_ascii_case("chat") => SummaryThinking::Chat,
+        Ok(value) => {
+            warn!("{SUMMARY_THINKING_KEY} is {value:?}, not `off` or `chat`; using {default:?}");
+            default
+        }
+        Err(crate::config::ConfigError::NotFound(_)) => default,
+        Err(e) => {
+            warn!("{SUMMARY_THINKING_KEY} could not be read ({e}); using {default:?}");
+            default
+        }
+    }
+}
+
+/// The model config the chat-extending summary call is made with: the chat's, with its reasoning
+/// switched off unless `thinking` keeps the chat's.
+pub fn summary_model_config(chat: &ModelConfig, thinking: SummaryThinking) -> ModelConfig {
+    match thinking {
+        SummaryThinking::Off => chat
+            .clone()
+            .with_thinking_effort(goose_providers::thinking::ThinkingEffort::Off),
+        SummaryThinking::Chat => chat.clone(),
+    }
+}
+
+/// `GOOSE_COMPACTION_SUMMARY_TOOL_CALL_RETRY` (env > config > default true): a chat-shaped
+/// summary request answered with a tool call is asked once more with `tool_choice: none` before
+/// the transcript fallback. MEASURED (Forge 2.0 run B, C4): the chat-shaped request read 100,658
+/// of 103,412 tokens from cache and answered with a tool call (91 tokens, 17.7 s); the transcript
+/// fallback then read 0 of 85,085 and took 568.8 s to its first token, 1,207 s in all. A retry
+/// sends the same messages and tools, so it reads the same prefix.
+pub const SUMMARY_TOOL_CALL_RETRY_KEY: &str = "GOOSE_COMPACTION_SUMMARY_TOOL_CALL_RETRY";
+
+fn summary_tool_call_retry() -> bool {
+    knob_bool(SUMMARY_TOOL_CALL_RETRY_KEY, true)
+}
+
+/// The summary config asked again after a tool call: `tool_choice: none`, and reasoning pinned off
+/// when nothing pins it. A Rapid-MLX engine switches thinking off on a tool-carrying request only
+/// while tool_choice is not `none` (rank_thinking.py `resolved_thinking`), so an unpinned retry
+/// would render Qwen3.8's default — thinking on at `xhigh`, which writes a line into the cached
+/// system block. An effort already set (the chat's, under `chat`) is the first attempt's and stays.
+pub fn refusing_tool_calls(summary: &ModelConfig) -> ModelConfig {
+    let config = summary.clone().with_merged_request_params(
+        [("tool_choice".to_string(), serde_json::json!("none"))]
+            .into_iter()
+            .collect(),
+    );
+    let effective = crate::agents::reply_parts::provider_call_model_config(config.clone());
+    if effective.thinking_effort().is_some() {
+        effective
+    } else {
+        config.with_thinking_effort(goose_providers::thinking::ThinkingEffort::Off)
+    }
+}
+
+fn answered_with_a_tool_call(response: &Message) -> bool {
+    response.content.iter().any(|c| {
+        matches!(
+            c,
+            MessageContent::ToolRequest(_) | MessageContent::FrontendToolRequest(_)
+        )
+    })
+}
+
+fn tool_call_names(response: &Message) -> String {
+    let names: Vec<String> = response
+        .content
+        .iter()
+        .filter_map(|c| match c {
+            MessageContent::ToolRequest(req) => Some(match &req.tool_call {
+                Ok(call) => call.name.to_string(),
+                Err(e) => format!("unparsed: {}", excerpt(&e.message)),
+            }),
+            MessageContent::FrontendToolRequest(_) => Some("a frontend tool".to_string()),
+            _ => None,
+        })
+        .collect();
+    names.join(", ")
+}
+
 const CONVERSATION_CONTINUATION_TEXT: &str =
     "Your context was compacted. The previous message contains a summary of the conversation so far.
 Do not mention that you read a summary or that conversation summarization occurred.
@@ -46,6 +188,11 @@ const TOOL_LOOP_CONTINUATION_TEXT: &str =
     "Your context was compacted. The previous message contains a summary of the conversation so far.
 Do not mention that you read a summary or that conversation summarization occurred.
 Continue calling tools as necessary to complete the task.";
+
+/// Stage 1's line after the conversation it masked: what changed, and where the files are. It does
+/// not open with `COMPACTED_PREFIX`: no summary precedes it (`latest_summary`, `earlier_summary`).
+const MASK_CONTINUATION_TEXT: &str =
+    "Your context was trimmed: the outputs of earlier tool calls were replaced by short stubs and earlier reasoning was dropped; everything you and the user wrote is still here. The next message, when there is one, holds the current contents of the files this conversation read or wrote. Continue the task from where you are; do not mention the compaction.";
 
 const MANUAL_COMPACT_CONTINUATION_TEXT: &str =
     "Your context was compacted at the user's request. The previous message contains a summary of the conversation so far.
@@ -143,9 +290,38 @@ pub struct ChatCompaction {
     pub ledger: LedgerRead,
     /// The kept block's share of the window, in chars; `None` when the window is unknown.
     pub kept_budget_chars: Option<usize>,
+    /// The working set's share of the window, in chars (`working_set`); `None` when the window
+    /// is unknown or GOOSE_COMPACTION_WORKING_SET_SHARE is 0 — then none is placed.
+    pub working_set_budget_chars: Option<usize>,
+    /// What the compacted context must fit under; `None` when the window is unknown.
+    pub room: Option<Room>,
     /// The session's folder, which the kept block resolves relative paths against (Q-394).
     pub working_dir: std::path::PathBuf,
     pub progress: Option<CompactionObserver>,
+}
+
+/// What a compaction must leave room under: the window, the compaction point, and the system
+/// prompt + tools every request carries. The shares (working set 1/4, tail and kept block 1/16)
+/// are of the WINDOW; on a small window with a large head they would end past the compaction
+/// point and compact again on the next tool iteration — so what is placed after a summary is
+/// sized to the room under `ceiling` (COMPACTION-V2.md §5).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Room {
+    pub limit: usize,
+    pub threshold: f64,
+    pub head_tokens: usize,
+}
+
+impl Room {
+    /// `limit × (2·threshold − 1)`: the rule stage 1 is held to — the context left leaves at
+    /// least the room before the compaction point that the window has past it.
+    pub fn ceiling(&self) -> usize {
+        (self.limit as f64 * (2.0 * self.threshold - 1.0)).max(0.0) as usize
+    }
+
+    pub fn compaction_point(&self) -> usize {
+        (self.limit as f64 * self.threshold) as usize
+    }
 }
 
 // ratio: the kept block may take a sixteenth of the window — E2E #3p's model-written summary was
@@ -259,9 +435,76 @@ pub async fn compact_messages(
 }
 
 fn keep_tail_from_config() -> usize {
-    Config::global()
-        .get_param::<usize>("GOOSE_COMPACT_KEEP_TAIL")
-        .unwrap_or(0)
+    configured_keep_tail().unwrap_or(0)
+}
+
+/// `GOOSE_COMPACT_KEEP_TAIL` when it is set (env > config): the number of newest messages a
+/// compaction keeps word for word.
+fn configured_keep_tail() -> Option<usize> {
+    match Config::global().get_param::<usize>("GOOSE_COMPACT_KEEP_TAIL") {
+        Ok(tail) => Some(tail),
+        Err(crate::config::ConfigError::NotFound(_)) => None,
+        Err(e) => {
+            warn!("GOOSE_COMPACT_KEEP_TAIL is not a count ({e}); it is read as unset");
+            None
+        }
+    }
+}
+
+/// A chat's default kept tail when GOOSE_COMPACT_KEEP_TAIL is unset and the compaction lands inside
+/// a tool loop: the newest agent-visible messages whose text fits `budget_chars` (the kept block's share of the window, a sixteenth),
+/// never reaching back past a message an earlier compaction hid. Every system surveyed for
+/// COMPACTION-V2.md keeps the newest turns word for word (JetBrains' best window 10 turns,
+/// OpenHands half the events, Cline ~20k tokens); goose's chats kept none, and after run B's
+/// summaries the model re-planned for 800-1,150 s from the summary alone. A swarm worker's
+/// compaction never reads this (`compact_messages`).
+fn chat_tail(messages: &[Message], budget_chars: Option<usize>) -> usize {
+    let Some(budget) = budget_chars else {
+        return 0;
+    };
+    // Only inside a tool loop: at a reply's start the person's new message sets the direction,
+    // and the place the model loses (run B, every compaction) is mid-loop.
+    let mid_loop = messages
+        .iter()
+        .rev()
+        .find(|m| m.is_agent_visible())
+        .is_some_and(|m| {
+            m.content
+                .iter()
+                .any(|c| matches!(c, MessageContent::ToolResponse(_)))
+        });
+    if !mid_loop {
+        return 0;
+    }
+    let size = |m: &Message| -> usize {
+        m.content
+            .iter()
+            .map(|c| match c {
+                MessageContent::Text(t) => t.text.chars().count(),
+                MessageContent::Thinking(t) => t.thinking.chars().count(),
+                MessageContent::ToolRequest(r) => r.tool_call.as_ref().map_or(0, |call| {
+                    serde_json::to_string(&call.arguments).map_or(0, |a| a.chars().count())
+                }),
+                MessageContent::ToolResponse(r) => r.tool_result.as_ref().map_or(0, |result| {
+                    model_visible_texts(result).map(|t| t.chars().count()).sum()
+                }),
+                _ => 0,
+            })
+            .sum()
+    };
+    let mut used = 0usize;
+    let mut tail = 0usize;
+    for message in messages.iter().rev() {
+        if !message.is_agent_visible() {
+            break;
+        }
+        used += size(message);
+        if used > budget {
+            break;
+        }
+        tail += 1;
+    }
+    tail
 }
 
 /// `compact_messages` with the keep-tail injected — the testable form (no env/config read). The
@@ -317,13 +560,25 @@ pub async fn compact_chat(
     request: &SummaryRequest,
     chat: &ChatCompaction,
 ) -> Result<ChatCompacted> {
+    let tail_budget = match (chat.kept_budget_chars, chat.room) {
+        (Some(share), Some(room)) => Some(share.min(
+            // ratio: the tail takes at most a quarter of the room under the ceiling after the
+            // head; the summary, the kept block and the working set share the rest.
+            (room.ceiling().saturating_sub(room.head_tokens) as f64
+                * crate::agents::platform_extensions::recall::CHARS_PER_TOKEN
+                / 4.0) as usize,
+        )),
+        (share, _) => share,
+    };
+    let keep_tail =
+        configured_keep_tail().unwrap_or_else(|| chat_tail(conversation.messages(), tail_budget));
     compact_core(
         provider,
         model_config,
         session_id,
         conversation,
         manual_compact,
-        keep_tail_from_config(),
+        keep_tail,
         request,
         Some(chat),
     )
@@ -348,7 +603,10 @@ async fn compact_core(
     // A chat's kept turn-context blocks are goose's, not the person's words: they are never the
     // request a compaction preserves.
     let persons_text = |c: &MessageContent| match c {
-        MessageContent::Text(text) => !crate::conversation::is_turn_context_text(&text.text),
+        MessageContent::Text(text) => {
+            !crate::conversation::is_turn_context_text(&text.text)
+                && !working_set::is_working_set_text(&text.text)
+        }
         _ => false,
     };
     let has_text_only = |msg: &Message| {
@@ -376,6 +634,20 @@ async fn compact_core(
             Some(text_parts.join("\n"))
         }
     };
+
+    if let Some(chat) = chat.filter(|_| !manual_compact) {
+        if let Some(conversation) = mask_stage(messages, chat, request).await {
+            return Ok(ChatCompacted::Compacted {
+                conversation,
+                usage: Box::new(ProviderUsage::new(
+                    model_config.model_name.clone(),
+                    Usage::default(),
+                )),
+                note: NoteOutcome::NoNote,
+                kept: None,
+            });
+        }
+    }
 
     // Find and preserve the most recent user message for non-manual compacts
     let (preserved_user_message, preserved_idx, is_most_recent) = if !manual_compact {
@@ -496,6 +768,7 @@ async fn compact_core(
         final_messages.push(updated_msg);
     }
 
+    let summary_text = summary_message.as_concat_text();
     let summary_msg = summary_message.with_metadata(MessageMetadata::agent_only());
 
     let mut continuation_messages = vec![summary_msg];
@@ -516,6 +789,36 @@ async fn compact_core(
     let (merged_continuation, _issues) = merge_consecutive_messages(continuation_messages);
     final_messages.extend(merged_continuation);
 
+    // The working set: right after the summary (after its continuation line, so the summary
+    // stays the message `latest_summary` reads), agent-only, before the kept tail and the
+    // person's message.
+    if let Some(chat) = chat {
+        let fixed_text = format!(
+            "{summary_text}\n{continuation_text}\n{}",
+            preserved_text.as_deref().unwrap_or("")
+        );
+        if let (Some(block), _) =
+            working_set_after_summary(chat, messages_to_compact, &fixed_text, &messages[cut..])
+                .await
+        {
+            final_messages.push(
+                Message::user()
+                    .with_text(block)
+                    .with_metadata(MessageMetadata::agent_only()),
+            );
+        }
+    }
+
+    // A chat's person's message goes before its kept tail: after it, it would join the tail's
+    // last tool result as one user turn. The swarm workers keep their measured order.
+    let preserved_text = match (chat.is_some(), preserved_text) {
+        (true, Some(text)) => {
+            final_messages.push(Message::user().with_text(&text));
+            None
+        }
+        (_, preserved) => preserved,
+    };
+
     // K4: the kept tail returns VERBATIM after the summary, so the agent reads "summary of the
     // early conversation, then the last turns exactly as they happened" — same shape as the
     // preserved-user mechanism, generalized to tool content.
@@ -533,6 +836,233 @@ async fn compact_core(
         note,
         kept: kept.map(Box::new),
     })
+}
+
+/// The working set placed after a summary, sized to the room the compaction must leave (`Room`):
+/// the head, the summary with its kept block, the continuation line, the person's message and the
+/// kept tail are fixed; the working set gets at most what is left under the ceiling. When even
+/// that leaves the context past the compaction point, it says so loudly — the next tool iteration
+/// will compact again.
+async fn working_set_after_summary(
+    chat: &ChatCompaction,
+    messages_to_compact: &[Message],
+    fixed_text: &str,
+    tail: &[Message],
+) -> (Option<String>, RoomVerdict) {
+    let Some(configured) = chat.working_set_budget_chars else {
+        info!(
+            "compaction: no working set placed after the summary (the window is unknown or {} is 0)",
+            working_set::WORKING_SET_SHARE_KEY
+        );
+        return (None, RoomVerdict::Unmeasured);
+    };
+    let files = working_set::touched_files(messages_to_compact, Some(&chat.working_dir));
+    let block_within =
+        |budget: usize| working_set::working_set_block(&files, budget, Some(&chat.working_dir));
+    let Some(room) = chat.room else {
+        return (block_within(configured), RoomVerdict::Unmeasured);
+    };
+    let counter = match create_token_counter().await {
+        Ok(counter) => counter,
+        Err(e) => {
+            warn!(
+                "compaction_room_unmeasured: no tokenizer ({e}); the working set takes its \
+                 configured share of the window"
+            );
+            return (block_within(configured), RoomVerdict::Unmeasured);
+        }
+    };
+    let fixed = room.head_tokens
+        + counter.count_tokens(fixed_text)
+        + counter.count_chat_tokens("", tail, &[]);
+    let available = room.ceiling().saturating_sub(fixed);
+    let mut block = if available == 0 {
+        None
+    } else {
+        let budget = configured.min(
+            (available as f64 * crate::agents::platform_extensions::recall::CHARS_PER_TOKEN)
+                as usize,
+        );
+        let first = block_within(budget);
+        // Chars per token run below the estimate on code: shrink once, by the measured overshoot.
+        match first.as_deref().map(|b| counter.count_tokens(b)) {
+            Some(tokens) if tokens > available => block_within(budget * available / tokens),
+            _ => first,
+        }
+    };
+    let block_tokens = block.as_deref().map_or(0, |b| counter.count_tokens(b));
+    let mut verdict = RoomVerdict::Fits;
+    if block_tokens > available {
+        tracing::warn!(
+            block_tokens,
+            available,
+            "compaction_working_set_dropped: the working set is {block_tokens} tokens after its one \
+             shrink, over the {available} left under the ceiling; no working set is placed"
+        );
+        block = None;
+        verdict = RoomVerdict::WorkingSetDropped {
+            tokens: block_tokens,
+            available,
+        };
+    }
+    let after = fixed + block.as_deref().map_or(0, |b| counter.count_tokens(b));
+    if available == 0 || after > room.compaction_point() {
+        tracing::warn!(
+            fixed,
+            available,
+            after,
+            limit = room.limit,
+            head = room.head_tokens,
+            working_set = block.is_some(),
+            "compaction_cannot_make_room: the compacted context ({after} tokens with the working \
+             set, {fixed} without) is past the room this window leaves; the next request may \
+             compact again"
+        );
+        verdict = RoomVerdict::CannotMakeRoom { fixed, after };
+    }
+    (block, verdict)
+}
+
+/// How the room after a summary came out. Each case but `Fits` and `Unmeasured` is also logged by
+/// its name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RoomVerdict {
+    /// No window, no head count or no tokenizer: the working set took its configured share.
+    Unmeasured,
+    Fits,
+    /// `compaction_working_set_dropped`: over the room even after its one shrink.
+    WorkingSetDropped {
+        tokens: usize,
+        available: usize,
+    },
+    /// `compaction_cannot_make_room`: no room under the ceiling, or past the compaction point.
+    CannotMakeRoom {
+        fixed: usize,
+        after: usize,
+    },
+}
+
+/// Stage 1 (`mask`): an automatic compaction with no note for its summary first tries to make room
+/// by dropping old tool outputs (stubs of facts stay) and old reasoning, placing the working set,
+/// and asking for no summary. Taken only when the estimate passes `mask::accepts`; `None` (the
+/// summary runs) otherwise, each reason logged.
+async fn mask_stage(
+    messages: &[Message],
+    chat: &ChatCompaction,
+    request: &SummaryRequest,
+) -> Option<Conversation> {
+    let CompactionTrigger::Auto {
+        used: Some(used),
+        limit: Some(limit),
+        threshold,
+    } = chat.trigger
+    else {
+        return None;
+    };
+    if chat.note.is_some() || !mask::mask_first() {
+        return None;
+    }
+    let counter = match create_token_counter().await {
+        Ok(counter) => counter,
+        Err(e) => {
+            warn!("compaction_mask_skipped: no tokenizer to estimate what it frees ({e})");
+            return None;
+        }
+    };
+    let keep_recent = kept_budget_chars(Some(limit))?;
+    let masked = mask::mask(messages, keep_recent, mask::drop_reasoning());
+    let block = chat.working_set_budget_chars.and_then(|budget| {
+        let files = working_set::touched_files(messages, Some(&chat.working_dir));
+        working_set::working_set_block(&files, budget, Some(&chat.working_dir))
+    });
+    let note = MASK_CONTINUATION_TEXT;
+    // Reasoning counts as freed only as far as the provider rendered it: the openai format sends
+    // it only with preserve_thinking_context, and a template may drop it before the last user
+    // message. `used` is what the provider measured; goose's count of the same request without
+    // any reasoning (`count_chat_tokens` counts none) leaves at most the reasoning it rendered.
+    let reasoning = counter.count_tokens(&masked.removed_reasoning);
+    let rendered_reasoning = match request {
+        SummaryRequest::ExtendsChat(frame) if reasoning > 0 => used.saturating_sub(
+            counter.count_chat_tokens(&frame.system_prompt, messages, &frame.tools),
+        ),
+        _ => 0,
+    };
+    let removed = counter.count_tokens(&masked.removed_outputs) + reasoning.min(rendered_reasoning);
+    let added = counter.count_tokens(&masked.added)
+        + block.as_deref().map_or(0, |b| counter.count_tokens(b))
+        + counter.count_tokens(note);
+    let after = (used + added).saturating_sub(removed);
+    if !mask::accepts(after, limit, threshold) {
+        info!(
+            used,
+            removed,
+            added,
+            after,
+            limit,
+            "compaction_mask_not_enough: dropping old outputs and reasoning would leave {after} \
+             tokens, over {:.0}% of the window; summarizing",
+            (2.0 * threshold - 1.0) * 100.0
+        );
+        return None;
+    }
+    info!(
+        used,
+        removed,
+        added,
+        after,
+        limit,
+        outputs = masked.outputs_masked,
+        reasoning = masked.reasoning_dropped,
+        working_set = block.is_some(),
+        "compaction_masked: no summary; old outputs and reasoning dropped, working set placed"
+    );
+
+    // The person's newest message, when the conversation ends on it (a compaction at a reply's
+    // start), stays the last message, as compact_core keeps it.
+    let last = messages.iter().rposition(|m| m.is_agent_visible());
+    let trailing_person = last.filter(|&i| {
+        let m = &messages[i];
+        m.role == Role::User
+            && m.is_user_visible()
+            && m.content
+                .iter()
+                .all(|c| matches!(c, MessageContent::Text(_)))
+    });
+    let mut out: Vec<Message> = messages
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            let metadata = if Some(i) == trailing_person {
+                MessageMetadata::invisible()
+            } else {
+                m.metadata.clone().with_agent_invisible()
+            };
+            m.clone().with_metadata(metadata)
+        })
+        .collect();
+    let mut copies = masked.messages;
+    let person = trailing_person.map(|_| copies.pop());
+    out.extend(copies);
+    out.push(
+        Message::assistant()
+            .with_text(note)
+            .with_metadata(MessageMetadata::agent_only()),
+    );
+    if let Some(block) = block {
+        out.push(
+            Message::user()
+                .with_text(block)
+                .with_metadata(MessageMetadata::agent_only()),
+        );
+    }
+    if let (Some(Some(_)), Some(i)) = (person, trailing_person) {
+        out.push(
+            messages[i]
+                .clone()
+                .with_metadata(MessageMetadata::default()),
+        );
+    }
+    Some(Conversation::new_unvalidated(out))
 }
 
 /// Check if messages exceed the auto-compaction threshold
@@ -860,8 +1390,8 @@ fn chat_instruction(
 /// fixes every request, its kept turn-context blocks included), so these are too — which is also what places the instruction: it
 /// joins a trailing user message, as the turn-context block does, and follows tool results as a
 /// user message of its own (a strict chat template refuses two user turns in a row). The call is
-/// the chat's, not a helper's (`complete_as_the_chat`: the thinking switch can change the system
-/// block the cache holds). Q-357: the call streams, so the chat's card counts what is written and
+/// the chat's, not a helper's (`stream_as_the_chat`: its config and frame are the chat's), with
+/// its reasoning as [`SummaryThinking`] sets it — off by default. Q-357: the call streams, so the chat's card counts what is written and
 /// the note's verdict is read from the first line as it arrives — a question stops the call there.
 /// The person's note, like every fact about this chat, is in the instruction alone: the messages
 /// before it are the chat's own, byte for byte, and stay the cached prefix.
@@ -898,59 +1428,109 @@ async fn summarize_as_the_chat(
         }
     };
     let watch_note = kept.note.is_some() && chat.may_ask;
-    let mut written_tokens = 0u64;
-    let mut asked: Option<String> = None;
-    let watch = |delta: &str, text: &str| {
-        if let Some(counter) = &counter {
-            written_tokens += counter.count_tokens(delta) as u64;
-        }
-        if let Some(observe) = &chat.progress {
-            observe(WritingProgress {
-                written_tokens: counter.as_ref().map(|_| written_tokens),
-                parts: pillars::written_parts(text),
-            });
-        }
-        if watch_note {
-            if let Some(NoteVerdict::Question(question)) = pillars::streaming_note_verdict(text) {
-                asked = Some(question);
-                return false;
-            }
-        }
-        true
-    };
-    let answer = crate::model_config::stream_as_the_chat(
-        crate::background_work::BackgroundWorkKind::Compaction,
-        provider,
+    let summary_config = summary_model_config(
         model_config,
-        session_id,
-        &frame.system_prompt,
-        sent.messages(),
-        &frame.tools,
-        watch,
-    )
-    .await;
-    let (mut response, mut provider_usage) = match answer {
-        Ok((answer, _)) => answer,
-        Err(ProviderError::ContextLengthExceeded(detail)) => {
-            return Ok(ChatSummary::NotWritten(format!(
-                "was refused as too long ({detail})"
-            )))
-        }
-        Err(e) => return Err(e.into()),
-    };
-    if let Some(question) = asked {
-        return Ok(ChatSummary::Asked(question));
-    }
-    if response.content.iter().any(|c| {
-        matches!(
-            c,
-            MessageContent::ToolRequest(_) | MessageContent::FrontendToolRequest(_)
+        summary_thinking(provider.reasoning_off_keeps_the_prefix(&model_config.model_name)),
+    );
+    let mut config = summary_config.clone();
+    let mut retried = false;
+    let (mut response, mut provider_usage) = loop {
+        let mut written_tokens = 0u64;
+        let mut asked: Option<String> = None;
+        let watch = |delta: &str, text: &str| {
+            if let Some(counter) = &counter {
+                written_tokens += counter.count_tokens(delta) as u64;
+            }
+            if let Some(observe) = &chat.progress {
+                observe(WritingProgress {
+                    written_tokens: counter.as_ref().map(|_| written_tokens),
+                    parts: pillars::written_parts(text),
+                });
+            }
+            if watch_note {
+                if let Some(NoteVerdict::Question(question)) = pillars::streaming_note_verdict(text)
+                {
+                    asked = Some(question);
+                    return false;
+                }
+            }
+            true
+        };
+        let answer = crate::model_config::stream_as_the_chat(
+            crate::background_work::BackgroundWorkKind::Compaction,
+            provider,
+            &config,
+            session_id,
+            &frame.system_prompt,
+            sent.messages(),
+            &frame.tools,
+            watch,
         )
-    }) {
-        return Ok(ChatSummary::NotWritten(
-            "was answered with a tool call instead of the summary".to_string(),
-        ));
-    }
+        .await;
+        let (response, usage) = match answer {
+            Ok((answer, _)) => answer,
+            Err(ProviderError::ContextLengthExceeded(detail)) => {
+                return Ok(ChatSummary::NotWritten(format!(
+                    "was refused as too long ({detail})"
+                )))
+            }
+            Err(e) if retried => {
+                return Ok(ChatSummary::NotWritten(format!(
+                    "was answered with a tool call, and asked again with tool_choice none it \
+                     failed ({e})"
+                )))
+            }
+            Err(e) => return Err(e.into()),
+        };
+        if let Some(question) = asked {
+            return Ok(ChatSummary::Asked(question));
+        }
+        if !answered_with_a_tool_call(&response) {
+            // An engine that does not parse tool calls under tool_choice none hands the call back
+            // as text; only an answer carrying the instruction's own sections is a summary.
+            if retried && pillars::written_parts(&response.as_concat_text()).is_empty() {
+                return Ok(ChatSummary::NotWritten(format!(
+                    "was answered with a tool call, and asked again with tool_choice none it \
+                     answered without any of the summary's sections ({})",
+                    excerpt(&response.as_concat_text())
+                )));
+            }
+            break (response, usage);
+        }
+        if retried {
+            return Ok(ChatSummary::NotWritten(
+                "was answered with a tool call, and again when asked with tool_choice none"
+                    .to_string(),
+            ));
+        }
+        if !summary_tool_call_retry() {
+            return Ok(ChatSummary::NotWritten(format!(
+                "was answered with a tool call instead of the summary \
+                 ({SUMMARY_TOOL_CALL_RETRY_KEY} is off)"
+            )));
+        }
+        // Only the formats that put `tool_choice` on the wire can be asked this; elsewhere the
+        // same request would come back the same way.
+        if !provider.sends_tool_choice(&model_config.model_name) {
+            return Ok(ChatSummary::NotWritten(format!(
+                "was answered with a tool call instead of the summary, and {}'s request format \
+                 cannot carry tool_choice none, so it was not asked again",
+                provider.get_name()
+            )));
+        }
+        warn!(
+            "compaction_summary_tool_call: the summary request that extends the chat was answered \
+             with a tool call ({}) after {} input tokens; asking ONCE more with the same \
+             conversation and tool_choice none before falling back to a transcript",
+            tool_call_names(&response),
+            usage
+                .usage
+                .input_tokens
+                .map_or_else(|| "an unmeasured number of".to_string(), |n| n.to_string())
+        );
+        config = refusing_tool_calls(&summary_config);
+        retried = true;
+    };
     let note = match &kept.note {
         None => NoteOutcome::NoNote,
         Some(_) => match pillars::note_verdict(&response.as_concat_text()) {
@@ -1849,11 +2429,11 @@ mod tests {
             "the summary request starts with the chat's cached request, byte for byte"
         );
         assert_eq!(summary["tools"], chat["tools"], "the chat's tools, as sent");
-        assert_eq!(
-            summary.get("chat_template_kwargs"),
-            chat.get("chat_template_kwargs"),
-            "the chat's template switches: a thinking switch can change the system block"
-        );
+        // GOOSE_COMPACTION_SUMMARY_THINKING's default: the summary is written with reasoning off.
+        // The chat sent no switch, which the engine renders thinking-off on a tool-carrying
+        // request (Q-135) — the same render, so the cached system block is unchanged.
+        assert!(chat.get("chat_template_kwargs").is_none(), "{chat}");
+        assert_eq!(summary["chat_template_kwargs"], thinking_off());
         assert_eq!(
             sent[cached.len()],
             serde_json::json!({"role": "assistant", "content": "one file: notes/kickoff.md"})
@@ -1916,6 +2496,26 @@ mod tests {
         assert_eq!(transcript["chat_template_kwargs"], thinking_off());
     }
 
+    /// GOOSE_COMPACTION_SUMMARY_THINKING: `off` (the default) writes the summary with reasoning off
+    /// — and the reply path's default effort does not switch it back on — while `chat` keeps the
+    /// chat's own switch, Q-342's behaviour. Forge 2.0's chats run at `medium`.
+    #[test]
+    fn the_summary_is_written_with_reasoning_off_unless_told_to_keep_the_chats() {
+        use goose_providers::thinking::ThinkingEffort;
+        let chat = ModelConfig::new("served").with_thinking_effort(ThinkingEffort::Medium);
+        let off = summary_model_config(&chat, SummaryThinking::Off);
+        assert_eq!(off.thinking_effort(), Some(ThinkingEffort::Off));
+        assert_eq!(
+            crate::agents::reply_parts::provider_call_model_config(off.clone()).thinking_effort(),
+            Some(ThinkingEffort::Off)
+        );
+        assert_eq!(off.model_name, chat.model_name);
+        assert_eq!(
+            summary_model_config(&chat, SummaryThinking::Chat).thinking_effort(),
+            Some(ThinkingEffort::Medium)
+        );
+    }
+
     /// A summary request that extends the chat and ends mid tool loop: the instruction follows the
     /// tool results as a user message of its own (merged into them, the formatter would put it
     /// before the results).
@@ -1973,6 +2573,8 @@ mod tests {
             goal: None,
             ledger: LedgerRead::Entries(Vec::new()),
             kept_budget_chars: None,
+            working_set_budget_chars: None,
+            room: None,
             working_dir: std::path::PathBuf::from("/Users/someone"),
             progress: None,
         }
@@ -2044,6 +2646,56 @@ mod tests {
             system_prompt: "You are goose.".to_string(),
             tools: chat_tools(),
         })
+    }
+
+    /// Forge 2.0 run B (sessions.db 2295→3300): a task prompt ending in a newline, compacted five
+    /// times inside one tool loop, was in the context five times by the fifth compaction — the
+    /// kept block carried 1, 1, 2, 3, 4 copies beside the copy each compaction appends. Three
+    /// compactions of the same loop now leave it in the agent's context exactly once.
+    #[tokio::test]
+    async fn a_task_prompt_compacted_three_times_mid_loop_is_in_the_context_once() {
+        let task = "# forge-2.0 \u{2014} Scope Ledger 2\n\nShip v2 of the Scope Ledger.\n";
+        let provider = ScriptedProvider::new("## Where we are\nbuilding\n## Next step\nsync.js");
+        let mut stored = vec![Message::user().with_text(task)];
+        for compaction in 0..3 {
+            stored.extend(create_tool_pair(
+                &format!("call{compaction}"),
+                &format!("resp{compaction}"),
+                "developer__shell",
+                "ok",
+            ));
+            let ChatCompacted::Compacted { conversation, .. } = compact_chat(
+                &provider,
+                &ModelConfig::new("scripted"),
+                "s",
+                &Conversation::new_unvalidated(stored.clone()),
+                false,
+                &frame(),
+                &chat_inputs(None, false),
+            )
+            .await
+            .unwrap() else {
+                panic!("an automatic compaction is never asked");
+            };
+            stored = conversation.messages().to_vec();
+        }
+        let task = task.trim();
+        // The kept block indents a message's later lines, so a copy is counted by one of them.
+        let line = "Ship v2 of the Scope Ledger.";
+        let in_context: usize = stored
+            .iter()
+            .filter(|m| m.is_agent_visible())
+            .map(|m| m.as_concat_text().matches(line).count())
+            .sum();
+        assert_eq!(in_context, 1, "{stored:#?}");
+        let summary = latest_summary(&stored).expect("a summary");
+        assert!(!summary.contains(line), "{summary}");
+        assert!(
+            stored
+                .last()
+                .is_some_and(|m| m.is_agent_visible() && m.as_concat_text().trim() == task),
+            "the one copy is the person's message after the summary"
+        );
     }
 
     /// Q-357 STEER: a manual compaction under a note the conversation contradicts stops at the
@@ -2263,6 +2915,7 @@ mod tests {
                     .with_tool_request("t1", Ok(CallToolRequestParams::new("developer__shell"))),
             ),
         ] {
+            let tool_call = answer.is_some();
             let provider = RecordingProvider {
                 calls: std::sync::Mutex::new(Vec::new()),
                 chat_shaped_answer: answer,
@@ -2285,11 +2938,18 @@ mod tests {
                 panic!("compacted");
             };
             let calls = provider.calls.lock().unwrap();
-            assert_eq!(calls.len(), 2);
-            assert_eq!(calls[0].0, "You are goose.");
-            assert_eq!(calls[0].2, 1, "the first request extends the chat");
-            assert_eq!(calls[1].2, 0, "the second is the transcript request");
-            assert!(calls[1].0.contains("**Conversation History:**"));
+            // This provider's format cannot carry tool_choice none (`sends_tool_choice` false),
+            // so a tool call is not asked again; neither is a refusal as too long.
+            let _ = tool_call;
+            let chat_shaped = 1;
+            assert_eq!(calls.len(), chat_shaped + 1);
+            for call in &calls[..chat_shaped] {
+                assert_eq!(call.0, "You are goose.");
+                assert_eq!(call.2, 1, "a chat-shaped request extends the chat");
+            }
+            let transcript = &calls[chat_shaped];
+            assert_eq!(transcript.2, 0, "the last is the transcript request");
+            assert!(transcript.0.contains("**Conversation History:**"));
             let visible: Vec<String> = compacted
                 .agent_visible_messages()
                 .iter()
@@ -2305,6 +2965,628 @@ mod tests {
                 .iter()
                 .any(|c| matches!(c, MessageContent::ToolRequest(_)))));
         }
+    }
+
+    /// The working set lands right after the summary's continuation line, agent-only, with the
+    /// file as it is on disk NOW (changed after it was read); the summary stays what
+    /// `latest_summary` reads, and the next compaction never mistakes the block for the person's
+    /// message.
+    #[tokio::test]
+    async fn the_working_set_follows_the_summary_with_the_files_as_they_are_now() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("sync.js"), "export const v = 1;\n").unwrap();
+        let mut read = vec![Message::user().with_text("ship the sync")];
+        let mut params = CallToolRequestParams::new("shell");
+        params.arguments = serde_json::json!({"command": "cat sync.js"})
+            .as_object()
+            .cloned();
+        read.push(Message::assistant().with_tool_request("c1", Ok(params)));
+        read.push(Message::user().with_tool_response(
+            "c1",
+            Ok(rmcp::model::CallToolResult::success(vec![
+                RawContent::text("export const v = 1;").no_annotation(),
+            ])),
+        ));
+        std::fs::write(dir.path().join("sync.js"), "export const v = 2;\n").unwrap();
+        let mut inputs = chat_inputs(None, false);
+        inputs.working_dir = dir.path().to_path_buf();
+        inputs.working_set_budget_chars = Some(10_000);
+        let provider = ScriptedProvider::new("## Where we are\nsync.js read");
+        let compact = |stored: Vec<Message>| {
+            let inputs = inputs.clone();
+            let provider = &provider;
+            async move {
+                match compact_chat(
+                    provider,
+                    &ModelConfig::new("scripted"),
+                    "s",
+                    &Conversation::new_unvalidated(stored),
+                    false,
+                    &frame(),
+                    &inputs,
+                )
+                .await
+                .unwrap()
+                {
+                    ChatCompacted::Compacted { conversation, .. } => {
+                        conversation.messages().to_vec()
+                    }
+                    ChatCompacted::Asked { .. } => panic!("never asked"),
+                }
+            }
+        };
+        let stored = compact(read).await;
+        let visible: Vec<&Message> = stored.iter().filter(|m| m.is_agent_visible()).collect();
+        assert_eq!(
+            visible.len(),
+            4,
+            "summary, continuation, working set, the person's message"
+        );
+        assert!(visible[1].as_concat_text().starts_with(COMPACTED_PREFIX));
+        let block = visible[2].as_concat_text();
+        assert_eq!(visible[2].role, Role::User);
+        assert!(!visible[2].is_user_visible());
+        assert!(block.starts_with(working_set::WORKING_SET_OPEN), "{block}");
+        assert!(
+            block.contains("Current file contents after compaction"),
+            "{block}"
+        );
+        assert!(
+            block.contains("export const v = 2;"),
+            "the file as it is now: {block}"
+        );
+        assert!(!block.contains("v = 1"), "{block}");
+        assert_eq!(visible[3].as_concat_text(), "ship the sync");
+        assert!(latest_summary(&stored).is_some_and(|s| !s.contains(working_set::WORKING_SET_OPEN)));
+
+        // The next compaction mid-loop keeps the person's message as the one it preserves.
+        let mut next = stored.clone();
+        next.extend(create_tool_pair("c2", "r2", "shell", "ok"));
+        let again = compact(next).await;
+        let last = again.last().unwrap();
+        assert_eq!(last.as_concat_text(), "ship the sync");
+        let blocks = again
+            .iter()
+            .filter(|m| m.is_agent_visible())
+            .filter(|m| {
+                m.as_concat_text()
+                    .starts_with(working_set::WORKING_SET_OPEN)
+            })
+            .count();
+        assert_eq!(blocks, 1, "one working set, the newest");
+    }
+
+    /// A chat's default tail: the newest agent-visible messages within the budget, never past a
+    /// message an earlier compaction hid; no budget (an unknown window) keeps none.
+    #[test]
+    fn a_chats_tail_is_the_newest_messages_within_the_budget() {
+        let mut messages = vec![
+            Message::user()
+                .with_text("old")
+                .with_visibility(true, false),
+            Message::user().with_text("a".repeat(50)),
+        ];
+        messages.extend(create_tool_pair("c1", "r1", "shell", &"c".repeat(50)));
+        assert_eq!(
+            chat_tail(&messages, Some(52)),
+            1,
+            "the tool result alone fits"
+        );
+        assert_eq!(
+            chat_tail(&messages, Some(1_000)),
+            3,
+            "stops at the hidden one"
+        );
+        assert_eq!(chat_tail(&messages, None), 0);
+        messages.push(Message::user().with_text("next please"));
+        assert_eq!(
+            chat_tail(&messages, Some(1_000)),
+            0,
+            "at a reply's start the person's message leads; no tail"
+        );
+    }
+
+    /// Mid-loop, a chat keeps its newest turns word for word after the summary, the person's
+    /// message before them, the tool pair whole.
+    #[tokio::test]
+    async fn a_chat_compacted_mid_loop_keeps_its_newest_turns_after_the_persons_message() {
+        let mut stored = vec![Message::user().with_text("ship the sync")];
+        stored.extend(create_tool_pair("c1", "r1", "shell", &"old ".repeat(500)));
+        stored.extend(create_tool_pair("c2", "r2", "shell", "tests: 3 failed"));
+        let mut inputs = chat_inputs(None, false);
+        inputs.kept_budget_chars = Some(100);
+        let provider = ScriptedProvider::new("## Where we are\nsync");
+        let ChatCompacted::Compacted { conversation, .. } = compact_chat(
+            &provider,
+            &ModelConfig::new("scripted"),
+            "s",
+            &Conversation::new_unvalidated(stored),
+            false,
+            &frame(),
+            &inputs,
+        )
+        .await
+        .unwrap() else {
+            panic!("never asked");
+        };
+        let agent: Vec<String> = conversation
+            .messages()
+            .iter()
+            .filter(|m| m.is_agent_visible())
+            .map(|m| serde_json::to_string(&m.content).unwrap())
+            .collect();
+        assert_eq!(agent.len(), 5, "{agent:#?}");
+        assert!(agent[0].contains("## Where we are"));
+        assert!(agent[2].contains("ship the sync"));
+        assert!(agent[3].contains("\"c2\""), "{}", agent[3]);
+        assert!(agent[4].contains("tests: 3 failed"));
+        let summarized = provider.requests.lock().unwrap()[0].clone();
+        assert!(!serde_json::to_string(&summarized)
+            .unwrap()
+            .contains("tests: 3 failed"));
+    }
+
+    fn words(n: usize, seed: &str) -> String {
+        (0..n).map(|i| format!("{seed}{i} ")).collect()
+    }
+
+    /// Stage 1 at an automatic compaction point: no summary request, every message still there
+    /// for the agent in order (old outputs as stubs, old reasoning gone), the trim line and the
+    /// working set after them, and the person's copy of the conversation untouched. When the
+    /// estimate leaves too little room, the summary runs as before.
+    #[tokio::test]
+    async fn an_automatic_compaction_masks_first_and_summarizes_only_when_that_is_not_enough() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("sync.js"), "export const v = 2;\n").unwrap();
+        let mut stored = vec![Message::user().with_text("ship the sync")];
+        for i in 0..4 {
+            let mut params = CallToolRequestParams::new("shell");
+            params.arguments = serde_json::json!({"command": "cat sync.js"})
+                .as_object()
+                .cloned();
+            stored.push(
+                Message::assistant()
+                    .with_thinking(words(2_000, &format!("why{i}-")), "sig")
+                    .with_tool_request(format!("c{i}"), Ok(params)),
+            );
+            stored.push(Message::user().with_tool_response(
+                format!("c{i}"),
+                Ok(rmcp::model::CallToolResult::success(vec![
+                    RawContent::text(words(3_000, &format!("out{i}-"))).no_annotation(),
+                ])),
+            ));
+        }
+        let mut inputs = chat_inputs(None, false);
+        inputs.working_dir = dir.path().to_path_buf();
+        inputs.working_set_budget_chars = Some(10_000);
+        inputs.trigger = CompactionTrigger::Auto {
+            // Over the ceiling (106,905) on its own: only what masking removes admits stage 1.
+            used: Some(115_000),
+            limit: Some(178_176),
+            threshold: 0.8,
+        };
+        let provider = ScriptedProvider::new("## Where we are\nsync");
+        let compact = |inputs: ChatCompaction| {
+            let stored = stored.clone();
+            let provider = &provider;
+            async move {
+                let ChatCompacted::Compacted {
+                    conversation, kept, ..
+                } = compact_chat(
+                    provider,
+                    &ModelConfig::new("scripted"),
+                    "s",
+                    &Conversation::new_unvalidated(stored),
+                    false,
+                    &frame(),
+                    &inputs,
+                )
+                .await
+                .unwrap()
+                else {
+                    panic!("never asked");
+                };
+                (conversation.messages().to_vec(), kept)
+            }
+        };
+
+        let (masked, kept) = compact(inputs.clone()).await;
+        assert!(
+            provider.requests.lock().unwrap().is_empty(),
+            "no summary asked for"
+        );
+        assert!(kept.is_none());
+        let user_side: Vec<&Message> = masked.iter().filter(|m| m.is_user_visible()).collect();
+        assert_eq!(
+            user_side.len(),
+            stored.len(),
+            "the person's copy is untouched"
+        );
+        assert!(user_side
+            .iter()
+            .zip(&stored)
+            .all(|(a, b)| a.content == b.content));
+        let agent: Vec<&Message> = masked.iter().filter(|m| m.is_agent_visible()).collect();
+        assert_eq!(
+            agent.len(),
+            stored.len() + 2,
+            "every message, the trim line, the working set"
+        );
+        let text = |m: &Message| serde_json::to_string(&m.content).unwrap();
+        assert!(
+            text(agent[2]).contains("[Output elided at compaction"),
+            "{}",
+            text(agent[2])
+        );
+        assert!(
+            text(agent[1]).contains("why0-"),
+            "reasoning is kept by default: the plan lives there"
+        );
+        assert!(text(agent[6]).contains("[Output elided at compaction"));
+        assert!(
+            text(agent[8]).contains("out3-2999"),
+            "the newest output whole"
+        );
+        assert!(agent[9]
+            .as_concat_text()
+            .starts_with("Your context was trimmed"));
+        assert!(agent[10].as_concat_text().contains("export const v = 2;"));
+        assert!(latest_summary(&masked).is_none(), "no summary was written");
+
+        let mut full = inputs;
+        full.trigger = CompactionTrigger::Auto {
+            used: Some(176_000),
+            limit: Some(178_176),
+            threshold: 0.8,
+        };
+        let (summarized, kept) = compact(full).await;
+        assert_eq!(
+            provider.requests.lock().unwrap().len(),
+            1,
+            "the summary ran"
+        );
+        assert!(kept.is_some());
+        assert!(latest_summary(&summarized).is_some());
+    }
+
+    /// Answers the first chat-shaped request with a tool call and every later one with a summary,
+    /// recording the config and messages each was sent.
+    struct ToolCallOnceProvider {
+        calls: std::sync::Mutex<Vec<(ModelConfig, Vec<Message>, usize)>>,
+    }
+
+    #[async_trait]
+    impl Provider for ToolCallOnceProvider {
+        fn get_name(&self) -> &str {
+            "tool-call-once"
+        }
+
+        fn sends_tool_choice(&self, _model_name: &str) -> bool {
+            true
+        }
+
+        async fn stream(
+            &self,
+            model_config: &ModelConfig,
+            _system: &str,
+            messages: &[Message],
+            tools: &[Tool],
+        ) -> Result<MessageStream, ProviderError> {
+            let mut calls = self.calls.lock().unwrap();
+            calls.push((model_config.clone(), messages.to_vec(), tools.len()));
+            let usage = ProviderUsage::new(
+                "tool-call-once".to_string(),
+                Usage::new(Some(103_412), Some(91), Some(103_503)),
+            );
+            let answer = if calls.len() == 1 {
+                Message::assistant()
+                    .with_tool_request("t1", Ok(CallToolRequestParams::new("developer__shell")))
+            } else {
+                Message::assistant().with_text("## Where we are\nsync.js written")
+            };
+            Ok(stream_from_single_message(answer, usage))
+        }
+    }
+
+    /// Forge 2.0 run B, C4: the chat-shaped summary request (100,658 of 103,412 tokens cached) was
+    /// answered with a tool call and the transcript fallback read 0 of 85,085. Now it is asked
+    /// ONCE more — the same messages and tools, `tool_choice: none`, reasoning pinned off — and
+    /// its answer is the summary; no transcript request is made.
+    #[tokio::test]
+    async fn a_summary_answered_with_a_tool_call_is_asked_once_more_refusing_tools() {
+        use goose_providers::thinking::ThinkingEffort;
+        let provider = ToolCallOnceProvider {
+            calls: std::sync::Mutex::new(Vec::new()),
+        };
+        let ChatCompacted::Compacted {
+            conversation: compacted,
+            ..
+        } = compact_chat(
+            &provider,
+            &ModelConfig::new("served"),
+            "s",
+            &two_turn_chat(),
+            false,
+            &frame(),
+            &chat_inputs(None, false),
+        )
+        .await
+        .unwrap()
+        else {
+            panic!("compacted");
+        };
+        let calls = provider.calls.lock().unwrap();
+        assert_eq!(calls.len(), 2, "no transcript request");
+        let (first, retry) = (&calls[0], &calls[1]);
+        assert_eq!(
+            retry.1, first.1,
+            "the retry sends the same messages: the same prefix"
+        );
+        assert_eq!((first.2, retry.2), (1, 1), "both carry the chat's tools");
+        assert!(first.0.request_param::<String>("tool_choice").is_none());
+        assert_eq!(
+            retry.0.request_param::<String>("tool_choice").as_deref(),
+            Some("none")
+        );
+        assert_eq!(retry.0.thinking_effort(), Some(ThinkingEffort::Off));
+        let summary = latest_summary(compacted.messages()).expect("a summary");
+        assert!(
+            summary.starts_with("## Where we are\nsync.js written"),
+            "{summary}"
+        );
+    }
+
+    /// An engine that ignores tool_choice none may hand the refused call back as text: that text
+    /// never becomes the summary — the transcript fallback runs, as before the retry existed.
+    #[tokio::test]
+    async fn a_retry_answered_with_no_summary_sections_falls_back_to_the_transcript() {
+        let provider = RecordingProvider {
+            calls: std::sync::Mutex::new(Vec::new()),
+            chat_shaped_answer: None,
+        };
+        let text_call = Message::assistant()
+            .with_text("<tool_call>\n<function=shell>\n<parameter=command>\nls\n</parameter>");
+        let tool_call = Message::assistant()
+            .with_tool_request("t1", Ok(CallToolRequestParams::new("developer__shell")));
+        struct Scripted {
+            inner: RecordingProvider,
+            answers: std::sync::Mutex<Vec<Message>>,
+        }
+        #[async_trait]
+        impl Provider for Scripted {
+            fn get_name(&self) -> &str {
+                "scripted-retry"
+            }
+            fn sends_tool_choice(&self, _model_name: &str) -> bool {
+                true
+            }
+            async fn stream(
+                &self,
+                model_config: &ModelConfig,
+                system: &str,
+                messages: &[Message],
+                tools: &[Tool],
+            ) -> Result<MessageStream, ProviderError> {
+                if tools.is_empty() {
+                    return self
+                        .inner
+                        .stream(model_config, system, messages, tools)
+                        .await;
+                }
+                let answer = self.answers.lock().unwrap().remove(0);
+                Ok(stream_from_single_message(
+                    answer,
+                    ProviderUsage::new("s".to_string(), Usage::default()),
+                ))
+            }
+        }
+        let scripted = Scripted {
+            inner: provider,
+            answers: std::sync::Mutex::new(vec![tool_call, text_call]),
+        };
+        let ChatCompacted::Compacted {
+            conversation: compacted,
+            ..
+        } = compact_chat(
+            &scripted,
+            &ModelConfig::new("served"),
+            "s",
+            &two_turn_chat(),
+            false,
+            &frame(),
+            &chat_inputs(None, false),
+        )
+        .await
+        .unwrap()
+        else {
+            panic!("compacted");
+        };
+        let summary = latest_summary(compacted.messages()).expect("a summary");
+        assert!(summary.starts_with("<transcript summary>"), "{summary}");
+        assert_eq!(scripted.inner.calls.lock().unwrap().len(), 1);
+    }
+
+    /// The retry as it goes on the WIRE to an MLX engine (the `omlx` definition, openai chat
+    /// format): the first summary request carries no tool_choice, the second carries
+    /// `"tool_choice": "none"` and the thinking-off switch, with the same messages and tools.
+    #[tokio::test]
+    async fn the_retry_puts_tool_choice_none_on_the_wire() {
+        use crate::model_config::mlx_endpoint::{thinking_off, MlxEndpoint, SERVED};
+        let engine = MlxEndpoint::start_answering_first_with_a_tool_call().await;
+        let ChatCompacted::Compacted { .. } = compact_chat(
+            engine.provider.as_ref(),
+            &ModelConfig::new(SERVED),
+            "s",
+            &two_turn_chat(),
+            false,
+            &frame(),
+            &chat_inputs(None, false),
+        )
+        .await
+        .unwrap() else {
+            panic!("compacted");
+        };
+        let bodies = engine.bodies().await;
+        // The mock's second answer carries no summary section, so the guard sends the summary
+        // to the transcript request: three bodies.
+        assert_eq!(
+            bodies.len(),
+            3,
+            "summary, the one retry, transcript: {bodies:?}"
+        );
+        let (first, retry, transcript) = (&bodies[0], &bodies[1], &bodies[2]);
+        assert!(first.get("tool_choice").is_none(), "{first}");
+        assert_eq!(retry["tool_choice"], serde_json::json!("none"), "{retry}");
+        assert_eq!(retry["chat_template_kwargs"], thinking_off());
+        assert_eq!(retry["messages"], first["messages"]);
+        assert_eq!(retry["tools"], first["tools"]);
+        assert!(transcript.get("tool_choice").is_none());
+        assert!(transcript
+            .get("tools")
+            .is_none_or(|t| t.as_array().is_some_and(|t| t.is_empty())));
+    }
+
+    /// knob_bool reads every spelling a person writes, and nonsense keeps the default.
+    #[test]
+    fn knob_bool_reads_every_spelling_and_keeps_the_default_on_nonsense() {
+        const KEY: &str = "GOOSE_TEST_KNOB_BOOL_SPELLINGS";
+        for (value, want) in [
+            ("off", false),
+            ("0", false),
+            ("no", false),
+            ("false", false),
+            ("on", true),
+            ("1", true),
+            ("YES", true),
+            ("true", true),
+        ] {
+            std::env::set_var(KEY, value);
+            assert_eq!(knob_bool(KEY, !want), want, "{value}");
+        }
+        std::env::set_var(KEY, "maybe");
+        assert!(knob_bool(KEY, true));
+        assert!(!knob_bool(KEY, false));
+        std::env::remove_var(KEY);
+        assert!(knob_bool(KEY, true), "unset: the default");
+    }
+
+    /// A provider that does not say reasoning-off keeps its prefix (the trait default, as for
+    /// Anthropic) gets the chat's own reasoning on the summary, not Off.
+    #[tokio::test]
+    async fn a_provider_whose_format_would_change_the_prefix_keeps_the_chats_reasoning() {
+        use goose_providers::thinking::ThinkingEffort;
+        assert_eq!(summary_thinking(false), SummaryThinking::Chat);
+        assert_eq!(summary_thinking(true), SummaryThinking::Off);
+        let provider = ToolCallOnceProvider {
+            calls: std::sync::Mutex::new(Vec::new()),
+        };
+        compact_chat(
+            &provider,
+            &ModelConfig::new("served").with_thinking_effort(ThinkingEffort::Medium),
+            "s",
+            &two_turn_chat(),
+            false,
+            &frame(),
+            &chat_inputs(None, false),
+        )
+        .await
+        .unwrap();
+        let calls = provider.calls.lock().unwrap();
+        assert_eq!(calls[0].0.thinking_effort(), Some(ThinkingEffort::Medium));
+    }
+
+    fn room_inputs(dir: &std::path::Path, head_tokens: usize) -> ChatCompaction {
+        let mut inputs = chat_inputs(None, false);
+        inputs.working_dir = dir.to_path_buf();
+        inputs.working_set_budget_chars = Some(128_000);
+        inputs.room = Some(Room {
+            limit: 32_768,
+            threshold: 0.8,
+            head_tokens,
+        });
+        inputs
+    }
+
+    /// Ten files the session read, each 4,000 chars, as a succeeded `cat`.
+    fn ten_files_read(dir: &std::path::Path) -> Vec<Message> {
+        let names: Vec<String> = (0..10).map(|i| format!("f{i}.txt")).collect();
+        for name in &names {
+            std::fs::write(dir.join(name), "alpha beta gamma delta ".repeat(174)).unwrap();
+        }
+        let mut params = CallToolRequestParams::new("shell");
+        params.arguments = serde_json::json!({"command": format!("cat {}", names.join(" "))})
+            .as_object()
+            .cloned();
+        vec![
+            Message::assistant().with_tool_request("r1", Ok(params)),
+            Message::user().with_tool_response(
+                "r1",
+                Ok(rmcp::model::CallToolResult::success(vec![
+                    RawContent::text("ok").no_annotation(),
+                ])),
+            ),
+        ]
+    }
+
+    /// A 32,768-token window with a 12,000-token head: the ceiling is 19,660; the working set is
+    /// sized so head + summary + working set stay under it (the window shares alone would place
+    /// 1/4 of the window, 8k tokens of files, on top of a ~13k context).
+    #[tokio::test]
+    async fn a_small_window_gets_a_working_set_sized_to_its_room() {
+        let dir = tempfile::tempdir().unwrap();
+        let messages = ten_files_read(dir.path());
+        let inputs = room_inputs(dir.path(), 12_000);
+        assert_eq!(inputs.room.unwrap().ceiling(), 19_660);
+        let summary = "summary ".repeat(1_000);
+        let (block, verdict) = working_set_after_summary(&inputs, &messages, &summary, &[]).await;
+        assert_eq!(verdict, RoomVerdict::Fits);
+        let block = block.expect("a working set within the room");
+        let counter = create_token_counter().await.unwrap();
+        let after = 12_000 + counter.count_tokens(&summary) + counter.count_tokens(&block);
+        assert!(after <= 19_660, "{after}");
+        assert!(block.contains("===== "), "{block}");
+        assert!(
+            block.contains("Not shown"),
+            "some files did not fit: {block}"
+        );
+    }
+
+    /// A 22,000-token head on the same window leaves no room under the ceiling: no working set,
+    /// and `compaction_cannot_make_room` is the verdict (and the logged event).
+    #[tokio::test]
+    async fn a_head_past_the_ceiling_cannot_make_room() {
+        let dir = tempfile::tempdir().unwrap();
+        let messages = ten_files_read(dir.path());
+        let inputs = room_inputs(dir.path(), 22_000);
+        let (block, verdict) = working_set_after_summary(&inputs, &messages, "summary", &[]).await;
+        assert!(block.is_none());
+        assert!(
+            matches!(verdict, RoomVerdict::CannotMakeRoom { fixed, .. } if fixed >= 22_000),
+            "{verdict:?}"
+        );
+    }
+
+    /// `chat` keeps the chat's effort on the retry (it is the first attempt's); an unpinned config
+    /// is pinned off, because tool_choice none lifts the engine's thinking-off for tool requests.
+    #[test]
+    fn the_retry_pins_reasoning_off_only_where_nothing_pins_it() {
+        use goose_providers::thinking::ThinkingEffort;
+        let medium = ModelConfig::new("served").with_thinking_effort(ThinkingEffort::Medium);
+        assert_eq!(
+            refusing_tool_calls(&medium).thinking_effort(),
+            Some(ThinkingEffort::Medium)
+        );
+        let off = summary_model_config(&medium, SummaryThinking::Off);
+        assert_eq!(
+            refusing_tool_calls(&off).thinking_effort(),
+            Some(ThinkingEffort::Off)
+        );
+        assert_eq!(
+            refusing_tool_calls(&off)
+                .request_param::<String>("tool_choice")
+                .as_deref(),
+            Some("none")
+        );
     }
 
     /// `compaction.md` before Q-342, verbatim: the transcript request — the swarm workers' golden

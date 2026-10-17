@@ -170,7 +170,10 @@ pub async fn complete_helper(
 /// to the helper path's forced Off. The measurement that licenses the call (#3p, 27B split): the
 /// transcript-shaped compaction prefilled 97,590 tokens cold for 441 s beside a conversation
 /// prefix of ~142k tokens the chat's previous call had read from the cache (138,665 of 139,503).
-/// Tagged with the chat's session and `kind` like every helper.
+/// Tagged with the chat's session and `kind` like every helper. The caller passes the config the
+/// summary is written under: the chat's, with reasoning off unless
+/// `GOOSE_COMPACTION_SUMMARY_THINKING=chat` (`context_mgmt::SummaryThinking` holds the measurement
+/// and the one case — a chat pinned at Qwen3.8's `xhigh`/`low` — where Off costs the prefix).
 ///
 /// Q-357: the call streams, as the chat's own calls do. `watch` sees each chunk's new text and
 /// reasoning, and the answer's text so far — the chat's compaction card counts what is written, and
@@ -400,6 +403,34 @@ pub(crate) mod mlx_endpoint {
     }
 
     impl MlxEndpoint {
+        /// An engine whose FIRST chat answer is a tool call (`shell`) and every later one the
+        /// short streamed text `start` answers with — a summary request answered with a tool call.
+        pub(crate) async fn start_answering_first_with_a_tool_call() -> Self {
+            let endpoint = Self::start().await;
+            let body = format!(
+                "{}{}data: [DONE]\n\n",
+                chunk(
+                    json!({"role": "assistant", "tool_calls": [{"index": 0, "id": "t1",
+                        "type": "function", "function": {"name": "shell",
+                        "arguments": "{\"command\": \"ls\"}"}}]}),
+                    Value::Null
+                ),
+                chunk(json!({}), json!("tool_calls")),
+            );
+            Mock::given(method("POST"))
+                .and(path("/v1/chat/completions"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .insert_header("content-type", "text/event-stream")
+                        .set_body_string(body),
+                )
+                .up_to_n_times(1)
+                .with_priority(1)
+                .mount(&endpoint.server)
+                .await;
+            endpoint
+        }
+
         pub(crate) async fn start() -> Self {
             let server = MockServer::start().await;
             Mock::given(method("GET"))

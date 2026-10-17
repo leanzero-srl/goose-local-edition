@@ -548,8 +548,13 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   newest first, whole or named, `GOOSE_COMPACTION_WORKING_SET_SHARE=0.25`); STAGE 1 MASK before any summary
   (`GOOSE_COMPACTION_MASK_FIRST`, `GOOSE_COMPACTION_DROP_REASONING`: old outputs -> stubs of facts, old reasoning
   dropped, no model call, taken only when it leaves <= limit x (2·threshold-1)); chats mid-loop keep a verbatim
-  tail (GOOSE_COMPACT_KEEP_TAIL unset). Offline replay of run B: stage 1 taken at C1 only (104.5k -> 68.3k); at
-  C2/C3 the working set gives back what masking takes. LIVE METRIC: calls and tokens until the first write after
+  tail (GOOSE_COMPACT_KEEP_TAIL unset). REVIEW FIXES (two reviews, FIX-FIRST; fixes UNCOMPILED when committed):
+  GOOSE_COMPACTION_DROP_REASONING defaults FALSE — the PLAN LIVES IN THE REASONING (B_C1: 555 chars of assistant
+  text vs 250,387 of reasoning); summary thinking-off only where `Provider::reasoning_off_keeps_the_prefix` (openai
+  chat format at loopback/Rapid-MLX; Anthropic drops signed thinking at Off); tool_choice retry only where
+  `sends_tool_choice`; working set reads only for SUCCEEDED calls, never outside the folder / credential-like /
+  non-regular files; heredocs parsed; room guard `context_mgmt::Room` + `compaction_cannot_make_room`. With the
+  default (reasoning kept) stage 1 is NOT taken at any B point; stage 2 + working set + tail run there. LIVE METRIC: calls and tokens until the first write after
   each compaction (baseline B C1 37 calls and no write; C2 18 calls / 74.6 min). Replay commands: design doc §7.
 - COMPACTION IS THE CONVERSATION'S NEXT REQUEST (Q-342, 2026-09-28, E2E #3p on 3.0.69). The old summary
   request put the history as TEXT in the system message (transcript shape) → 0 of 97,590 read, 441 s of

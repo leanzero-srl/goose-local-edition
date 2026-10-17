@@ -526,7 +526,10 @@ fn read_skill_file(skill_md: &Path, skill_dir: &Path, global: bool) -> SkillRead
 ///   * THE MANIFEST (loaded_skill_context) prints one line per supporting file with no cap, so
 ///     load_skill on that skill emits ~948,000 characters — roughly TWICE the 128K-token window of the
 ///     local fleet — from a single tool call the system prompt invites the model to make.
-fn should_skip_dir(path: &Path) -> bool {
+///
+/// The developer extension's `tree` tool names these folders without walking them, for the same
+/// reason: one Forge 2.0 run's `tree` result was 161,890 chars, most of it node_modules.
+pub(crate) fn should_skip_dir(path: &Path) -> bool {
     matches!(
         path.file_name().and_then(|name| name.to_str()),
         Some(".git")

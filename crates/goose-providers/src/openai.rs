@@ -907,7 +907,7 @@ fn engine_reasoning_effort(effort: ThinkingEffort) -> &'static str {
 }
 
 /// Whether `host` (a base URL) names this machine: `localhost`, `127.0.0.0/8` or `::1`.
-fn is_loopback_endpoint(host: &str) -> bool {
+pub(crate) fn is_loopback_endpoint(host: &str) -> bool {
     url::Url::parse(host)
         .ok()
         .and_then(|url| {
@@ -1215,6 +1215,21 @@ impl ProviderDescriptor for OpenAiProvider {
 impl Provider for OpenAiProvider {
     fn get_name(&self) -> &str {
         &self.name
+    }
+
+    /// The chat-completions format renders history the same with reasoning off (reasoning is
+    /// sent only by `preserve_thinking_context`, which the switch does not touch); counted only for
+    /// a local or Rapid-MLX engine, where Qwen3.8 at `medium` was rendered byte-identical both
+    /// ways (COMPACTION-V2.md) and a cold prefill costs minutes.
+    fn reasoning_off_keeps_the_prefix(&self, model_name: &str) -> bool {
+        !Self::should_use_responses_api(model_name, &self.base_path)
+            && (Self::PROVIDERS_FRONTING_RAPID_MLX.contains(&self.name.as_str())
+                || is_loopback_endpoint(self.api_client.host()))
+    }
+
+    /// The chat-completions format copies request params, `tool_choice` among them, into the body.
+    fn sends_tool_choice(&self, model_name: &str) -> bool {
+        !Self::should_use_responses_api(model_name, &self.base_path)
     }
 
     fn skip_canonical_filtering(&self) -> bool {

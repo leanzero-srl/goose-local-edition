@@ -200,6 +200,13 @@ impl ProviderDef for LiteLLMProvider {
 
 #[async_trait]
 impl Provider for LiteLLMProvider {
+    /// The OpenAI chat format (`formats::openai::create_request`) copies request params,
+    /// `tool_choice` among them, into the body; LiteLLM translates it for the model behind it.
+    /// Reasoning-off is not claimed prefix-neutral: the model behind may be Anthropic's.
+    fn sends_tool_choice(&self, _model_name: &str) -> bool {
+        true
+    }
+
     fn get_name(&self) -> &str {
         &self.name
     }

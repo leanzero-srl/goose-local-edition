@@ -2287,11 +2287,96 @@ async fn live_plan(route: &RouteModel) -> Result<ChainPlan, String> {
 }
 
 /// This Mac's name, read once per process (adoption names this Mac's engine node with it).
+static THIS_MAC_NAME: tokio::sync::OnceCell<Result<String, String>> =
+    tokio::sync::OnceCell::const_new();
+
 async fn this_mac_name() -> Result<String, String> {
-    static NAME: tokio::sync::OnceCell<Result<String, String>> = tokio::sync::OnceCell::const_new();
-    NAME.get_or_init(crate::nodes::acp::this_mac_name)
+    THIS_MAC_NAME
+        .get_or_init(crate::nodes::acp::this_mac_name)
         .await
         .clone()
+}
+
+/// The kinds of every node a chat on `model` may be served by, as routing would see them now: the
+/// pool's enabled devices (and a live LeanZero Link route) for Auto, the chain's nodes for
+/// `node:` and `strategy:`. `None` when the route cannot be resolved without waiting (this Mac's
+/// name not read yet, an unreadable pool or node list) — callers answer no.
+fn chat_route_kinds(model: &str) -> Option<Vec<NodeKind>> {
+    let route = nodes_route(model).ok()?;
+    let Some(route) = route else {
+        let cfg = load_pool().ok()?;
+        let nodes = with_remote_route(nodes_from_config(&cfg), mlx_remote::read().live().as_ref());
+        return Some(nodes.into_iter().map(|n| n.kind).collect());
+    };
+    let mac = THIS_MAC_NAME.get()?.clone();
+    let read = crate::nodes::read(Config::global(), mac).ok()?;
+    let session = crate::session_context::current_session_id();
+    let plan = chain_plan(&route, &read, session.as_deref(), None).ok()?;
+    let pool = match Config::global().get_param::<PoolConfig>(SWARM_CONFIG_KEY) {
+        Ok(cfg) => Ok(Some(cfg)),
+        Err(ConfigError::NotFound(_)) => Ok(None),
+        Err(e) => Err(format!("the `swarm` config block could not be read ({e})")),
+    };
+    plan.defs
+        .values()
+        .map(|def| {
+            if is_pinned(def) {
+                return Some(NodeKind::MlxSidecar);
+            }
+            let member = match &def.def.pool_device {
+                Some(device) => pool_member(def, &pool, device),
+                None => cloud_member(def),
+            };
+            member.ok().map(|m| m.node.kind)
+        })
+        .collect()
+}
+
+/// `kinds` all say yes: an empty route says no.
+fn all_say(kinds: &[NodeKind], says: fn(&NodeKind) -> bool) -> bool {
+    !kinds.is_empty() && kinds.iter().all(says)
+}
+
+fn endpoint_is_loopback(endpoint: &str) -> bool {
+    url::Url::parse(endpoint)
+        .ok()
+        .and_then(|url| {
+            url.host().map(|host| match host {
+                url::Host::Domain(name) => name.eq_ignore_ascii_case("localhost"),
+                url::Host::Ipv4(ip) => ip.is_loopback(),
+                url::Host::Ipv6(ip) => ip.is_loopback(),
+            })
+        })
+        .unwrap_or(false)
+}
+
+/// The provider each kind is served through, asked `reasoning_off_keeps_the_prefix`
+/// (COMPACTION-V2.md §3.5): MLX this Mac and a Link peer are the `omlx` provider (OpenAI chat
+/// format on Rapid-MLX: yes); LM Studio is the OpenAI chat format, yes where its endpoint is this
+/// Mac; a cloud node's format is its registry's and is not built here: no.
+fn kind_keeps_the_prefix(kind: &NodeKind) -> bool {
+    match kind {
+        NodeKind::MlxSidecar | NodeKind::MlxRemote(_) => true,
+        NodeKind::LmStudio { endpoint } => endpoint_is_loopback(endpoint),
+        NodeKind::Cloud { .. } => false,
+    }
+}
+
+/// `sends_tool_choice` per kind: the OpenAI chat format (MLX, Link peer, LM Studio) puts it on the
+/// wire; a cloud node's registry format is not known here: no, so its retry is skipped.
+fn kind_sends_tool_choice(kind: &NodeKind) -> bool {
+    !matches!(kind, NodeKind::Cloud { .. })
+}
+
+/// `Provider::reasoning_off_keeps_the_prefix` for a swarm chat: every node the route may pick says
+/// yes (the summary may be served by any of them).
+pub(crate) fn chat_reasoning_off_keeps_the_prefix(model: &str) -> bool {
+    chat_route_kinds(model).is_some_and(|kinds| all_say(&kinds, kind_keeps_the_prefix))
+}
+
+/// `Provider::sends_tool_choice` for a swarm chat, by the same rule.
+pub(crate) fn chat_sends_tool_choice(model: &str) -> bool {
+    chat_route_kinds(model).is_some_and(|kinds| all_say(&kinds, kind_sends_tool_choice))
 }
 
 /// A chain node as routing reaches it now.
@@ -2937,6 +3022,45 @@ async fn node_window(
 mod tests {
     use super::*;
     use futures::StreamExt;
+
+    /// A swarm chat answers the compaction's format questions by its nodes: yes only when every
+    /// node its route may pick says yes (MLX here and a Link peer: Rapid-MLX on the OpenAI chat
+    /// format; LM Studio: the chat format, prefix-neutral only on this Mac); a cloud node, whose
+    /// format is its registry's, says no; an empty route says no.
+    #[test]
+    fn a_swarm_chat_says_yes_only_when_every_node_it_may_pick_says_yes() {
+        let peer = NodeKind::MlxRemote(RemoteTarget {
+            peer: "p".to_string(),
+            peer_name: "Studio".to_string(),
+            base_url: "http://127.0.0.1:9/peer".to_string(),
+            template_kwargs: None,
+        });
+        let local_lms = NodeKind::LmStudio {
+            endpoint: "http://127.0.0.1:1234".to_string(),
+        };
+        let lan_lms = NodeKind::LmStudio {
+            endpoint: "http://192.168.8.220:1234".to_string(),
+        };
+        let cloud = NodeKind::Cloud {
+            registry: "anthropic".to_string(),
+        };
+        let mlx = [NodeKind::MlxSidecar, peer.clone()];
+        assert!(all_say(&mlx, kind_keeps_the_prefix));
+        assert!(all_say(&mlx, kind_sends_tool_choice));
+        assert!(all_say(
+            std::slice::from_ref(&local_lms),
+            kind_keeps_the_prefix
+        ));
+        assert!(!all_say(
+            std::slice::from_ref(&lan_lms),
+            kind_keeps_the_prefix
+        ));
+        assert!(all_say(&[lan_lms], kind_sends_tool_choice));
+        let with_cloud = [NodeKind::MlxSidecar, cloud];
+        assert!(!all_say(&with_cloud, kind_keeps_the_prefix));
+        assert!(!all_say(&with_cloud, kind_sends_tool_choice));
+        assert!(!all_say(&[], kind_keeps_the_prefix));
+    }
     use goose_providers::base::stream_from_single_message;
     use goose_providers::conversation::token_usage::{ProviderUsage, Usage};
 

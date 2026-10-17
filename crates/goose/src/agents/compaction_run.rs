@@ -459,7 +459,12 @@ impl Agent {
             } => self.summary_request_extending(tools, system_prompt).await,
             CompactionRun::Recovery => SummaryRequest::Transcript,
         };
+        let room = match limit {
+            Some(limit) => self.compaction_room(&session, limit).await,
+            None => None,
+        };
         let chat = ChatCompaction {
+            room,
             trigger,
             note,
             may_ask,
@@ -467,10 +472,54 @@ impl Agent {
             goal: self.get_goal().await,
             ledger,
             kept_budget_chars: context_mgmt::kept_budget_chars(limit),
+            working_set_budget_chars: context_mgmt::working_set::working_set_budget_chars(
+                limit,
+                context_mgmt::working_set::working_set_share(),
+            ),
             working_dir: session.working_dir.clone(),
             progress: None,
         };
         Ok((state, chat, request))
+    }
+
+    /// What the compacted context must fit under (`context_mgmt::Room`): the window, the
+    /// compaction point and the system prompt + tools every request carries, counted as
+    /// `context_after_compaction` counts them. `None` — and each reason logged — when the point is
+    /// outside (0.5, 1) (no ceiling under it) or the head cannot be built or counted.
+    async fn compaction_room(
+        &self,
+        session: &crate::session::Session,
+        limit: usize,
+    ) -> Option<context_mgmt::Room> {
+        let threshold = Config::global()
+            .get_param::<f64>("GOOSE_AUTO_COMPACT_THRESHOLD")
+            .unwrap_or(DEFAULT_COMPACTION_THRESHOLD);
+        if threshold <= 0.5 || threshold >= 1.0 {
+            warn!(
+                "compaction_room_unmeasured: the compaction point {threshold} leaves no ceiling \
+                 under it; what follows a summary takes its configured shares"
+            );
+            return None;
+        }
+        let (tools, _, system_prompt, _) = match self.prepare_tools_and_prompt(session).await {
+            Ok(frame) => frame,
+            Err(e) => {
+                warn!("compaction_room_unmeasured: the system prompt and tools could not be built ({e})");
+                return None;
+            }
+        };
+        let counter = match crate::token_counter::create_token_counter().await {
+            Ok(counter) => counter,
+            Err(e) => {
+                warn!("compaction_room_unmeasured: no tokenizer ({e})");
+                return None;
+            }
+        };
+        Some(context_mgmt::Room {
+            limit,
+            threshold,
+            head_tokens: counter.count_chat_tokens(&system_prompt, &[], &tools),
+        })
     }
 
     /// Stores how a compaction ended where the chat shows it (user-only, so a reload shows the card
