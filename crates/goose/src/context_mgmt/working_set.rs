@@ -605,7 +605,7 @@ pub fn working_set_block(
         .count();
     let mut out = format!(
         "{WORKING_SET_OPEN}\nCurrent file contents after compaction: the files this conversation \
-         read or wrote, as they are on disk NOW, newest first (a dependency's files after them; {shown} of {} shown in full, \
+         read or wrote, as they are on disk NOW, newest first ({shown} of {} shown in full, \
          {used} of a {budget_chars}-char budget). They supersede any earlier view of these files \
          in this conversation; read a file again only if it changes or is listed below as not \
          shown.\n",
@@ -915,14 +915,28 @@ mod tests {
         ];
         let block = working_set_block(&files, 1_000, Some(d)).unwrap();
         let own = block.find("run();").expect("own file shown");
-        let dependency = block.find("export type X").expect("room left: the .d.ts shown");
-        assert!(own < dependency, "own files first, though the .d.ts is newer: {block}");
-
-        let tight = working_set_block(&files, "run();".len(), Some(d)).unwrap();
-        assert!(tight.contains("run();"), "{tight}");
-        assert!(!tight.contains("export type X"), "{tight}");
+        let dependency = block
+            .find("export type X")
+            .expect("room left: the .d.ts shown");
         assert!(
-            tight.contains("types.d.ts — inside a dependency or build folder; not shown (no budget left"),
+            own < dependency,
+            "own files first, though the .d.ts is newer: {block}"
+        );
+
+        // A dependency file bigger than what the own files leave is named, not shown.
+        let big = "export type Y = 2;\n".repeat(200);
+        std::fs::write(d.join("node_modules/@forge/llm/big.d.ts"), &big).unwrap();
+        let files = [
+            whole(d.join("node_modules/@forge/llm/big.d.ts")),
+            whole(d.join("index.js")),
+        ];
+        let tight = working_set_block(&files, 1_000, Some(d)).unwrap();
+        assert!(tight.contains("run();"), "{tight}");
+        assert!(!tight.contains("export type Y"), "{tight}");
+        assert!(
+            tight.contains(
+                "big.d.ts — inside a dependency or build folder; not shown (no budget left"
+            ),
             "{tight}"
         );
 
