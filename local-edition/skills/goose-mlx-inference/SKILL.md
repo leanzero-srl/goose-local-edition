@@ -1276,3 +1276,43 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
   reasoning chars); without effort 2/3 (the third chose `shell mkdir -p src` first, a well-formed call). lz.11 carries
   the same muse files (models/muse_glimmer.py, muse parsers). DFlash still needs meta-models/Muse-Glimmer-30B-assistant
   (not on disk); without it the engine serves plain decode.
+- XING4.0 LOCAL (XingChen-AGI/Xing4.0-29B-A4B, `xing4_0`, Apache-2.0, 31.2B total / ~4B active; 2026-10-18; fork
+  `lz/xing4-rc13` 1c513d179e17af804901012fa14c9bc6109edc96 on the Nemotron RC13 port 9828cffa8, so ONE pin carries
+  RC13 + Nemotron + Xing; pushed, NOT released, NOT real-model smoked yet):
+  - Why it could not load: stock mlx-lm (0.31.3 pinned, 0.32.2 latest) has no `xing4_0` (`ValueError: Model type
+    xing4_0 not supported`); support is the OPEN mlx-lm PR #1901 (TokenAI-zer). Architecture = DeepSeek-V3 MLA
+    attention (latent KV cache, ~46 KB/token across 40 layers) + noaux_tc MoE (64 routed + 1 shared, 4/token, sigmoid,
+    routed scale 2.0) + manifold-constrained HYPER-CONNECTIONS (4 residual streams, Sinkhorn-mixed around every
+    sublayer, mean over streams at the end). Not hybrid, MoE.
+  - Port: `rapid_mlx/models/xing4_0.py` = PR #1901 verbatim (two imports made absolute) + `Fp32RouterGate` (the
+    reference routes in float32; mlx-lm's MoEGate in bf16 flips near-ties). Registered in `_register_vendored_archs`.
+  - TOKENIZER TRAP: no Xing checkpoint (bf16 or MLX) ships `tokenizer.json`; only SentencePiece `tokenizer.model` behind
+    a remote-code `Xing4_0Tokenizer` (auto_map). Never run checkpoint code: the fork vendors that class
+    (`rapid_mlx/models/xing4_0_tokenizer.py`) and `_load_with_tokenizer_fallback` loads it when the folder is xing4_0 +
+    tokenizer.model. Test plants a raising `tokenization_xing4_0.py` to prove it never runs.
+  - TOOL WIRE: `<tool_call>NAME<param_key>K</param_key><param_value>V</param_value>...</tool_call>` (one line, string
+    values RAW, others JSON). Parser `xing4` (aliases xing4_0, xing), a Glm47ToolParser subclass with its own scan: a
+    value ends at a `</param_value>` followed by the next `<param_key>` or `</tool_call>`; string-schema values
+    byte-identical (the GLM parser strips + json.loads, which would cut a file's trailing newline). `<tool_call>` and
+    `</tool_call>` are SPECIAL tokens (arrive whole in a stream). The multi-format fallback scanner cannot read this
+    wire, so the parser MUST be selected: auto-config does it for any local `xing4_0` folder (is_moe, tool xing4,
+    reasoning qwen3 because the template primes `<think>\n` behind enable_thinking and renders `</think>` when off).
+  - Reference bug: the checkpoint's `modeling_xing4_0.py` `_init_weights` reads `module.fn` (attr is `hc_fn`) and
+    raises on random init; a parity harness must bypass it (the weights it loads are fine).
+  - Proof (workhorse, engine env lz.11 archive sERprzWJ… + pytest/torch in /tmp/xingref/pyext): full-model parity vs
+    the reference (tiny random config, fp32, HF state dict -> sanitize -> strict load, 96 tokens) max |dlogit| 1.49e-06
+    at scale 1.56, top-1 96/96 (`RAPID_MLX_XING_REFERENCE=<dir with modeling/configuration_xing4_0.py> pytest
+    tests/test_xing4_0_model.py`). Xing suites 741 passed; wider tool/tokenizer/vendored set 7884 passed with the same
+    9 fail + 4 error as base (llguidance/Gemma fixtures absent).
+  - WEIGHTS: TokenAI-zer/Xing4.0-29B-A4B-8bit-MLX (the PR author's conversion, mlx-lm layout: stacked switch_mlp,
+    absorbed embed_q/unembed_out, MTP layer dropped, affine 8-bit g64) at
+    `/Volumes/AI-workhorse/models/goose/TokenAI-zer/Xing4.0-29B-A4B-8bit-MLX` (31 GB). Verified vs the bf16 original
+    on 2 of 12 shards: 1,361 tensors, median rel max-error 0.7-0.8%, worst 1.6%; MLA absorption worst 1.5% over 19
+    layers; expert-order negative control 78-98% off (scripts: workhorse ~/goose-builds/loop-state/engine-smoke/).
+    nativ-community/...-MLX-8bit uses a `language_model.` prefix and would need remapping: do not use.
+  - PENDING (needs a free 48 GB+ box, never beside a loaded model): standalone real-model smoke, then the app.
+    Serve (workhorse, app argv; not a vision checkpoint so no --text-only):
+    `uvx --from "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@1c513d179e17af804901012fa14c9bc6109edc96" rapid-mlx serve /Volumes/AI-workhorse/models/goose/TokenAI-zer/Xing4.0-29B-A4B-8bit-MLX --port 8198 --served-model-name xing-smoke --enable-prefix-cache --hybrid-cache-entries 24 --max-concurrent-requests 8`
+    Boot log must say `tool_call_parser=xing4, reasoning_parser=qwen3`. Smoke:
+    `python3 ~/goose-builds/loop-state/engine-smoke/smoke.py 8198 xing-smoke` and `... --effort medium` (TEXT clean, no
+    leaked `<think>`/`<tool_call>` in content, 3/3 write calls). In the app: engine-wrap pin to the full sha above.
