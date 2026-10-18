@@ -141,6 +141,18 @@ impl EditTools {
             }
         };
 
+        // A no-op edit (before == after) used to report "Edited X (N lines -> N lines)" and write the file
+        // unchanged: Gemma 4 26B-A4B (Forge 2.0, 2026-10-18) made two in a row, read them as progress, and
+        // ended its turn empty. Say plainly that nothing changed.
+        if params.before == params.after {
+            return CallToolResult::error(vec![Content::text(format!(
+                "No change made to {}: `before` and `after` are identical, so this edit would not change the \
+                 file. To change it, give the new text in `after`.",
+                params.path
+            ))
+            .with_priority(0.0)]);
+        }
+
         let new_content = match string_replace(&content, &params.before, &params.after) {
             Ok(c) => c,
             Err(msg) => {
@@ -761,5 +773,25 @@ mod tests {
             assert_eq!(openai(&now_msg), openai(&then_msg));
             assert_eq!(anthropic(&now_msg), anthropic(&then_msg));
         }
+    }
+
+    #[test]
+    fn a_no_op_edit_is_refused_and_leaves_the_file_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.js");
+        std::fs::write(&path, "import { kvs } from '@forge/kvs';\nconst CONFIG_KEY = 'config';\n").unwrap();
+        let before = std::fs::metadata(&path).unwrap().modified().unwrap();
+        let tool = EditTools::new();
+        let same = "import { kvs } from '@forge/kvs';".to_string();
+        let result = tool.file_edit(FileEditParams {
+            path: path.to_string_lossy().into_owned(),
+            before: same.clone(),
+            after: same,
+        });
+        assert_eq!(result.is_error, Some(true), "{result:?}");
+        let text = format!("{:?}", result.content);
+        assert!(text.contains("No change made"), "{text}");
+        assert!(!text.contains("Edited"), "{text}");
+        assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), before);
     }
 }

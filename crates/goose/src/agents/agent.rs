@@ -83,6 +83,11 @@ const LENGTH_CUT_CONTINUATION: &str = "Your last reply was cut off at the model'
      unfinished and nothing in it was carried out. Continue from where it stopped in smaller steps: if the task needs \
      actions, take the next one now with a tool call instead of planning everything in one reply, and keep each reply \
      well under the limit.";
+/// Sent (agent-visible only) with every empty-turn retry. Resending the identical conversation to a
+/// deterministic local model reproduces the same empty reply: Gemma 4 26B-A4B (2026-10-18) stopped after one
+/// token three times on the same 71,670-token prompt and the run was refused.
+const EMPTY_TURN_CONTINUATION: &str = "Your last reply had no text and no tool call. Continue the task now: \
+     take the next step with a tool call, or give your final answer if the task is done.";
 const EMPTY_TURN_MESSAGE: &str =
     "The model returned an empty response. Please resend your message to continue.";
 const DEFAULT_FRONTEND_INSTRUCTIONS: &str = "The following tools are provided directly by the frontend and will be executed by the frontend when called.";
@@ -3261,6 +3266,11 @@ impl Agent {
                                     if empty_turn_retries < MAX_EMPTY_TURN_RETRIES {
                                         empty_turn_retries += 1;
                                         retrying_after_empty_turn = true;
+                                        messages_to_add.push(
+                                            Message::user()
+                                                .with_text(EMPTY_TURN_CONTINUATION)
+                                                .with_visibility(false, true),
+                                        );
                                         warn!(
                                             "Provider returned an empty response; retrying ({}/{})",
                                             empty_turn_retries, MAX_EMPTY_TURN_RETRIES
