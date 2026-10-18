@@ -1199,8 +1199,39 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
   as a projsync wip snapshot.
 - RC13 CONTROL, FIRST FULL LOCAL FORGE 2.0 BUILD WITH NO ENGINE INCIDENT (2026-10-17, Gabee 64 GB, Qwen3.8-27B Q8-base,
   engine e3a92b555): build 1 scored 0.1342. That is the best local Forge score so far (previous best was JetBrains-blend at 0.0938).
-  Inner score 0.664, cut by a critical failure (CI secret echoed in the admin save/load resolver responses, x0.6) and by
-  reliability 0.337. 299 of 300 calls, 7.8 h, OOM 0, and the memory guard took no harmful action. Peak prompt 122k.
+  Inner score 0.664, cut by a x0.6 critical (r6_secret_never_disclosed) and by reliability 0.337. CORRECTION 2026-10-17: that
+  critical is a PROBE FALSE POSITIVE, not a model leak: forge2_probe.mjs shownSecret took the admin accountId (36 chars,
+  first shown after the rotate) for the secret; the real secret occurs only in kvs secret/set and the rotate response.
+  Without it the build is at least 0.2237 (details + fix design: goose-benchmark-iteration SKILL.md changelog 2026-10-17). 299 of 300 calls, 7.8 h, OOM 0, and the memory guard took no harmful action. Peak prompt 122k.
   Model-side trap seen: it spent about 1.4 h in `sleep 480` chains waiting for the simulator's quota hour to roll so it could re-test
   the backfill, and it read local time as UTC. Count that wait separately when comparing candidates' wall clock. The engine
   sits idle the whole time, so it is not serving cost.
+- COMPACTION V2 LIVE + LIVE WINDOW + V3 (2026-10-17, Gabee, Qwen3.8-27B Q8-base, engine RC13):
+  - The window probe read the memory guard's `max_model_len` ONCE per process. Reading it at app launch under load
+    gave 117,760, while the engine later served 130-161k, so every compaction fired early. Fixed in df5d65d03
+    (t12/combined, also on t12/local-bench-fidelity): a guard-derived window is re-read every 60 s
+    (LIVE_WINDOW_REFRESH); a missed re-read keeps the last window and waits a refresh. Live trace: 117,760 -> 137,984
+    -> 161,014 within one run.
+  - V2 C1 (series 8795392e, at call 61, 105k -> 61k): the summary held every needed fact, yet the model re-researched
+    for 29+ calls with nothing written. It cited the summary only at about call 78. Request order was [summary][cont]
+    [working set 135k ch][task]. The six node_modules .d.ts it had read were "not shown", and those are the APIs it
+    re-read. V3 (t12/compaction-v3 76dc2744f): working set BEFORE the summary; dependency files read whole fill
+    the budget left after the chat's own files.
+  - A ONE-CALL REPLAY CANNOT SEPARATE PROMPT ORDERS here: every sample's first action was the summary's own
+    "next step" (research). The defect lives in the ~30 calls after that, so measure V3 live (calls and minutes from
+    compaction to first write). Single-call timings vary 6x run to run (1,696 s vs 279 s for the same request).
+  - The "turn N/M used" line already exists (moim.rs turn_budget_line, from 50% of max_turns). The model saw
+    299/300 and still made a breaking last edit, so this is not a goose gap.
+- LIQUID LFM2.5 24B-A2B LOCAL (2026-10-17, engine pin v0.14.3-lz.11 = lz.10 + fork c56728690, goose 48ef631b8, app 3.0.117):
+  - Aliases match only hub names/paths, so a FOLDER mount of any LFM got no parser: calls came back as content
+    `[shell(command='ls /tmp')]`. lz.11 detects `model_type lfm2*` + a `<|tool_call_start|>` template → tool `lfm`,
+    reasoning `deepseek_r1_distill` (LFM2.5 opens `<think>` in EVERY generation prompt and has no enable_thinking
+    switch; `qwen3` streamed the thought as content whenever R12-T1F auto-disabled thinking for tools).
+  - TAG RULE: the fork's pipeline audit (tests/test_pipeline_single_line_ports_audit.py) accepts only
+    `v<x>.<y>.<z>-lz.<N>` integers; a `lz.10.1` tag fails it. lz.11 is now LFM; the memory guard release takes lz.12.
+    A pin bump also moves `PIPELINE_SINGLE_LINE_REVIEWED_THROUGH` with an n/a entry on the pipeline line (331d6231d).
+  - PLANNER GAP: "Could not plan — config.json declares 64 experts but no tensor has a leading dimension of 64" for
+    lfm2_moe (stacked layout); starting still works. Not fixed.
+  - Config for a local Gauntlet: mlx_engine.model_id = <org>/<dir>, served_model_name null (the old alias would name
+    the new model), OPENAI_HOST http://127.0.0.1:8090, provider_default_models.openai = the served id; edit with the
+    app QUIT. The engine-glance pill appears once the engine mounts: loop-state tools/mainpage.mjs picks the largest page.

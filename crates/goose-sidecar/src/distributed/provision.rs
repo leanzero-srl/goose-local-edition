@@ -118,8 +118,9 @@ pub const PIPELINE_FORK_COMMIT: &str = "8c000705422c314b2f7acd81ae9e398db0ae9320
 /// `tests/pipeline_single_line_ports.json` `reviewed_through`. The pipeline line branched from the
 /// single one at lz.2 and missed lz.6..lz.8 silently (Q-143, Q-144); a test pins this equal to
 /// [`crate::engine::ENGINE_LAUNCHER`]'s tag, so bumping the single engine without reviewing the
-/// pipeline fails `cargo test -p goose-sidecar`.
-pub const PIPELINE_SINGLE_LINE_REVIEWED_THROUGH: &str = "v0.14.3-lz.10";
+/// pipeline fails `cargo test -p goose-sidecar`. lz.11 (LFM metadata parsers) is reviewed n/a in
+/// the fork's manifest at 331d6231d; the pinned pipeline code is unchanged by it.
+pub const PIPELINE_SINGLE_LINE_REVIEWED_THROUGH: &str = "v0.14.3-lz.11";
 /// The fork carrying `rapid_mlx.distributed.pipeline_qwen4` at [`PIPELINE_FORK_COMMIT`].
 pub const PIPELINE_FORK: &str =
     "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@8c000705422c314b2f7acd81ae9e398db0ae9320";
