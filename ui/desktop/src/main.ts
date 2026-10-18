@@ -27,7 +27,15 @@ import {
   type BuildCompletionReceipt,
   type StoredRunMeta,
 } from './benchRescore';
-import { billedCostRowField } from './benchBilledCost';
+import {
+  billedCostRowField,
+  declaredPublishBilling,
+  openRouterPublishBilling,
+  runTokens,
+  MAX_DECLARED_USD_PER_MTOK,
+  type DeclaredPrices,
+  type PublishBilling,
+} from './benchBilledCost';
 import { budgetRowField, maxUsdLaunchEnv } from './benchBudget';
 import {
   appendBenchmarkActivity,
@@ -145,6 +153,7 @@ import {
 } from './benchSeriesProvider';
 import started from 'electron-squirrel-startup';
 import path from 'node:path';
+import util from 'node:util';
 import os from 'node:os';
 import { execFileSync, spawn, execFile, type ChildProcess } from 'child_process';
 import 'dotenv/config';
@@ -5829,333 +5838,419 @@ const cancelActiveBenchRun = (why: string): { ok: boolean; error?: string } => {
 ipcMain.handle('benchmark-cancel', async () => cancelActiveBenchRun('cancel requested'));
 
 const benchmarkPublicationOwner = new BenchPublicationOwner();
-ipcMain.handle('benchmark-publish', (_event, args?: { title?: string; runKey?: string }) =>
-  benchmarkPublicationOwner.run(async () => {
-    if (activeBenchRun || activeBenchSeries || benchmarkLaunchPending)
-      return { ok: false, error: 'Wait for the benchmark to finish before publishing.' };
-    // ANY finished run publishes from its OWN result row (runKey); without a key, the latest result as
-    // before. A run this machine already posted is not posted twice.
-    let stored: Record<string, unknown>;
-    let storedIsLatest = true;
-    let runKey: string | null = null;
-    if (typeof args?.runKey === 'string' && args.runKey) {
-      const row = (await readBenchSessionRows()).find((r) => benchRunKey(r) === args.runKey);
-      if (!row) return { ok: false, error: 'this run is no longer in the session list' };
-      const resolved = await resolveRunResult(row);
-      if (!resolved)
-        return { ok: false, error: "this run's scored result could not be read from its folder" };
-      // Posted and not re-scored since: the board already shows exactly this result.
-      const rescoredAt = (resolved.result.runMeta as Partial<StoredRunMeta> | undefined)
-        ?.rescoredAt;
-      if (publishedIsCurrent((await readPublished())[args.runKey], rescoredAt))
-        return { ok: false, error: 'this run is already live on leanzero.net' };
-      stored = resolved.result;
-      storedIsLatest = resolved.latest;
-      runKey = args.runKey;
-    } else {
-      try {
-        stored = JSON.parse(await fs.readFile(BENCH_RESULT, 'utf8')) as Record<string, unknown>;
-      } catch {
-        return { ok: false, error: 'no benchmark result to publish — run the benchmark first' };
+/**
+ * The run's price as leanzero.net stores it (`billing`; the run page's "Recorded inference cost"). Before
+ * 2026-10-18 the app sent none, so every published run showed no price although OpenRouter had billed every
+ * call. An OpenRouter bill in the run's own verdict.json is the price and is always sent; declared prices
+ * (the publish card's per-1M-token fields) are used only when no such bill exists — Google direct, Bedrock,
+ * a local engine — and are sent as an ESTIMATE the site recomputes from the run's own token counts.
+ */
+async function benchPublishBilling(
+  stored: Record<string, unknown>,
+  declared: unknown
+): Promise<{ record?: PublishBilling; error?: string }> {
+  const prices = declared === undefined || declared === null ? null : readDeclaredPrices(declared);
+  if (prices === 'invalid')
+    return {
+      error: `Declared prices must be USD per 1M tokens, from 0 to ${MAX_DECLARED_USD_PER_MTOK}, with both an input and an output price.`,
+    };
+  if (typeof stored.workdir !== 'string') return {};
+  // The verdict whose bill is sent: the run dir's verdict.json. A Gauntlet re-score stores its
+  // verdict-evidence folder as the workdir, with its verdict one level up. A file whose bill is not the
+  // stored row's bill belongs to another run and is never hashed.
+  let bytes: Buffer | null = null;
+  let verdict: { agent?: { billed_cost?: unknown; usage?: unknown } } | null = null;
+  for (const dir of [stored.workdir, path.dirname(stored.workdir)]) {
+    try {
+      const raw = await fs.readFile(path.join(dir, 'verdict.json'));
+      const v = JSON.parse(raw.toString('utf8'));
+      if (
+        stored.billedCost === undefined ||
+        util.isDeepStrictEqual(v?.agent?.billed_cost, stored.billedCost)
+      ) {
+        bytes = raw;
+        verdict = v;
+        break;
       }
+    } catch {
+      // no verdict here; try the next folder
     }
-    // Key by key for both families: the build's id and, after a re-score, rescoredAt — what lets the
-    // site replace the entry it already shows for this build instead of adding a second one.
-    const runMeta = publishRunMeta(stored);
-    if (!runMeta) {
-      return {
-        ok: false,
-        error:
-          'this result was saved by an older version of the app and is missing the run record publishing needs — run the benchmark again to publish',
-      };
-    }
-    // Frozen gate, from the CACHED catalog: the same refusal the server would return, without
-    // burning the POST. The server stays the authority — it refuses frozen benchmarks too.
-    const frozenRefusal = frozenPublishRefusal(
-      (await readBenchCatalogCache())?.benchmarks,
-      typeof stored.scorerVersion === 'string' ? stored.scorerVersion : ''
-    );
-    if (frozenRefusal) return frozenRefusal;
-    // `model` is ENGINE TRUTH only (v2.4): the renderer stopped sending one, so a user-editable
-    // value can no longer publish a lie. A result whose run recorded no usable pool_resolved id
-    // refuses loudly with the reason — never a substitute.
-    const model = (typeof stored.modelId === 'string' ? stored.modelId : '').trim();
-    if (benchmarkModelIdProblem(model)) {
-      return {
-        ok: false,
-        error:
-          'this result carries no usable model id from the engine — run the benchmark again to publish',
-      };
-    }
-    // Forge (forge/INTEGRATION.md): the same route and envelope, refused here when score_forge.py itself
-    // marked the verdict not board-grade (held, unpublishable, or an rc scorer).
-    const forgeResult =
-      typeof stored.scorerVersion === 'string' && familyOfScorer(stored.scorerVersion) === 'forge';
-    if (stored.scorerVersion === 'forge-2.0') {
-      let installedFingerprint: string;
-      try {
-        installedFingerprint = forgeTaskFingerprint(
-          await fs.readFile(path.join(resolveBenchPayloadDir(), 'forge2', 'release-manifest.json'))
-        );
-      } catch {
+  }
+  if (!bytes || !verdict)
+    return prices
+      ? {
+          error:
+            "This run's verdict.json is no longer in its folder, so a price cannot be attached. Clear the price fields to publish without one.",
+        }
+      : {};
+  const sha = crypto.createHash('sha256').update(bytes).digest('hex');
+  const bill = openRouterPublishBilling(verdict.agent?.billed_cost, sha);
+  if (bill) return { record: bill };
+  if (!prices) return {};
+  const tokens = runTokens(verdict.agent?.usage);
+  if (!tokens)
+    return {
+      error:
+        'This run recorded no complete token counts, so declared prices cannot be turned into a cost. Clear the price fields to publish without one.',
+    };
+  const record = declaredPublishBilling(tokens, prices, sha);
+  return record ? { record } : { error: 'The declared prices could not be applied to this run.' };
+}
+
+function readDeclaredPrices(value: unknown): DeclaredPrices | 'invalid' {
+  if (!value || typeof value !== 'object') return 'invalid';
+  const v = value as Record<string, unknown>;
+  const ok = (n: unknown) =>
+    typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= MAX_DECLARED_USD_PER_MTOK;
+  if (!ok(v.inputUsdPerMTok) || !ok(v.outputUsdPerMTok)) return 'invalid';
+  if (v.cachedInputUsdPerMTok !== undefined && !ok(v.cachedInputUsdPerMTok)) return 'invalid';
+  return {
+    inputUsdPerMTok: v.inputUsdPerMTok as number,
+    outputUsdPerMTok: v.outputUsdPerMTok as number,
+    ...(v.cachedInputUsdPerMTok !== undefined
+      ? { cachedInputUsdPerMTok: v.cachedInputUsdPerMTok as number }
+      : {}),
+  };
+}
+
+ipcMain.handle(
+  'benchmark-publish',
+  (_event, args?: { title?: string; runKey?: string; declaredPrices?: DeclaredPrices }) =>
+    benchmarkPublicationOwner.run(async () => {
+      if (activeBenchRun || activeBenchSeries || benchmarkLaunchPending)
+        return { ok: false, error: 'Wait for the benchmark to finish before publishing.' };
+      // ANY finished run publishes from its OWN result row (runKey); without a key, the latest result as
+      // before. A run this machine already posted is not posted twice.
+      let stored: Record<string, unknown>;
+      let storedIsLatest = true;
+      let runKey: string | null = null;
+      if (typeof args?.runKey === 'string' && args.runKey) {
+        const row = (await readBenchSessionRows()).find((r) => benchRunKey(r) === args.runKey);
+        if (!row) return { ok: false, error: 'this run is no longer in the session list' };
+        const resolved = await resolveRunResult(row);
+        if (!resolved)
+          return { ok: false, error: "this run's scored result could not be read from its folder" };
+        // Posted and not re-scored since: the board already shows exactly this result.
+        const rescoredAt = (resolved.result.runMeta as Partial<StoredRunMeta> | undefined)
+          ?.rescoredAt;
+        if (publishedIsCurrent((await readPublished())[args.runKey], rescoredAt))
+          return { ok: false, error: 'this run is already live on leanzero.net' };
+        stored = resolved.result;
+        storedIsLatest = resolved.latest;
+        runKey = args.runKey;
+      } else {
+        try {
+          stored = JSON.parse(await fs.readFile(BENCH_RESULT, 'utf8')) as Record<string, unknown>;
+        } catch {
+          return { ok: false, error: 'no benchmark result to publish — run the benchmark first' };
+        }
+      }
+      // Key by key for both families: the build's id and, after a re-score, rescoredAt — what lets the
+      // site replace the entry it already shows for this build instead of adding a second one.
+      const runMeta = publishRunMeta(stored);
+      if (!runMeta) {
         return {
           ok: false,
           error:
-            'The installed Forge 2.0 task receipt could not be read. Reinstall the current Goose Swarm release before publishing.',
+            'this result was saved by an older version of the app and is missing the run record publishing needs — run the benchmark again to publish',
         };
       }
-      const taskProblem = forgeTaskPublicationProblem(stored, installedFingerprint);
-      if (taskProblem) return { ok: false, error: taskProblem };
-    }
-    if (forgeResult) {
-      const problem = forgePublishProblem(stored);
-      if (problem) return { ok: false, error: problem };
-    }
-    const identity = await ensureBenchIdentity();
-    // The title is the USER'S name for the run (v2.4, Mihai 2026-08-30: the auto-generated
-    // handle is not a title) — required, refused here with the reason, never defaulted.
-    const title = typeof args?.title === 'string' ? args.title.trim().slice(0, 80) : '';
-    if (!title) {
-      return { ok: false, error: 'a title is required — name this run before publishing' };
-    }
-    // Prefer the frozen snapshot written WITH the result row — the workdir is reused and wiped
-    // by the next run, so reading it at publish time can attach another run's screenshots to
-    // this row's score.
-    // The snapshot belongs to result.json's run only; any other run reads its own tree.
-    const snapshotShots: BenchShot[] = storedIsLatest
-      ? await readBenchShotsSnapshot(path.join(BENCH_DIR, 'shots-snapshot'))
-      : [];
-    const screenshots = limitBenchShotsForPublish(
-      snapshotShots.length
-        ? snapshotShots
-        : typeof stored.workdir === 'string'
-          ? await pickBenchShots(stored.workdir)
-          : []
-    );
-    const tiers = (stored.tiers ?? {}) as Record<string, unknown>;
-    // STRICT allowlist per the contract — unknown keys reject the whole payload, so the payload
-    // is built key by key (never a spread of the stored row, which carries mine/workdir).
-    // v2.3 card hygiene: the PUBLIC label is neutral — "<N>-node Swarm", never the in-app
-    // first-person "Your fleet · N nodes".
-    const cloudEntrant =
-      typeof stored.provider === 'string' ||
-      (typeof stored.runId === 'string' && stored.runId.startsWith('cloud-'));
-    const nodeCount = !cloudEntrant && typeof stored.nodes === 'number' ? stored.nodes : null;
-    const payload: Record<string, unknown> = {
-      label: cloudEntrant
-        ? `${model} · single agent`
-        : nodeCount != null
-          ? `${nodeCount}-node Swarm`
-          : 'Swarm',
-      score: stored.score,
-      // Forge's tiers (L…E) come with forgePublishBody below; this is Gauntlet's A–D envelope.
-      tiers: { A: tiers.A ?? 0, B: tiers.B ?? 0, C: tiers.C ?? 0, D: tiers.D ?? 0 },
-      ...(nodeCount != null ? { nodes: nodeCount } : {}),
-      ...(typeof stored.hard === 'number' ? { hard: stored.hard } : {}),
-      ...(typeof stored.excellent === 'boolean' ? { excellent: stored.excellent } : {}),
-      ...(typeof stored.wallSecs === 'number' ? { wallSecs: stored.wallSecs } : {}),
-      ...(typeof stored.scorerVersion === 'string' ? { scorerVersion: stored.scorerVersion } : {}),
-      title,
-      model,
-      ...(typeof stored.provider === 'string' ? { provider: stored.provider } : {}),
-      poster: { installId: identity.installId, handle: identity.handle },
-      ...(screenshots.length > 0 ? { screenshots } : {}),
-      runMeta,
-      ...(stored.telemetry && typeof stored.telemetry === 'object'
-        ? { telemetry: stored.telemetry }
-        : {}),
-    };
-    // Forge's graded browser recording (score_forge.py, SB7.x's media shape) rides like Gauntlet's. Without
-    // a verified clip it publishes ONLY when the four visual rows are the scorer's own "no surface rendered
-    // app content" vacuous zeros (clipAbsence = the site's rule); anything else is refused.
-    if (forgeResult) {
-      const media =
-        typeof stored.workdir === 'string'
-          ? await readBenchMedia(stored.workdir)
-          : { videos: [], error: 'no run directory' };
-      const clipless =
-        media.videos.length !== 1 || media.error
-          ? clipAbsence(
-              stored.scorerVersion as string,
-              (stored.verdict as { checks?: unknown })?.checks
-            )
-          : null;
-      // Surfaces rendered (or the probe failed) but no verified clip: a SCORING problem, never a clip-less
-      // post — the card offers Retry scoring on the saved build (forgeClipMissing).
-      if (!clipless && (media.error || media.videos.length !== 1))
+      // Frozen gate, from the CACHED catalog: the same refusal the server would return, without
+      // burning the POST. The server stays the authority — it refuses frozen benchmarks too.
+      const frozenRefusal = frozenPublishRefusal(
+        (await readBenchCatalogCache())?.benchmarks,
+        typeof stored.scorerVersion === 'string' ? stored.scorerVersion : ''
+      );
+      if (frozenRefusal) return frozenRefusal;
+      // `model` is ENGINE TRUTH only (v2.4): the renderer stopped sending one, so a user-editable
+      // value can no longer publish a lie. A result whose run recorded no usable pool_resolved id
+      // refuses loudly with the reason — never a substitute.
+      const model = (typeof stored.modelId === 'string' ? stored.modelId : '').trim();
+      if (benchmarkModelIdProblem(model)) {
         return {
           ok: false,
-          error: `${stored.scorerVersion} publication requires its graded browser clip, and none could be verified although the app's surfaces were graded (${media.error ?? 'clip count mismatch'}). Retry scoring re-grades the saved build and records it.`,
+          error:
+            'this result carries no usable model id from the engine — run the benchmark again to publish',
         };
-      if (clipless) payload.noRecording = true;
-      else {
-        try {
-          const clip = await publishableClip(
-            stored.workdir as string,
-            media.videos[0],
-            benchClipTools
-          );
-          payload.videoReceipt = await uploadBenchmarkVideo(
-            clip.video,
-            BENCH_PUBLISH_URL,
-            identity.installId,
-            stored.scorerVersion as string
-          );
-        } catch (error) {
-          return { ok: false, error: error instanceof Error ? error.message : String(error) };
-        }
       }
-    }
-    if (typeof stored.scorerVersion === 'string' && isolatedPaymentsTier(stored.scorerVersion)) {
-      if (typeof stored.workdir !== 'string')
-        return { ok: false, error: `${stored.scorerVersion} recording has no run directory` };
-      const media = await readBenchMedia(stored.workdir);
-      // With its one verified clip: uploaded as always. Without one, ONLY when the scorer's own rows say
-      // the app never served a page (clipAbsence = the site's rule, website 9c371d7): the payload simply
-      // carries no videoReceipt and the posted checksSummary rows are the proof. Otherwise refused.
-      const clipless =
-        media.videos.length !== 1 || media.error
-          ? clipAbsence(stored.scorerVersion, (stored.verdict as { checks?: unknown })?.checks)
-          : null;
-      // The site accepts noRecording only when it equals its own absence computed from the posted rows.
-      if (clipless) payload.noRecording = true;
-      else {
-        if (media.error || media.videos.length !== 1)
+      // Forge (forge/INTEGRATION.md): the same route and envelope, refused here when score_forge.py itself
+      // marked the verdict not board-grade (held, unpublishable, or an rc scorer).
+      const forgeResult =
+        typeof stored.scorerVersion === 'string' &&
+        familyOfScorer(stored.scorerVersion) === 'forge';
+      if (stored.scorerVersion === 'forge-2.0') {
+        let installedFingerprint: string;
+        try {
+          installedFingerprint = forgeTaskFingerprint(
+            await fs.readFile(
+              path.join(resolveBenchPayloadDir(), 'forge2', 'release-manifest.json')
+            )
+          );
+        } catch {
           return {
             ok: false,
-            error: `${stored.scorerVersion} publication requires one verified graded browser clip: ${media.error ?? 'clip count mismatch'}`,
+            error:
+              'The installed Forge 2.0 task receipt could not be read. Reinstall the current Goose Swarm release before publishing.',
           };
-        try {
-          const clip = await publishableClip(stored.workdir, media.videos[0], benchClipTools);
-          payload.videoReceipt = await uploadBenchmarkVideo(
-            clip.video,
-            BENCH_PUBLISH_URL,
-            identity.installId,
-            stored.scorerVersion
-          );
-        } catch (error) {
-          return { ok: false, error: error instanceof Error ? error.message : String(error) };
         }
+        const taskProblem = forgeTaskPublicationProblem(stored, installedFingerprint);
+        if (taskProblem) return { ok: false, error: taskProblem };
       }
-    }
-    // v2.3: per-node detail from the persisted pool_resolved devices — omitted entirely when
-    // the run's log had no pool_resolved (legacy results store no poolDevices).
-    const poolDevices = (Array.isArray(stored.poolDevices) ? stored.poolDevices : []) as Array<{
-      id?: unknown;
-      modelId?: unknown;
-    }>;
-    const nodesDetail = poolDevices
-      .filter((d) => typeof d?.modelId === 'string' && d.modelId.length > 0)
-      .slice(0, 8)
-      .map((d) => ({
-        name: benchNodeName(typeof d.id === 'string' ? d.id : ''),
-        model: (d.modelId as string).slice(0, 120),
-      }))
-      .filter((n) => n.name.length > 0);
-    if (nodesDetail.length > 0) payload.nodesDetail = nodesDetail;
-    // v2.1 scoring depth (contract addition 2026-08-17): the same "How this score was built"
-    // story the desktop shows, on the site's run card. Built key-by-key from the persisted
-    // verdict — never a spread — and each field omitted entirely for legacy results without one.
-    const verdict = stored.verdict as
-      | {
-          checks?: Array<{ check?: unknown; tier?: unknown; score?: unknown; detail?: unknown }>;
-          tiers?: Record<string, { mean?: unknown } | undefined>;
-          core?: unknown;
-          admission?: unknown;
-          rawScore?: unknown;
-          hard?: unknown;
-          findingsHeld?: unknown;
-          repairRounds?: Array<{ round?: unknown; findings?: unknown }>;
-        }
-      | undefined;
-    if (forgeResult)
-      Object.assign(payload, forgePublishBody(stored), forgeTaskPublicationFields(stored));
-    else if (verdict) {
-      Object.assign(payload, publicScoreDetails(verdict));
-      if (verdict.admission) payload.admission = verdict.admission;
-      if (typeof verdict.rawScore === 'number') payload.rawScore = verdict.rawScore;
-      const checksSummary = (Array.isArray(verdict.checks) ? verdict.checks : [])
-        .filter(
-          (c) =>
-            typeof c?.check === 'string' &&
-            typeof c?.tier === 'string' &&
-            typeof c?.score === 'number'
-        )
-        .map((c) => ({
-          check: (c.check as string).slice(0, 60),
-          tier: c.tier as string,
-          score: c.score as number,
-          detail: (typeof c.detail === 'string' ? c.detail : '').slice(0, 220),
-        }));
-      if (checksSummary.length > 0) payload.checksSummary = checksSummary;
-
-      const num = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined);
-      const composition = {
-        core: num(verdict.core),
-        journey: num(verdict.tiers?.J?.mean),
-        visual: num(verdict.tiers?.V?.mean),
-        perf: num(verdict.tiers?.P?.mean),
-        hard: num(verdict.hard),
-      };
-      // All five or none — a partial object (an sb-4-era verdict without J/V/P) would trip the
-      // server's strict validation for no gain.
-      if (Object.values(composition).every((v) => typeof v === 'number')) {
-        payload.composition = composition;
+      if (forgeResult) {
+        const problem = forgePublishProblem(stored);
+        if (problem) return { ok: false, error: problem };
       }
-
-      const repairRounds = (Array.isArray(verdict.repairRounds) ? verdict.repairRounds : [])
-        .filter((r) => typeof r?.round === 'number' && typeof r?.findings === 'number')
-        .map((r) => ({ round: r.round as number, findings: r.findings as number }));
-      if (repairRounds.length > 0) payload.repairRounds = repairRounds;
-
-      const findingsHeld = (Array.isArray(verdict.findingsHeld) ? verdict.findingsHeld : [])
-        .filter((f): f is string => typeof f === 'string')
-        .slice(0, 12)
-        .map((f) => f.slice(0, 400));
-      if (findingsHeld.length > 0) payload.findingsHeld = findingsHeld;
-    }
-    try {
-      const res = await fetch(BENCH_SITE_API, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        // 422 = the server's consistency gates fired; surface ITS message, not a bare status.
-        const body = await res.text().catch(() => '');
-        let serverMessage = '';
-        try {
-          const parsed = JSON.parse(body) as { error?: unknown; message?: unknown };
-          serverMessage = String(parsed.error ?? parsed.message ?? '');
-        } catch {
-          serverMessage = body.slice(0, 300);
-        }
-        return {
-          ok: false,
-          status: res.status,
-          error: serverMessage ? `HTTP ${res.status}: ${serverMessage}` : `HTTP ${res.status}`,
-        };
+      const identity = await ensureBenchIdentity();
+      // The title is the USER'S name for the run (v2.4, Mihai 2026-08-30: the auto-generated
+      // handle is not a title) — required, refused here with the reason, never defaulted.
+      const title = typeof args?.title === 'string' ? args.title.trim().slice(0, 80) : '';
+      if (!title) {
+        return { ok: false, error: 'a title is required — name this run before publishing' };
       }
-      const accepted = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-      // The run is now live: remembered per run so its card says so and it is never posted twice.
-      const publishedKey =
-        runKey ??
-        benchRunKey({
-          runId: typeof stored.runId === 'string' ? stored.runId : null,
-          startedAt: runMeta.startedAt,
-        });
-      await recordPublished(publishedKey, {
-        url: typeof accepted.url === 'string' ? accepted.url : null,
+      // Prefer the frozen snapshot written WITH the result row — the workdir is reused and wiped
+      // by the next run, so reading it at publish time can attach another run's screenshots to
+      // this row's score.
+      // The snapshot belongs to result.json's run only; any other run reads its own tree.
+      const snapshotShots: BenchShot[] = storedIsLatest
+        ? await readBenchShotsSnapshot(path.join(BENCH_DIR, 'shots-snapshot'))
+        : [];
+      const screenshots = limitBenchShotsForPublish(
+        snapshotShots.length
+          ? snapshotShots
+          : typeof stored.workdir === 'string'
+            ? await pickBenchShots(stored.workdir)
+            : []
+      );
+      const tiers = (stored.tiers ?? {}) as Record<string, unknown>;
+      // STRICT allowlist per the contract — unknown keys reject the whole payload, so the payload
+      // is built key by key (never a spread of the stored row, which carries mine/workdir).
+      // v2.3 card hygiene: the PUBLIC label is neutral — "<N>-node Swarm", never the in-app
+      // first-person "Your fleet · N nodes".
+      const cloudEntrant =
+        typeof stored.provider === 'string' ||
+        (typeof stored.runId === 'string' && stored.runId.startsWith('cloud-'));
+      const nodeCount = !cloudEntrant && typeof stored.nodes === 'number' ? stored.nodes : null;
+      const payload: Record<string, unknown> = {
+        label: cloudEntrant
+          ? `${model} · single agent`
+          : nodeCount != null
+            ? `${nodeCount}-node Swarm`
+            : 'Swarm',
+        score: stored.score,
+        // Forge's tiers (L…E) come with forgePublishBody below; this is Gauntlet's A–D envelope.
+        tiers: { A: tiers.A ?? 0, B: tiers.B ?? 0, C: tiers.C ?? 0, D: tiers.D ?? 0 },
+        ...(nodeCount != null ? { nodes: nodeCount } : {}),
+        ...(typeof stored.hard === 'number' ? { hard: stored.hard } : {}),
+        ...(typeof stored.excellent === 'boolean' ? { excellent: stored.excellent } : {}),
+        ...(typeof stored.wallSecs === 'number' ? { wallSecs: stored.wallSecs } : {}),
+        ...(typeof stored.scorerVersion === 'string'
+          ? { scorerVersion: stored.scorerVersion }
+          : {}),
         title,
-        score: typeof stored.score === 'number' ? stored.score : 0,
-        publishedAt: new Date().toISOString(),
-        source: 'app',
-      }).catch((error) => log.error('Published run could not be recorded:', error));
-      return { ok: true, ...accepted };
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
-    }
-  })
+        model,
+        ...(typeof stored.provider === 'string' ? { provider: stored.provider } : {}),
+        poster: { installId: identity.installId, handle: identity.handle },
+        ...(screenshots.length > 0 ? { screenshots } : {}),
+        runMeta,
+        ...(stored.telemetry && typeof stored.telemetry === 'object'
+          ? { telemetry: stored.telemetry }
+          : {}),
+      };
+      // The price: the run's own OpenRouter bill, else the publisher's declared per-1M-token prices.
+      const billing = await benchPublishBilling(stored, args?.declaredPrices);
+      if (billing.error) return { ok: false, error: billing.error };
+      if (billing.record) payload.billing = billing.record;
+      // Forge's graded browser recording (score_forge.py, SB7.x's media shape) rides like Gauntlet's. Without
+      // a verified clip it publishes ONLY when the four visual rows are the scorer's own "no surface rendered
+      // app content" vacuous zeros (clipAbsence = the site's rule); anything else is refused.
+      if (forgeResult) {
+        const media =
+          typeof stored.workdir === 'string'
+            ? await readBenchMedia(stored.workdir)
+            : { videos: [], error: 'no run directory' };
+        const clipless =
+          media.videos.length !== 1 || media.error
+            ? clipAbsence(
+                stored.scorerVersion as string,
+                (stored.verdict as { checks?: unknown })?.checks
+              )
+            : null;
+        // Surfaces rendered (or the probe failed) but no verified clip: a SCORING problem, never a clip-less
+        // post — the card offers Retry scoring on the saved build (forgeClipMissing).
+        if (!clipless && (media.error || media.videos.length !== 1))
+          return {
+            ok: false,
+            error: `${stored.scorerVersion} publication requires its graded browser clip, and none could be verified although the app's surfaces were graded (${media.error ?? 'clip count mismatch'}). Retry scoring re-grades the saved build and records it.`,
+          };
+        if (clipless) payload.noRecording = true;
+        else {
+          try {
+            const clip = await publishableClip(
+              stored.workdir as string,
+              media.videos[0],
+              benchClipTools
+            );
+            payload.videoReceipt = await uploadBenchmarkVideo(
+              clip.video,
+              BENCH_PUBLISH_URL,
+              identity.installId,
+              stored.scorerVersion as string
+            );
+          } catch (error) {
+            return { ok: false, error: error instanceof Error ? error.message : String(error) };
+          }
+        }
+      }
+      if (typeof stored.scorerVersion === 'string' && isolatedPaymentsTier(stored.scorerVersion)) {
+        if (typeof stored.workdir !== 'string')
+          return { ok: false, error: `${stored.scorerVersion} recording has no run directory` };
+        const media = await readBenchMedia(stored.workdir);
+        // With its one verified clip: uploaded as always. Without one, ONLY when the scorer's own rows say
+        // the app never served a page (clipAbsence = the site's rule, website 9c371d7): the payload simply
+        // carries no videoReceipt and the posted checksSummary rows are the proof. Otherwise refused.
+        const clipless =
+          media.videos.length !== 1 || media.error
+            ? clipAbsence(stored.scorerVersion, (stored.verdict as { checks?: unknown })?.checks)
+            : null;
+        // The site accepts noRecording only when it equals its own absence computed from the posted rows.
+        if (clipless) payload.noRecording = true;
+        else {
+          if (media.error || media.videos.length !== 1)
+            return {
+              ok: false,
+              error: `${stored.scorerVersion} publication requires one verified graded browser clip: ${media.error ?? 'clip count mismatch'}`,
+            };
+          try {
+            const clip = await publishableClip(stored.workdir, media.videos[0], benchClipTools);
+            payload.videoReceipt = await uploadBenchmarkVideo(
+              clip.video,
+              BENCH_PUBLISH_URL,
+              identity.installId,
+              stored.scorerVersion
+            );
+          } catch (error) {
+            return { ok: false, error: error instanceof Error ? error.message : String(error) };
+          }
+        }
+      }
+      // v2.3: per-node detail from the persisted pool_resolved devices — omitted entirely when
+      // the run's log had no pool_resolved (legacy results store no poolDevices).
+      const poolDevices = (Array.isArray(stored.poolDevices) ? stored.poolDevices : []) as Array<{
+        id?: unknown;
+        modelId?: unknown;
+      }>;
+      const nodesDetail = poolDevices
+        .filter((d) => typeof d?.modelId === 'string' && d.modelId.length > 0)
+        .slice(0, 8)
+        .map((d) => ({
+          name: benchNodeName(typeof d.id === 'string' ? d.id : ''),
+          model: (d.modelId as string).slice(0, 120),
+        }))
+        .filter((n) => n.name.length > 0);
+      if (nodesDetail.length > 0) payload.nodesDetail = nodesDetail;
+      // v2.1 scoring depth (contract addition 2026-08-17): the same "How this score was built"
+      // story the desktop shows, on the site's run card. Built key-by-key from the persisted
+      // verdict — never a spread — and each field omitted entirely for legacy results without one.
+      const verdict = stored.verdict as
+        | {
+            checks?: Array<{ check?: unknown; tier?: unknown; score?: unknown; detail?: unknown }>;
+            tiers?: Record<string, { mean?: unknown } | undefined>;
+            core?: unknown;
+            admission?: unknown;
+            rawScore?: unknown;
+            hard?: unknown;
+            findingsHeld?: unknown;
+            repairRounds?: Array<{ round?: unknown; findings?: unknown }>;
+          }
+        | undefined;
+      if (forgeResult)
+        Object.assign(payload, forgePublishBody(stored), forgeTaskPublicationFields(stored));
+      else if (verdict) {
+        Object.assign(payload, publicScoreDetails(verdict));
+        if (verdict.admission) payload.admission = verdict.admission;
+        if (typeof verdict.rawScore === 'number') payload.rawScore = verdict.rawScore;
+        const checksSummary = (Array.isArray(verdict.checks) ? verdict.checks : [])
+          .filter(
+            (c) =>
+              typeof c?.check === 'string' &&
+              typeof c?.tier === 'string' &&
+              typeof c?.score === 'number'
+          )
+          .map((c) => ({
+            check: (c.check as string).slice(0, 60),
+            tier: c.tier as string,
+            score: c.score as number,
+            detail: (typeof c.detail === 'string' ? c.detail : '').slice(0, 220),
+          }));
+        if (checksSummary.length > 0) payload.checksSummary = checksSummary;
+
+        const num = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined);
+        const composition = {
+          core: num(verdict.core),
+          journey: num(verdict.tiers?.J?.mean),
+          visual: num(verdict.tiers?.V?.mean),
+          perf: num(verdict.tiers?.P?.mean),
+          hard: num(verdict.hard),
+        };
+        // All five or none — a partial object (an sb-4-era verdict without J/V/P) would trip the
+        // server's strict validation for no gain.
+        if (Object.values(composition).every((v) => typeof v === 'number')) {
+          payload.composition = composition;
+        }
+
+        const repairRounds = (Array.isArray(verdict.repairRounds) ? verdict.repairRounds : [])
+          .filter((r) => typeof r?.round === 'number' && typeof r?.findings === 'number')
+          .map((r) => ({ round: r.round as number, findings: r.findings as number }));
+        if (repairRounds.length > 0) payload.repairRounds = repairRounds;
+
+        const findingsHeld = (Array.isArray(verdict.findingsHeld) ? verdict.findingsHeld : [])
+          .filter((f): f is string => typeof f === 'string')
+          .slice(0, 12)
+          .map((f) => f.slice(0, 400));
+        if (findingsHeld.length > 0) payload.findingsHeld = findingsHeld;
+      }
+      try {
+        const res = await fetch(BENCH_SITE_API, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          // 422 = the server's consistency gates fired; surface ITS message, not a bare status.
+          const body = await res.text().catch(() => '');
+          let serverMessage = '';
+          try {
+            const parsed = JSON.parse(body) as { error?: unknown; message?: unknown };
+            serverMessage = String(parsed.error ?? parsed.message ?? '');
+          } catch {
+            serverMessage = body.slice(0, 300);
+          }
+          return {
+            ok: false,
+            status: res.status,
+            error: serverMessage ? `HTTP ${res.status}: ${serverMessage}` : `HTTP ${res.status}`,
+          };
+        }
+        const accepted = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+        // The run is now live: remembered per run so its card says so and it is never posted twice.
+        const publishedKey =
+          runKey ??
+          benchRunKey({
+            runId: typeof stored.runId === 'string' ? stored.runId : null,
+            startedAt: runMeta.startedAt,
+          });
+        await recordPublished(publishedKey, {
+          url: typeof accepted.url === 'string' ? accepted.url : null,
+          title,
+          score: typeof stored.score === 'number' ? stored.score : 0,
+          publishedAt: new Date().toISOString(),
+          source: 'app',
+        }).catch((error) => log.error('Published run could not be recorded:', error));
+        return { ok: true, ...accepted };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    })
 );
 
 // One watch set per renderer, armed by that renderer's own reads and dropped when it goes away.

@@ -131,3 +131,220 @@ export function billedCostLine(value: unknown, provider: string | null): BilledC
     detail: detailOf(cost),
   };
 }
+
+/**
+ * The `billing` record leanzero.net stores with a published run (website src/lib/benchmark-billing.ts,
+ * validateBenchmarkBilling): the run page shows it as "Recorded inference cost $X" ("At least $X" when
+ * incomplete) or, for a publisher-declared price, "Estimated $X". Before 2026-10-18 the app never sent it,
+ * so every published run showed no price even when OpenRouter had billed every call.
+ */
+export type PublishBilling =
+  | {
+      status: 'complete' | 'incomplete' | 'unavailable';
+      source: 'openrouter-generation-records';
+      billedUsd?: number;
+      requestCount?: number;
+      missingCallCount: number;
+      includesAuxiliaryCalls: boolean | null;
+      reasons: string[];
+      nativeVerdictSha256: string;
+    }
+  | {
+      status: 'estimated';
+      source: 'declared-prices';
+      billedUsd: number;
+      inputUsdPerMTok: number;
+      outputUsdPerMTok: number;
+      cachedInputUsdPerMTok?: number;
+      promptTokens: number;
+      cachedTokens: number;
+      completionTokens: number;
+      includesAuxiliaryCalls: null;
+      reasons: string[];
+      nativeVerdictSha256: string;
+    };
+
+const OPENROUTER_BILL_SOURCE = 'https://openrouter.ai/api/v1/generation (usage per generation id)';
+const SHA256 = /^[a-f0-9]{64}$/;
+
+/**
+ * The harness's OpenRouter bill (`agent.billed_cost`) as the site's billing record — the SAME mapping the
+ * operator's backfill applied to already-published runs (loop-state forge2_billing.mjs nativeBilling), so an
+ * app-published run and a backfilled one read identically. `verdictSha256` is the sha256 of the run's own
+ * verdict.json bytes. Null when the record is not an OpenRouter bill (Google direct, a local engine) or does
+ * not keep its own shape — never a guessed bill.
+ */
+export function openRouterPublishBilling(
+  billedCost: unknown,
+  verdictSha256: string
+): PublishBilling | null {
+  if (!billedCost || typeof billedCost !== 'object' || !SHA256.test(verdictSha256)) return null;
+  const b = billedCost as Record<string, unknown>;
+  if (b.provider !== 'openrouter' || b.source !== OPENROUTER_BILL_SOURCE) return null;
+  if (b.status !== 'complete' && b.status !== 'incomplete') return null;
+  if (!Array.isArray(b.missing) || !Array.isArray(b.incomplete_reasons)) return null;
+  const hasAmount = finite(b.billed_usd) && b.billed_usd >= 0;
+  if (!hasAmount && b.billed_usd !== null && b.billed_usd !== undefined) return null;
+  const requests = b.request_count;
+  if (requests !== undefined && (!finite(requests) || !Number.isInteger(requests) || requests < 0))
+    return null;
+  const auxiliary = (b.budget as { calls_other_models?: unknown } | undefined)?.calls_other_models;
+  const hosts = b.hosts && typeof b.hosts === 'object' ? (b.hosts as object) : {};
+  const includesAuxiliaryCalls =
+    auxiliary && typeof auxiliary === 'object' && Object.keys(auxiliary).length
+      ? Object.prototype.hasOwnProperty.call(hosts, 'Google')
+        ? true
+        : null
+      : null;
+  const reasons = (b.incomplete_reasons as unknown[]).filter(
+    (r): r is string => typeof r === 'string' && r.trim().length > 0
+  );
+  if (
+    b.missing.length &&
+    b.missing.every((x) => (x as { reason?: unknown } | null)?.reason === 'HTTP 404')
+  )
+    reasons.push(
+      'OpenRouter returned HTTP 404 for every missing generation record. Missing charges are unknown, not zero.'
+    );
+  return {
+    // A bill that names missing calls is a lower bound whatever its status says (the site refuses a
+    // 'complete' record with missing calls, which would refuse the whole publish).
+    status: hasAmount
+      ? b.missing.length
+        ? 'incomplete'
+        : (b.status as 'complete' | 'incomplete')
+      : 'unavailable',
+    source: 'openrouter-generation-records',
+    ...(hasAmount ? { billedUsd: b.billed_usd as number } : {}),
+    ...(requests !== undefined ? { requestCount: requests as number } : {}),
+    missingCallCount: b.missing.length,
+    includesAuxiliaryCalls,
+    reasons: reasons.map((r) => r.slice(0, 400)).slice(0, 20),
+    nativeVerdictSha256: verdictSha256,
+  };
+}
+
+/** Whether a run carries an OpenRouter bill — then the bill is the price and no price is declared. */
+export function hasOpenRouterBill(billedCost: unknown): boolean {
+  return openRouterPublishBilling(billedCost, 'a'.repeat(64)) !== null;
+}
+
+export interface RunTokens {
+  promptTokens: number;
+  cachedTokens: number;
+  completionTokens: number;
+}
+
+/**
+ * The run's own token counts from the harness's isolated goose session counters (`agent.usage.sessions`):
+ * prompt = accumulated input (cached reads included), cached = accumulated cache reads, completion =
+ * accumulated output. Null when any session did not record its counters, or the cache reads exceed the
+ * input (counters that do not add up are not priced).
+ */
+export function runTokens(usage: unknown): RunTokens | null {
+  const sessions = (usage as { sessions?: unknown } | null | undefined)?.sessions;
+  if (!Array.isArray(sessions) || sessions.length === 0) return null;
+  let prompt = 0;
+  let cached = 0;
+  let completion = 0;
+  for (const s of sessions as Array<Record<string, unknown>>) {
+    const input = s?.accumulated_input_tokens;
+    const output = s?.accumulated_output_tokens;
+    const read = s?.accumulated_cache_read_tokens ?? 0;
+    for (const n of [input, output, read])
+      if (!finite(n) || n < 0 || !Number.isInteger(n)) return null;
+    prompt += input as number;
+    completion += output as number;
+    cached += read as number;
+  }
+  if (cached > prompt) return null;
+  return { promptTokens: prompt, cachedTokens: cached, completionTokens: completion };
+}
+
+export interface DeclaredPrices {
+  inputUsdPerMTok: number;
+  outputUsdPerMTok: number;
+  cachedInputUsdPerMTok?: number;
+}
+
+/** The highest per-1M-token price the site accepts (website MAX_USD_PER_MTOK). */
+export const MAX_DECLARED_USD_PER_MTOK = 10_000;
+
+/** One price field: blank is "not declared"; anything else must be a plain non-negative number. */
+export function parseDeclaredPrice(text: string): number | undefined | 'invalid' {
+  const t = text.trim();
+  if (!t) return undefined;
+  if (!/^\d+(\.\d+)?$|^\.\d+$/.test(t)) return 'invalid';
+  const n = Number(t);
+  return Number.isFinite(n) && n >= 0 && n <= MAX_DECLARED_USD_PER_MTOK ? n : 'invalid';
+}
+
+/** The fields as typed → the prices to send, nothing (all blank), or the reason they cannot be sent. */
+export function declaredPricesFromFields(fields: {
+  input: string;
+  output: string;
+  cached: string;
+}): { prices: DeclaredPrices | null; problem: string | null } {
+  const input = parseDeclaredPrice(fields.input);
+  const output = parseDeclaredPrice(fields.output);
+  const cached = parseDeclaredPrice(fields.cached);
+  if (input === 'invalid' || output === 'invalid' || cached === 'invalid')
+    return {
+      prices: null,
+      problem: `Prices are USD per 1M tokens: a number from 0 to ${MAX_DECLARED_USD_PER_MTOK.toLocaleString('en-US')}.`,
+    };
+  if (input === undefined && output === undefined && cached === undefined)
+    return { prices: null, problem: null };
+  if (input === undefined || output === undefined)
+    return {
+      prices: null,
+      problem: 'Enter both the input and the output price, or leave all price fields empty.',
+    };
+  return {
+    prices: {
+      inputUsdPerMTok: input,
+      outputUsdPerMTok: output,
+      ...(cached !== undefined ? { cachedInputUsdPerMTok: cached } : {}),
+    },
+    problem: null,
+  };
+}
+
+/** USD for the run's tokens at declared prices — the site recomputes exactly this and refuses any other
+ *  figure: uncached prompt at the input price, cached prompt at the cached price (else the input price),
+ *  completion at the output price. */
+export function declaredPriceUsd(tokens: RunTokens, prices: DeclaredPrices): number {
+  return (
+    ((tokens.promptTokens - tokens.cachedTokens) * prices.inputUsdPerMTok +
+      tokens.cachedTokens * (prices.cachedInputUsdPerMTok ?? prices.inputUsdPerMTok) +
+      tokens.completionTokens * prices.outputUsdPerMTok) /
+    1e6
+  );
+}
+
+/** The publisher-declared estimate as the site's billing record (no provider bill exists). */
+export function declaredPublishBilling(
+  tokens: RunTokens,
+  prices: DeclaredPrices,
+  verdictSha256: string
+): PublishBilling | null {
+  if (!SHA256.test(verdictSha256)) return null;
+  for (const p of [prices.inputUsdPerMTok, prices.outputUsdPerMTok, prices.cachedInputUsdPerMTok])
+    if (p !== undefined && (!finite(p) || p < 0 || p > MAX_DECLARED_USD_PER_MTOK)) return null;
+  return {
+    status: 'estimated',
+    source: 'declared-prices',
+    billedUsd: declaredPriceUsd(tokens, prices),
+    inputUsdPerMTok: prices.inputUsdPerMTok,
+    outputUsdPerMTok: prices.outputUsdPerMTok,
+    ...(prices.cachedInputUsdPerMTok !== undefined
+      ? { cachedInputUsdPerMTok: prices.cachedInputUsdPerMTok }
+      : {}),
+    promptTokens: tokens.promptTokens,
+    cachedTokens: tokens.cachedTokens,
+    completionTokens: tokens.completionTokens,
+    includesAuxiliaryCalls: null,
+    reasons: [],
+    nativeVerdictSha256: verdictSha256,
+  };
+}

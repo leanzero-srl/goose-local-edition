@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { billedCostLine, billedCostRowField, readBilledCost } from './benchBilledCost';
+import {
+  billedCostLine,
+  billedCostRowField,
+  declaredPricesFromFields,
+  declaredPriceUsd,
+  declaredPublishBilling,
+  hasOpenRouterBill,
+  openRouterPublishBilling,
+  readBilledCost,
+  runTokens,
+} from './benchBilledCost';
 
 const complete = {
   status: 'complete',
@@ -81,5 +91,174 @@ describe('the billed cost the Benchmark view states', () => {
     });
     for (const agent of [undefined, null, 'agent', { usage: { accumulated_cost: 2 } }])
       expect(billedCostRowField(agent)).toEqual({});
+  });
+});
+
+// The `billing` record benchmark-publish sends (website validateBenchmarkBilling). The OpenRouter mapping is the
+// one the 2026-10-18 backfill applied to DeepSeek V4.1 Flash 1017's pair (loop-state forge2_billing.mjs).
+const SHA = 'f'.repeat(64);
+const orBill = {
+  provider: 'openrouter',
+  source: 'https://openrouter.ai/api/v1/generation (usage per generation id)',
+  model: 'deepseek/deepseek-v4.1-flash-1017',
+  status: 'complete',
+  billed_usd: 0.295860456,
+  request_count: 263,
+  missing: [],
+  incomplete_reasons: [],
+  hosts: { DeepSeek: 263 },
+  budget: { calls_other_models: {} },
+};
+
+describe('the billing record a publish carries', () => {
+  it('maps a complete OpenRouter bill exactly as the backfill did', () => {
+    expect(openRouterPublishBilling(orBill, SHA)).toEqual({
+      status: 'complete',
+      source: 'openrouter-generation-records',
+      billedUsd: 0.295860456,
+      requestCount: 263,
+      missingCallCount: 0,
+      includesAuxiliaryCalls: null,
+      reasons: [],
+      nativeVerdictSha256: SHA,
+    });
+  });
+
+  it('keeps an incomplete bill a lower bound, with the 404 sentence when every miss is a 404', () => {
+    const b = openRouterPublishBilling(
+      {
+        ...orBill,
+        status: 'incomplete',
+        missing: [{ id: 'gen-1', reason: 'HTTP 404' }],
+        incomplete_reasons: ['1 generation id(s) have no billed record'],
+        hosts: { DeepSeek: 262, Google: 1 },
+        budget: { calls_other_models: { 'gemini-3.8-flash': 1 } },
+      },
+      SHA
+    );
+    expect(b?.status).toBe('incomplete');
+    expect(b && 'missingCallCount' in b ? b.missingCallCount : null).toBe(1);
+    expect(b?.includesAuxiliaryCalls).toBe(true);
+    expect(b?.reasons).toEqual([
+      '1 generation id(s) have no billed record',
+      'OpenRouter returned HTTP 404 for every missing generation record. Missing charges are unknown, not zero.',
+    ]);
+  });
+
+  it('states an OpenRouter record with no amount as unavailable, never a zero bill', () => {
+    const b = openRouterPublishBilling({ ...orBill, billed_usd: null }, SHA);
+    expect(b?.status).toBe('unavailable');
+    expect(b && 'billedUsd' in b).toBe(false);
+  });
+
+  it('never states a bill with missing calls as complete', () => {
+    const b = openRouterPublishBilling(
+      { ...orBill, missing: [{ id: 'gen-9', reason: 'timeout' }] },
+      SHA
+    );
+    expect(b?.status).toBe('incomplete');
+  });
+
+  it('sends nothing for a bill that is not OpenRouter, or that breaks its shape', () => {
+    expect(
+      openRouterPublishBilling({ status: 'unavailable', provider: 'google', reason: 'x' }, SHA)
+    ).toBeNull();
+    expect(openRouterPublishBilling({ ...orBill, missing: undefined }, SHA)).toBeNull();
+    expect(openRouterPublishBilling({ ...orBill, billed_usd: -1 }, SHA)).toBeNull();
+    expect(openRouterPublishBilling(orBill, 'not-a-sha')).toBeNull();
+    expect(openRouterPublishBilling(undefined, SHA)).toBeNull();
+    expect(hasOpenRouterBill(orBill)).toBe(true);
+    expect(hasOpenRouterBill({ status: 'unavailable', provider: 'google' })).toBe(false);
+  });
+});
+
+describe('a publisher-declared price when goose has no bill', () => {
+  const usage = {
+    sessions: [
+      {
+        accumulated_input_tokens: 54_217_535,
+        accumulated_output_tokens: 203_647,
+        accumulated_cache_read_tokens: 52_893_080,
+      },
+    ],
+  };
+
+  it("reads the run's own token counts and refuses counters that do not add up", () => {
+    expect(runTokens(usage)).toEqual({
+      promptTokens: 54_217_535,
+      cachedTokens: 52_893_080,
+      completionTokens: 203_647,
+    });
+    expect(
+      runTokens({ sessions: [{ accumulated_input_tokens: null, accumulated_output_tokens: 1 }] })
+    ).toBeNull();
+    expect(
+      runTokens({
+        sessions: [
+          {
+            accumulated_input_tokens: 1,
+            accumulated_output_tokens: 1,
+            accumulated_cache_read_tokens: 2,
+          },
+        ],
+      })
+    ).toBeNull();
+    expect(runTokens({ sessions: [] })).toBeNull();
+    expect(runTokens(undefined)).toBeNull();
+  });
+
+  it('parses the fields: all blank sends nothing, half-filled or junk is refused with the reason', () => {
+    expect(declaredPricesFromFields({ input: '', output: '', cached: '' })).toEqual({
+      prices: null,
+      problem: null,
+    });
+    expect(declaredPricesFromFields({ input: '1.25', output: '10', cached: '' })).toEqual({
+      prices: { inputUsdPerMTok: 1.25, outputUsdPerMTok: 10 },
+      problem: null,
+    });
+    expect(
+      declaredPricesFromFields({ input: '1.25', output: '10', cached: '0.125' }).prices
+        ?.cachedInputUsdPerMTok
+    ).toBe(0.125);
+    expect(declaredPricesFromFields({ input: '1', output: '', cached: '' }).problem).toMatch(
+      /both/
+    );
+    expect(declaredPricesFromFields({ input: '-1', output: '2', cached: '' }).problem).toMatch(
+      /USD per 1M/
+    );
+    expect(declaredPricesFromFields({ input: '1e3', output: '2', cached: '' }).problem).toMatch(
+      /USD per 1M/
+    );
+    expect(declaredPricesFromFields({ input: '20000', output: '2', cached: '' }).problem).toMatch(
+      /USD per 1M/
+    );
+  });
+
+  it('prices uncached prompt, cached prompt and completion the way the site recomputes it', () => {
+    const tokens = runTokens(usage)!;
+    const prices = { inputUsdPerMTok: 1.25, outputUsdPerMTok: 10, cachedInputUsdPerMTok: 0.125 };
+    const usd = (1_324_455 * 1.25 + 52_893_080 * 0.125 + 203_647 * 10) / 1e6;
+    expect(declaredPriceUsd(tokens, prices)).toBeCloseTo(usd, 12);
+    expect(declaredPriceUsd(tokens, { inputUsdPerMTok: 1, outputUsdPerMTok: 0 })).toBeCloseTo(
+      54.217535,
+      9
+    );
+    expect(declaredPublishBilling(tokens, prices, SHA)).toEqual({
+      status: 'estimated',
+      source: 'declared-prices',
+      billedUsd: declaredPriceUsd(tokens, prices),
+      inputUsdPerMTok: 1.25,
+      outputUsdPerMTok: 10,
+      cachedInputUsdPerMTok: 0.125,
+      promptTokens: 54_217_535,
+      cachedTokens: 52_893_080,
+      completionTokens: 203_647,
+      includesAuxiliaryCalls: null,
+      reasons: [],
+      nativeVerdictSha256: SHA,
+    });
+    expect(
+      declaredPublishBilling(tokens, { inputUsdPerMTok: -1, outputUsdPerMTok: 1 }, SHA)
+    ).toBeNull();
   });
 });

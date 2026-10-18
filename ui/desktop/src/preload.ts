@@ -306,7 +306,16 @@ type ElectronAPI = {
    *  blocks external hosts. `title` is REQUIRED (the user's name for the run); the model id is
    *  engine truth read from the stored result — the renderer cannot send one. Returns the
    *  server's own message on 4xx and the live card's url on success. */
-  benchmarkPublish: (args?: { title?: string; runKey?: string }) => Promise<{
+  benchmarkPublish: (args?: {
+    title?: string;
+    runKey?: string;
+    /** USD per 1M tokens, used ONLY when the run has no OpenRouter bill (sent as an estimate). */
+    declaredPrices?: {
+      inputUsdPerMTok: number;
+      outputUsdPerMTok: number;
+      cachedInputUsdPerMTok?: number;
+    };
+  }) => Promise<{
     ok: boolean;
     error?: string;
     status?: number | string;
@@ -632,8 +641,15 @@ const electronAPI: ElectronAPI = {
   benchmarkStatus: () => ipcRenderer.invoke('benchmark-status'),
   benchmarkMedia: (workdir: string) => ipcRenderer.invoke('benchmark-media', workdir),
   benchmarkShots: (workdir?: string) => ipcRenderer.invoke('benchmark-shots', workdir),
-  benchmarkPublish: (args?: { title?: string; runKey?: string }) =>
-    ipcRenderer.invoke('benchmark-publish', args),
+  benchmarkPublish: (args?: {
+    title?: string;
+    runKey?: string;
+    declaredPrices?: {
+      inputUsdPerMTok: number;
+      outputUsdPerMTok: number;
+      cachedInputUsdPerMTok?: number;
+    };
+  }) => ipcRenderer.invoke('benchmark-publish', args),
   benchmarkRunResult: (runKey: string) => ipcRenderer.invoke('benchmark-run-result', runKey),
   benchmarkSeries: (seriesId?: string) => ipcRenderer.invoke('benchmark-series', seriesId),
   fleetStatus: () => ipcRenderer.invoke('fleet-status'),

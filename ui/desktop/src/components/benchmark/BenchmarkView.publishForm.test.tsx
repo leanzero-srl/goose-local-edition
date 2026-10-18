@@ -23,6 +23,21 @@ vi.mock('../swarm/useSamplingDefaults', () => ({
   useSaveSamplingDefaults: () => () => {},
 }));
 
+// goose's price list (canonical model info): Google's Gemini 4 Argon at $1.25 / $10 per 1M tokens.
+const canonical = vi.fn(async (_provider: string, _model: string) => ({
+  provider: 'google',
+  model: 'gemini-4-argon',
+  contextLimit: 1_000_000,
+  reasoning: true,
+  inputTokenCost: 1.25,
+  outputTokenCost: 10,
+  cacheReadTokenCost: null,
+  currency: '$',
+}));
+vi.mock('../../utils/canonical', () => ({
+  fetchCanonicalModelInfo: (provider: string, model: string) => canonical(provider, model),
+}));
+
 import BenchmarkView, { modelIdProblem, titleProblem } from './BenchmarkView';
 
 type ElectronMock = Record<string, unknown>;
@@ -286,5 +301,104 @@ describe('the publish form', () => {
     expect(one).not.toBeDisabled();
     expect(one.getAttribute('title')).toBe('Run on 1 node');
     expect(one.getAttribute('aria-describedby')).toBeNull();
+  });
+});
+
+describe('the price a publish carries (Mihai 2026-10-18)', () => {
+  afterEach(() => cleanup());
+  const usage = {
+    status: 'recorded',
+    sessions: [
+      {
+        accumulated_input_tokens: 3_000_000,
+        accumulated_output_tokens: 40_000,
+        accumulated_cache_read_tokens: 2_000_000,
+      },
+    ],
+  };
+  const openRouterBill = {
+    provider: 'openrouter',
+    source: 'https://openrouter.ai/api/v1/generation (usage per generation id)',
+    status: 'complete',
+    billed_usd: 0.2959,
+    request_count: 263,
+    missing: [],
+    incomplete_reasons: [],
+  };
+  const renderWith = (row: Record<string, unknown>) => {
+    mockElectron({ running: false, modelId: 'gemini-4-argon' });
+    electron().benchmarkRead = vi.fn(async () => ({ ...MINE, modelId: 'gemini-4-argon', ...row }));
+    electron().benchmarkPublish = vi.fn(async () => ({
+      ok: true,
+      url: '/agentic-benchmarks/run/brun-1',
+    }));
+    return render(
+      <IntlTestWrapper>
+        <BenchmarkView />
+      </IntlTestWrapper>
+    );
+  };
+
+  it('an OpenRouter-billed run offers no price fields: its bill is the price', async () => {
+    const { findByTestId, queryByTestId, findByRole, getByLabelText } = renderWith({
+      provider: 'openrouter',
+      billedCost: openRouterBill,
+      modelUsage: usage,
+    });
+    expect((await findByTestId('publish-price-billed')).textContent).toContain('$0.2959');
+    expect(queryByTestId('publish-price')).toBeNull();
+    const publishBtn = await findByRole('button', { name: /Publish/ });
+    fireEvent.change(getByLabelText(/^Title/), { target: { value: 'Billed run' } });
+    await waitFor(() => expect(publishBtn).not.toBeDisabled());
+    fireEvent.click(publishBtn);
+    await waitFor(() => expect(electron().benchmarkPublish).toHaveBeenCalled());
+    const sent = (electron().benchmarkPublish as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(sent).not.toHaveProperty('declaredPrices');
+  });
+
+  it("a run with no bill is prefilled from goose's price list and publishes the declared prices", async () => {
+    const { findByTestId, findByRole, getByLabelText } = renderWith({
+      provider: 'google',
+      billedCost: { status: 'unavailable', provider: 'google', reason: 'no per-call bill' },
+      modelUsage: usage,
+    });
+    await waitFor(async () =>
+      expect(((await findByTestId('publish-price-input')) as HTMLInputElement).value).toBe('1.25')
+    );
+    expect(canonical).toHaveBeenCalledWith('google', 'gemini-4-argon');
+    expect(((await findByTestId('publish-price-output')) as HTMLInputElement).value).toBe('10');
+    // (1M uncached + 2M cached at the input price) x $1.25 + 40k x $10 = $4.15
+    expect((await findByTestId('publish-price-hint')).textContent).toContain(
+      'Published as an estimate: $4.15 for 3,000,000 prompt (2,000,000 cached) and 40,000 completion tokens'
+    );
+    const publishBtn = await findByRole('button', { name: /Publish/ });
+    fireEvent.change(getByLabelText(/^Title/), { target: { value: 'Argon build' } });
+    await waitFor(() => expect(publishBtn).not.toBeDisabled());
+    fireEvent.click(publishBtn);
+    await waitFor(() => expect(electron().benchmarkPublish).toHaveBeenCalled());
+    const sent = (electron().benchmarkPublish as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(sent.declaredPrices).toEqual({ inputUsdPerMTok: 1.25, outputUsdPerMTok: 10 });
+  });
+
+  it('a half-filled price blocks Publish with the reason; clearing it publishes without a price', async () => {
+    const { findByTestId, findByRole, getByLabelText } = renderWith({
+      provider: 'google',
+      modelUsage: usage,
+    });
+    const input = (await findByTestId('publish-price-input')) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe('1.25'));
+    fireEvent.change(await findByTestId('publish-price-output'), { target: { value: '' } });
+    fireEvent.change(getByLabelText(/^Title/), { target: { value: 'Half priced' } });
+    const publishBtn = await findByRole('button', { name: /Publish/ });
+    await waitFor(() =>
+      expect(publishBtn.getAttribute('title')).toMatch(/both the input and the output price/)
+    );
+    expect(publishBtn).toBeDisabled();
+    fireEvent.change(input, { target: { value: '' } });
+    await waitFor(() => expect(publishBtn).not.toBeDisabled());
+    fireEvent.click(publishBtn);
+    await waitFor(() => expect(electron().benchmarkPublish).toHaveBeenCalled());
+    const sent = (electron().benchmarkPublish as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(sent).not.toHaveProperty('declaredPrices');
   });
 });

@@ -5,7 +5,15 @@ import { defineMessages, useIntl } from '../../i18n';
 import { appendBenchmarkActivity, emptyBenchmarkActivity } from '../../benchActivity';
 import { BenchmarkActivityPanel } from './BenchmarkActivityPanel';
 import { benchmarkModelIdProblem } from '../../benchModelIdentity';
-import { billedCostLine } from '../../benchBilledCost';
+import {
+  billedCostLine,
+  declaredPricesFromFields,
+  declaredPriceUsd,
+  hasOpenRouterBill,
+  runTokens,
+} from '../../benchBilledCost';
+import { fetchCanonicalModelInfo } from '../../utils/canonical';
+import { isLocalProviderName } from '../settings/models/leanzeroSelectorPolicy';
 import { budgetLines } from '../../benchBudget';
 import { BenchmarkRuntimeSetup } from './BenchmarkRuntimeSetup';
 import { BenchmarkFamilyToggle } from './BenchmarkFamilyToggle';
@@ -190,6 +198,8 @@ interface MineRow extends BenchmarkRow {
   billedCost?: unknown;
   /** The harness's `agent.budget` record, verbatim (benchBudget.ts reads it). */
   budget?: unknown;
+  /** The harness's `agent.usage` record (isolated goose session counters) — what declared prices price. */
+  modelUsage?: unknown;
   runMeta?: {
     startedAt: string;
     finishedAt: string;
@@ -1710,6 +1720,49 @@ export default function BenchmarkView() {
   useEffect(() => {
     setPub({ kind: 'idle' });
   }, [selectedKey]);
+  // The price leanzero.net shows with the run (Mihai 2026-10-18: "anyone picking up the app ... knows exactly
+  // how to publish and set the prices"). An OpenRouter bill in the run is the price and is sent by main as is;
+  // without one (Google direct, Bedrock, a local engine) the publisher may declare USD per 1M tokens, which the
+  // site shows as an estimate over the run's own token counts. Prefilled from goose's price list when it has one.
+  const [priceFields, setPriceFields] = useState({ input: '', output: '', cached: '' });
+  const [pricePrefilled, setPricePrefilled] = useState(false);
+  const runBilled = shownRow != null && hasOpenRouterBill(shownRow.billedCost);
+  const runTokenCounts = useMemo(() => runTokens(shownRow?.modelUsage), [shownRow]);
+  const priceProvider = shownRow?.provider ?? null;
+  const priceModel = shownRow?.modelId ?? null;
+  useEffect(() => {
+    setPriceFields({ input: '', output: '', cached: '' });
+    setPricePrefilled(false);
+    if (runBilled || !priceProvider || !priceModel || isLocalProviderName(priceProvider)) return;
+    let alive = true;
+    void fetchCanonicalModelInfo(priceProvider, priceModel).then((info) => {
+      const input = info?.inputTokenCost;
+      const output = info?.outputTokenCost;
+      if (!alive || typeof input !== 'number' || typeof output !== 'number') return;
+      if (info?.currency && !['$', 'USD', 'usd'].includes(info.currency)) return;
+      const cached = info?.cacheReadTokenCost;
+      setPriceFields((now) =>
+        now.input || now.output || now.cached
+          ? now
+          : {
+              input: String(input),
+              output: String(output),
+              cached: typeof cached === 'number' ? String(cached) : '',
+            }
+      );
+      setPricePrefilled(true);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [selectedKey, runBilled, priceProvider, priceModel]);
+  const declared = declaredPricesFromFields(priceFields);
+  const priceProblem = runBilled
+    ? null
+    : (declared.problem ??
+      (declared.prices && !runTokenCounts
+        ? 'This run recorded no complete token counts, so a price cannot be estimated — clear the price fields to publish without one.'
+        : null));
 
   const run = useCallback(async () => {
     if (forge) window.location.hash = '#/benchmark?family=forge';
@@ -1868,7 +1921,11 @@ export default function BenchmarkView() {
     if (!chosen) return;
     setPub({ kind: 'publishing' });
     try {
-      const res = await window.electron.benchmarkPublish?.({ title: chosen, runKey: selectedKey });
+      const res = await window.electron.benchmarkPublish?.({
+        title: chosen,
+        runKey: selectedKey,
+        ...(!runBilled && declared.prices ? { declaredPrices: declared.prices } : {}),
+      });
       if (res?.ok) {
         void loadSessions();
         setPub({
@@ -1890,7 +1947,7 @@ export default function BenchmarkView() {
     } catch (err) {
       setPub({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
     }
-  }, [shownRow, selectedKey, title, loadSessions]);
+  }, [shownRow, selectedKey, title, loadSessions, runBilled, declared.prices]);
 
   const publishing = pub.kind === 'publishing';
   const publishable = shownRow != null && shownRow.runMeta != null;
@@ -1902,6 +1959,8 @@ export default function BenchmarkView() {
   const modelHintId = `${uid}-model-hint`;
   const titleId = `${uid}-title`;
   const titleHintId = `${uid}-title-hint`;
+  const priceId = `${uid}-price`;
+  const priceHintId = `${uid}-price-hint`;
   const lockedWhy = 'Locked while a run is live — the node count is fixed at launch';
 
   const selectedEra = selectedSession
@@ -1933,7 +1992,9 @@ export default function BenchmarkView() {
               ? modelProblem
               : publishTitleProblem
                 ? publishTitleProblem
-                : null;
+                : priceProblem
+                  ? priceProblem
+                  : null;
 
   // Publish belongs to the selected session's detail and posts THAT run's own result row. A run this
   // machine already posted says where it is live instead of offering a second post.
@@ -1998,6 +2059,70 @@ export default function BenchmarkView() {
               )}
             </p>
           </div>
+          {runBilled ? (
+            <p data-testid="publish-price-billed" className={TYPE.meta}>
+              Price: this run&apos;s OpenRouter bill
+              {billedCostLine(shownRow.billedCost, 'openrouter')?.amount
+                ? ` (${billedCostLine(shownRow.billedCost, 'openrouter')?.amount})`
+                : ''}{' '}
+              is published with it.
+            </p>
+          ) : (
+            <fieldset
+              data-testid="publish-price"
+              className="m-0 min-w-0 max-w-[560px] border-0 p-0"
+              disabled={publishing}
+            >
+              <legend className={cx('mb-1.5 block', TYPE.meta)}>
+                Price{' '}
+                <span className="text-lz-ink-4">(optional — no provider bill for this run)</span>
+              </legend>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                {(
+                  [
+                    ['input', 'Input price', 'e.g. 1.25'],
+                    ['output', 'Output price', 'e.g. 10'],
+                    ['cached', 'Cached input price', 'same as input'],
+                  ] as const
+                ).map(([key, label, hint]) => (
+                  <div key={key}>
+                    <label htmlFor={`${priceId}-${key}`} className={cx('mb-1 block', TYPE.meta)}>
+                      {label} <span className="text-lz-ink-4">(USD per 1M tokens)</span>
+                    </label>
+                    <input
+                      id={`${priceId}-${key}`}
+                      data-testid={`publish-price-${key}`}
+                      type="text"
+                      inputMode="decimal"
+                      value={priceFields[key]}
+                      onChange={(e) =>
+                        setPriceFields((now) => ({ ...now, [key]: e.target.value.slice(0, 12) }))
+                      }
+                      placeholder={hint}
+                      aria-invalid={priceProblem != null}
+                      aria-describedby={priceHintId}
+                      className={INPUT}
+                    />
+                  </div>
+                ))}
+              </div>
+              <p
+                id={priceHintId}
+                data-testid="publish-price-hint"
+                className={cx('mt-1.5', TYPE.meta)}
+              >
+                {!runTokenCounts
+                  ? 'This run recorded no complete token counts, so it publishes without a price.'
+                  : declared.prices
+                    ? `Published as an estimate: $${declaredPriceUsd(runTokenCounts, declared.prices).toFixed(2)} for ${runTokenCounts.promptTokens.toLocaleString('en-US')} prompt (${runTokenCounts.cachedTokens.toLocaleString('en-US')} cached) and ${runTokenCounts.completionTokens.toLocaleString('en-US')} completion tokens — not a provider bill.`
+                    : 'Enter what you pay for this model to show its cost as an estimate, or leave empty to publish without a price.'}
+                {pricePrefilled && " Prefilled from goose's price list — check before publishing."}
+                {priceProblem && (
+                  <span className={cx('ml-1', WEIGHT.medium, TONE_TEXT.err)}>{priceProblem}</span>
+                )}
+              </p>
+            </fieldset>
+          )}
           <div className="flex flex-wrap items-end gap-3">
             <div className="w-full max-w-[360px]">
               <label htmlFor={titleId} className={cx('mb-1.5 block', TYPE.meta)}>
