@@ -115,3 +115,24 @@ export function readDeclaredPrices(value: unknown): DeclaredPrices | 'invalid' {
 export function refusalIsAboutBilling(status: number, message: string): boolean {
   return status >= 400 && status < 500 && /\bbilling\b/i.test(message);
 }
+
+/** Optional additions a publish can live without: a site that does not know them yet (older leanzero.net) or
+ *  refuses them must never cost the whole publish. */
+export const DROPPABLE_PUBLISH_FIELDS = ['billing', 'comparisonCohort'] as const;
+
+/**
+ * Which optional fields to drop and retry after a 4xx: those the site names as unknown ("Unknown field(s):
+ * comparisonCohort"), the price when the refusal is about billing, the receipt when it is about the comparison
+ * cohort. Empty = the refusal is about the run itself and stands.
+ */
+export function droppableAfterRefusal(status: number, message: string, present: string[]): string[] {
+  if (status < 400 || status >= 500) return [];
+  const drop = new Set<string>();
+  const unknown = message.match(/Unknown field\(s\):\s*([^.]*)/i);
+  if (unknown)
+    for (const name of unknown[1].split(/[,\s]+/).filter(Boolean))
+      if ((DROPPABLE_PUBLISH_FIELDS as readonly string[]).includes(name)) drop.add(name);
+  if (refusalIsAboutBilling(status, message)) drop.add('billing');
+  if (/^\s*comparisonCohort\b/i.test(message)) drop.add('comparisonCohort');
+  return [...drop].filter((name) => present.includes(name));
+}

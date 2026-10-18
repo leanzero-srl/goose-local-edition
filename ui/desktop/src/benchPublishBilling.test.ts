@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { benchPublishBilling, refusalIsAboutBilling } from './benchPublishBilling';
+import { benchPublishBilling, droppableAfterRefusal, refusalIsAboutBilling } from './benchPublishBilling';
 
 const bill = {
   provider: 'openrouter',
@@ -75,5 +75,19 @@ describe('refusalIsAboutBilling', () => {
     expect(refusalIsAboutBilling(422, 'billing: a declared-prices estimate must price the run telemetry token counts')).toBe(true);
     expect(refusalIsAboutBilling(422, 'score must be a number')).toBe(false);
     expect(refusalIsAboutBilling(500, 'billing')).toBe(false);
+  });
+});
+
+describe('droppableAfterRefusal', () => {
+  const present = ['label', 'score', 'billing', 'comparisonCohort'];
+  it('drops only the optional fields a site names or refuses, never the run itself', () => {
+    expect(droppableAfterRefusal(400, 'Unknown field(s): comparisonCohort', present)).toEqual(['comparisonCohort']);
+    expect(droppableAfterRefusal(400, 'Unknown field(s): billing, comparisonCohort', present).sort()).toEqual(['billing', 'comparisonCohort']);
+    expect(droppableAfterRefusal(400, 'billing must be a valid recorded OpenRouter billing summary.', present)).toEqual(['billing']);
+    expect(droppableAfterRefusal(422, 'comparisonCohort: the cohort names a different Forge 2.0 task', present)).toEqual(['comparisonCohort']);
+    expect(droppableAfterRefusal(400, 'Unknown field(s): mystery', present)).toEqual([]);
+    expect(droppableAfterRefusal(422, 'score must be a number between 0 and 1.', present)).toEqual([]);
+    expect(droppableAfterRefusal(400, 'Unknown field(s): comparisonCohort', ['label'])).toEqual([]);
+    expect(droppableAfterRefusal(503, 'billing', present)).toEqual([]);
   });
 });

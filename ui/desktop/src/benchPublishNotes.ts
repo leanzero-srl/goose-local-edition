@@ -2,16 +2,20 @@
 export function publishNotes(res: {
   baseline?: boolean;
   coupled?: boolean;
+  comparisonReceipt?: boolean;
   operator?: string;
   priceWarning?: string;
   cohortProblem?: string;
 }): string[] {
   const notes: string[] = [];
   if (res.baseline) notes.push('Listed as a LeanZero cloud baseline.');
-  if (res.coupled) notes.push('Carries its comparison receipt: it couples with this setup’s other build into one entry.');
+  // "coupled" is the site's word for what the board shows NOW; a receipt alone only means it will couple later.
+  if (res.coupled) notes.push('Coupled with this setup’s other build: the board shows them as one entry.');
+  else if (res.comparisonReceipt)
+    notes.push('Carries its comparison receipt: it becomes one entry with this setup’s other build once that is published.');
   if (res.cohortProblem) notes.push(`No comparison receipt (${res.cohortProblem}), so this build is listed on its own.`);
-  if (res.operator === 'rejected') notes.push('The LeanZero operator key was not accepted, so it is listed as a community run.');
-  if (res.operator === 'unconfigured') notes.push('leanzero.net has no operator key configured, so it is listed as a community run.');
+  if (res.operator === 'not-operator')
+    notes.push('The LeanZero operator key was not accepted, so it is listed as a community run.');
   if (res.operator === 'needs-comparison-cohort')
     notes.push('A Forge 2.0 cloud baseline needs its comparison receipt, so it is listed as a community run.');
   if (res.priceWarning) notes.push(res.priceWarning);

@@ -199,6 +199,8 @@ interface MineRow extends BenchmarkRow {
   telemetry?: unknown;
   /** The model ran on THIS Mac (main reads the run's isolation record): never priced from a cloud list. */
   localEngine?: boolean;
+  /** Where the run went, from its own evidence (main benchRunRoute): only 'cloud' is proven cloud. */
+  runRoute?: 'cloud' | 'local' | 'unknown';
   runMeta?: {
     startedAt: string;
     finishedAt: string;
@@ -1733,21 +1735,25 @@ export default function BenchmarkView() {
     billed: runBilled,
     provider: shownRow?.provider ?? null,
     model: shownRow?.modelId ?? null,
-    local: shownRow?.localEngine === true,
+    cloud: shownRow?.runRoute === 'cloud',
     tokens: runTokenCounts,
   });
   const priceProblem = price.problem;
   // The title is prefilled with a readable name the board shows ("DeepSeek V4.1 Flash 1017, single model via
   // OpenRouter"), never the id; still the user's to edit, and once they type it is theirs for this run.
   const titleTouched = useRef(false);
+  const [noDisplayName, setNoDisplayName] = useState(false);
   useEffect(() => {
     titleTouched.current = false;
+    setNoDisplayName(false);
     if (!selectedKey || !selectedFinished || !window.electron.benchmarkPublishSuggestion) return;
     let alive = true;
     void window.electron
       .benchmarkPublishSuggestion(selectedKey)
       .then((suggestion) => {
-        if (alive && suggestion?.title && !titleTouched.current) setTitle(suggestion.title);
+        if (!alive || !suggestion) return;
+        if (!suggestion.title) setNoDisplayName(true);
+        else if (!titleTouched.current) setTitle(suggestion.title);
       })
       .catch(() => {});
     return () => {
@@ -2089,6 +2095,8 @@ export default function BenchmarkView() {
               />
               <p id={titleHintId} className={cx('mt-1.5', TYPE.meta)}>
                 Your name for this run — the public title on the board.
+                {noDisplayName &&
+                  ' goose has no display name for this model: type a readable model name (not its id), e.g. "Qwen3.8 27B, run locally on a Mac".'}
                 {publishTitleProblem && (
                   <span className={cx('ml-1', WEIGHT.medium, TONE_TEXT.err)}>
                     {publishTitleProblem}

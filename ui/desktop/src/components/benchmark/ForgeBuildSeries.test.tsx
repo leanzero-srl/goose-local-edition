@@ -182,7 +182,9 @@ describe('Forge two-build presentation and publication', () => {
   it('prefills a readable title and, with no provider bill, sends the declared prices with both builds', async () => {
     const series = completedSeriesFixture();
     const usage = { sessions: [{ accumulated_input_tokens: 1_000_000, accumulated_output_tokens: 10_000, accumulated_cache_read_tokens: 0 }] };
-    const post = vi.fn(async () => ({ ok: true, url: '/x', coupled: true }));
+    let posted = 0;
+    // The site's own answers: build 1 carries a receipt, build 2 joins it on the board.
+    const post = vi.fn(async () => (++posted === 1 ? { ok: true, url: '/x', coupled: false, comparisonReceipt: true } : { ok: true, url: '/y', coupled: true, comparisonReceipt: true }));
     Object.assign(window.electron, {
       benchmarkSessions: vi.fn(async () => ({ sessions: sessionsFixture(series) })),
       benchmarkPublish: post,
@@ -201,7 +203,9 @@ describe('Forge two-build presentation and publication', () => {
       expect(args.title).toBe('Gemini 4 Argon, single model via Google');
       expect(args.declaredPrices).toEqual({ inputUsdPerMTok: 1.25, outputUsdPerMTok: 10 });
     }
-    expect(await screen.findByTestId('forge-series-notes')).toHaveTextContent('Build 1: Carries its comparison receipt');
+    const notes = await screen.findByTestId('forge-series-notes');
+    await waitFor(() => expect(notes).toHaveTextContent('Build 2: Coupled with this setup’s other build'));
+    expect(notes).toHaveTextContent('Build 1: Carries its comparison receipt');
   });
   it('a half-filled price blocks publishing both builds', async () => {
     const series = completedSeriesFixture();

@@ -325,17 +325,24 @@ type ElectronAPI = {
     url?: string;
     /** The site marked it a cloud baseline (a verified LeanZero operator key, or kept from before). */
     baseline?: boolean;
-    /** Forge 2.0: the build carries its comparison receipt, so it couples with the series' other build. */
+    /** Forge 2.0: the board now shows this build coupled with another build of the same entrant. */
     coupled?: boolean;
-    /** The operator key outcome: verified / rejected / unconfigured / needs-comparison-cohort / … */
+    /** Forge 2.0: the build carries its comparison receipt (it couples when its other build is live). */
+    comparisonReceipt?: boolean;
+    /** The operator key outcome: verified / not-operator / needs-comparison-cohort / not-single-model-cloud. */
     operator?: string;
     /** The run published WITHOUT its price because the site refused the price (said plainly to the user). */
     priceWarning?: string;
     /** Forge 2.0: why no comparison receipt could be attached (the build then publishes on its own). */
     cohortProblem?: string;
   }>;
-  /** The publish card's prefill for a run: a readable title, and whether the model ran on this Mac. */
-  benchmarkPublishSuggestion: (runKey: string) => Promise<{ title: string; local: boolean } | null>;
+  /** The publish card's prefill for a run: a readable title (null when goose knows no display name) and where it ran. */
+  benchmarkPublishSuggestion: (
+    runKey: string
+  ) => Promise<{ title: string | null; local: boolean; route?: 'cloud' | 'local' | 'unknown' } | null>;
+  /** The LeanZero operator key: write-only (main keeps it in the OS keychain via safeStorage); never read back. */
+  benchmarkOperatorKeyStatus: () => Promise<{ saved: boolean; available: boolean }>;
+  benchmarkOperatorKeySet: (key: string) => Promise<{ ok: boolean; saved?: boolean; error?: string }>;
   readSwarmRun: (workingDir: string) => Promise<{
     runId: string;
     /** Where the run actually lives — differs from workingDir when the engine redirected the build. */
@@ -665,6 +672,8 @@ const electronAPI: ElectronAPI = {
   benchmarkRunResult: (runKey: string) => ipcRenderer.invoke('benchmark-run-result', runKey),
   benchmarkPublishSuggestion: (runKey: string) =>
     ipcRenderer.invoke('benchmark-publish-suggestion', runKey),
+  benchmarkOperatorKeyStatus: () => ipcRenderer.invoke('benchmark-operator-key-status'),
+  benchmarkOperatorKeySet: (key: string) => ipcRenderer.invoke('benchmark-operator-key-set', key),
   benchmarkSeries: (seriesId?: string) => ipcRenderer.invoke('benchmark-series', seriesId),
   fleetStatus: () => ipcRenderer.invoke('fleet-status'),
   fleetProbe: (endpoint: string) => ipcRenderer.invoke('fleet-probe', endpoint),

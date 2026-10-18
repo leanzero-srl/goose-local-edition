@@ -122,13 +122,35 @@ export function forge2CohortReceipt(
 }
 
 const LOOPBACK = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?(\/|$)/i;
+const LOOPBACK_HOST = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i;
 
-/** Whether a run used a model on THIS Mac: the harness's isolation record lists its loopback provider under
- *  `direct_providers` (a cloud run reaches its provider only through the relay, so that list is empty). The
- *  provider NAME cannot tell: a local engine is served through the built-in `openai` provider. */
+export type BenchRunRoute = 'cloud' | 'local' | 'unknown';
+
+/**
+ * Where the model ran, from the run's OWN evidence — never the provider name (a local engine is served through the
+ * built-in `openai` provider). CLOUD needs positive proof: the isolation relay admitted a non-loopback provider host
+ * (Forge: "allow": ["openrouter.ai:443"]) or the harness recorded an OpenRouter bill. LOCAL: a loopback direct
+ * provider in the isolation record, or engine telemetry (the scorer's telemetry_summary — cloud entrants have none).
+ * Gauntlet sb-7.x writes no relay/direct_providers at all, so without a bill a run there is "unknown", and unknown is
+ * treated as not-cloud: no operator key, no cloud price prefill, no "via <provider>" title (app review 2026-10-18:
+ * local LFM2.5 / Qwen3.8 Gauntlet runs read as cloud and would have become baselines "via OpenAI").
+ */
+export function benchRunRoute(evidence: { isolation?: unknown; billedCost?: unknown; telemetry?: unknown }): BenchRunRoute {
+  const iso = isRecord(evidence.isolation) ? evidence.isolation : {};
+  const direct = Array.isArray(iso.direct_providers) ? iso.direct_providers : [];
+  const tel = isRecord(evidence.telemetry) ? evidence.telemetry : null;
+  if (direct.some((u) => typeof u === 'string' && LOOPBACK.test(u))) return 'local';
+  if (tel && (typeof tel.prompt_tokens === 'number' || isRecord(tel.nodes))) return 'local';
+  const allow = isRecord(iso.relay) && Array.isArray(iso.relay.allow) ? iso.relay.allow : [];
+  if (allow.some((h) => typeof h === 'string' && h.trim() && !LOOPBACK_HOST.test(h.trim()))) return 'cloud';
+  const bill = isRecord(evidence.billedCost) ? evidence.billedCost : null;
+  if (bill && bill.provider === 'openrouter' && (bill.status === 'complete' || bill.status === 'incomplete')) return 'cloud';
+  return 'unknown';
+}
+
+/** Kept for callers that only need the yes/no: a run that used this Mac. */
 export function runUsedLocalEngine(isolation: unknown): boolean {
-  const direct = isRecord(isolation) ? isolation.direct_providers : undefined;
-  return Array.isArray(direct) && direct.length > 0 && direct.every((u) => typeof u === 'string' && LOOPBACK.test(u));
+  return benchRunRoute({ isolation }) === 'local';
 }
 
 /** How the board's title names the route: "single model via OpenRouter". */
@@ -172,14 +194,13 @@ export function catalogDisplayName(
 export function suggestedPublishTitle(args: {
   model: string;
   provider: string | null;
-  local: boolean;
+  route: BenchRunRoute;
   displayName: string | null;
-}): string {
-  const bare = args.model.trim().replace(/^~/, '').replace(/^[^/]+\//, '');
-  if (args.local) return `${args.displayName ?? bare}, run locally on a Mac`.slice(0, 80);
+}): string | null {
+  // No display name = no prefill: the card asks for a name rather than offering the id's tail (never an id).
+  if (!args.displayName) return null;
+  if (args.route === 'local') return `${args.displayName}, run locally on a Mac`.slice(0, 80);
+  if (args.route !== 'cloud') return args.displayName.slice(0, 80);
   const via = (args.provider && PROVIDER_TITLE_LABELS[args.provider]) || args.provider || 'its provider';
-  return `${args.displayName ?? bare}, single model via ${via}`.slice(0, 80);
+  return `${args.displayName}, single model via ${via}`.slice(0, 80);
 }
-
-/** goose config.yaml key (and environment variable) holding the LeanZero operator key on our own installs. */
-export const BENCH_OPERATOR_KEY_CONFIG = 'LEANZERO_BENCH_OPERATOR_KEY';

@@ -126,7 +126,8 @@ export function ForgeBuildSeries({
   }, [childKeys]);
   const unbilled = Object.values(rows).filter((row) => row && !hasOpenRouterBill(row.billedCost));
   const loadedAll = childKeys !== '' && childKeys.split('|').every((key) => key in rows);
-  const anyLocal = Object.values(rows).some((row) => row?.localEngine === true);
+  // Price prefill only when every build is PROVEN cloud (main benchRunRoute); a local or unknown build never.
+  const allCloud = loadedAll && Object.values(rows).every((row) => row?.runRoute === 'cloud');
   const unbilledTokens = useMemo((): RunTokens | null => {
     let sum: RunTokens | null = { promptTokens: 0, cachedTokens: 0, completionTokens: 0 };
     for (const row of unbilled) {
@@ -147,7 +148,7 @@ export function ForgeBuildSeries({
     billed: !loadedAll || unbilled.length === 0,
     provider: series.provider ?? null,
     model: series.model ?? null,
-    local: anyLocal,
+    cloud: allCloud,
     tokens: unbilledTokens,
   });
   // A readable title (the board names the entry by the text before the first comma), prefilled once.

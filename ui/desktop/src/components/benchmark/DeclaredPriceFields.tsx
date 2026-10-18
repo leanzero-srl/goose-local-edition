@@ -23,22 +23,23 @@ const INPUT = cx(
 /**
  * The publisher's declared prices for a run with no provider bill (Mihai 2026-10-18: "anyone picking up the app
  * ... knows exactly how to publish and set the prices ... fields for the user to add input and output costs if
- * goose can't read the prices"). Prefilled from goose's own price list for a CLOUD model (never for a model
- * that ran on this Mac, whatever provider name served it); the site shows the result as an estimate.
+ * goose can't read the prices"). Prefilled from goose's own price list only for a run PROVEN to be cloud (never for a
+ * model that ran on this Mac or a run whose route is unknown); the site shows the result as an estimate.
  */
 export function useDeclaredPrices({
   resetKey,
   billed,
   provider,
   model,
-  local,
+  cloud,
   tokens,
 }: {
   resetKey: string | null;
   billed: boolean;
   provider: string | null;
   model: string | null;
-  local: boolean;
+  /** The run is PROVEN cloud (main's benchRunRoute). Only then is a cloud price list a fair prefill. */
+  cloud: boolean;
   tokens: RunTokens | null;
 }): {
   fields: PriceFields;
@@ -52,7 +53,7 @@ export function useDeclaredPrices({
   useEffect(() => {
     setFields({ input: '', output: '', cached: '' });
     setPrefilled(false);
-    if (billed || local || !provider || !model || isLocalProviderName(provider)) return;
+    if (billed || !cloud || !provider || !model || isLocalProviderName(provider)) return;
     let alive = true;
     void fetchCanonicalModelInfo(provider, model).then((info) => {
       const input = info?.inputTokenCost;
@@ -74,7 +75,7 @@ export function useDeclaredPrices({
     return () => {
       alive = false;
     };
-  }, [resetKey, billed, local, provider, model]);
+  }, [resetKey, billed, cloud, provider, model]);
   const declared = declaredPricesFromFields(fields, tokens);
   const problem = billed
     ? null

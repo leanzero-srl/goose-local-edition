@@ -28,13 +28,13 @@ import {
   type StoredRunMeta,
 } from './benchRescore';
 import { billedCostRowField, type DeclaredPrices } from './benchBilledCost';
-import { benchPublishBilling, refusalIsAboutBilling } from './benchPublishBilling';
+import { benchPublishBilling, droppableAfterRefusal } from './benchPublishBilling';
 import {
-  BENCH_OPERATOR_KEY_CONFIG,
   catalogDisplayName,
+  benchRunRoute,
   forge2CohortReceipt,
-  runUsedLocalEngine,
   suggestedPublishTitle,
+  type BenchRunRoute,
 } from './benchPublishIdentity';
 import { budgetRowField, maxUsdLaunchEnv } from './benchBudget';
 import {
@@ -110,6 +110,7 @@ import {
   Notification,
   powerMonitor,
   powerSaveBlocker,
+  safeStorage,
   session,
   screen,
   shell,
@@ -4488,8 +4489,9 @@ ipcMain.handle('benchmark-run-result', async (_event, key: string) => {
   if (!row) return null;
   const resolved = await resolveRunResult(row);
   if (!resolved?.result) return null;
-  // Whether the model ran on this Mac (its isolation record), so the card never prefills a cloud price for it.
-  return { ...resolved.result, localEngine: await benchRunWasLocal(resolved.result.workdir) };
+  // Where the model ran (its own evidence), so the card prefills a cloud price only for a proven cloud run.
+  const route = await benchRunRouteOf(resolved.result);
+  return { ...resolved.result, runRoute: route, localEngine: route === 'local' };
 });
 
 /** The result row a scored verdict becomes — the one shape result.json, the per-run store and a run
@@ -4794,6 +4796,7 @@ const runSingleBenchmark = async (
         slotDir: workdir,
         completionReceipt,
         ...(runModelFields ? { modelFields: runModelFields } : {}),
+        engineSha256: await benchmarkFileSha(engineBinary),
         ...(seriesBuild
           ? { seriesId: seriesBuild.series.id, buildIndex: seriesBuild.build.index }
           : {}),
@@ -5840,32 +5843,74 @@ ipcMain.handle('benchmark-cancel', async () => cancelActiveBenchRun('cancel requ
 
 const benchmarkPublicationOwner = new BenchPublicationOwner();
 
-/** The run folder's isolation record says whether the model ran on THIS Mac (benchPublishIdentity). */
-async function benchRunWasLocal(workdir: unknown): Promise<boolean> {
-  if (typeof workdir !== 'string') return false;
-  for (const dir of [workdir, path.dirname(workdir)]) {
-    try {
-      return runUsedLocalEngine(JSON.parse(await fs.readFile(path.join(dir, 'isolation.json'), 'utf8')));
-    } catch {
-      // no isolation record here; try the next folder
+/** Where the model ran, from the run's own evidence (benchPublishIdentity benchRunRoute): its isolation record,
+ *  its harness bill and its engine telemetry. Cloud only with positive proof; anything unproven is not cloud. */
+async function benchRunRouteOf(stored: Record<string, unknown>): Promise<BenchRunRoute> {
+  let isolation: unknown = null;
+  if (typeof stored.workdir === 'string')
+    for (const dir of [stored.workdir, path.dirname(stored.workdir)]) {
+      try {
+        isolation = JSON.parse(await fs.readFile(path.join(dir, 'isolation.json'), 'utf8'));
+        break;
+      } catch {
+        // no isolation record here; try the next folder
+      }
     }
-  }
-  return false;
+  return benchRunRoute({ isolation, billedCost: stored.billedCost, telemetry: stored.telemetry });
 }
 
-/** The LeanZero operator key (our own installs only): Benchmark view → "LeanZero operator key", stored in
- *  goose's config.yaml as LEANZERO_BENCH_OPERATOR_KEY, or the same environment variable. leanzero.net holds
- *  only its sha256; with a verified key a single-model CLOUD run publishes as a cloud baseline by itself. */
+/** The engine that RAN a build: stamped on its session row at launch (BenchSessionRow.engineSha256). */
+async function benchEngineShaFor(runKey: string | null, stored: Record<string, unknown>): Promise<string | null> {
+  const rows = await readBenchSessionRows();
+  const key =
+    runKey ??
+    benchRunKey({
+      runId: typeof stored.runId === 'string' ? stored.runId : null,
+      startedAt: (stored.runMeta as { startedAt?: string } | undefined)?.startedAt ?? '',
+    });
+  const sha = rows.find((r) => benchRunKey(r) === key)?.engineSha256;
+  return typeof sha === 'string' && /^[a-f0-9]{64}$/.test(sha) ? sha : null;
+}
+
+/** The LeanZero operator key (our own installs only). Kept OUT of goose's config.yaml (which diagnostics copy) and
+ *  never readable by the renderer: the Benchmark view writes it through `benchmark-operator-key-set`, main stores it
+ *  encrypted with Electron safeStorage (the OS keychain) in BENCH_DIR, and only main decrypts it, at publish, to send
+ *  it as a header for a proven-cloud single-model run. LEANZERO_BENCH_OPERATOR_KEY in main's environment overrides.
+ *  leanzero.net holds only its sha256; rotating the key = a new key here + its sha256 in the site's env. */
+const BENCH_OPERATOR_KEY_FILE = () => path.join(BENCH_DIR, 'operator-key.bin');
 async function benchOperatorKey(): Promise<string | null> {
   const fromEnv = process.env.LEANZERO_BENCH_OPERATOR_KEY?.trim();
   if (fromEnv) return fromEnv;
   try {
-    const value = (yaml.parse(await fs.readFile(gooseConfigYamlPath(), 'utf8')) ?? {})[BENCH_OPERATOR_KEY_CONFIG];
-    return typeof value === 'string' && value.trim() ? value.trim() : null;
+    if (!safeStorage.isEncryptionAvailable()) return null;
+    const key = safeStorage.decryptString(await fs.readFile(BENCH_OPERATOR_KEY_FILE())).trim();
+    return key || null;
   } catch {
     return null;
   }
 }
+ipcMain.handle('benchmark-operator-key-status', async () => {
+  try {
+    await fs.access(BENCH_OPERATOR_KEY_FILE());
+    return { saved: true, available: safeStorage.isEncryptionAvailable() };
+  } catch {
+    return { saved: false, available: safeStorage.isEncryptionAvailable() };
+  }
+});
+// Write-only: the key goes in, nothing about it comes back but whether one is saved.
+ipcMain.handle('benchmark-operator-key-set', async (_event, key: unknown) => {
+  const value = typeof key === 'string' ? key.trim() : '';
+  if (value.length > 256) return { ok: false, error: 'An operator key is at most 256 characters.' };
+  if (!value) {
+    await fs.rm(BENCH_OPERATOR_KEY_FILE(), { force: true });
+    return { ok: true, saved: false };
+  }
+  if (!safeStorage.isEncryptionAvailable())
+    return { ok: false, error: "This Mac's keychain encryption is not available, so the key cannot be stored safely." };
+  await fs.mkdir(BENCH_DIR, { recursive: true });
+  await fs.writeFile(BENCH_OPERATOR_KEY_FILE(), safeStorage.encryptString(value), { mode: 0o600 });
+  return { ok: true, saved: true };
+});
 
 // OpenRouter's public model catalog (no key): the display names the publish title is prefilled with.
 let benchCatalogNames: { at: number; data: Array<{ id?: unknown; name?: unknown }> } | null = null;
@@ -5892,9 +5937,9 @@ ipcMain.handle('benchmark-publish-suggestion', async (_event, key: string) => {
   const model = typeof stored.modelId === 'string' ? stored.modelId : '';
   const provider = typeof stored.provider === 'string' ? stored.provider : null;
   if (!model) return null;
-  const local = await benchRunWasLocal(stored.workdir);
-  const displayName = local || !provider ? null : await benchModelDisplayName(model, provider);
-  return { title: suggestedPublishTitle({ model, provider, local, displayName }), local };
+  const route = await benchRunRouteOf(stored);
+  const displayName = await benchModelDisplayName(model, provider ?? '');
+  return { title: suggestedPublishTitle({ model, provider, route, displayName }), local: route === 'local', route };
 });
 
 ipcMain.handle(
@@ -6047,19 +6092,24 @@ ipcMain.handle(
       // Forge 2.0: this build's own comparison receipt (forge2_compare's cohort bytes), so the site couples a
       // series' builds into one entry by itself — no operator script. Without one it publishes on its own.
       let cohortProblem: string | null = null;
-      if (stored.scorerVersion === 'forge-2.0' && billing.verdict) {
-        const engine = findGooseBinaryPath({
-          isPackaged: app.isPackaged,
-          resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
-        });
-        const receipt = forge2CohortReceipt(billing.verdict, await benchmarkFileSha(engine).catch(() => ''));
-        if ('receipt' in receipt) payload.comparisonCohort = receipt.receipt;
-        else cohortProblem = receipt.problem;
+      if (stored.scorerVersion === 'forge-2.0') {
+        // The engine that RAN the build (stamped at launch). A run from before that stamp has no record of it; the
+        // receipt would name the engine installed now, which can differ, so it is not guessed: no receipt, said so.
+        const engineSha = await benchEngineShaFor(runKey, stored);
+        if (!billing.verdict)
+          cohortProblem = "this build's verdict.json is no longer in its folder, so its comparison receipt cannot be built";
+        else if (!engineSha)
+          cohortProblem = 'this build predates the engine record its comparison receipt needs';
+        else {
+          const receipt = forge2CohortReceipt(billing.verdict, engineSha);
+          if ('receipt' in receipt) payload.comparisonCohort = receipt.receipt;
+          else cohortProblem = receipt.problem;
+        }
       }
       // Our own installs: the operator key marks a single-model CLOUD run a cloud baseline on the site. Never
       // sent for a run that used this Mac's engine (a local run is not a cloud baseline).
       const operatorKey =
-        cloudEntrant && nodeCount == null && !(await benchRunWasLocal(stored.workdir))
+        cloudEntrant && nodeCount == null && (await benchRunRouteOf(stored)) === 'cloud'
           ? await benchOperatorKey()
           : null;
       // Forge's graded browser recording (score_forge.py, SB7.x's media shape) rides like Gauntlet's. Without
@@ -6222,10 +6272,12 @@ ipcMain.handle(
             body: JSON.stringify(payload),
           });
         let res = await post();
-        // The price must never cost the whole publish: a site that refuses the price (e.g. one that does not
-        // take declared prices yet) gets the run without it, and the user is told plainly.
+        // An optional addition must never cost the whole publish: a site that refuses the price or the comparison
+        // receipt (or does not know the field yet, "Unknown field(s): comparisonCohort") gets the run without it,
+        // and the user is told plainly what was left out.
         let priceWarning: string | null = null;
-        if (!res.ok && payload.billing !== undefined) {
+        const dropped: string[] = [];
+        for (let attempt = 0; attempt < 2 && !res.ok; attempt++) {
           const refusal = await res
             .clone()
             .text()
@@ -6236,15 +6288,20 @@ ipcMain.handle(
           } catch {
             // not JSON; the raw text is the message
           }
-          if (refusalIsAboutBilling(res.status, refusalMessage)) {
-            const estimate =
-              (payload.billing as { source?: unknown }).source === 'declared-prices';
-            delete payload.billing;
-            res = await post();
-            priceWarning = estimate
-              ? `Published without the price: leanzero.net did not accept the declared-price estimate (${refusalMessage.slice(0, 200)}).`
-              : `Published without the price: leanzero.net did not accept this run's bill (${refusalMessage.slice(0, 200)}).`;
+          const drop = droppableAfterRefusal(res.status, refusalMessage, Object.keys(payload));
+          if (!drop.length) break;
+          for (const name of drop) {
+            if (name === 'billing')
+              priceWarning =
+                (payload.billing as { source?: unknown } | undefined)?.source === 'declared-prices'
+                  ? `Published without the price: leanzero.net did not accept the declared-price estimate (${refusalMessage.slice(0, 200)}).`
+                  : `Published without the price: leanzero.net did not accept this run's bill (${refusalMessage.slice(0, 200)}).`;
+            if (name === 'comparisonCohort')
+              cohortProblem = `leanzero.net did not accept the comparison receipt (${refusalMessage.slice(0, 200)})`;
+            delete payload[name];
+            dropped.push(name);
           }
+          res = await post();
         }
         if (!res.ok) {
           // 422 = the server's consistency gates fired; surface ITS message, not a bare status.

@@ -361,6 +361,7 @@ describe('the price a publish carries (Mihai 2026-10-18)', () => {
   it("a run with no bill is prefilled from goose's price list and publishes the declared prices", async () => {
     const { findByTestId, findByRole, getByLabelText } = renderWith({
       provider: 'google',
+      runRoute: 'cloud',
       billedCost: { status: 'unavailable', provider: 'google', reason: 'no per-call bill' },
       modelUsage: usage,
     });
@@ -393,10 +394,24 @@ describe('the price a publish carries (Mihai 2026-10-18)', () => {
     });
   });
 
+  it('a run whose route is unproven (no relay record, no bill) is never prefilled from a cloud price list', async () => {
+    const { findByTestId } = renderWith({
+      provider: 'google',
+      runRoute: 'unknown',
+      billedCost: { status: 'unavailable', provider: 'google' },
+      modelUsage: usage,
+    });
+    const input = (await findByTestId('publish-price-input')) as HTMLInputElement;
+    await new Promise((r) => setTimeout(r, 50));
+    expect(input.value).toBe('');
+    expect(canonical).not.toHaveBeenCalled();
+  });
+
   it('a run that used this Mac is never prefilled from a cloud price list, whatever provider served it', async () => {
     const { findByTestId } = renderWith({
       provider: 'openai',
       localEngine: true,
+      runRoute: 'local',
       billedCost: { status: 'unavailable', provider: 'openai' },
       modelUsage: usage,
     });
@@ -434,6 +449,7 @@ describe('the price a publish carries (Mihai 2026-10-18)', () => {
   it('a half-filled price blocks Publish with the reason; clearing it publishes without a price', async () => {
     const { findByTestId, findByRole, getByLabelText } = renderWith({
       provider: 'google',
+      runRoute: 'cloud',
       modelUsage: usage,
     });
     const input = (await findByTestId('publish-price-input')) as HTMLInputElement;

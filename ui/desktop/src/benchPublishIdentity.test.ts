@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  benchRunRoute,
   catalogDisplayName,
   forge2CohortReceipt,
   pythonCanonicalJson,
@@ -75,6 +76,19 @@ describe('forge2CohortReceipt', () => {
   });
 });
 
+describe('benchRunRoute: cloud only with positive proof', () => {
+  it('reads the run evidence, never the provider name', () => {
+    expect(benchRunRoute({ isolation: { relay: { allow: ['openrouter.ai:443'] } } })).toBe('cloud');
+    expect(benchRunRoute({ billedCost: { provider: 'openrouter', status: 'complete' } })).toBe('cloud');
+    expect(benchRunRoute({ isolation: { direct_providers: ['http://127.0.0.1:8090'] } })).toBe('local');
+    // Gauntlet sb-7.x isolation records carry neither list: a local LFM2.5 run there has engine telemetry.
+    expect(benchRunRoute({ isolation: { mechanism: 'macOS sandbox-exec' }, billedCost: { status: 'unavailable', provider: 'openai' }, telemetry: { prompt_tokens: 10, nodes: {} } })).toBe('local');
+    expect(benchRunRoute({ isolation: { mechanism: 'macOS sandbox-exec' }, billedCost: { status: 'unavailable', provider: 'google' } })).toBe('unknown');
+    expect(benchRunRoute({ isolation: { relay: { allow: ['127.0.0.1:8090'] } } })).toBe('unknown');
+    expect(benchRunRoute({})).toBe('unknown');
+  });
+});
+
 describe('runUsedLocalEngine', () => {
   it('reads the isolation record, not the provider name', () => {
     expect(runUsedLocalEngine({ direct_providers: ['http://127.0.0.1:8090'] })).toBe(true);
@@ -98,13 +112,16 @@ describe('titles', () => {
   });
   it('prefills a name the board shows before its first comma, never an id', () => {
     expect(
-      suggestedPublishTitle({ model: 'deepseek/deepseek-v4.1-flash-1017', provider: 'openrouter', local: false, displayName: 'DeepSeek V4.1 Flash 1017' })
+      suggestedPublishTitle({ model: 'deepseek/deepseek-v4.1-flash-1017', provider: 'openrouter', route: 'cloud', displayName: 'DeepSeek V4.1 Flash 1017' })
     ).toBe('DeepSeek V4.1 Flash 1017, single model via OpenRouter');
-    expect(suggestedPublishTitle({ model: 'gemini-4-argon', provider: 'google', local: false, displayName: 'Gemini 4 Argon' })).toBe(
+    expect(suggestedPublishTitle({ model: 'gemini-4-argon', provider: 'google', route: 'cloud', displayName: 'Gemini 4 Argon' })).toBe(
       'Gemini 4 Argon, single model via Google'
     );
-    expect(
-      suggestedPublishTitle({ model: 't12-candidates/Muse-Glimmer-30B-8bit', provider: 'openai', local: true, displayName: null })
-    ).toBe('Muse-Glimmer-30B-8bit, run locally on a Mac');
+    expect(suggestedPublishTitle({ model: 'qwen3.8-27b', provider: 'openai', route: 'local', displayName: 'Qwen3.8 27B' })).toBe(
+      'Qwen3.8 27B, run locally on a Mac'
+    );
+    // Route unproven: no "via <provider>" claim; no display name: no prefill at all, never the id's tail.
+    expect(suggestedPublishTitle({ model: 'x/y', provider: 'openai', route: 'unknown', displayName: 'Y Model' })).toBe('Y Model');
+    expect(suggestedPublishTitle({ model: 't12-candidates/Muse-Glimmer-30B-8bit', provider: 'openai', route: 'local', displayName: null })).toBeNull();
   });
 });
