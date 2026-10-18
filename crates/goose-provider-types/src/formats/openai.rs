@@ -7329,7 +7329,7 @@ mod tool_image_order_tests {
             .collect();
         assert_eq!(tools, ["call_img", "call_sh"]);
         assert!(
-            spec.iter().any(|m| is_image_only_user_message(m)),
+            spec.iter().any(is_image_only_user_message),
             "image still sent"
         );
     }
