@@ -449,6 +449,24 @@ fn merge_request_params(
         .extend(params);
 }
 
+/// The configured OPENROUTER_PARAMETERS one request carries. A `provider` routing block (a host
+/// pin such as `{"order": ["mistral"], "allow_fallbacks": false}`) is set for the ENTRANT model;
+/// background work on the provider's default fast model drops it (I-11, 2026-10-18): under a
+/// `mistral` pin every title/summary helper call to google/gemini-2.5-flash came back 404 "No
+/// endpoints found ... Every candidate endpoint was removed during routing" (12-16 per Mistral
+/// Large 4 Forge build), then fell back to the entrant. Every other request keeps every parameter.
+fn parameters_for_request(
+    params: &HashMap<String, Value>,
+    model_name: &str,
+    background: bool,
+) -> HashMap<String, Value> {
+    let mut params = params.clone();
+    if background && model_name == OPENROUTER_DEFAULT_FAST_MODEL {
+        params.remove("provider");
+    }
+    params
+}
+
 fn merge_openrouter_parameters(model: &mut ModelConfig, params: HashMap<String, Value>) {
     merge_request_params(&mut model.request_params, params);
 }
@@ -551,7 +569,14 @@ impl Provider for OpenRouterProvider {
         let mut merged_model;
         let model_config = if let Some(params) = &self.configured_parameters {
             merged_model = model_config.clone();
-            merge_openrouter_parameters(&mut merged_model, params.clone());
+            merge_openrouter_parameters(
+                &mut merged_model,
+                parameters_for_request(
+                    params,
+                    &model_config.model_name,
+                    crate::background_work::current_kind().is_some(),
+                ),
+            );
             &merged_model
         } else {
             model_config
@@ -746,6 +771,29 @@ mod tests {
         let request_params = model.request_params.as_ref().unwrap();
         assert_eq!(request_params["plugins"], json!([{ "id": "web" }]));
         assert_eq!(request_params["verbosity"], json!("xhigh"));
+    }
+
+    #[test]
+    fn a_host_pin_stays_off_the_fast_model_helper_calls_only() {
+        // I-11: the laptop chain pinned Mistral Large 4 to `mistral`; helper calls inherited it.
+        let params = parse_openrouter_parameters(json!({
+            "provider": {"order": ["mistral"], "allow_fallbacks": false},
+            "verbosity": "low"
+        }))
+        .unwrap();
+
+        let helper = parameters_for_request(&params, OPENROUTER_DEFAULT_FAST_MODEL, true);
+        assert!(!helper.contains_key("provider"), "{helper:?}");
+        assert_eq!(helper["verbosity"], json!("low"));
+
+        let entrant_turn = parameters_for_request(&params, "mistralai/mistral-large-4-0", false);
+        assert_eq!(entrant_turn["provider"]["order"], json!(["mistral"]));
+        // Background work on the ENTRANT model (compaction extending the chat) keeps the pin.
+        let entrant_compaction = parameters_for_request(&params, "mistralai/mistral-large-4-0", true);
+        assert_eq!(entrant_compaction["provider"]["order"], json!(["mistral"]));
+        // The fast model as the session's own turn (someone benchmarking it) keeps the pin.
+        let fast_turn = parameters_for_request(&params, OPENROUTER_DEFAULT_FAST_MODEL, false);
+        assert!(fast_turn.contains_key("provider"));
     }
 
     fn models_listing() -> Value {
