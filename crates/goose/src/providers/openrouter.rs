@@ -789,7 +789,8 @@ mod tests {
         let entrant_turn = parameters_for_request(&params, "mistralai/mistral-large-4-0", false);
         assert_eq!(entrant_turn["provider"]["order"], json!(["mistral"]));
         // Background work on the ENTRANT model (compaction extending the chat) keeps the pin.
-        let entrant_compaction = parameters_for_request(&params, "mistralai/mistral-large-4-0", true);
+        let entrant_compaction =
+            parameters_for_request(&params, "mistralai/mistral-large-4-0", true);
         assert_eq!(entrant_compaction["provider"]["order"], json!(["mistral"]));
         // The fast model as the session's own turn (someone benchmarking it) keeps the pin.
         let fast_turn = parameters_for_request(&params, OPENROUTER_DEFAULT_FAST_MODEL, false);

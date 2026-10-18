@@ -2250,7 +2250,8 @@ mod tests {
         );
         let window_only = json!({"data": [{"id": "m", "context_window": 131072}]});
         assert_eq!(parse_n_ctx_from_models(&window_only, "m"), Some(131_072));
-        let meta_first = json!({"data": [{"id": "m", "meta": {"n_ctx": 8192}, "max_model_len": 32768}]});
+        let meta_first =
+            json!({"data": [{"id": "m", "meta": {"n_ctx": 8192}, "max_model_len": 32768}]});
         assert_eq!(parse_n_ctx_from_models(&meta_first, "m"), Some(8192));
         let zero = json!({"data": [{"id": "m", "max_model_len": 0, "context_window": 0}]});
         assert_eq!(parse_n_ctx_from_models(&zero, "m"), None);

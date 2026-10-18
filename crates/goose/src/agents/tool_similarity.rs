@@ -245,14 +245,12 @@ pub fn argument_shape_match<'a>(tools: &'a [Tool], argument_names: &[&str]) -> O
     let params: Vec<HashSet<String>> = tools.iter().map(parameter_names).collect();
     let mut matches = tools.iter().zip(&params).filter(|(tool, own)| {
         call.iter().all(|a| own.contains(*a))
-            && required_names(tool).iter().all(|r| call.contains(r.as_str()))
-            && call.iter().any(|a| {
-                params
-                    .iter()
-                    .filter(|other| other.contains(*a))
-                    .count()
-                    == 1
-            })
+            && required_names(tool)
+                .iter()
+                .all(|r| call.contains(r.as_str()))
+            && call
+                .iter()
+                .any(|a| params.iter().filter(|other| other.contains(*a)).count() == 1)
     });
     let first = matches.next().map(|(tool, _)| tool);
     match matches.next() {
@@ -458,12 +456,18 @@ mod tests {
         }
     }
 
-    fn required_tool(name: &str, description: &str, properties: &[&str], required: &[&str]) -> Tool {
+    fn required_tool(
+        name: &str,
+        description: &str,
+        properties: &[&str],
+        required: &[&str],
+    ) -> Tool {
         let props: serde_json::Map<String, serde_json::Value> = properties
             .iter()
             .map(|p| (p.to_string(), serde_json::json!({"type": "string"})))
             .collect();
-        let schema = serde_json::json!({"type": "object", "properties": props, "required": required});
+        let schema =
+            serde_json::json!({"type": "object", "properties": props, "required": required});
         Tool::new(
             name.to_string(),
             description.to_string(),
@@ -476,11 +480,36 @@ mod tests {
     /// field required).
     fn forge_tools() -> Vec<Tool> {
         vec![
-            required_tool("shell", "Execute a shell command in the current dir.", &["command", "timeout_secs"], &["command"]),
-            required_tool("write", "Create a new file or overwrite an existing file.", &["path", "content"], &["path", "content"]),
-            required_tool("edit", "Edit a file by finding and replacing text.", &["path", "before", "after"], &["path", "before", "after"]),
-            required_tool("tree", "List a directory tree with line counts.", &["path", "depth"], &["path"]),
-            required_tool("read_image", "Read an image from a local file path or http(s) URL.", &["source", "crop"], &["source"]),
+            required_tool(
+                "shell",
+                "Execute a shell command in the current dir.",
+                &["command", "timeout_secs"],
+                &["command"],
+            ),
+            required_tool(
+                "write",
+                "Create a new file or overwrite an existing file.",
+                &["path", "content"],
+                &["path", "content"],
+            ),
+            required_tool(
+                "edit",
+                "Edit a file by finding and replacing text.",
+                &["path", "before", "after"],
+                &["path", "before", "after"],
+            ),
+            required_tool(
+                "tree",
+                "List a directory tree with line counts.",
+                &["path", "depth"],
+                &["path"],
+            ),
+            required_tool(
+                "read_image",
+                "Read an image from a local file path or http(s) URL.",
+                &["source", "crop"],
+                &["source"],
+            ),
         ]
     }
 
@@ -499,7 +528,10 @@ mod tests {
         let mut args = JsonObject::new();
         args.insert("command".into(), serde_json::json!("ls -la"));
         let msg = not_found_message(&tools, "bash", Some(&args));
-        assert!(msg.contains("The closest tools by name and purpose:\n- shell"), "{msg}");
+        assert!(
+            msg.contains("The closest tools by name and purpose:\n- shell"),
+            "{msg}"
+        );
     }
 
     #[test]
