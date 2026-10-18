@@ -779,6 +779,7 @@ pub fn format_messages_reporting_images(
     }
 
     merge_split_tool_call_messages(&mut messages_spec);
+    hoist_tool_result_images(&mut messages_spec);
     if let Some(text) = turn_context {
         attach_turn_context(
             &mut messages_spec,
@@ -912,6 +913,66 @@ fn append_turn_context_tail(messages_spec: &mut Vec<Value>, text: &str) {
         }
     }
     messages_spec.push(json!({"role": "user", "content": text}));
+}
+
+/// Tool results whose content had an image are followed by an image-only `user` message (OpenAI
+/// tool messages cannot carry images). With PARALLEL tool calls that put a `user` message between
+/// two `tool` results, and strict hosts refuse the request: Mistral answered 400 "Unexpected role
+/// 'tool' after role 'user'" (invalid_request_message_order) and ended Mistral Large 4's Gauntlet
+/// after 97 of 150 calls (2026-10-19, RUN-ISSUES I-19). Every tool result must follow its
+/// assistant tool call directly, so within each run of tool results the image-only messages move
+/// to after the run's last tool result, merged into one `user` message. Real user text is never
+/// moved, and a request without such a gap is unchanged.
+fn hoist_tool_result_images(messages: &mut Vec<Value>) {
+    let mut i = 0;
+    while i < messages.len() {
+        if messages[i].get("role") != Some(&json!("tool")) {
+            i += 1;
+            continue;
+        }
+        // The run: tool results and the image-only user messages between them.
+        let start = i;
+        let mut end = i;
+        let mut j = i;
+        while j < messages.len() {
+            if messages[j].get("role") == Some(&json!("tool")) {
+                end = j;
+            } else if !is_image_only_user_message(&messages[j]) {
+                break;
+            }
+            j += 1;
+        }
+        let gap = (start..=end).any(|k| is_image_only_user_message(&messages[k]));
+        if !gap {
+            i = end + 1;
+            continue;
+        }
+        let run: Vec<Value> = messages.drain(start..=end).collect();
+        let (tools, images): (Vec<Value>, Vec<Value>) = run
+            .into_iter()
+            .partition(|m| m.get("role") == Some(&json!("tool")));
+        let parts: Vec<Value> = images
+            .iter()
+            .flat_map(|m| m["content"].as_array().cloned().unwrap_or_default())
+            .collect();
+        let n_tools = tools.len();
+        let mut rebuilt = tools;
+        rebuilt.push(json!({"role": "user", "content": parts}));
+        let inserted = rebuilt.len();
+        messages.splice(start..start, rebuilt);
+        // Image-only messages that already trailed the run join the merged one.
+        let merged = start + n_tools;
+        while merged + 1 < messages.len() && is_image_only_user_message(&messages[merged + 1]) {
+            let extra = messages.remove(merged + 1);
+            if let (Some(dst), Some(src)) = (
+                messages[merged]["content"].as_array_mut(),
+                extra["content"].as_array(),
+            ) {
+                dst.extend(src.iter().cloned());
+            }
+        }
+        i = start + inserted;
+    }
 }
 
 /// The agent splits a single assistant response with N tool_calls into N
@@ -5457,6 +5518,79 @@ data: [DONE]"#;
         assert_eq!(messages[2]["role"], "user");
         assert_eq!(messages[3]["role"], "tool");
         assert_eq!(messages[3]["tool_call_id"], "tc2");
+        // ...and the request-level pass then restores strict order (I-19).
+        hoist_tool_result_images(&mut messages);
+        let roles: Vec<&str> = messages
+            .iter()
+            .map(|m| m["role"].as_str().unwrap())
+            .collect();
+        assert_eq!(roles, ["assistant", "tool", "tool", "user"]);
+        assert_eq!(messages[1]["tool_call_id"], "tc1");
+        assert_eq!(messages[2]["tool_call_id"], "tc2");
+    }
+
+    /// RUN-ISSUES I-19: the exact shape of the request Mistral refused (2026-10-19 02:05) —
+    /// two parallel calls, the first result carried an image, then the turn-context tail.
+    #[test]
+    fn test_parallel_tool_results_with_image_keep_strict_order() {
+        let mut messages = vec![
+            json!({"role": "user", "content": "<turn-context>…</turn-context>"}),
+            json!({"role": "assistant", "content": "PIL isn't available. Let me examine viz.js.", "tool_calls": [
+                {"id": "IRPiNVqgS", "type": "function", "function": {"name": "read_image", "arguments": "{}"}},
+                {"id": "yDLU4h1Yq", "type": "function", "function": {"name": "shell", "arguments": "{}"}}]}),
+            json!({"role": "tool", "tool_call_id": "IRPiNVqgS", "content": "Loaded image … uploaded in the next message."}),
+            json!({"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBOR"}}]}),
+            json!({"role": "tool", "tool_call_id": "yDLU4h1Yq", "content": "return n ? [v[0] / n] : [0];"}),
+            json!({"role": "user", "content": "<turn-context>…</turn-context>"}),
+        ];
+        hoist_tool_result_images(&mut messages);
+        let roles: Vec<&str> = messages
+            .iter()
+            .map(|m| m["role"].as_str().unwrap())
+            .collect();
+        assert_eq!(roles, ["user", "assistant", "tool", "tool", "user", "user"]);
+        for w in messages.windows(2) {
+            assert!(
+                !(w[0]["role"] == "user" && w[1]["role"] == "tool"),
+                "tool after user: {w:?}"
+            );
+        }
+        assert_eq!(messages[2]["tool_call_id"], "IRPiNVqgS");
+        assert_eq!(messages[3]["tool_call_id"], "yDLU4h1Yq");
+        assert_eq!(messages[4]["content"][0]["type"], "image_url");
+        assert_eq!(messages[5]["content"], "<turn-context>…</turn-context>");
+    }
+
+    #[test]
+    fn test_hoist_merges_images_and_never_moves_user_text() {
+        let img = |u: &str| json!({"role": "user", "content": [{"type": "image_url", "image_url": {"url": u}}]});
+        let mut messages = vec![
+            json!({"role": "assistant", "tool_calls": [
+                {"id": "a", "type": "function", "function": {"name": "s1", "arguments": "{}"}},
+                {"id": "b", "type": "function", "function": {"name": "s2", "arguments": "{}"}}]}),
+            json!({"role": "tool", "tool_call_id": "a", "content": "x"}),
+            img("data:1"),
+            json!({"role": "tool", "tool_call_id": "b", "content": "y"}),
+            img("data:2"),
+            json!({"role": "user", "content": "real text"}),
+        ];
+        hoist_tool_result_images(&mut messages);
+        let roles: Vec<&str> = messages
+            .iter()
+            .map(|m| m["role"].as_str().unwrap())
+            .collect();
+        assert_eq!(roles, ["assistant", "tool", "tool", "user", "user"]);
+        assert_eq!(messages[3]["content"].as_array().unwrap().len(), 2);
+        assert_eq!(messages[4]["content"], "real text");
+        // No gap: unchanged.
+        let mut plain = vec![
+            json!({"role": "assistant", "tool_calls": [{"id": "a", "type": "function", "function": {"name": "s", "arguments": "{}"}}]}),
+            json!({"role": "tool", "tool_call_id": "a", "content": "x"}),
+            img("data:1"),
+        ];
+        let before = plain.clone();
+        hoist_tool_result_images(&mut plain);
+        assert_eq!(plain, before);
     }
 
     #[test]
@@ -7142,6 +7276,61 @@ mod text_only_engine_tests {
             wire.matches(r#""type":"image_url""#).count(),
             2,
             "both image parts go out: {wire}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tool_image_order_tests {
+    use super::*;
+    use rmcp::model::{CallToolRequestParams, CallToolResult, Content};
+
+    /// RUN-ISSUES I-19 end to end: two parallel tool calls, the first result carries an image.
+    /// The formatted request must keep both tool results directly after the assistant call
+    /// (Mistral 400 "Unexpected role 'tool' after role 'user'" otherwise).
+    #[test]
+    fn test_formatted_parallel_tool_image_has_no_user_between_tool_results() {
+        let history = vec![
+            Message::user().with_text("check the screenshot and the code"),
+            Message::assistant()
+                .with_tool_request("call_img", Ok(CallToolRequestParams::new("read_image")))
+                .with_tool_request("call_sh", Ok(CallToolRequestParams::new("shell"))),
+            Message::user()
+                .with_tool_response(
+                    "call_img",
+                    Ok(CallToolResult::success(vec![
+                        Content::text("Loaded image."),
+                        Content::image("iVBORw0KGgo=", "image/png"),
+                    ])),
+                )
+                .with_tool_response(
+                    "call_sh",
+                    Ok(CallToolResult::success(vec![Content::text("ok")])),
+                ),
+        ];
+        let mut images = ImageReport::default();
+        let spec = format_messages_reporting_images(
+            &history,
+            &ImageFormat::OpenAi,
+            OpenAiFormatOptions::default(),
+            &mut images,
+        );
+        let roles: Vec<&str> = spec.iter().map(|m| m["role"].as_str().unwrap()).collect();
+        for w in spec.windows(2) {
+            assert!(
+                !(w[0]["role"] == "user" && w[1]["role"] == "tool"),
+                "tool after user in {roles:?}"
+            );
+        }
+        let tools: Vec<&str> = spec
+            .iter()
+            .filter(|m| m["role"] == "tool")
+            .map(|m| m["tool_call_id"].as_str().unwrap())
+            .collect();
+        assert_eq!(tools, ["call_img", "call_sh"]);
+        assert!(
+            spec.iter().any(|m| is_image_only_user_message(m)),
+            "image still sent"
         );
     }
 }
