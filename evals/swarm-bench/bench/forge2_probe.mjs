@@ -357,6 +357,15 @@ const lineageOf = (emu, inv) => {
   return rec ? { originChange: rec.originChange ?? null, scheduledRun: rec.scheduledRun ?? null } : {};
 };
 let logCursor = 0;
+// Large arrays never go through a spread: `a.push(...xs)` and `Math.max(...xs)` pass every element as an argument
+// and throw "RangeError: Maximum call stack size exceeded" past V8's argument limit (~100k). Measured 2026-10-18:
+// build cloud-03aded39's live phase recorded enough platform calls that `ph.calls.push(...takeCalls(emu))` threw on
+// one scoring site and 39 rows went UNAVAILABLE, unpublishable, for a harness reason. A call-heavy app is graded by
+// the economy rows, never by the probe dying. test_forge2_probe_spread.py keeps every spread out of this file.
+const pushAll = (arr, xs) => { for (const x of xs) arr.push(x); return arr.length; };
+const maxOf = (xs) => { let m = -Infinity; for (const x of xs) if (x > m) m = x; return m; };
+const minOf = (xs) => { let m = Infinity; for (const x of xs) if (x < m) m = x; return m; };
+
 const takeCalls = (emu) => {
   const all = emu.log || [];
   const fresh = all.slice(logCursor).map((e) => {
@@ -801,10 +810,10 @@ async function main() {
   const worldUntil = async (t) => {
     if (typeof site.control.world !== 'function') { gap('site.control.world (P5: the world schedule)', 'world'); return; }
     const r = await site.control.world({ until: t });
-    obs.world.push(...(r.applied ?? []));
+    pushAll(obs.world, (r.applied ?? []));
     // The world's product events (avi:jira:deleted:issue) reach the app's triggers as the site applies them.
     for (const w of await emu.deliverWorldEvents()) {
-      (obs.phases.live?.invocations ?? []).push(...w.invocations.map((x) => normInvocation(x, 'trigger', x?.moduleKey)));
+      pushAll((obs.phases.live?.invocations ?? []), w.invocations.map((x) => normInvocation(x, 'trigger', x?.moduleKey)));
     }
   };
   // The next scheduled world event the site has not applied (its atMs), the agenda point runHours drains to before it
@@ -853,15 +862,15 @@ async function main() {
     const seq = createCiSequence({ seed, secret, issueKeys });
     obs.webtriggerSetup.plan = seq.plan;
     const cases = { next: () => { const s = seq.next(Math.floor(now() / 1000)); return s && { case: s.name, eventId: s.eventId, concurrent_group: s.concurrentGroup, headers: s.request.headers, body: s.request.body }; } };
-    ciCalls.push(...takeCalls(emu));
+    pushAll(ciCalls, takeCalls(emu));
     // In-process through the kit's ingress (the same one the proxy route mounts): fetch would lower-case the header
     // names, and the header-case step sends them spelled as a CI system might.
     const { invokeWebtrigger } = require(join(kitDir, 'lib', 'webtrigger.cjs'));
     const send = async (c) => { const r = await invokeWebtrigger(emu, wt.key, { method: 'POST', headers: c.headers, body: c.body }); return { status: r.statusCode, text: r.body ?? '', invocationIds: r.invocation ? [r.invocation.id ?? r.invocation.invocationId] : [] }; };
     const sendGroup = async (batch) => (await invokeCiGroup(emu, wt.key, batch.map((c) => ({ method: 'POST', headers: c.headers, body: c.body }))))
       .map((r) => ({ status: r.statusCode, text: r.body ?? '', invocationIds: [r.invocation.id ?? r.invocation.invocationId] }));
-    obs.webtrigger.push(...await sendCiCases({ cases, url: emu.webtriggerUrl(wt.key), emu, completed: completedInvocations, send, sendGroup }));
-    ciCalls.push(...takeCalls(emu));
+    pushAll(obs.webtrigger, await sendCiCases({ cases, url: emu.webtriggerUrl(wt.key), emu, completed: completedInvocations, send, sendGroup }));
+    pushAll(ciCalls, takeCalls(emu));
   };
   const jqlInitial = [];
   async function probeJql(stage) {
@@ -888,7 +897,7 @@ async function main() {
             throw new Error('Native JQL search recorded no precomputation expansion evidence');
           }
           if (Array.isArray(entry?.jqlExpansion?.calls)) {
-            record.calls.push(...entry.jqlExpansion.calls);
+            pushAll(record.calls, entry.jqlExpansion.calls);
             record.invoked += entry.jqlExpansion.calls.filter((c) => c.invoked).length;
             record.precomputationId ??= entry.jqlExpansion.calls[0]?.precomputationId ?? null;
             record.expanded_jql = entry.jqlExpansion.jql ?? null;
@@ -975,7 +984,7 @@ async function main() {
         const r = await emu.deliverNext();
         if (!r) { planDone = true; return false; }
         const trig = (r.invocations || []).map((x) => normInvocation(x, 'trigger', x?.moduleKey));
-        ph.invocations.push(...trig);
+        pushAll(ph.invocations, trig);
         ph.events.push({ changelogId: r.changelogId, slot: r.slot, duplicate: Boolean(r.duplicate), t: vt(new Date(now()).toISOString()),
           triggerInvocations: trig.map((x) => x.inv).filter(Boolean), ...(Number.isInteger(r.batchEnd) ? { batchEnd: r.batchEnd } : {}) });
         if (batch && r.slot <= batch.end) {
@@ -1003,18 +1012,18 @@ async function main() {
       world: worldUntil,
       nextWorldAt,
       hourly: async (k) => {
-        ph.calls.push(...takeCalls(emu));
+        pushAll(ph.calls, takeCalls(emu));
         await runSchedules(`hour-${k}`, now());
       },
       ci: async () => {
-        ph.calls.push(...takeCalls(emu));
+        pushAll(ph.calls, takeCalls(emu));
         await section('webtrigger', ciSequence, ['webtrigger']);
       },
       panel: async (cp) => {
-        ph.calls.push(...takeCalls(emu));
+        pushAll(ph.calls, takeCalls(emu));
         await section(`panel-${cp}`, () => adm.panelRead(cp));
         await section(`person-${cp}`, () => personReads(cp));
-        (obs.ui.adminCalls ??= []).push(...takeCalls(emu));
+        pushAll((obs.ui.adminCalls ??= []), takeCalls(emu));
       },
       checkpoint: (cp) => checkpointWithJql(cp, checkpoint, (stage) => section('jql', () => probeJql(stage), ['jql'])),
       quotaWindow,
@@ -1040,7 +1049,7 @@ async function main() {
     if (typeof site.flushLive === 'function') site.flushLive();
     else gap('site.flushLive (dropped changes after the last delivery)', 'live', 'heal');
     consumed(ph, await emu.drainQueues());
-    ph.calls.push(...takeCalls(emu));
+    pushAll(ph.calls, takeCalls(emu));
     ph.kvsAfter = snapshot('live');
     obs.webtriggerCalls = ciCalls;
   }, ['migration', 'field', 'world', 'webtrigger', 'rate']);
@@ -1238,7 +1247,7 @@ function adminDriver({ emu, pack, host, adminPage, appDir, now }) {
     const changed = changedKeys(s0, s1);
     const entries = a.invokes.slice(i0).map((inv) => ({ as, via: 'ui', resolver: inv.resolver, payload: inv.payload, result_ok: inv.ok,
       state_changed: changed.length > 0, changed_keys: changed, landed: landedOf(s0, s1, changed), response: inv.response, error: inv.error }));
-    obs.admin.actions.push(...entries);
+    pushAll(obs.admin.actions, entries);
     return entries;
   };
   // A direct resolver call, as a non-admin or with a forged payload (P1's explicit-context invocation).
@@ -1315,7 +1324,7 @@ function adminDriver({ emu, pack, host, adminPage, appDir, now }) {
     await n.ui.waitIdle();
     obs.admin.nonadmin_text = n.ui.text();
     if (found(n.ui, LABELS.budget) && found(n.ui, LABELS.save)) {
-      replays.push(...await act(n, 'nonadmin', async () => { await n.ui.setValue(LABELS.budget, FORGED_BUDGET); await n.ui.click(LABELS.save); }));
+      pushAll(replays, await act(n, 'nonadmin', async () => { await n.ui.setValue(LABELS.budget, FORGED_BUDGET); await n.ui.click(LABELS.save); }));
     }
     // A replay that rotated the secret (the R5 critical, priced there) leaves the panel's secret stale: the admin
     // rotates once more, so the CI sequence grades the web trigger and not that defect a second time.
@@ -1491,7 +1500,7 @@ async function waitMeaningful(s, selector) {
 async function bootCounts(s, selector, painted) {
   const seen = await s.page.evaluate(() => window.__forgeProbe?.firstSeen ?? {}).catch(() => ({}));
   const stamps = selector.split(/\s*,\s*/).map((p) => seen[p]).filter((x) => typeof x === 'number');
-  const paintAt = stamps.length ? Math.min(...stamps) : null;
+  const paintAt = stamps.length ? minOf(stamps) : null;
   const external = externalOf(s.net, new URL(s.startUrl).origin);
   const measured = painted && paintAt !== null;
   return { painted, paint_missed: painted && paintAt === null,
@@ -1604,9 +1613,9 @@ function bootOf(surfaces) {
   const xs = surfaces.map((s) => s.boot).filter(Boolean);
   if (!xs.length) return null;
   // The worst measured open; `opens`/`painted`/`unmeasured` say how many opens that covers.
-  const worst = (k) => { const v = xs.map((b) => b[k]).filter((x) => typeof x === 'number'); return v.length ? Math.max(...v) : null; };
+  const worst = (k) => { const v = xs.map((b) => b[k]).filter((x) => typeof x === 'number'); return v.length ? maxOf(v) : null; };
   return { invokes_before_paint: worst('invokes_before_paint'), round_trips_before_paint: worst('round_trips_before_paint'),
-    bytes_before_paint: worst('bytes_before_paint'), external_requests: Math.max(...xs.map((b) => b.external_requests)), opens: xs.length,
+    bytes_before_paint: worst('bytes_before_paint'), external_requests: maxOf(xs.map((b) => b.external_requests)), opens: xs.length,
     painted: xs.filter((b) => b.painted).length, unmeasured: xs.filter((b) => b.paint_missed).length,
     external_urls: [...new Set(xs.flatMap((b) => b.external_urls))].slice(0, 10) };
 }
@@ -2023,7 +2032,7 @@ async function liveStep(s, board, pack) {
   const ops = bridgeOps(s);
   const widgetKey = (emu.modules ? emu.modules('dashboards:widget') : [])[0]?.key ?? null;
   const windows = changes.map((c) => readAfterWrite(c.changelogId, widgetKey, obs.concurrency.query_lag_ms));
-  obs.concurrency.read_after_write.push(...windows);
+  pushAll(obs.concurrency.read_after_write, windows);
   return { board, subscribed: ops.some((b) => opName(b) === 'subscribeRealtimeChannel'),
     idleInvokes: idle.filter((b) => ['invoke', 'fetchProduct'].includes(opName(b))).length, idleMs: LIVE_IDLE_MS,
     reloaded: navigations > 0, delivered: changes.map((c) => c.changelogId),
@@ -2045,9 +2054,9 @@ function readAfterWrite(changelogId, widgetKey, lagMs) {
   const mine = (emu.log || []).filter((e) => ids.has(e.invocationId));
   const writes = mine.filter((e) => e.service === 'kvs' && isWrite(e)).map(at);
   const publishes = mine.filter((e) => e.service === 'realtime' && /^publish/.test(String(e.op ?? '')) && Number(e.status) < 400).map(at);
-  const publish = publishes.length ? Math.max(...publishes) : null;
+  const publish = publishes.length ? maxOf(publishes) : null;
   const announced = publish === null ? writes : writes.filter((t) => t <= publish);
-  const lastWrite = announced.length ? Math.max(...announced) : null;
+  const lastWrite = announced.length ? maxOf(announced) : null;
   const reread = publish === null || !widgetKey ? null
     : recs.filter((r) => r.moduleKey === widgetKey && r.source === 'resolver' && r.vStart >= publish).sort((a, b) => a.vStart - b.vStart)[0] ?? null;
   const query = reread ? (emu.log || []).filter((e) => e.invocationId === reread.id && e.service === 'kvs' && /query$/.test(String(e.path ?? ''))).map(at)[0] ?? null : null;
@@ -2251,7 +2260,7 @@ async function llmCases(pack, v) {
       else row.cross_viewer.absent = 'second viewer has no explain control';
       await peer.page.close();
     }
-    (obs.ui.llmCalls ??= []).push(...takeCalls(emu));
+    pushAll((obs.ui.llmCalls ??= []), takeCalls(emu));
     if (c.admin?.restore !== undefined && row.setting_applied) row.setting_restored = await panelSet(c.admin.label, c.admin.restore === true ? !c.admin.value : c.admin.restore);
     obs.llm_v2.push(row);
   }
