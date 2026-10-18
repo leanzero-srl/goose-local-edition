@@ -1405,7 +1405,12 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
   Scheduler._kv_element_bytes (loaded params' itemsize first, for growth + latent + quantized re-pricing), prompt counted by
   the engine tokenizer, BackpressureError(error_object=...) = context_length_exceeded when it cannot fit alone (HTTP 400
   pre-stream / SSE object mid-stream), else SSE code rate_limit_exceeded (goose in_stream_error -> RateLimitExceeded -> retry).
-  Tests tests/test_gemma4_kv_admission.py (11 red on base, 13 green). REPLAY (own engine :8197, the app's argv, worktree via
+  Final head b20ec1b7 (+9acd7982: a waiting request's prompt is tokenized ONCE — _sum_in_flight_kv_bytes re-projects every
+  waiting request per admission under the lock; +b20ec1b7: test_metal_cap_enforcement's byte-fallback test now drives the
+  fallback). Tests tests/test_gemma4_kv_admission.py (11 red on base, 14 green). DEPLOY REV=b20ec1b73f3ee4bb61aa1013862da516d9691a59.
+  TRAP: tests/test_memory_guard_mtp_decode.py::test_a_fixed_verify_cost_is_planned_without_a_crossing[m4max128] takes ~96 s on
+  the Studio — a --timeout 90 (thread method) kills the WHOLE run there; use >= 300. HF_HUB_OFFLINE=1 makes
+  test_streaming_detokenizer / test_tokenizer_gemma4_hybrid fail on base too (no cached tokenizer). REPLAY (own engine :8197, the app's argv, worktree via
   M_WORKTREE sys.path launcher /private/tmp/m_engine.py, client /private/tmp/m_replay.py = 7 msgs/85k chars/5 tools/max_tokens
   unset): 3 concurrent turns -> base refuses 2 ("projected KV 41.6 GB", masked); fix admits all, peak 29 GB.
   GOOSE GAP (not fixed here): goose's in-stream error mapper (goose-provider-types formats/openai.rs in_stream_error) maps only
