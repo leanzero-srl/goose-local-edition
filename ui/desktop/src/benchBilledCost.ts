@@ -270,21 +270,29 @@ export interface DeclaredPrices {
 /** The highest per-1M-token price the site accepts (website MAX_USD_PER_MTOK). */
 export const MAX_DECLARED_USD_PER_MTOK = 10_000;
 
-/** One price field: blank is "not declared"; anything else must be a plain non-negative number. */
+/** One price field: blank is "not declared"; anything else must be a plain non-negative number. A decimal
+ *  comma is read as the decimal point ("1,25" is 1.25, as many locales type it); thousands separators are not
+ *  accepted ("1,250.5" is refused rather than guessed). */
 export function parseDeclaredPrice(text: string): number | undefined | 'invalid' {
-  const t = text.trim();
+  let t = text.trim();
   if (!t) return undefined;
+  if (/^\d*,\d+$/.test(t)) t = t.replace(',', '.');
   if (!/^\d+(\.\d+)?$|^\.\d+$/.test(t)) return 'invalid';
   const n = Number(t);
   return Number.isFinite(n) && n >= 0 && n <= MAX_DECLARED_USD_PER_MTOK ? n : 'invalid';
 }
 
-/** The fields as typed → the prices to send, nothing (all blank), or the reason they cannot be sent. */
-export function declaredPricesFromFields(fields: {
-  input: string;
-  output: string;
-  cached: string;
-}): { prices: DeclaredPrices | null; problem: string | null } {
+/** The fields as typed → the prices to send, nothing (all blank), or the reason they cannot be sent. With the
+ *  run's token counts, a run that read cached tokens must say what a cache read costs: charging them at the
+ *  full input price overstates most providers' bills several times (a real Gemini run: $18.78 vs $4.23). */
+export function declaredPricesFromFields(
+  fields: {
+    input: string;
+    output: string;
+    cached: string;
+  },
+  tokens?: RunTokens | null
+): { prices: DeclaredPrices | null; problem: string | null } {
   const input = parseDeclaredPrice(fields.input);
   const output = parseDeclaredPrice(fields.output);
   const cached = parseDeclaredPrice(fields.cached);
@@ -300,14 +308,46 @@ export function declaredPricesFromFields(fields: {
       prices: null,
       problem: 'Enter both the input and the output price, or leave all price fields empty.',
     };
-  return {
-    prices: {
-      inputUsdPerMTok: input,
-      outputUsdPerMTok: output,
-      ...(cached !== undefined ? { cachedInputUsdPerMTok: cached } : {}),
-    },
-    problem: null,
+  const prices: DeclaredPrices = {
+    inputUsdPerMTok: input,
+    outputUsdPerMTok: output,
+    ...(cached !== undefined ? { cachedInputUsdPerMTok: cached } : {}),
   };
+  const missingCached = cachedPriceProblem(tokens ?? null, prices);
+  return missingCached ? { prices: null, problem: missingCached } : { prices, problem: null };
+}
+
+/** The reason declared prices cannot price these tokens: cached tokens with no cached-input price. */
+export function cachedPriceProblem(tokens: RunTokens | null, prices: DeclaredPrices): string | null {
+  if (!tokens || tokens.cachedTokens <= 0 || prices.cachedInputUsdPerMTok !== undefined) return null;
+  return `This run read ${tokens.cachedTokens.toLocaleString('en-US')} cached prompt tokens: enter the cached input price (what a cache read costs), or clear the price fields to publish without one.`;
+}
+
+/**
+ * The token counts a declared price applies to — the same ones the site checks: the engine's own measured
+ * totals (`telemetry.prompt_tokens` / `completion_tokens`, a local engine run) when the run has them, else
+ * goose's isolated session counters (`agent.usage`). Cached reads come from the session counters, capped at
+ * the prompt total. Null when neither source is complete.
+ */
+export function publishTokens(usage: unknown, telemetry: unknown): RunTokens | null {
+  const session = runTokens(usage);
+  const t = telemetry && typeof telemetry === 'object' ? (telemetry as Record<string, unknown>) : null;
+  const prompt = t?.prompt_tokens;
+  const completion = t?.completion_tokens;
+  if (
+    finite(prompt) &&
+    finite(completion) &&
+    Number.isInteger(prompt) &&
+    Number.isInteger(completion) &&
+    prompt >= 0 &&
+    completion >= 0
+  )
+    return {
+      promptTokens: prompt,
+      cachedTokens: Math.min(session?.cachedTokens ?? 0, prompt),
+      completionTokens: completion,
+    };
+  return session;
 }
 
 /** USD for the run's tokens at declared prices — the site recomputes exactly this and refuses any other

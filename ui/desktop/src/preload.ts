@@ -323,7 +323,19 @@ type ElectronAPI = {
      *  catalog without burning the POST — the server refuses too). */
     message?: string;
     url?: string;
+    /** The site marked it a cloud baseline (a verified LeanZero operator key, or kept from before). */
+    baseline?: boolean;
+    /** Forge 2.0: the build carries its comparison receipt, so it couples with the series' other build. */
+    coupled?: boolean;
+    /** The operator key outcome: verified / rejected / unconfigured / needs-comparison-cohort / … */
+    operator?: string;
+    /** The run published WITHOUT its price because the site refused the price (said plainly to the user). */
+    priceWarning?: string;
+    /** Forge 2.0: why no comparison receipt could be attached (the build then publishes on its own). */
+    cohortProblem?: string;
   }>;
+  /** The publish card's prefill for a run: a readable title, and whether the model ran on this Mac. */
+  benchmarkPublishSuggestion: (runKey: string) => Promise<{ title: string; local: boolean } | null>;
   readSwarmRun: (workingDir: string) => Promise<{
     runId: string;
     /** Where the run actually lives — differs from workingDir when the engine redirected the build. */
@@ -651,6 +663,8 @@ const electronAPI: ElectronAPI = {
     };
   }) => ipcRenderer.invoke('benchmark-publish', args),
   benchmarkRunResult: (runKey: string) => ipcRenderer.invoke('benchmark-run-result', runKey),
+  benchmarkPublishSuggestion: (runKey: string) =>
+    ipcRenderer.invoke('benchmark-publish-suggestion', runKey),
   benchmarkSeries: (seriesId?: string) => ipcRenderer.invoke('benchmark-series', seriesId),
   fleetStatus: () => ipcRenderer.invoke('fleet-status'),
   fleetProbe: (endpoint: string) => ipcRenderer.invoke('fleet-probe', endpoint),

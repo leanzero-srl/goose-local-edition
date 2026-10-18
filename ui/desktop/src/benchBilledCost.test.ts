@@ -234,6 +234,31 @@ describe('a publisher-declared price when goose has no bill', () => {
     );
   });
 
+  it('reads a decimal comma as the decimal point and refuses thousands separators', () => {
+    expect(declaredPricesFromFields({ input: '1,25', output: '10', cached: '' }).prices).toEqual({
+      inputUsdPerMTok: 1.25,
+      outputUsdPerMTok: 10,
+    });
+    expect(declaredPricesFromFields({ input: '1,250.5', output: '10', cached: '' }).problem).toMatch(
+      /USD per 1M/
+    );
+  });
+
+  it('requires a cached input price when the run read cached tokens', () => {
+    const tokens = { promptTokens: 1_000_000, cachedTokens: 900_000, completionTokens: 1 };
+    expect(declaredPricesFromFields({ input: '1', output: '2', cached: '' }, tokens).problem).toMatch(
+      /cached input price/
+    );
+    expect(declaredPricesFromFields({ input: '1', output: '2', cached: '0,1' }, tokens).prices).toEqual({
+      inputUsdPerMTok: 1,
+      outputUsdPerMTok: 2,
+      cachedInputUsdPerMTok: 0.1,
+    });
+    expect(
+      declaredPricesFromFields({ input: '1', output: '2', cached: '' }, { ...tokens, cachedTokens: 0 }).prices
+    ).not.toBeNull();
+  });
+
   it('prices uncached prompt, cached prompt and completion the way the site recomputes it', () => {
     const tokens = runTokens(usage)!;
     const prices = { inputUsdPerMTok: 1.25, outputUsdPerMTok: 10, cachedInputUsdPerMTok: 0.125 };

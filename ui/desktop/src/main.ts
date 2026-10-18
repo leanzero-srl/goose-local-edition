@@ -27,15 +27,15 @@ import {
   type BuildCompletionReceipt,
   type StoredRunMeta,
 } from './benchRescore';
+import { billedCostRowField, type DeclaredPrices } from './benchBilledCost';
+import { benchPublishBilling, refusalIsAboutBilling } from './benchPublishBilling';
 import {
-  billedCostRowField,
-  declaredPublishBilling,
-  openRouterPublishBilling,
-  runTokens,
-  MAX_DECLARED_USD_PER_MTOK,
-  type DeclaredPrices,
-  type PublishBilling,
-} from './benchBilledCost';
+  BENCH_OPERATOR_KEY_CONFIG,
+  catalogDisplayName,
+  forge2CohortReceipt,
+  runUsedLocalEngine,
+  suggestedPublishTitle,
+} from './benchPublishIdentity';
 import { budgetRowField, maxUsdLaunchEnv } from './benchBudget';
 import {
   appendBenchmarkActivity,
@@ -153,7 +153,6 @@ import {
 } from './benchSeriesProvider';
 import started from 'electron-squirrel-startup';
 import path from 'node:path';
-import util from 'node:util';
 import os from 'node:os';
 import { execFileSync, spawn, execFile, type ChildProcess } from 'child_process';
 import 'dotenv/config';
@@ -4488,7 +4487,9 @@ ipcMain.handle('benchmark-run-result', async (_event, key: string) => {
   const row = (await readBenchSessionRows()).find((r) => benchRunKey(r) === key);
   if (!row) return null;
   const resolved = await resolveRunResult(row);
-  return resolved?.result ?? null;
+  if (!resolved?.result) return null;
+  // Whether the model ran on this Mac (its isolation record), so the card never prefills a cloud price for it.
+  return { ...resolved.result, localEngine: await benchRunWasLocal(resolved.result.workdir) };
 });
 
 /** The result row a scored verdict becomes — the one shape result.json, the per-run store and a run
@@ -5838,80 +5839,63 @@ const cancelActiveBenchRun = (why: string): { ok: boolean; error?: string } => {
 ipcMain.handle('benchmark-cancel', async () => cancelActiveBenchRun('cancel requested'));
 
 const benchmarkPublicationOwner = new BenchPublicationOwner();
-/**
- * The run's price as leanzero.net stores it (`billing`; the run page's "Recorded inference cost"). Before
- * 2026-10-18 the app sent none, so every published run showed no price although OpenRouter had billed every
- * call. An OpenRouter bill in the run's own verdict.json is the price and is always sent; declared prices
- * (the publish card's per-1M-token fields) are used only when no such bill exists — Google direct, Bedrock,
- * a local engine — and are sent as an ESTIMATE the site recomputes from the run's own token counts.
- */
-async function benchPublishBilling(
-  stored: Record<string, unknown>,
-  declared: unknown
-): Promise<{ record?: PublishBilling; error?: string }> {
-  const prices = declared === undefined || declared === null ? null : readDeclaredPrices(declared);
-  if (prices === 'invalid')
-    return {
-      error: `Declared prices must be USD per 1M tokens, from 0 to ${MAX_DECLARED_USD_PER_MTOK}, with both an input and an output price.`,
-    };
-  if (typeof stored.workdir !== 'string') return {};
-  // The verdict whose bill is sent: the run dir's verdict.json. A Gauntlet re-score stores its
-  // verdict-evidence folder as the workdir, with its verdict one level up. A file whose bill is not the
-  // stored row's bill belongs to another run and is never hashed.
-  let bytes: Buffer | null = null;
-  let verdict: { agent?: { billed_cost?: unknown; usage?: unknown } } | null = null;
-  for (const dir of [stored.workdir, path.dirname(stored.workdir)]) {
+
+/** The run folder's isolation record says whether the model ran on THIS Mac (benchPublishIdentity). */
+async function benchRunWasLocal(workdir: unknown): Promise<boolean> {
+  if (typeof workdir !== 'string') return false;
+  for (const dir of [workdir, path.dirname(workdir)]) {
     try {
-      const raw = await fs.readFile(path.join(dir, 'verdict.json'));
-      const v = JSON.parse(raw.toString('utf8'));
-      if (
-        stored.billedCost === undefined ||
-        util.isDeepStrictEqual(v?.agent?.billed_cost, stored.billedCost)
-      ) {
-        bytes = raw;
-        verdict = v;
-        break;
-      }
+      return runUsedLocalEngine(JSON.parse(await fs.readFile(path.join(dir, 'isolation.json'), 'utf8')));
     } catch {
-      // no verdict here; try the next folder
+      // no isolation record here; try the next folder
     }
   }
-  if (!bytes || !verdict)
-    return prices
-      ? {
-          error:
-            "This run's verdict.json is no longer in its folder, so a price cannot be attached. Clear the price fields to publish without one.",
-        }
-      : {};
-  const sha = crypto.createHash('sha256').update(bytes).digest('hex');
-  const bill = openRouterPublishBilling(verdict.agent?.billed_cost, sha);
-  if (bill) return { record: bill };
-  if (!prices) return {};
-  const tokens = runTokens(verdict.agent?.usage);
-  if (!tokens)
-    return {
-      error:
-        'This run recorded no complete token counts, so declared prices cannot be turned into a cost. Clear the price fields to publish without one.',
-    };
-  const record = declaredPublishBilling(tokens, prices, sha);
-  return record ? { record } : { error: 'The declared prices could not be applied to this run.' };
+  return false;
 }
 
-function readDeclaredPrices(value: unknown): DeclaredPrices | 'invalid' {
-  if (!value || typeof value !== 'object') return 'invalid';
-  const v = value as Record<string, unknown>;
-  const ok = (n: unknown) =>
-    typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= MAX_DECLARED_USD_PER_MTOK;
-  if (!ok(v.inputUsdPerMTok) || !ok(v.outputUsdPerMTok)) return 'invalid';
-  if (v.cachedInputUsdPerMTok !== undefined && !ok(v.cachedInputUsdPerMTok)) return 'invalid';
-  return {
-    inputUsdPerMTok: v.inputUsdPerMTok as number,
-    outputUsdPerMTok: v.outputUsdPerMTok as number,
-    ...(v.cachedInputUsdPerMTok !== undefined
-      ? { cachedInputUsdPerMTok: v.cachedInputUsdPerMTok as number }
-      : {}),
-  };
+/** The LeanZero operator key (our own installs only): Benchmark view → "LeanZero operator key", stored in
+ *  goose's config.yaml as LEANZERO_BENCH_OPERATOR_KEY, or the same environment variable. leanzero.net holds
+ *  only its sha256; with a verified key a single-model CLOUD run publishes as a cloud baseline by itself. */
+async function benchOperatorKey(): Promise<string | null> {
+  const fromEnv = process.env.LEANZERO_BENCH_OPERATOR_KEY?.trim();
+  if (fromEnv) return fromEnv;
+  try {
+    const value = (yaml.parse(await fs.readFile(gooseConfigYamlPath(), 'utf8')) ?? {})[BENCH_OPERATOR_KEY_CONFIG];
+    return typeof value === 'string' && value.trim() ? value.trim() : null;
+  } catch {
+    return null;
+  }
 }
+
+// OpenRouter's public model catalog (no key): the display names the publish title is prefilled with.
+let benchCatalogNames: { at: number; data: Array<{ id?: unknown; name?: unknown }> } | null = null;
+async function benchModelDisplayName(model: string, provider: string): Promise<string | null> {
+  if (!benchCatalogNames || Date.now() - benchCatalogNames.at > 3600_000) {
+    try {
+      const res = await fetch('https://openrouter.ai/api/v1/models', { signal: AbortSignal.timeout(8000) });
+      const body = (await res.json()) as { data?: unknown };
+      if (res.ok && Array.isArray(body.data)) benchCatalogNames = { at: Date.now(), data: body.data };
+    } catch {
+      // offline or refused: the title simply is not prefilled with a display name
+    }
+  }
+  return benchCatalogNames ? catalogDisplayName(benchCatalogNames.data, model, provider) : null;
+}
+
+/** What the publish card prefills for a run: a readable title, and whether the run used a local engine. */
+ipcMain.handle('benchmark-publish-suggestion', async (_event, key: string) => {
+  const row = (await readBenchSessionRows()).find((r) => benchRunKey(r) === key);
+  if (!row) return null;
+  const resolved = await resolveRunResult(row);
+  const stored = resolved?.result as Record<string, unknown> | undefined;
+  if (!stored) return null;
+  const model = typeof stored.modelId === 'string' ? stored.modelId : '';
+  const provider = typeof stored.provider === 'string' ? stored.provider : null;
+  if (!model) return null;
+  const local = await benchRunWasLocal(stored.workdir);
+  const displayName = local || !provider ? null : await benchModelDisplayName(model, provider);
+  return { title: suggestedPublishTitle({ model, provider, local, displayName }), local };
+});
 
 ipcMain.handle(
   'benchmark-publish',
@@ -6057,9 +6041,27 @@ ipcMain.handle(
           : {}),
       };
       // The price: the run's own OpenRouter bill, else the publisher's declared per-1M-token prices.
-      const billing = await benchPublishBilling(stored, args?.declaredPrices);
+      const billing = await benchPublishBilling(stored, args?.declaredPrices, (file) => fs.readFile(file));
       if (billing.error) return { ok: false, error: billing.error };
       if (billing.record) payload.billing = billing.record;
+      // Forge 2.0: this build's own comparison receipt (forge2_compare's cohort bytes), so the site couples a
+      // series' builds into one entry by itself — no operator script. Without one it publishes on its own.
+      let cohortProblem: string | null = null;
+      if (stored.scorerVersion === 'forge-2.0' && billing.verdict) {
+        const engine = findGooseBinaryPath({
+          isPackaged: app.isPackaged,
+          resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
+        });
+        const receipt = forge2CohortReceipt(billing.verdict, await benchmarkFileSha(engine).catch(() => ''));
+        if ('receipt' in receipt) payload.comparisonCohort = receipt.receipt;
+        else cohortProblem = receipt.problem;
+      }
+      // Our own installs: the operator key marks a single-model CLOUD run a cloud baseline on the site. Never
+      // sent for a run that used this Mac's engine (a local run is not a cloud baseline).
+      const operatorKey =
+        cloudEntrant && nodeCount == null && !(await benchRunWasLocal(stored.workdir))
+          ? await benchOperatorKey()
+          : null;
       // Forge's graded browser recording (score_forge.py, SB7.x's media shape) rides like Gauntlet's. Without
       // a verified clip it publishes ONLY when the four visual rows are the scorer's own "no surface rendered
       // app content" vacuous zeros (clipAbsence = the site's rule); anything else is refused.
@@ -6210,11 +6212,40 @@ ipcMain.handle(
         if (findingsHeld.length > 0) payload.findingsHeld = findingsHeld;
       }
       try {
-        const res = await fetch(BENCH_SITE_API, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
+        const post = () =>
+          fetch(BENCH_SITE_API, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(operatorKey ? { 'x-leanzero-operator-key': operatorKey } : {}),
+            },
+            body: JSON.stringify(payload),
+          });
+        let res = await post();
+        // The price must never cost the whole publish: a site that refuses the price (e.g. one that does not
+        // take declared prices yet) gets the run without it, and the user is told plainly.
+        let priceWarning: string | null = null;
+        if (!res.ok && payload.billing !== undefined) {
+          const refusal = await res
+            .clone()
+            .text()
+            .catch(() => '');
+          let refusalMessage = refusal;
+          try {
+            refusalMessage = String((JSON.parse(refusal) as { error?: unknown }).error ?? refusal);
+          } catch {
+            // not JSON; the raw text is the message
+          }
+          if (refusalIsAboutBilling(res.status, refusalMessage)) {
+            const estimate =
+              (payload.billing as { source?: unknown }).source === 'declared-prices';
+            delete payload.billing;
+            res = await post();
+            priceWarning = estimate
+              ? `Published without the price: leanzero.net did not accept the declared-price estimate (${refusalMessage.slice(0, 200)}).`
+              : `Published without the price: leanzero.net did not accept this run's bill (${refusalMessage.slice(0, 200)}).`;
+          }
+        }
         if (!res.ok) {
           // 422 = the server's consistency gates fired; surface ITS message, not a bare status.
           const body = await res.text().catch(() => '');
@@ -6246,7 +6277,12 @@ ipcMain.handle(
           publishedAt: new Date().toISOString(),
           source: 'app',
         }).catch((error) => log.error('Published run could not be recorded:', error));
-        return { ok: true, ...accepted };
+        return {
+          ok: true,
+          ...accepted,
+          ...(priceWarning ? { priceWarning } : {}),
+          ...(cohortProblem ? { cohortProblem } : {}),
+        };
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) };
       }

@@ -325,13 +325,15 @@ describe('the price a publish carries (Mihai 2026-10-18)', () => {
     missing: [],
     incomplete_reasons: [],
   };
-  const renderWith = (row: Record<string, unknown>) => {
+  const renderWith = (row: Record<string, unknown>, setup?: () => void) => {
+    canonical.mockClear();
     mockElectron({ running: false, modelId: 'gemini-4-argon' });
     electron().benchmarkRead = vi.fn(async () => ({ ...MINE, modelId: 'gemini-4-argon', ...row }));
     electron().benchmarkPublish = vi.fn(async () => ({
       ok: true,
       url: '/agentic-benchmarks/run/brun-1',
     }));
+    setup?.();
     return render(
       <IntlTestWrapper>
         <BenchmarkView />
@@ -367,17 +369,66 @@ describe('the price a publish carries (Mihai 2026-10-18)', () => {
     );
     expect(canonical).toHaveBeenCalledWith('google', 'gemini-4-argon');
     expect(((await findByTestId('publish-price-output')) as HTMLInputElement).value).toBe('10');
-    // (1M uncached + 2M cached at the input price) x $1.25 + 40k x $10 = $4.15
-    expect((await findByTestId('publish-price-hint')).textContent).toContain(
-      'Published as an estimate: $4.15 for 3,000,000 prompt (2,000,000 cached) and 40,000 completion tokens'
-    );
+    // The run read 2M cached tokens and goose's list has no cache-read price: charging them at the full input
+    // price would overstate the bill, so Publish waits for the cached price (app review 2026-10-18).
     const publishBtn = await findByRole('button', { name: /Publish/ });
     fireEvent.change(getByLabelText(/^Title/), { target: { value: 'Argon build' } });
+    await waitFor(() => expect(publishBtn.getAttribute('title')).toMatch(/cached input price/));
+    expect(publishBtn).toBeDisabled();
+    fireEvent.change(await findByTestId('publish-price-cached'), { target: { value: '0,125' } });
+    // 1M uncached x $1.25 + 2M cached x $0.125 + 40k x $10 = $1.90
+    await waitFor(async () =>
+      expect((await findByTestId('publish-price-hint')).textContent).toContain(
+        'Published as an estimate: $1.90 for 3,000,000 prompt (2,000,000 cached) and 40,000 completion tokens'
+      )
+    );
     await waitFor(() => expect(publishBtn).not.toBeDisabled());
     fireEvent.click(publishBtn);
     await waitFor(() => expect(electron().benchmarkPublish).toHaveBeenCalled());
     const sent = (electron().benchmarkPublish as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(sent.declaredPrices).toEqual({ inputUsdPerMTok: 1.25, outputUsdPerMTok: 10 });
+    expect(sent.declaredPrices).toEqual({
+      inputUsdPerMTok: 1.25,
+      outputUsdPerMTok: 10,
+      cachedInputUsdPerMTok: 0.125,
+    });
+  });
+
+  it('a run that used this Mac is never prefilled from a cloud price list, whatever provider served it', async () => {
+    const { findByTestId } = renderWith({
+      provider: 'openai',
+      localEngine: true,
+      billedCost: { status: 'unavailable', provider: 'openai' },
+      modelUsage: usage,
+    });
+    const input = (await findByTestId('publish-price-input')) as HTMLInputElement;
+    await new Promise((r) => setTimeout(r, 50));
+    expect(input.value).toBe('');
+    expect(canonical).not.toHaveBeenCalled();
+  });
+
+  it('prefills a readable title from main, and the success card says what the site did', async () => {
+    const { findByRole, findByLabelText, findByText } = renderWith(
+      { provider: 'openrouter', billedCost: openRouterBill, modelUsage: usage },
+      () => {
+        electron().benchmarkPublishSuggestion = vi.fn(async () => ({
+          title: 'DeepSeek V4.1 Flash 1017, single model via OpenRouter',
+          local: false,
+        }));
+        electron().benchmarkPublish = vi.fn(async () => ({
+          ok: true,
+          url: '/agentic-benchmarks/run/brun-1',
+          baseline: true,
+          priceWarning: "Published without the price: leanzero.net did not accept this run's bill (x).",
+        }));
+      }
+    );
+    const title = (await findByLabelText(/^Title/)) as HTMLInputElement;
+    await waitFor(() => expect(title.value).toBe('DeepSeek V4.1 Flash 1017, single model via OpenRouter'));
+    const publishBtn = await findByRole('button', { name: /Publish/ });
+    await waitFor(() => expect(publishBtn).not.toBeDisabled());
+    fireEvent.click(publishBtn);
+    expect(await findByText('Listed as a LeanZero cloud baseline.')).toBeInTheDocument();
+    expect(await findByText(/Published without the price/)).toBeInTheDocument();
   });
 
   it('a half-filled price blocks Publish with the reason; clearing it publishes without a price', async () => {

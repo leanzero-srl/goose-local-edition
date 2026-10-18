@@ -5,15 +5,10 @@ import { defineMessages, useIntl } from '../../i18n';
 import { appendBenchmarkActivity, emptyBenchmarkActivity } from '../../benchActivity';
 import { BenchmarkActivityPanel } from './BenchmarkActivityPanel';
 import { benchmarkModelIdProblem } from '../../benchModelIdentity';
-import {
-  billedCostLine,
-  declaredPricesFromFields,
-  declaredPriceUsd,
-  hasOpenRouterBill,
-  runTokens,
-} from '../../benchBilledCost';
-import { fetchCanonicalModelInfo } from '../../utils/canonical';
-import { isLocalProviderName } from '../settings/models/leanzeroSelectorPolicy';
+import { billedCostLine, hasOpenRouterBill, publishTokens } from '../../benchBilledCost';
+import { DeclaredPriceFields, useDeclaredPrices } from './DeclaredPriceFields';
+import { publishNotes } from '../../benchPublishNotes';
+import { OperatorKey } from './OperatorKey';
 import { budgetLines } from '../../benchBudget';
 import { BenchmarkRuntimeSetup } from './BenchmarkRuntimeSetup';
 import { BenchmarkFamilyToggle } from './BenchmarkFamilyToggle';
@@ -187,7 +182,7 @@ export function titleProblem(title: string): string | null {
 type PublishState =
   | { kind: 'idle' }
   | { kind: 'publishing' }
-  | { kind: 'accepted'; title: string; score: number; url: string | null }
+  | { kind: 'accepted'; title: string; score: number; url: string | null; notes: string[] }
   | { kind: 'error'; message: string };
 
 /** The stored result row — the v1 chart fields plus the v2 publisher inputs main.ts persists. */
@@ -200,6 +195,10 @@ interface MineRow extends BenchmarkRow {
   budget?: unknown;
   /** The harness's `agent.usage` record (isolated goose session counters) — what declared prices price. */
   modelUsage?: unknown;
+  /** The engine's own measured token totals (a local run) — preferred over the session counters. */
+  telemetry?: unknown;
+  /** The model ran on THIS Mac (main reads the run's isolation record): never priced from a cloud list. */
+  localEngine?: boolean;
   runMeta?: {
     startedAt: string;
     finishedAt: string;
@@ -1724,45 +1723,37 @@ export default function BenchmarkView() {
   // how to publish and set the prices"). An OpenRouter bill in the run is the price and is sent by main as is;
   // without one (Google direct, Bedrock, a local engine) the publisher may declare USD per 1M tokens, which the
   // site shows as an estimate over the run's own token counts. Prefilled from goose's price list when it has one.
-  const [priceFields, setPriceFields] = useState({ input: '', output: '', cached: '' });
-  const [pricePrefilled, setPricePrefilled] = useState(false);
   const runBilled = shownRow != null && hasOpenRouterBill(shownRow.billedCost);
-  const runTokenCounts = useMemo(() => runTokens(shownRow?.modelUsage), [shownRow]);
-  const priceProvider = shownRow?.provider ?? null;
-  const priceModel = shownRow?.modelId ?? null;
+  const runTokenCounts = useMemo(
+    () => publishTokens(shownRow?.modelUsage, shownRow?.telemetry),
+    [shownRow]
+  );
+  const price = useDeclaredPrices({
+    resetKey: selectedKey,
+    billed: runBilled,
+    provider: shownRow?.provider ?? null,
+    model: shownRow?.modelId ?? null,
+    local: shownRow?.localEngine === true,
+    tokens: runTokenCounts,
+  });
+  const priceProblem = price.problem;
+  // The title is prefilled with a readable name the board shows ("DeepSeek V4.1 Flash 1017, single model via
+  // OpenRouter"), never the id; still the user's to edit, and once they type it is theirs for this run.
+  const titleTouched = useRef(false);
   useEffect(() => {
-    setPriceFields({ input: '', output: '', cached: '' });
-    setPricePrefilled(false);
-    if (runBilled || !priceProvider || !priceModel || isLocalProviderName(priceProvider)) return;
+    titleTouched.current = false;
+    if (!selectedKey || !selectedFinished || !window.electron.benchmarkPublishSuggestion) return;
     let alive = true;
-    void fetchCanonicalModelInfo(priceProvider, priceModel).then((info) => {
-      const input = info?.inputTokenCost;
-      const output = info?.outputTokenCost;
-      if (!alive || typeof input !== 'number' || typeof output !== 'number') return;
-      if (info?.currency && !['$', 'USD', 'usd'].includes(info.currency)) return;
-      const cached = info?.cacheReadTokenCost;
-      setPriceFields((now) =>
-        now.input || now.output || now.cached
-          ? now
-          : {
-              input: String(input),
-              output: String(output),
-              cached: typeof cached === 'number' ? String(cached) : '',
-            }
-      );
-      setPricePrefilled(true);
-    });
+    void window.electron
+      .benchmarkPublishSuggestion(selectedKey)
+      .then((suggestion) => {
+        if (alive && suggestion?.title && !titleTouched.current) setTitle(suggestion.title);
+      })
+      .catch(() => {});
     return () => {
       alive = false;
     };
-  }, [selectedKey, runBilled, priceProvider, priceModel]);
-  const declared = declaredPricesFromFields(priceFields);
-  const priceProblem = runBilled
-    ? null
-    : (declared.problem ??
-      (declared.prices && !runTokenCounts
-        ? 'This run recorded no complete token counts, so a price cannot be estimated — clear the price fields to publish without one.'
-        : null));
+  }, [selectedKey, selectedFinished]);
 
   const run = useCallback(async () => {
     if (forge) window.location.hash = '#/benchmark?family=forge';
@@ -1924,7 +1915,7 @@ export default function BenchmarkView() {
       const res = await window.electron.benchmarkPublish?.({
         title: chosen,
         runKey: selectedKey,
-        ...(!runBilled && declared.prices ? { declaredPrices: declared.prices } : {}),
+        ...(!runBilled && price.prices ? { declaredPrices: price.prices } : {}),
       });
       if (res?.ok) {
         void loadSessions();
@@ -1933,6 +1924,7 @@ export default function BenchmarkView() {
           title: chosen,
           score: shownRow.score,
           url: typeof res.url === 'string' ? res.url : null,
+          notes: publishNotes(res),
         });
       } else {
         // The server's OWN words (its 4xx body travels through main.ts verbatim), or main's
@@ -1947,7 +1939,7 @@ export default function BenchmarkView() {
     } catch (err) {
       setPub({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
     }
-  }, [shownRow, selectedKey, title, loadSessions, runBilled, declared.prices]);
+  }, [shownRow, selectedKey, title, loadSessions, runBilled, price.prices]);
 
   const publishing = pub.kind === 'publishing';
   const publishable = shownRow != null && shownRow.runMeta != null;
@@ -1960,7 +1952,6 @@ export default function BenchmarkView() {
   const titleId = `${uid}-title`;
   const titleHintId = `${uid}-title-hint`;
   const priceId = `${uid}-price`;
-  const priceHintId = `${uid}-price-hint`;
   const lockedWhy = 'Locked while a run is live — the node count is fixed at launch';
 
   const selectedEra = selectedSession
@@ -2068,60 +2059,12 @@ export default function BenchmarkView() {
               is published with it.
             </p>
           ) : (
-            <fieldset
-              data-testid="publish-price"
-              className="m-0 min-w-0 max-w-[560px] border-0 p-0"
+            <DeclaredPriceFields
+              idBase={priceId}
+              state={price}
+              tokens={runTokenCounts}
               disabled={publishing}
-            >
-              <legend className={cx('mb-1.5 block', TYPE.meta)}>
-                Price{' '}
-                <span className="text-lz-ink-4">(optional — no provider bill for this run)</span>
-              </legend>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                {(
-                  [
-                    ['input', 'Input price', 'e.g. 1.25'],
-                    ['output', 'Output price', 'e.g. 10'],
-                    ['cached', 'Cached input price', 'same as input'],
-                  ] as const
-                ).map(([key, label, hint]) => (
-                  <div key={key}>
-                    <label htmlFor={`${priceId}-${key}`} className={cx('mb-1 block', TYPE.meta)}>
-                      {label} <span className="text-lz-ink-4">(USD per 1M tokens)</span>
-                    </label>
-                    <input
-                      id={`${priceId}-${key}`}
-                      data-testid={`publish-price-${key}`}
-                      type="text"
-                      inputMode="decimal"
-                      value={priceFields[key]}
-                      onChange={(e) =>
-                        setPriceFields((now) => ({ ...now, [key]: e.target.value.slice(0, 12) }))
-                      }
-                      placeholder={hint}
-                      aria-invalid={priceProblem != null}
-                      aria-describedby={priceHintId}
-                      className={INPUT}
-                    />
-                  </div>
-                ))}
-              </div>
-              <p
-                id={priceHintId}
-                data-testid="publish-price-hint"
-                className={cx('mt-1.5', TYPE.meta)}
-              >
-                {!runTokenCounts
-                  ? 'This run recorded no complete token counts, so it publishes without a price.'
-                  : declared.prices
-                    ? `Published as an estimate: $${declaredPriceUsd(runTokenCounts, declared.prices).toFixed(2)} for ${runTokenCounts.promptTokens.toLocaleString('en-US')} prompt (${runTokenCounts.cachedTokens.toLocaleString('en-US')} cached) and ${runTokenCounts.completionTokens.toLocaleString('en-US')} completion tokens — not a provider bill.`
-                    : 'Enter what you pay for this model to show its cost as an estimate, or leave empty to publish without a price.'}
-                {pricePrefilled && " Prefilled from goose's price list — check before publishing."}
-                {priceProblem && (
-                  <span className={cx('ml-1', WEIGHT.medium, TONE_TEXT.err)}>{priceProblem}</span>
-                )}
-              </p>
-            </fieldset>
+            />
           )}
           <div className="flex flex-wrap items-end gap-3">
             <div className="w-full max-w-[360px]">
@@ -2132,7 +2075,10 @@ export default function BenchmarkView() {
                 id={titleId}
                 type="text"
                 value={title}
-                onChange={(e) => setTitle(e.target.value.slice(0, 80))}
+                onChange={(e) => {
+                  titleTouched.current = true;
+                  setTitle(e.target.value.slice(0, 80));
+                }}
                 maxLength={80}
                 placeholder="e.g. My M4 fleet first run"
                 disabled={publishing}
@@ -2207,6 +2153,11 @@ export default function BenchmarkView() {
                 Live on leanzero.net — &ldquo;{pub.title}&rdquo; ·{' '}
                 {scoreText(pub.score, selectedSession.scorerVersion)}
                 {pub.url ? ` · leanzero.net${pub.url}` : ''}
+                {pub.notes.map((note) => (
+                  <span key={note} className="block">
+                    {note}
+                  </span>
+                ))}
               </span>
             </div>
           )}
@@ -2387,6 +2338,7 @@ export default function BenchmarkView() {
                   onValuesChange={setCloudModelFields}
                 />
                 {!forge && <WalletLimit disabled={running} />}
+                <OperatorKey disabled={running} />
               </>
             ) : (
               <>

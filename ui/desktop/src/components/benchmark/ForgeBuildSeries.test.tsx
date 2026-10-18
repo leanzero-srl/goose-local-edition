@@ -6,6 +6,8 @@ import { seriesFixture, completedSeriesFixture, sessionsFixture } from './series
 import type { BenchSeriesSnapshot } from '../../benchSeries';
 import type { BenchSession } from './bridge';
 
+vi.mock('../../utils/canonical', () => ({ fetchCanonicalModelInfo: vi.fn(async () => null) }));
+
 function mount(series: BenchSeriesSnapshot, sessions = sessionsFixture(series)) {
   Object.assign(window.electron, { benchmarkSeries: vi.fn(async () => series) });
   const open = vi.fn();
@@ -176,5 +178,43 @@ describe('Forge two-build presentation and publication', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Publish 2 builds' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Publishing waits for two complete');
     expect(post).not.toHaveBeenCalled();
+  });
+  it('prefills a readable title and, with no provider bill, sends the declared prices with both builds', async () => {
+    const series = completedSeriesFixture();
+    const usage = { sessions: [{ accumulated_input_tokens: 1_000_000, accumulated_output_tokens: 10_000, accumulated_cache_read_tokens: 0 }] };
+    const post = vi.fn(async () => ({ ok: true, url: '/x', coupled: true }));
+    Object.assign(window.electron, {
+      benchmarkSessions: vi.fn(async () => ({ sessions: sessionsFixture(series) })),
+      benchmarkPublish: post,
+      benchmarkRunResult: vi.fn(async () => ({ billedCost: { status: 'unavailable', provider: 'google' }, modelUsage: usage })),
+      benchmarkPublishSuggestion: vi.fn(async () => ({ title: 'Gemini 4 Argon, single model via Google', local: false })),
+    });
+    mount(series);
+    const title = screen.getByRole('textbox', { name: 'Publication title' }) as HTMLInputElement;
+    await waitFor(() => expect(title.value).toBe('Gemini 4 Argon, single model via Google'));
+    fireEvent.change(await screen.findByTestId('forge-series-price-input'), { target: { value: '1,25' } });
+    fireEvent.change(screen.getByTestId('forge-series-price-output'), { target: { value: '10' } });
+    expect(screen.getByTestId('forge-series-price-hint')).toHaveTextContent('Published as an estimate: $2.70 for 2,000,000 prompt');
+    fireEvent.click(screen.getByRole('button', { name: 'Publish 2 builds' }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    for (const [args] of post.mock.calls as unknown as Array<[Record<string, unknown>]>) {
+      expect(args.title).toBe('Gemini 4 Argon, single model via Google');
+      expect(args.declaredPrices).toEqual({ inputUsdPerMTok: 1.25, outputUsdPerMTok: 10 });
+    }
+    expect(await screen.findByTestId('forge-series-notes')).toHaveTextContent('Build 1: Carries its comparison receipt');
+  });
+  it('a half-filled price blocks publishing both builds', async () => {
+    const series = completedSeriesFixture();
+    const usage = { sessions: [{ accumulated_input_tokens: 10, accumulated_output_tokens: 1, accumulated_cache_read_tokens: 0 }] };
+    Object.assign(window.electron, {
+      benchmarkSessions: vi.fn(async () => ({ sessions: sessionsFixture(series) })),
+      benchmarkPublish: vi.fn(),
+      benchmarkRunResult: vi.fn(async () => ({ billedCost: { status: 'unavailable' }, modelUsage: usage })),
+      benchmarkPublishSuggestion: vi.fn(async () => null),
+    });
+    mount(series);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Publication title' }), { target: { value: 'T' } });
+    fireEvent.change(await screen.findByTestId('forge-series-price-input'), { target: { value: '1' } });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Publish 2 builds' })).toBeDisabled());
   });
 });
