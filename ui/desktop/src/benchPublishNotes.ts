@@ -6,6 +6,7 @@ export function publishNotes(res: {
   operator?: string;
   priceWarning?: string;
   cohortProblem?: string;
+  operatorWarning?: string;
 }): string[] {
   const notes: string[] = [];
   if (res.baseline) notes.push('Listed as a LeanZero cloud baseline.');
@@ -18,6 +19,7 @@ export function publishNotes(res: {
     notes.push('The LeanZero operator key was not accepted, so it is listed as a community run.');
   if (res.operator === 'needs-comparison-cohort')
     notes.push('A Forge 2.0 cloud baseline needs its comparison receipt, so it is listed as a community run.');
+  if (res.operatorWarning) notes.push(res.operatorWarning);
   if (res.priceWarning) notes.push(res.priceWarning);
   return notes;
 }

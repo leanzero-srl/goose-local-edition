@@ -335,6 +335,8 @@ type ElectronAPI = {
     priceWarning?: string;
     /** Forge 2.0: why no comparison receipt could be attached (the build then publishes on its own). */
     cohortProblem?: string;
+    /** A saved operator key could not be read from the keychain: the run went out as a community entry. */
+    operatorWarning?: string;
   }>;
   /** The publish card's prefill for a run: a readable title (null when goose knows no display name) and where it ran. */
   benchmarkPublishSuggestion: (

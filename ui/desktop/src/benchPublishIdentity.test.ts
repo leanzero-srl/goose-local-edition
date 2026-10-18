@@ -87,6 +87,20 @@ describe('benchRunRoute: cloud only with positive proof', () => {
     expect(benchRunRoute({ isolation: { relay: { allow: ['127.0.0.1:8090'] } } })).toBe('unknown');
     expect(benchRunRoute({})).toBe('unknown');
   });
+  it('a cloud run that also records telemetry (every entrant does) is cloud; telemetry means local only without cloud proof', () => {
+    // The final reviewer's probe: an OpenRouter Gauntlet sb-7.2 row, its bill plus run_build telemetry.
+    const telemetry = { calls: 147, prompt_tokens: 25328259, completion_tokens: 212850, nodes: { deepseek: { calls: 147, prompt_tokens: 25328259 } } };
+    const cloud = { isolation: { mechanism: 'macOS sandbox-exec' }, billedCost: { provider: 'openrouter', status: 'complete' }, telemetry };
+    expect(benchRunRoute(cloud)).toBe('cloud');
+    expect(suggestedPublishTitle({ model: 'deepseek/deepseek-v4.1-flash-1017', provider: 'openrouter', route: benchRunRoute(cloud), displayName: 'DeepSeek V4.1 Flash 1017' })).toBe(
+      'DeepSeek V4.1 Flash 1017, single model via OpenRouter'
+    );
+    expect(benchRunRoute({ isolation: { relay: { allow: ['openrouter.ai:443'] } }, telemetry })).toBe('cloud');
+    // A local LFM2.5 sb-7.2 run: no relay record, no bill (provider openai has no billing API), engine telemetry.
+    expect(benchRunRoute({ isolation: { mechanism: 'macOS sandbox-exec' }, billedCost: { status: 'unavailable', provider: 'openai' }, telemetry })).toBe('local');
+    // A loopback direct provider wins over anything else.
+    expect(benchRunRoute({ isolation: { direct_providers: ['http://127.0.0.1:8090'], relay: { allow: ['openrouter.ai:443'] } } })).toBe('local');
+  });
 });
 
 describe('runUsedLocalEngine', () => {

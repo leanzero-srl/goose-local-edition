@@ -128,9 +128,10 @@ export type BenchRunRoute = 'cloud' | 'local' | 'unknown';
 
 /**
  * Where the model ran, from the run's OWN evidence — never the provider name (a local engine is served through the
- * built-in `openai` provider). CLOUD needs positive proof: the isolation relay admitted a non-loopback provider host
- * (Forge: "allow": ["openrouter.ai:443"]) or the harness recorded an OpenRouter bill. LOCAL: a loopback direct
- * provider in the isolation record, or engine telemetry (the scorer's telemetry_summary — cloud entrants have none).
+ * built-in `openai` provider). LOCAL: a loopback direct provider in the isolation record. CLOUD needs positive proof,
+ * checked next: the isolation relay admitted a non-loopback provider host (Forge: "allow": ["openrouter.ai:443"]), a
+ * non-loopback direct provider, or the harness recorded an OpenRouter bill. Only without any cloud proof does
+ * engine telemetry mean local (every entrant writes telemetry, cloud ones too).
  * Gauntlet sb-7.x writes no relay/direct_providers at all, so without a bill a run there is "unknown", and unknown is
  * treated as not-cloud: no operator key, no cloud price prefill, no "via <provider>" title (app review 2026-10-18:
  * local LFM2.5 / Qwen3.8 Gauntlet runs read as cloud and would have become baselines "via OpenAI").
@@ -138,13 +139,17 @@ export type BenchRunRoute = 'cloud' | 'local' | 'unknown';
 export function benchRunRoute(evidence: { isolation?: unknown; billedCost?: unknown; telemetry?: unknown }): BenchRunRoute {
   const iso = isRecord(evidence.isolation) ? evidence.isolation : {};
   const direct = Array.isArray(iso.direct_providers) ? iso.direct_providers : [];
-  const tel = isRecord(evidence.telemetry) ? evidence.telemetry : null;
   if (direct.some((u) => typeof u === 'string' && LOOPBACK.test(u))) return 'local';
-  if (tel && (typeof tel.prompt_tokens === 'number' || isRecord(tel.nodes))) return 'local';
+  // Positive cloud proof FIRST: every entrant, cloud ones included, records run_build telemetry (run_build.py), so
+  // telemetry alone can never outvote a relay that admitted a cloud host or an OpenRouter bill (final review).
   const allow = isRecord(iso.relay) && Array.isArray(iso.relay.allow) ? iso.relay.allow : [];
   if (allow.some((h) => typeof h === 'string' && h.trim() && !LOOPBACK_HOST.test(h.trim()))) return 'cloud';
+  if (direct.some((u) => typeof u === 'string' && /^https?:\/\//i.test(u) && !LOOPBACK.test(u))) return 'cloud';
   const bill = isRecord(evidence.billedCost) ? evidence.billedCost : null;
   if (bill && bill.provider === 'openrouter' && (bill.status === 'complete' || bill.status === 'incomplete')) return 'cloud';
+  // No cloud proof: engine telemetry means the model was served on this machine (a local engine through `openai`).
+  const tel = isRecord(evidence.telemetry) ? evidence.telemetry : null;
+  if (tel && (typeof tel.prompt_tokens === 'number' || isRecord(tel.nodes))) return 'local';
   return 'unknown';
 }
 

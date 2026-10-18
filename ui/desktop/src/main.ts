@@ -5878,15 +5878,23 @@ async function benchEngineShaFor(runKey: string | null, stored: Record<string, u
  *  it as a header for a proven-cloud single-model run. LEANZERO_BENCH_OPERATOR_KEY in main's environment overrides.
  *  leanzero.net holds only its sha256; rotating the key = a new key here + its sha256 in the site's env. */
 const BENCH_OPERATOR_KEY_FILE = () => path.join(BENCH_DIR, 'operator-key.bin');
-async function benchOperatorKey(): Promise<string | null> {
+async function benchOperatorKey(): Promise<{ key: string | null; problem?: string }> {
   const fromEnv = process.env.LEANZERO_BENCH_OPERATOR_KEY?.trim();
-  if (fromEnv) return fromEnv;
+  if (fromEnv) return { key: fromEnv };
+  let sealed: Buffer;
   try {
-    if (!safeStorage.isEncryptionAvailable()) return null;
-    const key = safeStorage.decryptString(await fs.readFile(BENCH_OPERATOR_KEY_FILE())).trim();
-    return key || null;
+    sealed = await fs.readFile(BENCH_OPERATOR_KEY_FILE());
   } catch {
-    return null;
+    return { key: null }; // no key saved: an ordinary community publish
+  }
+  // A key IS saved but cannot be read (keychain locked, access denied, encryption unavailable): say so on the card
+  // rather than publishing as a community entry without a word (final review 2026-10-18).
+  try {
+    if (!safeStorage.isEncryptionAvailable()) throw new Error('keychain encryption is not available');
+    const key = safeStorage.decryptString(sealed).trim();
+    return key ? { key } : { key: null, problem: 'the saved operator key is empty' };
+  } catch (error) {
+    return { key: null, problem: error instanceof Error ? error.message : String(error) };
   }
 }
 ipcMain.handle('benchmark-operator-key-status', async () => {
@@ -6108,10 +6116,14 @@ ipcMain.handle(
       }
       // Our own installs: the operator key marks a single-model CLOUD run a cloud baseline on the site. Never
       // sent for a run that used this Mac's engine (a local run is not a cloud baseline).
-      const operatorKey =
+      const operator =
         cloudEntrant && nodeCount == null && (await benchRunRouteOf(stored)) === 'cloud'
           ? await benchOperatorKey()
-          : null;
+          : { key: null };
+      const operatorKey = operator.key;
+      const operatorWarning = operator.problem
+        ? `Operator key unavailable (${operator.problem.slice(0, 160)}): published as a community entry.`
+        : null;
       // Forge's graded browser recording (score_forge.py, SB7.x's media shape) rides like Gauntlet's. Without
       // a verified clip it publishes ONLY when the four visual rows are the scorer's own "no surface rendered
       // app content" vacuous zeros (clipAbsence = the site's rule); anything else is refused.
@@ -6338,6 +6350,7 @@ ipcMain.handle(
           ok: true,
           ...accepted,
           ...(priceWarning ? { priceWarning } : {}),
+          ...(operatorWarning ? { operatorWarning } : {}),
           ...(cohortProblem ? { cohortProblem } : {}),
         };
       } catch (err) {
