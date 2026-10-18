@@ -30,6 +30,14 @@ Every line below has file:line evidence in the T12 plan's "Local bake-off REDESI
   - MTP via `--speculative-config {"method":"mtp","model":<dir>,"num_speculative_tokens":3}` whenever
     `mtp.safetensors` sits in the model folder. The `[mtp]` extra only installs deps. MTP needs real MTP weights:
     `mlx convert --q-mtp` defaults to OFF, so a home-made Q8 has none unless converted with `--q-mtp`.
+    TRAP (2026-10-18, Coder390): `--q-mtp cyankiwi` writes INT4 layer linears with a DENSE `mtp.fc`; the engine's
+    injector sizes the module from `mtp.fc` ("Sidecar fc is full-precision; leaving MTP module full-precision") and then
+    refuses the packed layers ("7 tensor(s) whose shape disagrees") -> boot exit 3, the app view sticks on "Mounting"
+    (press Stop). What works: the base's layout `mtplx-bf16` = the checkpoint's own BF16 mtp tensors with every
+    `*norm*.weight` shifted +1 (HF Qwen3.5 RMSNorm stores an offset; measured base sidecar = HF + 1.000 on 4 norms),
+    metadata {"format":"mlx","mtp_layout":"mtplx-bf16"}, plus config `mtplx_mtp_quantization` copied from the base.
+    Tool: Gabee ~/t12-bench/mk_mtp_sidecar.py <hf mtp-bf16.safetensors> <model dir>/mtp.safetensors. Coder390 then
+    accepted ~2.7 tokens per verify step, 19.9 tok/s vs 12.3 without MTP.
   - No `--timeout` and no `max_tokens` (engine default 32,768 out). The engine's 1800 s default applies only to
     NON-streaming requests (`routes/chat.py` `_wait_with_disconnect`) and the multimodal lane's first chunk; the app
     streams on the text lane, so no request cap applies, and goose's client has only a connect timeout. A
