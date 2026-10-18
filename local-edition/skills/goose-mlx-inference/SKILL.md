@@ -1245,3 +1245,34 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
   - Config for a local Gauntlet: mlx_engine.model_id = <org>/<dir>, served_model_name null (the old alias would name
     the new model), OPENAI_HOST http://127.0.0.1:8090, provider_default_models.openai = the served id; edit with the
     app QUIT. The engine-glance pill appears once the engine mounts: loop-state tools/mainpage.mjs picks the largest page.
+- NEMOTRON-H LOCAL (NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-MLX-4bit, 2026-10-18; fork `lz/nemotron-h-metadata` 8af0af611
+  on lz.11, port `lz/nemotron-h-metadata-rc13` 9828cffa8 on RC13 e3a92b555; NOT in any pin yet):
+  - Symptom: goose's connection check said "no visible response". Streaming content read `<think>The user wants...OK` +
+    `OK` with no reasoning split; with tools the call came back as raw `<tool_call><function=write>...` CONTENT, 0 parsed.
+  - Cause: `detect_model_config(<folder>)` returned None (no profile at all). Its template shows the tool wire only as an
+    EXAMPLE string inside the instructions and lists tools as `<function><name>` blocks, so
+    `_template_uses_parameterized_xml_tools` is False; nemotron_h declares no linear attention; no alias names a local
+    folder. With no reasoning parser, `strip_special_tokens` dropped the non-special `</think>` (id 13) and
+    `set_thinking_model` (name contains "nemotron", no parser) prefixed a lone `<think>`. The OutputRouter's "Think tag
+    format detected" log line is a red herring: only gemma4/harmony routers are allowlisted (`_OUTPUT_ROUTER_ALLOWLIST`).
+    Renaming served_model_name changes nothing.
+  - Fix (metadata fallback): nemotron_h -> hybrid, no spec decode, MoE when `n_routed_experts`; tool `nemotron` when
+    the template has `<tool_call>` + `<function=` + `<parameter=`; reasoning `qwen3` when it primes `<think>` behind
+    `enable_thinking` (the nemotron-3.5-lightning alias's choice). Boot log: `Auto-detected checkpoint metadata ... →
+    tool_call_parser=nemotron, reasoning_parser=qwen3, is_hybrid=True`.
+  - Measured live on the workhorse (standalone engine, lz.11 env + the worktree on PYTHONPATH, app argv, port 8196,
+    weights 69.5 GB under the 83.5 GB Metal ceiling): streaming text "OK" clean; 3/3 write calls parsed without effort
+    (2.6-3.1 s each) and 3/3 at reasoning_effort medium with 1,030-2,142 reasoning chars split out; non-streaming call
+    parsed. Tests: 2 RED on lz.11, 354 passed with the fix.
+  - Smoke tool: `smoke.py <port> <model> [--effort medium]` (streams like goose; TEXT + 3 write calls, flags leaked
+    `<think>`/`<tool_call>` in content). Copy in the session scratchpad; it is also at /tmp/smoke.py on workhorse/Gabee.
+  - Release step (workhorse session): tag the lz.11-line commit as the next `v0.14.3-lz.<N>` (or fold the RC13-line
+    port into the memory-guard release), bump ENGINE_LAUNCHER + SUPERSEDED_ENGINE_LAUNCHERS + the pipeline
+    `reviewed_through` n/a entry (see the LFM entry above), then remount Nemotron in the app and re-run the
+    connection check.
+- MUSE-GLIMMER-30B-8bit LOCAL (2026-10-18, Gabee, RC13 e3a92b555 standalone, `--text-only`): NO engine fix needed. Auto
+  family detection `muse[-_]?glimmer` -> tool `muse`, reasoning `muse`; text-only lane forced. Streaming smoke: text
+  "OK" with 288-364 reasoning chars split; at reasoning_effort medium 3/3 write calls (51-113 s each, 1,638-4,564
+  reasoning chars); without effort 2/3 (the third chose `shell mkdir -p src` first, a well-formed call). lz.11 carries
+  the same muse files (models/muse_glimmer.py, muse parsers). DFlash still needs meta-models/Muse-Glimmer-30B-assistant
+  (not on disk); without it the engine serves plain decode.
