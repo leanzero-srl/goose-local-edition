@@ -1217,6 +1217,13 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
     compaction to first write). Single-call timings vary 6x run to run (1,696 s vs 279 s for the same request).
   - The "turn N/M used" line already exists (moim.rs turn_budget_line, from 50% of max_turns). The model saw
     299/300 and still made a breaking last edit, so this is not a goose gap.
+  - V3 MEASURED (series d1f23cea, 2 builds, frozen forge-2.0 scorer): 0.2576 / 0.1128, mean 0.185 vs the old-goose
+    control 0.140; inner 0.708 / 0.771 vs 0.664. After every compaction the next call or the one after was a write
+    (V2 C1 went 29+ calls without one). b2's low final score is two R6 security criticals in its 75-line web-trigger
+    (an unsigned request still persisted the rate dose to KVS; a check-then-set eventId guard let a concurrent replay
+    apply twice). That is model variance in one file, not compaction. b2 first read 0.2736 unpublishable because the
+    scorer's probe crashed (RangeError on a spread; fixed d97ab1fab on fix/forge2-probe-spread) and the crash had
+    hidden those criticals.
 - LIQUID LFM2.5 24B-A2B LOCAL (2026-10-17, engine pin v0.14.3-lz.11 = lz.10 + fork c56728690, goose 48ef631b8, app 3.0.117):
   - Aliases match only hub names/paths, so a FOLDER mount of any LFM got no parser: calls came back as content
     `[shell(command='ls /tmp')]`. lz.11 detects `model_type lfm2*` + a `<|tool_call_start|>` template → tool `lfm`,
