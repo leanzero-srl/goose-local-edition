@@ -1436,3 +1436,25 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
   `reasoning_effort: medium`; the Studio and laptop run released 3.0.118, which sends no thinking preference, so the engine's
   R12-T1F injects enable_thinking=False. Gemma 4 then reasons exactly "\n" each turn, and the released formatter folds every
   turn into turn 2 (I-22, fix branch lz/i22-turn-merge 6464f335). Check `[REQUEST]` roles in the engine log on a new machine.
+- **2026-10-19 — Nex-N2.5-mini (qwen3_5_moe, abenzerps folder) gets NO parsers from auto-detect (RUN-ISSUES I-27).** Wrapper
+  flags `--tool-call-parser qwen3_coder_xml --reasoning-parser qwen3` fix it on 7108304a+ (earlier engines silently ignored
+  an explicit --tool-call-parser without --enable-auto-tool-choice — the I-23 finding). Generalise the I-23 template-wire rule.
+- **2026-10-19 — NEMOTRON 3.5 BOLT (`nemotron_h_puzzle`) PORTED + the guard's KV over-prices (RUN-ISSUES I-29, I-30).** Fork
+  `lz/nemotron-h-puzzle` 6d127474875ded467922111b5825329758751776 (on 7108304a; 1b025e4f5 = port of raullenchai/Rapid-MLX#4679:
+  vendored rapid_mlx/models/nemotron_h_puzzle.py over mlx-lm nemotron_h, aliases, sizes, tiny-forward tests). Folder profile is
+  TEMPLATE-driven (the PR pins nemotron/qwen3 unconditionally): the Nemotron-H fallback now covers both model types; MoE when any
+  block_configs entry is moe. Two guard fixes in the same branch: (1) `_kv_footprint_terms`' mlx-lm fallback priced KV with the
+  config dtype probe, which has no dtype in mlx-lm ModelArgs -> fp32 -> KV DOUBLED (Granite 4.2 30B 524,288 vs 262,144 B/token,
+  window 69,888 -> 131,072 native); now `_kv_element_bytes`. Read it from the boot line: `token=` in `[memory_guard] enabled: prior`
+  = KV/token + 16 x hidden + 6 x intermediate (bf16) -- a KV/token twice the model's real figure is this bug. Qwen3.8 unaffected.
+  (2) Nemotron-H block stacks carry no `layer_types`, so they were priced as all-attention (Bolt 180,224 B/token, window 116,480);
+  `kv_estimation.block_pattern_kv_bytes` reads the loaded blocks ("*" KV, "M" fixed conv+SSM state, "E"/"-" nothing): Bolt 8,192
+  B/token + 170,229,760 B state (= the live `recurrent=162.3MB`), window 262,144. PROBE without loading weights: a stub scheduler
+  (`Scheduler.__new__` + model/config/_kv_* fields) over `mlx_lm.utils.load_model(dir, lazy=True)` prints `_kv_footprint_terms()`,
+  `_memguard_prior()` and `MemoryGuard.max_context` in a second (scratch m_guardprobe.py / m_windowprobe.py pattern). LIVE (Studio
+  app, picker swap, no app quit): Bolt boot clean, smoke text + 3/3 tools (medium: reasoning split), 58.6k prompt admitted 93 s;
+  Granite 81.6k admitted (was refused at 80k). DEPLOY TRICK when the app must not be quit (a cloud chain run is live): the engine is
+  spawned from the wrapper FILE at every mount, so bump REV in the currently configured wrapper and swap models with the
+  #/leanzero-swarm picker -> "Run on this Mac"; config.yaml stays untouched. RESIDUAL: head_dim-128 models never calibrate the
+  attention coefficient (every pair slope < one layer's copy is discarded), so the 4-copy prior stays and prefill chunks get cut
+  (chunks_reduced 13-25 per long prompt) -- safe, slower. App planner gap: "config.json has no integer num_hidden_layers" for Bolt.
