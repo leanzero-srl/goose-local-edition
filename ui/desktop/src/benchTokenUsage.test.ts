@@ -256,7 +256,7 @@ describe('the site rule (website benchmark-token-usage.ts) mirrored', () => {
       'Tokens: at least 2.6M in · 90.5k out · 2.5M cached (lower bound, OpenRouter records)'
     );
     expect(tokenUsageLine({ ...good(), exact: false, source: 'estimate' })).toBe(
-      'Tokens: about 2.6M in · 90.5k out · 2.5M cached (estimated)'
+      'Tokens: about 2.6M in · 90.5k out (estimated)'
     );
     expect([999, 12_345, 206_869, 10_932_017, 1_234_000_000].map(formatTokenCount)).toEqual([
       '999',

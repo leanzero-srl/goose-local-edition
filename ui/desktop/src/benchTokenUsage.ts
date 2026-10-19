@@ -755,7 +755,8 @@ export function tokenUsageLine(t: TokenUsage, provider?: string | null): string 
       : '';
   const figures = `${formatTokenCount(t.promptTokens)} in · ${formatTokenCount(t.completionTokens)} out${cached}`;
   // "estimated" only for an estimate; a record with calls or tokens it could not count is a LOWER BOUND.
-  if (t.source === 'estimate') return `Tokens: about ${figures} (estimated)`;
+  if (t.source === 'estimate')
+    return `Tokens: about ${formatTokenCount(t.promptTokens)} in · ${formatTokenCount(t.completionTokens)} out (estimated)`;
   if (t.exact) return `Tokens: ${figures} (exact, ${label})`;
   return `Tokens: at least ${figures} (lower bound, ${label})`;
 }
