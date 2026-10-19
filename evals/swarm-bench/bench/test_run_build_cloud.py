@@ -581,12 +581,8 @@ class ProviderErrorEndingTests(unittest.TestCase):
             self.assertIn(marker.removesuffix(':'), source, marker)
 
     def test_run_refuses_to_grade_a_session_the_provider_ended(self):
-        # invoke() records the budget from goose's exit status alone; goose exits 0 after it prints the
-        # provider failure, so the budget arrives saying model_finished (Mistral Large 4 Gauntlet
-        # openrouter-cloud-43949758, 2026-10-19: refused correctly, recorded as model_finished).
         def invoke(entrant, workdir, *args):
-            return {'exit': 0, 'secs': 3600.0, 'tail': MEASURED_TAIL, 'timed_out': False,
-                    'budget': {'max_calls': 150, 'calls_used': 97, 'stopped_by': 'model_finished'}}
+            return {'exit': 0, 'secs': 3600.0, 'tail': MEASURED_TAIL, 'timed_out': False}
         scorer = SimpleNamespace(_port_holder=lambda port: None,
                                  gather=lambda *a, **k: self.fail('a provider-ended session was graded'))
         vendor = SimpleNamespace(serve=lambda port, trace: trace.write_text('') or
@@ -609,6 +605,4 @@ class ProviderErrorEndingTests(unittest.TestCase):
             record = json.loads((tree / 'incomplete-agent.json').read_text())
             self.assertFalse((tree / 'verdict.json').exists())
         self.assertEqual(record['ended_on_provider_error'], MEASURED_ERROR)
-        self.assertEqual(record['budget']['stopped_by'], 'provider_error')
-        self.assertEqual(record['budget']['calls_used'], 97)
         self.assertIn(f'ENDED ON PROVIDER ERROR (not scored): {MEASURED_ERROR}', stdout.getvalue())

@@ -107,18 +107,6 @@ def provider_error_ending(tail: str) -> str | None:
     return "\n\n".join(re.split(r"\n\s*\n", tail.rstrip())[-2:]).strip()
 
 
-def mark_unscored_end(agent: dict, cause: str) -> None:
-    """Record who ended a session the run refuses to grade.
-
-    The budget's ``stopped_by`` is read from goose's exit status alone, and goose exits 0 after it prints
-    a provider failure or gives up on empty responses, so the record said ``model_finished`` for a
-    session the PROVIDER ended (Mistral Large 4 Gauntlet openrouter-cloud-43949758, 2026-10-19).
-    """
-    budget = agent.get("budget")
-    if isinstance(budget, dict):
-        budget["stopped_by"] = cause
-
-
 def load_env(path: str = "~/.config/agent-board/bedrock.env") -> Dict[str, str]:
     env: Dict[str, str] = {}
     resolved = Path(path).expanduser()
@@ -1125,7 +1113,6 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
         harness_stop = bench_budget.is_harness_stop(agent)
         if provider and not harness_stop and \
                 "The model returned an empty response. Please resend your message to continue." in agent["tail"]:
-            mark_unscored_end(agent, "empty_responses")
             (workdir / "incomplete-agent.json").write_text(json.dumps(agent, indent=2))
             raise RuntimeError("REFUSED: provider ended on empty responses; no completed benchmark artifact")
         # Same treatment as the empty-response ending above: a session the PROVIDER ended is no
@@ -1135,7 +1122,6 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
         ended_on = provider_error_ending(agent["tail"]) if provider and not harness_stop else None
         if ended_on:
             agent["ended_on_provider_error"] = ended_on
-            mark_unscored_end(agent, "provider_error")
             (workdir / "incomplete-agent.json").write_text(json.dumps(agent, indent=2))
             print(f"ENDED ON PROVIDER ERROR (not scored): {ended_on}", flush=True)
             raise RuntimeError("REFUSED: the session ended on a provider error, not on the model's "
