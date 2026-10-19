@@ -1316,3 +1316,18 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
     Boot log must say `tool_call_parser=xing4, reasoning_parser=qwen3`. Smoke:
     `python3 ~/goose-builds/loop-state/engine-smoke/smoke.py 8198 xing-smoke` and `... --effort medium` (TEXT clean, no
     leaked `<think>`/`<tool_call>` in content, 3/3 write calls). In the app: engine-wrap pin to the full sha above.
+- **2026-10-19 — RELEASE 3.0.119: engine pin v0.14.3-lz.12, overnight wrappers RETIRED.** ENGINE_LAUNCHER =
+  `rapid-mlx[mtp] @ git+...Rapid-MLX@v0.14.3-lz.12` (tag object 5dfea7d5 -> cd53a8247 = lz/overnight-stack 429d0b40d +
+  lz.11's LFM auto-config c56728690, which the overnight stack lacked: pin 429d0b40d alone and a local LFM2.5 folder
+  serves tool calls as text again). engine_profile.rs (from t12 d44f8a81b, launcher table only): lz.12 = Guarded, so
+  build_serve_command passes NO --cache-memory-percent (prefix_cache_flags, from t12 fe1893dec) — the guard sizes
+  its own cache, as the overnight wrappers did. PIPELINE_SINGLE_LINE_REVIEWED_THROUGH = lz.12 (fork
+  lz/pipeline-review-lz12 56e0a4165: 117 n/a, 3 equivalent, 11 recorded `gap`s — the Flash split stays on
+  8c000705 without the tool-call hardening, split-turn join and reasoning_content sanitising). Installed 08:56 on
+  the laptop and 08:57 on Gabee: the `mlx_engine.spawn_command` wrappers (engine-wrap-laptop.sh,
+  ~/t12-bench/engine-wrap.sh) were removed with the app quit (backups config.yaml.before-3.0.119-*); the restored
+  engines run `Rapid-MLX@v0.14.3-lz.12` without the cache share, memory_guard.enabled true, toolsmoke 3/3 on both.
+  The Studio's engine-wrap-granite.sh goes in its install waiter (loop-state studio_waiter.sh). Gabee's t12-line
+  goose binary (thinking effort, compaction V2/V3, live window) is GONE with 3.0.119 by the coordinator's
+  decision: those features are not on main. A fresh-fetch proof for any new pin: `uvx --no-cache --from
+  "rapid-mlx[mtp] @ git+...@<tag>" rapid-mlx --help` with HOME/UV_CACHE_DIR in a scratch dir.
