@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Loader2, Upload } from 'lucide-react';
 import { defineMessages, useIntl } from '../../i18n';
 import type { BenchSeriesSnapshot } from '../../benchSeries';
@@ -6,6 +6,9 @@ import { publishedIsCurrent } from '../../benchRescore';
 import { Button, Chip, Panel, TYPE, WEIGHT, TNUM, FOCUS, RADIUS, SURFACE, cx } from '../lz';
 import type { BenchSession } from './bridge';
 import { seriesSessionKey, seriesSessions } from './seriesPresentation';
+import { hasOpenRouterBill, publishTokens, type RunTokens } from '../../benchBilledCost';
+import { publishNotes } from '../../benchPublishNotes';
+import { DeclaredPriceFields, useDeclaredPrices } from './DeclaredPriceFields';
 
 const messages = defineMessages({
   checking: { id: 'forgeSeries.checking', defaultMessage: 'Checking the two builds…' },
@@ -104,6 +107,66 @@ export function ForgeBuildSeries({
     Record<string, { url: string | null; score?: number; rescoredAt?: string }>
   >({});
   const children = seriesSessions(series.id, sessions);
+  const [notes, setNotes] = useState<string[]>([]);
+  // Each build's own result row: its bill (an OpenRouter bill is its price, sent as is), its token counts
+  // and whether it ran on this Mac — what the price fields and the title prefill need.
+  const childKeys = children.map(seriesSessionKey).join('|');
+  const [rows, setRows] = useState<Record<string, Record<string, unknown> | null>>({});
+  useEffect(() => {
+    if (!window.electron.benchmarkRunResult || !childKeys) return;
+    let alive = true;
+    void Promise.all(
+      childKeys.split('|').map(async (key) => [key, (await window.electron.benchmarkRunResult(key).catch(() => null)) as Record<string, unknown> | null] as const)
+    ).then((pairs) => {
+      if (alive) setRows(Object.fromEntries(pairs));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [childKeys]);
+  const unbilled = Object.values(rows).filter((row) => row && !hasOpenRouterBill(row.billedCost));
+  const loadedAll = childKeys !== '' && childKeys.split('|').every((key) => key in rows);
+  // Price prefill only when every build is PROVEN cloud (main benchRunRoute); a local or unknown build never.
+  const allCloud = loadedAll && Object.values(rows).every((row) => row?.runRoute === 'cloud');
+  const unbilledTokens = useMemo((): RunTokens | null => {
+    let sum: RunTokens | null = { promptTokens: 0, cachedTokens: 0, completionTokens: 0 };
+    for (const row of unbilled) {
+      const t = publishTokens(row?.modelUsage, row?.telemetry);
+      if (!t || !sum) return null;
+      sum = {
+        promptTokens: sum.promptTokens + t.promptTokens,
+        cachedTokens: sum.cachedTokens + t.cachedTokens,
+        completionTokens: sum.completionTokens + t.completionTokens,
+      };
+    }
+    return sum;
+    // rows is the source; unbilled is derived from it
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows]);
+  const price = useDeclaredPrices({
+    resetKey: series.id,
+    billed: !loadedAll || unbilled.length === 0,
+    provider: series.provider ?? null,
+    model: series.model ?? null,
+    cloud: allCloud,
+    tokens: unbilledTokens,
+  });
+  // A readable title (the board names the entry by the text before the first comma), prefilled once.
+  const titleTouched = useRef(false);
+  const firstKey = childKeys.split('|')[0] ?? '';
+  useEffect(() => {
+    if (!firstKey || !window.electron.benchmarkPublishSuggestion) return;
+    let alive = true;
+    void window.electron
+      .benchmarkPublishSuggestion(firstKey)
+      .then((suggestion) => {
+        if (alive && suggestion?.title && !titleTouched.current) setTitle(suggestion.title);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [firstKey]);
   const isPosted = (session: BenchSession) => {
     const receipt = accepted[seriesSessionKey(session)];
     return (
@@ -131,10 +194,11 @@ export function ForgeBuildSeries({
         ? messages.running
         : messages[series.stage];
   const publish = async () => {
-    if (!canPublish || !title.trim() || publicationInFlight.current) return;
+    if (!canPublish || !title.trim() || price.problem || publicationInFlight.current) return;
     publicationInFlight.current = true;
     setPublishing(true);
     setError(null);
+    setNotes([]);
     try {
       // A partial acceptance survives a second-build refusal; the next attempt reads the durable index.
       const [fresh, currentSeries] = await Promise.all([
@@ -164,11 +228,18 @@ export function ForgeBuildSeries({
           throw new Error(intl.formatMessage(messages.waitingPublish));
         const runKey = seriesSessionKey(child);
         setPublishingBuild(child.buildIndex ?? null);
-        const result = await window.electron.benchmarkPublish({ title: title.trim(), runKey });
+        const result = await window.electron.benchmarkPublish({
+          title: title.trim(),
+          runKey,
+          ...(price.prices ? { declaredPrices: price.prices } : {}),
+        });
         if (!result?.ok)
           throw new Error(
             result?.error ?? result?.message ?? intl.formatMessage(messages.noResponse)
           );
+        const said = publishNotes(result);
+        if (said.length)
+          setNotes((now) => [...now, ...said.map((note) => `Build ${child.buildIndex}: ${note}`)]);
         setAccepted((previous) => ({
           ...previous,
           [runKey]: { url: result.url ?? null, score: child.score, rescoredAt: child.rescoredAt },
@@ -277,6 +348,15 @@ export function ForgeBuildSeries({
               )}
         </p>
         {series.summary.reason && <p className={TYPE.bodyMuted}>{series.summary.reason}</p>}
+        {posted < 2 && loadedAll && unbilled.length > 0 && (
+          <DeclaredPriceFields
+            idBase={`${titleId}-price`}
+            state={price}
+            tokens={unbilledTokens}
+            disabled={publishing}
+            testIdPrefix="forge-series-price"
+          />
+        )}
         {posted < 2 ? (
           <div className="flex flex-wrap items-end gap-3">
             <div className="w-full max-w-sm">
@@ -286,7 +366,10 @@ export function ForgeBuildSeries({
               <input
                 id={titleId}
                 value={title}
-                onChange={(event) => setTitle(event.target.value.slice(0, 80))}
+                onChange={(event) => {
+                  titleTouched.current = true;
+                  setTitle(event.target.value.slice(0, 80));
+                }}
                 maxLength={80}
                 disabled={publishing}
                 placeholder={series.model}
@@ -301,7 +384,7 @@ export function ForgeBuildSeries({
             <Button
               icon={publishing ? <Loader2 className="animate-spin" /> : <Upload />}
               onClick={() => void publish()}
-              disabled={!canPublish || !title.trim() || publishing}
+              disabled={!canPublish || !title.trim() || price.problem != null || publishing}
             >
               {intl.formatMessage(
                 publishingBuild != null
@@ -318,6 +401,13 @@ export function ForgeBuildSeries({
         ) : null}
         {!canPublish && posted < 2 && (
           <p className={TYPE.meta}>{intl.formatMessage(messages.waitingPublish)}</p>
+        )}
+        {notes.length > 0 && (
+          <div data-testid="forge-series-notes" className={cx(TYPE.body, 'flex flex-col gap-1')}>
+            {notes.map((note) => (
+              <span key={note}>{note}</span>
+            ))}
+          </div>
         )}
         {error && (
           <p role="alert" className="text-lz-err text-lz-body break-words">

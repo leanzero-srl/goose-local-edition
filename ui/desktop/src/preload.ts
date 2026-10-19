@@ -306,7 +306,16 @@ type ElectronAPI = {
    *  blocks external hosts. `title` is REQUIRED (the user's name for the run); the model id is
    *  engine truth read from the stored result — the renderer cannot send one. Returns the
    *  server's own message on 4xx and the live card's url on success. */
-  benchmarkPublish: (args?: { title?: string; runKey?: string }) => Promise<{
+  benchmarkPublish: (args?: {
+    title?: string;
+    runKey?: string;
+    /** USD per 1M tokens, used ONLY when the run has no OpenRouter bill (sent as an estimate). */
+    declaredPrices?: {
+      inputUsdPerMTok: number;
+      outputUsdPerMTok: number;
+      cachedInputUsdPerMTok?: number;
+    };
+  }) => Promise<{
     ok: boolean;
     error?: string;
     status?: number | string;
@@ -314,7 +323,28 @@ type ElectronAPI = {
      *  catalog without burning the POST — the server refuses too). */
     message?: string;
     url?: string;
+    /** The site marked it a cloud baseline (a verified LeanZero operator key, or kept from before). */
+    baseline?: boolean;
+    /** Forge 2.0: the board now shows this build coupled with another build of the same entrant. */
+    coupled?: boolean;
+    /** Forge 2.0: the build carries its comparison receipt (it couples when its other build is live). */
+    comparisonReceipt?: boolean;
+    /** The operator key outcome: verified / not-operator / needs-comparison-cohort / not-single-model-cloud. */
+    operator?: string;
+    /** The run published WITHOUT its price because the site refused the price (said plainly to the user). */
+    priceWarning?: string;
+    /** Forge 2.0: why no comparison receipt could be attached (the build then publishes on its own). */
+    cohortProblem?: string;
+    /** A saved operator key could not be read from the keychain: the run went out as a community entry. */
+    operatorWarning?: string;
   }>;
+  /** The publish card's prefill for a run: a readable title (null when goose knows no display name) and where it ran. */
+  benchmarkPublishSuggestion: (
+    runKey: string
+  ) => Promise<{ title: string | null; local: boolean; route?: 'cloud' | 'local' | 'unknown' } | null>;
+  /** The LeanZero operator key: write-only (main keeps it in the OS keychain via safeStorage); never read back. */
+  benchmarkOperatorKeyStatus: () => Promise<{ saved: boolean; available: boolean }>;
+  benchmarkOperatorKeySet: (key: string) => Promise<{ ok: boolean; saved?: boolean; error?: string }>;
   readSwarmRun: (workingDir: string) => Promise<{
     runId: string;
     /** Where the run actually lives — differs from workingDir when the engine redirected the build. */
@@ -632,9 +662,20 @@ const electronAPI: ElectronAPI = {
   benchmarkStatus: () => ipcRenderer.invoke('benchmark-status'),
   benchmarkMedia: (workdir: string) => ipcRenderer.invoke('benchmark-media', workdir),
   benchmarkShots: (workdir?: string) => ipcRenderer.invoke('benchmark-shots', workdir),
-  benchmarkPublish: (args?: { title?: string; runKey?: string }) =>
-    ipcRenderer.invoke('benchmark-publish', args),
+  benchmarkPublish: (args?: {
+    title?: string;
+    runKey?: string;
+    declaredPrices?: {
+      inputUsdPerMTok: number;
+      outputUsdPerMTok: number;
+      cachedInputUsdPerMTok?: number;
+    };
+  }) => ipcRenderer.invoke('benchmark-publish', args),
   benchmarkRunResult: (runKey: string) => ipcRenderer.invoke('benchmark-run-result', runKey),
+  benchmarkPublishSuggestion: (runKey: string) =>
+    ipcRenderer.invoke('benchmark-publish-suggestion', runKey),
+  benchmarkOperatorKeyStatus: () => ipcRenderer.invoke('benchmark-operator-key-status'),
+  benchmarkOperatorKeySet: (key: string) => ipcRenderer.invoke('benchmark-operator-key-set', key),
   benchmarkSeries: (seriesId?: string) => ipcRenderer.invoke('benchmark-series', seriesId),
   fleetStatus: () => ipcRenderer.invoke('fleet-status'),
   fleetProbe: (endpoint: string) => ipcRenderer.invoke('fleet-probe', endpoint),
