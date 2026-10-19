@@ -920,7 +920,14 @@ fn append_turn_context_tail(messages_spec: &mut Vec<Value>, text: &str) {
 /// followed by the tool results — the standard OpenAI format.
 ///
 /// Only merges when `reasoning_content` is present and matches, since that is
-/// the only signal that messages were split from the same turn.
+/// the only signal that messages were split from the same turn. Two rules keep
+/// that signal from joining SEQUENTIAL turns (I-22, Gemma 4 31B on the Studio,
+/// 2026-10-19: every turn reasoned exactly "\n", so every later call was folded
+/// into the second assistant message, its result moved before the newer ones, and
+/// the rendered prompt diverged there on every request, a full re-prefill each
+/// turn): whitespace-only reasoning is no evidence of a split, and a tool result
+/// that carries a turn-context block ends its turn, because the agent writes that
+/// block only between model calls, never between the parts of one response.
 fn merge_split_tool_call_messages(messages: &mut Vec<Value>) {
     let mut i = 0;
     while i < messages.len() {
@@ -931,11 +938,13 @@ fn merge_split_tool_call_messages(messages: &mut Vec<Value>) {
                 .is_some_and(|a| !a.is_empty());
         let base_reasoning = messages[i].get("reasoning_content");
 
-        if !is_assistant_tool_call || base_reasoning.is_none() {
+        let Some(base_reasoning) = base_reasoning
+            .filter(|r| is_assistant_tool_call && reasoning_evidences_split(r))
+            .cloned()
+        else {
             i += 1;
             continue;
-        }
-        let base_reasoning = base_reasoning.unwrap().clone();
+        };
 
         let mut extra_tool_calls: Vec<Value> = Vec::new();
         let mut collected: Vec<Value> = Vec::new();
@@ -943,6 +952,9 @@ fn merge_split_tool_call_messages(messages: &mut Vec<Value>) {
 
         loop {
             if scan >= messages.len() || messages[scan].get("role") != Some(&json!("tool")) {
+                break;
+            }
+            if tool_result_ends_turn(&messages[scan]) {
                 break;
             }
 
@@ -1005,6 +1017,30 @@ fn merge_split_tool_call_messages(messages: &mut Vec<Value>) {
 
         i = insert_at + num_collected;
     }
+}
+
+/// Reasoning that can tell one response's split tool calls from separate turns: it must say
+/// something. A model that reasons nothing (Gemma 4 with thinking off streams "\n" every turn)
+/// repeats the same whitespace on every turn.
+fn reasoning_evidences_split(reasoning: &Value) -> bool {
+    reasoning.as_str().is_some_and(|r| !r.trim().is_empty())
+}
+
+/// A tool result whose text ends with a turn-context block (joined to it, Q-94): the model was
+/// called again after it, so the next assistant message is a new turn.
+fn tool_result_ends_turn(msg: &Value) -> bool {
+    let Some(content) = msg.get("content").and_then(|c| c.as_str()) else {
+        return false;
+    };
+    let opening = format!(
+        "<{}>\n<{}>",
+        crate::conversation::TURN_CONTEXT_TAG,
+        crate::conversation::CURRENT_TIME_TAG
+    );
+    content
+        .rfind(&opening)
+        .and_then(|at| content.get(at..))
+        .is_some_and(crate::conversation::is_turn_context_text)
 }
 
 /// True if `msg` is a synthetic image-only user message (content is exclusively image_url items).
@@ -5475,6 +5511,195 @@ data: [DONE]"#;
         assert_eq!(messages[2]["role"], "user");
         assert_eq!(messages[2]["content"], "what happened?");
         assert_eq!(messages[3]["tool_calls"].as_array().unwrap().len(), 1);
+    }
+
+    /// The turn-context block goose keeps on a tool result (Q-94), in the exact shape the Studio's
+    /// Gemma 4 31B run (openai-cloud-18d9a7e5, 2026-10-19) sent.
+    fn i22_turn_context(time: &str) -> String {
+        format!(
+            "<turn-context>\n<current-time>{time}</current-time>\n<working-directory>/runs/build/openai-cloud-18d9a7e5-r0</working-directory>\ncontext: 24,780 of 128,000 tokens used (19%)\n</turn-context>"
+        )
+    }
+
+    fn i22_call(id: &str, command: &str, blank_thinking: bool) -> Message {
+        let mut message = Message::assistant();
+        if blank_thinking {
+            // Gemma 4 with thinking off (R12-T1F) streams a lone "\n" thought on every turn.
+            message = message.with_content(MessageContent::thinking("\n", ""));
+        }
+        message.with_tool_request(
+            id,
+            Ok(CallToolRequestParams::new("shell").with_arguments(object!({"command": command}))),
+        )
+    }
+
+    fn i22_result(id: &str, text: &str) -> Message {
+        Message::user().with_tool_response(
+            id,
+            Ok(CallToolResult::success(vec![rmcp::model::Content::text(
+                text,
+            )])),
+        )
+    }
+
+    /// The stored history of that run: one tool call per turn, each turn after the first opening
+    /// with the blank thought, a turn-context block written only on some turns.
+    fn i22_stored_history() -> Vec<Message> {
+        vec![
+            Message::user().with_text("# forge-2.0 — Scope Ledger 2 (Atlassian Forge)"),
+            i22_call("call_90480d26", "ls", false),
+            i22_result("call_90480d26", "STARTER.md\nFORGE2-CONTRACT.md"),
+            i22_call("call_e1f92443", "cat STARTER.md", true),
+            i22_result("call_e1f92443", "# Starter and offline tools"),
+            Message::user().with_text(i22_turn_context("2026-10-19 02:59:00")),
+            i22_call("call_e774f517", "npm run lint", true),
+            i22_result("call_e774f517", "No issues found."),
+            i22_call("call_b2dbfea5", "cat manifest.yml", true),
+            i22_result("call_b2dbfea5", "modules:"),
+            Message::user().with_text(i22_turn_context("2026-10-19 03:07:00")),
+            i22_call("call_5f880360", "cat src/index.js", true),
+            i22_result("call_5f880360", "import Resolver from '@forge/resolver';"),
+        ]
+    }
+
+    fn i22_request(stored: &[Message]) -> Vec<Value> {
+        // goose's messages_for_provider (crates/goose/src/agents/reply_parts.rs) hands a kept
+        // turn-context block to the formatter on the tool-result message before it.
+        let mut sent: Vec<Message> = Vec::new();
+        for message in stored {
+            let kept_block = matches!(message.content.as_slice(),
+                [MessageContent::Text(t)] if crate::conversation::is_turn_context_text(&t.text));
+            match sent.last_mut() {
+                Some(host) if kept_block && host.role == Role::User => {
+                    host.content.extend(message.content.clone())
+                }
+                _ => sent.push(message.clone()),
+            }
+        }
+        let (fixed, _) = crate::conversation::fix_conversation(
+            crate::conversation::Conversation::new_unvalidated(sent),
+        );
+        // The options goose's openai provider sends a local engine with (goose-providers openai.rs).
+        format_messages_with_options(
+            fixed.messages(),
+            &ImageFormat::OpenAi,
+            OpenAiFormatOptions {
+                preserve_thinking_context: true,
+                turn_context_joins_tool_results: true,
+                text_only_engine: false,
+            },
+        )
+    }
+
+    #[test]
+    fn i22_sequential_turns_keep_each_tool_call_before_its_own_result() {
+        // Before the fix every later call was folded into the second assistant message, the roles
+        // the live engine logged: [user, assistant, tool, assistant, tool, tool, tool, tool].
+        let spec = i22_request(&i22_stored_history());
+        let roles: Vec<&str> = spec.iter().map(|m| m["role"].as_str().unwrap()).collect();
+        assert_eq!(
+            roles,
+            [
+                "user",
+                "assistant",
+                "tool",
+                "assistant",
+                "tool",
+                "assistant",
+                "tool",
+                "assistant",
+                "tool",
+                "assistant",
+                "tool"
+            ],
+            "{spec:#?}"
+        );
+        for pair in spec[1..].chunks(2) {
+            let calls = pair[0]["tool_calls"].as_array().unwrap();
+            assert_eq!(calls.len(), 1, "one call per stored turn: {spec:#?}");
+            assert_eq!(pair[1]["tool_call_id"], calls[0]["id"]);
+        }
+    }
+
+    #[test]
+    fn i22_each_request_extends_the_previous_one() {
+        // The prompt-cache symptom: request N must be a prefix of request N+1, so an engine resumes
+        // from the previous turn instead of re-reading everything after the second assistant message.
+        let history = i22_stored_history();
+        let mut previous: Option<Vec<Value>> = None;
+        // Cut where goose sends a request: after a turn's results and the block written with them.
+        for end in 3..=history.len() {
+            let next_is_model_call = history.get(end).is_none_or(|m| m.role == Role::Assistant);
+            if history[end - 1].role != Role::User || !next_is_model_call {
+                continue;
+            }
+            let spec = i22_request(&history[..end]);
+            if let Some(previous) = &previous {
+                assert!(
+                    spec.len() >= previous.len() && spec[..previous.len()] == previous[..],
+                    "request over {end} stored messages rewrote the previous request:\nprevious {previous:#?}\nnow {spec:#?}"
+                );
+            }
+            previous = Some(spec);
+        }
+    }
+
+    #[test]
+    fn i22_blank_reasoning_is_no_evidence_of_a_split() {
+        for blank in ["\n", "\n\n", " \t\n"] {
+            let mut messages = vec![
+                json!({"role": "assistant", "content": null, "tool_calls": [{"id": "tc1", "type": "function", "function": {"name": "shell", "arguments": "{}"}}], "reasoning_content": blank}),
+                json!({"role": "tool", "tool_call_id": "tc1", "content": "result1"}),
+                json!({"role": "assistant", "content": null, "tool_calls": [{"id": "tc2", "type": "function", "function": {"name": "shell", "arguments": "{}"}}], "reasoning_content": blank}),
+                json!({"role": "tool", "tool_call_id": "tc2", "content": "result2"}),
+            ];
+            let before = messages.clone();
+            merge_split_tool_call_messages(&mut messages);
+            assert_eq!(messages, before, "reasoning {blank:?}");
+        }
+    }
+
+    #[test]
+    fn i22_a_turn_context_on_a_tool_result_ends_the_turn() {
+        let tool_with_block = format!("result1\n{}", i22_turn_context("2026-10-19 02:59:00"));
+        let mut messages = vec![
+            json!({"role": "assistant", "content": null, "tool_calls": [{"id": "tc1", "type": "function", "function": {"name": "read", "arguments": "{}"}}], "reasoning_content": "thinking..."}),
+            json!({"role": "tool", "tool_call_id": "tc1", "content": tool_with_block}),
+            json!({"role": "assistant", "content": null, "tool_calls": [{"id": "tc2", "type": "function", "function": {"name": "write", "arguments": "{}"}}], "reasoning_content": "thinking..."}),
+            json!({"role": "tool", "tool_call_id": "tc2", "content": "result2"}),
+        ];
+        let before = messages.clone();
+        merge_split_tool_call_messages(&mut messages);
+        assert_eq!(messages, before);
+
+        // Control: a tool output that only QUOTES the tag (no block shape) still merges.
+        let mut quoted = before.clone();
+        quoted[1]["content"] = json!("grep found <turn-context> in a file");
+        merge_split_tool_call_messages(&mut quoted);
+        assert_eq!(quoted.len(), 3);
+        assert_eq!(quoted[0]["tool_calls"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn i22_a_real_split_with_reasoning_still_merges_after_its_last_result() {
+        // One response with two calls (agent.rs clones the reasoning onto each), then the next
+        // turn with the same reasoning text after a turn-context block: only the split merges.
+        let mut messages = vec![
+            json!({"role": "assistant", "content": null, "tool_calls": [{"id": "tc1", "type": "function", "function": {"name": "read", "arguments": "{}"}}], "reasoning_content": "plan"}),
+            json!({"role": "tool", "tool_call_id": "tc1", "content": "r1"}),
+            json!({"role": "assistant", "content": null, "tool_calls": [{"id": "tc2", "type": "function", "function": {"name": "read", "arguments": "{}"}}], "reasoning_content": "plan"}),
+            json!({"role": "tool", "tool_call_id": "tc2", "content": format!("r2\n{}", i22_turn_context("2026-10-19 03:00:00"))}),
+            json!({"role": "assistant", "content": null, "tool_calls": [{"id": "tc3", "type": "function", "function": {"name": "write", "arguments": "{}"}}], "reasoning_content": "plan"}),
+            json!({"role": "tool", "tool_call_id": "tc3", "content": "r3"}),
+        ];
+        merge_split_tool_call_messages(&mut messages);
+        let roles: Vec<&str> = messages
+            .iter()
+            .map(|m| m["role"].as_str().unwrap())
+            .collect();
+        assert_eq!(roles, ["assistant", "tool", "tool", "assistant", "tool"]);
+        assert_eq!(messages[0]["tool_calls"].as_array().unwrap().len(), 2);
+        assert_eq!(messages[3]["tool_calls"][0]["id"], "tc3");
     }
 
     #[test]
