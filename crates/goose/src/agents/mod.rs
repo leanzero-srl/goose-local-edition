@@ -29,7 +29,8 @@ pub mod types;
 pub mod validate_extensions;
 
 pub use agent::{
-    Agent, AgentConfig, AgentEvent, ExtensionLoadResult, GoosePlatform, MAX_TURNS_MESSAGE,
+    Agent, AgentConfig, AgentEvent, ExtensionLoadResult, GoosePlatform, LENGTH_CUT_CONTINUATION,
+    MAX_TURNS_MESSAGE,
 };
 pub use container::Container;
 pub use execute_commands::COMPACT_TRIGGERS;

@@ -79,7 +79,9 @@ const MAX_EMPTY_TURN_RETRIES: u32 = 3;
 /// Consecutive replies cut at the output-token limit before any tool call that are answered with
 /// LENGTH_CUT_CONTINUATION instead of ending (text) or re-asking blind (reasoning only).
 const MAX_LENGTH_CUT_NUDGES: u32 = 3;
-const LENGTH_CUT_CONTINUATION: &str = "Your last reply was cut off at the model's output-token limit, so it is \
+/// Also the compaction's matcher: a preserved "latest request" must never be this nudge
+/// (context_mgmt `is_harness_nudge`), so a rewording here moves the matcher with it.
+pub const LENGTH_CUT_CONTINUATION: &str = "Your last reply was cut off at the model's output-token limit, so it is \
      unfinished and nothing in it was carried out. Continue from where it stopped in smaller steps: if the task needs \
      actions, take the next one now with a tool call instead of planning everything in one reply, and keep each reply \
      well under the limit.";
