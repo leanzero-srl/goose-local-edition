@@ -1822,6 +1822,23 @@ impl ExtensionManager {
                     name = recovered;
                     continue;
                 }
+                // I-10: a call whose ARGUMENTS fit exactly one offered tool (one of them that tool's
+                // alone) runs as that tool — `bash` {command} as `shell` — instead of spending a call
+                // on "not found" (tool_similarity::argument_shape_match).
+                let argument_names: Vec<&str> = arguments
+                    .map(|args| args.keys().map(String::as_str).collect())
+                    .unwrap_or_default();
+                if let Some(shaped) =
+                    super::tool_similarity::argument_shape_match(&tools, &argument_names)
+                {
+                    tracing::warn!(
+                        called = %tool_name,
+                        routed_to = %shaped.name,
+                        "tool not found: its arguments fit exactly one tool, running it as that tool"
+                    );
+                    name = shaped.name.to_string();
+                    continue;
+                }
             }
 
             break;

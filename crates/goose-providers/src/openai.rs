@@ -671,13 +671,13 @@ impl OpenAiProvider {
                     tracing::info!(
                         model = %model_name,
                         context_window = n_ctx,
-                        "context window from {} meta.n_ctx",
+                        "context window from {} (meta.n_ctx, max_model_len or context_window)",
                         models_path
                     );
                     return Ok(n_ctx);
                 }
                 None => format!(
-                    "{models_path}: no meta.n_ctx for {model_name} ({})",
+                    "{models_path}: no meta.n_ctx, max_model_len or context_window for {model_name} ({})",
                     describe_listing(&json)
                 ),
             },
@@ -758,16 +758,25 @@ fn describe_listing(json: &serde_json::Value) -> String {
     }
 }
 
-/// Extract `meta.n_ctx` for `model_name` from a `/v1/models` response body.
+/// Extract the loaded context window for `model_name` from a `/v1/models` response body, from the
+/// first field the server carries: llama.cpp/Ollama's `meta.n_ctx`; vLLM's and the LeanZero
+/// Rapid-MLX engine's `max_model_len` (the window the engine SERVES — on a 64 GB Mac the RC13 line
+/// lists 76,800 for Gemma 4 31B while the model's own window is 262,144); then the Rapid-MLX
+/// `context_window` (the model's window). I-12 (2026-10-18): the Studio's app logged
+/// `context_window_probe_missed` against an engine that listed both, so compaction ran on the
+/// default limit.
 fn parse_n_ctx_from_models(json: &serde_json::Value, model_name: &str) -> Option<usize> {
     let data = json.get("data")?.as_array()?;
 
     let n_ctx = |entry: &serde_json::Value| -> Option<usize> {
-        entry
-            .get("meta")?
-            .get("n_ctx")?
-            .as_u64()
-            .map(|v| v as usize)
+        let positive = |v: Option<&serde_json::Value>| {
+            v.and_then(serde_json::Value::as_u64)
+                .filter(|n| *n > 0)
+                .map(|n| n as usize)
+        };
+        positive(entry.get("meta").and_then(|m| m.get("n_ctx")))
+            .or_else(|| positive(entry.get("max_model_len")))
+            .or_else(|| positive(entry.get("context_window")))
     };
 
     if let Some(entry) = data
@@ -944,7 +953,7 @@ impl Provider for OpenAiProvider {
                     model = %model_config.model_name,
                     default_context_limit = model_config.context_limit(),
                     reason = %reason,
-                    "context_window_probe_missed: no meta.n_ctx or loaded_context_length for this \
+                    "context_window_probe_missed: no meta.n_ctx, max_model_len, context_window or loaded_context_length for this \
                      model; the compaction guard and the per-turn context line run on the default"
                 );
                 None
@@ -2215,6 +2224,37 @@ mod tests {
             ]
         });
         assert_eq!(parse_n_ctx_from_models(&body, "qwen3"), Some(32768));
+    }
+
+    /// I-12: the Rapid-MLX RC13-line engine's `/v1/models` entries as served on 2026-10-18 (Gabee's
+    /// Gemma 4 31B under the memory guard, the Studio's Gemma 4 26B-A4B): no `meta`, the served
+    /// window in `max_model_len`, the model's window in `context_window`.
+    #[test]
+    fn parse_n_ctx_reads_the_rapid_mlx_served_window() {
+        let gabee = json!({"object": "list", "data": [{
+            "id": "t12-candidates/gemma-4-31B-it-MLX-8bit", "object": "model", "owned_by": "rapid-mlx",
+            "context_window": 262144, "max_model_len": 76800
+        }]});
+        assert_eq!(
+            parse_n_ctx_from_models(&gabee, "t12-candidates/gemma-4-31B-it-MLX-8bit"),
+            Some(76_800),
+            "the served window wins over the model's own"
+        );
+        let studio = json!({"object": "list", "data": [{
+            "id": "lmstudio-community/gemma-4-26B-A4B-it-MLX-8bit", "owned_by": "rapid-mlx",
+            "context_window": 262144, "max_model_len": 262144
+        }]});
+        assert_eq!(
+            parse_n_ctx_from_models(&studio, "lmstudio-community/gemma-4-26B-A4B-it-MLX-8bit"),
+            Some(262_144)
+        );
+        let window_only = json!({"data": [{"id": "m", "context_window": 131072}]});
+        assert_eq!(parse_n_ctx_from_models(&window_only, "m"), Some(131_072));
+        let meta_first =
+            json!({"data": [{"id": "m", "meta": {"n_ctx": 8192}, "max_model_len": 32768}]});
+        assert_eq!(parse_n_ctx_from_models(&meta_first, "m"), Some(8192));
+        let zero = json!({"data": [{"id": "m", "max_model_len": 0, "context_window": 0}]});
+        assert_eq!(parse_n_ctx_from_models(&zero, "m"), None);
     }
 
     #[test]
