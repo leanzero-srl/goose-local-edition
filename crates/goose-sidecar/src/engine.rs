@@ -15,6 +15,7 @@ use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
+use crate::engine_profile::{self, EngineMemoryProfile};
 use crate::fit::{self, FitVerdict, Need, NodeMemoryFacts, Verdict};
 use crate::hf::{self, LocalModel};
 use crate::kv_cache::{self, KvCacheMode};
@@ -156,6 +157,9 @@ pub const MAX_CONCURRENT_REQUESTS: u32 = 8; // measured: 9th concurrent request 
 /// Holding two measured turns needs ≥ 0.312; staying under that line with the cache full, one
 /// prefill peak and two more live 49k sequences needs ≤ 0.389 — see
 /// `the_prefix_cache_share_holds_two_turns_under_the_pressure_line`.
+/// Passed ONLY to an engine without a memory guard (`prefix_cache_flags`): the guard takes any
+/// `--cache-memory-percent` other than its default as an operator cap, and with none it derives the
+/// budget from the device itself.
 pub const PREFIX_CACHE_SHARE_OF_FREE: f64 = 0.35; // ratio: of the engine's post-load available memory; receipt above
 
 /// Recurrent-state (GatedDeltaNet) and sliding-window caches cannot be trimmed, so Rapid-MLX
@@ -173,6 +177,19 @@ pub fn hybrid_cache_entries() -> u32 {
     MAX_CONCURRENT_REQUESTS * PREFIX_ENTRIES_PER_REQUEST
 }
 
+/// v0.14.3-lz.12 (fork lz/release-3.0.119-engine cd53a8247 = lz/overnight-stack 429d0b40d + lz.11's
+/// LFM auto-config c56728690, which the overnight stack did not carry) = the memory-guard line (RC13
+/// e3a92b555: a per-step memory plan before every prefill chunk, decode growth and batch join, so a
+/// long session cannot OOM; the text-only image notice; history reasoning reaches the template; a
+/// split assistant turn renders as one) + local Nemotron-H and Nemotron 3.5 Bolt profiles (I-1,
+/// I-30), Xing4.0 (I-2), MLA latent KV priced from what the cache stores (I-7), Gemma 4 prefix reuse
+/// across agent turns (I-4, I-4b), Gemma 4 KV priced from its attention modules (I-17), Granite 4.2
+/// dense profile and a bare `--tool-call-parser` that binds (I-23), the guard's KV in the dtype it
+/// caches (I-29) and history think blocks kept once (I-32). It ran overnight 2026-10-18/19 on three
+/// Macs at its ancestors b20ec1b7, 1b5f497a and 7108304a. The guard sizes its own prefix cache from
+/// the device, so goose passes it no `--cache-memory-percent` (`prefix_cache_flags`,
+/// `engine_profile`).
+///
 /// v0.14.3-lz.11 = lz.10 + a local LFM2/LFM2.5 folder gets the `lfm` tool parser and the
 /// `deepseek_r1_distill` reasoning parser from its config.json + template (fork lz/lfm-metadata
 /// c56728690). Aliases name only hub repos, so the app's folder mount of Liquid's 24B served
@@ -240,7 +257,7 @@ pub fn hybrid_cache_entries() -> u32 {
 pub const ENGINE_LAUNCHER: [&str; 4] = [
     "uvx",
     "--from",
-    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.11",
+    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.12",
     "rapid-mlx",
 ];
 
@@ -325,6 +342,12 @@ pub const SUPERSEDED_ENGINE_LAUNCHERS: &[[&str; 4]] = &[
         "uvx",
         "--from",
         "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.10",
+        "rapid-mlx",
+    ],
+    [
+        "uvx",
+        "--from",
+        "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.11",
         "rapid-mlx",
     ],
 ];
@@ -653,6 +676,39 @@ fn validated_adapter_dir(raw: &str) -> Result<Option<PathBuf>> {
     Ok(Some(dir))
 }
 
+/// The prefix cache and admission flags for the engine `engine` describes. Prefix caching is
+/// always on and never a person's knob; who sizes it depends on the engine:
+/// - memory guard (`Guarded`): NO budget flag. The guard honours any `--cache-memory-percent`
+///   other than its default as an operator cap, and with none it derives the budget from the
+///   device's idle room. Measured on the guard (lz/memory-guard 64c1f288b, real allocator, one
+///   session to the window edge, 35 turns): with 0.35 the hits stopped at ~half the window (15
+///   full re-prefills); with no flag, 35/35 hits, peak under the ceiling. On Gabee the 0.35 capped
+///   the ledger at 9.9 GB, where the guard derives 17.3 GB. The overnight runs of 2026-10-18/19 ran
+///   the guard this way (their engine wrapper dropped the flag).
+/// - no guard (lz.11 and older), or an engine goose cannot place: `PREFIX_CACHE_SHARE_OF_FREE`,
+///   still that engine's only bound on its cache.
+///
+/// `--hybrid-cache-entries` and `--max-concurrent-requests` stay for both: neither overrides a
+/// value the guard derives from the device. The guard sizes BYTES; the hybrid count is a count
+/// (without the flag the engine falls to 8, tighter than goose's 24, so dropping it would cost
+/// hits), and the admission cap is a concurrency bound the guard's memory admission sits under.
+fn prefix_cache_flags(engine: &Result<EngineMemoryProfile, String>) -> Vec<String> {
+    let mut flags = vec!["--enable-prefix-cache".to_string()];
+    if !matches!(engine, Ok(EngineMemoryProfile::Guarded { .. })) {
+        flags.extend([
+            "--cache-memory-percent".to_string(),
+            PREFIX_CACHE_SHARE_OF_FREE.to_string(),
+        ]);
+    }
+    flags.extend([
+        "--hybrid-cache-entries".to_string(),
+        hybrid_cache_entries().to_string(),
+        "--max-concurrent-requests".to_string(),
+        MAX_CONCURRENT_REQUESTS.to_string(),
+    ]);
+    flags
+}
+
 /// The engine argv for `model_id` under `settings`, read together with the model
 /// directory (`inspect_model_dir`). Fails only when the profile names an adapter directory
 /// that is not one, when checkpoint parser metadata cannot be read, or when the profile asks for
@@ -678,15 +734,9 @@ pub fn build_serve_command(
     for alias in names.also {
         argv.extend(["--served-model-alias".to_string(), alias]);
     }
-    argv.extend([
-        "--enable-prefix-cache".to_string(),
-        "--cache-memory-percent".to_string(),
-        PREFIX_CACHE_SHARE_OF_FREE.to_string(),
-        "--hybrid-cache-entries".to_string(),
-        hybrid_cache_entries().to_string(),
-        "--max-concurrent-requests".to_string(),
-        MAX_CONCURRENT_REQUESTS.to_string(),
-    ]);
+    argv.extend(prefix_cache_flags(&engine_profile::profile_of_launcher(
+        &settings.spawn_command,
+    )));
     let default_profile = ModelProfile::default();
     let profile = settings
         .model_profiles
@@ -2752,7 +2802,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.11",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.12",
                 "rapid-mlx",
                 "serve",
                 "/opt/models/mlx-community/Qwen3.5-9B-MLX-4bit",
@@ -2761,8 +2811,6 @@ mod tests {
                 "--served-model-name",
                 "mlx-community/Qwen3.5-9B-MLX-4bit",
                 "--enable-prefix-cache",
-                "--cache-memory-percent",
-                "0.35",
                 "--hybrid-cache-entries",
                 "24",
                 "--max-concurrent-requests",
@@ -2782,6 +2830,47 @@ mod tests {
                 "--default-top-k",
                 "40",
             ]
+        );
+    }
+
+    /// A memory-guard engine sizes its own prefix cache from the device: goose passes it no
+    /// budget. An unguarded engine and one goose cannot place keep the share.
+    #[test]
+    fn a_guarded_engine_gets_no_prefix_cache_budget() {
+        let guarded = prefix_cache_flags(&Ok(EngineMemoryProfile::Guarded {
+            floor_chunk_tokens: engine_profile::GUARD_FLOOR_CHUNK_TOKENS,
+        }));
+        assert_eq!(
+            guarded,
+            vec![
+                "--enable-prefix-cache",
+                "--hybrid-cache-entries",
+                "24",
+                "--max-concurrent-requests",
+                "8",
+            ]
+        );
+        let with_share = [
+            "--enable-prefix-cache",
+            "--cache-memory-percent",
+            "0.35",
+            "--hybrid-cache-entries",
+            "24",
+            "--max-concurrent-requests",
+            "8",
+        ];
+        assert_eq!(
+            prefix_cache_flags(&Ok(engine_profile::UNDECLARED)),
+            with_share
+        );
+        assert_eq!(
+            prefix_cache_flags(&Err("an owner's own launcher".to_string())),
+            with_share
+        );
+        let own = vec!["python3".to_string(), "serve.py".to_string()];
+        assert_eq!(
+            prefix_cache_flags(&engine_profile::profile_of_launcher(&own)),
+            with_share
         );
     }
 
@@ -2934,7 +3023,7 @@ mod tests {
         .unwrap();
         assert_eq!(&argv[..base.len() - 1], &base[..base.len() - 1]);
         assert_eq!(
-            &argv[17..],
+            &argv[argv.len() - 3..],
             &[
                 "--speculative-config".to_string(),
                 expected_json,
@@ -3089,7 +3178,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.11",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.12",
                 "rapid-mlx",
                 "serve",
                 &model_path.to_string_lossy(),
@@ -3098,8 +3187,6 @@ mod tests {
                 "--served-model-name",
                 "pub/model",
                 "--enable-prefix-cache",
-                "--cache-memory-percent",
-                "0.35",
                 "--hybrid-cache-entries",
                 "24",
                 "--max-concurrent-requests",
