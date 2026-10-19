@@ -363,21 +363,43 @@ describe('the price a publish carries (Mihai 2026-10-18)', () => {
       provider: 'google',
       runRoute: 'cloud',
       billedCost: { status: 'unavailable', provider: 'google', reason: 'no per-call bill' },
-      modelUsage: usage,
+      modelUsage: {
+        ...usage,
+        sessions: [{ ...usage.sessions[0], accumulated_cache_read_tokens: 0 }],
+      },
     });
     await waitFor(async () =>
       expect(((await findByTestId('publish-price-input')) as HTMLInputElement).value).toBe('1.25')
     );
     expect(canonical).toHaveBeenCalledWith('google', 'gemini-4-argon');
     expect(((await findByTestId('publish-price-output')) as HTMLInputElement).value).toBe('10');
-    // The run read 2M cached tokens and goose's list has no cache-read price: charging them at the full input
-    // price would overstate the bill, so Publish waits for the cached price (app review 2026-10-18).
     const publishBtn = await findByRole('button', { name: /Publish/ });
     fireEvent.change(getByLabelText(/^Title/), { target: { value: 'Argon build' } });
-    await waitFor(() => expect(publishBtn.getAttribute('title')).toMatch(/cached input price/));
-    expect(publishBtn).toBeDisabled();
+    await waitFor(() => expect(publishBtn).not.toBeDisabled());
+    fireEvent.click(publishBtn);
+    await waitFor(() => expect(electron().benchmarkPublish).toHaveBeenCalled());
+    const sent = (electron().benchmarkPublish as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(sent.declaredPrices).toEqual({ inputUsdPerMTok: 1.25, outputUsdPerMTok: 10 });
+  });
+
+  it('a prefill that could not price the run is not made, so Publish is never blocked by fields nobody typed', async () => {
+    const { findByTestId, findByRole, getByLabelText } = renderWith({
+      provider: 'google',
+      runRoute: 'cloud',
+      billedCost: { status: 'unavailable', provider: 'google', reason: 'no per-call bill' },
+      modelUsage: usage,
+    });
+    // The run read 2M cached tokens and goose's list has no cache-read price: the list cannot price it.
+    await waitFor(() => expect(canonical).toHaveBeenCalledWith('google', 'gemini-4-argon'));
+    const input = (await findByTestId('publish-price-input')) as HTMLInputElement;
+    expect(input.value).toBe('');
+    const publishBtn = await findByRole('button', { name: /Publish/ });
+    fireEvent.change(getByLabelText(/^Title/), { target: { value: 'Argon build' } });
+    await waitFor(() => expect(publishBtn).not.toBeDisabled());
+    // Typed by the person, all three prices price it: 1M uncached x $1.25 + 2M cached x $0.125 + 40k x $10 = $1.90
+    fireEvent.change(input, { target: { value: '1.25' } });
+    fireEvent.change(await findByTestId('publish-price-output'), { target: { value: '10' } });
     fireEvent.change(await findByTestId('publish-price-cached'), { target: { value: '0,125' } });
-    // 1M uncached x $1.25 + 2M cached x $0.125 + 40k x $10 = $1.90
     await waitFor(async () =>
       expect((await findByTestId('publish-price-hint')).textContent).toContain(
         'Published as an estimate: $1.90 for 3,000,000 prompt (2,000,000 cached) and 40,000 completion tokens'
@@ -433,12 +455,15 @@ describe('the price a publish carries (Mihai 2026-10-18)', () => {
           ok: true,
           url: '/agentic-benchmarks/run/brun-1',
           baseline: true,
-          priceWarning: "Published without the price: leanzero.net did not accept this run's bill (x).",
+          priceWarning:
+            "Published without the price: leanzero.net did not accept this run's bill (x).",
         }));
       }
     );
     const title = (await findByLabelText(/^Title/)) as HTMLInputElement;
-    await waitFor(() => expect(title.value).toBe('DeepSeek V4.1 Flash 1017, single model via OpenRouter'));
+    await waitFor(() =>
+      expect(title.value).toBe('DeepSeek V4.1 Flash 1017, single model via OpenRouter')
+    );
     const publishBtn = await findByRole('button', { name: /Publish/ });
     await waitFor(() => expect(publishBtn).not.toBeDisabled());
     fireEvent.click(publishBtn);
@@ -453,8 +478,7 @@ describe('the price a publish carries (Mihai 2026-10-18)', () => {
       modelUsage: usage,
     });
     const input = (await findByTestId('publish-price-input')) as HTMLInputElement;
-    await waitFor(() => expect(input.value).toBe('1.25'));
-    fireEvent.change(await findByTestId('publish-price-output'), { target: { value: '' } });
+    fireEvent.change(input, { target: { value: '1.25' } });
     fireEvent.change(getByLabelText(/^Title/), { target: { value: 'Half priced' } });
     const publishBtn = await findByRole('button', { name: /Publish/ });
     await waitFor(() =>

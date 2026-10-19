@@ -272,11 +272,17 @@ export const MAX_DECLARED_USD_PER_MTOK = 10_000;
 
 /** One price field: blank is "not declared"; anything else must be a plain non-negative number. A decimal
  *  comma is read as the decimal point ("1,25" is 1.25, as many locales type it); thousands separators are not
- *  accepted ("1,250.5" is refused rather than guessed). */
-export function parseDeclaredPrice(text: string): number | undefined | 'invalid' {
+ *  accepted ("1,250.5" is refused rather than guessed). A comma followed by exactly three digits after a
+ *  non-zero whole part ("1,250") reads as 1.25 in one locale and 1250 in another, so it is `ambiguous`:
+ *  never guessed. */
+export function parseDeclaredPrice(text: string): number | undefined | 'invalid' | 'ambiguous' {
   let t = text.trim();
   if (!t) return undefined;
-  if (/^\d*,\d+$/.test(t)) t = t.replace(',', '.');
+  if (/^\d*,\d+$/.test(t)) {
+    const [whole, fraction] = t.split(',');
+    if (fraction.length === 3 && /[1-9]/.test(whole)) return 'ambiguous';
+    t = `${whole}.${fraction}`;
+  }
   if (!/^\d+(\.\d+)?$|^\.\d+$/.test(t)) return 'invalid';
   const n = Number(t);
   return Number.isFinite(n) && n >= 0 && n <= MAX_DECLARED_USD_PER_MTOK ? n : 'invalid';
@@ -296,6 +302,16 @@ export function declaredPricesFromFields(
   const input = parseDeclaredPrice(fields.input);
   const output = parseDeclaredPrice(fields.output);
   const cached = parseDeclaredPrice(fields.cached);
+  if (input === 'ambiguous' || output === 'ambiguous' || cached === 'ambiguous') {
+    const typed = (
+      input === 'ambiguous' ? fields.input : output === 'ambiguous' ? fields.output : fields.cached
+    ).trim();
+    const [whole, fraction] = typed.split(',');
+    return {
+      prices: null,
+      problem: `"${typed}" could mean ${whole}.${fraction} or ${whole}${fraction}: write it with a point (${whole}.${fraction}) or without the comma (${whole}${fraction}).`,
+    };
+  }
   if (input === 'invalid' || output === 'invalid' || cached === 'invalid')
     return {
       prices: null,
@@ -318,8 +334,12 @@ export function declaredPricesFromFields(
 }
 
 /** The reason declared prices cannot price these tokens: cached tokens with no cached-input price. */
-export function cachedPriceProblem(tokens: RunTokens | null, prices: DeclaredPrices): string | null {
-  if (!tokens || tokens.cachedTokens <= 0 || prices.cachedInputUsdPerMTok !== undefined) return null;
+export function cachedPriceProblem(
+  tokens: RunTokens | null,
+  prices: DeclaredPrices
+): string | null {
+  if (!tokens || tokens.cachedTokens <= 0 || prices.cachedInputUsdPerMTok !== undefined)
+    return null;
   return `This run read ${tokens.cachedTokens.toLocaleString('en-US')} cached prompt tokens: enter the cached input price (what a cache read costs), or clear the price fields to publish without one.`;
 }
 
@@ -331,7 +351,8 @@ export function cachedPriceProblem(tokens: RunTokens | null, prices: DeclaredPri
  */
 export function publishTokens(usage: unknown, telemetry: unknown): RunTokens | null {
   const session = runTokens(usage);
-  const t = telemetry && typeof telemetry === 'object' ? (telemetry as Record<string, unknown>) : null;
+  const t =
+    telemetry && typeof telemetry === 'object' ? (telemetry as Record<string, unknown>) : null;
   const prompt = t?.prompt_tokens;
   const completion = t?.completion_tokens;
   if (

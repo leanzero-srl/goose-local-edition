@@ -50,10 +50,20 @@ export function useDeclaredPrices({
 } {
   const [fields, setFields] = useState<PriceFields>({ input: '', output: '', cached: '' });
   const [prefilled, setPrefilled] = useState(false);
+  // The counts by value, so the prefill can be checked against them without re-running on a new object.
+  const tokensKey = tokens
+    ? `${tokens.promptTokens}/${tokens.cachedTokens}/${tokens.completionTokens}`
+    : '';
   useEffect(() => {
     setFields({ input: '', output: '', cached: '' });
     setPrefilled(false);
     if (billed || !cloud || !provider || !model || isLocalProviderName(provider)) return;
+    // A prefill is a convenience, never a gate: with no token counts it could not price anything, and a
+    // list without a cached-read price cannot price a run that read cached tokens. Either would leave
+    // Publish blocked until the person cleared fields they never typed, so those runs get no prefill.
+    if (!tokensKey) return;
+    const [promptTokens, cachedTokens, completionTokens] = tokensKey.split('/').map(Number);
+    const counts: RunTokens = { promptTokens, cachedTokens, completionTokens };
     let alive = true;
     void fetchCanonicalModelInfo(provider, model).then((info) => {
       const input = info?.inputTokenCost;
@@ -61,21 +71,19 @@ export function useDeclaredPrices({
       if (!alive || typeof input !== 'number' || typeof output !== 'number') return;
       if (info?.currency && !['$', 'USD', 'usd'].includes(info.currency)) return;
       const cached = info?.cacheReadTokenCost;
-      setFields((now) =>
-        now.input || now.output || now.cached
-          ? now
-          : {
-              input: String(input),
-              output: String(output),
-              cached: typeof cached === 'number' ? String(cached) : '',
-            }
-      );
+      const prefill = {
+        input: String(input),
+        output: String(output),
+        cached: typeof cached === 'number' ? String(cached) : '',
+      };
+      if (declaredPricesFromFields(prefill, counts).problem) return;
+      setFields((now) => (now.input || now.output || now.cached ? now : prefill));
       setPrefilled(true);
     });
     return () => {
       alive = false;
     };
-  }, [resetKey, billed, cloud, provider, model]);
+  }, [resetKey, billed, cloud, provider, model, tokensKey]);
   const declared = declaredPricesFromFields(fields, tokens);
   const problem = billed
     ? null
@@ -114,7 +122,11 @@ export function DeclaredPriceFields({
           [
             ['input', 'Input price', 'e.g. 1.25'],
             ['output', 'Output price', 'e.g. 10'],
-            ['cached', 'Cached input price', tokens && tokens.cachedTokens > 0 ? 'required' : 'same as input'],
+            [
+              'cached',
+              'Cached input price',
+              tokens && tokens.cachedTokens > 0 ? 'required' : 'same as input',
+            ],
           ] as const
         ).map(([key, label, hint]) => (
           <div key={key}>

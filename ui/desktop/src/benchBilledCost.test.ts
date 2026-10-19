@@ -239,23 +239,41 @@ describe('a publisher-declared price when goose has no bill', () => {
       inputUsdPerMTok: 1.25,
       outputUsdPerMTok: 10,
     });
-    expect(declaredPricesFromFields({ input: '1,250.5', output: '10', cached: '' }).problem).toMatch(
-      /USD per 1M/
+    expect(
+      declaredPricesFromFields({ input: '1,250.5', output: '10', cached: '' }).problem
+    ).toMatch(/USD per 1M/);
+  });
+
+  it('never guesses a comma that could be a thousands separator ("1,250")', () => {
+    const typed = declaredPricesFromFields({ input: '1,250', output: '10', cached: '' });
+    expect(typed.prices).toBeNull();
+    expect(typed.problem).toMatch(/could mean 1\.250 or 1250/);
+    expect(declaredPricesFromFields({ input: '0,125', output: '1,5', cached: '' }).prices).toEqual({
+      inputUsdPerMTok: 0.125,
+      outputUsdPerMTok: 1.5,
+    });
+    expect(declaredPricesFromFields({ input: '1', output: '2', cached: '12,500' }).problem).toMatch(
+      /could mean 12\.500 or 12500/
     );
   });
 
   it('requires a cached input price when the run read cached tokens', () => {
     const tokens = { promptTokens: 1_000_000, cachedTokens: 900_000, completionTokens: 1 };
-    expect(declaredPricesFromFields({ input: '1', output: '2', cached: '' }, tokens).problem).toMatch(
-      /cached input price/
-    );
-    expect(declaredPricesFromFields({ input: '1', output: '2', cached: '0,1' }, tokens).prices).toEqual({
+    expect(
+      declaredPricesFromFields({ input: '1', output: '2', cached: '' }, tokens).problem
+    ).toMatch(/cached input price/);
+    expect(
+      declaredPricesFromFields({ input: '1', output: '2', cached: '0,1' }, tokens).prices
+    ).toEqual({
       inputUsdPerMTok: 1,
       outputUsdPerMTok: 2,
       cachedInputUsdPerMTok: 0.1,
     });
     expect(
-      declaredPricesFromFields({ input: '1', output: '2', cached: '' }, { ...tokens, cachedTokens: 0 }).prices
+      declaredPricesFromFields(
+        { input: '1', output: '2', cached: '' },
+        { ...tokens, cachedTokens: 0 }
+      ).prices
     ).not.toBeNull();
   });
 

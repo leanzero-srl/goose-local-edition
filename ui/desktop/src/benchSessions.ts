@@ -110,6 +110,8 @@ export const upsertArchivedRow = (
     ...(prior?.completionReceipt ? { completionReceipt: prior.completionReceipt } : {}),
     ...(prior?.scoringError ? { scoringError: prior.scoringError } : {}),
     ...(prior?.modelFields ? { modelFields: prior.modelFields } : {}),
+    // The engine that RAN the build, stamped at launch: a Forge 2.0 cohort receipt names it at publish.
+    ...(prior?.engineSha256 ? { engineSha256: prior.engineSha256 } : {}),
     ...(prior?.seriesId && prior.buildIndex
       ? { seriesId: prior.seriesId, buildIndex: prior.buildIndex }
       : {}),
