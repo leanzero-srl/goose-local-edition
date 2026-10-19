@@ -228,8 +228,12 @@ fn required_names(tool: &Tool) -> HashSet<String> {
     }
 }
 
-/// The one offered tool a call to a name that does not exist can be run as, read from the call's
-/// ARGUMENTS alone (I-10, 2026-10-18): every argument it carries is one of the tool's parameters,
+/// The one offered tool a call to a name that does not exist could have meant, read from the
+/// call's ARGUMENTS alone (I-10, 2026-10-18), and NAMED in the not-found message so the model calls
+/// it by that name. It is never run in the call's place: dispatch resolves after the permission
+/// inspection, which keys on the name the model typed, so running `bash` as `shell` would skip a
+/// NeverAllow/AskBefore on `shell`, and `append_file` {path, content} would overwrite as `write`.
+/// The match: every argument it carries is one of the tool's parameters,
 /// it supplies every parameter the tool requires, and at least one of its arguments is a
 /// parameter NO other offered tool takes — so the shape of the call names the tool even when its
 /// name shares nothing with it. Measured need: Mistral Large 4 called `bash` {command} 48 times in
