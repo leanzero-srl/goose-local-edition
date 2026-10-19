@@ -1458,3 +1458,15 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
   #/leanzero-swarm picker -> "Run on this Mac"; config.yaml stays untouched. RESIDUAL: head_dim-128 models never calibrate the
   attention coefficient (every pair slope < one layer's copy is discarded), so the 4-copy prior stays and prefill chunks get cut
   (chunks_reduced 13-25 per long prompt) -- safe, slower. App planner gap: "config.json has no integer num_hidden_layers" for Bolt.
+- **2026-10-19 (audit #9) — THE ENGINE DOUBLED HISTORY THINK BLOCKS on a template that renders them on every row (RUN-ISSUES I-32;
+  fix lz/think-retain-once e874f045).** Signature: requests whose LAST role is `user` (a goose nudge, a compaction request) reuse almost
+  nothing (`cached=` a few thousand of 100k) right after a stored boundary, while tool-ending requests reuse 90 %+. The client is NOT
+  the cause if goose's bodies share their prefix: replay the ENGINE's render offline — `rapid_mlx.utils.chat_template.apply_chat_template
+  (AutoTokenizer.from_pretrained(<model dir>), engine._normalize_tool_call_arguments_for_template(msgs), tools=...,
+  enable_thinking=False, add_generation_prompt=True)` with the engine's uv-archive python (`ps` of rapid-mlx serve), CPU only,
+  HF_HUB_OFFLINE=1 — and diff the two renders. `_retain_tool_loop_think_blocks` was armed by literals alone; a probe render now decides.
+  Rule: never decide row edits from rendered text (an existing test pins that a row's CONTENT may open with its own think block); decide
+  per TEMPLATE with a cached probe render, like `_template_puts_narration_before_calls`.
+- **Speed math for a dense model at long context (laptop Granite 4.2 30B, 2026-10-19):** decode tok/s ~= bandwidth / (weights +
+  KV bytes per token x context). Granite 30B KV = 64 x 8 x 128 x 2 x 2 B = 256 KB/token -> 25.6 GB read per token at 100k + 32 GB
+  weights -> ~9 tok/s ceiling on an M4 Max (546 GB/s); measured ~7. Slow is the architecture, not the NFS model mount.
