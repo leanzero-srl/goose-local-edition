@@ -82,9 +82,12 @@ fn classify(name: &str, leading_dim: Option<u64>, experts: Option<u64>) -> Tenso
         TensorClass::Lookup
     } else if experts.is_some()
         && leading_dim == experts
-        && name.contains("experts")
+        && (name.contains("experts") || name.contains("switch_mlp"))
         && !name.contains("shared_expert")
     {
+        // mlx-lm stacks a MoE layer's experts into `switch_mlp.*` (SwitchGLU): qwen3_moe, lfm2_moe,
+        // xing4_0, nemotron_h. Before I-3 only an `experts` name counted, so every such checkpoint
+        // was refused "no tensor has a leading dimension of N" and got no plan.
         TensorClass::Routed
     } else {
         TensorClass::Dense
@@ -363,6 +366,95 @@ mod tests {
         assert_eq!(facts.largest_layer_bytes, q + experts);
         assert_eq!(facts.max_context, Some(4096));
         assert!(facts.kv.is_ok());
+    }
+
+    /// I-3: mlx-lm's stacked layout, names and shapes from the real checkpoints' shard headers
+    /// (TokenAI-zer/Xing4.0-29B-A4B-8bit-MLX layer 10, mlx-community/LFM2-8B-A1B-4bit layer 10).
+    #[test]
+    fn stacked_switch_mlp_experts_are_routed() {
+        let xing = Some(64);
+        for name in [
+            "model.layers.10.mlp.switch_mlp.down_proj.weight",
+            "model.layers.10.mlp.switch_mlp.gate_proj.scales",
+        ] {
+            assert_eq!(
+                classify(name, Some(64), xing),
+                TensorClass::Routed,
+                "{name}"
+            );
+        }
+        // The router and the shared experts are read every token.
+        assert_eq!(
+            classify("model.layers.10.mlp.gate.weight", Some(64), xing),
+            TensorClass::Dense
+        );
+        assert_eq!(
+            classify(
+                "model.layers.10.mlp.shared_experts.down_proj.weight",
+                Some(64),
+                xing
+            ),
+            TensorClass::Dense
+        );
+        assert_eq!(
+            classify(
+                "model.layers.10.feed_forward.switch_mlp.up_proj.weight",
+                Some(32),
+                Some(32)
+            ),
+            TensorClass::Routed
+        );
+        assert_eq!(
+            classify("model.layers.1.mlp.switch_mlp.x", Some(16), Some(32)),
+            TensorClass::Dense
+        );
+    }
+
+    /// I-3: a Xing-shaped checkpoint (two dense layers, then stacked experts) gets its active bytes
+    /// instead of "config.json declares 64 experts but no tensor has a leading dimension of 64".
+    #[test]
+    fn a_stacked_moe_reads_the_active_share_of_its_experts() {
+        let dir = tempfile::tempdir().unwrap();
+        write_checkpoint(
+            dir.path(),
+            serde_json::json!({
+                "model_type": "xing4_0", "num_hidden_layers": 2, "num_attention_heads": 2,
+                "num_key_value_heads": 1, "head_dim": 64, "torch_dtype": "bfloat16",
+                "n_routed_experts": 64, "num_experts_per_tok": 4, "first_k_dense_replace": 1,
+                "quantization": {"bits": 8, "group_size": 64}
+            }),
+            &[
+                ("model.layers.0.mlp.gate_proj.weight", "U32", &[1024, 8]),
+                ("model.layers.1.mlp.gate.weight", "BF16", &[64, 16]),
+                (
+                    "model.layers.1.mlp.switch_mlp.down_proj.weight",
+                    "U32",
+                    &[64, 16, 4],
+                ),
+                (
+                    "model.layers.1.mlp.switch_mlp.down_proj.scales",
+                    "BF16",
+                    &[64, 16, 1],
+                ),
+                (
+                    "model.layers.1.mlp.shared_experts.down_proj.weight",
+                    "U32",
+                    &[16, 4],
+                ),
+            ],
+        );
+        let facts = read_model_facts(dir.path()).unwrap();
+        let dense = 1024 * 8 * 4 + 64 * 16 * 2 + 16 * 4 * 4;
+        let routed = 64 * 16 * 4 * 4 + 64 * 16 * 2;
+        assert_eq!(
+            facts.moe,
+            Some(MoeFacts {
+                experts: 64,
+                experts_per_token: 4
+            })
+        );
+        assert_eq!(facts.resident_bytes, dense + routed);
+        assert_eq!(facts.active_bytes_per_token, dense + routed * 4 / 64);
     }
 
     #[test]
