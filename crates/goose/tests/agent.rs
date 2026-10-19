@@ -3235,6 +3235,7 @@ mod tests {
             empty_count: usize,
             /// Instead of empty turns: replies cut at the output limit (reasoning + the stamp).
             length_cut: bool,
+            loop_stop: bool,
             /// The text of the last message of every request, in call order.
             last_texts: std::sync::Mutex<Vec<String>>,
         }
@@ -3245,6 +3246,7 @@ mod tests {
                     call_count: AtomicUsize::new(0),
                     empty_count,
                     length_cut: false,
+                    loop_stop: false,
                     last_texts: std::sync::Mutex::new(Vec::new()),
                 }
             }
@@ -3253,6 +3255,13 @@ mod tests {
                 Self {
                     length_cut: true,
                     ..Self::new(cut_count)
+                }
+            }
+
+            fn loop_stop(cut_count: usize) -> Self {
+                Self {
+                    loop_stop: true,
+                    ..Self::length_cut(cut_count)
                 }
             }
         }
@@ -3306,8 +3315,12 @@ mod tests {
                         Message::assistant()
                             .with_thinking("Plan the whole app in one go", "")
                             .with_text(
-                                goose_providers::formats::openai::OUTPUT_TRUNCATED_BY_LENGTH
-                                    .trim_start(),
+                                if self.loop_stop {
+                                    goose_providers::formats::openai::OUTPUT_STOPPED_AS_LOOP
+                                } else {
+                                    goose_providers::formats::openai::OUTPUT_TRUNCATED_BY_LENGTH
+                                }
+                                .trim_start(),
                             ),
                         usage(),
                     ))
@@ -3481,6 +3494,45 @@ mod tests {
             assert_eq!(seen.len(), 4, "{seen:?}");
             assert_eq!(
                 seen.iter().filter(|t| t.contains(nudge)).count(),
+                3,
+                "{seen:?}"
+            );
+            Ok(())
+        }
+
+        /// I-28: a reply the engine's loop guard stopped is answered with the loop nudge, never the
+        /// "cut at the output-token limit" one (Gemma 4 26B, 2026-10-19, was told three times it was
+        /// cut for length while it was looping), and the nudge is bounded the same way.
+        #[tokio::test]
+        async fn test_loop_stopped_reply_gets_the_loop_nudge() -> Result<()> {
+            let turn = |p: &EmptyThenTextProvider| -> Vec<String> {
+                p.last_texts
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|t| !t.contains("Generate a short title"))
+                    .cloned()
+                    .collect()
+            };
+            let loop_nudge = "kept repeating the same text";
+            let length_nudge = "cut off at the model's output-token limit";
+            let provider = Arc::new(EmptyThenTextProvider::loop_stop(3));
+            let (messages, _persisted) = run_reply(provider.clone(), "loop-stop-continue").await?;
+            assert!(concat_text(&messages).contains("All done."));
+            let seen = turn(&provider);
+            assert_eq!(seen.len(), 3, "{seen:?}");
+            assert!(
+                seen[1].contains(loop_nudge) && seen[2].contains(loop_nudge),
+                "{seen:?}"
+            );
+            assert!(!seen.iter().any(|t| t.contains(length_nudge)), "{seen:?}");
+
+            let always = Arc::new(EmptyThenTextProvider::loop_stop(usize::MAX));
+            run_reply(always.clone(), "loop-stop-bounded").await?;
+            let seen = turn(&always);
+            assert_eq!(seen.len(), 4, "{seen:?}");
+            assert_eq!(
+                seen.iter().filter(|t| t.contains(loop_nudge)).count(),
                 3,
                 "{seen:?}"
             );
