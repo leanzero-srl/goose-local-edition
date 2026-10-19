@@ -3396,6 +3396,28 @@ mod tests {
             message.role == rmcp::model::Role::Assistant && message.content.is_empty()
         }
 
+        /// An empty turn is retried WITH a nudge, not by resending the identical conversation (a
+        /// deterministic local model answers that with the same empty reply: Gemma 4 26B-A4B, 2026-10-18).
+        #[tokio::test]
+        async fn test_empty_turn_retry_carries_a_continuation_nudge() -> Result<()> {
+            let provider = Arc::new(EmptyThenTextProvider::new(2));
+            let (messages, _persisted) = run_reply(provider.clone(), "empty-retry-nudge").await?;
+            assert!(concat_text(&messages).contains("All done."));
+            let turn: Vec<String> = provider
+                .last_texts
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|t| !t.contains("Generate a short title"))
+                .cloned()
+                .collect();
+            assert!(
+                turn.iter().skip(1).any(|t| t.contains("had no text and no tool call")),
+                "a retried empty turn must end with the continuation nudge: {turn:?}"
+            );
+            Ok(())
+        }
+
         /// A transient empty response should be retried and recover, ultimately
         /// delivering the real text response instead of stopping silently.
         #[tokio::test]
