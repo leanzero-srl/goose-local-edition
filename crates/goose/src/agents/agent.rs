@@ -88,7 +88,8 @@ pub const LENGTH_CUT_CONTINUATION: &str = "Your last reply was cut off at the mo
 /// Sent (agent-visible only) with every empty-turn retry. Resending the identical conversation to a
 /// deterministic local model reproduces the same empty reply: Gemma 4 26B-A4B (2026-10-18) stopped after one
 /// token three times on the same 71,670-token prompt and the run was refused.
-const EMPTY_TURN_CONTINUATION: &str = "Your last reply had no text and no tool call. Continue the task now: \
+const EMPTY_TURN_CONTINUATION: &str =
+    "Your last reply had no text and no tool call. Continue the task now: \
      take the next step with a tool call, or give your final answer if the task is done.";
 const EMPTY_TURN_MESSAGE: &str =
     "The model returned an empty response. Please resend your message to continue.";

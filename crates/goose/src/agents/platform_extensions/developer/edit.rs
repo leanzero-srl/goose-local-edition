@@ -779,7 +779,11 @@ mod tests {
     fn a_no_op_edit_is_refused_and_leaves_the_file_alone() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.js");
-        std::fs::write(&path, "import { kvs } from '@forge/kvs';\nconst CONFIG_KEY = 'config';\n").unwrap();
+        std::fs::write(
+            &path,
+            "import { kvs } from '@forge/kvs';\nconst CONFIG_KEY = 'config';\n",
+        )
+        .unwrap();
         let before = std::fs::metadata(&path).unwrap().modified().unwrap();
         let tool = EditTools::new();
         let same = "import { kvs } from '@forge/kvs';".to_string();
@@ -792,6 +796,9 @@ mod tests {
         let text = format!("{:?}", result.content);
         assert!(text.contains("No change made"), "{text}");
         assert!(!text.contains("Edited"), "{text}");
-        assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), before);
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().modified().unwrap(),
+            before
+        );
     }
 }

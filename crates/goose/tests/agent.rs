@@ -3412,7 +3412,9 @@ mod tests {
                 .cloned()
                 .collect();
             assert!(
-                turn.iter().skip(1).any(|t| t.contains("had no text and no tool call")),
+                turn.iter()
+                    .skip(1)
+                    .any(|t| t.contains("had no text and no tool call")),
                 "a retried empty turn must end with the continuation nudge: {turn:?}"
             );
             Ok(())
