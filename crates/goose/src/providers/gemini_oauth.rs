@@ -990,30 +990,34 @@ impl Provider for GeminiOAuthProvider {
                 let _ = log.error(e);
             })?;
 
+        let stall_url = response.url().clone();
         let stream = response
             .bytes_stream()
             .map_err(goose_providers::errors::body_read_error);
 
-        Ok(Box::pin(try_stream! {
-            let stream_reader = StreamReader::new(stream);
-            // Read raw lines, then unwrap the Code Assist response envelope
-            let raw_lines = FramedRead::new(stream_reader, LinesCodec::new())
-                .map_ok(|line| unwrap_code_assist_sse_line(&line))
-                .map_err(anyhow::Error::from);
+        Ok(goose_providers::stream_stall::guard(
+            Box::pin(try_stream! {
+                let stream_reader = StreamReader::new(stream);
+                // Read raw lines, then unwrap the Code Assist response envelope
+                let raw_lines = FramedRead::new(stream_reader, LinesCodec::new())
+                    .map_ok(|line| unwrap_code_assist_sse_line(&line))
+                    .map_err(anyhow::Error::from);
 
-            let message_stream = response_to_streaming_message(raw_lines);
-            pin!(message_stream);
-            while let Some(message) = message_stream.next().await {
-                let (message, usage) = message.map_err(|e| {
-                    e.downcast::<ProviderError>()
-                        .unwrap_or_else(ProviderError::stream_decode_error)
-                })?;
-                if message.is_some() || usage.is_some() {
-                    log.write(&message, usage.as_ref().map(|f| f.usage).as_ref())?;
+                let message_stream = response_to_streaming_message(raw_lines);
+                pin!(message_stream);
+                while let Some(message) = message_stream.next().await {
+                    let (message, usage) = message.map_err(|e| {
+                        e.downcast::<ProviderError>()
+                            .unwrap_or_else(ProviderError::stream_decode_error)
+                    })?;
+                    if message.is_some() || usage.is_some() {
+                        log.write(&message, usage.as_ref().map(|f| f.usage).as_ref())?;
+                    }
+                    yield (message, usage);
                 }
-                yield (message, usage);
-            }
-        }))
+            }),
+            &stall_url,
+        ))
     }
 }
 

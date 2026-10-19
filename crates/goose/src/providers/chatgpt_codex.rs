@@ -995,24 +995,28 @@ impl Provider for ChatGptCodexProvider {
             })
             .await?;
 
+        let stall_url = response.url().clone();
         let stream = response
             .bytes_stream()
             .map_err(goose_providers::errors::body_read_error);
 
-        Ok(Box::pin(try_stream! {
-            let stream_reader = StreamReader::new(stream);
-            let framed = FramedRead::new(stream_reader, LinesCodec::new()).map_err(anyhow::Error::from);
+        Ok(goose_providers::stream_stall::guard(
+            Box::pin(try_stream! {
+                let stream_reader = StreamReader::new(stream);
+                let framed = FramedRead::new(stream_reader, LinesCodec::new()).map_err(anyhow::Error::from);
 
-            let message_stream = responses_api_to_streaming_message(framed);
-            pin!(message_stream);
-            while let Some(message) = message_stream.next().await {
-                let (message, usage) = message.map_err(|e| {
-                    e.downcast::<ProviderError>()
-                        .unwrap_or_else(ProviderError::stream_decode_error)
-                })?;
-                yield (message, usage);
-            }
-        }))
+                let message_stream = responses_api_to_streaming_message(framed);
+                pin!(message_stream);
+                while let Some(message) = message_stream.next().await {
+                    let (message, usage) = message.map_err(|e| {
+                        e.downcast::<ProviderError>()
+                            .unwrap_or_else(ProviderError::stream_decode_error)
+                    })?;
+                    yield (message, usage);
+                }
+            }),
+            &stall_url,
+        ))
     }
 
     async fn configure_oauth(&self) -> Result<(), ProviderError> {

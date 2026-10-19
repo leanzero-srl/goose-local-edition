@@ -370,28 +370,32 @@ fn stream_openai_compat_recorded(
     mut log: Option<Box<dyn RequestLogHandle>>,
     mut call: CallTelemetry,
 ) -> Result<MessageStream, ProviderError> {
+    let stall_url = response.url().clone();
     let stream = response
         .bytes_stream()
         .map_err(crate::errors::body_read_error);
 
-    Ok(Box::pin(try_stream! {
-        let stream_reader = StreamReader::new(stream);
-        let framed = FramedRead::new(stream_reader, LinesCodec::new())
-            .map_err(Error::from);
+    Ok(crate::stream_stall::guard(
+        Box::pin(try_stream! {
+            let stream_reader = StreamReader::new(stream);
+            let framed = FramedRead::new(stream_reader, LinesCodec::new())
+                .map_err(Error::from);
 
-        let message_stream = response_to_streaming_message(framed);
-        pin!(message_stream);
-        while let Some(message) = message_stream.next().await {
-            let (message, usage) = message.map_err(|e|
-                e.downcast::<ProviderError>()
-                    .unwrap_or_else(ProviderError::stream_decode_error)
-            )?;
-            call.observe(message.as_ref(), usage.as_ref());
-            log.write(&message, usage.as_ref().map(|f| f.usage).as_ref())?;
-            yield (message, usage);
-        }
-        call.write(CallEnd::Completed);
-    }))
+            let message_stream = response_to_streaming_message(framed);
+            pin!(message_stream);
+            while let Some(message) = message_stream.next().await {
+                let (message, usage) = message.map_err(|e|
+                    e.downcast::<ProviderError>()
+                        .unwrap_or_else(ProviderError::stream_decode_error)
+                )?;
+                call.observe(message.as_ref(), usage.as_ref());
+                log.write(&message, usage.as_ref().map(|f| f.usage).as_ref())?;
+                yield (message, usage);
+            }
+            call.write(CallEnd::Completed);
+        }),
+        &stall_url,
+    ))
 }
 
 // Re-exported from the dedicated `http_status` module — these helpers are
@@ -407,52 +411,60 @@ pub fn stream_openai_compat(
     response: Response,
     mut log: Option<Box<dyn RequestLogHandle>>,
 ) -> Result<MessageStream, ProviderError> {
+    let stall_url = response.url().clone();
     let stream = response
         .bytes_stream()
         .map_err(crate::errors::body_read_error);
 
-    Ok(Box::pin(try_stream! {
-        let stream_reader = StreamReader::new(stream);
-        let framed = FramedRead::new(stream_reader, LinesCodec::new())
-            .map_err(Error::from);
+    Ok(crate::stream_stall::guard(
+        Box::pin(try_stream! {
+            let stream_reader = StreamReader::new(stream);
+            let framed = FramedRead::new(stream_reader, LinesCodec::new())
+                .map_err(Error::from);
 
-        let message_stream = response_to_streaming_message(framed);
-        pin!(message_stream);
-        while let Some(message) = message_stream.next().await {
-            let (message, usage) = message.map_err(|e|
-                e.downcast::<ProviderError>()
-                    .unwrap_or_else(ProviderError::stream_decode_error)
-            )?;
-            log.write(&message, usage.as_ref().map(|f| f.usage).as_ref())?;
-            yield (message, usage);
-        }
-    }))
+            let message_stream = response_to_streaming_message(framed);
+            pin!(message_stream);
+            while let Some(message) = message_stream.next().await {
+                let (message, usage) = message.map_err(|e|
+                    e.downcast::<ProviderError>()
+                        .unwrap_or_else(ProviderError::stream_decode_error)
+                )?;
+                log.write(&message, usage.as_ref().map(|f| f.usage).as_ref())?;
+                yield (message, usage);
+            }
+        }),
+        &stall_url,
+    ))
 }
 
 pub fn stream_responses_compat(
     response: Response,
     mut log: Option<Box<dyn RequestLogHandle>>,
 ) -> Result<MessageStream, ProviderError> {
+    let stall_url = response.url().clone();
     let stream = response
         .bytes_stream()
         .map_err(crate::errors::body_read_error);
 
-    Ok(Box::pin(try_stream! {
-        let stream_reader = StreamReader::new(stream);
-        let framed = FramedRead::new(stream_reader, LinesCodec::new())
-            .map_err(Error::from);
+    Ok(crate::stream_stall::guard(
+        Box::pin(try_stream! {
+            let stream_reader = StreamReader::new(stream);
+            let framed = FramedRead::new(stream_reader, LinesCodec::new())
+                .map_err(Error::from);
 
-        let message_stream = responses_api_to_streaming_message(framed);
-        pin!(message_stream);
-        while let Some(message) = message_stream.next().await {
-            let (message, usage) = message.map_err(|e|
-                e.downcast::<ProviderError>()
-                    .unwrap_or_else(ProviderError::stream_decode_error)
-            )?;
-            log.write(&message, usage.as_ref().map(|f| f.usage).as_ref())?;
-            yield (message, usage);
-        }
-    }))
+            let message_stream = responses_api_to_streaming_message(framed);
+            pin!(message_stream);
+            while let Some(message) = message_stream.next().await {
+                let (message, usage) = message.map_err(|e|
+                    e.downcast::<ProviderError>()
+                        .unwrap_or_else(ProviderError::stream_decode_error)
+                )?;
+                log.write(&message, usage.as_ref().map(|f| f.usage).as_ref())?;
+                yield (message, usage);
+            }
+        }),
+        &stall_url,
+    ))
 }
 
 #[cfg(test)]
@@ -675,5 +687,77 @@ mod tests {
 
         assert_eq!(payload.get("stream"), None);
         assert_eq!(payload.get("stream_options"), None);
+    }
+
+    /// I-33 (Glimpse, 2026-10-19): a remote stream that delivers deltas and then neither sends a
+    /// byte nor closes. Before the stall guard this read waited forever; now it ends with the
+    /// transient "stream stalled" error the reply loop resends.
+    #[tokio::test]
+    async fn a_remote_stream_that_goes_silent_mid_answer_ends_as_a_resendable_error() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let _env = env_lock::lock_env([(crate::stream_stall::STREAM_STALL_ENV, Some("2"))]);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = vec![0u8; 8192];
+            let _ = socket.read(&mut request).await.unwrap();
+            let delta = |text: &str| {
+                let c = json!({"id": GEN_ID, "object": "chat.completion.chunk", "created": 1,
+                               "model": "elorian/glimpse",
+                               "choices": [{"index": 0, "delta": {"content": text}, "finish_reason": null}]});
+                let line = format!("data: {c}\n\n");
+                format!("{:x}\r\n{line}\r\n", line.len())
+            };
+            let head = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ntransfer-encoding: chunked\r\n\r\n";
+            socket.write_all(head.as_bytes()).await.unwrap();
+            socket
+                .write_all(delta("The plan").as_bytes())
+                .await
+                .unwrap();
+            socket.write_all(delta(" /in").as_bytes()).await.unwrap();
+            socket.flush().await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_secs(3_600)).await;
+            drop(socket);
+        });
+
+        let response = reqwest::Client::builder()
+            .resolve("stalls.example.com", addr)
+            .build()
+            .unwrap()
+            .post(format!(
+                "http://stalls.example.com:{}/v1/chat/completions",
+                addr.port()
+            ))
+            .send()
+            .await
+            .unwrap();
+        let mut stream = stream_openai_compat(response, None).unwrap();
+        let read = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            let mut texts = Vec::new();
+            loop {
+                match stream.next().await {
+                    Some(Ok((Some(message), _))) => texts.push(message.as_concat_text()),
+                    Some(Ok(_)) => {}
+                    Some(Err(error)) => return (texts, Some(error)),
+                    None => return (texts, None),
+                }
+            }
+        })
+        .await
+        .expect("the stalled stream was waited on forever (I-33)");
+        server.abort();
+        let (texts, error) = read;
+        assert_eq!(texts.concat(), "The plan /in");
+        let error =
+            error.expect("a stalled stream must end with an error, not as a finished answer");
+        assert!(
+            error
+                .to_string()
+                .contains(crate::stream_stall::STREAM_STALLED),
+            "{error}"
+        );
+        assert!(error.is_transient(), "{error:?}");
     }
 }
