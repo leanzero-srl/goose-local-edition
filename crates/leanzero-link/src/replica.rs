@@ -1318,8 +1318,11 @@ async fn release_offer(client: &reqwest::Client, spec: &PullSpec) -> Result<(), 
     }
 }
 
-/// Delete `models_dir/<model_id>` after a cancel, with the canonicalize guard the model
-/// delete uses. A directory never created counts as already gone.
+/// Delete `models_dir/<model_id>` after a cancel, with the guard the model delete uses
+/// (goose-sidecar `hf::remove_model_dir`). A directory never created counts as already
+/// gone. The copy lands through a publisher linked to the AI-workhorse SSD
+/// (`pub -> /Volumes/...`), so a real folder under such a link is ours to remove; a
+/// per-model link, or anything that is the models dir or one of its ancestors, is not.
 fn remove_partial(models_dir: &Path, model_id: &str) -> Result<(), String> {
     let target = models_dir.join(model_id);
     if !target.exists() {
@@ -1331,7 +1334,15 @@ fn remove_partial(models_dir: &Path, model_id: &str) -> Result<(), String> {
     let canonical = target
         .canonicalize()
         .map_err(|e| format!("{}: {e}", target.display()))?;
-    if !canonical.starts_with(&root) || canonical == root {
+    let is_link = |p: &Path| {
+        std::fs::symlink_metadata(p)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+    };
+    let inside = canonical.starts_with(&root) && canonical != root;
+    let under_linked_publisher =
+        !is_link(&target) && target.parent().is_some_and(is_link) && !root.starts_with(&canonical);
+    if !inside && !under_linked_publisher {
         return Err(format!(
             "refusing to delete {}: it resolves outside {}",
             canonical.display(),
@@ -1439,6 +1450,32 @@ mod tests {
                 "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad".to_string()
             )
         );
+    }
+
+    /// A cancelled copy into a publisher linked to the SSD is cleaned up there; a per-model
+    /// link and a link back to the models dir are refused.
+    #[cfg(unix)]
+    #[test]
+    fn remove_partial_follows_a_linked_publisher_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("models");
+        let ssd = dir.path().join("ssd");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(ssd.join("pub/half")).unwrap();
+        std::fs::write(ssd.join("pub/half/a.part"), b"xx").unwrap();
+        std::os::unix::fs::symlink(ssd.join("pub"), root.join("pub")).unwrap();
+        remove_partial(&root, "pub/half").unwrap();
+        assert!(!ssd.join("pub/half").exists());
+        assert!(root.join("pub").is_dir(), "the publisher link must stay");
+
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, ssd.join("pub/odd")).unwrap();
+        std::os::unix::fs::symlink(dir.path(), ssd.join("pub/up")).unwrap();
+        for bad in ["pub/odd", "pub/up"] {
+            assert!(remove_partial(&root, bad).is_err(), "{bad} was followed");
+        }
+        assert!(outside.exists() && root.exists());
     }
 
     #[test]

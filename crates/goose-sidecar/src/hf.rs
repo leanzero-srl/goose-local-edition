@@ -1054,28 +1054,84 @@ impl DownloadTracker {
     }
 }
 
-/// Delete `{models_dir}/{repo_id}` with the same canonicalize guard as
-/// `delete_local_model`; a directory that never got created counts as already deleted.
+/// Delete `{models_dir}/{repo_id}` with the same guard as `delete_local_model`; a
+/// directory that never got created counts as already deleted. A partial download may
+/// not have its `config.json` yet, so it is accepted without one, but only when it is a
+/// real folder (the downloader never creates a per-model link).
 fn remove_partial_repo(models_dir: &Path, repo_id: &str) -> Result<()> {
     validate_model_id(repo_id)?;
-    let target = models_dir.join(repo_id);
-    if !target.exists() {
+    if !models_dir.join(repo_id).exists() {
         return Ok(());
     }
+    remove_model_dir(models_dir, repo_id, Need::Partial)
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Need {
+    /// A listed model: the folder must hold `config.json` when reached through a link.
+    Model,
+    /// A cancelled download's folder, which may not have `config.json` yet.
+    Partial,
+}
+
+/// Resolve and remove `{models_dir}/{id}`. The listing follows symlinks (weights moved to
+/// the AI-workhorse SSD are linked back as `publisher -> /Volumes/...` or
+/// `publisher/name -> ...`), so the delete follows them too; refusing every folder that
+/// resolves outside the models dir made the app list models it then would not delete.
+/// A folder reached through a link is removed only when the link itself sits inside the
+/// models dir (`id` is a validated `publisher/name`, so no `..`), it is not the models
+/// dir or one of its ancestors, and it is a model folder (`config.json`). A per-model
+/// link is removed with its target so it cannot dangle; a publisher link stays, since it
+/// may hold other models.
+fn remove_model_dir(models_dir: &Path, id: &str, need: Need) -> Result<()> {
     let canonical_root = models_dir
         .canonicalize()
         .with_context(|| format!("models dir {} does not resolve", models_dir.display()))?;
-    let canonical_target = target
+    let entry = models_dir.join(id);
+    let canonical_target = entry
         .canonicalize()
-        .with_context(|| format!("partial repo {} does not resolve", target.display()))?;
-    ensure!(
-        canonical_target.starts_with(&canonical_root),
-        "refusing to delete '{repo_id}': {} resolves outside {}",
-        canonical_target.display(),
-        canonical_root.display()
-    );
-    std::fs::remove_dir_all(&canonical_target)
-        .with_context(|| format!("deleting {}", canonical_target.display()))
+        .with_context(|| format!("model '{id}' not found under {}", models_dir.display()))?;
+    let is_link = |p: &Path| {
+        std::fs::symlink_metadata(p)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+    };
+    let model_link = is_link(&entry);
+    if !(canonical_target.starts_with(&canonical_root) && canonical_target != canonical_root) {
+        let publisher_link = entry.parent().is_some_and(is_link);
+        ensure!(
+            model_link || publisher_link,
+            "refusing to delete '{id}': {} resolves outside {}",
+            canonical_target.display(),
+            canonical_root.display()
+        );
+        ensure!(
+            canonical_target.is_dir() && !canonical_root.starts_with(&canonical_target),
+            "refusing to delete '{id}': it links to {}, which is not a model folder outside {}",
+            canonical_target.display(),
+            canonical_root.display()
+        );
+        ensure!(
+            (need == Need::Partial && !model_link)
+                || canonical_target.join("config.json").is_file(),
+            "refusing to delete '{id}': it links to {}, which is outside {} and has no config.json",
+            canonical_target.display(),
+            canonical_root.display()
+        );
+    }
+    std::fs::remove_dir_all(&canonical_target).map_err(|e| {
+        let hint = if e.kind() == std::io::ErrorKind::ReadOnlyFilesystem {
+            " (this Mac sees that folder read-only, e.g. a mounted share; delete it on the Mac that owns the disk)"
+        } else {
+            ""
+        };
+        anyhow::anyhow!("deleting {}: {e}{hint}", canonical_target.display())
+    })?;
+    if model_link {
+        std::fs::remove_file(&entry)
+            .with_context(|| format!("removing the link {}", entry.display()))?;
+    }
+    Ok(())
 }
 
 fn update_progress(
@@ -1444,21 +1500,7 @@ fn assess_model_dir(dir: &Path) -> ModelDirAssessment {
 
 pub fn delete_local_model(models_dir: &Path, id: &str) -> Result<()> {
     validate_model_id(id)?;
-    let canonical_root = models_dir
-        .canonicalize()
-        .with_context(|| format!("models dir {} does not resolve", models_dir.display()))?;
-    let target = models_dir.join(id);
-    let canonical_target = target
-        .canonicalize()
-        .with_context(|| format!("model '{id}' not found under {}", models_dir.display()))?;
-    ensure!(
-        canonical_target.starts_with(&canonical_root),
-        "refusing to delete '{id}': {} resolves outside {}",
-        canonical_target.display(),
-        canonical_root.display()
-    );
-    std::fs::remove_dir_all(&canonical_target)
-        .with_context(|| format!("deleting {}", canonical_target.display()))
+    remove_model_dir(models_dir, id, Need::Model)
 }
 
 #[cfg(test)]
@@ -2290,5 +2332,115 @@ mod tests {
             delete_local_model(&root, "pub/model").is_err(),
             "double delete must be loud"
         );
+    }
+
+    /// The Studio links each publisher to the SSD (`pub -> /Volumes/AI-workhorse/...`); the
+    /// listing shows those models, so delete must remove them (owner hit "resolves outside"
+    /// on 2026-10-19) while keeping the publisher link and its other models.
+    #[cfg(unix)]
+    #[test]
+    fn delete_follows_a_symlinked_publisher_to_the_ssd() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("models");
+        let store = tmp.path().join("ssd");
+        std::fs::create_dir_all(&root).unwrap();
+        make_model(
+            &store,
+            "pub/a",
+            &[("config.json", 10), ("model.safetensors", 20)],
+        );
+        make_model(
+            &store,
+            "pub/b",
+            &[("config.json", 10), ("model.safetensors", 20)],
+        );
+        std::os::unix::fs::symlink(store.join("pub"), root.join("pub")).unwrap();
+        let listed: Vec<_> = list_local_models(&root)
+            .unwrap()
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
+        assert_eq!(listed, ["pub/a", "pub/b"]);
+
+        delete_local_model(&root, "pub/a").unwrap();
+        assert!(!store.join("pub/a").exists(), "the weights on the SSD stay");
+        assert!(
+            store.join("pub/b/config.json").exists(),
+            "a sibling model was touched"
+        );
+        assert!(root.join("pub").is_dir(), "the publisher link was removed");
+        let listed: Vec<_> = list_local_models(&root)
+            .unwrap()
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
+        assert_eq!(listed, ["pub/b"]);
+        assert!(
+            delete_local_model(&root, "pub/a").is_err(),
+            "double delete must be loud"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn delete_follows_a_per_model_link_and_removes_the_link() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("models");
+        let store = tmp.path().join("ssd");
+        std::fs::create_dir_all(root.join("pub")).unwrap();
+        make_model(
+            &store,
+            "other/m",
+            &[("config.json", 10), ("model.safetensors", 20)],
+        );
+        std::os::unix::fs::symlink(store.join("other/m"), root.join("pub/m")).unwrap();
+
+        delete_local_model(&root, "pub/m").unwrap();
+        assert!(!store.join("other/m").exists(), "the linked weights stay");
+        assert!(
+            std::fs::symlink_metadata(root.join("pub/m")).is_err(),
+            "a dangling link was left behind"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn delete_never_follows_a_link_to_the_models_dir_or_its_ancestors() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("models");
+        make_model(&root, "pub/model", &[("config.json", 10)]);
+        // An ancestor that even carries a config.json must not be removed.
+        std::fs::write(tmp.path().join("config.json"), b"{}").unwrap();
+        std::os::unix::fs::symlink(tmp.path(), root.join("pub").join("up")).unwrap();
+        std::os::unix::fs::symlink(&root, root.join("pub").join("self")).unwrap();
+        for bad in ["pub/up", "pub/self"] {
+            assert!(
+                delete_local_model(&root, bad).is_err(),
+                "'{bad}' was followed"
+            );
+        }
+        assert!(root.join("pub/model/config.json").exists());
+        assert!(tmp.path().join("config.json").exists());
+    }
+
+    /// A cancelled download into a linked publisher has no config.json yet and must still
+    /// be cleaned up; a per-model link without one must not.
+    #[cfg(unix)]
+    #[test]
+    fn partial_cleanup_follows_a_publisher_link_but_not_a_bare_model_link() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("models");
+        let store = tmp.path().join("ssd");
+        std::fs::create_dir_all(&root).unwrap();
+        make_model(&store, "pub/half", &[("model-00001.safetensors.part", 5)]);
+        std::os::unix::fs::symlink(store.join("pub"), root.join("pub")).unwrap();
+        remove_partial_repo(&root, "pub/half").unwrap();
+        assert!(!store.join("pub/half").exists());
+
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("pub").join("odd")).unwrap();
+        assert!(remove_partial_repo(&root, "pub/odd").is_err());
+        assert!(outside.exists());
     }
 }
