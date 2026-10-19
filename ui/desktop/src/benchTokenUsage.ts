@@ -180,7 +180,7 @@ function bucketsToUsage(
     source,
     exact: missingCalls === 0 && !partial && source !== 'estimate',
     missingCalls,
-    note: notes.length ? notes.join(' ').slice(0, 400) : null,
+    note: notes.length ? notes.join(' ').slice(0, 400).trim() : null,
     byModel,
   };
   return tokenUsageProblem(usage) ? null : usage;
@@ -232,6 +232,12 @@ export function tokenUsageFromProviderRecords(input: {
   calls: TelemetryCall[];
   ids: string[];
   records: Record<string, GenerationRecord | null | undefined>;
+  /** The harness bill's `generation_ids_collected`: ids it found that this read does not know (it billed some from
+   *  sessions.db / request logs that the telemetry does not list) are calls of the run with no tokens here. */
+  collected?: number;
+  /** The telemetry is the run's per-call record (bill telemetry status "recorded"): only then is a telemetry line
+   *  without a generation id a separate call. An older engine's lines carry no ids for calls the bill found by id. */
+  telemetryAuthoritative?: boolean;
 }): TokenUsage | null {
   const requested = new Map<string, string>();
   for (const call of input.calls)
@@ -272,11 +278,20 @@ export function tokenUsageFromProviderRecords(input: {
     }
   }
   // A call goose made that carries no generation id has no record to read: it is a call of the run all the same.
-  for (const call of input.calls)
-    if (!call.responseId || !GENERATION_ID.test(call.responseId)) {
-      bucketFor(buckets, call.model ?? UNKNOWN_MODEL).calls++;
-      missing++;
-    }
+  if (input.telemetryAuthoritative !== false)
+    for (const call of input.calls)
+      if (!call.responseId || !GENERATION_ID.test(call.responseId)) {
+        bucketFor(buckets, call.model ?? UNKNOWN_MODEL).calls++;
+        missing++;
+      }
+  const uncollected =
+    count(input.collected, MAX_CALLS) && input.collected > input.ids.length
+      ? input.collected - input.ids.length
+      : 0;
+  if (uncollected) {
+    bucketFor(buckets, UNKNOWN_MODEL).calls += uncollected;
+    missing += uncollected;
+  }
   const notes: string[] = [];
   if (missing)
     notes.push(
@@ -469,10 +484,9 @@ export function tokenUsageFromHarnessBill(input: {
     source: 'provider-records',
     exact: bill.status === 'complete' && missingCalls === 0 && !partialReasoning,
     missingCalls,
-    note: `Totals from the OpenRouter records the harness summed at run end; the records could not be read again at publish (${input.reason.slice(0, 160)}).${missingCalls ? ` ${missingCalls} call${missingCalls === 1 ? '' : 's'} had no record then.` : ''}`.slice(
-      0,
-      400
-    ),
+    note: `Totals from the OpenRouter records the harness summed at run end; the records could not be read again at publish (${input.reason.slice(0, 160)}).${missingCalls ? ` ${missingCalls} call${missingCalls === 1 ? '' : 's'} had no record then.` : ''}`
+      .slice(0, 400)
+      .trim(),
     byModel,
   };
   return tokenUsageProblem(usage) ? null : usage;
@@ -504,7 +518,13 @@ export function tokenUsageProblem(t: TokenUsage): string | null {
     return 'source or exact';
   if (t.exact && t.missingCalls > 0) return 'exact with missing calls';
   if (t.exact && t.source === 'estimate') return 'an estimate is never exact';
-  if (t.note !== null && (typeof t.note !== 'string' || !t.note.trim() || t.note.length > 400))
+  if (
+    t.note !== null &&
+    (typeof t.note !== 'string' ||
+      !t.note.trim() ||
+      t.note !== t.note.trim() ||
+      t.note.length > 400)
+  )
     return 'note';
   for (const v of [t.cachedTokens, t.reasoningTokens])
     if (v !== null && !count(v)) return 'cached or reasoning count';

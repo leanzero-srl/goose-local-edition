@@ -343,6 +343,8 @@ type ElectronAPI = {
     tokenProblem?: string;
     /** Forge 2.0 series: both builds were published together by this one action. */
     pair?: boolean;
+    /** Forge 2.0 series: why the board will list the builds apart, or why one went out on its own. */
+    pairWarning?: string;
     /** Forge 2.0 series: each build's own outcome, in build order (already-live builds say so). */
     builds?: Array<{
       index: 1 | 2;
@@ -364,9 +366,7 @@ type ElectronAPI = {
     partial?: boolean;
   }>;
   /** The publish card's prefill for a run: a readable title (null when goose knows no display name) and where it ran. */
-  benchmarkPublishSuggestion: (
-    runKey: string
-  ) => Promise<{
+  benchmarkPublishSuggestion: (runKey: string) => Promise<{
     title: string | null;
     local: boolean;
     route?: 'cloud' | 'local' | 'unknown';

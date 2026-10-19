@@ -6027,8 +6027,13 @@ async function publishBenchmark(args: BenchPublishArgs | undefined) {
 
 async function publishBenchPair(keys: [string, string], args: BenchPublishArgs) {
   const published = await readPublished();
-  const prepared: Array<{ index: 1 | 2; key: string; facts: PairCouplingFacts; posted: boolean }> =
-    [];
+  const prepared: Array<{
+    index: 1 | 2;
+    key: string;
+    facts: PairCouplingFacts | null;
+    error: string | null;
+    posted: boolean;
+  }> = [];
   for (const [i, key] of keys.entries()) {
     const check = (await publishBenchRun({ ...args, runKey: key }, { preflight: true })) as {
       ok: boolean;
@@ -6036,26 +6041,46 @@ async function publishBenchPair(keys: [string, string], args: BenchPublishArgs) 
       facts?: PairCouplingFacts;
       rescoredAt?: string;
     };
-    if (!check.ok || !check.facts)
-      return {
-        ok: false,
-        error: `Build ${i + 1}: ${check.error ?? 'could not be prepared'}. Neither build was published.`,
-      };
+    const ready = check.ok && check.facts ? check.facts : null;
     prepared.push({
       index: (i + 1) as 1 | 2,
       key,
-      facts: check.facts,
-      posted: publishedIsCurrent(published[key], check.rescoredAt),
+      facts: ready,
+      error: ready ? null : (check.error ?? 'could not be prepared'),
+      // A build already live stays live: when it no longer prepares (its folder moved since), it is not re-posted
+      // and never blocks its partner.
+      posted: ready ? publishedIsCurrent(published[key], check.rescoredAt) : published[key] != null,
     });
   }
-  const coupling = pairCouplingProblem(prepared[0].facts, prepared[1].facts);
-  if (coupling)
+  const requested = prepared.find((p) => p.key === args.runKey) ?? prepared[0];
+  if (requested.error && !requested.posted)
     return {
       ok: false,
-      error: `The two builds would not land as one entry on leanzero.net: ${coupling}. Neither build was published.`,
+      error: `Build ${requested.index}: ${requested.error}. Neither build was published.`,
     };
+  // A partner that can never be published (the scorer held it, its verdict is gone) does not strand this build:
+  // it goes out on its own, as a series with one scored build does, and the card says why.
+  const lone = prepared.find((p) => p.error && !p.posted);
+  let alone: string | null = null;
+  if (lone) {
+    alone = `Build ${lone.index} cannot be published (${lone.error}), so build ${requested.index} was published on its own.`;
+    prepared.splice(prepared.indexOf(lone), 1);
+  } else if (prepared[0].facts && prepared[1].facts) {
+    const coupling = pairCouplingProblem(prepared[0].facts, prepared[1].facts);
+    if (coupling)
+      return {
+        ok: false,
+        error: `The two builds would not land as one entry on leanzero.net: ${coupling}. Neither build was published.`,
+      };
+  }
   if (prepared.every((p) => p.posted))
-    return { ok: false, error: 'both builds of this series are already live on leanzero.net' };
+    return {
+      ok: false,
+      error:
+        prepared.length === 2
+          ? 'both builds of this series are already live on leanzero.net'
+          : `this build is already live on leanzero.net. ${alone ?? ''}`.trim(),
+    };
   const builds: Array<Record<string, unknown>> = [];
   for (const p of prepared) {
     if (p.posted) {
@@ -6084,11 +6109,15 @@ async function publishBenchPair(keys: [string, string], args: BenchPublishArgs) 
     }
   }
   const last = builds[builds.length - 1];
-  const apart = pairCouplingWarning(prepared[0].facts, prepared[1].facts);
+  const apart =
+    alone ??
+    (prepared.length === 2 && prepared[0].facts && prepared[1].facts
+      ? pairCouplingWarning(prepared[0].facts, prepared[1].facts)
+      : null);
   return {
     ...last,
     ok: true,
-    pair: true,
+    pair: !alone,
     ...(apart ? { pairWarning: apart } : {}),
     url: builds.find((b) => typeof b.url === 'string')?.url ?? null,
     builds,
@@ -6294,19 +6323,22 @@ async function publishBenchRun(
         error: `${stored.scorerVersion} publication requires its graded browser clip, and none could be verified although the app's surfaces were graded (${media.error ?? 'clip count mismatch'}). Retry scoring re-grades the saved build and records it.`,
       };
     if (clipless) payload.noRecording = true;
-    else if (!opts.preflight) {
+    else {
       try {
+        // Prepared in a preflight too (made once, reused from the media manifest): a clip that cannot be made
+        // refuses BEFORE either build of a series is posted; only the upload waits for the real publish.
         const clip = await publishableClip(
           stored.workdir as string,
           media.videos[0],
           benchClipTools
         );
-        payload.videoReceipt = await uploadBenchmarkVideo(
-          clip.video,
-          BENCH_PUBLISH_URL,
-          identity.installId,
-          stored.scorerVersion as string
-        );
+        if (!opts.preflight)
+          payload.videoReceipt = await uploadBenchmarkVideo(
+            clip.video,
+            BENCH_PUBLISH_URL,
+            identity.installId,
+            stored.scorerVersion as string
+          );
       } catch (error) {
         return { ok: false, error: error instanceof Error ? error.message : String(error) };
       }
@@ -6331,18 +6363,18 @@ async function publishBenchRun(
           ok: false,
           error: `${stored.scorerVersion} publication requires one verified graded browser clip: ${media.error ?? 'clip count mismatch'}`,
         };
-      if (!opts.preflight)
-        try {
-          const clip = await publishableClip(stored.workdir, media.videos[0], benchClipTools);
+      try {
+        const clip = await publishableClip(stored.workdir, media.videos[0], benchClipTools);
+        if (!opts.preflight)
           payload.videoReceipt = await uploadBenchmarkVideo(
             clip.video,
             BENCH_PUBLISH_URL,
             identity.installId,
             stored.scorerVersion
           );
-        } catch (error) {
-          return { ok: false, error: error instanceof Error ? error.message : String(error) };
-        }
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      }
     }
   }
   // v2.3: per-node detail from the persisted pool_resolved devices — omitted entirely when

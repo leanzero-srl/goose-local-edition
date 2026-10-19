@@ -7,7 +7,7 @@ import { BenchmarkActivityPanel } from './BenchmarkActivityPanel';
 import { benchmarkModelIdProblem } from '../../benchModelIdentity';
 import { billedCostLine, hasOpenRouterBill, publishTokens } from '../../benchBilledCost';
 import { DeclaredPriceFields, useDeclaredPrices } from './DeclaredPriceFields';
-import { publishNotes } from '../../benchPublishNotes';
+import { publishResultNotes } from '../../benchPublishNotes';
 import { OperatorKey } from './OperatorKey';
 import { budgetLines } from '../../benchBudget';
 import { BenchmarkRuntimeSetup } from './BenchmarkRuntimeSetup';
@@ -1930,7 +1930,7 @@ export default function BenchmarkView() {
           title: chosen,
           score: shownRow.score,
           url: typeof res.url === 'string' ? res.url : null,
-          notes: publishNotes(res),
+          notes: publishResultNotes(res),
         });
       } else {
         // The server's OWN words (its 4xx body travels through main.ts verbatim), or main's

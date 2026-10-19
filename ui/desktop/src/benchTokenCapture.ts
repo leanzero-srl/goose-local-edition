@@ -39,17 +39,27 @@ async function readRunTelemetry(
 ): Promise<TelemetryCall[] | null> {
   const named = (billedCost as { telemetry?: { path?: unknown } } | null | undefined)?.telemetry
     ?.path;
-  const dirs = [stored.candidateWorkdir, stored.workdir]
-    .filter((d): d is string => typeof d === 'string' && d.length > 0)
-    .flatMap((d) => [d, path.dirname(d)]);
+  // A run folder another run can reuse (a fleet's swarm-<N>node-r0 slot) may hold the NEXT run's telemetry: a folder
+  // is read only when it is this run's own (the re-pointed workdir, or a folder named after this run's id).
+  const runId = typeof stored.runId === 'string' && stored.runId ? stored.runId : null;
+  const ownFolder = (dir: string) => runId !== null && path.basename(dir).includes(runId);
+  const workdirs = (
+    typeof stored.workdir === 'string' && stored.workdir ? [stored.workdir] : []
+  ).flatMap((d) => [d, path.dirname(d)]);
+  const candidate =
+    typeof stored.candidateWorkdir === 'string' && ownFolder(stored.candidateWorkdir)
+      ? [stored.candidateWorkdir]
+      : [];
   const candidates = [
+    ...workdirs.map((d) => path.join(d, '.swarm', 'telemetry.jsonl')),
+    ...candidate.map((d) => path.join(d, '.swarm', 'telemetry.jsonl')),
     ...(typeof named === 'string' &&
     path.isAbsolute(named) &&
     path.basename(named) === 'telemetry.jsonl' &&
-    path.basename(path.dirname(named)) === '.swarm'
+    path.basename(path.dirname(named)) === '.swarm' &&
+    ownFolder(path.dirname(path.dirname(named)))
       ? [named]
       : []),
-    ...dirs.map((d) => path.join(d, '.swarm', 'telemetry.jsonl')),
   ];
   for (const file of [...new Set(candidates)]) {
     try {
@@ -105,10 +115,19 @@ export async function captureTokenUsage(
           fetchImpl: deps.fetchImpl,
           sleep: deps.sleep,
         });
+        const billRecord = bill as {
+          generation_ids_collected?: unknown;
+          telemetry?: { status?: unknown };
+        };
         const usage = tokenUsageFromProviderRecords({
           calls: calls ?? [],
           ids,
           records: read.records,
+          collected:
+            typeof billRecord.generation_ids_collected === 'number'
+              ? billRecord.generation_ids_collected
+              : undefined,
+          telemetryAuthoritative: billRecord.telemetry?.status === 'recorded' && !!calls?.length,
         });
         const found = Object.values(read.records).filter(Boolean).length;
         if (usage && found > 0) {
@@ -143,11 +162,9 @@ export async function captureTokenUsage(
         const withNote = {
           ...fromCalls,
           exact: false,
-          note: `${note} ${fromCalls.note ?? ''}`.trim().slice(0, 400),
+          note: `${note} ${fromCalls.note ?? ''}`.slice(0, 400).trim(),
         };
-        return tokenUsageProblem(withNote)
-          ? { usage: fromCalls, problem: null }
-          : { usage: withNote, problem: null };
+        if (!tokenUsageProblem(withNote)) return { usage: withNote, problem: null };
       }
     }
     return { usage: null, problem: `token counts could not be recorded: ${reason}` };

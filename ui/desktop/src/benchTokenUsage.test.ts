@@ -264,3 +264,51 @@ describe('the site rule (website benchmark-token-usage.ts) mirrored', () => {
     ]);
   });
 });
+
+describe('review fixes: an incomplete id list is never exact', () => {
+  const rec = (id: string): GenerationRecord => ({
+    id,
+    model: 'm/x',
+    native_tokens_prompt: 12_000,
+    native_tokens_completion: 10,
+    native_tokens_cached: 0,
+    native_tokens_reasoning: 0,
+  });
+  it('ids the harness collected but this read does not know are missing calls (sessions.db-billed run, no telemetry)', () => {
+    const ids = ['gen-1-aaaa', 'gen-2-bbbb'];
+    const usage = tokenUsageFromProviderRecords({
+      calls: [],
+      ids,
+      records: Object.fromEntries(ids.map((id) => [id, rec(id)])),
+      collected: 10,
+      telemetryAuthoritative: false,
+    })!;
+    expect(usage).toMatchObject({ calls: 10, missingCalls: 8, exact: false, promptTokens: 24_000 });
+    expect(tokenUsageProblem(usage)).toBeNull();
+  });
+  it('an older engine’s id-less telemetry lines are not counted again beside the ids the bill found', () => {
+    const old = parseTelemetryCalls(
+      [1, 2]
+        .map(() => JSON.stringify({ model: 'm/x', prompt_tokens: 1, completion_tokens: 1 }))
+        .join('\n')
+    ).calls;
+    const ids = ['gen-1-aaaa', 'gen-2-bbbb'];
+    const usage = tokenUsageFromProviderRecords({
+      calls: old,
+      ids,
+      records: Object.fromEntries(ids.map((id) => [id, rec(id)])),
+      collected: 2,
+      telemetryAuthoritative: false,
+    })!;
+    expect(usage).toMatchObject({ calls: 2, missingCalls: 0, exact: true });
+  });
+  it('a note with trailing whitespace is refused, as the site refuses it', () => {
+    const ids = ['gen-1-aaaa'];
+    const usage = tokenUsageFromProviderRecords({
+      calls: [],
+      ids,
+      records: { [ids[0]]: rec(ids[0]) },
+    })!;
+    expect(tokenUsageProblem({ ...usage, note: 'cut at a space ' })).toMatch(/note/);
+  });
+});

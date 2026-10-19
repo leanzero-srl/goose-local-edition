@@ -133,3 +133,30 @@ describe('an older site that does not know tokenUsage never costs the publish', 
     );
   });
 });
+
+describe('the card says what happened to the pair and to each build', () => {
+  it('pair note, the apart warning, then each posted build’s own notes; already-live builds add nothing', async () => {
+    const { publishResultNotes } = await import('./benchPublishNotes');
+    expect(
+      publishResultNotes({
+        pair: true,
+        pairWarning:
+          'A build carries no comparison receipt, so leanzero.net lists the two builds separately.',
+        builds: [
+          { index: 1, ok: true, alreadyLive: true, baseline: true },
+          {
+            index: 2,
+            ok: true,
+            baseline: true,
+            tokenUsageLine: 'Tokens: 1.0M in · 10.0k out (exact, OpenRouter records)',
+          },
+        ],
+      })
+    ).toEqual([
+      'Both builds of this Forge 2.0 series were published together, as one entry.',
+      'A build carries no comparison receipt, so leanzero.net lists the two builds separately.',
+      'Build 2: Listed as a LeanZero cloud baseline.',
+      'Build 2: Tokens: 1.0M in · 10.0k out (exact, OpenRouter records)',
+    ]);
+  });
+});

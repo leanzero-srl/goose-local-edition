@@ -145,3 +145,41 @@ describe('captureTokenUsage: the publish-time token record', () => {
     expect(result.problem).toMatch(/telemetry\.jsonl/);
   });
 });
+
+describe('review fix: a reused run folder never lends its telemetry to another run', () => {
+  it('reads the run’s own (re-pointed) folder first and skips a slot that is not named after the run', async () => {
+    const slot = '/Users/example/runs/build/swarm-3node-r0';
+    const archived = '/Users/example/sessions/run-abc';
+    const files: Record<string, string> = {
+      [`${slot}/.swarm/telemetry.jsonl`]:
+        '{"model":"next/run","prompt_tokens":999,"completion_tokens":9,"usage":true,"response_id":"chatcmpl-n","ended":"completed"}',
+      [`${archived}/.swarm/telemetry.jsonl`]:
+        '{"model":"this/run","prompt_tokens":5,"completion_tokens":1,"usage":true,"response_id":"chatcmpl-t","ended":"completed"}',
+    };
+    const read = async (f: string) => {
+      if (f in files) return files[f];
+      throw new Error('ENOENT');
+    };
+    const own = await captureTokenUsage(
+      {
+        stored: { runId: 'run-abc', workdir: archived, candidateWorkdir: slot },
+        verdict: { agent: {} },
+        verdictSha256: null,
+        route: 'local',
+      },
+      { readFile: read, openRouterCredentials: vi.fn() }
+    );
+    expect(own.usage?.byModel.map((m) => m.model)).toEqual(['this/run']);
+    delete files[`${archived}/.swarm/telemetry.jsonl`];
+    const none = await captureTokenUsage(
+      {
+        stored: { runId: 'run-abc', workdir: archived, candidateWorkdir: slot },
+        verdict: { agent: {} },
+        verdictSha256: null,
+        route: 'local',
+      },
+      { readFile: read, openRouterCredentials: vi.fn() }
+    );
+    expect(none.usage).toBeNull();
+  });
+});

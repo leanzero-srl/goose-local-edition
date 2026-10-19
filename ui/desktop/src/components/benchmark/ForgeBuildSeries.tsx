@@ -7,7 +7,7 @@ import { Button, Chip, Panel, TYPE, WEIGHT, TNUM, FOCUS, RADIUS, SURFACE, cx } f
 import type { BenchSession } from './bridge';
 import { seriesSessionKey, seriesSessions } from './seriesPresentation';
 import { hasOpenRouterBill, publishTokens, type RunTokens } from '../../benchBilledCost';
-import { publishNotes } from '../../benchPublishNotes';
+import { publishResultNotes } from '../../benchPublishNotes';
 import { DeclaredPriceFields, useDeclaredPrices } from './DeclaredPriceFields';
 
 const messages = defineMessages({
@@ -245,15 +245,15 @@ export function ForgeBuildSeries({
         runKey: seriesSessionKey(next),
         ...(price.prices ? { declaredPrices: price.prices } : {}),
       });
-      // Each build main posted (or found already live) is remembered, so a refused build 2 can be posted alone.
+      // What happened to the pair and to each build, in order; then each build main posted (or found already live)
+      // is remembered, so a refused build 2 can be posted alone.
+      const said = result ? publishResultNotes(result) : [];
+      if (said.length) setNotes((now) => [...now, ...said]);
       const builds = Array.isArray(result?.builds) ? result.builds : [];
       for (const build of builds) {
         if (!build?.ok) continue;
         const child = currentChildren.find((c) => c.buildIndex === build.index);
         if (!child) continue;
-        const said = publishNotes(build);
-        if (said.length)
-          setNotes((now) => [...now, ...said.map((note) => `Build ${build.index}: ${note}`)]);
         setAccepted((previous) => ({
           ...previous,
           [seriesSessionKey(child)]: {
@@ -264,8 +264,6 @@ export function ForgeBuildSeries({
         }));
       }
       if (!builds.length && result?.ok) {
-        const said = publishNotes(result);
-        if (said.length) setNotes((now) => [...now, ...said]);
         setAccepted((previous) => ({
           ...previous,
           [seriesSessionKey(next)]: {
