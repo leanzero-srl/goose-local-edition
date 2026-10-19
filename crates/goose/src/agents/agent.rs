@@ -2920,6 +2920,16 @@ impl Agent {
                         #[allow(unused_variables)]
                         Err(ref provider_err @ ProviderError::ContextLengthExceeded(_)) => {
                             provider_errored = true;
+                            if let Some(window) = crate::context_mgmt::note_refused_window(
+                                &session_config.id,
+                                &model_config.model_name,
+                                provider_err,
+                            ) {
+                                warn!(
+                                    "the provider refused the request as too long; its window is {window} tokens, \
+                                     compaction sizes to it from now on"
+                                );
+                            }
                             #[cfg(feature = "telemetry")]
                             crate::posthog::emit_error(provider_err.telemetry_type(), &provider_err.to_string());
                             compaction_attempts += 1;

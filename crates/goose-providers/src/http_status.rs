@@ -92,6 +92,24 @@ fn parse_http_date(value: &str) -> Option<SystemTime> {
     None
 }
 
+/// A context-length refusal whose window is only in the payload's `n_ctx` (llama.cpp's
+/// "the request exceeds the available context size, try increasing it") carries it in its text, so
+/// compaction can size to it (I-9, `errors::refused_context_window`).
+fn with_named_window(payload: Option<&Value>, message: String) -> String {
+    if crate::errors::refused_context_window(&message).is_some() {
+        return message;
+    }
+    let n_ctx = payload
+        .and_then(|payload| payload.get("error"))
+        .and_then(|error| error.get("n_ctx"))
+        .and_then(Value::as_u64)
+        .filter(|n_ctx| *n_ctx > 0);
+    match n_ctx {
+        Some(n_ctx) => format!("{message} (n_ctx {n_ctx})"),
+        None => message,
+    }
+}
+
 fn is_context_length_exceeded(payload: Option<&Value>, message: &str) -> bool {
     let payload_exceeded = payload
         .and_then(|payload| payload.get("error"))
@@ -272,7 +290,10 @@ pub fn map_http_error_to_provider_error(
         (StatusCode::BAD_REQUEST, None) => {
             let payload_str = extract_message();
             if is_context_length_exceeded(payload.as_ref(), &payload_str) {
-                ProviderError::ContextLengthExceeded(payload_str)
+                ProviderError::ContextLengthExceeded(with_named_window(
+                    payload.as_ref(),
+                    payload_str,
+                ))
             } else {
                 ProviderError::RequestFailed(format!("Bad request (400): {}", payload_str))
             }
@@ -571,6 +592,28 @@ mod tests {
                 "unexpected classification for {case}: {error:?}"
             );
         }
+    }
+
+    /// I-9: the window a payload's `n_ctx` names survives into the refusal's text.
+    #[test]
+    fn a_context_refusal_carries_the_payloads_window() {
+        let error = map_http_error_to_provider_error(
+            StatusCode::BAD_REQUEST,
+            Some(json!({"error": {
+                "message": "the request exceeds the available context size, try increasing it",
+                "n_prompt_tokens": 9000,
+                "n_ctx": 8192
+            }})),
+            "http://127.0.0.1:8080/v1/chat/completions",
+        );
+        let ProviderError::ContextLengthExceeded(text) = &error else {
+            panic!("{error:?}");
+        };
+        assert_eq!(
+            crate::errors::refused_context_window(text),
+            Some(8192),
+            "{text}"
+        );
     }
 
     /// Q-302, the live critic on 3.0.68: Rapid-MLX refused an image part with a 404 whose body is

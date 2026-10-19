@@ -4,6 +4,8 @@ use thiserror::Error;
 
 use crate::redact::redact_relay_capability;
 use crate::request_log::LogError;
+use once_cell::sync::Lazy;
+use regex::Regex;
 
 /// The name of the error a stream parser raises when the body ends before its protocol's
 /// completion marker — see [`ProviderError::stream_truncated`].
@@ -385,6 +387,31 @@ pub fn body_read_error(error: reqwest::Error) -> std::io::Error {
     std::io::Error::other(said)
 }
 
+/// The context window a context-length refusal names, in tokens (I-9): Rapid-MLX's memory guard
+/// ("the maximum context here is 35328 tokens", plus `n_ctx` in its payload), the OpenAI shape
+/// ("maximum context length is 262144 tokens"), Anthropic ("210000 tokens > 200000 maximum"),
+/// llama.cpp ("available context size (4096 tokens)") and the `(n_ctx N)` that
+/// `http_status` adds when only the payload carried the number. `None` when the refusal names no
+/// usable window (a zero is "nothing fits", never a window to size to).
+pub fn refused_context_window(text: &str) -> Option<usize> {
+    static PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
+        [
+            r"(?i)maximum context(?: length| size| window)?(?: here)?(?: is| of)?\s+(\d[\d,]*)",
+            r"(?i)\(n_ctx (\d+)\)",
+            r#"(?i)"n_ctx"\s*:\s*(\d+)"#,
+            r"(?i)tokens\s*>\s*(\d[\d,]*)\s*maximum",
+            r"(?i)context size \((\d[\d,]*) tokens\)",
+        ]
+        .iter()
+        .map(|pattern| Regex::new(pattern).expect("a valid pattern"))
+        .collect()
+    });
+    PATTERNS.iter().find_map(|pattern| {
+        let digits = pattern.captures(text)?.get(1)?.as_str().replace(',', "");
+        digits.parse::<usize>().ok().filter(|window| *window > 0)
+    })
+}
+
 impl From<LogError> for ProviderError {
     fn from(value: LogError) -> Self {
         ProviderError::ExecutionError(value.to_string())
@@ -541,5 +568,47 @@ mod tests {
         };
         assert_eq!(limited.engine_words(), "slow down");
         assert!(limited.is_transient());
+    }
+}
+
+#[cfg(test)]
+mod refused_window_tests {
+    use super::refused_context_window;
+
+    #[test]
+    fn a_refusal_names_its_window() {
+        for (text, window) in [
+            (
+                "This prompt (82684 tokens) needs 131.8 GB but this Mac can hold 75.1 GB; the \
+                 maximum context here is 35328 tokens.",
+                Some(35_328),
+            ),
+            (
+                "This model's maximum context length is 262144 tokens. However, you requested \
+                 270000 tokens (269000 prompt + 1000 completion).",
+                Some(262_144),
+            ),
+            (
+                "prompt is too long: 210000 tokens > 200000 maximum",
+                Some(200_000),
+            ),
+            (
+                "the request exceeds the available context size (4,096 tokens)",
+                Some(4_096),
+            ),
+            (
+                "the request exceeds the available context size (n_ctx 8192)",
+                Some(8_192),
+            ),
+            (
+                r#"{"error":{"n_prompt_tokens":9000,"n_ctx":8192}}"#,
+                Some(8_192),
+            ),
+            ("the maximum context here is 0 tokens.", None),
+            ("Too many tool responses: 5 > 2", None),
+            ("context_length_exceeded", None),
+        ] {
+            assert_eq!(refused_context_window(text), window, "{text}");
+        }
     }
 }
