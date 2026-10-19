@@ -337,14 +337,45 @@ type ElectronAPI = {
     cohortProblem?: string;
     /** A saved operator key could not be read from the keychain: the run went out as a community entry. */
     operatorWarning?: string;
+    /** The token counts sent with the run, as one line ("Tokens: 12.3M in · 206k out (exact, OpenRouter records)"). */
+    tokenUsageLine?: string;
+    /** Why the run went out without token counts. */
+    tokenProblem?: string;
+    /** Forge 2.0 series: both builds were published together by this one action. */
+    pair?: boolean;
+    /** Forge 2.0 series: each build's own outcome, in build order (already-live builds say so). */
+    builds?: Array<{
+      index: 1 | 2;
+      ok: boolean;
+      alreadyLive?: boolean;
+      url?: string | null;
+      error?: string;
+      baseline?: boolean;
+      coupled?: boolean;
+      comparisonReceipt?: boolean;
+      operator?: string;
+      priceWarning?: string;
+      cohortProblem?: string;
+      operatorWarning?: string;
+      tokenUsageLine?: string;
+      tokenProblem?: string;
+    }>;
+    /** Forge 2.0 series: one build is live and the other was refused (publish again to post it). */
+    partial?: boolean;
   }>;
   /** The publish card's prefill for a run: a readable title (null when goose knows no display name) and where it ran. */
   benchmarkPublishSuggestion: (
     runKey: string
-  ) => Promise<{ title: string | null; local: boolean; route?: 'cloud' | 'local' | 'unknown' } | null>;
+  ) => Promise<{
+    title: string | null;
+    local: boolean;
+    route?: 'cloud' | 'local' | 'unknown';
+  } | null>;
   /** The LeanZero operator key: write-only (main keeps it in the OS keychain via safeStorage); never read back. */
   benchmarkOperatorKeyStatus: () => Promise<{ saved: boolean; available: boolean }>;
-  benchmarkOperatorKeySet: (key: string) => Promise<{ ok: boolean; saved?: boolean; error?: string }>;
+  benchmarkOperatorKeySet: (
+    key: string
+  ) => Promise<{ ok: boolean; saved?: boolean; error?: string }>;
   readSwarmRun: (workingDir: string) => Promise<{
     runId: string;
     /** Where the run actually lives — differs from workingDir when the engine redirected the build. */

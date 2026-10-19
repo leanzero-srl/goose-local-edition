@@ -1,0 +1,720 @@
+{
+ "_source": "Real runs, 2026-10. sonnet: openrouter-cloud-1d88ea1b (anthropic/claude-sonnet-5.5, Forge 1.0) - .swarm/telemetry.jsonl, verdict agent.billed_cost + agent.usage (bill INCOMPLETE at run end: 43 of 51 records, 8 HTTP 404), and OpenRouter's records for all 51 generation ids re-read 2026-10-18 (forge_billing_recover.py). pareto: openrouter-cloud-48107c98 (unbiased/pareto-26.10, Gauntlet sb-7.2) - telemetry + model-cost.json (complete bill, helper call billed outside session counters).",
+ "sonnet": {
+  "telemetry": "{\"t\":1791101366694,\"model\":\"google/gemini-2.5-flash\",\"node\":\"gemini\",\"ttft_ms\":770,\"total_ms\":798,\"prompt_tokens\":883,\"completion_tokens\":4,\"usage\":true,\"response_id\":\"gen-1791101365-nvUlQqEEzx7UKdjQQPa9\",\"ended\":\"completed\"}\n{\"t\":1791101367766,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":1852,\"total_ms\":1870,\"prompt_tokens\":3596,\"completion_tokens\":69,\"usage\":true,\"response_id\":\"gen-1791101365-ffw0evWNouIETm0h2BOl\",\"ended\":\"completed\"}\n{\"t\":1791101369871,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":2051,\"total_ms\":2098,\"prompt_tokens\":9904,\"completion_tokens\":140,\"usage\":true,\"response_id\":\"gen-1791101367-e4RacDi5SFyxcBqvf7F4\",\"ended\":\"completed\"}\n{\"t\":1791101372209,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":2262,\"total_ms\":2335,\"prompt_tokens\":11364,\"completion_tokens\":135,\"usage\":true,\"response_id\":\"gen-1791101369-uXEFAfGs0oKqaNz01B04\",\"ended\":\"completed\"}\n{\"t\":1791101376003,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":3678,\"total_ms\":3792,\"prompt_tokens\":11987,\"completion_tokens\":152,\"usage\":true,\"response_id\":\"gen-1791101372-H6pkdDBPkRhnbhWxkOUa\",\"ended\":\"completed\"}\n{\"t\":1791101379823,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":3469,\"total_ms\":3816,\"prompt_tokens\":12772,\"completion_tokens\":289,\"usage\":true,\"response_id\":\"gen-1791101376-9RJju4IzKW7mm8tmpi2a\",\"ended\":\"completed\"}\n{\"t\":1791101382445,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":2568,\"total_ms\":2619,\"prompt_tokens\":13345,\"completion_tokens\":215,\"usage\":true,\"response_id\":\"gen-1791101379-H46LnnosncNiTacPTmcT\",\"ended\":\"completed\"}\n{\"t\":1791101385620,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":3139,\"total_ms\":3173,\"prompt_tokens\":14502,\"completion_tokens\":291,\"usage\":true,\"response_id\":\"gen-1791101382-TnL5emr36kmrW4QmbSeU\",\"ended\":\"completed\"}\n{\"t\":1791101391694,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":3746,\"total_ms\":6070,\"prompt_tokens\":17019,\"completion_tokens\":640,\"usage\":true,\"response_id\":\"gen-1791101385-Qp8UdbAKokXdUZQYU2zB\",\"ended\":\"completed\"}\n{\"t\":1791101395870,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":4133,\"total_ms\":4173,\"prompt_tokens\":17984,\"completion_tokens\":517,\"usage\":true,\"response_id\":\"gen-1791101391-2IomkYiZyBQuh13WE7jr\",\"ended\":\"completed\"}\n{\"t\":1791101400635,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":3298,\"total_ms\":4761,\"prompt_tokens\":20368,\"completion_tokens\":536,\"usage\":true,\"response_id\":\"gen-1791101395-f2a7zQ5wZbaibvAo3jWh\",\"ended\":\"completed\"}\n{\"t\":1791101405011,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":3253,\"total_ms\":4374,\"prompt_tokens\":23882,\"completion_tokens\":427,\"usage\":true,\"response_id\":\"gen-1791101400-BB564VTpIhvM7Siqpk5l\",\"ended\":\"completed\"}\n{\"t\":1791101409213,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":3595,\"total_ms\":4199,\"prompt_tokens\":25486,\"completion_tokens\":391,\"usage\":true,\"response_id\":\"gen-1791101405-6nM9xqRQP9L4rKtNerXB\",\"ended\":\"completed\"}\n{\"t\":1791101413079,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":3807,\"total_ms\":3862,\"prompt_tokens\":27064,\"completion_tokens\":477,\"usage\":true,\"response_id\":\"gen-1791101409-6qzXQg8pDougHmv24obo\",\"ended\":\"completed\"}\n{\"t\":1791101415980,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":2865,\"total_ms\":2895,\"prompt_tokens\":29465,\"completion_tokens\":271,\"usage\":true,\"response_id\":\"gen-1791101413-EcsvjHFlQUiLhYP5vw7z\",\"ended\":\"completed\"}\n{\"t\":1791101419126,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":3112,\"total_ms\":3142,\"prompt_tokens\":32692,\"completion_tokens\":255,\"usage\":true,\"response_id\":\"gen-1791101416-44nY0KiSHqyAXv4PY5ty\",\"ended\":\"completed\"}\n{\"t\":1791101422567,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":3425,\"total_ms\":3436,\"prompt_tokens\":34982,\"completion_tokens\":96,\"usage\":true,\"response_id\":\"gen-1791101419-A495biy4mIoZvp7XZ8uW\",\"ended\":\"completed\"}\n{\"t\":1791101463823,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":4056,\"total_ms\":41252,\"prompt_tokens\":35905,\"completion_tokens\":4087,\"usage\":true,\"response_id\":\"gen-1791101422-6Fz2xS34LpTJe9CDesnp\",\"ended\":\"completed\"}\n{\"t\":1791101467979,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":3629,\"total_ms\":4152,\"prompt_tokens\":37177,\"completion_tokens\":220,\"usage\":true,\"response_id\":\"gen-1791101464-WxINaaroxKPEZcChYLci\",\"ended\":\"completed\"}\n{\"t\":1791101479851,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":4642,\"total_ms\":11869,\"prompt_tokens\":39141,\"completion_tokens\":1419,\"usage\":true,\"response_id\":\"gen-1791101468-kaDvm4PruA9X1Toye7jT\",\"ended\":\"completed\"}\n{\"t\":1791101541114,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":5301,\"total_ms\":61259,\"prompt_tokens\":41031,\"completion_tokens\":5847,\"usage\":true,\"response_id\":\"gen-1791101479-uA2okAhbgEQS1Jaah1Cu\",\"ended\":\"completed\"}\n{\"t\":1791101543604,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":2476,\"total_ms\":2487,\"prompt_tokens\":41640,\"completion_tokens\":166,\"usage\":true,\"response_id\":\"gen-1791101541-MHNdxLG7EQ3vBIUH2lmi\",\"ended\":\"completed\"}\n{\"t\":1791101583034,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":4642,\"total_ms\":39426,\"prompt_tokens\":43646,\"completion_tokens\":3725,\"usage\":true,\"response_id\":\"gen-1791101543-GMc8clAZqkr6TYXIyCEZ\",\"ended\":\"completed\"}\n{\"t\":1791101586882,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":3609,\"total_ms\":3845,\"prompt_tokens\":45674,\"completion_tokens\":103,\"usage\":true,\"response_id\":\"gen-1791101583-UXeiti4zBuM1f2r7be2I\",\"ended\":\"completed\"}\n{\"t\":1791101589285,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":2392,\"total_ms\":2399,\"prompt_tokens\":45825,\"completion_tokens\":76,\"usage\":true,\"response_id\":\"gen-1791101586-BWUybCtbRf4XQdnOxXBV\",\"ended\":\"completed\"}\n{\"t\":1791101633892,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":4244,\"total_ms\":44603,\"prompt_tokens\":48486,\"completion_tokens\":4245,\"usage\":true,\"response_id\":\"gen-1791101589-sxG9wcD6gII3cLr0cAKz\",\"ended\":\"completed\"}\n{\"t\":1791101707797,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":5608,\"total_ms\":73902,\"prompt_tokens\":50897,\"completion_tokens\":7602,\"usage\":true,\"response_id\":\"gen-1791101634-Hh0Pr9yzHCr1xxqgSKMI\",\"ended\":\"completed\"}\n{\"t\":1791101839398,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":4643,\"total_ms\":131596,\"prompt_tokens\":52388,\"completion_tokens\":13832,\"usage\":true,\"response_id\":\"gen-1791101707-I3F4zSsnZw0dbSf8yeiZ\",\"ended\":\"completed\"}\n{\"t\":1791101843377,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":3691,\"total_ms\":3974,\"prompt_tokens\":54978,\"completion_tokens\":198,\"usage\":true,\"response_id\":\"gen-1791101839-tWvrkLtl2JRHj8FKe5vC\",\"ended\":\"completed\"}\n{\"t\":1791101909348,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":4242,\"total_ms\":65967,\"prompt_tokens\":55346,\"completion_tokens\":6692,\"usage\":true,\"response_id\":\"gen-1791101843-cwgbMT2X3VgReYdynxSR\",\"ended\":\"completed\"}\n{\"t\":1791101914284,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":4144,\"total_ms\":4932,\"prompt_tokens\":57430,\"completion_tokens\":191,\"usage\":true,\"response_id\":\"gen-1791101909-wcdoPkDZXPMUvLxQoPq9\",\"ended\":\"completed\"}\n{\"t\":1791101978125,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":4452,\"total_ms\":63837,\"prompt_tokens\":62084,\"completion_tokens\":6271,\"usage\":true,\"response_id\":\"gen-1791101914-n7NOToM4gDoHBFq0vDW1\",\"ended\":\"completed\"}\n{\"t\":1791102128413,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":4574,\"total_ms\":150284,\"prompt_tokens\":62481,\"completion_tokens\":19571,\"usage\":true,\"response_id\":\"gen-1791101978-trcoXR1K0JZYv7hcViLX\",\"ended\":\"completed\"}\n{\"t\":1791102137005,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":5360,\"total_ms\":8584,\"prompt_tokens\":71485,\"completion_tokens\":324,\"usage\":true,\"response_id\":\"gen-1791102128-hVxrefUOA3frTfpCqGcp\",\"ended\":\"completed\"}\n{\"t\":1791102176010,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":4332,\"total_ms\":39000,\"prompt_tokens\":72345,\"completion_tokens\":5795,\"usage\":true,\"response_id\":\"gen-1791102137-JCxb5fF22547RKRh0gwM\",\"ended\":\"completed\"}\n{\"t\":1791102180205,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":3583,\"total_ms\":4190,\"prompt_tokens\":77789,\"completion_tokens\":180,\"usage\":true,\"response_id\":\"gen-1791102176-iRZJ7Hf7SWMA9ZslzdTw\",\"ended\":\"completed\"}\n{\"t\":1791102185383,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":2531,\"total_ms\":5175,\"prompt_tokens\":78995,\"completion_tokens\":130,\"usage\":true,\"response_id\":\"gen-1791102180-3jCEfKiyqt2VrnzxZq8i\",\"ended\":\"completed\"}\n{\"t\":1791102195627,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":4934,\"total_ms\":10239,\"prompt_tokens\":80218,\"completion_tokens\":468,\"usage\":true,\"response_id\":\"gen-1791102185-LDHUkU1HvovHAv1vLlst\",\"ended\":\"completed\"}\n{\"t\":1791102200094,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":3781,\"total_ms\":4463,\"prompt_tokens\":81944,\"completion_tokens\":184,\"usage\":true,\"response_id\":\"gen-1791102195-iNU6NkB75pPzMiumsh4a\",\"ended\":\"completed\"}\n{\"t\":1791102207959,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":4148,\"total_ms\":7860,\"prompt_tokens\":83466,\"completion_tokens\":334,\"usage\":true,\"response_id\":\"gen-1791102200-ACroC4rfjjUpJKhyGNwr\",\"ended\":\"completed\"}\n{\"t\":1791102217888,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":4573,\"total_ms\":9926,\"prompt_tokens\":83960,\"completion_tokens\":391,\"usage\":true,\"response_id\":\"gen-1791102208-bOSnTp53hBUAOru3qkyC\",\"ended\":\"completed\"}\n{\"t\":1791102224367,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":4030,\"total_ms\":6475,\"prompt_tokens\":84668,\"completion_tokens\":325,\"usage\":true,\"response_id\":\"gen-1791102217-xHEN5WT8xFsvGGGsCCKR\",\"ended\":\"completed\"}\n{\"t\":1791102228252,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":3390,\"total_ms\":3882,\"prompt_tokens\":85487,\"completion_tokens\":127,\"usage\":true,\"response_id\":\"gen-1791102224-pBVReJXgvARAE90OQ6Dd\",\"ended\":\"completed\"}\n{\"t\":1791102276181,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":4176,\"total_ms\":47923,\"prompt_tokens\":86541,\"completion_tokens\":319,\"usage\":true,\"response_id\":\"gen-1791102228-zk54N2ehHXgsjqWm6e80\",\"ended\":\"completed\"}\n{\"t\":1791102290039,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":5691,\"total_ms\":13854,\"prompt_tokens\":87120,\"completion_tokens\":468,\"usage\":true,\"response_id\":\"gen-1791102276-gob2Hwdvvw6SkP94GTOj\",\"ended\":\"completed\"}\n{\"t\":1791102304990,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":2359,\"total_ms\":14948,\"prompt_tokens\":87705,\"completion_tokens\":155,\"usage\":true,\"response_id\":\"gen-1791102290-GovfjotBKUghvtUUs0vG\",\"ended\":\"completed\"}\n{\"t\":1791102307775,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":2769,\"total_ms\":2781,\"prompt_tokens\":88841,\"completion_tokens\":95,\"usage\":true,\"response_id\":\"gen-1791102305-asmZYmtyzF3jC7fvvnsQ\",\"ended\":\"completed\"}\n{\"t\":1791102316912,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":6990,\"total_ms\":9128,\"prompt_tokens\":93681,\"completion_tokens\":381,\"usage\":true,\"response_id\":\"gen-1791102307-lpr59twbdKBw4IvLaFj0\",\"ended\":\"completed\"}\n{\"t\":1791102320738,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":2380,\"total_ms\":3822,\"prompt_tokens\":94203,\"completion_tokens\":224,\"usage\":true,\"response_id\":\"gen-1791102317-3IhVzZFG1eJ5YXvXPtsg\",\"ended\":\"completed\"}\n{\"t\":1791102329309,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":4320,\"total_ms\":8563,\"prompt_tokens\":95198,\"completion_tokens\":338,\"usage\":true,\"response_id\":\"gen-1791102320-ZNgl7J0jhwxOE42sf6uB\",\"ended\":\"completed\"}\n{\"t\":1791102340879,\"model\":\"anthropic/claude-sonnet-5.5\",\"node\":\"claude\",\"ttft_ms\":8935,\"total_ms\":11566,\"prompt_tokens\":95601,\"completion_tokens\":1093,\"usage\":true,\"response_id\":\"gen-1791102329-MRcDjodEmNtG1WLqseHD\",\"ended\":\"completed\"}\n",
+  "agent": {
+   "billed_cost": {
+    "provider": "openrouter",
+    "source": "https://openrouter.ai/api/v1/generation (usage per generation id)",
+    "status": "incomplete",
+    "billed_usd": 1.4506002,
+    "billed_usd_is_lower_bound": true,
+    "incomplete_reasons": [
+     "8 generation id(s) have no billed record",
+     "goose counted tokens no recovered generation id accounts for: prompt +728007, cached +715843, completion +3069"
+    ],
+    "request_count": 43,
+    "generation_ids_collected": 51,
+    "tokens": {
+     "prompt": 1881781,
+     "cached": 1793474,
+     "completion": 87408,
+     "reasoning": 62674
+    },
+    "hosts": {
+     "Google": 1,
+     "Claude Platform on AWS": 42
+    },
+    "missing": [
+     {
+      "id": "gen-1791102228-zk54N2ehHXgsjqWm6e80",
+      "reason": "HTTP 404"
+     },
+     {
+      "id": "gen-1791102276-gob2Hwdvvw6SkP94GTOj",
+      "reason": "HTTP 404"
+     },
+     {
+      "id": "gen-1791102290-GovfjotBKUghvtUUs0vG",
+      "reason": "HTTP 404"
+     },
+     {
+      "id": "gen-1791102305-asmZYmtyzF3jC7fvvnsQ",
+      "reason": "HTTP 404"
+     },
+     {
+      "id": "gen-1791102307-lpr59twbdKBw4IvLaFj0",
+      "reason": "HTTP 404"
+     },
+     {
+      "id": "gen-1791102317-3IhVzZFG1eJ5YXvXPtsg",
+      "reason": "HTTP 404"
+     },
+     {
+      "id": "gen-1791102320-ZNgl7J0jhwxOE42sf6uB",
+      "reason": "HTTP 404"
+     },
+     {
+      "id": "gen-1791102329-MRcDjodEmNtG1WLqseHD",
+      "reason": "HTTP 404"
+     }
+    ],
+    "late": [],
+    "incomplete_calls": {
+     "count": 0,
+     "billed_usd": 0.0,
+     "ids": []
+    },
+    "reconciliation": {
+     "status": "unattributed_tokens",
+     "against": "goose session counters (sessions.db accumulated_*)",
+     "goose_tokens": {
+      "prompt": 2609788,
+      "cached": 2509317,
+      "completion": 90477
+     },
+     "unattributed_tokens": {
+      "prompt": 728007,
+      "cached": 715843,
+      "completion": 3069
+     }
+    },
+    "generation_id_sources": {
+     "telemetry": 51,
+     "sessions_db_message_ids": 2,
+     "request_logs": 10
+    },
+    "telemetry": {
+     "status": "recorded",
+     "path": "/Users/example/Library/Application Support/Goose/benchmark/runs/build/openrouter-cloud-1d88ea1b-07c6-4370-b1c5-1d1d6f3b9d7c-r0/.swarm/telemetry.jsonl",
+     "calls": 51,
+     "calls_without_response_id": 0,
+     "unparseable_lines": 0
+    },
+    "model": "anthropic/claude-sonnet-5.5",
+    "budget": {
+     "max_calls": 150,
+     "calls_used": 50,
+     "calls_source": "telemetry (provider calls on the entrant model)",
+     "calls_other_models": {
+      "google/gemini-2.5-flash": 1
+     },
+     "stopped_by": "model_finished"
+    }
+   },
+   "usage": {
+    "status": "recorded",
+    "source": "isolated Goose session counters",
+    "billing_verified": false,
+    "sessions": [
+     {
+      "id": "20261004_1",
+      "accumulated_input_tokens": 2609788,
+      "accumulated_output_tokens": 90477,
+      "accumulated_cache_read_tokens": 2509317,
+      "accumulated_cache_write_tokens": 95599,
+      "accumulated_cost": null
+     }
+    ]
+   },
+   "model": "anthropic/claude-sonnet-5.5",
+   "provider": "openrouter"
+  },
+  "records": {
+   "gen-1791101365-nvUlQqEEzx7UKdjQQPa9": {
+    "id": "gen-1791101365-nvUlQqEEzx7UKdjQQPa9",
+    "usage": 0.0002749,
+    "model": "google/gemini-2.5-flash",
+    "provider_name": "Google",
+    "native_tokens_prompt": 883,
+    "native_tokens_cached": 0,
+    "native_tokens_completion": 4,
+    "native_tokens_reasoning": 0
+   },
+   "gen-1791101365-ffw0evWNouIETm0h2BOl": {
+    "id": "gen-1791101365-ffw0evWNouIETm0h2BOl",
+    "usage": 0.009604,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 3596,
+    "native_tokens_cached": 0,
+    "native_tokens_completion": 69,
+    "native_tokens_reasoning": 0
+   },
+   "gen-1791101367-e4RacDi5SFyxcBqvf7F4": {
+    "id": "gen-1791101367-e4RacDi5SFyxcBqvf7F4",
+    "usage": 0.0181603,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 9904,
+    "native_tokens_cached": 3444,
+    "native_tokens_completion": 140,
+    "native_tokens_reasoning": 0
+   },
+   "gen-1791101369-uXEFAfGs0oKqaNz01B04": {
+    "id": "gen-1791101369-uXEFAfGs0oKqaNz01B04",
+    "usage": 0.0073409,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 11364,
+    "native_tokens_cached": 9747,
+    "native_tokens_completion": 135,
+    "native_tokens_reasoning": 0
+   },
+   "gen-1791101372-H6pkdDBPkRhnbhWxkOUa": {
+    "id": "gen-1791101372-H6pkdDBPkRhnbhWxkOUa",
+    "usage": 0.0053539,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 11987,
+    "native_tokens_cached": 11362,
+    "native_tokens_completion": 152,
+    "native_tokens_reasoning": 48
+   },
+   "gen-1791101376-9RJju4IzKW7mm8tmpi2a": {
+    "id": "gen-1791101376-9RJju4IzKW7mm8tmpi2a",
+    "usage": 0.0072535,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 12772,
+    "native_tokens_cached": 11985,
+    "native_tokens_completion": 289,
+    "native_tokens_reasoning": 55
+   },
+   "gen-1791101379-H46LnnosncNiTacPTmcT": {
+    "id": "gen-1791101379-H46LnnosncNiTacPTmcT",
+    "usage": 0.0061405,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 13345,
+    "native_tokens_cached": 12770,
+    "native_tokens_completion": 215,
+    "native_tokens_reasoning": 0
+   },
+   "gen-1791101382-TnL5emr36kmrW4QmbSeU": {
+    "id": "gen-1791101382-TnL5emr36kmrW4QmbSeU",
+    "usage": 0.0084751,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 14502,
+    "native_tokens_cached": 13343,
+    "native_tokens_completion": 291,
+    "native_tokens_reasoning": 0
+   },
+   "gen-1791101385-Qp8UdbAKokXdUZQYU2zB": {
+    "id": "gen-1791101385-Qp8UdbAKokXdUZQYU2zB",
+    "usage": 0.015519,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 17019,
+    "native_tokens_cached": 14500,
+    "native_tokens_completion": 640,
+    "native_tokens_reasoning": 76
+   },
+   "gen-1791101391-2IomkYiZyBQuh13WE7jr": {
+    "id": "gen-1791101391-2IomkYiZyBQuh13WE7jr",
+    "usage": 0.0113464,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 17984,
+    "native_tokens_cached": 16862,
+    "native_tokens_completion": 517,
+    "native_tokens_reasoning": 0
+   },
+   "gen-1791101395-f2a7zQ5wZbaibvAo3jWh": {
+    "id": "gen-1791101395-f2a7zQ5wZbaibvAo3jWh",
+    "usage": 0.0149204,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 20368,
+    "native_tokens_cached": 17982,
+    "native_tokens_completion": 536,
+    "native_tokens_reasoning": 41
+   },
+   "gen-1791101400-BB564VTpIhvM7Siqpk5l": {
+    "id": "gen-1791101400-BB564VTpIhvM7Siqpk5l",
+    "usage": 0.0171322,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 23882,
+    "native_tokens_cached": 20366,
+    "native_tokens_completion": 427,
+    "native_tokens_reasoning": 70
+   },
+   "gen-1791101405-6nM9xqRQP9L4rKtNerXB": {
+    "id": "gen-1791101405-6nM9xqRQP9L4rKtNerXB",
+    "usage": 0.0127,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 25486,
+    "native_tokens_cached": 23880,
+    "native_tokens_completion": 391,
+    "native_tokens_reasoning": 83
+   },
+   "gen-1791101409-6qzXQg8pDougHmv24obo": {
+    "id": "gen-1791101409-6qzXQg8pDougHmv24obo",
+    "usage": 0.0137383,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 27064,
+    "native_tokens_cached": 25484,
+    "native_tokens_completion": 477,
+    "native_tokens_reasoning": 0
+   },
+   "gen-1791101413-EcsvjHFlQUiLhYP5vw7z": {
+    "id": "gen-1791101413-EcsvjHFlQUiLhYP5vw7z",
+    "usage": 0.0144854,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 29465,
+    "native_tokens_cached": 26907,
+    "native_tokens_completion": 271,
+    "native_tokens_reasoning": 0
+   },
+   "gen-1791101416-44nY0KiSHqyAXv4PY5ty": {
+    "id": "gen-1791101416-44nY0KiSHqyAXv4PY5ty",
+    "usage": 0.0165141,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 32692,
+    "native_tokens_cached": 29463,
+    "native_tokens_completion": 255,
+    "native_tokens_reasoning": 0
+   },
+   "gen-1791101419-A495biy4mIoZvp7XZ8uW": {
+    "id": "gen-1791101419-A495biy4mIoZvp7XZ8uW",
+    "usage": 0.013227,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 34982,
+    "native_tokens_cached": 32690,
+    "native_tokens_completion": 96,
+    "native_tokens_reasoning": 0
+   },
+   "gen-1791101422-6Fz2xS34LpTJe9CDesnp": {
+    "id": "gen-1791101422-6Fz2xS34LpTJe9CDesnp",
+    "usage": 0.0501775,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 35905,
+    "native_tokens_cached": 34980,
+    "native_tokens_completion": 4087,
+    "native_tokens_reasoning": 3887
+   },
+   "gen-1791101464-WxINaaroxKPEZcChYLci": {
+    "id": "gen-1791101464-WxINaaroxKPEZcChYLci",
+    "usage": 0.0124871,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 37177,
+    "native_tokens_cached": 35903,
+    "native_tokens_completion": 220,
+    "native_tokens_reasoning": 48
+   },
+   "gen-1791101468-kaDvm4PruA9X1Toye7jT": {
+    "id": "gen-1791101468-kaDvm4PruA9X1Toye7jT",
+    "usage": 0.0268955,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 39141,
+    "native_tokens_cached": 37020,
+    "native_tokens_completion": 1419,
+    "native_tokens_reasoning": 652
+   },
+   "gen-1791101479-uA2okAhbgEQS1Jaah1Cu": {
+    "id": "gen-1791101479-uA2okAhbgEQS1Jaah1Cu",
+    "usage": 0.0710268,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 41031,
+    "native_tokens_cached": 39139,
+    "native_tokens_completion": 5847,
+    "native_tokens_reasoning": 5538
+   },
+   "gen-1791101541-MHNdxLG7EQ3vBIUH2lmi": {
+    "id": "gen-1791101541-MHNdxLG7EQ3vBIUH2lmi",
+    "usage": 0.0113923,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 41640,
+    "native_tokens_cached": 41029,
+    "native_tokens_completion": 166,
+    "native_tokens_reasoning": 0
+   },
+   "gen-1791101543-GMc8clAZqkr6TYXIyCEZ": {
+    "id": "gen-1791101543-GMc8clAZqkr6TYXIyCEZ",
+    "usage": 0.0505966,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 43646,
+    "native_tokens_cached": 41638,
+    "native_tokens_completion": 3725,
+    "native_tokens_reasoning": 3581
+   },
+   "gen-1791101583-UXeiti4zBuM1f2r7be2I": {
+    "id": "gen-1791101583-UXeiti4zBuM1f2r7be2I",
+    "usage": 0.0148328,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 45674,
+    "native_tokens_cached": 43644,
+    "native_tokens_completion": 103,
+    "native_tokens_reasoning": 26
+   },
+   "gen-1791101586-BWUybCtbRf4XQdnOxXBV": {
+    "id": "gen-1791101586-BWUybCtbRf4XQdnOxXBV",
+    "usage": 0.0102759,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 45825,
+    "native_tokens_cached": 45672,
+    "native_tokens_completion": 76,
+    "native_tokens_reasoning": 0
+   },
+   "gen-1791101589-sxG9wcD6gII3cLr0cAKz": {
+    "id": "gen-1791101589-sxG9wcD6gII3cLr0cAKz",
+    "usage": 0.0582711,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 48486,
+    "native_tokens_cached": 45823,
+    "native_tokens_completion": 4245,
+    "native_tokens_reasoning": 4106
+   },
+   "gen-1791101634-Hh0Pr9yzHCr1xxqgSKMI": {
+    "id": "gen-1791101634-Hh0Pr9yzHCr1xxqgSKMI",
+    "usage": 0.0916708,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 50897,
+    "native_tokens_cached": 48484,
+    "native_tokens_completion": 7602,
+    "native_tokens_reasoning": 7254
+   },
+   "gen-1791101707-I3F4zSsnZw0dbSf8yeiZ": {
+    "id": "gen-1791101707-I3F4zSsnZw0dbSf8yeiZ",
+    "usage": 0.152587,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 52388,
+    "native_tokens_cached": 50740,
+    "native_tokens_completion": 13832,
+    "native_tokens_reasoning": 12008
+   },
+   "gen-1791101839-tWvrkLtl2JRHj8FKe5vC": {
+    "id": "gen-1791101839-tWvrkLtl2JRHj8FKe5vC",
+    "usage": 0.0188587,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 54978,
+    "native_tokens_cached": 52386,
+    "native_tokens_completion": 198,
+    "native_tokens_reasoning": 44
+   },
+   "gen-1791101843-cwgbMT2X3VgReYdynxSR": {
+    "id": "gen-1791101843-cwgbMT2X3VgReYdynxSR",
+    "usage": 0.0791182,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 55346,
+    "native_tokens_cached": 54821,
+    "native_tokens_completion": 6692,
+    "native_tokens_reasoning": 6542
+   },
+   "gen-1791101909-wcdoPkDZXPMUvLxQoPq9": {
+    "id": "gen-1791101909-wcdoPkDZXPMUvLxQoPq9",
+    "usage": 0.0185493,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 57430,
+    "native_tokens_cached": 55189,
+    "native_tokens_completion": 191,
+    "native_tokens_reasoning": 104
+   },
+   "gen-1791101914-n7NOToM4gDoHBFq0vDW1": {
+    "id": "gen-1791101914-n7NOToM4gDoHBFq0vDW1",
+    "usage": 0.0858346,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 62084,
+    "native_tokens_cached": 57428,
+    "native_tokens_completion": 6271,
+    "native_tokens_reasoning": 6111
+   },
+   "gen-1791101978-trcoXR1K0JZYv7hcViLX": {
+    "id": "gen-1791101978-trcoXR1K0JZYv7hcViLX",
+    "usage": 0.2090454,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 62481,
+    "native_tokens_cached": 62082,
+    "native_tokens_completion": 19571,
+    "native_tokens_reasoning": 11115
+   },
+   "gen-1791102128-hVxrefUOA3frTfpCqGcp": {
+    "id": "gen-1791102128-hVxrefUOA3frTfpCqGcp",
+    "usage": 0.0385288,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 71485,
+    "native_tokens_cached": 62324,
+    "native_tokens_completion": 324,
+    "native_tokens_reasoning": 26
+   },
+   "gen-1791102137-JCxb5fF22547RKRh0gwM": {
+    "id": "gen-1791102137-JCxb5fF22547RKRh0gwM",
+    "usage": 0.0746796,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 72345,
+    "native_tokens_cached": 71328,
+    "native_tokens_completion": 5795,
+    "native_tokens_reasoning": 401
+   },
+   "gen-1791102176-iRZJ7Hf7SWMA9ZslzdTw": {
+    "id": "gen-1791102176-iRZJ7Hf7SWMA9ZslzdTw",
+    "usage": 0.0302391,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 77789,
+    "native_tokens_cached": 72188,
+    "native_tokens_completion": 180,
+    "native_tokens_reasoning": 54
+   },
+   "gen-1791102180-3jCEfKiyqt2VrnzxZq8i": {
+    "id": "gen-1791102180-3jCEfKiyqt2VrnzxZq8i",
+    "usage": 0.0198764,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 78995,
+    "native_tokens_cached": 77787,
+    "native_tokens_completion": 130,
+    "native_tokens_reasoning": 0
+   },
+   "gen-1791102185-LDHUkU1HvovHAv1vLlst": {
+    "id": "gen-1791102185-LDHUkU1HvovHAv1vLlst",
+    "usage": 0.0235401,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 80218,
+    "native_tokens_cached": 78993,
+    "native_tokens_completion": 468,
+    "native_tokens_reasoning": 246
+   },
+   "gen-1791102195-iNU6NkB75pPzMiumsh4a": {
+    "id": "gen-1791102195-iNU6NkB75pPzMiumsh4a",
+    "usage": 0.0222022,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 81944,
+    "native_tokens_cached": 80216,
+    "native_tokens_completion": 184,
+    "native_tokens_reasoning": 68
+   },
+   "gen-1791102200-ACroC4rfjjUpJKhyGNwr": {
+    "id": "gen-1791102200-ACroC4rfjjUpJKhyGNwr",
+    "usage": 0.0234599,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 83466,
+    "native_tokens_cached": 81942,
+    "native_tokens_completion": 334,
+    "native_tokens_reasoning": 87
+   },
+   "gen-1791102208-bOSnTp53hBUAOru3qkyC": {
+    "id": "gen-1791102208-bOSnTp53hBUAOru3qkyC",
+    "usage": 0.0221983,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 83960,
+    "native_tokens_cached": 83309,
+    "native_tokens_completion": 391,
+    "native_tokens_reasoning": 182
+   },
+   "gen-1791102217-xHEN5WT8xFsvGGGsCCKR": {
+    "id": "gen-1791102217-xHEN5WT8xFsvGGGsCCKR",
+    "usage": 0.0218156,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 84668,
+    "native_tokens_cached": 83958,
+    "native_tokens_completion": 325,
+    "native_tokens_reasoning": 183
+   },
+   "gen-1791102224-pBVReJXgvARAE90OQ6Dd": {
+    "id": "gen-1791102224-pBVReJXgvARAE90OQ6Dd",
+    "usage": 0.0202547,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 85487,
+    "native_tokens_cached": 84666,
+    "native_tokens_completion": 127,
+    "native_tokens_reasoning": 38
+   },
+   "gen-1791102228-zk54N2ehHXgsjqWm6e80": {
+    "id": "gen-1791102228-zk54N2ehHXgsjqWm6e80",
+    "usage": 0.022926,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 86541,
+    "native_tokens_cached": 85485,
+    "native_tokens_completion": 319,
+    "native_tokens_reasoning": 45
+   },
+   "gen-1791102276-gob2Hwdvvw6SkP94GTOj": {
+    "id": "gen-1791102276-gob2Hwdvvw6SkP94GTOj",
+    "usage": 0.0234393,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 87120,
+    "native_tokens_cached": 86539,
+    "native_tokens_completion": 468,
+    "native_tokens_reasoning": 270
+   },
+   "gen-1791102290-GovfjotBKUghvtUUs0vG": {
+    "id": "gen-1791102290-GovfjotBKUghvtUUs0vG",
+    "usage": 0.0204401,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 87705,
+    "native_tokens_cached": 87118,
+    "native_tokens_completion": 155,
+    "native_tokens_reasoning": 0
+   },
+   "gen-1791102305-asmZYmtyzF3jC7fvvnsQ": {
+    "id": "gen-1791102305-asmZYmtyzF3jC7fvvnsQ",
+    "usage": 0.0213346,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 88841,
+    "native_tokens_cached": 87703,
+    "native_tokens_completion": 95,
+    "native_tokens_reasoning": 0
+   },
+   "gen-1791102307-lpr59twbdKBw4IvLaFj0": {
+    "id": "gen-1791102307-lpr59twbdKBw4IvLaFj0",
+    "usage": 0.0323008,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 93681,
+    "native_tokens_cached": 88839,
+    "native_tokens_completion": 381,
+    "native_tokens_reasoning": 188
+   },
+   "gen-1791102317-3IhVzZFG1eJ5YXvXPtsg": {
+    "id": "gen-1791102317-3IhVzZFG1eJ5YXvXPtsg",
+    "usage": 0.0285599,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 94203,
+    "native_tokens_cached": 90917,
+    "native_tokens_completion": 224,
+    "native_tokens_reasoning": 0
+   },
+   "gen-1791102320-ZNgl7J0jhwxOE42sf6uB": {
+    "id": "gen-1791102320-ZNgl7J0jhwxOE42sf6uB",
+    "usage": 0.0250682,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 95198,
+    "native_tokens_cached": 94046,
+    "native_tokens_completion": 338,
+    "native_tokens_reasoning": 120
+   },
+   "gen-1791102329-MRcDjodEmNtG1WLqseHD": {
+    "id": "gen-1791102329-MRcDjodEmNtG1WLqseHD",
+    "usage": 0.0309807,
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "provider_name": "Claude Platform on AWS",
+    "native_tokens_prompt": 95601,
+    "native_tokens_cached": 95196,
+    "native_tokens_completion": 1093,
+    "native_tokens_reasoning": 0
+   }
+  }
+ },
+ "pareto": {
+  "telemetry": "{\"t\":1792432840113,\"model\":\"google/gemini-2.5-flash\",\"node\":\"gemini\",\"ttft_ms\":697,\"total_ms\":766,\"prompt_tokens\":972,\"completion_tokens\":5,\"usage\":true,\"response_id\":\"gen-1792432839-lm2ynzah2aYMEVZVLrBa\",\"ended\":\"completed\"}\n{\"t\":1792432841244,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":1880,\"total_ms\":1897,\"prompt_tokens\":2388,\"completion_tokens\":43,\"usage\":true,\"response_id\":\"gen-1792432839-Utbgqn39pLOHBGtMav6i\",\"ended\":\"completed\"}\n{\"t\":1792432845070,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":3544,\"total_ms\":3821,\"prompt_tokens\":2629,\"completion_tokens\":67,\"usage\":true,\"response_id\":\"gen-1792432841-lmv79P9VtVb6SJanwu8I\",\"ended\":\"completed\"}\n{\"t\":1792432846414,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":1321,\"total_ms\":1338,\"prompt_tokens\":4270,\"completion_tokens\":65,\"usage\":true,\"response_id\":\"gen-1792432845-QzwYefq4EmWCMDCSsj8g\",\"ended\":\"completed\"}\n{\"t\":1792432847531,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":1104,\"total_ms\":1115,\"prompt_tokens\":6229,\"completion_tokens\":25,\"usage\":true,\"response_id\":\"gen-1792432846-iJAePhg8RrmoDRkOZ1L8\",\"ended\":\"completed\"}\n{\"t\":1792432849980,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2427,\"total_ms\":2444,\"prompt_tokens\":6643,\"completion_tokens\":58,\"usage\":true,\"response_id\":\"gen-1792432847-zg02ET3fx2O1zTy8phn7\",\"ended\":\"completed\"}\n{\"t\":1792432852478,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2479,\"total_ms\":2494,\"prompt_tokens\":15610,\"completion_tokens\":62,\"usage\":true,\"response_id\":\"gen-1792432850-LGaFziadMs1zSD1pXsNf\",\"ended\":\"completed\"}\n{\"t\":1792432855455,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2953,\"total_ms\":2974,\"prompt_tokens\":15827,\"completion_tokens\":50,\"usage\":true,\"response_id\":\"gen-1792432852-12tE62ZmAaSs2T6hYK9l\",\"ended\":\"completed\"}\n{\"t\":1792432883676,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":13769,\"total_ms\":28217,\"prompt_tokens\":18242,\"completion_tokens\":1162,\"usage\":true,\"response_id\":\"gen-1792432855-tGavpbWZZX4nCZ05YFfl\",\"ended\":\"completed\"}\n{\"t\":1792432905791,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":22100,\"total_ms\":22103,\"prompt_tokens\":19037,\"completion_tokens\":732,\"usage\":true,\"response_id\":\"gen-1792432883-aqJUZWgxHlW2AAhVcl1n\",\"ended\":\"completed\"}\n{\"t\":1792433029422,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":123620,\"total_ms\":123622,\"prompt_tokens\":16233,\"completion_tokens\":6466,\"usage\":true,\"response_id\":\"gen-1792432905-EiNnkpWL983C03IhYxp9\",\"ended\":\"completed\"}\n{\"t\":1792433048832,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":19402,\"total_ms\":19404,\"prompt_tokens\":25734,\"completion_tokens\":797,\"usage\":true,\"response_id\":\"gen-1792433029-q7NJlacm4Nd4t5DkJAN7\",\"ended\":\"completed\"}\n{\"t\":1792433057736,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":6749,\"total_ms\":8897,\"prompt_tokens\":26578,\"completion_tokens\":290,\"usage\":true,\"response_id\":\"gen-1792433048-d3LqJwqHduZaMGLaWaOX\",\"ended\":\"completed\"}\n{\"t\":1792433104862,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":47114,\"total_ms\":47123,\"prompt_tokens\":26997,\"completion_tokens\":1853,\"usage\":true,\"response_id\":\"gen-1792433057-90Ud566JHR7RESE4bNoV\",\"ended\":\"completed\"}\n{\"t\":1792433168081,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":63200,\"total_ms\":63205,\"prompt_tokens\":28351,\"completion_tokens\":3002,\"usage\":true,\"response_id\":\"gen-1792433104-EvncPe2TABv06lvu9AlH\",\"ended\":\"completed\"}\n{\"t\":1792433230041,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":61943,\"total_ms\":61949,\"prompt_tokens\":31372,\"completion_tokens\":3165,\"usage\":true,\"response_id\":\"gen-1792433168-9lhZq0wHdDOIQfxK5y5r\",\"ended\":\"completed\"}\n{\"t\":1792433482455,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":219992,\"total_ms\":252403,\"prompt_tokens\":33647,\"completion_tokens\":55922,\"usage\":true,\"response_id\":\"gen-1792433230-LIoqm9S67smyJ6Jcsm5f\",\"ended\":\"completed\"}\n{\"t\":1792433497438,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":12276,\"total_ms\":14975,\"prompt_tokens\":16567,\"completion_tokens\":398,\"usage\":true,\"response_id\":\"gen-1792433482-lJe0nBL3fI5OVHNju3mC\",\"ended\":\"completed\"}\n{\"t\":1792433507743,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":8451,\"total_ms\":10300,\"prompt_tokens\":48210,\"completion_tokens\":202,\"usage\":true,\"response_id\":\"gen-1792433497-Scr03d3Qymr8SdWps6Yb\",\"ended\":\"completed\"}\n{\"t\":1792433627518,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":119763,\"total_ms\":119770,\"prompt_tokens\":48531,\"completion_tokens\":7021,\"usage\":true,\"response_id\":\"gen-1792433507-tMQqPRSnAXsLq8Qj53xA\",\"ended\":\"completed\"}\n{\"t\":1792433632328,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":3732,\"total_ms\":4802,\"prompt_tokens\":55054,\"completion_tokens\":63,\"usage\":true,\"response_id\":\"gen-1792433628-6yfiibhSHkfhgA9uMqMB\",\"ended\":\"completed\"}\n{\"t\":1792433635023,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2665,\"total_ms\":2692,\"prompt_tokens\":55203,\"completion_tokens\":42,\"usage\":true,\"response_id\":\"gen-1792433632-KTCVNzErRPvGI8wPARCv\",\"ended\":\"completed\"}\n{\"t\":1792433659754,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":24714,\"total_ms\":24716,\"prompt_tokens\":57234,\"completion_tokens\":984,\"usage\":true,\"response_id\":\"gen-1792433635-A2sfZGQ4WwG7Jt9dI0Ym\",\"ended\":\"completed\"}\n{\"t\":1792433667884,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2980,\"total_ms\":8123,\"prompt_tokens\":56267,\"completion_tokens\":24,\"usage\":true,\"response_id\":\"gen-1792433659-9LIW3wDiW28pGQdsnER3\",\"ended\":\"completed\"}\n{\"t\":1792433670963,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":3069,\"total_ms\":3074,\"prompt_tokens\":56550,\"completion_tokens\":15,\"usage\":true,\"response_id\":\"gen-1792433667-GfpBaSNfX2Qf1DkMfQFr\",\"ended\":\"completed\"}\n{\"t\":1792433675710,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":4729,\"total_ms\":4738,\"prompt_tokens\":18160,\"completion_tokens\":84,\"usage\":true,\"response_id\":\"gen-1792433671-Qg3PrgAEMB9oujbNUH2W\",\"ended\":\"completed\"}\n{\"t\":1792433690874,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":15149,\"total_ms\":15156,\"prompt_tokens\":60606,\"completion_tokens\":445,\"usage\":true,\"response_id\":\"gen-1792433675-AziCDKGE1VVklVHIQahJ\",\"ended\":\"completed\"}\n{\"t\":1792433724089,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":27715,\"total_ms\":33205,\"prompt_tokens\":61088,\"completion_tokens\":1196,\"usage\":true,\"response_id\":\"gen-1792433691-JvjUPqqssLIT9kMIkMF9\",\"ended\":\"completed\"}\n{\"t\":1792433747314,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":18139,\"total_ms\":23220,\"prompt_tokens\":62817,\"completion_tokens\":546,\"usage\":true,\"response_id\":\"gen-1792433724-hK5PZwpOMkhEcs9SeSHq\",\"ended\":\"completed\"}\n{\"t\":1792433767772,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":18362,\"total_ms\":20453,\"prompt_tokens\":19224,\"completion_tokens\":619,\"usage\":true,\"response_id\":\"gen-1792433747-cGOEiJawPPukeKnG3I79\",\"ended\":\"completed\"}\n{\"t\":1792433786653,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":18817,\"total_ms\":18870,\"prompt_tokens\":64349,\"completion_tokens\":568,\"usage\":true,\"response_id\":\"gen-1792433767-C9JxaHvSk1ifOZU8Zi8U\",\"ended\":\"completed\"}\n{\"t\":1792433806035,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":19374,\"total_ms\":19376,\"prompt_tokens\":71137,\"completion_tokens\":640,\"usage\":true,\"response_id\":\"gen-1792433786-WdqBvMncTKUxnPGxVL98\",\"ended\":\"completed\"}\n{\"t\":1792433810405,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":4359,\"total_ms\":4364,\"prompt_tokens\":71282,\"completion_tokens\":56,\"usage\":true,\"response_id\":\"gen-1792433806-JIMJsxJAryc6vTvYCfUG\",\"ended\":\"completed\"}\n{\"t\":1792433823235,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":9611,\"total_ms\":12818,\"prompt_tokens\":26916,\"completion_tokens\":411,\"usage\":true,\"response_id\":\"gen-1792433810-U5CHQ1D7k8gH1mg8RZra\",\"ended\":\"completed\"}\n{\"t\":1792433841043,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":17791,\"total_ms\":17796,\"prompt_tokens\":71668,\"completion_tokens\":582,\"usage\":true,\"response_id\":\"gen-1792433823-uYZEsfcndo9t2ZWn9aHO\",\"ended\":\"completed\"}\n{\"t\":1792433857720,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":16647,\"total_ms\":16667,\"prompt_tokens\":71858,\"completion_tokens\":463,\"usage\":true,\"response_id\":\"gen-1792433841-LaPsX8dpYO5OHBEgDfRU\",\"ended\":\"completed\"}\n{\"t\":1792433869714,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":11986,\"total_ms\":11989,\"prompt_tokens\":72880,\"completion_tokens\":369,\"usage\":true,\"response_id\":\"gen-1792433857-5QCai85YhgNu8GWsiS3e\",\"ended\":\"completed\"}\n{\"t\":1792433881135,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":7745,\"total_ms\":11414,\"prompt_tokens\":28321,\"completion_tokens\":287,\"usage\":true,\"response_id\":\"gen-1792433869-qSOtkUeJZ4BLyzRiDrqX\",\"ended\":\"completed\"}\n{\"t\":1792433890997,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":9846,\"total_ms\":9851,\"prompt_tokens\":73284,\"completion_tokens\":236,\"usage\":true,\"response_id\":\"gen-1792433881-w4RaDvvLrSzETpmlJIpy\",\"ended\":\"completed\"}\n{\"t\":1792433898420,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":7409,\"total_ms\":7413,\"prompt_tokens\":73497,\"completion_tokens\":202,\"usage\":true,\"response_id\":\"gen-1792433891-gcFECGVssIcscxMhNVPK\",\"ended\":\"completed\"}\n{\"t\":1792433904446,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":6009,\"total_ms\":6013,\"prompt_tokens\":73722,\"completion_tokens\":66,\"usage\":true,\"response_id\":\"gen-1792433898-sVlzaO6hXEonrNrF6nGn\",\"ended\":\"completed\"}\n{\"t\":1792433922714,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":6627,\"total_ms\":18256,\"prompt_tokens\":28574,\"completion_tokens\":307,\"usage\":true,\"response_id\":\"gen-1792433904-EopsRRDRrPunYizMNi1W\",\"ended\":\"completed\"}\n{\"t\":1792433945767,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":23039,\"total_ms\":23043,\"prompt_tokens\":74394,\"completion_tokens\":686,\"usage\":true,\"response_id\":\"gen-1792433922-aNfkr128eAfLFWn2Hon4\",\"ended\":\"completed\"}\n{\"t\":1792433978476,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":32694,\"total_ms\":32699,\"prompt_tokens\":74684,\"completion_tokens\":1438,\"usage\":true,\"response_id\":\"gen-1792433945-Mpkz30LY5OKKChlmhHVJ\",\"ended\":\"completed\"}\n{\"t\":1792434006109,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":3867,\"total_ms\":27620,\"prompt_tokens\":75625,\"completion_tokens\":28,\"usage\":true,\"response_id\":\"gen-1792433978-T6DWS1vEcemwsPT1WgJO\",\"ended\":\"completed\"}\n{\"t\":1792434050631,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":7726,\"total_ms\":44516,\"prompt_tokens\":29260,\"completion_tokens\":2482,\"usage\":true,\"response_id\":\"gen-1792434006-utINf5rgQ3wAE0nXJ6D6\",\"ended\":\"completed\"}\n{\"t\":1792434058069,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":4063,\"total_ms\":7425,\"prompt_tokens\":78602,\"completion_tokens\":46,\"usage\":true,\"response_id\":\"gen-1792434050-Iu8nkdb4FnKuXiLiBM2P\",\"ended\":\"completed\"}\n{\"t\":1792434076703,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":18624,\"total_ms\":18628,\"prompt_tokens\":78853,\"completion_tokens\":612,\"usage\":true,\"response_id\":\"gen-1792434058-AfybUIojXyTnbIweunUN\",\"ended\":\"completed\"}\n{\"t\":1792434082542,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":5825,\"total_ms\":5828,\"prompt_tokens\":78970,\"completion_tokens\":125,\"usage\":true,\"response_id\":\"gen-1792434076-mgRsgh67Gq9ySVHdbfGM\",\"ended\":\"completed\"}\n{\"t\":1792434091443,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":8885,\"total_ms\":8889,\"prompt_tokens\":29620,\"completion_tokens\":360,\"usage\":true,\"response_id\":\"gen-1792434082-LfSSK3zztAON65FtCuBC\",\"ended\":\"completed\"}\n{\"t\":1792434095224,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":3481,\"total_ms\":3768,\"prompt_tokens\":78405,\"completion_tokens\":32,\"usage\":true,\"response_id\":\"gen-1792434091-vfv3pUmFRU48S9WPIUvH\",\"ended\":\"completed\"}\n{\"t\":1792434134387,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2566,\"total_ms\":39156,\"prompt_tokens\":78731,\"completion_tokens\":126,\"usage\":true,\"response_id\":\"gen-1792434095-RPS8lAWEE5mlBrO19luI\",\"ended\":\"completed\"}\n{\"t\":1792434149555,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":7984,\"total_ms\":15162,\"prompt_tokens\":79670,\"completion_tokens\":3010,\"usage\":true,\"response_id\":\"gen-1792434134-Qrl00V2GFcdCBIfU4RNJ\",\"ended\":\"completed\"}\n{\"t\":1792434184664,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2781,\"total_ms\":35097,\"prompt_tokens\":81827,\"completion_tokens\":25,\"usage\":true,\"response_id\":\"gen-1792434149-bVfRF0ZtnZWW9SU5BMXT\",\"ended\":\"completed\"}\n{\"t\":1792434220912,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":35308,\"total_ms\":36239,\"prompt_tokens\":82283,\"completion_tokens\":5846,\"usage\":true,\"response_id\":\"gen-1792434184-QPap17yGCO6n194hp9YF\",\"ended\":\"completed\"}\n{\"t\":1792434242929,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":16838,\"total_ms\":21994,\"prompt_tokens\":30896,\"completion_tokens\":4671,\"usage\":true,\"response_id\":\"gen-1792434221-9chqUQdD4wqF70IUCgAI\",\"ended\":\"completed\"}\n{\"t\":1792434248495,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2507,\"total_ms\":5557,\"prompt_tokens\":84623,\"completion_tokens\":25,\"usage\":true,\"response_id\":\"gen-1792434243-XiDm7ovwSRkP98Y39Gpt\",\"ended\":\"completed\"}\n{\"t\":1792434251299,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2794,\"total_ms\":2798,\"prompt_tokens\":84936,\"completion_tokens\":176,\"usage\":true,\"response_id\":\"gen-1792434248-86CG8VKQKOVsJ2Sg4w3I\",\"ended\":\"completed\"}\n{\"t\":1792434259679,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2519,\"total_ms\":8368,\"prompt_tokens\":85132,\"completion_tokens\":25,\"usage\":true,\"response_id\":\"gen-1792434251-ejCxC9ephwFZ31Mrhivs\",\"ended\":\"completed\"}\n{\"t\":1792434286620,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":22541,\"total_ms\":26934,\"prompt_tokens\":31470,\"completion_tokens\":5177,\"usage\":true,\"response_id\":\"gen-1792434259-ENqqa8DnDah0WRDMm70N\",\"ended\":\"completed\"}\n{\"t\":1792434291347,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2822,\"total_ms\":4715,\"prompt_tokens\":87047,\"completion_tokens\":26,\"usage\":true,\"response_id\":\"gen-1792434286-gX5L01fO56OcX3DCKDcR\",\"ended\":\"completed\"}\n{\"t\":1792434294069,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2681,\"total_ms\":2715,\"prompt_tokens\":87397,\"completion_tokens\":144,\"usage\":true,\"response_id\":\"gen-1792434291-7gNjfIKdyuSYRjhxvjKS\",\"ended\":\"completed\"}\n{\"t\":1792434296743,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2625,\"total_ms\":2667,\"prompt_tokens\":87577,\"completion_tokens\":139,\"usage\":true,\"response_id\":\"gen-1792434294-7iZLlR0cgMl3dXISZ4KW\",\"ended\":\"completed\"}\n{\"t\":1792434313835,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":14136,\"total_ms\":17086,\"prompt_tokens\":31918,\"completion_tokens\":3062,\"usage\":true,\"response_id\":\"gen-1792434296-AtCq2KA2dANWb4U3Q8OP\",\"ended\":\"completed\"}\n{\"t\":1792434317487,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2589,\"total_ms\":3638,\"prompt_tokens\":88942,\"completion_tokens\":24,\"usage\":true,\"response_id\":\"gen-1792434313-5hu11Jx93lkwoo5w1Hv7\",\"ended\":\"completed\"}\n{\"t\":1792434383881,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":66383,\"total_ms\":66387,\"prompt_tokens\":89549,\"completion_tokens\":14020,\"usage\":true,\"response_id\":\"gen-1792434317-XxJHIy798GVexGaL03mt\",\"ended\":\"completed\"}\n{\"t\":1792434389326,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2806,\"total_ms\":5435,\"prompt_tokens\":90642,\"completion_tokens\":26,\"usage\":true,\"response_id\":\"gen-1792434384-cmnzNi415RV0fL6SlvYh\",\"ended\":\"completed\"}\n{\"t\":1792434405746,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2453,\"total_ms\":16413,\"prompt_tokens\":90814,\"completion_tokens\":106,\"usage\":true,\"response_id\":\"gen-1792434389-NUvcehH5QsHR1nyxoEdH\",\"ended\":\"completed\"}\n{\"t\":1792434424400,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":10091,\"total_ms\":18647,\"prompt_tokens\":32824,\"completion_tokens\":3752,\"usage\":true,\"response_id\":\"gen-1792434405-LOXsKhN9sEW933IWmHc6\",\"ended\":\"completed\"}\n{\"t\":1792434432171,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2461,\"total_ms\":7758,\"prompt_tokens\":94011,\"completion_tokens\":25,\"usage\":true,\"response_id\":\"gen-1792434424-Da3PJ7TJyOvtUMS6m5Ra\",\"ended\":\"completed\"}\n{\"t\":1792434441099,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":8915,\"total_ms\":8921,\"prompt_tokens\":94421,\"completion_tokens\":1723,\"usage\":true,\"response_id\":\"gen-1792434432-8rBVRme5zMX1ZERTctGk\",\"ended\":\"completed\"}\n{\"t\":1792434445577,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2508,\"total_ms\":4466,\"prompt_tokens\":95894,\"completion_tokens\":25,\"usage\":true,\"response_id\":\"gen-1792434441-zLjK1XimhxUE9G36co6I\",\"ended\":\"completed\"}\n{\"t\":1792434456740,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":6272,\"total_ms\":11157,\"prompt_tokens\":33336,\"completion_tokens\":2280,\"usage\":true,\"response_id\":\"gen-1792434445-AL6KiV7EY1MuZf0fBZBA\",\"ended\":\"completed\"}\n{\"t\":1792434466367,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2705,\"total_ms\":9615,\"prompt_tokens\":97718,\"completion_tokens\":25,\"usage\":true,\"response_id\":\"gen-1792434456-S6CAJXlGWR9CsS89zQ1d\",\"ended\":\"completed\"}\n{\"t\":1792434470634,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":4152,\"total_ms\":4260,\"prompt_tokens\":97902,\"completion_tokens\":419,\"usage\":true,\"response_id\":\"gen-1792434466-NRBR8mS397PCejworhj0\",\"ended\":\"completed\"}\n{\"t\":1792434480253,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":9608,\"total_ms\":9612,\"prompt_tokens\":98624,\"completion_tokens\":2187,\"usage\":true,\"response_id\":\"gen-1792434470-NPi6SCBsoW3dS9RqKqTc\",\"ended\":\"completed\"}\n{\"t\":1792434517175,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":31738,\"total_ms\":36914,\"prompt_tokens\":33898,\"completion_tokens\":8324,\"usage\":true,\"response_id\":\"gen-1792434480-DC0plq0blrL1dhL5qmAl\",\"ended\":\"completed\"}\n{\"t\":1792434522033,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2806,\"total_ms\":4834,\"prompt_tokens\":102456,\"completion_tokens\":25,\"usage\":true,\"response_id\":\"gen-1792434517-kWouDkQFTscUDYOSGPXa\",\"ended\":\"completed\"}\n{\"t\":1792434524812,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2768,\"total_ms\":2772,\"prompt_tokens\":103340,\"completion_tokens\":65,\"usage\":true,\"response_id\":\"gen-1792434522-iRSCXp9SHbKsoi1JcSES\",\"ended\":\"completed\"}\n{\"t\":1792434527627,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2785,\"total_ms\":2801,\"prompt_tokens\":104205,\"completion_tokens\":92,\"usage\":true,\"response_id\":\"gen-1792434524-TS998nZ8Mx7NMpHPtCFp\",\"ended\":\"completed\"}\n{\"t\":1792434545678,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":17088,\"total_ms\":18043,\"prompt_tokens\":35300,\"completion_tokens\":3219,\"usage\":true,\"response_id\":\"gen-1792434527-5xEwo12OkwbiHXdZxQ2O\",\"ended\":\"completed\"}\n{\"t\":1792434548323,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2615,\"total_ms\":2632,\"prompt_tokens\":104807,\"completion_tokens\":49,\"usage\":true,\"response_id\":\"gen-1792434545-dDZbOG5N3obMoEu81bN3\",\"ended\":\"completed\"}\n{\"t\":1792434551425,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":3089,\"total_ms\":3093,\"prompt_tokens\":105239,\"completion_tokens\":206,\"usage\":true,\"response_id\":\"gen-1792434548-Tg2zMz11QW5YjgXeo24a\",\"ended\":\"completed\"}\n{\"t\":1792434556119,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2670,\"total_ms\":4683,\"prompt_tokens\":105582,\"completion_tokens\":25,\"usage\":true,\"response_id\":\"gen-1792434551-bob6FzAUYkJEa7AWq8it\",\"ended\":\"completed\"}\n{\"t\":1792434566755,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":10049,\"total_ms\":10627,\"prompt_tokens\":106466,\"completion_tokens\":1341,\"usage\":true,\"response_id\":\"gen-1792434556-iPfdgEmFCVUE4zfWL8xw\",\"ended\":\"completed\"}\n{\"t\":1792434569491,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2720,\"total_ms\":2724,\"prompt_tokens\":107086,\"completion_tokens\":92,\"usage\":true,\"response_id\":\"gen-1792434566-cVHsJDIMbLsgcUWWbxnO\",\"ended\":\"completed\"}\n{\"t\":1792434755888,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":6187,\"total_ms\":186389,\"prompt_tokens\":36936,\"completion_tokens\":708,\"usage\":true,\"response_id\":\"gen-1792434569-8udO9qTkwjhdrxKszgGb\",\"ended\":\"completed\"}\n{\"t\":1792434764605,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":8471,\"total_ms\":8710,\"prompt_tokens\":107813,\"completion_tokens\":47,\"usage\":true,\"response_id\":\"gen-1792434761-0FuL3Uv6uj3NuBlsiGgE\",\"ended\":\"completed\"}\n{\"t\":1792434773261,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":8604,\"total_ms\":8650,\"prompt_tokens\":108052,\"completion_tokens\":46,\"usage\":true,\"response_id\":\"gen-1792434770-kCoOsmBSxchC6bWrNMv9\",\"ended\":\"completed\"}\n{\"t\":1792434781583,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":8307,\"total_ms\":8313,\"prompt_tokens\":108522,\"completion_tokens\":70,\"usage\":true,\"response_id\":\"gen-1792434778-pRxlPFmDQfXkBkcLOBH7\",\"ended\":\"completed\"}\n{\"t\":1792434791373,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":9717,\"total_ms\":9780,\"prompt_tokens\":37786,\"completion_tokens\":245,\"usage\":true,\"response_id\":\"gen-1792434787-ziB2k2rkKbnxRPihOgoR\",\"ended\":\"completed\"}\n{\"t\":1792434804964,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":12917,\"total_ms\":13584,\"prompt_tokens\":109148,\"completion_tokens\":369,\"usage\":true,\"response_id\":\"gen-1792434800-6aMiAjq7662qkoz7YxeW\",\"ended\":\"completed\"}\n{\"t\":1792434809931,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":4919,\"total_ms\":4960,\"prompt_tokens\":109660,\"completion_tokens\":127,\"usage\":true,\"response_id\":\"gen-1792434806-ZE7LRLHKxZwh96BsZSuT\",\"ended\":\"completed\"}\n{\"t\":1792434821766,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2645,\"total_ms\":11826,\"prompt_tokens\":109979,\"completion_tokens\":132,\"usage\":true,\"response_id\":\"gen-1792434810-jWtlVamGn1941O4FrR3B\",\"ended\":\"completed\"}\n{\"t\":1792434834662,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":5379,\"total_ms\":12890,\"prompt_tokens\":38591,\"completion_tokens\":2091,\"usage\":true,\"response_id\":\"gen-1792434821-J1GL95OCTc994HrPLg4i\",\"ended\":\"completed\"}\n{\"t\":1792434837478,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2728,\"total_ms\":2799,\"prompt_tokens\":112277,\"completion_tokens\":26,\"usage\":true,\"response_id\":\"gen-1792434834-AQ9ZLrLd5fyE7vnGG5ql\",\"ended\":\"completed\"}\n{\"t\":1792434853521,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":10823,\"total_ms\":16036,\"prompt_tokens\":112563,\"completion_tokens\":3274,\"usage\":true,\"response_id\":\"gen-1792434837-9bh8ML0q8awoCAb3qgPR\",\"ended\":\"completed\"}\n{\"t\":1792434857909,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2748,\"total_ms\":4372,\"prompt_tokens\":114418,\"completion_tokens\":26,\"usage\":true,\"response_id\":\"gen-1792434853-xitWJMJKu2bfVaF9wA2W\",\"ended\":\"completed\"}\n{\"t\":1792434873474,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":10056,\"total_ms\":15557,\"prompt_tokens\":40647,\"completion_tokens\":2609,\"usage\":true,\"response_id\":\"gen-1792434858-iMZsD2eNUIzsaHHnD9Bv\",\"ended\":\"completed\"}\n{\"t\":1792434877037,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2637,\"total_ms\":3548,\"prompt_tokens\":118942,\"completion_tokens\":26,\"usage\":true,\"response_id\":\"gen-1792434873-ntw0wcSKQO6C9NQ7txVS\",\"ended\":\"completed\"}\n{\"t\":1792434879938,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2891,\"total_ms\":2895,\"prompt_tokens\":119249,\"completion_tokens\":75,\"usage\":true,\"response_id\":\"gen-1792434877-UJCh1bVqOQb6JJR6NbMy\",\"ended\":\"completed\"}\n{\"t\":1792434883600,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2549,\"total_ms\":3654,\"prompt_tokens\":119462,\"completion_tokens\":26,\"usage\":true,\"response_id\":\"gen-1792434880-qNbBDNR9303RGzegul9A\",\"ended\":\"completed\"}\n{\"t\":1792434889530,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":5897,\"total_ms\":5923,\"prompt_tokens\":41360,\"completion_tokens\":661,\"usage\":true,\"response_id\":\"gen-1792434883-x4LEplCkix3CoTJO9eew\",\"ended\":\"completed\"}\n{\"t\":1792434893575,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":4033,\"total_ms\":4037,\"prompt_tokens\":120116,\"completion_tokens\":743,\"usage\":true,\"response_id\":\"gen-1792434889-RC9EmSWBOoTiRHHlse9w\",\"ended\":\"completed\"}\n{\"t\":1792434897739,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":3041,\"total_ms\":4145,\"prompt_tokens\":120997,\"completion_tokens\":26,\"usage\":true,\"response_id\":\"gen-1792434893-RbKU6NGlOWPNkyTemZnA\",\"ended\":\"completed\"}\n{\"t\":1792434905833,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":5659,\"total_ms\":8087,\"prompt_tokens\":121308,\"completion_tokens\":1236,\"usage\":true,\"response_id\":\"gen-1792434897-sGJ3ml9CllNUN9qokVzA\",\"ended\":\"completed\"}\n{\"t\":1792434952351,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":40167,\"total_ms\":46510,\"prompt_tokens\":43023,\"completion_tokens\":9077,\"usage\":true,\"response_id\":\"gen-1792434905-4AvuxkyOHcKgi7ZsBBW4\",\"ended\":\"completed\"}\n{\"t\":1792434958038,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2700,\"total_ms\":5670,\"prompt_tokens\":126801,\"completion_tokens\":26,\"usage\":true,\"response_id\":\"gen-1792434952-DN1pgXxKJzQm0TqLlZjI\",\"ended\":\"completed\"}\n{\"t\":1792434967781,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":5878,\"total_ms\":9735,\"prompt_tokens\":127530,\"completion_tokens\":935,\"usage\":true,\"response_id\":\"gen-1792434958-F0Ixb9MZJ0s2LY9JJ8H0\",\"ended\":\"completed\"}\n{\"t\":1792434983343,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":11017,\"total_ms\":15548,\"prompt_tokens\":128273,\"completion_tokens\":2063,\"usage\":true,\"response_id\":\"gen-1792434967-4G3NM4pGoFF4LVlhsQ9q\",\"ended\":\"completed\"}\n{\"t\":1792434995949,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":12591,\"total_ms\":12595,\"prompt_tokens\":129174,\"completion_tokens\":2028,\"usage\":true,\"response_id\":\"gen-1792434985-q7l6K3d88j4XczxkrLaO\",\"ended\":\"completed\"}\n{\"t\":1792435029056,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":31257,\"total_ms\":33098,\"prompt_tokens\":44500,\"completion_tokens\":5227,\"usage\":true,\"response_id\":\"gen-1792434996-6MZc4Y6e1DqSTgWa68pS\",\"ended\":\"completed\"}\n{\"t\":1792435036222,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":7145,\"total_ms\":7149,\"prompt_tokens\":131071,\"completion_tokens\":1366,\"usage\":true,\"response_id\":\"gen-1792435029-5WweupWDFPAp43pkYe7K\",\"ended\":\"completed\"}\n{\"t\":1792435041095,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":3374,\"total_ms\":4860,\"prompt_tokens\":132570,\"completion_tokens\":24,\"usage\":true,\"response_id\":\"gen-1792435036-y6zUwMbP8xBQlcwrCJX6\",\"ended\":\"completed\"}\n{\"t\":1792435047667,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":3463,\"total_ms\":6561,\"prompt_tokens\":132933,\"completion_tokens\":165,\"usage\":true,\"response_id\":\"gen-1792435041-93MathRtZ2Nd2Q8BHW7K\",\"ended\":\"completed\"}\n{\"t\":1792435054702,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":7022,\"total_ms\":7027,\"prompt_tokens\":45327,\"completion_tokens\":1554,\"usage\":true,\"response_id\":\"gen-1792435047-T3RfmtypcspUSaQ60R5s\",\"ended\":\"completed\"}\n{\"t\":1792435059061,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":3072,\"total_ms\":4343,\"prompt_tokens\":135221,\"completion_tokens\":24,\"usage\":true,\"response_id\":\"gen-1792435054-4pECuDbpQyRmRNesycYv\",\"ended\":\"completed\"}\n{\"t\":1792435062245,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":3170,\"total_ms\":3175,\"prompt_tokens\":135555,\"completion_tokens\":290,\"usage\":true,\"response_id\":\"gen-1792435059-ad5xi9FZT8uHdQzFpy9K\",\"ended\":\"completed\"}\n{\"t\":1792435067093,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2830,\"total_ms\":4834,\"prompt_tokens\":135981,\"completion_tokens\":24,\"usage\":true,\"response_id\":\"gen-1792435062-rTq59NXGdeLuAnGYCKxy\",\"ended\":\"completed\"}\n{\"t\":1792435120686,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":20969,\"total_ms\":53585,\"prompt_tokens\":45939,\"completion_tokens\":3568,\"usage\":true,\"response_id\":\"gen-1792435067-6kWHm2FZVSwMOI24NinW\",\"ended\":\"completed\"}\n{\"t\":1792435123832,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":3113,\"total_ms\":3131,\"prompt_tokens\":136943,\"completion_tokens\":45,\"usage\":true,\"response_id\":\"gen-1792435120-G45sG2NVfIJW2H5y0cD0\",\"ended\":\"completed\"}\n{\"t\":1792435126765,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2916,\"total_ms\":2921,\"prompt_tokens\":137360,\"completion_tokens\":164,\"usage\":true,\"response_id\":\"gen-1792435124-hQlHeMcxVTbv3Qsy4aT2\",\"ended\":\"completed\"}\n{\"t\":1792435129473,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2665,\"total_ms\":2685,\"prompt_tokens\":137996,\"completion_tokens\":31,\"usage\":true,\"response_id\":\"gen-1792435126-wu9nBwrFUOW31WDWlelG\",\"ended\":\"completed\"}\n{\"t\":1792435173273,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":12963,\"total_ms\":43792,\"prompt_tokens\":47415,\"completion_tokens\":1693,\"usage\":true,\"response_id\":\"gen-1792435129-hInrj2auDYXMZJffl4Gh\",\"ended\":\"completed\"}\n{\"t\":1792435182824,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":4421,\"total_ms\":9537,\"prompt_tokens\":138741,\"completion_tokens\":391,\"usage\":true,\"response_id\":\"gen-1792435173-zHA0SsfWr4hgPHrRwGl2\",\"ended\":\"completed\"}\n{\"t\":1792435194306,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2816,\"total_ms\":11473,\"prompt_tokens\":139325,\"completion_tokens\":621,\"usage\":true,\"response_id\":\"gen-1792435182-vBNz5YSQwd6nuDb5o8am\",\"ended\":\"completed\"}\n{\"t\":1792435197449,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":3121,\"total_ms\":3127,\"prompt_tokens\":140107,\"completion_tokens\":102,\"usage\":true,\"response_id\":\"gen-1792435194-FwmQy7loc518v0Jmp1Qw\",\"ended\":\"completed\"}\n{\"t\":1792435218018,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":20484,\"total_ms\":20550,\"prompt_tokens\":48217,\"completion_tokens\":3337,\"usage\":true,\"response_id\":\"gen-1792435197-qyxzyYcUe6tyakNpUo38\",\"ended\":\"completed\"}\n{\"t\":1792435253013,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":3100,\"total_ms\":34984,\"prompt_tokens\":140609,\"completion_tokens\":132,\"usage\":true,\"response_id\":\"gen-1792435218-vlbLnI4LUBnlqPgT7Ai6\",\"ended\":\"completed\"}\n{\"t\":1792435258219,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":3850,\"total_ms\":5195,\"prompt_tokens\":141117,\"completion_tokens\":238,\"usage\":true,\"response_id\":\"gen-1792435253-Sq2vxXU3bxsFRS8Wrg9v\",\"ended\":\"completed\"}\n{\"t\":1792435265805,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2828,\"total_ms\":7576,\"prompt_tokens\":141599,\"completion_tokens\":70,\"usage\":true,\"response_id\":\"gen-1792435258-QgNocjxF1TaiGEyCCyiM\",\"ended\":\"completed\"}\n{\"t\":1792435281851,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":3826,\"total_ms\":16034,\"prompt_tokens\":49055,\"completion_tokens\":954,\"usage\":true,\"response_id\":\"gen-1792435265-GLZwC9NevQBCqiHTusIn\",\"ended\":\"completed\"}\n{\"t\":1792435296801,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":3027,\"total_ms\":14936,\"prompt_tokens\":142810,\"completion_tokens\":227,\"usage\":true,\"response_id\":\"gen-1792435282-gBbJJdfo7T9T4AULwl5b\",\"ended\":\"completed\"}\n{\"t\":1792435300339,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":3167,\"total_ms\":3527,\"prompt_tokens\":143275,\"completion_tokens\":91,\"usage\":true,\"response_id\":\"gen-1792435296-aW2YxVr5w8mDNiKUFVL7\",\"ended\":\"completed\"}\n{\"t\":1792435311022,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":3118,\"total_ms\":10672,\"prompt_tokens\":143560,\"completion_tokens\":106,\"usage\":true,\"response_id\":\"gen-1792435300-aN8nIQExaZUipvULeGJJ\",\"ended\":\"completed\"}\n{\"t\":1792435314402,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":2901,\"total_ms\":3368,\"prompt_tokens\":143929,\"completion_tokens\":99,\"usage\":true,\"response_id\":\"gen-1792435311-5fyfXQDyJXmwfcfjJsEi\",\"ended\":\"completed\"}\n{\"t\":1792435351479,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":8011,\"total_ms\":37068,\"prompt_tokens\":145278,\"completion_tokens\":1037,\"usage\":true,\"response_id\":\"gen-1792435314-slEee5E5mV8NjBvhPEPe\",\"ended\":\"completed\"}\n{\"t\":1792435363167,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":8399,\"total_ms\":11669,\"prompt_tokens\":51264,\"completion_tokens\":1259,\"usage\":true,\"response_id\":\"gen-1792435351-UIVSJIwV2BXhooN1QPow\",\"ended\":\"completed\"}\n{\"t\":1792435366493,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":3244,\"total_ms\":3312,\"prompt_tokens\":146309,\"completion_tokens\":84,\"usage\":true,\"response_id\":\"gen-1792435363-8Nut2HK7J57HwSpjfew7\",\"ended\":\"completed\"}\n{\"t\":1792435376248,\"model\":\"unbiased/pareto-26.10\",\"node\":\"pareto\",\"ttft_ms\":3659,\"total_ms\":9744,\"prompt_tokens\":146650,\"completion_tokens\":1353,\"usage\":true,\"response_id\":\"gen-1792435366-UK2oGnLXx7ZGC8SFVRVg\",\"ended\":\"completed\"}\n",
+  "modelCost": {
+   "provider": "openrouter",
+   "source": "https://openrouter.ai/api/v1/generation (usage per generation id)",
+   "status": "complete",
+   "billed_usd": 1.234116671,
+   "billed_usd_is_lower_bound": false,
+   "incomplete_reasons": [],
+   "request_count": 140,
+   "generation_ids_collected": 140,
+   "tokens": {
+    "prompt": 10932017,
+    "cached": 10598081,
+    "completion": 206869,
+    "reasoning": 0
+   },
+   "hosts": {
+    "Google": 1,
+    "Unbiased": 139
+   },
+   "missing": [],
+   "late": [],
+   "incomplete_calls": {
+    "count": 0,
+    "billed_usd": 0.0,
+    "ids": []
+   },
+   "reconciliation": {
+    "status": "billed_calls_outside_session_counters",
+    "against": "goose session counters (sessions.db accumulated_*)",
+    "goose_tokens": {
+     "prompt": 10931045,
+     "cached": 10598081,
+     "completion": 206864
+    },
+    "unattributed_tokens": {
+     "prompt": -972,
+     "cached": 0,
+     "completion": -5
+    },
+    "telemetry_native_proof": {
+     "status": "matched",
+     "generations_covered": 140,
+     "completed_native_counts_matched": 140,
+     "missing_native_usage_ids": [],
+     "mismatched_generation_ids": [],
+     "reasons": []
+    },
+    "billed_tokens_outside_session_counters": {
+     "prompt": 972,
+     "cached": 0,
+     "completion": 5
+    }
+   },
+   "generation_id_sources": {
+    "telemetry": 140,
+    "sessions_db_message_ids": 34,
+    "request_logs": 10
+   },
+   "telemetry": {
+    "status": "recorded",
+    "path": "/Users/example/Library/Application Support/Goose/benchmark/runs/build/openrouter-cloud-48107c98-71d8-4f7b-95de-6b5c0a50717a-r0/.swarm/telemetry.jsonl",
+    "calls": 140,
+    "invalid_native_usage_ids": [],
+    "conflicting_native_usage_ids": [],
+    "invalid_model_ids": [],
+    "conflicting_model_ids": [],
+    "calls_without_response_id": 0,
+    "calls_without_end_marker": 0,
+    "unparseable_lines": 0
+   },
+   "model": "unbiased/pareto-26.10",
+   "budget": {
+    "max_calls": 150,
+    "calls_used": 139,
+    "calls_source": "telemetry (provider calls on the entrant model)",
+    "calls_other_models": {
+     "google/gemini-2.5-flash": 1
+    },
+    "stopped_by": "model_finished"
+   }
+  }
+ }
+}

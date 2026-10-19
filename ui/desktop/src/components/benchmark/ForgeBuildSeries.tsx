@@ -116,7 +116,18 @@ export function ForgeBuildSeries({
     if (!window.electron.benchmarkRunResult || !childKeys) return;
     let alive = true;
     void Promise.all(
-      childKeys.split('|').map(async (key) => [key, (await window.electron.benchmarkRunResult(key).catch(() => null)) as Record<string, unknown> | null] as const)
+      childKeys
+        .split('|')
+        .map(
+          async (key) =>
+            [
+              key,
+              (await window.electron.benchmarkRunResult(key).catch(() => null)) as Record<
+                string,
+                unknown
+              > | null,
+            ] as const
+        )
     ).then((pairs) => {
       if (alive) setRows(Object.fromEntries(pairs));
     });
@@ -222,30 +233,53 @@ export function ForgeBuildSeries({
         )
       )
         throw new Error(intl.formatMessage(messages.waitingPublish));
-      for (const child of currentChildren) {
-        if (isPosted(child)) continue;
-        if (!currentPublishableSeries(await window.electron.benchmarkSeries(series.id), series))
-          throw new Error(intl.formatMessage(messages.waitingPublish));
-        const runKey = seriesSessionKey(child);
-        setPublishingBuild(child.buildIndex ?? null);
-        const result = await window.electron.benchmarkPublish({
-          title: title.trim(),
-          runKey,
-          ...(price.prices ? { declaredPrices: price.prices } : {}),
-        });
-        if (!result?.ok)
-          throw new Error(
-            result?.error ?? result?.message ?? intl.formatMessage(messages.noResponse)
-          );
-        const said = publishNotes(result);
+      // ONE publish for the series: main prepares both builds, checks they land as one entry, then posts them in
+      // build order under this title (benchSeriesPublish). Built for the first build not yet live.
+      const next = currentChildren.find((child) => !isPosted(child));
+      if (!next) return;
+      if (!currentPublishableSeries(await window.electron.benchmarkSeries(series.id), series))
+        throw new Error(intl.formatMessage(messages.waitingPublish));
+      setPublishingBuild(next.buildIndex ?? null);
+      const result = await window.electron.benchmarkPublish({
+        title: title.trim(),
+        runKey: seriesSessionKey(next),
+        ...(price.prices ? { declaredPrices: price.prices } : {}),
+      });
+      // Each build main posted (or found already live) is remembered, so a refused build 2 can be posted alone.
+      const builds = Array.isArray(result?.builds) ? result.builds : [];
+      for (const build of builds) {
+        if (!build?.ok) continue;
+        const child = currentChildren.find((c) => c.buildIndex === build.index);
+        if (!child) continue;
+        const said = publishNotes(build);
         if (said.length)
-          setNotes((now) => [...now, ...said.map((note) => `Build ${child.buildIndex}: ${note}`)]);
+          setNotes((now) => [...now, ...said.map((note) => `Build ${build.index}: ${note}`)]);
         setAccepted((previous) => ({
           ...previous,
-          [runKey]: { url: result.url ?? null, score: child.score, rescoredAt: child.rescoredAt },
+          [seriesSessionKey(child)]: {
+            url: typeof build.url === 'string' ? build.url : null,
+            score: child.score,
+            rescoredAt: child.rescoredAt,
+          },
         }));
-        await onPublished();
       }
+      if (!builds.length && result?.ok) {
+        const said = publishNotes(result);
+        if (said.length) setNotes((now) => [...now, ...said]);
+        setAccepted((previous) => ({
+          ...previous,
+          [seriesSessionKey(next)]: {
+            url: typeof result.url === 'string' ? result.url : null,
+            score: next.score,
+            rescoredAt: next.rescoredAt,
+          },
+        }));
+      }
+      await onPublished();
+      if (!result?.ok)
+        throw new Error(
+          result?.error ?? result?.message ?? intl.formatMessage(messages.noResponse)
+        );
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
       await onPublished();

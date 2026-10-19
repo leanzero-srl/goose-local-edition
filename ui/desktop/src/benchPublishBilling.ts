@@ -24,7 +24,13 @@ export async function benchPublishBilling(
   stored: Record<string, unknown>,
   declared: unknown,
   readFile: (file: string) => Promise<Buffer>
-): Promise<{ record?: PublishBilling; verdict?: Record<string, unknown>; error?: string }> {
+): Promise<{
+  record?: PublishBilling;
+  verdict?: Record<string, unknown>;
+  /** sha256 of the verdict.json bytes read (the bill's nativeVerdictSha256). */
+  verdictSha256?: string;
+  error?: string;
+}> {
   const prices = declared === undefined || declared === null ? null : readDeclaredPrices(declared);
   if (prices === 'invalid')
     return {
@@ -54,7 +60,10 @@ export async function benchPublishBilling(
       const raw = await readFile(path.join(dir, 'verdict.json'));
       const v = JSON.parse(raw.toString('utf8')) as Record<string, unknown>;
       const agent = (v?.agent ?? {}) as { billed_cost?: unknown };
-      if (stored.billedCost === undefined || util.isDeepStrictEqual(agent.billed_cost, stored.billedCost)) {
+      if (
+        stored.billedCost === undefined ||
+        util.isDeepStrictEqual(agent.billed_cost, stored.billedCost)
+      ) {
         bytes = raw;
         verdict = v;
         break;
@@ -79,19 +88,26 @@ export async function benchPublishBilling(
   const sha = createHash('sha256').update(bytes).digest('hex');
   const agent = (verdict.agent ?? {}) as { billed_cost?: unknown; usage?: unknown };
   const bill = openRouterPublishBilling(agent.billed_cost, sha);
-  if (bill) return { record: bill, verdict };
-  if (!prices) return { verdict };
+  if (bill) return { record: bill, verdict, verdictSha256: sha };
+  if (!prices) return { verdict, verdictSha256: sha };
   const tokens = publishTokens(agent.usage, stored.telemetry);
   if (!tokens)
     return {
       verdict,
+      verdictSha256: sha,
       error:
         'This run recorded no complete token counts, so declared prices cannot be turned into a cost. Clear the price fields to publish without one.',
     };
   const missingCached = cachedPriceProblem(tokens, prices);
-  if (missingCached) return { verdict, error: missingCached };
+  if (missingCached) return { verdict, verdictSha256: sha, error: missingCached };
   const record = declaredPublishBilling(tokens, prices, sha);
-  return record ? { record, verdict } : { verdict, error: 'The declared prices could not be applied to this run.' };
+  return record
+    ? { record, verdict, verdictSha256: sha }
+    : {
+        verdict,
+        verdictSha256: sha,
+        error: 'The declared prices could not be applied to this run.',
+      };
 }
 
 export function readDeclaredPrices(value: unknown): DeclaredPrices | 'invalid' {
@@ -118,14 +134,18 @@ export function refusalIsAboutBilling(status: number, message: string): boolean 
 
 /** Optional additions a publish can live without: a site that does not know them yet (older leanzero.net) or
  *  refuses them must never cost the whole publish. */
-export const DROPPABLE_PUBLISH_FIELDS = ['billing', 'comparisonCohort'] as const;
+export const DROPPABLE_PUBLISH_FIELDS = ['billing', 'comparisonCohort', 'tokenUsage'] as const;
 
 /**
  * Which optional fields to drop and retry after a 4xx: those the site names as unknown ("Unknown field(s):
  * comparisonCohort"), the price when the refusal is about billing, the receipt when it is about the comparison
  * cohort. Empty = the refusal is about the run itself and stands.
  */
-export function droppableAfterRefusal(status: number, message: string, present: string[]): string[] {
+export function droppableAfterRefusal(
+  status: number,
+  message: string,
+  present: string[]
+): string[] {
   if (status < 400 || status >= 500) return [];
   const drop = new Set<string>();
   const unknown = message.match(/Unknown field\(s\):\s*([^.]*)/i);
@@ -134,5 +154,7 @@ export function droppableAfterRefusal(status: number, message: string, present: 
       if ((DROPPABLE_PUBLISH_FIELDS as readonly string[]).includes(name)) drop.add(name);
   if (refusalIsAboutBilling(status, message)) drop.add('billing');
   if (/^\s*comparisonCohort\b/i.test(message)) drop.add('comparisonCohort');
+  // The site names its token-usage refusals "tokenUsage …" (website benchmark-token-usage.ts).
+  if (/^\s*tokenUsage\b/i.test(message)) drop.add('tokenUsage');
   return [...drop].filter((name) => present.includes(name));
 }
