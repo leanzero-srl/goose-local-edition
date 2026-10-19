@@ -383,6 +383,7 @@ async fn compact_core(
             msg.is_agent_visible()
                 && matches!(msg.role, rmcp::model::Role::User)
                 && has_text_only(msg)
+                && !is_harness_nudge(msg)
         });
 
         if let Some((idx, msg)) = found_msg {
@@ -533,6 +534,21 @@ async fn compact_core(
         note,
         kept: kept.map(Box::new),
     })
+}
+
+/// goose's own continuation nudge ("Your last reply was cut off ...") is a user row the agent
+/// adds, not the person's request. Preserved after a compaction it became the chat's last word:
+/// Nex-N2.5-mini (laptop, 2026-10-19, run openai-cloud-21a3f68b) read "continue in smaller
+/// steps" under a summary and answered with prose, so the session ended at call 54 of 300.
+/// The person's own message still reaches the model inside the kept block.
+fn is_harness_nudge(msg: &Message) -> bool {
+    let text: String = msg
+        .content
+        .iter()
+        .filter_map(|c| c.as_text())
+        .collect::<Vec<_>>()
+        .join("\n");
+    text.trim() == crate::agents::LENGTH_CUT_CONTINUATION
 }
 
 /// Check if messages exceed the auto-compaction threshold
@@ -1704,6 +1720,64 @@ mod tests {
 
         let _ = Conversation::new(agent_conversation)
             .expect("compaction should produce a valid conversation");
+    }
+
+    /// I-31: goose's length-cut nudge is the newest agent-visible user text in a long tool loop,
+    /// and a compaction preserved IT as the chat's latest request. The person's message must be
+    /// the one carried after the summary. NEGATIVE CONTROL: without `is_harness_nudge` the last
+    /// message is the nudge.
+    #[tokio::test]
+    async fn a_compaction_never_preserves_goose_s_own_length_cut_nudge_as_the_request() {
+        let provider = MockProvider::new(Message::assistant().with_text("<mock summary>"), 1);
+        let conversation = Conversation::new_unvalidated(vec![
+            Message::user().with_text("ship v2 of the app"),
+            Message::assistant()
+                .with_tool_request("tool_0", Ok(CallToolRequestParams::new("read_file"))),
+            Message::user().with_tool_response(
+                "tool_0",
+                Ok(rmcp::model::CallToolResult::success(vec![
+                    RawContent::text("v1 source").no_annotation(),
+                ])),
+            ),
+            Message::user()
+                .with_text(crate::agents::LENGTH_CUT_CONTINUATION)
+                .with_visibility(false, true),
+        ]);
+        let model_config = provider.config.clone();
+        let (compacted, _usage) = compact_messages(
+            &provider,
+            &model_config,
+            "test-session-id",
+            &conversation,
+            false,
+            &SummaryRequest::Transcript,
+        )
+        .await
+        .unwrap();
+        let visible = compacted.agent_visible_messages();
+        let texts: Vec<String> = visible
+            .iter()
+            .flat_map(|m| {
+                m.content
+                    .iter()
+                    .filter_map(|c| c.as_text().map(str::to_string))
+            })
+            .collect();
+        assert!(
+            !texts
+                .iter()
+                .any(|t| t.contains("Your last reply was cut off")),
+            "the nudge survived the compaction: {texts:?}"
+        );
+        let last = visible.last().expect("a compacted conversation");
+        assert!(matches!(last.role, rmcp::model::Role::User));
+        assert_eq!(
+            last.content
+                .iter()
+                .filter_map(|c| c.as_text())
+                .collect::<String>(),
+            "ship v2 of the app"
+        );
     }
 
     fn chat_tools() -> Vec<Tool> {
