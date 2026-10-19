@@ -5995,7 +5995,7 @@ async function benchOpenRouterCredentials(): Promise<{ key: string; host: string
 /** Exact provider-record token usage per verdict (sha256), kept out of the run folders (they are evidence). The
  *  folder is versioned: an exact result cached by an earlier rule (v1 sent records goose's own usage contradicted as
  *  exact) is never reused. */
-const BENCH_TOKEN_USAGE_DIR = () => path.join(BENCH_DIR, 'token-usage-v2');
+const BENCH_TOKEN_USAGE_DIR = () => path.join(BENCH_DIR, 'token-usage-v3');
 const benchTokenUsageCache = {
   get: async (sha: string): Promise<CachedCapture | null> =>
     /^[a-f0-9]{64}$/.test(sha)
@@ -6408,14 +6408,11 @@ async function publishBenchRun(
     problem: `token counts could not be recorded: ${error instanceof Error ? error.message : String(error)}`,
   }));
   if (tokens.usage) payload.tokenUsage = tokens.usage;
-  // The run-end bill missed records the publish-time read found (OpenRouter writes a record after the stream ends):
-  // the exact read is the complete bill, so price and tokens on the page tell one story.
+  // The run-end bill was incomplete ONLY because records were missing, and the publish-time read found every one of
+  // them with the run's own usage agreeing (benchTokenCapture): that read is the complete bill, so price and tokens on
+  // the page tell one story. Any other incompleteness keeps the run-end bill, status and reasons as they were.
   const bill = payload.billing as Record<string, unknown> | undefined;
-  if (
-    tokens.recordsBill &&
-    bill?.source === 'openrouter-generation-records' &&
-    bill.status !== 'complete'
-  )
+  if (tokens.recordsBill && bill?.source === 'openrouter-generation-records')
     payload.billing = {
       ...bill,
       status: 'complete',
@@ -6423,7 +6420,7 @@ async function publishBenchRun(
       requestCount: tokens.recordsBill.requestCount,
       missingCallCount: 0,
       reasons: [
-        `Read again at publish: OpenRouter's records for all ${tokens.recordsBill.requestCount} generation ids of the run (the read at the end of the run missed some, which OpenRouter writes after the stream ends).`,
+        `Read again at publish: OpenRouter's records for all ${tokens.recordsBill.requestCount} generation ids of the run. ${tokens.recordsBill.missingAtRunEnd} of them had no record yet when the run ended (OpenRouter writes a record after the stream ends).`,
       ],
     };
   let tokenProblem: string | null = tokens.problem;

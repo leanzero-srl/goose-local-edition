@@ -243,6 +243,8 @@ export function tokenUsageFromProviderRecords(input: {
   telemetryAuthoritative?: boolean;
   /** goose's session counters (`agent.usage`): with the per-call usage, the run's own evidence to reconcile with. */
   usage?: unknown;
+  /** The entrant model as goose requested it: the session counters count its calls (not the helpers'). */
+  entrantModel?: string;
 }): TokenUsage | null {
   const requested = new Map<string, string>();
   // goose's per-call usage by generation id: the same calls, as the provider streamed their usage to goose.
@@ -325,31 +327,56 @@ export function tokenUsageFromProviderRecords(input: {
     notes.push(
       `${missing} call${missing === 1 ? '' : 's'} of the run ha${missing === 1 ? 's' : 've'} no readable OpenRouter record${unreadable ? ` (${unreadable} malformed)` : ''}; ${missing === 1 ? 'its' : 'their'} tokens are not in the totals.`
     );
-  // The run's own evidence must agree: goose's per-call usage for the SAME generation ids, and goose's session counters
-  // (entrant only, so never above every call's records), must not exceed the records. When they do, OpenRouter's
-  // figures are still the ones sent (the provider's own record, which the owner compares against) but as a LOWER
-  // BOUND, and the note names goose's larger count. Measured: Jev Router 6,276,908 / 36,831 in the records against
-  // 6,853,350 / 61,901 streamed for the same 117 ids.
+  // The run's own evidence must agree, in BOTH directions, before the records are called exact:
+  //  - goose's per-call usage for the SAME generation ids must not exceed the records (Jev Router: 6,276,908 / 36,831
+  //    in the records against 6,853,350 / 61,901 streamed for the same 117 ids);
+  //  - goose's session counters must EQUAL the entrant model's records, cached included (DeepSeek 1017 build 2: the
+  //    records are 1,346 prompt / 1,152 cached / 7 completion ABOVE the counters, a call the session never counted).
+  // The records are still the figures sent (the provider's own count, the owner's reference); they are just not exact,
+  // and the note names the difference.
+  const n = (v: number) => v.toLocaleString('en-US');
+  const signed = (v: number, unit: string) => `${v > 0 ? '+' : '-'}${n(Math.abs(v))} ${unit}`;
   const gapPrompt = matched.streamPrompt - matched.recordPrompt;
   const gapCompletion = matched.streamCompletion - matched.recordCompletion;
-  let lowerBound = false;
+  let inexact = false;
   if (gapPrompt > 0 || gapCompletion > 0) {
-    lowerBound = true;
+    inexact = true;
     notes.push(
-      `goose's per-call usage for the same ${matched.calls} calls is ${matched.streamPrompt.toLocaleString('en-US')} in / ${matched.streamCompletion.toLocaleString('en-US')} out, more than OpenRouter's records (${gapPrompt > 0 ? `+${gapPrompt.toLocaleString('en-US')} in` : ''}${gapPrompt > 0 && gapCompletion > 0 ? ', ' : ''}${gapCompletion > 0 ? `+${gapCompletion.toLocaleString('en-US')} out` : ''}): the records are a lower bound.`
+      `goose's per-call usage for the same ${matched.calls} calls is ${n(matched.streamPrompt)} in / ${n(matched.streamCompletion)} out, more than OpenRouter's records (${[gapPrompt > 0 ? `+${n(gapPrompt)} in` : '', gapCompletion > 0 ? `+${n(gapCompletion)} out` : ''].filter(Boolean).join(', ')}): the records are a lower bound.`
     );
   } else {
     const counters = sessionCounters(input.usage);
-    const recordPrompt = [...buckets.values()].reduce((a, b) => a + b.prompt, 0);
-    const recordCompletion = [...buckets.values()].reduce((a, b) => a + b.completion, 0);
-    if (counters && (counters.prompt > recordPrompt || counters.completion > recordCompletion)) {
-      lowerBound = true;
-      notes.push(
-        `goose's session counters (${counters.prompt.toLocaleString('en-US')} in / ${counters.completion.toLocaleString('en-US')} out) exceed OpenRouter's records: the records are a lower bound.`
-      );
+    const entrant = input.entrantModel ? buckets.get(input.entrantModel) : undefined;
+    if (counters && entrant && entrant.counted > 0) {
+      const differences = [
+        entrant.prompt !== counters.prompt ? signed(entrant.prompt - counters.prompt, 'in') : '',
+        counters.cached !== null &&
+        entrant.cachedKnown === entrant.counted &&
+        entrant.cached !== counters.cached
+          ? signed(entrant.cached - counters.cached, 'cached')
+          : '',
+        entrant.completion !== counters.completion
+          ? signed(entrant.completion - counters.completion, 'out')
+          : '',
+      ].filter(Boolean);
+      if (differences.length) {
+        inexact = true;
+        notes.push(
+          `OpenRouter's records for ${entrant.model} differ from goose's session counters (${differences.join(', ')}), so they are not exact.`
+        );
+      }
+    } else if (counters) {
+      const recordPrompt = [...buckets.values()].reduce((a, b) => a + b.prompt, 0);
+      const recordCompletion = [...buckets.values()].reduce((a, b) => a + b.completion, 0);
+      if (counters.prompt > recordPrompt || counters.completion > recordCompletion) {
+        inexact = true;
+        notes.push(
+          `goose's session counters (${n(counters.prompt)} in / ${n(counters.completion)} out) exceed OpenRouter's records: the records are a lower bound.`
+        );
+      }
     }
   }
-  return bucketsToUsage(buckets, 'provider-records', missing, notes, lowerBound);
+  return bucketsToUsage(buckets, 'provider-records', missing, notes, inexact);
 }
 
 /** Integer sums of goose's isolated session counters (`agent.usage.sessions`), or null when any is missing. */
@@ -779,4 +806,24 @@ export function recordsBill(
     micro += Math.round(billed * 1e9);
   }
   return { billedUsd: micro / 1e9, requestCount: ids.length };
+}
+
+/**
+ * Whether an exact publish-time read may REPLACE the run-end bill: only when that bill named records it could not read
+ * and every reason it gave is about those missing records (the shortfall in goose's counted tokens that the missing
+ * records leave is one of them). A bill incomplete for any other reason (records above goose's counters without
+ * per-call proof: DeepSeek 1017 build 2) keeps its status and reasons.
+ */
+export function billMissedOnlyRecords(billedCost: unknown): number {
+  const b =
+    billedCost && typeof billedCost === 'object' ? (billedCost as Record<string, unknown>) : null;
+  if (!b || !Array.isArray(b.missing) || b.missing.length === 0) return 0;
+  const reasons = Array.isArray(b.incomplete_reasons) ? b.incomplete_reasons : [];
+  const aboutMissing = (r: unknown) =>
+    typeof r === 'string' &&
+    (/^\d+ generation id\(s\) have no billed record$/.test(r) ||
+      /^goose counted tokens no recovered generation id accounts for: (?:[a-z]+ \+\d+(?:, )?)+$/.test(
+        r
+      ));
+  return reasons.every(aboutMissing) ? b.missing.length : 0;
 }

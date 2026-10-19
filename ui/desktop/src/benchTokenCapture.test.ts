@@ -55,7 +55,11 @@ describe('captureTokenUsage: the publish-time token record', () => {
     });
     expect(fetchImpl).toHaveBeenCalledTimes(51);
     // The exact read is also the complete bill the run-end read missed (43 + 8 records then): OpenRouter's own USD.
-    expect(result.recordsBill).toEqual({ billedUsd: 1.6556498, requestCount: 51 });
+    expect(result.recordsBill).toEqual({
+      billedUsd: 1.6556498,
+      requestCount: 51,
+      missingAtRunEnd: 8,
+    });
     expect(saved['c'.repeat(64)]).toEqual({ usage: result.usage, recordsBill: result.recordsBill });
     // A republish reads the cache, not OpenRouter.
     const again = await captureTokenUsage(
@@ -225,4 +229,48 @@ describe('second review: a hung OpenRouter falls back to the harness bill within
       /could not be read again at publish \(OpenRouter did not answer within the read budget\)/
     );
   }, 5_000);
+});
+
+describe('third review: the bill is replaced only when the run-end bill missed records, nothing else', () => {
+  it('DeepSeek 1017 build 2: records above goose’s counters are not exact and the incomplete bill stays as it was', async () => {
+    const ds = fixture.deepseek;
+    const RUN3 =
+      '/Users/example/Library/Application Support/Goose/benchmark/runs/build/openrouter-cloud-3ca1d7f0-fa26-4c2d-a034-38f2d4b61aeb-r0';
+    const served = vi.fn(async (url: string | URL) => {
+      const id = new URL(String(url)).searchParams.get('id')!;
+      const record = (ds.records as Record<string, unknown>)[id];
+      return record
+        ? new Response(JSON.stringify({ data: record }), { status: 200 })
+        : new Response('{}', { status: 404 });
+    });
+    const result = await captureTokenUsage(
+      {
+        stored: { workdir: RUN3 },
+        verdict: { agent: ds.agent },
+        verdictSha256: null,
+        route: 'cloud',
+      },
+      {
+        readFile: async (f) => {
+          if (f === `${RUN3}/.swarm/telemetry.jsonl`) return ds.telemetry;
+          throw new Error('ENOENT');
+        },
+        fetchImpl: served as unknown as typeof fetch,
+        openRouterCredentials: async () => ({ key: KEY, host: 'https://openrouter.ai' }),
+        sleep: async () => {},
+      }
+    );
+    expect(served).toHaveBeenCalledTimes(271);
+    expect(result.usage).toMatchObject({
+      promptTokens: 54_638_753,
+      completionTokens: 223_659,
+      calls: 271,
+      missingCalls: 0,
+      exact: false,
+    });
+    expect(result.usage!.note).toMatch(
+      /differ from goose's session counters \(\+1,346 in, \+1,152 cached, \+7 out\)/
+    );
+    expect(result.recordsBill).toBeUndefined();
+  });
 });

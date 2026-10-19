@@ -1,5 +1,6 @@
 import path from 'node:path';
 import {
+  billMissedOnlyRecords,
   billingHost,
   recordsBill,
   parseTelemetryCalls,
@@ -33,13 +34,14 @@ export interface TokenCapture {
   /** Why no token usage is sent, in plain words for the publish card. */
   problem: string | null;
   /** An EXACT publish-time read is also a complete bill (Σ each record's billed USD): main sends it in place of a
-   *  run-end bill that missed records, so the page never says "8 calls not found" beside "exact, 51 calls". */
-  recordsBill?: { billedUsd: number; requestCount: number };
+   *  run-end bill that missed records, so the page never says "8 calls not found" beside "exact, 51 calls". Only
+   *  when the run-end bill was incomplete ONLY because records were missing (billMissedOnlyRecords). */
+  recordsBill?: { billedUsd: number; requestCount: number; missingAtRunEnd: number };
 }
 
 export interface CachedCapture {
   usage: TokenUsage;
-  recordsBill?: { billedUsd: number; requestCount: number };
+  recordsBill?: { billedUsd: number; requestCount: number; missingAtRunEnd: number };
 }
 
 /** The run's per-call telemetry: the file the harness bill names (inside a `.swarm` folder only), else the run folders. */
@@ -146,6 +148,10 @@ export async function captureTokenUsage(
               : undefined,
           telemetryAuthoritative: billRecord.telemetry?.status === 'recorded' && !!calls?.length,
           usage: agent.usage,
+          entrantModel:
+            typeof (bill as { model?: unknown }).model === 'string'
+              ? ((bill as { model: string }).model as string)
+              : undefined,
         });
         const found = Object.values(read.records).filter(Boolean).length;
         if (usage && found > 0) {
@@ -161,7 +167,9 @@ export async function captureTokenUsage(
             if (fromBill && fromBill.missingCalls < usage.missingCalls)
               return { usage: fromBill, problem: null };
           }
-          const exactBill = recordsBill(usage, ids, read.records);
+          const missedAtRunEnd = billMissedOnlyRecords(bill);
+          const sum = missedAtRunEnd ? recordsBill(usage, ids, read.records) : null;
+          const exactBill = sum ? { ...sum, missingAtRunEnd: missedAtRunEnd } : null;
           if (usage.exact && input.verdictSha256 && deps.cache)
             await deps.cache
               .set(input.verdictSha256, { usage, ...(exactBill ? { recordsBill: exactBill } : {}) })

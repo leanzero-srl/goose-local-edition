@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import fixture from './benchTokenUsage.fixture.json';
 import {
+  billMissedOnlyRecords,
   formatTokenCount,
   parseTelemetryCalls,
   runGenerationIds,
@@ -439,4 +440,31 @@ describe('second review: one read budget for every record', () => {
     expect(Object.values(read.records).every((r) => r === null)).toBe(true);
     expect(Object.keys(read.failures)).toHaveLength(5);
   }, 5_000);
+});
+
+describe('third review: which run-end bills an exact re-read may replace', () => {
+  it('only a bill incomplete because records were missing (Sonnet: 8 x 404), never one incomplete for another reason', () => {
+    expect(billMissedOnlyRecords(bill)).toBe(8);
+    expect(billMissedOnlyRecords(fixture.deepseek.agent.billed_cost)).toBe(0);
+    expect(
+      billMissedOnlyRecords({
+        ...bill,
+        incomplete_reasons: [
+          ...bill.incomplete_reasons,
+          '2 telemetry call(s) carried no response id to bill',
+        ],
+      })
+    ).toBe(0);
+  });
+  it('Sonnet’s records equal goose’s counters for the entrant: still exact with the symmetric check', () => {
+    const usage = tokenUsageFromProviderRecords({
+      calls,
+      ids: runGenerationIds(calls, bill),
+      records,
+      telemetryAuthoritative: true,
+      usage: sonnet.agent.usage,
+      entrantModel: 'anthropic/claude-sonnet-5.5',
+    })!;
+    expect(usage.exact).toBe(true);
+  });
 });
