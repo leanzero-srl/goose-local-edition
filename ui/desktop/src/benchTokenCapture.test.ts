@@ -183,3 +183,45 @@ describe('review fix: a reused run folder never lends its telemetry to another r
     expect(none.usage).toBeNull();
   });
 });
+
+describe('second review: a hung OpenRouter falls back to the harness bill within the budget', () => {
+  it('Pareto (complete bill): the publish gets the bill’s split, labelled, after one budget', async () => {
+    const pareto = fixture.pareto;
+    const RUN2 =
+      '/Users/example/Library/Application Support/Goose/benchmark/runs/build/openrouter-cloud-48107c98-71d8-4f7b-95de-6b5c0a50717a-r0';
+    const hang = vi.fn(
+      (_url: string | URL, init?: RequestInit) =>
+        new Promise<Response>((_r, reject) =>
+          init?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('aborted', 'AbortError'))
+          )
+        )
+    );
+    const result = await captureTokenUsage(
+      {
+        stored: { workdir: RUN2 },
+        verdict: { agent: { billed_cost: pareto.modelCost } },
+        verdictSha256: null,
+        route: 'cloud',
+      },
+      {
+        readFile: async (f) => {
+          if (f === `${RUN2}/.swarm/telemetry.jsonl`) return pareto.telemetry;
+          throw new Error('ENOENT');
+        },
+        fetchImpl: hang as unknown as typeof fetch,
+        openRouterCredentials: async () => ({ key: KEY, host: 'https://openrouter.ai' }),
+        readDeadlineMs: 150,
+        sleep: async () => {},
+      }
+    );
+    expect(result.usage).toMatchObject({
+      source: 'provider-records',
+      promptTokens: 10_932_017,
+      calls: 140,
+    });
+    expect(result.usage!.note).toMatch(
+      /could not be read again at publish \(OpenRouter did not answer within the read budget\)/
+    );
+  }, 5_000);
+});

@@ -11603,6 +11603,9 @@
   "forgeSeries.publish": {
     "defaultMessage": "빌드 2개 게시"
   },
+  "forgeSeries.publishSeparately": {
+    "defaultMessage": "빌드를 따로 게시"
+  },
   "forgeSeries.publishTitle": {
     "defaultMessage": "게시 제목"
   },

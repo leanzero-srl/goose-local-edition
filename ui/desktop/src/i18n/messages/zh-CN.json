@@ -11603,6 +11603,9 @@
   "forgeSeries.publish": {
     "defaultMessage": "发布 2 次构建"
   },
+  "forgeSeries.publishSeparately": {
+    "defaultMessage": "分别发布构建"
+  },
   "forgeSeries.publishTitle": {
     "defaultMessage": "发布标题"
   },

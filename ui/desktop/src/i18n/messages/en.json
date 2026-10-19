@@ -2705,6 +2705,9 @@
   "forgeSeries.publish": {
     "defaultMessage": "Publish 2 builds"
   },
+  "forgeSeries.publishSeparately": {
+    "defaultMessage": "Publish the builds separately"
+  },
   "forgeSeries.publishTitle": {
     "defaultMessage": "Publication title"
   },

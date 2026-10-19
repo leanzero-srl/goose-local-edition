@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import fixture from './benchTokenUsage.fixture.json';
 import {
   formatTokenCount,
@@ -252,8 +252,11 @@ describe('the site rule (website benchmark-token-usage.ts) mirrored', () => {
     expect(tokenUsageLine(good(), 'openrouter')).toBe(
       'Tokens: 2.6M in · 90.5k out · 2.5M cached (exact, OpenRouter records)'
     );
-    expect(tokenUsageLine({ ...good(), exact: false }, 'openrouter')).toMatch(
-      /\(estimated, OpenRouter records\)$/
+    expect(tokenUsageLine({ ...good(), exact: false }, 'openrouter')).toBe(
+      'Tokens: at least 2.6M in · 90.5k out · 2.5M cached (lower bound, OpenRouter records)'
+    );
+    expect(tokenUsageLine({ ...good(), exact: false, source: 'estimate' })).toBe(
+      'Tokens: about 2.6M in · 90.5k out · 2.5M cached (estimated)'
     );
     expect([999, 12_345, 206_869, 10_932_017, 1_234_000_000].map(formatTokenCount)).toEqual([
       '999',
@@ -311,4 +314,129 @@ describe('review fixes: an incomplete id list is never exact', () => {
     })!;
     expect(tokenUsageProblem({ ...usage, note: 'cut at a space ' })).toMatch(/note/);
   });
+});
+
+describe('second review: the run’s own evidence decides whether records are exact', () => {
+  const jev = fixture.jev;
+  const jevCalls = parseTelemetryCalls(jev.telemetry).calls;
+  const jevRecords = jev.records as unknown as Record<string, GenerationRecord>;
+  it('Jev Router: records below goose’s per-call usage for the same ids are a lower bound, and the note names the gap', () => {
+    const ids = runGenerationIds(jevCalls, jev.modelCost);
+    expect(ids).toHaveLength(117);
+    const usage = tokenUsageFromProviderRecords({
+      calls: jevCalls,
+      ids,
+      records: jevRecords,
+      collected: jev.modelCost.generation_ids_collected,
+      telemetryAuthoritative: true,
+      usage: jev.usage,
+    })!;
+    expect(usage).toMatchObject({
+      promptTokens: 6_276_908,
+      completionTokens: 36_831,
+      calls: 117,
+      missingCalls: 0,
+      exact: false,
+    });
+    expect(usage.note).toMatch(
+      /6,853,350 in \/ 61,901 out, more than OpenRouter's records \(\+576,442 in, \+25,070 out\)/
+    );
+    expect(tokenUsageLine(usage, 'openrouter')).toBe(
+      'Tokens: at least 6.3M in · 36.8k out · 6.2M cached (lower bound, OpenRouter records)'
+    );
+    expect(tokenUsageProblem(usage)).toBeNull();
+  });
+  it('Sonnet: records that agree with goose’s per-call usage stay exact', () => {
+    const usage = tokenUsageFromProviderRecords({
+      calls,
+      ids: runGenerationIds(calls, bill),
+      records,
+      telemetryAuthoritative: true,
+      usage: sonnet.agent.usage,
+    })!;
+    expect(usage.exact).toBe(true);
+  });
+  it('without per-call usage, session counters above the records make them a lower bound', () => {
+    const ids = runGenerationIds(jevCalls, jev.modelCost);
+    const blind = jevCalls.map((c) => ({ ...c, promptTokens: null, completionTokens: null }));
+    const usage = tokenUsageFromProviderRecords({
+      calls: blind,
+      ids,
+      records: jevRecords,
+      usage: jev.usage,
+    })!;
+    expect(usage.exact).toBe(false);
+    expect(usage.note).toMatch(
+      /session counters \(6,852,378 in \/ 61,896 out\) exceed OpenRouter's records/
+    );
+  });
+});
+
+describe('second review: an engine without per-call ids', () => {
+  it('a complete single-model bill counts the bill’s calls, not its id-less telemetry lines again', () => {
+    const lines = parseTelemetryCalls(
+      [1, 2, 3]
+        .map(() => JSON.stringify({ model: 'm/x', prompt_tokens: 10, completion_tokens: 1 }))
+        .join('\n')
+    ).calls;
+    const old = {
+      provider: 'openrouter',
+      status: 'complete',
+      model: 'm/x',
+      tokens: { prompt: 30, cached: 0, completion: 3, reasoning: 0 },
+      request_count: 3,
+      generation_ids_collected: 3,
+      missing: [],
+      telemetry: { status: 'predates_response_id' },
+    };
+    const usage = tokenUsageFromHarnessBill({ calls: lines, billedCost: old, reason: 'offline' })!;
+    expect(usage).toMatchObject({ calls: 3, missingCalls: 0, exact: true, promptTokens: 30 });
+    const fromRecords = tokenUsageFromProviderRecords({
+      calls: lines,
+      ids: ['gen-1-a', 'gen-2-b', 'gen-3-c'],
+      records: Object.fromEntries(
+        ['gen-1-a', 'gen-2-b', 'gen-3-c'].map((id) => [
+          id,
+          {
+            id,
+            model: 'm/x',
+            native_tokens_prompt: 10,
+            native_tokens_completion: 1,
+            native_tokens_cached: 0,
+            native_tokens_reasoning: 0,
+          },
+        ])
+      ),
+    })!;
+    expect(fromRecords).toMatchObject({ calls: 3, missingCalls: 0 });
+  });
+});
+
+describe('second review: one read budget for every record', () => {
+  it('a hung OpenRouter ends at the budget with every unread id named, never per-request × passes', async () => {
+    const { readGenerationRecords } = await import('./benchTokenUsage');
+    const hang = vi.fn(
+      (_url: string | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) =>
+          init?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('aborted', 'AbortError'))
+          )
+        )
+    );
+    const started = Date.now();
+    const read = await readGenerationRecords(
+      ['gen-1-a', 'gen-2-b', 'gen-3-c', 'gen-4-d', 'gen-5-e'],
+      {
+        key: 'k',
+        host: 'https://openrouter.ai',
+        fetchImpl: hang as unknown as typeof fetch,
+        deadlineMs: 150,
+        sleep: async () => {},
+      }
+    );
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(read.timedOut).toBe(true);
+    expect(Object.values(read.records).every((r) => r === null)).toBe(true);
+    expect(Object.keys(read.failures)).toHaveLength(5);
+  }, 5_000);
 });

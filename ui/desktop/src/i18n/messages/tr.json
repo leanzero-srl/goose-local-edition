@@ -11603,6 +11603,9 @@
   "forgeSeries.publish": {
     "defaultMessage": "2 derlemeyi yayımla"
   },
+  "forgeSeries.publishSeparately": {
+    "defaultMessage": "Derlemeleri ayrı ayrı yayımla"
+  },
   "forgeSeries.publishTitle": {
     "defaultMessage": "Yayın başlığı"
   },

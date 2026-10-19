@@ -32,8 +32,7 @@ import { benchPublishBilling, droppableAfterRefusal } from './benchPublishBillin
 import { captureTokenUsage } from './benchTokenCapture';
 import { tokenUsageLine, type TokenUsage } from './benchTokenUsage';
 import {
-  pairCouplingProblem,
-  pairCouplingWarning,
+  publishSeriesPair,
   seriesPublishPlan,
   type PairCouplingFacts,
 } from './benchSeriesPublish';
@@ -5968,7 +5967,13 @@ ipcMain.handle('benchmark-publish-suggestion', async (_event, key: string) => {
   return { title: suggestedPublishTitle({ model, provider, route, displayName }), local: route === 'local', route };
 });
 
-type BenchPublishArgs = { title?: string; runKey?: string; declaredPrices?: DeclaredPrices };
+type BenchPublishArgs = {
+  title?: string;
+  runKey?: string;
+  declaredPrices?: DeclaredPrices;
+  /** The user's explicit choice, offered only after a pair was refused as one entry: publish this build alone. */
+  separately?: boolean;
+};
 
 /** The OpenRouter key and host goose is configured with, read the way a cloud launch reads them (benchmark-config);
  *  the key stays in main and travels only to the host that billed the run. */
@@ -5987,8 +5992,10 @@ async function benchOpenRouterCredentials(): Promise<{ key: string; host: string
   };
 }
 
-/** Exact provider-record token usage per verdict (sha256), kept out of the run folders (they are evidence). */
-const BENCH_TOKEN_USAGE_DIR = () => path.join(BENCH_DIR, 'token-usage');
+/** Exact provider-record token usage per verdict (sha256), kept out of the run folders (they are evidence). The
+ *  folder is versioned: an exact result cached by an earlier rule (v1 sent records goose's own usage contradicted as
+ *  exact) is never reused. */
+const BENCH_TOKEN_USAGE_DIR = () => path.join(BENCH_DIR, 'token-usage-v2');
 const benchTokenUsageCache = {
   get: async (sha: string): Promise<TokenUsage | null> =>
     /^[a-f0-9]{64}$/.test(sha)
@@ -6011,7 +6018,8 @@ const benchTokenUsageCache = {
 async function publishBenchmark(args: BenchPublishArgs | undefined) {
   if (activeBenchRun || activeBenchSeries || benchmarkLaunchPending)
     return { ok: false, error: 'Wait for the benchmark to finish before publishing.' };
-  if (typeof args?.runKey !== 'string' || !args.runKey) return publishBenchRun(args);
+  if (typeof args?.runKey !== 'string' || !args.runKey || args.separately === true)
+    return publishBenchRun(args);
   const rows = await readBenchSessionRows();
   const row = rows.find((r) => benchRunKey(r) === args.runKey) ?? null;
   const plan = seriesPublishPlan({
@@ -6027,101 +6035,12 @@ async function publishBenchmark(args: BenchPublishArgs | undefined) {
 
 async function publishBenchPair(keys: [string, string], args: BenchPublishArgs) {
   const published = await readPublished();
-  const prepared: Array<{
-    index: 1 | 2;
-    key: string;
-    facts: PairCouplingFacts | null;
-    error: string | null;
-    posted: boolean;
-  }> = [];
-  for (const [i, key] of keys.entries()) {
-    const check = (await publishBenchRun({ ...args, runKey: key }, { preflight: true })) as {
-      ok: boolean;
-      error?: string;
-      facts?: PairCouplingFacts;
-      rescoredAt?: string;
-    };
-    const ready = check.ok && check.facts ? check.facts : null;
-    prepared.push({
-      index: (i + 1) as 1 | 2,
-      key,
-      facts: ready,
-      error: ready ? null : (check.error ?? 'could not be prepared'),
-      // A build already live stays live: when it no longer prepares (its folder moved since), it is not re-posted
-      // and never blocks its partner.
-      posted: ready ? publishedIsCurrent(published[key], check.rescoredAt) : published[key] != null,
-    });
-  }
-  const requested = prepared.find((p) => p.key === args.runKey) ?? prepared[0];
-  if (requested.error && !requested.posted)
-    return {
-      ok: false,
-      error: `Build ${requested.index}: ${requested.error}. Neither build was published.`,
-    };
-  // A partner that can never be published (the scorer held it, its verdict is gone) does not strand this build:
-  // it goes out on its own, as a series with one scored build does, and the card says why.
-  const lone = prepared.find((p) => p.error && !p.posted);
-  let alone: string | null = null;
-  if (lone) {
-    alone = `Build ${lone.index} cannot be published (${lone.error}), so build ${requested.index} was published on its own.`;
-    prepared.splice(prepared.indexOf(lone), 1);
-  } else if (prepared[0].facts && prepared[1].facts) {
-    const coupling = pairCouplingProblem(prepared[0].facts, prepared[1].facts);
-    if (coupling)
-      return {
-        ok: false,
-        error: `The two builds would not land as one entry on leanzero.net: ${coupling}. Neither build was published.`,
-      };
-  }
-  if (prepared.every((p) => p.posted))
-    return {
-      ok: false,
-      error:
-        prepared.length === 2
-          ? 'both builds of this series are already live on leanzero.net'
-          : `this build is already live on leanzero.net. ${alone ?? ''}`.trim(),
-    };
-  const builds: Array<Record<string, unknown>> = [];
-  for (const p of prepared) {
-    if (p.posted) {
-      builds.push({
-        index: p.index,
-        ok: true,
-        alreadyLive: true,
-        url: published[p.key]?.url ?? null,
-      });
-      continue;
-    }
-    const result = (await publishBenchRun({ ...args, runKey: p.key })) as Record<string, unknown>;
-    builds.push({ index: p.index, ...result });
-    if (!result.ok) {
-      const live = builds.filter((b) => b.ok).map((b) => `build ${b.index}`);
-      return {
-        ok: false,
-        partial: live.length > 0,
-        builds,
-        error: `Build ${p.index} was refused: ${String(result.error ?? 'no reason given')}${
-          live.length
-            ? ` ${live.join(' and ')} is live on its own until build ${p.index} is published: publish again to post it.`
-            : ''
-        }`,
-      };
-    }
-  }
-  const last = builds[builds.length - 1];
-  const apart =
-    alone ??
-    (prepared.length === 2 && prepared[0].facts && prepared[1].facts
-      ? pairCouplingWarning(prepared[0].facts, prepared[1].facts)
-      : null);
-  return {
-    ...last,
-    ok: true,
-    pair: !alone,
-    ...(apart ? { pairWarning: apart } : {}),
-    url: builds.find((b) => typeof b.url === 'string')?.url ?? null,
-    builds,
-  };
+  return publishSeriesPair(keys, args.runKey ?? keys[0], {
+    published,
+    isCurrent: (key, rescoredAt) => publishedIsCurrent(published[key], rescoredAt),
+    preflight: (key) => publishBenchRun({ ...args, runKey: key }, { preflight: true }),
+    publish: (key) => publishBenchRun({ ...args, runKey: key }),
+  });
 }
 
 ipcMain.handle('benchmark-publish', (_event, args?: BenchPublishArgs) =>

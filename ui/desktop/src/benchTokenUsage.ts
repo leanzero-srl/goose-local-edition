@@ -130,7 +130,8 @@ function bucketsToUsage(
   buckets: Map<string, Bucket>,
   source: TokenUsageSource,
   missingCalls: number,
-  notes: string[]
+  notes: string[],
+  lowerBound = false
 ): TokenUsage | null {
   const list = [...buckets.values()].filter((b) => b.calls > 0);
   if (!list.length || list.length > MAX_MODELS) return null;
@@ -178,7 +179,7 @@ function bucketsToUsage(
     totalTokens: promptTokens + completionTokens,
     calls,
     source,
-    exact: missingCalls === 0 && !partial && source !== 'estimate',
+    exact: missingCalls === 0 && !partial && !lowerBound && source !== 'estimate',
     missingCalls,
     note: notes.length ? notes.join(' ').slice(0, 400).trim() : null,
     byModel,
@@ -238,14 +239,31 @@ export function tokenUsageFromProviderRecords(input: {
   /** The telemetry is the run's per-call record (bill telemetry status "recorded"): only then is a telemetry line
    *  without a generation id a separate call. An older engine's lines carry no ids for calls the bill found by id. */
   telemetryAuthoritative?: boolean;
+  /** goose's session counters (`agent.usage`): with the per-call usage, the run's own evidence to reconcile with. */
+  usage?: unknown;
 }): TokenUsage | null {
   const requested = new Map<string, string>();
-  for (const call of input.calls)
+  // goose's per-call usage by generation id: the same calls, as the provider streamed their usage to goose.
+  const streamed = new Map<string, { prompt: number; completion: number }>();
+  for (const call of input.calls) {
     if (call.responseId && call.model && !requested.has(call.responseId))
       requested.set(call.responseId, call.model);
+    if (call.responseId && call.promptTokens !== null && call.completionTokens !== null)
+      streamed.set(call.responseId, {
+        prompt: call.promptTokens,
+        completion: call.completionTokens,
+      });
+  }
   const buckets = new Map<string, Bucket>();
   let missing = 0;
   let unreadable = 0;
+  const matched = {
+    calls: 0,
+    recordPrompt: 0,
+    recordCompletion: 0,
+    streamPrompt: 0,
+    streamCompletion: 0,
+  };
   for (const id of input.ids) {
     const record = input.records[id];
     const recordModel =
@@ -265,6 +283,14 @@ export function tokenUsageFromProviderRecords(input: {
     b.counted++;
     b.prompt += record.native_tokens_prompt;
     b.completion += record.native_tokens_completion;
+    const stream = streamed.get(id);
+    if (stream) {
+      matched.calls++;
+      matched.recordPrompt += record.native_tokens_prompt;
+      matched.recordCompletion += record.native_tokens_completion;
+      matched.streamPrompt += stream.prompt;
+      matched.streamCompletion += stream.completion;
+    }
     if (
       count(record.native_tokens_cached) &&
       record.native_tokens_cached <= record.native_tokens_prompt
@@ -278,7 +304,7 @@ export function tokenUsageFromProviderRecords(input: {
     }
   }
   // A call goose made that carries no generation id has no record to read: it is a call of the run all the same.
-  if (input.telemetryAuthoritative !== false)
+  if (input.telemetryAuthoritative === true)
     for (const call of input.calls)
       if (!call.responseId || !GENERATION_ID.test(call.responseId)) {
         bucketFor(buckets, call.model ?? UNKNOWN_MODEL).calls++;
@@ -297,7 +323,31 @@ export function tokenUsageFromProviderRecords(input: {
     notes.push(
       `${missing} call${missing === 1 ? '' : 's'} of the run ha${missing === 1 ? 's' : 've'} no readable OpenRouter record${unreadable ? ` (${unreadable} malformed)` : ''}; ${missing === 1 ? 'its' : 'their'} tokens are not in the totals.`
     );
-  return bucketsToUsage(buckets, 'provider-records', missing, notes);
+  // The run's own evidence must agree: goose's per-call usage for the SAME generation ids, and goose's session counters
+  // (entrant only, so never above every call's records), must not exceed the records. When they do, OpenRouter's
+  // figures are still the ones sent (the provider's own record, which the owner compares against) but as a LOWER
+  // BOUND, and the note names goose's larger count. Measured: Jev Router 6,276,908 / 36,831 in the records against
+  // 6,853,350 / 61,901 streamed for the same 117 ids.
+  const gapPrompt = matched.streamPrompt - matched.recordPrompt;
+  const gapCompletion = matched.streamCompletion - matched.recordCompletion;
+  let lowerBound = false;
+  if (gapPrompt > 0 || gapCompletion > 0) {
+    lowerBound = true;
+    notes.push(
+      `goose's per-call usage for the same ${matched.calls} calls is ${matched.streamPrompt.toLocaleString('en-US')} in / ${matched.streamCompletion.toLocaleString('en-US')} out, more than OpenRouter's records (${gapPrompt > 0 ? `+${gapPrompt.toLocaleString('en-US')} in` : ''}${gapPrompt > 0 && gapCompletion > 0 ? ', ' : ''}${gapCompletion > 0 ? `+${gapCompletion.toLocaleString('en-US')} out` : ''}): the records are a lower bound.`
+    );
+  } else {
+    const counters = sessionCounters(input.usage);
+    const recordPrompt = [...buckets.values()].reduce((a, b) => a + b.prompt, 0);
+    const recordCompletion = [...buckets.values()].reduce((a, b) => a + b.completion, 0);
+    if (counters && (counters.prompt > recordPrompt || counters.completion > recordCompletion)) {
+      lowerBound = true;
+      notes.push(
+        `goose's session counters (${counters.prompt.toLocaleString('en-US')} in / ${counters.completion.toLocaleString('en-US')} out) exceed OpenRouter's records: the records are a lower bound.`
+      );
+    }
+  }
+  return bucketsToUsage(buckets, 'provider-records', missing, notes, lowerBound);
 }
 
 /** Integer sums of goose's isolated session counters (`agent.usage.sessions`), or null when any is missing. */
@@ -381,26 +431,45 @@ export function tokenUsageFromHarnessBill(input: {
   if (!tokens || !count(tokens.prompt) || !count(tokens.completion)) return null;
   const t = tokens as Record<string, number>;
   const missing = Array.isArray(bill.missing) ? bill.missing.length : 0;
-  const withoutId = input.calls.filter(
-    (c) => !c.responseId || !GENERATION_ID.test(c.responseId)
-  ).length;
-  const ids = runGenerationIds(input.calls, bill);
-  const requested = new Map(
-    input.calls
-      .filter((c) => c.responseId && c.model)
-      .map((c) => [c.responseId as string, c.model as string])
-  );
+  // Telemetry lines name separate calls only when the bill says the telemetry is the run's per-call record; an older
+  // engine's lines carry no ids for calls the bill found by id (counting them again would double every call).
+  const authoritative = (bill.telemetry as { status?: unknown } | undefined)?.status === 'recorded';
+  const withoutId = authoritative
+    ? input.calls.filter((c) => !c.responseId || !GENERATION_ID.test(c.responseId)).length
+    : 0;
   const callsByModel = new Map<string, number>();
-  for (const id of ids) {
-    const model = requested.get(id);
-    if (!model) return null; // a call the split cannot name
-    callsByModel.set(model, (callsByModel.get(model) ?? 0) + 1);
-  }
-  for (const c of input.calls)
-    if (!c.responseId || !GENERATION_ID.test(c.responseId)) {
-      if (!c.model) return null;
-      callsByModel.set(c.model, (callsByModel.get(c.model) ?? 0) + 1);
+  if (authoritative) {
+    const ids = runGenerationIds(input.calls, bill);
+    const requested = new Map(
+      input.calls
+        .filter((c) => c.responseId && c.model)
+        .map((c) => [c.responseId as string, c.model as string])
+    );
+    for (const id of ids) {
+      const model = requested.get(id);
+      if (!model) return null; // a call the split cannot name
+      callsByModel.set(model, (callsByModel.get(model) ?? 0) + 1);
     }
+    for (const c of input.calls)
+      if (!c.responseId || !GENERATION_ID.test(c.responseId)) {
+        if (!c.model) return null;
+        callsByModel.set(c.model, (callsByModel.get(c.model) ?? 0) + 1);
+      }
+  } else {
+    // No per-call record to split by: only a bill that names one model and no helper calls is attributable.
+    const helpers = Object.keys(
+      ((bill.budget as Record<string, unknown> | undefined)?.calls_other_models ?? {}) as object
+    );
+    const collected = bill.generation_ids_collected;
+    if (
+      helpers.length ||
+      typeof bill.model !== 'string' ||
+      !bill.model ||
+      !count(collected, MAX_CALLS)
+    )
+      return null;
+    callsByModel.set(bill.model.slice(0, 120), collected);
+  }
   const cached = count(t.cached) ? t.cached : null;
   const reasoning = count(t.reasoning) ? t.reasoning : null;
   const models = [...callsByModel.keys()];
@@ -565,7 +634,14 @@ export function tokenUsageProblem(t: TokenUsage): string | null {
 export interface GenerationReadResult {
   records: Record<string, GenerationRecord | null>;
   failures: Record<string, string>;
+  /** The read budget ran out with records still unread. */
+  timedOut: boolean;
 }
+
+// policy: one request may take 30 s (OpenRouter answers in well under a second); the whole read of a run's records
+// gets 75 s, after which the publish falls back to the harness bill's totals instead of holding the publication lock.
+const REQUEST_TIMEOUT_MS = 30_000;
+const READ_DEADLINE_MS = 75_000;
 
 /**
  * Read OpenRouter's generation record for each id (the harness's own read: same endpoint, same bounded concurrency,
@@ -581,9 +657,14 @@ export async function readGenerationRecords(
     concurrency?: number;
     sleep?: (ms: number) => Promise<void>;
     retryDelaysMs?: number[];
+    /** ONE budget for the whole read (every request, every pass): a hung OpenRouter must not hold the publish. */
+    deadlineMs?: number;
   }
 ): Promise<GenerationReadResult> {
   const doFetch = options.fetchImpl ?? fetch;
+  const budget = options.deadlineMs ?? READ_DEADLINE_MS;
+  const deadline = AbortSignal.timeout(budget);
+  const started = Date.now();
   const sleep = options.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
   const base = `${options.host.replace(/\/+$/, '')}/api/v1/generation?id=`;
   const records: Record<string, GenerationRecord | null> = Object.fromEntries(
@@ -592,16 +673,24 @@ export async function readGenerationRecords(
   const failures: Record<string, string> = {};
   let pending = [...ids];
   for (const wait of [0, ...(options.retryDelaysMs ?? [2000, 8000])]) {
-    if (!pending.length) break;
-    if (wait) await sleep(wait);
+    if (!pending.length || deadline.aborted) break;
+    if (wait) {
+      if (Date.now() - started + wait >= budget) break;
+      await sleep(wait);
+    }
     const still: string[] = [];
     const queue = [...pending];
     const worker = async () => {
       for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
+        if (deadline.aborted) {
+          failures[id] = 'read budget spent';
+          still.push(id);
+          continue;
+        }
         try {
           const res = await doFetch(base + encodeURIComponent(id), {
             headers: { Authorization: `Bearer ${options.key}` },
-            signal: AbortSignal.timeout(30_000),
+            signal: AbortSignal.any([AbortSignal.timeout(REQUEST_TIMEOUT_MS), deadline]),
           });
           if (!res.ok) {
             failures[id] = `HTTP ${res.status}`;
@@ -628,7 +717,7 @@ export async function readGenerationRecords(
     );
     pending = still;
   }
-  return { records, failures };
+  return { records, failures, timedOut: deadline.aborted && pending.length > 0 };
 }
 
 /** The https host whose generation endpoint billed the run (`billed_cost.source`), or null. */
@@ -662,5 +751,9 @@ export function tokenUsageLine(t: TokenUsage, provider?: string | null): string 
     t.cachedTokens !== null && t.cachedTokens > 0
       ? ` · ${formatTokenCount(t.cachedTokens)} cached`
       : '';
-  return `Tokens: ${formatTokenCount(t.promptTokens)} in · ${formatTokenCount(t.completionTokens)} out${cached} (${t.exact ? 'exact' : 'estimated'}, ${label})`;
+  const figures = `${formatTokenCount(t.promptTokens)} in · ${formatTokenCount(t.completionTokens)} out${cached}`;
+  // "estimated" only for an estimate; a record with calls or tokens it could not count is a LOWER BOUND.
+  if (t.source === 'estimate') return `Tokens: about ${figures} (estimated)`;
+  if (t.exact) return `Tokens: ${figures} (exact, ${label})`;
+  return `Tokens: at least ${figures} (lower bound, ${label})`;
 }

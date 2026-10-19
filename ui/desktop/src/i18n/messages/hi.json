@@ -11603,6 +11603,9 @@
   "forgeSeries.publish": {
     "defaultMessage": "2 बिल्ड प्रकाशित करें"
   },
+  "forgeSeries.publishSeparately": {
+    "defaultMessage": "बिल्ड अलग-अलग प्रकाशित करें"
+  },
   "forgeSeries.publishTitle": {
     "defaultMessage": "प्रकाशन शीर्षक"
   },

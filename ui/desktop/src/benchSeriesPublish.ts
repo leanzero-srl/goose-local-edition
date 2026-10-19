@@ -90,3 +90,125 @@ export function pairCouplingWarning(a: PairCouplingFacts, b: PairCouplingFacts):
     return 'The builds ran under different conditions (engine, kit or settings), so leanzero.net lists them separately.';
   return null;
 }
+
+export interface PairPublishDeps {
+  /** This machine's published record per run key (its url), as main keeps it. */
+  published: Record<string, { url?: string | null } | undefined>;
+  /** Whether the record for `key` shows exactly this result (published and not re-scored since). */
+  isCurrent: (key: string, rescoredAt: string | undefined) => boolean;
+  /** Prepare a build without uploading or posting anything: its coupling facts, or why it cannot be published. */
+  preflight: (key: string) => Promise<Record<string, unknown>>;
+  /** Post a build (uploads, POST, recorded as published). */
+  publish: (key: string) => Promise<Record<string, unknown>>;
+}
+
+/**
+ * Publish both builds of a finished series in ONE action. Both are prepared first; a build that is already live stays
+ * live (never re-posted, never blocking); a partner that can never be published does not strand the requested build
+ * (it goes out on its own, said on the card); a pair that would not land as one entry is refused with
+ * `couplingRefused`, so the card can offer publishing the builds separately as the user's explicit choice. Then the
+ * builds post in build order; a refusal after one build is live is reported per build (`partial`), and publishing
+ * again posts only the missing one. `url` is the REQUESTED build's page.
+ */
+export async function publishSeriesPair(
+  keys: [string, string],
+  requestedKey: string,
+  deps: PairPublishDeps
+): Promise<Record<string, unknown>> {
+  const prepared: Array<{
+    index: 1 | 2;
+    key: string;
+    facts: PairCouplingFacts | null;
+    error: string | null;
+    posted: boolean;
+  }> = [];
+  for (const [i, key] of keys.entries()) {
+    const check = (await deps.preflight(key)) as {
+      ok?: boolean;
+      error?: string;
+      facts?: PairCouplingFacts;
+      rescoredAt?: string;
+    };
+    const ready = check.ok && check.facts ? check.facts : null;
+    prepared.push({
+      index: (i + 1) as 1 | 2,
+      key,
+      facts: ready,
+      error: ready ? null : (check.error ?? 'could not be prepared'),
+      posted: ready ? deps.isCurrent(key, check.rescoredAt) : deps.published[key] != null,
+    });
+  }
+  const requested = prepared.find((p) => p.key === requestedKey) ?? prepared[0];
+  if (requested.error && !requested.posted)
+    return {
+      ok: false,
+      error: `Build ${requested.index}: ${requested.error}. Neither build was published.`,
+    };
+  const lone = prepared.find((p) => p.error && !p.posted);
+  let alone: string | null = null;
+  if (lone) {
+    alone = `Build ${lone.index} cannot be published (${lone.error}), so build ${requested.index} was published on its own.`;
+    prepared.splice(prepared.indexOf(lone), 1);
+  } else if (prepared[0].facts && prepared[1].facts) {
+    const coupling = pairCouplingProblem(prepared[0].facts, prepared[1].facts);
+    if (coupling)
+      return {
+        ok: false,
+        couplingRefused: true,
+        error: `The two builds would not land as one entry on leanzero.net: ${coupling}. Neither build was published.`,
+      };
+  }
+  if (prepared.every((p) => p.posted))
+    return {
+      ok: false,
+      error:
+        prepared.length === 2
+          ? 'both builds of this series are already live on leanzero.net'
+          : `this build is already live on leanzero.net. ${alone ?? ''}`.trim(),
+    };
+  const builds: Array<Record<string, unknown>> = [];
+  for (const p of prepared) {
+    if (p.posted) {
+      builds.push({
+        index: p.index,
+        ok: true,
+        alreadyLive: true,
+        url: deps.published[p.key]?.url ?? null,
+      });
+      continue;
+    }
+    const result = await deps.publish(p.key);
+    builds.push({ index: p.index, ...result });
+    if (!result.ok) {
+      const live = builds.filter((b) => b.ok).map((b) => `build ${b.index}`);
+      return {
+        ok: false,
+        partial: live.length > 0,
+        builds,
+        error: `Build ${p.index} was refused: ${String(result.error ?? 'no reason given')}${
+          live.length
+            ? ` ${live.join(' and ')} is live on its own until build ${p.index} is published: publish again to post it.`
+            : ''
+        }`,
+      };
+    }
+  }
+  const last = builds[builds.length - 1];
+  const apart =
+    alone ??
+    (prepared.length === 2 && prepared[0].facts && prepared[1].facts
+      ? pairCouplingWarning(prepared[0].facts, prepared[1].facts)
+      : null);
+  const own = builds.find((b) => b.index === requested.index);
+  return {
+    ...last,
+    ok: true,
+    pair: !alone,
+    ...(apart ? { pairWarning: apart } : {}),
+    url:
+      (typeof own?.url === 'string' ? own.url : null) ??
+      builds.find((b) => typeof b.url === 'string')?.url ??
+      null,
+    builds,
+  };
+}

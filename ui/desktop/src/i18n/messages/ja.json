@@ -11603,6 +11603,9 @@
   "forgeSeries.publish": {
     "defaultMessage": "2 回のビルドを公開"
   },
+  "forgeSeries.publishSeparately": {
+    "defaultMessage": "ビルドを別々に公開"
+  },
   "forgeSeries.publishTitle": {
     "defaultMessage": "公開タイトル"
   },

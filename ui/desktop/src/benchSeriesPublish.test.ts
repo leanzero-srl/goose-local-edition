@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { completedSeriesFixture, seriesFixture } from './components/benchmark/series.fixture';
 import {
   pairCouplingProblem,
   pairCouplingWarning,
+  publishSeriesPair,
   seriesPublishPlan,
   type PairCouplingFacts,
   type SeriesPublishRow,
@@ -158,5 +159,97 @@ describe('the card says what happened to the pair and to each build', () => {
       'Build 2: Listed as a LeanZero cloud baseline.',
       'Build 2: Tokens: 1.0M in · 10.0k out (exact, OpenRouter records)',
     ]);
+  });
+});
+
+describe('publishSeriesPair: both builds in one action (main.ts publishBenchPair)', () => {
+  const facts: PairCouplingFacts = {
+    model: 'm/x',
+    provider: 'openrouter',
+    scorerVersion: 'forge-2.0',
+    taskFingerprint: 'e'.repeat(64),
+    comparisonCohortSha: 'f'.repeat(64),
+    title: 'X, single model via OpenRouter',
+    operator: true,
+  };
+  const ok = (key: string) => ({ ok: true, facts, rescoredAt: undefined, key });
+  function harness(
+    over: {
+      preflight?: Record<string, Record<string, unknown>>;
+      publish?: Record<string, Record<string, unknown>>;
+      published?: Record<string, { url: string }>;
+    } = {}
+  ) {
+    const published: Record<string, { url?: string | null }> = { ...(over.published ?? {}) };
+    const posted: string[] = [];
+    const deps = {
+      published,
+      isCurrent: (key: string) => key in published,
+      preflight: vi.fn(async (key: string) => over.preflight?.[key] ?? ok(key)),
+      publish: vi.fn(async (key: string) => {
+        posted.push(key);
+        const r = over.publish?.[key] ?? { ok: true, url: `/run/${key}`, baseline: true };
+        if (r.ok) published[key] = { url: r.url as string };
+        return r;
+      }),
+    };
+    return { deps, posted, published };
+  }
+  it('posts both in build order; the url is the REQUESTED build’s page', async () => {
+    const h = harness();
+    const r = await publishSeriesPair(['b1', 'b2'], 'b2', h.deps);
+    expect(h.posted).toEqual(['b1', 'b2']);
+    expect(r).toMatchObject({ ok: true, pair: true, url: '/run/b2' });
+  });
+  it('a partner that cannot be prepared: the requested build goes out alone and the card says why', async () => {
+    const h = harness({ preflight: { b2: { ok: false, error: 'the scorer held this build' } } });
+    const r = await publishSeriesPair(['b1', 'b2'], 'b1', h.deps);
+    expect(h.posted).toEqual(['b1']);
+    expect(r).toMatchObject({ ok: true, pair: false });
+    expect(r.pairWarning).toMatch(/Build 2 cannot be published \(the scorer held this build\)/);
+  });
+  it('the requested build cannot be prepared: nothing is posted', async () => {
+    const h = harness({ preflight: { b1: { ok: false, error: 'verdict gone' } } });
+    const r = await publishSeriesPair(['b1', 'b2'], 'b1', h.deps);
+    expect(h.posted).toEqual([]);
+    expect(r).toMatchObject({ ok: false });
+    expect(r.error).toMatch(/Build 1: verdict gone. Neither build was published/);
+  });
+  it('partial failure: build 1 live, build 2 refused; publishing again posts only build 2', async () => {
+    const h = harness({ publish: { b2: { ok: false, error: 'HTTP 422: tokenUsage …' } } });
+    const first = await publishSeriesPair(['b1', 'b2'], 'b1', h.deps);
+    expect(first).toMatchObject({ ok: false, partial: true });
+    expect(first.error).toMatch(
+      /Build 2 was refused: HTTP 422.*build 1 is live on its own until build 2 is published: publish again/
+    );
+    expect(
+      (first.builds as Array<{ index: number; ok: boolean }>).map((b) => [b.index, b.ok])
+    ).toEqual([
+      [1, true],
+      [2, false],
+    ]);
+    h.deps.publish.mockImplementation(async (key: string) => {
+      h.posted.push(key);
+      return { ok: true, url: `/run/${key}` };
+    });
+    const again = await publishSeriesPair(['b1', 'b2'], 'b2', h.deps);
+    expect(h.posted).toEqual(['b1', 'b2', 'b2']);
+    expect(again).toMatchObject({ ok: true, pair: true, url: '/run/b2' });
+    expect((again.builds as Array<{ alreadyLive?: boolean }>)[0].alreadyLive).toBe(true);
+  });
+  it('an already-live build that no longer prepares is not re-posted and does not block its partner', async () => {
+    const h = harness({
+      published: { b1: { url: '/run/b1' } },
+      preflight: { b1: { ok: false, error: 'folder moved' } },
+    });
+    const r = await publishSeriesPair(['b1', 'b2'], 'b2', h.deps);
+    expect(h.posted).toEqual(['b2']);
+    expect(r).toMatchObject({ ok: true });
+  });
+  it('builds that would not land as one entry are refused with couplingRefused, and nothing is posted', async () => {
+    const h = harness({ preflight: { b2: { ok: true, facts: { ...facts, title: 'Other' } } } });
+    const r = await publishSeriesPair(['b1', 'b2'], 'b1', h.deps);
+    expect(h.posted).toEqual([]);
+    expect(r).toMatchObject({ ok: false, couplingRefused: true });
   });
 });

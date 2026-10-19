@@ -309,6 +309,8 @@ type ElectronAPI = {
   benchmarkPublish: (args?: {
     title?: string;
     runKey?: string;
+    /** Publish this build alone: the user's explicit choice after the pair was refused as one entry. */
+    separately?: boolean;
     /** USD per 1M tokens, used ONLY when the run has no OpenRouter bill (sent as an estimate). */
     declaredPrices?: {
       inputUsdPerMTok: number;
@@ -364,6 +366,8 @@ type ElectronAPI = {
     }>;
     /** Forge 2.0 series: one build is live and the other was refused (publish again to post it). */
     partial?: boolean;
+    /** Forge 2.0 series: the builds would not land as one entry; the card offers publishing them separately. */
+    couplingRefused?: boolean;
   }>;
   /** The publish card's prefill for a run: a readable title (null when goose knows no display name) and where it ran. */
   benchmarkPublishSuggestion: (runKey: string) => Promise<{
@@ -696,6 +700,7 @@ const electronAPI: ElectronAPI = {
   benchmarkPublish: (args?: {
     title?: string;
     runKey?: string;
+    separately?: boolean;
     declaredPrices?: {
       inputUsdPerMTok: number;
       outputUsdPerMTok: number;

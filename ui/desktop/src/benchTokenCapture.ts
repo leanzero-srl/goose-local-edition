@@ -23,6 +23,8 @@ export interface TokenCaptureDeps {
     set: (verdictSha256: string, usage: TokenUsage) => Promise<void>;
   };
   sleep?: (ms: number) => Promise<void>;
+  /** The whole-read budget for OpenRouter's records (benchTokenUsage READ_DEADLINE_MS when absent). */
+  readDeadlineMs?: number;
 }
 
 export interface TokenCapture {
@@ -114,6 +116,7 @@ export async function captureTokenUsage(
           host,
           fetchImpl: deps.fetchImpl,
           sleep: deps.sleep,
+          deadlineMs: deps.readDeadlineMs,
         });
         const billRecord = bill as {
           generation_ids_collected?: unknown;
@@ -128,6 +131,7 @@ export async function captureTokenUsage(
               ? billRecord.generation_ids_collected
               : undefined,
           telemetryAuthoritative: billRecord.telemetry?.status === 'recorded' && !!calls?.length,
+          usage: agent.usage,
         });
         const found = Object.values(read.records).filter(Boolean).length;
         if (usage && found > 0) {
@@ -136,7 +140,9 @@ export async function captureTokenUsage(
             const fromBill = tokenUsageFromHarnessBill({
               calls: calls ?? [],
               billedCost: bill,
-              reason: `${usage.missingCalls} record(s) could not be read`,
+              reason: read.timedOut
+                ? `OpenRouter did not answer every record within the read budget; ${usage.missingCalls} unread`
+                : `${usage.missingCalls} record(s) could not be read`,
             });
             if (fromBill && fromBill.missingCalls < usage.missingCalls)
               return { usage: fromBill, problem: null };
@@ -146,7 +152,9 @@ export async function captureTokenUsage(
           return { usage, problem: null };
         }
         const failures = [...new Set(Object.values(read.failures))].slice(0, 3).join(', ');
-        reason = `OpenRouter answered no record (${failures || 'no usable record'})`;
+        reason = read.timedOut
+          ? 'OpenRouter did not answer within the read budget'
+          : `OpenRouter answered no record (${failures || 'no usable record'})`;
       }
     }
     const fromBill = tokenUsageFromHarnessBill({ calls: calls ?? [], billedCost: bill, reason });

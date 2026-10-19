@@ -11603,6 +11603,9 @@
   "forgeSeries.publish": {
     "defaultMessage": "發布 2 次建置"
   },
+  "forgeSeries.publishSeparately": {
+    "defaultMessage": "分別發布建置"
+  },
   "forgeSeries.publishTitle": {
     "defaultMessage": "發布標題"
   },

@@ -291,3 +291,33 @@ describe('Forge two-build presentation and publication', () => {
     );
   });
 });
+
+describe('a pair refused as one entry', () => {
+  it('offers publishing the builds separately, as the user’s explicit choice, build by build', async () => {
+    const series = completedSeriesFixture();
+    const post = vi.fn(async (args: { runKey: string; separately?: boolean }) =>
+      args.separately
+        ? { ok: true, url: `/${args.runKey}` }
+        : {
+            ok: false,
+            couplingRefused: true,
+            error: 'The two builds would not land as one entry on leanzero.net: different titles.',
+          }
+    );
+    Object.assign(window.electron, {
+      benchmarkSessions: vi.fn(async () => ({ sessions: sessionsFixture(series) })),
+      benchmarkPublish: post,
+    });
+    mount(series);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Publication title' }), {
+      target: { value: 'Fixture pair' },
+    });
+    expect(screen.queryByRole('button', { name: 'Publish the builds separately' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Publish 2 builds' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Publish the builds separately' }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(3));
+    expect(post.mock.calls.slice(1).map(([args]) => [args.runKey, args.separately])).toEqual(
+      series.builds.map((build) => [build.runId, true])
+    );
+  });
+});

@@ -11603,6 +11603,9 @@
   "forgeSeries.publish": {
     "defaultMessage": "Terbitkan 2 build"
   },
+  "forgeSeries.publishSeparately": {
+    "defaultMessage": "Terbitkan build secara terpisah"
+  },
   "forgeSeries.publishTitle": {
     "defaultMessage": "Judul penerbitan"
   },

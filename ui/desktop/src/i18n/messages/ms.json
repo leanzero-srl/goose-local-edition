@@ -11603,6 +11603,9 @@
   "forgeSeries.publish": {
     "defaultMessage": "Terbitkan 2 binaan"
   },
+  "forgeSeries.publishSeparately": {
+    "defaultMessage": "Terbitkan binaan secara berasingan"
+  },
   "forgeSeries.publishTitle": {
     "defaultMessage": "Tajuk penerbitan"
   },

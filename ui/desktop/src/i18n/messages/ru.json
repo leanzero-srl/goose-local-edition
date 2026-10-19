@@ -11603,6 +11603,9 @@
   "forgeSeries.publish": {
     "defaultMessage": "Опубликовать 2 сборки"
   },
+  "forgeSeries.publishSeparately": {
+    "defaultMessage": "Опубликовать сборки по отдельности"
+  },
   "forgeSeries.publishTitle": {
     "defaultMessage": "Заголовок публикации"
   },

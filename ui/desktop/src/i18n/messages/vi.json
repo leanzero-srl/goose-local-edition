@@ -11603,6 +11603,9 @@
   "forgeSeries.publish": {
     "defaultMessage": "Công bố 2 bản dựng"
   },
+  "forgeSeries.publishSeparately": {
+    "defaultMessage": "Xuất bản các bản dựng riêng biệt"
+  },
   "forgeSeries.publishTitle": {
     "defaultMessage": "Tiêu đề công bố"
   },

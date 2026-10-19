@@ -183,7 +183,7 @@ type PublishState =
   | { kind: 'idle' }
   | { kind: 'publishing' }
   | { kind: 'accepted'; title: string; score: number; url: string | null; notes: string[] }
-  | { kind: 'error'; message: string };
+  | { kind: 'error'; message: string; couplingRefused?: boolean };
 
 /** The stored result row — the v1 chart fields plus the v2 publisher inputs main.ts persists. */
 interface MineRow extends BenchmarkRow {
@@ -1912,7 +1912,8 @@ export default function BenchmarkView() {
     }
   }, [deleteTarget, loadSessions]);
 
-  const publish = useCallback(async () => {
+  // `separately`: the user's explicit choice after a Forge 2.0 pair was refused as one entry (never automatic).
+  const publish = useCallback(async (separately = false) => {
     if (!shownRow || !selectedKey) return;
     const chosen = title.trim();
     if (!chosen) return;
@@ -1921,6 +1922,7 @@ export default function BenchmarkView() {
       const res = await window.electron.benchmarkPublish?.({
         title: chosen,
         runKey: selectedKey,
+        ...(separately ? { separately: true } : {}),
         ...(!runBilled && price.prices ? { declaredPrices: price.prices } : {}),
       });
       if (res?.ok) {
@@ -1937,9 +1939,12 @@ export default function BenchmarkView() {
         // server-shaped refusal (`message` — e.g. the frozen-benchmark gate answered from the
         // cached catalog). Never a generic line; "no response" appears only when the handler
         // itself returned nothing.
+        // A series publish that left one build live changed the history: show it now.
+        if (res?.partial) void loadSessions();
         setPub({
           kind: 'error',
           message: res?.error ?? res?.message ?? 'the publish handler returned no response',
+          ...(res?.couplingRefused ? { couplingRefused: true } : {}),
         });
       }
     } catch (err) {
@@ -2106,7 +2111,7 @@ export default function BenchmarkView() {
             </div>
             <Button
               variant="primary"
-              onClick={publish}
+              onClick={() => void publish()}
               disabled={publishWhy != null || publishing}
               title={
                 publishing
@@ -2180,6 +2185,17 @@ export default function BenchmarkView() {
             >
               <XCircle />
               <span>Publish failed: {pub.message}</span>
+            </div>
+          )}
+          {pub.kind === 'error' && pub.couplingRefused && (
+            <div className="mt-3">
+              <Button
+                variant="secondary"
+                onClick={() => void publish(true)}
+                data-testid="publish-separately"
+              >
+                Publish this build on its own
+              </Button>
             </div>
           )}
         </div>
