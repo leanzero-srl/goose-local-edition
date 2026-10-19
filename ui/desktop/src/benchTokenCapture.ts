@@ -1,6 +1,7 @@
 import path from 'node:path';
 import {
   billingHost,
+  recordsBill,
   parseTelemetryCalls,
   readGenerationRecords,
   runGenerationIds,
@@ -19,8 +20,8 @@ export interface TokenCaptureDeps {
   fetchImpl?: typeof fetch;
   /** Exact provider-record results keyed by the verdict's sha256, so a republish does not read every record again. */
   cache?: {
-    get: (verdictSha256: string) => Promise<TokenUsage | null>;
-    set: (verdictSha256: string, usage: TokenUsage) => Promise<void>;
+    get: (verdictSha256: string) => Promise<CachedCapture | null>;
+    set: (verdictSha256: string, capture: CachedCapture) => Promise<void>;
   };
   sleep?: (ms: number) => Promise<void>;
   /** The whole-read budget for OpenRouter's records (benchTokenUsage READ_DEADLINE_MS when absent). */
@@ -31,6 +32,14 @@ export interface TokenCapture {
   usage: TokenUsage | null;
   /** Why no token usage is sent, in plain words for the publish card. */
   problem: string | null;
+  /** An EXACT publish-time read is also a complete bill (Σ each record's billed USD): main sends it in place of a
+   *  run-end bill that missed records, so the page never says "8 calls not found" beside "exact, 51 calls". */
+  recordsBill?: { billedUsd: number; requestCount: number };
+}
+
+export interface CachedCapture {
+  usage: TokenUsage;
+  recordsBill?: { billedUsd: number; requestCount: number };
 }
 
 /** The run's per-call telemetry: the file the harness bill names (inside a `.swarm` folder only), else the run folders. */
@@ -99,7 +108,12 @@ export async function captureTokenUsage(
   if (openRouter) {
     if (input.verdictSha256 && deps.cache) {
       const cached = await deps.cache.get(input.verdictSha256).catch(() => null);
-      if (cached && !tokenUsageProblem(cached)) return { usage: cached, problem: null };
+      if (cached?.usage && !tokenUsageProblem(cached.usage))
+        return {
+          usage: cached.usage,
+          problem: null,
+          ...(cached.recordsBill ? { recordsBill: cached.recordsBill } : {}),
+        };
     }
     const ids = runGenerationIds(calls ?? [], bill);
     let reason = 'the run kept no OpenRouter generation id';
@@ -147,9 +161,12 @@ export async function captureTokenUsage(
             if (fromBill && fromBill.missingCalls < usage.missingCalls)
               return { usage: fromBill, problem: null };
           }
+          const exactBill = recordsBill(usage, ids, read.records);
           if (usage.exact && input.verdictSha256 && deps.cache)
-            await deps.cache.set(input.verdictSha256, usage).catch(() => {});
-          return { usage, problem: null };
+            await deps.cache
+              .set(input.verdictSha256, { usage, ...(exactBill ? { recordsBill: exactBill } : {}) })
+              .catch(() => {});
+          return { usage, problem: null, ...(exactBill ? { recordsBill: exactBill } : {}) };
         }
         const failures = [...new Set(Object.values(read.failures))].slice(0, 3).join(', ');
         reason = read.timedOut

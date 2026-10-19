@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import fixture from './benchTokenUsage.fixture.json';
-import { captureTokenUsage } from './benchTokenCapture';
-import type { TokenUsage } from './benchTokenUsage';
+import { captureTokenUsage, type CachedCapture } from './benchTokenCapture';
 
 const sonnet = fixture.sonnet;
 const RUN =
@@ -30,7 +29,7 @@ function openRouter(missing = new Set<string>()) {
 describe('captureTokenUsage: the publish-time token record', () => {
   it('an OpenRouter run re-reads every generation record: exact, by model, cached for the next publish', async () => {
     const fetchImpl = openRouter();
-    const saved: Record<string, TokenUsage> = {};
+    const saved: Record<string, CachedCapture> = {};
     const result = await captureTokenUsage(
       { stored, verdict, verdictSha256: 'c'.repeat(64), route: 'cloud' },
       {
@@ -55,7 +54,9 @@ describe('captureTokenUsage: the publish-time token record', () => {
       source: 'provider-records',
     });
     expect(fetchImpl).toHaveBeenCalledTimes(51);
-    expect(saved['c'.repeat(64)]).toEqual(result.usage);
+    // The exact read is also the complete bill the run-end read missed (43 + 8 records then): OpenRouter's own USD.
+    expect(result.recordsBill).toEqual({ billedUsd: 1.6556498, requestCount: 51 });
+    expect(saved['c'.repeat(64)]).toEqual({ usage: result.usage, recordsBill: result.recordsBill });
     // A republish reads the cache, not OpenRouter.
     const again = await captureTokenUsage(
       { stored, verdict, verdictSha256: 'c'.repeat(64), route: 'cloud' },

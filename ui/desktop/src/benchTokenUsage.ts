@@ -106,6 +106,8 @@ export function parseTelemetryCalls(text: string): { calls: TelemetryCall[]; unp
 export interface GenerationRecord {
   id?: unknown;
   model?: unknown;
+  /** USD OpenRouter billed for the generation. */
+  usage?: unknown;
   native_tokens_prompt?: unknown;
   native_tokens_completion?: unknown;
   native_tokens_cached?: unknown;
@@ -756,4 +758,24 @@ export function tokenUsageLine(t: TokenUsage, provider?: string | null): string 
   if (t.source === 'estimate') return `Tokens: about ${figures} (estimated)`;
   if (t.exact) return `Tokens: ${figures} (exact, ${label})`;
   return `Tokens: at least ${figures} (lower bound, ${label})`;
+}
+
+/**
+ * The bill OpenRouter's records make when the publish-time read is EXACT (every generation id the run kept has its
+ * record and the run's own usage agrees): the sum of each record's billed `usage`. Null otherwise — a partial read
+ * never replaces the harness's bill.
+ */
+export function recordsBill(
+  usage: TokenUsage | null,
+  ids: string[],
+  records: Record<string, GenerationRecord | null | undefined>
+): { billedUsd: number; requestCount: number } | null {
+  if (!usage?.exact || usage.source !== 'provider-records' || !ids.length) return null;
+  let micro = 0;
+  for (const id of ids) {
+    const billed = records[id]?.usage;
+    if (typeof billed !== 'number' || !Number.isFinite(billed) || billed < 0) return null;
+    micro += Math.round(billed * 1e9);
+  }
+  return { billedUsd: micro / 1e9, requestCount: ids.length };
 }

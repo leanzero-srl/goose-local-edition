@@ -29,7 +29,7 @@ import {
 } from './benchRescore';
 import { billedCostRowField, type DeclaredPrices } from './benchBilledCost';
 import { benchPublishBilling, droppableAfterRefusal } from './benchPublishBilling';
-import { captureTokenUsage } from './benchTokenCapture';
+import { captureTokenUsage, type CachedCapture, type TokenCapture } from './benchTokenCapture';
 import { tokenUsageLine, type TokenUsage } from './benchTokenUsage';
 import {
   publishSeriesPair,
@@ -5997,13 +5997,13 @@ async function benchOpenRouterCredentials(): Promise<{ key: string; host: string
  *  exact) is never reused. */
 const BENCH_TOKEN_USAGE_DIR = () => path.join(BENCH_DIR, 'token-usage-v2');
 const benchTokenUsageCache = {
-  get: async (sha: string): Promise<TokenUsage | null> =>
+  get: async (sha: string): Promise<CachedCapture | null> =>
     /^[a-f0-9]{64}$/.test(sha)
       ? (JSON.parse(
           await fs.readFile(path.join(BENCH_TOKEN_USAGE_DIR(), `${sha}.json`), 'utf8')
-        ) as TokenUsage)
+        ) as CachedCapture)
       : null,
-  set: async (sha: string, usage: TokenUsage): Promise<void> => {
+  set: async (sha: string, usage: CachedCapture): Promise<void> => {
     if (!/^[a-f0-9]{64}$/.test(sha)) return;
     await fs.mkdir(BENCH_TOKEN_USAGE_DIR(), { recursive: true });
     await fs.writeFile(path.join(BENCH_TOKEN_USAGE_DIR(), `${sha}.json`), JSON.stringify(usage));
@@ -6403,11 +6403,29 @@ async function publishBenchRun(
       openRouterCredentials: benchOpenRouterCredentials,
       cache: benchTokenUsageCache,
     }
-  ).catch((error) => ({
+  ).catch((error): TokenCapture => ({
     usage: null,
     problem: `token counts could not be recorded: ${error instanceof Error ? error.message : String(error)}`,
   }));
   if (tokens.usage) payload.tokenUsage = tokens.usage;
+  // The run-end bill missed records the publish-time read found (OpenRouter writes a record after the stream ends):
+  // the exact read is the complete bill, so price and tokens on the page tell one story.
+  const bill = payload.billing as Record<string, unknown> | undefined;
+  if (
+    tokens.recordsBill &&
+    bill?.source === 'openrouter-generation-records' &&
+    bill.status !== 'complete'
+  )
+    payload.billing = {
+      ...bill,
+      status: 'complete',
+      billedUsd: tokens.recordsBill.billedUsd,
+      requestCount: tokens.recordsBill.requestCount,
+      missingCallCount: 0,
+      reasons: [
+        `Read again at publish: OpenRouter's records for all ${tokens.recordsBill.requestCount} generation ids of the run (the read at the end of the run missed some, which OpenRouter writes after the stream ends).`,
+      ],
+    };
   let tokenProblem: string | null = tokens.problem;
   try {
     const post = () =>
