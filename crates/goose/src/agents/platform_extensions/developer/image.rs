@@ -119,9 +119,8 @@ async fn load_image(
     let bytes = load_image_bytes(&params.source, working_dir).await?;
     ensure_image_size(bytes.len() as u64)?;
 
-    let format = image::guess_format(&bytes).map_err(|_| {
-        "unsupported image format; supported formats are png, jpeg, gif, and webp".to_string()
-    })?;
+    let format = image::guess_format(&bytes)
+        .map_err(|_| unsupported_format_message(&bytes, &params.source))?;
     let mime_type = mime_type(format)?;
     let image = image::load_from_memory_with_format(&bytes, format)
         .map_err(|error| format!("failed to decode image: {error}"))?;
@@ -159,6 +158,28 @@ async fn load_image(
         original_height,
         cropped: true,
     })
+}
+
+const UNSUPPORTED_FORMAT: &str =
+    "unsupported image format; supported formats are png, jpeg, gif, and webp";
+
+/// A model that reaches for `read_image` to read a text file (a contract, a manifest, JSON) gets an
+/// error it cannot act on and retries the same call until the duplicate guard stops it — Xing 4.0
+/// spent 121 of its Forge 2.0 calls this way (RUN-ISSUES I-15). When the bytes are text, say so and
+/// name the tool that reads text.
+fn unsupported_format_message(bytes: &[u8], source: &str) -> String {
+    if looks_like_text(bytes) {
+        format!(
+            "{UNSUPPORTED_FORMAT}. `{source}` is a text file, not an image: read it with the `shell` tool instead (for example `cat '{source}'` or `sed -n '1,200p' '{source}'`)."
+        )
+    } else {
+        UNSUPPORTED_FORMAT.to_string()
+    }
+}
+
+fn looks_like_text(bytes: &[u8]) -> bool {
+    let head = &bytes[..bytes.len().min(8192)];
+    !head.is_empty() && !head.contains(&0) && std::str::from_utf8(head).is_ok()
 }
 
 async fn load_image_bytes(source: &str, working_dir: Option<&Path>) -> Result<Vec<u8>, String> {
@@ -253,8 +274,37 @@ fn mime_type(format: image::ImageFormat) -> Result<&'static str, String> {
         image::ImageFormat::Jpeg => Ok("image/jpeg"),
         image::ImageFormat::Gif => Ok("image/gif"),
         image::ImageFormat::WebP => Ok("image/webp"),
-        _ => Err(
-            "unsupported image format; supported formats are png, jpeg, gif, and webp".to_string(),
-        ),
+        _ => Err(UNSUPPORTED_FORMAT.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_file_error_points_to_shell() {
+        let msg = unsupported_format_message(
+            b"# forge-2.0 contract\nmodules:\n",
+            "/w/FORGE2-CONTRACT.md",
+        );
+        assert!(msg.starts_with(UNSUPPORTED_FORMAT));
+        assert!(msg.contains("is a text file"));
+        assert!(msg.contains("`shell`"));
+        assert!(msg.contains("cat '/w/FORGE2-CONTRACT.md'"));
+    }
+
+    #[test]
+    fn binary_non_image_keeps_the_plain_error() {
+        let msg = unsupported_format_message(&[0u8, 159, 146, 150, 0, 1, 2], "/w/blob.bin");
+        assert_eq!(msg, UNSUPPORTED_FORMAT);
+    }
+
+    #[test]
+    fn empty_file_is_not_called_text() {
+        assert_eq!(
+            unsupported_format_message(b"", "/w/empty"),
+            UNSUPPORTED_FORMAT
+        );
     }
 }
