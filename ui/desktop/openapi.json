@@ -4972,6 +4972,10 @@
             "type": "boolean",
             "description": "Whether the message should be included in the agent's context window"
           },
+          "harnessNudge": {
+            "type": "boolean",
+            "description": "A user row the harness added to keep the agent loop going (a length-cut or empty-turn\ncontinuation, a goal or stop-hook reminder), not the person's words. A compaction never\ncarries such a row forward as the chat's latest request (context_mgmt `is_harness_nudge`).\nNever sent to providers."
+          },
           "inference": {
             "allOf": [
               {

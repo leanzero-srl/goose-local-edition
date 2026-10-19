@@ -698,6 +698,12 @@ pub struct MessageMetadata {
     /// Boxed: four strings would grow every `Message` for a field almost none carry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_error: Option<Box<ProviderErrorNotice>>,
+    /// A user row the harness added to keep the agent loop going (a length-cut or empty-turn
+    /// continuation, a goal or stop-hook reminder), not the person's words. A compaction never
+    /// carries such a row forward as the chat's latest request (context_mgmt `is_harness_nudge`).
+    /// Never sent to providers.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub harness_nudge: bool,
 }
 
 /// A provider error as a client shows it: what the serving engine said, whether resending can
@@ -732,6 +738,7 @@ impl Default for MessageMetadata {
             inference: None,
             steer: false,
             provider_error: None,
+            harness_nudge: false,
         }
     }
 }
@@ -1092,6 +1099,12 @@ impl Message {
 
     pub fn with_steer(mut self) -> Self {
         self.metadata.steer = true;
+        self
+    }
+
+    /// Mark this row as added by the harness, not written by the person.
+    pub fn with_harness_nudge(mut self) -> Self {
+        self.metadata.harness_nudge = true;
         self
     }
 

@@ -79,8 +79,6 @@ const MAX_EMPTY_TURN_RETRIES: u32 = 3;
 /// Consecutive replies cut at the output-token limit before any tool call that are answered with
 /// LENGTH_CUT_CONTINUATION instead of ending (text) or re-asking blind (reasoning only).
 const MAX_LENGTH_CUT_NUDGES: u32 = 3;
-/// Also the compaction's matcher: a preserved "latest request" must never be this nudge
-/// (context_mgmt `is_harness_nudge`), so a rewording here moves the matcher with it.
 pub const LENGTH_CUT_CONTINUATION: &str = "Your last reply was cut off at the model's output-token limit, so it is \
      unfinished and nothing in it was carried out. Continue from where it stopped in smaller steps: if the task needs \
      actions, take the next one now with a tool call instead of planning everything in one reply, and keep each reply \
@@ -88,7 +86,7 @@ pub const LENGTH_CUT_CONTINUATION: &str = "Your last reply was cut off at the mo
 /// Sent (agent-visible only) with every empty-turn retry. Resending the identical conversation to a
 /// deterministic local model reproduces the same empty reply: Gemma 4 26B-A4B (2026-10-18) stopped after one
 /// token three times on the same 71,670-token prompt and the run was refused.
-const EMPTY_TURN_CONTINUATION: &str =
+pub const EMPTY_TURN_CONTINUATION: &str =
     "Your last reply had no text and no tool call. Continue the task now: \
      take the next step with a tool call, or give your final answer if the task is done.";
 const EMPTY_TURN_MESSAGE: &str =
@@ -125,6 +123,16 @@ fn extract_string_arg(input: &Value, keys: &[&str]) -> Option<String> {
     None
 }
 
+/// A user row the agent loop adds to keep going: agent-visible only, and marked as the harness's
+/// own (`MessageMetadata::harness_nudge`) so a compaction never preserves it as the person's latest
+/// request (I-31: a preserved "continue" note ended a run at call 54 of 300).
+pub fn harness_nudge(text: impl Into<String>) -> Message {
+    Message::user()
+        .with_text(text.into())
+        .with_visibility(false, true)
+        .with_harness_nudge()
+}
+
 fn stop_hook_denial_context_message(plugin: &str, reason: &str) -> Message {
     let nudge = format!(
         "Stop hook `{plugin}` blocked ending this turn:
@@ -133,9 +141,7 @@ fn stop_hook_denial_context_message(plugin: &str, reason: &str) -> Message {
 
 Address this policy hook denial before trying to stop again."
     );
-    Message::user()
-        .with_text(nudge)
-        .with_visibility(false, true)
+    harness_nudge(nudge)
 }
 
 fn stop_hook_denial_notification(plugin: &str) -> Message {
@@ -3203,9 +3209,7 @@ impl Agent {
                                 "Reply cut at the output-token limit before any tool call; continuing ({}/{})",
                                 length_cut_nudges, MAX_LENGTH_CUT_NUDGES
                             );
-                            let message = Message::user()
-                                .with_text(LENGTH_CUT_CONTINUATION)
-                                .with_visibility(false, true);
+                            let message = harness_nudge(LENGTH_CUT_CONTINUATION);
                             messages_to_add.push(message);
                         }
                         None if self.goal.lock().await.is_some() && !goal_check_pending => {
@@ -3216,8 +3220,7 @@ impl Agent {
                                  **Goal:** {goal}\n\n\
                                  If not, continue working toward it."
                             );
-                            let message = Message::user().with_text(&nudge)
-                                .with_visibility(false, true);
+                            let message = harness_nudge(nudge);
                             messages_to_add.push(message);
                             yield AgentEvent::Message(
                                 Message::assistant().with_system_notification(
@@ -3234,8 +3237,7 @@ impl Agent {
                                  **Goal:** {grind}\n\n\
                                  Continue until it is fully done."
                             );
-                            let message = Message::user().with_text(&nudge)
-                                .with_visibility(false, true);
+                            let message = harness_nudge(nudge);
                             messages_to_add.push(message);
                             yield AgentEvent::Message(
                                 Message::assistant().with_system_notification(
@@ -3269,11 +3271,7 @@ impl Agent {
                                     if empty_turn_retries < MAX_EMPTY_TURN_RETRIES {
                                         empty_turn_retries += 1;
                                         retrying_after_empty_turn = true;
-                                        messages_to_add.push(
-                                            Message::user()
-                                                .with_text(EMPTY_TURN_CONTINUATION)
-                                                .with_visibility(false, true),
-                                        );
+                                        messages_to_add.push(harness_nudge(EMPTY_TURN_CONTINUATION));
                                         warn!(
                                             "Provider returned an empty response; retrying ({}/{})",
                                             empty_turn_retries, MAX_EMPTY_TURN_RETRIES

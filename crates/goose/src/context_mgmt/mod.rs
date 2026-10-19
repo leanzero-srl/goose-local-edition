@@ -536,19 +536,15 @@ async fn compact_core(
     })
 }
 
-/// goose's own continuation nudge ("Your last reply was cut off ...") is a user row the agent
-/// adds, not the person's request. Preserved after a compaction it became the chat's last word:
-/// Nex-N2.5-mini (laptop, 2026-10-19, run openai-cloud-21a3f68b) read "continue in smaller
-/// steps" under a summary and answered with prose, so the session ended at call 54 of 300.
-/// The person's own message still reaches the model inside the kept block.
+/// A row the agent loop added to keep going (`crate::agents::harness_nudge`: the length-cut and
+/// empty-turn continuations, goal and stop-hook reminders) is not the person's request. Preserved
+/// after a compaction it became the chat's last word: Nex-N2.5-mini (laptop, 2026-10-19, run
+/// openai-cloud-21a3f68b) read "continue in smaller steps" under a summary and answered with prose,
+/// so the session ended at call 54 of 300. Decided by the row's marker, never by its words: a
+/// person who types the same sentence is still the person. The person's own message still reaches
+/// the model inside the kept block.
 fn is_harness_nudge(msg: &Message) -> bool {
-    let text: String = msg
-        .content
-        .iter()
-        .filter_map(|c| c.as_text())
-        .collect::<Vec<_>>()
-        .join("\n");
-    text.trim() == crate::agents::LENGTH_CUT_CONTINUATION
+    msg.metadata.harness_nudge
 }
 
 /// Check if messages exceed the auto-compaction threshold
@@ -1722,6 +1718,72 @@ mod tests {
             .expect("compaction should produce a valid conversation");
     }
 
+    /// I-13 x I-31: every harness nudge (the empty-turn continuation too, which tells the model it
+    /// may "give your final answer") is skipped by the compaction's preserved request, through a
+    /// stored round trip; the same words typed by the person are still the person's request.
+    #[tokio::test]
+    async fn every_harness_nudge_stays_out_of_the_preserved_request_and_the_persons_words_stay_in()
+    {
+        for nudge_text in [
+            crate::agents::LENGTH_CUT_CONTINUATION,
+            crate::agents::EMPTY_TURN_CONTINUATION,
+        ] {
+            let stored: Message = serde_json::from_str(
+                &serde_json::to_string(&crate::agents::harness_nudge(nudge_text)).unwrap(),
+            )
+            .unwrap();
+            assert!(stored.metadata.harness_nudge, "the marker is persisted");
+            for (last, nudge_kept) in [
+                (stored.clone(), false),
+                (
+                    Message::user()
+                        .with_text(nudge_text)
+                        .with_visibility(false, true),
+                    true,
+                ),
+            ] {
+                let provider =
+                    MockProvider::new(Message::assistant().with_text("<mock summary>"), 1);
+                let conversation = Conversation::new_unvalidated(vec![
+                    Message::user().with_text("ship v2 of the app"),
+                    Message::assistant()
+                        .with_tool_request("tool_0", Ok(CallToolRequestParams::new("read_file"))),
+                    Message::user().with_tool_response(
+                        "tool_0",
+                        Ok(rmcp::model::CallToolResult::success(vec![
+                            RawContent::text("v1 source").no_annotation(),
+                        ])),
+                    ),
+                    last,
+                ]);
+                let model_config = provider.config.clone();
+                let (compacted, _usage) = compact_messages(
+                    &provider,
+                    &model_config,
+                    "test-session-id",
+                    &conversation,
+                    false,
+                    &SummaryRequest::Transcript,
+                )
+                .await
+                .unwrap();
+                let last_text = compacted
+                    .agent_visible_messages()
+                    .last()
+                    .expect("a compacted conversation")
+                    .as_concat_text();
+                assert_eq!(
+                    last_text.contains(nudge_text),
+                    nudge_kept,
+                    "{nudge_text:?} -> {last_text:?}"
+                );
+                if !nudge_kept {
+                    assert!(last_text.contains("ship v2 of the app"), "{last_text:?}");
+                }
+            }
+        }
+    }
+
     /// I-31: goose's length-cut nudge is the newest agent-visible user text in a long tool loop,
     /// and a compaction preserved IT as the chat's latest request. The person's message must be
     /// the one carried after the summary. NEGATIVE CONTROL: without `is_harness_nudge` the last
@@ -1739,9 +1801,7 @@ mod tests {
                     RawContent::text("v1 source").no_annotation(),
                 ])),
             ),
-            Message::user()
-                .with_text(crate::agents::LENGTH_CUT_CONTINUATION)
-                .with_visibility(false, true),
+            crate::agents::harness_nudge(crate::agents::LENGTH_CUT_CONTINUATION),
         ]);
         let model_config = provider.config.clone();
         let (compacted, _usage) = compact_messages(
