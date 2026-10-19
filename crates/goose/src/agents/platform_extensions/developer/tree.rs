@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use ignore::WalkBuilder;
 use rmcp::model::{CallToolResult, Content};
@@ -17,6 +18,14 @@ pub struct TreeParams {
 fn default_depth() -> u32 {
     2
 }
+
+/// Directories a package manager fills. Below the requested root they are shown by name only, even when no
+/// .gitignore names them: a Forge benchmark run dir has none, and one `tree` at depth 3 dumped 162k chars of
+/// node_modules into a model's first turn (RUN-ISSUES I-26). Asking for such a directory as the root lists it.
+const DEPENDENCY_DIRS: &[&str] = &["node_modules", "bower_components", "__pycache__"];
+
+/// Most lines one call returns; the rest is summarised so the model narrows the path or the depth.
+const MAX_TREE_LINES: usize = 2000;
 
 pub struct TreeTool;
 
@@ -68,6 +77,7 @@ impl TreeTool {
         if output.is_empty() {
             output.push_str("(empty directory)");
         }
+        let output = cap_lines(output, MAX_TREE_LINES);
 
         CallToolResult::success(vec![Content::text(output).with_priority(0.0)])
     }
@@ -84,6 +94,7 @@ struct DirectoryNode {
     dirs: BTreeMap<String, DirectoryNode>,
     files: BTreeMap<String, usize>,
     total_lines: usize,
+    dependencies: bool,
 }
 
 impl DirectoryNode {
@@ -92,6 +103,14 @@ impl DirectoryNode {
         for component in components {
             node = node.dirs.entry(component.clone()).or_default();
         }
+    }
+
+    fn insert_dependency_dir(&mut self, components: &[String]) {
+        let mut node = self;
+        for component in components {
+            node = node.dirs.entry(component.clone()).or_default();
+        }
+        node.dependencies = true;
     }
 
     fn insert_file(&mut self, components: &[String], line_count: usize) {
@@ -123,6 +142,13 @@ impl DirectoryNode {
         let indent = "  ".repeat(depth);
 
         for (name, dir) in &self.dirs {
+            if dir.dependencies {
+                out.push_str(&format!(
+                    "{}{}/  (installed dependencies, not listed; call tree on it to see inside)\n",
+                    indent, name
+                ));
+                continue;
+            }
             out.push_str(&format!(
                 "{}{}/  {}\n",
                 indent,
@@ -156,6 +182,23 @@ fn collect_tree(root: &Path, max_depth: Option<usize>) -> DirectoryNode {
         builder.max_depth(Some(depth + 1));
     }
 
+    let skipped: Arc<Mutex<Vec<PathBuf>>> = Arc::default();
+    let seen = Arc::clone(&skipped);
+    builder.filter_entry(move |entry| {
+        let is_dependency_dir = entry.depth() > 0
+            && entry.file_type().is_some_and(|t| t.is_dir())
+            && entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| DEPENDENCY_DIRS.contains(&name));
+        if is_dependency_dir {
+            if let Ok(mut seen) = seen.lock() {
+                seen.push(entry.path().to_path_buf());
+            }
+        }
+        !is_dependency_dir
+    });
+
     let mut tree = DirectoryNode::default();
     for entry in builder.build().flatten() {
         let path = entry.path();
@@ -180,7 +223,31 @@ fn collect_tree(root: &Path, max_depth: Option<usize>) -> DirectoryNode {
         }
     }
 
+    let skipped = skipped.lock().map(|s| s.clone()).unwrap_or_default();
+    for path in skipped {
+        if let Some(components) = path.strip_prefix(root).ok().and_then(relative_components) {
+            tree.insert_dependency_dir(&components);
+        }
+    }
+
     tree
+}
+
+fn cap_lines(output: String, max_lines: usize) -> String {
+    let total = output.lines().count();
+    if total <= max_lines {
+        return output;
+    }
+    let mut capped: String = output
+        .lines()
+        .take(max_lines)
+        .flat_map(|line| [line, "\n"])
+        .collect();
+    capped.push_str(&format!(
+        "... {} more lines not shown. Call tree on a subdirectory or with a smaller depth.\n",
+        total - max_lines
+    ));
+    capped
 }
 
 fn relative_components(path: &Path) -> Option<Vec<String>> {
@@ -290,5 +357,68 @@ mod tests {
         assert!(text.contains("visible.rs"));
         assert!(!text.contains("ignored"));
         assert!(!text.contains("debug.log"));
+    }
+
+    #[test]
+    fn tree_names_dependency_dirs_without_listing_them() {
+        let dir = setup_tree();
+        fs::create_dir_all(dir.path().join("node_modules/@atlaskit/adf-schema/dist")).unwrap();
+        fs::write(
+            dir.path()
+                .join("node_modules/@atlaskit/adf-schema/dist/index.js"),
+            "x\n",
+        )
+        .unwrap();
+        let result = TreeTool::new().tree(TreeParams {
+            path: dir.path().to_string_lossy().into_owned(),
+            depth: 3,
+        });
+        let text = extract_text(&result);
+        assert!(text.contains("main.rs"), "{text}");
+        assert!(
+            text.contains("node_modules/  (installed dependencies"),
+            "{text}"
+        );
+        assert!(!text.contains("adf-schema"), "{text}");
+        assert!(!text.contains("index.js"), "{text}");
+    }
+
+    #[test]
+    fn tree_lists_a_dependency_dir_asked_for_as_the_root() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("node_modules/left-pad")).unwrap();
+        fs::write(dir.path().join("node_modules/left-pad/index.js"), "x\n").unwrap();
+        let result = TreeTool::new().tree(TreeParams {
+            path: dir
+                .path()
+                .join("node_modules")
+                .to_string_lossy()
+                .into_owned(),
+            depth: 2,
+        });
+        let text = extract_text(&result);
+        assert!(text.contains("left-pad/"), "{text}");
+        assert!(text.contains("index.js"), "{text}");
+    }
+
+    #[test]
+    fn tree_caps_a_huge_listing() {
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..(MAX_TREE_LINES + 50) {
+            fs::write(dir.path().join(format!("f{i:05}.txt")), "").unwrap();
+        }
+        let result = TreeTool::new().tree(TreeParams {
+            path: dir.path().to_string_lossy().into_owned(),
+            depth: 1,
+        });
+        let text = extract_text(&result);
+        assert_eq!(
+            text.lines().count(),
+            MAX_TREE_LINES + 1,
+            "cap + one summary line"
+        );
+        assert!(text.ends_with(
+            "50 more lines not shown. Call tree on a subdirectory or with a smaller depth.\n"
+        ));
     }
 }
