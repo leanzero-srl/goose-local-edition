@@ -847,6 +847,10 @@ const CTRL_CANCEL: u8 = 2;
 struct DownloadEntry {
     progress: DownloadProgress,
     control: Arc<AtomicU8>,
+    /// The repo folder did not exist when this download (or the one it resumes) started,
+    /// so a cancel may remove it whole. Otherwise it is someone's model and only `.part`
+    /// files go (see `discard_partial`).
+    created_dir: bool,
 }
 
 #[derive(Default)]
@@ -953,6 +957,13 @@ impl DownloadTracker {
         prev_downloaded: u64,
     ) {
         let control = Arc::new(AtomicU8::new(CTRL_RUN));
+        let created_dir = !models_dir.join(repo_id).exists()
+            || self
+                .downloads
+                .lock()
+                .unwrap()
+                .get(repo_id)
+                .is_some_and(|e| e.created_dir);
         self.downloads.lock().unwrap().insert(
             repo_id.to_string(),
             DownloadEntry {
@@ -965,6 +976,7 @@ impl DownloadTracker {
                     error: None,
                 },
                 control: Arc::clone(&control),
+                created_dir,
             },
         );
 
@@ -978,6 +990,7 @@ impl DownloadTracker {
                 token.as_deref(),
                 &downloads,
                 &control,
+                created_dir,
             )
             .await;
             let mut map = downloads.lock().unwrap();
@@ -1008,9 +1021,10 @@ impl DownloadTracker {
             .map(|e| e.progress.clone())
     }
 
-    /// Cancel a download AND delete its on-disk claim: every `.part` and the whole
-    /// partial `{models_dir}/{repo_id}` directory. For an active task the deletion runs
-    /// in the task as it stops; for a paused/failed one it happens here, synchronously.
+    /// Cancel a download AND delete its on-disk claim: every `.part`, and the whole
+    /// `{models_dir}/{repo_id}` directory when this download created it (`discard_partial`).
+    /// For an active task the deletion runs in the task as it stops; for a paused/failed
+    /// one it happens here, synchronously.
     pub fn cancel(&self, repo_id: &str, models_dir: &Path) -> Result<()> {
         let mut map = self.downloads.lock().unwrap();
         let Some(entry) = map.get_mut(repo_id) else {
@@ -1022,7 +1036,7 @@ impl DownloadTracker {
                 Ok(())
             }
             DownloadState::Paused | DownloadState::Failed => {
-                remove_partial_repo(models_dir, repo_id)?;
+                discard_partial(models_dir, repo_id, entry.created_dir)?;
                 entry.progress.state = DownloadState::Cancelled;
                 entry.progress.downloaded_bytes = 0;
                 entry.progress.current_file = None;
@@ -1037,6 +1051,11 @@ impl DownloadTracker {
 
     #[cfg(test)]
     fn seed_state(&self, repo_id: &str, state: DownloadState) {
+        self.seed_state_with(repo_id, state, true);
+    }
+
+    #[cfg(test)]
+    fn seed_state_with(&self, repo_id: &str, state: DownloadState, created_dir: bool) {
         self.downloads.lock().unwrap().insert(
             repo_id.to_string(),
             DownloadEntry {
@@ -1049,9 +1068,64 @@ impl DownloadTracker {
                     error: None,
                 },
                 control: Arc::new(AtomicU8::new(CTRL_RUN)),
+                created_dir,
             },
         );
     }
+}
+
+/// What a cancelled download may remove. A folder the download created is removed whole.
+/// A folder that was already there (Resume of an incomplete model, or a resume of partials
+/// left by an earlier session) loses only its unfinished `.part` files: its shards may be
+/// the only copy (the AI-workhorse SSD has no backup), and before the delete followed links
+/// a cancel there wiped the whole model.
+fn discard_partial(models_dir: &Path, repo_id: &str, created_dir: bool) -> Result<()> {
+    if created_dir {
+        return remove_partial_repo(models_dir, repo_id);
+    }
+    remove_part_files(&models_dir.join(repo_id))
+}
+
+/// Remove every regular `*.part` file under `dir`, never following a link inside it.
+fn remove_part_files(dir: &Path) -> Result<()> {
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&current) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            let path = entry.path();
+            if kind.is_dir() {
+                stack.push(path);
+            } else if kind.is_file() && path.extension().is_some_and(|e| e == "part") {
+                std::fs::remove_file(&path)
+                    .with_context(|| format!("deleting {}", path.display()))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// True when `target` is `root` or one of its ancestors. Compared by device and inode as
+/// well as by path, so a second spelling of the same folder (a macOS firmlink such as
+/// /System/Volumes/Data/Users, which `canonicalize` does not fold) cannot pass as unrelated.
+fn is_root_or_ancestor(root: &Path, target: &Path) -> bool {
+    if root.starts_with(target) {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let Ok(t) = std::fs::metadata(target) {
+            return root.ancestors().any(|a| {
+                std::fs::metadata(a).is_ok_and(|m| m.dev() == t.dev() && m.ino() == t.ino())
+            });
+        }
+    }
+    false
 }
 
 /// Delete `{models_dir}/{repo_id}` with the same guard as `delete_local_model`; a
@@ -1106,7 +1180,7 @@ fn remove_model_dir(models_dir: &Path, id: &str, need: Need) -> Result<()> {
             canonical_root.display()
         );
         ensure!(
-            canonical_target.is_dir() && !canonical_root.starts_with(&canonical_target),
+            canonical_target.is_dir() && !is_root_or_ancestor(&canonical_root, &canonical_target),
             "refusing to delete '{id}': it links to {}, which is not a model folder outside {}",
             canonical_target.display(),
             canonical_root.display()
@@ -1159,6 +1233,7 @@ async fn run_download(
     token: Option<&str>,
     downloads: &Arc<Mutex<HashMap<String, DownloadEntry>>>,
     control: &AtomicU8,
+    created_dir: bool,
 ) -> Result<DownloadOutcome> {
     let files = repo_files(repo_id, token).await?;
     ensure!(!files.is_empty(), "repo '{repo_id}' lists no files");
@@ -1190,7 +1265,7 @@ async fn run_download(
         match control.load(Ordering::SeqCst) {
             CTRL_PAUSE => return Ok(DownloadOutcome::Paused),
             CTRL_CANCEL => {
-                remove_partial_repo(models_dir, repo_id)?;
+                discard_partial(models_dir, repo_id, created_dir)?;
                 return Ok(DownloadOutcome::Cancelled);
             }
             _ => {}
@@ -1254,7 +1329,7 @@ async fn run_download(
             {
                 Ok(FileOutcome::Paused) => return Ok(DownloadOutcome::Paused),
                 Ok(FileOutcome::Cancelled) => {
-                    remove_partial_repo(models_dir, repo_id)?;
+                    discard_partial(models_dir, repo_id, created_dir)?;
                     return Ok(DownloadOutcome::Cancelled);
                 }
                 Ok(FileOutcome::RangeRejected) => {
@@ -2421,6 +2496,69 @@ mod tests {
         }
         assert!(root.join("pub/model/config.json").exists());
         assert!(tmp.path().join("config.json").exists());
+    }
+
+    /// Review D1 (2026-10-19): Resume of an incomplete model the user already had, then a
+    /// failed listing and Cancel, wiped the whole folder (now on the SSD too, through the
+    /// linked publisher). A cancel of a folder the download did not create keeps every
+    /// shard and drops only `.part` files.
+    #[cfg(unix)]
+    #[test]
+    fn cancel_never_wipes_a_model_folder_the_download_did_not_create() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("models");
+        let store = tmp.path().join("ssd");
+        std::fs::create_dir_all(&root).unwrap();
+        make_model(
+            &store,
+            "pub/mine",
+            &[
+                ("config.json", 10),
+                ("model-00001-of-00002.safetensors", 100),
+                ("model-00002-of-00002.safetensors.part", 40),
+            ],
+        );
+        std::os::unix::fs::symlink(store.join("pub"), root.join("pub")).unwrap();
+        let tracker = DownloadTracker::new();
+        tracker.seed_state_with("pub/mine", DownloadState::Failed, false);
+        tracker.cancel("pub/mine", &root).unwrap();
+        assert!(
+            store.join("pub/mine/config.json").is_file(),
+            "config.json deleted"
+        );
+        assert!(
+            store
+                .join("pub/mine/model-00001-of-00002.safetensors")
+                .is_file(),
+            "a finished shard was deleted"
+        );
+        assert!(!store
+            .join("pub/mine/model-00002-of-00002.safetensors.part")
+            .exists());
+        assert_eq!(
+            tracker.progress("pub/mine").unwrap().state,
+            DownloadState::Cancelled
+        );
+    }
+
+    /// `canonicalize` keeps a firmlink spelling; the inode compare still sees the ancestor.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn ancestor_check_sees_through_the_data_volume_firmlink() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("models");
+        std::fs::create_dir_all(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let parent = root.parent().unwrap();
+        let alias = Path::new("/System/Volumes/Data").join(parent.strip_prefix("/").unwrap());
+        if alias.exists() {
+            assert!(
+                !root.starts_with(&alias),
+                "the alias must be a different spelling"
+            );
+            assert!(is_root_or_ancestor(&root, &alias));
+        }
+        assert!(!is_root_or_ancestor(&root, &tmp.path().join("elsewhere")));
     }
 
     /// A cancelled download into a linked publisher has no config.json yet and must still
