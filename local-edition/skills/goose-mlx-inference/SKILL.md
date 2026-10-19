@@ -1418,3 +1418,21 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
   Gemma 4 31B on Gabee: dtype present, so only the 2x head-shape over-price (163,840 vs 81,920 B/token); its live log
   (mlx-engine-1792361017063.log, 21 requests to 43k prompt, max_tokens ~219k) has ZERO D-METAL-CAP lines — WHY the same
   estimator does not bite there (50.1 GB cap) is UNEXPLAINED; check before trusting the 64 GB Mac with concurrent turns.
+- **2026-10-19 (03:40) — GRANITE 4.2 30B: stale `granite[-_]?4` profile (RUN-ISSUES I-23).** Engine b20ec1b7 boots
+  lmstudio-community/granite-4.2-30b-MLX-8bit as hermes / reasoning None / hybrid True. It is DENSE (GraniteForCausalLM) and its
+  template primes `<think>\n` behind enable_thinking (default True), so reasoning streams as content and a text call never
+  stops. The serve CLI has `--reasoning-parser <name>`, `--no-hybrid`, `--force-hybrid`, `--no-tool-call-parser`: appending
+  them to the wrapper's exec line overrides auto-detect (Studio ~/goose-builds/loop-state/engine-wrap-granite.sh adds
+  `--reasoning-parser qwen3 --no-hybrid`). Engine fix still owed: key granite profiles on model_type (granite = dense,
+  granitemoehybrid = hybrid) and pick qwen3 when the template primes <think>.
+  FIXED 2026-10-19 (fork `lz/granite42-profile` 7108304a01658d9cf61f74ea8d60bdf5f9c18090 on b20ec1b7, not released): the
+  name rule defers to model_type (granite -> qwen3_coder_xml / qwen3 / not hybrid, = IBM's granite-4.2 aliases), and a
+  bare `--tool-call-parser X` now binds. TRAP that hid behind the wrapper: on `rapid-mlx serve` an explicit
+  `--tool-call-parser` WITHOUT `--enable-auto-tool-choice` was silently dropped (/v1/models `tool_call_parser: null`):
+  non-streaming calls still parsed via the generic fallback scan, STREAMED calls came back as content, finish stop. Check
+  `/v1/models` after any parser override. Studio wrapper now passes the app argv only; smoke: no-effort text + 3/3 tools,
+  medium 3/3 tools; medium text overthinks past smoke's 600-token cap about half the time (model, not parser).
+- **2026-10-19 — the three Macs do NOT run the same goose.** Gabee's app is a t12-line build that sends
+  `reasoning_effort: medium`; the Studio and laptop run released 3.0.118, which sends no thinking preference, so the engine's
+  R12-T1F injects enable_thinking=False. Gemma 4 then reasons exactly "\n" each turn, and the released formatter folds every
+  turn into turn 2 (I-22, fix branch lz/i22-turn-merge 6464f335). Check `[REQUEST]` roles in the engine log on a new machine.
