@@ -306,6 +306,7 @@ import {
 } from './engineGlanceDesktop';
 import { createGlanceWindowPort } from './engineGlanceWindow';
 import { gooseWindowFacts, trackOutOfSight } from './engineGlanceGooseWindows';
+import { keepRepainted, repaintWindow } from './windowRepaint';
 import { GlanceCoverage, WINDOW_LIST_JXA } from './engineGlanceCoverage';
 import { TRAY_ACTION_ENGINES, workCutBy } from './utils/mlxInFlight';
 import { isMlxRestoreReport, type MlxRestoreReport } from './utils/mlxRestoreReport';
@@ -2526,10 +2527,19 @@ const refreshGlanceSoon = () => setTimeout(() => engineGlanceDesktop.refresh(), 
 // Event, the tray's Quit and SIGTERM all start here. A refused quit (a live run's close guard) gives
 // it back: see mainWindow.on('close').
 app.on('before-quit', () => engineGlanceDesktop.suspendForQuit());
+// The evidence for windowRepaint.ts: a GPU or renderer process that goes away is named in main.log.
+app.on('child-process-gone', (_event, details) => {
+  log.warn(`child process gone: ${details.type} ${details.reason} exit=${details.exitCode}${details.name ? ` (${details.name})` : ''}`);
+});
+app.on('render-process-gone', (_event, contents, details) => {
+  log.warn(`renderer gone: ${details.reason} exit=${details.exitCode} url=${contents.getURL().slice(0, 120)}`);
+});
 app.on('browser-window-focus', refreshGlanceSoon);
 app.on('browser-window-blur', refreshGlanceSoon);
 app.on('browser-window-created', (_event, win) => {
   trackOutOfSight(win);
+  // A page drawn only part of the way down is drawn again (windowRepaint.ts).
+  keepRepainted(win);
   win.on('minimize', refreshGlanceSoon);
   win.on('restore', refreshGlanceSoon);
   win.on('hide', refreshGlanceSoon);
@@ -7513,6 +7523,12 @@ async function appMain() {
   screen.on('display-added', glanceDisplaysChanged);
   screen.on('display-removed', glanceDisplaysChanged);
   screen.on('display-metrics-changed', glanceDisplaysChanged);
+  // A display or session change can leave a page part-drawn: repaint every window (windowRepaint.ts).
+  const repaintAll = () => BrowserWindow.getAllWindows().forEach((w) => repaintWindow(w));
+  screen.on('display-added', repaintAll);
+  screen.on('display-metrics-changed', repaintAll);
+  powerMonitor.on('unlock-screen', repaintAll);
+  powerMonitor.on('resume', repaintAll);
 
   if (process.platform === 'darwin' && !settings.showDockIcon && settings.showMenuBarIcon) {
     app.dock?.hide();
