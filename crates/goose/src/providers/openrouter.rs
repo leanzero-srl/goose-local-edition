@@ -153,6 +153,47 @@ impl OpenRouterProvider {
             .unwrap_or(ImageInput::Undeclared))
     }
 
+    /// Fits the request's `reasoning.effort` to what the listing declares for the model
+    /// (`fit_reasoning_effort`): an "Off" turn on a model that cannot switch reasoning off was a
+    /// 400 on every call. A listing that cannot be read leaves the request as it was.
+    async fn fit_reasoning_effort(
+        &self,
+        payload: &mut Value,
+        model_config: &ModelConfig,
+        users_reasoning: bool,
+    ) {
+        if payload.get("reasoning").is_none() {
+            return;
+        }
+        let declared = match self.listing().await {
+            Ok(listing) => listing.parameters.get(&model_config.model_name).cloned(),
+            Err(err) => {
+                tracing::warn!(
+                    model = %model_config.model_name,
+                    "reasoning_effort_unfitted: OpenRouter's models listing could not be read \
+                     ({err}); the effort is sent as configured"
+                );
+                return;
+            }
+        };
+        let Some(declared) = declared else { return };
+        let goose_effort = if users_reasoning {
+            None
+        } else {
+            model_config.thinking_effort()
+        };
+        if let Some((sent, fitted)) =
+            openrouter_format::fit_reasoning_effort(payload, &declared, goose_effort)
+        {
+            tracing::info!(
+                model = %model_config.model_name,
+                "reasoning_effort_fitted: {sent} -> {fitted} (the model declares mandatory={}, levels {:?})",
+                declared.reasoning_mandatory,
+                declared.effort_levels
+            );
+        }
+    }
+
     /// The request for `model_config`, with every image part withheld behind a named placeholder
     /// when the listing declares the model text-only, and the chat's notice for the images this
     /// request is the first to withhold. OpenRouter answers an image part sent to a text-only model
@@ -600,7 +641,10 @@ impl Provider for OpenRouterProvider {
         if is_gemini_model(&model_config.model_name) {
             openrouter_format::add_reasoning_details_to_request(&mut payload, messages);
         }
+        let users_reasoning = payload.get("reasoning").is_some();
         openrouter_format::apply_reasoning_config(&mut payload, model_config);
+        self.fit_reasoning_effort(&mut payload, model_config, users_reasoning)
+            .await;
 
         if let Some(obj) = payload.as_object_mut() {
             obj.insert("transforms".to_string(), json!(["middle-out"]));
@@ -1369,7 +1413,13 @@ mod model_field_tests {
              "default_parameters": {"temperature": 1, "top_p": 1, "top_k": null},
              "reasoning": {"mandatory": false}},
             {"id": "vendor/plain", "context_length": 32768,
-             "supported_parameters": ["tools"]}
+             "supported_parameters": ["tools"]},
+            // as served on 2026-10-20
+            {"id": "minimax/minimax-m3.1-flash:free", "context_length": 1000000,
+             "supported_parameters": ["include_reasoning", "max_tokens", "reasoning", "tools"],
+             "reasoning": {"mandatory": true, "default_enabled": true,
+                           "supported_efforts": ["max", "xhigh", "high", "medium", "low"],
+                           "default_effort": "max"}}
         ]})
     }
 
@@ -1480,5 +1530,74 @@ mod model_field_tests {
         assert_eq!(sent["top_k"], json!(40));
         assert!(sent.get("reasoning_effort").is_none(), "{sent}");
         assert!(sent.get("thinking_effort").is_none(), "{sent}");
+    }
+
+    /// What one streamed turn on `model` at the global `effort` puts in the body's `reasoning`.
+    async fn reasoning_on_the_wire(model: &str, effort: ThinkingEffort) -> Value {
+        use futures::StreamExt;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let body = [
+            format!(
+                "data: {}\n\n",
+                json!({"id": "gen-1", "object": "chat.completion.chunk", "created": 1, "model": model,
+                       "choices": [{"index": 0, "delta": {"role": "assistant", "content": "ok"},
+                                    "finish_reason": "stop"}]})
+            ),
+            "data: [DONE]\n\n".to_string(),
+        ]
+        .concat();
+        Mock::given(method("POST"))
+            .and(path("/api/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+            .mount(&server)
+            .await;
+        let mut config = ModelConfig::new(model).with_thinking_effort(effort);
+        config.reasoning = Some(true);
+        let mut stream = provider(&server.uri())
+            .stream(&config, "system", &[Message::user().with_text("hi")], &[])
+            .await
+            .unwrap();
+        while let Some(item) = stream.next().await {
+            item.unwrap();
+        }
+        let requests = server.received_requests().await.unwrap();
+        let sent: Value = serde_json::from_slice(&requests[0].body).unwrap();
+        sent.get("reasoning").cloned().unwrap_or(Value::Null)
+    }
+
+    /// MiniMax M3.1 Flash (2026-10-20) answers `effort: none` with 400 "Reasoning is mandatory for
+    /// this endpoint and cannot be disabled": an Off session there failed every turn.
+    #[tokio::test]
+    async fn off_on_a_mandatory_reasoning_model_reaches_the_wire_as_its_cheapest_level() {
+        let minimax = "minimax/minimax-m3.1-flash:free";
+        assert_eq!(
+            reasoning_on_the_wire(minimax, ThinkingEffort::Off).await,
+            json!({"effort": "low"})
+        );
+        assert_eq!(
+            reasoning_on_the_wire(minimax, ThinkingEffort::Max).await,
+            json!({"effort": "max"})
+        );
+        assert_eq!(
+            reasoning_on_the_wire(minimax, ThinkingEffort::Medium).await,
+            json!({"effort": "medium"})
+        );
+        // a model that can switch reasoning off still gets none, and an unlisted model is unchanged
+        let deepseek = "deepseek/deepseek-v4.1-flash";
+        assert_eq!(
+            reasoning_on_the_wire(deepseek, ThinkingEffort::Off).await,
+            json!({"effort": "none"})
+        );
+        assert_eq!(
+            reasoning_on_the_wire(deepseek, ThinkingEffort::Max).await,
+            json!({"effort": "max"})
+        );
+        assert_eq!(
+            reasoning_on_the_wire("qwen/unlisted", ThinkingEffort::Off).await,
+            json!({"effort": "none"})
+        );
     }
 }

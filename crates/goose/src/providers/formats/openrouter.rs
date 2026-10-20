@@ -1,4 +1,5 @@
 use crate::conversation::message::{Message, MessageContent, ProviderMetadata};
+use goose_providers::base::DeclaredModelParameters;
 use goose_providers::formats::openai;
 use goose_providers::model::ModelConfig;
 use goose_providers::thinking::ThinkingEffort;
@@ -97,6 +98,69 @@ fn reasoning_effort_for_openrouter(effort: ThinkingEffort) -> &'static str {
         ThinkingEffort::High => "high",
         ThinkingEffort::Max => "xhigh",
     }
+}
+
+/// OpenRouter's `reasoning.effort` vocabulary, cheapest first.
+const EFFORT_SCALE: [&str; 7] = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+fn effort_rank(level: &str) -> Option<usize> {
+    EFFORT_SCALE.iter().position(|known| *known == level)
+}
+
+/// Fits the `reasoning.effort` a request carries to what OpenRouter's models listing declares
+/// for the model, and returns `(sent, fitted)` when it changed. Two cases only:
+///   - `none` on a model whose reasoning is MANDATORY: OpenRouter answers 400 "Reasoning is
+///     mandatory for this endpoint and cannot be disabled" (MiniMax M3.1 Flash, 2026-10-20), so
+///     every turn of an "Off" session failed. Off becomes the model's cheapest declared level, or
+///     the model's own default when it declares none.
+///   - goose's Max (sent as `xhigh`) on a model that declares a higher level: Max means the
+///     model's own top level (`max` on DeepSeek/MiniMax), not a fixed name.
+///
+/// Any other level is left alone: OpenRouter maps an undeclared level itself (probe 2026-10-20:
+/// `minimal` on MiniMax, which declares max..low, answered 200), and the benchmark pins
+/// (`medium`) must reach every entrant unchanged. `goose_effort` is the effort goose itself
+/// wrote (`None` when the request's `reasoning` came from the user's own parameters, which only
+/// get the mandatory fix).
+pub fn fit_reasoning_effort(
+    payload: &mut Value,
+    declared: &DeclaredModelParameters,
+    goose_effort: Option<ThinkingEffort>,
+) -> Option<(String, String)> {
+    let reasoning = payload.get_mut("reasoning")?.as_object_mut()?;
+    let sent = reasoning.get("effort")?.as_str()?.to_string();
+    let known: Vec<&str> = declared
+        .effort_levels
+        .iter()
+        .map(String::as_str)
+        .filter(|level| effort_rank(level).is_some())
+        .collect();
+    let fitted = if sent == "none" && declared.reasoning_mandatory {
+        known
+            .iter()
+            .copied()
+            .filter(|level| *level != "none")
+            .min_by_key(|level| effort_rank(level))
+            .map(str::to_string)
+    } else if goose_effort == Some(ThinkingEffort::Max) {
+        match known.iter().copied().max_by_key(|level| effort_rank(level)) {
+            Some(top) if effort_rank(top) > effort_rank(&sent) => Some(top.to_string()),
+            _ => return None,
+        }
+    } else {
+        return None;
+    };
+    match &fitted {
+        Some(level) => {
+            reasoning.insert("effort".to_string(), json!(level));
+        }
+        None => {
+            reasoning.remove("effort");
+            if reasoning.is_empty() {
+                payload.as_object_mut()?.remove("reasoning");
+            }
+        }
+    }
+    Some((sent, fitted.unwrap_or_else(|| "model default".to_string())))
 }
 
 pub fn apply_reasoning_config(payload: &mut Value, model_config: &ModelConfig) {
@@ -322,5 +386,124 @@ mod tests {
         apply_reasoning_config(&mut payload, &model_config);
 
         assert_eq!(payload["reasoning"], json!({ "effort": "none" }));
+    }
+
+    fn declared(levels: &[&str], mandatory: bool) -> DeclaredModelParameters {
+        DeclaredModelParameters {
+            effort_levels: levels.iter().map(|l| l.to_string()).collect(),
+            reasoning_mandatory: mandatory,
+            ..Default::default()
+        }
+    }
+
+    const MINIMAX: &[&str] = &["max", "xhigh", "high", "medium", "low"];
+
+    #[test]
+    fn off_on_a_mandatory_reasoning_model_sends_its_cheapest_level() {
+        let mut payload = json!({ "reasoning": { "effort": "none" } });
+        let fit = fit_reasoning_effort(
+            &mut payload,
+            &declared(MINIMAX, true),
+            Some(ThinkingEffort::Off),
+        );
+        assert_eq!(payload["reasoning"], json!({ "effort": "low" }));
+        assert_eq!(fit, Some(("none".to_string(), "low".to_string())));
+    }
+
+    #[test]
+    fn off_on_a_mandatory_model_without_levels_falls_back_to_its_default() {
+        let mut payload = json!({ "reasoning": { "effort": "none" } });
+        let fit = fit_reasoning_effort(
+            &mut payload,
+            &declared(&[], true),
+            Some(ThinkingEffort::Off),
+        );
+        assert!(payload.get("reasoning").is_none(), "{payload}");
+        assert_eq!(fit.unwrap().1, "model default");
+        // other reasoning keys the user set survive
+        let mut payload = json!({ "reasoning": { "effort": "none", "exclude": true } });
+        fit_reasoning_effort(&mut payload, &declared(&[], true), None);
+        assert_eq!(payload["reasoning"], json!({ "exclude": true }));
+    }
+
+    #[test]
+    fn off_on_a_model_that_can_switch_reasoning_off_stays_none() {
+        let mut payload = json!({ "reasoning": { "effort": "none" } });
+        let fit = fit_reasoning_effort(
+            &mut payload,
+            &declared(&["max", "high", "low"], false),
+            Some(ThinkingEffort::Off),
+        );
+        assert_eq!(payload["reasoning"], json!({ "effort": "none" }));
+        assert!(fit.is_none());
+    }
+
+    #[test]
+    fn a_users_own_none_on_a_mandatory_model_is_fixed_too() {
+        let mut payload = json!({ "reasoning": { "effort": "none" } });
+        fit_reasoning_effort(&mut payload, &declared(MINIMAX, true), None);
+        assert_eq!(payload["reasoning"], json!({ "effort": "low" }));
+    }
+
+    #[test]
+    fn max_uses_the_models_own_top_level() {
+        let mut payload = json!({ "reasoning": { "effort": "xhigh" } });
+        fit_reasoning_effort(
+            &mut payload,
+            &declared(MINIMAX, true),
+            Some(ThinkingEffort::Max),
+        );
+        assert_eq!(payload["reasoning"], json!({ "effort": "max" }));
+        // a model whose top level is xhigh (or that declares nothing) keeps xhigh
+        for levels in [&["xhigh", "high", "low"][..], &[][..]] {
+            let mut payload = json!({ "reasoning": { "effort": "xhigh" } });
+            assert!(fit_reasoning_effort(
+                &mut payload,
+                &declared(levels, false),
+                Some(ThinkingEffort::Max)
+            )
+            .is_none());
+            assert_eq!(payload["reasoning"], json!({ "effort": "xhigh" }));
+        }
+        // a user's own saved level is never raised by the global Max
+        let mut payload = json!({ "reasoning": { "effort": "xhigh" } });
+        assert!(fit_reasoning_effort(&mut payload, &declared(MINIMAX, true), None).is_none());
+    }
+
+    #[test]
+    fn a_pinned_level_reaches_every_model_unchanged() {
+        // the Forge benchmark pin is medium; DeepSeek declares max/high/low, OpenRouter maps it itself
+        for (levels, mandatory) in [
+            (&["max", "high", "low"][..], false),
+            (MINIMAX, true),
+            (&[][..], true),
+        ] {
+            let mut payload = json!({ "reasoning": { "effort": "medium" } });
+            assert!(fit_reasoning_effort(
+                &mut payload,
+                &declared(levels, mandatory),
+                Some(ThinkingEffort::Medium)
+            )
+            .is_none());
+            assert_eq!(payload["reasoning"], json!({ "effort": "medium" }));
+        }
+    }
+
+    #[test]
+    fn a_request_without_an_effort_is_left_alone() {
+        let mut payload = json!({ "reasoning": { "max_tokens": 2000 } });
+        assert!(fit_reasoning_effort(
+            &mut payload,
+            &declared(MINIMAX, true),
+            Some(ThinkingEffort::Off)
+        )
+        .is_none());
+        let mut payload = json!({ "messages": [] });
+        assert!(fit_reasoning_effort(
+            &mut payload,
+            &declared(MINIMAX, true),
+            Some(ThinkingEffort::Off)
+        )
+        .is_none());
     }
 }
