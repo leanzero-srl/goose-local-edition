@@ -1649,6 +1649,11 @@ pub const OUTPUT_TRUNCATED_BY_LENGTH: &str =
 /// reply (`rapid_mlx_stop_reason: "repetition"` beside `finish_reason: "length"`). Gemma 4 26B on
 /// 2026-10-19 (I-28) was told three times its reply was cut for length when it was looping, and the
 /// session then ended as if the model had finished.
+/// The error a tool call carries when the engine's loop guard stopped the reply inside it.
+pub const LOOP_STOPPED_TOOL_CALL: &str = "The engine stopped this tool call because the reply kept \
+     repeating the same text in a loop, so its arguments are cut and it was not run. Do not write it \
+     again: take a different next step.";
+
 pub const OUTPUT_STOPPED_AS_LOOP: &str =
     "\n\n[OUTPUT STOPPED: the engine ended this response because it kept repeating the same text \
      — this response is INCOMPLETE]";
@@ -1893,6 +1898,9 @@ where
                                     continue
                                 };
                                 completion.observe(&tool_chunk);
+                                if let Some(stamp) = tool_chunk.choices.first().and_then(cut_stamp_of) {
+                                    cut_stamp = Some(stamp);
+                                }
                                 if let Some(model) = &tool_chunk.model {
                                     last_seen_model = Some(model.clone());
                                 }
@@ -2130,6 +2138,23 @@ where
 
                         contents.push(content);
                         notify_tool_forming(ToolFormingEvent::Complete { id: id.clone() });
+                    }
+                }
+
+                // I-28 review: the engine's loop guard stopped the reply inside the last call's
+                // arguments. That call is cut where the loop was caught, so it is failed with the
+                // loop named instead of running on a fragment (or failing as a malformed call).
+                if cut_stamp == Some(OUTPUT_STOPPED_AS_LOOP) {
+                    if let Some(MessageContent::ToolRequest(request)) = contents
+                        .iter_mut()
+                        .rev()
+                        .find(|content| matches!(content, MessageContent::ToolRequest(_)))
+                    {
+                        request.tool_call = Err(ErrorData {
+                            code: ErrorCode::INVALID_PARAMS,
+                            message: Cow::from(LOOP_STOPPED_TOOL_CALL),
+                            data: None,
+                        });
                     }
                 }
 
@@ -7412,6 +7437,40 @@ mod unparsed_tool_call_tests {
         assert!(
             text.contains(OUTPUT_TRUNCATED_BY_LENGTH) && !text.contains(OUTPUT_STOPPED_AS_LOOP)
         );
+    }
+
+    /// I-28 review: the loop is in a tool call's arguments. Before, the closing chunk's stop reason
+    /// was never read in the call-accumulating loop, so a call whose arguments happened to parse ran
+    /// as a normal call. Now the cut call fails and names the loop; a plain length cut is unchanged.
+    #[tokio::test]
+    async fn a_loop_stop_inside_a_tool_call_fails_that_call_with_the_loop_named() {
+        let frames = |extra: Value| {
+            vec![
+                frame(json!({"content": "Writing it."}), None, json!({})),
+                frame(
+                    json!({"tool_calls": [{"index": 0, "id": "call_1", "type": "function",
+                        "function": {"name": "write", "arguments": ""}}]}),
+                    None,
+                    json!({}),
+                ),
+                frame(
+                    json!({"tool_calls": [{"index": 0, "function": {"arguments":
+                        "{\"path\": \"a.js\", \"content\": \"x = 1; x = 1; x = 1;\"}"}}]}),
+                    None,
+                    json!({}),
+                ),
+                frame(json!({}), Some("length"), extra),
+                "data: [DONE]".to_string(),
+            ]
+        };
+        let (_, failed, calls, _) =
+            decode(frames(json!({"rapid_mlx_stop_reason": "repetition"}))).await;
+        assert!(calls.is_empty(), "{calls:?}");
+        assert_eq!(failed, vec![LOOP_STOPPED_TOOL_CALL.to_string()]);
+
+        let (_, failed, calls, _) = decode(frames(json!({}))).await;
+        assert_eq!(calls, vec!["write".to_string()]);
+        assert!(failed.is_empty(), "{failed:?}");
     }
 
     #[tokio::test]
