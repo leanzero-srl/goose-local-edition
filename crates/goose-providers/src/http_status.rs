@@ -96,11 +96,18 @@ fn parse_http_date(value: &str) -> Option<SystemTime> {
 /// "the request exceeds the available context size, try increasing it") carries it in its text, so
 /// compaction can size to it (I-9, `errors::refused_context_window`).
 fn with_named_window(payload: Option<&Value>, message: String) -> String {
+    let error = payload.and_then(|payload| payload.get("error"));
+    if error
+        .and_then(|error| error.get("lz_reason"))
+        .and_then(Value::as_str)
+        == Some("metal_cap_exceeds_device")
+    {
+        return format!("{message} {}", crate::errors::NOT_A_CONTEXT_WINDOW);
+    }
     if crate::errors::refused_context_window(&message).is_some() {
         return message;
     }
-    let n_ctx = payload
-        .and_then(|payload| payload.get("error"))
+    let n_ctx = error
         .and_then(|error| error.get("n_ctx"))
         .and_then(Value::as_u64)
         .filter(|n_ctx| *n_ctx > 0);
@@ -613,6 +620,46 @@ mod tests {
             crate::errors::refused_context_window(text),
             Some(8192),
             "{text}"
+        );
+    }
+
+    /// Review 2026-10-19: a D-METAL-CAP refusal names the prompt that fits beside the request's
+    /// own max_tokens reservation (`lz_reason: metal_cap_exceeds_device`), in the old wording
+    /// ("the maximum context here is N tokens") and the reworded one; neither is a window. The
+    /// memory guard's refusal (the same old wording, another lz_reason) still is.
+    #[test]
+    fn a_metal_cap_refusal_names_no_context_window() {
+        let refusal = |message: &str, reason: &str| {
+            map_http_error_to_provider_error(
+                StatusCode::BAD_REQUEST,
+                Some(json!({"error": {
+                    "message": message,
+                    "type": "invalid_request_error",
+                    "code": "context_length_exceeded",
+                    "n_prompt_tokens": 40000,
+                    "n_ctx": 6123,
+                    "lz_reason": reason
+                }})),
+                "http://127.0.0.1:8090/v1/chat/completions",
+            )
+        };
+        let window = |error: ProviderError| match error {
+            ProviderError::ContextLengthExceeded(text) => {
+                crate::errors::refused_context_window(&text)
+            }
+            other => panic!("{other:?}"),
+        };
+        let old = "This prompt (40000 tokens) needs 42.6 GB but this Mac can hold 38.0 GB; the \
+                   maximum context here is 6123 tokens.";
+        let reworded =
+            "This prompt (40000 tokens) needs 42.6 GB but this Mac can hold 38.0 GB; the \
+                        largest prompt that fits beside this request's max_tokens reservation of \
+                        222000 tokens is 6123 tokens.";
+        assert_eq!(window(refusal(old, "metal_cap_exceeds_device")), None);
+        assert_eq!(window(refusal(reworded, "metal_cap_exceeds_device")), None);
+        assert_eq!(
+            window(refusal(old, "context_exceeds_device_memory")),
+            Some(6123)
         );
     }
 

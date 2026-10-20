@@ -387,6 +387,14 @@ pub fn body_read_error(error: reqwest::Error) -> std::io::Error {
     std::io::Error::other(said)
 }
 
+/// Added by `http_status` to a context-length refusal whose number is NOT the model's window:
+/// Rapid-MLX's D-METAL-CAP refusal (`lz_reason: "metal_cap_exceeds_device"`) names the largest
+/// prompt that fits beside THIS request's own max_tokens reservation — with an unset max_tokens
+/// that is the window minus the prompt, so a few thousand tokens (review 2026-10-19, I-17
+/// numbers: ~6k). Read as a window it would shrink the session's compaction to it.
+pub const NOT_A_CONTEXT_WINDOW: &str =
+    "[this number is the prompt that fits beside the request's output reservation, not the context window]";
+
 /// The context window a context-length refusal names, in tokens (I-9): Rapid-MLX's memory guard
 /// ("the maximum context here is 35328 tokens", plus `n_ctx` in its payload), the OpenAI shape
 /// ("maximum context length is 262144 tokens"), Anthropic ("210000 tokens > 200000 maximum"),
@@ -394,6 +402,9 @@ pub fn body_read_error(error: reqwest::Error) -> std::io::Error {
 /// `http_status` adds when only the payload carried the number. `None` when the refusal names no
 /// usable window (a zero is "nothing fits", never a window to size to).
 pub fn refused_context_window(text: &str) -> Option<usize> {
+    if text.contains(NOT_A_CONTEXT_WINDOW) {
+        return None;
+    }
     static PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
         [
             r"(?i)maximum context(?: length| size| window)?(?: here)?(?: is| of)?\s+(\d[\d,]*)",
@@ -607,6 +618,14 @@ mod refused_window_tests {
             ("the maximum context here is 0 tokens.", None),
             ("Too many tool responses: 5 > 2", None),
             ("context_length_exceeded", None),
+            (
+                &format!(
+                    "This prompt (40000 tokens) needs 42.6 GB but this Mac can hold 38.0 GB; the \
+                     maximum context here is 6123 tokens. {}",
+                    super::NOT_A_CONTEXT_WINDOW
+                ),
+                None,
+            ),
         ] {
             assert_eq!(refused_context_window(text), window, "{text}");
         }
