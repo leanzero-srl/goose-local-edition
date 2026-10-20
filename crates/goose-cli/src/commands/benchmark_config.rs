@@ -93,8 +93,17 @@ pub async fn export(provider: Option<&str>, output: &Path) -> Result<()> {
     }
     // Every entrant is served the prompt goose sent: an operator's opt-in to OpenRouter's
     // middle-out compression is a chat setting, and in a benchmark it silently cut the middle of
-    // long builds (Grok 4.7 and Tencent Hy4 on Forge 2.0, 2026-10).
+    // long builds (Grok 4.7 and Tencent Hy4 on Forge 2.0, 2026-10). The opt-in can also be written
+    // into the routing parameters, which the entrant keeps for its host pin.
     params.remove(goose::providers::openrouter::OPENROUTER_MIDDLE_OUT_CONFIG_KEY);
+    if let Some(routing) =
+        params.remove(goose::providers::openrouter::OPENROUTER_PARAMETERS_CONFIG_KEY)
+    {
+        params.insert(
+            goose::providers::openrouter::OPENROUTER_PARAMETERS_CONFIG_KEY.into(),
+            without_context_compression(routing),
+        );
+    }
     for key in [
         "GOOSE_TEMPERATURE",
         "GOOSE_CONTEXT_LIMIT",
@@ -121,6 +130,40 @@ pub async fn export(provider: Option<&str>, output: &Path) -> Result<()> {
     let snapshot = json!({"version": 1, "providers": providers, "config": params,
                           "secrets": secrets, "custom_providers": definitions});
     write_private(output, &snapshot)
+}
+
+/// OPENROUTER_PARAMETERS (an object, or the JSON string the benchmark driver writes) without
+/// `transforms` or a context-compression plugin; everything else — the host pin — is kept, and a
+/// string with nothing to remove is kept byte for byte.
+fn without_context_compression(routing: Value) -> Value {
+    let compression = |plugin: &Value| {
+        plugin.get("id").and_then(Value::as_str)
+            == Some(goose::providers::openrouter::CONTEXT_COMPRESSION_PLUGIN)
+    };
+    match routing {
+        Value::Object(mut params) => {
+            params.remove("transforms");
+            if let Some(Value::Array(plugins)) = params.get_mut("plugins") {
+                plugins.retain(|plugin| !compression(plugin));
+                if plugins.is_empty() {
+                    params.remove("plugins");
+                }
+            }
+            Value::Object(params)
+        }
+        Value::String(raw) => match serde_json::from_str::<Value>(&raw) {
+            Ok(parsed @ Value::Object(_)) => {
+                let stripped = without_context_compression(parsed.clone());
+                if stripped == parsed {
+                    Value::String(raw)
+                } else {
+                    Value::String(stripped.to_string())
+                }
+            }
+            _ => Value::String(raw),
+        },
+        other => other,
+    }
 }
 
 /// The per-model custom fields the benchmark LAUNCHER chose for this run (the desktop passes the
@@ -187,6 +230,37 @@ mod tests {
         );
         assert!(launcher_model_fields(Some("[1]"), &providers).is_err());
         assert!(launcher_model_fields(Some("not json"), &providers).is_err());
+    }
+
+    #[test]
+    fn a_benchmark_entrant_never_carries_context_compression_in_its_routing() {
+        let pin = json!({"provider": {"order": ["xai"], "allow_fallbacks": false}});
+        let mut written = pin.clone();
+        written["transforms"] = json!(["middle-out"]);
+        written["plugins"] = json!([{"id": "context-compression"}, {"id": "web"}]);
+        let mut expected = pin.clone();
+        expected["plugins"] = json!([{"id": "web"}]);
+        assert_eq!(without_context_compression(written.clone()), expected);
+        assert_eq!(
+            without_context_compression(json!({"plugins": [{"id": "context-compression"}]})),
+            json!({})
+        );
+
+        let as_string = Value::String(written.to_string());
+        let stripped: Value = serde_json::from_str(
+            without_context_compression(as_string)
+                .as_str()
+                .expect("a string stays a string"),
+        )
+        .unwrap();
+        assert_eq!(stripped, expected);
+
+        let raw = r#"{"provider":{"order":["xai"],"allow_fallbacks":false}}"#;
+        assert_eq!(
+            without_context_compression(Value::String(raw.to_string())),
+            Value::String(raw.to_string()),
+            "a pin with nothing to remove is kept byte for byte"
+        );
     }
 
     #[test]

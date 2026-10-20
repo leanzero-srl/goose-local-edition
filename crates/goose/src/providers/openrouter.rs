@@ -22,11 +22,11 @@ use goose_providers::request_log::{start_log, LoggerHandleExt};
 use rmcp::model::Tool;
 
 pub const OPENROUTER_PROVIDER_NAME: &str = "openrouter";
-pub(crate) const OPENROUTER_PARAMETERS_CONFIG_KEY: &str = "OPENROUTER_PARAMETERS";
+pub const OPENROUTER_PARAMETERS_CONFIG_KEY: &str = "OPENROUTER_PARAMETERS";
 /// The owner's opt-in to OpenRouter's middle-out compression; off unless set to true.
 pub const OPENROUTER_MIDDLE_OUT_CONFIG_KEY: &str = "OPENROUTER_MIDDLE_OUT";
 /// OpenRouter's plugin id for middle-out (openrouter.ai/docs/guides/features/message-transforms).
-const CONTEXT_COMPRESSION_PLUGIN: &str = "context-compression";
+pub const CONTEXT_COMPRESSION_PLUGIN: &str = "context-compression";
 pub const OPENROUTER_DEFAULT_MODEL: &str = "anthropic/claude-sonnet-4";
 pub const OPENROUTER_DEFAULT_FAST_MODEL: &str = "google/gemini-2.5-flash";
 pub const OPENROUTER_MODEL_PREFIX_ANTHROPIC: &str = "anthropic";
