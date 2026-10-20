@@ -208,47 +208,52 @@ impl Provider for GoogleProvider {
                 let _ = log.error(e);
             })?;
 
+        let stall = goose_providers::stream_stall::StallWatch::of(&response);
         let stream = response
             .bytes_stream()
+            .inspect_ok(stall.data_lines())
             .map_err(goose_providers::errors::body_read_error);
 
-        Ok(Box::pin(try_stream! {
-            let stream_reader = StreamReader::new(stream);
-            let framed = FramedRead::new(stream_reader, LinesCodec::new())
-                .map_err(anyhow::Error::from);
+        Ok(goose_providers::stream_stall::guard(
+            Box::pin(try_stream! {
+                let stream_reader = StreamReader::new(stream);
+                let framed = FramedRead::new(stream_reader, LinesCodec::new())
+                    .map_err(anyhow::Error::from);
 
-            let message_stream = response_to_streaming_message(framed);
-            pin!(message_stream);
-            let mut telemetry_first = None;
-            let mut telemetry_chunks = 0u64;
-            let mut last_usage = None;
-            while let Some(message) = message_stream.next().await {
-                let (message, usage) = message.map_err(|e| {
-                    e.downcast::<ProviderError>()
-                        .unwrap_or_else(ProviderError::stream_decode_error)
-                })?;
-                if message.is_some() {
-                    telemetry_first.get_or_insert_with(std::time::Instant::now);
-                    telemetry_chunks += 1;
+                let message_stream = response_to_streaming_message(framed);
+                pin!(message_stream);
+                let mut telemetry_first = None;
+                let mut telemetry_chunks = 0u64;
+                let mut last_usage = None;
+                while let Some(message) = message_stream.next().await {
+                    let (message, usage) = message.map_err(|e| {
+                        e.downcast::<ProviderError>()
+                            .unwrap_or_else(ProviderError::stream_decode_error)
+                    })?;
+                    if message.is_some() {
+                        telemetry_first.get_or_insert_with(std::time::Instant::now);
+                        telemetry_chunks += 1;
+                    }
+                    if let Some(u) = &usage {
+                        last_usage = Some(u.usage);
+                    }
+                    if message.is_some() || usage.is_some() {
+                        log.write(&message, usage.as_ref().map(|f| f.usage).as_ref())?;
+                    }
+                    yield (message, usage);
                 }
-                if let Some(u) = &usage {
-                    last_usage = Some(u.usage);
-                }
-                if message.is_some() || usage.is_some() {
-                    log.write(&message, usage.as_ref().map(|f| f.usage).as_ref())?;
-                }
-                yield (message, usage);
-            }
-            // The benchmark's call counter and per-call usage read this sink; without it a direct
-            // Google run published no call count (Argon, 2026-10-16).
-            super::swarm::record_call(
-                &model_name,
-                telemetry_t0,
-                telemetry_first,
-                last_usage.as_ref(),
-                Some(telemetry_chunks),
-            );
-        }))
+                // The benchmark's call counter and per-call usage read this sink; without it a direct
+                // Google run published no call count (Argon, 2026-10-16).
+                super::swarm::record_call(
+                    &model_name,
+                    telemetry_t0,
+                    telemetry_first,
+                    last_usage.as_ref(),
+                    Some(telemetry_chunks),
+                );
+            }),
+            stall,
+        ))
     }
 }
 

@@ -621,27 +621,32 @@ impl Provider for GcpVertexAIProvider {
                 let _ = log.error(e);
             })?;
 
+        let stall = goose_providers::stream_stall::StallWatch::of(&response);
         let stream = response
             .bytes_stream()
+            .inspect_ok(stall.data_lines())
             .map_err(goose_providers::errors::body_read_error);
 
         let context_clone = context.clone();
-        Ok(Box::pin(try_stream! {
-            let stream_reader = StreamReader::new(stream);
-            let framed = tokio_util::codec::FramedRead::new(
-                stream_reader,
-                tokio_util::codec::LinesCodec::new(),
-            )
-            .map_err(anyhow::Error::from);
+        Ok(goose_providers::stream_stall::guard(
+            Box::pin(try_stream! {
+                let stream_reader = StreamReader::new(stream);
+                let framed = tokio_util::codec::FramedRead::new(
+                    stream_reader,
+                    tokio_util::codec::LinesCodec::new(),
+                )
+                .map_err(anyhow::Error::from);
 
-            let mut message_stream = response_to_streaming_message(framed, &context_clone);
+                let mut message_stream = response_to_streaming_message(framed, &context_clone);
 
-            while let Some(message) = message_stream.next().await {
-                let (message, usage) = message.map_err(ProviderError::from_stream_error)?;
-                log.write(&message, usage.as_ref().map(|u| &u.usage))?;
-                yield (message, usage);
-            }
-        }))
+                while let Some(message) = message_stream.next().await {
+                    let (message, usage) = message.map_err(ProviderError::from_stream_error)?;
+                    log.write(&message, usage.as_ref().map(|u| &u.usage))?;
+                    yield (message, usage);
+                }
+            }),
+            stall,
+        ))
     }
 
     async fn fetch_supported_models(&self) -> Result<Vec<String>, ProviderError> {

@@ -83,6 +83,12 @@ pub const LENGTH_CUT_CONTINUATION: &str = "Your last reply was cut off at the mo
      unfinished and nothing in it was carried out. Continue from where it stopped in smaller steps: if the task needs \
      actions, take the next one now with a tool call instead of planning everything in one reply, and keep each reply \
      well under the limit.";
+/// Answers a reply the engine's loop guard stopped (I-28) instead of LENGTH_CUT_CONTINUATION: the
+/// model was repeating itself, so "keep each reply under the limit" was the wrong cause and advice.
+pub const LOOP_STOP_CONTINUATION: &str = "Your last reply was stopped because it kept repeating the same \
+     text in a loop (goose kept one copy of the repeated text above), so it is unfinished and nothing in it \
+     was carried out. Do not write it again: take a different next step now with a tool call, or give your \
+     final answer if the task is done.";
 /// Sent (agent-visible only) with every empty-turn retry. Resending the identical conversation to a
 /// deterministic local model reproduces the same empty reply: Gemma 4 26B-A4B (2026-10-18) stopped after one
 /// token three times on the same 71,670-token prompt and the run was refused.
@@ -2190,6 +2196,7 @@ impl Agent {
             let mut compaction_attempts = 0;
             let mut empty_turn_retries = 0u32;
             let mut length_cut_nudges = 0u32;
+            let mut loop_stop_nudges = 0u32;
             let mut retrying_after_empty_turn = false;
             let mut retrying_after_transient_error = false;
             let mut last_assistant_text = String::new();
@@ -2914,6 +2921,16 @@ impl Agent {
                         #[allow(unused_variables)]
                         Err(ref provider_err @ ProviderError::ContextLengthExceeded(_)) => {
                             provider_errored = true;
+                            if let Some(window) = crate::context_mgmt::note_refused_window(
+                                &session_config.id,
+                                &model_config.model_name,
+                                provider_err,
+                            ) {
+                                warn!(
+                                    "the provider refused the request as too long; its window is {window} tokens, \
+                                     compaction sizes to it from now on"
+                                );
+                            }
                             #[cfg(feature = "telemetry")]
                             crate::posthog::emit_error(provider_err.telemetry_type(), &provider_err.to_string());
                             compaction_attempts += 1;
@@ -3139,6 +3156,7 @@ impl Agent {
 
                 if !no_tools_called {
                     length_cut_nudges = 0;
+                    loop_stop_nudges = 0;
                 }
                 if empty_response {
                     messages_to_add = Conversation::default();
@@ -3151,6 +3169,18 @@ impl Agent {
 
                 let mut terminal_structured_provider_error = false;
                 if no_tools_called && !exit_chat && !resending {
+                    // I-28 review: a reply the engine stopped as a loop keeps one copy of the
+                    // repeated text in the history, whether or not a nudge follows it.
+                    if last_assistant_text
+                        .contains(goose_providers::formats::openai::OUTPUT_STOPPED_AS_LOOP.trim())
+                    {
+                        messages_to_add = Conversation::new_unvalidated(
+                            super::loop_collapse::collapse_looped_reply(
+                                messages_to_add.messages(),
+                                goose_providers::formats::openai::OUTPUT_STOPPED_AS_LOOP,
+                            ),
+                        );
+                    }
                     // Lock, extract state, drop guard before branching — handle_retry_logic
                     // also locks final_output_tool and tokio::sync::Mutex is not reentrant.
                     let final_output = {
@@ -3200,6 +3230,18 @@ impl Agent {
                         // A reply the server cut at its output limit is unfinished, not a final
                         // answer (it would end the run) and not an empty turn (re-asked blind, the
                         // model repeats the same over-long plan: aion-labs/aion-3.5, 2026-10-07).
+                        None if loop_stop_nudges < MAX_LENGTH_CUT_NUDGES
+                            && last_assistant_text
+                                .contains(goose_providers::formats::openai::OUTPUT_STOPPED_AS_LOOP.trim()) =>
+                        {
+                            loop_stop_nudges += 1;
+                            warn!(
+                                "Reply stopped by the engine's repetition guard before any tool call; continuing ({}/{})",
+                                loop_stop_nudges, MAX_LENGTH_CUT_NUDGES
+                            );
+                            let message = harness_nudge(LOOP_STOP_CONTINUATION);
+                            messages_to_add.push(message);
+                        }
                         None if length_cut_nudges < MAX_LENGTH_CUT_NUDGES
                             && last_assistant_text
                                 .contains(goose_providers::formats::openai::OUTPUT_TRUNCATED_BY_LENGTH.trim()) =>

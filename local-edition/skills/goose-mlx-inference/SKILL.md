@@ -1331,3 +1331,21 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
   goose binary (thinking effort, compaction V2/V3, live window) is GONE with 3.0.119 by the coordinator's
   decision: those features are not on main. A fresh-fetch proof for any new pin: `uvx --no-cache --from
   "rapid-mlx[mtp] @ git+...@<tag>" rapid-mlx --help` with HOME/UV_CACHE_DIR in a scratch dir.
+- **2026-10-20 — ENGINE PIN v0.14.3-lz.13 on branch lz/backlog-1019 (not released).** Tag object 3bab1d05 -> c58790b11 (fork
+  lz/backlog-1019 = lz.12 + I-28 `rapid_mlx_stop_reason: "repetition"` beside `finish_reason: "length"` (also when the stop lands
+  inside a tool call: the cut call arrives with args `{}`, goose fails it with LOOP_STOPPED_TOOL_CALL), I-24 long exact-loop hard
+  stop (periods 129..1024, 4 copies, tool-bearing requests only on every lane, `--repetition-guard-max-period`, default 1024),
+  I-27 template-wire parsers for folders no family rule claims (Nex-N2.5-mini -> qwen3_coder_xml + deepseek_r1_distill), a prompt
+  that closed the think block streams as content (`prompt_thinking_closed`), and the D-METAL-CAP refusal worded as "the largest
+  prompt that fits beside that reservation is N tokens" (+ `max_tokens_reserved`; goose also keys on lz_reason
+  `metal_cap_exceeds_device` so an lz.12 engine's "maximum context here is N" from that path is never read as a window).
+  Pipeline review on the fork's branch lz/pipeline-review-lz13 (1a2a4118d): 5 n/a, 2 gaps (the split's own StreamRelay repeat
+  stop sends no stop reason; its priming never sets the closed-think signal). Pin bump recipe that worked: tag annotated at the
+  head, `git push origin <tag>`, add the json entries on the pipeline branch (json.dumps indent=2, ASCII, trailing newline — any
+  other serialisation rewrites the whole file), run `tests/test_pipeline_single_line_ports_audit.py` (it lists every gap as a
+  warning), then ENGINE_LAUNCHER + SUPERSEDED_ENGINE_LAUNCHERS + PINNED_PROFILES Guarded row + PIPELINE_SINGLE_LINE_REVIEWED_THROUGH
+  + the two argv goldens in engine.rs. LIGHT SMOKE without the Studio: the configured Flash-Next-4bit is 98 GB on the read-only
+  NFS share served FROM the Studio's SSD, so loading it is Studio I/O; instead fetch mlx-community/Qwen3.5-9B-MLX-4bit (5.6 GB)
+  to a scratch dir, print the app's argv with a throwaway `build_serve_command` test, run it on a spare port, stream one text +
+  one tool call. lz.13 measured 2026-10-20 on the laptop: parsers bind (explicit qwen3_coder_xml/deepseek_r1 over the family's
+  hermes/qwen3), memory guard enabled, no cache share, text clean, `write` call whole; direct_url commit c58790b11.

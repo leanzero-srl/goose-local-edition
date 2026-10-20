@@ -332,6 +332,21 @@ struct StreamingChoice {
     /// (Q-133); absent from every other engine.
     #[serde(default)]
     refused_tool_calls: Option<Vec<RefusedToolCall>>,
+    /// Rapid-MLX's word for WHY a `length` stop happened: `repetition` = its loop guard ended a reply
+    /// that kept repeating the same tokens (I-28); absent from every other engine.
+    #[serde(default)]
+    rapid_mlx_stop_reason: Option<String>,
+}
+
+/// The stamp a cut reply carries: the engine's loop stop, or the output-token limit.
+fn cut_stamp_of(choice: &StreamingChoice) -> Option<&'static str> {
+    (choice.finish_reason.as_deref() == Some("length")).then(|| {
+        if choice.rapid_mlx_stop_reason.as_deref() == Some("repetition") {
+            OUTPUT_STOPPED_AS_LOOP
+        } else {
+            OUTPUT_TRUNCATED_BY_LENGTH
+        }
+    })
 }
 
 fn empty_finish_reason_as_none<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
@@ -1630,6 +1645,19 @@ pub const OUTPUT_TRUNCATED_BY_LENGTH: &str =
     "\n\n[OUTPUT TRUNCATED: the model hit its output-token \
      limit mid-generation — this response is INCOMPLETE]";
 
+/// Appended instead of [`OUTPUT_TRUNCATED_BY_LENGTH`] when the engine says its loop guard ended the
+/// reply (`rapid_mlx_stop_reason: "repetition"` beside `finish_reason: "length"`). Gemma 4 26B on
+/// 2026-10-19 (I-28) was told three times its reply was cut for length when it was looping, and the
+/// session then ended as if the model had finished.
+/// The error a tool call carries when the engine's loop guard stopped the reply inside it.
+pub const LOOP_STOPPED_TOOL_CALL: &str = "The engine stopped this tool call because the reply kept \
+     repeating the same text in a loop, so its arguments are cut and it was not run. Do not write it \
+     again: take a different next step.";
+
+pub const OUTPUT_STOPPED_AS_LOOP: &str =
+    "\n\n[OUTPUT STOPPED: the engine ended this response because it kept repeating the same text \
+     — this response is INCOMPLETE]";
+
 /// What a chat-completions stream has shown of its own end.
 ///
 /// Servers disagree on the terminator — Rapid-MLX and mlx_lm.server send a `finish_reason`
@@ -1755,7 +1783,7 @@ where
         // text: a reasoning-only reply (aion-labs/aion-3.5, 2026-10-07: 32,768 tokens of thinking,
         // no text, no call) otherwise reads as an empty turn and the agent re-asks the identical
         // prompt, so the model never learns it was cut.
-        let mut cut_by_length = false;
+        let mut cut_stamp: Option<&'static str> = None;
         let mut length_marked = false;
         let mut yielded_tool_call = false;
 
@@ -1779,8 +1807,8 @@ where
                 continue  // metadata-only frame
             };
             completion.observe(&chunk);
-            if chunk.choices.first().and_then(|c| c.finish_reason.as_deref()) == Some("length") {
-                cut_by_length = true;
+            if let Some(stamp) = chunk.choices.first().and_then(cut_stamp_of) {
+                cut_stamp = Some(stamp);
             }
             if let Some(model) = &chunk.model {
                 last_seen_model = Some(model.clone());
@@ -1870,6 +1898,9 @@ where
                                     continue
                                 };
                                 completion.observe(&tool_chunk);
+                                if let Some(stamp) = tool_chunk.choices.first().and_then(cut_stamp_of) {
+                                    cut_stamp = Some(stamp);
+                                }
                                 if let Some(model) = &tool_chunk.model {
                                     last_seen_model = Some(model.clone());
                                 }
@@ -2110,6 +2141,23 @@ where
                     }
                 }
 
+                // I-28 review: the engine's loop guard stopped the reply inside the last call's
+                // arguments. That call is cut where the loop was caught, so it is failed with the
+                // loop named instead of running on a fragment (or failing as a malformed call).
+                if cut_stamp == Some(OUTPUT_STOPPED_AS_LOOP) {
+                    if let Some(MessageContent::ToolRequest(request)) = contents
+                        .iter_mut()
+                        .rev()
+                        .find(|content| matches!(content, MessageContent::ToolRequest(_)))
+                    {
+                        request.tool_call = Err(ErrorData {
+                            code: ErrorCode::INVALID_PARAMS,
+                            message: Cow::from(LOOP_STOPPED_TOOL_CALL),
+                            data: None,
+                        });
+                    }
+                }
+
                 let mut msg = Message::new(
                     Role::Assistant,
                     chrono::Utc::now().timestamp(),
@@ -2150,7 +2198,7 @@ where
 
                     let mut shown = call_hold.push(&filtered.content);
                     // A cut reply is not a call block; the truncation stamp needs its text.
-                    if chunk.choices[0].finish_reason.as_deref() == Some("length") {
+                    if cut_stamp_of(&chunk.choices[0]).is_some() {
                         shown.push_str(&call_hold.release());
                     }
                     if !shown.is_empty() {
@@ -2174,8 +2222,8 @@ where
                     // the swarm's gates could not tell "done" from "guillotined". The marker is
                     // deterministic text every downstream reader sees: a truncated final_output no
                     // longer passes as complete, and the retry machinery has a signal to re-ask.
-                    if chunk.choices[0].finish_reason.as_deref() == Some("length") {
-                        msg = msg.with_text(OUTPUT_TRUNCATED_BY_LENGTH);
+                    if let Some(stamp) = cut_stamp_of(&chunk.choices[0]) {
+                        msg = msg.with_text(stamp);
                         length_marked = true;
                     }
 
@@ -2208,11 +2256,11 @@ where
         let tail = call_hold.push(&filtered.content);
         let (settled, failed_calls) = settle_reply(call_hold.finish(), &refused);
         let mut shown = tail + &settled;
-        if cut_by_length && !length_marked && !yielded_tool_call {
+        if let Some(stamp) = cut_stamp.filter(|_| !length_marked && !yielded_tool_call) {
             if shown.is_empty() {
-                shown.push_str(OUTPUT_TRUNCATED_BY_LENGTH.trim_start());
+                shown.push_str(stamp.trim_start());
             } else {
-                shown.push_str(OUTPUT_TRUNCATED_BY_LENGTH);
+                shown.push_str(stamp);
             }
         }
         if !failed_calls.is_empty() {
@@ -7337,6 +7385,92 @@ mod unparsed_tool_call_tests {
         assert!(text.starts_with("<tool_call>\n<function=shell>"), "{text}");
         assert!(text.contains(OUTPUT_TRUNCATED_BY_LENGTH), "{text}");
         assert!(failed.is_empty());
+    }
+
+    /// I-28: the engine's loop guard ends a looping reply with `finish_reason: length` plus
+    /// `rapid_mlx_stop_reason: repetition`; the reply says it looped, not that it was cut for length.
+    #[tokio::test]
+    async fn a_loop_stop_is_stamped_as_a_loop_not_as_a_length_cut() {
+        let looped = vec![
+            frame(
+                json!({"content": "do it. First, config.js."}),
+                None,
+                json!({}),
+            ),
+            frame(
+                json!({"content": " do it. First, config.js."}),
+                Some("length"),
+                json!({"rapid_mlx_stop_reason": "repetition"}),
+            ),
+            "data: [DONE]".to_string(),
+        ];
+        let (text, failed, calls, _) = decode(looped).await;
+        assert!(text.contains(OUTPUT_STOPPED_AS_LOOP), "{text}");
+        assert!(!text.contains(OUTPUT_TRUNCATED_BY_LENGTH), "{text}");
+        assert!(failed.is_empty() && calls.is_empty());
+
+        // A reasoning-only loop (no text) is stamped too, never read as an empty turn.
+        let thinking_loop = vec![
+            frame(json!({"reasoning": "again and again"}), None, json!({})),
+            frame(
+                json!({}),
+                Some("length"),
+                json!({"rapid_mlx_stop_reason": "repetition"}),
+            ),
+            "data: [DONE]".to_string(),
+        ];
+        assert_eq!(
+            decode(thinking_loop).await.0,
+            OUTPUT_STOPPED_AS_LOOP.trim_start()
+        );
+
+        // Any other engine's length stop keeps the length stamp.
+        let other = vec![
+            frame(
+                json!({"content": "Plan"}),
+                Some("length"),
+                json!({"stop_reason": "x"}),
+            ),
+            "data: [DONE]".to_string(),
+        ];
+        let text = decode(other).await.0;
+        assert!(
+            text.contains(OUTPUT_TRUNCATED_BY_LENGTH) && !text.contains(OUTPUT_STOPPED_AS_LOOP)
+        );
+    }
+
+    /// I-28 review: the loop is in a tool call's arguments. Before, the closing chunk's stop reason
+    /// was never read in the call-accumulating loop, so a call whose arguments happened to parse ran
+    /// as a normal call. Now the cut call fails and names the loop; a plain length cut is unchanged.
+    #[tokio::test]
+    async fn a_loop_stop_inside_a_tool_call_fails_that_call_with_the_loop_named() {
+        let frames = |extra: Value| {
+            vec![
+                frame(json!({"content": "Writing it."}), None, json!({})),
+                frame(
+                    json!({"tool_calls": [{"index": 0, "id": "call_1", "type": "function",
+                        "function": {"name": "write", "arguments": ""}}]}),
+                    None,
+                    json!({}),
+                ),
+                frame(
+                    json!({"tool_calls": [{"index": 0, "function": {"arguments":
+                        "{\"path\": \"a.js\", \"content\": \"x = 1; x = 1; x = 1;\"}"}}]}),
+                    None,
+                    json!({}),
+                ),
+                frame(json!({}), Some("length"), extra),
+                "data: [DONE]".to_string(),
+            ]
+        };
+        let (_, failed, calls, _) =
+            decode(frames(json!({"rapid_mlx_stop_reason": "repetition"}))).await;
+        assert!(calls.is_empty(), "{calls:?}");
+        assert_eq!(failed, vec![LOOP_STOPPED_TOOL_CALL.to_string()]);
+
+        let (_, failed, calls, _) = decode(frames(json!({}))).await;
+        assert_eq!(calls, vec!["write".to_string()]);
+        assert!(failed.is_empty(), "{failed:?}");
     }
 
     #[tokio::test]
