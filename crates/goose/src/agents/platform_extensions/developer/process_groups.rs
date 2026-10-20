@@ -954,8 +954,18 @@ mod tests {
         let leader = child.id() as i32;
         let mut command = CommandProcesses::spawned(leader, true, Some(session));
         let _ = child.wait();
+        // `sh` exits right after forking the background job, which may not have exec'd `marker`
+        // yet: under a loaded full run the group read here as `sh -c {marker} &`, and once as
+        // no member at all. The leftover this helper promises is the one running `marker`.
+        let mut members = Vec::new();
+        for _ in 0..250 {
+            members = running_members(leader).await.expect("list the group");
+            if members.len() == 1 && members[0].command == marker {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
         command.ended();
-        let members = running_members(leader).await.expect("list the group");
         assert_eq!(members.len(), 1, "one survivor of `{marker}`");
         assert_eq!(members[0].command, marker);
         members[0].pid
