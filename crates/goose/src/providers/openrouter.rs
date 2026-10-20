@@ -1368,13 +1368,19 @@ mod tests {
 
     /// The bench harness bills an OpenRouter run per generation id (bench_cost.py); that id reaches
     /// it only through this line, for completed and dropped streams alike.
+    ///
+    /// The sink is the process env, so while this test points it at its file every other test in
+    /// the binary that streams through any provider appends there too (runs 39065614665,
+    /// 39296331961, 39387447211: an MLX-endpoint test's `c1` line). The generation id is this
+    /// run's own, and only the lines carrying it are this test's calls.
     #[tokio::test]
     async fn every_streamed_call_writes_its_generation_id_to_the_telemetry_file() {
         use futures::StreamExt;
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
-        let gen_id = "gen-1790911486-OyqP2p7UE9dNJc1weFAo";
+        let gen_id = format!("gen-{}", uuid::Uuid::new_v4().simple());
+        let gen_id = gen_id.as_str();
         let chunk = |delta: Value, finish: Value, usage: Option<Value>| {
             let mut c = json!({"id": gen_id, "object": "chat.completion.chunk", "created": 1,
                                "model": "deepseek/deepseek-v4.1-flash",
@@ -1438,7 +1444,8 @@ mod tests {
         let lines: Vec<Value> = std::fs::read_to_string(&telemetry)
             .unwrap()
             .lines()
-            .map(|l| serde_json::from_str(l).unwrap())
+            .map(|l| serde_json::from_str::<Value>(l).unwrap())
+            .filter(|line| line["response_id"] == json!(gen_id))
             .collect();
         assert_eq!(lines.len(), 2, "{lines:?}");
         assert_eq!(lines[0]["response_id"], json!(gen_id));
