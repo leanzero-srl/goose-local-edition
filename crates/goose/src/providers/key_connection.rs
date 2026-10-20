@@ -109,14 +109,25 @@ impl LoopbackEndpoint {
     }
 
     /// True only when the OS refused the connection (`ECONNREFUSED`): nothing listens there. Any
-    /// other outcome — accepted, or a failure that is not a refusal — leaves the full check to say
-    /// what is wrong.
+    /// other outcome — accepted, unanswered, or a failure that is not a refusal — leaves the full
+    /// check to say what is wrong.
     async fn refuses_connection(&self) -> bool {
-        matches!(
-            tokio::net::TcpStream::connect(self.address.as_str()).await,
-            Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused
-        )
+        refuses_within(&self.address, LOOPBACK_CONNECT_WAIT).await
     }
+}
+
+/// How long a loopback connect may go unanswered. This Mac's own kernel accepts or refuses a
+/// loopback SYN in microseconds; one that goes unanswered (an lo0 firewall rule, a full accept
+/// queue) proves nothing, and waiting on it would hold the check lock — and every provider list
+/// behind it — for the OS's ~75 s SYN retry. A transport connect bound, never a limit on model
+/// work (gate 5 keeps connect timeouts in the transport).
+const LOOPBACK_CONNECT_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+
+async fn refuses_within(address: &str, wait: std::time::Duration) -> bool {
+    matches!(
+        tokio::time::timeout(wait, tokio::net::TcpStream::connect(address)).await,
+        Ok(Err(error)) if error.kind() == std::io::ErrorKind::ConnectionRefused
+    )
 }
 
 /// The provider a check runs, after every key the provider needs is present.
@@ -543,6 +554,47 @@ mod tests {
         ] {
             assert_eq!(origin(endpoint).as_deref(), expected, "{endpoint}");
         }
+    }
+
+    #[tokio::test]
+    async fn only_a_refused_loopback_connect_reads_as_a_server_that_is_not_started() {
+        let wait = std::time::Duration::from_millis(300);
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let closed_address = closed.local_addr().unwrap().to_string();
+        drop(closed);
+        assert!(refuses_within(&closed_address, wait).await);
+
+        let open = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let open_address = open.local_addr().unwrap().to_string();
+        assert!(!refuses_within(&open_address, wait).await);
+
+        // A listener that never accepts, its one-slot queue filled: the kernel drops the next SYN
+        // without an answer, the way an lo0 firewall rule does.
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let stalled_address = socket.local_addr().unwrap().to_string();
+        let _stalled = socket.listen(1).unwrap();
+        let mut queued = Vec::new();
+        let mut unanswered = false;
+        for _ in 0..16 {
+            match tokio::time::timeout(
+                wait,
+                tokio::net::TcpStream::connect(stalled_address.as_str()),
+            )
+            .await
+            {
+                Ok(Ok(stream)) => queued.push(stream),
+                Ok(Err(error)) => panic!("a full queue answered: {error}"),
+                Err(_) => {
+                    unanswered = true;
+                    break;
+                }
+            }
+        }
+        assert!(unanswered, "the accept queue never filled");
+        let started = std::time::Instant::now();
+        assert!(!refuses_within(&stalled_address, wait).await);
+        assert!(started.elapsed() < wait * 3, "{:?}", started.elapsed());
     }
 
     #[test]
