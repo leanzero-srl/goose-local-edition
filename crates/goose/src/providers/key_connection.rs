@@ -35,12 +35,17 @@ pub(crate) fn requires_connection_check(
 
 /// What a check established. A model listing is NOT proof of a key — OpenRouter's `/models` is public
 /// and answered 444 models to a made-up key (2026-09-22) — so a key is `Proven` only when a model ran.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Verification {
     /// A model answered with the key: the key works.
     Proven,
     /// Only the provider's model listing answered; no default model is chosen yet, so nothing ran.
     ListedOnly,
+    /// Nothing listens at the provider's loopback endpoint (the origin): a server on this Mac that
+    /// is not started, which is normal whenever its model is not loaded (goose's own MLX engine on
+    /// 127.0.0.1:8090 is up only while a model is mounted). Only the restart check concludes this —
+    /// there is no key to prove until the server runs, and a save always runs the full check.
+    LocalServerNotRunning(String),
 }
 
 /// The message a `ListedOnly` state shows until a default model is chosen and run.
@@ -57,6 +62,68 @@ pub(crate) async fn check(
     metadata: &ProviderMetadata,
     model: Option<&str>,
 ) -> Result<Verification> {
+    let provider = provider_with_keys(provider_id, metadata).await?;
+    verify(provider_id, provider.as_ref(), metadata, model).await
+}
+
+/// The check a restart (and the Recheck button) runs on SAVED settings. An endpoint on this Mac's
+/// loopback that refuses the connection is a local server that is not started, recorded as such
+/// and never as a failure; a loopback server that answers (a refused key, a missing model) and
+/// every other host get the full check, so a broken key still says so at startup.
+async fn restart_check(provider_id: &str, metadata: &ProviderMetadata) -> Result<Verification> {
+    let provider = provider_with_keys(provider_id, metadata).await?;
+    if let Some(endpoint) = provider.endpoint().and_then(LoopbackEndpoint::parse) {
+        if endpoint.refuses_connection().await {
+            return Ok(Verification::LocalServerNotRunning(endpoint.origin));
+        }
+    }
+    verify(provider_id, provider.as_ref(), metadata, None).await
+}
+
+/// A provider endpoint on this Mac's loopback: `127.0.0.0/8`, `::1`, `localhost`, or the
+/// unspecified address (`0.0.0.0` / `::`), which a connect from this Mac reaches locally.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct LoopbackEndpoint {
+    /// `scheme://host:port` — never a path, query or credentials.
+    pub(crate) origin: String,
+    address: String,
+}
+
+impl LoopbackEndpoint {
+    pub(crate) fn parse(endpoint: &str) -> Option<Self> {
+        let url = url::Url::parse(endpoint).ok()?;
+        let local = match url.host()? {
+            url::Host::Ipv4(ip) => ip.is_loopback() || ip.is_unspecified(),
+            url::Host::Ipv6(ip) => ip.is_loopback() || ip.is_unspecified(),
+            url::Host::Domain(name) => name.eq_ignore_ascii_case("localhost"),
+        };
+        if !local {
+            return None;
+        }
+        let host = url.host_str()?;
+        let port = url.port_or_known_default()?;
+        Some(Self {
+            origin: format!("{}://{host}:{port}", url.scheme()),
+            address: format!("{host}:{port}"),
+        })
+    }
+
+    /// True only when the OS refused the connection (`ECONNREFUSED`): nothing listens there. Any
+    /// other outcome — accepted, or a failure that is not a refusal — leaves the full check to say
+    /// what is wrong.
+    async fn refuses_connection(&self) -> bool {
+        matches!(
+            tokio::net::TcpStream::connect(self.address.as_str()).await,
+            Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused
+        )
+    }
+}
+
+/// The provider a check runs, after every key the provider needs is present.
+async fn provider_with_keys(
+    provider_id: &str,
+    metadata: &ProviderMetadata,
+) -> Result<std::sync::Arc<dyn crate::providers::base::Provider>> {
     let config = Config::global();
     config.invalidate_secrets_cache();
     for key in metadata.config_keys.iter().filter(|key| {
@@ -70,10 +137,19 @@ pub(crate) async fn check(
             return Err(anyhow!("{} requires {}", metadata.display_name, key.name));
         }
     }
-    let provider = provider_for_check(provider_id).await?;
+    provider_for_check(provider_id).await
+}
+
+async fn verify(
+    provider_id: &str,
+    provider: &dyn crate::providers::base::Provider,
+    metadata: &ProviderMetadata,
+    model: Option<&str>,
+) -> Result<Verification> {
+    let config = Config::global();
     if provider_id == "azure_openai" {
         let deployment = config.get_param::<String>("AZURE_OPENAI_DEPLOYMENT_NAME")?;
-        probe(provider.as_ref(), &deployment, &metadata.display_name).await?;
+        probe(provider, &deployment, &metadata.display_name).await?;
         save_default_model(provider_id, &deployment)?;
         return Ok(Verification::Proven);
     }
@@ -83,11 +159,11 @@ pub(crate) async fn check(
         .map(str::to_owned)
         .or(saved_default_model(provider_id)?);
     if let Some(model) = chosen {
-        probe(provider.as_ref(), &model, &metadata.display_name).await?;
+        probe(provider, &model, &metadata.display_name).await?;
         save_default_model(provider_id, &model)?;
         return Ok(Verification::Proven);
     }
-    let listed = list_models(provider.as_ref(), &metadata.display_name).await?;
+    let listed = list_models(provider, &metadata.display_name).await?;
     if !listed.is_empty() {
         return Ok(Verification::ListedOnly);
     }
@@ -98,7 +174,7 @@ pub(crate) async fn check(
             metadata.display_name
         ));
     }
-    probe(provider.as_ref(), registry_default, &metadata.display_name).await?;
+    probe(provider, registry_default, &metadata.display_name).await?;
     Ok(Verification::Proven)
 }
 
@@ -227,11 +303,21 @@ async fn probe(
     Ok(())
 }
 
+/// What the last check of a provider left behind this session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CheckState {
+    Proven,
+    /// The check's words: the provider's refusal, or what is still missing.
+    Failed(String),
+    /// The origin of a loopback endpoint nothing listens at — not a failure.
+    LocalServerNotRunning(String),
+}
+
 static CHECKS: std::sync::LazyLock<
-    std::sync::Mutex<std::collections::HashMap<String, Option<String>>>,
+    std::sync::Mutex<std::collections::HashMap<String, CheckState>>,
 > = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
-pub(crate) fn status(provider: &str) -> Option<Option<String>> {
+pub(crate) fn status(provider: &str) -> Option<CheckState> {
     CHECKS
         .lock()
         .expect("provider check lock poisoned")
@@ -241,19 +327,22 @@ pub(crate) fn status(provider: &str) -> Option<Option<String>> {
 
 pub(crate) async fn check_and_record(provider: &str, metadata: &ProviderMetadata) -> Result<()> {
     let _guard = lock().await;
-    let result = check(provider, metadata, None).await;
+    let result = restart_check(provider, metadata).await;
     record(provider, &result);
     result.map(|_| ())
 }
 
 /// The status a check leaves behind: `Proven` clears it, `ListedOnly` states what is still missing,
-/// an error carries the provider's own words. Callers record only what `requires_connection_check`
-/// admitted.
+/// a local server that is not started names its origin, an error carries the provider's own words.
+/// Callers record only what `requires_connection_check` admitted.
 pub(crate) fn record(provider: &str, result: &Result<Verification>) {
     let status = match result {
-        Ok(Verification::Proven) => None,
-        Ok(Verification::ListedOnly) => Some(NO_DEFAULT_MODEL_YET.to_owned()),
-        Err(error) => Some(error.to_string()),
+        Ok(Verification::Proven) => CheckState::Proven,
+        Ok(Verification::ListedOnly) => CheckState::Failed(NO_DEFAULT_MODEL_YET.to_owned()),
+        Ok(Verification::LocalServerNotRunning(origin)) => {
+            CheckState::LocalServerNotRunning(origin.clone())
+        }
+        Err(error) => CheckState::Failed(error.to_string()),
     };
     CHECKS
         .lock()
@@ -425,6 +514,35 @@ mod tests {
             )),
             "OpenAI rejected the key: invalid x-api-key. Your previous settings were kept."
         );
+    }
+
+    #[test]
+    fn only_this_macs_loopback_is_a_local_server() {
+        let origin = |endpoint: &str| LoopbackEndpoint::parse(endpoint).map(|e| e.origin);
+        for (endpoint, expected) in [
+            ("http://127.0.0.1:8090", Some("http://127.0.0.1:8090")),
+            (
+                "http://127.0.0.1:8090/v1?x=1",
+                Some("http://127.0.0.1:8090"),
+            ),
+            ("http://localhost:1234/v1", Some("http://localhost:1234")),
+            ("http://LOCALHOST:11434", Some("http://localhost:11434")),
+            ("http://[::1]:8080", Some("http://[::1]:8080")),
+            ("http://0.0.0.0:8000", Some("http://0.0.0.0:8000")),
+            ("http://127.0.0.2", Some("http://127.0.0.2:80")),
+            (
+                "http://user:secret@127.0.0.1:8090",
+                Some("http://127.0.0.1:8090"),
+            ),
+            ("https://api.openai.com", None),
+            ("http://192.168.1.20:8090", None),
+            ("http://100.122.51.13:8090", None),
+            ("http://localhost.example.com:8090", None),
+            ("http://desk.lan:8000", None),
+            ("not a url", None),
+        ] {
+            assert_eq!(origin(endpoint).as_deref(), expected, "{endpoint}");
+        }
     }
 
     #[test]

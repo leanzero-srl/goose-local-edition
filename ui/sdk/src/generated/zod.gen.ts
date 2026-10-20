@@ -1104,6 +1104,10 @@ export const zProviderConfigStatusDto = z.object({
         z.string(),
         z.null()
     ]).optional(),
+    localServerNotRunning: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
     testModel: z.union([
         z.string(),
         z.null()

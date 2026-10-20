@@ -2590,6 +2590,13 @@
             "null"
           ]
         },
+        "localServerNotRunning": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The origin (`http://127.0.0.1:8090`) of a loopback endpoint the last check found nothing\nlistening at: a local server that is not started. Not a failure — `connection_error` stays\nempty — and not proof of the settings either."
+        },
         "testModel": {
           "type": [
             "string",

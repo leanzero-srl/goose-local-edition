@@ -1225,6 +1225,12 @@ export type ProviderConfigStatusDto = {
     isConfigured: boolean;
     connectionChecked: boolean;
     connectionError?: string | null;
+    /**
+     * The origin (`http://127.0.0.1:8090`) of a loopback endpoint the last check found nothing
+     * listening at: a local server that is not started. Not a failure — `connection_error` stays
+     * empty — and not proof of the settings either.
+     */
+    localServerNotRunning?: string | null;
     testModel?: string | null;
 };
 

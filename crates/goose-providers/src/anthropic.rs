@@ -231,6 +231,10 @@ impl Provider for AnthropicProvider {
         &self.name
     }
 
+    fn endpoint(&self) -> Option<&str> {
+        Some(self.api_client.host())
+    }
+
     fn skip_canonical_filtering(&self) -> bool {
         self.skip_canonical_filtering
     }

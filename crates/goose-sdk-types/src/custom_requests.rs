@@ -902,6 +902,11 @@ pub struct ProviderConfigStatusDto {
     pub is_configured: bool,
     pub connection_checked: bool,
     pub connection_error: Option<String>,
+    /// The origin (`http://127.0.0.1:8090`) of a loopback endpoint the last check found nothing
+    /// listening at: a local server that is not started. Not a failure — `connection_error` stays
+    /// empty — and not proof of the settings either.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_server_not_running: Option<String>,
     pub test_model: Option<String>,
 }
 

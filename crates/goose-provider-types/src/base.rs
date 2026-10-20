@@ -433,6 +433,13 @@ pub trait Provider: Send + Sync {
     /// Get the name of this provider instance
     fn get_name(&self) -> &str;
 
+    /// The base URL this provider's HTTP requests go to, for a provider that sends them through
+    /// one `ApiClient`. The restart connection check reads it to tell a local server that is not
+    /// started from a broken key (`key_connection::restart_check`).
+    fn endpoint(&self) -> Option<&str> {
+        None
+    }
+
     /// Primary streaming method that all providers must implement.
     async fn stream(
         &self,

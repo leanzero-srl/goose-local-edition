@@ -75,6 +75,10 @@ impl Provider for OpenAiCompatibleProvider {
         &self.name
     }
 
+    fn endpoint(&self) -> Option<&str> {
+        Some(self.api_client.host())
+    }
+
     async fn fetch_supported_models(&self) -> Result<Vec<String>, ProviderError> {
         let response = self.api_client.response_get("models").await.map_err(|e| {
             ProviderError::RequestFailed(super::http_status::redact_relay_capability(
