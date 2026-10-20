@@ -1609,12 +1609,32 @@ fn classify_choiceless_frame(value: &Value) -> Option<ProviderError> {
 /// say `rate_limit_exceeded`, Anthropic-shaped gateways `rate_limit_error`.
 const RATE_LIMIT_ERROR_TYPES: &[&str] = &["rate_limit_exceeded", "rate_limit_error"];
 
+/// Error types gateways name an over-long request by. OpenRouter documents
+/// `metadata.error_type: "context_length_exceeded"` on its mid-stream error chunk ("The combined
+/// input and output tokens exceed the model's context window", openrouter.ai/docs/api/reference/
+/// errors-and-debugging, Typed error codes); OpenAI's own `code` uses the same word.
+const CONTEXT_LENGTH_ERROR_TYPES: &[&str] = &["context_length_exceeded"];
+
 /// The class of an error a stream reported after its HTTP 200: a rate limit is the same
 /// `RateLimitExceeded` an HTTP 429 maps to, so it is waited out instead of spending the quick resends
 /// (2026-10-16, Qwen3.8 Flash on OpenRouter/Alibaba: `{"error": {"code": 429, "message": "Provider
 /// returned error", "metadata": {"error_type": "rate_limit_exceeded"}}}` as the only frame ended the
-/// run at call 50 after three resends in seven seconds). Every other report stays a server fault.
+/// run at call 50 after three resends in seven seconds). An over-long request is the same
+/// `ContextLengthExceeded` an HTTP 400 maps to, so the agent compacts and retries instead of
+/// resending the same too-long request as a server fault. Every other report stays a server fault.
 fn in_stream_error(error: &Value, details: String) -> ProviderError {
+    let names_context_length = [
+        error.get("code"),
+        error.get("type"),
+        error.get("metadata").and_then(|m| m.get("error_type")),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(Value::as_str)
+    .any(|kind| CONTEXT_LENGTH_ERROR_TYPES.contains(&kind));
+    if names_context_length || details.to_lowercase().contains("maximum context length") {
+        return ProviderError::ContextLengthExceeded(details);
+    }
     let code_is_429 = ["code", "status", "statusCode"].iter().any(|key| {
         error.get(*key).is_some_and(|raw| {
             raw.as_i64() == Some(429) || raw.as_str().map(str::trim) == Some("429")
@@ -6119,6 +6139,42 @@ data: [DONE]"#;
                 }) => assert_eq!(details, "Provider returned error", "for {line}"),
                 other => panic!("expected RateLimitExceeded for {line}, got {other:?}"),
             }
+        }
+    }
+
+    /// OpenRouter reports an over-long request after its HTTP 200 as a chunk with a top-level
+    /// `error` and `finish_reason: "error"` (its documented MidStreamError shape, with
+    /// `metadata.error_type` from the Typed error codes table); the message is the one OpenRouter
+    /// answers pre-stream (aider-desk#361, 2025). Each is the same class the HTTP 400 maps to, so
+    /// the agent compacts instead of resending it as a server fault.
+    #[test]
+    fn test_in_stream_context_length_is_the_http_400_class() {
+        let message = "This endpoint's maximum context length is 131072 tokens. However, you \
+                       requested about 272464 tokens (258978 of text input, 3486 of tool input, \
+                       10000 in the output). Please reduce the length of either one, or use the \
+                       \\\"middle-out\\\" transform to compress your prompt automatically.";
+        let documented = json!({
+            "id": "gen-abc123", "object": "chat.completion.chunk", "created": 1,
+            "model": "x-ai/grok-4.7", "provider": "xAI",
+            "error": {"code": 400, "message": "Provider returned error",
+                      "metadata": {"error_type": "context_length_exceeded"}},
+            "choices": [{"index": 0, "delta": {"content": ""}, "finish_reason": "error"}]
+        })
+        .to_string();
+        let worded = format!(r#"{{"error":{{"code":400,"message":"{message}"}}}}"#);
+        for line in [
+            documented.as_str(),
+            worded.as_str(),
+            r#"{"error":{"message":"too long","code":"context_length_exceeded"}}"#,
+        ] {
+            assert!(
+                matches!(
+                    parse_streaming_chunk(line),
+                    Err(ProviderError::ContextLengthExceeded(_))
+                ),
+                "expected ContextLengthExceeded for {line}, got {:?}",
+                parse_streaming_chunk(line)
+            );
         }
     }
 

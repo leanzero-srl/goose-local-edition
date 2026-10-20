@@ -91,6 +91,10 @@ pub async fn export(provider: Option<&str>, output: &Path) -> Result<()> {
             definitions.insert(name.clone(), serde_json::to_value(definition.config)?);
         }
     }
+    // Every entrant is served the prompt goose sent: an operator's opt-in to OpenRouter's
+    // middle-out compression is a chat setting, and in a benchmark it silently cut the middle of
+    // long builds (Grok 4.7 and Tencent Hy4 on Forge 2.0, 2026-10).
+    params.remove(goose::providers::openrouter::OPENROUTER_MIDDLE_OUT_CONFIG_KEY);
     for key in [
         "GOOSE_TEMPERATURE",
         "GOOSE_CONTEXT_LIMIT",

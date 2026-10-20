@@ -695,6 +695,9 @@ impl Agent {
             .and_then(|pn| self.accumulate_cost(session.accumulated_cost, usage, pn))
             .or(session.accumulated_cost);
 
+        if is_compaction_usage {
+            crate::context_mgmt::forget_compressed_prompt(session_id);
+        }
         let current_usage = if !is_compaction_usage {
             usage.usage
         } else if self.is_swarm_worker() {

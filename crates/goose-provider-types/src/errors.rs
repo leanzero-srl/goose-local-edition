@@ -423,6 +423,18 @@ pub fn refused_context_window(text: &str) -> Option<usize> {
     })
 }
 
+/// The output tokens a context-length refusal says the request reserved beside its prompt, when
+/// it says so: OpenRouter's refusal counts them inside the window it names — "This endpoint's
+/// maximum context length is 131072 tokens. However, you requested about 272464 tokens (258978 of
+/// text input, 3486 of tool input, 10000 in the output)" (aider-desk#361) — so the prompt a later
+/// request may carry is the window minus this reservation, not the whole window.
+pub fn refused_output_reservation(text: &str) -> Option<usize> {
+    static PATTERN: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?i)(\d[\d,]*) in the output").expect("a valid pattern"));
+    let digits = PATTERN.captures(text)?.get(1)?.as_str().replace(',', "");
+    digits.parse::<usize>().ok()
+}
+
 impl From<LogError> for ProviderError {
     fn from(value: LogError) -> Self {
         ProviderError::ExecutionError(value.to_string())
@@ -584,7 +596,38 @@ mod tests {
 
 #[cfg(test)]
 mod refused_window_tests {
-    use super::refused_context_window;
+    use super::{refused_context_window, refused_output_reservation};
+
+    /// OpenRouter's refusal as it reached clients (aider-desk#361; the 2026 wording names the
+    /// context-compression plugin, multica#1796): the window and the output share inside it.
+    #[test]
+    fn an_openrouter_refusal_names_its_window_and_its_output_reservation() {
+        for (text, window, output) in [
+            (
+                "This endpoint's maximum context length is 131072 tokens. However, you requested \
+                 about 272464 tokens (258978 of text input, 3486 of tool input, 10000 in the \
+                 output). Please reduce the length of either one, or use the \"middle-out\" \
+                 transform to compress your prompt automatically.",
+                131_072,
+                10_000,
+            ),
+            (
+                "This endpoint's maximum context length is 204800 tokens. However, you requested \
+                 about 208281 tokens (158694 of text input, 17587 of tool input, 32000 in the \
+                 output). Please reduce the length of either one, or use the context-compression \
+                 plugin to compress your prompt automatically.",
+                204_800,
+                32_000,
+            ),
+        ] {
+            assert_eq!(refused_context_window(text), Some(window), "{text}");
+            assert_eq!(refused_output_reservation(text), Some(output), "{text}");
+        }
+        assert_eq!(
+            refused_output_reservation("maximum context length is 262144 tokens"),
+            None
+        );
+    }
 
     #[test]
     fn a_refusal_names_its_window() {

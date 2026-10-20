@@ -631,17 +631,113 @@ fn refused_window(session_id: &str, model: &str) -> Option<usize> {
 
 /// Remembers the window a context-length refusal names, so `effective_context_limit` (and with it
 /// proactive compaction and the recovery summary) sizes to it from now on. The latest refusal wins:
-/// it says what the engine can hold now.
+/// it says what the engine can hold now. A refusal that counts an output reservation inside the
+/// window (OpenRouter's "… 10000 in the output") leaves the prompt only the rest of it: sized to
+/// the whole window, the next request would be refused again at the same size.
 pub fn note_refused_window(session_id: &str, model: &str, error: &ProviderError) -> Option<usize> {
     let ProviderError::ContextLengthExceeded(text) = error else {
         return None;
     };
-    let window = goose_providers::errors::refused_context_window(text)?;
+    let named = goose_providers::errors::refused_context_window(text)?;
+    let window = goose_providers::errors::refused_output_reservation(text)
+        .filter(|output| *output < named)
+        .map_or(named, |output| named - output);
+    remember_window(session_id, model, window);
+    Some(window)
+}
+
+fn remember_window(session_id: &str, model: &str, window: usize) {
     REFUSED_WINDOWS
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .insert((session_id.to_string(), model.to_string()), window);
-    Some(window)
+}
+
+/// A provider-reported prompt below this share of goose's own count of the request it sent means
+/// the provider dropped part of it (OpenRouter's middle-out). The share is far below any
+/// tokenizer disagreement — goose counts o200k, a provider its own vocabulary — measured on the
+/// Grok 4.7 Forge 2.0 build: billed 207,145 at call #181 against goose's count of what it sent,
+/// then 76,843 at #182 while goose kept sending the whole history (~273k).
+pub const COMPRESSED_PROMPT_SHARE: f64 = 0.5;
+
+/// Whether a call's reported prompt says the provider compressed what goose sent.
+pub fn prompt_was_compressed(sent_tokens: usize, reported_prompt_tokens: usize) -> bool {
+    sent_tokens > 0
+        && (reported_prompt_tokens as f64) < sent_tokens as f64 * COMPRESSED_PROMPT_SHARE
+}
+
+/// What goose sent on a call the provider compressed, per session, until the session compacts.
+static COMPRESSED_PROMPTS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, usize>>,
+> = std::sync::LazyLock::new(Default::default);
+
+fn compressed_prompt(session_id: &str) -> Option<usize> {
+    COMPRESSED_PROMPTS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(session_id)
+        .copied()
+}
+
+/// A provider compressed this call's prompt (`prompt_was_compressed`): the usage it reports is
+/// what it kept, not what the conversation holds, and reading it as the context hides the very
+/// truncation from the compaction guard. From now on the guard counts `sent_tokens`, and the
+/// window is at most `delivered_tokens` — what the provider showed it would hold — so the next
+/// check compacts the conversation instead of letting the provider cut its middle again.
+///
+/// `fixed_tokens` is the system prompt and tools, which compaction cannot shrink: a provider that
+/// held less than twice that has no room a compacted chat could fit in, and sizing to it would
+/// compact on every call, so only the count is kept and the warning says why.
+pub fn note_compressed_prompt(
+    session_id: &str,
+    model: &str,
+    sent_tokens: usize,
+    delivered_tokens: usize,
+    fixed_tokens: usize,
+) {
+    COMPRESSED_PROMPTS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(session_id.to_string(), sent_tokens);
+    let sized = delivered_tokens >= fixed_tokens.saturating_mul(2);
+    if sized {
+        remember_window(session_id, model, delivered_tokens);
+    }
+    tracing::warn!(
+        session_id,
+        model,
+        sent_tokens,
+        delivered_tokens,
+        fixed_tokens,
+        window_sized_to_delivered = sized,
+        "prompt_compressed_by_provider: the provider reported a prompt under {:.0}% of what goose \
+         sent, so it dropped part of the conversation; compaction now counts what goose sent{}",
+        COMPRESSED_PROMPT_SHARE * 100.0,
+        if sized {
+            " and sizes to what the provider held"
+        } else {
+            " (the provider held less than twice the system prompt and tools, so the window is not \
+             sized to it)"
+        }
+    );
+}
+
+/// A call the provider did not compress, or a compaction, ends the compressed reading.
+pub fn forget_compressed_prompt(session_id: &str) {
+    COMPRESSED_PROMPTS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(session_id);
+}
+
+/// The context the compaction guard reads: the provider's reported usage, or what goose sent when
+/// the provider is known to have compressed the last call.
+fn guarded_context_tokens(reported: Option<i32>, compressed_sent: Option<usize>) -> Option<usize> {
+    let reported = reported.map(|tokens| tokens.max(0) as usize);
+    match (reported, compressed_sent) {
+        (Some(reported), Some(sent)) => Some(reported.max(sent)),
+        (reported, sent) => reported.or(sent),
+    }
 }
 
 pub async fn check_if_compaction_needed(
@@ -672,22 +768,23 @@ pub async fn check_if_compaction_needed(
         return Ok(false);
     };
 
-    let (current_tokens, _token_source) = match session.usage.total_tokens {
-        Some(tokens) => (tokens as usize, "session metadata"),
-        None => {
-            let token_counter = create_token_counter()
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to create token counter: {}", e))?;
+    let (current_tokens, _token_source) =
+        match guarded_context_tokens(session.usage.total_tokens, compressed_prompt(&session.id)) {
+            Some(tokens) => (tokens, "session metadata"),
+            None => {
+                let token_counter = create_token_counter()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to create token counter: {}", e))?;
 
-            let token_counts: Vec<_> = messages
-                .iter()
-                .filter(|m| m.is_agent_visible())
-                .map(|msg| token_counter.count_chat_tokens("", std::slice::from_ref(msg), &[]))
-                .collect();
+                let token_counts: Vec<_> = messages
+                    .iter()
+                    .filter(|m| m.is_agent_visible())
+                    .map(|msg| token_counter.count_chat_tokens("", std::slice::from_ref(msg), &[]))
+                    .collect();
 
-            (token_counts.iter().sum(), "estimated")
-        }
-    };
+                (token_counts.iter().sum(), "estimated")
+            }
+        };
 
     let usage_ratio = current_tokens as f64 / context_limit as f64;
 
@@ -3252,6 +3349,80 @@ mod tests {
         assert_eq!(
             effective_context_limit(&provider, &model_config, Some("another-session")).await,
             Some(262_144)
+        );
+    }
+
+    /// OpenRouter's refusal counts the output it reserved inside the window it names: the prompt
+    /// a later request may carry is the window minus that share.
+    #[tokio::test]
+    async fn an_openrouter_refusal_sizes_the_prompt_to_the_window_minus_its_output_share() {
+        let provider = MockProvider::new(Message::assistant().with_text("x"), 500_000);
+        let model_config = provider.config.clone();
+        let session = "openrouter-refusal-session";
+        let refusal = ProviderError::ContextLengthExceeded(
+            "This endpoint's maximum context length is 131072 tokens. However, you requested \
+             about 272464 tokens (258978 of text input, 3486 of tool input, 10000 in the \
+             output). Please reduce the length of either one, or use the \"middle-out\" \
+             transform to compress your prompt automatically."
+                .to_string(),
+        );
+        assert_eq!(
+            note_refused_window(session, &model_config.model_name, &refusal),
+            Some(121_072)
+        );
+        assert_eq!(
+            effective_context_limit(&provider, &model_config, Some(session)).await,
+            Some(121_072)
+        );
+    }
+
+    #[test]
+    fn a_reported_prompt_under_half_of_what_goose_sent_was_compressed() {
+        // Grok 4.7's Forge 2.0 low build: billed 76,843 at call #182 while goose sent ~273k.
+        assert!(prompt_was_compressed(273_000, 76_843));
+        // The call before it was billed in full.
+        assert!(!prompt_was_compressed(207_000, 207_145));
+        // A provider tokenizer that counts a fifth fewer tokens than o200k is not compression.
+        assert!(!prompt_was_compressed(100_000, 80_000));
+        assert!(!prompt_was_compressed(0, 0));
+    }
+
+    #[test]
+    fn the_guard_counts_what_goose_sent_while_the_provider_compresses() {
+        assert_eq!(guarded_context_tokens(Some(80_000), None), Some(80_000));
+        assert_eq!(
+            guarded_context_tokens(Some(80_000), Some(273_000)),
+            Some(273_000)
+        );
+        assert_eq!(guarded_context_tokens(None, Some(273_000)), Some(273_000));
+        assert_eq!(guarded_context_tokens(None, None), None);
+    }
+
+    /// A compressed call sizes the window to what the provider held, so the guard (0.8 x window)
+    /// compacts on the next check; a provider that held less than twice the fixed prompt is not
+    /// sized to, or every compacted call would compact again.
+    #[tokio::test]
+    async fn a_compressed_call_sizes_the_window_to_what_the_provider_held() {
+        let provider = MockProvider::new(Message::assistant().with_text("x"), 500_000);
+        let model_config = provider.config.clone();
+        let model = model_config.model_name.clone();
+
+        let sized = "compressed-sized-session";
+        note_compressed_prompt(sized, &model, 273_000, 76_843, 9_000);
+        assert_eq!(compressed_prompt(sized), Some(273_000));
+        assert_eq!(
+            effective_context_limit(&provider, &model_config, Some(sized)).await,
+            Some(76_843)
+        );
+        forget_compressed_prompt(sized);
+        assert_eq!(compressed_prompt(sized), None);
+
+        let tiny = "compressed-tiny-session";
+        note_compressed_prompt(tiny, &model, 95_000, 7_000, 9_000);
+        assert_eq!(compressed_prompt(tiny), Some(95_000));
+        assert_eq!(
+            effective_context_limit(&provider, &model_config, Some(tiny)).await,
+            Some(500_000)
         );
     }
 

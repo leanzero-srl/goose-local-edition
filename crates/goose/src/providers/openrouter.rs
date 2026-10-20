@@ -23,6 +23,10 @@ use rmcp::model::Tool;
 
 pub const OPENROUTER_PROVIDER_NAME: &str = "openrouter";
 pub(crate) const OPENROUTER_PARAMETERS_CONFIG_KEY: &str = "OPENROUTER_PARAMETERS";
+/// The owner's opt-in to OpenRouter's middle-out compression; off unless set to true.
+pub const OPENROUTER_MIDDLE_OUT_CONFIG_KEY: &str = "OPENROUTER_MIDDLE_OUT";
+/// OpenRouter's plugin id for middle-out (openrouter.ai/docs/guides/features/message-transforms).
+const CONTEXT_COMPRESSION_PLUGIN: &str = "context-compression";
 pub const OPENROUTER_DEFAULT_MODEL: &str = "anthropic/claude-sonnet-4";
 pub const OPENROUTER_DEFAULT_FAST_MODEL: &str = "google/gemini-2.5-flash";
 pub const OPENROUTER_MODEL_PREFIX_ANTHROPIC: &str = "anthropic";
@@ -544,6 +548,127 @@ fn merge_openrouter_parameters(model: &mut ModelConfig, params: HashMap<String, 
     merge_request_params(&mut model.request_params, params);
 }
 
+/// Whether the owner opted into middle-out (OPENROUTER_MIDDLE_OUT: true). Absent or unreadable is
+/// off: compression drops the middle of the conversation without telling goose or the model.
+pub(crate) fn middle_out_enabled(config: &crate::config::Config) -> bool {
+    match config.get_param::<bool>(OPENROUTER_MIDDLE_OUT_CONFIG_KEY) {
+        Ok(on) => on,
+        Err(crate::config::ConfigError::NotFound(_)) => false,
+        Err(err) => {
+            tracing::warn!(
+                error = %err,
+                "{OPENROUTER_MIDDLE_OUT_CONFIG_KEY} is unreadable; OpenRouter requests go without \
+                 context compression"
+            );
+            false
+        }
+    }
+}
+
+/// Sets OpenRouter's context compression on `payload` and says whether the request allows it.
+///
+/// Off (the default), compression is disabled explicitly: OpenRouter compresses on its own for
+/// every endpoint of 8,192 tokens or less, and a compressing request may be routed to any endpoint
+/// whose window holds half the request ("When context compression is enabled, OpenRouter will
+/// first try to find models whose context length is at least half of your total required tokens";
+/// without it "the request will fail with an error message", which goose's context-length path
+/// compacts and retries — openrouter.ai/docs/guides/features/message-transforms). Measured on the
+/// Forge 2.0 builds of 2026-10: with `transforms: ["middle-out"]` on every request, Grok 4.7's
+/// billed prompt fell 207,145 -> 76,843 at call #182 while goose kept sending the whole history,
+/// and Tencent Hy4's low build was served 5-9k of a 95k-905k history on 268 of 301 calls.
+///
+/// On, the request carries `transforms: ["middle-out"]`. A request whose OPENROUTER_PARAMETERS
+/// already name `transforms` or the context-compression plugin is left as the owner wrote it.
+fn apply_context_compression(payload: &mut Value, middle_out: bool) -> bool {
+    let Some(obj) = payload.as_object_mut() else {
+        return false;
+    };
+    let plugin = obj
+        .get("plugins")
+        .and_then(Value::as_array)
+        .and_then(|plugins| {
+            plugins
+                .iter()
+                .find(|p| p.get("id").and_then(Value::as_str) == Some(CONTEXT_COMPRESSION_PLUGIN))
+        });
+    if let Some(plugin) = plugin {
+        return plugin.get("enabled").and_then(Value::as_bool) != Some(false);
+    }
+    if let Some(transforms) = obj.get("transforms") {
+        return transforms
+            .as_array()
+            .is_some_and(|t| t.iter().any(|t| t.as_str() == Some("middle-out")));
+    }
+    if middle_out {
+        obj.insert("transforms".to_string(), json!(["middle-out"]));
+        return true;
+    }
+    let off = json!({"id": CONTEXT_COMPRESSION_PLUGIN, "enabled": false});
+    match obj.get_mut("plugins") {
+        Some(Value::Array(plugins)) => plugins.push(off),
+        Some(_) => {}
+        None => {
+            obj.insert("plugins".to_string(), json!([off]));
+        }
+    }
+    false
+}
+
+/// goose's own count of a request: the whole of it, and the system prompt and tools alone.
+struct SentPrompt {
+    total: usize,
+    fixed: usize,
+}
+
+async fn count_sent_prompt(
+    system: &str,
+    messages: &[Message],
+    tools: &[Tool],
+) -> Option<SentPrompt> {
+    match crate::token_counter::create_token_counter().await {
+        Ok(counter) => Some(SentPrompt {
+            total: counter.count_chat_tokens(system, messages, tools),
+            fixed: counter.count_chat_tokens(system, &[], tools),
+        }),
+        Err(err) => {
+            tracing::warn!(
+                error = %err,
+                "compression_unwatched: goose could not count this OpenRouter request, so a \
+                 compressed prompt goes unnoticed on this call"
+            );
+            None
+        }
+    }
+}
+
+/// With compression allowed, compares each reported prompt with what goose sent
+/// (`context_mgmt::prompt_was_compressed`) and tells the compaction guard either way.
+fn watch_for_compression(
+    stream: MessageStream,
+    session_id: String,
+    model: String,
+    sent: SentPrompt,
+) -> MessageStream {
+    use futures::TryStreamExt;
+    Box::pin(stream.inspect_ok(move |(_, usage)| {
+        let Some(reported) = usage.as_ref().and_then(|usage| usage.usage.input_tokens) else {
+            return;
+        };
+        let reported = reported.max(0) as usize;
+        if crate::context_mgmt::prompt_was_compressed(sent.total, reported) {
+            crate::context_mgmt::note_compressed_prompt(
+                &session_id,
+                &model,
+                sent.total,
+                reported,
+                sent.fixed,
+            );
+        } else {
+            crate::context_mgmt::forget_compressed_prompt(&session_id);
+        }
+    }))
+}
+
 impl goose_providers::base::ProviderDescriptor for OpenRouterProvider {
     fn metadata() -> ProviderMetadata {
         ProviderMetadata::new(
@@ -563,6 +688,7 @@ impl goose_providers::base::ProviderDescriptor for OpenRouterProvider {
                     false,
                 ),
                 ConfigKey::new(OPENROUTER_PARAMETERS_CONFIG_KEY, false, false, None, false),
+                ConfigKey::new(OPENROUTER_MIDDLE_OUT_CONFIG_KEY, false, false, None, false),
             ],
         )
         .with_setup_steps(vec![
@@ -688,9 +814,15 @@ impl Provider for OpenRouterProvider {
             (images, effort) => images.or(effort),
         };
 
-        if let Some(obj) = payload.as_object_mut() {
-            obj.insert("transforms".to_string(), json!(["middle-out"]));
-        }
+        // Read per request, so the owner's switch applies to the chat already open.
+        let compresses = apply_context_compression(
+            &mut payload,
+            middle_out_enabled(crate::config::Config::global()),
+        );
+        let sent = match compresses && !session_id.is_empty() {
+            true => count_sent_prompt(system, messages, tools).await,
+            false => None,
+        };
 
         let mut log = start_log(model_config, &payload)?;
 
@@ -716,6 +848,15 @@ impl Provider for OpenRouterProvider {
             telemetry_t0,
             model_config.model_name.clone(),
         )?;
+        let stream = match sent {
+            Some(sent) => watch_for_compression(
+                stream,
+                session_id.to_string(),
+                model_config.model_name.clone(),
+                sent,
+            ),
+            None => stream,
+        };
         Ok(announced(stream, notice))
     }
 }
@@ -1770,5 +1911,141 @@ mod model_field_tests {
         .await;
         assert_eq!(reasoning, json!({"effort": "none"}));
         assert!(notices.is_empty(), "{notices:?}");
+    }
+}
+
+#[cfg(test)]
+mod context_compression_tests {
+    use super::*;
+
+    fn off() -> Value {
+        json!({"id": CONTEXT_COMPRESSION_PLUGIN, "enabled": false})
+    }
+
+    #[test]
+    fn compression_is_off_by_default_and_the_request_says_so() {
+        let mut payload = json!({"model": "x-ai/grok-4.7", "messages": []});
+        assert!(!apply_context_compression(&mut payload, false));
+        assert_eq!(payload.get("transforms"), None, "{payload}");
+        assert_eq!(payload["plugins"], json!([off()]));
+    }
+
+    #[test]
+    fn the_owners_opt_in_sends_middle_out() {
+        let mut payload = json!({"model": "x-ai/grok-4.7", "messages": []});
+        assert!(apply_context_compression(&mut payload, true));
+        assert_eq!(payload["transforms"], json!(["middle-out"]));
+        assert_eq!(payload.get("plugins"), None, "{payload}");
+    }
+
+    #[test]
+    fn the_owners_other_plugins_ride_beside_the_off_switch() {
+        let mut payload = json!({"plugins": [{"id": "web"}]});
+        assert!(!apply_context_compression(&mut payload, false));
+        assert_eq!(payload["plugins"], json!([{"id": "web"}, off()]));
+    }
+
+    #[test]
+    fn compression_named_in_the_parameters_is_left_as_written() {
+        let mut on = json!({"plugins": [{"id": CONTEXT_COMPRESSION_PLUGIN}]});
+        let before = on.clone();
+        assert!(apply_context_compression(&mut on, false));
+        assert_eq!(on, before);
+
+        let mut none = json!({"transforms": []});
+        assert!(!apply_context_compression(&mut none, true));
+        assert_eq!(none, json!({"transforms": []}));
+
+        let mut legacy = json!({"transforms": ["middle-out"]});
+        assert!(apply_context_compression(&mut legacy, false));
+        assert_eq!(legacy, json!({"transforms": ["middle-out"]}));
+    }
+
+    #[test]
+    fn middle_out_is_on_only_when_the_owner_says_true() {
+        let _env = env_lock::lock_env([(OPENROUTER_MIDDLE_OUT_CONFIG_KEY, None::<&str>)]);
+        let dir = tempfile::tempdir().unwrap();
+        let read = |yaml: &str| {
+            let config_path = dir.path().join("config.yaml");
+            std::fs::write(&config_path, yaml).unwrap();
+            let config = crate::config::Config::new_with_file_secrets(
+                &config_path,
+                dir.path().join("secrets.yaml"),
+            )
+            .unwrap();
+            middle_out_enabled(&config)
+        };
+        assert!(!read("OPENROUTER_HOST: https://openrouter.ai\n"));
+        assert!(read("OPENROUTER_MIDDLE_OUT: true\n"));
+        assert!(!read("OPENROUTER_MIDDLE_OUT: false\n"));
+        assert!(!read("OPENROUTER_MIDDLE_OUT: sometimes\n"));
+    }
+
+    /// The body OpenRouter receives on a default turn: no `transforms`, compression switched off.
+    #[tokio::test]
+    async fn a_default_turn_reaches_the_wire_without_middle_out() {
+        use futures::StreamExt;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let body = [
+            format!(
+                "data: {}\n\n",
+                json!({"id": "gen-1", "object": "chat.completion.chunk", "created": 1,
+                       "model": "vendor/plain",
+                       "choices": [{"index": 0, "delta": {"role": "assistant", "content": "ok"},
+                                    "finish_reason": "stop"}]})
+            ),
+            "data: [DONE]\n\n".to_string(),
+        ]
+        .concat();
+        Mock::given(method("POST"))
+            .and(path("/api/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+            .mount(&server)
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let telemetry = dir.path().join("telemetry.jsonl");
+        let _guard = env_lock::lock_env([
+            (
+                "GOOSE_SWARM_TELEMETRY_FILE",
+                Some(telemetry.to_str().unwrap()),
+            ),
+            (OPENROUTER_MIDDLE_OUT_CONFIG_KEY, Some("false")),
+        ]);
+        let provider = OpenRouterProvider {
+            api_client: ApiClient::new_with_tls(
+                server.uri(),
+                AuthMethod::BearerToken("test".to_string()),
+                None,
+            )
+            .unwrap(),
+            supports_streaming: true,
+            name: OPENROUTER_PROVIDER_NAME.to_string(),
+            configured_parameters: Some(HashMap::from([(
+                "plugins".to_string(),
+                json!([{"id": "web"}]),
+            )])),
+            listing: tokio::sync::OnceCell::new(),
+            resolved_windows: std::sync::Mutex::new(HashMap::new()),
+            effort_notices: Default::default(),
+        };
+        let mut stream = provider
+            .stream(
+                &ModelConfig::new("vendor/plain"),
+                "system",
+                &[Message::user().with_text("hi")],
+                &[],
+            )
+            .await
+            .unwrap();
+        while let Some(item) = stream.next().await {
+            item.unwrap();
+        }
+        let requests = server.received_requests().await.unwrap();
+        let sent: Value = serde_json::from_slice(&requests[0].body).unwrap();
+        assert_eq!(sent.get("transforms"), None, "{sent}");
+        assert_eq!(sent["plugins"], json!([{"id": "web"}, off()]));
     }
 }
