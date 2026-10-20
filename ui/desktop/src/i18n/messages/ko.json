@@ -5526,7 +5526,7 @@
     "defaultMessage": "이전 분할이 {node}에서 아직 종료 중입니다 — 끝나면 goose가 복원합니다"
   },
   "mlxRestoreSettings.description": {
-    "defaultMessage": "앱이 시작될 때 goose가 로컬 모델을 어떻게 다루는지입니다. 여기서 요청하지 않으면 모델을 시작하지 않습니다."
+    "defaultMessage": "goose를 열 때 이전에 실행되던 로컬 모델을 다시 불러올지 여부입니다. 기본값은 끔입니다."
   },
   "mlxRestoreSettings.readFailed": {
     "defaultMessage": "이 설정을 읽을 수 없습니다: {reason}"

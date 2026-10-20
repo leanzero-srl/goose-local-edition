@@ -5526,7 +5526,7 @@
     "defaultMessage": "पिछला बँटवारा {node} पर अभी बंद हो रहा है — यह पूरा होते ही goose इसे बहाल कर देगा"
   },
   "mlxRestoreSettings.description": {
-    "defaultMessage": "ऐप शुरू होने पर goose लोकल मॉडल के साथ क्या करता है। जब तक आप यहाँ न कहें, यह कभी कोई मॉडल शुरू नहीं करता।"
+    "defaultMessage": "goose खोलने पर पहले चल रहा लोकल मॉडल वापस लाया जाए या नहीं। डिफ़ॉल्ट रूप से बंद।"
   },
   "mlxRestoreSettings.readFailed": {
     "defaultMessage": "यह सेटिंग पढ़ी नहीं जा सकी: {reason}"

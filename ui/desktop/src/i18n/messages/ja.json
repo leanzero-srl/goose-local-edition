@@ -5526,7 +5526,7 @@
     "defaultMessage": "前の分割が {node} でまだ終了処理中です — 終わり次第 goose が復元します"
   },
   "mlxRestoreSettings.description": {
-    "defaultMessage": "アプリ起動時に goose がローカルモデルをどう扱うか。ここで指定しない限り、モデルを起動することはありません。"
+    "defaultMessage": "goose を開いたときに、以前動いていたローカルモデルを戻すかどうか。既定ではオフです。"
   },
   "mlxRestoreSettings.readFailed": {
     "defaultMessage": "この設定を読み込めませんでした: {reason}"

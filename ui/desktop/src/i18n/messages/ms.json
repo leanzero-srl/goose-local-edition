@@ -5526,7 +5526,7 @@
     "defaultMessage": "Pembahagian sebelumnya masih ditutup pada {node} — goose memulihkannya sebaik sahaja selesai"
   },
   "mlxRestoreSettings.description": {
-    "defaultMessage": "Apa yang goose lakukan dengan model tempatan apabila aplikasi bermula. Ia tidak pernah memulakan model melainkan anda memintanya di sini."
+    "defaultMessage": "Sama ada membuka goose mengembalikan model tempatan yang berjalan sebelum ini. Mati secara lalai."
   },
   "mlxRestoreSettings.readFailed": {
     "defaultMessage": "Tetapan ini tidak dapat dibaca: {reason}"

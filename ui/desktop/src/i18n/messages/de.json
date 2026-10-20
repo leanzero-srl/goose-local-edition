@@ -5526,7 +5526,7 @@
     "defaultMessage": "Die vorherige Aufteilung wird auf {node} noch beendet — goose stellt sie wieder her, sobald das abgeschlossen ist"
   },
   "mlxRestoreSettings.description": {
-    "defaultMessage": "Was goose beim Start der App mit dem lokalen Modell macht. Es startet nie eines, außer Sie stellen es hier ein."
+    "defaultMessage": "Ob goose beim Öffnen das lokale Modell zurückholt, das zuvor lief. Standardmäßig aus."
   },
   "mlxRestoreSettings.readFailed": {
     "defaultMessage": "Diese Einstellung konnte nicht gelesen werden: {reason}"

@@ -5526,7 +5526,7 @@
     "defaultMessage": "Önceki bölme {node} üzerinde hâlâ kapanıyor — bu bitince goose onu geri yükler"
   },
   "mlxRestoreSettings.description": {
-    "defaultMessage": "Uygulama başlarken goose'un yerel modelle ne yaptığı. Burada istemediğiniz sürece hiçbir modeli başlatmaz."
+    "defaultMessage": "goose açılırken daha önce çalışan yerel modelin geri getirilip getirilmeyeceği. Varsayılan olarak kapalı."
   },
   "mlxRestoreSettings.readFailed": {
     "defaultMessage": "Bu ayar okunamadı: {reason}"

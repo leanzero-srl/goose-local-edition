@@ -5526,7 +5526,7 @@
     "defaultMessage": "Bản chia trước vẫn đang tắt trên {node} — goose sẽ khôi phục khi việc đó xong"
   },
   "mlxRestoreSettings.description": {
-    "defaultMessage": "Việc goose làm với mô hình cục bộ khi ứng dụng khởi động. goose không bao giờ khởi động mô hình nào trừ khi bạn yêu cầu ở đây."
+    "defaultMessage": "Có đưa trở lại mô hình cục bộ đã chạy trước đó khi mở goose hay không. Mặc định tắt."
   },
   "mlxRestoreSettings.readFailed": {
     "defaultMessage": "Không thể đọc cài đặt này: {reason}"

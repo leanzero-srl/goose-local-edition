@@ -5526,7 +5526,7 @@
     "defaultMessage": "La suddivisione precedente si sta ancora chiudendo su {node}: goose la ripristina appena finisce"
   },
   "mlxRestoreSettings.description": {
-    "defaultMessage": "Cosa fa goose con il modello locale all'avvio dell'app. Non ne avvia mai uno a meno che tu non lo chieda qui."
+    "defaultMessage": "Se all'apertura goose riporta il modello locale che era in uso prima. Disattivato per impostazione predefinita."
   },
   "mlxRestoreSettings.readFailed": {
     "defaultMessage": "Impossibile leggere questa impostazione: {reason}"

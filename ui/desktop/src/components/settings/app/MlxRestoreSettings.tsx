@@ -10,7 +10,7 @@ const i18n = defineMessages({
   description: {
     id: 'mlxRestoreSettings.description',
     defaultMessage:
-      'What goose does with the local model when the app starts. It never starts one unless you ask it to here.',
+      'Whether opening goose brings back the local model that served before. Off by default.',
   },
   restore: {
     id: 'mlxRestoreSettings.restore',

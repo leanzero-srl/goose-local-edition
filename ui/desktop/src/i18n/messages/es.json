@@ -5526,7 +5526,7 @@
     "defaultMessage": "La división anterior aún se está cerrando en {node}; goose la restaura cuando termine"
   },
   "mlxRestoreSettings.description": {
-    "defaultMessage": "Qué hace goose con el modelo local cuando se inicia la app. Nunca inicia uno a menos que se lo pidas aquí."
+    "defaultMessage": "Si al abrir goose se recupera el modelo local que estaba en uso antes. Desactivado por defecto."
   },
   "mlxRestoreSettings.readFailed": {
     "defaultMessage": "No se pudo leer este ajuste: {reason}"

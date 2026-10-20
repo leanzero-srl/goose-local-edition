@@ -5667,7 +5667,7 @@
     "defaultMessage": "The previous split is still shutting down on {node} — goose restores it when that finishes"
   },
   "mlxRestoreSettings.description": {
-    "defaultMessage": "What goose does with the local model when the app starts. It never starts one unless you ask it to here."
+    "defaultMessage": "Whether opening goose brings back the local model that served before. Off by default."
   },
   "mlxRestoreSettings.readFailed": {
     "defaultMessage": "Could not read this setting: {reason}"

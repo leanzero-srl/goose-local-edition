@@ -5526,7 +5526,7 @@
     "defaultMessage": "La répartition précédente s’arrête encore sur {node} — goose la restaure dès que c’est terminé"
   },
   "mlxRestoreSettings.description": {
-    "defaultMessage": "Ce que goose fait du modèle local au démarrage de l'app. Il n'en démarre jamais un sauf si vous le demandez ici."
+    "defaultMessage": "Si l'ouverture de goose relance le modèle local qui servait auparavant. Désactivé par défaut."
   },
   "mlxRestoreSettings.readFailed": {
     "defaultMessage": "Impossible de lire ce réglage : {reason}"

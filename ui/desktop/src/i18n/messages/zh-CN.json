@@ -5526,7 +5526,7 @@
     "defaultMessage": "之前的拆分仍在 {node} 上关闭——完成后 goose 会恢复它"
   },
   "mlxRestoreSettings.description": {
-    "defaultMessage": "应用启动时 goose 如何处理本地模型。除非您在这里要求，否则它从不自行启动模型。"
+    "defaultMessage": "打开 goose 时是否恢复之前运行的本地模型。默认关闭。"
   },
   "mlxRestoreSettings.readFailed": {
     "defaultMessage": "无法读取此设置：{reason}"
