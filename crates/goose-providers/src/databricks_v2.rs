@@ -283,9 +283,10 @@ impl DatabricksV2Provider {
                 let _ = log.error(e);
             })?;
 
-        let stall_url = response.url().clone();
+        let stall = crate::stream_stall::StallWatch::of(&response);
         let stream = response
             .bytes_stream()
+            .inspect_ok(stall.data_lines())
             .map_err(crate::errors::body_read_error);
 
         Ok(crate::stream_stall::guard(
@@ -302,7 +303,7 @@ impl DatabricksV2Provider {
                     yield (message, usage);
                 }
             }),
-            &stall_url,
+            stall,
         ))
     }
 }

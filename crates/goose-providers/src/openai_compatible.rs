@@ -370,9 +370,10 @@ fn stream_openai_compat_recorded(
     mut log: Option<Box<dyn RequestLogHandle>>,
     mut call: CallTelemetry,
 ) -> Result<MessageStream, ProviderError> {
-    let stall_url = response.url().clone();
+    let stall = crate::stream_stall::StallWatch::of(&response);
     let stream = response
         .bytes_stream()
+        .inspect_ok(stall.data_lines())
         .map_err(crate::errors::body_read_error);
 
     Ok(crate::stream_stall::guard(
@@ -394,7 +395,7 @@ fn stream_openai_compat_recorded(
             }
             call.write(CallEnd::Completed);
         }),
-        &stall_url,
+        stall,
     ))
 }
 
@@ -409,11 +410,20 @@ pub use super::http_status::handle_response as handle_response_openai_compat;
 
 pub fn stream_openai_compat(
     response: Response,
-    mut log: Option<Box<dyn RequestLogHandle>>,
+    log: Option<Box<dyn RequestLogHandle>>,
 ) -> Result<MessageStream, ProviderError> {
-    let stall_url = response.url().clone();
+    let stall = crate::stream_stall::StallWatch::of(&response);
+    stream_openai_compat_watched(response, log, stall)
+}
+
+fn stream_openai_compat_watched(
+    response: Response,
+    mut log: Option<Box<dyn RequestLogHandle>>,
+    stall: crate::stream_stall::StallWatch,
+) -> Result<MessageStream, ProviderError> {
     let stream = response
         .bytes_stream()
+        .inspect_ok(stall.data_lines())
         .map_err(crate::errors::body_read_error);
 
     Ok(crate::stream_stall::guard(
@@ -433,7 +443,7 @@ pub fn stream_openai_compat(
                 yield (message, usage);
             }
         }),
-        &stall_url,
+        stall,
     ))
 }
 
@@ -441,9 +451,10 @@ pub fn stream_responses_compat(
     response: Response,
     mut log: Option<Box<dyn RequestLogHandle>>,
 ) -> Result<MessageStream, ProviderError> {
-    let stall_url = response.url().clone();
+    let stall = crate::stream_stall::StallWatch::of(&response);
     let stream = response
         .bytes_stream()
+        .inspect_ok(stall.data_lines())
         .map_err(crate::errors::body_read_error);
 
     Ok(crate::stream_stall::guard(
@@ -463,7 +474,7 @@ pub fn stream_responses_compat(
                 yield (message, usage);
             }
         }),
-        &stall_url,
+        stall,
     ))
 }
 
@@ -689,40 +700,41 @@ mod tests {
         assert_eq!(payload.get("stream_options"), None);
     }
 
-    /// I-33 (Glimpse, 2026-10-19): a remote stream that delivers deltas and then neither sends a
-    /// byte nor closes. Before the stall guard this read waited forever; now it ends with the
-    /// transient "stream stalled" error the reply loop resends.
-    #[tokio::test]
-    async fn a_remote_stream_that_goes_silent_mid_answer_ends_as_a_resendable_error() {
+    /// A one-connection SSE server: `frames` are written with the given delay before each, then
+    /// the connection is held open (neither a byte nor a close) for an hour.
+    async fn hold_after(
+        frames: Vec<(std::time::Duration, String)>,
+    ) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-        let _env = env_lock::lock_env([(crate::stream_stall::STREAM_STALL_ENV, Some("2"))]);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
             let mut request = vec![0u8; 8192];
             let _ = socket.read(&mut request).await.unwrap();
-            let delta = |text: &str| {
-                let c = json!({"id": GEN_ID, "object": "chat.completion.chunk", "created": 1,
-                               "model": "elorian/glimpse",
-                               "choices": [{"index": 0, "delta": {"content": text}, "finish_reason": null}]});
-                let line = format!("data: {c}\n\n");
-                format!("{:x}\r\n{line}\r\n", line.len())
-            };
             let head = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ntransfer-encoding: chunked\r\n\r\n";
             socket.write_all(head.as_bytes()).await.unwrap();
-            socket
-                .write_all(delta("The plan").as_bytes())
-                .await
-                .unwrap();
-            socket.write_all(delta(" /in").as_bytes()).await.unwrap();
-            socket.flush().await.unwrap();
+            for (delay, frame) in frames {
+                tokio::time::sleep(delay).await;
+                let chunk = format!("{:x}\r\n{frame}\r\n", frame.len());
+                socket.write_all(chunk.as_bytes()).await.unwrap();
+                socket.flush().await.unwrap();
+            }
             tokio::time::sleep(std::time::Duration::from_secs(3_600)).await;
             drop(socket);
         });
+        (addr, server)
+    }
 
-        let response = reqwest::Client::builder()
+    fn sse(choice: Value) -> String {
+        let c = json!({"id": GEN_ID, "object": "chat.completion.chunk", "created": 1,
+                       "model": "elorian/glimpse", "choices": [choice]});
+        format!("data: {c}\n\n")
+    }
+
+    /// The response from `addr` under a public-looking name (the peer is still loopback).
+    async fn public_named(addr: std::net::SocketAddr) -> Response {
+        reqwest::Client::builder()
             .resolve("stalls.example.com", addr)
             .build()
             .unwrap()
@@ -732,24 +744,69 @@ mod tests {
             ))
             .send()
             .await
-            .unwrap();
-        let mut stream = stream_openai_compat(response, None).unwrap();
-        let read = tokio::time::timeout(std::time::Duration::from_secs(30), async {
-            let mut texts = Vec::new();
+            .unwrap()
+    }
+
+    /// Reads `stream` to its end (or 30 s): the texts, the tool calls and the error it ended on.
+    async fn drain(mut stream: MessageStream) -> (String, Vec<String>, Option<ProviderError>) {
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            let (mut text, mut calls) = (String::new(), Vec::new());
             loop {
                 match stream.next().await {
-                    Some(Ok((Some(message), _))) => texts.push(message.as_concat_text()),
+                    Some(Ok((Some(message), _))) => {
+                        text.push_str(&message.as_concat_text());
+                        for content in &message.content {
+                            if let crate::conversation::message::MessageContent::ToolRequest(r) =
+                                content
+                            {
+                                calls.push(match &r.tool_call {
+                                    Ok(call) => format!("{}:{:?}", call.name, call.arguments),
+                                    Err(e) => format!("ERR {}", e.message),
+                                });
+                            }
+                        }
+                    }
                     Some(Ok(_)) => {}
-                    Some(Err(error)) => return (texts, Some(error)),
-                    None => return (texts, None),
+                    Some(Err(error)) => return (text, calls, Some(error)),
+                    None => return (text, calls, None),
                 }
             }
         })
         .await
-        .expect("the stalled stream was waited on forever (I-33)");
+        .expect("the stream was waited on forever (I-33)")
+    }
+
+    /// I-33 (Glimpse, 2026-10-19): a remote stream that delivers deltas and then neither sends a
+    /// byte nor closes. Before the stall guard this read waited forever; now it ends with the
+    /// transient "stream stalled" error the reply loop resends.
+    #[tokio::test]
+    async fn a_remote_stream_that_goes_silent_mid_answer_ends_as_a_resendable_error() {
+        let zero = std::time::Duration::ZERO;
+        let (addr, server) = hold_after(vec![
+            (
+                zero,
+                sse(json!({"index": 0, "delta": {"content": "The plan"}, "finish_reason": null})),
+            ),
+            (
+                zero,
+                sse(json!({"index": 0, "delta": {"content": " /in"}, "finish_reason": null})),
+            ),
+        ])
+        .await;
+        let response = public_named(addr).await;
+        // The peer is loopback, so the rule an ordinary call gets never judges it (review 2026-10-19).
+        assert_eq!(
+            crate::stream_stall::StallWatch::of(&response).window(),
+            None
+        );
+        let watch = crate::stream_stall::StallWatch::judging(
+            std::time::Duration::from_secs(2),
+            "stalls.example.com",
+        );
+        let (text, _, error) =
+            drain(stream_openai_compat_watched(response, None, watch).unwrap()).await;
         server.abort();
-        let (texts, error) = read;
-        assert_eq!(texts.concat(), "The plan /in");
+        assert_eq!(text, "The plan /in");
         let error =
             error.expect("a stalled stream must end with an error, not as a finished answer");
         assert!(
@@ -759,5 +816,94 @@ mod tests {
             "{error}"
         );
         assert!(error.is_transient(), "{error:?}");
+    }
+
+    /// Review 2026-10-19: text, then a tool call whose arguments arrive every 0.9 s. The parser
+    /// yields nothing until the call closes; with a 2 s window the first guard ended it as
+    /// "stream stalled". The arguments are progress: the call arrives whole.
+    #[tokio::test]
+    async fn tool_call_arguments_streaming_slowly_are_not_a_stall() {
+        let gap = std::time::Duration::from_millis(900);
+        let zero = std::time::Duration::ZERO;
+        let mut frames = vec![
+            (
+                zero,
+                sse(
+                    json!({"index": 0, "delta": {"content": "Writing it."}, "finish_reason": null}),
+                ),
+            ),
+            (
+                gap,
+                sse(
+                    json!({"index": 0, "delta": {"tool_calls": [{"index": 0, "id": "call_1", "type": "function",
+                "function": {"name": "write", "arguments": ""}}]}, "finish_reason": null}),
+                ),
+            ),
+        ];
+        for piece in [
+            "{\"path\": ",
+            "\"a.txt\", ",
+            "\"content\": ",
+            "\"hello\"",
+            "}",
+        ] {
+            frames.push((
+                gap,
+                sse(json!({"index": 0, "delta": {"tool_calls": [{"index": 0,
+                "function": {"arguments": piece}}]}, "finish_reason": null})),
+            ));
+        }
+        frames.push((
+            gap,
+            sse(json!({"index": 0, "delta": {}, "finish_reason": "tool_calls"})),
+        ));
+        frames.push((zero, "data: [DONE]\n\n".to_string()));
+        let (addr, server) = hold_after(frames).await;
+        let watch = crate::stream_stall::StallWatch::judging(
+            std::time::Duration::from_secs(2),
+            "stalls.example.com",
+        );
+        let response = public_named(addr).await;
+        let (text, calls, error) =
+            drain(stream_openai_compat_watched(response, None, watch).unwrap()).await;
+        server.abort();
+        assert!(error.is_none(), "{error:?}");
+        assert_eq!(text, "Writing it.");
+        assert_eq!(calls.len(), 1, "{calls:?}");
+        assert!(
+            calls[0].starts_with("write:") && calls[0].contains("hello"),
+            "{calls:?}"
+        );
+    }
+
+    /// An SSE comment is not progress: a relay that keeps the connection alive with comments over a
+    /// dead upstream still stalls.
+    #[tokio::test]
+    async fn keepalive_comments_alone_are_a_stall() {
+        let gap = std::time::Duration::from_millis(500);
+        let zero = std::time::Duration::ZERO;
+        let mut frames = vec![(
+            zero,
+            sse(json!({"index": 0, "delta": {"content": "thinking"}, "finish_reason": null})),
+        )];
+        for _ in 0..20 {
+            frames.push((gap, ": OPENROUTER PROCESSING\n\n".to_string()));
+        }
+        let (addr, server) = hold_after(frames).await;
+        let watch = crate::stream_stall::StallWatch::judging(
+            std::time::Duration::from_secs(2),
+            "stalls.example.com",
+        );
+        let response = public_named(addr).await;
+        let (_, _, error) =
+            drain(stream_openai_compat_watched(response, None, watch).unwrap()).await;
+        server.abort();
+        let error = error.expect("comments over a dead upstream must still stall");
+        assert!(
+            error
+                .to_string()
+                .contains(crate::stream_stall::STREAM_STALLED),
+            "{error}"
+        );
     }
 }

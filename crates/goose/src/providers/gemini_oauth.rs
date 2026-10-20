@@ -990,9 +990,10 @@ impl Provider for GeminiOAuthProvider {
                 let _ = log.error(e);
             })?;
 
-        let stall_url = response.url().clone();
+        let stall = goose_providers::stream_stall::StallWatch::of(&response);
         let stream = response
             .bytes_stream()
+            .inspect_ok(stall.data_lines())
             .map_err(goose_providers::errors::body_read_error);
 
         Ok(goose_providers::stream_stall::guard(
@@ -1016,7 +1017,7 @@ impl Provider for GeminiOAuthProvider {
                     yield (message, usage);
                 }
             }),
-            &stall_url,
+            stall,
         ))
     }
 }
