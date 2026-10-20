@@ -1500,7 +1500,7 @@ impl MlxEngineManager {
     pub fn new() -> Self {
         Self {
             state: Arc::new(Mutex::new(ManagerState::Stopped)),
-            settings: StdMutex::new(EngineSettings::default()),
+            settings: StdMutex::new(Self::initial_settings()),
             nodes: StdMutex::new(Vec::new()),
             last_gate: StdMutex::new(None),
             making_room: StdMutex::new(None),
@@ -1593,8 +1593,31 @@ impl MlxEngineManager {
     /// consumer (the ACP layer persists the migration; the swarm engine registry does
     /// not) spawns from profile truth even when handed an un-migrated config.
     pub fn set_settings(&self, mut settings: EngineSettings) {
+        #[cfg(test)]
+        assert_ne!(
+            settings.port,
+            EngineSettings::default().port,
+            "a unit test configured the default engine port — the owner's real engine listens \
+             there (Q-258); give the test `free_port()`"
+        );
         settings.migrate_legacy();
         *self.settings.lock().unwrap() = settings;
+    }
+
+    /// The settings a manager starts from. A test manager starts on a port no other test was
+    /// handed, never the default: Mount's port check, the status's stray-listener read and
+    /// Unmount's reclaim all act on whatever listens on the configured port, and on the default one
+    /// that is the owner's real engine (Q-258: four SIGTERMs; CI runs 39021216708 and 39154855201:
+    /// three gate tests read the workhorse's engine as an unsupervised listener and got a port
+    /// refusal instead of the gate's).
+    fn initial_settings() -> EngineSettings {
+        #[cfg(test)]
+        return EngineSettings {
+            port: crate::unshared_loopback_port().expect("a loopback port for a test manager"),
+            ..EngineSettings::default()
+        };
+        #[cfg(not(test))]
+        EngineSettings::default()
     }
 
     pub fn settings(&self) -> EngineSettings {
@@ -2161,16 +2184,10 @@ impl MlxEngineManager {
         }
         drop(self.judging.write().await);
         if !supervised {
-            let port = self.settings().port;
             // Q-258: two unit tests reached this reclaim on the default port and SIGTERMed the
             // owner's live engine four times on 2026-09-28, mid-prefill, with no goosed log line.
-            #[cfg(test)]
-            assert_ne!(
-                port,
-                EngineSettings::default().port,
-                "a unit test reached Unmount's reclaim on the default engine port — the owner's \
-                 real engine listens there; configure a free port"
-            );
+            // A test manager can no longer hold that port (`initial_settings`, `set_settings`).
+            let port = self.settings().port;
             if port_has_listener(port) {
                 reclaim_port(port).await.map_err(|why| UnmountRefused {
                     port,
@@ -4517,6 +4534,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
             5 * GIB,
         ));
         manager.set_settings(EngineSettings {
+            port: free_port(),
             models_dir: tmp.path().to_string_lossy().into_owned(),
             ..Default::default()
         });
@@ -4557,6 +4575,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
 
         let manager = test_manager();
         manager.set_settings(EngineSettings {
+            port: free_port(),
             models_dir: tmp.path().to_string_lossy().into_owned(),
             ..Default::default()
         });
@@ -4596,6 +4615,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         let tmp = tempfile::tempdir().unwrap();
         let manager = test_manager();
         manager.set_settings(EngineSettings {
+            port: free_port(),
             models_dir: tmp.path().to_string_lossy().into_owned(),
             ..Default::default()
         });
@@ -4914,6 +4934,7 @@ while True:
         complete_small_model(tmp.path(), "pub/small");
         let manager = test_manager();
         manager.set_settings(EngineSettings {
+            port: free_port(),
             models_dir: tmp.path().to_string_lossy().into_owned(),
             ..Default::default()
         });
