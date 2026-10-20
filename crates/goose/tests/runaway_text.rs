@@ -12,6 +12,7 @@ use goose::providers::base::{MessageStream, Provider};
 use goose::session::session_manager::SessionType;
 use goose_providers::conversation::token_usage::{ProviderUsage, Usage};
 use goose_providers::errors::ProviderError;
+use goose_providers::formats::openai::OUTPUT_TRUNCATED_BY_LENGTH;
 use goose_providers::model::ModelConfig;
 use rmcp::model::{Role, Tool};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -31,9 +32,12 @@ const DELTA_CHARS: usize = 24;
 
 /// The chat's first call streams the runaway in small deltas, counting how many it handed out;
 /// every later chat call answers once. The session's title request is answered apart.
+/// Its last delta is the stamp the OpenAI formatter appends when the server ends the reply at
+/// its output limit, as Grok's four runaways ended.
 struct RunawayProvider {
     calls: AtomicUsize,
     deltas_pulled: Arc<AtomicUsize>,
+    later_requests: std::sync::Mutex<Vec<String>>,
 }
 
 #[async_trait]
@@ -46,7 +50,7 @@ impl Provider for RunawayProvider {
         &self,
         _model_config: &ModelConfig,
         system: &str,
-        _messages: &[Message],
+        messages: &[Message],
         _tools: &[Tool],
     ) -> Result<MessageStream, ProviderError> {
         if system.starts_with("Generate a short title") {
@@ -59,6 +63,12 @@ impl Provider for RunawayProvider {
             Usage::new(Some(1_000), Some(10), Some(1_010)),
         );
         if call > 0 {
+            if let Some(last) = messages.last() {
+                self.later_requests
+                    .lock()
+                    .unwrap()
+                    .push(last.as_concat_text());
+            }
             let message = Message::assistant()
                 .with_id(format!("answer-{call}"))
                 .with_text("I'll take a different step: the cap is already in the source.");
@@ -72,6 +82,7 @@ impl Provider for RunawayProvider {
         let deltas: Vec<String> = text
             .chunks(DELTA_CHARS)
             .map(|chunk| chunk.iter().collect())
+            .chain([OUTPUT_TRUNCATED_BY_LENGTH.to_string()])
             .collect();
         Ok(Box::pin(futures::stream::iter(deltas).map(move |delta| {
             pulled.fetch_add(1, Ordering::SeqCst);
@@ -86,6 +97,7 @@ impl Provider for RunawayProvider {
 struct Run {
     pulled: usize,
     chat_calls: usize,
+    later_requests: Vec<String>,
     stored: Vec<Message>,
 }
 
@@ -111,6 +123,7 @@ async fn run(span: Option<&str>) -> Result<Run> {
     let provider = Arc::new(RunawayProvider {
         calls: AtomicUsize::new(0),
         deltas_pulled: deltas_pulled.clone(),
+        later_requests: Default::default(),
     });
     agent
         .update_provider(provider.clone(), ModelConfig::new("runaway"), &session.id)
@@ -142,9 +155,11 @@ async fn run(span: Option<&str>) -> Result<Run> {
         .expect("a conversation")
         .messages()
         .clone();
+    let later_requests = provider.later_requests.lock().unwrap().clone();
     Ok(Run {
         pulled: deltas_pulled.load(Ordering::SeqCst),
         chat_calls: provider.calls.load(Ordering::SeqCst),
+        later_requests,
         stored,
     })
 }
@@ -154,32 +169,44 @@ fn total_deltas() -> usize {
         .chars()
         .count()
         .div_ceil(DELTA_CHARS)
+        + 1
+}
+
+fn the_runaway(stored: &[Message]) -> String {
+    stored
+        .iter()
+        .find(|m| m.role == Role::Assistant && m.as_concat_text().contains("I'll cap each"))
+        .expect("the reply is in the history")
+        .as_concat_text()
 }
 
 #[tokio::test]
 async fn a_runaway_reply_is_stopped_kept_once_and_the_turn_goes_on() -> Result<()> {
     let run = run(None).await?;
+    // Stopped within the watch's span and one check (~37k of 286k characters).
     assert!(
-        run.pulled * 10 < total_deltas(),
+        run.pulled * DELTA_CHARS < 40_000,
         "the stream was stopped early: {} of {} deltas read",
         run.pulled,
         total_deltas()
     );
     assert!(run.chat_calls >= 2, "the turn continued after the stop");
-    let runaway = run
-        .stored
-        .iter()
-        .find(|m| m.role == Role::Assistant && m.as_concat_text().contains("I'll cap each"))
-        .expect("the stopped reply is in the history")
-        .as_concat_text();
+    let runaway = the_runaway(&run.stored);
     assert_eq!(
         runaway.matches("I'll cap each request").count(),
         1,
         "one copy kept: {runaway}"
     );
+    // goose stopped it, not an engine: the stamp says so.
+    assert!(runaway.contains("goose stopped this response"), "{runaway}");
+    assert!(!runaway.contains("the engine ended"), "{runaway}");
+    // The person may have asked for the repetition: the model is told where such output goes.
     assert!(
-        runaway.contains(goose_providers::formats::openai::OUTPUT_STOPPED_AS_LOOP.trim()),
-        "{runaway}"
+        run.later_requests
+            .iter()
+            .any(|text| text.contains("write it to a file")),
+        "{:?}",
+        run.later_requests
     );
     assert!(runaway.chars().count() < 1_000, "{}", runaway.len());
     assert!(
@@ -197,6 +224,19 @@ async fn a_runaway_reply_is_stopped_kept_once_and_the_turn_goes_on() -> Result<(
 async fn with_the_watch_off_the_runaway_is_read_to_its_end() -> Result<()> {
     let run = run(Some("0")).await?;
     assert_eq!(run.pulled, total_deltas());
-    assert_eq!(run.chat_calls, 1, "nothing stopped it, so nothing nudged");
+    // Turned off means off: the reply cut at the output limit is kept as it came.
+    let runaway = the_runaway(&run.stored);
+    assert_eq!(
+        runaway.matches("I'll cap each request").count(),
+        COPIES,
+        "the history kept the whole reply"
+    );
+    assert!(
+        !run.later_requests
+            .iter()
+            .any(|text| text.contains("kept repeating")),
+        "nothing stopped it as a loop: {:?}",
+        run.later_requests
+    );
     Ok(())
 }

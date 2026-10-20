@@ -11,8 +11,11 @@
 use goose_providers::conversation::message::{Message, MessageContent};
 use rmcp::model::Role;
 
-/// The shortest repeated unit worth collapsing, in characters: a stutter is the model's own text.
-const MIN_PERIOD_CHARS: usize = 16;
+/// The shortest repeated unit that is a loop, in characters, for the collapse and the runaway watch
+/// alike: a shorter one is a stutter, or output a person asks for ("hello" 5,000 times, a row of
+/// zeros, a progress bar, `---` lines), and the watch must never stop what the collapse would not
+/// shorten.
+pub(crate) const MIN_PERIOD_CHARS: usize = 16;
 /// Copies of a unit before it counts as a loop (the engine's long-period rule stops at 4).
 const MIN_COPIES: usize = 3;
 
@@ -80,13 +83,15 @@ fn collapse_repeated_suffix(text: &str, min_covered: usize) -> Option<String> {
     let n = chars.len();
     let reversed: Vec<char> = chars.iter().rev().copied().collect();
     let z = z_function(&reversed);
-    // The smallest period is the loop's own unit: a long multiple of a stutter is still a stutter.
-    let period =
-        (1..=n / MIN_COPIES).find(|&p| z.get(p).is_some_and(|&lcp| lcp >= (MIN_COPIES - 1) * p))?;
-    if period < MIN_PERIOD_CHARS {
+    let repeats = |p: usize| z.get(p).is_some_and(|&lcp| lcp >= (MIN_COPIES - 1) * p);
+    // The smallest period of at least the minimum is the loop's own unit; a shorter run at the
+    // very end ("...") does not hide it. A long multiple of a stutter is still a stutter: when a
+    // shorter period covers as much, nothing is collapsed.
+    let period = (MIN_PERIOD_CHARS..=n / MIN_COPIES).find(|&p| repeats(p))?;
+    let covered = z[period] + period;
+    if (1..MIN_PERIOD_CHARS).any(|p| repeats(p) && z[p] + p >= covered) {
         return None;
     }
-    let covered = z[period] + period;
     if covered < min_covered {
         return None;
     }
@@ -101,13 +106,16 @@ fn collapse_repeated_suffix(text: &str, min_covered: usize) -> Option<String> {
     ))
 }
 
-/// The runaway watch's defaults: the last 16,384 characters (~4k tokens) of a streamed reply's text
-/// are ONE unit of at most 2,048 characters repeated exactly, at least 8 times. Ordinary output is
-/// never exactly periodic over a span that long — a table, a log or a list varies in its numbers,
-/// names or values from row to row, and code varies line to line — so the watch trips only on a
-/// model writing the same text over and over. Grok 4.7's four runaways (units of 105-140
-/// characters) trip it ~16k characters in, where the stream otherwise ran on to 286-325k.
-pub const RUNAWAY_TEXT_CHARS_DEFAULT: usize = 16_384;
+/// The runaway watch's defaults: the last 32,768 characters (~8k tokens) of a streamed reply's text
+/// are ONE unit of 16 to 4,096 characters repeated exactly, at least 8 times, outside a code block.
+/// Ordinary output is never exactly periodic over a span that long — a table, a log or a list
+/// varies in its numbers, names or values from row to row, and code varies line to line. Output a
+/// person asks for that is exactly periodic has a short unit (a word, a row of zeros, a bar), sits
+/// in a code block, or stays under the span (a 500-row blank table is ~10k characters); what
+/// remains — over 32k characters of one prose unit — is rare, and the continuation then tells the
+/// model to write it to a file. Grok 4.7's four runaways (prose units of 67-140 characters) trip
+/// it within ~35k characters (~9k tokens) of their 65,536-token cap.
+pub const RUNAWAY_TEXT_CHARS_DEFAULT: usize = 32_768;
 pub const RUNAWAY_TEXT_COPIES_DEFAULT: usize = 8;
 /// config.yaml keys: the span in characters (0 turns the watch off) and the copies of one unit it
 /// must hold.
@@ -157,19 +165,32 @@ impl RunawayWatch {
 
     /// `delta` was just appended to `text`, the reply so far: the repeated unit's length when the
     /// reply now ends in a runaway. The tail is examined once per eighth of the span of new text,
-    /// so the cost stays linear in the reply.
+    /// so the cost stays linear in the reply. Inside an open code block (an odd number of ```
+    /// fences so far) nothing is a runaway: that is where requested data goes.
     pub(crate) fn runaway_period(&mut self, delta: &str, text: &str) -> Option<usize> {
         self.seen += delta.chars().count();
         if self.seen < self.next_check {
             return None;
         }
         self.next_check = self.seen + (self.chars / 8).max(1);
+        if text.matches("```").count() % 2 == 1 {
+            return None;
+        }
         let start = text.char_indices().rev().nth(self.chars - 1)?.0;
         let tail: Vec<char> = text.get(start..)?.chars().collect();
         let z = z_function(&tail);
-        (1..=self.chars / self.copies).find(|&p| z.get(p).is_some_and(|&lcp| lcp + p >= self.chars))
+        // The smallest period of the whole span is its unit; a short one is a stutter, never a loop.
+        (1..=self.chars / self.copies)
+            .find(|&p| z.get(p).is_some_and(|&lcp| lcp + p >= self.chars))
+            .filter(|&p| p >= MIN_PERIOD_CHARS)
     }
 }
+
+/// Appended when goose's own watch stopped the reply (an engine guard's stop carries
+/// `OUTPUT_STOPPED_AS_LOOP` instead): a cloud model has no engine that ended it.
+pub const GOOSE_STOPPED_AS_LOOP: &str =
+    "\n\n[OUTPUT STOPPED: goose stopped this response because it kept repeating the same text \
+     — this response is INCOMPLETE]";
 
 fn z_function(s: &[char]) -> Vec<usize> {
     let n = s.len();
@@ -264,7 +285,12 @@ mod tests {
         );
         let (at, period) = watch(&text, 23).expect("the runaway trips the watch");
         assert_eq!(period, unit.chars().count());
-        assert!(at < 20_000, "tripped at {at} of {}", text.chars().count());
+        // Within ~37k characters (~9k tokens) of a 65,536-token cap: the span plus one check.
+        assert!(
+            at <= RUNAWAY_TEXT_CHARS_DEFAULT + RUNAWAY_TEXT_CHARS_DEFAULT / 8 + 300,
+            "tripped at {at} of {}",
+            text.chars().count()
+        );
     }
 
     /// The four Grok runaways had units of 105-140 characters; one with no space between its
@@ -320,7 +346,7 @@ mod tests {
     }
 
     /// The same 3,000-character block written out twice in one reply (a model restating a file):
-    /// a repeat, but one a span of 16,384 characters cannot hold eight copies of.
+    /// a repeat, but one the watch's span cannot hold eight copies of.
     fn a_long_block_twice() -> String {
         let block: String = (0..60)
             .map(|i| format!("line {i} of the configuration that matters.\n"))
@@ -345,11 +371,89 @@ mod tests {
             ),
         ] {
             assert!(
-                text.chars().count() > 2 * RUNAWAY_TEXT_CHARS_DEFAULT,
+                text.chars().count() > RUNAWAY_TEXT_CHARS_DEFAULT,
                 "{name} is too short to test the watch"
             );
             assert_eq!(watch(&text, 31), None, "{name} tripped the watch");
         }
+    }
+
+    fn fenced(body: String) -> String {
+        format!("Here it is:\n```\n{body}```\n")
+    }
+
+    /// Output a person can ask for (review of a673ec5f5, 2026-10-20: 17 of 20 such outputs tripped
+    /// the first watch), streamed in 24-character deltas: a unit shorter than the collapse's
+    /// minimum, or text inside an open code block, is never a runaway.
+    #[test]
+    fn requested_repetition_with_a_short_unit_or_in_a_code_block_never_trips() {
+        let sentence = "The quick brown fox jumps over the lazy dog. ";
+        for (name, text) in [
+            ("hello x5000", "hello\n".repeat(5_000)),
+            (
+                "a sentence x2000 in a code block",
+                fenced(sentence.repeat(2_000)),
+            ),
+            (
+                "1,500 identical CSV rows in a code block",
+                fenced("2026-10-20,LZPT-1,0,0,0,0\n".repeat(1_500)),
+            ),
+            (
+                "identical JSON objects in a code block",
+                fenced("{\"id\": 0, \"name\": \"\", \"tags\": []},\n".repeat(1_500)),
+            ),
+            (
+                "a C array of zeros",
+                format!("int a[] = {{{}}};", "0, ".repeat(12_000)),
+            ),
+            (
+                "blank bitmap rows in a code block",
+                fenced(format!("{}\n", ".".repeat(64)).repeat(800)),
+            ),
+            (
+                "a 500-row blank markdown table",
+                format!(
+                    "| a | b | c |\n|---|---|---|\n{}",
+                    "|     |     |     |\n".repeat(500)
+                ),
+            ),
+            (
+                "an empty box in a code block",
+                fenced(format!("|{}|\n", " ".repeat(40)).repeat(1_000)),
+            ),
+            ("base64 of zero bytes", "A".repeat(40_000)),
+            ("hex of zero bytes", "00".repeat(20_000)),
+            ("a progress bar", "\u{2588}".repeat(40_000)),
+            ("5,000 --- lines", "---\n".repeat(5_000)),
+            ("repeated emoji", "\u{1f680}".repeat(40_000)),
+            (
+                "a repeated CJK phrase",
+                "\u{597d}\u{597d}\u{5b66}\u{4e60}\u{ff0c}\u{5929}\u{5929}\u{5411}\u{4e0a}\u{3002}"
+                    .repeat(5_000),
+            ),
+        ] {
+            assert_eq!(watch(&text, 24), None, "{name} tripped the watch");
+        }
+    }
+
+    /// Requested prose repetition outside a code block is the one shape the watch cannot tell from
+    /// a runaway: it still trips, and goose's continuation tells the model to write such output to
+    /// a file with a tool.
+    #[test]
+    fn requested_prose_repetition_outside_a_code_block_still_trips() {
+        let sentence = "The quick brown fox jumps over the lazy dog. ";
+        let (_, period) = watch(&sentence.repeat(2_000), 24).expect("it trips");
+        assert_eq!(period, sentence.chars().count());
+    }
+
+    /// A loop whose unit ends in a short run of its own ("...") is still collapsed: the stutter
+    /// "." is shorter than the minimum, and the search goes on to the real unit.
+    #[test]
+    fn a_unit_that_ends_in_a_short_run_still_collapses() {
+        let unit = "I'll check how the batching is grouped once more...";
+        let collapsed = collapse_repeated_suffix(&unit.repeat(40), 0).expect("collapsed");
+        assert_eq!(collapsed.matches("I'll check").count(), 1, "{collapsed}");
+        assert_eq!(collapse_repeated_suffix(&"ha ".repeat(50), 0), None);
     }
 
     #[test]
@@ -359,8 +463,8 @@ mod tests {
             RunawayWatch::new(16_384, 1).is_none(),
             "one copy is not a repeat"
         );
-        let mut watch = RunawayWatch::new(64, 4).unwrap();
-        let loop_text = "abcdefgh".repeat(20);
+        let mut watch = RunawayWatch::new(96, 4).unwrap();
+        let loop_text = "the same sixteen+ chars ".repeat(20);
         assert!(watch.runaway_period(&loop_text, &loop_text).is_some());
         watch.reset();
         assert_eq!(watch.runaway_period("abc", "abc"), None);

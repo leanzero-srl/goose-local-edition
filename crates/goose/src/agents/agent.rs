@@ -89,6 +89,14 @@ pub const LOOP_STOP_CONTINUATION: &str = "Your last reply was stopped because it
      text in a loop (goose kept one copy of the repeated text above), so it is unfinished and nothing in it \
      was carried out. Do not write it again: take a different next step now with a tool call, or give your \
      final answer if the task is done.";
+/// Answers a reply goose's runaway watch stopped. The person may have asked for the repeated text
+/// (a line written a thousand times), and goose cannot tell that from a loop, so the model is told
+/// where such output belongs instead of only being told to stop.
+pub const RUNAWAY_STOP_CONTINUATION: &str = "Your last reply was stopped because it kept repeating the \
+     same text (goose kept one copy of it above), so it is unfinished and nothing in it was carried out. \
+     If the person asked for this repeated output, write it to a file with a tool instead of into your \
+     reply. Otherwise do not write it again: take a different next step now with a tool call, or give \
+     your final answer if the task is done.";
 /// Sent (agent-visible only) with every empty-turn retry. Resending the identical conversation to a
 /// deterministic local model reproduces the same empty reply: Gemma 4 26B-A4B (2026-10-18) stopped after one
 /// token three times on the same 71,670-token prompt and the run was refused.
@@ -2578,7 +2586,7 @@ impl Agent {
                                              {period}-character unit; goose stopped the stream",
                                             runaway_watch.as_ref().map_or(0, |watch| watch.span())
                                         );
-                                        let stamp = goose_providers::formats::openai::OUTPUT_STOPPED_AS_LOOP;
+                                        let stamp = super::loop_collapse::GOOSE_STOPPED_AS_LOOP;
                                         let mut stop = Message::assistant().with_text(stamp);
                                         if let Some(id) = response_id {
                                             stop = stop.with_id(id);
@@ -3209,28 +3217,33 @@ impl Agent {
                 if no_tools_called && !exit_chat && !resending {
                     // I-28 review: a reply the engine stopped as a loop keeps one copy of the
                     // repeated text in the history, whether or not a nudge follows it.
-                    if last_assistant_text
-                        .contains(goose_providers::formats::openai::OUTPUT_STOPPED_AS_LOOP.trim())
-                    {
+                    let loop_stamp = [
+                        goose_providers::formats::openai::OUTPUT_STOPPED_AS_LOOP,
+                        super::loop_collapse::GOOSE_STOPPED_AS_LOOP,
+                    ]
+                    .into_iter()
+                    .find(|stamp| last_assistant_text.contains(stamp.trim()));
+                    if let Some(stamp) = loop_stamp {
                         messages_to_add = Conversation::new_unvalidated(
                             super::loop_collapse::collapse_looped_reply(
                                 messages_to_add.messages(),
-                                goose_providers::formats::openai::OUTPUT_STOPPED_AS_LOOP,
+                                stamp,
                             ),
                         );
-                    } else if !self.is_swarm_worker()
-                        && last_assistant_text
+                    } else if let Some(span) = runaway_watch.as_ref().map(|watch| watch.span()) {
+                        if last_assistant_text
                             .contains(goose_providers::formats::openai::OUTPUT_TRUNCATED_BY_LENGTH.trim())
-                    {
-                        // A runaway the watch did not stop (turned off, or not exact) still reaches
-                        // the history as one copy once it ran to the output limit.
-                        messages_to_add = Conversation::new_unvalidated(
-                            super::loop_collapse::collapse_runaway_reply(
-                                messages_to_add.messages(),
-                                goose_providers::formats::openai::OUTPUT_TRUNCATED_BY_LENGTH,
-                                super::loop_collapse::RUNAWAY_TEXT_CHARS_DEFAULT,
-                            ),
-                        );
+                        {
+                            // A runaway the watch did not stop (not exact over its span) still
+                            // reaches the history as one copy once it ran to the output limit.
+                            messages_to_add = Conversation::new_unvalidated(
+                                super::loop_collapse::collapse_runaway_reply(
+                                    messages_to_add.messages(),
+                                    goose_providers::formats::openai::OUTPUT_TRUNCATED_BY_LENGTH,
+                                    span,
+                                ),
+                            );
+                        }
                     }
                     // Lock, extract state, drop guard before branching — handle_retry_logic
                     // also locks final_output_tool and tokio::sync::Mutex is not reentrant.
@@ -3291,6 +3304,18 @@ impl Agent {
                                 loop_stop_nudges, MAX_LENGTH_CUT_NUDGES
                             );
                             let message = harness_nudge(LOOP_STOP_CONTINUATION);
+                            messages_to_add.push(message);
+                        }
+                        None if loop_stop_nudges < MAX_LENGTH_CUT_NUDGES
+                            && last_assistant_text
+                                .contains(super::loop_collapse::GOOSE_STOPPED_AS_LOOP.trim()) =>
+                        {
+                            loop_stop_nudges += 1;
+                            warn!(
+                                "Reply stopped by goose's runaway watch before any tool call; continuing ({}/{})",
+                                loop_stop_nudges, MAX_LENGTH_CUT_NUDGES
+                            );
+                            let message = harness_nudge(RUNAWAY_STOP_CONTINUATION);
                             messages_to_add.push(message);
                         }
                         None if length_cut_nudges < MAX_LENGTH_CUT_NUDGES
