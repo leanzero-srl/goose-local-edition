@@ -5525,6 +5525,24 @@
   "mlxRestore.waitingPrevious": {
     "defaultMessage": "Önceki bölme {node} üzerinde hâlâ kapanıyor — bu bitince goose onu geri yükler"
   },
+  "mlxRestoreSettings.description": {
+    "defaultMessage": "Uygulama başlarken goose'un yerel modelle ne yaptığı. Burada istemediğiniz sürece hiçbir modeli başlatmaz."
+  },
+  "mlxRestoreSettings.readFailed": {
+    "defaultMessage": "Bu ayar okunamadı: {reason}"
+  },
+  "mlxRestoreSettings.restore": {
+    "defaultMessage": "Açılışta yerel modeli geri yükle"
+  },
+  "mlxRestoreSettings.restoreDesc": {
+    "defaultMessage": "goose başladığında, en son başlattığınız ve durdurmadığınız modeli geri getirir: bu Mac'te, LeanZero Link üzerinden başka bir Mac'te ya da birkaç Mac'e bölünmüş olarak. Kapalı: goose kendiliğinden model başlatmaz; ihtiyacınız olduğunda Providers'tan bir tane başlatın."
+  },
+  "mlxRestoreSettings.saveFailed": {
+    "defaultMessage": "Bu ayar kaydedilemedi: {reason}"
+  },
+  "mlxRestoreSettings.title": {
+    "defaultMessage": "Açılışta yerel model"
+  },
   "mlxSetup.aria": {
     "defaultMessage": "LeanZero MLX kurulumu"
   },

@@ -5525,6 +5525,24 @@
   "mlxRestore.waitingPrevious": {
     "defaultMessage": "이전 분할이 {node}에서 아직 종료 중입니다 — 끝나면 goose가 복원합니다"
   },
+  "mlxRestoreSettings.description": {
+    "defaultMessage": "앱이 시작될 때 goose가 로컬 모델을 어떻게 다루는지입니다. 여기서 요청하지 않으면 모델을 시작하지 않습니다."
+  },
+  "mlxRestoreSettings.readFailed": {
+    "defaultMessage": "이 설정을 읽을 수 없습니다: {reason}"
+  },
+  "mlxRestoreSettings.restore": {
+    "defaultMessage": "시작 시 로컬 모델 복원"
+  },
+  "mlxRestoreSettings.restoreDesc": {
+    "defaultMessage": "goose가 시작될 때 마지막으로 시작하고 중지하지 않은 모델을 다시 불러옵니다: 이 Mac, LeanZero Link를 통한 다른 Mac, 또는 여러 Mac에 나눠 실행한 모델. 끔: goose는 스스로 모델을 시작하지 않습니다. 필요할 때 Providers에서 시작하세요."
+  },
+  "mlxRestoreSettings.saveFailed": {
+    "defaultMessage": "이 설정을 저장할 수 없습니다: {reason}"
+  },
+  "mlxRestoreSettings.title": {
+    "defaultMessage": "시작 시 로컬 모델"
+  },
   "mlxSetup.aria": {
     "defaultMessage": "LeanZero MLX 설정"
   },

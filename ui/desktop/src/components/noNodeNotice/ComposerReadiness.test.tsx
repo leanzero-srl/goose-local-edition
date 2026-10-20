@@ -47,7 +47,7 @@ vi.mock('../../acp/config', () => ({
   acpReadConfig: (key: string) => mockReadConfig(key),
 }));
 const mockIntent = vi.fn(
-  async (): Promise<MlxServingIntentRead> => ({ intent: null, error: null })
+  async (): Promise<MlxServingIntentRead> => ({ intent: null, error: null, restoreAtLaunch: false })
 );
 vi.mock('../../acp/mlx-serving-intent', () => ({
   mlxServingIntent: () => mockIntent(),

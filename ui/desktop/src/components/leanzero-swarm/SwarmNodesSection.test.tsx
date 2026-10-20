@@ -166,7 +166,7 @@ beforeEach(() => {
     availableMemoryGb: 40,
     totalMemoryGb: 64,
   });
-  mockIntent.mockResolvedValue({ intent: null, error: null });
+  mockIntent.mockResolvedValue({ intent: null, error: null, restoreAtLaunch: false });
   mockSwarmCloud.mockResolvedValue({ ok: true, stdout: '{}', stderr: '', error: null });
   mockLinkNodes.mockResolvedValue({ self: linkNode('workhorse'), peers: [linkNode('mihai')] });
   // the shared setup's window.electron is writable-but-not-configurable — extend it in place

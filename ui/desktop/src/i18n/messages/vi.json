@@ -5525,6 +5525,24 @@
   "mlxRestore.waitingPrevious": {
     "defaultMessage": "Bản chia trước vẫn đang tắt trên {node} — goose sẽ khôi phục khi việc đó xong"
   },
+  "mlxRestoreSettings.description": {
+    "defaultMessage": "Việc goose làm với mô hình cục bộ khi ứng dụng khởi động. goose không bao giờ khởi động mô hình nào trừ khi bạn yêu cầu ở đây."
+  },
+  "mlxRestoreSettings.readFailed": {
+    "defaultMessage": "Không thể đọc cài đặt này: {reason}"
+  },
+  "mlxRestoreSettings.restore": {
+    "defaultMessage": "Khôi phục mô hình cục bộ khi khởi động"
+  },
+  "mlxRestoreSettings.restoreDesc": {
+    "defaultMessage": "Khi goose khởi động, đưa trở lại mô hình bạn khởi động gần nhất và chưa dừng: trên Mac này, trên một Mac khác qua LeanZero Link, hoặc chia trên nhiều Mac. Tắt: goose không tự khởi động mô hình nào; hãy khởi động một mô hình từ Providers khi bạn cần."
+  },
+  "mlxRestoreSettings.saveFailed": {
+    "defaultMessage": "Không thể lưu cài đặt này: {reason}"
+  },
+  "mlxRestoreSettings.title": {
+    "defaultMessage": "Mô hình cục bộ khi khởi động"
+  },
   "mlxSetup.aria": {
     "defaultMessage": "Thiết lập LeanZero MLX"
   },

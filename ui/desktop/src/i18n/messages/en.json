@@ -5666,6 +5666,24 @@
   "mlxRestore.waitingPrevious": {
     "defaultMessage": "The previous split is still shutting down on {node} — goose restores it when that finishes"
   },
+  "mlxRestoreSettings.description": {
+    "defaultMessage": "What goose does with the local model when the app starts. It never starts one unless you ask it to here."
+  },
+  "mlxRestoreSettings.readFailed": {
+    "defaultMessage": "Could not read this setting: {reason}"
+  },
+  "mlxRestoreSettings.restore": {
+    "defaultMessage": "Restore the local model at launch"
+  },
+  "mlxRestoreSettings.restoreDesc": {
+    "defaultMessage": "When goose starts, bring back the model you last started and did not stop: on this Mac, on another Mac over LeanZero Link, or split across Macs. Off: goose starts no model by itself; start one from Providers when you want it."
+  },
+  "mlxRestoreSettings.saveFailed": {
+    "defaultMessage": "Could not save this setting: {reason}"
+  },
+  "mlxRestoreSettings.title": {
+    "defaultMessage": "Local model at launch"
+  },
   "mlxSetup.aria": {
     "defaultMessage": "Setting up LeanZero MLX"
   },

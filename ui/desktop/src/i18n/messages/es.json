@@ -5525,6 +5525,24 @@
   "mlxRestore.waitingPrevious": {
     "defaultMessage": "La división anterior aún se está cerrando en {node}; goose la restaura cuando termine"
   },
+  "mlxRestoreSettings.description": {
+    "defaultMessage": "Qué hace goose con el modelo local cuando se inicia la app. Nunca inicia uno a menos que se lo pidas aquí."
+  },
+  "mlxRestoreSettings.readFailed": {
+    "defaultMessage": "No se pudo leer este ajuste: {reason}"
+  },
+  "mlxRestoreSettings.restore": {
+    "defaultMessage": "Restaurar el modelo local al iniciar"
+  },
+  "mlxRestoreSettings.restoreDesc": {
+    "defaultMessage": "Al iniciar goose, recupera el modelo que iniciaste por última vez y no detuviste: en este Mac, en otro Mac a través de LeanZero Link o repartido entre varios Mac. Desactivado: goose no inicia ningún modelo por sí solo; inicia uno desde Providers cuando lo necesites."
+  },
+  "mlxRestoreSettings.saveFailed": {
+    "defaultMessage": "No se pudo guardar este ajuste: {reason}"
+  },
+  "mlxRestoreSettings.title": {
+    "defaultMessage": "Modelo local al iniciar"
+  },
   "mlxSetup.aria": {
     "defaultMessage": "Configurar LeanZero MLX"
   },

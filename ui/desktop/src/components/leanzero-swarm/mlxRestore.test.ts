@@ -59,15 +59,18 @@ function deps(answers: {
   }>;
   link?: Array<LinkState | null>;
   mount?: () => Promise<void>;
+  /** The owner's switch as goose reports it; the cases below are about a restore, so on. */
+  restoreAtLaunch?: boolean;
 }) {
   const take = <T>(queue: T[] | undefined, fallback: T): T =>
     queue && queue.length > 1 ? (queue.shift() as T) : (queue?.[0] ?? fallback);
   const d = {
     readIntent: vi.fn(async () => {
       const next = take(answers.intent, null);
+      const restoreAtLaunch = answers.restoreAtLaunch ?? true;
       return next && 'error' in next
-        ? { intent: null, error: next.error }
-        : { intent: next as MlxServingIntent | null, error: null };
+        ? { intent: null, error: next.error, restoreAtLaunch }
+        : { intent: next as MlxServingIntent | null, error: null, restoreAtLaunch };
     }),
     singleStatus: vi.fn(async () => take(answers.single, engine({}))),
     mount: vi.fn(answers.mount ?? (async () => undefined)),
@@ -83,6 +86,75 @@ function deps(answers: {
   };
   return d as typeof d & RestoreDeps;
 }
+
+describe("the owner's switch — nothing comes back at launch unless it is on", () => {
+  afterEach(() => publishRestoreLine({ phase: 'idle' }));
+
+  it('off (the default): a recorded model is not started and nothing is shown', async () => {
+    const d = deps({ restoreAtLaunch: false, intent: [{ kind: 'single', modelId: QWEN }] });
+    const onRestoring = vi.fn();
+    expect(await restoreServing(d, onRestoring)).toEqual({ phase: 'idle' });
+    expect(onRestoring).not.toHaveBeenCalled();
+    expect(d.mount).not.toHaveBeenCalled();
+    expect(d.singleStatus).not.toHaveBeenCalled();
+    expect(d.remoteStart).not.toHaveBeenCalled();
+    expect(d.distributedStart).not.toHaveBeenCalled();
+  });
+
+  it('off: a remote route and a split are not started either', async () => {
+    for (const intent of [REMOTE, { kind: 'split', modelId: FLASH } as MlxServingIntent]) {
+      const d = deps({ restoreAtLaunch: false, intent: [intent] });
+      expect(await restoreServing(d, vi.fn())).toEqual({ phase: 'idle' });
+      expect(d.remoteStart).not.toHaveBeenCalled();
+      expect(d.distributedStart).not.toHaveBeenCalled();
+      expect(d.linkState).not.toHaveBeenCalled();
+    }
+  });
+
+  it('off: even an unreadable record shows nothing red', async () => {
+    const d = deps({ restoreAtLaunch: false, intent: [{ error: 'unreadable: expected value' }] });
+    expect(await restoreServing(d, vi.fn())).toEqual({ phase: 'idle' });
+  });
+
+  it('off: the launch line every surface reads (tray, Engine tab, composer) stays idle', async () => {
+    const reports: unknown[] = [];
+    const electron = (window as unknown as { electron: Record<string, unknown> }).electron;
+    const previous = electron.mlxRestoreReport;
+    electron.mlxRestoreReport = (report: unknown) => reports.push(report);
+    try {
+      const d = deps({ restoreAtLaunch: false, intent: [{ kind: 'single', modelId: QWEN }] });
+      await runRestore(d);
+      expect(latestRestoreLine()).toEqual({ phase: 'idle' });
+      expect(reports.every((report) => report === null)).toBe(true);
+      expect(d.mount).not.toHaveBeenCalled();
+    } finally {
+      electron.mlxRestoreReport = previous;
+    }
+  });
+
+  it('on, a model goose forgot because its folder is gone: nothing to restore, nothing red', async () => {
+    const d = deps({ intent: [null] });
+    await runRestore(d);
+    expect(latestRestoreLine()).toEqual({ phase: 'idle' });
+    expect(d.mount).not.toHaveBeenCalled();
+  });
+
+  it('on, a model that is still here and fails: the failure is reported as before', async () => {
+    const d = deps({
+      intent: [{ kind: 'single', modelId: QWEN }],
+      single: [engine({}), engine({ state: 'failed', lastError: 'the engine exited (code 3)' })],
+    });
+    await runRestore(d);
+    const line = latestRestoreLine();
+    expect(line.phase).toBe('failed');
+    expect(d.mount).toHaveBeenCalledWith(QWEN);
+    expect(toRestoreReport(line)).toMatchObject({
+      phase: 'failed',
+      modelId: QWEN,
+      reason: 'the engine exited (code 3)',
+    });
+  });
+});
 
 describe('restoreServing — what served before the relaunch comes back the way a click starts it', () => {
   it('nothing recorded (never started, or the owner stopped it): nothing is started', async () => {

@@ -5525,6 +5525,24 @@
   "mlxRestore.waitingPrevious": {
     "defaultMessage": "之前的拆分仍在 {node} 上关闭——完成后 goose 会恢复它"
   },
+  "mlxRestoreSettings.description": {
+    "defaultMessage": "应用启动时 goose 如何处理本地模型。除非您在这里要求，否则它从不自行启动模型。"
+  },
+  "mlxRestoreSettings.readFailed": {
+    "defaultMessage": "无法读取此设置：{reason}"
+  },
+  "mlxRestoreSettings.restore": {
+    "defaultMessage": "启动时恢复本地模型"
+  },
+  "mlxRestoreSettings.restoreDesc": {
+    "defaultMessage": "goose 启动时，恢复您上次启动且未停止的模型：在这台 Mac 上、通过 LeanZero Link 在另一台 Mac 上，或分布在多台 Mac 上。关闭：goose 不会自行启动任何模型；需要时请在 Providers 中启动。"
+  },
+  "mlxRestoreSettings.saveFailed": {
+    "defaultMessage": "无法保存此设置：{reason}"
+  },
+  "mlxRestoreSettings.title": {
+    "defaultMessage": "启动时的本地模型"
+  },
   "mlxSetup.aria": {
     "defaultMessage": "设置 LeanZero MLX"
   },

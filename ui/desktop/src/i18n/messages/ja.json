@@ -5525,6 +5525,24 @@
   "mlxRestore.waitingPrevious": {
     "defaultMessage": "前の分割が {node} でまだ終了処理中です — 終わり次第 goose が復元します"
   },
+  "mlxRestoreSettings.description": {
+    "defaultMessage": "アプリ起動時に goose がローカルモデルをどう扱うか。ここで指定しない限り、モデルを起動することはありません。"
+  },
+  "mlxRestoreSettings.readFailed": {
+    "defaultMessage": "この設定を読み込めませんでした: {reason}"
+  },
+  "mlxRestoreSettings.restore": {
+    "defaultMessage": "起動時にローカルモデルを復元する"
+  },
+  "mlxRestoreSettings.restoreDesc": {
+    "defaultMessage": "goose の起動時に、最後に起動して停止していないモデルを戻します:この Mac、LeanZero Link 経由の別の Mac、または複数の Mac に分割したもの。オフ:goose が自分でモデルを起動することはありません。必要なときに Providers から起動してください。"
+  },
+  "mlxRestoreSettings.saveFailed": {
+    "defaultMessage": "この設定を保存できませんでした: {reason}"
+  },
+  "mlxRestoreSettings.title": {
+    "defaultMessage": "起動時のローカルモデル"
+  },
   "mlxSetup.aria": {
     "defaultMessage": "LeanZero MLX のセットアップ"
   },

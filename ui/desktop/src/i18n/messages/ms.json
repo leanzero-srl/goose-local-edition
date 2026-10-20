@@ -5525,6 +5525,24 @@
   "mlxRestore.waitingPrevious": {
     "defaultMessage": "Pembahagian sebelumnya masih ditutup pada {node} — goose memulihkannya sebaik sahaja selesai"
   },
+  "mlxRestoreSettings.description": {
+    "defaultMessage": "Apa yang goose lakukan dengan model tempatan apabila aplikasi bermula. Ia tidak pernah memulakan model melainkan anda memintanya di sini."
+  },
+  "mlxRestoreSettings.readFailed": {
+    "defaultMessage": "Tetapan ini tidak dapat dibaca: {reason}"
+  },
+  "mlxRestoreSettings.restore": {
+    "defaultMessage": "Pulihkan model tempatan semasa pelancaran"
+  },
+  "mlxRestoreSettings.restoreDesc": {
+    "defaultMessage": "Apabila goose bermula, kembalikan model yang terakhir anda mulakan dan tidak hentikan: pada Mac ini, pada Mac lain melalui LeanZero Link, atau dipecahkan merentas beberapa Mac. Mati: goose tidak memulakan model dengan sendirinya; mulakan satu dari Providers apabila anda memerlukannya."
+  },
+  "mlxRestoreSettings.saveFailed": {
+    "defaultMessage": "Tetapan ini tidak dapat disimpan: {reason}"
+  },
+  "mlxRestoreSettings.title": {
+    "defaultMessage": "Model tempatan semasa pelancaran"
+  },
   "mlxSetup.aria": {
     "defaultMessage": "Menyediakan LeanZero MLX"
   },

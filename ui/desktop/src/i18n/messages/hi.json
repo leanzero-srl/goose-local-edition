@@ -5525,6 +5525,24 @@
   "mlxRestore.waitingPrevious": {
     "defaultMessage": "पिछला बँटवारा {node} पर अभी बंद हो रहा है — यह पूरा होते ही goose इसे बहाल कर देगा"
   },
+  "mlxRestoreSettings.description": {
+    "defaultMessage": "ऐप शुरू होने पर goose लोकल मॉडल के साथ क्या करता है। जब तक आप यहाँ न कहें, यह कभी कोई मॉडल शुरू नहीं करता।"
+  },
+  "mlxRestoreSettings.readFailed": {
+    "defaultMessage": "यह सेटिंग पढ़ी नहीं जा सकी: {reason}"
+  },
+  "mlxRestoreSettings.restore": {
+    "defaultMessage": "लॉन्च पर लोकल मॉडल वापस लाएँ"
+  },
+  "mlxRestoreSettings.restoreDesc": {
+    "defaultMessage": "goose शुरू होने पर वह मॉडल वापस लाएँ जिसे आपने आख़िरी बार शुरू किया था और रोका नहीं था: इस Mac पर, LeanZero Link के ज़रिए किसी दूसरे Mac पर, या कई Mac में बँटा हुआ। बंद: goose अपने आप कोई मॉडल शुरू नहीं करता; ज़रूरत हो तब Providers से एक शुरू करें।"
+  },
+  "mlxRestoreSettings.saveFailed": {
+    "defaultMessage": "यह सेटिंग सहेजी नहीं जा सकी: {reason}"
+  },
+  "mlxRestoreSettings.title": {
+    "defaultMessage": "लॉन्च पर लोकल मॉडल"
+  },
   "mlxSetup.aria": {
     "defaultMessage": "LeanZero MLX सेट अप करना"
   },
