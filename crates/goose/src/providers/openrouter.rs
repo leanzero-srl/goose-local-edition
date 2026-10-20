@@ -819,7 +819,12 @@ impl Provider for OpenRouterProvider {
             &mut payload,
             middle_out_enabled(crate::config::Config::global()),
         );
-        let sent = match compresses && !session_id.is_empty() {
+        // A background call (the compaction's own summary, a title) is sized by its own request,
+        // not by the chat's window: what it is billed says nothing about the conversation.
+        let watched = compresses
+            && !session_id.is_empty()
+            && crate::background_work::current_kind().is_none();
+        let sent = match watched {
             true => count_sent_prompt(system, messages, tools).await,
             false => None,
         };
@@ -2047,5 +2052,102 @@ mod context_compression_tests {
         let sent: Value = serde_json::from_slice(&requests[0].body).unwrap();
         assert_eq!(sent.get("transforms"), None, "{sent}");
         assert_eq!(sent["plugins"], json!([{"id": "web"}, off()]));
+    }
+}
+
+#[cfg(test)]
+mod compression_watch_tests {
+    use super::*;
+    use crate::background_work::{self, BackgroundWorkKind};
+    use futures::StreamExt;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// A turn billed 40 prompt tokens, whatever was sent.
+    async fn billed_40() -> MockServer {
+        let server = MockServer::start().await;
+        let chunk = json!({"id": "gen-1", "object": "chat.completion.chunk", "created": 1,
+                           "model": "vendor/plain",
+                           "choices": [{"index": 0, "delta": {"role": "assistant", "content": "ok"},
+                                        "finish_reason": "stop"}],
+                           "usage": {"prompt_tokens": 40, "completion_tokens": 1,
+                                     "total_tokens": 41}});
+        Mock::given(method("POST"))
+            .and(path("/api/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                format!("data: {chunk}\n\ndata: [DONE]\n\n"),
+                "text/event-stream",
+            ))
+            .mount(&server)
+            .await;
+        server
+    }
+
+    fn provider(host: &str) -> OpenRouterProvider {
+        OpenRouterProvider {
+            api_client: ApiClient::new_with_tls(
+                host.to_string(),
+                AuthMethod::BearerToken("test".to_string()),
+                None,
+            )
+            .unwrap(),
+            supports_streaming: true,
+            name: OPENROUTER_PROVIDER_NAME.to_string(),
+            configured_parameters: None,
+            listing: tokio::sync::OnceCell::new(),
+            resolved_windows: std::sync::Mutex::new(HashMap::new()),
+            effort_notices: Default::default(),
+        }
+    }
+
+    async fn drain(stream: MessageStream) {
+        let mut stream = stream;
+        while let Some(item) = stream.next().await {
+            item.unwrap();
+        }
+    }
+
+    /// The compaction's own summary call is sized by the compaction, not by the chat's window: a
+    /// small reported prompt there says nothing about the chat, so it is never watched.
+    #[tokio::test]
+    async fn a_background_call_is_never_read_as_a_compressed_chat() {
+        let server = billed_40().await;
+        let dir = tempfile::tempdir().unwrap();
+        let telemetry = dir.path().join("telemetry.jsonl");
+        let _guard = env_lock::lock_env([
+            (
+                "GOOSE_SWARM_TELEMETRY_FILE",
+                Some(telemetry.to_str().unwrap()),
+            ),
+            (OPENROUTER_MIDDLE_OUT_CONFIG_KEY, Some("true")),
+        ]);
+        let provider = provider(&server.uri());
+        let model = ModelConfig::new("vendor/plain");
+        let history = [Message::user().with_text("the batch moved forward. ".repeat(2_000))];
+
+        let foreground = crate::session_context::with_session_id(
+            Some("watch-foreground".to_string()),
+            provider.stream(&model, "system", &history, &[]),
+        )
+        .await
+        .unwrap();
+        drain(foreground).await;
+        assert!(
+            crate::context_mgmt::compressed_prompt("watch-foreground").is_some(),
+            "the chat's own call billed 40 of ~10k is compressed"
+        );
+
+        let background = background_work::run(
+            BackgroundWorkKind::Compaction,
+            "watch-background",
+            provider.stream(&model, "system", &history, &[]),
+        )
+        .await
+        .unwrap();
+        drain(background).await;
+        assert_eq!(
+            crate::context_mgmt::compressed_prompt("watch-background"),
+            None
+        );
     }
 }

@@ -604,6 +604,13 @@ pub async fn effective_context_limit(
         Some(window) => context_limit.min(window),
         None => context_limit,
     };
+    let context_limit = match session_id
+        .and_then(compressed)
+        .and_then(|prompt| prompt.window)
+    {
+        Some(window) => context_limit.min(window),
+        None => context_limit,
+    };
     Some(
         match Config::global().get_param::<usize>("GOOSE_LOCAL_CONTEXT_CAP") {
             Ok(cap) if cap > 0 => context_limit.min(cap),
@@ -666,17 +673,30 @@ pub fn prompt_was_compressed(sent_tokens: usize, reported_prompt_tokens: usize) 
         && (reported_prompt_tokens as f64) < sent_tokens as f64 * COMPRESSED_PROMPT_SHARE
 }
 
-/// What goose sent on a call the provider compressed, per session, until the session compacts.
+/// A call the provider compressed: what goose sent, and the window it showed it would hold.
+#[derive(Clone, Copy)]
+struct CompressedPrompt {
+    sent: usize,
+    window: Option<usize>,
+}
+
+/// Per session, until the next uncompressed call or a compaction ends it. Kept apart from the
+/// refused windows, which stand for the session: one compressed call (one OpenRouter routed to a
+/// small host) says what that call was served, not what the model can hold.
 static COMPRESSED_PROMPTS: std::sync::LazyLock<
-    std::sync::Mutex<std::collections::HashMap<String, usize>>,
+    std::sync::Mutex<std::collections::HashMap<String, CompressedPrompt>>,
 > = std::sync::LazyLock::new(Default::default);
 
-fn compressed_prompt(session_id: &str) -> Option<usize> {
+fn compressed(session_id: &str) -> Option<CompressedPrompt> {
     COMPRESSED_PROMPTS
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .get(session_id)
         .copied()
+}
+
+pub(crate) fn compressed_prompt(session_id: &str) -> Option<usize> {
+    compressed(session_id).map(|prompt| prompt.sent)
 }
 
 /// A provider compressed this call's prompt (`prompt_was_compressed`): the usage it reports is
@@ -695,14 +715,17 @@ pub fn note_compressed_prompt(
     delivered_tokens: usize,
     fixed_tokens: usize,
 ) {
+    let sized = delivered_tokens >= fixed_tokens.saturating_mul(2);
     COMPRESSED_PROMPTS
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .insert(session_id.to_string(), sent_tokens);
-    let sized = delivered_tokens >= fixed_tokens.saturating_mul(2);
-    if sized {
-        remember_window(session_id, model, delivered_tokens);
-    }
+        .insert(
+            session_id.to_string(),
+            CompressedPrompt {
+                sent: sent_tokens,
+                window: sized.then_some(delivered_tokens),
+            },
+        );
     tracing::warn!(
         session_id,
         model,
@@ -3422,6 +3445,26 @@ mod tests {
         assert_eq!(compressed_prompt(tiny), Some(95_000));
         assert_eq!(
             effective_context_limit(&provider, &model_config, Some(tiny)).await,
+            Some(500_000)
+        );
+    }
+
+    /// One compressed call — the compaction's own summary call, or one OpenRouter routed to a
+    /// small endpoint — does not shrink the session's window for good: the next uncompressed call
+    /// or a compaction gives the listed window back.
+    #[tokio::test]
+    async fn a_compressed_window_lasts_only_until_the_compression_ends() {
+        let provider = MockProvider::new(Message::assistant().with_text("x"), 500_000);
+        let model_config = provider.config.clone();
+        let session = "compressed-then-clear-session";
+        note_compressed_prompt(session, &model_config.model_name, 273_000, 76_843, 9_000);
+        assert_eq!(
+            effective_context_limit(&provider, &model_config, Some(session)).await,
+            Some(76_843)
+        );
+        forget_compressed_prompt(session);
+        assert_eq!(
+            effective_context_limit(&provider, &model_config, Some(session)).await,
             Some(500_000)
         );
     }
