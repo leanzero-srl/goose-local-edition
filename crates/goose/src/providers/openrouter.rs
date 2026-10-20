@@ -65,6 +65,9 @@ pub struct OpenRouterProvider {
     listing: tokio::sync::OnceCell<ModelsListing>,
     #[serde(skip)]
     resolved_windows: std::sync::Mutex<HashMap<String, Option<usize>>>,
+    /// Models this provider already told the chat that Off cannot switch their reasoning off.
+    #[serde(skip)]
+    effort_notices: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 impl OpenRouterProvider {
@@ -100,6 +103,7 @@ impl OpenRouterProvider {
             configured_parameters,
             listing: tokio::sync::OnceCell::new(),
             resolved_windows: std::sync::Mutex::new(HashMap::new()),
+            effort_notices: Default::default(),
         })
     }
 
@@ -155,43 +159,71 @@ impl OpenRouterProvider {
 
     /// Fits the request's `reasoning.effort` to what the listing declares for the model
     /// (`fit_reasoning_effort`): an "Off" turn on a model that cannot switch reasoning off was a
-    /// 400 on every call. A listing that cannot be read leaves the request as it was.
+    /// 400 on every call. A listing that cannot be read (or does not answer within 10 s) leaves
+    /// the request as it was. Returns the chat notice, once per model, when Off could not be
+    /// honoured: the picker still reads "Off" while the model reasons at its lowest level.
     async fn fit_reasoning_effort(
         &self,
         payload: &mut Value,
         model_config: &ModelConfig,
         users_reasoning: bool,
-    ) {
-        if payload.get("reasoning").is_none() {
-            return;
-        }
-        let declared = match self.listing().await {
-            Ok(listing) => listing.parameters.get(&model_config.model_name).cloned(),
-            Err(err) => {
-                tracing::warn!(
-                    model = %model_config.model_name,
-                    "reasoning_effort_unfitted: OpenRouter's models listing could not be read \
-                     ({err}); the effort is sent as configured"
-                );
-                return;
-            }
-        };
-        let Some(declared) = declared else { return };
+    ) -> Option<String> {
+        payload.get("reasoning")?;
+        let model = &model_config.model_name;
+        let listing =
+            match tokio::time::timeout(std::time::Duration::from_secs(10), self.listing()).await {
+                Ok(Ok(listing)) => listing,
+                failed => {
+                    let why = match failed {
+                        Ok(Err(err)) => err.to_string(),
+                        _ => "no answer within 10 s".to_string(),
+                    };
+                    tracing::warn!(
+                        model = %model,
+                        "reasoning_effort_unfitted: OpenRouter's models listing could not be read \
+                         ({why}); the effort is sent as configured"
+                    );
+                    return None;
+                }
+            };
+        // A routing variant (`:nitro`, `:floor`, `:online`) is not a listing id of its own.
+        let declared = listing.parameters.get(model).or_else(|| {
+            model
+                .rsplit_once(':')
+                .and_then(|(base, _)| listing.parameters.get(base))
+        })?;
         let goose_effort = if users_reasoning {
             None
         } else {
             model_config.thinking_effort()
         };
-        if let Some((sent, fitted)) =
-            openrouter_format::fit_reasoning_effort(payload, &declared, goose_effort)
-        {
-            tracing::info!(
-                model = %model_config.model_name,
-                "reasoning_effort_fitted: {sent} -> {fitted} (the model declares mandatory={}, levels {:?})",
-                declared.reasoning_mandatory,
-                declared.effort_levels
-            );
+        let (sent, fitted) =
+            openrouter_format::fit_reasoning_effort(payload, declared, goose_effort)?;
+        tracing::info!(
+            model = %model,
+            "reasoning_effort_fitted: {sent} -> {fitted} (the model declares mandatory={}, levels {:?})",
+            declared.reasoning_mandatory,
+            declared.effort_levels
+        );
+        if sent != "none" {
+            return None;
         }
+        let first = self
+            .effort_notices
+            .lock()
+            .map(|mut told| told.insert(model.clone()))
+            .unwrap_or(false);
+        first.then(|| {
+            let level = if fitted == "model default" {
+                "its default level".to_string()
+            } else {
+                format!("its lowest level ({fitted})")
+            };
+            format!(
+                "{model} cannot switch reasoning off, so Thinking Off runs it at {level}. \
+                 OpenRouter refuses a request with reasoning off for this model."
+            )
+        })
     }
 
     /// The request for `model_config`, with every image part withheld behind a named placeholder
@@ -641,10 +673,20 @@ impl Provider for OpenRouterProvider {
         if is_gemini_model(&model_config.model_name) {
             openrouter_format::add_reasoning_details_to_request(&mut payload, messages);
         }
-        let users_reasoning = payload.get("reasoning").is_some();
+        // The user's own reasoning setting (OPENROUTER_PARAMETERS or a saved per-model field)
+        // arrives as `reasoning` or `reasoning_effort`; only goose's own effort is raised by Max.
+        let users_reasoning = payload.get("reasoning").is_some()
+            || model_config.request_params.as_ref().is_some_and(|params| {
+                params.contains_key("reasoning") || params.contains_key("reasoning_effort")
+            });
         openrouter_format::apply_reasoning_config(&mut payload, model_config);
-        self.fit_reasoning_effort(&mut payload, model_config, users_reasoning)
+        let effort_notice = self
+            .fit_reasoning_effort(&mut payload, model_config, users_reasoning)
             .await;
+        let notice = match (images_notice, effort_notice) {
+            (Some(images), Some(effort)) => Some(format!("{images}\n\n{effort}")),
+            (images, effort) => images.or(effort),
+        };
 
         if let Some(obj) = payload.as_object_mut() {
             obj.insert("transforms".to_string(), json!(["middle-out"]));
@@ -674,7 +716,7 @@ impl Provider for OpenRouterProvider {
             telemetry_t0,
             model_config.model_name.clone(),
         )?;
-        Ok(announced(stream, images_notice))
+        Ok(announced(stream, notice))
     }
 }
 
@@ -864,6 +906,7 @@ mod tests {
             configured_parameters: None,
             listing: tokio::sync::OnceCell::new_with(Some(listing)),
             resolved_windows: std::sync::Mutex::new(HashMap::new()),
+            effort_notices: Default::default(),
         }
     }
 
@@ -1437,6 +1480,7 @@ mod model_field_tests {
             configured_parameters: None,
             listing: tokio::sync::OnceCell::new_with(Some(listing)),
             resolved_windows: std::sync::Mutex::new(HashMap::new()),
+            effort_notices: Default::default(),
         }
     }
 
@@ -1503,6 +1547,12 @@ mod model_field_tests {
             .mount(&server)
             .await;
         let provider = provider(&server.uri());
+        let dir = tempfile::tempdir().unwrap();
+        let telemetry = dir.path().join("telemetry.jsonl");
+        let _guard = env_lock::lock_env([(
+            "GOOSE_SWARM_TELEMETRY_FILE",
+            Some(telemetry.to_str().unwrap()),
+        )]);
 
         let saved = FieldValues::from([
             ("effort".to_string(), json!("low")),
@@ -1532,9 +1582,15 @@ mod model_field_tests {
         assert!(sent.get("thinking_effort").is_none(), "{sent}");
     }
 
-    /// What one streamed turn on `model` at the global `effort` puts in the body's `reasoning`.
-    async fn reasoning_on_the_wire(model: &str, effort: ThinkingEffort) -> Value {
+    /// One streamed turn of `config` through `provider` against a mock OpenRouter (the models
+    /// listing answers 500 unless the provider already holds one): the body's `reasoning` and the
+    /// chat notices the turn carried.
+    async fn turn_on_the_wire(
+        provider: impl FnOnce(&str) -> OpenRouterProvider,
+        config: &ModelConfig,
+    ) -> (Value, Vec<String>) {
         use futures::StreamExt;
+        use goose_providers::conversation::message::{MessageContent, SystemNotificationType};
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -1542,7 +1598,8 @@ mod model_field_tests {
         let body = [
             format!(
                 "data: {}\n\n",
-                json!({"id": "gen-1", "object": "chat.completion.chunk", "created": 1, "model": model,
+                json!({"id": "gen-1", "object": "chat.completion.chunk", "created": 1,
+                       "model": config.model_name,
                        "choices": [{"index": 0, "delta": {"role": "assistant", "content": "ok"},
                                     "finish_reason": "stop"}]})
             ),
@@ -1554,18 +1611,62 @@ mod model_field_tests {
             .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
             .mount(&server)
             .await;
-        let mut config = ModelConfig::new(model).with_thinking_effort(effort);
-        config.reasoning = Some(true);
-        let mut stream = provider(&server.uri())
-            .stream(&config, "system", &[Message::user().with_text("hi")], &[])
-            .await
-            .unwrap();
-        while let Some(item) = stream.next().await {
-            item.unwrap();
+        Mock::given(method("GET"))
+            .and(path("/api/v1/models"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        // Every streamed call appends to the telemetry file: hold the env lock with a file of our
+        // own, or these turns land in a parallel test's file (every_streamed_call_writes_...).
+        let dir = tempfile::tempdir().unwrap();
+        let telemetry = dir.path().join("telemetry.jsonl");
+        let _guard = env_lock::lock_env([(
+            "GOOSE_SWARM_TELEMETRY_FILE",
+            Some(telemetry.to_str().unwrap()),
+        )]);
+        let provider = provider(&server.uri());
+        let mut notices = Vec::new();
+        for _ in 0..2 {
+            let mut stream = provider
+                .stream(config, "system", &[Message::user().with_text("hi")], &[])
+                .await
+                .unwrap();
+            while let Some(item) = stream.next().await {
+                if let (Some(message), _) = item.unwrap() {
+                    for content in &message.content {
+                        if let MessageContent::SystemNotification(n) = content {
+                            if n.notification_type == SystemNotificationType::InlineMessage {
+                                notices.push(n.msg.clone());
+                            }
+                        }
+                    }
+                }
+            }
         }
         let requests = server.received_requests().await.unwrap();
-        let sent: Value = serde_json::from_slice(&requests[0].body).unwrap();
-        sent.get("reasoning").cloned().unwrap_or(Value::Null)
+        let chats: Vec<_> = requests
+            .iter()
+            .filter(|r| r.url.path() == "/api/v1/chat/completions")
+            .collect();
+        assert_eq!(chats.len(), 2, "both turns reached OpenRouter");
+        let sent: Value = serde_json::from_slice(&chats[1].body).unwrap();
+        (
+            sent.get("reasoning").cloned().unwrap_or(Value::Null),
+            notices,
+        )
+    }
+
+    fn reasoning_config(model: &str, effort: ThinkingEffort) -> ModelConfig {
+        let mut config = ModelConfig::new(model).with_thinking_effort(effort);
+        config.reasoning = Some(true);
+        config
+    }
+
+    /// What a turn on `model` at the global `effort` puts in the body's `reasoning`.
+    async fn reasoning_on_the_wire(model: &str, effort: ThinkingEffort) -> Value {
+        turn_on_the_wire(provider, &reasoning_config(model, effort))
+            .await
+            .0
     }
 
     /// MiniMax M3.1 Flash (2026-10-20) answers `effort: none` with 400 "Reasoning is mandatory for
@@ -1585,6 +1686,12 @@ mod model_field_tests {
             reasoning_on_the_wire(minimax, ThinkingEffort::Medium).await,
             json!({"effort": "medium"})
         );
+        // a routing variant is looked up by its listed id
+        assert_eq!(
+            reasoning_on_the_wire("minimax/minimax-m3.1-flash:free:nitro", ThinkingEffort::Off)
+                .await,
+            json!({"effort": "low"})
+        );
         // a model that can switch reasoning off still gets none, and an unlisted model is unchanged
         let deepseek = "deepseek/deepseek-v4.1-flash";
         assert_eq!(
@@ -1599,5 +1706,69 @@ mod model_field_tests {
             reasoning_on_the_wire("qwen/unlisted", ThinkingEffort::Off).await,
             json!({"effort": "none"})
         );
+    }
+
+    #[tokio::test]
+    async fn the_chat_is_told_once_that_off_cannot_switch_reasoning_off() {
+        let (_, notices) = turn_on_the_wire(
+            provider,
+            &reasoning_config("minimax/minimax-m3.1-flash:free", ThinkingEffort::Off),
+        )
+        .await;
+        assert_eq!(notices.len(), 1, "{notices:?}");
+        assert!(
+            notices[0].contains("cannot switch reasoning off"),
+            "{}",
+            notices[0]
+        );
+        assert!(notices[0].contains("lowest level (low)"), "{}", notices[0]);
+        // a model that honours Off, and a Max upgrade, say nothing
+        for (model, effort) in [
+            ("deepseek/deepseek-v4.1-flash", ThinkingEffort::Off),
+            ("minimax/minimax-m3.1-flash:free", ThinkingEffort::Max),
+        ] {
+            let (_, notices) = turn_on_the_wire(provider, &reasoning_config(model, effort)).await;
+            assert!(notices.is_empty(), "{model}: {notices:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_global_max_never_raises_the_users_own_effort() {
+        // OPENROUTER_PARAMETERS {"reasoning_effort": "high"} lands in the request params
+        let mut config = reasoning_config("deepseek/deepseek-v4.1-flash", ThinkingEffort::Max);
+        config
+            .request_params
+            .get_or_insert_with(HashMap::new)
+            .insert("reasoning_effort".to_string(), json!("high"));
+        assert_eq!(
+            turn_on_the_wire(provider, &config).await.0,
+            json!({"effort": "high"})
+        );
+        // ...but the user's own none on a mandatory model is still fixed
+        let mut config = reasoning_config("minimax/minimax-m3.1-flash:free", ThinkingEffort::Max);
+        config
+            .request_params
+            .get_or_insert_with(HashMap::new)
+            .insert("reasoning".to_string(), json!({"effort": "none"}));
+        assert_eq!(
+            turn_on_the_wire(provider, &config).await.0,
+            json!({"effort": "low"})
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_listing_sends_the_turn_as_configured() {
+        let unread = |host: &str| {
+            let mut provider = provider(host);
+            provider.listing = tokio::sync::OnceCell::new();
+            provider
+        };
+        let (reasoning, notices) = turn_on_the_wire(
+            unread,
+            &reasoning_config("minimax/minimax-m3.1-flash:free", ThinkingEffort::Off),
+        )
+        .await;
+        assert_eq!(reasoning, json!({"effort": "none"}));
+        assert!(notices.is_empty(), "{notices:?}");
     }
 }
