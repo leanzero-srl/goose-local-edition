@@ -111,6 +111,25 @@ describe("the owner's switch — nothing comes back at launch unless it is on", 
     }
   });
 
+  it('a read that fails (goosed refused the call) is a switch nobody can see: nothing red', async () => {
+    const d = deps({ intent: [{ kind: 'single', modelId: QWEN }] });
+    d.readIntent.mockRejectedValueOnce(new Error('Internal error: reading mlx_engine config'));
+    expect(await restoreServing(d, vi.fn())).toEqual({ phase: 'idle' });
+    d.readIntent.mockRejectedValueOnce(new Error('Internal error: reading mlx_engine config'));
+    await runRestore(d);
+    expect(latestRestoreLine()).toEqual({ phase: 'idle' });
+    expect(d.mount).not.toHaveBeenCalled();
+  });
+
+  it('only the launch read asks goose to forget a gone model; the re-read after a start does not', async () => {
+    const d = deps({
+      intent: [{ kind: 'single', modelId: QWEN }],
+      single: [engine({}), engine({ state: 'failed', lastError: 'the engine exited (code 3)' })],
+    });
+    await restoreServing(d, vi.fn());
+    expect(d.readIntent.mock.calls).toEqual([[true], []]);
+  });
+
   it('off: even an unreadable record shows nothing red', async () => {
     const d = deps({ restoreAtLaunch: false, intent: [{ error: 'unreadable: expected value' }] });
     expect(await restoreServing(d, vi.fn())).toEqual({ phase: 'idle' });

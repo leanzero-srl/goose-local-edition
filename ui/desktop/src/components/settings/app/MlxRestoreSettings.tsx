@@ -34,9 +34,12 @@ const i18n = defineMessages({
 /** goose config.yaml key; the engine reads the same key (`mlx_engine.rs` RESTORE_AT_LAUNCH_KEY). */
 export const RESTORE_AT_LAUNCH_KEY = 'GOOSE_MLX_RESTORE_AT_LAUNCH';
 
-/** Off unless the owner turned it on: an absent key, or anything but true, reads as off. */
+/**
+ * Off unless the owner turned it on, read the way goose reads a boolean (a quoted "True" or
+ * " TRUE " is on there too, so the switch must show it on): an absent key, or anything else, is off.
+ */
 export function restoreAtLaunchFrom(value: unknown): boolean {
-  return value === true || value === 'true';
+  return value === true || (typeof value === 'string' && value.trim().toLowerCase() === 'true');
 }
 
 /**

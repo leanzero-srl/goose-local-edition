@@ -35,7 +35,8 @@ export interface RestoreWhat {
 
 /** The facts and starts a restore reads and makes — the renderer's ACP calls, injected. */
 export interface RestoreDeps {
-  readIntent(): Promise<MlxServingIntentRead>;
+  /** `atLaunch`: the restore's first read, the only one goose may answer by forgetting a gone model. */
+  readIntent(atLaunch?: boolean): Promise<MlxServingIntentRead>;
   singleStatus(): Promise<MlxEngineStatus>;
   mount(modelId: string): Promise<void>;
   remoteStatus(): Promise<MlxRemoteSingleStatus>;
@@ -269,8 +270,10 @@ export async function restoreServing(
   deps: RestoreDeps,
   onRestoring: OnRestoring
 ): Promise<RestoreResult> {
-  const read = await deps.readIntent();
-  if (!read.restoreAtLaunch) return { phase: 'idle' };
+  // A read goose refused says nothing about the switch, and the switch is off unless goose says
+  // it is on: nothing is restored and nothing red is shown.
+  const read = await deps.readIntent(true).catch(() => null);
+  if (!read?.restoreAtLaunch) return { phase: 'idle' };
   if (read.error)
     return { phase: 'failed', what: null, reason: { code: 'said', text: read.error } };
   const intent = read.intent;

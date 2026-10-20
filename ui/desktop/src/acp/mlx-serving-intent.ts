@@ -21,9 +21,16 @@ export interface MlxServingIntentRead {
   restoreAtLaunch: boolean;
 }
 
-export async function mlxServingIntent(): Promise<MlxServingIntentRead> {
+/**
+ * `atLaunch`: the launch restore's own read — the only one that lets goose forget a record whose
+ * model folder is gone (with the switch on). Every other reader gets the record as it stands.
+ */
+export async function mlxServingIntent(
+  options: { atLaunch?: boolean } = {}
+): Promise<MlxServingIntentRead> {
   const client = await getAcpClient();
-  const response = (await client.extMethod('_goose/unstable/mlxEngine/servingIntent', {})) as {
+  const params = options.atLaunch ? { atLaunch: true } : {};
+  const response = (await client.extMethod('_goose/unstable/mlxEngine/servingIntent', params)) as {
     intent?: MlxServingIntent | null;
     error?: string | null;
     restoreAtLaunch?: boolean;

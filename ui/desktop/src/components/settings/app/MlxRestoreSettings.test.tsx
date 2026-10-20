@@ -68,6 +68,7 @@ describe('Settings > App — Restore the local model at launch', () => {
   it('reads only a real true as on', () => {
     expect(restoreAtLaunchFrom(true)).toBe(true);
     expect(restoreAtLaunchFrom('true')).toBe(true);
+    for (const on of ['True', 'TRUE', ' true ']) expect(restoreAtLaunchFrom(on)).toBe(true);
     for (const off of [null, undefined, false, 'false', 1, 'yes']) {
       expect(restoreAtLaunchFrom(off)).toBe(false);
     }
