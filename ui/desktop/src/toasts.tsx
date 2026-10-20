@@ -27,6 +27,21 @@ export function renderStudioCloseButton({ closeToast }: CloseButtonProps) {
   );
 }
 
+/** A toast body, one line per `\n`: a joined list (one provider per line at launch) was rendered as
+ *  one run-on paragraph because HTML collapses the newline. */
+function MessageLines({ msg }: { msg: string }) {
+  const lines = msg.split('\n').filter((line) => line.trim() !== '');
+  return (
+    <div className="flex min-w-0 flex-col gap-0.5 break-words">
+      {lines.map((line, index) => (
+        <div key={index} data-testid="toast-line">
+          {line}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /**
  * Toast content on the tokens: a StatusDot carries the tone beside the title and one body line.
  * App's ToastContainer renders no library icon (`icon={false}`), so the dot IS the tone mark.
@@ -49,7 +64,7 @@ function ToastNotice({
       <StatusDot tone={tone} live={live} label={label} size={10} className="mt-1.5" />
       <div className="flex min-w-0 flex-col gap-0.5">
         {title ? <strong className={WEIGHT.semibold}>{title}</strong> : null}
-        {title ? <div>{msg}</div> : null}
+        {title && msg ? <MessageLines msg={msg} /> : null}
       </div>
     </div>
   );
@@ -231,7 +246,7 @@ function ToastErrorContent({ title, msg, traceback }: ToastErrorProps) {
       <StatusDot tone="err" label="Error" size={10} className="mt-1.5" />
       <div className="flex-grow">
         {title && <strong className={WEIGHT.semibold}>{title}</strong>}
-        {msg && <div>{msg}</div>}
+        {msg && <MessageLines msg={msg} />}
       </div>
       <div className="flex-none flex items-center gap-2">
         {traceback && (
