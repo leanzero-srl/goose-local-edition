@@ -34,7 +34,9 @@ export function unusableProviderReasons(
     const reason =
       state === 'failed'
         ? `its connection check failed: ${row.connection_error}`
-        : 'its key is saved but the connection check has not passed yet — press Refresh providers';
+        : state === 'not-running'
+          ? `nothing is running at ${row.local_server_not_running} yet — start the local server, then press Refresh providers`
+          : 'its key is saved but the connection check has not passed yet — press Refresh providers';
     return [{ name: row.name, label: row.metadata.display_name, reason }];
   });
 }

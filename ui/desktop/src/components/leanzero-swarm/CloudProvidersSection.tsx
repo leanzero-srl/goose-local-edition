@@ -45,6 +45,12 @@ const i18n = defineMessages({
   },
   connected: { id: 'cloudProviders.connected', defaultMessage: 'Connected' },
   checkFailed: { id: 'cloudProviders.checkFailed', defaultMessage: 'Check failed' },
+  notRunning: { id: 'cloudProviders.notRunning', defaultMessage: 'Not running' },
+  notRunningText: {
+    id: 'cloudProviders.notRunningText',
+    defaultMessage:
+      'Nothing is running at {origin} yet. Start the local server, then recheck connections.',
+  },
   notChecked: { id: 'cloudProviders.notChecked', defaultMessage: 'Not checked yet' },
   noDefault: { id: 'cloudProviders.noDefault', defaultMessage: 'no default model yet' },
   notSetUp: { id: 'cloudProviders.notSetUp', defaultMessage: 'Not set up' },
@@ -91,6 +97,8 @@ function StateChip({ provider }: { provider: ProviderDetails }) {
   switch (providerRowState(provider)) {
     case 'failed':
       return <Chip tone="err">{intl.formatMessage(i18n.checkFailed)}</Chip>;
+    case 'not-running':
+      return <Chip tone="stopped">{intl.formatMessage(i18n.notRunning)}</Chip>;
     case 'connected':
       return <Chip tone="ok">{intl.formatMessage(i18n.connected)}</Chip>;
     case 'unchecked':
@@ -146,6 +154,16 @@ function ProviderRow({
         {state === 'failed' && (
           <span role="alert" className="break-words text-lz-meta text-lz-err">
             {provider.connection_error}
+          </span>
+        )}
+        {state === 'not-running' && (
+          <span
+            data-testid={`cloud-provider-not-running-${provider.name}`}
+            className={cx('break-words', TYPE.meta)}
+          >
+            {intl.formatMessage(i18n.notRunningText, {
+              origin: provider.local_server_not_running,
+            })}
           </span>
         )}
         {warning && (

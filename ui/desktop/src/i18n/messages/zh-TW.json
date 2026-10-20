@@ -848,6 +848,12 @@
   "cloudProviders.notOfficialText": {
     "defaultMessage": "請求傳送到 {where},而不是 api.openai.com。"
   },
+  "cloudProviders.notRunning": {
+    "defaultMessage": "未執行"
+  },
+  "cloudProviders.notRunningText": {
+    "defaultMessage": "{origin} 上還沒有任何服務在執行。請啟動本機伺服器，然後重新檢查連線。"
+  },
   "cloudProviders.notSetUp": {
     "defaultMessage": "尚未設定"
   },
@@ -6959,6 +6965,9 @@
   "nodes.loadsUnread": {
     "defaultMessage": "無法讀取載入時間：{error}"
   },
+  "nodes.localServerNotRunning": {
+    "defaultMessage": "{origin} 上還沒有任何服務在執行；請啟動本機伺服器"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "管理雲端提供方"
   },
@@ -7108,6 +7117,9 @@
   },
   "nodes.newProviderModels": {
     "defaultMessage": "模型"
+  },
+  "nodes.newProviderNotRunning": {
+    "defaultMessage": "未執行"
   },
   "nodes.newProvidersFailed": {
     "defaultMessage": "無法讀取你的提供方：{error}"

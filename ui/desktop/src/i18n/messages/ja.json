@@ -848,6 +848,12 @@
   "cloudProviders.notOfficialText": {
     "defaultMessage": "リクエストは api.openai.com ではなく {where} に送られています。"
   },
+  "cloudProviders.notRunning": {
+    "defaultMessage": "未起動"
+  },
+  "cloudProviders.notRunningText": {
+    "defaultMessage": "{origin} ではまだ何も動いていません。ローカルサーバーを起動してから、接続を再確認してください。"
+  },
   "cloudProviders.notSetUp": {
     "defaultMessage": "未設定"
   },
@@ -6959,6 +6965,9 @@
   "nodes.loadsUnread": {
     "defaultMessage": "ロード時間を読み取れませんでした: {error}"
   },
+  "nodes.localServerNotRunning": {
+    "defaultMessage": "{origin} ではまだ何も動いていません。ローカルサーバーを起動してください"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "クラウドプロバイダーを管理"
   },
@@ -7108,6 +7117,9 @@
   },
   "nodes.newProviderModels": {
     "defaultMessage": "モデル"
+  },
+  "nodes.newProviderNotRunning": {
+    "defaultMessage": "未起動"
   },
   "nodes.newProvidersFailed": {
     "defaultMessage": "プロバイダーを読み取れませんでした: {error}"

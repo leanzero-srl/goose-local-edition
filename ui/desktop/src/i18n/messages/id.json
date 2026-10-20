@@ -848,6 +848,12 @@
   "cloudProviders.notOfficialText": {
     "defaultMessage": "Permintaan pergi ke {where}, bukan ke api.openai.com."
   },
+  "cloudProviders.notRunning": {
+    "defaultMessage": "Tidak berjalan"
+  },
+  "cloudProviders.notRunningText": {
+    "defaultMessage": "Belum ada yang berjalan di {origin}. Jalankan server lokal, lalu periksa ulang koneksi."
+  },
   "cloudProviders.notSetUp": {
     "defaultMessage": "Belum disiapkan"
   },
@@ -6959,6 +6965,9 @@
   "nodes.loadsUnread": {
     "defaultMessage": "Waktu muat tidak dapat dibaca: {error}"
   },
+  "nodes.localServerNotRunning": {
+    "defaultMessage": "Belum ada yang berjalan di {origin}; jalankan server lokal"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "Kelola penyedia cloud"
   },
@@ -7108,6 +7117,9 @@
   },
   "nodes.newProviderModels": {
     "defaultMessage": "Model"
+  },
+  "nodes.newProviderNotRunning": {
+    "defaultMessage": "Tidak berjalan"
   },
   "nodes.newProvidersFailed": {
     "defaultMessage": "Penyedia Anda tidak dapat dibaca: {error}"

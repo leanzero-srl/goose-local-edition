@@ -848,6 +848,12 @@
   "cloudProviders.notOfficialText": {
     "defaultMessage": "Yêu cầu đi đến {where}, không phải api.openai.com."
   },
+  "cloudProviders.notRunning": {
+    "defaultMessage": "Chưa chạy"
+  },
+  "cloudProviders.notRunningText": {
+    "defaultMessage": "Chưa có gì chạy tại {origin}. Hãy khởi động máy chủ cục bộ, rồi kiểm tra lại kết nối."
+  },
   "cloudProviders.notSetUp": {
     "defaultMessage": "Chưa thiết lập"
   },
@@ -6959,6 +6965,9 @@
   "nodes.loadsUnread": {
     "defaultMessage": "Không đọc được thời gian nạp: {error}"
   },
+  "nodes.localServerNotRunning": {
+    "defaultMessage": "Chưa có gì chạy tại {origin}; hãy khởi động máy chủ cục bộ"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "Quản lý nhà cung cấp đám mây"
   },
@@ -7108,6 +7117,9 @@
   },
   "nodes.newProviderModels": {
     "defaultMessage": "Mô hình"
+  },
+  "nodes.newProviderNotRunning": {
+    "defaultMessage": "Chưa chạy"
   },
   "nodes.newProvidersFailed": {
     "defaultMessage": "Không đọc được các nhà cung cấp của bạn: {error}"

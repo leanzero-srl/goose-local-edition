@@ -848,6 +848,12 @@
   "cloudProviders.notOfficialText": {
     "defaultMessage": "Anfragen gehen an {where}, nicht an api.openai.com."
   },
+  "cloudProviders.notRunning": {
+    "defaultMessage": "Läuft nicht"
+  },
+  "cloudProviders.notRunningText": {
+    "defaultMessage": "Unter {origin} läuft noch nichts. Starte den lokalen Server und prüfe die Verbindungen dann erneut."
+  },
   "cloudProviders.notSetUp": {
     "defaultMessage": "Nicht eingerichtet"
   },
@@ -6959,6 +6965,9 @@
   "nodes.loadsUnread": {
     "defaultMessage": "Ladezeiten konnten nicht gelesen werden: {error}"
   },
+  "nodes.localServerNotRunning": {
+    "defaultMessage": "Unter {origin} läuft noch nichts; starte den lokalen Server"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "Cloud-Anbieter verwalten"
   },
@@ -7108,6 +7117,9 @@
   },
   "nodes.newProviderModels": {
     "defaultMessage": "Modell"
+  },
+  "nodes.newProviderNotRunning": {
+    "defaultMessage": "Läuft nicht"
   },
   "nodes.newProvidersFailed": {
     "defaultMessage": "Deine Anbieter konnten nicht gelesen werden: {error}"

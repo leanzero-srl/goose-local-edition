@@ -848,6 +848,12 @@
   "cloudProviders.notOfficialText": {
     "defaultMessage": "Запросы идут на {where}, а не на api.openai.com."
   },
+  "cloudProviders.notRunning": {
+    "defaultMessage": "Не запущен"
+  },
+  "cloudProviders.notRunningText": {
+    "defaultMessage": "На {origin} пока ничего не запущено. Запустите локальный сервер, затем проверьте подключения снова."
+  },
   "cloudProviders.notSetUp": {
     "defaultMessage": "Не настроено"
   },
@@ -6959,6 +6965,9 @@
   "nodes.loadsUnread": {
     "defaultMessage": "Не удалось прочитать время загрузки: {error}"
   },
+  "nodes.localServerNotRunning": {
+    "defaultMessage": "На {origin} пока ничего не запущено; запустите локальный сервер"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "Управлять облачными провайдерами"
   },
@@ -7108,6 +7117,9 @@
   },
   "nodes.newProviderModels": {
     "defaultMessage": "Модель"
+  },
+  "nodes.newProviderNotRunning": {
+    "defaultMessage": "Не запущен"
   },
   "nodes.newProvidersFailed": {
     "defaultMessage": "Не удалось прочитать ваших провайдеров: {error}"

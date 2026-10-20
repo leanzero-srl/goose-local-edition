@@ -848,6 +848,12 @@
   "cloudProviders.notOfficialText": {
     "defaultMessage": "अनुरोध api.openai.com के बजाय {where} पर जाते हैं।"
   },
+  "cloudProviders.notRunning": {
+    "defaultMessage": "चल नहीं रहा"
+  },
+  "cloudProviders.notRunningText": {
+    "defaultMessage": "{origin} पर अभी कुछ नहीं चल रहा है। लोकल सर्वर शुरू करें, फिर कनेक्शन दोबारा जाँचें।"
+  },
   "cloudProviders.notSetUp": {
     "defaultMessage": "सेटअप नहीं किया गया"
   },
@@ -6959,6 +6965,9 @@
   "nodes.loadsUnread": {
     "defaultMessage": "लोड समय पढ़े नहीं जा सके: {error}"
   },
+  "nodes.localServerNotRunning": {
+    "defaultMessage": "{origin} पर अभी कुछ नहीं चल रहा है; लोकल सर्वर शुरू करें"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "क्लाउड प्रदाता प्रबंधित करें"
   },
@@ -7108,6 +7117,9 @@
   },
   "nodes.newProviderModels": {
     "defaultMessage": "मॉडल"
+  },
+  "nodes.newProviderNotRunning": {
+    "defaultMessage": "चल नहीं रहा"
   },
   "nodes.newProvidersFailed": {
     "defaultMessage": "आपके प्रदाता पढ़े नहीं जा सके: {error}"

@@ -848,6 +848,12 @@
   "cloudProviders.notOfficialText": {
     "defaultMessage": "요청이 api.openai.com이 아닌 {where}(으)로 갑니다."
   },
+  "cloudProviders.notRunning": {
+    "defaultMessage": "실행 중 아님"
+  },
+  "cloudProviders.notRunningText": {
+    "defaultMessage": "{origin}에서 아직 실행 중인 것이 없습니다. 로컬 서버를 시작한 뒤 연결을 다시 확인하세요."
+  },
   "cloudProviders.notSetUp": {
     "defaultMessage": "설정되지 않음"
   },
@@ -6959,6 +6965,9 @@
   "nodes.loadsUnread": {
     "defaultMessage": "로드 시간을 읽을 수 없습니다: {error}"
   },
+  "nodes.localServerNotRunning": {
+    "defaultMessage": "{origin}에서 아직 실행 중인 것이 없습니다. 로컬 서버를 시작하세요"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "클라우드 제공자 관리"
   },
@@ -7108,6 +7117,9 @@
   },
   "nodes.newProviderModels": {
     "defaultMessage": "모델"
+  },
+  "nodes.newProviderNotRunning": {
+    "defaultMessage": "실행 중 아님"
   },
   "nodes.newProvidersFailed": {
     "defaultMessage": "제공자를 읽을 수 없습니다: {error}"

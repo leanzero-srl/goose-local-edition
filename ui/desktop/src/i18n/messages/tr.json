@@ -848,6 +848,12 @@
   "cloudProviders.notOfficialText": {
     "defaultMessage": "İstekler api.openai.com yerine {where} adresine gidiyor."
   },
+  "cloudProviders.notRunning": {
+    "defaultMessage": "Çalışmıyor"
+  },
+  "cloudProviders.notRunningText": {
+    "defaultMessage": "{origin} adresinde henüz çalışan bir şey yok. Yerel sunucuyu başlatın, ardından bağlantıları yeniden denetleyin."
+  },
   "cloudProviders.notSetUp": {
     "defaultMessage": "Kurulmadı"
   },
@@ -6959,6 +6965,9 @@
   "nodes.loadsUnread": {
     "defaultMessage": "Yükleme süreleri okunamadı: {error}"
   },
+  "nodes.localServerNotRunning": {
+    "defaultMessage": "{origin} adresinde henüz çalışan bir şey yok; yerel sunucuyu başlatın"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "Bulut sağlayıcılarını yönet"
   },
@@ -7108,6 +7117,9 @@
   },
   "nodes.newProviderModels": {
     "defaultMessage": "Model"
+  },
+  "nodes.newProviderNotRunning": {
+    "defaultMessage": "Çalışmıyor"
   },
   "nodes.newProvidersFailed": {
     "defaultMessage": "Sağlayıcılarınız okunamadı: {error}"

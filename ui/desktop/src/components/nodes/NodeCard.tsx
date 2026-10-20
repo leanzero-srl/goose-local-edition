@@ -89,6 +89,10 @@ const i18n = defineMessages({
     defaultMessage: 'Set up {provider} under Providers › Cloud Providers',
   },
   checking: { id: 'nodes.checking', defaultMessage: 'Checking {provider}…' },
+  localServerNotRunning: {
+    id: 'nodes.localServerNotRunning',
+    defaultMessage: 'Nothing is running at {origin} yet; start the local server',
+  },
   readingState: { id: 'nodes.readingState', defaultMessage: 'Reading what serves now…' },
   planning: { id: 'nodes.planning', defaultMessage: 'Measuring your Macs for this way…' },
   planFailed: { id: 'nodes.planFailed', defaultMessage: 'No plan for this way: {error}' },
@@ -245,6 +249,8 @@ export function lineText(intl: IntlShape, line: GlanceLine): string {
       return intl.formatMessage(i18n.keyMissingLine, { provider: line.provider });
     case 'checking':
       return intl.formatMessage(i18n.checking, { provider: line.provider });
+    case 'localServerNotRunning':
+      return intl.formatMessage(i18n.localServerNotRunning, { origin: line.origin });
   }
 }
 

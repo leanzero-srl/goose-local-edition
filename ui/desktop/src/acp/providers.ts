@@ -88,7 +88,8 @@ export async function acpListProviderDetails(): Promise<ProviderDetails[]> {
           (status) =>
             status.providerId === entry.providerId &&
             status.connectionChecked &&
-            !status.connectionError
+            !status.connectionError &&
+            !status.localServerNotRunning
         )),
     credentials_saved: entry.configured,
     default_model: statuses.find((status) => status.providerId === entry.providerId)?.testModel,
@@ -96,6 +97,8 @@ export async function acpListProviderDetails(): Promise<ProviderDetails[]> {
       ?.connectionError,
     connection_checked: statuses.find((status) => status.providerId === entry.providerId)
       ?.connectionChecked,
+    local_server_not_running: statuses.find((status) => status.providerId === entry.providerId)
+      ?.localServerNotRunning,
     provider_type: entry.providerType as ProviderDetails['provider_type'],
     metadata: {
       name: entry.providerId,
