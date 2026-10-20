@@ -4848,6 +4848,11 @@ export type MlxEngineServingIntentResponse_unstable = {
      * The record exists and could not be read — named, never read as "nothing to restore".
      */
     error?: string | null;
+    /**
+     * The owner's tunable `GOOSE_MLX_RESTORE_AT_LAUNCH` (default off): false = the launch
+     * restores nothing and shows nothing, while starts keep being recorded for when it is on.
+     */
+    restoreAtLaunch?: boolean;
 };
 
 /**

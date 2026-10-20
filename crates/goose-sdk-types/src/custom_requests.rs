@@ -4709,6 +4709,10 @@ pub struct MlxEngineServingIntentResponse {
     /// The record exists and could not be read — named, never read as "nothing to restore".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// The owner's tunable `GOOSE_MLX_RESTORE_AT_LAUNCH` (default off): false = the launch
+    /// restores nothing and shows nothing, while starts keep being recorded for when it is on.
+    #[serde(default)]
+    pub restore_at_launch: bool,
 }
 
 // ============================================================================

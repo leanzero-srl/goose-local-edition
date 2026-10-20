@@ -4916,7 +4916,8 @@ export const zMlxEngineServingIntentResponse_unstable = z.object({
     error: z.union([
         z.string(),
         z.null()
-    ]).optional()
+    ]).optional(),
+    restoreAtLaunch: z.boolean().optional().default(false)
 });
 
 /**

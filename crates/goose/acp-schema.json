@@ -11558,6 +11558,11 @@
             "null"
           ],
           "description": "The record exists and could not be read — named, never read as \"nothing to restore\"."
+        },
+        "restoreAtLaunch": {
+          "type": "boolean",
+          "description": "The owner's tunable `GOOSE_MLX_RESTORE_AT_LAUNCH` (default off): false = the launch\nrestores nothing and shows nothing, while starts keep being recorded for when it is on.",
+          "default": false
         }
       },
       "x-side": "agent",

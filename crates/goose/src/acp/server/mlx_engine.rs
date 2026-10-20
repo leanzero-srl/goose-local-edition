@@ -5,7 +5,9 @@
 
 use super::*;
 use crate::config::ConfigError;
-use crate::providers::mlx_serving_intent::{self, IntentKind, IntentRecord, ServingIntent};
+use crate::providers::mlx_serving_intent::{
+    self, DeletedOn, IntentKind, IntentRecord, ServingIntent,
+};
 use goose_sidecar::engine::{
     expand_tilde, global_manager, EngineLoad, EngineSettings, MlxEngineManager, ModelProfile,
     MountRefused, StrayListenerHolder, StrayListenerStep, ThinkingMode,
@@ -22,6 +24,43 @@ use serde::Serialize;
 use std::sync::{LazyLock, Mutex as StdMutex, OnceLock};
 
 const MLX_ENGINE_CONFIG_KEY: &str = "mlx_engine";
+
+/// The owner's switch for bringing back, at launch, what served before the app quit. Off by
+/// default: a relaunch starts no model the owner did not start in this session.
+pub(super) const RESTORE_AT_LAUNCH_KEY: &str = "GOOSE_MLX_RESTORE_AT_LAUNCH";
+
+fn restore_at_launch() -> bool {
+    match Config::global().get_param::<bool>(RESTORE_AT_LAUNCH_KEY) {
+        Ok(on) => on,
+        Err(ConfigError::NotFound(_)) => false,
+        Err(e) => {
+            warn!(
+                error = %e,
+                "{RESTORE_AT_LAUNCH_KEY} is unreadable; nothing is restored at launch"
+            );
+            false
+        }
+    }
+}
+
+/// What the launch's restore reads: with the switch off the record is reported as it stands and
+/// nothing comes back; with it on, a single-engine record whose model is provably gone from
+/// `models_dir` is forgotten first.
+fn launch_serving_intent(
+    restore_at_launch: bool,
+    record: impl FnOnce() -> IntentRecord,
+    forget_gone: impl FnOnce() -> IntentRecord,
+) -> MlxEngineServingIntentResponse {
+    let record = if restore_at_launch {
+        forget_gone()
+    } else {
+        record()
+    };
+    MlxEngineServingIntentResponse {
+        restore_at_launch,
+        ..serving_intent_response(record)
+    }
+}
 
 /// True when the operator exported OMLX_HOST before goosed started — their value wins
 /// forever. Otherwise goosed owns the variable and keeps it aligned to `mlx_engine.port`,
@@ -128,14 +167,14 @@ fn serving_intent_response(record: IntentRecord) -> MlxEngineServingIntentRespon
         IntentRecord::Absent => MlxEngineServingIntentResponse::default(),
         IntentRecord::Present(intent) => MlxEngineServingIntentResponse {
             intent: Some(intent_to_dto(intent)),
-            error: None,
+            ..Default::default()
         },
         IntentRecord::Unreadable { path, error } => MlxEngineServingIntentResponse {
-            intent: None,
             error: Some(format!(
                 "the record of what served before the relaunch ({}) is unreadable: {error}",
                 path.display()
             )),
+            ..Default::default()
         },
     }
 }
@@ -837,7 +876,20 @@ async fn core_model_delete(
     let settings = load_engine_settings()?;
     hf::delete_local_model(&expand_tilde(&settings.models_dir), &req.model_id)
         .invalid_params_err()?;
+    forget_deleted_model(&req.model_id, DeletedOn::ThisMac);
     Ok(EmptyResponse {})
+}
+
+/// A deleted model cannot come back at the next launch: a record naming that copy goes with it.
+/// The delete itself stands either way; a record that cannot be removed is said in the log.
+fn forget_deleted_model(model_id: &str, on: DeletedOn<'_>) {
+    if let Err(e) = mlx_serving_intent::forget_deleted_model(model_id, on) {
+        warn!(
+            error = %format!("{e:#}"),
+            model_id,
+            "the deleted model's MLX serving intent was not removed"
+        );
+    }
 }
 
 async fn core_hf_search(
@@ -1097,7 +1149,12 @@ impl GooseAcpAgent {
         &self,
         _req: MlxEngineServingIntentRequest,
     ) -> Result<MlxEngineServingIntentResponse, agent_client_protocol::Error> {
-        Ok(serving_intent_response(mlx_serving_intent::read()))
+        let models_dir = expand_tilde(&load_engine_settings()?.models_dir);
+        Ok(launch_serving_intent(
+            restore_at_launch(),
+            mlx_serving_intent::read,
+            || mlx_serving_intent::forget_if_model_gone(&models_dir),
+        ))
     }
 
     pub(super) async fn on_mlx_engine_settings_read(
@@ -1139,7 +1196,11 @@ impl GooseAcpAgent {
         req: MlxEngineModelDeleteRequest,
     ) -> Result<EmptyResponse, agent_client_protocol::Error> {
         if let Some(node) = self.mlx_engine_remote_target(req.node_id.as_deref()) {
-            return self.mlx_engine_relay(&node, MlxOp::ModelDelete, &req).await;
+            let response = self
+                .mlx_engine_relay(&node, MlxOp::ModelDelete, &req)
+                .await?;
+            forget_deleted_model(&req.model_id, DeletedOn::Peer(&node));
+            return Ok(response);
         }
         core_model_delete(req).await
     }
@@ -1395,6 +1456,37 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
+    /// Off (the default) the launch restores nothing and forgets nothing: the record is reported
+    /// as it stands so turning the switch on later brings it back. On, the record is read through
+    /// the gone-model check.
+    #[test]
+    fn the_launch_restores_only_with_the_owners_switch_on() {
+        let single = || {
+            IntentRecord::Present(ServingIntent::Single {
+                model_id: "pub/m".to_string(),
+            })
+        };
+        let off = launch_serving_intent(false, single, || {
+            panic!("the switch is off: nothing may be forgotten")
+        });
+        assert!(!off.restore_at_launch);
+        assert_eq!(off.intent.map(|i| i.model_id).as_deref(), Some("pub/m"));
+        assert!(
+            serde_json::to_value(MlxEngineServingIntentResponse::default())
+                .unwrap()
+                .get("restoreAtLaunch")
+                .is_some_and(|v| v == false)
+        );
+
+        let on = launch_serving_intent(
+            true,
+            || panic!("on reads through the check"),
+            || IntentRecord::Absent,
+        );
+        assert!(on.restore_at_launch);
+        assert!(on.intent.is_none() && on.error.is_none());
+    }
+
     /// Q-277: the last gate reaches the wire whole as `gateFit` — the model it judged, its verdict
     /// and the short the refusal banner states — beside the words it always had; a status with no
     /// gate sends none of it.
@@ -1518,12 +1610,15 @@ mod tests {
         }));
         assert_eq!(
             serde_json::to_value(&remote).unwrap(),
-            serde_json::json!({"intent": {
-                "kind": "remoteSingle",
-                "modelId": "m",
-                "peer": "worksmacstudio-lan-9c1e2a",
-                "peerName": "Work's Mac Studio",
-            }})
+            serde_json::json!({
+                "intent": {
+                    "kind": "remoteSingle",
+                    "modelId": "m",
+                    "peer": "worksmacstudio-lan-9c1e2a",
+                    "peerName": "Work's Mac Studio",
+                },
+                "restoreAtLaunch": false,
+            })
         );
         let split = serving_intent_response(IntentRecord::Present(ServingIntent::Split {
             model_id: "s".to_string(),
