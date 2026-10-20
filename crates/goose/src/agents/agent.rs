@@ -2200,6 +2200,12 @@ impl Agent {
             let mut retrying_after_empty_turn = false;
             let mut retrying_after_transient_error = false;
             let mut last_assistant_text = String::new();
+            // A cloud model has no engine loop guard; the swarm's workers have their own judge.
+            let mut runaway_watch = if self.is_swarm_worker() {
+                None
+            } else {
+                super::loop_collapse::RunawayWatch::from_config(Config::global())
+            };
             let mut goal_check_pending = false;
             let mut tool_pair_summarization_done = false;
             let mut stop_hook_handled_for_exit = false;
@@ -2395,6 +2401,9 @@ impl Agent {
                     !resend.enabled(),
                 ).await?;
                 last_assistant_text.clear();
+                if let Some(watch) = runaway_watch.as_mut() {
+                    watch.reset();
+                }
 
                 let current_turn_tool_count = conversation.messages().iter()
                     .flat_map(|m| m.content.iter())
@@ -2546,10 +2555,36 @@ impl Agent {
                                     if !text.is_empty() {
                                         last_assistant_text.push_str(&text);
                                     }
+                                    let response_id = response.id.clone();
                                     if resend.enabled() {
                                         attempt_partial.push(filtered_response);
                                     }
                                     messages_to_add.push(response);
+                                    // A reply whose tail is one unit repeated over the watch's span is
+                                    // stopped here, stamped like the engine guard's stop, so the same
+                                    // collapse keeps one copy and the loop-stop nudge continues the turn.
+                                    if let Some(period) = runaway_watch
+                                        .as_mut()
+                                        .and_then(|watch| watch.runaway_period(&text, &last_assistant_text))
+                                    {
+                                        warn!(
+                                            session_id = %session_config.id,
+                                            period,
+                                            chars = last_assistant_text.chars().count(),
+                                            "runaway_text_stopped: the reply's last {} characters repeat one \
+                                             {period}-character unit; goose stopped the stream",
+                                            runaway_watch.as_ref().map_or(0, |watch| watch.span())
+                                        );
+                                        let stamp = goose_providers::formats::openai::OUTPUT_STOPPED_AS_LOOP;
+                                        let mut stop = Message::assistant().with_text(stamp);
+                                        if let Some(id) = response_id {
+                                            stop = stop.with_id(id);
+                                        }
+                                        last_assistant_text.push_str(stamp);
+                                        yield AgentEvent::Message(stop.clone());
+                                        messages_to_add.push(stop);
+                                        break;
+                                    }
                                     continue;
                                 }
 
@@ -3178,6 +3213,19 @@ impl Agent {
                             super::loop_collapse::collapse_looped_reply(
                                 messages_to_add.messages(),
                                 goose_providers::formats::openai::OUTPUT_STOPPED_AS_LOOP,
+                            ),
+                        );
+                    } else if !self.is_swarm_worker()
+                        && last_assistant_text
+                            .contains(goose_providers::formats::openai::OUTPUT_TRUNCATED_BY_LENGTH.trim())
+                    {
+                        // A runaway the watch did not stop (turned off, or not exact) still reaches
+                        // the history as one copy once it ran to the output limit.
+                        messages_to_add = Conversation::new_unvalidated(
+                            super::loop_collapse::collapse_runaway_reply(
+                                messages_to_add.messages(),
+                                goose_providers::formats::openai::OUTPUT_TRUNCATED_BY_LENGTH,
+                                super::loop_collapse::RUNAWAY_TEXT_CHARS_DEFAULT,
                             ),
                         );
                     }
