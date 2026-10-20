@@ -8531,6 +8531,12 @@
   "providerCard.noMetadata": {
     "defaultMessage": "ProviderCard hatası: Meta veri sağlanmadı"
   },
+  "providerCard.notRunning": {
+    "defaultMessage": "Çalışmıyor"
+  },
+  "providerCard.notRunningText": {
+    "defaultMessage": "{origin} adresinde henüz çalışan bir şey yok. Yerel sunucuyu başlatın, ardından bağlantıları yeniden denetleyin."
+  },
   "providerCard.unknownProvider": {
     "defaultMessage": "Bilinmeyen Sağlayıcı"
   },

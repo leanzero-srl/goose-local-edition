@@ -8531,6 +8531,12 @@
   "providerCard.noMetadata": {
     "defaultMessage": "ProviderCardエラー: メタデータが提供されていません"
   },
+  "providerCard.notRunning": {
+    "defaultMessage": "未起動"
+  },
+  "providerCard.notRunningText": {
+    "defaultMessage": "{origin} ではまだ何も動いていません。ローカルサーバーを起動してから、接続を再確認してください。"
+  },
   "providerCard.unknownProvider": {
     "defaultMessage": "不明なプロバイダー"
   },

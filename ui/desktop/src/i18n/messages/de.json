@@ -8531,6 +8531,12 @@
   "providerCard.noMetadata": {
     "defaultMessage": "ProviderCard-Fehler: Keine Metadaten bereitgestellt"
   },
+  "providerCard.notRunning": {
+    "defaultMessage": "Läuft nicht"
+  },
+  "providerCard.notRunningText": {
+    "defaultMessage": "Unter {origin} läuft noch nichts. Starte den lokalen Server und prüfe die Verbindungen dann erneut."
+  },
   "providerCard.unknownProvider": {
     "defaultMessage": "Unbekannter Anbieter"
   },

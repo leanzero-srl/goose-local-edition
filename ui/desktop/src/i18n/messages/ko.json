@@ -8531,6 +8531,12 @@
   "providerCard.noMetadata": {
     "defaultMessage": "ProviderCard 오류: 메타데이터가 제공되지 않았습니다."
   },
+  "providerCard.notRunning": {
+    "defaultMessage": "실행 중 아님"
+  },
+  "providerCard.notRunningText": {
+    "defaultMessage": "{origin}에서 아직 실행 중인 것이 없습니다. 로컬 서버를 시작한 뒤 연결을 다시 확인하세요."
+  },
   "providerCard.unknownProvider": {
     "defaultMessage": "알 수 없는 제공업체"
   },

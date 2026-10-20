@@ -8531,6 +8531,12 @@
   "providerCard.noMetadata": {
     "defaultMessage": "प्रदाता कार्ड त्रुटि: कोई मेटाडेटा प्रदान नहीं किया गया"
   },
+  "providerCard.notRunning": {
+    "defaultMessage": "चल नहीं रहा"
+  },
+  "providerCard.notRunningText": {
+    "defaultMessage": "{origin} पर अभी कुछ नहीं चल रहा है। लोकल सर्वर शुरू करें, फिर कनेक्शन दोबारा जाँचें।"
+  },
   "providerCard.unknownProvider": {
     "defaultMessage": "अज्ञात प्रदाता"
   },

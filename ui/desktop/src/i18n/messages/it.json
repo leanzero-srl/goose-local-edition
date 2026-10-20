@@ -8531,6 +8531,12 @@
   "providerCard.noMetadata": {
     "defaultMessage": "Errore ProviderCard: nessun metadato fornito"
   },
+  "providerCard.notRunning": {
+    "defaultMessage": "Non in esecuzione"
+  },
+  "providerCard.notRunningText": {
+    "defaultMessage": "Non c'è ancora nulla in esecuzione su {origin}. Avvia il server locale, poi ricontrolla le connessioni."
+  },
   "providerCard.unknownProvider": {
     "defaultMessage": "Provider sconosciuto"
   },

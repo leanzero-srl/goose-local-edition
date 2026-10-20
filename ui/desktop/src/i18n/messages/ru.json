@@ -8531,6 +8531,12 @@
   "providerCard.noMetadata": {
     "defaultMessage": "Ошибка ProviderCard: метаданные не предоставлены"
   },
+  "providerCard.notRunning": {
+    "defaultMessage": "Не запущен"
+  },
+  "providerCard.notRunningText": {
+    "defaultMessage": "На {origin} пока ничего не запущено. Запустите локальный сервер, затем проверьте подключения снова."
+  },
   "providerCard.unknownProvider": {
     "defaultMessage": "Неизвестный провайдер"
   },

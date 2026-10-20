@@ -5,6 +5,8 @@ import CardBody from './CardBody';
 import DefaultCardButtons from './buttons/DefaultCardButtons';
 import type { ProviderDetails, ProviderMetadata } from '../../../../types/providers';
 import { defineMessages, useIntl } from '../../../../i18n';
+import { Chip, TYPE, cx } from '../../../lz';
+import { providerRowState } from '../../../leanzero-swarm/cloudProviderState';
 
 const i18n = defineMessages({
   noMetadata: {
@@ -14,6 +16,12 @@ const i18n = defineMessages({
   unknownProvider: {
     id: 'providerCard.unknownProvider',
     defaultMessage: 'Unknown Provider',
+  },
+  notRunning: { id: 'providerCard.notRunning', defaultMessage: 'Not running' },
+  notRunningText: {
+    id: 'providerCard.notRunningText',
+    defaultMessage:
+      'Nothing is running at {origin} yet. Start the local server, then recheck connections.',
   },
 });
 
@@ -41,6 +49,8 @@ export const ProviderCard = function ProviderCard({
     return <div>{intl.formatMessage(i18n.noMetadata)}</div>;
   }
 
+  const state = providerRowState(provider);
+
   const handleCardClick = () => {
     if (!isOnboarding) {
       onConfigure();
@@ -61,10 +71,23 @@ export const ProviderCard = function ProviderCard({
       }
       body={
         <CardBody>
-          {provider.connection_error && (
+          {state === 'failed' && (
             <p role="alert" className="mb-3 text-sm text-text-danger break-words">
               {provider.connection_error}
             </p>
+          )}
+          {state === 'not-running' && (
+            <div
+              data-testid={`provider-card-not-running-${provider.name}`}
+              className="mb-3 flex flex-col items-start gap-1"
+            >
+              <Chip tone="stopped">{intl.formatMessage(i18n.notRunning)}</Chip>
+              <p className={cx('break-words', TYPE.meta)}>
+                {intl.formatMessage(i18n.notRunningText, {
+                  origin: provider.local_server_not_running,
+                })}
+              </p>
+            </div>
           )}
           <DefaultCardButtons
             provider={provider}

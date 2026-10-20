@@ -8531,6 +8531,12 @@
   "providerCard.noMetadata": {
     "defaultMessage": "Lỗi ProviderCard: Không có metadata được cung cấp"
   },
+  "providerCard.notRunning": {
+    "defaultMessage": "Chưa chạy"
+  },
+  "providerCard.notRunningText": {
+    "defaultMessage": "Chưa có gì chạy tại {origin}. Hãy khởi động máy chủ cục bộ, rồi kiểm tra lại kết nối."
+  },
   "providerCard.unknownProvider": {
     "defaultMessage": "Nhà cung cấp không xác định"
   },

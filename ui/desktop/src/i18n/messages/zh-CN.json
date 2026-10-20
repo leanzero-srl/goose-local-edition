@@ -8531,6 +8531,12 @@
   "providerCard.noMetadata": {
     "defaultMessage": "ProviderCard 错误：未提供元数据"
   },
+  "providerCard.notRunning": {
+    "defaultMessage": "未运行"
+  },
+  "providerCard.notRunningText": {
+    "defaultMessage": "{origin} 上还没有任何服务在运行。请启动本地服务器，然后重新检查连接。"
+  },
   "providerCard.unknownProvider": {
     "defaultMessage": "未知提供商"
   },

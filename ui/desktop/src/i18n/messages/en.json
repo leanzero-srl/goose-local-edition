@@ -8678,6 +8678,12 @@
   "providerCard.noMetadata": {
     "defaultMessage": "ProviderCard error: No metadata provided"
   },
+  "providerCard.notRunning": {
+    "defaultMessage": "Not running"
+  },
+  "providerCard.notRunningText": {
+    "defaultMessage": "Nothing is running at {origin} yet. Start the local server, then recheck connections."
+  },
   "providerCard.unknownProvider": {
     "defaultMessage": "Unknown Provider"
   },

@@ -8531,6 +8531,12 @@
   "providerCard.noMetadata": {
     "defaultMessage": "Ralat ProviderCard: Tiada metadata disediakan"
   },
+  "providerCard.notRunning": {
+    "defaultMessage": "Tidak berjalan"
+  },
+  "providerCard.notRunningText": {
+    "defaultMessage": "Belum ada apa-apa yang berjalan di {origin}. Mulakan pelayan tempatan, kemudian semak semula sambungan."
+  },
   "providerCard.unknownProvider": {
     "defaultMessage": "Penyedia Tidak Diketahui"
   },

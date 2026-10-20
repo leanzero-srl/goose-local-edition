@@ -8531,6 +8531,12 @@
   "providerCard.noMetadata": {
     "defaultMessage": "ProviderCard 錯誤：未提供中繼資料"
   },
+  "providerCard.notRunning": {
+    "defaultMessage": "未執行"
+  },
+  "providerCard.notRunningText": {
+    "defaultMessage": "{origin} 上還沒有任何服務在執行。請啟動本機伺服器，然後重新檢查連線。"
+  },
   "providerCard.unknownProvider": {
     "defaultMessage": "未知的提供者"
   },

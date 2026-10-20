@@ -8531,6 +8531,12 @@
   "providerCard.noMetadata": {
     "defaultMessage": "Erreur ProviderCard : aucune métadonnée fournie"
   },
+  "providerCard.notRunning": {
+    "defaultMessage": "Non démarré"
+  },
+  "providerCard.notRunningText": {
+    "defaultMessage": "Rien ne tourne encore à {origin}. Démarrez le serveur local, puis revérifiez les connexions."
+  },
   "providerCard.unknownProvider": {
     "defaultMessage": "Fournisseur inconnu"
   },
