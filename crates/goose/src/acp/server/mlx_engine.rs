@@ -910,6 +910,7 @@ async fn core_model_delete(
 
 /// Whether the saved split runs a rank on Link peer `node` (`link:<node>`). An unreadable split
 /// config answers no: the record then stays, and a later start names what is missing.
+#[cfg(unix)]
 fn split_runs_on_link_peer(node: &str) -> bool {
     super::mlx_distributed::persisted_config()
         .ok()
@@ -919,6 +920,13 @@ fn split_runs_on_link_peer(node: &str) -> bool {
                 goose_sidecar::distributed::link_control::link_peer(n.host()) == Some(node)
             })
         })
+}
+
+/// The distributed engine has no Windows shape (goose_sidecar::distributed is unix-only), so no
+/// saved split can run a rank anywhere.
+#[cfg(not(unix))]
+fn split_runs_on_link_peer(_node: &str) -> bool {
+    false
 }
 
 /// A deleted model cannot come back at the next launch: a record naming that copy goes with it.
