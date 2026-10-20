@@ -838,10 +838,17 @@ async fn run_command(
                     while let Ok(item) = rx.try_recv() {
                         lines.push(item);
                     }
+                    // The leader is reaped the moment it exits, not once the pipes close: an
+                    // end held outside the group — a daemon that left it, or a descriptor a
+                    // concurrent spawn inherited before std marked it close-on-exec (macOS has
+                    // no pipe2) — keeps them open, and a killed leader left unreaped is a
+                    // zombie that keeps the group probing alive.
                     tokio::spawn(async move {
-                        while rx.recv().await.is_some() {}
-                        let _ = output_task.await;
-                        let _ = child.wait().await;
+                        let drain = async move {
+                            while rx.recv().await.is_some() {}
+                            let _ = output_task.await;
+                        };
+                        let _ = tokio::join!(drain, child.wait());
                     });
                     return Ok(ExecutionOutput {
                         lines,
@@ -1530,6 +1537,68 @@ mod tests {
             }
         }
         assert!(gone, "the attempt-end reap must clear the detached group");
+    }
+
+    /// The detached leader is reaped when it dies even while something outside its group still
+    /// holds its output pipe (run 39062879196: the expiry test above read its reaped group alive —
+    /// the drainer reaped the leader only after EOF, and in a test binary on macOS a pipe end can
+    /// leak into a concurrent spawn before std marks it close-on-exec). Here the holder leaves the
+    /// group on purpose, so the case is deterministic.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_detached_leader_is_reaped_while_a_process_outside_its_group_holds_its_output() {
+        use super::super::process_groups;
+        process_groups::enable();
+        let dir = tempfile::tempdir().unwrap();
+        let holder_pid_file = dir.path().join("holder.pid");
+        let tool = ShellTool::new_for_test().unwrap();
+        let result = tool
+            .shell_in_session(
+                ShellParams {
+                    command: format!(
+                        "perl -e 'setpgrp(0, 0); open my $f, \">\", $ARGV[0]; print $f $$; close $f; sleep 300' '{}' & sleep 300",
+                        holder_pid_file.display()
+                    ),
+                    timeout_secs: Some(1),
+                },
+                None,
+                Some("shell-detach-held-pipe-session"),
+            )
+            .await;
+        assert!(
+            extract_shell_output(&result).still_running,
+            "{}",
+            extract_text(&result)
+        );
+        let mut holder = None;
+        for _ in 0..250 {
+            holder = std::fs::read_to_string(&holder_pid_file)
+                .ok()
+                .and_then(|pid| pid.trim().parse::<i32>().ok());
+            if holder.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let holder = holder.expect("the holder wrote its pid");
+
+        let killed = process_groups::reap_session("shell-detach-held-pipe-session");
+        assert_eq!(killed.len(), 1, "the detached group must be registered");
+        let pgid = killed[0];
+        let mut gone = false;
+        for _ in 0..250 {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            if !process_groups::group_alive(pgid) {
+                gone = true;
+                break;
+            }
+        }
+        // SAFETY: the holder this test started, signalled by its own pid.
+        unsafe { libc::kill(holder, libc::SIGKILL) };
+        assert!(
+            gone,
+            "the killed leader must be reaped while the holder outside its group keeps the pipe open"
+        );
     }
 
     #[cfg(not(windows))]
