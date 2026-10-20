@@ -3314,14 +3314,17 @@ mod tests {
                     Ok(stream_from_single_message(
                         Message::assistant()
                             .with_thinking("Plan the whole app in one go", "")
-                            .with_text(
-                                if self.loop_stop {
+                            .with_text(if self.loop_stop {
+                                format!(
+                                    "{}{}",
+                                    "do it. First, `config.js`. I'll add the field. ".repeat(38),
                                     goose_providers::formats::openai::OUTPUT_STOPPED_AS_LOOP
-                                } else {
-                                    goose_providers::formats::openai::OUTPUT_TRUNCATED_BY_LENGTH
-                                }
-                                .trim_start(),
-                            ),
+                                )
+                            } else {
+                                goose_providers::formats::openai::OUTPUT_TRUNCATED_BY_LENGTH
+                                    .trim_start()
+                                    .to_string()
+                            }),
                         usage(),
                     ))
                 } else if call < self.empty_count {
@@ -3517,7 +3520,7 @@ mod tests {
             let loop_nudge = "kept repeating the same text";
             let length_nudge = "cut off at the model's output-token limit";
             let provider = Arc::new(EmptyThenTextProvider::loop_stop(3));
-            let (messages, _persisted) = run_reply(provider.clone(), "loop-stop-continue").await?;
+            let (messages, persisted) = run_reply(provider.clone(), "loop-stop-continue").await?;
             assert!(concat_text(&messages).contains("All done."));
             let seen = turn(&provider);
             assert_eq!(seen.len(), 3, "{seen:?}");
@@ -3526,6 +3529,13 @@ mod tests {
                 "{seen:?}"
             );
             assert!(!seen.iter().any(|t| t.contains(length_nudge)), "{seen:?}");
+            // Review 2026-10-19: the history keeps ONE copy of the repeated text, not 38.
+            let stored = concat_text(&persisted);
+            assert!(
+                stored.matches("do it. First").count() <= 2,
+                "two loop-stopped replies, one copy each: {stored}"
+            );
+            assert!(stored.contains("repeats were removed"), "{stored}");
 
             let always = Arc::new(EmptyThenTextProvider::loop_stop(usize::MAX));
             run_reply(always.clone(), "loop-stop-bounded").await?;

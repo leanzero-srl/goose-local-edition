@@ -86,8 +86,9 @@ pub const LENGTH_CUT_CONTINUATION: &str = "Your last reply was cut off at the mo
 /// Answers a reply the engine's loop guard stopped (I-28) instead of LENGTH_CUT_CONTINUATION: the
 /// model was repeating itself, so "keep each reply under the limit" was the wrong cause and advice.
 pub const LOOP_STOP_CONTINUATION: &str = "Your last reply was stopped because it kept repeating the same \
-     text in a loop, so it is unfinished and nothing in it was carried out. Do not write it again: take a \
-     different next step now with a tool call, or give your final answer if the task is done.";
+     text in a loop (goose kept one copy of the repeated text above), so it is unfinished and nothing in it \
+     was carried out. Do not write it again: take a different next step now with a tool call, or give your \
+     final answer if the task is done.";
 /// Sent (agent-visible only) with every empty-turn retry. Resending the identical conversation to a
 /// deterministic local model reproduces the same empty reply: Gemma 4 26B-A4B (2026-10-18) stopped after one
 /// token three times on the same 71,670-token prompt and the run was refused.
@@ -3168,6 +3169,18 @@ impl Agent {
 
                 let mut terminal_structured_provider_error = false;
                 if no_tools_called && !exit_chat && !resending {
+                    // I-28 review: a reply the engine stopped as a loop keeps one copy of the
+                    // repeated text in the history, whether or not a nudge follows it.
+                    if last_assistant_text
+                        .contains(goose_providers::formats::openai::OUTPUT_STOPPED_AS_LOOP.trim())
+                    {
+                        messages_to_add = Conversation::new_unvalidated(
+                            super::loop_collapse::collapse_looped_reply(
+                                messages_to_add.messages(),
+                                goose_providers::formats::openai::OUTPUT_STOPPED_AS_LOOP,
+                            ),
+                        );
+                    }
                     // Lock, extract state, drop guard before branching — handle_retry_logic
                     // also locks final_output_tool and tokio::sync::Mutex is not reentrant.
                     let final_output = {
