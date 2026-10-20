@@ -2473,6 +2473,10 @@ impl Agent {
                     };
                     let Some(next) = next else {
                         resend.call_completed();
+                        // Only a call that ran to its end clears the refusal count: a provider
+                        // that streams part of a reply and then refuses it as too long would
+                        // otherwise reset the count on its first item and compact without end.
+                        compaction_attempts = 0;
                         break;
                     };
 
@@ -2485,7 +2489,6 @@ impl Agent {
                     match next {
                         Ok((response, usage)) => {
                             turn_failure = None;
-                            compaction_attempts = 0;
                             last_call_usage = if usage
                                 .as_ref()
                                 .is_some_and(|u| u.usage.total_tokens.is_some())
