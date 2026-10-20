@@ -4698,7 +4698,12 @@ pub struct MlxServingIntentDto {
     response = MlxEngineServingIntentResponse
 )]
 #[serde(rename_all = "camelCase")]
-pub struct MlxEngineServingIntentRequest {}
+pub struct MlxEngineServingIntentRequest {
+    /// The launch restore's own read. Only it runs the gone-model check (with
+    /// `GOOSE_MLX_RESTORE_AT_LAUNCH` on); every other reader gets the record as it stands.
+    #[serde(default)]
+    pub at_launch: bool,
+}
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
 #[serde(rename_all = "camelCase")]

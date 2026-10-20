@@ -11534,6 +11534,13 @@
     },
     "MlxEngineServingIntentRequest_unstable": {
       "type": "object",
+      "properties": {
+        "atLaunch": {
+          "type": "boolean",
+          "description": "The launch restore's own read. Only it runs the gone-model check (with\n`GOOSE_MLX_RESTORE_AT_LAUNCH` on); every other reader gets the record as it stands.",
+          "default": false
+        }
+      },
       "description": "Read the serving intent. Written by the owner's own starts (Mount, remote single start, split\nstart), removed by the matching explicit stop; an app quit or a goosed exit never touches it.",
       "x-side": "agent",
       "x-method": "_goose/unstable/mlxEngine/servingIntent"

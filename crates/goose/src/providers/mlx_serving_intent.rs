@@ -84,25 +84,22 @@ pub fn forget(kind: IntentKind) -> Result<bool> {
     forget_at(&record_path(), kind)
 }
 
-/// Where a model was deleted: on this Mac's models dir, or on Link peer `peer` (its node id).
+/// Where a model was deleted: on this Mac's models dir, or on Link peer `node` (its node id).
+/// `in_split`: the saved split names that peer as one of its Macs (`link:<node>`), so the split
+/// loads the peer's copy too.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeletedOn<'a> {
     ThisMac,
-    Peer(&'a str),
+    Peer { node: &'a str, in_split: bool },
 }
 
 /// The owner deleted `model_id`: a record that would bring that copy back is forgotten. This
 /// Mac's copy serves the single engine and the split; a peer's copy serves the remote single
-/// routed to that peer. Any other record stays.
+/// routed to that peer, and the split when the split runs a rank there. Any other record stays.
+/// A split peer reached by an ssh alias is not named by a Link node id, so a delete over Link
+/// cannot be matched to it and its split record stays.
 pub fn forget_deleted_model(model_id: &str, on: DeletedOn<'_>) -> Result<bool> {
     forget_deleted_model_at(&record_path(), model_id, on)
-}
-
-/// At launch, with restore on: a single-engine record whose model folder is provably gone from
-/// `models_dir` (the owner deleted it, here or by hand) can bring nothing back, so it is
-/// forgotten and the launch shows nothing. Out of reach is not gone (`model_folder_gone`).
-pub fn forget_if_model_gone(models_dir: &Path) -> IntentRecord {
-    forget_if_model_gone_at(&record_path(), models_dir)
 }
 
 pub(crate) fn forget_deleted_model_at(
@@ -121,8 +118,12 @@ pub(crate) fn forget_deleted_model_at(
             IntentRecord::Present(ServingIntent::RemoteSingle {
                 peer, model_id: m, ..
             }),
-            DeletedOn::Peer(deleted_on),
-        ) => peer == deleted_on && m == model_id,
+            DeletedOn::Peer { node, .. },
+        ) => peer == node && m == model_id,
+        (
+            IntentRecord::Present(ServingIntent::Split { model_id: m }),
+            DeletedOn::Peer { in_split: true, .. },
+        ) => m == model_id,
         _ => false,
     };
     if names_it {
@@ -131,12 +132,23 @@ pub(crate) fn forget_deleted_model_at(
     Ok(names_it)
 }
 
-pub(crate) fn forget_if_model_gone_at(path: &Path, models_dir: &Path) -> IntentRecord {
+/// The launch restore's read, with restore on: a single-engine record whose model folder is
+/// provably gone from `models_dir` (the owner deleted it, here or by hand) can bring nothing back,
+/// so it is forgotten and the launch shows nothing. Out of reach is not gone
+/// (`model_folder_gone`), and a model the engine is serving (`serving`) is never forgotten.
+/// Only the launch restore calls this: every other reader of the record reads it as it stands.
+pub(crate) fn forget_if_model_gone_at(
+    path: &Path,
+    models_dir: &Path,
+    serving: Option<&str>,
+) -> IntentRecord {
     let record = read_at(path);
     let IntentRecord::Present(ServingIntent::Single { model_id }) = &record else {
         return record;
     };
-    if !goose_sidecar::hf::model_folder_gone(models_dir, model_id) {
+    if serving == Some(model_id.as_str())
+        || !goose_sidecar::hf::model_folder_gone(models_dir, model_id)
+    {
         return record;
     }
     match forget_at(path, IntentKind::Single) {
@@ -281,7 +293,7 @@ mod tests {
 
         remember_at(&path, &single("pub/deleted")).unwrap();
         assert_eq!(
-            forget_if_model_gone_at(&path, &models),
+            forget_if_model_gone_at(&path, &models, None),
             IntentRecord::Absent
         );
         assert_eq!(
@@ -292,7 +304,7 @@ mod tests {
 
         remember_at(&path, &single("pub/kept")).unwrap();
         assert_eq!(
-            forget_if_model_gone_at(&path, &models),
+            forget_if_model_gone_at(&path, &models, None),
             IntentRecord::Present(single("pub/kept"))
         );
         assert_eq!(read_at(&path), IntentRecord::Present(single("pub/kept")));
@@ -307,14 +319,14 @@ mod tests {
 
         remember_at(&path, &single("pub/m")).unwrap();
         assert_eq!(
-            forget_if_model_gone_at(&path, &empty),
+            forget_if_model_gone_at(&path, &empty, None),
             IntentRecord::Present(single("pub/m")),
             "an empty models dir may be an unmounted share"
         );
         remember_at(&path, &remote()).unwrap();
         let models = models_dir_with(dir.path(), &["pub/other"]);
         assert_eq!(
-            forget_if_model_gone_at(&path, &models),
+            forget_if_model_gone_at(&path, &models, None),
             IntentRecord::Present(remote()),
             "a remote single's model lives on the peer"
         );
@@ -344,17 +356,77 @@ mod tests {
             !forget_deleted_model_at(&path, model, DeletedOn::ThisMac).unwrap(),
             "this Mac's copy is not the peer's"
         );
-        assert!(!forget_deleted_model_at(&path, model, DeletedOn::Peer("another-mac")).unwrap());
+        assert!(!forget_deleted_model_at(
+            &path,
+            model,
+            DeletedOn::Peer {
+                node: "another-mac",
+                in_split: false
+            }
+        )
+        .unwrap());
         assert_eq!(read_at(&path), IntentRecord::Present(remote()));
         assert!(forget_deleted_model_at(
             &path,
             model,
-            DeletedOn::Peer("worksmacstudio-lan-9c1e2a")
+            DeletedOn::Peer {
+                node: "worksmacstudio-lan-9c1e2a",
+                in_split: false,
+            }
         )
         .unwrap());
         assert_eq!(read_at(&path), IntentRecord::Absent);
 
         assert!(!forget_deleted_model_at(&path, model, DeletedOn::ThisMac).unwrap());
+    }
+
+    #[test]
+    fn deleting_the_peer_copy_a_split_loads_forgets_the_split() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(RECORD_FILE);
+        let split = ServingIntent::Split {
+            model_id: "pub/flash".to_string(),
+        };
+        remember_at(&path, &split).unwrap();
+        let peer = |in_split| DeletedOn::Peer {
+            node: "studio",
+            in_split,
+        };
+        assert!(!forget_deleted_model_at(&path, "pub/flash", peer(false)).unwrap());
+        assert!(!forget_deleted_model_at(&path, "pub/other", peer(true)).unwrap());
+        assert_eq!(read_at(&path), IntentRecord::Present(split));
+        assert!(forget_deleted_model_at(&path, "pub/flash", peer(true)).unwrap());
+        assert_eq!(read_at(&path), IntentRecord::Absent);
+    }
+
+    #[test]
+    fn a_model_the_engine_serves_is_never_forgotten() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(RECORD_FILE);
+        let models = models_dir_with(dir.path(), &["pub/kept"]);
+        remember_at(&path, &single("pub/gone-from-disk")).unwrap();
+        assert_eq!(
+            forget_if_model_gone_at(&path, &models, Some("pub/gone-from-disk")),
+            IntentRecord::Present(single("pub/gone-from-disk"))
+        );
+        assert_eq!(
+            read_at(&path),
+            IntentRecord::Present(single("pub/gone-from-disk"))
+        );
+    }
+
+    #[test]
+    fn a_models_dir_holding_only_ds_store_forgets_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(RECORD_FILE);
+        let models = dir.path().join("models");
+        std::fs::create_dir_all(models.join(".locks")).unwrap();
+        std::fs::write(models.join(".DS_Store"), b"x").unwrap();
+        remember_at(&path, &single("pub/m")).unwrap();
+        assert_eq!(
+            forget_if_model_gone_at(&path, &models, None),
+            IntentRecord::Present(single("pub/m"))
+        );
     }
 
     #[test]

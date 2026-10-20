@@ -4836,7 +4836,11 @@ export type MlxEngineRemoteSingleStatusResponse_unstable = {
  * start), removed by the matching explicit stop; an app quit or a goosed exit never touches it.
  */
 export type MlxEngineServingIntentRequest_unstable = {
-    [key: string]: unknown;
+    /**
+     * The launch restore's own read. Only it runs the gone-model check (with
+     * `GOOSE_MLX_RESTORE_AT_LAUNCH` on); every other reader gets the record as it stands.
+     */
+    atLaunch?: boolean;
 };
 
 export type MlxEngineServingIntentResponse_unstable = {

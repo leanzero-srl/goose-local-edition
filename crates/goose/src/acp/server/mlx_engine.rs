@@ -29,8 +29,8 @@ const MLX_ENGINE_CONFIG_KEY: &str = "mlx_engine";
 /// default: a relaunch starts no model the owner did not start in this session.
 pub(super) const RESTORE_AT_LAUNCH_KEY: &str = "GOOSE_MLX_RESTORE_AT_LAUNCH";
 
-fn restore_at_launch() -> bool {
-    match Config::global().get_param::<bool>(RESTORE_AT_LAUNCH_KEY) {
+fn restore_at_launch(config: &Config) -> bool {
+    match config.get_param::<bool>(RESTORE_AT_LAUNCH_KEY) {
         Ok(on) => on,
         Err(ConfigError::NotFound(_)) => false,
         Err(e) => {
@@ -43,23 +43,51 @@ fn restore_at_launch() -> bool {
     }
 }
 
-/// What the launch's restore reads: with the switch off the record is reported as it stands and
-/// nothing comes back; with it on, a single-engine record whose model is provably gone from
-/// `models_dir` is forgotten first.
-fn launch_serving_intent(
-    restore_at_launch: bool,
-    record: impl FnOnce() -> IntentRecord,
-    forget_gone: impl FnOnce() -> IntentRecord,
+/// The `servingIntent` answer. The owner's switch is read FIRST and nothing else can fail the
+/// call: with it off, or for any reader but the launch restore (`at_launch`), the record is
+/// reported as it stands. Only the launch restore with the switch on runs the gone-model check,
+/// and only on facts it can read — unreadable `mlx_engine` settings fall back to the plain read
+/// (a red "Restore failed" over a settings typo is the defect this replaces), and a model the
+/// engine is serving right now (`serving`) is never forgotten.
+async fn serving_intent_answer(
+    config: &Config,
+    at_launch: bool,
+    record_path: &std::path::Path,
+    serving: impl std::future::Future<Output = Option<String>>,
 ) -> MlxEngineServingIntentResponse {
-    let record = if restore_at_launch {
-        forget_gone()
-    } else {
-        record()
-    };
-    MlxEngineServingIntentResponse {
+    let restore_at_launch = restore_at_launch(config);
+    let answer = |record| MlxEngineServingIntentResponse {
         restore_at_launch,
         ..serving_intent_response(record)
+    };
+    if !restore_at_launch || !at_launch {
+        return answer(mlx_serving_intent::read_at(record_path));
     }
+    let models_dir = match config.get_param::<EngineSettings>(MLX_ENGINE_CONFIG_KEY) {
+        Ok(settings) => expand_tilde(&settings.models_dir),
+        Err(ConfigError::NotFound(_)) => expand_tilde(&EngineSettings::default().models_dir),
+        Err(e) => {
+            warn!(
+                error = %e,
+                "mlx_engine config is unreadable; the launch restore reads its record without the gone-model check"
+            );
+            return answer(mlx_serving_intent::read_at(record_path));
+        }
+    };
+    let serving = serving.await;
+    answer(mlx_serving_intent::forget_if_model_gone_at(
+        record_path,
+        &models_dir,
+        serving.as_deref(),
+    ))
+}
+
+/// The model this goosed's single engine serves or is loading, if any.
+async fn engine_serving_model() -> Option<String> {
+    let status = global_manager().status().await;
+    matches!(status.state.as_str(), "running" | "mounting")
+        .then_some(status.model_id)
+        .flatten()
 }
 
 /// True when the operator exported OMLX_HOST before goosed started — their value wins
@@ -880,6 +908,19 @@ async fn core_model_delete(
     Ok(EmptyResponse {})
 }
 
+/// Whether the saved split runs a rank on Link peer `node` (`link:<node>`). An unreadable split
+/// config answers no: the record then stays, and a later start names what is missing.
+fn split_runs_on_link_peer(node: &str) -> bool {
+    super::mlx_distributed::persisted_config()
+        .ok()
+        .flatten()
+        .is_some_and(|config| {
+            config.nodes.iter().any(|n| {
+                goose_sidecar::distributed::link_control::link_peer(n.host()) == Some(node)
+            })
+        })
+}
+
 /// A deleted model cannot come back at the next launch: a record naming that copy goes with it.
 /// The delete itself stands either way; a record that cannot be removed is said in the log.
 fn forget_deleted_model(model_id: &str, on: DeletedOn<'_>) {
@@ -1147,14 +1188,15 @@ impl GooseAcpAgent {
 
     pub(super) async fn on_mlx_engine_serving_intent(
         &self,
-        _req: MlxEngineServingIntentRequest,
+        req: MlxEngineServingIntentRequest,
     ) -> Result<MlxEngineServingIntentResponse, agent_client_protocol::Error> {
-        let models_dir = expand_tilde(&load_engine_settings()?.models_dir);
-        Ok(launch_serving_intent(
-            restore_at_launch(),
-            mlx_serving_intent::read,
-            || mlx_serving_intent::forget_if_model_gone(&models_dir),
-        ))
+        Ok(serving_intent_answer(
+            Config::global(),
+            req.at_launch,
+            &mlx_serving_intent::record_path(),
+            engine_serving_model(),
+        )
+        .await)
     }
 
     pub(super) async fn on_mlx_engine_settings_read(
@@ -1199,7 +1241,14 @@ impl GooseAcpAgent {
             let response = self
                 .mlx_engine_relay(&node, MlxOp::ModelDelete, &req)
                 .await?;
-            forget_deleted_model(&req.model_id, DeletedOn::Peer(&node));
+            let in_split = split_runs_on_link_peer(&node);
+            forget_deleted_model(
+                &req.model_id,
+                DeletedOn::Peer {
+                    node: &node,
+                    in_split,
+                },
+            );
             return Ok(response);
         }
         core_model_delete(req).await
@@ -1456,35 +1505,127 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
-    /// Off (the default) the launch restores nothing and forgets nothing: the record is reported
-    /// as it stands so turning the switch on later brings it back. On, the record is read through
-    /// the gone-model check.
-    #[test]
-    fn the_launch_restores_only_with_the_owners_switch_on() {
-        let single = || {
-            IntentRecord::Present(ServingIntent::Single {
-                model_id: "pub/m".to_string(),
-            })
-        };
-        let off = launch_serving_intent(false, single, || {
-            panic!("the switch is off: nothing may be forgotten")
-        });
-        assert!(!off.restore_at_launch);
-        assert_eq!(off.intent.map(|i| i.model_id).as_deref(), Some("pub/m"));
+    struct LaunchFixture {
+        _dir: tempfile::TempDir,
+        config: Config,
+        record: std::path::PathBuf,
+    }
+
+    /// A real goose config file (`config_yaml`, `{models}` replaced by a models dir holding one
+    /// real model `pub/kept`) and a serving-intent record naming `recorded`.
+    fn launch_fixture(config_yaml: &str, recorded: &str) -> LaunchFixture {
+        let dir = tempfile::tempdir().unwrap();
+        let models = dir.path().join("models");
+        std::fs::create_dir_all(models.join("pub/kept")).unwrap();
+        std::fs::write(models.join("pub/kept/config.json"), b"{}").unwrap();
+        let config_path = dir.path().join("config.yaml");
+        std::fs::write(
+            &config_path,
+            config_yaml.replace("{models}", &models.display().to_string()),
+        )
+        .unwrap();
+        let config =
+            Config::new_with_file_secrets(&config_path, dir.path().join("secrets.yaml")).unwrap();
+        let record = dir.path().join("mlx-serving-intent.json");
+        std::fs::write(
+            &record,
+            format!(r#"{{"kind":"single","modelId":"{recorded}"}}"#),
+        )
+        .unwrap();
+        LaunchFixture {
+            _dir: dir,
+            config,
+            record,
+        }
+    }
+
+    fn intent_model(response: &MlxEngineServingIntentResponse) -> Option<&str> {
+        response.intent.as_ref().map(|i| i.model_id.as_str())
+    }
+
+    async fn not_serving() -> Option<String> {
+        None
+    }
+
+    /// Off (the default) nothing can fail the answer: a wrongly-typed `mlx_engine` block is never
+    /// read, the record is reported as it stands, and nothing is forgotten.
+    #[tokio::test]
+    async fn off_answers_whatever_the_engine_settings_hold() {
+        let f = launch_fixture("mlx_engine:\n  port: not-a-port\n", "pub/gone");
+        let answer = serving_intent_answer(&f.config, true, &f.record, not_serving()).await;
+        assert!(!answer.restore_at_launch);
+        assert!(answer.error.is_none());
+        assert_eq!(intent_model(&answer), Some("pub/gone"));
+        assert!(f.record.exists());
+    }
+
+    /// On, the launch restore with unreadable engine settings falls back to the plain read: no
+    /// error reaches the desktop, nothing is forgotten.
+    #[tokio::test]
+    async fn on_with_unreadable_engine_settings_reads_the_record_plainly() {
+        let f = launch_fixture(
+            "GOOSE_MLX_RESTORE_AT_LAUNCH: true\nmlx_engine:\n  port: not-a-port\n",
+            "pub/gone",
+        );
+        let answer = serving_intent_answer(&f.config, true, &f.record, not_serving()).await;
+        assert!(answer.restore_at_launch);
+        assert!(answer.error.is_none());
+        assert_eq!(intent_model(&answer), Some("pub/gone"));
+        assert!(f.record.exists());
+    }
+
+    /// On, only the launch restore forgets a gone model; the composer's lookup and the router read
+    /// the record as it stands mid-session.
+    #[tokio::test]
+    async fn only_the_launch_restore_forgets_a_gone_model() {
+        let yaml = "GOOSE_MLX_RESTORE_AT_LAUNCH: true\nmlx_engine:\n  models_dir: {models}\n";
+        let f = launch_fixture(yaml, "pub/gone");
+        let mid_session = serving_intent_answer(&f.config, false, &f.record, not_serving()).await;
+        assert_eq!(intent_model(&mid_session), Some("pub/gone"));
+        assert!(f.record.exists());
+
+        let launch = serving_intent_answer(&f.config, true, &f.record, not_serving()).await;
+        assert!(launch.restore_at_launch);
+        assert!(launch.intent.is_none() && launch.error.is_none());
+        assert!(!f.record.exists());
+
+        let f = launch_fixture(yaml, "pub/kept");
+        let launch = serving_intent_answer(&f.config, true, &f.record, not_serving()).await;
+        assert_eq!(intent_model(&launch), Some("pub/kept"));
+    }
+
+    /// On, a model the engine is serving is never forgotten, even with its folder gone.
+    #[tokio::test]
+    async fn the_launch_restore_never_forgets_the_model_the_engine_serves() {
+        let f = launch_fixture(
+            "GOOSE_MLX_RESTORE_AT_LAUNCH: true\nmlx_engine:\n  models_dir: {models}\n",
+            "pub/gone",
+        );
+        let answer = serving_intent_answer(&f.config, true, &f.record, async {
+            Some("pub/gone".to_string())
+        })
+        .await;
+        assert_eq!(intent_model(&answer), Some("pub/gone"));
+        assert!(f.record.exists());
+    }
+
+    /// The switch reads a quoted or capitalised true the way every goose boolean does.
+    #[tokio::test]
+    async fn the_switch_reads_a_quoted_true() {
+        for value in ["\"True\"", "TRUE", "\" true \""] {
+            let f = launch_fixture(
+                &format!("GOOSE_MLX_RESTORE_AT_LAUNCH: {value}\n"),
+                "pub/kept",
+            );
+            let answer = serving_intent_answer(&f.config, false, &f.record, not_serving()).await;
+            assert!(answer.restore_at_launch, "{value}");
+        }
         assert!(
             serde_json::to_value(MlxEngineServingIntentResponse::default())
                 .unwrap()
                 .get("restoreAtLaunch")
                 .is_some_and(|v| v == false)
         );
-
-        let on = launch_serving_intent(
-            true,
-            || panic!("on reads through the check"),
-            || IntentRecord::Absent,
-        );
-        assert!(on.restore_at_launch);
-        assert!(on.intent.is_none() && on.error.is_none());
     }
 
     /// Q-277: the last gate reaches the wire whole as `gateFit` — the model it judged, its verdict

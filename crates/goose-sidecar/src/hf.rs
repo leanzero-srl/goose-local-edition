@@ -1578,12 +1578,14 @@ pub fn delete_local_model(models_dir: &Path, id: &str) -> Result<()> {
     remove_model_dir(models_dir, id, Need::Model)
 }
 
-/// True only when `id`'s folder is PROVABLY gone from `models_dir`: the models dir is readable
-/// and not empty, and either the publisher has no entry at all, or the publisher resolves to a
-/// readable folder holding no entry named for the model. An empty models dir proves nothing (the
-/// laptop's models dir is an NFS mount point that is empty without its Thunderbolt cable), and
-/// neither does a link whose target does not resolve (a publisher or model linked to an
-/// unmounted SSD): both answer false, so a caller never forgets a model that is only out of reach.
+/// True only when `id`'s folder is PROVABLY gone from `models_dir`. The positive control comes
+/// first, on the same tree: the dir must list at least one real model (`publisher/name/config.json`,
+/// dot-entries ignored), because an unmounted share is not always empty — macOS leaves
+/// `.DS_Store` on the laptop's NFS mount point, a download leaves `.locks`, a publisher folder can
+/// outlive its last model. Then the publisher must have no entry at all, or resolve to a readable
+/// folder with no entry named for the model. A link whose target does not resolve (a publisher or
+/// model linked to an unmounted SSD) proves nothing either: false, so a caller never forgets a
+/// model that is only out of reach.
 pub fn model_folder_gone(models_dir: &Path, id: &str) -> bool {
     if validate_model_id(id).is_err() {
         return false;
@@ -1591,10 +1593,7 @@ pub fn model_folder_gone(models_dir: &Path, id: &str) -> bool {
     let Some((publisher, name)) = id.split_once('/') else {
         return false;
     };
-    let Ok(mut entries) = std::fs::read_dir(models_dir) else {
-        return false;
-    };
-    if entries.next().is_none() {
+    if !lists_a_real_model(models_dir) {
         return false;
     }
     let absent = |path: &Path| {
@@ -1608,6 +1607,21 @@ pub fn model_folder_gone(models_dir: &Path, id: &str) -> bool {
         return true;
     }
     std::fs::read_dir(&publisher_dir).is_ok() && absent(&publisher_dir.join(name))
+}
+
+fn lists_a_real_model(models_dir: &Path) -> bool {
+    let visible = |entry: &std::fs::DirEntry| !entry.file_name().to_string_lossy().starts_with('.');
+    let Ok(publishers) = std::fs::read_dir(models_dir) else {
+        return false;
+    };
+    publishers.flatten().filter(visible).any(|publisher| {
+        std::fs::read_dir(publisher.path()).is_ok_and(|models| {
+            models
+                .flatten()
+                .filter(visible)
+                .any(|model| model.path().join("config.json").is_file())
+        })
+    })
 }
 
 #[cfg(test)]
@@ -2615,8 +2629,9 @@ mod tests {
     }
 
     /// A model is "gone" only when the models dir proves it: a deleted folder is gone, a listed
-    /// model is not, and neither an empty models dir (an unmounted share) nor a link to an
-    /// unmounted SSD proves anything.
+    /// model is not, and nothing proves anything until the dir lists one real model — not an
+    /// empty dir, not the `.DS_Store` macOS leaves on an unmounted share, not `.locks`, not an
+    /// empty publisher — nor does a link to an unmounted SSD.
     #[cfg(unix)]
     #[test]
     fn a_model_folder_is_gone_only_when_the_models_dir_proves_it() {
@@ -2630,8 +2645,29 @@ mod tests {
         );
         assert!(!model_folder_gone(&tmp.path().join("absent"), "pub/a"));
 
-        make_model(&root, "pub/a", &[("config.json", 10)]);
-        assert!(!model_folder_gone(&root, "pub/a"));
+        std::fs::write(root.join(".DS_Store"), b"x").unwrap();
+        assert!(
+            !model_folder_gone(&root, "pub/a"),
+            ".DS_Store alone proves nothing"
+        );
+        make_model(&root, ".locks/models--pub--a", &[("config.json", 2)]);
+        assert!(
+            !model_folder_gone(&root, "pub/a"),
+            ".locks alone proves nothing"
+        );
+        std::fs::create_dir_all(root.join("pub")).unwrap();
+        assert!(
+            !model_folder_gone(&root, "pub/a"),
+            "an empty publisher proves nothing"
+        );
+        make_model(&root, "pub/half", &[("model.safetensors.part", 5)]);
+        assert!(
+            !model_folder_gone(&root, "pub/a"),
+            "a folder without config.json is not a model"
+        );
+
+        make_model(&root, "pub/kept", &[("config.json", 10)]);
+        assert!(!model_folder_gone(&root, "pub/kept"));
         assert!(model_folder_gone(&root, "pub/deleted"));
         assert!(model_folder_gone(&root, "otherpub/m"));
         assert!(!model_folder_gone(&root, "not-an-id"));
@@ -2652,5 +2688,18 @@ mod tests {
         std::os::unix::fs::symlink(store.join("nowhere"), root.join("pub").join("dangling"))
             .unwrap();
         assert!(!model_folder_gone(&root, "pub/dangling"));
+    }
+
+    /// The only real model sits behind a link to an unmounted SSD: the listing sees no model, so
+    /// nothing under it can be called gone.
+    #[cfg(unix)]
+    #[test]
+    fn a_models_dir_whose_only_models_are_offline_proves_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("models");
+        std::fs::create_dir_all(&root).unwrap();
+        std::os::unix::fs::symlink(tmp.path().join("unmounted"), root.join("pub")).unwrap();
+        std::fs::create_dir_all(root.join("local")).unwrap();
+        assert!(!model_folder_gone(&root, "local/m"));
     }
 }

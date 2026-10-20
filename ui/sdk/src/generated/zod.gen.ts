@@ -4906,7 +4906,9 @@ export const zMlxEngineRemoteSingleStatusResponse_unstable = z.object({
  * Read the serving intent. Written by the owner's own starts (Mount, remote single start, split
  * start), removed by the matching explicit stop; an app quit or a goosed exit never touches it.
  */
-export const zMlxEngineServingIntentRequest_unstable = z.record(z.unknown());
+export const zMlxEngineServingIntentRequest_unstable = z.object({
+    atLaunch: z.boolean().optional().default(false)
+});
 
 export const zMlxEngineServingIntentResponse_unstable = z.object({
     intent: z.union([
