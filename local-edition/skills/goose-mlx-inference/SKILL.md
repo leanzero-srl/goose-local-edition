@@ -1360,3 +1360,42 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
   to a scratch dir, print the app's argv with a throwaway `build_serve_command` test, run it on a spare port, stream one text +
   one tool call. lz.13 measured 2026-10-20 on the laptop: parsers bind (explicit qwen3_coder_xml/deepseek_r1 over the family's
   hermes/qwen3), memory guard enabled, no cache share, text clean, `write` call whole; direct_url commit c58790b11.
+- **2026-10-22 — RECURSIVE FLINT LOCAL (RecursiveSI/flint, `flint` / FlintForCausalLM, Apache-2.0, 39.8B total / 2.5B
+  active MoE; fork branch `lz/flint` ff88eb79cdbdb12c3b5c59f34951b79ebd251d40 on the lz.13 pin c58790b11; pushed, NOT
+  released, NOT pinned).** Stock mlx-lm (0.31.3 pinned, 0.32.2 latest) has no `flint`; mlx-lm PR #1998 is open; mlx-vlm
+  0.7.10 runs it but would put Flint on the multimodal lane and cannot read Recursive's uint8 INT4. So: vendored.
+  - Model (`rapid_mlx/models/flint.py`, PR #1998 + the reference's rules): sliding layers = window 513 INCLUDING the current
+    token, RoPE; full layers = `no_rope_layer_indices`, NO positional encoding; learned per-head sinks (`softmax_offset`);
+    fp32 sigmoid routing, top-6, renormalised (+1e-20), ungated shared expert; fp32 lm_head. Rapid-owned
+    (`_RAPID_OWNED_RUNTIME_MODEL_TYPES`): installed over any native mlx_lm.models.flint, checkpoint model_file ignored.
+  - TRAP: Recursive's INT4 export packs weights as uint8 (sanitize views them as uint32) and stores the embedding at 8 bits
+    without a per-layer config entry; `_flint_quantization_override` reads the shard headers and adds the widths.
+  - TRAP: the PR's ModelArgs dropped `max_position_embeddings`: /v1/models said context_window null and the guard advertised
+    768,512 on the 128 GB laptop for a 262,144-token model. Fixed (ff88eb79c); now 262,144 / 262,144.
+  - Parsers (auto-config by model_type flint): tool `flint` = Xing4.0's reading rules on GLM-4.7's `<arg_key>/<arg_value>`
+    tags (glm47 strips + json-decodes values: "42\n" came back as 42); reasoning `flint` = `<think>` only where the model writes
+    it (no switch, never primed: untagged output is content from the first char). The template mentions `<think>` (history
+    rows), so any source-scan priming guess is wrong for it.
+  - TRAP (live): the chat route's default tool-use suffix ("Do NOT think out loud ...") made Flint write `write` calls with NO
+    content (5/21 samples at the route's exact prompt, 0/16 without). Tool parsers can now set `AUTO_TOOL_USE_SUFFIX = False`.
+  - TRAP (live): `reasoning_effort=medium` = a 2,048-token post-hoc reasoning cap on tool requests; the rest of the thought
+    arrived as CONTENT. Flint has no effort control, so its parser sets `graded_effort_cap = False`.
+  - KV: 28,672 B/token growth (14 full layers) + 71,680 B per sliding slot (35 layers), window 513 (the checkpoint README's
+    28 KiB + 70 KiB); probe `_kv_footprint_terms()` on a lazy load prints (28672, 0, 71680, 513).
+  - Proof: parity vs an independent float64 numpy reference 8.7e-06 at scale 6 (top-1 40/40; cached decode across the window
+    3.9e-06) and vs mlx-vlm 0.7.10's flint 2.3e-06; route SSE + whole-response tests 34/34 fail with qwen3/deepseek_r1/glm47;
+    217-file related suite: same 12 failed + 17 errors as lz.13. Laptop smoke (spare port 8197, app argv, weights over NFS):
+    text 4/4, write tools 11/12 plain (the miss = a well-formed `shell` first) and 6/6 at medium, 10-turn agent loop with
+    history reasoning + tool results: prefix cache 97-99 % per turn, parallel writes parsed, files byte-correct; ~100 tok/s.
+  - WEIGHTS: RecursiveSI/flint-int4 @3b93f905 (22.6 GB, sha256 = its flint-int4.json manifest) at
+    /Volumes/AI-workhorse/models/goose/RecursiveSI/flint-int4 (laptop: ~/.goose/models/RecursiveSI/flint-int4, visible over
+    NFS without a remount). Chosen over pgmharikrishnan/Flint-MLX-Serve-mixed-4-8bit (also on the SSD): teacher-forced on
+    11,242 tokens written that day, int4 ppl 6.82 vs 7.34 (paired diff 0.073 nats/token, 95 % CI 0.039-0.109); Recursive
+    trained its quantized builds (blog: distillation recovery) and mlx-community measured INT4 ppl below a 6-bit PTQ of BF16.
+    mlx-community/flint-mixed-3-4bit = 3-bit experts (rejected, owner's 4-bit rule).
+  - TRAP: right after the download, the laptop's NFS view failed "[load_safetensors] Failed to open file" twice and once
+    gave a Metal GPU Timeout during load (while the workhorse was still writing/hashing the other download); a later boot
+    loaded in ~32 s. If a fresh model fails to open over NFS, wait for the workhorse's I/O to settle and retry.
+  - Launcher: ~/goose-builds/loop-state/engine-wrap-flint.sh (REV = the sha above, drops --cache-memory-percent, no extra
+    flags: boot log says tool_call_parser=flint, reasoning_parser=flint). Sampling: generation_config 1.0/0.95/20 is applied
+    by the engine; Flint reasons long on hard turns (card: max_tokens >= 32768; goose sends none = engine 32,768).
