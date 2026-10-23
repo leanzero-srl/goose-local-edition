@@ -1361,8 +1361,8 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
   one tool call. lz.13 measured 2026-10-20 on the laptop: parsers bind (explicit qwen3_coder_xml/deepseek_r1 over the family's
   hermes/qwen3), memory guard enabled, no cache share, text clean, `write` call whole; direct_url commit c58790b11.
 - **2026-10-22 — RECURSIVE FLINT LOCAL (RecursiveSI/flint, `flint` / FlintForCausalLM, Apache-2.0, 39.8B total / 2.5B
-  active MoE; fork branch `lz/flint` ff88eb79cdbdb12c3b5c59f34951b79ebd251d40 on the lz.13 pin c58790b11; pushed, NOT
-  released, NOT pinned).** Stock mlx-lm (0.31.3 pinned, 0.32.2 latest) has no `flint`; mlx-lm PR #1998 is open; mlx-vlm
+  active MoE; fork branch `lz/flint` ff88eb79cdbdb12c3b5c59f34951b79ebd251d40 on the lz.13 pin c58790b11; RELEASED in pin
+  v0.14.3-lz.14, 2026-10-23).** Stock mlx-lm (0.31.3 pinned, 0.32.2 latest) has no `flint`; mlx-lm PR #1998 is open; mlx-vlm
   0.7.10 runs it but would put Flint on the multimodal lane and cannot read Recursive's uint8 INT4. So: vendored.
   - Model (`rapid_mlx/models/flint.py`, PR #1998 + the reference's rules): sliding layers = window 513 INCLUDING the current
     token, RoPE; full layers = `no_rope_layer_indices`, NO positional encoding; learned per-head sinks (`softmax_offset`);
@@ -1400,7 +1400,7 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
     flags: boot log says tool_call_parser=flint, reasoning_parser=flint). Sampling: generation_config 1.0/0.95/20 is applied
     by the engine; Flint reasons long on hard turns (card: max_tokens >= 32768; goose sends none = engine 32,768).
 - **2026-10-23 — DENSE 27B AT 4 tok/s ON THE LAPTOP = Q-447 ON THE SINGLE ENGINE (float32 promotion; fork
-  `lz/kv-dtype-extend` @ edd279eb6cb82267d86e5419dcd145b85f9e7089 on the lz.13 pin c58790b11, NOT in any pin yet).** Symptom (M4 Max 128 GB, app engine lz.13,
+  `lz/kv-dtype-extend` @ edd279eb6cb82267d86e5419dcd145b85f9e7089 on the lz.13 pin c58790b11; RELEASED in pin v0.14.3-lz.14).** Symptom (M4 Max 128 GB, app engine lz.13,
   Forge 2.0, sabicap/sabi-noema-MLX-4bit = dense qwen3_5 27B 4-bit, no MTP): 4.0 tok/s at ~47k with prefix-cache HITs every
   turn, ~15-17 at <1k; HireTheRobots Qwen3.8-27B 4-bit 2.9 tok/s at 170k. MoE on the same app/engine fast (Ornith 122B-A10B
   38 -> 21 tok/s from 50k to 200k; Flint 46-62). It was NOT dense-vs-MoE, NOT the memory guard (0 actions, 0 clears; it
@@ -1436,5 +1436,33 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
     of 24 KB KV). On a pre-fix engine the first run after the fix may log `[kv_dtype] dropped` for autoloaded float32 entries.
   - **LIVE-PROVEN 2026-10-23 (laptop, app, sabi-noema 4-bit, Forge 2.0 call 19 at 48k):** kv 2995.2 MB / 47,924 tok =
     65,535 B/token, recurrent 146.8 MB, `cold_rows_padded` 16, `mixed_dtype_extends` 0, decode 123 tok in 8.05 s after the
-    first token = 15.3 tok/s (pre-fix ~4). Launcher: ~/goose-builds/loop-state/engine-wrap-kvdtype.sh. Still needs a release + pin.
+    first token = 15.3 tok/s (pre-fix ~4). Launcher: ~/goose-builds/loop-state/engine-wrap-kvdtype.sh. RELEASED 2026-10-23: pin v0.14.3-lz.14
+    (see the lz.14 release entry below). Retire engine-wrap-kvdtype.sh after the current laptop series: put
+    `mlx_engine.spawn_command` back to the default (app quit, config backed up) once the laptop runs 3.0.127+.
   - CHECK ON ANY NEW MODEL: compute kv/token from the first two big `cache_store_bytes` lines; a doubling mid-run = this bug.
+- **2026-10-23 — RELEASE v0.14.3-lz.14 (fork lz/release-lz14 03fa3b38ff4bbf42642d1e3448b1fffce90c4b09 = lz.13 c58790b11 +
+  merge lz/kv-dtype-extend edd279eb6 + merge lz/flint ff88eb79c; goose 68c6b5398 pins it; app 3.0.127).** The KV-dtype fix
+  and Recursive Flint both ride it. Flint was taken because it sat on the same lz.13 base, merged clean and its suite was
+  green; it is model-gated (parser flags default to the old behaviour for every other parser).
+  - Pipeline review: lz/pipeline-review-lz14 eec8f6bd7 on 1a2a4118d, 7 n/a (the split never calls mlx-lm
+    BatchKVCache.extend: a row prefills alone and joins by merge; Qwen4ExpStateCache.extend = extract + merge).
+    goose PIPELINE_SINGLE_LINE_REVIEWED_THROUGH = lz.14; PIPELINE_FORK_COMMIT unchanged.
+  - HOW THE FORK SUITE WAS RUN (workhorse, ~25 min): worktrees for head AND base on the SSD
+    (/Volumes/AI-workhorse/scratch/release-lz14/), `~/Projects/Rapid-MLX/.venv/bin/python -m pytest -p m_cpu` (a plugin
+    doing `mx.set_default_device(mx.cpu)`), PYTHONPATH = plugin dir : worktree : a side `pyext` dir with hypothesis +
+    aiohttp only (`uv pip install --target`, then delete anything the venv already has: typing_extensions/idna/attrs),
+    `--continue-on-collection-errors --timeout 600`, 10 file shards per arm, skipping test_pipeline_qwen4{,_serve,_vision}.py
+    (launch ranks). Compare FAILED/ERROR node ids head vs base. TRAPS: (1) a shard's failures depend on its NEIGHBOUR files
+    (test pollution), and the head arm has extra files so its shards differ: every "new in head" id must be re-run in
+    isolation on both arms (here 43 = 43, identical). (2) tests/test_batching_deterministic.py hangs at 0% CPU on both
+    arms past pytest-timeout (kill it, drop the file from the shard). (3) the venv lacks hypothesis (test_memory_guard.py)
+    and aiohttp (test_event_loop.py): without them the WHOLE shard aborts at collection (exit 2).
+  - Tag proof (workhorse, tag via uvx, app argv, port 8197): direct_url commit 03fa3b38f; sabi-noema 4-bit, a 4.5k cold
+    request joined a 20.9k prefill (running=2) -> kv_dtype cold_rows_padded 16, mixed 0, kv 65,535 B/token, recurrent
+    146.8 MB, follow-up HIT 20,864; ~31 tok/s decode at 21k on the M3 Ultra. Flint: parsers flint/flint, smoke text PASS,
+    tools 2/3 (TOOL1 reasoned past smoke.py's token cap, the model's habit, not a parser fault).
+  - TRAP: BOTH repos (goose and Rapid-MLX) have a commit-msg hook that REJECTS any `Co-Authored-By: Claude` line
+    ("This is a PUBLIC repo"). Commit without it, whatever a brief says.
+  - Release build: on the workhorse in the worktree with `target` symlinked to ~/Projects/goose/target (copy-binary reads
+    ./target), `source bin/activate-hermit; (cd ui/desktop && pnpm install --frozen-lockfile); just release-notarized <v>`,
+    then commit notes + package.json, tag v<v>, push, `just publish-release <v> docs/releases/<notes>.md`.
