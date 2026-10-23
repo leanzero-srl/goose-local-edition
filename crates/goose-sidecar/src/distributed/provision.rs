@@ -125,8 +125,11 @@ pub const PIPELINE_FORK_COMMIT: &str = "8c000705422c314b2f7acd81ae9e398db0ae9320
 /// fixes it lists as not ported are NOT in the split (see the manifest's `gap` entries). lz.13 (I-24,
 /// I-27, I-28 and their review fixes) is reviewed on branch lz/pipeline-review-lz13 (1a2a4118d): 5
 /// n/a, 2 gaps (the split's own repeat stop sends no rapid_mlx_stop_reason; its priming never sets
-/// the closed-think signal); the pinned pipeline code is unchanged.
-pub const PIPELINE_SINGLE_LINE_REVIEWED_THROUGH: &str = "v0.14.3-lz.13";
+/// the closed-think signal); the pinned pipeline code is unchanged. lz.14 (the single engine's KV
+/// dtype guard and Recursive Flint) is reviewed on branch lz/pipeline-review-lz14 (eec8f6bd7): 7 n/a
+/// (the split never calls mlx-lm's BatchKVCache.extend and never serves flint); the pinned pipeline
+/// code is unchanged.
+pub const PIPELINE_SINGLE_LINE_REVIEWED_THROUGH: &str = "v0.14.3-lz.14";
 /// The fork carrying `rapid_mlx.distributed.pipeline_qwen4` at [`PIPELINE_FORK_COMMIT`].
 pub const PIPELINE_FORK: &str =
     "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@8c000705422c314b2f7acd81ae9e398db0ae9320";
