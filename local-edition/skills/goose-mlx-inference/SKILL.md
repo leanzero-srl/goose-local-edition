@@ -1399,3 +1399,39 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
   - Launcher: ~/goose-builds/loop-state/engine-wrap-flint.sh (REV = the sha above, drops --cache-memory-percent, no extra
     flags: boot log says tool_call_parser=flint, reasoning_parser=flint). Sampling: generation_config 1.0/0.95/20 is applied
     by the engine; Flint reasons long on hard turns (card: max_tokens >= 32768; goose sends none = engine 32,768).
+- **2026-10-23 — DENSE 27B AT 4 tok/s ON THE LAPTOP = Q-447 ON THE SINGLE ENGINE (float32 promotion; fork
+  `lz/kv-dtype-extend` @ edd279eb6cb82267d86e5419dcd145b85f9e7089 on the lz.13 pin c58790b11, NOT in any pin yet).** Symptom (M4 Max 128 GB, app engine lz.13,
+  Forge 2.0, sabicap/sabi-noema-MLX-4bit = dense qwen3_5 27B 4-bit, no MTP): 4.0 tok/s at ~47k with prefix-cache HITs every
+  turn, ~15-17 at <1k; HireTheRobots Qwen3.8-27B 4-bit 2.9 tok/s at 170k. MoE on the same app/engine fast (Ornith 122B-A10B
+  38 -> 21 tok/s from 50k to 200k; Flint 46-62). It was NOT dense-vs-MoE, NOT the memory guard (0 actions, 0 clears; it
+  checks per prefill chunk, not per decode step), NOT head_dim-256 decode attention.
+  - EVIDENCE, readable from any engine log with no attach: `[cache_store_bytes] tokens=N ... kv=X MB` -> X x 2^20 / N =
+    65,536 B/token (bf16, 16 full layers x 2 x 4 KV heads x 256 x 2 B) for every entry until 03:47:10, then 131,072 (float32)
+    for EVERY later entry, and `recurrent=` 146.8 -> 149.4 MB (the conv state follows the activation dtype; the SSM state is
+    float32 by design). At 03:47:10 `[schedule] ... prompt_tokens=3208 ... running=2`: goose's second request joined while
+    the first (1,405) was mid-prefill. HireTheRobots flipped at the identical moment of its run. Ornith's two requests were
+    scheduled in the same millisecond (prefilled together, no extend of an empty side), so it stayed bf16 by luck. The
+    `[Metal memory] ... cache=0.0GB` on every decode line is the same float32 signature Q-447 recorded on the split.
+  - CAUSE: mlx-lm 0.31.3 `BatchKVCache.extend` / `BatchRotatingKVCache.extend` pad a side with no KV via `mx.array([])`
+    (FLOAT32); concatenate promotes the batch, the attention output and residual stream follow, `merge` keeps the first
+    row's dtype on every restore, and each stored prefix entry hands float32 to the next turn: the session never recovers.
+    Persisted entries (`[cache_persist] SAVED` at shutdown, autoloaded at boot) carry it into the NEXT engine too. goose fixed
+    exactly this on the tensor split (Q-447, rank_batch.py `extend_in_its_dtype`) but the single engine never got it.
+  - FIX: `_mlx_compat.install_batch_kv_dtype_guard` (installed by scheduler.py and mllm_scheduler.py): the cold side gets
+    zero-length KV in the filled side's dtype; two filled sides of different dtypes are counted + WARNED. The scheduler's
+    fetch drops any prefix entry holding float32 KV on a half-precision model (`[kv_dtype] dropped N prefix entr...`) and
+    re-reads the prompt once. `/v1/status kv_dtype {model_dtype, cold_rows_padded, mixed_dtype_extends,
+    promoted_entries_dropped}`. Test `tests/test_kv_dtype_cold_join.py` (real Scheduler + BatchGenerator, tiny BF16 qwen3_5
+    hybrid on CPU, second request at step 2 of an 8-token-chunk prefill): 7 red on c58790b11 (stored entry float32), green
+    on the fix; mutants "guard not installed" / "no fetch drop" killed. Related suite (35 files, CPU): 704 pass, 1 fails the same on base. A float32 tiny model cannot show it (nothing to
+    promote): BF16 fixtures only.
+  - EXPECTED after the fix: bandwidth model (checked on Granite 4.2 30B dense bf16 on this laptop: predicted 11.3, measured
+    10.3 at 30k) gives the 4-bit 27B ~17 GB weights + 3.1 GB KV per token at 47k -> ~20 tok/s ceiling at the measured
+    ~449 GB/s, ~15-18 real; ~20+ at short context. That also matches Gabee's 27B Q8 at 11.7 (2x the weight bytes, 0.73x BW).
+  - PROVE IT LIVE (between series, app quit; never mid-run): engine-wrap REV = the full sha above, remount sabi-noema, run the
+    first ~15 turns of a Forge series. PASS = every `cache_store_bytes` entry >= 1k tokens at 65,536 B/token, recurrent stays
+    146.8 MB, `/v1/status kv_dtype.cold_rows_padded >= 1` and `mixed_dtype_extends == 0`, and `[Metal memory]` step lines
+    256 steps per <= ~17 s at 40-50k (>= 15 tok/s). If entries stay bf16 and decode is still ~4 tok/s, the float32 theory is
+    refuted and the next suspect is the q=1 SDPA path at head_dim 256 / GQA 6 (compare Ornith's slope: 0.15 ms per 1k tokens
+    of 24 KB KV). On a pre-fix engine the first run after the fix may log `[kv_dtype] dropped` for autoloaded float32 entries.
+  - CHECK ON ANY NEW MODEL: compute kv/token from the first two big `cache_store_bytes` lines; a doubling mid-run = this bug.
