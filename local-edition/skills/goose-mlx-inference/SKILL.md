@@ -1434,4 +1434,7 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
     256 steps per <= ~17 s at 40-50k (>= 15 tok/s). If entries stay bf16 and decode is still ~4 tok/s, the float32 theory is
     refuted and the next suspect is the q=1 SDPA path at head_dim 256 / GQA 6 (compare Ornith's slope: 0.15 ms per 1k tokens
     of 24 KB KV). On a pre-fix engine the first run after the fix may log `[kv_dtype] dropped` for autoloaded float32 entries.
+  - **LIVE-PROVEN 2026-10-23 (laptop, app, sabi-noema 4-bit, Forge 2.0 call 19 at 48k):** kv 2995.2 MB / 47,924 tok =
+    65,535 B/token, recurrent 146.8 MB, `cold_rows_padded` 16, `mixed_dtype_extends` 0, decode 123 tok in 8.05 s after the
+    first token = 15.3 tok/s (pre-fix ~4). Launcher: ~/goose-builds/loop-state/engine-wrap-kvdtype.sh. Still needs a release + pin.
   - CHECK ON ANY NEW MODEL: compute kv/token from the first two big `cache_store_bytes` lines; a doubling mid-run = this bug.
