@@ -2244,17 +2244,35 @@ mod tests {
         assert_eq!(verdict(&own, 50.0, false, &gate).can_take, Some(7));
         let v = verdict(&own, 50.0, true, &gate);
         assert_eq!(v.can_take, Some(5));
-        assert!(v.line.ends_with("can take ~5 more 50 GB jobs"), "{}", v.line);
+        assert!(
+            v.line.ends_with("can take ~5 more 50 GB jobs"),
+            "{}",
+            v.line
+        );
         // Memory still caps it when it is the tighter limit.
-        let tight = OwnLoad { mem_free_pct: Some(40.0), ..own.clone() };
+        let tight = OwnLoad {
+            mem_free_pct: Some(40.0),
+            ..own.clone()
+        };
         assert_eq!(verdict(&tight, 50.0, true, &gate).can_take, Some(2));
         // Every slot taken: busy, and nothing more fits.
-        let full = OwnLoad { heavy_slots_used: 7, ..own.clone() };
+        let full = OwnLoad {
+            heavy_slots_used: 7,
+            ..own.clone()
+        };
         assert_eq!(verdict(&full, 50.0, true, &gate).can_take, Some(0));
         // An older report (only the flag) has one slot.
-        let old = OwnLoad { heavy_slots_used: 0, heavy_slots_max: 0, heavy_slot_held: false, ..own.clone() };
+        let old = OwnLoad {
+            heavy_slots_used: 0,
+            heavy_slots_max: 0,
+            heavy_slot_held: false,
+            ..own.clone()
+        };
         assert_eq!(verdict(&old, 50.0, true, &gate).can_take, Some(1));
-        let old_held = OwnLoad { heavy_slot_held: true, ..old };
+        let old_held = OwnLoad {
+            heavy_slot_held: true,
+            ..old
+        };
         assert_eq!(verdict(&old_held, 50.0, true, &gate).can_take, Some(0));
     }
 
