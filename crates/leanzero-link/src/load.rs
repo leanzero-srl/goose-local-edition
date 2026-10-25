@@ -9,7 +9,7 @@
 //!   RSS undercounts MLX/GPU memory (measured 31 MiB RSS vs a 4370 MB footprint);
 //! - a closed lid only matters when it would actually sleep (`AppleClamshellCausesSleep`);
 //! - a benchmark is detected by the launcher's live-pid marker, the `GOOSE_SWARM_BENCHMARK` env,
-//!   a WORD-bounded argv match, then recent run files (rule in full at [`detect_benchmark`]);
+//!   an argv that says it IS a benchmark, then recent run files (rule in full at [`detect_benchmark`]);
 //! - the heavy slot is the SAME `~/.cache/heavy-run.lock` flock heavy-run takes;
 //! - limits come from the SAME `~/.leanzero/node-limits.json`, same keys, same defaults.
 //!
@@ -452,38 +452,88 @@ pub fn heavy_holder_reason(path: &std::path::Path) -> String {
 // ---------------------------------------------------------------------------------------------
 // Benchmark detection (node_fleet's rule)
 
-/// True when `args` carries `benchmark` as a word: at the start or after whitespace or `/`,
-/// optionally as `-benchmark`/`--benchmark`, and followed by the end, whitespace, `/` or `=`.
-/// Or the `GOOSE_SWARM_BENCHMARK` flag. Case-insensitive. Mentions inside other text (a
-/// `python3 -c "...'benchmark'..."`) do NOT count.
-pub fn args_mention_benchmark(args: &str) -> bool {
-    let lower = args.to_ascii_lowercase();
-    if lower.contains("goose_swarm_benchmark") {
+/// True when `name` contains `benchmark` at its start or after a non-letter (`run_benchmark.py`,
+/// `benchmark`), never inside a word (`microbenchmark`). Case-insensitive.
+fn names_benchmark(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower
+        .match_indices("benchmark")
+        .any(|(at, _)| at == 0 || !lower.as_bytes()[at - 1].is_ascii_lowercase())
+}
+
+/// The goose env flag written into argv (`env GOOSE_SWARM_BENCHMARK=1 ...`).
+fn argv_env_flag(args: &str) -> bool {
+    args.split_whitespace().any(|t| {
+        t.split_once('=').is_some_and(|(k, v)| {
+            k.eq_ignore_ascii_case("GOOSE_SWARM_BENCHMARK")
+                && ["1", "on", "true", "yes"]
+                    .iter()
+                    .any(|on| v.eq_ignore_ascii_case(on))
+        })
+    })
+}
+
+/// True when the ARGV says the process IS a benchmark, never when it only TALKS about one
+/// (2026-10-25: the newsroom's `claude -p /leanzero-newsroom PREPARE TICK ... a benchmark result
+/// ...` read as "benchmark running: prepare.py"; a flattened argv turns a quoted prompt into
+/// words). Counted: the program, or a script in the first three arguments, whose basename names
+/// it (`run_benchmark.py`, `benchmark`); a `benchmark`/`bench` subcommand right after the program
+/// or script; a `-benchmark`/`--benchmark[=..]` flag; a path token (from `/`, `~` or `.`) with a
+/// `/benchmark/` directory; the goose env flag in argv. A prompt-carrying agent CLI (`claude`,
+/// `codex`) is prose after its flags: only its program name counts. Same rule as node_fleet.py's
+/// `argv_is_benchmark`.
+pub fn argv_is_benchmark(args: &str) -> bool {
+    let a: Vec<&str> = args.split_whitespace().collect();
+    let Some(first) = a.first() else {
+        return false;
+    };
+    let prog = first
+        .rsplit('/')
+        .next()
+        .unwrap_or(first)
+        .to_ascii_lowercase();
+    if names_benchmark(&prog) {
         return true;
     }
-    let bytes = lower.as_bytes();
-    let word = b"benchmark";
-    let mut from = 0;
-    while let Some(off) = lower[from..].find("benchmark") {
-        let at = from + off;
-        let end = at + word.len();
-        // Walk back over up to two dashes.
-        let mut start = at;
-        let mut dashes = 0;
-        while start > 0 && bytes[start - 1] == b'-' && dashes < 2 {
-            start -= 1;
-            dashes += 1;
+    if prog == "claude" || prog == "codex" {
+        return false;
+    }
+    if argv_env_flag(args) {
+        return true;
+    }
+    let head = &a[1..a.len().min(4)];
+    const SCRIPT_EXT: [&str; 6] = [".py", ".js", ".mjs", ".sh", ".ts", ".rs"];
+    for (k, x) in head.iter().enumerate() {
+        let xl = x.to_ascii_lowercase();
+        if xl.contains('/') || SCRIPT_EXT.iter().any(|e| xl.ends_with(e)) {
+            if names_benchmark(xl.rsplit('/').next().unwrap_or(&xl)) {
+                return true;
+            }
+        } else if xl == "benchmark" || xl == "bench" {
+            let after_script = head[..k]
+                .iter()
+                .any(|y| y.contains('/') || y.ends_with(".py"));
+            if k <= 1 + usize::from(after_script) {
+                return true;
+            }
         }
-        let before_ok =
-            start == 0 || bytes[start - 1].is_ascii_whitespace() || bytes[start - 1] == b'/';
-        let after_ok = end == bytes.len()
-            || bytes[end].is_ascii_whitespace()
-            || bytes[end] == b'/'
-            || bytes[end] == b'=';
-        if before_ok && after_ok {
+    }
+    for x in &a[1..] {
+        if x.starts_with('-') || x.starts_with('\'') || x.starts_with('"') {
+            let xl = x.to_ascii_lowercase();
+            let flag = xl.trim_start_matches('-');
+            let dashes = xl.len() - flag.len();
+            if (1..=2).contains(&dashes) && (flag == "benchmark" || flag.starts_with("benchmark="))
+            {
+                return true;
+            }
+        } else if x.contains('/')
+            && (x.starts_with('/') || x.starts_with('~') || x.starts_with('.'))
+            && x.len() < 400
+            && x.to_ascii_lowercase().contains("/benchmark/")
+        {
             return true;
         }
-        from = end;
     }
     false
 }
@@ -646,7 +696,7 @@ fn run_name<S: AsRef<str>>(cmd: &[S]) -> String {
 ///    [`marker_reason`]); the desktop writes it for every build run and rescore it spawns;
 /// 2. a live process whose ENV has `GOOSE_SWARM_BENCHMARK` on (the desktop sets it on the runner,
 ///    run_build passes it to every engine), named by its script;
-/// 3. a process whose ARGV carries `benchmark` as a word ([`args_mention_benchmark`]);
+/// 3. a process whose ARGV says it is one ([`argv_is_benchmark`]), not one that mentions the word;
 /// 4. a run file under `.../Goose/benchmark/runs/build` modified in the last 2 min.
 ///
 /// Why: the packaged app runs `.../Resources/swarm-bench/bench/run_build.py`, whose argv never says
@@ -679,7 +729,7 @@ fn detect_benchmark() -> Option<String> {
         .filter(|&pid| pid != me)
         .filter(|&pid| {
             let args = cmd_of(pid).join(" ");
-            args_mention_benchmark(&args) && !is_observer(&args)
+            argv_is_benchmark(&args) && !is_observer(&args)
         })
         .collect();
     argv_hits.sort_unstable();
@@ -1216,17 +1266,53 @@ mod tests {
     }
 
     #[test]
-    fn benchmark_word_bounded() {
-        assert!(args_mention_benchmark("goose run benchmark --x"));
-        assert!(args_mention_benchmark("goose --benchmark"));
-        assert!(args_mention_benchmark("/x/benchmark/runs/build/a"));
-        assert!(args_mention_benchmark("cli -benchmark=1"));
-        assert!(args_mention_benchmark("env GOOSE_SWARM_BENCHMARK=1 goose"));
-        assert!(args_mention_benchmark("BENCHMARK"));
-        assert!(!args_mention_benchmark("python3 -c \"print('benchmark')\""));
-        assert!(!args_mention_benchmark("run benchmarks"));
-        assert!(!args_mention_benchmark("microbenchmark"));
-        assert!(!args_mention_benchmark("x_benchmark"));
+    fn argv_says_it_is_a_benchmark() {
+        assert!(argv_is_benchmark("goose run benchmark --x"));
+        assert!(argv_is_benchmark("goose bench run --suite gauntlet"));
+        assert!(argv_is_benchmark("goose --benchmark"));
+        assert!(argv_is_benchmark("cli -benchmark=1"));
+        assert!(argv_is_benchmark("env GOOSE_SWARM_BENCHMARK=1 goose"));
+        assert!(argv_is_benchmark(
+            "/usr/bin/env GOOSE_SWARM_BENCHMARK=1 python3 x.py"
+        ));
+        assert!(argv_is_benchmark("BENCHMARK"));
+        assert!(argv_is_benchmark("python3 /x/run_benchmark.py"));
+        assert!(argv_is_benchmark("node /x/benchmark/run.mjs"));
+        assert!(argv_is_benchmark("python3 run.py --benchmark"));
+        assert!(argv_is_benchmark(
+            "python3 /x/y/run_build.py /h/Goose/benchmark/runs/build/a"
+        ));
+        assert!(!argv_is_benchmark("python3 -c \"print('benchmark')\""));
+        assert!(!argv_is_benchmark("run benchmarks"));
+        assert!(!argv_is_benchmark("microbenchmark"));
+        assert!(!argv_is_benchmark("goose --benchmarks"));
+        assert!(!argv_is_benchmark(
+            "python3 /x/prepare.py write about the benchmark board"
+        ));
+    }
+
+    /// 2026-10-25 live false positive: node-probe marked the workhorse BUSY "benchmark running:
+    /// prepare.py (pid 37048)" for a newsroom session whose prompt mentions benchmarks.
+    #[test]
+    fn a_prompt_that_mentions_benchmarks_is_not_a_benchmark() {
+        let prompt = "/leanzero-newsroom PREPARE TICK STEP 1: any article whose subject is a \
+                      benchmark result follows references/benchmark-narratives.md; the benchmark \
+                      board --benchmark /Goose/benchmark/runs/build --quiet";
+        assert!(!argv_is_benchmark(&format!("claude -p {prompt}")));
+        assert!(!argv_is_benchmark(&format!(
+            "/opt/homebrew/bin/claude --dangerously-skip-permissions -p {prompt}"
+        )));
+        assert!(!argv_is_benchmark(
+            "python3 /x/newsroom/prepare.py STEP 1: any article whose subject is a benchmark \
+             result follows references/benchmark-narratives.md; the benchmark board --quiet"
+        ));
+        assert!(!argv_is_benchmark(
+            "python3 /x/newsroom/prepare.py -p /leanzero-newsroom STEP 1: a benchmark result \
+             the benchmark board --quiet"
+        ));
+        assert!(!argv_is_benchmark(
+            "codex exec run the benchmark --benchmark"
+        ));
     }
 
     #[test]
