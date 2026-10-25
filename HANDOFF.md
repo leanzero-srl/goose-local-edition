@@ -4,7 +4,7 @@ Worktree ~/Projects/goose-strategies (Gabee), branch feat/job-strategies (--no-t
 Owner spec: see the brief (local-first DEFAULT / selfish; LEANZERO_LINK_JOBS_STRATEGY overrides node-limits.json
 "strategy"; UI segmented control in JobsSettings + per-job override in RunJobDialog; FIFO queue on the origin
 instead of 409; re-place ~15 s; queued id/state/position/refusals; cancel while queued; survives reconnect).
-RUST SIDE DONE + GATED (2026-10-25). UI (step 5) is next.
+RUST SIDE DONE + GATED (2026-10-25). UI (step 5) DONE + GATED (e33c72d10). Not pushed, not released.
 
 ## DONE, compiled and gated (Rust)
 - jobs.rs: PlacementStrategy (local-first default / selfish), plan_placement, StrategySource, JobRequest.strategy,
@@ -54,3 +54,16 @@ Builds: /private/tmp/claude-501/hr.sh pattern = source bin/activate-hermit + ~/P
 - machine-sync node-run/node_fleet.py does NOT read "strategy" yet (grep 2026-10-25): goose uses the names the
   brief gave; tell the coordinator.
 - Registry is process-shared per ledger root (D1 fix); queue must stay in Core, not control.
+
+## UI step 5 DONE (e33c72d10, 2026-10-25)
+- macLoad.ts: JOBS_KEYS.strategy, STRATEGIES, JOBS_DEFAULTS.strategy, parseStrategy, waitingJobs; liveJobs
+  excludes briefs with `queue`. leanzero-link.ts: JobBrief.queue, JobView.placed_on, PlacementStrategy,
+  jobsPlace -> JobPlan {placements, strategy, refusals}, jobsSubmit(job, target?, strategy?) -> queued/queuePosition.
+- MacLoadPanel: JobsSettings Segmented "Where my jobs run" (saves at once); job rows "Waiting, #n in line" +
+  refusals + inline cancel (confirm); JobDialog place/refusals/"Placed on X as id"; useStrategyWords shared.
+- RunJobDialog: strategy Segmented (Best Mac only; default = jobsPlace's answered strategy), refusals + "waits
+  in line" when nothing fits, queued submit opens JobDialog on self/qid.
+- Gates: lint:check (typecheck+eslint+i18n) exit 0; full vitest 548 files / 5111 pass after Q-383 fix (no
+  `{timeout}` on waits); i18n:check 16 locales; just check-acp-schema up to date; prettier on changed files.
+- origin/main still 7a351ec9c (3.0.129 notes only, no release commit): nothing to rebase; Rust unchanged.
+- Trap: Segmented overrides data-testid with "lz-segmented"; test via option testIds.
