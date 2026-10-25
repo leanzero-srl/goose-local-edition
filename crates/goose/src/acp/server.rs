@@ -97,11 +97,13 @@ mod link;
 pub(crate) use link::reconnect_link_on_first_agent;
 pub use link::{
     arm_link_reconnect_at_boot, set_delta_source, set_executor, set_mlx_control, DeltaInput,
-    DeltaSource, ExecuteAccepted, ExecuteError, ExecuteRequest, MlxControl, MlxControlError, MlxOp,
-    RemoteExecutor, SessionDeltaKind,
+    DeltaSource, ExecuteAccepted, ExecuteError, ExecuteLog, ExecuteRequest, MlxControl,
+    MlxControlError, MlxOp, RemoteExecutor, SessionDeltaKind,
 };
 mod link_serve;
-pub use link_serve::{wire_link_for_serve, ServeDeltaSource, ServeLinkConfig, ServeRemoteExecutor};
+pub use link_serve::{
+    job_log_text, wire_link_for_serve, ServeDeltaSource, ServeLinkConfig, ServeRemoteExecutor,
+};
 mod list_sessions;
 mod load_session;
 mod local_inference;
