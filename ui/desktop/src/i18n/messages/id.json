@@ -6615,7 +6615,7 @@
     "defaultMessage": "Izinkan Mac saya yang lain memakai Mac ini"
   },
   "myMacs.masterHint": {
-    "defaultMessage": "Hanya Mac yang masuk ke akun LeanZero Link Anda. Setiap sakelar hanya membuka operasi milik goose — tidak pernah perintah sembarang."
+    "defaultMessage": "Hanya Mac yang masuk ke akun LeanZero Link Anda. Sakelar ini mencakup operasi goose sendiri: model, chat, dan sesi prompt yang dimulai Mac Anda yang lain di sini. Perintah shell dan tugas prompt punya sakelar tersendiri, “Jalankan tugas yang dikirim Mac lain”, yang mati sampai Anda menyalakannya."
   },
   "myMacs.memory": {
     "defaultMessage": "Memori"
@@ -11797,5 +11797,65 @@
   },
   "modelCustomFields.noFields": {
     "defaultMessage": "Kolom khusus: {provider} tidak mendeklarasikan kolom apa pun untuk “{model}”, jadi model berjalan dengan bawaan penyedia."
+  },
+  "macLoad.stateCancelling": {
+    "defaultMessage": "Membatalkan…"
+  },
+  "myMacs.runJob": {
+    "defaultMessage": "Jalankan tugas…"
+  },
+  "runJob.title": {
+    "defaultMessage": "Jalankan tugas di…"
+  },
+  "runJob.target": {
+    "defaultMessage": "Jalankan di"
+  },
+  "runJob.best": {
+    "defaultMessage": "Mac terbaik"
+  },
+  "runJob.ranking": {
+    "defaultMessage": "Terbaik sekarang: {macs}"
+  },
+  "runJob.inUse": {
+    "defaultMessage": "{name} (sedang dipakai)"
+  },
+  "runJob.noPlace": {
+    "defaultMessage": "Tidak ada Mac yang bisa menerima tugas ini sekarang."
+  },
+  "runJob.none": {
+    "defaultMessage": "Tidak ada Mac Anda yang menerima tugas sekarang. Nyalakan “Jalankan tugas yang dikirim Mac lain” di Mac yang harus menjalankannya."
+  },
+  "runJob.kind": {
+    "defaultMessage": "Jenis"
+  },
+  "runJob.kindShell": {
+    "defaultMessage": "Perintah shell"
+  },
+  "runJob.kindPrompt": {
+    "defaultMessage": "Prompt"
+  },
+  "runJob.command": {
+    "defaultMessage": "{kind, select, shell {Perintah} other {Prompt}}"
+  },
+  "runJob.heavy": {
+    "defaultMessage": "Tugas berat"
+  },
+  "runJob.heavyHint": {
+    "defaultMessage": "Satu Mac menjalankan satu tugas berat dalam satu waktu (build, render, pelatihan)."
+  },
+  "runJob.mem": {
+    "defaultMessage": "Memori yang dibutuhkan (GB, opsional)"
+  },
+  "runJob.timeout": {
+    "defaultMessage": "Batas waktu (detik, opsional)"
+  },
+  "runJob.submit": {
+    "defaultMessage": "Jalankan tugas"
+  },
+  "runJob.close": {
+    "defaultMessage": "Tutup"
+  },
+  "runJob.refused": {
+    "defaultMessage": "Tidak terkirim: {reason}"
   }
 }

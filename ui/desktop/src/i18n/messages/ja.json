@@ -6615,7 +6615,7 @@
     "defaultMessage": "他の Mac にこの Mac の使用を許可"
   },
   "myMacs.masterHint": {
-    "defaultMessage": "LeanZero Link アカウントにサインインしている Mac のみ。各スイッチは goose 自身の操作だけを許可し、任意のコマンドは実行しません。"
+    "defaultMessage": "LeanZero Link アカウントにサインインしている Mac のみ。これらのスイッチは goose 自身の操作を対象とします：モデル、チャット、そして他の Mac がここで開始するプロンプトセッション。シェルコマンドとプロンプトジョブは別のスイッチ「他の Mac から送られたジョブを実行」で、オンにするまでオフのままです。"
   },
   "myMacs.memory": {
     "defaultMessage": "メモリ"
@@ -11797,5 +11797,65 @@
   },
   "modelCustomFields.noFields": {
     "defaultMessage": "カスタムフィールド: {provider} は「{model}」に対してフィールドを宣言していないため、プロバイダーの既定値で実行されます。"
+  },
+  "macLoad.stateCancelling": {
+    "defaultMessage": "キャンセル中…"
+  },
+  "myMacs.runJob": {
+    "defaultMessage": "ジョブを実行…"
+  },
+  "runJob.title": {
+    "defaultMessage": "ジョブの実行先…"
+  },
+  "runJob.target": {
+    "defaultMessage": "実行先"
+  },
+  "runJob.best": {
+    "defaultMessage": "最適な Mac"
+  },
+  "runJob.ranking": {
+    "defaultMessage": "現在の最適順: {macs}"
+  },
+  "runJob.inUse": {
+    "defaultMessage": "{name}（使用中）"
+  },
+  "runJob.noPlace": {
+    "defaultMessage": "現在このジョブを受けられる Mac はありません。"
+  },
+  "runJob.none": {
+    "defaultMessage": "現在ジョブを受け付けている Mac はありません。実行させたい Mac で「他の Mac から送られたジョブを実行」をオンにしてください。"
+  },
+  "runJob.kind": {
+    "defaultMessage": "種類"
+  },
+  "runJob.kindShell": {
+    "defaultMessage": "シェルコマンド"
+  },
+  "runJob.kindPrompt": {
+    "defaultMessage": "プロンプト"
+  },
+  "runJob.command": {
+    "defaultMessage": "{kind, select, shell {コマンド} other {プロンプト}}"
+  },
+  "runJob.heavy": {
+    "defaultMessage": "重いジョブ"
+  },
+  "runJob.heavyHint": {
+    "defaultMessage": "1 台の Mac が同時に実行する重いジョブは 1 つだけです（ビルド、レンダリング、学習）。"
+  },
+  "runJob.mem": {
+    "defaultMessage": "必要なメモリ（GB、任意）"
+  },
+  "runJob.timeout": {
+    "defaultMessage": "制限時間（秒、任意）"
+  },
+  "runJob.submit": {
+    "defaultMessage": "ジョブを実行"
+  },
+  "runJob.close": {
+    "defaultMessage": "閉じる"
+  },
+  "runJob.refused": {
+    "defaultMessage": "送信されませんでした: {reason}"
   }
 }

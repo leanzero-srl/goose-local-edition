@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Laptop, Link2Off, Loader2, LogOut, Network, RefreshCw } from 'lucide-react';
+import { Laptop, Link2Off, Loader2, LogOut, Network, Play, RefreshCw } from 'lucide-react';
 import { defineMessages, useIntl } from '../../i18n';
 import {
   Button,
@@ -39,6 +39,7 @@ import { useMacSummary } from './useMacSummary';
 import { PERMISSION_LABEL, useMacs, type MacFacts } from './useMacs';
 import { useGlanceNodes } from '../engineGlance/glanceStore';
 import { JobsSettings, MacLoadBars } from './MacLoadPanel';
+import { RunJobDialog } from './RunJobDialog';
 import type { NodesRead, Residency } from '../../acp/nodes';
 import { nodeHref } from '../../utils/navigationUtils';
 
@@ -51,6 +52,7 @@ import { nodeHref } from '../../utils/navigationUtils';
 
 const i18n = defineMessages({
   title: { id: 'myMacs.title', defaultMessage: 'My Macs' },
+  runJob: { id: 'myMacs.runJob', defaultMessage: 'Run a job…' },
   intro: {
     id: 'myMacs.intro',
     defaultMessage:
@@ -77,7 +79,7 @@ const i18n = defineMessages({
   masterHint: {
     id: 'myMacs.masterHint',
     defaultMessage:
-      'Only Macs signed in to your LeanZero Link account. Each switch is goose’s own operations — never an arbitrary command.',
+      'Only Macs signed in to your LeanZero Link account. These switches cover goose’s own operations: models, chat, and prompt sessions your other Macs start here. Shell commands and prompt jobs are a separate switch, “Run jobs other Macs send”, off until you turn it on.',
   },
   manageHint: {
     id: 'myMacs.manageHint',
@@ -597,6 +599,7 @@ export function MyMacs(props: MyMacsProps) {
   const intl = useIntl();
   const { macs } = useMacs();
   const nodes = useGlanceNodes();
+  const [runJob, setRunJob] = useState(false);
   return (
     <div className="flex flex-col gap-4 pb-8" data-testid="link-connected">
       {props.stale && (
@@ -617,8 +620,18 @@ export function MyMacs(props: MyMacsProps) {
       )}
       <div className="flex items-center gap-2">
         <StatusDot tone="ok" label={intl.formatMessage(i18n.mesh)} />
-        <p className={TYPE.bodyMuted}>{intl.formatMessage(i18n.intro)}</p>
+        <p className={cx(TYPE.bodyMuted, 'flex-1')}>{intl.formatMessage(i18n.intro)}</p>
+        <Button
+          size="sm"
+          variant="secondary"
+          data-testid="my-macs-run-job"
+          icon={<Play />}
+          onClick={() => setRunJob(true)}
+        >
+          {intl.formatMessage(i18n.runJob)}
+        </Button>
       </div>
+      {runJob && <RunJobDialog macs={macs} onClose={() => setRunJob(false)} />}
       {nodes.kind === 'failed' && (
         <ToneBanner
           tone="err"

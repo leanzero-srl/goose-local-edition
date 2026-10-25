@@ -114,6 +114,17 @@ export function macTarget(mac: Pick<Mac, 'isSelf' | 'key'>): string | undefined 
   return mac.isSelf ? undefined : mac.key;
 }
 
+/**
+ * A Link node id (a job's origin, a placement's pick) as the Mac's ONE name; the id itself only
+ * when no Mac on the roster answers to it (signed out, not read yet).
+ */
+export function macNameOfNode(
+  macs: readonly Pick<Mac, 'nodeId' | 'name'>[],
+  nodeId: string
+): string {
+  return macs.find((m) => m.nodeId === nodeId)?.name ?? nodeId;
+}
+
 /** true/false as the Mac reported it; null when its goose did not say. */
 export function allowsOf(mac: Pick<Mac, 'allows'>, permission: Permission): boolean | null {
   return mac.allows ? (mac.allows[ALLOWS_FIELD[permission]] ?? null) : null;

@@ -6615,7 +6615,7 @@
     "defaultMessage": "Meine anderen Macs dürfen diesen Mac nutzen"
   },
   "myMacs.masterHint": {
-    "defaultMessage": "Nur Macs, die bei deinem LeanZero-Link-Konto angemeldet sind. Jeder Schalter erlaubt nur goose-eigene Vorgänge — niemals beliebige Befehle."
+    "defaultMessage": "Nur Macs, die bei deinem LeanZero-Link-Konto angemeldet sind. Diese Schalter betreffen die eigenen Vorgänge von goose: Modelle, Chat und Prompt-Sitzungen, die deine anderen Macs hier starten. Shell-Befehle und Prompt-Jobs haben einen eigenen Schalter, „Jobs von anderen Macs ausführen“, der aus bleibt, bis du ihn einschaltest."
   },
   "myMacs.memory": {
     "defaultMessage": "Arbeitsspeicher"
@@ -11797,5 +11797,65 @@
   },
   "modelCustomFields.noFields": {
     "defaultMessage": "Benutzerdefinierte Felder: {provider} deklariert keine für „{model}“, daher läuft es mit den Standardwerten des Anbieters."
+  },
+  "macLoad.stateCancelling": {
+    "defaultMessage": "Wird abgebrochen…"
+  },
+  "myMacs.runJob": {
+    "defaultMessage": "Job ausführen…"
+  },
+  "runJob.title": {
+    "defaultMessage": "Job ausführen auf…"
+  },
+  "runJob.target": {
+    "defaultMessage": "Ausführen auf"
+  },
+  "runJob.best": {
+    "defaultMessage": "Bester Mac"
+  },
+  "runJob.ranking": {
+    "defaultMessage": "Jetzt am besten: {macs}"
+  },
+  "runJob.inUse": {
+    "defaultMessage": "{name} (in Benutzung)"
+  },
+  "runJob.noPlace": {
+    "defaultMessage": "Gerade kann kein Mac diesen Job übernehmen."
+  },
+  "runJob.none": {
+    "defaultMessage": "Keiner deiner Macs nimmt gerade Jobs an. Schalte „Jobs von anderen Macs ausführen“ auf dem Mac ein, der sie ausführen soll."
+  },
+  "runJob.kind": {
+    "defaultMessage": "Art"
+  },
+  "runJob.kindShell": {
+    "defaultMessage": "Shell-Befehl"
+  },
+  "runJob.kindPrompt": {
+    "defaultMessage": "Prompt"
+  },
+  "runJob.command": {
+    "defaultMessage": "{kind, select, shell {Befehl} other {Prompt}}"
+  },
+  "runJob.heavy": {
+    "defaultMessage": "Schwerer Job"
+  },
+  "runJob.heavyHint": {
+    "defaultMessage": "Ein Mac führt jeweils nur einen schweren Job aus (Builds, Renderings, Training)."
+  },
+  "runJob.mem": {
+    "defaultMessage": "Benötigter Speicher (GB, optional)"
+  },
+  "runJob.timeout": {
+    "defaultMessage": "Zeitlimit (Sekunden, optional)"
+  },
+  "runJob.submit": {
+    "defaultMessage": "Job ausführen"
+  },
+  "runJob.close": {
+    "defaultMessage": "Schließen"
+  },
+  "runJob.refused": {
+    "defaultMessage": "Nicht gesendet: {reason}"
   }
 }

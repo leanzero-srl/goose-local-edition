@@ -6615,7 +6615,7 @@
     "defaultMessage": "允許我的其他 Mac 使用這台 Mac"
   },
   "myMacs.masterHint": {
-    "defaultMessage": "僅限登入你 LeanZero Link 帳號的 Mac。每個開關只開放 goose 自身的操作 — 絕不是任意指令。"
+    "defaultMessage": "僅限登入你的 LeanZero Link 帳戶的 Mac。這些開關涵蓋 goose 本身的操作：模型、聊天，以及你的其他 Mac 在這裡啟動的提示工作階段。Shell 指令和提示工作由獨立的開關「執行其他 Mac 傳來的工作」控制，在你開啟之前一直關閉。"
   },
   "myMacs.memory": {
     "defaultMessage": "記憶體"
@@ -11797,5 +11797,65 @@
   },
   "modelCustomFields.noFields": {
     "defaultMessage": "自訂欄位：{provider} 沒有為「{model}」宣告任何欄位，因此它以供應商的預設值執行。"
+  },
+  "macLoad.stateCancelling": {
+    "defaultMessage": "正在取消…"
+  },
+  "myMacs.runJob": {
+    "defaultMessage": "執行工作…"
+  },
+  "runJob.title": {
+    "defaultMessage": "在…上執行工作"
+  },
+  "runJob.target": {
+    "defaultMessage": "執行位置"
+  },
+  "runJob.best": {
+    "defaultMessage": "最佳 Mac"
+  },
+  "runJob.ranking": {
+    "defaultMessage": "目前最佳：{macs}"
+  },
+  "runJob.inUse": {
+    "defaultMessage": "{name}（使用中）"
+  },
+  "runJob.noPlace": {
+    "defaultMessage": "目前沒有 Mac 能接受此工作。"
+  },
+  "runJob.none": {
+    "defaultMessage": "你的 Mac 目前都不接受工作。請在要執行工作的 Mac 上開啟「執行其他 Mac 傳來的工作」。"
+  },
+  "runJob.kind": {
+    "defaultMessage": "類型"
+  },
+  "runJob.kindShell": {
+    "defaultMessage": "Shell 指令"
+  },
+  "runJob.kindPrompt": {
+    "defaultMessage": "提示"
+  },
+  "runJob.command": {
+    "defaultMessage": "{kind, select, shell {指令} other {提示}}"
+  },
+  "runJob.heavy": {
+    "defaultMessage": "重型工作"
+  },
+  "runJob.heavyHint": {
+    "defaultMessage": "一台 Mac 一次只執行一個重型工作（建置、算繪、訓練）。"
+  },
+  "runJob.mem": {
+    "defaultMessage": "所需記憶體（GB，選填）"
+  },
+  "runJob.timeout": {
+    "defaultMessage": "時間限制（秒，選填）"
+  },
+  "runJob.submit": {
+    "defaultMessage": "執行工作"
+  },
+  "runJob.close": {
+    "defaultMessage": "關閉"
+  },
+  "runJob.refused": {
+    "defaultMessage": "未送出：{reason}"
   }
 }

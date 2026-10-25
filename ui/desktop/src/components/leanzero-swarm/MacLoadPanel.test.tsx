@@ -19,9 +19,15 @@ vi.mock('../../acp/config', () => ({
   acpUpsertConfig: (...a: unknown[]) => mockUpsert(...(a as [])),
 }));
 
+const macsMock = vi.hoisted(() => ({ macs: null as null | { nodeId: string; name: string }[] }));
+vi.mock('./useMacs', async (importActual) => ({
+  ...(await importActual<typeof import('./useMacs')>()),
+  useMacsMaybe: () => (macsMock.macs ? { macs: macsMock.macs } : null),
+}));
+
 import { JobsSettings, MacLoadBars } from './MacLoadPanel';
 import { BAR_FILL, JOBS_KEYS } from './macLoad';
-import { busyLoad } from './macLoad.fixtures';
+import { brief, busyLoad } from './macLoad.fixtures';
 
 const renderBars = (load = busyLoad()) =>
   render(
@@ -36,6 +42,7 @@ beforeEach(() => {
   mockCancel.mockReset();
   mockRead.mockReset();
   mockUpsert.mockClear();
+  macsMock.macs = null;
 });
 afterEach(cleanup);
 
@@ -123,6 +130,54 @@ describe('MacLoadBars', () => {
     expect(screen.getByTestId('job-dialog-exit').textContent).toBe('143');
     expect(screen.queryByTestId('job-dialog-cancel')).toBeNull();
   });
+
+  it('names the Mac a job came from by its display name, the node id only when no Mac answers', async () => {
+    const user = userEvent.setup();
+    macsMock.macs = [{ nodeId: 'n-gabee', name: 'Gabee’s MacBook' }];
+    mockGet.mockResolvedValue({ ...busyLoad().jobs[1], log_bytes: 0 });
+    mockLog.mockResolvedValue({ from: 0, next: 0, data: '', done: true });
+    renderBars();
+    const list = screen.getByTestId('mac-load-job-list');
+    expect(list.textContent).toContain('prompt from Gabee’s MacBook');
+    expect(list.textContent).not.toContain('from n-gabee');
+    // n-studio is on no Mac in the list: the id is all there is to show.
+    expect(list.textContent).toContain('shell from n-studio');
+    await user.click(screen.getByTestId('mac-job-j-wait'));
+    await screen.findByTestId('job-dialog');
+    await waitFor(() =>
+      expect(screen.getByTestId('job-dialog-origin').textContent).toBe('Gabee’s MacBook')
+    );
+  });
+
+  it('shows cancelling as Cancelling… and keeps reading the job until it ends', async () => {
+    const user = userEvent.setup();
+    const running = { ...busyLoad().jobs[0], log_bytes: 0 };
+    // The log is already complete, but the group has not exited yet: the view must still be read.
+    mockLog.mockResolvedValue({ from: 0, next: 0, data: '', done: true });
+    mockGet.mockResolvedValueOnce(running);
+    mockCancel.mockResolvedValue({ ...running, state: 'cancelling' });
+    renderBars(busyLoad({ jobs: [brief('j-run', 'running'), brief('j-stop', 'cancelling')] }));
+    expect(screen.getByTestId('mac-job-j-stop-state').textContent).toBe('Cancelling…');
+    // A cancelling job still holds the Mac.
+    expect(screen.getByTestId('mac-load-jobs-count').textContent).toBe('2');
+    await user.click(screen.getByTestId('mac-job-j-run'));
+    await screen.findByTestId('job-dialog');
+    await waitFor(() => expect(screen.getByTestId('job-dialog-state').textContent).toBe('running'));
+    await user.click(screen.getByTestId('job-dialog-cancel'));
+    await screen.findByText('Cancel job j-run?');
+    const buttons = screen.getAllByRole('button', { name: 'Cancel job' });
+    mockGet.mockResolvedValue({ ...running, state: 'cancelled', exit_code: 143 });
+    await user.click(buttons[buttons.length - 1]);
+    await waitFor(() =>
+      expect(screen.getByTestId('job-dialog-state').textContent).toBe('Cancelling…')
+    );
+    expect(screen.queryByTestId('job-dialog-cancel')).toBeNull();
+    await waitFor(
+      () => expect(screen.getByTestId('job-dialog-state').textContent).toBe('cancelled'),
+      { timeout: 5000 }
+    );
+    expect(screen.getByTestId('job-dialog-exit').textContent).toBe('143');
+  }, 10_000);
 
   it('shows the refusal reason when a job call fails', async () => {
     const user = userEvent.setup();
