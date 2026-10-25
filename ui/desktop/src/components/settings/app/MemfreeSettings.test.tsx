@@ -5,6 +5,7 @@ import { MemfreeSettings } from './MemfreeSettings';
 import {
   LINK_ALLOW_REMOTE_APP_QUIT_KEY,
   MEMFREE_ENABLED_KEY,
+  MEMFREE_NEVER_TOUCH_KEY,
   MEMFREE_SHOW_APPS_MIN_MB_KEY,
 } from '../../memfree/memfree';
 
@@ -122,5 +123,43 @@ describe('Settings > App — Free up memory', () => {
     mount();
     expect((await screen.findByRole('alert')).textContent).toContain('engine not reachable');
     expect(enabled()).toBeDisabled();
+  });
+
+  it('never-touch: shows the built-in defaults, adds and removes the person’s own entries', async () => {
+    config.stored = { [MEMFREE_NEVER_TOUCH_KEY]: ['Photoshop'] };
+    mount();
+    await waitFor(() => expect(enabled()).not.toBeDisabled());
+    expect(config.read).toHaveBeenCalledWith(MEMFREE_NEVER_TOUCH_KEY, false);
+    const defaults = screen.getByTestId('memfree-never-touch-defaults');
+    expect(defaults.textContent).toContain('com.microsoft.teams2');
+    expect(defaults.textContent).toContain('dev.warp.Warp-Stable');
+    expect(screen.getByTestId('memfree-never-touch-extras').textContent).toContain('Photoshop');
+    const input = screen.getByTestId('memfree-never-touch-input');
+    fireEvent.change(input, { target: { value: ' Final Cut Pro ' } });
+    fireEvent.click(screen.getByTestId('memfree-never-touch-add'));
+    await waitFor(() =>
+      expect(config.upsert).toHaveBeenCalledWith(
+        MEMFREE_NEVER_TOUCH_KEY,
+        ['Photoshop', 'Final Cut Pro'],
+        false
+      )
+    );
+    // A default typed again is not stored twice.
+    fireEvent.change(input, { target: { value: 'US.ZOOM.XOS' } });
+    fireEvent.click(screen.getByTestId('memfree-never-touch-add'));
+    await waitFor(() => expect(config.upsert).toHaveBeenCalledTimes(2));
+    expect(config.upsert).toHaveBeenLastCalledWith(
+      MEMFREE_NEVER_TOUCH_KEY,
+      ['Photoshop', 'Final Cut Pro'],
+      false
+    );
+    fireEvent.click(screen.getByTestId('memfree-never-touch-remove-Photoshop'));
+    await waitFor(() =>
+      expect(config.upsert).toHaveBeenLastCalledWith(
+        MEMFREE_NEVER_TOUCH_KEY,
+        ['Final Cut Pro'],
+        false
+      )
+    );
   });
 });
