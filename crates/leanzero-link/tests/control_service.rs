@@ -981,9 +981,10 @@ fn is_offline(p: &serde_json::Value) -> bool {
 /// D2 (3.0.128 live): the workhorse's Link was dropped and the laptop showed it Offline only
 /// after ~6-7 s. The pooled poll connection to a peer whose Link died stays open and silent
 /// ([`support::FakeTailnet::kill`]), so the next poll waited out the whole 5 s request timeout on
-/// top of the 3 s poll sleep. At the production cadence the row must read Offline within 3.5 s.
+/// top of the 3 s poll sleep. At the production cadence the row must read Offline within 2.4 s (3.0.130: the engine's
+/// worst is 2.3 s so that with the desktop's 500 ms roster poll the screen shows it within 3.0 s).
 #[tokio::test]
-async fn a_peer_whose_link_drops_reads_offline_within_3_5_s_at_production_cadence() {
+async fn a_peer_whose_link_drops_reads_offline_within_2_4_s_at_production_cadence() {
     let source_b = FakeStateSource::new("node-b");
     let b = spawn_node(source_b, mesh_v6()).await;
     let a = spawn_node_production_cadence(FakeStateSource::new("node-a")).await;
@@ -1002,17 +1003,17 @@ async fn a_peer_whose_link_drops_reads_offline_within_3_5_s_at_production_cadenc
     support::fake_tailnet().kill(&b_mesh_ip);
     let took = time_until_row(&client, &base_a, "node-b", is_offline).await;
     assert!(
-        took <= Duration::from_millis(3500),
-        "a dropped peer must read Offline within 3.5 s, took {took:?}"
+        took <= Duration::from_millis(2400),
+        "a dropped peer must read Offline within 2.4 s, took {took:?}"
     );
     a.shutdown();
     b.shutdown();
 }
 
 /// D2, the port-closed shape: the peer's control service stops while its mesh daemon still
-/// answers (a CONNECT is refused at once). Offline within 3.5 s at the production cadence.
+/// answers (a CONNECT is refused at once). Offline within 2.4 s at the production cadence.
 #[tokio::test]
-async fn a_peer_whose_port_closes_reads_offline_within_3_5_s_at_production_cadence() {
+async fn a_peer_whose_port_closes_reads_offline_within_2_4_s_at_production_cadence() {
     let unauthorized = Arc::new(AtomicBool::new(false));
     let (stub_port, stub) = spawn_stub_peer("node-stub", unauthorized).await;
     let a = spawn_node_production_cadence(FakeStateSource::new("node-a")).await;
@@ -1029,8 +1030,8 @@ async fn a_peer_whose_port_closes_reads_offline_within_3_5_s_at_production_caden
     stub.vanish().await;
     let took = time_until_row(&client, &base_a, "node-stub", is_offline).await;
     assert!(
-        took <= Duration::from_millis(3500),
-        "a peer whose port closed must read Offline within 3.5 s, took {took:?}"
+        took <= Duration::from_millis(2400),
+        "a peer whose port closed must read Offline within 2.4 s, took {took:?}"
     );
     a.shutdown();
 }
