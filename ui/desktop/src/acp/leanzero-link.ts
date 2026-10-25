@@ -198,7 +198,15 @@ export interface InferenceLoad {
 }
 
 export type JobKind = 'shell' | 'prompt';
-export type JobState = 'queued' | 'running' | 'done' | 'failed' | 'killed' | 'cancelled';
+export type JobState =
+  | 'queued'
+  | 'running'
+  | 'done'
+  | 'failed'
+  | 'killed'
+  | 'cancelled'
+  | 'cancelling'
+  | 'lost';
 
 /** A job as peers see it: never the command (leanzero-link `JobBrief`). */
 export interface JobBrief {

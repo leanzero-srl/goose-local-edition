@@ -118,11 +118,16 @@ pub enum JobState {
     Failed,
     Killed,
     Cancelled,
+    /// Cancel was asked and the group has not exited yet (TERM sent, KILL after the grace).
+    Cancelling,
+    /// The outcome is unknown: the job's process group was gone when goose came back (a
+    /// restart, a crash), or an adopted job ended without leaving its exit status.
+    Lost,
 }
 
 impl JobState {
     pub fn is_terminal(self) -> bool {
-        !matches!(self, Self::Queued | Self::Running)
+        !matches!(self, Self::Queued | Self::Running | Self::Cancelling)
     }
 }
 
@@ -273,12 +278,11 @@ impl HeavySlot {
     /// never share the real `~/.cache/heavy-run.lock`).
     #[cfg(unix)]
     pub fn try_take_at(path: &std::path::Path, holder: &str) -> std::io::Result<Option<Self>> {
-        use std::io::{Seek, Write};
         use std::os::fd::AsRawFd;
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        let mut file = std::fs::OpenOptions::new()
+        let file = std::fs::OpenOptions::new()
             .create(true)
             .truncate(false)
             .read(true)
@@ -293,18 +297,28 @@ impl HeavySlot {
             }
             return Err(e);
         }
-        // The holder line heavy-run writes (informational; the flock is the truth).
-        let _ = file.set_len(0);
-        let _ = file.seek(std::io::SeekFrom::Start(0));
-        let _ = writeln!(
-            file,
-            "pid {} goose-job {} since {}",
-            std::process::id(),
-            holder,
-            Utc::now().to_rfc3339()
-        );
-        Ok(Some(Self { file }))
+        let mut slot = Self { file };
+        slot.write_holder(std::process::id() as i32, holder);
+        Ok(Some(slot))
     }
+
+    /// Rewrite the holder line in heavy-run's own format (`pid P since %F %T: label`, local
+    /// time), so heavy-run, node-run and goose's refusals all read one shape. Informational:
+    /// the flock is the truth. Goose calls it again with the job's pgid once it has spawned.
+    pub fn write_holder(&mut self, pid: i32, label: &str) {
+        use std::io::{Seek, Write};
+        let _ = self.file.set_len(0);
+        let _ = self.file.seek(std::io::SeekFrom::Start(0));
+        let _ = writeln!(
+            self.file,
+            "{}",
+            holder_line(pid, chrono::Local::now(), label)
+        );
+        let _ = self.file.flush();
+    }
+
+    #[cfg(not(unix))]
+    pub fn write_holder(&mut self, _pid: i32, _label: &str) {}
 
     #[cfg(not(unix))]
     pub fn try_take_at(_path: &std::path::Path, _holder: &str) -> std::io::Result<Option<Self>> {
@@ -322,6 +336,115 @@ impl HeavySlot {
             Ok(None) => true,
             Err(_) => false,
         }
+    }
+}
+
+/// heavy-run's holder line: `pid 4321 since 2026-10-25 14:57:52: cargo test -p goose`.
+pub fn holder_line(pid: i32, since: chrono::DateTime<chrono::Local>, label: &str) -> String {
+    format!("pid {pid} since {}: {label}", since.format("%F %T"))
+}
+
+/// The reason a heavy refusal carries: who holds the slot and for how long, read from the
+/// lock file's holder line (heavy-run's format, goose's own, or the 3.0.128 goose shape
+/// `pid P goose-job ID since RFC3339`). Short: no full paths, at most a few words.
+pub fn describe_holder(text: &str, now: chrono::DateTime<chrono::Local>) -> String {
+    let line = text.lines().map(str::trim).find(|l| !l.is_empty());
+    let Some(line) = line else {
+        return "heavy slot held (the holder has not written its line yet)".into();
+    };
+    let mut rest = line;
+    let mut pid = None;
+    if let Some(r) = rest.strip_prefix("pid ") {
+        let (p, r) = r.split_once(' ').unwrap_or((r, ""));
+        pid = p.parse::<i64>().ok();
+        rest = r.trim_start();
+    }
+    let mut label = String::new();
+    let mut since: Option<chrono::DateTime<chrono::Local>> = None;
+    if let Some(r) = rest.strip_prefix("since ") {
+        // heavy-run / goose >= 3.0.129: `since %F %T: label`.
+        if r.len() >= 19 && r.is_char_boundary(19) {
+            if let Ok(t) = chrono::NaiveDateTime::parse_from_str(&r[..19], "%F %T") {
+                since = t.and_local_timezone(chrono::Local).earliest();
+                label = r[19..].trim_start_matches(':').trim().to_string();
+            }
+        }
+    } else if let Some((who, ts)) = rest.split_once(" since ") {
+        // 3.0.128 goose: `goose-job ID since RFC3339`.
+        since = chrono::DateTime::parse_from_rfc3339(ts.trim())
+            .ok()
+            .map(|t| t.with_timezone(&chrono::Local));
+        label = who.trim().to_string();
+    } else {
+        label = rest.trim().to_string();
+    }
+    let who = if let Some(id) = label.strip_prefix("goose-job ") {
+        let id = id.split_whitespace().next().unwrap_or("");
+        format!("goose job {id}")
+    } else if label.is_empty() {
+        "heavy-run".into()
+    } else {
+        format!("heavy-run: {}", short_command(&label))
+    };
+    let mut out = String::from("heavy slot held by ");
+    if let Some(p) = pid {
+        out.push_str(&format!("pid {p} ({who})"));
+    } else {
+        out.push_str(&who);
+    }
+    if let Some(t) = since {
+        let secs = (now - t).num_seconds().max(0) as u64;
+        out.push_str(&format!(" for {}", human_duration(secs)));
+    }
+    out
+}
+
+/// `/opt/homebrew/bin/cargo test --config X -p goose --lib a::b` -> `cargo test -p goose --lib`:
+/// path words lose their directories, `--config <value>` pairs go, at most 5 words / 48 chars.
+fn short_command(cmd: &str) -> String {
+    let mut words: Vec<String> = Vec::new();
+    let mut it = cmd.split_whitespace();
+    while let Some(w) = it.next() {
+        if w == "--config" {
+            it.next();
+            continue;
+        }
+        if w.starts_with("--config=") {
+            continue;
+        }
+        let w = if w.contains('/') {
+            w.trim_end_matches('/').rsplit('/').next().unwrap_or(w)
+        } else {
+            w
+        };
+        words.push(w.to_string());
+        if words.len() == 5 {
+            break;
+        }
+    }
+    let mut s = words.join(" ");
+    if s.chars().count() > 48 {
+        s = s.chars().take(47).collect::<String>() + "…";
+    } else if it.next().is_some() {
+        s.push_str(" …");
+    }
+    s
+}
+
+/// `372` -> `6m 12s`; `45` -> `45s`; `3725` -> `1h 2m`.
+pub fn human_duration(secs: u64) -> String {
+    match secs {
+        s if s < 60 => format!("{s}s"),
+        s if s < 3600 => format!("{}m {}s", s / 60, s % 60),
+        s => format!("{}h {}m", s / 3600, (s % 3600) / 60),
+    }
+}
+
+/// [`describe_holder`] over the lock file at `path` (unreadable = a bare "held").
+pub fn heavy_holder_reason(path: &std::path::Path) -> String {
+    match std::fs::read_to_string(path) {
+        Ok(t) => describe_holder(&t, chrono::Local::now()),
+        Err(_) => "heavy slot held".into(),
     }
 }
 
@@ -1001,5 +1124,51 @@ mod tests {
         assert_eq!(load.inference.engine_active, 4);
         assert!(load.inference.router_slots_used >= 1);
         assert!(load.sampled_at.is_some());
+    }
+
+    #[test]
+    fn holder_description_names_who_and_how_long() {
+        let now = chrono::Local::now();
+        let at = |secs: i64| {
+            (now - chrono::Duration::seconds(secs))
+                .format("%F %T")
+                .to_string()
+        };
+        let hr = format!(
+            "pid 66379 since {}: cargo test --config profile.dev.package.\"*\".strip=false -p goose --lib providers::swarm_router\n",
+            at(372)
+        );
+        assert_eq!(
+            describe_holder(&hr, now),
+            "heavy slot held by pid 66379 (heavy-run: cargo test -p goose --lib …) for 6m 12s"
+        );
+        let py = format!(
+            "pid 7 since {}: /usr/bin/python3 /Users/x/Projects/a/run.py\n",
+            at(45)
+        );
+        assert_eq!(
+            describe_holder(&py, now),
+            "heavy slot held by pid 7 (heavy-run: python3 run.py) for 45s"
+        );
+        let goose = holder_line(
+            812,
+            now - chrono::Duration::seconds(3725),
+            "goose-job j1-abc from laptop",
+        );
+        assert_eq!(
+            describe_holder(&goose, now),
+            "heavy slot held by pid 812 (goose job j1-abc) for 1h 2m"
+        );
+        let old = format!(
+            "pid 9 goose-job j2-def since {}",
+            (now - chrono::Duration::seconds(5))
+                .with_timezone(&Utc)
+                .to_rfc3339()
+        );
+        assert_eq!(
+            describe_holder(&old, now),
+            "heavy slot held by pid 9 (goose job j2-def) for 5s"
+        );
+        assert!(describe_holder("", now).contains("has not written"));
     }
 }

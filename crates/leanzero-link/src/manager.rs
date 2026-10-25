@@ -1145,14 +1145,20 @@ impl LinkManager {
         serde_json::from_value(v).map_err(|e| LinkError::JobProxy(e.to_string()))
     }
 
-    /// `POST /v1/swarm/jobs/{id}/cancel` on `target` (the group dies async; poll the view).
+    /// `POST /v1/swarm/jobs/{id}/cancel` on `target`: answers once the group is gone (the final
+    /// `cancelled` view), or `cancelling` if it outlived the TERM->KILL window.
     pub async fn cancel_job(
         &self,
         target: &str,
         id: &str,
     ) -> Result<crate::jobs::JobView, LinkError> {
         if self.is_self(target).await {
-            return self.local_jobs().await?.cancel(id).map_err(LinkError::Job);
+            return self
+                .local_jobs()
+                .await?
+                .cancel(id)
+                .await
+                .map_err(LinkError::Job);
         }
         let v = self
             .peer_jobs(
@@ -1999,7 +2005,8 @@ fn fresh_suffix() -> String {
 /// The request goes through the mesh proxy ([`crate::peer_dial`]); no proxy is
 /// [`LinkError::PeerDial`], never a direct dial.
 /// Every jobs call is a small JSON exchange (the job itself runs async on the peer).
-const JOBS_PEER_TIMEOUT: Duration = Duration::from_secs(10);
+/// Above a peer's cancel wait (its 10 s TERM->KILL grace plus 3 s) so a cancel answers its final view.
+const JOBS_PEER_TIMEOUT: Duration = Duration::from_secs(20);
 
 fn job_not_found(id: &str) -> LinkError {
     LinkError::Job(crate::jobs::Refusal::new(

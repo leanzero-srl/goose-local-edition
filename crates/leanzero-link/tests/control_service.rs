@@ -1825,6 +1825,17 @@ mod jobs_http {
         executor: Option<Arc<dyn RemoteExecutor>>,
     ) -> Node {
         let tmp = tempfile::tempdir().unwrap();
+        start_jobs_node(tmp, on, limits, executor).await
+    }
+
+    /// A node over an existing temp dir (its `jobs/` ledger and lock): the same node after a
+    /// goose restart or a Link reconnect.
+    async fn start_jobs_node(
+        tmp: tempfile::TempDir,
+        on: bool,
+        limits: NodeLimits,
+        executor: Option<Arc<dyn RemoteExecutor>>,
+    ) -> Node {
         let root = tmp.path().join("jobs");
         let lock = tmp.path().join("heavy-run.lock");
         let own = Arc::new(StdMutex::new(calm()));
@@ -2113,11 +2124,11 @@ mod jobs_http {
             .send()
             .await
             .unwrap();
-        assert_eq!(
-            r.status().as_u16(),
-            202,
-            "cancel is accepted, the group dies async"
-        );
+        assert_eq!(r.status().as_u16(), 202, "cancel is accepted");
+        // D3 (3.0.128 live test): the answer is the FINAL view, not the pre-cancel "running".
+        let body: serde_json::Value = r.json().await.unwrap();
+        assert_eq!(body["state"], "cancelled", "cancel answered {body}");
+        assert_eq!(body["exit_code"], 143, "cancel answered {body}");
         let end = wait_terminal(&n, &id, Duration::from_secs(20)).await;
         assert_eq!(end["state"], "cancelled", "{end}");
         assert_eq!(end["exit_code"], 143, "{end}");
@@ -2256,6 +2267,162 @@ mod jobs_http {
         // SAFETY: TERM our own child; heavy-run then kills its job group itself.
         unsafe { libc::kill(hr.id() as i32, libc::SIGTERM) };
         let _ = hr.wait();
+        n.handle.shutdown();
+    }
+
+    async fn cancel(n: &Node, id: &str) -> (u16, serde_json::Value) {
+        let r = reqwest::Client::new()
+            .post(format!("{}/v1/swarm/jobs/{id}/cancel", n.base))
+            .bearer_auth(TOKEN)
+            .send()
+            .await
+            .unwrap();
+        let s = r.status().as_u16();
+        (s, r.json().await.unwrap_or(serde_json::Value::Null))
+    }
+
+    async fn listed(n: &Node, id: &str) -> Option<serde_json::Value> {
+        let c = reqwest::Client::new();
+        let list = get_json(&c, &format!("{}/v1/swarm/jobs", n.base)).await;
+        list.as_array()?.iter().find(|j| j["job_id"] == id).cloned()
+    }
+
+    /// D1 (3.0.128 live test): a Link reconnect rebuilt the control service and with it an
+    /// EMPTY job registry: the running job vanished from the list, cancel said not_found, and
+    /// the process kept running (and holding the heavy slot). The registry must outlive it.
+    #[tokio::test]
+    async fn a_running_job_survives_a_control_service_restart_and_cancel_kills_its_group() {
+        let n = spawn_jobs_node(true, test_limits(), None).await;
+        let (s, v) = submit(&n, shell("sleep 300")).await;
+        assert_eq!(s, 202, "{v}");
+        let id = v["job_id"].as_str().unwrap().to_string();
+        let pgid = ledger(&n, &id)["pgid"].as_i64().unwrap() as i32;
+        assert!(group_alive(pgid));
+
+        let Node { handle, _tmp, .. } = n;
+        handle.shutdown();
+        let n = start_jobs_node(_tmp, true, test_limits(), None).await;
+
+        let row = listed(&n, &id)
+            .await
+            .unwrap_or_else(|| panic!("job {id} vanished after the restart"));
+        assert_eq!(row["state"], "running", "{row}");
+        let (s, v) = cancel(&n, &id).await;
+        assert_eq!(s, 202, "cancel must find the job: {v}");
+        assert_eq!(v["state"], "cancelled", "{v}");
+        assert_eq!(v["exit_code"], 143, "{v}");
+        assert!(!group_alive(pgid), "the group must be dead after cancel");
+        n.handle.shutdown();
+    }
+
+    fn running_record(id: &str, pgid: i32, heavy: bool) -> serde_json::Value {
+        serde_json::json!({
+            "job_id": id, "origin_node": "laptop", "kind": "shell", "command": "sleep 60",
+            "cwd": null, "heavy": heavy, "need_mem_gb": null, "timeout_s": 600,
+            "state": "running", "started_at": chrono::Utc::now().to_rfc3339(),
+            "ended_at": null, "exit_code": null, "reason": null, "session_id": null,
+            "pgid": pgid,
+        })
+    }
+
+    fn seed(root: &Path, rec: &serde_json::Value) {
+        let dir = root.join(rec["job_id"].as_str().unwrap());
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("job.json"), rec.to_string()).unwrap();
+    }
+
+    /// D1, the goose-restart half: a fresh registry over a ledger adopts a `running` job whose
+    /// group is alive (listed, holds the heavy slot it asked for, cancellable by group kill)
+    /// and marks one whose group is gone `lost`, never leaving it "running".
+    #[tokio::test]
+    async fn a_fresh_registry_adopts_a_live_ledger_job_and_marks_a_dead_one_lost() {
+        use std::os::unix::process::CommandExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("jobs");
+        let live_id = "j20261025000000-aaaaaa";
+        let dead_id = "j20261025000000-bbbbbb";
+        // The live record is written BEFORE its process starts, as submit does.
+        let mut live_rec = running_record(live_id, 0, true);
+        // The leader exits at once and its `sleep` lives on in the group, reparented to launchd
+        // (as a job's group is after the goose that started it died).
+        let mut leader = std::process::Command::new("/bin/sh")
+            .args(["-c", "/bin/sleep 60 >/dev/null 2>&1 & exit 0"])
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let live_pgid = leader.id() as i32;
+        leader.wait().unwrap();
+        assert!(group_alive(live_pgid), "the group outlives its leader");
+        live_rec["pgid"] = live_pgid.into();
+        seed(&root, &live_rec);
+        let mut dead = std::process::Command::new("/usr/bin/true")
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let dead_pgid = dead.id() as i32;
+        dead.wait().unwrap();
+        seed(&root, &running_record(dead_id, dead_pgid, false));
+
+        let n = start_jobs_node(tmp, true, test_limits(), None).await;
+        let row = listed(&n, live_id).await.expect("live ledger job adopted");
+        assert_eq!(row["state"], "running", "{row}");
+        let row = listed(&n, dead_id).await.expect("dead ledger job listed");
+        assert_eq!(row["state"], "lost", "{row}");
+        assert!(row["ended_at"].is_string(), "{row}");
+        assert_eq!(ledger(&n, dead_id)["state"], "lost");
+        // The adopted heavy job holds the slot again, and the lock names it.
+        assert!(
+            matches!(HeavySlot::try_take_at(&n.lock, "probe"), Ok(None)),
+            "an adopted heavy job must hold the heavy slot"
+        );
+        let holder = std::fs::read_to_string(&n.lock).unwrap();
+        assert!(holder.contains(live_id), "lock holder line: {holder}");
+
+        let (s, v) = cancel(&n, live_id).await;
+        assert_eq!(s, 202, "{v}");
+        assert_eq!(v["state"], "cancelled", "{v}");
+        assert_eq!(v["exit_code"], 143, "{v}");
+        assert!(
+            !group_alive(live_pgid),
+            "the adopted group is gone after cancel"
+        );
+        assert!(
+            matches!(HeavySlot::try_take_at(&n.lock, "probe"), Ok(Some(_))),
+            "the slot is free once the adopted job is gone"
+        );
+        n.handle.shutdown();
+    }
+
+    /// D10: a heavy refusal names the holder and for how long, from the lock's holder line.
+    #[tokio::test]
+    async fn heavy_slot_refusal_names_the_holder_and_how_long() {
+        let n = spawn_jobs_node(true, test_limits(), None).await;
+        let _held = HeavySlot::try_take_at(&n.lock, "test")
+            .unwrap()
+            .expect("slot");
+        let since = (chrono::Local::now() - chrono::Duration::seconds(372))
+            .format("%F %T")
+            .to_string();
+        std::fs::write(
+            &n.lock,
+            format!("pid 4321 since {since}: /opt/homebrew/bin/cargo test -p goose\n"),
+        )
+        .unwrap();
+        let mut heavy = shell("true");
+        heavy["heavy"] = true.into();
+        let (s, v) = submit(&n, heavy).await;
+        assert_eq!(
+            (s, v["code"].as_str()),
+            (409, Some("heavy_slot_held")),
+            "{v}"
+        );
+        let reason = v["reason"].as_str().unwrap();
+        assert!(
+            reason.starts_with(
+                "heavy slot held by pid 4321 (heavy-run: cargo test -p goose) for 6m 1"
+            ),
+            "{reason}"
+        );
         n.handle.shutdown();
     }
 }

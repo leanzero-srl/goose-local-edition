@@ -277,7 +277,9 @@ impl ControlService {
         )?;
 
         let leaving = Arc::new(StdMutex::new(None));
-        let jobs = Arc::new(crate::jobs::JobRegistry::new(config.jobs.clone()));
+        // The process-wide registry for this ledger root: it outlives this service, so a Link
+        // reconnect (which rebuilds the service) keeps every running job listed and cancellable.
+        let jobs = crate::jobs::JobRegistry::shared(config.jobs.clone());
         let ctx = Ctx {
             source: source.clone(),
             pubsub: pubsub.clone(),
@@ -646,7 +648,7 @@ async fn jobs_log(
 }
 
 async fn jobs_cancel(Path(id): Path<String>, State(ctx): State<Ctx>) -> Response {
-    match ctx.jobs.cancel(&id) {
+    match ctx.jobs.cancel(&id).await {
         Ok(v) => (StatusCode::ACCEPTED, Json(v)).into_response(),
         Err(r) => refusal_response(r),
     }

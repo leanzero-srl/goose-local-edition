@@ -24,7 +24,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
@@ -32,8 +32,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
 use crate::load::{
-    sample_own, user_idle_threshold_s, HeavySlot, JobBrief, JobKind, JobState, NodeLimits,
-    NodeLoad, OwnLoad, THERMAL_REFUSE_LEVEL,
+    heavy_holder_reason, sample_own, user_idle_threshold_s, HeavySlot, JobBrief, JobKind, JobState,
+    NodeLimits, NodeLoad, OwnLoad, THERMAL_REFUSE_LEVEL,
 };
 use crate::state::{ExecuteRequest, RemoteExecutor, SwarmStateSource};
 
@@ -56,6 +56,14 @@ const BRIEF_KEEP: Duration = Duration::from_secs(600);
 const BRIEF_MAX: usize = 20;
 /// One `/log` read returns at most this many bytes.
 pub const LOG_CHUNK_MAX: u64 = 256 * 1024;
+/// Cancel waits for the group this long past the TERM->KILL grace before answering
+/// `cancelling` (the KILL itself and the reap are near instant).
+const CANCEL_SLACK: Duration = Duration::from_secs(3);
+/// A ledger job that ended this long ago is not loaded back into the list after a restart.
+const LEDGER_KEEP_HOURS: i64 = 24;
+/// The shell's exit status, written by the wrapper (`<job>/exit`), so a job that outlived the
+/// goose that started it still leaves its outcome for the goose that adopts it.
+const EXIT_FILE: &str = "exit";
 
 // ---------------------------------------------------------------------------------------------
 // Wire
@@ -546,10 +554,19 @@ fn new_job_id() -> String {
 }
 
 /// The node's jobs: admission, spawn, watchdog, ledger, views.
+///
+/// One per ledger root for the whole process ([`Self::shared`]): the control service is
+/// rebuilt on every Link reconnect, and a registry that lived inside it lost every running job
+/// with it (3.0.128 live test: the job vanished from the list, cancel said not_found, the
+/// process kept running and holding the heavy slot). On first use with the switch on, the
+/// registry also rebuilds itself from the ledger, so a goose restart adopts what still runs.
 pub struct JobRegistry {
-    cfg: JobsConfig,
+    cfg: RwLock<JobsConfig>,
     jobs: Mutex<HashMap<String, Arc<JobEntry>>>,
+    rebuilt: AtomicBool,
 }
+
+static SHARED: OnceLock<Mutex<HashMap<PathBuf, Arc<JobRegistry>>>> = OnceLock::new();
 
 impl std::fmt::Debug for JobRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -560,31 +577,141 @@ impl std::fmt::Debug for JobRegistry {
 }
 
 impl JobRegistry {
+    /// A private registry (tests). Production uses [`Self::shared`].
     pub fn new(cfg: JobsConfig) -> Self {
         Self {
-            cfg,
+            cfg: RwLock::new(cfg),
             jobs: Mutex::new(HashMap::new()),
+            rebuilt: AtomicBool::new(false),
         }
     }
 
+    /// The process-wide registry for `cfg.root`, created on first use and handed to every
+    /// control service started over that root afterwards. The newest config wins (the switch
+    /// or the limits may have changed between starts); the jobs and their watchdogs stay.
+    pub fn shared(cfg: JobsConfig) -> Arc<Self> {
+        let map = SHARED.get_or_init(Default::default);
+        let reg = map
+            .lock()
+            .unwrap()
+            .entry(cfg.root.clone())
+            .or_insert_with(|| Arc::new(Self::new(cfg.clone())))
+            .clone();
+        *reg.cfg.write().unwrap() = cfg;
+        reg.ensure_rebuilt();
+        reg
+    }
+
+    fn cfg(&self) -> JobsConfig {
+        self.cfg.read().unwrap().clone()
+    }
+
     pub fn enabled(&self) -> bool {
-        self.cfg.switch.is_on()
+        self.cfg().switch.is_on()
     }
 
     /// The memory floor this node admits against (config, else node-limits.json `min_free`);
     /// the placer uses its own floor to pre-screen peers (each receiver re-checks with its own).
     pub fn min_free(&self) -> f64 {
-        self.cfg.min_free.unwrap_or_else(|| {
-            self.cfg
-                .limits
-                .clone()
-                .unwrap_or_else(NodeLimits::load)
-                .min_free
-        })
+        let cfg = self.cfg();
+        cfg.min_free
+            .unwrap_or_else(|| cfg.limits.unwrap_or_else(NodeLimits::load).min_free)
     }
 
     fn get(&self, id: &str) -> Option<Arc<JobEntry>> {
+        self.ensure_rebuilt();
         self.jobs.lock().unwrap().get(id).cloned()
+    }
+
+    /// Rebuild from the ledger once, the first time the switch is on inside a tokio runtime.
+    /// Gated on the switch so a node that never ran jobs (and every test that leaves the
+    /// switch off over the real `~/.leanzero/jobs`) never touches the ledger.
+    fn ensure_rebuilt(&self) {
+        if self.rebuilt.load(Ordering::SeqCst) {
+            return;
+        }
+        let cfg = self.cfg();
+        let Ok(rt) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        if !cfg.switch.is_on() || self.rebuilt.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        self.rebuild(&cfg, &rt);
+    }
+
+    /// Each `<root>/<id>/job.json`: a `running`/`cancelling` shell job whose process group is
+    /// still the one it started is ADOPTED (listed, watched, cancellable by group kill, its
+    /// heavy slot taken again); one whose group is gone gets its exit file's outcome, else
+    /// `lost`. Never left "running". Jobs that ended in the last day are listed again.
+    fn rebuild(&self, cfg: &JobsConfig, rt: &tokio::runtime::Handle) {
+        let Ok(rd) = std::fs::read_dir(&cfg.root) else {
+            return;
+        };
+        let limits = cfg.limits.clone().unwrap_or_else(NodeLimits::load);
+        let keep_since = Utc::now() - chrono::Duration::hours(LEDGER_KEEP_HOURS);
+        for d in rd.flatten() {
+            let dir = d.path();
+            let Ok(raw) = std::fs::read_to_string(dir.join("job.json")) else {
+                continue;
+            };
+            let Ok(mut rec) = serde_json::from_str::<JobRecord>(&raw) else {
+                tracing::warn!(dir = %dir.display(), "jobs: unreadable ledger record skipped");
+                continue;
+            };
+            if self.jobs.lock().unwrap().contains_key(&rec.job_id) {
+                continue;
+            }
+            let mut adopt = None;
+            if !rec.state.is_terminal() {
+                match (rec.kind, rec.pgid) {
+                    (JobKind::Shell, Some(p)) if ledger_group_alive(p, rec.started_at) => {
+                        adopt = Some(p)
+                    }
+                    (kind, _) => {
+                        let (state, code, reason) = match (kind, read_exit(&dir)) {
+                            (JobKind::Shell, Some(0)) => (JobState::Done, Some(0), None),
+                            (JobKind::Shell, Some(c)) => (JobState::Failed, Some(c), None),
+                            (JobKind::Shell, None) => (
+                                JobState::Lost,
+                                None,
+                                Some("its process group was gone when goose came back; exit status unknown"),
+                            ),
+                            (JobKind::Prompt, _) => (
+                                JobState::Lost,
+                                None,
+                                Some("goose restarted while its session ran; the end was not observed"),
+                            ),
+                        };
+                        rec.state = state;
+                        rec.exit_code = code;
+                        rec.reason = Some(reason.map_or_else(
+                            || "ended while goose was not running".to_string(),
+                            str::to_string,
+                        ));
+                        rec.ended_at = Some(Utc::now());
+                        write_record(&dir, &rec);
+                        tracing::info!(job = %rec.job_id, state = ?rec.state, "jobs: ledger job closed on rebuild");
+                    }
+                }
+            } else if rec.ended_at.is_none_or(|t| t < keep_since) {
+                continue;
+            }
+            let cancelling = rec.state == JobState::Cancelling;
+            let id = rec.job_id.clone();
+            let entry = Arc::new(JobEntry {
+                record: Mutex::new(rec),
+                dir,
+                cancel: AtomicBool::new(cancelling),
+                cancel_notify: Notify::new(),
+                pgid: AtomicI32::new(adopt.unwrap_or(0)),
+            });
+            self.jobs.lock().unwrap().insert(id.clone(), entry.clone());
+            if let Some(pgid) = adopt {
+                tracing::info!(job = %id, pgid, "jobs: adopted a running ledger job");
+                rt.spawn(watch_adopted(entry, pgid, limits.clone(), cfg.clone()));
+            }
+        }
     }
 
     /// Admit and start one job. `executor`/`source` serve prompt jobs.
@@ -594,7 +721,8 @@ impl JobRegistry {
         executor: Option<Arc<dyn RemoteExecutor>>,
         source: Arc<dyn SwarmStateSource>,
     ) -> Result<JobAccepted, Refusal> {
-        if !self.cfg.switch.is_on() {
+        let cfg = self.cfg();
+        if !cfg.switch.is_on() {
             return Err(Refusal::new(
                 RefusalCode::JobsDisabled,
                 "remote jobs are disabled on this node",
@@ -617,17 +745,18 @@ impl JobRegistry {
                 ));
             }
         }
-        let limits = self.cfg.limits.clone().unwrap_or_else(NodeLimits::load);
-        let min_free = self.cfg.min_free.unwrap_or(limits.min_free);
-        let sampler = self.cfg.sampler.clone();
+        self.ensure_rebuilt();
+        let limits = cfg.limits.clone().unwrap_or_else(NodeLimits::load);
+        let min_free = cfg.min_free.unwrap_or(limits.min_free);
+        let sampler = cfg.sampler.clone();
         let mut own = tokio::task::spawn_blocking(move || sampler())
             .await
             .unwrap_or_default();
         let job_id = new_job_id();
         // The slot is the truth, not the sampled flag: take it now (non-blocking) and hold it
         // for the job's life. Taken BEFORE the verdict so a refusal names the right cause.
-        let slot = if req.heavy {
-            match HeavySlot::try_take_at(&self.cfg.heavy_lock, &job_id) {
+        let mut slot = if req.heavy {
+            match HeavySlot::try_take_at(&cfg.heavy_lock, &job_id) {
                 Ok(Some(s)) => {
                     own.heavy_slot_held = false;
                     Some(s)
@@ -639,16 +768,22 @@ impl JobRegistry {
                 Err(e) => {
                     return Err(Refusal::new(
                         RefusalCode::Internal,
-                        format!("heavy-run lock {}: {e}", self.cfg.heavy_lock.display()),
+                        format!("heavy-run lock {}: {e}", cfg.heavy_lock.display()),
                     ))
                 }
             }
         } else {
             None
         };
-        admit(&own, &req, min_free, self.cfg.user_active)?;
+        admit(&own, &req, min_free, cfg.user_active).map_err(|mut r| {
+            if r.code == RefusalCode::HeavySlotHeld {
+                // Who holds it and for how long (the lock's holder line), not a bare "held".
+                r.reason = heavy_holder_reason(&cfg.heavy_lock);
+            }
+            r
+        })?;
 
-        let dir = self.cfg.root.join(&job_id);
+        let dir = cfg.root.join(&job_id);
         std::fs::create_dir_all(&dir).map_err(|e| {
             Refusal::new(
                 RefusalCode::Internal,
@@ -702,7 +837,9 @@ impl JobRegistry {
                 let pgid = child.id().map(|p| p as i32).unwrap_or(0);
                 entry.pgid.store(pgid, Ordering::SeqCst);
                 entry.update(|r| r.pgid = Some(pgid));
-                let cfg = self.cfg.clone();
+                if let Some(s) = slot.as_mut() {
+                    s.write_holder(pgid, &holder_label(&entry.snapshot()));
+                }
                 tokio::spawn(watch_shell(entry, child, pgid, limits, cfg, slot));
             }
             JobKind::Prompt => {
@@ -715,13 +852,7 @@ impl JobRegistry {
                 match exec.execute(er).await {
                     Ok(acc) => {
                         entry.update(|r| r.session_id = Some(acc.session_id.clone()));
-                        tokio::spawn(watch_prompt(
-                            entry,
-                            acc.session_id,
-                            source,
-                            self.cfg.tick,
-                            slot,
-                        ));
+                        tokio::spawn(watch_prompt(entry, acc.session_id, source, cfg.tick, slot));
                     }
                     Err(e) => {
                         entry.finish(JobState::Failed, None, Some(e.to_string()));
@@ -740,6 +871,7 @@ impl JobRegistry {
 
     /// Newest first.
     pub fn list(&self) -> Vec<JobView> {
+        self.ensure_rebuilt();
         let mut v: Vec<JobView> = self
             .jobs
             .lock()
@@ -757,6 +889,7 @@ impl JobRegistry {
 
     /// What `NodeLoad.jobs` carries: running jobs plus those that ended < 10 min ago.
     pub fn briefs(&self) -> Vec<JobBrief> {
+        self.ensure_rebuilt();
         let cutoff = Utc::now() - chrono::Duration::from_std(BRIEF_KEEP).unwrap_or_default();
         let mut v: Vec<JobRecord> = self
             .jobs
@@ -786,8 +919,10 @@ impl JobRegistry {
         })
     }
 
-    /// Cancel: the watchdog TERMs the group (KILL after the grace) and records 143.
-    pub fn cancel(&self, id: &str) -> Result<JobView, Refusal> {
+    /// Cancel: the watchdog TERMs the group (KILL after the grace) and records 143. Waits for
+    /// that (the grace plus [`CANCEL_SLACK`]) and answers the FINAL view; a group still alive
+    /// then answers `cancelling` (the record says so too), never the pre-cancel `running`.
+    pub async fn cancel(&self, id: &str) -> Result<JobView, Refusal> {
         let e = self
             .get(id)
             .ok_or_else(|| Refusal::new(RefusalCode::NotFound, format!("no job {id}")))?;
@@ -804,8 +939,17 @@ impl JobRegistry {
                 "a prompt job cannot be cancelled from the mesh (the executor has no cancel seam); stop its session in goose",
             ));
         }
+        e.update(|r| {
+            if !r.state.is_terminal() {
+                r.state = JobState::Cancelling;
+            }
+        });
         e.cancel.store(true, Ordering::SeqCst);
         e.cancel_notify.notify_one();
+        let deadline = Instant::now() + self.cfg().kill_grace + CANCEL_SLACK;
+        while !e.snapshot().state.is_terminal() && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
         Ok(e.view())
     }
 }
@@ -817,7 +961,7 @@ pub async fn load_with_jobs(engine_active: u32, jobs: Option<&JobRegistry>) -> N
     let Some(reg) = jobs else {
         return crate::load::snapshot(engine_active, Vec::new()).await;
     };
-    crate::load::snapshot_with(engine_active, reg.briefs(), reg.cfg.sampler.clone()).await
+    crate::load::snapshot_with(engine_active, reg.briefs(), reg.cfg().sampler).await
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -829,9 +973,17 @@ fn spawn_shell(req: &JobRequest, dir: &Path) -> std::io::Result<tokio::process::
         .append(true)
         .open(dir.join("log"))?;
     let err = log.try_clone()?;
+    // `/bin/zsh -lc <command>` as before, under a non-login `zsh -f` that records its exit
+    // status in `<job>/exit`: a goose that adopts this job after a restart is not its parent
+    // and cannot wait() for it, so the file is how the outcome survives. A signalled group
+    // kills the wrapper too (no file), which the watchdog records itself.
     let mut cmd = tokio::process::Command::new("/bin/zsh");
-    cmd.arg("-lc")
+    cmd.arg("-f")
+        .arg("-c")
+        .arg(r#"/bin/zsh -lc "$1"; rc=$?; print -r -- $rc >| "$2"; exit $rc"#)
+        .arg("goose-job")
         .arg(&req.command)
+        .arg(dir.join(EXIT_FILE))
         .stdin(std::process::Stdio::null())
         .stdout(log)
         .stderr(err)
@@ -862,6 +1014,73 @@ fn ram_bytes() -> Option<u64> {
 fn group_alive(pgid: i32) -> bool {
     // SAFETY: signal 0 only checks existence/permission.
     pgid > 0 && unsafe { libc::killpg(pgid, 0) } == 0
+}
+
+/// The ledger's pgid is still the group this job started: the group exists, and if its
+/// leader is still alive the leader started with the job (pids are reused after a reboot;
+/// the kernel never reuses a pid while it is still some group's id, so a group whose leader
+/// is gone is the original one).
+#[cfg(unix)]
+fn ledger_group_alive(pgid: i32, started_at: DateTime<Utc>) -> bool {
+    if !group_alive(pgid) {
+        return false;
+    }
+    // SAFETY: getpgid has no memory effects.
+    let leader_pgid = unsafe { libc::getpgid(pgid) };
+    if leader_pgid < 0 {
+        return true; // the leader is gone, its group lives on
+    }
+    if leader_pgid != pgid {
+        return false; // that pid is now some other group's member
+    }
+    match process_start_secs(pgid) {
+        Some(t) => {
+            let s = started_at.timestamp();
+            (s - 5..=s + 300).contains(&t)
+        }
+        None => true,
+    }
+}
+
+#[cfg(not(unix))]
+fn ledger_group_alive(_pgid: i32, _started_at: DateTime<Utc>) -> bool {
+    false
+}
+
+#[cfg(target_os = "macos")]
+fn process_start_secs(pid: i32) -> Option<i64> {
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as i32;
+    // SAFETY: proc_pidinfo writes at most `size` bytes into `info`.
+    let n = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            &mut info as *mut libc::proc_bsdinfo as *mut libc::c_void,
+            size,
+        )
+    };
+    (n == size).then_some(info.pbi_start_tvsec as i64)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn process_start_secs(_pid: i32) -> Option<i64> {
+    None
+}
+
+/// The wrapper's `<job>/exit` (see [`spawn_shell`]).
+fn read_exit(dir: &Path) -> Option<i32> {
+    std::fs::read_to_string(dir.join(EXIT_FILE))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+}
+
+/// What goose writes after `pid P since T: ` in the heavy-run lock (never the command).
+fn holder_label(r: &JobRecord) -> String {
+    format!("goose-job {} from {}", r.job_id, r.origin_node)
 }
 
 /// Only a group this registry created (`process_group(0)` makes the shell's pid its pgid) and
@@ -940,42 +1159,7 @@ async fn watch_shell(
                 format!("timeout after {}s", timeout.as_secs()),
             ))
         } else {
-            let used = tokio::task::spawn_blocking(move || crate::load::group_memory_bytes(pgid))
-                .await
-                .ok()
-                .flatten();
-            let free = tokio::task::spawn_blocking(system_free_pct)
-                .await
-                .ok()
-                .flatten();
-            if used.is_none() || free.is_none() {
-                fails += 1;
-            } else {
-                fails = 0;
-            }
-            let cap = ram.map(|r| r as f64 * limits.max_rss_pct / 100.0);
-            match (used, cap, free) {
-                (Some(u), Some(c), _) if u as f64 > c => Some((
-                    JobState::Killed,
-                    EXIT_MEMORY,
-                    format!(
-                        "job memory passed {}% of RAM ({} MB)",
-                        limits.max_rss_pct,
-                        u / (1 << 20)
-                    ),
-                )),
-                (_, _, Some(f)) if f < limits.kill_free => Some((
-                    JobState::Killed,
-                    EXIT_MEMORY,
-                    format!("memory free fell under {}% ({f:.1}%)", limits.kill_free),
-                )),
-                _ if fails >= MEM_FAIL_KILL => Some((
-                    JobState::Killed,
-                    EXIT_MEMORY,
-                    format!("memory could not be read {fails} times in a row"),
-                )),
-                _ => None,
-            }
+            memory_verdict(pgid, ram, &limits, &mut fails).await
         };
         if let Some((state, code, reason)) = why {
             // A job that already exited between ticks is not killed again.
@@ -996,6 +1180,152 @@ async fn watch_shell(
     if group_alive(pgid) {
         signal_group(pgid, libc::SIGTERM);
     }
+    let _ = append_line(
+        &entry.dir,
+        &format!(
+            "[goose-job] end {:?} exit {:?} {}",
+            outcome.0,
+            outcome.1,
+            outcome.2.clone().unwrap_or_default()
+        ),
+    );
+    entry.finish(outcome.0, outcome.1, outcome.2);
+    drop(slot);
+}
+
+/// The watchdog's memory rule (heavy-run's): group footprint over `max_rss_pct` of RAM, system
+/// free under `kill_free`, or memory unreadable [`MEM_FAIL_KILL`] times in a row -> 137.
+async fn memory_verdict(
+    pgid: i32,
+    ram: Option<u64>,
+    limits: &NodeLimits,
+    fails: &mut u32,
+) -> Option<(JobState, i32, String)> {
+    let used = tokio::task::spawn_blocking(move || crate::load::group_memory_bytes(pgid))
+        .await
+        .ok()
+        .flatten();
+    let free = tokio::task::spawn_blocking(system_free_pct)
+        .await
+        .ok()
+        .flatten();
+    if used.is_none() || free.is_none() {
+        *fails += 1;
+    } else {
+        *fails = 0;
+    }
+    let cap = ram.map(|r| r as f64 * limits.max_rss_pct / 100.0);
+    match (used, cap, free) {
+        (Some(u), Some(c), _) if u as f64 > c => Some((
+            JobState::Killed,
+            EXIT_MEMORY,
+            format!(
+                "job memory passed {}% of RAM ({} MB)",
+                limits.max_rss_pct,
+                u / (1 << 20)
+            ),
+        )),
+        (_, _, Some(f)) if f < limits.kill_free => Some((
+            JobState::Killed,
+            EXIT_MEMORY,
+            format!("memory free fell under {}% ({f:.1}%)", limits.kill_free),
+        )),
+        _ if *fails >= MEM_FAIL_KILL => Some((
+            JobState::Killed,
+            EXIT_MEMORY,
+            format!("memory could not be read {fails} times in a row"),
+        )),
+        _ => None,
+    }
+}
+
+/// TERM the group, KILL after `grace` if any member is left, for a group that is not our child
+/// (an adopted job): only `killpg(0)` tells us when it is gone.
+#[cfg(unix)]
+async fn kill_adopted(pgid: i32, grace: Duration) {
+    signal_group(pgid, libc::SIGTERM);
+    let deadline = Instant::now() + grace;
+    while group_alive(pgid) && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    if group_alive(pgid) {
+        signal_group(pgid, libc::SIGKILL);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while group_alive(pgid) && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+}
+
+/// The watchdog for a job adopted from the ledger after a goose restart: same timeout (from the
+/// recorded start), memory and cancel rules as [`watch_shell`], by group signals. The flock of
+/// the goose that started it died with that goose (Rust opens files `O_CLOEXEC`, so the job
+/// never inherited the fd), so a heavy job takes the slot again here and holds it until its
+/// group is gone; if someone else took the slot in between, the log says so.
+async fn watch_adopted(entry: Arc<JobEntry>, pgid: i32, limits: NodeLimits, cfg: JobsConfig) {
+    let rec = entry.snapshot();
+    let mut slot = None;
+    if rec.heavy {
+        match HeavySlot::try_take_at(&cfg.heavy_lock, &rec.job_id) {
+            Ok(Some(mut s)) => {
+                s.write_holder(pgid, &holder_label(&rec));
+                slot = Some(s);
+            }
+            Ok(None) => {
+                let who = heavy_holder_reason(&cfg.heavy_lock);
+                tracing::warn!(job = %rec.job_id, %who, "jobs: adopted heavy job could not retake the slot");
+                let _ = append_line(
+                    &entry.dir,
+                    &format!("[goose-job] adopted after a goose restart; the slot was taken meanwhile: {who}"),
+                );
+            }
+            Err(e) => {
+                tracing::warn!(job = %rec.job_id, error = %e, "jobs: heavy lock unreadable on adoption")
+            }
+        }
+    }
+    let _ = append_line(
+        &entry.dir,
+        &format!("[goose-job] adopted after a goose restart (pgid {pgid})"),
+    );
+    let timeout = Duration::from_secs(rec.timeout_s);
+    let ram = ram_bytes();
+    let mut fails = 0u32;
+    let outcome: (JobState, Option<i32>, Option<String>) = loop {
+        tokio::select! {
+            _ = entry.cancel_notify.notified() => {}
+            _ = tokio::time::sleep(cfg.tick) => {}
+        }
+        if !group_alive(pgid) {
+            break match read_exit(&entry.dir) {
+                Some(0) => (JobState::Done, Some(0), None),
+                Some(c) => (JobState::Failed, Some(c), None),
+                None => (
+                    JobState::Lost,
+                    None,
+                    Some("ended after goose adopted it and left no exit status".into()),
+                ),
+            };
+        }
+        let elapsed = (Utc::now() - rec.started_at).to_std().unwrap_or_default();
+        let why = if entry.cancel.load(Ordering::SeqCst) {
+            Some((JobState::Cancelled, EXIT_CANCEL, "cancelled".to_string()))
+        } else if elapsed > timeout {
+            Some((
+                JobState::Killed,
+                EXIT_TIMEOUT,
+                format!("timeout after {}s", timeout.as_secs()),
+            ))
+        } else {
+            memory_verdict(pgid, ram, &limits, &mut fails).await
+        };
+        if let Some((state, code, reason)) = why {
+            tracing::warn!(job = %rec.job_id, %reason, "jobs: killing adopted job group");
+            #[cfg(unix)]
+            kill_adopted(pgid, cfg.kill_grace).await;
+            break (state, Some(code), Some(reason));
+        }
+    };
     let _ = append_line(
         &entry.dir,
         &format!(

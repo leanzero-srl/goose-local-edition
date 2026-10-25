@@ -3242,3 +3242,89 @@ async fn jobs_go_to_a_peer_with_this_nodes_origin_and_refusals_stay_typed() {
     b.shutdown();
     manager.logout(false).await.unwrap();
 }
+
+// ── jobs survive a Link disconnect + reconnect (3.0.128 live test D1) ─────────
+
+#[tokio::test]
+async fn a_running_job_survives_disconnect_and_reconnect_and_stays_cancellable() {
+    use leanzero_link::jobs::{JobRequest, JobsConfig, JobsSwitch};
+    use leanzero_link::load::{JobKind, JobState, NodeLimits, OwnLoad};
+    let tmp = tempfile::tempdir().unwrap();
+    let jobs_root = tmp.path().join("jobs");
+    let lock = tmp.path().join("lock");
+    let server = MockServer::start().await;
+    mount(
+        &server,
+        "POST",
+        "/v1/mesh/join-key",
+        200,
+        json!({"authKey": "tskey-auth-ok", "nodeSecret": SECRET, "expirySeconds": 600}),
+    )
+    .await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    let manager = h.manager_with(&server, false, |c| {
+        c.jobs = JobsConfig {
+            switch: JobsSwitch::fixed(true),
+            root: jobs_root.clone(),
+            heavy_lock: lock.clone(),
+            limits: Some(NodeLimits {
+                kill_free: 0.0,
+                ..NodeLimits::default()
+            }),
+            min_free: Some(20.0),
+            sampler: Arc::new(|| OwnLoad {
+                mem_free_pct: Some(80.0),
+                mem_total_gb: Some(128.0),
+                on_ac: Some(true),
+                user_idle_s: Some(9999.0),
+                ..Default::default()
+            }),
+            tick: Duration::from_millis(200),
+            kill_grace: Duration::from_secs(1),
+            ..JobsConfig::default()
+        };
+    });
+    manager.connect().await.expect("connects");
+    let me = manager.local_node_id().await;
+    let req = JobRequest {
+        kind: JobKind::Shell,
+        command: "sleep 300".into(),
+        cwd: None,
+        need_mem_gb: None,
+        heavy: false,
+        timeout_s: Some(600),
+        origin_node: None,
+        allow_user_active: false,
+    };
+    let (node, acc) = manager.submit_job(Some(&me), req).await.expect("submits");
+    assert_eq!(node, me);
+    let id = acc.job_id;
+    let rec: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(jobs_root.join(&id).join("job.json")).unwrap(),
+    )
+    .unwrap();
+    let pgid = rec["pgid"].as_i64().expect("pgid recorded") as i32;
+    // SAFETY: kill(-pgid, 0) only probes.
+    let alive = |g: i32| unsafe { libc::kill(-g, 0) == 0 };
+    assert!(alive(pgid));
+
+    manager.disconnect().await.expect("disconnects");
+    manager.connect().await.expect("reconnects");
+
+    let list = manager.list_jobs(&me).await.unwrap();
+    let row = list
+        .iter()
+        .find(|j| j.brief.job_id == id)
+        .unwrap_or_else(|| panic!("job {id} vanished after reconnect: {list:?}"));
+    assert_eq!(row.brief.state, JobState::Running);
+
+    let v = manager
+        .cancel_job(&me, &id)
+        .await
+        .expect("cancel finds the job");
+    assert_eq!(v.brief.state, JobState::Cancelled, "{v:?}");
+    assert_eq!(v.exit_code, Some(143), "{v:?}");
+    assert!(!alive(pgid), "the job's group must be gone after cancel");
+    manager.logout(false).await.unwrap();
+}
