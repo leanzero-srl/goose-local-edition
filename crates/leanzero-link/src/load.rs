@@ -191,7 +191,9 @@ pub fn router_slots_used() -> u32 {
 // ---------------------------------------------------------------------------------------------
 // Limits (shared with heavy-run)
 
-/// `~/.leanzero/node-limits.json`, keys and defaults exactly as heavy-run (lines 27-37).
+/// `~/.leanzero/node-limits.json`, keys and defaults exactly as heavy-run: timeout, max_load,
+/// min_free, kill_free, max_rss_pct, wait, lock_wait, plus the measured-load keys max_heavy
+/// (default `max(2, cores / 4)`), max_load_per_core (2.0, a backstop) and default_need_gb (8).
 #[derive(Debug, Clone, PartialEq)]
 pub struct NodeLimits {
     pub timeout_s: u64,
@@ -558,7 +560,7 @@ pub fn human_duration(secs: u64) -> String {
 }
 
 /// [`describe_holder`] over the lock file at `path` (unreadable = a bare "held").
-/// [`heavy_holder_reason`] for every slot of `max`: `all 3 heavy slots held: <slot 0>; <slot 1>; ...`.
+/// [`heavy_holder_reason`] for every slot of `max`: `busy: 3/3 heavy slots held: <slot 0>; <slot 1>; ...`.
 pub fn heavy_holders_reason(base: &std::path::Path, max: u32) -> String {
     let max = max.max(1);
     let who: Vec<String> = (0..max)
