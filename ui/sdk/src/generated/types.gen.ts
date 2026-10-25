@@ -3503,6 +3503,11 @@ export type MlxEngineMemoryHoldersRequest_unstable = {
      */
     nodeId?: string | null;
     fitModelId?: string | null;
+    /**
+     * The caller's never-touch list; the answering Mac unions it with its own
+     * (`GOOSE_MEMFREE_NEVER_TOUCH` + the defaults) for `nuclearDefault`.
+     */
+    neverTouch?: Array<string>;
 };
 
 export type MlxEngineMemoryHoldersResponse_unstable = {
@@ -3512,10 +3517,16 @@ export type MlxEngineMemoryHoldersResponse_unstable = {
     fit?: MlxMountFitDto | null;
     groups: Array<MlxMemoryGroupDto>;
     /**
-     * What goose can reclaim itself that the fit does NOT already credit (the own engine is
-     * already counted as available by the fit, so it is listed as a group but not summed here).
+     * What the soft clean (`gooseOwned`) reclaims that the fit does NOT already credit: proven
+     * left-over goose servers, plus this goose's own idle engine when there is no fit (the fit
+     * already counts it as available). Never another engine, model server or app.
      */
     gooseOwnedBytes: number;
+    /**
+     * What unloading the unprotected model servers (loaded models) and stopping the other MLX
+     * engines would free: each needs the person's confirmation (`unloadServers`).
+     */
+    serversBytes?: number;
     /**
      * Quittable user apps at or above `GOOSE_MEMFREE_SHOW_APPS_MIN_MB`.
      */
@@ -3561,6 +3572,24 @@ export type MlxMemoryGroupDto = {
      * Why it is protected or not reclaimable now (busy engine, system process, …).
      */
     why?: string | null;
+    /**
+     * Set when nothing may free it (a launchd job, an MCP server, a terminal session, a
+     * heavy-run job, …): never quittable, never unloaded, never ticked.
+     */
+    protectedWhy?: string | null;
+    /**
+     * Who uses it: TCP clients of a server's port, the process that started it, its launchd job.
+     */
+    usedBy?: Array<string>;
+    /**
+     * The launchd job that owns any of its processes.
+     */
+    launchdLabel?: string | null;
+    /**
+     * Ticked by default in "free everything except protected" (never for protected or
+     * never-touch groups).
+     */
+    nuclearDefault?: boolean;
 };
 
 /**
@@ -3587,7 +3616,9 @@ export type MlxMemoryVerdictDto = {
      */
     remainingBytes: number;
     /**
-     * fitsWithApps: the fewest apps (largest first) that close the gap; cannotFit: every quittable app.
+     * The confirmable holders that close the gap: app bundle ids and model-server / other-engine
+     * group ids (look each up by `bundleId` OR `id`). fitsWithApps: the fewest, largest first;
+     * cannotFit: every one. Soft (goose-owned) reclaim never needs these.
      */
     appsToQuit: Array<string>;
 };
@@ -3623,13 +3654,30 @@ export type MlxMemoryAlternativeDto = {
 };
 
 /**
- * Free memory: goose's own holders (`gooseOwned`) and/or ask named apps to quit (graceful only).
+ * Free memory. `gooseOwned` = the soft clean (this goose's own idle engine + proven left-over
+ * goose servers, nothing anyone else uses). Everything else is named item by item and re-checked
+ * against a fresh census, the protected set and the never-touch list: `unloadServers` (group ids
+ * of model servers / other MLX engines), `quitApps` (bundle ids). `nuclear` lets an app that
+ * ignored quit get a SIGTERM (own uid, unprotected, never SIGKILL). Over the Link, everything
+ * but `gooseOwned` needs `GOOSE_LINK_ALLOW_REMOTE_APP_QUIT` on the answering Mac.
  */
 export type MlxEngineMemoryFreeRequest_unstable = {
     nodeId?: string | null;
     gooseOwned?: boolean;
     quitApps?: Array<string>;
     fitModelId?: string | null;
+    /**
+     * Group ids (`ai:…`, `mlx:<pid>`) the person ticked to unload/stop.
+     */
+    unloadServers?: Array<string>;
+    /**
+     * "Free everything except protected": apps that ignore quit get one SIGTERM.
+     */
+    nuclear?: boolean;
+    /**
+     * The caller's never-touch list, unioned with the executing Mac's own.
+     */
+    neverTouch?: Array<string>;
 };
 
 export type MlxEngineMemoryFreeResponse_unstable = {

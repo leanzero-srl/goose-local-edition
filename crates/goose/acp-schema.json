@@ -8736,6 +8736,14 @@
             "string",
             "null"
           ]
+        },
+        "neverTouch": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The caller's never-touch list; the answering Mac unions it with its own\n(`GOOSE_MEMFREE_NEVER_TOUCH` + the defaults) for `nuclearDefault`.",
+          "default": []
         }
       },
       "description": "Who holds memory on this Mac, and — for `fitModelId` — what freeing it would buy.",
@@ -8775,8 +8783,14 @@
         },
         "gooseOwnedBytes": {
           "type": "integer",
-          "description": "What goose can reclaim itself that the fit does NOT already credit (the own engine is\nalready counted as available by the fit, so it is listed as a group but not summed here).",
+          "description": "What the soft clean (`gooseOwned`) reclaims that the fit does NOT already credit: proven\nleft-over goose servers, plus this goose's own idle engine when there is no fit (the fit\nalready counts it as available). Never another engine, model server or app.",
           "minimum": 0
+        },
+        "serversBytes": {
+          "type": "integer",
+          "default": 0,
+          "minimum": 0,
+          "description": "What unloading the unprotected model servers (loaded models) and stopping the other MLX\nengines would free: each needs the person's confirmation (`unloadServers`)."
         },
         "appsBytes": {
           "type": "integer",
@@ -8873,6 +8887,33 @@
             "null"
           ],
           "description": "Why it is protected or not reclaimable now (busy engine, system process, …)."
+        },
+        "protectedWhy": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Set when nothing may free it (a launchd job, an MCP server, a terminal session, a\nheavy-run job, …): never quittable, never unloaded, never ticked."
+        },
+        "usedBy": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Who uses it: TCP clients of a server's port, the process that started it, its launchd job.",
+          "default": []
+        },
+        "launchdLabel": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The launchd job that owns any of its processes."
+        },
+        "nuclearDefault": {
+          "type": "boolean",
+          "description": "Ticked by default in \"free everything except protected\" (never for protected or\nnever-touch groups).",
+          "default": false
         }
       },
       "required": [
@@ -8922,7 +8963,7 @@
           "items": {
             "type": "string"
           },
-          "description": "fitsWithApps: the fewest apps (largest first) that close the gap; cannotFit: every quittable app."
+          "description": "The confirmable holders that close the gap: app bundle ids and model-server / other-engine\ngroup ids (look each up by `bundleId` OR `id`). fitsWithApps: the fewest, largest first;\ncannotFit: every one. Soft (goose-owned) reclaim never needs these."
         }
       },
       "required": [
@@ -9007,9 +9048,30 @@
             "string",
             "null"
           ]
+        },
+        "unloadServers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Group ids (`ai:…`, `mlx:<pid>`) the person ticked to unload/stop.",
+          "default": []
+        },
+        "nuclear": {
+          "type": "boolean",
+          "description": "\"Free everything except protected\": apps that ignore quit get one SIGTERM.",
+          "default": false
+        },
+        "neverTouch": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The caller's never-touch list, unioned with the executing Mac's own.",
+          "default": []
         }
       },
-      "description": "Free memory: goose's own holders (`gooseOwned`) and/or ask named apps to quit (graceful only).",
+      "description": "Free memory. `gooseOwned` = the soft clean (this goose's own idle engine + proven left-over\ngoose servers, nothing anyone else uses). Everything else is named item by item and re-checked\nagainst a fresh census, the protected set and the never-touch list: `unloadServers` (group ids\nof model servers / other MLX engines), `quitApps` (bundle ids). `nuclear` lets an app that\nignored quit get a SIGTERM (own uid, unprotected, never SIGKILL). Over the Link, everything\nbut `gooseOwned` needs `GOOSE_LINK_ALLOW_REMOTE_APP_QUIT` on the answering Mac.",
       "x-side": "agent",
       "x-method": "_goose/unstable/mlxEngine/memoryFree"
     },
