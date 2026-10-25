@@ -150,3 +150,26 @@ STILL TO DO after they finish (next coordinator, fresh session):
    App-quit live only on an app the agent launched itself (TextEdit/Chess). Never quit Gabriela's apps.
 4. Rebase onto origin/main once 3.0.129 lands (`git fetch && git log origin/main`), resolve keeping both; i18n by key replay.
 LESSON: subagents here start near 100k+ (CLAUDE.md + memory index); do NOT load goose-feature-dev in full — brief the facts.
+
+## AGENT U state (2026-10-25 18:17, stopped at the context guard ~161k)
+DONE (committed, `desktop memfree: ...`): `ui/desktop/src/components/memfree/memfree.ts` (types mirroring the ACP
+contract, `verdictOf` mirror of the engine rule, `verdictLine` -> {fitsByGooseOwned freeGb | fitsWithApps freeGb+app
+labels | cannotFit everythingGb+shortGb+alternatives}, `groupByCategory`, `quitOffer`, `afterLine`, tunable keys +
+readers `memfreeEnabledFrom`/`boolOnFrom`/`minMbFrom`), `memfree.fixtures.ts` (GABEE fixture: short 21.2, apps 15.5 ->
+cannotFit 5.7), `memfree.test.ts` 16 tests green. NO i18n strings yet (pure ts, no messages).
+NOT DONE (steps 2-8 of the brief): R's schema commit had not landed at 18:17 (`git log --oneline | grep 'acp: memoryHolders'`).
+Next agent, in order:
+1. After R's commit: `cd ui/desktop && pnpm install --frozen-lockfile && pnpm run build-goose-sdk`; wrapper
+   `src/acp/memfree.ts` like `src/acp/mlx-engine.ts` (client.goose.mlxEngineMemoryHolders_unstable / ...MemoryFree_unstable).
+2. FreeMemoryDialog: use `OverlayDialog`/`OverlayDialogTitle` (ui/OverlayDialog) + `useConfirmDialog` (ui/useConfirmDialog)
+   + lz `Button`/`Chip` and tokens SURFACE/TYPE/WEIGHT/TNUM/TONE_TEXT/cx — exact pattern = `JobDialog` in
+   components/leanzero-swarm/MacLoadPanel.tsx:239. Bold GB via ICU `<b>{gb}</b>` + `b: (c) => <strong>{c}</strong>`
+   (DictationSettings.tsx:41 does it). GB format = GiB, 1 decimal (NodeCard.tsx:178 `gb`).
+3. Entry points: NodeCard.tsx `primary` switch case 'details' returns null for mlx (line ~558) — add the button when
+   glance.state==='cantRun' && glance.line.kind==='outcome' && glance.line.candidate.fit.status==='short'; card opens the
+   dialog itself (no new onAction kind). `useEdition()` THROWS without EditionProvider and NodeCard tests don't wrap one ->
+   add a non-throwing reader in contexts/EditionContext.tsx. MacLoadBars (MacLoadPanel.tsx:120) is used by NodeCard:626
+   and MyMacs:551 — add the per-Mac entry there (target = Link nodeId; omit nodeId for the self Mac).
+4. Settings › App: copy MlxRestoreSettings.tsx (acpReadConfig/acpUpsertConfig); register beside it in AppSettingsSection.tsx.
+5. i18n: extract, then all 15 catalogs in FILE order (not sorted), json.dumps(ensure_ascii=False, indent=2)+'\n'.
+6. Gate `pnpm run lint:check && pnpm run test:run`; screenshots per skill recipe into the scratchpad memfree-shots/.
