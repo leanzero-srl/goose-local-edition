@@ -265,11 +265,16 @@ pub struct HeavySlot {
 
 impl HeavySlot {
     /// Non-blocking take. `None` = someone else holds it.
-    #[cfg(unix)]
     pub fn try_take(holder: &str) -> std::io::Result<Option<Self>> {
+        Self::try_take_at(&heavy_lock_path(), holder)
+    }
+
+    /// [`Self::try_take`] on an explicit lock file (the jobs service carries its path so tests
+    /// never share the real `~/.cache/heavy-run.lock`).
+    #[cfg(unix)]
+    pub fn try_take_at(path: &std::path::Path, holder: &str) -> std::io::Result<Option<Self>> {
         use std::io::{Seek, Write};
         use std::os::fd::AsRawFd;
-        let path = heavy_lock_path();
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
@@ -278,7 +283,7 @@ impl HeavySlot {
             .truncate(false)
             .read(true)
             .write(true)
-            .open(&path)?;
+            .open(path)?;
         // SAFETY: valid fd owned by `file`.
         let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
         if rc != 0 {
@@ -302,7 +307,7 @@ impl HeavySlot {
     }
 
     #[cfg(not(unix))]
-    pub fn try_take(_holder: &str) -> std::io::Result<Option<Self>> {
+    pub fn try_take_at(_path: &std::path::Path, _holder: &str) -> std::io::Result<Option<Self>> {
         Err(std::io::Error::other("heavy slot needs flock (unix)"))
     }
 

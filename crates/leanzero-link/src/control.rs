@@ -171,6 +171,9 @@ pub struct ControlConfig {
     /// [`PeerDialError::NoMeshProxy`] on record — never a direct dial.
     /// `LinkManager::connect` fills it from the live daemon.
     pub peer_proxy: Option<MeshProxy>,
+    /// `/v1/swarm/jobs`: its own switch (OFF by default, separate from
+    /// `allow_remote_execution`), the ledger root, the heavy-run lock and the admission policy.
+    pub jobs: crate::jobs::JobsConfig,
 }
 
 impl ControlConfig {
@@ -186,6 +189,7 @@ impl ControlConfig {
             reconnect_backoff: Duration::from_secs(2),
             allow_remote_execution: false,
             peer_proxy: None,
+            jobs: crate::jobs::JobsConfig::default(),
         }
     }
 }
@@ -234,6 +238,7 @@ struct Ctx {
     /// The relay requests this service is serving right now, under this start's epoch.
     streams: Arc<InflightStreams>,
     allow_remote_execution: bool,
+    jobs: Arc<crate::jobs::JobRegistry>,
     /// Set once this node has begun going away ([`ControlHandle::mark_leaving`]); its
     /// `/nodes` `self` then carries it.
     leaving: Arc<StdMutex<Option<NodeLeaving>>>,
@@ -286,6 +291,7 @@ impl ControlService {
                 .map_err(ControlError::EngineClient)?,
             streams: Arc::new(InflightStreams::new()),
             allow_remote_execution: config.allow_remote_execution,
+            jobs: Arc::new(crate::jobs::JobRegistry::new(config.jobs.clone())),
             leaving: leaving.clone(),
         };
         let router = swarm_router(ctx, Arc::new(config.node_token));
@@ -429,6 +435,10 @@ fn swarm_router(ctx: Ctx, token: Arc<String>) -> Router {
         .route("/v1/swarm/sessions", get(sessions))
         .route("/v1/swarm/stream", get(stream))
         .route("/v1/swarm/execute", post(execute))
+        .route("/v1/swarm/jobs", post(jobs_submit).get(jobs_list))
+        .route("/v1/swarm/jobs/{id}", get(jobs_get))
+        .route("/v1/swarm/jobs/{id}/log", get(jobs_log))
+        .route("/v1/swarm/jobs/{id}/cancel", post(jobs_cancel))
         .route("/v1/swarm/peer-leaving", post(peer_leaving))
         // One authenticated proxy route per mlxEngine op. `{op}` is validated against
         // `MlxOp` in the handler — an unknown op is a loud `404`, never a silent no-op.
@@ -552,7 +562,86 @@ async fn self_load(ctx: &Ctx) -> crate::load::NodeLoad {
         _ => 0,
     };
     let relays = ctx.streams.len().min(u32::MAX as usize) as u32;
-    crate::load::snapshot(engine.saturating_add(relays), Vec::new()).await
+    crate::jobs::load_with_jobs(engine.saturating_add(relays), Some(&ctx.jobs)).await
+}
+
+fn refusal_response(r: crate::jobs::Refusal) -> Response {
+    let status =
+        StatusCode::from_u16(r.code.http_status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    (status, Json(r)).into_response()
+}
+
+fn job_not_found(id: &str) -> Response {
+    refusal_response(crate::jobs::Refusal::new(
+        crate::jobs::RefusalCode::NotFound,
+        format!("no job {id}"),
+    ))
+}
+
+/// `POST /v1/swarm/jobs`: admit (switch, then resources) and start one job; `202 {job_id}` or
+/// a `{code, reason}` refusal (see [`crate::jobs::RefusalCode::http_status`]).
+async fn jobs_submit(
+    State(ctx): State<Ctx>,
+    body: Result<Json<crate::jobs::JobRequest>, JsonRejection>,
+) -> Response {
+    if !ctx.jobs.enabled() {
+        return refusal_response(crate::jobs::Refusal::new(
+            crate::jobs::RefusalCode::JobsDisabled,
+            "remote jobs are disabled on this node",
+        ));
+    }
+    let Json(req) = match body {
+        Ok(json) => json,
+        Err(rejection) => {
+            return refusal_response(crate::jobs::Refusal::new(
+                crate::jobs::RefusalCode::BadRequest,
+                format!("invalid job request body: {rejection}"),
+            ))
+        }
+    };
+    match ctx
+        .jobs
+        .submit(req, ctx.executor.clone(), ctx.source.clone())
+        .await
+    {
+        Ok(accepted) => (StatusCode::ACCEPTED, Json(accepted)).into_response(),
+        Err(r) => refusal_response(r),
+    }
+}
+
+async fn jobs_list(State(ctx): State<Ctx>) -> Json<Vec<crate::jobs::JobView>> {
+    Json(ctx.jobs.list())
+}
+
+async fn jobs_get(Path(id): Path<String>, State(ctx): State<Ctx>) -> Response {
+    match ctx.jobs.view(&id) {
+        Some(v) => Json(v).into_response(),
+        None => job_not_found(&id),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct LogQuery {
+    #[serde(default)]
+    from: u64,
+}
+
+async fn jobs_log(
+    Path(id): Path<String>,
+    Query(q): Query<LogQuery>,
+    State(ctx): State<Ctx>,
+) -> Response {
+    match ctx.jobs.log(&id, q.from) {
+        Some(c) => Json(c).into_response(),
+        None => job_not_found(&id),
+    }
+}
+
+async fn jobs_cancel(Path(id): Path<String>, State(ctx): State<Ctx>) -> Response {
+    match ctx.jobs.cancel(&id) {
+        Ok(v) => (StatusCode::ACCEPTED, Json(v)).into_response(),
+        Err(r) => refusal_response(r),
+    }
 }
 
 /// `POST /v1/swarm/peer-leaving`: a peer says it is going away on purpose (see the module

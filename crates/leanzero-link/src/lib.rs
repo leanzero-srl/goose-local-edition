@@ -33,6 +33,7 @@ pub mod discovery;
 pub mod identity;
 pub mod inference;
 pub mod intent;
+pub mod jobs;
 pub mod load;
 pub mod manager;
 pub mod mesh;
