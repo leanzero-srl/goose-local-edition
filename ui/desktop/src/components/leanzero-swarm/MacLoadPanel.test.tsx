@@ -172,9 +172,8 @@ describe('MacLoadBars', () => {
       expect(screen.getByTestId('job-dialog-state').textContent).toBe('Cancelling…')
     );
     expect(screen.queryByTestId('job-dialog-cancel')).toBeNull();
-    await waitFor(
-      () => expect(screen.getByTestId('job-dialog-state').textContent).toBe('cancelled'),
-      { timeout: 5000 }
+    await waitFor(() =>
+      expect(screen.getByTestId('job-dialog-state').textContent).toBe('cancelled')
     );
     expect(screen.getByTestId('job-dialog-exit').textContent).toBe('143');
   }, 10_000);
