@@ -65,3 +65,34 @@ Gates: cargo fmt; clippy --workspace --all-targets -D warnings; cargo test -p go
 --exit-code). Rebuild crates/goose-sidecar/examples/memfree_dryrun.rs (--release), scp to workhorse, run
 READ-ONLY; confirm ticked = goose-owned only (LM Studio + rapid-mlx unticked, LM Link in LM Studio used_by).
 Append FIXED notes per C1..C8 to ~/Projects/goose-memfree-REVIEW.md. Commit.
+
+## F1 PROGRESS (2026-10-25) — stopped at the context guard; continue from here
+DONE (failing-first, red then green; `cargo test -p goose-sidecar memfree` 41 passed):
+- 1ad231904 sidecar: C1/C2 `memfree_protect::is_foreign_server` + `nuclear_default` false for AiServer and `mlx:*`
+  (categorize now calls nuclear_default too); C6 `ProtectInput.orphan_roots` (categorize passes own engine as
+  exempt_roots, orphans as orphan_roots; orphans exempt only from sessions / "this is goose" / MCP-host rules);
+  C7 `never_touch_hit` = lowercase contains; C8 MCP-host rule ("hosts an MCP server (pid N)", ancestors in an .app,
+  pid>1, not orphans). Tests: memfree_c1_c2_servers_goose_did_not_start_are_never_ticked,
+  memfree_c6_a_proven_orphan_keeps_launchd_tty_and_ssh_protection,
+  memfree_c7_never_touch_matches_natural_names_and_bundle_prefixes, memfree_c8_an_app_hosting_an_mcp_child_is_protected
+  (+ updated a_server_in_use_is_offered_but_not_ticked, categorize_carries_protection, never_touch_matching).
+- 1e41015ac sidecar: LM Link — `memfree_servers::{LMLINK_CONNECTOR, parse_lsof_listen_ports, lmlink_users,
+  lmlink_used_by, lmlink_lines_for, fn lsof (shared runner)}`; wired into ACP enrich_used_by and the dry-run example.
+  Tests: memfree_lmlink_listen_ports_parse, memfree_lmlink_connector_names_its_ports_peers_and_clients.
+NOT DONE (in order):
+- ACP C3: request `seen_used_by` (HashMap<String,Vec<String>>, serde default) + pure `recheck(fresh,&step,req,nt)`;
+  fresh `groups()` before each Server/App/OwnEngine/Orphan step in core_memory_free (~L960), execute with the FRESH
+  group. Refactor select_free's `check` closure into a fn reused by recheck.
+- ACP C4: quit_one_app never SIGTERMs; ok=false "didn't quit (maybe unsaved work)"; MlxMemoryFreeItemDto +=
+  `force_stoppable: bool` (serde default) — constructions at memfree.rs L436/L458/L814/L838/L862/L880; request +=
+  `force_stop_apps: Vec<String>` -> new Step::ForceStop(bundle) gated like quit_apps (relayed switch) + recheck, then
+  servers::app_term_targets + terminate_pids.
+- ACP C5: engine.rs `unmount` (L2177) -> Running: `sidecar.shutdown()` (lib.rs L734: terminate L1338 ->
+  sigkill_tree_or_pid L1375); not supervised: reclaim_port -> port_holder claim_port (L964 SIGKILL leg). Add
+  `MlxEngineManager::unmount_graceful()` (SIGTERM + wait + "goose's engine did not exit; goose does not force it"),
+  leave unmount/stopOtherEngine unchanged; memfree stop_own_engine (memfree.rs ~L823) uses it via a new core fn.
+- UI (ui/desktop/src/components/memfree): isServerGroup rows never ticked; send seenUsedBy; Force stop button
+  (useConfirmDialog) sending {forceStopApps:[bid], nuclear:true}; nuclear confirm text; neverTouchHit contains-mirror
+  + test; i18n 16 catalogs. Then schema regen, all gates, dry run on workhorse, FIXED notes in the REVIEW file.
+Build env: `source bin/activate-hermit; export CARGO_TARGET_DIR=~/Projects/goose-fix130b/target;
+~/Projects/machine-sync/bin/heavy-run -- cargo test --config 'profile.dev.package."*".strip=false' -p goose-sidecar memfree`.
