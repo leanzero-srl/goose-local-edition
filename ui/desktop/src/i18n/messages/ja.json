@@ -4128,7 +4128,7 @@
     "defaultMessage": "他の Mac から送られたジョブを実行"
   },
   "macLoad.allowJobsHint": {
-    "defaultMessage": "シェルコマンドとプロンプト。重いジョブは一度に 1 つ、メモリの下限を超えると停止。すぐに反映されます。"
+    "defaultMessage": "シェルコマンドとプロンプト。重いジョブはこの Mac のスロットとメモリが許す数だけ実行し、メモリの下限を超えると停止。すぐに反映されます。"
   },
   "macLoad.benchmark": {
     "defaultMessage": "ベンチマーク実行中: {why}"
@@ -4217,11 +4217,11 @@
   "macLoad.policy": {
     "defaultMessage": "誰かがこの Mac を使っているとき"
   },
+  "macLoad.policyHint": {
+    "defaultMessage": "ビジーは計測値で判断します：下限を超えるメモリ、空いている重いジョブ枠、コアあたりの負荷。キーボードを使っている人は同点時の判断にだけ使います。"
+  },
   "macLoad.policy.allow": {
     "defaultMessage": "ジョブを受ける"
-  },
-  "macLoad.policy.lastResort": {
-    "defaultMessage": "最後の手段としてのみ"
   },
   "macLoad.policy.refuse": {
     "defaultMessage": "ジョブを断る"
@@ -11993,6 +11993,9 @@
   "runJob.refusal": {
     "defaultMessage": "{mac}: {reason}"
   },
+  "runJob.verdictLine": {
+    "defaultMessage": "{mac}: {verdict}"
+  },
   "runJob.inUse": {
     "defaultMessage": "{name}（使用中）"
   },
@@ -12021,7 +12024,7 @@
     "defaultMessage": "重いジョブ"
   },
   "runJob.heavyHint": {
-    "defaultMessage": "1 台の Mac が同時に実行する重いジョブは 1 つだけです（ビルド、レンダリング、学習）。"
+    "defaultMessage": "Mac は、スロットとメモリが許す数だけ重いジョブ（ビルド、レンダリング、学習）を実行します。"
   },
   "runJob.mem": {
     "defaultMessage": "必要なメモリ（GB、任意）"

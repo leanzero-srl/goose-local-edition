@@ -4128,7 +4128,7 @@
     "defaultMessage": "运行其他 Mac 发来的任务"
   },
   "macLoad.allowJobsHint": {
-    "defaultMessage": "Shell 命令和提示词，一次只运行一个重任务，超过内存下限即被终止。立即生效。"
+    "defaultMessage": "Shell 命令和提示词，重任务的数量取决于这台 Mac 的槽位和内存，超过内存下限即被终止。立即生效。"
   },
   "macLoad.benchmark": {
     "defaultMessage": "基准测试运行中：{why}"
@@ -4217,11 +4217,11 @@
   "macLoad.policy": {
     "defaultMessage": "有人使用这台 Mac 时"
   },
+  "macLoad.policyHint": {
+    "defaultMessage": "忙碌以实测为准：高于下限的内存、空闲的重任务槽位、每核负载。有人在用键盘只用于打破平局。"
+  },
   "macLoad.policy.allow": {
     "defaultMessage": "接受任务"
-  },
-  "macLoad.policy.lastResort": {
-    "defaultMessage": "仅作为最后手段"
   },
   "macLoad.policy.refuse": {
     "defaultMessage": "拒绝任务"
@@ -11993,6 +11993,9 @@
   "runJob.refusal": {
     "defaultMessage": "{mac}：{reason}"
   },
+  "runJob.verdictLine": {
+    "defaultMessage": "{mac}：{verdict}"
+  },
   "runJob.inUse": {
     "defaultMessage": "{name}（使用中）"
   },
@@ -12021,7 +12024,7 @@
     "defaultMessage": "重型任务"
   },
   "runJob.heavyHint": {
-    "defaultMessage": "一台 Mac 一次只运行一个重型任务（构建、渲染、训练）。"
+    "defaultMessage": "一台 Mac 能同时运行的重任务（构建、渲染、训练）数量取决于它的槽位和内存。"
   },
   "runJob.mem": {
     "defaultMessage": "所需内存（GB，可选）"

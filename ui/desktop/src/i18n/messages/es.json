@@ -4128,7 +4128,7 @@
     "defaultMessage": "Ejecutar trabajos que envían otros Mac"
   },
   "macLoad.allowJobsHint": {
-    "defaultMessage": "Comandos de shell y prompts, un trabajo pesado a la vez, detenidos si superan el límite de memoria. Se aplica al momento."
+    "defaultMessage": "Comandos de shell y prompts, tantos trabajos pesados como espacios y memoria tenga este Mac, detenidos si superan el límite de memoria. Se aplica al momento."
   },
   "macLoad.benchmark": {
     "defaultMessage": "Benchmark en curso: {why}"
@@ -4217,11 +4217,11 @@
   "macLoad.policy": {
     "defaultMessage": "Mientras alguien usa este Mac"
   },
+  "macLoad.policyHint": {
+    "defaultMessage": "Ocupado significa medido: memoria por encima del mínimo, huecos libres para trabajos pesados, carga por núcleo. Alguien al teclado solo desempata."
+  },
   "macLoad.policy.allow": {
     "defaultMessage": "Aceptar trabajos"
-  },
-  "macLoad.policy.lastResort": {
-    "defaultMessage": "Solo como último recurso"
   },
   "macLoad.policy.refuse": {
     "defaultMessage": "Rechazar trabajos"
@@ -11993,6 +11993,9 @@
   "runJob.refusal": {
     "defaultMessage": "{mac}: {reason}"
   },
+  "runJob.verdictLine": {
+    "defaultMessage": "{mac}: {verdict}"
+  },
   "runJob.inUse": {
     "defaultMessage": "{name} (en uso)"
   },
@@ -12021,7 +12024,7 @@
     "defaultMessage": "Trabajo pesado"
   },
   "runJob.heavyHint": {
-    "defaultMessage": "Un Mac ejecuta un solo trabajo pesado a la vez (compilaciones, renderizados, entrenamiento)."
+    "defaultMessage": "Un Mac ejecuta tantos trabajos pesados (compilaciones, renderizados, entrenamiento) como espacios y memoria tenga."
   },
   "runJob.mem": {
     "defaultMessage": "Memoria que necesita (GB, opcional)"

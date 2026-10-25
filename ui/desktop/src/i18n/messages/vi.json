@@ -4128,7 +4128,7 @@
     "defaultMessage": "Chạy tác vụ do các Mac khác gửi"
   },
   "macLoad.allowJobsHint": {
-    "defaultMessage": "Lệnh shell và prompt, mỗi lần một tác vụ nặng, bị dừng khi vượt ngưỡng bộ nhớ. Áp dụng ngay."
+    "defaultMessage": "Lệnh shell và prompt, số tác vụ nặng tùy theo số khe và bộ nhớ của Mac này, bị dừng khi vượt ngưỡng bộ nhớ. Áp dụng ngay."
   },
   "macLoad.benchmark": {
     "defaultMessage": "Đang chạy benchmark: {why}"
@@ -4217,11 +4217,11 @@
   "macLoad.policy": {
     "defaultMessage": "Khi có người dùng Mac này"
   },
+  "macLoad.policyHint": {
+    "defaultMessage": "Bận nghĩa là đo được: bộ nhớ trên mức sàn, chỗ trống cho việc nặng, tải mỗi lõi. Người đang dùng bàn phím chỉ dùng để phân xử khi ngang nhau."
+  },
   "macLoad.policy.allow": {
     "defaultMessage": "Nhận tác vụ"
-  },
-  "macLoad.policy.lastResort": {
-    "defaultMessage": "Chỉ khi không còn cách nào khác"
   },
   "macLoad.policy.refuse": {
     "defaultMessage": "Từ chối tác vụ"
@@ -11993,6 +11993,9 @@
   "runJob.refusal": {
     "defaultMessage": "{mac}: {reason}"
   },
+  "runJob.verdictLine": {
+    "defaultMessage": "{mac}: {verdict}"
+  },
   "runJob.inUse": {
     "defaultMessage": "{name} (đang dùng)"
   },
@@ -12021,7 +12024,7 @@
     "defaultMessage": "Tác vụ nặng"
   },
   "runJob.heavyHint": {
-    "defaultMessage": "Mỗi máy Mac chỉ chạy một tác vụ nặng tại một thời điểm (build, render, huấn luyện)."
+    "defaultMessage": "Một máy Mac chạy số tác vụ nặng (build, render, huấn luyện) tùy theo số khe và bộ nhớ của nó."
   },
   "runJob.mem": {
     "defaultMessage": "Bộ nhớ cần (GB, tùy chọn)"

@@ -4128,7 +4128,7 @@
     "defaultMessage": "Diğer Mac’lerin gönderdiği işleri çalıştır"
   },
   "macLoad.allowJobsHint": {
-    "defaultMessage": "Kabuk komutları ve istemler, aynı anda tek ağır iş, bellek eşiğini aşınca durdurulur. Hemen geçerli olur."
+    "defaultMessage": "Kabuk komutları ve istemler, bu Mac'in yuvaları ve belleği kaç ağır işe yetiyorsa o kadar, bellek eşiğini aşınca durdurulur. Hemen geçerli olur."
   },
   "macLoad.benchmark": {
     "defaultMessage": "Kıyaslama çalışıyor: {why}"
@@ -4217,11 +4217,11 @@
   "macLoad.policy": {
     "defaultMessage": "Biri bu Mac’i kullanırken"
   },
+  "macLoad.policyHint": {
+    "defaultMessage": "Meşgul ölçülerek belirlenir: tabanın üstündeki bellek, boş ağır iş yuvaları, çekirdek başına yük. Klavyedeki biri yalnızca eşitliği bozar."
+  },
   "macLoad.policy.allow": {
     "defaultMessage": "İşleri al"
-  },
-  "macLoad.policy.lastResort": {
-    "defaultMessage": "Yalnızca son çare olarak"
   },
   "macLoad.policy.refuse": {
     "defaultMessage": "İşleri reddet"
@@ -11993,6 +11993,9 @@
   "runJob.refusal": {
     "defaultMessage": "{mac}: {reason}"
   },
+  "runJob.verdictLine": {
+    "defaultMessage": "{mac}: {verdict}"
+  },
   "runJob.inUse": {
     "defaultMessage": "{name} (kullanımda)"
   },
@@ -12021,7 +12024,7 @@
     "defaultMessage": "Ağır iş"
   },
   "runJob.heavyHint": {
-    "defaultMessage": "Bir Mac aynı anda yalnızca bir ağır iş çalıştırır (derlemeler, işlemeler, eğitim)."
+    "defaultMessage": "Bir Mac, yuvaları ve belleği kaç ağır işe (derleme, işleme, eğitim) yetiyorsa o kadarını çalıştırır."
   },
   "runJob.mem": {
     "defaultMessage": "Gereken bellek (GB, isteğe bağlı)"

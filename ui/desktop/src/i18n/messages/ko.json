@@ -4128,7 +4128,7 @@
     "defaultMessage": "다른 Mac이 보낸 작업 실행"
   },
   "macLoad.allowJobsHint": {
-    "defaultMessage": "셸 명령과 프롬프트, 무거운 작업은 한 번에 하나, 메모리 하한을 넘으면 중지됩니다. 바로 적용됩니다."
+    "defaultMessage": "셸 명령과 프롬프트, 무거운 작업은 이 Mac의 슬롯과 메모리가 허용하는 만큼 실행하며, 메모리 하한을 넘으면 중지됩니다. 바로 적용됩니다."
   },
   "macLoad.benchmark": {
     "defaultMessage": "벤치마크 실행 중: {why}"
@@ -4217,11 +4217,11 @@
   "macLoad.policy": {
     "defaultMessage": "누군가 이 Mac을 사용하는 동안"
   },
+  "macLoad.policyHint": {
+    "defaultMessage": "바쁨은 측정값입니다: 하한을 넘는 메모리, 비어 있는 무거운 작업 슬롯, 코어당 부하. 키보드 앞에 사람이 있으면 동점일 때만 반영합니다."
+  },
   "macLoad.policy.allow": {
     "defaultMessage": "작업 받기"
-  },
-  "macLoad.policy.lastResort": {
-    "defaultMessage": "최후의 수단으로만"
   },
   "macLoad.policy.refuse": {
     "defaultMessage": "작업 거부"
@@ -11993,6 +11993,9 @@
   "runJob.refusal": {
     "defaultMessage": "{mac}: {reason}"
   },
+  "runJob.verdictLine": {
+    "defaultMessage": "{mac}: {verdict}"
+  },
   "runJob.inUse": {
     "defaultMessage": "{name}(사용 중)"
   },
@@ -12021,7 +12024,7 @@
     "defaultMessage": "무거운 작업"
   },
   "runJob.heavyHint": {
-    "defaultMessage": "Mac 한 대는 무거운 작업을 한 번에 하나만 실행합니다(빌드, 렌더링, 학습)."
+    "defaultMessage": "Mac은 슬롯과 메모리가 허용하는 만큼 무거운 작업(빌드, 렌더링, 학습)을 실행합니다."
   },
   "runJob.mem": {
     "defaultMessage": "필요한 메모리(GB, 선택)"

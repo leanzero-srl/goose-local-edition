@@ -1059,7 +1059,7 @@ impl LinkManager {
             rows,
             need_gb,
             heavy,
-            reg.min_free(),
+            &reg.gate(),
             strategy,
         ))
     }
@@ -1165,7 +1165,9 @@ impl LinkManager {
         let mut refusals = plan.refusals;
         for c in plan.candidates {
             let mut r = req.clone();
-            r.allow_user_active |= c.user_active;
+            // Someone at the keyboard is a tiebreak, never a refusal: say so to every receiver
+            // (a 3.0.130 one on its old `last_resort` default refuses without it).
+            r.allow_user_active = true;
             match self.submit_to(&c.node_id, r).await {
                 Ok(acc) => return Ok((c.node_id, acc)),
                 Err(e) => {

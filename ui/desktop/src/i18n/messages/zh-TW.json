@@ -4128,7 +4128,7 @@
     "defaultMessage": "執行其他 Mac 傳來的工作"
   },
   "macLoad.allowJobsHint": {
-    "defaultMessage": "Shell 指令與提示詞，一次只執行一個重工作，超過記憶體下限即會終止。立即生效。"
+    "defaultMessage": "Shell 指令與提示詞，重工作的數量取決於這台 Mac 的槽位與記憶體，超過記憶體下限即會終止。立即生效。"
   },
   "macLoad.benchmark": {
     "defaultMessage": "基準測試執行中：{why}"
@@ -4217,11 +4217,11 @@
   "macLoad.policy": {
     "defaultMessage": "有人使用這台 Mac 時"
   },
+  "macLoad.policyHint": {
+    "defaultMessage": "忙碌以實測為準：高於下限的記憶體、空閒的重任務槽位、每核負載。有人在用鍵盤只用於打破平手。"
+  },
   "macLoad.policy.allow": {
     "defaultMessage": "接受工作"
-  },
-  "macLoad.policy.lastResort": {
-    "defaultMessage": "僅作為最後手段"
   },
   "macLoad.policy.refuse": {
     "defaultMessage": "拒絕工作"
@@ -11993,6 +11993,9 @@
   "runJob.refusal": {
     "defaultMessage": "{mac}：{reason}"
   },
+  "runJob.verdictLine": {
+    "defaultMessage": "{mac}：{verdict}"
+  },
   "runJob.inUse": {
     "defaultMessage": "{name}（使用中）"
   },
@@ -12021,7 +12024,7 @@
     "defaultMessage": "重型工作"
   },
   "runJob.heavyHint": {
-    "defaultMessage": "一台 Mac 一次只執行一個重型工作（建置、算繪、訓練）。"
+    "defaultMessage": "一台 Mac 能同時執行的重工作（建置、算繪、訓練）數量取決於它的槽位與記憶體。"
   },
   "runJob.mem": {
     "defaultMessage": "所需記憶體（GB，選填）"

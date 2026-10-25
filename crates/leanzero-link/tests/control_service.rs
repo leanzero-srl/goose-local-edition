@@ -156,7 +156,51 @@ async fn spawn_node_full(
     executor: Option<Arc<dyn RemoteExecutor>>,
     allow_remote_execution: bool,
 ) -> ControlHandle {
+    spawn_node_measured(
+        source,
+        mesh_ip,
+        executor,
+        allow_remote_execution,
+        calm_own(),
+    )
+    .await
+}
+
+/// A calm, idle, plugged-in 128 GB machine: what every node presents unless a test says
+/// otherwise (`/v1/swarm/execute` refuses on MEASURED load, so a test must never read the
+/// real Mac's memory).
+fn calm_own() -> leanzero_link::load::OwnLoad {
+    leanzero_link::load::OwnLoad {
+        user_idle_s: Some(9999.0),
+        cpu_load_per_core: Some(0.1),
+        ncpu: 16,
+        mem_free_pct: Some(80.0),
+        mem_total_gb: Some(128.0),
+        on_ac: Some(true),
+        thermal_limit: Some(0),
+        ..Default::default()
+    }
+}
+
+async fn spawn_node_measured(
+    source: Arc<FakeStateSource>,
+    mesh_ip: Option<IpAddr>,
+    executor: Option<Arc<dyn RemoteExecutor>>,
+    allow_remote_execution: bool,
+    own: leanzero_link::load::OwnLoad,
+) -> ControlHandle {
+    // Its own ledger root: JobRegistry::shared is keyed by root, so nodes sharing the default
+    // root would share (and overwrite) one sampler.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let mut config = ControlConfig::new(TOKEN.to_string(), mesh_ip);
+    config.jobs.root = std::env::temp_dir().join(format!(
+        "lz-control-test-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::SeqCst)
+    ));
+    config.jobs.sampler = Arc::new(move || own.clone());
+    config.jobs.limits = Some(leanzero_link::load::NodeLimits::default());
+    config.jobs.min_free = Some(20.0);
     config.port = 0;
     config.poll_interval = Duration::from_millis(100);
     config.heartbeat_interval = Duration::from_secs(5);
@@ -1359,12 +1403,33 @@ async fn execute_returns_202_when_idle_enabled_and_wired() {
     handle.shutdown();
 }
 
+/// Owner 2026-10-25: a live session of the node's own is NOT busy. A Mac with headroom takes
+/// the remote prompt.
+#[tokio::test]
+async fn execute_202_when_a_session_is_live_but_the_mac_has_headroom() {
+    let source = FakeStateSource::new("node-a");
+    source.set_sessions(vec![summary("s1", "node-a", true, 100)]); // live, flag says Busy
+    let executor = FakeExecutor::accepting("sess-new");
+    let handle = spawn_node_full(source.clone(), mesh_v6(), Some(executor.clone()), true).await;
+    let base = base_url(&handle);
+    let client = reqwest::Client::new();
+
+    let resp = post_execute(&client, &base, TOKEN, serde_json::json!({"prompt": "x"})).await;
+    assert_eq!(resp.status(), 202, "a live session is not measured load");
+    assert_eq!(executor.call_count(), 1);
+
+    handle.shutdown();
+}
+
 #[tokio::test]
 async fn execute_409_when_node_busy_and_never_calls_executor() {
     let source = FakeStateSource::new("node-a");
-    source.set_sessions(vec![summary("s1", "node-a", true, 100)]); // live → Busy
     let executor = FakeExecutor::accepting("unused");
-    let handle = spawn_node_full(source.clone(), mesh_v6(), Some(executor.clone()), true).await;
+    // MEASURED busy: 12% free, under the 20% floor.
+    let mut own = calm_own();
+    own.mem_free_pct = Some(12.0);
+    let handle =
+        spawn_node_measured(source.clone(), mesh_v6(), Some(executor.clone()), true, own).await;
     let base = base_url(&handle);
     let client = reqwest::Client::new();
 
@@ -1372,7 +1437,7 @@ async fn execute_409_when_node_busy_and_never_calls_executor() {
     assert_eq!(
         resp.status(),
         409,
-        "receive-side idle guard refuses a busy node"
+        "receive-side guard refuses a node under its memory floor"
     );
     assert_eq!(
         executor.call_count(),
@@ -2000,7 +2065,7 @@ async fn a_peer_leaving_on_purpose_is_marked_at_once_and_cleared_when_it_answers
 mod jobs_http {
     use super::*;
     use leanzero_link::jobs::{JobsConfig, JobsSwitch, UserActivePolicy};
-    use leanzero_link::load::{HeavySlot, NodeLimits, OwnLoad};
+    use leanzero_link::load::{heavy_slot_path, heavy_slots_used, HeavySlot, NodeLimits, OwnLoad};
     use std::path::{Path, PathBuf};
 
     /// A calm, idle, plugged-in 128 GB machine.
@@ -2034,7 +2099,7 @@ mod jobs_http {
         executor: Option<Arc<dyn RemoteExecutor>>,
     ) -> Node {
         let tmp = tempfile::tempdir().unwrap();
-        start_jobs_node(tmp, on, limits, executor).await
+        start_jobs_node_with(tmp, on, limits, executor, UserActivePolicy::Allow).await
     }
 
     /// A node over an existing temp dir (its `jobs/` ledger and lock): the same node after a
@@ -2044,6 +2109,16 @@ mod jobs_http {
         on: bool,
         limits: NodeLimits,
         executor: Option<Arc<dyn RemoteExecutor>>,
+    ) -> Node {
+        start_jobs_node_with(tmp, on, limits, executor, UserActivePolicy::Allow).await
+    }
+
+    async fn start_jobs_node_with(
+        tmp: tempfile::TempDir,
+        on: bool,
+        limits: NodeLimits,
+        executor: Option<Arc<dyn RemoteExecutor>>,
+        policy: UserActivePolicy,
     ) -> Node {
         let root = tmp.path().join("jobs");
         let lock = tmp.path().join("heavy-run.lock");
@@ -2058,7 +2133,7 @@ mod jobs_http {
             heavy_lock: lock.clone(),
             limits: Some(limits),
             min_free: Some(20.0),
-            user_active: UserActivePolicy::LastResort,
+            user_active: policy,
             sampler: Arc::new(move || sampler_own.lock().unwrap().clone()),
             tick: Duration::from_millis(200),
             kill_grace: Duration::from_secs(1),
@@ -2080,10 +2155,12 @@ mod jobs_http {
         }
     }
 
-    /// Limits for tests: no system-free kill line (the real machine's free % is not ours).
+    /// Limits for tests: no system-free kill line (the real machine's free % is not ours) and
+    /// TWO heavy slots (the shared default on an 8-core Mac), so a test can fill them.
     fn test_limits() -> NodeLimits {
         NodeLimits {
             kill_free: 0.0,
+            max_heavy: Some(2),
             ..NodeLimits::default()
         }
     }
@@ -2196,22 +2273,39 @@ mod jobs_http {
             o.user_active = true;
             o.user_idle_s = Some(3.0);
         });
-        expect_refusal(&n, shell("true"), 409, "user_active").await;
-        // ... and the placer's explicit last-resort flag admits it under the default policy.
-        let mut last = shell("true");
-        last["allow_user_active"] = true.into();
-        let (s, v) = submit(&n, last).await;
-        assert_eq!(s, 202, "{v}");
+        // Someone at the keyboard is NOT busy under the default policy (owner 2026-10-25).
+        let (s, v) = submit(&n, shell("true")).await;
+        assert_eq!(s, 202, "user active, default policy: {v}");
+        set(&|o| o.cpu_load_per_core = Some(2.5));
+        expect_refusal(&n, heavy.clone(), 409, "cpu_overloaded").await;
         set(&|_| {});
-        // heavy_slot_held: someone else holds the lock file (the sampled flag is ignored: the
-        // slot itself is the truth).
+        // heavy_slot_held only when EVERY slot is held (the sampled flag is ignored: the slots
+        // themselves are the truth). Slot 0 held by someone else is one taken slot of two.
         let other = HeavySlot::try_take_at(&n.lock, "test holder")
             .unwrap()
             .unwrap();
-        expect_refusal(&n, heavy.clone(), 409, "heavy_slot_held").await;
+        let other1 = HeavySlot::try_take_at(&heavy_slot_path(&n.lock, 1), "test holder 1")
+            .unwrap()
+            .unwrap();
+        let (s, v) = submit(&n, heavy.clone()).await;
+        assert_eq!(
+            (s, v["code"].as_str()),
+            (409, Some("heavy_slot_held")),
+            "{v}"
+        );
+        assert!(
+            v["reason"]
+                .as_str()
+                .unwrap()
+                .starts_with("busy: 2/2 heavy slots held: "),
+            "{v}"
+        );
+        drop(other1);
+        let (s, v) = submit(&n, heavy.clone()).await;
+        assert_eq!(s, 202, "slot 0 held, slot 1 free: {v}");
         drop(other);
         let (s, v) = submit(&n, heavy).await;
-        assert_eq!(s, 202, "slot free again: {v}");
+        assert_eq!(s, 202, "slots free again: {v}");
         // not_found on every per-job route.
         let c = reqwest::Client::new();
         for (m, path) in [
@@ -2618,13 +2712,22 @@ mod jobs_http {
         n.handle.shutdown();
     }
 
+    /// machine-sync's heavy-run, when it knows the measured-load slots (`--max-heavy`); an older
+    /// heavy-run (one slot) is skipped rather than tested against the new semantics.
     fn heavy_run() -> Option<PathBuf> {
         let p = dirs::home_dir()?.join("Projects/machine-sync/bin/heavy-run");
-        p.is_file().then_some(p)
+        if !p.is_file() {
+            return None;
+        }
+        let help = std::process::Command::new(&p).arg("--help").output().ok()?;
+        String::from_utf8_lossy(&help.stdout)
+            .contains("--max-heavy")
+            .then_some(p)
     }
 
     fn heavy_run_cmd(bin: &Path, lock: &Path, ledger: &Path) -> std::process::Command {
         let mut c = std::process::Command::new(bin);
+        // Same two slots as test_limits(); CPU backstop off (a test box mid-build is loaded).
         c.env("HEAVY_RUN_LOCK", lock)
             .env("NODE_LIMITS_FILE", ledger.join("absent-limits.json"))
             .args([
@@ -2634,6 +2737,12 @@ mod jobs_http {
                 "0",
                 "--wait",
                 "0",
+                "--max-heavy",
+                "2",
+                "--need-mem",
+                "0",
+                "--max-load-per-core",
+                "1000",
                 "--ledger",
             ])
             .arg(ledger);
@@ -2643,16 +2752,18 @@ mod jobs_http {
     #[tokio::test]
     async fn goose_jobs_and_heavy_run_exclude_each_other_on_one_lock() {
         let Some(bin) = heavy_run() else {
-            eprintln!("SKIP: ~/Projects/machine-sync/bin/heavy-run absent");
+            eprintln!("SKIP: ~/Projects/machine-sync/bin/heavy-run absent or without --max-heavy");
             return;
         };
         let n = spawn_jobs_node(true, test_limits(), None).await;
-        // 1) A goose heavy job holds the slot -> heavy-run --lock-wait 0 -- true exits 75.
+        // 1) A goose heavy job holds slot 0 -> heavy-run takes slot 1 and runs; with slot 1
+        //    held too, heavy-run --lock-wait 0 -- true exits 75.
         let mut heavy = shell("sleep 30");
         heavy["heavy"] = true.into();
         let (s, v) = submit(&n, heavy.clone()).await;
         assert_eq!(s, 202, "{v}");
         let id = v["job_id"].as_str().unwrap().to_string();
+        assert!(matches!(HeavySlot::try_take_at(&n.lock, "probe"), Ok(None)));
         let led1 = n.root.join("hr1");
         std::fs::create_dir_all(&led1).unwrap();
         let out = heavy_run_cmd(&bin, &n.lock, &led1)
@@ -2661,10 +2772,24 @@ mod jobs_http {
             .unwrap();
         assert_eq!(
             out.status.code(),
-            Some(75),
-            "heavy-run must refuse while a goose job holds the lock: {}",
+            Some(0),
+            "heavy-run takes the free slot next to a goose job: {}",
             String::from_utf8_lossy(&out.stderr)
         );
+        let held1 = HeavySlot::try_take_at(&heavy_slot_path(&n.lock, 1), "test")
+            .unwrap()
+            .expect("slot 1 free after heavy-run");
+        let out = heavy_run_cmd(&bin, &n.lock, &led1)
+            .args(["--", "true"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(75),
+            "heavy-run must refuse while every slot is held: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        drop(held1);
         reqwest::Client::new()
             .post(format!("{}/v1/swarm/jobs/{id}/cancel", n.base))
             .bearer_auth(TOKEN)
@@ -2673,7 +2798,8 @@ mod jobs_http {
             .unwrap();
         wait_terminal(&n, &id, Duration::from_secs(20)).await;
 
-        // 2) A real heavy-run holds the lock -> a heavy goose job is refused heavy_slot_held.
+        // 2) A real heavy-run holds a slot -> a heavy goose job takes the other one; a third
+        //    heavy job is refused heavy_slot_held.
         let led2 = n.root.join("hr2");
         std::fs::create_dir_all(&led2).unwrap();
         let mut hr = heavy_run_cmd(&bin, &n.lock, &led2)
@@ -2681,19 +2807,131 @@ mod jobs_http {
             .spawn()
             .unwrap();
         let lock = n.lock.clone();
-        wait_until("heavy-run took the lock", || {
+        wait_until("heavy-run took a slot", || {
             let lock = lock.clone();
-            async move { matches!(HeavySlot::try_take_at(&lock, "probe"), Ok(None)) }
+            async move { heavy_slots_used(&lock, 2) == 1 }
         })
         .await;
+        let (s, v) = submit(&n, heavy.clone()).await;
+        assert_eq!(s, 202, "one slot left next to heavy-run: {v}");
+        let id = v["job_id"].as_str().unwrap().to_string();
         expect_refusal(&n, heavy.clone(), 409, "heavy_slot_held").await;
-        // A light job is not affected by the heavy slot.
+        // A light job is not affected by the heavy slots.
         let (s, v) = submit(&n, shell("true")).await;
         assert_eq!(s, 202, "{v}");
+        cancel(&n, &id).await;
+        wait_terminal(&n, &id, Duration::from_secs(20)).await;
         // SAFETY: TERM our own child; heavy-run then kills its job group itself.
         unsafe { libc::kill(hr.id() as i32, libc::SIGTERM) };
         let _ = hr.wait();
         n.handle.shutdown();
+    }
+
+    /// The owner's laptop state of 2026-10-25: slot 0 held by an EXTERNAL flock (a release
+    /// build waiting on notarization), 94% free, load 0.28/core. Before 3.0.131 every heavy job
+    /// was refused; now it runs on slot 1, and with three slots a SECOND heavy goose job runs
+    /// next to it. Only when every slot is held is the next one refused, with the count.
+    #[tokio::test]
+    async fn two_heavy_goose_jobs_run_concurrently_next_to_an_external_slot0_flock() {
+        let limits = NodeLimits {
+            max_heavy: Some(3),
+            ..test_limits()
+        };
+        let n = spawn_jobs_node(true, limits, None).await;
+        *n.own.lock().unwrap() = OwnLoad {
+            cpu_load_per_core: Some(0.28),
+            mem_free_pct: Some(94.0),
+            ncpu: 14,
+            ..calm()
+        };
+        let external = HeavySlot::try_take_at(&n.lock, "pid 999 release build")
+            .unwrap()
+            .expect("slot 0");
+        let mut heavy = shell("sleep 30");
+        heavy["heavy"] = true.into();
+        heavy["need_mem_gb"] = 8.0.into();
+        let (s1, a) = submit(&n, heavy.clone()).await;
+        assert_eq!(s1, 202, "first heavy job next to the external flock: {a}");
+        let (s2, b) = submit(&n, heavy.clone()).await;
+        assert_eq!(s2, 202, "second heavy job, concurrently: {b}");
+        let (a, b) = (
+            a["job_id"].as_str().unwrap().to_string(),
+            b["job_id"].as_str().unwrap().to_string(),
+        );
+        for id in [&a, &b] {
+            assert_eq!(job(&n, id).await.1["state"], "running");
+        }
+        assert_eq!(heavy_slots_used(&n.lock, 3), 3);
+        let (s, v) = submit(&n, heavy.clone()).await;
+        assert_eq!(
+            (s, v["code"].as_str()),
+            (409, Some("heavy_slot_held")),
+            "{v}"
+        );
+        let reason = v["reason"].as_str().unwrap();
+        assert!(
+            reason.starts_with("busy: 3/3 heavy slots held: "),
+            "{reason}"
+        );
+        assert!(reason.contains("pid 999 release build"), "{reason}");
+        // The card says how much more this Mac can take.
+        let nodes = get_json(
+            &reqwest::Client::new(),
+            &format!("{}/v1/swarm/nodes", n.base),
+        )
+        .await;
+        let load = &nodes["self"]["load"];
+        let own = &load["own"];
+        assert_eq!(own["heavy_slots_max"], 3, "{load}");
+        assert_eq!(own["can_take"], 11, "{load}");
+        assert!(
+            own["verdict"]
+                .as_str()
+                .is_some_and(|l| l.starts_with("busy: 3/3 heavy slots held")),
+            "{load}"
+        );
+        drop(external);
+        for id in [&a, &b] {
+            cancel(&n, id).await;
+            wait_terminal(&n, id, Duration::from_secs(20)).await;
+        }
+        n.handle.shutdown();
+    }
+
+    /// Someone at the keyboard (79% free): admitted by default; refused only when the owner
+    /// set Refuse jobs, and the refusal carries the numbers.
+    #[tokio::test]
+    async fn user_active_is_admitted_by_default_and_refused_only_under_refuse() {
+        let typing = || OwnLoad {
+            user_active: true,
+            user_idle_s: Some(3.0),
+            mem_free_pct: Some(79.0),
+            ..calm()
+        };
+        let n = spawn_jobs_node(true, test_limits(), None).await;
+        *n.own.lock().unwrap() = typing();
+        let mut heavy = shell("true");
+        heavy["heavy"] = true.into();
+        for body in [shell("true"), heavy.clone()] {
+            let (s, v) = submit(&n, body).await;
+            assert_eq!(s, 202, "{v}");
+        }
+        n.handle.shutdown();
+
+        let tmp = tempfile::tempdir().unwrap();
+        let r =
+            start_jobs_node_with(tmp, true, test_limits(), None, UserActivePolicy::Refuse).await;
+        *r.own.lock().unwrap() = typing();
+        let mut flagged = shell("true");
+        flagged["allow_user_active"] = true.into();
+        for body in [shell("true"), flagged] {
+            let (s, v) = submit(&r, body).await;
+            assert_eq!((s, v["code"].as_str()), (409, Some("user_active")), "{v}");
+            let reason = v["reason"].as_str().unwrap();
+            assert!(reason.contains("3s since last input"), "{reason}");
+            assert!(reason.contains("can take ~9 more 8 GB jobs"), "{reason}");
+        }
+        r.handle.shutdown();
     }
 
     async fn cancel(n: &Node, id: &str) -> (u16, serde_json::Value) {
@@ -2826,6 +3064,9 @@ mod jobs_http {
         let _held = HeavySlot::try_take_at(&n.lock, "test")
             .unwrap()
             .expect("slot");
+        let _held1 = HeavySlot::try_take_at(&heavy_slot_path(&n.lock, 1), "test")
+            .unwrap()
+            .expect("slot 1");
         let since = (chrono::Local::now() - chrono::Duration::seconds(372))
             .format("%F %T")
             .to_string();
@@ -2845,7 +3086,7 @@ mod jobs_http {
         let reason = v["reason"].as_str().unwrap();
         assert!(
             reason.starts_with(
-                "heavy slot held by pid 4321 (heavy-run: cargo test -p goose) for 6m 1"
+                "busy: 2/2 heavy slots held: heavy slot held by pid 4321 (heavy-run: cargo test -p goose) for 6m 1"
             ),
             "{reason}"
         );

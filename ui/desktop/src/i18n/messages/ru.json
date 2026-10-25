@@ -4128,7 +4128,7 @@
     "defaultMessage": "Выполнять задания от других Mac"
   },
   "macLoad.allowJobsHint": {
-    "defaultMessage": "Команды оболочки и промпты, одно тяжёлое задание за раз, останавливаются при выходе за порог памяти. Действует сразу."
+    "defaultMessage": "Команды оболочки и промпты, столько тяжёлых заданий, сколько позволяют слоты и память этого Mac, останавливаются при выходе за порог памяти. Действует сразу."
   },
   "macLoad.benchmark": {
     "defaultMessage": "Идёт бенчмарк: {why}"
@@ -4217,11 +4217,11 @@
   "macLoad.policy": {
     "defaultMessage": "Пока кто-то работает за этим Mac"
   },
+  "macLoad.policyHint": {
+    "defaultMessage": "Занятость измеряется: память выше порога, свободные слоты для тяжёлых задач, нагрузка на ядро. Человек за клавиатурой учитывается только при равенстве."
+  },
   "macLoad.policy.allow": {
     "defaultMessage": "Принимать задания"
-  },
-  "macLoad.policy.lastResort": {
-    "defaultMessage": "Только в крайнем случае"
   },
   "macLoad.policy.refuse": {
     "defaultMessage": "Отклонять задания"
@@ -11993,6 +11993,9 @@
   "runJob.refusal": {
     "defaultMessage": "{mac}: {reason}"
   },
+  "runJob.verdictLine": {
+    "defaultMessage": "{mac}: {verdict}"
+  },
   "runJob.inUse": {
     "defaultMessage": "{name} (используется)"
   },
@@ -12021,7 +12024,7 @@
     "defaultMessage": "Тяжёлое задание"
   },
   "runJob.heavyHint": {
-    "defaultMessage": "Mac выполняет только одно тяжёлое задание за раз (сборки, рендеринг, обучение)."
+    "defaultMessage": "Mac выполняет столько тяжёлых заданий (сборки, рендеры, обучение), сколько позволяют его слоты и память."
   },
   "runJob.mem": {
     "defaultMessage": "Нужная память (ГБ, необязательно)"

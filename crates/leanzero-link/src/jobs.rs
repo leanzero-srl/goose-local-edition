@@ -4,13 +4,19 @@
 //! The rules mirror `~/Projects/machine-sync/bin/heavy-run` and `node_fleet.py` (machine-sync
 //! a789c6c, skill `node-dispatch`) so goose jobs and `heavy-run`/`node-run` jobs behave as one
 //! system on a Mac:
-//! - ONE heavy slot per machine: the SAME `~/.cache/heavy-run.lock` flock, held for the job's
-//!   whole life (python's `fcntl.flock` is flock(2), so each side sees the other).
-//! - Admission is resources, not just "Idle": benchmark running = refuse; memory headroom above
-//!   the `min_free` floor must cover `need_mem_gb`; a heavy job also needs the slot, AC power,
-//!   no thermal pressure; a lid that would sleep refuses everything; the owner at the keyboard
-//!   is the LAST resort (policy below). Every refusal carries a machine-readable
-//!   [`RefusalCode`].
+//! - Busy means MEASURED load (owner 2026-10-25: "use resources to their fullest; the goal is to
+//!   not kill the machines but USE THEM"). A heavy job takes any free one of `max_heavy` flock
+//!   slots (default `max(2, cores / 4)`): slot 0 is exactly `~/.cache/heavy-run.lock`, so an
+//!   older goose or a `heavy-run` holding it counts as one taken slot; slot i is
+//!   `~/.cache/heavy-run.lock.i`. Slots are held for the job's whole life (python's
+//!   `fcntl.flock` is flock(2), so each side sees the other).
+//! - Admission is resources: benchmark running = refuse; memory free must stay above the
+//!   `min_free` floor and the GB above it must cover `need_mem_gb`; load per core is a
+//!   BACKSTOP only (`max_load_per_core`, default 2.0; CPU is there to be used); a heavy job also
+//!   needs a free slot, AC power, no thermal pressure; a lid that would sleep refuses everything.
+//!   Someone at the keyboard is a placement TIEBREAK, never a refusal, unless the node's policy
+//!   is `refuse`. Every refusal carries a machine-readable [`RefusalCode`] and a reason with the
+//!   numbers behind it; every verdict says how many more default-size jobs the Mac can take.
 //! - Shell jobs run `/bin/zsh -lc <command>` in their own process group under a 1 s watchdog:
 //!   timeout -> 124, group memory (sum of `max(resident, phys_footprint)` over the group, since
 //!   RSS undercounts MLX/GPU memory 100x) over `max_rss_pct` of RAM or system free under
@@ -32,8 +38,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
 use crate::load::{
-    heavy_holder_reason, sample_own, user_idle_threshold_s, HeavySlot, JobBrief, JobKind, JobState,
-    NodeLimits, NodeLoad, OwnLoad, THERMAL_REFUSE_LEVEL,
+    sample_own, user_idle_threshold_s, HeavySlot, JobBrief, JobKind, JobState, NodeLimits,
+    NodeLoad, OwnLoad, THERMAL_REFUSE_LEVEL,
 };
 use crate::state::{ExecuteRequest, RemoteExecutor, RunEnd, SwarmStateSource};
 
@@ -41,7 +47,7 @@ use crate::state::{ExecuteRequest, RemoteExecutor, RunEnd, SwarmStateSource};
 pub const ALLOW_REMOTE_JOBS_KEY: &str = "LEANZERO_LINK_ALLOW_REMOTE_JOBS";
 /// Overrides `node-limits.json`'s `min_free` for job admission (percent).
 pub const MIN_FREE_ENV: &str = "LEANZERO_LINK_JOBS_MIN_FREE";
-/// `allow` | `last_resort` (default) | `refuse`.
+/// `allow` (default) | `refuse` (`last_resort`, the pre-3.0.131 default, reads as `allow`).
 pub const USER_ACTIVE_POLICY_ENV: &str = "LEANZERO_LINK_JOBS_USER_ACTIVE";
 /// The ledger root (default `~/.leanzero/jobs`).
 pub const JOBS_DIR_ENV: &str = "LEANZERO_LINK_JOBS_DIR";
@@ -91,8 +97,9 @@ pub struct JobRequest {
     /// The node that placed the job (shown to every peer). `None` = "unknown".
     #[serde(default)]
     pub origin_node: Option<String>,
-    /// The placer found no idle node and chose this one knowing its owner is at the keyboard
-    /// (node_fleet's USER-ACTIVE last resort).
+    /// The placer accepts that someone uses the receiving Mac. Receivers from 3.0.131 ignore
+    /// it (someone at the keyboard is a tiebreak, not a refusal); placers from 3.0.131 always
+    /// send `true` so a 3.0.130 receiver on its old `last_resort` default takes the job too.
     #[serde(default)]
     pub allow_user_active: bool,
     /// The placer's strategy for THIS job (the "Run a job" override). `None` = the node's
@@ -122,6 +129,8 @@ pub enum RefusalCode {
     OnBattery,
     Thermal,
     LidSleeps,
+    /// Load per core at or past the `max_load_per_core` backstop (heavy jobs).
+    CpuOverloaded,
     UserActive,
     ExecutorMissing,
     NotFound,
@@ -146,6 +155,7 @@ impl RefusalCode {
             | Self::OnBattery
             | Self::Thermal
             | Self::LidSleeps
+            | Self::CpuOverloaded
             | Self::UserActive
             | Self::AlreadyFinished => 409,
         }
@@ -249,20 +259,20 @@ pub struct JobRecord {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum UserActivePolicy {
-    /// Take jobs while the owner is typing.
-    Allow,
-    /// Take them only when the placer says no idle node was left (`allow_user_active`).
+    /// Take jobs while someone uses the Mac (the default since 3.0.131): busy is MEASURED load
+    /// only, and someone at the keyboard just moves this Mac behind an equally able one.
     #[default]
-    LastResort,
-    /// Never while the owner is typing.
+    Allow,
+    /// The owner's explicit opt-out: never take a job while someone uses this Mac.
     Refuse,
 }
 
 impl UserActivePolicy {
+    /// `allow` | `refuse`. The pre-3.0.131 `last_resort` reads as `allow` (owner 2026-10-25:
+    /// "if I use one of these Macs it should still treat it as LOADABLE").
     pub fn parse(s: &str) -> Option<Self> {
         match s.trim().to_ascii_lowercase().replace('-', "_").as_str() {
-            "allow" => Some(Self::Allow),
-            "last_resort" => Some(Self::LastResort),
+            "allow" | "last_resort" => Some(Self::Allow),
             "refuse" => Some(Self::Refuse),
             _ => None,
         }
@@ -276,7 +286,35 @@ impl UserActivePolicy {
     }
 }
 
-/// node_fleet's verdict classes: OK, USER-ACTIVE (last resort), or BUSY with reasons.
+/// What a verdict measures against: the floor and the backstops of `node-limits.json`
+/// (shared with heavy-run/node-run).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Gate {
+    /// Memory floor, % of RAM; the job's need must fit ABOVE it.
+    pub min_free: f64,
+    /// A heavy job is refused at or above this load per core (a backstop, default 2.0).
+    pub max_load_per_core: f64,
+    /// What "can take ~N more" counts a job at when it names no need (8 GB).
+    pub default_need_gb: f64,
+}
+
+impl Gate {
+    pub fn new(limits: &NodeLimits, min_free: f64) -> Self {
+        Self {
+            min_free,
+            max_load_per_core: limits.max_load_per_core,
+            default_need_gb: limits.default_need_gb,
+        }
+    }
+
+    /// The shared defaults with a floor of `min_free`.
+    pub fn with_floor(min_free: f64) -> Self {
+        Self::new(&NodeLimits::default(), min_free)
+    }
+}
+
+/// node_fleet's verdict classes, MEASURED: OK, or BUSY with the numbers that made it busy.
+/// `user_active` is information and a ranking tiebreak, never a reason to be busy.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Verdict {
     /// The first blocking reason (BUSY), or `None`.
@@ -286,6 +324,11 @@ pub struct Verdict {
     /// off AC. Higher is better.
     pub score: f64,
     pub avail_gb: Option<f64>,
+    /// More jobs of this size (the job's need, else `default_need_gb`) that fit above the floor.
+    pub can_take: Option<u32>,
+    /// The verdict with its numbers: `ok: 1/3 heavy, 94 GB free, load 0.28/core, can take ~11
+    /// more 8 GB jobs` or `busy: memory 12% free < 20% floor`.
+    pub line: String,
 }
 
 /// GB of memory above the `min_free` floor (node_fleet `avail`).
@@ -295,12 +338,31 @@ pub fn avail_gb(own: &OwnLoad, min_free: f64) -> Option<f64> {
     Some(((total * (free - min_free) / 100.0) * 10.0).round() / 10.0)
 }
 
+fn num(x: f64) -> String {
+    let r = (x * 10.0).round() / 10.0;
+    if r.fract() == 0.0 {
+        format!("{r:.0}")
+    } else {
+        format!("{r:.1}")
+    }
+}
+
+/// The heavy slots a report shows as `(used, max)`; `None` = an older report (only the flag).
+fn heavy_slots(own: &OwnLoad) -> Option<(u32, u32)> {
+    (own.heavy_slots_max > 0).then_some((own.heavy_slots_used, own.heavy_slots_max))
+}
+
 /// node_fleet `verdict()` over one node's OWN load, for a job needing `need_gb` (heavy or not).
-pub fn verdict(own: &OwnLoad, need_gb: f64, heavy: bool, min_free: f64) -> Verdict {
+/// BUSY only on MEASURED load: memory headroom after the need under the floor, every heavy slot
+/// taken, load per core past the backstop, thermal pressure; plus the physical states that
+/// would kill the job (lid closed and sleeping, a heavy job on battery) and a running benchmark
+/// (its numbers must not be disturbed). Someone at the keyboard never makes a Mac busy.
+pub fn verdict(own: &OwnLoad, need_gb: f64, heavy: bool, gate: &Gate) -> Verdict {
+    let min_free = gate.min_free;
     let mut busy: Option<Refusal> = None;
     let mut block = |code, why: String| {
         if busy.is_none() {
-            busy = Some(Refusal::new(code, why));
+            busy = Some(Refusal::new(code, format!("busy: {why}")));
         }
     };
     if let Some(b) = &own.benchmark {
@@ -312,20 +374,46 @@ pub fn verdict(own: &OwnLoad, need_gb: f64, heavy: bool, min_free: f64) -> Verdi
     let avail = avail_gb(own, min_free);
     match (own.mem_free_pct, avail) {
         (Some(free), Some(av)) => {
-            if av < need_gb || free < min_free {
+            if free < min_free {
+                block(
+                    RefusalCode::MemoryHeadroom,
+                    format!("memory {}% free < {}% floor", num(free), num(min_free)),
+                );
+            } else if av < need_gb {
                 block(
                     RefusalCode::MemoryHeadroom,
                     format!(
-                        "memory: {free}% free, {av} GB above the {min_free}% floor < need {need_gb} GB"
+                        "memory {} GB above the {}% floor < need {} GB",
+                        num(av),
+                        num(min_free),
+                        num(need_gb)
                     ),
                 );
             }
         }
         _ => block(RefusalCode::MemoryUnreadable, "memory unreadable".into()),
     }
+    let lpc = own.cpu_load_per_core.unwrap_or(0.0);
     if heavy {
-        if own.heavy_slot_held {
-            block(RefusalCode::HeavySlotHeld, "heavy slot held".into());
+        match heavy_slots(own) {
+            Some((used, max)) if used >= max => block(
+                RefusalCode::HeavySlotHeld,
+                format!("{used}/{max} heavy slots held"),
+            ),
+            None if own.heavy_slot_held => block(
+                RefusalCode::HeavySlotHeld,
+                "heavy slot held (an older goose reports one slot)".into(),
+            ),
+            _ => {}
+        }
+        if own.cpu_load_per_core.is_some() && lpc >= gate.max_load_per_core {
+            block(
+                RefusalCode::CpuOverloaded,
+                format!(
+                    "load {lpc:.2}/core >= {} backstop",
+                    num(gate.max_load_per_core)
+                ),
+            );
         }
         if own.on_ac == Some(false) {
             block(RefusalCode::OnBattery, "on battery".into());
@@ -342,90 +430,117 @@ pub fn verdict(own: &OwnLoad, need_gb: f64, heavy: bool, min_free: f64) -> Verdi
     if own.lid_closed_sleeps {
         block(RefusalCode::LidSleeps, "lid closed (it would sleep)".into());
     }
-    let lpc = own.cpu_load_per_core.unwrap_or(0.0);
     let mut score = avail.unwrap_or(0.0) - need_gb - 10.0 * lpc;
     if own.on_ac != Some(true) {
         score -= 20.0;
     }
+    let unit = if need_gb > 0.0 {
+        need_gb
+    } else {
+        gate.default_need_gb
+    };
+    let can_take = avail.map(|av| {
+        if unit > 0.0 {
+            (av.max(0.0) / unit).floor() as u32
+        } else {
+            0
+        }
+    });
+    let line = match &busy {
+        Some(r) => r.reason.clone(),
+        None => {
+            let mut parts = Vec::new();
+            if let Some((used, max)) = heavy_slots(own) {
+                parts.push(format!("{used}/{max} heavy"));
+            }
+            if let (Some(free), Some(total)) = (own.mem_free_pct, own.mem_total_gb) {
+                parts.push(format!("{} GB free", num(total * free / 100.0)));
+            }
+            if let Some(l) = own.cpu_load_per_core {
+                parts.push(format!("load {l:.2}/core"));
+            }
+            if let Some(n) = can_take {
+                parts.push(format!("can take ~{n} more {} GB jobs", num(unit)));
+            }
+            if own.user_active {
+                parts.push("in use".into());
+            }
+            format!("ok: {}", parts.join(", "))
+        }
+    };
     Verdict {
         busy,
         user_active: own.user_active,
         score: (score * 10.0).round() / 10.0,
         avail_gb: avail,
+        can_take,
+        line,
     }
 }
 
-/// Admission on the RECEIVING node: the verdict plus the user-active policy.
+/// The card summary a node reports about itself (`OwnLoad.verdict`/`can_take`): the verdict
+/// for a heavy job of `default_need_gb`.
+pub fn stamp_summary(own: &mut OwnLoad, gate: &Gate) {
+    let v = verdict(own, gate.default_need_gb, true, gate);
+    own.can_take = v.can_take;
+    own.verdict = Some(v.line);
+}
+
+/// Admission on the RECEIVING node: the measured verdict, then the owner's explicit opt-out.
 pub fn admit(
     own: &OwnLoad,
     req: &JobRequest,
-    min_free: f64,
+    gate: &Gate,
     policy: UserActivePolicy,
 ) -> Result<(), Refusal> {
-    let v = verdict(own, req.need_mem_gb.unwrap_or(0.0), req.heavy, min_free);
+    let v = verdict(own, req.need_mem_gb.unwrap_or(0.0), req.heavy, gate);
     if let Some(r) = v.busy {
         return Err(r);
     }
-    if v.user_active {
-        let ok = match policy {
-            UserActivePolicy::Allow => true,
-            UserActivePolicy::LastResort => req.allow_user_active,
-            UserActivePolicy::Refuse => false,
-        };
-        if !ok {
-            let idle = own
-                .user_idle_s
-                .map(|s| format!("{s:.0}s since last input"))
-                .unwrap_or_else(|| "recent input".into());
-            return Err(Refusal::new(
-                RefusalCode::UserActive,
-                format!("user active ({idle}); policy {policy:?}"),
-            ));
-        }
+    if v.user_active && policy == UserActivePolicy::Refuse {
+        let idle = own
+            .user_idle_s
+            .map(|s| format!("{s:.0}s since last input"))
+            .unwrap_or_else(|| "recent input".into());
+        return Err(Refusal::new(
+            RefusalCode::UserActive,
+            format!(
+                "refused: someone is using this Mac ({idle}) and its owner set Refuse jobs; {}",
+                v.line
+            ),
+        ));
     }
     Ok(())
 }
 
-/// One candidate of [`rank_placements`].
+/// One candidate of [`plan_placement`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct Placement {
     pub node_id: String,
     pub user_active: bool,
     pub score: f64,
+    pub can_take: Option<u32>,
+    /// The verdict line with its numbers.
+    pub verdict: String,
 }
 
-/// node_fleet `order_candidates`: nodes that may take the job (they allow jobs and have a
-/// load report), OK ones first, then USER-ACTIVE as the last resort, each by score; BUSY nodes
-/// are not candidates. `min_free` is the PLACER's floor (each receiver re-checks with its own).
+/// node_fleet `order_candidates` without a strategy: every Mac that allows jobs and is
+/// MEASURABLY able, most headroom first, someone at the keyboard only breaking ties.
 pub fn rank_placements<'a>(
     nodes: impl IntoIterator<Item = (&'a str, bool, Option<&'a NodeLoad>)>,
     need_gb: f64,
     heavy: bool,
-    min_free: f64,
+    gate: &Gate,
 ) -> Vec<Placement> {
-    let mut out: Vec<Placement> = nodes
-        .into_iter()
-        .filter_map(|(id, allows_jobs, load)| {
-            let load = load?;
-            if !allows_jobs {
-                return None;
-            }
-            let v = verdict(&load.own, need_gb, heavy, min_free);
-            v.busy.is_none().then(|| Placement {
-                node_id: id.to_string(),
-                user_active: v.user_active,
-                score: v.score,
-            })
-        })
-        .collect();
-    out.sort_by(|a, b| {
-        a.user_active.cmp(&b.user_active).then(
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal),
-        )
-    });
-    out
+    plan_placement(
+        "",
+        nodes,
+        need_gb,
+        heavy,
+        gate,
+        PlacementStrategy::LocalFirst,
+    )
+    .candidates
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -475,15 +590,16 @@ pub struct PlacementPlan {
     pub refusals: Vec<NodeRefusal>,
 }
 
-/// [`rank_placements`]'s rules (OK nodes first, USER-ACTIVE as the last resort, BUSY never)
-/// with the strategy deciding, inside each class, whether THIS node (`self_id`) is tried
-/// before the others (`local-first`) or after them (`selfish`). Others go best score first.
+/// Where a job can go: every Mac that allows jobs and is MEASURABLY able ([`verdict`]) is a
+/// candidate; the strategy decides whether THIS node (`self_id`) is tried before the others
+/// (`local-first`) or after them (`selfish`); then the most room (jobs of this size that still
+/// fit), then someone at the keyboard as a TIEBREAK only, then the score.
 pub fn plan_placement<'a>(
     self_id: &str,
     nodes: impl IntoIterator<Item = (&'a str, bool, Option<&'a NodeLoad>)>,
     need_gb: f64,
     heavy: bool,
-    min_free: f64,
+    gate: &Gate,
     strategy: PlacementStrategy,
 ) -> PlacementPlan {
     let mut candidates = Vec::new();
@@ -505,13 +621,15 @@ pub fn plan_placement<'a>(
             ));
             continue;
         };
-        let v = verdict(&load.own, need_gb, heavy, min_free);
+        let v = verdict(&load.own, need_gb, heavy, gate);
         match v.busy {
             Some(r) => refusals.push(refuse(r.code, &r.reason)),
             None => candidates.push(Placement {
                 node_id: id.to_string(),
                 user_active: v.user_active,
                 score: v.score,
+                can_take: v.can_take,
+                verdict: v.line,
             }),
         }
     }
@@ -523,9 +641,10 @@ pub fn plan_placement<'a>(
         }
     };
     candidates.sort_by(|a, b| {
-        a.user_active
-            .cmp(&b.user_active)
-            .then(own_rank(a).cmp(&own_rank(b)))
+        own_rank(a)
+            .cmp(&own_rank(b))
+            .then(b.can_take.unwrap_or(0).cmp(&a.can_take.unwrap_or(0)))
+            .then(a.user_active.cmp(&b.user_active))
             .then(
                 b.score
                     .partial_cmp(&a.score)
@@ -801,6 +920,23 @@ impl JobRegistry {
             .unwrap_or_else(|| cfg.limits.unwrap_or_else(NodeLimits::load).min_free)
     }
 
+    /// The measured gate this node admits against ([`Gate`] over its limits and floor).
+    pub fn gate(&self) -> Gate {
+        let cfg = self.cfg();
+        let limits = cfg.limits.clone().unwrap_or_else(NodeLimits::load);
+        Gate::new(&limits, cfg.min_free.unwrap_or(limits.min_free))
+    }
+
+    /// `Some` when this node is MEASURABLY unable to take a light job now (memory under the
+    /// floor, a benchmark, the lid); what `/v1/swarm/execute` refuses on instead of a flag.
+    pub async fn measured_busy(&self) -> Option<Refusal> {
+        let sampler = self.cfg().sampler;
+        let own = tokio::task::spawn_blocking(move || sampler())
+            .await
+            .unwrap_or_default();
+        verdict(&own, 0.0, false, &self.gate()).busy
+    }
+
     fn get(&self, id: &str) -> Option<Arc<JobEntry>> {
         self.ensure_rebuilt();
         self.prune_deleted();
@@ -950,15 +1086,24 @@ impl JobRegistry {
             .await
             .unwrap_or_default();
         let job_id = new_job_id();
-        // The slot is the truth, not the sampled flag: take it now (non-blocking) and hold it
-        // for the job's life. Taken BEFORE the verdict so a refusal names the right cause.
+        let gate = Gate::new(&limits, min_free);
+        let max_heavy = limits.max_heavy_for(own.ncpu);
+        // The slots are the truth, not the sampled flag: take ANY free one of `max_heavy` now
+        // (non-blocking; slot 0 is heavy-run's own lock file) and hold it for the job's life.
+        // Taken BEFORE the verdict so a refusal names the right cause.
         let mut slot = if req.heavy {
-            match HeavySlot::try_take_at(&cfg.heavy_lock, &job_id) {
-                Ok(Some(s)) => {
+            match HeavySlot::try_take_any(&cfg.heavy_lock, max_heavy, &job_id) {
+                Ok(Some((s, _))) => {
+                    own.heavy_slots_max = max_heavy;
+                    // Ours is held too (a flock per open file); the verdict counts the others.
+                    own.heavy_slots_used =
+                        crate::load::heavy_slots_used(&cfg.heavy_lock, max_heavy).saturating_sub(1);
                     own.heavy_slot_held = false;
                     Some(s)
                 }
                 Ok(None) => {
+                    own.heavy_slots_max = max_heavy;
+                    own.heavy_slots_used = max_heavy;
                     own.heavy_slot_held = true;
                     None
                 }
@@ -972,10 +1117,10 @@ impl JobRegistry {
         } else {
             None
         };
-        admit(&own, &req, min_free, cfg.user_active).map_err(|mut r| {
+        admit(&own, &req, &gate, cfg.user_active).map_err(|mut r| {
             if r.code == RefusalCode::HeavySlotHeld {
-                // Who holds it and for how long (the lock's holder line), not a bare "held".
-                r.reason = heavy_holder_reason(&cfg.heavy_lock);
+                // Who holds each slot and for how long (the holder lines), not a bare "held".
+                r.reason = crate::load::heavy_holders_reason(&cfg.heavy_lock, max_heavy);
             }
             r
         })?;
@@ -1173,9 +1318,22 @@ impl JobRegistry {
 /// exactly what admission reads here (same user-idle threshold, same test seam).
 pub async fn load_with_jobs(engine_active: u32, jobs: Option<&JobRegistry>) -> NodeLoad {
     let Some(reg) = jobs else {
-        return crate::load::snapshot(engine_active, Vec::new()).await;
+        let mut load = crate::load::snapshot(engine_active, Vec::new()).await;
+        let limits = NodeLimits::load();
+        stamp_summary(&mut load.own, &Gate::new(&limits, limits.min_free));
+        return load;
     };
-    crate::load::snapshot_with(engine_active, reg.briefs(), reg.cfg().sampler).await
+    let cfg = reg.cfg();
+    let mut load = crate::load::snapshot_with(engine_active, reg.briefs(), cfg.sampler).await;
+    // The slots are the truth: probe THIS registry's lock files (the ones submit takes) with its
+    // own slot count, so the card counts exactly what admission will find.
+    let limits = cfg.limits.clone().unwrap_or_else(NodeLimits::load);
+    let max = limits.max_heavy_for(load.own.ncpu);
+    load.own.heavy_slots_max = max;
+    load.own.heavy_slots_used = crate::load::heavy_slots_used(&cfg.heavy_lock, max);
+    load.own.heavy_slot_held = load.own.heavy_slots_used >= max;
+    stamp_summary(&mut load.own, &reg.gate());
+    load
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1526,14 +1684,16 @@ async fn watch_adopted(entry: Arc<JobEntry>, pgid: i32, limits: NodeLimits, cfg:
     let rec = entry.snapshot();
     let mut slot = None;
     if rec.heavy {
-        match HeavySlot::try_take_at(&cfg.heavy_lock, &rec.job_id) {
-            Ok(Some(mut s)) => {
+        let max_heavy = limits
+            .max_heavy_for(std::thread::available_parallelism().map_or(1, |n| n.get() as u32));
+        match HeavySlot::try_take_any(&cfg.heavy_lock, max_heavy, &rec.job_id) {
+            Ok(Some((mut s, _))) => {
                 s.write_holder(pgid, &holder_label(&rec));
                 slot = Some(s);
             }
             Ok(None) => {
-                let who = heavy_holder_reason(&cfg.heavy_lock);
-                tracing::warn!(job = %rec.job_id, %who, "jobs: adopted heavy job could not retake the slot");
+                let who = crate::load::heavy_holders_reason(&cfg.heavy_lock, max_heavy);
+                tracing::warn!(job = %rec.job_id, %who, "jobs: adopted heavy job could not retake a slot");
                 let _ = append_line(
                     &entry.dir,
                     &format!("[goose-job] adopted after a goose restart; the slot was taken meanwhile: {who}"),
@@ -1735,23 +1895,31 @@ mod tests {
     }
 
     fn code(own: &OwnLoad, r: &JobRequest, p: UserActivePolicy) -> Option<RefusalCode> {
-        admit(own, r, 20.0, p).err().map(|e| e.code)
+        admit(own, r, &Gate::with_floor(20.0), p)
+            .err()
+            .map(|e| e.code)
     }
 
     #[test]
     fn the_benchmark_refusal_names_the_run() {
         let mut m = idle_mac();
         m.benchmark = Some("Gauntlet build run 2026-10-25T15:40Z (pid 1234)".into());
-        let e = admit(&m, &req(false, 0.0), 20.0, UserActivePolicy::LastResort).unwrap_err();
+        let e = admit(
+            &m,
+            &req(false, 0.0),
+            &Gate::with_floor(20.0),
+            UserActivePolicy::Allow,
+        )
+        .unwrap_err();
         assert_eq!(
             e.reason,
-            "benchmark running: Gauntlet build run 2026-10-25T15:40Z (pid 1234)"
+            "busy: benchmark running: Gauntlet build run 2026-10-25T15:40Z (pid 1234)"
         );
     }
 
     #[test]
     fn admission_codes() {
-        let lr = UserActivePolicy::LastResort;
+        let lr = UserActivePolicy::Allow;
         assert_eq!(code(&idle_mac(), &req(true, 10.0), lr), None);
         let mut m = idle_mac();
         m.benchmark = Some("pid 1 goose benchmark".into());
@@ -1804,26 +1972,32 @@ mod tests {
         m.user_active = true;
         m.user_idle_s = Some(4.0);
         let mut r = req(false, 0.0);
-        assert_eq!(
-            code(&m, &r, UserActivePolicy::LastResort),
-            Some(RefusalCode::UserActive)
-        );
+        // Someone at the keyboard is NOT a refusal under the default policy.
+        assert_eq!(UserActivePolicy::default(), UserActivePolicy::Allow);
         assert_eq!(code(&m, &r, UserActivePolicy::Allow), None);
-        r.allow_user_active = true;
-        assert_eq!(code(&m, &r, UserActivePolicy::LastResort), None);
+        // Only the owner's explicit opt-out refuses, with or without the placer's flag.
         assert_eq!(
             code(&m, &r, UserActivePolicy::Refuse),
             Some(RefusalCode::UserActive)
         );
+        r.allow_user_active = true;
         assert_eq!(
-            UserActivePolicy::parse("last-resort"),
-            Some(UserActivePolicy::LastResort)
+            code(&m, &r, UserActivePolicy::Refuse),
+            Some(RefusalCode::UserActive)
+        );
+        // The pre-3.0.131 value reads as allow.
+        for old in ["last_resort", "last-resort", " Last_Resort "] {
+            assert_eq!(UserActivePolicy::parse(old), Some(UserActivePolicy::Allow));
+        }
+        assert_eq!(
+            UserActivePolicy::parse("refuse"),
+            Some(UserActivePolicy::Refuse)
         );
         assert_eq!(UserActivePolicy::parse("nope"), None);
     }
 
     #[test]
-    fn placement_ok_first_then_user_active_by_score() {
+    fn placement_most_room_first_user_active_only_breaks_ties() {
         let load = |own: OwnLoad| NodeLoad {
             own,
             ..Default::default()
@@ -1848,14 +2022,24 @@ mod tests {
             ("e", false, Some(&e)),
             ("f", true, None),
         ];
-        let p = rank_placements(nodes, 4.0, true, 20.0);
+        let p = rank_placements(nodes, 4.0, true, &Gate::with_floor(20.0));
         let ids: Vec<&str> = p.iter().map(|x| x.node_id.as_str()).collect();
-        assert_eq!(ids, vec!["a", "c", "b"]);
+        // Most room first: b (80% free, someone typing) fits 19 more 4 GB jobs, a 12, c 6.
+        // Someone at the keyboard does not push a roomier Mac behind a fuller one.
+        assert_eq!(ids, vec!["b", "a", "c"]);
+        assert_eq!(
+            p.iter().map(|x| x.can_take).collect::<Vec<_>>(),
+            vec![Some(19), Some(12), Some(6)]
+        );
+        assert!(p[0].user_active);
         // node_fleet score: 128*(60-20)/100 = 51.2 - 4 - 10*0.1 = 46.2
-        assert_eq!(p[0].score, 46.2);
+        assert_eq!(p[1].score, 46.2);
         let mut batt = idle_mac();
         batt.on_ac = Some(false);
-        assert_eq!(verdict(&batt, 4.0, false, 20.0).score, 26.2);
+        assert_eq!(
+            verdict(&batt, 4.0, false, &Gate::with_floor(20.0)).score,
+            26.2
+        );
     }
 
     fn plan_ids(p: &PlacementPlan) -> Vec<&str> {
@@ -1902,7 +2086,7 @@ mod tests {
                 ],
                 4.0,
                 true,
-                20.0,
+                &Gate::with_floor(20.0),
                 strategy,
             );
             assert_eq!(plan_ids(&p), own_fits_order, "{strategy:?} own fits");
@@ -1917,7 +2101,7 @@ mod tests {
                 ],
                 4.0,
                 true,
-                20.0,
+                &Gate::with_floor(20.0),
                 strategy,
             );
             assert_eq!(plan_ids(&p), vec!["studio"], "{strategy:?} own full");
@@ -1932,7 +2116,7 @@ mod tests {
                 ],
                 4.0,
                 true,
-                20.0,
+                &Gate::with_floor(20.0),
                 strategy,
             );
             assert!(p.candidates.is_empty(), "{strategy:?} all full");
@@ -1946,10 +2130,10 @@ mod tests {
                     ("studio", true, Some(&studio_ok)),
                 ]
             };
-            let p = plan_placement("me", rows(), 4.0, true, 20.0, strategy);
+            let p = plan_placement("me", rows(), 4.0, true, &Gate::with_floor(20.0), strategy);
             assert_eq!(plan_ids(&p), vec!["studio"], "{strategy:?} own locked");
             assert_eq!(refusal_of(&p, "me"), Some(RefusalCode::HeavySlotHeld));
-            let p = plan_placement("me", rows(), 4.0, false, 20.0, strategy);
+            let p = plan_placement("me", rows(), 4.0, false, &Gate::with_floor(20.0), strategy);
             assert_eq!(
                 plan_ids(&p),
                 own_fits_order,
@@ -1966,7 +2150,7 @@ mod tests {
             ],
             4.0,
             true,
-            20.0,
+            &Gate::with_floor(20.0),
             Selfish,
         );
         assert_eq!(plan_ids(&p), vec!["me"]);
@@ -1974,34 +2158,254 @@ mod tests {
     }
 
     #[test]
-    fn plan_placement_keeps_user_active_last_and_names_every_non_candidate() {
+    fn plan_placement_user_active_breaks_ties_only_and_names_every_non_candidate() {
         let load = |own: OwnLoad| NodeLoad {
             own,
             ..Default::default()
         };
-        let mut busy_me = idle_mac();
-        busy_me.user_active = true;
-        let me = load(busy_me);
+        let mut typing = idle_mac();
+        typing.user_active = true;
+        let me = load(typing.clone());
+        let gabee = load(typing);
         let studio = load(idle_mac());
         let other = load(idle_mac());
         let p = plan_placement(
             "me",
             vec![
                 ("me", true, Some(&me)),
+                ("gabee", true, Some(&gabee)),
                 ("studio", true, Some(&studio)),
                 ("off", false, Some(&other)),
                 ("old", true, None),
             ],
             4.0,
             false,
-            20.0,
+            &Gate::with_floor(20.0),
             PlacementStrategy::LocalFirst,
         );
-        // local-first never puts a Mac whose owner types ahead of an idle one
-        assert_eq!(plan_ids(&p), vec!["studio", "me"]);
-        assert!(p.candidates[1].user_active);
+        // Someone typing on this Mac does not skip it (local-first, it has room); between two
+        // equally roomy OTHER Macs the idle one goes first: a tiebreak, not an exclusion.
+        assert_eq!(plan_ids(&p), vec!["me", "studio", "gabee"]);
+        assert!(p.candidates[0].user_active && p.candidates[2].user_active);
+        assert!(
+            p.candidates[0].verdict.ends_with(", in use"),
+            "{:?}",
+            p.candidates[0]
+        );
         assert_eq!(refusal_of(&p, "off"), Some(RefusalCode::JobsDisabled));
         assert_eq!(refusal_of(&p, "old"), Some(RefusalCode::MemoryUnreadable));
+    }
+
+    // ---- The owner's three live states of 2026-10-25 ("all 3 Macs busy" while the laptop was
+    // ---- at 94% free and load 0.28/core). Each was refused before 3.0.131.
+
+    /// The laptop: 128 GB, 94% free, load 0.28/core, slot 0 held by a release build (an
+    /// external flock), so the report shows 1 of 3 slots used.
+    fn laptop_with_slot0_held() -> OwnLoad {
+        OwnLoad {
+            user_idle_s: Some(900.0),
+            cpu_load_per_core: Some(0.28),
+            ncpu: 14,
+            mem_free_pct: Some(94.0),
+            mem_total_gb: Some(128.0),
+            on_ac: Some(true),
+            thermal_limit: Some(0),
+            heavy_slot_held: false,
+            heavy_slots_used: 1,
+            heavy_slots_max: 3,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn fixture_laptop_with_one_held_slot_admits_a_heavy_job_and_says_how_much_more() {
+        let gate = Gate::with_floor(20.0);
+        let own = laptop_with_slot0_held();
+        assert_eq!(
+            admit(&own, &req(true, 8.0), &gate, UserActivePolicy::Allow),
+            Ok(())
+        );
+        let v = verdict(&own, 8.0, true, &gate);
+        assert_eq!(v.busy, None);
+        // 128 x (94 - 20)% = 94.7 GB above the floor -> 11 more 8 GB jobs.
+        assert_eq!(v.avail_gb, Some(94.7));
+        assert_eq!(v.can_take, Some(11));
+        assert_eq!(
+            v.line,
+            "ok: 1/3 heavy, 120.3 GB free, load 0.28/core, can take ~11 more 8 GB jobs"
+        );
+        // The card summary is the same verdict at default_need_gb.
+        let mut card = own.clone();
+        stamp_summary(&mut card, &gate);
+        assert_eq!(card.can_take, Some(11));
+        assert_eq!(card.verdict.as_deref(), Some(v.line.as_str()));
+        // Only when EVERY slot is taken is a heavy job refused, with the count.
+        let mut full = own;
+        full.heavy_slots_used = 3;
+        let e = admit(&full, &req(true, 8.0), &gate, UserActivePolicy::Allow).unwrap_err();
+        assert_eq!(e.code, RefusalCode::HeavySlotHeld);
+        assert_eq!(e.reason, "busy: 3/3 heavy slots held");
+        // ... and a light job still goes.
+        assert_eq!(
+            admit(&full, &req(false, 8.0), &gate, UserActivePolicy::Allow),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn fixture_user_active_mac_at_79_percent_free_is_loadable() {
+        let gate = Gate::with_floor(20.0);
+        let mut gabee = idle_mac();
+        gabee.mem_free_pct = Some(79.0);
+        gabee.user_active = true;
+        gabee.user_idle_s = Some(2.0);
+        for heavy in [false, true] {
+            assert_eq!(
+                admit(&gabee, &req(heavy, 8.0), &gate, UserActivePolicy::Allow),
+                Ok(()),
+                "heavy={heavy}"
+            );
+        }
+        let v = verdict(&gabee, 8.0, true, &gate);
+        assert!(v.busy.is_none() && v.user_active);
+        assert!(
+            v.line.starts_with("ok: ") && v.line.ends_with(", in use"),
+            "{}",
+            v.line
+        );
+        // The explicit opt-out refuses, and says why with the numbers.
+        let e = admit(&gabee, &req(false, 8.0), &gate, UserActivePolicy::Refuse).unwrap_err();
+        assert_eq!(e.code, RefusalCode::UserActive);
+        assert!(e.reason.contains("2s since last input"), "{}", e.reason);
+        assert!(
+            e.reason.contains("can take ~9 more 8 GB jobs"),
+            "{}",
+            e.reason
+        );
+    }
+
+    #[test]
+    fn fixture_cpu_is_a_backstop_and_memory_is_the_gate() {
+        let gate = Gate::with_floor(20.0);
+        let mut m = idle_mac();
+        // 1.2/core used to be "overloaded"; it is a Mac doing its job now.
+        m.cpu_load_per_core = Some(1.2);
+        assert_eq!(
+            admit(&m, &req(true, 8.0), &gate, UserActivePolicy::Allow),
+            Ok(())
+        );
+        m.cpu_load_per_core = Some(1.99);
+        assert_eq!(
+            admit(&m, &req(true, 8.0), &gate, UserActivePolicy::Allow),
+            Ok(())
+        );
+        m.cpu_load_per_core = Some(2.4);
+        let e = admit(&m, &req(true, 8.0), &gate, UserActivePolicy::Allow).unwrap_err();
+        assert_eq!(e.code, RefusalCode::CpuOverloaded);
+        assert_eq!(e.reason, "busy: load 2.40/core >= 2 backstop");
+        assert_eq!(e.code.http_status(), 409);
+        // The backstop is a heavy-job rule; a light job still runs.
+        assert_eq!(
+            admit(&m, &req(false, 0.0), &gate, UserActivePolicy::Allow),
+            Ok(())
+        );
+        // A tunable backstop.
+        let lim = NodeLimits {
+            max_load_per_core: 3.0,
+            ..NodeLimits::default()
+        };
+        assert_eq!(
+            admit(
+                &m,
+                &req(true, 8.0),
+                &Gate::new(&lim, 20.0),
+                UserActivePolicy::Allow
+            ),
+            Ok(())
+        );
+        // Memory: under the floor, and above the floor but short of the need.
+        let mut m = idle_mac();
+        m.mem_free_pct = Some(12.0);
+        let e = admit(&m, &req(false, 0.0), &gate, UserActivePolicy::Allow).unwrap_err();
+        assert_eq!(e.code, RefusalCode::MemoryHeadroom);
+        assert_eq!(e.reason, "busy: memory 12% free < 20% floor");
+        let mut m = idle_mac();
+        m.mem_free_pct = Some(52.0);
+        let e = admit(&m, &req(true, 48.0), &gate, UserActivePolicy::Allow).unwrap_err();
+        assert_eq!(
+            e.reason,
+            "busy: memory 41 GB above the 20% floor < need 48 GB"
+        );
+    }
+
+    #[test]
+    fn fixture_limits_file_reads_the_measured_keys() {
+        let l = NodeLimits::from_json(Some(
+            r#"{"max_heavy": 5, "max_load_per_core": 3.5, "default_need_gb": 16}"#,
+        ));
+        assert_eq!(l.max_heavy, Some(5));
+        assert_eq!(l.max_heavy_for(16), 5);
+        assert_eq!(l.max_load_per_core, 3.5);
+        assert_eq!(l.default_need_gb, 16.0);
+        let d = NodeLimits::from_json(None);
+        assert_eq!(
+            (d.max_heavy, d.max_load_per_core, d.default_need_gb),
+            (None, 2.0, 8.0)
+        );
+        // max(2, cores / 4)
+        for (cores, n) in [(4, 2), (8, 2), (14, 3), (16, 4), (28, 7)] {
+            assert_eq!(crate::load::default_max_heavy(cores), n, "{cores} cores");
+            assert_eq!(d.max_heavy_for(cores), n);
+        }
+        // A zero in the file still leaves one slot.
+        assert_eq!(
+            NodeLimits::from_json(Some(r#"{"max_heavy": 0}"#)).max_heavy_for(16),
+            1
+        );
+    }
+
+    /// Slot 0 is heavy-run's own lock file: an EXTERNAL flock on it (a 3.0.130 goose, a
+    /// heavy-run) is one taken slot, and goose takes the next free one.
+    #[test]
+    fn fixture_slot0_external_flock_is_one_taken_slot() {
+        use crate::load::{heavy_slot_path, heavy_slots_used, HeavySlot};
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().join("heavy-run.lock");
+        assert_eq!(heavy_slot_path(&base, 0), base);
+        assert_eq!(
+            heavy_slot_path(&base, 1),
+            tmp.path().join("heavy-run.lock.1")
+        );
+        let external = HeavySlot::try_take_at(&base, "release build (external)")
+            .unwrap()
+            .expect("slot 0");
+        assert_eq!(heavy_slots_used(&base, 2), 1);
+        let (first, i) = HeavySlot::try_take_any(&base, 2, "job-1")
+            .unwrap()
+            .expect("slot 1 is free");
+        assert_eq!(i, 1);
+        assert_eq!(heavy_slots_used(&base, 2), 2);
+        assert!(HeavySlot::try_take_any(&base, 2, "job-2")
+            .unwrap()
+            .is_none());
+        // With three slots a second goose job runs next to the first.
+        let (second, j) = HeavySlot::try_take_any(&base, 3, "job-2")
+            .unwrap()
+            .expect("slot 2 is free");
+        assert_eq!(j, 2);
+        // A dropped flock is free once no forked child (another test spawning a job, between
+        // fork and exec) still shares the open file description: poll briefly.
+        let settles_to = |want: u32| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while heavy_slots_used(&base, 3) != want && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            heavy_slots_used(&base, 3)
+        };
+        drop(external);
+        assert_eq!(settles_to(2), 2);
+        drop((first, second));
+        assert_eq!(settles_to(0), 0);
     }
 
     #[test]

@@ -18,6 +18,7 @@ vi.mock('../../acp/leanzero-link', async (importOriginal) => ({
   leanzeroLinkJobsLog: (...a: unknown[]) => acp.log(...a),
 }));
 
+import { TONE_TEXT } from '../lz';
 import { RunJobDialog } from './RunJobDialog';
 
 const ALLOWS = { manage_models: true, answer_chat: true, run_split: false, run_jobs: true };
@@ -98,6 +99,53 @@ describe('RunJobDialog', () => {
     ]);
     // Never a native control.
     expect(document.querySelector('select')).toBeNull();
+  });
+
+  it('shows each candidate’s measured verdict, busy in the warn tone, and on its option', async () => {
+    const user = userEvent.setup();
+    acp.place.mockResolvedValue({
+      placements: [
+        {
+          nodeId: 'gabee-1',
+          userActive: false,
+          score: 0.9,
+          canTake: 11,
+          verdict: 'ok: 1/3 heavy, 94 GB free, load 0.28/core, can take ~11 more 8 GB jobs',
+        },
+        {
+          nodeId: 'studio-7f3a',
+          userActive: true,
+          score: 0.4,
+          canTake: 0,
+          verdict: 'busy: 3/3 heavy slots held',
+        },
+      ],
+      strategy: 'local-first',
+      refusals: [],
+    });
+    renderDialog();
+    const ok = await screen.findByTestId('run-job-verdict-gabee-1');
+    expect(ok).toHaveTextContent(
+      'Gabee’s MacBook: ok: 1/3 heavy, 94 GB free, load 0.28/core, can take ~11 more 8 GB jobs'
+    );
+    expect(ok.className).not.toContain(TONE_TEXT.warn);
+    const busy = screen.getByTestId('run-job-verdict-studio-7f3a');
+    expect(busy).toHaveTextContent('Work’s Mac Studio: busy: 3/3 heavy slots held');
+    expect(busy.className).toContain(TONE_TEXT.warn);
+    await user.click(screen.getByRole('combobox', { name: 'Run on' }));
+    expect(screen.getByRole('option', { name: /^Gabee’s MacBook/ })).toHaveTextContent(
+      'can take ~11 more 8 GB jobs'
+    );
+    // Picked by name: only that Mac's line stays.
+    await user.click(screen.getByRole('option', { name: /^Work’s Mac Studio/ }));
+    expect(screen.getByTestId('run-job-verdict-studio-7f3a')).toBeInTheDocument();
+    expect(screen.queryByTestId('run-job-verdict-gabee-1')).toBeNull();
+  });
+
+  it('shows no verdict lines when the Macs send none (older goose)', async () => {
+    renderDialog();
+    expect(await screen.findByTestId('run-job-ranking')).toBeInTheDocument();
+    expect(screen.queryByTestId('run-job-verdicts')).toBeNull();
   });
 
   it('shows the Best Mac label in the field, never the raw value (D12)', async () => {

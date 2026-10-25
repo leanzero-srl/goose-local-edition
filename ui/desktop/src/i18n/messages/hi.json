@@ -4128,7 +4128,7 @@
     "defaultMessage": "दूसरे Mac से भेजे गए जॉब चलाएँ"
   },
   "macLoad.allowJobsHint": {
-    "defaultMessage": "शेल कमांड और प्रॉम्प्ट, एक समय में एक भारी जॉब, मेमोरी सीमा पार करने पर बंद। तुरंत लागू होता है।"
+    "defaultMessage": "शेल कमांड और प्रॉम्प्ट, इस Mac के स्लॉट और मेमोरी जितने भारी जॉब, मेमोरी सीमा पार करने पर बंद। तुरंत लागू होता है।"
   },
   "macLoad.benchmark": {
     "defaultMessage": "बेंचमार्क चल रहा है: {why}"
@@ -4217,11 +4217,11 @@
   "macLoad.policy": {
     "defaultMessage": "जब कोई इस Mac का उपयोग कर रहा हो"
   },
+  "macLoad.policyHint": {
+    "defaultMessage": "व्यस्त का मतलब मापा गया: सीमा से ऊपर मेमोरी, भारी कामों के खाली स्लॉट, प्रति कोर लोड। कीबोर्ड पर कोई हो तो वह केवल बराबरी तोड़ता है।"
+  },
   "macLoad.policy.allow": {
     "defaultMessage": "जॉब लें"
-  },
-  "macLoad.policy.lastResort": {
-    "defaultMessage": "सिर्फ़ आख़िरी विकल्प के रूप में"
   },
   "macLoad.policy.refuse": {
     "defaultMessage": "जॉब अस्वीकार करें"
@@ -11993,6 +11993,9 @@
   "runJob.refusal": {
     "defaultMessage": "{mac}: {reason}"
   },
+  "runJob.verdictLine": {
+    "defaultMessage": "{mac}: {verdict}"
+  },
   "runJob.inUse": {
     "defaultMessage": "{name} (उपयोग में)"
   },
@@ -12021,7 +12024,7 @@
     "defaultMessage": "भारी जॉब"
   },
   "runJob.heavyHint": {
-    "defaultMessage": "एक Mac एक समय में एक ही भारी जॉब चलाता है (बिल्ड, रेंडर, ट्रेनिंग)।"
+    "defaultMessage": "एक Mac उतने भारी जॉब (बिल्ड, रेंडर, ट्रेनिंग) चलाता है जितने उसके स्लॉट और मेमोरी में समाते हैं।"
   },
   "runJob.mem": {
     "defaultMessage": "ज़रूरी मेमोरी (GB, वैकल्पिक)"

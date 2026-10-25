@@ -4128,7 +4128,7 @@
     "defaultMessage": "Jobs von anderen Macs ausführen"
   },
   "macLoad.allowJobsHint": {
-    "defaultMessage": "Shell-Befehle und Prompts, ein schwerer Job gleichzeitig, beendet, sobald sie die Speichergrenze unterschreiten. Gilt sofort."
+    "defaultMessage": "Shell-Befehle und Prompts, so viele schwere Jobs, wie dieser Mac Slots und Speicher hat, beendet, sobald sie die Speichergrenze unterschreiten. Gilt sofort."
   },
   "macLoad.benchmark": {
     "defaultMessage": "Benchmark läuft: {why}"
@@ -4217,11 +4217,11 @@
   "macLoad.policy": {
     "defaultMessage": "Während jemand diesen Mac benutzt"
   },
+  "macLoad.policyHint": {
+    "defaultMessage": "Ausgelastet heißt gemessen: Speicher über der Untergrenze, freie Plätze für schwere Jobs, Last pro Kern. Jemand an der Tastatur entscheidet nur bei Gleichstand."
+  },
   "macLoad.policy.allow": {
     "defaultMessage": "Jobs annehmen"
-  },
-  "macLoad.policy.lastResort": {
-    "defaultMessage": "Nur als letzte Möglichkeit"
   },
   "macLoad.policy.refuse": {
     "defaultMessage": "Jobs ablehnen"
@@ -11993,6 +11993,9 @@
   "runJob.refusal": {
     "defaultMessage": "{mac}: {reason}"
   },
+  "runJob.verdictLine": {
+    "defaultMessage": "{mac}: {verdict}"
+  },
   "runJob.inUse": {
     "defaultMessage": "{name} (in Benutzung)"
   },
@@ -12021,7 +12024,7 @@
     "defaultMessage": "Schwerer Job"
   },
   "runJob.heavyHint": {
-    "defaultMessage": "Ein Mac führt jeweils nur einen schweren Job aus (Builds, Renderings, Training)."
+    "defaultMessage": "Ein Mac führt so viele schwere Jobs (Builds, Renderings, Training) aus, wie er Slots und Speicher hat."
   },
   "runJob.mem": {
     "defaultMessage": "Benötigter Speicher (GB, optional)"

@@ -4128,7 +4128,7 @@
     "defaultMessage": "Exécuter les tâches envoyées par d’autres Mac"
   },
   "macLoad.allowJobsHint": {
-    "defaultMessage": "Commandes shell et prompts, une tâche lourde à la fois, arrêtées si elles dépassent le seuil mémoire. Effet immédiat."
+    "defaultMessage": "Commandes shell et prompts, autant de tâches lourdes que ce Mac a d’emplacements et de mémoire, arrêtées si elles dépassent le seuil mémoire. Effet immédiat."
   },
   "macLoad.benchmark": {
     "defaultMessage": "Benchmark en cours : {why}"
@@ -4217,11 +4217,11 @@
   "macLoad.policy": {
     "defaultMessage": "Quand quelqu’un utilise ce Mac"
   },
+  "macLoad.policyHint": {
+    "defaultMessage": "Occupé signifie mesuré : mémoire au-dessus du plancher, emplacements lourds libres, charge par cœur. Quelqu’un au clavier ne sert qu’à départager."
+  },
   "macLoad.policy.allow": {
     "defaultMessage": "Accepter les tâches"
-  },
-  "macLoad.policy.lastResort": {
-    "defaultMessage": "Seulement en dernier recours"
   },
   "macLoad.policy.refuse": {
     "defaultMessage": "Refuser les tâches"
@@ -11993,6 +11993,9 @@
   "runJob.refusal": {
     "defaultMessage": "{mac} : {reason}"
   },
+  "runJob.verdictLine": {
+    "defaultMessage": "{mac} : {verdict}"
+  },
   "runJob.inUse": {
     "defaultMessage": "{name} (utilisé)"
   },
@@ -12021,7 +12024,7 @@
     "defaultMessage": "Tâche lourde"
   },
   "runJob.heavyHint": {
-    "defaultMessage": "Un Mac n’exécute qu’une tâche lourde à la fois (builds, rendus, entraînement)."
+    "defaultMessage": "Un Mac exécute autant de tâches lourdes (builds, rendus, entraînement) qu’il a d’emplacements et de mémoire."
   },
   "runJob.mem": {
     "defaultMessage": "Mémoire nécessaire (Go, facultatif)"

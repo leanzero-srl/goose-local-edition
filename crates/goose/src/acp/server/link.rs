@@ -642,7 +642,15 @@ fn jobs_err(error: LinkError) -> agent_client_protocol::Error {
 }
 
 fn placement_json(p: &leanzero_link::jobs::Placement) -> serde_json::Value {
-    serde_json::json!({"nodeId": p.node_id, "userActive": p.user_active, "score": p.score})
+    // `canTake` + `verdict` (3.0.131): how many more jobs of this size fit, and the verdict line
+    // with its numbers, so the Run-a-job dialog shows why a Mac is (or is not) first.
+    serde_json::json!({
+        "nodeId": p.node_id,
+        "userActive": p.user_active,
+        "score": p.score,
+        "canTake": p.can_take,
+        "verdict": p.verdict,
+    })
 }
 
 fn place_response(
@@ -2596,6 +2604,9 @@ mod tests {
                 node_id: "studio".into(),
                 user_active: false,
                 score: 40.0,
+                can_take: Some(5),
+                verdict: "ok: 0/2 heavy, 60 GB free, load 0.10/core, can take ~5 more 8 GB jobs"
+                    .into(),
             }],
             refusals: vec![NodeRefusal {
                 node_id: "me".into(),
@@ -2606,6 +2617,11 @@ mod tests {
         let v = serde_json::to_value(place_response(&plan, PlacementStrategy::Selfish)).unwrap();
         assert_eq!(v["strategy"], "selfish");
         assert_eq!(v["placements"][0]["nodeId"], "studio");
+        assert_eq!(v["placements"][0]["canTake"], 5);
+        assert!(v["placements"][0]["verdict"]
+            .as_str()
+            .unwrap()
+            .ends_with("can take ~5 more 8 GB jobs"));
         assert_eq!(
             v["refusals"][0],
             serde_json::json!({"nodeId": "me", "code": "heavy_slot_held", "reason": "heavy slot held"})
@@ -2630,10 +2646,15 @@ mod tests {
             node_id: "w".into(),
             user_active: true,
             score: 1.5,
+            can_take: None,
+            verdict: "ok: in use".into(),
         });
         assert_eq!(
             p,
-            serde_json::json!({"nodeId": "w", "userActive": true, "score": 1.5})
+            serde_json::json!({
+                "nodeId": "w", "userActive": true, "score": 1.5,
+                "canTake": null, "verdict": "ok: in use"
+            })
         );
     }
 
