@@ -12037,5 +12037,8 @@
   },
   "runJob.refused": {
     "defaultMessage": "Nicht gesendet: {reason}"
+  },
+  "myMacs.updatedAgo": {
+    "defaultMessage": "vor {seconds} s aktualisiert"
   }
 }
