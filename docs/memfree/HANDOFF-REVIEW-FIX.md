@@ -96,3 +96,42 @@ NOT DONE (in order):
   + test; i18n 16 catalogs. Then schema regen, all gates, dry run on workhorse, FIXED notes in the REVIEW file.
 Build env: `source bin/activate-hermit; export CARGO_TARGET_DIR=~/Projects/goose-fix130b/target;
 ~/Projects/machine-sync/bin/heavy-run -- cargo test --config 'profile.dev.package."*".strip=false' -p goose-sidecar memfree`.
+
+## F2 PROGRESS (2026-10-25, second agent) — stopped at the context guard; continue from here
+DONE (engine complete; `cargo test -p goose memfree` 13 passed, `-p goose-sidecar memfree` 43 passed):
+- 37b943c12 C3/C4/C5. ACP memfree.rs: `item_refusal`, `new_users`, `server_refusal`, `app_refusal`, pure
+  `recheck(fresh,&step,req,nt) -> Option<Step::Refuse>`; core_memory_free takes a fresh `groups()` before EACH
+  non-refuse step and runs it with the fresh group/ai. `Step::ForceStop(bundle)` from `req.force_stop_apps` (same
+  explicit/relayed gate + app_refusal); `quit_one_app` never signals -> `not_quit_report` ("<label> didn't quit
+  (maybe unsaved work); it was left running (<detail>)", force_stoppable when app_term_targets non-empty);
+  `force_stop_app` = SIGTERM via terminate_pids. Own engine: mlx_engine.rs `core_unmount_graceful` ->
+  engine.rs `MlxEngineManager::unmount_graceful` (Running -> lib.rs `Sidecar::shutdown_graceful`: killpg/kill TERM,
+  grace, no SIGKILL, handle kept if alive; Mounting refused; leftover -> `reclaim_port_graceful` ->
+  port_holder `claim_port_with(..,false)` / `stop_signals(force)`); `release_port_with(group, force)` +
+  `reclaim_group_residue(..,force) -> bool`. normal unmount unchanged.
+  DTOs (goose-sdk-types custom_requests.rs): request `seen_used_by`, `force_stop_apps`; item `force_stoppable`.
+  Tests: memfree_c3_each_item_is_rechecked_and_a_new_user_refuses_a_server,
+  memfree_c4_nuclear_never_force_stops_unless_the_person_asks, memfree_c4_an_app_that_did_not_quit_is_reported_and_left_running,
+  (sidecar lib.rs) memfree_c5_graceful_shutdown_never_sigkills_an_engine_that_ignores_sigterm,
+  (port_holder) memfree_c5_an_unforced_port_claim_sends_sigterm_only (written after the code; the lib.rs one was red first).
+- bf39436cc schema + ui/sdk generated regenerated (re-run before check-acp-schema gate to confirm clean).
+NOT DONE (desktop, in order; files ui/desktop/src/components/memfree/):
+- memfree.ts: MemfreeItem += `forceStoppable?: boolean`; nuclearRows: `ticked: !isServerGroup(group) &&
+  group.nuclearDefault === true` (server rows never ticked); NuclearFreeRequest += `seenUsedBy: Record<string,string[]>`
+  (each ticked server's usedBy ?? []) and `forceStopApps: string[]` (empty); neverTouchHit -> contains-match mirror
+  (`names.some(n => n === e || n.includes(e))`, e = entry trimmed lowercase, skip empty). Tests in memfree.test.ts
+  first (red): server row with nuclearDefault true is unticked; seenUsedBy sent; "Teams" hits label "Microsoft Teams",
+  "com.microsoft" hits bundle prefix.
+- FreeMemoryDialog.tsx (~L318 openNuclear, confirm text, result list): per-item "Force stop" lz button on result items
+  with forceStoppable, via the app's useConfirmDialog (no native confirm/select); confirm says unsaved work in that app
+  is lost; sends memoryFree({forceStopApps:[bundleId], nuclear:true, gooseOwned:false, quitApps:[], unloadServers:[],
+  neverTouch}). Nuclear confirm text: "Apps are asked to quit. An app that does not quit is left running and reported."
+  Dialog test in FreeMemoryDialog.test.tsx.
+- i18n: new keys in all 16 catalogs, each after its en-order predecessor; `pnpm run i18n:check`.
+- Gates (hermit Node 24): cargo fmt --check; cargo clippy --workspace --all-targets -D warnings (strip=false config after
+  subcommand); both memfree suites; ui/desktop lint:check, typecheck, test:run, i18n:check; check-acp-schema.
+- Dry run: rebuild crates/goose-sidecar/examples/memfree_dryrun.rs --release (grep it executes nothing: no kill/quit/
+  unload calls), scp to workhorse, `ssh workhorse 'zsh -lc "..."'`, append to ~/Projects/goose-memfree-dryrun-workhorse.txt;
+  expect ticked = goose-owned only, LM Studio + rapid-mlx unticked, LM Link line in LM Studio used_by.
+- FIXED notes per C1..C8 in ~/Projects/goose-memfree-REVIEW.md (shas 1ad231904 C1 C2 C6 C7 C8, 1e41015ac C1 LM Link,
+  37b943c12 C3 C4 C5, + desktop sha).
