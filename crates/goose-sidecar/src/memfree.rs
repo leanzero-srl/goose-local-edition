@@ -605,12 +605,6 @@ pub fn categorize(rows: &[ProcRow], ctx: &CategorizeCtx) -> Vec<Group> {
         );
     }
 
-    let exempt: Vec<u32> = ctx
-        .own_engine_pids
-        .iter()
-        .chain(&ctx.orphan_goosed_pids)
-        .copied()
-        .collect();
     let shield = crate::memfree_protect::protected(&crate::memfree_protect::ProtectInput {
         rows,
         cmds: &ctx.cmdlines,
@@ -618,7 +612,8 @@ pub fn categorize(rows: &[ProcRow], ctx: &CategorizeCtx) -> Vec<Group> {
         bundles: &ctx.bundles,
         self_pid: ctx.self_pid,
         self_uid: ctx.self_uid,
-        exempt_roots: &exempt,
+        exempt_roots: &ctx.own_engine_pids,
+        orphan_roots: &ctx.orphan_goosed_pids,
     });
     let owner = crate::memfree_protect::launchd_owner(rows, &ctx.launchd_labels);
     let mut out: Vec<Group> = groups
@@ -654,11 +649,7 @@ pub fn categorize(rows: &[ProcRow], ctx: &CategorizeCtx) -> Vec<Group> {
                     g.why = Some("it has no bundle id to ask it to quit".into());
                 }
             }
-            g.nuclear_default = crate::memfree_protect::eligible(
-                &g,
-                crate::memfree_protect::Mode::Nuclear,
-                &ctx.never_touch,
-            );
+            g.nuclear_default = crate::memfree_protect::nuclear_default(&g, &ctx.never_touch);
             g
         })
         .collect();

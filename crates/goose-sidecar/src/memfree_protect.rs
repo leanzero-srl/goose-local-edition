@@ -44,18 +44,23 @@ pub fn never_touch_list(extra: &[String]) -> Vec<String> {
     out
 }
 
-/// The never-touch entry any of `names` matches (case-insensitive, trimmed), if one does.
+/// The never-touch entry any of `names` matches, if one does: case-insensitive, trimmed, and a
+/// name that CONTAINS the entry counts ("Teams" protects "Microsoft Teams", "com.microsoft"
+/// every Microsoft bundle id). Matching more only ever protects more.
 pub fn never_touch_hit<'a>(
     names: impl IntoIterator<Item = &'a str>,
     list: &[String],
 ) -> Option<String> {
-    let names: Vec<&str> = names
+    let names: Vec<String> = names
         .into_iter()
-        .map(str::trim)
+        .map(|n| n.trim().to_lowercase())
         .filter(|n| !n.is_empty())
         .collect();
     list.iter()
-        .find(|entry| names.iter().any(|n| n.eq_ignore_ascii_case(entry.trim())))
+        .find(|entry| {
+            let entry = entry.trim().to_lowercase();
+            !entry.is_empty() && names.iter().any(|n| n.contains(&entry))
+        })
         .cloned()
 }
 
@@ -225,9 +230,13 @@ pub struct ProtectInput<'a> {
     pub bundles: &'a HashMap<String, (String, String)>,
     pub self_pid: u32,
     pub self_uid: u32,
-    /// goose's own engine pids and its PROVEN left-over servers: these trees are goose's to free,
-    /// so no rule but "another user's" protects them.
+    /// goose's own engine pids: this tree is goose's to free, so no rule but "another user's"
+    /// protects it.
     pub exempt_roots: &'a [u32],
+    /// goose's PROVEN left-over servers: exempt only from the session, "this is goose" and
+    /// MCP-host rules (they ARE goose and host its MCP children); launchd, terminal, ssh, MCP,
+    /// automation and heavy-run protection still apply to them.
+    pub orphan_roots: &'a [u32],
 }
 
 /// pid → why nothing may quit, signal or unload it. First matching rule names the reason:
@@ -239,6 +248,7 @@ pub struct ProtectInput<'a> {
 pub fn protected(input: &ProtectInput) -> HashMap<u32, String> {
     let rows = input.rows;
     let exempt = with_descendants(input.exempt_roots, rows);
+    let orphans = with_descendants(input.orphan_roots, rows);
     let mut out: HashMap<u32, String> = HashMap::new();
     // Another user's process: never ours to touch, exempt or not.
     for r in rows.iter().filter(|r| r.uid != input.self_uid) {
@@ -271,6 +281,25 @@ pub fn protected(input: &ProtectInput) -> HashMap<u32, String> {
     mark(&mut with_descendants(&mcp, rows).into_iter(), &|_| {
         "an MCP server".into()
     });
+    // An app that hosts MCP servers as children (an Electron coding app not in HOSTS_SESSIONS):
+    // quitting it ends them. Every ancestor inside an `.app` bundle is protected; a proven
+    // orphan goose hosts goose's own MCP children and stays goose's to free.
+    let mut hosts: Vec<(u32, u32)> = vec![];
+    for &m in &mcp {
+        for a in crate::memfree::ancestors(m, rows) {
+            let in_app = rows
+                .iter()
+                .find(|r| r.pid == a)
+                .is_some_and(|r| outer_app(&r.path).is_some());
+            if a > 1 && in_app && !orphans.contains(&a) {
+                hosts.push((a, m));
+            }
+        }
+    }
+    let host_of: HashMap<u32, u32> = hosts.iter().copied().collect();
+    mark(&mut hosts.iter().map(|h| h.0), &|pid| {
+        format!("hosts an MCP server (pid {})", host_of[&pid])
+    });
 
     let driven: Vec<u32> = rows
         .iter()
@@ -297,7 +326,7 @@ pub fn protected(input: &ProtectInput) -> HashMap<u32, String> {
 
     let sessions: Vec<u32> = rows
         .iter()
-        .filter(|r| !exempt.contains(&r.pid))
+        .filter(|r| !exempt.contains(&r.pid) && !orphans.contains(&r.pid))
         .filter(|r| {
             matches!(
                 process_name(&r.path).as_str(),
@@ -310,9 +339,10 @@ pub fn protected(input: &ProtectInput) -> HashMap<u32, String> {
     for &s in &sessions {
         session_set.extend(crate::memfree::ancestors(s, rows));
     }
-    mark(&mut session_set.into_iter(), &|_| {
-        "part of a claude or goose session".into()
-    });
+    mark(
+        &mut session_set.into_iter().filter(|p| !orphans.contains(p)),
+        &|_| "part of a claude or goose session".into(),
+    );
 
     let jobs: Vec<u32> = rows
         .iter()
@@ -335,7 +365,7 @@ pub fn protected(input: &ProtectInput) -> HashMap<u32, String> {
         {
             Some("part of macOS")
         } else if bundle_id.is_some_and(is_goose_bundle) {
-            Some("this is goose")
+            (!orphans.contains(&r.pid)).then_some("this is goose")
         } else if bundle_id.is_some_and(|b| HOSTS_SESSIONS.contains(&b)) {
             Some("hosts terminal or coding sessions")
         } else {
@@ -380,12 +410,21 @@ pub fn eligible(g: &Group, mode: Mode, never_touch: &[String]) -> bool {
         }
 }
 
-/// Is it ticked by default in the "free everything except protected" view? Eligible for nuclear
-/// AND nobody is using it: a server with a client connected (the workhorse's rapid-mlx 8093 had an
+/// A model server or another MLX engine: something goose did not start (LM Studio, Ollama,
+/// rapid-mlx, any other MLX server).
+pub fn is_foreign_server(g: &Group) -> bool {
+    g.category == Category::AiServer
+        || (g.category == Category::GooseEngine && g.id.starts_with("mlx:"))
+}
+
+/// Is it ticked by default in the "free everything except protected" view? NEVER for a server
+/// goose did not start ([`is_foreign_server`]): a client between requests or an LM Link peer
+/// is invisible to a census (review C1/C2, 2026-10-25), so the person ticks those. Otherwise
+/// eligible for nuclear AND nobody is using it: a server with a client connected (the workhorse's rapid-mlx 8093 had an
 /// ssh port-forward on it, 2026-10-25), a parent or a label in `used_by` stays offered but
 /// unticked. Explicit picks are re-validated with [`eligible`] alone.
 pub fn nuclear_default(g: &Group, never_touch: &[String]) -> bool {
-    eligible(g, Mode::Nuclear, never_touch) && g.used_by.is_empty()
+    !is_foreign_server(g) && eligible(g, Mode::Nuclear, never_touch) && g.used_by.is_empty()
 }
 
 /// The group ids a clean in `mode` frees, in the groups' order.
@@ -573,7 +612,7 @@ mod tests {
         f
     }
 
-    fn input<'a>(f: &'a Fx, exempt: &'a [u32]) -> ProtectInput<'a> {
+    fn input<'a>(f: &'a Fx, exempt: &'a [u32], orphans: &'a [u32]) -> ProtectInput<'a> {
         ProtectInput {
             rows: &f.rows,
             cmds: &f.cmds,
@@ -582,6 +621,7 @@ mod tests {
             self_pid: 500,
             self_uid: UID,
             exempt_roots: exempt,
+            orphan_roots: orphans,
         }
     }
 
@@ -637,7 +677,7 @@ mod tests {
     #[test]
     fn protected_names_every_class() {
         let f = workhorse();
-        let p = protected(&input(&f, &[600, 700]));
+        let p = protected(&input(&f, &[600], &[700]));
         let why = |pid: u32| p.get(&pid).map(String::as_str);
         assert_eq!(why(500), Some("runs this goose"));
         assert_eq!(why(400), Some("runs this goose"));
@@ -676,7 +716,7 @@ mod tests {
             assert_eq!(why(free), None, "pid {free}");
         }
         // Without the exemption, the own engine is a goose session's child.
-        let p = protected(&input(&f, &[]));
+        let p = protected(&input(&f, &[], &[]));
         assert!(p.contains_key(&601) && p.contains_key(&700));
     }
 
@@ -707,7 +747,7 @@ mod tests {
             Some("com.microsoft.teams2")
         );
         assert_eq!(never_touch_hit(["plain"], &list).as_deref(), Some("Plain"));
-        assert_eq!(never_touch_hit(["Plainer", ""], &list), None);
+        assert_eq!(never_touch_hit(["Plai", ""], &list), None);
         let gs = groups(&workhorse());
         let g = |id: &str| gs.iter().find(|g| g.id == id).unwrap().clone();
         assert!(group_never_touch(&g("app:com.microsoft.teams2"), &list).is_some());
@@ -751,7 +791,10 @@ mod tests {
             !g("app:com.microsoft.teams2").nuclear_default,
             "never-touch"
         );
-        assert!(g("mlx:97100").nuclear_default);
+        assert!(
+            !g("mlx:97100").nuclear_default,
+            "an engine goose did not start is never pre-ticked"
+        );
         // A bundle with one driven instance is protected whole: a quit names the bundle.
         assert_eq!(
             g("system").protected_why.as_deref(),
@@ -771,7 +814,7 @@ mod tests {
         let mut gs = groups(&workhorse());
         let nt = never_touch_list(&[]);
         let engine = gs.iter_mut().find(|g| g.id == "mlx:97100").unwrap();
-        assert!(nuclear_default(engine, &nt));
+        assert!(!nuclear_default(engine, &nt), "never pre-ticked, used or not");
         engine.used_by = vec!["sshd-session (pid 97112) is connected to it".into()];
         assert!(!nuclear_default(engine, &nt), "a client is connected");
         assert!(
@@ -872,5 +915,98 @@ mod tests {
             let g = forced.iter().find(|g| g.id == id).unwrap();
             assert!(g.protected_why.is_none(), "{id}");
         }
+    }
+
+    #[test]
+    fn memfree_c1_c2_servers_goose_did_not_start_are_never_ticked() {
+        let gs = groups(&workhorse());
+        let nt = never_touch_list(&[]);
+        let g = |id: &str| gs.iter().find(|g| g.id == id).unwrap();
+        for id in ["mlx:97100", "ai:/Applications/LM Studio.app"] {
+            assert!(g(id).used_by.is_empty(), "{id}: no client connected right now");
+            assert!(eligible(g(id), Mode::Nuclear, &nt), "{id} is still offered");
+            assert!(!nuclear_default(g(id), &nt), "{id} must not be pre-ticked");
+        }
+        // goose's own and plain quittable apps still default ticked.
+        for id in ["gooseEngine", "orphan:700", "app:org.example.Plain"] {
+            assert!(nuclear_default(g(id), &nt), "{id}");
+        }
+    }
+
+    #[test]
+    fn memfree_c6_a_proven_orphan_keeps_launchd_tty_and_ssh_protection() {
+        for case in ["launchd", "tty", "ssh"] {
+            let mut f = workhorse();
+            let row = f.rows.iter_mut().find(|r| r.pid == 700).unwrap();
+            match case {
+                "tty" => row.has_tty = true,
+                "ssh" => row.ppid = 5001,
+                _ => {
+                    f.labels.insert(700, "net.example.goose-serve".into());
+                }
+            }
+            let p = protected(&input(&f, &[600], &[700]));
+            assert!(p.contains_key(&700), "{case}: {:?}", p.get(&700));
+            let gs = groups(&f);
+            assert!(
+                !plan(&gs, Mode::Soft, &[]).contains(&"orphan:700".to_string()),
+                "{case}"
+            );
+        }
+        // A plain proven orphan (ppid 1, no label, no tty) is still goose's to free.
+        let f = workhorse();
+        assert_eq!(protected(&input(&f, &[600], &[700])).get(&700), None);
+    }
+
+    #[test]
+    fn memfree_c7_never_touch_matches_natural_names_and_bundle_prefixes() {
+        let gs = groups(&workhorse());
+        let teams = gs
+            .iter()
+            .find(|g| g.id == "app:com.microsoft.teams2")
+            .unwrap();
+        assert!(group_never_touch(teams, &["Teams".into()]).is_some());
+        assert!(group_never_touch(teams, &["com.microsoft".into()]).is_some());
+        assert!(group_never_touch(teams, &["Slack".into()]).is_none());
+        assert_eq!(
+            never_touch_hit(["Microsoft Outlook"], &["outlook".into()]).as_deref(),
+            Some("outlook")
+        );
+    }
+
+    #[test]
+    fn memfree_c8_an_app_hosting_an_mcp_child_is_protected() {
+        let mut f = workhorse();
+        f.p(4000, 1, "/Applications/Windsurf.app/Contents/MacOS/Electron");
+        f.app(
+            "/Applications/Windsurf.app",
+            "com.exafunction.windsurf",
+            "Windsurf",
+        );
+        f.p(
+            4001,
+            4000,
+            "/Applications/Windsurf.app/Contents/Frameworks/Windsurf Helper (Plugin).app/Contents/MacOS/Windsurf Helper (Plugin)",
+        );
+        f.p(4002, 4001, "/opt/homebrew/bin/node");
+        f.cmd(4002, "node /x/bin/github-mcp-server stdio");
+        // The proven orphan's own MCP child does not make the orphan untouchable.
+        f.p(702, 700, "/opt/homebrew/bin/node");
+        f.cmd(702, "npx -y @modelcontextprotocol/server-filesystem /tmp");
+        let p = protected(&input(&f, &[600], &[700]));
+        assert_eq!(
+            p.get(&4000).map(String::as_str),
+            Some("hosts an MCP server (pid 4002)")
+        );
+        assert!(p.contains_key(&4001));
+        assert_eq!(p.get(&700), None, "the orphan stays goose's");
+        let gs = groups(&f);
+        let app = gs
+            .iter()
+            .find(|g| g.id == "app:com.exafunction.windsurf")
+            .unwrap();
+        assert!(app.protected_why.is_some() && !app.quittable && !app.nuclear_default);
+        assert!(!plan(&gs, Mode::Nuclear, &never_touch_list(&[]))
+            .contains(&"app:com.exafunction.windsurf".to_string()));
     }
 }
