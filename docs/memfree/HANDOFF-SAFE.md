@@ -128,3 +128,24 @@ group += `protectedWhy?`, `usedBy: string[]`, `launchdLabel?`, `nuclearDefault: 
 holds app bundle ids AND server group ids (look up by bundleId OR id). free request += `unloadServers: string[]`
 (group ids `ai:…`/`mlx:<pid>`), `nuclear: bool`, `neverTouch: string[]`. Relayed: everything but `gooseOwned`
 needs GOOSE_LINK_ALLOW_REMOTE_APP_QUIT (refused per item, message names the key); `quitAppsAllowed` reflects it.
+
+## R3 DONE (2026-10-25) — tests, workhorse dry run, schema
+Commits: 8eae34e24 probe subcommand = first non-flag token (rapid-mlx miss); 8f17a0e34 protect CDP-driven browsers
+(`--remote-debugging-port/-pipe`, `--enable-automation`, + descendants) and group reason = biggest protected pid's
+(System groups always "part of macOS"); abcaa3e60 `memfree_protect::nuclear_default(g, nt)` = eligible(Nuclear) &&
+used_by empty (ACP + example use it; explicit picks still validate with `eligible`); 99c1e1878 regenerated
+acp-schema.json + ui/sdk/src/generated (acp-meta.json unchanged).
+Gates: `cargo test -p goose memfree` 10 passed; `cargo test -p goose-sidecar -- probe:: memfree machine::` 64 passed;
+clippy -p goose-sidecar -p goose --all-targets -D warnings clean; check-acp-schema (regenerate + git diff
+--exit-code) OK; ui/desktop typecheck clean. ui needed `pnpm install --frozen-lockfile --ignore-scripts` in this
+worktree first (no node_modules); the SDK types step is `cd ui/sdk && pnpm exec tsx generate-schema.ts`.
+Workhorse dry run (~/Projects/goose-memfree-dryrun-workhorse.txt; AUDIT "After the fix"): legacy soft 2 groups 28.0 GB
+(rapid-mlx 97100 27.4 GB footprint + LM Studio), new soft 0, nuclear ticked 1 (LM Studio 0.6 GB), nuclear offered
+unticked 1 (97100, used by an sshd-session port-forward), protected 15 groups 9.0 GB, never-touch 0 (none running).
+Findings: rapid-mlx missed because global flags precede `serve`; the classifier is shared with the distributed
+preflight, which now ALSO sees such engines (new behaviour). Automation Chrome 38975 (mp-vendor-profile, CDP 9333)
+was a nuclear default; now protected (whole Chrome bundle group, since a quit names the bundle).
+OPEN: (1) desktop step (design item 6) not started; (2) Goose Swarm's protected reason reads "browser driven by
+automation" (its CDP renderer is the biggest pid) — true but "runs this goose" would read better; (3) a global flag
+with a value before `serve` still misses (safe direction); (4) the unsaved-work caveat for nuclear SIGTERM must be
+in the UI confirm text; (5) Gabee live nuclear test (item 8) not done.
