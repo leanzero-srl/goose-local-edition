@@ -45,6 +45,11 @@ pub const MIN_FREE_ENV: &str = "LEANZERO_LINK_JOBS_MIN_FREE";
 pub const USER_ACTIVE_POLICY_ENV: &str = "LEANZERO_LINK_JOBS_USER_ACTIVE";
 /// The ledger root (default `~/.leanzero/jobs`).
 pub const JOBS_DIR_ENV: &str = "LEANZERO_LINK_JOBS_DIR";
+/// goose setting for the placement strategy (`local-first` | `selfish`); it overrides
+/// node-limits.json `strategy`, which is the default node-run reads too.
+pub const STRATEGY_KEY: &str = "LEANZERO_LINK_JOBS_STRATEGY";
+/// How often a queued job is offered to the Macs again.
+pub const QUEUE_TICK: Duration = Duration::from_secs(15);
 /// Exit codes, as heavy-run.
 pub const EXIT_TIMEOUT: i32 = 124;
 pub const EXIT_MEMORY: i32 = 137;
@@ -90,12 +95,19 @@ pub struct JobRequest {
     /// (node_fleet's USER-ACTIVE last resort).
     #[serde(default)]
     pub allow_user_active: bool,
+    /// The placer's strategy for THIS job (the "Run a job" override). `None` = the node's
+    /// setting ([`STRATEGY_KEY`], else node-limits.json `strategy`). Receivers ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy: Option<PlacementStrategy>,
 }
 
 /// `202` body.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobAccepted {
     pub job_id: String,
+    /// No Mac had room: the job waits in the ORIGIN node's queue at this position (1 = next).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queued: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -172,6 +184,34 @@ pub struct JobView {
     pub session_id: Option<String>,
     #[serde(default)]
     pub log_bytes: u64,
+    /// A queued job that has since been placed: where it runs and under which id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placed_on: Option<PlacedOn>,
+}
+
+/// Where a job that waited in the queue went.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlacedOn {
+    pub node_id: String,
+    pub job_id: String,
+}
+
+/// A queued job's place in line and why each Mac said no at the last try.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueueInfo {
+    /// 1 = the next job to be placed.
+    pub position: u32,
+    pub strategy: PlacementStrategy,
+    #[serde(default)]
+    pub refusals: Vec<NodeRefusal>,
+}
+
+/// One Mac's answer to a placement: the code and reason it gave (or the placer read).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeRefusal {
+    pub node_id: String,
+    pub code: RefusalCode,
+    pub reason: String,
 }
 
 /// `GET /v1/swarm/jobs/{id}/log?from=N`: bytes `[from, next)` of the combined stdout+stderr.
@@ -389,6 +429,139 @@ pub fn rank_placements<'a>(
 }
 
 // ---------------------------------------------------------------------------------------------
+// Placement strategy
+
+/// Where an untargeted job goes first. The names are node-run's (`"strategy"` in
+/// `~/.leanzero/node-limits.json`), so goose and Claude's node-run place alike.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PlacementStrategy {
+    /// This Mac if it has room, else the other Mac with the best headroom, else the queue.
+    #[default]
+    LocalFirst,
+    /// The other Mac with the best headroom, else this Mac, else the queue.
+    Selfish,
+}
+
+impl PlacementStrategy {
+    pub const ALL: [Self; 2] = [Self::LocalFirst, Self::Selfish];
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().replace('_', "-").as_str() {
+            "local-first" => Some(Self::LocalFirst),
+            "selfish" => Some(Self::Selfish),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::LocalFirst => "local-first",
+            Self::Selfish => "selfish",
+        }
+    }
+
+    /// node-limits.json `strategy` (re-read each call), else local-first.
+    pub fn from_limits() -> Self {
+        crate::load::NodeLimits::load().strategy.unwrap_or_default()
+    }
+}
+
+/// Where a job can go under a strategy: the candidates in the order to try them, and every
+/// Mac that is not a candidate with the reason it is not.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlacementPlan {
+    pub candidates: Vec<Placement>,
+    pub refusals: Vec<NodeRefusal>,
+}
+
+/// [`rank_placements`]'s rules (OK nodes first, USER-ACTIVE as the last resort, BUSY never)
+/// with the strategy deciding, inside each class, whether THIS node (`self_id`) is tried
+/// before the others (`local-first`) or after them (`selfish`). Others go best score first.
+pub fn plan_placement<'a>(
+    self_id: &str,
+    nodes: impl IntoIterator<Item = (&'a str, bool, Option<&'a NodeLoad>)>,
+    need_gb: f64,
+    heavy: bool,
+    min_free: f64,
+    strategy: PlacementStrategy,
+) -> PlacementPlan {
+    let mut candidates = Vec::new();
+    let mut refusals = Vec::new();
+    for (id, allows_jobs, load) in nodes {
+        let refuse = |code, reason: &str| NodeRefusal {
+            node_id: id.to_string(),
+            code,
+            reason: reason.to_string(),
+        };
+        if !allows_jobs {
+            refusals.push(refuse(RefusalCode::JobsDisabled, "does not take jobs"));
+            continue;
+        }
+        let Some(load) = load else {
+            refusals.push(refuse(
+                RefusalCode::MemoryUnreadable,
+                "reports no load (an older goose)",
+            ));
+            continue;
+        };
+        let v = verdict(&load.own, need_gb, heavy, min_free);
+        match v.busy {
+            Some(r) => refusals.push(refuse(r.code, &r.reason)),
+            None => candidates.push(Placement {
+                node_id: id.to_string(),
+                user_active: v.user_active,
+                score: v.score,
+            }),
+        }
+    }
+    let own_rank = |p: &Placement| {
+        let mine = p.node_id == self_id;
+        match strategy {
+            PlacementStrategy::LocalFirst => !mine,
+            PlacementStrategy::Selfish => mine,
+        }
+    };
+    candidates.sort_by(|a, b| {
+        a.user_active
+            .cmp(&b.user_active)
+            .then(own_rank(a).cmp(&own_rank(b)))
+            .then(
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
+    });
+    PlacementPlan {
+        candidates,
+        refusals,
+    }
+}
+
+/// The placer's strategy setting, read on every untargeted submit (a settings change applies
+/// to the next job without a reconnect).
+#[derive(Clone)]
+pub struct StrategySource(Arc<dyn Fn() -> PlacementStrategy + Send + Sync>);
+
+impl StrategySource {
+    pub fn fixed(s: PlacementStrategy) -> Self {
+        Self(Arc::new(move || s))
+    }
+    pub fn from_fn(f: impl Fn() -> PlacementStrategy + Send + Sync + 'static) -> Self {
+        Self(Arc::new(f))
+    }
+    pub fn get(&self) -> PlacementStrategy {
+        (self.0)()
+    }
+}
+
+impl std::fmt::Debug for StrategySource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "StrategySource({})", self.get().as_str())
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
 // Config
 
 /// The jobs switch, read on every request (a settings toggle applies without a reconnect).
@@ -433,6 +606,10 @@ pub struct JobsConfig {
     /// Watchdog tick (1 s) and the TERM->KILL grace (10 s).
     pub tick: Duration,
     pub kill_grace: Duration,
+    /// The placer's default strategy ([`STRATEGY_KEY`], else node-limits.json `strategy`).
+    pub strategy: StrategySource,
+    /// How often the origin node re-places its queued jobs from fresh peer load (15 s).
+    pub queue_tick: Duration,
 }
 
 impl std::fmt::Debug for JobsConfig {
@@ -442,6 +619,8 @@ impl std::fmt::Debug for JobsConfig {
             .field("root", &self.root)
             .field("heavy_lock", &self.heavy_lock)
             .field("user_active", &self.user_active)
+            .field("strategy", &self.strategy)
+            .field("queue_tick", &self.queue_tick)
             .finish_non_exhaustive()
     }
 }
@@ -467,6 +646,8 @@ impl Default for JobsConfig {
             sampler: Arc::new(|| sample_own(user_idle_threshold_s())),
             tick: Duration::from_secs(1),
             kill_grace: Duration::from_secs(10),
+            strategy: StrategySource::from_fn(PlacementStrategy::from_limits),
+            queue_tick: QUEUE_TICK,
         }
     }
 }
@@ -519,6 +700,7 @@ impl JobEntry {
             log_bytes: std::fs::metadata(self.dir.join("log"))
                 .map(|m| m.len())
                 .unwrap_or(0),
+            placed_on: None,
         }
     }
 }
@@ -531,6 +713,7 @@ fn brief_of(r: &JobRecord) -> JobBrief {
         started_at: r.started_at,
         state: r.state,
         heavy: r.heavy,
+        queue: None,
     }
 }
 
@@ -867,7 +1050,10 @@ impl JobRegistry {
                 }
             }
         }
-        Ok(JobAccepted { job_id })
+        Ok(JobAccepted {
+            job_id,
+            queued: None,
+        })
     }
 
     /// Newest first.
@@ -1591,12 +1777,14 @@ mod tests {
                 started_at: Utc::now(),
                 state: JobState::Running,
                 heavy: false,
+                queue: None,
             },
             ended_at: None,
             exit_code: None,
             reason: None,
             session_id: None,
             log_bytes: 0,
+            placed_on: None,
         };
         let s = serde_json::to_string(&v).unwrap();
         assert!(!s.contains("command"), "{s}");

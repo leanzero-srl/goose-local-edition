@@ -174,6 +174,9 @@ pub struct ControlConfig {
     /// `/v1/swarm/jobs`: its own switch (OFF by default, separate from
     /// `allow_remote_execution`), the ledger root, the heavy-run lock and the admission policy.
     pub jobs: crate::jobs::JobsConfig,
+    /// The manager's queue of jobs this node placed and no Mac had room for yet: shown in
+    /// this node's load and job routes, never owned here (it outlives the service).
+    pub pending_jobs: Option<Arc<crate::queue::JobQueue>>,
 }
 
 impl ControlConfig {
@@ -190,6 +193,7 @@ impl ControlConfig {
             allow_remote_execution: false,
             peer_proxy: None,
             jobs: crate::jobs::JobsConfig::default(),
+            pending_jobs: None,
         }
     }
 }
@@ -239,6 +243,7 @@ struct Ctx {
     streams: Arc<InflightStreams>,
     allow_remote_execution: bool,
     jobs: Arc<crate::jobs::JobRegistry>,
+    pending_jobs: Option<Arc<crate::queue::JobQueue>>,
     /// Set once this node has begun going away ([`ControlHandle::mark_leaving`]); its
     /// `/nodes` `self` then carries it.
     leaving: Arc<StdMutex<Option<NodeLeaving>>>,
@@ -295,6 +300,7 @@ impl ControlService {
             streams: Arc::new(InflightStreams::new()),
             allow_remote_execution: config.allow_remote_execution,
             jobs: jobs.clone(),
+            pending_jobs: config.pending_jobs.clone(),
             leaving: leaving.clone(),
         };
         let router = swarm_router(ctx, Arc::new(config.node_token));
@@ -572,7 +578,12 @@ async fn self_load(ctx: &Ctx) -> crate::load::NodeLoad {
         _ => 0,
     };
     let relays = ctx.streams.len().min(u32::MAX as usize) as u32;
-    crate::jobs::load_with_jobs(engine.saturating_add(relays), Some(&ctx.jobs)).await
+    let mut load =
+        crate::jobs::load_with_jobs(engine.saturating_add(relays), Some(&ctx.jobs)).await;
+    if let Some(q) = &ctx.pending_jobs {
+        load.jobs.splice(0..0, q.briefs());
+    }
+    load
 }
 
 fn refusal_response(r: crate::jobs::Refusal) -> Response {
@@ -620,11 +631,18 @@ async fn jobs_submit(
 }
 
 async fn jobs_list(State(ctx): State<Ctx>) -> Json<Vec<crate::jobs::JobView>> {
-    Json(ctx.jobs.list())
+    let mut all = ctx.pending_jobs.as_ref().map(|q| q.list()).unwrap_or_default();
+    all.extend(ctx.jobs.list());
+    Json(all)
 }
 
 async fn jobs_get(Path(id): Path<String>, State(ctx): State<Ctx>) -> Response {
-    match ctx.jobs.view(&id) {
+    let queued = ctx.pending_jobs.as_ref().and_then(|q| q.lookup(&id)).map(|l| match l {
+        crate::queue::QueueLookup::Waiting(v)
+        | crate::queue::QueueLookup::Placed(_, v)
+        | crate::queue::QueueLookup::Cancelled(v) => v,
+    });
+    match queued.or_else(|| ctx.jobs.view(&id)) {
         Some(v) => Json(v).into_response(),
         None => job_not_found(&id),
     }
@@ -648,6 +666,9 @@ async fn jobs_log(
 }
 
 async fn jobs_cancel(Path(id): Path<String>, State(ctx): State<Ctx>) -> Response {
+    if let Some(v) = ctx.pending_jobs.as_ref().and_then(|q| q.cancel_waiting(&id)) {
+        return (StatusCode::ACCEPTED, Json(v)).into_response();
+    }
     match ctx.jobs.cancel(&id).await {
         Ok(v) => (StatusCode::ACCEPTED, Json(v)).into_response(),
         Err(r) => refusal_response(r),

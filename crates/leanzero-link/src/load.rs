@@ -142,6 +142,9 @@ pub struct JobBrief {
     pub state: JobState,
     #[serde(default)]
     pub heavy: bool,
+    /// Set on a job still waiting in its origin node's queue (not on any Mac yet).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue: Option<crate::jobs::QueueInfo>,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -183,6 +186,8 @@ pub struct NodeLimits {
     pub max_rss_pct: f64,
     pub wait_s: u64,
     pub lock_wait_s: u64,
+    /// node-run's placement strategy (`"strategy"`); goose's own setting overrides it.
+    pub strategy: Option<crate::jobs::PlacementStrategy>,
 }
 
 impl Default for NodeLimits {
@@ -195,6 +200,7 @@ impl Default for NodeLimits {
             max_rss_pct: 50.0,
             wait_s: 900,
             lock_wait_s: 3600,
+            strategy: None,
         }
     }
 }
@@ -253,6 +259,12 @@ impl NodeLimits {
         }
         if let Some(x) = f("lock_wait") {
             l.lock_wait_s = x.max(0.0) as u64;
+        }
+        if let Some(s) = v.get("strategy").and_then(|x| x.as_str()) {
+            l.strategy = crate::jobs::PlacementStrategy::parse(s);
+            if l.strategy.is_none() {
+                tracing::warn!(strategy = s, "node-limits.json strategy unknown; using local-first");
+            }
         }
         l
     }
@@ -1369,6 +1381,7 @@ mod tests {
             started_at: Utc::now(),
             state: JobState::Running,
             heavy: true,
+            queue: None,
         };
         let s = serde_json::to_string(&b).unwrap();
         assert!(!s.contains("command"), "{s}");
