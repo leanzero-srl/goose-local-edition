@@ -264,3 +264,38 @@ Done: sidecar memfree tests green (10, already in b020d02d4); crates/goose/src/a
 Gaps for U3/R2: peerMac has NO budgetBytes (placement candidate DTO carries none; TS type says number — make it optional
 or R2 measures it). Orphaned goose serve / LM Studio / Ollama not reclaimed (groups list them, reclaimableByGoose false).
 Remote nodeId still refused (R2: relay + MlxOp + GOOSE_LINK_ALLOW_REMOTE_APP_QUIT). NOT live-tested against a running goosed.
+
+## AGENT R2a state (2026-10-25, stopped near the context limit after step 1 of the coordinator's 5)
+DONE (committed, clippy -D warnings clean on -p goose-sidecar -p goose --all-targets; sidecar memfree tests 18/18):
+- 07db0471b `crates/goose-sidecar/src/memfree_servers.rs` (new, `pub mod` in lib.rs): API VERIFIED 2026-10-25 against
+  lmstudio.ai/docs/developer/rest/{list,unload} (`GET /api/v1/models` -> models[].loaded_instances[].id + size_bytes;
+  `POST /api/v1/models/unload {instance_id}`; optional Bearer from env LM_API_TOKEN), lmstudio.ai/docs/cli/unload
+  (`lms unload --all`, CLI at ~/.lmstudio/bin/lms or PATH), docs.ollama.com/faq (`POST /api/generate {model, keep_alive:0}`;
+  `GET /api/ps` models[].model|name + size; base from OLLAMA_HOST, 0.0.0.0 -> 127.0.0.1). Orphaned goose serve = port of
+  selectOrphanedGoosed: ppid 1, same uid, not self, census path == canonical current_exe, cmdline (sysinfo) is desktop serve
+  shape; re-proven before SIGTERM and before SIGKILL (pid only, after ORPHAN_GRACE 10 s). CategorizeCtx.orphan_goosed_pids
+  (filled in groups_now); orphan group reclaimable only when proven, else why "not this install's desktop server".
+  Tests: kind mapping, both list parsers, desktop-serve shape, orphan proof table, mock-HTTP unload bodies, 401 surfaced,
+  server-off is an error not empty.
+- c3ef02b1e crates/goose/src/acp/server/memfree.rs: groups() now returns (groups, ai holds); enrich_ai_servers asks each
+  aiServer group (loaded -> reclaimable + label "(N model(s) loaded)"; none -> why "no models loaded"; REST down + lms CLI ->
+  reclaimable via `lms unload --all`; else why = the error). gooseOwnedBytes adds proven orphans + min(loaded model bytes,
+  footprint). free(gooseOwned) unloads each model (LM Studio falls back to lms on failure), reaps orphans; freed =
+  group bytes - footprint still alive after settle (polls 250 ms up to 8 s).
+- Gabee has NEITHER Ollama nor LM Studio installed (checked): those paths are unit-tested only, not live.
+NOT DONE (coordinator steps 2-5), in order:
+2. Remote over Link: MlxOp::MemoryHolders/MemoryFree in crates/leanzero-link/src/state.rs (path()+from_path()), arms in
+   GoosedMlxControl::dispatch (mlx_engine.rs ~1432) calling core_memory_holders/free(req, relayed=true); replace the
+   "not supported yet" refusal in on_mlx_engine_memory_holders/free with the relay pattern
+   (`if let Some(node) = self.mlx_engine_remote_target(req.node_id.as_deref()) { return self.mlx_engine_relay(&node, MlxOp::X, &req).await; }`).
+   Goose-owned reclaim allowed only when the PEER's manage_models allow is on (find how stop_other_engine checks it).
+   App quit: NEW switch GOOSE_LINK_ALLOW_REMOTE_APP_QUIT default false read on the PEER; quitAppsAllowed = !relayed || switch;
+   NodeAllows.quit_apps (wire.rs ~111) `#[serde(default)]` false + test that an old peer's JSON without the field parses false.
+3. Other-Mac suggestion free-GB from Link load (peerMac alternative has no budgetBytes; fill from the node's Link load
+   reading, else make the TS field optional).
+4. Gates: cargo fmt --all --check; clippy (above cmd, add -p leanzero-link); cargo test -p goose-sidecar -p goose memfree
+   -p leanzero-link; `cd ui/desktop && pnpm run lint:check && pnpm run test:run -- --maxWorkers=6` (U3: full rerun pending).
+5. LIVE on Gabee (never quit Gabriela's apps): packaged app, isolated profile, own CDP port, engine port != 8090; load a
+   small MLX model in goose's engine; Free up memory -> goose's own; budget rises by measured footprint (±2% RAM);
+   screenshot to /private/tmp/claude-501/-Users-mihaiperdum-Projects/9235260e-4bbb-41c2-aefc-cd516bd51e28/scratchpad/.
+Do NOT rebase until 3.0.129 lands.
