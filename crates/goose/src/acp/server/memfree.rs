@@ -12,7 +12,9 @@ use crate::providers::mlx_serving_intent::IntentKind;
 use goose_sidecar::engine::{expand_tilde, MlxEngineManager, StartFrees};
 use goose_sidecar::fit::{FitVerdict, NodeMemoryFacts};
 use goose_sidecar::memfree::{self, CategorizeCtx, Category, Group, VerdictKind};
+use goose_sidecar::memfree_servers::{self as servers, AiServerKind, LoadedModel};
 use goose_sidecar::{hf, holders, machine};
+use std::collections::HashMap;
 
 /// Off switch for the whole feature (default on).
 pub(super) const MEMFREE_ENABLED_KEY: &str = "GOOSE_MEMFREE_ENABLED";
@@ -70,23 +72,190 @@ async fn categorize_ctx(
             own_engine_model: status.model_id,
             own_engine_busy: busy,
             other_engine_pids,
+            orphan_goosed_pids: vec![],
             bundles: Default::default(),
         },
         port,
     ))
 }
 
-/// The census grouped, with user apps under the size floor dropped.
-async fn groups(ctx: &CategorizeCtx) -> Result<Vec<Group>, agent_client_protocol::Error> {
+/// What one model server holds, as goose will unload it.
+struct AiHold {
+    kind: AiServerKind,
+    base: String,
+    models: Vec<LoadedModel>,
+    /// LM Studio's REST did not answer; `lms unload --all` is the way in.
+    via_cli: bool,
+}
+
+impl AiHold {
+    /// The bytes unloading frees, never more than the server's own footprint.
+    fn reclaim_bytes(&self, g: &Group) -> u64 {
+        self.models
+            .iter()
+            .map(|m| m.bytes)
+            .sum::<u64>()
+            .min(g.bytes)
+    }
+}
+
+/// Ask each listed model server what it holds; a server with models becomes reclaimable.
+async fn enrich_ai_servers(groups: &mut [Group]) -> HashMap<String, AiHold> {
+    let mut out = HashMap::new();
+    for g in groups
+        .iter_mut()
+        .filter(|g| g.category == Category::AiServer)
+    {
+        let Some(kind) = servers::ai_server_kind(&g.id, g.bundle_id.as_deref()) else {
+            continue;
+        };
+        let base = match kind {
+            AiServerKind::Ollama => servers::ollama_base(),
+            AiServerKind::LmStudio => servers::lmstudio_base(),
+        };
+        match servers::loaded_models(kind, &base).await {
+            Ok(models) if models.is_empty() => g.why = Some("no models loaded".into()),
+            Ok(models) => {
+                g.reclaimable_by_goose = true;
+                g.why = None;
+                g.label = format!("{} ({} model(s) loaded)", g.label, models.len());
+                out.insert(
+                    g.id.clone(),
+                    AiHold {
+                        kind,
+                        base,
+                        models,
+                        via_cli: false,
+                    },
+                );
+            }
+            Err(e) if kind == AiServerKind::LmStudio && servers::lms_cli().is_some() => {
+                g.reclaimable_by_goose = true;
+                g.why = None;
+                g.label = format!("{} (goose unloads its models through lms)", g.label);
+                tracing::debug!("LM Studio REST: {e:#}");
+                out.insert(
+                    g.id.clone(),
+                    AiHold {
+                        kind,
+                        base,
+                        models: vec![],
+                        via_cli: true,
+                    },
+                );
+            }
+            Err(e) => g.why = Some(format!("its API did not answer ({e:#})")),
+        }
+    }
+    out
+}
+
+/// The census grouped, with user apps under the size floor dropped and model servers asked.
+async fn groups(
+    ctx: &CategorizeCtx,
+) -> Result<(Vec<Group>, HashMap<String, AiHold>), agent_client_protocol::Error> {
     let ctx = ctx.clone();
     let min = show_apps_min_bytes();
     let groups = tokio::task::spawn_blocking(move || memfree::groups_now(ctx))
         .await
         .internal_err()?;
-    Ok(groups
+    let mut groups: Vec<Group> = groups
         .into_iter()
         .filter(|g| g.category != Category::UserApp || g.bytes >= min)
-        .collect())
+        .collect();
+    let ai = enrich_ai_servers(&mut groups).await;
+    Ok((groups, ai))
+}
+
+fn is_orphan(g: &Group) -> bool {
+    g.category == Category::GooseOrphan && g.reclaimable_by_goose
+}
+
+/// Other MLX engines + proven left-over goose servers + loaded models of model servers.
+fn goose_owned_outside_engine(groups: &[Group], ai: &HashMap<String, AiHold>) -> u64 {
+    groups
+        .iter()
+        .map(|g| {
+            if is_other_mlx(g) || is_orphan(g) {
+                g.bytes
+            } else {
+                ai.get(&g.id).map_or(0, |h| h.reclaim_bytes(g))
+            }
+        })
+        .sum()
+}
+
+/// Wait (bounded, transport-style) for a reclaim's memory to leave; the measured remainder.
+async fn settle_footprint(pids: &[(u32, u64)], before: u64, expected: u64) -> u64 {
+    let target = before.saturating_sub(expected / 2);
+    let mut alive = footprint_alive(pids);
+    for _ in 0..32 {
+        if alive <= target {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        alive = footprint_alive(pids);
+    }
+    alive
+}
+
+async fn unload_ai(g: &Group, hold: &AiHold) -> MlxMemoryFreeItemDto {
+    let mut messages = vec![];
+    let mut failed = false;
+    if !hold.via_cli {
+        for m in &hold.models {
+            match servers::unload_model(hold.kind, &hold.base, &m.name).await {
+                Ok(()) => messages.push(format!("unloaded {}", m.name)),
+                Err(e) => {
+                    failed = true;
+                    messages.push(format!("{}: {e:#}", m.name));
+                }
+            }
+        }
+    }
+    if hold.kind == AiServerKind::LmStudio && (hold.via_cli || failed) {
+        match servers::lms_cli() {
+            Some(lms) => match servers::lms_unload_all(&lms).await {
+                Ok(text) => {
+                    failed = false;
+                    messages.push(format!("lms unload --all: {text}"));
+                }
+                Err(e) => messages.push(format!("{e:#}")),
+            },
+            None if hold.via_cli => messages.push("the lms CLI is gone".into()),
+            None => {}
+        }
+    }
+    let expected = hold.reclaim_bytes(g).max(1);
+    let alive = settle_footprint(&g.pids, g.bytes, expected).await;
+    MlxMemoryFreeItemDto {
+        id: g.id.clone(),
+        label: g.label.clone(),
+        ok: !failed,
+        freed_bytes: Some(g.bytes.saturating_sub(alive)),
+        message: messages.join("; "),
+    }
+}
+
+async fn reap_orphan(g: &Group) -> MlxMemoryFreeItemDto {
+    let mut messages = vec![];
+    let mut ok = true;
+    for &(pid, started_at) in &g.pids {
+        match servers::reap_orphaned_goosed(pid, started_at).await {
+            Ok(m) => messages.push(m),
+            Err(e) => {
+                ok = false;
+                messages.push(format!("{e:#}"));
+            }
+        }
+    }
+    MlxMemoryFreeItemDto {
+        id: g.id.clone(),
+        label: g.label.clone(),
+        ok,
+        freed_bytes: Some(g.bytes.saturating_sub(footprint_alive(&g.pids))),
+        message: messages.join("; "),
+    }
 }
 
 /// This Mac's memory measured live, crediting nothing a switch would free.
@@ -220,7 +389,7 @@ pub(super) async fn core_memory_holders(
     }
     let manager = synced_manager()?;
     let (ctx, port) = categorize_ctx(manager).await?;
-    let groups = groups(&ctx).await?;
+    let (groups, ai) = groups(&ctx).await?;
     let fit = match &req.fit_model_id {
         Some(id) => Some((
             id.clone(),
@@ -232,11 +401,7 @@ pub(super) async fn core_memory_holders(
         Some((_, f)) => f.facts,
         None => measured_facts(port).await?,
     };
-    let other_mlx: u64 = groups
-        .iter()
-        .filter(|g| is_other_mlx(g))
-        .map(|g| g.bytes)
-        .sum();
+    let other_mlx = goose_owned_outside_engine(&groups, &ai);
     // The fit already credits the own engine; the bare measurement does not.
     let own: u64 = groups
         .iter()
@@ -308,7 +473,7 @@ pub(super) async fn core_memory_free(
 
     if req.goose_owned {
         // A fresh census: only what is reclaimable NOW is touched.
-        let groups = groups(&ctx).await?;
+        let (groups, ai) = groups(&ctx).await?;
         if let Some(g) = groups.iter().find(|g| g.id == "gooseEngine") {
             if g.reclaimable_by_goose {
                 let result =
@@ -360,6 +525,13 @@ pub(super) async fn core_memory_free(
                 freed_bytes: Some(freed),
                 message: messages.join("; "),
             });
+        }
+        for g in &groups {
+            if let Some(hold) = ai.get(&g.id) {
+                items.push(unload_ai(g, hold).await);
+            } else if is_orphan(g) {
+                items.push(reap_orphan(g).await);
+            }
         }
     }
 
