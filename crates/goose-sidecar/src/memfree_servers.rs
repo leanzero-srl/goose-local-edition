@@ -9,8 +9,9 @@
 //!   the `lms` CLI's `lms unload --all` (lmstudio.ai/docs/cli/unload) talks to the app directly.
 //! - **A left-over goose server**: the same proof the desktop's launch reap uses
 //!   (ui/desktop/src/utils/orphanGoosedReap.ts `selectOrphanedGoosed`), re-proven before each
-//!   signal; SIGTERM, then SIGKILL on that one pid only if it outlived the grace.
+//!   signal; SIGTERM only, reported (never forced) if it outlives the grace.
 
+use crate::fit::gb;
 use crate::memfree::ProcRow;
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::Value;
@@ -311,7 +312,7 @@ pub fn orphaned_goosed_now(rows: &[ProcRow], self_pid: u32, uid: u32) -> Vec<(u3
     select_orphaned_goosed(rows, &cmdlines(&candidates), &exe, uid, self_pid)
 }
 
-/// How long a left-over server's own teardown may take before SIGKILL (its mesh daemon and engine
+/// How long a left-over server's own teardown may take before goose reports it still running (its mesh daemon and engine
 /// stop on SIGTERM; the desktop's quit grace is of the same order).
 pub const ORPHAN_GRACE: Duration = Duration::from_secs(10);
 
@@ -327,8 +328,8 @@ fn still_orphan(pid: u32, started_at: u64, exe: &str, uid: u32) -> bool {
     ok && !select_orphaned_goosed(&rows, &cmdlines(&[pid]), exe, uid, std::process::id()).is_empty()
 }
 
-/// Stop one proven left-over goose server. SIGTERM, wait, SIGKILL that pid only if it outlived
-/// the grace; re-proven before each signal.
+/// Stop one proven left-over goose server: re-proven, SIGTERM, wait the grace; still running is
+/// reported, never forced.
 #[cfg(unix)]
 pub async fn reap_orphaned_goosed(pid: u32, started_at: u64) -> Result<String> {
     let exe = self_exe();
@@ -337,7 +338,7 @@ pub async fn reap_orphaned_goosed(pid: u32, started_at: u64) -> Result<String> {
         let exe = exe.clone();
         move || still_orphan(pid, started_at, &exe, uid)
     };
-    if !tokio::task::spawn_blocking(proven.clone()).await? {
+    if !tokio::task::spawn_blocking(proven).await? {
         bail!("pid {pid} is no longer the left-over goose server it was");
     }
     // SAFETY: plain signal to a pid proven to be the orphan a moment ago.
@@ -351,18 +352,52 @@ pub async fn reap_orphaned_goosed(pid: u32, started_at: u64) -> Result<String> {
             return Ok(format!("stopped left-over goose server pid {pid}"));
         }
     }
-    if tokio::task::spawn_blocking(proven).await? {
-        // SAFETY: same proof, re-read; one pid, never a group.
-        unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
-        tokio::time::sleep(Duration::from_millis(300)).await;
-    }
-    if crate::memfree::alive(pid, started_at) {
-        bail!("left-over goose server pid {pid} is still running");
-    }
-    Ok(format!(
-        "stopped left-over goose server pid {pid} (SIGKILL after {} s)",
+    bail!(
+        "left-over goose server pid {pid} is still running {} s after SIGTERM; goose does not \
+         force it",
         ORPHAN_GRACE.as_secs()
-    ))
+    )
+}
+
+/// Stop ANOTHER MLX engine for "Free up memory": re-proven against a fresh engine census (still an
+/// MLX engine, not on `own_port`, same start time), then SIGTERM only — never SIGKILL, never a
+/// group. Reports, without forcing, an engine still running after the grace window.
+/// (`machine::stop_other_engine`, the mlxEngine ACP's explicit stop, keeps its own behaviour.)
+#[cfg(unix)]
+pub async fn terminate_engine(pid: u32, started_at: u64, own_port: u16) -> Result<String> {
+    let engines =
+        tokio::task::spawn_blocking(move || crate::machine::other_engines(Some(own_port))).await?;
+    let Some(engine) = engines.into_iter().find(|e| e.pid == pid) else {
+        bail!("pid {pid} is not another MLX engine on this Mac: nothing was signalled");
+    };
+    if engine.started_at != started_at {
+        bail!("pid {pid} is no longer the engine you were shown: nothing was signalled");
+    }
+    // SAFETY: plain signal to one pid proven a moment ago to be that engine.
+    if unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) } != 0 {
+        bail!("SIGTERM to pid {pid}: {}", std::io::Error::last_os_error());
+    }
+    let signalled = std::time::Instant::now();
+    while signalled.elapsed() < crate::grace_window() {
+        if crate::machine::prove(pid, started_at) != crate::machine::Liveness::Alive {
+            return Ok(format!(
+                "stopped {} (SIGTERM); its {} are the Mac's again",
+                engine.describe(),
+                gb(engine.resident_bytes)
+            ));
+        }
+        tokio::time::sleep(crate::GRACE_TICK).await;
+    }
+    bail!(
+        "{} is still running {} s after SIGTERM; goose does not force it",
+        engine.describe(),
+        crate::grace_window().as_secs()
+    )
+}
+
+#[cfg(not(unix))]
+pub async fn terminate_engine(pid: u32, _started_at: u64, _own_port: u16) -> Result<String> {
+    bail!("pid {pid}: stopping a process is unix-only")
 }
 
 #[cfg(not(unix))]
