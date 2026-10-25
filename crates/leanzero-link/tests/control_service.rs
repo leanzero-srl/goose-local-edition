@@ -1783,3 +1783,479 @@ async fn a_peer_leaving_on_purpose_is_marked_at_once_and_cleared_when_it_answers
     b2.shutdown();
     a.shutdown();
 }
+
+// ---------------------------------------------------------------------------------------------
+// /v1/swarm/jobs over HTTP (step 2): every refusal code, group cancel, ledger content, the
+// watchdog's timeout and memory kill, and the shared heavy-run lock in both directions.
+
+mod jobs_http {
+    use super::*;
+    use leanzero_link::jobs::{JobsConfig, JobsSwitch, UserActivePolicy};
+    use leanzero_link::load::{HeavySlot, NodeLimits, OwnLoad};
+    use std::path::{Path, PathBuf};
+
+    /// A calm, idle, plugged-in 128 GB machine.
+    fn calm() -> OwnLoad {
+        OwnLoad {
+            user_idle_s: Some(9999.0),
+            user_active: false,
+            cpu_load_per_core: Some(0.1),
+            ncpu: 16,
+            mem_free_pct: Some(80.0),
+            mem_total_gb: Some(128.0),
+            on_ac: Some(true),
+            thermal_limit: Some(0),
+            ..Default::default()
+        }
+    }
+
+    struct Node {
+        handle: ControlHandle,
+        base: String,
+        own: Arc<StdMutex<OwnLoad>>,
+        root: PathBuf,
+        lock: PathBuf,
+        source: Arc<FakeStateSource>,
+        _tmp: tempfile::TempDir,
+    }
+
+    async fn spawn_jobs_node(
+        on: bool,
+        limits: NodeLimits,
+        executor: Option<Arc<dyn RemoteExecutor>>,
+    ) -> Node {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("jobs");
+        let lock = tmp.path().join("heavy-run.lock");
+        let own = Arc::new(StdMutex::new(calm()));
+        let sampler_own = own.clone();
+        let mut config = ControlConfig::new(TOKEN.to_string(), None);
+        config.port = 0;
+        config.poll_interval = Duration::from_millis(100);
+        config.jobs = JobsConfig {
+            switch: JobsSwitch::fixed(on),
+            root: root.clone(),
+            heavy_lock: lock.clone(),
+            limits: Some(limits),
+            min_free: Some(20.0),
+            user_active: UserActivePolicy::LastResort,
+            sampler: Arc::new(move || sampler_own.lock().unwrap().clone()),
+            tick: Duration::from_millis(200),
+            kill_grace: Duration::from_secs(1),
+        };
+        let source = FakeStateSource::new("jobs-node");
+        let handle = ControlService::start(config, source.clone(), executor, None, None, None)
+            .await
+            .expect("control service starts");
+        let base = base_url(&handle);
+        Node {
+            handle,
+            base,
+            own,
+            root,
+            lock,
+            source,
+            _tmp: tmp,
+        }
+    }
+
+    /// Limits for tests: no system-free kill line (the real machine's free % is not ours).
+    fn test_limits() -> NodeLimits {
+        NodeLimits {
+            kill_free: 0.0,
+            ..NodeLimits::default()
+        }
+    }
+
+    async fn submit(n: &Node, body: serde_json::Value) -> (u16, serde_json::Value) {
+        let r = reqwest::Client::new()
+            .post(format!("{}/v1/swarm/jobs", n.base))
+            .bearer_auth(TOKEN)
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        let s = r.status().as_u16();
+        (s, r.json().await.unwrap_or(serde_json::Value::Null))
+    }
+
+    fn shell(cmd: &str) -> serde_json::Value {
+        serde_json::json!({"kind": "shell", "command": cmd, "origin_node": "laptop"})
+    }
+
+    async fn expect_refusal(n: &Node, body: serde_json::Value, status: u16, code: &str) {
+        let (s, v) = submit(n, body).await;
+        assert_eq!((s, v["code"].as_str()), (status, Some(code)), "body {v}");
+        assert!(v["reason"].as_str().is_some_and(|r| !r.is_empty()), "{v}");
+    }
+
+    async fn job(n: &Node, id: &str) -> (u16, serde_json::Value) {
+        let r = reqwest::Client::new()
+            .get(format!("{}/v1/swarm/jobs/{id}", n.base))
+            .bearer_auth(TOKEN)
+            .send()
+            .await
+            .unwrap();
+        let s = r.status().as_u16();
+        (s, r.json().await.unwrap_or(serde_json::Value::Null))
+    }
+
+    async fn wait_terminal(n: &Node, id: &str, within: Duration) -> serde_json::Value {
+        let deadline = tokio::time::Instant::now() + within;
+        loop {
+            let (_, v) = job(n, id).await;
+            if !matches!(v["state"].as_str(), Some("running") | Some("queued") | None) {
+                return v;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "job {id} never ended: {v}"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    fn ledger(n: &Node, id: &str) -> serde_json::Value {
+        let raw = std::fs::read_to_string(n.root.join(id).join("job.json")).unwrap();
+        serde_json::from_str(&raw).unwrap()
+    }
+
+    fn group_alive(pgid: i32) -> bool {
+        // SAFETY: kill(-pgid, 0) only probes.
+        unsafe { libc::kill(-pgid, 0) == 0 }
+    }
+
+    #[tokio::test]
+    async fn every_refusal_code_answers_its_status_over_http() {
+        // jobs_disabled: the switch is OFF by default.
+        let off = spawn_jobs_node(false, test_limits(), None).await;
+        expect_refusal(&off, shell("true"), 403, "jobs_disabled").await;
+        off.handle.shutdown();
+
+        let n = spawn_jobs_node(true, test_limits(), None).await;
+        expect_refusal(&n, shell("   "), 400, "bad_request").await;
+        let mut bad_cwd = shell("true");
+        bad_cwd["cwd"] = "/definitely/not/here".into();
+        expect_refusal(&n, bad_cwd, 400, "bad_request").await;
+        // A body that is not a JobRequest at all is a 400 too, in the same {code, reason} shape.
+        expect_refusal(&n, serde_json::json!({"nope": 1}), 400, "bad_request").await;
+        // prompt without goose's executor wired here.
+        expect_refusal(
+            &n,
+            serde_json::json!({"kind": "prompt", "command": "hi"}),
+            501,
+            "executor_missing",
+        )
+        .await;
+
+        let set = |f: &dyn Fn(&mut OwnLoad)| {
+            let mut o = calm();
+            f(&mut o);
+            *n.own.lock().unwrap() = o;
+        };
+        set(&|o| o.benchmark = Some("gauntlet run".into()));
+        expect_refusal(&n, shell("true"), 503, "benchmark_running").await;
+        set(&|o| o.mem_free_pct = None);
+        expect_refusal(&n, shell("true"), 503, "memory_unreadable").await;
+        set(&|_| {});
+        let mut big = shell("true");
+        big["need_mem_gb"] = 500.0.into();
+        expect_refusal(&n, big, 409, "memory_headroom").await;
+        set(&|o| o.mem_free_pct = Some(10.0));
+        expect_refusal(&n, shell("true"), 409, "memory_headroom").await;
+        let mut heavy = shell("true");
+        heavy["heavy"] = true.into();
+        set(&|o| o.on_ac = Some(false));
+        expect_refusal(&n, heavy.clone(), 409, "on_battery").await;
+        set(&|o| o.thermal_limit = Some(4));
+        expect_refusal(&n, heavy.clone(), 409, "thermal").await;
+        set(&|o| o.lid_closed_sleeps = true);
+        expect_refusal(&n, shell("true"), 409, "lid_sleeps").await;
+        set(&|o| {
+            o.user_active = true;
+            o.user_idle_s = Some(3.0);
+        });
+        expect_refusal(&n, shell("true"), 409, "user_active").await;
+        // ... and the placer's explicit last-resort flag admits it under the default policy.
+        let mut last = shell("true");
+        last["allow_user_active"] = true.into();
+        let (s, v) = submit(&n, last).await;
+        assert_eq!(s, 202, "{v}");
+        set(&|_| {});
+        // heavy_slot_held: someone else holds the lock file (the sampled flag is ignored: the
+        // slot itself is the truth).
+        let other = HeavySlot::try_take_at(&n.lock, "test holder")
+            .unwrap()
+            .unwrap();
+        expect_refusal(&n, heavy.clone(), 409, "heavy_slot_held").await;
+        drop(other);
+        let (s, v) = submit(&n, heavy).await;
+        assert_eq!(s, 202, "slot free again: {v}");
+        // not_found on every per-job route.
+        let c = reqwest::Client::new();
+        for (m, path) in [
+            ("GET", "/v1/swarm/jobs/nope"),
+            ("GET", "/v1/swarm/jobs/nope/log"),
+            ("POST", "/v1/swarm/jobs/nope/cancel"),
+        ] {
+            let r = c
+                .request(m.parse().unwrap(), format!("{}{path}", n.base))
+                .bearer_auth(TOKEN)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status().as_u16(), 404, "{m} {path}");
+            let v: serde_json::Value = r.json().await.unwrap();
+            assert_eq!(v["code"], "not_found");
+        }
+        // already_finished: cancel a job that has ended.
+        let (_, v) = submit(&n, shell("true")).await;
+        let id = v["job_id"].as_str().unwrap().to_string();
+        wait_terminal(&n, &id, Duration::from_secs(20)).await;
+        let r = c
+            .post(format!("{}/v1/swarm/jobs/{id}/cancel", n.base))
+            .bearer_auth(TOKEN)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status().as_u16(), 409);
+        let v: serde_json::Value = r.json().await.unwrap();
+        assert_eq!(v["code"], "already_finished");
+        // No token = 401 like every other route.
+        let r = c
+            .post(format!("{}/v1/swarm/jobs", n.base))
+            .json(&shell("true"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status().as_u16(), 401);
+        n.handle.shutdown();
+    }
+
+    #[tokio::test]
+    async fn prompt_jobs_run_through_the_executor_and_cancel_is_an_honest_501() {
+        let exec = FakeExecutor::accepting("sess-job-1");
+        let n = spawn_jobs_node(true, test_limits(), Some(exec.clone())).await;
+        let (s, v) = submit(
+            &n,
+            serde_json::json!({"kind": "prompt", "command": "write hello", "origin_node": "laptop"}),
+        )
+        .await;
+        assert_eq!(s, 202, "{v}");
+        let id = v["job_id"].as_str().unwrap().to_string();
+        assert_eq!(exec.call_count(), 1);
+        let (_, view) = job(&n, &id).await;
+        assert_eq!(view["session_id"], "sess-job-1", "{view}");
+        assert_eq!(view["state"], "running", "{view}");
+        let r = reqwest::Client::new()
+            .post(format!("{}/v1/swarm/jobs/{id}/cancel", n.base))
+            .bearer_auth(TOKEN)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status().as_u16(), 501);
+        let v: serde_json::Value = r.json().await.unwrap();
+        assert_eq!(v["code"], "cancel_unsupported");
+        // The job follows its session: live, then not live = done.
+        n.source
+            .set_sessions(vec![summary("sess-job-1", "laptop", true, 1)]);
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        assert_eq!(job(&n, &id).await.1["state"], "running");
+        n.source
+            .set_sessions(vec![summary("sess-job-1", "laptop", false, 2)]);
+        let end = wait_terminal(&n, &id, Duration::from_secs(5)).await;
+        assert_eq!(end["state"], "done", "{end}");
+        n.handle.shutdown();
+    }
+
+    #[tokio::test]
+    async fn cancel_kills_the_whole_process_group_and_the_ledger_keeps_origin_and_command() {
+        let n = spawn_jobs_node(true, test_limits(), None).await;
+        let cmd = "sleep 300 & sleep 300 & echo started; wait";
+        let (s, v) = submit(&n, shell(cmd)).await;
+        assert_eq!(s, 202, "{v}");
+        let id = v["job_id"].as_str().unwrap().to_string();
+        // Wait for the children to exist (the log line is printed after both backgrounded).
+        let c = reqwest::Client::new();
+        wait_until("job log shows started", || {
+            let c = c.clone();
+            let url = format!("{}/v1/swarm/jobs/{id}/log?from=0", n.base);
+            async move {
+                let r = c.get(url).bearer_auth(TOKEN).send().await.unwrap();
+                let v: serde_json::Value = r.json().await.unwrap();
+                v["data"].as_str().is_some_and(|d| d.contains("started"))
+            }
+        })
+        .await;
+        let rec = ledger(&n, &id);
+        let pgid = rec["pgid"].as_i64().expect("ledger has pgid") as i32;
+        assert!(pgid > 1);
+        assert!(group_alive(pgid), "group should be running");
+        // Ledger: origin and the command are recorded locally.
+        assert_eq!(rec["origin_node"], "laptop");
+        assert_eq!(rec["command"], cmd);
+        // The wire never carries the command: not the job view, not the list, not /nodes.
+        let (_, view) = job(&n, &id).await;
+        let list = get_json(&c, &format!("{}/v1/swarm/jobs", n.base)).await;
+        let nodes = get_json(&c, &format!("{}/v1/swarm/nodes", n.base)).await;
+        for (what, body) in [("view", &view), ("list", &list), ("nodes", &nodes)] {
+            let s = body.to_string();
+            assert!(!s.contains("sleep 300"), "{what} leaked the command: {s}");
+            assert!(s.contains(&id), "{what} should carry the job id: {s}");
+            assert!(s.contains("laptop"), "{what} should carry the origin: {s}");
+        }
+        assert_eq!(view["origin_node"], "laptop");
+        assert_eq!(view["kind"], "shell");
+
+        let r = c
+            .post(format!("{}/v1/swarm/jobs/{id}/cancel", n.base))
+            .bearer_auth(TOKEN)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            r.status().as_u16(),
+            202,
+            "cancel is accepted, the group dies async"
+        );
+        let end = wait_terminal(&n, &id, Duration::from_secs(20)).await;
+        assert_eq!(end["state"], "cancelled", "{end}");
+        assert_eq!(end["exit_code"], 143, "{end}");
+        wait_until("every process of the group is gone", || async move {
+            !group_alive(pgid)
+        })
+        .await;
+        let rec = ledger(&n, &id);
+        assert_eq!(rec["state"], "cancelled");
+        assert_eq!(rec["exit_code"], 143);
+        n.handle.shutdown();
+    }
+
+    #[tokio::test]
+    async fn watchdog_times_out_and_kills_a_memory_hog_by_footprint() {
+        // ~100 MB cap on this machine's RAM: a 400 MB hog must die with 137.
+        let ram = {
+            let mut v: u64 = 0;
+            let mut len = std::mem::size_of::<u64>();
+            let name = std::ffi::CString::new("hw.memsize").unwrap();
+            // SAFETY: sysctlbyname writes at most len bytes into v.
+            unsafe {
+                libc::sysctlbyname(
+                    name.as_ptr(),
+                    &mut v as *mut u64 as *mut libc::c_void,
+                    &mut len,
+                    std::ptr::null_mut(),
+                    0,
+                )
+            };
+            v
+        };
+        assert!(ram > 0);
+        let limits = NodeLimits {
+            max_rss_pct: 100.0 * (100u64 << 20) as f64 / ram as f64,
+            ..test_limits()
+        };
+        let n = spawn_jobs_node(true, limits, None).await;
+        let (s, v) = submit(
+            &n,
+            shell("python3 -c \"a=b'x'*(400<<20); import time; time.sleep(60)\""),
+        )
+        .await;
+        assert_eq!(s, 202, "{v}");
+        let hog = v["job_id"].as_str().unwrap().to_string();
+        let mut t = shell("sleep 30");
+        t["timeout_s"] = 1.into();
+        let (s, v) = submit(&n, t).await;
+        assert_eq!(s, 202, "{v}");
+        let slow = v["job_id"].as_str().unwrap().to_string();
+
+        let end = wait_terminal(&n, &hog, Duration::from_secs(30)).await;
+        assert_eq!(end["state"], "killed", "{end}");
+        assert_eq!(end["exit_code"], 137, "{end}");
+        assert!(
+            end["reason"].as_str().unwrap_or("").contains("of RAM"),
+            "{end}"
+        );
+        let end = wait_terminal(&n, &slow, Duration::from_secs(20)).await;
+        assert_eq!(end["exit_code"], 124, "{end}");
+        n.handle.shutdown();
+    }
+
+    fn heavy_run() -> Option<PathBuf> {
+        let p = dirs::home_dir()?.join("Projects/machine-sync/bin/heavy-run");
+        p.is_file().then_some(p)
+    }
+
+    fn heavy_run_cmd(bin: &Path, lock: &Path, ledger: &Path) -> std::process::Command {
+        let mut c = std::process::Command::new(bin);
+        c.env("HEAVY_RUN_LOCK", lock)
+            .env("NODE_LIMITS_FILE", ledger.join("absent-limits.json"))
+            .args([
+                "--lock-wait",
+                "0",
+                "--min-free",
+                "0",
+                "--wait",
+                "0",
+                "--ledger",
+            ])
+            .arg(ledger);
+        c
+    }
+
+    #[tokio::test]
+    async fn goose_jobs_and_heavy_run_exclude_each_other_on_one_lock() {
+        let Some(bin) = heavy_run() else {
+            eprintln!("SKIP: ~/Projects/machine-sync/bin/heavy-run absent");
+            return;
+        };
+        let n = spawn_jobs_node(true, test_limits(), None).await;
+        // 1) A goose heavy job holds the slot -> heavy-run --lock-wait 0 -- true exits 75.
+        let mut heavy = shell("sleep 30");
+        heavy["heavy"] = true.into();
+        let (s, v) = submit(&n, heavy.clone()).await;
+        assert_eq!(s, 202, "{v}");
+        let id = v["job_id"].as_str().unwrap().to_string();
+        let led1 = n.root.join("hr1");
+        std::fs::create_dir_all(&led1).unwrap();
+        let out = heavy_run_cmd(&bin, &n.lock, &led1)
+            .args(["--", "true"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(75),
+            "heavy-run must refuse while a goose job holds the lock: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        reqwest::Client::new()
+            .post(format!("{}/v1/swarm/jobs/{id}/cancel", n.base))
+            .bearer_auth(TOKEN)
+            .send()
+            .await
+            .unwrap();
+        wait_terminal(&n, &id, Duration::from_secs(20)).await;
+
+        // 2) A real heavy-run holds the lock -> a heavy goose job is refused heavy_slot_held.
+        let led2 = n.root.join("hr2");
+        std::fs::create_dir_all(&led2).unwrap();
+        let mut hr = heavy_run_cmd(&bin, &n.lock, &led2)
+            .args(["--", "sleep", "20"])
+            .spawn()
+            .unwrap();
+        let lock = n.lock.clone();
+        wait_until("heavy-run took the lock", || {
+            let lock = lock.clone();
+            async move { matches!(HeavySlot::try_take_at(&lock, "probe"), Ok(None)) }
+        })
+        .await;
+        expect_refusal(&n, heavy.clone(), 409, "heavy_slot_held").await;
+        // A light job is not affected by the heavy slot.
+        let (s, v) = submit(&n, shell("true")).await;
+        assert_eq!(s, 202, "{v}");
+        // SAFETY: TERM our own child; heavy-run then kills its job group itself.
+        unsafe { libc::kill(hr.id() as i32, libc::SIGTERM) };
+        let _ = hr.wait();
+        n.handle.shutdown();
+    }
+}

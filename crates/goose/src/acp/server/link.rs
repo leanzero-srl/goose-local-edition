@@ -467,7 +467,7 @@ fn node_allows(allow_remote_execution: bool) -> NodeAllows {
         manage_models: allow_remote_execution,
         answer_chat: super::mlx_remote_single::chat_serving_allowed(),
         run_split: distributed_node_allowed(),
-        run_jobs: false,
+        run_jobs: remote_jobs_allowed(),
     }
 }
 
@@ -632,14 +632,67 @@ fn remote_execution_allowed() -> bool {
 }
 
 fn allow_from_config(read: Result<bool, ConfigError>) -> bool {
+    switch_from_config(ALLOW_REMOTE_EXECUTION_KEY, read)
+}
+
+/// Incoming mesh jobs (`/v1/swarm/jobs`): its own switch, OFF by default and separate from
+/// remote execution. Read on EVERY request (the control service holds this fn, not a value),
+/// so flipping it in settings takes effect without restarting the link.
+fn remote_jobs_allowed() -> bool {
+    switch_from_config(
+        leanzero_link::jobs::ALLOW_REMOTE_JOBS_KEY,
+        Config::global().get_param::<bool>(leanzero_link::jobs::ALLOW_REMOTE_JOBS_KEY),
+    )
+}
+
+/// A goose config number (env first, then config.yaml), `None` when unset or unparseable.
+fn config_f64(key: &str) -> Option<f64> {
+    Config::global().get_param::<f64>(key).ok()
+}
+
+/// The jobs side of the control config from the user's settings: the live switch, the
+/// memory floor (`LEANZERO_LINK_JOBS_MIN_FREE`, else node-limits.json `min_free`), the
+/// user-active policy and the user-idle threshold. The floor and policy are read when the
+/// manager is built; the switch and the idle threshold are read per request.
+fn jobs_config() -> leanzero_link::jobs::JobsConfig {
+    use leanzero_link::jobs::{
+        JobsConfig, JobsSwitch, UserActivePolicy, MIN_FREE_ENV, USER_ACTIVE_POLICY_ENV,
+    };
+    let mut jobs = JobsConfig {
+        switch: JobsSwitch::from_fn(remote_jobs_allowed),
+        sampler: std::sync::Arc::new(|| leanzero_link::load::sample_own(jobs_user_idle_s())),
+        ..JobsConfig::default()
+    };
+    if let Some(v) = config_f64(MIN_FREE_ENV) {
+        jobs.min_free = Some(v);
+    }
+    if let Some(p) = Config::global()
+        .get_param::<String>(USER_ACTIVE_POLICY_ENV)
+        .ok()
+        .and_then(|s| UserActivePolicy::parse(&s))
+    {
+        jobs.user_active = p;
+    }
+    jobs
+}
+
+/// Seconds without keyboard/mouse input before this Mac counts as idle (default 300).
+fn jobs_user_idle_s() -> u64 {
+    config_f64(leanzero_link::load::USER_IDLE_ENV)
+        .filter(|v| *v >= 0.0)
+        .map(|v| v as u64)
+        .unwrap_or_else(leanzero_link::load::user_idle_threshold_s)
+}
+
+fn switch_from_config(key: &str, read: Result<bool, ConfigError>) -> bool {
     match read {
         Ok(value) => value,
         Err(ConfigError::NotFound(_)) => false,
         Err(error) => {
             warn!(
                 %error,
-                key = ALLOW_REMOTE_EXECUTION_KEY,
-                "leanzeroLink: the remote-execution setting is unreadable; treating it as OFF"
+                key,
+                "leanzeroLink: a remote-work switch is unreadable; treating it as OFF"
             );
             false
         }
@@ -993,6 +1046,7 @@ fn build_link_config(
     let mut control = ControlConfig::new(String::new(), None);
     // The crate's default is observe-only; only the user's own setting opts a node in.
     control.allow_remote_execution = key.allow_remote_execution;
+    control.jobs = jobs_config();
     control.port = resolve_control_port()
         .map_err(|message| agent_client_protocol::Error::invalid_params().data(message))?;
     if control.port != DEFAULT_CONTROL_PORT {

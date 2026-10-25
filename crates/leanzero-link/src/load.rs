@@ -826,7 +826,21 @@ pub async fn engine_active(client: &reqwest::Client, base: &str) -> u32 {
 /// `engine_active` as the caller measured it, this process's router slots, and `jobs`.
 pub async fn snapshot(engine_active: u32, jobs: Vec<JobBrief>) -> NodeLoad {
     let threshold = user_idle_threshold_s();
-    let own = tokio::task::spawn_blocking(move || sample_own(threshold))
+    snapshot_with(
+        engine_active,
+        jobs,
+        std::sync::Arc::new(move || sample_own(threshold)),
+    )
+    .await
+}
+
+/// [`snapshot`] with the OWN sampler supplied by the caller (the jobs registry's).
+pub async fn snapshot_with(
+    engine_active: u32,
+    jobs: Vec<JobBrief>,
+    sampler: std::sync::Arc<dyn Fn() -> OwnLoad + Send + Sync>,
+) -> NodeLoad {
+    let own = tokio::task::spawn_blocking(move || sampler())
         .await
         .unwrap_or_default();
     NodeLoad {

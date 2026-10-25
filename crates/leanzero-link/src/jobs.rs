@@ -799,8 +799,13 @@ impl JobRegistry {
 }
 
 /// What the control service's `/nodes` attaches: a load snapshot carrying this registry's briefs.
+/// With a registry, OWN comes from the registry's own sampler, so what peers are shown is
+/// exactly what admission reads here (same user-idle threshold, same test seam).
 pub async fn load_with_jobs(engine_active: u32, jobs: Option<&JobRegistry>) -> NodeLoad {
-    crate::load::snapshot(engine_active, jobs.map(|j| j.briefs()).unwrap_or_default()).await
+    let Some(reg) = jobs else {
+        return crate::load::snapshot(engine_active, Vec::new()).await;
+    };
+    crate::load::snapshot_with(engine_active, reg.briefs(), reg.cfg.sampler.clone()).await
 }
 
 // ---------------------------------------------------------------------------------------------
