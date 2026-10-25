@@ -7025,6 +7025,53 @@ ipcMain.handle('read-swarm-run', async (event, workingDir: string) => {
   }
 });
 
+// Settings › App › Never touch: the installed apps (name + bundle id), so an entry that names
+// nothing on this Mac can say so. Read once per run; plutil reads binary and XML Info.plist alike.
+let installedAppsCache: Promise<{ name: string; bundleId: string | null }[]> | null = null;
+async function scanInstalledApps(): Promise<{ name: string; bundleId: string | null }[]> {
+  if (process.platform !== 'darwin') return [];
+  const dirs = [
+    '/Applications',
+    '/Applications/Utilities',
+    '/System/Applications',
+    '/System/Applications/Utilities',
+    path.join(os.homedir(), 'Applications'),
+  ];
+  const apps: string[] = [];
+  for (const dir of dirs) {
+    try {
+      for (const entry of await fs.readdir(dir)) {
+        if (entry.endsWith('.app')) apps.push(path.join(dir, entry));
+      }
+    } catch {
+      // a missing folder (~/Applications) is normal
+    }
+  }
+  const bundleId = (app: string) =>
+    new Promise<string | null>((resolve) => {
+      execFile(
+        '/usr/bin/plutil',
+        ['-extract', 'CFBundleIdentifier', 'raw', '-o', '-', path.join(app, 'Contents', 'Info.plist')],
+        { timeout: 5_000 },
+        (err, stdout) => resolve(err ? null : String(stdout).trim() || null)
+      );
+    });
+  const out: { name: string; bundleId: string | null }[] = [];
+  for (let i = 0; i < apps.length; i += 16) {
+    const batch = apps.slice(i, i + 16);
+    const ids = await Promise.all(batch.map(bundleId));
+    batch.forEach((app, j) => out.push({ name: path.basename(app, '.app'), bundleId: ids[j] }));
+  }
+  return out;
+}
+ipcMain.handle('list-installed-apps', () => {
+  installedAppsCache ??= scanInstalledApps().catch(() => {
+    installedAppsCache = null;
+    return [];
+  });
+  return installedAppsCache;
+});
+
 ipcMain.handle('check-ollama', async () => {
   try {
     return new Promise((resolve) => {

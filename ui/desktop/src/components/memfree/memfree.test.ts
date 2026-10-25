@@ -7,6 +7,7 @@ import {
   forceStopBundle,
   neverTouchExtrasFrom,
   neverTouchHit,
+  neverTouchMatch,
   nuclearRequest,
   nuclearRows,
   unloadOffer,
@@ -221,6 +222,23 @@ describe('never-touch list', () => {
     expect(neverTouchHit(teams, ['Teams'])).toBe('Teams');
     expect(neverTouchHit(teams, ['com.microsoft'])).toBe('com.microsoft');
     expect(neverTouchHit(teams, ['  ', 'Slack'])).toBeNull();
+  });
+});
+
+describe('never-touch match hint (review C7)', () => {
+  const teams = grp('app:com.microsoft.teams2', 'userApp', { label: 'Microsoft Teams' });
+  const installed = [
+    { name: 'Final Cut Pro', bundleId: 'com.apple.FinalCut' },
+    { name: 'Broken', bundleId: null },
+  ];
+  it('names the running holder first, then an installed app, by contains', () => {
+    expect(neverTouchMatch('Teams', [teams], installed)).toBe('Microsoft Teams');
+    expect(neverTouchMatch('final cut', [teams], installed)).toBe('Final Cut Pro');
+    expect(neverTouchMatch('com.apple.finalcut', [], installed)).toBe('Final Cut Pro');
+  });
+  it('an entry that names nothing running or installed matches nothing', () => {
+    expect(neverTouchMatch('Photoshop', [teams], installed)).toBeNull();
+    expect(neverTouchMatch('   ', [teams], installed)).toBeNull();
   });
 });
 

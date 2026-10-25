@@ -159,6 +159,8 @@ type ElectronAPI = {
   openInChrome: (url: string) => void;
   reloadApp: () => void;
   checkForOllama: () => Promise<boolean>;
+  /** Installed .app bundles (name + bundle id) for the never-touch hint in Settings. */
+  listInstalledApps: () => Promise<{ name: string; bundleId: string | null }[]>;
   selectFileOrDirectory: (defaultPath?: string) => Promise<string | null>;
   selectImportSessionFile: () => Promise<{
     filePath: string;
@@ -654,6 +656,7 @@ const electronAPI: ElectronAPI = {
   openInChrome: (url: string) => ipcRenderer.send('open-in-chrome', url),
   reloadApp: () => ipcRenderer.send('reload-app'),
   checkForOllama: () => ipcRenderer.invoke('check-ollama'),
+  listInstalledApps: () => ipcRenderer.invoke('list-installed-apps'),
 
   selectFileOrDirectory: (defaultPath?: string) =>
     ipcRenderer.invoke('select-file-or-directory', defaultPath),

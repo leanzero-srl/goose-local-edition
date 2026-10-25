@@ -20,6 +20,9 @@ vi.mock('../../../acp/config', () => ({
   acpUpsertConfig: config.upsert,
 }));
 
+const census = vi.hoisted(() => ({ holders: vi.fn() }));
+vi.mock('../../../acp/memfree', () => ({ memoryHolders: census.holders }));
+
 const forget = vi.hoisted(() => vi.fn());
 vi.mock('../../memfree/useMemfreeEnabled', () => ({ forgetMemfreeEnabled: forget }));
 
@@ -41,6 +44,11 @@ beforeEach(() => {
     config.stored[key] = value;
   });
   forget.mockReset();
+  census.holders.mockReset().mockResolvedValue({ groups: [] });
+  (window as unknown as { electron: Record<string, unknown> }).electron = {
+    ...((window as unknown as { electron?: Record<string, unknown> }).electron ?? {}),
+    listInstalledApps: vi.fn().mockResolvedValue([]),
+  };
 });
 
 describe('Settings > App — Free up memory', () => {
@@ -161,5 +169,50 @@ describe('Settings > App — Free up memory', () => {
         false
       )
     );
+  });
+  it('C7: each added entry says what it matches, or that it matches no running or installed app', async () => {
+    config.stored = { [MEMFREE_NEVER_TOUCH_KEY]: ['Teams', 'Final Cut', 'Photoshop'] };
+    census.holders.mockResolvedValue({
+      groups: [
+        {
+          id: 'app:com.microsoft.teams2',
+          label: 'Microsoft Teams',
+          category: 'userApp',
+          bytes: 1,
+          pids: [],
+          bundleId: 'com.microsoft.teams2',
+          quittable: true,
+          reclaimableByGoose: false,
+        },
+      ],
+    });
+    (
+      window as unknown as { electron: { listInstalledApps: ReturnType<typeof vi.fn> } }
+    ).electron.listInstalledApps.mockResolvedValue([
+      { name: 'Final Cut Pro', bundleId: 'com.apple.FinalCut' },
+    ]);
+    mount();
+    await waitFor(() =>
+      expect(screen.getByTestId('memfree-never-touch-match-Photoshop')).toBeInTheDocument()
+    );
+    expect(census.holders).toHaveBeenCalledWith({});
+    const teams = screen.getByTestId('memfree-never-touch-match-Teams');
+    expect(teams.dataset.matched).toBe('yes');
+    expect(teams.textContent).toContain('Microsoft Teams');
+    expect(screen.getByTestId('memfree-never-touch-match-Final Cut').textContent).toContain(
+      'Final Cut Pro'
+    );
+    const none = screen.getByTestId('memfree-never-touch-match-Photoshop');
+    expect(none.dataset.matched).toBe('no');
+    expect(none.textContent).toContain('matches no running or installed app');
+  });
+
+  it('C7: no census, no hint (never a wrong "matches nothing")', async () => {
+    config.stored = { [MEMFREE_NEVER_TOUCH_KEY]: ['Photoshop'] };
+    census.holders.mockRejectedValue(new Error('engine down'));
+    mount();
+    await waitFor(() => expect(enabled()).not.toBeDisabled());
+    expect(screen.getByTestId('memfree-never-touch-extras').textContent).toContain('Photoshop');
+    expect(screen.queryByTestId('memfree-never-touch-match-Photoshop')).toBeNull();
   });
 });

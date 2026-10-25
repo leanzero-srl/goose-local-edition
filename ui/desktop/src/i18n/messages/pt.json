@@ -4556,6 +4556,12 @@
   "memfreeSettings.neverTouchDesc": {
     "defaultMessage": "Apps e processos que nenhuma limpeza fecha ou para, neste Mac e quando este Mac libera memória em outro. Um bundle id, nome de app ou nome de processo; maiúsculas não importam. Os embutidos sempre valem."
   },
+  "memfreeSettings.neverTouchMatches": {
+    "defaultMessage": "corresponde a {app}"
+  },
+  "memfreeSettings.neverTouchMatchesNothing": {
+    "defaultMessage": "não corresponde a nenhuma app aberta ou instalada, por isso agora não protege nada"
+  },
   "memfreeSettings.neverTouchNone": {
     "defaultMessage": "Nada adicionado ainda"
   },

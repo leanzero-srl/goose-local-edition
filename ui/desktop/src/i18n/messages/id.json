@@ -4556,6 +4556,12 @@
   "memfreeSettings.neverTouchDesc": {
     "defaultMessage": "Aplikasi dan proses yang tidak pernah ditutup atau dihentikan oleh pembersihan apa pun, di Mac ini dan saat Mac ini membebaskan memori di Mac lain. Bundle id, nama aplikasi, atau nama proses; huruf besar kecil tidak berpengaruh. Yang bawaan selalu berlaku."
   },
+  "memfreeSettings.neverTouchMatches": {
+    "defaultMessage": "cocok dengan {app}"
+  },
+  "memfreeSettings.neverTouchMatchesNothing": {
+    "defaultMessage": "tidak cocok dengan aplikasi yang berjalan atau terpasang, jadi saat ini tidak melindungi apa pun"
+  },
   "memfreeSettings.neverTouchNone": {
     "defaultMessage": "Belum ada yang ditambahkan"
   },

@@ -338,6 +338,36 @@ export function neverTouchHit(group: MemfreeGroup, list: readonly string[]): str
   );
 }
 
+export interface InstalledApp {
+  name: string;
+  bundleId: string | null;
+}
+
+/**
+ * What a never-touch entry protects right now, by the same rule as neverTouchHit (case-insensitive
+ * equal or contains): the first running holder's label, else the first installed app's name, else
+ * null (the entry protects nothing on this Mac today; review C7).
+ */
+export function neverTouchMatch(
+  entry: string,
+  groups: readonly MemfreeGroup[],
+  installed: readonly InstalledApp[]
+): string | null {
+  const e = entry.trim().toLowerCase();
+  if (e === '') return null;
+  const running = groups.find((g) => neverTouchHit(g, [entry]) != null);
+  if (running) return running.label.replace(/ \(build\)$/, '');
+  const app = installed.find((a) =>
+    [a.bundleId, a.name]
+      .filter((n): n is string => typeof n === 'string' && n.trim() !== '')
+      .some((n) => {
+        const v = n.trim().toLowerCase();
+        return v === e || v.includes(e);
+      })
+  );
+  return app ? app.name : null;
+}
+
 /** One holder in the "Free everything except protected" view. */
 export type NuclearRow =
   | { kind: 'offer'; group: MemfreeGroup; ticked: boolean }

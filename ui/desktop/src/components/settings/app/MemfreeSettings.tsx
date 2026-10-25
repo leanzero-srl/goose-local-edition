@@ -18,7 +18,11 @@ import {
   memfreeEnabledFrom,
   minMbFrom,
   neverTouchExtrasFrom,
+  neverTouchMatch,
+  type InstalledApp,
+  type MemfreeGroup,
 } from '../../memfree/memfree';
+import { memoryHolders } from '../../../acp/memfree';
 import { forgetMemfreeEnabled } from '../../memfree/useMemfreeEnabled';
 
 const i18n = defineMessages({
@@ -62,6 +66,14 @@ const i18n = defineMessages({
     defaultMessage: 'com.example.App or an app name',
   },
   neverTouchAdd: { id: 'memfreeSettings.neverTouchAdd', defaultMessage: 'Add' },
+  neverTouchMatches: {
+    id: 'memfreeSettings.neverTouchMatches',
+    defaultMessage: 'matches {app}',
+  },
+  neverTouchMatchesNothing: {
+    id: 'memfreeSettings.neverTouchMatchesNothing',
+    defaultMessage: 'matches no running or installed app, so it protects nothing now',
+  },
   neverTouchRemove: { id: 'memfreeSettings.neverTouchRemove', defaultMessage: 'Remove {name}' },
   readFailed: {
     id: 'memfreeSettings.readFailed',
@@ -91,6 +103,30 @@ export function MemfreeSettings() {
   const [state, setState] = useState<MemfreeSettingsState | null>(null);
   const [draft, setDraft] = useState('');
   const [problem, setProblem] = useState<{ kind: 'read' | 'save'; reason: string } | null>(null);
+  // What each added entry matches on this Mac: running holders + installed apps. Null while unknown
+  // (still reading, or the census failed): then no hint is shown rather than a wrong one.
+  const [seen, setSeen] = useState<{ groups: MemfreeGroup[]; installed: InstalledApp[] } | null>(
+    null
+  );
+
+  useEffect(() => {
+    let alive = true;
+    const installed: Promise<InstalledApp[]> =
+      typeof window.electron?.listInstalledApps === 'function'
+        ? window.electron.listInstalledApps().catch(() => [])
+        : Promise.resolve([]);
+    Promise.all([memoryHolders({}), installed]).then(
+      ([holders, apps]) => {
+        if (alive) setSeen({ groups: holders.groups ?? [], installed: apps ?? [] });
+      },
+      () => {
+        // no census, no hint
+      }
+    );
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -251,6 +287,21 @@ export function MemfreeSettings() {
                     data-testid={`memfree-never-touch-remove-${name}`}
                     onClick={() => saveNeverTouch(state.neverTouch.filter((n) => n !== name))}
                   />
+                  {seen &&
+                    (() => {
+                      const app = neverTouchMatch(name, seen.groups, seen.installed);
+                      return (
+                        <span
+                          className={`text-xs ${app ? 'text-text-secondary' : 'text-lz-warn'}`}
+                          data-testid={`memfree-never-touch-match-${name}`}
+                          data-matched={app ? 'yes' : 'no'}
+                        >
+                          {app
+                            ? intl.formatMessage(i18n.neverTouchMatches, { app })
+                            : intl.formatMessage(i18n.neverTouchMatchesNothing)}
+                        </span>
+                      );
+                    })()}
                 </li>
               ))}
             </ul>

@@ -4556,6 +4556,12 @@
   "memfreeSettings.neverTouchDesc": {
     "defaultMessage": "任何清理都不會結束或停止的 App 與程序,在這台 Mac 上以及這台 Mac 在另一台上釋放記憶體時都生效。可填 bundle id、App 名稱或程序名稱,不分大小寫。內建項目永遠生效。"
   },
+  "memfreeSettings.neverTouchMatches": {
+    "defaultMessage": "符合 {app}"
+  },
+  "memfreeSettings.neverTouchMatchesNothing": {
+    "defaultMessage": "未符合任何執行中或已安裝的 App，因此目前不保護任何項目"
+  },
   "memfreeSettings.neverTouchNone": {
     "defaultMessage": "尚未新增任何項目"
   },

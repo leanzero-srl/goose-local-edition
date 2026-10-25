@@ -4556,6 +4556,12 @@
   "memfreeSettings.neverTouchDesc": {
     "defaultMessage": "어떤 정리도 종료하거나 중지하지 않는 앱과 프로세스입니다. 이 Mac에서, 그리고 이 Mac이 다른 Mac의 메모리를 해제할 때도 적용됩니다. 번들 ID, 앱 이름 또는 프로세스 이름이며 대소문자는 구분하지 않습니다. 기본 항목은 항상 적용됩니다."
   },
+  "memfreeSettings.neverTouchMatches": {
+    "defaultMessage": "{app}와(과) 일치"
+  },
+  "memfreeSettings.neverTouchMatchesNothing": {
+    "defaultMessage": "실행 중이거나 설치된 앱과 일치하지 않아 지금은 아무것도 보호하지 않습니다"
+  },
   "memfreeSettings.neverTouchNone": {
     "defaultMessage": "아직 추가한 항목이 없습니다"
   },

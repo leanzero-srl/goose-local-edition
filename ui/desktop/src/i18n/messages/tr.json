@@ -4556,6 +4556,12 @@
   "memfreeSettings.neverTouchDesc": {
     "defaultMessage": "Hiçbir temizliğin asla kapatmadığı veya durdurmadığı uygulamalar ve işlemler; bu Mac’te ve bu Mac başka bir Mac’te bellek boşaltırken. Bir bundle id, uygulama adı ya da işlem adı; büyük küçük harf fark etmez. Yerleşik olanlar her zaman geçerlidir."
   },
+  "memfreeSettings.neverTouchMatches": {
+    "defaultMessage": "{app} ile eşleşiyor"
+  },
+  "memfreeSettings.neverTouchMatchesNothing": {
+    "defaultMessage": "çalışan veya yüklü hiçbir uygulamayla eşleşmiyor, bu yüzden şu an hiçbir şeyi korumuyor"
+  },
   "memfreeSettings.neverTouchNone": {
     "defaultMessage": "Henüz bir şey eklenmedi"
   },

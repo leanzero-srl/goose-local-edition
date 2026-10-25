@@ -4556,6 +4556,12 @@
   "memfreeSettings.neverTouchDesc": {
     "defaultMessage": "ऐप और प्रोसेस जिन्हें कोई सफ़ाई कभी बंद या रोकती नहीं, इस Mac पर और जब यह Mac किसी दूसरे पर मेमोरी खाली करे तब भी। बंडल id, ऐप का नाम या प्रोसेस का नाम; बड़े-छोटे अक्षर से फ़र्क नहीं पड़ता। बिल्ट-इन वाले हमेशा लागू होते हैं।"
   },
+  "memfreeSettings.neverTouchMatches": {
+    "defaultMessage": "{app} से मेल खाता है"
+  },
+  "memfreeSettings.neverTouchMatchesNothing": {
+    "defaultMessage": "किसी चल रहे या इंस्टॉल किए गए ऐप से मेल नहीं खाता, इसलिए अभी यह कुछ भी सुरक्षित नहीं करता"
+  },
   "memfreeSettings.neverTouchNone": {
     "defaultMessage": "अभी कुछ नहीं जोड़ा"
   },

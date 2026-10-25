@@ -4556,6 +4556,12 @@
   "memfreeSettings.neverTouchDesc": {
     "defaultMessage": "任何清理都不会退出或停止的应用和进程,在这台 Mac 上以及这台 Mac 在另一台上释放内存时都生效。可填 bundle id、应用名或进程名,不区分大小写。内置项始终生效。"
   },
+  "memfreeSettings.neverTouchMatches": {
+    "defaultMessage": "匹配 {app}"
+  },
+  "memfreeSettings.neverTouchMatchesNothing": {
+    "defaultMessage": "未匹配任何正在运行或已安装的应用，因此目前不保护任何内容"
+  },
   "memfreeSettings.neverTouchNone": {
     "defaultMessage": "还没有添加任何项"
   },

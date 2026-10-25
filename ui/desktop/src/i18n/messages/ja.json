@@ -4556,6 +4556,12 @@
   "memfreeSettings.neverTouchDesc": {
     "defaultMessage": "どのクリーンアップでも終了・停止しないアプリとプロセス。この Mac でも、この Mac が別の Mac のメモリを解放するときにも適用されます。バンドル ID、アプリ名、プロセス名のいずれか。大文字小文字は区別しません。組み込みのものは常に適用されます。"
   },
+  "memfreeSettings.neverTouchMatches": {
+    "defaultMessage": "{app} に一致"
+  },
+  "memfreeSettings.neverTouchMatchesNothing": {
+    "defaultMessage": "実行中またはインストール済みのアプリに一致しないため、現在は何も保護していません"
+  },
   "memfreeSettings.neverTouchNone": {
     "defaultMessage": "まだ何も追加されていません"
   },

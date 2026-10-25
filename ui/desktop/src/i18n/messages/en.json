@@ -4718,6 +4718,12 @@
   "memfreeSettings.neverTouchDesc": {
     "defaultMessage": "Apps and processes no clean ever quits or stops, on this Mac and when this Mac frees memory on another. A bundle id, app name or process name; case does not matter. The built-in ones always apply."
   },
+  "memfreeSettings.neverTouchMatches": {
+    "defaultMessage": "matches {app}"
+  },
+  "memfreeSettings.neverTouchMatchesNothing": {
+    "defaultMessage": "matches no running or installed app, so it protects nothing now"
+  },
   "memfreeSettings.neverTouchNone": {
     "defaultMessage": "Nothing added yet"
   },

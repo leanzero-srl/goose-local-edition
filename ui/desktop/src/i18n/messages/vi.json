@@ -4556,6 +4556,12 @@
   "memfreeSettings.neverTouchDesc": {
     "defaultMessage": "Ứng dụng và tiến trình không bao giờ bị dọn dẹp thoát hoặc dừng, trên máy Mac này và khi máy Mac này giải phóng bộ nhớ trên máy khác. Bundle id, tên ứng dụng hoặc tên tiến trình; không phân biệt hoa thường. Các mục có sẵn luôn được áp dụng."
   },
+  "memfreeSettings.neverTouchMatches": {
+    "defaultMessage": "khớp với {app}"
+  },
+  "memfreeSettings.neverTouchMatchesNothing": {
+    "defaultMessage": "không khớp với ứng dụng nào đang chạy hoặc đã cài, nên hiện không bảo vệ gì"
+  },
   "memfreeSettings.neverTouchNone": {
     "defaultMessage": "Chưa thêm gì"
   },
