@@ -2681,6 +2681,18 @@
   "freeMemory.fitsWithAppsOnly": {
     "defaultMessage": "Model ini muat setelah menutup {apps}, yang membebaskan <b>{gb} GB</b>."
   },
+  "freeMemory.forceStop": {
+    "defaultMessage": "Paksa berhenti"
+  },
+  "freeMemory.forceStopBody": {
+    "defaultMessage": "{app} tidak keluar saat diminta, mungkin karena ada pekerjaan yang belum disimpan. Paksa berhenti mengakhirinya di {mac} tanpa menyimpan. Pekerjaan yang belum disimpan di {app} akan hilang."
+  },
+  "freeMemory.forceStopConfirm": {
+    "defaultMessage": "Paksa hentikan {app}"
+  },
+  "freeMemory.forceStopTitle": {
+    "defaultMessage": "Paksa hentikan {app}?"
+  },
   "freeMemory.freeFailed": {
     "defaultMessage": "Tidak dapat membebaskan memori: {reason}"
   },
@@ -2693,11 +2705,53 @@
   "freeMemory.keep": {
     "defaultMessage": "Biarkan terbuka"
   },
+  "freeMemory.keepRunning": {
+    "defaultMessage": "Biarkan berjalan"
+  },
+  "freeMemory.leftAlone": {
+    "defaultMessage": "Dibiarkan"
+  },
   "freeMemory.loading": {
     "defaultMessage": "Mengukur apa yang memakai memori…"
   },
+  "freeMemory.neverTouchReason": {
+    "defaultMessage": "ada di daftar jangan disentuh ({entry})"
+  },
   "freeMemory.nothingOwn": {
     "defaultMessage": "goose tidak memakai memori yang bisa dibebaskannya"
+  },
+  "freeMemory.nuclearBack": {
+    "defaultMessage": "Kembali"
+  },
+  "freeMemory.nuclearConfirmBody": {
+    "defaultMessage": "goose meminta setiap aplikasi yang dicentang untuk keluar dan membongkar setiap server model yang dicentang. Aplikasi diminta untuk keluar. Aplikasi yang tidak keluar dibiarkan berjalan dan dilaporkan, tidak dihentikan. Item yang dilindungi tidak pernah disentuh."
+  },
+  "freeMemory.nuclearConfirmKeep": {
+    "defaultMessage": "Simpan semuanya"
+  },
+  "freeMemory.nuclearConfirmTitle": {
+    "defaultMessage": "Bebaskan {gb} GB di {mac}?"
+  },
+  "freeMemory.nuclearFree": {
+    "defaultMessage": "Bebaskan {gb} GB"
+  },
+  "freeMemory.nuclearGooseOwn": {
+    "defaultMessage": "Memori milik goose sendiri"
+  },
+  "freeMemory.nuclearIntro": {
+    "defaultMessage": "Semua yang tidak dipakai siapa pun sudah dicentang. Hapus centang yang ingin kamu simpan. Yang dilindungi tidak pernah disentuh."
+  },
+  "freeMemory.nuclearOpen": {
+    "defaultMessage": "Bebaskan semua kecuali yang dilindungi"
+  },
+  "freeMemory.nuclearProtectedHead": {
+    "defaultMessage": "Tidak pernah disentuh"
+  },
+  "freeMemory.nuclearTotal": {
+    "defaultMessage": "Dicentang: <b>{gb} GB</b>"
+  },
+  "freeMemory.protectedChip": {
+    "defaultMessage": "Dilindungi"
   },
   "freeMemory.quit": {
     "defaultMessage": "Keluar"
@@ -2719,6 +2773,24 @@
   },
   "freeMemory.title": {
     "defaultMessage": "Bebaskan memori di {mac}"
+  },
+  "freeMemory.unload": {
+    "defaultMessage": "Bongkar"
+  },
+  "freeMemory.unloadBody": {
+    "defaultMessage": "goose membongkar model yang dipegang {server} di {mac} (mesin MLX diminta berhenti). Yang memakainya harus memuat ulang model itu."
+  },
+  "freeMemory.unloadConfirm": {
+    "defaultMessage": "Bongkar {server}"
+  },
+  "freeMemory.unloadInUse": {
+    "defaultMessage": "Sedang dipakai, ini menghentikan pekerjaan mereka:"
+  },
+  "freeMemory.unloadTitle": {
+    "defaultMessage": "Bongkar {server}?"
+  },
+  "freeMemory.usedBy": {
+    "defaultMessage": "Dipakai oleh: {who}"
   },
   "freeMemoryEntry.open": {
     "defaultMessage": "Bebaskan memori"
@@ -4468,6 +4540,30 @@
   },
   "memfreeSettings.minMbDesc": {
     "defaultMessage": "Aplikasi yang memakai memori kurang dari ini tidak dicantumkan. Default {mb} MB."
+  },
+  "memfreeSettings.neverTouch": {
+    "defaultMessage": "Jangan pernah disentuh"
+  },
+  "memfreeSettings.neverTouchAdd": {
+    "defaultMessage": "Tambah"
+  },
+  "memfreeSettings.neverTouchAdded": {
+    "defaultMessage": "Ditambahkan olehmu"
+  },
+  "memfreeSettings.neverTouchBuiltIn": {
+    "defaultMessage": "Bawaan"
+  },
+  "memfreeSettings.neverTouchDesc": {
+    "defaultMessage": "Aplikasi dan proses yang tidak pernah ditutup atau dihentikan oleh pembersihan apa pun, di Mac ini dan saat Mac ini membebaskan memori di Mac lain. Bundle id, nama aplikasi, atau nama proses; huruf besar kecil tidak berpengaruh. Yang bawaan selalu berlaku."
+  },
+  "memfreeSettings.neverTouchNone": {
+    "defaultMessage": "Belum ada yang ditambahkan"
+  },
+  "memfreeSettings.neverTouchPlaceholder": {
+    "defaultMessage": "com.example.App atau nama aplikasi"
+  },
+  "memfreeSettings.neverTouchRemove": {
+    "defaultMessage": "Hapus {name}"
   },
   "memfreeSettings.readFailed": {
     "defaultMessage": "Tidak dapat membaca pengaturan ini: {reason}"

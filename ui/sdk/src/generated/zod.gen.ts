@@ -3583,7 +3583,8 @@ export const zMlxEngineMemoryHoldersRequest_unstable = z.object({
     fitModelId: z.union([
         z.string(),
         z.null()
-    ]).optional()
+    ]).optional(),
+    neverTouch: z.array(z.string()).optional().default([])
 });
 
 /**
@@ -3612,7 +3613,17 @@ export const zMlxMemoryGroupDto = z.object({
     why: z.union([
         z.string(),
         z.null()
-    ]).optional()
+    ]).optional(),
+    protectedWhy: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    usedBy: z.array(z.string()).optional().default([]),
+    launchdLabel: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    nuclearDefault: z.boolean().optional().default(false)
 });
 
 /**
@@ -3661,6 +3672,7 @@ export const zMlxEngineMemoryHoldersResponse_unstable = z.object({
     ]).optional(),
     groups: z.array(zMlxMemoryGroupDto),
     gooseOwnedBytes: z.number().int().gte(0),
+    serversBytes: z.number().int().gte(0).optional().default(0),
     appsBytes: z.number().int().gte(0),
     shortBytes: z.union([
         z.number().int().gte(0),
@@ -3676,7 +3688,14 @@ export const zMlxEngineMemoryHoldersResponse_unstable = z.object({
 });
 
 /**
- * Free memory: goose's own holders (`gooseOwned`) and/or ask named apps to quit (graceful only).
+ * Free memory. `gooseOwned` = the soft clean (this goose's own idle engine + proven left-over
+ * goose servers, nothing anyone else uses). Everything else is named item by item and re-checked
+ * against a fresh census, the protected set and the never-touch list: `unloadServers` (group ids
+ * of model servers / other MLX engines), `quitApps` (bundle ids, asked to quit; one that does
+ * not quit is left running and reported), `forceStopApps` (bundle ids the person chose to force
+ * stop: one SIGTERM per pid, own uid, unprotected, never SIGKILL). Each item is re-checked right
+ * before it runs; a server that gained a user not in `seenUsedBy` is refused. Over the Link,
+ * everything but `gooseOwned` needs `GOOSE_LINK_ALLOW_REMOTE_APP_QUIT` on the answering Mac.
  */
 export const zMlxEngineMemoryFreeRequest_unstable = z.object({
     nodeId: z.union([
@@ -3688,7 +3707,12 @@ export const zMlxEngineMemoryFreeRequest_unstable = z.object({
     fitModelId: z.union([
         z.string(),
         z.null()
-    ]).optional()
+    ]).optional(),
+    unloadServers: z.array(z.string()).optional().default([]),
+    nuclear: z.boolean().optional().default(false),
+    neverTouch: z.array(z.string()).optional().default([]),
+    seenUsedBy: z.record(z.array(z.string())).optional().default({}),
+    forceStopApps: z.array(z.string()).optional().default([])
 });
 
 export const zMlxMemoryFreeItemDto = z.object({
@@ -3699,7 +3723,8 @@ export const zMlxMemoryFreeItemDto = z.object({
         z.number().int().gte(0),
         z.null()
     ]).optional(),
-    message: z.string()
+    message: z.string(),
+    forceStoppable: z.boolean().optional().default(false)
 });
 
 export const zMlxMemoryBudgetDto = z.object({

@@ -2822,6 +2822,18 @@
   "freeMemory.fitsWithAppsOnly": {
     "defaultMessage": "This model fits after quitting {apps}, which frees <b>{gb} GB</b>."
   },
+  "freeMemory.forceStop": {
+    "defaultMessage": "Force stop"
+  },
+  "freeMemory.forceStopBody": {
+    "defaultMessage": "{app} did not quit when asked, maybe because it has unsaved work. Force stop ends it on {mac} without saving. Unsaved work in {app} is lost."
+  },
+  "freeMemory.forceStopConfirm": {
+    "defaultMessage": "Force stop {app}"
+  },
+  "freeMemory.forceStopTitle": {
+    "defaultMessage": "Force stop {app}?"
+  },
   "freeMemory.freeFailed": {
     "defaultMessage": "Could not free memory: {reason}"
   },
@@ -2834,11 +2846,53 @@
   "freeMemory.keep": {
     "defaultMessage": "Keep it open"
   },
+  "freeMemory.keepRunning": {
+    "defaultMessage": "Keep it running"
+  },
+  "freeMemory.leftAlone": {
+    "defaultMessage": "Left alone"
+  },
   "freeMemory.loading": {
     "defaultMessage": "Measuring what holds memory…"
   },
+  "freeMemory.neverTouchReason": {
+    "defaultMessage": "on the never-touch list ({entry})"
+  },
   "freeMemory.nothingOwn": {
     "defaultMessage": "goose holds no memory it can free"
+  },
+  "freeMemory.nuclearBack": {
+    "defaultMessage": "Back"
+  },
+  "freeMemory.nuclearConfirmBody": {
+    "defaultMessage": "goose asks each ticked app to quit and unloads each ticked model server. Apps are asked to quit. An app that does not quit is left running and reported, not stopped. Protected items are never touched."
+  },
+  "freeMemory.nuclearConfirmKeep": {
+    "defaultMessage": "Keep everything"
+  },
+  "freeMemory.nuclearConfirmTitle": {
+    "defaultMessage": "Free {gb} GB on {mac}?"
+  },
+  "freeMemory.nuclearFree": {
+    "defaultMessage": "Free {gb} GB"
+  },
+  "freeMemory.nuclearGooseOwn": {
+    "defaultMessage": "goose’s own memory"
+  },
+  "freeMemory.nuclearIntro": {
+    "defaultMessage": "Everything nobody is using is ticked. Untick what you want to keep. Protected items are never touched."
+  },
+  "freeMemory.nuclearOpen": {
+    "defaultMessage": "Free everything except protected"
+  },
+  "freeMemory.nuclearProtectedHead": {
+    "defaultMessage": "Never touched"
+  },
+  "freeMemory.nuclearTotal": {
+    "defaultMessage": "Ticked: <b>{gb} GB</b>"
+  },
+  "freeMemory.protectedChip": {
+    "defaultMessage": "Protected"
   },
   "freeMemory.quit": {
     "defaultMessage": "Quit"
@@ -2860,6 +2914,24 @@
   },
   "freeMemory.title": {
     "defaultMessage": "Free up memory on {mac}"
+  },
+  "freeMemory.unload": {
+    "defaultMessage": "Unload"
+  },
+  "freeMemory.unloadBody": {
+    "defaultMessage": "goose unloads the models {server} holds on {mac} (an MLX engine is asked to stop). Whatever uses it has to load them again."
+  },
+  "freeMemory.unloadConfirm": {
+    "defaultMessage": "Unload {server}"
+  },
+  "freeMemory.unloadInUse": {
+    "defaultMessage": "In use right now, this stops their work:"
+  },
+  "freeMemory.unloadTitle": {
+    "defaultMessage": "Unload {server}?"
+  },
+  "freeMemory.usedBy": {
+    "defaultMessage": "In use: {who}"
   },
   "freeMemoryEntry.open": {
     "defaultMessage": "Free up memory"
@@ -4630,6 +4702,30 @@
   },
   "memfreeSettings.minMbDesc": {
     "defaultMessage": "Apps using less memory than this are left out of the list. Default {mb} MB."
+  },
+  "memfreeSettings.neverTouch": {
+    "defaultMessage": "Never touch"
+  },
+  "memfreeSettings.neverTouchAdd": {
+    "defaultMessage": "Add"
+  },
+  "memfreeSettings.neverTouchAdded": {
+    "defaultMessage": "Added by you"
+  },
+  "memfreeSettings.neverTouchBuiltIn": {
+    "defaultMessage": "Built in"
+  },
+  "memfreeSettings.neverTouchDesc": {
+    "defaultMessage": "Apps and processes no clean ever quits or stops, on this Mac and when this Mac frees memory on another. A bundle id, app name or process name; case does not matter. The built-in ones always apply."
+  },
+  "memfreeSettings.neverTouchNone": {
+    "defaultMessage": "Nothing added yet"
+  },
+  "memfreeSettings.neverTouchPlaceholder": {
+    "defaultMessage": "com.example.App or an app name"
+  },
+  "memfreeSettings.neverTouchRemove": {
+    "defaultMessage": "Remove {name}"
   },
   "memfreeSettings.readFailed": {
     "defaultMessage": "Could not read these settings: {reason}"

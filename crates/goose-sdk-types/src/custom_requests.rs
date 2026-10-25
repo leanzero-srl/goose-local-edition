@@ -2735,6 +2735,20 @@ pub struct MlxMemoryGroupDto {
     /// Why it is protected or not reclaimable now (busy engine, system process, …).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub why: Option<String>,
+    /// Set when nothing may free it (a launchd job, an MCP server, a terminal session, a
+    /// heavy-run job, …): never quittable, never unloaded, never ticked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protected_why: Option<String>,
+    /// Who uses it: TCP clients of a server's port, the process that started it, its launchd job.
+    #[serde(default)]
+    pub used_by: Vec<String>,
+    /// The launchd job that owns any of its processes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launchd_label: Option<String>,
+    /// Ticked by default in "free everything except protected" (never for protected or
+    /// never-touch groups).
+    #[serde(default)]
+    pub nuclear_default: bool,
 }
 
 /// The honest answer to a short fit, from live measurement.
@@ -2745,7 +2759,9 @@ pub struct MlxMemoryVerdictDto {
     pub kind: String,
     /// cannotFit only: `shortBytes − gooseOwnedBytes − appsBytes`; 0 otherwise.
     pub remaining_bytes: u64,
-    /// fitsWithApps: the fewest apps (largest first) that close the gap; cannotFit: every quittable app.
+    /// The confirmable holders that close the gap: app bundle ids and model-server / other-engine
+    /// group ids (look each up by `bundleId` OR `id`). fitsWithApps: the fewest, largest first;
+    /// cannotFit: every one. Soft (goose-owned) reclaim never needs these.
     pub apps_to_quit: Vec<String>,
 }
 
@@ -2785,6 +2801,10 @@ pub struct MlxEngineMemoryHoldersRequest {
     pub node_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fit_model_id: Option<String>,
+    /// The caller's never-touch list; the answering Mac unions it with its own
+    /// (`GOOSE_MEMFREE_NEVER_TOUCH` + the defaults) for `nuclearDefault`.
+    #[serde(default)]
+    pub never_touch: Vec<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
@@ -2796,9 +2816,14 @@ pub struct MlxEngineMemoryHoldersResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fit: Option<MlxMountFitDto>,
     pub groups: Vec<MlxMemoryGroupDto>,
-    /// What goose can reclaim itself that the fit does NOT already credit (the own engine is
-    /// already counted as available by the fit, so it is listed as a group but not summed here).
+    /// What the soft clean (`gooseOwned`) reclaims that the fit does NOT already credit: proven
+    /// left-over goose servers, plus this goose's own idle engine when there is no fit (the fit
+    /// already counts it as available). Never another engine, model server or app.
     pub goose_owned_bytes: u64,
+    /// What unloading the unprotected model servers (loaded models) and stopping the other MLX
+    /// engines would free: each needs the person's confirmation (`unloadServers`).
+    #[serde(default)]
+    pub servers_bytes: u64,
     /// Quittable user apps at or above `GOOSE_MEMFREE_SHOW_APPS_MIN_MB`.
     pub apps_bytes: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2811,7 +2836,14 @@ pub struct MlxEngineMemoryHoldersResponse {
     pub enabled: bool,
 }
 
-/// Free memory: goose's own holders (`gooseOwned`) and/or ask named apps to quit (graceful only).
+/// Free memory. `gooseOwned` = the soft clean (this goose's own idle engine + proven left-over
+/// goose servers, nothing anyone else uses). Everything else is named item by item and re-checked
+/// against a fresh census, the protected set and the never-touch list: `unloadServers` (group ids
+/// of model servers / other MLX engines), `quitApps` (bundle ids, asked to quit; one that does
+/// not quit is left running and reported), `forceStopApps` (bundle ids the person chose to force
+/// stop: one SIGTERM per pid, own uid, unprotected, never SIGKILL). Each item is re-checked right
+/// before it runs; a server that gained a user not in `seenUsedBy` is refused. Over the Link,
+/// everything but `gooseOwned` needs `GOOSE_LINK_ALLOW_REMOTE_APP_QUIT` on the answering Mac.
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
 #[request(
     method = "_goose/unstable/mlxEngine/memoryFree",
@@ -2827,6 +2859,22 @@ pub struct MlxEngineMemoryFreeRequest {
     pub quit_apps: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fit_model_id: Option<String>,
+    /// Group ids (`ai:…`, `mlx:<pid>`) the person ticked to unload/stop.
+    #[serde(default)]
+    pub unload_servers: Vec<String>,
+    /// "Free everything except protected". Apps are only asked to quit; nothing is forced.
+    #[serde(default)]
+    pub nuclear: bool,
+    /// The caller's never-touch list, unioned with the executing Mac's own.
+    #[serde(default)]
+    pub never_touch: Vec<String>,
+    /// Per ticked server group id: the `usedBy` lines the person saw. A server with a user
+    /// not in this list when it is about to be freed is refused.
+    #[serde(default)]
+    pub seen_used_by: HashMap<String, Vec<String>>,
+    /// Bundle ids the person explicitly chose to force stop (SIGTERM, never SIGKILL).
+    #[serde(default)]
+    pub force_stop_apps: Vec<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -2839,6 +2887,9 @@ pub struct MlxMemoryFreeItemDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub freed_bytes: Option<u64>,
     pub message: String,
+    /// The app did not quit and may still be force stopped (own uid, unprotected).
+    #[serde(default)]
+    pub force_stoppable: bool,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]

@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DEFAULT_NEVER_TOUCH,
   GIB,
   afterLine,
+  effectiveNeverTouch,
+  forceStopBundle,
+  neverTouchExtrasFrom,
+  neverTouchHit,
+  nuclearRequest,
+  nuclearRows,
+  unloadOffer,
+  type MemfreeGroup,
   groupByCategory,
   memfreeEnabledFrom,
   minMbFrom,
@@ -167,5 +176,133 @@ describe('tunable readers', () => {
     expect(minMbFrom('abc')).toBe(200);
     expect(minMbFrom(-5)).toBe(200);
     expect(minMbFrom('350')).toBe(350);
+  });
+});
+
+const grp = (id: string, category: string, extra: Partial<MemfreeGroup> = {}): MemfreeGroup => ({
+  id,
+  label: id,
+  category,
+  bytes: gb(1),
+  pids: [{ pid: 1, startedAt: 1 }],
+  quittable: category === 'userApp',
+  reclaimableByGoose: category !== 'userApp' && category !== 'job' && category !== 'system',
+  bundleId: category === 'userApp' ? id.replace(/^app:/, '') : null,
+  ...extra,
+});
+
+describe('never-touch list', () => {
+  it('reads a list, a JSON string or a comma list; drops blanks, dupes and defaults', () => {
+    expect(neverTouchExtrasFrom(['Foo', ' foo ', '', 'us.zoom.xos', 'Bar'])).toEqual([
+      'Foo',
+      'Bar',
+    ]);
+    expect(neverTouchExtrasFrom('["a","b"]')).toEqual(['a', 'b']);
+    expect(neverTouchExtrasFrom('a, b ,')).toEqual(['a', 'b']);
+    expect(neverTouchExtrasFrom(null)).toEqual([]);
+    expect(neverTouchExtrasFrom('[broken')).toEqual([]);
+  });
+
+  it('effective = defaults first, then additions', () => {
+    expect(effectiveNeverTouch(['Foo'])).toEqual([...DEFAULT_NEVER_TOUCH, 'Foo']);
+  });
+
+  it('matches bundle id, label or the name in the id, case-insensitively', () => {
+    const teams = grp('app:com.microsoft.teams2', 'userApp', { label: 'Microsoft Teams' });
+    expect(neverTouchHit(teams, DEFAULT_NEVER_TOUCH)).toBe('com.microsoft.teams2');
+    expect(neverTouchHit(grp('ai:/Applications/LM Studio.app', 'aiServer'), ['lm studio'])).toBe(
+      'lm studio'
+    );
+    expect(neverTouchHit(grp('app:com.apple.TextEdit', 'userApp'), DEFAULT_NEVER_TOUCH)).toBeNull();
+  });
+
+  it('C7: a natural name or a bundle prefix matches by contains, like the engine', () => {
+    const teams = grp('app:com.microsoft.teams2', 'userApp', { label: 'Microsoft Teams' });
+    expect(neverTouchHit(teams, ['Teams'])).toBe('Teams');
+    expect(neverTouchHit(teams, ['com.microsoft'])).toBe('com.microsoft');
+    expect(neverTouchHit(teams, ['  ', 'Slack'])).toBeNull();
+  });
+});
+
+describe('unload offer', () => {
+  it('only a server goose can free now, never a protected one; disabled when remote is off', () => {
+    expect(unloadOffer(grp('mlx:97100', 'gooseEngine'), true)).toEqual({
+      show: true,
+      disabled: false,
+    });
+    expect(unloadOffer(grp('ai:lms', 'aiServer'), false)).toEqual({ show: true, disabled: true });
+    expect(unloadOffer(grp('ai:lms', 'aiServer', { protectedWhy: 'launchd' }), true).show).toBe(
+      false
+    );
+    expect(unloadOffer(grp('gooseEngine', 'gooseEngine'), true).show).toBe(false);
+    expect(unloadOffer(grp('app:x', 'userApp'), true).show).toBe(false);
+  });
+});
+
+describe('nuclear rows + request', () => {
+  const groups = [
+    grp('mlx:97100', 'gooseEngine', { usedBy: ['sshd-session'], nuclearDefault: false }),
+    grp('ai:lms', 'aiServer', { nuclearDefault: true }),
+    grp('job:mcp', 'job', { protectedWhy: 'MCP server' }),
+    grp('app:com.microsoft.teams2', 'userApp', { nuclearDefault: true }),
+    grp('app:com.apple.TextEdit', 'userApp', { nuclearDefault: true }),
+    grp('job:rclone', 'job', { why: 'a job' }),
+    grp('gooseEngine', 'gooseEngine'),
+  ];
+  const rows = nuclearRows(groups, DEFAULT_NEVER_TOUCH);
+  const kind = (id: string) => rows.find((r) => r.group.id === id)?.kind;
+
+  it('protected and never-touch are never offered; goose’s own is its own row', () => {
+    expect(kind('job:mcp')).toBe('protected');
+    expect(kind('app:com.microsoft.teams2')).toBe('protected');
+    expect(kind('job:rclone')).toBe('left');
+    expect(kind('gooseEngine')).toBeUndefined();
+    const offered = rows.filter((r) => r.kind === 'offer');
+    expect(offered.map((r) => [r.group.id, r.kind === 'offer' && r.ticked])).toEqual([
+      ['mlx:97100', false],
+      ['ai:lms', false],
+      ['app:com.apple.TextEdit', true],
+    ]);
+  });
+
+  it('C1/C2: a server row is never ticked, even when an older engine says nuclearDefault', () => {
+    const server = rows.find((r) => r.group.id === 'ai:lms');
+    expect(server?.kind === 'offer' && server.ticked).toBe(false);
+  });
+
+  it('sends only what is ticked; a ticked protected id is dropped', () => {
+    const ticked = new Set([
+      'ai:lms',
+      'app:com.apple.TextEdit',
+      'job:mcp',
+      'app:com.microsoft.teams2',
+    ]);
+    expect(nuclearRequest(rows, ticked, false, ['x'])).toEqual({
+      gooseOwned: false,
+      quitApps: ['com.apple.TextEdit'],
+      unloadServers: ['ai:lms'],
+      seenUsedBy: { 'ai:lms': [] },
+      forceStopApps: [],
+      nuclear: true,
+      neverTouch: ['x'],
+    });
+    const mlx = nuclearRequest(rows, new Set(['mlx:97100']), false, []);
+    expect(mlx.seenUsedBy).toEqual({ 'mlx:97100': ['sshd-session'] });
+    expect(nuclearRequest(rows, new Set(), true, []).quitApps).toEqual([]);
+  });
+});
+
+describe('force stop offer (C4)', () => {
+  const item = (extra: object) => ({
+    id: 'app:com.apple.TextEdit',
+    label: 'TextEdit',
+    ok: false,
+    message: 'm',
+    ...extra,
+  });
+  it('only an app item the engine marked forceStoppable', () => {
+    expect(forceStopBundle(item({ forceStoppable: true }))).toBe('com.apple.TextEdit');
+    expect(forceStopBundle(item({}))).toBeNull();
+    expect(forceStopBundle(item({ forceStoppable: true, id: 'ai:lms' }))).toBeNull();
   });
 });

@@ -2681,6 +2681,18 @@
   "freeMemory.fitsWithAppsOnly": {
     "defaultMessage": "Bu model {apps} kapatıldıktan sonra sığar, bu <b>{gb} GB</b> boşaltır."
   },
+  "freeMemory.forceStop": {
+    "defaultMessage": "Zorla durdur"
+  },
+  "freeMemory.forceStopBody": {
+    "defaultMessage": "{app} istendiğinde kapanmadı, belki kaydedilmemiş işi vardır. Zorla durdurma onu {mac} üzerinde kaydetmeden sonlandırır. {app} içindeki kaydedilmemiş iş kaybolur."
+  },
+  "freeMemory.forceStopConfirm": {
+    "defaultMessage": "{app} uygulamasını zorla durdur"
+  },
+  "freeMemory.forceStopTitle": {
+    "defaultMessage": "{app} zorla durdurulsun mu?"
+  },
   "freeMemory.freeFailed": {
     "defaultMessage": "Bellek boşaltılamadı: {reason}"
   },
@@ -2693,11 +2705,53 @@
   "freeMemory.keep": {
     "defaultMessage": "Açık kalsın"
   },
+  "freeMemory.keepRunning": {
+    "defaultMessage": "Çalışmaya devam etsin"
+  },
+  "freeMemory.leftAlone": {
+    "defaultMessage": "Dokunulmuyor"
+  },
   "freeMemory.loading": {
     "defaultMessage": "Belleği neyin kullandığı ölçülüyor…"
   },
+  "freeMemory.neverTouchReason": {
+    "defaultMessage": "asla dokunma listesinde ({entry})"
+  },
   "freeMemory.nothingOwn": {
     "defaultMessage": "goose’un boşaltabileceği bir belleği yok"
+  },
+  "freeMemory.nuclearBack": {
+    "defaultMessage": "Geri"
+  },
+  "freeMemory.nuclearConfirmBody": {
+    "defaultMessage": "goose işaretlenen her uygulamadan kapanmasını ister ve işaretlenen her model sunucusunu boşaltır. Uygulamalardan kapanmaları istenir. Kapanmayan bir uygulama çalışır halde bırakılır ve raporlanır, durdurulmaz. Korunan öğelere asla dokunulmaz."
+  },
+  "freeMemory.nuclearConfirmKeep": {
+    "defaultMessage": "Hepsini tut"
+  },
+  "freeMemory.nuclearConfirmTitle": {
+    "defaultMessage": "{mac} üzerinde {gb} GB boşaltılsın mı?"
+  },
+  "freeMemory.nuclearFree": {
+    "defaultMessage": "{gb} GB boşalt"
+  },
+  "freeMemory.nuclearGooseOwn": {
+    "defaultMessage": "goose’un kendi belleği"
+  },
+  "freeMemory.nuclearIntro": {
+    "defaultMessage": "Kimsenin kullanmadığı her şey işaretli. Tutmak istediklerinin işaretini kaldır. Korumalı olanlara asla dokunulmaz."
+  },
+  "freeMemory.nuclearOpen": {
+    "defaultMessage": "Korumalılar dışında her şeyi boşalt"
+  },
+  "freeMemory.nuclearProtectedHead": {
+    "defaultMessage": "Asla dokunulmaz"
+  },
+  "freeMemory.nuclearTotal": {
+    "defaultMessage": "İşaretli: <b>{gb} GB</b>"
+  },
+  "freeMemory.protectedChip": {
+    "defaultMessage": "Korumalı"
   },
   "freeMemory.quit": {
     "defaultMessage": "Çık"
@@ -2719,6 +2773,24 @@
   },
   "freeMemory.title": {
     "defaultMessage": "{mac} üzerinde bellek boşalt"
+  },
+  "freeMemory.unload": {
+    "defaultMessage": "Boşalt"
+  },
+  "freeMemory.unloadBody": {
+    "defaultMessage": "goose, {server} sunucusunun {mac} üzerinde tuttuğu modelleri boşaltır (bir MLX motorundan durması istenir). Onu kullanan, modelleri yeniden yüklemek zorunda kalır."
+  },
+  "freeMemory.unloadConfirm": {
+    "defaultMessage": "{server} boşalt"
+  },
+  "freeMemory.unloadInUse": {
+    "defaultMessage": "Şu anda kullanımda, bu onların işini durdurur:"
+  },
+  "freeMemory.unloadTitle": {
+    "defaultMessage": "{server} boşaltılsın mı?"
+  },
+  "freeMemory.usedBy": {
+    "defaultMessage": "Kullanan: {who}"
   },
   "freeMemoryEntry.open": {
     "defaultMessage": "Bellek boşalt"
@@ -4468,6 +4540,30 @@
   },
   "memfreeSettings.minMbDesc": {
     "defaultMessage": "Bundan daha az bellek kullanan uygulamalar listede yer almaz. Varsayılan {mb} MB."
+  },
+  "memfreeSettings.neverTouch": {
+    "defaultMessage": "Asla dokunma"
+  },
+  "memfreeSettings.neverTouchAdd": {
+    "defaultMessage": "Ekle"
+  },
+  "memfreeSettings.neverTouchAdded": {
+    "defaultMessage": "Senin eklediklerin"
+  },
+  "memfreeSettings.neverTouchBuiltIn": {
+    "defaultMessage": "Yerleşik"
+  },
+  "memfreeSettings.neverTouchDesc": {
+    "defaultMessage": "Hiçbir temizliğin asla kapatmadığı veya durdurmadığı uygulamalar ve işlemler; bu Mac’te ve bu Mac başka bir Mac’te bellek boşaltırken. Bir bundle id, uygulama adı ya da işlem adı; büyük küçük harf fark etmez. Yerleşik olanlar her zaman geçerlidir."
+  },
+  "memfreeSettings.neverTouchNone": {
+    "defaultMessage": "Henüz bir şey eklenmedi"
+  },
+  "memfreeSettings.neverTouchPlaceholder": {
+    "defaultMessage": "com.example.App ya da bir uygulama adı"
+  },
+  "memfreeSettings.neverTouchRemove": {
+    "defaultMessage": "{name} kaldır"
   },
   "memfreeSettings.readFailed": {
     "defaultMessage": "Bu ayarlar okunamadı: {reason}"

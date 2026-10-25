@@ -2681,6 +2681,18 @@
   "freeMemory.fitsWithAppsOnly": {
     "defaultMessage": "Questo modello ci sta dopo la chiusura di {apps}, che libera <b>{gb} GB</b>."
   },
+  "freeMemory.forceStop": {
+    "defaultMessage": "Forza chiusura"
+  },
+  "freeMemory.forceStopBody": {
+    "defaultMessage": "{app} non si è chiusa quando richiesto, forse perché ha lavoro non salvato. Forza chiusura la termina su {mac} senza salvare. Il lavoro non salvato in {app} va perso."
+  },
+  "freeMemory.forceStopConfirm": {
+    "defaultMessage": "Forza chiusura di {app}"
+  },
+  "freeMemory.forceStopTitle": {
+    "defaultMessage": "Forzare la chiusura di {app}?"
+  },
   "freeMemory.freeFailed": {
     "defaultMessage": "Impossibile liberare memoria: {reason}"
   },
@@ -2693,11 +2705,53 @@
   "freeMemory.keep": {
     "defaultMessage": "Lasciala aperta"
   },
+  "freeMemory.keepRunning": {
+    "defaultMessage": "Lascialo in esecuzione"
+  },
+  "freeMemory.leftAlone": {
+    "defaultMessage": "Lasciato stare"
+  },
   "freeMemory.loading": {
     "defaultMessage": "Misurazione di cosa occupa la memoria…"
   },
+  "freeMemory.neverTouchReason": {
+    "defaultMessage": "nella lista da non toccare ({entry})"
+  },
   "freeMemory.nothingOwn": {
     "defaultMessage": "goose non occupa memoria che possa liberare"
+  },
+  "freeMemory.nuclearBack": {
+    "defaultMessage": "Indietro"
+  },
+  "freeMemory.nuclearConfirmBody": {
+    "defaultMessage": "goose chiede a ogni app selezionata di chiudersi e scarica ogni server di modelli selezionato. Alle app viene chiesto di chiudersi. Un’app che non si chiude resta in esecuzione e viene segnalata, non fermata. Gli elementi protetti non vengono mai toccati."
+  },
+  "freeMemory.nuclearConfirmKeep": {
+    "defaultMessage": "Tieni tutto"
+  },
+  "freeMemory.nuclearConfirmTitle": {
+    "defaultMessage": "Liberare {gb} GB su {mac}?"
+  },
+  "freeMemory.nuclearFree": {
+    "defaultMessage": "Libera {gb} GB"
+  },
+  "freeMemory.nuclearGooseOwn": {
+    "defaultMessage": "La memoria di goose"
+  },
+  "freeMemory.nuclearIntro": {
+    "defaultMessage": "Tutto ciò che nessuno usa è spuntato. Togli la spunta a ciò che vuoi tenere. Il protetto non viene mai toccato."
+  },
+  "freeMemory.nuclearOpen": {
+    "defaultMessage": "Libera tutto tranne il protetto"
+  },
+  "freeMemory.nuclearProtectedHead": {
+    "defaultMessage": "Mai toccato"
+  },
+  "freeMemory.nuclearTotal": {
+    "defaultMessage": "Spuntato: <b>{gb} GB</b>"
+  },
+  "freeMemory.protectedChip": {
+    "defaultMessage": "Protetto"
   },
   "freeMemory.quit": {
     "defaultMessage": "Esci"
@@ -2719,6 +2773,24 @@
   },
   "freeMemory.title": {
     "defaultMessage": "Libera memoria su {mac}"
+  },
+  "freeMemory.unload": {
+    "defaultMessage": "Scarica"
+  },
+  "freeMemory.unloadBody": {
+    "defaultMessage": "goose scarica i modelli che {server} tiene su {mac} (a un motore MLX viene chiesto di fermarsi). Chi lo usa dovrà ricaricarli."
+  },
+  "freeMemory.unloadConfirm": {
+    "defaultMessage": "Scarica {server}"
+  },
+  "freeMemory.unloadInUse": {
+    "defaultMessage": "In uso adesso, questo ferma il loro lavoro:"
+  },
+  "freeMemory.unloadTitle": {
+    "defaultMessage": "Scaricare {server}?"
+  },
+  "freeMemory.usedBy": {
+    "defaultMessage": "In uso: {who}"
   },
   "freeMemoryEntry.open": {
     "defaultMessage": "Libera memoria"
@@ -4468,6 +4540,30 @@
   },
   "memfreeSettings.minMbDesc": {
     "defaultMessage": "Le app che usano meno memoria di questo valore non vengono elencate. Predefinito {mb} MB."
+  },
+  "memfreeSettings.neverTouch": {
+    "defaultMessage": "Non toccare mai"
+  },
+  "memfreeSettings.neverTouchAdd": {
+    "defaultMessage": "Aggiungi"
+  },
+  "memfreeSettings.neverTouchAdded": {
+    "defaultMessage": "Aggiunti da te"
+  },
+  "memfreeSettings.neverTouchBuiltIn": {
+    "defaultMessage": "Integrati"
+  },
+  "memfreeSettings.neverTouchDesc": {
+    "defaultMessage": "App e processi che nessuna pulizia chiude o ferma mai, su questo Mac e quando questo Mac libera memoria su un altro. Un bundle id, un nome di app o di processo; maiuscole e minuscole non contano. Quelli integrati valgono sempre."
+  },
+  "memfreeSettings.neverTouchNone": {
+    "defaultMessage": "Ancora niente aggiunto"
+  },
+  "memfreeSettings.neverTouchPlaceholder": {
+    "defaultMessage": "com.example.App o un nome di app"
+  },
+  "memfreeSettings.neverTouchRemove": {
+    "defaultMessage": "Rimuovi {name}"
   },
   "memfreeSettings.readFailed": {
     "defaultMessage": "Impossibile leggere queste impostazioni: {reason}"

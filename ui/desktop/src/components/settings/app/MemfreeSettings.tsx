@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { Plus, X } from 'lucide-react';
+import { Button, Chip } from '../../lz';
 import { defineMessages, useIntl } from '../../../i18n';
 import { Switch } from '../../ui/switch';
 import { Input } from '../../ui/input';
@@ -6,13 +8,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../..
 import { acpReadConfig, acpUpsertConfig } from '../../../acp/config';
 import { errorMessage } from '../../../utils/conversionUtils';
 import {
+  DEFAULT_NEVER_TOUCH,
   LINK_ALLOW_REMOTE_APP_QUIT_KEY,
+  MEMFREE_NEVER_TOUCH_KEY,
   MEMFREE_ENABLED_KEY,
   MEMFREE_SHOW_APPS_MIN_MB_DEFAULT,
   MEMFREE_SHOW_APPS_MIN_MB_KEY,
   boolOnFrom,
   memfreeEnabledFrom,
   minMbFrom,
+  neverTouchExtrasFrom,
 } from '../../memfree/memfree';
 import { forgetMemfreeEnabled } from '../../memfree/useMemfreeEnabled';
 
@@ -43,6 +48,21 @@ const i18n = defineMessages({
     defaultMessage:
       'Another Mac on LeanZero Link may ask this Mac to quit an app, always after a confirmation there. Off by default: they can still free goose’s own memory here.',
   },
+  neverTouch: { id: 'memfreeSettings.neverTouch', defaultMessage: 'Never touch' },
+  neverTouchDesc: {
+    id: 'memfreeSettings.neverTouchDesc',
+    defaultMessage:
+      'Apps and processes no clean ever quits or stops, on this Mac and when this Mac frees memory on another. A bundle id, app name or process name; case does not matter. The built-in ones always apply.',
+  },
+  neverTouchBuiltIn: { id: 'memfreeSettings.neverTouchBuiltIn', defaultMessage: 'Built in' },
+  neverTouchAdded: { id: 'memfreeSettings.neverTouchAdded', defaultMessage: 'Added by you' },
+  neverTouchNone: { id: 'memfreeSettings.neverTouchNone', defaultMessage: 'Nothing added yet' },
+  neverTouchPlaceholder: {
+    id: 'memfreeSettings.neverTouchPlaceholder',
+    defaultMessage: 'com.example.App or an app name',
+  },
+  neverTouchAdd: { id: 'memfreeSettings.neverTouchAdd', defaultMessage: 'Add' },
+  neverTouchRemove: { id: 'memfreeSettings.neverTouchRemove', defaultMessage: 'Remove {name}' },
   readFailed: {
     id: 'memfreeSettings.readFailed',
     defaultMessage: 'Could not read these settings: {reason}',
@@ -57,6 +77,8 @@ interface MemfreeSettingsState {
   enabled: boolean;
   minMb: string;
   remoteQuit: boolean;
+  /** Only the person's additions; the defaults are built into the engine. */
+  neverTouch: string[];
 }
 
 /**
@@ -67,6 +89,7 @@ interface MemfreeSettingsState {
 export function MemfreeSettings() {
   const intl = useIntl();
   const [state, setState] = useState<MemfreeSettingsState | null>(null);
+  const [draft, setDraft] = useState('');
   const [problem, setProblem] = useState<{ kind: 'read' | 'save'; reason: string } | null>(null);
 
   useEffect(() => {
@@ -75,13 +98,15 @@ export function MemfreeSettings() {
       acpReadConfig(MEMFREE_ENABLED_KEY, false),
       acpReadConfig(MEMFREE_SHOW_APPS_MIN_MB_KEY, false),
       acpReadConfig(LINK_ALLOW_REMOTE_APP_QUIT_KEY, false),
+      acpReadConfig(MEMFREE_NEVER_TOUCH_KEY, false),
     ]).then(
-      ([enabled, minMb, remoteQuit]) => {
+      ([enabled, minMb, remoteQuit, neverTouch]) => {
         if (!alive) return;
         setState({
           enabled: memfreeEnabledFrom(enabled),
           minMb: String(minMbFrom(minMb)),
           remoteQuit: boolOnFrom(remoteQuit),
+          neverTouch: neverTouchExtrasFrom(neverTouch),
         });
       },
       (error: unknown) => {
@@ -110,6 +135,18 @@ export function MemfreeSettings() {
     if (!state) return;
     const mb = minMbFrom(state.minMb.trim() === '' ? NaN : state.minMb);
     void save(MEMFREE_SHOW_APPS_MIN_MB_KEY, mb, { ...state, minMb: String(mb) });
+  };
+
+  const saveNeverTouch = (list: string[]) => {
+    if (!state) return;
+    const next = neverTouchExtrasFrom(list);
+    void save(MEMFREE_NEVER_TOUCH_KEY, next, { ...state, neverTouch: next });
+  };
+
+  const addNeverTouch = () => {
+    if (!state || draft.trim() === '') return;
+    saveNeverTouch([...state.neverTouch, draft]);
+    setDraft('');
   };
 
   return (
@@ -181,6 +218,69 @@ export function MemfreeSettings() {
             }
             variant="mono"
           />
+        </div>
+        <div className="space-y-2" data-testid="memfree-never-touch">
+          <div>
+            <h3 className="text-text-primary text-xs">{intl.formatMessage(i18n.neverTouch)}</h3>
+            <p className="text-xs text-text-secondary max-w-md mt-[2px]">
+              {intl.formatMessage(i18n.neverTouchDesc)}
+            </p>
+          </div>
+          <p className="text-xs text-text-secondary">
+            {intl.formatMessage(i18n.neverTouchBuiltIn)}
+          </p>
+          <ul className="flex flex-wrap gap-1.5" data-testid="memfree-never-touch-defaults">
+            {DEFAULT_NEVER_TOUCH.map((name) => (
+              <li key={name}>
+                <Chip>{name}</Chip>
+              </li>
+            ))}
+          </ul>
+          <p className="text-xs text-text-secondary">{intl.formatMessage(i18n.neverTouchAdded)}</p>
+          {state && state.neverTouch.length > 0 ? (
+            <ul className="flex flex-wrap gap-1.5" data-testid="memfree-never-touch-extras">
+              {state.neverTouch.map((name) => (
+                <li key={name} className="flex items-center gap-1">
+                  <Chip tone="accent">{name}</Chip>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    iconOnly
+                    icon={<X />}
+                    aria-label={intl.formatMessage(i18n.neverTouchRemove, { name })}
+                    data-testid={`memfree-never-touch-remove-${name}`}
+                    onClick={() => saveNeverTouch(state.neverTouch.filter((n) => n !== name))}
+                  />
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-xs text-text-secondary">{intl.formatMessage(i18n.neverTouchNone)}</p>
+          )}
+          <div className="flex items-center gap-2">
+            <Input
+              data-testid="memfree-never-touch-input"
+              aria-label={intl.formatMessage(i18n.neverTouch)}
+              className="w-64"
+              placeholder={intl.formatMessage(i18n.neverTouchPlaceholder)}
+              value={draft}
+              disabled={state == null}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') addNeverTouch();
+              }}
+            />
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<Plus />}
+              data-testid="memfree-never-touch-add"
+              disabled={state == null || draft.trim() === ''}
+              onClick={addNeverTouch}
+            >
+              {intl.formatMessage(i18n.neverTouchAdd)}
+            </Button>
+          </div>
         </div>
       </CardContent>
     </Card>

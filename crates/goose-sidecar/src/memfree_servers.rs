@@ -9,8 +9,9 @@
 //!   the `lms` CLI's `lms unload --all` (lmstudio.ai/docs/cli/unload) talks to the app directly.
 //! - **A left-over goose server**: the same proof the desktop's launch reap uses
 //!   (ui/desktop/src/utils/orphanGoosedReap.ts `selectOrphanedGoosed`), re-proven before each
-//!   signal; SIGTERM, then SIGKILL on that one pid only if it outlived the grace.
+//!   signal; SIGTERM only, reported (never forced) if it outlives the grace.
 
+use crate::fit::gb;
 use crate::memfree::ProcRow;
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::Value;
@@ -311,7 +312,7 @@ pub fn orphaned_goosed_now(rows: &[ProcRow], self_pid: u32, uid: u32) -> Vec<(u3
     select_orphaned_goosed(rows, &cmdlines(&candidates), &exe, uid, self_pid)
 }
 
-/// How long a left-over server's own teardown may take before SIGKILL (its mesh daemon and engine
+/// How long a left-over server's own teardown may take before goose reports it still running (its mesh daemon and engine
 /// stop on SIGTERM; the desktop's quit grace is of the same order).
 pub const ORPHAN_GRACE: Duration = Duration::from_secs(10);
 
@@ -327,8 +328,8 @@ fn still_orphan(pid: u32, started_at: u64, exe: &str, uid: u32) -> bool {
     ok && !select_orphaned_goosed(&rows, &cmdlines(&[pid]), exe, uid, std::process::id()).is_empty()
 }
 
-/// Stop one proven left-over goose server. SIGTERM, wait, SIGKILL that pid only if it outlived
-/// the grace; re-proven before each signal.
+/// Stop one proven left-over goose server: re-proven, SIGTERM, wait the grace; still running is
+/// reported, never forced.
 #[cfg(unix)]
 pub async fn reap_orphaned_goosed(pid: u32, started_at: u64) -> Result<String> {
     let exe = self_exe();
@@ -337,7 +338,7 @@ pub async fn reap_orphaned_goosed(pid: u32, started_at: u64) -> Result<String> {
         let exe = exe.clone();
         move || still_orphan(pid, started_at, &exe, uid)
     };
-    if !tokio::task::spawn_blocking(proven.clone()).await? {
+    if !tokio::task::spawn_blocking(proven).await? {
         bail!("pid {pid} is no longer the left-over goose server it was");
     }
     // SAFETY: plain signal to a pid proven to be the orphan a moment ago.
@@ -351,23 +352,355 @@ pub async fn reap_orphaned_goosed(pid: u32, started_at: u64) -> Result<String> {
             return Ok(format!("stopped left-over goose server pid {pid}"));
         }
     }
-    if tokio::task::spawn_blocking(proven).await? {
-        // SAFETY: same proof, re-read; one pid, never a group.
-        unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
-        tokio::time::sleep(Duration::from_millis(300)).await;
-    }
-    if crate::memfree::alive(pid, started_at) {
-        bail!("left-over goose server pid {pid} is still running");
-    }
-    Ok(format!(
-        "stopped left-over goose server pid {pid} (SIGKILL after {} s)",
+    bail!(
+        "left-over goose server pid {pid} is still running {} s after SIGTERM; goose does not \
+         force it",
         ORPHAN_GRACE.as_secs()
-    ))
+    )
+}
+
+/// Stop ANOTHER MLX engine for "Free up memory": re-proven against a fresh engine census (still an
+/// MLX engine, not on `own_port`, same start time), then SIGTERM only — never SIGKILL, never a
+/// group. Reports, without forcing, an engine still running after the grace window.
+/// (`machine::stop_other_engine`, the mlxEngine ACP's explicit stop, keeps its own behaviour.)
+#[cfg(unix)]
+pub async fn terminate_engine(pid: u32, started_at: u64, own_port: u16) -> Result<String> {
+    let engines =
+        tokio::task::spawn_blocking(move || crate::machine::other_engines(Some(own_port))).await?;
+    let Some(engine) = engines.into_iter().find(|e| e.pid == pid) else {
+        bail!("pid {pid} is not another MLX engine on this Mac: nothing was signalled");
+    };
+    if engine.started_at != started_at {
+        bail!("pid {pid} is no longer the engine you were shown: nothing was signalled");
+    }
+    // SAFETY: plain signal to one pid proven a moment ago to be that engine.
+    if unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) } != 0 {
+        bail!("SIGTERM to pid {pid}: {}", std::io::Error::last_os_error());
+    }
+    let signalled = std::time::Instant::now();
+    while signalled.elapsed() < crate::grace_window() {
+        if crate::machine::prove(pid, started_at) != crate::machine::Liveness::Alive {
+            return Ok(format!(
+                "stopped {} (SIGTERM); its {} are the Mac's again",
+                engine.describe(),
+                gb(engine.resident_bytes)
+            ));
+        }
+        tokio::time::sleep(crate::GRACE_TICK).await;
+    }
+    bail!(
+        "{} is still running {} s after SIGTERM; goose does not force it",
+        engine.describe(),
+        crate::grace_window().as_secs()
+    )
+}
+
+#[cfg(not(unix))]
+pub async fn terminate_engine(pid: u32, _started_at: u64, _own_port: u16) -> Result<String> {
+    bail!("pid {pid}: stopping a process is unix-only")
 }
 
 #[cfg(not(unix))]
 pub async fn reap_orphaned_goosed(pid: u32, _started_at: u64) -> Result<String> {
     bail!("pid {pid}: stopping a process is unix-only")
+}
+
+/// The port in a server base URL (`http://127.0.0.1:1234` → 1234); `None` without one.
+pub fn base_port(base: &str) -> Option<u16> {
+    let host = base.split_once("://").map_or(base, |(_, h)| h);
+    let host = host.split('/').next().unwrap_or("");
+    host.rsplit_once(':')?.1.parse().ok()
+}
+
+/// `lsof -F pc` output → (pid, command), one per process, in first-seen order. Other field lines
+/// (`f…`, the per-file fields lsof always adds) are skipped.
+pub fn parse_lsof_fpc(out: &str) -> Vec<(u32, String)> {
+    let mut res: Vec<(u32, String)> = vec![];
+    let mut current: Option<u32> = None;
+    for line in out.lines() {
+        let mut chars = line.chars();
+        let Some(tag) = chars.next() else { continue };
+        let rest = chars.as_str().trim();
+        match tag {
+            'p' => current = rest.parse().ok(),
+            'c' => {
+                if let Some(pid) = current {
+                    if !res.iter().any(|(p, _)| *p == pid) {
+                        res.push((pid, rest.to_string()));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    res
+}
+
+/// Who holds an ESTABLISHED TCP connection to `port` on this Mac, minus the server's own pids
+/// (`lsof -nP -iTCP:<port> -sTCP:ESTABLISHED -Fpc`, bounded to 5 s). Read-only. Without root lsof
+/// sees only this user's sockets, so a client of another user is not listed.
+pub fn port_clients(port: u16, exclude: &[u32]) -> Vec<(u32, String)> {
+    let out = lsof(&["-nP", &format!("-iTCP:{port}"), "-sTCP:ESTABLISHED", "-Fpc"]);
+    parse_lsof_fpc(&out)
+        .into_iter()
+        .filter(|(pid, _)| !exclude.contains(pid))
+        .collect()
+}
+
+/// Run `/usr/sbin/lsof <args>` bounded to 5 s; its stdout, or empty on any failure. Read-only.
+fn lsof(args: &[&str]) -> String {
+    let child = std::process::Command::new("/usr/sbin/lsof")
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    let Ok(mut child) = child else {
+        return String::new();
+    };
+    let started = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if started.elapsed() < std::time::Duration::from_secs(5) => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            _ => {
+                // Our own lsof child only.
+                let _ = child.kill();
+                let _ = child.wait();
+                return String::new();
+            }
+        }
+    }
+    let mut out = String::new();
+    if let Some(mut stdout) = child.stdout.take() {
+        use std::io::Read;
+        let _ = stdout.read_to_string(&mut out);
+    }
+    out
+}
+
+/// The process name of LM Studio's Link connector (LM Link): other Macs reach this LM Studio's
+/// models through it, never through the REST port.
+pub const LMLINK_CONNECTOR: &str = "lmlink-connector";
+
+/// `lsof -F n` LISTEN output → the ports listened on (`n*:34267`, `n127.0.0.1:34267`,
+/// `n[::1]:34267`), deduplicated, first-seen order.
+pub fn parse_lsof_listen_ports(out: &str) -> Vec<u16> {
+    let mut ports: Vec<u16> = vec![];
+    for line in out.lines() {
+        let Some(name) = line.strip_prefix('n') else {
+            continue;
+        };
+        let Some(port) = name
+            .rsplit_once(':')
+            .and_then(|(_, p)| p.trim().parse().ok())
+        else {
+            continue;
+        };
+        if !ports.contains(&port) {
+            ports.push(port);
+        }
+    }
+    ports
+}
+
+/// The "used by" lines LM Link adds to LM Studio's group: every running `lmlink-connector`
+/// (from `rows`) with the ports it listens on (`listen`: (pid, port)), and the ESTABLISHED
+/// clients of those ports (`clients`: (port, pid, name)). The connector itself among a port's
+/// clients means a Link peer is connected through it.
+pub fn lmlink_users(
+    rows: &[ProcRow],
+    listen: &[(u32, u16)],
+    clients: &[(u16, u32, String)],
+) -> Vec<String> {
+    let mut out = vec![];
+    for r in rows
+        .iter()
+        .filter(|r| proc_name(&r.path) == LMLINK_CONNECTOR)
+    {
+        let ports: Vec<u16> = listen
+            .iter()
+            .filter(|(pid, _)| *pid == r.pid)
+            .map(|(_, port)| *port)
+            .collect();
+        if ports.is_empty() {
+            out.push(format!(
+                "LM Link: {LMLINK_CONNECTOR} (pid {}) is running, so other Macs may be using this LM Studio",
+                r.pid
+            ));
+            continue;
+        }
+        let list: Vec<String> = ports.iter().map(u16::to_string).collect();
+        out.push(format!(
+            "LM Link: {LMLINK_CONNECTOR} (pid {}) listens on {}, so other Macs may be using this LM Studio",
+            r.pid,
+            list.join(", ")
+        ));
+        for &port in &ports {
+            let on_port = clients.iter().filter(|(p, _, _)| *p == port);
+            if on_port.clone().any(|(_, pid, _)| *pid == r.pid) {
+                out.push(format!(
+                    "a Link peer is connected through {LMLINK_CONNECTOR} (port {port})"
+                ));
+            }
+            for (_, pid, name) in on_port.filter(|(_, pid, _)| *pid != r.pid) {
+                out.push(format!(
+                    "{name} (pid {pid}) is connected to LM Link (port {port})"
+                ));
+            }
+        }
+    }
+    out
+}
+
+/// The LM Link lines for a group when it is LM Studio ([`lmlink_used_by`]), else none. Read-only.
+pub fn lmlink_lines_for(group: &crate::memfree::Group, rows: &[ProcRow]) -> Vec<String> {
+    match ai_server_kind(&group.id, group.bundle_id.as_deref()) {
+        Some(AiServerKind::LmStudio) if group.category == crate::memfree::Category::AiServer => {
+            lmlink_used_by(rows)
+        }
+        _ => vec![],
+    }
+}
+
+/// [`lmlink_users`] for this Mac now: each connector's LISTEN ports
+/// (`lsof -a -p <pid> -iTCP -sTCP:LISTEN -Fn`) and their ESTABLISHED clients. Read-only.
+pub fn lmlink_used_by(rows: &[ProcRow]) -> Vec<String> {
+    let mut listen = vec![];
+    let mut clients = vec![];
+    for r in rows
+        .iter()
+        .filter(|r| proc_name(&r.path) == LMLINK_CONNECTOR)
+    {
+        let out = lsof(&[
+            "-nP",
+            "-a",
+            "-p",
+            &r.pid.to_string(),
+            "-iTCP",
+            "-sTCP:LISTEN",
+            "-Fn",
+        ]);
+        for port in parse_lsof_listen_ports(&out) {
+            listen.push((r.pid, port));
+            for (pid, name) in port_clients(port, &[]) {
+                clients.push((port, pid, name));
+            }
+        }
+    }
+    lmlink_users(rows, &listen, &clients)
+}
+
+fn proc_name(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
+/// The "used by" lines a confirm shows for a server group: its TCP clients, the process that
+/// started it (when that is not launchd) and the launchd job that owns it.
+pub fn used_by_lines(
+    group: &crate::memfree::Group,
+    rows: &[ProcRow],
+    clients: &[(u32, String)],
+) -> Vec<String> {
+    let own: Vec<u32> = group.pids.iter().map(|(p, _)| *p).collect();
+    let mut out: Vec<String> = clients
+        .iter()
+        .filter(|(pid, _)| !own.contains(pid))
+        .map(|(pid, name)| format!("{name} (pid {pid}) is connected to it"))
+        .collect();
+    let parent = group.pids.iter().find_map(|(pid, _)| {
+        let row = rows.iter().find(|r| r.pid == *pid)?;
+        (row.ppid > 1 && !own.contains(&row.ppid)).then_some(row.ppid)
+    });
+    if let Some(ppid) = parent {
+        let name = rows
+            .iter()
+            .find(|r| r.pid == ppid)
+            .map(|r| proc_name(&r.path).to_string())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| "an unreadable process".into());
+        out.push(format!("started by {name} (pid {ppid})"));
+    }
+    if let Some(label) = &group.launchd_label {
+        out.push(format!("launchd job {label}"));
+    }
+    out
+}
+
+/// The pids of an app that may get a SIGTERM after it ignored "quit" (nuclear clean only), from a
+/// FRESH census: still a quittable user app, not protected, not on the never-touch list, and only
+/// its processes that run as this user with the start time the census shows. `Ok(empty)` when the
+/// app is gone; `Err(why)` when it may not be signalled at all.
+pub fn app_term_targets(
+    group: Option<&crate::memfree::Group>,
+    rows: &[ProcRow],
+    self_uid: u32,
+    self_pid: u32,
+    never_touch: &[String],
+) -> std::result::Result<Vec<(u32, u64)>, String> {
+    use crate::memfree::Category;
+    let Some(g) = group else {
+        return Ok(vec![]);
+    };
+    if g.category != Category::UserApp {
+        return Err(format!("{} is not a user app", g.label));
+    }
+    if let Some(why) = &g.protected_why {
+        return Err(format!("{} is protected: {why}", g.label));
+    }
+    if let Some(hit) = crate::memfree_protect::group_never_touch(g, never_touch) {
+        return Err(format!("{} is on the never-touch list ({hit})", g.label));
+    }
+    if !g.quittable {
+        return Err(format!(
+            "{}: {}",
+            g.label,
+            g.why
+                .clone()
+                .unwrap_or_else(|| "goose may not quit it".into())
+        ));
+    }
+    Ok(g.pids
+        .iter()
+        .filter(|(pid, started)| {
+            *pid > 1
+                && *pid != self_pid
+                && rows
+                    .iter()
+                    .any(|r| r.pid == *pid && r.started_at == *started && r.uid == self_uid)
+        })
+        .copied()
+        .collect())
+}
+
+/// SIGTERM each (pid, start) still alive, then wait the grace window. Never SIGKILL, never a
+/// process group. Returns how many are still running afterwards.
+#[cfg(unix)]
+pub async fn terminate_pids(targets: &[(u32, u64)]) -> usize {
+    for &(pid, started) in targets {
+        if crate::memfree::alive(pid, started) {
+            // SAFETY: plain signal to one pid whose start time was re-proven a moment ago.
+            unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+        }
+    }
+    let signalled = std::time::Instant::now();
+    loop {
+        let left = targets
+            .iter()
+            .filter(|(p, s)| crate::memfree::alive(*p, *s))
+            .count();
+        if left == 0 || signalled.elapsed() >= crate::grace_window() {
+            return left;
+        }
+        tokio::time::sleep(crate::GRACE_TICK).await;
+    }
+}
+
+#[cfg(not(unix))]
+pub async fn terminate_pids(targets: &[(u32, u64)]) -> usize {
+    targets.len()
 }
 
 #[cfg(test)]
@@ -383,6 +716,8 @@ mod tests {
             started_at: 1000 + pid as u64,
             path: path.into(),
             footprint: 1,
+            pgid: pid,
+            has_tty: false,
         }
     }
 
@@ -578,5 +913,181 @@ mod tests {
         };
         let base = format!("http://127.0.0.1:{port}");
         assert!(loaded_models(AiServerKind::Ollama, &base).await.is_err());
+    }
+
+    fn group(
+        id: &str,
+        cat: crate::memfree::Category,
+        pids: &[(u32, u64)],
+    ) -> crate::memfree::Group {
+        crate::memfree::Group {
+            id: id.into(),
+            label: id.trim_start_matches("app:").into(),
+            category: cat,
+            bytes: 1,
+            pids: pids.to_vec(),
+            bundle_id: id.strip_prefix("app:").map(str::to_string),
+            quittable: cat == crate::memfree::Category::UserApp,
+            reclaimable_by_goose: false,
+            why: None,
+            protected_why: None,
+            used_by: vec![],
+            launchd_label: None,
+            nuclear_default: false,
+        }
+    }
+
+    #[test]
+    fn memfree_lmlink_listen_ports_parse() {
+        let out = "p14330\nf9\nn*:34267\nf10\nn127.0.0.1:34268\nf11\nn[::1]:34267\nf12\nnjunk\n";
+        assert_eq!(parse_lsof_listen_ports(out), vec![34267, 34268]);
+        assert!(parse_lsof_listen_ports("").is_empty());
+    }
+
+    #[test]
+    fn memfree_lmlink_connector_names_its_ports_peers_and_clients() {
+        let rows = vec![
+            row(
+                13856,
+                1,
+                501,
+                "/Applications/LM Studio.app/Contents/MacOS/LM Studio",
+            ),
+            row(14330, 13856, 501, "/Users/w/.lmstudio/bin/lmlink-connector"),
+            row(2222, 1, 501, "/usr/bin/curl"),
+        ];
+        let lines = lmlink_users(
+            &rows,
+            &[(14330, 34267)],
+            &[
+                (34267, 14330, "lmlink-con".into()),
+                (34267, 2222, "curl".into()),
+            ],
+        );
+        assert_eq!(
+            lines,
+            vec![
+                "LM Link: lmlink-connector (pid 14330) listens on 34267, so other Macs may be using this LM Studio".to_string(),
+                "a Link peer is connected through lmlink-connector (port 34267)".to_string(),
+                "curl (pid 2222) is connected to LM Link (port 34267)".to_string(),
+            ]
+        );
+        // Running with no port read yet still names it; no connector, no lines.
+        assert_eq!(
+            lmlink_users(&rows, &[], &[]),
+            vec!["LM Link: lmlink-connector (pid 14330) is running, so other Macs may be using this LM Studio".to_string()]
+        );
+        assert!(lmlink_users(&rows[..1], &[], &[]).is_empty());
+    }
+
+    #[test]
+    fn memfree_base_port_reads_the_url() {
+        assert_eq!(base_port("http://127.0.0.1:1234"), Some(1234));
+        assert_eq!(base_port("http://127.0.0.1:11434/"), Some(11434));
+        assert_eq!(base_port("localhost:8093/v1"), Some(8093));
+        assert_eq!(base_port("http://example.com"), None);
+    }
+
+    #[test]
+    fn memfree_lsof_fpc_parses_clients_once_per_pid() {
+        let out =
+            "p97100\ncrapid-mlx\nf12\nf13\np9375\ncPython\nf7\np9375\ncPython\np14200\ncnode\n";
+        assert_eq!(
+            parse_lsof_fpc(out),
+            vec![
+                (97100, "rapid-mlx".to_string()),
+                (9375, "Python".to_string()),
+                (14200, "node".to_string())
+            ]
+        );
+        assert!(parse_lsof_fpc("").is_empty());
+        assert!(parse_lsof_fpc("cname-without-pid\nfé\n").is_empty());
+    }
+
+    #[test]
+    fn memfree_used_by_names_clients_parent_and_launchd_job() {
+        use crate::memfree::Category;
+        let rows = vec![
+            row(97100, 36740, 501, "/opt/rapid-mlx/bin/python3"),
+            row(
+                36740,
+                1,
+                501,
+                "/Users/w/Projects/machine-sync/bin/heavy-run",
+            ),
+            row(9375, 1, 501, "/usr/bin/python3"),
+        ];
+        let mut g = group("mlx:97100", Category::GooseEngine, &[(97100, 98100)]);
+        g.launchd_label = Some("net.leanzero.tts".into());
+        let clients = vec![(97100, "python3".to_string()), (9375, "Python".to_string())];
+        assert_eq!(
+            used_by_lines(&g, &rows, &clients),
+            vec![
+                "Python (pid 9375) is connected to it".to_string(),
+                "started by heavy-run (pid 36740)".to_string(),
+                "launchd job net.leanzero.tts".to_string(),
+            ]
+        );
+        // ppid 1 (launchd) is not a "started by" line.
+        let lone = group("mlx:9375", Category::GooseEngine, &[(9375, 10375)]);
+        assert!(used_by_lines(&lone, &rows, &[]).is_empty());
+    }
+
+    #[test]
+    fn memfree_app_term_targets_only_own_unprotected_unlisted_apps() {
+        use crate::memfree::Category;
+        let rows = vec![
+            row(
+                700,
+                1,
+                501,
+                "/Applications/TextEdit.app/Contents/MacOS/TextEdit",
+            ),
+            row(
+                701,
+                700,
+                0,
+                "/Applications/TextEdit.app/Contents/MacOS/helper",
+            ),
+            row(
+                800,
+                1,
+                501,
+                "/Applications/Microsoft Teams.app/Contents/MacOS/MSTeams",
+            ),
+        ];
+        let nt = crate::memfree_protect::never_touch_list(&[]);
+        let te = group(
+            "app:com.apple.TextEdit",
+            Category::UserApp,
+            &[(700, 1700), (701, 1701), (999, 1)],
+        );
+        // Own uid only, live start time only.
+        assert_eq!(
+            app_term_targets(Some(&te), &rows, 501, 1, &nt),
+            Ok(vec![(700, 1700)])
+        );
+        // Gone: nothing to signal.
+        assert_eq!(app_term_targets(None, &rows, 501, 1, &nt), Ok(vec![]));
+        // Never-touch, protected, system and not-quittable are refused outright.
+        let teams = group(
+            "app:com.microsoft.teams2",
+            Category::UserApp,
+            &[(800, 1800)],
+        );
+        assert!(app_term_targets(Some(&teams), &rows, 501, 1, &nt).is_err());
+        let mut prot = te.clone();
+        prot.protected_why = Some("has a terminal".into());
+        assert!(app_term_targets(Some(&prot), &rows, 501, 1, &nt).is_err());
+        let sys = group("sys:WindowServer", Category::System, &[(700, 1700)]);
+        assert!(app_term_targets(Some(&sys), &rows, 501, 1, &nt).is_err());
+        let mut nq = te.clone();
+        nq.quittable = false;
+        assert!(app_term_targets(Some(&nq), &rows, 501, 1, &nt).is_err());
+        // The caller's own pid is never a target.
+        assert_eq!(
+            app_term_targets(Some(&te), &rows, 501, 700, &nt),
+            Ok(vec![])
+        );
     }
 }

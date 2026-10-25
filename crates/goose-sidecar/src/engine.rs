@@ -1434,6 +1434,19 @@ async fn reclaim_port(port: u16) -> Result<()> {
         .map(|_| ())
 }
 
+/// [`reclaim_port`] without the SIGKILL leg (Free up memory, review C5).
+#[cfg(unix)]
+async fn reclaim_port_graceful(port: u16) -> Result<()> {
+    port_holder::claim_port_with(port, &engine_marker(port), false)
+        .await
+        .map(|_| ())
+}
+
+#[cfg(not(unix))]
+async fn reclaim_port_graceful(port: u16) -> Result<()> {
+    reclaim_port(port).await
+}
+
 #[cfg(not(unix))]
 async fn reclaim_port(port: u16) -> Result<()> {
     anyhow::bail!(
@@ -2211,6 +2224,46 @@ impl MlxEngineManager {
             }
         }
         Ok(())
+    }
+
+    /// Free up memory's stop of goose's own idle engine (review C5): SIGTERM only, never SIGKILL.
+    /// A running engine gets [`crate::Sidecar::shutdown_graceful`]; one that outlives the grace
+    /// stays running and supervised, and the error says goose does not force it. A start in
+    /// flight is not touched (only an idle engine is freed). An unsupervised port held by this
+    /// goose's proven leftover gets SIGTERM per pid ([`port_holder::claim_port_with`] unforced).
+    /// The normal [`Self::unmount`] (Unmount, switches) is unchanged.
+    pub async fn unmount_graceful(&self) -> std::result::Result<(), String> {
+        let supervised = {
+            let mut state = self.state.lock().await;
+            match &*state {
+                ManagerState::Running { sidecar, .. } => {
+                    sidecar.shutdown_graceful().await?;
+                    *state = ManagerState::Stopped;
+                    true
+                }
+                ManagerState::Mounting { .. } => {
+                    return Err(
+                        "goose's engine is loading a model; Free up memory leaves it".into(),
+                    )
+                }
+                _ => false,
+            }
+        };
+        if supervised {
+            *self.waiting_for_load.lock().unwrap() = None;
+            self.unmounts
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            return Ok(());
+        }
+        let port = self.settings().port;
+        if !port_has_listener(port) {
+            return Ok(());
+        }
+        reclaim_port_graceful(port).await.map_err(|why| {
+            format!(
+                "goose's engine on port {port} was not stopped: {why:#}; goose does not force it"
+            )
+        })
     }
 
     /// Where the running engine's logged errors stand now — taken as a chat request is sent to it

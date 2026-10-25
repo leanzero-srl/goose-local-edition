@@ -2681,6 +2681,18 @@
   "freeMemory.fitsWithAppsOnly": {
     "defaultMessage": "Dieses Modell passt, nachdem {apps} beendet wurde. Das gibt <b>{gb} GB</b> frei."
   },
+  "freeMemory.forceStop": {
+    "defaultMessage": "Beenden erzwingen"
+  },
+  "freeMemory.forceStopBody": {
+    "defaultMessage": "{app} hat sich nicht beendet, als es darum gebeten wurde, vielleicht wegen ungesicherter Arbeit. Beenden erzwingen beendet es auf {mac} ohne zu sichern. Ungesicherte Arbeit in {app} geht verloren."
+  },
+  "freeMemory.forceStopConfirm": {
+    "defaultMessage": "{app} beenden erzwingen"
+  },
+  "freeMemory.forceStopTitle": {
+    "defaultMessage": "{app} beenden erzwingen?"
+  },
   "freeMemory.freeFailed": {
     "defaultMessage": "Speicher konnte nicht freigegeben werden: {reason}"
   },
@@ -2693,11 +2705,53 @@
   "freeMemory.keep": {
     "defaultMessage": "Geöffnet lassen"
   },
+  "freeMemory.keepRunning": {
+    "defaultMessage": "Weiterlaufen lassen"
+  },
+  "freeMemory.leftAlone": {
+    "defaultMessage": "Bleibt unberührt"
+  },
   "freeMemory.loading": {
     "defaultMessage": "Ermittle, was Speicher belegt…"
   },
+  "freeMemory.neverTouchReason": {
+    "defaultMessage": "auf der Nie-anfassen-Liste ({entry})"
+  },
   "freeMemory.nothingOwn": {
     "defaultMessage": "goose belegt keinen Speicher, den es freigeben kann"
+  },
+  "freeMemory.nuclearBack": {
+    "defaultMessage": "Zurück"
+  },
+  "freeMemory.nuclearConfirmBody": {
+    "defaultMessage": "goose bittet jede angehakte App, sich zu beenden, und entlädt jeden angehakten Modellserver. Apps werden gebeten, sich zu beenden. Eine App, die sich nicht beendet, läuft weiter und wird gemeldet, nicht gestoppt. Geschütztes wird nie angefasst."
+  },
+  "freeMemory.nuclearConfirmKeep": {
+    "defaultMessage": "Alles behalten"
+  },
+  "freeMemory.nuclearConfirmTitle": {
+    "defaultMessage": "{gb} GB auf {mac} freigeben?"
+  },
+  "freeMemory.nuclearFree": {
+    "defaultMessage": "{gb} GB freigeben"
+  },
+  "freeMemory.nuclearGooseOwn": {
+    "defaultMessage": "Der eigene Speicher von goose"
+  },
+  "freeMemory.nuclearIntro": {
+    "defaultMessage": "Alles, was niemand nutzt, ist angehakt. Entferne den Haken bei dem, was du behalten willst. Geschütztes wird nie angefasst."
+  },
+  "freeMemory.nuclearOpen": {
+    "defaultMessage": "Alles außer Geschütztem freigeben"
+  },
+  "freeMemory.nuclearProtectedHead": {
+    "defaultMessage": "Wird nie angefasst"
+  },
+  "freeMemory.nuclearTotal": {
+    "defaultMessage": "Angehakt: <b>{gb} GB</b>"
+  },
+  "freeMemory.protectedChip": {
+    "defaultMessage": "Geschützt"
   },
   "freeMemory.quit": {
     "defaultMessage": "Beenden"
@@ -2719,6 +2773,24 @@
   },
   "freeMemory.title": {
     "defaultMessage": "Speicher freigeben auf {mac}"
+  },
+  "freeMemory.unload": {
+    "defaultMessage": "Entladen"
+  },
+  "freeMemory.unloadBody": {
+    "defaultMessage": "goose entlädt die Modelle, die {server} auf {mac} hält (eine MLX-Engine wird gebeten zu stoppen). Wer es nutzt, muss sie neu laden."
+  },
+  "freeMemory.unloadConfirm": {
+    "defaultMessage": "{server} entladen"
+  },
+  "freeMemory.unloadInUse": {
+    "defaultMessage": "Gerade in Benutzung, das stoppt deren Arbeit:"
+  },
+  "freeMemory.unloadTitle": {
+    "defaultMessage": "{server} entladen?"
+  },
+  "freeMemory.usedBy": {
+    "defaultMessage": "In Benutzung: {who}"
   },
   "freeMemoryEntry.open": {
     "defaultMessage": "Speicher freigeben"
@@ -4468,6 +4540,30 @@
   },
   "memfreeSettings.minMbDesc": {
     "defaultMessage": "Apps, die weniger Speicher als diesen Wert nutzen, werden nicht aufgeführt. Standard {mb} MB."
+  },
+  "memfreeSettings.neverTouch": {
+    "defaultMessage": "Nie anfassen"
+  },
+  "memfreeSettings.neverTouchAdd": {
+    "defaultMessage": "Hinzufügen"
+  },
+  "memfreeSettings.neverTouchAdded": {
+    "defaultMessage": "Von dir hinzugefügt"
+  },
+  "memfreeSettings.neverTouchBuiltIn": {
+    "defaultMessage": "Eingebaut"
+  },
+  "memfreeSettings.neverTouchDesc": {
+    "defaultMessage": "Apps und Prozesse, die keine Bereinigung je beendet oder stoppt, auf diesem Mac und wenn dieser Mac auf einem anderen Speicher freigibt. Eine Bundle-ID, ein App-Name oder ein Prozessname; Groß- und Kleinschreibung egal. Die eingebauten gelten immer."
+  },
+  "memfreeSettings.neverTouchNone": {
+    "defaultMessage": "Noch nichts hinzugefügt"
+  },
+  "memfreeSettings.neverTouchPlaceholder": {
+    "defaultMessage": "com.example.App oder ein App-Name"
+  },
+  "memfreeSettings.neverTouchRemove": {
+    "defaultMessage": "{name} entfernen"
   },
   "memfreeSettings.readFailed": {
     "defaultMessage": "Diese Einstellungen konnten nicht gelesen werden: {reason}"

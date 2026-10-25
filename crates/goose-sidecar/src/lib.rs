@@ -39,6 +39,7 @@ pub mod holders;
 pub mod kv_cache;
 pub mod machine;
 pub mod memfree;
+pub mod memfree_protect;
 pub mod memfree_servers;
 mod memory;
 pub mod model_identity;
@@ -742,6 +743,55 @@ impl Sidecar {
         }
     }
 
+    /// Free up memory's stop (review C5): SIGTERM to the child's PROVEN own process group (or
+    /// the pid alone when the proof fails), the grace window, and NEVER a SIGKILL. A child that
+    /// outlives the grace stays supervised — dropping its handle would SIGKILL it through
+    /// `kill_on_drop` — and the error says so; residue on the port gets SIGTERM only too.
+    pub async fn shutdown_graceful(&self) -> std::result::Result<(), String> {
+        let mut state = self.state.lock().await;
+        let Some(h) = state.handle.as_mut() else {
+            return Ok(());
+        };
+        let pid = h.child.id();
+        h.stopping("stopped by goose: Free up memory asked its idle engine to exit (SIGTERM only)");
+        #[cfg(unix)]
+        if let Some(pid) = pid {
+            if owns_process_group(pid) {
+                unsafe { libc::killpg(pid as libc::pid_t, libc::SIGTERM) };
+            } else {
+                unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+            }
+        }
+        let termed = Instant::now();
+        let mut exited = false;
+        while termed.elapsed() < grace_window() {
+            if let Ok(Some(_)) = h.child.try_wait() {
+                exited = true;
+                break;
+            }
+            tokio::time::sleep(GRACE_TICK).await;
+        }
+        if !exited {
+            *h.stopped_by.lock().unwrap() = None;
+            let pid = pid.map(|p| format!(" (pid {p})")).unwrap_or_default();
+            return Err(format!(
+                "goose's engine{pid} did not exit within {} s of SIGTERM; it was left running, \
+                 goose does not force it",
+                grace_window().as_secs()
+            ));
+        }
+        state.handle.take();
+        if self.release_port_with(pid, false).await {
+            Ok(())
+        } else {
+            Err(
+                "goose's engine exited but part of it still holds its port; it was left \
+                 running, goose does not force it"
+                    .to_string(),
+            )
+        }
+    }
+
     fn spawn_child(&self) -> Result<ChildHandle> {
         let mut cmd = Command::new(&self.config.command[0]);
         cmd.args(&self.config.command[1..])
@@ -1091,22 +1141,28 @@ impl Sidecar {
     /// logged (the manager refuses to mount over it; an explicit unmount reclaims it only when
     /// `port_holder`'s proof calls it this goose's own leftover — Q-252).
     async fn release_port(&self, owned_group: Option<u32>) {
+        self.release_port_with(owned_group, true).await;
+    }
+
+    /// `force` false (Free up memory, review C5): residue gets SIGTERM only, never SIGKILL.
+    /// Returns whether the port is clear.
+    async fn release_port_with(&self, owned_group: Option<u32>, force: bool) -> bool {
         let Some(port) = self.listen_port() else {
             tracing::warn!(
                 sidecar = %self.config.name,
                 base_url = %self.config.base_url,
                 "base_url carries no port; cannot verify the port was released"
             );
-            return;
+            return true;
         };
         if wait_port_clear(port).await {
-            return;
+            return true;
         }
         let listeners = match listening_pids(port).await {
             Ok(pids) => pids,
             Err(e) => {
                 tracing::warn!(port, error = %e, "port still occupied and lsof unavailable");
-                return;
+                return false;
             }
         };
         let Some(group) = owned_group else {
@@ -1115,9 +1171,9 @@ impl Sidecar {
                 ?listeners,
                 "port still occupied by a listener this sidecar never owned; left alone"
             );
-            return;
+            return false;
         };
-        reclaim_group_residue(port, group, listeners).await;
+        reclaim_group_residue(port, group, listeners, force).await
     }
 }
 
@@ -1410,7 +1466,7 @@ pub fn sigkill_owned_group(pid: u32) -> bool {
 /// Terminate, per-pid, the listeners on `port` that belong to the engine's own process
 /// `group`; listeners outside it are logged and left alone.
 #[cfg(unix)]
-async fn reclaim_group_residue(port: u16, group: u32, listeners: Vec<u32>) {
+async fn reclaim_group_residue(port: u16, group: u32, listeners: Vec<u32>, force: bool) -> bool {
     let (residue, foreign): (Vec<u32>, Vec<u32>) = listeners
         .into_iter()
         .partition(|pid| process_group_of(*pid) == Some(group));
@@ -1432,7 +1488,7 @@ async fn reclaim_group_residue(port: u16, group: u32, listeners: Vec<u32>) {
         })
         .collect();
     if residue.is_empty() {
-        return;
+        return wait_port_clear(port).await;
     }
     tracing::warn!(
         port,
@@ -1443,7 +1499,16 @@ async fn reclaim_group_residue(port: u16, group: u32, listeners: Vec<u32>) {
     signal_running(&residue, libc::SIGTERM);
     // The EXIT is awaited, not the port: an engine closes its socket first and then drains
     // (Q-258 measured up to 6 minutes), still resident beside whatever mounts next.
-    if !residue_exited_within_grace(&residue).await {
+    let exited = residue_exited_within_grace(&residue).await;
+    if !exited && !force {
+        tracing::warn!(
+            port,
+            ?residue,
+            "residue still runs after the grace; goose does not force it (Free up memory)"
+        );
+        return false;
+    }
+    if !exited {
         tracing::warn!(
             port,
             ?residue,
@@ -1459,7 +1524,9 @@ async fn reclaim_group_residue(port: u16, group: u32, listeners: Vec<u32>) {
             port,
             "port still occupied after the engine's residue exited; a listener outside it holds it"
         );
+        return false;
     }
+    true
 }
 
 #[cfg(unix)]
@@ -1508,13 +1575,14 @@ fn group_still_runs(group: u32) -> bool {
 }
 
 #[cfg(not(unix))]
-async fn reclaim_group_residue(port: u16, group: u32, listeners: Vec<u32>) {
+async fn reclaim_group_residue(port: u16, group: u32, listeners: Vec<u32>, _force: bool) -> bool {
     tracing::warn!(
         port,
         ?listeners,
         group,
         "port still occupied; reclaiming by process group needs Unix signals, left alone"
     );
+    false
 }
 
 #[cfg(unix)]
@@ -2282,6 +2350,44 @@ mod tests {
             Some(0),
             "the watch left the child for the supervisor to reap"
         );
+    }
+
+    /// Review C5: Free up memory's stop of goose's own engine is SIGTERM only. An engine that
+    /// ignores the TERM is left running, still supervised (dropping it would SIGKILL it through
+    /// kill_on_drop), and the refusal says goose does not force it; one that honours it is stopped.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn memfree_c5_graceful_shutdown_never_sigkills_an_engine_that_ignores_sigterm() {
+        let stubborn =
+            sidecar_running("trap '' TERM; echo ready >&2; while :; do sleep 0.05; done");
+        let handle = stubborn.spawn_child().unwrap();
+        let pid = handle.pid.unwrap();
+        while handle.stderr_lines.load(Ordering::Relaxed) == 0 {
+            tokio::time::sleep(GRACE_TICK).await;
+        }
+        stubborn.state.lock().await.handle = Some(handle);
+        let err = stubborn.shutdown_graceful().await.unwrap_err();
+        assert!(err.contains("goose does not force it"), "{err}");
+        assert_eq!(
+            unsafe { libc::kill(pid as libc::pid_t, 0) },
+            0,
+            "still running"
+        );
+        assert!(
+            stubborn.state.lock().await.handle.is_some(),
+            "still supervised, never dropped"
+        );
+        stubborn.shutdown().await; // test cleanup only
+
+        let polite =
+            sidecar_running("trap 'exit 0' TERM; echo ready >&2; while :; do sleep 0.05; done");
+        let handle = polite.spawn_child().unwrap();
+        while handle.stderr_lines.load(Ordering::Relaxed) == 0 {
+            tokio::time::sleep(GRACE_TICK).await;
+        }
+        polite.state.lock().await.handle = Some(handle);
+        polite.shutdown_graceful().await.unwrap();
+        assert!(polite.state.lock().await.handle.is_none());
     }
 
     /// A SIGKILL no goose path sent is named as what macOS's memory killer does, with the memory then.

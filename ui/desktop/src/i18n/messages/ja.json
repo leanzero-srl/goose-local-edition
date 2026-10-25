@@ -2681,6 +2681,18 @@
   "freeMemory.fitsWithAppsOnly": {
     "defaultMessage": "{apps} を終了するとこのモデルが収まります(<b>{gb} GB</b> を解放)。"
   },
+  "freeMemory.forceStop": {
+    "defaultMessage": "強制終了"
+  },
+  "freeMemory.forceStopBody": {
+    "defaultMessage": "{app} は終了を求めても終了しませんでした。未保存の作業があるのかもしれません。強制終了すると {mac} 上で保存せずに終了します。{app} の未保存の作業は失われます。"
+  },
+  "freeMemory.forceStopConfirm": {
+    "defaultMessage": "{app} を強制終了"
+  },
+  "freeMemory.forceStopTitle": {
+    "defaultMessage": "{app} を強制終了しますか？"
+  },
   "freeMemory.freeFailed": {
     "defaultMessage": "メモリを解放できませんでした: {reason}"
   },
@@ -2693,11 +2705,53 @@
   "freeMemory.keep": {
     "defaultMessage": "開いたままにする"
   },
+  "freeMemory.keepRunning": {
+    "defaultMessage": "実行したままにする"
+  },
+  "freeMemory.leftAlone": {
+    "defaultMessage": "そのまま"
+  },
   "freeMemory.loading": {
     "defaultMessage": "メモリを使用しているものを測定中…"
   },
+  "freeMemory.neverTouchReason": {
+    "defaultMessage": "触らないリストにあります({entry})"
+  },
   "freeMemory.nothingOwn": {
     "defaultMessage": "goose が解放できるメモリはありません"
+  },
+  "freeMemory.nuclearBack": {
+    "defaultMessage": "戻る"
+  },
+  "freeMemory.nuclearConfirmBody": {
+    "defaultMessage": "goose はチェックした各アプリに終了を求め、チェックした各モデルサーバーをアンロードします。アプリには終了を求めるだけです。終了しないアプリは実行したまま残され、報告されます（停止はしません）。保護された項目には一切触れません。"
+  },
+  "freeMemory.nuclearConfirmKeep": {
+    "defaultMessage": "すべて残す"
+  },
+  "freeMemory.nuclearConfirmTitle": {
+    "defaultMessage": "{mac} で {gb} GB を解放しますか?"
+  },
+  "freeMemory.nuclearFree": {
+    "defaultMessage": "{gb} GB を解放"
+  },
+  "freeMemory.nuclearGooseOwn": {
+    "defaultMessage": "goose 自身のメモリ"
+  },
+  "freeMemory.nuclearIntro": {
+    "defaultMessage": "誰も使っていないものにチェックが入っています。残したいもののチェックを外してください。保護されたものには触れません。"
+  },
+  "freeMemory.nuclearOpen": {
+    "defaultMessage": "保護されたもの以外をすべて解放"
+  },
+  "freeMemory.nuclearProtectedHead": {
+    "defaultMessage": "触れないもの"
+  },
+  "freeMemory.nuclearTotal": {
+    "defaultMessage": "チェック済み: <b>{gb} GB</b>"
+  },
+  "freeMemory.protectedChip": {
+    "defaultMessage": "保護"
   },
   "freeMemory.quit": {
     "defaultMessage": "終了"
@@ -2719,6 +2773,24 @@
   },
   "freeMemory.title": {
     "defaultMessage": "{mac} のメモリを解放"
+  },
+  "freeMemory.unload": {
+    "defaultMessage": "アンロード"
+  },
+  "freeMemory.unloadBody": {
+    "defaultMessage": "goose は {mac} で {server} が保持しているモデルをアンロードします(MLX エンジンには停止を依頼します)。使っている側はモデルを読み込み直す必要があります。"
+  },
+  "freeMemory.unloadConfirm": {
+    "defaultMessage": "{server} をアンロード"
+  },
+  "freeMemory.unloadInUse": {
+    "defaultMessage": "現在使用中です。止めると作業が止まります:"
+  },
+  "freeMemory.unloadTitle": {
+    "defaultMessage": "{server} をアンロードしますか?"
+  },
+  "freeMemory.usedBy": {
+    "defaultMessage": "使用中: {who}"
   },
   "freeMemoryEntry.open": {
     "defaultMessage": "メモリを解放"
@@ -4468,6 +4540,30 @@
   },
   "memfreeSettings.minMbDesc": {
     "defaultMessage": "これより使用メモリが少ないアプリは一覧に表示されません。デフォルト {mb} MB。"
+  },
+  "memfreeSettings.neverTouch": {
+    "defaultMessage": "触らない"
+  },
+  "memfreeSettings.neverTouchAdd": {
+    "defaultMessage": "追加"
+  },
+  "memfreeSettings.neverTouchAdded": {
+    "defaultMessage": "自分で追加"
+  },
+  "memfreeSettings.neverTouchBuiltIn": {
+    "defaultMessage": "組み込み"
+  },
+  "memfreeSettings.neverTouchDesc": {
+    "defaultMessage": "どのクリーンアップでも終了・停止しないアプリとプロセス。この Mac でも、この Mac が別の Mac のメモリを解放するときにも適用されます。バンドル ID、アプリ名、プロセス名のいずれか。大文字小文字は区別しません。組み込みのものは常に適用されます。"
+  },
+  "memfreeSettings.neverTouchNone": {
+    "defaultMessage": "まだ何も追加されていません"
+  },
+  "memfreeSettings.neverTouchPlaceholder": {
+    "defaultMessage": "com.example.App またはアプリ名"
+  },
+  "memfreeSettings.neverTouchRemove": {
+    "defaultMessage": "{name} を削除"
   },
   "memfreeSettings.readFailed": {
     "defaultMessage": "これらの設定を読み取れませんでした: {reason}"
