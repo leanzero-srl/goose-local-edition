@@ -258,7 +258,7 @@ pub fn verdict(own: &OwnLoad, need_gb: f64, heavy: bool, min_free: f64) -> Verdi
     if let Some(b) = &own.benchmark {
         block(
             RefusalCode::BenchmarkRunning,
-            format!("benchmark running ({b})"),
+            format!("benchmark running: {b}"),
         );
     }
     let avail = avail_gb(own, min_free);
@@ -1097,6 +1097,17 @@ mod tests {
 
     fn code(own: &OwnLoad, r: &JobRequest, p: UserActivePolicy) -> Option<RefusalCode> {
         admit(own, r, 20.0, p).err().map(|e| e.code)
+    }
+
+    #[test]
+    fn the_benchmark_refusal_names_the_run() {
+        let mut m = idle_mac();
+        m.benchmark = Some("Gauntlet build run 2026-10-25T15:40Z (pid 1234)".into());
+        let e = admit(&m, &req(false, 0.0), 20.0, UserActivePolicy::LastResort).unwrap_err();
+        assert_eq!(
+            e.reason,
+            "benchmark running: Gauntlet build run 2026-10-25T15:40Z (pid 1234)"
+        );
     }
 
     #[test]

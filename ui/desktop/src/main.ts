@@ -50,6 +50,7 @@ import {
   type BenchmarkActivity,
 } from './benchActivity';
 import { spawnBenchmarkWithPower } from './benchPower';
+import { attachBenchMarker, benchMarkerLabel } from './benchMarker';
 import { registerKeepAwake } from './keepAwake';
 import { registerSystemResumed } from './systemResumed';
 import { publicScoreDetails } from './benchPublicScore';
@@ -194,6 +195,7 @@ import {
   type CloudBenchmarkTier,
 } from './benchTierPayload';
 import {
+  FAMILY_WORD,
   familyOfScorer,
   forgeEra,
   isolatedPaymentsTier,
@@ -4963,6 +4965,8 @@ const runSingleBenchmark = async (
           }
         )
       );
+      // Other Macs read this marker before placing work here (load.rs / node_fleet.py).
+      attachBenchMarker(child, benchMarkerLabel(FAMILY_WORD[family], 'build run'));
       const harnessConsole = fsSync.createWriteStream(
         completionReceipt.replace(/\.json$/, '.log'),
         { flags: 'wx' }
@@ -5604,6 +5608,7 @@ ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string, mode?: '
       const { child, releasePower } = spawnBenchmarkWithPower(powerSaveBlocker, () =>
         spawn(runtime.python, python.args, { cwd: workdir, env: python.env, detached: true })
       );
+      attachBenchMarker(child, benchMarkerLabel(FAMILY_WORD[family], 'rescore'));
       activeBenchRun = {
         activity: emptyBenchmarkActivity(),
         releasePower,

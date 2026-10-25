@@ -8,7 +8,8 @@
 //! - memory per process is `phys_footprint` (`proc_pid_rusage` RUSAGE_INFO_V4), never RSS:
 //!   RSS undercounts MLX/GPU memory (measured 31 MiB RSS vs a 4370 MB footprint);
 //! - a closed lid only matters when it would actually sleep (`AppleClamshellCausesSleep`);
-//! - a benchmark is detected by WORD-bounded matching (a mere mention of the word is not one);
+//! - a benchmark is detected by the launcher's live-pid marker, the `GOOSE_SWARM_BENCHMARK` env,
+//!   a WORD-bounded argv match, then recent run files (rule in full at [`detect_benchmark`]);
 //! - the heavy slot is the SAME `~/.cache/heavy-run.lock` flock heavy-run takes;
 //! - limits come from the SAME `~/.leanzero/node-limits.json`, same keys, same defaults.
 //!
@@ -406,33 +407,164 @@ pub fn recent_file_under(dir: &std::path::Path, window: Duration) -> bool {
     walk(dir, 1, cutoff, &mut budget)
 }
 
-fn detect_benchmark() -> Option<String> {
-    if recent_file_under(&benchmark_dir(), Duration::from_secs(120)) {
-        return Some("benchmark run files written in the last 2 min".into());
-    }
-    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
-    let mut sys = System::new();
-    sys.refresh_processes_specifics(
-        ProcessesToUpdate::All,
-        true,
-        ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always),
-    );
-    let me = std::process::id();
-    for (pid, p) in sys.processes() {
-        if pid.as_u32() == me {
+/// Where launchers mark a running benchmark: `~/.leanzero/benchmarks/<pid>.json`.
+pub fn benchmark_marker_dir() -> PathBuf {
+    home().join(".leanzero/benchmarks")
+}
+
+/// How much later than the marker's `started_at` its pid may have started and still be the runner
+/// (the launcher writes the marker right AFTER spawning, so the real runner is never younger).
+const MARKER_PID_SLACK_S: i64 = 120;
+
+#[derive(Deserialize)]
+struct BenchMarker {
+    pid: u32,
+    label: String,
+    started_at: String,
+}
+
+/// The sysinfo refresh benchmark detection needs: argv, environment and start time.
+fn bench_refresh_kind() -> sysinfo::ProcessRefreshKind {
+    use sysinfo::{ProcessRefreshKind, UpdateKind};
+    ProcessRefreshKind::nothing()
+        .with_cmd(UpdateKind::Always)
+        .with_environ(UpdateKind::Always)
+}
+
+/// The first LIVE marker in `dir`, as "<label> <started_at, UTC minute>Z (pid N)". A marker whose
+/// pid is gone, or whose pid now belongs to a process that started more than
+/// [`MARKER_PID_SLACK_S`] after `started_at` (a reused pid), is stale and ignored, so a crashed
+/// launcher never leaves "benchmark running" behind. Unparseable markers are ignored.
+fn marker_reason(dir: &std::path::Path, sys: &sysinfo::System) -> Option<String> {
+    let mut rd: Vec<_> = std::fs::read_dir(dir).ok()?.flatten().collect();
+    rd.sort_by_key(|e| e.file_name());
+    for entry in rd {
+        let Ok(text) = std::fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        let Ok(m) = serde_json::from_str::<BenchMarker>(&text) else {
+            continue;
+        };
+        let Ok(started) = DateTime::parse_from_rfc3339(&m.started_at) else {
+            continue;
+        };
+        let started = started.with_timezone(&Utc);
+        let Some(p) = sys.process(sysinfo::Pid::from_u32(m.pid)) else {
+            continue;
+        };
+        // 0 = start time unknown: the live pid alone decides (node_fleet does the same).
+        let proc_start = p.start_time() as i64;
+        if proc_start != 0 && proc_start > started.timestamp() + MARKER_PID_SLACK_S {
             continue;
         }
-        let args = p
-            .cmd()
-            .iter()
-            .map(|s| s.to_string_lossy())
-            .collect::<Vec<_>>()
-            .join(" ");
-        if args_mention_benchmark(&args) && !is_observer(&args) {
-            let mut shown: String = args.chars().take(100).collect();
-            shown.insert_str(0, "process: ");
-            return Some(shown);
-        }
+        return Some(format!(
+            "{} {} (pid {})",
+            m.label,
+            started.format("%Y-%m-%dT%H:%MZ"),
+            m.pid
+        ));
+    }
+    None
+}
+
+/// `GOOSE_SWARM_BENCHMARK` set to an ON value (`1`/`on`/`true`/`yes`, the engine's own reading).
+fn env_flag_on(entry: &str) -> bool {
+    entry
+        .strip_prefix("GOOSE_SWARM_BENCHMARK=")
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "on" | "true" | "yes"
+            )
+        })
+        .unwrap_or(false)
+}
+
+/// Live processes (other than this one) whose environment carries the benchmark flag, lowest pid
+/// first (the launcher's runner before the engines it spawned). Only same-user environments are
+/// readable on macOS, which is the user a benchmark runs as.
+fn env_benchmark_pids(sys: &sysinfo::System) -> Vec<u32> {
+    let me = std::process::id();
+    let mut pids: Vec<u32> = sys
+        .processes()
+        .iter()
+        .filter(|(pid, p)| {
+            pid.as_u32() != me
+                && p.environ()
+                    .iter()
+                    .any(|e| env_flag_on(&e.to_string_lossy()))
+        })
+        .map(|(pid, _)| pid.as_u32())
+        .collect();
+    pids.sort_unstable();
+    pids
+}
+
+/// A process named for a person: its script's basename (`run_build.py`), else its program's
+/// basename. Never an interpreter path.
+fn run_name<S: AsRef<str>>(cmd: &[S]) -> String {
+    let base = |s: &str| s.rsplit('/').next().unwrap_or(s).to_string();
+    let script = cmd.iter().skip(1).map(AsRef::as_ref).find(|a| {
+        !a.starts_with('-')
+            && [".py", ".js", ".mjs", ".sh", ".ts"]
+                .iter()
+                .any(|x| a.ends_with(x))
+    });
+    match (script, cmd.first()) {
+        (Some(s), _) => base(s),
+        (None, Some(p)) => base(p.as_ref()),
+        (None, None) => "unknown".into(),
+    }
+}
+
+/// THE RULE, identical in `~/Projects/machine-sync/bin/node_fleet.py` (PROBE) and the launcher
+/// `ui/desktop/src/benchMarker.ts`; change all three together. First hit wins:
+/// 1. a live marker `~/.leanzero/benchmarks/<pid>.json` {pid, label, started_at} (see
+///    [`marker_reason`]); the desktop writes it for every build run and rescore it spawns;
+/// 2. a live process whose ENV has `GOOSE_SWARM_BENCHMARK` on (the desktop sets it on the runner,
+///    run_build passes it to every engine), named by its script;
+/// 3. a process whose ARGV carries `benchmark` as a word ([`args_mention_benchmark`]);
+/// 4. a run file under `.../Goose/benchmark/runs/build` modified in the last 2 min.
+///
+/// Why: the packaged app runs `.../Resources/swarm-bench/bench/run_build.py`, whose argv never says
+/// "benchmark", so 3 alone missed it and only 4 caught it (and not through a quiet phase > 2 min).
+fn detect_benchmark() -> Option<String> {
+    use sysinfo::{ProcessesToUpdate, System};
+    let mut sys = System::new();
+    sys.refresh_processes_specifics(ProcessesToUpdate::All, true, bench_refresh_kind());
+    if let Some(r) = marker_reason(&benchmark_marker_dir(), &sys) {
+        return Some(r);
+    }
+    let cmd_of = |pid: u32| -> Vec<String> {
+        sys.process(sysinfo::Pid::from_u32(pid))
+            .map(|p| {
+                p.cmd()
+                    .iter()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    if let Some(&pid) = env_benchmark_pids(&sys).first() {
+        return Some(format!("{} (pid {pid})", run_name(&cmd_of(pid))));
+    }
+    let me = std::process::id();
+    let mut argv_hits: Vec<u32> = sys
+        .processes()
+        .keys()
+        .map(|p| p.as_u32())
+        .filter(|&pid| pid != me)
+        .filter(|&pid| {
+            let args = cmd_of(pid).join(" ");
+            args_mention_benchmark(&args) && !is_observer(&args)
+        })
+        .collect();
+    argv_hits.sort_unstable();
+    if let Some(&pid) = argv_hits.first() {
+        return Some(format!("{} (pid {pid})", run_name(&cmd_of(pid))));
+    }
+    if recent_file_under(&benchmark_dir(), Duration::from_secs(120)) {
+        return Some("benchmark run files written in the last 2 min".into());
     }
     None
 }
@@ -857,6 +989,108 @@ pub async fn snapshot_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sys_now() -> sysinfo::System {
+        let mut sys = sysinfo::System::new();
+        sys.refresh_processes_specifics(
+            sysinfo::ProcessesToUpdate::All,
+            true,
+            bench_refresh_kind(),
+        );
+        sys
+    }
+
+    fn write_marker(dir: &std::path::Path, pid: u32, label: &str, started_at: &str) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(
+            dir.join(format!("{pid}.json")),
+            format!(r#"{{"pid":{pid},"label":"{label}","started_at":"{started_at}"}}"#),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_marker_with_a_live_pid_is_a_running_benchmark_named_by_its_label() {
+        let dir = tempfile::tempdir().unwrap();
+        let me = std::process::id();
+        let now = Utc::now();
+        write_marker(dir.path(), me, "Gauntlet build run", &now.to_rfc3339());
+        let reason = marker_reason(dir.path(), &sys_now());
+        assert_eq!(
+            reason,
+            Some(format!(
+                "Gauntlet build run {} (pid {me})",
+                now.format("%Y-%m-%dT%H:%MZ")
+            ))
+        );
+    }
+
+    #[test]
+    fn a_marker_whose_pid_died_or_was_reused_is_stale() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let dead = child.id();
+        child.wait().unwrap();
+        write_marker(
+            dir.path(),
+            dead,
+            "Forge build run",
+            &Utc::now().to_rfc3339(),
+        );
+        // a live pid that started long AFTER the marker's run: a reused pid, not the runner
+        write_marker(
+            dir.path(),
+            std::process::id(),
+            "Old run",
+            "2000-01-01T00:00:00Z",
+        );
+        std::fs::write(dir.path().join("junk.json"), "{not json").unwrap();
+        assert_eq!(marker_reason(dir.path(), &sys_now()), None);
+    }
+
+    /// The env test's child: this test binary itself, parked. A platform binary (`/bin/sleep`)
+    /// hides its environment on macOS; a benchmark runner (python, goose) does not.
+    #[test]
+    #[ignore]
+    fn env_probe_child() {
+        if std::env::var_os("LZ_ENV_PROBE_CHILD").is_some() {
+            std::thread::sleep(Duration::from_secs(30));
+        }
+    }
+
+    #[test]
+    fn a_live_process_with_the_benchmark_env_is_a_running_benchmark() {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "load::tests::env_probe_child", "--ignored"])
+            .env("GOOSE_SWARM_BENCHMARK", "1")
+            .env("LZ_ENV_PROBE_CHILD", "1")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        std::thread::sleep(Duration::from_millis(300));
+        let found = env_benchmark_pids(&sys_now());
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(found.contains(&pid), "pid {pid} not in {found:?}");
+        assert!(env_flag_on("GOOSE_SWARM_BENCHMARK=on"));
+        assert!(!env_flag_on("GOOSE_SWARM_BENCHMARK=0"));
+        assert!(!env_flag_on("GOOSE_SWARM_BENCHMARKX=1"));
+    }
+
+    #[test]
+    fn a_run_is_named_by_its_script_never_the_interpreter_path() {
+        let py = [
+            "/Library/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/Python",
+            "/Applications/Goose.app/Contents/Resources/swarm-bench/bench/run_build.py",
+            "--entrant",
+            "swarm-3node",
+        ];
+        assert_eq!(run_name(&py), "run_build.py");
+        assert_eq!(run_name(&["/usr/local/bin/goose", "run"]), "goose");
+        assert_eq!(run_name(&[] as &[&str]), "unknown");
+    }
 
     #[test]
     fn benchmark_word_bounded() {
