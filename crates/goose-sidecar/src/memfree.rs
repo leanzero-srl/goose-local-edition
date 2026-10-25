@@ -625,7 +625,20 @@ pub fn categorize(rows: &[ProcRow], ctx: &CategorizeCtx) -> Vec<Group> {
         .into_values()
         .map(|mut g| {
             g.launchd_label = g.pids.iter().find_map(|(p, _)| owner.get(p).cloned());
-            if let Some(reason) = g.pids.iter().find_map(|(p, _)| shield.get(p)) {
+            // The reason shown is its BIGGEST protected pid's (hash order once named the whole
+            // macOS group "started over ssh" after one small sshd child).
+            let biggest = g
+                .pids
+                .iter()
+                .filter_map(|(p, bytes)| shield.get(p).map(|why| (*bytes, *p, why)))
+                .max_by_key(|(bytes, pid, _)| (*bytes, std::cmp::Reverse(*pid)));
+            if let Some((_, _, reason)) = biggest {
+                // macOS is protected for being macOS, whichever rule saw its pids first.
+                let reason = if g.category == Category::System {
+                    "part of macOS".to_string()
+                } else {
+                    reason.clone()
+                };
                 g.protected_why = Some(reason.clone());
                 g.quittable = false;
                 g.reclaimable_by_goose = false;

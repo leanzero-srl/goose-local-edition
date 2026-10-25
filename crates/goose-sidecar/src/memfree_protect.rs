@@ -158,6 +158,18 @@ pub fn is_mcp_command(cmd: &str) -> bool {
     })
 }
 
+/// Is this browser/Electron process driven by a tool over the DevTools protocol? Started with
+/// `--remote-debugging-port`, `--remote-debugging-pipe` or `--enable-automation` (Playwright,
+/// Puppeteer, a CDP harness). The workhorse's mp-vendor-profile Chrome (2026-10-25) was a nuclear
+/// default before this rule.
+pub fn is_automation_browser(cmd: &str) -> bool {
+    cmd.split_whitespace().any(|token| {
+        token.starts_with("--remote-debugging-port")
+            || token == "--remote-debugging-pipe"
+            || token == "--enable-automation"
+    })
+}
+
 /// Is this a heavy-run / node-run wrapper (the owner's job launchers)? By the basename of any argv
 /// token, or of the executable.
 fn is_job_wrapper(path: &str, cmd: Option<&str>) -> bool {
@@ -220,7 +232,8 @@ pub struct ProtectInput<'a> {
 
 /// pid → why nothing may quit, signal or unload it. First matching rule names the reason:
 /// another user's; this goose and its ancestors; launchd jobs (+ descendants + their process
-/// groups); MCP servers (+ descendants); anything with a terminal (+ descendants); anything
+/// groups); MCP servers (+ descendants); browsers driven over remote debugging (+ descendants);
+/// anything with a terminal (+ descendants); anything
 /// started over ssh; claude/goose sessions (+ descendants + ancestors); heavy-run/node-run jobs
 /// (+ descendants + their process groups); macOS; goose, Apple and terminal/editor apps.
 pub fn protected(input: &ProtectInput) -> HashMap<u32, String> {
@@ -257,6 +270,15 @@ pub fn protected(input: &ProtectInput) -> HashMap<u32, String> {
         .collect();
     mark(&mut with_descendants(&mcp, rows).into_iter(), &|_| {
         "an MCP server".into()
+    });
+
+    let driven: Vec<u32> = rows
+        .iter()
+        .filter(|r| cmd(r.pid).is_some_and(is_automation_browser))
+        .map(|r| r.pid)
+        .collect();
+    mark(&mut with_descendants(&driven, rows).into_iter(), &|_| {
+        "a browser driven by automation (remote debugging)".into()
     });
 
     let tty: Vec<u32> = rows.iter().filter(|r| r.has_tty).map(|r| r.pid).collect();
@@ -491,6 +513,25 @@ mod tests {
             "Microsoft Teams",
         );
         f.p(9000, 1, "/Applications/Plain.app/Contents/MacOS/Plain");
+        // Two Chromes: one a CDP harness drives, one the owner's. One bundle = one group.
+        let chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+        f.p(38975, 1, chrome);
+        f.cmd(
+            38975,
+            &format!("{chrome} --user-data-dir=/Users/w/.local/share/mp-vendor-profile --remote-debugging-port=9333 about:blank"),
+        );
+        f.p(
+            38986,
+            38975,
+            "/Applications/Google Chrome.app/Contents/Frameworks/Helper (GPU)",
+        );
+        f.p(63438, 1, chrome);
+        f.cmd(63438, chrome);
+        f.app(
+            "/Applications/Google Chrome.app",
+            "com.google.Chrome",
+            "Google Chrome",
+        );
         f.app("/Applications/Plain.app", "org.example.Plain", "Plain");
         f.p(6999, 1, "/opt/homebrew/bin/fish").has_tty = true;
         f.p(
@@ -612,6 +653,10 @@ mod tests {
         assert_eq!(why(6999), Some("runs in a terminal"));
         assert_eq!(why(6100), Some("runs in a terminal"));
         assert_eq!(why(5002), Some("started over ssh"));
+        let driven = Some("a browser driven by automation (remote debugging)");
+        assert_eq!(why(38975), driven);
+        assert_eq!(why(38986), driven, "its helper");
+        assert_eq!(why(63438), None, "the owner's own Chrome is not driven");
         assert_eq!(why(5000), Some("another user's process"));
         assert_eq!(why(701), Some("part of a claude or goose session"));
         // goose's own engine and its proven orphan are goose's to free.
@@ -699,6 +744,32 @@ mod tests {
             "never-touch"
         );
         assert!(g("mlx:97100").nuclear_default);
+        // A bundle with one driven instance is protected whole: a quit names the bundle.
+        assert_eq!(
+            g("system").protected_why.as_deref(),
+            Some("part of macOS"),
+            "not the ssh child's reason"
+        );
+        let chrome = g("app:com.google.Chrome");
+        assert!(!chrome.nuclear_default && !chrome.quittable);
+        assert_eq!(
+            chrome.protected_why.as_deref(),
+            Some("a browser driven by automation (remote debugging)")
+        );
+    }
+
+    #[test]
+    fn automation_browser_shapes() {
+        assert!(is_automation_browser("chrome --remote-debugging-port=9333"));
+        assert!(is_automation_browser("chrome --remote-debugging-port 0"));
+        assert!(is_automation_browser(
+            "chromium --remote-debugging-pipe --headless"
+        ));
+        assert!(is_automation_browser("chrome --enable-automation"));
+        assert!(!is_automation_browser(
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        ));
+        assert!(!is_automation_browser("chrome --remote-allow-origins=*"));
     }
 
     #[test]
