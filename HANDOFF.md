@@ -19,8 +19,8 @@ Commits on top:
 Uses CARGO_TARGET_DIR=~/Projects/goose-strategies/target (reuse), strip=false config, heavy-run.
 Done so far: fmt 0, clippy (4 crates, all-targets, -D warnings) 0, test -p leanzero-link 0,
 goose --lib `acp::server::link link_serve swarm_router memfree` 0 (144 passed).
-Pending at write time: goose-server remote_executor, goose-sidecar memfree, just check-acp-schema,
-ui lint:check, typecheck, i18n:check, full vitest. Rerun command:
+All steps PASSED 19:50 (rust 467 tests 0 failed; vitest 552 files all green, waitClock did not trip).
+Rerun command:
   zsh /private/tmp/claude-501/-Users-mihaiperdum-Projects/9235260e-4bbb-41c2-aefc-cd516bd51e28/scratchpad/gate.sh
 Known: waitClock.test.ts may trip on git-ignored ui/desktop/src/swarm-bench/ (not tracked, not ours).
 
