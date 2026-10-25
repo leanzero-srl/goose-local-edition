@@ -11,6 +11,7 @@ import {
   parseBool,
   parseNumber,
   parsePolicy,
+  USER_ACTIVE_POLICIES,
   parseStrategy,
   STRATEGIES,
   waitingJobs,
@@ -91,9 +92,13 @@ describe('macLoad: the three bars', () => {
 });
 
 describe('macLoad: config parsers', () => {
-  it('parsePolicy accepts the three values, case and dash tolerant, else the default', () => {
+  it('parsePolicy accepts allow and refuse, reads the old last_resort as allow, else the default', () => {
+    expect(USER_ACTIVE_POLICIES).toEqual(['allow', 'refuse']);
+    expect(JOBS_DEFAULTS.policy).toBe('allow');
     expect(parsePolicy('allow')).toBe('allow');
-    expect(parsePolicy(' Last-Resort ')).toBe('last_resort');
+    // Busy is measured load only since 3.0.131: someone at the keyboard never ranks a Mac last.
+    expect(parsePolicy(' Last-Resort ')).toBe('allow');
+    expect(parsePolicy('last_resort')).toBe('allow');
     expect(parsePolicy('REFUSE')).toBe('refuse');
     expect(parsePolicy('maybe')).toBe(JOBS_DEFAULTS.policy);
     expect(parsePolicy(null)).toBe(JOBS_DEFAULTS.policy);

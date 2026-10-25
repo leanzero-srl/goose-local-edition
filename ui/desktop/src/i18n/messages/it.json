@@ -4128,7 +4128,7 @@
     "defaultMessage": "Esegui i job inviati da altri Mac"
   },
   "macLoad.allowJobsHint": {
-    "defaultMessage": "Comandi shell e prompt, un job pesante alla volta, fermati se superano la soglia di memoria. Effetto immediato."
+    "defaultMessage": "Comandi shell e prompt, tanti job pesanti quanti ne consentono gli slot e la memoria di questo Mac, fermati se superano la soglia di memoria. Effetto immediato."
   },
   "macLoad.benchmark": {
     "defaultMessage": "Benchmark in corso: {why}"
@@ -11993,6 +11993,9 @@
   "runJob.refusal": {
     "defaultMessage": "{mac}: {reason}"
   },
+  "runJob.verdictLine": {
+    "defaultMessage": "{mac}: {verdict}"
+  },
   "runJob.inUse": {
     "defaultMessage": "{name} (in uso)"
   },
@@ -12021,7 +12024,7 @@
     "defaultMessage": "Job pesante"
   },
   "runJob.heavyHint": {
-    "defaultMessage": "Un Mac esegue un solo job pesante alla volta (build, rendering, addestramento)."
+    "defaultMessage": "Un Mac esegue tanti job pesanti (build, rendering, addestramento) quanti ne consentono i suoi slot e la sua memoria."
   },
   "runJob.mem": {
     "defaultMessage": "Memoria necessaria (GB, facoltativo)"

@@ -4128,7 +4128,7 @@
     "defaultMessage": "Jalankan tugas yang dikirim Mac lain"
   },
   "macLoad.allowJobsHint": {
-    "defaultMessage": "Perintah shell dan prompt, satu tugas berat sekaligus, dihentikan saat melewati batas memori. Langsung berlaku."
+    "defaultMessage": "Perintah shell dan prompt, tugas berat sebanyak slot dan memori yang dimiliki Mac ini, dihentikan saat melewati batas memori. Langsung berlaku."
   },
   "macLoad.benchmark": {
     "defaultMessage": "Benchmark sedang berjalan: {why}"
@@ -11993,6 +11993,9 @@
   "runJob.refusal": {
     "defaultMessage": "{mac}: {reason}"
   },
+  "runJob.verdictLine": {
+    "defaultMessage": "{mac}: {verdict}"
+  },
   "runJob.inUse": {
     "defaultMessage": "{name} (sedang dipakai)"
   },
@@ -12021,7 +12024,7 @@
     "defaultMessage": "Tugas berat"
   },
   "runJob.heavyHint": {
-    "defaultMessage": "Satu Mac menjalankan satu tugas berat dalam satu waktu (build, render, pelatihan)."
+    "defaultMessage": "Sebuah Mac menjalankan tugas berat (build, render, pelatihan) sebanyak slot dan memori yang dimilikinya."
   },
   "runJob.mem": {
     "defaultMessage": "Memori yang dibutuhkan (GB, opsional)"

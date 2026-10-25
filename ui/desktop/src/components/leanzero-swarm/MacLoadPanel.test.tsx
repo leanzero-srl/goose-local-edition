@@ -26,6 +26,7 @@ vi.mock('./useMacs', async (importActual) => ({
 }));
 
 import { JobsSettings, MacLoadBars } from './MacLoadPanel';
+import { TONE_TEXT } from '../lz';
 import { BAR_FILL, JOBS_KEYS } from './macLoad';
 import { brief, busyLoad } from './macLoad.fixtures';
 
@@ -73,6 +74,28 @@ describe('MacLoadBars', () => {
     expect(screen.getByTestId('mac-load-jobs').textContent).toContain('2 jobs running');
     // The house rules: no left rails, no rounded corners on the bar.
     expect(container.innerHTML).not.toMatch(/border-l-\d|rounded/);
+  });
+
+  it('shows the measured verdict with how much more the Mac can take, busy in the warn tone', () => {
+    const { unmount } = renderBars();
+    const ok = screen.getByTestId('mac-load-verdict');
+    expect(ok.textContent).toBe(
+      'ok: 1/4 heavy, 49 GB free, load 0.35/core, can take ~2 more 8 GB jobs'
+    );
+    expect(ok.className).not.toContain(TONE_TEXT.warn);
+    unmount();
+    const base = busyLoad();
+    renderBars({
+      ...base,
+      own: { ...base.own, can_take: 0, verdict: 'busy: memory 12% free < 20% floor' },
+    });
+    const busy = screen.getByTestId('mac-load-verdict');
+    expect(busy.textContent).toBe('busy: memory 12% free < 20% floor');
+    expect(busy.className).toContain(TONE_TEXT.warn);
+    cleanup();
+    // An older goose sends no verdict: no line.
+    renderBars({ ...base, own: { ...base.own, verdict: null } });
+    expect(screen.queryByTestId('mac-load-verdict')).toBeNull();
   });
 
   it('lists every job, live and ended, with its origin and state', () => {
@@ -321,8 +344,13 @@ describe('JobsSettings', () => {
 
     await user.click(sw);
     await waitFor(() => expect(mockUpsert).toHaveBeenCalledWith(JOBS_KEYS.allow, true));
-    await user.click(screen.getByTestId('jobs-policy-last_resort'));
-    await waitFor(() => expect(mockUpsert).toHaveBeenCalledWith(JOBS_KEYS.policy, 'last_resort'));
+    // Two policies only; the hint says busy is measured.
+    expect(screen.queryByTestId('jobs-policy-last_resort')).toBeNull();
+    expect(screen.getByTestId('jobs-settings-policy-hint').textContent).toContain(
+      'Busy means measured'
+    );
+    await user.click(screen.getByTestId('jobs-policy-allow'));
+    await waitFor(() => expect(mockUpsert).toHaveBeenCalledWith(JOBS_KEYS.policy, 'allow'));
     await user.clear(idle);
     await user.type(idle, '120');
     await user.tab();

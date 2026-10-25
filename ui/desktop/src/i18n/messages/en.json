@@ -4358,14 +4358,14 @@
   "macLoad.policy": {
     "defaultMessage": "While someone uses this Mac"
   },
-  "macLoad.policyHint": {
-    "defaultMessage": "Busy means measured: memory above the floor, free heavy slots, load per core. Someone at the keyboard only breaks ties."
-  },
   "macLoad.policy.allow": {
     "defaultMessage": "Take jobs"
   },
   "macLoad.policy.refuse": {
     "defaultMessage": "Refuse jobs"
+  },
+  "macLoad.policyHint": {
+    "defaultMessage": "Busy means measured: memory above the floor, free heavy slots, load per core. Someone at the keyboard only breaks ties."
   },
   "macLoad.queueNoTry": {
     "defaultMessage": "Not offered to any Mac yet: a job ahead of it is waiting."
@@ -9696,7 +9696,7 @@
     "defaultMessage": "Heavy job"
   },
   "runJob.heavyHint": {
-    "defaultMessage": "A Mac runs one heavy job at a time (builds, renders, training)."
+    "defaultMessage": "A Mac runs as many heavy jobs (builds, renders, training) as it has slots and memory for."
   },
   "runJob.inUse": {
     "defaultMessage": "{name} (in use)"
@@ -9742,6 +9742,9 @@
   },
   "runJob.title": {
     "defaultMessage": "Run a job on…"
+  },
+  "runJob.verdictLine": {
+    "defaultMessage": "{mac}: {verdict}"
   },
   "runJob.willQueue": {
     "defaultMessage": "No Mac has room right now. Run it and it waits in line on this Mac, then starts on the first Mac that has room."

@@ -34,6 +34,7 @@ const i18n = defineMessages({
       'No Mac has room right now. Run it and it waits in line on this Mac, then starts on the first Mac that has room.',
   },
   refusal: { id: 'runJob.refusal', defaultMessage: '{mac}: {reason}' },
+  verdictLine: { id: 'runJob.verdictLine', defaultMessage: '{mac}: {verdict}' },
   none: {
     id: 'runJob.none',
     defaultMessage:
@@ -50,7 +51,8 @@ const i18n = defineMessages({
   heavy: { id: 'runJob.heavy', defaultMessage: 'Heavy job' },
   heavyHint: {
     id: 'runJob.heavyHint',
-    defaultMessage: 'A Mac runs one heavy job at a time (builds, renders, training).',
+    defaultMessage:
+      'A Mac runs as many heavy jobs (builds, renders, training) as it has slots and memory for.',
   },
   mem: { id: 'runJob.mem', defaultMessage: 'Memory it needs (GB, optional)' },
   timeout: { id: 'runJob.timeout', defaultMessage: 'Time limit (seconds, optional)' },
@@ -160,6 +162,10 @@ export function RunJobDialog({ macs, onClose }: { macs: readonly Mac[]; onClose:
   const ranking = placements?.map((p) =>
     p.userActive ? intl.formatMessage(i18n.inUse, { name: nameOf(p.nodeId) }) : nameOf(p.nodeId)
   );
+  // Each candidate's measured verdict ("ok: … can take ~N more" / "busy: …"); a 3.0.130 peer sends none.
+  const verdicts = new Map(
+    (placements ?? []).flatMap((p) => (p.verdict ? [[p.nodeId, p.verdict] as const] : []))
+  );
   const targetOff = target !== BEST && !takers.some((t) => t.nodeId === target);
   const canSend =
     command.trim() !== '' && memGb !== 'bad' && timeoutS !== 'bad' && !targetOff && !sending;
@@ -202,7 +208,7 @@ export function RunJobDialog({ macs, onClose }: { macs: readonly Mac[]; onClose:
     { value: BEST, label: intl.formatMessage(i18n.best), hint: bestHint },
     ...targets.map((t) =>
       t.takesJobs
-        ? { value: t.nodeId, label: t.mac.name }
+        ? { value: t.nodeId, label: t.mac.name, hint: verdicts.get(t.nodeId) }
         : {
             value: t.nodeId,
             label: t.mac.name,
@@ -244,6 +250,29 @@ export function RunJobDialog({ macs, onClose }: { macs: readonly Mac[]; onClose:
                 ? intl.formatMessage(i18n.ranking, { macs: ranking.join(' · ') })
                 : intl.formatMessage(i18n.noPlace)}
             </span>
+          )}
+          {placements && verdicts.size > 0 && (
+            <ul data-testid="run-job-verdicts" className="flex flex-col gap-0.5">
+              {placements
+                .filter((p) => p.verdict && (target === BEST || p.nodeId === target))
+                .map((p) => (
+                  <li
+                    key={p.nodeId}
+                    data-testid={`run-job-verdict-${p.nodeId}`}
+                    className={cx(
+                      TYPE.meta,
+                      TNUM,
+                      'break-words',
+                      p.verdict?.startsWith('busy:') && cx(WEIGHT.semibold, TONE_TEXT.warn)
+                    )}
+                  >
+                    {intl.formatMessage(i18n.verdictLine, {
+                      mac: nameOf(p.nodeId),
+                      verdict: p.verdict,
+                    })}
+                  </li>
+                ))}
+            </ul>
           )}
           {target === BEST && plan && plan.placements.length === 0 && plan.refusals.length > 0 && (
             <div data-testid="run-job-refusals" className="flex flex-col gap-0.5">
