@@ -299,3 +299,36 @@ NOT DONE (coordinator steps 2-5), in order:
    small MLX model in goose's engine; Free up memory -> goose's own; budget rises by measured footprint (±2% RAM);
    screenshot to /private/tmp/claude-501/-Users-mihaiperdum-Projects/9235260e-4bbb-41c2-aefc-cd516bd51e28/scratchpad/.
 Do NOT rebase until 3.0.129 lands.
+
+## AGENT R2b state (2026-10-25, stopped at the context limit; steps 2-4 DONE, step 5 LIVE not done)
+DONE, committed on feat/memfree:
+- 1875d4005 Link relay: MlxOp::MemoryHolders/MemoryFree (paths memoryHolders/memoryFree, MemoryFree is_destructive, ALL=24),
+  dispatch arms call core_memory_*(req, relayed=true), on_mlx_engine_memory_* relay via mlx_engine_relay. Goose-owned reclaim
+  over Link is gated by the PEER's manage_models because control.rs mlx_proxy already 403s when allow_remote_execution=false.
+  App quit: memfree.rs ALLOW_REMOTE_APP_QUIT_KEY="GOOSE_LINK_ALLOW_REMOTE_APP_QUIT" (default off, read on the peer via
+  link::switch_from_config, now pub(super)); quit_apps_allowed(relayed, switch). NodeAllows.quit_apps (struct-level serde default)
+  + test a_peer_without_quit_apps_parses_it_as_off; TS NodeAllows.quit_apps?.
+- 027fedabe other-Mac suggestion: peer_free_bytes(node_id) = peer's Link load own.mem_free_pct x mem_total_gb (GiB) -> budget_bytes;
+  None when Link down / no load (never 0). TS peerMac.budgetBytes optional; new i18n freeMemory.altPeerNoFree ("Run it on <b>{mac}</b> instead").
+- 4b6d556ce altPeerNoFree in all 15 locales.
+GATES (all green at 4b6d556ce): cargo fmt --all --check OK; clippy -D warnings (-p goose-sidecar -p goose -p leanzero-link
+--all-targets, strip=false config) clean; leanzero-link tests all pass; goose-sidecar memfree 18/18; goose --lib "memfree link" 73/73;
+just check-acp-schema up to date; desktop lint:check (typecheck+eslint+i18n:check) pass; full vitest 550 files / 5125 passed, 3 skipped.
+STEP 5 LIVE — NOT DONE. Prepared on Gabee:
+- Isolated root $S/gooseroot (S = this session's scratchpad) with config/config.yaml (mlx_engine models_dir $S/gooseroot/models,
+  port 8391) and a 4.3 GB test model mlx-community/Qwen3-8B-4bit downloaded there (delete $S/gooseroot/models when done).
+  Gabee's ~/.goose/models are NFS links to the workhorse SSD (16+ GB, too slow to load over Tailscale).
+- The installed Goose Swarm app is running on Gabee (CDP 9897, nothing loaded): do NOT quit it; run the packaged copy beside it
+  with GOOSE_PATH_ROOT + GOOSE_USER_DATA_DIR=$S/userdata + --remote-debugging-port=9333.
+- TRAP: `just copy-binary debug` fails at fetch-tailscale (no Go, no local tailscale). Workaround: after the cargo build,
+  do the copy step by hand (codesign target/debug/goose, cp to ui/desktop/src/bin/) and copy tailscaled+tailscale from
+  "/Applications/Goose Swarm.app/Contents/Resources/bin/" into ui/desktop/src/bin/, then `cd ui/desktop && pnpm run package`.
+  The cargo build of goose-cli itself SUCCEEDED (target/debug/goose is current).
+- LM Studio live (laptop, `ssh laptop`): LM Studio server up on 127.0.0.1:1234, nothing loaded; local models: only
+  text-embedding-nomic-embed-text-v1.5 (84 MB); qwen3.6-35b is on WorksMacStudio (remote device, do not load). Laptop 65 GB free.
+  Plan: `lms get` a small LLM (~1-4 GB) or load the embedding model, then run the probe. Probe source (not in repo, it would
+  break clippy --all-targets until fixed): $S/memfree_lms_probe.rs -> put in crates/goose-sidecar/examples/, fix 2 errors
+  (goose_sidecar::memory is private: use memfree footprint + vm_stat or make a pub re-export; the filter_map closure must return
+  Option: `Some((pid.trim().parse().ok()?, comm.trim().to_string())).filter(|_| comm.contains("LM Studio"))`), build on Gabee,
+  scp target/debug/examples/memfree_lms_probe to the laptop, run it; confirm `lms ps` empty and free GB up. Only unload models
+  YOU loaded; remove the downloaded model afterwards.
