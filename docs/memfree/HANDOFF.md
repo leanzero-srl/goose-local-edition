@@ -91,3 +91,45 @@ Contract for AGENT U (ACP, camelCase):
      alternatives: [{kind:"smallerVariant", modelId, needBytes} | {kind:"peerMac", nodeId, label, budgetBytes}], quitAppsAllowed: bool}
   `_goose/unstable/mlxEngine/memoryFree` {nodeId?, gooseOwned: bool, quitApps: [bundleId], fitModelId?} ->
      {items:[{id,label,ok,freedBytes?,message}], before: {budgetBytes}, after: {budgetBytes}, fit?: MlxMountFitDto}
+
+## AGENT R state (2026-10-25 ~18:30, agent 2 stopped at the 160k guard BEFORE writing code)
+Nothing of steps 1-7 is coded yet. The ctx guard fired at 161k: the injected global CLAUDE.md + skill text alone is
+~150k, so a fresh agent must NOT load skill `goose-feature-dev` in full (this section carries what it needs) and keep reads tight.
+Facts read (file:line at e4cfd942a), so the next agent skips the survey:
+- Deps: goose-sidecar has libc 0.2 (unix), sysinfo 0.37, reqwest, serde_json, tokio; NO plist dep. `plist 1.9.0` is already in
+  Cargo.lock (transitive) -> `cargo add plist@1.9 -p goose-sidecar --target 'cfg(target_os = "macos")'` costs no new download.
+- FFI: libc exposes `proc_pidinfo`, `PROC_PIDTBSDINFO`, `proc_bsdinfo` (pbi_ppid, pbi_uid, pbi_start_tvsec) — usage example
+  leanzero-link/src/mesh.rs:1286. `proc_pid_rusage` + `proc_listallpids` are declared by hand in leanzero-link/src/load.rs:611
+  (`extern "C" { fn proc_pid_rusage(pid:i32, flavor:i32, buf:*mut c_void)->i32; fn proc_listallpids(buf:*mut c_void,size:i32)->i32; }`,
+  rusage V4 = flavor 4, 512-byte buffer, phys_footprint = bytes [72..80] LE, list buffer 8192 i32). Copy that pattern into
+  memfree.rs (sidecar cannot depend on leanzero-link). proc_pidpath: declare `fn proc_pidpath(pid:i32, buf:*mut c_void, size:u32)->i32` (buf 4096).
+- Own engine: `global_manager()` (engine.rs:2516); `.start_frees().await -> StartFrees::{Nothing, Mounted{model_id,bytes:Result<u64,String>},
+  Leftover{pids,port,bytes}}` (engine.rs:1053/1736), `.bytes()`; `.unmount().await -> Result<(),UnmountRefused>` (2177);
+  `.status().await.active_requests: Option<u32>` (1221); `.settings().port`; `.mount_fit(model_id).await -> Result<FitVerdict>` (1674).
+  IMPORTANT: mount_fit ALREADY credits StartFrees bytes as available (`freed_by_switch_bytes`, engine.rs:1712), so fit.short_bytes()
+  already excludes the own engine. In `verdict(short, goose_owned, apps)` pass goose_owned WITHOUT the own-engine bytes, else double count
+  (still list the own engine as a gooseEngine group with reclaimableByGoose).
+- Busy check: `holders::read_all(&holders::holders_dir()?)` -> Vec<HolderEntry::{Live(HolderRecord), Stale{..}, Unreadable{..}}>;
+  HolderRecord.kind = HolderKind::Goosed{replies: Vec<ReplyHold{waiting: bool,..}>} | SwarmRun{..} (holders.rs:83-134).
+  Busy = any Live SwarmRun, or Goosed with a reply where !waiting; Unreadable = treat as busy (unknown is never "idle").
+- Other engines: `machine::other_engines(Some(own_port)) -> Vec<OtherEngine{pid,started_at,kind,command,port,resident_bytes}>`
+  (machine.rs:634; resident_bytes is sysinfo RSS, re-read footprint per pid in the census), `machine::stop_other_engine(pid, started_at, own_port)`
+  (709) -> StopReport. `machine::prove(pid, started_at) -> Liveness` (242) and `machine::process_start(pid) -> Option<(u64,bool)>` (275)
+  give the pid+start-time check for the goose-serve SIGTERM. `fit::gb(bytes)` formats GB.
+- fit.rs: FitVerdict{verdict, need (need.total_bytes(), weights_bytes), facts, budget_bytes, message}, short_bytes() Some only on Block.
+- ACP (crates/goose/src/acp/server/mlx_engine.rs): fit_to_dto(model_id,&fit) at 600; core_status 651 (pattern for fitModelId);
+  mount_refusal 754 calls `super::mlx_placement::mount_alternative(&model_id, need.weights_bytes).await -> Result<(Option<candidate>, badge), String>`;
+  core_stop_other_engine 804 (port = synced_manager()?.settings().port); core_models_list 856 (models via
+  `hf::list_local_models(&expand_tilde(&load_engine_settings()?.models_dir))`, each {id,size_bytes,complete}); local handlers in
+  `impl GooseAcpAgent` 1120+ with remote relay pattern:
+  `if let Some(node) = self.mlx_engine_remote_target(req.node_id.as_deref()) { return self.mlx_engine_relay(&node, MlxOp::X, &req).await; }`
+  GoosedMlxControl::dispatch match at 1433 (`MlxOp::X => mlx_response_to_value(core_x(mlx_req_from_value(request)?).await)`).
+  The relayed path enters core_* directly, so the quit-apps refusal (GOOSE_LINK_ALLOW_REMOTE_APP_QUIT off) goes in a
+  `core_memory_free(req, relayed: bool)` param, true from the dispatch arm.
+- SDK types: custom_requests.rs MlxEngineStopOtherEngineRequest at ~2685 is the template (JsonRpcRequest + #[request(method, response)],
+  camelCase, JsonSchema); MlxMountFitDto at 2713.
+- Not yet read: custom_dispatch.rs ~1015 route, leanzero-link state.rs MlxOp path()/from_path(), wire.rs:111 NodeAllows,
+  ui/desktop/src/utils/orphanGoosedReap.ts selectOrphanedGoosed rule, LM Studio unload docs (WebFetch lmstudio.ai/docs).
+Commands (unchanged): `cd ~/Projects/goose-memfree && source bin/activate-hermit`; every cargo build/test with
+`--config 'profile.dev.package."*".strip=false'` (clippy: after `clippy`); heavy ones via `~/Projects/machine-sync/bin/heavy-run --timeout 3600 -- <cmd>`.
+Commit ONLY own paths (crates/**, acp-schema.json, acp-meta.json, ui/sdk/src/generated); AGENT U shares the worktree.
