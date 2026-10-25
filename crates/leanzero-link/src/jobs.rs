@@ -32,8 +32,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
 use crate::load::{
-    sample_own, user_idle_threshold_s, HeavySlot, JobBrief, JobKind, JobState,
-    NodeLimits, NodeLoad, OwnLoad, THERMAL_REFUSE_LEVEL,
+    sample_own, user_idle_threshold_s, HeavySlot, JobBrief, JobKind, JobState, NodeLimits,
+    NodeLoad, OwnLoad, THERMAL_REFUSE_LEVEL,
 };
 use crate::state::{ExecuteRequest, RemoteExecutor, RunEnd, SwarmStateSource};
 
@@ -498,7 +498,10 @@ pub fn admit(
             .unwrap_or_else(|| "recent input".into());
         return Err(Refusal::new(
             RefusalCode::UserActive,
-            format!("refused: someone is using this Mac ({idle}) and its owner set Refuse jobs; {}", v.line),
+            format!(
+                "refused: someone is using this Mac ({idle}) and its owner set Refuse jobs; {}",
+                v.line
+            ),
         ));
     }
     Ok(())
@@ -523,7 +526,15 @@ pub fn rank_placements<'a>(
     heavy: bool,
     gate: &Gate,
 ) -> Vec<Placement> {
-    plan_placement("", nodes, need_gb, heavy, gate, PlacementStrategy::LocalFirst).candidates
+    plan_placement(
+        "",
+        nodes,
+        need_gb,
+        heavy,
+        gate,
+        PlacementStrategy::LocalFirst,
+    )
+    .candidates
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1661,9 +1672,8 @@ async fn watch_adopted(entry: Arc<JobEntry>, pgid: i32, limits: NodeLimits, cfg:
     let rec = entry.snapshot();
     let mut slot = None;
     if rec.heavy {
-        let max_heavy = limits.max_heavy_for(
-            std::thread::available_parallelism().map_or(1, |n| n.get() as u32),
-        );
+        let max_heavy = limits
+            .max_heavy_for(std::thread::available_parallelism().map_or(1, |n| n.get() as u32));
         match HeavySlot::try_take_any(&cfg.heavy_lock, max_heavy, &rec.job_id) {
             Ok(Some((mut s, _))) => {
                 s.write_holder(pgid, &holder_label(&rec));
