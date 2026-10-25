@@ -4139,6 +4139,9 @@
   "macLoad.cancelJob": {
     "defaultMessage": "取消工作"
   },
+  "macLoad.cancelQueuedBody": {
+    "defaultMessage": "這會把工作從 {mac} 的佇列中移除，它不會再啟動。"
+  },
   "macLoad.cancelTitle": {
     "defaultMessage": "取消工作 {id}？"
   },
@@ -4172,8 +4175,14 @@
   "macLoad.jobsLine": {
     "defaultMessage": "{live,plural,=0{沒有執行中的工作} one{# 個工作執行中} other{# 個工作執行中}}"
   },
+  "macLoad.jobsWaiting": {
+    "defaultMessage": "{waiting, plural, other {# 個工作在等待有空間的 Mac}}"
+  },
   "macLoad.keepRunning": {
     "defaultMessage": "繼續執行"
+  },
+  "macLoad.keepWaiting": {
+    "defaultMessage": "繼續等待"
   },
   "macLoad.kind": {
     "defaultMessage": "類型"
@@ -4199,6 +4208,12 @@
   "macLoad.ownLine": {
     "defaultMessage": "{user} · cpu {cpu} · 記憶體已用 {mem} · gpu {gpu}"
   },
+  "macLoad.placedOn": {
+    "defaultMessage": "已分配到"
+  },
+  "macLoad.placedOnValue": {
+    "defaultMessage": "{mac}，編號 {id}"
+  },
   "macLoad.policy": {
     "defaultMessage": "有人使用這台 Mac 時"
   },
@@ -4211,11 +4226,20 @@
   "macLoad.policy.refuse": {
     "defaultMessage": "拒絕工作"
   },
+  "macLoad.queueNoTry": {
+    "defaultMessage": "尚未分配給任何 Mac：前面有工作在等待。"
+  },
+  "macLoad.queueRefusals": {
+    "defaultMessage": "每台 Mac 拒絕的原因"
+  },
   "macLoad.reason": {
     "defaultMessage": "原因"
   },
   "macLoad.reconnectHint": {
     "defaultMessage": "政策與記憶體下限會在 Link 重新連線後生效。"
+  },
+  "macLoad.refusalLine": {
+    "defaultMessage": "{mac}：{reason}"
   },
   "macLoad.saveFailed": {
     "defaultMessage": "未儲存：{reason}"
@@ -11930,11 +11954,32 @@
   "macLoad.stateCancelling": {
     "defaultMessage": "正在取消…"
   },
+  "macLoad.stateWaiting": {
+    "defaultMessage": "等待中，排第 {position} 位"
+  },
+  "macLoad.strategy": {
+    "defaultMessage": "我的工作在哪裡執行"
+  },
+  "macLoad.strategy.localFirst": {
+    "defaultMessage": "先用我的 Mac"
+  },
+  "macLoad.strategy.selfish": {
+    "defaultMessage": "先用其他 Mac"
+  },
+  "macLoad.strategyHint.localFirst": {
+    "defaultMessage": "這台 Mac 有空間就在這裡執行，否則在空間最多的其他 Mac 上執行，都沒有就在佇列中等待。"
+  },
+  "macLoad.strategyHint.selfish": {
+    "defaultMessage": "在空間最多的其他 Mac 上執行，否則在這台 Mac 上執行，都沒有就在佇列中等待。讓這台 Mac 保持空閒。"
+  },
   "myMacs.runJob": {
     "defaultMessage": "執行工作…"
   },
   "runJob.title": {
     "defaultMessage": "在…上執行工作"
+  },
+  "runJob.willQueue": {
+    "defaultMessage": "現在沒有 Mac 有空間。執行後它會在這台 Mac 的佇列中等待，並在第一台有空間的 Mac 上啟動。"
   },
   "runJob.target": {
     "defaultMessage": "執行位置"
@@ -11944,6 +11989,9 @@
   },
   "runJob.ranking": {
     "defaultMessage": "目前最佳：{macs}"
+  },
+  "runJob.refusal": {
+    "defaultMessage": "{mac}：{reason}"
   },
   "runJob.inUse": {
     "defaultMessage": "{name}（使用中）"

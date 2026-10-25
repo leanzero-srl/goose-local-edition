@@ -6461,21 +6461,41 @@ export type LeanzeroLinkRemoteExecuteResponse_unstable = {
  * logs and placements are carried as the node's own JSON (`leanzero_link::jobs` DTOs);
  * a view never carries the command line.
  *
- * Submit one job. `targetNodeId` absent = place it on the best node (see `jobsPlace`).
- * `job` is a `JobRequest`: `{kind: "shell"|"prompt", command, cwd?, needMemGb?, heavy,
- * timeoutS?}` (snake_case keys inside `job`, as the node's route takes them).
+ * Submit one job. `targetNodeId` absent = place it by the placement strategy (see
+ * `jobsPlace`): the first candidate that accepts runs it; when none can, or other jobs already
+ * wait, it joins THIS node's FIFO queue (`queued: true`, `queuePosition` 1 = next, `nodeId` =
+ * this node, `jobId` = the queue id) and is offered to the Macs again every 15 s. A queue id
+ * follows its job: `jobsGet`/`jobsLog`/`jobsCancel` on this node show it waiting (`state:
+ * "queued"`, `queue: {position, strategy, refusals}`), then the placed job with `placed_on`.
+ * A targeted job never queues (a refusal is the error). `job` is a `JobRequest`: `{kind:
+ * "shell"|"prompt", command, cwd?, needMemGb?, heavy, timeoutS?}` (snake_case keys inside
+ * `job`, as the node's route takes them).
  */
 export type LeanzeroLinkJobsSubmitRequest_unstable = {
     targetNodeId?: string | null;
     job: unknown;
+    /**
+     * This job's placement strategy, `"local-first"` | `"selfish"` (the "Run a job" override).
+     * Absent = the setting (`LEANZERO_LINK_JOBS_STRATEGY`, else node-limits.json `strategy`,
+     * else local-first). Ignored with `targetNodeId`.
+     */
+    strategy?: string | null;
 };
 
 export type LeanzeroLinkJobsSubmitResponse_unstable = {
     /**
-     * Where the job went (the placement's pick when no target was given).
+     * Where the job went (the placement's pick when no target was given; this node when queued).
      */
     nodeId: string;
     jobId: string;
+    /**
+     * No Mac had room: the job waits in this node's queue under `jobId`.
+     */
+    queued?: boolean;
+    /**
+     * Its place in line when queued (1 = next).
+     */
+    queuePosition?: number | null;
 };
 
 /**
@@ -6525,19 +6545,34 @@ export type LeanzeroLinkJobsLogResponse_unstable = {
 };
 
 /**
- * Where a job could run now, best first (node_fleet's rules: OK nodes by score, then
- * USER-ACTIVE as the last resort; busy nodes and nodes that do not allow jobs are absent).
+ * Where a job could run now, in the order a submit tries them (node_fleet's rules: OK nodes
+ * first, USER-ACTIVE as the last resort; inside each class this node first under
+ * `local-first`, last under `selfish`, the others by score). Busy nodes and nodes that do not
+ * allow jobs are not placements: they are `refusals`, each `{nodeId, code, reason}`.
  */
 export type LeanzeroLinkJobsPlaceRequest_unstable = {
     needMemGb?: number | null;
     heavy?: boolean;
+    /**
+     * As `jobsSubmit`'s `strategy`; absent = the setting.
+     */
+    strategy?: string | null;
 };
 
 export type LeanzeroLinkJobsPlaceResponse_unstable = {
     /**
-     * `{nodeId, userActive, score}` per candidate, best first.
+     * `{nodeId, userActive, score}` per candidate, in the order a submit tries them.
      */
     placements: Array<unknown>;
+    /**
+     * The strategy the order was made with (`"local-first"` | `"selfish"`).
+     */
+    strategy?: string;
+    /**
+     * `{nodeId, code, reason}` per Mac that is not a placement (the job would wait in the
+     * queue when `placements` is empty).
+     */
+    refusals?: Array<unknown>;
 };
 
 /**

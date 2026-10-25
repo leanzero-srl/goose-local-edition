@@ -4280,6 +4280,9 @@
   "macLoad.cancelJob": {
     "defaultMessage": "Cancel job"
   },
+  "macLoad.cancelQueuedBody": {
+    "defaultMessage": "This takes the job out of the queue on {mac}. It never starts."
+  },
   "macLoad.cancelTitle": {
     "defaultMessage": "Cancel job {id}?"
   },
@@ -4313,8 +4316,14 @@
   "macLoad.jobsLine": {
     "defaultMessage": "{live,plural,=0{No job running} one{# job running} other{# jobs running}}"
   },
+  "macLoad.jobsWaiting": {
+    "defaultMessage": "{waiting,plural,one{# job waiting for a Mac with room} other{# jobs waiting for a Mac with room}}"
+  },
   "macLoad.keepRunning": {
     "defaultMessage": "Keep running"
+  },
+  "macLoad.keepWaiting": {
+    "defaultMessage": "Keep waiting"
   },
   "macLoad.kind": {
     "defaultMessage": "Kind"
@@ -4340,6 +4349,12 @@
   "macLoad.ownLine": {
     "defaultMessage": "{user} · cpu {cpu} · memory {mem} used · gpu {gpu}"
   },
+  "macLoad.placedOn": {
+    "defaultMessage": "Placed on"
+  },
+  "macLoad.placedOnValue": {
+    "defaultMessage": "{mac} as {id}"
+  },
   "macLoad.policy": {
     "defaultMessage": "While someone uses this Mac"
   },
@@ -4352,11 +4367,20 @@
   "macLoad.policy.refuse": {
     "defaultMessage": "Refuse jobs"
   },
+  "macLoad.queueNoTry": {
+    "defaultMessage": "Not offered to any Mac yet: a job ahead of it is waiting."
+  },
+  "macLoad.queueRefusals": {
+    "defaultMessage": "Why each Mac said no"
+  },
   "macLoad.reason": {
     "defaultMessage": "Why"
   },
   "macLoad.reconnectHint": {
     "defaultMessage": "The policy and the memory floor apply after Link reconnects."
+  },
+  "macLoad.refusalLine": {
+    "defaultMessage": "{mac}: {reason}"
   },
   "macLoad.saveFailed": {
     "defaultMessage": "Not saved: {reason}"
@@ -4372,6 +4396,24 @@
   },
   "macLoad.stateCancelling": {
     "defaultMessage": "Cancelling…"
+  },
+  "macLoad.stateWaiting": {
+    "defaultMessage": "Waiting, #{position} in line"
+  },
+  "macLoad.strategy": {
+    "defaultMessage": "Where my jobs run"
+  },
+  "macLoad.strategy.localFirst": {
+    "defaultMessage": "My Mac first"
+  },
+  "macLoad.strategy.selfish": {
+    "defaultMessage": "Other Macs first"
+  },
+  "macLoad.strategyHint.localFirst": {
+    "defaultMessage": "Runs on this Mac when it has room, else on the other Mac with the most room, else waits in line."
+  },
+  "macLoad.strategyHint.selfish": {
+    "defaultMessage": "Runs on the other Mac with the most room, else on this Mac, else waits in line. Keeps this Mac free."
   },
   "macLoad.title": {
     "defaultMessage": "Load"
@@ -9677,6 +9719,9 @@
   "runJob.ranking": {
     "defaultMessage": "Best now: {macs}"
   },
+  "runJob.refusal": {
+    "defaultMessage": "{mac}: {reason}"
+  },
   "runJob.refused": {
     "defaultMessage": "Not sent: {reason}"
   },
@@ -9691,6 +9736,9 @@
   },
   "runJob.title": {
     "defaultMessage": "Run a job on…"
+  },
+  "runJob.willQueue": {
+    "defaultMessage": "No Mac has room right now. Run it and it waits in line on this Mac, then starts on the first Mac that has room."
   },
   "scheduleDetailView.actions": {
     "defaultMessage": "Actions"

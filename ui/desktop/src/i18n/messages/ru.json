@@ -4139,6 +4139,9 @@
   "macLoad.cancelJob": {
     "defaultMessage": "Отменить задание"
   },
+  "macLoad.cancelQueuedBody": {
+    "defaultMessage": "Задание будет убрано из очереди на {mac}. Оно не запустится."
+  },
   "macLoad.cancelTitle": {
     "defaultMessage": "Отменить задание {id}?"
   },
@@ -4172,8 +4175,14 @@
   "macLoad.jobsLine": {
     "defaultMessage": "{live,plural,=0{Заданий не выполняется} one{# задание выполняется} few{# задания выполняются} many{# заданий выполняется} other{# задания выполняется}}"
   },
+  "macLoad.jobsWaiting": {
+    "defaultMessage": "{waiting, plural, one {# задание ждёт Mac со свободным местом} few {# задания ждут Mac со свободным местом} many {# заданий ждут Mac со свободным местом} other {# задания ждут Mac со свободным местом}}"
+  },
   "macLoad.keepRunning": {
     "defaultMessage": "Оставить"
+  },
+  "macLoad.keepWaiting": {
+    "defaultMessage": "Ждать дальше"
   },
   "macLoad.kind": {
     "defaultMessage": "Тип"
@@ -4199,6 +4208,12 @@
   "macLoad.ownLine": {
     "defaultMessage": "{user} · cpu {cpu} · память {mem} занята · gpu {gpu}"
   },
+  "macLoad.placedOn": {
+    "defaultMessage": "Запущено на"
+  },
+  "macLoad.placedOnValue": {
+    "defaultMessage": "{mac} как {id}"
+  },
   "macLoad.policy": {
     "defaultMessage": "Пока кто-то работает за этим Mac"
   },
@@ -4211,11 +4226,20 @@
   "macLoad.policy.refuse": {
     "defaultMessage": "Отклонять задания"
   },
+  "macLoad.queueNoTry": {
+    "defaultMessage": "Ещё не предлагалось ни одному Mac: впереди ждёт другое задание."
+  },
+  "macLoad.queueRefusals": {
+    "defaultMessage": "Почему каждый Mac отказал"
+  },
   "macLoad.reason": {
     "defaultMessage": "Причина"
   },
   "macLoad.reconnectHint": {
     "defaultMessage": "Политика и порог памяти применятся после переподключения Link."
+  },
+  "macLoad.refusalLine": {
+    "defaultMessage": "{mac}: {reason}"
   },
   "macLoad.saveFailed": {
     "defaultMessage": "Не сохранено: {reason}"
@@ -11930,11 +11954,32 @@
   "macLoad.stateCancelling": {
     "defaultMessage": "Отмена…"
   },
+  "macLoad.stateWaiting": {
+    "defaultMessage": "Ожидает, №{position} в очереди"
+  },
+  "macLoad.strategy": {
+    "defaultMessage": "Где запускать мои задания"
+  },
+  "macLoad.strategy.localFirst": {
+    "defaultMessage": "Сначала мой Mac"
+  },
+  "macLoad.strategy.selfish": {
+    "defaultMessage": "Сначала другие Mac"
+  },
+  "macLoad.strategyHint.localFirst": {
+    "defaultMessage": "Запускается на этом Mac, если есть место, иначе на другом Mac с наибольшим запасом, иначе ждёт в очереди."
+  },
+  "macLoad.strategyHint.selfish": {
+    "defaultMessage": "Запускается на другом Mac с наибольшим запасом, иначе на этом Mac, иначе ждёт в очереди. Этот Mac остаётся свободным."
+  },
   "myMacs.runJob": {
     "defaultMessage": "Запустить задание…"
   },
   "runJob.title": {
     "defaultMessage": "Запустить задание на…"
+  },
+  "runJob.willQueue": {
+    "defaultMessage": "Сейчас ни на одном Mac нет места. Если запустить, задание подождёт в очереди на этом Mac и начнётся на первом Mac, где появится место."
   },
   "runJob.target": {
     "defaultMessage": "Где запустить"
@@ -11944,6 +11989,9 @@
   },
   "runJob.ranking": {
     "defaultMessage": "Лучшие сейчас: {macs}"
+  },
+  "runJob.refusal": {
+    "defaultMessage": "{mac}: {reason}"
   },
   "runJob.inUse": {
     "defaultMessage": "{name} (используется)"

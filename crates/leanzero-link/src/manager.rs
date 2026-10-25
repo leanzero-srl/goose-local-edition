@@ -35,6 +35,7 @@ use crate::inference::{PeerCall, PeerCallResolver};
 use crate::intent::{IntentCause, IntentError, IntentRecord, IntentStore, LinkIntent};
 use crate::mesh::{MeshConfig, MeshEngine, MeshError, MeshPeer, MeshStatus};
 use crate::peer_dial::{peer_http_client, MeshProxy, PeerDialError, PeerTimeout};
+use crate::queue::QueueLookup;
 use crate::state::{
     ChatServing, DistributedNode, DistributedNodeError, ExecuteAccepted, ExecuteError,
     ExecuteRequest, MlxControl, MlxControlError, MlxOp, PeerRegistry, RemoteExecutor,
@@ -529,6 +530,9 @@ struct Core {
     mesh_factory: Arc<dyn MeshFactory>,
     source: Arc<dyn SwarmStateSource>,
     inner: Mutex<Inner>,
+    /// Untargeted jobs no Mac had room for, waiting FIFO on this (the origin) node. Here and
+    /// not in the control service, which is rebuilt on every reconnect.
+    queue: Arc<crate::queue::JobQueue>,
 }
 
 pub struct LinkManager {
@@ -592,6 +596,7 @@ impl LinkManager {
                     last_connect: 0,
                     restart: None,
                 }),
+                queue: Arc::new(crate::queue::JobQueue::new()),
             }),
             seams: Seams::default(),
         })
@@ -1008,12 +1013,27 @@ impl LinkManager {
 
     /// Rank where a job could run, node_fleet's rules ([`crate::jobs::rank_placements`]):
     /// this node (its live load and its own jobs switch) plus every peer whose last `/nodes`
-    /// carried a load report and `allows.run_jobs`. OK nodes first, USER-ACTIVE last resort.
+    /// carried a load report and `allows.run_jobs`. OK nodes first, USER-ACTIVE last resort,
+    /// this node first inside each class (the default `local-first` strategy).
     pub async fn place_job(
         &self,
         need_gb: f64,
         heavy: bool,
     ) -> Result<Vec<crate::jobs::Placement>, LinkError> {
+        Ok(self
+            .place_job_with(need_gb, heavy, crate::jobs::PlacementStrategy::default())
+            .await?
+            .candidates)
+    }
+
+    /// [`Self::place_job`] under `strategy`, with every Mac that is NOT a candidate and why
+    /// ([`crate::jobs::plan_placement`]).
+    pub async fn place_job_with(
+        &self,
+        need_gb: f64,
+        heavy: bool,
+        strategy: crate::jobs::PlacementStrategy,
+    ) -> Result<crate::jobs::PlacementPlan, LinkError> {
         let reg = self.local_jobs().await?;
         let self_id = self.core.source.local_node().await.node_id;
         let self_load = crate::jobs::load_with_jobs(0, Some(&reg)).await;
@@ -1034,17 +1054,29 @@ impl LinkManager {
                 p.load.as_deref(),
             ));
         }
-        Ok(crate::jobs::rank_placements(
+        Ok(crate::jobs::plan_placement(
+            &self_id,
             rows,
             need_gb,
             heavy,
             reg.min_free(),
+            strategy,
         ))
     }
 
-    /// Submit a job to `target` (`None` = the best [`Self::place_job`] candidate; a USER-ACTIVE
-    /// candidate is sent with `allow_user_active`). `origin_node` is stamped with this node's id.
-    /// Returns the node it went to and its `{job_id}`.
+    /// The strategy an untargeted job is placed with: its own override, else this node's setting.
+    fn strategy_for(&self, req: &crate::jobs::JobRequest) -> crate::jobs::PlacementStrategy {
+        req.strategy
+            .unwrap_or_else(|| self.core.config.control.jobs.strategy.get())
+    }
+
+    /// Submit a job to `target`. `Some` = that node or an error (a targeted job never queues).
+    /// `None` = placed by the job's strategy ([`Self::strategy_for`]): each candidate of
+    /// [`Self::place_job_with`] is tried in order (a USER-ACTIVE one with `allow_user_active`),
+    /// and when every Mac says no, or other jobs already wait, the job joins this node's FIFO
+    /// queue: the answer is then `(this node, {job_id: <queue id>, queued: <position>})` and
+    /// the queue is offered to the Macs again every `queue_tick`. `origin_node` is stamped with
+    /// this node's id. Returns the node it went to and its `{job_id}`.
     pub async fn submit_job(
         &self,
         target: Option<&str>,
@@ -1052,48 +1084,184 @@ impl LinkManager {
     ) -> Result<(String, crate::jobs::JobAccepted), LinkError> {
         let self_id = self.core.source.local_node().await.node_id;
         req.origin_node = Some(self_id.clone());
-        let target = match target {
-            Some(t) => t.to_string(),
-            None => {
-                let best = self
-                    .place_job(req.need_mem_gb.unwrap_or(0.0), req.heavy)
-                    .await?
-                    .into_iter()
-                    .next()
-                    .ok_or_else(|| {
-                        LinkError::Job(crate::jobs::Refusal::new(
-                            crate::jobs::RefusalCode::MemoryHeadroom,
-                            "no node can take this job now (none allows jobs, or all are busy)",
-                        ))
-                    })?;
-                req.allow_user_active |= best.user_active;
-                best.node_id
+        if let Some(t) = target {
+            let acc = self.submit_to(t, req).await?;
+            return Ok((t.to_string(), acc));
+        }
+        // Not connected stays an error: a queue nobody can drain is not an answer.
+        self.local_jobs().await?;
+        let strategy = self.strategy_for(&req);
+        let refusals = if self.core.queue.is_empty() {
+            match self.try_place(&req, strategy).await {
+                Ok(placed) => return Ok(placed),
+                Err(refusals) => refusals,
             }
+        } else {
+            // Strict FIFO: a job never overtakes one already waiting.
+            self.place_job_with(req.need_mem_gb.unwrap_or(0.0), req.heavy, strategy)
+                .await
+                .map(|p| p.refusals)
+                .unwrap_or_default()
         };
-        if target == self_id {
+        req.strategy = Some(strategy);
+        let (job_id, position) = self.core.queue.enqueue(&self_id, req, strategy, refusals);
+        tracing::info!(
+            job_id = %job_id,
+            position,
+            strategy = strategy.as_str(),
+            "leanzero-link: no Mac has room; the job waits in the queue"
+        );
+        self.ensure_queue_ticker();
+        Ok((
+            self_id,
+            crate::jobs::JobAccepted {
+                job_id,
+                queued: Some(position),
+            },
+        ))
+    }
+
+    /// One submit to `target` (this node short-cuts to its registry).
+    async fn submit_to(
+        &self,
+        target: &str,
+        req: crate::jobs::JobRequest,
+    ) -> Result<crate::jobs::JobAccepted, LinkError> {
+        if self.is_self(target).await {
             let reg = self.local_jobs().await?;
-            let acc = reg
+            return reg
                 .submit(req, self.seams.executor.clone(), self.core.source.clone())
                 .await
-                .map_err(LinkError::Job)?;
-            return Ok((target, acc));
+                .map_err(LinkError::Job);
         }
         let v = self
             .peer_jobs(
-                &target,
+                target,
                 reqwest::Method::POST,
                 "",
                 Some(serde_json::to_value(&req).map_err(|e| LinkError::JobProxy(e.to_string()))?),
             )
             .await?;
-        let acc = serde_json::from_value(v).map_err(|e| LinkError::JobProxy(e.to_string()))?;
-        Ok((target, acc))
+        serde_json::from_value(v).map_err(|e| LinkError::JobProxy(e.to_string()))
     }
 
-    /// `GET /v1/swarm/jobs` on `target` (this node short-cuts to its registry).
+    /// Offer `req` to every candidate in the strategy's order; the first that accepts wins.
+    /// `Err` = nobody took it: the plan's non-candidates plus each candidate's own refusal.
+    async fn try_place(
+        &self,
+        req: &crate::jobs::JobRequest,
+        strategy: crate::jobs::PlacementStrategy,
+    ) -> Result<(String, crate::jobs::JobAccepted), Vec<crate::jobs::NodeRefusal>> {
+        let self_id = self.core.source.local_node().await.node_id;
+        let plan = match self
+            .place_job_with(req.need_mem_gb.unwrap_or(0.0), req.heavy, strategy)
+            .await
+        {
+            Ok(p) => p,
+            Err(e) => {
+                return Err(vec![link_refusal(&self_id, &e)]);
+            }
+        };
+        let mut refusals = plan.refusals;
+        for c in plan.candidates {
+            let mut r = req.clone();
+            r.allow_user_active |= c.user_active;
+            match self.submit_to(&c.node_id, r).await {
+                Ok(acc) => return Ok((c.node_id, acc)),
+                Err(e) => {
+                    tracing::info!(node = %c.node_id, error = %e, "leanzero-link: a candidate refused the job");
+                    refusals.push(link_refusal(&c.node_id, &e));
+                }
+            }
+        }
+        Err(refusals)
+    }
+
+    /// Offer the waiting jobs to the Macs once, head first. The head that still does not fit
+    /// blocks the rest (strict FIFO): they only get their refusals refreshed. Run by the queue
+    /// ticker every `queue_tick`; public so a caller (and the tests) can drain at once.
+    pub async fn drain_job_queue(&self) {
+        let queue = self.core.queue.clone();
+        let _held = queue.drain_lock().await;
+        let self_id = self.core.source.local_node().await.node_id;
+        let connected = self.local_jobs().await.is_ok();
+        let mut blocked = false;
+        for (qid, req, strategy) in queue.snapshot() {
+            if !connected {
+                queue.set_refusals(
+                    &qid,
+                    vec![crate::jobs::NodeRefusal {
+                        node_id: self_id.clone(),
+                        code: crate::jobs::RefusalCode::Internal,
+                        reason: "Link not connected".into(),
+                    }],
+                );
+                continue;
+            }
+            if blocked {
+                if let Ok(plan) = self
+                    .place_job_with(req.need_mem_gb.unwrap_or(0.0), req.heavy, strategy)
+                    .await
+                {
+                    queue.set_refusals(&qid, plan.refusals);
+                }
+                continue;
+            }
+            match self.try_place(&req, strategy).await {
+                Ok((node, acc)) => {
+                    let on = crate::jobs::PlacedOn {
+                        node_id: node.clone(),
+                        job_id: acc.job_id.clone(),
+                    };
+                    tracing::info!(job_id = %qid, node = %node, placed_as = %acc.job_id, "leanzero-link: a queued job was placed");
+                    if !queue.mark_placed(&qid, on) {
+                        // Cancelled while the submit was in flight: undo the placement.
+                        if let Err(e) = self.cancel_direct(&node, &acc.job_id).await {
+                            tracing::warn!(job_id = %acc.job_id, node = %node, error = %e, "leanzero-link: could not cancel a job placed after its queue entry was cancelled");
+                        }
+                    }
+                }
+                Err(refusals) => {
+                    queue.set_refusals(&qid, refusals);
+                    blocked = true;
+                }
+            }
+        }
+    }
+
+    /// Start the re-place loop unless it already runs. It holds the manager weakly (a dropped
+    /// manager ends it) and ends itself once the queue is empty.
+    fn ensure_queue_ticker(&self) {
+        let weak = Arc::downgrade(&self.core);
+        let seams = self.seams.clone();
+        let tick = self.core.config.control.jobs.queue_tick;
+        self.core.queue.ensure_ticker(move || {
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(tick).await;
+                    let Some(core) = weak.upgrade() else { break };
+                    let queue = core.queue.clone();
+                    LinkManager {
+                        core,
+                        seams: seams.clone(),
+                    }
+                    .drain_job_queue()
+                    .await;
+                    if queue.retire_ticker_if_empty() {
+                        break;
+                    }
+                }
+            })
+        });
+    }
+
+    /// `GET /v1/swarm/jobs` on `target` (this node short-cuts to its registry, its waiting
+    /// queue first).
     pub async fn list_jobs(&self, target: &str) -> Result<Vec<crate::jobs::JobView>, LinkError> {
         if self.is_self(target).await {
-            return Ok(self.local_jobs().await?.list());
+            let mut all = self.core.queue.list();
+            all.extend(self.local_jobs().await?.list());
+            return Ok(all);
         }
         let v = self
             .peer_jobs(target, reqwest::Method::GET, "", None)
@@ -1101,8 +1269,31 @@ impl LinkManager {
         serde_json::from_value(v).map_err(|e| LinkError::JobProxy(e.to_string()))
     }
 
-    /// `GET /v1/swarm/jobs/{id}` on `target`.
+    /// `GET /v1/swarm/jobs/{id}` on `target`. A queue id of this node follows its job: still
+    /// waiting (position, refusals), cancelled, or the placed job's live view with `placed_on`.
     pub async fn job_view(
+        &self,
+        target: &str,
+        id: &str,
+    ) -> Result<crate::jobs::JobView, LinkError> {
+        if self.is_self(target).await {
+            match self.core.queue.lookup(id) {
+                Some(QueueLookup::Waiting(v)) | Some(QueueLookup::Cancelled(v)) => return Ok(v),
+                Some(QueueLookup::Placed(on, stub)) => {
+                    let mut v = self
+                        .job_view_direct(&on.node_id, &on.job_id)
+                        .await
+                        .unwrap_or(stub);
+                    v.placed_on = Some(on);
+                    return Ok(v);
+                }
+                None => {}
+            }
+        }
+        self.job_view_direct(target, id).await
+    }
+
+    async fn job_view_direct(
         &self,
         target: &str,
         id: &str,
@@ -1120,8 +1311,34 @@ impl LinkManager {
         serde_json::from_value(v).map_err(|e| LinkError::JobProxy(e.to_string()))
     }
 
-    /// `GET /v1/swarm/jobs/{id}/log?from=` on `target`.
+    /// `GET /v1/swarm/jobs/{id}/log?from=` on `target`. A waiting queue id has no log yet
+    /// (`done: false`), a cancelled one is done, a placed one reads the placed job's log.
     pub async fn job_log(
+        &self,
+        target: &str,
+        id: &str,
+        from: u64,
+    ) -> Result<crate::jobs::JobLogChunk, LinkError> {
+        if self.is_self(target).await {
+            let empty = |done| crate::jobs::JobLogChunk {
+                from,
+                next: from,
+                data: String::new(),
+                done,
+            };
+            match self.core.queue.lookup(id) {
+                Some(QueueLookup::Waiting(_)) => return Ok(empty(false)),
+                Some(QueueLookup::Cancelled(_)) => return Ok(empty(true)),
+                Some(QueueLookup::Placed(on, _)) => {
+                    return self.job_log_direct(&on.node_id, &on.job_id, from).await;
+                }
+                None => {}
+            }
+        }
+        self.job_log_direct(target, id, from).await
+    }
+
+    async fn job_log_direct(
         &self,
         target: &str,
         id: &str,
@@ -1146,8 +1363,34 @@ impl LinkManager {
     }
 
     /// `POST /v1/swarm/jobs/{id}/cancel` on `target`: answers once the group is gone (the final
-    /// `cancelled` view), or `cancelling` if it outlived the TERM->KILL window.
+    /// `cancelled` view), or `cancelling` if it outlived the TERM->KILL window. A waiting queue
+    /// id leaves the line at once; a placed one cancels the placed job.
     pub async fn cancel_job(
+        &self,
+        target: &str,
+        id: &str,
+    ) -> Result<crate::jobs::JobView, LinkError> {
+        if self.is_self(target).await {
+            if let Some(v) = self.core.queue.cancel_waiting(id) {
+                tracing::info!(job_id = %id, "leanzero-link: a queued job was cancelled while it waited");
+                return Ok(v);
+            }
+            match self.core.queue.lookup(id) {
+                Some(QueueLookup::Placed(on, _)) => {
+                    let mut v = self.cancel_direct(&on.node_id, &on.job_id).await?;
+                    v.placed_on = Some(on);
+                    return Ok(v);
+                }
+                Some(_) => {
+                    return Err(LinkError::Job(crate::queue::JobQueue::cancel_refusal(id)));
+                }
+                None => {}
+            }
+        }
+        self.cancel_direct(target, id).await
+    }
+
+    async fn cancel_direct(
         &self,
         target: &str,
         id: &str,
@@ -1752,6 +1995,7 @@ impl Core {
         control_config.mesh_ip = Some(mesh_ip_addr);
         control_config.node_token = node_token.clone();
         control_config.peer_proxy = Some(peer_proxy);
+        control_config.pending_jobs = Some(self.queue.clone());
         let control = match ControlService::start(
             control_config,
             self.source.clone(),
@@ -2007,6 +2251,19 @@ fn fresh_suffix() -> String {
 /// Every jobs call is a small JSON exchange (the job itself runs async on the peer).
 /// Above a peer's cancel wait (its 10 s TERM->KILL grace plus 3 s) so a cancel answers its final view.
 const JOBS_PEER_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// A candidate's "no" as the queue shows it: its own refusal, else the error that stopped the call.
+fn link_refusal(node_id: &str, err: &LinkError) -> crate::jobs::NodeRefusal {
+    let (code, reason) = match err {
+        LinkError::Job(r) => (r.code, r.reason.clone()),
+        other => (crate::jobs::RefusalCode::Internal, other.to_string()),
+    };
+    crate::jobs::NodeRefusal {
+        node_id: node_id.to_string(),
+        code,
+        reason,
+    }
+}
 
 fn job_not_found(id: &str) -> LinkError {
     LinkError::Job(crate::jobs::Refusal::new(

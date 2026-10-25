@@ -56,10 +56,14 @@ function renderDialog(macs: Mac[] = [SELF, STUDIO, GABEE, OFFLINE]) {
 }
 
 beforeEach(() => {
-  acp.place.mockResolvedValue([
-    { nodeId: 'gabee-1', userActive: false, score: 0.9 },
-    { nodeId: 'studio-7f3a', userActive: true, score: 0.4 },
-  ]);
+  acp.place.mockImplementation(async (args: { strategy?: string }) => ({
+    placements: [
+      { nodeId: 'gabee-1', userActive: false, score: 0.9 },
+      { nodeId: 'studio-7f3a', userActive: true, score: 0.4 },
+    ],
+    strategy: args.strategy ?? 'local-first',
+    refusals: [],
+  }));
   acp.get.mockResolvedValue({
     job_id: 'j-new',
     origin_node: 'mbp-local-faf207',
@@ -104,7 +108,8 @@ describe('RunJobDialog', () => {
     await waitFor(() =>
       expect(acp.submit).toHaveBeenCalledWith(
         { kind: 'shell', command: 'make test', heavy: true, need_mem_gb: 24, timeout_s: 600 },
-        undefined
+        undefined,
+        'local-first'
       )
     );
     expect(await screen.findByTestId('job-dialog')).toHaveTextContent('Job j-new');
@@ -156,10 +161,95 @@ describe('RunJobDialog', () => {
   });
 
   it('says so when no Mac takes jobs', async () => {
-    acp.place.mockResolvedValue([]);
+    acp.place.mockResolvedValue({ placements: [], strategy: 'local-first', refusals: [] });
     renderDialog([SELF]);
     expect(await screen.findByTestId('run-job-none')).toHaveTextContent(
       'None of your Macs takes jobs now'
     );
+  });
+
+  it('defaults the placement to the setting and overrides it for this job', async () => {
+    const user = userEvent.setup();
+    acp.place.mockImplementation(async (args: { strategy?: string }) => ({
+      placements: [{ nodeId: 'gabee-1', userActive: false, score: 0.9 }],
+      strategy: args.strategy ?? 'selfish',
+      refusals: [],
+    }));
+    acp.submit.mockResolvedValue({ nodeId: 'gabee-1', jobId: 'j-new', queued: false });
+    renderDialog();
+    // The setting (selfish here) is what jobsPlace answered with no strategy given.
+    await waitFor(() =>
+      expect(screen.getByTestId('run-job-strategy-selfish')).toHaveAttribute('aria-checked', 'true')
+    );
+    expect(screen.getByTestId('run-job-strategy-hint').textContent).toContain(
+      'Keeps this Mac free'
+    );
+    await user.click(screen.getByTestId('run-job-strategy-local-first'));
+    await waitFor(() =>
+      expect(acp.place).toHaveBeenLastCalledWith({ heavy: false, strategy: 'local-first' })
+    );
+    await user.type(screen.getByTestId('run-job-command'), 'ls');
+    await user.click(screen.getByTestId('run-job-submit'));
+    await waitFor(() =>
+      expect(acp.submit).toHaveBeenCalledWith(
+        { kind: 'shell', command: 'ls', heavy: false },
+        undefined,
+        'local-first'
+      )
+    );
+  });
+
+  it('hides the placement choice when a Mac is picked by name', async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    expect(await screen.findByTestId('run-job-strategy-selfish')).toBeInTheDocument();
+    await user.click(screen.getByRole('combobox', { name: 'Run on' }));
+    await user.click(screen.getByRole('option', { name: 'Work’s Mac Studio' }));
+    expect(screen.queryByTestId('run-job-strategy-selfish')).toBeNull();
+    expect(screen.queryByTestId('run-job-strategy-hint')).toBeNull();
+  });
+
+  it('shows each Mac’s reason when none has room, then opens the queued job', async () => {
+    const user = userEvent.setup();
+    acp.place.mockResolvedValue({
+      placements: [],
+      strategy: 'local-first',
+      refusals: [
+        { nodeId: 'gabee-1', code: 'memory_headroom', reason: 'needs 24 GB, 9 GB free' },
+        { nodeId: 'studio-7f3a', code: 'heavy_slot_held', reason: 'a heavy job is running' },
+      ],
+    });
+    acp.submit.mockResolvedValue({
+      nodeId: 'mbp-local-faf207',
+      jobId: 'q-1',
+      queued: true,
+      queuePosition: 2,
+    });
+    acp.get.mockResolvedValue({
+      job_id: 'q-1',
+      origin_node: 'mbp-local-faf207',
+      kind: 'shell',
+      started_at: '2026-10-25T10:00:00Z',
+      state: 'queued',
+      log_bytes: 0,
+      queue: {
+        position: 2,
+        strategy: 'local-first',
+        refusals: [
+          { node_id: 'gabee-1', code: 'memory_headroom', reason: 'needs 24 GB, 9 GB free' },
+        ],
+      },
+    });
+    renderDialog();
+    const refusals = await screen.findByTestId('run-job-refusals');
+    expect(refusals.textContent).toContain('waits in line on this Mac');
+    expect(refusals.textContent).toContain('Gabee’s MacBook: needs 24 GB, 9 GB free');
+    expect(refusals.textContent).toContain('Work’s Mac Studio: a heavy job is running');
+    await user.type(screen.getByTestId('run-job-command'), 'make test');
+    await user.click(screen.getByTestId('run-job-submit'));
+    expect(await screen.findByTestId('job-dialog')).toHaveTextContent('Job q-1');
+    expect(screen.getByTestId('job-dialog-state').textContent).toBe('Waiting, #2 in line');
+    await waitFor(() => expect(acp.get).toHaveBeenCalledWith('mbp-local-faf207', 'q-1'));
+    expect(screen.getByTestId('job-dialog-cancel')).toBeInTheDocument();
   });
 });

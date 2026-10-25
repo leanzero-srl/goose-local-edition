@@ -191,8 +191,117 @@ describe('MacLoadBars', () => {
   });
 });
 
+describe('queued jobs (waiting in the origin queue)', () => {
+  const queued = brief('q-7', 'queued', {
+    queue: {
+      position: 2,
+      strategy: 'local-first',
+      refusals: [
+        { node_id: 'n-gabee', code: 'memory_headroom', reason: 'needs 24 GB, 9 GB free' },
+        { node_id: 'n-studio', code: 'heavy_slot_held', reason: 'a heavy job is running' },
+      ],
+    },
+  });
+
+  it('lists a waiting job with its place in line and each Mac’s reason, not as running', () => {
+    macsMock.macs = [{ nodeId: 'n-gabee', name: 'Gabee’s MacBook' }];
+    renderBars(busyLoad({ jobs: [brief('j-run', 'running'), queued] }));
+    expect(screen.getByTestId('mac-job-q-7-state').textContent).toBe('Waiting, #2 in line');
+    const reasons = screen.getByTestId('mac-job-q-7-refusals').textContent;
+    expect(reasons).toContain('Gabee’s MacBook: needs 24 GB, 9 GB free');
+    expect(reasons).toContain('n-studio: a heavy job is running');
+    expect(screen.getByTestId('mac-load-jobs-count').textContent).toBe('1');
+    expect(screen.getByTestId('mac-load-jobs').textContent).toContain(
+      '1 job running · 1 job waiting for a Mac with room'
+    );
+  });
+
+  it('cancels a waiting job from its row after a confirm', async () => {
+    const user = userEvent.setup();
+    mockCancel.mockResolvedValue({ ...queued, state: 'cancelled', log_bytes: 0 });
+    renderBars(busyLoad({ jobs: [queued] }));
+    await user.click(screen.getByTestId('mac-job-q-7-cancel'));
+    await screen.findByText('Cancel job q-7?');
+    expect(screen.getByText(/takes the job out of the queue/)).toBeInTheDocument();
+    const buttons = screen.getAllByRole('button', { name: 'Cancel job' });
+    await user.click(buttons[buttons.length - 1]);
+    await waitFor(() => expect(mockCancel).toHaveBeenCalledWith('n-studio', 'q-7'));
+  });
+
+  it('the job dialog shows the place in line and reasons, then where it was placed', async () => {
+    const user = userEvent.setup();
+    macsMock.macs = [{ nodeId: 'n-gabee', name: 'Gabee’s MacBook' }];
+    mockLog.mockResolvedValue({ from: 0, next: 0, data: '', done: false });
+    mockGet.mockResolvedValueOnce({ ...queued, log_bytes: 0 });
+    renderBars(busyLoad({ jobs: [queued] }));
+    await user.click(screen.getByTestId('mac-job-q-7'));
+    await screen.findByTestId('job-dialog');
+    await waitFor(() =>
+      expect(screen.getByTestId('job-dialog-state').textContent).toBe('Waiting, #2 in line')
+    );
+    expect(screen.getByTestId('job-dialog-refusals').textContent).toContain(
+      'Gabee’s MacBook: needs 24 GB, 9 GB free'
+    );
+    // Cancellable while it waits.
+    expect(screen.getByTestId('job-dialog-cancel')).toBeInTheDocument();
+    // Placed: the view is the placed job's, with placed_on, and the queue section goes.
+    mockGet.mockResolvedValue({
+      ...brief('j-placed', 'running'),
+      log_bytes: 0,
+      placed_on: { node_id: 'n-gabee', job_id: 'j-placed' },
+    });
+    // The next 2 s poll reads it (testing-library's wait runs on this test's 10 s clock).
+    await waitFor(() =>
+      expect(screen.getByTestId('job-dialog-placed').textContent).toBe(
+        'Gabee’s MacBook as j-placed'
+      )
+    );
+    expect(screen.getByTestId('job-dialog-state').textContent).toBe('running');
+    expect(screen.queryByTestId('job-dialog-queue')).toBeNull();
+    // Still read through the queue id.
+    expect(mockGet).toHaveBeenLastCalledWith('n-studio', 'q-7');
+  }, 10_000);
+});
+
 describe('JobsSettings', () => {
-  it('reads the four keys with defaults and writes each one back', async () => {
+  it('shows the placement strategy, My Mac first by default, and saves a change at once', async () => {
+    const user = userEvent.setup();
+    mockRead.mockResolvedValue(null);
+    render(
+      <IntlTestWrapper>
+        <JobsSettings />
+      </IntlTestWrapper>
+    );
+    const local = await screen.findByTestId('jobs-strategy-local-first');
+    expect(local).toHaveTextContent('My Mac first');
+    expect(local).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByTestId('jobs-strategy-selfish')).toHaveTextContent('Other Macs first');
+    expect(screen.getByTestId('jobs-settings-strategy-hint').textContent).toContain(
+      'Runs on this Mac when it has room'
+    );
+    await user.click(screen.getByTestId('jobs-strategy-selfish'));
+    await waitFor(() => expect(mockUpsert).toHaveBeenCalledWith(JOBS_KEYS.strategy, 'selfish'));
+    expect(screen.getByTestId('jobs-settings-strategy-hint').textContent).toContain(
+      'Keeps this Mac free'
+    );
+  });
+
+  it('reads a saved strategy back', async () => {
+    mockRead.mockImplementation(async (key: string) =>
+      key === JOBS_KEYS.strategy ? 'selfish' : null
+    );
+    render(
+      <IntlTestWrapper>
+        <JobsSettings />
+      </IntlTestWrapper>
+    );
+    expect(await screen.findByTestId('jobs-strategy-selfish')).toHaveAttribute(
+      'aria-checked',
+      'true'
+    );
+  });
+
+  it('reads every jobs key with defaults and writes each one back', async () => {
     const user = userEvent.setup();
     mockRead.mockImplementation(async (key: string) =>
       key === JOBS_KEYS.policy ? 'refuse' : key === JOBS_KEYS.idleS ? '600' : null

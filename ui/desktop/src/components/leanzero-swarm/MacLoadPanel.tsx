@@ -12,15 +12,18 @@ import {
   leanzeroLinkJobsGet,
   leanzeroLinkJobsLog,
   type JobBrief,
+  type JobNodeRefusal,
   type JobState,
   type JobView,
   type NodeLoad,
+  type PlacementStrategy,
 } from '../../acp/leanzero-link';
 import { INPUT, StudioSwitch } from './studio';
 import {
   BAR_FILL,
   JOBS_DEFAULTS,
   JOBS_KEYS,
+  STRATEGIES,
   USER_ACTIVE_POLICIES,
   inferenceCount,
   isTerminal,
@@ -30,6 +33,8 @@ import {
   parseBool,
   parseNumber,
   parsePolicy,
+  parseStrategy,
+  waitingJobs,
   type BarId,
   type UserActivePolicy,
 } from './macLoad';
@@ -57,6 +62,25 @@ const i18n = defineMessages({
     defaultMessage:
       '{live, plural, =0 {No job running} one {# job running} other {# jobs running}}',
   },
+  jobsWaiting: {
+    id: 'macLoad.jobsWaiting',
+    defaultMessage:
+      '{waiting, plural, one {# job waiting for a Mac with room} other {# jobs waiting for a Mac with room}}',
+  },
+  stateWaiting: { id: 'macLoad.stateWaiting', defaultMessage: 'Waiting, #{position} in line' },
+  refusalLine: { id: 'macLoad.refusalLine', defaultMessage: '{mac}: {reason}' },
+  queueRefusals: { id: 'macLoad.queueRefusals', defaultMessage: 'Why each Mac said no' },
+  queueNoTry: {
+    id: 'macLoad.queueNoTry',
+    defaultMessage: 'Not offered to any Mac yet: a job ahead of it is waiting.',
+  },
+  placedOn: { id: 'macLoad.placedOn', defaultMessage: 'Placed on' },
+  placedOnValue: { id: 'macLoad.placedOnValue', defaultMessage: '{mac} as {id}' },
+  cancelQueuedBody: {
+    id: 'macLoad.cancelQueuedBody',
+    defaultMessage: 'This takes the job out of the queue on {mac}. It never starts.',
+  },
+  keepWaiting: { id: 'macLoad.keepWaiting', defaultMessage: 'Keep waiting' },
   noLoad: {
     id: 'macLoad.noLoad',
     defaultMessage: 'Its goose does not report load yet (an older build).',
@@ -101,7 +125,60 @@ const i18n = defineMessages({
     defaultMessage: 'The policy and the memory floor apply after Link reconnects.',
   },
   saveFailed: { id: 'macLoad.saveFailed', defaultMessage: 'Not saved: {reason}' },
+  strategy: { id: 'macLoad.strategy', defaultMessage: 'Where my jobs run' },
+  strategy_local_first: { id: 'macLoad.strategy.localFirst', defaultMessage: 'My Mac first' },
+  strategy_selfish: { id: 'macLoad.strategy.selfish', defaultMessage: 'Other Macs first' },
+  strategyHint_local_first: {
+    id: 'macLoad.strategyHint.localFirst',
+    defaultMessage:
+      'Runs on this Mac when it has room, else on the other Mac with the most room, else waits in line.',
+  },
+  strategyHint_selfish: {
+    id: 'macLoad.strategyHint.selfish',
+    defaultMessage:
+      'Runs on the other Mac with the most room, else on this Mac, else waits in line. Keeps this Mac free.',
+  },
 });
+
+/** The message key suffix of a strategy (`local-first` → `local_first`). */
+export function strategyKey(s: PlacementStrategy): 'local_first' | 'selfish' {
+  return s === 'selfish' ? 'selfish' : 'local_first';
+}
+
+/** The Segmented label and one-line explanation of each strategy, for the setting and the dialog. */
+export function useStrategyWords(): {
+  label: (s: PlacementStrategy) => string;
+  hint: (s: PlacementStrategy) => string;
+  title: string;
+} {
+  const intl = useIntl();
+  return {
+    label: (s) => intl.formatMessage(i18n[`strategy_${strategyKey(s)}`]),
+    hint: (s) => intl.formatMessage(i18n[`strategyHint_${strategyKey(s)}`]),
+    title: intl.formatMessage(i18n.strategy),
+  };
+}
+
+/** Each Mac's refusal at the last placement try, by name, as one line each. */
+function RefusalLines({
+  refusals,
+  testId,
+}: {
+  refusals: readonly JobNodeRefusal[];
+  testId: string;
+}) {
+  const intl = useIntl();
+  const nodeName = useNodeName();
+  return (
+    <ul data-testid={testId} className="flex flex-col gap-0.5">
+      {refusals.map((r) => (
+        <li key={r.node_id} className={cx(TYPE.meta, 'break-words')}>
+          {intl.formatMessage(i18n.refusalLine, { mac: nodeName(r.node_id), reason: r.reason })}
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 const BAR_LABEL: Record<BarId, (typeof i18n)['own']> = {
   own: i18n.own,
@@ -111,8 +188,18 @@ const BAR_LABEL: Record<BarId, (typeof i18n)['own']> = {
 
 const LOG_POLL_MS = 2000;
 
-/** The job's state as shown: `cancelling` in words (it is waiting on the group), the rest verbatim. */
-function stateText(intl: ReturnType<typeof useIntl>, state: JobState): string {
+/**
+ * The job's state as shown: `cancelling` in words (it is waiting on the group), a job waiting in
+ * the origin's queue as its place in line, the rest verbatim.
+ */
+function stateText(
+  intl: ReturnType<typeof useIntl>,
+  state: JobState,
+  queue?: JobBrief['queue']
+): string {
+  if (queue && !isTerminal(state)) {
+    return intl.formatMessage(i18n.stateWaiting, { position: queue.position });
+  }
   return state === 'cancelling' ? intl.formatMessage(i18n.stateCancelling) : state;
 }
 
@@ -147,7 +234,9 @@ export function MacLoadBars({
 }) {
   const intl = useIntl();
   const nodeName = useNodeName();
+  const { confirm, dialog } = useConfirmDialog();
   const [openJob, setOpenJob] = useState<JobBrief | null>(null);
+  const [cancelError, setCancelError] = useState<string | null>(null);
   if (!load) {
     return (
       <p data-testid="mac-load-none" className={TYPE.meta}>
@@ -171,7 +260,31 @@ export function MacLoadBars({
       engine: load.inference.engine_active,
       slots: load.inference.router_slots_used,
     }),
-    jobs: intl.formatMessage(i18n.jobsLine, { live: liveJobs(load.jobs).length }),
+    jobs: [
+      intl.formatMessage(i18n.jobsLine, { live: liveJobs(load.jobs).length }),
+      ...(waitingJobs(load.jobs).length > 0
+        ? [intl.formatMessage(i18n.jobsWaiting, { waiting: waitingJobs(load.jobs).length })]
+        : []),
+    ].join(' · '),
+  };
+  // A job still in the origin's queue is cancelled from its row: nothing runs yet, so there is no
+  // log to watch first. The 3 s poll then drops it from the list.
+  const cancelQueued = async (job: JobBrief) => {
+    if (!target) return;
+    const ok = await confirm({
+      title: intl.formatMessage(i18n.cancelTitle, { id: job.job_id }),
+      message: intl.formatMessage(i18n.cancelQueuedBody, { mac: macName }),
+      confirmLabel: intl.formatMessage(i18n.cancelJob),
+      cancelLabel: intl.formatMessage(i18n.keepWaiting),
+      confirmVariant: 'destructive',
+    });
+    if (!ok) return;
+    try {
+      await leanzeroLinkJobsCancel(target, job.job_id);
+      setCancelError(null);
+    } catch (e) {
+      setCancelError(jobErrorText(e));
+    }
   };
   const counts: Record<BarId, string> = {
     own: `${loadBars(load)[0].pct}%`,
@@ -218,7 +331,11 @@ export function MacLoadBars({
       {load.jobs.length > 0 && (
         <ul data-testid="mac-load-job-list" className="flex flex-col gap-1">
           {load.jobs.map((job) => (
-            <li key={job.job_id} className="flex flex-wrap items-center gap-2">
+            <li
+              key={job.job_id}
+              data-testid={job.queue ? `mac-job-${job.job_id}-queued` : undefined}
+              className="flex flex-wrap items-center gap-2"
+            >
               <button
                 type="button"
                 data-testid={`mac-job-${job.job_id}`}
@@ -241,8 +358,27 @@ export function MacLoadBars({
                   isTerminal(job.state) ? '' : TONE_TEXT.ok
                 )}
               >
-                {stateText(intl, job.state)}
+                {stateText(intl, job.state, job.queue)}
               </span>
+              {job.queue && !isTerminal(job.state) && target && (
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  data-testid={`mac-job-${job.job_id}-cancel`}
+                  icon={<Square />}
+                  onClick={() => void cancelQueued(job)}
+                >
+                  {intl.formatMessage(i18n.cancelJob)}
+                </Button>
+              )}
+              {job.queue && !isTerminal(job.state) && job.queue.refusals.length > 0 && (
+                <div className="basis-full">
+                  <RefusalLines
+                    refusals={job.queue.refusals}
+                    testId={`mac-job-${job.job_id}-refusals`}
+                  />
+                </div>
+              )}
             </li>
           ))}
         </ul>
@@ -256,6 +392,15 @@ export function MacLoadBars({
           />
         </div>
       )}
+      {cancelError && (
+        <p
+          data-testid="mac-load-cancel-error"
+          className={cx(TYPE.meta, WEIGHT.semibold, TONE_TEXT.err, 'break-words')}
+        >
+          {cancelError}
+        </p>
+      )}
+      {dialog}
       {openJob && target && (
         <JobDialog
           brief={openJob}
@@ -323,12 +468,18 @@ export function JobDialog({
   }, [target, brief.job_id]);
 
   const shown = view ?? brief;
+  // Waiting in the origin's queue (not placed yet). Once placed, the view is the placed job's and
+  // carries `placed_on`; this dialog keeps following the queue id, which answers for it.
+  const waiting = shown.queue != null && !isTerminal(shown.state) ? shown.queue : null;
+  const placedOn = view?.placed_on ?? null;
   const cancel = async () => {
     const ok = await confirm({
       title: intl.formatMessage(i18n.cancelTitle, { id: brief.job_id }),
-      message: intl.formatMessage(i18n.cancelBody, { mac: macName }),
+      message: waiting
+        ? intl.formatMessage(i18n.cancelQueuedBody, { mac: macName })
+        : intl.formatMessage(i18n.cancelBody, { mac: macName }),
       confirmLabel: intl.formatMessage(i18n.cancelJob),
-      cancelLabel: intl.formatMessage(i18n.keepRunning),
+      cancelLabel: intl.formatMessage(waiting ? i18n.keepWaiting : i18n.keepRunning),
       confirmVariant: 'destructive',
     });
     if (!ok) return;
@@ -346,7 +497,23 @@ export function JobDialog({
   };
 
   const rows: { key: string; label: string; value: string }[] = [
-    { key: 'state', label: intl.formatMessage(i18n.state), value: stateText(intl, shown.state) },
+    {
+      key: 'state',
+      label: intl.formatMessage(i18n.state),
+      value: stateText(intl, shown.state, shown.queue),
+    },
+    ...(placedOn
+      ? [
+          {
+            key: 'placed',
+            label: intl.formatMessage(i18n.placedOn),
+            value: intl.formatMessage(i18n.placedOnValue, {
+              mac: nodeName(placedOn.node_id),
+              id: placedOn.job_id,
+            }),
+          },
+        ]
+      : []),
     { key: 'kind', label: intl.formatMessage(i18n.kind), value: shown.kind },
     { key: 'origin', label: intl.formatMessage(i18n.origin), value: nodeName(shown.origin_node) },
     { key: 'started', label: intl.formatMessage(i18n.started), value: shown.started_at },
@@ -386,6 +553,18 @@ export function JobDialog({
             </div>
           ))}
         </dl>
+        {waiting && (
+          <div data-testid="job-dialog-queue" className="flex flex-col gap-1">
+            <span className={cx(TYPE.meta, WEIGHT.semibold)}>
+              {intl.formatMessage(i18n.queueRefusals)}
+            </span>
+            {waiting.refusals.length > 0 ? (
+              <RefusalLines refusals={waiting.refusals} testId="job-dialog-refusals" />
+            ) : (
+              <span className={TYPE.meta}>{intl.formatMessage(i18n.queueNoTry)}</span>
+            )}
+          </div>
+        )}
         <div className="flex flex-col gap-1">
           <span className={cx(TYPE.meta, WEIGHT.semibold)}>{intl.formatMessage(i18n.log)}</span>
           <pre
@@ -431,6 +610,7 @@ export function JobDialog({
 
 interface JobsSettingsState {
   allow: boolean;
+  strategy: PlacementStrategy;
   policy: UserActivePolicy;
   idleS: string;
   minFree: string;
@@ -439,6 +619,7 @@ interface JobsSettingsState {
 /** This Mac's jobs tunables, each a goose config key the jobs side reads (link.rs `jobs_config`). */
 export function JobsSettings() {
   const intl = useIntl();
+  const strategyWords = useStrategyWords();
   const [state, setState] = useState<JobsSettingsState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -447,8 +628,9 @@ export function JobsSettings() {
     let alive = true;
     void (async () => {
       try {
-        const [allow, policy, idleS, minFree] = await Promise.all([
+        const [allow, strategy, policy, idleS, minFree] = await Promise.all([
           acpReadConfig(JOBS_KEYS.allow),
+          acpReadConfig(JOBS_KEYS.strategy),
           acpReadConfig(JOBS_KEYS.policy),
           acpReadConfig(JOBS_KEYS.idleS),
           acpReadConfig(JOBS_KEYS.minFree),
@@ -456,6 +638,7 @@ export function JobsSettings() {
         if (!alive) return;
         setState({
           allow: allow == null ? JOBS_DEFAULTS.allow : parseBool(allow),
+          strategy: parseStrategy(strategy),
           policy: parsePolicy(policy),
           idleS: String(parseNumber(idleS) ?? JOBS_DEFAULTS.idleS),
           minFree: String(parseNumber(minFree) ?? JOBS_DEFAULTS.minFree),
@@ -505,6 +688,23 @@ export function JobsSettings() {
             <span className={TYPE.body}>{intl.formatMessage(i18n.allowJobs)}</span>
           </span>
           <p className={TYPE.meta}>{intl.formatMessage(i18n.allowJobsHint)}</p>
+          <span className={cx(TYPE.meta, WEIGHT.semibold)}>{strategyWords.title}</span>
+          <Segmented
+            size="sm"
+            aria-label={strategyWords.title}
+            disabled={saving}
+            value={state.strategy}
+            options={STRATEGIES.map((st) => ({
+              value: st,
+              label: strategyWords.label(st),
+              title: strategyWords.hint(st),
+              testId: `jobs-strategy-${st}`,
+            }))}
+            onChange={(st) => void save(JOBS_KEYS.strategy, st, { strategy: st })}
+          />
+          <p data-testid="jobs-settings-strategy-hint" className={TYPE.meta}>
+            {strategyWords.hint(state.strategy)}
+          </p>
           <span className={cx(TYPE.meta, WEIGHT.semibold)}>{intl.formatMessage(i18n.policy)}</span>
           <Segmented
             size="sm"

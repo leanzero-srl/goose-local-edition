@@ -3182,6 +3182,7 @@ async fn jobs_go_to_a_peer_with_this_nodes_origin_and_refusals_stay_typed() {
         timeout_s: Some(30),
         origin_node: Some("spoofed".into()),
         allow_user_active: false,
+        strategy: None,
     };
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     let (node, accepted) = loop {
@@ -3296,6 +3297,7 @@ async fn a_running_job_survives_disconnect_and_reconnect_and_stays_cancellable()
         timeout_s: Some(600),
         origin_node: None,
         allow_user_active: false,
+        strategy: None,
     };
     let (node, acc) = manager.submit_job(Some(&me), req).await.expect("submits");
     assert_eq!(node, me);
@@ -3327,4 +3329,247 @@ async fn a_running_job_survives_disconnect_and_reconnect_and_stays_cancellable()
     assert_eq!(v.exit_code, Some(143), "{v:?}");
     assert!(!alive(pgid), "the job's group must be gone after cancel");
     manager.logout(false).await.unwrap();
+}
+
+// ── the origin queue: no Mac has room → FIFO wait, re-placed every queue_tick ──
+
+mod job_queue {
+    use super::*;
+    use leanzero_link::jobs::{
+        JobRequest, JobsConfig, JobsSwitch, PlacementStrategy, RefusalCode, StrategySource,
+    };
+    use leanzero_link::load::{JobKind, JobState, NodeLimits, OwnLoad};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct Bed {
+        manager: LinkManager,
+        me: String,
+        room: Arc<AtomicBool>,
+        _tmp: tempfile::TempDir,
+        _h: Harness,
+        _server: MockServer,
+    }
+
+    /// One node, jobs ON, its memory "full" (10 % free) until `room` flips, queue tick 200 ms.
+    async fn bed() -> Bed {
+        let tmp = tempfile::tempdir().unwrap();
+        let jobs_root = tmp.path().join("jobs");
+        let lock = tmp.path().join("lock");
+        let server = MockServer::start().await;
+        mount(
+            &server,
+            "POST",
+            "/v1/mesh/join-key",
+            200,
+            json!({"authKey": "tskey-auth-ok", "nodeSecret": SECRET, "expirySeconds": 600}),
+        )
+        .await;
+        let h = Harness::new(tempfile::tempdir().unwrap());
+        h.seed_identity("a@example.com", "good-token");
+        let room = Arc::new(AtomicBool::new(false));
+        let r = room.clone();
+        let manager = h.manager_with(&server, false, |c| {
+            c.jobs = JobsConfig {
+                switch: JobsSwitch::fixed(true),
+                root: jobs_root.clone(),
+                heavy_lock: lock.clone(),
+                limits: Some(NodeLimits {
+                    kill_free: 0.0,
+                    ..NodeLimits::default()
+                }),
+                min_free: Some(20.0),
+                sampler: Arc::new(move || OwnLoad {
+                    mem_free_pct: Some(if r.load(Ordering::SeqCst) { 80.0 } else { 10.0 }),
+                    mem_total_gb: Some(128.0),
+                    on_ac: Some(true),
+                    user_idle_s: Some(9999.0),
+                    ..Default::default()
+                }),
+                tick: Duration::from_millis(200),
+                kill_grace: Duration::from_secs(1),
+                strategy: StrategySource::fixed(PlacementStrategy::LocalFirst),
+                queue_tick: Duration::from_millis(200),
+                ..JobsConfig::default()
+            };
+        });
+        manager.connect().await.expect("connects");
+        let me = manager.local_node_id().await;
+        Bed {
+            manager,
+            me,
+            room,
+            _tmp: tmp,
+            _h: h,
+            _server: server,
+        }
+    }
+
+    fn sleeper() -> JobRequest {
+        JobRequest {
+            kind: JobKind::Shell,
+            command: "sleep 300".into(),
+            cwd: None,
+            need_mem_gb: None,
+            heavy: false,
+            timeout_s: Some(600),
+            origin_node: None,
+            allow_user_active: false,
+            strategy: None,
+        }
+    }
+
+    async fn wait_placed(b: &Bed, qid: &str) -> leanzero_link::jobs::JobView {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let v = b
+                .manager
+                .job_view(&b.me, qid)
+                .await
+                .expect("queue id resolves");
+            if v.placed_on.is_some() {
+                return v;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "{qid} was never placed: {v:?}"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn three_jobs_wait_fifo_and_are_placed_in_order_once_there_is_room() {
+        let b = bed().await;
+        let mut qids = Vec::new();
+        for want in 1..=3u32 {
+            let (node, acc) = b
+                .manager
+                .submit_job(None, sleeper())
+                .await
+                .expect("queues, never 409");
+            assert_eq!(node, b.me, "a queued job answers from its origin");
+            assert_eq!(acc.queued, Some(want));
+            qids.push(acc.job_id);
+        }
+        let v = b.manager.job_view(&b.me, &qids[0]).await.unwrap();
+        assert_eq!(v.brief.state, JobState::Queued);
+        let q = v.brief.queue.as_ref().expect("queue info");
+        assert_eq!(q.position, 1);
+        assert_eq!(q.strategy, PlacementStrategy::LocalFirst);
+        assert!(
+            q.refusals
+                .iter()
+                .any(|r| r.node_id == b.me && r.code == RefusalCode::MemoryHeadroom),
+            "{q:?}"
+        );
+        let list = b.manager.list_jobs(&b.me).await.unwrap();
+        let listed: Vec<&str> = list
+            .iter()
+            .take(3)
+            .map(|j| j.brief.job_id.as_str())
+            .collect();
+        assert_eq!(listed, qids.iter().map(String::as_str).collect::<Vec<_>>());
+        let log = b.manager.job_log(&b.me, &qids[0], 0).await.unwrap();
+        assert!(!log.done && log.data.is_empty() && log.next == 0, "{log:?}");
+
+        b.room.store(true, Ordering::SeqCst);
+        let mut placed = Vec::new();
+        for q in &qids {
+            placed.push(wait_placed(&b, q).await);
+        }
+        for w in placed.windows(2) {
+            assert!(
+                w[0].brief.started_at <= w[1].brief.started_at,
+                "placed out of order: {placed:?}"
+            );
+        }
+        for (q, v) in qids.iter().zip(&placed) {
+            let on = v.placed_on.as_ref().unwrap();
+            assert_eq!(on.node_id, b.me);
+            assert_eq!(
+                v.brief.job_id, on.job_id,
+                "the view is the placed job's own"
+            );
+            assert_eq!(v.brief.state, JobState::Running);
+            // The queue id follows the job all the way to its cancel.
+            let c = b
+                .manager
+                .cancel_job(&b.me, q)
+                .await
+                .expect("cancel via queue id");
+            assert_eq!(c.brief.state, JobState::Cancelled, "{c:?}");
+            assert_eq!(c.placed_on.as_ref(), Some(on));
+        }
+        b.manager.logout(false).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_job_cancelled_while_queued_leaves_the_line_and_is_never_placed() {
+        let b = bed().await;
+        let (_, a) = b.manager.submit_job(None, sleeper()).await.unwrap();
+        let (_, c) = b.manager.submit_job(None, sleeper()).await.unwrap();
+        let v = b.manager.cancel_job(&b.me, &a.job_id).await.unwrap();
+        assert_eq!(v.brief.state, JobState::Cancelled);
+        assert!(v.brief.queue.is_none() && v.ended_at.is_some());
+        match b.manager.cancel_job(&b.me, &a.job_id).await {
+            Err(LinkError::Job(r)) => assert_eq!(r.code, RefusalCode::AlreadyFinished),
+            other => panic!("a second cancel must say it already left: {other:?}"),
+        }
+        let log = b.manager.job_log(&b.me, &a.job_id, 0).await.unwrap();
+        assert!(log.done);
+        let v = b.manager.job_view(&b.me, &c.job_id).await.unwrap();
+        assert_eq!(v.brief.queue.unwrap().position, 1, "the next one moved up");
+
+        b.room.store(true, Ordering::SeqCst);
+        let placed = wait_placed(&b, &c.job_id).await;
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        let v = b.manager.job_view(&b.me, &a.job_id).await.unwrap();
+        assert_eq!(v.brief.state, JobState::Cancelled);
+        assert!(v.placed_on.is_none());
+        let running: Vec<_> = b
+            .manager
+            .list_jobs(&b.me)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|j| {
+                j.brief.state == JobState::Running
+                    && j.brief.queue.is_none()
+                    && j.placed_on.is_none()
+            })
+            .collect();
+        assert_eq!(running.len(), 1, "only the waiting one ran: {running:?}");
+        assert_eq!(running[0].brief.job_id, placed.placed_on.unwrap().job_id);
+        b.manager.cancel_job(&b.me, &c.job_id).await.unwrap();
+        b.manager.logout(false).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn the_queue_survives_a_disconnect_and_drains_after_the_reconnect() {
+        let b = bed().await;
+        let (_, a) = b.manager.submit_job(None, sleeper()).await.unwrap();
+        b.manager.disconnect().await.expect("disconnects");
+        match b.manager.submit_job(None, sleeper()).await {
+            Err(LinkError::NotConnected) => {}
+            other => panic!("no queueing while not connected: {other:?}"),
+        }
+        b.manager.drain_job_queue().await;
+        let v = b.manager.job_view(&b.me, &a.job_id).await.unwrap();
+        let q = v.brief.queue.expect("still waiting while offline");
+        assert_eq!(q.refusals[0].code, RefusalCode::Internal, "{q:?}");
+        assert!(q.refusals[0].reason.contains("not connected"));
+
+        b.manager.connect().await.expect("reconnects");
+        let list = b.manager.list_jobs(&b.me).await.unwrap();
+        assert!(
+            list.iter()
+                .any(|j| j.brief.job_id == a.job_id && j.brief.state == JobState::Queued),
+            "{list:?}"
+        );
+        b.room.store(true, Ordering::SeqCst);
+        let placed = wait_placed(&b, &a.job_id).await;
+        assert_eq!(placed.brief.state, JobState::Running);
+        b.manager.cancel_job(&b.me, &a.job_id).await.unwrap();
+        b.manager.logout(false).await.unwrap();
+    }
 }

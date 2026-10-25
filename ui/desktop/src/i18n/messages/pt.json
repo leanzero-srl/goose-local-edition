@@ -4139,6 +4139,9 @@
   "macLoad.cancelJob": {
     "defaultMessage": "Cancelar tarefa"
   },
+  "macLoad.cancelQueuedBody": {
+    "defaultMessage": "Isso tira o trabalho da fila em {mac}. Ele nunca começa."
+  },
   "macLoad.cancelTitle": {
     "defaultMessage": "Cancelar a tarefa {id}?"
   },
@@ -4172,8 +4175,14 @@
   "macLoad.jobsLine": {
     "defaultMessage": "{live,plural,=0{Nenhuma tarefa em execução} one{# tarefa em execução} other{# tarefas em execução}}"
   },
+  "macLoad.jobsWaiting": {
+    "defaultMessage": "{waiting, plural, one {# trabalho aguardando um Mac com espaço} other {# trabalhos aguardando um Mac com espaço}}"
+  },
   "macLoad.keepRunning": {
     "defaultMessage": "Continuar executando"
+  },
+  "macLoad.keepWaiting": {
+    "defaultMessage": "Continuar aguardando"
   },
   "macLoad.kind": {
     "defaultMessage": "Tipo"
@@ -4199,6 +4208,12 @@
   "macLoad.ownLine": {
     "defaultMessage": "{user} · cpu {cpu} · memória {mem} usada · gpu {gpu}"
   },
+  "macLoad.placedOn": {
+    "defaultMessage": "Colocado em"
+  },
+  "macLoad.placedOnValue": {
+    "defaultMessage": "{mac} como {id}"
+  },
   "macLoad.policy": {
     "defaultMessage": "Enquanto alguém usa este Mac"
   },
@@ -4211,11 +4226,20 @@
   "macLoad.policy.refuse": {
     "defaultMessage": "Recusar tarefas"
   },
+  "macLoad.queueNoTry": {
+    "defaultMessage": "Ainda não oferecido a nenhum Mac: um trabalho à frente está aguardando."
+  },
+  "macLoad.queueRefusals": {
+    "defaultMessage": "Por que cada Mac recusou"
+  },
   "macLoad.reason": {
     "defaultMessage": "Motivo"
   },
   "macLoad.reconnectHint": {
     "defaultMessage": "A política e o limite de memória valem depois que o Link se reconectar."
+  },
+  "macLoad.refusalLine": {
+    "defaultMessage": "{mac}: {reason}"
   },
   "macLoad.saveFailed": {
     "defaultMessage": "Não salvo: {reason}"
@@ -11930,11 +11954,32 @@
   "macLoad.stateCancelling": {
     "defaultMessage": "Cancelando…"
   },
+  "macLoad.stateWaiting": {
+    "defaultMessage": "Aguardando, nº {position} na fila"
+  },
+  "macLoad.strategy": {
+    "defaultMessage": "Onde meus trabalhos rodam"
+  },
+  "macLoad.strategy.localFirst": {
+    "defaultMessage": "Meu Mac primeiro"
+  },
+  "macLoad.strategy.selfish": {
+    "defaultMessage": "Outros Macs primeiro"
+  },
+  "macLoad.strategyHint.localFirst": {
+    "defaultMessage": "Roda neste Mac se houver espaço; senão, no outro Mac com mais espaço; senão, aguarda na fila."
+  },
+  "macLoad.strategyHint.selfish": {
+    "defaultMessage": "Roda no outro Mac com mais espaço; senão, neste Mac; senão, aguarda na fila. Mantém este Mac livre."
+  },
   "myMacs.runJob": {
     "defaultMessage": "Executar um trabalho…"
   },
   "runJob.title": {
     "defaultMessage": "Executar um trabalho em…"
+  },
+  "runJob.willQueue": {
+    "defaultMessage": "Nenhum Mac tem espaço agora. Se você executar, ele aguarda na fila deste Mac e começa no primeiro Mac que tiver espaço."
   },
   "runJob.target": {
     "defaultMessage": "Executar em"
@@ -11944,6 +11989,9 @@
   },
   "runJob.ranking": {
     "defaultMessage": "Melhores agora: {macs}"
+  },
+  "runJob.refusal": {
+    "defaultMessage": "{mac}: {reason}"
   },
   "runJob.inUse": {
     "defaultMessage": "{name} (em uso)"

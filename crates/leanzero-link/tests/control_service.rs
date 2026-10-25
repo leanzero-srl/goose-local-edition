@@ -2061,6 +2061,7 @@ mod jobs_http {
             sampler: Arc::new(move || sampler_own.lock().unwrap().clone()),
             tick: Duration::from_millis(200),
             kill_grace: Duration::from_secs(1),
+            ..JobsConfig::default()
         };
         let source = FakeStateSource::new("jobs-node");
         let handle = ControlService::start(config, source.clone(), executor, None, None, None)

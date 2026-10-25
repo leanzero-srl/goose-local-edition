@@ -4139,6 +4139,9 @@
   "macLoad.cancelJob": {
     "defaultMessage": "Batalkan tugas"
   },
+  "macLoad.cancelQueuedBody": {
+    "defaultMessage": "Ini mengeluarkan pekerjaan dari antrean di {mac}. Pekerjaan tidak akan pernah dimulai."
+  },
   "macLoad.cancelTitle": {
     "defaultMessage": "Batalkan tugas {id}?"
   },
@@ -4172,8 +4175,14 @@
   "macLoad.jobsLine": {
     "defaultMessage": "{live,plural,=0{Tidak ada tugas berjalan} one{# tugas berjalan} other{# tugas berjalan}}"
   },
+  "macLoad.jobsWaiting": {
+    "defaultMessage": "{waiting, plural, other {# pekerjaan menunggu Mac yang punya ruang}}"
+  },
   "macLoad.keepRunning": {
     "defaultMessage": "Biarkan berjalan"
+  },
+  "macLoad.keepWaiting": {
+    "defaultMessage": "Tetap menunggu"
   },
   "macLoad.kind": {
     "defaultMessage": "Jenis"
@@ -4199,6 +4208,12 @@
   "macLoad.ownLine": {
     "defaultMessage": "{user} · cpu {cpu} · memori {mem} terpakai · gpu {gpu}"
   },
+  "macLoad.placedOn": {
+    "defaultMessage": "Ditempatkan di"
+  },
+  "macLoad.placedOnValue": {
+    "defaultMessage": "{mac} sebagai {id}"
+  },
   "macLoad.policy": {
     "defaultMessage": "Saat seseorang memakai Mac ini"
   },
@@ -4211,11 +4226,20 @@
   "macLoad.policy.refuse": {
     "defaultMessage": "Tolak tugas"
   },
+  "macLoad.queueNoTry": {
+    "defaultMessage": "Belum ditawarkan ke Mac mana pun: pekerjaan di depannya masih menunggu."
+  },
+  "macLoad.queueRefusals": {
+    "defaultMessage": "Alasan tiap Mac menolak"
+  },
   "macLoad.reason": {
     "defaultMessage": "Alasan"
   },
   "macLoad.reconnectHint": {
     "defaultMessage": "Kebijakan dan batas memori berlaku setelah Link tersambung lagi."
+  },
+  "macLoad.refusalLine": {
+    "defaultMessage": "{mac}: {reason}"
   },
   "macLoad.saveFailed": {
     "defaultMessage": "Tidak tersimpan: {reason}"
@@ -11930,11 +11954,32 @@
   "macLoad.stateCancelling": {
     "defaultMessage": "Membatalkan…"
   },
+  "macLoad.stateWaiting": {
+    "defaultMessage": "Menunggu, urutan ke-{position}"
+  },
+  "macLoad.strategy": {
+    "defaultMessage": "Tempat pekerjaan saya berjalan"
+  },
+  "macLoad.strategy.localFirst": {
+    "defaultMessage": "Mac saya dulu"
+  },
+  "macLoad.strategy.selfish": {
+    "defaultMessage": "Mac lain dulu"
+  },
+  "macLoad.strategyHint.localFirst": {
+    "defaultMessage": "Berjalan di Mac ini jika ada ruang, jika tidak di Mac lain dengan ruang terbanyak, jika tidak menunggu di antrean."
+  },
+  "macLoad.strategyHint.selfish": {
+    "defaultMessage": "Berjalan di Mac lain dengan ruang terbanyak, jika tidak di Mac ini, jika tidak menunggu di antrean. Mac ini tetap lega."
+  },
   "myMacs.runJob": {
     "defaultMessage": "Jalankan tugas…"
   },
   "runJob.title": {
     "defaultMessage": "Jalankan tugas di…"
+  },
+  "runJob.willQueue": {
+    "defaultMessage": "Saat ini tidak ada Mac yang punya ruang. Jika dijalankan, pekerjaan menunggu di antrean Mac ini lalu dimulai di Mac pertama yang punya ruang."
   },
   "runJob.target": {
     "defaultMessage": "Jalankan di"
@@ -11944,6 +11989,9 @@
   },
   "runJob.ranking": {
     "defaultMessage": "Terbaik sekarang: {macs}"
+  },
+  "runJob.refusal": {
+    "defaultMessage": "{mac}: {reason}"
   },
   "runJob.inUse": {
     "defaultMessage": "{name} (sedang dipakai)"

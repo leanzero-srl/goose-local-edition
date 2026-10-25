@@ -4139,6 +4139,9 @@
   "macLoad.cancelJob": {
     "defaultMessage": "Annuler la tâche"
   },
+  "macLoad.cancelQueuedBody": {
+    "defaultMessage": "La tâche sera retirée de la file sur {mac}. Elle ne démarrera jamais."
+  },
   "macLoad.cancelTitle": {
     "defaultMessage": "Annuler la tâche {id} ?"
   },
@@ -4172,8 +4175,14 @@
   "macLoad.jobsLine": {
     "defaultMessage": "{live,plural,=0{Aucune tâche en cours} one{# tâche en cours} other{# tâches en cours}}"
   },
+  "macLoad.jobsWaiting": {
+    "defaultMessage": "{waiting, plural, one {# tâche attend un Mac avec de la place} other {# tâches attendent un Mac avec de la place}}"
+  },
   "macLoad.keepRunning": {
     "defaultMessage": "Laisser tourner"
+  },
+  "macLoad.keepWaiting": {
+    "defaultMessage": "Continuer d’attendre"
   },
   "macLoad.kind": {
     "defaultMessage": "Type"
@@ -4199,6 +4208,12 @@
   "macLoad.ownLine": {
     "defaultMessage": "{user} · cpu {cpu} · mémoire {mem} utilisée · gpu {gpu}"
   },
+  "macLoad.placedOn": {
+    "defaultMessage": "Placée sur"
+  },
+  "macLoad.placedOnValue": {
+    "defaultMessage": "{mac} sous {id}"
+  },
   "macLoad.policy": {
     "defaultMessage": "Quand quelqu’un utilise ce Mac"
   },
@@ -4211,11 +4226,20 @@
   "macLoad.policy.refuse": {
     "defaultMessage": "Refuser les tâches"
   },
+  "macLoad.queueNoTry": {
+    "defaultMessage": "Proposée à aucun Mac pour l’instant : une tâche devant elle attend."
+  },
+  "macLoad.queueRefusals": {
+    "defaultMessage": "Pourquoi chaque Mac a refusé"
+  },
   "macLoad.reason": {
     "defaultMessage": "Raison"
   },
   "macLoad.reconnectHint": {
     "defaultMessage": "La règle et le seuil mémoire s’appliquent après la reconnexion de Link."
+  },
+  "macLoad.refusalLine": {
+    "defaultMessage": "{mac} : {reason}"
   },
   "macLoad.saveFailed": {
     "defaultMessage": "Non enregistré : {reason}"
@@ -11930,11 +11954,32 @@
   "macLoad.stateCancelling": {
     "defaultMessage": "Annulation…"
   },
+  "macLoad.stateWaiting": {
+    "defaultMessage": "En attente, n°{position} dans la file"
+  },
+  "macLoad.strategy": {
+    "defaultMessage": "Où mes tâches s’exécutent"
+  },
+  "macLoad.strategy.localFirst": {
+    "defaultMessage": "Mon Mac d’abord"
+  },
+  "macLoad.strategy.selfish": {
+    "defaultMessage": "Les autres Macs d’abord"
+  },
+  "macLoad.strategyHint.localFirst": {
+    "defaultMessage": "S’exécute sur ce Mac s’il a de la place, sinon sur l’autre Mac le plus libre, sinon attend dans la file."
+  },
+  "macLoad.strategyHint.selfish": {
+    "defaultMessage": "S’exécute sur l’autre Mac le plus libre, sinon sur ce Mac, sinon attend dans la file. Garde ce Mac libre."
+  },
   "myMacs.runJob": {
     "defaultMessage": "Lancer une tâche…"
   },
   "runJob.title": {
     "defaultMessage": "Lancer une tâche sur…"
+  },
+  "runJob.willQueue": {
+    "defaultMessage": "Aucun Mac n’a de place pour l’instant. Lancez-la : elle attend dans la file de ce Mac et démarre sur le premier Mac qui a de la place."
   },
   "runJob.target": {
     "defaultMessage": "Exécuter sur"
@@ -11944,6 +11989,9 @@
   },
   "runJob.ranking": {
     "defaultMessage": "Meilleurs maintenant : {macs}"
+  },
+  "runJob.refusal": {
+    "defaultMessage": "{mac} : {reason}"
   },
   "runJob.inUse": {
     "defaultMessage": "{name} (utilisé)"

@@ -40,6 +40,7 @@ pub mod mesh;
 pub mod netpath;
 pub mod peer_dial;
 pub mod pubsub;
+pub mod queue;
 pub mod replica;
 pub mod state;
 mod subprocess;
