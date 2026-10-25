@@ -210,7 +210,7 @@ fn serving_intent_response(record: IntentRecord) -> MlxEngineServingIntentRespon
 /// Who unmounted this goose's single engine last, since this goose started; cleared by the next
 /// accepted Mount. In memory on purpose: a relaunch is exactly the fact that nothing stopped it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EngineStopper {
+pub(super) enum EngineStopper {
     Owner,
     LinkedMac,
 }
@@ -817,7 +817,7 @@ async fn core_stop_other_engine(
 }
 
 /// Recorded BEFORE the engine goes, so no status read ever sees it stopped without its stopper.
-async fn core_unmount(
+pub(super) async fn core_unmount(
     _req: MlxEngineUnmountRequest,
     by: EngineStopper,
 ) -> Result<EmptyResponse, agent_client_protocol::Error> {

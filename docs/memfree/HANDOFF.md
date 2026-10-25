@@ -245,3 +245,22 @@ DONE (3 commits on feat/memfree, ui/desktop only):
 GATE: lint:check exit 0. test:run -- --maxWorkers=6: 5120 pass / 4 fail, all 4 were preventSleep (fixed above;
   settings dir rerun 185/185). Full suite NOT rerun after the fix.
 OPEN: full `pnpm run test:run` rerun once to confirm; optional shots; live check on Gabee once R2's engine ships.
+
+## AGENT R1b state (2026-10-25 ~19:40)
+Done: sidecar memfree tests green (10, already in b020d02d4); crates/goose/src/acp/server/memfree.rs real handlers
+(1 unit test on the RAM/ceiling short split). ACP field names UNCHANGED, no schema regen needed.
+- holders: GOOSE_MEMFREE_ENABLED (default true) false -> {enabled:false}. Ctx: own engine = status().pid else
+  StartFrees::Leftover pids; busy = holders_busy(read_all) | unreadable dir | active_requests != Some(0).
+  userApp groups < GOOSE_MEMFREE_SHOW_APPS_MIN_MB (default 200) dropped. Accounting: WITH fitModelId,
+  budgetBytes = fit.budget_bytes (already credits own engine) and gooseOwnedBytes = other MLX engines only;
+  WITHOUT fit, budget = live measured facts (no switch credit) and gooseOwnedBytes also includes an idle own engine.
+  verdict only on a Block fit: memfree::verdict(ram_short, ceiling_short, gooseOwned, apps). alternatives on any short:
+  smallerVariant (complete local models, room = min(avail_after_switch - margin + gooseOwned + apps, ceiling));
+  peerMac only on cannotFit via mlx_placement::mount_alternative (its Err is dropped silently). quitAppsAllowed = !relayed.
+- free: budgets before/after from live facts (no switch credit, so an unmount shows as a gain). gooseOwned: own engine
+  via core_unmount(Owner) + forget_serving(Single) (both made pub(super) in mlx_engine.rs), or an ok:false item with why;
+  each mlx:* group -> machine::stop_other_engine per pid; freed = group bytes - footprint still alive. quitApps ->
+  memfree::quit_app (refused per item when relayed). fit re-read when fitModelId.
+Gaps for U3/R2: peerMac has NO budgetBytes (placement candidate DTO carries none; TS type says number — make it optional
+or R2 measures it). Orphaned goose serve / LM Studio / Ollama not reclaimed (groups list them, reclaimableByGoose false).
+Remote nodeId still refused (R2: relay + MlxOp + GOOSE_LINK_ALLOW_REMOTE_APP_QUIT). NOT live-tested against a running goosed.
