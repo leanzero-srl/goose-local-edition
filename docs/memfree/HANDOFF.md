@@ -359,3 +359,20 @@ ACP client: scratchpad live/acp.mjs (node 22 WebSocket, initialize then method).
 config.yaml `nodes: {version: 1, defs: [{id, name, kind: mlx, model, placement: {kind: single, macs: [local]},
 goal: chat, origin: user}]}` (the New-node dialog refuses a non-fitting way).
 Cleaned: Gabee test model, stand-in, userdata, packaged app stopped. out/ package left in ui/desktop/out.
+
+## AGENT D (defects, 2026-10-25 ~19:35) — both OPEN DEFECTS fixed, rebased onto origin/main 1770006a8 (3.0.129)
+1. LM Studio freed: CAUSE = the model lives in `~/.lmstudio/.internal/utils/node` (child of LM Studio, OUTSIDE the .app,
+   footprint 2.5 GB, the process EXITS on unload); the census filed it as `job:node`, so the LM Studio group only shrank by
+   its GPU helper. Fix (sidecar memfree.rs `ai_server_membership`): model-server groups take every descendant + any
+   `/.lmstudio/` process (headless one = `ai:lms`). Measurement (goose memfree.rs `footprints`/`freed_between`/`settle_freed`):
+   per-process snapshot just before each reclaim, freed = sum of per-process drops (growth counts 0), poll 250 ms up to 10 s
+   until 4 readings agree. Used for own engine, other MLX, AI servers, orphans.
+   LIVE laptop, qwen/qwen3-1.7b MLX 8bit, 3 runs: reported 2.62 / 2.45 / 2.46 GiB vs budget rise 2.45 / 2.31 / 1.54 and
+   vm free rise 2.19 / 2.38 / 2.27 GiB (vm noise ±0.3). Model deleted, lms ps empty, /tmp/memfree-live removed.
+2. Verdict: `withGoose` on the fitsWithApps line; gooseOwned 0 -> new `freeMemory.fitsWithAppsOnly` (16 locales). Tests added.
+Gates after rebase: fmt OK; clippy -D warnings (sidecar, goose, leanzero-link) clean; sidecar memfree 21/21; goose --lib memfree 5/5;
+check-acp-schema up to date; lint:check (typecheck+eslint+i18n) exit 0; vitest 551/552 files — the 1 fail is waitClock.test.ts
+tripping on `ui/desktop/src/swarm-bench/` (git-IGNORED local dir created 19:12 by another process, not in git, not ours).
+TRAPS: on the laptop run goose serve via `machine-sync/bin/node-run --host laptop --light` (raw nohup is hook-blocked) with
+`--dangerously-unauthenticated` (else GOOSE_SERVER__SECRET_KEY required); zsh does not word-split `$A` — use a function.
+Still open: packaged-app live check (ui/desktop/out was deleted by the 3.0.129 installer; rebuild if needed).
