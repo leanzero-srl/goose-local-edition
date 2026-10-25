@@ -103,6 +103,28 @@ pub enum ExecuteError {
 #[async_trait::async_trait]
 pub trait RemoteExecutor: Send + Sync + 'static {
     async fn execute(&self, req: ExecuteRequest) -> Result<ExecuteAccepted, ExecuteError>;
+
+    /// [`Self::execute`], plus a sink the run's transcript is streamed into AS IT HAPPENS
+    /// (assistant text, each tool call with short args, truncated tool results, the finish
+    /// line). A prompt job passes its job log here, so `GET /v1/swarm/jobs/{id}/log?from=`
+    /// tails the answer live instead of reading an empty file while the answer only lives
+    /// in the goose session. The default ignores the sink: an executor that cannot stream
+    /// still runs, its job log just stays empty.
+    async fn execute_logged(
+        &self,
+        req: ExecuteRequest,
+        log: Arc<dyn ExecuteLog>,
+    ) -> Result<ExecuteAccepted, ExecuteError> {
+        let _ = log;
+        self.execute(req).await
+    }
+}
+
+/// Where a logged remote run writes its transcript. `append` is called from the run's own
+/// task with text in order; it must not block for long (a file append is fine) and it
+/// never fails loudly: a lost log line must not break the run.
+pub trait ExecuteLog: Send + Sync + 'static {
+    fn append(&self, text: &str);
 }
 
 /// One mlxEngine operation the mesh proxy forwards. Each variant maps 1:1 to a
@@ -414,11 +436,15 @@ struct PeerEntry {
 
 /// How often each peer's liveness DIAL runs (D2): a fresh TCP connect through the mesh proxy,
 /// never a request — a loaded peer's kernel still accepts, so only a gone peer fails it.
-pub const PEER_LIVENESS_INTERVAL: Duration = Duration::from_secs(1);
+pub const PEER_LIVENESS_INTERVAL: Duration = Duration::from_millis(800);
 /// The liveness dial's bound. A tailnet connect is one round trip (well under 500 ms even over
-/// a DERP relay); a peer whose Link died leaves the CONNECT hanging, so this is how long a
-/// dropped peer can still read alive after the last look began.
-pub const PEER_LIVENESS_DIAL_TIMEOUT: Duration = Duration::from_millis(1500);
+/// a DERP relay); a peer whose Link died leaves the CONNECT hanging until this runs out.
+pub const PEER_LIVENESS_DIAL_TIMEOUT: Duration = Duration::from_millis(1200);
+/// Liveness dials in a row that must TIME OUT before the row reads `Offline`. One slow
+/// connect on a relayed path is not a dead peer; the retry runs at once (no interval sleep),
+/// so a dropped peer reads Offline within INTERVAL + this × DIAL_TIMEOUT (3.2 s). A definite
+/// refusal (connection refused, host unreachable) is one look, never retried.
+pub const PEER_LIVENESS_TIMEOUTS: u32 = 2;
 /// Polls in a row that may time out on a CONNECTED peer (alive but slow, e.g. under load)
 /// before it reads `Offline`. Until then its status is kept and the timeout rides in
 /// `last_poll_error`.
@@ -751,25 +777,38 @@ fn classify_send_error(error: reqwest::Error) -> PollFailure {
 }
 
 /// D2: dial the peer's control port through the mesh proxy every
-/// [`PEER_LIVENESS_INTERVAL`]. A failed dial (refused at once, or a CONNECT left hanging past
-/// [`PEER_LIVENESS_DIAL_TIMEOUT`] because the peer's Link is gone) marks the row `Offline`
-/// without waiting out a poll — whose pooled connection to a dead peer stays open and silent
+/// [`PEER_LIVENESS_INTERVAL`]. A refused dial marks the row `Offline` at once; a CONNECT left
+/// hanging past [`PEER_LIVENESS_DIAL_TIMEOUT`] (the peer's Link is gone, or a slow relay) is
+/// re-dialled at once and marks `Offline` only after [`PEER_LIVENESS_TIMEOUTS`] in a row —
+/// either way without waiting out a poll — whose pooled connection to a dead peer stays open and silent
 /// for the whole request timeout. A successful dial changes nothing: only a poll restores
 /// a status.
 async fn liveness_peer_loop(weak: Weak<RegistryInner>, target: PeerTarget, base_url: String) {
     let Ok(url) = url::Url::parse(&base_url) else {
         return;
     };
+    let mut timeouts = 0u32;
     loop {
-        tokio::time::sleep(PEER_LIVENESS_INTERVAL).await;
+        if timeouts == 0 {
+            tokio::time::sleep(PEER_LIVENESS_INTERVAL).await;
+        }
         let Some(inner) = weak.upgrade() else { return };
         let Some(proxy) = inner.dial.as_ref().map(|dial| dial.proxy) else {
             return;
         };
         drop(inner);
         let Err(error) = proxy.tcp_stream(&url, PEER_LIVENESS_DIAL_TIMEOUT).await else {
+            timeouts = 0;
             continue;
         };
+        if matches!(error, PeerDialError::SocksTimeout { .. }) {
+            timeouts += 1;
+            if timeouts < PEER_LIVENESS_TIMEOUTS {
+                tracing::debug!(hostname = %target.hostname, %error, "mesh peer liveness dial timed out once; re-dialling");
+                continue;
+            }
+        }
+        timeouts = 0;
         let Some(inner) = weak.upgrade() else { return };
         let text = format!("{base_url} unreachable: {error}");
         if let Some(event) = mark_peer_unreachable(&inner, &target.hostname, &text) {

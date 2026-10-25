@@ -255,6 +255,26 @@ impl ServeRemoteExecutor {
 #[async_trait::async_trait]
 impl RemoteExecutor for ServeRemoteExecutor {
     async fn execute(&self, req: ExecuteRequest) -> Result<ExecuteAccepted, ExecuteError> {
+        self.execute_with_log(req, None).await
+    }
+
+    /// The same run, with its transcript streamed into `log` as the reply produces it (a
+    /// prompt job's log file), so the job log tails the answer live.
+    async fn execute_logged(
+        &self,
+        req: ExecuteRequest,
+        log: Arc<dyn ExecuteLog>,
+    ) -> Result<ExecuteAccepted, ExecuteError> {
+        self.execute_with_log(req, Some(log)).await
+    }
+}
+
+impl ServeRemoteExecutor {
+    async fn execute_with_log(
+        &self,
+        req: ExecuteRequest,
+        log: Option<Arc<dyn ExecuteLog>>,
+    ) -> Result<ExecuteAccepted, ExecuteError> {
         if req.prompt.trim().is_empty() {
             return Err(ExecuteError::BadRequest(
                 "prompt must not be empty".to_string(),
@@ -310,6 +330,7 @@ impl RemoteExecutor for ServeRemoteExecutor {
             session_id.clone(),
             req.prompt,
             cancel_token,
+            log,
         ));
 
         Ok(ExecuteAccepted { session_id })
@@ -350,13 +371,18 @@ async fn run_remote_reply(
     session_id: String,
     prompt: String,
     cancel_token: CancellationToken,
+    log: Option<Arc<dyn ExecuteLog>>,
 ) {
     let mut guard = BusyDoorGuard {
         agent_manager: managers.agent_manager.clone(),
         session_id: session_id.clone(),
         armed: true,
     };
-    drive_remote_reply(&managers, &session_id, prompt, &cancel_token).await;
+    let reason =
+        drive_remote_reply(&managers, &session_id, prompt, &cancel_token, log.as_ref()).await;
+    if let Some(log) = &log {
+        log.append(&format!("\n[finished: {reason}]\n"));
+    }
     // Release inline on every non-panic exit so the next reply on this session is not
     // refused by a token the guard's spawned drop has not removed yet; the guard stays as
     // the panic net.
@@ -378,12 +404,18 @@ async fn drive_remote_reply(
     session_id: &str,
     prompt: String,
     cancel_token: &CancellationToken,
-) {
+    log: Option<&Arc<dyn ExecuteLog>>,
+) -> &'static str {
+    let log_text = |text: &str| {
+        if let (Some(log), false) = (log, text.is_empty()) {
+            log.append(text);
+        }
+    };
     // A cancel that raced the 202: nothing is built and no model is called — the early
     // exit `on_prompt` takes before it streams.
     if cancel_token.is_cancelled() {
         info!(%session_id, "leanzeroLink: remote prompt cancelled before it started");
-        return;
+        return "cancelled";
     }
 
     let agent = match managers
@@ -394,15 +426,18 @@ async fn drive_remote_reply(
         Ok(agent) => agent,
         Err(error) => {
             error!(%session_id, %error, "leanzeroLink: remote prompt could not get the session agent");
+            log_text(&format!(
+                "[error: failed to get the session agent: {error}]"
+            ));
             publish_tap(session_id, || {
                 TapEvent::Error(format!("Failed to get session agent: {error}"))
             });
-            return;
+            return "error";
         }
     };
     if cancel_token.is_cancelled() {
         info!(%session_id, "leanzeroLink: remote prompt cancelled before its reply started");
-        return;
+        return "cancelled";
     }
 
     let session_config = SessionConfig {
@@ -422,32 +457,91 @@ async fn drive_remote_reply(
         Ok(stream) => stream,
         Err(error) => {
             error!(%session_id, %error, "leanzeroLink: remote prompt failed to start its reply stream");
+            log_text(&format!("[error: {error}]"));
             publish_tap(session_id, || TapEvent::Error(error.to_string()));
-            return;
+            return "error";
         }
     };
     // The mirror: every event fans onto the process-wide tap, and the session's delta
     // sequence closes with Finish when the stream ends or is dropped.
     let mut stream = tapped_reply(session_id, stream);
 
-    loop {
+    let reason = loop {
         let event = tokio::select! {
             biased;
             _ = cancel_token.cancelled() => {
                 info!(%session_id, "leanzeroLink: remote prompt cancelled");
-                break;
+                break "cancelled";
             }
             maybe_event = stream.next() => match maybe_event {
                 Some(event) => event,
-                None => break,
+                None => break "stop",
             },
         };
-        if let Err(error) = event {
-            error!(%session_id, %error, "leanzeroLink: remote prompt's reply stream failed");
-            break;
+        match event {
+            Ok(AgentEvent::Message(message)) => log_text(&job_log_text(&message)),
+            Ok(_) => {}
+            Err(error) => {
+                error!(%session_id, %error, "leanzeroLink: remote prompt's reply stream failed");
+                log_text(&format!("\n[error: {error}]"));
+                break "error";
+            }
+        }
+    };
+    drop(stream);
+    reason
+}
+
+/// Longest tool-call argument text a job log line carries.
+const JOB_LOG_ARGS_MAX: usize = 200;
+/// Longest tool-result text a job log line carries.
+const JOB_LOG_RESULT_MAX: usize = 2000;
+
+/// One reply message as job-log text (D4): assistant text as it streams (deltas are appended
+/// raw, so they read as one answer), each tool call as `→ name {args}` with the args cut to
+/// [`JOB_LOG_ARGS_MAX`] chars, each tool result as `← text` cut to [`JOB_LOG_RESULT_MAX`].
+/// User-side text (the echoed prompt) and thinking are left out. Pure, so both executors
+/// (this one and goose-server's) format a run the same way.
+pub fn job_log_text(message: &Message) -> String {
+    let mut out = String::new();
+    for content in &message.content {
+        match content {
+            MessageContent::Text(t) if message.role == Role::Assistant => out.push_str(&t.text),
+            MessageContent::ToolRequest(req) => match &req.tool_call {
+                Ok(call) => {
+                    let args = call
+                        .arguments
+                        .as_ref()
+                        .map(|a| serde_json::Value::Object(a.clone()).to_string())
+                        .unwrap_or_default();
+                    out.push_str(&format!(
+                        "\n→ {} {}\n",
+                        call.name,
+                        clip(&args, JOB_LOG_ARGS_MAX)
+                    ));
+                }
+                Err(e) => out.push_str(&format!("\n→ (invalid tool call: {e})\n")),
+            },
+            MessageContent::ToolResponse(_) => {
+                let text = content.as_tool_response_text().unwrap_or_default();
+                out.push_str(&format!(
+                    "← {}\n",
+                    clip(text.trim_end(), JOB_LOG_RESULT_MAX)
+                ));
+            }
+            _ => {}
         }
     }
-    drop(stream);
+    out
+}
+
+fn clip(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let mut cut: String = text.chars().take(max).collect();
+    cut.push('…');
+    cut
 }
 
 /// A short, human-readable session name from the prompt (for the mirror index the UI and
@@ -830,6 +924,62 @@ async fn to_delta_input(session_manager: &SessionManager, msg: TappedMsg) -> Opt
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// D4: a run's messages become job-log text — assistant deltas raw (they read as one
+    /// answer), tool calls with short args, results clipped, the echoed prompt left out.
+    #[test]
+    fn job_log_text_streams_text_tool_calls_and_clipped_results() {
+        use rmcp::model::{CallToolRequestParams, CallToolResult, Content};
+        let prompt = Message::user().with_text("write hello");
+        let delta1 = Message::assistant().with_text("I'll ");
+        let delta2 = Message::assistant().with_text("check.");
+        let long_arg = "x".repeat(500);
+        let call = Message::assistant().with_tool_request(
+            "t1",
+            Ok(CallToolRequestParams::new("shell").with_arguments(
+                serde_json::json!({ "command": long_arg })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            )),
+        );
+        let result = Message::user().with_tool_response(
+            "t1",
+            Ok(CallToolResult::success(vec![Content::text(
+                "y".repeat(3000),
+            )])),
+        );
+        let answer = Message::assistant()
+            .with_thinking("hidden reasoning", "sig")
+            .with_text("Done: hello.");
+
+        let log: String = [&prompt, &delta1, &delta2, &call, &result, &answer]
+            .iter()
+            .map(|m| job_log_text(m))
+            .collect();
+
+        assert!(
+            !log.contains("write hello"),
+            "the prompt is not echoed: {log}"
+        );
+        assert!(
+            !log.contains("hidden reasoning"),
+            "thinking stays out: {log}"
+        );
+        assert!(
+            log.starts_with("I'll check.\n→ shell {\"command\":\"xxx"),
+            "{log}"
+        );
+        let call_line = log.lines().find(|l| l.starts_with("→ shell")).unwrap();
+        assert_eq!(
+            call_line.chars().count(),
+            "→ shell ".chars().count() + JOB_LOG_ARGS_MAX + 1
+        );
+        let result_line = log.lines().find(|l| l.starts_with("← ")).unwrap();
+        assert_eq!(result_line.chars().count(), 2 + JOB_LOG_RESULT_MAX + 1);
+        assert!(result_line.ends_with('…'));
+        assert!(log.ends_with("…\nDone: hello."), "{log}");
+    }
     use crate::agents::{AgentConfig, GoosePlatform};
     use crate::config::permission::PermissionManager;
     use std::time::Duration;
@@ -965,6 +1115,49 @@ mod tests {
 
         // The door releases when the run ends.
         wait_until_idle(&managers.agent_manager, &accepted.session_id).await;
+    }
+
+    #[derive(Default)]
+    struct MemLog(StdMutex<String>);
+    impl ExecuteLog for MemLog {
+        fn append(&self, text: &str) {
+            self.0.lock().unwrap().push_str(text);
+        }
+    }
+
+    /// D4: `execute_logged` threads the sink through the real run path — a run that ends
+    /// (here: cancelled at the door, so no provider is built) closes the log with its reason.
+    #[tokio::test]
+    async fn execute_logged_writes_the_runs_end_into_the_sink() {
+        let _turn = BIND_LOCK.lock().await;
+        let (temp, managers) = temp_managers().await;
+        bind_run_managers(
+            managers.agent_manager.clone(),
+            managers.session_manager.clone(),
+        );
+        let executor = executor(receiver_config(temp.path()));
+        let working_dir = temp.path().join("work");
+        std::fs::create_dir_all(&working_dir).unwrap();
+        let log = Arc::new(MemLog::default());
+        let accepted = executor
+            .execute_logged(
+                ExecuteRequest {
+                    prompt: "say hello".to_string(),
+                    working_dir: Some(working_dir.to_string_lossy().into_owned()),
+                    session_id: None,
+                },
+                log.clone(),
+            )
+            .await
+            .expect("execute_logged accepts");
+        managers
+            .agent_manager
+            .cancel_session(&accepted.session_id)
+            .await
+            .unwrap();
+        wait_until_idle(&managers.agent_manager, &accepted.session_id).await;
+        let text = log.0.lock().unwrap().clone();
+        assert!(text.ends_with("[finished: cancelled]\n"), "log: {text:?}");
     }
 
     #[tokio::test]

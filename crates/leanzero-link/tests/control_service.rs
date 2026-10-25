@@ -22,8 +22,8 @@ use leanzero_link::control::{
 };
 use leanzero_link::pubsub::REPLAY_BUFFER_CAPACITY;
 use leanzero_link::state::{
-    ExecuteAccepted, ExecuteError, ExecuteRequest, MlxControl, MlxControlError, MlxOp, PeerTarget,
-    RemoteExecutor, SwarmStateSource,
+    ExecuteAccepted, ExecuteError, ExecuteLog, ExecuteRequest, MlxControl, MlxControlError, MlxOp,
+    PeerTarget, RemoteExecutor, SwarmStateSource,
 };
 use leanzero_link::wire::{
     LeaveReason, LinkEvent, NodeState, NodeStatus, SessionDeltaKind, SessionSummary, StreamFrame,
@@ -1092,6 +1092,45 @@ async fn a_slow_but_alive_peer_is_not_marked_offline_on_one_timeout() {
     .await;
     stub.vanish().await;
     a.shutdown();
+}
+
+/// D2 hardening: ONE liveness dial that times out (a live peer on a slow relayed tailnet path)
+/// must not flap the row Offline. A connect TIMEOUT needs two in a row; a definite refusal
+/// (the port-closed test above) still marks Offline at once.
+#[tokio::test]
+async fn one_timed_out_liveness_dial_does_not_mark_a_live_peer_offline() {
+    let source_b = FakeStateSource::new("node-b");
+    let b = spawn_node(source_b, mesh_v6()).await;
+    let a = spawn_node_production_cadence(FakeStateSource::new("node-a")).await;
+    let base_a = base_url(&a);
+    let client = reqwest::Client::new();
+    let b_mesh_ip = support::fake_tailnet().expose(b.local_addr().port());
+    a.set_peers(vec![PeerTarget {
+        hostname: "node-b-host".to_string(),
+        mesh_ip: Some(b_mesh_ip.clone()),
+        port: b.local_addr().port(),
+    }]);
+    time_until_row(&client, &base_a, "node-b", |p| !is_offline(p)).await;
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+
+    support::fake_tailnet().stall_next_connects(&b_mesh_ip, 1);
+    let watch_until = tokio::time::Instant::now() + Duration::from_secs(5);
+    while tokio::time::Instant::now() < watch_until {
+        let nodes = get_json(&client, &format!("{base_a}/v1/swarm/nodes")).await;
+        let row = peer_row(&nodes, "node-b").expect("node-b row");
+        assert!(
+            !is_offline(&row),
+            "one slow dial must not mark a live peer Offline: {row}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(
+        support::fake_tailnet().stalled_connects(&b_mesh_ip),
+        1,
+        "the stalled CONNECT was actually hit"
+    );
+    a.shutdown();
+    b.shutdown();
 }
 
 // ── Unreachable-from-birth peer: Offline row, endpoint healthy ──────────
@@ -2232,6 +2271,84 @@ mod jobs_http {
             .set_sessions(vec![summary("sess-job-1", "laptop", false, 2)]);
         let end = wait_terminal(&n, &id, Duration::from_secs(5)).await;
         assert_eq!(end["state"], "done", "{end}");
+        n.handle.shutdown();
+    }
+
+    /// An executor that streams its run into the sink it is handed: one line at accept time,
+    /// two more later from its own task — the shape of a real goose run.
+    struct StreamingExecutor;
+
+    #[async_trait::async_trait]
+    impl RemoteExecutor for StreamingExecutor {
+        async fn execute(&self, _req: ExecuteRequest) -> Result<ExecuteAccepted, ExecuteError> {
+            Ok(ExecuteAccepted {
+                session_id: "sess-streamed".to_string(),
+            })
+        }
+
+        async fn execute_logged(
+            &self,
+            req: ExecuteRequest,
+            log: Arc<dyn ExecuteLog>,
+        ) -> Result<ExecuteAccepted, ExecuteError> {
+            log.append("alpha\n");
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                log.append("beta\n");
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                log.append("gamma\n");
+            });
+            self.execute(req).await
+        }
+    }
+
+    async fn log_chunk(n: &Node, id: &str, from: u64) -> serde_json::Value {
+        let r = reqwest::Client::new()
+            .get(format!("{}/v1/swarm/jobs/{id}/log?from={from}", n.base))
+            .bearer_auth(TOKEN)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status().as_u16(), 200);
+        r.json().await.unwrap()
+    }
+
+    /// D4: a prompt job's log carries the run as it happens (the answer used to live only in
+    /// the goose session; the log was empty), in order, and `from=next` tails it live.
+    #[tokio::test]
+    async fn a_prompt_jobs_log_streams_the_run_in_order_and_tails_with_from_next() {
+        let n = spawn_jobs_node(true, test_limits(), Some(Arc::new(StreamingExecutor))).await;
+        let (s, v) = submit(
+            &n,
+            serde_json::json!({"kind": "prompt", "command": "write hello", "origin_node": "laptop"}),
+        )
+        .await;
+        assert_eq!(s, 202, "{v}");
+        let id = v["job_id"].as_str().unwrap().to_string();
+
+        let first = log_chunk(&n, &id, 0).await;
+        assert_eq!(
+            first["data"], "alpha\n",
+            "the accept-time line is in the log: {first}"
+        );
+        let mut next = first["next"].as_u64().unwrap();
+        let mut tail = String::new();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while !tail.contains("gamma") {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "tail never reached gamma: {tail:?}"
+            );
+            let c = log_chunk(&n, &id, next).await;
+            tail.push_str(c["data"].as_str().unwrap());
+            next = c["next"].as_u64().unwrap();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert_eq!(
+            tail, "beta\ngamma\n",
+            "tailing from=next yields the rest, once, in order"
+        );
+        assert_eq!(log_chunk(&n, &id, 0).await["data"], "alpha\nbeta\ngamma\n");
         n.handle.shutdown();
     }
 

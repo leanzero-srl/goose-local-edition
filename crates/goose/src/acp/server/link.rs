@@ -69,7 +69,9 @@ pub use leanzero_link::wire::SessionDeltaKind;
 /// The remote-execution seam types, re-exported so goose-server can implement
 /// [`RemoteExecutor`] and drive [`ExecuteRequest`]/[`ExecuteAccepted`]/[`ExecuteError`]
 /// through `goose::acp::server::*` without a direct `leanzero-link` dependency.
-pub use leanzero_link::state::{ExecuteAccepted, ExecuteError, ExecuteRequest, RemoteExecutor};
+pub use leanzero_link::state::{
+    ExecuteAccepted, ExecuteError, ExecuteLog, ExecuteRequest, RemoteExecutor,
+};
 
 /// The remote model-management seam types, re-exported so goose's `GoosedMlxControl` (in
 /// `mlx_engine.rs`) and the boot path can drive the mesh MLX proxy without naming

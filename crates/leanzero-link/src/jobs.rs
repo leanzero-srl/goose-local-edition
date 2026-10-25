@@ -712,7 +712,8 @@ impl JobRegistry {
                     working_dir: req.cwd.clone(),
                     session_id: None,
                 };
-                match exec.execute(er).await {
+                let log = Arc::new(FileLog(entry.dir.join("log")));
+                match exec.execute_logged(er, log).await {
                     Ok(acc) => {
                         entry.update(|r| r.session_id = Some(acc.session_id.clone()));
                         tokio::spawn(watch_prompt(
@@ -1007,6 +1008,25 @@ async fn watch_shell(
     );
     entry.finish(outcome.0, outcome.1, outcome.2);
     drop(slot);
+}
+
+/// A prompt job's transcript sink: every chunk the executor streams is appended to the
+/// job's `log` file (opened per append so a rotated or deleted dir never wedges the run).
+/// A failed write is dropped with a debug line; it never stops the run.
+struct FileLog(PathBuf);
+
+impl crate::state::ExecuteLog for FileLog {
+    fn append(&self, text: &str) {
+        use std::io::Write;
+        let res = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.0)
+            .and_then(|mut f| f.write_all(text.as_bytes()));
+        if let Err(e) = res {
+            tracing::debug!(path = %self.0.display(), error = %e, "jobs: prompt log append failed");
+        }
+    }
 }
 
 fn append_line(dir: &Path, line: &str) -> std::io::Result<()> {
