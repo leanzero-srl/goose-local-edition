@@ -440,14 +440,23 @@ pub fn parse_lsof_fpc(out: &str) -> Vec<(u32, String)> {
 /// (`lsof -nP -iTCP:<port> -sTCP:ESTABLISHED -Fpc`, bounded to 5 s). Read-only. Without root lsof
 /// sees only this user's sockets, so a client of another user is not listed.
 pub fn port_clients(port: u16, exclude: &[u32]) -> Vec<(u32, String)> {
+    let out = lsof(&["-nP", &format!("-iTCP:{port}"), "-sTCP:ESTABLISHED", "-Fpc"]);
+    parse_lsof_fpc(&out)
+        .into_iter()
+        .filter(|(pid, _)| !exclude.contains(pid))
+        .collect()
+}
+
+/// Run `/usr/sbin/lsof <args>` bounded to 5 s; its stdout, or empty on any failure. Read-only.
+fn lsof(args: &[&str]) -> String {
     let child = std::process::Command::new("/usr/sbin/lsof")
-        .args(["-nP", &format!("-iTCP:{port}"), "-sTCP:ESTABLISHED", "-Fpc"])
+        .args(args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn();
     let Ok(mut child) = child else {
-        return vec![];
+        return String::new();
     };
     let started = std::time::Instant::now();
     loop {
@@ -460,7 +469,7 @@ pub fn port_clients(port: u16, exclude: &[u32]) -> Vec<(u32, String)> {
                 // Our own lsof child only.
                 let _ = child.kill();
                 let _ = child.wait();
-                return vec![];
+                return String::new();
             }
         }
     }
@@ -469,10 +478,110 @@ pub fn port_clients(port: u16, exclude: &[u32]) -> Vec<(u32, String)> {
         use std::io::Read;
         let _ = stdout.read_to_string(&mut out);
     }
-    parse_lsof_fpc(&out)
-        .into_iter()
-        .filter(|(pid, _)| !exclude.contains(pid))
-        .collect()
+    out
+}
+
+/// The process name of LM Studio's Link connector (LM Link): other Macs reach this LM Studio's
+/// models through it, never through the REST port.
+pub const LMLINK_CONNECTOR: &str = "lmlink-connector";
+
+/// `lsof -F n` LISTEN output → the ports listened on (`n*:34267`, `n127.0.0.1:34267`,
+/// `n[::1]:34267`), deduplicated, first-seen order.
+pub fn parse_lsof_listen_ports(out: &str) -> Vec<u16> {
+    let mut ports: Vec<u16> = vec![];
+    for line in out.lines() {
+        let Some(name) = line.strip_prefix('n') else {
+            continue;
+        };
+        let Some(port) = name.rsplit_once(':').and_then(|(_, p)| p.trim().parse().ok()) else {
+            continue;
+        };
+        if !ports.contains(&port) {
+            ports.push(port);
+        }
+    }
+    ports
+}
+
+/// The "used by" lines LM Link adds to LM Studio's group: every running `lmlink-connector`
+/// (from `rows`) with the ports it listens on (`listen`: (pid, port)), and the ESTABLISHED
+/// clients of those ports (`clients`: (port, pid, name)). The connector itself among a port's
+/// clients means a Link peer is connected through it.
+pub fn lmlink_users(
+    rows: &[ProcRow],
+    listen: &[(u32, u16)],
+    clients: &[(u16, u32, String)],
+) -> Vec<String> {
+    let mut out = vec![];
+    for r in rows.iter().filter(|r| proc_name(&r.path) == LMLINK_CONNECTOR) {
+        let ports: Vec<u16> = listen
+            .iter()
+            .filter(|(pid, _)| *pid == r.pid)
+            .map(|(_, port)| *port)
+            .collect();
+        if ports.is_empty() {
+            out.push(format!(
+                "LM Link: {LMLINK_CONNECTOR} (pid {}) is running, so other Macs may be using this LM Studio",
+                r.pid
+            ));
+            continue;
+        }
+        let list: Vec<String> = ports.iter().map(u16::to_string).collect();
+        out.push(format!(
+            "LM Link: {LMLINK_CONNECTOR} (pid {}) listens on {}, so other Macs may be using this LM Studio",
+            r.pid,
+            list.join(", ")
+        ));
+        for &port in &ports {
+            let on_port = clients.iter().filter(|(p, _, _)| *p == port);
+            if on_port.clone().any(|(_, pid, _)| *pid == r.pid) {
+                out.push(format!(
+                    "a Link peer is connected through {LMLINK_CONNECTOR} (port {port})"
+                ));
+            }
+            for (_, pid, name) in on_port.filter(|(_, pid, _)| *pid != r.pid) {
+                out.push(format!(
+                    "{name} (pid {pid}) is connected to LM Link (port {port})"
+                ));
+            }
+        }
+    }
+    out
+}
+
+/// The LM Link lines for a group when it is LM Studio ([`lmlink_used_by`]), else none. Read-only.
+pub fn lmlink_lines_for(group: &crate::memfree::Group, rows: &[ProcRow]) -> Vec<String> {
+    match ai_server_kind(&group.id, group.bundle_id.as_deref()) {
+        Some(AiServerKind::LmStudio) if group.category == crate::memfree::Category::AiServer => {
+            lmlink_used_by(rows)
+        }
+        _ => vec![],
+    }
+}
+
+/// [`lmlink_users`] for this Mac now: each connector's LISTEN ports
+/// (`lsof -a -p <pid> -iTCP -sTCP:LISTEN -Fn`) and their ESTABLISHED clients. Read-only.
+pub fn lmlink_used_by(rows: &[ProcRow]) -> Vec<String> {
+    let mut listen = vec![];
+    let mut clients = vec![];
+    for r in rows.iter().filter(|r| proc_name(&r.path) == LMLINK_CONNECTOR) {
+        let out = lsof(&[
+            "-nP",
+            "-a",
+            "-p",
+            &r.pid.to_string(),
+            "-iTCP",
+            "-sTCP:LISTEN",
+            "-Fn",
+        ]);
+        for port in parse_lsof_listen_ports(&out) {
+            listen.push((r.pid, port));
+            for (pid, name) in port_clients(port, &[]) {
+                clients.push((port, pid, name));
+            }
+        }
+    }
+    lmlink_users(rows, &listen, &clients)
 }
 
 fn proc_name(path: &str) -> &str {
@@ -817,6 +926,44 @@ mod tests {
             launchd_label: None,
             nuclear_default: false,
         }
+    }
+
+    #[test]
+    fn memfree_lmlink_listen_ports_parse() {
+        let out = "p14330\nf9\nn*:34267\nf10\nn127.0.0.1:34268\nf11\nn[::1]:34267\nf12\nnjunk\n";
+        assert_eq!(parse_lsof_listen_ports(out), vec![34267, 34268]);
+        assert!(parse_lsof_listen_ports("").is_empty());
+    }
+
+    #[test]
+    fn memfree_lmlink_connector_names_its_ports_peers_and_clients() {
+        let rows = vec![
+            row(13856, 1, 501, "/Applications/LM Studio.app/Contents/MacOS/LM Studio"),
+            row(14330, 13856, 501, "/Users/w/.lmstudio/bin/lmlink-connector"),
+            row(2222, 1, 501, "/usr/bin/curl"),
+        ];
+        let lines = lmlink_users(
+            &rows,
+            &[(14330, 34267)],
+            &[
+                (34267, 14330, "lmlink-con".into()),
+                (34267, 2222, "curl".into()),
+            ],
+        );
+        assert_eq!(
+            lines,
+            vec![
+                "LM Link: lmlink-connector (pid 14330) listens on 34267, so other Macs may be using this LM Studio".to_string(),
+                "a Link peer is connected through lmlink-connector (port 34267)".to_string(),
+                "curl (pid 2222) is connected to LM Link (port 34267)".to_string(),
+            ]
+        );
+        // Running with no port read yet still names it; no connector, no lines.
+        assert_eq!(
+            lmlink_users(&rows, &[], &[]),
+            vec!["LM Link: lmlink-connector (pid 14330) is running, so other Macs may be using this LM Studio".to_string()]
+        );
+        assert!(lmlink_users(&rows[..1], &[], &[]).is_empty());
     }
 
     #[test]

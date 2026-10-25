@@ -244,7 +244,9 @@ async fn enrich_used_by(
                 let clients = server_port(&g, &ports)
                     .map(|p| servers::port_clients(p, &own))
                     .unwrap_or_default();
-                (i, servers::used_by_lines(&g, &rows, &clients))
+                let mut lines = servers::used_by_lines(&g, &rows, &clients);
+                lines.extend(servers::lmlink_lines_for(&g, &rows));
+                (i, lines)
             })
             .collect::<Vec<_>>()
     })

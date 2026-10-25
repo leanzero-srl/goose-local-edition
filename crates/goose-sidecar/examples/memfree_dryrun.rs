@@ -135,6 +135,7 @@ async fn main() -> Result<()> {
                 .map(|p| servers::port_clients(p, &own))
                 .unwrap_or_default();
             g.used_by = servers::used_by_lines(g, &rows, &clients);
+            g.used_by.extend(servers::lmlink_lines_for(g, &rows));
         }
         g.nuclear_default = protect::nuclear_default(g, &never_touch);
     }
