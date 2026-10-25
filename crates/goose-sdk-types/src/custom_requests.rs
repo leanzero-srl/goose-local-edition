@@ -2890,6 +2890,10 @@ pub struct MlxMemoryFreeItemDto {
     /// The app did not quit and may still be force stopped (own uid, unprotected).
     #[serde(default)]
     pub force_stoppable: bool,
+    /// Set when the item was refused because nothing may ever touch it: `neverTouch` (on the
+    /// never-touch list) or `protected` (another person, job, session, launchd/MCP, macOS).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal_code: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]

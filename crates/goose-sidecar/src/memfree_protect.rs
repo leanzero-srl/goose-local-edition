@@ -85,6 +85,57 @@ pub fn group_never_touch(group: &Group, list: &[String]) -> Option<String> {
     )
 }
 
+/// Why a refusal happened, as a stable code a surface can branch on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefusalCode {
+    /// On the never-touch list (built-in defaults, settings, or the caller's list over the Link).
+    NeverTouch,
+    /// Protected by [`protected`]: another person, job, session, launchd job, MCP server, macOS.
+    Protected,
+}
+
+impl RefusalCode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NeverTouch => "neverTouch",
+            Self::Protected => "protected",
+        }
+    }
+}
+
+/// A refusal to quit, stop, unload or signal a group: its code and the sentence a person reads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Refusal {
+    pub code: RefusalCode,
+    pub message: String,
+}
+
+/// THE rule every quit / force stop / unload / stop / nuclear path runs right before it acts,
+/// on a group from a FRESH census: `Some` = nothing may touch it, whoever asks (local or over
+/// the Link). Never-touch is checked against `list` itself as well as the folded
+/// `protected_why`, so a caller's list that differs from the census's still holds.
+pub fn untouchable(g: &Group, list: &[String]) -> Option<Refusal> {
+    if let Some(hit) = group_never_touch(g, list) {
+        return Some(Refusal {
+            code: RefusalCode::NeverTouch,
+            message: format!("{} is on the never-touch list ({hit})", g.label),
+        });
+    }
+    let why = g.protected_why.as_ref()?;
+    let code = if why.starts_with(NEVER_TOUCH_WHY) {
+        RefusalCode::NeverTouch
+    } else {
+        RefusalCode::Protected
+    };
+    Some(Refusal {
+        code,
+        message: format!("goose will not touch {}: protected ({why})", g.label),
+    })
+}
+
+/// The `protected_why` prefix [`crate::memfree::categorize`] gives a never-touch group.
+pub const NEVER_TOUCH_WHY: &str = "on the never-touch list";
+
 /// `launchctl list` output (`PID\tStatus\tLabel`) → pid → label. Not-running jobs (`-`) and GUI
 /// app launches (`application.*`, every app the owner opened) are skipped: only real jobs remain.
 pub fn parse_launchctl_list(out: &str) -> HashMap<u32, String> {
@@ -395,7 +446,7 @@ fn soft_kind(g: &Group) -> bool {
 
 /// May a clean in `mode` free this group? Never when protected or on the never-touch list.
 pub fn eligible(g: &Group, mode: Mode, never_touch: &[String]) -> bool {
-    if g.protected_why.is_some() || group_never_touch(g, never_touch).is_some() {
+    if untouchable(g, never_touch).is_some() {
         return false;
     }
     if soft_kind(g) {
@@ -753,6 +804,60 @@ mod tests {
         assert!(group_never_touch(&g("app:com.microsoft.teams2"), &list).is_some());
         assert!(group_never_touch(&g("app:org.example.Plain"), &list).is_some());
         assert!(group_never_touch(&g("app:org.example.Plain"), &never_touch_list(&[])).is_none());
+    }
+
+    /// 3.0.131 defect: the dialog labelled Outlook "Protected" (never-touch) yet offered Quit,
+    /// because categorize left a never-touch app `quittable`. A never-touch group is now
+    /// untouchable for EVERY path: not quittable, not reclaimable, `protected_why` set, and
+    /// [`untouchable`] refuses it with the `neverTouch` code — by bundle id, by app name and by
+    /// a fragment of the name ("Outlook" → "Microsoft Outlook").
+    #[test]
+    fn never_touch_apps_are_untouchable_by_bundle_name_and_fragment() {
+        let mut f = workhorse();
+        f.p(
+            8800,
+            1,
+            "/Applications/Microsoft Outlook.app/Contents/MacOS/Microsoft Outlook",
+        );
+        f.app(
+            "/Applications/Microsoft Outlook.app",
+            "com.microsoft.Outlook",
+            "Microsoft Outlook",
+        );
+        f.p(8900, 1, "/Applications/Olk.app/Contents/MacOS/Olk");
+        f.app("/Applications/Olk.app", "com.example.olk", "Microsoft Outlook Beta");
+        let gs = groups(&f);
+        let g = |id: &str| gs.iter().find(|g| g.id == id).unwrap().clone();
+        let defaults = never_touch_list(&[]);
+        for id in ["app:com.microsoft.Outlook", "app:com.microsoft.teams2"] {
+            let app = g(id);
+            assert!(!app.quittable, "{id} is never-touch, so never quittable");
+            assert!(!app.reclaimable_by_goose, "{id}");
+            assert!(
+                app.protected_why.as_deref().unwrap_or("").contains("never-touch"),
+                "{id}: {:?}",
+                app.protected_why
+            );
+            let r = untouchable(&app, &defaults).expect("refused");
+            assert_eq!(r.code, RefusalCode::NeverTouch, "{id}");
+            assert!(!eligible(&app, Mode::Nuclear, &defaults));
+        }
+        // By name fragment: an owner entry "Outlook" holds an app labelled "Microsoft Outlook…".
+        let beta = g("app:com.example.olk");
+        assert!(untouchable(&beta, &defaults).is_none(), "not on the default list");
+        let list = never_touch_list(&["Outlook".into()]);
+        let r = untouchable(&beta, &list).expect("name fragment matches");
+        assert_eq!((r.code, r.code.as_str()), (RefusalCode::NeverTouch, "neverTouch"));
+        // By bundle id in any case.
+        let list = never_touch_list(&["COM.EXAMPLE.OLK".into()]);
+        assert!(untouchable(&beta, &list).is_some());
+        // A protected launchd MCP server and a heavy-run job: the `protected` code.
+        for id in ["job:node", "job:python3.12"] {
+            let r = untouchable(&g(id), &defaults).expect("protected");
+            assert_eq!((r.code, r.code.as_str()), (RefusalCode::Protected, "protected"), "{id}");
+        }
+        // goose's own idle engine is neither.
+        assert!(untouchable(&g("gooseEngine"), &defaults).is_none());
     }
 
     #[test]

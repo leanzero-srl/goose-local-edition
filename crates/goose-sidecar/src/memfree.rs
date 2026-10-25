@@ -641,6 +641,19 @@ pub fn categorize(rows: &[ProcRow], ctx: &CategorizeCtx) -> Vec<Group> {
                     g.why = Some(reason.clone());
                 }
             }
+            // Never-touch is protection too (3.0.131: Outlook showed "Protected" and a Quit
+            // button): folded here so every surface and every path reads one answer.
+            if let Some(hit) = crate::memfree_protect::group_never_touch(&g, &ctx.never_touch) {
+                let reason = format!("{} ({hit})", crate::memfree_protect::NEVER_TOUCH_WHY);
+                if g.protected_why.is_none() {
+                    g.protected_why = Some(reason.clone());
+                }
+                g.quittable = false;
+                g.reclaimable_by_goose = false;
+                if g.why.is_none() {
+                    g.why = Some(reason);
+                }
+            }
             if g.category == Category::UserApp {
                 if let Some(reason) = app_blocked.get(&g.id) {
                     g.quittable = false;
@@ -1008,6 +1021,20 @@ pub fn groups_now(mut ctx: CategorizeCtx) -> Vec<Group> {
     categorize(&rows, &ctx)
 }
 
+/// Why [`quit_app`] may not ask `g` to quit (pure; tested): never-touch or protected first
+/// ([`crate::memfree_protect::untouchable`], re-checked on the census taken right before the
+/// Apple Event), then "not a quittable user app". `None` = it may be asked.
+pub fn quit_refusal(g: &Group, never_touch: &[String]) -> Option<String> {
+    if let Some(r) = crate::memfree_protect::untouchable(g, never_touch) {
+        return Some(r.message);
+    }
+    if g.category != Category::UserApp || !g.quittable {
+        let why = g.why.clone().unwrap_or_else(|| "not a user app".into());
+        return Some(format!("goose will not quit {}: {why}", g.label));
+    }
+    None
+}
+
 /// Ask an app to quit — an Apple Event (`tell application id … to quit`), never a signal. The
 /// app is looked up in a FRESH census and must be a quittable user app; it may refuse or show a
 /// save dialog, which is reported, not forced. Freed bytes are measured: the footprint the app's
@@ -1027,6 +1054,7 @@ pub async fn quit_app(bundle_id: &str, ctx: CategorizeCtx) -> ReclaimOutcome {
             format!("`{bundle_id}` is not a bundle id"),
         );
     }
+    let never_touch = crate::memfree_protect::never_touch_list(&ctx.never_touch);
     let groups = match tokio::task::spawn_blocking(move || groups_now(ctx)).await {
         Ok(g) => g,
         Err(e) => return refuse(bundle_id.to_string(), format!("the census failed: {e}")),
@@ -1034,12 +1062,8 @@ pub async fn quit_app(bundle_id: &str, ctx: CategorizeCtx) -> ReclaimOutcome {
     let Some(group) = groups.into_iter().find(|g| g.id == id) else {
         return refuse(bundle_id.to_string(), format!("{bundle_id} is not running"));
     };
-    if group.category != Category::UserApp || !group.quittable {
-        let why = group.why.clone().unwrap_or_else(|| "not a user app".into());
-        return refuse(
-            group.label.clone(),
-            format!("goose will not quit {}: {why}", group.label),
-        );
+    if let Some(message) = quit_refusal(&group, &never_touch) {
+        return refuse(group.label.clone(), message);
     }
     let before = group.bytes;
     let script = format!("tell application id \"{bundle_id}\" to quit");
@@ -1128,6 +1152,37 @@ mod tests {
                 .map(|(p, b, n)| (p.to_string(), (b.to_string(), n.to_string())))
                 .collect(),
             ..Default::default()
+        }
+    }
+
+    /// The per-app Quit's own server-side refusal (3.0.131 defect): a never-touch app is refused
+    /// by bundle id, by name and by name fragment, before any Apple Event is sent.
+    #[test]
+    fn quit_refuses_never_touch_apps_by_bundle_name_and_fragment() {
+        let outlook = "/Applications/Microsoft Outlook.app";
+        let olk = "/Applications/Olk.app";
+        let rows = vec![
+            row(1, 0, 0, "/sbin/launchd", 0),
+            row(800, 1, 501, &format!("{outlook}/Contents/MacOS/Microsoft Outlook"), GB),
+            row(900, 1, 501, &format!("{olk}/Contents/MacOS/Olk"), GB),
+        ];
+        let mut c = ctx(&[
+            (outlook, "com.microsoft.Outlook", "Microsoft Outlook"),
+            (olk, "com.example.olk", "Microsoft Outlook Beta"),
+        ]);
+        c.never_touch = crate::memfree_protect::never_touch_list(&[]);
+        let gs = categorize(&rows, &c);
+        let g = |id: &str| gs.iter().find(|g| g.id == id).unwrap().clone();
+        let defaults = c.never_touch.clone();
+        let msg = quit_refusal(&g("app:com.microsoft.Outlook"), &defaults).expect("refused");
+        assert!(msg.contains("never-touch"), "{msg}");
+        // The census itself carries it, so a list that lost the entry still refuses.
+        assert!(quit_refusal(&g("app:com.microsoft.Outlook"), &[]).is_some());
+        assert!(quit_refusal(&g("app:com.example.olk"), &defaults).is_none());
+        for entry in ["Outlook", "microsoft outlook beta", "COM.EXAMPLE.OLK"] {
+            let list = crate::memfree_protect::never_touch_list(&[entry.to_string()]);
+            let msg = quit_refusal(&g("app:com.example.olk"), &list).expect(entry);
+            assert!(msg.contains("never-touch"), "{entry}: {msg}");
         }
     }
 

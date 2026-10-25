@@ -805,6 +805,11 @@ async fn core_stop_other_engine(
     req: MlxEngineStopOtherEngineRequest,
 ) -> Result<MlxEngineStopOtherEngineResponse, agent_client_protocol::Error> {
     let port = synced_manager()?.settings().port;
+    // Nothing on the never-touch list or protected is ever stopped, by any path.
+    if let Some((message, code)) = super::memfree::stop_other_engine_refusal(req.pid).await? {
+        return Err(agent_client_protocol::Error::invalid_params()
+            .data(format!("[{code}] {message}; nothing was signalled")));
+    }
     let report = goose_sidecar::machine::stop_other_engine(req.pid, req.started_at, port)
         .await
         .invalid_params_err()?;

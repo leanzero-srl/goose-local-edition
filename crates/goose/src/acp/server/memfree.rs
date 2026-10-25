@@ -442,6 +442,7 @@ async fn unload_ai(g: &Group, hold: &AiHold) -> MlxMemoryFreeItemDto {
         freed_bytes: Some(freed),
         message: messages.join("; "),
         force_stoppable: false,
+        refusal_code: None,
     }
 }
 
@@ -465,6 +466,7 @@ async fn reap_orphan(g: &Group) -> MlxMemoryFreeItemDto {
         freed_bytes: Some(settle_freed(&g.pids, &before, before.iter().sum::<u64>().max(1)).await),
         message: messages.join("; "),
         force_stoppable: false,
+        refusal_code: None,
     }
 }
 
@@ -501,12 +503,38 @@ enum Step {
     /// A user app the person chose to force stop, by bundle id: one SIGTERM per pid, never
     /// SIGKILL (review C4).
     ForceStop(String),
-    /// Not done, and why.
+    /// Not done, and why. `code` names a never-touch / protected refusal (`refusalCode`).
     Refuse {
         id: String,
         label: String,
         message: String,
+        code: Option<&'static str>,
     },
+}
+
+/// Why one item may not be freed: the sentence, and the code when it is never-touch / protected.
+#[derive(Debug, Clone, PartialEq)]
+struct Why {
+    message: String,
+    code: Option<&'static str>,
+}
+
+impl From<String> for Why {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            code: None,
+        }
+    }
+}
+
+impl From<protect::Refusal> for Why {
+    fn from(r: protect::Refusal) -> Self {
+        Self {
+            message: r.message,
+            code: Some(r.code.as_str()),
+        }
+    }
 }
 
 /// What a free request may touch, item by item, against a FRESH census (pure; tested). Only what
@@ -521,10 +549,11 @@ fn select_free(
     remote_switch: bool,
 ) -> Vec<Step> {
     let mut steps = vec![];
-    let refuse = |id: &str, label: &str, message: String| Step::Refuse {
+    let refuse = |id: &str, label: &str, why: Why| Step::Refuse {
         id: id.to_string(),
         label: label.to_string(),
-        message,
+        message: why.message,
+        code: why.code,
     };
     if req.goose_owned {
         let soft = protect::plan(groups, Mode::Soft, never_touch);
@@ -544,7 +573,7 @@ fn select_free(
                 steps.push(refuse(
                     &g.id,
                     &g.label,
-                    format!("goose left it running: {why}"),
+                    format!("goose left it running: {why}").into(),
                 ));
             }
         }
@@ -559,7 +588,7 @@ fn select_free(
         && req.quit_apps.is_empty()
         && req.force_stop_apps.is_empty()
     {
-        steps.push(refuse("nuclear", "Free everything", off()));
+        steps.push(refuse("nuclear", "Free everything", off().into()));
     }
     let mut seen: Vec<String> = vec![];
     for id in &req.unload_servers {
@@ -568,15 +597,15 @@ fn select_free(
         }
         seen.push(id.clone());
         if !explicit {
-            steps.push(refuse(id, id, off()));
+            steps.push(refuse(id, id, off().into()));
             continue;
         }
         let Some(g) = groups.iter().find(|g| &g.id == id) else {
-            steps.push(refuse(id, id, format!("{id} is not running now")));
+            steps.push(refuse(id, id, format!("{id} is not running now").into()));
             continue;
         };
         match server_refusal(g, req, never_touch) {
-            Some(message) => steps.push(refuse(id, &g.label, message)),
+            Some(why) => steps.push(refuse(id, &g.label, why)),
             None => steps.push(Step::Server(id.clone())),
         }
     }
@@ -593,19 +622,19 @@ fn select_free(
             }
             seen.push(key);
             if !explicit {
-                steps.push(refuse(&id, bundle_id, off()));
+                steps.push(refuse(&id, bundle_id, off().into()));
                 continue;
             }
             let Some(g) = groups.iter().find(|g| g.id == id) else {
                 steps.push(refuse(
                     &id,
                     bundle_id,
-                    format!("{bundle_id} is not running"),
+                    format!("{bundle_id} is not running").into(),
                 ));
                 continue;
             };
             match app_refusal(g, never_touch) {
-                Some(message) => steps.push(refuse(&id, &g.label, message)),
+                Some(why) => steps.push(refuse(&id, &g.label, why)),
                 None if force => steps.push(Step::ForceStop(bundle_id.clone())),
                 None => steps.push(Step::App(bundle_id.clone())),
             }
@@ -616,15 +645,9 @@ fn select_free(
 
 /// Why an item may not be freed now: protected, on the never-touch list, or nothing goose can
 /// reclaim. `None` = it may be freed.
-fn item_refusal(g: &Group, never_touch: &[String]) -> Option<String> {
-    if let Some(why) = &g.protected_why {
-        return Some(format!(
-            "goose will not touch {}: protected ({why})",
-            g.label
-        ));
-    }
-    if let Some(hit) = protect::group_never_touch(g, never_touch) {
-        return Some(format!("{} is on the never-touch list ({hit})", g.label));
+fn item_refusal(g: &Group, never_touch: &[String]) -> Option<Why> {
+    if let Some(r) = protect::untouchable(g, never_touch) {
+        return Some(r.into());
     }
     (!protect::eligible(g, Mode::Nuclear, never_touch)).then(|| {
         format!(
@@ -632,6 +655,7 @@ fn item_refusal(g: &Group, never_touch: &[String]) -> Option<String> {
             g.label,
             g.why.clone().unwrap_or_else(|| "nothing to unload".into())
         )
+        .into()
     })
 }
 
@@ -649,12 +673,16 @@ fn server_refusal(
     g: &Group,
     req: &MlxEngineMemoryFreeRequest,
     never_touch: &[String],
-) -> Option<String> {
-    if !is_server(g) {
-        return Some(format!("{} is not a model server or MLX engine", g.label));
+) -> Option<Why> {
+    // Never-touch / protected first, so the refusal carries its code whatever else is true.
+    if let Some(r) = protect::untouchable(g, never_touch) {
+        return Some(r.into());
     }
-    if let Some(message) = item_refusal(g, never_touch) {
-        return Some(message);
+    if !is_server(g) {
+        return Some(format!("{} is not a model server or MLX engine", g.label).into());
+    }
+    if let Some(why) = item_refusal(g, never_touch) {
+        return Some(why);
     }
     let new = new_users(g, &req.seen_used_by);
     (!new.is_empty()).then(|| {
@@ -663,12 +691,16 @@ fn server_refusal(
             g.label,
             new.join("; ")
         )
+        .into()
     })
 }
 
-fn app_refusal(g: &Group, never_touch: &[String]) -> Option<String> {
+fn app_refusal(g: &Group, never_touch: &[String]) -> Option<Why> {
+    if let Some(r) = protect::untouchable(g, never_touch) {
+        return Some(r.into());
+    }
     if g.category != Category::UserApp {
-        return Some(format!("{} is not a user app", g.label));
+        return Some(format!("{} is not a user app", g.label).into());
     }
     item_refusal(g, never_touch)
 }
@@ -681,11 +713,12 @@ fn recheck(
     req: &MlxEngineMemoryFreeRequest,
     never_touch: &[String],
 ) -> Option<Step> {
-    let refuse = |id: &str, label: &str, message: String| {
+    let refuse = |id: &str, label: &str, why: Why| {
         Some(Step::Refuse {
             id: id.to_string(),
             label: label.to_string(),
-            message,
+            message: why.message,
+            code: why.code,
         })
     };
     let find = |id: &str| fresh.iter().find(|g| g.id == id);
@@ -703,29 +736,56 @@ fn recheck(
                 return None;
             }
             match find(id) {
-                None => refuse(id, id, format!("{id} is not running now")),
+                None => refuse(id, id, format!("{id} is not running now").into()),
                 Some(g) => {
+                    if let Some(r) = protect::untouchable(g, never_touch) {
+                        return refuse(id, &g.label, r.into());
+                    }
                     let why = g
                         .protected_why
                         .clone()
                         .or_else(|| g.why.clone())
                         .unwrap_or_else(|| "it is in use".into());
-                    refuse(id, &g.label, format!("goose left it running: {why}"))
+                    refuse(id, &g.label, format!("goose left it running: {why}").into())
                 }
             }
         }
         Step::Server(id) => match find(id) {
-            None => refuse(id, id, format!("{id} is not running now")),
+            None => refuse(id, id, format!("{id} is not running now").into()),
             Some(g) => server_refusal(g, req, never_touch).and_then(|m| refuse(id, &g.label, m)),
         },
         Step::App(bundle_id) | Step::ForceStop(bundle_id) => {
             let id = format!("app:{bundle_id}");
             match find(&id) {
-                None => refuse(&id, bundle_id, format!("{bundle_id} is not running now")),
+                None => refuse(&id, bundle_id, format!("{bundle_id} is not running now").into()),
                 Some(g) => app_refusal(g, never_touch).and_then(|m| refuse(&id, &g.label, m)),
             }
         }
     }
+}
+
+/// The never-touch / protected refusal for signalling `pid` (pure; tested): the group of a
+/// fresh census that holds the pid, through [`protect::untouchable`]. `None` = no group holds it
+/// or it is touchable (`machine::stop_other_engine` still proves it is an MLX engine).
+fn pid_refusal(groups: &[Group], pid: u32, never_touch: &[String]) -> Option<Why> {
+    let g = groups.iter().find(|g| g.pids.iter().any(|(p, _)| *p == pid))?;
+    protect::untouchable(g, never_touch).map(Why::from)
+}
+
+/// `mlxEngine/stopOtherEngine` signals one pid (SIGTERM, then SIGKILL). It had no protection
+/// check (audit 2026-10-25): an MLX engine a heavy-run job, launchd or a terminal started could
+/// be stopped. This re-proves it against a census taken right before the signal.
+pub(super) async fn stop_other_engine_refusal(
+    pid: u32,
+) -> Result<Option<(String, &'static str)>, agent_client_protocol::Error> {
+    let manager = synced_manager()?;
+    let (ctx, _) = categorize_ctx(manager, &[]).await?;
+    let never_touch = protect::never_touch_list(&ctx.never_touch);
+    let groups = tokio::task::spawn_blocking(move || memfree::groups_now(ctx))
+        .await
+        .internal_err()?;
+    Ok(pid_refusal(&groups, pid, &never_touch)
+        .map(|w| (w.message, w.code.unwrap_or("protected"))))
 }
 
 fn group_to_dto(g: &Group) -> MlxMemoryGroupDto {
@@ -912,7 +972,12 @@ pub(super) async fn core_memory_holders(
     })
 }
 
-fn refused(id: String, label: String, message: String) -> MlxMemoryFreeItemDto {
+fn refused(
+    id: String,
+    label: String,
+    message: String,
+    code: Option<&'static str>,
+) -> MlxMemoryFreeItemDto {
     MlxMemoryFreeItemDto {
         id,
         label,
@@ -920,6 +985,7 @@ fn refused(id: String, label: String, message: String) -> MlxMemoryFreeItemDto {
         freed_bytes: None,
         message,
         force_stoppable: false,
+        refusal_code: code.map(str::to_string),
     }
 }
 
@@ -945,6 +1011,7 @@ async fn stop_own_engine(g: &Group) -> MlxMemoryFreeItemDto {
         freed_bytes: freed,
         message,
         force_stoppable: false,
+        refusal_code: None,
     }
 }
 
@@ -970,6 +1037,7 @@ async fn stop_other_engine(g: &Group, own_port: u16) -> MlxMemoryFreeItemDto {
         freed_bytes: Some(freed),
         message: messages.join("; "),
         force_stoppable: false,
+        refusal_code: None,
     }
 }
 
@@ -1040,6 +1108,7 @@ async fn quit_one_app(
         freed_bytes: outcome.freed_bytes,
         message: outcome.message,
         force_stoppable: false,
+        refusal_code: None,
     };
     if item.ok {
         return item;
@@ -1066,6 +1135,7 @@ async fn force_stop_app(
         freed_bytes: None,
         message: String::new(),
         force_stoppable: false,
+        refusal_code: None,
     };
     match app_targets(bundle_id, ctx, never_touch).await {
         Ok(None) => {
@@ -1129,17 +1199,27 @@ pub(super) async fn core_memory_free(
     );
     drop(first);
     for step in steps {
-        if let Step::Refuse { id, label, message } = step {
-            items.push(refused(id, label, message));
+        if let Step::Refuse {
+            id,
+            label,
+            message,
+            code,
+        } = step
+        {
+            items.push(refused(id, label, message, code));
             continue;
         }
         // Review C3: steps run one after another (an app may take 15 s), so each is re-checked
         // against a census taken right before it, and run with what that census found.
         let (fresh, ai) = groups(&ctx, port).await?;
-        if let Some(Step::Refuse { id, label, message }) =
-            recheck(&fresh, &step, &req, &never_touch)
+        if let Some(Step::Refuse {
+            id,
+            label,
+            message,
+            code,
+        }) = recheck(&fresh, &step, &req, &never_touch)
         {
-            items.push(refused(id, label, message));
+            items.push(refused(id, label, message, code));
             continue;
         }
         let find = |id: &str| fresh.iter().find(|g| g.id == id);
@@ -1164,6 +1244,7 @@ pub(super) async fn core_memory_free(
                             g.id.clone(),
                             g.label.clone(),
                             format!("{} has no models loaded", g.label),
+                            None,
                         )),
                     }
                 } else {
@@ -1614,6 +1695,7 @@ mod tests {
             freed_bytes: Some(0),
             message: "TextEdit is still running (it may be asking to save)".into(),
             force_stoppable: false,
+        refusal_code: None,
         };
         let left = not_quit_report(asked.clone(), true, true);
         assert!(!left.ok);

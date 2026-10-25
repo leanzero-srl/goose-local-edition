@@ -647,11 +647,8 @@ pub fn app_term_targets(
     if g.category != Category::UserApp {
         return Err(format!("{} is not a user app", g.label));
     }
-    if let Some(why) = &g.protected_why {
-        return Err(format!("{} is protected: {why}", g.label));
-    }
-    if let Some(hit) = crate::memfree_protect::group_never_touch(g, never_touch) {
-        return Err(format!("{} is on the never-touch list ({hit})", g.label));
+    if let Some(r) = crate::memfree_protect::untouchable(g, never_touch) {
+        return Err(r.message);
     }
     if !g.quittable {
         return Err(format!(
