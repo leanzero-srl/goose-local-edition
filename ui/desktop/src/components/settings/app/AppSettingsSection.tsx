@@ -26,6 +26,7 @@ import BlockLogoWhite from './icons/block-lockup_white.png';
 import TelemetrySettings from './TelemetrySettings';
 import { EngineGlanceSettings } from '../../engineGlance/EngineGlanceSettings';
 import { MlxRestoreSettings } from './MlxRestoreSettings';
+import { MemfreeSettings } from './MemfreeSettings';
 import { trackSettingToggled } from '../../../utils/analytics';
 import { LEANZERO_ISSUES_NEW_URL } from '../../../branding';
 import type { LanguageSetting } from '../../../utils/settings';
@@ -556,6 +557,7 @@ export default function AppSettingsSection({ scrollToSection }: AppSettingsSecti
       <EngineGlanceSettings />
 
       <MlxRestoreSettings />
+      <MemfreeSettings />
 
       {SHOW_EDITION_CARD && (
         <Card className="rounded-lg">

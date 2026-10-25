@@ -173,3 +173,27 @@ Next agent, in order:
 4. Settings › App: copy MlxRestoreSettings.tsx (acpReadConfig/acpUpsertConfig); register beside it in AppSettingsSection.tsx.
 5. i18n: extract, then all 15 catalogs in FILE order (not sorted), json.dumps(ensure_ascii=False, indent=2)+'\n'.
 6. Gate `pnpm run lint:check && pnpm run test:run`; screenshots per skill recipe into the scratchpad memfree-shots/.
+
+## AGENT U2 state (2026-10-25, stopped at the 160k context guard)
+DONE (committed `desktop memfree: dialog, card + per-Mac entries, settings rows`): eslint + tsc clean on changed files,
+vitest src/components/memfree 21 green (5 new dialog tests: Gabee cannotFit 5.7 short + alternatives, one-click own
+free -> before/after + re-read verdict, quit only after ConfirmDialog, remote quit disabled with reason, read error).
+- `src/acp/memfree.ts` memoryHolders/memoryFree via `client.extMethod` (same as acp/mlx-engine.ts, no generated client
+  needed; method strings `_goose/unstable/mlxEngine/memoryHolders|memoryFree`, response FLAT per R1's custom_requests.rs).
+- `components/memfree/FreeMemoryDialog.tsx`, `FreeMemoryEntry.tsx` (gated by `useEditionIsLocal()` + `useMemfreeEnabled()`),
+  `useMemfreeEnabled.ts` (module-cached config read, `forgetMemfreeEnabled()` on settings save).
+- `contexts/EditionContext.tsx` `useEditionIsLocal()` (non-throwing; cached edition defaults 'local' in tests!).
+- NodeCard: `memfreeTargetOf(glance, macs)` + primary button `node-free-memory` for mlx cantRun/outcome/fit short.
+- MacLoadBars: new `isSelf` prop (NodeCard + MyMacs pass it), button `mac-load-free-memory` under the bars.
+- Settings › App `settings/app/MemfreeSettings.tsx` registered after MlxRestoreSettings (3 keys, testids memfree-*).
+- `MemoryHolders.enabled?` added to memfree.ts.
+OPEN, in order:
+1. R1's `acp: memoryHolders` commit has landed: confirm the response is flat (no wrapper) and field names match.
+2. i18n: `cd ui/desktop && pnpm run i18n:extract` (check package.json name), then add the new ids (freeMemory.*,
+   freeMemoryEntry.open, memfreeSettings.*, nodeCard.memfreeThisMac) to all 15 catalogs in FILE order (insert after the
+   en.json neighbour; json.dumps(d, ensure_ascii=False, indent=2)+'\n').
+3. Tests still missing: NodeCard entry (cantRun short shows node-free-memory; mock ../../acp/config + ../memfree/...),
+   MemfreeSettings (read 3 keys, toggle saves, min MB on blur). Existing MacLoadPanel/NodeCard/MyMacs tests now render
+   the entry (mockRead returns undefined -> enabled) — run the full suite, fix any button-count assertions.
+4. Gate: `source bin/activate-hermit; cd ui/desktop && pnpm run lint:check && pnpm run test:run` (-- --maxWorkers=6).
+5. Optional shots (see brief). Live check on Gabee once R2's engine is in the app.

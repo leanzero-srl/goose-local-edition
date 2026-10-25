@@ -61,6 +61,8 @@ export interface MemoryHolders {
   verdict?: MemfreeVerdict | null;
   alternatives: MemfreeAlternative[] | { kind: string }[];
   quitAppsAllowed: boolean;
+  /** The engine's own reading of GOOSE_MEMFREE_ENABLED (absent on an older engine = on). */
+  enabled?: boolean;
 }
 
 export interface MemfreeItem {

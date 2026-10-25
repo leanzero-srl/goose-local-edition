@@ -154,7 +154,10 @@ export function EditionProvider({ children }: EditionProviderProps) {
         const { acpReadConfig } = await import('../acp/config');
         provider = await acpReadConfig('GOOSE_PROVIDER', false);
       } catch (error) {
-        console.warn('[EditionContext] Failed to read active provider for edition derivation:', error);
+        console.warn(
+          '[EditionContext] Failed to read active provider for edition derivation:',
+          error
+        );
       }
       const derived = resolveEdition(saved, typeof provider === 'string' ? provider : null);
       if (!cancelled) {
@@ -189,4 +192,14 @@ export function useEdition(): EditionContextValue {
     throw new Error('useEdition must be used within an EditionProvider');
   }
   return ctx;
+}
+
+/**
+ * The edition without the provider requirement: inside an EditionProvider it is the live value;
+ * outside one (an isolated card in a test, a surface rendered before the provider mounts) it falls
+ * back to the cached edition instead of throwing.
+ */
+export function useEditionIsLocal(): boolean {
+  const ctx = useContext(EditionContext);
+  return ctx ? ctx.isLocal : getCachedEdition() === 'local';
 }

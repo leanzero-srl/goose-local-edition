@@ -33,6 +33,7 @@ import { figureText, stageWord } from '../engineGlance/EngineGlanceCard';
 import { loadPhaseWord } from './loadPhaseWord';
 import { formatElapsed } from '../leanzero-swarm/mlxLiveStats';
 import { PERMISSION_LABEL, useMacsMaybe } from '../leanzero-swarm/useMacs';
+import { FreeMemoryEntry } from '../memfree/FreeMemoryEntry';
 import { MacLoadBars } from '../leanzero-swarm/MacLoadPanel';
 import type { Mac } from '../leanzero-swarm/macs';
 import { CandidateFigures, outcomeText } from '../leanzero-swarm/PlacementCandidates';
@@ -51,6 +52,7 @@ import { modelShortName } from '../../utils/modelShortName';
  */
 
 const i18n = defineMessages({
+  memfreeThisMac: { id: 'nodeCard.memfreeThisMac', defaultMessage: 'this Mac' },
   fromPool: { id: 'nodes.fromPool', defaultMessage: 'from your swarm pool' },
   editInPool: { id: 'nodes.editInPool', defaultMessage: 'Edit in your swarm pool' },
   leftPool: { id: 'nodes.leftPool', defaultMessage: 'No longer in your swarm pool' },
@@ -262,6 +264,27 @@ export function lineText(intl: IntlShape, line: GlanceLine): string {
  * three load bars (own, AI inference, jobs) show on the card, the same MacLoadBars My Macs shows.
  * A split, a provider, or an older goose that reports no load shows none.
  */
+/**
+ * Where "Free up memory" points for a card that cannot run because the model is short of memory:
+ * the Mac it was placed on (this Mac, or a peer by name). null for any other card.
+ */
+export function memfreeTargetOf(
+  glance: NodeGlance,
+  macs: readonly Mac[]
+): { target: string | null; mac: Mac | null } | null {
+  if (glance.state !== 'cantRun' || glance.line.kind !== 'outcome') return null;
+  if (glance.line.candidate.fit.status !== 'short') return null;
+  const where = glance.where;
+  if (where?.kind === 'thisMac') return { target: null, mac: macs.find((m) => m.isSelf) ?? null };
+  if (where?.kind === 'mac') {
+    const mac = macs.find((m) => m.name === where.name);
+    if (!mac || !mac.online) return null;
+    if (mac.isSelf) return { target: null, mac };
+    return mac.nodeId ? { target: mac.nodeId, mac } : null;
+  }
+  return null;
+}
+
 export function loadMacOf(where: GlanceWhere | null, macs: readonly Mac[]): Mac | null {
   if (!where) return null;
   const mac =
@@ -465,7 +488,9 @@ export function NodeCard({
   onAction,
 }: NodeCardProps) {
   const intl = useIntl();
-  const loadMac = loadMacOf(glance.where, useMacsMaybe()?.macs ?? []);
+  const macs = useMacsMaybe()?.macs ?? [];
+  const loadMac = loadMacOf(glance.where, macs);
+  const memfree = node.def.kind === 'mlx' ? memfreeTargetOf(glance, macs) : null;
   const [detailsOpen, setDetailsOpen] = useState(false);
   const def = node.def;
   const fromPool = node.modelFrom.kind === 'pool';
@@ -556,7 +581,18 @@ export function NodeCard({
           </Button>
         );
       case 'details':
-        return def.kind === 'mlx' ? null : (
+        if (def.kind === 'mlx') {
+          return memfree ? (
+            <FreeMemoryEntry
+              target={memfree.target}
+              macName={memfree.mac?.name ?? intl.formatMessage(i18n.memfreeThisMac)}
+              fitModelId={node.model}
+              variant="primary"
+              testId="node-free-memory"
+            />
+          ) : null;
+        }
+        return (
           <Button
             variant="secondary"
             size="sm"
@@ -623,7 +659,12 @@ export function NodeCard({
       <MemoryBars rows={glance.memory} />
       {loadMac && (
         <div data-testid="node-mac-load">
-          <MacLoadBars load={loadMac.load} target={loadMac.nodeId} macName={loadMac.name} />
+          <MacLoadBars
+            load={loadMac.load}
+            target={loadMac.nodeId}
+            macName={loadMac.name}
+            isSelf={loadMac.isSelf}
+          />
         </div>
       )}
 

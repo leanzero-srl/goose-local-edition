@@ -550,7 +550,9 @@ function MacCard({ mac, props }: { mac: Mac; props: MyMacsProps }) {
         </p>
       )}
       {mac.online && summary.state !== 'off' && <FactsGrid mac={mac} facts={facts} />}
-      {mac.online && <MacLoadBars load={mac.load} target={mac.nodeId} macName={mac.name} />}
+      {mac.online && (
+        <MacLoadBars load={mac.load} target={mac.nodeId} macName={mac.name} isSelf={mac.isSelf} />
+      )}
       <NodesOnMac mac={mac} />
       {mac.isSelf ? (
         <LetOthersUseThisMac

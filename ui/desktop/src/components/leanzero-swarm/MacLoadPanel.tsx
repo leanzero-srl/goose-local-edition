@@ -4,6 +4,7 @@ import { defineMessages, useIntl } from '../../i18n';
 import { Button, Segmented, SURFACE, TNUM, TONE_TEXT, TYPE, WEIGHT, cx } from '../lz';
 import { OverlayDialog, OverlayDialogTitle } from '../ui/OverlayDialog';
 import { useConfirmDialog } from '../ui/useConfirmDialog';
+import { FreeMemoryEntry } from '../memfree/FreeMemoryEntry';
 import { acpReadConfig, acpUpsertConfig } from '../../acp/config';
 import {
   jobErrorText,
@@ -136,10 +137,13 @@ export function MacLoadBars({
   load,
   target,
   macName,
+  isSelf = false,
 }: {
   load: NodeLoad | null;
   target: string | null;
   macName: string;
+  /** This Mac: "Free up memory" then talks to the local engine (no nodeId on the wire). */
+  isSelf?: boolean;
 }) {
   const intl = useIntl();
   const nodeName = useNodeName();
@@ -242,6 +246,15 @@ export function MacLoadBars({
             </li>
           ))}
         </ul>
+      )}
+      {(isSelf || target) && (
+        <div>
+          <FreeMemoryEntry
+            target={isSelf ? null : target}
+            macName={macName}
+            testId="mac-load-free-memory"
+          />
+        </div>
       )}
       {openJob && target && (
         <JobDialog
