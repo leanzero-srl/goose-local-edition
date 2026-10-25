@@ -197,3 +197,35 @@ OPEN, in order:
    the entry (mockRead returns undefined -> enabled) — run the full suite, fix any button-count assertions.
 4. Gate: `source bin/activate-hermit; cd ui/desktop && pnpm run lint:check && pnpm run test:run` (-- --maxWorkers=6).
 5. Optional shots (see brief). Live check on Gabee once R2's engine is in the app.
+
+## AGENT R1 state (2026-10-25 ~19:00, stopped at the 173k ctx guard)
+Done (committed):
+- 4f8421308 `acp: memoryHolders/memoryFree schema` — sdk types (custom_requests.rs after MlxEngineStopOtherEngineResponse:
+  MlxMemoryPidDto/GroupDto/VerdictDto/AlternativeDto/FreeItemDto/BudgetDto + the 2 requests/responses, response has extra
+  `enabled: bool`), routes in custom_dispatch.rs, `on_mlx_engine_memory_holders/free` in mlx_engine.rs (remote nodeId -> invalid_params
+  "not supported yet"; R2 replaces with relay + MlxOp), THIN cores in NEW crates/goose/src/acp/server/memfree.rs returning Default.
+  `synced_manager` made pub(super). Schema + ui/sdk/src/generated regenerated. AGENT U can build on it.
+- next commit (WIP): crates/goose-sidecar/src/memfree.rs (census FFI, categorize, never_kill, protected_pids, holders_busy,
+  verdict(short, ceiling_short, goose_owned, apps), family_key/smaller_variants, valid_bundle_id, quit_app via osascript,
+  ReclaimItem enum, groups_now) + `pub mod memfree` in lib.rs + plist dep (macOS target). Tests written (9), NOT yet run green:
+  the last build failed only on a missing `kind` field in the holders test (fixed, unverified).
+Open / exact next steps:
+1. `cargo test --config 'profile.dev.package."*".strip=false' -p goose-sidecar memfree` (via heavy-run); fix; commit.
+2. Fill crates/goose/src/acp/server/memfree.rs:
+   holders: if Config GOOSE_MEMFREE_ENABLED false -> enabled=false, empty. ctx = {self_pid std::process::id(), self_uid,
+   own_engine_pids = status().pid or StartFrees::Leftover pids, own_engine_model, own_engine_busy = holders_busy(read_all(holders_dir))
+   or "a request is in flight" if active_requests != Some(0), other_engine_pids = machine::other_engines(Some(port))}; groups via
+   spawn_blocking(groups_now). Drop userApp groups < GOOSE_MEMFREE_SHOW_APPS_MIN_MB (200). gooseOwned = sum of mlx:* groups (NOT
+   gooseEngine — fit credits it). apps = quittable userApp (bundle,bytes). fit = manager.mount_fit(id) -> fit_to_dto.
+   RAM short = need - (facts.available_after_switch_bytes() - facts.margin_bytes()); ceiling_short = need - facts.ceiling_bytes
+   (all other engines reclaimable). verdict only when fit.short_bytes().is_some(). Without fit: budget via NodeMemoryFacts from
+   goose_sidecar::measure() + engine::local_gpu_ceiling(). alternatives: smaller_variants over hf::list_local_models (room =
+   budget+gooseOwned+apps, kv = fit.need.kv_bytes) + mlx_placement::mount_alternative(id, weights) peer (see mount_refusal ~770).
+   quitAppsAllowed = !relayed (R2 adds GOOSE_LINK_ALLOW_REMOTE_APP_QUIT).
+   free: before budget; if gooseOwned: own engine only if group reclaimable -> make mlx_engine::core_unmount pub(super) and call
+   with EngineStopper::Owner + forget_serving(IntentKind::Single) (both private in mlx_engine.rs); freed = footprint(pids) before.
+   Each mlx:* -> machine::stop_other_engine(pid, started_at, port), freed = footprint before - footprint after. Each quitApps ->
+   memfree::quit_app(bid, ctx) (refuse all when relayed && !allowed). after budget + re-read fit.
+3. Gate: cargo fmt --all; clippy -p goose-sidecar -p goose --all-targets -D warnings; tests. Commit `goose: memoryHolders/memoryFree
+   handlers ...`.
+Trap: the ctx guard fires at ~160k; this brief + CLAUDE.md is ~45k at start, so keep reads to sed ranges.

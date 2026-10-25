@@ -38,6 +38,7 @@ pub mod hf;
 pub mod holders;
 pub mod kv_cache;
 pub mod machine;
+pub mod memfree;
 mod memory;
 pub mod model_identity;
 mod model_parsers;
