@@ -47,7 +47,8 @@ export interface MemfreeVerdict {
 
 export type MemfreeAlternative =
   | { kind: 'smallerVariant'; modelId: string; needBytes: number }
-  | { kind: 'peerMac'; nodeId: string; label: string; budgetBytes: number };
+  /** budgetBytes: free memory there from its Link load report; absent when it sent none. */
+  | { kind: 'peerMac'; nodeId: string; label: string; budgetBytes?: number };
 
 /** The fields this side reads of the engine's MlxMountFitDto (`verdict` is "allow" | "warn" | "block"). */
 export interface MemfreeFit {

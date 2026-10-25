@@ -48,6 +48,10 @@ const i18n = defineMessages({
     id: 'freeMemory.altPeer',
     defaultMessage: 'Run it on {mac} instead (<b>{gb} GB</b> free there)',
   },
+  altPeerNoFree: {
+    id: 'freeMemory.altPeerNoFree',
+    defaultMessage: 'Run it on <b>{mac}</b> instead',
+  },
   freeOwn: { id: 'freeMemory.freeOwn', defaultMessage: 'Free goose’s own ({gb} GB)' },
   nothingOwn: { id: 'freeMemory.nothingOwn', defaultMessage: 'goose holds no memory it can free' },
   quit: { id: 'freeMemory.quit', defaultMessage: 'Quit' },
@@ -252,11 +256,13 @@ export function FreeMemoryDialog({ target, macName, fitModelId, onClose }: FreeM
                               gb: fmt(a.needBytes),
                               ...bold,
                             })
-                          : intl.formatMessage(i18n.altPeer, {
-                              mac: a.label,
-                              gb: fmt(a.budgetBytes),
-                              ...bold,
-                            })}
+                          : a.budgetBytes === undefined
+                            ? intl.formatMessage(i18n.altPeerNoFree, { mac: a.label, ...bold })
+                            : intl.formatMessage(i18n.altPeer, {
+                                mac: a.label,
+                                gb: fmt(a.budgetBytes),
+                                ...bold,
+                              })}
                       </li>
                     ))}
                   </ul>

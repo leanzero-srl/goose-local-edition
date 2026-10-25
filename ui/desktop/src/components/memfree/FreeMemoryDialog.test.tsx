@@ -58,6 +58,7 @@ describe('FreeMemoryDialog', () => {
     const alts = screen.getByTestId('free-memory-alternatives');
     expect(alts.textContent).toContain('mlx-community/Qwen3.8-27B-4bit');
     expect(alts.textContent).toContain('Mac Studio');
+    expect(alts.textContent).toContain('98.3 GB');
     expect(mockHolders).toHaveBeenCalledWith({ nodeId: undefined, fitModelId: 'qwen-30b' });
     // goose holds nothing here: the one-click button says so and is disabled.
     expect(screen.getByTestId('free-memory-own')).toBeDisabled();
@@ -66,6 +67,17 @@ describe('FreeMemoryDialog', () => {
     expect(screen.getByTestId('free-memory-cat-system')).toBeInTheDocument();
     // system holders never get a Quit.
     expect(screen.queryByTestId('free-memory-quit-WindowServer')).toBeNull();
+  });
+
+  it('names the other Mac without a GB figure when it sent no Link load reading', async () => {
+    mockHolders.mockResolvedValue({
+      ...GABEE,
+      alternatives: [{ kind: 'peerMac', nodeId: 'studio', label: 'Mac Studio' }],
+    });
+    show();
+    const alts = await screen.findByTestId('free-memory-alternatives');
+    expect(alts.textContent).toBe('Run it on Mac Studio instead');
+    expect(alts.textContent).not.toContain('GB');
   });
 
   it('frees goose’s own memory in one click and shows before → after and the new verdict', async () => {

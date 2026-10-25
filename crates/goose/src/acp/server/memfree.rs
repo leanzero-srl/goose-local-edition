@@ -349,6 +349,23 @@ fn footprint_alive(pids: &[(u32, u64)]) -> u64 {
         .sum()
 }
 
+/// Free memory on a peer from its own Link load report (available % x RAM). `None` when the
+/// Link is down, the peer is unknown, or it sent no load (an older goose): unknown, never 0.
+async fn peer_free_bytes(node_id: &str) -> Option<u64> {
+    let manager = super::link::existing_link_manager()?;
+    let node = manager.active_registry().await?.peer_node(node_id)?;
+    free_bytes_from_load(&node.load?.own)
+}
+
+fn free_bytes_from_load(own: &leanzero_link::load::OwnLoad) -> Option<u64> {
+    let pct = own.mem_free_pct?;
+    let total_gib = own.mem_total_gb?;
+    if !(pct.is_finite() && total_gib.is_finite()) || pct < 0.0 || total_gib <= 0.0 {
+        return None;
+    }
+    Some((pct.min(100.0) / 100.0 * total_gib * (1u64 << 30) as f64) as u64)
+}
+
 async fn alternatives(
     model_id: &str,
     fit: &FitVerdict,
@@ -382,10 +399,16 @@ async fn alternatives(
         if let Ok((Some(candidate), _)) =
             super::mlx_placement::mount_alternative(model_id, fit.need.weights_bytes).await
         {
+            let node_id = candidate.key.nodes.first().cloned();
+            let budget_bytes = match &node_id {
+                Some(id) => peer_free_bytes(id).await,
+                None => None,
+            };
             out.push(MlxMemoryAlternativeDto {
                 kind: "peerMac".into(),
-                node_id: candidate.key.nodes.first().cloned(),
+                node_id,
                 label: Some(candidate.node_names.join(" + ")),
+                budget_bytes,
                 ..Default::default()
             });
         }
@@ -616,6 +639,27 @@ mod tests {
             budget_bytes: 0,
             message: String::new(),
         }
+    }
+
+    #[test]
+    fn peer_free_bytes_come_from_its_load_report() {
+        let mut own = leanzero_link::load::OwnLoad {
+            mem_free_pct: Some(50.0),
+            mem_total_gb: Some(128.0),
+            ..Default::default()
+        };
+        assert_eq!(free_bytes_from_load(&own), Some(64 * (1u64 << 30)));
+        own.mem_free_pct = None;
+        assert_eq!(
+            free_bytes_from_load(&own),
+            None,
+            "no reading is unknown, not 0"
+        );
+        own.mem_free_pct = Some(f64::NAN);
+        assert_eq!(free_bytes_from_load(&own), None);
+        own.mem_free_pct = Some(10.0);
+        own.mem_total_gb = None;
+        assert_eq!(free_bytes_from_load(&own), None);
     }
 
     #[test]
