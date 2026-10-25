@@ -170,3 +170,24 @@ passed / 3 skipped, i18n:check 0 (4042 messages). New tests: 4 dialog, 6 pure, 1
 OPEN: not run live in the app (no CDP check); item 8 Gabee nuclear test still open; the ticked total uses the
 group footprint for servers (the engine's serversBytes counts loaded models), so the GB shown can overstate
 what unloading LM Studio frees.
+
+## U2 DONE (2026-10-25) — full gates + live tests
+Gates (all rc 0): cargo fmt --check; `cargo clippy --workspace --all-targets -- -D warnings` (re-run -p goose after
+the live test was added); `cargo test -p goose-sidecar memfree` 35 passed; `cargo test -p goose memfree` 10 passed;
+check-acp-schema (regenerate schema + `cd ui/sdk && pnpm exec tsx generate-schema.ts`, git diff --exit-code) clean;
+ui/desktop (hermit Node 24.10) lint:check, typecheck, i18n:check 0; test:run 554 files / 5171 passed / 3 skipped.
+Workhorse dry run (final code, nothing executed; appended to ~/Projects/goose-memfree-dryrun-workhorse.txt):
+legacy soft 2 groups 30.3 GB; new soft 0 / 0 GB; nuclear ticked 1 (LM Studio 0.6 GB); offered unticked 1
+(rapid-mlx 97100 29.7 GB, used by sshd-session 97112); protected 17 groups 40.7 GB (TTS python3.12 heavy-run job
+now 32 GB; new: gh + Python under launchd net.leanzero.runner-watch); never-touch 0 (none running).
+Gabee live (I was running ON Gabee's Mac, hostname Mac.lan — `ssh gabee` does not resolve there; local run):
+new ignored test `acp::server::memfree::tests::live_nuclear_free_quits_only_the_named_app` drives the REAL
+core_memory_holders + core_memory_free; env MEMFREE_LIVE_QUIT=<bundle>, MEMFREE_LIVE_NEVER_TOUCH, and
+GOOSE_MEMFREE_SHOW_APPS_MIN_MB=0 for a small app. Run: build `cargo test -p goose --lib --no-run`, then
+`<deps/goose-*> live_nuclear_free --ignored --nocapture`. App = VLC (TextEdit is com.apple.* = system).
+Result: VLC 91798 quit via osascript (ok, 0.1 GB), 1 item only; Teams pids 570 817 78469 before = after (main
+Teams app was not open; agent group protected by launchd label); ps diff = VLC + a cycling rsync loop + my ps.
+Evidence ~/Projects/goose-memfree-live-gabee.txt.
+OPEN: not exercised live: the nuclear SIGTERM escalation (VLC quit cleanly), unloadServers on a real server,
+the relayed (Link) refusals, the desktop UI over CDP; Teams main window was not running, so never-touch was
+proven by unit tests + the protected launchd agent, not against a live Teams.app main process.

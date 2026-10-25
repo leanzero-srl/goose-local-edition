@@ -1317,4 +1317,66 @@ mod tests {
         assert!(on.contains(&Step::Server("mlx:97100".into())));
         assert!(on.contains(&Step::App("com.apple.TextEdit".into())));
     }
+
+    /// LIVE, opt-in: drives the real holders + free handlers (nuclear) against ONE app the
+    /// tester launched. `MEMFREE_LIVE_QUIT=<bundle id>` names it, `MEMFREE_LIVE_NEVER_TOUCH`
+    /// (comma list) is the caller's never-touch. Only the named app is in the request, so
+    /// nothing else can be selected. Run: `cargo test -p goose --lib live_nuclear_free --
+    /// --ignored --nocapture` with `GOOSE_MEMFREE_SHOW_APPS_MIN_MB=0` for a small app.
+    #[tokio::test]
+    #[ignore = "live: quits the app named in MEMFREE_LIVE_QUIT"]
+    async fn live_nuclear_free_quits_only_the_named_app() {
+        let Ok(bundle) = std::env::var("MEMFREE_LIVE_QUIT") else {
+            return;
+        };
+        let never_touch: Vec<String> = std::env::var("MEMFREE_LIVE_NEVER_TOUCH")
+            .unwrap_or_default()
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let holders = core_memory_holders(
+            MlxEngineMemoryHoldersRequest {
+                never_touch: never_touch.clone(),
+                ..Default::default()
+            },
+            false,
+        )
+        .await
+        .expect("holders");
+        for g in &holders.groups {
+            let id = g.id.to_lowercase();
+            if g.id == format!("app:{bundle}") || id.contains("teams") {
+                println!(
+                    "HOLDER {} label={:?} bytes={} pids={:?} nuclearDefault={} protected={:?} why={:?}",
+                    g.id,
+                    g.label,
+                    g.bytes,
+                    g.pids.iter().map(|p| p.pid).collect::<Vec<_>>(),
+                    g.nuclear_default,
+                    g.protected_why,
+                    g.why
+                );
+            }
+        }
+        let resp = core_memory_free(
+            MlxEngineMemoryFreeRequest {
+                quit_apps: vec![bundle.clone()],
+                nuclear: true,
+                never_touch,
+                ..Default::default()
+            },
+            false,
+        )
+        .await
+        .expect("free");
+        for item in &resp.items {
+            println!(
+                "FREED {} ok={} freed={:?} message={:?}",
+                item.id, item.ok, item.freed_bytes, item.message
+            );
+        }
+        assert_eq!(resp.items.len(), 1, "only the named app is acted on");
+        assert_eq!(resp.items[0].id, format!("app:{bundle}"));
+    }
 }
