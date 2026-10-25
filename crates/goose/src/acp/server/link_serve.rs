@@ -378,10 +378,11 @@ async fn run_remote_reply(
         session_id: session_id.clone(),
         armed: true,
     };
-    let reason =
+    let (reason, failure) =
         drive_remote_reply(&managers, &session_id, prompt, &cancel_token, log.as_ref()).await;
     if let Some(log) = &log {
         log.append(&format!("\n[finished: {reason}]\n"));
+        log.finish(run_end(reason, failure));
     }
     // Release inline on every non-panic exit so the next reply on this session is not
     // refused by a token the guard's spawned drop has not removed yet; the guard stays as
@@ -405,7 +406,7 @@ async fn drive_remote_reply(
     prompt: String,
     cancel_token: &CancellationToken,
     log: Option<&Arc<dyn ExecuteLog>>,
-) -> &'static str {
+) -> (&'static str, Option<String>) {
     let log_text = |text: &str| {
         if let (Some(log), false) = (log, text.is_empty()) {
             log.append(text);
@@ -415,7 +416,7 @@ async fn drive_remote_reply(
     // exit `on_prompt` takes before it streams.
     if cancel_token.is_cancelled() {
         info!(%session_id, "leanzeroLink: remote prompt cancelled before it started");
-        return "cancelled";
+        return ("cancelled", None);
     }
 
     let agent = match managers
@@ -432,12 +433,15 @@ async fn drive_remote_reply(
             publish_tap(session_id, || {
                 TapEvent::Error(format!("Failed to get session agent: {error}"))
             });
-            return "error";
+            return (
+                "error",
+                Some(format!("failed to get the session agent: {error}")),
+            );
         }
     };
     if cancel_token.is_cancelled() {
         info!(%session_id, "leanzeroLink: remote prompt cancelled before its reply started");
-        return "cancelled";
+        return ("cancelled", None);
     }
 
     let session_config = SessionConfig {
@@ -459,13 +463,16 @@ async fn drive_remote_reply(
             error!(%session_id, %error, "leanzeroLink: remote prompt failed to start its reply stream");
             log_text(&format!("[error: {error}]"));
             publish_tap(session_id, || TapEvent::Error(error.to_string()));
-            return "error";
+            return ("error", Some(error.to_string()));
         }
     };
     // The mirror: every event fans onto the process-wide tap, and the session's delta
     // sequence closes with Finish when the stream ends or is dropped.
     let mut stream = tapped_reply(session_id, stream);
 
+    // D13: a provider failure does not error the stream; the agent yields a notice message
+    // and the stream ends normally, so the failure is read off the messages themselves.
+    let mut failure: Option<String> = None;
     let reason = loop {
         let event = tokio::select! {
             biased;
@@ -479,17 +486,44 @@ async fn drive_remote_reply(
             },
         };
         match event {
-            Ok(AgentEvent::Message(message)) => log_text(&job_log_text(&message)),
+            Ok(AgentEvent::Message(message)) => {
+                if let Some(why) = job_run_failure(&message) {
+                    failure = Some(why);
+                }
+                log_text(&job_log_text(&message));
+            }
             Ok(_) => {}
             Err(error) => {
                 error!(%session_id, %error, "leanzeroLink: remote prompt's reply stream failed");
                 log_text(&format!("\n[error: {error}]"));
+                failure = Some(error.to_string());
                 break "error";
             }
         }
     };
     drop(stream);
-    reason
+    (reason, failure)
+}
+
+/// The failure a reply message reports, if any (D13): the provider-error notice the agent ends
+/// a failed turn with. Pure, so both executors (this one and goose-server's) read a run's end
+/// the same way.
+pub fn job_run_failure(message: &Message) -> Option<String> {
+    message
+        .metadata
+        .provider_error
+        .as_ref()
+        .map(|notice| notice.detail.clone())
+}
+
+/// How a remote run ended, from its finish reason and the failure seen along the way.
+fn run_end(reason: &str, failure: Option<String>) -> RunEnd {
+    match (reason, failure) {
+        ("cancelled", _) => RunEnd::Cancelled,
+        (_, Some(why)) => RunEnd::Failed(why),
+        ("error", None) => RunEnd::Failed("the reply stream failed".to_string()),
+        _ => RunEnd::Completed,
+    }
 }
 
 /// Longest tool-call argument text a job log line carries.
@@ -1118,11 +1152,50 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct MemLog(StdMutex<String>);
+    struct MemLog(StdMutex<String>, StdMutex<Vec<RunEnd>>);
     impl ExecuteLog for MemLog {
         fn append(&self, text: &str) {
             self.0.lock().unwrap().push_str(text);
         }
+        fn finish(&self, end: RunEnd) {
+            self.1.lock().unwrap().push(end);
+        }
+    }
+
+    /// D13: the provider-error notice a failed turn ends on is the run's failure; a plain
+    /// assistant message is not.
+    #[test]
+    fn a_provider_error_notice_is_the_runs_failure() {
+        use crate::conversation::message::ProviderErrorNotice;
+        let failed = Message::assistant()
+            .with_text("I could not reach a model.")
+            .with_provider_error(ProviderErrorNotice {
+                class: "execution".to_string(),
+                transient: false,
+                said: String::new(),
+                detail: "Execution error: swarm chat: no node can serve this turn".to_string(),
+            });
+        assert_eq!(
+            job_run_failure(&failed).as_deref(),
+            Some("Execution error: swarm chat: no node can serve this turn")
+        );
+        assert_eq!(job_run_failure(&Message::assistant().with_text("hi")), None);
+    }
+
+    #[test]
+    fn the_run_end_follows_the_failure_seen_not_the_stream_end() {
+        assert_eq!(run_end("stop", None), RunEnd::Completed);
+        assert_eq!(
+            run_end("stop", Some("no node".into())),
+            RunEnd::Failed("no node".into()),
+            "a failed turn whose stream ended normally is still Failed"
+        );
+        assert_eq!(
+            run_end("error", Some("boom".into())),
+            RunEnd::Failed("boom".into())
+        );
+        assert!(matches!(run_end("error", None), RunEnd::Failed(_)));
+        assert_eq!(run_end("cancelled", Some("x".into())), RunEnd::Cancelled);
     }
 
     /// D4: `execute_logged` threads the sink through the real run path — a run that ends
@@ -1158,6 +1231,7 @@ mod tests {
         wait_until_idle(&managers.agent_manager, &accepted.session_id).await;
         let text = log.0.lock().unwrap().clone();
         assert!(text.ends_with("[finished: cancelled]\n"), "log: {text:?}");
+        assert_eq!(*log.1.lock().unwrap(), vec![RunEnd::Cancelled]);
     }
 
     #[tokio::test]

@@ -125,6 +125,25 @@ pub trait RemoteExecutor: Send + Sync + 'static {
 /// never fails loudly: a lost log line must not break the run.
 pub trait ExecuteLog: Send + Sync + 'static {
     fn append(&self, text: &str);
+
+    /// How the run ended, reported once by the executor when it knows (D13). A prompt job
+    /// takes its final state from this, never from "the session is no longer live": a turn
+    /// whose provider failed ends its stream normally, so liveness alone read it as Done.
+    /// The default ignores it (an executor that cannot tell leaves the job `lost`).
+    fn finish(&self, end: RunEnd) {
+        let _ = end;
+    }
+}
+
+/// How a logged remote run ended ([`ExecuteLog::finish`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunEnd {
+    /// The turn ran to its end with no provider or stream error.
+    Completed,
+    /// The turn failed; the text says why (the provider error, the stream error).
+    Failed(String),
+    /// The turn was cancelled (a cancel token, the Stop button).
+    Cancelled,
 }
 
 /// One mlxEngine operation the mesh proxy forwards. Each variant maps 1:1 to a

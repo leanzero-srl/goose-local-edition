@@ -23,7 +23,7 @@ use leanzero_link::control::{
 use leanzero_link::pubsub::REPLAY_BUFFER_CAPACITY;
 use leanzero_link::state::{
     ExecuteAccepted, ExecuteError, ExecuteLog, ExecuteRequest, MlxControl, MlxControlError, MlxOp,
-    PeerTarget, RemoteExecutor, SwarmStateSource,
+    PeerTarget, RemoteExecutor, RunEnd, SwarmStateSource,
 };
 use leanzero_link::wire::{
     LeaveReason, LinkEvent, NodeState, NodeStatus, SessionDeltaKind, SessionSummary, StreamFrame,
@@ -2284,9 +2284,94 @@ mod jobs_http {
         assert_eq!(job(&n, &id).await.1["state"], "running");
         n.source
             .set_sessions(vec![summary("sess-job-1", "laptop", false, 2)]);
-        let end = wait_terminal(&n, &id, Duration::from_secs(5)).await;
-        assert_eq!(end["state"], "done", "{end}");
+        // D13: this executor never reports how the run ended, so the job is `lost` once the
+        // grace for the report runs out, never a fabricated Done/exit 0.
+        let end = wait_terminal(&n, &id, Duration::from_secs(10)).await;
+        assert_eq!(end["state"], "lost", "{end}");
+        assert!(end["exit_code"].is_null(), "{end}");
         n.handle.shutdown();
+    }
+
+    /// An executor that reports how its run ended, from its own task after a short run.
+    struct EndingExecutor(RunEnd);
+
+    #[async_trait::async_trait]
+    impl RemoteExecutor for EndingExecutor {
+        async fn execute(&self, _req: ExecuteRequest) -> Result<ExecuteAccepted, ExecuteError> {
+            Ok(ExecuteAccepted {
+                session_id: "sess-ending".to_string(),
+            })
+        }
+
+        async fn execute_logged(
+            &self,
+            req: ExecuteRequest,
+            log: Arc<dyn ExecuteLog>,
+        ) -> Result<ExecuteAccepted, ExecuteError> {
+            let end = self.0.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                log.append("\n[finished: stop]\n");
+                log.finish(end);
+            });
+            self.execute(req).await
+        }
+    }
+
+    async fn run_prompt_job_to_its_end(end: RunEnd) -> (serde_json::Value, String) {
+        let n = spawn_jobs_node(true, test_limits(), Some(Arc::new(EndingExecutor(end)))).await;
+        let (s, v) = submit(
+            &n,
+            serde_json::json!({"kind": "prompt", "command": "write hello", "origin_node": "laptop"}),
+        )
+        .await;
+        assert_eq!(s, 202, "{v}");
+        let id = v["job_id"].as_str().unwrap().to_string();
+        let end = wait_terminal(&n, &id, Duration::from_secs(5)).await;
+        let log = log_chunk(&n, &id, 0).await["data"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        n.handle.shutdown();
+        (end, log)
+    }
+
+    /// D13 (3.0.130 live): a prompt turn whose provider failed ("swarm chat: no node can serve
+    /// this turn") was reported Done / exit 0, because the job only watched session liveness.
+    #[tokio::test]
+    async fn a_prompt_job_whose_turn_failed_is_failed_with_exit_1_and_the_reason() {
+        let why = "swarm chat: no node can serve this turn — no enabled device";
+        let (end, log) = run_prompt_job_to_its_end(RunEnd::Failed(why.to_string())).await;
+        assert_eq!(end["state"], "failed", "{end}");
+        assert_eq!(end["exit_code"], 1, "{end}");
+        assert!(
+            end["reason"]
+                .as_str()
+                .is_some_and(|r| r.contains("no node can serve this turn")),
+            "{end}"
+        );
+        assert!(
+            log.contains("[goose-job] end Failed exit Some(1) swarm chat: no node can serve"),
+            "log: {log:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_prompt_job_whose_turn_completed_is_done_with_exit_0() {
+        let (end, log) = run_prompt_job_to_its_end(RunEnd::Completed).await;
+        assert_eq!(end["state"], "done", "{end}");
+        assert_eq!(end["exit_code"], 0, "{end}");
+        assert!(
+            log.contains("[goose-job] end Done exit Some(0)"),
+            "log: {log:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_prompt_job_whose_turn_was_cancelled_is_cancelled_with_143() {
+        let (end, _) = run_prompt_job_to_its_end(RunEnd::Cancelled).await;
+        assert_eq!(end["state"], "cancelled", "{end}");
+        assert_eq!(end["exit_code"], 143, "{end}");
     }
 
     /// D14 (3.0.130 live): a finished job whose ledger dir was deleted stayed listed (and
@@ -2301,7 +2386,10 @@ mod jobs_http {
         assert_eq!(end["state"], "done", "{end}");
         let c = reqwest::Client::new();
         let list = get_json(&c, &format!("{}/v1/swarm/jobs", n.base)).await;
-        assert!(list.to_string().contains(&id), "listed before the delete: {list}");
+        assert!(
+            list.to_string().contains(&id),
+            "listed before the delete: {list}"
+        );
 
         std::fs::remove_dir_all(n.root.join(&id)).unwrap();
         let list = get_json(&c, &format!("{}/v1/swarm/jobs", n.base)).await;
@@ -2321,7 +2409,10 @@ mod jobs_http {
         std::fs::remove_dir_all(n.root.join(&id)).unwrap();
         let c = reqwest::Client::new();
         let list = get_json(&c, &format!("{}/v1/swarm/jobs", n.base)).await;
-        assert!(list.to_string().contains(&id), "dropped while running: {list}");
+        assert!(
+            list.to_string().contains(&id),
+            "dropped while running: {list}"
+        );
         let r = c
             .post(format!("{}/v1/swarm/jobs/{id}/cancel", n.base))
             .bearer_auth(TOKEN)

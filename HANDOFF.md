@@ -1,4 +1,4 @@
-# HANDOFF: fix/fix130 (five 3.0.130 defects) — NOTHING CODED YET, design done
+# HANDOFF: fix/fix130 (five 3.0.130 defects) — D2, D13, D14 DONE; D5 leftover + stale cards open
 
 Agent stopped at the ctx-guard 160k warning (system prompt is large); a fresh agent continues here.
 This file REPLACES rel/3.0.130's own HANDOFF.md in this branch only (that one still lives on
@@ -92,5 +92,17 @@ data is older than ~10 s (needs a fetchedAt per roster/facts; i18n key in all 16
 `pnpm run i18n:check`). Vitest with fake timers + defineProperty(document,'visibilityState').
 
 ## Status
-Nothing edited except this file. Next agent: implement D13+D14 (jobs.rs) and D2 first, then D5,
-then the cards; commit per defect with failing-first test; run the gate; report gate lines.
+2026-10-25: D2, D13, D14 coded, failing-first proven, committed on fix/fix130 (not merged/pushed).
+D2 ab63e2763: INTERVAL 500 / DIAL_TIMEOUT 900, LINK_POLL_MS 500; link-drop test failed at 3.12 s
+before, both <= 2.4 s tests pass after; linkPollBudget.test.ts failed (1500) then passes.
+D14 9abedac08: JobRegistry::prune_deleted in get/list/briefs (terminal + job.json gone only).
+D13 (commit after 9abedac08): ExecuteLog::finish(RunEnd) default no-op; FileLog -> RunEndSlot; watch_prompt
+takes the end from the report, session gone with no report within PROMPT_END_GRACE 5 s = Lost
+(the old prompt test now expects lost: FakeExecutor never reports). link_serve: job_run_failure
+(provider_error.detail) + run_end; remote_executor pump reports Failed/Completed/Cancelled,
+nothing on a silent vanish. Tests: control_service jobs_http a_prompt_job_whose_turn_* (failed
+before the fix), link_serve a_provider_error_notice_is_the_runs_failure + run_end, goose-server
+the_pump_reports_*. Not live-verified on a real failing swarm turn.
+Gate script: scratchpad/gate130fix.sh (log gate130fix.log).
+Open: D5 leftover, stale cards (sections above), untouched.
+Gate 2026-10-25 20:03 ALL GREEN: fmt, clippy -D warnings (link, goose, goose-server), test-link (all), goose link+link_serve 56, goose-server remote_executor 8, lint, typecheck, vitest 4 files/24.

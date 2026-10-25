@@ -70,7 +70,7 @@ pub use leanzero_link::wire::SessionDeltaKind;
 /// [`RemoteExecutor`] and drive [`ExecuteRequest`]/[`ExecuteAccepted`]/[`ExecuteError`]
 /// through `goose::acp::server::*` without a direct `leanzero-link` dependency.
 pub use leanzero_link::state::{
-    ExecuteAccepted, ExecuteError, ExecuteLog, ExecuteRequest, RemoteExecutor,
+    ExecuteAccepted, ExecuteError, ExecuteLog, ExecuteRequest, RemoteExecutor, RunEnd,
 };
 
 /// The remote model-management seam types, re-exported so goose's `GoosedMlxControl` (in
