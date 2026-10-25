@@ -39,6 +39,7 @@ pub mod holders;
 pub mod kv_cache;
 pub mod machine;
 pub mod memfree;
+pub mod memfree_protect;
 pub mod memfree_servers;
 mod memory;
 pub mod model_identity;

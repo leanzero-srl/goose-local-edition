@@ -89,7 +89,7 @@ async fn categorize_ctx(
             own_engine_busy: busy,
             other_engine_pids,
             orphan_goosed_pids: vec![],
-            bundles: Default::default(),
+            ..Default::default()
         },
         port,
     ))

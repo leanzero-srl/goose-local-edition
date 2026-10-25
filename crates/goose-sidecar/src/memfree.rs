@@ -29,6 +29,11 @@ pub struct ProcRow {
     pub path: String,
     /// `ri_phys_footprint`; 0 when unreadable (another user's process without privileges).
     pub footprint: u64,
+    /// Process group (`pbi_pgid`): a job launched as one group (heavy-run, a launchd job) keeps
+    /// its group even when a child is reparented to launchd.
+    pub pgid: u32,
+    /// Has a controlling terminal (`pbi_flags & PROC_FLAG_CONTROLT`): someone is typing at it.
+    pub has_tty: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -72,6 +77,12 @@ pub struct CategorizeCtx {
     pub orphan_goosed_pids: Vec<u32>,
     /// Outermost `.app` path → (bundle id, display name), read from its Info.plist.
     pub bundles: HashMap<String, (String, String)>,
+    /// pid → command line (`memfree_protect::all_cmdlines`), for MCP and job-wrapper detection.
+    pub cmdlines: HashMap<u32, String>,
+    /// pid → launchd label (`memfree_protect::launchd_labels`).
+    pub launchd_labels: HashMap<u32, String>,
+    /// The never-touch list in force (`memfree_protect::never_touch_list`).
+    pub never_touch: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,6 +97,17 @@ pub struct Group {
     pub quittable: bool,
     pub reclaimable_by_goose: bool,
     pub why: Option<String>,
+    /// Why nothing may free this group (`memfree_protect::protected`): never quittable or
+    /// reclaimable while set.
+    pub protected_why: Option<String>,
+    /// Who uses it (TCP clients of a server's port, its parent, its launchd job); filled by the
+    /// caller that measures it, empty here.
+    pub used_by: Vec<String>,
+    /// The launchd job that owns any of its processes.
+    pub launchd_label: Option<String>,
+    /// Ticked by default in "free everything except protected" (`memfree_protect::eligible`
+    /// in Nuclear mode). A caller that changes `reclaimable_by_goose` recomputes it.
+    pub nuclear_default: bool,
 }
 
 /// The kinds of reclaim goose performs.
@@ -122,11 +144,11 @@ pub fn outer_app(path: &str) -> Option<&str> {
     Some(&path[..i + 4])
 }
 
-fn basename(path: &str) -> &str {
+pub(crate) fn basename(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
 
-const SYSTEM_PREFIXES: &[&str] = &[
+pub(crate) const SYSTEM_PREFIXES: &[&str] = &[
     "/System/",
     "/usr/",
     "/bin/",
@@ -135,7 +157,7 @@ const SYSTEM_PREFIXES: &[&str] = &[
     "/private/var/",
 ];
 
-const SYSTEM_NAMES: &[&str] = &[
+pub(crate) const SYSTEM_NAMES: &[&str] = &[
     "WindowServer",
     "loginwindow",
     "Finder",
@@ -148,7 +170,7 @@ const SYSTEM_NAMES: &[&str] = &[
 ];
 
 /// Apps that host terminals or coding agents: quitting one would take sessions with it.
-const HOSTS_SESSIONS: &[&str] = &[
+pub(crate) const HOSTS_SESSIONS: &[&str] = &[
     "com.apple.Terminal",
     "com.googlecode.iterm2",
     "com.mitchellh.ghostty",
@@ -164,7 +186,7 @@ const HOSTS_SESSIONS: &[&str] = &[
     "com.anthropic.claudefordesktop",
 ];
 
-fn is_goose_bundle(bundle_id: &str) -> bool {
+pub(crate) fn is_goose_bundle(bundle_id: &str) -> bool {
     bundle_id.starts_with("net.leanzero.goose") || bundle_id.starts_with("com.block.goose")
 }
 
@@ -327,7 +349,7 @@ pub fn never_kill(
 }
 
 /// `roots` plus every process whose parent chain reaches one of them.
-fn with_descendants(roots: &[u32], rows: &[ProcRow]) -> HashSet<u32> {
+pub(crate) fn with_descendants(roots: &[u32], rows: &[ProcRow]) -> HashSet<u32> {
     let mut set: HashSet<u32> = roots.iter().copied().collect();
     if set.is_empty() {
         return set;
@@ -348,7 +370,7 @@ fn with_descendants(roots: &[u32], rows: &[ProcRow]) -> HashSet<u32> {
 /// The name a loose process is known by. Self-updating CLIs run a binary named after its version
 /// (`~/.local/share/claude/versions/2.1.299`): those take the nearest folder that is a real name, so
 /// five sessions on three versions read as one "claude", not five version numbers.
-fn process_name(path: &str) -> String {
+pub(crate) fn process_name(path: &str) -> String {
     let is_version = |c: &str| {
         c.starts_with(|ch: char| ch.is_ascii_digit())
             && c.chars()
@@ -406,6 +428,10 @@ pub fn categorize(rows: &[ProcRow], ctx: &CategorizeCtx) -> Vec<Group> {
                     bundle_id: None,
                     quittable: false,
                     reclaimable_by_goose: why.is_none(),
+                    protected_why: None,
+                    used_by: vec![],
+                    launchd_label: None,
+                    nuclear_default: false,
                     why: why.clone(),
                 },
                 row,
@@ -425,6 +451,10 @@ pub fn categorize(rows: &[ProcRow], ctx: &CategorizeCtx) -> Vec<Group> {
                     bundle_id: None,
                     quittable: false,
                     reclaimable_by_goose: true,
+                    protected_why: None,
+                    used_by: vec![],
+                    launchd_label: None,
+                    nuclear_default: false,
                     why: None,
                 },
                 row,
@@ -455,6 +485,10 @@ pub fn categorize(rows: &[ProcRow], ctx: &CategorizeCtx) -> Vec<Group> {
                     bundle_id: None,
                     quittable: false,
                     reclaimable_by_goose: mine,
+                    protected_why: None,
+                    used_by: vec![],
+                    launchd_label: None,
+                    nuclear_default: false,
                     why: (!mine).then(|| {
                         "it is not this install's desktop server, so goose leaves it alone".into()
                     }),
@@ -475,6 +509,10 @@ pub fn categorize(rows: &[ProcRow], ctx: &CategorizeCtx) -> Vec<Group> {
                     bundle_id: None,
                     quittable: false,
                     reclaimable_by_goose: false,
+                    protected_why: None,
+                    used_by: vec![],
+                    launchd_label: None,
+                    nuclear_default: false,
                     why: Some("part of macOS".into()),
                 },
                 row,
@@ -494,6 +532,10 @@ pub fn categorize(rows: &[ProcRow], ctx: &CategorizeCtx) -> Vec<Group> {
                     bundle_id: bid.clone(),
                     quittable: false,
                     reclaimable_by_goose: false,
+                    protected_why: None,
+                    used_by: vec![],
+                    launchd_label: None,
+                    nuclear_default: false,
                     why: Some("goose cannot unload this server's models yet".into()),
                 },
                 row,
@@ -524,6 +566,10 @@ pub fn categorize(rows: &[ProcRow], ctx: &CategorizeCtx) -> Vec<Group> {
                     // Settled after the fold: an app needs a bundle id to be asked to quit.
                     quittable: bid.is_some(),
                     reclaimable_by_goose: false,
+                    protected_why: None,
+                    used_by: vec![],
+                    launchd_label: None,
+                    nuclear_default: false,
                     why: None,
                 },
                 row,
@@ -549,15 +595,44 @@ pub fn categorize(rows: &[ProcRow], ctx: &CategorizeCtx) -> Vec<Group> {
                 bundle_id: None,
                 quittable: false,
                 reclaimable_by_goose: false,
+                protected_why: None,
+                used_by: vec![],
+                launchd_label: None,
+                nuclear_default: false,
                 why: why.clone(),
             },
             row,
         );
     }
 
+    let exempt: Vec<u32> = ctx
+        .own_engine_pids
+        .iter()
+        .chain(&ctx.orphan_goosed_pids)
+        .copied()
+        .collect();
+    let shield = crate::memfree_protect::protected(&crate::memfree_protect::ProtectInput {
+        rows,
+        cmds: &ctx.cmdlines,
+        labels: &ctx.launchd_labels,
+        bundles: &ctx.bundles,
+        self_pid: ctx.self_pid,
+        self_uid: ctx.self_uid,
+        exempt_roots: &exempt,
+    });
+    let owner = crate::memfree_protect::launchd_owner(rows, &ctx.launchd_labels);
     let mut out: Vec<Group> = groups
         .into_values()
         .map(|mut g| {
+            g.launchd_label = g.pids.iter().find_map(|(p, _)| owner.get(p).cloned());
+            if let Some(reason) = g.pids.iter().find_map(|(p, _)| shield.get(p)) {
+                g.protected_why = Some(reason.clone());
+                g.quittable = false;
+                g.reclaimable_by_goose = false;
+                if g.why.is_none() {
+                    g.why = Some(reason.clone());
+                }
+            }
             if g.category == Category::UserApp {
                 if let Some(reason) = app_blocked.get(&g.id) {
                     g.quittable = false;
@@ -566,6 +641,11 @@ pub fn categorize(rows: &[ProcRow], ctx: &CategorizeCtx) -> Vec<Group> {
                     g.why = Some("it has no bundle id to ask it to quit".into());
                 }
             }
+            g.nuclear_default = crate::memfree_protect::eligible(
+                &g,
+                crate::memfree_protect::Mode::Nuclear,
+                &ctx.never_touch,
+            );
             g
         })
         .collect();
@@ -768,7 +848,11 @@ mod mac {
         Some(u64::from_le_bytes(buf[72..80].try_into().ok()?))
     }
 
-    pub fn bsd(pid: u32) -> Option<(u32, u32, u64)> {
+    /// `sys/proc_info.h`: the process has a controlling terminal.
+    const PROC_FLAG_CONTROLT: u32 = 0x2;
+
+    /// (ppid, uid, started_at, pgid, has_tty)
+    pub fn bsd(pid: u32) -> Option<(u32, u32, u64, u32, bool)> {
         let ipid = libc::c_int::try_from(pid).ok().filter(|p| *p > 0)?;
         // SAFETY: zeroed plain-old-data struct, size passed to the kernel.
         let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
@@ -782,7 +866,13 @@ mod mac {
                 size,
             )
         };
-        (written == size).then_some((info.pbi_ppid, info.pbi_uid, info.pbi_start_tvsec))
+        (written == size).then_some((
+            info.pbi_ppid,
+            info.pbi_uid,
+            info.pbi_start_tvsec,
+            info.pbi_pgid,
+            info.pbi_flags & PROC_FLAG_CONTROLT != 0,
+        ))
     }
 
     pub fn path(pid: u32) -> String {
@@ -812,7 +902,7 @@ mod mac {
             .filter(|p| *p > 0)
             .filter_map(|p| {
                 let pid = p as u32;
-                let (ppid, uid, started_at) = bsd(pid)?;
+                let (ppid, uid, started_at, pgid, has_tty) = bsd(pid)?;
                 Some(ProcRow {
                     pid,
                     ppid,
@@ -820,6 +910,8 @@ mod mac {
                     started_at,
                     path: path(pid),
                     footprint: footprint(pid).unwrap_or(0),
+                    pgid,
+                    has_tty,
                 })
             })
             .collect()
@@ -861,7 +953,7 @@ pub fn footprint(pid: u32) -> Option<u64> {
 /// Is the process that started at `started_at` still alive under `pid`?
 pub fn alive(pid: u32, started_at: u64) -> bool {
     #[cfg(target_os = "macos")]
-    return mac::bsd(pid).is_some_and(|(_, _, s)| s == started_at);
+    return mac::bsd(pid).is_some_and(|(_, _, s, _, _)| s == started_at);
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (pid, started_at);
@@ -896,10 +988,14 @@ pub fn self_uid() -> u32 {
     0
 }
 
-/// Census + bundles + categorize in one go (blocking; call from `spawn_blocking`).
+/// Census + bundles + command lines + launchd labels + categorize in one go (blocking; call from
+/// `spawn_blocking`). `ctx.never_touch` is unioned with the default list.
 pub fn groups_now(mut ctx: CategorizeCtx) -> Vec<Group> {
     let rows = census();
     ctx.bundles = bundles_for(&rows);
+    ctx.cmdlines = crate::memfree_protect::all_cmdlines();
+    ctx.launchd_labels = crate::memfree_protect::launchd_labels();
+    ctx.never_touch = crate::memfree_protect::never_touch_list(&ctx.never_touch);
     ctx.orphan_goosed_pids =
         crate::memfree_servers::orphaned_goosed_now(&rows, ctx.self_pid, ctx.self_uid)
             .into_iter()
@@ -1014,6 +1110,8 @@ mod tests {
             started_at: 1000 + pid as u64,
             path: path.into(),
             footprint,
+            pgid: pid,
+            has_tty: false,
         }
     }
 

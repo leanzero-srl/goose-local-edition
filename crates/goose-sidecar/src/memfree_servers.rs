@@ -383,6 +383,8 @@ mod tests {
             started_at: 1000 + pid as u64,
             path: path.into(),
             footprint: 1,
+            pgid: pid,
+            has_tty: false,
         }
     }
 
