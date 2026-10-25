@@ -67,6 +67,9 @@ pub struct CategorizeCtx {
     pub own_engine_busy: Option<String>,
     /// Other MLX engines (`machine::other_engines`): goose stops them per pid.
     pub other_engine_pids: Vec<u32>,
+    /// Left-over goose servers PROVEN to be this install's desktop `goose serve` with its app gone
+    /// (`memfree_servers::select_orphaned_goosed`): goose stops these; any other orphan is named only.
+    pub orphan_goosed_pids: Vec<u32>,
     /// Outermost `.app` path → (bundle id, display name), read from its Info.plist.
     pub bundles: HashMap<String, (String, String)>,
 }
@@ -85,7 +88,7 @@ pub struct Group {
     pub why: Option<String>,
 }
 
-/// The kinds of reclaim goose performs; room for more (LM Studio, Ollama, orphaned goose serve).
+/// The kinds of reclaim goose performs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReclaimItem {
     /// This goose's own idle engine (unmount).
@@ -332,6 +335,7 @@ pub fn categorize(rows: &[ProcRow], ctx: &CategorizeCtx) -> Vec<Group> {
             && !protected.contains(&row.pid)
         {
             let id = format!("orphan:{}", row.pid);
+            let mine = ctx.orphan_goosed_pids.contains(&row.pid);
             add(
                 id.clone(),
                 &|| Group {
@@ -342,8 +346,10 @@ pub fn categorize(rows: &[ProcRow], ctx: &CategorizeCtx) -> Vec<Group> {
                     pids: vec![],
                     bundle_id: None,
                     quittable: false,
-                    reclaimable_by_goose: false,
-                    why: Some("goose cannot stop a left-over server yet".into()),
+                    reclaimable_by_goose: mine,
+                    why: (!mine).then(|| {
+                        "it is not this install's desktop server, so goose leaves it alone".into()
+                    }),
                 },
                 row,
             );
@@ -791,6 +797,11 @@ pub fn self_uid() -> u32 {
 pub fn groups_now(mut ctx: CategorizeCtx) -> Vec<Group> {
     let rows = census();
     ctx.bundles = bundles_for(&rows);
+    ctx.orphan_goosed_pids =
+        crate::memfree_servers::orphaned_goosed_now(&rows, ctx.self_pid, ctx.self_uid)
+            .into_iter()
+            .map(|(pid, _)| pid)
+            .collect();
     categorize(&rows, &ctx)
 }
 
@@ -1013,7 +1024,10 @@ mod tests {
             (ollama.category, ollama.quittable),
             (Category::AiServer, false)
         );
-        assert_eq!(by("orphan:900").category, Category::GooseOrphan);
+        let orphan = by("orphan:900");
+        assert_eq!(orphan.category, Category::GooseOrphan);
+        // Not proven this install's desktop server: named, never stopped.
+        assert!(!orphan.reclaimable_by_goose && orphan.why.is_some());
         let system = by("system");
         // launchd, WindowServer (other uid), Finder, zsh (/bin), Slack (other uid)
         assert_eq!(system.pids.len(), 5);
