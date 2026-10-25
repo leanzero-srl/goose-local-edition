@@ -3691,9 +3691,11 @@ export const zMlxEngineMemoryHoldersResponse_unstable = z.object({
  * Free memory. `gooseOwned` = the soft clean (this goose's own idle engine + proven left-over
  * goose servers, nothing anyone else uses). Everything else is named item by item and re-checked
  * against a fresh census, the protected set and the never-touch list: `unloadServers` (group ids
- * of model servers / other MLX engines), `quitApps` (bundle ids). `nuclear` lets an app that
- * ignored quit get a SIGTERM (own uid, unprotected, never SIGKILL). Over the Link, everything
- * but `gooseOwned` needs `GOOSE_LINK_ALLOW_REMOTE_APP_QUIT` on the answering Mac.
+ * of model servers / other MLX engines), `quitApps` (bundle ids, asked to quit; one that does
+ * not quit is left running and reported), `forceStopApps` (bundle ids the person chose to force
+ * stop: one SIGTERM per pid, own uid, unprotected, never SIGKILL). Each item is re-checked right
+ * before it runs; a server that gained a user not in `seenUsedBy` is refused. Over the Link,
+ * everything but `gooseOwned` needs `GOOSE_LINK_ALLOW_REMOTE_APP_QUIT` on the answering Mac.
  */
 export const zMlxEngineMemoryFreeRequest_unstable = z.object({
     nodeId: z.union([
@@ -3708,7 +3710,9 @@ export const zMlxEngineMemoryFreeRequest_unstable = z.object({
     ]).optional(),
     unloadServers: z.array(z.string()).optional().default([]),
     nuclear: z.boolean().optional().default(false),
-    neverTouch: z.array(z.string()).optional().default([])
+    neverTouch: z.array(z.string()).optional().default([]),
+    seenUsedBy: z.record(z.array(z.string())).optional().default({}),
+    forceStopApps: z.array(z.string()).optional().default([])
 });
 
 export const zMlxMemoryFreeItemDto = z.object({
@@ -3719,7 +3723,8 @@ export const zMlxMemoryFreeItemDto = z.object({
         z.number().int().gte(0),
         z.null()
     ]).optional(),
-    message: z.string()
+    message: z.string(),
+    forceStoppable: z.boolean().optional().default(false)
 });
 
 export const zMlxMemoryBudgetDto = z.object({

@@ -9059,7 +9059,7 @@
         },
         "nuclear": {
           "type": "boolean",
-          "description": "\"Free everything except protected\": apps that ignore quit get one SIGTERM.",
+          "description": "\"Free everything except protected\". Apps are only asked to quit; nothing is forced.",
           "default": false
         },
         "neverTouch": {
@@ -9069,9 +9069,28 @@
           },
           "description": "The caller's never-touch list, unioned with the executing Mac's own.",
           "default": []
+        },
+        "seenUsedBy": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "description": "Per ticked server group id: the `usedBy` lines the person saw. A server with a user\nnot in this list when it is about to be freed is refused.",
+          "default": {}
+        },
+        "forceStopApps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Bundle ids the person explicitly chose to force stop (SIGTERM, never SIGKILL).",
+          "default": []
         }
       },
-      "description": "Free memory. `gooseOwned` = the soft clean (this goose's own idle engine + proven left-over\ngoose servers, nothing anyone else uses). Everything else is named item by item and re-checked\nagainst a fresh census, the protected set and the never-touch list: `unloadServers` (group ids\nof model servers / other MLX engines), `quitApps` (bundle ids). `nuclear` lets an app that\nignored quit get a SIGTERM (own uid, unprotected, never SIGKILL). Over the Link, everything\nbut `gooseOwned` needs `GOOSE_LINK_ALLOW_REMOTE_APP_QUIT` on the answering Mac.",
+      "description": "Free memory. `gooseOwned` = the soft clean (this goose's own idle engine + proven left-over\ngoose servers, nothing anyone else uses). Everything else is named item by item and re-checked\nagainst a fresh census, the protected set and the never-touch list: `unloadServers` (group ids\nof model servers / other MLX engines), `quitApps` (bundle ids, asked to quit; one that does\nnot quit is left running and reported), `forceStopApps` (bundle ids the person chose to force\nstop: one SIGTERM per pid, own uid, unprotected, never SIGKILL). Each item is re-checked right\nbefore it runs; a server that gained a user not in `seenUsedBy` is refused. Over the Link,\neverything but `gooseOwned` needs `GOOSE_LINK_ALLOW_REMOTE_APP_QUIT` on the answering Mac.",
       "x-side": "agent",
       "x-method": "_goose/unstable/mlxEngine/memoryFree"
     },
@@ -9131,6 +9150,11 @@
         },
         "message": {
           "type": "string"
+        },
+        "forceStoppable": {
+          "type": "boolean",
+          "description": "The app did not quit and may still be force stopped (own uid, unprotected).",
+          "default": false
         }
       },
       "required": [
