@@ -4028,6 +4028,120 @@
   "loops.tick.yielded": {
     "defaultMessage": "A cédé la main à votre tour dans « {chat} »"
   },
+  "macLoad.allowJobs": {
+    "defaultMessage": "Exécuter les tâches envoyées par d’autres Mac"
+  },
+  "macLoad.allowJobsHint": {
+    "defaultMessage": "Commandes shell et prompts, une tâche lourde à la fois, arrêtées si elles dépassent le seuil mémoire. Effet immédiat."
+  },
+  "macLoad.benchmark": {
+    "defaultMessage": "Benchmark en cours : {why}"
+  },
+  "macLoad.cancelBody": {
+    "defaultMessage": "Cela arrête la tâche sur {mac} et tous les processus qu’elle a lancés. Ce qu’elle a déjà écrit reste dans son journal."
+  },
+  "macLoad.cancelJob": {
+    "defaultMessage": "Annuler la tâche"
+  },
+  "macLoad.cancelTitle": {
+    "defaultMessage": "Annuler la tâche {id} ?"
+  },
+  "macLoad.close": {
+    "defaultMessage": "Fermer"
+  },
+  "macLoad.dialogTitle": {
+    "defaultMessage": "Tâche {id}"
+  },
+  "macLoad.ended": {
+    "defaultMessage": "Terminée"
+  },
+  "macLoad.exit": {
+    "defaultMessage": "Code de sortie"
+  },
+  "macLoad.idleS": {
+    "defaultMessage": "Considéré inactif après (secondes)"
+  },
+  "macLoad.inference": {
+    "defaultMessage": "Inférence IA"
+  },
+  "macLoad.inferenceLine": {
+    "defaultMessage": "{engine,plural,one{{slots,plural,one{{engine, number} requête moteur · # créneau routeur} other{{engine, number} requête moteur · # créneaux routeur}}} other{{slots,plural,one{{engine, number} requêtes moteur · # créneau routeur} other{{engine, number} requêtes moteur · # créneaux routeur}}}}"
+  },
+  "macLoad.jobFrom": {
+    "defaultMessage": "{kind} depuis {origin}"
+  },
+  "macLoad.jobs": {
+    "defaultMessage": "Tâches"
+  },
+  "macLoad.jobsLine": {
+    "defaultMessage": "{live,plural,=0{Aucune tâche en cours} one{# tâche en cours} other{# tâches en cours}}"
+  },
+  "macLoad.keepRunning": {
+    "defaultMessage": "Laisser tourner"
+  },
+  "macLoad.kind": {
+    "defaultMessage": "Type"
+  },
+  "macLoad.log": {
+    "defaultMessage": "Journal"
+  },
+  "macLoad.logEmpty": {
+    "defaultMessage": "Rien d’écrit pour l’instant."
+  },
+  "macLoad.minFree": {
+    "defaultMessage": "Seuil mémoire (% gardé libre)"
+  },
+  "macLoad.noLoad": {
+    "defaultMessage": "Son goose ne signale pas encore la charge (version plus ancienne)."
+  },
+  "macLoad.origin": {
+    "defaultMessage": "Envoyée depuis"
+  },
+  "macLoad.own": {
+    "defaultMessage": "Usage propre"
+  },
+  "macLoad.ownLine": {
+    "defaultMessage": "{user} · cpu {cpu} · mémoire {mem} utilisée · gpu {gpu}"
+  },
+  "macLoad.policy": {
+    "defaultMessage": "Quand quelqu’un utilise ce Mac"
+  },
+  "macLoad.policy.allow": {
+    "defaultMessage": "Accepter les tâches"
+  },
+  "macLoad.policy.lastResort": {
+    "defaultMessage": "Seulement en dernier recours"
+  },
+  "macLoad.policy.refuse": {
+    "defaultMessage": "Refuser les tâches"
+  },
+  "macLoad.reason": {
+    "defaultMessage": "Raison"
+  },
+  "macLoad.reconnectHint": {
+    "defaultMessage": "La règle et le seuil mémoire s’appliquent après la reconnexion de Link."
+  },
+  "macLoad.saveFailed": {
+    "defaultMessage": "Non enregistré : {reason}"
+  },
+  "macLoad.settingsTitle": {
+    "defaultMessage": "Tâches des autres Mac"
+  },
+  "macLoad.started": {
+    "defaultMessage": "Démarrée"
+  },
+  "macLoad.state": {
+    "defaultMessage": "État"
+  },
+  "macLoad.title": {
+    "defaultMessage": "Charge"
+  },
+  "macLoad.userActive": {
+    "defaultMessage": "Quelqu’un l’utilise"
+  },
+  "macLoad.userIdle": {
+    "defaultMessage": "Inactif {idle}"
+  },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "Échec de l’annulation."
   },

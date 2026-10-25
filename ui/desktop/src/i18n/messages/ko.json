@@ -4028,6 +4028,120 @@
   "loops.tick.yielded": {
     "defaultMessage": "“{chat}”에서 사용자의 턴에 양보함"
   },
+  "macLoad.allowJobs": {
+    "defaultMessage": "다른 Mac이 보낸 작업 실행"
+  },
+  "macLoad.allowJobsHint": {
+    "defaultMessage": "셸 명령과 프롬프트, 무거운 작업은 한 번에 하나, 메모리 하한을 넘으면 중지됩니다. 바로 적용됩니다."
+  },
+  "macLoad.benchmark": {
+    "defaultMessage": "벤치마크 실행 중: {why}"
+  },
+  "macLoad.cancelBody": {
+    "defaultMessage": "{mac}의 작업과 그 작업이 시작한 모든 프로세스를 중지합니다. 이미 쓴 내용은 로그에 남습니다."
+  },
+  "macLoad.cancelJob": {
+    "defaultMessage": "작업 취소"
+  },
+  "macLoad.cancelTitle": {
+    "defaultMessage": "작업 {id}을(를) 취소할까요?"
+  },
+  "macLoad.close": {
+    "defaultMessage": "닫기"
+  },
+  "macLoad.dialogTitle": {
+    "defaultMessage": "작업 {id}"
+  },
+  "macLoad.ended": {
+    "defaultMessage": "종료됨"
+  },
+  "macLoad.exit": {
+    "defaultMessage": "종료 코드"
+  },
+  "macLoad.idleS": {
+    "defaultMessage": "유휴로 보는 시간(초)"
+  },
+  "macLoad.inference": {
+    "defaultMessage": "AI 추론"
+  },
+  "macLoad.inferenceLine": {
+    "defaultMessage": "{engine,plural,one{{slots,plural,one{엔진 요청 {engine, number}개 · 라우터 슬롯 #개} other{엔진 요청 {engine, number}개 · 라우터 슬롯 #개}}} other{{slots,plural,one{엔진 요청 {engine, number}개 · 라우터 슬롯 #개} other{엔진 요청 {engine, number}개 · 라우터 슬롯 #개}}}}"
+  },
+  "macLoad.jobFrom": {
+    "defaultMessage": "{origin}에서 보낸 {kind}"
+  },
+  "macLoad.jobs": {
+    "defaultMessage": "작업"
+  },
+  "macLoad.jobsLine": {
+    "defaultMessage": "{live,plural,=0{실행 중인 작업 없음} one{작업 #개 실행 중} other{작업 #개 실행 중}}"
+  },
+  "macLoad.keepRunning": {
+    "defaultMessage": "계속 실행"
+  },
+  "macLoad.kind": {
+    "defaultMessage": "종류"
+  },
+  "macLoad.log": {
+    "defaultMessage": "로그"
+  },
+  "macLoad.logEmpty": {
+    "defaultMessage": "아직 기록된 내용이 없습니다."
+  },
+  "macLoad.minFree": {
+    "defaultMessage": "메모리 하한(비워 둘 %)"
+  },
+  "macLoad.noLoad": {
+    "defaultMessage": "이 Mac의 goose는 아직 부하를 보고하지 않습니다(이전 빌드)."
+  },
+  "macLoad.origin": {
+    "defaultMessage": "보낸 곳"
+  },
+  "macLoad.own": {
+    "defaultMessage": "자체 사용"
+  },
+  "macLoad.ownLine": {
+    "defaultMessage": "{user} · cpu {cpu} · 메모리 {mem} 사용 · gpu {gpu}"
+  },
+  "macLoad.policy": {
+    "defaultMessage": "누군가 이 Mac을 사용하는 동안"
+  },
+  "macLoad.policy.allow": {
+    "defaultMessage": "작업 받기"
+  },
+  "macLoad.policy.lastResort": {
+    "defaultMessage": "최후의 수단으로만"
+  },
+  "macLoad.policy.refuse": {
+    "defaultMessage": "작업 거부"
+  },
+  "macLoad.reason": {
+    "defaultMessage": "이유"
+  },
+  "macLoad.reconnectHint": {
+    "defaultMessage": "정책과 메모리 하한은 Link가 다시 연결된 뒤 적용됩니다."
+  },
+  "macLoad.saveFailed": {
+    "defaultMessage": "저장되지 않음: {reason}"
+  },
+  "macLoad.settingsTitle": {
+    "defaultMessage": "다른 Mac의 작업"
+  },
+  "macLoad.started": {
+    "defaultMessage": "시작됨"
+  },
+  "macLoad.state": {
+    "defaultMessage": "상태"
+  },
+  "macLoad.title": {
+    "defaultMessage": "부하"
+  },
+  "macLoad.userActive": {
+    "defaultMessage": "누군가 사용 중"
+  },
+  "macLoad.userIdle": {
+    "defaultMessage": "유휴 {idle}"
+  },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "취소하지 못했습니다."
   },

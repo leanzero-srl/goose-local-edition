@@ -4028,6 +4028,120 @@
   "loops.tick.yielded": {
     "defaultMessage": "Hat deinem Zug in „{chat}“ Vorrang gegeben"
   },
+  "macLoad.allowJobs": {
+    "defaultMessage": "Jobs von anderen Macs ausführen"
+  },
+  "macLoad.allowJobsHint": {
+    "defaultMessage": "Shell-Befehle und Prompts, ein schwerer Job gleichzeitig, beendet, sobald sie die Speichergrenze unterschreiten. Gilt sofort."
+  },
+  "macLoad.benchmark": {
+    "defaultMessage": "Benchmark läuft: {why}"
+  },
+  "macLoad.cancelBody": {
+    "defaultMessage": "Das stoppt den Job auf {mac} und jeden Prozess, den er gestartet hat. Was er schon geschrieben hat, bleibt in seinem Log."
+  },
+  "macLoad.cancelJob": {
+    "defaultMessage": "Job abbrechen"
+  },
+  "macLoad.cancelTitle": {
+    "defaultMessage": "Job {id} abbrechen?"
+  },
+  "macLoad.close": {
+    "defaultMessage": "Schließen"
+  },
+  "macLoad.dialogTitle": {
+    "defaultMessage": "Job {id}"
+  },
+  "macLoad.ended": {
+    "defaultMessage": "Beendet"
+  },
+  "macLoad.exit": {
+    "defaultMessage": "Exit-Code"
+  },
+  "macLoad.idleS": {
+    "defaultMessage": "Gilt als untätig nach (Sekunden)"
+  },
+  "macLoad.inference": {
+    "defaultMessage": "KI-Inferenz"
+  },
+  "macLoad.inferenceLine": {
+    "defaultMessage": "{engine,plural,one{{slots,plural,one{{engine, number} Engine-Anfrage · # Router-Slot} other{{engine, number} Engine-Anfrage · # Router-Slots}}} other{{slots,plural,one{{engine, number} Engine-Anfragen · # Router-Slot} other{{engine, number} Engine-Anfragen · # Router-Slots}}}}"
+  },
+  "macLoad.jobFrom": {
+    "defaultMessage": "{kind} von {origin}"
+  },
+  "macLoad.jobs": {
+    "defaultMessage": "Jobs"
+  },
+  "macLoad.jobsLine": {
+    "defaultMessage": "{live,plural,=0{Kein Job läuft} one{# Job läuft} other{# Jobs laufen}}"
+  },
+  "macLoad.keepRunning": {
+    "defaultMessage": "Weiterlaufen lassen"
+  },
+  "macLoad.kind": {
+    "defaultMessage": "Art"
+  },
+  "macLoad.log": {
+    "defaultMessage": "Log"
+  },
+  "macLoad.logEmpty": {
+    "defaultMessage": "Noch nichts geschrieben."
+  },
+  "macLoad.minFree": {
+    "defaultMessage": "Speichergrenze (% frei gehalten)"
+  },
+  "macLoad.noLoad": {
+    "defaultMessage": "Sein goose meldet noch keine Last (ältere Version)."
+  },
+  "macLoad.origin": {
+    "defaultMessage": "Gesendet von"
+  },
+  "macLoad.own": {
+    "defaultMessage": "Eigene Nutzung"
+  },
+  "macLoad.ownLine": {
+    "defaultMessage": "{user} · CPU {cpu} · Speicher {mem} belegt · GPU {gpu}"
+  },
+  "macLoad.policy": {
+    "defaultMessage": "Während jemand diesen Mac benutzt"
+  },
+  "macLoad.policy.allow": {
+    "defaultMessage": "Jobs annehmen"
+  },
+  "macLoad.policy.lastResort": {
+    "defaultMessage": "Nur als letzte Möglichkeit"
+  },
+  "macLoad.policy.refuse": {
+    "defaultMessage": "Jobs ablehnen"
+  },
+  "macLoad.reason": {
+    "defaultMessage": "Grund"
+  },
+  "macLoad.reconnectHint": {
+    "defaultMessage": "Die Richtlinie und die Speichergrenze gelten, nachdem Link sich neu verbunden hat."
+  },
+  "macLoad.saveFailed": {
+    "defaultMessage": "Nicht gespeichert: {reason}"
+  },
+  "macLoad.settingsTitle": {
+    "defaultMessage": "Jobs von anderen Macs"
+  },
+  "macLoad.started": {
+    "defaultMessage": "Gestartet"
+  },
+  "macLoad.state": {
+    "defaultMessage": "Status"
+  },
+  "macLoad.title": {
+    "defaultMessage": "Last"
+  },
+  "macLoad.userActive": {
+    "defaultMessage": "Jemand benutzt ihn"
+  },
+  "macLoad.userIdle": {
+    "defaultMessage": "Untätig {idle}"
+  },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "Abbrechen fehlgeschlagen."
   },

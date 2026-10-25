@@ -4028,6 +4028,120 @@
   "loops.tick.yielded": {
     "defaultMessage": "\"{chat}\" में आपकी बारी के लिए रुका"
   },
+  "macLoad.allowJobs": {
+    "defaultMessage": "दूसरे Mac से भेजे गए जॉब चलाएँ"
+  },
+  "macLoad.allowJobsHint": {
+    "defaultMessage": "शेल कमांड और प्रॉम्प्ट, एक समय में एक भारी जॉब, मेमोरी सीमा पार करने पर बंद। तुरंत लागू होता है।"
+  },
+  "macLoad.benchmark": {
+    "defaultMessage": "बेंचमार्क चल रहा है: {why}"
+  },
+  "macLoad.cancelBody": {
+    "defaultMessage": "यह {mac} पर जॉब और उसके शुरू किए हर प्रोसेस को रोक देता है। जो उसने पहले लिखा है वह उसके लॉग में रहता है।"
+  },
+  "macLoad.cancelJob": {
+    "defaultMessage": "जॉब रद्द करें"
+  },
+  "macLoad.cancelTitle": {
+    "defaultMessage": "जॉब {id} रद्द करें?"
+  },
+  "macLoad.close": {
+    "defaultMessage": "बंद करें"
+  },
+  "macLoad.dialogTitle": {
+    "defaultMessage": "जॉब {id}"
+  },
+  "macLoad.ended": {
+    "defaultMessage": "समाप्त"
+  },
+  "macLoad.exit": {
+    "defaultMessage": "एग्ज़िट कोड"
+  },
+  "macLoad.idleS": {
+    "defaultMessage": "इतने सेकंड बाद निष्क्रिय माना जाए"
+  },
+  "macLoad.inference": {
+    "defaultMessage": "AI इन्फ़रेंस"
+  },
+  "macLoad.inferenceLine": {
+    "defaultMessage": "{engine,plural,one{{slots,plural,one{{engine, number} इंजन अनुरोध · # राउटर स्लॉट} other{{engine, number} इंजन अनुरोध · # राउटर स्लॉट}}} other{{slots,plural,one{{engine, number} इंजन अनुरोध · # राउटर स्लॉट} other{{engine, number} इंजन अनुरोध · # राउटर स्लॉट}}}}"
+  },
+  "macLoad.jobFrom": {
+    "defaultMessage": "{origin} से {kind}"
+  },
+  "macLoad.jobs": {
+    "defaultMessage": "जॉब"
+  },
+  "macLoad.jobsLine": {
+    "defaultMessage": "{live,plural,=0{कोई जॉब नहीं चल रहा} one{# जॉब चल रहा है} other{# जॉब चल रहे हैं}}"
+  },
+  "macLoad.keepRunning": {
+    "defaultMessage": "चलने दें"
+  },
+  "macLoad.kind": {
+    "defaultMessage": "प्रकार"
+  },
+  "macLoad.log": {
+    "defaultMessage": "लॉग"
+  },
+  "macLoad.logEmpty": {
+    "defaultMessage": "अभी कुछ नहीं लिखा गया।"
+  },
+  "macLoad.minFree": {
+    "defaultMessage": "मेमोरी सीमा (% खाली रखी)"
+  },
+  "macLoad.noLoad": {
+    "defaultMessage": "इसका goose अभी लोड नहीं बताता (पुराना बिल्ड)।"
+  },
+  "macLoad.origin": {
+    "defaultMessage": "यहाँ से भेजा गया"
+  },
+  "macLoad.own": {
+    "defaultMessage": "अपना उपयोग"
+  },
+  "macLoad.ownLine": {
+    "defaultMessage": "{user} · cpu {cpu} · मेमोरी {mem} उपयोग में · gpu {gpu}"
+  },
+  "macLoad.policy": {
+    "defaultMessage": "जब कोई इस Mac का उपयोग कर रहा हो"
+  },
+  "macLoad.policy.allow": {
+    "defaultMessage": "जॉब लें"
+  },
+  "macLoad.policy.lastResort": {
+    "defaultMessage": "सिर्फ़ आख़िरी विकल्प के रूप में"
+  },
+  "macLoad.policy.refuse": {
+    "defaultMessage": "जॉब अस्वीकार करें"
+  },
+  "macLoad.reason": {
+    "defaultMessage": "कारण"
+  },
+  "macLoad.reconnectHint": {
+    "defaultMessage": "नीति और मेमोरी सीमा Link के फिर से जुड़ने के बाद लागू होती हैं।"
+  },
+  "macLoad.saveFailed": {
+    "defaultMessage": "सहेजा नहीं गया: {reason}"
+  },
+  "macLoad.settingsTitle": {
+    "defaultMessage": "दूसरे Mac के जॉब"
+  },
+  "macLoad.started": {
+    "defaultMessage": "शुरू हुआ"
+  },
+  "macLoad.state": {
+    "defaultMessage": "स्थिति"
+  },
+  "macLoad.title": {
+    "defaultMessage": "लोड"
+  },
+  "macLoad.userActive": {
+    "defaultMessage": "कोई इसका उपयोग कर रहा है"
+  },
+  "macLoad.userIdle": {
+    "defaultMessage": "निष्क्रिय {idle}"
+  },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "रद्द नहीं हो सका।"
   },

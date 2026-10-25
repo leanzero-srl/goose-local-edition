@@ -4028,6 +4028,120 @@
   "loops.tick.yielded": {
     "defaultMessage": "已讓位於你在「{chat}」中的回合"
   },
+  "macLoad.allowJobs": {
+    "defaultMessage": "執行其他 Mac 傳來的工作"
+  },
+  "macLoad.allowJobsHint": {
+    "defaultMessage": "Shell 指令與提示詞，一次只執行一個重工作，超過記憶體下限即會終止。立即生效。"
+  },
+  "macLoad.benchmark": {
+    "defaultMessage": "基準測試執行中：{why}"
+  },
+  "macLoad.cancelBody": {
+    "defaultMessage": "這會停止 {mac} 上的工作及其啟動的所有程序。已寫入的內容會保留在記錄中。"
+  },
+  "macLoad.cancelJob": {
+    "defaultMessage": "取消工作"
+  },
+  "macLoad.cancelTitle": {
+    "defaultMessage": "取消工作 {id}？"
+  },
+  "macLoad.close": {
+    "defaultMessage": "關閉"
+  },
+  "macLoad.dialogTitle": {
+    "defaultMessage": "工作 {id}"
+  },
+  "macLoad.ended": {
+    "defaultMessage": "已結束"
+  },
+  "macLoad.exit": {
+    "defaultMessage": "結束代碼"
+  },
+  "macLoad.idleS": {
+    "defaultMessage": "幾秒後視為閒置"
+  },
+  "macLoad.inference": {
+    "defaultMessage": "AI 推論"
+  },
+  "macLoad.inferenceLine": {
+    "defaultMessage": "{engine,plural,one{{slots,plural,one{{engine, number} 個引擎請求 · # 個路由槽位} other{{engine, number} 個引擎請求 · # 個路由槽位}}} other{{slots,plural,one{{engine, number} 個引擎請求 · # 個路由槽位} other{{engine, number} 個引擎請求 · # 個路由槽位}}}}"
+  },
+  "macLoad.jobFrom": {
+    "defaultMessage": "來自 {origin} 的 {kind}"
+  },
+  "macLoad.jobs": {
+    "defaultMessage": "工作"
+  },
+  "macLoad.jobsLine": {
+    "defaultMessage": "{live,plural,=0{沒有執行中的工作} one{# 個工作執行中} other{# 個工作執行中}}"
+  },
+  "macLoad.keepRunning": {
+    "defaultMessage": "繼續執行"
+  },
+  "macLoad.kind": {
+    "defaultMessage": "類型"
+  },
+  "macLoad.log": {
+    "defaultMessage": "記錄"
+  },
+  "macLoad.logEmpty": {
+    "defaultMessage": "尚無內容。"
+  },
+  "macLoad.minFree": {
+    "defaultMessage": "記憶體下限（保留閒置 %）"
+  },
+  "macLoad.noLoad": {
+    "defaultMessage": "它的 goose 尚未回報負載（舊版本）。"
+  },
+  "macLoad.origin": {
+    "defaultMessage": "傳送自"
+  },
+  "macLoad.own": {
+    "defaultMessage": "自身使用"
+  },
+  "macLoad.ownLine": {
+    "defaultMessage": "{user} · cpu {cpu} · 記憶體已用 {mem} · gpu {gpu}"
+  },
+  "macLoad.policy": {
+    "defaultMessage": "有人使用這台 Mac 時"
+  },
+  "macLoad.policy.allow": {
+    "defaultMessage": "接受工作"
+  },
+  "macLoad.policy.lastResort": {
+    "defaultMessage": "僅作為最後手段"
+  },
+  "macLoad.policy.refuse": {
+    "defaultMessage": "拒絕工作"
+  },
+  "macLoad.reason": {
+    "defaultMessage": "原因"
+  },
+  "macLoad.reconnectHint": {
+    "defaultMessage": "政策與記憶體下限會在 Link 重新連線後生效。"
+  },
+  "macLoad.saveFailed": {
+    "defaultMessage": "未儲存：{reason}"
+  },
+  "macLoad.settingsTitle": {
+    "defaultMessage": "來自其他 Mac 的工作"
+  },
+  "macLoad.started": {
+    "defaultMessage": "開始時間"
+  },
+  "macLoad.state": {
+    "defaultMessage": "狀態"
+  },
+  "macLoad.title": {
+    "defaultMessage": "負載"
+  },
+  "macLoad.userActive": {
+    "defaultMessage": "有人正在使用"
+  },
+  "macLoad.userIdle": {
+    "defaultMessage": "閒置 {idle}"
+  },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "取消失敗。"
   },

@@ -4028,6 +4028,120 @@
   "loops.tick.yielded": {
     "defaultMessage": "Ha ceduto il passo al tuo turno in \"{chat}\""
   },
+  "macLoad.allowJobs": {
+    "defaultMessage": "Esegui i job inviati da altri Mac"
+  },
+  "macLoad.allowJobsHint": {
+    "defaultMessage": "Comandi shell e prompt, un job pesante alla volta, fermati se superano la soglia di memoria. Effetto immediato."
+  },
+  "macLoad.benchmark": {
+    "defaultMessage": "Benchmark in corso: {why}"
+  },
+  "macLoad.cancelBody": {
+    "defaultMessage": "Questo ferma il job su {mac} e ogni processo che ha avviato. Ciò che ha già scritto resta nel suo log."
+  },
+  "macLoad.cancelJob": {
+    "defaultMessage": "Annulla job"
+  },
+  "macLoad.cancelTitle": {
+    "defaultMessage": "Annullare il job {id}?"
+  },
+  "macLoad.close": {
+    "defaultMessage": "Chiudi"
+  },
+  "macLoad.dialogTitle": {
+    "defaultMessage": "Job {id}"
+  },
+  "macLoad.ended": {
+    "defaultMessage": "Terminato"
+  },
+  "macLoad.exit": {
+    "defaultMessage": "Codice di uscita"
+  },
+  "macLoad.idleS": {
+    "defaultMessage": "Considerato inattivo dopo (secondi)"
+  },
+  "macLoad.inference": {
+    "defaultMessage": "Inferenza IA"
+  },
+  "macLoad.inferenceLine": {
+    "defaultMessage": "{engine,plural,one{{slots,plural,one{{engine, number} richiesta al motore · # slot del router} other{{engine, number} richiesta al motore · # slot del router}}} other{{slots,plural,one{{engine, number} richieste al motore · # slot del router} other{{engine, number} richieste al motore · # slot del router}}}}"
+  },
+  "macLoad.jobFrom": {
+    "defaultMessage": "{kind} da {origin}"
+  },
+  "macLoad.jobs": {
+    "defaultMessage": "Job"
+  },
+  "macLoad.jobsLine": {
+    "defaultMessage": "{live,plural,=0{Nessun job in esecuzione} one{# job in esecuzione} other{# job in esecuzione}}"
+  },
+  "macLoad.keepRunning": {
+    "defaultMessage": "Lascia in esecuzione"
+  },
+  "macLoad.kind": {
+    "defaultMessage": "Tipo"
+  },
+  "macLoad.log": {
+    "defaultMessage": "Log"
+  },
+  "macLoad.logEmpty": {
+    "defaultMessage": "Ancora niente di scritto."
+  },
+  "macLoad.minFree": {
+    "defaultMessage": "Soglia di memoria (% lasciata libera)"
+  },
+  "macLoad.noLoad": {
+    "defaultMessage": "Il suo goose non riporta ancora il carico (build più vecchia)."
+  },
+  "macLoad.origin": {
+    "defaultMessage": "Inviato da"
+  },
+  "macLoad.own": {
+    "defaultMessage": "Uso proprio"
+  },
+  "macLoad.ownLine": {
+    "defaultMessage": "{user} · cpu {cpu} · memoria {mem} usata · gpu {gpu}"
+  },
+  "macLoad.policy": {
+    "defaultMessage": "Mentre qualcuno usa questo Mac"
+  },
+  "macLoad.policy.allow": {
+    "defaultMessage": "Accetta job"
+  },
+  "macLoad.policy.lastResort": {
+    "defaultMessage": "Solo come ultima risorsa"
+  },
+  "macLoad.policy.refuse": {
+    "defaultMessage": "Rifiuta job"
+  },
+  "macLoad.reason": {
+    "defaultMessage": "Motivo"
+  },
+  "macLoad.reconnectHint": {
+    "defaultMessage": "La regola e la soglia di memoria valgono dopo che Link si riconnette."
+  },
+  "macLoad.saveFailed": {
+    "defaultMessage": "Non salvato: {reason}"
+  },
+  "macLoad.settingsTitle": {
+    "defaultMessage": "Job da altri Mac"
+  },
+  "macLoad.started": {
+    "defaultMessage": "Avviato"
+  },
+  "macLoad.state": {
+    "defaultMessage": "Stato"
+  },
+  "macLoad.title": {
+    "defaultMessage": "Carico"
+  },
+  "macLoad.userActive": {
+    "defaultMessage": "Qualcuno lo sta usando"
+  },
+  "macLoad.userIdle": {
+    "defaultMessage": "Inattivo {idle}"
+  },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "Annullamento non riuscito."
   },

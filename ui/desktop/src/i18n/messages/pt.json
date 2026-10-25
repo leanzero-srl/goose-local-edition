@@ -4028,6 +4028,120 @@
   "loops.tick.yielded": {
     "defaultMessage": "Cedeu a vez ao seu turno em \"{chat}\""
   },
+  "macLoad.allowJobs": {
+    "defaultMessage": "Executar tarefas enviadas por outros Macs"
+  },
+  "macLoad.allowJobsHint": {
+    "defaultMessage": "Comandos de shell e prompts, uma tarefa pesada de cada vez, encerradas ao ultrapassar o limite de memória. Vale na hora."
+  },
+  "macLoad.benchmark": {
+    "defaultMessage": "Benchmark em execução: {why}"
+  },
+  "macLoad.cancelBody": {
+    "defaultMessage": "Isso para a tarefa em {mac} e todos os processos que ela iniciou. O que ela já escreveu fica no log."
+  },
+  "macLoad.cancelJob": {
+    "defaultMessage": "Cancelar tarefa"
+  },
+  "macLoad.cancelTitle": {
+    "defaultMessage": "Cancelar a tarefa {id}?"
+  },
+  "macLoad.close": {
+    "defaultMessage": "Fechar"
+  },
+  "macLoad.dialogTitle": {
+    "defaultMessage": "Tarefa {id}"
+  },
+  "macLoad.ended": {
+    "defaultMessage": "Terminada"
+  },
+  "macLoad.exit": {
+    "defaultMessage": "Código de saída"
+  },
+  "macLoad.idleS": {
+    "defaultMessage": "Conta como ocioso após (segundos)"
+  },
+  "macLoad.inference": {
+    "defaultMessage": "Inferência de IA"
+  },
+  "macLoad.inferenceLine": {
+    "defaultMessage": "{engine,plural,one{{slots,plural,one{{engine, number} pedido ao motor · # vaga do roteador} other{{engine, number} pedido ao motor · # vagas do roteador}}} other{{slots,plural,one{{engine, number} pedidos ao motor · # vaga do roteador} other{{engine, number} pedidos ao motor · # vagas do roteador}}}}"
+  },
+  "macLoad.jobFrom": {
+    "defaultMessage": "{kind} de {origin}"
+  },
+  "macLoad.jobs": {
+    "defaultMessage": "Tarefas"
+  },
+  "macLoad.jobsLine": {
+    "defaultMessage": "{live,plural,=0{Nenhuma tarefa em execução} one{# tarefa em execução} other{# tarefas em execução}}"
+  },
+  "macLoad.keepRunning": {
+    "defaultMessage": "Continuar executando"
+  },
+  "macLoad.kind": {
+    "defaultMessage": "Tipo"
+  },
+  "macLoad.log": {
+    "defaultMessage": "Log"
+  },
+  "macLoad.logEmpty": {
+    "defaultMessage": "Nada escrito ainda."
+  },
+  "macLoad.minFree": {
+    "defaultMessage": "Limite de memória (% mantida livre)"
+  },
+  "macLoad.noLoad": {
+    "defaultMessage": "O goose dele ainda não informa a carga (build antiga)."
+  },
+  "macLoad.origin": {
+    "defaultMessage": "Enviado de"
+  },
+  "macLoad.own": {
+    "defaultMessage": "Uso próprio"
+  },
+  "macLoad.ownLine": {
+    "defaultMessage": "{user} · cpu {cpu} · memória {mem} usada · gpu {gpu}"
+  },
+  "macLoad.policy": {
+    "defaultMessage": "Enquanto alguém usa este Mac"
+  },
+  "macLoad.policy.allow": {
+    "defaultMessage": "Aceitar tarefas"
+  },
+  "macLoad.policy.lastResort": {
+    "defaultMessage": "Só como último recurso"
+  },
+  "macLoad.policy.refuse": {
+    "defaultMessage": "Recusar tarefas"
+  },
+  "macLoad.reason": {
+    "defaultMessage": "Motivo"
+  },
+  "macLoad.reconnectHint": {
+    "defaultMessage": "A política e o limite de memória valem depois que o Link se reconectar."
+  },
+  "macLoad.saveFailed": {
+    "defaultMessage": "Não salvo: {reason}"
+  },
+  "macLoad.settingsTitle": {
+    "defaultMessage": "Tarefas de outros Macs"
+  },
+  "macLoad.started": {
+    "defaultMessage": "Iniciada"
+  },
+  "macLoad.state": {
+    "defaultMessage": "Estado"
+  },
+  "macLoad.title": {
+    "defaultMessage": "Carga"
+  },
+  "macLoad.userActive": {
+    "defaultMessage": "Alguém está usando"
+  },
+  "macLoad.userIdle": {
+    "defaultMessage": "Ocioso {idle}"
+  },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "Falha ao cancelar."
   },

@@ -4028,6 +4028,120 @@
   "loops.tick.yielded": {
     "defaultMessage": "Уступила ход вам в «{chat}»"
   },
+  "macLoad.allowJobs": {
+    "defaultMessage": "Выполнять задания от других Mac"
+  },
+  "macLoad.allowJobsHint": {
+    "defaultMessage": "Команды оболочки и промпты, одно тяжёлое задание за раз, останавливаются при выходе за порог памяти. Действует сразу."
+  },
+  "macLoad.benchmark": {
+    "defaultMessage": "Идёт бенчмарк: {why}"
+  },
+  "macLoad.cancelBody": {
+    "defaultMessage": "Это остановит задание на {mac} и все запущенные им процессы. То, что оно уже записало, останется в его журнале."
+  },
+  "macLoad.cancelJob": {
+    "defaultMessage": "Отменить задание"
+  },
+  "macLoad.cancelTitle": {
+    "defaultMessage": "Отменить задание {id}?"
+  },
+  "macLoad.close": {
+    "defaultMessage": "Закрыть"
+  },
+  "macLoad.dialogTitle": {
+    "defaultMessage": "Задание {id}"
+  },
+  "macLoad.ended": {
+    "defaultMessage": "Завершено"
+  },
+  "macLoad.exit": {
+    "defaultMessage": "Код выхода"
+  },
+  "macLoad.idleS": {
+    "defaultMessage": "Считать простоем через (секунд)"
+  },
+  "macLoad.inference": {
+    "defaultMessage": "ИИ-инференс"
+  },
+  "macLoad.inferenceLine": {
+    "defaultMessage": "{engine,plural,one{{slots,plural,one{{engine, number} запрос к движку · # слот роутера} few{{engine, number} запрос к движку · # слота роутера} many{{engine, number} запрос к движку · # слотов роутера} other{{engine, number} запрос к движку · # слота роутера}}} few{{slots,plural,one{{engine, number} запроса к движку · # слот роутера} few{{engine, number} запроса к движку · # слота роутера} many{{engine, number} запроса к движку · # слотов роутера} other{{engine, number} запроса к движку · # слота роутера}}} many{{slots,plural,one{{engine, number} запросов к движку · # слот роутера} few{{engine, number} запросов к движку · # слота роутера} many{{engine, number} запросов к движку · # слотов роутера} other{{engine, number} запросов к движку · # слота роутера}}} other{{slots,plural,one{{engine, number} запроса к движку · # слот роутера} few{{engine, number} запроса к движку · # слота роутера} many{{engine, number} запроса к движку · # слотов роутера} other{{engine, number} запроса к движку · # слота роутера}}}}"
+  },
+  "macLoad.jobFrom": {
+    "defaultMessage": "{kind} от {origin}"
+  },
+  "macLoad.jobs": {
+    "defaultMessage": "Задания"
+  },
+  "macLoad.jobsLine": {
+    "defaultMessage": "{live,plural,=0{Заданий не выполняется} one{# задание выполняется} few{# задания выполняются} many{# заданий выполняется} other{# задания выполняется}}"
+  },
+  "macLoad.keepRunning": {
+    "defaultMessage": "Оставить"
+  },
+  "macLoad.kind": {
+    "defaultMessage": "Тип"
+  },
+  "macLoad.log": {
+    "defaultMessage": "Журнал"
+  },
+  "macLoad.logEmpty": {
+    "defaultMessage": "Пока ничего не записано."
+  },
+  "macLoad.minFree": {
+    "defaultMessage": "Порог памяти (% свободно)"
+  },
+  "macLoad.noLoad": {
+    "defaultMessage": "Его goose пока не сообщает нагрузку (старая сборка)."
+  },
+  "macLoad.origin": {
+    "defaultMessage": "Отправлено с"
+  },
+  "macLoad.own": {
+    "defaultMessage": "Собственная нагрузка"
+  },
+  "macLoad.ownLine": {
+    "defaultMessage": "{user} · cpu {cpu} · память {mem} занята · gpu {gpu}"
+  },
+  "macLoad.policy": {
+    "defaultMessage": "Пока кто-то работает за этим Mac"
+  },
+  "macLoad.policy.allow": {
+    "defaultMessage": "Принимать задания"
+  },
+  "macLoad.policy.lastResort": {
+    "defaultMessage": "Только в крайнем случае"
+  },
+  "macLoad.policy.refuse": {
+    "defaultMessage": "Отклонять задания"
+  },
+  "macLoad.reason": {
+    "defaultMessage": "Причина"
+  },
+  "macLoad.reconnectHint": {
+    "defaultMessage": "Политика и порог памяти применятся после переподключения Link."
+  },
+  "macLoad.saveFailed": {
+    "defaultMessage": "Не сохранено: {reason}"
+  },
+  "macLoad.settingsTitle": {
+    "defaultMessage": "Задания от других Mac"
+  },
+  "macLoad.started": {
+    "defaultMessage": "Запущено"
+  },
+  "macLoad.state": {
+    "defaultMessage": "Состояние"
+  },
+  "macLoad.title": {
+    "defaultMessage": "Нагрузка"
+  },
+  "macLoad.userActive": {
+    "defaultMessage": "Кто-то за ним работает"
+  },
+  "macLoad.userIdle": {
+    "defaultMessage": "Простой {idle}"
+  },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "Не удалось отменить."
   },

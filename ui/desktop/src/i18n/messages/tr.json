@@ -4028,6 +4028,120 @@
   "loops.tick.yielded": {
     "defaultMessage": "\"{chat}\" sohbetindeki sırana yer açtı"
   },
+  "macLoad.allowJobs": {
+    "defaultMessage": "Diğer Mac’lerin gönderdiği işleri çalıştır"
+  },
+  "macLoad.allowJobsHint": {
+    "defaultMessage": "Kabuk komutları ve istemler, aynı anda tek ağır iş, bellek eşiğini aşınca durdurulur. Hemen geçerli olur."
+  },
+  "macLoad.benchmark": {
+    "defaultMessage": "Kıyaslama çalışıyor: {why}"
+  },
+  "macLoad.cancelBody": {
+    "defaultMessage": "Bu, {mac} üzerindeki işi ve başlattığı her süreci durdurur. Zaten yazdıkları günlüğünde kalır."
+  },
+  "macLoad.cancelJob": {
+    "defaultMessage": "İşi iptal et"
+  },
+  "macLoad.cancelTitle": {
+    "defaultMessage": "{id} işi iptal edilsin mi?"
+  },
+  "macLoad.close": {
+    "defaultMessage": "Kapat"
+  },
+  "macLoad.dialogTitle": {
+    "defaultMessage": "İş {id}"
+  },
+  "macLoad.ended": {
+    "defaultMessage": "Bitti"
+  },
+  "macLoad.exit": {
+    "defaultMessage": "Çıkış kodu"
+  },
+  "macLoad.idleS": {
+    "defaultMessage": "Şu süreden sonra boşta sayılır (saniye)"
+  },
+  "macLoad.inference": {
+    "defaultMessage": "Yapay zekâ çıkarımı"
+  },
+  "macLoad.inferenceLine": {
+    "defaultMessage": "{engine,plural,one{{slots,plural,one{{engine, number} motor isteği · # yönlendirici yuvası} other{{engine, number} motor isteği · # yönlendirici yuvası}}} other{{slots,plural,one{{engine, number} motor isteği · # yönlendirici yuvası} other{{engine, number} motor isteği · # yönlendirici yuvası}}}}"
+  },
+  "macLoad.jobFrom": {
+    "defaultMessage": "{origin} kaynaklı {kind}"
+  },
+  "macLoad.jobs": {
+    "defaultMessage": "İşler"
+  },
+  "macLoad.jobsLine": {
+    "defaultMessage": "{live,plural,=0{Çalışan iş yok} one{# iş çalışıyor} other{# iş çalışıyor}}"
+  },
+  "macLoad.keepRunning": {
+    "defaultMessage": "Çalışmaya devam etsin"
+  },
+  "macLoad.kind": {
+    "defaultMessage": "Tür"
+  },
+  "macLoad.log": {
+    "defaultMessage": "Günlük"
+  },
+  "macLoad.logEmpty": {
+    "defaultMessage": "Henüz bir şey yazılmadı."
+  },
+  "macLoad.minFree": {
+    "defaultMessage": "Bellek eşiği (% boş tutulan)"
+  },
+  "macLoad.noLoad": {
+    "defaultMessage": "Onun goose’u henüz yük bildirmiyor (eski sürüm)."
+  },
+  "macLoad.origin": {
+    "defaultMessage": "Gönderen"
+  },
+  "macLoad.own": {
+    "defaultMessage": "Kendi kullanımı"
+  },
+  "macLoad.ownLine": {
+    "defaultMessage": "{user} · cpu {cpu} · bellek {mem} kullanımda · gpu {gpu}"
+  },
+  "macLoad.policy": {
+    "defaultMessage": "Biri bu Mac’i kullanırken"
+  },
+  "macLoad.policy.allow": {
+    "defaultMessage": "İşleri al"
+  },
+  "macLoad.policy.lastResort": {
+    "defaultMessage": "Yalnızca son çare olarak"
+  },
+  "macLoad.policy.refuse": {
+    "defaultMessage": "İşleri reddet"
+  },
+  "macLoad.reason": {
+    "defaultMessage": "Neden"
+  },
+  "macLoad.reconnectHint": {
+    "defaultMessage": "Politika ve bellek eşiği Link yeniden bağlandıktan sonra uygulanır."
+  },
+  "macLoad.saveFailed": {
+    "defaultMessage": "Kaydedilmedi: {reason}"
+  },
+  "macLoad.settingsTitle": {
+    "defaultMessage": "Diğer Mac’lerden işler"
+  },
+  "macLoad.started": {
+    "defaultMessage": "Başladı"
+  },
+  "macLoad.state": {
+    "defaultMessage": "Durum"
+  },
+  "macLoad.title": {
+    "defaultMessage": "Yük"
+  },
+  "macLoad.userActive": {
+    "defaultMessage": "Biri kullanıyor"
+  },
+  "macLoad.userIdle": {
+    "defaultMessage": "Boşta {idle}"
+  },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "İptal edilemedi."
   },

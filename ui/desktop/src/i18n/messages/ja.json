@@ -4028,6 +4028,120 @@
   "loops.tick.yielded": {
     "defaultMessage": "「{chat}」でのあなたのターンに譲りました"
   },
+  "macLoad.allowJobs": {
+    "defaultMessage": "他の Mac から送られたジョブを実行"
+  },
+  "macLoad.allowJobsHint": {
+    "defaultMessage": "シェルコマンドとプロンプト。重いジョブは一度に 1 つ、メモリの下限を超えると停止。すぐに反映されます。"
+  },
+  "macLoad.benchmark": {
+    "defaultMessage": "ベンチマーク実行中: {why}"
+  },
+  "macLoad.cancelBody": {
+    "defaultMessage": "{mac} 上のジョブと、それが起動したすべてのプロセスを停止します。すでに書き出した内容はログに残ります。"
+  },
+  "macLoad.cancelJob": {
+    "defaultMessage": "ジョブをキャンセル"
+  },
+  "macLoad.cancelTitle": {
+    "defaultMessage": "ジョブ {id} をキャンセルしますか？"
+  },
+  "macLoad.close": {
+    "defaultMessage": "閉じる"
+  },
+  "macLoad.dialogTitle": {
+    "defaultMessage": "ジョブ {id}"
+  },
+  "macLoad.ended": {
+    "defaultMessage": "終了"
+  },
+  "macLoad.exit": {
+    "defaultMessage": "終了コード"
+  },
+  "macLoad.idleS": {
+    "defaultMessage": "アイドルとみなすまで（秒）"
+  },
+  "macLoad.inference": {
+    "defaultMessage": "AI 推論"
+  },
+  "macLoad.inferenceLine": {
+    "defaultMessage": "{engine,plural,one{{slots,plural,one{エンジン要求 {engine, number} 件 · ルータースロット # 個} other{エンジン要求 {engine, number} 件 · ルータースロット # 個}}} other{{slots,plural,one{エンジン要求 {engine, number} 件 · ルータースロット # 個} other{エンジン要求 {engine, number} 件 · ルータースロット # 個}}}}"
+  },
+  "macLoad.jobFrom": {
+    "defaultMessage": "{origin} からの {kind}"
+  },
+  "macLoad.jobs": {
+    "defaultMessage": "ジョブ"
+  },
+  "macLoad.jobsLine": {
+    "defaultMessage": "{live,plural,=0{実行中のジョブなし} one{# 件のジョブを実行中} other{# 件のジョブを実行中}}"
+  },
+  "macLoad.keepRunning": {
+    "defaultMessage": "実行を続ける"
+  },
+  "macLoad.kind": {
+    "defaultMessage": "種類"
+  },
+  "macLoad.log": {
+    "defaultMessage": "ログ"
+  },
+  "macLoad.logEmpty": {
+    "defaultMessage": "まだ何も書かれていません。"
+  },
+  "macLoad.minFree": {
+    "defaultMessage": "メモリの下限（空けておく %）"
+  },
+  "macLoad.noLoad": {
+    "defaultMessage": "この Mac の goose はまだ負荷を報告しません（古いビルド）。"
+  },
+  "macLoad.origin": {
+    "defaultMessage": "送信元"
+  },
+  "macLoad.own": {
+    "defaultMessage": "自分の使用"
+  },
+  "macLoad.ownLine": {
+    "defaultMessage": "{user} · cpu {cpu} · メモリ {mem} 使用 · gpu {gpu}"
+  },
+  "macLoad.policy": {
+    "defaultMessage": "誰かがこの Mac を使っているとき"
+  },
+  "macLoad.policy.allow": {
+    "defaultMessage": "ジョブを受ける"
+  },
+  "macLoad.policy.lastResort": {
+    "defaultMessage": "最後の手段としてのみ"
+  },
+  "macLoad.policy.refuse": {
+    "defaultMessage": "ジョブを断る"
+  },
+  "macLoad.reason": {
+    "defaultMessage": "理由"
+  },
+  "macLoad.reconnectHint": {
+    "defaultMessage": "ポリシーとメモリの下限は Link の再接続後に適用されます。"
+  },
+  "macLoad.saveFailed": {
+    "defaultMessage": "保存されませんでした: {reason}"
+  },
+  "macLoad.settingsTitle": {
+    "defaultMessage": "他の Mac からのジョブ"
+  },
+  "macLoad.started": {
+    "defaultMessage": "開始"
+  },
+  "macLoad.state": {
+    "defaultMessage": "状態"
+  },
+  "macLoad.title": {
+    "defaultMessage": "負荷"
+  },
+  "macLoad.userActive": {
+    "defaultMessage": "誰かが使用中"
+  },
+  "macLoad.userIdle": {
+    "defaultMessage": "アイドル {idle}"
+  },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "キャンセルできませんでした。"
   },

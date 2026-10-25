@@ -4028,6 +4028,120 @@
   "loops.tick.yielded": {
     "defaultMessage": "Memberi laluan kepada giliran anda dalam \"{chat}\""
   },
+  "macLoad.allowJobs": {
+    "defaultMessage": "Jalankan kerja yang dihantar Mac lain"
+  },
+  "macLoad.allowJobsHint": {
+    "defaultMessage": "Arahan shell dan prompt, satu kerja berat pada satu masa, dihentikan apabila melepasi had memori. Berkuat kuasa serta-merta."
+  },
+  "macLoad.benchmark": {
+    "defaultMessage": "Benchmark sedang berjalan: {why}"
+  },
+  "macLoad.cancelBody": {
+    "defaultMessage": "Ini menghentikan kerja pada {mac} dan setiap proses yang dimulakannya. Apa yang sudah ditulis kekal dalam lognya."
+  },
+  "macLoad.cancelJob": {
+    "defaultMessage": "Batalkan kerja"
+  },
+  "macLoad.cancelTitle": {
+    "defaultMessage": "Batalkan kerja {id}?"
+  },
+  "macLoad.close": {
+    "defaultMessage": "Tutup"
+  },
+  "macLoad.dialogTitle": {
+    "defaultMessage": "Kerja {id}"
+  },
+  "macLoad.ended": {
+    "defaultMessage": "Tamat"
+  },
+  "macLoad.exit": {
+    "defaultMessage": "Kod keluar"
+  },
+  "macLoad.idleS": {
+    "defaultMessage": "Dikira melahu selepas (saat)"
+  },
+  "macLoad.inference": {
+    "defaultMessage": "Inferens AI"
+  },
+  "macLoad.inferenceLine": {
+    "defaultMessage": "{engine,plural,one{{slots,plural,one{{engine, number} permintaan enjin · # slot penghala} other{{engine, number} permintaan enjin · # slot penghala}}} other{{slots,plural,one{{engine, number} permintaan enjin · # slot penghala} other{{engine, number} permintaan enjin · # slot penghala}}}}"
+  },
+  "macLoad.jobFrom": {
+    "defaultMessage": "{kind} dari {origin}"
+  },
+  "macLoad.jobs": {
+    "defaultMessage": "Kerja"
+  },
+  "macLoad.jobsLine": {
+    "defaultMessage": "{live,plural,=0{Tiada kerja berjalan} one{# kerja berjalan} other{# kerja berjalan}}"
+  },
+  "macLoad.keepRunning": {
+    "defaultMessage": "Biarkan berjalan"
+  },
+  "macLoad.kind": {
+    "defaultMessage": "Jenis"
+  },
+  "macLoad.log": {
+    "defaultMessage": "Log"
+  },
+  "macLoad.logEmpty": {
+    "defaultMessage": "Belum ada apa-apa ditulis."
+  },
+  "macLoad.minFree": {
+    "defaultMessage": "Had memori (% dikekalkan kosong)"
+  },
+  "macLoad.noLoad": {
+    "defaultMessage": "goose-nya belum melaporkan beban (binaan lama)."
+  },
+  "macLoad.origin": {
+    "defaultMessage": "Dihantar dari"
+  },
+  "macLoad.own": {
+    "defaultMessage": "Kegunaan sendiri"
+  },
+  "macLoad.ownLine": {
+    "defaultMessage": "{user} · cpu {cpu} · memori {mem} digunakan · gpu {gpu}"
+  },
+  "macLoad.policy": {
+    "defaultMessage": "Semasa seseorang menggunakan Mac ini"
+  },
+  "macLoad.policy.allow": {
+    "defaultMessage": "Terima kerja"
+  },
+  "macLoad.policy.lastResort": {
+    "defaultMessage": "Hanya sebagai pilihan terakhir"
+  },
+  "macLoad.policy.refuse": {
+    "defaultMessage": "Tolak kerja"
+  },
+  "macLoad.reason": {
+    "defaultMessage": "Sebab"
+  },
+  "macLoad.reconnectHint": {
+    "defaultMessage": "Dasar dan had memori berkuat kuasa selepas Link bersambung semula."
+  },
+  "macLoad.saveFailed": {
+    "defaultMessage": "Tidak disimpan: {reason}"
+  },
+  "macLoad.settingsTitle": {
+    "defaultMessage": "Kerja dari Mac lain"
+  },
+  "macLoad.started": {
+    "defaultMessage": "Dimulakan"
+  },
+  "macLoad.state": {
+    "defaultMessage": "Keadaan"
+  },
+  "macLoad.title": {
+    "defaultMessage": "Beban"
+  },
+  "macLoad.userActive": {
+    "defaultMessage": "Seseorang sedang menggunakannya"
+  },
+  "macLoad.userIdle": {
+    "defaultMessage": "Melahu {idle}"
+  },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "Gagal membatalkan."
   },
