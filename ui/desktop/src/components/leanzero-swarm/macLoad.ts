@@ -57,9 +57,12 @@ export function inferenceCount(load: NodeLoad): number {
   return load.inference.engine_active + load.inference.router_slots_used;
 }
 
-/** Jobs still holding the Mac (queued or running); ended ones are listed but do not fill the bar. */
+/**
+ * Jobs still holding the Mac (queued, running, or cancelling until the group exits); ended ones
+ * are listed but do not fill the bar.
+ */
 export function liveJobs(jobs: readonly JobBrief[]): JobBrief[] {
-  return jobs.filter((j) => j.state === 'queued' || j.state === 'running');
+  return jobs.filter((j) => !isTerminal(j.state));
 }
 
 export function loadBars(load: NodeLoad): LoadBar[] {
@@ -72,8 +75,9 @@ export function loadBars(load: NodeLoad): LoadBar[] {
   ];
 }
 
+/** A final state: nothing more will change. `cancelling` is not final — keep reading. */
 export function isTerminal(state: JobState): boolean {
-  return state !== 'queued' && state !== 'running';
+  return state !== 'queued' && state !== 'running' && state !== 'cancelling';
 }
 
 /** The values the jobs tunables take; mirrors leanzero-link `UserActivePolicy::parse`. */

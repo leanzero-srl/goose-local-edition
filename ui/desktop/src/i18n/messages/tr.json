@@ -6615,7 +6615,7 @@
     "defaultMessage": "Diğer Mac’lerim bu Mac’i kullanabilsin"
   },
   "myMacs.masterHint": {
-    "defaultMessage": "Yalnızca LeanZero Link hesabınızda oturum açmış Mac’ler. Her anahtar yalnızca goose’un kendi işlemlerini açar — asla rastgele bir komutu değil."
+    "defaultMessage": "Yalnızca LeanZero Link hesabınızda oturum açmış Mac’ler. Bu anahtarlar goose’un kendi işlemlerini kapsar: modeller, sohbet ve diğer Mac’lerinizin burada başlattığı istem oturumları. Kabuk komutları ve istem işleri için ayrı bir anahtar vardır, “Diğer Mac’lerin gönderdiği işleri çalıştır”; siz açana kadar kapalıdır."
   },
   "myMacs.memory": {
     "defaultMessage": "Bellek"
@@ -11797,5 +11797,65 @@
   },
   "modelCustomFields.noFields": {
     "defaultMessage": "Özel alanlar: {provider}, “{model}” için hiçbir alan bildirmiyor; bu yüzden sağlayıcının varsayılanlarıyla çalışır."
+  },
+  "macLoad.stateCancelling": {
+    "defaultMessage": "İptal ediliyor…"
+  },
+  "myMacs.runJob": {
+    "defaultMessage": "İş çalıştır…"
+  },
+  "runJob.title": {
+    "defaultMessage": "İşi şurada çalıştır…"
+  },
+  "runJob.target": {
+    "defaultMessage": "Çalıştırılacak yer"
+  },
+  "runJob.best": {
+    "defaultMessage": "En iyi Mac"
+  },
+  "runJob.ranking": {
+    "defaultMessage": "Şu an en iyi: {macs}"
+  },
+  "runJob.inUse": {
+    "defaultMessage": "{name} (kullanımda)"
+  },
+  "runJob.noPlace": {
+    "defaultMessage": "Şu anda hiçbir Mac bu işi alamıyor."
+  },
+  "runJob.none": {
+    "defaultMessage": "Şu anda Mac’lerinizin hiçbiri iş almıyor. İşleri çalıştıracak Mac’te “Diğer Mac’lerin gönderdiği işleri çalıştır” anahtarını açın."
+  },
+  "runJob.kind": {
+    "defaultMessage": "Tür"
+  },
+  "runJob.kindShell": {
+    "defaultMessage": "Kabuk komutu"
+  },
+  "runJob.kindPrompt": {
+    "defaultMessage": "İstem"
+  },
+  "runJob.command": {
+    "defaultMessage": "{kind, select, shell {Komut} other {İstem}}"
+  },
+  "runJob.heavy": {
+    "defaultMessage": "Ağır iş"
+  },
+  "runJob.heavyHint": {
+    "defaultMessage": "Bir Mac aynı anda yalnızca bir ağır iş çalıştırır (derlemeler, işlemeler, eğitim)."
+  },
+  "runJob.mem": {
+    "defaultMessage": "Gereken bellek (GB, isteğe bağlı)"
+  },
+  "runJob.timeout": {
+    "defaultMessage": "Süre sınırı (saniye, isteğe bağlı)"
+  },
+  "runJob.submit": {
+    "defaultMessage": "İşi çalıştır"
+  },
+  "runJob.close": {
+    "defaultMessage": "Kapat"
+  },
+  "runJob.refused": {
+    "defaultMessage": "Gönderilmedi: {reason}"
   }
 }

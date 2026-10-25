@@ -6615,7 +6615,7 @@
     "defaultMessage": "내 다른 Mac이 이 Mac 사용 허용"
   },
   "myMacs.masterHint": {
-    "defaultMessage": "LeanZero Link 계정에 로그인한 Mac만 해당됩니다. 각 스위치는 goose 자체 작업만 허용하며, 임의의 명령은 절대 허용하지 않습니다."
+    "defaultMessage": "LeanZero Link 계정에 로그인한 Mac만 해당됩니다. 이 스위치는 goose 자체 작업을 다룹니다: 모델, 채팅, 그리고 다른 Mac이 여기서 시작하는 프롬프트 세션. 셸 명령과 프롬프트 작업은 별도 스위치인 “다른 Mac이 보낸 작업 실행”으로 제어되며, 직접 켜기 전까지 꺼져 있습니다."
   },
   "myMacs.memory": {
     "defaultMessage": "메모리"
@@ -11797,5 +11797,65 @@
   },
   "modelCustomFields.noFields": {
     "defaultMessage": "사용자 지정 필드: {provider}이(가) “{model}”에 대해 선언한 필드가 없으므로 공급자 기본값으로 실행됩니다."
+  },
+  "macLoad.stateCancelling": {
+    "defaultMessage": "취소 중…"
+  },
+  "myMacs.runJob": {
+    "defaultMessage": "작업 실행…"
+  },
+  "runJob.title": {
+    "defaultMessage": "작업 실행 위치…"
+  },
+  "runJob.target": {
+    "defaultMessage": "실행 위치"
+  },
+  "runJob.best": {
+    "defaultMessage": "최적의 Mac"
+  },
+  "runJob.ranking": {
+    "defaultMessage": "현재 최적: {macs}"
+  },
+  "runJob.inUse": {
+    "defaultMessage": "{name}(사용 중)"
+  },
+  "runJob.noPlace": {
+    "defaultMessage": "지금은 이 작업을 받을 수 있는 Mac이 없습니다."
+  },
+  "runJob.none": {
+    "defaultMessage": "지금 작업을 받는 Mac이 없습니다. 작업을 실행할 Mac에서 “다른 Mac이 보낸 작업 실행”을 켜세요."
+  },
+  "runJob.kind": {
+    "defaultMessage": "종류"
+  },
+  "runJob.kindShell": {
+    "defaultMessage": "셸 명령"
+  },
+  "runJob.kindPrompt": {
+    "defaultMessage": "프롬프트"
+  },
+  "runJob.command": {
+    "defaultMessage": "{kind, select, shell {명령} other {프롬프트}}"
+  },
+  "runJob.heavy": {
+    "defaultMessage": "무거운 작업"
+  },
+  "runJob.heavyHint": {
+    "defaultMessage": "Mac 한 대는 무거운 작업을 한 번에 하나만 실행합니다(빌드, 렌더링, 학습)."
+  },
+  "runJob.mem": {
+    "defaultMessage": "필요한 메모리(GB, 선택)"
+  },
+  "runJob.timeout": {
+    "defaultMessage": "시간 제한(초, 선택)"
+  },
+  "runJob.submit": {
+    "defaultMessage": "작업 실행"
+  },
+  "runJob.close": {
+    "defaultMessage": "닫기"
+  },
+  "runJob.refused": {
+    "defaultMessage": "보내지 않음: {reason}"
   }
 }

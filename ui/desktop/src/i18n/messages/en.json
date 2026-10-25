@@ -4274,6 +4274,9 @@
   "macLoad.state": {
     "defaultMessage": "State"
   },
+  "macLoad.stateCancelling": {
+    "defaultMessage": "Cancelling…"
+  },
   "macLoad.title": {
     "defaultMessage": "Load"
   },
@@ -6762,7 +6765,7 @@
     "defaultMessage": "Let my other Macs use this Mac"
   },
   "myMacs.masterHint": {
-    "defaultMessage": "Only Macs signed in to your LeanZero Link account. Each switch is goose’s own operations — never an arbitrary command."
+    "defaultMessage": "Only Macs signed in to your LeanZero Link account. These switches cover goose’s own operations: models, chat, and prompt sessions your other Macs start here. Shell commands and prompt jobs are a separate switch, “Run jobs other Macs send”, off until you turn it on."
   },
   "myMacs.memory": {
     "defaultMessage": "Memory"
@@ -6808,6 +6811,9 @@
   },
   "myMacs.reconnecting": {
     "defaultMessage": "Reconnecting… (lost contact with this Mac’s goose)"
+  },
+  "myMacs.runJob": {
+    "defaultMessage": "Run a job…"
   },
   "myMacs.saveFailed": {
     "defaultMessage": "The switch was not saved"
@@ -9502,6 +9508,60 @@
   },
   "responseStyle.detailedLabel": {
     "defaultMessage": "Detailed"
+  },
+  "runJob.best": {
+    "defaultMessage": "Best Mac"
+  },
+  "runJob.close": {
+    "defaultMessage": "Close"
+  },
+  "runJob.command": {
+    "defaultMessage": "{kind,select,shell{Command} other{Prompt}}"
+  },
+  "runJob.heavy": {
+    "defaultMessage": "Heavy job"
+  },
+  "runJob.heavyHint": {
+    "defaultMessage": "A Mac runs one heavy job at a time (builds, renders, training)."
+  },
+  "runJob.inUse": {
+    "defaultMessage": "{name} (in use)"
+  },
+  "runJob.kind": {
+    "defaultMessage": "Kind"
+  },
+  "runJob.kindPrompt": {
+    "defaultMessage": "Prompt"
+  },
+  "runJob.kindShell": {
+    "defaultMessage": "Shell command"
+  },
+  "runJob.mem": {
+    "defaultMessage": "Memory it needs (GB, optional)"
+  },
+  "runJob.noPlace": {
+    "defaultMessage": "No Mac can take this job right now."
+  },
+  "runJob.none": {
+    "defaultMessage": "None of your Macs takes jobs now. Turn on “Run jobs other Macs send” on the Mac that should run them."
+  },
+  "runJob.ranking": {
+    "defaultMessage": "Best now: {macs}"
+  },
+  "runJob.refused": {
+    "defaultMessage": "Not sent: {reason}"
+  },
+  "runJob.submit": {
+    "defaultMessage": "Run job"
+  },
+  "runJob.target": {
+    "defaultMessage": "Run on"
+  },
+  "runJob.timeout": {
+    "defaultMessage": "Time limit (seconds, optional)"
+  },
+  "runJob.title": {
+    "defaultMessage": "Run a job on…"
   },
   "scheduleDetailView.actions": {
     "defaultMessage": "Actions"

@@ -6615,7 +6615,7 @@
     "defaultMessage": "मेरे दूसरे Mac इस Mac का उपयोग कर सकें"
   },
   "myMacs.masterHint": {
-    "defaultMessage": "केवल आपके LeanZero Link खाते में साइन इन Mac। हर स्विच goose के अपने ही काम खोलता है — कभी कोई मनमाना कमांड नहीं।"
+    "defaultMessage": "केवल वे Mac जो आपके LeanZero Link खाते में साइन इन हैं। ये स्विच goose के अपने काम संभालते हैं: मॉडल, चैट और वे प्रॉम्प्ट सत्र जो आपके दूसरे Mac यहाँ शुरू करते हैं। शेल कमांड और प्रॉम्प्ट जॉब का अलग स्विच है, “दूसरे Mac से भेजे गए जॉब चलाएँ”, जो तब तक बंद रहता है जब तक आप इसे चालू न करें।"
   },
   "myMacs.memory": {
     "defaultMessage": "मेमोरी"
@@ -11797,5 +11797,65 @@
   },
   "modelCustomFields.noFields": {
     "defaultMessage": "कस्टम फ़ील्ड: {provider} “{model}” के लिए कोई फ़ील्ड घोषित नहीं करता, इसलिए यह प्रदाता के डिफ़ॉल्ट पर चलता है।"
+  },
+  "macLoad.stateCancelling": {
+    "defaultMessage": "रद्द किया जा रहा है…"
+  },
+  "myMacs.runJob": {
+    "defaultMessage": "जॉब चलाएँ…"
+  },
+  "runJob.title": {
+    "defaultMessage": "इस पर जॉब चलाएँ…"
+  },
+  "runJob.target": {
+    "defaultMessage": "कहाँ चलाएँ"
+  },
+  "runJob.best": {
+    "defaultMessage": "सबसे अच्छा Mac"
+  },
+  "runJob.ranking": {
+    "defaultMessage": "अभी सबसे अच्छे: {macs}"
+  },
+  "runJob.inUse": {
+    "defaultMessage": "{name} (उपयोग में)"
+  },
+  "runJob.noPlace": {
+    "defaultMessage": "अभी कोई Mac यह जॉब नहीं ले सकता।"
+  },
+  "runJob.none": {
+    "defaultMessage": "अभी आपका कोई Mac जॉब नहीं ले रहा। जिस Mac पर उन्हें चलाना है, उस पर “दूसरे Mac से भेजे गए जॉब चलाएँ” चालू करें।"
+  },
+  "runJob.kind": {
+    "defaultMessage": "प्रकार"
+  },
+  "runJob.kindShell": {
+    "defaultMessage": "शेल कमांड"
+  },
+  "runJob.kindPrompt": {
+    "defaultMessage": "प्रॉम्प्ट"
+  },
+  "runJob.command": {
+    "defaultMessage": "{kind, select, shell {कमांड} other {प्रॉम्प्ट}}"
+  },
+  "runJob.heavy": {
+    "defaultMessage": "भारी जॉब"
+  },
+  "runJob.heavyHint": {
+    "defaultMessage": "एक Mac एक समय में एक ही भारी जॉब चलाता है (बिल्ड, रेंडर, ट्रेनिंग)।"
+  },
+  "runJob.mem": {
+    "defaultMessage": "ज़रूरी मेमोरी (GB, वैकल्पिक)"
+  },
+  "runJob.timeout": {
+    "defaultMessage": "समय सीमा (सेकंड, वैकल्पिक)"
+  },
+  "runJob.submit": {
+    "defaultMessage": "जॉब चलाएँ"
+  },
+  "runJob.close": {
+    "defaultMessage": "बंद करें"
+  },
+  "runJob.refused": {
+    "defaultMessage": "नहीं भेजा गया: {reason}"
   }
 }

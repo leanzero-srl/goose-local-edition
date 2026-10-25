@@ -6615,7 +6615,7 @@
     "defaultMessage": "Cho các Mac khác của tôi dùng Mac này"
   },
   "myMacs.masterHint": {
-    "defaultMessage": "Chỉ các Mac đã đăng nhập tài khoản LeanZero Link của bạn. Mỗi công tắc chỉ mở các thao tác riêng của goose — không bao giờ là lệnh tùy ý."
+    "defaultMessage": "Chỉ những máy Mac đã đăng nhập vào tài khoản LeanZero Link của bạn. Các công tắc này áp dụng cho thao tác riêng của goose: mô hình, trò chuyện và các phiên prompt mà các máy Mac khác của bạn bắt đầu tại đây. Lệnh shell và tác vụ prompt có công tắc riêng, “Chạy tác vụ do máy Mac khác gửi”, tắt cho đến khi bạn bật."
   },
   "myMacs.memory": {
     "defaultMessage": "Bộ nhớ"
@@ -11797,5 +11797,65 @@
   },
   "modelCustomFields.noFields": {
     "defaultMessage": "Trường tùy chỉnh: {provider} không khai báo trường nào cho “{model}”, nên mô hình chạy theo mặc định của nhà cung cấp."
+  },
+  "macLoad.stateCancelling": {
+    "defaultMessage": "Đang hủy…"
+  },
+  "myMacs.runJob": {
+    "defaultMessage": "Chạy tác vụ…"
+  },
+  "runJob.title": {
+    "defaultMessage": "Chạy tác vụ trên…"
+  },
+  "runJob.target": {
+    "defaultMessage": "Chạy trên"
+  },
+  "runJob.best": {
+    "defaultMessage": "Mac tốt nhất"
+  },
+  "runJob.ranking": {
+    "defaultMessage": "Tốt nhất lúc này: {macs}"
+  },
+  "runJob.inUse": {
+    "defaultMessage": "{name} (đang dùng)"
+  },
+  "runJob.noPlace": {
+    "defaultMessage": "Hiện không có máy Mac nào nhận được tác vụ này."
+  },
+  "runJob.none": {
+    "defaultMessage": "Hiện không có máy Mac nào của bạn nhận tác vụ. Hãy bật “Chạy tác vụ do máy Mac khác gửi” trên máy Mac sẽ chạy chúng."
+  },
+  "runJob.kind": {
+    "defaultMessage": "Loại"
+  },
+  "runJob.kindShell": {
+    "defaultMessage": "Lệnh shell"
+  },
+  "runJob.kindPrompt": {
+    "defaultMessage": "Prompt"
+  },
+  "runJob.command": {
+    "defaultMessage": "{kind, select, shell {Lệnh} other {Prompt}}"
+  },
+  "runJob.heavy": {
+    "defaultMessage": "Tác vụ nặng"
+  },
+  "runJob.heavyHint": {
+    "defaultMessage": "Mỗi máy Mac chỉ chạy một tác vụ nặng tại một thời điểm (build, render, huấn luyện)."
+  },
+  "runJob.mem": {
+    "defaultMessage": "Bộ nhớ cần (GB, tùy chọn)"
+  },
+  "runJob.timeout": {
+    "defaultMessage": "Giới hạn thời gian (giây, tùy chọn)"
+  },
+  "runJob.submit": {
+    "defaultMessage": "Chạy tác vụ"
+  },
+  "runJob.close": {
+    "defaultMessage": "Đóng"
+  },
+  "runJob.refused": {
+    "defaultMessage": "Chưa gửi: {reason}"
   }
 }

@@ -6615,7 +6615,7 @@
     "defaultMessage": "Autoriser mes autres Mac à utiliser ce Mac"
   },
   "myMacs.masterHint": {
-    "defaultMessage": "Uniquement les Mac connectés à votre compte LeanZero Link. Chaque interrupteur couvre des opérations propres à goose — jamais une commande arbitraire."
+    "defaultMessage": "Uniquement les Mac connectés à votre compte LeanZero Link. Ces interrupteurs couvrent les opérations propres à goose : modèles, chat et sessions de prompt que vos autres Mac lancent ici. Les commandes shell et les tâches de prompt ont leur propre interrupteur, « Exécuter les tâches envoyées par d’autres Mac », désactivé tant que vous ne l’activez pas."
   },
   "myMacs.memory": {
     "defaultMessage": "Mémoire"
@@ -11797,5 +11797,65 @@
   },
   "modelCustomFields.noFields": {
     "defaultMessage": "Champs personnalisés : {provider} n’en déclare aucun pour « {model} », il s’exécute donc avec les valeurs par défaut du fournisseur."
+  },
+  "macLoad.stateCancelling": {
+    "defaultMessage": "Annulation…"
+  },
+  "myMacs.runJob": {
+    "defaultMessage": "Lancer une tâche…"
+  },
+  "runJob.title": {
+    "defaultMessage": "Lancer une tâche sur…"
+  },
+  "runJob.target": {
+    "defaultMessage": "Exécuter sur"
+  },
+  "runJob.best": {
+    "defaultMessage": "Meilleur Mac"
+  },
+  "runJob.ranking": {
+    "defaultMessage": "Meilleurs maintenant : {macs}"
+  },
+  "runJob.inUse": {
+    "defaultMessage": "{name} (utilisé)"
+  },
+  "runJob.noPlace": {
+    "defaultMessage": "Aucun Mac ne peut prendre cette tâche pour l’instant."
+  },
+  "runJob.none": {
+    "defaultMessage": "Aucun de vos Mac n’accepte de tâches pour l’instant. Activez « Exécuter les tâches envoyées par d’autres Mac » sur le Mac qui doit les exécuter."
+  },
+  "runJob.kind": {
+    "defaultMessage": "Type"
+  },
+  "runJob.kindShell": {
+    "defaultMessage": "Commande shell"
+  },
+  "runJob.kindPrompt": {
+    "defaultMessage": "Prompt"
+  },
+  "runJob.command": {
+    "defaultMessage": "{kind, select, shell {Commande} other {Prompt}}"
+  },
+  "runJob.heavy": {
+    "defaultMessage": "Tâche lourde"
+  },
+  "runJob.heavyHint": {
+    "defaultMessage": "Un Mac n’exécute qu’une tâche lourde à la fois (builds, rendus, entraînement)."
+  },
+  "runJob.mem": {
+    "defaultMessage": "Mémoire nécessaire (Go, facultatif)"
+  },
+  "runJob.timeout": {
+    "defaultMessage": "Durée maximale (secondes, facultatif)"
+  },
+  "runJob.submit": {
+    "defaultMessage": "Lancer la tâche"
+  },
+  "runJob.close": {
+    "defaultMessage": "Fermer"
+  },
+  "runJob.refused": {
+    "defaultMessage": "Non envoyée : {reason}"
   }
 }

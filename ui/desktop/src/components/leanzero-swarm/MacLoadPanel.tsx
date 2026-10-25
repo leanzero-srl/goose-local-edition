@@ -11,6 +11,7 @@ import {
   leanzeroLinkJobsGet,
   leanzeroLinkJobsLog,
   type JobBrief,
+  type JobState,
   type JobView,
   type NodeLoad,
 } from '../../acp/leanzero-link';
@@ -31,6 +32,8 @@ import {
   type BarId,
   type UserActivePolicy,
 } from './macLoad';
+import { macNameOfNode } from './macs';
+import { useMacsMaybe } from './useMacs';
 
 const i18n = defineMessages({
   loadTitle: { id: 'macLoad.title', defaultMessage: 'Load' },
@@ -59,6 +62,7 @@ const i18n = defineMessages({
   },
   benchmark: { id: 'macLoad.benchmark', defaultMessage: 'Benchmark running: {why}' },
   jobFrom: { id: 'macLoad.jobFrom', defaultMessage: '{kind} from {origin}' },
+  stateCancelling: { id: 'macLoad.stateCancelling', defaultMessage: 'Cancelling…' },
   dialogTitle: { id: 'macLoad.dialogTitle', defaultMessage: 'Job {id}' },
   state: { id: 'macLoad.state', defaultMessage: 'State' },
   kind: { id: 'macLoad.kind', defaultMessage: 'Kind' },
@@ -106,6 +110,17 @@ const BAR_LABEL: Record<BarId, (typeof i18n)['own']> = {
 
 const LOG_POLL_MS = 2000;
 
+/** The job's state as shown: `cancelling` in words (it is waiting on the group), the rest verbatim. */
+function stateText(intl: ReturnType<typeof useIntl>, state: JobState): string {
+  return state === 'cancelling' ? intl.formatMessage(i18n.stateCancelling) : state;
+}
+
+/** Node id → the Mac's name, through the view's Macs when a MacsProvider is above. */
+function useNodeName(): (nodeId: string) => string {
+  const macs = useMacsMaybe()?.macs ?? [];
+  return (nodeId) => macNameOfNode(macs, nodeId);
+}
+
 function pctText(v: number | null): string {
   return v == null ? '—' : `${v}%`;
 }
@@ -127,6 +142,7 @@ export function MacLoadBars({
   macName: string;
 }) {
   const intl = useIntl();
+  const nodeName = useNodeName();
   const [openJob, setOpenJob] = useState<JobBrief | null>(null);
   if (!load) {
     return (
@@ -208,7 +224,10 @@ export function MacLoadBars({
                 {job.job_id}
               </button>
               <span className={TYPE.meta}>
-                {intl.formatMessage(i18n.jobFrom, { kind: job.kind, origin: job.origin_node })}
+                {intl.formatMessage(i18n.jobFrom, {
+                  kind: job.kind,
+                  origin: nodeName(job.origin_node),
+                })}
               </span>
               <span
                 data-testid={`mac-job-${job.job_id}-state`}
@@ -218,7 +237,7 @@ export function MacLoadBars({
                   isTerminal(job.state) ? '' : TONE_TEXT.ok
                 )}
               >
-                {job.state}
+                {stateText(intl, job.state)}
               </span>
             </li>
           ))}
@@ -248,6 +267,7 @@ export function JobDialog({
   onClose: () => void;
 }) {
   const intl = useIntl();
+  const nodeName = useNodeName();
   const { confirm, dialog } = useConfirmDialog();
   const [view, setView] = useState<JobView | null>(null);
   const [log, setLog] = useState('');
@@ -255,6 +275,9 @@ export function JobDialog({
   const [cancelling, setCancelling] = useState(false);
   const next = useRef(0);
   const done = useRef(false);
+  // The view's state is final: with the log complete, nothing more will change. Until then (a
+  // `cancelling` job whose group has not exited, say) the view is read again on every tick.
+  const ended = useRef(isTerminal(brief.state));
 
   useEffect(() => {
     let alive = true;
@@ -262,6 +285,7 @@ export function JobDialog({
       try {
         const v = await leanzeroLinkJobsGet(target, brief.job_id);
         if (!alive) return;
+        ended.current = isTerminal(v.state);
         setView(v);
         if (!done.current) {
           const chunk = await leanzeroLinkJobsLog(target, brief.job_id, next.current);
@@ -277,7 +301,7 @@ export function JobDialog({
     };
     void read();
     const timer = setInterval(() => {
-      if (!done.current) void read();
+      if (!done.current || !ended.current) void read();
     }, LOG_POLL_MS);
     return () => {
       alive = false;
@@ -297,7 +321,9 @@ export function JobDialog({
     if (!ok) return;
     setCancelling(true);
     try {
-      setView(await leanzeroLinkJobsCancel(target, brief.job_id));
+      const v = await leanzeroLinkJobsCancel(target, brief.job_id);
+      ended.current = isTerminal(v.state);
+      setView(v);
       setError(null);
     } catch (e) {
       setError(jobErrorText(e));
@@ -307,9 +333,9 @@ export function JobDialog({
   };
 
   const rows: { key: string; label: string; value: string }[] = [
-    { key: 'state', label: intl.formatMessage(i18n.state), value: shown.state },
+    { key: 'state', label: intl.formatMessage(i18n.state), value: stateText(intl, shown.state) },
     { key: 'kind', label: intl.formatMessage(i18n.kind), value: shown.kind },
-    { key: 'origin', label: intl.formatMessage(i18n.origin), value: shown.origin_node },
+    { key: 'origin', label: intl.formatMessage(i18n.origin), value: nodeName(shown.origin_node) },
     { key: 'started', label: intl.formatMessage(i18n.started), value: shown.started_at },
     ...(view?.ended_at
       ? [{ key: 'ended', label: intl.formatMessage(i18n.ended), value: view.ended_at }]
@@ -369,7 +395,7 @@ export function JobDialog({
         )}
       </div>
       <div className="flex flex-wrap justify-end gap-2">
-        {!isTerminal(shown.state) && (
+        {!isTerminal(shown.state) && shown.state !== 'cancelling' && (
           <Button
             size="sm"
             variant="destructive"

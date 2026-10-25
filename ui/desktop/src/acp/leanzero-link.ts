@@ -198,7 +198,15 @@ export interface InferenceLoad {
 }
 
 export type JobKind = 'shell' | 'prompt';
-export type JobState = 'queued' | 'running' | 'done' | 'failed' | 'killed' | 'cancelled';
+/** `cancelling`: a cancel was sent and the job's process group has not exited yet. */
+export type JobState =
+  | 'queued'
+  | 'running'
+  | 'cancelling'
+  | 'done'
+  | 'failed'
+  | 'killed'
+  | 'cancelled';
 
 /** A job as peers see it: never the command (leanzero-link `JobBrief`). */
 export interface JobBrief {
@@ -404,6 +412,56 @@ export async function leanzeroLinkJobsLog(
     from,
   });
   return r.log;
+}
+
+/** A job to send (leanzero-link `JobRequest`; snake_case inside `job`, as the node's route takes it). */
+export interface JobRequest {
+  kind: JobKind;
+  command: string;
+  cwd?: string;
+  need_mem_gb?: number;
+  heavy: boolean;
+  timeout_s?: number;
+}
+
+/** `{ nodeId, jobId }`: where the job went (the placement's pick when no target was given). */
+export interface JobSubmitResult {
+  nodeId: string;
+  jobId: string;
+}
+
+/**
+ * Send one job. `targetNodeId` omitted = goosed places it on the best Mac (`jobsPlace`'s first).
+ * A refusal (jobs off there, no memory headroom, heavy slot held, …) throws with `data.reason`.
+ */
+export async function leanzeroLinkJobsSubmit(
+  job: JobRequest,
+  targetNodeId?: string
+): Promise<JobSubmitResult> {
+  const params: Record<string, unknown> = { job };
+  if (targetNodeId) params.targetNodeId = targetNodeId;
+  return await call<JobSubmitResult>('_goose/unstable/leanzeroLink/jobsSubmit', params);
+}
+
+/** One candidate Mac for a job, best first (leanzero-link placement). */
+export interface JobPlacement {
+  nodeId: string;
+  userActive: boolean;
+  score: number;
+}
+
+/** Where a job could run now, best first; busy Macs and Macs that refuse jobs are absent. */
+export async function leanzeroLinkJobsPlace(args: {
+  needMemGb?: number;
+  heavy: boolean;
+}): Promise<JobPlacement[]> {
+  const params: Record<string, unknown> = { heavy: args.heavy };
+  if (args.needMemGb != null) params.needMemGb = args.needMemGb;
+  const r = await call<{ placements: JobPlacement[] }>(
+    '_goose/unstable/leanzeroLink/jobsPlace',
+    params
+  );
+  return r.placements;
 }
 
 /**
