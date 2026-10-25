@@ -332,3 +332,30 @@ STEP 5 LIVE — NOT DONE. Prepared on Gabee:
   Option: `Some((pid.trim().parse().ok()?, comm.trim().to_string())).filter(|_| comm.contains("LM Studio"))`), build on Gabee,
   scp target/debug/examples/memfree_lms_probe to the laptop, run it; confirm `lms ps` empty and free GB up. Only unload models
   YOU loaded; remove the downloaded model afterwards.
+
+## AGENT L (live test, 2026-10-25 ~19:30) — steps a/b/c DONE, 1 fix committed, 2 defects OPEN
+Fix d3ffc341b (sidecar memfree, tests 20/20, clippy clean): own engine = whole process tree under status pid
+(uv launcher 18-66 MB, python child 4.9 GB was listed as job "python3.12" -> gooseOwned read 0.06 GB);
+version-named binaries (~/.local/share/claude/versions/2.1.299) group as "claude".
+(a) Gabee, isolated goose serve :18791, Qwen3-8B-4bit mounted + warmed: footprint 18+4869 MB. memoryHolders:
+gooseEngine 4.77 GiB reclaimable. memoryFree{gooseOwned}: freedBytes 5,123,675,416; budget 25.31e9 -> 30.56e9
+(+5.25e9 = +2.5% vs footprint); available 29.52 -> 34.53 GiB; status stopped, python gone. 2nd run with fit
+(27B Q8 Block, short 1.83 GiB, verdict fitsWithApps quit Chrome): freed 4.79 GiB, budget +5.53e9 (+3.4%).
+(b) laptop, LM Studio qwen/qwen3-1.7b MLX 8bit (1.84 GB): same ACP path, goose serve copied to the laptop.
+Group "LM Studio (1 model(s) loaded)" 1.19 GiB reclaimable; free -> "unloaded qwen/qwen3-1.7b", lms ps empty,
+vm free 79.92 -> 81.48 GiB, budget +1.72e9. Model + /tmp/memfree-live removed.
+(c) scratchpad memfree-dialog.png = card's Free-up dialog (2nd "Free up memory" button; the 1st is the per-Mac
+load entry, no fitModelId, no verdict line — by design).
+OPEN DEFECTS:
+1. LM Studio freedBytes = 0.40 GiB while measured rise was 1.6 GiB: freed = group bytes - footprint alive is
+   under-counted (group footprint 1.19 < model 1.84; MLX weights not all in phys_footprint, or settle too early).
+   Look at enrich_ai_servers/free in crates/goose/src/acp/server/memfree.rs; measure with budget delta instead.
+2. Verdict line says "fits after freeing 4.3 GB: goose's own memory and quitting Google Chrome" while goose
+   holds 0 — verdictLine() in ui/desktop/src/components/memfree/memfree.ts must drop the goose clause at 0.
+TRAPS: debug `goose serve` overflows its tokio stack on mlxEngine/mount -> run with RUST_MIN_STACK=16777216.
+CDP 9333 on Gabee is Gabriela's Chrome — use 9471. Gabee NFS model links time out intermittently: a non-fit
+test model = sparse stand-in (safetensors header + truncate to size) in the isolated models dir.
+ACP client: scratchpad live/acp.mjs (node 22 WebSocket, initialize then method). Nodes can be seeded in
+config.yaml `nodes: {version: 1, defs: [{id, name, kind: mlx, model, placement: {kind: single, macs: [local]},
+goal: chat, origin: user}]}` (the New-node dialog refuses a non-fitting way).
+Cleaned: Gabee test model, stand-in, userdata, packaged app stopped. out/ package left in ui/desktop/out.
