@@ -2681,6 +2681,18 @@
   "freeMemory.fitsWithAppsOnly": {
     "defaultMessage": "退出 {apps} 后此模型放得下,可释放 <b>{gb} GB</b>。"
   },
+  "freeMemory.forceStop": {
+    "defaultMessage": "强制停止"
+  },
+  "freeMemory.forceStopBody": {
+    "defaultMessage": "{app} 在被要求退出时没有退出，可能是因为有未保存的工作。强制停止会在 {mac} 上不保存地结束它。{app} 中未保存的工作将丢失。"
+  },
+  "freeMemory.forceStopConfirm": {
+    "defaultMessage": "强制停止 {app}"
+  },
+  "freeMemory.forceStopTitle": {
+    "defaultMessage": "强制停止 {app}？"
+  },
   "freeMemory.freeFailed": {
     "defaultMessage": "无法释放内存:{reason}"
   },
@@ -2712,7 +2724,7 @@
     "defaultMessage": "返回"
   },
   "freeMemory.nuclearConfirmBody": {
-    "defaultMessage": "goose 会请求每个已勾选的应用退出,并卸载每个已勾选的模型服务器。忽略退出请求的应用会收到 SIGTERM,可能丢失未保存的工作:请先保存。受保护的项永远不会被触碰。"
+    "defaultMessage": "goose 会请每个勾选的应用退出，并卸载每个勾选的模型服务器。应用只会被请求退出。没有退出的应用会保持运行并被报告，不会被停止。受保护的项目永远不会被触碰。"
   },
   "freeMemory.nuclearConfirmKeep": {
     "defaultMessage": "全部保留"

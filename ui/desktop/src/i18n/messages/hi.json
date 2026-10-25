@@ -2681,6 +2681,18 @@
   "freeMemory.fitsWithAppsOnly": {
     "defaultMessage": "{apps} को बंद करने के बाद यह मॉडल फ़िट होता है, इससे <b>{gb} GB</b> खाली होता है।"
   },
+  "freeMemory.forceStop": {
+    "defaultMessage": "ज़बरदस्ती बंद करें"
+  },
+  "freeMemory.forceStopBody": {
+    "defaultMessage": "कहने पर {app} बंद नहीं हुआ, शायद उसमें बिना सहेजा काम है। ज़बरदस्ती बंद करने से यह {mac} पर बिना सहेजे बंद हो जाता है। {app} में बिना सहेजा काम खो जाएगा।"
+  },
+  "freeMemory.forceStopConfirm": {
+    "defaultMessage": "{app} को ज़बरदस्ती बंद करें"
+  },
+  "freeMemory.forceStopTitle": {
+    "defaultMessage": "{app} को ज़बरदस्ती बंद करें?"
+  },
   "freeMemory.freeFailed": {
     "defaultMessage": "मेमोरी खाली नहीं हो सकी: {reason}"
   },
@@ -2712,7 +2724,7 @@
     "defaultMessage": "वापस"
   },
   "freeMemory.nuclearConfirmBody": {
-    "defaultMessage": "goose हर टिक किए ऐप से बंद होने को कहता है और हर टिक किए मॉडल सर्वर को अनलोड करता है। जो ऐप बंद होने की बात नहीं मानता उसे SIGTERM मिलता है और बिना सहेजा काम खो सकता है: पहले अपना काम सहेज लें। सुरक्षित चीज़ों को कभी नहीं छुआ जाता।"
+    "defaultMessage": "goose हर चुने गए ऐप से बंद होने को कहता है और हर चुने गए मॉडल सर्वर को अनलोड करता है। ऐप्स से बंद होने को कहा जाता है। जो ऐप बंद नहीं होता, वह चलता रहता है और उसकी रिपोर्ट दी जाती है, उसे रोका नहीं जाता। सुरक्षित आइटम कभी नहीं छुए जाते।"
   },
   "freeMemory.nuclearConfirmKeep": {
     "defaultMessage": "सब रखें"

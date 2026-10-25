@@ -2681,6 +2681,18 @@
   "freeMemory.fitsWithAppsOnly": {
     "defaultMessage": "Mô hình này vừa sau khi thoát {apps}, giải phóng <b>{gb} GB</b>."
   },
+  "freeMemory.forceStop": {
+    "defaultMessage": "Buộc dừng"
+  },
+  "freeMemory.forceStopBody": {
+    "defaultMessage": "{app} không thoát khi được yêu cầu, có thể vì có công việc chưa lưu. Buộc dừng sẽ kết thúc ứng dụng trên {mac} mà không lưu. Công việc chưa lưu trong {app} sẽ bị mất."
+  },
+  "freeMemory.forceStopConfirm": {
+    "defaultMessage": "Buộc dừng {app}"
+  },
+  "freeMemory.forceStopTitle": {
+    "defaultMessage": "Buộc dừng {app}?"
+  },
   "freeMemory.freeFailed": {
     "defaultMessage": "Không thể giải phóng bộ nhớ: {reason}"
   },
@@ -2712,7 +2724,7 @@
     "defaultMessage": "Quay lại"
   },
   "freeMemory.nuclearConfirmBody": {
-    "defaultMessage": "goose yêu cầu từng ứng dụng đã đánh dấu thoát và gỡ tải từng máy chủ mô hình đã đánh dấu. Ứng dụng phớt lờ yêu cầu thoát sẽ nhận SIGTERM và có thể mất công việc chưa lưu: hãy lưu trước. Mục được bảo vệ không bao giờ bị chạm tới."
+    "defaultMessage": "goose yêu cầu từng ứng dụng đã chọn thoát và gỡ tải từng máy chủ mô hình đã chọn. Ứng dụng chỉ được yêu cầu thoát. Ứng dụng nào không thoát sẽ được để chạy tiếp và được báo cáo, không bị dừng. Các mục được bảo vệ không bao giờ bị động đến."
   },
   "freeMemory.nuclearConfirmKeep": {
     "defaultMessage": "Giữ tất cả"

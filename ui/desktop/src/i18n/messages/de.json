@@ -2681,6 +2681,18 @@
   "freeMemory.fitsWithAppsOnly": {
     "defaultMessage": "Dieses Modell passt, nachdem {apps} beendet wurde. Das gibt <b>{gb} GB</b> frei."
   },
+  "freeMemory.forceStop": {
+    "defaultMessage": "Beenden erzwingen"
+  },
+  "freeMemory.forceStopBody": {
+    "defaultMessage": "{app} hat sich nicht beendet, als es darum gebeten wurde, vielleicht wegen ungesicherter Arbeit. Beenden erzwingen beendet es auf {mac} ohne zu sichern. Ungesicherte Arbeit in {app} geht verloren."
+  },
+  "freeMemory.forceStopConfirm": {
+    "defaultMessage": "{app} beenden erzwingen"
+  },
+  "freeMemory.forceStopTitle": {
+    "defaultMessage": "{app} beenden erzwingen?"
+  },
   "freeMemory.freeFailed": {
     "defaultMessage": "Speicher konnte nicht freigegeben werden: {reason}"
   },
@@ -2712,7 +2724,7 @@
     "defaultMessage": "Zurück"
   },
   "freeMemory.nuclearConfirmBody": {
-    "defaultMessage": "goose bittet jede angehakte App, sich zu beenden, und entlädt jeden angehakten Modellserver. Eine App, die das Beenden ignoriert, bekommt ein SIGTERM und kann ungesicherte Arbeit verlieren: sichere deine Arbeit vorher. Geschütztes wird nie angefasst."
+    "defaultMessage": "goose bittet jede angehakte App, sich zu beenden, und entlädt jeden angehakten Modellserver. Apps werden gebeten, sich zu beenden. Eine App, die sich nicht beendet, läuft weiter und wird gemeldet, nicht gestoppt. Geschütztes wird nie angefasst."
   },
   "freeMemory.nuclearConfirmKeep": {
     "defaultMessage": "Alles behalten"

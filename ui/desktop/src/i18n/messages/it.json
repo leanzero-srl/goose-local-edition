@@ -2681,6 +2681,18 @@
   "freeMemory.fitsWithAppsOnly": {
     "defaultMessage": "Questo modello ci sta dopo la chiusura di {apps}, che libera <b>{gb} GB</b>."
   },
+  "freeMemory.forceStop": {
+    "defaultMessage": "Forza chiusura"
+  },
+  "freeMemory.forceStopBody": {
+    "defaultMessage": "{app} non si è chiusa quando richiesto, forse perché ha lavoro non salvato. Forza chiusura la termina su {mac} senza salvare. Il lavoro non salvato in {app} va perso."
+  },
+  "freeMemory.forceStopConfirm": {
+    "defaultMessage": "Forza chiusura di {app}"
+  },
+  "freeMemory.forceStopTitle": {
+    "defaultMessage": "Forzare la chiusura di {app}?"
+  },
   "freeMemory.freeFailed": {
     "defaultMessage": "Impossibile liberare memoria: {reason}"
   },
@@ -2712,7 +2724,7 @@
     "defaultMessage": "Indietro"
   },
   "freeMemory.nuclearConfirmBody": {
-    "defaultMessage": "goose chiede a ogni app spuntata di chiudersi e scarica ogni server di modelli spuntato. Un’app che ignora la chiusura riceve un SIGTERM e può perdere il lavoro non salvato: salva prima il tuo lavoro. Il protetto non viene mai toccato."
+    "defaultMessage": "goose chiede a ogni app selezionata di chiudersi e scarica ogni server di modelli selezionato. Alle app viene chiesto di chiudersi. Un’app che non si chiude resta in esecuzione e viene segnalata, non fermata. Gli elementi protetti non vengono mai toccati."
   },
   "freeMemory.nuclearConfirmKeep": {
     "defaultMessage": "Tieni tutto"

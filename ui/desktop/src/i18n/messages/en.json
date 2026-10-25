@@ -2822,6 +2822,18 @@
   "freeMemory.fitsWithAppsOnly": {
     "defaultMessage": "This model fits after quitting {apps}, which frees <b>{gb} GB</b>."
   },
+  "freeMemory.forceStop": {
+    "defaultMessage": "Force stop"
+  },
+  "freeMemory.forceStopBody": {
+    "defaultMessage": "{app} did not quit when asked, maybe because it has unsaved work. Force stop ends it on {mac} without saving. Unsaved work in {app} is lost."
+  },
+  "freeMemory.forceStopConfirm": {
+    "defaultMessage": "Force stop {app}"
+  },
+  "freeMemory.forceStopTitle": {
+    "defaultMessage": "Force stop {app}?"
+  },
   "freeMemory.freeFailed": {
     "defaultMessage": "Could not free memory: {reason}"
   },
@@ -2853,7 +2865,7 @@
     "defaultMessage": "Back"
   },
   "freeMemory.nuclearConfirmBody": {
-    "defaultMessage": "goose asks each ticked app to quit and unloads each ticked model server. An app that ignores the quit request gets a SIGTERM and may lose unsaved work: save your work first. Protected items are never touched."
+    "defaultMessage": "goose asks each ticked app to quit and unloads each ticked model server. Apps are asked to quit. An app that does not quit is left running and reported, not stopped. Protected items are never touched."
   },
   "freeMemory.nuclearConfirmKeep": {
     "defaultMessage": "Keep everything"

@@ -2681,6 +2681,18 @@
   "freeMemory.fitsWithAppsOnly": {
     "defaultMessage": "Ce modèle tient après la fermeture de {apps}, qui libère <b>{gb} Go</b>."
   },
+  "freeMemory.forceStop": {
+    "defaultMessage": "Forcer l’arrêt"
+  },
+  "freeMemory.forceStopBody": {
+    "defaultMessage": "{app} ne s’est pas fermée quand on le lui a demandé, peut-être à cause de travail non enregistré. Forcer l’arrêt la termine sur {mac} sans enregistrer. Le travail non enregistré dans {app} est perdu."
+  },
+  "freeMemory.forceStopConfirm": {
+    "defaultMessage": "Forcer l’arrêt de {app}"
+  },
+  "freeMemory.forceStopTitle": {
+    "defaultMessage": "Forcer l’arrêt de {app} ?"
+  },
   "freeMemory.freeFailed": {
     "defaultMessage": "Impossible de libérer de la mémoire : {reason}"
   },
@@ -2712,7 +2724,7 @@
     "defaultMessage": "Retour"
   },
   "freeMemory.nuclearConfirmBody": {
-    "defaultMessage": "goose demande à chaque app cochée de se fermer et décharge chaque serveur de modèles coché. Une app qui ignore la fermeture reçoit un SIGTERM et peut perdre le travail non enregistré : enregistre ton travail avant. Le protégé n’est jamais touché."
+    "defaultMessage": "goose demande à chaque app cochée de se fermer et décharge chaque serveur de modèles coché. Les apps sont invitées à se fermer. Une app qui ne se ferme pas reste ouverte et est signalée, elle n’est pas arrêtée. Les éléments protégés ne sont jamais touchés."
   },
   "freeMemory.nuclearConfirmKeep": {
     "defaultMessage": "Tout garder"

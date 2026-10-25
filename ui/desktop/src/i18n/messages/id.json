@@ -2681,6 +2681,18 @@
   "freeMemory.fitsWithAppsOnly": {
     "defaultMessage": "Model ini muat setelah menutup {apps}, yang membebaskan <b>{gb} GB</b>."
   },
+  "freeMemory.forceStop": {
+    "defaultMessage": "Paksa berhenti"
+  },
+  "freeMemory.forceStopBody": {
+    "defaultMessage": "{app} tidak keluar saat diminta, mungkin karena ada pekerjaan yang belum disimpan. Paksa berhenti mengakhirinya di {mac} tanpa menyimpan. Pekerjaan yang belum disimpan di {app} akan hilang."
+  },
+  "freeMemory.forceStopConfirm": {
+    "defaultMessage": "Paksa hentikan {app}"
+  },
+  "freeMemory.forceStopTitle": {
+    "defaultMessage": "Paksa hentikan {app}?"
+  },
   "freeMemory.freeFailed": {
     "defaultMessage": "Tidak dapat membebaskan memori: {reason}"
   },
@@ -2712,7 +2724,7 @@
     "defaultMessage": "Kembali"
   },
   "freeMemory.nuclearConfirmBody": {
-    "defaultMessage": "goose meminta setiap aplikasi yang dicentang untuk keluar dan membongkar setiap server model yang dicentang. Aplikasi yang mengabaikan permintaan keluar mendapat SIGTERM dan bisa kehilangan pekerjaan yang belum disimpan: simpan dulu pekerjaanmu. Yang dilindungi tidak pernah disentuh."
+    "defaultMessage": "goose meminta setiap aplikasi yang dicentang untuk keluar dan membongkar setiap server model yang dicentang. Aplikasi diminta untuk keluar. Aplikasi yang tidak keluar dibiarkan berjalan dan dilaporkan, tidak dihentikan. Item yang dilindungi tidak pernah disentuh."
   },
   "freeMemory.nuclearConfirmKeep": {
     "defaultMessage": "Simpan semuanya"

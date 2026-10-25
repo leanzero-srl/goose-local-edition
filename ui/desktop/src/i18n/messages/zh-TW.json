@@ -2681,6 +2681,18 @@
   "freeMemory.fitsWithAppsOnly": {
     "defaultMessage": "結束 {apps} 後此模型放得下,可釋放 <b>{gb} GB</b>。"
   },
+  "freeMemory.forceStop": {
+    "defaultMessage": "強制停止"
+  },
+  "freeMemory.forceStopBody": {
+    "defaultMessage": "{app} 在被要求結束時沒有結束，可能是因為有未儲存的工作。強制停止會在 {mac} 上不儲存地結束它。{app} 中未儲存的工作將會遺失。"
+  },
+  "freeMemory.forceStopConfirm": {
+    "defaultMessage": "強制停止 {app}"
+  },
+  "freeMemory.forceStopTitle": {
+    "defaultMessage": "要強制停止 {app} 嗎？"
+  },
   "freeMemory.freeFailed": {
     "defaultMessage": "無法釋放記憶體:{reason}"
   },
@@ -2712,7 +2724,7 @@
     "defaultMessage": "返回"
   },
   "freeMemory.nuclearConfirmBody": {
-    "defaultMessage": "goose 會請求每個已勾選的 App 結束,並卸載每個已勾選的模型伺服器。忽略結束請求的 App 會收到 SIGTERM,可能遺失未儲存的工作:請先儲存。受保護的項目永遠不會被觸碰。"
+    "defaultMessage": "goose 會請每個勾選的 App 結束，並卸載每個勾選的模型伺服器。App 只會被要求結束。沒有結束的 App 會繼續執行並被回報，不會被停止。受保護的項目永遠不會被碰觸。"
   },
   "freeMemory.nuclearConfirmKeep": {
     "defaultMessage": "全部保留"

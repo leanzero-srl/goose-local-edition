@@ -2681,6 +2681,18 @@
   "freeMemory.fitsWithAppsOnly": {
     "defaultMessage": "{apps} を終了するとこのモデルが収まります(<b>{gb} GB</b> を解放)。"
   },
+  "freeMemory.forceStop": {
+    "defaultMessage": "強制終了"
+  },
+  "freeMemory.forceStopBody": {
+    "defaultMessage": "{app} は終了を求めても終了しませんでした。未保存の作業があるのかもしれません。強制終了すると {mac} 上で保存せずに終了します。{app} の未保存の作業は失われます。"
+  },
+  "freeMemory.forceStopConfirm": {
+    "defaultMessage": "{app} を強制終了"
+  },
+  "freeMemory.forceStopTitle": {
+    "defaultMessage": "{app} を強制終了しますか？"
+  },
   "freeMemory.freeFailed": {
     "defaultMessage": "メモリを解放できませんでした: {reason}"
   },
@@ -2712,7 +2724,7 @@
     "defaultMessage": "戻る"
   },
   "freeMemory.nuclearConfirmBody": {
-    "defaultMessage": "goose はチェックした各アプリに終了を依頼し、チェックした各モデルサーバーをアンロードします。終了を無視したアプリには SIGTERM が送られ、保存していない作業が失われることがあります。先に保存してください。保護されたものには触れません。"
+    "defaultMessage": "goose はチェックした各アプリに終了を求め、チェックした各モデルサーバーをアンロードします。アプリには終了を求めるだけです。終了しないアプリは実行したまま残され、報告されます（停止はしません）。保護された項目には一切触れません。"
   },
   "freeMemory.nuclearConfirmKeep": {
     "defaultMessage": "すべて残す"

@@ -2681,6 +2681,18 @@
   "freeMemory.fitsWithAppsOnly": {
     "defaultMessage": "Bu model {apps} kapatıldıktan sonra sığar, bu <b>{gb} GB</b> boşaltır."
   },
+  "freeMemory.forceStop": {
+    "defaultMessage": "Zorla durdur"
+  },
+  "freeMemory.forceStopBody": {
+    "defaultMessage": "{app} istendiğinde kapanmadı, belki kaydedilmemiş işi vardır. Zorla durdurma onu {mac} üzerinde kaydetmeden sonlandırır. {app} içindeki kaydedilmemiş iş kaybolur."
+  },
+  "freeMemory.forceStopConfirm": {
+    "defaultMessage": "{app} uygulamasını zorla durdur"
+  },
+  "freeMemory.forceStopTitle": {
+    "defaultMessage": "{app} zorla durdurulsun mu?"
+  },
   "freeMemory.freeFailed": {
     "defaultMessage": "Bellek boşaltılamadı: {reason}"
   },
@@ -2712,7 +2724,7 @@
     "defaultMessage": "Geri"
   },
   "freeMemory.nuclearConfirmBody": {
-    "defaultMessage": "goose işaretli her uygulamadan kapanmasını ister ve işaretli her model sunucusunu boşaltır. Kapanma isteğini yok sayan bir uygulama SIGTERM alır ve kaydedilmemiş işini kaybedebilir: önce işini kaydet. Korumalı olanlara asla dokunulmaz."
+    "defaultMessage": "goose işaretlenen her uygulamadan kapanmasını ister ve işaretlenen her model sunucusunu boşaltır. Uygulamalardan kapanmaları istenir. Kapanmayan bir uygulama çalışır halde bırakılır ve raporlanır, durdurulmaz. Korunan öğelere asla dokunulmaz."
   },
   "freeMemory.nuclearConfirmKeep": {
     "defaultMessage": "Hepsini tut"
