@@ -74,3 +74,33 @@ i18n:check; check-acp-schema (grep package.json / justfile).
 Goose Swarm 3.0.129 (net.leanzero.goose-swarm), goose serve 65933 parent app. rapid-mlx 97100 ppid 1 port 8093 Tess-27B.
 LM Studio 13856 REST needs a token; ~/.lmstudio/bin/lms present; `lms ps` = no models. No Ollama.
 TTS python 9375 (pgid 36740), link worker node 14200, rclone 4521, actions runners, 40+ net.leanzero.* labels.
+
+## R1 DONE (2026-10-25) — sidecar, commits 381c668fe, 0e0f17d04
+Gates: `cargo test -p goose-sidecar memfree` 29 passed (8 new in memfree_protect); clippy -p goose-sidecar
+--all-targets -D warnings clean; `cargo check -p goose` clean; fmt done. ACP change: only `CategorizeCtx {..}`
+literal now ends `..Default::default()`.
+
+New pub API (crates/goose-sidecar):
+- `memfree::ProcRow` += `pgid: u32`, `has_tty: bool`.
+- `memfree::CategorizeCtx` += `cmdlines: HashMap<u32,String>`, `launchd_labels: HashMap<u32,String>`,
+  `never_touch: Vec<String>`. `groups_now(ctx)` fills cmdlines + labels itself and unions never_touch with
+  the defaults — the ACP only passes the request's/settings' extra entries in `ctx.never_touch`.
+- `memfree::Group` += `protected_why: Option<String>`, `used_by: Vec<String>` (empty; ACP fills from lsof),
+  `launchd_label: Option<String>`, `nuclear_default: bool`.
+- `memfree_protect::{DEFAULT_NEVER_TOUCH, never_touch_list(&[String]) -> Vec<String>,
+  never_touch_hit(names, &[String]) -> Option<String>, group_never_touch(&Group, &[String]) -> Option<String>,
+  parse_launchctl_list(&str) -> HashMap<u32,String>, launchd_labels(), all_cmdlines(), is_mcp_command(&str),
+  launchd_owner(rows, labels), ProtectInput{rows,cmds,labels,bundles,self_pid,self_uid,exempt_roots},
+  protected(&ProtectInput) -> HashMap<u32,String>, Mode::{Soft,Nuclear},
+  eligible(&Group, Mode, &[String]) -> bool, plan(&[Group], Mode, &[String]) -> Vec<String>}`.
+- `memfree_servers::terminate_engine(pid, started_at, own_port: u16) -> Result<String>` (SIGTERM only).
+- `reap_orphaned_goosed` now never SIGKILLs (Err "still running … goose does not force it").
+
+TRAPS for the ACP step:
+- The ACP sets `reclaimable_by_goose = true` on AiServer groups AFTER categorize (core_memory_holders ~l.135,
+  ~l.149): it must (a) skip that when `protected_why.is_some()` and (b) recompute
+  `g.nuclear_default = memfree_protect::eligible(&g, Mode::Nuclear, &never_touch)` afterwards.
+- Soft must become `plan(&groups, Mode::Soft, ..)`; replace the `mlx:` arm's `machine::stop_other_engine`
+  with `terminate_engine` (nuclear/explicit only).
+- Not done here: design item 5's example `memfree_dryrun.rs`, config GOOSE_MEMFREE_NEVER_TOUCH (item 2 config
+  part), lsof used_by, everything in items 3/4/6.
