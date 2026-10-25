@@ -2839,9 +2839,11 @@ pub struct MlxEngineMemoryHoldersResponse {
 /// Free memory. `gooseOwned` = the soft clean (this goose's own idle engine + proven left-over
 /// goose servers, nothing anyone else uses). Everything else is named item by item and re-checked
 /// against a fresh census, the protected set and the never-touch list: `unloadServers` (group ids
-/// of model servers / other MLX engines), `quitApps` (bundle ids). `nuclear` lets an app that
-/// ignored quit get a SIGTERM (own uid, unprotected, never SIGKILL). Over the Link, everything
-/// but `gooseOwned` needs `GOOSE_LINK_ALLOW_REMOTE_APP_QUIT` on the answering Mac.
+/// of model servers / other MLX engines), `quitApps` (bundle ids, asked to quit; one that does
+/// not quit is left running and reported), `forceStopApps` (bundle ids the person chose to force
+/// stop: one SIGTERM per pid, own uid, unprotected, never SIGKILL). Each item is re-checked right
+/// before it runs; a server that gained a user not in `seenUsedBy` is refused. Over the Link,
+/// everything but `gooseOwned` needs `GOOSE_LINK_ALLOW_REMOTE_APP_QUIT` on the answering Mac.
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
 #[request(
     method = "_goose/unstable/mlxEngine/memoryFree",
@@ -2860,12 +2862,19 @@ pub struct MlxEngineMemoryFreeRequest {
     /// Group ids (`ai:…`, `mlx:<pid>`) the person ticked to unload/stop.
     #[serde(default)]
     pub unload_servers: Vec<String>,
-    /// "Free everything except protected": apps that ignore quit get one SIGTERM.
+    /// "Free everything except protected". Apps are only asked to quit; nothing is forced.
     #[serde(default)]
     pub nuclear: bool,
     /// The caller's never-touch list, unioned with the executing Mac's own.
     #[serde(default)]
     pub never_touch: Vec<String>,
+    /// Per ticked server group id: the `usedBy` lines the person saw. A server with a user
+    /// not in this list when it is about to be freed is refused.
+    #[serde(default)]
+    pub seen_used_by: HashMap<String, Vec<String>>,
+    /// Bundle ids the person explicitly chose to force stop (SIGTERM, never SIGKILL).
+    #[serde(default)]
+    pub force_stop_apps: Vec<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -2878,6 +2887,9 @@ pub struct MlxMemoryFreeItemDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub freed_bytes: Option<u64>,
     pub message: String,
+    /// The app did not quit and may still be force stopped (own uid, unprotected).
+    #[serde(default)]
+    pub force_stoppable: bool,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]

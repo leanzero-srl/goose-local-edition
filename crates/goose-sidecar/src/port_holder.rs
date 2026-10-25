@@ -926,6 +926,23 @@ mod read {
     /// (see [`ownership_proof`]) → each is stopped per pid, its identity re-read before every
     /// signal, and the port waited for. Anything else → [`PortHeld`], nothing signalled.
     pub async fn claim_port(port: u16, marker: &str) -> Result<Vec<Reaped>> {
+        claim_port_with(port, marker, true).await
+    }
+
+    /// The signals a stop sends, in order: SIGTERM, then SIGKILL only when `force` (review C5:
+    /// Free up memory never forces, so its leftover reclaim is SIGTERM only).
+    pub fn stop_signals(force: bool) -> &'static [(libc::c_int, &'static str)] {
+        const FORCED: [(libc::c_int, &str); 2] =
+            [(libc::SIGTERM, "SIGTERM"), (libc::SIGKILL, "SIGKILL")];
+        if force {
+            &FORCED
+        } else {
+            &FORCED[..1]
+        }
+    }
+
+    /// [`claim_port`], with the SIGKILL leg only when `force`.
+    pub async fn claim_port_with(port: u16, marker: &str, force: bool) -> Result<Vec<Reaped>> {
         if !crate::port_has_listener(port) {
             return Ok(Vec::new());
         }
@@ -961,7 +978,7 @@ mod read {
         }
         let mut reaped = Vec::new();
         let mut left = targets;
-        for (signal, name) in [(libc::SIGTERM, "SIGTERM"), (libc::SIGKILL, "SIGKILL")] {
+        for &(signal, name) in stop_signals(force) {
             for process in &left {
                 if still(process) {
                     unsafe { libc::kill(process.pid as libc::pid_t, signal) };
@@ -1010,12 +1027,23 @@ mod read {
 
 #[cfg(unix)]
 pub use read::{
-    claim_port, inspect_port, listener_pids, read_process, reuse_port, HoldersCache, Reaped,
+    claim_port, claim_port_with, inspect_port, listener_pids, read_process, reuse_port,
+    stop_signals, HoldersCache, Reaped,
 };
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Review C5: a stop that is not forced (Free up memory) never reaches SIGKILL; the start's
+    /// own claim keeps its SIGKILL leg.
+    #[cfg(unix)]
+    #[test]
+    fn memfree_c5_an_unforced_port_claim_sends_sigterm_only() {
+        let names = |force| stop_signals(force).iter().map(|s| s.1).collect::<Vec<_>>();
+        assert_eq!(names(false), vec!["SIGTERM"]);
+        assert_eq!(names(true), vec!["SIGTERM", "SIGKILL"]);
+    }
 
     const UID: u32 = 501;
     const GOOSED: u32 = 73403;

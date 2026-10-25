@@ -828,6 +828,13 @@ pub(super) async fn core_unmount(
     Ok(EmptyResponse {})
 }
 
+/// Free up memory's stop of goose's own idle engine (review C5): SIGTERM only; an engine that
+/// does not exit is left running and the error says so.
+pub(super) async fn core_unmount_graceful(by: EngineStopper) -> Result<(), String> {
+    *ENGINE_STOPPED_BY.lock().unwrap_or_else(|e| e.into_inner()) = Some(by);
+    global_manager().unmount_graceful().await
+}
+
 async fn core_settings_read(
     _req: MlxEngineSettingsReadRequest,
 ) -> Result<MlxEngineSettingsResponse, agent_client_protocol::Error> {

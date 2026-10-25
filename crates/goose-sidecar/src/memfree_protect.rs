@@ -814,7 +814,10 @@ mod tests {
         let mut gs = groups(&workhorse());
         let nt = never_touch_list(&[]);
         let engine = gs.iter_mut().find(|g| g.id == "mlx:97100").unwrap();
-        assert!(!nuclear_default(engine, &nt), "never pre-ticked, used or not");
+        assert!(
+            !nuclear_default(engine, &nt),
+            "never pre-ticked, used or not"
+        );
         engine.used_by = vec!["sshd-session (pid 97112) is connected to it".into()];
         assert!(!nuclear_default(engine, &nt), "a client is connected");
         assert!(
@@ -923,7 +926,10 @@ mod tests {
         let nt = never_touch_list(&[]);
         let g = |id: &str| gs.iter().find(|g| g.id == id).unwrap();
         for id in ["mlx:97100", "ai:/Applications/LM Studio.app"] {
-            assert!(g(id).used_by.is_empty(), "{id}: no client connected right now");
+            assert!(
+                g(id).used_by.is_empty(),
+                "{id}: no client connected right now"
+            );
             assert!(eligible(g(id), Mode::Nuclear, &nt), "{id} is still offered");
             assert!(!nuclear_default(g(id), &nt), "{id} must not be pre-ticked");
         }
@@ -977,7 +983,11 @@ mod tests {
     #[test]
     fn memfree_c8_an_app_hosting_an_mcp_child_is_protected() {
         let mut f = workhorse();
-        f.p(4000, 1, "/Applications/Windsurf.app/Contents/MacOS/Electron");
+        f.p(
+            4000,
+            1,
+            "/Applications/Windsurf.app/Contents/MacOS/Electron",
+        );
         f.app(
             "/Applications/Windsurf.app",
             "com.exafunction.windsurf",

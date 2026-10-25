@@ -493,7 +493,10 @@ pub fn parse_lsof_listen_ports(out: &str) -> Vec<u16> {
         let Some(name) = line.strip_prefix('n') else {
             continue;
         };
-        let Some(port) = name.rsplit_once(':').and_then(|(_, p)| p.trim().parse().ok()) else {
+        let Some(port) = name
+            .rsplit_once(':')
+            .and_then(|(_, p)| p.trim().parse().ok())
+        else {
             continue;
         };
         if !ports.contains(&port) {
@@ -513,7 +516,10 @@ pub fn lmlink_users(
     clients: &[(u16, u32, String)],
 ) -> Vec<String> {
     let mut out = vec![];
-    for r in rows.iter().filter(|r| proc_name(&r.path) == LMLINK_CONNECTOR) {
+    for r in rows
+        .iter()
+        .filter(|r| proc_name(&r.path) == LMLINK_CONNECTOR)
+    {
         let ports: Vec<u16> = listen
             .iter()
             .filter(|(pid, _)| *pid == r.pid)
@@ -564,7 +570,10 @@ pub fn lmlink_lines_for(group: &crate::memfree::Group, rows: &[ProcRow]) -> Vec<
 pub fn lmlink_used_by(rows: &[ProcRow]) -> Vec<String> {
     let mut listen = vec![];
     let mut clients = vec![];
-    for r in rows.iter().filter(|r| proc_name(&r.path) == LMLINK_CONNECTOR) {
+    for r in rows
+        .iter()
+        .filter(|r| proc_name(&r.path) == LMLINK_CONNECTOR)
+    {
         let out = lsof(&[
             "-nP",
             "-a",
@@ -938,7 +947,12 @@ mod tests {
     #[test]
     fn memfree_lmlink_connector_names_its_ports_peers_and_clients() {
         let rows = vec![
-            row(13856, 1, 501, "/Applications/LM Studio.app/Contents/MacOS/LM Studio"),
+            row(
+                13856,
+                1,
+                501,
+                "/Applications/LM Studio.app/Contents/MacOS/LM Studio",
+            ),
             row(14330, 13856, 501, "/Users/w/.lmstudio/bin/lmlink-connector"),
             row(2222, 1, 501, "/usr/bin/curl"),
         ];

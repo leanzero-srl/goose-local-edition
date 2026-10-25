@@ -6,7 +6,9 @@
 //! (`freed_by_switch_bytes`), so `gooseOwnedBytes` leaves it out; without one, the budget is the
 //! live measurement and the own engine's bytes are in `gooseOwnedBytes` when it is idle.
 
-use super::mlx_engine::{core_unmount, fit_to_dto, forget_serving, synced_manager, EngineStopper};
+use super::mlx_engine::{
+    core_unmount_graceful, fit_to_dto, forget_serving, synced_manager, EngineStopper,
+};
 use super::*;
 use crate::providers::mlx_serving_intent::IntentKind;
 use goose_sidecar::engine::{expand_tilde, MlxEngineManager, StartFrees};
@@ -439,6 +441,7 @@ async fn unload_ai(g: &Group, hold: &AiHold) -> MlxMemoryFreeItemDto {
         ok: !failed,
         freed_bytes: Some(freed),
         message: messages.join("; "),
+        force_stoppable: false,
     }
 }
 
@@ -461,6 +464,7 @@ async fn reap_orphan(g: &Group) -> MlxMemoryFreeItemDto {
         ok,
         freed_bytes: Some(settle_freed(&g.pids, &before, before.iter().sum::<u64>().max(1)).await),
         message: messages.join("; "),
+        force_stoppable: false,
     }
 }
 
@@ -492,8 +496,11 @@ enum Step {
     Orphan(String),
     /// A model server (REST unload per model) or another MLX engine (SIGTERM only), by group id.
     Server(String),
-    /// A user app asked to quit, by bundle id.
+    /// A user app asked to quit, by bundle id. Never signalled.
     App(String),
+    /// A user app the person chose to force stop, by bundle id: one SIGTERM per pid, never
+    /// SIGKILL (review C4).
+    ForceStop(String),
     /// Not done, and why.
     Refuse {
         id: String,
@@ -546,27 +553,14 @@ fn select_free(
     let off = || {
         format!("freeing memory from another Mac beyond goose's own is off on this Mac ({ALLOW_REMOTE_APP_QUIT_KEY})")
     };
-    if !explicit && req.nuclear && req.unload_servers.is_empty() && req.quit_apps.is_empty() {
+    if !explicit
+        && req.nuclear
+        && req.unload_servers.is_empty()
+        && req.quit_apps.is_empty()
+        && req.force_stop_apps.is_empty()
+    {
         steps.push(refuse("nuclear", "Free everything", off()));
     }
-    let check = |g: &Group| -> Option<String> {
-        if let Some(why) = &g.protected_why {
-            return Some(format!(
-                "goose will not touch {}: protected ({why})",
-                g.label
-            ));
-        }
-        if let Some(hit) = protect::group_never_touch(g, never_touch) {
-            return Some(format!("{} is on the never-touch list ({hit})", g.label));
-        }
-        (!protect::eligible(g, Mode::Nuclear, never_touch)).then(|| {
-            format!(
-                "goose cannot free {} now: {}",
-                g.label,
-                g.why.clone().unwrap_or_else(|| "nothing to unload".into())
-            )
-        })
-    };
     let mut seen: Vec<String> = vec![];
     for id in &req.unload_servers {
         if seen.contains(id) {
@@ -581,49 +575,157 @@ fn select_free(
             steps.push(refuse(id, id, format!("{id} is not running now")));
             continue;
         };
-        if !is_server(g) {
-            steps.push(refuse(
-                id,
-                &g.label,
-                format!("{} is not a model server or MLX engine", g.label),
-            ));
-        } else if let Some(message) = check(g) {
-            steps.push(refuse(id, &g.label, message));
-        } else {
-            steps.push(Step::Server(id.clone()));
+        match server_refusal(g, req, never_touch) {
+            Some(message) => steps.push(refuse(id, &g.label, message)),
+            None => steps.push(Step::Server(id.clone())),
         }
     }
-    for bundle_id in &req.quit_apps {
-        let id = format!("app:{bundle_id}");
-        if seen.contains(&id) {
-            continue;
-        }
-        seen.push(id.clone());
-        if !explicit {
-            steps.push(refuse(&id, bundle_id, off()));
-            continue;
-        }
-        let Some(g) = groups.iter().find(|g| g.id == id) else {
-            steps.push(refuse(
-                &id,
-                bundle_id,
-                format!("{bundle_id} is not running"),
-            ));
-            continue;
-        };
-        if g.category != Category::UserApp {
-            steps.push(refuse(
-                &id,
-                &g.label,
-                format!("{} is not a user app", g.label),
-            ));
-        } else if let Some(message) = check(g) {
-            steps.push(refuse(&id, &g.label, message));
-        } else {
-            steps.push(Step::App(bundle_id.clone()));
+    for (bundles, force) in [(&req.quit_apps, false), (&req.force_stop_apps, true)] {
+        for bundle_id in bundles {
+            let id = format!("app:{bundle_id}");
+            let key = if force {
+                format!("force:{id}")
+            } else {
+                id.clone()
+            };
+            if seen.contains(&key) {
+                continue;
+            }
+            seen.push(key);
+            if !explicit {
+                steps.push(refuse(&id, bundle_id, off()));
+                continue;
+            }
+            let Some(g) = groups.iter().find(|g| g.id == id) else {
+                steps.push(refuse(
+                    &id,
+                    bundle_id,
+                    format!("{bundle_id} is not running"),
+                ));
+                continue;
+            };
+            match app_refusal(g, never_touch) {
+                Some(message) => steps.push(refuse(&id, &g.label, message)),
+                None if force => steps.push(Step::ForceStop(bundle_id.clone())),
+                None => steps.push(Step::App(bundle_id.clone())),
+            }
         }
     }
     steps
+}
+
+/// Why an item may not be freed now: protected, on the never-touch list, or nothing goose can
+/// reclaim. `None` = it may be freed.
+fn item_refusal(g: &Group, never_touch: &[String]) -> Option<String> {
+    if let Some(why) = &g.protected_why {
+        return Some(format!(
+            "goose will not touch {}: protected ({why})",
+            g.label
+        ));
+    }
+    if let Some(hit) = protect::group_never_touch(g, never_touch) {
+        return Some(format!("{} is on the never-touch list ({hit})", g.label));
+    }
+    (!protect::eligible(g, Mode::Nuclear, never_touch)).then(|| {
+        format!(
+            "goose cannot free {} now: {}",
+            g.label,
+            g.why.clone().unwrap_or_else(|| "nothing to unload".into())
+        )
+    })
+}
+
+/// The `usedBy` lines of `g` the person did not see when they ticked it.
+fn new_users(g: &Group, seen_used_by: &HashMap<String, Vec<String>>) -> Vec<String> {
+    let seen = seen_used_by.get(&g.id);
+    g.used_by
+        .iter()
+        .filter(|line| !seen.is_some_and(|s| s.contains(line)))
+        .cloned()
+        .collect()
+}
+
+fn server_refusal(
+    g: &Group,
+    req: &MlxEngineMemoryFreeRequest,
+    never_touch: &[String],
+) -> Option<String> {
+    if !is_server(g) {
+        return Some(format!("{} is not a model server or MLX engine", g.label));
+    }
+    if let Some(message) = item_refusal(g, never_touch) {
+        return Some(message);
+    }
+    let new = new_users(g, &req.seen_used_by);
+    (!new.is_empty()).then(|| {
+        format!(
+            "{} became used since you looked: {}",
+            g.label,
+            new.join("; ")
+        )
+    })
+}
+
+fn app_refusal(g: &Group, never_touch: &[String]) -> Option<String> {
+    if g.category != Category::UserApp {
+        return Some(format!("{} is not a user app", g.label));
+    }
+    item_refusal(g, never_touch)
+}
+
+/// Review C3: re-validate ONE step against a census taken right before it runs (pure; tested).
+/// `Some(Step::Refuse)` = do not run it; the reason is what changed.
+fn recheck(
+    fresh: &[Group],
+    step: &Step,
+    req: &MlxEngineMemoryFreeRequest,
+    never_touch: &[String],
+) -> Option<Step> {
+    let refuse = |id: &str, label: &str, message: String| {
+        Some(Step::Refuse {
+            id: id.to_string(),
+            label: label.to_string(),
+            message,
+        })
+    };
+    let find = |id: &str| fresh.iter().find(|g| g.id == id);
+    match step {
+        Step::Refuse { .. } => None,
+        Step::OwnEngine | Step::Orphan(_) => {
+            let id = match step {
+                Step::Orphan(id) => id.as_str(),
+                _ => "gooseEngine",
+            };
+            if protect::plan(fresh, Mode::Soft, never_touch)
+                .iter()
+                .any(|p| p == id)
+            {
+                return None;
+            }
+            match find(id) {
+                None => refuse(id, id, format!("{id} is not running now")),
+                Some(g) => {
+                    let why = g
+                        .protected_why
+                        .clone()
+                        .or_else(|| g.why.clone())
+                        .unwrap_or_else(|| "it is in use".into());
+                    refuse(id, &g.label, format!("goose left it running: {why}"))
+                }
+            }
+        }
+        Step::Server(id) => match find(id) {
+            None => refuse(id, id, format!("{id} is not running now")),
+            Some(g) => server_refusal(g, req, never_touch).and_then(|m| refuse(id, &g.label, m)),
+        },
+        Step::App(bundle_id) | Step::ForceStop(bundle_id) => {
+            let id = format!("app:{bundle_id}");
+            match find(&id) {
+                None => refuse(&id, bundle_id, format!("{bundle_id} is not running now")),
+                Some(g) => app_refusal(g, never_touch).and_then(|m| refuse(&id, &g.label, m)),
+            }
+        }
+    }
 }
 
 fn group_to_dto(g: &Group) -> MlxMemoryGroupDto {
@@ -817,18 +919,19 @@ fn refused(id: String, label: String, message: String) -> MlxMemoryFreeItemDto {
         ok: false,
         freed_bytes: None,
         message,
+        force_stoppable: false,
     }
 }
 
 async fn stop_own_engine(g: &Group) -> MlxMemoryFreeItemDto {
     let before = footprints(&g.pids);
-    let result = core_unmount(MlxEngineUnmountRequest::default(), EngineStopper::Owner).await;
-    let (ok, message) = match result {
-        Ok(_) => {
+    // Review C5: SIGTERM only; an engine that does not exit is left running and reported.
+    let (ok, message) = match core_unmount_graceful(EngineStopper::Owner).await {
+        Ok(()) => {
             forget_serving(IntentKind::Single);
             (true, format!("stopped {}", g.label))
         }
-        Err(e) => (false, e.message.clone()),
+        Err(why) => (false, why),
     };
     let freed = if ok {
         Some(settle_freed(&g.pids, &before, before.iter().sum::<u64>().max(1)).await)
@@ -841,6 +944,7 @@ async fn stop_own_engine(g: &Group) -> MlxMemoryFreeItemDto {
         ok,
         freed_bytes: freed,
         message,
+        force_stoppable: false,
     }
 }
 
@@ -865,81 +969,136 @@ async fn stop_other_engine(g: &Group, own_port: u16) -> MlxMemoryFreeItemDto {
         ok,
         freed_bytes: Some(freed),
         message: messages.join("; "),
+        force_stoppable: false,
     }
 }
 
-/// Ask an app to quit; in a nuclear clean, an app still running afterwards gets one SIGTERM per
-/// pid that a FRESH census still shows as this user's unprotected, not-never-touch user app.
+/// What the person is told about an app it asked to quit that did not (review C4; pure). It is
+/// left running, never signalled; `force_stoppable` offers an explicit Force stop when goose
+/// could signal it. An app gone by the re-check has quit after all.
+fn not_quit_report(
+    mut item: MlxMemoryFreeItemDto,
+    still_there: bool,
+    force_stoppable: bool,
+) -> MlxMemoryFreeItemDto {
+    if !still_there {
+        item.ok = true;
+        item.message.push_str("; it has quit since");
+        return item;
+    }
+    let detail = std::mem::take(&mut item.message);
+    item.message = format!(
+        "{} didn't quit (maybe unsaved work); it was left running",
+        item.label
+    );
+    if !detail.is_empty() {
+        item.message.push_str(&format!(" ({detail})"));
+    }
+    item.force_stoppable = force_stoppable;
+    item
+}
+
+/// The pids goose may SIGTERM for app `bundle_id`, from a fresh census: this user's,
+/// unprotected, not never-touch. `Ok(None)` = the app is not running.
+async fn app_targets(
+    bundle_id: &str,
+    ctx: &CategorizeCtx,
+    never_touch: &[String],
+) -> Result<Option<(Group, Vec<(u32, u64)>)>, String> {
+    let id = format!("app:{bundle_id}");
+    let ctx = ctx.clone();
+    let (rows, group) = tokio::task::spawn_blocking(move || {
+        let rows = memfree::census();
+        let group = memfree::groups_now(ctx).into_iter().find(|g| g.id == id);
+        (rows, group)
+    })
+    .await
+    .map_err(|_| "the census failed, nothing was signalled".to_string())?;
+    let Some(group) = group else { return Ok(None) };
+    let targets = servers::app_term_targets(
+        Some(&group),
+        &rows,
+        memfree::self_uid(),
+        std::process::id(),
+        never_touch,
+    )?;
+    Ok(Some((group, targets)))
+}
+
+/// Ask an app to quit (osascript). Never a signal: an app that does not quit is reported and
+/// left running, with `forceStoppable` when the person could still choose Force stop.
 async fn quit_one_app(
     bundle_id: &str,
     ctx: &CategorizeCtx,
     never_touch: &[String],
-    nuclear: bool,
 ) -> MlxMemoryFreeItemDto {
     let outcome = memfree::quit_app(bundle_id, ctx.clone()).await;
-    let mut item = MlxMemoryFreeItemDto {
+    let item = MlxMemoryFreeItemDto {
         id: outcome.id,
         label: outcome.label,
         ok: outcome.ok,
         freed_bytes: outcome.freed_bytes,
         message: outcome.message,
+        force_stoppable: false,
     };
-    if item.ok || !nuclear {
+    if item.ok {
         return item;
     }
+    match app_targets(bundle_id, ctx, never_touch).await {
+        Ok(None) => not_quit_report(item, false, false),
+        Ok(Some((_, targets))) => not_quit_report(item, true, !targets.is_empty()),
+        Err(_) => not_quit_report(item, true, false),
+    }
+}
+
+/// Force stop, only for a bundle the person explicitly chose (review C4): one SIGTERM per pid a
+/// FRESH census still shows as this user's unprotected, not-never-touch user app. Never SIGKILL.
+async fn force_stop_app(
+    bundle_id: &str,
+    ctx: &CategorizeCtx,
+    never_touch: &[String],
+) -> MlxMemoryFreeItemDto {
     let id = format!("app:{bundle_id}");
-    let ctx = ctx.clone();
-    let fresh = tokio::task::spawn_blocking(move || {
-        let rows = memfree::census();
-        let group = memfree::groups_now(ctx).into_iter().find(|g| g.id == id);
-        (rows, group)
-    })
-    .await;
-    let Ok((rows, group)) = fresh else {
-        item.message
-            .push_str("; the census failed, nothing was signalled");
-        return item;
+    let mut item = MlxMemoryFreeItemDto {
+        id: id.clone(),
+        label: bundle_id.to_string(),
+        ok: false,
+        freed_bytes: None,
+        message: String::new(),
+        force_stoppable: false,
     };
-    let before: u64 = group.as_ref().map_or(0, |g| g.bytes);
-    match servers::app_term_targets(
-        group.as_ref(),
-        &rows,
-        memfree::self_uid(),
-        std::process::id(),
-        never_touch,
-    ) {
-        Ok(targets) if targets.is_empty() => {
-            if group.is_none() {
-                item.ok = true;
-                item.message.push_str("; it has quit since");
-            } else {
-                item.message
-                    .push_str("; none of its processes run as you, nothing was signalled");
-            }
+    match app_targets(bundle_id, ctx, never_touch).await {
+        Ok(None) => {
+            item.ok = true;
+            item.message = format!("{bundle_id} is not running");
         }
-        Ok(targets) => {
+        Ok(Some((group, targets))) => {
+            item.label = group.label.clone();
+            if targets.is_empty() {
+                item.message = format!(
+                    "none of {}'s processes run as you, nothing was signalled",
+                    group.label
+                );
+                return item;
+            }
             let left = servers::terminate_pids(&targets).await;
             let after: u64 = targets
                 .iter()
                 .filter(|(p, s)| memfree::alive(*p, *s))
                 .filter_map(|(p, _)| memfree::footprint(*p))
                 .sum();
-            item.freed_bytes = Some(
-                item.freed_bytes
-                    .unwrap_or(0)
-                    .max(before.saturating_sub(after)),
-            );
+            item.freed_bytes = Some(group.bytes.saturating_sub(after));
             if left == 0 {
                 item.ok = true;
-                item.message
-                    .push_str("; it ignored quit and was sent SIGTERM, now gone");
+                item.message = format!("force stopped {} (SIGTERM)", group.label);
             } else {
-                item.message.push_str(&format!(
-                    "; sent SIGTERM, {left} process(es) still running (goose does not force it)"
-                ));
+                item.message = format!(
+                    "sent SIGTERM, {left} process(es) of {} still running (goose does not force it further)",
+                    group.label
+                );
             }
         }
-        Err(why) => item.message.push_str(&format!("; not signalled: {why}")),
+        Err(why) => item.message = format!("not signalled: {why}"),
     }
     item
 }
@@ -960,18 +1119,32 @@ pub(super) async fn core_memory_free(
     let mut items = vec![];
 
     // A fresh census: only what is reclaimable NOW, and only what was asked for, is touched.
-    let (groups, ai) = groups(&ctx, port).await?;
+    let (first, _) = groups(&ctx, port).await?;
     let steps = select_free(
-        &groups,
+        &first,
         &req,
         &never_touch,
         relayed,
         relayed && remote_app_quit_allowed(),
     );
-    let find = |id: &str| groups.iter().find(|g| g.id == id);
+    drop(first);
     for step in steps {
+        if let Step::Refuse { id, label, message } = step {
+            items.push(refused(id, label, message));
+            continue;
+        }
+        // Review C3: steps run one after another (an app may take 15 s), so each is re-checked
+        // against a census taken right before it, and run with what that census found.
+        let (fresh, ai) = groups(&ctx, port).await?;
+        if let Some(Step::Refuse { id, label, message }) =
+            recheck(&fresh, &step, &req, &never_touch)
+        {
+            items.push(refused(id, label, message));
+            continue;
+        }
+        let find = |id: &str| fresh.iter().find(|g| g.id == id);
         match step {
-            Step::Refuse { id, label, message } => items.push(refused(id, label, message)),
+            Step::Refuse { .. } => {}
             Step::OwnEngine => {
                 if let Some(g) = find("gooseEngine") {
                     items.push(stop_own_engine(g).await);
@@ -998,7 +1171,10 @@ pub(super) async fn core_memory_free(
                 }
             }
             Step::App(bundle_id) => {
-                items.push(quit_one_app(&bundle_id, &ctx, &never_touch, req.nuclear).await);
+                items.push(quit_one_app(&bundle_id, &ctx, &never_touch).await);
+            }
+            Step::ForceStop(bundle_id) => {
+                items.push(force_stop_app(&bundle_id, &ctx, &never_touch).await);
             }
         }
     }
@@ -1182,6 +1358,7 @@ mod tests {
                 Step::OwnEngine => "gooseEngine".to_string(),
                 Step::Orphan(id) | Step::Server(id) => id.clone(),
                 Step::App(b) => format!("app:{b}"),
+                Step::ForceStop(b) => format!("force:app:{b}"),
                 Step::Refuse { id, .. } => format!("REFUSED {id}"),
             })
             .collect()
@@ -1318,6 +1495,139 @@ mod tests {
         let on = select_free(&groups, &req, &nt(&[]), true, true);
         assert!(on.contains(&Step::Server("mlx:97100".into())));
         assert!(on.contains(&Step::App("com.apple.TextEdit".into())));
+    }
+
+    /// Review C3: every item is re-checked against a FRESH census right before it runs. A server
+    /// that gained a user the person did not see is refused and named; one whose users are all
+    /// ones they saw goes through; an app that became protected or quit is refused.
+    #[test]
+    fn memfree_c3_each_item_is_rechecked_and_a_new_user_refuses_a_server() {
+        let mut req = MlxEngineMemoryFreeRequest {
+            unload_servers: vec!["mlx:97100".into()],
+            quit_apps: vec!["com.apple.TextEdit".into()],
+            nuclear: true,
+            ..Default::default()
+        };
+        req.seen_used_by.insert(
+            "mlx:97100".into(),
+            vec!["sshd-session (pid 97112) is connected to it".into()],
+        );
+        let mut fresh = workhorse();
+        let rapid = fresh.iter_mut().find(|g| g.id == "mlx:97100").unwrap();
+        rapid.used_by = vec!["sshd-session (pid 97112) is connected to it".into()];
+        let server = Step::Server("mlx:97100".into());
+        assert_eq!(
+            recheck(&fresh, &server, &req, &nt(&[])),
+            None,
+            "only what they saw"
+        );
+
+        let rapid = fresh.iter_mut().find(|g| g.id == "mlx:97100").unwrap();
+        rapid
+            .used_by
+            .push("python3 (pid 555) is connected to it".into());
+        let Some(Step::Refuse { message, .. }) = recheck(&fresh, &server, &req, &nt(&[])) else {
+            panic!("a server with a new user must be refused");
+        };
+        assert!(
+            message.contains("became used since you looked"),
+            "{message}"
+        );
+        assert!(message.contains("python3 (pid 555)"), "{message}");
+        assert!(
+            !message.contains("97112"),
+            "only the NEW user is named: {message}"
+        );
+        // The first selection applies the same rule.
+        assert_eq!(
+            ids(&select_free(&fresh, &req, &nt(&[]), false, false)),
+            vec!["REFUSED mlx:97100", "app:com.apple.TextEdit"]
+        );
+
+        let app = Step::App("com.apple.TextEdit".into());
+        assert_eq!(recheck(&fresh, &app, &req, &nt(&[])), None);
+        let edit = fresh
+            .iter_mut()
+            .find(|g| g.id == "app:com.apple.TextEdit")
+            .unwrap();
+        edit.protected_why = Some("started from a terminal".into());
+        assert!(matches!(
+            recheck(&fresh, &app, &req, &nt(&[])),
+            Some(Step::Refuse { .. })
+        ));
+        fresh.retain(|g| g.id != "app:com.apple.TextEdit" && g.id != "gooseEngine");
+        assert!(matches!(
+            recheck(&fresh, &app, &req, &nt(&[])),
+            Some(Step::Refuse { .. })
+        ));
+        assert!(matches!(
+            recheck(&fresh, &Step::OwnEngine, &req, &nt(&[])),
+            Some(Step::Refuse { .. })
+        ));
+    }
+
+    /// Review C4: nuclear only ASKS apps to quit. A SIGTERM happens only for a bundle the
+    /// person chose to force stop (`forceStopApps`), after the same checks, and over the Link
+    /// only with the peer's switch.
+    #[test]
+    fn memfree_c4_nuclear_never_force_stops_unless_the_person_asks() {
+        let groups = workhorse();
+        let nuclear = MlxEngineMemoryFreeRequest {
+            quit_apps: vec!["com.apple.TextEdit".into()],
+            nuclear: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            select_free(&groups, &nuclear, &nt(&[]), false, false),
+            vec![Step::App("com.apple.TextEdit".into())]
+        );
+        let force = MlxEngineMemoryFreeRequest {
+            force_stop_apps: vec!["com.apple.TextEdit".into(), "com.microsoft.teams2".into()],
+            nuclear: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            ids(&select_free(&groups, &force, &nt(&["Teams"]), false, false)),
+            vec![
+                "force:app:com.apple.TextEdit",
+                "REFUSED app:com.microsoft.teams2"
+            ]
+        );
+        assert_eq!(
+            ids(&select_free(&groups, &force, &nt(&[]), true, false)),
+            vec![
+                "REFUSED app:com.apple.TextEdit",
+                "REFUSED app:com.microsoft.teams2"
+            ],
+            "over the Link a force stop needs the peer's switch"
+        );
+    }
+
+    /// Review C4: an app still running after it was asked to quit is reported, left running,
+    /// and offered for an explicit force stop only when goose could signal it.
+    #[test]
+    fn memfree_c4_an_app_that_did_not_quit_is_reported_and_left_running() {
+        let asked = MlxMemoryFreeItemDto {
+            id: "app:com.apple.TextEdit".into(),
+            label: "TextEdit".into(),
+            ok: false,
+            freed_bytes: Some(0),
+            message: "TextEdit is still running (it may be asking to save)".into(),
+            force_stoppable: false,
+        };
+        let left = not_quit_report(asked.clone(), true, true);
+        assert!(!left.ok);
+        assert!(left.force_stoppable);
+        assert!(
+            left.message.contains("didn't quit (maybe unsaved work)"),
+            "{}",
+            left.message
+        );
+        assert!(left.message.contains("left running"), "{}", left.message);
+        assert!(!left.message.contains("SIGTERM"), "{}", left.message);
+        assert!(!not_quit_report(asked.clone(), true, false).force_stoppable);
+        let gone = not_quit_report(asked, false, false);
+        assert!(gone.ok && !gone.force_stoppable, "{}", gone.message);
     }
 
     /// LIVE, opt-in: drives the real holders + free handlers (nuclear) against ONE app the
