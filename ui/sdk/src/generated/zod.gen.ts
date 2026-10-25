@@ -6386,6 +6386,93 @@ export const zLeanzeroLinkRemoteExecuteResponse_unstable = z.object({
 });
 
 /**
+ * Mesh jobs (`/v1/swarm/jobs` on a node). Every jobs method needs the manager `connected`
+ * (else `invalid_params` "not connected to the mesh"). A refusal from the target (switch
+ * off, no memory headroom, heavy slot held, benchmark running, user active, ...) is an
+ * `invalid_params` error whose `data` is the node's `{code, reason}` verbatim. Job views,
+ * logs and placements are carried as the node's own JSON (`leanzero_link::jobs` DTOs);
+ * a view never carries the command line.
+ *
+ * Submit one job. `targetNodeId` absent = place it on the best node (see `jobsPlace`).
+ * `job` is a `JobRequest`: `{kind: "shell"|"prompt", command, cwd?, needMemGb?, heavy,
+ * timeoutS?}` (snake_case keys inside `job`, as the node's route takes them).
+ */
+export const zLeanzeroLinkJobsSubmitRequest_unstable = z.object({
+    targetNodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    job: z.unknown()
+});
+
+export const zLeanzeroLinkJobsSubmitResponse_unstable = z.object({
+    nodeId: z.string(),
+    jobId: z.string()
+});
+
+/**
+ * Every job a node knows (running and finished since it started), newest first as it lists them.
+ */
+export const zLeanzeroLinkJobsListRequest_unstable = z.object({
+    targetNodeId: z.string()
+});
+
+export const zLeanzeroLinkJobsListResponse_unstable = z.object({
+    jobs: z.array(z.unknown())
+});
+
+/**
+ * One job's view (brief + outcome), as `GET /v1/swarm/jobs/{id}`.
+ */
+export const zLeanzeroLinkJobsGetRequest_unstable = z.object({
+    targetNodeId: z.string(),
+    jobId: z.string()
+});
+
+export const zLeanzeroLinkJobsJobResponse_unstable = z.object({
+    job: z.unknown()
+});
+
+/**
+ * Cancel a shell job: its whole process group is TERMed, then KILLed after the grace. The
+ * group dies async: poll `jobsGet` for `cancelled`/143. A prompt job answers
+ * `cancel_unsupported`.
+ */
+export const zLeanzeroLinkJobsCancelRequest_unstable = z.object({
+    targetNodeId: z.string(),
+    jobId: z.string()
+});
+
+/**
+ * Bytes `[from, next)` of a job's combined stdout+stderr (`{from, next, data, done}`).
+ */
+export const zLeanzeroLinkJobsLogRequest_unstable = z.object({
+    targetNodeId: z.string(),
+    jobId: z.string(),
+    from: z.number().int().gte(0).optional().default(0)
+});
+
+export const zLeanzeroLinkJobsLogResponse_unstable = z.object({
+    log: z.unknown()
+});
+
+/**
+ * Where a job could run now, best first (node_fleet's rules: OK nodes by score, then
+ * USER-ACTIVE as the last resort; busy nodes and nodes that do not allow jobs are absent).
+ */
+export const zLeanzeroLinkJobsPlaceRequest_unstable = z.object({
+    needMemGb: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    heavy: z.boolean().optional().default(false)
+});
+
+export const zLeanzeroLinkJobsPlaceResponse_unstable = z.object({
+    placements: z.array(z.unknown())
+});
+
+/**
  * Read the `nodes` config, with the pool adopted and every def resolved. Never writes config.
  */
 export const zNodesReadRequest_unstable = z.record(z.unknown());
@@ -8426,6 +8513,12 @@ export const zExtRequest = z.object({
             zNotesInboxRequest_unstable,
             zNotesShowingRequest_unstable,
             zLeanzeroLinkRemoteExecuteRequest_unstable,
+            zLeanzeroLinkJobsSubmitRequest_unstable,
+            zLeanzeroLinkJobsListRequest_unstable,
+            zLeanzeroLinkJobsGetRequest_unstable,
+            zLeanzeroLinkJobsCancelRequest_unstable,
+            zLeanzeroLinkJobsLogRequest_unstable,
+            zLeanzeroLinkJobsPlaceRequest_unstable,
             zNodesReadRequest_unstable,
             zNodesWriteRequest_unstable,
             zNodesRemoveNodeRequest_unstable,
@@ -8589,6 +8682,11 @@ export const zExtResponse = z.union([
                 zNotesInboxResponse_unstable,
                 zNotesShowingResponse_unstable,
                 zLeanzeroLinkRemoteExecuteResponse_unstable,
+                zLeanzeroLinkJobsSubmitResponse_unstable,
+                zLeanzeroLinkJobsListResponse_unstable,
+                zLeanzeroLinkJobsJobResponse_unstable,
+                zLeanzeroLinkJobsLogResponse_unstable,
+                zLeanzeroLinkJobsPlaceResponse_unstable,
                 zNodesReadResponse_unstable,
                 zNodesWriteResponse_unstable,
                 zNodesSetChatNodesResponse_unstable,
