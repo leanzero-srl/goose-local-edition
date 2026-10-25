@@ -521,6 +521,10 @@ impl StreamScope {
 async fn nodes(State(ctx): State<Ctx>) -> Json<SwarmNodesResponse> {
     let mut self_node = ctx.source.local_node().await;
     self_node.leaving = ctx.leaving.lock().unwrap().clone();
+    // The node's load rides here — the one place both the desktop (ACP proxy) and every
+    // peer's 3 s poll read — never in the source's delta feed, which would publish a
+    // NodeStateChanged every tick.
+    self_node.load = Some(Box::new(self_load(&ctx).await));
     match ctx.mesh_ip {
         Some(ip) => {
             self_node.mesh_ip = Some(ip.to_string());
@@ -538,6 +542,17 @@ async fn nodes(State(ctx): State<Ctx>) -> Json<SwarmNodesResponse> {
             })
         }
     }
+}
+
+/// This node's load: the engine's running + waiting requests (when chat serving is wired and
+/// names its engine) plus the relay streams this service serves for peers.
+async fn self_load(ctx: &Ctx) -> crate::load::NodeLoad {
+    let engine = match ctx.chat_serving.as_ref().map(|s| s.engine_base_url()) {
+        Some(Ok(base)) => crate::load::engine_active(&ctx.engine_http, &base).await,
+        _ => 0,
+    };
+    let relays = ctx.streams.len().min(u32::MAX as usize) as u32;
+    crate::load::snapshot(engine.saturating_add(relays), Vec::new()).await
 }
 
 /// `POST /v1/swarm/peer-leaving`: a peer says it is going away on purpose (see the module

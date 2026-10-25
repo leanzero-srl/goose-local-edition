@@ -52,7 +52,7 @@ pub struct NodeState {
     /// stores it without publishing a `NodeStateChanged` for a load-only change). Absent from
     /// an older peer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub load: Option<crate::load::NodeLoad>,
+    pub load: Option<Box<crate::load::NodeLoad>>,
 }
 
 impl NodeState {

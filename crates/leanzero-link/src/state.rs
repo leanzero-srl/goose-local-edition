@@ -1139,13 +1139,13 @@ mod tests {
         let mut loaded = base.clone();
         let mut load = crate::load::NodeLoad::default();
         load.own.gpu_util_pct = Some(42.0);
-        loaded.load = Some(load.clone());
+        loaded.load = Some(Box::new(load.clone()));
         let events = fold_peer_snapshot(inner, "studio", Some(0), loaded.clone(), None, None);
         assert!(events.is_empty(), "{events:?}");
-        assert_eq!(row(&registry).load, Some(load.clone()));
+        assert_eq!(row(&registry).load, Some(Box::new(load.clone())));
 
         load.own.gpu_util_pct = Some(7.0);
-        loaded.load = Some(load.clone());
+        loaded.load = Some(Box::new(load.clone()));
         assert!(
             fold_peer_snapshot(inner, "studio", Some(0), loaded.clone(), None, None).is_empty()
         );

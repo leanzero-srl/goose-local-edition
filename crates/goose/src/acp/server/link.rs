@@ -448,6 +448,17 @@ fn derive_node(
     }
 }
 
+/// The load of a node with no control service up: OWN + this process's router slots + the
+/// local engine's `/v1/status` count (0 when the engine is down or its port is unknown).
+async fn not_connected_load() -> leanzero_link::load::NodeLoad {
+    use leanzero_link::state::ChatServing;
+    let engine = match super::mlx_remote_single::GoosedChatServing.engine_base_url() {
+        Ok(base) => leanzero_link::load::engine_active(&reqwest::Client::new(), &base).await,
+        Err(_) => 0,
+    };
+    leanzero_link::load::snapshot(engine, Vec::new()).await
+}
+
 /// The owner's three switches as THIS node enforces them now: model management as the running
 /// control service was built with it, chat serving and split ranks as their routes read them on
 /// every request.
@@ -456,6 +467,7 @@ fn node_allows(allow_remote_execution: bool) -> NodeAllows {
         manage_models: allow_remote_execution,
         answer_chat: super::mlx_remote_single::chat_serving_allowed(),
         run_split: distributed_node_allowed(),
+        run_jobs: false,
     }
 }
 
@@ -1627,10 +1639,13 @@ impl GooseAcpAgent {
         }
         // Not connected: there are no peers to know about — self only is the truth here. No
         // control service runs, so the switch this node would enforce is the one configured.
-        let self_node = self
+        let mut self_node = self
             .link_source(remote_execution_allowed())
             .local_node()
             .await;
+        // The same load snapshot the control service attaches to its `/nodes` self; no
+        // relay streams exist while not connected, so only the engine's own count rides.
+        self_node.load = Some(Box::new(not_connected_load().await));
         Ok(LeanzeroLinkNodesResponse {
             self_node: serde_json::to_value(self_node).internal_err()?,
             peers: Vec::new(),
@@ -1781,6 +1796,7 @@ mod tests {
         manage_models: false,
         answer_chat: false,
         run_split: false,
+        run_jobs: false,
     };
 
     /// The node's own report carries the switches it enforces, verbatim — a peer shows "off
@@ -1791,6 +1807,7 @@ mod tests {
             manage_models: true,
             answer_chat: false,
             run_split: true,
+            run_jobs: false,
         };
         let node = derive_node("node-a", &snapshot_of(Vec::new()), allows, Utc::now());
         assert_eq!(node.allows, Some(allows));
@@ -1798,7 +1815,7 @@ mod tests {
         let wire = serde_json::to_value(&node).unwrap();
         assert_eq!(
             wire["allows"],
-            serde_json::json!({"manage_models": true, "answer_chat": false, "run_split": true})
+            serde_json::json!({"manage_models": true, "answer_chat": false, "run_split": true, "run_jobs": false})
         );
     }
 

@@ -688,10 +688,7 @@ mod mac {
                     if CFGetTypeID(v.0) != CFDictionaryGetTypeID() {
                         return None;
                     }
-                    num(CFDictionaryGetValue(
-                        v.0 as CFDictionaryRef,
-                        k.0 as *const c_void,
-                    ))
+                    num(CFDictionaryGetValue(v.0 as CFDictionaryRef, k.0))
                 }
             })
             .max()
@@ -775,6 +772,66 @@ mod mac {
         v.truncate(n as usize);
         v.retain(|&p| p > 0);
         v
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The snapshot `/v1/swarm/nodes` attaches to `self`
+
+/// Env key of the user-idle threshold in seconds (default [`DEFAULT_USER_IDLE_S`]).
+pub const USER_IDLE_ENV: &str = "LEANZERO_LINK_JOBS_USER_IDLE_S";
+
+/// The user-idle threshold this node reports `user_active` against: `LEANZERO_LINK_JOBS_USER_IDLE_S`
+/// when set to a positive integer, else [`DEFAULT_USER_IDLE_S`].
+pub fn user_idle_threshold_s() -> u64 {
+    std::env::var(USER_IDLE_ENV)
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(DEFAULT_USER_IDLE_S)
+}
+
+/// `num_running + num_waiting` from an engine `/v1/status` body; `None` when neither is a number.
+pub fn engine_active_from_status(body: &str) -> Option<u32> {
+    let v: serde_json::Value = serde_json::from_str(body).ok()?;
+    let running = v.get("num_running").and_then(|n| n.as_u64());
+    let waiting = v.get("num_waiting").and_then(|n| n.as_u64());
+    if running.is_none() && waiting.is_none() {
+        return None;
+    }
+    Some((running.unwrap_or(0) + waiting.unwrap_or(0)).min(u32::MAX as u64) as u32)
+}
+
+/// The engine at `base` (loopback) asked for its `/v1/status`, 500 ms total (node_fleet reads
+/// 127.0.0.1:8090/v1/status the same way). An engine that does not answer serves nothing: 0.
+pub async fn engine_active(client: &reqwest::Client, base: &str) -> u32 {
+    let url = format!("{}/v1/status", base.trim_end_matches('/'));
+    let Ok(Ok(resp)) =
+        tokio::time::timeout(Duration::from_millis(500), client.get(&url).send()).await
+    else {
+        return 0;
+    };
+    match tokio::time::timeout(Duration::from_millis(500), resp.text()).await {
+        Ok(Ok(body)) => engine_active_from_status(&body).unwrap_or(0),
+        _ => 0,
+    }
+}
+
+/// One full load snapshot: OWN sampled on a blocking thread (IOKit + proc reads, ~3 ms),
+/// `engine_active` as the caller measured it, this process's router slots, and `jobs`.
+pub async fn snapshot(engine_active: u32, jobs: Vec<JobBrief>) -> NodeLoad {
+    let threshold = user_idle_threshold_s();
+    let own = tokio::task::spawn_blocking(move || sample_own(threshold))
+        .await
+        .unwrap_or_default();
+    NodeLoad {
+        own,
+        inference: InferenceLoad {
+            engine_active,
+            router_slots_used: router_slots_used(),
+        },
+        jobs,
+        sampled_at: Some(Utc::now()),
     }
 }
 
@@ -896,5 +953,34 @@ mod tests {
         let g = group_memory_bytes(pg).expect("group readable");
         assert!(g >= b);
         assert_eq!(group_memory_bytes(i32::MAX - 7), None);
+    }
+
+    #[test]
+    fn engine_status_body_counts_running_plus_waiting() {
+        assert_eq!(
+            engine_active_from_status(r#"{"status":"generating","num_running":1,"num_waiting":2}"#),
+            Some(3)
+        );
+        assert_eq!(engine_active_from_status(r#"{"num_running":0}"#), Some(0));
+        assert_eq!(engine_active_from_status(r#"{"status":"ok"}"#), None);
+        assert_eq!(engine_active_from_status("not json"), None);
+    }
+
+    #[tokio::test]
+    async fn an_engine_that_does_not_answer_counts_zero_within_the_cap() {
+        let started = Instant::now();
+        // Port 9 (discard) on loopback: refused or silent, never a status body.
+        let n = engine_active(&reqwest::Client::new(), "http://127.0.0.1:9").await;
+        assert_eq!(n, 0);
+        assert!(started.elapsed() < Duration::from_millis(1500));
+    }
+
+    #[tokio::test]
+    async fn snapshot_carries_router_slots_and_a_sample_time() {
+        let _slot = RouterSlot::acquire();
+        let load = snapshot(4, Vec::new()).await;
+        assert_eq!(load.inference.engine_active, 4);
+        assert!(load.inference.router_slots_used >= 1);
+        assert!(load.sampled_at.is_some());
     }
 }
