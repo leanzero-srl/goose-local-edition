@@ -276,7 +276,7 @@ async fn groups(
     enrich_used_by(&mut groups, own_port).await?;
     let never_touch = protect::never_touch_list(&never_touch);
     for g in &mut groups {
-        g.nuclear_default = protect::eligible(g, Mode::Nuclear, &never_touch);
+        g.nuclear_default = protect::nuclear_default(g, &never_touch);
     }
     Ok((groups, ai))
 }

@@ -119,7 +119,6 @@ async fn main() -> Result<()> {
         }
     }
     for g in groups.iter_mut() {
-        g.nuclear_default = protect::eligible(g, Mode::Nuclear, &never_touch);
         let is_server = g.category == Category::AiServer || g.id.starts_with("mlx:");
         if is_server {
             let port = if g.category == Category::AiServer {
@@ -137,6 +136,7 @@ async fn main() -> Result<()> {
                 .unwrap_or_default();
             g.used_by = servers::used_by_lines(g, &rows, &clients);
         }
+        g.nuclear_default = protect::nuclear_default(g, &never_touch);
     }
 
     // LEGACY 3.0.130 soft: own engine (assumed idle here) + EVERY other MLX engine + every model
@@ -170,17 +170,30 @@ async fn main() -> Result<()> {
     print_list("NEW soft (one click)", &soft_g, |_| String::new());
 
     let nuclear = protect::plan(&groups, Mode::Nuclear, &never_touch);
-    let nuc_g: Vec<&Group> = groups.iter().filter(|g| nuclear.contains(&g.id)).collect();
+    let used = |g: &Group| {
+        if g.used_by.is_empty() {
+            String::new()
+        } else {
+            format!("used by: {}", g.used_by.join("; "))
+        }
+    };
+    let ticked: Vec<&Group> = groups
+        .iter()
+        .filter(|g| nuclear.contains(&g.id) && g.nuclear_default)
+        .collect();
     print_list(
         "NEW nuclear default selection (ticked, one confirm)",
-        &nuc_g,
-        |g| {
-            if g.used_by.is_empty() {
-                String::new()
-            } else {
-                format!("used by: {}", g.used_by.join("; "))
-            }
-        },
+        &ticked,
+        used,
+    );
+    let unticked: Vec<&Group> = groups
+        .iter()
+        .filter(|g| nuclear.contains(&g.id) && !g.nuclear_default)
+        .collect();
+    print_list(
+        "NEW nuclear offered but NOT ticked (in use; owner must tick it)",
+        &unticked,
+        used,
     );
 
     let prot: Vec<&Group> = groups

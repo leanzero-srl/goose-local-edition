@@ -380,6 +380,14 @@ pub fn eligible(g: &Group, mode: Mode, never_touch: &[String]) -> bool {
         }
 }
 
+/// Is it ticked by default in the "free everything except protected" view? Eligible for nuclear
+/// AND nobody is using it: a server with a client connected (the workhorse's rapid-mlx 8093 had an
+/// ssh port-forward on it, 2026-10-25), a parent or a label in `used_by` stays offered but
+/// unticked. Explicit picks are re-validated with [`eligible`] alone.
+pub fn nuclear_default(g: &Group, never_touch: &[String]) -> bool {
+    eligible(g, Mode::Nuclear, never_touch) && g.used_by.is_empty()
+}
+
 /// The group ids a clean in `mode` frees, in the groups' order.
 pub fn plan(groups: &[Group], mode: Mode, never_touch: &[String]) -> Vec<String> {
     groups
@@ -755,6 +763,20 @@ mod tests {
         assert_eq!(
             chrome.protected_why.as_deref(),
             Some("a browser driven by automation (remote debugging)")
+        );
+    }
+
+    #[test]
+    fn a_server_in_use_is_offered_but_not_ticked() {
+        let mut gs = groups(&workhorse());
+        let nt = never_touch_list(&[]);
+        let engine = gs.iter_mut().find(|g| g.id == "mlx:97100").unwrap();
+        assert!(nuclear_default(engine, &nt));
+        engine.used_by = vec!["sshd-session (pid 97112) is connected to it".into()];
+        assert!(!nuclear_default(engine, &nt), "a client is connected");
+        assert!(
+            eligible(engine, Mode::Nuclear, &nt),
+            "still offered and freeable when picked"
         );
     }
 
