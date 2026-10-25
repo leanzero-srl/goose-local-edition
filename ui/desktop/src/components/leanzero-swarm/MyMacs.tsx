@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Laptop, Link2Off, Loader2, LogOut, Network, Play, RefreshCw } from 'lucide-react';
 import { defineMessages, useIntl } from '../../i18n';
@@ -36,7 +36,7 @@ import {
 } from './macs';
 import { macLine, macStateWord } from './macSummary';
 import { useMacSummary } from './useMacSummary';
-import { PERMISSION_LABEL, useMacs, type MacFacts } from './useMacs';
+import { PERMISSION_LABEL, cardReadAt, staleSeconds, useMacs, type MacFacts } from './useMacs';
 import { useGlanceNodes } from '../engineGlance/glanceStore';
 import { JobsSettings, MacLoadBars } from './MacLoadPanel';
 import { RunJobDialog } from './RunJobDialog';
@@ -52,6 +52,7 @@ import { nodeHref } from '../../utils/navigationUtils';
 
 const i18n = defineMessages({
   title: { id: 'myMacs.title', defaultMessage: 'My Macs' },
+  updatedAgo: { id: 'myMacs.updatedAgo', defaultMessage: 'updated {seconds}s ago' },
   runJob: { id: 'myMacs.runJob', defaultMessage: 'Run a job…' },
   intro: {
     id: 'myMacs.intro',
@@ -460,6 +461,27 @@ interface MyMacsProps {
   onLinkChanged: () => Promise<void>;
 }
 
+/**
+ * "updated Xs ago" while the card's facts are older than STALE_AFTER_MS (after the window was
+ * hidden, or while a Mac stops answering), so old data is never shown as if it were current.
+ * Ticks itself once a second; renders nothing while fresh.
+ */
+export function UpdatedAgo({ at }: { at: number | null }) {
+  const intl = useIntl();
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const seconds = staleSeconds(at, Math.max(now, Date.now()));
+  if (seconds == null) return null;
+  return (
+    <span data-testid="my-mac-updated-ago" className={cx(TYPE.bodyMuted, TNUM)}>
+      {intl.formatMessage(i18n.updatedAgo, { seconds })}
+    </span>
+  );
+}
+
 function MacCard({ mac, props }: { mac: Mac; props: MyMacsProps }) {
   const intl = useIntl();
   const macsCtx = useMacs();
@@ -516,6 +538,7 @@ function MacCard({ mac, props }: { mac: Mac; props: MyMacsProps }) {
           {mac.name}
         </span>
         {mac.isSelf && <Chip>{intl.formatMessage(i18n.thisMac)}</Chip>}
+        <UpdatedAgo at={cardReadAt(macsCtx.rosterAt, facts)} />
         {summary.phase ? (
           <Chip phase={summary.phase}>
             <span data-testid="my-mac-state" data-phase={summary.phase}>

@@ -12037,5 +12037,8 @@
   },
   "runJob.refused": {
     "defaultMessage": "Gönderilmedi: {reason}"
+  },
+  "myMacs.updatedAgo": {
+    "defaultMessage": "{seconds} sn önce güncellendi"
   }
 }

@@ -12037,5 +12037,8 @@
   },
   "runJob.refused": {
     "defaultMessage": "Chưa gửi: {reason}"
+  },
+  "myMacs.updatedAgo": {
+    "defaultMessage": "cập nhật {seconds} giây trước"
   }
 }

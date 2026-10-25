@@ -12037,5 +12037,8 @@
   },
   "runJob.refused": {
     "defaultMessage": "Tidak dihantar: {reason}"
+  },
+  "myMacs.updatedAgo": {
+    "defaultMessage": "dikemas kini {seconds} saat lalu"
   }
 }

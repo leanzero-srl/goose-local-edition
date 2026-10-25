@@ -494,7 +494,8 @@ fn argv_env_flag(args: &str) -> bool {
 /// words). Counted: the program, or a script in the first three arguments, whose basename names
 /// it (`run_benchmark.py`, `benchmark`); a `benchmark`/`bench` subcommand right after the program
 /// or script; a `-benchmark`/`--benchmark[=..]` flag; a path token (from `/`, `~` or `.`) with a
-/// `/benchmark/` directory; the goose env flag in argv. A prompt-carrying agent CLI (`claude`,
+/// `/benchmark/` directory; a script under the app's `swarm-bench/bench/` payload in the script
+/// position ([`is_swarm_bench_script`]); the goose env flag in argv. A prompt-carrying agent CLI (`claude`,
 /// `codex`) is prose after its flags: only its program name counts. Same rule as node_fleet.py's
 /// `argv_is_benchmark`.
 pub fn argv_is_benchmark(args: &str) -> bool {
@@ -517,6 +518,13 @@ pub fn argv_is_benchmark(args: &str) -> bool {
         return true;
     }
     let head = &a[1..a.len().min(4)];
+    // The script position: the program itself (a shebang run) or the first non-flag argument.
+    let script_pos = head.iter().find(|x| !x.starts_with('-'));
+    if is_swarm_bench_script(&first.to_ascii_lowercase())
+        || script_pos.is_some_and(|x| is_swarm_bench_script(&x.to_ascii_lowercase()))
+    {
+        return true;
+    }
     const SCRIPT_EXT: [&str; 6] = [".py", ".js", ".mjs", ".sh", ".ts", ".rs"];
     for (k, x) in head.iter().enumerate() {
         let xl = x.to_ascii_lowercase();
@@ -551,6 +559,19 @@ pub fn argv_is_benchmark(args: &str) -> bool {
         }
     }
     false
+}
+
+/// A script the app's benchmark payload runs: `<...>/swarm-bench/bench/<name>.py|.mjs|...`
+/// (packaged `Contents/Resources/swarm-bench/bench/run_build.py`, dev `evals/swarm-bench/...`).
+/// Its argv never says "benchmark" (D5 leftover, 3.0.130). Only checked in the program's
+/// script position, so prose naming the file is not a hit.
+fn is_swarm_bench_script(lower: &str) -> bool {
+    const SCRIPT_EXT: [&str; 4] = [".py", ".js", ".mjs", ".sh"];
+    lower
+        .rsplit_once("/swarm-bench/bench/")
+        .is_some_and(|(_, file)| {
+            !file.contains('/') && SCRIPT_EXT.iter().any(|e| file.ends_with(e))
+        })
 }
 
 /// Processes that look at benchmarks without being one (node_fleet's exclusion).
@@ -1303,6 +1324,34 @@ mod tests {
         assert!(!argv_is_benchmark("goose --benchmarks"));
         assert!(!argv_is_benchmark(
             "python3 /x/prepare.py write about the benchmark board"
+        ));
+    }
+
+    /// D5 leftover (3.0.130): the app's own runner, `.../Resources/swarm-bench/bench/run_build.py`
+    /// (and the dev tree's `evals/swarm-bench/bench/...`), never says "benchmark" in its argv.
+    #[test]
+    fn the_apps_swarm_bench_runner_is_a_benchmark() {
+        let py = "/Library/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/Python";
+        assert!(argv_is_benchmark(&format!(
+            "{py} /Applications/Goose.app/Contents/Resources/swarm-bench/bench/run_build.py \
+             --entrant swarm-3node --only-rep 0 --timeout 0 --out /tmp/o"
+        )));
+        assert!(argv_is_benchmark(
+            "python3 /Users/x/Projects/goose/evals/swarm-bench/bench/bench_rescore.py /tmp/run"
+        ));
+        assert!(argv_is_benchmark(
+            "/usr/bin/python3 -u /A/Goose.app/Contents/Resources/swarm-bench/bench/run_build.py"
+        ));
+        // Mentioning the runner in prose, or a non-script file there, is not running it.
+        assert!(!argv_is_benchmark(
+            "claude -p fix swarm-bench/bench/run_build.py /x/swarm-bench/bench/run_build.py"
+        ));
+        assert!(!argv_is_benchmark(
+            "python3 /x/newsroom/prepare.py see /a/swarm-bench/bench/run_build.py benchmark"
+        ));
+        assert!(!argv_is_benchmark("cat /a/swarm-bench/bench/notes.txt"));
+        assert!(!argv_is_benchmark(
+            "python3 /x/swarm-bench-notes/bench/run_build.py"
         ));
     }
 

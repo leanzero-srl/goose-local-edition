@@ -6998,6 +6998,9 @@
   "myMacs.title": {
     "defaultMessage": "My Macs"
   },
+  "myMacs.updatedAgo": {
+    "defaultMessage": "updated {seconds}s ago"
+  },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "Providers"
   },
