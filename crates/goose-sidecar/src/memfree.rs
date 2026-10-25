@@ -260,10 +260,51 @@ pub fn never_kill(
     None
 }
 
+/// `roots` plus every process whose parent chain reaches one of them.
+fn with_descendants(roots: &[u32], rows: &[ProcRow]) -> HashSet<u32> {
+    let mut set: HashSet<u32> = roots.iter().copied().collect();
+    if set.is_empty() {
+        return set;
+    }
+    loop {
+        let before = set.len();
+        for r in rows {
+            if r.pid != r.ppid && set.contains(&r.ppid) {
+                set.insert(r.pid);
+            }
+        }
+        if set.len() == before {
+            return set;
+        }
+    }
+}
+
+/// The name a loose process is known by. Self-updating CLIs run a binary named after its version
+/// (`~/.local/share/claude/versions/2.1.299`): those take the nearest folder that is a real name, so
+/// five sessions on three versions read as one "claude", not five version numbers.
+fn process_name(path: &str) -> String {
+    let is_version = |c: &str| {
+        c.starts_with(|ch: char| ch.is_ascii_digit())
+            && c.chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ".-_+".contains(ch))
+    };
+    let base = basename(path);
+    if !is_version(base) {
+        return base.to_string();
+    }
+    path.rsplit('/')
+        .skip(1)
+        .find(|c| !c.is_empty() && !is_version(c) && !matches!(*c, "versions" | "bin" | "current"))
+        .unwrap_or(base)
+        .to_string()
+}
+
 /// Fold the census into the groups the owner sees, largest first.
 pub fn categorize(rows: &[ProcRow], ctx: &CategorizeCtx) -> Vec<Group> {
     let protected = protected_pids(ctx.self_pid, rows);
-    let own: HashSet<u32> = ctx.own_engine_pids.iter().copied().collect();
+    // goose's engine is a launcher (`uv run`) whose child python holds the weights: the whole
+    // tree under the recorded pid is the engine (measured live 2026-10-25: uv 66 MB, python 4.9 GB).
+    let own = with_descendants(&ctx.own_engine_pids, rows);
     let others: HashSet<u32> = ctx.other_engine_pids.iter().copied().collect();
     let mut groups: BTreeMap<String, Group> = BTreeMap::new();
     // An app is protected when ANY of its processes is (the main binary may be an ancestor).
@@ -279,7 +320,7 @@ pub fn categorize(rows: &[ProcRow], ctx: &CategorizeCtx) -> Vec<Group> {
         let app = outer_app(&row.path).map(str::to_string);
         let bundle = app.as_ref().and_then(|a| ctx.bundles.get(a));
         let bundle_id = bundle.map(|(b, _)| b.as_str());
-        let name = basename(&row.path).to_string();
+        let name = process_name(&row.path);
 
         if own.contains(&row.pid) {
             let label = match &ctx.own_engine_model {
@@ -1038,6 +1079,63 @@ mod tests {
         assert!(!noplist.quittable);
         // Largest first.
         assert!(groups.windows(2).all(|w| w[0].bytes >= w[1].bytes));
+    }
+
+    #[test]
+    fn engine_child_processes_count_as_the_engine() {
+        // Live shape: status pid = the uv launcher, the weights sit in its python child.
+        let rows = vec![
+            row(510, 1, 501, "/opt/homebrew/bin/uv", 66 * 1024 * 1024),
+            row(
+                511,
+                510,
+                501,
+                "/u/.cache/uv/archive-v0/x/bin/python",
+                5 * GB,
+            ),
+            row(512, 511, 501, "/u/.cache/uv/archive-v0/x/bin/python", GB),
+            row(600, 1, 501, "/opt/homebrew/bin/python3.12", 2 * GB),
+        ];
+        let mut c = ctx(&[]);
+        c.own_engine_pids = vec![510];
+        let g = categorize(&rows, &c);
+        let engine = g.iter().find(|g| g.id == "gooseEngine").unwrap();
+        assert_eq!(engine.bytes, 6 * GB + 66 * 1024 * 1024);
+        assert_eq!(engine.pids.len(), 3);
+        assert!(g
+            .iter()
+            .any(|g| g.id == "job:python3.12" && g.bytes == 2 * GB));
+    }
+
+    #[test]
+    fn version_named_binaries_take_their_tool_name() {
+        assert_eq!(
+            process_name("/Users/m/.local/share/claude/versions/2.1.299"),
+            "claude"
+        );
+        assert_eq!(process_name("/usr/local/bin/node"), "node");
+        assert_eq!(process_name("/opt/x/bin/python3.12"), "python3.12");
+        assert_eq!(process_name("/opt/tool/1.2/bin/9.9"), "tool");
+        assert_eq!(process_name("2.1.0"), "2.1.0");
+        let rows = vec![
+            row(
+                700,
+                1,
+                501,
+                "/Users/m/.local/share/claude/versions/2.1.299",
+                GB,
+            ),
+            row(
+                701,
+                1,
+                501,
+                "/Users/m/.local/share/claude/versions/2.1.308",
+                GB,
+            ),
+        ];
+        let g = categorize(&rows, &ctx(&[]));
+        assert_eq!(g.len(), 1);
+        assert_eq!((g[0].id.as_str(), g[0].bytes), ("job:claude", 2 * GB));
     }
 
     #[test]
