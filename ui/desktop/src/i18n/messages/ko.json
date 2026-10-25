@@ -4217,11 +4217,11 @@
   "macLoad.policy": {
     "defaultMessage": "누군가 이 Mac을 사용하는 동안"
   },
+  "macLoad.policyHint": {
+    "defaultMessage": "바쁨은 측정값입니다: 하한을 넘는 메모리, 비어 있는 무거운 작업 슬롯, 코어당 부하. 키보드 앞에 사람이 있으면 동점일 때만 반영합니다."
+  },
   "macLoad.policy.allow": {
     "defaultMessage": "작업 받기"
-  },
-  "macLoad.policy.lastResort": {
-    "defaultMessage": "최후의 수단으로만"
   },
   "macLoad.policy.refuse": {
     "defaultMessage": "작업 거부"

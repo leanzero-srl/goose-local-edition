@@ -4217,11 +4217,11 @@
   "macLoad.policy": {
     "defaultMessage": "जब कोई इस Mac का उपयोग कर रहा हो"
   },
+  "macLoad.policyHint": {
+    "defaultMessage": "व्यस्त का मतलब मापा गया: सीमा से ऊपर मेमोरी, भारी कामों के खाली स्लॉट, प्रति कोर लोड। कीबोर्ड पर कोई हो तो वह केवल बराबरी तोड़ता है।"
+  },
   "macLoad.policy.allow": {
     "defaultMessage": "जॉब लें"
-  },
-  "macLoad.policy.lastResort": {
-    "defaultMessage": "सिर्फ़ आख़िरी विकल्प के रूप में"
   },
   "macLoad.policy.refuse": {
     "defaultMessage": "जॉब अस्वीकार करें"

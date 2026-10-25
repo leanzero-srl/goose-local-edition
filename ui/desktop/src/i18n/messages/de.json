@@ -4217,11 +4217,11 @@
   "macLoad.policy": {
     "defaultMessage": "Während jemand diesen Mac benutzt"
   },
+  "macLoad.policyHint": {
+    "defaultMessage": "Ausgelastet heißt gemessen: Speicher über der Untergrenze, freie Plätze für schwere Jobs, Last pro Kern. Jemand an der Tastatur entscheidet nur bei Gleichstand."
+  },
   "macLoad.policy.allow": {
     "defaultMessage": "Jobs annehmen"
-  },
-  "macLoad.policy.lastResort": {
-    "defaultMessage": "Nur als letzte Möglichkeit"
   },
   "macLoad.policy.refuse": {
     "defaultMessage": "Jobs ablehnen"

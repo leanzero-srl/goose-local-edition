@@ -4217,11 +4217,11 @@
   "macLoad.policy": {
     "defaultMessage": "Mentre qualcuno usa questo Mac"
   },
+  "macLoad.policyHint": {
+    "defaultMessage": "Occupato significa misurato: memoria sopra la soglia, slot pesanti liberi, carico per core. Qualcuno alla tastiera decide solo a parità."
+  },
   "macLoad.policy.allow": {
     "defaultMessage": "Accetta job"
-  },
-  "macLoad.policy.lastResort": {
-    "defaultMessage": "Solo come ultima risorsa"
   },
   "macLoad.policy.refuse": {
     "defaultMessage": "Rifiuta job"

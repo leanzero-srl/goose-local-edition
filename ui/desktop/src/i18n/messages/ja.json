@@ -4217,11 +4217,11 @@
   "macLoad.policy": {
     "defaultMessage": "誰かがこの Mac を使っているとき"
   },
+  "macLoad.policyHint": {
+    "defaultMessage": "ビジーは計測値で判断します：下限を超えるメモリ、空いている重いジョブ枠、コアあたりの負荷。キーボードを使っている人は同点時の判断にだけ使います。"
+  },
   "macLoad.policy.allow": {
     "defaultMessage": "ジョブを受ける"
-  },
-  "macLoad.policy.lastResort": {
-    "defaultMessage": "最後の手段としてのみ"
   },
   "macLoad.policy.refuse": {
     "defaultMessage": "ジョブを断る"

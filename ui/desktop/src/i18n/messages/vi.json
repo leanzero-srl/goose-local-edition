@@ -4217,11 +4217,11 @@
   "macLoad.policy": {
     "defaultMessage": "Khi có người dùng Mac này"
   },
+  "macLoad.policyHint": {
+    "defaultMessage": "Bận nghĩa là đo được: bộ nhớ trên mức sàn, chỗ trống cho việc nặng, tải mỗi lõi. Người đang dùng bàn phím chỉ dùng để phân xử khi ngang nhau."
+  },
   "macLoad.policy.allow": {
     "defaultMessage": "Nhận tác vụ"
-  },
-  "macLoad.policy.lastResort": {
-    "defaultMessage": "Chỉ khi không còn cách nào khác"
   },
   "macLoad.policy.refuse": {
     "defaultMessage": "Từ chối tác vụ"

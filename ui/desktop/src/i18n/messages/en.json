@@ -4269,7 +4269,7 @@
     "defaultMessage": "Run jobs other Macs send"
   },
   "macLoad.allowJobsHint": {
-    "defaultMessage": "Shell commands and prompts, one heavy job at a time, killed when they pass the memory floor. Takes effect at once."
+    "defaultMessage": "Shell commands and prompts, as many heavy jobs as this Mac has slots and memory for, killed when they pass the memory floor. Takes effect at once."
   },
   "macLoad.benchmark": {
     "defaultMessage": "Benchmark running: {why}"
@@ -4358,11 +4358,11 @@
   "macLoad.policy": {
     "defaultMessage": "While someone uses this Mac"
   },
+  "macLoad.policyHint": {
+    "defaultMessage": "Busy means measured: memory above the floor, free heavy slots, load per core. Someone at the keyboard only breaks ties."
+  },
   "macLoad.policy.allow": {
     "defaultMessage": "Take jobs"
-  },
-  "macLoad.policy.lastResort": {
-    "defaultMessage": "Only as a last resort"
   },
   "macLoad.policy.refuse": {
     "defaultMessage": "Refuse jobs"

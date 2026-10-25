@@ -89,9 +89,9 @@ export function isTerminal(state: JobState): boolean {
 }
 
 /** The values the jobs tunables take; mirrors leanzero-link `UserActivePolicy::parse`. */
-export type UserActivePolicy = 'allow' | 'last_resort' | 'refuse';
+export type UserActivePolicy = 'allow' | 'refuse';
 
-export const USER_ACTIVE_POLICIES: readonly UserActivePolicy[] = ['allow', 'last_resort', 'refuse'];
+export const USER_ACTIVE_POLICIES: readonly UserActivePolicy[] = ['allow', 'refuse'];
 
 /** goose config keys the jobs side reads (link.rs `jobs_config`, leanzero-link jobs/load). */
 export const JOBS_KEYS = {
@@ -108,7 +108,7 @@ export const STRATEGIES: readonly PlacementStrategy[] = ['local-first', 'selfish
 /** The defaults the backend falls back to when a key is unset. */
 export const JOBS_DEFAULTS = {
   allow: false,
-  policy: 'last_resort' as UserActivePolicy,
+  policy: 'allow' as UserActivePolicy,
   idleS: 300,
   minFree: 20,
   strategy: 'local-first' as PlacementStrategy,
@@ -116,6 +116,8 @@ export const JOBS_DEFAULTS = {
 
 export function parsePolicy(v: unknown): UserActivePolicy {
   const s = typeof v === 'string' ? v.trim().toLowerCase().replace('-', '_') : '';
+  // The pre-3.0.131 `last_resort` reads as `allow` (busy is measured load only).
+  if (s === 'last_resort') return 'allow';
   return (USER_ACTIVE_POLICIES as readonly string[]).includes(s)
     ? (s as UserActivePolicy)
     : JOBS_DEFAULTS.policy;

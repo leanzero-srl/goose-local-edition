@@ -112,11 +112,15 @@ const i18n = defineMessages({
   allowJobsHint: {
     id: 'macLoad.allowJobsHint',
     defaultMessage:
-      'Shell commands and prompts, one heavy job at a time, killed when they pass the memory floor. Takes effect at once.',
+      'Shell commands and prompts, as many heavy jobs as this Mac has slots and memory for, killed when they pass the memory floor. Takes effect at once.',
   },
   policy: { id: 'macLoad.policy', defaultMessage: 'While someone uses this Mac' },
   policy_allow: { id: 'macLoad.policy.allow', defaultMessage: 'Take jobs' },
-  policy_last_resort: { id: 'macLoad.policy.lastResort', defaultMessage: 'Only as a last resort' },
+  policyHint: {
+    id: 'macLoad.policyHint',
+    defaultMessage:
+      'Busy means measured: memory above the floor, free heavy slots, load per core. Someone at the keyboard only breaks ties.',
+  },
   policy_refuse: { id: 'macLoad.policy.refuse', defaultMessage: 'Refuse jobs' },
   idleS: { id: 'macLoad.idleS', defaultMessage: 'Counts as idle after (seconds)' },
   minFree: { id: 'macLoad.minFree', defaultMessage: 'Memory floor (% kept free)' },
@@ -299,6 +303,18 @@ export function MacLoadBars({
           className={cx(TYPE.meta, WEIGHT.semibold, TONE_TEXT.warn)}
         >
           {intl.formatMessage(i18n.benchmark, { why: load.own.benchmark })}
+        </p>
+      )}
+      {load.own.verdict && (
+        <p
+          data-testid="mac-load-verdict"
+          className={cx(
+            TYPE.meta,
+            TNUM,
+            load.own.verdict.startsWith('busy:') && cx(WEIGHT.semibold, TONE_TEXT.warn)
+          )}
+        >
+          {load.own.verdict}
         </p>
       )}
       {loadBars(load).map((bar) => (
@@ -719,6 +735,9 @@ export function JobsSettings() {
             }))}
             onChange={(p) => void save(JOBS_KEYS.policy, p, { policy: p })}
           />
+          <p data-testid="jobs-settings-policy-hint" className={TYPE.meta}>
+            {intl.formatMessage(i18n.policyHint)}
+          </p>
           <label className="flex flex-wrap items-center gap-2">
             <span className={TYPE.meta}>{intl.formatMessage(i18n.idleS)}</span>
             <input

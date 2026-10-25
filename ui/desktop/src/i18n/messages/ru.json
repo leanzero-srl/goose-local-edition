@@ -4217,11 +4217,11 @@
   "macLoad.policy": {
     "defaultMessage": "Пока кто-то работает за этим Mac"
   },
+  "macLoad.policyHint": {
+    "defaultMessage": "Занятость измеряется: память выше порога, свободные слоты для тяжёлых задач, нагрузка на ядро. Человек за клавиатурой учитывается только при равенстве."
+  },
   "macLoad.policy.allow": {
     "defaultMessage": "Принимать задания"
-  },
-  "macLoad.policy.lastResort": {
-    "defaultMessage": "Только в крайнем случае"
   },
   "macLoad.policy.refuse": {
     "defaultMessage": "Отклонять задания"

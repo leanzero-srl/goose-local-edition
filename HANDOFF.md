@@ -31,42 +31,43 @@ Cards/verdicts show how much more a Mac can take: "can take ~11 more 8 GB jobs".
 - control.rs /v1/swarm/execute: the "node status != Idle -> 409" flag guard is REPLACED by ctx.jobs.measured_busy() (audit item: a Mac
   refused all remote prompts whenever any session of its own was live). Session-level double-reply guard stays in link_serve.rs:318.
 
-## TODO (in order)
-1. Lib tests in crates/leanzero-link/src/jobs.rs ~1830-2150: update to new signatures (`&Gate::with_floor(20.0)` instead of `20.0`,
-   UserActivePolicy::LastResort is gone, user-active is no longer "last" -> rewrite `user_active_policy`,
-   `placement_ok_first_then_user_active_by_score`, `plan_placement_keeps_user_active_last...` to assert the tiebreak semantics;
-   score asserts 46.2/26.2 are unchanged math). Placement literals need can_take/verdict.
-2. FAILING-FIRST fixtures (owner's three live states) as lib tests + a control_service test:
-   a) laptop 94% free, 128 GB, load 0.28/core, slot 0 held by an EXTERNAL flock (take HeavySlot::try_take_at(slot0) in the test) -> a
-      heavy submit is ADMITTED on slot 1; second heavy goose job concurrently also admitted (max_heavy 2 via limits) -> third refused
-      heavy_slot_held with "2/2 heavy slots held".
-   b) user_active=true, 79% free -> admitted under default policy; refused only under Refuse (reason has numbers).
-   c) overload: load 2.4/core -> heavy refused cpu_overloaded "load 2.40/core >= 2 backstop"; 12% free -> memory_headroom "12% free < 20% floor".
-   d) verdict line OK shape "ok: 1/3 heavy, 94 GB free, load 0.28/core, can take ~N more 8 GB jobs".
-   e) NodeLimits::from_json reads max_heavy/max_load_per_core/default_need_gb; default_max_heavy(16)=4? NO: 16/4=4; (8)=2; (28)=7.
-3. tests/control_service.rs: line ~2061 `UserActivePolicy::LastResort` -> Refuse or Allow; ~2196-2211 user_active test now expects
-   202 under default (and 409 user_active only with Refuse); heavy_slot_held tests (2206, 2676-2689, 2842) must hold ALL slots (set
-   limits max_heavy 1 in that JobsConfig, or flock slot 0 and .1); `execute_409_when_node_busy_and_never_calls_executor` (~1362):
-   live session must now give 202; add a 409 case via a sampler with mem_free_pct below the floor (check how spawn_node_full builds
-   ctx.jobs / its sampler; the default sampler reads the REAL Mac, so inject one). Also tests/manager.rs 3184/3299/3416 compile check.
-   queue.rs:365 test fine.
-4. crates/goose/src/acp/server/link.rs: placement_json add "canTake", "verdict"; tests ~2597/2631 Placement literals need new fields.
-   jobs_config() unchanged (policy parse handles last_resort).
-5. UI ui/desktop/src: acp/leanzero-link.ts OwnLoad add heavy_slots_used, heavy_slots_max, can_take?, verdict?; placement type add
-   canTake/verdict. components/leanzero-swarm/macLoad.ts: UserActivePolicy 'allow'|'refuse', USER_ACTIVE_POLICIES ['allow','refuse'],
-   JOBS_DEFAULTS.policy 'allow', parsePolicy maps last_resort -> allow. MacLoadPanel.tsx: drop policy_last_resort (line ~119), show
-   own.verdict line on each card (it carries the numbers + "can take ~N more"), JobsSettings description (line ~115 says "one heavy job
-   at a time" -> slots/measured). Relabel: policy label "While someone uses this Mac" options "Take jobs" / "Refuse jobs"; add a hint
-   key e.g. macLoad.policyHint "Busy means measured: memory above the floor, free heavy slots, load per core. Someone at the keyboard
-   only breaks ties." Remove macLoad.policy.lastResort from all 16 locales (src/i18n/messages/*.json; en, de, es, fr, hi, id, it, ja,
-   ko, ms, pt, ru, tr, vi, zh-CN, zh-TW) and add the new key translated in all 16. RunJobDialog shows candidates: show verdict text.
-   Update macLoad.fixtures.ts / *.test.tsx (MacLoadPanel.test.tsx, RunJobDialog.test.tsx, macLoad.test.ts) for policy + verdict line.
-6. Module doc at top of jobs.rs (lines 1-22) still says "ONE heavy slot" and "owner at the keyboard is the LAST resort": rewrite.
-   load.rs OwnLoad heavy_slot_held doc done. NodeLimits doc comment "keys and defaults exactly as heavy-run (lines 27-37)" -> mention new keys.
-7. Gates (hermit Node 24 for UI; builds via ~/Projects/machine-sync/bin/heavy-run, strip=false):
-   cd worktree; source bin/activate-hermit; heavy-run cargo fmt --check; heavy-run cargo clippy -p leanzero-link -p goose --all-targets -- -D warnings;
-   heavy-run cargo test -p leanzero-link; heavy-run cargo test -p goose --lib link; cd ui/desktop && pnpm lint:check && pnpm typecheck &&
-   pnpm vitest run src/components/leanzero-swarm && pnpm i18n:check; check-acp-schema (just/ scripts: grep "acp-schema" in Justfile/package.json).
+## DONE since 26dcca562 (this agent, commit after 7c55a938f)
+- Steps 1-3 + 6: lib tests rewritten to the new semantics; failing-first fixtures in jobs.rs tests
+  (fixture_laptop_with_one_held_slot..., fixture_user_active_mac_at_79..., fixture_cpu_is_a_backstop...,
+  fixture_limits_file_reads..., fixture_slot0_external_flock...). control_service.rs: spawn_node_full now injects a
+  calm sampler + unique jobs root (JobRegistry::shared is keyed by root: the default root made every node share one
+  sampler); execute 202 with a live session, 409 only at 12% free; test_limits max_heavy 2; refusal test fills BOTH
+  slots; new two_heavy_goose_jobs_run_concurrently_next_to_an_external_slot0_flock (max_heavy 3, card can_take 11)
+  and user_active_is_admitted_by_default_and_refused_only_under_refuse; heavy-run interop uses --max-heavy 2 and
+  SKIPS a heavy-run without --max-heavy (machine-sync's new heavy-run is uncommitted there and flipped mid-run once).
+  load_with_jobs now probes the REGISTRY's lock files with its slot count (card == what admission finds).
+  `cargo test -p leanzero-link` green 3 runs in a row.
+- Step 4: link.rs placement_json adds canTake + verdict; its two tests updated.
+- Step 5 (partial): leanzero-link.ts OwnLoad heavy_slots_used/max, can_take, verdict; JobPlacement canTake/verdict.
+  macLoad.ts policy 'allow'|'refuse', default allow, last_resort -> allow. MacLoadPanel: verdict line on each card
+  (data-testid mac-load-verdict, warn tone when it starts "busy:"), policy_last_resort removed, policyHint added
+  (jobs-settings-policy-hint), allowJobsHint en text "as many heavy jobs as this Mac has slots and memory for".
+  16 locales: macLoad.policy.lastResort removed, macLoad.policyHint added (translated).
+
+## TODO (next agent)
+1. RunJobDialog.tsx: show each candidate's `verdict` (placements from jobsPlace) next to its Mac name.
+2. allowJobsHint: en text changed; re-translate macLoad.allowJobsHint in the 15 other locales (they still say
+   "one heavy job at a time").
+3. UI tests: macLoad.test.ts (parsePolicy last_resort -> allow, USER_ACTIVE_POLICIES), MacLoadPanel.test.tsx
+   (no jobs-policy-last_resort; verdict line renders; policy hint), RunJobDialog.test.tsx (verdict), macLoad.fixtures.ts
+   (add verdict/can_take/heavy_slots_* to fixtures). grep -rn "last_resort\|lastResort" ui/desktop/src.
+4. Gates (clippy for the 3 crates was started by this agent; its log is
+   /private/tmp/claude-501/-Users-mihaiperdum-Projects/9235260e-4bbb-41c2-aefc-cd516bd51e28/scratchpad/clippy.log —
+   re-run anyway after UI work is irrelevant to it):
+   C='profile.dev.package."*".strip=false'  (laptop is macOS 27: needed on every cargo build/test; for clippy put
+   --config AFTER `clippy`)
+   source bin/activate-hermit; cargo fmt --all -- --check
+   ~/Projects/machine-sync/bin/heavy-run --timeout 5400 -- cargo clippy --config "$C" -p leanzero-link -p goose -p goose-server --all-targets -- -D warnings
+   heavy-run -- cargo --config "$C" test -p leanzero-link
+   heavy-run -- cargo --config "$C" test -p goose --lib -- link link_serve swarm_router
+   cd ui/desktop && pnpm lint:check && pnpm typecheck && pnpm vitest run && pnpm i18n:check; check-acp-schema
+   (grep acp-schema in Justfile/package.json; OwnLoad gained can_take/verdict — regenerate if the schema carries it).
+5. Commit (repo identity, NO AI credit lines), delete this HANDOFF.md in the final commit. Don't release.
 
 ## Audit (item 5 of the brief) results
 - FIXED: control.rs execute idle guard (flag: any live session); manager try_place allow_user_active flag.
@@ -76,6 +77,8 @@ Cards/verdicts show how much more a Mac can take: "can take ~11 more 8 GB jobs".
 - KEPT on purpose (physical/measurement, not load flags): benchmark running, lid closed+sleeps, heavy on battery, thermal >= 2. Same as node_fleet.py.
 
 ## Traps
+- A dropped flock can read 'held' for a moment: a child forked by another test shares the open file description
+  until exec. Poll, don't assert once (fixture_slot0 does).
 - flock is per open file description: a probe from this process on a slot it holds reads "held" (used in submit: used-1).
 - Old peers (3.0.130) only know slot 0 and refuse heavy when it is held; nothing to do on our side.
 - A 3.0.130 placer cannot parse the new refusal code cpu_overloaded (it shows the raw text); acceptable.

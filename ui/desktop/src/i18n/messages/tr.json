@@ -4217,11 +4217,11 @@
   "macLoad.policy": {
     "defaultMessage": "Biri bu Mac’i kullanırken"
   },
+  "macLoad.policyHint": {
+    "defaultMessage": "Meşgul ölçülerek belirlenir: tabanın üstündeki bellek, boş ağır iş yuvaları, çekirdek başına yük. Klavyedeki biri yalnızca eşitliği bozar."
+  },
   "macLoad.policy.allow": {
     "defaultMessage": "İşleri al"
-  },
-  "macLoad.policy.lastResort": {
-    "defaultMessage": "Yalnızca son çare olarak"
   },
   "macLoad.policy.refuse": {
     "defaultMessage": "İşleri reddet"

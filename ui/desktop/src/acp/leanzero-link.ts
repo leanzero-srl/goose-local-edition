@@ -186,7 +186,15 @@ export interface OwnLoad {
   /** macOS thermal pressure, 0 nominal .. 4. */
   thermal_limit?: number | null;
   lid_closed_sleeps: boolean;
+  /** True when EVERY heavy slot is held (3.0.131; before, the one slot). */
   heavy_slot_held: boolean;
+  /** Heavy slots held / this Mac's slot count (0 max = an older goose that reports the flag only). */
+  heavy_slots_used?: number;
+  heavy_slots_max?: number;
+  /** How many more default-size (8 GB) jobs fit above the memory floor. */
+  can_take?: number | null;
+  /** The measured verdict with its numbers: "ok: 1/3 heavy, 120 GB free, load 0.28/core, can take ~11 more 8 GB jobs" or "busy: ...". */
+  verdict?: string | null;
   /** Why a benchmark counts as running there; absent = none. */
   benchmark?: string;
 }
@@ -484,6 +492,10 @@ export interface JobPlacement {
   nodeId: string;
   userActive: boolean;
   score: number;
+  /** More jobs of this size that fit there (3.0.131; absent from older goose). */
+  canTake?: number | null;
+  /** The verdict line with its numbers. */
+  verdict?: string;
 }
 
 /** One Mac's refusal at placement (camelCase, as `jobsPlace` answers). */

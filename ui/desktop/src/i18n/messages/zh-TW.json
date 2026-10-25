@@ -4217,11 +4217,11 @@
   "macLoad.policy": {
     "defaultMessage": "有人使用這台 Mac 時"
   },
+  "macLoad.policyHint": {
+    "defaultMessage": "忙碌以實測為準：高於下限的記憶體、空閒的重任務槽位、每核負載。有人在用鍵盤只用於打破平手。"
+  },
   "macLoad.policy.allow": {
     "defaultMessage": "接受工作"
-  },
-  "macLoad.policy.lastResort": {
-    "defaultMessage": "僅作為最後手段"
   },
   "macLoad.policy.refuse": {
     "defaultMessage": "拒絕工作"

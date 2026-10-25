@@ -4217,11 +4217,11 @@
   "macLoad.policy": {
     "defaultMessage": "Semasa seseorang menggunakan Mac ini"
   },
+  "macLoad.policyHint": {
+    "defaultMessage": "Sibuk bermaksud diukur: memori di atas had, slot berat yang kosong, beban setiap teras. Orang di papan kekunci hanya memutuskan apabila seri."
+  },
   "macLoad.policy.allow": {
     "defaultMessage": "Terima kerja"
-  },
-  "macLoad.policy.lastResort": {
-    "defaultMessage": "Hanya sebagai pilihan terakhir"
   },
   "macLoad.policy.refuse": {
     "defaultMessage": "Tolak kerja"
