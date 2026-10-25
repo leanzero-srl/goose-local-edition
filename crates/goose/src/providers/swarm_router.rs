@@ -69,6 +69,16 @@ const MLX_ENGINE_CONFIG_KEY: &str = "mlx_engine";
 pub(crate) struct PoolConfig {
     pub endpoint: String,
     pub devices: Vec<PoolDevice>,
+    /// Seconds a pick waits for one node's whole probe before it reads that node as SLOW and
+    /// routes past it (`GOOSE_SWARM_PROBE_TIMEOUT_S` wins). 0 = no limit. See [`PeerSettings`].
+    pub probe_timeout_s: u64,
+    /// Seconds a node whose probe timed out, or that refused admission, is skipped by later
+    /// picks (`GOOSE_SWARM_PEER_COOLDOWN_S` wins). 0 = no cooldown.
+    pub peer_cooldown_s: u64,
+    /// The engine's benchmark flag (`GOOSE_SWARM_BENCHMARK` wins, as in goose-cli's swarm.rs):
+    /// under it neither the probe timeout nor the cooldown applies, so a benchmark run routes
+    /// exactly as before they existed.
+    pub benchmark: bool,
 }
 
 impl Default for PoolConfig {
@@ -77,7 +87,130 @@ impl Default for PoolConfig {
             // The engine's `default_endpoint` (goose-cli swarm.rs) and lmstudio.json's default.
             endpoint: "http://localhost:1234".to_string(),
             devices: Vec::new(),
+            probe_timeout_s: DEFAULT_PROBE_TIMEOUT_S,
+            peer_cooldown_s: DEFAULT_PEER_COOLDOWN_S,
+            benchmark: false,
         }
+    }
+}
+
+const DEFAULT_PROBE_TIMEOUT_S: u64 = 3;
+const DEFAULT_PEER_COOLDOWN_S: u64 = 15;
+const PROBE_TIMEOUT_ENV: &str = "GOOSE_SWARM_PROBE_TIMEOUT_S";
+const PEER_COOLDOWN_ENV: &str = "GOOSE_SWARM_PEER_COOLDOWN_S";
+const BENCHMARK_ENV: &str = "GOOSE_SWARM_BENCHMARK";
+/// The probe client's TCP connect limit: a backstop for a peer that never answers the SYN, and
+/// the only limit left when the whole-probe timeout is off (benchmark, or `probe_timeout_s: 0`).
+/// Longer than the whole-probe default so it never decides a normal pick.
+const PROBE_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// How a pick treats slow and refusing peers, resolved from the `swarm` block and the env. One
+/// hung peer used to stall every chat turn: `join_all` waited on its probe with no clock, and a
+/// node that refused admission was set aside for that turn only, so the next turn asked it first
+/// again. `None` = that mechanism is off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PeerSettings {
+    /// The limit on one node's whole probe (every request it makes).
+    pub probe_timeout: Option<std::time::Duration>,
+    /// How long a slow or refusing node is skipped across turns.
+    pub cooldown: Option<std::time::Duration>,
+}
+
+impl Default for PeerSettings {
+    fn default() -> Self {
+        Self::resolve(&PoolConfig::default(), |_| None)
+    }
+}
+
+impl PeerSettings {
+    /// Env beats config beats default. An env value that is not a whole number of seconds is
+    /// ignored (the config's value stands) rather than read as 0. The benchmark flag reads as
+    /// goose-cli's `benchmark()`: a set env var decides (truthy = 1/on/true/yes), else config.
+    pub(crate) fn resolve(cfg: &PoolConfig, env: impl Fn(&str) -> Option<String>) -> Self {
+        let benchmark = match env(BENCHMARK_ENV) {
+            Some(v) => matches!(v.trim(), "1" | "on" | "true" | "yes"),
+            None => cfg.benchmark,
+        };
+        if benchmark {
+            return Self {
+                probe_timeout: None,
+                cooldown: None,
+            };
+        }
+        let secs = |key: &str, configured: u64| {
+            env(key)
+                .and_then(|v| v.trim().parse::<u64>().ok())
+                .unwrap_or(configured)
+        };
+        let some_secs = |s: u64| (s > 0).then(|| std::time::Duration::from_secs(s));
+        Self {
+            probe_timeout: some_secs(secs(PROBE_TIMEOUT_ENV, cfg.probe_timeout_s)),
+            cooldown: some_secs(secs(PEER_COOLDOWN_ENV, cfg.peer_cooldown_s)),
+        }
+    }
+
+    /// The live settings: the `swarm` block as config.yaml has it now (its defaults when the
+    /// block is missing or unreadable — that error is `load_pool`'s to name), and the process env.
+    fn live() -> Self {
+        let cfg = Config::global()
+            .get_param::<PoolConfig>(SWARM_CONFIG_KEY)
+            .unwrap_or_default();
+        Self::resolve(&cfg, |key| std::env::var(key).ok())
+    }
+}
+
+/// One node's probe under `limit` (`None` = no limit). `Err(limit)` = the probe did not answer
+/// in time; the probe future is dropped, so its requests are cancelled with it.
+async fn probe_within(
+    probe: &dyn NodeProbe,
+    node: &Node,
+    limit: Option<std::time::Duration>,
+) -> Result<Result<Servable, String>, std::time::Duration> {
+    let Some(limit) = limit else {
+        return Ok(probe.probe(node).await);
+    };
+    tokio::time::timeout(limit, probe.probe(node))
+        .await
+        .map_err(|_| {
+            tracing::warn!(
+                target: "swarm_router",
+                node = %node.id,
+                timeout_ms = limit.as_millis() as u64,
+                "probe did not answer in time; routing past the node as SLOW"
+            );
+            limit
+        })
+}
+
+/// A timed-out probe's reason: the node is SLOW (busy, wedged or far), which is not proof it is
+/// down, so it never says dead or offline.
+fn slow_reason(limit: std::time::Duration) -> String {
+    format!("SLOW — probe did not answer within {}", say_secs(limit))
+}
+
+/// A probe with the probe timeout applied to each node — for the window reads goose makes before
+/// a turn (`route_window`), which take a `&dyn NodeProbe` and must not hang on one peer either.
+struct BoundedProbe<'a> {
+    inner: &'a dyn NodeProbe,
+    limit: Option<std::time::Duration>,
+}
+
+#[async_trait]
+impl NodeProbe for BoundedProbe<'_> {
+    async fn probe(&self, node: &Node) -> Result<Servable, String> {
+        probe_within(self.inner, node, self.limit)
+            .await
+            .unwrap_or_else(|limit| Err(slow_reason(limit)))
+    }
+}
+
+/// "3 s", "2.5 s": a duration as a reason line says it.
+fn say_secs(d: std::time::Duration) -> String {
+    let s = d.as_secs_f64();
+    if s.fract() == 0.0 {
+        format!("{} s", s as u64)
+    } else {
+        format!("{s:.1} s")
     }
 }
 
@@ -859,11 +992,36 @@ pub(crate) struct Router {
     /// [`route_window`] reads first: the window of the node that serves the chat, not the
     /// smallest of every chain entry that happens to be loaded now (Q-463).
     served_windows: StdMutex<HashMap<String, (String, Option<u64>)>>,
+    /// The probe timeout and cooldown this router applies; `None` = resolved live at each pick
+    /// (the shared router, so a config edit or env flag takes effect on the next turn).
+    settings: Option<PeerSettings>,
+    /// Node → until when later picks skip it, and why. Lasts ACROSS turns, unlike a turn's
+    /// `saturated` set: a node whose probe timed out or that refused admission is not asked first
+    /// again on the very next turn. Cleared when the node serves.
+    cooling: StdMutex<HashMap<String, (tokio::time::Instant, String)>>,
 }
 
 impl Router {
+    /// A router with the default probe timeout and cooldown, fixed (tests and anything that wants
+    /// its settings not to follow config.yaml).
+    #[cfg(test)]
     pub(crate) fn new() -> Self {
+        Self::with_settings(PeerSettings::default())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_settings(settings: PeerSettings) -> Self {
         Self {
+            settings: Some(settings),
+            ..Self::live()
+        }
+    }
+
+    /// The shared router: its settings follow config.yaml and the env, read at each pick.
+    pub(crate) fn live() -> Self {
+        Self {
+            settings: None,
+            cooling: StdMutex::new(HashMap::new()),
             slots: StdMutex::new(HashMap::new()),
             sticky: StdMutex::new(HashMap::new()),
             shares: StdMutex::new(HashMap::new()),
@@ -872,6 +1030,79 @@ impl Router {
             pool_measured: std::sync::atomic::AtomicBool::new(false),
             served_windows: StdMutex::new(HashMap::new()),
         }
+    }
+
+    fn settings(&self) -> PeerSettings {
+        self.settings.unwrap_or_else(PeerSettings::live)
+    }
+
+    /// One node's probe, bounded as a whole by the probe timeout (a remote probe makes two
+    /// requests in sequence, so a per-request limit would not bound it). A probe that runs out the
+    /// clock is the node being SLOW — busy, wedged or far — never proof it is dead, and the reason
+    /// says so. `cool_on_timeout` puts a timed-out node into the cooldown (Auto's pick).
+    async fn probe_bounded(
+        &self,
+        probe: &dyn NodeProbe,
+        node: &Node,
+        settings: PeerSettings,
+        cool_on_timeout: bool,
+    ) -> Result<Servable, String> {
+        match probe_within(probe, node, settings.probe_timeout).await {
+            Ok(outcome) => outcome,
+            Err(limit) => {
+                if cool_on_timeout {
+                    self.cool(
+                        &node.id,
+                        settings,
+                        &format!("a SLOW probe (no answer within {})", say_secs(limit)),
+                    );
+                }
+                Err(slow_reason(limit))
+            }
+        }
+    }
+
+    /// Start (or restart) `node`'s cooldown; a no-op when the cooldown is off.
+    pub(crate) fn cool(&self, node: &str, settings: PeerSettings, why: &str) {
+        let Some(cooldown) = settings.cooldown else {
+            return;
+        };
+        self.cooling
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(
+                node.to_string(),
+                (tokio::time::Instant::now() + cooldown, why.to_string()),
+            );
+    }
+
+    /// `node` served a turn: it is no longer cooling down.
+    pub(crate) fn warm(&self, node: &str) {
+        self.cooling
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(node);
+    }
+
+    /// The nodes among `nodes` still cooling down, with the reason line a pick gives for each.
+    /// Expired entries are dropped. Empty when the cooldown is off.
+    fn cooling_now(&self, nodes: &[Node], settings: PeerSettings) -> HashMap<String, String> {
+        if settings.cooldown.is_none() {
+            return HashMap::new();
+        }
+        let now = tokio::time::Instant::now();
+        let mut cooling = self.cooling.lock().unwrap_or_else(|e| e.into_inner());
+        cooling.retain(|_, (until, _)| *until > now);
+        nodes
+            .iter()
+            .filter_map(|n| {
+                cooling.get(&n.id).map(|(until, why)| {
+                    let left = until.saturating_duration_since(now);
+                    let secs = left.as_secs() + u64::from(left.subsec_nanos() > 0);
+                    (n.id.clone(), format!("cooling down {secs}s after {why}"))
+                })
+            })
+            .collect()
     }
 
     fn note_served_window(&self, session: &str, node: &str, window: Option<u64>) {
@@ -921,7 +1152,13 @@ impl Router {
                 "no servable node reported its context window at the last pick".to_string(),
             );
         }
-        let probes = futures::future::join_all(nodes.iter().map(|n| probe.probe(n))).await;
+        let settings = self.settings();
+        let probes = futures::future::join_all(
+            nodes
+                .iter()
+                .map(|n| self.probe_bounded(probe, n, settings, false)),
+        )
+        .await;
         let mut candidates: Vec<(&Node, Servable)> = Vec::new();
         let mut reasons: Vec<String> = Vec::new();
         for (node, outcome) in nodes.iter().zip(probes) {
@@ -979,7 +1216,10 @@ impl Router {
     /// Choose a node and take one of its slots. Sticky first; else the servable node with the most
     /// free slots (ties → the larger Share, then the higher weight); else queue on every servable
     /// node until a permit frees.
-    /// `saturated` names nodes this turn already saw refuse admission.
+    /// `saturated` names nodes this turn already saw refuse admission. Each probe is bounded by
+    /// the probe timeout, and a node cooling down (see [`Router::cool`]) is not probed while any
+    /// other node can serve; when none of the others can, the cooling nodes are probed after all,
+    /// so the cooldown never fails a turn that would otherwise have been served.
     pub(crate) async fn pick(
         &self,
         nodes: &[Node],
@@ -987,16 +1227,54 @@ impl Router {
         key: u64,
         saturated: &HashSet<String>,
     ) -> Result<Lease, ProviderError> {
-        let probes = futures::future::join_all(nodes.iter().map(|n| probe.probe(n))).await;
+        let settings = self.settings();
+        let cooling = self.cooling_now(nodes, settings);
+        let warm: Vec<&Node> = nodes
+            .iter()
+            .filter(|n| !cooling.contains_key(&n.id))
+            .collect();
         let mut candidates: Vec<(&Node, Servable)> = Vec::new();
         let mut reasons: Vec<String> = Vec::new();
-        for (node, outcome) in nodes.iter().zip(probes) {
-            match outcome {
-                Ok(_) if saturated.contains(&node.id) => {
-                    reasons.push(format!("{}: refused admission this turn", node.id));
+        self.probe_into(
+            probe,
+            &warm,
+            saturated,
+            settings,
+            &mut candidates,
+            &mut reasons,
+        )
+        .await;
+        if !cooling.is_empty() {
+            let cooled: Vec<&Node> = nodes
+                .iter()
+                .filter(|n| cooling.contains_key(&n.id))
+                .collect();
+            if candidates.is_empty() {
+                tracing::info!(
+                    target: "swarm_router",
+                    nodes = %cooled.iter().map(|n| n.id.as_str()).collect::<Vec<_>>().join(","),
+                    "no other node can serve; probing the nodes that are cooling down"
+                );
+                self.probe_into(
+                    probe,
+                    &cooled,
+                    saturated,
+                    settings,
+                    &mut candidates,
+                    &mut reasons,
+                )
+                .await;
+            } else {
+                for node in cooled {
+                    let why = &cooling[&node.id];
+                    tracing::info!(
+                        target: "swarm_router",
+                        node = %node.id,
+                        reason = %why,
+                        "skipped while cooling down"
+                    );
+                    reasons.push(format!("{}: {why}", node.id));
                 }
-                Ok(facts) => candidates.push((node, facts)),
-                Err(reason) => reasons.push(format!("{}: {reason}", node.id)),
             }
         }
         one_node_per_engine(&mut candidates, &mut reasons);
@@ -1048,6 +1326,33 @@ impl Router {
             }
         }
         self.queue_on(&servable, key).await
+    }
+
+    /// Probe `nodes` (each bounded) and sort them into candidates and reasons.
+    async fn probe_into<'n>(
+        &self,
+        probe: &dyn NodeProbe,
+        nodes: &[&'n Node],
+        saturated: &HashSet<String>,
+        settings: PeerSettings,
+        candidates: &mut Vec<(&'n Node, Servable)>,
+        reasons: &mut Vec<String>,
+    ) {
+        let probes = futures::future::join_all(
+            nodes
+                .iter()
+                .map(|n| self.probe_bounded(probe, n, settings, true)),
+        )
+        .await;
+        for (node, outcome) in nodes.iter().copied().zip(probes) {
+            match outcome {
+                Ok(_) if saturated.contains(&node.id) => {
+                    reasons.push(format!("{}: refused admission this turn", node.id));
+                }
+                Ok(facts) => candidates.push((node, facts)),
+                Err(reason) => reasons.push(format!("{}: {reason}", node.id)),
+            }
+        }
     }
 
     /// A probed node with its slots: the node (naming what its engine serves), its semaphore, its
@@ -1203,7 +1508,7 @@ fn one_node_per_engine(candidates: &mut Vec<(&Node, Servable)>, reasons: &mut Ve
     });
 }
 
-static ROUTER: LazyLock<Router> = LazyLock::new(Router::new);
+static ROUTER: LazyLock<Router> = LazyLock::new(Router::live);
 
 /// The shared router's pool window — what the provider reports to goose for `swarm` chat: the
 /// last pick's, else measured now against the configured pool (see [`Router::pool_context_window`]).
@@ -1222,9 +1527,21 @@ pub(crate) async fn pool_context_window() -> Result<usize, String> {
     ROUTER.pool_context_window(&nodes, &*PROBE).await
 }
 static PROVIDERS: LazyLock<Arc<LiveProviders>> = LazyLock::new(|| Arc::new(LiveProviders::new()));
-static PROBE: LazyLock<LiveProbe> = LazyLock::new(|| LiveProbe {
-    http: reqwest::Client::new(),
+static PROBE: LazyLock<LiveProbe> = LazyLock::new(|| {
+    LiveProbe {
+    http: reqwest::Client::builder()
+        .connect_timeout(PROBE_CONNECT_TIMEOUT)
+        .build()
+        .unwrap_or_else(|e| {
+            tracing::warn!(
+                target: "swarm_router",
+                error = %e,
+                "the probe client could not be built with a connect timeout; using the default client"
+            );
+            reqwest::Client::new()
+        }),
     providers: PROVIDERS.clone(),
+}
 });
 
 /// The sidecar's admission refusal as it reaches this layer: Rapid-MLX answers `503 "Server is
@@ -1431,6 +1748,7 @@ pub(crate) async fn route_stream(
             Err(no_node) => {
                 if let Some((node, hold)) = held.take() {
                     wait_out_hold(&node, &hold, &mut saturated).await?;
+                    router.warm(&node);
                     last_refusal = None;
                     continue;
                 }
@@ -1453,6 +1771,7 @@ pub(crate) async fn route_stream(
         let window = lease.context_window;
         match stream_on(lease, providers, kwargs_source, &turn).await? {
             Streamed::Served(stream, node) => {
+                router.warm(&node.id);
                 note_served(seam, &node, pool_lease_way(seam, &node), || {
                     NodeServedTurnDto {
                         node: node.id.clone(),
@@ -1471,6 +1790,7 @@ pub(crate) async fn route_stream(
             }
             Streamed::Refused(node, e) => {
                 note_hold(&node, &e, &mut held);
+                router.cool(&node, router.settings(), "it refused admission");
                 saturated.insert(node);
                 last_refusal = Some(e);
             }
@@ -1771,6 +2091,11 @@ async fn route_window(
     members: &dyn ChainMembers,
     probe: &dyn NodeProbe,
 ) -> Result<usize, String> {
+    let bounded = BoundedProbe {
+        inner: probe,
+        limit: router.settings().probe_timeout,
+    };
+    let probe: &dyn NodeProbe = &bounded;
     let served = session
         .and_then(|session| router.served_window(session))
         .filter(|(node, _)| plan.entry.chain.iter().any(|link| &link.node == node));
@@ -2449,6 +2774,7 @@ async fn chain_facts(
             ids.push(&link.node);
         }
     }
+    let settings = router.settings();
     let looked: Vec<Looked> = futures::future::join_all(ids.iter().map(|id| async move {
         let member = match (overrides.get(*id), plan.defs.get(*id)) {
             (Some(fact), _) => Err(fact.clone()),
@@ -2461,7 +2787,10 @@ async fn chain_facts(
         let remote = matches!(&member, Ok(m) if matches!(m.node.kind, NodeKind::MlxRemote(_)));
         let probed = match member {
             Err(fact) => Err(fact),
-            Ok(member) => match probe.probe(&member.node).await {
+            Ok(member) => match router
+                .probe_bounded(probe, &member.node, settings, false)
+                .await
+            {
                 Err(reason) => Err(EntryFact::CantRun { reason }),
                 Ok(facts) if member.pinned && facts.follows.is_some() => Err(EntryFact::NotLoaded),
                 Ok(facts) => Ok((member, facts)),
@@ -5186,6 +5515,7 @@ devices:
                     ..PoolDevice::default()
                 },
             ],
+            ..PoolConfig::default()
         };
         let nodes = nodes_from_config(&cfg);
         assert_eq!(nodes[0].share, Some(4));
@@ -6911,6 +7241,7 @@ devices:
                     ..PoolDevice::default()
                 },
             ],
+            ..PoolConfig::default()
         };
         let def = |id: &str, device: &str| {
             crate::nodes::resolve_def(
@@ -7201,5 +7532,388 @@ devices:
             ),
             "{err}"
         );
+    }
+
+    // ---- probe timeout + cross-turn cooldown ---------------------------------------------------
+
+    use std::time::Duration;
+
+    /// Answers every node idle except the hung ones, which never answer; counts each node's probes.
+    #[derive(Default)]
+    struct HangingProbe {
+        hung: StdMutex<HashSet<String>>,
+        calls: StdMutex<HashMap<String, usize>>,
+    }
+
+    impl HangingProbe {
+        fn hanging(ids: &[&str]) -> Self {
+            Self {
+                hung: StdMutex::new(ids.iter().map(|s| s.to_string()).collect()),
+                ..Self::default()
+            }
+        }
+
+        fn calls(&self, id: &str) -> usize {
+            self.calls.lock().unwrap().get(id).copied().unwrap_or(0)
+        }
+
+        fn answer(&self, id: &str) {
+            self.hung.lock().unwrap().remove(id);
+        }
+    }
+
+    #[async_trait]
+    impl NodeProbe for HangingProbe {
+        async fn probe(&self, node: &Node) -> Result<Servable, String> {
+            *self
+                .calls
+                .lock()
+                .unwrap()
+                .entry(node.id.clone())
+                .or_default() += 1;
+            let hung = self.hung.lock().unwrap().contains(&node.id);
+            if hung {
+                std::future::pending::<()>().await;
+            }
+            Ok(Servable::default())
+        }
+    }
+
+    fn reason_of(err: ProviderError) -> String {
+        err.to_string()
+    }
+
+    /// The regression: one hung peer used to stall every pick (join_all with no clock). Now the
+    /// healthy node is leased once the 3 s default runs out, and the hung one is named SLOW.
+    #[tokio::test(start_paused = true)]
+    async fn a_hung_peer_no_longer_stalls_the_pick_and_is_named_slow() {
+        let router = Router::new();
+        // The hung node is the one a pick would prefer (more free slots).
+        let nodes = vec![node("hung", 4, 1), node("ok", 1, 1)];
+        let probe = HangingProbe::hanging(&["hung"]);
+        let start = tokio::time::Instant::now();
+        let lease = router
+            .pick(&nodes, &probe, 1, &HashSet::new())
+            .await
+            .unwrap();
+        let elapsed = start.elapsed();
+        assert_eq!(lease.node.id, "ok");
+        assert!(
+            elapsed >= Duration::from_secs(3) && elapsed < Duration::from_millis(3500),
+            "{elapsed:?}"
+        );
+        let cooling = router.cooling_now(&nodes, router.settings());
+        assert_eq!(
+            cooling.get("hung").map(String::as_str),
+            Some("cooling down 15s after a SLOW probe (no answer within 3 s)")
+        );
+    }
+
+    /// The same on the real clock with a short limit: the pick returns, it does not hang.
+    #[tokio::test]
+    async fn a_hung_peer_is_routed_past_on_the_real_clock() {
+        let router = Router::with_settings(PeerSettings {
+            probe_timeout: Some(Duration::from_millis(200)),
+            cooldown: Some(Duration::from_secs(15)),
+        });
+        let nodes = vec![node("hung", 4, 1), node("ok", 1, 1)];
+        let probe = HangingProbe::hanging(&["hung"]);
+        let start = std::time::Instant::now();
+        let lease = router
+            .pick(&nodes, &probe, 1, &HashSet::new())
+            .await
+            .unwrap();
+        let elapsed = start.elapsed();
+        eprintln!("real-clock pick past a hung peer: {elapsed:?}");
+        assert_eq!(lease.node.id, "ok");
+        assert!(elapsed < Duration::from_secs(1), "{elapsed:?}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn every_node_hung_fails_the_pick_within_the_timeout_and_says_slow() {
+        let router = Router::new();
+        let nodes = vec![node("a", 1, 1), node("b", 1, 1)];
+        let probe = HangingProbe::hanging(&["a", "b"]);
+        let start = tokio::time::Instant::now();
+        let err = router
+            .pick(&nodes, &probe, 1, &HashSet::new())
+            .await
+            .err()
+            .unwrap();
+        let elapsed = start.elapsed();
+        // Both probes run at once under one 3 s limit: the turn fails at 3 s, never a hang.
+        assert!(
+            elapsed >= Duration::from_secs(3) && elapsed < Duration::from_millis(3500),
+            "{elapsed:?}"
+        );
+        let words = reason_of(err);
+        assert!(
+            words.contains("a: SLOW — probe did not answer within 3 s")
+                && words.contains("b: SLOW — probe did not answer within 3 s"),
+            "{words}"
+        );
+        assert!(
+            !words.contains("dead") && !words.contains("offline"),
+            "{words}"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_cooldown_lasts_across_turns_and_expires() {
+        let router = Router::new();
+        let nodes = vec![node("a", 4, 1), node("b", 1, 1)];
+        let probe = HangingProbe::hanging(&["a"]);
+        // Turn 1: a hangs, b serves, a cools.
+        drop(
+            router
+                .pick(&nodes, &probe, 1, &HashSet::new())
+                .await
+                .unwrap(),
+        );
+        assert_eq!(probe.calls("a"), 1);
+        // a answers again, but turn 2 (a fresh `saturated`, another conversation) skips it
+        // without probing: the cooldown is the router's, not the turn's.
+        probe.answer("a");
+        let start = tokio::time::Instant::now();
+        let lease = router
+            .pick(&nodes, &probe, 2, &HashSet::new())
+            .await
+            .unwrap();
+        assert_eq!(lease.node.id, "b");
+        assert_eq!(probe.calls("a"), 1, "a cooling node is not probed");
+        assert!(start.elapsed() < Duration::from_millis(1), "no wait on a");
+        drop(lease);
+        // 15 s after the timeout the cooldown is over and a (more free slots) serves again.
+        tokio::time::advance(Duration::from_secs(13)).await;
+        assert!(router
+            .cooling_now(&nodes, router.settings())
+            .contains_key("a"));
+        // The timeout fired at 3 s, so the cooldown ends at 18 s.
+        tokio::time::advance(Duration::from_secs(2)).await;
+        assert!(router.cooling_now(&nodes, router.settings()).is_empty());
+        let lease = router
+            .pick(&nodes, &probe, 3, &HashSet::new())
+            .await
+            .unwrap();
+        assert_eq!(lease.node.id, "a");
+    }
+
+    #[tokio::test]
+    async fn the_cooldown_is_ignored_when_no_other_node_can_serve() {
+        let router = Router::new();
+        let nodes = vec![node("a", 4, 1), node("b", 1, 1)];
+        let probe = FakeProbe::all_idle(&nodes);
+        // Every node cooling: the pick serves anyway.
+        router.cool("a", router.settings(), "it refused admission");
+        router.cool("b", router.settings(), "it refused admission");
+        let lease = router
+            .pick(&nodes, &probe, 1, &HashSet::new())
+            .await
+            .unwrap();
+        assert_eq!(lease.node.id, "a");
+        drop(lease);
+        // Only a cooling, but b cannot serve: a is probed after all and serves.
+        let router = Router::new();
+        router.cool("a", router.settings(), "it refused admission");
+        let mut outcomes = FakeProbe::all_idle(&nodes).0;
+        outcomes.insert("b".to_string(), Err("GET http://b unreachable".to_string()));
+        let lease = router
+            .pick(&nodes, &FakeProbe(outcomes), 1, &HashSet::new())
+            .await
+            .unwrap();
+        assert_eq!(lease.node.id, "a");
+        // Only a cooling and b refused this turn: a is still probed, and its own reason is said.
+        let router = Router::new();
+        router.cool("a", router.settings(), "it refused admission");
+        let saturated: HashSet<String> = ["b".to_string()].into();
+        let mut outcomes = FakeProbe::all_idle(&nodes).0;
+        outcomes.insert("a".to_string(), Err("GET http://a unreachable".to_string()));
+        let words = reason_of(
+            router
+                .pick(&nodes, &FakeProbe(outcomes), 1, &saturated)
+                .await
+                .err()
+                .unwrap(),
+        );
+        assert!(words.contains("b: refused admission this turn"), "{words}");
+        assert!(words.contains("a: GET http://a unreachable"), "{words}");
+    }
+
+    fn one_turn<'a>(messages: &'a [Message], model: &'a ModelConfig) -> Turn<'a> {
+        Turn {
+            model_config: model,
+            system: "sys",
+            messages,
+            tools: &[],
+            session: &DEFAULT_SESSION_KWARGS,
+        }
+    }
+
+    static DEFAULT_SESSION_KWARGS: LazyLock<SessionTemplateKwargs> =
+        LazyLock::new(SessionTemplateKwargs::default);
+
+    /// A refusal cools the node for later turns; the node that serves is warm.
+    #[tokio::test]
+    async fn a_refusing_node_is_skipped_by_the_next_turn_and_a_serve_clears_the_cooldown() {
+        let router = Router::new();
+        let nodes = vec![node("a", 4, 1), node("b", 1, 1)];
+        let probe = FakeProbe::all_idle(&nodes);
+        let model = ModelConfig::new("swarm");
+        let first = vec![Message::user().with_text("turn one")];
+        // b is cooling from an earlier turn; a is preferred, refuses, and b serves anyway.
+        router.cool("b", router.settings(), "it refused admission");
+        let stream = route_stream(
+            &router,
+            &nodes,
+            &probe,
+            &FakeProviders,
+            &NoKwargs,
+            &NoRouteLoad,
+            &RecordingSeam::default(),
+            one_turn(&first, &model),
+        )
+        .await
+        .unwrap();
+        drop(stream);
+        let cooling = router.cooling_now(&nodes, router.settings());
+        assert_eq!(
+            cooling.get("a").map(String::as_str),
+            Some("cooling down 15s after it refused admission")
+        );
+        assert!(!cooling.contains_key("b"), "b served, so it is warm");
+        // The next turn (another conversation, so no sticky) goes to b without trying a.
+        let lease = router
+            .pick(&nodes, &probe, 99, &HashSet::new())
+            .await
+            .unwrap();
+        assert_eq!(lease.node.id, "b");
+    }
+
+    #[tokio::test]
+    async fn under_benchmark_there_is_no_timeout_and_no_cooldown() {
+        let env = |key: &str| (key == BENCHMARK_ENV).then(|| "1".to_string());
+        let settings = PeerSettings::resolve(&PoolConfig::default(), env);
+        assert_eq!(
+            settings,
+            PeerSettings {
+                probe_timeout: None,
+                cooldown: None
+            }
+        );
+        let router = Router::with_settings(settings);
+        let nodes = vec![node("a", 4, 1), node("b", 1, 1)];
+        let probe = FakeProbe::all_idle(&nodes);
+        let model = ModelConfig::new("swarm");
+        let first = vec![Message::user().with_text("turn one")];
+        drop(
+            route_stream(
+                &router,
+                &nodes,
+                &probe,
+                &FakeProviders,
+                &NoKwargs,
+                &NoRouteLoad,
+                &RecordingSeam::default(),
+                one_turn(&first, &model),
+            )
+            .await
+            .unwrap(),
+        );
+        assert!(router.cooling_now(&nodes, settings).is_empty());
+        assert!(router.cooling.lock().unwrap().is_empty());
+        // The refusing node is asked first again on the next turn, exactly as before.
+        let lease = router
+            .pick(&nodes, &probe, 99, &HashSet::new())
+            .await
+            .unwrap();
+        assert_eq!(lease.node.id, "a");
+    }
+
+    #[test]
+    fn peer_settings_env_beats_config_beats_default() {
+        let none = |_: &str| None;
+        let secs = Duration::from_secs;
+        assert_eq!(
+            PeerSettings::resolve(&PoolConfig::default(), none),
+            PeerSettings {
+                probe_timeout: Some(secs(3)),
+                cooldown: Some(secs(15))
+            }
+        );
+        let cfg = PoolConfig {
+            probe_timeout_s: 5,
+            peer_cooldown_s: 0,
+            ..PoolConfig::default()
+        };
+        assert_eq!(
+            PeerSettings::resolve(&cfg, none),
+            PeerSettings {
+                probe_timeout: Some(secs(5)),
+                cooldown: None
+            },
+            "config beats default; 0 turns the cooldown off"
+        );
+        let env = |key: &str| match key {
+            PROBE_TIMEOUT_ENV => Some(" 7 ".to_string()),
+            PEER_COOLDOWN_ENV => Some("30".to_string()),
+            _ => None,
+        };
+        assert_eq!(
+            PeerSettings::resolve(&cfg, env),
+            PeerSettings {
+                probe_timeout: Some(secs(7)),
+                cooldown: Some(secs(30))
+            },
+            "env beats config"
+        );
+        let garbage = |key: &str| (key == PROBE_TIMEOUT_ENV).then(|| "soon".to_string());
+        assert_eq!(
+            PeerSettings::resolve(&cfg, garbage).probe_timeout,
+            Some(secs(5)),
+            "an unreadable env value leaves the config's"
+        );
+        // The benchmark flag: config turns it on, a set env var decides over config.
+        let bench_cfg = PoolConfig {
+            benchmark: true,
+            ..PoolConfig::default()
+        };
+        assert_eq!(PeerSettings::resolve(&bench_cfg, none).probe_timeout, None);
+        let off = |key: &str| (key == BENCHMARK_ENV).then(|| "0".to_string());
+        assert_eq!(
+            PeerSettings::resolve(&bench_cfg, off).probe_timeout,
+            Some(secs(3))
+        );
+        for truthy in ["1", "on", "true", "yes"] {
+            let on = |key: &str| (key == BENCHMARK_ENV).then(|| truthy.to_string());
+            assert_eq!(
+                PeerSettings::resolve(&PoolConfig::default(), on).cooldown,
+                None,
+                "{truthy}"
+            );
+        }
+        // The `swarm` block reads the new keys, and leaves them at their defaults when absent.
+        let read: PoolConfig = serde_json::from_value(serde_json::json!({
+            "probe_timeout_s": 9, "peer_cooldown_s": 4, "benchmark": true
+        }))
+        .unwrap();
+        assert_eq!(
+            (read.probe_timeout_s, read.peer_cooldown_s, read.benchmark),
+            (9, 4, true)
+        );
+        let absent: PoolConfig = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert_eq!(
+            (
+                absent.probe_timeout_s,
+                absent.peer_cooldown_s,
+                absent.benchmark
+            ),
+            (3, 15, false)
+        );
+    }
+
+    #[test]
+    fn durations_read_as_a_reason_line_says_them() {
+        assert_eq!(say_secs(Duration::from_secs(3)), "3 s");
+        assert_eq!(say_secs(Duration::from_millis(2500)), "2.5 s");
     }
 }
