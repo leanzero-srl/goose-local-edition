@@ -2693,11 +2693,53 @@
   "freeMemory.keep": {
     "defaultMessage": "Giữ mở"
   },
+  "freeMemory.keepRunning": {
+    "defaultMessage": "Để nó chạy tiếp"
+  },
+  "freeMemory.leftAlone": {
+    "defaultMessage": "Để nguyên"
+  },
   "freeMemory.loading": {
     "defaultMessage": "Đang đo những gì chiếm bộ nhớ…"
   },
+  "freeMemory.neverTouchReason": {
+    "defaultMessage": "trong danh sách không bao giờ chạm ({entry})"
+  },
   "freeMemory.nothingOwn": {
     "defaultMessage": "goose không giữ bộ nhớ nào có thể giải phóng"
+  },
+  "freeMemory.nuclearBack": {
+    "defaultMessage": "Quay lại"
+  },
+  "freeMemory.nuclearConfirmBody": {
+    "defaultMessage": "goose yêu cầu từng ứng dụng đã đánh dấu thoát và gỡ tải từng máy chủ mô hình đã đánh dấu. Ứng dụng phớt lờ yêu cầu thoát sẽ nhận SIGTERM và có thể mất công việc chưa lưu: hãy lưu trước. Mục được bảo vệ không bao giờ bị chạm tới."
+  },
+  "freeMemory.nuclearConfirmKeep": {
+    "defaultMessage": "Giữ tất cả"
+  },
+  "freeMemory.nuclearConfirmTitle": {
+    "defaultMessage": "Giải phóng {gb} GB trên {mac}?"
+  },
+  "freeMemory.nuclearFree": {
+    "defaultMessage": "Giải phóng {gb} GB"
+  },
+  "freeMemory.nuclearGooseOwn": {
+    "defaultMessage": "Bộ nhớ riêng của goose"
+  },
+  "freeMemory.nuclearIntro": {
+    "defaultMessage": "Mọi thứ không ai dùng đều đã được đánh dấu. Bỏ đánh dấu những gì bạn muốn giữ. Mục được bảo vệ không bao giờ bị chạm tới."
+  },
+  "freeMemory.nuclearOpen": {
+    "defaultMessage": "Giải phóng mọi thứ trừ mục được bảo vệ"
+  },
+  "freeMemory.nuclearProtectedHead": {
+    "defaultMessage": "Không bao giờ chạm tới"
+  },
+  "freeMemory.nuclearTotal": {
+    "defaultMessage": "Đã đánh dấu: <b>{gb} GB</b>"
+  },
+  "freeMemory.protectedChip": {
+    "defaultMessage": "Được bảo vệ"
   },
   "freeMemory.quit": {
     "defaultMessage": "Thoát"
@@ -2719,6 +2761,24 @@
   },
   "freeMemory.title": {
     "defaultMessage": "Giải phóng bộ nhớ trên {mac}"
+  },
+  "freeMemory.unload": {
+    "defaultMessage": "Gỡ tải"
+  },
+  "freeMemory.unloadBody": {
+    "defaultMessage": "goose gỡ các mô hình mà {server} đang giữ trên {mac} (động cơ MLX được yêu cầu dừng). Bên đang dùng nó sẽ phải tải lại mô hình."
+  },
+  "freeMemory.unloadConfirm": {
+    "defaultMessage": "Gỡ tải {server}"
+  },
+  "freeMemory.unloadInUse": {
+    "defaultMessage": "Đang được dùng, việc này sẽ dừng công việc của họ:"
+  },
+  "freeMemory.unloadTitle": {
+    "defaultMessage": "Gỡ tải {server}?"
+  },
+  "freeMemory.usedBy": {
+    "defaultMessage": "Đang dùng: {who}"
   },
   "freeMemoryEntry.open": {
     "defaultMessage": "Giải phóng bộ nhớ"
@@ -4468,6 +4528,30 @@
   },
   "memfreeSettings.minMbDesc": {
     "defaultMessage": "Ứng dụng dùng ít bộ nhớ hơn mức này sẽ không được liệt kê. Mặc định {mb} MB."
+  },
+  "memfreeSettings.neverTouch": {
+    "defaultMessage": "Không bao giờ chạm"
+  },
+  "memfreeSettings.neverTouchAdd": {
+    "defaultMessage": "Thêm"
+  },
+  "memfreeSettings.neverTouchAdded": {
+    "defaultMessage": "Do bạn thêm"
+  },
+  "memfreeSettings.neverTouchBuiltIn": {
+    "defaultMessage": "Có sẵn"
+  },
+  "memfreeSettings.neverTouchDesc": {
+    "defaultMessage": "Ứng dụng và tiến trình không bao giờ bị dọn dẹp thoát hoặc dừng, trên máy Mac này và khi máy Mac này giải phóng bộ nhớ trên máy khác. Bundle id, tên ứng dụng hoặc tên tiến trình; không phân biệt hoa thường. Các mục có sẵn luôn được áp dụng."
+  },
+  "memfreeSettings.neverTouchNone": {
+    "defaultMessage": "Chưa thêm gì"
+  },
+  "memfreeSettings.neverTouchPlaceholder": {
+    "defaultMessage": "com.example.App hoặc tên ứng dụng"
+  },
+  "memfreeSettings.neverTouchRemove": {
+    "defaultMessage": "Xoá {name}"
   },
   "memfreeSettings.readFailed": {
     "defaultMessage": "Không thể đọc các cài đặt này: {reason}"

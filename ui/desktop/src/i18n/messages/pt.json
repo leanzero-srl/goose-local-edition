@@ -2693,11 +2693,53 @@
   "freeMemory.keep": {
     "defaultMessage": "Manter aberto"
   },
+  "freeMemory.keepRunning": {
+    "defaultMessage": "Deixar a correr"
+  },
+  "freeMemory.leftAlone": {
+    "defaultMessage": "Deixado em paz"
+  },
   "freeMemory.loading": {
     "defaultMessage": "Medindo o que ocupa a memória…"
   },
+  "freeMemory.neverTouchReason": {
+    "defaultMessage": "na lista de nunca tocar ({entry})"
+  },
   "freeMemory.nothingOwn": {
     "defaultMessage": "O goose não ocupa memória que possa liberar"
+  },
+  "freeMemory.nuclearBack": {
+    "defaultMessage": "Voltar"
+  },
+  "freeMemory.nuclearConfirmBody": {
+    "defaultMessage": "O goose pede a cada app marcado que feche e descarrega cada servidor de modelos marcado. Um app que ignore o pedido recebe um SIGTERM e pode perder trabalho não salvo: salve seu trabalho antes. O protegido nunca é tocado."
+  },
+  "freeMemory.nuclearConfirmKeep": {
+    "defaultMessage": "Manter tudo"
+  },
+  "freeMemory.nuclearConfirmTitle": {
+    "defaultMessage": "Liberar {gb} GB em {mac}?"
+  },
+  "freeMemory.nuclearFree": {
+    "defaultMessage": "Liberar {gb} GB"
+  },
+  "freeMemory.nuclearGooseOwn": {
+    "defaultMessage": "A memória do próprio goose"
+  },
+  "freeMemory.nuclearIntro": {
+    "defaultMessage": "Tudo o que ninguém está usando está marcado. Desmarque o que quiser manter. O protegido nunca é tocado."
+  },
+  "freeMemory.nuclearOpen": {
+    "defaultMessage": "Liberar tudo exceto o protegido"
+  },
+  "freeMemory.nuclearProtectedHead": {
+    "defaultMessage": "Nunca tocado"
+  },
+  "freeMemory.nuclearTotal": {
+    "defaultMessage": "Marcado: <b>{gb} GB</b>"
+  },
+  "freeMemory.protectedChip": {
+    "defaultMessage": "Protegido"
   },
   "freeMemory.quit": {
     "defaultMessage": "Encerrar"
@@ -2719,6 +2761,24 @@
   },
   "freeMemory.title": {
     "defaultMessage": "Liberar memória em {mac}"
+  },
+  "freeMemory.unload": {
+    "defaultMessage": "Descarregar"
+  },
+  "freeMemory.unloadBody": {
+    "defaultMessage": "O goose descarrega os modelos que {server} mantém em {mac} (um motor MLX é solicitado a parar). Quem o usa terá de carregá-los de novo."
+  },
+  "freeMemory.unloadConfirm": {
+    "defaultMessage": "Descarregar {server}"
+  },
+  "freeMemory.unloadInUse": {
+    "defaultMessage": "Em uso agora, isto interrompe o trabalho deles:"
+  },
+  "freeMemory.unloadTitle": {
+    "defaultMessage": "Descarregar {server}?"
+  },
+  "freeMemory.usedBy": {
+    "defaultMessage": "Em uso: {who}"
   },
   "freeMemoryEntry.open": {
     "defaultMessage": "Liberar memória"
@@ -4468,6 +4528,30 @@
   },
   "memfreeSettings.minMbDesc": {
     "defaultMessage": "Apps que usam menos memória do que isso ficam fora da lista. Padrão {mb} MB."
+  },
+  "memfreeSettings.neverTouch": {
+    "defaultMessage": "Nunca tocar"
+  },
+  "memfreeSettings.neverTouchAdd": {
+    "defaultMessage": "Adicionar"
+  },
+  "memfreeSettings.neverTouchAdded": {
+    "defaultMessage": "Adicionados por você"
+  },
+  "memfreeSettings.neverTouchBuiltIn": {
+    "defaultMessage": "Embutidos"
+  },
+  "memfreeSettings.neverTouchDesc": {
+    "defaultMessage": "Apps e processos que nenhuma limpeza fecha ou para, neste Mac e quando este Mac libera memória em outro. Um bundle id, nome de app ou nome de processo; maiúsculas não importam. Os embutidos sempre valem."
+  },
+  "memfreeSettings.neverTouchNone": {
+    "defaultMessage": "Nada adicionado ainda"
+  },
+  "memfreeSettings.neverTouchPlaceholder": {
+    "defaultMessage": "com.example.App ou um nome de app"
+  },
+  "memfreeSettings.neverTouchRemove": {
+    "defaultMessage": "Remover {name}"
   },
   "memfreeSettings.readFailed": {
     "defaultMessage": "Não foi possível ler estas configurações: {reason}"

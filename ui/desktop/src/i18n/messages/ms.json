@@ -2693,11 +2693,53 @@
   "freeMemory.keep": {
     "defaultMessage": "Biarkan terbuka"
   },
+  "freeMemory.keepRunning": {
+    "defaultMessage": "Biarkan berjalan"
+  },
+  "freeMemory.leftAlone": {
+    "defaultMessage": "Dibiarkan"
+  },
   "freeMemory.loading": {
     "defaultMessage": "Mengukur apa yang menggunakan memori…"
   },
+  "freeMemory.neverTouchReason": {
+    "defaultMessage": "dalam senarai jangan sentuh ({entry})"
+  },
   "freeMemory.nothingOwn": {
     "defaultMessage": "goose tidak memegang memori yang boleh dibebaskannya"
+  },
+  "freeMemory.nuclearBack": {
+    "defaultMessage": "Kembali"
+  },
+  "freeMemory.nuclearConfirmBody": {
+    "defaultMessage": "goose meminta setiap apl yang ditanda untuk keluar dan menyahmuat setiap pelayan model yang ditanda. Apl yang mengabaikan permintaan keluar menerima SIGTERM dan mungkin kehilangan kerja yang belum disimpan: simpan kerja anda dahulu. Yang dilindungi tidak pernah disentuh."
+  },
+  "freeMemory.nuclearConfirmKeep": {
+    "defaultMessage": "Simpan semua"
+  },
+  "freeMemory.nuclearConfirmTitle": {
+    "defaultMessage": "Kosongkan {gb} GB pada {mac}?"
+  },
+  "freeMemory.nuclearFree": {
+    "defaultMessage": "Kosongkan {gb} GB"
+  },
+  "freeMemory.nuclearGooseOwn": {
+    "defaultMessage": "Memori goose sendiri"
+  },
+  "freeMemory.nuclearIntro": {
+    "defaultMessage": "Semua yang tidak digunakan sesiapa sudah ditanda. Nyahtanda apa yang anda mahu simpan. Yang dilindungi tidak pernah disentuh."
+  },
+  "freeMemory.nuclearOpen": {
+    "defaultMessage": "Kosongkan semua kecuali yang dilindungi"
+  },
+  "freeMemory.nuclearProtectedHead": {
+    "defaultMessage": "Tidak pernah disentuh"
+  },
+  "freeMemory.nuclearTotal": {
+    "defaultMessage": "Ditanda: <b>{gb} GB</b>"
+  },
+  "freeMemory.protectedChip": {
+    "defaultMessage": "Dilindungi"
   },
   "freeMemory.quit": {
     "defaultMessage": "Keluar"
@@ -2719,6 +2761,24 @@
   },
   "freeMemory.title": {
     "defaultMessage": "Bebaskan memori pada {mac}"
+  },
+  "freeMemory.unload": {
+    "defaultMessage": "Nyahmuat"
+  },
+  "freeMemory.unloadBody": {
+    "defaultMessage": "goose menyahmuat model yang dipegang {server} pada {mac} (enjin MLX diminta berhenti). Apa-apa yang menggunakannya perlu memuatkannya semula."
+  },
+  "freeMemory.unloadConfirm": {
+    "defaultMessage": "Nyahmuat {server}"
+  },
+  "freeMemory.unloadInUse": {
+    "defaultMessage": "Sedang digunakan, ini menghentikan kerja mereka:"
+  },
+  "freeMemory.unloadTitle": {
+    "defaultMessage": "Nyahmuat {server}?"
+  },
+  "freeMemory.usedBy": {
+    "defaultMessage": "Digunakan oleh: {who}"
   },
   "freeMemoryEntry.open": {
     "defaultMessage": "Bebaskan memori"
@@ -4468,6 +4528,30 @@
   },
   "memfreeSettings.minMbDesc": {
     "defaultMessage": "Apl yang menggunakan kurang memori daripada ini tidak disenaraikan. Lalai {mb} MB."
+  },
+  "memfreeSettings.neverTouch": {
+    "defaultMessage": "Jangan sentuh"
+  },
+  "memfreeSettings.neverTouchAdd": {
+    "defaultMessage": "Tambah"
+  },
+  "memfreeSettings.neverTouchAdded": {
+    "defaultMessage": "Ditambah oleh anda"
+  },
+  "memfreeSettings.neverTouchBuiltIn": {
+    "defaultMessage": "Terbina dalam"
+  },
+  "memfreeSettings.neverTouchDesc": {
+    "defaultMessage": "Apl dan proses yang tidak pernah ditutup atau dihentikan oleh mana-mana pembersihan, pada Mac ini dan apabila Mac ini mengosongkan memori pada Mac lain. Bundle id, nama apl atau nama proses; huruf besar kecil tidak penting. Yang terbina dalam sentiasa terpakai."
+  },
+  "memfreeSettings.neverTouchNone": {
+    "defaultMessage": "Belum ada yang ditambah"
+  },
+  "memfreeSettings.neverTouchPlaceholder": {
+    "defaultMessage": "com.example.App atau nama apl"
+  },
+  "memfreeSettings.neverTouchRemove": {
+    "defaultMessage": "Buang {name}"
   },
   "memfreeSettings.readFailed": {
     "defaultMessage": "Tidak dapat membaca tetapan ini: {reason}"

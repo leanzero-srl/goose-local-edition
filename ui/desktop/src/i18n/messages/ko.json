@@ -2693,11 +2693,53 @@
   "freeMemory.keep": {
     "defaultMessage": "열어 두기"
   },
+  "freeMemory.keepRunning": {
+    "defaultMessage": "계속 실행"
+  },
+  "freeMemory.leftAlone": {
+    "defaultMessage": "그대로 둠"
+  },
   "freeMemory.loading": {
     "defaultMessage": "메모리를 차지하는 항목 측정 중…"
   },
+  "freeMemory.neverTouchReason": {
+    "defaultMessage": "건드리지 않기 목록에 있음({entry})"
+  },
   "freeMemory.nothingOwn": {
     "defaultMessage": "goose가 해제할 수 있는 메모리가 없습니다"
+  },
+  "freeMemory.nuclearBack": {
+    "defaultMessage": "뒤로"
+  },
+  "freeMemory.nuclearConfirmBody": {
+    "defaultMessage": "goose가 체크한 각 앱에 종료를 요청하고 체크한 각 모델 서버를 언로드합니다. 종료 요청을 무시한 앱은 SIGTERM을 받으며 저장하지 않은 작업을 잃을 수 있습니다. 먼저 작업을 저장하세요. 보호된 항목은 절대 건드리지 않습니다."
+  },
+  "freeMemory.nuclearConfirmKeep": {
+    "defaultMessage": "모두 유지"
+  },
+  "freeMemory.nuclearConfirmTitle": {
+    "defaultMessage": "{mac}에서 {gb} GB를 해제할까요?"
+  },
+  "freeMemory.nuclearFree": {
+    "defaultMessage": "{gb} GB 해제"
+  },
+  "freeMemory.nuclearGooseOwn": {
+    "defaultMessage": "goose 자체 메모리"
+  },
+  "freeMemory.nuclearIntro": {
+    "defaultMessage": "아무도 사용하지 않는 항목은 모두 체크되어 있습니다. 남길 항목은 체크를 해제하세요. 보호된 항목은 절대 건드리지 않습니다."
+  },
+  "freeMemory.nuclearOpen": {
+    "defaultMessage": "보호된 항목을 제외하고 모두 해제"
+  },
+  "freeMemory.nuclearProtectedHead": {
+    "defaultMessage": "건드리지 않음"
+  },
+  "freeMemory.nuclearTotal": {
+    "defaultMessage": "체크됨: <b>{gb} GB</b>"
+  },
+  "freeMemory.protectedChip": {
+    "defaultMessage": "보호됨"
   },
   "freeMemory.quit": {
     "defaultMessage": "종료"
@@ -2719,6 +2761,24 @@
   },
   "freeMemory.title": {
     "defaultMessage": "{mac}의 메모리 확보"
+  },
+  "freeMemory.unload": {
+    "defaultMessage": "언로드"
+  },
+  "freeMemory.unloadBody": {
+    "defaultMessage": "goose가 {mac}에서 {server}이(가) 들고 있는 모델을 언로드합니다(MLX 엔진에는 중지를 요청합니다). 사용 중인 쪽은 모델을 다시 불러와야 합니다."
+  },
+  "freeMemory.unloadConfirm": {
+    "defaultMessage": "{server} 언로드"
+  },
+  "freeMemory.unloadInUse": {
+    "defaultMessage": "지금 사용 중이며, 이 작업은 그 작업을 멈춥니다:"
+  },
+  "freeMemory.unloadTitle": {
+    "defaultMessage": "{server}을(를) 언로드할까요?"
+  },
+  "freeMemory.usedBy": {
+    "defaultMessage": "사용 중: {who}"
   },
   "freeMemoryEntry.open": {
     "defaultMessage": "메모리 확보"
@@ -4468,6 +4528,30 @@
   },
   "memfreeSettings.minMbDesc": {
     "defaultMessage": "이보다 메모리를 적게 쓰는 앱은 목록에서 제외됩니다. 기본값 {mb} MB."
+  },
+  "memfreeSettings.neverTouch": {
+    "defaultMessage": "건드리지 않기"
+  },
+  "memfreeSettings.neverTouchAdd": {
+    "defaultMessage": "추가"
+  },
+  "memfreeSettings.neverTouchAdded": {
+    "defaultMessage": "직접 추가"
+  },
+  "memfreeSettings.neverTouchBuiltIn": {
+    "defaultMessage": "기본 제공"
+  },
+  "memfreeSettings.neverTouchDesc": {
+    "defaultMessage": "어떤 정리도 종료하거나 중지하지 않는 앱과 프로세스입니다. 이 Mac에서, 그리고 이 Mac이 다른 Mac의 메모리를 해제할 때도 적용됩니다. 번들 ID, 앱 이름 또는 프로세스 이름이며 대소문자는 구분하지 않습니다. 기본 항목은 항상 적용됩니다."
+  },
+  "memfreeSettings.neverTouchNone": {
+    "defaultMessage": "아직 추가한 항목이 없습니다"
+  },
+  "memfreeSettings.neverTouchPlaceholder": {
+    "defaultMessage": "com.example.App 또는 앱 이름"
+  },
+  "memfreeSettings.neverTouchRemove": {
+    "defaultMessage": "{name} 제거"
   },
   "memfreeSettings.readFailed": {
     "defaultMessage": "이 설정을 읽을 수 없습니다: {reason}"

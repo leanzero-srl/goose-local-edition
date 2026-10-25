@@ -2693,11 +2693,53 @@
   "freeMemory.keep": {
     "defaultMessage": "इसे खुला रखें"
   },
+  "freeMemory.keepRunning": {
+    "defaultMessage": "चलने दें"
+  },
+  "freeMemory.leftAlone": {
+    "defaultMessage": "छोड़ दिया"
+  },
   "freeMemory.loading": {
     "defaultMessage": "माप रहे हैं कि मेमोरी किसने घेरी है…"
   },
+  "freeMemory.neverTouchReason": {
+    "defaultMessage": "कभी-न-छुएँ सूची में ({entry})"
+  },
   "freeMemory.nothingOwn": {
     "defaultMessage": "goose के पास ऐसी कोई मेमोरी नहीं जिसे वह खाली कर सके"
+  },
+  "freeMemory.nuclearBack": {
+    "defaultMessage": "वापस"
+  },
+  "freeMemory.nuclearConfirmBody": {
+    "defaultMessage": "goose हर टिक किए ऐप से बंद होने को कहता है और हर टिक किए मॉडल सर्वर को अनलोड करता है। जो ऐप बंद होने की बात नहीं मानता उसे SIGTERM मिलता है और बिना सहेजा काम खो सकता है: पहले अपना काम सहेज लें। सुरक्षित चीज़ों को कभी नहीं छुआ जाता।"
+  },
+  "freeMemory.nuclearConfirmKeep": {
+    "defaultMessage": "सब रखें"
+  },
+  "freeMemory.nuclearConfirmTitle": {
+    "defaultMessage": "{mac} पर {gb} GB खाली करें?"
+  },
+  "freeMemory.nuclearFree": {
+    "defaultMessage": "{gb} GB खाली करें"
+  },
+  "freeMemory.nuclearGooseOwn": {
+    "defaultMessage": "goose की अपनी मेमोरी"
+  },
+  "freeMemory.nuclearIntro": {
+    "defaultMessage": "जो कुछ कोई इस्तेमाल नहीं कर रहा, उस पर टिक लगा है। जो रखना है उसका टिक हटा दें। सुरक्षित चीज़ों को कभी नहीं छुआ जाता।"
+  },
+  "freeMemory.nuclearOpen": {
+    "defaultMessage": "सुरक्षित को छोड़कर सब खाली करें"
+  },
+  "freeMemory.nuclearProtectedHead": {
+    "defaultMessage": "कभी नहीं छुआ जाता"
+  },
+  "freeMemory.nuclearTotal": {
+    "defaultMessage": "टिक किया: <b>{gb} GB</b>"
+  },
+  "freeMemory.protectedChip": {
+    "defaultMessage": "सुरक्षित"
   },
   "freeMemory.quit": {
     "defaultMessage": "बंद करें"
@@ -2719,6 +2761,24 @@
   },
   "freeMemory.title": {
     "defaultMessage": "{mac} पर मेमोरी खाली करें"
+  },
+  "freeMemory.unload": {
+    "defaultMessage": "अनलोड करें"
+  },
+  "freeMemory.unloadBody": {
+    "defaultMessage": "goose {mac} पर {server} के रखे मॉडल अनलोड करता है (MLX इंजन से रुकने को कहा जाता है)। जो इसे इस्तेमाल कर रहा है उसे मॉडल फिर से लोड करने होंगे।"
+  },
+  "freeMemory.unloadConfirm": {
+    "defaultMessage": "{server} अनलोड करें"
+  },
+  "freeMemory.unloadInUse": {
+    "defaultMessage": "अभी इस्तेमाल में है, इससे उनका काम रुक जाएगा:"
+  },
+  "freeMemory.unloadTitle": {
+    "defaultMessage": "{server} अनलोड करें?"
+  },
+  "freeMemory.usedBy": {
+    "defaultMessage": "इस्तेमाल में: {who}"
   },
   "freeMemoryEntry.open": {
     "defaultMessage": "मेमोरी खाली करें"
@@ -4468,6 +4528,30 @@
   },
   "memfreeSettings.minMbDesc": {
     "defaultMessage": "इससे कम मेमोरी इस्तेमाल करने वाले ऐप सूची में नहीं दिखते। डिफ़ॉल्ट {mb} MB।"
+  },
+  "memfreeSettings.neverTouch": {
+    "defaultMessage": "कभी न छुएँ"
+  },
+  "memfreeSettings.neverTouchAdd": {
+    "defaultMessage": "जोड़ें"
+  },
+  "memfreeSettings.neverTouchAdded": {
+    "defaultMessage": "आपके जोड़े हुए"
+  },
+  "memfreeSettings.neverTouchBuiltIn": {
+    "defaultMessage": "बिल्ट-इन"
+  },
+  "memfreeSettings.neverTouchDesc": {
+    "defaultMessage": "ऐप और प्रोसेस जिन्हें कोई सफ़ाई कभी बंद या रोकती नहीं, इस Mac पर और जब यह Mac किसी दूसरे पर मेमोरी खाली करे तब भी। बंडल id, ऐप का नाम या प्रोसेस का नाम; बड़े-छोटे अक्षर से फ़र्क नहीं पड़ता। बिल्ट-इन वाले हमेशा लागू होते हैं।"
+  },
+  "memfreeSettings.neverTouchNone": {
+    "defaultMessage": "अभी कुछ नहीं जोड़ा"
+  },
+  "memfreeSettings.neverTouchPlaceholder": {
+    "defaultMessage": "com.example.App या किसी ऐप का नाम"
+  },
+  "memfreeSettings.neverTouchRemove": {
+    "defaultMessage": "{name} हटाएँ"
   },
   "memfreeSettings.readFailed": {
     "defaultMessage": "ये सेटिंग्स पढ़ी नहीं जा सकीं: {reason}"

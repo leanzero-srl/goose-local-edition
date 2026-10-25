@@ -2693,11 +2693,53 @@
   "freeMemory.keep": {
     "defaultMessage": "保持開啟"
   },
+  "freeMemory.keepRunning": {
+    "defaultMessage": "保持執行"
+  },
+  "freeMemory.leftAlone": {
+    "defaultMessage": "不處理"
+  },
   "freeMemory.loading": {
     "defaultMessage": "正在測量佔用記憶體的項目…"
   },
+  "freeMemory.neverTouchReason": {
+    "defaultMessage": "在不觸碰清單中({entry})"
+  },
   "freeMemory.nothingOwn": {
     "defaultMessage": "goose 沒有可釋放的記憶體"
+  },
+  "freeMemory.nuclearBack": {
+    "defaultMessage": "返回"
+  },
+  "freeMemory.nuclearConfirmBody": {
+    "defaultMessage": "goose 會請求每個已勾選的 App 結束,並卸載每個已勾選的模型伺服器。忽略結束請求的 App 會收到 SIGTERM,可能遺失未儲存的工作:請先儲存。受保護的項目永遠不會被觸碰。"
+  },
+  "freeMemory.nuclearConfirmKeep": {
+    "defaultMessage": "全部保留"
+  },
+  "freeMemory.nuclearConfirmTitle": {
+    "defaultMessage": "在 {mac} 上釋放 {gb} GB?"
+  },
+  "freeMemory.nuclearFree": {
+    "defaultMessage": "釋放 {gb} GB"
+  },
+  "freeMemory.nuclearGooseOwn": {
+    "defaultMessage": "goose 自身的記憶體"
+  },
+  "freeMemory.nuclearIntro": {
+    "defaultMessage": "所有沒人使用的項目都已勾選。取消勾選你想保留的項目。受保護的項目永遠不會被觸碰。"
+  },
+  "freeMemory.nuclearOpen": {
+    "defaultMessage": "釋放受保護項以外的全部"
+  },
+  "freeMemory.nuclearProtectedHead": {
+    "defaultMessage": "永不觸碰"
+  },
+  "freeMemory.nuclearTotal": {
+    "defaultMessage": "已勾選:<b>{gb} GB</b>"
+  },
+  "freeMemory.protectedChip": {
+    "defaultMessage": "受保護"
   },
   "freeMemory.quit": {
     "defaultMessage": "結束"
@@ -2719,6 +2761,24 @@
   },
   "freeMemory.title": {
     "defaultMessage": "釋放 {mac} 上的記憶體"
+  },
+  "freeMemory.unload": {
+    "defaultMessage": "卸載"
+  },
+  "freeMemory.unloadBody": {
+    "defaultMessage": "goose 會卸載 {server} 在 {mac} 上佔用的模型(會請求 MLX 引擎停止)。正在使用它的程式需要重新載入模型。"
+  },
+  "freeMemory.unloadConfirm": {
+    "defaultMessage": "卸載 {server}"
+  },
+  "freeMemory.unloadInUse": {
+    "defaultMessage": "正在使用中,這會中斷它們的工作:"
+  },
+  "freeMemory.unloadTitle": {
+    "defaultMessage": "卸載 {server}?"
+  },
+  "freeMemory.usedBy": {
+    "defaultMessage": "使用者:{who}"
   },
   "freeMemoryEntry.open": {
     "defaultMessage": "釋放記憶體"
@@ -4468,6 +4528,30 @@
   },
   "memfreeSettings.minMbDesc": {
     "defaultMessage": "記憶體用量低於此值的 App 不會列出。預設 {mb} MB。"
+  },
+  "memfreeSettings.neverTouch": {
+    "defaultMessage": "永不觸碰"
+  },
+  "memfreeSettings.neverTouchAdd": {
+    "defaultMessage": "新增"
+  },
+  "memfreeSettings.neverTouchAdded": {
+    "defaultMessage": "你新增的"
+  },
+  "memfreeSettings.neverTouchBuiltIn": {
+    "defaultMessage": "內建"
+  },
+  "memfreeSettings.neverTouchDesc": {
+    "defaultMessage": "任何清理都不會結束或停止的 App 與程序,在這台 Mac 上以及這台 Mac 在另一台上釋放記憶體時都生效。可填 bundle id、App 名稱或程序名稱,不分大小寫。內建項目永遠生效。"
+  },
+  "memfreeSettings.neverTouchNone": {
+    "defaultMessage": "尚未新增任何項目"
+  },
+  "memfreeSettings.neverTouchPlaceholder": {
+    "defaultMessage": "com.example.App 或 App 名稱"
+  },
+  "memfreeSettings.neverTouchRemove": {
+    "defaultMessage": "移除 {name}"
   },
   "memfreeSettings.readFailed": {
     "defaultMessage": "無法讀取這些設定:{reason}"

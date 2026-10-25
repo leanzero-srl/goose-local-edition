@@ -35,6 +35,13 @@ export interface MemfreeGroup {
   quittable: boolean;
   reclaimableByGoose: boolean;
   why?: string | null;
+  /** Set when nothing may free it (launchd job, MCP server, terminal session, …): never offered. */
+  protectedWhy?: string | null;
+  /** Who uses it: TCP clients of a server's port, the process that started it, its launchd job. */
+  usedBy?: string[];
+  launchdLabel?: string | null;
+  /** Ticked by default in "Free everything except protected" (never when protected or in use). */
+  nuclearDefault?: boolean;
 }
 
 export type VerdictKind = 'fitsByGooseOwned' | 'fitsWithApps' | 'cannotFit';
@@ -67,6 +74,8 @@ export interface MemoryHolders {
   totalBytes: number;
   groups: MemfreeGroup[];
   gooseOwnedBytes: number;
+  /** What unloading the unprotected model servers / stopping other MLX engines would free. */
+  serversBytes?: number;
   appsBytes: number;
   shortBytes?: number | null;
   verdict?: MemfreeVerdict | null;
@@ -225,6 +234,172 @@ export function quitOffer(
   return { show: true, disabled: !quitAppsAllowed };
 }
 
+/**
+ * A model server (LM Studio, Ollama) or another MLX engine (`mlx:<pid>`): freed only when the person
+ * names it (`unloadServers`). Mirrors the engine's `is_server`.
+ */
+export function isServerGroup(group: MemfreeGroup): boolean {
+  return (
+    group.category === 'aiServer' ||
+    (group.category === 'gooseEngine' && group.id.startsWith('mlx:'))
+  );
+}
+
+/**
+ * Whether a server gets its own Unload button, and whether it is pressable. Never for a protected
+ * one or one goose cannot free now; a peer without remote app quit shows it disabled.
+ */
+export function unloadOffer(
+  group: MemfreeGroup,
+  allowed: boolean
+): { show: false } | { show: true; disabled: boolean } {
+  if (!isServerGroup(group) || group.protectedWhy || !group.reclaimableByGoose) {
+    return { show: false };
+  }
+  return { show: true, disabled: !allowed };
+}
+
+/** The soft clean's own kinds: goose's idle engine and its proven left-over servers. */
+export function isGooseOwnGroup(group: MemfreeGroup): boolean {
+  return (
+    (group.id === 'gooseEngine' && group.reclaimableByGoose) || group.category === 'gooseOrphan'
+  );
+}
+
+/** Built into the engine (memfree_protect::DEFAULT_NEVER_TOUCH); the setting can only add. */
+export const DEFAULT_NEVER_TOUCH: readonly string[] = [
+  'com.microsoft.teams2',
+  'com.microsoft.teams',
+  'com.microsoft.Outlook',
+  'com.tinyspeck.slackmacgap',
+  'us.zoom.xos',
+  'com.apple.Terminal',
+  'com.googlecode.iterm2',
+  'dev.warp.Warp-Stable',
+];
+
+/**
+ * The entries the person added (GOOSE_MEMFREE_NEVER_TOUCH): a list, or a JSON / comma-separated
+ * string as an env var sets it. Trimmed, de-duplicated case-insensitively, defaults dropped.
+ */
+export function neverTouchExtrasFrom(value: unknown): string[] {
+  let raw: unknown[] = [];
+  if (Array.isArray(value)) raw = value;
+  else if (typeof value === 'string') {
+    const text = value.trim();
+    if (text.startsWith('[')) {
+      try {
+        const parsed: unknown = JSON.parse(text);
+        if (Array.isArray(parsed)) raw = parsed;
+      } catch {
+        raw = [];
+      }
+    } else raw = text.split(',');
+  }
+  const out: string[] = [];
+  const seen = new Set(DEFAULT_NEVER_TOUCH.map((d) => d.toLowerCase()));
+  for (const item of raw) {
+    if (typeof item !== 'string') continue;
+    const name = item.trim();
+    if (!name || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    out.push(name);
+  }
+  return out;
+}
+
+/** Defaults first, then the person's additions: what a request's `neverTouch` carries. */
+export function effectiveNeverTouch(extras: readonly string[]): string[] {
+  return [...DEFAULT_NEVER_TOUCH, ...neverTouchExtrasFrom([...extras])];
+}
+
+/** The never-touch entry a group matches (bundle id, label, the name in its id), like the engine. */
+export function neverTouchHit(group: MemfreeGroup, list: readonly string[]): string | null {
+  const idName = group.id.includes(':') ? group.id.slice(group.id.indexOf(':') + 1) : '';
+  const appName = idName.endsWith('.app')
+    ? (idName.split('/').pop() ?? '').replace(/\.app$/, '')
+    : null;
+  const names = [group.bundleId, group.label.replace(/ \(build\)$/, ''), idName, appName]
+    .filter((n): n is string => typeof n === 'string')
+    .map((n) => n.trim().toLowerCase())
+    .filter((n) => n !== '');
+  return list.find((entry) => names.includes(entry.trim().toLowerCase())) ?? null;
+}
+
+/** One holder in the "Free everything except protected" view. */
+export type NuclearRow =
+  | { kind: 'offer'; group: MemfreeGroup; ticked: boolean }
+  | { kind: 'protected'; group: MemfreeGroup; reason: string }
+  | { kind: 'left'; group: MemfreeGroup; reason: string | null };
+
+/**
+ * Sort every holder for the nuclear view. Protected (engine reason, or on the never-touch list)
+ * is never offered. Offered = a quittable app or a server goose can free now; ticked by default
+ * only when the engine says so (`nuclearDefault`: nobody uses it). goose's own kinds are the
+ * separate "goose's own" row (`gooseOwned`); everything else is left alone with its reason.
+ */
+export function nuclearRows(
+  groups: readonly MemfreeGroup[],
+  neverTouch: readonly string[]
+): NuclearRow[] {
+  const rows: NuclearRow[] = [];
+  for (const group of [...groups].sort((a, b) => b.bytes - a.bytes)) {
+    if (isGooseOwnGroup(group)) continue;
+    if (group.protectedWhy) {
+      rows.push({ kind: 'protected', group, reason: group.protectedWhy });
+      continue;
+    }
+    const hit = neverTouchHit(group, neverTouch);
+    if (hit) {
+      rows.push({ kind: 'protected', group, reason: hit });
+      continue;
+    }
+    const offered =
+      (group.category === 'userApp' && group.quittable && !!group.bundleId) ||
+      (isServerGroup(group) && group.reclaimableByGoose);
+    rows.push(
+      offered
+        ? { kind: 'offer', group, ticked: group.nuclearDefault === true }
+        : { kind: 'left', group, reason: group.why ?? null }
+    );
+  }
+  return rows;
+}
+
+export interface NuclearFreeRequest {
+  gooseOwned: boolean;
+  quitApps: string[];
+  unloadServers: string[];
+  nuclear: true;
+  neverTouch: string[];
+}
+
+/**
+ * The one `memoryFree` call the nuclear view sends: only what is ticked. A ticked id that is not
+ * an offered row (protected, never-touch, left alone) is dropped here too — never selectable.
+ */
+export function nuclearRequest(
+  rows: readonly NuclearRow[],
+  ticked: ReadonlySet<string>,
+  gooseOwn: boolean,
+  neverTouch: readonly string[]
+): NuclearFreeRequest {
+  const quitApps: string[] = [];
+  const unloadServers: string[] = [];
+  for (const row of rows) {
+    if (row.kind !== 'offer' || !ticked.has(row.group.id)) continue;
+    if (isServerGroup(row.group)) unloadServers.push(row.group.id);
+    else if (row.group.bundleId) quitApps.push(row.group.bundleId);
+  }
+  return {
+    gooseOwned: gooseOwn,
+    quitApps,
+    unloadServers,
+    nuclear: true,
+    neverTouch: [...neverTouch],
+  };
+}
+
 /** Before → after of one free, in GB, from the engine's own re-reading. */
 export function afterLine(r: MemoryFreeResult): {
   beforeGb: number;
@@ -249,6 +424,7 @@ export const MEMFREE_ENABLED_KEY = 'GOOSE_MEMFREE_ENABLED';
 export const MEMFREE_SHOW_APPS_MIN_MB_KEY = 'GOOSE_MEMFREE_SHOW_APPS_MIN_MB';
 export const LINK_ALLOW_REMOTE_APP_QUIT_KEY = 'GOOSE_LINK_ALLOW_REMOTE_APP_QUIT';
 export const MEMFREE_SHOW_APPS_MIN_MB_DEFAULT = 200;
+export const MEMFREE_NEVER_TOUCH_KEY = 'GOOSE_MEMFREE_NEVER_TOUCH';
 
 /** On unless the owner turned it off: only an explicit false / "false" is off. */
 export function memfreeEnabledFrom(value: unknown): boolean {

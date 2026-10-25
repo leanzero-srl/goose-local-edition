@@ -1,5 +1,11 @@
 import { getAcpClient } from './acpConnection';
-import type { MemoryFreeResult, MemoryHolders } from '../components/memfree/memfree';
+import { acpReadConfig } from './config';
+import {
+  MEMFREE_NEVER_TOUCH_KEY,
+  neverTouchExtrasFrom,
+  type MemoryFreeResult,
+  type MemoryHolders,
+} from '../components/memfree/memfree';
 
 /**
  * "Free up memory" over ACP: `_goose/unstable/mlxEngine/memoryHolders` measures who holds memory
@@ -18,25 +24,44 @@ function withNode(params: Record<string, unknown>, nodeId?: string): Record<stri
   return params;
 }
 
+/** This Mac's own never-touch additions (Settings › App), sent with every call so they hold on a peer. */
+export async function readNeverTouchExtras(): Promise<string[]> {
+  return neverTouchExtrasFrom(await acpReadConfig(MEMFREE_NEVER_TOUCH_KEY, false));
+}
+
 export async function memoryHolders(opts: {
   nodeId?: string;
   fitModelId?: string | null;
+  neverTouch?: string[];
 }): Promise<MemoryHolders> {
+  const params: Record<string, unknown> = {};
+  if (opts.fitModelId) params.fitModelId = opts.fitModelId;
+  if (opts.neverTouch) params.neverTouch = opts.neverTouch;
   return call<MemoryHolders>(
     '_goose/unstable/mlxEngine/memoryHolders',
-    withNode(opts.fitModelId ? { fitModelId: opts.fitModelId } : {}, opts.nodeId)
+    withNode(params, opts.nodeId)
   );
 }
 
+/**
+ * `gooseOwned` = the soft clean. `quitApps` (bundle ids) and `unloadServers` (`ai:…` / `mlx:<pid>`)
+ * are only what the person confirmed; `nuclear` lets an app that ignores quit get one SIGTERM.
+ */
 export async function memoryFree(opts: {
   nodeId?: string;
   gooseOwned: boolean;
   quitApps: string[];
+  unloadServers: string[];
+  nuclear: boolean;
+  neverTouch: string[];
   fitModelId?: string | null;
 }): Promise<MemoryFreeResult> {
   const params: Record<string, unknown> = {
     gooseOwned: opts.gooseOwned,
     quitApps: opts.quitApps,
+    unloadServers: opts.unloadServers,
+    nuclear: opts.nuclear,
+    neverTouch: opts.neverTouch,
   };
   if (opts.fitModelId) params.fitModelId = opts.fitModelId;
   return call<MemoryFreeResult>(

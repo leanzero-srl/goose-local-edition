@@ -2693,11 +2693,53 @@
   "freeMemory.keep": {
     "defaultMessage": "Оставить открытым"
   },
+  "freeMemory.keepRunning": {
+    "defaultMessage": "Оставить работать"
+  },
+  "freeMemory.leftAlone": {
+    "defaultMessage": "Не трогаем"
+  },
   "freeMemory.loading": {
     "defaultMessage": "Измеряем, что занимает память…"
   },
+  "freeMemory.neverTouchReason": {
+    "defaultMessage": "в списке «не трогать» ({entry})"
+  },
   "freeMemory.nothingOwn": {
     "defaultMessage": "goose не занимает память, которую мог бы освободить"
+  },
+  "freeMemory.nuclearBack": {
+    "defaultMessage": "Назад"
+  },
+  "freeMemory.nuclearConfirmBody": {
+    "defaultMessage": "goose просит каждое отмеченное приложение завершиться и выгружает каждый отмеченный сервер моделей. Приложение, которое игнорирует запрос, получает SIGTERM и может потерять несохранённую работу: сначала сохраните её. Защищённое никогда не трогается."
+  },
+  "freeMemory.nuclearConfirmKeep": {
+    "defaultMessage": "Оставить всё"
+  },
+  "freeMemory.nuclearConfirmTitle": {
+    "defaultMessage": "Освободить {gb} ГБ на {mac}?"
+  },
+  "freeMemory.nuclearFree": {
+    "defaultMessage": "Освободить {gb} ГБ"
+  },
+  "freeMemory.nuclearGooseOwn": {
+    "defaultMessage": "Собственная память goose"
+  },
+  "freeMemory.nuclearIntro": {
+    "defaultMessage": "Всё, чем никто не пользуется, отмечено. Снимите отметку с того, что хотите оставить. Защищённое никогда не трогается."
+  },
+  "freeMemory.nuclearOpen": {
+    "defaultMessage": "Освободить всё, кроме защищённого"
+  },
+  "freeMemory.nuclearProtectedHead": {
+    "defaultMessage": "Никогда не трогается"
+  },
+  "freeMemory.nuclearTotal": {
+    "defaultMessage": "Отмечено: <b>{gb} ГБ</b>"
+  },
+  "freeMemory.protectedChip": {
+    "defaultMessage": "Защищено"
   },
   "freeMemory.quit": {
     "defaultMessage": "Завершить"
@@ -2719,6 +2761,24 @@
   },
   "freeMemory.title": {
     "defaultMessage": "Освободить память на {mac}"
+  },
+  "freeMemory.unload": {
+    "defaultMessage": "Выгрузить"
+  },
+  "freeMemory.unloadBody": {
+    "defaultMessage": "goose выгружает модели, которые {server} держит на {mac} (движок MLX просят остановиться). Тем, кто им пользуется, придётся загрузить их заново."
+  },
+  "freeMemory.unloadConfirm": {
+    "defaultMessage": "Выгрузить {server}"
+  },
+  "freeMemory.unloadInUse": {
+    "defaultMessage": "Сейчас используется, это остановит их работу:"
+  },
+  "freeMemory.unloadTitle": {
+    "defaultMessage": "Выгрузить {server}?"
+  },
+  "freeMemory.usedBy": {
+    "defaultMessage": "Используется: {who}"
   },
   "freeMemoryEntry.open": {
     "defaultMessage": "Освободить память"
@@ -4468,6 +4528,30 @@
   },
   "memfreeSettings.minMbDesc": {
     "defaultMessage": "Приложения, использующие меньше памяти, не попадают в список. По умолчанию {mb} МБ."
+  },
+  "memfreeSettings.neverTouch": {
+    "defaultMessage": "Никогда не трогать"
+  },
+  "memfreeSettings.neverTouchAdd": {
+    "defaultMessage": "Добавить"
+  },
+  "memfreeSettings.neverTouchAdded": {
+    "defaultMessage": "Добавлено вами"
+  },
+  "memfreeSettings.neverTouchBuiltIn": {
+    "defaultMessage": "Встроенные"
+  },
+  "memfreeSettings.neverTouchDesc": {
+    "defaultMessage": "Приложения и процессы, которые никакая очистка не завершит и не остановит, на этом Mac и когда этот Mac освобождает память на другом. Bundle id, имя приложения или процесса; регистр не важен. Встроенные действуют всегда."
+  },
+  "memfreeSettings.neverTouchNone": {
+    "defaultMessage": "Пока ничего не добавлено"
+  },
+  "memfreeSettings.neverTouchPlaceholder": {
+    "defaultMessage": "com.example.App или имя приложения"
+  },
+  "memfreeSettings.neverTouchRemove": {
+    "defaultMessage": "Удалить {name}"
   },
   "memfreeSettings.readFailed": {
     "defaultMessage": "Не удалось прочитать эти настройки: {reason}"
