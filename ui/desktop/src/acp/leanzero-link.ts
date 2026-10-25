@@ -220,6 +220,25 @@ export interface JobBrief {
   started_at: string;
   state: JobState;
   heavy?: boolean;
+  /** Set while the job waits in its ORIGIN node's queue: no Mac had room for it yet. */
+  queue?: JobQueueInfo;
+}
+
+/** How a job without a named target is placed (leanzero-link `PlacementStrategy`). */
+export type PlacementStrategy = 'local-first' | 'selfish';
+
+/** One Mac's answer at the last placement try (leanzero-link `NodeRefusal`, snake_case). */
+export interface JobNodeRefusal {
+  node_id: string;
+  code: string;
+  reason: string;
+}
+
+/** A queued job's place in line (1 = next) and why each Mac said no (leanzero-link `QueueInfo`). */
+export interface JobQueueInfo {
+  position: number;
+  strategy: PlacementStrategy;
+  refusals: JobNodeRefusal[];
 }
 
 /** `NodeState.load`, on the 3 s poll: own use, inference, jobs. */
@@ -237,6 +256,8 @@ export interface JobView extends JobBrief {
   reason?: string | null;
   session_id?: string | null;
   log_bytes: number;
+  /** A queued job that has since been placed: the Mac it runs on and its id there. */
+  placed_on?: { node_id: string; job_id: string } | null;
 }
 
 export interface JobLogChunk {
@@ -428,22 +449,31 @@ export interface JobRequest {
   timeout_s?: number;
 }
 
-/** `{ nodeId, jobId }`: where the job went (the placement's pick when no target was given). */
+/**
+ * Where the job went (the placement's pick when no target was given). `queued`: no Mac had room,
+ * so it waits in THIS node's queue at `queuePosition` (1 = next) and `nodeId`/`jobId` are this node
+ * and the queue id, which keeps answering get/log/cancel after the job is placed.
+ */
 export interface JobSubmitResult {
   nodeId: string;
   jobId: string;
+  queued?: boolean;
+  queuePosition?: number | null;
 }
 
 /**
- * Send one job. `targetNodeId` omitted = goosed places it on the best Mac (`jobsPlace`'s first).
- * A refusal (jobs off there, no memory headroom, heavy slot held, …) throws with `data.reason`.
+ * Send one job. `targetNodeId` omitted = goosed places it by `strategy` (omitted = the setting),
+ * queueing it when no Mac has room. A refusal from a NAMED target (jobs off there, no memory
+ * headroom, heavy slot held, …) throws with `data.reason`.
  */
 export async function leanzeroLinkJobsSubmit(
   job: JobRequest,
-  targetNodeId?: string
+  targetNodeId?: string,
+  strategy?: PlacementStrategy
 ): Promise<JobSubmitResult> {
   const params: Record<string, unknown> = { job };
   if (targetNodeId) params.targetNodeId = targetNodeId;
+  if (strategy) params.strategy = strategy;
   return await call<JobSubmitResult>('_goose/unstable/leanzeroLink/jobsSubmit', params);
 }
 
@@ -454,18 +484,38 @@ export interface JobPlacement {
   score: number;
 }
 
-/** Where a job could run now, best first; busy Macs and Macs that refuse jobs are absent. */
+/** One Mac's refusal at placement (camelCase, as `jobsPlace` answers). */
+export interface JobPlaceRefusal {
+  nodeId: string;
+  code: string;
+  reason: string;
+}
+
+/** `jobsPlace`: the order the strategy gives, the strategy used, and why each other Mac said no. */
+export interface JobPlan {
+  placements: JobPlacement[];
+  strategy: PlacementStrategy;
+  refusals: JobPlaceRefusal[];
+}
+
+/**
+ * Where a job could run now, best first by `strategy` (omitted = the setting); busy Macs and Macs
+ * that refuse jobs are absent from `placements` and listed in `refusals` with their reason.
+ */
 export async function leanzeroLinkJobsPlace(args: {
   needMemGb?: number;
   heavy: boolean;
-}): Promise<JobPlacement[]> {
+  strategy?: PlacementStrategy;
+}): Promise<JobPlan> {
   const params: Record<string, unknown> = { heavy: args.heavy };
   if (args.needMemGb != null) params.needMemGb = args.needMemGb;
-  const r = await call<{ placements: JobPlacement[] }>(
-    '_goose/unstable/leanzeroLink/jobsPlace',
-    params
-  );
-  return r.placements;
+  if (args.strategy) params.strategy = args.strategy;
+  const r = await call<Partial<JobPlan>>('_goose/unstable/leanzeroLink/jobsPlace', params);
+  return {
+    placements: r.placements ?? [],
+    strategy: r.strategy === 'selfish' ? 'selfish' : 'local-first',
+    refusals: r.refusals ?? [],
+  };
 }
 
 /**

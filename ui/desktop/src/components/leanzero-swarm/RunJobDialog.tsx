@@ -9,12 +9,14 @@ import {
   leanzeroLinkJobsSubmit,
   type JobBrief,
   type JobKind,
-  type JobPlacement,
+  type JobPlan,
   type JobRequest,
+  type PlacementStrategy,
 } from '../../acp/leanzero-link';
 import { INPUT, StudioSwitch, TEXTAREA } from './studio';
 import { macNameOfNode, type Mac } from './macs';
-import { JobDialog } from './MacLoadPanel';
+import { JobDialog, useStrategyWords } from './MacLoadPanel';
+import { STRATEGIES } from './macLoad';
 
 const i18n = defineMessages({
   title: { id: 'runJob.title', defaultMessage: 'Run a job on…' },
@@ -26,6 +28,12 @@ const i18n = defineMessages({
     id: 'runJob.noPlace',
     defaultMessage: 'No Mac can take this job right now.',
   },
+  willQueue: {
+    id: 'runJob.willQueue',
+    defaultMessage:
+      'No Mac has room right now. Run it and it waits in line on this Mac, then starts on the first Mac that has room.',
+  },
+  refusal: { id: 'runJob.refusal', defaultMessage: '{mac}: {reason}' },
   none: {
     id: 'runJob.none',
     defaultMessage:
@@ -86,7 +94,10 @@ export function RunJobDialog({ macs, onClose }: { macs: readonly Mac[]; onClose:
   const [heavy, setHeavy] = useState(false);
   const [mem, setMem] = useState('');
   const [timeout, setTimeoutText] = useState('');
-  const [placements, setPlacements] = useState<JobPlacement[] | null>(null);
+  const strategyWords = useStrategyWords();
+  // null = not picked here: the setting decides, and jobsPlace answers which one that is.
+  const [picked, setPicked] = useState<PlacementStrategy | null>(null);
+  const [plan, setPlan] = useState<JobPlan | null>(null);
   const [placeError, setPlaceError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -98,10 +109,14 @@ export function RunJobDialog({ macs, onClose }: { macs: readonly Mac[]; onClose:
 
   useEffect(() => {
     let alive = true;
-    leanzeroLinkJobsPlace({ heavy, ...(placeMem != null ? { needMemGb: placeMem } : {}) })
+    leanzeroLinkJobsPlace({
+      heavy,
+      ...(placeMem != null ? { needMemGb: placeMem } : {}),
+      ...(picked ? { strategy: picked } : {}),
+    })
       .then((p) => {
         if (!alive) return;
-        setPlacements(p);
+        setPlan(p);
         setPlaceError(null);
       })
       .catch((e: unknown) => {
@@ -110,7 +125,9 @@ export function RunJobDialog({ macs, onClose }: { macs: readonly Mac[]; onClose:
     return () => {
       alive = false;
     };
-  }, [heavy, placeMem]);
+  }, [heavy, placeMem, picked]);
+  const placements = plan?.placements ?? null;
+  const strategy: PlacementStrategy = picked ?? plan?.strategy ?? 'local-first';
 
   if (sent) {
     return (
@@ -137,7 +154,10 @@ export function RunJobDialog({ macs, onClose }: { macs: readonly Mac[]; onClose:
     setSending(true);
     setError(null);
     try {
-      const r = await leanzeroLinkJobsSubmit(job, target === BEST ? undefined : target);
+      const r =
+        target === BEST
+          ? await leanzeroLinkJobsSubmit(job, undefined, strategy)
+          : await leanzeroLinkJobsSubmit(job, target);
       setSent({
         nodeId: r.nodeId,
         brief: {
@@ -147,6 +167,9 @@ export function RunJobDialog({ macs, onClose }: { macs: readonly Mac[]; onClose:
           started_at: '—',
           state: 'queued',
           heavy,
+          ...(r.queued
+            ? { queue: { position: r.queuePosition ?? 1, strategy, refusals: [] } }
+            : {}),
         },
       });
     } catch (e) {
@@ -195,10 +218,44 @@ export function RunJobDialog({ macs, onClose }: { macs: readonly Mac[]; onClose:
                 : intl.formatMessage(i18n.noPlace)}
             </span>
           )}
+          {target === BEST && plan && plan.placements.length === 0 && plan.refusals.length > 0 && (
+            <div data-testid="run-job-refusals" className="flex flex-col gap-0.5">
+              <span className={cx(TYPE.meta, WEIGHT.semibold, TONE_TEXT.warn, 'break-words')}>
+                {intl.formatMessage(i18n.willQueue)}
+              </span>
+              <ul className="flex flex-col gap-0.5">
+                {plan.refusals.map((r) => (
+                  <li key={r.nodeId} className={cx(TYPE.meta, 'break-words')}>
+                    {intl.formatMessage(i18n.refusal, { mac: nameOf(r.nodeId), reason: r.reason })}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {target === BEST && placeError && (
             <span className={cx(TYPE.meta, TONE_TEXT.err, 'break-words')}>{placeError}</span>
           )}
         </div>
+        {target === BEST && (
+          <div className="flex flex-col gap-1">
+            <span className={cx(TYPE.meta, WEIGHT.semibold)}>{strategyWords.title}</span>
+            <Segmented
+              size="sm"
+              aria-label={strategyWords.title}
+              value={strategy}
+              options={STRATEGIES.map((st) => ({
+                value: st,
+                label: strategyWords.label(st),
+                title: strategyWords.hint(st),
+                testId: `run-job-strategy-${st}`,
+              }))}
+              onChange={setPicked}
+            />
+            <span data-testid="run-job-strategy-hint" className={cx(TYPE.meta, 'break-words')}>
+              {strategyWords.hint(strategy)}
+            </span>
+          </div>
+        )}
         <div className="flex flex-col gap-1">
           <span className={cx(TYPE.meta, WEIGHT.semibold)}>{intl.formatMessage(i18n.kind)}</span>
           <Segmented

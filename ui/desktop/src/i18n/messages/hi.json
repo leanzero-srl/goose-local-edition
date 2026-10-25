@@ -4043,6 +4043,9 @@
   "macLoad.cancelJob": {
     "defaultMessage": "जॉब रद्द करें"
   },
+  "macLoad.cancelQueuedBody": {
+    "defaultMessage": "इससे काम {mac} की कतार से हट जाएगा। यह कभी शुरू नहीं होगा।"
+  },
   "macLoad.cancelTitle": {
     "defaultMessage": "जॉब {id} रद्द करें?"
   },
@@ -4076,8 +4079,14 @@
   "macLoad.jobsLine": {
     "defaultMessage": "{live,plural,=0{कोई जॉब नहीं चल रहा} one{# जॉब चल रहा है} other{# जॉब चल रहे हैं}}"
   },
+  "macLoad.jobsWaiting": {
+    "defaultMessage": "{waiting, plural, one {# काम जगह वाले Mac का इंतज़ार कर रहा है} other {# काम जगह वाले Mac का इंतज़ार कर रहे हैं}}"
+  },
   "macLoad.keepRunning": {
     "defaultMessage": "चलने दें"
+  },
+  "macLoad.keepWaiting": {
+    "defaultMessage": "इंतज़ार जारी रखें"
   },
   "macLoad.kind": {
     "defaultMessage": "प्रकार"
@@ -4103,6 +4112,12 @@
   "macLoad.ownLine": {
     "defaultMessage": "{user} · cpu {cpu} · मेमोरी {mem} उपयोग में · gpu {gpu}"
   },
+  "macLoad.placedOn": {
+    "defaultMessage": "यहाँ भेजा गया"
+  },
+  "macLoad.placedOnValue": {
+    "defaultMessage": "{mac}, आईडी {id}"
+  },
   "macLoad.policy": {
     "defaultMessage": "जब कोई इस Mac का उपयोग कर रहा हो"
   },
@@ -4115,11 +4130,20 @@
   "macLoad.policy.refuse": {
     "defaultMessage": "जॉब अस्वीकार करें"
   },
+  "macLoad.queueNoTry": {
+    "defaultMessage": "अभी किसी Mac को नहीं भेजा गया: आगे वाला काम इंतज़ार में है।"
+  },
+  "macLoad.queueRefusals": {
+    "defaultMessage": "हर Mac ने मना क्यों किया"
+  },
   "macLoad.reason": {
     "defaultMessage": "कारण"
   },
   "macLoad.reconnectHint": {
     "defaultMessage": "नीति और मेमोरी सीमा Link के फिर से जुड़ने के बाद लागू होती हैं।"
+  },
+  "macLoad.refusalLine": {
+    "defaultMessage": "{mac}: {reason}"
   },
   "macLoad.saveFailed": {
     "defaultMessage": "सहेजा नहीं गया: {reason}"
@@ -11801,11 +11825,32 @@
   "macLoad.stateCancelling": {
     "defaultMessage": "रद्द किया जा रहा है…"
   },
+  "macLoad.stateWaiting": {
+    "defaultMessage": "इंतज़ार में, कतार में #{position}"
+  },
+  "macLoad.strategy": {
+    "defaultMessage": "मेरे काम कहाँ चलें"
+  },
+  "macLoad.strategy.localFirst": {
+    "defaultMessage": "पहले मेरा Mac"
+  },
+  "macLoad.strategy.selfish": {
+    "defaultMessage": "पहले दूसरे Mac"
+  },
+  "macLoad.strategyHint.localFirst": {
+    "defaultMessage": "इस Mac में जगह हो तो यहीं, नहीं तो सबसे ज़्यादा जगह वाले दूसरे Mac पर, नहीं तो कतार में इंतज़ार।"
+  },
+  "macLoad.strategyHint.selfish": {
+    "defaultMessage": "सबसे ज़्यादा जगह वाले दूसरे Mac पर, नहीं तो इस Mac पर, नहीं तो कतार में इंतज़ार। यह Mac खाली रहता है।"
+  },
   "myMacs.runJob": {
     "defaultMessage": "जॉब चलाएँ…"
   },
   "runJob.title": {
     "defaultMessage": "इस पर जॉब चलाएँ…"
+  },
+  "runJob.willQueue": {
+    "defaultMessage": "अभी किसी Mac में जगह नहीं है। चलाने पर यह इस Mac की कतार में रुकेगा और जगह मिलते ही पहले Mac पर शुरू होगा।"
   },
   "runJob.target": {
     "defaultMessage": "कहाँ चलाएँ"
@@ -11815,6 +11860,9 @@
   },
   "runJob.ranking": {
     "defaultMessage": "अभी सबसे अच्छे: {macs}"
+  },
+  "runJob.refusal": {
+    "defaultMessage": "{mac}: {reason}"
   },
   "runJob.inUse": {
     "defaultMessage": "{name} (उपयोग में)"

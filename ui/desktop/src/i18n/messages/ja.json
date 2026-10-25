@@ -4043,6 +4043,9 @@
   "macLoad.cancelJob": {
     "defaultMessage": "ジョブをキャンセル"
   },
+  "macLoad.cancelQueuedBody": {
+    "defaultMessage": "{mac} のキューからこのジョブを外します。ジョブは開始されません。"
+  },
   "macLoad.cancelTitle": {
     "defaultMessage": "ジョブ {id} をキャンセルしますか？"
   },
@@ -4076,8 +4079,14 @@
   "macLoad.jobsLine": {
     "defaultMessage": "{live,plural,=0{実行中のジョブなし} one{# 件のジョブを実行中} other{# 件のジョブを実行中}}"
   },
+  "macLoad.jobsWaiting": {
+    "defaultMessage": "{waiting, plural, other {空きのある Mac を待っているジョブ # 件}}"
+  },
   "macLoad.keepRunning": {
     "defaultMessage": "実行を続ける"
+  },
+  "macLoad.keepWaiting": {
+    "defaultMessage": "待ち続ける"
   },
   "macLoad.kind": {
     "defaultMessage": "種類"
@@ -4103,6 +4112,12 @@
   "macLoad.ownLine": {
     "defaultMessage": "{user} · cpu {cpu} · メモリ {mem} 使用 · gpu {gpu}"
   },
+  "macLoad.placedOn": {
+    "defaultMessage": "割り当て先"
+  },
+  "macLoad.placedOnValue": {
+    "defaultMessage": "{mac}（{id}）"
+  },
   "macLoad.policy": {
     "defaultMessage": "誰かがこの Mac を使っているとき"
   },
@@ -4115,11 +4130,20 @@
   "macLoad.policy.refuse": {
     "defaultMessage": "ジョブを断る"
   },
+  "macLoad.queueNoTry": {
+    "defaultMessage": "まだどの Mac にも割り当てていません: 前のジョブが待機中です。"
+  },
+  "macLoad.queueRefusals": {
+    "defaultMessage": "各 Mac が断った理由"
+  },
   "macLoad.reason": {
     "defaultMessage": "理由"
   },
   "macLoad.reconnectHint": {
     "defaultMessage": "ポリシーとメモリの下限は Link の再接続後に適用されます。"
+  },
+  "macLoad.refusalLine": {
+    "defaultMessage": "{mac}: {reason}"
   },
   "macLoad.saveFailed": {
     "defaultMessage": "保存されませんでした: {reason}"
@@ -11801,11 +11825,32 @@
   "macLoad.stateCancelling": {
     "defaultMessage": "キャンセル中…"
   },
+  "macLoad.stateWaiting": {
+    "defaultMessage": "待機中、{position} 番目"
+  },
+  "macLoad.strategy": {
+    "defaultMessage": "ジョブの実行先"
+  },
+  "macLoad.strategy.localFirst": {
+    "defaultMessage": "自分の Mac を優先"
+  },
+  "macLoad.strategy.selfish": {
+    "defaultMessage": "他の Mac を優先"
+  },
+  "macLoad.strategyHint.localFirst": {
+    "defaultMessage": "空きがあればこの Mac で、なければ最も空きのある他の Mac で実行し、どちらもなければキューで待ちます。"
+  },
+  "macLoad.strategyHint.selfish": {
+    "defaultMessage": "最も空きのある他の Mac で、なければこの Mac で実行し、どちらもなければキューで待ちます。この Mac を空けておけます。"
+  },
   "myMacs.runJob": {
     "defaultMessage": "ジョブを実行…"
   },
   "runJob.title": {
     "defaultMessage": "ジョブの実行先…"
+  },
+  "runJob.willQueue": {
+    "defaultMessage": "今は空きのある Mac がありません。実行するとこの Mac のキューで待ち、最初に空いた Mac で開始します。"
   },
   "runJob.target": {
     "defaultMessage": "実行先"
@@ -11815,6 +11860,9 @@
   },
   "runJob.ranking": {
     "defaultMessage": "現在の最適順: {macs}"
+  },
+  "runJob.refusal": {
+    "defaultMessage": "{mac}: {reason}"
   },
   "runJob.inUse": {
     "defaultMessage": "{name}（使用中）"

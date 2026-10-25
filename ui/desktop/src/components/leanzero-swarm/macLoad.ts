@@ -1,4 +1,4 @@
-import type { JobBrief, JobState, NodeLoad } from '../../acp/leanzero-link';
+import type { JobBrief, JobState, NodeLoad, PlacementStrategy } from '../../acp/leanzero-link';
 
 /**
  * A Mac's load as three bars, ONE derivation for every card that shows them (My Macs, the Nodes
@@ -59,10 +59,18 @@ export function inferenceCount(load: NodeLoad): number {
 
 /**
  * Jobs still holding the Mac (queued, running, or cancelling until the group exits); ended ones
- * are listed but do not fill the bar.
+ * are listed but do not fill the bar. A brief carrying `queue` is waiting in this Mac's ORIGIN
+ * queue for some Mac to have room: it holds nothing yet, so it is not live (see `waitingJobs`).
  */
 export function liveJobs(jobs: readonly JobBrief[]): JobBrief[] {
-  return jobs.filter((j) => !isTerminal(j.state));
+  return jobs.filter((j) => !j.queue && !isTerminal(j.state));
+}
+
+/** Jobs this Mac sent that wait in its queue for a Mac with room, first in line first. */
+export function waitingJobs(jobs: readonly JobBrief[]): JobBrief[] {
+  return jobs
+    .filter((j) => j.queue != null && !isTerminal(j.state))
+    .sort((a, b) => (a.queue?.position ?? 0) - (b.queue?.position ?? 0));
 }
 
 export function loadBars(load: NodeLoad): LoadBar[] {
@@ -91,7 +99,11 @@ export const JOBS_KEYS = {
   policy: 'LEANZERO_LINK_JOBS_USER_ACTIVE',
   idleS: 'LEANZERO_LINK_JOBS_USER_IDLE_S',
   minFree: 'LEANZERO_LINK_JOBS_MIN_FREE',
+  strategy: 'LEANZERO_LINK_JOBS_STRATEGY',
 } as const;
+
+/** The placement strategies, default first; mirrors leanzero-link `PlacementStrategy::ALL`. */
+export const STRATEGIES: readonly PlacementStrategy[] = ['local-first', 'selfish'];
 
 /** The defaults the backend falls back to when a key is unset. */
 export const JOBS_DEFAULTS = {
@@ -99,6 +111,7 @@ export const JOBS_DEFAULTS = {
   policy: 'last_resort' as UserActivePolicy,
   idleS: 300,
   minFree: 20,
+  strategy: 'local-first' as PlacementStrategy,
 };
 
 export function parsePolicy(v: unknown): UserActivePolicy {
@@ -106,6 +119,14 @@ export function parsePolicy(v: unknown): UserActivePolicy {
   return (USER_ACTIVE_POLICIES as readonly string[]).includes(s)
     ? (s as UserActivePolicy)
     : JOBS_DEFAULTS.policy;
+}
+
+/** Mirrors leanzero-link `PlacementStrategy::parse` (case-blind, `_` = `-`); else the default. */
+export function parseStrategy(v: unknown): PlacementStrategy {
+  const s = typeof v === 'string' ? v.trim().toLowerCase().replace(/_/g, '-') : '';
+  return (STRATEGIES as readonly string[]).includes(s)
+    ? (s as PlacementStrategy)
+    : JOBS_DEFAULTS.strategy;
 }
 
 /** A config value as a number, or null when unset/unparseable (the backend's `config_f64`). */

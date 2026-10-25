@@ -4043,6 +4043,9 @@
   "macLoad.cancelJob": {
     "defaultMessage": "İşi iptal et"
   },
+  "macLoad.cancelQueuedBody": {
+    "defaultMessage": "Bu işlem işi {mac} üzerindeki sıradan çıkarır. İş hiç başlamaz."
+  },
   "macLoad.cancelTitle": {
     "defaultMessage": "{id} işi iptal edilsin mi?"
   },
@@ -4076,8 +4079,14 @@
   "macLoad.jobsLine": {
     "defaultMessage": "{live,plural,=0{Çalışan iş yok} one{# iş çalışıyor} other{# iş çalışıyor}}"
   },
+  "macLoad.jobsWaiting": {
+    "defaultMessage": "{waiting, plural, one {Yeri olan bir Mac bekleyen # iş} other {Yeri olan bir Mac bekleyen # iş}}"
+  },
   "macLoad.keepRunning": {
     "defaultMessage": "Çalışmaya devam etsin"
+  },
+  "macLoad.keepWaiting": {
+    "defaultMessage": "Beklemeye devam et"
   },
   "macLoad.kind": {
     "defaultMessage": "Tür"
@@ -4103,6 +4112,12 @@
   "macLoad.ownLine": {
     "defaultMessage": "{user} · cpu {cpu} · bellek {mem} kullanımda · gpu {gpu}"
   },
+  "macLoad.placedOn": {
+    "defaultMessage": "Yerleştirildiği yer"
+  },
+  "macLoad.placedOnValue": {
+    "defaultMessage": "{mac}, kimlik {id}"
+  },
   "macLoad.policy": {
     "defaultMessage": "Biri bu Mac’i kullanırken"
   },
@@ -4115,11 +4130,20 @@
   "macLoad.policy.refuse": {
     "defaultMessage": "İşleri reddet"
   },
+  "macLoad.queueNoTry": {
+    "defaultMessage": "Henüz hiçbir Mac’e sunulmadı: önündeki bir iş bekliyor."
+  },
+  "macLoad.queueRefusals": {
+    "defaultMessage": "Her Mac neden reddetti"
+  },
   "macLoad.reason": {
     "defaultMessage": "Neden"
   },
   "macLoad.reconnectHint": {
     "defaultMessage": "Politika ve bellek eşiği Link yeniden bağlandıktan sonra uygulanır."
+  },
+  "macLoad.refusalLine": {
+    "defaultMessage": "{mac}: {reason}"
   },
   "macLoad.saveFailed": {
     "defaultMessage": "Kaydedilmedi: {reason}"
@@ -11801,11 +11825,32 @@
   "macLoad.stateCancelling": {
     "defaultMessage": "İptal ediliyor…"
   },
+  "macLoad.stateWaiting": {
+    "defaultMessage": "Bekliyor, sırada #{position}"
+  },
+  "macLoad.strategy": {
+    "defaultMessage": "İşlerim nerede çalışır"
+  },
+  "macLoad.strategy.localFirst": {
+    "defaultMessage": "Önce benim Mac’im"
+  },
+  "macLoad.strategy.selfish": {
+    "defaultMessage": "Önce diğer Mac’ler"
+  },
+  "macLoad.strategyHint.localFirst": {
+    "defaultMessage": "Yeri varsa bu Mac’te, yoksa en çok yeri olan diğer Mac’te çalışır, o da yoksa sırada bekler."
+  },
+  "macLoad.strategyHint.selfish": {
+    "defaultMessage": "En çok yeri olan diğer Mac’te, yoksa bu Mac’te çalışır, o da yoksa sırada bekler. Bu Mac’i boş tutar."
+  },
   "myMacs.runJob": {
     "defaultMessage": "İş çalıştır…"
   },
   "runJob.title": {
     "defaultMessage": "İşi şurada çalıştır…"
+  },
+  "runJob.willQueue": {
+    "defaultMessage": "Şu anda hiçbir Mac’te yer yok. Çalıştırırsanız bu Mac’te sırada bekler ve yeri olan ilk Mac’te başlar."
   },
   "runJob.target": {
     "defaultMessage": "Çalıştırılacak yer"
@@ -11815,6 +11860,9 @@
   },
   "runJob.ranking": {
     "defaultMessage": "Şu an en iyi: {macs}"
+  },
+  "runJob.refusal": {
+    "defaultMessage": "{mac}: {reason}"
   },
   "runJob.inUse": {
     "defaultMessage": "{name} (kullanımda)"

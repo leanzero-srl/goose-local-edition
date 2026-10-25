@@ -11,6 +11,9 @@ import {
   parseBool,
   parseNumber,
   parsePolicy,
+  parseStrategy,
+  STRATEGIES,
+  waitingJobs,
 } from './macLoad';
 import { brief, busyLoad } from './macLoad.fixtures';
 
@@ -110,5 +113,36 @@ describe('macLoad: config parsers', () => {
     expect(parseBool(' TRUE ')).toBe(true);
     expect(parseBool('yes')).toBe(false);
     expect(parseBool(1)).toBe(false);
+  });
+});
+
+describe('macLoad: the origin queue and the placement strategy', () => {
+  const waiting = (id: string, position: number) =>
+    brief(id, 'queued', {
+      queue: {
+        position,
+        strategy: 'local-first',
+        refusals: [{ node_id: 'n-gabee', code: 'memory_headroom', reason: 'no room' }],
+      },
+    });
+
+  it('a job waiting in the origin queue is not live and does not fill the jobs bar', () => {
+    const jobs = [brief('j-run', 'running'), waiting('q-2', 2), waiting('q-1', 1)];
+    expect(liveJobs(jobs).map((j) => j.job_id)).toEqual(['j-run']);
+    expect(pctOf(busyLoad({ jobs })).jobs).toBe(100 / COUNT_SCALE);
+    // First in line first, whatever order the node listed them in.
+    expect(waitingJobs(jobs).map((j) => j.job_id)).toEqual(['q-1', 'q-2']);
+    // A plain `queued` brief (accepted on that Mac, starting) is live, not waiting.
+    expect(waitingJobs([brief('j-q', 'queued')])).toEqual([]);
+    expect(liveJobs([brief('j-q', 'queued')]).length).toBe(1);
+  });
+
+  it('parses the strategy the way leanzero-link does, local-first by default', () => {
+    expect(STRATEGIES).toEqual(['local-first', 'selfish']);
+    expect(JOBS_DEFAULTS.strategy).toBe('local-first');
+    expect(parseStrategy('selfish')).toBe('selfish');
+    expect(parseStrategy(' Local_First ')).toBe('local-first');
+    expect(parseStrategy('greedy')).toBe('local-first');
+    expect(parseStrategy(null)).toBe('local-first');
   });
 });

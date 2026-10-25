@@ -4043,6 +4043,9 @@
   "macLoad.cancelJob": {
     "defaultMessage": "Hủy tác vụ"
   },
+  "macLoad.cancelQueuedBody": {
+    "defaultMessage": "Thao tác này đưa tác vụ ra khỏi hàng đợi trên {mac}. Tác vụ sẽ không bao giờ chạy."
+  },
   "macLoad.cancelTitle": {
     "defaultMessage": "Hủy tác vụ {id}?"
   },
@@ -4076,8 +4079,14 @@
   "macLoad.jobsLine": {
     "defaultMessage": "{live,plural,=0{Không có tác vụ nào đang chạy} one{# tác vụ đang chạy} other{# tác vụ đang chạy}}"
   },
+  "macLoad.jobsWaiting": {
+    "defaultMessage": "{waiting, plural, other {# tác vụ đang chờ một Mac còn chỗ}}"
+  },
   "macLoad.keepRunning": {
     "defaultMessage": "Tiếp tục chạy"
+  },
+  "macLoad.keepWaiting": {
+    "defaultMessage": "Tiếp tục chờ"
   },
   "macLoad.kind": {
     "defaultMessage": "Loại"
@@ -4103,6 +4112,12 @@
   "macLoad.ownLine": {
     "defaultMessage": "{user} · cpu {cpu} · bộ nhớ {mem} đã dùng · gpu {gpu}"
   },
+  "macLoad.placedOn": {
+    "defaultMessage": "Đã đặt trên"
+  },
+  "macLoad.placedOnValue": {
+    "defaultMessage": "{mac} với mã {id}"
+  },
   "macLoad.policy": {
     "defaultMessage": "Khi có người dùng Mac này"
   },
@@ -4115,11 +4130,20 @@
   "macLoad.policy.refuse": {
     "defaultMessage": "Từ chối tác vụ"
   },
+  "macLoad.queueNoTry": {
+    "defaultMessage": "Chưa gửi cho Mac nào: một tác vụ phía trước đang chờ."
+  },
+  "macLoad.queueRefusals": {
+    "defaultMessage": "Lý do từng Mac từ chối"
+  },
   "macLoad.reason": {
     "defaultMessage": "Lý do"
   },
   "macLoad.reconnectHint": {
     "defaultMessage": "Chính sách và ngưỡng bộ nhớ áp dụng sau khi Link kết nối lại."
+  },
+  "macLoad.refusalLine": {
+    "defaultMessage": "{mac}: {reason}"
   },
   "macLoad.saveFailed": {
     "defaultMessage": "Chưa lưu: {reason}"
@@ -11801,11 +11825,32 @@
   "macLoad.stateCancelling": {
     "defaultMessage": "Đang hủy…"
   },
+  "macLoad.stateWaiting": {
+    "defaultMessage": "Đang chờ, thứ {position} trong hàng"
+  },
+  "macLoad.strategy": {
+    "defaultMessage": "Tác vụ của tôi chạy ở đâu"
+  },
+  "macLoad.strategy.localFirst": {
+    "defaultMessage": "Ưu tiên Mac của tôi"
+  },
+  "macLoad.strategy.selfish": {
+    "defaultMessage": "Ưu tiên Mac khác"
+  },
+  "macLoad.strategyHint.localFirst": {
+    "defaultMessage": "Chạy trên Mac này nếu còn chỗ, nếu không thì trên Mac khác còn nhiều chỗ nhất, nếu không nữa thì chờ trong hàng."
+  },
+  "macLoad.strategyHint.selfish": {
+    "defaultMessage": "Chạy trên Mac khác còn nhiều chỗ nhất, nếu không thì trên Mac này, nếu không nữa thì chờ trong hàng. Giữ Mac này rảnh."
+  },
   "myMacs.runJob": {
     "defaultMessage": "Chạy tác vụ…"
   },
   "runJob.title": {
     "defaultMessage": "Chạy tác vụ trên…"
+  },
+  "runJob.willQueue": {
+    "defaultMessage": "Hiện không Mac nào còn chỗ. Nếu chạy, tác vụ sẽ chờ trong hàng trên Mac này và bắt đầu trên Mac đầu tiên còn chỗ."
   },
   "runJob.target": {
     "defaultMessage": "Chạy trên"
@@ -11815,6 +11860,9 @@
   },
   "runJob.ranking": {
     "defaultMessage": "Tốt nhất lúc này: {macs}"
+  },
+  "runJob.refusal": {
+    "defaultMessage": "{mac}: {reason}"
   },
   "runJob.inUse": {
     "defaultMessage": "{name} (đang dùng)"

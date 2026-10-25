@@ -4043,6 +4043,9 @@
   "macLoad.cancelJob": {
     "defaultMessage": "작업 취소"
   },
+  "macLoad.cancelQueuedBody": {
+    "defaultMessage": "{mac}의 대기열에서 이 작업을 뺍니다. 작업은 시작되지 않습니다."
+  },
   "macLoad.cancelTitle": {
     "defaultMessage": "작업 {id}을(를) 취소할까요?"
   },
@@ -4076,8 +4079,14 @@
   "macLoad.jobsLine": {
     "defaultMessage": "{live,plural,=0{실행 중인 작업 없음} one{작업 #개 실행 중} other{작업 #개 실행 중}}"
   },
+  "macLoad.jobsWaiting": {
+    "defaultMessage": "{waiting, plural, other {여유 있는 Mac을 기다리는 작업 #개}}"
+  },
   "macLoad.keepRunning": {
     "defaultMessage": "계속 실행"
+  },
+  "macLoad.keepWaiting": {
+    "defaultMessage": "계속 대기"
   },
   "macLoad.kind": {
     "defaultMessage": "종류"
@@ -4103,6 +4112,12 @@
   "macLoad.ownLine": {
     "defaultMessage": "{user} · cpu {cpu} · 메모리 {mem} 사용 · gpu {gpu}"
   },
+  "macLoad.placedOn": {
+    "defaultMessage": "배치된 곳"
+  },
+  "macLoad.placedOnValue": {
+    "defaultMessage": "{mac}, ID {id}"
+  },
   "macLoad.policy": {
     "defaultMessage": "누군가 이 Mac을 사용하는 동안"
   },
@@ -4115,11 +4130,20 @@
   "macLoad.policy.refuse": {
     "defaultMessage": "작업 거부"
   },
+  "macLoad.queueNoTry": {
+    "defaultMessage": "아직 어떤 Mac에도 보내지 않았습니다: 앞의 작업이 대기 중입니다."
+  },
+  "macLoad.queueRefusals": {
+    "defaultMessage": "각 Mac이 거절한 이유"
+  },
   "macLoad.reason": {
     "defaultMessage": "이유"
   },
   "macLoad.reconnectHint": {
     "defaultMessage": "정책과 메모리 하한은 Link가 다시 연결된 뒤 적용됩니다."
+  },
+  "macLoad.refusalLine": {
+    "defaultMessage": "{mac}: {reason}"
   },
   "macLoad.saveFailed": {
     "defaultMessage": "저장되지 않음: {reason}"
@@ -11801,11 +11825,32 @@
   "macLoad.stateCancelling": {
     "defaultMessage": "취소 중…"
   },
+  "macLoad.stateWaiting": {
+    "defaultMessage": "대기 중, {position}번째"
+  },
+  "macLoad.strategy": {
+    "defaultMessage": "내 작업이 실행될 곳"
+  },
+  "macLoad.strategy.localFirst": {
+    "defaultMessage": "내 Mac 먼저"
+  },
+  "macLoad.strategy.selfish": {
+    "defaultMessage": "다른 Mac 먼저"
+  },
+  "macLoad.strategyHint.localFirst": {
+    "defaultMessage": "여유가 있으면 이 Mac에서, 없으면 여유가 가장 많은 다른 Mac에서 실행하고, 그것도 없으면 대기열에서 기다립니다."
+  },
+  "macLoad.strategyHint.selfish": {
+    "defaultMessage": "여유가 가장 많은 다른 Mac에서, 없으면 이 Mac에서 실행하고, 그것도 없으면 대기열에서 기다립니다. 이 Mac을 비워 둡니다."
+  },
   "myMacs.runJob": {
     "defaultMessage": "작업 실행…"
   },
   "runJob.title": {
     "defaultMessage": "작업 실행 위치…"
+  },
+  "runJob.willQueue": {
+    "defaultMessage": "지금은 여유 있는 Mac이 없습니다. 실행하면 이 Mac의 대기열에서 기다렸다가 처음 여유가 생기는 Mac에서 시작합니다."
   },
   "runJob.target": {
     "defaultMessage": "실행 위치"
@@ -11815,6 +11860,9 @@
   },
   "runJob.ranking": {
     "defaultMessage": "현재 최적: {macs}"
+  },
+  "runJob.refusal": {
+    "defaultMessage": "{mac}: {reason}"
   },
   "runJob.inUse": {
     "defaultMessage": "{name}(사용 중)"
