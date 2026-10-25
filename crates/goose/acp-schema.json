@@ -8721,6 +8721,375 @@
       "x-side": "agent",
       "x-method": "_goose/unstable/mlxEngine/stopOtherEngine"
     },
+    "MlxEngineMemoryHoldersRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "nodeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Mesh target; absent/self → local."
+        },
+        "fitModelId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "description": "Who holds memory on this Mac, and — for `fitModelId` — what freeing it would buy.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/memoryHolders"
+    },
+    "MlxEngineMemoryHoldersResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "availableBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "budgetBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "totalBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxMountFitDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxMemoryGroupDto"
+          }
+        },
+        "gooseOwnedBytes": {
+          "type": "integer",
+          "description": "What goose can reclaim itself that the fit does NOT already credit (the own engine is\nalready counted as available by the fit, so it is listed as a group but not summed here).",
+          "minimum": 0
+        },
+        "appsBytes": {
+          "type": "integer",
+          "description": "Quittable user apps at or above `GOOSE_MEMFREE_SHOW_APPS_MIN_MB`.",
+          "minimum": 0
+        },
+        "shortBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "verdict": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxMemoryVerdictDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "alternatives": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxMemoryAlternativeDto"
+          }
+        },
+        "quitAppsAllowed": {
+          "type": "boolean"
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "`GOOSE_MEMFREE_ENABLED`; when false the groups are empty."
+        }
+      },
+      "required": [
+        "availableBytes",
+        "budgetBytes",
+        "totalBytes",
+        "groups",
+        "gooseOwnedBytes",
+        "appsBytes",
+        "alternatives",
+        "quitAppsAllowed",
+        "enabled"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/memoryHolders"
+    },
+    "MlxMemoryGroupDto": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Stable id a `memoryFree` call names: `gooseEngine`, `mlx:<pid>`, `app:<bundleId>`, …."
+        },
+        "label": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string",
+          "description": "\"gooseEngine\" | \"gooseOrphan\" | \"aiServer\" | \"userApp\" | \"system\" | \"job\"."
+        },
+        "bytes": {
+          "type": "integer",
+          "description": "Physical footprint (`ri_phys_footprint`) summed over the group's processes.",
+          "minimum": 0
+        },
+        "pids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxMemoryPidDto"
+          }
+        },
+        "bundleId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "quittable": {
+          "type": "boolean",
+          "description": "A user app goose may ASK to quit (Apple Event, graceful; the app can refuse)."
+        },
+        "reclaimableByGoose": {
+          "type": "boolean",
+          "description": "goose can give these bytes back itself (its own idle engine, another MLX engine, …)."
+        },
+        "why": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Why it is protected or not reclaimable now (busy engine, system process, …)."
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "category",
+        "bytes",
+        "pids",
+        "quittable",
+        "reclaimableByGoose"
+      ],
+      "description": "One memory holder on a Mac, grouped (an app's helpers fold into its outermost `.app`)."
+    },
+    "MlxMemoryPidDto": {
+      "type": "object",
+      "properties": {
+        "pid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "startedAt": {
+          "type": "integer",
+          "description": "Unix seconds.",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "pid",
+        "startedAt"
+      ],
+      "description": "One process (identity a free must name back): pid + start time, so a reused pid is never hit."
+    },
+    "MlxMemoryVerdictDto": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "\"fitsByGooseOwned\" | \"fitsWithApps\" | \"cannotFit\"."
+        },
+        "remainingBytes": {
+          "type": "integer",
+          "description": "cannotFit only: `shortBytes − gooseOwnedBytes − appsBytes`; 0 otherwise.",
+          "minimum": 0
+        },
+        "appsToQuit": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "fitsWithApps: the fewest apps (largest first) that close the gap; cannotFit: every quittable app."
+        }
+      },
+      "required": [
+        "kind",
+        "remainingBytes",
+        "appsToQuit"
+      ],
+      "description": "The honest answer to a short fit, from live measurement."
+    },
+    "MlxMemoryAlternativeDto": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "\"smallerVariant\" | \"peerMac\"."
+        },
+        "modelId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "smallerVariant: the local model id."
+        },
+        "needBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "smallerVariant: its weights bytes.",
+          "minimum": 0
+        },
+        "nodeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "peerMac: the node id."
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "peerMac: display label."
+        },
+        "budgetBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "peerMac: its fit budget.",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "description": "Another way to run when freeing memory is not enough (or not wanted)."
+    },
+    "MlxEngineMemoryFreeRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "nodeId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "gooseOwned": {
+          "type": "boolean",
+          "default": false
+        },
+        "quitApps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "fitModelId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "description": "Free memory: goose's own holders (`gooseOwned`) and/or ask named apps to quit (graceful only).",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/memoryFree"
+    },
+    "MlxEngineMemoryFreeResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxMemoryFreeItemDto"
+          }
+        },
+        "before": {
+          "$ref": "#/$defs/MlxMemoryBudgetDto"
+        },
+        "after": {
+          "$ref": "#/$defs/MlxMemoryBudgetDto"
+        },
+        "fit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxMountFitDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "items",
+        "before",
+        "after"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/memoryFree"
+    },
+    "MlxMemoryFreeItemDto": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "freedBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Measured: footprint before minus after.",
+          "minimum": 0
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "ok",
+        "message"
+      ]
+    },
+    "MlxMemoryBudgetDto": {
+      "type": "object",
+      "properties": {
+        "budgetBytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "budgetBytes"
+      ]
+    },
     "MlxEngineUnmountRequest_unstable": {
       "type": "object",
       "properties": {
@@ -21350,6 +21719,24 @@
                 {
                   "allOf": [
                     {
+                      "$ref": "#/$defs/MlxEngineMemoryHoldersRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/memoryHolders",
+                  "title": "MlxEngineMemoryHoldersRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineMemoryFreeRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/memoryFree",
+                  "title": "MlxEngineMemoryFreeRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
                       "$ref": "#/$defs/MlxEngineUnmountRequest_unstable"
                     }
                   ],
@@ -22803,6 +23190,22 @@
                         }
                       ],
                       "title": "MlxEngineStopOtherEngineResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineMemoryHoldersResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineMemoryHoldersResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineMemoryFreeResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineMemoryFreeResponse_unstable"
                     },
                     {
                       "allOf": [

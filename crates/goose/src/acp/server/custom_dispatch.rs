@@ -1020,6 +1020,22 @@ impl GooseAcpAgent {
         self.on_mlx_engine_stop_other_engine(req).await
     }
 
+    #[custom_method(MlxEngineMemoryHoldersRequest)]
+    async fn dispatch_mlx_engine_memory_holders(
+        &self,
+        req: MlxEngineMemoryHoldersRequest,
+    ) -> Result<MlxEngineMemoryHoldersResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_memory_holders(req).await
+    }
+
+    #[custom_method(MlxEngineMemoryFreeRequest)]
+    async fn dispatch_mlx_engine_memory_free(
+        &self,
+        req: MlxEngineMemoryFreeRequest,
+    ) -> Result<MlxEngineMemoryFreeResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_memory_free(req).await
+    }
+
     #[custom_method(MlxEngineUnmountRequest)]
     async fn dispatch_mlx_engine_unmount(
         &self,

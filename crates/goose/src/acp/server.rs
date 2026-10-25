@@ -109,6 +109,7 @@ mod load_session;
 mod local_inference;
 mod loop_door;
 mod manage_sessions;
+mod memfree;
 #[cfg(unix)]
 mod mlx_distributed;
 #[cfg(not(unix))]

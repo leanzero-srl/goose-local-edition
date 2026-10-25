@@ -299,7 +299,7 @@ pub(super) async fn shutdown_supervised_engine() -> String {
     }
 }
 
-fn synced_manager() -> Result<&'static MlxEngineManager, agent_client_protocol::Error> {
+pub(super) fn synced_manager() -> Result<&'static MlxEngineManager, agent_client_protocol::Error> {
     let manager = global_manager();
     manager.set_settings(load_engine_settings()?);
     Ok(manager)
@@ -1180,6 +1180,35 @@ impl GooseAcpAgent {
         req: MlxEngineStopOtherEngineRequest,
     ) -> Result<MlxEngineStopOtherEngineResponse, agent_client_protocol::Error> {
         core_stop_other_engine(req).await
+    }
+
+    /// Local only for now: a `nodeId` naming a peer is refused until the Link carries the op.
+    pub(super) async fn on_mlx_engine_memory_holders(
+        &self,
+        req: MlxEngineMemoryHoldersRequest,
+    ) -> Result<MlxEngineMemoryHoldersResponse, agent_client_protocol::Error> {
+        if self
+            .mlx_engine_remote_target(req.node_id.as_deref())
+            .is_some()
+        {
+            return Err(agent_client_protocol::Error::invalid_params()
+                .data("memoryHolders on another Mac is not supported yet"));
+        }
+        super::memfree::core_memory_holders(req, false).await
+    }
+
+    pub(super) async fn on_mlx_engine_memory_free(
+        &self,
+        req: MlxEngineMemoryFreeRequest,
+    ) -> Result<MlxEngineMemoryFreeResponse, agent_client_protocol::Error> {
+        if self
+            .mlx_engine_remote_target(req.node_id.as_deref())
+            .is_some()
+        {
+            return Err(agent_client_protocol::Error::invalid_params()
+                .data("memoryFree on another Mac is not supported yet"));
+        }
+        super::memfree::core_memory_free(req, false).await
     }
 
     pub(super) async fn on_mlx_engine_unmount(

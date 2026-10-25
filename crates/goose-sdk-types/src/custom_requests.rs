@@ -2705,6 +2705,158 @@ pub struct MlxEngineStopOtherEngineResponse {
     pub message: String,
 }
 
+/// One process (identity a free must name back): pid + start time, so a reused pid is never hit.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxMemoryPidDto {
+    pub pid: u32,
+    /// Unix seconds.
+    pub started_at: u64,
+}
+
+/// One memory holder on a Mac, grouped (an app's helpers fold into its outermost `.app`).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxMemoryGroupDto {
+    /// Stable id a `memoryFree` call names: `gooseEngine`, `mlx:<pid>`, `app:<bundleId>`, ….
+    pub id: String,
+    pub label: String,
+    /// "gooseEngine" | "gooseOrphan" | "aiServer" | "userApp" | "system" | "job".
+    pub category: String,
+    /// Physical footprint (`ri_phys_footprint`) summed over the group's processes.
+    pub bytes: u64,
+    pub pids: Vec<MlxMemoryPidDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bundle_id: Option<String>,
+    /// A user app goose may ASK to quit (Apple Event, graceful; the app can refuse).
+    pub quittable: bool,
+    /// goose can give these bytes back itself (its own idle engine, another MLX engine, …).
+    pub reclaimable_by_goose: bool,
+    /// Why it is protected or not reclaimable now (busy engine, system process, …).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
+}
+
+/// The honest answer to a short fit, from live measurement.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxMemoryVerdictDto {
+    /// "fitsByGooseOwned" | "fitsWithApps" | "cannotFit".
+    pub kind: String,
+    /// cannotFit only: `shortBytes − gooseOwnedBytes − appsBytes`; 0 otherwise.
+    pub remaining_bytes: u64,
+    /// fitsWithApps: the fewest apps (largest first) that close the gap; cannotFit: every quittable app.
+    pub apps_to_quit: Vec<String>,
+}
+
+/// Another way to run when freeing memory is not enough (or not wanted).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxMemoryAlternativeDto {
+    /// "smallerVariant" | "peerMac".
+    pub kind: String,
+    /// smallerVariant: the local model id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    /// smallerVariant: its weights bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub need_bytes: Option<u64>,
+    /// peerMac: the node id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    /// peerMac: display label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// peerMac: its fit budget.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_bytes: Option<u64>,
+}
+
+/// Who holds memory on this Mac, and — for `fitModelId` — what freeing it would buy.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/memoryHolders",
+    response = MlxEngineMemoryHoldersResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineMemoryHoldersRequest {
+    /// Mesh target; absent/self → local.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit_model_id: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineMemoryHoldersResponse {
+    pub available_bytes: u64,
+    pub budget_bytes: u64,
+    pub total_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit: Option<MlxMountFitDto>,
+    pub groups: Vec<MlxMemoryGroupDto>,
+    /// What goose can reclaim itself that the fit does NOT already credit (the own engine is
+    /// already counted as available by the fit, so it is listed as a group but not summed here).
+    pub goose_owned_bytes: u64,
+    /// Quittable user apps at or above `GOOSE_MEMFREE_SHOW_APPS_MIN_MB`.
+    pub apps_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub short_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<MlxMemoryVerdictDto>,
+    pub alternatives: Vec<MlxMemoryAlternativeDto>,
+    pub quit_apps_allowed: bool,
+    /// `GOOSE_MEMFREE_ENABLED`; when false the groups are empty.
+    pub enabled: bool,
+}
+
+/// Free memory: goose's own holders (`gooseOwned`) and/or ask named apps to quit (graceful only).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/memoryFree",
+    response = MlxEngineMemoryFreeResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineMemoryFreeRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    #[serde(default)]
+    pub goose_owned: bool,
+    #[serde(default)]
+    pub quit_apps: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit_model_id: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxMemoryFreeItemDto {
+    pub id: String,
+    pub label: String,
+    pub ok: bool,
+    /// Measured: footprint before minus after.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freed_bytes: Option<u64>,
+    pub message: String,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxMemoryBudgetDto {
+    pub budget_bytes: u64,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineMemoryFreeResponse {
+    pub items: Vec<MlxMemoryFreeItemDto>,
+    pub before: MlxMemoryBudgetDto,
+    pub after: MlxMemoryBudgetDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit: Option<MlxMountFitDto>,
+}
+
 /// The one fit rule (goose-sidecar `fit`) for one model on one Mac: `budget = min(available −
 /// RAM × marginRatio, GPU ceiling)`; the need fits when ≤ budget, and is "warn" when what is left
 /// is inside the live-memory drift. Bytes throughout; the desktop draws these, never recomputes.

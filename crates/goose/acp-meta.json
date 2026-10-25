@@ -621,6 +621,16 @@
       "responseType": "MlxEngineStopOtherEngineResponse_unstable"
     },
     {
+      "method": "_goose/unstable/mlxEngine/memoryHolders",
+      "requestType": "MlxEngineMemoryHoldersRequest_unstable",
+      "responseType": "MlxEngineMemoryHoldersResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/mlxEngine/memoryFree",
+      "requestType": "MlxEngineMemoryFreeRequest_unstable",
+      "responseType": "MlxEngineMemoryFreeResponse_unstable"
+    },
+    {
       "method": "_goose/unstable/mlxEngine/unmount",
       "requestType": "MlxEngineUnmountRequest_unstable",
       "responseType": "EmptyResponse"

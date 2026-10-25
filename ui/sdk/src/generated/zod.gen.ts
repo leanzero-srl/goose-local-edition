@@ -3573,6 +3573,150 @@ export const zMlxEngineStopOtherEngineResponse_unstable = z.object({
 });
 
 /**
+ * Who holds memory on this Mac, and — for `fitModelId` — what freeing it would buy.
+ */
+export const zMlxEngineMemoryHoldersRequest_unstable = z.object({
+    nodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    fitModelId: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * One process (identity a free must name back): pid + start time, so a reused pid is never hit.
+ */
+export const zMlxMemoryPidDto = z.object({
+    pid: z.number().int().gte(0),
+    startedAt: z.number().int().gte(0)
+});
+
+/**
+ * One memory holder on a Mac, grouped (an app's helpers fold into its outermost `.app`).
+ */
+export const zMlxMemoryGroupDto = z.object({
+    id: z.string(),
+    label: z.string(),
+    category: z.string(),
+    bytes: z.number().int().gte(0),
+    pids: z.array(zMlxMemoryPidDto),
+    bundleId: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    quittable: z.boolean(),
+    reclaimableByGoose: z.boolean(),
+    why: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * The honest answer to a short fit, from live measurement.
+ */
+export const zMlxMemoryVerdictDto = z.object({
+    kind: z.string(),
+    remainingBytes: z.number().int().gte(0),
+    appsToQuit: z.array(z.string())
+});
+
+/**
+ * Another way to run when freeing memory is not enough (or not wanted).
+ */
+export const zMlxMemoryAlternativeDto = z.object({
+    kind: z.string(),
+    modelId: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    needBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    nodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    label: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    budgetBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional()
+});
+
+export const zMlxEngineMemoryHoldersResponse_unstable = z.object({
+    availableBytes: z.number().int().gte(0),
+    budgetBytes: z.number().int().gte(0),
+    totalBytes: z.number().int().gte(0),
+    fit: z.union([
+        zMlxMountFitDto,
+        z.null()
+    ]).optional(),
+    groups: z.array(zMlxMemoryGroupDto),
+    gooseOwnedBytes: z.number().int().gte(0),
+    appsBytes: z.number().int().gte(0),
+    shortBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    verdict: z.union([
+        zMlxMemoryVerdictDto,
+        z.null()
+    ]).optional(),
+    alternatives: z.array(zMlxMemoryAlternativeDto),
+    quitAppsAllowed: z.boolean(),
+    enabled: z.boolean()
+});
+
+/**
+ * Free memory: goose's own holders (`gooseOwned`) and/or ask named apps to quit (graceful only).
+ */
+export const zMlxEngineMemoryFreeRequest_unstable = z.object({
+    nodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    gooseOwned: z.boolean().optional().default(false),
+    quitApps: z.array(z.string()).optional().default([]),
+    fitModelId: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zMlxMemoryFreeItemDto = z.object({
+    id: z.string(),
+    label: z.string(),
+    ok: z.boolean(),
+    freedBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    message: z.string()
+});
+
+export const zMlxMemoryBudgetDto = z.object({
+    budgetBytes: z.number().int().gte(0)
+});
+
+export const zMlxEngineMemoryFreeResponse_unstable = z.object({
+    items: z.array(zMlxMemoryFreeItemDto),
+    before: zMlxMemoryBudgetDto,
+    after: zMlxMemoryBudgetDto,
+    fit: z.union([
+        zMlxMountFitDto,
+        z.null()
+    ]).optional()
+});
+
+/**
  * Stop the MLX engine and unmount its model.
  */
 export const zMlxEngineUnmountRequest_unstable = z.object({
@@ -8458,6 +8602,8 @@ export const zExtRequest = z.object({
             zMlxEngineMountRequest_unstable,
             zMlxEngineMountAfterLoadRequest_unstable,
             zMlxEngineStopOtherEngineRequest_unstable,
+            zMlxEngineMemoryHoldersRequest_unstable,
+            zMlxEngineMemoryFreeRequest_unstable,
             zMlxEngineUnmountRequest_unstable,
             zMlxEngineSettingsReadRequest_unstable,
             zMlxEngineSettingsUpdateRequest_unstable,
@@ -8639,6 +8785,8 @@ export const zExtResponse = z.union([
                 zMlxEngineStatusResponse_unstable,
                 zMlxEngineMountResponse_unstable,
                 zMlxEngineStopOtherEngineResponse_unstable,
+                zMlxEngineMemoryHoldersResponse_unstable,
+                zMlxEngineMemoryFreeResponse_unstable,
                 zMlxEngineSettingsResponse_unstable,
                 zMlxEngineModelsListResponse_unstable,
                 zMlxEngineHfSearchResponse_unstable,

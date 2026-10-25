@@ -219,6 +219,10 @@ import type {
   MlxEngineLinkFactsResponse_unstable,
   MlxEngineMeasureSpeedRequest_unstable,
   MlxEngineMeasureSpeedResponse_unstable,
+  MlxEngineMemoryFreeRequest_unstable,
+  MlxEngineMemoryFreeResponse_unstable,
+  MlxEngineMemoryHoldersRequest_unstable,
+  MlxEngineMemoryHoldersResponse_unstable,
   MlxEngineModelCardRequest_unstable,
   MlxEngineModelCardResponse_unstable,
   MlxEngineModelDeleteRequest_unstable,
@@ -467,6 +471,8 @@ import {
   zMlxEngineHfSearchResponse_unstable,
   zMlxEngineLinkFactsResponse_unstable,
   zMlxEngineMeasureSpeedResponse_unstable,
+  zMlxEngineMemoryFreeResponse_unstable,
+  zMlxEngineMemoryHoldersResponse_unstable,
   zMlxEngineModelCardResponse_unstable,
   zMlxEngineModelsListResponse_unstable,
   zMlxEngineMountResponse_unstable,
@@ -1849,6 +1855,30 @@ export class GooseExtClient {
     return zMlxEngineStopOtherEngineResponse_unstable.parse(
       raw,
     ) as MlxEngineStopOtherEngineResponse_unstable;
+  }
+
+  async mlxEngineMemoryHolders_unstable(
+    params: MlxEngineMemoryHoldersRequest_unstable,
+  ): Promise<MlxEngineMemoryHoldersResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/memoryHolders",
+      params,
+    );
+    return zMlxEngineMemoryHoldersResponse_unstable.parse(
+      raw,
+    ) as MlxEngineMemoryHoldersResponse_unstable;
+  }
+
+  async mlxEngineMemoryFree_unstable(
+    params: MlxEngineMemoryFreeRequest_unstable,
+  ): Promise<MlxEngineMemoryFreeResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/memoryFree",
+      params,
+    );
+    return zMlxEngineMemoryFreeResponse_unstable.parse(
+      raw,
+    ) as MlxEngineMemoryFreeResponse_unstable;
   }
 
   async mlxEngineUnmount_unstable(
