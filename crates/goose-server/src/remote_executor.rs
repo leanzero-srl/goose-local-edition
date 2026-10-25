@@ -20,7 +20,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use goose::acp::server::{
-    job_log_text, ExecuteAccepted, ExecuteError, ExecuteLog, ExecuteRequest, RemoteExecutor,
+    job_log_text, job_run_failure, ExecuteAccepted, ExecuteError, ExecuteLog, ExecuteRequest,
+    RemoteExecutor, RunEnd,
 };
 use goose::config::{Config, GooseMode};
 use goose::conversation::message::Message;
@@ -188,7 +189,10 @@ const JOB_LOG_IDLE_CHECK: std::time::Duration = std::time::Duration::from_secs(2
 /// Copies one request's reply events from the session bus into a job log (D4): messages via
 /// the shared [`job_log_text`] formatter, errors as `[error: …]`, the end as
 /// `[finished: reason]`. Stops at Finish, when the bus closes, or when the request is no
-/// longer active on the bus after a quiet `idle_check`.
+/// longer active on the bus after a quiet `idle_check`. It also reports how the run ended
+/// ([`ExecuteLog::finish`], D13): a provider-error notice or an Error event makes it Failed even
+/// when a normal Finish follows; a run that vanished with no failure seen reports nothing
+/// (the job reads `lost`, never a fabricated Done).
 async fn pump_job_log(
     bus: Arc<SessionEventBus>,
     mut rx: broadcast::Receiver<SessionEvent>,
@@ -196,6 +200,12 @@ async fn pump_job_log(
     log: Arc<dyn ExecuteLog>,
     idle_check: std::time::Duration,
 ) {
+    let mut failure: Option<String> = None;
+    let report_failure = |log: &Arc<dyn ExecuteLog>, failure: Option<String>| {
+        if let Some(why) = failure {
+            log.finish(RunEnd::Failed(why));
+        }
+    };
     loop {
         let event = match tokio::time::timeout(idle_check, rx.recv()).await {
             Err(_) => {
@@ -203,13 +213,17 @@ async fn pump_job_log(
                     continue;
                 }
                 log.append("\n[finished: ended]\n");
+                report_failure(&log, failure);
                 return;
             }
             Ok(Err(broadcast::error::RecvError::Lagged(n))) => {
                 log.append(&format!("\n[log: {n} events skipped]\n"));
                 continue;
             }
-            Ok(Err(broadcast::error::RecvError::Closed)) => return,
+            Ok(Err(broadcast::error::RecvError::Closed)) => {
+                report_failure(&log, failure);
+                return;
+            }
             Ok(Ok(event)) => event,
         };
         if event.request_id.as_deref() != Some(request_id.as_str()) {
@@ -217,14 +231,25 @@ async fn pump_job_log(
         }
         match event.event {
             MessageEvent::Message { message, .. } => {
+                if let Some(why) = job_run_failure(&message) {
+                    failure = Some(why);
+                }
                 let text = job_log_text(&message);
                 if !text.is_empty() {
                     log.append(&text);
                 }
             }
-            MessageEvent::Error { error } => log.append(&format!("\n[error: {error}]\n")),
+            MessageEvent::Error { error } => {
+                log.append(&format!("\n[error: {error}]\n"));
+                failure = Some(error);
+            }
             MessageEvent::Finish { reason, .. } => {
                 log.append(&format!("\n[finished: {reason}]\n"));
+                log.finish(match failure {
+                    _ if reason == "cancelled" => RunEnd::Cancelled,
+                    Some(why) => RunEnd::Failed(why),
+                    None => RunEnd::Completed,
+                });
                 return;
             }
             _ => {}
@@ -248,11 +273,103 @@ mod tests {
     use super::*;
 
     #[derive(Default)]
-    struct MemLog(std::sync::Mutex<String>);
+    struct MemLog(std::sync::Mutex<String>, std::sync::Mutex<Vec<RunEnd>>);
     impl ExecuteLog for MemLog {
         fn append(&self, text: &str) {
             self.0.lock().unwrap().push_str(text);
         }
+        fn finish(&self, end: RunEnd) {
+            self.1.lock().unwrap().push(end);
+        }
+    }
+
+    /// Runs the pump over `events` (all for request "ours") and answers what it reported.
+    async fn pump_ends(events: Vec<MessageEvent>) -> Vec<RunEnd> {
+        let bus = Arc::new(SessionEventBus::new());
+        let (_, _, rx) = bus.subscribe(None).await.unwrap();
+        let log = Arc::new(MemLog::default());
+        let pump = tokio::spawn(pump_job_log(
+            bus.clone(),
+            rx,
+            "ours".to_string(),
+            log.clone(),
+            std::time::Duration::from_millis(100),
+        ));
+        for e in events {
+            bus.publish(Some("ours".into()), e).await;
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(5), pump)
+            .await
+            .expect("the pump ends")
+            .unwrap();
+        let ends = log.1.lock().unwrap().clone();
+        ends
+    }
+
+    fn finish(reason: &str) -> MessageEvent {
+        MessageEvent::Finish {
+            reason: reason.into(),
+            token_state: token_state(),
+        }
+    }
+
+    /// D13 (3.0.130 live): a turn whose provider failed ends with a notice message and a
+    /// NORMAL Finish; the job must read Failed with the provider's words, not Done.
+    #[tokio::test]
+    async fn the_pump_reports_a_provider_failure_even_when_a_normal_finish_follows() {
+        use goose::conversation::message::ProviderErrorNotice;
+        let notice = Message::assistant()
+            .with_text("I could not reach a model.")
+            .with_provider_error(ProviderErrorNotice {
+                class: "execution".into(),
+                transient: false,
+                said: String::new(),
+                detail: "Execution error: swarm chat: no node can serve this turn".into(),
+            });
+        let ends = pump_ends(vec![
+            MessageEvent::Message {
+                message: notice,
+                token_state: token_state(),
+            },
+            finish("stop"),
+        ])
+        .await;
+        assert_eq!(
+            ends,
+            vec![RunEnd::Failed(
+                "Execution error: swarm chat: no node can serve this turn".into()
+            )]
+        );
+    }
+
+    #[tokio::test]
+    async fn the_pump_reports_completed_cancelled_and_errors() {
+        let ok = MessageEvent::Message {
+            message: Message::assistant().with_text("hi"),
+            token_state: token_state(),
+        };
+        assert_eq!(
+            pump_ends(vec![ok, finish("stop")]).await,
+            vec![RunEnd::Completed]
+        );
+        assert_eq!(
+            pump_ends(vec![finish("cancelled")]).await,
+            vec![RunEnd::Cancelled]
+        );
+        let err = || MessageEvent::Error {
+            error: "boom".into(),
+        };
+        assert_eq!(
+            pump_ends(vec![err(), finish("stop")]).await,
+            vec![RunEnd::Failed("boom".into())]
+        );
+        // A run that vanished after an error (no Finish) is still Failed; one that vanished
+        // with no failure seen reports nothing, so the job reads lost.
+        assert_eq!(
+            pump_ends(vec![err()]).await,
+            vec![RunEnd::Failed("boom".into())]
+        );
+        assert_eq!(pump_ends(vec![]).await, vec![]);
     }
 
     fn token_state() -> goose::conversation::message::TokenState {

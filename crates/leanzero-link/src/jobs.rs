@@ -35,7 +35,7 @@ use crate::load::{
     heavy_holder_reason, sample_own, user_idle_threshold_s, HeavySlot, JobBrief, JobKind, JobState,
     NodeLimits, NodeLoad, OwnLoad, THERMAL_REFUSE_LEVEL,
 };
-use crate::state::{ExecuteRequest, RemoteExecutor, SwarmStateSource};
+use crate::state::{ExecuteRequest, RemoteExecutor, RunEnd, SwarmStateSource};
 
 /// Config key of the switch (goose reads it; this crate only sees [`JobsSwitch`]).
 pub const ALLOW_REMOTE_JOBS_KEY: &str = "LEANZERO_LINK_ALLOW_REMOTE_JOBS";
@@ -803,7 +803,21 @@ impl JobRegistry {
 
     fn get(&self, id: &str) -> Option<Arc<JobEntry>> {
         self.ensure_rebuilt();
+        self.prune_deleted();
         self.jobs.lock().unwrap().get(id).cloned()
+    }
+
+    /// D14: a FINISHED job whose ledger dir was deleted (by hand, a cleanup) leaves the list at
+    /// once instead of at the next goose restart. A job that is still running stays listed:
+    /// its watchdog owns the process and the heavy slot, and only it may end the record.
+    fn prune_deleted(&self) {
+        self.jobs.lock().unwrap().retain(|id, e| {
+            if !e.snapshot().state.is_terminal() || e.dir.join("job.json").exists() {
+                return true;
+            }
+            tracing::info!(job = %id, dir = %e.dir.display(), "jobs: ledger dir deleted, dropping the finished job from the list");
+            false
+        });
     }
 
     /// Rebuild from the ledger once, the first time the switch is on inside a tokio runtime.
@@ -1032,11 +1046,22 @@ impl JobRegistry {
                     working_dir: req.cwd.clone(),
                     session_id: None,
                 };
-                let log = Arc::new(FileLog(entry.dir.join("log")));
+                let end = Arc::new(RunEndSlot::default());
+                let log = Arc::new(FileLog {
+                    path: entry.dir.join("log"),
+                    end: end.clone(),
+                });
                 match exec.execute_logged(er, log).await {
                     Ok(acc) => {
                         entry.update(|r| r.session_id = Some(acc.session_id.clone()));
-                        tokio::spawn(watch_prompt(entry, acc.session_id, source, cfg.tick, slot));
+                        tokio::spawn(watch_prompt(
+                            entry,
+                            acc.session_id,
+                            source,
+                            cfg.tick,
+                            slot,
+                            end,
+                        ));
                     }
                     Err(e) => {
                         entry.finish(JobState::Failed, None, Some(e.to_string()));
@@ -1059,6 +1084,7 @@ impl JobRegistry {
     /// Newest first.
     pub fn list(&self) -> Vec<JobView> {
         self.ensure_rebuilt();
+        self.prune_deleted();
         let mut v: Vec<JobView> = self
             .jobs
             .lock()
@@ -1077,6 +1103,7 @@ impl JobRegistry {
     /// What `NodeLoad.jobs` carries: running jobs plus those that ended < 10 min ago.
     pub fn briefs(&self) -> Vec<JobBrief> {
         self.ensure_rebuilt();
+        self.prune_deleted();
         let cutoff = Utc::now() - chrono::Duration::from_std(BRIEF_KEEP).unwrap_or_default();
         let mut v: Vec<JobRecord> = self
             .jobs
@@ -1447,7 +1474,24 @@ async fn kill_adopted(pgid: i32, grace: Duration) {
 /// A prompt job's transcript sink: every chunk the executor streams is appended to the
 /// job's `log` file (opened per append so a rotated or deleted dir never wedges the run).
 /// A failed write is dropped with a debug line; it never stops the run.
-struct FileLog(PathBuf);
+/// It also carries how the run ended ([`RunEnd`], D13) to the job's watchdog.
+struct FileLog {
+    path: PathBuf,
+    end: Arc<RunEndSlot>,
+}
+
+/// The executor's report of how a prompt run ended: the first report wins.
+#[derive(Default)]
+struct RunEndSlot {
+    end: Mutex<Option<RunEnd>>,
+    notify: Notify,
+}
+
+impl RunEndSlot {
+    fn get(&self) -> Option<RunEnd> {
+        self.end.lock().unwrap().clone()
+    }
+}
 
 impl crate::state::ExecuteLog for FileLog {
     fn append(&self, text: &str) {
@@ -1455,11 +1499,21 @@ impl crate::state::ExecuteLog for FileLog {
         let res = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&self.0)
+            .open(&self.path)
             .and_then(|mut f| f.write_all(text.as_bytes()));
         if let Err(e) = res {
-            tracing::debug!(path = %self.0.display(), error = %e, "jobs: prompt log append failed");
+            tracing::debug!(path = %self.path.display(), error = %e, "jobs: prompt log append failed");
         }
+    }
+
+    fn finish(&self, end: RunEnd) {
+        {
+            let mut slot = self.end.end.lock().unwrap();
+            if slot.is_none() {
+                *slot = Some(end);
+            }
+        }
+        self.end.notify.notify_one();
     }
 }
 
@@ -1554,21 +1608,49 @@ fn append_line(dir: &Path, line: &str) -> std::io::Result<()> {
     writeln!(f, "{line}")
 }
 
-/// A prompt job is Running while its session is `live` on this node; then Done. It holds the
-/// heavy slot (when asked for) the same way.
+/// How long a prompt job waits, once its session stopped being live, for the executor's report
+/// of how the run ended (the session can go idle a moment before the report lands).
+const PROMPT_END_GRACE: Duration = Duration::from_secs(5);
+
+/// The record a reported run end gives a prompt job (D13): only a turn that completed is Done
+/// with exit 0; a failed turn is Failed with exit 1 and the provider's words as the reason.
+fn prompt_outcome(end: RunEnd) -> (JobState, Option<i32>, Option<String>) {
+    match end {
+        RunEnd::Completed => (JobState::Done, Some(0), None),
+        RunEnd::Failed(reason) => (JobState::Failed, Some(1), Some(reason)),
+        RunEnd::Cancelled => (
+            JobState::Cancelled,
+            Some(EXIT_CANCEL),
+            Some("cancelled".to_string()),
+        ),
+    }
+}
+
+/// A prompt job is Running while its run has not reported its end. Its final state comes from
+/// the executor's [`RunEnd`] report (D13: a turn whose provider failed ends its stream
+/// normally, so "the session is no longer live" said nothing about success). A session that
+/// is gone with no report within [`PROMPT_END_GRACE`] is `lost`, never a fabricated Done. It
+/// holds the heavy slot (when asked for) the same way.
 async fn watch_prompt(
     entry: Arc<JobEntry>,
     session_id: String,
     source: Arc<dyn SwarmStateSource>,
     tick: Duration,
     slot: Option<HeavySlot>,
+    end: Arc<RunEndSlot>,
 ) {
     let timeout = Duration::from_secs(entry.snapshot().timeout_s);
     let start = Instant::now();
     let mut seen_live = false;
     let mut misses = 0u32;
-    loop {
-        tokio::time::sleep(tick.max(Duration::from_millis(200))).await;
+    let outcome = loop {
+        if let Some(e) = end.get() {
+            break prompt_outcome(e);
+        }
+        tokio::select! {
+            _ = tokio::time::sleep(tick.max(Duration::from_millis(200))) => {}
+            _ = end.notify.notified() => continue,
+        }
         let live = match source.local_sessions().await {
             Ok(s) => s.iter().any(|x| x.session_id == session_id && x.live),
             Err(_) => true, // index unreadable: unknown, keep waiting
@@ -1579,13 +1661,24 @@ async fn watch_prompt(
         } else {
             misses += 1;
         }
-        // Not live after having been live (or never live for 30 ticks) = finished.
+        // Not live after having been live (or never live for 30 ticks) = the run is over:
+        // its end report decides how, and a run that never reports one is lost.
         if (seen_live && !live) || misses >= 30 {
-            entry.finish(JobState::Done, Some(0), None);
-            break;
+            let grace = tokio::time::Instant::now() + PROMPT_END_GRACE;
+            while end.get().is_none() && tokio::time::Instant::now() < grace {
+                let _ = tokio::time::timeout_at(grace, end.notify.notified()).await;
+            }
+            break match end.get() {
+                Some(e) => prompt_outcome(e),
+                None => (
+                    JobState::Lost,
+                    None,
+                    Some("the run ended without reporting how it ended".to_string()),
+                ),
+            };
         }
         if start.elapsed() > timeout {
-            entry.finish(
+            break (
                 JobState::Failed,
                 Some(EXIT_TIMEOUT),
                 Some(format!(
@@ -1593,9 +1686,18 @@ async fn watch_prompt(
                     timeout.as_secs()
                 )),
             );
-            break;
         }
-    }
+    };
+    let _ = append_line(
+        &entry.dir,
+        &format!(
+            "[goose-job] end {:?} exit {:?} {}",
+            outcome.0,
+            outcome.1,
+            outcome.2.clone().unwrap_or_default()
+        ),
+    );
+    entry.finish(outcome.0, outcome.1, outcome.2);
     drop(slot);
 }
 

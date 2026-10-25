@@ -197,8 +197,11 @@ export function WithMacs({ children }: { children: ReactNode }) {
   return outer ? <>{children}</> : <MacsProvider>{children}</MacsProvider>;
 }
 
-/** D2: the roster read is in-memory on goosed; 1.5 s keeps a peer's Offline within ~3 s on screen. */
-export const LINK_POLL_MS = 1500;
+/**
+ * D2: the roster read is in-memory on goosed. Budget: the engine marks a dropped peer Offline
+ * within 2.3 s (state.rs PEER_LIVENESS_*), so a poll of at most 500 ms keeps it on screen within 3.0 s.
+ */
+export const LINK_POLL_MS = 500;
 export const STATUS_POLL_MS = 5000;
 export const MODELS_POLL_MS = 20000;
 const DOWNLOAD_POLL_MS = 1000;

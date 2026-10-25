@@ -125,6 +125,25 @@ pub trait RemoteExecutor: Send + Sync + 'static {
 /// never fails loudly: a lost log line must not break the run.
 pub trait ExecuteLog: Send + Sync + 'static {
     fn append(&self, text: &str);
+
+    /// How the run ended, reported once by the executor when it knows (D13). A prompt job
+    /// takes its final state from this, never from "the session is no longer live": a turn
+    /// whose provider failed ends its stream normally, so liveness alone read it as Done.
+    /// The default ignores it (an executor that cannot tell leaves the job `lost`).
+    fn finish(&self, end: RunEnd) {
+        let _ = end;
+    }
+}
+
+/// How a logged remote run ended ([`ExecuteLog::finish`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunEnd {
+    /// The turn ran to its end with no provider or stream error.
+    Completed,
+    /// The turn failed; the text says why (the provider error, the stream error).
+    Failed(String),
+    /// The turn was cancelled (a cancel token, the Stop button).
+    Cancelled,
 }
 
 /// One mlxEngine operation the mesh proxy forwards. Each variant maps 1:1 to a
@@ -450,13 +469,14 @@ struct PeerEntry {
 
 /// How often each peer's liveness DIAL runs (D2): a fresh TCP connect through the mesh proxy,
 /// never a request — a loaded peer's kernel still accepts, so only a gone peer fails it.
-pub const PEER_LIVENESS_INTERVAL: Duration = Duration::from_millis(800);
+pub const PEER_LIVENESS_INTERVAL: Duration = Duration::from_millis(500);
 /// The liveness dial's bound. A tailnet connect is one round trip (well under 500 ms even over
 /// a DERP relay); a peer whose Link died leaves the CONNECT hanging until this runs out.
-pub const PEER_LIVENESS_DIAL_TIMEOUT: Duration = Duration::from_millis(1200);
+pub const PEER_LIVENESS_DIAL_TIMEOUT: Duration = Duration::from_millis(900);
 /// Liveness dials in a row that must TIME OUT before the row reads `Offline`. One slow
 /// connect on a relayed path is not a dead peer; the retry runs at once (no interval sleep),
-/// so a dropped peer reads Offline within INTERVAL + this × DIAL_TIMEOUT (3.2 s). A definite
+/// so a dropped peer reads Offline within INTERVAL + this × DIAL_TIMEOUT (2.3 s;
+/// 3.0.130: with the desktop's 500 ms roster poll the screen shows it within 3.0 s). A definite
 /// refusal (connection refused, host unreachable) is one look, never retried.
 pub const PEER_LIVENESS_TIMEOUTS: u32 = 2;
 /// Polls in a row that may time out on a CONNECTED peer (alive but slow, e.g. under load)

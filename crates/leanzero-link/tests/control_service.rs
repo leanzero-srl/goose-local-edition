@@ -23,7 +23,7 @@ use leanzero_link::control::{
 use leanzero_link::pubsub::REPLAY_BUFFER_CAPACITY;
 use leanzero_link::state::{
     ExecuteAccepted, ExecuteError, ExecuteLog, ExecuteRequest, MlxControl, MlxControlError, MlxOp,
-    PeerTarget, RemoteExecutor, SwarmStateSource,
+    PeerTarget, RemoteExecutor, RunEnd, SwarmStateSource,
 };
 use leanzero_link::wire::{
     LeaveReason, LinkEvent, NodeState, NodeStatus, SessionDeltaKind, SessionSummary, StreamFrame,
@@ -981,9 +981,10 @@ fn is_offline(p: &serde_json::Value) -> bool {
 /// D2 (3.0.128 live): the workhorse's Link was dropped and the laptop showed it Offline only
 /// after ~6-7 s. The pooled poll connection to a peer whose Link died stays open and silent
 /// ([`support::FakeTailnet::kill`]), so the next poll waited out the whole 5 s request timeout on
-/// top of the 3 s poll sleep. At the production cadence the row must read Offline within 3.5 s.
+/// top of the 3 s poll sleep. At the production cadence the row must read Offline within 2.4 s (3.0.130: the engine's
+/// worst is 2.3 s so that with the desktop's 500 ms roster poll the screen shows it within 3.0 s).
 #[tokio::test]
-async fn a_peer_whose_link_drops_reads_offline_within_3_5_s_at_production_cadence() {
+async fn a_peer_whose_link_drops_reads_offline_within_2_4_s_at_production_cadence() {
     let source_b = FakeStateSource::new("node-b");
     let b = spawn_node(source_b, mesh_v6()).await;
     let a = spawn_node_production_cadence(FakeStateSource::new("node-a")).await;
@@ -1002,17 +1003,17 @@ async fn a_peer_whose_link_drops_reads_offline_within_3_5_s_at_production_cadenc
     support::fake_tailnet().kill(&b_mesh_ip);
     let took = time_until_row(&client, &base_a, "node-b", is_offline).await;
     assert!(
-        took <= Duration::from_millis(3500),
-        "a dropped peer must read Offline within 3.5 s, took {took:?}"
+        took <= Duration::from_millis(2400),
+        "a dropped peer must read Offline within 2.4 s, took {took:?}"
     );
     a.shutdown();
     b.shutdown();
 }
 
 /// D2, the port-closed shape: the peer's control service stops while its mesh daemon still
-/// answers (a CONNECT is refused at once). Offline within 3.5 s at the production cadence.
+/// answers (a CONNECT is refused at once). Offline within 2.4 s at the production cadence.
 #[tokio::test]
-async fn a_peer_whose_port_closes_reads_offline_within_3_5_s_at_production_cadence() {
+async fn a_peer_whose_port_closes_reads_offline_within_2_4_s_at_production_cadence() {
     let unauthorized = Arc::new(AtomicBool::new(false));
     let (stub_port, stub) = spawn_stub_peer("node-stub", unauthorized).await;
     let a = spawn_node_production_cadence(FakeStateSource::new("node-a")).await;
@@ -1029,8 +1030,8 @@ async fn a_peer_whose_port_closes_reads_offline_within_3_5_s_at_production_caden
     stub.vanish().await;
     let took = time_until_row(&client, &base_a, "node-stub", is_offline).await;
     assert!(
-        took <= Duration::from_millis(3500),
-        "a peer whose port closed must read Offline within 3.5 s, took {took:?}"
+        took <= Duration::from_millis(2400),
+        "a peer whose port closed must read Offline within 2.4 s, took {took:?}"
     );
     a.shutdown();
 }
@@ -2283,8 +2284,146 @@ mod jobs_http {
         assert_eq!(job(&n, &id).await.1["state"], "running");
         n.source
             .set_sessions(vec![summary("sess-job-1", "laptop", false, 2)]);
+        // D13: this executor never reports how the run ended, so the job is `lost` once the
+        // grace for the report runs out, never a fabricated Done/exit 0.
+        let end = wait_terminal(&n, &id, Duration::from_secs(10)).await;
+        assert_eq!(end["state"], "lost", "{end}");
+        assert!(end["exit_code"].is_null(), "{end}");
+        n.handle.shutdown();
+    }
+
+    /// An executor that reports how its run ended, from its own task after a short run.
+    struct EndingExecutor(RunEnd);
+
+    #[async_trait::async_trait]
+    impl RemoteExecutor for EndingExecutor {
+        async fn execute(&self, _req: ExecuteRequest) -> Result<ExecuteAccepted, ExecuteError> {
+            Ok(ExecuteAccepted {
+                session_id: "sess-ending".to_string(),
+            })
+        }
+
+        async fn execute_logged(
+            &self,
+            req: ExecuteRequest,
+            log: Arc<dyn ExecuteLog>,
+        ) -> Result<ExecuteAccepted, ExecuteError> {
+            let end = self.0.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                log.append("\n[finished: stop]\n");
+                log.finish(end);
+            });
+            self.execute(req).await
+        }
+    }
+
+    async fn run_prompt_job_to_its_end(end: RunEnd) -> (serde_json::Value, String) {
+        let n = spawn_jobs_node(true, test_limits(), Some(Arc::new(EndingExecutor(end)))).await;
+        let (s, v) = submit(
+            &n,
+            serde_json::json!({"kind": "prompt", "command": "write hello", "origin_node": "laptop"}),
+        )
+        .await;
+        assert_eq!(s, 202, "{v}");
+        let id = v["job_id"].as_str().unwrap().to_string();
+        let end = wait_terminal(&n, &id, Duration::from_secs(5)).await;
+        let log = log_chunk(&n, &id, 0).await["data"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        n.handle.shutdown();
+        (end, log)
+    }
+
+    /// D13 (3.0.130 live): a prompt turn whose provider failed ("swarm chat: no node can serve
+    /// this turn") was reported Done / exit 0, because the job only watched session liveness.
+    #[tokio::test]
+    async fn a_prompt_job_whose_turn_failed_is_failed_with_exit_1_and_the_reason() {
+        let why = "swarm chat: no node can serve this turn — no enabled device";
+        let (end, log) = run_prompt_job_to_its_end(RunEnd::Failed(why.to_string())).await;
+        assert_eq!(end["state"], "failed", "{end}");
+        assert_eq!(end["exit_code"], 1, "{end}");
+        assert!(
+            end["reason"]
+                .as_str()
+                .is_some_and(|r| r.contains("no node can serve this turn")),
+            "{end}"
+        );
+        assert!(
+            log.contains("[goose-job] end Failed exit Some(1) swarm chat: no node can serve"),
+            "log: {log:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_prompt_job_whose_turn_completed_is_done_with_exit_0() {
+        let (end, log) = run_prompt_job_to_its_end(RunEnd::Completed).await;
+        assert_eq!(end["state"], "done", "{end}");
+        assert_eq!(end["exit_code"], 0, "{end}");
+        assert!(
+            log.contains("[goose-job] end Done exit Some(0)"),
+            "log: {log:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_prompt_job_whose_turn_was_cancelled_is_cancelled_with_143() {
+        let (end, _) = run_prompt_job_to_its_end(RunEnd::Cancelled).await;
+        assert_eq!(end["state"], "cancelled", "{end}");
+        assert_eq!(end["exit_code"], 143, "{end}");
+    }
+
+    /// D14 (3.0.130 live): a finished job whose ledger dir was deleted stayed listed (and
+    /// viewable) until goose restarted. It leaves the list and the view at once.
+    #[tokio::test]
+    async fn a_finished_job_whose_ledger_dir_is_deleted_leaves_the_list_at_once() {
+        let n = spawn_jobs_node(true, test_limits(), None).await;
+        let (s, v) = submit(&n, shell("true")).await;
+        assert_eq!(s, 202, "{v}");
+        let id = v["job_id"].as_str().unwrap().to_string();
         let end = wait_terminal(&n, &id, Duration::from_secs(5)).await;
         assert_eq!(end["state"], "done", "{end}");
+        let c = reqwest::Client::new();
+        let list = get_json(&c, &format!("{}/v1/swarm/jobs", n.base)).await;
+        assert!(
+            list.to_string().contains(&id),
+            "listed before the delete: {list}"
+        );
+
+        std::fs::remove_dir_all(n.root.join(&id)).unwrap();
+        let list = get_json(&c, &format!("{}/v1/swarm/jobs", n.base)).await;
+        assert!(!list.to_string().contains(&id), "still listed: {list}");
+        assert_eq!(job(&n, &id).await.0, 404);
+        n.handle.shutdown();
+    }
+
+    /// D14's guard: a RUNNING job whose dir vanished stays listed — its watchdog still owns
+    /// the process, and cancel must still reach it.
+    #[tokio::test]
+    async fn a_running_job_whose_ledger_dir_is_deleted_stays_listed() {
+        let n = spawn_jobs_node(true, test_limits(), None).await;
+        let (s, v) = submit(&n, shell("sleep 30")).await;
+        assert_eq!(s, 202, "{v}");
+        let id = v["job_id"].as_str().unwrap().to_string();
+        std::fs::remove_dir_all(n.root.join(&id)).unwrap();
+        let c = reqwest::Client::new();
+        let list = get_json(&c, &format!("{}/v1/swarm/jobs", n.base)).await;
+        assert!(
+            list.to_string().contains(&id),
+            "dropped while running: {list}"
+        );
+        let r = c
+            .post(format!("{}/v1/swarm/jobs/{id}/cancel", n.base))
+            .bearer_auth(TOKEN)
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            matches!(r.status().as_u16(), 200 | 202),
+            "cancel still reaches it: {}",
+            r.status()
+        );
         n.handle.shutdown();
     }
 
