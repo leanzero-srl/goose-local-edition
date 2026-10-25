@@ -40,7 +40,8 @@ export interface MemfreeGroup {
   /** Who uses it: TCP clients of a server's port, the process that started it, its launchd job. */
   usedBy?: string[];
   launchdLabel?: string | null;
-  /** Ticked by default in "Free everything except protected" (never when protected or in use). */
+  /** Ticked by default in "Free everything except protected" (never when protected or in use,
+   * never for a server goose did not start). */
   nuclearDefault?: boolean;
 }
 
@@ -92,6 +93,8 @@ export interface MemfreeItem {
   ok: boolean;
   freedBytes?: number | null;
   message: string;
+  /** An app that did not quit and that goose could stop; only an explicit Force stop does. */
+  forceStoppable?: boolean;
 }
 
 /** `_goose/unstable/mlxEngine/memoryFree`, the fields this side reads. */
@@ -313,7 +316,11 @@ export function effectiveNeverTouch(extras: readonly string[]): string[] {
   return [...DEFAULT_NEVER_TOUCH, ...neverTouchExtrasFrom([...extras])];
 }
 
-/** The never-touch entry a group matches (bundle id, label, the name in its id), like the engine. */
+/**
+ * The never-touch entry a group matches (bundle id, label, the name in its id), like the engine's
+ * `never_touch_hit`: case-insensitive, equal or contained, so "Teams" holds "Microsoft Teams" and
+ * "com.microsoft" holds every bundle id under it.
+ */
 export function neverTouchHit(group: MemfreeGroup, list: readonly string[]): string | null {
   const idName = group.id.includes(':') ? group.id.slice(group.id.indexOf(':') + 1) : '';
   const appName = idName.endsWith('.app')
@@ -323,7 +330,12 @@ export function neverTouchHit(group: MemfreeGroup, list: readonly string[]): str
     .filter((n): n is string => typeof n === 'string')
     .map((n) => n.trim().toLowerCase())
     .filter((n) => n !== '');
-  return list.find((entry) => names.includes(entry.trim().toLowerCase())) ?? null;
+  return (
+    list.find((entry) => {
+      const e = entry.trim().toLowerCase();
+      return e !== '' && names.some((n) => n === e || n.includes(e));
+    }) ?? null
+  );
 }
 
 /** One holder in the "Free everything except protected" view. */
@@ -335,7 +347,8 @@ export type NuclearRow =
 /**
  * Sort every holder for the nuclear view. Protected (engine reason, or on the never-touch list)
  * is never offered. Offered = a quittable app or a server goose can free now; ticked by default
- * only when the engine says so (`nuclearDefault`: nobody uses it). goose's own kinds are the
+ * only when the engine says so (`nuclearDefault`: nobody uses it), and a server never — goose did
+ * not start it, so the person ticks it themselves (even if an older engine says otherwise). goose's own kinds are the
  * separate "goose's own" row (`gooseOwned`); everything else is left alone with its reason.
  */
 export function nuclearRows(
@@ -359,7 +372,7 @@ export function nuclearRows(
       (isServerGroup(group) && group.reclaimableByGoose);
     rows.push(
       offered
-        ? { kind: 'offer', group, ticked: group.nuclearDefault === true }
+        ? { kind: 'offer', group, ticked: !isServerGroup(group) && group.nuclearDefault === true }
         : { kind: 'left', group, reason: group.why ?? null }
     );
   }
@@ -370,6 +383,10 @@ export interface NuclearFreeRequest {
   gooseOwned: boolean;
   quitApps: string[];
   unloadServers: string[];
+  /** Each picked server's "used by" as the person saw it; the engine refuses one that gained a user. */
+  seenUsedBy: Record<string, string[]>;
+  /** Never filled by the nuclear view: a force stop is only ever its own per-app request. */
+  forceStopApps: string[];
   nuclear: true;
   neverTouch: string[];
 }
@@ -386,18 +403,29 @@ export function nuclearRequest(
 ): NuclearFreeRequest {
   const quitApps: string[] = [];
   const unloadServers: string[] = [];
+  const seenUsedBy: Record<string, string[]> = {};
   for (const row of rows) {
     if (row.kind !== 'offer' || !ticked.has(row.group.id)) continue;
-    if (isServerGroup(row.group)) unloadServers.push(row.group.id);
-    else if (row.group.bundleId) quitApps.push(row.group.bundleId);
+    if (isServerGroup(row.group)) {
+      unloadServers.push(row.group.id);
+      seenUsedBy[row.group.id] = [...(row.group.usedBy ?? [])];
+    } else if (row.group.bundleId) quitApps.push(row.group.bundleId);
   }
   return {
     gooseOwned: gooseOwn,
     quitApps,
     unloadServers,
+    seenUsedBy,
+    forceStopApps: [],
     nuclear: true,
     neverTouch: [...neverTouch],
   };
+}
+
+/** The bundle id of a result item that gets a Force stop button: an app the engine marked so. */
+export function forceStopBundle(item: MemfreeItem): string | null {
+  if (!item.forceStoppable || !item.id.startsWith('app:')) return null;
+  return item.id.slice('app:'.length) || null;
 }
 
 /** Before → after of one free, in GB, from the engine's own re-reading. */

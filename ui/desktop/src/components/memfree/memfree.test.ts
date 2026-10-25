@@ -4,6 +4,7 @@ import {
   GIB,
   afterLine,
   effectiveNeverTouch,
+  forceStopBundle,
   neverTouchExtrasFrom,
   neverTouchHit,
   nuclearRequest,
@@ -214,6 +215,13 @@ describe('never-touch list', () => {
     );
     expect(neverTouchHit(grp('app:com.apple.TextEdit', 'userApp'), DEFAULT_NEVER_TOUCH)).toBeNull();
   });
+
+  it('C7: a natural name or a bundle prefix matches by contains, like the engine', () => {
+    const teams = grp('app:com.microsoft.teams2', 'userApp', { label: 'Microsoft Teams' });
+    expect(neverTouchHit(teams, ['Teams'])).toBe('Teams');
+    expect(neverTouchHit(teams, ['com.microsoft'])).toBe('com.microsoft');
+    expect(neverTouchHit(teams, ['  ', 'Slack'])).toBeNull();
+  });
 });
 
 describe('unload offer', () => {
@@ -252,9 +260,14 @@ describe('nuclear rows + request', () => {
     const offered = rows.filter((r) => r.kind === 'offer');
     expect(offered.map((r) => [r.group.id, r.kind === 'offer' && r.ticked])).toEqual([
       ['mlx:97100', false],
-      ['ai:lms', true],
+      ['ai:lms', false],
       ['app:com.apple.TextEdit', true],
     ]);
+  });
+
+  it('C1/C2: a server row is never ticked, even when an older engine says nuclearDefault', () => {
+    const server = rows.find((r) => r.group.id === 'ai:lms');
+    expect(server?.kind === 'offer' && server.ticked).toBe(false);
   });
 
   it('sends only what is ticked; a ticked protected id is dropped', () => {
@@ -268,9 +281,28 @@ describe('nuclear rows + request', () => {
       gooseOwned: false,
       quitApps: ['com.apple.TextEdit'],
       unloadServers: ['ai:lms'],
+      seenUsedBy: { 'ai:lms': [] },
+      forceStopApps: [],
       nuclear: true,
       neverTouch: ['x'],
     });
+    const mlx = nuclearRequest(rows, new Set(['mlx:97100']), false, []);
+    expect(mlx.seenUsedBy).toEqual({ 'mlx:97100': ['sshd-session'] });
     expect(nuclearRequest(rows, new Set(), true, []).quitApps).toEqual([]);
+  });
+});
+
+describe('force stop offer (C4)', () => {
+  const item = (extra: object) => ({
+    id: 'app:com.apple.TextEdit',
+    label: 'TextEdit',
+    ok: false,
+    message: 'm',
+    ...extra,
+  });
+  it('only an app item the engine marked forceStoppable', () => {
+    expect(forceStopBundle(item({ forceStoppable: true }))).toBe('com.apple.TextEdit');
+    expect(forceStopBundle(item({}))).toBeNull();
+    expect(forceStopBundle(item({ forceStoppable: true, id: 'ai:lms' }))).toBeNull();
   });
 });

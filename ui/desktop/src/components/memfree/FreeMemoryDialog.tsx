@@ -22,6 +22,7 @@ import {
   DEFAULT_NEVER_TOUCH,
   afterLine,
   effectiveNeverTouch,
+  forceStopBundle,
   gib,
   groupByCategory,
   isGooseOwnGroup,
@@ -32,6 +33,7 @@ import {
   unloadOffer,
   verdictLine,
   type MemfreeGroup,
+  type MemfreeItem,
   type MemoryFreeResult,
   type MemoryHolders,
 } from './memfree';
@@ -85,6 +87,14 @@ const i18n = defineMessages({
   },
   quitConfirm: { id: 'freeMemory.quitConfirm', defaultMessage: 'Quit {app}' },
   keep: { id: 'freeMemory.keep', defaultMessage: 'Keep it open' },
+  forceStop: { id: 'freeMemory.forceStop', defaultMessage: 'Force stop' },
+  forceStopTitle: { id: 'freeMemory.forceStopTitle', defaultMessage: 'Force stop {app}?' },
+  forceStopBody: {
+    id: 'freeMemory.forceStopBody',
+    defaultMessage:
+      '{app} did not quit when asked, maybe because it has unsaved work. Force stop ends it on {mac} without saving. Unsaved work in {app} is lost.',
+  },
+  forceStopConfirm: { id: 'freeMemory.forceStopConfirm', defaultMessage: 'Force stop {app}' },
   remoteQuitOff: {
     id: 'freeMemory.remoteQuitOff',
     defaultMessage:
@@ -144,7 +154,7 @@ const i18n = defineMessages({
   nuclearConfirmBody: {
     id: 'freeMemory.nuclearConfirmBody',
     defaultMessage:
-      'goose asks each ticked app to quit and unloads each ticked model server. An app that ignores the quit request gets a SIGTERM and may lose unsaved work: save your work first. Protected items are never touched.',
+      'goose asks each ticked app to quit and unloads each ticked model server. Apps are asked to quit. An app that does not quit is left running and reported, not stopped. Protected items are never touched.',
   },
   nuclearConfirmKeep: { id: 'freeMemory.nuclearConfirmKeep', defaultMessage: 'Keep everything' },
   catGooseEngine: { id: 'freeMemory.cat.gooseEngine', defaultMessage: 'goose’s engines' },
@@ -243,12 +253,29 @@ export function FreeMemoryDialog({ target, macName, fitModelId, onClose }: FreeM
 
   const free = async (
     key: string,
-    what: { gooseOwned: boolean; quitApps: string[]; unloadServers: string[]; nuclear: boolean }
+    what: {
+      gooseOwned: boolean;
+      quitApps: string[];
+      unloadServers: string[];
+      seenUsedBy?: Record<string, string[]>;
+      forceStopApps?: string[];
+      nuclear: boolean;
+    }
   ) => {
     setBusy(key);
     try {
       setResult(
-        await memoryFree({ nodeId: target, ...what, neverTouch: neverTouch ?? [], fitModelId })
+        await memoryFree({
+          nodeId: target,
+          gooseOwned: what.gooseOwned,
+          quitApps: what.quitApps,
+          unloadServers: what.unloadServers,
+          seenUsedBy: what.seenUsedBy ?? {},
+          forceStopApps: what.forceStopApps ?? [],
+          nuclear: what.nuclear,
+          neverTouch: neverTouch ?? [],
+          fitModelId,
+        })
       );
       setError(null);
       setView('list');
@@ -304,7 +331,27 @@ export function FreeMemoryDialog({ target, macName, fitModelId, onClose }: FreeM
         gooseOwned: false,
         quitApps: [],
         unloadServers: [group.id],
+        seenUsedBy: { [group.id]: [...usedBy] },
         nuclear: false,
+      });
+    }
+  };
+
+  const forceStop = async (item: MemfreeItem, bundleId: string) => {
+    const ok = await confirm({
+      title: intl.formatMessage(i18n.forceStopTitle, { app: item.label }),
+      message: intl.formatMessage(i18n.forceStopBody, { app: item.label, mac: macName }),
+      confirmLabel: intl.formatMessage(i18n.forceStopConfirm, { app: item.label }),
+      cancelLabel: intl.formatMessage(i18n.keep),
+      confirmVariant: 'destructive',
+    });
+    if (ok) {
+      await free(item.id, {
+        gooseOwned: false,
+        quitApps: [],
+        unloadServers: [],
+        forceStopApps: [bundleId],
+        nuclear: true,
       });
     }
   };
@@ -362,8 +409,15 @@ export function FreeMemoryDialog({ target, macName, fitModelId, onClose }: FreeM
       confirmVariant: 'destructive',
     });
     if (!ok) return;
-    const { gooseOwned, quitApps, unloadServers, nuclear } = request;
-    await free('nuclear', { gooseOwned, quitApps, unloadServers, nuclear });
+    const { gooseOwned, quitApps, unloadServers, seenUsedBy, forceStopApps, nuclear } = request;
+    await free('nuclear', {
+      gooseOwned,
+      quitApps,
+      unloadServers,
+      seenUsedBy,
+      forceStopApps,
+      nuclear,
+    });
   };
 
   const protectedReason = (g: MemfreeGroup): string | null => {
@@ -484,14 +538,36 @@ export function FreeMemoryDialog({ target, macName, fitModelId, onClose }: FreeM
                 </p>
                 {result?.items
                   .filter((it) => !it.ok)
-                  .map((it) => (
-                    <p key={it.id} className={cx(WEIGHT.semibold, TONE_TEXT.err)}>
-                      {intl.formatMessage(i18n.itemFailed, {
-                        label: it.label,
-                        message: it.message,
-                      })}
-                    </p>
-                  ))}
+                  .map((it) => {
+                    const bundle = forceStopBundle(it);
+                    return (
+                      <div key={it.id} className="flex flex-wrap items-center gap-2">
+                        <p className={cx(WEIGHT.semibold, TONE_TEXT.err)}>
+                          {intl.formatMessage(i18n.itemFailed, {
+                            label: it.label,
+                            message: it.message,
+                          })}
+                        </p>
+                        {bundle && (
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            data-testid={`free-memory-force-${bundle}`}
+                            disabled={remoteOff || busy != null}
+                            title={
+                              remoteOff
+                                ? intl.formatMessage(i18n.remoteQuitOff, { mac: macName })
+                                : undefined
+                            }
+                            icon={busy === it.id ? spinner : <Power />}
+                            onClick={() => void forceStop(it, bundle)}
+                          >
+                            {intl.formatMessage(i18n.forceStop)}
+                          </Button>
+                        )}
+                      </div>
+                    );
+                  })}
               </div>
             )}
 

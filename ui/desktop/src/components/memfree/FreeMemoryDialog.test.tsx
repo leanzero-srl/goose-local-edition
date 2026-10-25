@@ -137,6 +137,8 @@ describe('FreeMemoryDialog', () => {
         gooseOwned: true,
         quitApps: [],
         unloadServers: [],
+        seenUsedBy: {},
+        forceStopApps: [],
         nuclear: false,
         neverTouch: NT,
         fitModelId: 'qwen-30b',
@@ -179,6 +181,8 @@ describe('FreeMemoryDialog', () => {
         gooseOwned: false,
         quitApps: ['com.google.Chrome'],
         unloadServers: [],
+        seenUsedBy: {},
+        forceStopApps: [],
         nuclear: false,
         neverTouch: NT,
         fitModelId: 'qwen-30b',
@@ -227,7 +231,12 @@ describe('FreeMemoryDialog', () => {
         usedBy: ['sshd-session (pid 97112) is connected to it'],
         nuclearDefault: false,
       }),
-      server('ai:/Applications/LM Studio.app', 'LM Studio', 0.6, { nuclearDefault: true }),
+      // LM Link peers reach LM Studio through lmlink-connector; an older engine may still say
+      // nuclearDefault: the desktop never ticks a server goose did not start.
+      server('ai:/Applications/LM Studio.app', 'LM Studio', 0.6, {
+        usedBy: ['LM Link: lmlink-connector (pid 14330) listens on 34267'],
+        nuclearDefault: true,
+      }),
       {
         id: 'job:mcp-web-search-upd',
         label: 'mcp-web-search-upd',
@@ -316,13 +325,14 @@ describe('FreeMemoryDialog', () => {
           gooseOwned: false,
           quitApps: [],
           unloadServers: ['mlx:97100'],
+          seenUsedBy: { 'mlx:97100': ['sshd-session (pid 97112) is connected to it'] },
           nuclear: false,
         })
       )
     );
   });
 
-  it('nuclear: ticks only nuclearDefault, protected is never selectable, sends only ticked + neverTouch', async () => {
+  it('nuclear: ticks only nuclearDefault, never a server, protected is never selectable, sends only ticked + neverTouch', async () => {
     mockNeverTouch.mockResolvedValue(['TextEditHelperX']);
     mockHolders.mockResolvedValue(WORKHORSE);
     mockFree.mockResolvedValue(OK_RESULT);
@@ -331,7 +341,8 @@ describe('FreeMemoryDialog', () => {
     await user.click(await screen.findByTestId('free-memory-nuclear-open'));
     const view = screen.getByTestId('free-memory-nuclear');
     const tick = (id: string) => within(view).queryByTestId(`free-memory-tick-${id}`);
-    expect(tick('ai:/Applications/LM Studio.app')?.getAttribute('aria-checked')).toBe('true');
+    // A server goose did not start is offered, never pre-ticked (review C1/C2).
+    expect(tick('ai:/Applications/LM Studio.app')?.getAttribute('aria-checked')).toBe('false');
     expect(tick('app:com.apple.TextEdit')?.getAttribute('aria-checked')).toBe('true');
     expect(tick('gooseOwned')?.getAttribute('aria-checked')).toBe('true');
     // In use: offered but not ticked.
@@ -345,13 +356,18 @@ describe('FreeMemoryDialog', () => {
     expect(
       within(view).getByTestId('free-memory-kept-app:com.microsoft.teams2').textContent
     ).toContain('never-touch list (com.microsoft.teams2)');
-    // 0.6 + 1 (TextEdit) + 1 (goose's own) = 2.6 GB ticked; untick TextEdit -> 1.6.
+    // 1 (TextEdit) + 1 (goose's own) = 2.0 GB ticked; tick LM Studio -> 2.6; untick TextEdit -> 1.6.
+    expect(screen.getByTestId('free-memory-nuclear-total').textContent).toContain('2.0 GB');
+    await user.click(tick('ai:/Applications/LM Studio.app')!);
     expect(screen.getByTestId('free-memory-nuclear-total').textContent).toContain('2.6 GB');
     await user.click(tick('app:com.apple.TextEdit')!);
     expect(screen.getByTestId('free-memory-nuclear-total').textContent).toContain('1.6 GB');
     await user.click(screen.getByTestId('free-memory-nuclear-free'));
-    // ONE confirm, warning about SIGTERM and unsaved work.
-    expect(await screen.findByText(/SIGTERM and may lose unsaved work/)).toBeInTheDocument();
+    // ONE confirm: apps are asked to quit; one that does not is left running and reported.
+    expect(
+      await screen.findByText(/does not quit is left running and reported/)
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/SIGTERM/)).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Free 1.6 GB' }));
     await waitFor(() => expect(mockFree).toHaveBeenCalledTimes(1));
     expect(mockFree.mock.calls[0][0]).toEqual({
@@ -359,6 +375,12 @@ describe('FreeMemoryDialog', () => {
       gooseOwned: true,
       quitApps: [],
       unloadServers: ['ai:/Applications/LM Studio.app'],
+      seenUsedBy: {
+        'ai:/Applications/LM Studio.app': [
+          'LM Link: lmlink-connector (pid 14330) listens on 34267',
+        ],
+      },
+      forceStopApps: [],
       nuclear: true,
       neverTouch: [...NT, 'TextEditHelperX'],
       fitModelId: 'qwen-30b',
@@ -375,5 +397,48 @@ describe('FreeMemoryDialog', () => {
     await user.click(screen.getByTestId('free-memory-nuclear-free'));
     await user.click(await screen.findByRole('button', { name: 'Keep everything' }));
     expect(mockFree).not.toHaveBeenCalled();
+  });
+
+  it('C4: an app that did not quit gets a Force stop, only after a confirm that says unsaved work is lost', async () => {
+    mockHolders.mockResolvedValue(WORKHORSE);
+    mockFree.mockResolvedValue({
+      ...OK_RESULT,
+      items: [
+        {
+          id: 'app:com.apple.TextEdit',
+          label: 'TextEdit',
+          ok: false,
+          message: "TextEdit didn't quit (maybe unsaved work); it was left running",
+          forceStoppable: true,
+        },
+        { id: 'app:x.other', label: 'Other', ok: false, message: 'refused' },
+      ],
+    });
+    const user = userEvent.setup();
+    show();
+    await user.click(await screen.findByTestId('free-memory-quit-app:com.apple.TextEdit'));
+    await user.click(await screen.findByRole('button', { name: 'Quit TextEdit' }));
+    const force = await screen.findByTestId('free-memory-force-com.apple.TextEdit');
+    expect(screen.queryByTestId('free-memory-force-x.other')).toBeNull();
+    mockFree.mockClear();
+    await user.click(force);
+    expect(await screen.findByText(/Unsaved work in TextEdit is lost/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Keep it open' }));
+    expect(mockFree).not.toHaveBeenCalled();
+    await user.click(screen.getByTestId('free-memory-force-com.apple.TextEdit'));
+    await user.click(await screen.findByRole('button', { name: 'Force stop TextEdit' }));
+    await waitFor(() =>
+      expect(mockFree).toHaveBeenCalledWith({
+        nodeId: undefined,
+        gooseOwned: false,
+        quitApps: [],
+        unloadServers: [],
+        seenUsedBy: {},
+        forceStopApps: ['com.apple.TextEdit'],
+        nuclear: true,
+        neverTouch: NT,
+        fitModelId: 'qwen-30b',
+      })
+    );
   });
 });

@@ -45,13 +45,17 @@ export async function memoryHolders(opts: {
 
 /**
  * `gooseOwned` = the soft clean. `quitApps` (bundle ids) and `unloadServers` (`ai:…` / `mlx:<pid>`)
- * are only what the person confirmed; `nuclear` lets an app that ignores quit get one SIGTERM.
+ * are only what the person confirmed. `seenUsedBy` = each picked server's "used by" as shown: the
+ * engine refuses a server that gained a user since. An app that does not quit is left running;
+ * only `forceStopApps` (an explicit, confirmed Force stop) gets a SIGTERM.
  */
 export async function memoryFree(opts: {
   nodeId?: string;
   gooseOwned: boolean;
   quitApps: string[];
   unloadServers: string[];
+  seenUsedBy: Record<string, string[]>;
+  forceStopApps: string[];
   nuclear: boolean;
   neverTouch: string[];
   fitModelId?: string | null;
@@ -60,6 +64,8 @@ export async function memoryFree(opts: {
     gooseOwned: opts.gooseOwned,
     quitApps: opts.quitApps,
     unloadServers: opts.unloadServers,
+    seenUsedBy: opts.seenUsedBy,
+    forceStopApps: opts.forceStopApps,
     nuclear: opts.nuclear,
     neverTouch: opts.neverTouch,
   };
