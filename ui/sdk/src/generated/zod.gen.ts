@@ -6645,9 +6645,9 @@ export const zLeanzeroLinkJobsLogResponse_unstable = z.object({
 });
 
 /**
- * Where a job could run now, in the order a submit tries them (node_fleet's rules: OK nodes
- * first, USER-ACTIVE as the last resort; inside each class this node first under
- * `local-first`, last under `selfish`, the others by score). Busy nodes and nodes that do not
+ * Where a job could run now, in the order a submit tries them (node_fleet's rules:
+ * this node first under `local-first`, last under `selfish`; then the most room (`canTake`);
+ * USER-ACTIVE only breaks a tie between equal room, then score). Busy nodes and nodes that do not
  * allow jobs are not placements: they are `refusals`, each `{nodeId, code, reason}`.
  */
 export const zLeanzeroLinkJobsPlaceRequest_unstable = z.object({

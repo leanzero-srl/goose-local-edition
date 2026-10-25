@@ -1013,8 +1013,8 @@ impl LinkManager {
 
     /// Rank where a job could run, node_fleet's rules ([`crate::jobs::rank_placements`]):
     /// this node (its live load and its own jobs switch) plus every peer whose last `/nodes`
-    /// carried a load report and `allows.run_jobs`. OK nodes first, USER-ACTIVE last resort,
-    /// this node first inside each class (the default `local-first` strategy).
+    /// carried a load report and `allows.run_jobs`. This node first (the default `local-first`
+    /// strategy), then the most room (`can_take`); USER-ACTIVE only breaks a tie between equal room.
     pub async fn place_job(
         &self,
         need_gb: f64,

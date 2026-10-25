@@ -439,12 +439,19 @@ pub fn verdict(own: &OwnLoad, need_gb: f64, heavy: bool, gate: &Gate) -> Verdict
     } else {
         gate.default_need_gb
     };
+    // How many more jobs of this size fit: memory above the floor, and for a heavy job never
+    // more than the free heavy slots (a node at 2/7 heavy with room for 7 by memory takes ~5).
+    let free_heavy = heavy.then(|| match heavy_slots(own) {
+        Some((used, max)) => max.saturating_sub(used),
+        None => u32::from(!own.heavy_slot_held),
+    });
     let can_take = avail.map(|av| {
-        if unit > 0.0 {
+        let by_mem = if unit > 0.0 {
             (av.max(0.0) / unit).floor() as u32
         } else {
             0
-        }
+        };
+        free_heavy.map_or(by_mem, |slots| by_mem.min(slots))
     });
     let line = match &busy {
         Some(r) => r.reason.clone(),
@@ -2218,6 +2225,40 @@ mod tests {
     }
 
     #[test]
+    fn can_take_for_a_heavy_job_is_capped_by_the_free_heavy_slots() {
+        // The workhorse in the 3.0.131 live test: 2/7 heavy, memory for ~7 more 50 GB jobs.
+        // The card said "can take ~7 more"; only 5 heavy slots are free, so it is ~5.
+        let gate = Gate::with_floor(20.0);
+        let own = OwnLoad {
+            cpu_load_per_core: Some(0.1),
+            ncpu: 28,
+            mem_free_pct: Some(90.0),
+            mem_total_gb: Some(512.0),
+            on_ac: Some(true),
+            thermal_limit: Some(0),
+            heavy_slots_used: 2,
+            heavy_slots_max: 7,
+            ..Default::default()
+        };
+        // 512 x (90 - 20)% = 358.4 GB above the floor -> 7 by memory.
+        assert_eq!(verdict(&own, 50.0, false, &gate).can_take, Some(7));
+        let v = verdict(&own, 50.0, true, &gate);
+        assert_eq!(v.can_take, Some(5));
+        assert!(v.line.ends_with("can take ~5 more 50 GB jobs"), "{}", v.line);
+        // Memory still caps it when it is the tighter limit.
+        let tight = OwnLoad { mem_free_pct: Some(40.0), ..own.clone() };
+        assert_eq!(verdict(&tight, 50.0, true, &gate).can_take, Some(2));
+        // Every slot taken: busy, and nothing more fits.
+        let full = OwnLoad { heavy_slots_used: 7, ..own.clone() };
+        assert_eq!(verdict(&full, 50.0, true, &gate).can_take, Some(0));
+        // An older report (only the flag) has one slot.
+        let old = OwnLoad { heavy_slots_used: 0, heavy_slots_max: 0, heavy_slot_held: false, ..own.clone() };
+        assert_eq!(verdict(&old, 50.0, true, &gate).can_take, Some(1));
+        let old_held = OwnLoad { heavy_slot_held: true, ..old };
+        assert_eq!(verdict(&old_held, 50.0, true, &gate).can_take, Some(0));
+    }
+
+    #[test]
     fn fixture_laptop_with_one_held_slot_admits_a_heavy_job_and_says_how_much_more() {
         let gate = Gate::with_floor(20.0);
         let own = laptop_with_slot0_held();
@@ -2227,17 +2268,20 @@ mod tests {
         );
         let v = verdict(&own, 8.0, true, &gate);
         assert_eq!(v.busy, None);
-        // 128 x (94 - 20)% = 94.7 GB above the floor -> 11 more 8 GB jobs.
+        // 128 x (94 - 20)% = 94.7 GB above the floor -> 11 more 8 GB jobs by memory, but only
+        // 2 heavy slots are free, so a heavy job reports ~2.
         assert_eq!(v.avail_gb, Some(94.7));
-        assert_eq!(v.can_take, Some(11));
+        assert_eq!(v.can_take, Some(2));
         assert_eq!(
             v.line,
-            "ok: 1/3 heavy, 120.3 GB free, load 0.28/core, can take ~11 more 8 GB jobs"
+            "ok: 1/3 heavy, 120.3 GB free, load 0.28/core, can take ~2 more 8 GB jobs"
         );
+        // A light job is not bound by heavy slots: memory alone decides.
+        assert_eq!(verdict(&own, 8.0, false, &gate).can_take, Some(11));
         // The card summary is the same verdict at default_need_gb.
         let mut card = own.clone();
         stamp_summary(&mut card, &gate);
-        assert_eq!(card.can_take, Some(11));
+        assert_eq!(card.can_take, Some(2));
         assert_eq!(card.verdict.as_deref(), Some(v.line.as_str()));
         // Only when EVERY slot is taken is a heavy job refused, with the count.
         let mut full = own;

@@ -15753,7 +15753,7 @@
           "description": "As `jobsSubmit`'s `strategy`; absent = the setting."
         }
       },
-      "description": "Where a job could run now, in the order a submit tries them (node_fleet's rules: OK nodes\nfirst, USER-ACTIVE as the last resort; inside each class this node first under\n`local-first`, last under `selfish`, the others by score). Busy nodes and nodes that do not\nallow jobs are not placements: they are `refusals`, each `{nodeId, code, reason}`.",
+      "description": "Where a job could run now, in the order a submit tries them (node_fleet's rules:\nthis node first under `local-first`, last under `selfish`; then the most room (`canTake`);\nUSER-ACTIVE only breaks a tie between equal room, then score). Busy nodes and nodes that do not\nallow jobs are not placements: they are `refusals`, each `{nodeId, code, reason}`.",
       "x-side": "agent",
       "x-method": "_goose/unstable/leanzeroLink/jobsPlace"
     },
