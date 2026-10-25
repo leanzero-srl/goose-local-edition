@@ -2769,7 +2769,10 @@
     "defaultMessage": "無法測量記憶體:{reason}"
   },
   "freeMemory.remoteQuitOff": {
-    "defaultMessage": "{mac} 不允許其他 Mac 結束它的 App(在那台 Mac 的 設定 › App)。請在那裡結束。"
+    "defaultMessage": "{mac} 不允許其他 Mac 結束它的 App 或卸載它的模型伺服器，因此從這裡只能釋放 goose 自己的記憶體。若要允許，請在 {mac} 上開啟 goose，前往 設定 › 應用程式，開啟「允許已連結的 Mac 結束這台 Mac 上的 App」。或直接在 {mac} 上結束它們。"
+  },
+  "freeMemory.onlyThere": {
+    "defaultMessage": "僅在 {mac} 上"
   },
   "freeMemory.title": {
     "defaultMessage": "釋放 {mac} 上的記憶體"

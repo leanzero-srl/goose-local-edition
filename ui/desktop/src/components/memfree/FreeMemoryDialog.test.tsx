@@ -191,12 +191,7 @@ describe('FreeMemoryDialog', () => {
     expect((await screen.findByTestId('free-memory-after')).textContent).toContain('14.0 GB');
   });
 
-  it('disables a peer’s Quit with the reason when remote app quit is off', async () => {
-    mockHolders.mockResolvedValue({ ...GABEE, quitAppsAllowed: false });
-    show({ target: 'n-gabee' });
-    expect(await screen.findByTestId('free-memory-quit-com.google.Chrome')).toBeDisabled();
-    expect(screen.getByTestId('free-memory-remote-off').textContent).toContain('Gabee');
-  });
+
 
   it('shows the measurement failure in words', async () => {
     mockHolders.mockRejectedValue(new Error('engine gone'));
@@ -288,6 +283,49 @@ describe('FreeMemoryDialog', () => {
     after: { budgetBytes: gb(11) },
     fit: { verdict: 'allow', shortBytes: null },
   };
+
+  it('3.0.132 O4: a peer with remote app quit off shows no Quit at all, only why and how to turn it on', async () => {
+    mockHolders.mockResolvedValue({ ...GABEE, quitAppsAllowed: false });
+    show({ target: 'n-gabee' });
+    const row = await screen.findByTestId('free-memory-holder-com.google.Chrome');
+    expect(screen.queryByTestId('free-memory-quit-com.google.Chrome')).toBeNull();
+    expect(within(row).queryByRole('button')).toBeNull();
+    expect(within(row).getByTestId('free-memory-only-there-com.google.Chrome').textContent).toContain(
+      'Gabee'
+    );
+    const off = screen.getByTestId('free-memory-remote-off').textContent ?? '';
+    expect(off).toContain('Gabee');
+    expect(off).toContain('Settings › App');
+    expect(off).toContain('Let linked Macs quit apps on this Mac');
+    // Free everything would only reach goose's own there: not offered, the one-click button is.
+    expect(screen.queryByTestId('free-memory-nuclear-open')).toBeNull();
+    expect(screen.getByTestId('free-memory-own')).toBeInTheDocument();
+  });
+
+  it('3.0.132 O4: a peer server gets no Unload and a failed quit gets no Force stop when remote quit is off', async () => {
+    mockHolders.mockResolvedValue({ ...WORKHORSE, quitAppsAllowed: false });
+    mockFree.mockResolvedValue({
+      ...OK_RESULT,
+      items: [
+        {
+          id: 'app:com.apple.TextEdit',
+          label: 'TextEdit',
+          ok: false,
+          message: "TextEdit didn't quit",
+          forceStoppable: true,
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    show({ target: 'n-wh' });
+    await screen.findByTestId('free-memory-holder-mlx:97100');
+    expect(screen.queryByTestId('free-memory-unload-mlx:97100')).toBeNull();
+    expect(screen.queryByTestId('free-memory-unload-ai:/Applications/LM Studio.app')).toBeNull();
+    expect(screen.getByTestId('free-memory-only-there-ai:/Applications/LM Studio.app')).toBeInTheDocument();
+    await user.click(screen.getByTestId('free-memory-own'));
+    await screen.findByTestId('free-memory-after');
+    expect(screen.queryByTestId('free-memory-force-com.apple.TextEdit')).toBeNull();
+  });
 
   it('a never-touch or protected app gets no Quit and no Force stop, and the row says why', async () => {
     mockHolders.mockResolvedValue({

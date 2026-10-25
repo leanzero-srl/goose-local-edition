@@ -1689,6 +1689,44 @@ mod tests {
         assert!(on.contains(&Step::App("com.apple.TextEdit".into())));
     }
 
+    /// 3.0.132 O4: the peer's own engine is the safety line, not the asking Mac's UI. Relayed with
+    /// GOOSE_LINK_ALLOW_REMOTE_APP_QUIT off, every app quit, force stop and server unload is refused
+    /// with the switch named, even an app that is not protected and is running; only goose's own runs.
+    #[test]
+    fn memfree_relayed_quit_and_force_stop_are_refused_with_the_switch_off() {
+        let groups = workhorse();
+        let req = MlxEngineMemoryFreeRequest {
+            goose_owned: true,
+            quit_apps: vec!["com.apple.TextEdit".into()],
+            force_stop_apps: vec!["com.apple.TextEdit".into()],
+            unload_servers: vec!["mlx:97100".into()],
+            ..Default::default()
+        };
+        let steps = select_free(&groups, &req, &nt(&[]), true, false);
+        assert!(
+            !steps
+                .iter()
+                .any(|s| matches!(s, Step::App(_) | Step::ForceStop(_) | Step::Server(_))),
+            "nothing beyond goose's own may run: {steps:?}"
+        );
+        let refusals: Vec<&str> = steps
+            .iter()
+            .filter_map(|s| match s {
+                Step::Refuse { message, .. } => Some(message.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(refusals.len(), 3, "{steps:?}");
+        assert!(refusals
+            .iter()
+            .all(|m| m.contains(ALLOW_REMOTE_APP_QUIT_KEY)));
+        assert!(steps.contains(&Step::OwnEngine));
+        // The same request from this Mac's own window goes through.
+        let local = select_free(&groups, &req, &nt(&[]), false, false);
+        assert!(local.contains(&Step::App("com.apple.TextEdit".into())));
+        assert!(local.contains(&Step::ForceStop("com.apple.TextEdit".into())));
+    }
+
     /// Review C3: every item is re-checked against a FRESH census right before it runs. A server
     /// that gained a user the person did not see is refused and named; one whose users are all
     /// ones they saw goes through; an app that became protected or quit is refused.

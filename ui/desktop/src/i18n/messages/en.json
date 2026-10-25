@@ -2891,6 +2891,9 @@
   "freeMemory.nuclearTotal": {
     "defaultMessage": "Ticked: <b>{gb} GB</b>"
   },
+  "freeMemory.onlyThere": {
+    "defaultMessage": "Only on {mac}"
+  },
   "freeMemory.protectedChip": {
     "defaultMessage": "Protected"
   },
@@ -2910,7 +2913,7 @@
     "defaultMessage": "Could not measure memory: {reason}"
   },
   "freeMemory.remoteQuitOff": {
-    "defaultMessage": "{mac} does not let other Macs quit its apps (Settings › App on that Mac). Quit them there."
+    "defaultMessage": "{mac} does not let other Macs quit its apps or unload its model servers, so from here only goose’s own memory can be freed. To allow it, open goose on {mac}, go to Settings › App and turn on “Let linked Macs quit apps on this Mac”. Or quit them on {mac} itself."
   },
   "freeMemory.title": {
     "defaultMessage": "Free up memory on {mac}"

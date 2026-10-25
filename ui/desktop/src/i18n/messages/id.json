@@ -2769,7 +2769,10 @@
     "defaultMessage": "Tidak dapat mengukur memori: {reason}"
   },
   "freeMemory.remoteQuitOff": {
-    "defaultMessage": "{mac} tidak mengizinkan Mac lain menutup aplikasinya (Pengaturan › App di Mac itu). Tutup di sana."
+    "defaultMessage": "{mac} tidak mengizinkan Mac lain menutup aplikasinya atau melepas server modelnya, jadi dari sini hanya memori milik goose yang bisa dibebaskan. Untuk mengizinkannya, buka goose di {mac}, buka Pengaturan › Aplikasi, lalu aktifkan “Izinkan Mac yang tertaut menutup aplikasi di Mac ini”. Atau tutup aplikasinya langsung di {mac}."
+  },
+  "freeMemory.onlyThere": {
+    "defaultMessage": "Hanya di {mac}"
   },
   "freeMemory.title": {
     "defaultMessage": "Bebaskan memori di {mac}"

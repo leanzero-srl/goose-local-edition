@@ -2769,7 +2769,10 @@
     "defaultMessage": "Não foi possível medir a memória: {reason}"
   },
   "freeMemory.remoteQuitOff": {
-    "defaultMessage": "{mac} não permite que outros Macs encerrem seus apps (Configurações › App naquele Mac). Encerre-os lá."
+    "defaultMessage": "{mac} não permite que outros Macs encerrem seus apps nem descarreguem seus servidores de modelos, então daqui só é possível liberar a memória do próprio goose. Para permitir, abra o goose em {mac}, vá em Definições › Aplicação e ative “Permitir que Macs vinculados encerrem apps neste Mac”. Ou encerre-os no próprio {mac}."
+  },
+  "freeMemory.onlyThere": {
+    "defaultMessage": "Só em {mac}"
   },
   "freeMemory.title": {
     "defaultMessage": "Liberar memória em {mac}"

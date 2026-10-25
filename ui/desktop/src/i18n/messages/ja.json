@@ -2769,7 +2769,10 @@
     "defaultMessage": "メモリを測定できませんでした: {reason}"
   },
   "freeMemory.remoteQuitOff": {
-    "defaultMessage": "{mac} は他の Mac によるアプリの終了を許可していません(その Mac の 設定 › アプリ)。そちらで終了してください。"
+    "defaultMessage": "{mac} は他の Mac によるアプリの終了やモデルサーバーのアンロードを許可していないため、ここからは goose 自身のメモリだけを解放できます。許可するには、{mac} で goose を開き、設定 › アプリ で「リンクされた Mac がこの Mac のアプリを終了できるようにする」をオンにしてください。または {mac} 上で直接終了してください。"
+  },
+  "freeMemory.onlyThere": {
+    "defaultMessage": "{mac} でのみ"
   },
   "freeMemory.title": {
     "defaultMessage": "{mac} のメモリを解放"

@@ -2769,7 +2769,10 @@
     "defaultMessage": "Speicher konnte nicht gemessen werden: {reason}"
   },
   "freeMemory.remoteQuitOff": {
-    "defaultMessage": "{mac} erlaubt anderen Macs nicht, seine Apps zu beenden (Einstellungen › App auf diesem Mac). Beende sie dort."
+    "defaultMessage": "{mac} erlaubt anderen Macs nicht, seine Apps zu beenden oder seine Modellserver zu entladen, daher kann von hier nur gooses eigener Speicher freigegeben werden. Zum Erlauben öffne goose auf {mac}, gehe zu Einstellungen › App und schalte „Verbundenen Macs erlauben, Apps auf diesem Mac zu beenden“ ein. Oder beende sie direkt auf {mac}."
+  },
+  "freeMemory.onlyThere": {
+    "defaultMessage": "Nur auf {mac}"
   },
   "freeMemory.title": {
     "defaultMessage": "Speicher freigeben auf {mac}"

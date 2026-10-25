@@ -2769,7 +2769,10 @@
     "defaultMessage": "Bellek ölçülemedi: {reason}"
   },
   "freeMemory.remoteQuitOff": {
-    "defaultMessage": "{mac}, diğer Mac’lerin uygulamalarını kapatmasına izin vermiyor (o Mac’te Ayarlar › Uygulama). Onları orada kapatın."
+    "defaultMessage": "{mac}, diğer Mac’lerin uygulamalarını kapatmasına veya model sunucularını boşaltmasına izin vermiyor; bu yüzden buradan yalnızca goose’un kendi belleği boşaltılabilir. İzin vermek için {mac} üzerinde goose’u açın, Ayarlar › Uygulama bölümüne gidin ve “Bağlı Mac’lerin bu Mac’teki uygulamaları kapatmasına izin ver” seçeneğini açın. Ya da uygulamaları doğrudan {mac} üzerinde kapatın."
+  },
+  "freeMemory.onlyThere": {
+    "defaultMessage": "Yalnızca {mac} üzerinde"
   },
   "freeMemory.title": {
     "defaultMessage": "{mac} üzerinde bellek boşalt"

@@ -2769,7 +2769,10 @@
     "defaultMessage": "Tidak dapat mengukur memori: {reason}"
   },
   "freeMemory.remoteQuitOff": {
-    "defaultMessage": "{mac} tidak membenarkan Mac lain menutup aplnya (Tetapan › App pada Mac itu). Tutup di sana."
+    "defaultMessage": "{mac} tidak membenarkan Mac lain menutup aplnya atau menyahmuat pelayan modelnya, jadi dari sini hanya memori goose sendiri boleh dikosongkan. Untuk membenarkannya, buka goose pada {mac}, pergi ke Tetapan › Aplikasi dan hidupkan “Benarkan Mac terpaut menutup apl pada Mac ini”. Atau tutup apl itu terus pada {mac}."
+  },
+  "freeMemory.onlyThere": {
+    "defaultMessage": "Hanya pada {mac}"
   },
   "freeMemory.title": {
     "defaultMessage": "Bebaskan memori pada {mac}"

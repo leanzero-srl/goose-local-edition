@@ -245,19 +245,28 @@ export function groupByCategory(groups: readonly MemfreeGroup[]): CategoryBlock[
 }
 
 /**
- * Whether a holder gets its own Quit button, and whether it is pressable. Only a quittable user app
- * with a bundle id is ever offered; system holders, goose's own, model servers, protected and
- * never-touch apps never are (the row shows the reason instead). A peer that does not allow remote
- * app quit shows the button disabled, with the reason.
+ * A row's own Quit / Unload button. `show: false, remoteOff: true` = it would be offered, but the peer
+ * Mac does not let other Macs quit its apps or unload its servers (its engine refuses every such
+ * request anyway): the row says "only on <Mac>" instead of a button that cannot work (3.0.132 O4).
+ */
+export type RowOffer = { show: true } | { show: false; remoteOff?: true };
+
+const offer = (allowed: boolean): RowOffer =>
+  allowed ? { show: true } : { show: false, remoteOff: true };
+
+/**
+ * Whether a holder gets its own Quit button. Only a quittable user app with a bundle id is ever
+ * offered; system holders, goose's own, model servers, protected and never-touch apps never are (the
+ * row shows the reason instead).
  */
 export function quitOffer(
   group: MemfreeGroup,
   quitAppsAllowed: boolean,
   neverTouch: readonly string[] = DEFAULT_NEVER_TOUCH
-): { show: false } | { show: true; disabled: boolean } {
+): RowOffer {
   if (group.category !== 'userApp' || !group.quittable || !group.bundleId) return { show: false };
   if (untouchable(group, neverTouch)) return { show: false };
-  return { show: true, disabled: !quitAppsAllowed };
+  return offer(quitAppsAllowed);
 }
 
 /**
@@ -271,19 +280,16 @@ export function isServerGroup(group: MemfreeGroup): boolean {
   );
 }
 
-/**
- * Whether a server gets its own Unload button, and whether it is pressable. Never for a protected
- * one or one goose cannot free now; a peer without remote app quit shows it disabled.
- */
+/** Whether a server gets its own Unload button: never for a protected one or one goose cannot free now. */
 export function unloadOffer(
   group: MemfreeGroup,
   allowed: boolean,
   neverTouch: readonly string[] = DEFAULT_NEVER_TOUCH
-): { show: false } | { show: true; disabled: boolean } {
+): RowOffer {
   if (!isServerGroup(group) || untouchable(group, neverTouch) || !group.reclaimableByGoose) {
     return { show: false };
   }
-  return { show: true, disabled: !allowed };
+  return offer(allowed);
 }
 
 /** The soft clean's own kinds: goose's idle engine and its proven left-over servers. */

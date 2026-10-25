@@ -98,8 +98,9 @@ const i18n = defineMessages({
   remoteQuitOff: {
     id: 'freeMemory.remoteQuitOff',
     defaultMessage:
-      '{mac} does not let other Macs quit its apps (Settings › App on that Mac). Quit them there.',
+      '{mac} does not let other Macs quit its apps or unload its model servers, so from here only goose’s own memory can be freed. To allow it, open goose on {mac}, go to Settings › App and turn on “Let linked Macs quit apps on this Mac”. Or quit them on {mac} itself.',
   },
+  onlyThere: { id: 'freeMemory.onlyThere', defaultMessage: 'Only on {mac}' },
   after: {
     id: 'freeMemory.after',
     defaultMessage:
@@ -548,17 +549,12 @@ export function FreeMemoryDialog({ target, macName, fitModelId, onClose }: FreeM
                             message: it.message,
                           })}
                         </p>
-                        {bundle && (
+                        {bundle && !remoteOff && (
                           <Button
                             variant="destructive"
                             size="sm"
                             data-testid={`free-memory-force-${bundle}`}
-                            disabled={remoteOff || busy != null}
-                            title={
-                              remoteOff
-                                ? intl.formatMessage(i18n.remoteQuitOff, { mac: macName })
-                                : undefined
-                            }
+                            disabled={busy != null}
                             icon={busy === it.id ? spinner : <Power />}
                             onClick={() => void forceStop(it, bundle)}
                           >
@@ -591,7 +587,7 @@ export function FreeMemoryDialog({ target, macName, fitModelId, onClose }: FreeM
                   ? intl.formatMessage(i18n.freeOwn, { gb: fmt(holders.gooseOwnedBytes) })
                   : intl.formatMessage(i18n.nothingOwn)}
               </Button>
-              {view === 'list' && (
+              {view === 'list' && !remoteOff && (
                 <Button
                   variant="secondary"
                   size="sm"
@@ -605,7 +601,7 @@ export function FreeMemoryDialog({ target, macName, fitModelId, onClose }: FreeM
               )}
             </div>
 
-            {!holders.quitAppsAllowed && target != null && (
+            {remoteOff && (
               <p data-testid="free-memory-remote-off" className={TYPE.meta}>
                 {intl.formatMessage(i18n.remoteQuitOff, { mac: macName })}
               </p>
@@ -791,12 +787,7 @@ export function FreeMemoryDialog({ target, macName, fitModelId, onClose }: FreeM
                                   variant="secondary"
                                   size="sm"
                                   data-testid={`free-memory-quit-${g.id}`}
-                                  disabled={offer.disabled || busy != null}
-                                  title={
-                                    offer.disabled
-                                      ? intl.formatMessage(i18n.remoteQuitOff, { mac: macName })
-                                      : undefined
-                                  }
+                                  disabled={busy != null}
                                   icon={busy === g.id ? spinner : <Power />}
                                   onClick={() => void quit(g)}
                                 >
@@ -808,17 +799,23 @@ export function FreeMemoryDialog({ target, macName, fitModelId, onClose }: FreeM
                                   variant="secondary"
                                   size="sm"
                                   data-testid={`free-memory-unload-${g.id}`}
-                                  disabled={unloadable.disabled || busy != null}
-                                  title={
-                                    unloadable.disabled
-                                      ? intl.formatMessage(i18n.remoteQuitOff, { mac: macName })
-                                      : undefined
-                                  }
+                                  disabled={busy != null}
                                   icon={busy === g.id ? spinner : <Unplug />}
                                   onClick={() => void unload(g)}
                                 >
                                   {intl.formatMessage(i18n.unload)}
                                 </Button>
+                              )}
+                              {((!offer.show && offer.remoteOff) ||
+                                (!unloadable.show && unloadable.remoteOff)) && (
+                                <span data-testid={`free-memory-only-there-${g.id}`}>
+                                  <Chip
+                                    tone="stopped"
+                                    title={intl.formatMessage(i18n.remoteQuitOff, { mac: macName })}
+                                  >
+                                    {intl.formatMessage(i18n.onlyThere, { mac: macName })}
+                                  </Chip>
+                                </span>
                               )}
                             </div>
                           </li>

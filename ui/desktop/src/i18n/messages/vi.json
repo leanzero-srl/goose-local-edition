@@ -2769,7 +2769,10 @@
     "defaultMessage": "Không thể đo bộ nhớ: {reason}"
   },
   "freeMemory.remoteQuitOff": {
-    "defaultMessage": "{mac} không cho phép các Mac khác thoát ứng dụng của nó (Cài đặt › Ứng dụng trên Mac đó). Hãy thoát chúng ở đó."
+    "defaultMessage": "{mac} không cho phép các Mac khác thoát ứng dụng hoặc gỡ máy chủ mô hình của nó, nên từ đây chỉ có thể giải phóng bộ nhớ của chính goose. Để cho phép, hãy mở goose trên {mac}, vào Cài đặt › Ứng dụng và bật “Cho phép các Mac được liên kết thoát ứng dụng trên Mac này”. Hoặc thoát chúng ngay trên {mac}."
+  },
+  "freeMemory.onlyThere": {
+    "defaultMessage": "Chỉ trên {mac}"
   },
   "freeMemory.title": {
     "defaultMessage": "Giải phóng bộ nhớ trên {mac}"

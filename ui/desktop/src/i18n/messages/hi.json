@@ -2769,7 +2769,10 @@
     "defaultMessage": "मेमोरी मापी नहीं जा सकी: {reason}"
   },
   "freeMemory.remoteQuitOff": {
-    "defaultMessage": "{mac} दूसरे Mac को अपने ऐप्स बंद करने नहीं देता (उस Mac पर सेटिंग्स › ऐप)। उन्हें वहीं बंद करें।"
+    "defaultMessage": "{mac} दूसरे Mac को अपने ऐप्स बंद करने या मॉडल सर्वर अनलोड करने नहीं देता, इसलिए यहाँ से सिर्फ़ goose की अपनी मेमोरी खाली की जा सकती है। इसकी अनुमति देने के लिए {mac} पर goose खोलें, Settings › ऐप में जाएँ और “जुड़े हुए Mac को इस Mac पर ऐप बंद करने दें” चालू करें। या उन्हें {mac} पर ही बंद करें।"
+  },
+  "freeMemory.onlyThere": {
+    "defaultMessage": "सिर्फ़ {mac} पर"
   },
   "freeMemory.title": {
     "defaultMessage": "{mac} पर मेमोरी खाली करें"

@@ -2769,7 +2769,10 @@
     "defaultMessage": "Impossible de mesurer la mémoire : {reason}"
   },
   "freeMemory.remoteQuitOff": {
-    "defaultMessage": "{mac} ne permet pas aux autres Mac de quitter ses apps (Réglages › App sur ce Mac). Quittez-les là-bas."
+    "defaultMessage": "{mac} ne permet pas aux autres Mac de quitter ses apps ni de décharger ses serveurs de modèles : d’ici, seule la mémoire de goose peut être libérée. Pour l’autoriser, ouvrez goose sur {mac}, allez dans Paramètres › Application et activez « Autoriser les Mac liés à quitter des apps sur ce Mac ». Ou quittez-les directement sur {mac}."
+  },
+  "freeMemory.onlyThere": {
+    "defaultMessage": "Seulement sur {mac}"
   },
   "freeMemory.title": {
     "defaultMessage": "Libérer de la mémoire sur {mac}"

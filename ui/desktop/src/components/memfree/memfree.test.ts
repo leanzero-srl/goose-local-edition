@@ -127,9 +127,11 @@ describe('quitOffer', () => {
     expect(quitOffer({ ...GABEE.groups[0], quittable: false }, true)).toEqual({ show: false });
   });
 
-  it('offers a user app, disabled where the Mac does not allow quitting', () => {
-    expect(quitOffer(GABEE.groups[0], true)).toEqual({ show: true, disabled: false });
-    expect(quitOffer(GABEE.groups[0], false)).toEqual({ show: true, disabled: true });
+  it('offers a user app; a peer that does not allow quitting gets no Quit, only the reason (3.0.132 O4)', () => {
+    expect(quitOffer(GABEE.groups[0], true)).toEqual({ show: true });
+    expect(quitOffer(GABEE.groups[0], false)).toEqual({ show: false, remoteOff: true });
+    // A holder that would never be offered stays plain: no "only there" note either.
+    expect(quitOffer(GABEE.groups[3], false)).toEqual({ show: false });
   });
   it('never offers quit for a never-touch or protected app (3.0.131: Outlook had Quit)', () => {
     const outlook = app('com.microsoft.Outlook', 'Microsoft Outlook', 1.2);
@@ -137,7 +139,7 @@ describe('quitOffer', () => {
     const folded = { ...outlook, protectedWhy: 'on the never-touch list (com.microsoft.Outlook)' };
     expect(quitOffer(folded, true, [])).toEqual({ show: false });
     const olk = app('com.example.olk', 'Microsoft Outlook', 1.2);
-    expect(quitOffer(olk, true, [])).toEqual({ show: true, disabled: false });
+    expect(quitOffer(olk, true, [])).toEqual({ show: true });
     expect(quitOffer(olk, true, ['Outlook'])).toEqual({ show: false });
     expect(quitOffer({ ...olk, protectedWhy: 'launchd job x' }, true, [])).toEqual({ show: false });
     expect(userApps([outlook, olk], ['Outlook']).map((g) => g.id)).toEqual([]);
@@ -269,12 +271,12 @@ describe('never-touch match hint (review C7)', () => {
 });
 
 describe('unload offer', () => {
-  it('only a server goose can free now, never a protected one; disabled when remote is off', () => {
-    expect(unloadOffer(grp('mlx:97100', 'gooseEngine'), true)).toEqual({
-      show: true,
-      disabled: false,
+  it('only a server goose can free now, never a protected one; no Unload when remote is off', () => {
+    expect(unloadOffer(grp('mlx:97100', 'gooseEngine'), true)).toEqual({ show: true });
+    expect(unloadOffer(grp('ai:lms', 'aiServer'), false)).toEqual({ show: false, remoteOff: true });
+    expect(unloadOffer(grp('ai:lms', 'aiServer', { protectedWhy: 'launchd' }), false)).toEqual({
+      show: false,
     });
-    expect(unloadOffer(grp('ai:lms', 'aiServer'), false)).toEqual({ show: true, disabled: true });
     expect(unloadOffer(grp('ai:lms', 'aiServer', { protectedWhy: 'launchd' }), true).show).toBe(
       false
     );

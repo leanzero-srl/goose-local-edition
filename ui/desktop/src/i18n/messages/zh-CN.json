@@ -2769,7 +2769,10 @@
     "defaultMessage": "无法测量内存:{reason}"
   },
   "freeMemory.remoteQuitOff": {
-    "defaultMessage": "{mac} 不允许其他 Mac 退出它的应用(在那台 Mac 上的 设置 › 应用)。请在那里退出。"
+    "defaultMessage": "{mac} 不允许其他 Mac 退出它的应用或卸载它的模型服务器，因此从这里只能释放 goose 自己的内存。要允许，请在 {mac} 上打开 goose，前往 设置 › 应用，开启“允许已连接的 Mac 退出这台 Mac 上的应用”。或者直接在 {mac} 上退出它们。"
+  },
+  "freeMemory.onlyThere": {
+    "defaultMessage": "仅在 {mac} 上"
   },
   "freeMemory.title": {
     "defaultMessage": "释放 {mac} 上的内存"
