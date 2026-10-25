@@ -176,6 +176,72 @@ fn is_ai_server(path: &str, bundle_id: Option<&str>) -> bool {
     ) || bundle_id.is_some_and(|b| b == "ai.elementlabs.lmstudio" || b == "com.electron.ollama")
         || path.contains("/LM Studio.app/")
         || path.contains("/Ollama.app/")
+        || is_lmstudio_runtime(path)
+}
+
+/// LM Studio runs its models OUTSIDE its .app: a node runtime and engine helpers under
+/// `~/.lmstudio/` (measured 2026-10-25 on the laptop: `~/.lmstudio/.internal/utils/node`, child of
+/// the app, held the loaded model while the .app's own processes held 0.4 GB of it).
+fn is_lmstudio_runtime(path: &str) -> bool {
+    path.contains("/.lmstudio/")
+}
+
+/// Which model-server group each process belongs to, as (group key, label, bundle id). A server
+/// is its own processes plus every descendant (the worker that holds the weights is a child), and
+/// a loose `~/.lmstudio/` process with no LM Studio parent is the headless `lms` server.
+fn ai_server_membership(
+    rows: &[ProcRow],
+    ctx: &CategorizeCtx,
+) -> HashMap<u32, (String, String, Option<String>)> {
+    let mut member: HashMap<u32, (String, String, Option<String>)> = HashMap::new();
+    for row in rows.iter().filter(|r| r.uid == ctx.self_uid) {
+        let app = outer_app(&row.path);
+        let bundle = app.and_then(|a| ctx.bundles.get(a));
+        let bundle_id = bundle.map(|(b, _)| b.as_str());
+        if !is_ai_server(&row.path, bundle_id) {
+            continue;
+        }
+        let entry = match (app, bundle) {
+            (Some(app), _) if !is_lmstudio_runtime(&row.path) => (
+                app.to_string(),
+                bundle
+                    .map(|(_, n)| n.clone())
+                    .unwrap_or_else(|| basename(app).trim_end_matches(".app").to_string()),
+                bundle_id.map(str::to_string),
+            ),
+            _ if is_lmstudio_runtime(&row.path) => {
+                ("lms".to_string(), "LM Studio".to_string(), None)
+            }
+            _ => {
+                let name = process_name(&row.path);
+                (name.clone(), name, None)
+            }
+        };
+        member.insert(row.pid, entry);
+    }
+    // Descendants join their server; a runtime under an app joins the app (fixed point).
+    loop {
+        let mut changed = false;
+        for row in rows
+            .iter()
+            .filter(|r| r.uid == ctx.self_uid && r.pid != r.ppid)
+        {
+            let Some(parent) = member.get(&row.ppid).cloned() else {
+                continue;
+            };
+            let adopt = match member.get(&row.pid) {
+                None => true,
+                Some((key, _, _)) => key == "lms" && parent.0 != "lms",
+            };
+            if adopt {
+                member.insert(row.pid, parent);
+                changed = true;
+            }
+        }
+        if !changed {
+            return member;
+        }
+    }
 }
 
 const JOB_NAMES: &[&str] = &[
@@ -306,6 +372,7 @@ pub fn categorize(rows: &[ProcRow], ctx: &CategorizeCtx) -> Vec<Group> {
     // tree under the recorded pid is the engine (measured live 2026-10-25: uv 66 MB, python 4.9 GB).
     let own = with_descendants(&ctx.own_engine_pids, rows);
     let others: HashSet<u32> = ctx.other_engine_pids.iter().copied().collect();
+    let ai_member = ai_server_membership(rows, ctx);
     let mut groups: BTreeMap<String, Group> = BTreeMap::new();
     // An app is protected when ANY of its processes is (the main binary may be an ancestor).
     let mut app_blocked: HashMap<String, &'static str> = HashMap::new();
@@ -414,13 +481,8 @@ pub fn categorize(rows: &[ProcRow], ctx: &CategorizeCtx) -> Vec<Group> {
             );
             continue;
         }
-        if is_ai_server(&row.path, bundle_id) {
-            let key = app.clone().unwrap_or_else(|| name.clone());
+        if let Some((key, label, bid)) = ai_member.get(&row.pid).cloned() {
             let id = format!("ai:{key}");
-            let label = bundle
-                .map(|(_, n)| n.clone())
-                .unwrap_or_else(|| name.clone());
-            let bid = bundle_id.map(str::to_string);
             add(
                 id.clone(),
                 &|| Group {
@@ -965,6 +1027,56 @@ mod tests {
                 .collect(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn lm_studio_counts_its_runtime_outside_the_app() {
+        // Laptop 2026-10-25: the model lived in ~/.lmstudio/.internal/utils/node (child of the
+        // app) and a worker under it; the .app's own processes held a fraction of it.
+        let rows = vec![
+            row(1, 0, 0, "/sbin/launchd", 0),
+            row(1628, 1, 501, "/Applications/LM Studio.app/Contents/MacOS/LM Studio", GB / 2),
+            row(
+                3540,
+                1628,
+                501,
+                "/Applications/LM Studio.app/Contents/Frameworks/LM Studio Helper (GPU).app/Contents/MacOS/LM Studio Helper (GPU)",
+                GB / 10,
+            ),
+            row(3542, 1628, 501, "/Users/me/.lmstudio/.internal/utils/node", 2 * GB),
+            row(3600, 3542, 501, "/Users/me/.lmstudio/extensions/backends/x/worker", GB),
+            // headless `lms` server with no app parent: its own group, still LM Studio
+            row(4000, 1, 501, "/Users/me/.lmstudio/llmster/node", 3 * GB),
+            // a plain node of another tool stays a job
+            row(4100, 1, 501, "/opt/homebrew/bin/node", GB),
+        ];
+        let c = ctx(&[(
+            "/Applications/LM Studio.app",
+            "ai.elementlabs.lmstudio",
+            "LM Studio",
+        )]);
+        let groups = categorize(&rows, &c);
+        let by = |id: &str| {
+            groups
+                .iter()
+                .find(|g| g.id == id)
+                .unwrap_or_else(|| panic!("{id}: {groups:?}"))
+        };
+        let app = by("ai:/Applications/LM Studio.app");
+        assert_eq!(app.category, Category::AiServer);
+        assert_eq!(app.bytes, GB / 2 + GB / 10 + 2 * GB + GB);
+        assert_eq!(app.pids.len(), 4);
+        assert_eq!(app.bundle_id.as_deref(), Some("ai.elementlabs.lmstudio"));
+        let headless = by("ai:lms");
+        assert_eq!(
+            (headless.bytes, headless.label.as_str()),
+            (3 * GB, "LM Studio")
+        );
+        assert_eq!(
+            crate::memfree_servers::ai_server_kind(&headless.id, None),
+            Some(crate::memfree_servers::AiServerKind::LmStudio)
+        );
+        assert_eq!(by("job:node").category, Category::Job);
     }
 
     #[test]

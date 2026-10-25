@@ -201,21 +201,67 @@ fn goose_owned_outside_engine(groups: &[Group], ai: &HashMap<String, AiHold>) ->
         .sum()
 }
 
-/// Wait (bounded, transport-style) for a reclaim's memory to leave; the measured remainder.
-async fn settle_footprint(pids: &[(u32, u64)], before: u64, expected: u64) -> u64 {
-    let target = before.saturating_sub(expected / 2);
-    let mut alive = footprint_alive(pids);
-    for _ in 0..32 {
-        if alive <= target {
+/// Poll interval and cap while a reclaim's memory leaves (the cap is the ~10 s a person waits).
+const SETTLE_POLL: std::time::Duration = std::time::Duration::from_millis(250);
+const SETTLE_POLLS: usize = 40;
+/// Readings in a row that must agree before the freed figure counts as settled (1 s).
+const SETTLE_STEADY: usize = 4;
+
+/// Each process's footprint right now, 0 once it is gone (pid + start time, so a reused pid
+/// never counts).
+fn footprints(pids: &[(u32, u64)]) -> Vec<u64> {
+    pids.iter()
+        .map(|&(pid, started)| {
+            if memfree::alive(pid, started) {
+                memfree::footprint(pid).unwrap_or(0)
+            } else {
+                0
+            }
+        })
+        .collect()
+}
+
+/// What left, process by process: a process that shrank or exited counts its drop, one that grew
+/// meanwhile (a UI repainting its model list) counts 0 instead of cancelling the others out.
+fn freed_between(before: &[u64], now: &[u64]) -> u64 {
+    before
+        .iter()
+        .zip(now)
+        .map(|(b, n)| b.saturating_sub(*n))
+        .sum()
+}
+
+/// Wait (bounded, ~10 s) for a reclaim's memory to leave and then stop moving; the bytes freed,
+/// measured against `before` (taken just before the reclaim). Measured live 2026-10-25 on the
+/// laptop: LM Studio's model sat in a `~/.lmstudio` node worker outside the .app, and the old
+/// "group total minus what is alive, read once" figure said 0.4 GiB against a 1.6 GiB rise.
+async fn settle_freed(pids: &[(u32, u64)], before: &[u64], expected: u64) -> u64 {
+    let mut freed = freed_between(before, &footprints(pids));
+    let mut steady = 0;
+    for _ in 0..SETTLE_POLLS {
+        tokio::time::sleep(SETTLE_POLL).await;
+        let now = freed_between(before, &footprints(pids));
+        steady = if settled(freed, now, expected) {
+            steady + 1
+        } else {
+            0
+        };
+        freed = now;
+        if freed >= expected / 2 && steady + 1 >= SETTLE_STEADY {
             break;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-        alive = footprint_alive(pids);
     }
-    alive
+    freed
+}
+
+/// Two readings within 2% of the expected reclaim (at least 16 MiB) agree.
+fn settled(prev: u64, now: u64, expected: u64) -> bool {
+    let slack = (expected / 50).max(16 << 20);
+    prev.abs_diff(now) <= slack
 }
 
 async fn unload_ai(g: &Group, hold: &AiHold) -> MlxMemoryFreeItemDto {
+    let before = footprints(&g.pids);
     let mut messages = vec![];
     let mut failed = false;
     if !hold.via_cli {
@@ -243,17 +289,18 @@ async fn unload_ai(g: &Group, hold: &AiHold) -> MlxMemoryFreeItemDto {
         }
     }
     let expected = hold.reclaim_bytes(g).max(1);
-    let alive = settle_footprint(&g.pids, g.bytes, expected).await;
+    let freed = settle_freed(&g.pids, &before, expected).await;
     MlxMemoryFreeItemDto {
         id: g.id.clone(),
         label: g.label.clone(),
         ok: !failed,
-        freed_bytes: Some(g.bytes.saturating_sub(alive)),
+        freed_bytes: Some(freed),
         message: messages.join("; "),
     }
 }
 
 async fn reap_orphan(g: &Group) -> MlxMemoryFreeItemDto {
+    let before = footprints(&g.pids);
     let mut messages = vec![];
     let mut ok = true;
     for &(pid, started_at) in &g.pids {
@@ -269,7 +316,7 @@ async fn reap_orphan(g: &Group) -> MlxMemoryFreeItemDto {
         id: g.id.clone(),
         label: g.label.clone(),
         ok,
-        freed_bytes: Some(g.bytes.saturating_sub(footprint_alive(&g.pids))),
+        freed_bytes: Some(settle_freed(&g.pids, &before, before.iter().sum::<u64>().max(1)).await),
         message: messages.join("; "),
     }
 }
@@ -339,14 +386,6 @@ fn shorts(fit: &FitVerdict) -> (u64, u64) {
         need.saturating_sub(ram_room),
         need.saturating_sub(fit.facts.ceiling_bytes),
     )
-}
-
-/// What is still alive of `pids`, by footprint.
-fn footprint_alive(pids: &[(u32, u64)]) -> u64 {
-    pids.iter()
-        .filter(|&&(pid, started)| memfree::alive(pid, started))
-        .filter_map(|&(pid, _)| memfree::footprint(pid))
-        .sum()
 }
 
 /// Free memory on a peer from its own Link load report (available % x RAM). `None` when the
@@ -515,6 +554,7 @@ pub(super) async fn core_memory_free(
         let (groups, ai) = groups(&ctx).await?;
         if let Some(g) = groups.iter().find(|g| g.id == "gooseEngine") {
             if g.reclaimable_by_goose {
+                let before = footprints(&g.pids);
                 let result =
                     core_unmount(MlxEngineUnmountRequest::default(), EngineStopper::Owner).await;
                 let (ok, message) = match result {
@@ -524,11 +564,16 @@ pub(super) async fn core_memory_free(
                     }
                     Err(e) => (false, e.message.clone()),
                 };
+                let freed = if ok {
+                    Some(settle_freed(&g.pids, &before, before.iter().sum::<u64>().max(1)).await)
+                } else {
+                    None
+                };
                 items.push(MlxMemoryFreeItemDto {
                     id: g.id.clone(),
                     label: g.label.clone(),
                     ok,
-                    freed_bytes: ok.then(|| g.bytes.saturating_sub(footprint_alive(&g.pids))),
+                    freed_bytes: freed,
                     message,
                 });
             } else {
@@ -545,6 +590,7 @@ pub(super) async fn core_memory_free(
             }
         }
         for g in groups.iter().filter(|g| is_other_mlx(g)) {
+            let before = footprints(&g.pids);
             let mut messages = vec![];
             let mut ok = true;
             for &(pid, started_at) in &g.pids {
@@ -556,7 +602,7 @@ pub(super) async fn core_memory_free(
                     }
                 }
             }
-            let freed = g.bytes.saturating_sub(footprint_alive(&g.pids));
+            let freed = settle_freed(&g.pids, &before, before.iter().sum::<u64>().max(1)).await;
             items.push(MlxMemoryFreeItemDto {
                 id: g.id.clone(),
                 label: g.label.clone(),
@@ -660,6 +706,28 @@ mod tests {
         own.mem_free_pct = Some(10.0);
         own.mem_total_gb = None;
         assert_eq!(free_bytes_from_load(&own), None);
+    }
+
+    #[test]
+    fn a_reclaim_settles_only_when_readings_agree() {
+        let gib = 1u64 << 30;
+        // still falling by 0.5 GiB between polls: not settled
+        assert!(!settled(gib / 2, gib, 2 * gib));
+        // within 2% of the expected reclaim: settled
+        assert!(settled(gib - gib / 100, gib, 2 * gib));
+        // tiny reclaims get a 16 MiB floor of slack
+        assert!(settled(0, 10 << 20, 1));
+    }
+
+    #[test]
+    fn freed_counts_each_process_drop_and_ignores_growth() {
+        let mib = 1u64 << 20;
+        // LM Studio 2026-10-25: the worker (2519 MiB) exits, the GPU helper shrinks 200 MiB,
+        // the renderer grows 300 MiB while the UI repaints: freed = 2519 + 200, not 2419.
+        let before = [298 * mib, 657 * mib, 282 * mib, 2519 * mib];
+        let now = [298 * mib, 457 * mib, 582 * mib, 0];
+        assert_eq!(freed_between(&before, &now), 2719 * mib);
+        assert_eq!(freed_between(&before, &before), 0);
     }
 
     #[test]
