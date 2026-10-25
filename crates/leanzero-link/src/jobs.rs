@@ -803,7 +803,21 @@ impl JobRegistry {
 
     fn get(&self, id: &str) -> Option<Arc<JobEntry>> {
         self.ensure_rebuilt();
+        self.prune_deleted();
         self.jobs.lock().unwrap().get(id).cloned()
+    }
+
+    /// D14: a FINISHED job whose ledger dir was deleted (by hand, a cleanup) leaves the list at
+    /// once instead of at the next goose restart. A job that is still running stays listed:
+    /// its watchdog owns the process and the heavy slot, and only it may end the record.
+    fn prune_deleted(&self) {
+        self.jobs.lock().unwrap().retain(|id, e| {
+            if !e.snapshot().state.is_terminal() || e.dir.join("job.json").exists() {
+                return true;
+            }
+            tracing::info!(job = %id, dir = %e.dir.display(), "jobs: ledger dir deleted, dropping the finished job from the list");
+            false
+        });
     }
 
     /// Rebuild from the ledger once, the first time the switch is on inside a tokio runtime.
@@ -1059,6 +1073,7 @@ impl JobRegistry {
     /// Newest first.
     pub fn list(&self) -> Vec<JobView> {
         self.ensure_rebuilt();
+        self.prune_deleted();
         let mut v: Vec<JobView> = self
             .jobs
             .lock()
@@ -1077,6 +1092,7 @@ impl JobRegistry {
     /// What `NodeLoad.jobs` carries: running jobs plus those that ended < 10 min ago.
     pub fn briefs(&self) -> Vec<JobBrief> {
         self.ensure_rebuilt();
+        self.prune_deleted();
         let cutoff = Utc::now() - chrono::Duration::from_std(BRIEF_KEEP).unwrap_or_default();
         let mut v: Vec<JobRecord> = self
             .jobs

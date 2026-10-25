@@ -2289,6 +2289,53 @@ mod jobs_http {
         n.handle.shutdown();
     }
 
+    /// D14 (3.0.130 live): a finished job whose ledger dir was deleted stayed listed (and
+    /// viewable) until goose restarted. It leaves the list and the view at once.
+    #[tokio::test]
+    async fn a_finished_job_whose_ledger_dir_is_deleted_leaves_the_list_at_once() {
+        let n = spawn_jobs_node(true, test_limits(), None).await;
+        let (s, v) = submit(&n, shell("true")).await;
+        assert_eq!(s, 202, "{v}");
+        let id = v["job_id"].as_str().unwrap().to_string();
+        let end = wait_terminal(&n, &id, Duration::from_secs(5)).await;
+        assert_eq!(end["state"], "done", "{end}");
+        let c = reqwest::Client::new();
+        let list = get_json(&c, &format!("{}/v1/swarm/jobs", n.base)).await;
+        assert!(list.to_string().contains(&id), "listed before the delete: {list}");
+
+        std::fs::remove_dir_all(n.root.join(&id)).unwrap();
+        let list = get_json(&c, &format!("{}/v1/swarm/jobs", n.base)).await;
+        assert!(!list.to_string().contains(&id), "still listed: {list}");
+        assert_eq!(job(&n, &id).await.0, 404);
+        n.handle.shutdown();
+    }
+
+    /// D14's guard: a RUNNING job whose dir vanished stays listed — its watchdog still owns
+    /// the process, and cancel must still reach it.
+    #[tokio::test]
+    async fn a_running_job_whose_ledger_dir_is_deleted_stays_listed() {
+        let n = spawn_jobs_node(true, test_limits(), None).await;
+        let (s, v) = submit(&n, shell("sleep 30")).await;
+        assert_eq!(s, 202, "{v}");
+        let id = v["job_id"].as_str().unwrap().to_string();
+        std::fs::remove_dir_all(n.root.join(&id)).unwrap();
+        let c = reqwest::Client::new();
+        let list = get_json(&c, &format!("{}/v1/swarm/jobs", n.base)).await;
+        assert!(list.to_string().contains(&id), "dropped while running: {list}");
+        let r = c
+            .post(format!("{}/v1/swarm/jobs/{id}/cancel", n.base))
+            .bearer_auth(TOKEN)
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            matches!(r.status().as_u16(), 200 | 202),
+            "cancel still reaches it: {}",
+            r.status()
+        );
+        n.handle.shutdown();
+    }
+
     /// An executor that streams its run into the sink it is handed: one line at accept time,
     /// two more later from its own task — the shape of a real goose run.
     struct StreamingExecutor;
