@@ -896,6 +896,36 @@
       "responseType": "LeanzeroLinkRemoteExecuteResponse_unstable"
     },
     {
+      "method": "_goose/unstable/leanzeroLink/jobsSubmit",
+      "requestType": "LeanzeroLinkJobsSubmitRequest_unstable",
+      "responseType": "LeanzeroLinkJobsSubmitResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/leanzeroLink/jobsList",
+      "requestType": "LeanzeroLinkJobsListRequest_unstable",
+      "responseType": "LeanzeroLinkJobsListResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/leanzeroLink/jobsGet",
+      "requestType": "LeanzeroLinkJobsGetRequest_unstable",
+      "responseType": "LeanzeroLinkJobsJobResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/leanzeroLink/jobsCancel",
+      "requestType": "LeanzeroLinkJobsCancelRequest_unstable",
+      "responseType": "LeanzeroLinkJobsJobResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/leanzeroLink/jobsLog",
+      "requestType": "LeanzeroLinkJobsLogRequest_unstable",
+      "responseType": "LeanzeroLinkJobsLogResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/leanzeroLink/jobsPlace",
+      "requestType": "LeanzeroLinkJobsPlaceRequest_unstable",
+      "responseType": "LeanzeroLinkJobsPlaceResponse_unstable"
+    },
+    {
       "method": "_goose/unstable/nodes/read",
       "requestType": "NodesReadRequest_unstable",
       "responseType": "NodesReadResponse_unstable"

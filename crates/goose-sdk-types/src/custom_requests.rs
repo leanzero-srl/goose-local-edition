@@ -5117,6 +5117,127 @@ pub struct LeanzeroLinkRemoteExecuteResponse {
     pub session_id: String,
 }
 
+/// Mesh jobs (`/v1/swarm/jobs` on a node). Every jobs method needs the manager `connected`
+/// (else `invalid_params` "not connected to the mesh"). A refusal from the target (switch
+/// off, no memory headroom, heavy slot held, benchmark running, user active, ...) is an
+/// `invalid_params` error whose `data` is the node's `{code, reason}` verbatim. Job views,
+/// logs and placements are carried as the node's own JSON (`leanzero_link::jobs` DTOs);
+/// a view never carries the command line.
+///
+/// Submit one job. `targetNodeId` absent = place it on the best node (see `jobsPlace`).
+/// `job` is a `JobRequest`: `{kind: "shell"|"prompt", command, cwd?, needMemGb?, heavy,
+/// timeoutS?}` (snake_case keys inside `job`, as the node's route takes them).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/leanzeroLink/jobsSubmit",
+    response = LeanzeroLinkJobsSubmitResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkJobsSubmitRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_node_id: Option<String>,
+    pub job: serde_json::Value,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkJobsSubmitResponse {
+    /// Where the job went (the placement's pick when no target was given).
+    pub node_id: String,
+    pub job_id: String,
+}
+
+/// Every job a node knows (running and finished since it started), newest first as it lists them.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/leanzeroLink/jobsList",
+    response = LeanzeroLinkJobsListResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkJobsListRequest {
+    pub target_node_id: String,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkJobsListResponse {
+    pub jobs: Vec<serde_json::Value>,
+}
+
+/// One job's view (brief + outcome), as `GET /v1/swarm/jobs/{id}`.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/leanzeroLink/jobsGet",
+    response = LeanzeroLinkJobsJobResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkJobsGetRequest {
+    pub target_node_id: String,
+    pub job_id: String,
+}
+
+/// Cancel a shell job: its whole process group is TERMed, then KILLed after the grace. The
+/// group dies async: poll `jobsGet` for `cancelled`/143. A prompt job answers
+/// `cancel_unsupported`.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/leanzeroLink/jobsCancel",
+    response = LeanzeroLinkJobsJobResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkJobsCancelRequest {
+    pub target_node_id: String,
+    pub job_id: String,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkJobsJobResponse {
+    pub job: serde_json::Value,
+}
+
+/// Bytes `[from, next)` of a job's combined stdout+stderr (`{from, next, data, done}`).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/leanzeroLink/jobsLog",
+    response = LeanzeroLinkJobsLogResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkJobsLogRequest {
+    pub target_node_id: String,
+    pub job_id: String,
+    #[serde(default)]
+    pub from: u64,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkJobsLogResponse {
+    pub log: serde_json::Value,
+}
+
+/// Where a job could run now, best first (node_fleet's rules: OK nodes by score, then
+/// USER-ACTIVE as the last resort; busy nodes and nodes that do not allow jobs are absent).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/leanzeroLink/jobsPlace",
+    response = LeanzeroLinkJobsPlaceResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkJobsPlaceRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub need_mem_gb: Option<f64>,
+    #[serde(default)]
+    pub heavy: bool,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkJobsPlaceResponse {
+    /// `{nodeId, userActive, score}` per candidate, best first.
+    pub placements: Vec<serde_json::Value>,
+}
+
 #[cfg(test)]
 mod mlx_engine_status_dto_tests {
     use super::*;

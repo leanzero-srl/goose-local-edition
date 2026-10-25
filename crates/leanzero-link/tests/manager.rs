@@ -3111,3 +3111,134 @@ async fn a_leaving_peer_is_refused_by_name_until_the_fabric_sees_it_again() {
     studio.shutdown();
     manager.logout(false).await.unwrap();
 }
+
+// ── jobs: submit / list / view / log / cancel through the manager to a peer ────
+
+#[tokio::test]
+async fn jobs_go_to_a_peer_with_this_nodes_origin_and_refusals_stay_typed() {
+    use leanzero_link::jobs::{JobRequest, JobsConfig, JobsSwitch, RefusalCode};
+    use leanzero_link::load::{JobKind, NodeLimits, OwnLoad};
+    let tmp = tempfile::tempdir().unwrap();
+    let mut b_config = ControlConfig::new(node_token_from_secret(SECRET), None);
+    b_config.port = 0;
+    b_config.jobs = JobsConfig {
+        switch: JobsSwitch::fixed(true),
+        root: tmp.path().join("jobs"),
+        heavy_lock: tmp.path().join("lock"),
+        limits: Some(NodeLimits {
+            kill_free: 0.0,
+            ..NodeLimits::default()
+        }),
+        min_free: Some(20.0),
+        sampler: Arc::new(|| OwnLoad {
+            mem_free_pct: Some(80.0),
+            mem_total_gb: Some(128.0),
+            on_ac: Some(true),
+            user_idle_s: Some(9999.0),
+            ..Default::default()
+        }),
+        tick: Duration::from_millis(200),
+        ..JobsConfig::default()
+    };
+    let b = ControlService::start(
+        b_config,
+        Arc::new(NamedIdleSource {
+            node_id: "node-b".to_string(),
+        }),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("node B starts");
+    let b_port = b.local_addr().port();
+
+    let server = MockServer::start().await;
+    mount(
+        &server,
+        "POST",
+        "/v1/mesh/join-key",
+        200,
+        json!({"authKey": "tskey-auth-ok", "nodeSecret": SECRET, "expirySeconds": 600}),
+    )
+    .await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    let manager = h.manager(&server, false);
+    manager.connect().await.expect("A connects");
+    let registry = manager.active_registry().await.unwrap();
+    let target = PeerTarget {
+        hostname: "node-b".to_string(),
+        mesh_ip: Some(support::fake_tailnet().expose(b_port)),
+        port: b_port,
+    };
+    let req = JobRequest {
+        kind: JobKind::Shell,
+        command: "echo hello-from-b".into(),
+        cwd: None,
+        need_mem_gb: None,
+        heavy: false,
+        timeout_s: Some(30),
+        origin_node: Some("spoofed".into()),
+        allow_user_active: false,
+    };
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let (node, accepted) = loop {
+        registry.set_peers(vec![target.clone()]);
+        match manager.submit_job(Some("node-b"), req.clone()).await {
+            Ok(v) => break v,
+            Err(LinkError::UnknownPeer(_)) if tokio::time::Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            Err(other) => panic!("unexpected submit_job error: {other:?}"),
+        }
+    };
+    assert_eq!(node, "node-b");
+    let id = accepted.job_id;
+
+    // The origin B records is A's node id, never what the caller wrote.
+    registry.set_peers(vec![target.clone()]); // the reconcile may have wiped it
+    let list = manager.list_jobs("node-b").await.unwrap();
+    let row = list.iter().find(|j| j.brief.job_id == id).expect("listed");
+    let a_id = manager.local_node_id().await;
+    assert_eq!(row.brief.origin_node, a_id);
+    assert_ne!(row.brief.origin_node, "spoofed");
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        registry.set_peers(vec![target.clone()]); // the reconcile may have wiped it
+        let v = manager.job_view("node-b", &id).await.unwrap();
+        if v.brief.state.is_terminal() {
+            assert_eq!(v.exit_code, Some(0), "{v:?}");
+            break;
+        }
+        assert!(tokio::time::Instant::now() < deadline, "job never ended");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    registry.set_peers(vec![target.clone()]); // the reconcile may have wiped it
+    let log = manager.job_log("node-b", &id, 0).await.unwrap();
+    assert!(log.data.contains("hello-from-b"), "{log:?}");
+
+    registry.set_peers(vec![target.clone()]); // the reconcile may have wiped it
+    match manager.cancel_job("node-b", &id).await {
+        Err(LinkError::Job(r)) => assert_eq!(r.code, RefusalCode::AlreadyFinished),
+        other => panic!("expected already_finished, got {other:?}"),
+    }
+    registry.set_peers(vec![target.clone()]); // the reconcile may have wiped it
+    match manager.job_view("node-b", "nope").await {
+        Err(LinkError::Job(r)) => assert_eq!(r.code, RefusalCode::NotFound),
+        other => panic!("expected not_found, got {other:?}"),
+    }
+    // A's own switch is OFF (the default): self-targeted submit is the typed refusal, and
+    // A never ranks itself.
+    match manager.submit_job(Some(&a_id), req.clone()).await {
+        Err(LinkError::Job(r)) => assert_eq!(r.code, RefusalCode::JobsDisabled),
+        other => panic!("expected jobs_disabled, got {other:?}"),
+    }
+    let ranked = manager.place_job(0.0, false).await.unwrap();
+    assert!(ranked.iter().all(|p| p.node_id != a_id), "{ranked:?}");
+
+    b.shutdown();
+    manager.logout(false).await.unwrap();
+}

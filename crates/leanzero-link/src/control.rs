@@ -277,6 +277,7 @@ impl ControlService {
         )?;
 
         let leaving = Arc::new(StdMutex::new(None));
+        let jobs = Arc::new(crate::jobs::JobRegistry::new(config.jobs.clone()));
         let ctx = Ctx {
             source: source.clone(),
             pubsub: pubsub.clone(),
@@ -291,7 +292,7 @@ impl ControlService {
                 .map_err(ControlError::EngineClient)?,
             streams: Arc::new(InflightStreams::new()),
             allow_remote_execution: config.allow_remote_execution,
-            jobs: Arc::new(crate::jobs::JobRegistry::new(config.jobs.clone())),
+            jobs: jobs.clone(),
             leaving: leaving.clone(),
         };
         let router = swarm_router(ctx, Arc::new(config.node_token));
@@ -365,6 +366,7 @@ impl ControlService {
             registry,
             tasks,
             leaving,
+            jobs,
         })
     }
 }
@@ -375,9 +377,15 @@ pub struct ControlHandle {
     registry: PeerRegistry,
     tasks: Vec<JoinHandle<()>>,
     leaving: Arc<StdMutex<Option<NodeLeaving>>>,
+    jobs: Arc<crate::jobs::JobRegistry>,
 }
 
 impl ControlHandle {
+    /// This node's jobs registry (what `/v1/swarm/jobs` serves): the manager's self short-cut.
+    pub fn jobs(&self) -> Arc<crate::jobs::JobRegistry> {
+        self.jobs.clone()
+    }
+
     pub fn local_addr(&self) -> SocketAddr {
         self.local_addr
     }

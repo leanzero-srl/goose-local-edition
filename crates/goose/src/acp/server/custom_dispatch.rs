@@ -1460,6 +1460,54 @@ impl GooseAcpAgent {
         self.on_leanzero_link_remote_execute(req).await
     }
 
+    #[custom_method(LeanzeroLinkJobsSubmitRequest)]
+    async fn dispatch_leanzero_link_jobs_submit(
+        &self,
+        req: LeanzeroLinkJobsSubmitRequest,
+    ) -> Result<LeanzeroLinkJobsSubmitResponse, agent_client_protocol::Error> {
+        self.on_leanzero_link_jobs_submit(req).await
+    }
+
+    #[custom_method(LeanzeroLinkJobsListRequest)]
+    async fn dispatch_leanzero_link_jobs_list(
+        &self,
+        req: LeanzeroLinkJobsListRequest,
+    ) -> Result<LeanzeroLinkJobsListResponse, agent_client_protocol::Error> {
+        self.on_leanzero_link_jobs_list(req).await
+    }
+
+    #[custom_method(LeanzeroLinkJobsGetRequest)]
+    async fn dispatch_leanzero_link_jobs_get(
+        &self,
+        req: LeanzeroLinkJobsGetRequest,
+    ) -> Result<LeanzeroLinkJobsJobResponse, agent_client_protocol::Error> {
+        self.on_leanzero_link_jobs_get(req).await
+    }
+
+    #[custom_method(LeanzeroLinkJobsCancelRequest)]
+    async fn dispatch_leanzero_link_jobs_cancel(
+        &self,
+        req: LeanzeroLinkJobsCancelRequest,
+    ) -> Result<LeanzeroLinkJobsJobResponse, agent_client_protocol::Error> {
+        self.on_leanzero_link_jobs_cancel(req).await
+    }
+
+    #[custom_method(LeanzeroLinkJobsLogRequest)]
+    async fn dispatch_leanzero_link_jobs_log(
+        &self,
+        req: LeanzeroLinkJobsLogRequest,
+    ) -> Result<LeanzeroLinkJobsLogResponse, agent_client_protocol::Error> {
+        self.on_leanzero_link_jobs_log(req).await
+    }
+
+    #[custom_method(LeanzeroLinkJobsPlaceRequest)]
+    async fn dispatch_leanzero_link_jobs_place(
+        &self,
+        req: LeanzeroLinkJobsPlaceRequest,
+    ) -> Result<LeanzeroLinkJobsPlaceResponse, agent_client_protocol::Error> {
+        self.on_leanzero_link_jobs_place(req).await
+    }
+
     #[custom_method(NodesReadRequest)]
     async fn dispatch_nodes_read(
         &self,

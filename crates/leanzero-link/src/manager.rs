@@ -270,6 +270,12 @@ pub enum LinkError {
     MlxControl(#[from] MlxControlError),
     #[error("mlx proxy request to a peer failed: {0}")]
     MlxProxy(String),
+    /// A jobs route (here or on a peer) refused with its `{code, reason}`, carried verbatim.
+    #[error("job refused ({code:?}): {reason}", code = .0.code, reason = .0.reason)]
+    Job(crate::jobs::Refusal),
+    /// A peer's jobs route could not be reached or answered something unparseable.
+    #[error("jobs request to a peer failed: {0}")]
+    JobProxy(String),
     /// A peer's `/v1/swarm/distributed/*` answered with one of its classes (403 its switch is
     /// off, 404, 400, 409 a named refusal, 500) — carried verbatim.
     #[error(transparent)]
@@ -978,6 +984,222 @@ impl LinkManager {
             connect_timeout: self.core.config.control.connect_timeout,
             liveness_interval: self.core.config.control.poll_interval,
         })
+    }
+
+    /// This node's jobs registry while connected (the control service's own).
+    async fn local_jobs(&self) -> Result<Arc<crate::jobs::JobRegistry>, LinkError> {
+        let inner = self.core.inner.lock().await;
+        let active = inner.active.as_ref().ok_or(LinkError::NotConnected)?;
+        active
+            .control
+            .as_ref()
+            .map(|c| c.jobs())
+            .ok_or(LinkError::NotConnected)
+    }
+
+    /// This node's id as its state source reports it (what jobs carry as `origin_node`).
+    pub async fn local_node_id(&self) -> String {
+        self.core.source.local_node().await.node_id
+    }
+
+    async fn is_self(&self, node_id: &str) -> bool {
+        node_id == self.core.source.local_node().await.node_id
+    }
+
+    /// Rank where a job could run, node_fleet's rules ([`crate::jobs::rank_placements`]):
+    /// this node (its live load and its own jobs switch) plus every peer whose last `/nodes`
+    /// carried a load report and `allows.run_jobs`. OK nodes first, USER-ACTIVE last resort.
+    pub async fn place_job(
+        &self,
+        need_gb: f64,
+        heavy: bool,
+    ) -> Result<Vec<crate::jobs::Placement>, LinkError> {
+        let reg = self.local_jobs().await?;
+        let self_id = self.core.source.local_node().await.node_id;
+        let self_load = crate::jobs::load_with_jobs(0, Some(&reg)).await;
+        let peers = self
+            .active_registry()
+            .await
+            .map(|r| r.peer_nodes())
+            .unwrap_or_default();
+        let mut rows: Vec<(&str, bool, Option<&crate::load::NodeLoad>)> =
+            vec![(self_id.as_str(), reg.enabled(), Some(&self_load))];
+        for p in &peers {
+            if p.status == crate::wire::NodeStatus::Offline || p.leaving.is_some() {
+                continue;
+            }
+            rows.push((
+                p.node_id.as_str(),
+                p.allows.as_ref().is_some_and(|a| a.run_jobs),
+                p.load.as_deref(),
+            ));
+        }
+        Ok(crate::jobs::rank_placements(
+            rows,
+            need_gb,
+            heavy,
+            reg.min_free(),
+        ))
+    }
+
+    /// Submit a job to `target` (`None` = the best [`Self::place_job`] candidate; a USER-ACTIVE
+    /// candidate is sent with `allow_user_active`). `origin_node` is stamped with this node's id.
+    /// Returns the node it went to and its `{job_id}`.
+    pub async fn submit_job(
+        &self,
+        target: Option<&str>,
+        mut req: crate::jobs::JobRequest,
+    ) -> Result<(String, crate::jobs::JobAccepted), LinkError> {
+        let self_id = self.core.source.local_node().await.node_id;
+        req.origin_node = Some(self_id.clone());
+        let target = match target {
+            Some(t) => t.to_string(),
+            None => {
+                let best = self
+                    .place_job(req.need_mem_gb.unwrap_or(0.0), req.heavy)
+                    .await?
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| {
+                        LinkError::Job(crate::jobs::Refusal::new(
+                            crate::jobs::RefusalCode::MemoryHeadroom,
+                            "no node can take this job now (none allows jobs, or all are busy)",
+                        ))
+                    })?;
+                req.allow_user_active |= best.user_active;
+                best.node_id
+            }
+        };
+        if target == self_id {
+            let reg = self.local_jobs().await?;
+            let acc = reg
+                .submit(req, self.seams.executor.clone(), self.core.source.clone())
+                .await
+                .map_err(LinkError::Job)?;
+            return Ok((target, acc));
+        }
+        let v = self
+            .peer_jobs(
+                &target,
+                reqwest::Method::POST,
+                "",
+                Some(serde_json::to_value(&req).map_err(|e| LinkError::JobProxy(e.to_string()))?),
+            )
+            .await?;
+        let acc = serde_json::from_value(v).map_err(|e| LinkError::JobProxy(e.to_string()))?;
+        Ok((target, acc))
+    }
+
+    /// `GET /v1/swarm/jobs` on `target` (this node short-cuts to its registry).
+    pub async fn list_jobs(&self, target: &str) -> Result<Vec<crate::jobs::JobView>, LinkError> {
+        if self.is_self(target).await {
+            return Ok(self.local_jobs().await?.list());
+        }
+        let v = self
+            .peer_jobs(target, reqwest::Method::GET, "", None)
+            .await?;
+        serde_json::from_value(v).map_err(|e| LinkError::JobProxy(e.to_string()))
+    }
+
+    /// `GET /v1/swarm/jobs/{id}` on `target`.
+    pub async fn job_view(
+        &self,
+        target: &str,
+        id: &str,
+    ) -> Result<crate::jobs::JobView, LinkError> {
+        if self.is_self(target).await {
+            return self
+                .local_jobs()
+                .await?
+                .view(id)
+                .ok_or_else(|| job_not_found(id));
+        }
+        let v = self
+            .peer_jobs(target, reqwest::Method::GET, &format!("/{id}"), None)
+            .await?;
+        serde_json::from_value(v).map_err(|e| LinkError::JobProxy(e.to_string()))
+    }
+
+    /// `GET /v1/swarm/jobs/{id}/log?from=` on `target`.
+    pub async fn job_log(
+        &self,
+        target: &str,
+        id: &str,
+        from: u64,
+    ) -> Result<crate::jobs::JobLogChunk, LinkError> {
+        if self.is_self(target).await {
+            return self
+                .local_jobs()
+                .await?
+                .log(id, from)
+                .ok_or_else(|| job_not_found(id));
+        }
+        let v = self
+            .peer_jobs(
+                target,
+                reqwest::Method::GET,
+                &format!("/{id}/log?from={from}"),
+                None,
+            )
+            .await?;
+        serde_json::from_value(v).map_err(|e| LinkError::JobProxy(e.to_string()))
+    }
+
+    /// `POST /v1/swarm/jobs/{id}/cancel` on `target` (the group dies async; poll the view).
+    pub async fn cancel_job(
+        &self,
+        target: &str,
+        id: &str,
+    ) -> Result<crate::jobs::JobView, LinkError> {
+        if self.is_self(target).await {
+            return self.local_jobs().await?.cancel(id).map_err(LinkError::Job);
+        }
+        let v = self
+            .peer_jobs(
+                target,
+                reqwest::Method::POST,
+                &format!("/{id}/cancel"),
+                None,
+            )
+            .await?;
+        serde_json::from_value(v).map_err(|e| LinkError::JobProxy(e.to_string()))
+    }
+
+    /// One call to a peer's `/v1/swarm/jobs{suffix}`; non-2xx `{code, reason}` = [`LinkError::Job`].
+    async fn peer_jobs(
+        &self,
+        target: &str,
+        method: reqwest::Method,
+        suffix: &str,
+        body: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value, LinkError> {
+        let call = self.peer_call(target).await?;
+        let client = peer_http_client(call.proxy, PeerTimeout::Total(JOBS_PEER_TIMEOUT))?;
+        let mut rb = client
+            .request(method, format!("{}/v1/swarm/jobs{suffix}", call.base_url))
+            .bearer_auth(&call.token);
+        if let Some(b) = body {
+            rb = rb.json(&b);
+        }
+        let resp = rb
+            .send()
+            .await
+            .map_err(|e| LinkError::JobProxy(e.to_string()))?;
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        if status.is_success() {
+            return serde_json::from_str(&text).map_err(|e| {
+                LinkError::JobProxy(format!(
+                    "peer answered {status} but the body did not parse: {e}"
+                ))
+            });
+        }
+        match serde_json::from_str::<crate::jobs::Refusal>(&text) {
+            Ok(r) => Err(LinkError::Job(r)),
+            Err(_) => Err(LinkError::JobProxy(format!(
+                "peer returned {status}: {text}"
+            ))),
+        }
     }
 
     /// Tell every linked peer this goose is going away ON PURPOSE, before its Link stops —
@@ -1776,6 +1998,16 @@ fn fresh_suffix() -> String {
 /// answer is not — a total cap would report failure while the peer completes the work.
 /// The request goes through the mesh proxy ([`crate::peer_dial`]); no proxy is
 /// [`LinkError::PeerDial`], never a direct dial.
+/// Every jobs call is a small JSON exchange (the job itself runs async on the peer).
+const JOBS_PEER_TIMEOUT: Duration = Duration::from_secs(10);
+
+fn job_not_found(id: &str) -> LinkError {
+    LinkError::Job(crate::jobs::Refusal::new(
+        crate::jobs::RefusalCode::NotFound,
+        format!("no job {id}"),
+    ))
+}
+
 async fn post_peer_execute(
     proxy: Option<MeshProxy>,
     base_url: &str,

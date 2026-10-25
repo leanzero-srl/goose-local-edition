@@ -624,6 +624,24 @@ fn current_identity_email() -> Option<String> {
     }
 }
 
+/// A jobs refusal (here or on the peer) is `invalid_params` with the node's `{code, reason}` as
+/// `data`, so the UI can show the named cause; anything else keeps its text.
+fn jobs_err(error: LinkError) -> agent_client_protocol::Error {
+    match error {
+        LinkError::Job(refusal) => agent_client_protocol::Error::invalid_params()
+            .data(serde_json::to_value(&refusal).unwrap_or_else(|_| refusal.reason.clone().into())),
+        LinkError::NotConnected => not_connected_to_mesh_err(),
+        LinkError::UnknownPeer(_) | LinkError::PeerLeaving { .. } => {
+            agent_client_protocol::Error::invalid_params().data(error.to_string())
+        }
+        other => agent_client_protocol::Error::internal_error().data(other.to_string()),
+    }
+}
+
+fn placement_json(p: &leanzero_link::jobs::Placement) -> serde_json::Value {
+    serde_json::json!({"nodeId": p.node_id, "userActive": p.user_active, "score": p.score})
+}
+
 /// Read the switch. `NotFound` is the documented default (OFF); any other error — an
 /// unparseable value, an unreadable config file — is logged and read as OFF: fail
 /// closed, never silently open.
@@ -1732,6 +1750,113 @@ impl GooseAcpAgent {
         })
     }
 
+    /// The connected manager, or `invalid_params` "not connected to the mesh" (every jobs method).
+    async fn jobs_manager(&self) -> Result<Arc<LinkManager>, agent_client_protocol::Error> {
+        let manager = self.link_manager().await?;
+        if !matches!(manager.status().await.auth, AuthState::Connected { .. }) {
+            return Err(not_connected_to_mesh_err());
+        }
+        Ok(manager)
+    }
+
+    pub(super) async fn on_leanzero_link_jobs_submit(
+        &self,
+        req: LeanzeroLinkJobsSubmitRequest,
+    ) -> Result<LeanzeroLinkJobsSubmitResponse, agent_client_protocol::Error> {
+        let job: leanzero_link::jobs::JobRequest =
+            serde_json::from_value(req.job).map_err(|e| {
+                agent_client_protocol::Error::invalid_params().data(format!("job: {e}"))
+            })?;
+        let manager = self.jobs_manager().await?;
+        let (node_id, accepted) = manager
+            .submit_job(req.target_node_id.as_deref(), job)
+            .await
+            .map_err(jobs_err)?;
+        Ok(LeanzeroLinkJobsSubmitResponse {
+            node_id,
+            job_id: accepted.job_id,
+        })
+    }
+
+    pub(super) async fn on_leanzero_link_jobs_list(
+        &self,
+        req: LeanzeroLinkJobsListRequest,
+    ) -> Result<LeanzeroLinkJobsListResponse, agent_client_protocol::Error> {
+        let jobs = self
+            .jobs_manager()
+            .await?
+            .list_jobs(&req.target_node_id)
+            .await
+            .map_err(jobs_err)?;
+        Ok(LeanzeroLinkJobsListResponse {
+            jobs: jobs
+                .into_iter()
+                .map(serde_json::to_value)
+                .collect::<Result<_, _>>()
+                .internal_err()?,
+        })
+    }
+
+    pub(super) async fn on_leanzero_link_jobs_get(
+        &self,
+        req: LeanzeroLinkJobsGetRequest,
+    ) -> Result<LeanzeroLinkJobsJobResponse, agent_client_protocol::Error> {
+        let view = self
+            .jobs_manager()
+            .await?
+            .job_view(&req.target_node_id, &req.job_id)
+            .await
+            .map_err(jobs_err)?;
+        Ok(LeanzeroLinkJobsJobResponse {
+            job: serde_json::to_value(view).internal_err()?,
+        })
+    }
+
+    pub(super) async fn on_leanzero_link_jobs_cancel(
+        &self,
+        req: LeanzeroLinkJobsCancelRequest,
+    ) -> Result<LeanzeroLinkJobsJobResponse, agent_client_protocol::Error> {
+        let view = self
+            .jobs_manager()
+            .await?
+            .cancel_job(&req.target_node_id, &req.job_id)
+            .await
+            .map_err(jobs_err)?;
+        Ok(LeanzeroLinkJobsJobResponse {
+            job: serde_json::to_value(view).internal_err()?,
+        })
+    }
+
+    pub(super) async fn on_leanzero_link_jobs_log(
+        &self,
+        req: LeanzeroLinkJobsLogRequest,
+    ) -> Result<LeanzeroLinkJobsLogResponse, agent_client_protocol::Error> {
+        let chunk = self
+            .jobs_manager()
+            .await?
+            .job_log(&req.target_node_id, &req.job_id, req.from)
+            .await
+            .map_err(jobs_err)?;
+        Ok(LeanzeroLinkJobsLogResponse {
+            log: serde_json::to_value(chunk).internal_err()?,
+        })
+    }
+
+    pub(super) async fn on_leanzero_link_jobs_place(
+        &self,
+        req: LeanzeroLinkJobsPlaceRequest,
+    ) -> Result<LeanzeroLinkJobsPlaceResponse, agent_client_protocol::Error> {
+        let placements = self
+            .jobs_manager()
+            .await?
+            .place_job(req.need_mem_gb.unwrap_or(0.0), req.heavy)
+            .await
+            .map_err(jobs_err)?;
+        Ok(LeanzeroLinkJobsPlaceResponse {
+            placements: placements.iter().map(placement_json).collect(),
+        })
+    }
+
     /// Decide where a mlxEngine op runs, from its optional `nodeId`. `None` and a `nodeId`
     /// equal to THIS node's id both mean "run locally" (returns `None`) — so the local path
     /// stays byte-identical whether `nodeId` is absent or names self. A different id names a
@@ -2323,6 +2448,60 @@ mod tests {
         assert_eq!(value["self"]["node_id"], "node-a");
         assert_eq!(value["peers"][0]["node_id"], "node-b");
         assert!(value.get("self_node").is_none());
+    }
+
+    #[test]
+    fn jobs_dtos_use_camelcase_and_job_carries_the_node_route_body() {
+        let req: LeanzeroLinkJobsSubmitRequest = serde_json::from_value(serde_json::json!({
+            "targetNodeId": "gabee",
+            "job": {"kind": "shell", "command": "true", "heavy": true, "timeout_s": 5}
+        }))
+        .unwrap();
+        assert_eq!(req.target_node_id.as_deref(), Some("gabee"));
+        let job: leanzero_link::jobs::JobRequest = serde_json::from_value(req.job).unwrap();
+        assert!(job.heavy);
+        assert_eq!(job.timeout_s, Some(5));
+        let auto: LeanzeroLinkJobsSubmitRequest =
+            serde_json::from_value(serde_json::json!({"job": {"kind": "prompt", "command": "x"}}))
+                .unwrap();
+        assert!(auto.target_node_id.is_none());
+        let resp = serde_json::to_value(LeanzeroLinkJobsSubmitResponse {
+            node_id: "n".into(),
+            job_id: "j".into(),
+        })
+        .unwrap();
+        assert_eq!(resp, serde_json::json!({"nodeId": "n", "jobId": "j"}));
+        let log: LeanzeroLinkJobsLogRequest =
+            serde_json::from_value(serde_json::json!({"targetNodeId": "a", "jobId": "b"})).unwrap();
+        assert_eq!(log.from, 0);
+        let place: LeanzeroLinkJobsPlaceRequest =
+            serde_json::from_value(serde_json::json!({"needMemGb": 8.0})).unwrap();
+        assert_eq!((place.need_mem_gb, place.heavy), (Some(8.0), false));
+    }
+
+    #[test]
+    fn jobs_err_carries_the_refusal_code_and_reason_as_data() {
+        use leanzero_link::jobs::{Refusal, RefusalCode};
+        let e = jobs_err(LinkError::Job(Refusal::new(
+            RefusalCode::HeavySlotHeld,
+            "heavy slot held",
+        )));
+        assert_eq!(e.code, agent_client_protocol::Error::invalid_params().code);
+        assert_eq!(
+            e.data,
+            Some(serde_json::json!({"code": "heavy_slot_held", "reason": "heavy slot held"}))
+        );
+        let e = jobs_err(LinkError::JobProxy("peer returned 502".into()));
+        assert_eq!(e.code, agent_client_protocol::Error::internal_error().code);
+        let p = placement_json(&leanzero_link::jobs::Placement {
+            node_id: "w".into(),
+            user_active: true,
+            score: 1.5,
+        });
+        assert_eq!(
+            p,
+            serde_json::json!({"nodeId": "w", "userActive": true, "score": 1.5})
+        );
     }
 
     #[test]

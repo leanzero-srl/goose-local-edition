@@ -571,6 +571,18 @@ impl JobRegistry {
         self.cfg.switch.is_on()
     }
 
+    /// The memory floor this node admits against (config, else node-limits.json `min_free`);
+    /// the placer uses its own floor to pre-screen peers (each receiver re-checks with its own).
+    pub fn min_free(&self) -> f64 {
+        self.cfg.min_free.unwrap_or_else(|| {
+            self.cfg
+                .limits
+                .clone()
+                .unwrap_or_else(NodeLimits::load)
+                .min_free
+        })
+    }
+
     fn get(&self, id: &str) -> Option<Arc<JobEntry>> {
         self.jobs.lock().unwrap().get(id).cloned()
     }

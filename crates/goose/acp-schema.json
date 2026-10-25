@@ -15105,6 +15105,184 @@
       "x-side": "agent",
       "x-method": "_goose/unstable/leanzeroLink/remoteExecute"
     },
+    "LeanzeroLinkJobsSubmitRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "targetNodeId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "job": {}
+      },
+      "required": [
+        "job"
+      ],
+      "description": "Mesh jobs (`/v1/swarm/jobs` on a node). Every jobs method needs the manager `connected`\n(else `invalid_params` \"not connected to the mesh\"). A refusal from the target (switch\noff, no memory headroom, heavy slot held, benchmark running, user active, ...) is an\n`invalid_params` error whose `data` is the node's `{code, reason}` verbatim. Job views,\nlogs and placements are carried as the node's own JSON (`leanzero_link::jobs` DTOs);\na view never carries the command line.\n\nSubmit one job. `targetNodeId` absent = place it on the best node (see `jobsPlace`).\n`job` is a `JobRequest`: `{kind: \"shell\"|\"prompt\", command, cwd?, needMemGb?, heavy,\ntimeoutS?}` (snake_case keys inside `job`, as the node's route takes them).",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/jobsSubmit"
+    },
+    "LeanzeroLinkJobsSubmitResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "nodeId": {
+          "type": "string",
+          "description": "Where the job went (the placement's pick when no target was given)."
+        },
+        "jobId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "nodeId",
+        "jobId"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/jobsSubmit"
+    },
+    "LeanzeroLinkJobsListRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "targetNodeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "targetNodeId"
+      ],
+      "description": "Every job a node knows (running and finished since it started), newest first as it lists them.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/jobsList"
+    },
+    "LeanzeroLinkJobsListResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "jobs": {
+          "type": "array",
+          "items": {}
+        }
+      },
+      "required": [
+        "jobs"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/jobsList"
+    },
+    "LeanzeroLinkJobsGetRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "targetNodeId": {
+          "type": "string"
+        },
+        "jobId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "targetNodeId",
+        "jobId"
+      ],
+      "description": "One job's view (brief + outcome), as `GET /v1/swarm/jobs/{id}`.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/jobsGet"
+    },
+    "LeanzeroLinkJobsJobResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "job": {}
+      },
+      "required": [
+        "job"
+      ],
+      "x-side": "agent"
+    },
+    "LeanzeroLinkJobsCancelRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "targetNodeId": {
+          "type": "string"
+        },
+        "jobId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "targetNodeId",
+        "jobId"
+      ],
+      "description": "Cancel a shell job: its whole process group is TERMed, then KILLed after the grace. The\ngroup dies async: poll `jobsGet` for `cancelled`/143. A prompt job answers\n`cancel_unsupported`.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/jobsCancel"
+    },
+    "LeanzeroLinkJobsLogRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "targetNodeId": {
+          "type": "string"
+        },
+        "jobId": {
+          "type": "string"
+        },
+        "from": {
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        }
+      },
+      "required": [
+        "targetNodeId",
+        "jobId"
+      ],
+      "description": "Bytes `[from, next)` of a job's combined stdout+stderr (`{from, next, data, done}`).",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/jobsLog"
+    },
+    "LeanzeroLinkJobsLogResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "log": {}
+      },
+      "required": [
+        "log"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/jobsLog"
+    },
+    "LeanzeroLinkJobsPlaceRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "needMemGb": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "heavy": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "description": "Where a job could run now, best first (node_fleet's rules: OK nodes by score, then\nUSER-ACTIVE as the last resort; busy nodes and nodes that do not allow jobs are absent).",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/jobsPlace"
+    },
+    "LeanzeroLinkJobsPlaceResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "placements": {
+          "type": "array",
+          "items": {},
+          "description": "`{nodeId, userActive, score}` per candidate, best first."
+        }
+      },
+      "required": [
+        "placements"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/jobsPlace"
+    },
     "NodesReadRequest_unstable": {
       "type": "object",
       "description": "Read the `nodes` config, with the pool adopted and every def resolved. Never writes config.",
@@ -21667,6 +21845,60 @@
                 {
                   "allOf": [
                     {
+                      "$ref": "#/$defs/LeanzeroLinkJobsSubmitRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/leanzeroLink/jobsSubmit",
+                  "title": "LeanzeroLinkJobsSubmitRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/LeanzeroLinkJobsListRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/leanzeroLink/jobsList",
+                  "title": "LeanzeroLinkJobsListRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/LeanzeroLinkJobsGetRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/leanzeroLink/jobsGet",
+                  "title": "LeanzeroLinkJobsGetRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/LeanzeroLinkJobsCancelRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/leanzeroLink/jobsCancel",
+                  "title": "LeanzeroLinkJobsCancelRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/LeanzeroLinkJobsLogRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/leanzeroLink/jobsLog",
+                  "title": "LeanzeroLinkJobsLogRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/LeanzeroLinkJobsPlaceRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/leanzeroLink/jobsPlace",
+                  "title": "LeanzeroLinkJobsPlaceRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
                       "$ref": "#/$defs/NodesReadRequest_unstable"
                     }
                   ],
@@ -22915,6 +23147,46 @@
                         }
                       ],
                       "title": "LeanzeroLinkRemoteExecuteResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/LeanzeroLinkJobsSubmitResponse_unstable"
+                        }
+                      ],
+                      "title": "LeanzeroLinkJobsSubmitResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/LeanzeroLinkJobsListResponse_unstable"
+                        }
+                      ],
+                      "title": "LeanzeroLinkJobsListResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/LeanzeroLinkJobsJobResponse_unstable"
+                        }
+                      ],
+                      "title": "LeanzeroLinkJobsJobResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/LeanzeroLinkJobsLogResponse_unstable"
+                        }
+                      ],
+                      "title": "LeanzeroLinkJobsLogResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/LeanzeroLinkJobsPlaceResponse_unstable"
+                        }
+                      ],
+                      "title": "LeanzeroLinkJobsPlaceResponse_unstable"
                     },
                     {
                       "allOf": [
