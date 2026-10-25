@@ -165,6 +165,74 @@ export interface NodeAllows {
   answer_chat: boolean;
   /** It runs part of another Mac's split model (`LEANZERO_LINK_ALLOW_DISTRIBUTED_NODE`). */
   run_split: boolean;
+  /** It takes mesh jobs (`LEANZERO_LINK_ALLOW_REMOTE_JOBS`); absent from a goose that predates jobs. */
+  run_jobs?: boolean;
+}
+
+/** What the Mac's owner is doing with it and what the hardware reads (leanzero-link `OwnLoad`). */
+export interface OwnLoad {
+  user_idle_s?: number | null;
+  user_active: boolean;
+  /** 1-minute load average divided by the core count. */
+  cpu_load_per_core?: number | null;
+  ncpu: number;
+  /** Available memory (free + file cache + purgeable), percent of total. */
+  mem_free_pct?: number | null;
+  mem_total_gb?: number | null;
+  gpu_util_pct?: number | null;
+  on_ac?: boolean | null;
+  /** macOS thermal pressure, 0 nominal .. 4. */
+  thermal_limit?: number | null;
+  lid_closed_sleeps: boolean;
+  heavy_slot_held: boolean;
+  /** Why a benchmark counts as running there; absent = none. */
+  benchmark?: string;
+}
+
+/** AI inference the Mac serves now (leanzero-link `InferenceLoad`). */
+export interface InferenceLoad {
+  /** Engine requests running + waiting, plus relayed chat streams. */
+  engine_active: number;
+  /** goose swarm-router slots this Mac's goosed holds. */
+  router_slots_used: number;
+}
+
+export type JobKind = 'shell' | 'prompt';
+export type JobState = 'queued' | 'running' | 'done' | 'failed' | 'killed' | 'cancelled';
+
+/** A job as peers see it: never the command (leanzero-link `JobBrief`). */
+export interface JobBrief {
+  job_id: string;
+  origin_node: string;
+  kind: JobKind;
+  started_at: string;
+  state: JobState;
+  heavy?: boolean;
+}
+
+/** `NodeState.load`, on the 3 s poll: own use, inference, jobs. */
+export interface NodeLoad {
+  own: OwnLoad;
+  inference: InferenceLoad;
+  jobs: JobBrief[];
+  sampled_at?: string;
+}
+
+/** `GET /v1/swarm/jobs/{id}`: the brief plus how it ended (snake_case, verbatim). */
+export interface JobView extends JobBrief {
+  ended_at?: string | null;
+  exit_code?: number | null;
+  reason?: string | null;
+  session_id?: string | null;
+  log_bytes: number;
+}
+
+export interface JobLogChunk {
+  from: number;
+  next: number;
+  data: string;
+  /** The job has ended and `next` is the end of the log. */
+  done: boolean;
 }
 
 /** The `/v1/swarm` `NodeState` — snake_case, consumed verbatim. */
@@ -181,6 +249,8 @@ export interface NodeState {
   computer_name?: string;
   /** What it lets the other Macs do there, as it enforces it now; absent = unknown (older goose). */
   allows?: NodeAllows;
+  /** Own use, AI inference and jobs, sampled on every poll; absent from a goose that predates it. */
+  load?: NodeLoad | null;
 }
 
 /** Body of `leanzeroLink/nodes`: the local node (`self`) plus its reachable peers. */
@@ -289,6 +359,63 @@ export async function leanzeroLinkRemoteExecute(
   const dir = args.workingDir?.trim();
   if (dir) params.workingDir = dir;
   return await call<RemoteExecuteResult>('_goose/unstable/leanzeroLink/remoteExecute', params);
+}
+
+// ---------------------------------------------------------------------------
+// Mesh jobs (`/v1/swarm/jobs` on the target, proxied by goosed).
+// ---------------------------------------------------------------------------
+
+export async function leanzeroLinkJobsList(targetNodeId: string): Promise<JobView[]> {
+  const r = await call<{ jobs: JobView[] }>('_goose/unstable/leanzeroLink/jobsList', {
+    targetNodeId,
+  });
+  return r.jobs;
+}
+
+export async function leanzeroLinkJobsGet(targetNodeId: string, jobId: string): Promise<JobView> {
+  const r = await call<{ job: JobView }>('_goose/unstable/leanzeroLink/jobsGet', {
+    targetNodeId,
+    jobId,
+  });
+  return r.job;
+}
+
+/** Cancel kills the job's whole process group there; a prompt job answers `cancel_unsupported`. */
+export async function leanzeroLinkJobsCancel(
+  targetNodeId: string,
+  jobId: string
+): Promise<JobView> {
+  const r = await call<{ job: JobView }>('_goose/unstable/leanzeroLink/jobsCancel', {
+    targetNodeId,
+    jobId,
+  });
+  return r.job;
+}
+
+/** The log from byte `from`; read again from `next` until `done`. */
+export async function leanzeroLinkJobsLog(
+  targetNodeId: string,
+  jobId: string,
+  from: number
+): Promise<JobLogChunk> {
+  const r = await call<{ log: JobLogChunk }>('_goose/unstable/leanzeroLink/jobsLog', {
+    targetNodeId,
+    jobId,
+    from,
+  });
+  return r.log;
+}
+
+/**
+ * A job refusal arrives as `invalid_params` whose `data` is `{code, reason}` (leanzero-link
+ * `Refusal`); its reason is the sentence to show. Anything else falls back to `linkBannerText`.
+ */
+export function jobErrorText(error: unknown): string {
+  const data = (error as { data?: unknown } | null | undefined)?.data;
+  if (data && typeof data === 'object' && typeof (data as { reason?: unknown }).reason === 'string') {
+    return (data as { reason: string }).reason;
+  }
+  return linkBannerText(error);
 }
 
 // ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-import type { NodeAllows, NodeState, NodesResponse } from '../../acp/leanzero-link';
+import type { NodeAllows, NodeLoad, NodeState, NodesResponse } from '../../acp/leanzero-link';
 
 /**
  * The linked Macs, ONE way: every surface that names a Mac (My Macs, the Models columns, Run it,
@@ -43,6 +43,8 @@ export interface Mac {
   allows: NodeAllows | null;
   /** Why this Mac's last poll of the peer failed, verbatim. */
   pollError: string | null;
+  /** Own use, AI inference and jobs from its last poll; null = not reported (older goose). */
+  load: NodeLoad | null;
 }
 
 export function macName(node: Pick<NodeState, 'computer_name' | 'hostname'>): string {
@@ -78,6 +80,7 @@ function toMac(node: NodeState, isSelf: boolean): Mac {
     sessionsActive: node.sessions_active,
     allows: node.allows ?? null,
     pollError: node.last_poll_error ?? null,
+    load: node.load ?? null,
   };
 }
 
@@ -99,6 +102,7 @@ export function macsFrom(nodes: NodesResponse | null, selfName: string): Mac[] {
         sessionsActive: 0,
         allows: null,
         pollError: null,
+        load: null,
       },
     ];
   }
@@ -112,7 +116,7 @@ export function macTarget(mac: Pick<Mac, 'isSelf' | 'key'>): string | undefined 
 
 /** true/false as the Mac reported it; null when its goose did not say. */
 export function allowsOf(mac: Pick<Mac, 'allows'>, permission: Permission): boolean | null {
-  return mac.allows ? mac.allows[ALLOWS_FIELD[permission]] : null;
+  return mac.allows ? (mac.allows[ALLOWS_FIELD[permission]] ?? null) : null;
 }
 
 /** A peer whose owner turned this switch OFF — known from its own report, never guessed. */

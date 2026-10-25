@@ -38,6 +38,7 @@ import { macLine, macStateWord } from './macSummary';
 import { useMacSummary } from './useMacSummary';
 import { PERMISSION_LABEL, useMacs, type MacFacts } from './useMacs';
 import { useGlanceNodes } from '../engineGlance/glanceStore';
+import { JobsSettings, MacLoadBars } from './MacLoadPanel';
 import type { NodesRead, Residency } from '../../acp/nodes';
 import { nodeHref } from '../../utils/navigationUtils';
 
@@ -547,6 +548,7 @@ function MacCard({ mac, props }: { mac: Mac; props: MyMacsProps }) {
         </p>
       )}
       {mac.online && summary.state !== 'off' && <FactsGrid mac={mac} facts={facts} />}
+      {mac.online && <MacLoadBars load={mac.load} target={mac.nodeId} macName={mac.name} />}
       <NodesOnMac mac={mac} />
       {mac.isSelf ? (
         <LetOthersUseThisMac
@@ -558,6 +560,7 @@ function MacCard({ mac, props }: { mac: Mac; props: MyMacsProps }) {
       ) : (
         <PeerLets mac={mac} />
       )}
+      {mac.isSelf && <JobsSettings />}
       <Disclosure variant="plain" title={intl.formatMessage(i18n.details)} testId="my-mac-details">
         <div className="flex flex-col gap-3">
           <KeyValue items={details} aria-label={intl.formatMessage(i18n.details)} />
