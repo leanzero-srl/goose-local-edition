@@ -1163,7 +1163,13 @@ mod tests {
         let olk = "/Applications/Olk.app";
         let rows = vec![
             row(1, 0, 0, "/sbin/launchd", 0),
-            row(800, 1, 501, &format!("{outlook}/Contents/MacOS/Microsoft Outlook"), GB),
+            row(
+                800,
+                1,
+                501,
+                &format!("{outlook}/Contents/MacOS/Microsoft Outlook"),
+                GB,
+            ),
             row(900, 1, 501, &format!("{olk}/Contents/MacOS/Olk"), GB),
         ];
         let mut c = ctx(&[

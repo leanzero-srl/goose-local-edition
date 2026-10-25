@@ -825,7 +825,11 @@ mod tests {
             "Microsoft Outlook",
         );
         f.p(8900, 1, "/Applications/Olk.app/Contents/MacOS/Olk");
-        f.app("/Applications/Olk.app", "com.example.olk", "Microsoft Outlook Beta");
+        f.app(
+            "/Applications/Olk.app",
+            "com.example.olk",
+            "Microsoft Outlook Beta",
+        );
         let gs = groups(&f);
         let g = |id: &str| gs.iter().find(|g| g.id == id).unwrap().clone();
         let defaults = never_touch_list(&[]);
@@ -834,7 +838,10 @@ mod tests {
             assert!(!app.quittable, "{id} is never-touch, so never quittable");
             assert!(!app.reclaimable_by_goose, "{id}");
             assert!(
-                app.protected_why.as_deref().unwrap_or("").contains("never-touch"),
+                app.protected_why
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("never-touch"),
                 "{id}: {:?}",
                 app.protected_why
             );
@@ -844,17 +851,27 @@ mod tests {
         }
         // By name fragment: an owner entry "Outlook" holds an app labelled "Microsoft Outlook…".
         let beta = g("app:com.example.olk");
-        assert!(untouchable(&beta, &defaults).is_none(), "not on the default list");
+        assert!(
+            untouchable(&beta, &defaults).is_none(),
+            "not on the default list"
+        );
         let list = never_touch_list(&["Outlook".into()]);
         let r = untouchable(&beta, &list).expect("name fragment matches");
-        assert_eq!((r.code, r.code.as_str()), (RefusalCode::NeverTouch, "neverTouch"));
+        assert_eq!(
+            (r.code, r.code.as_str()),
+            (RefusalCode::NeverTouch, "neverTouch")
+        );
         // By bundle id in any case.
         let list = never_touch_list(&["COM.EXAMPLE.OLK".into()]);
         assert!(untouchable(&beta, &list).is_some());
         // A protected launchd MCP server and a heavy-run job: the `protected` code.
         for id in ["job:node", "job:python3.12"] {
             let r = untouchable(&g(id), &defaults).expect("protected");
-            assert_eq!((r.code, r.code.as_str()), (RefusalCode::Protected, "protected"), "{id}");
+            assert_eq!(
+                (r.code, r.code.as_str()),
+                (RefusalCode::Protected, "protected"),
+                "{id}"
+            );
         }
         // goose's own idle engine is neither.
         assert!(untouchable(&g("gooseEngine"), &defaults).is_none());

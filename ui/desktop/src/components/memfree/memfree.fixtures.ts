@@ -20,7 +20,9 @@ export const GABEE: MemoryHolders = {
   totalBytes: gb(64),
   groups: [
     app('com.google.Chrome', 'Google Chrome', 7.2),
-    app('com.microsoft.teams2', 'Microsoft Teams', 4.1),
+    // Measured as Teams 4.1 GB; Teams is never-touch (the engine leaves it out of appsBytes since
+    // 3.0.132), so the fixture uses an ordinary app of the same size to keep the figures.
+    app('com.spotify.client', 'Spotify', 4.1),
     app('com.apple.Safari', 'Safari', 4.2),
     {
       id: 'WindowServer',

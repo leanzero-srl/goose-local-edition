@@ -95,6 +95,8 @@ export interface MemfreeItem {
   message: string;
   /** An app that did not quit and that goose could stop; only an explicit Force stop does. */
   forceStoppable?: boolean;
+  /** Set when the engine refused because the item is never-touch or protected. */
+  refusalCode?: 'neverTouch' | 'protected' | string | null;
 }
 
 /** `_goose/unstable/mlxEngine/memoryFree`, the fields this side reads. */
@@ -138,9 +140,27 @@ export function verdictOf(
   };
 }
 
-/** Quittable user apps, the ones a verdict may name. */
-export function userApps(groups: readonly MemfreeGroup[]): MemfreeGroup[] {
-  return groups.filter((g) => g.category === 'userApp' && g.quittable && !!g.bundleId);
+/** Quittable user apps, the ones a verdict may name. Never a protected or never-touch one. */
+export function userApps(
+  groups: readonly MemfreeGroup[],
+  neverTouch: readonly string[] = DEFAULT_NEVER_TOUCH
+): MemfreeGroup[] {
+  return groups.filter(
+    (g) =>
+      g.category === 'userApp' &&
+      g.quittable &&
+      !!g.bundleId &&
+      !g.protectedWhy &&
+      neverTouchHit(g, neverTouch) == null
+  );
+}
+
+/**
+ * Nothing may quit, stop or unload it: protected by the engine, or on the never-touch list (the
+ * same rule as the engine's `memfree_protect::untouchable`). Every button reads this.
+ */
+export function untouchable(group: MemfreeGroup, neverTouch: readonly string[]): boolean {
+  return !!group.protectedWhy || neverTouchHit(group, neverTouch) != null;
 }
 
 /** What the headline of the dialog (and the card's hint) says, every number in GB. */
@@ -226,14 +246,17 @@ export function groupByCategory(groups: readonly MemfreeGroup[]): CategoryBlock[
 
 /**
  * Whether a holder gets its own Quit button, and whether it is pressable. Only a quittable user app
- * with a bundle id is ever offered; system holders, goose's own and model servers never are. A peer
- * that does not allow remote app quit shows the button disabled, with the reason.
+ * with a bundle id is ever offered; system holders, goose's own, model servers, protected and
+ * never-touch apps never are (the row shows the reason instead). A peer that does not allow remote
+ * app quit shows the button disabled, with the reason.
  */
 export function quitOffer(
   group: MemfreeGroup,
-  quitAppsAllowed: boolean
+  quitAppsAllowed: boolean,
+  neverTouch: readonly string[] = DEFAULT_NEVER_TOUCH
 ): { show: false } | { show: true; disabled: boolean } {
   if (group.category !== 'userApp' || !group.quittable || !group.bundleId) return { show: false };
+  if (untouchable(group, neverTouch)) return { show: false };
   return { show: true, disabled: !quitAppsAllowed };
 }
 
@@ -254,9 +277,10 @@ export function isServerGroup(group: MemfreeGroup): boolean {
  */
 export function unloadOffer(
   group: MemfreeGroup,
-  allowed: boolean
+  allowed: boolean,
+  neverTouch: readonly string[] = DEFAULT_NEVER_TOUCH
 ): { show: false } | { show: true; disabled: boolean } {
-  if (!isServerGroup(group) || group.protectedWhy || !group.reclaimableByGoose) {
+  if (!isServerGroup(group) || untouchable(group, neverTouch) || !group.reclaimableByGoose) {
     return { show: false };
   }
   return { show: true, disabled: !allowed };
@@ -453,8 +477,14 @@ export function nuclearRequest(
 }
 
 /** The bundle id of a result item that gets a Force stop button: an app the engine marked so. */
-export function forceStopBundle(item: MemfreeItem): string | null {
-  if (!item.forceStoppable || !item.id.startsWith('app:')) return null;
+export function forceStopBundle(
+  item: MemfreeItem,
+  groups: readonly MemfreeGroup[] = [],
+  neverTouch: readonly string[] = DEFAULT_NEVER_TOUCH
+): string | null {
+  if (!item.forceStoppable || !item.id.startsWith('app:') || item.refusalCode) return null;
+  const group = groups.find((g) => g.id === item.id);
+  if (group && untouchable(group, neverTouch)) return null;
   return item.id.slice('app:'.length) || null;
 }
 

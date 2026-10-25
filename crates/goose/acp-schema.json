@@ -9155,6 +9155,13 @@
           "type": "boolean",
           "description": "The app did not quit and may still be force stopped (own uid, unprotected).",
           "default": false
+        },
+        "refusalCode": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Set when the item was refused because nothing may ever touch it: `neverTouch` (on the\nnever-touch list) or `protected` (another person, job, session, launchd/MCP, macOS)."
         }
       },
       "required": [

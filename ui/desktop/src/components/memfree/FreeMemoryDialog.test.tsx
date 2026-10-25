@@ -289,6 +289,57 @@ describe('FreeMemoryDialog', () => {
     fit: { verdict: 'allow', shortBytes: null },
   };
 
+  it('a never-touch or protected app gets no Quit and no Force stop, and the row says why', async () => {
+    mockHolders.mockResolvedValue({
+      ...WORKHORSE,
+      groups: [
+        ...WORKHORSE.groups,
+        {
+          id: 'app:com.microsoft.Outlook',
+          label: 'Microsoft Outlook',
+          category: 'userApp',
+          bytes: gb(1.5),
+          pids: [{ pid: 700, startedAt: 1 }],
+          bundleId: 'com.microsoft.Outlook',
+          // An engine before the fold: quittable, no protectedWhy. The desktop still refuses.
+          quittable: true,
+          reclaimableByGoose: false,
+        },
+      ],
+    });
+    mockFree.mockResolvedValue({
+      ...OK_RESULT,
+      items: [
+        {
+          id: 'app:com.microsoft.Outlook',
+          label: 'Microsoft Outlook',
+          ok: false,
+          message: 'Microsoft Outlook is on the never-touch list (com.microsoft.Outlook)',
+          forceStoppable: true,
+          refusalCode: 'neverTouch',
+        },
+        {
+          id: 'app:com.apple.TextEdit',
+          label: 'TextEdit',
+          ok: false,
+          message: "TextEdit didn't quit",
+          forceStoppable: true,
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    show();
+    const row = await screen.findByTestId('free-memory-holder-app:com.microsoft.Outlook');
+    expect(row.textContent).toContain('never-touch list (com.microsoft.Outlook)');
+    expect(screen.queryByTestId('free-memory-quit-app:com.microsoft.Outlook')).toBeNull();
+    expect(screen.queryByTestId('free-memory-quit-app:com.microsoft.teams2')).toBeNull();
+    expect(screen.queryByTestId('free-memory-quit-job:mcp-web-search-upd')).toBeNull();
+    await user.click(screen.getByTestId('free-memory-quit-app:com.apple.TextEdit'));
+    await user.click(await screen.findByRole('button', { name: 'Quit TextEdit' }));
+    expect(await screen.findByTestId('free-memory-force-com.apple.TextEdit')).toBeInTheDocument();
+    expect(screen.queryByTestId('free-memory-force-com.microsoft.Outlook')).toBeNull();
+  });
+
   it('the one-click button frees goose’s own only: no servers, no apps, not nuclear', async () => {
     mockHolders.mockResolvedValue(WORKHORSE);
     mockFree.mockResolvedValue(OK_RESULT);

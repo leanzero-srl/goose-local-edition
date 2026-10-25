@@ -539,7 +539,7 @@ export function FreeMemoryDialog({ target, macName, fitModelId, onClose }: FreeM
                 {result?.items
                   .filter((it) => !it.ok)
                   .map((it) => {
-                    const bundle = forceStopBundle(it);
+                    const bundle = forceStopBundle(it, holders?.groups ?? [], neverTouch ?? []);
                     return (
                       <div key={it.id} className="flex flex-wrap items-center gap-2">
                         <p className={cx(WEIGHT.semibold, TONE_TEXT.err)}>
@@ -749,8 +749,12 @@ export function FreeMemoryDialog({ target, macName, fitModelId, onClose }: FreeM
                     </div>
                     <ul className="flex flex-col">
                       {block.groups.map((g) => {
-                        const offer = quitOffer(g, holders.quitAppsAllowed);
-                        const unloadable = unloadOffer(g, holders.quitAppsAllowed);
+                        const offer = quitOffer(g, holders.quitAppsAllowed, neverTouch ?? []);
+                        const unloadable = unloadOffer(
+                          g,
+                          holders.quitAppsAllowed,
+                          neverTouch ?? []
+                        );
                         const kept = protectedReason(g);
                         return (
                           <li

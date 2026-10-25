@@ -11,6 +11,7 @@ import {
   nuclearRequest,
   nuclearRows,
   unloadOffer,
+  userApps,
   type MemfreeGroup,
   groupByCategory,
   memfreeEnabledFrom,
@@ -19,7 +20,7 @@ import {
   verdictLine,
   verdictOf,
 } from './memfree';
-import { GABEE, gb } from './memfree.fixtures';
+import { GABEE, app, gb } from './memfree.fixtures';
 
 describe('verdictOf (mirror of the engine rule)', () => {
   it('Gabee: nothing goose owns, apps not enough -> cannotFit, 5.7 GB short after everything', () => {
@@ -113,11 +114,7 @@ describe('groupByCategory', () => {
     const blocks = groupByCategory(GABEE.groups);
     expect(blocks.map((b) => b.category)).toEqual(['userApp', 'system']);
     expect(blocks[0].bytes / GIB).toBeCloseTo(15.5, 1);
-    expect(blocks[0].groups.map((g) => g.label)).toEqual([
-      'Google Chrome',
-      'Safari',
-      'Microsoft Teams',
-    ]);
+    expect(blocks[0].groups.map((g) => g.label)).toEqual(['Google Chrome', 'Safari', 'Spotify']);
   });
 });
 
@@ -133,6 +130,35 @@ describe('quitOffer', () => {
   it('offers a user app, disabled where the Mac does not allow quitting', () => {
     expect(quitOffer(GABEE.groups[0], true)).toEqual({ show: true, disabled: false });
     expect(quitOffer(GABEE.groups[0], false)).toEqual({ show: true, disabled: true });
+  });
+  it('never offers quit for a never-touch or protected app (3.0.131: Outlook had Quit)', () => {
+    const outlook = app('com.microsoft.Outlook', 'Microsoft Outlook', 1.2);
+    expect(quitOffer(outlook, true)).toEqual({ show: false });
+    const folded = { ...outlook, protectedWhy: 'on the never-touch list (com.microsoft.Outlook)' };
+    expect(quitOffer(folded, true, [])).toEqual({ show: false });
+    const olk = app('com.example.olk', 'Microsoft Outlook', 1.2);
+    expect(quitOffer(olk, true, [])).toEqual({ show: true, disabled: false });
+    expect(quitOffer(olk, true, ['Outlook'])).toEqual({ show: false });
+    expect(quitOffer({ ...olk, protectedWhy: 'launchd job x' }, true, [])).toEqual({ show: false });
+    expect(userApps([outlook, olk], ['Outlook']).map((g) => g.id)).toEqual([]);
+  });
+});
+
+describe('force stop offer', () => {
+  const item = {
+    id: 'app:com.example.olk',
+    label: 'Olk',
+    ok: false,
+    message: 'x',
+    forceStoppable: true,
+  };
+  it('is withheld for a refusal code or a never-touch / protected holder', () => {
+    expect(forceStopBundle(item)).toBe('com.example.olk');
+    expect(forceStopBundle({ ...item, refusalCode: 'neverTouch' })).toBeNull();
+    const olk = { ...app('com.example.olk', 'Microsoft Outlook', 1.2), id: 'app:com.example.olk' };
+    expect(forceStopBundle(item, [olk], ['Outlook'])).toBeNull();
+    expect(forceStopBundle(item, [{ ...olk, protectedWhy: 'heavy-run job' }], [])).toBeNull();
+    expect(forceStopBundle(item, [olk], [])).toBe('com.example.olk');
   });
 });
 

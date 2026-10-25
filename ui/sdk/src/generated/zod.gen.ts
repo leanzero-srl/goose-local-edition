@@ -3724,7 +3724,11 @@ export const zMlxMemoryFreeItemDto = z.object({
         z.null()
     ]).optional(),
     message: z.string(),
-    forceStoppable: z.boolean().optional().default(false)
+    forceStoppable: z.boolean().optional().default(false),
+    refusalCode: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
 });
 
 export const zMlxMemoryBudgetDto = z.object({

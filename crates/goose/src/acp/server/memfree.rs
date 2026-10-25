@@ -757,7 +757,11 @@ fn recheck(
         Step::App(bundle_id) | Step::ForceStop(bundle_id) => {
             let id = format!("app:{bundle_id}");
             match find(&id) {
-                None => refuse(&id, bundle_id, format!("{bundle_id} is not running now").into()),
+                None => refuse(
+                    &id,
+                    bundle_id,
+                    format!("{bundle_id} is not running now").into(),
+                ),
                 Some(g) => app_refusal(g, never_touch).and_then(|m| refuse(&id, &g.label, m)),
             }
         }
@@ -768,7 +772,9 @@ fn recheck(
 /// fresh census that holds the pid, through [`protect::untouchable`]. `None` = no group holds it
 /// or it is touchable (`machine::stop_other_engine` still proves it is an MLX engine).
 fn pid_refusal(groups: &[Group], pid: u32, never_touch: &[String]) -> Option<Why> {
-    let g = groups.iter().find(|g| g.pids.iter().any(|(p, _)| *p == pid))?;
+    let g = groups
+        .iter()
+        .find(|g| g.pids.iter().any(|(p, _)| *p == pid))?;
     protect::untouchable(g, never_touch).map(Why::from)
 }
 
@@ -784,8 +790,7 @@ pub(super) async fn stop_other_engine_refusal(
     let groups = tokio::task::spawn_blocking(move || memfree::groups_now(ctx))
         .await
         .internal_err()?;
-    Ok(pid_refusal(&groups, pid, &never_touch)
-        .map(|w| (w.message, w.code.unwrap_or("protected"))))
+    Ok(pid_refusal(&groups, pid, &never_touch).map(|w| (w.message, w.code.unwrap_or("protected"))))
 }
 
 fn group_to_dto(g: &Group) -> MlxMemoryGroupDto {
@@ -1543,6 +1548,112 @@ mod tests {
         );
     }
 
+    fn codes(steps: &[Step]) -> Vec<(String, Option<&'static str>)> {
+        steps
+            .iter()
+            .filter_map(|s| match s {
+                Step::Refuse { id, code, .. } => Some((id.clone(), *code)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Outlook, named by bundle id, by a fragment ("Outlook" protects "Microsoft Outlook") or only
+    /// by the default list, is refused `neverTouch` for Quit AND Force stop, locally and over the
+    /// Link with the peer's switch on. A launchd MCP server is refused `protected`. Both refusals
+    /// hold again in the re-check right before the step would run.
+    #[test]
+    fn never_touch_and_protected_refuse_quit_force_stop_and_unload_with_a_code() {
+        let mut groups = workhorse();
+        let mut outlook = grp("app:com.microsoft.Outlook", Category::UserApp, 3 * GB);
+        outlook.label = "Microsoft Outlook".into();
+        let mut olk = grp("app:com.example.olk", Category::UserApp, 2 * GB);
+        olk.label = "Microsoft Outlook".into();
+        groups.push(outlook);
+        groups.push(olk);
+        let req = MlxEngineMemoryFreeRequest {
+            unload_servers: vec!["job:mcp-web-search-upd".into()],
+            quit_apps: vec!["com.microsoft.Outlook".into(), "com.example.olk".into()],
+            force_stop_apps: vec!["com.microsoft.Outlook".into(), "com.example.olk".into()],
+            nuclear: true,
+            never_touch: vec!["Outlook".into()],
+            ..Default::default()
+        };
+        let list = nt(&["Outlook"]);
+        for (relayed, switch) in [(false, false), (true, true)] {
+            let steps = select_free(&groups, &req, &list, relayed, switch);
+            assert_eq!(
+                codes(&steps),
+                vec![
+                    ("job:mcp-web-search-upd".to_string(), Some("protected")),
+                    ("app:com.microsoft.Outlook".to_string(), Some("neverTouch")),
+                    ("app:com.example.olk".to_string(), Some("neverTouch")),
+                    ("app:com.microsoft.Outlook".to_string(), Some("neverTouch")),
+                    ("app:com.example.olk".to_string(), Some("neverTouch")),
+                ],
+                "relayed={relayed}: nothing runs, every refusal carries its code"
+            );
+            assert_eq!(steps.len(), 5, "relayed={relayed}: {steps:?}");
+        }
+        // Without the caller's fragment the look-alike bundle is an ordinary app; the real
+        // Outlook bundle id stays never-touch from the default list alone.
+        let bare = nt(&[]);
+        let steps = select_free(&groups, &req, &bare, false, false);
+        assert!(steps.contains(&Step::App("com.example.olk".into())));
+        assert!(
+            codes(&steps).contains(&("app:com.microsoft.Outlook".to_string(), Some("neverTouch")))
+        );
+        // Re-check at execution: a step selected earlier is refused when the fresh census says
+        // never-touch / protected.
+        for step in [
+            Step::App("com.example.olk".into()),
+            Step::ForceStop("com.example.olk".into()),
+            Step::App("com.microsoft.Outlook".into()),
+        ] {
+            assert!(
+                matches!(
+                    recheck(&groups, &step, &req, &list),
+                    Some(Step::Refuse {
+                        code: Some("neverTouch"),
+                        ..
+                    })
+                ),
+                "{step:?}"
+            );
+        }
+        assert!(matches!(
+            recheck(
+                &groups,
+                &Step::Server("job:mcp-web-search-upd".into()),
+                &req,
+                &list
+            ),
+            Some(Step::Refuse {
+                code: Some("protected"),
+                ..
+            })
+        ));
+    }
+
+    /// `mlxEngine/stopOtherEngine`: a pid held by a launchd MCP server, a heavy-run job or a
+    /// never-touch app is refused; an unprotected MLX engine pid and an unknown pid are not.
+    #[test]
+    fn stop_other_engine_refuses_protected_and_never_touch_pids() {
+        let mut groups = workhorse();
+        // grp() derives pids from sizes (Teams and ai:lms share one); give each its own.
+        for (i, g) in groups.iter_mut().enumerate() {
+            g.pids = vec![(5000 + i as u32, 1)];
+        }
+        let pid = |id: &str| groups.iter().find(|g| g.id == id).unwrap().pids[0].0;
+        let list = nt(&[]);
+        let code = |id: &str| pid_refusal(&groups, pid(id), &list).and_then(|w| w.code);
+        assert_eq!(code("job:mcp-web-search-upd"), Some("protected"));
+        assert_eq!(code("job:python3"), Some("protected"));
+        assert_eq!(code("app:com.microsoft.teams2"), Some("neverTouch"));
+        assert_eq!(code("mlx:97100"), None);
+        assert!(pid_refusal(&groups, 1, &list).is_none());
+    }
+
     #[test]
     fn memfree_relayed_nuclear_is_refused_with_the_switch_off() {
         let groups = workhorse();
@@ -1695,7 +1806,7 @@ mod tests {
             freed_bytes: Some(0),
             message: "TextEdit is still running (it may be asking to save)".into(),
             force_stoppable: false,
-        refusal_code: None,
+            refusal_code: None,
         };
         let left = not_quit_report(asked.clone(), true, true);
         assert!(!left.ok);

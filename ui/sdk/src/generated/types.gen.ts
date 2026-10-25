@@ -3713,6 +3713,11 @@ export type MlxMemoryFreeItemDto = {
      * The app did not quit and may still be force stopped (own uid, unprotected).
      */
     forceStoppable?: boolean;
+    /**
+     * Set when the item was refused because nothing may ever touch it: `neverTouch` (on the
+     * never-touch list) or `protected` (another person, job, session, launchd/MCP, macOS).
+     */
+    refusalCode?: string | null;
 };
 
 export type MlxMemoryBudgetDto = {
