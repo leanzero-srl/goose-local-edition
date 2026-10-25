@@ -104,3 +104,27 @@ TRAPS for the ACP step:
   with `terminate_engine` (nuclear/explicit only).
 - Not done here: design item 5's example `memfree_dryrun.rs`, config GOOSE_MEMFREE_NEVER_TOUCH (item 2 config
   part), lsof used_by, everything in items 3/4/6.
+
+## R2 PARTIAL (2026-10-25) — stopped at the 200k context guard; continue from here
+Done (committed in this step): sidecar `memfree_servers::{base_port, parse_lsof_fpc, port_clients, used_by_lines,
+app_term_targets, terminate_pids}` + 4 tests (sidecar memfree 33 passed); ACP memfree.rs rewritten: config
+`GOOSE_MEMFREE_NEVER_TOUCH` (defaults always apply, setting only adds), `effective_never_touch(config, caller)`,
+AI enrichment skips protected + nuclear_default recomputed, `enrich_used_by` (lsof), pure `reach()` (soft =
+plan(Soft); gooseOwnedBytes = soft minus own engine when fit), pure `select_free()` -> Vec<Step>, nuclear app
+SIGTERM escalation `quit_one_app`, other engine = `terminate_engine`; 5 new ACP tests (lib memfree 10 passed);
+clippy -p goose-sidecar -p goose -p goose-sdk-types --all-targets -D warnings clean (clippy needs `cargo clippy
+--config '…strip=false'` AFTER the subcommand). Example crates/goose-sidecar/examples/memfree_dryrun.rs built
+(--release, target goose-fix130b) and run on the workhorse -> ~/Projects/goose-memfree-dryrun-workhorse.txt.
+FIRST RUN FINDINGS: own port default 8090 found 0 engines, 0 other MLX engines (rapid-mlx 97100 not seen — check
+it is still running / other_engines detection), legacy soft 0.6 GB (1 group), new soft 0, nuclear default 2
+groups 1.1 GB, protected 13 groups 8.2 GB, never-touch 0 (Teams not running?). Re-check the list content.
+OPEN: (1) full `cargo test -p goose memfree` result (was running in background, log in the R2 agent's scratchpad —
+rerun); (2) append dry-run key lines to ~/Projects/goose-memfree-AUDIT.md "After the fix"; (3) regenerate schema
+`cargo run -p goose --bin generate-acp-schema` + `cd ui/desktop && pnpm run build-goose-sdk` (hermit Node 24),
+check-acp-schema, commit generated files; (4) caveat: nuclear SIGTERMs an app that refused quit (e.g. a save
+dialog) — unsaved work is lost; the UI confirm must say so.
+ACP CONTRACT (desktop step): holders request += `neverTouch: string[]`; holders response += `serversBytes`;
+group += `protectedWhy?`, `usedBy: string[]`, `launchdLabel?`, `nuclearDefault: bool`; verdict `appsToQuit` now
+holds app bundle ids AND server group ids (look up by bundleId OR id). free request += `unloadServers: string[]`
+(group ids `ai:…`/`mlx:<pid>`), `nuclear: bool`, `neverTouch: string[]`. Relayed: everything but `gooseOwned`
+needs GOOSE_LINK_ALLOW_REMOTE_APP_QUIT (refused per item, message names the key); `quitAppsAllowed` reflects it.
