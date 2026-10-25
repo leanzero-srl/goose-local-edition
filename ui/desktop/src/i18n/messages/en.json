@@ -4169,6 +4169,120 @@
   "loops.tick.yielded": {
     "defaultMessage": "Yielded to your turn in \"{chat}\""
   },
+  "macLoad.allowJobs": {
+    "defaultMessage": "Run jobs other Macs send"
+  },
+  "macLoad.allowJobsHint": {
+    "defaultMessage": "Shell commands and prompts, one heavy job at a time, killed when they pass the memory floor. Takes effect at once."
+  },
+  "macLoad.benchmark": {
+    "defaultMessage": "Benchmark running: {why}"
+  },
+  "macLoad.cancelBody": {
+    "defaultMessage": "This stops the job on {mac} and every process it started. What it already wrote stays in its log."
+  },
+  "macLoad.cancelJob": {
+    "defaultMessage": "Cancel job"
+  },
+  "macLoad.cancelTitle": {
+    "defaultMessage": "Cancel job {id}?"
+  },
+  "macLoad.close": {
+    "defaultMessage": "Close"
+  },
+  "macLoad.dialogTitle": {
+    "defaultMessage": "Job {id}"
+  },
+  "macLoad.ended": {
+    "defaultMessage": "Ended"
+  },
+  "macLoad.exit": {
+    "defaultMessage": "Exit code"
+  },
+  "macLoad.idleS": {
+    "defaultMessage": "Counts as idle after (seconds)"
+  },
+  "macLoad.inference": {
+    "defaultMessage": "AI inference"
+  },
+  "macLoad.inferenceLine": {
+    "defaultMessage": "{engine,plural,one{{slots,plural,one{{engine, number} engine request · # router slot} other{{engine, number} engine request · # router slots}}} other{{slots,plural,one{{engine, number} engine requests · # router slot} other{{engine, number} engine requests · # router slots}}}}"
+  },
+  "macLoad.jobFrom": {
+    "defaultMessage": "{kind} from {origin}"
+  },
+  "macLoad.jobs": {
+    "defaultMessage": "Jobs"
+  },
+  "macLoad.jobsLine": {
+    "defaultMessage": "{live,plural,=0{No job running} one{# job running} other{# jobs running}}"
+  },
+  "macLoad.keepRunning": {
+    "defaultMessage": "Keep running"
+  },
+  "macLoad.kind": {
+    "defaultMessage": "Kind"
+  },
+  "macLoad.log": {
+    "defaultMessage": "Log"
+  },
+  "macLoad.logEmpty": {
+    "defaultMessage": "Nothing written yet."
+  },
+  "macLoad.minFree": {
+    "defaultMessage": "Memory floor (% kept free)"
+  },
+  "macLoad.noLoad": {
+    "defaultMessage": "Its goose does not report load yet (an older build)."
+  },
+  "macLoad.origin": {
+    "defaultMessage": "Sent from"
+  },
+  "macLoad.own": {
+    "defaultMessage": "Own use"
+  },
+  "macLoad.ownLine": {
+    "defaultMessage": "{user} · cpu {cpu} · memory {mem} used · gpu {gpu}"
+  },
+  "macLoad.policy": {
+    "defaultMessage": "While someone uses this Mac"
+  },
+  "macLoad.policy.allow": {
+    "defaultMessage": "Take jobs"
+  },
+  "macLoad.policy.lastResort": {
+    "defaultMessage": "Only as a last resort"
+  },
+  "macLoad.policy.refuse": {
+    "defaultMessage": "Refuse jobs"
+  },
+  "macLoad.reason": {
+    "defaultMessage": "Why"
+  },
+  "macLoad.reconnectHint": {
+    "defaultMessage": "The policy and the memory floor apply after Link reconnects."
+  },
+  "macLoad.saveFailed": {
+    "defaultMessage": "Not saved: {reason}"
+  },
+  "macLoad.settingsTitle": {
+    "defaultMessage": "Jobs from other Macs"
+  },
+  "macLoad.started": {
+    "defaultMessage": "Started"
+  },
+  "macLoad.state": {
+    "defaultMessage": "State"
+  },
+  "macLoad.title": {
+    "defaultMessage": "Load"
+  },
+  "macLoad.userActive": {
+    "defaultMessage": "Someone is using it"
+  },
+  "macLoad.userIdle": {
+    "defaultMessage": "Idle {idle}"
+  },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "Cancel failed."
   },

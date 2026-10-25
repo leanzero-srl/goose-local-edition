@@ -25,6 +25,7 @@ const SELF: Mac = {
   online: true,
   sessionsActive: 0,
   allows: null,
+  load: null,
   pollError: null,
 };
 const STUDIO: Mac = { ...SELF, key: 'studio-1', isSelf: false, name: 'Work’s Mac Studio' };

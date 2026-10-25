@@ -412,7 +412,11 @@ export async function leanzeroLinkJobsLog(
  */
 export function jobErrorText(error: unknown): string {
   const data = (error as { data?: unknown } | null | undefined)?.data;
-  if (data && typeof data === 'object' && typeof (data as { reason?: unknown }).reason === 'string') {
+  if (
+    data &&
+    typeof data === 'object' &&
+    typeof (data as { reason?: unknown }).reason === 'string'
+  ) {
     return (data as { reason: string }).reason;
   }
   return linkBannerText(error);

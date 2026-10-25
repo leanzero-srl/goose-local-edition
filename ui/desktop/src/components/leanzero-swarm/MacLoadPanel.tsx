@@ -45,11 +45,13 @@ const i18n = defineMessages({
   userIdle: { id: 'macLoad.userIdle', defaultMessage: 'Idle {idle}' },
   inferenceLine: {
     id: 'macLoad.inferenceLine',
-    defaultMessage: '{engine} engine requests · {slots} router slots',
+    defaultMessage:
+      '{engine, plural, one {# engine request} other {# engine requests}} · {slots, plural, one {# router slot} other {# router slots}}',
   },
   jobsLine: {
     id: 'macLoad.jobsLine',
-    defaultMessage: '{live, plural, =0 {No job running} one {# job running} other {# jobs running}}',
+    defaultMessage:
+      '{live, plural, =0 {No job running} one {# job running} other {# jobs running}}',
   },
   noLoad: {
     id: 'macLoad.noLoad',
@@ -138,7 +140,9 @@ export function MacLoadBars({
     own: intl.formatMessage(i18n.ownLine, {
       user: own.userActive
         ? intl.formatMessage(i18n.userActive)
-        : intl.formatMessage(i18n.userIdle, { idle: own.idleS == null ? '—' : idleText(own.idleS) }),
+        : intl.formatMessage(i18n.userIdle, {
+            idle: own.idleS == null ? '—' : idleText(own.idleS),
+          }),
       cpu: pctText(own.cpuPct),
       mem: pctText(own.memUsedPct),
       gpu: pctText(own.gpuPct),
@@ -157,7 +161,10 @@ export function MacLoadBars({
   return (
     <div data-testid="mac-load" className="flex flex-col gap-2">
       {load.own.benchmark && (
-        <p data-testid="mac-load-benchmark" className={cx(TYPE.meta, WEIGHT.semibold, TONE_TEXT.warn)}>
+        <p
+          data-testid="mac-load-benchmark"
+          className={cx(TYPE.meta, WEIGHT.semibold, TONE_TEXT.warn)}
+        >
           {intl.formatMessage(i18n.benchmark, { why: load.own.benchmark })}
         </p>
       )}
@@ -205,7 +212,11 @@ export function MacLoadBars({
               </span>
               <span
                 data-testid={`mac-job-${job.job_id}-state`}
-                className={cx(TYPE.meta, WEIGHT.semibold, isTerminal(job.state) ? '' : TONE_TEXT.ok)}
+                className={cx(
+                  TYPE.meta,
+                  WEIGHT.semibold,
+                  isTerminal(job.state) ? '' : TONE_TEXT.ok
+                )}
               >
                 {job.state}
               </span>
@@ -327,7 +338,10 @@ export function JobDialog({
           {rows.map((r) => (
             <div key={r.key} className="contents">
               <dt className={cx(TYPE.meta, WEIGHT.semibold)}>{r.label}</dt>
-              <dd data-testid={`job-dialog-${r.key}`} className={cx(TYPE.body, TNUM, 'break-words')}>
+              <dd
+                data-testid={`job-dialog-${r.key}`}
+                className={cx(TYPE.body, TNUM, 'break-words')}
+              >
                 {r.value}
               </dd>
             </div>
@@ -346,7 +360,10 @@ export function JobDialog({
           </pre>
         </div>
         {error && (
-          <p data-testid="job-dialog-error" className={cx(TYPE.body, WEIGHT.semibold, TONE_TEXT.err)}>
+          <p
+            data-testid="job-dialog-error"
+            className={cx(TYPE.body, WEIGHT.semibold, TONE_TEXT.err)}
+          >
             {error}
           </p>
         )}
@@ -434,7 +451,9 @@ export function JobsSettings() {
 
   return (
     <div data-testid="jobs-settings" className="flex flex-col gap-2">
-      <span className={cx(TYPE.body, WEIGHT.semibold)}>{intl.formatMessage(i18n.settingsTitle)}</span>
+      <span className={cx(TYPE.body, WEIGHT.semibold)}>
+        {intl.formatMessage(i18n.settingsTitle)}
+      </span>
       {state && (
         <>
           <span className="flex items-center gap-2">
@@ -489,7 +508,10 @@ export function JobsSettings() {
         </>
       )}
       {error && (
-        <p data-testid="jobs-settings-error" className={cx(TYPE.body, WEIGHT.semibold, TONE_TEXT.err)}>
+        <p
+          data-testid="jobs-settings-error"
+          className={cx(TYPE.body, WEIGHT.semibold, TONE_TEXT.err)}
+        >
           {error}
         </p>
       )}

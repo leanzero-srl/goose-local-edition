@@ -186,6 +186,11 @@ export function useMacs(): MacsValue {
   return value;
 }
 
+/** The view's Macs when a MacsProvider is above, else null (cards that also render outside one). */
+export function useMacsMaybe(): MacsValue | null {
+  return useContext(MacsContext);
+}
+
 /** Renders `children` inside the view's MacsProvider, or inside its own when none is above. */
 export function WithMacs({ children }: { children: ReactNode }) {
   const outer = useContext(MacsContext);

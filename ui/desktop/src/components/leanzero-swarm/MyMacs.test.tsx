@@ -28,6 +28,7 @@ const SELF: Mac = {
   online: true,
   sessionsActive: 1,
   allows: null,
+  load: null,
   pollError: null,
 };
 const STUDIO: Mac = {

@@ -32,10 +32,12 @@ import {
 import { figureText, stageWord } from '../engineGlance/EngineGlanceCard';
 import { loadPhaseWord } from './loadPhaseWord';
 import { formatElapsed } from '../leanzero-swarm/mlxLiveStats';
-import { PERMISSION_LABEL } from '../leanzero-swarm/useMacs';
+import { PERMISSION_LABEL, useMacsMaybe } from '../leanzero-swarm/useMacs';
+import { MacLoadBars } from '../leanzero-swarm/MacLoadPanel';
+import type { Mac } from '../leanzero-swarm/macs';
 import { CandidateFigures, outcomeText } from '../leanzero-swarm/PlacementCandidates';
 import { KindChip, OtherWayChip, RoleChip, StateChip, WhereChip, ROLE_WORD } from './NodeChips';
-import type { GlanceLine, MemoryRow, NodeGlance, UsedBy } from './nodeGlance';
+import type { GlanceLine, GlanceWhere, MemoryRow, NodeGlance, UsedBy } from './nodeGlance';
 import type { ResolvedNodeDef } from './model';
 import { modelShortName } from '../../utils/modelShortName';
 
@@ -255,6 +257,22 @@ export function lineText(intl: IntlShape, line: GlanceLine): string {
 }
 
 /** The line's colour: red for what cannot run, orange-ink for a step, the page's ink otherwise. */
+/**
+ * The Mac a node runs on, when it runs on exactly one Mac that is online and reports Link load: its
+ * three load bars (own, AI inference, jobs) show on the card, the same MacLoadBars My Macs shows.
+ * A split, a provider, or an older goose that reports no load shows none.
+ */
+export function loadMacOf(where: GlanceWhere | null, macs: readonly Mac[]): Mac | null {
+  if (!where) return null;
+  const mac =
+    where.kind === 'thisMac'
+      ? macs.find((m) => m.isSelf)
+      : where.kind === 'mac'
+        ? macs.find((m) => m.name === where.name)
+        : undefined;
+  return mac && mac.online && mac.load ? mac : null;
+}
+
 function lineTone(glance: NodeGlance): string {
   switch (glance.state) {
     case 'cantRun':
@@ -447,6 +465,7 @@ export function NodeCard({
   onAction,
 }: NodeCardProps) {
   const intl = useIntl();
+  const loadMac = loadMacOf(glance.where, useMacsMaybe()?.macs ?? []);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const def = node.def;
   const fromPool = node.modelFrom.kind === 'pool';
@@ -602,6 +621,11 @@ export function NodeCard({
 
       <LiveFigures glance={glance} />
       <MemoryBars rows={glance.memory} />
+      {loadMac && (
+        <div data-testid="node-mac-load">
+          <MacLoadBars load={loadMac.load} target={loadMac.nodeId} macName={loadMac.name} />
+        </div>
+      )}
 
       {usedBy.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5" data-testid="node-used-by">
