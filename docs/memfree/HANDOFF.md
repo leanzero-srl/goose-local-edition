@@ -229,3 +229,19 @@ Open / exact next steps:
 3. Gate: cargo fmt --all; clippy -p goose-sidecar -p goose --all-targets -D warnings; tests. Commit `goose: memoryHolders/memoryFree
    handlers ...`.
 Trap: the ctx guard fires at ~160k; this brief + CLAUDE.md is ~45k at start, so keep reads to sed ranges.
+
+## AGENT U3 state (2026-10-25, stopped at the context guard ~165k)
+DONE (3 commits on feat/memfree, ui/desktop only):
+- db51b5333 types vs R1's real DTOs: all names matched EXCEPT fit — MlxMountFitDto has `verdict` "allow"|"warn"|"block"
+  and `shortBytes` (block only), not `status`. New `MemfreeFit` in memfree.ts, `MemoryHolders.fit?` added,
+  `afterLine` fits = verdict !== 'block'. Response is flat (no wrapper).
+- same commit: i18n:extract -> 41 new ids, translated into all 15 catalogs (insert-after-en-neighbour, file order kept,
+  diffs are pure insertions); i18n:check passes (3974 messages). Script: scratchpad u3/apply.py + tr_data.py.
+- next commit: NodeCard.memfree.test.tsx (8: memfreeTargetOf this Mac / peer node id / offline / other cantRun;
+  render shows on short, absent on fit, absent when GOOSE_MEMFREE_ENABLED=false, absent outside local edition —
+  EditionContext mocked), MemfreeSettings.test.tsx (7: defaults, stored values, toggle saves + forgetMemfreeEnabled,
+  remote quit key, min MB on blur + junk -> 200, save failure reverts, read failure alert).
+  AppSettingsSection.preventSleep.test.tsx now stubs ./MemfreeSettings (its unmocked config read rendered a 2nd alert).
+GATE: lint:check exit 0. test:run -- --maxWorkers=6: 5120 pass / 4 fail, all 4 were preventSleep (fixed above;
+  settings dir rerun 185/185). Full suite NOT rerun after the fix.
+OPEN: full `pnpm run test:run` rerun once to confirm; optional shots; live check on Gabee once R2's engine ships.
