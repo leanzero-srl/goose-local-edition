@@ -56,7 +56,7 @@ Cards/verdicts show how much more a Mac can take: "can take ~11 more 8 GB jobs".
 3. UI tests: macLoad.test.ts (parsePolicy last_resort -> allow, USER_ACTIVE_POLICIES), MacLoadPanel.test.tsx
    (no jobs-policy-last_resort; verdict line renders; policy hint), RunJobDialog.test.tsx (verdict), macLoad.fixtures.ts
    (add verdict/can_take/heavy_slots_* to fixtures). grep -rn "last_resort\|lastResort" ui/desktop/src.
-4. Gates (clippy for the 3 crates was started by this agent; its log is
+4. Gates (clippy -D warnings for leanzero-link + goose + goose-server PASSED at 4983e2b90's Rust code, exit 0; its log is
    /private/tmp/claude-501/-Users-mihaiperdum-Projects/9235260e-4bbb-41c2-aefc-cd516bd51e28/scratchpad/clippy.log —
    re-run anyway after UI work is irrelevant to it):
    C='profile.dev.package."*".strip=false'  (laptop is macOS 27: needed on every cargo build/test; for clippy put
