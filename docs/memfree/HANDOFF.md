@@ -133,3 +133,20 @@ Facts read (file:line at e4cfd942a), so the next agent skips the survey:
 Commands (unchanged): `cd ~/Projects/goose-memfree && source bin/activate-hermit`; every cargo build/test with
 `--config 'profile.dev.package."*".strip=false'` (clippy: after `clippy`); heavy ones via `~/Projects/machine-sync/bin/heavy-run --timeout 3600 -- <cmd>`.
 Commit ONLY own paths (crates/**, acp-schema.json, acp-meta.json, ui/sdk/src/generated); AGENT U shares the worktree.
+
+## COORDINATOR state (build agent 1, 2026-10-25 ~18:30) — context guard at 170k, stopping
+Running in background when I stopped (same worktree, both commit only their own paths):
+- AGENT R1: sidecar memfree.rs (census/categorize/never_kill/verdict), own-engine + other-MLX reclaim, graceful app quit,
+  ACP types/routes/handlers (local), schema regen commit "acp: memoryHolders/memoryFree schema". Writes "AGENT R1 state" here if cut.
+- AGENT U: ui/desktop helpers, acp/memfree.ts, FreeMemoryDialog, NodeCard/MacLoadPanel entries, Settings › App tunables,
+  i18n x15, vitest, fixture screenshots. Waits on R1's schema commit. Writes "AGENT U state" here if cut.
+STILL TO DO after they finish (next coordinator, fresh session):
+1. AGENT R2: Ollama (/api/ps + keep_alive:0) + LM Studio (verify unload endpoint in lmstudio.ai docs first) + orphaned goose serve
+   reclaim; Link MlxOp::MemoryHolders/MemoryFree + GoosedMlxControl arms; GOOSE_LINK_ALLOW_REMOTE_APP_QUIT (default false, read on
+   the peer) + NodeAllows.quit_apps serde default + old-peer test; one ACP integration test in crates/goose/tests.
+2. Full gate (fmt, clippy -D warnings with strip=false config, cargo test touched crates, pnpm lint:check + test:run).
+3. LIVE on Gabee: package app (isolated GOOSE_PATH_ROOT + GOOSE_USER_DATA_DIR, own CDP port, mlx_engine port != 8090), load a
+   small MLX model in that engine, open Free up memory, free goose's own, assert budget rises by the measured footprint (±2% RAM).
+   App-quit live only on an app the agent launched itself (TextEdit/Chess). Never quit Gabriela's apps.
+4. Rebase onto origin/main once 3.0.129 lands (`git fetch && git log origin/main`), resolve keeping both; i18n by key replay.
+LESSON: subagents here start near 100k+ (CLAUDE.md + memory index); do NOT load goose-feature-dev in full — brief the facts.
