@@ -759,6 +759,8 @@ async fn peer_keeps_its_mirror_while_the_peers_index_is_unreadable() {
 struct StubPeer {
     node: NodeState,
     unauthorized: Arc<AtomicBool>,
+    /// While set, `/nodes` answers only after this delay — a loaded peer, alive but slow.
+    slow: Arc<StdMutex<Option<Duration>>>,
 }
 
 async fn stub_nodes(
@@ -767,6 +769,10 @@ async fn stub_nodes(
     use axum::response::IntoResponse;
     if stub.unauthorized.load(Ordering::SeqCst) {
         return (axum::http::StatusCode::UNAUTHORIZED, "token mismatch").into_response();
+    }
+    let delay = *stub.slow.lock().unwrap();
+    if let Some(delay) = delay {
+        tokio::time::sleep(delay).await;
     }
     axum::Json(SwarmNodesResponse {
         self_node: stub.node.clone(),
@@ -805,6 +811,14 @@ impl StubPeerHandle {
 }
 
 async fn spawn_stub_peer(node_id: &str, unauthorized: Arc<AtomicBool>) -> (u16, StubPeerHandle) {
+    spawn_stub_peer_with(node_id, unauthorized, Arc::new(StdMutex::new(None))).await
+}
+
+async fn spawn_stub_peer_with(
+    node_id: &str,
+    unauthorized: Arc<AtomicBool>,
+    slow: Arc<StdMutex<Option<Duration>>>,
+) -> (u16, StubPeerHandle) {
     let stub = StubPeer {
         node: NodeState {
             node_id: node_id.to_string(),
@@ -820,6 +834,7 @@ async fn spawn_stub_peer(node_id: &str, unauthorized: Arc<AtomicBool>) -> (u16, 
             load: None,
         },
         unauthorized,
+        slow,
     };
     let router = axum::Router::new()
         .route("/v1/swarm/nodes", axum::routing::get(stub_nodes))
@@ -925,6 +940,151 @@ async fn a_peer_answering_4xx_keeps_its_last_status_and_carries_the_error() {
     .await;
 
     handle.shutdown();
+}
+
+/// A node with the PRODUCTION poll cadence and poll timeout (`ControlConfig::new`'s 3 s / 5 s):
+/// the D2 latency is a sum of those defaults, so the test must not shrink them.
+async fn spawn_node_production_cadence(source: Arc<FakeStateSource>) -> ControlHandle {
+    let mut config = ControlConfig::new(TOKEN.to_string(), mesh_v6());
+    config.port = 0;
+    config.peer_proxy = Some(support::fake_tailnet().proxy());
+    ControlService::start(config, source, None, None, None, None)
+        .await
+        .expect("control service starts")
+}
+
+/// Wait (up to 15 s) for A's row of `node_id` to satisfy `pred`; the time it took.
+async fn time_until_row(
+    client: &reqwest::Client,
+    base: &str,
+    node_id: &str,
+    pred: impl Fn(&serde_json::Value) -> bool,
+) -> Duration {
+    let started = tokio::time::Instant::now();
+    loop {
+        let nodes = get_json(client, &format!("{base}/v1/swarm/nodes")).await;
+        if peer_row(&nodes, node_id).is_some_and(|p| pred(&p)) {
+            return started.elapsed();
+        }
+        assert!(
+            started.elapsed() < DEADLINE,
+            "timed out waiting on {node_id}'s row: {nodes}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+fn is_offline(p: &serde_json::Value) -> bool {
+    p["status"] == serde_json::json!({"type": "Offline"})
+}
+
+/// D2 (3.0.128 live): the workhorse's Link was dropped and the laptop showed it Offline only
+/// after ~6-7 s. The pooled poll connection to a peer whose Link died stays open and silent
+/// ([`support::FakeTailnet::kill`]), so the next poll waited out the whole 5 s request timeout on
+/// top of the 3 s poll sleep. At the production cadence the row must read Offline within 3.5 s.
+#[tokio::test]
+async fn a_peer_whose_link_drops_reads_offline_within_3_5_s_at_production_cadence() {
+    let source_b = FakeStateSource::new("node-b");
+    let b = spawn_node(source_b, mesh_v6()).await;
+    let a = spawn_node_production_cadence(FakeStateSource::new("node-a")).await;
+    let base_a = base_url(&a);
+    let client = reqwest::Client::new();
+    let b_mesh_ip = support::fake_tailnet().expose(b.local_addr().port());
+    a.set_peers(vec![PeerTarget {
+        hostname: "node-b-host".to_string(),
+        mesh_ip: Some(b_mesh_ip.clone()),
+        port: b.local_addr().port(),
+    }]);
+    time_until_row(&client, &base_a, "node-b", |p| !is_offline(p)).await;
+    // Land the drop mid-cycle, right after a poll used the pooled connection.
+    tokio::time::sleep(Duration::from_millis(3200)).await;
+
+    support::fake_tailnet().kill(&b_mesh_ip);
+    let took = time_until_row(&client, &base_a, "node-b", is_offline).await;
+    assert!(
+        took <= Duration::from_millis(3500),
+        "a dropped peer must read Offline within 3.5 s, took {took:?}"
+    );
+    a.shutdown();
+    b.shutdown();
+}
+
+/// D2, the port-closed shape: the peer's control service stops while its mesh daemon still
+/// answers (a CONNECT is refused at once). Offline within 3.5 s at the production cadence.
+#[tokio::test]
+async fn a_peer_whose_port_closes_reads_offline_within_3_5_s_at_production_cadence() {
+    let unauthorized = Arc::new(AtomicBool::new(false));
+    let (stub_port, stub) = spawn_stub_peer("node-stub", unauthorized).await;
+    let a = spawn_node_production_cadence(FakeStateSource::new("node-a")).await;
+    let base_a = base_url(&a);
+    let client = reqwest::Client::new();
+    a.set_peers(vec![PeerTarget {
+        hostname: "node-stub-host".to_string(),
+        mesh_ip: Some(support::fake_tailnet().expose(stub_port)),
+        port: stub_port,
+    }]);
+    time_until_row(&client, &base_a, "node-stub", |p| !is_offline(p)).await;
+    tokio::time::sleep(Duration::from_millis(3200)).await;
+
+    stub.vanish().await;
+    let took = time_until_row(&client, &base_a, "node-stub", is_offline).await;
+    assert!(
+        took <= Duration::from_millis(3500),
+        "a peer whose port closed must read Offline within 3.5 s, took {took:?}"
+    );
+    a.shutdown();
+}
+
+/// D2's other half: a peer that is ALIVE (it accepts the connection) but answers a poll slower
+/// than the poll timeout — a loaded Mac — keeps its status through one timed-out look, with the
+/// timeout on record. Only a peer that stays that slow for several looks reads Offline.
+#[tokio::test]
+async fn a_slow_but_alive_peer_is_not_marked_offline_on_one_timeout() {
+    let unauthorized = Arc::new(AtomicBool::new(false));
+    let slow = Arc::new(StdMutex::new(None));
+    let (stub_port, stub) = spawn_stub_peer_with("node-stub", unauthorized, slow.clone()).await;
+    let mut config = ControlConfig::new(TOKEN.to_string(), mesh_v6());
+    config.port = 0;
+    config.poll_interval = Duration::from_millis(300);
+    config.request_timeout = Duration::from_millis(400);
+    config.peer_proxy = Some(support::fake_tailnet().proxy());
+    let a = ControlService::start(config, FakeStateSource::new("node-a"), None, None, None, None)
+        .await
+        .expect("control service starts");
+    let base_a = base_url(&a);
+    let client = reqwest::Client::new();
+    a.set_peers(vec![PeerTarget {
+        hostname: "node-stub-host".to_string(),
+        mesh_ip: Some(support::fake_tailnet().expose(stub_port)),
+        port: stub_port,
+    }]);
+    time_until_row(&client, &base_a, "node-stub", |p| {
+        p["status"] == serde_json::json!({"type": "Idle"})
+    })
+    .await;
+
+    *slow.lock().unwrap() = Some(Duration::from_millis(900));
+    time_until_row(&client, &base_a, "node-stub", |p| {
+        p["last_poll_error"].is_string() || is_offline(p)
+    })
+    .await;
+    let nodes = get_json(&client, &format!("{base_a}/v1/swarm/nodes")).await;
+    let row = peer_row(&nodes, "node-stub").unwrap();
+    assert_eq!(
+        row["status"],
+        serde_json::json!({"type": "Idle"}),
+        "one timed-out look at a live peer must keep its status: {row}"
+    );
+
+    // Negative control: a peer that STAYS too slow to answer is given up on.
+    time_until_row(&client, &base_a, "node-stub", is_offline).await;
+    *slow.lock().unwrap() = None;
+    time_until_row(&client, &base_a, "node-stub", |p| {
+        p["status"] == serde_json::json!({"type": "Idle"})
+    })
+    .await;
+    stub.vanish().await;
+    a.shutdown();
 }
 
 // ── Unreachable-from-birth peer: Offline row, endpoint healthy ──────────

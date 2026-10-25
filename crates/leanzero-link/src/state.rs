@@ -408,7 +408,21 @@ struct PeerEntry {
     /// may clear `state.leaving` only if no notice landed while it was in flight — an
     /// answer the peer gave before it said it was leaving never undoes the notice.
     leaving_notices: u64,
+    /// Consecutive polls that connected but got no answer in time ([`PollFailure::Slow`]).
+    slow_looks: u32,
 }
+
+/// How often each peer's liveness DIAL runs (D2): a fresh TCP connect through the mesh proxy,
+/// never a request — a loaded peer's kernel still accepts, so only a gone peer fails it.
+pub const PEER_LIVENESS_INTERVAL: Duration = Duration::from_secs(1);
+/// The liveness dial's bound. A tailnet connect is one round trip (well under 500 ms even over
+/// a DERP relay); a peer whose Link died leaves the CONNECT hanging, so this is how long a
+/// dropped peer can still read alive after the last look began.
+pub const PEER_LIVENESS_DIAL_TIMEOUT: Duration = Duration::from_millis(1500);
+/// Polls in a row that may time out on a CONNECTED peer (alive but slow, e.g. under load)
+/// before it reads `Offline`. Until then its status is kept and the timeout rides in
+/// `last_poll_error`.
+pub const PEER_SLOW_LOOKS: u32 = 3;
 
 struct RegistryInner {
     config: PeerRegistryConfig,
@@ -523,6 +537,11 @@ impl PeerRegistry {
                         target.clone(),
                         base_url,
                     )));
+                    tasks.push(tokio::spawn(liveness_peer_loop(
+                        weak.clone(),
+                        target.clone(),
+                        base_url.clone(),
+                    )));
                     tasks.push(tokio::spawn(stream_peer_loop(
                         weak,
                         target.clone(),
@@ -543,6 +562,7 @@ impl PeerRegistry {
                     state,
                     tasks,
                     leaving_notices: 0,
+                    slow_looks: 0,
                 },
             );
         }
@@ -715,13 +735,104 @@ enum PollFailure {
     Transport(String),
     /// The peer answered — with a non-2xx status or a body this crate cannot parse.
     Answered(String),
+    /// The connection was made but no answer came within the poll timeout: a peer that is
+    /// there but slow (loaded). Offline only after [`PEER_SLOW_LOOKS`] in a row.
+    Slow(String),
+}
+
+/// A reqwest failure classified: a timeout AFTER the connection was made is `Slow`; any
+/// other failure to complete the exchange (refused, reset, connect timeout) is `Transport`.
+fn classify_send_error(error: reqwest::Error) -> PollFailure {
+    if error.is_timeout() && !error.is_connect() {
+        PollFailure::Slow(error.to_string())
+    } else {
+        PollFailure::Transport(error.to_string())
+    }
+}
+
+/// D2: dial the peer's control port through the mesh proxy every
+/// [`PEER_LIVENESS_INTERVAL`]. A failed dial (refused at once, or a CONNECT left hanging past
+/// [`PEER_LIVENESS_DIAL_TIMEOUT`] because the peer's Link is gone) marks the row `Offline`
+/// without waiting out a poll — whose pooled connection to a dead peer stays open and silent
+/// for the whole request timeout. A successful dial changes nothing: only a poll restores
+/// a status.
+async fn liveness_peer_loop(weak: Weak<RegistryInner>, target: PeerTarget, base_url: String) {
+    let Ok(url) = url::Url::parse(&base_url) else {
+        return;
+    };
+    loop {
+        tokio::time::sleep(PEER_LIVENESS_INTERVAL).await;
+        let Some(inner) = weak.upgrade() else { return };
+        let Some(proxy) = inner.dial.as_ref().map(|dial| dial.proxy) else {
+            return;
+        };
+        drop(inner);
+        let Err(error) = proxy.tcp_stream(&url, PEER_LIVENESS_DIAL_TIMEOUT).await else {
+            continue;
+        };
+        let Some(inner) = weak.upgrade() else { return };
+        let text = format!("{base_url} unreachable: {error}");
+        if let Some(event) = mark_peer_unreachable(&inner, &target.hostname, &text) {
+            inner.pubsub.publish(EventOrigin::Peer, event).await;
+        }
+    }
+}
+
+/// The liveness dial failed: `Offline` with the dial's words — unless the row already reads
+/// `Offline` (a poll's own transport text, or a leaving notice, is never overwritten).
+fn mark_peer_unreachable(
+    inner: &Arc<RegistryInner>,
+    hostname: &str,
+    error: &str,
+) -> Option<LinkEvent> {
+    let mut peers = inner.peers.lock().unwrap();
+    let entry = peers.get_mut(hostname)?;
+    if entry.state.status == NodeStatus::Offline {
+        return None;
+    }
+    tracing::warn!(hostname, error, "mesh peer liveness dial failed; marked Offline");
+    entry.state.status = NodeStatus::Offline;
+    entry.state.last_poll_error = Some(error.to_string());
+    entry.state.updated_at = Utc::now();
+    Some(LinkEvent::NodeStateChanged(entry.state.clone()))
+}
+
+/// Count a slow look; the event to publish (Offline at [`PEER_SLOW_LOOKS`], else the error).
+fn mark_peer_slow(inner: &Arc<RegistryInner>, hostname: &str, error: &str) -> Option<LinkEvent> {
+    let looks = {
+        let mut peers = inner.peers.lock().unwrap();
+        let entry = peers.get_mut(hostname)?;
+        entry.slow_looks += 1;
+        entry.slow_looks
+    };
+    let text = format!("no answer in time ({looks} of {PEER_SLOW_LOOKS} looks): {error}");
+    if looks >= PEER_SLOW_LOOKS {
+        mark_peer_offline(inner, hostname, &text)
+    } else {
+        mark_peer_poll_error(inner, hostname, &text)
+    }
+}
+
+fn reset_slow_looks(inner: &Arc<RegistryInner>, hostname: &str) {
+    if let Some(entry) = inner.peers.lock().unwrap().get_mut(hostname) {
+        entry.slow_looks = 0;
+    }
 }
 
 async fn poll_peer_loop(weak: Weak<RegistryInner>, target: PeerTarget, base_url: String) {
     loop {
         let Some(inner) = weak.upgrade() else { return };
         let poll_interval = inner.config.poll_interval;
-        match poll_peer_once(&inner, &target, &base_url).await {
+        let outcome = poll_peer_once(&inner, &target, &base_url).await;
+        if !matches!(outcome, Err(PollFailure::Slow(_))) {
+            reset_slow_looks(&inner, &target.hostname);
+        }
+        match outcome {
+            Err(PollFailure::Slow(error)) => {
+                if let Some(event) = mark_peer_slow(&inner, &target.hostname, &error) {
+                    inner.pubsub.publish(EventOrigin::Peer, event).await;
+                }
+            }
             Ok(events) => {
                 for event in events {
                     inner.pubsub.publish(EventOrigin::Peer, event).await;
@@ -760,7 +871,7 @@ async fn fetch_json<T: serde::de::DeserializeOwned>(
         .bearer_auth(&inner.config.node_token)
         .send()
         .await
-        .map_err(|e| PollFailure::Transport(e.to_string()))?;
+        .map_err(classify_send_error)?;
     let status = response.status();
     if !status.is_success() {
         let body = response
@@ -773,6 +884,9 @@ async fn fetch_json<T: serde::de::DeserializeOwned>(
         )));
     }
     response.json::<T>().await.map_err(|e| {
+        if e.is_timeout() {
+            return PollFailure::Slow(e.to_string());
+        }
         PollFailure::Answered(format!(
             "{url} answered 2xx but its body did not parse: {e}"
         ))
