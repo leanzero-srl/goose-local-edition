@@ -35,6 +35,10 @@ const i18n = defineMessages({
     defaultMessage:
       'This model fits after freeing <b>{gb} GB</b>: goose’s own memory and quitting {apps}.',
   },
+  fitsWithAppsOnly: {
+    id: 'freeMemory.fitsWithAppsOnly',
+    defaultMessage: 'This model fits after quitting {apps}, which frees <b>{gb} GB</b>.',
+  },
   cannotFit: {
     id: 'freeMemory.cannotFit',
     defaultMessage:
@@ -231,7 +235,7 @@ export function FreeMemoryDialog({ target, macName, fitModelId, onClose }: FreeM
                   {line.kind === 'fitsByGooseOwned' &&
                     intl.formatMessage(i18n.fitsByGooseOwned, { gb: n1(line.freeGb), ...bold })}
                   {line.kind === 'fitsWithApps' &&
-                    intl.formatMessage(i18n.fitsWithApps, {
+                    intl.formatMessage(line.withGoose ? i18n.fitsWithApps : i18n.fitsWithAppsOnly, {
                       gb: n1(line.freeGb),
                       apps: intl.formatList(line.apps, { type: 'conjunction' }),
                       ...bold,

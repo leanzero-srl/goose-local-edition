@@ -2678,6 +2678,9 @@
   "freeMemory.fitsWithApps": {
     "defaultMessage": "Модель поместится после освобождения <b>{gb} ГБ</b>: собственной памяти goose и закрытия {apps}."
   },
+  "freeMemory.fitsWithAppsOnly": {
+    "defaultMessage": "Модель поместится после закрытия {apps}, это освободит <b>{gb} ГБ</b>."
+  },
   "freeMemory.freeFailed": {
     "defaultMessage": "Не удалось освободить память: {reason}"
   },

@@ -2678,6 +2678,9 @@
   "freeMemory.fitsWithApps": {
     "defaultMessage": "Este modelo cabe tras liberar <b>{gb} GB</b>: la memoria propia de goose y cerrar {apps}."
   },
+  "freeMemory.fitsWithAppsOnly": {
+    "defaultMessage": "Este modelo cabe tras cerrar {apps}, lo que libera <b>{gb} GB</b>."
+  },
   "freeMemory.freeFailed": {
     "defaultMessage": "No se pudo liberar memoria: {reason}"
   },

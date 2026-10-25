@@ -2678,6 +2678,9 @@
   "freeMemory.fitsWithApps": {
     "defaultMessage": "<b>{gb} GB</b> を解放するとこのモデルが収まります: goose 自身のメモリと {apps} の終了。"
   },
+  "freeMemory.fitsWithAppsOnly": {
+    "defaultMessage": "{apps} を終了するとこのモデルが収まります(<b>{gb} GB</b> を解放)。"
+  },
   "freeMemory.freeFailed": {
     "defaultMessage": "メモリを解放できませんでした: {reason}"
   },

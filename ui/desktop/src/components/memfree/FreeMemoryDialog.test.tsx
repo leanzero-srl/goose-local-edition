@@ -69,6 +69,21 @@ describe('FreeMemoryDialog', () => {
     expect(screen.queryByTestId('free-memory-quit-WindowServer')).toBeNull();
   });
 
+  it('names only the apps when goose holds nothing to free', async () => {
+    mockHolders.mockResolvedValue({
+      ...GABEE,
+      gooseOwnedBytes: 0,
+      shortBytes: gb(4.3),
+      verdict: { kind: 'fitsWithApps', remainingBytes: 0, appsToQuit: ['com.google.Chrome'] },
+    });
+    show();
+    const verdict = await screen.findByTestId('free-memory-verdict');
+    expect(verdict.dataset.verdict).toBe('fitsWithApps');
+    expect(verdict.textContent).toContain('Google Chrome');
+    expect(verdict.textContent).toContain('7.2 GB');
+    expect(verdict.textContent).not.toMatch(/goose/i);
+  });
+
   it('names the other Mac without a GB figure when it sent no Link load reading', async () => {
     mockHolders.mockResolvedValue({
       ...GABEE,

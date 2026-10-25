@@ -2678,6 +2678,9 @@
   "freeMemory.fitsWithApps": {
     "defaultMessage": "<b>{gb} GB</b> खाली करने के बाद यह मॉडल फ़िट होता है: goose की अपनी मेमोरी और {apps} को बंद करना।"
   },
+  "freeMemory.fitsWithAppsOnly": {
+    "defaultMessage": "{apps} को बंद करने के बाद यह मॉडल फ़िट होता है, इससे <b>{gb} GB</b> खाली होता है।"
+  },
   "freeMemory.freeFailed": {
     "defaultMessage": "मेमोरी खाली नहीं हो सकी: {reason}"
   },

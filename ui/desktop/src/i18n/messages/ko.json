@@ -2678,6 +2678,9 @@
   "freeMemory.fitsWithApps": {
     "defaultMessage": "<b>{gb} GB</b>를 해제하면 이 모델이 들어갑니다: goose 자체 메모리와 {apps} 종료."
   },
+  "freeMemory.fitsWithAppsOnly": {
+    "defaultMessage": "{apps}를 종료하면 이 모델이 들어갑니다(<b>{gb} GB</b> 해제)."
+  },
   "freeMemory.freeFailed": {
     "defaultMessage": "메모리를 해제할 수 없습니다: {reason}"
   },

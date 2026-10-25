@@ -134,7 +134,9 @@ export function userApps(groups: readonly MemfreeGroup[]): MemfreeGroup[] {
 /** What the headline of the dialog (and the card's hint) says, every number in GB. */
 export type VerdictLine =
   | { kind: 'fitsByGooseOwned'; freeGb: number }
-  | { kind: 'fitsWithApps'; freeGb: number; apps: string[] }
+  /** `withGoose`: goose's own memory is part of it. False when goose holds nothing to free, so
+   * the line names only the apps (it never credits a source that frees 0). */
+  | { kind: 'fitsWithApps'; freeGb: number; apps: string[]; withGoose: boolean }
   | {
       kind: 'cannotFit';
       everythingGb: number;
@@ -164,6 +166,7 @@ export function verdictLine(h: MemoryHolders): VerdictLine | null {
         kind: 'fitsWithApps',
         freeGb: gib(h.gooseOwnedBytes + appBytes),
         apps: named.length > 0 ? named.map((a) => a.label) : verdict.appsToQuit,
+        withGoose: h.gooseOwnedBytes > 0,
       };
     }
     default:

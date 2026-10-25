@@ -2678,6 +2678,9 @@
   "freeMemory.fitsWithApps": {
     "defaultMessage": "Mô hình này vừa sau khi giải phóng <b>{gb} GB</b>: bộ nhớ của chính goose và thoát {apps}."
   },
+  "freeMemory.fitsWithAppsOnly": {
+    "defaultMessage": "Mô hình này vừa sau khi thoát {apps}, giải phóng <b>{gb} GB</b>."
+  },
   "freeMemory.freeFailed": {
     "defaultMessage": "Không thể giải phóng bộ nhớ: {reason}"
   },

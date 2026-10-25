@@ -62,6 +62,22 @@ describe('verdictLine', () => {
       kind: 'fitsWithApps',
       freeGb: (gb(8) + gb(7.2)) / GIB,
       apps: ['Google Chrome'],
+      withGoose: true,
+    });
+  });
+
+  it('goose holds 0 -> fitsWithApps names only the apps, never goose', () => {
+    const line = verdictLine({
+      ...GABEE,
+      gooseOwnedBytes: 0,
+      shortBytes: gb(4.3),
+      verdict: { kind: 'fitsWithApps', remainingBytes: 0, appsToQuit: ['com.google.Chrome'] },
+    });
+    expect(line).toEqual({
+      kind: 'fitsWithApps',
+      freeGb: gb(7.2) / GIB,
+      apps: ['Google Chrome'],
+      withGoose: false,
     });
   });
 

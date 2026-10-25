@@ -2678,6 +2678,9 @@
   "freeMemory.fitsWithApps": {
     "defaultMessage": "Bu model <b>{gb} GB</b> boşaltıldıktan sonra sığar: goose’un kendi belleği ve {apps} kapatılarak."
   },
+  "freeMemory.fitsWithAppsOnly": {
+    "defaultMessage": "Bu model {apps} kapatıldıktan sonra sığar, bu <b>{gb} GB</b> boşaltır."
+  },
   "freeMemory.freeFailed": {
     "defaultMessage": "Bellek boşaltılamadı: {reason}"
   },

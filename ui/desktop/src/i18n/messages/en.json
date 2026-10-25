@@ -2819,6 +2819,9 @@
   "freeMemory.fitsWithApps": {
     "defaultMessage": "This model fits after freeing <b>{gb} GB</b>: goose’s own memory and quitting {apps}."
   },
+  "freeMemory.fitsWithAppsOnly": {
+    "defaultMessage": "This model fits after quitting {apps}, which frees <b>{gb} GB</b>."
+  },
   "freeMemory.freeFailed": {
     "defaultMessage": "Could not free memory: {reason}"
   },

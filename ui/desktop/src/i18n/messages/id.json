@@ -2678,6 +2678,9 @@
   "freeMemory.fitsWithApps": {
     "defaultMessage": "Model ini muat setelah membebaskan <b>{gb} GB</b>: memori milik goose sendiri dan menutup {apps}."
   },
+  "freeMemory.fitsWithAppsOnly": {
+    "defaultMessage": "Model ini muat setelah menutup {apps}, yang membebaskan <b>{gb} GB</b>."
+  },
   "freeMemory.freeFailed": {
     "defaultMessage": "Tidak dapat membebaskan memori: {reason}"
   },

@@ -2678,6 +2678,9 @@
   "freeMemory.fitsWithApps": {
     "defaultMessage": "釋放 <b>{gb} GB</b> 後此模型放得下:goose 自身的記憶體並結束 {apps}。"
   },
+  "freeMemory.fitsWithAppsOnly": {
+    "defaultMessage": "結束 {apps} 後此模型放得下,可釋放 <b>{gb} GB</b>。"
+  },
   "freeMemory.freeFailed": {
     "defaultMessage": "無法釋放記憶體:{reason}"
   },

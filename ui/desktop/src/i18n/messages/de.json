@@ -2678,6 +2678,9 @@
   "freeMemory.fitsWithApps": {
     "defaultMessage": "Dieses Modell passt, nachdem <b>{gb} GB</b> freigegeben wurden: der eigene Speicher von goose und das Beenden von {apps}."
   },
+  "freeMemory.fitsWithAppsOnly": {
+    "defaultMessage": "Dieses Modell passt, nachdem {apps} beendet wurde. Das gibt <b>{gb} GB</b> frei."
+  },
   "freeMemory.freeFailed": {
     "defaultMessage": "Speicher konnte nicht freigegeben werden: {reason}"
   },

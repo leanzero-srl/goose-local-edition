@@ -2678,6 +2678,9 @@
   "freeMemory.fitsWithApps": {
     "defaultMessage": "Questo modello ci sta dopo aver liberato <b>{gb} GB</b>: la memoria di goose e la chiusura di {apps}."
   },
+  "freeMemory.fitsWithAppsOnly": {
+    "defaultMessage": "Questo modello ci sta dopo la chiusura di {apps}, che libera <b>{gb} GB</b>."
+  },
   "freeMemory.freeFailed": {
     "defaultMessage": "Impossibile liberare memoria: {reason}"
   },
