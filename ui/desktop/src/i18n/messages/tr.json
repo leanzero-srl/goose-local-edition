@@ -12002,6 +12002,9 @@
   "runJob.none": {
     "defaultMessage": "Şu anda Mac’lerinizin hiçbiri iş almıyor. İşleri çalıştıracak Mac’te “Diğer Mac’lerin gönderdiği işleri çalıştır” anahtarını açın."
   },
+  "runJob.jobsOff": {
+    "defaultMessage": "bu Mac’te işler kapalı"
+  },
   "runJob.kind": {
     "defaultMessage": "Tür"
   },

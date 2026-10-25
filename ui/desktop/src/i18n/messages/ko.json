@@ -12002,6 +12002,9 @@
   "runJob.none": {
     "defaultMessage": "지금 작업을 받는 Mac이 없습니다. 작업을 실행할 Mac에서 “다른 Mac이 보낸 작업 실행”을 켜세요."
   },
+  "runJob.jobsOff": {
+    "defaultMessage": "이 Mac에서는 작업이 꺼져 있습니다"
+  },
   "runJob.kind": {
     "defaultMessage": "종류"
   },

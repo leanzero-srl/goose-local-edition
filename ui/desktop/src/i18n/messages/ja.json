@@ -12002,6 +12002,9 @@
   "runJob.none": {
     "defaultMessage": "現在ジョブを受け付けている Mac はありません。実行させたい Mac で「他の Mac から送られたジョブを実行」をオンにしてください。"
   },
+  "runJob.jobsOff": {
+    "defaultMessage": "この Mac ではジョブがオフです"
+  },
   "runJob.kind": {
     "defaultMessage": "種類"
   },

@@ -9698,6 +9698,9 @@
   "runJob.inUse": {
     "defaultMessage": "{name} (in use)"
   },
+  "runJob.jobsOff": {
+    "defaultMessage": "jobs are off on this Mac"
+  },
   "runJob.kind": {
     "defaultMessage": "Kind"
   },

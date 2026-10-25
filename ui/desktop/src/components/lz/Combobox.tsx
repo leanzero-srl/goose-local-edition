@@ -16,6 +16,8 @@ export interface ComboboxOption {
   label?: string;
   /** A quieter right-aligned note on the option row (an offset, a count). */
   hint?: ReactNode;
+  /** Listed but not pickable (its `hint` says why); a click or Enter on it does nothing. */
+  disabled?: boolean;
 }
 
 export interface ComboboxProps {
@@ -53,16 +55,21 @@ export function Combobox({
   emptyText = 'No matches.',
   className,
 }: ComboboxProps) {
+  // Picking from a list shows the option's label, never its raw value (D12: "__best__" in the
+  // field). Free text IS the value, so it shows the value as typed.
+  const committed = allowFreeText
+    ? value
+    : (options.find((o) => o.value === value)?.label ?? value);
   const [open, setOpen] = useState(false);
-  const [text, setText] = useState(value);
+  const [text, setText] = useState(committed);
   const [query, setQuery] = useState('');
   const [highlight, setHighlight] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
   const listId = `${useId()}-list`;
 
   useEffect(() => {
-    if (!open) setText(value);
-  }, [value, open]);
+    if (!open) setText(committed);
+  }, [committed, open]);
 
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -104,8 +111,9 @@ export function Combobox({
   };
 
   const pick = (o: ComboboxOption) => {
+    if (o.disabled) return;
     onChange(o.value);
-    setText(o.value);
+    setText(allowFreeText ? o.value : (o.label ?? o.value));
     setOpen(false);
     setQuery('');
   };
@@ -202,6 +210,7 @@ export function Combobox({
                 type="button"
                 role="option"
                 aria-selected={selected}
+                aria-disabled={o.disabled || undefined}
                 tabIndex={-1}
                 onMouseDown={(e) => e.preventDefault()}
                 onMouseEnter={() => setHighlight(i)}
@@ -210,9 +219,11 @@ export function Combobox({
                   'flex w-full items-center gap-2 px-2.5 text-left text-lz-body',
                   ROW.dense,
                   RADIUS.control,
-                  selected
-                    ? TONE_FILL.accent
-                    : cx('text-lz-ink', i === highlight && 'bg-lz-surface-2', SURFACE.hover),
+                  o.disabled
+                    ? cx('cursor-not-allowed text-lz-ink-4', i === highlight && 'bg-lz-surface-2')
+                    : selected
+                      ? TONE_FILL.accent
+                      : cx('text-lz-ink', i === highlight && 'bg-lz-surface-2', SURFACE.hover),
                   MOTION
                 )}
               >

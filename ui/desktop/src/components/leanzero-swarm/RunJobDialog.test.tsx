@@ -80,7 +80,7 @@ afterEach(() => {
 });
 
 describe('RunJobDialog', () => {
-  it('offers Best Mac plus each online Mac that takes jobs, by name, and the ranking', async () => {
+  it('offers Best Mac plus each online Mac by name, and the ranking', async () => {
     const user = userEvent.setup();
     renderDialog();
     expect(await screen.findByTestId('run-job-dialog')).toBeInTheDocument();
@@ -91,9 +91,42 @@ describe('RunJobDialog', () => {
     await user.click(screen.getByRole('combobox', { name: 'Run on' }));
     const options = screen.getAllByRole('option').map((o) => o.textContent);
     expect(options[0]).toContain('Best Mac');
-    expect(options.slice(1)).toEqual(['Work’s Mac Studio', 'Gabee’s MacBook']);
+    expect(options.slice(1)).toEqual([
+      'Mihai Macbookjobs are off on this Mac',
+      'Work’s Mac Studio',
+      'Gabee’s MacBook',
+    ]);
     // Never a native control.
     expect(document.querySelector('select')).toBeNull();
+  });
+
+  it('shows the Best Mac label in the field, never the raw value (D12)', async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    const field = screen.getByRole('combobox', { name: 'Run on' });
+    expect(field).toHaveValue('Best Mac');
+    expect(field).not.toHaveValue('__best__');
+    await user.click(field);
+    await user.click(screen.getByRole('option', { name: 'Work’s Mac Studio' }));
+    expect(field).toHaveValue('Work’s Mac Studio');
+  });
+
+  it('lists a Mac whose jobs switch is off, disabled with the reason (D11)', async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    const field = screen.getByRole('combobox', { name: 'Run on' });
+    await user.click(field);
+    const off = screen.getByRole('option', { name: /Mihai Macbook/ });
+    expect(off).toHaveAttribute('aria-disabled', 'true');
+    expect(off).toHaveTextContent('jobs are off on this Mac');
+    expect(screen.getByRole('option', { name: 'Work’s Mac Studio' })).not.toHaveAttribute(
+      'aria-disabled'
+    );
+    // The offline Mac is still not listed.
+    expect(screen.queryByRole('option', { name: /Old Mini/ })).toBeNull();
+    await user.click(off);
+    expect(field).toHaveValue('Best Mac');
+    expect(screen.getByTestId('run-job-strategy-hint')).toBeInTheDocument();
   });
 
   it('submits to the best Mac with no target, then opens the job', async () => {

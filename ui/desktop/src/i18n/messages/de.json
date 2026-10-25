@@ -12002,6 +12002,9 @@
   "runJob.none": {
     "defaultMessage": "Keiner deiner Macs nimmt gerade Jobs an. Schalte „Jobs von anderen Macs ausführen“ auf dem Mac ein, der sie ausführen soll."
   },
+  "runJob.jobsOff": {
+    "defaultMessage": "Jobs sind auf diesem Mac aus"
+  },
   "runJob.kind": {
     "defaultMessage": "Art"
   },

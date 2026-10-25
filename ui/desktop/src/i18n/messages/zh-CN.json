@@ -12002,6 +12002,9 @@
   "runJob.none": {
     "defaultMessage": "你的 Mac 目前都不接受任务。请在要运行任务的 Mac 上打开“运行其他 Mac 发来的任务”。"
   },
+  "runJob.jobsOff": {
+    "defaultMessage": "此 Mac 已关闭作业"
+  },
   "runJob.kind": {
     "defaultMessage": "类型"
   },

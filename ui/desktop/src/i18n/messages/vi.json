@@ -12002,6 +12002,9 @@
   "runJob.none": {
     "defaultMessage": "Hiện không có máy Mac nào của bạn nhận tác vụ. Hãy bật “Chạy tác vụ do máy Mac khác gửi” trên máy Mac sẽ chạy chúng."
   },
+  "runJob.jobsOff": {
+    "defaultMessage": "công việc đang tắt trên máy Mac này"
+  },
   "runJob.kind": {
     "defaultMessage": "Loại"
   },

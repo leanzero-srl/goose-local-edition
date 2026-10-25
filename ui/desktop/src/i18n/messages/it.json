@@ -12002,6 +12002,9 @@
   "runJob.none": {
     "defaultMessage": "Nessuno dei tuoi Mac accetta job ora. Accendi «Esegui i job inviati da altri Mac» sul Mac che deve eseguirli."
   },
+  "runJob.jobsOff": {
+    "defaultMessage": "i job sono disattivati su questo Mac"
+  },
   "runJob.kind": {
     "defaultMessage": "Tipo"
   },

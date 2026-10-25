@@ -12002,6 +12002,9 @@
   "runJob.none": {
     "defaultMessage": "Tidak ada Mac Anda yang menerima tugas sekarang. Nyalakan “Jalankan tugas yang dikirim Mac lain” di Mac yang harus menjalankannya."
   },
+  "runJob.jobsOff": {
+    "defaultMessage": "job dimatikan di Mac ini"
+  },
   "runJob.kind": {
     "defaultMessage": "Jenis"
   },

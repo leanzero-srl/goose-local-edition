@@ -12002,6 +12002,9 @@
   "runJob.none": {
     "defaultMessage": "Aucun de vos Mac n’accepte de tâches pour l’instant. Activez « Exécuter les tâches envoyées par d’autres Mac » sur le Mac qui doit les exécuter."
   },
+  "runJob.jobsOff": {
+    "defaultMessage": "les tâches sont désactivées sur ce Mac"
+  },
   "runJob.kind": {
     "defaultMessage": "Type"
   },

@@ -39,6 +39,7 @@ const i18n = defineMessages({
     defaultMessage:
       'None of your Macs takes jobs now. Turn on “Run jobs other Macs send” on the Mac that should run them.',
   },
+  jobsOff: { id: 'runJob.jobsOff', defaultMessage: 'jobs are off on this Mac' },
   kind: { id: 'runJob.kind', defaultMessage: 'Kind' },
   kindShell: { id: 'runJob.kindShell', defaultMessage: 'Shell command' },
   kindPrompt: { id: 'runJob.kindPrompt', defaultMessage: 'Prompt' },
@@ -60,9 +61,23 @@ const i18n = defineMessages({
 
 const BEST = '__best__';
 
-/** The Macs a job can be sent to by name: online, and taking jobs as they report it now. */
-export function jobTargets(macs: readonly Mac[]): Mac[] {
-  return macs.filter((m) => m.online && m.nodeId != null && m.allows?.run_jobs === true);
+/** A Mac the "Run on" field lists: every online Mac; `takesJobs` false when its jobs switch is off. */
+export interface JobTarget {
+  mac: Mac;
+  nodeId: string;
+  takesJobs: boolean;
+}
+
+/**
+ * Every online Mac, in the order given (D11): one whose jobs switch is off is still listed, so
+ * the person sees it and why it cannot be picked, instead of the Mac silently missing.
+ */
+export function jobTargets(macs: readonly Mac[]): JobTarget[] {
+  return macs.flatMap((m) =>
+    m.online && m.nodeId != null
+      ? [{ mac: m, nodeId: m.nodeId, takesJobs: m.allows?.run_jobs === true }]
+      : []
+  );
 }
 
 /** A blank field is "not given"; anything else must be a positive number (an integer if `int`). */
@@ -87,6 +102,7 @@ interface Sent {
 export function RunJobDialog({ macs, onClose }: { macs: readonly Mac[]; onClose: () => void }) {
   const intl = useIntl();
   const targets = jobTargets(macs);
+  const takers = targets.filter((t) => t.takesJobs);
   const self = macs.find((m) => m.isSelf);
   const [target, setTarget] = useState(BEST);
   const [kind, setKind] = useState<JobKind>('shell');
@@ -144,7 +160,9 @@ export function RunJobDialog({ macs, onClose }: { macs: readonly Mac[]; onClose:
   const ranking = placements?.map((p) =>
     p.userActive ? intl.formatMessage(i18n.inUse, { name: nameOf(p.nodeId) }) : nameOf(p.nodeId)
   );
-  const canSend = command.trim() !== '' && memGb !== 'bad' && timeoutS !== 'bad' && !sending;
+  const targetOff = target !== BEST && !takers.some((t) => t.nodeId === target);
+  const canSend =
+    command.trim() !== '' && memGb !== 'bad' && timeoutS !== 'bad' && !targetOff && !sending;
 
   const submit = async () => {
     if (!canSend) return;
@@ -182,7 +200,16 @@ export function RunJobDialog({ macs, onClose }: { macs: readonly Mac[]; onClose:
   const bestHint = placements?.[0] ? nameOf(placements[0].nodeId) : undefined;
   const options = [
     { value: BEST, label: intl.formatMessage(i18n.best), hint: bestHint },
-    ...targets.map((m) => ({ value: m.nodeId as string, label: m.name })),
+    ...targets.map((t) =>
+      t.takesJobs
+        ? { value: t.nodeId, label: t.mac.name }
+        : {
+            value: t.nodeId,
+            label: t.mac.name,
+            hint: intl.formatMessage(i18n.jobsOff),
+            disabled: true,
+          }
+    ),
   ];
 
   return (
@@ -195,7 +222,7 @@ export function RunJobDialog({ macs, onClose }: { macs: readonly Mac[]; onClose:
         <OverlayDialogTitle asChild>
           <h2 className={TYPE.h2}>{intl.formatMessage(i18n.title)}</h2>
         </OverlayDialogTitle>
-        {targets.length === 0 && (placements?.length ?? 0) === 0 && (
+        {takers.length === 0 && (placements?.length ?? 0) === 0 && (
           <p
             data-testid="run-job-none"
             className={cx(TYPE.body, WEIGHT.semibold, TONE_TEXT.warn, 'break-words')}

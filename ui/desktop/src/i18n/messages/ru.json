@@ -12002,6 +12002,9 @@
   "runJob.none": {
     "defaultMessage": "Сейчас ни один ваш Mac не принимает задания. Включите «Выполнять задания от других Mac» на том Mac, который должен их выполнять."
   },
+  "runJob.jobsOff": {
+    "defaultMessage": "задания на этом Mac выключены"
+  },
   "runJob.kind": {
     "defaultMessage": "Тип"
   },

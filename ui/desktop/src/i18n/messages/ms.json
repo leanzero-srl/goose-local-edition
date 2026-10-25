@@ -12002,6 +12002,9 @@
   "runJob.none": {
     "defaultMessage": "Tiada Mac anda yang menerima kerja sekarang. Hidupkan “Jalankan kerja yang dihantar Mac lain” pada Mac yang patut menjalankannya."
   },
+  "runJob.jobsOff": {
+    "defaultMessage": "kerja dimatikan pada Mac ini"
+  },
   "runJob.kind": {
     "defaultMessage": "Jenis"
   },

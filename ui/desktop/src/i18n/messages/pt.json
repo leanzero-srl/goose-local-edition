@@ -12002,6 +12002,9 @@
   "runJob.none": {
     "defaultMessage": "Nenhum dos seus Macs aceita trabalhos agora. Ligue “Executar trabalhos enviados por outros Macs” no Mac que deve executá-los."
   },
+  "runJob.jobsOff": {
+    "defaultMessage": "os trabalhos estão desligados neste Mac"
+  },
   "runJob.kind": {
     "defaultMessage": "Tipo"
   },

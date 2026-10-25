@@ -12002,6 +12002,9 @@
   "runJob.none": {
     "defaultMessage": "अभी आपका कोई Mac जॉब नहीं ले रहा। जिस Mac पर उन्हें चलाना है, उस पर “दूसरे Mac से भेजे गए जॉब चलाएँ” चालू करें।"
   },
+  "runJob.jobsOff": {
+    "defaultMessage": "इस Mac पर जॉब बंद हैं"
+  },
   "runJob.kind": {
     "defaultMessage": "प्रकार"
   },
