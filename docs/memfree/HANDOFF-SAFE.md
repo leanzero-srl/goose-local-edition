@@ -149,3 +149,24 @@ OPEN: (1) desktop step (design item 6) not started; (2) Goose Swarm's protected 
 automation" (its CDP renderer is the biggest pid) — true but "runs this goose" would read better; (3) a global flag
 with a value before `serve` still misses (safe direction); (4) the unsaved-work caveat for nuclear SIGTERM must be
 in the UI confirm text; (5) Gabee live nuclear test (item 8) not done.
+
+## U1 DONE (2026-10-25) — desktop (design item 6), commits 45bce2642, 7f13420bb
+- ui/desktop/src/acp/memfree.ts: `memoryHolders({..., neverTouch})`, `memoryFree({gooseOwned, quitApps,
+  unloadServers, nuclear, neverTouch, fitModelId})` (contract field names), `readNeverTouchExtras()`.
+- memfree.ts (pure, tested): `isServerGroup` (mirror of engine is_server), `unloadOffer`, `isGooseOwnGroup`,
+  `DEFAULT_NEVER_TOUCH` (copy of memfree_protect's; keep in sync), `neverTouchExtrasFrom` (list / JSON / comma),
+  `effectiveNeverTouch`, `neverTouchHit` (mirror of group_never_touch), `nuclearRows` (offer/protected/left),
+  `nuclearRequest` (only ticked offered rows; protected ids dropped), `MEMFREE_NEVER_TOUCH_KEY`.
+- FreeMemoryDialog: soft button = gooseOwned only; Unload per server (useConfirmDialog, detail lists usedBy);
+  "Free everything except protected" view (lz Checkbox, ticked = nuclearDefault, goose's own as its own row,
+  GB each + total, protected/never-touch as accent Chip + reason, left-alone as stopped Chip + why), ONE
+  confirm with the SIGTERM/unsaved-work warning, then back to the list with before→after. Protected chip
+  + usedBy line also in the list view. Remote-off peer: offers disabled, not pre-ticked.
+- Settings › App (MemfreeSettings): Never-touch editor; defaults as chips, additions saved as a list
+  (defaults/dupes dropped). Engine `config_never_touch` + union means storing only additions is correct.
+- i18n: 28 keys in all 16 catalogs, each inserted after its en-order predecessor (locales are not sorted).
+Gates (hermit Node 24.10): lint:check 0 (tsc + eslint --max-warnings 0 + i18n), test:run 554 files / 5171
+passed / 3 skipped, i18n:check 0 (4042 messages). New tests: 4 dialog, 6 pure, 1 settings.
+OPEN: not run live in the app (no CDP check); item 8 Gabee nuclear test still open; the ticked total uses the
+group footprint for servers (the engine's serversBytes counts loaded models), so the GB shown can overstate
+what unloading LM Studio frees.
