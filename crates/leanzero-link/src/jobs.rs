@@ -2005,8 +2005,13 @@ mod tests {
 
     #[test]
     fn placement_most_room_first_user_active_only_breaks_ties() {
+        // Plenty of free heavy slots on every node, so memory decides the room here (an
+        // older report with no slot count would cap each heavy placement at one).
         let load = |own: OwnLoad| NodeLoad {
-            own,
+            own: OwnLoad {
+                heavy_slots_max: 30,
+                ..own
+            },
             ..Default::default()
         };
         let a = load(idle_mac());

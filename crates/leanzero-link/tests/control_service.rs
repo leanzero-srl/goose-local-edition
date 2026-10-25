@@ -2883,7 +2883,8 @@ mod jobs_http {
         let load = &nodes["self"]["load"];
         let own = &load["own"];
         assert_eq!(own["heavy_slots_max"], 3, "{load}");
-        assert_eq!(own["can_take"], 11, "{load}");
+        // Memory has room for ~11 more, but every heavy slot is held: nothing more fits (D15).
+        assert_eq!(own["can_take"], 0, "{load}");
         assert!(
             own["verdict"]
                 .as_str()
