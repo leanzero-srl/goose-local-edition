@@ -162,6 +162,12 @@ pub enum MlxOp {
     ReplicaPull,
     ReplicaProgress,
     ReplicaCancel,
+    /// What holds this node's memory (Free up memory census), read-only.
+    MemoryHolders,
+    /// Free memory on this node: goose-owned reclaim always (the route itself is gated by
+    /// `manage_models`); quitting apps only when the node's own
+    /// `GOOSE_LINK_ALLOW_REMOTE_APP_QUIT` switch is on.
+    MemoryFree,
 }
 
 impl MlxOp {
@@ -191,6 +197,8 @@ impl MlxOp {
             Self::ReplicaPull => "replicaPull",
             Self::ReplicaProgress => "replicaProgress",
             Self::ReplicaCancel => "replicaCancel",
+            Self::MemoryHolders => "memoryHolders",
+            Self::MemoryFree => "memoryFree",
         }
     }
 
@@ -218,6 +226,8 @@ impl MlxOp {
             "replicaPull" => Self::ReplicaPull,
             "replicaProgress" => Self::ReplicaProgress,
             "replicaCancel" => Self::ReplicaCancel,
+            "memoryHolders" => Self::MemoryHolders,
+            "memoryFree" => Self::MemoryFree,
             _ => return None,
         })
     }
@@ -225,8 +235,9 @@ impl MlxOp {
     /// True for ops that destroy on-disk state or a running engine over the mesh: model
     /// delete, download-cancel (which also deletes the partial repo), settings-update
     /// (persists into the node's own config and can change what it serves) and unmount
-    /// (stops the engine a local session may be using), and replica-cancel (deletes the
-    /// partial copy). These are logged at `warn` on the executing node so a remote
+    /// (stops the engine a local session may be using), replica-cancel (deletes the
+    /// partial copy) and memory-free (stops goose's engines/servers, unloads models, may quit
+    /// apps when the node allows it). These are logged at `warn` on the executing node so a remote
     /// destructive action is never silent.
     pub fn is_destructive(self) -> bool {
         matches!(
@@ -236,11 +247,12 @@ impl MlxOp {
                 | Self::SettingsUpdate
                 | Self::Unmount
                 | Self::ReplicaCancel
+                | Self::MemoryFree
         )
     }
 
     /// Every op, so a round-trip test cannot miss a variant added later.
-    pub const ALL: [MlxOp; 22] = [
+    pub const ALL: [MlxOp; 24] = [
         Self::Status,
         Self::Mount,
         Self::Unmount,
@@ -263,6 +275,8 @@ impl MlxOp {
         Self::ReplicaPull,
         Self::ReplicaProgress,
         Self::ReplicaCancel,
+        Self::MemoryHolders,
+        Self::MemoryFree,
     ];
 }
 

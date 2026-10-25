@@ -167,6 +167,8 @@ export interface NodeAllows {
   run_split: boolean;
   /** It takes mesh jobs (`LEANZERO_LINK_ALLOW_REMOTE_JOBS`); absent from a goose that predates jobs. */
   run_jobs?: boolean;
+  /** Another Mac's Free up memory may quit apps there (`GOOSE_LINK_ALLOW_REMOTE_APP_QUIT`, default off). */
+  quit_apps?: boolean;
 }
 
 /** What the Mac's owner is doing with it and what the hardware reads (leanzero-link `OwnLoad`). */

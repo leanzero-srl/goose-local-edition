@@ -1182,17 +1182,17 @@ impl GooseAcpAgent {
         core_stop_other_engine(req).await
     }
 
-    /// Local only for now: a `nodeId` naming a peer is refused until the Link carries the op.
+    /// A `nodeId` naming a peer relays over the Link; the peer runs it as `relayed`, so its
+    /// own `GOOSE_LINK_ALLOW_REMOTE_APP_QUIT` decides app quitting (goose-owned reclaim needs
+    /// only its `manage_models`, enforced by the control route).
     pub(super) async fn on_mlx_engine_memory_holders(
         &self,
         req: MlxEngineMemoryHoldersRequest,
     ) -> Result<MlxEngineMemoryHoldersResponse, agent_client_protocol::Error> {
-        if self
-            .mlx_engine_remote_target(req.node_id.as_deref())
-            .is_some()
-        {
-            return Err(agent_client_protocol::Error::invalid_params()
-                .data("memoryHolders on another Mac is not supported yet"));
+        if let Some(node) = self.mlx_engine_remote_target(req.node_id.as_deref()) {
+            return self
+                .mlx_engine_relay(&node, MlxOp::MemoryHolders, &req)
+                .await;
         }
         super::memfree::core_memory_holders(req, false).await
     }
@@ -1201,12 +1201,8 @@ impl GooseAcpAgent {
         &self,
         req: MlxEngineMemoryFreeRequest,
     ) -> Result<MlxEngineMemoryFreeResponse, agent_client_protocol::Error> {
-        if self
-            .mlx_engine_remote_target(req.node_id.as_deref())
-            .is_some()
-        {
-            return Err(agent_client_protocol::Error::invalid_params()
-                .data("memoryFree on another Mac is not supported yet"));
+        if let Some(node) = self.mlx_engine_remote_target(req.node_id.as_deref()) {
+            return self.mlx_engine_relay(&node, MlxOp::MemoryFree, &req).await;
         }
         super::memfree::core_memory_free(req, false).await
     }
@@ -1529,6 +1525,12 @@ impl MlxControl for GoosedMlxControl {
             ),
             MlxOp::ReplicaProgress => mlx_response_to_value(
                 super::mlx_replica::core_replica_progress(mlx_req_from_value(request)?).await,
+            ),
+            MlxOp::MemoryHolders => mlx_response_to_value(
+                super::memfree::core_memory_holders(mlx_req_from_value(request)?, true).await,
+            ),
+            MlxOp::MemoryFree => mlx_response_to_value(
+                super::memfree::core_memory_free(mlx_req_from_value(request)?, true).await,
             ),
             MlxOp::ReplicaCancel => mlx_response_to_value(
                 super::mlx_replica::core_replica_cancel(mlx_req_from_value(request)?).await,

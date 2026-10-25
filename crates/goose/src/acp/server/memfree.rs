@@ -21,12 +21,28 @@ pub(super) const MEMFREE_ENABLED_KEY: &str = "GOOSE_MEMFREE_ENABLED";
 /// User apps below this footprint are not listed (and so never offered for quitting).
 pub(super) const MEMFREE_SHOW_APPS_MIN_MB_KEY: &str = "GOOSE_MEMFREE_SHOW_APPS_MIN_MB";
 const DEFAULT_SHOW_APPS_MIN_MB: u64 = 200;
+/// Read on THIS Mac when another Mac's Free up memory reaches it over the Link: may that
+/// peer quit apps here? Default OFF. Goose-owned reclaim over the Link needs only the
+/// `manage_models` switch, which the control route already enforces (403 when off).
+pub(super) const ALLOW_REMOTE_APP_QUIT_KEY: &str = "GOOSE_LINK_ALLOW_REMOTE_APP_QUIT";
 const MIB: u64 = 1024 * 1024;
 
 fn enabled() -> bool {
     Config::global()
         .get_param::<bool>(MEMFREE_ENABLED_KEY)
         .unwrap_or(true)
+}
+
+pub(super) fn remote_app_quit_allowed() -> bool {
+    super::link::switch_from_config(
+        ALLOW_REMOTE_APP_QUIT_KEY,
+        Config::global().get_param::<bool>(ALLOW_REMOTE_APP_QUIT_KEY),
+    )
+}
+
+/// A local caller may always quit apps it picked; a relayed one only with the switch on.
+fn quit_apps_allowed(relayed: bool, remote_switch: bool) -> bool {
+    !relayed || remote_switch
 }
 
 fn show_apps_min_bytes() -> u64 {
@@ -452,7 +468,7 @@ pub(super) async fn core_memory_holders(
         short_bytes,
         verdict,
         alternatives: alts,
-        quit_apps_allowed: !relayed,
+        quit_apps_allowed: quit_apps_allowed(relayed, relayed && remote_app_quit_allowed()),
         enabled: true,
     })
 }
@@ -535,14 +551,17 @@ pub(super) async fn core_memory_free(
         }
     }
 
+    let may_quit = quit_apps_allowed(relayed, relayed && remote_app_quit_allowed());
     for bundle_id in &req.quit_apps {
-        if relayed {
+        if !may_quit {
             items.push(MlxMemoryFreeItemDto {
                 id: format!("app:{bundle_id}"),
                 label: bundle_id.clone(),
                 ok: false,
                 freed_bytes: None,
-                message: "quitting apps from another Mac is not allowed".into(),
+                message: format!(
+                    "quitting apps from another Mac is off on this Mac ({ALLOW_REMOTE_APP_QUIT_KEY})"
+                ),
             });
             continue;
         }
@@ -597,6 +616,22 @@ mod tests {
             budget_bytes: 0,
             message: String::new(),
         }
+    }
+
+    #[test]
+    fn remote_app_quit_needs_the_peers_switch() {
+        assert!(
+            quit_apps_allowed(false, false),
+            "a local caller picks its own apps"
+        );
+        assert!(
+            !quit_apps_allowed(true, false),
+            "relayed with the switch off: refused"
+        );
+        assert!(
+            quit_apps_allowed(true, true),
+            "relayed with the switch on: allowed"
+        );
     }
 
     #[test]

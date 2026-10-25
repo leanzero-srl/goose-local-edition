@@ -1575,6 +1575,7 @@ fn destructive_mlx_ops_include_settings_update_and_unmount() {
         MlxOp::SettingsUpdate,
         MlxOp::Unmount,
         MlxOp::ReplicaCancel,
+        MlxOp::MemoryFree,
     ] {
         assert!(op.is_destructive(), "{op:?} reshapes the node; must warn");
     }
@@ -1586,6 +1587,7 @@ fn destructive_mlx_ops_include_settings_update_and_unmount() {
         MlxOp::LinkFacts,
         MlxOp::ReplicaTargets,
         MlxOp::ReplicaProgress,
+        MlxOp::MemoryHolders,
     ] {
         assert!(!op.is_destructive(), "{op:?} is a read");
     }

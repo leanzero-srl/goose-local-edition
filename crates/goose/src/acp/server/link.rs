@@ -470,6 +470,7 @@ fn node_allows(allow_remote_execution: bool) -> NodeAllows {
         answer_chat: super::mlx_remote_single::chat_serving_allowed(),
         run_split: distributed_node_allowed(),
         run_jobs: remote_jobs_allowed(),
+        quit_apps: super::memfree::remote_app_quit_allowed(),
     }
 }
 
@@ -704,7 +705,7 @@ fn jobs_user_idle_s() -> u64 {
         .unwrap_or_else(leanzero_link::load::user_idle_threshold_s)
 }
 
-fn switch_from_config(key: &str, read: Result<bool, ConfigError>) -> bool {
+pub(super) fn switch_from_config(key: &str, read: Result<bool, ConfigError>) -> bool {
     match read {
         Ok(value) => value,
         Err(ConfigError::NotFound(_)) => false,
@@ -1978,6 +1979,7 @@ mod tests {
         answer_chat: false,
         run_split: false,
         run_jobs: false,
+        quit_apps: false,
     };
 
     /// The node's own report carries the switches it enforces, verbatim — a peer shows "off
@@ -1989,6 +1991,7 @@ mod tests {
             answer_chat: false,
             run_split: true,
             run_jobs: false,
+            quit_apps: false,
         };
         let node = derive_node("node-a", &snapshot_of(Vec::new()), allows, Utc::now());
         assert_eq!(node.allows, Some(allows));
@@ -1996,7 +1999,7 @@ mod tests {
         let wire = serde_json::to_value(&node).unwrap();
         assert_eq!(
             wire["allows"],
-            serde_json::json!({"manage_models": true, "answer_chat": false, "run_split": true, "run_jobs": false})
+            serde_json::json!({"manage_models": true, "answer_chat": false, "run_split": true, "run_jobs": false, "quit_apps": false})
         );
     }
 

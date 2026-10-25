@@ -118,6 +118,9 @@ pub struct NodeAllows {
     pub run_split: bool,
     /// A peer places shell/prompt jobs there (`/v1/swarm/jobs`, `allow_remote_jobs`).
     pub run_jobs: bool,
+    /// A peer's Free up memory may quit apps there (`GOOSE_LINK_ALLOW_REMOTE_APP_QUIT`,
+    /// default off). Goose-owned reclaim needs only `manage_models`.
+    pub quit_apps: bool,
 }
 
 /// Wire: `{"type":"Idle"}`, `{"type":"Busy","session_id":"..."}`, `{"type":"Offline"}`.
@@ -224,9 +227,21 @@ mod tests {
         let a = n.allows.expect("allows");
         assert!(a.manage_models && a.answer_chat && !a.run_split);
         assert!(!a.run_jobs);
+        assert!(!a.quit_apps, "an old peer never allows remote app quit");
         assert!(n.load.is_none());
         let back = serde_json::to_string(&n).unwrap();
         assert!(!back.contains("\"load\""), "{back}");
+    }
+    /// A peer that predates `quit_apps` (it already sends `run_jobs`) parses with the app-quit
+    /// switch OFF, so a newer Mac never offers to quit apps on it.
+    #[test]
+    fn a_peer_without_quit_apps_parses_it_as_off() {
+        let a: NodeAllows = serde_json::from_str(
+            r#"{"manage_models":true,"answer_chat":false,"run_split":false,"run_jobs":true}"#,
+        )
+        .expect("pre-quit_apps allows parse");
+        assert!(a.manage_models && a.run_jobs);
+        assert!(!a.quit_apps);
     }
     use chrono::TimeZone;
 
@@ -372,6 +387,7 @@ mod tests {
                 manage_models: true,
                 answer_chat: false,
                 run_split: true,
+                quit_apps: false,
             }),
             ..parsed
         };
@@ -379,7 +395,7 @@ mod tests {
         assert_eq!(value["computer_name"], "Work's Mac Studio");
         assert_eq!(
             value["allows"],
-            serde_json::json!({"manage_models": true, "answer_chat": false, "run_split": true, "run_jobs": false})
+            serde_json::json!({"manage_models": true, "answer_chat": false, "run_split": true, "run_jobs": false, "quit_apps": false})
         );
         let back: NodeState = serde_json::from_value(value).unwrap();
         assert_eq!(back, named);
