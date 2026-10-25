@@ -329,38 +329,94 @@ impl HeavySlot {
 // ---------------------------------------------------------------------------------------------
 // Benchmark detection (node_fleet's rule)
 
-/// True when `args` carries `benchmark` as a word: at the start or after whitespace or `/`,
-/// optionally as `-benchmark`/`--benchmark`, and followed by the end, whitespace, `/` or `=`.
-/// Or the `GOOSE_SWARM_BENCHMARK` flag. Case-insensitive. Mentions inside other text (a
-/// `python3 -c "...'benchmark'..."`) do NOT count.
-pub fn args_mention_benchmark(args: &str) -> bool {
-    let lower = args.to_ascii_lowercase();
-    if lower.contains("goose_swarm_benchmark") {
-        return true;
-    }
-    let bytes = lower.as_bytes();
-    let word = b"benchmark";
+/// `(^|[^a-z])benchmark` on an already-lowercased string: `run_benchmark.py`, `benchmark`, not
+/// `microbenchmark`.
+fn benchmark_word_start(s: &str) -> bool {
+    let b = s.as_bytes();
     let mut from = 0;
-    while let Some(off) = lower[from..].find("benchmark") {
+    while let Some(off) = s[from..].find("benchmark") {
         let at = from + off;
-        let end = at + word.len();
-        // Walk back over up to two dashes.
-        let mut start = at;
-        let mut dashes = 0;
-        while start > 0 && bytes[start - 1] == b'-' && dashes < 2 {
-            start -= 1;
-            dashes += 1;
-        }
-        let before_ok =
-            start == 0 || bytes[start - 1].is_ascii_whitespace() || bytes[start - 1] == b'/';
-        let after_ok = end == bytes.len()
-            || bytes[end].is_ascii_whitespace()
-            || bytes[end] == b'/'
-            || bytes[end] == b'=';
-        if before_ok && after_ok {
+        if at == 0 || !b[at - 1].is_ascii_lowercase() {
             return true;
         }
-        from = end;
+        from = at + 1;
+    }
+    false
+}
+
+fn basename(s: &str) -> &str {
+    s.rsplit('/').next().unwrap_or(s)
+}
+
+/// An argv token `GOOSE_SWARM_BENCHMARK=<on>` (case-insensitive name, the engine's on values).
+fn argv_env_flag_on(token: &str) -> bool {
+    token
+        .to_ascii_lowercase()
+        .strip_prefix("goose_swarm_benchmark=")
+        .map(|v| matches!(v, "1" | "on" | "true" | "yes"))
+        .unwrap_or(false)
+}
+
+/// True when a process's ARGV says it IS a benchmark, never when the argv only TALKS about
+/// benchmarks (2026-10-25: the newsroom's `claude -p "<PREPARE TICK prompt ... a benchmark result
+/// ...>"` was refused as a benchmark; `ps` flattens a quoted prompt into words). Identical to
+/// node_fleet.py `argv_is_benchmark`; change both together. Counted, case-insensitive:
+/// the program's basename naming it (`benchmark`, `run_benchmark.py`) or a program path with a
+/// `/benchmark/` directory; the `GOOSE_SWARM_BENCHMARK=<on>` token; among the three tokens after the
+/// program, a script/path whose basename names it, or a `benchmark`/`bench` subcommand right after
+/// the program (or after its script); anywhere, a `-benchmark`/`--benchmark[=..]` flag or an absolute
+/// / `~` / `.` path token (< 400 chars) with a `/benchmark/` directory. A prompt-carrying agent CLI
+/// (`claude`, `codex`) is prose after its flags: only its program name counts.
+pub fn args_mention_benchmark(args: &str) -> bool {
+    const EXTS: [&str; 6] = [".py", ".js", ".mjs", ".sh", ".ts", ".rs"];
+    let a: Vec<&str> = args.split_whitespace().collect();
+    let Some(first) = a.first() else {
+        return false;
+    };
+    let first_l = first.to_ascii_lowercase();
+    let prog = basename(&first_l);
+    if benchmark_word_start(prog) || first_l.contains("/benchmark/") {
+        return true;
+    }
+    if matches!(prog, "claude" | "codex") {
+        return false;
+    }
+    if a.iter().any(|t| argv_env_flag_on(t)) {
+        return true;
+    }
+    let head: Vec<String> = a
+        .iter()
+        .skip(1)
+        .take(3)
+        .map(|x| x.to_ascii_lowercase())
+        .collect();
+    for (k, xl) in head.iter().enumerate() {
+        if xl.contains('/') || EXTS.iter().any(|e| xl.ends_with(e)) {
+            if benchmark_word_start(basename(xl)) {
+                return true;
+            }
+        } else if xl == "benchmark" || xl == "bench" {
+            let script_before = head[..k]
+                .iter()
+                .any(|y| y.contains('/') || y.ends_with(".py"));
+            if k <= 1 + usize::from(script_before) {
+                return true;
+            }
+        }
+    }
+    for x in a.iter().skip(1) {
+        let xl = x.to_ascii_lowercase();
+        if xl.starts_with('-') || xl.starts_with('\'') || xl.starts_with('"') {
+            let flag = xl.strip_prefix("--").or_else(|| xl.strip_prefix('-'));
+            if flag.is_some_and(|f| f == "benchmark" || f.starts_with("benchmark=")) {
+                return true;
+            }
+        } else if xl.starts_with(['/', '~', '.'])
+            && xl.contains("/benchmark/")
+            && x.chars().count() < 400
+        {
+            return true;
+        }
     }
     false
 }
@@ -1103,7 +1159,34 @@ mod tests {
         assert!(!args_mention_benchmark("python3 -c \"print('benchmark')\""));
         assert!(!args_mention_benchmark("run benchmarks"));
         assert!(!args_mention_benchmark("microbenchmark"));
-        assert!(!args_mention_benchmark("x_benchmark"));
+        assert!(!args_mention_benchmark("goose run x_benchmark"));
+        // same cases as node_fleet.py test_argv_matcher_units / test_real_benchmark_argv_is_detected
+        assert!(args_mention_benchmark("goose bench run --suite gauntlet"));
+        assert!(args_mention_benchmark(
+            "/usr/bin/env GOOSE_SWARM_BENCHMARK=1 python3 x.py"
+        ));
+        assert!(args_mention_benchmark("node /x/benchmark/run.mjs"));
+        assert!(args_mention_benchmark("python3 /h/run_benchmark.py"));
+        assert!(args_mention_benchmark("python3 /h/run.py --benchmark"));
+        assert!(!args_mention_benchmark(
+            "claude -p a benchmark run --benchmark /Goose/benchmark/runs"
+        ));
+        assert!(!args_mention_benchmark(
+            "python3 /x/prepare.py write about the benchmark board"
+        ));
+        assert!(!args_mention_benchmark("env GOOSE_SWARM_BENCHMARK=0 goose"));
+    }
+
+    #[test]
+    fn a_prompt_that_talks_about_benchmarks_is_not_one() {
+        // excerpt of the real workhorse argv that was refused (newsroom PREPARE TICK, 2026-10-25)
+        let newsroom = "claude -p /leanzero-newsroom PREPARE TICK (Mihai 2026-09-24: up to 2 queued \
+            articles) BENCHMARK ARTICLES ARE REFLECTION NARRATIVES ... any article whose subject is a \
+            benchmark result (bench_snapshot) follows ${SKILL}/references/benchmark-reflection.md \
+            ... the benchmark board or run page";
+        assert!(!args_mention_benchmark(newsroom));
+        let as_python = newsroom.replacen("claude", "python3 /x/prepare.py", 1);
+        assert!(!args_mention_benchmark(&as_python));
     }
 
     #[test]
