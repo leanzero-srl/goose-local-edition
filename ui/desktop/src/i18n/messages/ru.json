@@ -2639,6 +2639,9 @@
   "freeMemory.altPeer": {
     "defaultMessage": "Запустить на {mac} (там свободно <b>{gb} ГБ</b>)"
   },
+  "freeMemory.altPeerNoFree": {
+    "defaultMessage": "Запустить на <b>{mac}</b>"
+  },
   "freeMemory.altSmaller": {
     "defaultMessage": "Помещается вариант поменьше: {model} (нужно <b>{gb} ГБ</b>)"
   },

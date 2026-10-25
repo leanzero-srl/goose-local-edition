@@ -2639,6 +2639,9 @@
   "freeMemory.altPeer": {
     "defaultMessage": "改在 {mac} 上运行(那里空闲 <b>{gb} GB</b>)"
   },
+  "freeMemory.altPeerNoFree": {
+    "defaultMessage": "改在 <b>{mac}</b> 上运行"
+  },
   "freeMemory.altSmaller": {
     "defaultMessage": "更小的变体放得下:{model}(需要 <b>{gb} GB</b>)"
   },

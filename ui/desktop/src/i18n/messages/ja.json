@@ -2639,6 +2639,9 @@
   "freeMemory.altPeer": {
     "defaultMessage": "代わりに {mac} で実行(そちらは <b>{gb} GB</b> 空き)"
   },
+  "freeMemory.altPeerNoFree": {
+    "defaultMessage": "代わりに <b>{mac}</b> で実行"
+  },
   "freeMemory.altSmaller": {
     "defaultMessage": "より小さいバリアントなら収まります: {model}(<b>{gb} GB</b> 必要)"
   },

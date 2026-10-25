@@ -2639,6 +2639,9 @@
   "freeMemory.altPeer": {
     "defaultMessage": "Bunun yerine {mac} üzerinde çalıştırın (orada <b>{gb} GB</b> boş)"
   },
+  "freeMemory.altPeerNoFree": {
+    "defaultMessage": "Bunun yerine <b>{mac}</b> üzerinde çalıştırın"
+  },
   "freeMemory.altSmaller": {
     "defaultMessage": "Daha küçük bir varyant sığıyor: {model} (<b>{gb} GB</b> gerekir)"
   },

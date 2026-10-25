@@ -2639,6 +2639,9 @@
   "freeMemory.altPeer": {
     "defaultMessage": "대신 {mac}에서 실행(그쪽 여유 <b>{gb} GB</b>)"
   },
+  "freeMemory.altPeerNoFree": {
+    "defaultMessage": "대신 <b>{mac}</b>에서 실행"
+  },
   "freeMemory.altSmaller": {
     "defaultMessage": "더 작은 변형이 들어갑니다: {model}(<b>{gb} GB</b> 필요)"
   },

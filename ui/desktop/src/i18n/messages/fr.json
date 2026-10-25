@@ -2639,6 +2639,9 @@
   "freeMemory.altPeer": {
     "defaultMessage": "Exécutez-le plutôt sur {mac} (<b>{gb} Go</b> libres là-bas)"
   },
+  "freeMemory.altPeerNoFree": {
+    "defaultMessage": "Exécutez-le plutôt sur <b>{mac}</b>"
+  },
   "freeMemory.altSmaller": {
     "defaultMessage": "Une variante plus petite tient : {model} (nécessite <b>{gb} Go</b>)"
   },

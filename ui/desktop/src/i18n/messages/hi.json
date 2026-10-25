@@ -2639,6 +2639,9 @@
   "freeMemory.altPeer": {
     "defaultMessage": "इसके बजाय इसे {mac} पर चलाएँ (वहाँ <b>{gb} GB</b> खाली)"
   },
+  "freeMemory.altPeerNoFree": {
+    "defaultMessage": "इसके बजाय इसे <b>{mac}</b> पर चलाएँ"
+  },
   "freeMemory.altSmaller": {
     "defaultMessage": "एक छोटा वैरिएंट फ़िट होता है: {model} (<b>{gb} GB</b> चाहिए)"
   },

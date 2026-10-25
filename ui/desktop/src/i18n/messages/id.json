@@ -2639,6 +2639,9 @@
   "freeMemory.altPeer": {
     "defaultMessage": "Jalankan di {mac} saja (<b>{gb} GB</b> kosong di sana)"
   },
+  "freeMemory.altPeerNoFree": {
+    "defaultMessage": "Jalankan di <b>{mac}</b> saja"
+  },
   "freeMemory.altSmaller": {
     "defaultMessage": "Varian yang lebih kecil muat: {model} (butuh <b>{gb} GB</b>)"
   },

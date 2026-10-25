@@ -2639,6 +2639,9 @@
   "freeMemory.altPeer": {
     "defaultMessage": "Chạy trên {mac} thay vào đó (ở đó trống <b>{gb} GB</b>)"
   },
+  "freeMemory.altPeerNoFree": {
+    "defaultMessage": "Chạy trên <b>{mac}</b> thay vào đó"
+  },
   "freeMemory.altSmaller": {
     "defaultMessage": "Một biến thể nhỏ hơn vừa: {model} (cần <b>{gb} GB</b>)"
   },
