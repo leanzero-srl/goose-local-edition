@@ -14,8 +14,7 @@ use chrono::{DateTime, Utc};
 use tokio::task::JoinHandle;
 
 use crate::jobs::{
-    JobRequest, JobView, NodeRefusal, PlacedOn, PlacementStrategy, QueueInfo, Refusal,
-    RefusalCode,
+    JobRequest, JobView, NodeRefusal, PlacedOn, PlacementStrategy, QueueInfo, Refusal, RefusalCode,
 };
 use crate::load::{JobBrief, JobState};
 

@@ -631,17 +631,25 @@ async fn jobs_submit(
 }
 
 async fn jobs_list(State(ctx): State<Ctx>) -> Json<Vec<crate::jobs::JobView>> {
-    let mut all = ctx.pending_jobs.as_ref().map(|q| q.list()).unwrap_or_default();
+    let mut all = ctx
+        .pending_jobs
+        .as_ref()
+        .map(|q| q.list())
+        .unwrap_or_default();
     all.extend(ctx.jobs.list());
     Json(all)
 }
 
 async fn jobs_get(Path(id): Path<String>, State(ctx): State<Ctx>) -> Response {
-    let queued = ctx.pending_jobs.as_ref().and_then(|q| q.lookup(&id)).map(|l| match l {
-        crate::queue::QueueLookup::Waiting(v)
-        | crate::queue::QueueLookup::Placed(_, v)
-        | crate::queue::QueueLookup::Cancelled(v) => v,
-    });
+    let queued = ctx
+        .pending_jobs
+        .as_ref()
+        .and_then(|q| q.lookup(&id))
+        .map(|l| match l {
+            crate::queue::QueueLookup::Waiting(v)
+            | crate::queue::QueueLookup::Placed(_, v)
+            | crate::queue::QueueLookup::Cancelled(v) => v,
+        });
     match queued.or_else(|| ctx.jobs.view(&id)) {
         Some(v) => Json(v).into_response(),
         None => job_not_found(&id),
@@ -666,7 +674,11 @@ async fn jobs_log(
 }
 
 async fn jobs_cancel(Path(id): Path<String>, State(ctx): State<Ctx>) -> Response {
-    if let Some(v) = ctx.pending_jobs.as_ref().and_then(|q| q.cancel_waiting(&id)) {
+    if let Some(v) = ctx
+        .pending_jobs
+        .as_ref()
+        .and_then(|q| q.cancel_waiting(&id))
+    {
         return (StatusCode::ACCEPTED, Json(v)).into_response();
     }
     match ctx.jobs.cancel(&id).await {

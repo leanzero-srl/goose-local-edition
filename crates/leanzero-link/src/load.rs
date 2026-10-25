@@ -263,7 +263,10 @@ impl NodeLimits {
         if let Some(s) = v.get("strategy").and_then(|x| x.as_str()) {
             l.strategy = crate::jobs::PlacementStrategy::parse(s);
             if l.strategy.is_none() {
-                tracing::warn!(strategy = s, "node-limits.json strategy unknown; using local-first");
+                tracing::warn!(
+                    strategy = s,
+                    "node-limits.json strategy unknown; using local-first"
+                );
             }
         }
         l
@@ -1333,6 +1336,24 @@ mod tests {
         assert!(is_observer("/usr/bin/grep -r benchmark"));
         assert!(is_observer("python3 node_fleet.py benchmark"));
         assert!(!is_observer("goose benchmark"));
+    }
+
+    #[test]
+    fn limits_strategy_is_node_runs_key() {
+        assert_eq!(NodeLimits::from_json(None).strategy, None);
+        assert_eq!(
+            NodeLimits::from_json(Some(r#"{"strategy": "selfish"}"#)).strategy,
+            Some(crate::jobs::PlacementStrategy::Selfish)
+        );
+        assert_eq!(
+            NodeLimits::from_json(Some(r#"{"strategy": "local-first", "timeout": 60}"#)).strategy,
+            Some(crate::jobs::PlacementStrategy::LocalFirst)
+        );
+        // An unknown name is not a strategy (the caller falls back to local-first).
+        assert_eq!(
+            NodeLimits::from_json(Some(r#"{"strategy": "greedy"}"#)).strategy,
+            None
+        );
     }
 
     #[test]

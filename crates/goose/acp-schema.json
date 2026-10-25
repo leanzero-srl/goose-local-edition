@@ -15114,12 +15114,19 @@
             "null"
           ]
         },
-        "job": {}
+        "job": {},
+        "strategy": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "This job's placement strategy, `\"local-first\"` | `\"selfish\"` (the \"Run a job\" override).\nAbsent = the setting (`LEANZERO_LINK_JOBS_STRATEGY`, else node-limits.json `strategy`,\nelse local-first). Ignored with `targetNodeId`."
+        }
       },
       "required": [
         "job"
       ],
-      "description": "Mesh jobs (`/v1/swarm/jobs` on a node). Every jobs method needs the manager `connected`\n(else `invalid_params` \"not connected to the mesh\"). A refusal from the target (switch\noff, no memory headroom, heavy slot held, benchmark running, user active, ...) is an\n`invalid_params` error whose `data` is the node's `{code, reason}` verbatim. Job views,\nlogs and placements are carried as the node's own JSON (`leanzero_link::jobs` DTOs);\na view never carries the command line.\n\nSubmit one job. `targetNodeId` absent = place it on the best node (see `jobsPlace`).\n`job` is a `JobRequest`: `{kind: \"shell\"|\"prompt\", command, cwd?, needMemGb?, heavy,\ntimeoutS?}` (snake_case keys inside `job`, as the node's route takes them).",
+      "description": "Mesh jobs (`/v1/swarm/jobs` on a node). Every jobs method needs the manager `connected`\n(else `invalid_params` \"not connected to the mesh\"). A refusal from the target (switch\noff, no memory headroom, heavy slot held, benchmark running, user active, ...) is an\n`invalid_params` error whose `data` is the node's `{code, reason}` verbatim. Job views,\nlogs and placements are carried as the node's own JSON (`leanzero_link::jobs` DTOs);\na view never carries the command line.\n\nSubmit one job. `targetNodeId` absent = place it by the placement strategy (see\n`jobsPlace`): the first candidate that accepts runs it; when none can, or other jobs already\nwait, it joins THIS node's FIFO queue (`queued: true`, `queuePosition` 1 = next, `nodeId` =\nthis node, `jobId` = the queue id) and is offered to the Macs again every 15 s. A queue id\nfollows its job: `jobsGet`/`jobsLog`/`jobsCancel` on this node show it waiting (`state:\n\"queued\"`, `queue: {position, strategy, refusals}`), then the placed job with `placed_on`.\nA targeted job never queues (a refusal is the error). `job` is a `JobRequest`: `{kind:\n\"shell\"|\"prompt\", command, cwd?, needMemGb?, heavy, timeoutS?}` (snake_case keys inside\n`job`, as the node's route takes them).",
       "x-side": "agent",
       "x-method": "_goose/unstable/leanzeroLink/jobsSubmit"
     },
@@ -15128,10 +15135,23 @@
       "properties": {
         "nodeId": {
           "type": "string",
-          "description": "Where the job went (the placement's pick when no target was given)."
+          "description": "Where the job went (the placement's pick when no target was given; this node when queued)."
         },
         "jobId": {
           "type": "string"
+        },
+        "queued": {
+          "type": "boolean",
+          "description": "No Mac had room: the job waits in this node's queue under `jobId`.",
+          "default": false
+        },
+        "queuePosition": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Its place in line when queued (1 = next).",
+          "minimum": 0
         }
       },
       "required": [
@@ -15262,9 +15282,16 @@
         "heavy": {
           "type": "boolean",
           "default": false
+        },
+        "strategy": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "As `jobsSubmit`'s `strategy`; absent = the setting."
         }
       },
-      "description": "Where a job could run now, best first (node_fleet's rules: OK nodes by score, then\nUSER-ACTIVE as the last resort; busy nodes and nodes that do not allow jobs are absent).",
+      "description": "Where a job could run now, in the order a submit tries them (node_fleet's rules: OK nodes\nfirst, USER-ACTIVE as the last resort; inside each class this node first under\n`local-first`, last under `selfish`, the others by score). Busy nodes and nodes that do not\nallow jobs are not placements: they are `refusals`, each `{nodeId, code, reason}`.",
       "x-side": "agent",
       "x-method": "_goose/unstable/leanzeroLink/jobsPlace"
     },
@@ -15274,7 +15301,18 @@
         "placements": {
           "type": "array",
           "items": {},
-          "description": "`{nodeId, userActive, score}` per candidate, best first."
+          "description": "`{nodeId, userActive, score}` per candidate, in the order a submit tries them."
+        },
+        "strategy": {
+          "type": "string",
+          "description": "The strategy the order was made with (`\"local-first\"` | `\"selfish\"`).",
+          "default": ""
+        },
+        "refusals": {
+          "type": "array",
+          "items": {},
+          "description": "`{nodeId, code, reason}` per Mac that is not a placement (the job would wait in the\nqueue when `placements` is empty).",
+          "default": []
         }
       },
       "required": [

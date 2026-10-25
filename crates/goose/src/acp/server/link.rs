@@ -644,6 +644,60 @@ fn placement_json(p: &leanzero_link::jobs::Placement) -> serde_json::Value {
     serde_json::json!({"nodeId": p.node_id, "userActive": p.user_active, "score": p.score})
 }
 
+fn place_response(
+    plan: &leanzero_link::jobs::PlacementPlan,
+    strategy: leanzero_link::jobs::PlacementStrategy,
+) -> LeanzeroLinkJobsPlaceResponse {
+    LeanzeroLinkJobsPlaceResponse {
+        placements: plan.candidates.iter().map(placement_json).collect(),
+        strategy: strategy.as_str().to_string(),
+        refusals: plan
+            .refusals
+            .iter()
+            .map(|r| serde_json::json!({"nodeId": r.node_id, "code": r.code, "reason": r.reason}))
+            .collect(),
+    }
+}
+
+/// A request's `strategy`: absent = `None` (the setting decides), unknown = `invalid_params`.
+fn parse_strategy(
+    raw: Option<&str>,
+) -> Result<Option<leanzero_link::jobs::PlacementStrategy>, agent_client_protocol::Error> {
+    raw.map(|s| {
+        leanzero_link::jobs::PlacementStrategy::parse(s).ok_or_else(|| {
+            agent_client_protocol::Error::invalid_params()
+                .data(format!("strategy: {s:?} is not local-first or selfish"))
+        })
+    })
+    .transpose()
+}
+
+/// The placement strategy setting: `LEANZERO_LINK_JOBS_STRATEGY` (env, then config.yaml), else
+/// node-limits.json `strategy`, else local-first. Read on every placement, so a change in
+/// settings applies to the next job without a reconnect.
+fn configured_strategy() -> leanzero_link::jobs::PlacementStrategy {
+    strategy_from(
+        Config::global()
+            .get_param::<String>(leanzero_link::jobs::STRATEGY_KEY)
+            .ok(),
+    )
+}
+
+fn strategy_from(setting: Option<String>) -> leanzero_link::jobs::PlacementStrategy {
+    use leanzero_link::jobs::PlacementStrategy;
+    match setting.as_deref().map(|s| (s, PlacementStrategy::parse(s))) {
+        Some((_, Some(s))) => s,
+        Some((raw, None)) => {
+            tracing::warn!(
+                strategy = raw,
+                "LEANZERO_LINK_JOBS_STRATEGY unknown; using node-limits.json, else local-first"
+            );
+            PlacementStrategy::from_limits()
+        }
+        None => PlacementStrategy::from_limits(),
+    }
+}
+
 /// Read the switch. `NotFound` is the documented default (OFF); any other error — an
 /// unparseable value, an unreadable config file — is logged and read as OFF: fail
 /// closed, never silently open.
@@ -681,6 +735,7 @@ fn jobs_config() -> leanzero_link::jobs::JobsConfig {
     let mut jobs = JobsConfig {
         switch: JobsSwitch::from_fn(remote_jobs_allowed),
         sampler: std::sync::Arc::new(|| leanzero_link::load::sample_own(jobs_user_idle_s())),
+        strategy: leanzero_link::jobs::StrategySource::from_fn(configured_strategy),
         ..JobsConfig::default()
     };
     if let Some(v) = config_f64(MIN_FREE_ENV) {
@@ -1765,10 +1820,13 @@ impl GooseAcpAgent {
         &self,
         req: LeanzeroLinkJobsSubmitRequest,
     ) -> Result<LeanzeroLinkJobsSubmitResponse, agent_client_protocol::Error> {
-        let job: leanzero_link::jobs::JobRequest =
+        let mut job: leanzero_link::jobs::JobRequest =
             serde_json::from_value(req.job).map_err(|e| {
                 agent_client_protocol::Error::invalid_params().data(format!("job: {e}"))
             })?;
+        if let Some(s) = parse_strategy(req.strategy.as_deref())? {
+            job.strategy = Some(s);
+        }
         let manager = self.jobs_manager().await?;
         let (node_id, accepted) = manager
             .submit_job(req.target_node_id.as_deref(), job)
@@ -1777,6 +1835,8 @@ impl GooseAcpAgent {
         Ok(LeanzeroLinkJobsSubmitResponse {
             node_id,
             job_id: accepted.job_id,
+            queued: accepted.queued.is_some(),
+            queue_position: accepted.queued,
         })
     }
 
@@ -1848,15 +1908,14 @@ impl GooseAcpAgent {
         &self,
         req: LeanzeroLinkJobsPlaceRequest,
     ) -> Result<LeanzeroLinkJobsPlaceResponse, agent_client_protocol::Error> {
-        let placements = self
+        let strategy = parse_strategy(req.strategy.as_deref())?.unwrap_or_else(configured_strategy);
+        let plan = self
             .jobs_manager()
             .await?
-            .place_job(req.need_mem_gb.unwrap_or(0.0), req.heavy)
+            .place_job_with(req.need_mem_gb.unwrap_or(0.0), req.heavy, strategy)
             .await
             .map_err(jobs_err)?;
-        Ok(LeanzeroLinkJobsPlaceResponse {
-            placements: placements.iter().map(placement_json).collect(),
-        })
+        Ok(place_response(&plan, strategy))
     }
 
     /// Decide where a mlxEngine op runs, from its optional `nodeId`. `None` and a `nodeId`
@@ -2470,15 +2529,84 @@ mod tests {
         let resp = serde_json::to_value(LeanzeroLinkJobsSubmitResponse {
             node_id: "n".into(),
             job_id: "j".into(),
+            ..Default::default()
         })
         .unwrap();
-        assert_eq!(resp, serde_json::json!({"nodeId": "n", "jobId": "j"}));
+        assert_eq!(
+            resp,
+            serde_json::json!({"nodeId": "n", "jobId": "j", "queued": false})
+        );
+        let queued = serde_json::to_value(LeanzeroLinkJobsSubmitResponse {
+            node_id: "me".into(),
+            job_id: "q1".into(),
+            queued: true,
+            queue_position: Some(2),
+        })
+        .unwrap();
+        assert_eq!(queued["queuePosition"], 2);
+        assert_eq!(queued["queued"], true);
+        let with: LeanzeroLinkJobsSubmitRequest = serde_json::from_value(
+            serde_json::json!({"job": {"kind": "shell", "command": "x"}, "strategy": "selfish"}),
+        )
+        .unwrap();
+        assert_eq!(with.strategy.as_deref(), Some("selfish"));
         let log: LeanzeroLinkJobsLogRequest =
             serde_json::from_value(serde_json::json!({"targetNodeId": "a", "jobId": "b"})).unwrap();
         assert_eq!(log.from, 0);
         let place: LeanzeroLinkJobsPlaceRequest =
             serde_json::from_value(serde_json::json!({"needMemGb": 8.0})).unwrap();
         assert_eq!((place.need_mem_gb, place.heavy), (Some(8.0), false));
+    }
+
+    #[test]
+    fn strategy_requests_parse_and_bad_names_are_invalid_params() {
+        use leanzero_link::jobs::PlacementStrategy;
+        assert_eq!(parse_strategy(None).unwrap(), None);
+        assert_eq!(
+            parse_strategy(Some("selfish")).unwrap(),
+            Some(PlacementStrategy::Selfish)
+        );
+        assert_eq!(
+            parse_strategy(Some("local-first")).unwrap(),
+            Some(PlacementStrategy::LocalFirst)
+        );
+        let e = parse_strategy(Some("greedy")).unwrap_err();
+        assert_eq!(e.code, agent_client_protocol::Error::invalid_params().code);
+        assert_eq!(
+            strategy_from(Some("selfish".into())),
+            PlacementStrategy::Selfish
+        );
+        // An unknown setting falls back (node-limits.json, else local-first), never errors.
+        let _ = strategy_from(Some("nope".into()));
+        let place: LeanzeroLinkJobsPlaceRequest =
+            serde_json::from_value(serde_json::json!({"strategy": "selfish"})).unwrap();
+        assert_eq!(place.strategy.as_deref(), Some("selfish"));
+    }
+
+    #[test]
+    fn place_response_carries_order_strategy_and_refusals() {
+        use leanzero_link::jobs::{
+            NodeRefusal, Placement, PlacementPlan, PlacementStrategy, RefusalCode,
+        };
+        let plan = PlacementPlan {
+            candidates: vec![Placement {
+                node_id: "studio".into(),
+                user_active: false,
+                score: 40.0,
+            }],
+            refusals: vec![NodeRefusal {
+                node_id: "me".into(),
+                code: RefusalCode::HeavySlotHeld,
+                reason: "heavy slot held".into(),
+            }],
+        };
+        let v = serde_json::to_value(place_response(&plan, PlacementStrategy::Selfish)).unwrap();
+        assert_eq!(v["strategy"], "selfish");
+        assert_eq!(v["placements"][0]["nodeId"], "studio");
+        assert_eq!(
+            v["refusals"][0],
+            serde_json::json!({"nodeId": "me", "code": "heavy_slot_held", "reason": "heavy slot held"})
+        );
     }
 
     #[test]

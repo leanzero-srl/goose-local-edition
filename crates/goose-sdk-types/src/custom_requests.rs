@@ -5124,9 +5124,15 @@ pub struct LeanzeroLinkRemoteExecuteResponse {
 /// logs and placements are carried as the node's own JSON (`leanzero_link::jobs` DTOs);
 /// a view never carries the command line.
 ///
-/// Submit one job. `targetNodeId` absent = place it on the best node (see `jobsPlace`).
-/// `job` is a `JobRequest`: `{kind: "shell"|"prompt", command, cwd?, needMemGb?, heavy,
-/// timeoutS?}` (snake_case keys inside `job`, as the node's route takes them).
+/// Submit one job. `targetNodeId` absent = place it by the placement strategy (see
+/// `jobsPlace`): the first candidate that accepts runs it; when none can, or other jobs already
+/// wait, it joins THIS node's FIFO queue (`queued: true`, `queuePosition` 1 = next, `nodeId` =
+/// this node, `jobId` = the queue id) and is offered to the Macs again every 15 s. A queue id
+/// follows its job: `jobsGet`/`jobsLog`/`jobsCancel` on this node show it waiting (`state:
+/// "queued"`, `queue: {position, strategy, refusals}`), then the placed job with `placed_on`.
+/// A targeted job never queues (a refusal is the error). `job` is a `JobRequest`: `{kind:
+/// "shell"|"prompt", command, cwd?, needMemGb?, heavy, timeoutS?}` (snake_case keys inside
+/// `job`, as the node's route takes them).
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
 #[request(
     method = "_goose/unstable/leanzeroLink/jobsSubmit",
@@ -5137,14 +5143,25 @@ pub struct LeanzeroLinkJobsSubmitRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_node_id: Option<String>,
     pub job: serde_json::Value,
+    /// This job's placement strategy, `"local-first"` | `"selfish"` (the "Run a job" override).
+    /// Absent = the setting (`LEANZERO_LINK_JOBS_STRATEGY`, else node-limits.json `strategy`,
+    /// else local-first). Ignored with `targetNodeId`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
 #[serde(rename_all = "camelCase")]
 pub struct LeanzeroLinkJobsSubmitResponse {
-    /// Where the job went (the placement's pick when no target was given).
+    /// Where the job went (the placement's pick when no target was given; this node when queued).
     pub node_id: String,
     pub job_id: String,
+    /// No Mac had room: the job waits in this node's queue under `jobId`.
+    #[serde(default)]
+    pub queued: bool,
+    /// Its place in line when queued (1 = next).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_position: Option<u32>,
 }
 
 /// Every job a node knows (running and finished since it started), newest first as it lists them.
@@ -5216,8 +5233,10 @@ pub struct LeanzeroLinkJobsLogResponse {
     pub log: serde_json::Value,
 }
 
-/// Where a job could run now, best first (node_fleet's rules: OK nodes by score, then
-/// USER-ACTIVE as the last resort; busy nodes and nodes that do not allow jobs are absent).
+/// Where a job could run now, in the order a submit tries them (node_fleet's rules: OK nodes
+/// first, USER-ACTIVE as the last resort; inside each class this node first under
+/// `local-first`, last under `selfish`, the others by score). Busy nodes and nodes that do not
+/// allow jobs are not placements: they are `refusals`, each `{nodeId, code, reason}`.
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
 #[request(
     method = "_goose/unstable/leanzeroLink/jobsPlace",
@@ -5229,13 +5248,23 @@ pub struct LeanzeroLinkJobsPlaceRequest {
     pub need_mem_gb: Option<f64>,
     #[serde(default)]
     pub heavy: bool,
+    /// As `jobsSubmit`'s `strategy`; absent = the setting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
 #[serde(rename_all = "camelCase")]
 pub struct LeanzeroLinkJobsPlaceResponse {
-    /// `{nodeId, userActive, score}` per candidate, best first.
+    /// `{nodeId, userActive, score}` per candidate, in the order a submit tries them.
     pub placements: Vec<serde_json::Value>,
+    /// The strategy the order was made with (`"local-first"` | `"selfish"`).
+    #[serde(default)]
+    pub strategy: String,
+    /// `{nodeId, code, reason}` per Mac that is not a placement (the job would wait in the
+    /// queue when `placements` is empty).
+    #[serde(default)]
+    pub refusals: Vec<serde_json::Value>,
 }
 
 #[cfg(test)]

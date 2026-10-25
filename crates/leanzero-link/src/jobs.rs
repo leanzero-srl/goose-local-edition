@@ -1628,6 +1628,7 @@ mod tests {
             timeout_s: None,
             origin_node: None,
             allow_user_active: false,
+            strategy: None,
         }
     }
 
@@ -1753,6 +1754,179 @@ mod tests {
         let mut batt = idle_mac();
         batt.on_ac = Some(false);
         assert_eq!(verdict(&batt, 4.0, false, 20.0).score, 26.2);
+    }
+
+    fn plan_ids(p: &PlacementPlan) -> Vec<&str> {
+        p.candidates.iter().map(|c| c.node_id.as_str()).collect()
+    }
+
+    fn refusal_of(p: &PlacementPlan, id: &str) -> Option<RefusalCode> {
+        p.refusals.iter().find(|r| r.node_id == id).map(|r| r.code)
+    }
+
+    /// Each strategy x {own fits, own full, all full, own heavy slot held}. "me" is this node;
+    /// "studio" always has the better score when it fits, so only the strategy puts "me" first.
+    #[test]
+    fn plan_placement_per_strategy_and_case() {
+        use PlacementStrategy::{LocalFirst, Selfish};
+        let load = |own: OwnLoad| NodeLoad {
+            own,
+            ..Default::default()
+        };
+        let fits = |pct: f64| {
+            let mut o = idle_mac();
+            o.mem_free_pct = Some(pct);
+            load(o)
+        };
+        let full = || fits(10.0);
+        let mut locked_own = idle_mac();
+        locked_own.mem_free_pct = Some(50.0);
+        locked_own.heavy_slot_held = true;
+        let locked = load(locked_own);
+        let me_ok = fits(50.0);
+        let studio_ok = fits(80.0);
+        let (me_full, studio_full) = (full(), full());
+
+        for (strategy, own_fits_order) in [
+            (LocalFirst, vec!["me", "studio"]),
+            (Selfish, vec!["studio", "me"]),
+        ] {
+            // own fits (and so does the other Mac)
+            let p = plan_placement(
+                "me",
+                vec![
+                    ("me", true, Some(&me_ok)),
+                    ("studio", true, Some(&studio_ok)),
+                ],
+                4.0,
+                true,
+                20.0,
+                strategy,
+            );
+            assert_eq!(plan_ids(&p), own_fits_order, "{strategy:?} own fits");
+            assert!(p.refusals.is_empty());
+
+            // own full: only the other Mac, and why this one is not a candidate
+            let p = plan_placement(
+                "me",
+                vec![
+                    ("me", true, Some(&me_full)),
+                    ("studio", true, Some(&studio_ok)),
+                ],
+                4.0,
+                true,
+                20.0,
+                strategy,
+            );
+            assert_eq!(plan_ids(&p), vec!["studio"], "{strategy:?} own full");
+            assert_eq!(refusal_of(&p, "me"), Some(RefusalCode::MemoryHeadroom));
+
+            // all full: no candidate, a refusal per Mac (the job will queue)
+            let p = plan_placement(
+                "me",
+                vec![
+                    ("me", true, Some(&me_full)),
+                    ("studio", true, Some(&studio_full)),
+                ],
+                4.0,
+                true,
+                20.0,
+                strategy,
+            );
+            assert!(p.candidates.is_empty(), "{strategy:?} all full");
+            assert_eq!(refusal_of(&p, "me"), Some(RefusalCode::MemoryHeadroom));
+            assert_eq!(refusal_of(&p, "studio"), Some(RefusalCode::MemoryHeadroom));
+
+            // own locked: a heavy job skips this Mac's held heavy slot, a light one does not
+            let rows = || {
+                vec![
+                    ("me", true, Some(&locked)),
+                    ("studio", true, Some(&studio_ok)),
+                ]
+            };
+            let p = plan_placement("me", rows(), 4.0, true, 20.0, strategy);
+            assert_eq!(plan_ids(&p), vec!["studio"], "{strategy:?} own locked");
+            assert_eq!(refusal_of(&p, "me"), Some(RefusalCode::HeavySlotHeld));
+            let p = plan_placement("me", rows(), 4.0, false, 20.0, strategy);
+            assert_eq!(
+                plan_ids(&p),
+                own_fits_order,
+                "{strategy:?} light job, own locked"
+            );
+        }
+
+        // selfish, every other Mac full, this one fits: this one (selfish is not "never me")
+        let p = plan_placement(
+            "me",
+            vec![
+                ("me", true, Some(&me_ok)),
+                ("studio", true, Some(&studio_full)),
+            ],
+            4.0,
+            true,
+            20.0,
+            Selfish,
+        );
+        assert_eq!(plan_ids(&p), vec!["me"]);
+        assert_eq!(refusal_of(&p, "studio"), Some(RefusalCode::MemoryHeadroom));
+    }
+
+    #[test]
+    fn plan_placement_keeps_user_active_last_and_names_every_non_candidate() {
+        let load = |own: OwnLoad| NodeLoad {
+            own,
+            ..Default::default()
+        };
+        let mut busy_me = idle_mac();
+        busy_me.user_active = true;
+        let me = load(busy_me);
+        let studio = load(idle_mac());
+        let other = load(idle_mac());
+        let p = plan_placement(
+            "me",
+            vec![
+                ("me", true, Some(&me)),
+                ("studio", true, Some(&studio)),
+                ("off", false, Some(&other)),
+                ("old", true, None),
+            ],
+            4.0,
+            false,
+            20.0,
+            PlacementStrategy::LocalFirst,
+        );
+        // local-first never puts a Mac whose owner types ahead of an idle one
+        assert_eq!(plan_ids(&p), vec!["studio", "me"]);
+        assert!(p.candidates[1].user_active);
+        assert_eq!(refusal_of(&p, "off"), Some(RefusalCode::JobsDisabled));
+        assert_eq!(refusal_of(&p, "old"), Some(RefusalCode::MemoryUnreadable));
+    }
+
+    #[test]
+    fn strategy_names_parse_and_serialize_as_node_run_spells_them() {
+        assert_eq!(
+            PlacementStrategy::parse(" Local_First "),
+            Some(PlacementStrategy::LocalFirst)
+        );
+        assert_eq!(
+            PlacementStrategy::parse("selfish"),
+            Some(PlacementStrategy::Selfish)
+        );
+        assert_eq!(PlacementStrategy::parse("greedy"), None);
+        assert_eq!(PlacementStrategy::default(), PlacementStrategy::LocalFirst);
+        for s in PlacementStrategy::ALL {
+            assert_eq!(serde_json::to_value(s).unwrap(), s.as_str());
+            assert_eq!(PlacementStrategy::parse(s.as_str()), Some(s));
+        }
+        let r: JobRequest = serde_json::from_value(
+            serde_json::json!({"kind":"shell","command":"x","strategy":"selfish"}),
+        )
+        .unwrap();
+        assert_eq!(r.strategy, Some(PlacementStrategy::Selfish));
+        let r: JobRequest =
+            serde_json::from_value(serde_json::json!({"kind":"shell","command":"x"})).unwrap();
+        assert_eq!(r.strategy, None);
+        assert!(!serde_json::to_string(&r).unwrap().contains("strategy"));
     }
 
     #[test]

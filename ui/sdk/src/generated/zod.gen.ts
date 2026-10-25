@@ -6393,21 +6393,36 @@ export const zLeanzeroLinkRemoteExecuteResponse_unstable = z.object({
  * logs and placements are carried as the node's own JSON (`leanzero_link::jobs` DTOs);
  * a view never carries the command line.
  *
- * Submit one job. `targetNodeId` absent = place it on the best node (see `jobsPlace`).
- * `job` is a `JobRequest`: `{kind: "shell"|"prompt", command, cwd?, needMemGb?, heavy,
- * timeoutS?}` (snake_case keys inside `job`, as the node's route takes them).
+ * Submit one job. `targetNodeId` absent = place it by the placement strategy (see
+ * `jobsPlace`): the first candidate that accepts runs it; when none can, or other jobs already
+ * wait, it joins THIS node's FIFO queue (`queued: true`, `queuePosition` 1 = next, `nodeId` =
+ * this node, `jobId` = the queue id) and is offered to the Macs again every 15 s. A queue id
+ * follows its job: `jobsGet`/`jobsLog`/`jobsCancel` on this node show it waiting (`state:
+ * "queued"`, `queue: {position, strategy, refusals}`), then the placed job with `placed_on`.
+ * A targeted job never queues (a refusal is the error). `job` is a `JobRequest`: `{kind:
+ * "shell"|"prompt", command, cwd?, needMemGb?, heavy, timeoutS?}` (snake_case keys inside
+ * `job`, as the node's route takes them).
  */
 export const zLeanzeroLinkJobsSubmitRequest_unstable = z.object({
     targetNodeId: z.union([
         z.string(),
         z.null()
     ]).optional(),
-    job: z.unknown()
+    job: z.unknown(),
+    strategy: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
 });
 
 export const zLeanzeroLinkJobsSubmitResponse_unstable = z.object({
     nodeId: z.string(),
-    jobId: z.string()
+    jobId: z.string(),
+    queued: z.boolean().optional().default(false),
+    queuePosition: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional()
 });
 
 /**
@@ -6457,19 +6472,27 @@ export const zLeanzeroLinkJobsLogResponse_unstable = z.object({
 });
 
 /**
- * Where a job could run now, best first (node_fleet's rules: OK nodes by score, then
- * USER-ACTIVE as the last resort; busy nodes and nodes that do not allow jobs are absent).
+ * Where a job could run now, in the order a submit tries them (node_fleet's rules: OK nodes
+ * first, USER-ACTIVE as the last resort; inside each class this node first under
+ * `local-first`, last under `selfish`, the others by score). Busy nodes and nodes that do not
+ * allow jobs are not placements: they are `refusals`, each `{nodeId, code, reason}`.
  */
 export const zLeanzeroLinkJobsPlaceRequest_unstable = z.object({
     needMemGb: z.union([
         z.number(),
         z.null()
     ]).optional(),
-    heavy: z.boolean().optional().default(false)
+    heavy: z.boolean().optional().default(false),
+    strategy: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
 });
 
 export const zLeanzeroLinkJobsPlaceResponse_unstable = z.object({
-    placements: z.array(z.unknown())
+    placements: z.array(z.unknown()),
+    strategy: z.string().optional().default(''),
+    refusals: z.array(z.unknown()).optional().default([])
 });
 
 /**
