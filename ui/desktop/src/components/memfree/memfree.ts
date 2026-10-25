@@ -49,6 +49,16 @@ export type MemfreeAlternative =
   | { kind: 'smallerVariant'; modelId: string; needBytes: number }
   | { kind: 'peerMac'; nodeId: string; label: string; budgetBytes: number };
 
+/** The fields this side reads of the engine's MlxMountFitDto (`verdict` is "allow" | "warn" | "block"). */
+export interface MemfreeFit {
+  modelId?: string;
+  verdict?: string | null;
+  needBytes?: number;
+  budgetBytes?: number;
+  /** Block only: needBytes - budgetBytes. */
+  shortBytes?: number | null;
+}
+
 /** `_goose/unstable/mlxEngine/memoryHolders` (camelCase), the fields this side reads. */
 export interface MemoryHolders {
   availableBytes: number;
@@ -61,6 +71,7 @@ export interface MemoryHolders {
   verdict?: MemfreeVerdict | null;
   alternatives: MemfreeAlternative[] | { kind: string }[];
   quitAppsAllowed: boolean;
+  fit?: MemfreeFit | null;
   /** The engine's own reading of GOOSE_MEMFREE_ENABLED (absent on an older engine = on). */
   enabled?: boolean;
 }
@@ -78,7 +89,7 @@ export interface MemoryFreeResult {
   items: MemfreeItem[];
   before: { budgetBytes: number };
   after: { budgetBytes: number };
-  fit?: { status?: string | null; shortBytes?: number | null; budgetBytes?: number } | null;
+  fit?: MemfreeFit | null;
 }
 
 export const gib = (bytes: number) => bytes / GIB;
@@ -218,14 +229,14 @@ export function afterLine(r: MemoryFreeResult): {
   fits: boolean | null;
   shortGb: number | null;
 } {
-  const status = r.fit?.status ?? null;
+  const verdict = r.fit?.verdict ?? null;
   const short = r.fit?.shortBytes ?? null;
   return {
     beforeGb: gib(r.before.budgetBytes),
     afterGb: gib(r.after.budgetBytes),
     freedGb: gib(Math.max(0, r.after.budgetBytes - r.before.budgetBytes)),
-    fits: status == null ? null : status !== 'short',
-    shortGb: status === 'short' && short != null ? gib(short) : null,
+    fits: verdict == null ? null : verdict !== 'block',
+    shortGb: verdict === 'block' && short != null ? gib(short) : null,
   };
 }
 

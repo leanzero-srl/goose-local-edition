@@ -2627,6 +2627,96 @@
   "formingPanel.textHeading": {
     "defaultMessage": "Texto escrito junto às chamadas ({chars} caracteres) — não faz parte da resposta"
   },
+  "freeMemory.after": {
+    "defaultMessage": "Antes <b>{before} GB</b> livres, agora <b>{after} GB</b> livres ({freed} GB liberados)."
+  },
+  "freeMemory.afterFits": {
+    "defaultMessage": "O modelo agora cabe."
+  },
+  "freeMemory.afterShort": {
+    "defaultMessage": "Ainda faltam <b>{gb} GB</b>."
+  },
+  "freeMemory.altPeer": {
+    "defaultMessage": "Execute em {mac} em vez disso (<b>{gb} GB</b> livres lá)"
+  },
+  "freeMemory.altSmaller": {
+    "defaultMessage": "Uma variante menor cabe: {model} (precisa de <b>{gb} GB</b>)"
+  },
+  "freeMemory.budget": {
+    "defaultMessage": "<b>{free} GB</b> livres para um modelo, de {total} GB"
+  },
+  "freeMemory.cannotFit": {
+    "defaultMessage": "Mesmo liberando tudo o que está listado aqui (<b>{gb} GB</b>), ainda faltam <b>{short} GB</b> para este modelo."
+  },
+  "freeMemory.cat.aiServer": {
+    "defaultMessage": "Servidores de modelos"
+  },
+  "freeMemory.cat.gooseEngine": {
+    "defaultMessage": "Motores do goose"
+  },
+  "freeMemory.cat.gooseOrphan": {
+    "defaultMessage": "Restos do goose"
+  },
+  "freeMemory.cat.job": {
+    "defaultMessage": "Tarefas"
+  },
+  "freeMemory.cat.system": {
+    "defaultMessage": "macOS e o resto"
+  },
+  "freeMemory.cat.userApp": {
+    "defaultMessage": "Apps"
+  },
+  "freeMemory.close": {
+    "defaultMessage": "Fechar"
+  },
+  "freeMemory.fitsByGooseOwned": {
+    "defaultMessage": "Liberar a memória do próprio goose (<b>{gb} GB</b>) basta para este modelo."
+  },
+  "freeMemory.fitsWithApps": {
+    "defaultMessage": "Este modelo cabe depois de liberar <b>{gb} GB</b>: a memória do próprio goose e fechar {apps}."
+  },
+  "freeMemory.freeFailed": {
+    "defaultMessage": "Não foi possível liberar memória: {reason}"
+  },
+  "freeMemory.freeOwn": {
+    "defaultMessage": "Liberar a do goose ({gb} GB)"
+  },
+  "freeMemory.itemFailed": {
+    "defaultMessage": "{label}: {message}"
+  },
+  "freeMemory.keep": {
+    "defaultMessage": "Manter aberto"
+  },
+  "freeMemory.loading": {
+    "defaultMessage": "Medindo o que ocupa a memória…"
+  },
+  "freeMemory.nothingOwn": {
+    "defaultMessage": "O goose não ocupa memória que possa liberar"
+  },
+  "freeMemory.quit": {
+    "defaultMessage": "Encerrar"
+  },
+  "freeMemory.quitBody": {
+    "defaultMessage": "O goose pede a {app} em {mac} que encerre da forma normal. Salve seu trabalho lá primeiro: o que não estiver salvo pode ser perdido."
+  },
+  "freeMemory.quitConfirm": {
+    "defaultMessage": "Encerrar {app}"
+  },
+  "freeMemory.quitTitle": {
+    "defaultMessage": "Encerrar {app}?"
+  },
+  "freeMemory.readFailed": {
+    "defaultMessage": "Não foi possível medir a memória: {reason}"
+  },
+  "freeMemory.remoteQuitOff": {
+    "defaultMessage": "{mac} não permite que outros Macs encerrem seus apps (Configurações › App naquele Mac). Encerre-os lá."
+  },
+  "freeMemory.title": {
+    "defaultMessage": "Liberar memória em {mac}"
+  },
+  "freeMemoryEntry.open": {
+    "defaultMessage": "Liberar memória"
+  },
   "gooseImportSection.chooseSource": {
     "defaultMessage": "Escolher pasta de origem"
   },
@@ -4333,6 +4423,36 @@
   },
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Reproduzindo em Picture-in-Picture"
+  },
+  "memfreeSettings.description": {
+    "defaultMessage": "Quando um modelo local não cabe, o goose mostra o que ocupa a memória e pode liberar a própria parte."
+  },
+  "memfreeSettings.enabled": {
+    "defaultMessage": "Oferecer “Liberar memória”"
+  },
+  "memfreeSettings.enabledDesc": {
+    "defaultMessage": "Mostra o botão num modelo sem memória suficiente e nas barras de memória de cada Mac. Ativado por padrão."
+  },
+  "memfreeSettings.minMb": {
+    "defaultMessage": "Menor app listado (MB)"
+  },
+  "memfreeSettings.minMbDesc": {
+    "defaultMessage": "Apps que usam menos memória do que isso ficam fora da lista. Padrão {mb} MB."
+  },
+  "memfreeSettings.readFailed": {
+    "defaultMessage": "Não foi possível ler estas configurações: {reason}"
+  },
+  "memfreeSettings.remoteQuit": {
+    "defaultMessage": "Permitir que Macs vinculados encerrem apps neste Mac"
+  },
+  "memfreeSettings.remoteQuitDesc": {
+    "defaultMessage": "Outro Mac no LeanZero Link pode pedir a este Mac que encerre um app, sempre após uma confirmação aqui. Desativado por padrão: ainda assim podem liberar aqui a memória do próprio goose."
+  },
+  "memfreeSettings.saveFailed": {
+    "defaultMessage": "Não foi possível salvar esta configuração: {reason}"
+  },
+  "memfreeSettings.title": {
+    "defaultMessage": "Liberar memória"
   },
   "memoryProposal.cut": {
     "defaultMessage": "Foi cortado em {max} caracteres ao ser registrado, então não pode ser salvo assim. Peça de novo o texto completo."
@@ -6865,6 +6985,9 @@
   },
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "Nenhum modelo montado"
+  },
+  "nodeCard.memfreeThisMac": {
+    "defaultMessage": "este Mac"
   },
   "nodeModelCell.chatFollows": {
     "defaultMessage": "O chat segue sua execução: {model}"

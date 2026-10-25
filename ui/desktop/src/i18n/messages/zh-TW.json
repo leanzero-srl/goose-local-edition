@@ -2627,6 +2627,96 @@
   "formingPanel.textHeading": {
     "defaultMessage": "與呼叫一同寫出的文字（{chars} 個字元）— 不屬於回答"
   },
+  "freeMemory.after": {
+    "defaultMessage": "之前可用 <b>{before} GB</b>,現在可用 <b>{after} GB</b>(釋放了 {freed} GB)。"
+  },
+  "freeMemory.afterFits": {
+    "defaultMessage": "模型現在放得下了。"
+  },
+  "freeMemory.afterShort": {
+    "defaultMessage": "仍差 <b>{gb} GB</b>。"
+  },
+  "freeMemory.altPeer": {
+    "defaultMessage": "改在 {mac} 上執行(那裡可用 <b>{gb} GB</b>)"
+  },
+  "freeMemory.altSmaller": {
+    "defaultMessage": "較小的變體放得下:{model}(需要 <b>{gb} GB</b>)"
+  },
+  "freeMemory.budget": {
+    "defaultMessage": "可供模型使用 <b>{free} GB</b>,共 {total} GB"
+  },
+  "freeMemory.cannotFit": {
+    "defaultMessage": "即使釋放這裡列出的全部項目(<b>{gb} GB</b>),此模型仍差 <b>{short} GB</b>。"
+  },
+  "freeMemory.cat.aiServer": {
+    "defaultMessage": "模型伺服器"
+  },
+  "freeMemory.cat.gooseEngine": {
+    "defaultMessage": "goose 的引擎"
+  },
+  "freeMemory.cat.gooseOrphan": {
+    "defaultMessage": "goose 遺留的"
+  },
+  "freeMemory.cat.job": {
+    "defaultMessage": "工作"
+  },
+  "freeMemory.cat.system": {
+    "defaultMessage": "macOS 與其他"
+  },
+  "freeMemory.cat.userApp": {
+    "defaultMessage": "App"
+  },
+  "freeMemory.close": {
+    "defaultMessage": "關閉"
+  },
+  "freeMemory.fitsByGooseOwned": {
+    "defaultMessage": "釋放 goose 自身的記憶體(<b>{gb} GB</b>)就足以執行此模型。"
+  },
+  "freeMemory.fitsWithApps": {
+    "defaultMessage": "釋放 <b>{gb} GB</b> 後此模型放得下:goose 自身的記憶體並結束 {apps}。"
+  },
+  "freeMemory.freeFailed": {
+    "defaultMessage": "無法釋放記憶體:{reason}"
+  },
+  "freeMemory.freeOwn": {
+    "defaultMessage": "釋放 goose 自身的({gb} GB)"
+  },
+  "freeMemory.itemFailed": {
+    "defaultMessage": "{label}:{message}"
+  },
+  "freeMemory.keep": {
+    "defaultMessage": "保持開啟"
+  },
+  "freeMemory.loading": {
+    "defaultMessage": "正在測量佔用記憶體的項目…"
+  },
+  "freeMemory.nothingOwn": {
+    "defaultMessage": "goose 沒有可釋放的記憶體"
+  },
+  "freeMemory.quit": {
+    "defaultMessage": "結束"
+  },
+  "freeMemory.quitBody": {
+    "defaultMessage": "goose 會請 {mac} 上的 {app} 以正常方式結束。請先在那裡儲存你的工作:未儲存的內容可能會遺失。"
+  },
+  "freeMemory.quitConfirm": {
+    "defaultMessage": "結束 {app}"
+  },
+  "freeMemory.quitTitle": {
+    "defaultMessage": "要結束 {app} 嗎?"
+  },
+  "freeMemory.readFailed": {
+    "defaultMessage": "無法測量記憶體:{reason}"
+  },
+  "freeMemory.remoteQuitOff": {
+    "defaultMessage": "{mac} 不允許其他 Mac 結束它的 App(在那台 Mac 的 設定 › App)。請在那裡結束。"
+  },
+  "freeMemory.title": {
+    "defaultMessage": "釋放 {mac} 上的記憶體"
+  },
+  "freeMemoryEntry.open": {
+    "defaultMessage": "釋放記憶體"
+  },
   "gooseImportSection.chooseSource": {
     "defaultMessage": "選擇來源資料夾"
   },
@@ -4333,6 +4423,36 @@
   },
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "正在子母畫面中播放"
+  },
+  "memfreeSettings.description": {
+    "defaultMessage": "當本機模型放不下時,goose 會顯示佔用記憶體的項目,並可釋放它自己的那一份。"
+  },
+  "memfreeSettings.enabled": {
+    "defaultMessage": "提供「釋放記憶體」"
+  },
+  "memfreeSettings.enabledDesc": {
+    "defaultMessage": "在記憶體不足的模型上以及每台 Mac 的記憶體條上顯示此按鈕。預設開啟。"
+  },
+  "memfreeSettings.minMb": {
+    "defaultMessage": "列出的最小 App (MB)"
+  },
+  "memfreeSettings.minMbDesc": {
+    "defaultMessage": "記憶體用量低於此值的 App 不會列出。預設 {mb} MB。"
+  },
+  "memfreeSettings.readFailed": {
+    "defaultMessage": "無法讀取這些設定:{reason}"
+  },
+  "memfreeSettings.remoteQuit": {
+    "defaultMessage": "允許已連結的 Mac 結束這台 Mac 上的 App"
+  },
+  "memfreeSettings.remoteQuitDesc": {
+    "defaultMessage": "LeanZero Link 上的另一台 Mac 可以請這台 Mac 結束某個 App,且一律先在這裡確認。預設關閉:它們仍可在這裡釋放 goose 自身的記憶體。"
+  },
+  "memfreeSettings.saveFailed": {
+    "defaultMessage": "無法儲存此設定:{reason}"
+  },
+  "memfreeSettings.title": {
+    "defaultMessage": "釋放記憶體"
   },
   "memoryProposal.cut": {
     "defaultMessage": "提交時在 {max} 個字元處被截斷，因此無法原樣儲存。請重新取得完整內容。"
@@ -6865,6 +6985,9 @@
   },
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "沒有已掛載的模型"
+  },
+  "nodeCard.memfreeThisMac": {
+    "defaultMessage": "這台 Mac"
   },
   "nodeModelCell.chatFollows": {
     "defaultMessage": "聊天跟隨你的執行：{model}"

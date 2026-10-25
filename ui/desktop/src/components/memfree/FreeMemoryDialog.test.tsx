@@ -88,7 +88,7 @@ describe('FreeMemoryDialog', () => {
       ],
       before: { budgetBytes: gb(9.4) },
       after: { budgetBytes: gb(21.4) },
-      fit: { status: 'fits', shortBytes: null },
+      fit: { verdict: 'allow', shortBytes: null },
     });
     const user = userEvent.setup();
     show({ target: 'n-gabee' });
@@ -125,7 +125,7 @@ describe('FreeMemoryDialog', () => {
       ],
       before: { budgetBytes: gb(9.4) },
       after: { budgetBytes: gb(16.6) },
-      fit: { status: 'short', shortBytes: gb(14) },
+      fit: { verdict: 'block', shortBytes: gb(14) },
     });
     const user = userEvent.setup();
     show();

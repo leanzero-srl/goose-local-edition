@@ -2627,6 +2627,96 @@
   "formingPanel.textHeading": {
     "defaultMessage": "呼び出しと並んで書かれたテキスト ({chars} 文字) — 回答には含まれません"
   },
+  "freeMemory.after": {
+    "defaultMessage": "以前は <b>{before} GB</b> 空き、現在は <b>{after} GB</b> 空き({freed} GB を解放)。"
+  },
+  "freeMemory.afterFits": {
+    "defaultMessage": "モデルが収まるようになりました。"
+  },
+  "freeMemory.afterShort": {
+    "defaultMessage": "まだ <b>{gb} GB</b> 足りません。"
+  },
+  "freeMemory.altPeer": {
+    "defaultMessage": "代わりに {mac} で実行(そちらは <b>{gb} GB</b> 空き)"
+  },
+  "freeMemory.altSmaller": {
+    "defaultMessage": "より小さいバリアントなら収まります: {model}(<b>{gb} GB</b> 必要)"
+  },
+  "freeMemory.budget": {
+    "defaultMessage": "モデル用に <b>{free} GB</b> 空き({total} GB 中)"
+  },
+  "freeMemory.cannotFit": {
+    "defaultMessage": "ここに表示されたものをすべて解放しても(<b>{gb} GB</b>)、このモデルには <b>{short} GB</b> 足りません。"
+  },
+  "freeMemory.cat.aiServer": {
+    "defaultMessage": "モデルサーバー"
+  },
+  "freeMemory.cat.gooseEngine": {
+    "defaultMessage": "goose のエンジン"
+  },
+  "freeMemory.cat.gooseOrphan": {
+    "defaultMessage": "goose の残り"
+  },
+  "freeMemory.cat.job": {
+    "defaultMessage": "ジョブ"
+  },
+  "freeMemory.cat.system": {
+    "defaultMessage": "macOS とその他"
+  },
+  "freeMemory.cat.userApp": {
+    "defaultMessage": "アプリ"
+  },
+  "freeMemory.close": {
+    "defaultMessage": "閉じる"
+  },
+  "freeMemory.fitsByGooseOwned": {
+    "defaultMessage": "goose 自身のメモリ(<b>{gb} GB</b>)を解放すれば、このモデルに十分です。"
+  },
+  "freeMemory.fitsWithApps": {
+    "defaultMessage": "<b>{gb} GB</b> を解放するとこのモデルが収まります: goose 自身のメモリと {apps} の終了。"
+  },
+  "freeMemory.freeFailed": {
+    "defaultMessage": "メモリを解放できませんでした: {reason}"
+  },
+  "freeMemory.freeOwn": {
+    "defaultMessage": "goose 自身の分を解放({gb} GB)"
+  },
+  "freeMemory.itemFailed": {
+    "defaultMessage": "{label}: {message}"
+  },
+  "freeMemory.keep": {
+    "defaultMessage": "開いたままにする"
+  },
+  "freeMemory.loading": {
+    "defaultMessage": "メモリを使用しているものを測定中…"
+  },
+  "freeMemory.nothingOwn": {
+    "defaultMessage": "goose が解放できるメモリはありません"
+  },
+  "freeMemory.quit": {
+    "defaultMessage": "終了"
+  },
+  "freeMemory.quitBody": {
+    "defaultMessage": "goose は {mac} の {app} に通常の方法で終了するよう求めます。先にそちらで作業を保存してください。保存していない内容は失われる可能性があります。"
+  },
+  "freeMemory.quitConfirm": {
+    "defaultMessage": "{app} を終了"
+  },
+  "freeMemory.quitTitle": {
+    "defaultMessage": "{app} を終了しますか?"
+  },
+  "freeMemory.readFailed": {
+    "defaultMessage": "メモリを測定できませんでした: {reason}"
+  },
+  "freeMemory.remoteQuitOff": {
+    "defaultMessage": "{mac} は他の Mac によるアプリの終了を許可していません(その Mac の 設定 › アプリ)。そちらで終了してください。"
+  },
+  "freeMemory.title": {
+    "defaultMessage": "{mac} のメモリを解放"
+  },
+  "freeMemoryEntry.open": {
+    "defaultMessage": "メモリを解放"
+  },
   "gooseImportSection.chooseSource": {
     "defaultMessage": "ソースフォルダーを選択"
   },
@@ -4333,6 +4423,36 @@
   },
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "ピクチャ・イン・ピクチャで再生中"
+  },
+  "memfreeSettings.description": {
+    "defaultMessage": "ローカルモデルが収まらないとき、goose はメモリを使用しているものを表示し、自身の分を解放できます。"
+  },
+  "memfreeSettings.enabled": {
+    "defaultMessage": "「メモリを解放」を表示"
+  },
+  "memfreeSettings.enabledDesc": {
+    "defaultMessage": "メモリが足りないモデルと、各 Mac のメモリバーにボタンを表示します。デフォルトでオン。"
+  },
+  "memfreeSettings.minMb": {
+    "defaultMessage": "表示する最小のアプリ (MB)"
+  },
+  "memfreeSettings.minMbDesc": {
+    "defaultMessage": "これより使用メモリが少ないアプリは一覧に表示されません。デフォルト {mb} MB。"
+  },
+  "memfreeSettings.readFailed": {
+    "defaultMessage": "これらの設定を読み取れませんでした: {reason}"
+  },
+  "memfreeSettings.remoteQuit": {
+    "defaultMessage": "リンクされた Mac がこの Mac のアプリを終了できるようにする"
+  },
+  "memfreeSettings.remoteQuitDesc": {
+    "defaultMessage": "LeanZero Link 上の別の Mac が、この Mac にアプリの終了を求めることができます。必ずここで確認した後です。デフォルトでオフ: それでも goose 自身のメモリはここで解放できます。"
+  },
+  "memfreeSettings.saveFailed": {
+    "defaultMessage": "この設定を保存できませんでした: {reason}"
+  },
+  "memfreeSettings.title": {
+    "defaultMessage": "メモリを解放"
   },
   "memoryProposal.cut": {
     "defaultMessage": "登録時に {max} 文字で切れているため、このままでは保存できません。全文をもう一度依頼してください。"
@@ -6865,6 +6985,9 @@
   },
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "マウントされたモデルがありません"
+  },
+  "nodeCard.memfreeThisMac": {
+    "defaultMessage": "この Mac"
   },
   "nodeModelCell.chatFollows": {
     "defaultMessage": "チャットは実行したモデルに従います: {model}"

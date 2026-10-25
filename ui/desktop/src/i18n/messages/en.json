@@ -2768,6 +2768,96 @@
   "formingPanel.textHeading": {
     "defaultMessage": "Text written beside the calls ({chars} chars) — not part of the answer"
   },
+  "freeMemory.after": {
+    "defaultMessage": "Before <b>{before} GB</b> free, now <b>{after} GB</b> free (freed {freed} GB)."
+  },
+  "freeMemory.afterFits": {
+    "defaultMessage": "The model fits now."
+  },
+  "freeMemory.afterShort": {
+    "defaultMessage": "Still <b>{gb} GB</b> short."
+  },
+  "freeMemory.altPeer": {
+    "defaultMessage": "Run it on {mac} instead (<b>{gb} GB</b> free there)"
+  },
+  "freeMemory.altSmaller": {
+    "defaultMessage": "A smaller variant fits: {model} (needs <b>{gb} GB</b>)"
+  },
+  "freeMemory.budget": {
+    "defaultMessage": "<b>{free} GB</b> free for a model, of {total} GB"
+  },
+  "freeMemory.cannotFit": {
+    "defaultMessage": "Even freeing everything listed here (<b>{gb} GB</b>) leaves this model <b>{short} GB</b> short."
+  },
+  "freeMemory.cat.aiServer": {
+    "defaultMessage": "Model servers"
+  },
+  "freeMemory.cat.gooseEngine": {
+    "defaultMessage": "goose’s engines"
+  },
+  "freeMemory.cat.gooseOrphan": {
+    "defaultMessage": "Left over by goose"
+  },
+  "freeMemory.cat.job": {
+    "defaultMessage": "Jobs"
+  },
+  "freeMemory.cat.system": {
+    "defaultMessage": "macOS and the rest"
+  },
+  "freeMemory.cat.userApp": {
+    "defaultMessage": "Apps"
+  },
+  "freeMemory.close": {
+    "defaultMessage": "Close"
+  },
+  "freeMemory.fitsByGooseOwned": {
+    "defaultMessage": "Freeing goose’s own memory (<b>{gb} GB</b>) is enough for this model."
+  },
+  "freeMemory.fitsWithApps": {
+    "defaultMessage": "This model fits after freeing <b>{gb} GB</b>: goose’s own memory and quitting {apps}."
+  },
+  "freeMemory.freeFailed": {
+    "defaultMessage": "Could not free memory: {reason}"
+  },
+  "freeMemory.freeOwn": {
+    "defaultMessage": "Free goose’s own ({gb} GB)"
+  },
+  "freeMemory.itemFailed": {
+    "defaultMessage": "{label}: {message}"
+  },
+  "freeMemory.keep": {
+    "defaultMessage": "Keep it open"
+  },
+  "freeMemory.loading": {
+    "defaultMessage": "Measuring what holds memory…"
+  },
+  "freeMemory.nothingOwn": {
+    "defaultMessage": "goose holds no memory it can free"
+  },
+  "freeMemory.quit": {
+    "defaultMessage": "Quit"
+  },
+  "freeMemory.quitBody": {
+    "defaultMessage": "goose asks {app} on {mac} to quit the normal way. Save your work there first: anything unsaved may be lost."
+  },
+  "freeMemory.quitConfirm": {
+    "defaultMessage": "Quit {app}"
+  },
+  "freeMemory.quitTitle": {
+    "defaultMessage": "Quit {app}?"
+  },
+  "freeMemory.readFailed": {
+    "defaultMessage": "Could not measure memory: {reason}"
+  },
+  "freeMemory.remoteQuitOff": {
+    "defaultMessage": "{mac} does not let other Macs quit its apps (Settings › App on that Mac). Quit them there."
+  },
+  "freeMemory.title": {
+    "defaultMessage": "Free up memory on {mac}"
+  },
+  "freeMemoryEntry.open": {
+    "defaultMessage": "Free up memory"
+  },
   "gooseImportSection.chooseSource": {
     "defaultMessage": "Choose source folder"
   },
@@ -4477,6 +4567,36 @@
   },
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Playing in Picture-in-Picture"
+  },
+  "memfreeSettings.description": {
+    "defaultMessage": "When a local model does not fit, goose shows what holds the memory and can free its own share."
+  },
+  "memfreeSettings.enabled": {
+    "defaultMessage": "Offer “Free up memory”"
+  },
+  "memfreeSettings.enabledDesc": {
+    "defaultMessage": "Shows the button on a model that is short of memory and on each Mac’s memory bars. On by default."
+  },
+  "memfreeSettings.minMb": {
+    "defaultMessage": "Smallest app to list (MB)"
+  },
+  "memfreeSettings.minMbDesc": {
+    "defaultMessage": "Apps using less memory than this are left out of the list. Default {mb} MB."
+  },
+  "memfreeSettings.readFailed": {
+    "defaultMessage": "Could not read these settings: {reason}"
+  },
+  "memfreeSettings.remoteQuit": {
+    "defaultMessage": "Let linked Macs quit apps on this Mac"
+  },
+  "memfreeSettings.remoteQuitDesc": {
+    "defaultMessage": "Another Mac on LeanZero Link may ask this Mac to quit an app, always after a confirmation there. Off by default: they can still free goose’s own memory here."
+  },
+  "memfreeSettings.saveFailed": {
+    "defaultMessage": "Could not save this setting: {reason}"
+  },
+  "memfreeSettings.title": {
+    "defaultMessage": "Free up memory"
   },
   "memoryProposal.cut": {
     "defaultMessage": "Cut off at {max} characters when it was filed, so it cannot be saved as it is. Ask again for the whole piece."
@@ -7018,6 +7138,9 @@
   },
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "No model is mounted"
+  },
+  "nodeCard.memfreeThisMac": {
+    "defaultMessage": "this Mac"
   },
   "nodeModelCell.chatFollows": {
     "defaultMessage": "Chat follows your Run: {model}"

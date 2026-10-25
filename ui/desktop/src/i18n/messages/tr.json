@@ -2627,6 +2627,96 @@
   "formingPanel.textHeading": {
     "defaultMessage": "Çağrıların yanına yazılan metin ({chars} karakter) — yanıtın parçası değil"
   },
+  "freeMemory.after": {
+    "defaultMessage": "Önce <b>{before} GB</b> boş, şimdi <b>{after} GB</b> boş ({freed} GB boşaltıldı)."
+  },
+  "freeMemory.afterFits": {
+    "defaultMessage": "Model artık sığıyor."
+  },
+  "freeMemory.afterShort": {
+    "defaultMessage": "Hâlâ <b>{gb} GB</b> eksik."
+  },
+  "freeMemory.altPeer": {
+    "defaultMessage": "Bunun yerine {mac} üzerinde çalıştırın (orada <b>{gb} GB</b> boş)"
+  },
+  "freeMemory.altSmaller": {
+    "defaultMessage": "Daha küçük bir varyant sığıyor: {model} (<b>{gb} GB</b> gerekir)"
+  },
+  "freeMemory.budget": {
+    "defaultMessage": "Bir model için <b>{free} GB</b> boş, toplam {total} GB"
+  },
+  "freeMemory.cannotFit": {
+    "defaultMessage": "Burada listelenen her şey boşaltılsa bile (<b>{gb} GB</b>) bu modele <b>{short} GB</b> eksik kalır."
+  },
+  "freeMemory.cat.aiServer": {
+    "defaultMessage": "Model sunucuları"
+  },
+  "freeMemory.cat.gooseEngine": {
+    "defaultMessage": "goose motorları"
+  },
+  "freeMemory.cat.gooseOrphan": {
+    "defaultMessage": "goose’tan kalanlar"
+  },
+  "freeMemory.cat.job": {
+    "defaultMessage": "İşler"
+  },
+  "freeMemory.cat.system": {
+    "defaultMessage": "macOS ve geri kalanı"
+  },
+  "freeMemory.cat.userApp": {
+    "defaultMessage": "Uygulamalar"
+  },
+  "freeMemory.close": {
+    "defaultMessage": "Kapat"
+  },
+  "freeMemory.fitsByGooseOwned": {
+    "defaultMessage": "goose’un kendi belleğini (<b>{gb} GB</b>) boşaltmak bu model için yeterli."
+  },
+  "freeMemory.fitsWithApps": {
+    "defaultMessage": "Bu model <b>{gb} GB</b> boşaltıldıktan sonra sığar: goose’un kendi belleği ve {apps} kapatılarak."
+  },
+  "freeMemory.freeFailed": {
+    "defaultMessage": "Bellek boşaltılamadı: {reason}"
+  },
+  "freeMemory.freeOwn": {
+    "defaultMessage": "goose’unkini boşalt ({gb} GB)"
+  },
+  "freeMemory.itemFailed": {
+    "defaultMessage": "{label}: {message}"
+  },
+  "freeMemory.keep": {
+    "defaultMessage": "Açık kalsın"
+  },
+  "freeMemory.loading": {
+    "defaultMessage": "Belleği neyin kullandığı ölçülüyor…"
+  },
+  "freeMemory.nothingOwn": {
+    "defaultMessage": "goose’un boşaltabileceği bir belleği yok"
+  },
+  "freeMemory.quit": {
+    "defaultMessage": "Çık"
+  },
+  "freeMemory.quitBody": {
+    "defaultMessage": "goose, {mac} üzerindeki {app} uygulamasından normal yoldan çıkmasını ister. Önce oradaki işinizi kaydedin: kaydedilmemiş her şey kaybolabilir."
+  },
+  "freeMemory.quitConfirm": {
+    "defaultMessage": "{app} uygulamasından çık"
+  },
+  "freeMemory.quitTitle": {
+    "defaultMessage": "{app} uygulamasından çıkılsın mı?"
+  },
+  "freeMemory.readFailed": {
+    "defaultMessage": "Bellek ölçülemedi: {reason}"
+  },
+  "freeMemory.remoteQuitOff": {
+    "defaultMessage": "{mac}, diğer Mac’lerin uygulamalarını kapatmasına izin vermiyor (o Mac’te Ayarlar › Uygulama). Onları orada kapatın."
+  },
+  "freeMemory.title": {
+    "defaultMessage": "{mac} üzerinde bellek boşalt"
+  },
+  "freeMemoryEntry.open": {
+    "defaultMessage": "Bellek boşalt"
+  },
   "gooseImportSection.chooseSource": {
     "defaultMessage": "Kaynak klasörü seç"
   },
@@ -4333,6 +4423,36 @@
   },
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Resim İçinde Resim'de Oynatma"
+  },
+  "memfreeSettings.description": {
+    "defaultMessage": "Yerel bir model sığmadığında goose belleği neyin kullandığını gösterir ve kendi payını boşaltabilir."
+  },
+  "memfreeSettings.enabled": {
+    "defaultMessage": "“Bellek boşalt” seçeneğini sun"
+  },
+  "memfreeSettings.enabledDesc": {
+    "defaultMessage": "Düğmeyi belleği yetmeyen bir modelde ve her Mac’in bellek çubuklarında gösterir. Varsayılan olarak açık."
+  },
+  "memfreeSettings.minMb": {
+    "defaultMessage": "Listelenecek en küçük uygulama (MB)"
+  },
+  "memfreeSettings.minMbDesc": {
+    "defaultMessage": "Bundan daha az bellek kullanan uygulamalar listede yer almaz. Varsayılan {mb} MB."
+  },
+  "memfreeSettings.readFailed": {
+    "defaultMessage": "Bu ayarlar okunamadı: {reason}"
+  },
+  "memfreeSettings.remoteQuit": {
+    "defaultMessage": "Bağlı Mac’lerin bu Mac’teki uygulamaları kapatmasına izin ver"
+  },
+  "memfreeSettings.remoteQuitDesc": {
+    "defaultMessage": "LeanZero Link’teki başka bir Mac, bu Mac’ten bir uygulamayı kapatmasını isteyebilir, her zaman burada onaylandıktan sonra. Varsayılan olarak kapalı: goose’un kendi belleğini burada yine de boşaltabilirler."
+  },
+  "memfreeSettings.saveFailed": {
+    "defaultMessage": "Bu ayar kaydedilemedi: {reason}"
+  },
+  "memfreeSettings.title": {
+    "defaultMessage": "Bellek boşalt"
   },
   "memoryProposal.cut": {
     "defaultMessage": "Kaydedilirken {max} karakterde kesildi, bu yüzden bu haliyle kaydedilemez. Tam metni yeniden isteyin."
@@ -6865,6 +6985,9 @@
   },
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "Takılı model yok"
+  },
+  "nodeCard.memfreeThisMac": {
+    "defaultMessage": "bu Mac"
   },
   "nodeModelCell.chatFollows": {
     "defaultMessage": "Sohbet çalıştırdığın modeli izliyor: {model}"

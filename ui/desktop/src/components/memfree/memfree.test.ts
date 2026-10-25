@@ -116,7 +116,7 @@ describe('afterLine', () => {
       items: [],
       before: { budgetBytes: gb(9.4) },
       after: { budgetBytes: gb(16.6) },
-      fit: { status: 'short', shortBytes: gb(14) },
+      fit: { verdict: 'block', shortBytes: gb(14) },
     });
     expect(a.beforeGb).toBeCloseTo(9.4, 1);
     expect(a.afterGb).toBeCloseTo(16.6, 1);
@@ -130,7 +130,7 @@ describe('afterLine', () => {
       items: [],
       before: { budgetBytes: gb(9) },
       after: { budgetBytes: gb(8.9) },
-      fit: { status: 'fits' },
+      fit: { verdict: 'allow' },
     });
     expect(a.freedGb).toBe(0);
     expect(a.fits).toBe(true);

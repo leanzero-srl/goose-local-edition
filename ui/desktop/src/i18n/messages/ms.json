@@ -2627,6 +2627,96 @@
   "formingPanel.textHeading": {
     "defaultMessage": "Teks yang ditulis di sebelah panggilan ({chars} aksara) — bukan sebahagian daripada jawapan"
   },
+  "freeMemory.after": {
+    "defaultMessage": "Sebelum <b>{before} GB</b> kosong, kini <b>{after} GB</b> kosong ({freed} GB dibebaskan)."
+  },
+  "freeMemory.afterFits": {
+    "defaultMessage": "Model kini muat."
+  },
+  "freeMemory.afterShort": {
+    "defaultMessage": "Masih kurang <b>{gb} GB</b>."
+  },
+  "freeMemory.altPeer": {
+    "defaultMessage": "Jalankan pada {mac} sahaja (<b>{gb} GB</b> kosong di sana)"
+  },
+  "freeMemory.altSmaller": {
+    "defaultMessage": "Varian yang lebih kecil muat: {model} (perlu <b>{gb} GB</b>)"
+  },
+  "freeMemory.budget": {
+    "defaultMessage": "<b>{free} GB</b> kosong untuk model, daripada {total} GB"
+  },
+  "freeMemory.cannotFit": {
+    "defaultMessage": "Walaupun semua yang disenaraikan di sini dibebaskan (<b>{gb} GB</b>), model ini masih kurang <b>{short} GB</b>."
+  },
+  "freeMemory.cat.aiServer": {
+    "defaultMessage": "Pelayan model"
+  },
+  "freeMemory.cat.gooseEngine": {
+    "defaultMessage": "Enjin goose"
+  },
+  "freeMemory.cat.gooseOrphan": {
+    "defaultMessage": "Baki daripada goose"
+  },
+  "freeMemory.cat.job": {
+    "defaultMessage": "Kerja"
+  },
+  "freeMemory.cat.system": {
+    "defaultMessage": "macOS dan selebihnya"
+  },
+  "freeMemory.cat.userApp": {
+    "defaultMessage": "Apl"
+  },
+  "freeMemory.close": {
+    "defaultMessage": "Tutup"
+  },
+  "freeMemory.fitsByGooseOwned": {
+    "defaultMessage": "Membebaskan memori goose sendiri (<b>{gb} GB</b>) sudah cukup untuk model ini."
+  },
+  "freeMemory.fitsWithApps": {
+    "defaultMessage": "Model ini muat selepas membebaskan <b>{gb} GB</b>: memori goose sendiri dan menutup {apps}."
+  },
+  "freeMemory.freeFailed": {
+    "defaultMessage": "Tidak dapat membebaskan memori: {reason}"
+  },
+  "freeMemory.freeOwn": {
+    "defaultMessage": "Bebaskan milik goose ({gb} GB)"
+  },
+  "freeMemory.itemFailed": {
+    "defaultMessage": "{label}: {message}"
+  },
+  "freeMemory.keep": {
+    "defaultMessage": "Biarkan terbuka"
+  },
+  "freeMemory.loading": {
+    "defaultMessage": "Mengukur apa yang menggunakan memori…"
+  },
+  "freeMemory.nothingOwn": {
+    "defaultMessage": "goose tidak memegang memori yang boleh dibebaskannya"
+  },
+  "freeMemory.quit": {
+    "defaultMessage": "Keluar"
+  },
+  "freeMemory.quitBody": {
+    "defaultMessage": "goose meminta {app} pada {mac} keluar dengan cara biasa. Simpan kerja anda di sana dahulu: apa-apa yang belum disimpan mungkin hilang."
+  },
+  "freeMemory.quitConfirm": {
+    "defaultMessage": "Keluar {app}"
+  },
+  "freeMemory.quitTitle": {
+    "defaultMessage": "Keluar {app}?"
+  },
+  "freeMemory.readFailed": {
+    "defaultMessage": "Tidak dapat mengukur memori: {reason}"
+  },
+  "freeMemory.remoteQuitOff": {
+    "defaultMessage": "{mac} tidak membenarkan Mac lain menutup aplnya (Tetapan › App pada Mac itu). Tutup di sana."
+  },
+  "freeMemory.title": {
+    "defaultMessage": "Bebaskan memori pada {mac}"
+  },
+  "freeMemoryEntry.open": {
+    "defaultMessage": "Bebaskan memori"
+  },
   "gooseImportSection.chooseSource": {
     "defaultMessage": "Pilih folder sumber"
   },
@@ -4333,6 +4423,36 @@
   },
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Bermain dalam Gambar-dalam-Gambar"
+  },
+  "memfreeSettings.description": {
+    "defaultMessage": "Apabila model setempat tidak muat, goose menunjukkan apa yang menggunakan memori dan boleh membebaskan bahagiannya sendiri."
+  },
+  "memfreeSettings.enabled": {
+    "defaultMessage": "Tawarkan “Bebaskan memori”"
+  },
+  "memfreeSettings.enabledDesc": {
+    "defaultMessage": "Menunjukkan butang pada model yang kekurangan memori dan pada bar memori setiap Mac. Hidup secara lalai."
+  },
+  "memfreeSettings.minMb": {
+    "defaultMessage": "Apl terkecil untuk disenaraikan (MB)"
+  },
+  "memfreeSettings.minMbDesc": {
+    "defaultMessage": "Apl yang menggunakan kurang memori daripada ini tidak disenaraikan. Lalai {mb} MB."
+  },
+  "memfreeSettings.readFailed": {
+    "defaultMessage": "Tidak dapat membaca tetapan ini: {reason}"
+  },
+  "memfreeSettings.remoteQuit": {
+    "defaultMessage": "Benarkan Mac terpaut menutup apl pada Mac ini"
+  },
+  "memfreeSettings.remoteQuitDesc": {
+    "defaultMessage": "Mac lain pada LeanZero Link boleh meminta Mac ini menutup apl, sentiasa selepas pengesahan di sini. Mati secara lalai: mereka masih boleh membebaskan memori goose sendiri di sini."
+  },
+  "memfreeSettings.saveFailed": {
+    "defaultMessage": "Tidak dapat menyimpan tetapan ini: {reason}"
+  },
+  "memfreeSettings.title": {
+    "defaultMessage": "Bebaskan memori"
   },
   "memoryProposal.cut": {
     "defaultMessage": "Terpotong pada {max} aksara semasa difailkan, jadi tidak boleh disimpan begitu sahaja. Minta semula bahagian penuhnya."
@@ -6865,6 +6985,9 @@
   },
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "Tiada model dipasang"
+  },
+  "nodeCard.memfreeThisMac": {
+    "defaultMessage": "Mac ini"
   },
   "nodeModelCell.chatFollows": {
     "defaultMessage": "Sembang mengikut Run anda: {model}"

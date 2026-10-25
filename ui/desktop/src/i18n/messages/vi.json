@@ -2627,6 +2627,96 @@
   "formingPanel.textHeading": {
     "defaultMessage": "Văn bản viết bên cạnh các lệnh gọi ({chars} ký tự) — không thuộc câu trả lời"
   },
+  "freeMemory.after": {
+    "defaultMessage": "Trước <b>{before} GB</b> trống, giờ <b>{after} GB</b> trống (đã giải phóng {freed} GB)."
+  },
+  "freeMemory.afterFits": {
+    "defaultMessage": "Mô hình giờ đã vừa."
+  },
+  "freeMemory.afterShort": {
+    "defaultMessage": "Vẫn thiếu <b>{gb} GB</b>."
+  },
+  "freeMemory.altPeer": {
+    "defaultMessage": "Chạy trên {mac} thay vào đó (ở đó trống <b>{gb} GB</b>)"
+  },
+  "freeMemory.altSmaller": {
+    "defaultMessage": "Một biến thể nhỏ hơn vừa: {model} (cần <b>{gb} GB</b>)"
+  },
+  "freeMemory.budget": {
+    "defaultMessage": "<b>{free} GB</b> trống cho mô hình, trên tổng {total} GB"
+  },
+  "freeMemory.cannotFit": {
+    "defaultMessage": "Kể cả khi giải phóng mọi thứ liệt kê ở đây (<b>{gb} GB</b>), mô hình này vẫn thiếu <b>{short} GB</b>."
+  },
+  "freeMemory.cat.aiServer": {
+    "defaultMessage": "Máy chủ mô hình"
+  },
+  "freeMemory.cat.gooseEngine": {
+    "defaultMessage": "Engine của goose"
+  },
+  "freeMemory.cat.gooseOrphan": {
+    "defaultMessage": "Phần goose để lại"
+  },
+  "freeMemory.cat.job": {
+    "defaultMessage": "Tác vụ"
+  },
+  "freeMemory.cat.system": {
+    "defaultMessage": "macOS và phần còn lại"
+  },
+  "freeMemory.cat.userApp": {
+    "defaultMessage": "Ứng dụng"
+  },
+  "freeMemory.close": {
+    "defaultMessage": "Đóng"
+  },
+  "freeMemory.fitsByGooseOwned": {
+    "defaultMessage": "Giải phóng bộ nhớ của chính goose (<b>{gb} GB</b>) là đủ cho mô hình này."
+  },
+  "freeMemory.fitsWithApps": {
+    "defaultMessage": "Mô hình này vừa sau khi giải phóng <b>{gb} GB</b>: bộ nhớ của chính goose và thoát {apps}."
+  },
+  "freeMemory.freeFailed": {
+    "defaultMessage": "Không thể giải phóng bộ nhớ: {reason}"
+  },
+  "freeMemory.freeOwn": {
+    "defaultMessage": "Giải phóng phần của goose ({gb} GB)"
+  },
+  "freeMemory.itemFailed": {
+    "defaultMessage": "{label}: {message}"
+  },
+  "freeMemory.keep": {
+    "defaultMessage": "Giữ mở"
+  },
+  "freeMemory.loading": {
+    "defaultMessage": "Đang đo những gì chiếm bộ nhớ…"
+  },
+  "freeMemory.nothingOwn": {
+    "defaultMessage": "goose không giữ bộ nhớ nào có thể giải phóng"
+  },
+  "freeMemory.quit": {
+    "defaultMessage": "Thoát"
+  },
+  "freeMemory.quitBody": {
+    "defaultMessage": "goose yêu cầu {app} trên {mac} thoát theo cách thông thường. Hãy lưu công việc ở đó trước: mọi thứ chưa lưu có thể bị mất."
+  },
+  "freeMemory.quitConfirm": {
+    "defaultMessage": "Thoát {app}"
+  },
+  "freeMemory.quitTitle": {
+    "defaultMessage": "Thoát {app}?"
+  },
+  "freeMemory.readFailed": {
+    "defaultMessage": "Không thể đo bộ nhớ: {reason}"
+  },
+  "freeMemory.remoteQuitOff": {
+    "defaultMessage": "{mac} không cho phép các Mac khác thoát ứng dụng của nó (Cài đặt › Ứng dụng trên Mac đó). Hãy thoát chúng ở đó."
+  },
+  "freeMemory.title": {
+    "defaultMessage": "Giải phóng bộ nhớ trên {mac}"
+  },
+  "freeMemoryEntry.open": {
+    "defaultMessage": "Giải phóng bộ nhớ"
+  },
   "gooseImportSection.chooseSource": {
     "defaultMessage": "Chọn thư mục nguồn"
   },
@@ -4333,6 +4423,36 @@
   },
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Đang phát ở chế độ Hình-trong-hình"
+  },
+  "memfreeSettings.description": {
+    "defaultMessage": "Khi một mô hình cục bộ không vừa, goose cho thấy những gì chiếm bộ nhớ và có thể giải phóng phần của chính nó."
+  },
+  "memfreeSettings.enabled": {
+    "defaultMessage": "Hiển thị “Giải phóng bộ nhớ”"
+  },
+  "memfreeSettings.enabledDesc": {
+    "defaultMessage": "Hiển thị nút trên mô hình thiếu bộ nhớ và trên thanh bộ nhớ của mỗi Mac. Bật theo mặc định."
+  },
+  "memfreeSettings.minMb": {
+    "defaultMessage": "Ứng dụng nhỏ nhất được liệt kê (MB)"
+  },
+  "memfreeSettings.minMbDesc": {
+    "defaultMessage": "Ứng dụng dùng ít bộ nhớ hơn mức này sẽ không được liệt kê. Mặc định {mb} MB."
+  },
+  "memfreeSettings.readFailed": {
+    "defaultMessage": "Không thể đọc các cài đặt này: {reason}"
+  },
+  "memfreeSettings.remoteQuit": {
+    "defaultMessage": "Cho phép các Mac được liên kết thoát ứng dụng trên Mac này"
+  },
+  "memfreeSettings.remoteQuitDesc": {
+    "defaultMessage": "Một Mac khác trên LeanZero Link có thể yêu cầu Mac này thoát một ứng dụng, luôn sau khi xác nhận tại đây. Tắt theo mặc định: họ vẫn có thể giải phóng bộ nhớ của chính goose tại đây."
+  },
+  "memfreeSettings.saveFailed": {
+    "defaultMessage": "Không thể lưu cài đặt này: {reason}"
+  },
+  "memfreeSettings.title": {
+    "defaultMessage": "Giải phóng bộ nhớ"
   },
   "memoryProposal.cut": {
     "defaultMessage": "Bị cắt ở {max} ký tự khi được ghi lại, nên không thể lưu nguyên như vậy. Hãy yêu cầu lại toàn bộ nội dung."
@@ -6865,6 +6985,9 @@
   },
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "Chưa gắn mô hình nào"
+  },
+  "nodeCard.memfreeThisMac": {
+    "defaultMessage": "Mac này"
   },
   "nodeModelCell.chatFollows": {
     "defaultMessage": "Trò chuyện theo lần chạy của bạn: {model}"
