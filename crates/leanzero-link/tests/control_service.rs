@@ -1048,9 +1048,16 @@ async fn a_slow_but_alive_peer_is_not_marked_offline_on_one_timeout() {
     config.poll_interval = Duration::from_millis(300);
     config.request_timeout = Duration::from_millis(400);
     config.peer_proxy = Some(support::fake_tailnet().proxy());
-    let a = ControlService::start(config, FakeStateSource::new("node-a"), None, None, None, None)
-        .await
-        .expect("control service starts");
+    let a = ControlService::start(
+        config,
+        FakeStateSource::new("node-a"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("control service starts");
     let base_a = base_url(&a);
     let client = reqwest::Client::new();
     a.set_peers(vec![PeerTarget {

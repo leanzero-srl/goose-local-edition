@@ -197,7 +197,8 @@ export function WithMacs({ children }: { children: ReactNode }) {
   return outer ? <>{children}</> : <MacsProvider>{children}</MacsProvider>;
 }
 
-export const LINK_POLL_MS = 5000;
+/** D2: the roster read is in-memory on goosed; 1.5 s keeps a peer's Offline within ~3 s on screen. */
+export const LINK_POLL_MS = 1500;
 export const STATUS_POLL_MS = 5000;
 export const MODELS_POLL_MS = 20000;
 const DOWNLOAD_POLL_MS = 1000;

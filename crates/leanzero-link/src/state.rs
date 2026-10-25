@@ -535,12 +535,12 @@ impl PeerRegistry {
                     tasks.push(tokio::spawn(poll_peer_loop(
                         weak.clone(),
                         target.clone(),
-                        base_url,
+                        base_url.clone(),
                     )));
                     tasks.push(tokio::spawn(liveness_peer_loop(
                         weak.clone(),
                         target.clone(),
-                        base_url.clone(),
+                        base_url,
                     )));
                     tasks.push(tokio::spawn(stream_peer_loop(
                         weak,
@@ -790,7 +790,11 @@ fn mark_peer_unreachable(
     if entry.state.status == NodeStatus::Offline {
         return None;
     }
-    tracing::warn!(hostname, error, "mesh peer liveness dial failed; marked Offline");
+    tracing::warn!(
+        hostname,
+        error,
+        "mesh peer liveness dial failed; marked Offline"
+    );
     entry.state.status = NodeStatus::Offline;
     entry.state.last_poll_error = Some(error.to_string());
     entry.state.updated_at = Utc::now();
