@@ -135,3 +135,14 @@ NOT DONE (desktop, in order; files ui/desktop/src/components/memfree/):
   expect ticked = goose-owned only, LM Studio + rapid-mlx unticked, LM Link line in LM Studio used_by.
 - FIXED notes per C1..C8 in ~/Projects/goose-memfree-REVIEW.md (shas 1ad231904 C1 C2 C6 C7 C8, 1e41015ac C1 LM Link,
   37b943c12 C3 C4 C5, + desktop sha).
+
+## F3 DONE (2026-10-25, third agent) — all C1..C8 closed
+- a4eb3311c desktop: memfree.ts server rows never ticked, nuclearRequest sends seenUsedBy + forceStopApps [],
+  forceStopBundle(), neverTouchHit contains mirror; FreeMemoryDialog per-item Force stop (lz destructive button,
+  useConfirmDialog, testid free-memory-force-<bundle>), single Unload sends seenUsedBy, nuclear confirm text honest;
+  acp/memfree.ts carries seenUsedBy/forceStopApps. 81488e799 i18n 4 new keys + changed nuclearConfirmBody, 16 catalogs.
+- Gates all rc 0: fmt --check; clippy --workspace --all-targets -D warnings; sidecar memfree 43; goose memfree 13
+  (1 ignored); lint:check; typecheck; test:run 554 files / 5175 passed / 3 skipped; i18n:check 4046; check-acp-schema clean.
+- Workhorse dry run appended to ~/Projects/goose-memfree-dryrun-workhorse.txt (22:15): ticked 0; offered-unticked
+  LM Studio 0.6 GB with the LM Link line; rapid-mlx was not running so its leg is covered by unit tests only.
+- FIXED notes under C1..C8 in ~/Projects/goose-memfree-REVIEW.md. Open (low): Settings "matches nothing" hint (C7).
