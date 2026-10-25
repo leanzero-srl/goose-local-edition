@@ -787,10 +787,12 @@ async fn execute(
         return index_unreadable(&err);
     }
 
-    // Receive-side idle guard: the node the work lands on decides, from its own live
-    // session state, whether it can take work now. `local_node().status` is `Idle`/`Busy`
-    // (the source never fabricates `Offline` — that is a mesh-level verdict).
-    if ctx.source.local_node().await.status != NodeStatus::Idle {
+    // Receive-side guard on MEASURED load (owner 2026-10-25): a node is busy when its memory
+    // is under the floor (or a benchmark runs, or the lid would sleep), never because some
+    // session of its own is live. A second reply on the SAME session is still refused by the
+    // executor (`try_register_cancel_token`).
+    if let Some(r) = ctx.jobs.measured_busy().await {
+        tracing::info!(reason = %r.reason, "leanzero-link: execute refused on measured load");
         return execute_error_response(ExecuteError::Busy);
     }
 

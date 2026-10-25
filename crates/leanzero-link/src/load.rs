@@ -82,9 +82,24 @@ pub struct OwnLoad {
     /// The lid is closed AND the Mac would sleep because of it.
     #[serde(default)]
     pub lid_closed_sleeps: bool,
-    /// Someone (heavy-run, node-run or a goose job) holds `~/.cache/heavy-run.lock`.
+    /// EVERY heavy slot is held (by heavy-run, node-run or goose jobs): no heavy job fits.
+    /// Kept for placers older than 3.0.131, which read it as "busy"; one held slot of several
+    /// no longer sets it.
     #[serde(default)]
     pub heavy_slot_held: bool,
+    /// Heavy slots held right now (`~/.cache/heavy-run.lock`, `.1`, ...).
+    #[serde(default)]
+    pub heavy_slots_used: u32,
+    /// Heavy slots this Mac runs (`max_heavy`). 0 = an older report: read `heavy_slot_held`.
+    #[serde(default)]
+    pub heavy_slots_max: u32,
+    /// How many more jobs of `default_need_gb` fit above the memory floor right now.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_take: Option<u32>,
+    /// The node's own verdict WITH its numbers, e.g. `ok: 1/3 heavy, 94 GB free, load 0.28/core,
+    /// can take ~11 more 8 GB jobs` or `busy: memory 12% free < 20% floor`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<String>,
     /// Why a benchmark is believed to be running, or `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub benchmark: Option<String>,
@@ -188,6 +203,29 @@ pub struct NodeLimits {
     pub lock_wait_s: u64,
     /// node-run's placement strategy (`"strategy"`); goose's own setting overrides it.
     pub strategy: Option<crate::jobs::PlacementStrategy>,
+    /// Concurrent heavy jobs this Mac runs (`"max_heavy"`, shared with heavy-run/node-run).
+    /// `None` = [`default_max_heavy`] of the core count.
+    pub max_heavy: Option<u32>,
+    /// A heavy job is refused at or above this 1-minute load per core (`"max_load_per_core"`).
+    /// A BACKSTOP only (owner 2026-10-25: "use resources to their fullest"): memory headroom
+    /// is the real gate, CPU never blocks below 2.0 by default.
+    pub max_load_per_core: f64,
+    /// The memory a job without `need_mem_gb` is counted at in "can take ~N more" (`"default_need_gb"`).
+    pub default_need_gb: f64,
+}
+
+/// `max(2, cores // 4)`, the shared default of heavy-run/node-run (owner 2026-10-25).
+pub fn default_max_heavy(ncpu: u32) -> u32 {
+    (ncpu / 4).max(2)
+}
+
+impl NodeLimits {
+    /// The heavy slot count for a Mac with `ncpu` logical cores (at least 1).
+    pub fn max_heavy_for(&self, ncpu: u32) -> u32 {
+        self.max_heavy
+            .unwrap_or_else(|| default_max_heavy(ncpu))
+            .max(1)
+    }
 }
 
 impl Default for NodeLimits {
@@ -201,6 +239,9 @@ impl Default for NodeLimits {
             wait_s: 900,
             lock_wait_s: 3600,
             strategy: None,
+            max_heavy: None,
+            max_load_per_core: 2.0,
+            default_need_gb: 8.0,
         }
     }
 }
@@ -259,6 +300,19 @@ impl NodeLimits {
         }
         if let Some(x) = f("lock_wait") {
             l.lock_wait_s = x.max(0.0) as u64;
+        }
+        if let Some(x) = f("max_heavy") {
+            l.max_heavy = Some(x.max(1.0) as u32);
+        }
+        if let Some(x) = f("max_load_per_core") {
+            if x > 0.0 {
+                l.max_load_per_core = x;
+            }
+        }
+        if let Some(x) = f("default_need_gb") {
+            if x >= 0.0 {
+                l.default_need_gb = x;
+            }
         }
         if let Some(s) = v.get("strategy").and_then(|x| x.as_str()) {
             l.strategy = crate::jobs::PlacementStrategy::parse(s);
@@ -341,18 +395,65 @@ impl HeavySlot {
         Err(std::io::Error::other("heavy slot needs flock (unix)"))
     }
 
-    /// Is the slot held right now (by anyone, this process included)? Tested with flock, not
+    /// Is slot 0 held right now (by anyone, this process included)? Tested with flock, not
     /// by reading the holder text.
     pub fn is_held() -> bool {
-        match Self::try_take("probe") {
-            Ok(Some(slot)) => {
-                drop(slot);
-                false
+        slot_is_held(&heavy_lock_path())
+    }
+
+    /// Take ANY free slot of `max` (slot 0 = `base`, slot i = `base.i`, heavy-run/node-run's
+    /// names), lowest first, non-blocking. `None` = all `max` are held.
+    pub fn try_take_any(
+        base: &std::path::Path,
+        max: u32,
+        holder: &str,
+    ) -> std::io::Result<Option<(Self, u32)>> {
+        let mut first_err = None;
+        let mut any_held = false;
+        for i in 0..max.max(1) {
+            match Self::try_take_at(&heavy_slot_path(base, i), holder) {
+                Ok(Some(s)) => return Ok(Some((s, i))),
+                Ok(None) => any_held = true,
+                Err(e) => {
+                    first_err.get_or_insert(e);
+                }
             }
-            Ok(None) => true,
-            Err(_) => false,
+        }
+        // An error only when no slot could even be tried (an unwritable lock dir).
+        match first_err {
+            Some(e) if !any_held => Err(e),
+            _ => Ok(None),
         }
     }
+}
+
+/// Slot `i`'s lock file: slot 0 is `base` itself (`~/.cache/heavy-run.lock`, so a goose that
+/// knows one slot and heavy-run agree), slot i > 0 is `base.i`.
+pub fn heavy_slot_path(base: &std::path::Path, i: u32) -> PathBuf {
+    if i == 0 {
+        return base.to_path_buf();
+    }
+    let mut s = base.as_os_str().to_os_string();
+    s.push(format!(".{i}"));
+    PathBuf::from(s)
+}
+
+fn slot_is_held(path: &std::path::Path) -> bool {
+    match HeavySlot::try_take_at(path, "probe") {
+        Ok(Some(slot)) => {
+            drop(slot);
+            false
+        }
+        Ok(None) => true,
+        Err(_) => false,
+    }
+}
+
+/// How many of the `max` heavy slots under `base` are held right now (flock probes).
+pub fn heavy_slots_used(base: &std::path::Path, max: u32) -> u32 {
+    (0..max.max(1))
+        .filter(|i| slot_is_held(&heavy_slot_path(base, *i)))
+        .count() as u32
 }
 
 /// heavy-run's holder line: `pid 4321 since 2026-10-25 14:57:52: cargo test -p goose`.
@@ -457,6 +558,15 @@ pub fn human_duration(secs: u64) -> String {
 }
 
 /// [`describe_holder`] over the lock file at `path` (unreadable = a bare "held").
+/// [`heavy_holder_reason`] for every slot of `max`: `all 3 heavy slots held: <slot 0>; <slot 1>; ...`.
+pub fn heavy_holders_reason(base: &std::path::Path, max: u32) -> String {
+    let max = max.max(1);
+    let who: Vec<String> = (0..max)
+        .map(|i| heavy_holder_reason(&heavy_slot_path(base, i)))
+        .collect();
+    format!("busy: {max}/{max} heavy slots held: {}", who.join("; "))
+}
+
 pub fn heavy_holder_reason(path: &std::path::Path) -> String {
     match std::fs::read_to_string(path) {
         Ok(t) => describe_holder(&t, chrono::Local::now()),
@@ -844,10 +954,13 @@ pub fn sample_hardware(user_idle_threshold_s: u64) -> OwnLoad {
     own
 }
 
-/// The full OWN reading (hardware + benchmark + heavy slot).
+/// The full OWN reading (hardware + benchmark + heavy slots).
 pub fn sample_own(user_idle_threshold_s: u64) -> OwnLoad {
     let mut own = sample_hardware(user_idle_threshold_s);
-    own.heavy_slot_held = HeavySlot::is_held();
+    let max = NodeLimits::load().max_heavy_for(own.ncpu);
+    own.heavy_slots_max = max;
+    own.heavy_slots_used = heavy_slots_used(&heavy_lock_path(), max);
+    own.heavy_slot_held = own.heavy_slots_used >= max;
     own.benchmark = benchmark_running();
     own
 }
