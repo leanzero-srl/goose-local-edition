@@ -121,6 +121,7 @@ impl SwarmStateSource for FakeStateSource {
             computer_name: None,
             allows: None,
             leaving: None,
+            load: None,
         }
     }
 
@@ -816,6 +817,7 @@ async fn spawn_stub_peer(node_id: &str, unauthorized: Arc<AtomicBool>) -> (u16, 
             computer_name: None,
             allows: None,
             leaving: None,
+            load: None,
         },
         unauthorized,
     };

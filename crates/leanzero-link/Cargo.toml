@@ -50,6 +50,10 @@ url = { workspace = true }
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# The node-load sampler's IOKit / CoreFoundation FFI (load.rs). Already in Cargo.lock.
+core-foundation-sys = "0.8"
+
 [dev-dependencies]
 goose-provider-types = { path = "../goose-provider-types" }
 goose-providers = { path = "../goose-providers" }

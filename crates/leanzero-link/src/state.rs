@@ -512,6 +512,7 @@ impl PeerRegistry {
                 computer_name: None,
                 allows: None,
                 leaving: None,
+                load: None,
             };
             let mut tasks = Vec::new();
             match (target.base_url(), target.ws_base()) {
@@ -854,8 +855,14 @@ fn fold_peer_snapshot(
             if entry.state.leaving.is_some() && remote_self.leaving.is_none() {
                 tracing::info!(hostname, "peer_leaving_cleared: seen online again");
             }
+            // `load` changes on every poll; publishing it would turn the 3 s poll into a
+            // NodeStateChanged per peer per tick. Store it (so `/nodes` serves it), announce
+            // only a change in the rest.
+            let announce = !entry.state.same_except_load(remote_self);
             entry.state = remote_self.clone();
-            events.push(LinkEvent::NodeStateChanged(remote_self.clone()));
+            if announce {
+                events.push(LinkEvent::NodeStateChanged(remote_self.clone()));
+            }
         }
     }
     let remote_id = entry.state.node_id.clone();
@@ -1085,6 +1092,7 @@ mod tests {
 
     fn report(leaving: Option<LeaveReason>) -> NodeState {
         NodeState {
+            load: None,
             node_id: "studio-id".to_string(),
             hostname: "studio".to_string(),
             mesh_ip: Some("100.64.0.5".to_string()),
@@ -1116,6 +1124,36 @@ mod tests {
 
     fn row(registry: &PeerRegistry) -> NodeState {
         registry.peer_nodes().remove(0)
+    }
+
+    /// A load-only change is stored (so `/nodes` serves it) but announces nothing: the 3 s
+    /// poll must not become one NodeStateChanged per peer per tick. A real change still does.
+    #[tokio::test]
+    async fn a_load_only_change_is_stored_without_an_event() {
+        let registry = registry_with_studio();
+        let inner = &registry.inner;
+        let base = report(None);
+        let first = fold_peer_snapshot(inner, "studio", Some(0), base.clone(), None, None);
+        assert_eq!(first.len(), 1, "{first:?}");
+
+        let mut loaded = base.clone();
+        let mut load = crate::load::NodeLoad::default();
+        load.own.gpu_util_pct = Some(42.0);
+        loaded.load = Some(load.clone());
+        let events = fold_peer_snapshot(inner, "studio", Some(0), loaded.clone(), None, None);
+        assert!(events.is_empty(), "{events:?}");
+        assert_eq!(row(&registry).load, Some(load.clone()));
+
+        load.own.gpu_util_pct = Some(7.0);
+        loaded.load = Some(load.clone());
+        assert!(
+            fold_peer_snapshot(inner, "studio", Some(0), loaded.clone(), None, None).is_empty()
+        );
+        assert_eq!(row(&registry).load.unwrap().own.gpu_util_pct, Some(7.0));
+
+        loaded.sessions_active = 2;
+        let events = fold_peer_snapshot(inner, "studio", Some(0), loaded, None, None);
+        assert_eq!(events.len(), 1, "a real change still announces: {events:?}");
     }
 
     /// The race the notice counter exists for: a poll whose `/nodes` answered BEFORE the peer

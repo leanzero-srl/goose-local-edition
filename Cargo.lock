@@ -6523,6 +6523,7 @@ dependencies = [
  "axum",
  "bytes",
  "chrono",
+ "core-foundation-sys",
  "dirs",
  "futures",
  "gethostname",

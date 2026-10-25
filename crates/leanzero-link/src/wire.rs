@@ -46,6 +46,24 @@ pub struct NodeState {
     /// stop). Omitted when `None`; absent from an older peer's JSON.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub leaving: Option<NodeLeaving>,
+    /// What the node is busy with now: the owner's own use, AI inference, placed jobs
+    /// ([`crate::load`]). Filled by the node's own `/v1/swarm/nodes` handler at request time,
+    /// never by the delta poller (it changes every read; see `fold_peer_snapshot`, which
+    /// stores it without publishing a `NodeStateChanged` for a load-only change). Absent from
+    /// an older peer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub load: Option<crate::load::NodeLoad>,
+}
+
+impl NodeState {
+    /// Equal in everything except `load` (the part that changes on every read).
+    pub fn same_except_load(&self, other: &NodeState) -> bool {
+        let mut a = self.clone();
+        a.load = None;
+        let mut b = other.clone();
+        b.load = None;
+        a == b
+    }
 }
 
 /// Why a node is going away on purpose. Wire: `"quitting"` | `"restarting"`.
@@ -86,8 +104,10 @@ pub struct PeerLeavingNotice {
     pub reason: LeaveReason,
 }
 
-/// The owner's three switches as a node reports them about itself.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// The owner's switches as a node reports them about itself. Every field defaults to `false`
+/// so an older peer's JSON (which lacks a newer switch) parses as "not allowed".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct NodeAllows {
     /// `/v1/swarm/mlx/*` and `/v1/swarm/execute`: list, download, copy, load and delete
     /// models there (`allow_remote_execution`).
@@ -96,6 +116,8 @@ pub struct NodeAllows {
     pub answer_chat: bool,
     /// A peer runs a rank of its distributed engine there.
     pub run_split: bool,
+    /// A peer places shell/prompt jobs there (`/v1/swarm/jobs`, `allow_remote_jobs`).
+    pub run_jobs: bool,
 }
 
 /// Wire: `{"type":"Idle"}`, `{"type":"Busy","session_id":"..."}`, `{"type":"Offline"}`.
@@ -190,6 +212,22 @@ pub struct StreamFrame {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A peer whose goose predates `run_jobs` and `load` sends this shape: it must parse, with
+    /// the missing switch OFF and no load (unknown, never fabricated).
+    #[test]
+    fn an_old_peers_node_json_parses_without_the_new_fields() {
+        let old = r#"{"node_id":"n","hostname":"h","mesh_ip":null,"status":{"type":"Idle"},
+            "sessions_active":0,"updated_at":"2026-10-25T10:00:00Z",
+            "allows":{"manage_models":true,"answer_chat":true,"run_split":false}}"#;
+        let n: NodeState = serde_json::from_str(old).expect("old peer JSON parses");
+        let a = n.allows.expect("allows");
+        assert!(a.manage_models && a.answer_chat && !a.run_split);
+        assert!(!a.run_jobs);
+        assert!(n.load.is_none());
+        let back = serde_json::to_string(&n).unwrap();
+        assert!(!back.contains("\"load\""), "{back}");
+    }
     use chrono::TimeZone;
 
     fn ts(secs: i64) -> DateTime<Utc> {
@@ -257,6 +295,7 @@ mod tests {
             computer_name: None,
             allows: None,
             leaving: None,
+            load: None,
         };
         let value = serde_json::to_value(LinkEvent::NodeStateChanged(node.clone())).unwrap();
         assert_eq!(value["type"], "NodeStateChanged");
@@ -282,6 +321,7 @@ mod tests {
             computer_name: None,
             allows: None,
             leaving: None,
+            load: None,
         };
         let value = serde_json::to_value(&node).unwrap();
         assert!(
@@ -328,6 +368,7 @@ mod tests {
         let named = NodeState {
             computer_name: Some("Work's Mac Studio".to_string()),
             allows: Some(NodeAllows {
+                run_jobs: false,
                 manage_models: true,
                 answer_chat: false,
                 run_split: true,
@@ -338,7 +379,7 @@ mod tests {
         assert_eq!(value["computer_name"], "Work's Mac Studio");
         assert_eq!(
             value["allows"],
-            serde_json::json!({"manage_models": true, "answer_chat": false, "run_split": true})
+            serde_json::json!({"manage_models": true, "answer_chat": false, "run_split": true, "run_jobs": false})
         );
         let back: NodeState = serde_json::from_value(value).unwrap();
         assert_eq!(back, named);
@@ -406,6 +447,7 @@ mod tests {
                 computer_name: None,
                 allows: None,
                 leaving: None,
+                load: None,
             },
             peers: Vec::new(),
         };

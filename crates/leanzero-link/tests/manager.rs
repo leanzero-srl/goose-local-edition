@@ -264,6 +264,7 @@ impl SwarmStateSource for FakeStateSource {
             computer_name: None,
             allows: None,
             leaving: None,
+            load: None,
         }
     }
     async fn local_sessions(&self) -> Result<Vec<SessionSummary>, String> {
@@ -303,6 +304,7 @@ impl SwarmStateSource for NamedIdleSource {
             computer_name: None,
             allows: None,
             leaving: None,
+            load: None,
         }
     }
     async fn local_sessions(&self) -> Result<Vec<SessionSummary>, String> {

@@ -444,6 +444,7 @@ fn derive_node(
         computer_name: computer_name(),
         allows: Some(allows),
         leaving: None,
+        load: None,
     }
 }
 
