@@ -60,3 +60,34 @@ cd ui/desktop && pnpm install --frozen-lockfile && pnpm run build-goose-sdk && p
 - `memory_pressure -Q` percentage is meaningless for this (85% "free" with 19 GB available).
 - sysinfo `process.memory()` is RSS, not footprint; use proc_pid_rusage for the census numbers.
 - Load average ~19 on Gabee from the 3.0.129 gate: measure before/after within seconds, drift is real.
+
+## Coordinator decisions + facts found by build agent 1 (2026-10-25 18:15, read before coding)
+Context budget forces a split: AGENT R (Rust: sidecar census + reclaim + ACP + Link) then AGENT U (desktop + live).
+Verdict rule (owner, HONEST FIRST): on a short fit compute from LIVE measurement
+  gooseOwnedBytes (own idle engine + own leftover on port + other MLX engines + orphaned goose serve + idle LM Studio/Ollama models),
+  appsBytes (phys_footprint of quittable user apps, grouped by outer .app bundle, >= GOOSE_MEMFREE_SHOW_APPS_MIN_MB),
+  shortBytes (fit.short_bytes()). verdict: "fitsByGooseOwned" (gooseOwned >= short) | "fitsWithApps" (gooseOwned+apps >= short)
+  | "cannotFit" (short - gooseOwned - apps = remaining) + alternatives: smaller variant (same family, other quant/size, from
+  the models list / catalog, whose need fits budget+gooseOwned+apps) and/or a peer Mac (mlx_placement::mount_alternative,
+  already used by mount_refusal in mlx_engine.rs ~770). Pure fn `verdict(short, goose_owned, apps) -> Verdict` with a table
+  test; fixture = Gabee numbers: need 30.6 GB, budget 9.4 GB, short 21.2 GB, gooseOwned 0, apps 15.5 GB -> cannotFit, remaining 5.7 GB.
+Existing pieces to REUSE (do not rebuild):
+- `MlxEngineManager::start_frees()` (sidecar engine.rs:1736) -> StartFrees::{Nothing, Mounted{model_id,bytes}, Leftover{pids,port,bytes}};
+  `global_manager().unmount()` reclaims both Mounted and a proven-own Leftover. Idle = status().active_requests == Some(0) AND no
+  open reply in holders::read_all(holders_dir()) (HolderKind::Goosed{replies} non-empty with !waiting = busy; SwarmRun = busy).
+- `machine::other_engines(Some(own_port))` + `machine::stop_other_engine(pid, started_at, own_port)` (machine.rs:634/709) for other MLX engines.
+  NOTE its resident_bytes is sysinfo RSS (undercounts MLX); census should use phys_footprint instead.
+- phys_footprint FFI exists in leanzero-link/src/load.rs:526/757 (`pid_memory_bytes`, RUSAGE_INFO_V4 offsets [72..80]) but
+  leanzero-link DEPENDS ON goose-sidecar, so memfree.rs (sidecar) needs its own small FFI (proc_listallpids, proc_pid_rusage,
+  proc_pidpath, proc_pidinfo PROC_PIDTBSDINFO for uid+ppid). port_holder.rs:664 already calls libc::proc_listpids.
+- ACP pattern: core_stop_other_engine (mlx_engine.rs:804), dispatch route custom_dispatch.rs:1015, types custom_requests.rs:2666-2700,
+  remote GoosedMlxControl::dispatch mlx_engine.rs:1432 + MlxOp in leanzero-link/src/state.rs, NodeAllows wire.rs:111.
+- fit_to_dto / mount_refusal (mlx_engine.rs:600/770) give fit + alternative placement.
+Contract for AGENT U (ACP, camelCase):
+  `_goose/unstable/mlxEngine/memoryHolders` {nodeId?, fitModelId?} -> {availableBytes, budgetBytes, totalBytes, fit?: MlxMountFitDto,
+     groups: [{id, label, category: "gooseEngine"|"gooseOrphan"|"aiServer"|"userApp"|"system"|"job", bytes, pids:[{pid,startedAt}],
+     bundleId?, quittable: bool, reclaimableByGoose: bool, why?}], gooseOwnedBytes, appsBytes, shortBytes?,
+     verdict?: {kind: "fitsByGooseOwned"|"fitsWithApps"|"cannotFit", remainingBytes, appsToQuit:[bundleId]},
+     alternatives: [{kind:"smallerVariant", modelId, needBytes} | {kind:"peerMac", nodeId, label, budgetBytes}], quitAppsAllowed: bool}
+  `_goose/unstable/mlxEngine/memoryFree` {nodeId?, gooseOwned: bool, quitApps: [bundleId], fitModelId?} ->
+     {items:[{id,label,ok,freedBytes?,message}], before: {budgetBytes}, after: {budgetBytes}, fit?: MlxMountFitDto}
