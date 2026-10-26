@@ -6,6 +6,7 @@ if [ ! -f "$source_framework/TailscaleKit" ]; then
   echo 'error: Explicit mesh framework path does not contain TailscaleKit.framework/TailscaleKit' >&2
   exit 1
 fi
+python3 "$(dirname "$0")/verify-mesh-framework.py" "$source_framework"
 mkdir -p "$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH"
 /usr/bin/ditto "$source_framework" "$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH/TailscaleKit.framework"
 if [ "${CODE_SIGNING_ALLOWED:-NO}" = YES ] && [ -n "${EXPANDED_CODE_SIGN_IDENTITY:-}" ]; then
