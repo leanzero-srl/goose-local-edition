@@ -9391,7 +9391,7 @@
             "string",
             "null"
           ],
-          "description": "Speculative decoding: `\"mtp\"` (demand the MTP head, skipped with a warning when the\nmodel dir has no `mtp.safetensors`), `\"off\"`, or absent = auto (on when the head exists)."
+          "description": "Speculative decoding: `\"mtp\"` (demand the MTP head, skipped with a warning when the\nmodel has none: no `mtp.safetensors` and no in-shard head), `\"off\"`, or absent = auto\n(on when the head exists)."
         },
         "adapterPath": {
           "type": [
@@ -9652,7 +9652,7 @@
         },
         "hasMtpHead": {
           "type": "boolean",
-          "description": "The directory holds `mtp.safetensors`, so auto/`\"mtp\"` serves the MTP head and the\nprompt-lookup lever rides inside it.",
+          "description": "The model has an MTP head the engine serves (`mtp.safetensors`, or `mtp.*` tensors in the\nshards of a Qwen3.8-Flash-Next checkpoint), so auto/`\"mtp\"` serves it and the\nprompt-lookup lever rides inside it.",
           "default": false
         },
         "hybrid": {

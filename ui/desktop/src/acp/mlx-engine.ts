@@ -159,7 +159,8 @@ export interface MlxModelProfile {
   contextLimit?: number;
   /**
    * Speculative decoding: 'mtp' demands the MTP head (skipped with a warning when the model
-   * dir has no mtp.safetensors), 'off' refuses it; absent = auto (on when the head exists).
+   * has none: no mtp.safetensors and no in-shard head), 'off' refuses it; absent = auto (on when
+   * the head exists).
    */
   speculative?: 'mtp' | 'off';
   /**
@@ -312,7 +313,10 @@ export interface MlxLocalModel {
   /** Absent with no error = never measured on this model. */
   kvCacheMeasurement?: MlxKvCacheMeasurement | null;
   kvCacheMeasurementError?: string | null;
-  /** The folder holds `mtp.safetensors`: auto/`mtp` serves the head and prompt lookup rides in it. */
+  /**
+   * The model has an MTP head the engine serves (`mtp.safetensors`, or `mtp.*` tensors in the
+   * shards of a Qwen3.8-Flash-Next checkpoint): auto/`mtp` serves it and prompt lookup rides in it.
+   */
   hasMtpHead?: boolean;
   /** config.json declares recurrent-state layers; absent exactly when `hybridError` says why. */
   hybrid?: boolean | null;

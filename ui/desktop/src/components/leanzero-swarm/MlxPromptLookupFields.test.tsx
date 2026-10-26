@@ -22,7 +22,7 @@ const model = (over: Partial<MlxLocalModel>): MlxLocalModel => ({
   ...over,
 });
 const QWEN_MTP = model({ hasMtpHead: true, hybrid: true });
-const QWEN_FLASH_NO_HEAD = model({ hasMtpHead: false, hybrid: true });
+const HYBRID_NO_HEAD = model({ hasMtpHead: false, hybrid: true });
 const MELLUM = model({ hasMtpHead: false, hybrid: false });
 
 describe('promptLookupLane mirrors prompt_lookup::lane()', () => {
@@ -32,7 +32,7 @@ describe('promptLookupLane mirrors prompt_lookup::lane()', () => {
   });
   it('a hybrid without MTP has no lane, a pure-attention model takes suffix decoding', () => {
     expect(promptLookupLane(QWEN_MTP, 'off')).toEqual({ kind: 'unavailable', reason: 'hybrid' });
-    expect(promptLookupLane(QWEN_FLASH_NO_HEAD, '')).toEqual({
+    expect(promptLookupLane(HYBRID_NO_HEAD, '')).toEqual({
       kind: 'unavailable',
       reason: 'hybrid',
     });
@@ -104,7 +104,7 @@ describe('MlxPromptLookupFields', () => {
   it('locks a hybrid served without MTP, says why, and keeps Auto reachable', () => {
     render(
       <MlxPromptLookupFields
-        model={QWEN_FLASH_NO_HEAD}
+        model={HYBRID_NO_HEAD}
         drafts={{ ...draftsFromProfile(undefined), promptLookupMode: 'on' }}
         setDraft={vi.fn()}
       />

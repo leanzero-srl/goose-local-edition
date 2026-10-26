@@ -1498,7 +1498,7 @@ interface SpeculativeOption extends StudioSelectOption {
 }
 
 const SPECULATIVE_OPTIONS: readonly SpeculativeOption[] = [
-  { value: '', label: 'Auto — MTP when the model folder has mtp.safetensors' },
+  { value: '', label: 'Auto — MTP when the model has an MTP head' },
   { value: 'mtp', label: 'MTP — demand it (skipped with a warning if the head is missing)' },
   { value: 'off', label: 'Off — never speculate' },
 ];

@@ -2351,7 +2351,8 @@ pub struct MlxModelProfileDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_limit: Option<u32>,
     /// Speculative decoding: `"mtp"` (demand the MTP head, skipped with a warning when the
-    /// model dir has no `mtp.safetensors`), `"off"`, or absent = auto (on when the head exists).
+    /// model has none: no `mtp.safetensors` and no in-shard head), `"off"`, or absent = auto
+    /// (on when the head exists).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speculative: Option<String>,
     /// Directory of an mlx-lm LoRA/DoRA adapter fused at load (`--adapter-path`); `~` expands.
@@ -3074,7 +3075,8 @@ pub struct MlxLocalModelDto {
     pub kv_cache_measurement: Option<MlxKvCacheMeasurementDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kv_cache_measurement_error: Option<String>,
-    /// The directory holds `mtp.safetensors`, so auto/`"mtp"` serves the MTP head and the
+    /// The model has an MTP head the engine serves (`mtp.safetensors`, or `mtp.*` tensors in the
+    /// shards of a Qwen3.8-Flash-Next checkpoint), so auto/`"mtp"` serves it and the
     /// prompt-lookup lever rides inside it.
     #[serde(default)]
     pub has_mtp_head: bool,

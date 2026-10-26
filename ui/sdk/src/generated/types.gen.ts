@@ -3797,7 +3797,8 @@ export type MlxModelProfileDto = {
     contextLimit?: number | null;
     /**
      * Speculative decoding: `"mtp"` (demand the MTP head, skipped with a warning when the
-     * model dir has no `mtp.safetensors`), `"off"`, or absent = auto (on when the head exists).
+     * model has none: no `mtp.safetensors` and no in-shard head), `"off"`, or absent = auto
+     * (on when the head exists).
      */
     speculative?: string | null;
     /**
@@ -3928,7 +3929,8 @@ export type MlxLocalModelDto = {
     kvCacheMeasurement?: MlxKvCacheMeasurementDto | null;
     kvCacheMeasurementError?: string | null;
     /**
-     * The directory holds `mtp.safetensors`, so auto/`"mtp"` serves the MTP head and the
+     * The model has an MTP head the engine serves (`mtp.safetensors`, or `mtp.*` tensors in the
+     * shards of a Qwen3.8-Flash-Next checkpoint), so auto/`"mtp"` serves it and the
      * prompt-lookup lever rides inside it.
      */
     hasMtpHead?: boolean;
