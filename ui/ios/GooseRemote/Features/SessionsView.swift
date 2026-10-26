@@ -74,7 +74,7 @@ struct SessionsView: View {
             }
         }
         .listStyle(.insetGrouped).studioScreen()
-        .refreshable { store.manualSync() }
+        .refreshable { await store.synchronize() }
         .toolbar {
             if store.authenticated {
                 ToolbarItem(placement: .topBarTrailing) {

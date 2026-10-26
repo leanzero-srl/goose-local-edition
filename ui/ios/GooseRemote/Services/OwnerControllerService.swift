@@ -1,8 +1,9 @@
 import Foundation
 
-struct OwnerCatalogSnapshot: Sendable {
+struct OwnerCatalogSnapshot: Codable, Sendable {
     let entries: [CatalogEntry]
     let watermark: CatalogCursor
+    var resumeCursor: String = ""
 }
 
 protocol OwnerControllerService: Sendable {
@@ -12,6 +13,15 @@ protocol OwnerControllerService: Sendable {
     func resources(host: HostDescriptor, credential: String) async throws -> ResourceSample
     func submit(_ command: WorkCommand, host: HostDescriptor, credential: String) async throws -> CommandReceipt
     func receipt(commandId: UUID, host: HostDescriptor, credential: String) async throws -> CommandReceipt
+    func changes(cursor: String, host: HostDescriptor, credential: String) async throws -> CatalogChanges
+    func catalogEvents(cursor: String, host: HostDescriptor, credential: String) async throws -> AsyncThrowingStream<CatalogChange, Error>
+    func workEvents(work: SelectedWork, host: HostDescriptor, credential: String) async throws -> AsyncThrowingStream<WorkFrame, Error>
+}
+
+extension OwnerControllerService {
+    func changes(cursor: String, host: HostDescriptor, credential: String) async throws -> CatalogChanges { throw ControllerError.unsupported("Catalog replay is unavailable.") }
+    func catalogEvents(cursor: String, host: HostDescriptor, credential: String) async throws -> AsyncThrowingStream<CatalogChange, Error> { throw ControllerError.unsupported("Live catalog is unavailable.") }
+    func workEvents(work: SelectedWork, host: HostDescriptor, credential: String) async throws -> AsyncThrowingStream<WorkFrame, Error> { throw ControllerError.unsupported("Live transcript is unavailable.") }
 }
 
 struct UnavailableOwnerControllerService: OwnerControllerService {
@@ -33,6 +43,19 @@ struct PendingCommand: Codable, Identifiable, Sendable {
 struct LocalControllerData: Codable {
     var drafts: [String: String] = [:]
     var pendingCommands: [PendingCommand] = []
+    var catalogs: [String: OwnerCatalogSnapshot] = [:]
+    var selected: SelectedWork?
+    var syncPending: [UUID] = []
+    enum CodingKeys: String, CodingKey { case drafts, pendingCommands, catalogs, selected, syncPending }
+    init() {}
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        drafts = try values.decode([String: String].self, forKey: .drafts)
+        pendingCommands = try values.decode([PendingCommand].self, forKey: .pendingCommands)
+        catalogs = try values.decodeIfPresent([String: OwnerCatalogSnapshot].self, forKey: .catalogs) ?? [:]
+        selected = try values.decodeIfPresent(SelectedWork.self, forKey: .selected)
+        syncPending = try values.decodeIfPresent([UUID].self, forKey: .syncPending) ?? []
+    }
 }
 
 @MainActor
@@ -65,6 +88,25 @@ final class LocalControllerStore {
         try save(next)
     }
     func clear() throws { try save(LocalControllerData()) }
+    func cacheCatalog(_ snapshot: OwnerCatalogSnapshot) throws {
+        var next = data
+        next.catalogs[snapshot.watermark.ownerNodeId.uuidString] = snapshot
+        try save(next)
+    }
+    func retainOwners(_ owners: Set<UUID>) throws {
+        var next = data
+        next.catalogs = next.catalogs.filter { owners.contains($0.value.watermark.ownerNodeId) }
+        if let selected = next.selected, !owners.contains(selected.entry.work.ownerNodeId) { next.selected = nil }
+        try save(next)
+    }
+    func removeOwner(_ owner: UUID) throws {
+        var next = data
+        next.catalogs[owner.uuidString] = nil
+        if next.selected?.entry.work.ownerNodeId == owner { next.selected = nil }
+        try save(next)
+    }
+    func cacheSelected(_ selected: SelectedWork?) throws { var next = data; next.selected = selected; try save(next) }
+    func saveSyncPending(_ owners: [UUID]) throws { var next = data; next.syncPending = owners; try save(next) }
     private func save(_ next: LocalControllerData) throws {
         try ControllerCodec.encoder().encode(next).write(to: url, options: [.atomic, .completeFileProtection])
         data = next

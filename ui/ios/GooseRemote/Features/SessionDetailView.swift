@@ -8,17 +8,18 @@ struct SessionDetailView: View {
     var body: some View {
         Group {
             if store.selectedLoading { ProgressView("Loading from owner Mac").frame(maxWidth: .infinity, maxHeight: .infinity) }
-            else if let error = store.selectedError {
+            else if let selected = store.selectedWork, selected.entry.work == work {
+                content(selected)
+            } else if let error = store.selectedError {
                 ContentUnavailableView { Label("Session unavailable", systemImage: "wifi.exclamationmark") } description: { Text(error) } actions: {
                     Button("Try again") { Task { await store.select(work) } }.buttonStyle(StudioPrimaryButtonStyle())
                 }
-            } else if let selected = store.selectedWork, selected.entry.work == work {
-                content(selected)
             } else { ContentUnavailableView("Session not loaded", systemImage: work.kind.symbol, description: Text("Refresh the session list and try again.")) }
         }
         .studioScreen().navigationTitle(store.selectedWork?.entry.title ?? work.kind.title)
         .navigationBarTitleDisplayMode(.inline)
-        .task(id: work) { if store.selectedWork?.entry.work != work { await store.select(work) } }
+        .task(id: work) { if store.selectedRef != work || store.selectedError != nil { await store.select(work) } }
+        .onDisappear { store.endSelection(work) }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button { Task { await store.select(work) } } label: { Label("Refresh session", systemImage: "arrow.clockwise") }
@@ -32,6 +33,9 @@ struct SessionDetailView: View {
         VStack(spacing: 0) {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 16) {
+                    if let error = store.selectedError {
+                        Notice(title: "Saved view", message: error, symbol: "wifi.exclamationmark")
+                    }
                     StudioPanel {
                         Label(store.ownerName(work.ownerNodeId), systemImage: "desktopcomputer").font(.headline)
                         HStack { Text(work.kind.title).font(.subheadline); Spacer(); StatusBadge(text: selected.entry.state.title) }
@@ -41,7 +45,7 @@ struct SessionDetailView: View {
                         RelativeSample(date: selected.entry.updatedAt, prefix: "Owner updated")
                         if selected.entry.canPerform(.stop) {
                             Button("Stop run", role: .destructive) { confirmStop = true }.buttonStyle(.bordered)
-                                .disabled(store.sending || store.unfinishedCommand != nil)
+                                .disabled(store.selectedError != nil || store.sending || store.unfinishedCommand != nil)
                         }
                     }
                     ForEach(selected.pendingInputs) { input in
@@ -97,7 +101,7 @@ struct SessionDetailView: View {
                 Spacer()
                 Button { Task { await store.send(action: action) } } label: { Label(action.title, systemImage: "arrow.up") }
                     .buttonStyle(StudioPrimaryButtonStyle()).controlSize(.large)
-                    .disabled(!entry.canPerform(action) || !store.canStoreDrafts || store.sending || store.unfinishedCommand != nil || store.draft(for: work).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(store.selectedError != nil || !entry.canPerform(action) || !store.canStoreDrafts || store.sending || store.unfinishedCommand != nil || store.draft(for: work).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .padding(16).background(Studio.surface)
@@ -120,12 +124,12 @@ struct PendingInputView: View {
                     Button(choice.label) {
                         if choice.acceptsValue { option = choice }
                         else { Task { await store.answer(input: input, option: choice, value: nil) } }
-                    }.buttonStyle(.bordered).disabled(store.sending || store.unfinishedCommand != nil)
+                    }.buttonStyle(.bordered).disabled(store.selectedError != nil || store.sending || store.unfinishedCommand != nil)
                 }
                 if let option {
                     TextField("Your answer", text: $value, axis: .vertical).textFieldStyle(.roundedBorder).accessibilityLabel(option.label)
                     Button("Send answer") { Task { await store.answer(input: input, option: option, value: value.isEmpty ? nil : value) } }
-                        .buttonStyle(StudioPrimaryButtonStyle()).disabled(store.sending || store.unfinishedCommand != nil)
+                        .buttonStyle(StudioPrimaryButtonStyle()).disabled(store.selectedError != nil || store.sending || store.unfinishedCommand != nil)
                 }
             } else {
                 Text("This owner does not currently allow remote answers. Open the request on its Mac.").font(.subheadline).foregroundStyle(Studio.secondaryInk)

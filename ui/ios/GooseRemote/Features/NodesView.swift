@@ -32,7 +32,7 @@ struct NodesView: View {
                 }.listRowBackground(Studio.surface)
             }
         }.navigationTitle("Nodes").studioScreen()
-            .refreshable { store.manualSync() }
+            .refreshable { await store.synchronize() }
             .toolbar { if store.authenticated { Button { store.manualSync() } label: { Label("Sync all Macs", systemImage: "arrow.triangle.2.circlepath") }.disabled(store.syncRunning) } }
     }
 }

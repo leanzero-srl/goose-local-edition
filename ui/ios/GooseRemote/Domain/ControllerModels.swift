@@ -34,11 +34,11 @@ enum WorkAction: String, Codable, CaseIterable, Sendable {
 struct CatalogEntry: Codable, Identifiable, Sendable {
     let work: WorkRef
     let storeGeneration: UUID
-    let revision: UInt64
+    var revision: UInt64
     let title: String
     let workingDir: String?
     let state: WorkState
-    let currentRunId: UUID?
+    var currentRunId: UUID?
     let capabilities: [WorkAction]
     let parent: WorkRef?
     let related: [WorkRef]
@@ -64,6 +64,7 @@ struct CatalogPage: Codable, Sendable {
     let entries: [CatalogEntry]
     let watermark: CatalogCursor
     let nextPageToken: String?
+    var resumeCursor: String = ""
 }
 
 struct MeshEndpoint: Codable, Hashable, Sendable {
@@ -201,19 +202,25 @@ struct CommandReceipt: Codable, Sendable {
 
 // The selected-work adapter maps the canonical Goose history contract into these display values.
 // No synthetic transcript is produced when decoding or transport fails.
-struct TranscriptItem: Identifiable, Sendable {
+struct TranscriptItem: Codable, Identifiable, Sendable {
     let id: String
     let revision: UInt64
     let role: String
     let text: String
     let timestamp: Date?
 }
-struct SelectedWork: Sendable {
-    let entry: CatalogEntry
-    let transcript: [TranscriptItem]
-    let pendingInputs: [PendingInput]
-    let nextPageToken: String?
-    let historyRevision: UInt64
+struct SelectedWork: Codable, Sendable {
+    var entry: CatalogEntry
+    var transcript: [TranscriptItem]
+    var pendingInputs: [PendingInput]
+    var nextPageToken: String?
+    var historyRevision: UInt64
+    var workCursor: String = ""
+    var streamRevision: UInt64 = 0
+    var partialMessages: [String: HistoryItem] = [:]
+    var messageTombstones: [String: UInt64] = [:]
+    var historyOrder: [String] = []
+    var messageRenames: [String: String] = [:]
     var hasMoreHistory: Bool { nextPageToken != nil }
 }
 struct PendingInput: Codable, Identifiable, Sendable {
@@ -233,6 +240,8 @@ struct WorkSnapshot: Codable, Sendable {
     let entry: CatalogEntry
     let pendingInputs: [PendingInput]
     let historyWatermark: CatalogCursor
+    let workCursor: String
+    let liveMessages: [HistoryItem]
 }
 struct HistoryItem: Codable, Sendable {
     let messageId: String
@@ -245,6 +254,32 @@ struct HistoryPage: Codable, Sendable {
     let revision: UInt64
     let items: [HistoryItem]
     let nextPageToken: String?
+    let workCursor: String
+}
+
+struct CatalogChange: Codable, Sendable {
+    let resumeCursor: String
+    let cursor: CatalogCursor
+    let type: String
+    let work: WorkRef
+    let entry: CatalogEntry?
+}
+struct CatalogChanges: Codable, Sendable {
+    let resumeCursor: String
+    let changes: [CatalogChange]
+    let cursor: CatalogCursor
+    let hasMore: Bool
+}
+struct WorkFrame: Codable, Sendable {
+    let resumeCursor: String
+    let work: WorkRef
+    let storeGeneration: UUID
+    let streamEpoch: UUID
+    let sequence: UInt64
+    let workRevision: UInt64
+    let runId: UUID?
+    let type: String
+    let payload: JSONValue
 }
 struct ResourceSample: Sendable {
     let sampledAt: Date

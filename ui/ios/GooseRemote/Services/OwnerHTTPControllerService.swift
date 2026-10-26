@@ -19,21 +19,24 @@ struct OwnerHTTPControllerService: OwnerControllerService {
         var seen = Set<String>()
         var watermark: CatalogCursor?
         var entries: [CatalogEntry] = []
+        var resume = ""
         repeat {
             let query = token.map { [URLQueryItem(name: "page_token", value: $0)] } ?? []
             let page: CatalogPage = try await request("GET", path: "catalog", query: query, host: host, credential: credential, body: Optional<String>.none)
             guard page.watermark.ownerNodeId == host.id,
                   watermark == nil || watermark == page.watermark,
+                  !page.resumeCursor.isEmpty,
                   page.entries.allSatisfy({ $0.work.ownerNodeId == host.id && $0.storeGeneration == page.watermark.storeGeneration }) else {
                 throw ControllerError.malformedResponse
             }
             watermark = page.watermark
+            resume = page.resumeCursor
             entries.append(contentsOf: page.entries)
             token = page.nextPageToken
             if let token, !seen.insert(token).inserted { throw ControllerError.invalid("The owner repeated a catalog page. Refresh the connection.") }
         } while token != nil
         guard let watermark, Set(entries.map(\.id)).count == entries.count else { throw ControllerError.malformedResponse }
-        return .init(entries: entries, watermark: watermark)
+        return .init(entries: entries, watermark: watermark, resumeCursor: resume)
     }
 
     func selected(work: CatalogEntry, host: HostDescriptor, credential: String) async throws -> SelectedWork {
@@ -46,8 +49,15 @@ struct OwnerHTTPControllerService: OwnerControllerService {
         }
         let page: HistoryPage = try await request("GET", path: workPath(work.work) + "/history", query: query, host: host, credential: credential, body: Optional<String>.none)
         try validate(page, work: snapshot.entry)
-        return .init(entry: snapshot.entry, transcript: try TranscriptRenderer.items(page.items), pendingInputs: snapshot.pendingInputs,
-                     nextPageToken: page.nextPageToken, historyRevision: page.revision)
+        guard !snapshot.workCursor.isEmpty, snapshot.historyWatermark.revision >= snapshot.entry.revision,
+              page.revision >= snapshot.historyWatermark.revision else { throw ControllerError.malformedResponse }
+        let committed = Set(page.items.map(\.messageId))
+        let partials = snapshot.liveMessages.filter { !committed.contains($0.messageId) }
+        guard Set(partials.map(\.messageId)).count == partials.count else { throw ControllerError.malformedResponse }
+        return .init(entry: snapshot.entry, transcript: try TranscriptRenderer.items(page.items + partials), pendingInputs: snapshot.pendingInputs,
+                     nextPageToken: page.nextPageToken, historyRevision: page.revision, workCursor: snapshot.workCursor,
+                     streamRevision: snapshot.historyWatermark.revision, partialMessages: Dictionary(uniqueKeysWithValues: partials.map { ($0.messageId, $0) }),
+                     historyOrder: page.items.map(\.messageId))
     }
 
     func history(work: CatalogEntry, pageToken: String, host: HostDescriptor, credential: String) async throws -> HistoryPage {
@@ -76,15 +86,57 @@ struct OwnerHTTPControllerService: OwnerControllerService {
     private func workPath(_ work: WorkRef) -> String { "work/\(work.kind.rawValue)/\(work.workId.uuidString)" }
     private func validate(_ page: HistoryPage, work: CatalogEntry) throws {
         guard page.work == work.work, page.storeGeneration == work.storeGeneration,
-              page.revision == work.revision else { throw ControllerError.invalid("The session changed while history was loading. Refresh it before continuing.") }
+              !page.workCursor.isEmpty else { throw ControllerError.invalid("The session changed while history was loading. Refresh it before continuing.") }
+    }
+
+    func changes(cursor: String, host: HostDescriptor, credential: String) async throws -> CatalogChanges {
+        try await request("GET", path: "catalog/changes", query: [URLQueryItem(name: "cursor", value: cursor)], host: host, credential: credential, body: Optional<String>.none)
+    }
+    func catalogEvents(cursor: String, host: HostDescriptor, credential: String) async throws -> AsyncThrowingStream<CatalogChange, Error> {
+        try await stream(path: "catalog/stream", cursor: cursor, host: host, credential: credential)
+    }
+    func workEvents(work: SelectedWork, host: HostDescriptor, credential: String) async throws -> AsyncThrowingStream<WorkFrame, Error> {
+        guard work.entry.work.ownerNodeId == host.id else { throw ControllerError.malformedResponse }
+        return try await stream(path: workPath(work.entry.work) + "/stream", cursor: work.workCursor, host: host, credential: credential,
+                                generation: work.entry.storeGeneration)
+    }
+    private func stream<T: Decodable & Sendable>(path: String, cursor: String, host: HostDescriptor, credential: String,
+                                                 generation: UUID? = nil) async throws -> AsyncThrowingStream<T, Error> {
+        guard !cursor.isEmpty, host.controllerAvailable else { throw ControllerError.invalid("A verified replay cursor is required.") }
+        let connection = try await connections.connection(for: host)
+        try validate(connection, host: host)
+        guard let transport = connection.transport as? any OwnerEventTransport else { throw ControllerError.unavailable("The owner transport has no secure stream support.") }
+        var parts = URLComponents(url: connection.endpoint.url.appendingPathComponent("v1/controller").appendingPathComponent(path), resolvingAgainstBaseURL: false)
+        parts?.scheme = "wss"
+        parts?.queryItems = [URLQueryItem(name: "cursor", value: cursor)]
+        if let generation { parts?.queryItems?.append(.init(name: "store_generation", value: generation.uuidString)) }
+        guard let url = parts?.url else { throw ControllerError.malformedResponse }
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(credential)", forHTTPHeaderField: "Authorization")
+        let events = transport.events(for: request)
+        return AsyncThrowingStream(bufferingPolicy: .bufferingOldest(16)) { continuation in
+            let task = Task {
+                do {
+                    for try await data in events {
+                        let event = try ControllerCodec.decoder().decode(T.self, from: data)
+                        if case .dropped = continuation.yield(event) { throw ControllerError.unavailable("The live view needs replay. Refresh to continue.") }
+                    }
+                    continuation.finish()
+                } catch { continuation.finish(throwing: error) }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+    private func validate(_ connection: OwnerConnection, host: HostDescriptor) throws {
+        guard host.endpoints.contains(connection.endpoint), connection.endpoint.url.scheme == "https",
+              connection.endpoint.url.user == nil, connection.endpoint.url.password == nil,
+              connection.endpoint.url.query == nil, connection.endpoint.url.fragment == nil else { throw ControllerError.invalid("The connection does not match the owner’s registered endpoint.") }
     }
     private func request<T: Decodable, Body: Encodable>(_ method: String, path: String, query: [URLQueryItem] = [],
                                                        host: HostDescriptor, credential: String, body: Body?) async throws -> T {
         guard host.controllerAvailable else { throw ControllerError.unavailable("This Mac has no verified controller connection.") }
         let connection = try await connections.connection(for: host)
-        guard host.endpoints.contains(connection.endpoint), connection.endpoint.url.scheme == "https",
-              connection.endpoint.url.user == nil, connection.endpoint.url.password == nil,
-              connection.endpoint.url.query == nil, connection.endpoint.url.fragment == nil else { throw ControllerError.invalid("The connection does not match the owner’s registered endpoint.") }
+        try validate(connection, host: host)
         var components = URLComponents(url: connection.endpoint.url.appendingPathComponent("v1/controller").appendingPathComponent(path), resolvingAgainstBaseURL: false)
         components?.queryItems = query.isEmpty ? nil : query
         guard let url = components?.url else { throw ControllerError.invalid("The owner endpoint is invalid.") }

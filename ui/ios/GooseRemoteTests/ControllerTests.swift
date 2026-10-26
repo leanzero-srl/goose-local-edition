@@ -1,7 +1,7 @@
 import XCTest
 @testable import GooseRemote
 
-private final class MemoryCredentials: CredentialStorage, @unchecked Sendable {
+final class MemoryCredentials: CredentialStorage, @unchecked Sendable {
     private let lock = NSLock()
     private var values: [String: Data] = [:]
     func read<T: Decodable>(_ type: T.Type, account: String) throws -> T? {
@@ -19,7 +19,7 @@ private final class MemoryCredentials: CredentialStorage, @unchecked Sendable {
     }
 }
 
-private actor ScriptedTransport: HTTPTransport {
+actor ScriptedTransport: HTTPTransport {
     enum Reply: Sendable { case response(Int, Data), disconnected }
     var replies: [Reply]
     private(set) var requests: [URLRequest] = []
@@ -201,7 +201,7 @@ final class ControllerTests: XCTestCase {
     }
 }
 
-private struct FixedOwnerConnection: OwnerConnectionProvider {
+struct FixedOwnerConnection: OwnerConnectionProvider {
     let endpoint: MeshEndpoint
     let transport: any HTTPTransport
     func connection(for host: HostDescriptor) async throws -> OwnerConnection { .init(endpoint: endpoint, transport: transport) }
@@ -217,7 +217,7 @@ final class OwnerWireTests: XCTestCase {
               endpoints: [endpoint], capabilities: ["catalog.read", "history.read"], registrationState: nil, tlsSpkiSha256: nil)
     }
     private func page(owner: UUID? = nil, revision: UInt64 = 7, token: String? = nil) throws -> Data {
-        try ControllerCodec.encoder().encode(CatalogPage(entries: [], watermark: .init(ownerNodeId: owner ?? self.owner, storeGeneration: generation, revision: revision), nextPageToken: token))
+        try ControllerCodec.encoder().encode(CatalogPage(entries: [], watermark: .init(ownerNodeId: owner ?? self.owner, storeGeneration: generation, revision: revision), nextPageToken: token, resumeCursor: "signed-test-cursor"))
     }
     func testCatalogPaginationKeepsExactOwnerWatermarkAndOpaqueToken() async throws {
         let token = "opaque/+?=&"

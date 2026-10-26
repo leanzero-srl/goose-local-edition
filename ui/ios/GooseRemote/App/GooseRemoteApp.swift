@@ -2,14 +2,20 @@ import SwiftUI
 
 @main
 struct GooseRemoteApp: App {
-    @State private var store = ControllerStore()
+    @State private var store: ControllerStore = {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("GooseRemote", isDirectory: true)
+        let mesh = EmbeddedMeshConnectionProvider(directory: base.appendingPathComponent("mesh", isDirectory: true))
+        return ControllerStore(owner: OwnerHTTPControllerService(connections: mesh), directory: base, mesh: mesh)
+    }()
     @Environment(\.scenePhase) private var scenePhase
     var body: some Scene {
         WindowGroup {
             RootView().environment(store).tint(Studio.accent)
                 .task { if store.authenticated { store.manualSync() } }
                 .onChange(of: scenePhase) { _, phase in
-                    if phase == .active && store.authenticated { store.manualSync() }
+                    if phase == .active { store.sceneActive() }
+                    if phase == .background { Task { await store.sceneBackground() } }
                 }
         }
     }

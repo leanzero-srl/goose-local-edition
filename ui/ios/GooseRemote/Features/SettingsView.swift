@@ -69,7 +69,7 @@ struct SettingsView: View {
             .onAppear { if store.deviceName.isEmpty { store.deviceName = platform == "ipados" ? "My iPad" : "My iPhone" } }
             .confirmationDialog("Remove access from this device?", isPresented: $removingLocal, titleVisibility: .visible) {
                 Button("Remove local access", role: .destructive) {
-                    do { try store.forgetDevice() } catch { store.errorMessage = error.localizedDescription }
+                    Task { do { try await store.forgetDevice() } catch { store.errorMessage = error.localizedDescription } }
                 }
             } message: { Text("This removes local credentials, drafts, and command recovery records. It does not revoke this device on the Link service. Revoke it first when you have a connection.") }
             .confirmationDialog("Revoke \(deviceToRevoke?.name ?? "device")?", isPresented: Binding(get: { deviceToRevoke != nil }, set: { if !$0 { deviceToRevoke = nil } }), titleVisibility: .visible) {

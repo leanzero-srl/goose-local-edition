@@ -45,7 +45,12 @@ final class ControllerStore {
     @ObservationIgnored private let owner: any OwnerControllerService
     @ObservationIgnored private let local: LocalControllerStore?
     @ObservationIgnored private let transport: any HTTPTransport
+    @ObservationIgnored private let mesh: (any ControllerMeshSession)?
     @ObservationIgnored private var syncTask: Task<Void, Never>?
+    @ObservationIgnored private var catalogTasks: [UUID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var workTask: Task<Void, Never>?
+    @ObservationIgnored private var reconnectTask: Task<Void, Never>?
+    @ObservationIgnored private var foreground = true
     @ObservationIgnored private var selectedRequest = UUID()
     @ObservationIgnored private var refreshTask: Task<CredentialEnvelope, Error>?
 
@@ -53,10 +58,11 @@ final class ControllerStore {
     struct SavedRevoke: Codable { let device: DeviceRecord; let requestId: UUID }
 
     init(credentials: any CredentialStorage = KeychainStore(), owner: any OwnerControllerService = UnavailableOwnerControllerService(),
-         transport: any HTTPTransport = SecureHTTPTransport(), directory: URL? = nil) {
+         transport: any HTTPTransport = SecureHTTPTransport(), directory: URL? = nil, mesh: (any ControllerMeshSession)? = nil) {
         self.credentials = credentials
         self.owner = owner
         self.transport = transport
+        self.mesh = mesh
         do {
             let base = try directory ?? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
                 .appendingPathComponent("GooseRemote", isDirectory: true)
@@ -75,6 +81,12 @@ final class ControllerStore {
                 deviceName = saved.attempt.deviceName
             }
         } catch { errorMessage = error.localizedDescription }
+        if envelope != nil, let local {
+            entries = local.data.catalogs.values.flatMap(\.entries)
+            selectedWork = local.data.selected
+            selectedError = selectedWork == nil ? nil : "Saved view. Reconnect to verify this session with its owner."
+            if !entries.isEmpty { connection = .stale("Showing saved session metadata until your Macs reconnect.") }
+        }
     }
 
     var authenticated: Bool { envelope != nil }
@@ -132,6 +144,8 @@ final class ControllerStore {
             let api = try ControllerAPI(authority: saved.authority, transport: transport)
             let received = try await api.verify(attempt: enrollment, code: code, platform: platform)
             let next = CredentialEnvelope(authority: saved.authority, credentials: received)
+            // A newly verified device cannot inherit transcript caches from a removed Keychain.
+            try local?.clear()
             // A failed secure write leaves the enrollment receipt retryable with the same code/id.
             try credentials.write(next, account: "device")
             envelope = next
@@ -143,10 +157,10 @@ final class ControllerStore {
         } catch { errorMessage = error.localizedDescription }
     }
 
-    func validCredential() async throws -> CredentialEnvelope {
+    func validCredential(forceRefresh: Bool = false) async throws -> CredentialEnvelope {
         guard let current = envelope else { throw ControllerError.unavailable("Connect this device to Link first.") }
         if let refreshTask { return try await refreshTask.value }
-        if current.refreshRequestId == nil && current.credentials.expiresAt > Date() { return current }
+        if !forceRefresh, current.refreshRequestId == nil && current.credentials.expiresAt > Date() { return current }
         let task = Task { @MainActor [self] in
             var pending = current
             if pending.refreshRequestId == nil {
@@ -168,15 +182,21 @@ final class ControllerStore {
 
     func manualSync() {
         guard syncTask == nil, authenticated else { return }
+        stopStreams()
         syncRunning = true
         connection = .loading
         syncTask = Task { @MainActor [self] in
             defer { syncTask = nil; syncRunning = false }
             do {
                 let identity = try await validCredential()
+                try await mesh?.prepare(identity: identity)
                 let api = try ControllerAPI(authority: identity.authority, transport: transport)
                 let page = try await api.hosts(token: identity.credentials.accessToken)
+                guard !Task.isCancelled else { throw CancellationError() }
+                guard Set(page.hosts.map(\.id)).count == page.hosts.count else { throw ControllerError.malformedResponse }
                 hosts = page.hosts
+                try local?.retainOwners(Set(page.hosts.map(\.id)))
+                try local?.saveSyncPending(page.hosts.map(\.id))
                 syncResults = page.hosts.map { .init(id: $0.id, name: $0.name, state: .waiting) }
                 entries.removeAll { entry in !page.hosts.contains { $0.id == entry.work.ownerNodeId } }
                 for host in page.hosts {
@@ -187,15 +207,21 @@ final class ControllerStore {
                     }
                     syncResults[index].state = .syncing
                     do {
-                        let result = try await owner.catalog(host: host, credential: identity.credentials.accessToken)
+                        let result = try await synchronizedCatalog(host: host, credential: identity.credentials.accessToken)
                         guard result.watermark.ownerNodeId == host.id,
                               result.entries.allSatisfy({ $0.work.ownerNodeId == host.id && $0.storeGeneration == result.watermark.storeGeneration }) else {
                             throw ControllerError.malformedResponse
                         }
                         entries.removeAll { $0.work.ownerNodeId == host.id }
                         entries.append(contentsOf: result.entries)
+                        try local?.cacheCatalog(result)
+                        try local?.saveSyncPending((local?.data.syncPending ?? []).filter { $0 != host.id })
                         syncResults[index].state = .complete(result.entries.count)
-                    } catch { syncResults[index].state = .failed(error.localizedDescription) }
+                        startCatalogStream(host: host)
+                    } catch {
+                        syncResults[index].state = .failed(error.localizedDescription)
+                        if case ControllerError.remote(403, _, _) = error { await streamFailed(error, host: host) }
+                    }
                 }
                 lastSync = Date()
                 connection = syncResults.contains { result in
@@ -203,20 +229,25 @@ final class ControllerStore {
                     return true
                 } ? .partial : .connected
                 errorMessage = nil
+                if let selectedRef { await select(selectedRef) }
             } catch {
+                if Task.isCancelled { return }
                 connection = .stale(error.localizedDescription)
                 errorMessage = error.localizedDescription
             }
         }
     }
+    func synchronize() async { manualSync(); await syncTask?.value }
 
     func select(_ work: WorkRef?) async {
+        workTask?.cancel(); workTask = nil
         selectedRequest = UUID()
         selectedLoading = false
         selectedRef = work
         selectedWork = nil
         selectedError = nil
         guard let work, let entry = entries.first(where: { $0.work == work }), let host = hosts.first(where: { $0.id == work.ownerNodeId }) else { return }
+        if let saved = local?.data.selected, saved.entry.work == work { selectedWork = saved }
         let request = UUID()
         selectedRequest = request
         selectedLoading = true
@@ -225,12 +256,16 @@ final class ControllerStore {
             let identity = try await validCredential()
             let result = try await owner.selected(work: entry, host: host, credential: identity.credentials.accessToken)
             guard result.entry.work == work, result.entry.storeGeneration == entry.storeGeneration else { throw ControllerError.malformedResponse }
-            if selectedRequest == request { selectedWork = result }
+            if selectedRequest == request {
+                try local?.cacheSelected(result)
+                selectedWork = result
+                startWorkStream(host: host, request: request)
+            }
         } catch { if selectedRequest == request { selectedError = error.localizedDescription } }
     }
 
     func send(action: WorkAction) async {
-        guard let work = selectedWork else { return }
+        guard selectedError == nil, let work = selectedWork else { return }
         do {
             let command = try WorkCommand.make(entry: work.entry, action: action, text: draft(for: work.entry.work))
             await deliver(command)
@@ -238,7 +273,7 @@ final class ControllerStore {
     }
 
     func answer(input: PendingInput, option: InputOption, value: String?) async {
-        guard let current = selectedWork, current.pendingInputs.contains(where: { $0.id == input.id && $0.runId == input.runId }) else {
+        guard selectedError == nil, let current = selectedWork, current.pendingInputs.contains(where: { $0.id == input.id && $0.runId == input.runId }) else {
             errorMessage = "This input is no longer current. Refresh the session."
             return
         }
@@ -306,12 +341,10 @@ final class ControllerStore {
             let page = try await owner.history(work: current.entry, pageToken: token, host: host, credential: identity.credentials.accessToken)
             guard page.work == current.entry.work, page.storeGeneration == current.entry.storeGeneration, page.revision == current.historyRevision,
                   page.nextPageToken != token else { throw ControllerError.malformedResponse }
-            let messages = try TranscriptRenderer.items(page.items)
-            let combined = current.transcript + messages
-            guard Set(combined.map(\.id)).count == combined.count else { throw ControllerError.malformedResponse }
-            if selectedRequest == request {
-                selectedWork = .init(entry: current.entry, transcript: combined, pendingInputs: current.pendingInputs,
-                                     nextPageToken: page.nextPageToken, historyRevision: page.revision)
+            if selectedRequest == request, let current = selectedWork {
+                let latest = try OwnerReplay.history(page, into: current)
+                try local?.cacheSelected(latest)
+                selectedWork = latest
             }
         } catch { errorMessage = error.localizedDescription }
     }
@@ -334,13 +367,15 @@ final class ControllerStore {
             let receipt = try await ControllerAPI(authority: identity.authority, transport: transport).revoke(device: saved.device, requestId: saved.requestId, token: identity.credentials.accessToken)
             guard receipt.deviceId == device.id else { throw ControllerError.malformedResponse }
             try credentials.remove(account: key)
-            if device.id == identity.credentials.device.id { try forgetDevice() }
+            if device.id == identity.credentials.device.id { try await forgetDevice() }
             else { await loadDevices() }
         } catch { errorMessage = error.localizedDescription }
     }
-    func forgetDevice() throws {
+    func forgetDevice() async throws {
         guard !syncRunning, refreshTask == nil, !sending else { throw ControllerError.invalid("Wait for the current request to finish before removing local access.") }
         try local?.clear()
+        stopStreams()
+        try await mesh?.removeLocalIdentity()
         try credentials.remove(account: "device")
         try credentials.remove(account: "enrollment")
         envelope = nil
@@ -350,5 +385,146 @@ final class ControllerStore {
         selectedWork = nil; selectedRef = nil; lastSync = nil
         draftRevision += 1; pendingRevision += 1
         connection = .signedOut
+    }
+
+    private func synchronizedCatalog(host: HostDescriptor, credential: String) async throws -> OwnerCatalogSnapshot {
+        guard var snapshot = local?.data.catalogs[host.id.uuidString], !snapshot.resumeCursor.isEmpty else {
+            return try await owner.catalog(host: host, credential: credential)
+        }
+        do {
+            while true {
+                let changes = try await owner.changes(cursor: snapshot.resumeCursor, host: host, credential: credential)
+                guard changes.cursor.ownerNodeId == host.id, changes.cursor.storeGeneration == snapshot.watermark.storeGeneration,
+                      changes.cursor.revision >= snapshot.watermark.revision, !changes.resumeCursor.isEmpty else { throw ControllerError.malformedResponse }
+                let previous = snapshot.watermark.revision
+                for change in changes.changes { snapshot = try OwnerReplay.catalog(change, into: snapshot) }
+                guard changes.cursor.revision >= snapshot.watermark.revision,
+                      !changes.hasMore || changes.cursor.revision > previous else { throw ControllerError.malformedResponse }
+                snapshot = .init(entries: snapshot.entries, watermark: changes.cursor, resumeCursor: changes.resumeCursor)
+                try local?.cacheCatalog(snapshot)
+                if !changes.hasMore { return snapshot }
+            }
+        } catch ControllerError.remote(410, _, _) {
+            return try await owner.catalog(host: host, credential: credential)
+        }
+    }
+
+    private func startCatalogStream(host: HostDescriptor) {
+        guard foreground, let cached = local?.data.catalogs[host.id.uuidString] else { return }
+        catalogTasks[host.id]?.cancel()
+        catalogTasks[host.id] = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let identity = try await validCredential()
+                let events = try await owner.catalogEvents(cursor: cached.resumeCursor, host: host, credential: identity.credentials.accessToken)
+                for try await change in events {
+                    guard !Task.isCancelled, let current = local?.data.catalogs[host.id.uuidString] else { return }
+                    let next = try OwnerReplay.catalog(change, into: current)
+                    try local?.cacheCatalog(next)
+                    entries.removeAll { $0.work.ownerNodeId == host.id }
+                    entries.append(contentsOf: next.entries)
+                    if change.type == "tombstone", selectedRef == change.work {
+                        workTask?.cancel(); selectedWork = nil
+                        try local?.cacheSelected(nil)
+                        selectedError = "This session is no longer visible on its owner."
+                    }
+                }
+                if !Task.isCancelled { scheduleReconnect("The live catalog disconnected.") }
+            } catch {
+                if !Task.isCancelled { await streamFailed(error, host: host) }
+            }
+        }
+    }
+
+    private func startWorkStream(host: HostDescriptor, request: UUID) {
+        guard foreground, let current = selectedWork else { return }
+        workTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let identity = try await validCredential()
+                let events = try await owner.workEvents(work: current, host: host, credential: identity.credentials.accessToken)
+                for try await frame in events {
+                    guard !Task.isCancelled, selectedRequest == request, let selected = selectedWork else { return }
+                    let next = try OwnerReplay.work(frame, into: selected)
+                    try local?.cacheSelected(next)
+                    selectedWork = next
+                    if frame.type == "pending_input" {
+                        Task { @MainActor [weak self] in
+                            guard let self, selectedRequest == request, selectedRef == frame.work, foreground else { return }
+                            await select(frame.work)
+                        }
+                        return
+                    }
+                    if frame.type == "command_receipt", unfinishedCommand != nil { await checkDelivery() }
+                }
+                if !Task.isCancelled { scheduleReconnect("The live session disconnected.") }
+            } catch {
+                if !Task.isCancelled, selectedRequest == request {
+                    selectedError = error.localizedDescription
+                    await streamFailed(error, host: host)
+                }
+            }
+        }
+    }
+
+    private func streamFailed(_ error: Error, host: HostDescriptor) async {
+        if case ControllerError.remote(401, _, _) = error {
+            do {
+                _ = try await validCredential(forceRefresh: true)
+                scheduleReconnect("Reconnecting with refreshed device access.")
+            } catch {
+                stopStreams()
+                connection = .stale(error.localizedDescription)
+                selectedError = error.localizedDescription
+            }
+        } else if case ControllerError.remote(403, _, _) = error {
+            catalogTasks[host.id]?.cancel(); catalogTasks[host.id] = nil
+            entries.removeAll { $0.work.ownerNodeId == host.id }
+            do { try local?.removeOwner(host.id) } catch { errorMessage = error.localizedDescription }
+            if selectedRef?.ownerNodeId == host.id {
+                workTask?.cancel(); workTask = nil; selectedWork = nil
+                selectedError = error.localizedDescription
+            }
+            connection = .stale(error.localizedDescription)
+        } else { scheduleReconnect(error.localizedDescription) }
+    }
+
+    private func scheduleReconnect(_ reason: String) {
+        connection = .stale(reason)
+        guard foreground, authenticated, reconnectTask == nil else { return }
+        reconnectTask = Task { @MainActor [weak self] in
+            // Reconnect delay limits network churn; it never controls work on the owner.
+            do { try await Task.sleep(for: .seconds(3)) } catch { return }
+            guard let self, !Task.isCancelled else { return }
+            reconnectTask = nil
+            manualSync()
+        }
+    }
+    private func stopStreams() {
+        catalogTasks.values.forEach { $0.cancel() }; catalogTasks.removeAll()
+        workTask?.cancel(); workTask = nil
+        reconnectTask?.cancel(); reconnectTask = nil
+    }
+    func endSelection(_ work: WorkRef) {
+        guard selectedRef == work else { return }
+        selectedRequest = UUID()
+        workTask?.cancel(); workTask = nil
+        selectedRef = nil; selectedWork = nil; selectedError = nil
+    }
+    func sceneActive() {
+        foreground = true
+        let pending = syncTask
+        Task { @MainActor [weak self] in
+            await pending?.value
+            guard let self, foreground, authenticated else { return }
+            manualSync()
+        }
+    }
+    func sceneBackground() async {
+        foreground = false
+        stopStreams()
+        syncTask?.cancel()
+        selectedError = selectedWork == nil ? nil : "Reconnect to refresh this saved view."
+        await mesh?.suspend()
     }
 }
