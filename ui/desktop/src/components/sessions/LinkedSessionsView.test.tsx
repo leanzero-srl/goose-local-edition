@@ -6,6 +6,17 @@ import { leanzeroLinkStatus } from '../../acp/leanzero-link';
 import { fixtureEntry, fixtureHost } from './controllerFixtures';
 import LinkedSessionsView from './LinkedSessionsView';
 
+const fixtureDevice: NonNullable<api.ControllerStatus['device']> = {
+  device_id: 'device-a',
+  name: 'Controller',
+  platform: 'desktop',
+  role: 'controller',
+  revision: 1,
+  scopes: [],
+  created_at: '',
+  revoked_at: null,
+};
+
 vi.mock('../../acp/controller', async (original) => ({
   ...(await original<typeof import('../../acp/controller')>()),
   controllerStatus: vi.fn(),
@@ -25,16 +36,7 @@ beforeEach(() => {
   vi.mocked(leanzeroLinkStatus).mockResolvedValue({ auth: { state: 'loggedOut' }, nodeCount: 0 });
   vi.mocked(api.controllerStatus).mockResolvedValue({
     state: 'ready',
-    device: {
-      device_id: 'device-a',
-      name: 'Controller',
-      platform: 'desktop',
-      role: 'controller',
-      revision: 1,
-      scopes: [],
-      created_at: '',
-      revoked_at: null,
-    },
+    device: fixtureDevice,
     error: null,
   });
   vi.mocked(api.controllerCatalog).mockResolvedValue({
@@ -57,6 +59,81 @@ beforeEach(() => {
   });
 });
 describe('linked catalog selection', () => {
+  it('keeps loading after enrollment stores the new device until its first verification finishes', async () => {
+    vi.mocked(api.controllerStatus)
+      .mockResolvedValueOnce({ state: 'signed_out', device: null, error: null })
+      .mockResolvedValueOnce({ state: 'unavailable', device: fixtureDevice, error: null });
+    vi.mocked(leanzeroLinkStatus).mockResolvedValue({
+      auth: { state: 'connected', email: 'fixture@example.com', meshIp: '100.64.0.1' },
+      nodeCount: 1,
+    });
+    vi.useFakeTimers();
+    const view = render(<LinkedSessionsView navigation={null} />, { wrapper: IntlTestWrapper });
+    try {
+      await act(async () => {});
+      expect(screen.getByText('Connecting to your linked Macs…')).toBeInTheDocument();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      expect(api.controllerStatus).toHaveBeenCalledTimes(2);
+      expect(screen.getByText('Connecting to your linked Macs…')).toBeInTheDocument();
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      expect(screen.queryByText(/Sign in to LeanZero Link/)).not.toBeInTheDocument();
+      expect(api.controllerCatalog).not.toHaveBeenCalled();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      expect(screen.getByText('Original session')).toBeInTheDocument();
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
+  });
+  it.each([
+    {
+      label: 'explicit denial',
+      device: fixtureDevice,
+      error: 'Controller enrollment was denied',
+      connected: true,
+    },
+    { label: 'disconnected Link', device: fixtureDevice, error: null, connected: false },
+    { label: 'missing device', device: null, error: null, connected: true },
+    {
+      label: 'revoked device',
+      device: { ...fixtureDevice, revoked_at: '2026-10-26T10:00:00Z' },
+      error: null,
+      connected: true,
+    },
+  ])('preserves unavailable errors for $label', async ({ device, error, connected }) => {
+    vi.mocked(api.controllerStatus).mockResolvedValue({ state: 'unavailable', device, error });
+    vi.mocked(leanzeroLinkStatus).mockResolvedValue({
+      auth: connected
+        ? { state: 'connected', email: 'fixture@example.com', meshIp: '100.64.0.1' }
+        : { state: 'loggedIn', email: 'fixture@example.com' },
+      nodeCount: connected ? 1 : 0,
+    });
+    render(<LinkedSessionsView navigation={null} />, { wrapper: IntlTestWrapper });
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      error ?? 'The desktop controller is unavailable.'
+    );
+    expect(screen.queryByText('Connecting to your linked Macs…')).not.toBeInTheDocument();
+  });
+  it('does not treat a previously verified device becoming unavailable as initial loading', async () => {
+    render(<LinkedSessionsView navigation={null} />, { wrapper: IntlTestWrapper });
+    await screen.findByText('Original session');
+    vi.mocked(api.controllerStatus).mockResolvedValue({
+      state: 'unavailable',
+      device: fixtureDevice,
+      error: null,
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Sync sessions' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'The desktop controller is unavailable.'
+    );
+    expect(leanzeroLinkStatus).not.toHaveBeenCalled();
+    expect(screen.getByText('Original session')).toBeInTheDocument();
+  });
   it('keeps loading through pending status and the first catalog request', async () => {
     let resolveStatus!: (status: api.ControllerStatus) => void;
     let resolveCatalog!: (catalog: api.ControllerCatalog) => void;

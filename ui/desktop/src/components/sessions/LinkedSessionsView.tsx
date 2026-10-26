@@ -66,6 +66,7 @@ export default function LinkedSessionsView({ navigation }: { navigation: ReactNo
     null
   );
   const currentDevice = useRef<string | null>(null);
+  const verifiedDevice = useRef<string | null>(null);
   const alive = useRef(false);
   const inFlight = useRef(false);
   const refresh = useCallback(async (manual = false) => {
@@ -86,6 +87,7 @@ export default function LinkedSessionsView({ navigation }: { navigation: ReactNo
         const link = await leanzeroLinkStatus();
         if (!alive.current) return;
         const signedOut = link.auth.state === 'loggedOut' || link.auth.state === 'codeSent';
+        if (signedOut) verifiedDevice.current = null;
         setStatus(signedOut ? auth : null);
         setCatalog(null);
         setSelected(null);
@@ -93,9 +95,25 @@ export default function LinkedSessionsView({ navigation }: { navigation: ReactNo
         setError(null);
         return;
       }
+      if (
+        auth.state === 'unavailable' &&
+        auth.error === null &&
+        auth.device &&
+        auth.device.revoked_at === null &&
+        verifiedDevice.current !== auth.device.device_id
+      ) {
+        const link = await leanzeroLinkStatus();
+        if (!alive.current) return;
+        if (link.auth.state === 'connecting' || link.auth.state === 'connected') {
+          setStatus(null);
+          setError(null);
+          return;
+        }
+      }
       setStatus(auth);
       if (auth.state !== 'ready')
         throw new Error(auth.error ?? 'The desktop controller is unavailable.');
+      verifiedDevice.current = auth.device?.device_id ?? null;
       const next = await (manual ? controllerSync() : controllerCatalog());
       if (alive.current) {
         setCatalog(next);
