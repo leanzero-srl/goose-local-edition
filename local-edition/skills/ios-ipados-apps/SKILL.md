@@ -66,3 +66,5 @@ This installation is laptop-owned. Canonical source: `~/.claude/skills/ios-ipado
 2026-10-26: Added embedded-runtime diagnostic suppression proof, forced framework rebuild and binary provenance checks, and actual-screen theme/navigation verification. A silent logger or accessibility label alone did not prove the intended outcome.
 
 2026-10-26: Added consent binding across rolling transcript revisions, preaccept-refusal versus lost-acknowledgement recovery, and explicit Connect navigation reset after native simulator and independent-review findings.
+
+2026-10-26: Added observed-recipient provenance and sanitized-origin rules after the native sharing disclosure: runtime facts, saved configuration and unknown destinations must not be presented as exhaustive recipients or guaranteed future routing.
