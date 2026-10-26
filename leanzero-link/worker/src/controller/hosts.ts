@@ -7,14 +7,14 @@ import type { AccountState, AuthorizationLease, HostState } from "./types";
 
 export interface HostRegistration {
   owner_node_id: string; registration_id: string; host_name: string; protocol_version: 1;
-  tls_spki_sha256: string | null;
+  tls_spki_sha256: string | null; controller_port?: number | null;
 }
 export interface LeaseRequest {
   owner_node_id: string; runtime_id: string; store_generation: string; catalog_revision: number;
   mesh_node_key: string;
 }
 
-function checkedHost(state: AccountState | null, id: string, hash: string): HostState {
+export function checkedHost(state: AccountState | null, id: string, hash: string): HostState {
   const h = state?.hosts[id];
   if (!h || typeof h.credential_hash !== "string" || !constantTimeEqual(h.credential_hash, hash)) fail(401, "invalid_credential", "Invalid host credential");
   if (h.owner_node_id !== id || h.protocol_version !== 1 || !Number.isSafeInteger(h.revision) || !Number.isSafeInteger(h.catalog_high_water) || !(h.generation === null || typeof h.generation === "string") || !(h.lease === null || typeof h.lease === "object")) throw new Error("corrupt host registry");
@@ -37,15 +37,15 @@ export class HostService {
         if (existingHash === null) {
           // Recover a lost INITIAL response only for the same account/request and before
           // activation. Once leased, the existing host credential is always required.
-          if (previous.registration_id === req.registration_id && previous.generation === null && previous.host_name === req.host_name && previous.tls_spki_sha256 === req.tls_spki_sha256) {
+          if (previous.registration_id === req.registration_id && previous.generation === null && previous.host_name === req.host_name && previous.tls_spki_sha256 === req.tls_spki_sha256 && (previous.controller_port ?? null) === (req.controller_port ?? null)) {
             return { state: account, result: await unseal<{ host_credential: string; host_revision: number }>(c.secret, `${key}.${req.registration_id}`, previous.registration_receipt) };
           }
           fail(409, "owner_already_registered", "Existing owner requires its host credential");
         }
         checkedHost(account, req.owner_node_id, existingHash);
         if (previous.registration_id !== req.registration_id) fail(409, "registration_conflict", "Owner registration ID changed");
-        if (previous.tls_spki_sha256 !== req.tls_spki_sha256 || previous.host_name !== req.host_name) {
-          previous.tls_spki_sha256 = req.tls_spki_sha256; previous.host_name = req.host_name;
+        if (previous.tls_spki_sha256 !== req.tls_spki_sha256 || previous.host_name !== req.host_name || (previous.controller_port ?? null) !== (req.controller_port ?? null)) {
+          previous.tls_spki_sha256 = req.tls_spki_sha256; previous.host_name = req.host_name; previous.controller_port = req.controller_port ?? null;
           previous.revision += 1;
         }
         return { state: account, result: { host_credential: existingCredential!, host_revision: previous.revision } };
@@ -57,7 +57,7 @@ export class HostService {
     });
   }
 
-  async lease(credential: string, req: LeaseRequest): Promise<{ lease_id: string; lease_expires_at: string; host_revision: number }> {
+  async lease(credential: string, req: LeaseRequest, providerExpiresAt: number | null = null): Promise<{ lease_id: string; lease_expires_at: string; host_revision: number }> {
     const { key, id } = splitCredential(credential, "h1");
     if (id !== req.owner_node_id) fail(403, "wrong_owner", "Credential belongs to another owner");
     const hash = await digest(credential); const c = this.controller;
@@ -68,12 +68,42 @@ export class HostService {
       if (req.catalog_revision < h.catalog_high_water) fail(409, "store_rollback", "Catalog is older than the registered high-water mark");
       h.generation = req.store_generation; h.catalog_high_water = req.catalog_revision;
       const same = h.lease?.runtime_id === req.runtime_id && h.lease.expires_at > c.now();
-      h.lease = { runtime_id: req.runtime_id, lease_id: same ? h.lease!.lease_id : crypto.randomUUID(), expires_at: c.now() + HOST_LEASE_SECONDS * 1000, store_generation: req.store_generation, catalog_revision: req.catalog_revision, mesh_node_key: req.mesh_node_key };
+      h.lease = { runtime_id: req.runtime_id, lease_id: same ? h.lease!.lease_id : crypto.randomUUID(), renewed_at: c.now(), expires_at: Math.min(c.now() + HOST_LEASE_SECONDS * 1000, providerExpiresAt ?? Infinity), store_generation: req.store_generation, catalog_revision: req.catalog_revision, mesh_node_key: req.mesh_node_key };
       return { state: state!, result: { lease_id: h.lease.lease_id, lease_expires_at: new Date(h.lease.expires_at).toISOString(), host_revision: h.revision } };
     });
   }
 
-  async introspect(credential: string, token: string, ownerId: string, scope: string, runtimeId: string, leaseId: string): Promise<AuthorizationLease | { active: false }> {
+  async recover(credential: string, token: string, req: {
+    owner_node_id: string; request_id: string; expected_generation: string;
+    expected_host_revision: number; expected_catalog_revision: number; new_generation: string;
+  }): Promise<{ host_revision: number; store_generation: string }> {
+    const { key, id } = splitCredential(credential, "h1");
+    if (id !== req.owner_node_id) fail(403, "wrong_owner", "Credential belongs to another owner");
+    if (req.new_generation === req.expected_generation) fail(400, "invalid_request", "Recovery must rotate the generation");
+    const c = this.controller; const hash = await digest(credential);
+    const auth = await c.authenticate(token, "devices.manage");
+    if (auth.claims.account_key !== key) fail(403, "wrong_account", "Recovery authorization belongs to another account");
+    const requestHash = await digest(JSON.stringify(req));
+    return c.registry.update(key, state => {
+      const h = checkedHost(state, id, hash);
+      const d = deviceFrom(state, auth.claims, c.now());
+      if (!d.record.scopes.includes("devices.manage")) fail(403, "scope_denied", "Device management is not allowed");
+      const receipts = state!.generation_recoveries ??= {};
+      const receiptKey = auth.claims.device_id + "." + req.request_id;
+      const previous = receipts[receiptKey];
+      if (previous) {
+        if (previous.digest !== requestHash) fail(409, "request_id_conflict", "Recovery request changed");
+        return { state: state!, result: { host_revision: previous.host_revision, store_generation: previous.store_generation } };
+      }
+      if (h.generation !== req.expected_generation || h.revision !== req.expected_host_revision || h.catalog_high_water !== req.expected_catalog_revision) fail(409, "recovery_conflict", "Host generation, revision or catalog high-water changed");
+      h.generation = req.new_generation; h.catalog_high_water = 0; h.lease = null; h.revision += 1;
+      const result = { host_revision: h.revision, store_generation: h.generation };
+      receipts[receiptKey] = { digest: requestHash, ...result };
+      return { state: state!, result };
+    });
+  }
+
+  async introspect(credential: string, token: string, ownerId: string, scope: string, runtimeId: string, leaseId: string, providerExpiresAt: number | null = null): Promise<AuthorizationLease | { active: false }> {
     const { key, id } = splitCredential(credential, "h1");
     if (id !== ownerId) fail(403, "wrong_owner", "Credential belongs to another owner");
     const c = this.controller; const hash = await digest(credential);
@@ -87,7 +117,7 @@ export class HostService {
     let d;
     try { d = deviceFrom(state, claims, c.now()); } catch { return { active: false }; }
     if (!d.record.scopes.includes(scope as typeof d.record.scopes[number])) return { active: false };
-    const leaseSeconds = Math.min(AUTH_LEASE_SECONDS, claims.exp - Math.ceil(c.now() / 1000), Math.floor((host.lease.expires_at - c.now()) / 1000));
+    const leaseSeconds = Math.min(AUTH_LEASE_SECONDS, claims.exp - Math.ceil(c.now() / 1000), Math.floor((host.lease.expires_at - c.now()) / 1000), providerExpiresAt === null ? Infinity : Math.floor((providerExpiresAt - c.now()) / 1000));
     if (leaseSeconds <= 0) return { active: false };
     return { active: true, account_id: state!.account_id, device_id: d.record.device_id, device_revision: d.record.revision, role: "controller", owner_node_id: id, scopes: [...d.record.scopes], token_expires_at: new Date(claims.exp * 1000).toISOString(), lease_seconds: leaseSeconds, host_revision: host.revision, store_generation: host.lease.store_generation, host_lease_id: host.lease.lease_id };
   }

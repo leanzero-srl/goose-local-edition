@@ -30,11 +30,15 @@ export interface HostState {
   owner_node_id: string; host_name: string; protocol_version: 1; revision: number;
   credential_hash: string; registration_id: string; registration_receipt: string;
   tls_spki_sha256: string | null;
-  lease: { runtime_id: string; lease_id: string; expires_at: number; store_generation: string;
+  controller_port?: number | null;
+  lease: { runtime_id: string; lease_id: string; expires_at: number; renewed_at?: number; store_generation: string;
     catalog_revision: number; mesh_node_key: string } | null;
   generation: string | null; catalog_high_water: number;
 }
 export interface AccountState {
+  legacy_mesh_mints?: { in_flight: number; expires_at: number };
+  mesh_enrollments?: Record<string, MeshEnrollment>;
+  generation_recoveries?: Record<string, { digest: string; host_revision: number; store_generation: string }>;
   schema: 1; account_id: string; email: string;
   challenges: Record<string, Challenge>; devices: Record<string, DeviceState>; hosts: Record<string, HostState>;
   rate_windows: Record<string, { start: number; count: number }>;
@@ -44,4 +48,22 @@ export interface AuthorizationLease {
   active: true; account_id: string; device_id: string; device_revision: number; role: "controller";
   owner_node_id: string; scopes: ControllerScope[]; token_expires_at: string; lease_seconds: number;
   host_revision: number; store_generation: string; host_lease_id: string;
+}
+
+export interface MeshBinding {
+  node_id: string; node_key: string; user_id: string; key_id: string;
+}
+export interface MeshEnrollment {
+  enrollment_id: string; role: "host" | "controller"; subject_id: string;
+  status: "pending" | "issued" | "confirmed" | "revoked";
+  created_at: number; expires_at: number; user_id: string;
+  key_id: string | null; receipt: string | null; binding: MeshBinding | null;
+  cleanup_pending: boolean;
+}
+export interface MeshJoinCredential {
+  enrollment_id: string; auth_key: string; login_server: string; expiry_seconds: number;
+}
+export interface RegisteredPeers {
+  protocol_version: 1; revision: number; lease_seconds: number;
+  peers: { mesh_node_key: string; role: "host" | "controller"; owner_node_id: string | null }[];
 }

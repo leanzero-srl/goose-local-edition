@@ -1,3 +1,5 @@
+import { reserveLegacyMint } from "../controller/legacy-mesh";
+import { ControllerError } from "../controller/registry";
 import type { Deps } from "../lib/deps";
 import { mintHeadscaleJoinKey } from "../lib/headscale";
 import { jsonResponse } from "../lib/http";
@@ -35,24 +37,32 @@ export async function handleJoinKey(request: Request, deps: Deps): Promise<Respo
   }
 
   const email = verified.claims.sub;
-  if (deps.config.meshProvider === "headscale") {
-    const minted = await mintHeadscaleJoinKey(deps, email);
+  let release: (() => Promise<void>) | null;
+  try { release = await reserveLegacyMint(deps, email); }
+  catch (error) {
+    if (error instanceof ControllerError) return jsonResponse(error.status, { error: error.code });
+    return jsonResponse(503, { error: "controller authority unavailable" });
+  }
+  try {
+    if (deps.config.meshProvider === "headscale") {
+      const minted = await mintHeadscaleJoinKey(deps, email);
+      if (!minted.ok) {
+        return jsonResponse(502, { error: "headscale key mint failed", status: minted.status });
+      }
+      const nodeSecret = await ensureNodeSecret(deps.kv, email, deps.log);
+      return jsonResponse(200, {
+        authKey: minted.authKey,
+        loginServer: minted.loginServer,
+        expirySeconds: minted.expirySeconds,
+        nodeSecret,
+      });
+    }
+
+    const minted = await mintJoinKey(deps, email);
     if (!minted.ok) {
-      return jsonResponse(502, { error: "headscale key mint failed", status: minted.status });
+      return jsonResponse(502, { error: "tailscale key mint failed", status: minted.status });
     }
     const nodeSecret = await ensureNodeSecret(deps.kv, email, deps.log);
-    return jsonResponse(200, {
-      authKey: minted.authKey,
-      loginServer: minted.loginServer,
-      expirySeconds: minted.expirySeconds,
-      nodeSecret,
-    });
-  }
-
-  const minted = await mintJoinKey(deps, email);
-  if (!minted.ok) {
-    return jsonResponse(502, { error: "tailscale key mint failed", status: minted.status });
-  }
-  const nodeSecret = await ensureNodeSecret(deps.kv, email, deps.log);
-  return jsonResponse(200, { authKey: minted.authKey, expirySeconds: minted.expirySeconds, nodeSecret });
+    return jsonResponse(200, { authKey: minted.authKey, expirySeconds: minted.expirySeconds, nodeSecret });
+  } finally { if (release) await release(); }
 }

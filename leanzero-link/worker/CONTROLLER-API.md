@@ -1,6 +1,6 @@
 # Controller authority, protocol 1
 
-Implemented source slice A1, 26 October 2026. This is the authority/registry contract; it does not establish a working mobile-to-owner transport, mesh enrollment binding or owner command execution. No production deployment accompanies this patch.
+Implemented source slices A1 and A3, 26 October 2026. This documents registry authority and provider-verified enrollment. Installed mobile transport and owner execution remain separate integration proofs. Independent security review is pending; no production deployment accompanies this patch.
 
 All routes below are on the configured **HTTPS auth-worker URL** under `/v1/controller`. Native requests use Bearer headers; Origin is refused and credentials never go in query strings. Responses use `Cache-Control: no-store`. The controller receives no account JWT or `nodeSecret`. Its signed access JWT is version 2 with a distinct audience/issuer; existing host account tokens remain version 1, and old `/v1/mesh/join-key` refuses controller tokens.
 
@@ -37,7 +37,7 @@ Platforms are `ios`, `ipados`, `desktop`. Role/scopes are server policy; a suppl
 
 ## Host registration and introspection
 
-`POST /hosts/register` uses the **existing host account JWT**. Body is `{owner_node_id,registration_id,host_name,protocol_version:1,tls_spki_sha256}`. The IDs are UUIDs; `tls_spki_sha256` is lowercase 64-hex SHA-256 over the host certificate's DER SubjectPublicKeyInfo, or null before TLS is configured. Response is `{host_credential,host_revision}`. Store the opaque host credential privately. No host JWT is verified on the Rust client.
+`POST /hosts/register` uses the **existing host account JWT**. Body is `{owner_node_id,registration_id,host_name,protocol_version:1,tls_spki_sha256,controller_port}`. The IDs are UUIDs; `tls_spki_sha256` is lowercase 64-hex SHA-256 over the host certificate's DER SubjectPublicKeyInfo, or null before TLS is configured. Response is `{host_credential,host_revision}`. Store the opaque host credential privately. No host JWT is verified on the Rust client.
 
 Initial retries with the same account/registration ID/name/pin can recover the encrypted initial receipt before the host has ever acquired a lease. Existing activated owners additionally require `X-Link-Host-Credential` and the same registration ID. Different registration cannot take over that owner. Registration can update display name/pin with the existing credential; the host revision increments. A registered pin is a trust binding, not proof that a production TLS listener exists: the native client must verify the actual TLS key and HTTPS endpoint, without trust-all delegates or global ATS exceptions.
 
@@ -76,7 +76,7 @@ Invalid/cross-account/revoked controller authorization returns `{active:false}`.
 
 The real scope array contains the current device grants. The duration is capped by both token expiry and host lease expiry. Host/account/owner/runtime/lease are all checked. A missing TLS pin refuses with `host_trust_unconfigured`. The receiver anchors its monotonic freshness deadline before making the introspection request, sends no frame after it, and revalidates before mutation acceptance/dispatch. A1 supplies the authority decision; stream termination/queued-command behavior needs A2 owner implementation and proof.
 
-`GET /hosts` uses a device token with `catalog.read`. At A1 it returns registration metadata with `availability:"update_required"`, `registration_state:"awaiting_mesh_binding"`, empty endpoints/capabilities (or `offline` once the lease expires). It intentionally does not pretend that a submitted mesh key is provider-verified. Provider-confirmed endpoint/role binding and controller mesh enrollment remain the next source slice. The agreed endpoint shape for that slice is `{url:"https://<verified mesh IP>:<configured port>",tls_spki_sha256:"<hex>"}`; no caller-supplied IP is authoritative.
+Provider-confirmed host discovery, mesh enrollment and peer admission are specified in the A3 section below.
 
 ## Storage and operational gates
 
@@ -87,3 +87,56 @@ Cloudflare's actual entrypoint exports `DeviceRegistryDurableObject` and injects
 The conformance suite runs both adapters, concurrent OTP/refresh/CAS, wrong account/owner/runtime/scope, legacy replay, individual revocation, expiry, rollback, corruption, and actual worker-router persistence across a local workerd restart. Miniflare 5's shipped constructor requires `convertV4MiniflareOptions`; its README examples still show the old direct options. Test dependencies are pinned to the versions already resolved by Wrangler. These local results do not replace production rollout, native TLS/mesh proof, independent security review, or owner-side stream/run tests.
 
 Errors are `{error:{code,message,retryable}}`; 400 malformed request, 401 invalid credential/code, 403 origin/scope/owner/lease mismatch, 404 missing object/route, 409 stale/reused identity/revision, 429 rate limit, 503 missing/unavailable authority. Provider delivery failure is 502. Logs omit credential values, request payloads and underlying driver errors.
+
+## Provider-verified mesh enrollment (A3)
+
+Supported authority is Headscale v0.29.3, using its official [node](https://github.com/juanfont/headscale/blob/v0.29.3/proto/headscale/v1/node.proto), [pre-auth key](https://github.com/juanfont/headscale/blob/v0.29.3/proto/headscale/v1/preauthkey.proto) and [REST route](https://github.com/juanfont/headscale/blob/v0.29.3/proto/headscale/v1/headscale.proto) definitions. Hostnames and submitted addresses supply no identity proof. A binding records provider node ID, exact `nodekey:<64 lowercase hex>`, account user ID and the exact single-use key ID issued for that enrollment. The enrollment binding cannot switch keys; a provider rekey remains incompatible until explicit reenrollment. Node keys themselves can rotate; they are not physical-device identifiers.
+
+The controller provider adapter checks the existing account-isolation policy; it never rewrites provider policy. The account must already have its provider user, established by host onboarding. Tagged nodes are not eligible for this user-isolated path. The provider response's untagged user, exact issued key ID and current node key must agree. Empty or incomplete provider DTOs are errors. v0.29.3 lists are unpaginated; a response advertising pagination is rejected with `provider_pagination_unsupported`, preventing a partial list from authorizing enrollment. Only assigned 100.64.0.0/10 and fd7a:115c:a1e0::/48 addresses can form endpoints.
+
+`POST /mesh/join-key` uses a current controller token, body `{enrollment_id:UUID}`; `POST /hosts/mesh/join-key` uses a host credential with the same body. Role comes from the route and credential; a supplied role is rejected. The host must already have a valid registered port and SPKI pin. Both return:
+
+```json
+{"enrollment_id":"<UUID>","auth_key":"<single-use credential>","login_server":"https://<headscale>","expiry_seconds":600}
+```
+
+The duration follows configured TS_KEY_EXPIRY_SECONDS; 600 is the default. No account JWT or nodeSecret is returned. Persist the enrollment ID before requesting. The account CAS reserves the external mint once; exact retries recover the encrypted response. A concurrent or interrupted mint returns `enrollment_pending` rather than creating another key. A confirmed identity can explicitly request a new enrollment ID after its provider node disappeared or expired; a still-live provider node cannot be silently replaced. A pending enrollment with an unknown provider outcome must expire before requesting a new ID.
+
+Join using the app-owned mesh instance. Existing `tailscale up --reset` does not by itself prove that a new key was consumed. Real reenrollment still needs installed-client proof; no daemon was started by these tests.
+
+`POST /mesh/confirm` and `POST /hosts/mesh/confirm` take `{enrollment_id,mesh_node_key}` with their respective credential. The former returns DeviceRecord; the latter returns `{owner_node_id,mesh_node_key,host_revision}`. Confirmation is repeatable and refuses forged keys, another account's node, another subject's enrollment, expired enrollment, tagged/expired nodes, or changing a confirmed identity. Unconfirmed nodes never gain an admitted role.
+
+Before issuing any controller key, all unexpired account provider nodes must already have a confirmed enrollment. Every host must have a registered pin/port and current lease. Unknown nodes, legacy hosts and outstanding untracked provider join keys produce `409 update_required`. Legacy key mint requests and controller enrollment reservations serialize in the same account registry: in-flight legacy mints and their credential lifetime block controller issuance; issued/confirmed controller enrollments block new legacy join keys. This worker gate cannot upgrade or suppress an old binary itself. Rollout still requires fleet upgrade and direct mixed-version verification before admitting phones.
+
+Hosted Tailscale returns `501 provider_binding_unsupported` for these new mesh/discovery routes. The configured shared tagged key path has no implemented per-account enrollment attestation; it is not treated as equivalent to Headscale. No provider returns `501 mesh_unconfigured`. Legacy account authentication/join-key stays available to accounts without controller enrollment and still rejects controller tokens.
+
+### Host endpoints and authoritative peer admission
+
+Host registration accepts `controller_port:1..65535|null`; missing port is an explicit old/incomplete registration. Host lease and introspection now require a current provider-confirmed host binding. The lease's submitted key must equal the attested key. Host leases and authorization leases are also capped by provider node expiry.
+
+`GET /hosts` uses a controller token with catalog.read. It re-reads the provider and registry, returning `{revision,hosts:[HostDescriptor]}`. Verified, leased, online hosts expose only `{url:"https://<provider IP>:<registered port>",tls_spki_sha256:"<registered hex>"}` endpoints; IPv6 literals use brackets. Provider IP moves update the next response. Incompatible records carry update_required, empty endpoints/capabilities and registration_state awaiting_mesh_binding; compatible unreachable/expired-lease hosts are offline. Provider outage is an error, never stale successful endpoints. The reported online state reflects the provider and lease; it is not an end-to-end TLS reachability probe.
+
+`GET /hosts/peers` uses the host credential and returns:
+
+```json
+{"protocol_version":1,"revision":42,"lease_seconds":30,"peers":[
+  {"mesh_node_key":"nodekey:<64 hex>","role":"host","owner_node_id":"<UUID>"},
+  {"mesh_node_key":"nodekey:<64 hex>","role":"controller","owner_node_id":null}
+]}
+```
+
+The receiving host must have its own current verified binding and lease. Only current provider-attested, confirmed registry enrollments appear. Missing/unknown/controller peers must never be polled or counted as compute hosts. The registry revision fences registry changes; provider address/liveness changes can occur without incrementing that revision, so refresh each snapshot even if its revision is unchanged. Anchor freshness before the HTTP request. lease_seconds is at most 30 and capped by the receiver/peer host leases, provider expiries and device refresh-family expiries; zero remaining freshness returns an error. Outage or deadline expiry must clear admission.
+
+### Revocation cleanup and generation recovery
+
+Device revoke retains its existing response and adds `mesh_cleanup:"complete"|"pending"`. Registry authorization is removed before calling the provider. Cleanup expires the issued single-use keys, enumerates nodes by the exact account/key binding (including joined-but-unconfirmed nodes), then deletes those nodes. A second controller keeps its own enrollment. Provider failure leaves an explicit pending receipt. `POST /devices/{device_id}/mesh/cleanup`, authenticated with devices.manage, body `{}`, retries cleanup and returns `{device_id,mesh_cleanup}`. Refresh replay also invokes cleanup. Refresh cannot restore a revoked device. Mesh cleanup does not cancel already-running owner work.
+
+`POST /hosts/recover-generation` requires Bearer host credential and body:
+`{token:<controller token with devices.manage>,owner_node_id,request_id,expected_generation,expected_host_revision,expected_catalog_revision,new_generation}`.
+The expected catalog revision is the authoritative high-water. Both credentials must belong to the same account; every expected value must match. Success invalidates the host lease, rotates generation, resets that generation's high-water to zero and increments host revision, returning `{host_revision,store_generation}`. Exact retries recover the same result. Changed request IDs/contents, stale high-water, old-generation leases and old lease IDs are refused. The client must perform this explicit recovery flow; it cannot silently reset registration on 409.
+
+### A3 verification and remaining rollout proof
+
+Local typecheck, the full worker suite (178 tests), and Wrangler dry-run are the release-source checks. The new 18 tests execute both actual registry adapters against a loopback HTTP mock implementing the official Headscale REST shapes, including provider expiry, cross-account/role/forged-key negatives, IP moves, incomplete pagination, policy failure, mixed legacy nodes, outstanding/in-flight credentials, simultaneous retries, revoke during mint, retryable cleanup, sibling controllers, and explicit generation recovery. These are wire-level provider mocks, not a real Headscale daemon or installed phone.
+
+Independent security review is pending. No production provider query, credential read, daemon start, policy mutation or deployment was performed. Real Headscale enrollment/rekey behavior, mobile VPN enrollment, mixed-version fleet visibility, endpoint TLS reachability and manager admission wiring remain rollout gates.

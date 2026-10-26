@@ -5,10 +5,12 @@ import { jsonResponse, readJsonBody } from "../lib/http";
 import { bumpFixedWindow } from "../lib/ratelimit";
 import { sendOtpEmail } from "../lib/resend";
 import { normalizeCode, normalizeEmail } from "../lib/validate";
-import { ACCOUNT_KEY, HOST_LEASE_SECONDS, UUID } from "./crypto";
+import { ACCOUNT_KEY, UUID } from "./crypto";
 import { ControllerError, Registry, fail, integer, object, string, uuid } from "./registry";
 import { ControllerService } from "./service";
 import { HostService } from "./hosts";
+import { MeshService } from "./mesh";
+import { nodeKey } from "./mesh-provider";
 import type { Platform } from "./types";
 
 function bearer(request: Request): string {
@@ -39,6 +41,7 @@ export async function handleController(request: Request, deps: Deps): Promise<Re
     if (!deps.config.jwtSecret) fail(503, "authority_unconfigured", "Controller signing key is not configured");
     const service = new ControllerService(new Registry(deps.deviceRegistry), deps.config.jwtSecret, deps.now);
     const hosts = new HostService(service);
+    const mesh = new MeshService(service, deps);
     const path = new URL(request.url).pathname.slice("/v1/controller".length);
     let result: unknown;
     switch (path) {
@@ -73,7 +76,37 @@ export async function handleController(request: Request, deps: Deps): Promise<Re
       }
       case "/auth/refresh": {
         requireMethod(request, "POST"); const f = await fields(request);
-        result = await service.refresh(uuid(f.device_id, "device_id"), string(f.refresh_token, "refresh_token"), uuid(f.request_id, "request_id")); break;
+        const refresh = string(f.refresh_token, "refresh_token");
+        try { result = await service.refresh(uuid(f.device_id, "device_id"), refresh, uuid(f.request_id, "request_id")); }
+        finally {
+          const parts = refresh.split(".");
+          if (parts[0] === "r1" && ACCOUNT_KEY.test(parts[1] ?? "") && UUID.test(parts[2] ?? "")) await mesh.cleanup(parts[1]!, parts[2]!);
+        }
+        break;
+      }
+      case "/mesh/join-key":
+      case "/hosts/mesh/join-key": {
+        requireMethod(request, "POST"); const f = await fields(request);
+        if (f.role !== undefined) fail(400, "invalid_request", "Role is assigned by the enrollment route");
+        result = await mesh.join(bearer(request), path.startsWith("/hosts/") ? "host" : "controller", uuid(f.enrollment_id, "enrollment_id")); break;
+      }
+      case "/mesh/confirm":
+      case "/hosts/mesh/confirm": {
+        requireMethod(request, "POST"); const f = await fields(request);
+        result = await mesh.confirm(bearer(request), path.startsWith("/hosts/") ? "host" : "controller", uuid(f.enrollment_id, "enrollment_id"), nodeKey(f.mesh_node_key)); break;
+      }
+      case "/hosts/peers": {
+        requireMethod(request, "GET"); result = await mesh.peers(bearer(request)); break;
+      }
+      case "/hosts/recover-generation": {
+        requireMethod(request, "POST"); const f = await fields(request);
+        result = await hosts.recover(bearer(request), string(f.token, "token"), {
+          owner_node_id: uuid(f.owner_node_id, "owner_node_id"), request_id: uuid(f.request_id, "request_id"),
+          expected_generation: uuid(f.expected_generation, "expected_generation"),
+          expected_host_revision: integer(f.expected_host_revision, "expected_host_revision"),
+          expected_catalog_revision: integer(f.expected_catalog_revision, "expected_catalog_revision"),
+          new_generation: uuid(f.new_generation, "new_generation"),
+        }); break;
       }
       case "/devices": {
         requireMethod(request, "GET");
@@ -85,25 +118,39 @@ export async function handleController(request: Request, deps: Deps): Promise<Re
         if (f.protocol_version !== 1) fail(400, "invalid_request", "Unsupported host protocol");
         const pin = f.tls_spki_sha256 === undefined || f.tls_spki_sha256 === null ? null : string(f.tls_spki_sha256, "tls_spki_sha256");
         if (pin !== null && !ACCOUNT_KEY.test(pin)) fail(400, "invalid_request", "TLS SPKI pin must be SHA-256 hex");
-        result = await hosts.register(bearer(request), request.headers.get("X-Link-Host-Credential"), { owner_node_id: uuid(f.owner_node_id, "owner_node_id"), registration_id: uuid(f.registration_id, "registration_id"), host_name: name(f.host_name), protocol_version: 1, tls_spki_sha256: pin }); break;
+        const port = f.controller_port === undefined || f.controller_port === null ? null : integer(f.controller_port, "controller_port");
+        if (port !== null && (port < 1 || port > 65535)) fail(400, "invalid_request", "controller_port must be 1..65535");
+        result = await hosts.register(bearer(request), request.headers.get("X-Link-Host-Credential"), { owner_node_id: uuid(f.owner_node_id, "owner_node_id"), registration_id: uuid(f.registration_id, "registration_id"), host_name: name(f.host_name), protocol_version: 1, tls_spki_sha256: pin, controller_port: port }); break;
       }
       case "/hosts/lease": {
         requireMethod(request, "POST"); const f = await fields(request);
-        result = await hosts.lease(bearer(request), { owner_node_id: uuid(f.owner_node_id, "owner_node_id"), runtime_id: uuid(f.runtime_id, "runtime_id"), store_generation: uuid(f.store_generation, "store_generation"), catalog_revision: integer(f.catalog_revision, "catalog_revision"), mesh_node_key: string(f.mesh_node_key, "mesh_node_key") }); break;
+        const verifiedHost = await mesh.requireHost(bearer(request), nodeKey(f.mesh_node_key));
+        result = await hosts.lease(bearer(request), { owner_node_id: uuid(f.owner_node_id, "owner_node_id"), runtime_id: uuid(f.runtime_id, "runtime_id"), store_generation: uuid(f.store_generation, "store_generation"), catalog_revision: integer(f.catalog_revision, "catalog_revision"), mesh_node_key: string(f.mesh_node_key, "mesh_node_key") }, verifiedHost.node.expires_at); break;
       }
       case "/introspect": {
         requireMethod(request, "POST"); const f = await fields(request);
-        result = await hosts.introspect(bearer(request), string(f.token, "token"), uuid(f.owner_node_id, "owner_node_id"), string(f.required_scope, "required_scope"), uuid(f.runtime_id, "runtime_id"), uuid(f.host_lease_id, "host_lease_id")); break;
+        const verifiedHost = await mesh.requireHost(bearer(request));
+        result = await hosts.introspect(bearer(request), string(f.token, "token"), uuid(f.owner_node_id, "owner_node_id"), string(f.required_scope, "required_scope"), uuid(f.runtime_id, "runtime_id"), uuid(f.host_lease_id, "host_lease_id"), verifiedHost.node.expires_at); break;
       }
       case "/hosts": {
-        requireMethod(request, "GET"); const auth = await service.authenticate(bearer(request), "catalog.read");
-        result = { revision: auth.revision, hosts: Object.values(auth.state.hosts).map(h => ({ owner_node_id: h.owner_node_id, name: h.host_name, device_role: "host", protocol_version: h.protocol_version, availability: h.lease && h.lease.expires_at > deps.now() ? "update_required" : "offline", registration_state: "awaiting_mesh_binding", last_seen_at: h.lease ? new Date(h.lease.expires_at - HOST_LEASE_SECONDS * 1000).toISOString() : null, tls_spki_sha256: h.tls_spki_sha256, mesh_node_key: h.lease?.mesh_node_key ?? null, endpoints: [], capabilities: [] })) }; break;
+        requireMethod(request, "GET"); result = await mesh.hosts(bearer(request)); break;
       }
       default: {
+        const cleanup = /^\/devices\/([^/]+)\/mesh\/cleanup$/.exec(path);
+        if (cleanup) {
+          requireMethod(request, "POST");
+          const actor = await service.authenticate(bearer(request), "devices.manage");
+          const id = uuid(cleanup[1], "device_id");
+          if (!actor.state.devices[id]) fail(404, "device_missing", "Device was not found");
+          result = { device_id: id, mesh_cleanup: await mesh.cleanup(actor.claims.account_key, id) }; break;
+        }
         const match = /^\/devices\/([^/]+)\/revoke$/.exec(path);
         if (!match) fail(404, "not_found", "Unknown controller route");
         requireMethod(request, "POST"); const f = await fields(request);
+        const actor = await service.authenticate(bearer(request), "devices.manage");
         result = await service.revoke(bearer(request), uuid(match[1], "device_id"), uuid(f.request_id, "request_id"), integer(f.expected_revision, "expected_revision"));
+        const mesh_cleanup = await mesh.cleanup(actor.claims.account_key, uuid(match[1], "device_id"));
+        result = { ...result as object, mesh_cleanup };
       }
     }
     return jsonResponse(200, result, { "Cache-Control": "no-store" });
