@@ -350,9 +350,9 @@ function switchesOf(linkState: LinkState | null): SwitchState {
 
 /**
  * The ONE master switch and its three parts, each a goose config key its route reads. Off writes all
- * three off; on writes all three on, and each can then be unticked. The model-management switch is
- * built into the running mesh service, so a change to it applies at the next connect — said, with
- * the reconnect one click away.
+ * three off; on writes all three on. Each part can also be changed independently. The model-management
+ * switch is built into the running mesh service, so a change applies at the next connect — said,
+ * with the reconnect one click away.
  */
 function LetOthersUseThisMac({
   linkState,
@@ -418,7 +418,7 @@ function LetOthersUseThisMac({
             key={p}
             testId={`my-mac-permission-${p}`}
             checked={shown[p]}
-            disabled={saving || !master}
+            disabled={saving}
             label={intl.formatMessage(PERMISSION_LABEL[p])}
             description={hint[p]}
             onChange={(on) => void write({ ...shown, [p]: on })}

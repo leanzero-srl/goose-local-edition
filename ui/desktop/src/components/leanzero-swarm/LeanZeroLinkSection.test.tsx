@@ -570,6 +570,47 @@ describe('LeanZeroLinkSection — My Macs', () => {
     expect(peer).not.toHaveTextContent('peer returned 403');
   });
 
+  it('enables only model and session management from all permissions off', async () => {
+    currentState = {
+      ...CONNECTED,
+      remoteExecutionAllowed: false,
+      chatServingAllowed: false,
+      distributedNodeAllowed: false,
+    };
+    mockUpsert.mockImplementation(async (key: string, value: boolean) => {
+      if (key === 'LEANZERO_LINK_ALLOW_REMOTE_EXECUTION') {
+        currentState = { ...currentState, remoteExecutionAllowed: value };
+      }
+    });
+    render();
+    const self = await macCard('self');
+    const manage = within(self).getByTestId('my-mac-permission-manage');
+    const chat = within(self).getByTestId('my-mac-permission-chat');
+    const split = within(self).getByTestId('my-mac-permission-split');
+    const master = within(self).getByRole('switch', { name: 'Let my other devices use this Mac' });
+    expect(master).toHaveAttribute('aria-checked', 'false');
+    for (const permission of [manage, chat, split]) {
+      expect(permission).toHaveAttribute('aria-checked', 'false');
+      expect(permission).toBeEnabled();
+    }
+
+    await userEvent.click(manage);
+
+    await waitFor(() =>
+      expect(mockUpsert).toHaveBeenCalledExactlyOnceWith(
+        'LEANZERO_LINK_ALLOW_REMOTE_EXECUTION',
+        true
+      )
+    );
+    await waitFor(() => expect(manage).toBeEnabled());
+    expect(manage).toHaveAttribute('aria-checked', 'true');
+    expect(chat).toHaveAttribute('aria-checked', 'false');
+    expect(split).toHaveAttribute('aria-checked', 'false');
+    expect(master).toHaveAttribute('aria-checked', 'true');
+    expect(currentState.chatServingAllowed).toBe(false);
+    expect(currentState.distributedNodeAllowed).toBe(false);
+  });
+
   it('this Mac: one master switch and three parts, each writing its own config key', async () => {
     currentState = { ...CONNECTED, remoteExecutionAllowed: false, chatServingAllowed: false };
     render();
@@ -582,8 +623,7 @@ describe('LeanZeroLinkSection — My Macs', () => {
     expect(self).toHaveTextContent(
       'Your linked devices can manage models and provider settings, start or steer sessions, stop runs and answer requests for input on this Mac.'
     );
-    // Off: the three parts wait for the master.
-    expect(within(self).getByTestId('my-mac-permission-chat')).toBeDisabled();
+    expect(within(self).getByTestId('my-mac-permission-chat')).toBeEnabled();
 
     // goose persists what was written; the next status read says so.
     mockUpsert.mockImplementation(async () => {
