@@ -191,9 +191,10 @@ struct AddMacView: View {
         List {
             Section("Connect another Mac") {
                 Text("1. Install Goose Swarm on the Mac.")
-                Text("2. Open Link and sign in with the same account as this controller.")
-                Text("3. Connect the Mac to Link and finish its controller-access setup.")
-                Text("4. Sync here. The Mac appears after it has registered its secure connection.")
+                Text("2. Open Providers → LeanZero MLX → My Macs. Sign in with the same account as this controller.")
+                Text("3. Choose Connect to mesh.")
+                Text("4. For session controls and changes to models or providers, enable “Manage models and sessions” on This Mac.")
+                Text("5. Return here and choose Sync registered Macs. The Mac appears after it has registered its secure connection.")
                 Button("Sync registered Macs") { store.manualSync() }.disabled(store.syncRunning)
             }.listRowBackground(Studio.surface)
             Section("Connected Macs") { ForEach(store.hosts) { host in Label(host.name, icon: .laptop) } }.listRowBackground(Studio.surface)

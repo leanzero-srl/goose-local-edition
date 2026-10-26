@@ -27,7 +27,8 @@ const messages = defineMessages({
   archived: { id: 'controller.catalog.archived', defaultMessage: 'Include archived sessions' },
   signIn: {
     id: 'controller.catalog.signIn',
-    defaultMessage: 'Sign in to LeanZero Link in Settings to see your Macs here.',
+    defaultMessage:
+      'Sign in to LeanZero Link under Providers → LeanZero MLX → My Macs, then connect to see your Macs here.',
   },
   loading: { id: 'controller.catalog.loading', defaultMessage: 'Connecting to your linked Macs…' },
   empty: {
