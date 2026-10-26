@@ -98,3 +98,12 @@ Require a rebuilt binary after source/privacy changes. A build target that depen
 ## Theme proof on the actual native screen (2026-10-26)
 
 Test visible navigation titles as well as accessibility text. Forced SwiftUI navigation-bar background modifiers can cover a large title even while its accessibility label exists. Validate every theme on the actual iPhone and iPad layouts; preserve native navigation behavior before adding more styling overrides. Prove preference persistence by selecting a theme, terminating and relaunching the app, and verify System tracks an OS appearance change. Respect Reduce Motion and stop decorative animations when the scene is inactive.
+
+
+## Consent, refusal and explicit navigation entry (2026-10-26)
+
+For streaming remote work, permission binds the reviewed semantic payload, account/device, owner/work, store generation and run. Preserve those exact values across the human review interval; a rolling transcript revision is concurrency metadata, not the reviewed instruction. If only that revision advances, refresh it immediately before first dispatch after revalidating the same target/run/current input. A changed recipient configuration or run needs a new review. Verify this with a live frame during consent, a changed-run negative control and a changed composer draft; static snapshots missed the defect.
+
+Distinguish a typed refusal proven to occur before server acceptance from an unknown/lost acknowledgement. A verified preaccept refusal may clear only its exact receiptless local outbox entry, atomically, and return to a new explicit user action. Do not synthesize an authoritative receipt or retry automatically. Keep uncertain delivery on the original command/status lookup; a later 404 alone never proves nonexecution. Trace the server's idempotency lookup, rejection and receipt INSERT order before defining the narrow refusal classifier. A local deletion failure must retain the unresolved row.
+
+An explicit Connect action must open the sign-in root even if the Settings tab previously held a pushed details page. Own the navigation path and reset it on that explicit entry; changing tabs alone preserves the old page. Prove the real sequence (Settings detail -> another tab -> Connect -> sign-in), not only a routing variable. Ordinary tab switching may retain its path.

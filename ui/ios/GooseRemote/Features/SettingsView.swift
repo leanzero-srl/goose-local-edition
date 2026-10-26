@@ -1,5 +1,7 @@
 import SwiftUI
 
+enum SettingsDestination: Hashable { case devices, privacy, iconLicense }
+
 struct SettingsView: View {
     @Environment(ControllerStore.self) private var store
     @AppStorage(StudioTheme.storageKey) private var theme: StudioTheme = .system
@@ -24,7 +26,7 @@ struct SettingsView: View {
                         .font(.subheadline).foregroundStyle(Studio.secondaryInk)
                 }.listRowBackground(Studio.surface)
                 Section("Access") {
-                    NavigationLink("Connected devices") { deviceList }
+                    NavigationLink("Connected devices", value: SettingsDestination.devices)
                     Button("Revoke this device", role: .destructive) { deviceToRevoke = envelope.credentials.device }
                         .disabled(store.authBusy || store.syncRunning)
                     Button("Remove local access", role: .destructive) { removingLocal = true }.disabled(store.authBusy || store.syncRunning || store.sending)
@@ -73,10 +75,17 @@ struct SettingsView: View {
                 LabeledContent("Goose Swarm Remote", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown")
                 Text("Native iPhone and iPad controller for Goose Swarm. Your device does not run inference, shell jobs, or model downloads.")
                     .font(.subheadline).foregroundStyle(Studio.secondaryInk)
-                NavigationLink("Connection & privacy") { privacy }
-                NavigationLink("Icon license") { LucideLicenseView() }
+                NavigationLink("Connection & privacy", value: SettingsDestination.privacy)
+                NavigationLink("Icon license", value: SettingsDestination.iconLicense)
             }.listRowBackground(Studio.surface)
         }.navigationTitle("Settings").studioScreen()
+            .navigationDestination(for: SettingsDestination.self) { destination in
+                switch destination {
+                case .devices: deviceList
+                case .privacy: privacy
+                case .iconLicense: LucideLicenseView()
+                }
+            }
             .onAppear { if store.deviceName.isEmpty { store.deviceName = platform == "ipados" ? "My iPad" : "My iPhone" } }
             .confirmationDialog("Remove access from this device?", isPresented: $removingLocal, titleVisibility: .visible) {
                 Button("Remove local access", role: .destructive) {
@@ -106,6 +115,12 @@ struct SettingsView: View {
     }
     private var privacy: some View {
         List {
+            Section("Policy & support") {
+                Link("Privacy policy", destination: URL(string: "https://leanzero.net/privacy-policy")!)
+                    .foregroundStyle(Studio.accentInk).accessibilityIdentifier("privacy-policy-link")
+                Link("Support", destination: URL(string: "mailto:office@leanzero.net")!)
+                    .foregroundStyle(Studio.accentInk).accessibilityIdentifier("support-link")
+            }
             Section("On this device") {
                 Text("Access and refresh credentials use device-bound Keychain storage. Drafts and session command receipts use protected app storage and are excluded from backup. Pending provider changes, including any key you enter, stay in device-bound Keychain until delivery is resolved or you clear the saved request.")
                 Text("Your Mac owns session history and execution. This app displays history only for the session you select.")
