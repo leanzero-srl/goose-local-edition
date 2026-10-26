@@ -79,7 +79,8 @@ pub fn custom_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     }
 
-    // Generate the dispatch arms using matches_method for routing.
+    // Box route futures so unrelated handlers do not inflate the dispatcher stack frame.
+    // Desktop ACP runs on Tokio workers with their default stack size.
     let arms: Vec<_> = routes
         .iter()
         .map(|route| {
@@ -92,7 +93,7 @@ pub fn custom_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
                         if <#req_type as agent_client_protocol::JsonRpcMessage>::matches_method(method) {
                             let req = serde_json::from_value(params)
                                 .map_err(|e| agent_client_protocol::Error::invalid_params().data(e.to_string()))?;
-                            let result = self.#fn_ident(req).await?;
+                            let result = box_handler_future(|| self.#fn_ident(req)).await?;
                             return serde_json::to_value(&result)
                                 .map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()));
                         }
@@ -101,7 +102,7 @@ pub fn custom_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 None => {
                     quote! {
                         if <#req_type as agent_client_protocol::JsonRpcMessage>::matches_method(method) {
-                            let result = self.#fn_ident().await?;
+                            let result = box_handler_future(|| self.#fn_ident()).await?;
                             return serde_json::to_value(&result)
                                 .map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()));
                         }
@@ -187,6 +188,15 @@ pub fn custom_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
             method: &str,
             params: serde_json::Value,
         ) -> Result<serde_json::Value, agent_client_protocol::Error> {
+            // Construct each future in its own frame: boxing it directly in an arm still
+            // reserves stack space for every handler's temporary in debug builds.
+            #[inline(never)]
+            fn box_handler_future<F: std::future::Future>(
+                handler: impl FnOnce() -> F,
+            ) -> std::pin::Pin<Box<F>> {
+                Box::pin(handler())
+            }
+
             #(#arms)*
             Err(agent_client_protocol::Error::method_not_found())
         }
