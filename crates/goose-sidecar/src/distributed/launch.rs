@@ -500,6 +500,163 @@ impl TensorLaunch {
         }
         Ok(launches)
     }
+
+    /// Every mlx_lm pipeline rank's launch figures and prompt-cache weights. `layers[r]` / `full[r]`:
+    /// the layers rank r holds and how many of them are full attention (`LayerSplit`).
+    ///
+    /// Each rank runs its own mlx_lm prompt cache (`LRUPromptCache`, evicting on the sum of its
+    /// layer caches' `nbytes`) over the same requests, and the ranks must evict alike — a rank
+    /// that reuses a different prefix runs a different number of prefill steps and the hidden
+    /// states it passes no longer pair up. A pipeline rank holds only its layers' KV, so raw bytes
+    /// differ by rank; `rank_pipeline_split.py` scales each layer kind's `nbytes` by
+    /// `lcm(that kind's layers per rank) / this rank's`, which makes every rank's sum one integer.
+    /// The limits and the prefill projection are expressed in that unit here, identical on every
+    /// rank: the prefill per-token cost is `lcm × one layer's`, the limit the smallest of
+    /// `real limit × the rank's smaller weight` (weighted ≥ that weight × real bytes, so a rank
+    /// inside the weighted limit is inside its real one), the entry count the smallest.
+    pub fn for_pipeline_ranks(
+        plans: &[&RankPlan],
+        layers: &[u32],
+        full: &[u32],
+    ) -> Result<(Vec<Self>, Vec<PipelineCacheWeights>)> {
+        if plans.is_empty() || plans.len() != layers.len() || layers.len() != full.len() {
+            bail!(
+                "the pipeline launch needs one plan, layer count and full-attention count per rank \
+                 ({} plans, {} layer counts, {} full-attention counts)",
+                plans.len(),
+                layers.len(),
+                full.len()
+            );
+        }
+        let model_layers = plans.iter().map(|p| p.layer_end).max().unwrap_or(0);
+        let covered: u32 = layers.iter().sum();
+        if covered != model_layers
+            || plans
+                .iter()
+                .zip(layers)
+                .any(|(plan, &n)| plan.layer_end.saturating_sub(plan.layer_start) != n)
+        {
+            bail!(
+                "the split {layers:?} covers {covered} layers, the plans' ranges {:?} cover \
+                 {model_layers}: every rank must load exactly its planned range",
+                plans
+                    .iter()
+                    .map(|p| (p.layer_start, p.layer_end))
+                    .collect::<Vec<_>>()
+            );
+        }
+        let mut launches = plans
+            .iter()
+            .map(|plan| Self::from_plan(plan))
+            .collect::<Result<Vec<Self>>>()?;
+        let costs = |p: &TensorPrefill| {
+            (
+                p.step,
+                p.pair_bytes,
+                p.kv_bytes_per_token,
+                p.sequence_state_bytes,
+            )
+        };
+        let first = launches[0].prefill;
+        if let Some((rank, other)) = launches
+            .iter()
+            .enumerate()
+            .find(|(_, launch)| costs(&launch.prefill) != costs(&first))
+        {
+            bail!(
+                "the pipeline ranks' prefill figures differ (rank 0: {:?}, rank {rank}: {:?}): the \
+                 hidden states pass rank to rank each step, so every rank must take the same chunk",
+                costs(&first),
+                costs(&other.prefill)
+            );
+        }
+        let mut swa = Vec::with_capacity(layers.len());
+        for (rank, (&total, &full_layers)) in layers.iter().zip(full).enumerate() {
+            if full_layers > total {
+                bail!("rank {rank} holds {total} layers but {full_layers} full-attention ones");
+            }
+            swa.push(u64::from(total - full_layers));
+        }
+        let full: Vec<u64> = full.iter().map(|&n| u64::from(n)).collect();
+        let (full_multiple, full_weights) = kind_weights("full-attention", &full)?;
+        let (swa_multiple, swa_weights) = kind_weights("sliding-window", &swa)?;
+        let widest_full = full.iter().copied().max().unwrap_or(0);
+        let widest_swa = swa.iter().copied().max().unwrap_or(0);
+        let per_layer = |total: u64, widest: u64, what: &str| -> Result<u64> {
+            if widest == 0 {
+                return Ok(0);
+            }
+            if total % widest != 0 {
+                bail!(
+                    "the plan's {what} ({total} B) is not {widest} layers' worth: it was not built \
+                     by the layer split planner"
+                );
+            }
+            Ok(total / widest)
+        };
+        let kv_per_layer = per_layer(first.kv_bytes_per_token, widest_full, "KV per token")?;
+        let state_per_layer = per_layer(
+            first.sequence_state_bytes,
+            widest_swa,
+            "sliding-window state",
+        )?;
+        let workspace = launches
+            .iter()
+            .map(|l| l.prefill.workspace_bytes)
+            .min()
+            .unwrap_or(first.workspace_bytes);
+        let mut limit = u64::MAX;
+        for (rank, launch) in launches.iter().enumerate() {
+            let weight = full_weights[rank].min(swa_weights[rank]);
+            let scaled = launch
+                .prompt_cache_limit_bytes
+                .checked_mul(weight)
+                .with_context(|| format!("rank {rank}'s weighted prompt cache limit overflows"))?;
+            limit = limit.min(scaled);
+        }
+        let entries = launches
+            .iter()
+            .map(|l| l.prompt_cache_entries)
+            .min()
+            .unwrap_or(0);
+        for launch in &mut launches {
+            launch.prefill.workspace_bytes = workspace;
+            launch.prefill.kv_bytes_per_token = full_multiple * kv_per_layer;
+            launch.prefill.sequence_state_bytes = swa_multiple * state_per_layer;
+            launch.prompt_cache_limit_bytes = limit;
+            launch.prompt_cache_entries = entries;
+        }
+        let weights = full_weights
+            .into_iter()
+            .zip(swa_weights)
+            .map(|(full, swa)| PipelineCacheWeights { full, swa })
+            .collect();
+        Ok((launches, weights))
+    }
+}
+
+/// One layer kind's weights per rank and their common multiple (`lcm` of the kind's layers per
+/// rank). A kind no rank holds weighs 1 with multiple 0; a kind some ranks hold and others not is
+/// refused: no weight makes a rank with none of it count the bytes the others hold.
+fn kind_weights(kind: &str, counts: &[u64]) -> Result<(u64, Vec<u64>)> {
+    if counts.iter().all(|&n| n == 0) {
+        return Ok((0, vec![1; counts.len()]));
+    }
+    if let Some(rank) = counts.iter().position(|&n| n == 0) {
+        bail!(
+            "rank {rank} holds no {kind} layer while another rank does: its prompt cache cannot \
+             count the bytes the others' do, so the ranks would evict differently"
+        );
+    }
+    fn gcd(a: u64, b: u64) -> u64 {
+        if b == 0 {
+            a
+        } else {
+            gcd(b, a % b)
+        }
+    }
+    let multiple = counts.iter().fold(1, |acc, &n| acc / gcd(acc, n) * n);
+    Ok((multiple, counts.iter().map(|&n| multiple / n).collect()))
 }
 
 /// The per-rank tensor specs. See [`base_specs`] for the backend env.
@@ -507,6 +664,45 @@ pub fn rank_specs(
     config: &DistributedConfig,
     served: &ServedNames,
     per_rank: &[TensorLaunch],
+    context_window: u64,
+    memory_report_seconds: f64,
+) -> Vec<RankSpec> {
+    mlx_lm_server_specs(
+        config,
+        served,
+        per_rank,
+        None,
+        context_window,
+        memory_report_seconds,
+    )
+}
+
+/// The per-rank mlx_lm pipeline specs: the tensor wrapper's program with the planned split
+/// (`LayerSplit::layers`) and each rank's prompt-cache weights (`TensorLaunch::for_pipeline_ranks`).
+pub fn mlx_pipeline_rank_specs(
+    config: &DistributedConfig,
+    served: &ServedNames,
+    per_rank: &[TensorLaunch],
+    weights: &[PipelineCacheWeights],
+    split: &[u32],
+    context_window: u64,
+    memory_report_seconds: f64,
+) -> Vec<RankSpec> {
+    mlx_lm_server_specs(
+        config,
+        served,
+        per_rank,
+        Some((split, weights)),
+        context_window,
+        memory_report_seconds,
+    )
+}
+
+fn mlx_lm_server_specs(
+    config: &DistributedConfig,
+    served: &ServedNames,
+    per_rank: &[TensorLaunch],
+    pipeline: Option<(&[u32], &[PipelineCacheWeights])>,
     context_window: u64,
     memory_report_seconds: f64,
 ) -> Vec<RankSpec> {
@@ -533,8 +729,8 @@ pub fn rank_specs(
             keep_every_conversation: true,
             name_conversations: true,
             sampling_defaults: Box::default(),
-            pipeline_split: None,
-            pipeline_cache_weights: None,
+            pipeline_split: pipeline.map(|(split, _)| split.to_vec()),
+            pipeline_cache_weights: pipeline.map(|(_, weights)| weights[rank]),
         }
     })
 }
@@ -11536,5 +11732,204 @@ threading.Event().wait()
         assert_eq!(live.memory.unwrap().peak, 20);
         assert!(!live.tail_text().contains("GOOSE_RANK_MEM"));
         assert!(live.tail_text().contains("Traceback"));
+    }
+}
+
+#[cfg(test)]
+mod pipeline_launch_tests {
+    use super::*;
+    use crate::distributed::config::tests::two_mac_config;
+    use crate::distributed::layer_split::{plan_layer_split, tests as split_tests, LayerSplit};
+
+    fn mimo_split() -> LayerSplit {
+        let warn = super::super::WATCHDOG_WARN_RESERVE_RATIO;
+        plan_layer_split(
+            &split_tests::mimo_facts(),
+            &split_tests::nodes(),
+            warn,
+            warn,
+            None,
+        )
+        .unwrap()
+    }
+
+    fn pipeline_config() -> DistributedConfig {
+        let mut config = two_mac_config();
+        config.nodes[0].pipeline_python = Some("/fork/rank0/bin/python".to_string());
+        config.nodes[1].pipeline_python = Some("/fork/rank1/bin/python".to_string());
+        config
+    }
+
+    fn specs_for(split: &LayerSplit, config: &DistributedConfig) -> Vec<RankSpec> {
+        let plans: Vec<&RankPlan> = split.plans.iter().collect();
+        let (launches, weights) =
+            TensorLaunch::for_pipeline_ranks(&plans, &split.layers, &split.full_layers).unwrap();
+        mlx_pipeline_rank_specs(
+            config,
+            &ServedNames::only("mimo"),
+            &launches,
+            &weights,
+            &split.layers,
+            split.context,
+            2.0,
+        )
+    }
+
+    fn program_fields(
+        spec: &RankSpec,
+    ) -> (
+        Option<Vec<u32>>,
+        Option<PipelineCacheWeights>,
+        u64,
+        u64,
+        TensorPrefill,
+    ) {
+        match &spec.program {
+            RankProgram::MlxLmServer {
+                pipeline_split,
+                pipeline_cache_weights,
+                prompt_cache_limit_bytes,
+                prompt_cache_entries,
+                prefill,
+                ..
+            } => (
+                pipeline_split.clone(),
+                *pipeline_cache_weights,
+                prompt_cache_limit_bytes.unwrap(),
+                prompt_cache_entries.unwrap(),
+                prefill.unwrap(),
+            ),
+            other => panic!("not an mlx_lm server program: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_two_rank_mimo_launch_carries_the_split_the_weights_and_one_set_of_limits() {
+        let split = mimo_split();
+        assert_eq!(split.layers, vec![19, 29]);
+        // Rank 0 = the last 19 layers: 4 full + 15 sliding; rank 1: 5 full + 24 sliding.
+        assert_eq!(split.full_layers, vec![4, 5]);
+        let config = pipeline_config();
+        let specs = specs_for(&split, &config);
+        let (split0, weights0, limit0, entries0, prefill0) = program_fields(&specs[0]);
+        let (split1, weights1, limit1, entries1, prefill1) = program_fields(&specs[1]);
+        assert_eq!(split0, Some(vec![19, 29]));
+        assert_eq!(split1, Some(vec![19, 29]));
+        assert_eq!(weights0, Some(PipelineCacheWeights { full: 5, swa: 8 }));
+        assert_eq!(weights1, Some(PipelineCacheWeights { full: 4, swa: 5 }));
+        assert_eq!((limit0, entries0, prefill0), (limit1, entries1, prefill1));
+
+        // Every rank's weighted total for the same cached tokens is one number.
+        let facts = split_tests::mimo_facts();
+        let weighted = |w: PipelineCacheWeights, full: u64, swa: u64, tokens: u64| {
+            w.full * full * tokens * facts.full_kv_bytes_per_token
+                + w.swa * swa * facts.swa_state_bytes
+        };
+        for tokens in [256, 32_768, split.context] {
+            assert_eq!(
+                weighted(weights0.unwrap(), 4, 15, tokens),
+                weighted(weights1.unwrap(), 5, 24, tokens)
+            );
+        }
+        assert_eq!(
+            prefill0.kv_bytes_per_token,
+            20 * facts.full_kv_bytes_per_token
+        );
+        assert_eq!(prefill0.sequence_state_bytes, 120 * facts.swa_state_bytes);
+        // The weighted limit keeps every rank inside its real one.
+        for (rank, (plan, w)) in split
+            .plans
+            .iter()
+            .zip([weights0.unwrap(), weights1.unwrap()])
+            .enumerate()
+        {
+            assert!(
+                limit0 / w.full.min(w.swa) <= plan.prompt_cache_limit_bytes(),
+                "rank {rank}"
+            );
+        }
+
+        for (rank, spec) in specs.iter().enumerate() {
+            let node = &config.nodes[rank];
+            assert_eq!(
+                spec.interpreter(node).unwrap(),
+                node.pipeline_python.as_deref().unwrap()
+            );
+            let args = python_args(spec).unwrap();
+            let script = remote_script(spec.interpreter(node).unwrap(), &args);
+            assert!(script.contains("ulimit -n 65536"), "{script}");
+        }
+        let program = specs[0].program_source();
+        assert!(program.contains("import rapid_mlx.mlx_lm_models"));
+        assert!(program.contains("pipeline_class.pipeline = pipeline_with_split"));
+        assert!(program.contains("RANK_PIPELINE_BARRIER"));
+        assert!(program
+            .contains(r#"*(["--pipeline"] if spec.get("pipeline_split") is not None else [])"#));
+    }
+
+    #[test]
+    fn the_pipeline_spec_round_trips_and_an_older_tag_reads_as_tensor() {
+        let specs = specs_for(&mimo_split(), &pipeline_config());
+        let json = serde_json::to_string(&specs[1]).unwrap();
+        assert!(json.contains("\"mlxLmServerPipelineSplit\""), "{json}");
+        let back: RankSpec = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, specs[1]);
+
+        let tensor = serde_json::to_string(&specs[1].clone())
+            .unwrap()
+            .replace("mlxLmServerPipelineSplit", "mlxLmServerNamedConversation");
+        let mut old: serde_json::Value = serde_json::from_str(&tensor).unwrap();
+        let program = old.as_object_mut().unwrap();
+        program.remove("pipeline_split");
+        program.remove("pipeline_cache_weights");
+        let old: RankSpec = serde_json::from_value(old).unwrap();
+        assert!(matches!(
+            old.program,
+            RankProgram::MlxLmServer {
+                pipeline_split: None,
+                pipeline_cache_weights: None,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn the_pipeline_launch_refuses_what_cannot_evict_or_load_alike() {
+        let split = mimo_split();
+        let mut config = pipeline_config();
+        let specs = specs_for(&split, &config);
+        config.nodes[1].pipeline_python = None;
+        let err = specs[1]
+            .interpreter(&config.nodes[1])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("pipeline_python"), "{err}");
+
+        let plans: Vec<&RankPlan> = split.plans.iter().collect();
+        let err = TensorLaunch::for_pipeline_ranks(&plans, &split.layers, &[0, 5])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("rank 0 holds no full-attention layer"),
+            "{err}"
+        );
+
+        let err = TensorLaunch::for_pipeline_ranks(&plans, &[19, 28], &split.full_layers)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("covers 47 layers"), "{err}");
+
+        let mut other = split.plans[1].clone();
+        let mut prefill = other.prefill.unwrap();
+        prefill.step /= 2;
+        other.prefill = Some(prefill);
+        let err = TensorLaunch::for_pipeline_ranks(
+            &[&split.plans[0], &other],
+            &split.layers,
+            &split.full_layers,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("prefill figures differ"), "{err}");
     }
 }

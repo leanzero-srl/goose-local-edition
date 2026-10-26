@@ -187,7 +187,7 @@ fn publish(hosted: &Option<Hosted>) {
         status.pid = h.process.pid();
         let live = h.process.live.lock().unwrap();
         let phase = match (status.runner, live.phase()) {
-            (Runner::MlxLmTensor, RankPhase::Warming) => RankPhase::Ready,
+            (Runner::MlxLmTensor | Runner::MlxLmPipeline, RankPhase::Warming) => RankPhase::Ready,
             (_, phase) => phase,
         };
         status.state = if phase == RankPhase::Ready {

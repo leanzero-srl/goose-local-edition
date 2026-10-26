@@ -199,3 +199,40 @@ OPEN (next agent, in order):
    cargo test -p goose-swarm --test development_gates. rustfmt only own files. Commit, push HEAD:mimo-distributed.
 Unverified by design (live two-Mac only): the vendored pipeline under the wrapper's hooks (rank_batch fast path
 with BatchRotatingKVCache, batch_kv_dtype on SWA caches), the barrier, the weights' eviction parity in practice.
+
+## Session 4 (DTO+view), 2026-10-26: backend DONE (5662f78886), UI view OPEN
+- Per-model reserve: `MODEL_PLAN_RESERVES` in crates/goose-sidecar/src/distributed/config.rs next to RUNNERS,
+  `("mimo_v2", 0.05)` with `// ratio:`. `DistributedConfig::plan_reserve(model_type) -> (f64, ReserveSource)`:
+  user override > model entry (clamped to [WARN in force, AVAILABLE_MARGIN_RATIO]) > shared default. The old
+  `plan_reserve_ratio()` is gone. Global default untouched (0.093).
+- layer_split.rs: refusal is now `SplitRefusal { message, fitting_reserve_ratio }` (anyhow-wrapped, Display = the
+  same sentence); fitting ratio rounded to 0.001 and only set when >= the WARN floor (0.077 for the MiMo test).
+- PreflightReport + MlxDistributedPreflightDto: layer_split, split_reason, plan_reserve_ratio (also on refusal),
+  plan_reserve_source ("default"|"model"|"user"), fitting_reserve_ratio. TS regenerated (ui/sdk/src/generated).
+  Regen recipe without just: scratchpad gen-acp.sh = `cd ui && pnpm install --frozen-lockfile`; `cd crates/goose &&
+  cargo run --config '...strip=false' --features code-mode,local-inference,aws-providers,telemetry,otel,rustls-tls,system-keyring
+  --bin generate-acp-schema`; `cd ui/sdk && npx tsx generate-schema.ts`.
+- supervisor.rs: my 3 literal lines were staged ON TOP OF HEAD (git hash-object + update-index), the other agent's
+  launch edits stay unstaged in the working tree. Do the same if you must touch supervisor/launch.
+- Gate measured: sidecar 493 pass / 5 fail = 4 launch.rs tests (the OTHER agent's in-progress ulimit/launch edits)
+  + engine status_reports_a_stray_listener (flaky; passes alone). development_gates 11 pass. clippy fails ONLY on
+  the other agent's files (supervisor.rs unused `bail`, launch.rs is_multiple_of). Re-run clippy once they commit.
+- Real MiMo plan at 0.05 (fixture numbers): rank0 workhorse [29,48) weights 68,279,546,752 with_overhead
+  71,545,402,240 budget 71,546,039,245; rank1 mule [0,29) weights 100,312,603,648 with_overhead 103,900,896,256
+  budget 104,128,052,327; context 60,672 derived; reason "split 19/29 (rank 0 = the last layers) leaves the most
+  memory on the tightest Mac of all 47 contiguous splits: spare 0.00 GB / 0.23 GB at context 60672 with a 256-token
+  prefill chunk, reserve 5.0% of RAM". Spare ~0 is by design (derived context fills the budget; margin = reserve).
+- UI: pure helpers added in mlxDistributed.ts (MLX_LM_PIPELINE, layerSplitView, gbDecimal, reservePercent,
+  reserveSource, reserveFromPercent). OPEN:
+  1. New component (e.g. MlxLayerSplit.tsx) rendered in PreflightReportView (DistributedEngineSection.tsx ~L1030)
+     when layerSplitView(report) != null: split chip "19 / 29 layers", reserve chip "5.0% of RAM" + source word
+     (goose default / mimo_v2's own / set by you), reason verbatim, per node row: L29–47, weights GB, budget GB,
+     spare GB (decimal GB, the backend's unit). Refusal + fittingReserveRatio: ToneBanner (./studio) with Button
+     "Plan at 7.7%" -> setDraft({...config, planReserveRatio}) then mlxDistributedPreflight(cleanConfig(next)).
+     Needs a callback passed from DistributedEngineSection (owns draft) into PreflightReportView (like AdoptRunnerContext).
+  2. ConfigEditor: a percent input for planReserveRatio (copy NumberInput, allow '.', local text state,
+     reserveFromPercent; placeholder "model default"); cleanConfig must delete planReserveRatio when null.
+  3. Fixtures: MIMO_PREFLIGHT_OK / MIMO_PREFLIGHT_REFUSED (runner 'mlxLmPipeline', modelType 'mimo_v2', numbers
+     above; refused: planReserveRatio 0.093, source 'user', fittingReserveRatio 0.077, plan check fail, no plans).
+     Vitest in DistributedEngineSection.test.tsx (+ expectDesigned for owner UI rules) and mlxDistributed.test.ts.
+  4. `pnpm run i18n:extract` after new messages, then lint:check + test:run via $S; commit `desktop: ...`.
