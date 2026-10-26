@@ -1890,11 +1890,16 @@ mod tests {
     async fn a_fit_read_that_stalls_is_given_up_on_and_no_second_one_joins_it() {
         static BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
         let (release, held) = tokio::sync::oneshot::channel::<()>();
-        let stalled = bounded_fit(std::time::Duration::from_millis(200), &BUSY, async move {
-            let _ = held.await;
-            Err("released".to_string())
-        })
-        .await;
+        // An outer limit, so a bound that stops working fails this test instead of hanging it.
+        let stalled = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            bounded_fit(std::time::Duration::from_millis(200), &BUSY, async move {
+                let _ = held.await;
+                Err("released".to_string())
+            }),
+        )
+        .await
+        .expect("a stalled fit read must be given up on, never waited for");
         let words = stalled.unwrap_err();
         assert!(words.contains("did not finish in"), "{words}");
 
