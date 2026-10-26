@@ -344,3 +344,28 @@ and commit in ONE command (`git add <paths> && git commit`), never leave things 
 - Remaining: pin bump -> rebuild -> live test (COORDINATOR item 4; screenshot to /Volumes/AI-workhorse/media/goose/mimo-2026-10-26/
   after ai-disk-guard --out) -> skill notes (item 5). Commits: no AI trailer (public repo hook rejects it).
 - UPDATE: dev build finished BUILD_OK (pre-pin): "ui/desktop/out/Goose Swarm-darwin-arm64/Goose Swarm.app". Rebuild after the pin bump.
+
+## Session 7 (2026-10-26 ~20:00 EET, stopped at ctx-guard 160k before any code change)
+- Head 712f5c0264 = origin/mimo-distributed. No code changed this session.
+- WAITS: PLD benchmark FINISHED 19:55 (:8471 gone, workhorse 91% free) -> the 170 GB load is no longer blocked.
+  Dev build BUILD_OK (old pin 8c00070, packaged at ui/desktop/out/Goose Swarm-darwin-arm64/). Fork tags
+  `lz-pipeline-qwen4.15` / `v0.14.3-lz.15` NOT on origin at 19:58; release agent's pipe suites (suite2-pipe.log,
+  suite2-base-pipe.log) at ~54%, single suites ended exit=134 (its problem, not ours). Re-check:
+  `git -C ~/Projects/Rapid-MLX ls-remote --tags origin | grep -E 'qwen4.15|lz.15'`. Deadline for the bump ~22:55 EET,
+  else report "tags not on origin".
+- FOUND (live, dev package): the embedded DEBUG `goose serve` dies at once: "thread 'tokio-rt-worker' has overflowed
+  its stack / fatal runtime error: stack overflow, aborting" (SIGABRT, /tmp/gmimo/userdata/logs/goose-serve-stderr.log)
+  -> UI shows "This window's Goose backend stopped". Launching the app with `RUST_MIN_STACK=16777216` kept goose serve
+  alive (>35 s, no abort). Use that env on every dev-package launch (or build `just release-binary`/copy-binary release).
+  Not yet known whether 3.0.132 release is affected (release frames are smaller; likely debug-only).
+- Launch line that works:
+  cd ui/desktop && RUST_MIN_STACK=16777216 GOOSE_PATH_ROOT=/tmp/gmimo/root GOOSE_USER_DATA_DIR=/tmp/gmimo/userdata
+  GOOSE_DISABLE_KEYRING=1 nohup "out/Goose Swarm-darwin-arm64/Goose Swarm.app/Contents/MacOS/Goose Swarm"
+  --remote-debugging-port=9461 > $SCRATCH/live/app.log 2>&1 &   (stop: kill <pid> from live/app.pid; never pkill)
+- Distributed UI: buttons have NO testids; click by text "Preflight (dry run)", "Start", "Stop" inside
+  [data-testid=mlx-distributed]; split view rows mlx-dist-layer-split / -split-row / -split-reason. mimo plans with the
+  built-in MODEL_PLAN_RESERVES mimo_v2 0.05 (no plan_reserve_ratio needed in the seeded config).
+- Installed app (pid 40896, CDP 9897, another session) is running: leave it alone.
+- Next, in order: tags -> bump PIPELINE_FORK_COMMIT + PIPELINE_FORK (provision.rs:115/134) -> cargo test -p goose-sidecar
+  + clippy (--config 'profile.dev.package."*".strip=false', after the subcommand for clippy) -> rebuild via heavy-run
+  (scratchpad live/build.sh) -> live test per COORDINATOR item 4 -> skill notes (item 5). Commits: no AI trailer.
