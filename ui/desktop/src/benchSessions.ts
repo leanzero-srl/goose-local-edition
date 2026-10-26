@@ -19,6 +19,11 @@ import type { BenchModelFieldsRecord } from './benchModelFields';
 
 export type BenchSessionOutcome = 'running' | 'finished' | 'did_not_finish' | 'did_not_start';
 
+export interface BenchScoringAttempt {
+  id: string;
+  startedAt: string;
+}
+
 export interface BenchSessionRow extends Partial<BenchSeriesMembership> {
   /** null until `<slot>/.swarm/current-run.json` appears — the engine writes it before any phase. */
   runId: string | null;
@@ -34,6 +39,8 @@ export interface BenchSessionRow extends Partial<BenchSeriesMembership> {
   slotDir?: string;
   completionReceipt?: string;
   scoringError?: string;
+  /** Every registered rescore keeps its own console after completion and across older-page cursors. */
+  scoringAttempts?: BenchScoringAttempt[];
   /** A single-model run's custom fields, stamped at launch: what the entrant was sent and what
    *  the tier pinned. Every result row rebuilt for this run (a re-score included) reads it here. */
   modelFields?: BenchModelFieldsRecord;
@@ -109,6 +116,7 @@ export const upsertArchivedRow = (
     ...(prior?.nodes != null ? { nodes: prior.nodes } : {}),
     ...(prior?.completionReceipt ? { completionReceipt: prior.completionReceipt } : {}),
     ...(prior?.scoringError ? { scoringError: prior.scoringError } : {}),
+    ...(prior?.scoringAttempts ? { scoringAttempts: prior.scoringAttempts } : {}),
     ...(prior?.modelFields ? { modelFields: prior.modelFields } : {}),
     // The engine that RAN the build, stamped at launch: a Forge 2.0 cohort receipt names it at publish.
     ...(prior?.engineSha256 ? { engineSha256: prior.engineSha256 } : {}),
@@ -116,6 +124,7 @@ export const upsertArchivedRow = (
       ? { seriesId: prior.seriesId, buildIndex: prior.buildIndex }
       : {}),
     slot: false,
+    slotDir: archived.slotDir,
   };
   const next = rows.slice();
   if (idx >= 0) next[idx] = merged;

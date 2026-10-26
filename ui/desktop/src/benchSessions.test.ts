@@ -65,6 +65,9 @@ describe('upsertArchivedRow — archiving a slot folds into the index without du
     expect(next[0].startedAt).toBe('2026-08-31T10:00:00.000Z');
     // Archived data no longer lives in the slot.
     expect(next[0].slot).toBe(false);
+    expect(next[0].slotDir).toBe(SLOT);
+    expect(findLaunchRow(next, { startedAt: rows[0].startedAt, slotDir: SLOT })).toBe(0);
+    expect(benchRunDataDir(next[0], '/archive')).toBe('/archive/run-abc');
     // The provisional row's nodes survives — the slot derivation cannot know it.
     expect(next[0].nodes).toBe(3);
   });
@@ -82,6 +85,22 @@ describe('upsertArchivedRow — archiving a slot folds into the index without du
       scorerVersion: 'sb-7.0-rc',
     });
     expect(next[0].engineSha256).toBe('a'.repeat(64));
+  });
+
+  it('retains every scoring-attempt log identity when archiving its original build slot', () => {
+    const scoringAttempts = [
+      { id: '11111111-1111-4111-8111-111111111111', startedAt: '2026-10-26T21:00:00.000Z' },
+      { id: '22222222-2222-4222-8222-222222222222', startedAt: '2026-10-26T22:00:00.000Z' },
+    ];
+    const next = upsertArchivedRow([provisional({ runId: 'run-a', scoringAttempts })], {
+      runId: 'run-a',
+      slotDir: SLOT,
+      startedAt: '2026-08-31T10:00:01.000Z',
+      outcome: 'finished',
+      endedAt: '2026-10-26T22:05:00.000Z',
+    });
+    expect(next[0].scoringAttempts).toEqual(scoringAttempts);
+    expect(next[0].slotDir).toBe(SLOT);
   });
 
   it('matches by runId when the reconcile poll already stamped it', () => {

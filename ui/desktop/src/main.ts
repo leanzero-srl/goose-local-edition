@@ -128,6 +128,7 @@ import {
 import { pathToFileURL, format as formatUrl, URLSearchParams } from 'node:url';
 import { Buffer } from 'node:buffer';
 import fs from 'node:fs/promises';
+import { finished } from 'node:stream/promises';
 import fsSync from 'node:fs';
 import { eventsGeneration, readEvents, readTail } from './utils/swarmIncrementalRead';
 import { resolveSwarmDir } from './utils/swarmRunDir';
@@ -167,6 +168,11 @@ import { execFileSync, spawn, execFile, type ChildProcess } from 'child_process'
 import 'dotenv/config';
 import { checkBackendStatus } from './backendStatus';
 import { startGooseServe, findGooseBinaryPath, GOOSED_SIGKILL_AFTER_MS } from './gooseServe';
+import {
+  queueSwarmNote,
+  startDesktopBenchmarkBridge,
+  type DesktopBenchmarkBridge,
+} from './controllerDesktopBridge';
 import { reapOrphanedGoosed } from './utils/orphanGoosedReap';
 import { LOCAL_NETWORK_SETTINGS_URL, touchLocalNetwork } from './localNetwork';
 import { GooseServeLeaseRegistry, type GooseServeLease } from './gooseServeLeaseRegistry';
@@ -1314,12 +1320,14 @@ const startLocalGooseServe = async (): Promise<GooseServeLease | null> => {
 
   let gooseServeResult: Awaited<ReturnType<typeof startGooseServe>>;
   try {
+    const benchmarkBridge = await ensureDesktopBenchmarkBridge();
     gooseServeResult = await startGooseServe({
       serverSecret: GENERATED_SECRET,
       dir: os.homedir(),
       tls: true,
       env: {
         GOOSE_PATH_ROOT: appConfig.GOOSE_PATH_ROOT as string | undefined,
+        ...benchmarkBridge?.env,
       },
       isPackaged: app.isPackaged,
       resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
@@ -3732,6 +3740,39 @@ interface ActiveBenchRun {
   seriesMembership?: BenchSeriesMembership;
 }
 let activeBenchRun: ActiveBenchRun | null = null;
+let desktopBenchmarkBridge: DesktopBenchmarkBridge | null = null;
+let desktopBenchmarkBridgeStart: Promise<DesktopBenchmarkBridge> | null = null;
+const ensureDesktopBenchmarkBridge = async (): Promise<DesktopBenchmarkBridge | null> => {
+  if (process.platform === 'win32') return null;
+  desktopBenchmarkBridgeStart ??= startDesktopBenchmarkBridge({
+    readSessions: () => readBenchSessionRows(true),
+    sessionsRoot: benchSessionsRoot,
+    completionsRoot: () => path.join(benchWorkRoot(), 'completions'),
+    scoringAttemptsRoot: () => path.join(benchWorkRoot(), 'scoring-attempts'),
+    active: () => {
+      const run = activeBenchRun;
+      if (!run || run.cancelled || run.child.exitCode != null || run.child.signalCode != null)
+        return null;
+      return {
+        runId: run.runId,
+        startedAt: run.startedAt,
+        workdir: run.workdir,
+        phase: run.phase,
+        lastLine: run.lastLine,
+        noteSupported: !run.provider && run.phase === 'build' && !run.tray.rescore,
+        activityStartedAt: run.activityStartedAt ?? null,
+      };
+    },
+    stop: () => cancelActiveBenchRun('linked controller requested stop'),
+  }).then((bridge) => {
+    desktopBenchmarkBridge = bridge;
+    return bridge;
+  }).catch((error) => {
+    desktopBenchmarkBridgeStart = null;
+    throw error;
+  });
+  return desktopBenchmarkBridgeStart;
+};
 let activeBenchSeries: BenchSeriesSnapshot | null = null;
 const benchSeriesRoot = () => path.join(benchWorkRoot(), 'series');
 let benchmarkLaunchPending = false;
@@ -3899,17 +3940,21 @@ const benchNodeName = (deviceId: string): string => {
 
 const benchSessionsRoot = (): string => path.join(app.getPath('userData'), 'benchmark', 'sessions');
 
-const readBenchSessionRows = async (): Promise<BenchSessionRow[]> => {
+const readBenchSessionRows = async (strict = false): Promise<BenchSessionRow[]> => {
   let raw: string;
   try {
     raw = await fs.readFile(BENCH_SESSIONS_INDEX, 'utf8');
-  } catch {
+  } catch (error) {
+    if (strict && (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     return []; // no index yet is the normal first-run state
   }
   try {
     const parsed = JSON.parse(raw) as { sessions?: unknown };
+    if (strict && !Array.isArray(parsed.sessions))
+      throw new Error('Benchmark index has no sessions array');
     return Array.isArray(parsed.sessions) ? (parsed.sessions as BenchSessionRow[]) : [];
   } catch (err) {
+    if (strict) throw err;
     // A CORRUPT index is not an empty one — preserve the evidence beside the file and start a
     // fresh index loudly, never overwrite the broken bytes silently.
     const backup = `${BENCH_SESSIONS_INDEX}.corrupt-${Date.now()}`;
@@ -3926,13 +3971,17 @@ const writeBenchSessionRows = async (rows: BenchSessionRow[]): Promise<void> => 
 
 const stampBenchLaunchRow = async (
   key: { startedAt: string; slotDir: string; runId?: string },
-  patch: Partial<BenchSessionRow>
+  patch: Partial<BenchSessionRow>,
+  required = false
 ): Promise<void> => {
   const rows = await readBenchSessionRows();
   const idx = key.runId
     ? rows.findIndex((row) => row.runId === key.runId)
     : findLaunchRow(rows, key);
-  if (idx < 0) return;
+  if (idx < 0) {
+    if (required) throw new Error('Benchmark session disappeared before the scoring attempt was registered');
+    return;
+  }
   rows[idx] = { ...rows[idx], ...patch };
   await writeBenchSessionRows(rows);
 };
@@ -5589,7 +5638,8 @@ ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string, mode?: '
     }
     const node = await resolveBenchNode(sessionTier, runtime.node);
     const browser = await bundledBrowserEnv();
-    const attemptRoot = path.join(benchWorkRoot(), 'scoring-attempts', crypto.randomUUID());
+    const attemptId = crypto.randomUUID();
+    const attemptRoot = path.join(benchWorkRoot(), 'scoring-attempts', attemptId);
     await fs.mkdir(attemptRoot, { recursive: true });
     const output = path.join(attemptRoot, 'grading');
     const launchedAt = new Date().toISOString();
@@ -5636,7 +5686,10 @@ ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string, mode?: '
       }
     );
     await stamp('scoring');
-    await stampBenchLaunchRow(launchKey, { outcome: 'running' });
+    await stampBenchLaunchRow(launchKey, {
+      outcome: 'running',
+      scoringAttempts: [...(session.scoringAttempts ?? []), { id: attemptId, startedAt: launchedAt }],
+    }, true);
     return await new Promise((resolve, reject) => {
       const { child, releasePower } = spawnBenchmarkWithPower(powerSaveBlocker, () =>
         spawn(runtime.python, python.args, { cwd: workdir, env: python.env, detached: true })
@@ -5715,6 +5768,7 @@ ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string, mode?: '
         consoleFile.end();
         const cancelled = activeBenchRun?.child === child && activeBenchRun.cancelled;
         try {
+          await finished(consoleFile);
           if (cancelled)
             throw new Error(
               'Scoring cancelled. The completed build and prior evidence are preserved.'
@@ -7272,15 +7326,7 @@ ipcMain.handle('swarm-add-note', async (_event, workingDir: string, text: string
   try {
     const t = String(text || '').trim();
     if (!t) return false;
-    const inbox = path.join(expandTilde(workingDir), '.swarm', 'inbox');
-    await fs.mkdir(inbox, { recursive: true });
-    await fs.writeFile(
-      path.join(inbox, `${Date.now()}.json`),
-      JSON.stringify({ text: t }, null, 2),
-      {
-        encoding: 'utf8',
-      }
-    );
+    queueSwarmNote(expandTilde(workingDir), t);
     return true;
   } catch (error) {
     console.error('Error queueing swarm note:', error);
@@ -8640,6 +8686,7 @@ app.on('will-quit', (event) => {
   if (!quitWorkDone) {
     quitWorkDone = true;
     mlxMonitor.stop();
+    desktopBenchmarkBridge?.close();
     // A benchmark run cannot outlive the app that owns it: the same per-pid cancel as the button,
     // synchronous so it lands before Electron finishes quitting (U-M8).
     if (activeBenchRun !== null || activeBenchSeries !== null) {
