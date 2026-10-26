@@ -2095,6 +2095,11 @@ impl GooseAcpAgent {
             .clone()
             .unwrap_or_else(|| format!("Allow {tool_name}?"));
         let formatted_name = format_tool_name(&tool_name);
+        let input_payload = leanzero_link::controller_wire::PendingInputPayload::Permission {
+            request_id: request_id.clone(),
+            tool_name: tool_name.clone(),
+            arguments: arguments.clone(),
+        };
 
         let mut fields = ToolCallUpdateFields::new()
             .title(formatted_name)
@@ -2130,7 +2135,14 @@ impl GooseAcpAgent {
             .iter()
             .map(|option| leanzero_link::controller_wire::InputOption {
                 option_id: option.option_id.0.to_string(),
-                label: option.name.clone(),
+                label: match option.kind {
+                    PermissionOptionKind::AllowOnce => "Allow once",
+                    PermissionOptionKind::AllowAlways => "Always allow this tool",
+                    PermissionOptionKind::RejectOnce => "Deny once",
+                    PermissionOptionKind::RejectAlways => "Always deny this tool",
+                    _ => &option.name,
+                }
+                .to_string(),
                 accepts_value: false,
             })
             .collect::<Vec<_>>();
@@ -2151,6 +2163,7 @@ impl GooseAcpAgent {
                 &request_id,
                 input_prompt,
                 input_options,
+                input_payload,
                 handler,
             )
             .await
@@ -3982,7 +3995,8 @@ impl InputHandler for OwnerPermission {
     }
     async fn answer(&self, answer: InputAnswer) -> anyhow::Result<()> {
         let decision: PermissionDecision = answer.option_id.parse()?;
-        self.agent
+        let delivered = self
+            .agent
             .handle_confirmation(
                 self.request_id.clone(),
                 PermissionConfirmation {
@@ -3991,6 +4005,10 @@ impl InputHandler for OwnerPermission {
                 },
             )
             .await;
+        anyhow::ensure!(
+            delivered,
+            "original permission receiver is no longer waiting"
+        );
         Ok(())
     }
 }
@@ -4130,6 +4148,52 @@ mod tests {
     use std::path::PathBuf;
     use tempfile::NamedTempFile;
     use test_case::test_case;
+
+    #[tokio::test]
+    async fn owner_permission_reports_the_actual_receiver_result() {
+        let fixture = crate::work_control::tests::Fixture::new().await;
+        let ticket = fixture.reserve_run().await;
+        let agent = fixture.runs.active_agent(&fixture.session).await.unwrap();
+        let receiver = agent
+            .tool_confirmation_router
+            .register("owner-request".into())
+            .await;
+        let handler = OwnerPermission {
+            run_id: ticket.run_id.to_string(),
+            request_id: "owner-request".into(),
+            agent: agent.clone(),
+            request: RequestPermissionRequest::new(
+                SessionId::new(fixture.session.clone()),
+                ToolCallUpdate::new(
+                    ToolCallId::new("owner-request"),
+                    ToolCallUpdateFields::new(),
+                ),
+                vec![],
+            ),
+        };
+        let answer = InputAnswer {
+            option_id: "allow_once".into(),
+            value: None,
+        };
+        handler.answer(answer.clone()).await.unwrap();
+        assert_eq!(receiver.await.unwrap().permission, Permission::AllowOnce);
+        assert!(handler.answer(answer.clone()).await.is_err());
+        let dropped = agent
+            .tool_confirmation_router
+            .register("owner-request".into())
+            .await;
+        drop(dropped);
+        assert!(handler
+            .answer(answer)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("no longer waiting"));
+        fixture
+            .runs
+            .finish(&fixture.session, &ticket.run_id.to_string())
+            .await;
+    }
 
     /// Q-99: a replayed call whose model label was persisted says so, so the desktop shows the label
     /// instead of an argument-derived one; a call without one carries no such flag.

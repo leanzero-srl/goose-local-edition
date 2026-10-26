@@ -358,6 +358,20 @@ pub struct PendingInput {
     pub run_id: Uuid,
     pub prompt: String,
     pub options: Vec<InputOption>,
+    pub payload: PendingInputPayload,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PendingInputPayload {
+    Permission {
+        request_id: String,
+        tool_name: String,
+        arguments: serde_json::Map<String, serde_json::Value>,
+    },
+    Form {
+        schema: serde_json::Value,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

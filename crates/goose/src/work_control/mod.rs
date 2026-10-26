@@ -377,4 +377,4 @@ fn unsupported(message: impl Into<String>) -> ControllerError {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

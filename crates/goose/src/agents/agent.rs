@@ -1825,7 +1825,7 @@ impl Agent {
         &self,
         request_id: String,
         confirmation: PermissionConfirmation,
-    ) {
+    ) -> bool {
         let provider = self.provider.lock().await.clone();
         if let Some(provider) = provider.as_ref() {
             if provider.permission_routing() == PermissionRouting::ActionRequired
@@ -1833,16 +1833,17 @@ impl Agent {
                     .handle_permission_confirmation(&request_id, &confirmation)
                     .await
             {
-                return;
+                return true;
             }
         }
-        if !self
+        let delivered = self
             .tool_confirmation_router
             .deliver(request_id, confirmation)
-            .await
-        {
+            .await;
+        if !delivered {
             error!("Failed to deliver confirmation");
         }
+        delivered
     }
 
     pub async fn supports_action_required_permissions(&self) -> bool {

@@ -78,6 +78,9 @@ impl super::GooseAcpAgent {
                 elicitation_id,
                 message.to_string(),
                 options,
+                leanzero_link::controller_wire::PendingInputPayload::Form {
+                    schema: requested_schema.clone(),
+                },
                 handler,
             )
             .await
@@ -242,5 +245,144 @@ fn elicitation_response_from_acp(response: CreateElicitationResponse) -> Elicita
             warn!(?action, "Unsupported ACP elicitation action");
             ElicitationOutcome::Cancel
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::action_required_manager::ActionRequiredManager;
+    use crate::conversation::message::{ActionRequiredData, MessageContent};
+    use crate::work_control::InputAnswer;
+    use leanzero_link::controller_wire::{InputOption, PendingInputPayload};
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn owner_form_preserves_schema_and_only_valid_values_reach_original_callback() {
+        let fixture = crate::work_control::tests::Fixture::new().await;
+        let ticket = fixture.reserve_run().await;
+        let schema = json!({"type":"object", "properties":{"environment":{"type":"string", "enum":["staging","production"], "title":"Deployment target"}}, "required":["environment"], "additionalProperties":false});
+        let mut requests = ActionRequiredManager::global()
+            .register_action_required_stream(fixture.session.clone(), "deploy-form".into())
+            .await;
+        let session = fixture.session.clone();
+        let original_schema = schema.clone();
+        let waiting = tokio::spawn(async move {
+            ActionRequiredManager::global()
+                .request_and_wait(
+                    session,
+                    "deploy-form".into(),
+                    "Choose deployment target".into(),
+                    original_schema,
+                    std::time::Duration::from_secs(5),
+                )
+                .await
+        });
+        let message = requests.recv().await.unwrap();
+        let request_id = match &message.content[0] {
+            MessageContent::ActionRequired(required) => match &required.data {
+                ActionRequiredData::Elicitation { id, .. } => id.clone(),
+                _ => panic!("expected form request"),
+            },
+            _ => panic!("expected action required"),
+        };
+        let handler = Arc::new(OwnerElicitation {
+            run_id: ticket.run_id.to_string(),
+            session_id: fixture.session.clone(),
+            elicitation_id: request_id.clone(),
+            session_manager: fixture.manager.clone(),
+            schema: schema.clone(),
+            request: CreateElicitationRequest::new(
+                ElicitationFormMode::new(
+                    ElicitationSessionScope::new(fixture.session.clone()),
+                    serde_json::from_value(schema.clone()).unwrap(),
+                ),
+                "Choose deployment target",
+            ),
+        });
+        let input = fixture
+            .runs
+            .register_input(
+                &fixture.session,
+                &request_id,
+                "Choose deployment target".into(),
+                vec![InputOption {
+                    option_id: "accept".into(),
+                    label: "Submit".into(),
+                    accepts_value: true,
+                }],
+                PendingInputPayload::Form {
+                    schema: schema.clone(),
+                },
+                handler,
+            )
+            .await
+            .unwrap();
+        let work_id = fixture
+            .manager
+            .work_catalog()
+            .await
+            .unwrap()
+            .lookup_local_session(&fixture.session)
+            .await
+            .unwrap()
+            .work_id
+            .parse()
+            .unwrap();
+        let persisted = fixture.runs.pending_inputs(work_id).await.unwrap();
+        assert_eq!(
+            serde_json::to_value(&persisted[0]).unwrap()["payload"]["schema"],
+            schema
+        );
+        for value in ["staging", "{}", "{\"environment\":\"unknown\"}"] {
+            let error = fixture
+                .runs
+                .answer_input(
+                    input.input_id,
+                    ticket.run_id,
+                    InputAnswer {
+                        option_id: "accept".into(),
+                        value: Some(value.into()),
+                    },
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(error.body.code, "invalid_input_value");
+            assert_eq!(fixture.runs.pending_inputs(work_id).await.unwrap().len(), 1);
+            assert!(
+                !waiting.is_finished(),
+                "invalid value must not reach the original callback"
+            );
+        }
+        let values = json!({"environment":"staging"});
+        fixture
+            .runs
+            .answer_input(
+                input.input_id,
+                ticket.run_id,
+                InputAnswer {
+                    option_id: "accept".into(),
+                    value: Some(values.to_string()),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            waiting.await.unwrap().unwrap(),
+            ElicitationOutcome::Accept(values)
+        );
+        assert!(fixture
+            .runs
+            .pending_inputs(work_id)
+            .await
+            .unwrap()
+            .is_empty());
+        fixture
+            .runs
+            .finish(&fixture.session, &ticket.run_id.to_string())
+            .await;
+        ActionRequiredManager::global()
+            .unregister_action_required_stream(&fixture.session, "deploy-form")
+            .await;
     }
 }

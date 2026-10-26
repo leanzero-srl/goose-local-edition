@@ -1,7 +1,7 @@
 use super::{conflict, unavailable, OwnerRunRegistry};
 use async_trait::async_trait;
 use leanzero_link::controller::ControllerError;
-use leanzero_link::controller_wire::{InputOption, PendingInput};
+use leanzero_link::controller_wire::{InputOption, PendingInput, PendingInputPayload};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -43,12 +43,14 @@ impl OwnerRunRegistry {
             .collect()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn register_input(
         self: &Arc<Self>,
         session_id: &str,
         request_id: &str,
         prompt: String,
         options: Vec<InputOption>,
+        payload: PendingInputPayload,
         handler: Arc<dyn InputHandler>,
     ) -> anyhow::Result<PendingInput> {
         self.ensure_store().await?;
@@ -65,6 +67,7 @@ impl OwnerRunRegistry {
             run_id: Uuid::parse_str(&run.run_id)?,
             prompt,
             options,
+            payload,
         };
         let mut tx = self.pool().await?.begin_with("BEGIN IMMEDIATE").await?;
         sqlx::query("INSERT INTO owner_inputs(input_id,work_id,session_id,generation,run_id,request_id,input_json,state) VALUES (?,?,?,?,?,?,?,'open')")
@@ -119,6 +122,15 @@ impl OwnerRunRegistry {
             return Err(conflict(
                 "stale_run",
                 "pending input belongs to a different run",
+            ));
+        }
+        if runs
+            .get(&session_id)
+            .is_some_and(|run| run.cancel_token.is_cancelled())
+        {
+            return Err(conflict(
+                "input_interrupted",
+                "the original run was cancelled before this answer",
             ));
         }
         let current_generation: String =

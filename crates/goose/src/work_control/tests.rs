@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 struct Authority {
     lease: AuthorizationLease,
     revoked: AtomicBool,
+    barrier: Mutex<Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>>,
 }
 #[async_trait]
 impl ControllerAuthority for Authority {
@@ -18,6 +19,11 @@ impl ControllerAuthority for Authority {
         _: &ReceiverBinding,
         _: ControllerScope,
     ) -> Result<Option<AuthorizationLease>, AuthorizationError> {
+        let barrier = self.barrier.lock().await.take();
+        if let Some((entered, resume)) = barrier {
+            entered.notify_one();
+            resume.notified().await;
+        }
         Ok((!self.revoked.load(Ordering::SeqCst)).then(|| self.lease.clone()))
     }
 }
@@ -51,17 +57,17 @@ impl OwnerExecutor for Executor {
         Ok(PromptResponse::new(StopReason::Cancelled))
     }
 }
-struct Fixture {
+pub(crate) struct Fixture {
     _dir: tempfile::TempDir,
-    runs: Arc<OwnerRunRegistry>,
-    manager: Arc<SessionManager>,
-    session: String,
+    pub(crate) runs: Arc<OwnerRunRegistry>,
+    pub(crate) manager: Arc<SessionManager>,
+    pub(crate) session: String,
     authority: Arc<Authority>,
     receiver: ReceiverBinding,
     calls: Arc<AtomicUsize>,
 }
 impl Fixture {
-    async fn new() -> Self {
+    pub(crate) async fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let manager = Arc::new(SessionManager::new(dir.path().to_path_buf()));
         let session = manager
@@ -98,6 +104,7 @@ impl Fixture {
         };
         let authority = Arc::new(Authority {
             revoked: AtomicBool::new(false),
+            barrier: Mutex::new(None),
             lease: AuthorizationLease {
                 active: true,
                 account_id: Uuid::new_v4(),
@@ -193,6 +200,240 @@ impl Fixture {
         );
         self.runs.accept_command(&device, command, guard).await
     }
+
+    pub(crate) async fn reserve_run(&self) -> RunTicket {
+        let executor = self.runs.executor.read().unwrap().clone().unwrap();
+        let (agent, manager) = executor.prepare(&self.session).await.unwrap();
+        self.runs
+            .reserve(
+                &self.session,
+                Uuid::new_v4(),
+                CancellationToken::new(),
+                agent,
+                manager,
+                None,
+            )
+            .await
+            .unwrap()
+    }
+}
+
+struct PermissionReceiver {
+    run_id: String,
+    agent: Arc<Agent>,
+}
+
+#[async_trait]
+impl InputHandler for PermissionReceiver {
+    fn run_id(&self) -> &str {
+        &self.run_id
+    }
+    fn observe(&self, _: &ConnectionTo<Client>, _: Arc<OwnerRunRegistry>, _: PendingInput) {}
+    fn validate(&self, _: &InputAnswer) -> anyhow::Result<()> {
+        Ok(())
+    }
+    async fn answer(&self, _: InputAnswer) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.agent
+                .handle_confirmation(
+                    "original-shell".into(),
+                    crate::permission::PermissionConfirmation {
+                        principal_type:
+                            crate::permission::permission_confirmation::PrincipalType::Tool,
+                        permission: crate::permission::Permission::AllowOnce,
+                    }
+                )
+                .await,
+            "original permission receiver is no longer waiting"
+        );
+        Ok(())
+    }
+}
+
+async fn permission_fixture(
+    fixture: &Fixture,
+) -> (
+    RunTicket,
+    PendingInput,
+    tokio::sync::oneshot::Receiver<crate::permission::PermissionConfirmation>,
+) {
+    let executor = fixture.runs.executor.read().unwrap().clone().unwrap();
+    let (agent, manager) = executor.prepare(&fixture.session).await.unwrap();
+    let ticket = fixture
+        .runs
+        .reserve(
+            &fixture.session,
+            Uuid::new_v4(),
+            CancellationToken::new(),
+            agent.clone(),
+            manager,
+            None,
+        )
+        .await
+        .unwrap();
+    let receiver = agent
+        .tool_confirmation_router
+        .register("original-shell".into())
+        .await;
+    let input = fixture
+        .runs
+        .register_input(
+            &fixture.session,
+            "original-shell",
+            "Allow developer__shell?".into(),
+            vec![InputOption {
+                option_id: "allow_once".into(),
+                label: "Allow once".into(),
+                accepts_value: false,
+            }],
+            PendingInputPayload::Permission {
+                request_id: "original-shell".into(),
+                tool_name: "developer__shell".into(),
+                arguments: serde_json::from_value(
+                    serde_json::json!({"command":"printf test > /tmp/owner-result"}),
+                )
+                .unwrap(),
+            },
+            Arc::new(PermissionReceiver {
+                run_id: ticket.run_id.to_string(),
+                agent,
+            }),
+        )
+        .await
+        .unwrap();
+    (ticket, input, receiver)
+}
+
+async fn settled_receipt(fixture: &Fixture, id: Uuid) -> CommandReceipt {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let json: String =
+                sqlx::query_scalar("SELECT receipt_json FROM owner_commands WHERE command_id=?")
+                    .bind(id.to_string())
+                    .fetch_one(fixture.runs.pool().await.unwrap())
+                    .await
+                    .unwrap();
+            let receipt: CommandReceipt = serde_json::from_str(&json).unwrap();
+            if matches!(
+                receipt.state,
+                CommandState::Delivered | CommandState::Rejected | CommandState::OutcomeUnknown
+            ) {
+                return receipt;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn permission_receiver_drop_during_dispatch_cannot_report_delivery() {
+    for cancelled in [false, true] {
+        let fixture = Fixture::new().await;
+        let (ticket, input, receiver) = permission_fixture(&fixture).await;
+        let command = fixture
+            .command(ActionPayload::AnswerInput {
+                input_id: input.input_id,
+                option_id: "allow_once".into(),
+                value: None,
+            })
+            .await;
+        let device = authorize(
+            fixture.authority.as_ref(),
+            "fixture-device",
+            &fixture.receiver,
+            ControllerScope::InputAnswer,
+        )
+        .await
+        .unwrap();
+        let guard = DispatchAuthorization::new(
+            fixture.authority.clone(),
+            "fixture-device".into(),
+            fixture.receiver.clone(),
+            ControllerScope::InputAnswer,
+            device.clone(),
+        );
+        if cancelled {
+            assert!(fixture
+                .runs
+                .stop(&fixture.session, Some(&ticket.run_id.to_string()))
+                .await
+                .unwrap());
+        }
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let resume = Arc::new(tokio::sync::Notify::new());
+        *fixture.authority.barrier.lock().await = Some((entered.clone(), resume.clone()));
+        let accepted = fixture
+            .runs
+            .accept_command(&device, command, guard)
+            .await
+            .unwrap();
+        entered.notified().await;
+        assert!(
+            fixture.runs.runs.try_lock().is_err(),
+            "dispatch must be holding the owner control lock"
+        );
+        drop(receiver);
+        resume.notify_one();
+        let final_receipt = settled_receipt(&fixture, accepted.command_id).await;
+        assert!(matches!(final_receipt.state, CommandState::Rejected));
+        assert!(final_receipt.reason.unwrap().contains(if cancelled {
+            "input_interrupted"
+        } else {
+            "original permission receiver is no longer waiting"
+        }));
+        let state: String = sqlx::query_scalar("SELECT state FROM owner_inputs WHERE input_id=?")
+            .bind(input.input_id.to_string())
+            .fetch_one(fixture.runs.pool().await.unwrap())
+            .await
+            .unwrap();
+        assert_ne!(state, "answered");
+        fixture
+            .runs
+            .finish(&fixture.session, &ticket.run_id.to_string())
+            .await;
+    }
+}
+
+#[tokio::test]
+async fn permission_live_receiver_accepts_once_and_only_then_reports_delivery() {
+    let fixture = Fixture::new().await;
+    let (ticket, input, receiver) = permission_fixture(&fixture).await;
+    let command = fixture
+        .command(ActionPayload::AnswerInput {
+            input_id: input.input_id,
+            option_id: "allow_once".into(),
+            value: None,
+        })
+        .await;
+    let accepted = fixture.submit(command).await.unwrap();
+    let confirmation = receiver.await.unwrap();
+    assert_eq!(
+        confirmation.permission,
+        crate::permission::Permission::AllowOnce
+    );
+    assert!(matches!(
+        settled_receipt(&fixture, accepted.command_id).await.state,
+        CommandState::Delivered
+    ));
+    let duplicate = fixture
+        .runs
+        .answer_input(
+            input.input_id,
+            ticket.run_id,
+            InputAnswer {
+                option_id: "allow_once".into(),
+                value: None,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(duplicate.body.code, "input_already_answered");
+    fixture
+        .runs
+        .finish(&fixture.session, &ticket.run_id.to_string())
+        .await;
 }
 async fn until(mut condition: impl FnMut() -> bool) {
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -381,6 +622,9 @@ async fn competing_input_answers_consume_exactly_once_and_partial_snapshots_reco
                 label: "Yes".into(),
                 accepts_value: false,
             }],
+            PendingInputPayload::Form {
+                schema: serde_json::json!({"type":"object"}),
+            },
             Arc::new(AnswerOnce {
                 run_id: run.to_string(),
                 consumed: consumed.clone(),

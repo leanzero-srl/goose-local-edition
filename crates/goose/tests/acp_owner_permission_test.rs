@@ -95,6 +95,18 @@ async fn original_viewer_close_does_not_answer_permission_and_reconnected_view_r
     )
     .unwrap();
     let input = registry.pending_inputs(work_id).await.unwrap().remove(0);
+    let wire = serde_json::to_value(&input).unwrap();
+    assert_eq!(wire["payload"]["kind"], "permission");
+    assert_eq!(
+        wire["payload"]["request_id"],
+        old_request["params"]["toolCall"]["toolCallId"]
+    );
+    assert_eq!(wire["payload"]["tool_name"], "shell");
+    assert_eq!(
+        wire["payload"]["arguments"],
+        serde_json::from_str::<Value>(arguments).unwrap()
+    );
+    assert_eq!(input.prompt, "Allow shell?");
     original.close().await;
 
     let mut reconnected = Window::open(addr, true).await;
@@ -105,6 +117,10 @@ async fn original_viewer_close_does_not_answer_permission_and_reconnected_view_r
         )
         .await;
     let current_request = permission(&mut reconnected).await;
+    assert_eq!(
+        serde_json::to_value(registry.pending_inputs(work_id).await.unwrap().remove(0)).unwrap(),
+        wire
+    );
     assert_eq!(
         old_request["params"]["toolCall"]["toolCallId"],
         current_request["params"]["toolCall"]["toolCallId"]
