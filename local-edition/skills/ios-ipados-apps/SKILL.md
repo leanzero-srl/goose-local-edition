@@ -56,3 +56,5 @@ This installation is laptop-owned. Canonical source: `~/.claude/skills/ios-ipado
 2026-10-26: Simulator setup proved that an SDK can exist without a runtime, and a new runtime can support only one device model. Added compatible-runtime discovery and the distinction between sandbox permission errors and actual simulator failures.
 
 2026-10-26: Added real simulator Keychain entitlement verification and interrupted-command recovery proof after the native app exposed a storage failure that mocked tests missed.
+
+2026-10-26: Added the combined private-network TLS proof after localhost certificate tests passed but ATS rejected the actual mesh address. Documented supported Network framework investigation without claiming it was already proven.
