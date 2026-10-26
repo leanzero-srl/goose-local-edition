@@ -177,3 +177,10 @@ TODO (next agent, in order)
    (replace limit with 60 s -> stall test fails/timeouts).
 5. Live check per skill (packaged app + cdp-acp-override) or state unverified. Commit, push
    `git push origin HEAD:fix/engine-failure-card-sticks`. No DMG.
+- 19:10 RESULT of that background run: goose-sidecar compiles; lib unit tests 490 passed / 0 failed, incl.
+  `a_stop_signal_from_outside_goose_is_a_stop_everything_else_is_not` and
+  `an_engine_stopped_from_outside_goose_reads_stopped_not_failed` (the latter took >60 s: check whether a settle or
+  wait_exited is slow on the 143 leg before calling it done). Integration tests green. DOCTESTS failed with
+  E0460/E0463 "found possibly newer version of crate" = the shared ~/Projects/goose/target being rebuilt by another
+  worktree at the same time (environmental, not this change): re-run `cargo test -p goose-sidecar --doc` alone.
+  Still uncompiled: crates goose + goose-sdk-types (mlx_engine.rs, mlx_remote_single.rs, custom_requests.rs).
