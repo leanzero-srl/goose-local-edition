@@ -54,3 +54,5 @@ This installation is laptop-owned. Canonical source: `~/.claude/skills/ios-ipado
 2026-10-26: Created from the Goose remote-controller architecture work. The general rules above apply beyond Goose; its session/Link design belongs in its project plan.
 
 2026-10-26: Simulator setup proved that an SDK can exist without a runtime, and a new runtime can support only one device model. Added compatible-runtime discovery and the distinction between sandbox permission errors and actual simulator failures.
+
+2026-10-26: Added real simulator Keychain entitlement verification and interrupted-command recovery proof after the native app exposed a storage failure that mocked tests missed.
