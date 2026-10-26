@@ -24,7 +24,7 @@ use std::sync::{Arc, LazyLock};
 use tracing::{info, warn};
 use utoipa::ToSchema;
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 17;
+pub const CURRENT_SCHEMA_VERSION: i32 = 18;
 pub const SESSIONS_FOLDER: &str = "sessions";
 pub const DB_NAME: &str = "sessions.db";
 const MILLISECOND_TIMESTAMP_THRESHOLD: i64 = 10_000_000_000;
@@ -1512,7 +1512,7 @@ impl SessionStorage {
             16 => {
                 crate::session::work_catalog::create_objects(tx).await?;
             }
-            17 => {
+            17 | 18 => {
                 crate::session::work_catalog::create_external_objects(tx).await?;
             }
             _ => {

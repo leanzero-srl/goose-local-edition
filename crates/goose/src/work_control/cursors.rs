@@ -33,6 +33,11 @@ impl Default for CursorPolicy {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct BenchmarkLogSource {
+    pub activity_started_at: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "purpose", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum Position {
     CatalogPage {
@@ -47,6 +52,8 @@ pub(crate) enum Position {
     ExternalLog {
         work_id: Uuid,
         offset: u64,
+        source_run: Option<Uuid>,
+        benchmark_source: Option<BenchmarkLogSource>,
     },
     WorkResume {
         work_id: Uuid,

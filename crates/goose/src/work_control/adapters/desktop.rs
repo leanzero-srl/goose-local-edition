@@ -10,16 +10,17 @@ pub struct DesktopBridge {
 }
 
 impl DesktopBridge {
+    pub fn new(socket: PathBuf, secret: String) -> Self {
+        Self { socket, secret }
+    }
+
     pub fn from_env() -> Option<Self> {
         let socket = std::env::var_os("GOOSE_CONTROLLER_DESKTOP_SOCKET")?;
         let secret = std::env::var("GOOSE_CONTROLLER_DESKTOP_SECRET").ok()?;
         if secret.is_empty() {
             return None;
         }
-        Some(Self {
-            socket: socket.into(),
-            secret,
-        })
+        Some(Self::new(socket.into(), secret))
     }
 
     #[cfg(unix)]
@@ -28,7 +29,7 @@ impl DesktopBridge {
         use tokio::io::AsyncReadExt;
         if !matches!(
             method,
-            "benchmark.catalog" | "benchmark.command" | "benchmark.log"
+            "benchmark.catalog" | "benchmark.command" | "benchmark.log" | "benchmark.receipt"
         ) {
             return Err(ControllerError::new(
                 axum::http::StatusCode::BAD_REQUEST,

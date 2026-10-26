@@ -122,7 +122,11 @@ impl GooseControllerBackend {
             .set(adapters)
             .map_err(|_| ControllerError::unavailable("work adapters already installed"))?;
         let weak = Arc::downgrade(&self.0);
-        let interval = self.0.policy.journal_poll_interval;
+        let interval = self
+            .0
+            .policy
+            .journal_poll_interval
+            .max(std::time::Duration::from_secs(3));
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(interval).await;
@@ -850,36 +854,80 @@ impl ControllerBackend for GooseControllerBackend {
         let current = self.fence().await?;
         let record = self.visible_work(work, &current).await?;
         if work.kind != WorkKind::Chat {
-            let from = match page_token
+            let (end, revision, source_run, benchmark_source) = match page_token
                 .map(|token| self.decode(device, token))
                 .transpose()?
             {
                 Some(Cursor {
-                    position: Position::ExternalLog { work_id, offset },
+                    position:
+                        Position::ExternalLog {
+                            work_id,
+                            offset,
+                            source_run,
+                            benchmark_source,
+                        },
+                    revision,
                     ..
-                }) if work_id == work.work_id => offset,
+                }) if work_id == work.work_id => {
+                    (Some(offset), revision, source_run, benchmark_source)
+                }
                 Some(_) => return Err(invalid_cursor()),
-                None => 0,
+                None => (
+                    None,
+                    current.revision,
+                    record
+                        .current_run_id
+                        .as_deref()
+                        .map(parse_uuid)
+                        .transpose()?,
+                    None,
+                ),
             };
+            if work.kind == WorkKind::Benchmark && end.is_some() && benchmark_source.is_none() {
+                return Err(snapshot_required(
+                    "benchmark log source is absent from the cursor",
+                ));
+            }
+            if work.kind != WorkKind::Benchmark
+                && record.current_run_id.is_some()
+                && record.current_run_id.as_deref()
+                    != source_run.map(|run| run.to_string()).as_deref()
+            {
+                return Err(snapshot_required("log source run changed"));
+            }
             let adapters = self
                 .0
                 .adapters
                 .get()
                 .ok_or_else(|| unsupported("work adapters unavailable"))?;
-            let chunk = adapters.log(&record, from).await?;
-            let next_page_token = (!chunk.done && chunk.next > from)
+            let page = adapters
+                .log_tail(&record, end, benchmark_source.as_ref())
+                .await?;
+            let chunk = page.chunk;
+            let next_page_token = (chunk.from > 0)
                 .then(|| {
                     self.new_token(
                         device,
-                        current.revision,
+                        revision,
                         Position::ExternalLog {
                             work_id: work.work_id,
-                            offset: chunk.next,
+                            offset: chunk.from,
+                            source_run,
+                            benchmark_source: page.benchmark_source,
                         },
                     )
                 })
                 .transpose()?;
-            let message = Message::assistant().with_text(chunk.data);
+            let items = if chunk.next > chunk.from {
+                vec![HistoryItem {
+                    message_id: format!("log_{}_{}", chunk.from, chunk.next),
+                    revision: record.revision as u64,
+                    message: serde_json::to_value(Message::assistant().with_text(chunk.data))
+                        .map_err(|error| store_error(error.into()))?,
+                }]
+            } else {
+                Vec::new()
+            };
             return Ok(HistoryPage {
                 work_cursor: self.new_token(
                     device,
@@ -890,13 +938,8 @@ impl ControllerBackend for GooseControllerBackend {
                 )?,
                 work: work.clone(),
                 store_generation: generation,
-                revision: current.revision as u64,
-                items: vec![HistoryItem {
-                    message_id: format!("log_{}", chunk.from),
-                    revision: record.revision as u64,
-                    message: serde_json::to_value(message)
-                        .map_err(|error| store_error(error.into()))?,
-                }],
+                revision: revision as u64,
+                items,
                 next_page_token,
             });
         }

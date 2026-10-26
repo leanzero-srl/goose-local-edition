@@ -188,6 +188,7 @@ async fn migration_from_v15_is_atomic_and_backfills_without_copying_transcript_b
             .unwrap();
     }
     for table in [
+        "external_work_progress",
         "external_catalog_versions",
         "external_work_runs",
         "external_work_identity",

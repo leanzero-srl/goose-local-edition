@@ -11,9 +11,19 @@ use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 pub const RUNTIME_SUBDIR: &str = ".swarm/agent";
+
+#[derive(Serialize, Deserialize)]
+struct RemoteControl {
+    run_id: String,
+    device_id: String,
+    command_id: String,
+    action: String,
+    queued_at: DateTime<Utc>,
+}
 
 #[derive(Debug, Clone)]
 pub struct RuntimeDir {
@@ -141,9 +151,18 @@ impl RuntimeDir {
     }
 
     pub fn ensure(&self) -> Result<()> {
-        for sub in ["", "ledger", "inbox", "inbox/consumed", "ticks", "drafts"] {
+        for sub in [
+            "",
+            "ledger",
+            "inbox",
+            "inbox/consumed",
+            "ticks",
+            "drafts",
+            "control/acks",
+        ] {
             std::fs::create_dir_all(self.root.join(sub))?;
         }
+        std::fs::write(self.root.join("control/.gitignore"), "*\n")?;
         // The desk commits its memory (ledger, ticks, drafts, asks, decisions) and not the churn
         // (activity digests, the event log, the heartbeat, flags, the state mirror).
         let ignore = self.agent_dir.join(".swarm").join(".gitignore");
@@ -206,21 +225,126 @@ impl RuntimeDir {
 
     // ---- flags the desktop sets by touching a file ----
 
-    pub fn is_paused(&self) -> bool {
-        self.flag("paused").exists()
+    fn control_dir(&self, run_id: &str) -> PathBuf {
+        let key: String = Sha256::digest(run_id.as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        self.root.join("control").join(key)
     }
-    pub fn stop_requested(&self) -> bool {
-        self.flag("stop").exists()
+
+    fn acknowledge_control(
+        &self,
+        run_id: &str,
+        device_id: &str,
+        command_id: &str,
+        action: &str,
+    ) -> Result<()> {
+        for id in [device_id, command_id] {
+            if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+                return Err(anyhow!("invalid Agent Work device or command ID"));
+            }
+        }
+        let path = self
+            .root
+            .join("control/acks")
+            .join(format!("{device_id}_{command_id}.json"));
+        let temporary = path.with_extension("tmp");
+        std::fs::write(
+            &temporary,
+            serde_json::to_vec(&json!({
+                "run_id": run_id, "device_id": device_id, "command_id": command_id, "action": action, "state": "consumed",
+            }))?,
+        )?;
+        std::fs::rename(temporary, path)?;
+        Ok(())
+    }
+
+    fn apply_remote_controls(&self, run_id: &str, actions: &[&str]) -> Result<()> {
+        let root = self.control_dir(run_id);
+        let requests = match std::fs::read_dir(root.join("requests")) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(e.into()),
+        };
+        let mut pending = Vec::new();
+        for entry in requests {
+            let path = entry?.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
+            }
+            let request: RemoteControl = serde_json::from_slice(&std::fs::read(&path)?)?;
+            let key = format!("{}_{}", request.device_id, request.command_id);
+            if request.run_id == run_id
+                && path.file_stem().and_then(|s| s.to_str()) == Some(key.as_str())
+                && actions.contains(&request.action.as_str())
+            {
+                pending.push((request, path));
+            }
+        }
+        pending.sort_by(|(a, _), (b, _)| {
+            a.queued_at
+                .cmp(&b.queued_at)
+                .then(a.command_id.cmp(&b.command_id))
+        });
+        for (request, path) in pending {
+            match request.action.as_str() {
+                "resume" => {
+                    if self.flag_matches_run("paused", run_id)? {
+                        std::fs::remove_file(self.flag("paused"))?;
+                    }
+                }
+                "pause" | "stop" | "tick" => {
+                    let flag = match request.action.as_str() {
+                        "pause" => "paused",
+                        "stop" => "stop",
+                        _ => "tick-now",
+                    };
+                    std::fs::write(self.flag(flag), serde_json::to_vec(&request)?)?;
+                }
+                action => return Err(anyhow!("unsupported Agent Work control: {action}")),
+            }
+            self.acknowledge_control(
+                run_id,
+                &request.device_id,
+                &request.command_id,
+                &request.action,
+            )?;
+            std::fs::remove_file(path)?;
+        }
+        Ok(())
+    }
+
+    fn flag_matches_run(&self, name: &str, run_id: &str) -> Result<bool> {
+        let text = match std::fs::read_to_string(self.flag(name)) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(e) => return Err(e.into()),
+        };
+        // The desktop's local controls write a timestamp; shell controls may only touch the file.
+        if text.trim().is_empty() || DateTime::parse_from_rfc3339(text.trim()).is_ok() {
+            return Ok(true);
+        }
+        let request: RemoteControl = serde_json::from_str(&text)?;
+        Ok(request.run_id == run_id)
+    }
+
+    pub fn is_paused(&self, run_id: &str) -> Result<bool> {
+        self.apply_remote_controls(run_id, &["pause", "resume"])?;
+        self.flag_matches_run("paused", run_id)
+    }
+    pub fn stop_requested(&self, run_id: &str) -> Result<bool> {
+        self.apply_remote_controls(run_id, &["stop"])?;
+        self.flag_matches_run("stop", run_id)
     }
     /// Consumes the flag.
-    pub fn take_tick_now(&self) -> bool {
-        let f = self.flag("tick-now");
-        if f.exists() {
-            let _ = std::fs::remove_file(f);
-            true
-        } else {
-            false
+    pub fn take_tick_now(&self, run_id: &str) -> Result<bool> {
+        self.apply_remote_controls(run_id, &["tick"])?;
+        let requested = self.flag_matches_run("tick-now", run_id)?;
+        if requested {
+            std::fs::remove_file(self.flag("tick-now"))?;
         }
+        Ok(requested)
     }
     pub fn clear_stop(&self) {
         let _ = std::fs::remove_file(self.flag("stop"));
@@ -230,7 +354,7 @@ impl RuntimeDir {
 
     /// The notes, plus the inbox directory's own read error when it has one (named, never an
     /// empty inbox impersonating a readable one).
-    pub fn take_inbox(&self) -> (Vec<String>, Option<String>) {
+    pub fn take_inbox(&self, run_id: &str) -> (Vec<String>, Option<String>) {
         let dir = self.root.join("inbox");
         let mut names: Vec<PathBuf> = match std::fs::read_dir(&dir) {
             Ok(rd) => rd
@@ -243,15 +367,52 @@ impl RuntimeDir {
         names.sort();
         let mut out = Vec::new();
         for p in names {
+            let mut remote_id = None;
+            let mut text = None;
             if let Ok(t) = std::fs::read_to_string(&p) {
                 if let Ok(v) = serde_json::from_str::<Value>(&t) {
+                    if v.get("run_id").is_some() || v.get("command_id").is_some() {
+                        if v["run_id"].as_str() != Some(run_id) {
+                            continue;
+                        }
+                        let Some(id) = v["command_id"].as_str() else {
+                            return (
+                                out,
+                                Some(format!("{}: remote note has no command ID", p.display())),
+                            );
+                        };
+                        let Some(device) = v["device_id"].as_str() else {
+                            return (
+                                out,
+                                Some(format!("{}: remote note has no device ID", p.display())),
+                            );
+                        };
+                        let key = format!("{device}_{id}");
+                        if p.file_stem().and_then(|s| s.to_str()) != Some(key.as_str()) {
+                            return (
+                                out,
+                                Some(format!("{}: remote note command ID mismatch", p.display())),
+                            );
+                        }
+                        remote_id = Some((device.to_owned(), id.to_owned()));
+                    }
                     if let Some(s) = v.get("text").and_then(|x| x.as_str()) {
-                        out.push(s.to_string());
+                        text = Some(s.to_string());
                     }
                 }
             }
             if let Some(name) = p.file_name() {
-                let _ = std::fs::rename(&p, dir.join("consumed").join(name));
+                if let Err(e) = std::fs::rename(&p, dir.join("consumed").join(name)) {
+                    return (out, Some(format!("{}: {e}", p.display())));
+                }
+            }
+            if let Some(text) = text {
+                out.push(text);
+                if let Some((device, id)) = remote_id {
+                    if let Err(e) = self.acknowledge_control(run_id, &device, &id, "note") {
+                        return (out, Some(e.to_string()));
+                    }
+                }
             }
         }
         (out, None)
@@ -847,14 +1008,167 @@ mod tests {
             "{\"text\":\"hold ATL-9\"}",
         )
         .unwrap();
-        assert_eq!(r.take_inbox().0, vec!["hold ATL-9".to_string()]);
-        assert!(r.take_inbox().0.is_empty());
+        assert_eq!(
+            r.take_inbox("current-run").0,
+            vec!["hold ATL-9".to_string()]
+        );
+        assert!(r.take_inbox("current-run").0.is_empty());
         assert!(r
             .root
             .join("inbox")
             .join("consumed")
             .join("1.json")
             .exists());
+    }
+
+    fn queue_remote(r: &RuntimeDir, run_id: &str, id: &str, action: &str) {
+        queue_remote_for(r, run_id, "device", id, action);
+    }
+
+    fn queue_remote_for(r: &RuntimeDir, run_id: &str, device: &str, id: &str, action: &str) {
+        let request = json!({"run_id":run_id,"device_id":device,"command_id":id,"action":action,"queued_at":now_rfc3339(),"text":id});
+        let dir = if action == "note" {
+            r.root.join("inbox")
+        } else {
+            r.control_dir(run_id).join("requests")
+        };
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(format!("{device}_{id}.json")), request.to_string()).unwrap();
+    }
+
+    fn control_ack(r: &RuntimeDir, id: &str) -> Option<Value> {
+        read_json_file(
+            &r.root
+                .join("control/acks")
+                .join(format!("device_{id}.json")),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn remote_agent_controls_are_fenced_at_every_consumer() {
+        let (_d, r) = rt();
+        for action in ["note", "pause", "resume", "stop", "tick"] {
+            queue_remote(&r, "old-run", &format!("old-{action}"), action);
+        }
+        assert!(!r.is_paused("new-run").unwrap());
+        assert!(!r.stop_requested("new-run").unwrap());
+        assert!(!r.take_tick_now("new-run").unwrap());
+        assert!(r.take_inbox("new-run").0.is_empty());
+        std::fs::write(r.flag("paused"), "").unwrap();
+        assert!(
+            r.is_paused("new-run").unwrap(),
+            "old resume cannot clear a new manual pause"
+        );
+        for action in ["note", "pause", "resume", "stop", "tick"] {
+            assert!(control_ack(&r, &format!("old-{action}")).is_none());
+        }
+        std::fs::remove_file(r.flag("paused")).unwrap();
+        queue_remote(&r, "new-run", "current-pause", "pause");
+        assert!(r.is_paused("new-run").unwrap());
+        queue_remote(&r, "old-run", "delayed-resume", "resume");
+        assert!(
+            r.is_paused("new-run").unwrap(),
+            "delayed old writes cannot overwrite current pause"
+        );
+        assert!(control_ack(&r, "delayed-resume").is_none());
+    }
+
+    #[test]
+    fn remote_agent_controls_acknowledge_only_the_matching_checkpoint() {
+        let (_d, r) = rt();
+        queue_remote(&r, "run", "pause", "pause");
+        queue_remote(&r, "run", "stop", "stop");
+        queue_remote(&r, "run", "tick", "tick");
+        queue_remote(&r, "run", "note", "note");
+        assert!(r.is_paused("run").unwrap());
+        assert!(control_ack(&r, "stop").is_none());
+        assert!(control_ack(&r, "tick").is_none());
+        assert!(control_ack(&r, "note").is_none());
+        queue_remote(&r, "run", "resume", "resume");
+        assert!(!r.is_paused("run").unwrap());
+        assert!(r.stop_requested("run").unwrap());
+        assert!(r.take_tick_now("run").unwrap());
+        assert!(!r.take_tick_now("run").unwrap());
+        assert_eq!(r.take_inbox("run").0, vec!["note"]);
+        assert!(r.take_inbox("run").0.is_empty());
+        for action in ["pause", "resume", "stop", "tick", "note"] {
+            let ack = control_ack(&r, action).unwrap();
+            assert_eq!(
+                ack,
+                json!({"run_id":"run","device_id":"device","command_id":action,"action":action,"state":"consumed"})
+            );
+        }
+        assert!(
+            !r.stop_requested("later-run").unwrap(),
+            "consumed stop stays run-bound"
+        );
+    }
+
+    #[test]
+    fn remote_agent_pause_and_resume_preserve_legacy_flags() {
+        let (_d, r) = rt();
+        for contents in [String::new(), now_rfc3339()] {
+            for flag in ["paused", "stop", "tick-now"] {
+                std::fs::write(r.flag(flag), &contents).unwrap();
+            }
+            assert!(r.is_paused("run").unwrap());
+            assert!(r.stop_requested("run").unwrap());
+            assert!(r.take_tick_now("run").unwrap());
+            assert!(!r.take_tick_now("run").unwrap());
+        }
+        queue_remote(&r, "run", "resume", "resume");
+        assert!(!r.is_paused("run").unwrap());
+        queue_remote(&r, "run", "pause", "pause");
+        assert!(r.is_paused("run").unwrap());
+        assert!(
+            !r.is_paused("later-run").unwrap(),
+            "remote pause does not cross launches"
+        );
+        std::fs::remove_file(r.flag("paused")).unwrap();
+        assert!(
+            !r.is_paused("run").unwrap(),
+            "local resume still clears remote pause"
+        );
+    }
+
+    #[test]
+    fn remote_agent_devices_cannot_share_requests_or_consumption_acknowledgements() {
+        let (_d, r) = rt();
+        let consume = |action: &str| match action {
+            "note" => assert_eq!(r.take_inbox("run").0, vec!["note"]),
+            "pause" => assert!(r.is_paused("run").unwrap()),
+            "resume" => assert!(!r.is_paused("run").unwrap()),
+            "stop" => assert!(r.stop_requested("run").unwrap()),
+            "tick" => assert!(r.take_tick_now("run").unwrap()),
+            _ => unreachable!(),
+        };
+        for action in ["note", "pause", "resume", "stop", "tick"] {
+            queue_remote_for(&r, "run", "device-a", action, action);
+            consume(action);
+            let ack_a = r
+                .root
+                .join("control/acks")
+                .join(format!("device-a_{action}.json"));
+            let ack_b = r
+                .root
+                .join("control/acks")
+                .join(format!("device-b_{action}.json"));
+            let first: Value = read_json_file(&ack_a).unwrap().unwrap();
+            assert_eq!(first["device_id"], "device-a");
+            queue_remote_for(&r, "run", "device-b", action, action);
+            assert!(
+                !ack_b.exists(),
+                "a reused command ID must still wait for its own consumption"
+            );
+            consume(action);
+            let second: Value = read_json_file(&ack_b).unwrap().unwrap();
+            assert_eq!(
+                second,
+                json!({"run_id":"run","device_id":"device-b","command_id":action,"action":action,"state":"consumed"})
+            );
+            assert_eq!(read_json_file::<Value>(&ack_a).unwrap().unwrap(), first);
+        }
     }
 
     #[test]

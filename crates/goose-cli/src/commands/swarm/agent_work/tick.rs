@@ -41,6 +41,7 @@ use goose_swarm::EventSink;
 const LEDGER_NEWEST: usize = 24; // ratio: rows per kind the orchestrator re-reads each tick
 
 pub struct TickCtx {
+    pub run_id: String,
     pub manifest: Arc<AgentManifest>,
     pub dir: PathBuf,
     pub rt: RuntimeDir,
@@ -180,7 +181,7 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
     let window_open = ctx.clock.is_open(Utc::now());
     st.window_open = window_open;
     let mut guard_runs: Vec<ScriptRun> = Vec::new();
-    if hold.is_none() && ctx.rt.is_paused() {
+    if hold.is_none() && ctx.rt.is_paused(&ctx.run_id)? {
         hold = Some("paused by the human".into());
     }
     if hold.is_none() {
@@ -217,7 +218,7 @@ pub async fn run_tick(ctx: &TickCtx, st: &mut DeskState, n: u64) -> Result<TickS
 
     // ---------------- POLL
     set_phase(ctx, st, "poll");
-    let (notes, inbox_err) = ctx.rt.take_inbox();
+    let (notes, inbox_err) = ctx.rt.take_inbox(&ctx.run_id);
     if let Some(e) = inbox_err {
         ctx.sink
             .write_value(json!({"event": "inbox_unreadable", "tick": n, "error": e}));

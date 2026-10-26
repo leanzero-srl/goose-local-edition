@@ -1,6 +1,71 @@
 {
   "methods": [
     {
+      "method": "_goose/unstable/controller/status",
+      "requestType": "ControllerStatusRequest_unstable",
+      "responseType": "ControllerResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/controller/requestCode",
+      "requestType": "ControllerRequestCodeRequest_unstable",
+      "responseType": "ControllerResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/controller/verify",
+      "requestType": "ControllerVerifyRequest_unstable",
+      "responseType": "ControllerResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/controller/logout",
+      "requestType": "ControllerLogoutRequest_unstable",
+      "responseType": "ControllerResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/controller/hosts",
+      "requestType": "ControllerHostsRequest_unstable",
+      "responseType": "ControllerResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/controller/catalog",
+      "requestType": "ControllerCatalogRequest_unstable",
+      "responseType": "ControllerResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/controller/sync",
+      "requestType": "ControllerSyncRequest_unstable",
+      "responseType": "ControllerResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/controller/openWork",
+      "requestType": "ControllerOpenWorkRequest_unstable",
+      "responseType": "ControllerResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/controller/history",
+      "requestType": "ControllerHistoryRequest_unstable",
+      "responseType": "ControllerResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/controller/workChanges",
+      "requestType": "ControllerWorkChangesRequest_unstable",
+      "responseType": "ControllerResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/controller/command",
+      "requestType": "ControllerCommandRequest_unstable",
+      "responseType": "ControllerResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/controller/receipt",
+      "requestType": "ControllerReceiptRequest_unstable",
+      "responseType": "ControllerResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/controller/pendingCommands",
+      "requestType": "ControllerPendingCommandsRequest_unstable",
+      "responseType": "ControllerResponse_unstable"
+    },
+    {
       "method": "_goose/unstable/session/extensions/add",
       "requestType": "AddSessionExtensionRequest_unstable",
       "responseType": "EmptyResponse"

@@ -1,7 +1,9 @@
+mod benchmark;
 mod commands;
 mod desktop;
 pub use desktop::DesktopBridge;
 
+use super::cursors::BenchmarkLogSource;
 use crate::session::work_catalog::{CatalogRecord, ExternalWork, WorkCatalog};
 use leanzero_link::{
     controller::ControllerError,
@@ -16,12 +18,20 @@ use std::{
 };
 use tokio::sync::Mutex;
 
+pub const LOG_PAGE_BYTES: u64 = 128 * 1024;
+
+pub(crate) struct ExternalLogPage {
+    pub chunk: leanzero_link::jobs::JobLogChunk,
+    pub benchmark_source: Option<BenchmarkLogSource>,
+}
+
 pub struct WorkAdapters {
     pub jobs: Arc<JobRegistry>,
     pub config_dir: PathBuf,
     pub desktop: Option<DesktopBridge>,
     control: Mutex<()>,
     benchmark_note_supported: std::sync::RwLock<Option<String>>,
+    benchmark_receipt_offsets: Mutex<std::collections::HashMap<benchmark::ReceiptScanKey, u64>>,
 }
 
 impl WorkAdapters {
@@ -36,6 +46,7 @@ impl WorkAdapters {
             desktop,
             control: Mutex::new(()),
             benchmark_note_supported: std::sync::RwLock::new(None),
+            benchmark_receipt_offsets: Mutex::new(std::collections::HashMap::new()),
         }
     }
 
@@ -57,6 +68,7 @@ impl WorkAdapters {
             };
             catalog
                 .upsert_external(&ExternalWork {
+                    log_bytes: self.jobs.log_length(&job.brief.job_id).map_err(error)?,
                     kind: "shell_job".into(),
                     locator: job.brief.job_id.clone(),
                     title: format!("Shell job {}", job.brief.job_id),
@@ -127,6 +139,7 @@ impl WorkAdapters {
                 };
                 catalog
                     .upsert_external(&ExternalWork {
+                        log_bytes: file_length(&dir.join(".swarm/agent/engine.log")).await?,
                         kind: "agent_work".into(),
                         locator: dir.to_string_lossy().into_owned(),
                         title,
@@ -181,6 +194,7 @@ impl WorkAdapters {
                 };
                 catalog
                     .upsert_external(&ExternalWork {
+                        log_bytes: active.and_then(|active|active["logBytes"].as_u64()),
                         kind: "benchmark".into(),
                         locator: serde_json::to_string(
                             &json!({"slot_dir":slot,"started_at":started}),
@@ -192,12 +206,16 @@ impl WorkAdapters {
                         run_key: active
                             .map(|_| {
                                 serde_json::to_string(
-                                    &json!({"run_id":run_id,"started_at":started}),
+                                    &json!({"run_id":run_id,"started_at":started,"activity_started_at":active.and_then(|active|active["activityStartedAt"].as_str())}),
                                 )
                             })
                             .transpose()
                             .map_err(error)?,
-                        updated_at: session["endedAt"].as_str().unwrap_or(started).into(),
+                        updated_at: session["logActivityStartedAt"]
+                            .as_str()
+                            .or_else(|| session["endedAt"].as_str())
+                            .unwrap_or(started)
+                            .into(),
                         event_kind: active
                             .and_then(|a| a["phase"].as_str())
                             .unwrap_or(state)
@@ -251,17 +269,22 @@ impl WorkAdapters {
         }
     }
 
-    pub async fn log(
+    pub(crate) async fn log_tail(
         &self,
         record: &CatalogRecord,
-        from: u64,
-    ) -> Result<leanzero_link::jobs::JobLogChunk, ControllerError> {
+        end: Option<u64>,
+        benchmark_source: Option<&BenchmarkLogSource>,
+    ) -> Result<ExternalLogPage, ControllerError> {
         if record.kind == "shell_job" {
             return self
                 .jobs
-                .read_log(&record.local_locator, from)
+                .read_log_tail(&record.local_locator, end, LOG_PAGE_BYTES)
                 .map_err(error)?
-                .ok_or_else(|| error("shell job is no longer present"));
+                .ok_or_else(|| error("shell job is no longer present"))
+                .map(|chunk| ExternalLogPage {
+                    chunk,
+                    benchmark_source: None,
+                });
         }
         if record.kind == "benchmark" {
             let desktop = self
@@ -269,36 +292,59 @@ impl WorkAdapters {
                 .as_ref()
                 .ok_or_else(|| error("benchmark desktop owner is unavailable"))?;
             let mut params: Value = serde_json::from_str(&record.local_locator).map_err(error)?;
-            params["from"] = json!(from);
-            return serde_json::from_value(desktop.call("benchmark.log", params).await?)
-                .map_err(error);
-        }
-        let path = match record.kind.as_str() {
-            "agent_work" => PathBuf::from(&record.local_locator).join(".swarm/agent/engine.log"),
-            _ => {
-                return Err(super::unsupported(
-                    "this work has no readable text log adapter",
-                ))
+            if let Some(source) = benchmark_source {
+                params["activity_started_at"] = json!(source.activity_started_at);
             }
-        };
-        use tokio::io::{AsyncReadExt, AsyncSeekExt};
-        let mut file = tokio::fs::File::open(path).await.map_err(error)?;
-        let len = file.metadata().await.map_err(error)?.len();
-        let from = from.min(len);
-        file.seek(std::io::SeekFrom::Start(from))
-            .await
-            .map_err(error)?;
-        let mut bytes = Vec::new();
-        file.take(leanzero_link::jobs::LOG_CHUNK_MAX.min(len - from))
-            .read_to_end(&mut bytes)
-            .await
-            .map_err(error)?;
-        let next = from + bytes.len() as u64;
-        Ok(leanzero_link::jobs::JobLogChunk {
-            from,
-            next,
-            data: String::from_utf8_lossy(&bytes).into_owned(),
-            done: record.current_run_id.is_none() && next == len,
+            match end {
+                Some(end) => {
+                    params["from"] = json!(end.saturating_sub(LOG_PAGE_BYTES));
+                    params["to"] = json!(end);
+                }
+                None => {
+                    params["tail_bytes"] = json!(LOG_PAGE_BYTES);
+                }
+            }
+            let result = desktop.call("benchmark.log", params).await?;
+            let activity = result
+                .get("activity_started_at")
+                .ok_or_else(|| error("desktop returned no log source identity"))?;
+            let source = BenchmarkLogSource {
+                activity_started_at: serde_json::from_value(activity.clone()).map_err(error)?,
+            };
+            if benchmark_source.is_some_and(|expected| expected != &source) {
+                return Err(error("desktop returned a different log source"));
+            }
+            let chunk: leanzero_link::jobs::JobLogChunk =
+                serde_json::from_value(result).map_err(error)?;
+            if chunk.next < chunk.from
+                || chunk.next - chunk.from > LOG_PAGE_BYTES
+                || end.is_some_and(|end| {
+                    chunk.next > end || chunk.from < end.saturating_sub(LOG_PAGE_BYTES)
+                })
+            {
+                return Err(error("desktop returned an invalid log interval"));
+            }
+            return Ok(ExternalLogPage {
+                chunk,
+                benchmark_source: Some(source),
+            });
+        }
+        if record.kind != "agent_work" {
+            return Err(super::unsupported(
+                "this work has no readable text log adapter",
+            ));
+        }
+        let path = PathBuf::from(&record.local_locator).join(".swarm/agent/engine.log");
+        let done = record.current_run_id.is_none();
+        tokio::task::spawn_blocking(move || {
+            leanzero_link::jobs::read_log_tail_file(&path, end, LOG_PAGE_BYTES, done)
+        })
+        .await
+        .map_err(error)?
+        .map_err(error)
+        .map(|chunk| ExternalLogPage {
+            chunk,
+            benchmark_source: None,
         })
     }
 }
@@ -311,6 +357,13 @@ fn field<'a>(value: &'a Value, name: &str) -> Result<&'a str, ControllerError> {
         .as_str()
         .filter(|s| !s.is_empty())
         .ok_or_else(|| error(format!("work metadata has no {name}")))
+}
+async fn file_length(path: &Path) -> Result<Option<u64>, ControllerError> {
+    match tokio::fs::metadata(path).await {
+        Ok(metadata) => Ok(Some(metadata.len())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(error(e)),
+    }
 }
 async fn read_json_optional(path: &Path) -> Result<Option<Value>, ControllerError> {
     match tokio::fs::read(path).await {

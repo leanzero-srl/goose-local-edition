@@ -1287,6 +1287,74 @@ impl JobRegistry {
         let done = e.snapshot().state.is_terminal();
         read_log_range(&e.dir.join("log"), from, done).map(Some)
     }
+
+    pub fn log_length(&self, id: &str) -> std::io::Result<Option<u64>> {
+        let Some(entry) = self.get(id) else {
+            return Ok(None);
+        };
+        match std::fs::metadata(entry.dir.join("log")) {
+            Ok(metadata) => Ok(Some(metadata.len())),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    pub fn read_log_tail(
+        &self,
+        id: &str,
+        end: Option<u64>,
+        limit: u64,
+    ) -> std::io::Result<Option<JobLogChunk>> {
+        let Some(entry) = self.get(id) else {
+            return Ok(None);
+        };
+        read_log_tail_file(
+            &entry.dir.join("log"),
+            end,
+            limit,
+            entry.snapshot().state.is_terminal(),
+        )
+        .map(Some)
+    }
+}
+
+pub fn read_log_tail_file(
+    path: &Path,
+    end: Option<u64>,
+    limit: u64,
+    done: bool,
+) -> std::io::Result<JobLogChunk> {
+    let mut file = std::fs::File::open(path)?;
+    let len = file.metadata()?.len();
+    let end = end.unwrap_or(len);
+    if end > len || limit == 0 || limit > LOG_CHUNK_MAX {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "log range is no longer available",
+        ));
+    }
+    let from = end.saturating_sub(limit);
+    file.seek(SeekFrom::Start(from))?;
+    let mut bytes = vec![0; usize::try_from(end - from).map_err(std::io::Error::other)?];
+    file.read_exact(&mut bytes)?;
+    let skip = bytes
+        .iter()
+        .take(3)
+        .take_while(|byte| **byte & 0xc0 == 0x80)
+        .count();
+    let bytes = &bytes[skip..];
+    let length = match std::str::from_utf8(bytes) {
+        Err(error) if error.error_len().is_none() => error.valid_up_to(),
+        _ => bytes.len(),
+    };
+    let from = from + skip as u64;
+    let next = from + length as u64;
+    Ok(JobLogChunk {
+        from,
+        next,
+        data: String::from_utf8_lossy(&bytes[..length]).into_owned(),
+        done: done && next == len,
+    })
 }
 
 fn read_log_range(path: &Path, from: u64, done: bool) -> std::io::Result<JobLogChunk> {
@@ -1310,6 +1378,25 @@ fn read_log_range(path: &Path, from: u64, done: bool) -> std::io::Result<JobLogC
 mod controller_log_range_tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn tail_pages_preserve_utf8_and_exact_older_ranges() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("log");
+        std::fs::write(&path, "starté🙂finish").unwrap();
+        let tail = read_log_tail_file(&path, None, 9, true).unwrap();
+        assert_eq!(tail.data, "finish");
+        assert!(tail.done);
+        let older = read_log_tail_file(&path, Some(tail.from), 9, true).unwrap();
+        assert_eq!(older.data, "arté🙂");
+        assert_eq!(older.next, tail.from);
+        assert!(!older.data.contains('�'));
+        std::fs::write(&path, "").unwrap();
+        let empty = read_log_tail_file(&path, None, 9, false).unwrap();
+        assert_eq!((empty.from, empty.next), (0, 0));
+        assert!(empty.data.is_empty());
+        assert!(read_log_tail_file(&path, Some(tail.from), 9, false).is_err());
+    }
 
     #[test]
     fn sparse_large_log_reads_only_the_selected_range() {

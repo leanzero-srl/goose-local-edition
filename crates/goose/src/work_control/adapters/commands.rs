@@ -9,6 +9,7 @@ use leanzero_link::{
     controller_wire::*,
 };
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::{path::PathBuf, sync::Arc};
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
@@ -170,6 +171,7 @@ impl WorkAdapters {
                 )
                 .map_err(error)?;
                 params["command_id"] = json!(command.command_id);
+                params["device_id"] = json!(device);
                 match &command.action {
                     ActionPayload::Note { text } => {
                         params["action"] = json!("note");
@@ -215,42 +217,7 @@ impl WorkAdapters {
                     return Err(conflict("stale_run", "Agent Work owner run changed"));
                 }
                 let checkpoint = command.command_id.to_string();
-                match &command.action {
-                    ActionPayload::Note { text } => {
-                        let inbox = root.join("inbox");
-                        tokio::fs::create_dir_all(&inbox).await.map_err(error)?;
-                        let temporary = inbox.join(format!("{checkpoint}.tmp"));
-                        let mut file = tokio::fs::OpenOptions::new()
-                            .write(true)
-                            .create_new(true)
-                            .open(&temporary)
-                            .await
-                            .map_err(error)?;
-                        file.write_all(serde_json::to_string(&json!({"text":text,"command_id":command.command_id,"device_id":device,"human_assisted":true})).map_err(error)?.as_bytes()).await.map_err(error)?;
-                        file.sync_all().await.map_err(error)?;
-                        tokio::fs::rename(temporary, inbox.join(format!("{checkpoint}.json")))
-                            .await
-                            .map_err(error)?;
-                    }
-                    ActionPayload::Resume {} => {
-                        match tokio::fs::remove_file(root.join("paused")).await {
-                            Ok(()) => {}
-                            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                            Err(e) => return Err(error(e)),
-                        }
-                    }
-                    action => {
-                        let flag = match action {
-                            ActionPayload::Stop {} => "stop",
-                            ActionPayload::Pause {} => "paused",
-                            ActionPayload::Tick {} => "tick-now",
-                            _ => return Err(error("unsupported Agent Work action")),
-                        };
-                        tokio::fs::write(root.join(flag), checkpoint.as_bytes())
-                            .await
-                            .map_err(error)?;
-                    }
-                }
+                queue_agent_command(&root, &expected, command, device).await?;
                 Ok((
                     CommandState::Waiting,
                     checkpoint,
@@ -279,6 +246,10 @@ impl WorkAdapters {
             .await
             .map_err(error)?;
         let delivered = match record.kind.as_str() {
+            "benchmark" => {
+                self.benchmark_note_delivered(catalog, &record, &receipt)
+                    .await?
+            }
             "shell_job" => self
                 .jobs
                 .view(&record.local_locator)
@@ -299,32 +270,8 @@ impl WorkAdapters {
                     )
                     .await
                     .map_err(error)?;
-                let state = read_json_optional(&root.join("state.json")).await?;
-                let same_run = state
-                    .as_ref()
-                    .is_some_and(|state| state["run_id"].as_str() == Some(run_key.as_str()));
-                let status = state.as_ref().and_then(|state| state["status"].as_str());
-                match command.action {
-                    ActionPayload::Note { .. } => tokio::fs::try_exists(
-                        root.join("inbox/consumed")
-                            .join(format!("{}.json", receipt.command_id)),
-                    )
-                    .await
-                    .map_err(error)?,
-                    ActionPayload::Pause {} => same_run && status == Some("paused"),
-                    ActionPayload::Resume {} => {
-                        same_run
-                            && matches!(status, Some("idle" | "waiting" | "ticking" | "holding"))
-                    }
-                    ActionPayload::Stop {} => same_run && status == Some("stopped"),
-                    ActionPayload::Tick {} => {
-                        same_run
-                            && !tokio::fs::try_exists(root.join("tick-now"))
-                                .await
-                                .map_err(error)?
-                    }
-                    _ => false,
-                }
+                agent_command_consumed(&root, &run_key, &command, receipt.authenticated_device_id)
+                    .await?
             }
             _ => false,
         };
@@ -335,6 +282,77 @@ impl WorkAdapters {
         }
         Ok(receipt)
     }
+}
+
+async fn queue_agent_command(
+    root: &std::path::Path,
+    run_id: &str,
+    command: &WorkCommand,
+    device: Uuid,
+) -> Result<(), ControllerError> {
+    let mut envelope = json!({
+        "run_id": run_id, "command_id": command.command_id, "device_id": device,
+        "action": command.action.action(), "queued_at": chrono::Utc::now(), "human_assisted": true,
+    });
+    let dir = match &command.action {
+        ActionPayload::Note { text } => {
+            envelope["text"] = json!(text);
+            root.join("inbox")
+        }
+        ActionPayload::Pause {}
+        | ActionPayload::Resume {}
+        | ActionPayload::Stop {}
+        | ActionPayload::Tick {} => root
+            .join("control")
+            .join(agent_run_directory_key(run_id))
+            .join("requests"),
+        _ => return Err(error("unsupported Agent Work action")),
+    };
+    tokio::fs::create_dir_all(&dir).await.map_err(error)?;
+    let key = format!("{device}_{}", command.command_id);
+    let temporary = dir.join(format!("{key}.tmp"));
+    let mut file = tokio::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .await
+        .map_err(error)?;
+    file.write_all(&serde_json::to_vec(&envelope).map_err(error)?)
+        .await
+        .map_err(error)?;
+    file.sync_all().await.map_err(error)?;
+    tokio::fs::rename(temporary, dir.join(format!("{key}.json")))
+        .await
+        .map_err(error)?;
+    Ok(())
+}
+
+fn agent_run_directory_key(run_id: &str) -> String {
+    Sha256::digest(run_id.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+async fn agent_command_consumed(
+    root: &std::path::Path,
+    run_id: &str,
+    command: &WorkCommand,
+    device: Uuid,
+) -> Result<bool, ControllerError> {
+    let ack = read_json_optional(
+        &root
+            .join("control/acks")
+            .join(format!("{device}_{}.json", command.command_id)),
+    )
+    .await?;
+    Ok(ack.is_some_and(|ack| {
+        ack["run_id"].as_str() == Some(run_id)
+            && ack["device_id"].as_str() == Some(device.to_string().as_str())
+            && ack["command_id"].as_str() == Some(command.command_id.to_string().as_str())
+            && ack["action"] == json!(command.action.action())
+            && ack["state"].as_str() == Some("consumed")
+    }))
 }
 
 async fn save_receipt(
@@ -348,4 +366,215 @@ async fn save_receipt(
         .bind(account.to_string()).bind(receipt.authenticated_device_id.to_string()).bind(receipt.command_id.to_string())
         .execute(runs.pool().await.map_err(error)?).await.map_err(error)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn command(action: ActionPayload) -> WorkCommand {
+        WorkCommand {
+            command_id: Uuid::new_v4(),
+            work: WorkRef {
+                owner_node_id: Uuid::new_v4(),
+                kind: WorkKind::AgentWork,
+                work_id: Uuid::new_v4(),
+            },
+            expected_store_generation: Uuid::new_v4(),
+            expected_revision: 1,
+            expected_run_id: Some(Uuid::new_v4()),
+            action,
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_agent_queue_preserves_run_identity_for_every_action() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        tokio::fs::write(root.join("paused"), b"").await.unwrap();
+        for action in [
+            ActionPayload::Note {
+                text: "note".into(),
+            },
+            ActionPayload::Pause {},
+            ActionPayload::Resume {},
+            ActionPayload::Stop {},
+            ActionPayload::Tick {},
+        ] {
+            let command = command(action);
+            let device = Uuid::new_v4();
+            queue_agent_command(root, "prior-run", &command, device)
+                .await
+                .unwrap();
+            let queue = if matches!(command.action, ActionPayload::Note { .. }) {
+                root.join("inbox")
+            } else {
+                root.join("control")
+                    .join(agent_run_directory_key("prior-run"))
+                    .join("requests")
+            };
+            let envelope =
+                read_json_optional(&queue.join(format!("{device}_{}.json", command.command_id)))
+                    .await
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(envelope["run_id"], "prior-run");
+            assert_eq!(envelope["device_id"], device.to_string());
+            assert_eq!(envelope["command_id"], command.command_id.to_string());
+            assert_eq!(envelope["action"], json!(command.action.action()));
+            assert!(!agent_command_consumed(root, "prior-run", &command, device)
+                .await
+                .unwrap());
+        }
+        assert_eq!(
+            tokio::fs::read(root.join("paused")).await.unwrap(),
+            b"",
+            "dispatching resume must not clear a later owner's pause"
+        );
+        assert!(!root.join("stop").exists());
+        assert!(!root.join("tick-now").exists());
+    }
+
+    #[tokio::test]
+    async fn remote_agent_receipt_requires_matching_run_command_action_and_consumption() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        tokio::fs::create_dir_all(root.join("control/acks"))
+            .await
+            .unwrap();
+        tokio::fs::create_dir_all(root.join("inbox/consumed"))
+            .await
+            .unwrap();
+        for action in [
+            ActionPayload::Note {
+                text: "note".into(),
+            },
+            ActionPayload::Pause {},
+            ActionPayload::Resume {},
+            ActionPayload::Stop {},
+            ActionPayload::Tick {},
+        ] {
+            let command = command(action);
+            let device = Uuid::new_v4();
+            tokio::fs::write(
+                root.join("state.json"),
+                json!({"run_id":"run","status":"stopped"}).to_string(),
+            )
+            .await
+            .unwrap();
+            tokio::fs::write(
+                root.join("inbox/consumed")
+                    .join(format!("{device}_{}.json", command.command_id)),
+                b"{}",
+            )
+            .await
+            .unwrap();
+            assert!(
+                !agent_command_consumed(root, "run", &command, device)
+                    .await
+                    .unwrap(),
+                "status, renamed note, and absent tick flag cannot prove delivery"
+            );
+            let ack = json!({"run_id":"run","device_id":device,"command_id":command.command_id,"action":command.action.action(),"state":"consumed"});
+            let path = root
+                .join("control/acks")
+                .join(format!("{device}_{}.json", command.command_id));
+            for (field, wrong) in [
+                ("run_id", "other-run"),
+                ("device_id", "other-device"),
+                ("command_id", "other-command"),
+                ("action", "send"),
+                ("state", "queued"),
+            ] {
+                let mut wrong_ack = ack.clone();
+                wrong_ack[field] = json!(wrong);
+                tokio::fs::write(&path, wrong_ack.to_string())
+                    .await
+                    .unwrap();
+                assert!(
+                    !agent_command_consumed(root, "run", &command, device)
+                        .await
+                        .unwrap(),
+                    "wrong {field} must not acknowledge this command"
+                );
+            }
+            tokio::fs::write(&path, ack.to_string()).await.unwrap();
+            assert!(agent_command_consumed(root, "run", &command, device)
+                .await
+                .unwrap());
+            assert!(!agent_command_consumed(root, "later-run", &command, device)
+                .await
+                .unwrap());
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_agent_reused_command_id_cannot_borrow_another_devices_ack() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        tokio::fs::create_dir_all(root.join("control/acks"))
+            .await
+            .unwrap();
+        for action in [
+            ActionPayload::Note {
+                text: "first note".into(),
+            },
+            ActionPayload::Pause {},
+        ] {
+            let first = command(action);
+            let mut second = first.clone();
+            if matches!(second.action, ActionPayload::Note { .. }) {
+                second.action = ActionPayload::Note {
+                    text: "second note".into(),
+                };
+            }
+            let device_a = Uuid::new_v4();
+            let device_b = Uuid::new_v4();
+            queue_agent_command(root, "run", &first, device_a)
+                .await
+                .unwrap();
+            let ack_a = json!({"run_id":"run","device_id":device_a,"command_id":first.command_id,"action":first.action.action(),"state":"consumed"});
+            tokio::fs::write(
+                root.join("control/acks")
+                    .join(format!("{device_a}_{}.json", first.command_id)),
+                ack_a.to_string(),
+            )
+            .await
+            .unwrap();
+            queue_agent_command(root, "run", &second, device_b)
+                .await
+                .unwrap();
+            assert!(agent_command_consumed(root, "run", &first, device_a)
+                .await
+                .unwrap());
+            assert!(!agent_command_consumed(root, "run", &second, device_b)
+                .await
+                .unwrap());
+            let queue = if matches!(first.action, ActionPayload::Note { .. }) {
+                root.join("inbox")
+            } else {
+                root.join("control")
+                    .join(agent_run_directory_key("run"))
+                    .join("requests")
+            };
+            for device in [device_a, device_b] {
+                let request =
+                    read_json_optional(&queue.join(format!("{device}_{}.json", first.command_id)))
+                        .await
+                        .unwrap()
+                        .unwrap();
+                assert_eq!(request["device_id"], device.to_string());
+                if matches!(first.action, ActionPayload::Note { .. }) {
+                    assert_eq!(
+                        request["text"],
+                        if device == device_a {
+                            "first note"
+                        } else {
+                            "second note"
+                        }
+                    );
+                }
+            }
+        }
+    }
 }

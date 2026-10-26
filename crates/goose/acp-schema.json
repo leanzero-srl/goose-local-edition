@@ -2,6 +2,160 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "GooseExtensions",
   "$defs": {
+    "ControllerStatusRequest_unstable": {
+      "type": "object",
+      "additionalProperties": false,
+      "x-side": "agent",
+      "x-method": "_goose/unstable/controller/status"
+    },
+    "ControllerResponse_unstable": {
+      "description": "Canonical domain bodies are validated against leanzero-link/controller_wire.rs.\nThis envelope deliberately carries no account, host or device credentials.",
+      "x-side": "agent"
+    },
+    "ControllerRequestCodeRequest_unstable": {
+      "type": "object",
+      "additionalProperties": false,
+      "x-side": "agent",
+      "x-method": "_goose/unstable/controller/requestCode"
+    },
+    "ControllerVerifyRequest_unstable": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/controller/verify"
+    },
+    "ControllerLogoutRequest_unstable": {
+      "type": "object",
+      "additionalProperties": false,
+      "x-side": "agent",
+      "x-method": "_goose/unstable/controller/logout"
+    },
+    "ControllerHostsRequest_unstable": {
+      "type": "object",
+      "additionalProperties": false,
+      "x-side": "agent",
+      "x-method": "_goose/unstable/controller/hosts"
+    },
+    "ControllerCatalogRequest_unstable": {
+      "type": "object",
+      "additionalProperties": false,
+      "x-side": "agent",
+      "x-method": "_goose/unstable/controller/catalog"
+    },
+    "ControllerSyncRequest_unstable": {
+      "type": "object",
+      "additionalProperties": false,
+      "x-side": "agent",
+      "x-method": "_goose/unstable/controller/sync"
+    },
+    "ControllerOpenWorkRequest_unstable": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "work": {},
+        "store_generation": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "work",
+        "store_generation"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/controller/openWork"
+    },
+    "ControllerHistoryRequest_unstable": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "work": {},
+        "store_generation": {
+          "type": "string"
+        },
+        "page_token": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "work",
+        "store_generation"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/controller/history"
+    },
+    "ControllerWorkChangesRequest_unstable": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "work": {},
+        "store_generation": {
+          "type": "string"
+        },
+        "cursor": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "work",
+        "store_generation",
+        "cursor"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/controller/workChanges"
+    },
+    "ControllerCommandRequest_unstable": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {}
+      },
+      "required": [
+        "command"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/controller/command"
+    },
+    "ControllerReceiptRequest_unstable": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "owner_node_id": {
+          "type": "string"
+        },
+        "command_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "owner_node_id",
+        "command_id"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/controller/receipt"
+    },
+    "ControllerPendingCommandsRequest_unstable": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "work": {}
+      },
+      "required": [
+        "work"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/controller/pendingCommands"
+    },
     "AddSessionExtensionRequest_unstable": {
       "type": "object",
       "properties": {
@@ -20734,6 +20888,123 @@
                 {
                   "allOf": [
                     {
+                      "$ref": "#/$defs/ControllerStatusRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/controller/status",
+                  "title": "ControllerStatusRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/ControllerRequestCodeRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/controller/requestCode",
+                  "title": "ControllerRequestCodeRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/ControllerVerifyRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/controller/verify",
+                  "title": "ControllerVerifyRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/ControllerLogoutRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/controller/logout",
+                  "title": "ControllerLogoutRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/ControllerHostsRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/controller/hosts",
+                  "title": "ControllerHostsRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/ControllerCatalogRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/controller/catalog",
+                  "title": "ControllerCatalogRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/ControllerSyncRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/controller/sync",
+                  "title": "ControllerSyncRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/ControllerOpenWorkRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/controller/openWork",
+                  "title": "ControllerOpenWorkRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/ControllerHistoryRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/controller/history",
+                  "title": "ControllerHistoryRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/ControllerWorkChangesRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/controller/workChanges",
+                  "title": "ControllerWorkChangesRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/ControllerCommandRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/controller/command",
+                  "title": "ControllerCommandRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/ControllerReceiptRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/controller/receipt",
+                  "title": "ControllerReceiptRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/ControllerPendingCommandsRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/controller/pendingCommands",
+                  "title": "ControllerPendingCommandsRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
                       "$ref": "#/$defs/AddSessionExtensionRequest_unstable"
                     }
                   ],
@@ -22642,6 +22913,14 @@
               "anyOf": [
                 {
                   "anyOf": [
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/ControllerResponse_unstable"
+                        }
+                      ],
+                      "title": "ControllerResponse_unstable"
+                    },
                     {
                       "allOf": [
                         {

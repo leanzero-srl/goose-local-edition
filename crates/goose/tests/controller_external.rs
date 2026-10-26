@@ -22,6 +22,10 @@ use serde_json::json;
 use std::sync::Arc;
 use uuid::Uuid;
 
+#[cfg(unix)]
+#[path = "controller_external/benchmark.rs"]
+mod benchmark;
+
 struct Authority(AuthorizationLease);
 #[async_trait]
 impl ControllerAuthority for Authority {
@@ -99,6 +103,8 @@ async fn real_agent_inbox_has_idempotent_command_and_waits_for_consumption() {
     .unwrap();
     std::fs::write(runtime.join("state.json"),json!({"title":"Real desk","status":"waiting","run_id":"desk-run","updated_at":"2026-10-26T10:00:00Z"}).to_string()).unwrap();
     std::fs::write(runtime.join("lock"), std::process::id().to_string()).unwrap();
+    let original_log = format!("{}LATEST_VISIBLE_TAIL", "OLDER_ONLY_LINE\n".repeat(20000));
+    std::fs::write(runtime.join("engine.log"), &original_log).unwrap();
     let sessions = Arc::new(SessionManager::new(root.path().join("profile")));
     let catalog = sessions.work_catalog().await.unwrap();
     let generation = Uuid::parse_str(&catalog.watermark().await.unwrap().generation).unwrap();
@@ -109,6 +115,7 @@ async fn real_agent_inbox_has_idempotent_command_and_waits_for_consumption() {
         root: root.path().join("jobs"),
         ..JobsConfig::default()
     }));
+    let adapters = Arc::new(WorkAdapters::new(jobs, config, None));
     let backend = GooseControllerBackend::new(
         ControllerBackendConfig {
             host: HostDescriptor {
@@ -131,7 +138,7 @@ async fn real_agent_inbox_has_idempotent_command_and_waits_for_consumption() {
     )
     .await
     .unwrap()
-    .with_adapters(Arc::new(WorkAdapters::new(jobs, config, None)))
+    .with_adapters(adapters.clone())
     .await
     .unwrap();
     let (device, dispatch) = controller_auth(owner, account, generation).await;
@@ -161,12 +168,15 @@ async fn real_agent_inbox_has_idempotent_command_and_waits_for_consumption() {
         .await
         .unwrap();
     assert_eq!(duplicate.command_id, receipt.command_id);
-    let note = runtime
-        .join("inbox")
-        .join(format!("{}.json", receipt.command_id));
+    let note = runtime.join("inbox").join(format!(
+        "{}_{}.json",
+        device.device_id(),
+        receipt.command_id
+    ));
     let value: serde_json::Value = serde_json::from_slice(&std::fs::read(&note).unwrap()).unwrap();
     assert_eq!(value["text"], "Inspect the failing test first");
     assert_eq!(value["human_assisted"], true);
+    assert_eq!(value["run_id"], "desk-run");
     assert_eq!(
         std::fs::read_dir(runtime.join("inbox"))
             .unwrap()
@@ -210,9 +220,11 @@ async fn real_agent_inbox_has_idempotent_command_and_waits_for_consumption() {
     ));
     std::fs::rename(
         note,
-        runtime
-            .join("inbox/consumed")
-            .join(format!("{}.json", receipt.command_id)),
+        runtime.join("inbox/consumed").join(format!(
+            "{}_{}.json",
+            device.device_id(),
+            receipt.command_id
+        )),
     )
     .unwrap();
     assert!(matches!(
@@ -221,8 +233,114 @@ async fn real_agent_inbox_has_idempotent_command_and_waits_for_consumption() {
             .await
             .unwrap()
             .state,
+        CommandState::Waiting
+    ));
+    std::fs::create_dir_all(runtime.join("control/acks")).unwrap();
+    let ack_path = runtime.join("control/acks").join(format!(
+        "{}_{}.json",
+        device.device_id(),
+        receipt.command_id
+    ));
+    std::fs::write(&ack_path, json!({"run_id":"other-run","command_id":receipt.command_id,"device_id":device.device_id(),"action":"note","state":"consumed"}).to_string()).unwrap();
+    assert!(matches!(
+        backend
+            .receipt(&device, receipt.command_id)
+            .await
+            .unwrap()
+            .state,
+        CommandState::Waiting
+    ));
+    std::fs::write(&ack_path, json!({"run_id":"desk-run","command_id":receipt.command_id,"device_id":device.device_id(),"action":"note","state":"consumed"}).to_string()).unwrap();
+    assert!(matches!(
+        backend
+            .receipt(&device, receipt.command_id)
+            .await
+            .unwrap()
+            .state,
         CommandState::Delivered
     ));
+    let selected = backend
+        .snapshot(&device, &receipt.work, generation)
+        .await
+        .unwrap();
+    let tail = backend
+        .history(&device, &receipt.work, generation, None)
+        .await
+        .unwrap();
+    let tail_text = tail.items[0].message["content"][0]["text"]
+        .as_str()
+        .unwrap();
+    assert!(tail_text.ends_with("LATEST_VISIBLE_TAIL"));
+    assert_eq!(
+        tail_text.len(),
+        goose::work_control::adapters::LOG_PAGE_BYTES as usize
+    );
+    let first_start = original_log.len() - tail_text.len();
+    assert_eq!(
+        tail.items[0].message_id,
+        format!("log_{first_start}_{}", original_log.len())
+    );
+    assert!(tail.next_page_token.is_some());
+    catalog
+        .upsert_external(&work("shell_job", "unrelated-work"))
+        .await
+        .unwrap();
+    let older = backend
+        .history(
+            &device,
+            &receipt.work,
+            generation,
+            tail.next_page_token.as_deref(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        older.revision, tail.revision,
+        "other work must not invalidate older log pages"
+    );
+    assert!(older.items[0]
+        .message_id
+        .ends_with(&format!("_{first_start}")));
+    let before_append = catalog.watermark().await.unwrap();
+    {
+        use std::io::Write;
+        let mut log = std::fs::OpenOptions::new()
+            .append(true)
+            .open(runtime.join("engine.log"))
+            .unwrap();
+        log.write_all(b"\nNEW_VISIBLE_OUTPUT").unwrap();
+    }
+    adapters.refresh(&catalog).await.unwrap();
+    let changed = backend
+        .work_changes(&device, &receipt.work, generation, &selected.work_cursor)
+        .await
+        .unwrap();
+    assert!(changed
+        .frames
+        .iter()
+        .any(|frame| frame.kind == "log_updated"));
+    assert!(
+        !serde_json::to_string(&changed)
+            .unwrap()
+            .contains("NEW_VISIBLE_OUTPUT"),
+        "metadata must not broadcast log text"
+    );
+    let after_append = catalog.watermark().await.unwrap();
+    assert!(after_append.revision > before_append.revision);
+    adapters.refresh(&catalog).await.unwrap();
+    assert_eq!(
+        catalog.watermark().await.unwrap(),
+        after_append,
+        "unchanged log bytes must not write more events"
+    );
+    let latest = backend
+        .history(&device, &receipt.work, generation, None)
+        .await
+        .unwrap();
+    assert!(latest.items[0].message["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .ends_with("NEW_VISIBLE_OUTPUT"));
 }
 
 fn work(kind: &str, locator: &str) -> ExternalWork {
@@ -235,6 +353,7 @@ fn work(kind: &str, locator: &str) -> ExternalWork {
         run_key: Some("original-run".into()),
         updated_at: "2026-10-26T10:00:00Z".into(),
         event_kind: "started".into(),
+        log_bytes: None,
     }
 }
 

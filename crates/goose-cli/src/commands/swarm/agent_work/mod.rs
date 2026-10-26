@@ -175,11 +175,7 @@ async fn serve(dir: &std::path::Path, once: bool) -> Result<()> {
     rt.ensure()?;
     rt.take_lock()?;
     rt.clear_stop();
-    let run_id = format!(
-        "agent-{}-{}",
-        manifest.name,
-        Utc::now().format("%Y%m%d-%H%M%S")
-    );
+    let run_id = format!("agent-{}-{:032x}", manifest.name, rand::random::<u128>());
     let sink: Arc<dyn goose_swarm::EventSink> =
         Arc::new(super::JsonlSink::new(&rt.events_path(), run_id.clone())?);
     let charter = Arc::new(manifest.charter_text(&dir));
@@ -253,6 +249,7 @@ async fn serve(dir: &std::path::Path, once: bool) -> Result<()> {
     st.planner_model = fleet.planner_model.clone();
     st.devices = fleet.devices.clone();
     let ctx = tick::TickCtx {
+        run_id: run_id.clone(),
         manifest: manifest.clone(),
         dir: dir.clone(),
         rt: rt.clone(),
@@ -271,7 +268,7 @@ async fn serve(dir: &std::path::Path, once: bool) -> Result<()> {
     let result: Result<()> = async {
         loop {
             let now = Utc::now();
-            let (at, why) = if once || rt.take_tick_now() {
+            let (at, why) = if once || rt.take_tick_now(&run_id)? {
                 (Some(now), "requested now")
             } else {
                 clock.next_tick(last_start, now)
@@ -280,7 +277,7 @@ async fn serve(dir: &std::path::Path, once: bool) -> Result<()> {
             st.next_tick_reason = why.to_string();
             st.next_tick_local = at.map_or_else(|| "none".to_string(), |t| clock.local_label(t));
             st.window_open = clock.is_open(now);
-            st.status = if rt.is_paused() { "paused" } else { "waiting" }.into();
+            st.status = if rt.is_paused(&run_id)? { "paused" } else { "waiting" }.into();
             st.phase = "idle".into();
             st.phase_started_at = None;
             rt.write_state(&mut st);
@@ -292,13 +289,13 @@ async fn serve(dir: &std::path::Path, once: bool) -> Result<()> {
             };
             // Wait, touching the heartbeat, until the tick is due or the human steers.
             loop {
-                if rt.stop_requested() {
+                if rt.stop_requested(&run_id)? {
                     return Ok(());
                 }
-                if rt.take_tick_now() {
+                if rt.take_tick_now(&run_id)? {
                     break;
                 }
-                let paused = rt.is_paused();
+                let paused = rt.is_paused(&run_id)?;
                 let due = Utc::now() >= at;
                 if due && !paused {
                     break;
@@ -328,7 +325,7 @@ async fn serve(dir: &std::path::Path, once: bool) -> Result<()> {
                 sink.write_value(serde_json::json!({"event": "tick_failed", "tick": next_tick, "error": e.to_string()}));
                 eprintln!("tick {next_tick} failed: {e}");
             }
-            if once || rt.stop_requested() {
+            if once || rt.stop_requested(&run_id)? {
                 return Ok(());
             }
         }

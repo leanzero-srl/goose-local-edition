@@ -13,6 +13,7 @@ pub struct ExternalWork {
     pub run_key: Option<String>,
     pub updated_at: String,
     pub event_kind: String,
+    pub log_bytes: Option<u64>,
 }
 
 pub(crate) async fn create_objects(tx: &mut Transaction<'_, Sqlite>) -> Result<()> {
@@ -21,6 +22,7 @@ pub(crate) async fn create_objects(tx: &mut Transaction<'_, Sqlite>) -> Result<(
         "CREATE TABLE IF NOT EXISTS external_work_runs (work_id TEXT NOT NULL REFERENCES external_work_identity(work_id), run_key TEXT NOT NULL, run_id TEXT NOT NULL UNIQUE, PRIMARY KEY(work_id,run_key))",
         "CREATE TABLE IF NOT EXISTS external_catalog_versions (revision INTEGER PRIMARY KEY, work_id TEXT NOT NULL REFERENCES external_work_identity(work_id), kind TEXT NOT NULL, local_locator TEXT NOT NULL, title TEXT NOT NULL, working_dir TEXT NOT NULL, session_type TEXT NOT NULL, state TEXT NOT NULL, current_run_id TEXT, archived INTEGER NOT NULL, updated_at TEXT NOT NULL, deleted INTEGER NOT NULL, event_kind TEXT NOT NULL)",
         "CREATE INDEX IF NOT EXISTS external_versions_work ON external_catalog_versions(work_id,revision DESC)",
+        "CREATE TABLE IF NOT EXISTS external_work_progress (work_id TEXT PRIMARY KEY REFERENCES external_work_identity(work_id), log_bytes INTEGER, event_kind TEXT NOT NULL, source_updated_at TEXT NOT NULL)",
     ] {
         sqlx::query(statement).execute(&mut **tx).await?;
     }
@@ -43,6 +45,7 @@ impl WorkCatalog {
                     run_key: None,
                     updated_at: chrono::Utc::now().to_rfc3339(),
                     event_kind: "deleted".into(),
+                    log_bytes: None,
                 })
                 .await?;
             }
@@ -117,6 +120,14 @@ impl WorkCatalog {
         };
         let previous: Option<CatalogRecord> = sqlx::query_as("SELECT * FROM external_catalog_versions WHERE work_id=? ORDER BY revision DESC LIMIT 1")
             .bind(&work_id).fetch_optional(&mut *tx).await?;
+        let progress: Option<(Option<i64>,String,String)> = sqlx::query_as("SELECT log_bytes,event_kind,source_updated_at FROM external_work_progress WHERE work_id=?")
+            .bind(&work_id).fetch_optional(&mut *tx).await?;
+        let log_bytes = work.log_bytes.map(i64::try_from).transpose()?;
+        let mut comparable = previous.clone();
+        if let (Some(previous), Some((_, event_kind, updated_at))) = (&mut comparable, &progress) {
+            previous.event_kind = event_kind.clone();
+            previous.updated_at = updated_at.clone();
+        }
         let mut record = CatalogRecord {
             revision: previous.as_ref().map_or(0, |p| p.revision),
             work_id,
@@ -132,9 +143,22 @@ impl WorkCatalog {
             deleted: work.state == "deleted",
             event_kind: work.event_kind.clone(),
         };
-        if previous.as_ref() == Some(&record) {
+        if comparable.as_ref() == Some(&record)
+            && progress
+                .as_ref()
+                .is_some_and(|(bytes, _, _)| *bytes == log_bytes)
+        {
             tx.commit().await?;
-            return Ok(record);
+            return Ok(previous.expect("previous record compared"));
+        }
+        if previous.is_some()
+            && log_bytes.is_some()
+            && progress
+                .as_ref()
+                .is_some_and(|(bytes, _, _)| *bytes != log_bytes)
+        {
+            record.event_kind = "log_updated".into();
+            record.updated_at = chrono::Utc::now().to_rfc3339();
         }
         sqlx::query("UPDATE controller_store SET revision=revision+1 WHERE singleton=1")
             .execute(&mut *tx)
@@ -144,6 +168,8 @@ impl WorkCatalog {
             .bind(record.revision).bind(&record.work_id).bind(&record.kind).bind(&record.local_locator).bind(&record.title)
             .bind(&record.working_dir).bind(&record.session_type).bind(&record.state).bind(&record.current_run_id)
             .bind(record.archived).bind(&record.updated_at).bind(record.deleted).bind(&record.event_kind).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO external_work_progress(work_id,log_bytes,event_kind,source_updated_at) VALUES (?,?,?,?) ON CONFLICT(work_id) DO UPDATE SET log_bytes=excluded.log_bytes,event_kind=excluded.event_kind,source_updated_at=excluded.source_updated_at")
+            .bind(&record.work_id).bind(log_bytes).bind(&work.event_kind).bind(&work.updated_at).execute(&mut *tx).await?;
         tx.commit().await?;
         notify_commit(&self.path);
         Ok(record)
