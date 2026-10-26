@@ -54,6 +54,12 @@ The implemented user path is Settings → Delete Link account → Email a deleti
 
 Apple requires in-app initiation and account-associated data deletion, with legally required retention explained; email-code confirmation is permitted. A slower process must explain timing and confirm completion. The current retained-record categories and indefinite pending recovery therefore remain release questions: a disclosed retention category alone does not establish compliance, and a support link must not become a mandatory substitute for the in-app flow. [Apple account-deletion guidance](https://developer.apple.com/help/app-review/guideline-reference/5-1-1-account-deletion).
 
+## Observed session sharing details
+
+Native `04b2249764` and owner `a08c40317` add an optional selected-session descriptor to the existing action review. It reports live, saved or unavailable provenance, a provider label, and only known initial HTTP origins and connected tool labels. Known HTTP provider implementations reuse their request URL construction; ambiguous routing remains unavailable. Tool HTTP origins come from the URI actually passed to the client, not an earlier configuration-resolution read. Userinfo, paths, queries and fragments are excluded. Reads do not create a provider, start an extension or invoke a request decorator. Twelve native, two provider and six core focused cases passed, with independent review of both surfaces.
+
+This is observed metadata, not a future routing guarantee or complete recipient inventory. Saved configuration is explicitly not verified active state; external agent/benchmark runtimes can report unavailable. Providers and tools may contact further services. Existing per-action consent remains; no new command authorization or egress restriction is claimed. The real phone-to-owner review path remains held by legacy host enrollment, and these checks do not establish App Review acceptance.
+
 ## Factual privacy-page draft
 
 The following is ready as source-grounded draft copy; complete the owner/deployment fields below before publishing a policy.
