@@ -74,7 +74,9 @@ final class PinnedOwnerTransport: OwnerEventTransport, @unchecked Sendable {
             let pending = OnceContinuation(continuation)
             connection.stateUpdateHandler = { state in
                 switch state {
-                case .ready: pending.finish(.success(()))
+                case .ready:
+                    connection.stateUpdateHandler = nil
+                    pending.finish(.success(()))
                 case .failed(let error), .waiting(let error): pending.finish(.failure(error)); connection.cancel()
                 case .cancelled: pending.finish(.failure(CancellationError()))
                 default: break
@@ -83,20 +85,49 @@ final class PinnedOwnerTransport: OwnerEventTransport, @unchecked Sendable {
             connection.start(queue: queue)
         }
     }
-    private func watchdog(_ connection: NWConnection) -> Task<Void, Never> {
+    private func watchdog(_ connection: NWConnection, deadline: ContinuousClock.Instant) -> Task<Void, Never> {
         Task {
-            do { try await Task.sleep(for: .seconds(requestTimeout)); connection.cancel() }
+            do { try await ContinuousClock().sleep(until: deadline); connection.cancel() }
             catch { }
         }
     }
+    static func canRetryConnection(_ error: Error, hasProxy: Bool) -> Bool {
+        // Apple's SOCKS adapter maps the embedded proxy's connect timeout to EINVAL.
+        // This recovery is only before HTTP bytes are sent; TLS failures never qualify.
+        guard hasProxy, case NWError.posix(.EINVAL) = error else { return false }
+        return true
+    }
+    private func connected(_ request: URLRequest, websocket: Bool, deadline: ContinuousClock.Instant) async throws -> (UUID, NWConnection) {
+        let clock = ContinuousClock()
+        while true {
+            try Task.checkCancellation()
+            guard clock.now < deadline else { throw URLError(.timedOut) }
+            let (id, connection) = try makeConnection(request, websocket: websocket)
+            let timer = watchdog(connection, deadline: deadline)
+            do {
+                try await withTaskCancellationHandler {
+                    try Task.checkCancellation()
+                    try await start(connection)
+                } onCancel: { connection.cancel() }
+                timer.cancel()
+                return (id, connection)
+            } catch {
+                timer.cancel()
+                remove(id, connection: connection)
+                try Task.checkCancellation()
+                guard Self.canRetryConnection(error, hasProxy: !proxies.isEmpty), clock.now < deadline else { throw error }
+                try await clock.sleep(until: min(deadline, clock.now.advanced(by: .milliseconds(100))))
+            }
+        }
+    }
     func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        let (id, connection) = try makeConnection(request, websocket: false)
+        let deadline = ContinuousClock().now.advanced(by: .seconds(requestTimeout))
+        let (id, connection) = try await connected(request, websocket: false, deadline: deadline)
         defer { remove(id, connection: connection) }
-        let timer = watchdog(connection)
+        let timer = watchdog(connection, deadline: deadline)
         defer { timer.cancel() }
         return try await withTaskCancellationHandler {
             try Task.checkCancellation()
-            try await start(connection)
             let bytes = try OwnerHTTPMessage.request(request)
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                 connection.send(content: bytes, completion: .contentProcessed { error in
@@ -123,34 +154,35 @@ final class PinnedOwnerTransport: OwnerEventTransport, @unchecked Sendable {
     }
     func events(for request: URLRequest) -> AsyncThrowingStream<Data, Error> {
         AsyncThrowingStream(bufferingPolicy: .bufferingOldest(16)) { continuation in
-            let id: UUID, connection: NWConnection
-            do { (id, connection) = try makeConnection(request, websocket: true) }
-            catch { continuation.finish(throwing: error); return }
             let reader = Task {
-                defer { remove(id, connection: connection) }
-                let timer = watchdog(connection)
                 do {
-                    try await start(connection)
-                    timer.cancel()
-                    while !Task.isCancelled {
-                        let data = try await Self.receiveWebSocket(connection)
-                        if case .dropped = continuation.yield(data) { throw ControllerError.unavailable("The live view fell behind. Refresh to replay the owner’s history.") }
-                    }
-                    continuation.finish()
-                } catch { timer.cancel(); continuation.finish(throwing: error) }
+                    let deadline = ContinuousClock().now.advanced(by: .seconds(requestTimeout))
+                    let (id, connection) = try await connected(request, websocket: true, deadline: deadline)
+                    defer { remove(id, connection: connection) }
+                    try await withTaskCancellationHandler {
+                        while !Task.isCancelled {
+                            let data = try await Self.receiveWebSocket(connection)
+                            if case .dropped = continuation.yield(data) { throw ControllerError.unavailable("The live view fell behind. Refresh to replay the owner’s history.") }
+                        }
+                        continuation.finish()
+                    } onCancel: { connection.cancel() }
+                } catch { continuation.finish(throwing: error) }
             }
-            continuation.onTermination = { _ in reader.cancel(); connection.cancel() }
+            continuation.onTermination = { _ in reader.cancel() }
         }
     }
     private static func receiveWebSocket(_ connection: NWConnection) async throws -> Data {
         try await withCheckedThrowingContinuation { continuation in
             connection.receiveMessage { data, context, complete, error in
-                if let error { continuation.resume(throwing: error); return }
-                guard let metadata = context?.protocolMetadata(definition: NWProtocolWebSocket.definition) as? NWProtocolWebSocket.Metadata else {
-                    continuation.resume(throwing: ControllerError.malformedResponse); return
-                }
-                if metadata.opcode == .close {
+                let receivedMetadata = context?.protocolMetadata(definition: NWProtocolWebSocket.definition) as? NWProtocolWebSocket.Metadata
+                // A close frame can arrive with the socket's terminal error. Preserve
+                // the owner's authorization result before considering transport failure.
+                if let metadata = receivedMetadata, metadata.opcode == .close {
                     continuation.resume(throwing: OwnerStreamClose.error(metadata.closeCode)); return
+                }
+                if let error { continuation.resume(throwing: error); return }
+                guard let metadata = receivedMetadata else {
+                    continuation.resume(throwing: ControllerError.malformedResponse); return
                 }
                 guard complete, metadata.opcode == .text || metadata.opcode == .binary, let data, data.count <= responseLimit else {
                     continuation.resume(throwing: ControllerError.unavailable("The owner stream closed or returned an incompatible frame.")); return

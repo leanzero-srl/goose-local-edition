@@ -29,9 +29,10 @@ final class EmbeddedMeshTransportTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let owner = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
         let pin = "4379a9ee08e0d4f37685ce498c090125088f046413298a5d2cce99b60a127616"
-        func request(websocket: Bool = false) -> URLRequest {
+        func request(websocket: Bool = false, path: String? = nil) -> URLRequest {
             var parts = URLComponents(url: fixture.endpoint, resolvingAgainstBaseURL: false)!
             if websocket { parts.scheme = "wss"; parts.path = "/events" }
+            if let path { parts.path = path }
             var request = URLRequest(url: parts.url!)
             request.setValue("Bearer disposable-test-token", forHTTPHeaderField: "Authorization")
             return request
@@ -51,12 +52,27 @@ final class EmbeddedMeshTransportTests: XCTestCase {
                 if let firstKey { XCTAssertEqual(key, firstKey, "Node reconstruction must preserve its enrolled identity") } else { firstKey = key }
                 let configuration = URLSessionConfiguration.ephemeral
                 configuration.timeoutIntervalForRequest = 10
+                try await MeshPeerReadiness.waitForOwner(endpoint: fixture.endpoint, timeout: configuration.timeoutIntervalForRequest) {
+                    try await node.statusJSON()
+                }
                 try await configuration.proxyVia(node)
                 let transport = PinnedOwnerTransport(configuration: configuration, endpoint: fixture.endpoint, binding: .init(owner: owner, pin: pin))
                 do {
-                    let (data, response) = try await transport.data(for: request())
+                    var firstRequest = request(path: iteration == 1 ? "/command" : nil)
+                    if iteration == 1 { firstRequest.httpMethod = "POST"; firstRequest.httpBody = Data(fixture.nonce.utf8) }
+                    let (data, response) = try await transport.data(for: firstRequest)
                     XCTAssertEqual(response.statusCode, 200)
                     XCTAssertTrue(String(decoding: data, as: UTF8.self).contains(fixture.nonce))
+                    if iteration == 1 {
+                        let counts = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+                        XCTAssertEqual(counts["commands"] as? Int, 1, "Connection recovery must deliver the command once")
+                        var lostAck = request(path: "/command-lost-ack")
+                        lostAck.httpMethod = "POST"; lostAck.httpBody = Data(fixture.nonce.utf8)
+                        do { _ = try await transport.data(for: lostAck); XCTFail("The fixture deliberately dropped the acknowledgement") } catch {}
+                        let (afterLostAck, _) = try await transport.data(for: request(path: "/counts"))
+                        let finalCounts = try XCTUnwrap(JSONSerialization.jsonObject(with: afterLostAck) as? [String: Any])
+                        XCTAssertEqual(finalCounts["lost_ack_commands"] as? Int, 1, "A sent command must never be retried by the transport")
+                    }
                     var stream = transport.events(for: request(websocket: true)).makeAsyncIterator()
                     let frame = try await stream.next()
                     XCTAssertTrue(String(decoding: try XCTUnwrap(frame), as: UTF8.self).contains(fixture.nonce))

@@ -31,6 +31,13 @@ final class OwnerTransportTests: XCTestCase {
         result.setValue("Bearer disposable-test-token", forHTTPHeaderField: "Authorization")
         return result
     }
+    func testOnlyProxyConnectTimeoutQualifiesForPreRequestRecovery() {
+        XCTAssertTrue(PinnedOwnerTransport.canRetryConnection(NWError.posix(.EINVAL), hasProxy: true))
+        XCTAssertFalse(PinnedOwnerTransport.canRetryConnection(NWError.posix(.EINVAL), hasProxy: false))
+        for error: Error in [NWError.tls(-9807), NWError.posix(.ECONNREFUSED), CancellationError(), URLError(.timedOut)] {
+            XCTAssertFalse(PinnedOwnerTransport.canRetryConnection(error, hasProxy: true))
+        }
+    }
     func testCertificateBindingRejectsWrongKeyOwnerDatesAndEKU() throws {
         XCTAssertEqual(try pin(), "4379a9ee08e0d4f37685ce498c090125088f046413298a5d2cce99b60a127616", "Independent OpenSSL SPKI hash")
         let binding = OwnerTLSBinding(owner: owner, pin: try pin())
@@ -83,7 +90,7 @@ final class OwnerTransportTests: XCTestCase {
         do { _ = try await rejected.next(); XCTFail("Wrong pin received a websocket frame") } catch {}
     }
     func testActualWebSocketPreservesAuthorizationCloseCodes() async throws {
-        for (code, status) in [(4401, 401), (4403, 403), (4413, 503)] {
+        for (code, status) in Array(repeating: [(4401, 401), (4403, 403), (4413, 503)], count: 10).flatMap({ $0 }) {
             let connection = try transport()
             defer { connection.close() }
             var stream = connection.events(for: request(path: "/close/\(code)", websocket: true)).makeAsyncIterator()

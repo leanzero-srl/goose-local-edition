@@ -145,8 +145,14 @@ actor EmbeddedMeshConnectionProvider: OwnerConnectionProvider, ControllerMeshSes
         guard let node else { throw ControllerError.unavailable("Connect this device’s embedded mesh before opening a Mac.") }
         if let cached = transports[host.id], cached.0 == endpoint { return .init(endpoint: endpoint, transport: cached.1) }
         if let cached = transports.removeValue(forKey: host.id) { cached.1.close() }
+        let operation = lifecycle
         let configuration = URLSessionConfiguration.ephemeral
+        try await MeshPeerReadiness.waitForOwner(endpoint: endpoint.url, timeout: configuration.timeoutIntervalForRequest) {
+            try await node.statusJSON()
+        }
+        guard operation == lifecycle, !Task.isCancelled else { throw CancellationError() }
         try await configuration.proxyVia(node)
+        guard operation == lifecycle, !Task.isCancelled else { throw CancellationError() }
         guard !configuration.proxyConfigurations.isEmpty else { throw ControllerError.unavailable("The embedded mesh proxy is unavailable.") }
         let transport = PinnedOwnerTransport(configuration: configuration, endpoint: endpoint.url,
             binding: .init(owner: host.id, pin: endpoint.tlsSpkiSha256))

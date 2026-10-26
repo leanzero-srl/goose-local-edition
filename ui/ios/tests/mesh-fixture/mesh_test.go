@@ -6,12 +6,14 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -64,17 +66,24 @@ func TestPinnedNativeMesh(t *testing.T) {
 		return hex.EncodeToString(b)
 	}
 	key, nonce := "disposable-native-"+random(), random()
-	control := &testcontrol.Server{DERPMap: derp, RequireAuthKey: key, Logf: logger.Discard}
-	control.HTTPTestServer = httptest.NewUnstartedServer(control)
-	listener, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	controlURL, ownerKey := "", key
+	resumeWithoutKey := os.Getenv("GOOSE_NATIVE_HEADSCALE_BINARY") != ""
+	if resumeWithoutKey {
+		controlURL, ownerKey, key = isolatedHeadscale(t, ctx, derp)
+	} else {
+		control := &testcontrol.Server{DERPMap: derp, RequireAuthKey: key, Logf: logger.Discard}
+		control.HTTPTestServer = httptest.NewUnstartedServer(control)
+		listener, err := net.Listen("tcp4", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = control.HTTPTestServer.Listener.Close()
+		control.HTTPTestServer.Listener = listener
+		control.HTTPTestServer.Start()
+		t.Cleanup(control.HTTPTestServer.Close)
+		controlURL = control.HTTPTestServer.URL
 	}
-	_ = control.HTTPTestServer.Listener.Close()
-	control.HTTPTestServer.Listener = listener
-	control.HTTPTestServer.Start()
-	t.Cleanup(control.HTTPTestServer.Close)
-	owner := &tsnet.Server{Dir: t.TempDir(), Hostname: "native-pinned-owner", ControlURL: control.HTTPTestServer.URL, AuthKey: key, Ephemeral: true, Logf: logger.Discard, UserLogf: logger.Discard}
+	owner := &tsnet.Server{Dir: t.TempDir(), Hostname: "native-pinned-owner", ControlURL: controlURL, AuthKey: ownerKey, Ephemeral: true, Logf: logger.Discard, UserLogf: logger.Discard}
 	t.Cleanup(func() { _ = owner.Close() })
 	status, err := owner.Up(ctx)
 	if err != nil {
@@ -109,6 +118,7 @@ func TestPinnedNativeMesh(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = requests.Close() })
+	var commands, lostAckCommands atomic.Int64
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Origin") != "" {
 			w.WriteHeader(403)
@@ -124,7 +134,24 @@ func TestPinnedNativeMesh(t *testing.T) {
 			w.WriteHeader(500)
 			return
 		}
-		payload, _ := json.Marshal(map[string]string{"nonce": nonce})
+		if r.URL.Path == "/command" || r.URL.Path == "/command-lost-ack" {
+			body, err := io.ReadAll(io.LimitReader(r.Body, 1024))
+			if err != nil || r.Method != "POST" || string(body) != nonce {
+				w.WriteHeader(400)
+				return
+			}
+			if r.URL.Path == "/command" {
+				commands.Add(1)
+			} else {
+				lostAckCommands.Add(1)
+				conn, _, err := w.(http.Hijacker).Hijack()
+				if err == nil {
+					_ = conn.Close()
+				}
+				return
+			}
+		}
+		payload, _ := json.Marshal(map[string]any{"nonce": nonce, "commands": commands.Load(), "lost_ack_commands": lostAckCommands.Load()})
 		if r.URL.Path == "/events" {
 			conn, err := websocket.Accept(w, r, nil)
 			if err != nil {
@@ -145,7 +172,7 @@ func TestPinnedNativeMesh(t *testing.T) {
 	go func() {
 		_ = server.Serve(tls.NewListener(mesh, &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}}))
 	}()
-	config, _ := json.Marshal(map[string]any{"fixture": true, "controlURL": control.HTTPTestServer.URL, "authKey": key, "endpoint": "https://" + net.JoinHostPort(ip, port), "nonce": nonce})
+	config, _ := json.Marshal(map[string]any{"fixture": true, "controlURL": controlURL, "resumeWithoutKey": resumeWithoutKey, "authKey": key, "endpoint": "https://" + net.JoinHostPort(ip, port), "nonce": nonce})
 	configPath := filepath.Join(out, "mesh-runtime.json")
 	if err := os.WriteFile(configPath, config, 0600); err != nil {
 		t.Fatal(err)
