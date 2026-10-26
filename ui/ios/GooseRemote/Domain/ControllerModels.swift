@@ -222,6 +222,7 @@ struct SelectedWork: Codable, Sendable {
     var messageTombstones: [String: UInt64] = [:]
     var historyOrder: [String] = []
     var messageRenames: [String: String] = [:]
+    var sharing: SessionSharingDescriptor? = nil
     var hasMoreHistory: Bool { nextPageToken != nil }
 }
 struct PendingInput: Codable, Identifiable, Sendable, Equatable {
@@ -244,6 +245,7 @@ struct WorkSnapshot: Codable, Sendable {
     let historyWatermark: CatalogCursor
     let workCursor: String
     let liveMessages: [HistoryItem]
+    var sharing: SessionSharingDescriptor? = nil
 }
 struct HistoryItem: Codable, Sendable {
     let messageId: String

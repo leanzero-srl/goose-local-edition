@@ -324,7 +324,7 @@ final class ControllerStore {
         guard sharingRequest == nil, authenticated, let identity = envelope,
               let host = hosts.first(where: { $0.id == command.work.ownerNodeId }) else { return }
         sharingRequest = .init(command: command, authority: identity.authority,
-                               deviceId: identity.credentials.device.id, ownerName: host.name, input: input)
+                               deviceId: identity.credentials.device.id, ownerName: host.name, input: input, sharing: selectedWork?.sharing)
     }
 
     func declineSharing() { sharingRequest = nil }

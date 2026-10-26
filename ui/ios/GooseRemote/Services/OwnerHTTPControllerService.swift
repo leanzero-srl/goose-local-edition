@@ -57,7 +57,7 @@ struct OwnerHTTPControllerService: OwnerControllerService {
         return .init(entry: snapshot.entry, transcript: try TranscriptRenderer.items(page.items + partials), pendingInputs: snapshot.pendingInputs,
                      nextPageToken: page.nextPageToken, historyRevision: page.revision, workCursor: snapshot.workCursor,
                      streamRevision: snapshot.historyWatermark.revision, partialMessages: Dictionary(uniqueKeysWithValues: partials.map { ($0.messageId, $0) }),
-                     historyOrder: page.items.map(\.messageId))
+                     historyOrder: page.items.map(\.messageId), sharing: snapshot.sharing)
     }
 
     func history(work: CatalogEntry, pageToken: String, host: HostDescriptor, credential: String) async throws -> HistoryPage {

@@ -3,7 +3,7 @@ import SwiftUI
 @testable import GooseRemote
 
 @MainActor final class SessionSharingTests: XCTestCase {
-    private func fixture(input: PendingInput? = nil, lostAcknowledgement: Bool = false) async throws -> (ControllerStore, SharingOwner, ScriptedTransport, CredentialEnvelope) {
+    private func fixture(input: PendingInput? = nil, lostAcknowledgement: Bool = false, sharing: SessionSharingDescriptor? = nil) async throws -> (ControllerStore, SharingOwner, ScriptedTransport, CredentialEnvelope) {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
         let device = DeviceRecord(deviceId: UUID(), name: "Test phone", platform: "ios", role: "controller", revision: 1, scopes: [], createdAt: Date(), revokedAt: nil)
@@ -20,7 +20,7 @@ import SwiftUI
                          currentRunId: input == nil ? UUID() : input!.runId, capabilities: [.send, .steer, .note, .answerInput, .stop],
                          parent: nil, related: [], updatedAt: Date(), lastEvent: nil, archived: false)
         }
-        let owner = SharingOwner(entries: entries, input: input, device: device.id, lostAcknowledgement: lostAcknowledgement)
+        let owner = SharingOwner(entries: entries, input: input, device: device.id, lostAcknowledgement: lostAcknowledgement, sharing: sharing)
         let otherDevice = DeviceRecord(deviceId: UUID(), name: "Different account device", platform: "ios", role: "controller", revision: 1, scopes: [], createdAt: Date(), revokedAt: nil)
         let changed = DeviceCredentials(accessToken: "changed-access", tokenType: "Bearer", expiresAt: .distantFuture, refreshToken: "changed-refresh", device: otherDevice)
         let transport = ScriptedTransport([.response(200, try ControllerCodec.encoder().encode(HostPage(revision: 1, hosts: hosts))),
@@ -237,7 +237,10 @@ import SwiftUI
     }
 
     func testSessionScreenPresentsSharingSheetWithoutEndingSelection() async throws {
-        let (store, owner, _, _) = try await fixture()
+        let details = SessionSharingDescriptor(provenance: "live", provider: .init(name: "Anthropic", origin: "https://api.anthropic.com"),
+            tools: [.init(name: "Project documents", transport: "http", origin: "https://tools.example.test")],
+            limitations: ["provider_routing_not_reported", "tool_destinations_dynamic"])
+        let (store, owner, _, _) = try await fixture(sharing: details)
         let work = try XCTUnwrap(store.selectedWork?.entry.work)
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
         let previous = scene.keyWindow
@@ -257,18 +260,65 @@ import SwiftUI
         await fulfillment(of: [presented], timeout: 3)
         XCTAssertEqual(store.selectedRef, work)
         XCTAssertEqual(store.sharingRequest?.id, request.id)
+        XCTAssertEqual(request.sharing, details)
+        XCTAssertTrue(request.recipientLimitation.contains("not a complete list"))
         controller.presentedViewController?.view.layoutIfNeeded()
         let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
             window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
         }
         let attachment = XCTAttachment(image: image)
-        attachment.name = "Session data sharing consent"
+        attachment.name = "Session sharing with reported provider and tool"
         attachment.lifetime = .keepAlways
         add(attachment)
         let submissions = await owner.submissions
         XCTAssertTrue(submissions.isEmpty)
         store.declineSharing()
         await store.sceneBackground()
+    }
+
+    func testSnapshotCarriesKnownSharingAndOlderOwnersRemainReadable() async throws {
+        let (store, _, _, _) = try await fixture()
+        defer { Task { await store.sceneBackground() } }
+        let entry = try XCTUnwrap(store.selectedWork?.entry)
+        let host = try XCTUnwrap(store.hosts.first)
+        let snapshot = WorkSnapshot(entry: entry, pendingInputs: [], historyWatermark: .init(ownerNodeId: host.id, storeGeneration: entry.storeGeneration, revision: entry.revision), workCursor: "snapshot", liveMessages: [])
+        let page = HistoryPage(work: entry.work, storeGeneration: entry.storeGeneration, revision: entry.revision, items: [], nextPageToken: nil, workCursor: "history")
+        let reported = #"{"provenance":"live","provider":{"name":"Anthropic","origin":"https://user:private-password@api.anthropic.com/v1?api_key=private-key#fragment","api_key":"never-decode"},"tools":[{"name":"Documents","transport":"http","origin":"https://tools.example.test:8443/private-path?token=private-token"},{"name":"Local command","transport":"stdio","origin":"file:///private-script"}],"limitations":["provider_routing_not_reported","tool_destinations_dynamic"]}"#
+        for descriptor in [nil, reported] as [String?] {
+            var body = try XCTUnwrap(JSONSerialization.jsonObject(with: ControllerCodec.encoder().encode(snapshot)) as? [String: Any])
+            if let descriptor { body["sharing"] = try JSONSerialization.jsonObject(with: Data(descriptor.utf8)) }
+            let wire = ScriptedTransport([.response(200, try JSONSerialization.data(withJSONObject: body)), .response(200, try ControllerCodec.encoder().encode(page))])
+            let service = OwnerHTTPControllerService(connections: FixedOwnerConnection(endpoint: try XCTUnwrap(host.endpoints.first), transport: wire))
+            let selected = try await service.selected(work: entry, host: host, credential: "test-access")
+            if descriptor == nil {
+                XCTAssertNil(selected.sharing)
+            } else {
+                let sharing = try XCTUnwrap(selected.sharing)
+                XCTAssertEqual(sharing.provider?.name, "Anthropic")
+                XCTAssertEqual(sharing.provider?.origin, "https://api.anthropic.com")
+                XCTAssertEqual(sharing.tools[0].origin, "https://tools.example.test:8443")
+                XCTAssertNil(sharing.tools[1].origin)
+                let cached = String(decoding: try ControllerCodec.encoder().encode(selected), as: UTF8.self)
+                for secret in ["private-password", "private-key", "private-token", "private-path", "private-script", "never-decode"] { XCTAssertFalse(cached.contains(secret)) }
+            }
+        }
+    }
+
+    func testSavedUnavailableAndUnknownProvenanceNeverClaimActiveOrLocalRecipients() throws {
+        let unavailable = SharingProvider(name: "Configured driver", origin: nil)
+        for provenance in ["saved", "unavailable", "future_source"] {
+            let raw = "{\"provenance\":\"\(provenance)\",\"provider\":{\"name\":\"Configured driver\",\"origin\":null},\"tools\":[],\"limitations\":[\"future_limitation\"]}"
+            let details = try ControllerCodec.decoder().decode(SessionSharingDescriptor.self, from: Data(raw.utf8))
+            XCTAssertEqual(details.provider, unavailable)
+            XCTAssertNil(details.provider?.origin)
+            XCTAssertFalse(details.sourceDescription.contains("Reported by the active"))
+            XCTAssertEqual(details.showsReportedServices, provenance == "saved")
+            if provenance == "saved" { XCTAssertTrue(details.sourceDescription.contains("have not been verified")) }
+            if provenance == "future_source" { XCTAssertFalse(details.hasKnownProvenance) }
+        }
+        for origin in ["file:///private/script", "local-model", "javascript:alert(1)", "https://", ""] {
+            XCTAssertNil(SessionSharingDescriptor.safeOrigin(origin))
+        }
     }
 
     func testStopNeedsNoSharingPermission() async throws {
@@ -286,6 +336,7 @@ private actor SharingOwner: OwnerControllerService {
     let input: PendingInput?
     let device: UUID
     let lostAcknowledgement: Bool
+    let sharing: SessionSharingDescriptor?
     private(set) var submissions: [WorkCommand] = []
     private(set) var receiptChecks: [UUID] = []
     private var submissionService: (any OwnerControllerService)?
@@ -310,8 +361,8 @@ private actor SharingOwner: OwnerControllerService {
                             sequence: entry.revision, workRevision: entry.revision, runId: entry.currentRunId,
                             type: changingRun ? "state_changed" : "partial_replacement", payload: payload))
     }
-    init(entries: [CatalogEntry], input: PendingInput?, device: UUID, lostAcknowledgement: Bool) {
-        self.entries = entries; self.input = input; self.device = device; self.lostAcknowledgement = lostAcknowledgement
+    init(entries: [CatalogEntry], input: PendingInput?, device: UUID, lostAcknowledgement: Bool, sharing: SessionSharingDescriptor?) {
+        self.entries = entries; self.input = input; self.device = device; self.lostAcknowledgement = lostAcknowledgement; self.sharing = sharing
     }
     func catalog(host: HostDescriptor, credential: String) async throws -> OwnerCatalogSnapshot {
         let entry = entries.first { $0.work.ownerNodeId == host.id }!
@@ -319,7 +370,7 @@ private actor SharingOwner: OwnerControllerService {
     }
     func selected(work: CatalogEntry, host: HostDescriptor, credential: String) async throws -> SelectedWork {
         let entry = entries.first { $0.work == work.work }!
-        return .init(entry: entry, transcript: [], pendingInputs: input.map { [$0] } ?? [], nextPageToken: nil, historyRevision: entry.revision)
+        return .init(entry: entry, transcript: [], pendingInputs: input.map { [$0] } ?? [], nextPageToken: nil, historyRevision: entry.revision, sharing: sharing)
     }
     func submit(_ command: WorkCommand, host: HostDescriptor, credential: String) async throws -> CommandReceipt {
         submissions.append(command)
