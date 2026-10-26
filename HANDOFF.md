@@ -25,41 +25,23 @@ Do NOT load the skills goose-mlx-inference / goose-feature-dev / node-dispatch w
 - Gate at 7e360e4223: `cargo clippy -p goose-sidecar --all-targets -D warnings` clean;
   `cargo test -p goose-sidecar` all green (lib 499 passed, 12 ignored; integration suites ok).
 
+## DONE 2026-10-26 (third agent)
+- A2 ACP wire 4bc16dcddd: MlxModelProfileDto.promptLookup (MlxPromptLookupDto, auto = absent),
+  MlxLocalModelDto.hasMtpHead/hybrid/hybridError; profile_to/from_dto + core_models_list; acp-schema +
+  ui/sdk generated regenerated; round-trip test in mlx_engine.rs tests.
+- B UI b16fa1a3d4: MlxPromptLookupFields.tsx (+ .test.tsx), Segmented Auto/On/Off, lane chip, numbers
+  (shortest n-gram MTP only), hybrid-without-MTP locked with reason, Auto reachable; NumericField exported
+  (spec key widened); drafts promptLookup* in MlxEngineView (draftsEqual uses DRAFT_KEYS); i18n 16 catalogs.
+  Gate: pnpm lint:check (typecheck+eslint+i18n) green, pnpm test:run 555 files / 5195 tests green.
+- D skill bf9e236db0: references/prompt-lookup-ngram.md + SKILL.md pointer; ~/.claude/skills/goose-knob-turning
+  changelog line (not git; projsync).
+- TRAP: workhorse is macOS 27 now: every cargo needs `--config 'profile.dev.package."*".strip=false'`
+  (else sqlx_macros "mis-aligned LINKEDIT").
+
 ## OPEN
-A2. ACP wire (not started):
-  - crates/goose-sdk-types/src/custom_requests.rs `MlxModelProfileDto` (~line 2335): add
-    `prompt_lookup: Option<MlxPromptLookupDto>` (camelCase: promptLookup {mode:"on"|"off", minNgram,
-    maxNgram, maxDraft}), skip_serializing_if none. `MlxLocalModelDto` (~3010): add
-    `prompt_lookup_lane: Option<String>` ("mtp"|"suffix"|"unavailable") + `prompt_lookup_unavailable_reason`.
-    NOTE the lane depends on profile.speculative (MTP off -> suffix/unavailable), so the UI should
-    recompute: speculative!="off" && hasMtpHead -> mtp; else hybrid? unavailable : suffix. Simplest: send
-    `hasMtpHead: bool` + `hybrid: Option<bool>` + `hybridError` and compute lane in TS, mirroring `lane()`.
-  - crates/goose/src/acp/server/mlx_engine.rs profile_to_dto (~345) / profile_from_dto (~416) map it;
-    core_models_list (~870) fills the facts (inspect_model_dir(&dir).has_mtp_sidecar,
-    prompt_lookup::model_is_hybrid(&dir)).
-  - Regenerate: `cargo run -p goose --bin generate-acp-schema` then `cd ui/desktop && pnpm run build-goose-sdk`.
-B. UI: ui/desktop/src/components/leanzero-swarm/MlxKvCacheFields.tsx is the pattern (used from
-   MlxEngineView.tsx; types in ui/desktop/src/acp/mlx-engine.ts ~line 191 `kvCache?`). Add
-   MlxPromptLookupFields.tsx: mode dropdown Auto/On/Off (custom DropdownMenu, NO native select), three
-   number inputs (min n-gram MTP-only, max n-gram, max draft; hint 31/63/95 fill 32-row verify tiles),
-   lane caption ("inside MTP", "suffix decoding, greedy only, batch 1", or disabled + reason). Vitest
-   beside MlxEngineView.test.tsx. i18n keys in ALL 15 catalogs (round-trip JSON in file order,
-   ensure_ascii=False, indent=2). Gate: pnpm install --frozen-lockfile; pnpm run lint:check; pnpm run test:run.
-C. Measurement DONE (data + NOTES.md: /Volumes/AI-workhorse/runs/2026-10-26-pld-qwen38). Qwen3.8-27B-Q8,
-   lz.14, greedy, N=3, decode tok/s median (client: (tokens-1)/first-to-last chunk):
-   code_edit  MTP off 21.4 | MTP+PLD off 42.8 (MTP acc 85.7%) | MTP+PLD on 134.8 (PLD 1926/1940 = 99.3%) -> 3.15x
-   doc_quote  22.1 | 33.3 | 32.4 (PLD 64/123 = 52%) -> no gain
-   free_chat  22.0 | 37.3 | 37.1 (PLD never proposes) -> no gain
-   PLD=1 explicit == default (family default ON). SHA: code_edit all 12 outputs identical across all
-   configs; doc_quote/free_chat NOT identical, including repeat-to-repeat INSIDE MTP+PLD-off and a
-   free_chat run where PLD drafted 0 -> nondeterminism is MTP's (adaptive K), not PLD's (cause unproven).
-   Engine bug seen: streamed output drops the space before " [" / " &" tokens (4x per code_edit,
-   all configs; non-stream correct on Mellum build) -> file for the engine owner.
-   Mellum2.1-12B (lz/mellum-lz12 435781119): --suffix-decoding SLOWER (90.4 vs 99.5, 99.7 vs 109.4),
-   6660 "non_trimmable_cache" skips, 8/96 accepted, free_chat output diverges -> suffix lane is not
-   lossless/useful there; consider showing a warning or keeping it off by default (it is: auto = off).
-D. Skill notes: local-edition/skills/goose-mlx-inference/references/prompt-lookup-ngram.md (+ one-line
-   pointer in that SKILL.md) and a dated changelog line in ~/.claude/skills/goose-knob-turning/SKILL.md.
+- Live CDP check of a packaged build from this branch (saved profile -> engine env/argv) NOT done.
+- Engine owner: streaming space-drop before " [" / " &"; Flash-Next MTP (in-shard head detection + K 1-2).
+- Merge ngram-decoding to main.
 
 ## Engine facts (verified in /Users/workhorse/Projects/Rapid-MLX-wt-offload @ v0.14.3-lz.14, READ-ONLY)
 - spec_decode/mtp/generator.py `_effective_prompt_lookup_policy`: env read per request; MIN>=2,
