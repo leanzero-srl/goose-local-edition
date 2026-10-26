@@ -1,0 +1,242 @@
+{
+  "checks" : [
+    {
+      "id" : "config",
+      "observations" : {
+        "controlURL" : "http:\/\/127.0.0.1:49840",
+        "controllerID" : "fixture-phone",
+        "runID" : "1845f1347641ae796b3c38c6c05aea5a4a9e5f69c0e96ec2a91c6b1aa7f710a9"
+      },
+      "state" : "passed",
+      "title" : "Validate injected fixture configuration",
+      "updatedAt" : "2026-10-26T14:34:47Z"
+    },
+    {
+      "id" : "node",
+      "observations" : {
+        "IPv4" : "100.64.0.5",
+        "IPv6" : "fd7a:115c:a1e0:ab12:4843:cd96:6240:5",
+        "ephemeral" : "true",
+        "freshState" : "true",
+        "hostname" : "fixture-phone-0f68626f"
+      },
+      "state" : "passed",
+      "title" : "Join disposable mesh with fresh state",
+      "updatedAt" : "2026-10-26T14:34:47Z"
+    },
+    {
+      "id" : "proxy",
+      "observations" : {
+        "TLS" : "URLSession default trust",
+        "proxyConfigurations" : "1",
+        "redirects" : "rejected"
+      },
+      "state" : "passed",
+      "title" : "Configure the node's SOCKS transport",
+      "updatedAt" : "2026-10-26T14:34:47Z"
+    },
+    {
+      "id" : "health",
+      "observations" : {
+        "HTTPStatus" : "200",
+        "byteCount" : "296",
+        "deviceID" : "fixture-phone",
+        "epoch" : "7111451ff2b497524c2fa21ee5adf3d83a8e696c3a58eb097efee806e05a2818",
+        "nonce" : "738935a753639cad8095b9b60e3a4f974ca717f1fedcb49074f2ae5a5af2f340",
+        "ownerID" : "fixture-owner",
+        "runID" : "1845f1347641ae796b3c38c6c05aea5a4a9e5f69c0e96ec2a91c6b1aa7f710a9",
+        "type" : "health"
+      },
+      "state" : "passed",
+      "title" : "Read HTTPS owner identity and random nonce",
+      "updatedAt" : "2026-10-26T14:34:47Z"
+    },
+    {
+      "id" : "websocket",
+      "observations" : {
+        "deviceID" : "fixture-phone",
+        "epoch" : "7111451ff2b497524c2fa21ee5adf3d83a8e696c3a58eb097efee806e05a2818",
+        "nonce" : "738935a753639cad8095b9b60e3a4f974ca717f1fedcb49074f2ae5a5af2f340",
+        "ownerID" : "fixture-owner",
+        "runID" : "1845f1347641ae796b3c38c6c05aea5a4a9e5f69c0e96ec2a91c6b1aa7f710a9",
+        "sequence" : "6",
+        "type" : "connected"
+      },
+      "state" : "passed",
+      "title" : "Receive the WSS identity envelope",
+      "updatedAt" : "2026-10-26T14:34:47Z"
+    },
+    {
+      "id" : "command-journal",
+      "observations" : {
+        "commandID" : "6D3AEB8A-FC11-4FAC-86C5-12406506AEA4",
+        "journalReadBack" : "matched",
+        "replayCursor" : "4",
+        "reusedPersistedIdentity" : "true"
+      },
+      "state" : "passed",
+      "title" : "Persist command identity before sending",
+      "updatedAt" : "2026-10-26T14:34:47Z"
+    },
+    {
+      "id" : "command-recovery",
+      "observations" : {
+        "HTTPStatus" : "200",
+        "acceptedAt" : "2026-10-26T14:34:02.18405Z",
+        "commandID" : "6D3AEB8A-FC11-4FAC-86C5-12406506AEA4",
+        "deliveryCount" : "1",
+        "deviceID" : "fixture-phone",
+        "kind" : "fixture-command",
+        "mutationSentThisLaunch" : "false",
+        "result" : "Owner confirms the saved command was already accepted",
+        "state" : "accepted"
+      },
+      "state" : "passed",
+      "title" : "Reconcile the saved command before resubmitting",
+      "updatedAt" : "2026-10-26T14:34:47Z"
+    },
+    {
+      "id" : "lost-ack",
+      "observations" : {
+        "priorInterruptionRecorded" : "false",
+        "reason" : "Owner acceptance predates this launch; recovery succeeded independently",
+        "source" : "no current-launch acknowledgement loss"
+      },
+      "state" : "unproven",
+      "title" : "Observe the deliberately lost acknowledgement",
+      "updatedAt" : "2026-10-26T14:34:47Z"
+    },
+    {
+      "id" : "command-status",
+      "observations" : {
+        "HTTPStatus" : "200",
+        "acceptedAt" : "2026-10-26T14:34:02.18405Z",
+        "commandID" : "6D3AEB8A-FC11-4FAC-86C5-12406506AEA4",
+        "deliveryCount" : "1",
+        "deviceID" : "fixture-phone",
+        "kind" : "fixture-command",
+        "source" : "current-launch status query before resubmission",
+        "state" : "accepted"
+      },
+      "state" : "passed",
+      "title" : "Recover acceptance from the owner's command status",
+      "updatedAt" : "2026-10-26T14:34:47Z"
+    },
+    {
+      "id" : "command-retry",
+      "observations" : {
+        "HTTPStatus" : "200",
+        "acceptedAt" : "2026-10-26T14:34:02.18405Z",
+        "commandID" : "6D3AEB8A-FC11-4FAC-86C5-12406506AEA4",
+        "deliveryCount" : "1",
+        "deviceID" : "fixture-phone",
+        "duplicate" : "true",
+        "kind" : "fixture-command",
+        "state" : "accepted"
+      },
+      "state" : "passed",
+      "title" : "Retry the same command without a second delivery",
+      "updatedAt" : "2026-10-26T14:34:47Z"
+    },
+    {
+      "id" : "body-conflict",
+      "observations" : {
+        "HTTPStatus" : "409"
+      },
+      "state" : "passed",
+      "title" : "Reject a changed body for the same command ID",
+      "updatedAt" : "2026-10-26T14:34:47Z"
+    },
+    {
+      "id" : "token-ownership",
+      "observations" : {
+        "GETStatus" : "404",
+        "POSTStatus" : "409",
+        "commandIDExposed" : "false",
+        "ownerDeliveryCountAfterConflicts" : "1",
+        "scope" : "token ownership conflict; not simultaneous two-device contention",
+        "siblingControllerID" : "fixture-ipad"
+      },
+      "state" : "passed",
+      "title" : "Reject command access with the sibling token",
+      "updatedAt" : "2026-10-26T14:34:47Z"
+    },
+    {
+      "id" : "replay",
+      "observations" : {
+        "connectedSequence" : "6",
+        "deviceID" : "fixture-phone",
+        "epoch" : "7111451ff2b497524c2fa21ee5adf3d83a8e696c3a58eb097efee806e05a2818",
+        "nonce" : "738935a753639cad8095b9b60e3a4f974ca717f1fedcb49074f2ae5a5af2f340",
+        "ownerID" : "fixture-owner",
+        "replayedCommandID" : "6D3AEB8A-FC11-4FAC-86C5-12406506AEA4",
+        "replayedSequence" : "5",
+        "requestedAfter" : "4",
+        "runID" : "1845f1347641ae796b3c38c6c05aea5a4a9e5f69c0e96ec2a91c6b1aa7f710a9",
+        "sequence" : "5",
+        "type" : "command_accepted"
+      },
+      "state" : "passed",
+      "title" : "Replay the missed command event after reconnecting",
+      "updatedAt" : "2026-10-26T14:34:47Z"
+    },
+    {
+      "id" : "wrong-token",
+      "observations" : {
+        "HTTPStatus" : "401",
+        "noncePresent" : "false"
+      },
+      "state" : "passed",
+      "title" : "Reject a wrong token on the same endpoint",
+      "updatedAt" : "2026-10-26T14:34:47Z"
+    },
+    {
+      "id" : "no-proxy",
+      "observations" : {
+        "error" : "The request timed out.",
+        "errorCode" : "-1001",
+        "errorDomain" : "NSURLErrorDomain",
+        "nonceObtained" : "false",
+        "proxyConfigurations" : "0"
+      },
+      "state" : "passed",
+      "title" : "Direct URLSession must not obtain the nonce",
+      "updatedAt" : "2026-10-26T14:35:03Z"
+    },
+    {
+      "id" : "close",
+      "observations" : {
+        "result" : "local controller close() returned successfully"
+      },
+      "state" : "passed",
+      "title" : "Close and discard this controller node",
+      "updatedAt" : "2026-10-26T14:35:03Z"
+    },
+    {
+      "id" : "state",
+      "observations" : {
+        "stateDirectoryExists" : "false"
+      },
+      "state" : "passed",
+      "title" : "Remove this probe's ephemeral node state",
+      "updatedAt" : "2026-10-26T14:35:03Z"
+    }
+  ],
+  "commandTestingEnabled" : true,
+  "controllerID" : "fixture-phone",
+  "deviceFamily" : "iPhone",
+  "eventsEndpoint" : "wss:\/\/100.64.0.1:10002\/events",
+  "finished" : true,
+  "frameworkSHA256" : "18f40ec92ccb6f46348975f05c0c8ef1cb41bc9685a9a0c51ce02dbec3269642",
+  "healthEndpoint" : "https:\/\/100.64.0.1:10002\/health",
+  "measuredAt" : "2026-10-26T14:35:03Z",
+  "passed" : false,
+  "requestedCrashCheckpoint" : "after-command-transport-before-journal",
+  "runID" : "1845f1347641ae796b3c38c6c05aea5a4a9e5f69c0e96ec2a91c6b1aa7f710a9",
+  "schemaVersion" : 1,
+  "scope" : "Disposable simulator userspace mesh transport fixture",
+  "simulatorModel" : "iPhone18,3",
+  "sourceSHA256" : "84dad4e6a0dff74df4243adb36c5cb7637efbba0e0ef020c0dbeb4ede3adc21b",
+  "startedAt" : "2026-10-26T14:34:47Z",
+  "systemVersion" : "27.0"
+}

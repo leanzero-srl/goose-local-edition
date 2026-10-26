@@ -16,7 +16,7 @@ Working tree: `codex/link-controller-plan`, source base `e79a6f60ec`. Original c
 | --- | --- | --- |
 | Architecture and Apple research; shared Claude/Codex lifecycle skill | COMPLETE | Source audit, independent reviews, canonical/snapshot match, existing Apple team identified. |
 | Simulator toolchain and framework ABI | COMPLETE | Both virtual device families boot and run the measured C-handle positive/negative controls. |
-| Embedded network transport | ACTIVE | HTTPS/WSS nonce round-trip through mesh, authenticated source evidence, wrong-token/no-proxy controls, reconnect, two controllers. Fixture proof must remain distinguished from actual Link. |
+| Embedded network transport | FIXTURE PROOF COMPLETE | Both device families passed HTTPS/WSS, wrong-token/no-proxy, lost acknowledgement, duplicate suppression and replay. Deliberate process death recovered one delivery. See link-ios-mesh-proof.md; production Link and real devices remain unproved. |
 | Production contract and immutable identity | CONTRACT COMPLETE; implementation ACTIVE | Explicit owner/work IDs, migration/back-compat, DTO/endpoints, generations and cursor rules documented in link-controller-contract.md. |
 | Controller enrollment/auth and exclusion from compute | OPEN | Device-scoped credentials, receiver-side roles/capabilities, independent revocation, old-client behavior, every worker/job placement path excludes controllers. |
 | Shared catalog and durable recovery | OPEN | Real chat/agent/benchmark/job adapters, incremental metadata feed, selected detail history, gap-free snapshot/replay, owner restart and stale cache tests. |
