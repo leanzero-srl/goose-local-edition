@@ -24,12 +24,20 @@ enum ControllerCodec {
         }
         return decoder
     }
+    private static func safeBasePath(_ path: String) -> Bool {
+        guard !path.contains("//") else { return false }
+        return path.split(separator: "/").allSatisfy { segment in
+            guard let decoded = String(segment).removingPercentEncoding else { return false }
+            return decoded != "." && decoded != ".." && !decoded.contains("/") && !decoded.contains("\\") && !decoded.contains("%")
+        }
+    }
     static func authority(_ value: String) throws -> URL {
         guard let url = URL(string: value.trimmingCharacters(in: .whitespacesAndNewlines)),
               url.scheme == "https", let host = url.host, !host.isEmpty,
               url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
-              url.path.isEmpty || url.path == "/" else {
-            throw ControllerError.invalid("Enter the HTTPS address of your Link service, without a path, query, or password.")
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              safeBasePath(components.percentEncodedPath) else {
+            throw ControllerError.invalid("Enter the HTTPS base address of your Link service, without credentials, a query, or a fragment.")
         }
         return url
     }

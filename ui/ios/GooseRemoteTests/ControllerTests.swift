@@ -112,10 +112,20 @@ final class ControllerTests: XCTestCase {
         XCTAssertEqual(command.expectedRevision, 42)
     }
     func testAuthorityRejectsCredentialsInURLAndNonHTTPS() throws {
-        for bad in ["http://link.example", "https://user:password@link.example", "https://link.example/?token=secret", "https://link.example/#secret", "https://link.example/v1", "file:///tmp/foo"] {
+        for bad in ["http://link.example", "https://user:password@link.example", "https://link.example/?token=secret", "https://link.example/#secret", "file:///tmp/foo"] {
             XCTAssertThrowsError(try ControllerCodec.authority(bad), bad)
         }
         XCTAssertEqual(try ControllerCodec.authority("https://link.example:9443/").host, "link.example")
+    }
+    func testAuthorityBasePathPreservesRealLinkRouteAndRejectsTraversal() async throws {
+        let base = try ControllerCodec.authority("https://worksmacstudio.tailfc4700.ts.net/leanzero-link/")
+        let transport = ScriptedTransport([.response(200, Data(#"{"revision":1,"hosts":[]}"#.utf8))])
+        _ = try await ControllerAPI(authority: base, transport: transport).hosts(token: "test")
+        let requests = await transport.requests
+        XCTAssertEqual(requests.first?.url?.absoluteString, "https://worksmacstudio.tailfc4700.ts.net/leanzero-link/v1/controller/hosts")
+        for suffix in ["//other", "/%2e%2e/other", "/foo%2fbar", "/foo%5cbar", "/%252e%252e"] {
+            XCTAssertThrowsError(try ControllerCodec.authority("https://link.example" + suffix), suffix)
+        }
     }
     func testFractionalRFC3339AndOpaqueChallenge() throws {
         let data = Data(#"{"challenge_id":"opaque-account.abcdef","expires_at":"2026-10-26T11:00:00.123Z"}"#.utf8)

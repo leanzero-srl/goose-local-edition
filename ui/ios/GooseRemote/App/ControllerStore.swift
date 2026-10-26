@@ -17,7 +17,7 @@ enum ConnectionState: Equatable {
 
 @MainActor @Observable
 final class ControllerStore {
-    var authorityText = ""
+    var authorityText = Bundle.main.object(forInfoDictionaryKey: "LeanZeroLinkURL") as? String ?? ""
     var email = ""
     var deviceName = ""
     var code = ""

@@ -42,5 +42,7 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>LeanZeroLinkURL</key>
+	<string>https://worksmacstudio.tailfc4700.ts.net/leanzero-link</string>
 </dict>
 </plist>

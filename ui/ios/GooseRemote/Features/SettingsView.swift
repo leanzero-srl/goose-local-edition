@@ -96,11 +96,11 @@ struct SettingsView: View {
     private var privacy: some View {
         List {
             Section("On this device") {
-                Text("Access and refresh credentials use device-bound Keychain storage. Drafts and unresolved command receipts use protected app storage and are excluded from backup.")
+                Text("Access and refresh credentials use device-bound Keychain storage. Drafts and session command receipts use protected app storage and are excluded from backup. Pending provider changes, including any key you enter, stay in device-bound Keychain until delivery is resolved or you clear the saved request.")
                 Text("Your Mac owns session history and execution. This app displays history only for the session you select.")
             }
             Section("Connections") {
-                Text("Sign-in contacts the HTTPS Link service you enter. Mac connections require verified mesh endpoints. No provider key or legacy node secret is requested by this app.")
+                Text("Sign-in contacts the HTTPS Link service you enter. Mac connections require verified mesh endpoints. Provider setup sends a key you enter to the selected Mac over that connection. Existing provider secrets are never read back. Session messages can be sent by your Mac to the AI and tool services configured for that session.")
                 Text("This build does not include analytics, advertising, or tracking SDKs.")
             }
             Section("Remove data") {
