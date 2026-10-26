@@ -1,0 +1,45 @@
+{
+  "checks": [
+    {
+      "expected": "positive; accepted by close",
+      "id": "First handle",
+      "observed": 2752513,
+      "passed": true
+    },
+    {
+      "expected": "0",
+      "id": "First close",
+      "observed": 0,
+      "passed": true
+    },
+    {
+      "expected": "EBADF (9)",
+      "id": "Duplicate close",
+      "observed": 9,
+      "passed": true
+    },
+    {
+      "expected": "positive; different from 2752513",
+      "id": "Fresh handle",
+      "observed": 2752514,
+      "passed": true
+    },
+    {
+      "expected": "0",
+      "id": "Fresh handle close",
+      "observed": 0,
+      "passed": true
+    }
+  ],
+  "deviceFamily": "iPad",
+  "frameworkSHA256": "18f40ec92ccb6f46348975f05c0c8ef1cb41bc9685a9a0c51ce02dbec3269642",
+  "linkNetworkingTested": false,
+  "measuredAt": "2026-10-26T13:39:19Z",
+  "passed": true,
+  "platform": "iOS Simulator (arm64)",
+  "schemaVersion": 1,
+  "scope": "C handle lifecycle only",
+  "simulatorModel": "iPad17,2",
+  "systemName": "iPadOS",
+  "systemVersion": "27.0"
+}

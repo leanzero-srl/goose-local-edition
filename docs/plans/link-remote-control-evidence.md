@@ -6,7 +6,7 @@ source_revision: e79a6f60eccecabc3a8dd8b3e4e2651568034572
 
 # Evidence for Goose remote control
 
-This map supports [the implementation plan](link-remote-control-plan.md). It distinguishes existing source from proposed behavior. The remote SHA was verified with `git ls-remote origin refs/heads/main`; a clean managed worktree was created from that revision. The original checkout and unrelated local work were left intact. No Goose build, model run, device test, Apple login, submission or production change was performed.
+This map supports [the implementation plan](link-remote-control-plan.md). It distinguishes existing source from proposed behavior. The remote SHA was verified with `git ls-remote origin refs/heads/main`; a clean managed worktree was created from that revision. The original checkout and unrelated local work were left intact. The initial audit performed no Goose build, model run, device test, Apple login, submission or production change. The subsequent simulator-only feasibility proof is recorded separately below.
 
 ## Source anchors
 
@@ -77,4 +77,6 @@ The independent source reviewer returned PASS after five confirmed defects were 
 
 The iOS skill passed two independent forward scenarios: a remote AI controller preparing for review and a crashing phased update preparing a hotfix. Review-access/hardware evidence and removal/reinstatement rollout consequences were corrected; final verdict PASS. The standard skill validator passed. The Claude canonical source, Codex discovery link and five-file versioned snapshot were checked for identity, and local Markdown links resolve.
 
-Pending for implementation: actual iOS transport spike, real host-control behavior, performance measurements, physical-device accessibility/network/lifecycle proof, current Apple account/ASC/signing readiness, TestFlight and App Review. No green build, live-system success or approval is claimed for the proposed feature.
+Follow-up simulator work: [build and runtime receipt](link-ios-simulator-proof.md). The diagnostic runs on an iPhone and iPad simulator; it proves framework loading and C-handle cleanup only. Link networking remains untested.
+
+Pending for implementation: actual iOS mesh transport spike, real host-control behavior, performance measurements, physical-device accessibility/network/lifecycle proof, current Apple account/ASC/signing readiness, TestFlight and App Review. No green build, live-system success or approval is claimed for the proposed feature.
