@@ -369,3 +369,26 @@ and commit in ONE command (`git add <paths> && git commit`), never leave things 
 - Next, in order: tags -> bump PIPELINE_FORK_COMMIT + PIPELINE_FORK (provision.rs:115/134) -> cargo test -p goose-sidecar
   + clippy (--config 'profile.dev.package."*".strip=false', after the subcommand for clippy) -> rebuild via heavy-run
   (scratchpad live/build.sh) -> live test per COORDINATOR item 4 -> skill notes (item 5). Commits: no AI trailer.
+
+## Session 8 (2026-10-26 20:00-22:00 EET)
+- Head ee2a4b390d = origin/mimo-distributed. Commits: 23e7944192 (stack overflow), 0374b824f6 (pin), ee2a4b390d (rdmaGid).
+- STACK OVERFLOW ROOT CAUSE (fixed): macro-generated `handle_custom_request` (goose-acp-macros) awaited every
+  handler inline; its debug poll frame was 1,801,264 B (read from prologues in the crash report
+  ~/Library/Logs/DiagnosticReports/goose-2026-10-26-195646.ips). Each arm now `Box::pin(async move{..}).await`:
+  frame 792,176 B. Test crates/goose/tests/acp_custom_request_stack_test.rs (2 MiB workers): red SIGABRT before,
+  green after. Dev app now runs WITHOUT RUST_MIN_STACK. Frame-size tool: scratchpad so/fs.py + so/frames2.py.
+- PIN: PIPELINE_FORK(_COMMIT) = 07126f05 (lz-pipeline-qwen4.15, vendored mimo_v2). sidecar 500 lib + all tests green.
+- rdmaGid: preflight failed both Macs on "GID[2], not GID[1]"; link repair could not move it; JACCL all_sum ran
+  at 8.95 GB/s with that table (~/jaccl-smoke/run.sh jaccl). Check now fails only on an EMPTY index below the
+  IPv4 GID (the soak's failing shape). Leave the "Repair the Thunderbolt link" switch OFF.
+- Live UI: onboarding first (click [data-testid=onboarding-use-swarm], then "Get Started"); section is at
+  #/leanzero-swarm?tab=mlx&mlx=engine. Provision = "Detect again" -> pick "workmule· workmule" -> Detect ->
+  "Save and provision" (both Macs' envs Ready in <10 s; pipeline env at 07126f05). Preflight plan with free
+  Macs: split 17/31 (rank0 workhorse L31-47 61.2 GB, rank1 workmule L0-30 107.4 GB), context 126,208.
+- BLOCKED at 22:00: workhorse has a 32 GB TTS job (tts.py, content pipeline) and workmule a 7-label
+  ~/lcbench/chain_flash.sh benchmark (another agent, started 21:48): plan "no split fits". Not preempted.
+- OWNER RULE: one Goose app per Mac. Installed app was quit for the test (osascript quit by path); dev app
+  pid in scratchpad live/app.pid (CDP 9461). After the test: quit dev, `open -a "Goose Swarm"`, confirm.
+- Still to do: Start, 3 prompts (coding/reasoning/Jira) load time + tok/s vs 277 s / ~40 tok/s; then 16k/32k/64k
+  prompts (TTFT, prefill, decode, peak mem both Macs); split-view screenshot to
+  /Volumes/AI-workhorse/media/goose/mimo-2026-10-26/ (ai-disk-guard first); Stop; no ranks left; skill notes.
