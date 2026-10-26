@@ -1,64 +1,78 @@
 # HANDOFF: n-gram / prompt-lookup decoding lever (branch ngram-decoding)
 
-Written 2026-10-26 by the first agent. It hit the 200k ctx-guard right after loading the three skills
-(goose-mlx-inference + goose-feature-dev + node-dispatch are ~200k together). NOTHING was built yet.
-The worktree is clean at 0925b96990 (= origin/main at start).
+Updated 2026-10-26 by the second agent (stopped at the 160k ctx-guard; the CLAUDE.md/AGENTS.md
+reminders this repo injects cost ~60k on their own, so budget for that).
 
-## TRAP for the next agent (cost the whole first attempt)
-Do NOT load the full skills goose-mlx-inference / goose-feature-dev (they are huge). The facts you need are below.
-If you must, `grep -n` the skill files for a keyword instead:
-  ~/.claude/skills/goose-mlx-inference/SKILL.md, ~/.claude/skills/goose-feature-dev/SKILL.md,
-  ~/.claude/skills/node-dispatch/SKILL.md
+## TRAP (cost the first attempt)
+Do NOT load the skills goose-mlx-inference / goose-feature-dev / node-dispatch with the Skill tool.
+`grep -n` them: ~/.claude/skills/<name>/SKILL.md. Never cat engine.rs (5400 lines): grep -n + sed -n.
 
-## Task (from the coordinator, verbatim intent)
-A. Per-model lever: prompt lookup auto/on/off + min n-gram, max n-gram, max draft tokens (tunables).
-   ModelProfile field + Settings UI with the app's custom controls (no native select; reuse the existing
-   per-model profile UI, e.g. MlxKvCacheFields.tsx / FieldRow / DropdownMenu).
-   Wiring: MTP models -> env RAPID_MLX_MTP_PROMPT_LOOKUP (0/1), _MIN_NGRAM, _MAX_NGRAM, _MAX_TOKENS,
-   (_SAMPLED is disable-only) on the engine process (no engine bump). Non-MTP pure-attention models ->
-   `--suffix-decoding` + `--suffix-max-draft --suffix-max-suffix-len --suffix-min-confidence
-   --suffix-min-draft-len` when on. Hybrid non-MTP (Qwen3.5+/GatedDeltaNet) -> lever shown disabled with
-   the reason (engine refuses suffix decoding there). Default = auto (engine family policy).
-   Engine facts: PLD lives INSIDE MTP (copy-draft), suffix decoding is greedy-only, batch 1, exclusive with MTP.
-B. Measure on /Volumes/AI-workhorse/models/goose/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx (31 GB, has
-   mtp.safetensors): workloads code-edit (~150-line file, one-line change, full file back), summarise/quote a
-   document, free chat. Configs: MTP off; MTP on + PLD off; MTP on + PLD on. temperature 0, N>=3, decode tok/s,
-   acceptance (`prompt_lookup_*` in /v1/status or engine log), SHA-256 of outputs PLD on vs off.
-   Pure-attention model on the SSD (gemma/llama/mellum JetBrains/Mellum2.1-12B-A2.5B-Thinking is pure attention
-   per the skill) -> `--suffix-decoding` off vs on.
-C. Unit tests for the argv/env builder; gate; live CDP check only if it does not disturb the owner's app.
-D. Facts into local-edition/skills/goose-mlx-inference/references/prompt-lookup-ngram.md + one-line pointer in
-   that SKILL.md; dated changelog line in ~/.claude/skills/goose-knob-turning/SKILL.md.
+## DONE (commit 7e360e4223, step A Rust core)
+- NEW crates/goose-sidecar/src/prompt_lookup.rs: `PromptLookupMode {On,Off}` (auto = None),
+  `PromptLookupProfile {mode, min_ngram, max_ngram, max_draft}` (serde default, snake_case),
+  `PromptLookupLane {Mtp, Suffix, Unavailable(reason)}`, `lane()`, `model_is_hybrid(dir)` (config.json:
+  layer_types with linear_attention/mamba/ssm..., full_attention_interval>1, or model_type in a hybrid
+  list incl. qwen3_5/qwen3_next/granitemoehybrid/nemotron_h/lfm2), `engine_env()` (MTP lane only:
+  RAPID_MLX_MTP_PROMPT_LOOKUP=1/0 + _MIN_NGRAM(clamped>=2) _MAX_NGRAM(>=min) _MAX_TOKENS; Off sends only
+  =0), `engine_flags()` (Suffix lane + On only: --suffix-decoding, --suffix-max-draft <max_draft>,
+  --suffix-max-suffix-len <max_ngram>; min_ngram has no suffix-lane meaning). 10 unit tests.
+- engine.rs: `ModelProfile.prompt_lookup: PromptLookupProfile` (non-Option, default = auto);
+  `serves_mtp()` extracted from build_serve_command (same logic); build_serve_command appends
+  engine_flags when not auto; `pub fn prompt_lookup_lane(settings, model_id)`;
+  `pub fn build_serve_env(settings, model_id)`; `ManagerState::Running` carries `env`; mount reuse
+  compares argv AND env; config.env = sidecar_spawn_env() + serve env; restart_required compares both.
+  Test `prompt_lookup_rides_env_on_mtp_flags_on_pure_attention_and_nothing_on_a_hybrid`.
+- Gate run at handoff: `cargo test -p goose-sidecar --lib prompt_lookup` 11 passed. Full
+  `cargo clippy -p goose-sidecar --all-targets -D warnings` + `cargo test -p goose-sidecar` were
+  started; RE-RUN them first (results not recorded).
 
-## Code locations (from the brief + first look)
-- crates/goose-sidecar/src/engine.rs: `pub struct ModelProfile` at line 414 (fields: speculative, kv_cache,
-  thinking...). Add e.g. `prompt_lookup: Option<PromptLookupProfile>` there. `build_serve_command` builds argv
-  (MTP via --speculative-config when mtp.safetensors exists); engine spawned via Command at ~3608 / ~4462
-  (env can be set there). Argv goldens live in engine.rs tests.
-- Engine (READ-ONLY, another agent works there): /Users/workhorse/Projects/Rapid-MLX-wt-offload,
-  package rapid_mlx: spec_decode/mtp/generator.py (`_effective_prompt_lookup_policy`), prompt_lookup.py,
-  cli.py ~12417 (suffix flags), scheduler.py `_install_suffix_decoding` ~3418, aliases.json suffix_decoding_tier.
-- UI: ui/desktop/src/components/mlx/ (MlxKvCacheFields.tsx is the per-model-field pattern); wire DTO in
-  goose-sdk-types custom_requests (profile wire names camelCase, e.g. kvCache). Regenerate:
-  `cargo run -p goose --bin generate-acp-schema` then `cd ui/desktop && pnpm run build-goose-sdk`.
-  i18n keys must exist in all 15 catalogs (round-trip JSON in FILE order, ensure_ascii=False, indent=2).
+## OPEN
+A2. ACP wire (not started):
+  - crates/goose-sdk-types/src/custom_requests.rs `MlxModelProfileDto` (~line 2335): add
+    `prompt_lookup: Option<MlxPromptLookupDto>` (camelCase: promptLookup {mode:"on"|"off", minNgram,
+    maxNgram, maxDraft}), skip_serializing_if none. `MlxLocalModelDto` (~3010): add
+    `prompt_lookup_lane: Option<String>` ("mtp"|"suffix"|"unavailable") + `prompt_lookup_unavailable_reason`.
+    NOTE the lane depends on profile.speculative (MTP off -> suffix/unavailable), so the UI should
+    recompute: speculative!="off" && hasMtpHead -> mtp; else hybrid? unavailable : suffix. Simplest: send
+    `hasMtpHead: bool` + `hybrid: Option<bool>` + `hybridError` and compute lane in TS, mirroring `lane()`.
+  - crates/goose/src/acp/server/mlx_engine.rs profile_to_dto (~345) / profile_from_dto (~416) map it;
+    core_models_list (~870) fills the facts (inspect_model_dir(&dir).has_mtp_sidecar,
+    prompt_lookup::model_is_hybrid(&dir)).
+  - Regenerate: `cargo run -p goose --bin generate-acp-schema` then `cd ui/desktop && pnpm run build-goose-sdk`.
+B. UI: ui/desktop/src/components/leanzero-swarm/MlxKvCacheFields.tsx is the pattern (used from
+   MlxEngineView.tsx; types in ui/desktop/src/acp/mlx-engine.ts ~line 191 `kvCache?`). Add
+   MlxPromptLookupFields.tsx: mode dropdown Auto/On/Off (custom DropdownMenu, NO native select), three
+   number inputs (min n-gram MTP-only, max n-gram, max draft; hint 31/63/95 fill 32-row verify tiles),
+   lane caption ("inside MTP", "suffix decoding, greedy only, batch 1", or disabled + reason). Vitest
+   beside MlxEngineView.test.tsx. i18n keys in ALL 15 catalogs (round-trip JSON in file order,
+   ensure_ascii=False, indent=2). Gate: pnpm install --frozen-lockfile; pnpm run lint:check; pnpm run test:run.
+C. Measurement: DELEGATED to a background agent at ~19:40 (it reports to the coordinator that spawned
+   the second agent). Data dir: /Volumes/AI-workhorse/runs/2026-10-26-pld-qwen38 (NOTES.md there).
+   Matrix: MTP off / MTP+PLD off (RAPID_MLX_MTP_PROMPT_LOOKUP=0) / MTP+PLD on (family default ON for
+   qwen3_5: min 8, max 64, 31 tokens) x code-edit / summarise-quote / free-chat, greedy, N>=3, port 8471,
+   SHA-256 of outputs; secondary Mellum2.1 --suffix-decoding off/on. If NOTES.md has no results table,
+   re-run it (method in the brief above).
+D. Skill notes: local-edition/skills/goose-mlx-inference/references/prompt-lookup-ngram.md (+ one-line
+   pointer in that SKILL.md) and a dated changelog line in ~/.claude/skills/goose-knob-turning/SKILL.md.
+
+## Engine facts (verified in /Users/workhorse/Projects/Rapid-MLX-wt-offload @ v0.14.3-lz.14, READ-ONLY)
+- spec_decode/mtp/generator.py `_effective_prompt_lookup_policy`: env read per request; MIN>=2,
+  MAX>=MIN, MAX_TOKENS>=1; `_SAMPLED` is disable-only. `_prompt_lookup_is_enabled` needs
+  model.mtp_prompt_lookup_supported (qwen3_5_inject.py and qwen4_exp_inject.py set it).
+- qwen3_5_inject.py ~1009: family policy enabled_by_default=True, enabled_under_sampling=True,
+  min 8, max 64, max_tokens MAX_COPY_DRAFT_TOKENS (=31, prompt_lookup.py:175). Legacy default: off.
+- Suffix: cli.py ~12417 flags (store_true, defaults None -> drafter defaults max_draft 8, max_suffix_len 4,
+  min_confidence 0.3, min_draft_len 2); scheduler.py `_install_suffix_decoding` ~3418 logs
+  "[SuffixDecoding] disabled: model is hybrid" and returns (no crash) when !supports_spec_decode;
+  greedy-only, batch 1. Status counters: prompt_lookup_{proposals,drafted_tokens,accepted_tokens,
+  rejections,ev_declines,cache_fallthroughs,matched_suffix_tokens,mtp_sync_seconds}.
+
+## Unverified / risks
+- goose-side hybrid detection is a heuristic list; the engine's own `supports_spec_decode` is the authority
+  (it degrades silently-with-a-log, not by refusing). Distributed / remote-single engines do NOT get the env.
 
 ## Rules
-- `source bin/activate-hermit` first, THEN `export CARGO_TARGET_DIR=/Users/workhorse/Projects/goose-wt-ngram/target`.
-- Gate: cargo fmt --all; cargo clippy --all-targets -- -D warnings (crates touched); cargo test -p goose-sidecar;
-  ui/desktop: pnpm install --frozen-lockfile (fresh worktree), pnpm run lint:check, pnpm run test:run.
-- Heavy builds/engine runs via ~/Projects/machine-sync/bin/node-run (host workhorse or gabee, NOT workmule).
-- Engine by hand: port 8471 (never 8090 or others' engines), pinned launcher = ENGINE_LAUNCHER in engine.rs
-  (`uvx --from "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.14" rapid-mlx serve ...`),
-  argv exactly as build_serve_command prints it (write a throwaway test to print it).
-- Outputs on /Volumes/AI-workhorse/runs/<dated dir> after `~/Projects/machine-sync/bin/ai-disk-guard --need-gb 1 --out <dir>`.
-- Commits: identity leanzero.srl <office@leanzero.net>; NO Co-Authored-By (commit-msg hook rejects it).
-  Push: `git push -u origin HEAD:ngram-decoding`.
-- Never pkill by pattern; kill only pids you started.
-
-## Suggested split (fresh agents, one step each, each writes back here)
-1. Rust: ModelProfile field + env/argv builder + unit tests + ACP wire + schema regen. Commit/push.
-2. UI: Settings control + vitest + i18n. Commit/push.
-3. Measurement (workhorse via node-run): the 3 configs x 3 workloads x N=3, SHA proof; suffix-decoding on a
-   pure-attention model. Write results to the reference file. Commit/push.
-4. Skill notes (D) + knob-turning changelog line.
+`source bin/activate-hermit`, then `export CARGO_TARGET_DIR=/Users/workhorse/Projects/goose-wt-ngram/target`.
+Commits: `git -c user.name=leanzero.srl -c user.email=office@leanzero.net commit`, NO Co-Authored-By.
+Push: `git push -u origin HEAD:ngram-decoding`. Port 8471 only; never pkill by pattern; heavy runs via
+~/Projects/machine-sync/bin/node-run (workhorse or gabee, not workmule).
