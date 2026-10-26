@@ -4844,6 +4844,9 @@
   "mlxDistributed.editNode": {
     "defaultMessage": "{name} 편집"
   },
+  "mlxDistributed.error.planAt": {
+    "defaultMessage": "해당 예비분으로는 분할을 계획할 수 없습니다"
+  },
   "mlxDistributed.error.preflight": {
     "defaultMessage": "프리플라이트 오류"
   },
@@ -4987,6 +4990,9 @@
   },
   "mlxDistributed.field.pipelinePython": {
     "defaultMessage": "파이프라인 Python(선택)"
+  },
+  "mlxDistributed.field.planReserve": {
+    "defaultMessage": "계획 예비분 (RAM의 %)"
   },
   "mlxDistributed.field.port": {
     "defaultMessage": "API 포트"
@@ -5159,6 +5165,12 @@
   "mlxDistributed.planLine": {
     "defaultMessage": "GB(오버헤드 포함 계획) / 분할 예산 {budget} GB"
   },
+  "mlxDistributed.planReserveDefault": {
+    "defaultMessage": "모델 기본값"
+  },
+  "mlxDistributed.planReserveHint": {
+    "defaultMessage": "레이어 분할 모델(mimo_v2): 계획이 각 Mac의 RAM 중 비워 두는 비율입니다. 비워 두면 모델 자체 예비분을, 없으면 goose 기본값을 사용합니다. goose는 메모리 워치독의 경고 예비분보다 낮은 값을 거부합니다."
+  },
   "mlxDistributed.planned": {
     "defaultMessage": "계획 {gb} GB(오버헤드 포함)"
   },
@@ -5305,6 +5317,66 @@
   },
   "mlxDistributed.speedUnknown": {
     "defaultMessage": "속도 미보고"
+  },
+  "mlxDistributed.split.budget": {
+    "defaultMessage": "예산"
+  },
+  "mlxDistributed.split.fitsAtLabel": {
+    "defaultMessage": "{pct}%에서 맞음"
+  },
+  "mlxDistributed.split.fitsAtText": {
+    "defaultMessage": "RAM의 {current}% 예비분에서는 맞는 분할이 없습니다. {pct}%에서는 맞습니다. 그 값으로 계획하면 각 Mac에 비워 두는 메모리가 줄지만, 여전히 메모리 워치독의 경고선보다는 위입니다."
+  },
+  "mlxDistributed.split.gb": {
+    "defaultMessage": "{value} GB"
+  },
+  "mlxDistributed.split.layers": {
+    "defaultMessage": "레이어 {split}개"
+  },
+  "mlxDistributed.split.margin": {
+    "defaultMessage": "안전 마진이 곧 예비분입니다. goose는 각 Mac의 예산을 채우도록 컨텍스트 크기를 정하므로 여유는 설계상 약 0 GB로 표시됩니다."
+  },
+  "mlxDistributed.split.noFitLabel": {
+    "defaultMessage": "맞는 예비분 없음"
+  },
+  "mlxDistributed.split.noFitText": {
+    "defaultMessage": "설정할 수 있는 어떤 예비분으로도 분할이 맞지 않습니다. Mac의 메모리를 확보하거나 더 작은 모델을 분할하세요."
+  },
+  "mlxDistributed.split.noRange": {
+    "defaultMessage": "계획된 레이어 없음"
+  },
+  "mlxDistributed.split.planAt": {
+    "defaultMessage": "{pct}%로 계획"
+  },
+  "mlxDistributed.split.range": {
+    "defaultMessage": "L{first}–{last} · 레이어 {count}개"
+  },
+  "mlxDistributed.split.rank": {
+    "defaultMessage": "랭크 {rank}"
+  },
+  "mlxDistributed.split.reserve": {
+    "defaultMessage": "예비분 RAM의 {pct}%"
+  },
+  "mlxDistributed.split.sourceDefault": {
+    "defaultMessage": "goose 기본값"
+  },
+  "mlxDistributed.split.sourceModel": {
+    "defaultMessage": "{model} 자체 예비분"
+  },
+  "mlxDistributed.split.sourceModelUnnamed": {
+    "defaultMessage": "모델 자체 예비분"
+  },
+  "mlxDistributed.split.sourceUser": {
+    "defaultMessage": "직접 설정"
+  },
+  "mlxDistributed.split.spare": {
+    "defaultMessage": "여유"
+  },
+  "mlxDistributed.split.title": {
+    "defaultMessage": "레이어 분할"
+  },
+  "mlxDistributed.split.weights": {
+    "defaultMessage": "가중치"
   },
   "mlxDistributed.startHint": {
     "defaultMessage": "시작하면 프리플라이트를 실행하고, JACCL에 필요하면 Thunderbolt 링크를 복구한 뒤, 모든 랭크를 감독하에 실행합니다."

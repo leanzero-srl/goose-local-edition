@@ -4844,6 +4844,9 @@
   "mlxDistributed.editNode": {
     "defaultMessage": "{name} bearbeiten"
   },
+  "mlxDistributed.error.planAt": {
+    "defaultMessage": "Der Split ließ sich mit dieser Reserve nicht planen"
+  },
   "mlxDistributed.error.preflight": {
     "defaultMessage": "Preflight-Fehler"
   },
@@ -4987,6 +4990,9 @@
   },
   "mlxDistributed.field.pipelinePython": {
     "defaultMessage": "Pipeline-Python (optional)"
+  },
+  "mlxDistributed.field.planReserve": {
+    "defaultMessage": "Planreserve (% des RAM)"
   },
   "mlxDistributed.field.port": {
     "defaultMessage": "API-Port"
@@ -5159,6 +5165,12 @@
   "mlxDistributed.planLine": {
     "defaultMessage": "GB geplant mit Overhead, von {budget} GB Split-Budget"
   },
+  "mlxDistributed.planReserveDefault": {
+    "defaultMessage": "Modellstandard"
+  },
+  "mlxDistributed.planReserveHint": {
+    "defaultMessage": "Modelle mit Schicht-Split (mimo_v2): der Anteil des RAM jedes Macs, den der Plan frei hält. Leer nutzt die eigene Reserve des Modells, sonst den Standard von goose; goose lehnt einen Wert unter der Warnreserve des Speicher-Watchdogs ab."
+  },
   "mlxDistributed.planned": {
     "defaultMessage": "geplant {gb} GB mit Overhead"
   },
@@ -5305,6 +5317,66 @@
   },
   "mlxDistributed.speedUnknown": {
     "defaultMessage": "Geschwindigkeit nicht gemeldet"
+  },
+  "mlxDistributed.split.budget": {
+    "defaultMessage": "Budget"
+  },
+  "mlxDistributed.split.fitsAtLabel": {
+    "defaultMessage": "Passt bei {pct} %"
+  },
+  "mlxDistributed.split.fitsAtText": {
+    "defaultMessage": "Bei einer Reserve von {current} % des RAM passt kein Split; bei {pct} % passt einer. Damit bleibt auf jedem Mac weniger Speicher frei, aber immer noch über der Warnlinie des Speicher-Watchdogs."
+  },
+  "mlxDistributed.split.gb": {
+    "defaultMessage": "{value} GB"
+  },
+  "mlxDistributed.split.layers": {
+    "defaultMessage": "{split} Schichten"
+  },
+  "mlxDistributed.split.margin": {
+    "defaultMessage": "Die Sicherheitsmarge ist die Reserve: goose bemisst den Kontext so, dass er das Budget jedes Macs ausfüllt, daher zeigt „übrig“ absichtlich etwa 0 GB."
+  },
+  "mlxDistributed.split.noFitLabel": {
+    "defaultMessage": "Keine Reserve passt"
+  },
+  "mlxDistributed.split.noFitText": {
+    "defaultMessage": "Mit keiner einstellbaren Reserve passt ein Split: Gib Speicher auf einem Mac frei oder teile ein kleineres Modell auf."
+  },
+  "mlxDistributed.split.noRange": {
+    "defaultMessage": "keine Schichten geplant"
+  },
+  "mlxDistributed.split.planAt": {
+    "defaultMessage": "Mit {pct} % planen"
+  },
+  "mlxDistributed.split.range": {
+    "defaultMessage": "L{first}–{last} · {count} Schichten"
+  },
+  "mlxDistributed.split.rank": {
+    "defaultMessage": "Rank {rank}"
+  },
+  "mlxDistributed.split.reserve": {
+    "defaultMessage": "Reserve {pct} % des RAM"
+  },
+  "mlxDistributed.split.sourceDefault": {
+    "defaultMessage": "Standard von goose"
+  },
+  "mlxDistributed.split.sourceModel": {
+    "defaultMessage": "eigene Reserve von {model}"
+  },
+  "mlxDistributed.split.sourceModelUnnamed": {
+    "defaultMessage": "eigene Reserve des Modells"
+  },
+  "mlxDistributed.split.sourceUser": {
+    "defaultMessage": "von dir festgelegt"
+  },
+  "mlxDistributed.split.spare": {
+    "defaultMessage": "übrig"
+  },
+  "mlxDistributed.split.title": {
+    "defaultMessage": "Schicht-Split"
+  },
+  "mlxDistributed.split.weights": {
+    "defaultMessage": "Gewichte"
   },
   "mlxDistributed.startHint": {
     "defaultMessage": "Starten führt den Preflight aus, repariert die Thunderbolt-Verbindung, wenn JACCL es braucht, und startet dann jeden Rank unter Aufsicht."

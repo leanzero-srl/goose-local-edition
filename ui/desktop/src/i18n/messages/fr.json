@@ -4844,6 +4844,9 @@
   "mlxDistributed.editNode": {
     "defaultMessage": "Modifier {name}"
   },
+  "mlxDistributed.error.planAt": {
+    "defaultMessage": "Impossible de planifier la répartition avec cette réserve"
+  },
   "mlxDistributed.error.preflight": {
     "defaultMessage": "Erreur de preflight"
   },
@@ -4987,6 +4990,9 @@
   },
   "mlxDistributed.field.pipelinePython": {
     "defaultMessage": "Python du pipeline (facultatif)"
+  },
+  "mlxDistributed.field.planReserve": {
+    "defaultMessage": "Réserve du plan (% de la RAM)"
   },
   "mlxDistributed.field.port": {
     "defaultMessage": "Port de l’API"
@@ -5159,6 +5165,12 @@
   "mlxDistributed.planLine": {
     "defaultMessage": "Go planifiés avec surcoût, sur un budget de répartition de {budget} Go"
   },
+  "mlxDistributed.planReserveDefault": {
+    "defaultMessage": "valeur par défaut du modèle"
+  },
+  "mlxDistributed.planReserveHint": {
+    "defaultMessage": "Modèles répartis par couches (mimo_v2) : la part de la RAM de chaque Mac que le plan garde libre. Vide utilise la réserve propre du modèle, sinon celle par défaut de goose ; goose refuse une valeur inférieure à la réserve d’alerte du watchdog mémoire."
+  },
   "mlxDistributed.planned": {
     "defaultMessage": "planifié {gb} Go avec surcoût"
   },
@@ -5305,6 +5317,66 @@
   },
   "mlxDistributed.speedUnknown": {
     "defaultMessage": "vitesse non signalée"
+  },
+  "mlxDistributed.split.budget": {
+    "defaultMessage": "budget"
+  },
+  "mlxDistributed.split.fitsAtLabel": {
+    "defaultMessage": "Tient à {pct} %"
+  },
+  "mlxDistributed.split.fitsAtText": {
+    "defaultMessage": "Aucune répartition ne tient avec une réserve de {current} % de la RAM ; une tient à {pct} %. Planifier à ce niveau garde moins de mémoire libre sur chaque Mac, toujours au-dessus du seuil d’alerte du watchdog mémoire."
+  },
+  "mlxDistributed.split.gb": {
+    "defaultMessage": "{value} Go"
+  },
+  "mlxDistributed.split.layers": {
+    "defaultMessage": "{split} couches"
+  },
+  "mlxDistributed.split.margin": {
+    "defaultMessage": "La marge de sécurité, c’est la réserve : goose dimensionne le contexte pour remplir le budget de chaque Mac, donc le libre affiche environ 0 Go par conception."
+  },
+  "mlxDistributed.split.noFitLabel": {
+    "defaultMessage": "Aucune réserve ne convient"
+  },
+  "mlxDistributed.split.noFitText": {
+    "defaultMessage": "Aucune réserve réglable ne permet de faire tenir une répartition : libérez de la mémoire sur un Mac ou répartissez un modèle plus petit."
+  },
+  "mlxDistributed.split.noRange": {
+    "defaultMessage": "aucune couche planifiée"
+  },
+  "mlxDistributed.split.planAt": {
+    "defaultMessage": "Planifier à {pct} %"
+  },
+  "mlxDistributed.split.range": {
+    "defaultMessage": "L{first}–{last} · {count} couches"
+  },
+  "mlxDistributed.split.rank": {
+    "defaultMessage": "rank {rank}"
+  },
+  "mlxDistributed.split.reserve": {
+    "defaultMessage": "réserve de {pct} % de la RAM"
+  },
+  "mlxDistributed.split.sourceDefault": {
+    "defaultMessage": "valeur par défaut de goose"
+  },
+  "mlxDistributed.split.sourceModel": {
+    "defaultMessage": "réserve propre de {model}"
+  },
+  "mlxDistributed.split.sourceModelUnnamed": {
+    "defaultMessage": "la réserve propre du modèle"
+  },
+  "mlxDistributed.split.sourceUser": {
+    "defaultMessage": "définie par vous"
+  },
+  "mlxDistributed.split.spare": {
+    "defaultMessage": "libre"
+  },
+  "mlxDistributed.split.title": {
+    "defaultMessage": "Répartition par couches"
+  },
+  "mlxDistributed.split.weights": {
+    "defaultMessage": "poids"
   },
   "mlxDistributed.startHint": {
     "defaultMessage": "Démarrer lance le preflight, répare la liaison Thunderbolt si JACCL en a besoin, puis lance chaque rank sous supervision."
