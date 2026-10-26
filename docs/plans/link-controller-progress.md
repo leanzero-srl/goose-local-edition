@@ -37,7 +37,7 @@ Architecture/source references: [plan](link-remote-control-plan.md), [evidence](
 - Native identity `8e49774e11`: 26 exact desktop Lucide SVGs, brand, system/light/dark themes and reduced-motion support. Actual iPhone/iPad light/dark Settings/Sessions screenshots verified after fixing invisible navigation titles. Focused visual build `205416-39f1` passed.
 - Desktop entry `c8288782c`: added Sessions to shared primary navigation. Focused 29 tests, typecheck, scoped lint and 16-locale checks pass; actual sidebar click reaches Linked Macs view and marks the route current.
 - Signing `54caa8d10b` / export `ea2c76147e`: signed archive `212349-4f13` and App Store IPA `212534-373c` succeeded. Version 1.0.0 build 1, correct bundle/team, distribution entitlement `get-task-allow=false`; both app/framework signatures and packaged manifests checked. No upload.
-- Apple organization conversion: user selected LEANZERO S.R.L. and supplied corrected D-U-N-S 303218286. Authenticated form prepared; founder/other-membership facts confirmed by owner, remaining form facts and updated license agreement are being resolved. Request has not been submitted.
+- Apple organization conversion: request submitted for LEANZERO S.R.L., D-U-N-S 303218286, after all form facts were confirmed by the owner. Apple acknowledged receipt and said it would reply within one business day; no case number shown. Conversion remains pending, updated license agreement acceptance is not yet verified, and no App Store upload occurred. Receipt and exact request: [conversion record](../ios-release/APPLE-ORGANIZATION-CONVERSION.md).
 
 ## Open delivery work
 
