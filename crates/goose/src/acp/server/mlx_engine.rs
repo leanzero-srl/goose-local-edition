@@ -217,13 +217,15 @@ pub(super) enum EngineStopper {
 
 static ENGINE_STOPPED_BY: StdMutex<Option<EngineStopper>> = StdMutex::new(None);
 
-/// `stoppedBy` for a stopped engine: who unmounted it, or `notStarted` when nobody did since this
-/// goose started. `None` for every other state.
-fn stopped_by_wire(state: &str, stopper: Option<EngineStopper>) -> Option<String> {
+/// `stoppedBy` for a stopped engine: who unmounted it; `outside` when no goose path did and
+/// something outside goose stopped the process (`outside`: the engine's own reading); else
+/// `notStarted` when nobody did since this goose started. `None` for every other state.
+fn stopped_by_wire(state: &str, stopper: Option<EngineStopper>, outside: bool) -> Option<String> {
     (state == "stopped").then(|| {
         match stopper {
             Some(EngineStopper::Owner) => "owner",
             Some(EngineStopper::LinkedMac) => "linkedMac",
+            None if outside => "outside",
             None => "notStarted",
         }
         .to_string()
@@ -561,6 +563,7 @@ fn status_to_dto(status: goose_sidecar::engine::EngineStatus) -> MlxEngineStatus
         load: status.load.map(load_to_dto),
         hosting: None,
         stopped_by: None,
+        stopped_outside: status.stopped_outside,
         serving_intent: None,
         serving_intent_error: None,
         machine_load: status.machine_load.map(machine_load_to_dto),
@@ -676,6 +679,7 @@ async fn core_status(
     status.stopped_by = stopped_by_wire(
         &status.state,
         *ENGINE_STOPPED_BY.lock().unwrap_or_else(|e| e.into_inner()),
+        status.stopped_outside.is_some(),
     );
     match mlx_serving_intent::read() {
         IntentRecord::Absent => {}
@@ -1833,20 +1837,89 @@ mod tests {
     #[test]
     fn a_stopped_engine_says_who_stopped_it_or_that_nobody_did_since_this_goose_started() {
         assert_eq!(
-            stopped_by_wire("stopped", None).as_deref(),
+            stopped_by_wire("stopped", None, false).as_deref(),
             Some("notStarted")
         );
         assert_eq!(
-            stopped_by_wire("stopped", Some(EngineStopper::Owner)).as_deref(),
+            stopped_by_wire("stopped", Some(EngineStopper::Owner), false).as_deref(),
             Some("owner")
         );
         assert_eq!(
-            stopped_by_wire("stopped", Some(EngineStopper::LinkedMac)).as_deref(),
+            stopped_by_wire("stopped", Some(EngineStopper::LinkedMac), false).as_deref(),
             Some("linkedMac")
         );
         for state in ["mounting", "running", "failed"] {
-            assert_eq!(stopped_by_wire(state, Some(EngineStopper::Owner)), None);
+            assert_eq!(
+                stopped_by_wire(state, Some(EngineStopper::Owner), false),
+                None
+            );
+            assert_eq!(stopped_by_wire(state, None, true), None);
         }
+    }
+
+    #[test]
+    fn an_engine_stopped_from_outside_goose_says_outside_never_not_started() {
+        // `notStarted` is what a Link peer re-mounts over; a `kill -TERM` from another process
+        // must never read as it.
+        assert_eq!(
+            stopped_by_wire("stopped", None, true).as_deref(),
+            Some("outside")
+        );
+        // A goose Unmount is named for what it was, whatever the process's exit said.
+        assert_eq!(
+            stopped_by_wire("stopped", Some(EngineStopper::Owner), true).as_deref(),
+            Some("owner")
+        );
+    }
+
+    fn quick_fit() -> FitVerdict {
+        use goose_sidecar::fit::{judge, Need, NodeMemoryFacts, GIB};
+        judge(
+            Need::single_engine(GIB, Ok(0), 0),
+            NodeMemoryFacts {
+                available_bytes: 40 * GIB,
+                total_bytes: 128 * GIB,
+                ceiling_bytes: 100 * GIB,
+                other_engines_bytes: 0,
+                freed_by_switch_bytes: 0,
+            },
+        )
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_fit_read_that_stalls_is_given_up_on_and_no_second_one_joins_it() {
+        static BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        let (release, held) = tokio::sync::oneshot::channel::<()>();
+        let stalled = bounded_fit(std::time::Duration::from_millis(200), &BUSY, async move {
+            let _ = held.await;
+            Err("released".to_string())
+        })
+        .await;
+        let words = stalled.unwrap_err();
+        assert!(words.contains("did not finish in"), "{words}");
+
+        // The stalled read still runs: the next status does not start another one.
+        let joined = bounded_fit(std::time::Duration::from_millis(200), &BUSY, async {
+            Ok(quick_fit())
+        })
+        .await;
+        assert!(joined.unwrap_err().contains("earlier read"));
+
+        // Once the stalled read ends, the busy flag clears and a fit is read again.
+        release.send(()).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while BUSY.load(std::sync::atomic::Ordering::SeqCst) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the busy flag never cleared"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let read = bounded_fit(std::time::Duration::from_secs(2), &BUSY, async {
+            Ok(quick_fit())
+        })
+        .await;
+        assert!(read.is_ok(), "{read:?}");
     }
 
     #[test]

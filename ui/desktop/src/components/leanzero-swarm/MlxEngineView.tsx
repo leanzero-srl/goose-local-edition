@@ -416,6 +416,7 @@ export function draftsEqual(a: NumericDrafts, b: NumericDrafts): boolean {
  */
 function StateBadge(props: {
   state: MlxEngineState;
+  stoppedBy: string | null;
   live: MlxLiveRead | null;
   distributed: MlxDistributedStatus | null;
   remote: MlxRemoteSingleStatus | null;
@@ -1110,6 +1111,7 @@ function EngineSection(props: EngineSectionProps) {
       >
         <MlxStateTile
           state={state}
+          stoppedBy={status?.stoppedBy ?? null}
           unreachable={statusError != null && status == null}
           live={live}
           history={tpsHistory}
@@ -3124,6 +3126,7 @@ function MlxEngineViewBody({ tab: routedTab, onTabChange, onOpenNodes }: MlxEngi
           <span className="pb-2">
             <StateBadge
               state={status.state}
+              stoppedBy={status.stoppedBy ?? null}
               live={live}
               distributed={distributed.status}
               remote={remote}

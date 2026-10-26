@@ -144,6 +144,10 @@ const i18n = defineMessages({
     defaultMessage: 'Close it here until you bring it back',
   },
   hintDismiss: { id: 'engineGlance.hintDismiss', defaultMessage: 'Got it' },
+  dismissFailure: {
+    id: 'engineGlance.dismissFailure',
+    defaultMessage: 'Dismiss this failure — it comes back only if the engine fails again',
+  },
   hide: {
     id: 'engineGlance.hide',
     defaultMessage: 'Hide this card — bring it back from the foot of the sidebar or Settings › App',
@@ -623,6 +627,11 @@ export interface EngineGlanceCardProps {
   /** The docked card's hide: gone until the person brings it back (Q-218). Absent = no control. */
   onHide?: () => void;
   /**
+   * A failed engine's dismiss: the failure leaves the card until a different one is reported
+   * (glanceStore). Drawn only while the card shows a failure. Absent = no control.
+   */
+  onDismissFailure?: () => void;
+  /**
    * What the served chat's turn is still forming (formingStore.ts) — the docked card lists it
    * behind "What it's writing" while the chat line is that turn (Q-215). Absent = never offered.
    */
@@ -987,6 +996,15 @@ function GlanceFace(props: EngineGlanceCardProps) {
               </Control>
             )}
             {closeControl}
+            {props.onDismissFailure && engine.stage === 'failed' && (
+              <Control
+                testId="engine-glance-dismiss"
+                label={intl.formatMessage(i18n.dismissFailure)}
+                onClick={props.onDismissFailure}
+              >
+                <X />
+              </Control>
+            )}
             {props.onHide && (
               <Control
                 testId="engine-glance-hide"

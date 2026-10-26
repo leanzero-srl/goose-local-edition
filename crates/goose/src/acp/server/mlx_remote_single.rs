@@ -1028,6 +1028,9 @@ fn restore_step(route: &PublishedRoute, engine: &MlxEngineStatusDto) -> RestoreS
             Some("owner") => RestoreStep::Decline(Some(format!(
                 "{peer}'s owner stopped its engine there, so this Mac does not start it again — Run it again to bring '{model}' back"
             ))),
+            Some("outside") => RestoreStep::Decline(Some(format!(
+                "something outside goose stopped {peer}'s engine there, so this Mac does not start it again — Run it again to bring '{model}' back"
+            ))),
             Some("linkedMac") => RestoreStep::Decline(Some(format!(
                 "a linked Mac stopped {peer}'s engine over LeanZero Link, so this Mac does not start it again — Run it again to bring '{model}' back"
             ))),
@@ -2485,6 +2488,13 @@ mod tests {
                 "{by:?}"
             );
         }
+        // Something outside goose stopped the peer's engine (a `kill -TERM` there): a stop, which
+        // this Mac never undoes on its own.
+        let RestoreStep::Decline(Some(why)) = restore_step(&route, &stopped(Some("outside")))
+        else {
+            panic!("an engine stopped from outside goose must not be mounted again");
+        };
+        assert!(why.starts_with("something outside goose stopped"), "{why}");
 
         // The Studio's owner serves another model there, and its own launch brings it back.
         let intent = |kind: &str, model: &str| MlxEngineStatusDto {

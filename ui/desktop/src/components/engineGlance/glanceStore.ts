@@ -2,6 +2,7 @@ import { useEffect, useSyncExternalStore } from 'react';
 import {
   ENGINE_GLANCE_CHANNEL,
   isGlancePush,
+  type EngineGlance,
   type GlanceNodeRef,
   type GlancePrefs,
   type GlancePush,
@@ -94,6 +95,47 @@ export function glancePipAction(action: GlancePipAction): void {
 /** Bring the desktop window back after the person closed it this session (Q-426). */
 export function showDesktopGlanceAgain(): void {
   bridge()?.engineGlanceShowDesktop?.();
+}
+
+// ---------------------------------------------------------------------------
+// A failure the person dismissed from the card (3.0.132: a red "Failed" card sat in the sidebar
+// for hours with no way to clear it but a relaunch). Held in this window for this app session,
+// keyed by the failure's own words: the same failure stays dismissed, a different one (a new
+// exit, another model, another way) shows again. The eye control keeps its own meaning — hide
+// the whole card (Q-218).
+// ---------------------------------------------------------------------------
+
+let dismissedFailure: string | null = null;
+const dismissListeners = new Set<() => void>();
+
+/** What identifies a failed engine on the card; null when it is not failed. */
+export function glanceFailureKey(engine: EngineGlance): string | null {
+  if (engine.stage !== 'failed') return null;
+  return JSON.stringify([engine.engine, engine.modelId, engine.detail ?? '']);
+}
+
+export function dismissGlanceFailure(key: string): void {
+  dismissedFailure = key;
+  for (const listener of dismissListeners) listener();
+}
+
+function subscribeDismissed(listener: () => void): () => void {
+  dismissListeners.add(listener);
+  return () => {
+    dismissListeners.delete(listener);
+  };
+}
+
+/** The failure dismissed in this window, if any (`glanceFailureKey`). */
+export function useDismissedGlanceFailure(): string | null {
+  return useSyncExternalStore(subscribeDismissed, () => dismissedFailure);
+}
+
+/** The push with a dismissed failure taken off the card: the engine reads as not present. */
+export function withoutDismissedFailure(push: GlancePush, dismissed: string | null): GlancePush {
+  const key = glanceFailureKey(push.engine);
+  if (key == null || key !== dismissed) return push;
+  return { ...push, engine: { ...push.engine, present: false, stage: 'off', detail: null } };
 }
 
 export async function setGlancePrefs(prefs: GlancePrefs): Promise<void> {
@@ -343,6 +385,8 @@ export function resetEngineGlanceForTests(next: GlancePush | null = null): void 
   unsubscribe = null;
   listeners.clear();
   latest = next;
+  dismissedFailure = null;
+  dismissListeners.clear();
   nodesListeners.clear();
   nodesState = { kind: 'unread' };
   nodesKey = null;

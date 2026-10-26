@@ -133,3 +133,47 @@ TODO
    lint:check && pnpm run test:run. (ui deps already installed in this worktree.)
 6. Live check per skill (packaged + cdp-acp-override): never-answering mlxEngine/status -> banner after 10 s;
    status {state:'stopped', stoppedBy:'outside'} -> neutral. Or state unverified.
+
+## STATE 2026-10-26 ~19:05 (agent 3, stopped at the 160k guard) — code for (3) and (4) written, gate NOT run
+DONE this round (uncompiled Rust; the two UI test files below PASS in vitest):
+- (3) sidecar lib.rs: `SidecarExit` gained `code`/`signal` (filled in `exited()`), `stopped_outside_goose()`
+  (stopped_by None && code 143/130 or SIGTERM/SIGINT) + table test `a_stop_signal_from_outside_goose_is_a_stop...`.
+  engine.rs: `EngineStatus.stopped_outside: Option<String>` (#[serde(default)]), Running-branch arm -> state
+  "stopped", model_id None, words from new `outside_stop_message`; integration test
+  `an_engine_stopped_from_outside_goose_reads_stopped_not_failed` (SIGTERM signal + a python that exits 143 on TERM).
+  goose-sdk-types custom_requests.rs: `stopped_by` doc names `outside`; NEW DTO field `stopped_outside`.
+  mlx_engine.rs: `stopped_by_wire(state, stopper, outside)` (+ tests), DTO mapping, bounded_fit test
+  `a_fit_read_that_stalls_is_given_up_on_and_no_second_one_joins_it` (oneshot-held future, multi_thread rt).
+  mlx_remote_single.rs: restore_step `Some("outside")` -> Decline + assertion in
+  `only_a_stopped_engine_nobody_stopped_is_restored`.
+  UI: MlxStateTile `stoppedBy` prop, word `stoppedOutside` ("Stopped outside goose", i18n
+  `mlxStateTile.state.stoppedOutside`); passed from MlxEngineView tile + StateBadge. Tests appended to
+  MlxStateTile.test.tsx (describe '3.0.132: ... stopped from outside goose') PASS.
+- (4) glanceStore.ts: `glanceFailureKey`, `dismissGlanceFailure`, `useDismissedGlanceFailure`,
+  `withoutDismissedFailure` (reset in resetEngineGlanceForTests). EngineGlanceInApp DockSlot applies it and passes
+  `onDismissFailure`; EngineGlanceCard draws X `engine-glance-dismiss` only when stage failed (i18n
+  `engineGlance.dismissFailure`); eye `engine-glance-hide` unchanged. Tests appended to EngineGlanceInApp.test.tsx PASS.
+- `cargo fmt --all` ran clean. A background `heavy-run cargo test -p goose-sidecar` was started at ~19:00
+  (log /private/tmp/claude-501/-Users-workhorse-Projects/b3c77359-c57d-472f-be64-067a0ce26b03/scratchpad/t1.log) —
+  result unknown to the next agent: RE-RUN it.
+
+TODO (next agent, in order)
+1. i18n: `cd ui/desktop && pnpm run i18n:extract` exited 127 here (pnpm not on PATH without hermit: run it after
+   `source bin/activate-hermit` from the worktree root). New keys: mlxEngineView.statusRetry,
+   mlxStateTile.state.stoppedOutside, engineGlance.dismissFailure. Add to all 15 catalogs in FILE order after the
+   en.json neighbour (skill changelog: json.dumps(ensure_ascii=False, indent=2)+newline, NOT sorted), translated.
+2. Schema: `just generate-acp-types` (DTO field + doc changed; CI check-acp-schema diffs acp-schema.json,
+   acp-meta.json, ui/sdk/src/generated). Then the UI can read `status.stoppedOutside` if wanted (not used yet).
+3. Gate (heavy-run, one at a time; script
+   /private/tmp/claude-501/-Users-workhorse-Projects/b3c77359-c57d-472f-be64-067a0ce26b03/scratchpad/rs.sh = hermit +
+   CARGO_TARGET_DIR=~/Projects/goose/target + "$@"): cargo build -p goose-cli; cargo clippy --all-targets -p goose
+   -p goose-sidecar -p goose-sdk-types -- -D warnings; cargo test -p goose-sidecar; cargo test -p goose --lib mlx_;
+   cargo test -p goose-sdk-types; ui: pnpm run lint:check && pnpm run test:run.
+   Check other EngineStatus/SidecarExit consumers compile (only struct literals: engine.rs 2307, lib.rs exited()).
+4. Negative controls (copy file to scratchpad, break the fix, run the one test, copy back — never git checkout --):
+   stopped_outside_goose -> return false (sidecar tests fail); stopped_by_wire `None if outside` arm removed;
+   restore_step outside arm removed (test asserts wording "something outside goose stopped" -> fails);
+   MlxStateTile stoppedOutside branch removed; DockSlot `push = live` (dismiss test fails); bounded_fit timeout
+   (replace limit with 60 s -> stall test fails/timeouts).
+5. Live check per skill (packaged app + cdp-acp-override) or state unverified. Commit, push
+   `git push origin HEAD:fix/engine-failure-card-sticks`. No DMG.
