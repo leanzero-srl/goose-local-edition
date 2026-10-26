@@ -35,7 +35,7 @@ use goose_sidecar::distributed::link_control;
 use goose_sidecar::distributed::preflight::loaded_files;
 use goose_sidecar::distributed::probe::{self, Pressure};
 use goose_sidecar::distributed::provision::{self, EnvSpec};
-use goose_sidecar::distributed::Runner;
+use goose_sidecar::distributed::{Runner, RUNNERS};
 use goose_sidecar::{MemoryReading, GIB};
 use leanzero_link::netpath::{self, InterfaceFact, LinkKind, LinkPath};
 
@@ -914,7 +914,10 @@ pub(super) fn compose(
                     c.found(Some(rank), "modelDir", dir, n.detail.clone());
                 }
             }
-            if model.runner == Runner::PipelineQwen4.as_str() {
+            if RUNNERS
+                .iter()
+                .any(|(_, r)| r.uses_pipeline_env() && model.runner == r.as_str())
+            {
                 for rank in 0..size {
                     if let Some(p) = ok[rank] {
                         let spec = EnvSpec::pipeline();
@@ -939,7 +942,10 @@ pub(super) fn compose(
             None,
             "modelId",
             if models.is_empty() {
-                "no splittable model (qwen3_5 tensor, qwen4_exp pipeline) is on this Mac".to_string()
+                format!(
+                    "no splittable model ({}) is on this Mac",
+                    Runner::wired_summary()
+                )
             } else {
                 format!(
                     "none of this Mac's {} splittable models is on every node with the same files — \

@@ -1108,21 +1108,14 @@ pub fn plan(input: &PlanInput) -> Plan {
                     link: cluster.link.clone(),
                 };
                 let (id, node_names, chips, backend) = candidate_base(key.clone(), &all);
-                let wired = matches!(
-                    (&runner, kind),
-                    (Ok(Runner::MlxLmTensor), PlacementKind::Tensor)
-                        | (Ok(Runner::PipelineQwen4), PlacementKind::Pipeline)
-                );
+                let wired = matches!(&runner, Ok(r) if r.placement_kind() == kind);
                 let unsupported = if !wired {
                     Some(match &runner {
                         Err(e) => format!("not supported yet: {e:#}"),
                         Ok(r) => format!(
                             "not supported yet: goose splits {} {} only",
                             input.model.model_type,
-                            match r {
-                                Runner::MlxLmTensor => "tensor-parallel",
-                                Runner::PipelineQwen4 => "by layer range (pipeline)",
-                            }
+                            r.layout_words()
                         ),
                     })
                 } else if kind == PlacementKind::Tensor && cluster.link.as_deref() != Some("jaccl") {

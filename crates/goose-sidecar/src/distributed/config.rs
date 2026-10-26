@@ -34,25 +34,85 @@ pub enum Runner {
     MlxLmTensor,
     /// The fork's `rapid_mlx.distributed.pipeline_qwen4` (contiguous layer ranges per rank).
     PipelineQwen4,
+    /// `mlx_lm.server --pipeline` on every rank under goose's rank wrapper, each rank holding the
+    /// contiguous layer range goose's planner derived from the checkpoint's per-layer bytes
+    /// (`plan::plan_layer_split`; rank 0 = the LAST layers). The fork's env carries the model
+    /// code: `import rapid_mlx.mlx_lm_models` makes `mlx_lm.models.<model_type>` resolvable.
+    MlxLmPipeline,
 }
+
+/// THE one table of which checkpoint `model_type` splits under which runner. Every other place
+/// asks [`Runner`] (`for_model_type`, `placement_kind`, `layout_words`, `uses_pipeline_env`); a
+/// test (`no_other_file_maps_a_model_type_to_a_runner`) fails the build on a second copy.
+pub const RUNNERS: &[(&str, Runner)] = &[
+    ("qwen3_5", Runner::MlxLmTensor),
+    ("qwen4_exp", Runner::PipelineQwen4),
+    ("mimo_v2", Runner::MlxLmPipeline),
+];
 
 impl Runner {
     pub fn for_model_type(model_type: &str) -> Result<Self> {
-        match model_type {
-            "qwen3_5" => Ok(Runner::MlxLmTensor),
-            "qwen4_exp" => Ok(Runner::PipelineQwen4),
-            other => bail!(
-                "no distributed runner for model_type '{other}': qwen3_5 splits tensor-parallel \
-                 under mlx_lm.server, qwen4_exp splits by layer range under the fork's \
-                 pipeline_qwen4; nothing else is wired"
+        match RUNNERS.iter().find(|(t, _)| *t == model_type) {
+            Some((_, runner)) => Ok(*runner),
+            None => bail!(
+                "no distributed runner for model_type '{model_type}': {}; nothing else is wired",
+                Self::wired_summary()
             ),
         }
+    }
+
+    /// Every wired model_type with how it splits, from [`RUNNERS`]
+    /// ("qwen3_5 tensor-parallel, qwen4_exp by layer range (fork pipeline), …").
+    pub fn wired_summary() -> String {
+        RUNNERS
+            .iter()
+            .map(|(t, r)| format!("{t} {}", r.layout_words()))
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     pub fn as_str(self) -> &'static str {
         match self {
             Runner::MlxLmTensor => "mlxLmTensor",
             Runner::PipelineQwen4 => "pipelineQwen4",
+            Runner::MlxLmPipeline => "mlxLmPipeline",
+        }
+    }
+
+    /// How the placement store and planner key this runner's splits.
+    pub fn placement_kind(self) -> crate::placement::PlacementKind {
+        match self {
+            Runner::MlxLmTensor => crate::placement::PlacementKind::Tensor,
+            Runner::PipelineQwen4 | Runner::MlxLmPipeline => {
+                crate::placement::PlacementKind::Pipeline
+            }
+        }
+    }
+
+    /// How the split divides the model, in words.
+    pub fn layout_words(self) -> &'static str {
+        match self {
+            Runner::MlxLmTensor => "tensor-parallel",
+            Runner::PipelineQwen4 => "by layer range (the fork's pipeline_qwen4)",
+            Runner::MlxLmPipeline => "by layer range (mlx_lm pipeline, goose's split)",
+        }
+    }
+
+    /// The ranks run the fork's interpreter (`NodeConfig::pipeline_python`): the qwen4_exp
+    /// pipeline is the fork's program; the mlx_lm pipeline imports the fork's vendored model code.
+    pub fn uses_pipeline_env(self) -> bool {
+        match self {
+            Runner::MlxLmTensor => false,
+            Runner::PipelineQwen4 | Runner::MlxLmPipeline => true,
+        }
+    }
+
+    /// Each rank runs `mlx_lm.server` under goose's rank wrapper (`TENSOR_PROGRAM`): the wrapper's
+    /// serving loop, its `/v1/status` shape and its phases, whichever way the layers are split.
+    pub fn runs_rank_wrapper(self) -> bool {
+        match self {
+            Runner::MlxLmTensor | Runner::MlxLmPipeline => true,
+            Runner::PipelineQwen4 => false,
         }
     }
 }
@@ -355,7 +415,50 @@ pub(crate) mod tests {
             Runner::for_model_type("qwen4_exp").unwrap(),
             Runner::PipelineQwen4
         );
+        assert_eq!(
+            Runner::for_model_type("mimo_v2").unwrap(),
+            Runner::MlxLmPipeline
+        );
         let err = Runner::for_model_type("qwen3_moe").unwrap_err().to_string();
         assert!(err.contains("qwen3_moe"), "{err}");
+        for (model_type, _) in RUNNERS {
+            assert!(err.contains(model_type), "{err}");
+        }
+    }
+
+    /// The runner rule lives in [`RUNNERS`] only: no other non-test source maps a model_type
+    /// string to a runner, or compares a model_type with a literal. A second copy is how the
+    /// arch list drifted into prose and placement code before.
+    #[test]
+    fn no_other_file_maps_a_model_type_to_a_runner() {
+        let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let mut offenders = Vec::new();
+        let mut stack = vec![crates.join("goose-sidecar/src"), crates.join("goose/src")];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if path.extension().and_then(|e| e.to_str()) != Some("rs")
+                    || path.ends_with("distributed/config.rs")
+                {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&path).unwrap();
+                // Production code only: everything before the file's test module.
+                let code = text.split("#[cfg(test)]").next().unwrap_or_default();
+                for (n, line) in code.lines().enumerate() {
+                    let mapped = RUNNERS
+                        .iter()
+                        .any(|(t, _)| line.contains(&format!("\"{t}\" =>")));
+                    if mapped || line.contains("model_type == \"") {
+                        offenders.push(format!("{}:{}: {}", path.display(), n + 1, line.trim()));
+                    }
+                }
+            }
+        }
+        assert!(offenders.is_empty(), "{offenders:#?}");
     }
 }

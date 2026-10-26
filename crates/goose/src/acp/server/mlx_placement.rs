@@ -698,10 +698,7 @@ mod imp {
                 (dist.config.clone(), dist.model_id.clone(), dist.runner)
             {
                 let key = PlacementKey {
-                    kind: match runner {
-                        Runner::MlxLmTensor => PlacementKind::Tensor,
-                        Runner::PipelineQwen4 => PlacementKind::Pipeline,
-                    },
+                    kind: runner.placement_kind(),
                     nodes: config
                         .nodes
                         .iter()
@@ -1109,9 +1106,8 @@ mod imp {
                 status.model_id.as_deref().unwrap_or("none")
             )));
         }
-        let kind = match status.runner {
-            Some(Runner::MlxLmTensor) => PlacementKind::Tensor,
-            Some(Runner::PipelineQwen4) => PlacementKind::Pipeline,
+        let kind = match status.runner.map(Runner::placement_kind) {
+            Some(kind) => kind,
             None => {
                 return Err(refuse(
                     "the distributed engine reports no runner".to_string(),

@@ -52,7 +52,7 @@ pub mod sampling;
 pub mod supervisor;
 
 pub use compaction::{CompactionOutcome, CompactionRefusal, CompactionReport};
-pub use config::{Backend, DistributedConfig, NodeConfig, Runner};
+pub use config::{Backend, DistributedConfig, NodeConfig, Runner, RUNNERS};
 pub use exec::{ExecOutput, NodeExec, SystemExec};
 pub use plan::RankPlan;
 pub use preflight::{Check, CheckVerdict, NodePreflight, PreflightReport, RunnerEnv};

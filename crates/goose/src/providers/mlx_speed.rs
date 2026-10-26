@@ -140,10 +140,7 @@ pub(crate) async fn serving_way() -> Result<ServingWay, String> {
                 "the split owns this Mac but names no setup, model or runner yet".to_string(),
             );
         };
-        let kind = match runner {
-            goose_sidecar::distributed::Runner::MlxLmTensor => PlacementKind::Tensor,
-            goose_sidecar::distributed::Runner::PipelineQwen4 => PlacementKind::Pipeline,
-        };
+        let kind = runner.placement_kind();
         let key = PlacementKey {
             kind,
             nodes: config

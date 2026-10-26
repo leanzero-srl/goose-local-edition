@@ -544,9 +544,10 @@ fn split_way(
     config: &DistributedConfig,
     runner: Option<distributed::Runner>,
 ) -> Option<MlxPlacementKeyDto> {
-    let kind = match runner? {
-        distributed::Runner::MlxLmTensor => MlxPlacementKindDto::Tensor,
-        distributed::Runner::PipelineQwen4 => MlxPlacementKindDto::Pipeline,
+    let kind = match runner?.placement_kind() {
+        PlacementKind::Single => MlxPlacementKindDto::Single,
+        PlacementKind::Tensor => MlxPlacementKindDto::Tensor,
+        PlacementKind::Pipeline => MlxPlacementKindDto::Pipeline,
     };
     Some(MlxPlacementKeyDto {
         kind,
@@ -622,9 +623,8 @@ fn record_split_load(
             }
         };
         let phases = marks.times(std::time::Instant::now());
-        let kind = match manager.status().runner {
-            Some(distributed::Runner::MlxLmTensor) => PlacementKind::Tensor,
-            Some(distributed::Runner::PipelineQwen4) => PlacementKind::Pipeline,
+        let kind = match manager.status().runner.map(distributed::Runner::placement_kind) {
+            Some(kind) => kind,
             None => {
                 tracing::warn!(model = %config.model_id, "a split's load ended, but it reports no runner to key it by; not recorded");
                 return;
