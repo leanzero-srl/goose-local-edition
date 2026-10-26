@@ -8,6 +8,7 @@ import {
   type ControllerCatalog,
   type ControllerStatus,
 } from '../../acp/controller';
+import { leanzeroLinkStatus } from '../../acp/leanzero-link';
 import { workKey, type CatalogEntry, type HostDescriptor } from '../../acp/controllerTypes';
 import { defineMessages, useIntl } from '../../i18n';
 import { Button } from '../ui/button';
@@ -79,13 +80,20 @@ export default function LinkedSessionsView({ navigation }: { navigation: ReactNo
         setSelected(null);
         currentDevice.current = auth.device?.device_id ?? null;
       }
-      setStatus(auth);
       if (auth.state === 'signed_out') {
+        // Controller enrollment starts after Link connects; absent controller credentials
+        // do not establish that the Link account itself is signed out.
+        const link = await leanzeroLinkStatus();
+        if (!alive.current) return;
+        const signedOut = link.auth.state === 'loggedOut' || link.auth.state === 'codeSent';
+        setStatus(signedOut ? auth : null);
         setCatalog(null);
         setSelected(null);
+        if (!signedOut && auth.error) throw new Error(auth.error);
         setError(null);
         return;
       }
+      setStatus(auth);
       if (auth.state !== 'ready')
         throw new Error(auth.error ?? 'The desktop controller is unavailable.');
       const next = await (manual ? controllerSync() : controllerCatalog());
@@ -116,6 +124,7 @@ export default function LinkedSessionsView({ navigation }: { navigation: ReactNo
   const selectedHost =
     selected &&
     catalog?.hosts.find((row) => row.host.owner_node_id === selected.host.owner_node_id);
+  const catalogPending = !catalog || (catalog.updated_at === null && catalog.hosts.length === 0);
   return (
     <MainPanelLayout>
       <div className="flex-1 flex flex-col min-h-0">
@@ -166,8 +175,12 @@ export default function LinkedSessionsView({ navigation }: { navigation: ReactNo
               label={intl.formatMessage(messages.archived)}
             />
             {status?.state === 'signed_out' && <p>{intl.formatMessage(messages.signIn)}</p>}
-            {!status && !error && <p>{intl.formatMessage(messages.loading)}</p>}
-            {catalog?.hosts.length === 0 && <p>{intl.formatMessage(messages.empty)}</p>}
+            {catalogPending && !error && (!status || status.state === 'ready') && (
+              <p>{intl.formatMessage(messages.loading)}</p>
+            )}
+            {!catalogPending && catalog?.hosts.length === 0 && (
+              <p>{intl.formatMessage(messages.empty)}</p>
+            )}
             {catalog?.hosts.map((row) => {
               const entries = row.entries
                 .filter(

@@ -1,7 +1,8 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { IntlTestWrapper } from '../../i18n/test-utils';
 import * as api from '../../acp/controller';
+import { leanzeroLinkStatus } from '../../acp/leanzero-link';
 import { fixtureEntry, fixtureHost } from './controllerFixtures';
 import LinkedSessionsView from './LinkedSessionsView';
 
@@ -11,6 +12,7 @@ vi.mock('../../acp/controller', async (original) => ({
   controllerCatalog: vi.fn(),
   controllerSync: vi.fn(),
 }));
+vi.mock('../../acp/leanzero-link', () => ({ leanzeroLinkStatus: vi.fn() }));
 vi.mock('./ControllerWorkView', () => ({
   default: ({ entry, host }: { entry: typeof fixtureEntry; host: typeof fixtureHost }) => (
     <p>
@@ -20,6 +22,7 @@ vi.mock('./ControllerWorkView', () => ({
 }));
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(leanzeroLinkStatus).mockResolvedValue({ auth: { state: 'loggedOut' }, nodeCount: 0 });
   vi.mocked(api.controllerStatus).mockResolvedValue({
     state: 'ready',
     device: {
@@ -54,6 +57,88 @@ beforeEach(() => {
   });
 });
 describe('linked catalog selection', () => {
+  it('keeps loading through pending status and the first catalog request', async () => {
+    let resolveStatus!: (status: api.ControllerStatus) => void;
+    let resolveCatalog!: (catalog: api.ControllerCatalog) => void;
+    vi.mocked(api.controllerStatus).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveStatus = resolve;
+      })
+    );
+    vi.mocked(api.controllerCatalog).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveCatalog = resolve;
+      })
+    );
+    render(<LinkedSessionsView navigation={null} />, { wrapper: IntlTestWrapper });
+    expect(screen.getByText('Connecting to your linked Macs…')).toBeInTheDocument();
+    expect(screen.queryByText(/Sign in to LeanZero Link/)).not.toBeInTheDocument();
+    await act(async () => resolveStatus({ state: 'ready', device: null, error: null }));
+    expect(screen.getByText('Connecting to your linked Macs…')).toBeInTheDocument();
+    expect(screen.queryByText('No compatible linked Macs are available.')).not.toBeInTheDocument();
+    await act(async () => resolveCatalog({ hosts: [], updated_at: '2026-10-26T10:00:00Z' }));
+    expect(screen.getByText('No compatible linked Macs are available.')).toBeInTheDocument();
+    expect(screen.queryByText('Connecting to your linked Macs…')).not.toBeInTheDocument();
+  });
+  it.each(['loggedIn', 'connecting', 'connected'] as const)(
+    'does not diagnose a %s Link account as signed out while controller enrollment catches up',
+    async (state) => {
+      vi.mocked(api.controllerStatus).mockResolvedValueOnce({
+        state: 'signed_out',
+        device: null,
+        error: null,
+      });
+      vi.mocked(leanzeroLinkStatus).mockResolvedValue({
+        auth:
+          state === 'connected'
+            ? { state, email: 'fixture@example.com', meshIp: '100.64.0.1' }
+            : { state, email: 'fixture@example.com' },
+        nodeCount: 1,
+      });
+      render(<LinkedSessionsView navigation={null} />, { wrapper: IntlTestWrapper });
+      await waitFor(() => expect(leanzeroLinkStatus).toHaveBeenCalledOnce());
+      expect(screen.getByText('Connecting to your linked Macs…')).toBeInTheDocument();
+      expect(screen.queryByText(/Sign in to LeanZero Link/)).not.toBeInTheDocument();
+      expect(api.controllerCatalog).not.toHaveBeenCalled();
+      expect(
+        await screen.findByText('Original session', {}, { timeout: 3000 })
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/Sign in to LeanZero Link/)).not.toBeInTheDocument();
+    }
+  );
+  it('treats a catalog without its first sync timestamp as pending', async () => {
+    vi.mocked(api.controllerCatalog).mockResolvedValue({ hosts: [], updated_at: null });
+    render(<LinkedSessionsView navigation={null} />, { wrapper: IntlTestWrapper });
+    await waitFor(() => expect(api.controllerCatalog).toHaveBeenCalledOnce());
+    expect(screen.getByText('Connecting to your linked Macs…')).toBeInTheDocument();
+    expect(screen.queryByText('No compatible linked Macs are available.')).not.toBeInTheDocument();
+  });
+  it('surfaces account lookup failure without claiming the account is signed out', async () => {
+    vi.mocked(api.controllerStatus).mockResolvedValue({
+      state: 'signed_out',
+      device: null,
+      error: null,
+    });
+    vi.mocked(leanzeroLinkStatus).mockRejectedValue(new Error('Link identity is unavailable'));
+    render(<LinkedSessionsView navigation={null} />, { wrapper: IntlTestWrapper });
+    expect(await screen.findByRole('alert')).toHaveTextContent('Link identity is unavailable');
+    expect(screen.queryByText(/Sign in to LeanZero Link/)).not.toBeInTheDocument();
+  });
+  it('shows enrollment denial for a connected account instead of waiting indefinitely', async () => {
+    vi.mocked(api.controllerStatus).mockResolvedValue({
+      state: 'signed_out',
+      device: null,
+      error: 'Controller enrollment was denied',
+    });
+    vi.mocked(leanzeroLinkStatus).mockResolvedValue({
+      auth: { state: 'connected', email: 'fixture@example.com', meshIp: '100.64.0.1' },
+      nodeCount: 1,
+    });
+    render(<LinkedSessionsView navigation={null} />, { wrapper: IntlTestWrapper });
+    expect(await screen.findByRole('alert')).toHaveTextContent('Controller enrollment was denied');
+    expect(screen.queryByText('Connecting to your linked Macs…')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Sign in to LeanZero Link/)).not.toBeInTheDocument();
+  });
   it('keeps colliding work IDs separate by immutable owner and shows the owner on each card', async () => {
     render(<LinkedSessionsView navigation={<span>Session sources</span>} />, {
       wrapper: IntlTestWrapper,
