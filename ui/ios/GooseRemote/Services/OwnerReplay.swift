@@ -119,11 +119,19 @@ enum OwnerReplay {
         let order = Dictionary(work.historyOrder.enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: min)
         // Pages carry the owner's row order. Stable sorting keeps that order when
         // timestamps tie, ahead of newer live rows not yet in this history snapshot.
+        let external = work.entry.work.kind != .chat
         work.transcript.sort {
+            if external, let first = logOffset($0.id), let second = logOffset($1.id), first != second { return first < second }
             let first = $0.timestamp ?? .distantFuture, second = $1.timestamp ?? .distantFuture
             if first != second { return first < second }
             return (order[$0.id] ?? .max) < (order[$1.id] ?? .max)
         }
+    }
+
+    private static func logOffset(_ id: String) -> UInt64? {
+        let parts = id.split(separator: "_")
+        guard parts.count == 3, parts[0] == "log", let start = UInt64(parts[1]), let end = UInt64(parts[2]), end >= start else { return nil }
+        return start
     }
 
     private static func decode<T: Decodable>(_ value: JSONValue) throws -> T {

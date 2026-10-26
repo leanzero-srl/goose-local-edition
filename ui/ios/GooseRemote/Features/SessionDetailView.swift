@@ -7,7 +7,7 @@ struct SessionDetailView: View {
     @State private var confirmStop = false
     var body: some View {
         Group {
-            if store.selectedLoading { ProgressView("Loading from owner Mac").frame(maxWidth: .infinity, maxHeight: .infinity) }
+            if store.selectedLoading && store.selectedWork == nil { ProgressView("Loading from owner Mac").frame(maxWidth: .infinity, maxHeight: .infinity) }
             else if let selected = store.selectedWork, selected.entry.work == work {
                 content(selected)
             } else if let error = store.selectedError {
@@ -48,6 +48,12 @@ struct SessionDetailView: View {
                                 .disabled(store.selectedError != nil || store.sending || store.unfinishedCommand != nil)
                         }
                     }
+                    if store.selectedHistoryPaused {
+                        Notice(title: "Reading older activity", message: "Live log updates are paused to keep your place. Refresh to return to the latest activity.", symbol: "pause.circle")
+                    }
+                    if work.kind != .chat, selected.hasMoreHistory {
+                        Button("Load older activity") { Task { await store.loadMoreHistory() } }.buttonStyle(.bordered).disabled(store.selectedLoading)
+                    }
                     ForEach(selected.pendingInputs) { input in
                         PendingInputView(input: input, supported: selected.entry.canPerform(.answerInput))
                     }
@@ -64,7 +70,7 @@ struct SessionDetailView: View {
                             Text(item.text).font(work.kind == .shellJob ? .system(.body, design: .monospaced) : .body).textSelection(.enabled)
                         }
                     }
-                    if selected.hasMoreHistory { Button("Load more history") { Task { await store.loadMoreHistory() } }.buttonStyle(.bordered) }
+                    if work.kind == .chat, selected.hasMoreHistory { Button("Load more history") { Task { await store.loadMoreHistory() } }.buttonStyle(.bordered) }
                     if let pending = store.pendingCommands.last(where: { $0.command.work == work }) {
                         StudioPanel {
                             Label(pending.receipt?.state.title ?? "Checking delivery", systemImage: "paperplane").font(.headline)

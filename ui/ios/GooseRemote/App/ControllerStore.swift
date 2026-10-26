@@ -32,6 +32,7 @@ final class ControllerStore {
     private(set) var selectedWork: SelectedWork?
     private(set) var selectedError: String?
     private(set) var selectedLoading = false
+    private(set) var selectedHistoryPaused = false
     private(set) var syncResults: [NodeSyncResult] = []
     private(set) var lastSync: Date?
     private(set) var syncRunning = false
@@ -259,6 +260,7 @@ final class ControllerStore {
         selectedRequest = UUID()
         selectedLoading = false
         selectedRef = work
+        selectedHistoryPaused = false
         selectedWork = nil
         selectedError = nil
         guard let work, let entry = entries.first(where: { $0.work == work }), let host = hosts.first(where: { $0.id == work.ownerNodeId }) else { return }
@@ -349,6 +351,8 @@ final class ControllerStore {
         guard !selectedLoading, let current = selectedWork, let token = current.nextPageToken,
               let host = hosts.first(where: { $0.id == current.entry.work.ownerNodeId }) else { return }
         let request = selectedRequest
+        let wasPaused = selectedHistoryPaused
+        if current.entry.work.kind != .chat { selectedHistoryPaused = true }
         selectedLoading = true
         defer { if selectedRequest == request { selectedLoading = false } }
         do {
@@ -361,7 +365,7 @@ final class ControllerStore {
                 try local?.cacheSelected(latest)
                 selectedWork = latest
             }
-        } catch { errorMessage = error.localizedDescription }
+        } catch { if selectedRequest == request { selectedHistoryPaused = wasPaused }; errorMessage = error.localizedDescription }
     }
 
     func loadDevices() async {
@@ -452,6 +456,17 @@ final class ControllerStore {
         }
     }
 
+    private func refreshSelectedLog(host: HostDescriptor, request: UUID) async throws {
+        guard !selectedHistoryPaused, let selected = selectedWork else { return }
+        let identity = try await validCredential()
+        let latest = try await owner.selected(work: selected.entry, host: host, credential: identity.credentials.accessToken)
+        guard selectedRequest == request, !selectedHistoryPaused else { return }
+        guard latest.entry.work == selected.entry.work, latest.entry.storeGeneration == selected.entry.storeGeneration,
+              latest.streamRevision >= selected.streamRevision else { throw ControllerError.malformedResponse }
+        try local?.cacheSelected(latest)
+        selectedWork = latest
+    }
+
     private func startWorkStream(host: HostDescriptor, request: UUID) {
         guard foreground, let current = selectedWork else { return }
         workTask = Task { @MainActor [weak self] in
@@ -464,6 +479,9 @@ final class ControllerStore {
                     let next = try OwnerReplay.work(frame, into: selected)
                     try local?.cacheSelected(next)
                     selectedWork = next
+                    if frame.type == "log_updated", next.entry.work.kind != .chat, !selectedHistoryPaused {
+                        try await refreshSelectedLog(host: host, request: request)
+                    }
                     if frame.type == "pending_input" {
                         Task { @MainActor [weak self] in
                             guard let self, selectedRequest == request, selectedRef == frame.work, foreground else { return }
