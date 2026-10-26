@@ -412,6 +412,23 @@ describe('nodeGlance — cloud and endpoint nodes', () => {
     expect(g.line).toEqual({ kind: 'words', text: '401: invalid key' });
   });
 
+  it('a local server that is not started is a step to take, never a failure', () => {
+    const g = nodeGlance(
+      NODE_ENDPOINT,
+      facts({
+        provider: read(
+          provider('custom_desk_vllm', 'Desk vLLM', {
+            provider_type: 'Custom',
+            connection_checked: true,
+            local_server_not_running: 'http://localhost:8000',
+          })
+        ),
+      })
+    );
+    expect(g.state).toBe('needsStep');
+    expect(g.line).toEqual({ kind: 'localServerNotRunning', origin: 'http://localhost:8000' });
+  });
+
   it('an endpoint says “always available” with its own name', () => {
     const g = nodeGlance(
       NODE_ENDPOINT,

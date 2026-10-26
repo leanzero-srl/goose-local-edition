@@ -707,9 +707,15 @@ impl GooseAcpAgent {
             Err(_) => false,
         };
 
+        use crate::providers::key_connection::CheckState;
         let connection = is_configured
             .then(|| crate::providers::key_connection::status(&provider_id))
             .flatten();
+        let (connection_error, local_server_not_running) = match &connection {
+            Some(CheckState::Failed(error)) => (Some(error.clone()), None),
+            Some(CheckState::LocalServerNotRunning(origin)) => (None, Some(origin.clone())),
+            Some(CheckState::Proven) | None => (None, None),
+        };
         ProviderConfigStatusDto {
             test_model: match crate::providers::key_connection::saved_default_model(&provider_id) {
                 Ok(model) => model,
@@ -721,7 +727,8 @@ impl GooseAcpAgent {
             provider_id,
             is_configured,
             connection_checked: connection.is_some(),
-            connection_error: connection.flatten(),
+            connection_error,
+            local_server_not_running,
         }
     }
 

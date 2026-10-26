@@ -22,7 +22,11 @@ use goose_providers::request_log::{start_log, LoggerHandleExt};
 use rmcp::model::Tool;
 
 pub const OPENROUTER_PROVIDER_NAME: &str = "openrouter";
-pub(crate) const OPENROUTER_PARAMETERS_CONFIG_KEY: &str = "OPENROUTER_PARAMETERS";
+pub const OPENROUTER_PARAMETERS_CONFIG_KEY: &str = "OPENROUTER_PARAMETERS";
+/// The owner's opt-in to OpenRouter's middle-out compression; off unless set to true.
+pub const OPENROUTER_MIDDLE_OUT_CONFIG_KEY: &str = "OPENROUTER_MIDDLE_OUT";
+/// OpenRouter's plugin id for middle-out (openrouter.ai/docs/guides/features/message-transforms).
+pub const CONTEXT_COMPRESSION_PLUGIN: &str = "context-compression";
 pub const OPENROUTER_DEFAULT_MODEL: &str = "anthropic/claude-sonnet-4";
 pub const OPENROUTER_DEFAULT_FAST_MODEL: &str = "google/gemini-2.5-flash";
 pub const OPENROUTER_MODEL_PREFIX_ANTHROPIC: &str = "anthropic";
@@ -65,6 +69,9 @@ pub struct OpenRouterProvider {
     listing: tokio::sync::OnceCell<ModelsListing>,
     #[serde(skip)]
     resolved_windows: std::sync::Mutex<HashMap<String, Option<usize>>>,
+    /// Models this provider already told the chat that Off cannot switch their reasoning off.
+    #[serde(skip)]
+    effort_notices: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 impl OpenRouterProvider {
@@ -100,6 +107,7 @@ impl OpenRouterProvider {
             configured_parameters,
             listing: tokio::sync::OnceCell::new(),
             resolved_windows: std::sync::Mutex::new(HashMap::new()),
+            effort_notices: Default::default(),
         })
     }
 
@@ -151,6 +159,75 @@ impl OpenRouterProvider {
             .get(model_name)
             .copied()
             .unwrap_or(ImageInput::Undeclared))
+    }
+
+    /// Fits the request's `reasoning.effort` to what the listing declares for the model
+    /// (`fit_reasoning_effort`): an "Off" turn on a model that cannot switch reasoning off was a
+    /// 400 on every call. A listing that cannot be read (or does not answer within 10 s) leaves
+    /// the request as it was. Returns the chat notice, once per model, when Off could not be
+    /// honoured: the picker still reads "Off" while the model reasons at its lowest level.
+    async fn fit_reasoning_effort(
+        &self,
+        payload: &mut Value,
+        model_config: &ModelConfig,
+        users_reasoning: bool,
+    ) -> Option<String> {
+        payload.get("reasoning")?;
+        let model = &model_config.model_name;
+        let listing =
+            match tokio::time::timeout(std::time::Duration::from_secs(10), self.listing()).await {
+                Ok(Ok(listing)) => listing,
+                failed => {
+                    let why = match failed {
+                        Ok(Err(err)) => err.to_string(),
+                        _ => "no answer within 10 s".to_string(),
+                    };
+                    tracing::warn!(
+                        model = %model,
+                        "reasoning_effort_unfitted: OpenRouter's models listing could not be read \
+                         ({why}); the effort is sent as configured"
+                    );
+                    return None;
+                }
+            };
+        // A routing variant (`:nitro`, `:floor`, `:online`) is not a listing id of its own.
+        let declared = listing.parameters.get(model).or_else(|| {
+            model
+                .rsplit_once(':')
+                .and_then(|(base, _)| listing.parameters.get(base))
+        })?;
+        let goose_effort = if users_reasoning {
+            None
+        } else {
+            model_config.thinking_effort()
+        };
+        let (sent, fitted) =
+            openrouter_format::fit_reasoning_effort(payload, declared, goose_effort)?;
+        tracing::info!(
+            model = %model,
+            "reasoning_effort_fitted: {sent} -> {fitted} (the model declares mandatory={}, levels {:?})",
+            declared.reasoning_mandatory,
+            declared.effort_levels
+        );
+        if sent != "none" {
+            return None;
+        }
+        let first = self
+            .effort_notices
+            .lock()
+            .map(|mut told| told.insert(model.clone()))
+            .unwrap_or(false);
+        first.then(|| {
+            let level = if fitted == "model default" {
+                "its default level".to_string()
+            } else {
+                format!("its lowest level ({fitted})")
+            };
+            format!(
+                "{model} cannot switch reasoning off, so Thinking Off runs it at {level}. \
+                 OpenRouter refuses a request with reasoning off for this model."
+            )
+        })
     }
 
     /// The request for `model_config`, with every image part withheld behind a named placeholder
@@ -449,8 +526,147 @@ fn merge_request_params(
         .extend(params);
 }
 
+/// The configured OPENROUTER_PARAMETERS one request carries. A `provider` routing block (a host
+/// pin such as `{"order": ["mistral"], "allow_fallbacks": false}`) is set for the ENTRANT model;
+/// background work on the provider's default fast model drops it (I-11, 2026-10-18): under a
+/// `mistral` pin every title/summary helper call to google/gemini-2.5-flash came back 404 "No
+/// endpoints found ... Every candidate endpoint was removed during routing" (12-16 per Mistral
+/// Large 4 Forge build), then fell back to the entrant. Every other request keeps every parameter.
+fn parameters_for_request(
+    params: &HashMap<String, Value>,
+    model_name: &str,
+    background: bool,
+) -> HashMap<String, Value> {
+    let mut params = params.clone();
+    if background && model_name == OPENROUTER_DEFAULT_FAST_MODEL {
+        params.remove("provider");
+    }
+    params
+}
+
 fn merge_openrouter_parameters(model: &mut ModelConfig, params: HashMap<String, Value>) {
     merge_request_params(&mut model.request_params, params);
+}
+
+/// Whether the owner opted into middle-out (OPENROUTER_MIDDLE_OUT: true). Absent or unreadable is
+/// off: compression drops the middle of the conversation without telling goose or the model.
+pub(crate) fn middle_out_enabled(config: &crate::config::Config) -> bool {
+    match config.get_param::<bool>(OPENROUTER_MIDDLE_OUT_CONFIG_KEY) {
+        Ok(on) => on,
+        Err(crate::config::ConfigError::NotFound(_)) => false,
+        Err(err) => {
+            tracing::warn!(
+                error = %err,
+                "{OPENROUTER_MIDDLE_OUT_CONFIG_KEY} is unreadable; OpenRouter requests go without \
+                 context compression"
+            );
+            false
+        }
+    }
+}
+
+/// Sets OpenRouter's context compression on `payload` and says whether the request allows it.
+///
+/// Off (the default), compression is disabled explicitly: OpenRouter compresses on its own for
+/// every endpoint of 8,192 tokens or less, and a compressing request may be routed to any endpoint
+/// whose window holds half the request ("When context compression is enabled, OpenRouter will
+/// first try to find models whose context length is at least half of your total required tokens";
+/// without it "the request will fail with an error message", which goose's context-length path
+/// compacts and retries — openrouter.ai/docs/guides/features/message-transforms). Measured on the
+/// Forge 2.0 builds of 2026-10: with `transforms: ["middle-out"]` on every request, Grok 4.7's
+/// billed prompt fell 207,145 -> 76,843 at call #182 while goose kept sending the whole history,
+/// and Tencent Hy4's low build was served 5-9k of a 95k-905k history on 268 of 301 calls.
+///
+/// On, the request carries `transforms: ["middle-out"]`. A request whose OPENROUTER_PARAMETERS
+/// already name `transforms` or the context-compression plugin is left as the owner wrote it.
+fn apply_context_compression(payload: &mut Value, middle_out: bool) -> bool {
+    let Some(obj) = payload.as_object_mut() else {
+        return false;
+    };
+    let plugin = obj
+        .get("plugins")
+        .and_then(Value::as_array)
+        .and_then(|plugins| {
+            plugins
+                .iter()
+                .find(|p| p.get("id").and_then(Value::as_str) == Some(CONTEXT_COMPRESSION_PLUGIN))
+        });
+    if let Some(plugin) = plugin {
+        return plugin.get("enabled").and_then(Value::as_bool) != Some(false);
+    }
+    if let Some(transforms) = obj.get("transforms") {
+        return transforms
+            .as_array()
+            .is_some_and(|t| t.iter().any(|t| t.as_str() == Some("middle-out")));
+    }
+    if middle_out {
+        obj.insert("transforms".to_string(), json!(["middle-out"]));
+        return true;
+    }
+    let off = json!({"id": CONTEXT_COMPRESSION_PLUGIN, "enabled": false});
+    match obj.get_mut("plugins") {
+        Some(Value::Array(plugins)) => plugins.push(off),
+        Some(_) => {}
+        None => {
+            obj.insert("plugins".to_string(), json!([off]));
+        }
+    }
+    false
+}
+
+/// goose's own count of a request: the whole of it, and the system prompt and tools alone.
+struct SentPrompt {
+    total: usize,
+    fixed: usize,
+}
+
+async fn count_sent_prompt(
+    system: &str,
+    messages: &[Message],
+    tools: &[Tool],
+) -> Option<SentPrompt> {
+    match crate::token_counter::create_token_counter().await {
+        Ok(counter) => Some(SentPrompt {
+            total: counter.count_chat_tokens(system, messages, tools),
+            fixed: counter.count_chat_tokens(system, &[], tools),
+        }),
+        Err(err) => {
+            tracing::warn!(
+                error = %err,
+                "compression_unwatched: goose could not count this OpenRouter request, so a \
+                 compressed prompt goes unnoticed on this call"
+            );
+            None
+        }
+    }
+}
+
+/// With compression allowed, compares each reported prompt with what goose sent
+/// (`context_mgmt::prompt_was_compressed`) and tells the compaction guard either way.
+fn watch_for_compression(
+    stream: MessageStream,
+    session_id: String,
+    model: String,
+    sent: SentPrompt,
+) -> MessageStream {
+    use futures::TryStreamExt;
+    Box::pin(stream.inspect_ok(move |(_, usage)| {
+        let Some(reported) = usage.as_ref().and_then(|usage| usage.usage.input_tokens) else {
+            return;
+        };
+        let reported = reported.max(0) as usize;
+        if crate::context_mgmt::prompt_was_compressed(sent.total, reported) {
+            crate::context_mgmt::note_compressed_prompt(
+                &session_id,
+                &model,
+                sent.total,
+                reported,
+                sent.fixed,
+            );
+        } else {
+            crate::context_mgmt::forget_compressed_prompt(&session_id);
+        }
+    }))
 }
 
 impl goose_providers::base::ProviderDescriptor for OpenRouterProvider {
@@ -472,6 +688,7 @@ impl goose_providers::base::ProviderDescriptor for OpenRouterProvider {
                     false,
                 ),
                 ConfigKey::new(OPENROUTER_PARAMETERS_CONFIG_KEY, false, false, None, false),
+                ConfigKey::new(OPENROUTER_MIDDLE_OUT_CONFIG_KEY, false, false, None, false),
             ],
         )
         .with_setup_steps(vec![
@@ -551,7 +768,14 @@ impl Provider for OpenRouterProvider {
         let mut merged_model;
         let model_config = if let Some(params) = &self.configured_parameters {
             merged_model = model_config.clone();
-            merge_openrouter_parameters(&mut merged_model, params.clone());
+            merge_openrouter_parameters(
+                &mut merged_model,
+                parameters_for_request(
+                    params,
+                    &model_config.model_name,
+                    crate::background_work::current_kind().is_some(),
+                ),
+            );
             &merged_model
         } else {
             model_config
@@ -575,11 +799,35 @@ impl Provider for OpenRouterProvider {
         if is_gemini_model(&model_config.model_name) {
             openrouter_format::add_reasoning_details_to_request(&mut payload, messages);
         }
+        // The user's own reasoning setting (OPENROUTER_PARAMETERS or a saved per-model field)
+        // arrives as `reasoning` or `reasoning_effort`; only goose's own effort is raised by Max.
+        let users_reasoning = payload.get("reasoning").is_some()
+            || model_config.request_params.as_ref().is_some_and(|params| {
+                params.contains_key("reasoning") || params.contains_key("reasoning_effort")
+            });
         openrouter_format::apply_reasoning_config(&mut payload, model_config);
+        let effort_notice = self
+            .fit_reasoning_effort(&mut payload, model_config, users_reasoning)
+            .await;
+        let notice = match (images_notice, effort_notice) {
+            (Some(images), Some(effort)) => Some(format!("{images}\n\n{effort}")),
+            (images, effort) => images.or(effort),
+        };
 
-        if let Some(obj) = payload.as_object_mut() {
-            obj.insert("transforms".to_string(), json!(["middle-out"]));
-        }
+        // Read per request, so the owner's switch applies to the chat already open.
+        let compresses = apply_context_compression(
+            &mut payload,
+            middle_out_enabled(crate::config::Config::global()),
+        );
+        // A background call (the compaction's own summary, a title) is sized by its own request,
+        // not by the chat's window: what it is billed says nothing about the conversation.
+        let watched = compresses
+            && !session_id.is_empty()
+            && crate::background_work::current_kind().is_none();
+        let sent = match watched {
+            true => count_sent_prompt(system, messages, tools).await,
+            false => None,
+        };
 
         let mut log = start_log(model_config, &payload)?;
 
@@ -605,7 +853,16 @@ impl Provider for OpenRouterProvider {
             telemetry_t0,
             model_config.model_name.clone(),
         )?;
-        Ok(announced(stream, images_notice))
+        let stream = match sent {
+            Some(sent) => watch_for_compression(
+                stream,
+                session_id.to_string(),
+                model_config.model_name.clone(),
+                sent,
+            ),
+            None => stream,
+        };
+        Ok(announced(stream, notice))
     }
 }
 
@@ -748,6 +1005,30 @@ mod tests {
         assert_eq!(request_params["verbosity"], json!("xhigh"));
     }
 
+    #[test]
+    fn a_host_pin_stays_off_the_fast_model_helper_calls_only() {
+        // I-11: the laptop chain pinned Mistral Large 4 to `mistral`; helper calls inherited it.
+        let params = parse_openrouter_parameters(json!({
+            "provider": {"order": ["mistral"], "allow_fallbacks": false},
+            "verbosity": "low"
+        }))
+        .unwrap();
+
+        let helper = parameters_for_request(&params, OPENROUTER_DEFAULT_FAST_MODEL, true);
+        assert!(!helper.contains_key("provider"), "{helper:?}");
+        assert_eq!(helper["verbosity"], json!("low"));
+
+        let entrant_turn = parameters_for_request(&params, "mistralai/mistral-large-4-0", false);
+        assert_eq!(entrant_turn["provider"]["order"], json!(["mistral"]));
+        // Background work on the ENTRANT model (compaction extending the chat) keeps the pin.
+        let entrant_compaction =
+            parameters_for_request(&params, "mistralai/mistral-large-4-0", true);
+        assert_eq!(entrant_compaction["provider"]["order"], json!(["mistral"]));
+        // The fast model as the session's own turn (someone benchmarking it) keeps the pin.
+        let fast_turn = parameters_for_request(&params, OPENROUTER_DEFAULT_FAST_MODEL, false);
+        assert!(fast_turn.contains_key("provider"));
+    }
+
     fn models_listing() -> Value {
         json!({"data": [
             {"id": "vendor/new-model-1m", "context_length": 1048576},
@@ -771,6 +1052,7 @@ mod tests {
             configured_parameters: None,
             listing: tokio::sync::OnceCell::new_with(Some(listing)),
             resolved_windows: std::sync::Mutex::new(HashMap::new()),
+            effort_notices: Default::default(),
         }
     }
 
@@ -1086,13 +1368,19 @@ mod tests {
 
     /// The bench harness bills an OpenRouter run per generation id (bench_cost.py); that id reaches
     /// it only through this line, for completed and dropped streams alike.
+    ///
+    /// The sink is the process env, so while this test points it at its file every other test in
+    /// the binary that streams through any provider appends there too (runs 39065614665,
+    /// 39296331961, 39387447211: an MLX-endpoint test's `c1` line). The generation id is this
+    /// run's own, and only the lines carrying it are this test's calls.
     #[tokio::test]
     async fn every_streamed_call_writes_its_generation_id_to_the_telemetry_file() {
         use futures::StreamExt;
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
-        let gen_id = "gen-1790911486-OyqP2p7UE9dNJc1weFAo";
+        let gen_id = format!("gen-{}", uuid::Uuid::new_v4().simple());
+        let gen_id = gen_id.as_str();
         let chunk = |delta: Value, finish: Value, usage: Option<Value>| {
             let mut c = json!({"id": gen_id, "object": "chat.completion.chunk", "created": 1,
                                "model": "deepseek/deepseek-v4.1-flash",
@@ -1156,7 +1444,8 @@ mod tests {
         let lines: Vec<Value> = std::fs::read_to_string(&telemetry)
             .unwrap()
             .lines()
-            .map(|l| serde_json::from_str(l).unwrap())
+            .map(|l| serde_json::from_str::<Value>(l).unwrap())
+            .filter(|line| line["response_id"] == json!(gen_id))
             .collect();
         assert_eq!(lines.len(), 2, "{lines:?}");
         assert_eq!(lines[0]["response_id"], json!(gen_id));
@@ -1320,7 +1609,13 @@ mod model_field_tests {
              "default_parameters": {"temperature": 1, "top_p": 1, "top_k": null},
              "reasoning": {"mandatory": false}},
             {"id": "vendor/plain", "context_length": 32768,
-             "supported_parameters": ["tools"]}
+             "supported_parameters": ["tools"]},
+            // as served on 2026-10-20
+            {"id": "minimax/minimax-m3.1-flash:free", "context_length": 1000000,
+             "supported_parameters": ["include_reasoning", "max_tokens", "reasoning", "tools"],
+             "reasoning": {"mandatory": true, "default_enabled": true,
+                           "supported_efforts": ["max", "xhigh", "high", "medium", "low"],
+                           "default_effort": "max"}}
         ]})
     }
 
@@ -1338,6 +1633,7 @@ mod model_field_tests {
             configured_parameters: None,
             listing: tokio::sync::OnceCell::new_with(Some(listing)),
             resolved_windows: std::sync::Mutex::new(HashMap::new()),
+            effort_notices: Default::default(),
         }
     }
 
@@ -1404,6 +1700,12 @@ mod model_field_tests {
             .mount(&server)
             .await;
         let provider = provider(&server.uri());
+        let dir = tempfile::tempdir().unwrap();
+        let telemetry = dir.path().join("telemetry.jsonl");
+        let _guard = env_lock::lock_env([(
+            "GOOSE_SWARM_TELEMETRY_FILE",
+            Some(telemetry.to_str().unwrap()),
+        )]);
 
         let saved = FieldValues::from([
             ("effort".to_string(), json!("low")),
@@ -1431,5 +1733,428 @@ mod model_field_tests {
         assert_eq!(sent["top_k"], json!(40));
         assert!(sent.get("reasoning_effort").is_none(), "{sent}");
         assert!(sent.get("thinking_effort").is_none(), "{sent}");
+    }
+
+    /// One streamed turn of `config` through `provider` against a mock OpenRouter (the models
+    /// listing answers 500 unless the provider already holds one): the body's `reasoning` and the
+    /// chat notices the turn carried.
+    async fn turn_on_the_wire(
+        provider: impl FnOnce(&str) -> OpenRouterProvider,
+        config: &ModelConfig,
+    ) -> (Value, Vec<String>) {
+        use futures::StreamExt;
+        use goose_providers::conversation::message::{MessageContent, SystemNotificationType};
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let body = [
+            format!(
+                "data: {}\n\n",
+                json!({"id": "gen-1", "object": "chat.completion.chunk", "created": 1,
+                       "model": config.model_name,
+                       "choices": [{"index": 0, "delta": {"role": "assistant", "content": "ok"},
+                                    "finish_reason": "stop"}]})
+            ),
+            "data: [DONE]\n\n".to_string(),
+        ]
+        .concat();
+        Mock::given(method("POST"))
+            .and(path("/api/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/models"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        // Every streamed call appends to the telemetry file: hold the env lock with a file of our
+        // own, or these turns land in a parallel test's file (every_streamed_call_writes_...).
+        let dir = tempfile::tempdir().unwrap();
+        let telemetry = dir.path().join("telemetry.jsonl");
+        let _guard = env_lock::lock_env([(
+            "GOOSE_SWARM_TELEMETRY_FILE",
+            Some(telemetry.to_str().unwrap()),
+        )]);
+        let provider = provider(&server.uri());
+        let mut notices = Vec::new();
+        for _ in 0..2 {
+            let mut stream = provider
+                .stream(config, "system", &[Message::user().with_text("hi")], &[])
+                .await
+                .unwrap();
+            while let Some(item) = stream.next().await {
+                if let (Some(message), _) = item.unwrap() {
+                    for content in &message.content {
+                        if let MessageContent::SystemNotification(n) = content {
+                            if n.notification_type == SystemNotificationType::InlineMessage {
+                                notices.push(n.msg.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let requests = server.received_requests().await.unwrap();
+        let chats: Vec<_> = requests
+            .iter()
+            .filter(|r| r.url.path() == "/api/v1/chat/completions")
+            .collect();
+        assert_eq!(chats.len(), 2, "both turns reached OpenRouter");
+        let sent: Value = serde_json::from_slice(&chats[1].body).unwrap();
+        (
+            sent.get("reasoning").cloned().unwrap_or(Value::Null),
+            notices,
+        )
+    }
+
+    fn reasoning_config(model: &str, effort: ThinkingEffort) -> ModelConfig {
+        let mut config = ModelConfig::new(model).with_thinking_effort(effort);
+        config.reasoning = Some(true);
+        config
+    }
+
+    /// What a turn on `model` at the global `effort` puts in the body's `reasoning`.
+    async fn reasoning_on_the_wire(model: &str, effort: ThinkingEffort) -> Value {
+        turn_on_the_wire(provider, &reasoning_config(model, effort))
+            .await
+            .0
+    }
+
+    /// MiniMax M3.1 Flash (2026-10-20) answers `effort: none` with 400 "Reasoning is mandatory for
+    /// this endpoint and cannot be disabled": an Off session there failed every turn.
+    #[tokio::test]
+    async fn off_on_a_mandatory_reasoning_model_reaches_the_wire_as_its_cheapest_level() {
+        let minimax = "minimax/minimax-m3.1-flash:free";
+        assert_eq!(
+            reasoning_on_the_wire(minimax, ThinkingEffort::Off).await,
+            json!({"effort": "low"})
+        );
+        assert_eq!(
+            reasoning_on_the_wire(minimax, ThinkingEffort::Max).await,
+            json!({"effort": "max"})
+        );
+        assert_eq!(
+            reasoning_on_the_wire(minimax, ThinkingEffort::Medium).await,
+            json!({"effort": "medium"})
+        );
+        // a routing variant is looked up by its listed id
+        assert_eq!(
+            reasoning_on_the_wire("minimax/minimax-m3.1-flash:free:nitro", ThinkingEffort::Off)
+                .await,
+            json!({"effort": "low"})
+        );
+        // a model that can switch reasoning off still gets none, and an unlisted model is unchanged
+        let deepseek = "deepseek/deepseek-v4.1-flash";
+        assert_eq!(
+            reasoning_on_the_wire(deepseek, ThinkingEffort::Off).await,
+            json!({"effort": "none"})
+        );
+        assert_eq!(
+            reasoning_on_the_wire(deepseek, ThinkingEffort::Max).await,
+            json!({"effort": "max"})
+        );
+        assert_eq!(
+            reasoning_on_the_wire("qwen/unlisted", ThinkingEffort::Off).await,
+            json!({"effort": "none"})
+        );
+    }
+
+    #[tokio::test]
+    async fn the_chat_is_told_once_that_off_cannot_switch_reasoning_off() {
+        let (_, notices) = turn_on_the_wire(
+            provider,
+            &reasoning_config("minimax/minimax-m3.1-flash:free", ThinkingEffort::Off),
+        )
+        .await;
+        assert_eq!(notices.len(), 1, "{notices:?}");
+        assert!(
+            notices[0].contains("cannot switch reasoning off"),
+            "{}",
+            notices[0]
+        );
+        assert!(notices[0].contains("lowest level (low)"), "{}", notices[0]);
+        // a model that honours Off, and a Max upgrade, say nothing
+        for (model, effort) in [
+            ("deepseek/deepseek-v4.1-flash", ThinkingEffort::Off),
+            ("minimax/minimax-m3.1-flash:free", ThinkingEffort::Max),
+        ] {
+            let (_, notices) = turn_on_the_wire(provider, &reasoning_config(model, effort)).await;
+            assert!(notices.is_empty(), "{model}: {notices:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_global_max_never_raises_the_users_own_effort() {
+        // OPENROUTER_PARAMETERS {"reasoning_effort": "high"} lands in the request params
+        let mut config = reasoning_config("deepseek/deepseek-v4.1-flash", ThinkingEffort::Max);
+        config
+            .request_params
+            .get_or_insert_with(HashMap::new)
+            .insert("reasoning_effort".to_string(), json!("high"));
+        assert_eq!(
+            turn_on_the_wire(provider, &config).await.0,
+            json!({"effort": "high"})
+        );
+        // ...but the user's own none on a mandatory model is still fixed
+        let mut config = reasoning_config("minimax/minimax-m3.1-flash:free", ThinkingEffort::Max);
+        config
+            .request_params
+            .get_or_insert_with(HashMap::new)
+            .insert("reasoning".to_string(), json!({"effort": "none"}));
+        assert_eq!(
+            turn_on_the_wire(provider, &config).await.0,
+            json!({"effort": "low"})
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_listing_sends_the_turn_as_configured() {
+        let unread = |host: &str| {
+            let mut provider = provider(host);
+            provider.listing = tokio::sync::OnceCell::new();
+            provider
+        };
+        let (reasoning, notices) = turn_on_the_wire(
+            unread,
+            &reasoning_config("minimax/minimax-m3.1-flash:free", ThinkingEffort::Off),
+        )
+        .await;
+        assert_eq!(reasoning, json!({"effort": "none"}));
+        assert!(notices.is_empty(), "{notices:?}");
+    }
+}
+
+#[cfg(test)]
+mod context_compression_tests {
+    use super::*;
+
+    fn off() -> Value {
+        json!({"id": CONTEXT_COMPRESSION_PLUGIN, "enabled": false})
+    }
+
+    #[test]
+    fn compression_is_off_by_default_and_the_request_says_so() {
+        let mut payload = json!({"model": "x-ai/grok-4.7", "messages": []});
+        assert!(!apply_context_compression(&mut payload, false));
+        assert_eq!(payload.get("transforms"), None, "{payload}");
+        assert_eq!(payload["plugins"], json!([off()]));
+    }
+
+    #[test]
+    fn the_owners_opt_in_sends_middle_out() {
+        let mut payload = json!({"model": "x-ai/grok-4.7", "messages": []});
+        assert!(apply_context_compression(&mut payload, true));
+        assert_eq!(payload["transforms"], json!(["middle-out"]));
+        assert_eq!(payload.get("plugins"), None, "{payload}");
+    }
+
+    #[test]
+    fn the_owners_other_plugins_ride_beside_the_off_switch() {
+        let mut payload = json!({"plugins": [{"id": "web"}]});
+        assert!(!apply_context_compression(&mut payload, false));
+        assert_eq!(payload["plugins"], json!([{"id": "web"}, off()]));
+    }
+
+    #[test]
+    fn compression_named_in_the_parameters_is_left_as_written() {
+        let mut on = json!({"plugins": [{"id": CONTEXT_COMPRESSION_PLUGIN}]});
+        let before = on.clone();
+        assert!(apply_context_compression(&mut on, false));
+        assert_eq!(on, before);
+
+        let mut none = json!({"transforms": []});
+        assert!(!apply_context_compression(&mut none, true));
+        assert_eq!(none, json!({"transforms": []}));
+
+        let mut legacy = json!({"transforms": ["middle-out"]});
+        assert!(apply_context_compression(&mut legacy, false));
+        assert_eq!(legacy, json!({"transforms": ["middle-out"]}));
+    }
+
+    #[test]
+    fn middle_out_is_on_only_when_the_owner_says_true() {
+        let _env = env_lock::lock_env([(OPENROUTER_MIDDLE_OUT_CONFIG_KEY, None::<&str>)]);
+        let dir = tempfile::tempdir().unwrap();
+        let read = |yaml: &str| {
+            let config_path = dir.path().join("config.yaml");
+            std::fs::write(&config_path, yaml).unwrap();
+            let config = crate::config::Config::new_with_file_secrets(
+                &config_path,
+                dir.path().join("secrets.yaml"),
+            )
+            .unwrap();
+            middle_out_enabled(&config)
+        };
+        assert!(!read("OPENROUTER_HOST: https://openrouter.ai\n"));
+        assert!(read("OPENROUTER_MIDDLE_OUT: true\n"));
+        assert!(!read("OPENROUTER_MIDDLE_OUT: false\n"));
+        assert!(!read("OPENROUTER_MIDDLE_OUT: sometimes\n"));
+    }
+
+    /// The body OpenRouter receives on a default turn: no `transforms`, compression switched off.
+    #[tokio::test]
+    async fn a_default_turn_reaches_the_wire_without_middle_out() {
+        use futures::StreamExt;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let body = [
+            format!(
+                "data: {}\n\n",
+                json!({"id": "gen-1", "object": "chat.completion.chunk", "created": 1,
+                       "model": "vendor/plain",
+                       "choices": [{"index": 0, "delta": {"role": "assistant", "content": "ok"},
+                                    "finish_reason": "stop"}]})
+            ),
+            "data: [DONE]\n\n".to_string(),
+        ]
+        .concat();
+        Mock::given(method("POST"))
+            .and(path("/api/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+            .mount(&server)
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let telemetry = dir.path().join("telemetry.jsonl");
+        let _guard = env_lock::lock_env([
+            (
+                "GOOSE_SWARM_TELEMETRY_FILE",
+                Some(telemetry.to_str().unwrap()),
+            ),
+            (OPENROUTER_MIDDLE_OUT_CONFIG_KEY, Some("false")),
+        ]);
+        let provider = OpenRouterProvider {
+            api_client: ApiClient::new_with_tls(
+                server.uri(),
+                AuthMethod::BearerToken("test".to_string()),
+                None,
+            )
+            .unwrap(),
+            supports_streaming: true,
+            name: OPENROUTER_PROVIDER_NAME.to_string(),
+            configured_parameters: Some(HashMap::from([(
+                "plugins".to_string(),
+                json!([{"id": "web"}]),
+            )])),
+            listing: tokio::sync::OnceCell::new(),
+            resolved_windows: std::sync::Mutex::new(HashMap::new()),
+            effort_notices: Default::default(),
+        };
+        let mut stream = provider
+            .stream(
+                &ModelConfig::new("vendor/plain"),
+                "system",
+                &[Message::user().with_text("hi")],
+                &[],
+            )
+            .await
+            .unwrap();
+        while let Some(item) = stream.next().await {
+            item.unwrap();
+        }
+        let requests = server.received_requests().await.unwrap();
+        let sent: Value = serde_json::from_slice(&requests[0].body).unwrap();
+        assert_eq!(sent.get("transforms"), None, "{sent}");
+        assert_eq!(sent["plugins"], json!([{"id": "web"}, off()]));
+    }
+}
+
+#[cfg(test)]
+mod compression_watch_tests {
+    use super::*;
+    use crate::background_work::{self, BackgroundWorkKind};
+    use futures::StreamExt;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// A turn billed 40 prompt tokens, whatever was sent.
+    async fn billed_40() -> MockServer {
+        let server = MockServer::start().await;
+        let chunk = json!({"id": "gen-1", "object": "chat.completion.chunk", "created": 1,
+                           "model": "vendor/plain",
+                           "choices": [{"index": 0, "delta": {"role": "assistant", "content": "ok"},
+                                        "finish_reason": "stop"}],
+                           "usage": {"prompt_tokens": 40, "completion_tokens": 1,
+                                     "total_tokens": 41}});
+        Mock::given(method("POST"))
+            .and(path("/api/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                format!("data: {chunk}\n\ndata: [DONE]\n\n"),
+                "text/event-stream",
+            ))
+            .mount(&server)
+            .await;
+        server
+    }
+
+    fn provider(host: &str) -> OpenRouterProvider {
+        OpenRouterProvider {
+            api_client: ApiClient::new_with_tls(
+                host.to_string(),
+                AuthMethod::BearerToken("test".to_string()),
+                None,
+            )
+            .unwrap(),
+            supports_streaming: true,
+            name: OPENROUTER_PROVIDER_NAME.to_string(),
+            configured_parameters: None,
+            listing: tokio::sync::OnceCell::new(),
+            resolved_windows: std::sync::Mutex::new(HashMap::new()),
+            effort_notices: Default::default(),
+        }
+    }
+
+    async fn drain(stream: MessageStream) {
+        let mut stream = stream;
+        while let Some(item) = stream.next().await {
+            item.unwrap();
+        }
+    }
+
+    /// The compaction's own summary call is sized by the compaction, not by the chat's window: a
+    /// small reported prompt there says nothing about the chat, so it is never watched.
+    #[tokio::test]
+    async fn a_background_call_is_never_read_as_a_compressed_chat() {
+        let server = billed_40().await;
+        let dir = tempfile::tempdir().unwrap();
+        let telemetry = dir.path().join("telemetry.jsonl");
+        let _guard = env_lock::lock_env([
+            (
+                "GOOSE_SWARM_TELEMETRY_FILE",
+                Some(telemetry.to_str().unwrap()),
+            ),
+            (OPENROUTER_MIDDLE_OUT_CONFIG_KEY, Some("true")),
+        ]);
+        let provider = provider(&server.uri());
+        let model = ModelConfig::new("vendor/plain");
+        let history = [Message::user().with_text("the batch moved forward. ".repeat(2_000))];
+
+        let foreground = crate::session_context::with_session_id(
+            Some("watch-foreground".to_string()),
+            provider.stream(&model, "system", &history, &[]),
+        )
+        .await
+        .unwrap();
+        drain(foreground).await;
+        assert!(
+            crate::context_mgmt::compressed_prompt("watch-foreground").is_some(),
+            "the chat's own call billed 40 of ~10k is compressed"
+        );
+
+        let background = background_work::run(
+            BackgroundWorkKind::Compaction,
+            "watch-background",
+            provider.stream(&model, "system", &history, &[]),
+        )
+        .await
+        .unwrap();
+        drain(background).await;
+        assert_eq!(
+            crate::context_mgmt::compressed_prompt("watch-background"),
+            None
+        );
     }
 }

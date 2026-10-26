@@ -25,6 +25,7 @@ import { ModelChoice, type ModelSource } from './ModelChoice';
 import { ModelCustomFields } from '../modelFields/ModelCustomFields';
 import { officialEndpointReset, type EndpointOverride } from './openaiEndpoint';
 import { OpenRouterHostPicker } from '../openrouter/OpenRouterHostPicker';
+import { OpenRouterMiddleOutSwitch } from '../openrouter/OpenRouterMiddleOutSwitch';
 
 const i18n = defineMessages({
   titleSetup: { id: 'cloudProviderSetup.titleSetup', defaultMessage: 'Connect {provider}' },
@@ -358,6 +359,9 @@ export default function CloudProviderSetupDialog({
             )}
             {provider.name === 'openrouter' && (
               <OpenRouterHostPicker model={selection} disabled={busy != null} />
+            )}
+            {provider.name === 'openrouter' && (
+              <OpenRouterMiddleOutSwitch disabled={busy != null} />
             )}
             {!deploymentOnly && selection && (
               <ModelCustomFields

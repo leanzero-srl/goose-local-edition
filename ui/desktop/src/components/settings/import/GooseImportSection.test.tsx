@@ -33,7 +33,11 @@ type FileResponse = { file: string; filePath: string; error: string | null; foun
 
 function stubSource(files: Record<string, FileResponse>, recipeFiles: string[]) {
   const electron = window.electron as unknown as Record<string, unknown>;
-  electron.directoryChooser = vi.fn(async () => ({ canceled: false, filePaths: [SOURCE] }));
+  // The dialog answers on a later task, as the real IPC round trip does.
+  electron.directoryChooser = vi.fn(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    return { canceled: false, filePaths: [SOURCE] };
+  });
   electron.listFiles = vi.fn(async () => recipeFiles);
   electron.readFile = vi.fn(async (path: string) => {
     const hit = files[path];
@@ -58,7 +62,13 @@ async function scan() {
     </IntlTestWrapper>
   );
   fireEvent.click(screen.getByText('Choose source folder'));
-  await waitFor(() => expect(screen.queryByText(/^Scanning/)).toBeNull());
+  // "Scanning" is also absent BEFORE the scan starts (the chooser is awaited first), so the scan
+  // is over only once the source is picked (the prompt is gone) and nothing says Scanning —
+  // runs 38903430068 and 38946860233 asserted on the results while the picker was still showing.
+  await waitFor(() => {
+    expect(screen.queryByText(/^Pick another Goose config/)).toBeNull();
+    expect(screen.queryByText(/^Scanning/)).toBeNull();
+  });
 }
 
 const LEGACY_SCHEDULE = JSON.stringify([

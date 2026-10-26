@@ -2152,6 +2152,7 @@ mod tests {
                 reason,
                 since: chrono::Utc::now(),
             }),
+            load: None,
         };
         assert_eq!(
             fabric_verdict(

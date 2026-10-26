@@ -546,6 +546,11 @@ impl Agent {
                     let mut coerced_req = req.clone();
 
                     if let Ok(ref mut tool_call) = coerced_req.tool_call {
+                        if let Some(canonical) =
+                            super::extension_manager::canonical_tool_name(tools, &tool_call.name)
+                        {
+                            tool_call.name = canonical.into();
+                        }
                         if let Some(tool) = tools.iter().find(|t| t.name == tool_call.name) {
                             let schema_value = Value::Object(tool.input_schema.as_ref().clone());
                             tool_call.arguments =
@@ -690,6 +695,9 @@ impl Agent {
             .and_then(|pn| self.accumulate_cost(session.accumulated_cost, usage, pn))
             .or(session.accumulated_cost);
 
+        if is_compaction_usage {
+            crate::context_mgmt::forget_compressed_prompt(session_id);
+        }
         let current_usage = if !is_compaction_usage {
             usage.usage
         } else if self.is_swarm_worker() {
@@ -1264,6 +1272,65 @@ mod tests {
             error_seen,
             "Error should have been propagated, not silently ignored"
         );
+    }
+
+    /// A mangled tool name is made the real tool's name where requests are categorized, before
+    /// the permission inspection: a NeverAllow on `shell` holds for `functions.shell`, even with a
+    /// verdict cached under the mangled name. A call to a missing name keeps its name (dispatch
+    /// refuses it).
+    #[tokio::test]
+    async fn a_mangled_tool_name_meets_the_real_tools_permission() {
+        use crate::config::permission::PermissionLevel;
+        use crate::config::PermissionManager;
+        use crate::permission::PermissionInspector;
+        use crate::tool_inspection::{InspectionAction, ToolInspector};
+
+        let agent = crate::agents::Agent::new();
+        let schema = Arc::new(
+            serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}})
+                .as_object()
+                .unwrap()
+                .clone(),
+        );
+        let tools = vec![Tool::new("shell".to_string(), "shell".to_string(), schema)];
+        let response = Message::assistant()
+            .with_tool_request(
+                "t1",
+                Ok(rmcp::model::CallToolRequestParams::new("functions.shell")
+                    .with_arguments(rmcp::object!({"command": "rm -rf /tmp/x"}))),
+            )
+            .with_tool_request(
+                "t2",
+                Ok(rmcp::model::CallToolRequestParams::new("bash")
+                    .with_arguments(rmcp::object!({"command": "ls"}))),
+            );
+        let (_frontend, requests, _filtered) = agent
+            .categorize_tool_requests(&response, &tools, false)
+            .await;
+        let names: Vec<String> = requests
+            .iter()
+            .map(|r| r.tool_call.as_ref().unwrap().name.to_string())
+            .collect();
+        assert_eq!(names, ["shell", "bash"]);
+
+        let pm = Arc::new(PermissionManager::new(tempfile::tempdir().unwrap().keep()));
+        pm.update_user_permission("shell", PermissionLevel::NeverAllow);
+        pm.update_smart_approve_permission("functions.shell", PermissionLevel::AlwaysAllow);
+        let session_manager = Arc::new(crate::session::SessionManager::new(
+            tempfile::tempdir().unwrap().keep(),
+        ));
+        let inspector =
+            PermissionInspector::new(pm, Arc::new(tokio::sync::Mutex::new(None)), session_manager);
+        let results = inspector
+            .inspect(
+                goose_test_support::TEST_SESSION_ID,
+                &requests[..1],
+                &[],
+                GooseMode::SmartApprove,
+            )
+            .await
+            .unwrap();
+        assert_eq!(results[0].action, InspectionAction::Deny);
     }
 
     #[tokio::test]

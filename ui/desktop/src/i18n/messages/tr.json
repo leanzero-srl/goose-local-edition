@@ -848,6 +848,12 @@
   "cloudProviders.notOfficialText": {
     "defaultMessage": "İstekler api.openai.com yerine {where} adresine gidiyor."
   },
+  "cloudProviders.notRunning": {
+    "defaultMessage": "Çalışmıyor"
+  },
+  "cloudProviders.notRunningText": {
+    "defaultMessage": "{origin} adresinde henüz çalışan bir şey yok. Yerel sunucuyu başlatın, ardından bağlantıları yeniden denetleyin."
+  },
   "cloudProviders.notSetUp": {
     "defaultMessage": "Kurulmadı"
   },
@@ -2621,6 +2627,177 @@
   "formingPanel.textHeading": {
     "defaultMessage": "Çağrıların yanına yazılan metin ({chars} karakter) — yanıtın parçası değil"
   },
+  "freeMemory.after": {
+    "defaultMessage": "Önce <b>{before} GB</b> boş, şimdi <b>{after} GB</b> boş ({freed} GB boşaltıldı)."
+  },
+  "freeMemory.afterFits": {
+    "defaultMessage": "Model artık sığıyor."
+  },
+  "freeMemory.afterShort": {
+    "defaultMessage": "Hâlâ <b>{gb} GB</b> eksik."
+  },
+  "freeMemory.altPeer": {
+    "defaultMessage": "Bunun yerine {mac} üzerinde çalıştırın (orada <b>{gb} GB</b> boş)"
+  },
+  "freeMemory.altPeerNoFree": {
+    "defaultMessage": "Bunun yerine <b>{mac}</b> üzerinde çalıştırın"
+  },
+  "freeMemory.altSmaller": {
+    "defaultMessage": "Daha küçük bir varyant sığıyor: {model} (<b>{gb} GB</b> gerekir)"
+  },
+  "freeMemory.budget": {
+    "defaultMessage": "Bir model için <b>{free} GB</b> boş, toplam {total} GB"
+  },
+  "freeMemory.cannotFit": {
+    "defaultMessage": "Burada listelenen her şey boşaltılsa bile (<b>{gb} GB</b>) bu modele <b>{short} GB</b> eksik kalır."
+  },
+  "freeMemory.cat.aiServer": {
+    "defaultMessage": "Model sunucuları"
+  },
+  "freeMemory.cat.gooseEngine": {
+    "defaultMessage": "goose motorları"
+  },
+  "freeMemory.cat.gooseOrphan": {
+    "defaultMessage": "goose’tan kalanlar"
+  },
+  "freeMemory.cat.job": {
+    "defaultMessage": "İşler"
+  },
+  "freeMemory.cat.system": {
+    "defaultMessage": "macOS ve geri kalanı"
+  },
+  "freeMemory.cat.userApp": {
+    "defaultMessage": "Uygulamalar"
+  },
+  "freeMemory.close": {
+    "defaultMessage": "Kapat"
+  },
+  "freeMemory.fitsByGooseOwned": {
+    "defaultMessage": "goose’un kendi belleğini (<b>{gb} GB</b>) boşaltmak bu model için yeterli."
+  },
+  "freeMemory.fitsWithApps": {
+    "defaultMessage": "Bu model <b>{gb} GB</b> boşaltıldıktan sonra sığar: goose’un kendi belleği ve {apps} kapatılarak."
+  },
+  "freeMemory.fitsWithAppsOnly": {
+    "defaultMessage": "Bu model {apps} kapatıldıktan sonra sığar, bu <b>{gb} GB</b> boşaltır."
+  },
+  "freeMemory.forceStop": {
+    "defaultMessage": "Zorla durdur"
+  },
+  "freeMemory.forceStopBody": {
+    "defaultMessage": "{app} istendiğinde kapanmadı, belki kaydedilmemiş işi vardır. Zorla durdurma onu {mac} üzerinde kaydetmeden sonlandırır. {app} içindeki kaydedilmemiş iş kaybolur."
+  },
+  "freeMemory.forceStopConfirm": {
+    "defaultMessage": "{app} uygulamasını zorla durdur"
+  },
+  "freeMemory.forceStopTitle": {
+    "defaultMessage": "{app} zorla durdurulsun mu?"
+  },
+  "freeMemory.freeFailed": {
+    "defaultMessage": "Bellek boşaltılamadı: {reason}"
+  },
+  "freeMemory.freeOwn": {
+    "defaultMessage": "goose’unkini boşalt ({gb} GB)"
+  },
+  "freeMemory.itemFailed": {
+    "defaultMessage": "{label}: {message}"
+  },
+  "freeMemory.keep": {
+    "defaultMessage": "Açık kalsın"
+  },
+  "freeMemory.keepRunning": {
+    "defaultMessage": "Çalışmaya devam etsin"
+  },
+  "freeMemory.leftAlone": {
+    "defaultMessage": "Dokunulmuyor"
+  },
+  "freeMemory.loading": {
+    "defaultMessage": "Belleği neyin kullandığı ölçülüyor…"
+  },
+  "freeMemory.neverTouchReason": {
+    "defaultMessage": "asla dokunma listesinde ({entry})"
+  },
+  "freeMemory.nothingOwn": {
+    "defaultMessage": "goose’un boşaltabileceği bir belleği yok"
+  },
+  "freeMemory.nuclearBack": {
+    "defaultMessage": "Geri"
+  },
+  "freeMemory.nuclearConfirmBody": {
+    "defaultMessage": "goose işaretlenen her uygulamadan kapanmasını ister ve işaretlenen her model sunucusunu boşaltır. Uygulamalardan kapanmaları istenir. Kapanmayan bir uygulama çalışır halde bırakılır ve raporlanır, durdurulmaz. Korunan öğelere asla dokunulmaz."
+  },
+  "freeMemory.nuclearConfirmKeep": {
+    "defaultMessage": "Hepsini tut"
+  },
+  "freeMemory.nuclearConfirmTitle": {
+    "defaultMessage": "{mac} üzerinde {gb} GB boşaltılsın mı?"
+  },
+  "freeMemory.nuclearFree": {
+    "defaultMessage": "{gb} GB boşalt"
+  },
+  "freeMemory.nuclearGooseOwn": {
+    "defaultMessage": "goose’un kendi belleği"
+  },
+  "freeMemory.nuclearIntro": {
+    "defaultMessage": "Kimsenin kullanmadığı her şey işaretli. Tutmak istediklerinin işaretini kaldır. Korumalı olanlara asla dokunulmaz."
+  },
+  "freeMemory.nuclearOpen": {
+    "defaultMessage": "Korumalılar dışında her şeyi boşalt"
+  },
+  "freeMemory.nuclearProtectedHead": {
+    "defaultMessage": "Asla dokunulmaz"
+  },
+  "freeMemory.nuclearTotal": {
+    "defaultMessage": "İşaretli: <b>{gb} GB</b>"
+  },
+  "freeMemory.protectedChip": {
+    "defaultMessage": "Korumalı"
+  },
+  "freeMemory.quit": {
+    "defaultMessage": "Çık"
+  },
+  "freeMemory.quitBody": {
+    "defaultMessage": "goose, {mac} üzerindeki {app} uygulamasından normal yoldan çıkmasını ister. Önce oradaki işinizi kaydedin: kaydedilmemiş her şey kaybolabilir."
+  },
+  "freeMemory.quitConfirm": {
+    "defaultMessage": "{app} uygulamasından çık"
+  },
+  "freeMemory.quitTitle": {
+    "defaultMessage": "{app} uygulamasından çıkılsın mı?"
+  },
+  "freeMemory.readFailed": {
+    "defaultMessage": "Bellek ölçülemedi: {reason}"
+  },
+  "freeMemory.remoteQuitOff": {
+    "defaultMessage": "{mac}, diğer Mac’lerin uygulamalarını kapatmasına veya model sunucularını boşaltmasına izin vermiyor; bu yüzden buradan yalnızca goose’un kendi belleği boşaltılabilir. İzin vermek için {mac} üzerinde goose’u açın, Ayarlar › Uygulama bölümüne gidin ve “Bağlı Mac’lerin bu Mac’teki uygulamaları kapatmasına izin ver” seçeneğini açın. Ya da uygulamaları doğrudan {mac} üzerinde kapatın."
+  },
+  "freeMemory.onlyThere": {
+    "defaultMessage": "Yalnızca {mac} üzerinde"
+  },
+  "freeMemory.title": {
+    "defaultMessage": "{mac} üzerinde bellek boşalt"
+  },
+  "freeMemory.unload": {
+    "defaultMessage": "Boşalt"
+  },
+  "freeMemory.unloadBody": {
+    "defaultMessage": "goose, {server} sunucusunun {mac} üzerinde tuttuğu modelleri boşaltır (bir MLX motorundan durması istenir). Onu kullanan, modelleri yeniden yüklemek zorunda kalır."
+  },
+  "freeMemory.unloadConfirm": {
+    "defaultMessage": "{server} boşalt"
+  },
+  "freeMemory.unloadInUse": {
+    "defaultMessage": "Şu anda kullanımda, bu onların işini durdurur:"
+  },
+  "freeMemory.unloadTitle": {
+    "defaultMessage": "{server} boşaltılsın mı?"
+  },
+  "freeMemory.usedBy": {
+    "defaultMessage": "Kullanan: {who}"
+  },
+  "freeMemoryEntry.open": {
+    "defaultMessage": "Bellek boşalt"
+  },
   "gooseImportSection.chooseSource": {
     "defaultMessage": "Kaynak klasörü seç"
   },
@@ -4022,6 +4199,144 @@
   "loops.tick.yielded": {
     "defaultMessage": "\"{chat}\" sohbetindeki sırana yer açtı"
   },
+  "macLoad.allowJobs": {
+    "defaultMessage": "Diğer Mac’lerin gönderdiği işleri çalıştır"
+  },
+  "macLoad.allowJobsHint": {
+    "defaultMessage": "Kabuk komutları ve istemler, bu Mac'in yuvaları ve belleği kaç ağır işe yetiyorsa o kadar, bellek eşiğini aşınca durdurulur. Hemen geçerli olur."
+  },
+  "macLoad.benchmark": {
+    "defaultMessage": "Kıyaslama çalışıyor: {why}"
+  },
+  "macLoad.cancelBody": {
+    "defaultMessage": "Bu, {mac} üzerindeki işi ve başlattığı her süreci durdurur. Zaten yazdıkları günlüğünde kalır."
+  },
+  "macLoad.cancelJob": {
+    "defaultMessage": "İşi iptal et"
+  },
+  "macLoad.cancelQueuedBody": {
+    "defaultMessage": "Bu işlem işi {mac} üzerindeki sıradan çıkarır. İş hiç başlamaz."
+  },
+  "macLoad.cancelTitle": {
+    "defaultMessage": "{id} işi iptal edilsin mi?"
+  },
+  "macLoad.close": {
+    "defaultMessage": "Kapat"
+  },
+  "macLoad.dialogTitle": {
+    "defaultMessage": "İş {id}"
+  },
+  "macLoad.ended": {
+    "defaultMessage": "Bitti"
+  },
+  "macLoad.exit": {
+    "defaultMessage": "Çıkış kodu"
+  },
+  "macLoad.idleS": {
+    "defaultMessage": "Şu süreden sonra boşta sayılır (saniye)"
+  },
+  "macLoad.inference": {
+    "defaultMessage": "Yapay zekâ çıkarımı"
+  },
+  "macLoad.inferenceLine": {
+    "defaultMessage": "{engine,plural,one{{slots,plural,one{{engine, number} motor isteği · # yönlendirici yuvası} other{{engine, number} motor isteği · # yönlendirici yuvası}}} other{{slots,plural,one{{engine, number} motor isteği · # yönlendirici yuvası} other{{engine, number} motor isteği · # yönlendirici yuvası}}}}"
+  },
+  "macLoad.jobFrom": {
+    "defaultMessage": "{origin} kaynaklı {kind}"
+  },
+  "macLoad.jobs": {
+    "defaultMessage": "İşler"
+  },
+  "macLoad.jobsLine": {
+    "defaultMessage": "{live,plural,=0{Çalışan iş yok} one{# iş çalışıyor} other{# iş çalışıyor}}"
+  },
+  "macLoad.jobsWaiting": {
+    "defaultMessage": "{waiting, plural, one {Yeri olan bir Mac bekleyen # iş} other {Yeri olan bir Mac bekleyen # iş}}"
+  },
+  "macLoad.keepRunning": {
+    "defaultMessage": "Çalışmaya devam etsin"
+  },
+  "macLoad.keepWaiting": {
+    "defaultMessage": "Beklemeye devam et"
+  },
+  "macLoad.kind": {
+    "defaultMessage": "Tür"
+  },
+  "macLoad.log": {
+    "defaultMessage": "Günlük"
+  },
+  "macLoad.logEmpty": {
+    "defaultMessage": "Henüz bir şey yazılmadı."
+  },
+  "macLoad.minFree": {
+    "defaultMessage": "Bellek eşiği (% boş tutulan)"
+  },
+  "macLoad.noLoad": {
+    "defaultMessage": "Onun goose’u henüz yük bildirmiyor (eski sürüm)."
+  },
+  "macLoad.origin": {
+    "defaultMessage": "Gönderen"
+  },
+  "macLoad.own": {
+    "defaultMessage": "Kendi kullanımı"
+  },
+  "macLoad.ownLine": {
+    "defaultMessage": "{user} · cpu {cpu} · bellek {mem} kullanımda · gpu {gpu}"
+  },
+  "macLoad.placedOn": {
+    "defaultMessage": "Yerleştirildiği yer"
+  },
+  "macLoad.placedOnValue": {
+    "defaultMessage": "{mac}, kimlik {id}"
+  },
+  "macLoad.policy": {
+    "defaultMessage": "Biri bu Mac’i kullanırken"
+  },
+  "macLoad.policyHint": {
+    "defaultMessage": "Meşgul ölçülerek belirlenir: tabanın üstündeki bellek, boş ağır iş yuvaları, çekirdek başına yük. Klavyedeki biri yalnızca eşitliği bozar."
+  },
+  "macLoad.policy.allow": {
+    "defaultMessage": "İşleri al"
+  },
+  "macLoad.policy.refuse": {
+    "defaultMessage": "İşleri reddet"
+  },
+  "macLoad.queueNoTry": {
+    "defaultMessage": "Henüz hiçbir Mac’e sunulmadı: önündeki bir iş bekliyor."
+  },
+  "macLoad.queueRefusals": {
+    "defaultMessage": "Her Mac neden reddetti"
+  },
+  "macLoad.reason": {
+    "defaultMessage": "Neden"
+  },
+  "macLoad.reconnectHint": {
+    "defaultMessage": "Politika ve bellek eşiği Link yeniden bağlandıktan sonra uygulanır."
+  },
+  "macLoad.refusalLine": {
+    "defaultMessage": "{mac}: {reason}"
+  },
+  "macLoad.saveFailed": {
+    "defaultMessage": "Kaydedilmedi: {reason}"
+  },
+  "macLoad.settingsTitle": {
+    "defaultMessage": "Diğer Mac’lerden işler"
+  },
+  "macLoad.started": {
+    "defaultMessage": "Başladı"
+  },
+  "macLoad.state": {
+    "defaultMessage": "Durum"
+  },
+  "macLoad.title": {
+    "defaultMessage": "Yük"
+  },
+  "macLoad.userActive": {
+    "defaultMessage": "Biri kullanıyor"
+  },
+  "macLoad.userIdle": {
+    "defaultMessage": "Boşta {idle}"
+  },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "İptal edilemedi."
   },
@@ -4213,6 +4528,66 @@
   },
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Resim İçinde Resim'de Oynatma"
+  },
+  "memfreeSettings.description": {
+    "defaultMessage": "Yerel bir model sığmadığında goose belleği neyin kullandığını gösterir ve kendi payını boşaltabilir."
+  },
+  "memfreeSettings.enabled": {
+    "defaultMessage": "“Bellek boşalt” seçeneğini sun"
+  },
+  "memfreeSettings.enabledDesc": {
+    "defaultMessage": "Düğmeyi belleği yetmeyen bir modelde ve her Mac’in bellek çubuklarında gösterir. Varsayılan olarak açık."
+  },
+  "memfreeSettings.minMb": {
+    "defaultMessage": "Listelenecek en küçük uygulama (MB)"
+  },
+  "memfreeSettings.minMbDesc": {
+    "defaultMessage": "Bundan daha az bellek kullanan uygulamalar listede yer almaz. Varsayılan {mb} MB."
+  },
+  "memfreeSettings.neverTouch": {
+    "defaultMessage": "Asla dokunma"
+  },
+  "memfreeSettings.neverTouchAdd": {
+    "defaultMessage": "Ekle"
+  },
+  "memfreeSettings.neverTouchAdded": {
+    "defaultMessage": "Senin eklediklerin"
+  },
+  "memfreeSettings.neverTouchBuiltIn": {
+    "defaultMessage": "Yerleşik"
+  },
+  "memfreeSettings.neverTouchDesc": {
+    "defaultMessage": "Hiçbir temizliğin asla kapatmadığı veya durdurmadığı uygulamalar ve işlemler; bu Mac’te ve bu Mac başka bir Mac’te bellek boşaltırken. Bir bundle id, uygulama adı ya da işlem adı; büyük küçük harf fark etmez. Yerleşik olanlar her zaman geçerlidir."
+  },
+  "memfreeSettings.neverTouchMatches": {
+    "defaultMessage": "{app} ile eşleşiyor"
+  },
+  "memfreeSettings.neverTouchMatchesNothing": {
+    "defaultMessage": "çalışan veya yüklü hiçbir uygulamayla eşleşmiyor, bu yüzden şu an hiçbir şeyi korumuyor"
+  },
+  "memfreeSettings.neverTouchNone": {
+    "defaultMessage": "Henüz bir şey eklenmedi"
+  },
+  "memfreeSettings.neverTouchPlaceholder": {
+    "defaultMessage": "com.example.App ya da bir uygulama adı"
+  },
+  "memfreeSettings.neverTouchRemove": {
+    "defaultMessage": "{name} kaldır"
+  },
+  "memfreeSettings.readFailed": {
+    "defaultMessage": "Bu ayarlar okunamadı: {reason}"
+  },
+  "memfreeSettings.remoteQuit": {
+    "defaultMessage": "Bağlı Mac’lerin bu Mac’teki uygulamaları kapatmasına izin ver"
+  },
+  "memfreeSettings.remoteQuitDesc": {
+    "defaultMessage": "LeanZero Link’teki başka bir Mac, bu Mac’ten bir uygulamayı kapatmasını isteyebilir, her zaman burada onaylandıktan sonra. Varsayılan olarak kapalı: goose’un kendi belleğini burada yine de boşaltabilirler."
+  },
+  "memfreeSettings.saveFailed": {
+    "defaultMessage": "Bu ayar kaydedilemedi: {reason}"
+  },
+  "memfreeSettings.title": {
+    "defaultMessage": "Bellek boşalt"
   },
   "memoryProposal.cut": {
     "defaultMessage": "Kaydedilirken {max} karakterde kesildi, bu yüzden bu haliyle kaydedilemez. Tam metni yeniden isteyin."
@@ -5525,6 +5900,24 @@
   "mlxRestore.waitingPrevious": {
     "defaultMessage": "Önceki bölme {node} üzerinde hâlâ kapanıyor — bu bitince goose onu geri yükler"
   },
+  "mlxRestoreSettings.description": {
+    "defaultMessage": "goose açılırken daha önce çalışan yerel modelin geri getirilip getirilmeyeceği. Varsayılan olarak kapalı."
+  },
+  "mlxRestoreSettings.readFailed": {
+    "defaultMessage": "Bu ayar okunamadı: {reason}"
+  },
+  "mlxRestoreSettings.restore": {
+    "defaultMessage": "Açılışta yerel modeli geri yükle"
+  },
+  "mlxRestoreSettings.restoreDesc": {
+    "defaultMessage": "goose başladığında, en son başlattığınız ve durdurmadığınız modeli geri getirir: bu Mac'te, LeanZero Link üzerinden başka bir Mac'te ya da birkaç Mac'e bölünmüş olarak. Kapalı: goose kendiliğinden model başlatmaz; ihtiyacınız olduğunda Providers'tan bir tane başlatın."
+  },
+  "mlxRestoreSettings.saveFailed": {
+    "defaultMessage": "Bu ayar kaydedilemedi: {reason}"
+  },
+  "mlxRestoreSettings.title": {
+    "defaultMessage": "Açılışta yerel model"
+  },
   "mlxSetup.aria": {
     "defaultMessage": "LeanZero MLX kurulumu"
   },
@@ -6477,7 +6870,7 @@
     "defaultMessage": "Diğer Mac’lerim bu Mac’i kullanabilsin"
   },
   "myMacs.masterHint": {
-    "defaultMessage": "Yalnızca LeanZero Link hesabınızda oturum açmış Mac’ler. Her anahtar yalnızca goose’un kendi işlemlerini açar — asla rastgele bir komutu değil."
+    "defaultMessage": "Yalnızca LeanZero Link hesabınızda oturum açmış Mac’ler. Bu anahtarlar goose’un kendi işlemlerini kapsar: modeller, sohbet ve diğer Mac’lerinizin burada başlattığı istem oturumları. Kabuk komutları ve istem işleri için ayrı bir anahtar vardır, “Diğer Mac’lerin gönderdiği işleri çalıştır”; siz açana kadar kapalıdır."
   },
   "myMacs.memory": {
     "defaultMessage": "Bellek"
@@ -6728,6 +7121,9 @@
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "Takılı model yok"
   },
+  "nodeCard.memfreeThisMac": {
+    "defaultMessage": "bu Mac"
+  },
   "nodeModelCell.chatFollows": {
     "defaultMessage": "Sohbet çalıştırdığın modeli izliyor: {model}"
   },
@@ -6941,6 +7337,9 @@
   "nodes.loadsUnread": {
     "defaultMessage": "Yükleme süreleri okunamadı: {error}"
   },
+  "nodes.localServerNotRunning": {
+    "defaultMessage": "{origin} adresinde henüz çalışan bir şey yok; yerel sunucuyu başlatın"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "Bulut sağlayıcılarını yönet"
   },
@@ -7090,6 +7489,9 @@
   },
   "nodes.newProviderModels": {
     "defaultMessage": "Model"
+  },
+  "nodes.newProviderNotRunning": {
+    "defaultMessage": "Çalışmıyor"
   },
   "nodes.newProvidersFailed": {
     "defaultMessage": "Sağlayıcılarınız okunamadı: {error}"
@@ -8500,6 +8902,12 @@
   },
   "providerCard.noMetadata": {
     "defaultMessage": "ProviderCard hatası: Meta veri sağlanmadı"
+  },
+  "providerCard.notRunning": {
+    "defaultMessage": "Çalışmıyor"
+  },
+  "providerCard.notRunningText": {
+    "defaultMessage": "{origin} adresinde henüz çalışan bir şey yok. Yerel sunucuyu başlatın, ardından bağlantıları yeniden denetleyin."
   },
   "providerCard.unknownProvider": {
     "defaultMessage": "Bilinmeyen Sağlayıcı"
@@ -11603,6 +12011,9 @@
   "forgeSeries.publish": {
     "defaultMessage": "2 derlemeyi yayımla"
   },
+  "forgeSeries.publishSeparately": {
+    "defaultMessage": "Derlemeleri ayrı ayrı yayımla"
+  },
   "forgeSeries.publishTitle": {
     "defaultMessage": "Yayın başlığı"
   },
@@ -11644,5 +12055,98 @@
   },
   "modelCustomFields.noFields": {
     "defaultMessage": "Özel alanlar: {provider}, “{model}” için hiçbir alan bildirmiyor; bu yüzden sağlayıcının varsayılanlarıyla çalışır."
+  },
+  "macLoad.stateCancelling": {
+    "defaultMessage": "İptal ediliyor…"
+  },
+  "macLoad.stateWaiting": {
+    "defaultMessage": "Bekliyor, sırada #{position}"
+  },
+  "macLoad.strategy": {
+    "defaultMessage": "İşlerim nerede çalışır"
+  },
+  "macLoad.strategy.localFirst": {
+    "defaultMessage": "Önce benim Mac’im"
+  },
+  "macLoad.strategy.selfish": {
+    "defaultMessage": "Önce diğer Mac’ler"
+  },
+  "macLoad.strategyHint.localFirst": {
+    "defaultMessage": "Yeri varsa bu Mac’te, yoksa en çok yeri olan diğer Mac’te çalışır, o da yoksa sırada bekler."
+  },
+  "macLoad.strategyHint.selfish": {
+    "defaultMessage": "En çok yeri olan diğer Mac’te, yoksa bu Mac’te çalışır, o da yoksa sırada bekler. Bu Mac’i boş tutar."
+  },
+  "myMacs.runJob": {
+    "defaultMessage": "İş çalıştır…"
+  },
+  "runJob.title": {
+    "defaultMessage": "İşi şurada çalıştır…"
+  },
+  "runJob.willQueue": {
+    "defaultMessage": "Şu anda hiçbir Mac’te yer yok. Çalıştırırsanız bu Mac’te sırada bekler ve yeri olan ilk Mac’te başlar."
+  },
+  "runJob.target": {
+    "defaultMessage": "Çalıştırılacak yer"
+  },
+  "runJob.best": {
+    "defaultMessage": "En iyi Mac"
+  },
+  "runJob.ranking": {
+    "defaultMessage": "Şu an en iyi: {macs}"
+  },
+  "runJob.refusal": {
+    "defaultMessage": "{mac}: {reason}"
+  },
+  "runJob.verdictLine": {
+    "defaultMessage": "{mac}: {verdict}"
+  },
+  "runJob.inUse": {
+    "defaultMessage": "{name} (kullanımda)"
+  },
+  "runJob.noPlace": {
+    "defaultMessage": "Şu anda hiçbir Mac bu işi alamıyor."
+  },
+  "runJob.none": {
+    "defaultMessage": "Şu anda Mac’lerinizin hiçbiri iş almıyor. İşleri çalıştıracak Mac’te “Diğer Mac’lerin gönderdiği işleri çalıştır” anahtarını açın."
+  },
+  "runJob.jobsOff": {
+    "defaultMessage": "bu Mac’te işler kapalı"
+  },
+  "runJob.kind": {
+    "defaultMessage": "Tür"
+  },
+  "runJob.kindShell": {
+    "defaultMessage": "Kabuk komutu"
+  },
+  "runJob.kindPrompt": {
+    "defaultMessage": "İstem"
+  },
+  "runJob.command": {
+    "defaultMessage": "{kind, select, shell {Komut} other {İstem}}"
+  },
+  "runJob.heavy": {
+    "defaultMessage": "Ağır iş"
+  },
+  "runJob.heavyHint": {
+    "defaultMessage": "Bir Mac, yuvaları ve belleği kaç ağır işe (derleme, işleme, eğitim) yetiyorsa o kadarını çalıştırır."
+  },
+  "runJob.mem": {
+    "defaultMessage": "Gereken bellek (GB, isteğe bağlı)"
+  },
+  "runJob.timeout": {
+    "defaultMessage": "Süre sınırı (saniye, isteğe bağlı)"
+  },
+  "runJob.submit": {
+    "defaultMessage": "İşi çalıştır"
+  },
+  "runJob.close": {
+    "defaultMessage": "Kapat"
+  },
+  "runJob.refused": {
+    "defaultMessage": "Gönderilmedi: {reason}"
+  },
+  "myMacs.updatedAgo": {
+    "defaultMessage": "{seconds} sn önce güncellendi"
   }
 }

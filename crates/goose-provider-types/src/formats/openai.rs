@@ -332,6 +332,21 @@ struct StreamingChoice {
     /// (Q-133); absent from every other engine.
     #[serde(default)]
     refused_tool_calls: Option<Vec<RefusedToolCall>>,
+    /// Rapid-MLX's word for WHY a `length` stop happened: `repetition` = its loop guard ended a reply
+    /// that kept repeating the same tokens (I-28); absent from every other engine.
+    #[serde(default)]
+    rapid_mlx_stop_reason: Option<String>,
+}
+
+/// The stamp a cut reply carries: the engine's loop stop, or the output-token limit.
+fn cut_stamp_of(choice: &StreamingChoice) -> Option<&'static str> {
+    (choice.finish_reason.as_deref() == Some("length")).then(|| {
+        if choice.rapid_mlx_stop_reason.as_deref() == Some("repetition") {
+            OUTPUT_STOPPED_AS_LOOP
+        } else {
+            OUTPUT_TRUNCATED_BY_LENGTH
+        }
+    })
 }
 
 fn empty_finish_reason_as_none<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
@@ -779,6 +794,7 @@ pub fn format_messages_reporting_images(
     }
 
     merge_split_tool_call_messages(&mut messages_spec);
+    hoist_tool_result_images(&mut messages_spec);
     if let Some(text) = turn_context {
         attach_turn_context(
             &mut messages_spec,
@@ -914,13 +930,80 @@ fn append_turn_context_tail(messages_spec: &mut Vec<Value>, text: &str) {
     messages_spec.push(json!({"role": "user", "content": text}));
 }
 
+/// Tool results whose content had an image are followed by an image-only `user` message (OpenAI
+/// tool messages cannot carry images). With PARALLEL tool calls that put a `user` message between
+/// two `tool` results, and strict hosts refuse the request: Mistral answered 400 "Unexpected role
+/// 'tool' after role 'user'" (invalid_request_message_order) and ended Mistral Large 4's Gauntlet
+/// after 97 of 150 calls (2026-10-19, RUN-ISSUES I-19). Every tool result must follow its
+/// assistant tool call directly, so within each run of tool results the image-only messages move
+/// to after the run's last tool result, merged into one `user` message. Real user text is never
+/// moved, and a request without such a gap is unchanged.
+fn hoist_tool_result_images(messages: &mut Vec<Value>) {
+    let mut i = 0;
+    while i < messages.len() {
+        if messages[i].get("role") != Some(&json!("tool")) {
+            i += 1;
+            continue;
+        }
+        // The run: tool results and the image-only user messages between them.
+        let start = i;
+        let mut end = i;
+        let mut j = i;
+        while j < messages.len() {
+            if messages[j].get("role") == Some(&json!("tool")) {
+                end = j;
+            } else if !is_image_only_user_message(&messages[j]) {
+                break;
+            }
+            j += 1;
+        }
+        let gap = (start..=end).any(|k| is_image_only_user_message(&messages[k]));
+        if !gap {
+            i = end + 1;
+            continue;
+        }
+        let run: Vec<Value> = messages.drain(start..=end).collect();
+        let (tools, images): (Vec<Value>, Vec<Value>) = run
+            .into_iter()
+            .partition(|m| m.get("role") == Some(&json!("tool")));
+        let parts: Vec<Value> = images
+            .iter()
+            .flat_map(|m| m["content"].as_array().cloned().unwrap_or_default())
+            .collect();
+        let n_tools = tools.len();
+        let mut rebuilt = tools;
+        rebuilt.push(json!({"role": "user", "content": parts}));
+        let inserted = rebuilt.len();
+        messages.splice(start..start, rebuilt);
+        // Image-only messages that already trailed the run join the merged one.
+        let merged = start + n_tools;
+        while merged + 1 < messages.len() && is_image_only_user_message(&messages[merged + 1]) {
+            let extra = messages.remove(merged + 1);
+            if let (Some(dst), Some(src)) = (
+                messages[merged]["content"].as_array_mut(),
+                extra["content"].as_array(),
+            ) {
+                dst.extend(src.iter().cloned());
+            }
+        }
+        i = start + inserted;
+    }
+}
+
 /// The agent splits a single assistant response with N tool_calls into N
 /// interleaved `asst(TC)/tool` pairs, cloning `reasoning_content` onto each.
 /// This function merges them back into one assistant message with all tool_calls,
 /// followed by the tool results — the standard OpenAI format.
 ///
 /// Only merges when `reasoning_content` is present and matches, since that is
-/// the only signal that messages were split from the same turn.
+/// the only signal that messages were split from the same turn. Two rules keep
+/// that signal from joining SEQUENTIAL turns (I-22, Gemma 4 31B on the Studio,
+/// 2026-10-19: every turn reasoned exactly "\n", so every later call was folded
+/// into the second assistant message, its result moved before the newer ones, and
+/// the rendered prompt diverged there on every request, a full re-prefill each
+/// turn): whitespace-only reasoning is no evidence of a split, and a tool result
+/// that carries a turn-context block ends its turn, because the agent writes that
+/// block only between model calls, never between the parts of one response.
 fn merge_split_tool_call_messages(messages: &mut Vec<Value>) {
     let mut i = 0;
     while i < messages.len() {
@@ -931,11 +1014,13 @@ fn merge_split_tool_call_messages(messages: &mut Vec<Value>) {
                 .is_some_and(|a| !a.is_empty());
         let base_reasoning = messages[i].get("reasoning_content");
 
-        if !is_assistant_tool_call || base_reasoning.is_none() {
+        let Some(base_reasoning) = base_reasoning
+            .filter(|r| is_assistant_tool_call && reasoning_evidences_split(r))
+            .cloned()
+        else {
             i += 1;
             continue;
-        }
-        let base_reasoning = base_reasoning.unwrap().clone();
+        };
 
         let mut extra_tool_calls: Vec<Value> = Vec::new();
         let mut collected: Vec<Value> = Vec::new();
@@ -943,6 +1028,9 @@ fn merge_split_tool_call_messages(messages: &mut Vec<Value>) {
 
         loop {
             if scan >= messages.len() || messages[scan].get("role") != Some(&json!("tool")) {
+                break;
+            }
+            if tool_result_ends_turn(&messages[scan]) {
                 break;
             }
 
@@ -1005,6 +1093,30 @@ fn merge_split_tool_call_messages(messages: &mut Vec<Value>) {
 
         i = insert_at + num_collected;
     }
+}
+
+/// Reasoning that can tell one response's split tool calls from separate turns: it must say
+/// something. A model that reasons nothing (Gemma 4 with thinking off streams "\n" every turn)
+/// repeats the same whitespace on every turn.
+fn reasoning_evidences_split(reasoning: &Value) -> bool {
+    reasoning.as_str().is_some_and(|r| !r.trim().is_empty())
+}
+
+/// A tool result whose text ends with a turn-context block (joined to it, Q-94): the model was
+/// called again after it, so the next assistant message is a new turn.
+fn tool_result_ends_turn(msg: &Value) -> bool {
+    let Some(content) = msg.get("content").and_then(|c| c.as_str()) else {
+        return false;
+    };
+    let opening = format!(
+        "<{}>\n<{}>",
+        crate::conversation::TURN_CONTEXT_TAG,
+        crate::conversation::CURRENT_TIME_TAG
+    );
+    content
+        .rfind(&opening)
+        .and_then(|at| content.get(at..))
+        .is_some_and(crate::conversation::is_turn_context_text)
 }
 
 /// True if `msg` is a synthetic image-only user message (content is exclusively image_url items).
@@ -1497,12 +1609,32 @@ fn classify_choiceless_frame(value: &Value) -> Option<ProviderError> {
 /// say `rate_limit_exceeded`, Anthropic-shaped gateways `rate_limit_error`.
 const RATE_LIMIT_ERROR_TYPES: &[&str] = &["rate_limit_exceeded", "rate_limit_error"];
 
+/// Error types gateways name an over-long request by. OpenRouter documents
+/// `metadata.error_type: "context_length_exceeded"` on its mid-stream error chunk ("The combined
+/// input and output tokens exceed the model's context window", openrouter.ai/docs/api/reference/
+/// errors-and-debugging, Typed error codes); OpenAI's own `code` uses the same word.
+const CONTEXT_LENGTH_ERROR_TYPES: &[&str] = &["context_length_exceeded"];
+
 /// The class of an error a stream reported after its HTTP 200: a rate limit is the same
 /// `RateLimitExceeded` an HTTP 429 maps to, so it is waited out instead of spending the quick resends
 /// (2026-10-16, Qwen3.8 Flash on OpenRouter/Alibaba: `{"error": {"code": 429, "message": "Provider
 /// returned error", "metadata": {"error_type": "rate_limit_exceeded"}}}` as the only frame ended the
-/// run at call 50 after three resends in seven seconds). Every other report stays a server fault.
+/// run at call 50 after three resends in seven seconds). An over-long request is the same
+/// `ContextLengthExceeded` an HTTP 400 maps to, so the agent compacts and retries instead of
+/// resending the same too-long request as a server fault. Every other report stays a server fault.
 fn in_stream_error(error: &Value, details: String) -> ProviderError {
+    let names_context_length = [
+        error.get("code"),
+        error.get("type"),
+        error.get("metadata").and_then(|m| m.get("error_type")),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(Value::as_str)
+    .any(|kind| CONTEXT_LENGTH_ERROR_TYPES.contains(&kind));
+    if names_context_length || details.to_lowercase().contains("maximum context length") {
+        return ProviderError::ContextLengthExceeded(details);
+    }
     let code_is_429 = ["code", "status", "statusCode"].iter().any(|key| {
         error.get(*key).is_some_and(|raw| {
             raw.as_i64() == Some(429) || raw.as_str().map(str::trim) == Some("429")
@@ -1532,6 +1664,19 @@ fn in_stream_error(error: &Value, details: String) -> ProviderError {
 pub const OUTPUT_TRUNCATED_BY_LENGTH: &str =
     "\n\n[OUTPUT TRUNCATED: the model hit its output-token \
      limit mid-generation — this response is INCOMPLETE]";
+
+/// Appended instead of [`OUTPUT_TRUNCATED_BY_LENGTH`] when the engine says its loop guard ended the
+/// reply (`rapid_mlx_stop_reason: "repetition"` beside `finish_reason: "length"`). Gemma 4 26B on
+/// 2026-10-19 (I-28) was told three times its reply was cut for length when it was looping, and the
+/// session then ended as if the model had finished.
+/// The error a tool call carries when the engine's loop guard stopped the reply inside it.
+pub const LOOP_STOPPED_TOOL_CALL: &str = "The engine stopped this tool call because the reply kept \
+     repeating the same text in a loop, so its arguments are cut and it was not run. Do not write it \
+     again: take a different next step.";
+
+pub const OUTPUT_STOPPED_AS_LOOP: &str =
+    "\n\n[OUTPUT STOPPED: the engine ended this response because it kept repeating the same text \
+     — this response is INCOMPLETE]";
 
 /// What a chat-completions stream has shown of its own end.
 ///
@@ -1658,7 +1803,7 @@ where
         // text: a reasoning-only reply (aion-labs/aion-3.5, 2026-10-07: 32,768 tokens of thinking,
         // no text, no call) otherwise reads as an empty turn and the agent re-asks the identical
         // prompt, so the model never learns it was cut.
-        let mut cut_by_length = false;
+        let mut cut_stamp: Option<&'static str> = None;
         let mut length_marked = false;
         let mut yielded_tool_call = false;
 
@@ -1682,8 +1827,8 @@ where
                 continue  // metadata-only frame
             };
             completion.observe(&chunk);
-            if chunk.choices.first().and_then(|c| c.finish_reason.as_deref()) == Some("length") {
-                cut_by_length = true;
+            if let Some(stamp) = chunk.choices.first().and_then(cut_stamp_of) {
+                cut_stamp = Some(stamp);
             }
             if let Some(model) = &chunk.model {
                 last_seen_model = Some(model.clone());
@@ -1773,6 +1918,9 @@ where
                                     continue
                                 };
                                 completion.observe(&tool_chunk);
+                                if let Some(stamp) = tool_chunk.choices.first().and_then(cut_stamp_of) {
+                                    cut_stamp = Some(stamp);
+                                }
                                 if let Some(model) = &tool_chunk.model {
                                     last_seen_model = Some(model.clone());
                                 }
@@ -2013,6 +2161,23 @@ where
                     }
                 }
 
+                // I-28 review: the engine's loop guard stopped the reply inside the last call's
+                // arguments. That call is cut where the loop was caught, so it is failed with the
+                // loop named instead of running on a fragment (or failing as a malformed call).
+                if cut_stamp == Some(OUTPUT_STOPPED_AS_LOOP) {
+                    if let Some(MessageContent::ToolRequest(request)) = contents
+                        .iter_mut()
+                        .rev()
+                        .find(|content| matches!(content, MessageContent::ToolRequest(_)))
+                    {
+                        request.tool_call = Err(ErrorData {
+                            code: ErrorCode::INVALID_PARAMS,
+                            message: Cow::from(LOOP_STOPPED_TOOL_CALL),
+                            data: None,
+                        });
+                    }
+                }
+
                 let mut msg = Message::new(
                     Role::Assistant,
                     chrono::Utc::now().timestamp(),
@@ -2053,7 +2218,7 @@ where
 
                     let mut shown = call_hold.push(&filtered.content);
                     // A cut reply is not a call block; the truncation stamp needs its text.
-                    if chunk.choices[0].finish_reason.as_deref() == Some("length") {
+                    if cut_stamp_of(&chunk.choices[0]).is_some() {
                         shown.push_str(&call_hold.release());
                     }
                     if !shown.is_empty() {
@@ -2077,8 +2242,8 @@ where
                     // the swarm's gates could not tell "done" from "guillotined". The marker is
                     // deterministic text every downstream reader sees: a truncated final_output no
                     // longer passes as complete, and the retry machinery has a signal to re-ask.
-                    if chunk.choices[0].finish_reason.as_deref() == Some("length") {
-                        msg = msg.with_text(OUTPUT_TRUNCATED_BY_LENGTH);
+                    if let Some(stamp) = cut_stamp_of(&chunk.choices[0]) {
+                        msg = msg.with_text(stamp);
                         length_marked = true;
                     }
 
@@ -2111,11 +2276,11 @@ where
         let tail = call_hold.push(&filtered.content);
         let (settled, failed_calls) = settle_reply(call_hold.finish(), &refused);
         let mut shown = tail + &settled;
-        if cut_by_length && !length_marked && !yielded_tool_call {
+        if let Some(stamp) = cut_stamp.filter(|_| !length_marked && !yielded_tool_call) {
             if shown.is_empty() {
-                shown.push_str(OUTPUT_TRUNCATED_BY_LENGTH.trim_start());
+                shown.push_str(stamp.trim_start());
             } else {
-                shown.push_str(OUTPUT_TRUNCATED_BY_LENGTH);
+                shown.push_str(stamp);
             }
         }
         if !failed_calls.is_empty() {
@@ -5457,6 +5622,79 @@ data: [DONE]"#;
         assert_eq!(messages[2]["role"], "user");
         assert_eq!(messages[3]["role"], "tool");
         assert_eq!(messages[3]["tool_call_id"], "tc2");
+        // ...and the request-level pass then restores strict order (I-19).
+        hoist_tool_result_images(&mut messages);
+        let roles: Vec<&str> = messages
+            .iter()
+            .map(|m| m["role"].as_str().unwrap())
+            .collect();
+        assert_eq!(roles, ["assistant", "tool", "tool", "user"]);
+        assert_eq!(messages[1]["tool_call_id"], "tc1");
+        assert_eq!(messages[2]["tool_call_id"], "tc2");
+    }
+
+    /// RUN-ISSUES I-19: the exact shape of the request Mistral refused (2026-10-19 02:05) —
+    /// two parallel calls, the first result carried an image, then the turn-context tail.
+    #[test]
+    fn test_parallel_tool_results_with_image_keep_strict_order() {
+        let mut messages = vec![
+            json!({"role": "user", "content": "<turn-context>…</turn-context>"}),
+            json!({"role": "assistant", "content": "PIL isn't available. Let me examine viz.js.", "tool_calls": [
+                {"id": "IRPiNVqgS", "type": "function", "function": {"name": "read_image", "arguments": "{}"}},
+                {"id": "yDLU4h1Yq", "type": "function", "function": {"name": "shell", "arguments": "{}"}}]}),
+            json!({"role": "tool", "tool_call_id": "IRPiNVqgS", "content": "Loaded image … uploaded in the next message."}),
+            json!({"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBOR"}}]}),
+            json!({"role": "tool", "tool_call_id": "yDLU4h1Yq", "content": "return n ? [v[0] / n] : [0];"}),
+            json!({"role": "user", "content": "<turn-context>…</turn-context>"}),
+        ];
+        hoist_tool_result_images(&mut messages);
+        let roles: Vec<&str> = messages
+            .iter()
+            .map(|m| m["role"].as_str().unwrap())
+            .collect();
+        assert_eq!(roles, ["user", "assistant", "tool", "tool", "user", "user"]);
+        for w in messages.windows(2) {
+            assert!(
+                !(w[0]["role"] == "user" && w[1]["role"] == "tool"),
+                "tool after user: {w:?}"
+            );
+        }
+        assert_eq!(messages[2]["tool_call_id"], "IRPiNVqgS");
+        assert_eq!(messages[3]["tool_call_id"], "yDLU4h1Yq");
+        assert_eq!(messages[4]["content"][0]["type"], "image_url");
+        assert_eq!(messages[5]["content"], "<turn-context>…</turn-context>");
+    }
+
+    #[test]
+    fn test_hoist_merges_images_and_never_moves_user_text() {
+        let img = |u: &str| json!({"role": "user", "content": [{"type": "image_url", "image_url": {"url": u}}]});
+        let mut messages = vec![
+            json!({"role": "assistant", "tool_calls": [
+                {"id": "a", "type": "function", "function": {"name": "s1", "arguments": "{}"}},
+                {"id": "b", "type": "function", "function": {"name": "s2", "arguments": "{}"}}]}),
+            json!({"role": "tool", "tool_call_id": "a", "content": "x"}),
+            img("data:1"),
+            json!({"role": "tool", "tool_call_id": "b", "content": "y"}),
+            img("data:2"),
+            json!({"role": "user", "content": "real text"}),
+        ];
+        hoist_tool_result_images(&mut messages);
+        let roles: Vec<&str> = messages
+            .iter()
+            .map(|m| m["role"].as_str().unwrap())
+            .collect();
+        assert_eq!(roles, ["assistant", "tool", "tool", "user", "user"]);
+        assert_eq!(messages[3]["content"].as_array().unwrap().len(), 2);
+        assert_eq!(messages[4]["content"], "real text");
+        // No gap: unchanged.
+        let mut plain = vec![
+            json!({"role": "assistant", "tool_calls": [{"id": "a", "type": "function", "function": {"name": "s", "arguments": "{}"}}]}),
+            json!({"role": "tool", "tool_call_id": "a", "content": "x"}),
+            img("data:1"),
+        ];
+        let before = plain.clone();
+        hoist_tool_result_images(&mut plain);
+        assert_eq!(plain, before);
     }
 
     #[test]
@@ -5475,6 +5713,195 @@ data: [DONE]"#;
         assert_eq!(messages[2]["role"], "user");
         assert_eq!(messages[2]["content"], "what happened?");
         assert_eq!(messages[3]["tool_calls"].as_array().unwrap().len(), 1);
+    }
+
+    /// The turn-context block goose keeps on a tool result (Q-94), in the exact shape the Studio's
+    /// Gemma 4 31B run (openai-cloud-18d9a7e5, 2026-10-19) sent.
+    fn i22_turn_context(time: &str) -> String {
+        format!(
+            "<turn-context>\n<current-time>{time}</current-time>\n<working-directory>/runs/build/openai-cloud-18d9a7e5-r0</working-directory>\ncontext: 24,780 of 128,000 tokens used (19%)\n</turn-context>"
+        )
+    }
+
+    fn i22_call(id: &str, command: &str, blank_thinking: bool) -> Message {
+        let mut message = Message::assistant();
+        if blank_thinking {
+            // Gemma 4 with thinking off (R12-T1F) streams a lone "\n" thought on every turn.
+            message = message.with_content(MessageContent::thinking("\n", ""));
+        }
+        message.with_tool_request(
+            id,
+            Ok(CallToolRequestParams::new("shell").with_arguments(object!({"command": command}))),
+        )
+    }
+
+    fn i22_result(id: &str, text: &str) -> Message {
+        Message::user().with_tool_response(
+            id,
+            Ok(CallToolResult::success(vec![rmcp::model::Content::text(
+                text,
+            )])),
+        )
+    }
+
+    /// The stored history of that run: one tool call per turn, each turn after the first opening
+    /// with the blank thought, a turn-context block written only on some turns.
+    fn i22_stored_history() -> Vec<Message> {
+        vec![
+            Message::user().with_text("# forge-2.0 — Scope Ledger 2 (Atlassian Forge)"),
+            i22_call("call_90480d26", "ls", false),
+            i22_result("call_90480d26", "STARTER.md\nFORGE2-CONTRACT.md"),
+            i22_call("call_e1f92443", "cat STARTER.md", true),
+            i22_result("call_e1f92443", "# Starter and offline tools"),
+            Message::user().with_text(i22_turn_context("2026-10-19 02:59:00")),
+            i22_call("call_e774f517", "npm run lint", true),
+            i22_result("call_e774f517", "No issues found."),
+            i22_call("call_b2dbfea5", "cat manifest.yml", true),
+            i22_result("call_b2dbfea5", "modules:"),
+            Message::user().with_text(i22_turn_context("2026-10-19 03:07:00")),
+            i22_call("call_5f880360", "cat src/index.js", true),
+            i22_result("call_5f880360", "import Resolver from '@forge/resolver';"),
+        ]
+    }
+
+    fn i22_request(stored: &[Message]) -> Vec<Value> {
+        // goose's messages_for_provider (crates/goose/src/agents/reply_parts.rs) hands a kept
+        // turn-context block to the formatter on the tool-result message before it.
+        let mut sent: Vec<Message> = Vec::new();
+        for message in stored {
+            let kept_block = matches!(message.content.as_slice(),
+                [MessageContent::Text(t)] if crate::conversation::is_turn_context_text(&t.text));
+            match sent.last_mut() {
+                Some(host) if kept_block && host.role == Role::User => {
+                    host.content.extend(message.content.clone())
+                }
+                _ => sent.push(message.clone()),
+            }
+        }
+        let (fixed, _) = crate::conversation::fix_conversation(
+            crate::conversation::Conversation::new_unvalidated(sent),
+        );
+        // The options goose's openai provider sends a local engine with (goose-providers openai.rs).
+        format_messages_with_options(
+            fixed.messages(),
+            &ImageFormat::OpenAi,
+            OpenAiFormatOptions {
+                preserve_thinking_context: true,
+                turn_context_joins_tool_results: true,
+                text_only_engine: false,
+            },
+        )
+    }
+
+    #[test]
+    fn i22_sequential_turns_keep_each_tool_call_before_its_own_result() {
+        // Before the fix every later call was folded into the second assistant message, the roles
+        // the live engine logged: [user, assistant, tool, assistant, tool, tool, tool, tool].
+        let spec = i22_request(&i22_stored_history());
+        let roles: Vec<&str> = spec.iter().map(|m| m["role"].as_str().unwrap()).collect();
+        assert_eq!(
+            roles,
+            [
+                "user",
+                "assistant",
+                "tool",
+                "assistant",
+                "tool",
+                "assistant",
+                "tool",
+                "assistant",
+                "tool",
+                "assistant",
+                "tool"
+            ],
+            "{spec:#?}"
+        );
+        for pair in spec[1..].chunks(2) {
+            let calls = pair[0]["tool_calls"].as_array().unwrap();
+            assert_eq!(calls.len(), 1, "one call per stored turn: {spec:#?}");
+            assert_eq!(pair[1]["tool_call_id"], calls[0]["id"]);
+        }
+    }
+
+    #[test]
+    fn i22_each_request_extends_the_previous_one() {
+        // The prompt-cache symptom: request N must be a prefix of request N+1, so an engine resumes
+        // from the previous turn instead of re-reading everything after the second assistant message.
+        let history = i22_stored_history();
+        let mut previous: Option<Vec<Value>> = None;
+        // Cut where goose sends a request: after a turn's results and the block written with them.
+        for end in 3..=history.len() {
+            let next_is_model_call = history.get(end).is_none_or(|m| m.role == Role::Assistant);
+            if history[end - 1].role != Role::User || !next_is_model_call {
+                continue;
+            }
+            let spec = i22_request(&history[..end]);
+            if let Some(previous) = &previous {
+                assert!(
+                    spec.len() >= previous.len() && spec[..previous.len()] == previous[..],
+                    "request over {end} stored messages rewrote the previous request:\nprevious {previous:#?}\nnow {spec:#?}"
+                );
+            }
+            previous = Some(spec);
+        }
+    }
+
+    #[test]
+    fn i22_blank_reasoning_is_no_evidence_of_a_split() {
+        for blank in ["\n", "\n\n", " \t\n"] {
+            let mut messages = vec![
+                json!({"role": "assistant", "content": null, "tool_calls": [{"id": "tc1", "type": "function", "function": {"name": "shell", "arguments": "{}"}}], "reasoning_content": blank}),
+                json!({"role": "tool", "tool_call_id": "tc1", "content": "result1"}),
+                json!({"role": "assistant", "content": null, "tool_calls": [{"id": "tc2", "type": "function", "function": {"name": "shell", "arguments": "{}"}}], "reasoning_content": blank}),
+                json!({"role": "tool", "tool_call_id": "tc2", "content": "result2"}),
+            ];
+            let before = messages.clone();
+            merge_split_tool_call_messages(&mut messages);
+            assert_eq!(messages, before, "reasoning {blank:?}");
+        }
+    }
+
+    #[test]
+    fn i22_a_turn_context_on_a_tool_result_ends_the_turn() {
+        let tool_with_block = format!("result1\n{}", i22_turn_context("2026-10-19 02:59:00"));
+        let mut messages = vec![
+            json!({"role": "assistant", "content": null, "tool_calls": [{"id": "tc1", "type": "function", "function": {"name": "read", "arguments": "{}"}}], "reasoning_content": "thinking..."}),
+            json!({"role": "tool", "tool_call_id": "tc1", "content": tool_with_block}),
+            json!({"role": "assistant", "content": null, "tool_calls": [{"id": "tc2", "type": "function", "function": {"name": "write", "arguments": "{}"}}], "reasoning_content": "thinking..."}),
+            json!({"role": "tool", "tool_call_id": "tc2", "content": "result2"}),
+        ];
+        let before = messages.clone();
+        merge_split_tool_call_messages(&mut messages);
+        assert_eq!(messages, before);
+
+        // Control: a tool output that only QUOTES the tag (no block shape) still merges.
+        let mut quoted = before.clone();
+        quoted[1]["content"] = json!("grep found <turn-context> in a file");
+        merge_split_tool_call_messages(&mut quoted);
+        assert_eq!(quoted.len(), 3);
+        assert_eq!(quoted[0]["tool_calls"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn i22_a_real_split_with_reasoning_still_merges_after_its_last_result() {
+        // One response with two calls (agent.rs clones the reasoning onto each), then the next
+        // turn with the same reasoning text after a turn-context block: only the split merges.
+        let mut messages = vec![
+            json!({"role": "assistant", "content": null, "tool_calls": [{"id": "tc1", "type": "function", "function": {"name": "read", "arguments": "{}"}}], "reasoning_content": "plan"}),
+            json!({"role": "tool", "tool_call_id": "tc1", "content": "r1"}),
+            json!({"role": "assistant", "content": null, "tool_calls": [{"id": "tc2", "type": "function", "function": {"name": "read", "arguments": "{}"}}], "reasoning_content": "plan"}),
+            json!({"role": "tool", "tool_call_id": "tc2", "content": format!("r2\n{}", i22_turn_context("2026-10-19 03:00:00"))}),
+            json!({"role": "assistant", "content": null, "tool_calls": [{"id": "tc3", "type": "function", "function": {"name": "write", "arguments": "{}"}}], "reasoning_content": "plan"}),
+            json!({"role": "tool", "tool_call_id": "tc3", "content": "r3"}),
+        ];
+        merge_split_tool_call_messages(&mut messages);
+        let roles: Vec<&str> = messages
+            .iter()
+            .map(|m| m["role"].as_str().unwrap())
+            .collect();
+        assert_eq!(roles, ["assistant", "tool", "tool", "assistant", "tool"]);
+        assert_eq!(messages[0]["tool_calls"].as_array().unwrap().len(), 2);
+        assert_eq!(messages[3]["tool_calls"][0]["id"], "tc3");
     }
 
     #[test]
@@ -5712,6 +6139,42 @@ data: [DONE]"#;
                 }) => assert_eq!(details, "Provider returned error", "for {line}"),
                 other => panic!("expected RateLimitExceeded for {line}, got {other:?}"),
             }
+        }
+    }
+
+    /// OpenRouter reports an over-long request after its HTTP 200 as a chunk with a top-level
+    /// `error` and `finish_reason: "error"` (its documented MidStreamError shape, with
+    /// `metadata.error_type` from the Typed error codes table); the message is the one OpenRouter
+    /// answers pre-stream (aider-desk#361, 2025). Each is the same class the HTTP 400 maps to, so
+    /// the agent compacts instead of resending it as a server fault.
+    #[test]
+    fn test_in_stream_context_length_is_the_http_400_class() {
+        let message = "This endpoint's maximum context length is 131072 tokens. However, you \
+                       requested about 272464 tokens (258978 of text input, 3486 of tool input, \
+                       10000 in the output). Please reduce the length of either one, or use the \
+                       \\\"middle-out\\\" transform to compress your prompt automatically.";
+        let documented = json!({
+            "id": "gen-abc123", "object": "chat.completion.chunk", "created": 1,
+            "model": "x-ai/grok-4.7", "provider": "xAI",
+            "error": {"code": 400, "message": "Provider returned error",
+                      "metadata": {"error_type": "context_length_exceeded"}},
+            "choices": [{"index": 0, "delta": {"content": ""}, "finish_reason": "error"}]
+        })
+        .to_string();
+        let worded = format!(r#"{{"error":{{"code":400,"message":"{message}"}}}}"#);
+        for line in [
+            documented.as_str(),
+            worded.as_str(),
+            r#"{"error":{"message":"too long","code":"context_length_exceeded"}}"#,
+        ] {
+            assert!(
+                matches!(
+                    parse_streaming_chunk(line),
+                    Err(ProviderError::ContextLengthExceeded(_))
+                ),
+                "expected ContextLengthExceeded for {line}, got {:?}",
+                parse_streaming_chunk(line)
+            );
         }
     }
 
@@ -6980,6 +7443,92 @@ mod unparsed_tool_call_tests {
         assert!(failed.is_empty());
     }
 
+    /// I-28: the engine's loop guard ends a looping reply with `finish_reason: length` plus
+    /// `rapid_mlx_stop_reason: repetition`; the reply says it looped, not that it was cut for length.
+    #[tokio::test]
+    async fn a_loop_stop_is_stamped_as_a_loop_not_as_a_length_cut() {
+        let looped = vec![
+            frame(
+                json!({"content": "do it. First, config.js."}),
+                None,
+                json!({}),
+            ),
+            frame(
+                json!({"content": " do it. First, config.js."}),
+                Some("length"),
+                json!({"rapid_mlx_stop_reason": "repetition"}),
+            ),
+            "data: [DONE]".to_string(),
+        ];
+        let (text, failed, calls, _) = decode(looped).await;
+        assert!(text.contains(OUTPUT_STOPPED_AS_LOOP), "{text}");
+        assert!(!text.contains(OUTPUT_TRUNCATED_BY_LENGTH), "{text}");
+        assert!(failed.is_empty() && calls.is_empty());
+
+        // A reasoning-only loop (no text) is stamped too, never read as an empty turn.
+        let thinking_loop = vec![
+            frame(json!({"reasoning": "again and again"}), None, json!({})),
+            frame(
+                json!({}),
+                Some("length"),
+                json!({"rapid_mlx_stop_reason": "repetition"}),
+            ),
+            "data: [DONE]".to_string(),
+        ];
+        assert_eq!(
+            decode(thinking_loop).await.0,
+            OUTPUT_STOPPED_AS_LOOP.trim_start()
+        );
+
+        // Any other engine's length stop keeps the length stamp.
+        let other = vec![
+            frame(
+                json!({"content": "Plan"}),
+                Some("length"),
+                json!({"stop_reason": "x"}),
+            ),
+            "data: [DONE]".to_string(),
+        ];
+        let text = decode(other).await.0;
+        assert!(
+            text.contains(OUTPUT_TRUNCATED_BY_LENGTH) && !text.contains(OUTPUT_STOPPED_AS_LOOP)
+        );
+    }
+
+    /// I-28 review: the loop is in a tool call's arguments. Before, the closing chunk's stop reason
+    /// was never read in the call-accumulating loop, so a call whose arguments happened to parse ran
+    /// as a normal call. Now the cut call fails and names the loop; a plain length cut is unchanged.
+    #[tokio::test]
+    async fn a_loop_stop_inside_a_tool_call_fails_that_call_with_the_loop_named() {
+        let frames = |extra: Value| {
+            vec![
+                frame(json!({"content": "Writing it."}), None, json!({})),
+                frame(
+                    json!({"tool_calls": [{"index": 0, "id": "call_1", "type": "function",
+                        "function": {"name": "write", "arguments": ""}}]}),
+                    None,
+                    json!({}),
+                ),
+                frame(
+                    json!({"tool_calls": [{"index": 0, "function": {"arguments":
+                        "{\"path\": \"a.js\", \"content\": \"x = 1; x = 1; x = 1;\"}"}}]}),
+                    None,
+                    json!({}),
+                ),
+                frame(json!({}), Some("length"), extra),
+                "data: [DONE]".to_string(),
+            ]
+        };
+        let (_, failed, calls, _) =
+            decode(frames(json!({"rapid_mlx_stop_reason": "repetition"}))).await;
+        assert!(calls.is_empty(), "{calls:?}");
+        assert_eq!(failed, vec![LOOP_STOPPED_TOOL_CALL.to_string()]);
+
+        let (_, failed, calls, _) = decode(frames(json!({}))).await;
+        assert_eq!(calls, vec!["write".to_string()]);
+        assert!(failed.is_empty(), "{failed:?}");
+    }
+
     #[tokio::test]
     async fn a_reasoning_only_reply_cut_by_length_is_stamped() {
         // aion-labs/aion-3.5 on 2026-10-07: 32,768 tokens of reasoning, no text, no call, and a final
@@ -7142,6 +7691,61 @@ mod text_only_engine_tests {
             wire.matches(r#""type":"image_url""#).count(),
             2,
             "both image parts go out: {wire}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tool_image_order_tests {
+    use super::*;
+    use rmcp::model::{CallToolRequestParams, CallToolResult, Content};
+
+    /// RUN-ISSUES I-19 end to end: two parallel tool calls, the first result carries an image.
+    /// The formatted request must keep both tool results directly after the assistant call
+    /// (Mistral 400 "Unexpected role 'tool' after role 'user'" otherwise).
+    #[test]
+    fn test_formatted_parallel_tool_image_has_no_user_between_tool_results() {
+        let history = vec![
+            Message::user().with_text("check the screenshot and the code"),
+            Message::assistant()
+                .with_tool_request("call_img", Ok(CallToolRequestParams::new("read_image")))
+                .with_tool_request("call_sh", Ok(CallToolRequestParams::new("shell"))),
+            Message::user()
+                .with_tool_response(
+                    "call_img",
+                    Ok(CallToolResult::success(vec![
+                        Content::text("Loaded image."),
+                        Content::image("iVBORw0KGgo=", "image/png"),
+                    ])),
+                )
+                .with_tool_response(
+                    "call_sh",
+                    Ok(CallToolResult::success(vec![Content::text("ok")])),
+                ),
+        ];
+        let mut images = ImageReport::default();
+        let spec = format_messages_reporting_images(
+            &history,
+            &ImageFormat::OpenAi,
+            OpenAiFormatOptions::default(),
+            &mut images,
+        );
+        let roles: Vec<&str> = spec.iter().map(|m| m["role"].as_str().unwrap()).collect();
+        for w in spec.windows(2) {
+            assert!(
+                !(w[0]["role"] == "user" && w[1]["role"] == "tool"),
+                "tool after user in {roles:?}"
+            );
+        }
+        let tools: Vec<&str> = spec
+            .iter()
+            .filter(|m| m["role"] == "tool")
+            .map(|m| m["tool_call_id"].as_str().unwrap())
+            .collect();
+        assert_eq!(tools, ["call_img", "call_sh"]);
+        assert!(
+            spec.iter().any(is_image_only_user_message),
+            "image still sent"
         );
     }
 }

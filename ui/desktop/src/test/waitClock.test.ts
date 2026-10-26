@@ -31,8 +31,14 @@ const runsOnTestClock = (options: ts.Expression | undefined, sf: ts.SourceFile):
       p.initializer.getText(sf) === 'testClock()'
   );
 
+// Only a file that names `timeout` (a testing-library wait's own clock) or a vitest wait can hold an
+// offending wait. Parsing all ~540 test files with the TypeScript compiler made this guard the slow
+// test it polices: 0.4-1 s alone, past 5 s in five loaded CI runs.
+const MAY_OFFEND = /\btimeout\b|\bvi\s*\.\s*wait(For|Until)\b/;
+
 function waitsOnTheirOwnClock(file: string): string[] {
   const text = fs.readFileSync(file, 'utf8');
+  if (!MAY_OFFEND.test(text)) return [];
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
   const found: string[] = [];
   const visit = (node: ts.Node) => {
@@ -58,6 +64,16 @@ function waitsOnTheirOwnClock(file: string): string[] {
   visit(sf);
   return found;
 }
+
+it('the prefilter keeps every shape an offending wait can take', () => {
+  for (const offending of [
+    'await screen.findByText("x", {}, { timeout: 500 });',
+    'await waitFor(() => check(), { timeout });',
+    'await vi.waitFor(() => check());',
+    'await vi\n    .waitUntil(() => check());',
+  ])
+    expect(MAY_OFFEND.test(offending), offending).toBe(true);
+});
 
 it('every wait in a test runs on the test’s own clock (Q-383)', () => {
   const files = (fs.readdirSync(SRC, { recursive: true }) as string[])

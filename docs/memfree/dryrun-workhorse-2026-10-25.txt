@@ -1,0 +1,112 @@
+memfree dry run (nothing executed): 562 processes, self pid 65933, own engine port 8090 (0 own engine pid(s), 1 other MLX engine(s)), 280 launchd job pid(s)
+
+== LEGACY 3.0.130 soft (one click, no confirm): 2 group(s), 28.0 GB ==
+    27.4 GB  mlx:97100                                another MLX engine (pid 97100)
+     0.6 GB  ai:/Applications/LM Studio.app           LM Studio  [REST refused, would run `lms unload --all`]
+
+== NEW soft (one click): 0 group(s), 0.0 GB ==
+
+== NEW nuclear default selection (ticked, one confirm): 1 group(s), 0.6 GB ==
+     0.6 GB  ai:/Applications/LM Studio.app           LM Studio
+
+== NEW nuclear offered but NOT ticked (in use; owner must tick it): 1 group(s), 27.4 GB ==
+    27.4 GB  mlx:97100                                another MLX engine (pid 97100)  [used by: sshd-session (pid 97112) is connected to it]
+
+== PROTECTED (never offered): 15 group(s), 9.0 GB ==
+     5.5 GB  system                                   macOS and system services  [part of macOS]
+     0.8 GB  app:dev.warp.Warp-Stable                 Warp  [part of a claude or goose session]
+     0.8 GB  job:claude                               claude  [part of a claude or goose session]
+     0.6 GB  app:com.google.Chrome                    Google Chrome  [a browser driven by automation (remote debugging)]
+     0.5 GB  job:Runner.Listener                      Runner.Listener  [launchd job actions.runner.leanzero-srl-leanzero-cognirunner-forgeapp.workhorse-cr]
+     0.3 GB  app:net.leanzero.goose-swarm             Goose Swarm  [a browser driven by automation (remote debugging)]
+     0.2 GB  job:python3.12                           python3.12  [a heavy-run/node-run job]
+     0.1 GB  job:node                                 node  [launchd job actions.runner.leanzero-srl-leanzero-cognirunner-forgeapp.workhorse-cr]
+     0.0 GB  app:pro.betterdisplay.BetterDisplay      BetterDisplay  [launchd job pro.betterdisplay.BetterDisplay-sparkle-updater]
+     0.0 GB  job:headscale                            headscale  [launchd job com.leanzero.headscale]
+     0.0 GB  job:postgres                             postgres  [launchd job sh.brew.postgresql@16]
+     0.0 GB  app:org.webkit.Playwright                Playwright  [launchd job com.user.mcp-web-search]
+     0.0 GB  job:esbuild                              esbuild  [launchd job com.leanzero.link-auth]
+     0.0 GB  app:org.sparkle-project.Sparkle.Updater  Updater  [launchd job pro.betterdisplay.BetterDisplay-sparkle-progress]
+     0.0 GB  job:memfree_dryrun                       memfree_dryrun  [started over ssh]
+
+== NEVER-TOUCH (default list): 0 group(s), 0.0 GB ==
+
+== ALL model servers / MLX engines (with users): 2 group(s), 28.0 GB ==
+    27.4 GB  mlx:97100                                another MLX engine (pid 97100)  [used by: sshd-session (pid 97112) is connected to it]
+     0.6 GB  ai:/Applications/LM Studio.app           LM Studio  [REST refused, would run `lms unload --all`]
+
+######## U2 re-run 2026-10-25 21:38 laptop time — final branch code (HEAD 10fded73e), nothing executed ########
+memfree dry run (nothing executed): 566 processes, self pid 65933, own engine port 8090 (0 own engine pid(s), 1 other MLX engine(s)), 281 launchd job pid(s)
+
+== LEGACY 3.0.130 soft (one click, no confirm): 2 group(s), 30.3 GB ==
+    29.7 GB  mlx:97100                                another MLX engine (pid 97100)
+     0.6 GB  ai:/Applications/LM Studio.app           LM Studio  [REST refused, would run `lms unload --all`]
+
+== NEW soft (one click): 0 group(s), 0.0 GB ==
+
+== NEW nuclear default selection (ticked, one confirm): 1 group(s), 0.6 GB ==
+     0.6 GB  ai:/Applications/LM Studio.app           LM Studio
+
+== NEW nuclear offered but NOT ticked (in use; owner must tick it): 1 group(s), 29.7 GB ==
+    29.7 GB  mlx:97100                                another MLX engine (pid 97100)  [used by: sshd-session (pid 97112) is connected to it]
+
+== PROTECTED (never offered): 17 group(s), 40.7 GB ==
+    32.0 GB  job:python3.12                           python3.12  [a heavy-run/node-run job]
+     5.4 GB  system                                   macOS and system services  [part of macOS]
+     0.8 GB  app:dev.warp.Warp-Stable                 Warp  [part of a claude or goose session]
+     0.8 GB  job:claude                               claude  [part of a claude or goose session]
+     0.6 GB  app:com.google.Chrome                    Google Chrome  [a browser driven by automation (remote debugging)]
+     0.5 GB  job:Runner.Listener                      Runner.Listener  [launchd job actions.runner.leanzero-srl-leanzero-cognirunner-forgeapp.workhorse-cr]
+     0.3 GB  app:net.leanzero.goose-swarm             Goose Swarm  [a browser driven by automation (remote debugging)]
+     0.1 GB  job:node                                 node  [launchd job actions.runner.leanzero-srl-leanzero-cognirunner-forgeapp.workhorse-cr]
+     0.0 GB  app:pro.betterdisplay.BetterDisplay      BetterDisplay  [launchd job pro.betterdisplay.BetterDisplay-sparkle-updater]
+     0.0 GB  job:headscale                            headscale  [launchd job com.leanzero.headscale]
+     0.0 GB  job:postgres                             postgres  [launchd job sh.brew.postgresql@16]
+     0.0 GB  job:gh                                   gh  [launchd job net.leanzero.runner-watch]
+     0.0 GB  app:org.webkit.Playwright                Playwright  [launchd job com.user.mcp-web-search]
+     0.0 GB  job:esbuild                              esbuild  [launchd job com.leanzero.link-auth]
+     0.0 GB  app:org.python.python                    Python  [launchd job net.leanzero.runner-watch]
+     0.0 GB  app:org.sparkle-project.Sparkle.Updater  Updater  [launchd job pro.betterdisplay.BetterDisplay-sparkle-progress]
+     0.0 GB  job:memfree_dryrun_u2                    memfree_dryrun_u2  [started over ssh]
+
+== NEVER-TOUCH (default list): 0 group(s), 0.0 GB ==
+
+== ALL model servers / MLX engines (with users): 2 group(s), 30.3 GB ==
+    29.7 GB  mlx:97100                                another MLX engine (pid 97100)  [used by: sshd-session (pid 97112) is connected to it]
+     0.6 GB  ai:/Applications/LM Studio.app           LM Studio  [REST refused, would run `lms unload --all`]
+pgrep teams|outlook|slack|zoom on workhorse: none
+
+=== 2026-10-25 22:15:16 after review fix (desktop a4eb3311c/81488e799; engine 1ad231904 1e41015ac 37b943c12) ===
+memfree dry run (nothing executed): 564 processes, self pid 65933, own engine port 8090 (0 own engine pid(s), 0 other MLX engine(s)), 281 launchd job pid(s)
+
+== LEGACY 3.0.130 soft (one click, no confirm): 1 group(s), 0.6 GB ==
+     0.6 GB  ai:/Applications/LM Studio.app           LM Studio  [REST refused, would run `lms unload --all`]
+
+== NEW soft (one click): 0 group(s), 0.0 GB ==
+
+== NEW nuclear default selection (ticked, one confirm): 0 group(s), 0.0 GB ==
+
+== NEW nuclear offered but NOT ticked (in use; owner must tick it): 1 group(s), 0.6 GB ==
+     0.6 GB  ai:/Applications/LM Studio.app           LM Studio  [used by: LM Link: lmlink-connector (pid 14330) listens on 34267, so other Macs may be using this LM Studio]
+
+== PROTECTED (never offered): 15 group(s), 14.9 GB ==
+     5.9 GB  job:python3.12                           python3.12  [a heavy-run/node-run job]
+     5.5 GB  system                                   macOS and system services  [part of macOS]
+     0.8 GB  app:dev.warp.Warp-Stable                 Warp  [part of a claude or goose session]
+     0.8 GB  job:claude                               claude  [part of a claude or goose session]
+     0.6 GB  app:com.google.Chrome                    Google Chrome  [a browser driven by automation (remote debugging)]
+     0.5 GB  app:net.leanzero.goose-swarm             Goose Swarm  [a browser driven by automation (remote debugging)]
+     0.5 GB  job:Runner.Listener                      Runner.Listener  [launchd job actions.runner.leanzero-srl-leanzero-cognirunner-forgeapp.workhorse-cr]
+     0.1 GB  job:node                                 node  [launchd job actions.runner.leanzero-srl-leanzero-cognirunner-forgeapp.workhorse-cr]
+     0.0 GB  app:pro.betterdisplay.BetterDisplay      BetterDisplay  [launchd job pro.betterdisplay.BetterDisplay-sparkle-updater]
+     0.0 GB  job:headscale                            headscale  [launchd job com.leanzero.headscale]
+     0.0 GB  job:postgres                             postgres  [launchd job sh.brew.postgresql@16]
+     0.0 GB  app:org.webkit.Playwright                Playwright  [launchd job com.user.mcp-web-search]
+     0.0 GB  job:esbuild                              esbuild  [launchd job com.leanzero.link-auth]
+     0.0 GB  app:org.sparkle-project.Sparkle.Updater  Updater  [launchd job pro.betterdisplay.BetterDisplay-sparkle-progress]
+     0.0 GB  job:memfree_dryrun_c                     memfree_dryrun_c  [started over ssh]
+
+== NEVER-TOUCH (default list): 0 group(s), 0.0 GB ==
+
+== ALL model servers / MLX engines (with users): 1 group(s), 0.6 GB ==
+     0.6 GB  ai:/Applications/LM Studio.app           LM Studio  [REST refused, would run `lms unload --all` | used by: LM Link: lmlink-connector (pid 14330) listens on 34267, so other Macs may be using this LM Studio]

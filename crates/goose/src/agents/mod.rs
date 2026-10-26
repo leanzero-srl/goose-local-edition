@@ -7,6 +7,7 @@ pub mod extension_malware_check;
 pub mod extension_manager;
 pub mod final_output_tool;
 pub(crate) mod large_response_handler;
+mod loop_collapse;
 pub mod mcp_client;
 pub mod moim;
 pub mod platform_extensions;
@@ -29,7 +30,8 @@ pub mod types;
 pub mod validate_extensions;
 
 pub use agent::{
-    Agent, AgentConfig, AgentEvent, ExtensionLoadResult, GoosePlatform, MAX_TURNS_MESSAGE,
+    harness_nudge, Agent, AgentConfig, AgentEvent, ExtensionLoadResult, GoosePlatform,
+    EMPTY_TURN_CONTINUATION, LENGTH_CUT_CONTINUATION, MAX_TURNS_MESSAGE,
 };
 pub use container::Container;
 pub use execute_commands::COMPACT_TRIGGERS;

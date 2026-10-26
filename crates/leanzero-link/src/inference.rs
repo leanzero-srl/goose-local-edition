@@ -450,6 +450,15 @@ impl InflightStreams {
         })
     }
 
+    /// How many relay streams this service is serving right now (the node-load inference count).
+    pub fn len(&self) -> usize {
+        self.held.lock().unwrap_or_else(|e| e.into_inner()).len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn liveness(&self, id: &str) -> StreamLiveness {
         StreamLiveness {
             epoch: self.epoch.clone(),

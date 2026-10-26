@@ -132,4 +132,41 @@ describe('saved provider connection checks', () => {
     await acpListProviderDetails();
     expect(status.mock.calls.filter(([request]) => request.checkConnections)).toHaveLength(3);
   });
+
+  it('a local server that is not started is carried as such: no error, and not proven', async () => {
+    const client = {
+      goose: {
+        providersConfigStatus_unstable: vi.fn().mockResolvedValue({
+          statuses: [
+            {
+              providerId: 'openai',
+              isConfigured: true,
+              connectionChecked: true,
+              connectionError: null,
+              localServerNotRunning: 'http://127.0.0.1:8090',
+            },
+          ],
+        }),
+        providersList_unstable: vi.fn().mockResolvedValue({
+          entries: [
+            {
+              providerId: 'openai',
+              providerName: 'OpenAI',
+              configured: true,
+              configKeys: [],
+              models: [],
+              defaultModel: 'gpt-4o',
+            },
+          ],
+        }),
+      },
+    };
+    vi.mocked(getAcpClient).mockResolvedValue(
+      client as unknown as Awaited<ReturnType<typeof getAcpClient>>
+    );
+    const [openai] = await acpListProviderDetails();
+    expect(openai.connection_error).toBeNull();
+    expect(openai.local_server_not_running).toBe('http://127.0.0.1:8090');
+    expect(openai.is_configured).toBe(false);
+  });
 });

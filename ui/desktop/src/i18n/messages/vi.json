@@ -848,6 +848,12 @@
   "cloudProviders.notOfficialText": {
     "defaultMessage": "Yêu cầu đi đến {where}, không phải api.openai.com."
   },
+  "cloudProviders.notRunning": {
+    "defaultMessage": "Chưa chạy"
+  },
+  "cloudProviders.notRunningText": {
+    "defaultMessage": "Chưa có gì chạy tại {origin}. Hãy khởi động máy chủ cục bộ, rồi kiểm tra lại kết nối."
+  },
   "cloudProviders.notSetUp": {
     "defaultMessage": "Chưa thiết lập"
   },
@@ -2621,6 +2627,177 @@
   "formingPanel.textHeading": {
     "defaultMessage": "Văn bản viết bên cạnh các lệnh gọi ({chars} ký tự) — không thuộc câu trả lời"
   },
+  "freeMemory.after": {
+    "defaultMessage": "Trước <b>{before} GB</b> trống, giờ <b>{after} GB</b> trống (đã giải phóng {freed} GB)."
+  },
+  "freeMemory.afterFits": {
+    "defaultMessage": "Mô hình giờ đã vừa."
+  },
+  "freeMemory.afterShort": {
+    "defaultMessage": "Vẫn thiếu <b>{gb} GB</b>."
+  },
+  "freeMemory.altPeer": {
+    "defaultMessage": "Chạy trên {mac} thay vào đó (ở đó trống <b>{gb} GB</b>)"
+  },
+  "freeMemory.altPeerNoFree": {
+    "defaultMessage": "Chạy trên <b>{mac}</b> thay vào đó"
+  },
+  "freeMemory.altSmaller": {
+    "defaultMessage": "Một biến thể nhỏ hơn vừa: {model} (cần <b>{gb} GB</b>)"
+  },
+  "freeMemory.budget": {
+    "defaultMessage": "<b>{free} GB</b> trống cho mô hình, trên tổng {total} GB"
+  },
+  "freeMemory.cannotFit": {
+    "defaultMessage": "Kể cả khi giải phóng mọi thứ liệt kê ở đây (<b>{gb} GB</b>), mô hình này vẫn thiếu <b>{short} GB</b>."
+  },
+  "freeMemory.cat.aiServer": {
+    "defaultMessage": "Máy chủ mô hình"
+  },
+  "freeMemory.cat.gooseEngine": {
+    "defaultMessage": "Engine của goose"
+  },
+  "freeMemory.cat.gooseOrphan": {
+    "defaultMessage": "Phần goose để lại"
+  },
+  "freeMemory.cat.job": {
+    "defaultMessage": "Tác vụ"
+  },
+  "freeMemory.cat.system": {
+    "defaultMessage": "macOS và phần còn lại"
+  },
+  "freeMemory.cat.userApp": {
+    "defaultMessage": "Ứng dụng"
+  },
+  "freeMemory.close": {
+    "defaultMessage": "Đóng"
+  },
+  "freeMemory.fitsByGooseOwned": {
+    "defaultMessage": "Giải phóng bộ nhớ của chính goose (<b>{gb} GB</b>) là đủ cho mô hình này."
+  },
+  "freeMemory.fitsWithApps": {
+    "defaultMessage": "Mô hình này vừa sau khi giải phóng <b>{gb} GB</b>: bộ nhớ của chính goose và thoát {apps}."
+  },
+  "freeMemory.fitsWithAppsOnly": {
+    "defaultMessage": "Mô hình này vừa sau khi thoát {apps}, giải phóng <b>{gb} GB</b>."
+  },
+  "freeMemory.forceStop": {
+    "defaultMessage": "Buộc dừng"
+  },
+  "freeMemory.forceStopBody": {
+    "defaultMessage": "{app} không thoát khi được yêu cầu, có thể vì có công việc chưa lưu. Buộc dừng sẽ kết thúc ứng dụng trên {mac} mà không lưu. Công việc chưa lưu trong {app} sẽ bị mất."
+  },
+  "freeMemory.forceStopConfirm": {
+    "defaultMessage": "Buộc dừng {app}"
+  },
+  "freeMemory.forceStopTitle": {
+    "defaultMessage": "Buộc dừng {app}?"
+  },
+  "freeMemory.freeFailed": {
+    "defaultMessage": "Không thể giải phóng bộ nhớ: {reason}"
+  },
+  "freeMemory.freeOwn": {
+    "defaultMessage": "Giải phóng phần của goose ({gb} GB)"
+  },
+  "freeMemory.itemFailed": {
+    "defaultMessage": "{label}: {message}"
+  },
+  "freeMemory.keep": {
+    "defaultMessage": "Giữ mở"
+  },
+  "freeMemory.keepRunning": {
+    "defaultMessage": "Để nó chạy tiếp"
+  },
+  "freeMemory.leftAlone": {
+    "defaultMessage": "Để nguyên"
+  },
+  "freeMemory.loading": {
+    "defaultMessage": "Đang đo những gì chiếm bộ nhớ…"
+  },
+  "freeMemory.neverTouchReason": {
+    "defaultMessage": "trong danh sách không bao giờ chạm ({entry})"
+  },
+  "freeMemory.nothingOwn": {
+    "defaultMessage": "goose không giữ bộ nhớ nào có thể giải phóng"
+  },
+  "freeMemory.nuclearBack": {
+    "defaultMessage": "Quay lại"
+  },
+  "freeMemory.nuclearConfirmBody": {
+    "defaultMessage": "goose yêu cầu từng ứng dụng đã chọn thoát và gỡ tải từng máy chủ mô hình đã chọn. Ứng dụng chỉ được yêu cầu thoát. Ứng dụng nào không thoát sẽ được để chạy tiếp và được báo cáo, không bị dừng. Các mục được bảo vệ không bao giờ bị động đến."
+  },
+  "freeMemory.nuclearConfirmKeep": {
+    "defaultMessage": "Giữ tất cả"
+  },
+  "freeMemory.nuclearConfirmTitle": {
+    "defaultMessage": "Giải phóng {gb} GB trên {mac}?"
+  },
+  "freeMemory.nuclearFree": {
+    "defaultMessage": "Giải phóng {gb} GB"
+  },
+  "freeMemory.nuclearGooseOwn": {
+    "defaultMessage": "Bộ nhớ riêng của goose"
+  },
+  "freeMemory.nuclearIntro": {
+    "defaultMessage": "Mọi thứ không ai dùng đều đã được đánh dấu. Bỏ đánh dấu những gì bạn muốn giữ. Mục được bảo vệ không bao giờ bị chạm tới."
+  },
+  "freeMemory.nuclearOpen": {
+    "defaultMessage": "Giải phóng mọi thứ trừ mục được bảo vệ"
+  },
+  "freeMemory.nuclearProtectedHead": {
+    "defaultMessage": "Không bao giờ chạm tới"
+  },
+  "freeMemory.nuclearTotal": {
+    "defaultMessage": "Đã đánh dấu: <b>{gb} GB</b>"
+  },
+  "freeMemory.protectedChip": {
+    "defaultMessage": "Được bảo vệ"
+  },
+  "freeMemory.quit": {
+    "defaultMessage": "Thoát"
+  },
+  "freeMemory.quitBody": {
+    "defaultMessage": "goose yêu cầu {app} trên {mac} thoát theo cách thông thường. Hãy lưu công việc ở đó trước: mọi thứ chưa lưu có thể bị mất."
+  },
+  "freeMemory.quitConfirm": {
+    "defaultMessage": "Thoát {app}"
+  },
+  "freeMemory.quitTitle": {
+    "defaultMessage": "Thoát {app}?"
+  },
+  "freeMemory.readFailed": {
+    "defaultMessage": "Không thể đo bộ nhớ: {reason}"
+  },
+  "freeMemory.remoteQuitOff": {
+    "defaultMessage": "{mac} không cho phép các Mac khác thoát ứng dụng hoặc gỡ máy chủ mô hình của nó, nên từ đây chỉ có thể giải phóng bộ nhớ của chính goose. Để cho phép, hãy mở goose trên {mac}, vào Cài đặt › Ứng dụng và bật “Cho phép các Mac được liên kết thoát ứng dụng trên Mac này”. Hoặc thoát chúng ngay trên {mac}."
+  },
+  "freeMemory.onlyThere": {
+    "defaultMessage": "Chỉ trên {mac}"
+  },
+  "freeMemory.title": {
+    "defaultMessage": "Giải phóng bộ nhớ trên {mac}"
+  },
+  "freeMemory.unload": {
+    "defaultMessage": "Gỡ tải"
+  },
+  "freeMemory.unloadBody": {
+    "defaultMessage": "goose gỡ các mô hình mà {server} đang giữ trên {mac} (động cơ MLX được yêu cầu dừng). Bên đang dùng nó sẽ phải tải lại mô hình."
+  },
+  "freeMemory.unloadConfirm": {
+    "defaultMessage": "Gỡ tải {server}"
+  },
+  "freeMemory.unloadInUse": {
+    "defaultMessage": "Đang được dùng, việc này sẽ dừng công việc của họ:"
+  },
+  "freeMemory.unloadTitle": {
+    "defaultMessage": "Gỡ tải {server}?"
+  },
+  "freeMemory.usedBy": {
+    "defaultMessage": "Đang dùng: {who}"
+  },
+  "freeMemoryEntry.open": {
+    "defaultMessage": "Giải phóng bộ nhớ"
+  },
   "gooseImportSection.chooseSource": {
     "defaultMessage": "Chọn thư mục nguồn"
   },
@@ -4022,6 +4199,144 @@
   "loops.tick.yielded": {
     "defaultMessage": "Đã nhường cho lượt của bạn trong \"{chat}\""
   },
+  "macLoad.allowJobs": {
+    "defaultMessage": "Chạy tác vụ do các Mac khác gửi"
+  },
+  "macLoad.allowJobsHint": {
+    "defaultMessage": "Lệnh shell và prompt, số tác vụ nặng tùy theo số khe và bộ nhớ của Mac này, bị dừng khi vượt ngưỡng bộ nhớ. Áp dụng ngay."
+  },
+  "macLoad.benchmark": {
+    "defaultMessage": "Đang chạy benchmark: {why}"
+  },
+  "macLoad.cancelBody": {
+    "defaultMessage": "Thao tác này dừng tác vụ trên {mac} và mọi tiến trình nó đã khởi động. Những gì nó đã ghi vẫn còn trong nhật ký."
+  },
+  "macLoad.cancelJob": {
+    "defaultMessage": "Hủy tác vụ"
+  },
+  "macLoad.cancelQueuedBody": {
+    "defaultMessage": "Thao tác này đưa tác vụ ra khỏi hàng đợi trên {mac}. Tác vụ sẽ không bao giờ chạy."
+  },
+  "macLoad.cancelTitle": {
+    "defaultMessage": "Hủy tác vụ {id}?"
+  },
+  "macLoad.close": {
+    "defaultMessage": "Đóng"
+  },
+  "macLoad.dialogTitle": {
+    "defaultMessage": "Tác vụ {id}"
+  },
+  "macLoad.ended": {
+    "defaultMessage": "Đã kết thúc"
+  },
+  "macLoad.exit": {
+    "defaultMessage": "Mã thoát"
+  },
+  "macLoad.idleS": {
+    "defaultMessage": "Coi là rảnh sau (giây)"
+  },
+  "macLoad.inference": {
+    "defaultMessage": "Suy luận AI"
+  },
+  "macLoad.inferenceLine": {
+    "defaultMessage": "{engine,plural,one{{slots,plural,one{{engine, number} yêu cầu engine · # khe router} other{{engine, number} yêu cầu engine · # khe router}}} other{{slots,plural,one{{engine, number} yêu cầu engine · # khe router} other{{engine, number} yêu cầu engine · # khe router}}}}"
+  },
+  "macLoad.jobFrom": {
+    "defaultMessage": "{kind} từ {origin}"
+  },
+  "macLoad.jobs": {
+    "defaultMessage": "Tác vụ"
+  },
+  "macLoad.jobsLine": {
+    "defaultMessage": "{live,plural,=0{Không có tác vụ nào đang chạy} one{# tác vụ đang chạy} other{# tác vụ đang chạy}}"
+  },
+  "macLoad.jobsWaiting": {
+    "defaultMessage": "{waiting, plural, other {# tác vụ đang chờ một Mac còn chỗ}}"
+  },
+  "macLoad.keepRunning": {
+    "defaultMessage": "Tiếp tục chạy"
+  },
+  "macLoad.keepWaiting": {
+    "defaultMessage": "Tiếp tục chờ"
+  },
+  "macLoad.kind": {
+    "defaultMessage": "Loại"
+  },
+  "macLoad.log": {
+    "defaultMessage": "Nhật ký"
+  },
+  "macLoad.logEmpty": {
+    "defaultMessage": "Chưa có gì được ghi."
+  },
+  "macLoad.minFree": {
+    "defaultMessage": "Ngưỡng bộ nhớ (% để trống)"
+  },
+  "macLoad.noLoad": {
+    "defaultMessage": "goose của máy này chưa báo tải (bản cũ)."
+  },
+  "macLoad.origin": {
+    "defaultMessage": "Gửi từ"
+  },
+  "macLoad.own": {
+    "defaultMessage": "Sử dụng riêng"
+  },
+  "macLoad.ownLine": {
+    "defaultMessage": "{user} · cpu {cpu} · bộ nhớ {mem} đã dùng · gpu {gpu}"
+  },
+  "macLoad.placedOn": {
+    "defaultMessage": "Đã đặt trên"
+  },
+  "macLoad.placedOnValue": {
+    "defaultMessage": "{mac} với mã {id}"
+  },
+  "macLoad.policy": {
+    "defaultMessage": "Khi có người dùng Mac này"
+  },
+  "macLoad.policyHint": {
+    "defaultMessage": "Bận nghĩa là đo được: bộ nhớ trên mức sàn, chỗ trống cho việc nặng, tải mỗi lõi. Người đang dùng bàn phím chỉ dùng để phân xử khi ngang nhau."
+  },
+  "macLoad.policy.allow": {
+    "defaultMessage": "Nhận tác vụ"
+  },
+  "macLoad.policy.refuse": {
+    "defaultMessage": "Từ chối tác vụ"
+  },
+  "macLoad.queueNoTry": {
+    "defaultMessage": "Chưa gửi cho Mac nào: một tác vụ phía trước đang chờ."
+  },
+  "macLoad.queueRefusals": {
+    "defaultMessage": "Lý do từng Mac từ chối"
+  },
+  "macLoad.reason": {
+    "defaultMessage": "Lý do"
+  },
+  "macLoad.reconnectHint": {
+    "defaultMessage": "Chính sách và ngưỡng bộ nhớ áp dụng sau khi Link kết nối lại."
+  },
+  "macLoad.refusalLine": {
+    "defaultMessage": "{mac}: {reason}"
+  },
+  "macLoad.saveFailed": {
+    "defaultMessage": "Chưa lưu: {reason}"
+  },
+  "macLoad.settingsTitle": {
+    "defaultMessage": "Tác vụ từ các Mac khác"
+  },
+  "macLoad.started": {
+    "defaultMessage": "Đã bắt đầu"
+  },
+  "macLoad.state": {
+    "defaultMessage": "Trạng thái"
+  },
+  "macLoad.title": {
+    "defaultMessage": "Tải"
+  },
+  "macLoad.userActive": {
+    "defaultMessage": "Có người đang dùng"
+  },
+  "macLoad.userIdle": {
+    "defaultMessage": "Rảnh {idle}"
+  },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "Không hủy được."
   },
@@ -4213,6 +4528,66 @@
   },
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Đang phát ở chế độ Hình-trong-hình"
+  },
+  "memfreeSettings.description": {
+    "defaultMessage": "Khi một mô hình cục bộ không vừa, goose cho thấy những gì chiếm bộ nhớ và có thể giải phóng phần của chính nó."
+  },
+  "memfreeSettings.enabled": {
+    "defaultMessage": "Hiển thị “Giải phóng bộ nhớ”"
+  },
+  "memfreeSettings.enabledDesc": {
+    "defaultMessage": "Hiển thị nút trên mô hình thiếu bộ nhớ và trên thanh bộ nhớ của mỗi Mac. Bật theo mặc định."
+  },
+  "memfreeSettings.minMb": {
+    "defaultMessage": "Ứng dụng nhỏ nhất được liệt kê (MB)"
+  },
+  "memfreeSettings.minMbDesc": {
+    "defaultMessage": "Ứng dụng dùng ít bộ nhớ hơn mức này sẽ không được liệt kê. Mặc định {mb} MB."
+  },
+  "memfreeSettings.neverTouch": {
+    "defaultMessage": "Không bao giờ chạm"
+  },
+  "memfreeSettings.neverTouchAdd": {
+    "defaultMessage": "Thêm"
+  },
+  "memfreeSettings.neverTouchAdded": {
+    "defaultMessage": "Do bạn thêm"
+  },
+  "memfreeSettings.neverTouchBuiltIn": {
+    "defaultMessage": "Có sẵn"
+  },
+  "memfreeSettings.neverTouchDesc": {
+    "defaultMessage": "Ứng dụng và tiến trình không bao giờ bị dọn dẹp thoát hoặc dừng, trên máy Mac này và khi máy Mac này giải phóng bộ nhớ trên máy khác. Bundle id, tên ứng dụng hoặc tên tiến trình; không phân biệt hoa thường. Các mục có sẵn luôn được áp dụng."
+  },
+  "memfreeSettings.neverTouchMatches": {
+    "defaultMessage": "khớp với {app}"
+  },
+  "memfreeSettings.neverTouchMatchesNothing": {
+    "defaultMessage": "không khớp với ứng dụng nào đang chạy hoặc đã cài, nên hiện không bảo vệ gì"
+  },
+  "memfreeSettings.neverTouchNone": {
+    "defaultMessage": "Chưa thêm gì"
+  },
+  "memfreeSettings.neverTouchPlaceholder": {
+    "defaultMessage": "com.example.App hoặc tên ứng dụng"
+  },
+  "memfreeSettings.neverTouchRemove": {
+    "defaultMessage": "Xoá {name}"
+  },
+  "memfreeSettings.readFailed": {
+    "defaultMessage": "Không thể đọc các cài đặt này: {reason}"
+  },
+  "memfreeSettings.remoteQuit": {
+    "defaultMessage": "Cho phép các Mac được liên kết thoát ứng dụng trên Mac này"
+  },
+  "memfreeSettings.remoteQuitDesc": {
+    "defaultMessage": "Một Mac khác trên LeanZero Link có thể yêu cầu Mac này thoát một ứng dụng, luôn sau khi xác nhận tại đây. Tắt theo mặc định: họ vẫn có thể giải phóng bộ nhớ của chính goose tại đây."
+  },
+  "memfreeSettings.saveFailed": {
+    "defaultMessage": "Không thể lưu cài đặt này: {reason}"
+  },
+  "memfreeSettings.title": {
+    "defaultMessage": "Giải phóng bộ nhớ"
   },
   "memoryProposal.cut": {
     "defaultMessage": "Bị cắt ở {max} ký tự khi được ghi lại, nên không thể lưu nguyên như vậy. Hãy yêu cầu lại toàn bộ nội dung."
@@ -5525,6 +5900,24 @@
   "mlxRestore.waitingPrevious": {
     "defaultMessage": "Bản chia trước vẫn đang tắt trên {node} — goose sẽ khôi phục khi việc đó xong"
   },
+  "mlxRestoreSettings.description": {
+    "defaultMessage": "Có đưa trở lại mô hình cục bộ đã chạy trước đó khi mở goose hay không. Mặc định tắt."
+  },
+  "mlxRestoreSettings.readFailed": {
+    "defaultMessage": "Không thể đọc cài đặt này: {reason}"
+  },
+  "mlxRestoreSettings.restore": {
+    "defaultMessage": "Khôi phục mô hình cục bộ khi khởi động"
+  },
+  "mlxRestoreSettings.restoreDesc": {
+    "defaultMessage": "Khi goose khởi động, đưa trở lại mô hình bạn khởi động gần nhất và chưa dừng: trên Mac này, trên một Mac khác qua LeanZero Link, hoặc chia trên nhiều Mac. Tắt: goose không tự khởi động mô hình nào; hãy khởi động một mô hình từ Providers khi bạn cần."
+  },
+  "mlxRestoreSettings.saveFailed": {
+    "defaultMessage": "Không thể lưu cài đặt này: {reason}"
+  },
+  "mlxRestoreSettings.title": {
+    "defaultMessage": "Mô hình cục bộ khi khởi động"
+  },
   "mlxSetup.aria": {
     "defaultMessage": "Thiết lập LeanZero MLX"
   },
@@ -6477,7 +6870,7 @@
     "defaultMessage": "Cho các Mac khác của tôi dùng Mac này"
   },
   "myMacs.masterHint": {
-    "defaultMessage": "Chỉ các Mac đã đăng nhập tài khoản LeanZero Link của bạn. Mỗi công tắc chỉ mở các thao tác riêng của goose — không bao giờ là lệnh tùy ý."
+    "defaultMessage": "Chỉ những máy Mac đã đăng nhập vào tài khoản LeanZero Link của bạn. Các công tắc này áp dụng cho thao tác riêng của goose: mô hình, trò chuyện và các phiên prompt mà các máy Mac khác của bạn bắt đầu tại đây. Lệnh shell và tác vụ prompt có công tắc riêng, “Chạy tác vụ do máy Mac khác gửi”, tắt cho đến khi bạn bật."
   },
   "myMacs.memory": {
     "defaultMessage": "Bộ nhớ"
@@ -6728,6 +7121,9 @@
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "Chưa gắn mô hình nào"
   },
+  "nodeCard.memfreeThisMac": {
+    "defaultMessage": "Mac này"
+  },
   "nodeModelCell.chatFollows": {
     "defaultMessage": "Trò chuyện theo lần chạy của bạn: {model}"
   },
@@ -6941,6 +7337,9 @@
   "nodes.loadsUnread": {
     "defaultMessage": "Không đọc được thời gian nạp: {error}"
   },
+  "nodes.localServerNotRunning": {
+    "defaultMessage": "Chưa có gì chạy tại {origin}; hãy khởi động máy chủ cục bộ"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "Quản lý nhà cung cấp đám mây"
   },
@@ -7090,6 +7489,9 @@
   },
   "nodes.newProviderModels": {
     "defaultMessage": "Mô hình"
+  },
+  "nodes.newProviderNotRunning": {
+    "defaultMessage": "Chưa chạy"
   },
   "nodes.newProvidersFailed": {
     "defaultMessage": "Không đọc được các nhà cung cấp của bạn: {error}"
@@ -8500,6 +8902,12 @@
   },
   "providerCard.noMetadata": {
     "defaultMessage": "Lỗi ProviderCard: Không có metadata được cung cấp"
+  },
+  "providerCard.notRunning": {
+    "defaultMessage": "Chưa chạy"
+  },
+  "providerCard.notRunningText": {
+    "defaultMessage": "Chưa có gì chạy tại {origin}. Hãy khởi động máy chủ cục bộ, rồi kiểm tra lại kết nối."
   },
   "providerCard.unknownProvider": {
     "defaultMessage": "Nhà cung cấp không xác định"
@@ -11603,6 +12011,9 @@
   "forgeSeries.publish": {
     "defaultMessage": "Công bố 2 bản dựng"
   },
+  "forgeSeries.publishSeparately": {
+    "defaultMessage": "Xuất bản các bản dựng riêng biệt"
+  },
   "forgeSeries.publishTitle": {
     "defaultMessage": "Tiêu đề công bố"
   },
@@ -11644,5 +12055,98 @@
   },
   "modelCustomFields.noFields": {
     "defaultMessage": "Trường tùy chỉnh: {provider} không khai báo trường nào cho “{model}”, nên mô hình chạy theo mặc định của nhà cung cấp."
+  },
+  "macLoad.stateCancelling": {
+    "defaultMessage": "Đang hủy…"
+  },
+  "macLoad.stateWaiting": {
+    "defaultMessage": "Đang chờ, thứ {position} trong hàng"
+  },
+  "macLoad.strategy": {
+    "defaultMessage": "Tác vụ của tôi chạy ở đâu"
+  },
+  "macLoad.strategy.localFirst": {
+    "defaultMessage": "Ưu tiên Mac của tôi"
+  },
+  "macLoad.strategy.selfish": {
+    "defaultMessage": "Ưu tiên Mac khác"
+  },
+  "macLoad.strategyHint.localFirst": {
+    "defaultMessage": "Chạy trên Mac này nếu còn chỗ, nếu không thì trên Mac khác còn nhiều chỗ nhất, nếu không nữa thì chờ trong hàng."
+  },
+  "macLoad.strategyHint.selfish": {
+    "defaultMessage": "Chạy trên Mac khác còn nhiều chỗ nhất, nếu không thì trên Mac này, nếu không nữa thì chờ trong hàng. Giữ Mac này rảnh."
+  },
+  "myMacs.runJob": {
+    "defaultMessage": "Chạy tác vụ…"
+  },
+  "runJob.title": {
+    "defaultMessage": "Chạy tác vụ trên…"
+  },
+  "runJob.willQueue": {
+    "defaultMessage": "Hiện không Mac nào còn chỗ. Nếu chạy, tác vụ sẽ chờ trong hàng trên Mac này và bắt đầu trên Mac đầu tiên còn chỗ."
+  },
+  "runJob.target": {
+    "defaultMessage": "Chạy trên"
+  },
+  "runJob.best": {
+    "defaultMessage": "Mac tốt nhất"
+  },
+  "runJob.ranking": {
+    "defaultMessage": "Tốt nhất lúc này: {macs}"
+  },
+  "runJob.refusal": {
+    "defaultMessage": "{mac}: {reason}"
+  },
+  "runJob.verdictLine": {
+    "defaultMessage": "{mac}: {verdict}"
+  },
+  "runJob.inUse": {
+    "defaultMessage": "{name} (đang dùng)"
+  },
+  "runJob.noPlace": {
+    "defaultMessage": "Hiện không có máy Mac nào nhận được tác vụ này."
+  },
+  "runJob.none": {
+    "defaultMessage": "Hiện không có máy Mac nào của bạn nhận tác vụ. Hãy bật “Chạy tác vụ do máy Mac khác gửi” trên máy Mac sẽ chạy chúng."
+  },
+  "runJob.jobsOff": {
+    "defaultMessage": "công việc đang tắt trên máy Mac này"
+  },
+  "runJob.kind": {
+    "defaultMessage": "Loại"
+  },
+  "runJob.kindShell": {
+    "defaultMessage": "Lệnh shell"
+  },
+  "runJob.kindPrompt": {
+    "defaultMessage": "Prompt"
+  },
+  "runJob.command": {
+    "defaultMessage": "{kind, select, shell {Lệnh} other {Prompt}}"
+  },
+  "runJob.heavy": {
+    "defaultMessage": "Tác vụ nặng"
+  },
+  "runJob.heavyHint": {
+    "defaultMessage": "Một máy Mac chạy số tác vụ nặng (build, render, huấn luyện) tùy theo số khe và bộ nhớ của nó."
+  },
+  "runJob.mem": {
+    "defaultMessage": "Bộ nhớ cần (GB, tùy chọn)"
+  },
+  "runJob.timeout": {
+    "defaultMessage": "Giới hạn thời gian (giây, tùy chọn)"
+  },
+  "runJob.submit": {
+    "defaultMessage": "Chạy tác vụ"
+  },
+  "runJob.close": {
+    "defaultMessage": "Đóng"
+  },
+  "runJob.refused": {
+    "defaultMessage": "Chưa gửi: {reason}"
+  },
+  "myMacs.updatedAgo": {
+    "defaultMessage": "cập nhật {seconds} giây trước"
   }
 }

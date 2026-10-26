@@ -30,6 +30,16 @@ describe('providerRowState — the one rule for chip, list and count', () => {
     expect(providerRowState(row('xai', {}))).toBe('not-set-up');
   });
 
+  it('a loopback server nothing listens at is "not running" — listed, never failed', () => {
+    const engine = row('openai', {
+      credentials_saved: true,
+      connection_checked: true,
+      local_server_not_running: 'http://127.0.0.1:8090',
+    });
+    expect(providerRowState(engine)).toBe('not-running');
+    expect(partitionProviderRows([engine]).configured).toEqual([engine]);
+  });
+
   it('a saved OpenAI-compatible endpoint is never "not set up", even with its key missing', () => {
     expect(providerRowState(row('custom_gw', { provider_type: 'Custom' }))).toBe('unchecked');
     // A bundled declarative provider with a custom_ id is a cloud family, not an endpoint.

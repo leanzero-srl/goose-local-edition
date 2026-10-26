@@ -39,6 +39,10 @@ export type ProviderMetadata = {
 export type ProviderDetails = {
   connection_error?: string | null;
   connection_checked?: boolean;
+  /** The origin (`http://127.0.0.1:8090`) of a loopback endpoint nothing listened at when it was
+   *  last checked: a local server that is not started. A state, not a failure — `connection_error`
+   *  stays empty — and not proof of the settings either, so `is_configured` stays false. */
+  local_server_not_running?: string | null;
   is_configured: boolean;
   metadata: ProviderMetadata;
   name: string;

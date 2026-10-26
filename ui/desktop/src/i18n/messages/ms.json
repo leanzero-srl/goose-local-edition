@@ -848,6 +848,12 @@
   "cloudProviders.notOfficialText": {
     "defaultMessage": "Permintaan pergi ke {where}, bukan ke api.openai.com."
   },
+  "cloudProviders.notRunning": {
+    "defaultMessage": "Tidak berjalan"
+  },
+  "cloudProviders.notRunningText": {
+    "defaultMessage": "Belum ada apa-apa yang berjalan di {origin}. Mulakan pelayan tempatan, kemudian semak semula sambungan."
+  },
   "cloudProviders.notSetUp": {
     "defaultMessage": "Belum disediakan"
   },
@@ -2621,6 +2627,177 @@
   "formingPanel.textHeading": {
     "defaultMessage": "Teks yang ditulis di sebelah panggilan ({chars} aksara) — bukan sebahagian daripada jawapan"
   },
+  "freeMemory.after": {
+    "defaultMessage": "Sebelum <b>{before} GB</b> kosong, kini <b>{after} GB</b> kosong ({freed} GB dibebaskan)."
+  },
+  "freeMemory.afterFits": {
+    "defaultMessage": "Model kini muat."
+  },
+  "freeMemory.afterShort": {
+    "defaultMessage": "Masih kurang <b>{gb} GB</b>."
+  },
+  "freeMemory.altPeer": {
+    "defaultMessage": "Jalankan pada {mac} sahaja (<b>{gb} GB</b> kosong di sana)"
+  },
+  "freeMemory.altPeerNoFree": {
+    "defaultMessage": "Jalankan pada <b>{mac}</b> sahaja"
+  },
+  "freeMemory.altSmaller": {
+    "defaultMessage": "Varian yang lebih kecil muat: {model} (perlu <b>{gb} GB</b>)"
+  },
+  "freeMemory.budget": {
+    "defaultMessage": "<b>{free} GB</b> kosong untuk model, daripada {total} GB"
+  },
+  "freeMemory.cannotFit": {
+    "defaultMessage": "Walaupun semua yang disenaraikan di sini dibebaskan (<b>{gb} GB</b>), model ini masih kurang <b>{short} GB</b>."
+  },
+  "freeMemory.cat.aiServer": {
+    "defaultMessage": "Pelayan model"
+  },
+  "freeMemory.cat.gooseEngine": {
+    "defaultMessage": "Enjin goose"
+  },
+  "freeMemory.cat.gooseOrphan": {
+    "defaultMessage": "Baki daripada goose"
+  },
+  "freeMemory.cat.job": {
+    "defaultMessage": "Kerja"
+  },
+  "freeMemory.cat.system": {
+    "defaultMessage": "macOS dan selebihnya"
+  },
+  "freeMemory.cat.userApp": {
+    "defaultMessage": "Apl"
+  },
+  "freeMemory.close": {
+    "defaultMessage": "Tutup"
+  },
+  "freeMemory.fitsByGooseOwned": {
+    "defaultMessage": "Membebaskan memori goose sendiri (<b>{gb} GB</b>) sudah cukup untuk model ini."
+  },
+  "freeMemory.fitsWithApps": {
+    "defaultMessage": "Model ini muat selepas membebaskan <b>{gb} GB</b>: memori goose sendiri dan menutup {apps}."
+  },
+  "freeMemory.fitsWithAppsOnly": {
+    "defaultMessage": "Model ini muat selepas menutup {apps}, yang membebaskan <b>{gb} GB</b>."
+  },
+  "freeMemory.forceStop": {
+    "defaultMessage": "Paksa henti"
+  },
+  "freeMemory.forceStopBody": {
+    "defaultMessage": "{app} tidak keluar apabila diminta, mungkin kerana ada kerja yang belum disimpan. Paksa henti menamatkannya pada {mac} tanpa menyimpan. Kerja yang belum disimpan dalam {app} akan hilang."
+  },
+  "freeMemory.forceStopConfirm": {
+    "defaultMessage": "Paksa hentikan {app}"
+  },
+  "freeMemory.forceStopTitle": {
+    "defaultMessage": "Paksa hentikan {app}?"
+  },
+  "freeMemory.freeFailed": {
+    "defaultMessage": "Tidak dapat membebaskan memori: {reason}"
+  },
+  "freeMemory.freeOwn": {
+    "defaultMessage": "Bebaskan milik goose ({gb} GB)"
+  },
+  "freeMemory.itemFailed": {
+    "defaultMessage": "{label}: {message}"
+  },
+  "freeMemory.keep": {
+    "defaultMessage": "Biarkan terbuka"
+  },
+  "freeMemory.keepRunning": {
+    "defaultMessage": "Biarkan berjalan"
+  },
+  "freeMemory.leftAlone": {
+    "defaultMessage": "Dibiarkan"
+  },
+  "freeMemory.loading": {
+    "defaultMessage": "Mengukur apa yang menggunakan memori…"
+  },
+  "freeMemory.neverTouchReason": {
+    "defaultMessage": "dalam senarai jangan sentuh ({entry})"
+  },
+  "freeMemory.nothingOwn": {
+    "defaultMessage": "goose tidak memegang memori yang boleh dibebaskannya"
+  },
+  "freeMemory.nuclearBack": {
+    "defaultMessage": "Kembali"
+  },
+  "freeMemory.nuclearConfirmBody": {
+    "defaultMessage": "goose meminta setiap apl yang ditanda untuk keluar dan menyahmuat setiap pelayan model yang ditanda. Apl diminta untuk keluar. Apl yang tidak keluar dibiarkan berjalan dan dilaporkan, tidak dihentikan. Item yang dilindungi tidak pernah disentuh."
+  },
+  "freeMemory.nuclearConfirmKeep": {
+    "defaultMessage": "Simpan semua"
+  },
+  "freeMemory.nuclearConfirmTitle": {
+    "defaultMessage": "Kosongkan {gb} GB pada {mac}?"
+  },
+  "freeMemory.nuclearFree": {
+    "defaultMessage": "Kosongkan {gb} GB"
+  },
+  "freeMemory.nuclearGooseOwn": {
+    "defaultMessage": "Memori goose sendiri"
+  },
+  "freeMemory.nuclearIntro": {
+    "defaultMessage": "Semua yang tidak digunakan sesiapa sudah ditanda. Nyahtanda apa yang anda mahu simpan. Yang dilindungi tidak pernah disentuh."
+  },
+  "freeMemory.nuclearOpen": {
+    "defaultMessage": "Kosongkan semua kecuali yang dilindungi"
+  },
+  "freeMemory.nuclearProtectedHead": {
+    "defaultMessage": "Tidak pernah disentuh"
+  },
+  "freeMemory.nuclearTotal": {
+    "defaultMessage": "Ditanda: <b>{gb} GB</b>"
+  },
+  "freeMemory.protectedChip": {
+    "defaultMessage": "Dilindungi"
+  },
+  "freeMemory.quit": {
+    "defaultMessage": "Keluar"
+  },
+  "freeMemory.quitBody": {
+    "defaultMessage": "goose meminta {app} pada {mac} keluar dengan cara biasa. Simpan kerja anda di sana dahulu: apa-apa yang belum disimpan mungkin hilang."
+  },
+  "freeMemory.quitConfirm": {
+    "defaultMessage": "Keluar {app}"
+  },
+  "freeMemory.quitTitle": {
+    "defaultMessage": "Keluar {app}?"
+  },
+  "freeMemory.readFailed": {
+    "defaultMessage": "Tidak dapat mengukur memori: {reason}"
+  },
+  "freeMemory.remoteQuitOff": {
+    "defaultMessage": "{mac} tidak membenarkan Mac lain menutup aplnya atau menyahmuat pelayan modelnya, jadi dari sini hanya memori goose sendiri boleh dikosongkan. Untuk membenarkannya, buka goose pada {mac}, pergi ke Tetapan › Aplikasi dan hidupkan “Benarkan Mac terpaut menutup apl pada Mac ini”. Atau tutup apl itu terus pada {mac}."
+  },
+  "freeMemory.onlyThere": {
+    "defaultMessage": "Hanya pada {mac}"
+  },
+  "freeMemory.title": {
+    "defaultMessage": "Bebaskan memori pada {mac}"
+  },
+  "freeMemory.unload": {
+    "defaultMessage": "Nyahmuat"
+  },
+  "freeMemory.unloadBody": {
+    "defaultMessage": "goose menyahmuat model yang dipegang {server} pada {mac} (enjin MLX diminta berhenti). Apa-apa yang menggunakannya perlu memuatkannya semula."
+  },
+  "freeMemory.unloadConfirm": {
+    "defaultMessage": "Nyahmuat {server}"
+  },
+  "freeMemory.unloadInUse": {
+    "defaultMessage": "Sedang digunakan, ini menghentikan kerja mereka:"
+  },
+  "freeMemory.unloadTitle": {
+    "defaultMessage": "Nyahmuat {server}?"
+  },
+  "freeMemory.usedBy": {
+    "defaultMessage": "Digunakan oleh: {who}"
+  },
+  "freeMemoryEntry.open": {
+    "defaultMessage": "Bebaskan memori"
+  },
   "gooseImportSection.chooseSource": {
     "defaultMessage": "Pilih folder sumber"
   },
@@ -4022,6 +4199,144 @@
   "loops.tick.yielded": {
     "defaultMessage": "Memberi laluan kepada giliran anda dalam \"{chat}\""
   },
+  "macLoad.allowJobs": {
+    "defaultMessage": "Jalankan kerja yang dihantar Mac lain"
+  },
+  "macLoad.allowJobsHint": {
+    "defaultMessage": "Arahan shell dan prompt, kerja berat sebanyak slot dan memori yang ada pada Mac ini, dihentikan apabila melepasi had memori. Berkuat kuasa serta-merta."
+  },
+  "macLoad.benchmark": {
+    "defaultMessage": "Benchmark sedang berjalan: {why}"
+  },
+  "macLoad.cancelBody": {
+    "defaultMessage": "Ini menghentikan kerja pada {mac} dan setiap proses yang dimulakannya. Apa yang sudah ditulis kekal dalam lognya."
+  },
+  "macLoad.cancelJob": {
+    "defaultMessage": "Batalkan kerja"
+  },
+  "macLoad.cancelQueuedBody": {
+    "defaultMessage": "Ini mengeluarkan kerja daripada baris gilir di {mac}. Kerja itu tidak akan bermula."
+  },
+  "macLoad.cancelTitle": {
+    "defaultMessage": "Batalkan kerja {id}?"
+  },
+  "macLoad.close": {
+    "defaultMessage": "Tutup"
+  },
+  "macLoad.dialogTitle": {
+    "defaultMessage": "Kerja {id}"
+  },
+  "macLoad.ended": {
+    "defaultMessage": "Tamat"
+  },
+  "macLoad.exit": {
+    "defaultMessage": "Kod keluar"
+  },
+  "macLoad.idleS": {
+    "defaultMessage": "Dikira melahu selepas (saat)"
+  },
+  "macLoad.inference": {
+    "defaultMessage": "Inferens AI"
+  },
+  "macLoad.inferenceLine": {
+    "defaultMessage": "{engine,plural,one{{slots,plural,one{{engine, number} permintaan enjin · # slot penghala} other{{engine, number} permintaan enjin · # slot penghala}}} other{{slots,plural,one{{engine, number} permintaan enjin · # slot penghala} other{{engine, number} permintaan enjin · # slot penghala}}}}"
+  },
+  "macLoad.jobFrom": {
+    "defaultMessage": "{kind} dari {origin}"
+  },
+  "macLoad.jobs": {
+    "defaultMessage": "Kerja"
+  },
+  "macLoad.jobsLine": {
+    "defaultMessage": "{live,plural,=0{Tiada kerja berjalan} one{# kerja berjalan} other{# kerja berjalan}}"
+  },
+  "macLoad.jobsWaiting": {
+    "defaultMessage": "{waiting, plural, other {# kerja menunggu Mac yang ada ruang}}"
+  },
+  "macLoad.keepRunning": {
+    "defaultMessage": "Biarkan berjalan"
+  },
+  "macLoad.keepWaiting": {
+    "defaultMessage": "Terus menunggu"
+  },
+  "macLoad.kind": {
+    "defaultMessage": "Jenis"
+  },
+  "macLoad.log": {
+    "defaultMessage": "Log"
+  },
+  "macLoad.logEmpty": {
+    "defaultMessage": "Belum ada apa-apa ditulis."
+  },
+  "macLoad.minFree": {
+    "defaultMessage": "Had memori (% dikekalkan kosong)"
+  },
+  "macLoad.noLoad": {
+    "defaultMessage": "goose-nya belum melaporkan beban (binaan lama)."
+  },
+  "macLoad.origin": {
+    "defaultMessage": "Dihantar dari"
+  },
+  "macLoad.own": {
+    "defaultMessage": "Kegunaan sendiri"
+  },
+  "macLoad.ownLine": {
+    "defaultMessage": "{user} · cpu {cpu} · memori {mem} digunakan · gpu {gpu}"
+  },
+  "macLoad.placedOn": {
+    "defaultMessage": "Diletakkan pada"
+  },
+  "macLoad.placedOnValue": {
+    "defaultMessage": "{mac} sebagai {id}"
+  },
+  "macLoad.policy": {
+    "defaultMessage": "Semasa seseorang menggunakan Mac ini"
+  },
+  "macLoad.policyHint": {
+    "defaultMessage": "Sibuk bermaksud diukur: memori di atas had, slot berat yang kosong, beban setiap teras. Orang di papan kekunci hanya memutuskan apabila seri."
+  },
+  "macLoad.policy.allow": {
+    "defaultMessage": "Terima kerja"
+  },
+  "macLoad.policy.refuse": {
+    "defaultMessage": "Tolak kerja"
+  },
+  "macLoad.queueNoTry": {
+    "defaultMessage": "Belum ditawarkan kepada mana-mana Mac: kerja di hadapannya masih menunggu."
+  },
+  "macLoad.queueRefusals": {
+    "defaultMessage": "Sebab setiap Mac menolak"
+  },
+  "macLoad.reason": {
+    "defaultMessage": "Sebab"
+  },
+  "macLoad.reconnectHint": {
+    "defaultMessage": "Dasar dan had memori berkuat kuasa selepas Link bersambung semula."
+  },
+  "macLoad.refusalLine": {
+    "defaultMessage": "{mac}: {reason}"
+  },
+  "macLoad.saveFailed": {
+    "defaultMessage": "Tidak disimpan: {reason}"
+  },
+  "macLoad.settingsTitle": {
+    "defaultMessage": "Kerja dari Mac lain"
+  },
+  "macLoad.started": {
+    "defaultMessage": "Dimulakan"
+  },
+  "macLoad.state": {
+    "defaultMessage": "Keadaan"
+  },
+  "macLoad.title": {
+    "defaultMessage": "Beban"
+  },
+  "macLoad.userActive": {
+    "defaultMessage": "Seseorang sedang menggunakannya"
+  },
+  "macLoad.userIdle": {
+    "defaultMessage": "Melahu {idle}"
+  },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "Gagal membatalkan."
   },
@@ -4213,6 +4528,66 @@
   },
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Bermain dalam Gambar-dalam-Gambar"
+  },
+  "memfreeSettings.description": {
+    "defaultMessage": "Apabila model setempat tidak muat, goose menunjukkan apa yang menggunakan memori dan boleh membebaskan bahagiannya sendiri."
+  },
+  "memfreeSettings.enabled": {
+    "defaultMessage": "Tawarkan “Bebaskan memori”"
+  },
+  "memfreeSettings.enabledDesc": {
+    "defaultMessage": "Menunjukkan butang pada model yang kekurangan memori dan pada bar memori setiap Mac. Hidup secara lalai."
+  },
+  "memfreeSettings.minMb": {
+    "defaultMessage": "Apl terkecil untuk disenaraikan (MB)"
+  },
+  "memfreeSettings.minMbDesc": {
+    "defaultMessage": "Apl yang menggunakan kurang memori daripada ini tidak disenaraikan. Lalai {mb} MB."
+  },
+  "memfreeSettings.neverTouch": {
+    "defaultMessage": "Jangan sentuh"
+  },
+  "memfreeSettings.neverTouchAdd": {
+    "defaultMessage": "Tambah"
+  },
+  "memfreeSettings.neverTouchAdded": {
+    "defaultMessage": "Ditambah oleh anda"
+  },
+  "memfreeSettings.neverTouchBuiltIn": {
+    "defaultMessage": "Terbina dalam"
+  },
+  "memfreeSettings.neverTouchDesc": {
+    "defaultMessage": "Apl dan proses yang tidak pernah ditutup atau dihentikan oleh mana-mana pembersihan, pada Mac ini dan apabila Mac ini mengosongkan memori pada Mac lain. Bundle id, nama apl atau nama proses; huruf besar kecil tidak penting. Yang terbina dalam sentiasa terpakai."
+  },
+  "memfreeSettings.neverTouchMatches": {
+    "defaultMessage": "sepadan dengan {app}"
+  },
+  "memfreeSettings.neverTouchMatchesNothing": {
+    "defaultMessage": "tidak sepadan dengan apl yang sedang berjalan atau dipasang, jadi ia tidak melindungi apa-apa sekarang"
+  },
+  "memfreeSettings.neverTouchNone": {
+    "defaultMessage": "Belum ada yang ditambah"
+  },
+  "memfreeSettings.neverTouchPlaceholder": {
+    "defaultMessage": "com.example.App atau nama apl"
+  },
+  "memfreeSettings.neverTouchRemove": {
+    "defaultMessage": "Buang {name}"
+  },
+  "memfreeSettings.readFailed": {
+    "defaultMessage": "Tidak dapat membaca tetapan ini: {reason}"
+  },
+  "memfreeSettings.remoteQuit": {
+    "defaultMessage": "Benarkan Mac terpaut menutup apl pada Mac ini"
+  },
+  "memfreeSettings.remoteQuitDesc": {
+    "defaultMessage": "Mac lain pada LeanZero Link boleh meminta Mac ini menutup apl, sentiasa selepas pengesahan di sini. Mati secara lalai: mereka masih boleh membebaskan memori goose sendiri di sini."
+  },
+  "memfreeSettings.saveFailed": {
+    "defaultMessage": "Tidak dapat menyimpan tetapan ini: {reason}"
+  },
+  "memfreeSettings.title": {
+    "defaultMessage": "Bebaskan memori"
   },
   "memoryProposal.cut": {
     "defaultMessage": "Terpotong pada {max} aksara semasa difailkan, jadi tidak boleh disimpan begitu sahaja. Minta semula bahagian penuhnya."
@@ -5525,6 +5900,24 @@
   "mlxRestore.waitingPrevious": {
     "defaultMessage": "Pembahagian sebelumnya masih ditutup pada {node} — goose memulihkannya sebaik sahaja selesai"
   },
+  "mlxRestoreSettings.description": {
+    "defaultMessage": "Sama ada membuka goose mengembalikan model tempatan yang berjalan sebelum ini. Mati secara lalai."
+  },
+  "mlxRestoreSettings.readFailed": {
+    "defaultMessage": "Tetapan ini tidak dapat dibaca: {reason}"
+  },
+  "mlxRestoreSettings.restore": {
+    "defaultMessage": "Pulihkan model tempatan semasa pelancaran"
+  },
+  "mlxRestoreSettings.restoreDesc": {
+    "defaultMessage": "Apabila goose bermula, kembalikan model yang terakhir anda mulakan dan tidak hentikan: pada Mac ini, pada Mac lain melalui LeanZero Link, atau dipecahkan merentas beberapa Mac. Mati: goose tidak memulakan model dengan sendirinya; mulakan satu dari Providers apabila anda memerlukannya."
+  },
+  "mlxRestoreSettings.saveFailed": {
+    "defaultMessage": "Tetapan ini tidak dapat disimpan: {reason}"
+  },
+  "mlxRestoreSettings.title": {
+    "defaultMessage": "Model tempatan semasa pelancaran"
+  },
   "mlxSetup.aria": {
     "defaultMessage": "Menyediakan LeanZero MLX"
   },
@@ -6477,7 +6870,7 @@
     "defaultMessage": "Benarkan Mac saya yang lain menggunakan Mac ini"
   },
   "myMacs.masterHint": {
-    "defaultMessage": "Hanya Mac yang log masuk ke akaun LeanZero Link anda. Setiap suis hanya membuka operasi goose sendiri — tidak sekali-kali arahan sewenang-wenang."
+    "defaultMessage": "Hanya Mac yang log masuk ke akaun LeanZero Link anda. Suis ini meliputi operasi goose sendiri: model, sembang, dan sesi prompt yang dimulakan oleh Mac anda yang lain di sini. Arahan shell dan kerja prompt mempunyai suis berasingan, “Jalankan kerja yang dihantar Mac lain”, yang dimatikan sehingga anda menghidupkannya."
   },
   "myMacs.memory": {
     "defaultMessage": "Memori"
@@ -6728,6 +7121,9 @@
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "Tiada model dipasang"
   },
+  "nodeCard.memfreeThisMac": {
+    "defaultMessage": "Mac ini"
+  },
   "nodeModelCell.chatFollows": {
     "defaultMessage": "Sembang mengikut Run anda: {model}"
   },
@@ -6941,6 +7337,9 @@
   "nodes.loadsUnread": {
     "defaultMessage": "Masa muat tidak dapat dibaca: {error}"
   },
+  "nodes.localServerNotRunning": {
+    "defaultMessage": "Belum ada apa-apa yang berjalan di {origin}; mulakan pelayan tempatan"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "Urus penyedia awan"
   },
@@ -7090,6 +7489,9 @@
   },
   "nodes.newProviderModels": {
     "defaultMessage": "Model"
+  },
+  "nodes.newProviderNotRunning": {
+    "defaultMessage": "Tidak berjalan"
   },
   "nodes.newProvidersFailed": {
     "defaultMessage": "Penyedia anda tidak dapat dibaca: {error}"
@@ -8500,6 +8902,12 @@
   },
   "providerCard.noMetadata": {
     "defaultMessage": "Ralat ProviderCard: Tiada metadata disediakan"
+  },
+  "providerCard.notRunning": {
+    "defaultMessage": "Tidak berjalan"
+  },
+  "providerCard.notRunningText": {
+    "defaultMessage": "Belum ada apa-apa yang berjalan di {origin}. Mulakan pelayan tempatan, kemudian semak semula sambungan."
   },
   "providerCard.unknownProvider": {
     "defaultMessage": "Penyedia Tidak Diketahui"
@@ -11603,6 +12011,9 @@
   "forgeSeries.publish": {
     "defaultMessage": "Terbitkan 2 binaan"
   },
+  "forgeSeries.publishSeparately": {
+    "defaultMessage": "Terbitkan binaan secara berasingan"
+  },
   "forgeSeries.publishTitle": {
     "defaultMessage": "Tajuk penerbitan"
   },
@@ -11644,5 +12055,98 @@
   },
   "modelCustomFields.noFields": {
     "defaultMessage": "Medan tersuai: {provider} tidak mengisytiharkan sebarang medan untuk “{model}”, jadi ia berjalan pada lalai penyedia."
+  },
+  "macLoad.stateCancelling": {
+    "defaultMessage": "Membatalkan…"
+  },
+  "macLoad.stateWaiting": {
+    "defaultMessage": "Menunggu, giliran ke-{position}"
+  },
+  "macLoad.strategy": {
+    "defaultMessage": "Tempat kerja saya berjalan"
+  },
+  "macLoad.strategy.localFirst": {
+    "defaultMessage": "Mac saya dahulu"
+  },
+  "macLoad.strategy.selfish": {
+    "defaultMessage": "Mac lain dahulu"
+  },
+  "macLoad.strategyHint.localFirst": {
+    "defaultMessage": "Berjalan pada Mac ini jika ada ruang, jika tidak pada Mac lain yang paling lapang, jika tidak menunggu dalam baris gilir."
+  },
+  "macLoad.strategyHint.selfish": {
+    "defaultMessage": "Berjalan pada Mac lain yang paling lapang, jika tidak pada Mac ini, jika tidak menunggu dalam baris gilir. Mac ini kekal lapang."
+  },
+  "myMacs.runJob": {
+    "defaultMessage": "Jalankan kerja…"
+  },
+  "runJob.title": {
+    "defaultMessage": "Jalankan kerja pada…"
+  },
+  "runJob.willQueue": {
+    "defaultMessage": "Tiada Mac yang ada ruang sekarang. Jika dijalankan, ia menunggu dalam baris gilir Mac ini dan bermula pada Mac pertama yang ada ruang."
+  },
+  "runJob.target": {
+    "defaultMessage": "Jalankan pada"
+  },
+  "runJob.best": {
+    "defaultMessage": "Mac terbaik"
+  },
+  "runJob.ranking": {
+    "defaultMessage": "Terbaik sekarang: {macs}"
+  },
+  "runJob.refusal": {
+    "defaultMessage": "{mac}: {reason}"
+  },
+  "runJob.verdictLine": {
+    "defaultMessage": "{mac}: {verdict}"
+  },
+  "runJob.inUse": {
+    "defaultMessage": "{name} (sedang digunakan)"
+  },
+  "runJob.noPlace": {
+    "defaultMessage": "Tiada Mac boleh menerima kerja ini sekarang."
+  },
+  "runJob.none": {
+    "defaultMessage": "Tiada Mac anda yang menerima kerja sekarang. Hidupkan “Jalankan kerja yang dihantar Mac lain” pada Mac yang patut menjalankannya."
+  },
+  "runJob.jobsOff": {
+    "defaultMessage": "kerja dimatikan pada Mac ini"
+  },
+  "runJob.kind": {
+    "defaultMessage": "Jenis"
+  },
+  "runJob.kindShell": {
+    "defaultMessage": "Arahan shell"
+  },
+  "runJob.kindPrompt": {
+    "defaultMessage": "Prompt"
+  },
+  "runJob.command": {
+    "defaultMessage": "{kind, select, shell {Arahan} other {Prompt}}"
+  },
+  "runJob.heavy": {
+    "defaultMessage": "Kerja berat"
+  },
+  "runJob.heavyHint": {
+    "defaultMessage": "Sebuah Mac menjalankan kerja berat (binaan, render, latihan) sebanyak slot dan memori yang ada padanya."
+  },
+  "runJob.mem": {
+    "defaultMessage": "Memori yang diperlukan (GB, pilihan)"
+  },
+  "runJob.timeout": {
+    "defaultMessage": "Had masa (saat, pilihan)"
+  },
+  "runJob.submit": {
+    "defaultMessage": "Jalankan kerja"
+  },
+  "runJob.close": {
+    "defaultMessage": "Tutup"
+  },
+  "runJob.refused": {
+    "defaultMessage": "Tidak dihantar: {reason}"
+  },
+  "myMacs.updatedAgo": {
+    "defaultMessage": "dikemas kini {seconds} saat lalu"
   }
 }

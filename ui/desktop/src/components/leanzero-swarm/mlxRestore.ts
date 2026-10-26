@@ -18,9 +18,9 @@ import { mlxErrorMessage } from './mlxErrorMessage';
 import { portHeldBy } from './mlxPortHeld';
 
 /**
- * RESTORE ON RELAUNCH: every app update or relaunch stops goosed, and with it what served chat. At
- * launch, goose's record of what the owner last started and did not stop (`servingIntent`) is
- * brought back through the SAME start a click makes — Mount (the memory gate and Make room apply),
+ * RESTORE ON RELAUNCH (the owner's switch, off by default): every app update or relaunch stops
+ * goosed, and with it what served chat. At launch, goose's record of what the owner last started
+ * and did not stop (`servingIntent`) is brought back through the SAME start a click makes — Mount (the memory gate and Make room apply),
  * the remote single's start once LeanZero Link has reconnected by itself, the saved split's start
  * (its preflight applies) — and followed to serving or to a named failure. What is happening is one
  * line the Engine tab, the composer and the tray all show; nothing claims more than the status says.
@@ -35,7 +35,8 @@ export interface RestoreWhat {
 
 /** The facts and starts a restore reads and makes — the renderer's ACP calls, injected. */
 export interface RestoreDeps {
-  readIntent(): Promise<MlxServingIntentRead>;
+  /** `atLaunch`: the restore's first read, the only one goose may answer by forgetting a gone model. */
+  readIntent(atLaunch?: boolean): Promise<MlxServingIntentRead>;
   singleStatus(): Promise<MlxEngineStatus>;
   mount(modelId: string): Promise<void>;
   remoteStatus(): Promise<MlxRemoteSingleStatus>;
@@ -259,15 +260,20 @@ export type RestoreResult =
   | { phase: 'failed'; what: RestoreWhat | null; reason: RestoreReason };
 
 /**
- * Bring back what served before the relaunch. `onRestoring` fires once the restore actually starts
- * (not for nothing to do, nor for something already serving). A start the owner stopped while it
- * came up (the record is gone) ends quietly: that stop was a choice, not a failure.
+ * Bring back what served before the relaunch — only when the owner turned the restore on (off by
+ * default: a launch that starts a model nobody asked for, or names a failure for one deleted since,
+ * is noise at every start). `onRestoring` fires once the restore actually starts (not for nothing
+ * to do, nor for something already serving). A start the owner stopped while it came up (the
+ * record is gone) ends quietly: that stop was a choice, not a failure.
  */
 export async function restoreServing(
   deps: RestoreDeps,
   onRestoring: OnRestoring
 ): Promise<RestoreResult> {
-  const read = await deps.readIntent();
+  // A read goose refused says nothing about the switch, and the switch is off unless goose says
+  // it is on: nothing is restored and nothing red is shown.
+  const read = await deps.readIntent(true).catch(() => null);
+  if (!read?.restoreAtLaunch) return { phase: 'idle' };
   if (read.error)
     return { phase: 'failed', what: null, reason: { code: 'said', text: read.error } };
   const intent = read.intent;

@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Laptop, Link2Off, Loader2, LogOut, Network, RefreshCw } from 'lucide-react';
+import { Laptop, Link2Off, Loader2, LogOut, Network, Play, RefreshCw } from 'lucide-react';
 import { defineMessages, useIntl } from '../../i18n';
 import {
   Button,
@@ -36,8 +36,10 @@ import {
 } from './macs';
 import { macLine, macStateWord } from './macSummary';
 import { useMacSummary } from './useMacSummary';
-import { PERMISSION_LABEL, useMacs, type MacFacts } from './useMacs';
+import { PERMISSION_LABEL, cardReadAt, staleSeconds, useMacs, type MacFacts } from './useMacs';
 import { useGlanceNodes } from '../engineGlance/glanceStore';
+import { JobsSettings, MacLoadBars } from './MacLoadPanel';
+import { RunJobDialog } from './RunJobDialog';
 import type { NodesRead, Residency } from '../../acp/nodes';
 import { nodeHref } from '../../utils/navigationUtils';
 
@@ -50,6 +52,8 @@ import { nodeHref } from '../../utils/navigationUtils';
 
 const i18n = defineMessages({
   title: { id: 'myMacs.title', defaultMessage: 'My Macs' },
+  updatedAgo: { id: 'myMacs.updatedAgo', defaultMessage: 'updated {seconds}s ago' },
+  runJob: { id: 'myMacs.runJob', defaultMessage: 'Run a job…' },
   intro: {
     id: 'myMacs.intro',
     defaultMessage:
@@ -76,7 +80,7 @@ const i18n = defineMessages({
   masterHint: {
     id: 'myMacs.masterHint',
     defaultMessage:
-      'Only Macs signed in to your LeanZero Link account. Each switch is goose’s own operations — never an arbitrary command.',
+      'Only Macs signed in to your LeanZero Link account. These switches cover goose’s own operations: models, chat, and prompt sessions your other Macs start here. Shell commands and prompt jobs are a separate switch, “Run jobs other Macs send”, off until you turn it on.',
   },
   manageHint: {
     id: 'myMacs.manageHint',
@@ -457,6 +461,27 @@ interface MyMacsProps {
   onLinkChanged: () => Promise<void>;
 }
 
+/**
+ * "updated Xs ago" while the card's facts are older than STALE_AFTER_MS (after the window was
+ * hidden, or while a Mac stops answering), so old data is never shown as if it were current.
+ * Ticks itself once a second; renders nothing while fresh.
+ */
+export function UpdatedAgo({ at }: { at: number | null }) {
+  const intl = useIntl();
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const seconds = staleSeconds(at, Math.max(now, Date.now()));
+  if (seconds == null) return null;
+  return (
+    <span data-testid="my-mac-updated-ago" className={cx(TYPE.bodyMuted, TNUM)}>
+      {intl.formatMessage(i18n.updatedAgo, { seconds })}
+    </span>
+  );
+}
+
 function MacCard({ mac, props }: { mac: Mac; props: MyMacsProps }) {
   const intl = useIntl();
   const macsCtx = useMacs();
@@ -513,6 +538,7 @@ function MacCard({ mac, props }: { mac: Mac; props: MyMacsProps }) {
           {mac.name}
         </span>
         {mac.isSelf && <Chip>{intl.formatMessage(i18n.thisMac)}</Chip>}
+        <UpdatedAgo at={cardReadAt(macsCtx.rosterAt, facts)} />
         {summary.phase ? (
           <Chip phase={summary.phase}>
             <span data-testid="my-mac-state" data-phase={summary.phase}>
@@ -547,6 +573,9 @@ function MacCard({ mac, props }: { mac: Mac; props: MyMacsProps }) {
         </p>
       )}
       {mac.online && summary.state !== 'off' && <FactsGrid mac={mac} facts={facts} />}
+      {mac.online && (
+        <MacLoadBars load={mac.load} target={mac.nodeId} macName={mac.name} isSelf={mac.isSelf} />
+      )}
       <NodesOnMac mac={mac} />
       {mac.isSelf ? (
         <LetOthersUseThisMac
@@ -558,6 +587,7 @@ function MacCard({ mac, props }: { mac: Mac; props: MyMacsProps }) {
       ) : (
         <PeerLets mac={mac} />
       )}
+      {mac.isSelf && <JobsSettings />}
       <Disclosure variant="plain" title={intl.formatMessage(i18n.details)} testId="my-mac-details">
         <div className="flex flex-col gap-3">
           <KeyValue items={details} aria-label={intl.formatMessage(i18n.details)} />
@@ -594,6 +624,7 @@ export function MyMacs(props: MyMacsProps) {
   const intl = useIntl();
   const { macs } = useMacs();
   const nodes = useGlanceNodes();
+  const [runJob, setRunJob] = useState(false);
   return (
     <div className="flex flex-col gap-4 pb-8" data-testid="link-connected">
       {props.stale && (
@@ -614,8 +645,18 @@ export function MyMacs(props: MyMacsProps) {
       )}
       <div className="flex items-center gap-2">
         <StatusDot tone="ok" label={intl.formatMessage(i18n.mesh)} />
-        <p className={TYPE.bodyMuted}>{intl.formatMessage(i18n.intro)}</p>
+        <p className={cx(TYPE.bodyMuted, 'flex-1')}>{intl.formatMessage(i18n.intro)}</p>
+        <Button
+          size="sm"
+          variant="secondary"
+          data-testid="my-macs-run-job"
+          icon={<Play />}
+          onClick={() => setRunJob(true)}
+        >
+          {intl.formatMessage(i18n.runJob)}
+        </Button>
       </div>
+      {runJob && <RunJobDialog macs={macs} onClose={() => setRunJob(false)} />}
       {nodes.kind === 'failed' && (
         <ToneBanner
           tone="err"

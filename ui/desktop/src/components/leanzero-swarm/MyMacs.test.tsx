@@ -28,6 +28,7 @@ const SELF: Mac = {
   online: true,
   sessionsActive: 1,
   allows: null,
+  load: null,
   pollError: null,
 };
 const STUDIO: Mac = {
@@ -219,6 +220,15 @@ describe('MyMacs — Nodes on this Mac, and Add another Mac', () => {
     );
     await waitFor(() => expect(acp.residency).toHaveBeenCalled());
     expect(screen.queryByTestId('my-mac-nodes-self')).toBeNull();
+  });
+
+  it('says the master switch is goose’s own operations and that jobs are the separate jobs switch', async () => {
+    renderMacs();
+    const perms = await screen.findByTestId('my-mac-permissions');
+    expect(perms.textContent).not.toContain('never an arbitrary command');
+    expect(perms).toHaveTextContent(
+      'Shell commands and prompt jobs are a separate switch, “Run jobs other Macs send”, off until you turn it on.'
+    );
   });
 
   it('two Macs: no Add another Mac card', async () => {

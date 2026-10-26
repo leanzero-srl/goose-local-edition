@@ -46,11 +46,13 @@ it('runs every installed tool preflight and returns absolute child-process paths
     ffprobe: 'ffprobe',
   };
   await fs.writeFile(path.join(dir, 'manifest.json'), JSON.stringify(manifest));
-  for (const name of ['python', 'node', 'ffmpeg', 'ffprobe']) {
-    await fs.writeFile(path.join(dir, name), '#!/bin/sh\nprintf called > "$0.receipt"\n', {
-      mode: 0o755,
-    });
-  }
+  // One stand-in, linked under each tool's name ($0 keeps the name, so each writes its own
+  // receipt). macOS assesses every newly written executable on its first exec, ~200 ms on an idle
+  // Mac and far longer on a loaded one; four fresh files put this test past its 5 s budget once.
+  const standIn = path.join(dir, '.stand-in');
+  await fs.writeFile(standIn, '#!/bin/sh\nprintf called > "$0.receipt"\n', { mode: 0o755 });
+  for (const name of ['python', 'node', 'ffmpeg', 'ffprobe'])
+    await fs.symlink(standIn, path.join(dir, name));
   const runtime = await resolveBenchmarkRuntime(root);
   expect(runtime.node).toBe(path.join(dir, 'node'));
   expect(runtime.python).toBe(path.join(dir, 'python'));
@@ -59,6 +61,7 @@ it('runs every installed tool preflight and returns absolute child-process paths
   expect(runtime.env.PATH.split(path.delimiter)[0]).toBe(dir);
   for (const name of ['python', 'node', 'ffmpeg', 'ffprobe'])
     expect(await fs.readFile(path.join(dir, `${name}.receipt`), 'utf8')).toBe('called');
+  await fs.rm(path.join(dir, 'ffprobe'));
   await fs.writeFile(path.join(dir, 'ffprobe'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
   await expect(resolveBenchmarkRuntime(root)).rejects.toThrow('preflight failed');
 });

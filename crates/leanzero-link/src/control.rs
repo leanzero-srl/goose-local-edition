@@ -171,6 +171,12 @@ pub struct ControlConfig {
     /// [`PeerDialError::NoMeshProxy`] on record — never a direct dial.
     /// `LinkManager::connect` fills it from the live daemon.
     pub peer_proxy: Option<MeshProxy>,
+    /// `/v1/swarm/jobs`: its own switch (OFF by default, separate from
+    /// `allow_remote_execution`), the ledger root, the heavy-run lock and the admission policy.
+    pub jobs: crate::jobs::JobsConfig,
+    /// The manager's queue of jobs this node placed and no Mac had room for yet: shown in
+    /// this node's load and job routes, never owned here (it outlives the service).
+    pub pending_jobs: Option<Arc<crate::queue::JobQueue>>,
 }
 
 impl ControlConfig {
@@ -186,6 +192,8 @@ impl ControlConfig {
             reconnect_backoff: Duration::from_secs(2),
             allow_remote_execution: false,
             peer_proxy: None,
+            jobs: crate::jobs::JobsConfig::default(),
+            pending_jobs: None,
         }
     }
 }
@@ -234,6 +242,8 @@ struct Ctx {
     /// The relay requests this service is serving right now, under this start's epoch.
     streams: Arc<InflightStreams>,
     allow_remote_execution: bool,
+    jobs: Arc<crate::jobs::JobRegistry>,
+    pending_jobs: Option<Arc<crate::queue::JobQueue>>,
     /// Set once this node has begun going away ([`ControlHandle::mark_leaving`]); its
     /// `/nodes` `self` then carries it.
     leaving: Arc<StdMutex<Option<NodeLeaving>>>,
@@ -272,6 +282,9 @@ impl ControlService {
         )?;
 
         let leaving = Arc::new(StdMutex::new(None));
+        // The process-wide registry for this ledger root: it outlives this service, so a Link
+        // reconnect (which rebuilds the service) keeps every running job listed and cancellable.
+        let jobs = crate::jobs::JobRegistry::shared(config.jobs.clone());
         let ctx = Ctx {
             source: source.clone(),
             pubsub: pubsub.clone(),
@@ -286,6 +299,8 @@ impl ControlService {
                 .map_err(ControlError::EngineClient)?,
             streams: Arc::new(InflightStreams::new()),
             allow_remote_execution: config.allow_remote_execution,
+            jobs: jobs.clone(),
+            pending_jobs: config.pending_jobs.clone(),
             leaving: leaving.clone(),
         };
         let router = swarm_router(ctx, Arc::new(config.node_token));
@@ -359,6 +374,7 @@ impl ControlService {
             registry,
             tasks,
             leaving,
+            jobs,
         })
     }
 }
@@ -369,9 +385,15 @@ pub struct ControlHandle {
     registry: PeerRegistry,
     tasks: Vec<JoinHandle<()>>,
     leaving: Arc<StdMutex<Option<NodeLeaving>>>,
+    jobs: Arc<crate::jobs::JobRegistry>,
 }
 
 impl ControlHandle {
+    /// This node's jobs registry (what `/v1/swarm/jobs` serves): the manager's self short-cut.
+    pub fn jobs(&self) -> Arc<crate::jobs::JobRegistry> {
+        self.jobs.clone()
+    }
+
     pub fn local_addr(&self) -> SocketAddr {
         self.local_addr
     }
@@ -429,6 +451,10 @@ fn swarm_router(ctx: Ctx, token: Arc<String>) -> Router {
         .route("/v1/swarm/sessions", get(sessions))
         .route("/v1/swarm/stream", get(stream))
         .route("/v1/swarm/execute", post(execute))
+        .route("/v1/swarm/jobs", post(jobs_submit).get(jobs_list))
+        .route("/v1/swarm/jobs/{id}", get(jobs_get))
+        .route("/v1/swarm/jobs/{id}/log", get(jobs_log))
+        .route("/v1/swarm/jobs/{id}/cancel", post(jobs_cancel))
         .route("/v1/swarm/peer-leaving", post(peer_leaving))
         // One authenticated proxy route per mlxEngine op. `{op}` is validated against
         // `MlxOp` in the handler — an unknown op is a loud `404`, never a silent no-op.
@@ -521,6 +547,10 @@ impl StreamScope {
 async fn nodes(State(ctx): State<Ctx>) -> Json<SwarmNodesResponse> {
     let mut self_node = ctx.source.local_node().await;
     self_node.leaving = ctx.leaving.lock().unwrap().clone();
+    // The node's load rides here — the one place both the desktop (ACP proxy) and every
+    // peer's 3 s poll read — never in the source's delta feed, which would publish a
+    // NodeStateChanged every tick.
+    self_node.load = Some(Box::new(self_load(&ctx).await));
     match ctx.mesh_ip {
         Some(ip) => {
             self_node.mesh_ip = Some(ip.to_string());
@@ -537,6 +567,123 @@ async fn nodes(State(ctx): State<Ctx>) -> Json<SwarmNodesResponse> {
                 peers: Vec::new(),
             })
         }
+    }
+}
+
+/// This node's load: the engine's running + waiting requests (when chat serving is wired and
+/// names its engine) plus the relay streams this service serves for peers.
+async fn self_load(ctx: &Ctx) -> crate::load::NodeLoad {
+    let engine = match ctx.chat_serving.as_ref().map(|s| s.engine_base_url()) {
+        Some(Ok(base)) => crate::load::engine_active(&ctx.engine_http, &base).await,
+        _ => 0,
+    };
+    let relays = ctx.streams.len().min(u32::MAX as usize) as u32;
+    let mut load =
+        crate::jobs::load_with_jobs(engine.saturating_add(relays), Some(&ctx.jobs)).await;
+    if let Some(q) = &ctx.pending_jobs {
+        load.jobs.splice(0..0, q.briefs());
+    }
+    load
+}
+
+fn refusal_response(r: crate::jobs::Refusal) -> Response {
+    let status =
+        StatusCode::from_u16(r.code.http_status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    (status, Json(r)).into_response()
+}
+
+fn job_not_found(id: &str) -> Response {
+    refusal_response(crate::jobs::Refusal::new(
+        crate::jobs::RefusalCode::NotFound,
+        format!("no job {id}"),
+    ))
+}
+
+/// `POST /v1/swarm/jobs`: admit (switch, then resources) and start one job; `202 {job_id}` or
+/// a `{code, reason}` refusal (see [`crate::jobs::RefusalCode::http_status`]).
+async fn jobs_submit(
+    State(ctx): State<Ctx>,
+    body: Result<Json<crate::jobs::JobRequest>, JsonRejection>,
+) -> Response {
+    if !ctx.jobs.enabled() {
+        return refusal_response(crate::jobs::Refusal::new(
+            crate::jobs::RefusalCode::JobsDisabled,
+            "remote jobs are disabled on this node",
+        ));
+    }
+    let Json(req) = match body {
+        Ok(json) => json,
+        Err(rejection) => {
+            return refusal_response(crate::jobs::Refusal::new(
+                crate::jobs::RefusalCode::BadRequest,
+                format!("invalid job request body: {rejection}"),
+            ))
+        }
+    };
+    match ctx
+        .jobs
+        .submit(req, ctx.executor.clone(), ctx.source.clone())
+        .await
+    {
+        Ok(accepted) => (StatusCode::ACCEPTED, Json(accepted)).into_response(),
+        Err(r) => refusal_response(r),
+    }
+}
+
+async fn jobs_list(State(ctx): State<Ctx>) -> Json<Vec<crate::jobs::JobView>> {
+    let mut all = ctx
+        .pending_jobs
+        .as_ref()
+        .map(|q| q.list())
+        .unwrap_or_default();
+    all.extend(ctx.jobs.list());
+    Json(all)
+}
+
+async fn jobs_get(Path(id): Path<String>, State(ctx): State<Ctx>) -> Response {
+    let queued = ctx
+        .pending_jobs
+        .as_ref()
+        .and_then(|q| q.lookup(&id))
+        .map(|l| match l {
+            crate::queue::QueueLookup::Waiting(v)
+            | crate::queue::QueueLookup::Placed(_, v)
+            | crate::queue::QueueLookup::Cancelled(v) => v,
+        });
+    match queued.or_else(|| ctx.jobs.view(&id)) {
+        Some(v) => Json(v).into_response(),
+        None => job_not_found(&id),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct LogQuery {
+    #[serde(default)]
+    from: u64,
+}
+
+async fn jobs_log(
+    Path(id): Path<String>,
+    Query(q): Query<LogQuery>,
+    State(ctx): State<Ctx>,
+) -> Response {
+    match ctx.jobs.log(&id, q.from) {
+        Some(c) => Json(c).into_response(),
+        None => job_not_found(&id),
+    }
+}
+
+async fn jobs_cancel(Path(id): Path<String>, State(ctx): State<Ctx>) -> Response {
+    if let Some(v) = ctx
+        .pending_jobs
+        .as_ref()
+        .and_then(|q| q.cancel_waiting(&id))
+    {
+        return (StatusCode::ACCEPTED, Json(v)).into_response();
+    }
+    match ctx.jobs.cancel(&id).await {
+        Ok(v) => (StatusCode::ACCEPTED, Json(v)).into_response(),
+        Err(r) => refusal_response(r),
     }
 }
 
@@ -640,10 +787,12 @@ async fn execute(
         return index_unreadable(&err);
     }
 
-    // Receive-side idle guard: the node the work lands on decides, from its own live
-    // session state, whether it can take work now. `local_node().status` is `Idle`/`Busy`
-    // (the source never fabricates `Offline` — that is a mesh-level verdict).
-    if ctx.source.local_node().await.status != NodeStatus::Idle {
+    // Receive-side guard on MEASURED load (owner 2026-10-25): a node is busy when its memory
+    // is under the floor (or a benchmark runs, or the lid would sleep), never because some
+    // session of its own is live. A second reply on the SAME session is still refused by the
+    // executor (`try_register_cancel_token`).
+    if let Some(r) = ctx.jobs.measured_busy().await {
+        tracing::info!(reason = %r.reason, "leanzero-link: execute refused on measured load");
         return execute_error_response(ExecuteError::Busy);
     }
 

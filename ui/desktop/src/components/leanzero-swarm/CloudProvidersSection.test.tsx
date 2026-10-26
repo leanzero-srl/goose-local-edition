@@ -177,6 +177,28 @@ describe('CloudProvidersSection', () => {
     );
   });
 
+  it('a local server that is not started reads as Not running, never as a failed check', async () => {
+    mockList.mockResolvedValue([
+      provider('openai', false, {
+        credentials_saved: true,
+        connection_checked: true,
+        connection_error: null,
+        local_server_not_running: 'http://127.0.0.1:8090',
+        metadata: { ...provider('x', true).metadata, display_name: 'OpenAI' },
+      }),
+    ]);
+    render();
+    const configured = await screen.findByRole('region', { name: 'Configured' });
+    const row = await within(configured).findByTestId('cloud-provider-openai');
+    expect(row).toHaveAttribute('data-state', 'not-running');
+    expect(row).toHaveTextContent('Not running');
+    expect(within(row).getByTestId('cloud-provider-not-running-openai')).toHaveTextContent(
+      'Nothing is running at http://127.0.0.1:8090 yet.'
+    );
+    expect(row).not.toHaveTextContent('Check failed');
+    expect(row.className).not.toContain('border-lz-err-solid');
+  });
+
   it('each saved OpenAI-compatible endpoint is its own Configured row, counted, chat-only, and opens its own editor', async () => {
     mockList.mockResolvedValue([
       connected('anthropic'),

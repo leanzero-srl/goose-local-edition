@@ -396,7 +396,10 @@ fn python_engine_kind(args: &[&str]) -> Option<ForeignKind> {
         return Some(ForeignKind::Distributed);
     }
     let (program, rest) = python_program(args)?;
-    let subcommand = rest.first().copied();
+    // The subcommand is the first token that is not a flag: a CLI's global flags may come first
+    // (`rapid-mlx --no-telemetry --no-banner serve …`, seen on the workhorse 2026-10-25 and missed
+    // while the subcommand was simply the first token).
+    let subcommand = rest.iter().copied().find(|token| !token.starts_with('-'));
     match program {
         PyProgram::Inline => None,
         PyProgram::Module(module) => match module {
@@ -785,13 +788,15 @@ Pages occupied by compressor:                 649325.
         let ps = "  101 /tmp/jaccl-smoke/.venv/bin/python /tmp/jaccl-smoke/.venv/bin/mlx_lm.server --model m
   102 /usr/bin/python3 -m http.server
   103 /Users/w/.cache/uv/x/bin/python /Users/w/.local/bin/rapid-mlx serve /m --port 8090
+  107 /Users/w/.cache/uv/a/bin/python /Users/w/.cache/uv/a/bin/rapid-mlx --no-telemetry --no-banner serve /m --served-model-name m --host 127.0.0.1 --port 8093 --log-level INFO
+  108 /Users/w/.cache/uv/a/bin/python /Users/w/.cache/uv/a/bin/rapid-mlx --version
   104 /opt/py/bin/python3.12 -c import base64,sys;exec(base64.b64decode(sys.argv[1])) AAAA goose-distributed-rank
   105 /bin/zsh -c while pgrep -f 'mlx.launch|pipeline_qwen4'; do sleep 5; done
   106 /usr/bin/ssh -tt workhorse echo GOOSE_RANK_PID=$$; exec python -c x goose-distributed-rank
 ";
         let foreign = foreign_engine_processes(ps, &[104]);
         let pids: Vec<u32> = foreign.iter().map(|(p, _)| *p).collect();
-        assert_eq!(pids, vec![101, 103]);
+        assert_eq!(pids, vec![101, 103, 107]);
         let orphan = foreign_engine_processes(ps, &[]);
         assert!(orphan.iter().any(|(p, _)| *p == 104));
         let kinds: Vec<(u32, ForeignKind)> = classify_foreign_engines(ps, &[])
@@ -803,6 +808,7 @@ Pages occupied by compressor:                 649325.
             vec![
                 (101, ForeignKind::SingleServer),
                 (103, ForeignKind::SingleServer),
+                (107, ForeignKind::SingleServer),
                 (104, ForeignKind::Distributed)
             ]
         );

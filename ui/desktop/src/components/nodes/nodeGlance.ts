@@ -102,6 +102,7 @@ export type GlanceLine =
   | { kind: 'leftPool' }
   | { kind: 'cloudAlways'; provider: string; endpoint: boolean }
   | { kind: 'keyMissing'; provider: string }
+  | { kind: 'localServerNotRunning'; origin: string }
   | { kind: 'checking'; provider: string };
 
 export type GlanceAction = 'stop' | 'start' | 'openRunIt' | 'details' | 'pinWay' | 'setUp' | null;
@@ -392,6 +393,14 @@ function providerGlance(node: ResolvedNodeDef, facts: NodeFacts): NodeGlance {
       ...base,
       state: 'failing',
       line: { kind: 'words', text: details?.connection_error ?? name },
+      action: 'details',
+    };
+  }
+  if (row === 'not-running' && details?.local_server_not_running) {
+    return {
+      ...base,
+      state: 'needsStep',
+      line: { kind: 'localServerNotRunning', origin: details.local_server_not_running },
       action: 'details',
     };
   }

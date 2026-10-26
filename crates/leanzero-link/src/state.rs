@@ -103,6 +103,47 @@ pub enum ExecuteError {
 #[async_trait::async_trait]
 pub trait RemoteExecutor: Send + Sync + 'static {
     async fn execute(&self, req: ExecuteRequest) -> Result<ExecuteAccepted, ExecuteError>;
+
+    /// [`Self::execute`], plus a sink the run's transcript is streamed into AS IT HAPPENS
+    /// (assistant text, each tool call with short args, truncated tool results, the finish
+    /// line). A prompt job passes its job log here, so `GET /v1/swarm/jobs/{id}/log?from=`
+    /// tails the answer live instead of reading an empty file while the answer only lives
+    /// in the goose session. The default ignores the sink: an executor that cannot stream
+    /// still runs, its job log just stays empty.
+    async fn execute_logged(
+        &self,
+        req: ExecuteRequest,
+        log: Arc<dyn ExecuteLog>,
+    ) -> Result<ExecuteAccepted, ExecuteError> {
+        let _ = log;
+        self.execute(req).await
+    }
+}
+
+/// Where a logged remote run writes its transcript. `append` is called from the run's own
+/// task with text in order; it must not block for long (a file append is fine) and it
+/// never fails loudly: a lost log line must not break the run.
+pub trait ExecuteLog: Send + Sync + 'static {
+    fn append(&self, text: &str);
+
+    /// How the run ended, reported once by the executor when it knows (D13). A prompt job
+    /// takes its final state from this, never from "the session is no longer live": a turn
+    /// whose provider failed ends its stream normally, so liveness alone read it as Done.
+    /// The default ignores it (an executor that cannot tell leaves the job `lost`).
+    fn finish(&self, end: RunEnd) {
+        let _ = end;
+    }
+}
+
+/// How a logged remote run ended ([`ExecuteLog::finish`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunEnd {
+    /// The turn ran to its end with no provider or stream error.
+    Completed,
+    /// The turn failed; the text says why (the provider error, the stream error).
+    Failed(String),
+    /// The turn was cancelled (a cancel token, the Stop button).
+    Cancelled,
 }
 
 /// One mlxEngine operation the mesh proxy forwards. Each variant maps 1:1 to a
@@ -140,6 +181,12 @@ pub enum MlxOp {
     ReplicaPull,
     ReplicaProgress,
     ReplicaCancel,
+    /// What holds this node's memory (Free up memory census), read-only.
+    MemoryHolders,
+    /// Free memory on this node: goose-owned reclaim always (the route itself is gated by
+    /// `manage_models`); quitting apps only when the node's own
+    /// `GOOSE_LINK_ALLOW_REMOTE_APP_QUIT` switch is on.
+    MemoryFree,
 }
 
 impl MlxOp {
@@ -169,6 +216,8 @@ impl MlxOp {
             Self::ReplicaPull => "replicaPull",
             Self::ReplicaProgress => "replicaProgress",
             Self::ReplicaCancel => "replicaCancel",
+            Self::MemoryHolders => "memoryHolders",
+            Self::MemoryFree => "memoryFree",
         }
     }
 
@@ -196,6 +245,8 @@ impl MlxOp {
             "replicaPull" => Self::ReplicaPull,
             "replicaProgress" => Self::ReplicaProgress,
             "replicaCancel" => Self::ReplicaCancel,
+            "memoryHolders" => Self::MemoryHolders,
+            "memoryFree" => Self::MemoryFree,
             _ => return None,
         })
     }
@@ -203,8 +254,9 @@ impl MlxOp {
     /// True for ops that destroy on-disk state or a running engine over the mesh: model
     /// delete, download-cancel (which also deletes the partial repo), settings-update
     /// (persists into the node's own config and can change what it serves) and unmount
-    /// (stops the engine a local session may be using), and replica-cancel (deletes the
-    /// partial copy). These are logged at `warn` on the executing node so a remote
+    /// (stops the engine a local session may be using), replica-cancel (deletes the
+    /// partial copy) and memory-free (stops goose's engines/servers, unloads models, may quit
+    /// apps when the node allows it). These are logged at `warn` on the executing node so a remote
     /// destructive action is never silent.
     pub fn is_destructive(self) -> bool {
         matches!(
@@ -214,11 +266,12 @@ impl MlxOp {
                 | Self::SettingsUpdate
                 | Self::Unmount
                 | Self::ReplicaCancel
+                | Self::MemoryFree
         )
     }
 
     /// Every op, so a round-trip test cannot miss a variant added later.
-    pub const ALL: [MlxOp; 22] = [
+    pub const ALL: [MlxOp; 24] = [
         Self::Status,
         Self::Mount,
         Self::Unmount,
@@ -241,6 +294,8 @@ impl MlxOp {
         Self::ReplicaPull,
         Self::ReplicaProgress,
         Self::ReplicaCancel,
+        Self::MemoryHolders,
+        Self::MemoryFree,
     ];
 }
 
@@ -408,7 +463,26 @@ struct PeerEntry {
     /// may clear `state.leaving` only if no notice landed while it was in flight — an
     /// answer the peer gave before it said it was leaving never undoes the notice.
     leaving_notices: u64,
+    /// Consecutive polls that connected but got no answer in time ([`PollFailure::Slow`]).
+    slow_looks: u32,
 }
+
+/// How often each peer's liveness DIAL runs (D2): a fresh TCP connect through the mesh proxy,
+/// never a request — a loaded peer's kernel still accepts, so only a gone peer fails it.
+pub const PEER_LIVENESS_INTERVAL: Duration = Duration::from_millis(500);
+/// The liveness dial's bound. A tailnet connect is one round trip (well under 500 ms even over
+/// a DERP relay); a peer whose Link died leaves the CONNECT hanging until this runs out.
+pub const PEER_LIVENESS_DIAL_TIMEOUT: Duration = Duration::from_millis(900);
+/// Liveness dials in a row that must TIME OUT before the row reads `Offline`. One slow
+/// connect on a relayed path is not a dead peer; the retry runs at once (no interval sleep),
+/// so a dropped peer reads Offline within INTERVAL + this × DIAL_TIMEOUT (2.3 s;
+/// 3.0.130: with the desktop's 500 ms roster poll the screen shows it within 3.0 s). A definite
+/// refusal (connection refused, host unreachable) is one look, never retried.
+pub const PEER_LIVENESS_TIMEOUTS: u32 = 2;
+/// Polls in a row that may time out on a CONNECTED peer (alive but slow, e.g. under load)
+/// before it reads `Offline`. Until then its status is kept and the timeout rides in
+/// `last_poll_error`.
+pub const PEER_SLOW_LOOKS: u32 = 3;
 
 struct RegistryInner {
     config: PeerRegistryConfig,
@@ -512,12 +586,18 @@ impl PeerRegistry {
                 computer_name: None,
                 allows: None,
                 leaving: None,
+                load: None,
             };
             let mut tasks = Vec::new();
             match (target.base_url(), target.ws_base()) {
                 (Some(base_url), Some(ws_base)) => {
                     let weak = Arc::downgrade(&self.inner);
                     tasks.push(tokio::spawn(poll_peer_loop(
+                        weak.clone(),
+                        target.clone(),
+                        base_url.clone(),
+                    )));
+                    tasks.push(tokio::spawn(liveness_peer_loop(
                         weak.clone(),
                         target.clone(),
                         base_url,
@@ -542,6 +622,7 @@ impl PeerRegistry {
                     state,
                     tasks,
                     leaving_notices: 0,
+                    slow_looks: 0,
                 },
             );
         }
@@ -714,13 +795,121 @@ enum PollFailure {
     Transport(String),
     /// The peer answered — with a non-2xx status or a body this crate cannot parse.
     Answered(String),
+    /// The connection was made but no answer came within the poll timeout: a peer that is
+    /// there but slow (loaded). Offline only after [`PEER_SLOW_LOOKS`] in a row.
+    Slow(String),
+}
+
+/// A reqwest failure classified: a timeout AFTER the connection was made is `Slow`; any
+/// other failure to complete the exchange (refused, reset, connect timeout) is `Transport`.
+fn classify_send_error(error: reqwest::Error) -> PollFailure {
+    if error.is_timeout() && !error.is_connect() {
+        PollFailure::Slow(error.to_string())
+    } else {
+        PollFailure::Transport(error.to_string())
+    }
+}
+
+/// D2: dial the peer's control port through the mesh proxy every
+/// [`PEER_LIVENESS_INTERVAL`]. A refused dial marks the row `Offline` at once; a CONNECT left
+/// hanging past [`PEER_LIVENESS_DIAL_TIMEOUT`] (the peer's Link is gone, or a slow relay) is
+/// re-dialled at once and marks `Offline` only after [`PEER_LIVENESS_TIMEOUTS`] in a row —
+/// either way without waiting out a poll — whose pooled connection to a dead peer stays open and silent
+/// for the whole request timeout. A successful dial changes nothing: only a poll restores
+/// a status.
+async fn liveness_peer_loop(weak: Weak<RegistryInner>, target: PeerTarget, base_url: String) {
+    let Ok(url) = url::Url::parse(&base_url) else {
+        return;
+    };
+    let mut timeouts = 0u32;
+    loop {
+        if timeouts == 0 {
+            tokio::time::sleep(PEER_LIVENESS_INTERVAL).await;
+        }
+        let Some(inner) = weak.upgrade() else { return };
+        let Some(proxy) = inner.dial.as_ref().map(|dial| dial.proxy) else {
+            return;
+        };
+        drop(inner);
+        let Err(error) = proxy.tcp_stream(&url, PEER_LIVENESS_DIAL_TIMEOUT).await else {
+            timeouts = 0;
+            continue;
+        };
+        if matches!(error, PeerDialError::SocksTimeout { .. }) {
+            timeouts += 1;
+            if timeouts < PEER_LIVENESS_TIMEOUTS {
+                tracing::debug!(hostname = %target.hostname, %error, "mesh peer liveness dial timed out once; re-dialling");
+                continue;
+            }
+        }
+        timeouts = 0;
+        let Some(inner) = weak.upgrade() else { return };
+        let text = format!("{base_url} unreachable: {error}");
+        if let Some(event) = mark_peer_unreachable(&inner, &target.hostname, &text) {
+            inner.pubsub.publish(EventOrigin::Peer, event).await;
+        }
+    }
+}
+
+/// The liveness dial failed: `Offline` with the dial's words — unless the row already reads
+/// `Offline` (a poll's own transport text, or a leaving notice, is never overwritten).
+fn mark_peer_unreachable(
+    inner: &Arc<RegistryInner>,
+    hostname: &str,
+    error: &str,
+) -> Option<LinkEvent> {
+    let mut peers = inner.peers.lock().unwrap();
+    let entry = peers.get_mut(hostname)?;
+    if entry.state.status == NodeStatus::Offline {
+        return None;
+    }
+    tracing::warn!(
+        hostname,
+        error,
+        "mesh peer liveness dial failed; marked Offline"
+    );
+    entry.state.status = NodeStatus::Offline;
+    entry.state.last_poll_error = Some(error.to_string());
+    entry.state.updated_at = Utc::now();
+    Some(LinkEvent::NodeStateChanged(entry.state.clone()))
+}
+
+/// Count a slow look; the event to publish (Offline at [`PEER_SLOW_LOOKS`], else the error).
+fn mark_peer_slow(inner: &Arc<RegistryInner>, hostname: &str, error: &str) -> Option<LinkEvent> {
+    let looks = {
+        let mut peers = inner.peers.lock().unwrap();
+        let entry = peers.get_mut(hostname)?;
+        entry.slow_looks += 1;
+        entry.slow_looks
+    };
+    let text = format!("no answer in time ({looks} of {PEER_SLOW_LOOKS} looks): {error}");
+    if looks >= PEER_SLOW_LOOKS {
+        mark_peer_offline(inner, hostname, &text)
+    } else {
+        mark_peer_poll_error(inner, hostname, &text)
+    }
+}
+
+fn reset_slow_looks(inner: &Arc<RegistryInner>, hostname: &str) {
+    if let Some(entry) = inner.peers.lock().unwrap().get_mut(hostname) {
+        entry.slow_looks = 0;
+    }
 }
 
 async fn poll_peer_loop(weak: Weak<RegistryInner>, target: PeerTarget, base_url: String) {
     loop {
         let Some(inner) = weak.upgrade() else { return };
         let poll_interval = inner.config.poll_interval;
-        match poll_peer_once(&inner, &target, &base_url).await {
+        let outcome = poll_peer_once(&inner, &target, &base_url).await;
+        if !matches!(outcome, Err(PollFailure::Slow(_))) {
+            reset_slow_looks(&inner, &target.hostname);
+        }
+        match outcome {
+            Err(PollFailure::Slow(error)) => {
+                if let Some(event) = mark_peer_slow(&inner, &target.hostname, &error) {
+                    inner.pubsub.publish(EventOrigin::Peer, event).await;
+                }
+            }
             Ok(events) => {
                 for event in events {
                     inner.pubsub.publish(EventOrigin::Peer, event).await;
@@ -759,7 +948,7 @@ async fn fetch_json<T: serde::de::DeserializeOwned>(
         .bearer_auth(&inner.config.node_token)
         .send()
         .await
-        .map_err(|e| PollFailure::Transport(e.to_string()))?;
+        .map_err(classify_send_error)?;
     let status = response.status();
     if !status.is_success() {
         let body = response
@@ -772,6 +961,9 @@ async fn fetch_json<T: serde::de::DeserializeOwned>(
         )));
     }
     response.json::<T>().await.map_err(|e| {
+        if e.is_timeout() {
+            return PollFailure::Slow(e.to_string());
+        }
         PollFailure::Answered(format!(
             "{url} answered 2xx but its body did not parse: {e}"
         ))
@@ -854,8 +1046,14 @@ fn fold_peer_snapshot(
             if entry.state.leaving.is_some() && remote_self.leaving.is_none() {
                 tracing::info!(hostname, "peer_leaving_cleared: seen online again");
             }
+            // `load` changes on every poll; publishing it would turn the 3 s poll into a
+            // NodeStateChanged per peer per tick. Store it (so `/nodes` serves it), announce
+            // only a change in the rest.
+            let announce = !entry.state.same_except_load(remote_self);
             entry.state = remote_self.clone();
-            events.push(LinkEvent::NodeStateChanged(remote_self.clone()));
+            if announce {
+                events.push(LinkEvent::NodeStateChanged(remote_self.clone()));
+            }
         }
     }
     let remote_id = entry.state.node_id.clone();
@@ -1085,6 +1283,7 @@ mod tests {
 
     fn report(leaving: Option<LeaveReason>) -> NodeState {
         NodeState {
+            load: None,
             node_id: "studio-id".to_string(),
             hostname: "studio".to_string(),
             mesh_ip: Some("100.64.0.5".to_string()),
@@ -1116,6 +1315,36 @@ mod tests {
 
     fn row(registry: &PeerRegistry) -> NodeState {
         registry.peer_nodes().remove(0)
+    }
+
+    /// A load-only change is stored (so `/nodes` serves it) but announces nothing: the 3 s
+    /// poll must not become one NodeStateChanged per peer per tick. A real change still does.
+    #[tokio::test]
+    async fn a_load_only_change_is_stored_without_an_event() {
+        let registry = registry_with_studio();
+        let inner = &registry.inner;
+        let base = report(None);
+        let first = fold_peer_snapshot(inner, "studio", Some(0), base.clone(), None, None);
+        assert_eq!(first.len(), 1, "{first:?}");
+
+        let mut loaded = base.clone();
+        let mut load = crate::load::NodeLoad::default();
+        load.own.gpu_util_pct = Some(42.0);
+        loaded.load = Some(Box::new(load.clone()));
+        let events = fold_peer_snapshot(inner, "studio", Some(0), loaded.clone(), None, None);
+        assert!(events.is_empty(), "{events:?}");
+        assert_eq!(row(&registry).load, Some(Box::new(load.clone())));
+
+        load.own.gpu_util_pct = Some(7.0);
+        loaded.load = Some(Box::new(load.clone()));
+        assert!(
+            fold_peer_snapshot(inner, "studio", Some(0), loaded.clone(), None, None).is_empty()
+        );
+        assert_eq!(row(&registry).load.unwrap().own.gpu_util_pct, Some(7.0));
+
+        loaded.sessions_active = 2;
+        let events = fold_peer_snapshot(inner, "studio", Some(0), loaded, None, None);
+        assert_eq!(events.len(), 1, "a real change still announces: {events:?}");
     }
 
     /// The race the notice counter exists for: a poll whose `/nodes` answered BEFORE the peer

@@ -47,6 +47,21 @@ describe('toasts (Studio)', () => {
     mocks.toast.isActive.mockReturnValue(false);
   });
 
+  it('a multi-line message shows each line on its own, never one run-on paragraph', () => {
+    toastError({
+      title: 'Provider connections need attention',
+      msg: 'Claude: Anthropic could not list models: 401\nOpenRouter: OpenRouter rejected the key',
+    });
+    render(mocks.toast.error.mock.calls[0][0] as ReactElement);
+    expect(screen.getAllByTestId('toast-line').map((line) => line.textContent)).toEqual([
+      'Claude: Anthropic could not list models: 401',
+      'OpenRouter: OpenRouter rejected the key',
+    ]);
+    toastSuccess({ title: 'Saved', msg: 'one\ntwo' });
+    render(mocks.toast.success.mock.calls[0][0] as ReactElement);
+    expect(screen.getAllByTestId('toast-line').map((line) => line.textContent)).toContain('two');
+  });
+
   it('the extension-loading toast closes through a ghost icon Button, on create and on update', () => {
     toastService.extensionLoading([], 2, false);
     expect(mocks.toast).toHaveBeenCalledTimes(1);

@@ -87,4 +87,59 @@ describe('lz/Combobox', () => {
     fireEvent.click(screen.getByRole('option', { name: /America/ }));
     expect(screen.getByTestId('value')).toHaveTextContent('America/New_York');
   });
+  it('shows the picked option label in the field, never its raw value (D12)', () => {
+    function Labelled() {
+      const [v, setV] = useState('__best__');
+      return (
+        <Combobox
+          aria-label="Run on"
+          options={[
+            { value: '__best__', label: 'Best Mac' },
+            { value: 'node-1', label: 'Studio' },
+          ]}
+          value={v}
+          onChange={setV}
+        />
+      );
+    }
+    render(<Labelled />);
+    const field = screen.getByRole('combobox', { name: 'Run on' });
+    expect(field).toHaveValue('Best Mac');
+    fireEvent.focus(field);
+    fireEvent.click(screen.getByRole('option', { name: /Studio/ }));
+    expect(field).toHaveValue('Studio');
+    fireEvent.blur(field);
+    expect(field).toHaveValue('Studio');
+  });
+
+  it('lists a disabled option with its reason but never picks it (D11)', () => {
+    function WithOff() {
+      const [v, setV] = useState('a');
+      return (
+        <>
+          <Combobox
+            aria-label="Run on"
+            options={[
+              { value: 'a', label: 'Alpha' },
+              { value: 'b', label: 'Beta', hint: 'jobs are off', disabled: true },
+            ]}
+            value={v}
+            onChange={setV}
+          />
+          <output data-testid="value">{v}</output>
+        </>
+      );
+    }
+    render(<WithOff />);
+    const field = screen.getByRole('combobox', { name: 'Run on' });
+    fireEvent.focus(field);
+    const off = screen.getByRole('option', { name: /Beta/ });
+    expect(off).toHaveAttribute('aria-disabled', 'true');
+    expect(off).toHaveTextContent('jobs are off');
+    fireEvent.click(off);
+    expect(screen.getByTestId('value')).toHaveTextContent('a');
+    fireEvent.keyDown(field, { key: 'ArrowDown' });
+    fireEvent.keyDown(field, { key: 'Enter' });
+    expect(screen.getByTestId('value')).toHaveTextContent('a');
+  });
 });

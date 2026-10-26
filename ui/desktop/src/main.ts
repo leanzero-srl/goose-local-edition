@@ -27,7 +27,22 @@ import {
   type BuildCompletionReceipt,
   type StoredRunMeta,
 } from './benchRescore';
-import { billedCostRowField } from './benchBilledCost';
+import { billedCostRowField, type DeclaredPrices } from './benchBilledCost';
+import { benchPublishBilling, droppableAfterRefusal } from './benchPublishBilling';
+import { captureTokenUsage, type CachedCapture, type TokenCapture } from './benchTokenCapture';
+import { tokenUsageLine, type TokenUsage } from './benchTokenUsage';
+import {
+  publishSeriesPair,
+  seriesPublishPlan,
+  type PairCouplingFacts,
+} from './benchSeriesPublish';
+import {
+  catalogDisplayName,
+  benchRunRoute,
+  forge2CohortReceipt,
+  suggestedPublishTitle,
+  type BenchRunRoute,
+} from './benchPublishIdentity';
 import { budgetRowField, maxUsdLaunchEnv } from './benchBudget';
 import {
   appendBenchmarkActivity,
@@ -35,6 +50,7 @@ import {
   type BenchmarkActivity,
 } from './benchActivity';
 import { spawnBenchmarkWithPower } from './benchPower';
+import { attachBenchMarker, benchMarkerLabel } from './benchMarker';
 import { registerKeepAwake } from './keepAwake';
 import { registerSystemResumed } from './systemResumed';
 import { publicScoreDetails } from './benchPublicScore';
@@ -102,6 +118,7 @@ import {
   Notification,
   powerMonitor,
   powerSaveBlocker,
+  safeStorage,
   session,
   screen,
   shell,
@@ -178,6 +195,7 @@ import {
   type CloudBenchmarkTier,
 } from './benchTierPayload';
 import {
+  FAMILY_WORD,
   familyOfScorer,
   forgeEra,
   isolatedPaymentsTier,
@@ -297,6 +315,7 @@ import {
 } from './engineGlanceDesktop';
 import { createGlanceWindowPort } from './engineGlanceWindow';
 import { gooseWindowFacts, trackOutOfSight } from './engineGlanceGooseWindows';
+import { keepRepainted, repaintWindow } from './windowRepaint';
 import { GlanceCoverage, WINDOW_LIST_JXA } from './engineGlanceCoverage';
 import { TRAY_ACTION_ENGINES, workCutBy } from './utils/mlxInFlight';
 import { isMlxRestoreReport, type MlxRestoreReport } from './utils/mlxRestoreReport';
@@ -2517,10 +2536,19 @@ const refreshGlanceSoon = () => setTimeout(() => engineGlanceDesktop.refresh(), 
 // Event, the tray's Quit and SIGTERM all start here. A refused quit (a live run's close guard) gives
 // it back: see mainWindow.on('close').
 app.on('before-quit', () => engineGlanceDesktop.suspendForQuit());
+// The evidence for windowRepaint.ts: a GPU or renderer process that goes away is named in main.log.
+app.on('child-process-gone', (_event, details) => {
+  log.warn(`child process gone: ${details.type} ${details.reason} exit=${details.exitCode}${details.name ? ` (${details.name})` : ''}`);
+});
+app.on('render-process-gone', (_event, contents, details) => {
+  log.warn(`renderer gone: ${details.reason} exit=${details.exitCode} url=${contents.getURL().slice(0, 120)}`);
+});
 app.on('browser-window-focus', refreshGlanceSoon);
 app.on('browser-window-blur', refreshGlanceSoon);
 app.on('browser-window-created', (_event, win) => {
   trackOutOfSight(win);
+  // A page drawn only part of the way down is drawn again (windowRepaint.ts).
+  keepRepainted(win);
   win.on('minimize', refreshGlanceSoon);
   win.on('restore', refreshGlanceSoon);
   win.on('hide', refreshGlanceSoon);
@@ -4479,7 +4507,10 @@ ipcMain.handle('benchmark-run-result', async (_event, key: string) => {
   const row = (await readBenchSessionRows()).find((r) => benchRunKey(r) === key);
   if (!row) return null;
   const resolved = await resolveRunResult(row);
-  return resolved?.result ?? null;
+  if (!resolved?.result) return null;
+  // Where the model ran (its own evidence), so the card prefills a cloud price only for a proven cloud run.
+  const route = await benchRunRouteOf(resolved.result);
+  return { ...resolved.result, runRoute: route, localEngine: route === 'local' };
 });
 
 /** The result row a scored verdict becomes — the one shape result.json, the per-run store and a run
@@ -4784,6 +4815,7 @@ const runSingleBenchmark = async (
         slotDir: workdir,
         completionReceipt,
         ...(runModelFields ? { modelFields: runModelFields } : {}),
+        engineSha256: await benchmarkFileSha(engineBinary),
         ...(seriesBuild
           ? { seriesId: seriesBuild.series.id, buildIndex: seriesBuild.build.index }
           : {}),
@@ -4933,6 +4965,8 @@ const runSingleBenchmark = async (
           }
         )
       );
+      // Other Macs read this marker before placing work here (load.rs / node_fleet.py).
+      attachBenchMarker(child, benchMarkerLabel(FAMILY_WORD[family], 'build run'));
       const harnessConsole = fsSync.createWriteStream(
         completionReceipt.replace(/\.json$/, '.log'),
         { flags: 'wx' }
@@ -5574,6 +5608,7 @@ ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string, mode?: '
       const { child, releasePower } = spawnBenchmarkWithPower(powerSaveBlocker, () =>
         spawn(runtime.python, python.args, { cwd: workdir, env: python.env, detached: true })
       );
+      attachBenchMarker(child, benchMarkerLabel(FAMILY_WORD[family], 'rescore'));
       activeBenchRun = {
         activity: emptyBenchmarkActivity(),
         releasePower,
@@ -5829,334 +5864,666 @@ const cancelActiveBenchRun = (why: string): { ok: boolean; error?: string } => {
 ipcMain.handle('benchmark-cancel', async () => cancelActiveBenchRun('cancel requested'));
 
 const benchmarkPublicationOwner = new BenchPublicationOwner();
-ipcMain.handle('benchmark-publish', (_event, args?: { title?: string; runKey?: string }) =>
-  benchmarkPublicationOwner.run(async () => {
-    if (activeBenchRun || activeBenchSeries || benchmarkLaunchPending)
-      return { ok: false, error: 'Wait for the benchmark to finish before publishing.' };
-    // ANY finished run publishes from its OWN result row (runKey); without a key, the latest result as
-    // before. A run this machine already posted is not posted twice.
-    let stored: Record<string, unknown>;
-    let storedIsLatest = true;
-    let runKey: string | null = null;
-    if (typeof args?.runKey === 'string' && args.runKey) {
-      const row = (await readBenchSessionRows()).find((r) => benchRunKey(r) === args.runKey);
-      if (!row) return { ok: false, error: 'this run is no longer in the session list' };
-      const resolved = await resolveRunResult(row);
-      if (!resolved)
-        return { ok: false, error: "this run's scored result could not be read from its folder" };
-      // Posted and not re-scored since: the board already shows exactly this result.
-      const rescoredAt = (resolved.result.runMeta as Partial<StoredRunMeta> | undefined)
-        ?.rescoredAt;
-      if (publishedIsCurrent((await readPublished())[args.runKey], rescoredAt))
-        return { ok: false, error: 'this run is already live on leanzero.net' };
-      stored = resolved.result;
-      storedIsLatest = resolved.latest;
-      runKey = args.runKey;
-    } else {
+
+/** Where the model ran, from the run's own evidence (benchPublishIdentity benchRunRoute): its isolation record,
+ *  its harness bill and its engine telemetry. Cloud only with positive proof; anything unproven is not cloud. */
+async function benchRunRouteOf(stored: Record<string, unknown>): Promise<BenchRunRoute> {
+  let isolation: unknown = null;
+  if (typeof stored.workdir === 'string')
+    for (const dir of [stored.workdir, path.dirname(stored.workdir)]) {
       try {
-        stored = JSON.parse(await fs.readFile(BENCH_RESULT, 'utf8')) as Record<string, unknown>;
+        isolation = JSON.parse(await fs.readFile(path.join(dir, 'isolation.json'), 'utf8'));
+        break;
       } catch {
-        return { ok: false, error: 'no benchmark result to publish — run the benchmark first' };
+        // no isolation record here; try the next folder
       }
     }
-    // Key by key for both families: the build's id and, after a re-score, rescoredAt — what lets the
-    // site replace the entry it already shows for this build instead of adding a second one.
-    const runMeta = publishRunMeta(stored);
-    if (!runMeta) {
-      return {
-        ok: false,
-        error:
-          'this result was saved by an older version of the app and is missing the run record publishing needs — run the benchmark again to publish',
-      };
+  return benchRunRoute({ isolation, billedCost: stored.billedCost, telemetry: stored.telemetry });
+}
+
+/** The engine that RAN a build: stamped on its session row at launch (BenchSessionRow.engineSha256). */
+async function benchEngineShaFor(runKey: string | null, stored: Record<string, unknown>): Promise<string | null> {
+  const rows = await readBenchSessionRows();
+  const key =
+    runKey ??
+    benchRunKey({
+      runId: typeof stored.runId === 'string' ? stored.runId : null,
+      startedAt: (stored.runMeta as { startedAt?: string } | undefined)?.startedAt ?? '',
+    });
+  const sha = rows.find((r) => benchRunKey(r) === key)?.engineSha256;
+  return typeof sha === 'string' && /^[a-f0-9]{64}$/.test(sha) ? sha : null;
+}
+
+/** The LeanZero operator key (our own installs only). Kept OUT of goose's config.yaml (which diagnostics copy) and
+ *  never readable by the renderer: the Benchmark view writes it through `benchmark-operator-key-set`, main stores it
+ *  encrypted with Electron safeStorage (the OS keychain) in BENCH_DIR, and only main decrypts it, at publish, to send
+ *  it as a header for a proven-cloud single-model run. LEANZERO_BENCH_OPERATOR_KEY in main's environment overrides.
+ *  leanzero.net holds only its sha256; rotating the key = a new key here + its sha256 in the site's env. */
+const BENCH_OPERATOR_KEY_FILE = () => path.join(BENCH_DIR, 'operator-key.bin');
+async function benchOperatorKey(): Promise<{ key: string | null; problem?: string }> {
+  const fromEnv = process.env.LEANZERO_BENCH_OPERATOR_KEY?.trim();
+  if (fromEnv) return { key: fromEnv };
+  let sealed: Buffer;
+  try {
+    sealed = await fs.readFile(BENCH_OPERATOR_KEY_FILE());
+  } catch {
+    return { key: null }; // no key saved: an ordinary community publish
+  }
+  // A key IS saved but cannot be read (keychain locked, access denied, encryption unavailable): say so on the card
+  // rather than publishing as a community entry without a word (final review 2026-10-18).
+  try {
+    if (!safeStorage.isEncryptionAvailable()) throw new Error('keychain encryption is not available');
+    const key = safeStorage.decryptString(sealed).trim();
+    return key ? { key } : { key: null, problem: 'the saved operator key is empty' };
+  } catch (error) {
+    return { key: null, problem: error instanceof Error ? error.message : String(error) };
+  }
+}
+ipcMain.handle('benchmark-operator-key-status', async () => {
+  try {
+    await fs.access(BENCH_OPERATOR_KEY_FILE());
+    return { saved: true, available: safeStorage.isEncryptionAvailable() };
+  } catch {
+    return { saved: false, available: safeStorage.isEncryptionAvailable() };
+  }
+});
+// Write-only: the key goes in, nothing about it comes back but whether one is saved.
+ipcMain.handle('benchmark-operator-key-set', async (_event, key: unknown) => {
+  const value = typeof key === 'string' ? key.trim() : '';
+  if (value.length > 256) return { ok: false, error: 'An operator key is at most 256 characters.' };
+  if (!value) {
+    await fs.rm(BENCH_OPERATOR_KEY_FILE(), { force: true });
+    return { ok: true, saved: false };
+  }
+  if (!safeStorage.isEncryptionAvailable())
+    return { ok: false, error: "This Mac's keychain encryption is not available, so the key cannot be stored safely." };
+  await fs.mkdir(BENCH_DIR, { recursive: true });
+  await fs.writeFile(BENCH_OPERATOR_KEY_FILE(), safeStorage.encryptString(value), { mode: 0o600 });
+  return { ok: true, saved: true };
+});
+
+// OpenRouter's public model catalog (no key): the display names the publish title is prefilled with.
+let benchCatalogNames: { at: number; data: Array<{ id?: unknown; name?: unknown }> } | null = null;
+async function benchModelDisplayName(model: string, provider: string): Promise<string | null> {
+  if (!benchCatalogNames || Date.now() - benchCatalogNames.at > 3600_000) {
+    try {
+      const res = await fetch('https://openrouter.ai/api/v1/models', { signal: AbortSignal.timeout(8000) });
+      const body = (await res.json()) as { data?: unknown };
+      if (res.ok && Array.isArray(body.data)) benchCatalogNames = { at: Date.now(), data: body.data };
+    } catch {
+      // offline or refused: the title simply is not prefilled with a display name
     }
-    // Frozen gate, from the CACHED catalog: the same refusal the server would return, without
-    // burning the POST. The server stays the authority — it refuses frozen benchmarks too.
-    const frozenRefusal = frozenPublishRefusal(
-      (await readBenchCatalogCache())?.benchmarks,
-      typeof stored.scorerVersion === 'string' ? stored.scorerVersion : ''
-    );
-    if (frozenRefusal) return frozenRefusal;
-    // `model` is ENGINE TRUTH only (v2.4): the renderer stopped sending one, so a user-editable
-    // value can no longer publish a lie. A result whose run recorded no usable pool_resolved id
-    // refuses loudly with the reason — never a substitute.
-    const model = (typeof stored.modelId === 'string' ? stored.modelId : '').trim();
-    if (benchmarkModelIdProblem(model)) {
-      return {
-        ok: false,
-        error:
-          'this result carries no usable model id from the engine — run the benchmark again to publish',
-      };
+  }
+  return benchCatalogNames ? catalogDisplayName(benchCatalogNames.data, model, provider) : null;
+}
+
+/** What the publish card prefills for a run: a readable title, and whether the run used a local engine. */
+ipcMain.handle('benchmark-publish-suggestion', async (_event, key: string) => {
+  const row = (await readBenchSessionRows()).find((r) => benchRunKey(r) === key);
+  if (!row) return null;
+  const resolved = await resolveRunResult(row);
+  const stored = resolved?.result as Record<string, unknown> | undefined;
+  if (!stored) return null;
+  const model = typeof stored.modelId === 'string' ? stored.modelId : '';
+  const provider = typeof stored.provider === 'string' ? stored.provider : null;
+  if (!model) return null;
+  const route = await benchRunRouteOf(stored);
+  const displayName = await benchModelDisplayName(model, provider ?? '');
+  return { title: suggestedPublishTitle({ model, provider, route, displayName }), local: route === 'local', route };
+});
+
+type BenchPublishArgs = {
+  title?: string;
+  runKey?: string;
+  declaredPrices?: DeclaredPrices;
+  /** The user's explicit choice, offered only after a pair was refused as one entry: publish this build alone. */
+  separately?: boolean;
+};
+
+/** The OpenRouter key and host goose is configured with, read the way a cloud launch reads them (benchmark-config);
+ *  the key stays in main and travels only to the host that billed the run. */
+async function benchOpenRouterCredentials(): Promise<{ key: string; host: string } | null> {
+  const snapshot = await benchmarkProviderSnapshot(
+    { provider: 'openrouter', model: 'token-usage' },
+    { sent: {}, pinnedByTier: [] },
+    process.env
+  );
+  const key = snapshot.secrets.OPENROUTER_API_KEY;
+  if (typeof key !== 'string' || !key.trim()) return null;
+  const host = snapshot.config.OPENROUTER_HOST;
+  return {
+    key: key.trim(),
+    host: typeof host === 'string' && host.trim() ? host.trim() : 'https://openrouter.ai',
+  };
+}
+
+/** Exact provider-record token usage per verdict (sha256), kept out of the run folders (they are evidence). The
+ *  folder is versioned: an exact result cached by an earlier rule (v1 sent records goose's own usage contradicted as
+ *  exact) is never reused. */
+const BENCH_TOKEN_USAGE_DIR = () => path.join(BENCH_DIR, 'token-usage-v3');
+const benchTokenUsageCache = {
+  get: async (sha: string): Promise<CachedCapture | null> =>
+    /^[a-f0-9]{64}$/.test(sha)
+      ? (JSON.parse(
+          await fs.readFile(path.join(BENCH_TOKEN_USAGE_DIR(), `${sha}.json`), 'utf8')
+        ) as CachedCapture)
+      : null,
+  set: async (sha: string, usage: CachedCapture): Promise<void> => {
+    if (!/^[a-f0-9]{64}$/.test(sha)) return;
+    await fs.mkdir(BENCH_TOKEN_USAGE_DIR(), { recursive: true });
+    await fs.writeFile(path.join(BENCH_TOKEN_USAGE_DIR(), `${sha}.json`), JSON.stringify(usage));
+  },
+};
+
+/**
+ * Publish entry point. A build of a Forge 2.0 series publishes WITH its partner (benchSeriesPublish): both builds are
+ * prepared and checked to couple before either is posted, then posted in build order under one title. Any other run
+ * publishes on its own.
+ */
+async function publishBenchmark(args: BenchPublishArgs | undefined) {
+  if (activeBenchRun || activeBenchSeries || benchmarkLaunchPending)
+    return { ok: false, error: 'Wait for the benchmark to finish before publishing.' };
+  if (typeof args?.runKey !== 'string' || !args.runKey || args.separately === true)
+    return publishBenchRun(args);
+  const rows = await readBenchSessionRows();
+  const row = rows.find((r) => benchRunKey(r) === args.runKey) ?? null;
+  const plan = seriesPublishPlan({
+    row,
+    series: row?.seriesId ? await resolvedBenchmarkSeries(row.seriesId).catch(() => null) : null,
+    rows,
+    runKeyOf: (r) => benchRunKey(r),
+  });
+  if (plan.kind === 'wait') return { ok: false, error: plan.reason };
+  if (plan.kind === 'single') return publishBenchRun(args);
+  return publishBenchPair(plan.keys, args);
+}
+
+async function publishBenchPair(keys: [string, string], args: BenchPublishArgs) {
+  const published = await readPublished();
+  return publishSeriesPair(keys, args.runKey ?? keys[0], {
+    published,
+    isCurrent: (key, rescoredAt) => publishedIsCurrent(published[key], rescoredAt),
+    preflight: (key) => publishBenchRun({ ...args, runKey: key }, { preflight: true }),
+    publish: (key) => publishBenchRun({ ...args, runKey: key }),
+  });
+}
+
+ipcMain.handle('benchmark-publish', (_event, args?: BenchPublishArgs) =>
+  benchmarkPublicationOwner.run(() => publishBenchmark(args))
+);
+
+/** One run's publish. `preflight` prepares and checks everything that needs no upload or post and returns the facts
+ *  that decide coupling (a series' builds are both checked before either is posted). */
+async function publishBenchRun(
+  args: BenchPublishArgs | undefined,
+  opts: { preflight?: boolean } = {}
+): Promise<Record<string, unknown>> {
+  // ANY finished run publishes from its OWN result row (runKey); without a key, the latest result as
+  // before. A run this machine already posted is not posted twice.
+  let stored: Record<string, unknown>;
+  let storedIsLatest = true;
+  let runKey: string | null = null;
+  if (typeof args?.runKey === 'string' && args.runKey) {
+    const row = (await readBenchSessionRows()).find((r) => benchRunKey(r) === args.runKey);
+    if (!row) return { ok: false, error: 'this run is no longer in the session list' };
+    const resolved = await resolveRunResult(row);
+    if (!resolved)
+      return { ok: false, error: "this run's scored result could not be read from its folder" };
+    // Posted and not re-scored since: the board already shows exactly this result.
+    const rescoredAt = (resolved.result.runMeta as Partial<StoredRunMeta> | undefined)?.rescoredAt;
+    if (!opts.preflight && publishedIsCurrent((await readPublished())[args.runKey], rescoredAt))
+      return { ok: false, error: 'this run is already live on leanzero.net' };
+    stored = resolved.result;
+    storedIsLatest = resolved.latest;
+    runKey = args.runKey;
+  } else {
+    try {
+      stored = JSON.parse(await fs.readFile(BENCH_RESULT, 'utf8')) as Record<string, unknown>;
+    } catch {
+      return { ok: false, error: 'no benchmark result to publish — run the benchmark first' };
     }
-    // Forge (forge/INTEGRATION.md): the same route and envelope, refused here when score_forge.py itself
-    // marked the verdict not board-grade (held, unpublishable, or an rc scorer).
-    const forgeResult =
-      typeof stored.scorerVersion === 'string' && familyOfScorer(stored.scorerVersion) === 'forge';
-    if (stored.scorerVersion === 'forge-2.0') {
-      let installedFingerprint: string;
-      try {
-        installedFingerprint = forgeTaskFingerprint(
-          await fs.readFile(path.join(resolveBenchPayloadDir(), 'forge2', 'release-manifest.json'))
-        );
-      } catch {
-        return {
-          ok: false,
-          error:
-            'The installed Forge 2.0 task receipt could not be read. Reinstall the current Goose Swarm release before publishing.',
-        };
-      }
-      const taskProblem = forgeTaskPublicationProblem(stored, installedFingerprint);
-      if (taskProblem) return { ok: false, error: taskProblem };
-    }
-    if (forgeResult) {
-      const problem = forgePublishProblem(stored);
-      if (problem) return { ok: false, error: problem };
-    }
-    const identity = await ensureBenchIdentity();
-    // The title is the USER'S name for the run (v2.4, Mihai 2026-08-30: the auto-generated
-    // handle is not a title) — required, refused here with the reason, never defaulted.
-    const title = typeof args?.title === 'string' ? args.title.trim().slice(0, 80) : '';
-    if (!title) {
-      return { ok: false, error: 'a title is required — name this run before publishing' };
-    }
-    // Prefer the frozen snapshot written WITH the result row — the workdir is reused and wiped
-    // by the next run, so reading it at publish time can attach another run's screenshots to
-    // this row's score.
-    // The snapshot belongs to result.json's run only; any other run reads its own tree.
-    const snapshotShots: BenchShot[] = storedIsLatest
-      ? await readBenchShotsSnapshot(path.join(BENCH_DIR, 'shots-snapshot'))
-      : [];
-    const screenshots = limitBenchShotsForPublish(
-      snapshotShots.length
-        ? snapshotShots
-        : typeof stored.workdir === 'string'
-          ? await pickBenchShots(stored.workdir)
-          : []
-    );
-    const tiers = (stored.tiers ?? {}) as Record<string, unknown>;
-    // STRICT allowlist per the contract — unknown keys reject the whole payload, so the payload
-    // is built key by key (never a spread of the stored row, which carries mine/workdir).
-    // v2.3 card hygiene: the PUBLIC label is neutral — "<N>-node Swarm", never the in-app
-    // first-person "Your fleet · N nodes".
-    const cloudEntrant =
-      typeof stored.provider === 'string' ||
-      (typeof stored.runId === 'string' && stored.runId.startsWith('cloud-'));
-    const nodeCount = !cloudEntrant && typeof stored.nodes === 'number' ? stored.nodes : null;
-    const payload: Record<string, unknown> = {
-      label: cloudEntrant
-        ? `${model} · single agent`
-        : nodeCount != null
-          ? `${nodeCount}-node Swarm`
-          : 'Swarm',
-      score: stored.score,
-      // Forge's tiers (L…E) come with forgePublishBody below; this is Gauntlet's A–D envelope.
-      tiers: { A: tiers.A ?? 0, B: tiers.B ?? 0, C: tiers.C ?? 0, D: tiers.D ?? 0 },
-      ...(nodeCount != null ? { nodes: nodeCount } : {}),
-      ...(typeof stored.hard === 'number' ? { hard: stored.hard } : {}),
-      ...(typeof stored.excellent === 'boolean' ? { excellent: stored.excellent } : {}),
-      ...(typeof stored.wallSecs === 'number' ? { wallSecs: stored.wallSecs } : {}),
-      ...(typeof stored.scorerVersion === 'string' ? { scorerVersion: stored.scorerVersion } : {}),
-      title,
-      model,
-      ...(typeof stored.provider === 'string' ? { provider: stored.provider } : {}),
-      poster: { installId: identity.installId, handle: identity.handle },
-      ...(screenshots.length > 0 ? { screenshots } : {}),
-      runMeta,
-      ...(stored.telemetry && typeof stored.telemetry === 'object'
-        ? { telemetry: stored.telemetry }
-        : {}),
+  }
+  // Key by key for both families: the build's id and, after a re-score, rescoredAt — what lets the
+  // site replace the entry it already shows for this build instead of adding a second one.
+  const runMeta = publishRunMeta(stored);
+  if (!runMeta) {
+    return {
+      ok: false,
+      error:
+        'this result was saved by an older version of the app and is missing the run record publishing needs — run the benchmark again to publish',
     };
-    // Forge's graded browser recording (score_forge.py, SB7.x's media shape) rides like Gauntlet's. Without
-    // a verified clip it publishes ONLY when the four visual rows are the scorer's own "no surface rendered
-    // app content" vacuous zeros (clipAbsence = the site's rule); anything else is refused.
-    if (forgeResult) {
-      const media =
-        typeof stored.workdir === 'string'
-          ? await readBenchMedia(stored.workdir)
-          : { videos: [], error: 'no run directory' };
-      const clipless =
-        media.videos.length !== 1 || media.error
-          ? clipAbsence(
-              stored.scorerVersion as string,
-              (stored.verdict as { checks?: unknown })?.checks
-            )
-          : null;
-      // Surfaces rendered (or the probe failed) but no verified clip: a SCORING problem, never a clip-less
-      // post — the card offers Retry scoring on the saved build (forgeClipMissing).
-      if (!clipless && (media.error || media.videos.length !== 1))
-        return {
-          ok: false,
-          error: `${stored.scorerVersion} publication requires its graded browser clip, and none could be verified although the app's surfaces were graded (${media.error ?? 'clip count mismatch'}). Retry scoring re-grades the saved build and records it.`,
-        };
-      if (clipless) payload.noRecording = true;
-      else {
-        try {
-          const clip = await publishableClip(
-            stored.workdir as string,
-            media.videos[0],
-            benchClipTools
-          );
+  }
+  // Frozen gate, from the CACHED catalog: the same refusal the server would return, without
+  // burning the POST. The server stays the authority — it refuses frozen benchmarks too.
+  const frozenRefusal = frozenPublishRefusal(
+    (await readBenchCatalogCache())?.benchmarks,
+    typeof stored.scorerVersion === 'string' ? stored.scorerVersion : ''
+  );
+  if (frozenRefusal) return frozenRefusal;
+  // `model` is ENGINE TRUTH only (v2.4): the renderer stopped sending one, so a user-editable
+  // value can no longer publish a lie. A result whose run recorded no usable pool_resolved id
+  // refuses loudly with the reason — never a substitute.
+  const model = (typeof stored.modelId === 'string' ? stored.modelId : '').trim();
+  if (benchmarkModelIdProblem(model)) {
+    return {
+      ok: false,
+      error:
+        'this result carries no usable model id from the engine — run the benchmark again to publish',
+    };
+  }
+  // Forge (forge/INTEGRATION.md): the same route and envelope, refused here when score_forge.py itself
+  // marked the verdict not board-grade (held, unpublishable, or an rc scorer).
+  const forgeResult =
+    typeof stored.scorerVersion === 'string' && familyOfScorer(stored.scorerVersion) === 'forge';
+  if (stored.scorerVersion === 'forge-2.0') {
+    let installedFingerprint: string;
+    try {
+      installedFingerprint = forgeTaskFingerprint(
+        await fs.readFile(path.join(resolveBenchPayloadDir(), 'forge2', 'release-manifest.json'))
+      );
+    } catch {
+      return {
+        ok: false,
+        error:
+          'The installed Forge 2.0 task receipt could not be read. Reinstall the current Goose Swarm release before publishing.',
+      };
+    }
+    const taskProblem = forgeTaskPublicationProblem(stored, installedFingerprint);
+    if (taskProblem) return { ok: false, error: taskProblem };
+  }
+  if (forgeResult) {
+    const problem = forgePublishProblem(stored);
+    if (problem) return { ok: false, error: problem };
+  }
+  const identity = await ensureBenchIdentity();
+  // The title is the USER'S name for the run (v2.4, Mihai 2026-08-30: the auto-generated
+  // handle is not a title) — required, refused here with the reason, never defaulted.
+  const title = typeof args?.title === 'string' ? args.title.trim().slice(0, 80) : '';
+  if (!title) {
+    return { ok: false, error: 'a title is required — name this run before publishing' };
+  }
+  // Prefer the frozen snapshot written WITH the result row — the workdir is reused and wiped
+  // by the next run, so reading it at publish time can attach another run's screenshots to
+  // this row's score.
+  // The snapshot belongs to result.json's run only; any other run reads its own tree.
+  const snapshotShots: BenchShot[] = storedIsLatest
+    ? await readBenchShotsSnapshot(path.join(BENCH_DIR, 'shots-snapshot'))
+    : [];
+  const screenshots = limitBenchShotsForPublish(
+    snapshotShots.length
+      ? snapshotShots
+      : typeof stored.workdir === 'string'
+        ? await pickBenchShots(stored.workdir)
+        : []
+  );
+  const tiers = (stored.tiers ?? {}) as Record<string, unknown>;
+  // STRICT allowlist per the contract — unknown keys reject the whole payload, so the payload
+  // is built key by key (never a spread of the stored row, which carries mine/workdir).
+  // v2.3 card hygiene: the PUBLIC label is neutral — "<N>-node Swarm", never the in-app
+  // first-person "Your fleet · N nodes".
+  const cloudEntrant =
+    typeof stored.provider === 'string' ||
+    (typeof stored.runId === 'string' && stored.runId.startsWith('cloud-'));
+  const nodeCount = !cloudEntrant && typeof stored.nodes === 'number' ? stored.nodes : null;
+  const payload: Record<string, unknown> = {
+    label: cloudEntrant
+      ? `${model} · single agent`
+      : nodeCount != null
+        ? `${nodeCount}-node Swarm`
+        : 'Swarm',
+    score: stored.score,
+    // Forge's tiers (L…E) come with forgePublishBody below; this is Gauntlet's A–D envelope.
+    tiers: { A: tiers.A ?? 0, B: tiers.B ?? 0, C: tiers.C ?? 0, D: tiers.D ?? 0 },
+    ...(nodeCount != null ? { nodes: nodeCount } : {}),
+    ...(typeof stored.hard === 'number' ? { hard: stored.hard } : {}),
+    ...(typeof stored.excellent === 'boolean' ? { excellent: stored.excellent } : {}),
+    ...(typeof stored.wallSecs === 'number' ? { wallSecs: stored.wallSecs } : {}),
+    ...(typeof stored.scorerVersion === 'string' ? { scorerVersion: stored.scorerVersion } : {}),
+    title,
+    model,
+    ...(typeof stored.provider === 'string' ? { provider: stored.provider } : {}),
+    poster: { installId: identity.installId, handle: identity.handle },
+    ...(screenshots.length > 0 ? { screenshots } : {}),
+    runMeta,
+    ...(stored.telemetry && typeof stored.telemetry === 'object'
+      ? { telemetry: stored.telemetry }
+      : {}),
+  };
+  // The price: the run's own OpenRouter bill, else the publisher's declared per-1M-token prices.
+  const billing = await benchPublishBilling(stored, args?.declaredPrices, (file) =>
+    fs.readFile(file)
+  );
+  if (billing.error) return { ok: false, error: billing.error };
+  if (billing.record) payload.billing = billing.record;
+  // Forge 2.0: this build's own comparison receipt (forge2_compare's cohort bytes), so the site couples a
+  // series' builds into one entry by itself — no operator script. Without one it publishes on its own.
+  let cohortProblem: string | null = null;
+  if (stored.scorerVersion === 'forge-2.0') {
+    // The engine that RAN the build (stamped at launch). A run from before that stamp has no record of it; the
+    // receipt would name the engine installed now, which can differ, so it is not guessed: no receipt, said so.
+    const engineSha = await benchEngineShaFor(runKey, stored);
+    if (!billing.verdict)
+      cohortProblem =
+        "this build's verdict.json is no longer in its folder, so its comparison receipt cannot be built";
+    else if (!engineSha)
+      cohortProblem = 'this build predates the engine record its comparison receipt needs';
+    else {
+      const receipt = forge2CohortReceipt(billing.verdict, engineSha);
+      if ('receipt' in receipt) payload.comparisonCohort = receipt.receipt;
+      else cohortProblem = receipt.problem;
+    }
+  }
+  // Our own installs: the operator key marks a single-model CLOUD run a cloud baseline on the site. Never
+  // sent for a run that used this Mac's engine (a local run is not a cloud baseline).
+  const runRoute = await benchRunRouteOf(stored);
+  const operator =
+    cloudEntrant && nodeCount == null && runRoute === 'cloud'
+      ? await benchOperatorKey()
+      : { key: null };
+  const operatorKey = operator.key;
+  const operatorWarning = operator.problem
+    ? `Operator key unavailable (${operator.problem.slice(0, 160)}): published as a community entry.`
+    : null;
+  // Forge's graded browser recording (score_forge.py, SB7.x's media shape) rides like Gauntlet's. Without
+  // a verified clip it publishes ONLY when the four visual rows are the scorer's own "no surface rendered
+  // app content" vacuous zeros (clipAbsence = the site's rule); anything else is refused.
+  if (forgeResult) {
+    const media =
+      typeof stored.workdir === 'string'
+        ? await readBenchMedia(stored.workdir)
+        : { videos: [], error: 'no run directory' };
+    const clipless =
+      media.videos.length !== 1 || media.error
+        ? clipAbsence(
+            stored.scorerVersion as string,
+            (stored.verdict as { checks?: unknown })?.checks
+          )
+        : null;
+    // Surfaces rendered (or the probe failed) but no verified clip: a SCORING problem, never a clip-less
+    // post — the card offers Retry scoring on the saved build (forgeClipMissing).
+    if (!clipless && (media.error || media.videos.length !== 1))
+      return {
+        ok: false,
+        error: `${stored.scorerVersion} publication requires its graded browser clip, and none could be verified although the app's surfaces were graded (${media.error ?? 'clip count mismatch'}). Retry scoring re-grades the saved build and records it.`,
+      };
+    if (clipless) payload.noRecording = true;
+    else {
+      try {
+        // Prepared in a preflight too (made once, reused from the media manifest): a clip that cannot be made
+        // refuses BEFORE either build of a series is posted; only the upload waits for the real publish.
+        const clip = await publishableClip(
+          stored.workdir as string,
+          media.videos[0],
+          benchClipTools
+        );
+        if (!opts.preflight)
           payload.videoReceipt = await uploadBenchmarkVideo(
             clip.video,
             BENCH_PUBLISH_URL,
             identity.installId,
             stored.scorerVersion as string
           );
-        } catch (error) {
-          return { ok: false, error: error instanceof Error ? error.message : String(error) };
-        }
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) };
       }
     }
-    if (typeof stored.scorerVersion === 'string' && isolatedPaymentsTier(stored.scorerVersion)) {
-      if (typeof stored.workdir !== 'string')
-        return { ok: false, error: `${stored.scorerVersion} recording has no run directory` };
-      const media = await readBenchMedia(stored.workdir);
-      // With its one verified clip: uploaded as always. Without one, ONLY when the scorer's own rows say
-      // the app never served a page (clipAbsence = the site's rule, website 9c371d7): the payload simply
-      // carries no videoReceipt and the posted checksSummary rows are the proof. Otherwise refused.
-      const clipless =
-        media.videos.length !== 1 || media.error
-          ? clipAbsence(stored.scorerVersion, (stored.verdict as { checks?: unknown })?.checks)
-          : null;
-      // The site accepts noRecording only when it equals its own absence computed from the posted rows.
-      if (clipless) payload.noRecording = true;
-      else {
-        if (media.error || media.videos.length !== 1)
-          return {
-            ok: false,
-            error: `${stored.scorerVersion} publication requires one verified graded browser clip: ${media.error ?? 'clip count mismatch'}`,
-          };
-        try {
-          const clip = await publishableClip(stored.workdir, media.videos[0], benchClipTools);
+  }
+  if (typeof stored.scorerVersion === 'string' && isolatedPaymentsTier(stored.scorerVersion)) {
+    if (typeof stored.workdir !== 'string')
+      return { ok: false, error: `${stored.scorerVersion} recording has no run directory` };
+    const media = await readBenchMedia(stored.workdir);
+    // With its one verified clip: uploaded as always. Without one, ONLY when the scorer's own rows say
+    // the app never served a page (clipAbsence = the site's rule, website 9c371d7): the payload simply
+    // carries no videoReceipt and the posted checksSummary rows are the proof. Otherwise refused.
+    const clipless =
+      media.videos.length !== 1 || media.error
+        ? clipAbsence(stored.scorerVersion, (stored.verdict as { checks?: unknown })?.checks)
+        : null;
+    // The site accepts noRecording only when it equals its own absence computed from the posted rows.
+    if (clipless) payload.noRecording = true;
+    else {
+      if (media.error || media.videos.length !== 1)
+        return {
+          ok: false,
+          error: `${stored.scorerVersion} publication requires one verified graded browser clip: ${media.error ?? 'clip count mismatch'}`,
+        };
+      try {
+        const clip = await publishableClip(stored.workdir, media.videos[0], benchClipTools);
+        if (!opts.preflight)
           payload.videoReceipt = await uploadBenchmarkVideo(
             clip.video,
             BENCH_PUBLISH_URL,
             identity.installId,
             stored.scorerVersion
           );
-        } catch (error) {
-          return { ok: false, error: error instanceof Error ? error.message : String(error) };
-        }
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) };
       }
     }
-    // v2.3: per-node detail from the persisted pool_resolved devices — omitted entirely when
-    // the run's log had no pool_resolved (legacy results store no poolDevices).
-    const poolDevices = (Array.isArray(stored.poolDevices) ? stored.poolDevices : []) as Array<{
-      id?: unknown;
-      modelId?: unknown;
-    }>;
-    const nodesDetail = poolDevices
-      .filter((d) => typeof d?.modelId === 'string' && d.modelId.length > 0)
-      .slice(0, 8)
-      .map((d) => ({
-        name: benchNodeName(typeof d.id === 'string' ? d.id : ''),
-        model: (d.modelId as string).slice(0, 120),
-      }))
-      .filter((n) => n.name.length > 0);
-    if (nodesDetail.length > 0) payload.nodesDetail = nodesDetail;
-    // v2.1 scoring depth (contract addition 2026-08-17): the same "How this score was built"
-    // story the desktop shows, on the site's run card. Built key-by-key from the persisted
-    // verdict — never a spread — and each field omitted entirely for legacy results without one.
-    const verdict = stored.verdict as
-      | {
-          checks?: Array<{ check?: unknown; tier?: unknown; score?: unknown; detail?: unknown }>;
-          tiers?: Record<string, { mean?: unknown } | undefined>;
-          core?: unknown;
-          admission?: unknown;
-          rawScore?: unknown;
-          hard?: unknown;
-          findingsHeld?: unknown;
-          repairRounds?: Array<{ round?: unknown; findings?: unknown }>;
-        }
-      | undefined;
-    if (forgeResult)
-      Object.assign(payload, forgePublishBody(stored), forgeTaskPublicationFields(stored));
-    else if (verdict) {
-      Object.assign(payload, publicScoreDetails(verdict));
-      if (verdict.admission) payload.admission = verdict.admission;
-      if (typeof verdict.rawScore === 'number') payload.rawScore = verdict.rawScore;
-      const checksSummary = (Array.isArray(verdict.checks) ? verdict.checks : [])
-        .filter(
-          (c) =>
-            typeof c?.check === 'string' &&
-            typeof c?.tier === 'string' &&
-            typeof c?.score === 'number'
-        )
-        .map((c) => ({
-          check: (c.check as string).slice(0, 60),
-          tier: c.tier as string,
-          score: c.score as number,
-          detail: (typeof c.detail === 'string' ? c.detail : '').slice(0, 220),
-        }));
-      if (checksSummary.length > 0) payload.checksSummary = checksSummary;
-
-      const num = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined);
-      const composition = {
-        core: num(verdict.core),
-        journey: num(verdict.tiers?.J?.mean),
-        visual: num(verdict.tiers?.V?.mean),
-        perf: num(verdict.tiers?.P?.mean),
-        hard: num(verdict.hard),
-      };
-      // All five or none — a partial object (an sb-4-era verdict without J/V/P) would trip the
-      // server's strict validation for no gain.
-      if (Object.values(composition).every((v) => typeof v === 'number')) {
-        payload.composition = composition;
+  }
+  // v2.3: per-node detail from the persisted pool_resolved devices — omitted entirely when
+  // the run's log had no pool_resolved (legacy results store no poolDevices).
+  const poolDevices = (Array.isArray(stored.poolDevices) ? stored.poolDevices : []) as Array<{
+    id?: unknown;
+    modelId?: unknown;
+  }>;
+  const nodesDetail = poolDevices
+    .filter((d) => typeof d?.modelId === 'string' && d.modelId.length > 0)
+    .slice(0, 8)
+    .map((d) => ({
+      name: benchNodeName(typeof d.id === 'string' ? d.id : ''),
+      model: (d.modelId as string).slice(0, 120),
+    }))
+    .filter((n) => n.name.length > 0);
+  if (nodesDetail.length > 0) payload.nodesDetail = nodesDetail;
+  // v2.1 scoring depth (contract addition 2026-08-17): the same "How this score was built"
+  // story the desktop shows, on the site's run card. Built key-by-key from the persisted
+  // verdict — never a spread — and each field omitted entirely for legacy results without one.
+  const verdict = stored.verdict as
+    | {
+        checks?: Array<{ check?: unknown; tier?: unknown; score?: unknown; detail?: unknown }>;
+        tiers?: Record<string, { mean?: unknown } | undefined>;
+        core?: unknown;
+        admission?: unknown;
+        rawScore?: unknown;
+        hard?: unknown;
+        findingsHeld?: unknown;
+        repairRounds?: Array<{ round?: unknown; findings?: unknown }>;
       }
+    | undefined;
+  if (forgeResult)
+    Object.assign(payload, forgePublishBody(stored), forgeTaskPublicationFields(stored));
+  else if (verdict) {
+    Object.assign(payload, publicScoreDetails(verdict));
+    if (verdict.admission) payload.admission = verdict.admission;
+    if (typeof verdict.rawScore === 'number') payload.rawScore = verdict.rawScore;
+    const checksSummary = (Array.isArray(verdict.checks) ? verdict.checks : [])
+      .filter(
+        (c) =>
+          typeof c?.check === 'string' &&
+          typeof c?.tier === 'string' &&
+          typeof c?.score === 'number'
+      )
+      .map((c) => ({
+        check: (c.check as string).slice(0, 60),
+        tier: c.tier as string,
+        score: c.score as number,
+        detail: (typeof c.detail === 'string' ? c.detail : '').slice(0, 220),
+      }));
+    if (checksSummary.length > 0) payload.checksSummary = checksSummary;
 
-      const repairRounds = (Array.isArray(verdict.repairRounds) ? verdict.repairRounds : [])
-        .filter((r) => typeof r?.round === 'number' && typeof r?.findings === 'number')
-        .map((r) => ({ round: r.round as number, findings: r.findings as number }));
-      if (repairRounds.length > 0) payload.repairRounds = repairRounds;
-
-      const findingsHeld = (Array.isArray(verdict.findingsHeld) ? verdict.findingsHeld : [])
-        .filter((f): f is string => typeof f === 'string')
-        .slice(0, 12)
-        .map((f) => f.slice(0, 400));
-      if (findingsHeld.length > 0) payload.findingsHeld = findingsHeld;
+    const num = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined);
+    const composition = {
+      core: num(verdict.core),
+      journey: num(verdict.tiers?.J?.mean),
+      visual: num(verdict.tiers?.V?.mean),
+      perf: num(verdict.tiers?.P?.mean),
+      hard: num(verdict.hard),
+    };
+    // All five or none — a partial object (an sb-4-era verdict without J/V/P) would trip the
+    // server's strict validation for no gain.
+    if (Object.values(composition).every((v) => typeof v === 'number')) {
+      payload.composition = composition;
     }
-    try {
-      const res = await fetch(BENCH_SITE_API, {
+
+    const repairRounds = (Array.isArray(verdict.repairRounds) ? verdict.repairRounds : [])
+      .filter((r) => typeof r?.round === 'number' && typeof r?.findings === 'number')
+      .map((r) => ({ round: r.round as number, findings: r.findings as number }));
+    if (repairRounds.length > 0) payload.repairRounds = repairRounds;
+
+    const findingsHeld = (Array.isArray(verdict.findingsHeld) ? verdict.findingsHeld : [])
+      .filter((f): f is string => typeof f === 'string')
+      .slice(0, 12)
+      .map((f) => f.slice(0, 400));
+    if (findingsHeld.length > 0) payload.findingsHeld = findingsHeld;
+  }
+  if (opts.preflight)
+    return {
+      ok: true,
+      rescoredAt: runMeta.rescoredAt,
+      facts: {
+        model,
+        provider: typeof stored.provider === 'string' ? stored.provider : null,
+        scorerVersion: typeof stored.scorerVersion === 'string' ? stored.scorerVersion : '',
+        taskFingerprint:
+          typeof payload.taskFingerprint === 'string' ? payload.taskFingerprint : null,
+        comparisonCohortSha:
+          (payload.comparisonCohort as { comparisonCohortSha?: string } | undefined)
+            ?.comparisonCohortSha ?? null,
+        title,
+        operator: Boolean(operatorKey),
+      } satisfies PairCouplingFacts,
+    };
+  // Every model call of the run, split by model: OpenRouter's own generation records for an OpenRouter run, the
+  // engine's per-call usage for a local run, goose's per-call API usage otherwise (benchTokenCapture).
+  const tokens = await captureTokenUsage(
+    {
+      stored,
+      verdict: billing.verdict ?? null,
+      verdictSha256: billing.verdictSha256 ?? null,
+      route: runRoute,
+    },
+    {
+      readFile: (file) => fs.readFile(file, 'utf8'),
+      openRouterCredentials: benchOpenRouterCredentials,
+      cache: benchTokenUsageCache,
+    }
+  ).catch((error): TokenCapture => ({
+    usage: null,
+    problem: `token counts could not be recorded: ${error instanceof Error ? error.message : String(error)}`,
+  }));
+  if (tokens.usage) payload.tokenUsage = tokens.usage;
+  // The run-end bill was incomplete ONLY because records were missing, and the publish-time read found every one of
+  // them with the run's own usage agreeing (benchTokenCapture): that read is the complete bill, so price and tokens on
+  // the page tell one story. Any other incompleteness keeps the run-end bill, status and reasons as they were.
+  const bill = payload.billing as Record<string, unknown> | undefined;
+  if (tokens.recordsBill && bill?.source === 'openrouter-generation-records')
+    payload.billing = {
+      ...bill,
+      status: 'complete',
+      billedUsd: tokens.recordsBill.billedUsd,
+      requestCount: tokens.recordsBill.requestCount,
+      missingCallCount: 0,
+      reasons: [
+        `Read again at publish: OpenRouter's records for all ${tokens.recordsBill.requestCount} generation ids of the run. ${tokens.recordsBill.missingAtRunEnd} of them had no record yet when the run ended (OpenRouter writes a record after the stream ends).`,
+      ],
+    };
+  let tokenProblem: string | null = tokens.problem;
+  try {
+    const post = () =>
+      fetch(BENCH_SITE_API, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(operatorKey ? { 'x-leanzero-operator-key': operatorKey } : {}),
+        },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) {
-        // 422 = the server's consistency gates fired; surface ITS message, not a bare status.
-        const body = await res.text().catch(() => '');
-        let serverMessage = '';
-        try {
-          const parsed = JSON.parse(body) as { error?: unknown; message?: unknown };
-          serverMessage = String(parsed.error ?? parsed.message ?? '');
-        } catch {
-          serverMessage = body.slice(0, 300);
-        }
-        return {
-          ok: false,
-          status: res.status,
-          error: serverMessage ? `HTTP ${res.status}: ${serverMessage}` : `HTTP ${res.status}`,
-        };
+    let res = await post();
+    // An optional addition must never cost the whole publish: a site that refuses the price or the comparison
+    // receipt (or does not know the field yet, "Unknown field(s): comparisonCohort") gets the run without it,
+    // and the user is told plainly what was left out.
+    let priceWarning: string | null = null;
+    const dropped: string[] = [];
+    for (let attempt = 0; attempt < 3 && !res.ok; attempt++) {
+      const refusal = await res
+        .clone()
+        .text()
+        .catch(() => '');
+      let refusalMessage = refusal;
+      try {
+        refusalMessage = String((JSON.parse(refusal) as { error?: unknown }).error ?? refusal);
+      } catch {
+        // not JSON; the raw text is the message
       }
-      const accepted = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-      // The run is now live: remembered per run so its card says so and it is never posted twice.
-      const publishedKey =
-        runKey ??
-        benchRunKey({
-          runId: typeof stored.runId === 'string' ? stored.runId : null,
-          startedAt: runMeta.startedAt,
-        });
-      await recordPublished(publishedKey, {
-        url: typeof accepted.url === 'string' ? accepted.url : null,
-        title,
-        score: typeof stored.score === 'number' ? stored.score : 0,
-        publishedAt: new Date().toISOString(),
-        source: 'app',
-      }).catch((error) => log.error('Published run could not be recorded:', error));
-      return { ok: true, ...accepted };
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      const drop = droppableAfterRefusal(res.status, refusalMessage, Object.keys(payload));
+      if (!drop.length) break;
+      for (const name of drop) {
+        if (name === 'billing')
+          priceWarning =
+            (payload.billing as { source?: unknown } | undefined)?.source === 'declared-prices'
+              ? `Published without the price: leanzero.net did not accept the declared-price estimate (${refusalMessage.slice(0, 200)}).`
+              : `Published without the price: leanzero.net did not accept this run's bill (${refusalMessage.slice(0, 200)}).`;
+        if (name === 'comparisonCohort')
+          cohortProblem = `leanzero.net did not accept the comparison receipt (${refusalMessage.slice(0, 200)})`;
+        if (name === 'tokenUsage')
+          tokenProblem = `leanzero.net did not accept the token counts (${refusalMessage.slice(0, 200)})`;
+        delete payload[name];
+        dropped.push(name);
+      }
+      res = await post();
     }
-  })
-);
+    if (!res.ok) {
+      // 422 = the server's consistency gates fired; surface ITS message, not a bare status.
+      const body = await res.text().catch(() => '');
+      let serverMessage = '';
+      try {
+        const parsed = JSON.parse(body) as { error?: unknown; message?: unknown };
+        serverMessage = String(parsed.error ?? parsed.message ?? '');
+      } catch {
+        serverMessage = body.slice(0, 300);
+      }
+      return {
+        ok: false,
+        status: res.status,
+        error: serverMessage ? `HTTP ${res.status}: ${serverMessage}` : `HTTP ${res.status}`,
+      };
+    }
+    const accepted = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    // The run is now live: remembered per run so its card says so and it is never posted twice.
+    const publishedKey =
+      runKey ??
+      benchRunKey({
+        runId: typeof stored.runId === 'string' ? stored.runId : null,
+        startedAt: runMeta.startedAt,
+      });
+    await recordPublished(publishedKey, {
+      url: typeof accepted.url === 'string' ? accepted.url : null,
+      title,
+      score: typeof stored.score === 'number' ? stored.score : 0,
+      publishedAt: new Date().toISOString(),
+      source: 'app',
+    }).catch((error) => log.error('Published run could not be recorded:', error));
+    return {
+      ok: true,
+      ...accepted,
+      ...(priceWarning ? { priceWarning } : {}),
+      ...(operatorWarning ? { operatorWarning } : {}),
+      ...(cohortProblem ? { cohortProblem } : {}),
+      ...(payload.tokenUsage
+        ? {
+            tokenUsageLine: tokenUsageLine(
+              payload.tokenUsage as TokenUsage,
+              typeof stored.provider === 'string' ? stored.provider : null
+            ),
+          }
+        : {}),
+      ...(tokenProblem ? { tokenProblem } : {}),
+    };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
 
 // One watch set per renderer, armed by that renderer's own reads and dropped when it goes away.
 const swarmWatchers = new SwarmWatchRegistry();
@@ -6656,6 +7023,53 @@ ipcMain.handle('read-swarm-run', async (event, workingDir: string) => {
     }
     throw err;
   }
+});
+
+// Settings › App › Never touch: the installed apps (name + bundle id), so an entry that names
+// nothing on this Mac can say so. Read once per run; plutil reads binary and XML Info.plist alike.
+let installedAppsCache: Promise<{ name: string; bundleId: string | null }[]> | null = null;
+async function scanInstalledApps(): Promise<{ name: string; bundleId: string | null }[]> {
+  if (process.platform !== 'darwin') return [];
+  const dirs = [
+    '/Applications',
+    '/Applications/Utilities',
+    '/System/Applications',
+    '/System/Applications/Utilities',
+    path.join(os.homedir(), 'Applications'),
+  ];
+  const apps: string[] = [];
+  for (const dir of dirs) {
+    try {
+      for (const entry of await fs.readdir(dir)) {
+        if (entry.endsWith('.app')) apps.push(path.join(dir, entry));
+      }
+    } catch {
+      // a missing folder (~/Applications) is normal
+    }
+  }
+  const bundleId = (app: string) =>
+    new Promise<string | null>((resolve) => {
+      execFile(
+        '/usr/bin/plutil',
+        ['-extract', 'CFBundleIdentifier', 'raw', '-o', '-', path.join(app, 'Contents', 'Info.plist')],
+        { timeout: 5_000 },
+        (err, stdout) => resolve(err ? null : String(stdout).trim() || null)
+      );
+    });
+  const out: { name: string; bundleId: string | null }[] = [];
+  for (let i = 0; i < apps.length; i += 16) {
+    const batch = apps.slice(i, i + 16);
+    const ids = await Promise.all(batch.map(bundleId));
+    batch.forEach((app, j) => out.push({ name: path.basename(app, '.app'), bundleId: ids[j] }));
+  }
+  return out;
+}
+ipcMain.handle('list-installed-apps', () => {
+  installedAppsCache ??= scanInstalledApps().catch(() => {
+    installedAppsCache = null;
+    return [];
+  });
+  return installedAppsCache;
 });
 
 ipcMain.handle('check-ollama', async () => {
@@ -7312,6 +7726,12 @@ async function appMain() {
   screen.on('display-added', glanceDisplaysChanged);
   screen.on('display-removed', glanceDisplaysChanged);
   screen.on('display-metrics-changed', glanceDisplaysChanged);
+  // A display or session change can leave a page part-drawn: repaint every window (windowRepaint.ts).
+  const repaintAll = () => BrowserWindow.getAllWindows().forEach((w) => repaintWindow(w));
+  screen.on('display-added', repaintAll);
+  screen.on('display-metrics-changed', repaintAll);
+  powerMonitor.on('unlock-screen', repaintAll);
+  powerMonitor.on('resume', repaintAll);
 
   if (process.platform === 'darwin' && !settings.showDockIcon && settings.showMenuBarIcon) {
     app.dock?.hide();

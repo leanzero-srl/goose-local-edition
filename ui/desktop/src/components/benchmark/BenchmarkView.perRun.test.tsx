@@ -126,6 +126,43 @@ describe('every finished run keeps its own card and can be published', () => {
     expect(await screen.findByText(/Live on leanzero.net — “DeepSeek Pro” · 69.9%/)).toBeVisible();
   });
 
+  it('a refused pair offers publishing this build on its own, and a partial result reloads the history', async () => {
+    mockElectron([session(SOLAR), session(DEEPSEEK)]);
+    window.location.hash = `#/benchmark?era=sb-7.2&run=${DEEPSEEK.runId}`;
+    const publish = vi.fn(async (args: { separately?: boolean }) =>
+      args.separately
+        ? { ok: true, url: '/runs/alone' }
+        : {
+            ok: false,
+            partial: true,
+            couplingRefused: true,
+            error: 'The two builds would not land as one entry on leanzero.net: x',
+          }
+    );
+    electron().benchmarkPublish = publish;
+    mount();
+    await screen.findByText(/GET \/ -> 200 \(~deepseek\/deepseek-pro-latest\)/);
+    const reads = (electron().benchmarkSessions as ReturnType<typeof vi.fn>).mock.calls.length;
+    fireEvent.change(screen.getByPlaceholderText('e.g. My M4 fleet first run'), {
+      target: { value: 'DeepSeek Pro' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Publish' }));
+    const alone = await screen.findByRole('button', { name: 'Publish this build on its own' });
+    await waitFor(() =>
+      expect(
+        (electron().benchmarkSessions as ReturnType<typeof vi.fn>).mock.calls.length
+      ).toBeGreaterThan(reads)
+    );
+    fireEvent.click(alone);
+    await waitFor(() =>
+      expect(publish).toHaveBeenLastCalledWith({
+        title: 'DeepSeek Pro',
+        runKey: DEEPSEEK.runId,
+        separately: true,
+      })
+    );
+  });
+
   it('a run already posted says where it is live and offers no second post', async () => {
     mockElectron([
       session(SOLAR),

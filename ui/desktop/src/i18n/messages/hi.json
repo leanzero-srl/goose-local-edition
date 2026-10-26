@@ -848,6 +848,12 @@
   "cloudProviders.notOfficialText": {
     "defaultMessage": "अनुरोध api.openai.com के बजाय {where} पर जाते हैं।"
   },
+  "cloudProviders.notRunning": {
+    "defaultMessage": "चल नहीं रहा"
+  },
+  "cloudProviders.notRunningText": {
+    "defaultMessage": "{origin} पर अभी कुछ नहीं चल रहा है। लोकल सर्वर शुरू करें, फिर कनेक्शन दोबारा जाँचें।"
+  },
   "cloudProviders.notSetUp": {
     "defaultMessage": "सेटअप नहीं किया गया"
   },
@@ -2621,6 +2627,177 @@
   "formingPanel.textHeading": {
     "defaultMessage": "कॉल के साथ लिखा गया टेक्स्ट ({chars} अक्षर) — उत्तर का हिस्सा नहीं"
   },
+  "freeMemory.after": {
+    "defaultMessage": "पहले <b>{before} GB</b> खाली, अब <b>{after} GB</b> खाली ({freed} GB खाली किया गया)।"
+  },
+  "freeMemory.afterFits": {
+    "defaultMessage": "मॉडल अब फ़िट हो जाता है।"
+  },
+  "freeMemory.afterShort": {
+    "defaultMessage": "अभी भी <b>{gb} GB</b> कम है।"
+  },
+  "freeMemory.altPeer": {
+    "defaultMessage": "इसके बजाय इसे {mac} पर चलाएँ (वहाँ <b>{gb} GB</b> खाली)"
+  },
+  "freeMemory.altPeerNoFree": {
+    "defaultMessage": "इसके बजाय इसे <b>{mac}</b> पर चलाएँ"
+  },
+  "freeMemory.altSmaller": {
+    "defaultMessage": "एक छोटा वैरिएंट फ़िट होता है: {model} (<b>{gb} GB</b> चाहिए)"
+  },
+  "freeMemory.budget": {
+    "defaultMessage": "मॉडल के लिए <b>{free} GB</b> खाली, {total} GB में से"
+  },
+  "freeMemory.cannotFit": {
+    "defaultMessage": "यहाँ सूचीबद्ध सब कुछ खाली करने पर भी (<b>{gb} GB</b>) इस मॉडल के लिए <b>{short} GB</b> कम रहता है।"
+  },
+  "freeMemory.cat.aiServer": {
+    "defaultMessage": "मॉडल सर्वर"
+  },
+  "freeMemory.cat.gooseEngine": {
+    "defaultMessage": "goose के इंजन"
+  },
+  "freeMemory.cat.gooseOrphan": {
+    "defaultMessage": "goose द्वारा छोड़ा गया"
+  },
+  "freeMemory.cat.job": {
+    "defaultMessage": "जॉब"
+  },
+  "freeMemory.cat.system": {
+    "defaultMessage": "macOS और बाकी"
+  },
+  "freeMemory.cat.userApp": {
+    "defaultMessage": "ऐप्स"
+  },
+  "freeMemory.close": {
+    "defaultMessage": "बंद करें"
+  },
+  "freeMemory.fitsByGooseOwned": {
+    "defaultMessage": "goose की अपनी मेमोरी (<b>{gb} GB</b>) खाली करना इस मॉडल के लिए काफ़ी है।"
+  },
+  "freeMemory.fitsWithApps": {
+    "defaultMessage": "<b>{gb} GB</b> खाली करने के बाद यह मॉडल फ़िट होता है: goose की अपनी मेमोरी और {apps} को बंद करना।"
+  },
+  "freeMemory.fitsWithAppsOnly": {
+    "defaultMessage": "{apps} को बंद करने के बाद यह मॉडल फ़िट होता है, इससे <b>{gb} GB</b> खाली होता है।"
+  },
+  "freeMemory.forceStop": {
+    "defaultMessage": "ज़बरदस्ती बंद करें"
+  },
+  "freeMemory.forceStopBody": {
+    "defaultMessage": "कहने पर {app} बंद नहीं हुआ, शायद उसमें बिना सहेजा काम है। ज़बरदस्ती बंद करने से यह {mac} पर बिना सहेजे बंद हो जाता है। {app} में बिना सहेजा काम खो जाएगा।"
+  },
+  "freeMemory.forceStopConfirm": {
+    "defaultMessage": "{app} को ज़बरदस्ती बंद करें"
+  },
+  "freeMemory.forceStopTitle": {
+    "defaultMessage": "{app} को ज़बरदस्ती बंद करें?"
+  },
+  "freeMemory.freeFailed": {
+    "defaultMessage": "मेमोरी खाली नहीं हो सकी: {reason}"
+  },
+  "freeMemory.freeOwn": {
+    "defaultMessage": "goose की अपनी मेमोरी खाली करें ({gb} GB)"
+  },
+  "freeMemory.itemFailed": {
+    "defaultMessage": "{label}: {message}"
+  },
+  "freeMemory.keep": {
+    "defaultMessage": "इसे खुला रखें"
+  },
+  "freeMemory.keepRunning": {
+    "defaultMessage": "चलने दें"
+  },
+  "freeMemory.leftAlone": {
+    "defaultMessage": "छोड़ दिया"
+  },
+  "freeMemory.loading": {
+    "defaultMessage": "माप रहे हैं कि मेमोरी किसने घेरी है…"
+  },
+  "freeMemory.neverTouchReason": {
+    "defaultMessage": "कभी-न-छुएँ सूची में ({entry})"
+  },
+  "freeMemory.nothingOwn": {
+    "defaultMessage": "goose के पास ऐसी कोई मेमोरी नहीं जिसे वह खाली कर सके"
+  },
+  "freeMemory.nuclearBack": {
+    "defaultMessage": "वापस"
+  },
+  "freeMemory.nuclearConfirmBody": {
+    "defaultMessage": "goose हर चुने गए ऐप से बंद होने को कहता है और हर चुने गए मॉडल सर्वर को अनलोड करता है। ऐप्स से बंद होने को कहा जाता है। जो ऐप बंद नहीं होता, वह चलता रहता है और उसकी रिपोर्ट दी जाती है, उसे रोका नहीं जाता। सुरक्षित आइटम कभी नहीं छुए जाते।"
+  },
+  "freeMemory.nuclearConfirmKeep": {
+    "defaultMessage": "सब रखें"
+  },
+  "freeMemory.nuclearConfirmTitle": {
+    "defaultMessage": "{mac} पर {gb} GB खाली करें?"
+  },
+  "freeMemory.nuclearFree": {
+    "defaultMessage": "{gb} GB खाली करें"
+  },
+  "freeMemory.nuclearGooseOwn": {
+    "defaultMessage": "goose की अपनी मेमोरी"
+  },
+  "freeMemory.nuclearIntro": {
+    "defaultMessage": "जो कुछ कोई इस्तेमाल नहीं कर रहा, उस पर टिक लगा है। जो रखना है उसका टिक हटा दें। सुरक्षित चीज़ों को कभी नहीं छुआ जाता।"
+  },
+  "freeMemory.nuclearOpen": {
+    "defaultMessage": "सुरक्षित को छोड़कर सब खाली करें"
+  },
+  "freeMemory.nuclearProtectedHead": {
+    "defaultMessage": "कभी नहीं छुआ जाता"
+  },
+  "freeMemory.nuclearTotal": {
+    "defaultMessage": "टिक किया: <b>{gb} GB</b>"
+  },
+  "freeMemory.protectedChip": {
+    "defaultMessage": "सुरक्षित"
+  },
+  "freeMemory.quit": {
+    "defaultMessage": "बंद करें"
+  },
+  "freeMemory.quitBody": {
+    "defaultMessage": "goose {mac} पर {app} से सामान्य तरीके से बंद होने को कहता है। पहले वहाँ अपना काम सहेजें: बिना सहेजा काम खो सकता है।"
+  },
+  "freeMemory.quitConfirm": {
+    "defaultMessage": "{app} बंद करें"
+  },
+  "freeMemory.quitTitle": {
+    "defaultMessage": "{app} बंद करें?"
+  },
+  "freeMemory.readFailed": {
+    "defaultMessage": "मेमोरी मापी नहीं जा सकी: {reason}"
+  },
+  "freeMemory.remoteQuitOff": {
+    "defaultMessage": "{mac} दूसरे Mac को अपने ऐप्स बंद करने या मॉडल सर्वर अनलोड करने नहीं देता, इसलिए यहाँ से सिर्फ़ goose की अपनी मेमोरी खाली की जा सकती है। इसकी अनुमति देने के लिए {mac} पर goose खोलें, Settings › ऐप में जाएँ और “जुड़े हुए Mac को इस Mac पर ऐप बंद करने दें” चालू करें। या उन्हें {mac} पर ही बंद करें।"
+  },
+  "freeMemory.onlyThere": {
+    "defaultMessage": "सिर्फ़ {mac} पर"
+  },
+  "freeMemory.title": {
+    "defaultMessage": "{mac} पर मेमोरी खाली करें"
+  },
+  "freeMemory.unload": {
+    "defaultMessage": "अनलोड करें"
+  },
+  "freeMemory.unloadBody": {
+    "defaultMessage": "goose {mac} पर {server} के रखे मॉडल अनलोड करता है (MLX इंजन से रुकने को कहा जाता है)। जो इसे इस्तेमाल कर रहा है उसे मॉडल फिर से लोड करने होंगे।"
+  },
+  "freeMemory.unloadConfirm": {
+    "defaultMessage": "{server} अनलोड करें"
+  },
+  "freeMemory.unloadInUse": {
+    "defaultMessage": "अभी इस्तेमाल में है, इससे उनका काम रुक जाएगा:"
+  },
+  "freeMemory.unloadTitle": {
+    "defaultMessage": "{server} अनलोड करें?"
+  },
+  "freeMemory.usedBy": {
+    "defaultMessage": "इस्तेमाल में: {who}"
+  },
+  "freeMemoryEntry.open": {
+    "defaultMessage": "मेमोरी खाली करें"
+  },
   "gooseImportSection.chooseSource": {
     "defaultMessage": "स्रोत फ़ोल्डर चुनें"
   },
@@ -4022,6 +4199,144 @@
   "loops.tick.yielded": {
     "defaultMessage": "\"{chat}\" में आपकी बारी के लिए रुका"
   },
+  "macLoad.allowJobs": {
+    "defaultMessage": "दूसरे Mac से भेजे गए जॉब चलाएँ"
+  },
+  "macLoad.allowJobsHint": {
+    "defaultMessage": "शेल कमांड और प्रॉम्प्ट, इस Mac के स्लॉट और मेमोरी जितने भारी जॉब, मेमोरी सीमा पार करने पर बंद। तुरंत लागू होता है।"
+  },
+  "macLoad.benchmark": {
+    "defaultMessage": "बेंचमार्क चल रहा है: {why}"
+  },
+  "macLoad.cancelBody": {
+    "defaultMessage": "यह {mac} पर जॉब और उसके शुरू किए हर प्रोसेस को रोक देता है। जो उसने पहले लिखा है वह उसके लॉग में रहता है।"
+  },
+  "macLoad.cancelJob": {
+    "defaultMessage": "जॉब रद्द करें"
+  },
+  "macLoad.cancelQueuedBody": {
+    "defaultMessage": "इससे काम {mac} की कतार से हट जाएगा। यह कभी शुरू नहीं होगा।"
+  },
+  "macLoad.cancelTitle": {
+    "defaultMessage": "जॉब {id} रद्द करें?"
+  },
+  "macLoad.close": {
+    "defaultMessage": "बंद करें"
+  },
+  "macLoad.dialogTitle": {
+    "defaultMessage": "जॉब {id}"
+  },
+  "macLoad.ended": {
+    "defaultMessage": "समाप्त"
+  },
+  "macLoad.exit": {
+    "defaultMessage": "एग्ज़िट कोड"
+  },
+  "macLoad.idleS": {
+    "defaultMessage": "इतने सेकंड बाद निष्क्रिय माना जाए"
+  },
+  "macLoad.inference": {
+    "defaultMessage": "AI इन्फ़रेंस"
+  },
+  "macLoad.inferenceLine": {
+    "defaultMessage": "{engine,plural,one{{slots,plural,one{{engine, number} इंजन अनुरोध · # राउटर स्लॉट} other{{engine, number} इंजन अनुरोध · # राउटर स्लॉट}}} other{{slots,plural,one{{engine, number} इंजन अनुरोध · # राउटर स्लॉट} other{{engine, number} इंजन अनुरोध · # राउटर स्लॉट}}}}"
+  },
+  "macLoad.jobFrom": {
+    "defaultMessage": "{origin} से {kind}"
+  },
+  "macLoad.jobs": {
+    "defaultMessage": "जॉब"
+  },
+  "macLoad.jobsLine": {
+    "defaultMessage": "{live,plural,=0{कोई जॉब नहीं चल रहा} one{# जॉब चल रहा है} other{# जॉब चल रहे हैं}}"
+  },
+  "macLoad.jobsWaiting": {
+    "defaultMessage": "{waiting, plural, one {# काम जगह वाले Mac का इंतज़ार कर रहा है} other {# काम जगह वाले Mac का इंतज़ार कर रहे हैं}}"
+  },
+  "macLoad.keepRunning": {
+    "defaultMessage": "चलने दें"
+  },
+  "macLoad.keepWaiting": {
+    "defaultMessage": "इंतज़ार जारी रखें"
+  },
+  "macLoad.kind": {
+    "defaultMessage": "प्रकार"
+  },
+  "macLoad.log": {
+    "defaultMessage": "लॉग"
+  },
+  "macLoad.logEmpty": {
+    "defaultMessage": "अभी कुछ नहीं लिखा गया।"
+  },
+  "macLoad.minFree": {
+    "defaultMessage": "मेमोरी सीमा (% खाली रखी)"
+  },
+  "macLoad.noLoad": {
+    "defaultMessage": "इसका goose अभी लोड नहीं बताता (पुराना बिल्ड)।"
+  },
+  "macLoad.origin": {
+    "defaultMessage": "यहाँ से भेजा गया"
+  },
+  "macLoad.own": {
+    "defaultMessage": "अपना उपयोग"
+  },
+  "macLoad.ownLine": {
+    "defaultMessage": "{user} · cpu {cpu} · मेमोरी {mem} उपयोग में · gpu {gpu}"
+  },
+  "macLoad.placedOn": {
+    "defaultMessage": "यहाँ भेजा गया"
+  },
+  "macLoad.placedOnValue": {
+    "defaultMessage": "{mac}, आईडी {id}"
+  },
+  "macLoad.policy": {
+    "defaultMessage": "जब कोई इस Mac का उपयोग कर रहा हो"
+  },
+  "macLoad.policyHint": {
+    "defaultMessage": "व्यस्त का मतलब मापा गया: सीमा से ऊपर मेमोरी, भारी कामों के खाली स्लॉट, प्रति कोर लोड। कीबोर्ड पर कोई हो तो वह केवल बराबरी तोड़ता है।"
+  },
+  "macLoad.policy.allow": {
+    "defaultMessage": "जॉब लें"
+  },
+  "macLoad.policy.refuse": {
+    "defaultMessage": "जॉब अस्वीकार करें"
+  },
+  "macLoad.queueNoTry": {
+    "defaultMessage": "अभी किसी Mac को नहीं भेजा गया: आगे वाला काम इंतज़ार में है।"
+  },
+  "macLoad.queueRefusals": {
+    "defaultMessage": "हर Mac ने मना क्यों किया"
+  },
+  "macLoad.reason": {
+    "defaultMessage": "कारण"
+  },
+  "macLoad.reconnectHint": {
+    "defaultMessage": "नीति और मेमोरी सीमा Link के फिर से जुड़ने के बाद लागू होती हैं।"
+  },
+  "macLoad.refusalLine": {
+    "defaultMessage": "{mac}: {reason}"
+  },
+  "macLoad.saveFailed": {
+    "defaultMessage": "सहेजा नहीं गया: {reason}"
+  },
+  "macLoad.settingsTitle": {
+    "defaultMessage": "दूसरे Mac के जॉब"
+  },
+  "macLoad.started": {
+    "defaultMessage": "शुरू हुआ"
+  },
+  "macLoad.state": {
+    "defaultMessage": "स्थिति"
+  },
+  "macLoad.title": {
+    "defaultMessage": "लोड"
+  },
+  "macLoad.userActive": {
+    "defaultMessage": "कोई इसका उपयोग कर रहा है"
+  },
+  "macLoad.userIdle": {
+    "defaultMessage": "निष्क्रिय {idle}"
+  },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "रद्द नहीं हो सका।"
   },
@@ -4213,6 +4528,66 @@
   },
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "पिक्चर-इन-पिक्चर में बजाना"
+  },
+  "memfreeSettings.description": {
+    "defaultMessage": "जब कोई लोकल मॉडल फ़िट नहीं होता, goose दिखाता है कि मेमोरी किसने घेरी है और अपना हिस्सा खाली कर सकता है।"
+  },
+  "memfreeSettings.enabled": {
+    "defaultMessage": "“मेमोरी खाली करें” दिखाएँ"
+  },
+  "memfreeSettings.enabledDesc": {
+    "defaultMessage": "जिस मॉडल के लिए मेमोरी कम है उस पर और हर Mac की मेमोरी बार पर बटन दिखाता है। डिफ़ॉल्ट रूप से चालू।"
+  },
+  "memfreeSettings.minMb": {
+    "defaultMessage": "सूची में सबसे छोटा ऐप (MB)"
+  },
+  "memfreeSettings.minMbDesc": {
+    "defaultMessage": "इससे कम मेमोरी इस्तेमाल करने वाले ऐप सूची में नहीं दिखते। डिफ़ॉल्ट {mb} MB।"
+  },
+  "memfreeSettings.neverTouch": {
+    "defaultMessage": "कभी न छुएँ"
+  },
+  "memfreeSettings.neverTouchAdd": {
+    "defaultMessage": "जोड़ें"
+  },
+  "memfreeSettings.neverTouchAdded": {
+    "defaultMessage": "आपके जोड़े हुए"
+  },
+  "memfreeSettings.neverTouchBuiltIn": {
+    "defaultMessage": "बिल्ट-इन"
+  },
+  "memfreeSettings.neverTouchDesc": {
+    "defaultMessage": "ऐप और प्रोसेस जिन्हें कोई सफ़ाई कभी बंद या रोकती नहीं, इस Mac पर और जब यह Mac किसी दूसरे पर मेमोरी खाली करे तब भी। बंडल id, ऐप का नाम या प्रोसेस का नाम; बड़े-छोटे अक्षर से फ़र्क नहीं पड़ता। बिल्ट-इन वाले हमेशा लागू होते हैं।"
+  },
+  "memfreeSettings.neverTouchMatches": {
+    "defaultMessage": "{app} से मेल खाता है"
+  },
+  "memfreeSettings.neverTouchMatchesNothing": {
+    "defaultMessage": "किसी चल रहे या इंस्टॉल किए गए ऐप से मेल नहीं खाता, इसलिए अभी यह कुछ भी सुरक्षित नहीं करता"
+  },
+  "memfreeSettings.neverTouchNone": {
+    "defaultMessage": "अभी कुछ नहीं जोड़ा"
+  },
+  "memfreeSettings.neverTouchPlaceholder": {
+    "defaultMessage": "com.example.App या किसी ऐप का नाम"
+  },
+  "memfreeSettings.neverTouchRemove": {
+    "defaultMessage": "{name} हटाएँ"
+  },
+  "memfreeSettings.readFailed": {
+    "defaultMessage": "ये सेटिंग्स पढ़ी नहीं जा सकीं: {reason}"
+  },
+  "memfreeSettings.remoteQuit": {
+    "defaultMessage": "जुड़े हुए Mac को इस Mac पर ऐप बंद करने दें"
+  },
+  "memfreeSettings.remoteQuitDesc": {
+    "defaultMessage": "LeanZero Link पर कोई दूसरा Mac इस Mac से कोई ऐप बंद करने को कह सकता है, हमेशा यहाँ पुष्टि के बाद। डिफ़ॉल्ट रूप से बंद: वे फिर भी यहाँ goose की अपनी मेमोरी खाली कर सकते हैं।"
+  },
+  "memfreeSettings.saveFailed": {
+    "defaultMessage": "यह सेटिंग सहेजी नहीं जा सकी: {reason}"
+  },
+  "memfreeSettings.title": {
+    "defaultMessage": "मेमोरी खाली करें"
   },
   "memoryProposal.cut": {
     "defaultMessage": "दर्ज करते समय {max} अक्षरों पर कट गया, इसलिए इसे ऐसे सहेजा नहीं जा सकता। पूरा अंश फिर से माँगें।"
@@ -5525,6 +5900,24 @@
   "mlxRestore.waitingPrevious": {
     "defaultMessage": "पिछला बँटवारा {node} पर अभी बंद हो रहा है — यह पूरा होते ही goose इसे बहाल कर देगा"
   },
+  "mlxRestoreSettings.description": {
+    "defaultMessage": "goose खोलने पर पहले चल रहा लोकल मॉडल वापस लाया जाए या नहीं। डिफ़ॉल्ट रूप से बंद।"
+  },
+  "mlxRestoreSettings.readFailed": {
+    "defaultMessage": "यह सेटिंग पढ़ी नहीं जा सकी: {reason}"
+  },
+  "mlxRestoreSettings.restore": {
+    "defaultMessage": "लॉन्च पर लोकल मॉडल वापस लाएँ"
+  },
+  "mlxRestoreSettings.restoreDesc": {
+    "defaultMessage": "goose शुरू होने पर वह मॉडल वापस लाएँ जिसे आपने आख़िरी बार शुरू किया था और रोका नहीं था: इस Mac पर, LeanZero Link के ज़रिए किसी दूसरे Mac पर, या कई Mac में बँटा हुआ। बंद: goose अपने आप कोई मॉडल शुरू नहीं करता; ज़रूरत हो तब Providers से एक शुरू करें।"
+  },
+  "mlxRestoreSettings.saveFailed": {
+    "defaultMessage": "यह सेटिंग सहेजी नहीं जा सकी: {reason}"
+  },
+  "mlxRestoreSettings.title": {
+    "defaultMessage": "लॉन्च पर लोकल मॉडल"
+  },
   "mlxSetup.aria": {
     "defaultMessage": "LeanZero MLX सेट अप करना"
   },
@@ -6477,7 +6870,7 @@
     "defaultMessage": "मेरे दूसरे Mac इस Mac का उपयोग कर सकें"
   },
   "myMacs.masterHint": {
-    "defaultMessage": "केवल आपके LeanZero Link खाते में साइन इन Mac। हर स्विच goose के अपने ही काम खोलता है — कभी कोई मनमाना कमांड नहीं।"
+    "defaultMessage": "केवल वे Mac जो आपके LeanZero Link खाते में साइन इन हैं। ये स्विच goose के अपने काम संभालते हैं: मॉडल, चैट और वे प्रॉम्प्ट सत्र जो आपके दूसरे Mac यहाँ शुरू करते हैं। शेल कमांड और प्रॉम्प्ट जॉब का अलग स्विच है, “दूसरे Mac से भेजे गए जॉब चलाएँ”, जो तब तक बंद रहता है जब तक आप इसे चालू न करें।"
   },
   "myMacs.memory": {
     "defaultMessage": "मेमोरी"
@@ -6728,6 +7121,9 @@
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "कोई मॉडल माउंट नहीं है"
   },
+  "nodeCard.memfreeThisMac": {
+    "defaultMessage": "यह Mac"
+  },
   "nodeModelCell.chatFollows": {
     "defaultMessage": "चैट आपके Run का अनुसरण करता है: {model}"
   },
@@ -6941,6 +7337,9 @@
   "nodes.loadsUnread": {
     "defaultMessage": "लोड समय पढ़े नहीं जा सके: {error}"
   },
+  "nodes.localServerNotRunning": {
+    "defaultMessage": "{origin} पर अभी कुछ नहीं चल रहा है; लोकल सर्वर शुरू करें"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "क्लाउड प्रदाता प्रबंधित करें"
   },
@@ -7090,6 +7489,9 @@
   },
   "nodes.newProviderModels": {
     "defaultMessage": "मॉडल"
+  },
+  "nodes.newProviderNotRunning": {
+    "defaultMessage": "चल नहीं रहा"
   },
   "nodes.newProvidersFailed": {
     "defaultMessage": "आपके प्रदाता पढ़े नहीं जा सके: {error}"
@@ -8500,6 +8902,12 @@
   },
   "providerCard.noMetadata": {
     "defaultMessage": "प्रदाता कार्ड त्रुटि: कोई मेटाडेटा प्रदान नहीं किया गया"
+  },
+  "providerCard.notRunning": {
+    "defaultMessage": "चल नहीं रहा"
+  },
+  "providerCard.notRunningText": {
+    "defaultMessage": "{origin} पर अभी कुछ नहीं चल रहा है। लोकल सर्वर शुरू करें, फिर कनेक्शन दोबारा जाँचें।"
   },
   "providerCard.unknownProvider": {
     "defaultMessage": "अज्ञात प्रदाता"
@@ -11603,6 +12011,9 @@
   "forgeSeries.publish": {
     "defaultMessage": "2 बिल्ड प्रकाशित करें"
   },
+  "forgeSeries.publishSeparately": {
+    "defaultMessage": "बिल्ड अलग-अलग प्रकाशित करें"
+  },
   "forgeSeries.publishTitle": {
     "defaultMessage": "प्रकाशन शीर्षक"
   },
@@ -11644,5 +12055,98 @@
   },
   "modelCustomFields.noFields": {
     "defaultMessage": "कस्टम फ़ील्ड: {provider} “{model}” के लिए कोई फ़ील्ड घोषित नहीं करता, इसलिए यह प्रदाता के डिफ़ॉल्ट पर चलता है।"
+  },
+  "macLoad.stateCancelling": {
+    "defaultMessage": "रद्द किया जा रहा है…"
+  },
+  "macLoad.stateWaiting": {
+    "defaultMessage": "इंतज़ार में, कतार में #{position}"
+  },
+  "macLoad.strategy": {
+    "defaultMessage": "मेरे काम कहाँ चलें"
+  },
+  "macLoad.strategy.localFirst": {
+    "defaultMessage": "पहले मेरा Mac"
+  },
+  "macLoad.strategy.selfish": {
+    "defaultMessage": "पहले दूसरे Mac"
+  },
+  "macLoad.strategyHint.localFirst": {
+    "defaultMessage": "इस Mac में जगह हो तो यहीं, नहीं तो सबसे ज़्यादा जगह वाले दूसरे Mac पर, नहीं तो कतार में इंतज़ार।"
+  },
+  "macLoad.strategyHint.selfish": {
+    "defaultMessage": "सबसे ज़्यादा जगह वाले दूसरे Mac पर, नहीं तो इस Mac पर, नहीं तो कतार में इंतज़ार। यह Mac खाली रहता है।"
+  },
+  "myMacs.runJob": {
+    "defaultMessage": "जॉब चलाएँ…"
+  },
+  "runJob.title": {
+    "defaultMessage": "इस पर जॉब चलाएँ…"
+  },
+  "runJob.willQueue": {
+    "defaultMessage": "अभी किसी Mac में जगह नहीं है। चलाने पर यह इस Mac की कतार में रुकेगा और जगह मिलते ही पहले Mac पर शुरू होगा।"
+  },
+  "runJob.target": {
+    "defaultMessage": "कहाँ चलाएँ"
+  },
+  "runJob.best": {
+    "defaultMessage": "सबसे अच्छा Mac"
+  },
+  "runJob.ranking": {
+    "defaultMessage": "अभी सबसे अच्छे: {macs}"
+  },
+  "runJob.refusal": {
+    "defaultMessage": "{mac}: {reason}"
+  },
+  "runJob.verdictLine": {
+    "defaultMessage": "{mac}: {verdict}"
+  },
+  "runJob.inUse": {
+    "defaultMessage": "{name} (उपयोग में)"
+  },
+  "runJob.noPlace": {
+    "defaultMessage": "अभी कोई Mac यह जॉब नहीं ले सकता।"
+  },
+  "runJob.none": {
+    "defaultMessage": "अभी आपका कोई Mac जॉब नहीं ले रहा। जिस Mac पर उन्हें चलाना है, उस पर “दूसरे Mac से भेजे गए जॉब चलाएँ” चालू करें।"
+  },
+  "runJob.jobsOff": {
+    "defaultMessage": "इस Mac पर जॉब बंद हैं"
+  },
+  "runJob.kind": {
+    "defaultMessage": "प्रकार"
+  },
+  "runJob.kindShell": {
+    "defaultMessage": "शेल कमांड"
+  },
+  "runJob.kindPrompt": {
+    "defaultMessage": "प्रॉम्प्ट"
+  },
+  "runJob.command": {
+    "defaultMessage": "{kind, select, shell {कमांड} other {प्रॉम्प्ट}}"
+  },
+  "runJob.heavy": {
+    "defaultMessage": "भारी जॉब"
+  },
+  "runJob.heavyHint": {
+    "defaultMessage": "एक Mac उतने भारी जॉब (बिल्ड, रेंडर, ट्रेनिंग) चलाता है जितने उसके स्लॉट और मेमोरी में समाते हैं।"
+  },
+  "runJob.mem": {
+    "defaultMessage": "ज़रूरी मेमोरी (GB, वैकल्पिक)"
+  },
+  "runJob.timeout": {
+    "defaultMessage": "समय सीमा (सेकंड, वैकल्पिक)"
+  },
+  "runJob.submit": {
+    "defaultMessage": "जॉब चलाएँ"
+  },
+  "runJob.close": {
+    "defaultMessage": "बंद करें"
+  },
+  "runJob.refused": {
+    "defaultMessage": "नहीं भेजा गया: {reason}"
+  },
+  "myMacs.updatedAgo": {
+    "defaultMessage": "{seconds} सेकंड पहले अपडेट किया गया"
   }
 }

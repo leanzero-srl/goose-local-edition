@@ -33,6 +33,7 @@ export const SELF_MAC: Mac = {
   online: true,
   sessionsActive: 1,
   allows: { manage_models: true, answer_chat: true, run_split: true },
+  load: null,
   pollError: null,
 };
 
@@ -46,6 +47,7 @@ export const STUDIO_MAC: Mac = {
   online: true,
   sessionsActive: 0,
   allows: { manage_models: true, answer_chat: true, run_split: true },
+  load: null,
   pollError: null,
 };
 

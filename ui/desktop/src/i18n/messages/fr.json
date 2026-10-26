@@ -848,6 +848,12 @@
   "cloudProviders.notOfficialText": {
     "defaultMessage": "Les requêtes vont à {where}, pas à api.openai.com."
   },
+  "cloudProviders.notRunning": {
+    "defaultMessage": "Non démarré"
+  },
+  "cloudProviders.notRunningText": {
+    "defaultMessage": "Rien ne tourne encore à {origin}. Démarrez le serveur local, puis revérifiez les connexions."
+  },
   "cloudProviders.notSetUp": {
     "defaultMessage": "Non configuré"
   },
@@ -2621,6 +2627,177 @@
   "formingPanel.textHeading": {
     "defaultMessage": "Texte écrit à côté des appels ({chars} caractères) — ne fait pas partie de la réponse"
   },
+  "freeMemory.after": {
+    "defaultMessage": "Avant <b>{before} Go</b> libres, maintenant <b>{after} Go</b> libres ({freed} Go libérés)."
+  },
+  "freeMemory.afterFits": {
+    "defaultMessage": "Le modèle tient maintenant."
+  },
+  "freeMemory.afterShort": {
+    "defaultMessage": "Il manque encore <b>{gb} Go</b>."
+  },
+  "freeMemory.altPeer": {
+    "defaultMessage": "Exécutez-le plutôt sur {mac} (<b>{gb} Go</b> libres là-bas)"
+  },
+  "freeMemory.altPeerNoFree": {
+    "defaultMessage": "Exécutez-le plutôt sur <b>{mac}</b>"
+  },
+  "freeMemory.altSmaller": {
+    "defaultMessage": "Une variante plus petite tient : {model} (nécessite <b>{gb} Go</b>)"
+  },
+  "freeMemory.budget": {
+    "defaultMessage": "<b>{free} Go</b> libres pour un modèle, sur {total} Go"
+  },
+  "freeMemory.cannotFit": {
+    "defaultMessage": "Même en libérant tout ce qui est listé ici (<b>{gb} Go</b>), il manque encore <b>{short} Go</b> à ce modèle."
+  },
+  "freeMemory.cat.aiServer": {
+    "defaultMessage": "Serveurs de modèles"
+  },
+  "freeMemory.cat.gooseEngine": {
+    "defaultMessage": "Moteurs de goose"
+  },
+  "freeMemory.cat.gooseOrphan": {
+    "defaultMessage": "Restes de goose"
+  },
+  "freeMemory.cat.job": {
+    "defaultMessage": "Tâches"
+  },
+  "freeMemory.cat.system": {
+    "defaultMessage": "macOS et le reste"
+  },
+  "freeMemory.cat.userApp": {
+    "defaultMessage": "Apps"
+  },
+  "freeMemory.close": {
+    "defaultMessage": "Fermer"
+  },
+  "freeMemory.fitsByGooseOwned": {
+    "defaultMessage": "Libérer la mémoire propre à goose (<b>{gb} Go</b>) suffit pour ce modèle."
+  },
+  "freeMemory.fitsWithApps": {
+    "defaultMessage": "Ce modèle tient après avoir libéré <b>{gb} Go</b> : la mémoire propre à goose et la fermeture de {apps}."
+  },
+  "freeMemory.fitsWithAppsOnly": {
+    "defaultMessage": "Ce modèle tient après la fermeture de {apps}, qui libère <b>{gb} Go</b>."
+  },
+  "freeMemory.forceStop": {
+    "defaultMessage": "Forcer l’arrêt"
+  },
+  "freeMemory.forceStopBody": {
+    "defaultMessage": "{app} ne s’est pas fermée quand on le lui a demandé, peut-être à cause de travail non enregistré. Forcer l’arrêt la termine sur {mac} sans enregistrer. Le travail non enregistré dans {app} est perdu."
+  },
+  "freeMemory.forceStopConfirm": {
+    "defaultMessage": "Forcer l’arrêt de {app}"
+  },
+  "freeMemory.forceStopTitle": {
+    "defaultMessage": "Forcer l’arrêt de {app} ?"
+  },
+  "freeMemory.freeFailed": {
+    "defaultMessage": "Impossible de libérer de la mémoire : {reason}"
+  },
+  "freeMemory.freeOwn": {
+    "defaultMessage": "Libérer celle de goose ({gb} Go)"
+  },
+  "freeMemory.itemFailed": {
+    "defaultMessage": "{label} : {message}"
+  },
+  "freeMemory.keep": {
+    "defaultMessage": "La laisser ouverte"
+  },
+  "freeMemory.keepRunning": {
+    "defaultMessage": "Le laisser tourner"
+  },
+  "freeMemory.leftAlone": {
+    "defaultMessage": "Laissé tel quel"
+  },
+  "freeMemory.loading": {
+    "defaultMessage": "Mesure de ce qui occupe la mémoire…"
+  },
+  "freeMemory.neverTouchReason": {
+    "defaultMessage": "sur la liste à ne jamais toucher ({entry})"
+  },
+  "freeMemory.nothingOwn": {
+    "defaultMessage": "goose n’occupe aucune mémoire qu’il peut libérer"
+  },
+  "freeMemory.nuclearBack": {
+    "defaultMessage": "Retour"
+  },
+  "freeMemory.nuclearConfirmBody": {
+    "defaultMessage": "goose demande à chaque app cochée de se fermer et décharge chaque serveur de modèles coché. Les apps sont invitées à se fermer. Une app qui ne se ferme pas reste ouverte et est signalée, elle n’est pas arrêtée. Les éléments protégés ne sont jamais touchés."
+  },
+  "freeMemory.nuclearConfirmKeep": {
+    "defaultMessage": "Tout garder"
+  },
+  "freeMemory.nuclearConfirmTitle": {
+    "defaultMessage": "Libérer {gb} Go sur {mac} ?"
+  },
+  "freeMemory.nuclearFree": {
+    "defaultMessage": "Libérer {gb} Go"
+  },
+  "freeMemory.nuclearGooseOwn": {
+    "defaultMessage": "La mémoire propre à goose"
+  },
+  "freeMemory.nuclearIntro": {
+    "defaultMessage": "Tout ce que personne n’utilise est coché. Décoche ce que tu veux garder. Le protégé n’est jamais touché."
+  },
+  "freeMemory.nuclearOpen": {
+    "defaultMessage": "Tout libérer sauf le protégé"
+  },
+  "freeMemory.nuclearProtectedHead": {
+    "defaultMessage": "Jamais touché"
+  },
+  "freeMemory.nuclearTotal": {
+    "defaultMessage": "Coché : <b>{gb} Go</b>"
+  },
+  "freeMemory.protectedChip": {
+    "defaultMessage": "Protégé"
+  },
+  "freeMemory.quit": {
+    "defaultMessage": "Quitter"
+  },
+  "freeMemory.quitBody": {
+    "defaultMessage": "goose demande à {app} sur {mac} de quitter normalement. Enregistrez d’abord votre travail : tout ce qui n’est pas enregistré peut être perdu."
+  },
+  "freeMemory.quitConfirm": {
+    "defaultMessage": "Quitter {app}"
+  },
+  "freeMemory.quitTitle": {
+    "defaultMessage": "Quitter {app} ?"
+  },
+  "freeMemory.readFailed": {
+    "defaultMessage": "Impossible de mesurer la mémoire : {reason}"
+  },
+  "freeMemory.remoteQuitOff": {
+    "defaultMessage": "{mac} ne permet pas aux autres Mac de quitter ses apps ni de décharger ses serveurs de modèles : d’ici, seule la mémoire de goose peut être libérée. Pour l’autoriser, ouvrez goose sur {mac}, allez dans Paramètres › Application et activez « Autoriser les Mac liés à quitter des apps sur ce Mac ». Ou quittez-les directement sur {mac}."
+  },
+  "freeMemory.onlyThere": {
+    "defaultMessage": "Seulement sur {mac}"
+  },
+  "freeMemory.title": {
+    "defaultMessage": "Libérer de la mémoire sur {mac}"
+  },
+  "freeMemory.unload": {
+    "defaultMessage": "Décharger"
+  },
+  "freeMemory.unloadBody": {
+    "defaultMessage": "goose décharge les modèles que {server} garde sur {mac} (un moteur MLX est prié de s’arrêter). Ce qui l’utilise devra les recharger."
+  },
+  "freeMemory.unloadConfirm": {
+    "defaultMessage": "Décharger {server}"
+  },
+  "freeMemory.unloadInUse": {
+    "defaultMessage": "En cours d’utilisation, cela arrête leur travail :"
+  },
+  "freeMemory.unloadTitle": {
+    "defaultMessage": "Décharger {server} ?"
+  },
+  "freeMemory.usedBy": {
+    "defaultMessage": "Utilisé par : {who}"
+  },
+  "freeMemoryEntry.open": {
+    "defaultMessage": "Libérer de la mémoire"
+  },
   "gooseImportSection.chooseSource": {
     "defaultMessage": "Choisir le dossier source"
   },
@@ -4022,6 +4199,144 @@
   "loops.tick.yielded": {
     "defaultMessage": "A cédé la main à votre tour dans « {chat} »"
   },
+  "macLoad.allowJobs": {
+    "defaultMessage": "Exécuter les tâches envoyées par d’autres Mac"
+  },
+  "macLoad.allowJobsHint": {
+    "defaultMessage": "Commandes shell et prompts, autant de tâches lourdes que ce Mac a d’emplacements et de mémoire, arrêtées si elles dépassent le seuil mémoire. Effet immédiat."
+  },
+  "macLoad.benchmark": {
+    "defaultMessage": "Benchmark en cours : {why}"
+  },
+  "macLoad.cancelBody": {
+    "defaultMessage": "Cela arrête la tâche sur {mac} et tous les processus qu’elle a lancés. Ce qu’elle a déjà écrit reste dans son journal."
+  },
+  "macLoad.cancelJob": {
+    "defaultMessage": "Annuler la tâche"
+  },
+  "macLoad.cancelQueuedBody": {
+    "defaultMessage": "La tâche sera retirée de la file sur {mac}. Elle ne démarrera jamais."
+  },
+  "macLoad.cancelTitle": {
+    "defaultMessage": "Annuler la tâche {id} ?"
+  },
+  "macLoad.close": {
+    "defaultMessage": "Fermer"
+  },
+  "macLoad.dialogTitle": {
+    "defaultMessage": "Tâche {id}"
+  },
+  "macLoad.ended": {
+    "defaultMessage": "Terminée"
+  },
+  "macLoad.exit": {
+    "defaultMessage": "Code de sortie"
+  },
+  "macLoad.idleS": {
+    "defaultMessage": "Considéré inactif après (secondes)"
+  },
+  "macLoad.inference": {
+    "defaultMessage": "Inférence IA"
+  },
+  "macLoad.inferenceLine": {
+    "defaultMessage": "{engine,plural,one{{slots,plural,one{{engine, number} requête moteur · # créneau routeur} other{{engine, number} requête moteur · # créneaux routeur}}} other{{slots,plural,one{{engine, number} requêtes moteur · # créneau routeur} other{{engine, number} requêtes moteur · # créneaux routeur}}}}"
+  },
+  "macLoad.jobFrom": {
+    "defaultMessage": "{kind} depuis {origin}"
+  },
+  "macLoad.jobs": {
+    "defaultMessage": "Tâches"
+  },
+  "macLoad.jobsLine": {
+    "defaultMessage": "{live,plural,=0{Aucune tâche en cours} one{# tâche en cours} other{# tâches en cours}}"
+  },
+  "macLoad.jobsWaiting": {
+    "defaultMessage": "{waiting, plural, one {# tâche attend un Mac avec de la place} other {# tâches attendent un Mac avec de la place}}"
+  },
+  "macLoad.keepRunning": {
+    "defaultMessage": "Laisser tourner"
+  },
+  "macLoad.keepWaiting": {
+    "defaultMessage": "Continuer d’attendre"
+  },
+  "macLoad.kind": {
+    "defaultMessage": "Type"
+  },
+  "macLoad.log": {
+    "defaultMessage": "Journal"
+  },
+  "macLoad.logEmpty": {
+    "defaultMessage": "Rien d’écrit pour l’instant."
+  },
+  "macLoad.minFree": {
+    "defaultMessage": "Seuil mémoire (% gardé libre)"
+  },
+  "macLoad.noLoad": {
+    "defaultMessage": "Son goose ne signale pas encore la charge (version plus ancienne)."
+  },
+  "macLoad.origin": {
+    "defaultMessage": "Envoyée depuis"
+  },
+  "macLoad.own": {
+    "defaultMessage": "Usage propre"
+  },
+  "macLoad.ownLine": {
+    "defaultMessage": "{user} · cpu {cpu} · mémoire {mem} utilisée · gpu {gpu}"
+  },
+  "macLoad.placedOn": {
+    "defaultMessage": "Placée sur"
+  },
+  "macLoad.placedOnValue": {
+    "defaultMessage": "{mac} sous {id}"
+  },
+  "macLoad.policy": {
+    "defaultMessage": "Quand quelqu’un utilise ce Mac"
+  },
+  "macLoad.policyHint": {
+    "defaultMessage": "Occupé signifie mesuré : mémoire au-dessus du plancher, emplacements lourds libres, charge par cœur. Quelqu’un au clavier ne sert qu’à départager."
+  },
+  "macLoad.policy.allow": {
+    "defaultMessage": "Accepter les tâches"
+  },
+  "macLoad.policy.refuse": {
+    "defaultMessage": "Refuser les tâches"
+  },
+  "macLoad.queueNoTry": {
+    "defaultMessage": "Proposée à aucun Mac pour l’instant : une tâche devant elle attend."
+  },
+  "macLoad.queueRefusals": {
+    "defaultMessage": "Pourquoi chaque Mac a refusé"
+  },
+  "macLoad.reason": {
+    "defaultMessage": "Raison"
+  },
+  "macLoad.reconnectHint": {
+    "defaultMessage": "La règle et le seuil mémoire s’appliquent après la reconnexion de Link."
+  },
+  "macLoad.refusalLine": {
+    "defaultMessage": "{mac} : {reason}"
+  },
+  "macLoad.saveFailed": {
+    "defaultMessage": "Non enregistré : {reason}"
+  },
+  "macLoad.settingsTitle": {
+    "defaultMessage": "Tâches des autres Mac"
+  },
+  "macLoad.started": {
+    "defaultMessage": "Démarrée"
+  },
+  "macLoad.state": {
+    "defaultMessage": "État"
+  },
+  "macLoad.title": {
+    "defaultMessage": "Charge"
+  },
+  "macLoad.userActive": {
+    "defaultMessage": "Quelqu’un l’utilise"
+  },
+  "macLoad.userIdle": {
+    "defaultMessage": "Inactif {idle}"
+  },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "Échec de l’annulation."
   },
@@ -4213,6 +4528,66 @@
   },
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Lecture en Picture-in-Picture"
+  },
+  "memfreeSettings.description": {
+    "defaultMessage": "Quand un modèle local ne tient pas, goose montre ce qui occupe la mémoire et peut libérer sa propre part."
+  },
+  "memfreeSettings.enabled": {
+    "defaultMessage": "Proposer « Libérer de la mémoire »"
+  },
+  "memfreeSettings.enabledDesc": {
+    "defaultMessage": "Affiche le bouton sur un modèle à court de mémoire et sur les barres de mémoire de chaque Mac. Activé par défaut."
+  },
+  "memfreeSettings.minMb": {
+    "defaultMessage": "Plus petite app listée (Mo)"
+  },
+  "memfreeSettings.minMbDesc": {
+    "defaultMessage": "Les apps qui utilisent moins de mémoire que cette valeur ne sont pas listées. Par défaut {mb} Mo."
+  },
+  "memfreeSettings.neverTouch": {
+    "defaultMessage": "Ne jamais toucher"
+  },
+  "memfreeSettings.neverTouchAdd": {
+    "defaultMessage": "Ajouter"
+  },
+  "memfreeSettings.neverTouchAdded": {
+    "defaultMessage": "Ajoutés par toi"
+  },
+  "memfreeSettings.neverTouchBuiltIn": {
+    "defaultMessage": "Intégrés"
+  },
+  "memfreeSettings.neverTouchDesc": {
+    "defaultMessage": "Apps et processus qu’aucun nettoyage ne ferme ni n’arrête jamais, sur ce Mac et quand ce Mac libère de la mémoire sur un autre. Un identifiant de bundle, un nom d’app ou de processus ; la casse ne compte pas. Ceux intégrés s’appliquent toujours."
+  },
+  "memfreeSettings.neverTouchMatches": {
+    "defaultMessage": "correspond à {app}"
+  },
+  "memfreeSettings.neverTouchMatchesNothing": {
+    "defaultMessage": "ne correspond à aucune app ouverte ou installée, donc ne protège rien pour l’instant"
+  },
+  "memfreeSettings.neverTouchNone": {
+    "defaultMessage": "Rien d’ajouté pour l’instant"
+  },
+  "memfreeSettings.neverTouchPlaceholder": {
+    "defaultMessage": "com.example.App ou un nom d’app"
+  },
+  "memfreeSettings.neverTouchRemove": {
+    "defaultMessage": "Retirer {name}"
+  },
+  "memfreeSettings.readFailed": {
+    "defaultMessage": "Impossible de lire ces réglages : {reason}"
+  },
+  "memfreeSettings.remoteQuit": {
+    "defaultMessage": "Autoriser les Mac liés à quitter des apps sur ce Mac"
+  },
+  "memfreeSettings.remoteQuitDesc": {
+    "defaultMessage": "Un autre Mac sur LeanZero Link peut demander à ce Mac de quitter une app, toujours après une confirmation ici. Désactivé par défaut : ils peuvent quand même libérer ici la mémoire propre à goose."
+  },
+  "memfreeSettings.saveFailed": {
+    "defaultMessage": "Impossible d’enregistrer ce réglage : {reason}"
+  },
+  "memfreeSettings.title": {
+    "defaultMessage": "Libérer de la mémoire"
   },
   "memoryProposal.cut": {
     "defaultMessage": "Coupé à {max} caractères lors de son dépôt, il ne peut donc pas être enregistré tel quel. Redemande le texte complet."
@@ -5525,6 +5900,24 @@
   "mlxRestore.waitingPrevious": {
     "defaultMessage": "La répartition précédente s’arrête encore sur {node} — goose la restaure dès que c’est terminé"
   },
+  "mlxRestoreSettings.description": {
+    "defaultMessage": "Si l'ouverture de goose relance le modèle local qui servait auparavant. Désactivé par défaut."
+  },
+  "mlxRestoreSettings.readFailed": {
+    "defaultMessage": "Impossible de lire ce réglage : {reason}"
+  },
+  "mlxRestoreSettings.restore": {
+    "defaultMessage": "Restaurer le modèle local au lancement"
+  },
+  "mlxRestoreSettings.restoreDesc": {
+    "defaultMessage": "Au démarrage de goose, relancer le modèle que vous avez démarré en dernier sans l'arrêter : sur ce Mac, sur un autre Mac via LeanZero Link, ou réparti sur plusieurs Mac. Désactivé : goose ne démarre aucun modèle de lui-même ; démarrez-en un depuis Providers quand vous en avez besoin."
+  },
+  "mlxRestoreSettings.saveFailed": {
+    "defaultMessage": "Impossible d'enregistrer ce réglage : {reason}"
+  },
+  "mlxRestoreSettings.title": {
+    "defaultMessage": "Modèle local au lancement"
+  },
   "mlxSetup.aria": {
     "defaultMessage": "Configurer LeanZero MLX"
   },
@@ -6477,7 +6870,7 @@
     "defaultMessage": "Autoriser mes autres Mac à utiliser ce Mac"
   },
   "myMacs.masterHint": {
-    "defaultMessage": "Uniquement les Mac connectés à votre compte LeanZero Link. Chaque interrupteur couvre des opérations propres à goose — jamais une commande arbitraire."
+    "defaultMessage": "Uniquement les Mac connectés à votre compte LeanZero Link. Ces interrupteurs couvrent les opérations propres à goose : modèles, chat et sessions de prompt que vos autres Mac lancent ici. Les commandes shell et les tâches de prompt ont leur propre interrupteur, « Exécuter les tâches envoyées par d’autres Mac », désactivé tant que vous ne l’activez pas."
   },
   "myMacs.memory": {
     "defaultMessage": "Mémoire"
@@ -6728,6 +7121,9 @@
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "Aucun modèle n’est monté"
   },
+  "nodeCard.memfreeThisMac": {
+    "defaultMessage": "ce Mac"
+  },
   "nodeModelCell.chatFollows": {
     "defaultMessage": "Le chat suit ton lancement : {model}"
   },
@@ -6941,6 +7337,9 @@
   "nodes.loadsUnread": {
     "defaultMessage": "Impossible de lire les temps de chargement : {error}"
   },
+  "nodes.localServerNotRunning": {
+    "defaultMessage": "Rien ne tourne encore à {origin} ; démarrez le serveur local"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "Gérer les fournisseurs cloud"
   },
@@ -7090,6 +7489,9 @@
   },
   "nodes.newProviderModels": {
     "defaultMessage": "Modèle"
+  },
+  "nodes.newProviderNotRunning": {
+    "defaultMessage": "Non démarré"
   },
   "nodes.newProvidersFailed": {
     "defaultMessage": "Impossible de lire vos fournisseurs : {error}"
@@ -8500,6 +8902,12 @@
   },
   "providerCard.noMetadata": {
     "defaultMessage": "Erreur ProviderCard : aucune métadonnée fournie"
+  },
+  "providerCard.notRunning": {
+    "defaultMessage": "Non démarré"
+  },
+  "providerCard.notRunningText": {
+    "defaultMessage": "Rien ne tourne encore à {origin}. Démarrez le serveur local, puis revérifiez les connexions."
   },
   "providerCard.unknownProvider": {
     "defaultMessage": "Fournisseur inconnu"
@@ -11603,6 +12011,9 @@
   "forgeSeries.publish": {
     "defaultMessage": "Publier 2 builds"
   },
+  "forgeSeries.publishSeparately": {
+    "defaultMessage": "Publier les builds séparément"
+  },
   "forgeSeries.publishTitle": {
     "defaultMessage": "Titre de publication"
   },
@@ -11644,5 +12055,98 @@
   },
   "modelCustomFields.noFields": {
     "defaultMessage": "Champs personnalisés : {provider} n’en déclare aucun pour « {model} », il s’exécute donc avec les valeurs par défaut du fournisseur."
+  },
+  "macLoad.stateCancelling": {
+    "defaultMessage": "Annulation…"
+  },
+  "macLoad.stateWaiting": {
+    "defaultMessage": "En attente, n°{position} dans la file"
+  },
+  "macLoad.strategy": {
+    "defaultMessage": "Où mes tâches s’exécutent"
+  },
+  "macLoad.strategy.localFirst": {
+    "defaultMessage": "Mon Mac d’abord"
+  },
+  "macLoad.strategy.selfish": {
+    "defaultMessage": "Les autres Macs d’abord"
+  },
+  "macLoad.strategyHint.localFirst": {
+    "defaultMessage": "S’exécute sur ce Mac s’il a de la place, sinon sur l’autre Mac le plus libre, sinon attend dans la file."
+  },
+  "macLoad.strategyHint.selfish": {
+    "defaultMessage": "S’exécute sur l’autre Mac le plus libre, sinon sur ce Mac, sinon attend dans la file. Garde ce Mac libre."
+  },
+  "myMacs.runJob": {
+    "defaultMessage": "Lancer une tâche…"
+  },
+  "runJob.title": {
+    "defaultMessage": "Lancer une tâche sur…"
+  },
+  "runJob.willQueue": {
+    "defaultMessage": "Aucun Mac n’a de place pour l’instant. Lancez-la : elle attend dans la file de ce Mac et démarre sur le premier Mac qui a de la place."
+  },
+  "runJob.target": {
+    "defaultMessage": "Exécuter sur"
+  },
+  "runJob.best": {
+    "defaultMessage": "Meilleur Mac"
+  },
+  "runJob.ranking": {
+    "defaultMessage": "Meilleurs maintenant : {macs}"
+  },
+  "runJob.refusal": {
+    "defaultMessage": "{mac} : {reason}"
+  },
+  "runJob.verdictLine": {
+    "defaultMessage": "{mac} : {verdict}"
+  },
+  "runJob.inUse": {
+    "defaultMessage": "{name} (utilisé)"
+  },
+  "runJob.noPlace": {
+    "defaultMessage": "Aucun Mac ne peut prendre cette tâche pour l’instant."
+  },
+  "runJob.none": {
+    "defaultMessage": "Aucun de vos Mac n’accepte de tâches pour l’instant. Activez « Exécuter les tâches envoyées par d’autres Mac » sur le Mac qui doit les exécuter."
+  },
+  "runJob.jobsOff": {
+    "defaultMessage": "les tâches sont désactivées sur ce Mac"
+  },
+  "runJob.kind": {
+    "defaultMessage": "Type"
+  },
+  "runJob.kindShell": {
+    "defaultMessage": "Commande shell"
+  },
+  "runJob.kindPrompt": {
+    "defaultMessage": "Prompt"
+  },
+  "runJob.command": {
+    "defaultMessage": "{kind, select, shell {Commande} other {Prompt}}"
+  },
+  "runJob.heavy": {
+    "defaultMessage": "Tâche lourde"
+  },
+  "runJob.heavyHint": {
+    "defaultMessage": "Un Mac exécute autant de tâches lourdes (builds, rendus, entraînement) qu’il a d’emplacements et de mémoire."
+  },
+  "runJob.mem": {
+    "defaultMessage": "Mémoire nécessaire (Go, facultatif)"
+  },
+  "runJob.timeout": {
+    "defaultMessage": "Durée maximale (secondes, facultatif)"
+  },
+  "runJob.submit": {
+    "defaultMessage": "Lancer la tâche"
+  },
+  "runJob.close": {
+    "defaultMessage": "Fermer"
+  },
+  "runJob.refused": {
+    "defaultMessage": "Non envoyée : {reason}"
+  },
+  "myMacs.updatedAgo": {
+    "defaultMessage": "mis à jour il y a {seconds} s"
   }
 }

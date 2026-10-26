@@ -231,6 +231,10 @@ impl Provider for AnthropicProvider {
         &self.name
     }
 
+    fn endpoint(&self) -> Option<&str> {
+        Some(self.api_client.host())
+    }
+
     fn skip_canonical_filtering(&self) -> bool {
         self.skip_canonical_filtering
     }
@@ -290,22 +294,27 @@ impl Provider for AnthropicProvider {
                 let _ = log.error(e);
             })?;
 
+        let stall = crate::stream_stall::StallWatch::of(&response);
         let stream = response
             .bytes_stream()
+            .inspect_ok(stall.data_lines())
             .map_err(crate::errors::body_read_error);
 
-        Ok(Box::pin(try_stream! {
-            let stream_reader = StreamReader::new(stream);
-            let framed = tokio_util::codec::FramedRead::new(stream_reader, tokio_util::codec::LinesCodec::new()).map_err(anyhow::Error::from);
+        Ok(crate::stream_stall::guard(
+            Box::pin(try_stream! {
+                let stream_reader = StreamReader::new(stream);
+                let framed = tokio_util::codec::FramedRead::new(stream_reader, tokio_util::codec::LinesCodec::new()).map_err(anyhow::Error::from);
 
-            let message_stream = response_to_streaming_message(framed);
-            pin!(message_stream);
-            while let Some(message) = futures::StreamExt::next(&mut message_stream).await {
-                let (message, usage) = message.map_err(ProviderError::from_stream_error)?;
-                log.write(&message, usage.as_ref().map(|f| f.usage).as_ref())?;
-                yield (message, usage);
-            }
-        }))
+                let message_stream = response_to_streaming_message(framed);
+                pin!(message_stream);
+                while let Some(message) = futures::StreamExt::next(&mut message_stream).await {
+                    let (message, usage) = message.map_err(ProviderError::from_stream_error)?;
+                    log.write(&message, usage.as_ref().map(|f| f.usage).as_ref())?;
+                    yield (message, usage);
+                }
+            }),
+            stall,
+        ))
     }
 }
 

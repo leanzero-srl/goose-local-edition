@@ -902,6 +902,11 @@ pub struct ProviderConfigStatusDto {
     pub is_configured: bool,
     pub connection_checked: bool,
     pub connection_error: Option<String>,
+    /// The origin (`http://127.0.0.1:8090`) of a loopback endpoint the last check found nothing
+    /// listening at: a local server that is not started. Not a failure — `connection_error` stays
+    /// empty — and not proof of the settings either.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_server_not_running: Option<String>,
     pub test_model: Option<String>,
 }
 
@@ -2698,6 +2703,213 @@ pub struct MlxEngineStopOtherEngineResponse {
     /// What it held when stopped.
     pub resident_bytes: u64,
     pub message: String,
+}
+
+/// One process (identity a free must name back): pid + start time, so a reused pid is never hit.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxMemoryPidDto {
+    pub pid: u32,
+    /// Unix seconds.
+    pub started_at: u64,
+}
+
+/// One memory holder on a Mac, grouped (an app's helpers fold into its outermost `.app`).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxMemoryGroupDto {
+    /// Stable id a `memoryFree` call names: `gooseEngine`, `mlx:<pid>`, `app:<bundleId>`, ….
+    pub id: String,
+    pub label: String,
+    /// "gooseEngine" | "gooseOrphan" | "aiServer" | "userApp" | "system" | "job".
+    pub category: String,
+    /// Physical footprint (`ri_phys_footprint`) summed over the group's processes.
+    pub bytes: u64,
+    pub pids: Vec<MlxMemoryPidDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bundle_id: Option<String>,
+    /// A user app goose may ASK to quit (Apple Event, graceful; the app can refuse).
+    pub quittable: bool,
+    /// goose can give these bytes back itself (its own idle engine, another MLX engine, …).
+    pub reclaimable_by_goose: bool,
+    /// Why it is protected or not reclaimable now (busy engine, system process, …).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
+    /// Set when nothing may free it (a launchd job, an MCP server, a terminal session, a
+    /// heavy-run job, …): never quittable, never unloaded, never ticked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protected_why: Option<String>,
+    /// Who uses it: TCP clients of a server's port, the process that started it, its launchd job.
+    #[serde(default)]
+    pub used_by: Vec<String>,
+    /// The launchd job that owns any of its processes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launchd_label: Option<String>,
+    /// Ticked by default in "free everything except protected" (never for protected or
+    /// never-touch groups).
+    #[serde(default)]
+    pub nuclear_default: bool,
+}
+
+/// The honest answer to a short fit, from live measurement.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxMemoryVerdictDto {
+    /// "fitsByGooseOwned" | "fitsWithApps" | "cannotFit".
+    pub kind: String,
+    /// cannotFit only: `shortBytes − gooseOwnedBytes − appsBytes`; 0 otherwise.
+    pub remaining_bytes: u64,
+    /// The confirmable holders that close the gap: app bundle ids and model-server / other-engine
+    /// group ids (look each up by `bundleId` OR `id`). fitsWithApps: the fewest, largest first;
+    /// cannotFit: every one. Soft (goose-owned) reclaim never needs these.
+    pub apps_to_quit: Vec<String>,
+}
+
+/// Another way to run when freeing memory is not enough (or not wanted).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxMemoryAlternativeDto {
+    /// "smallerVariant" | "peerMac".
+    pub kind: String,
+    /// smallerVariant: the local model id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    /// smallerVariant: its weights bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub need_bytes: Option<u64>,
+    /// peerMac: the node id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    /// peerMac: display label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// peerMac: its fit budget.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_bytes: Option<u64>,
+}
+
+/// Who holds memory on this Mac, and — for `fitModelId` — what freeing it would buy.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/memoryHolders",
+    response = MlxEngineMemoryHoldersResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineMemoryHoldersRequest {
+    /// Mesh target; absent/self → local.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit_model_id: Option<String>,
+    /// The caller's never-touch list; the answering Mac unions it with its own
+    /// (`GOOSE_MEMFREE_NEVER_TOUCH` + the defaults) for `nuclearDefault`.
+    #[serde(default)]
+    pub never_touch: Vec<String>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineMemoryHoldersResponse {
+    pub available_bytes: u64,
+    pub budget_bytes: u64,
+    pub total_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit: Option<MlxMountFitDto>,
+    pub groups: Vec<MlxMemoryGroupDto>,
+    /// What the soft clean (`gooseOwned`) reclaims that the fit does NOT already credit: proven
+    /// left-over goose servers, plus this goose's own idle engine when there is no fit (the fit
+    /// already counts it as available). Never another engine, model server or app.
+    pub goose_owned_bytes: u64,
+    /// What unloading the unprotected model servers (loaded models) and stopping the other MLX
+    /// engines would free: each needs the person's confirmation (`unloadServers`).
+    #[serde(default)]
+    pub servers_bytes: u64,
+    /// Quittable user apps at or above `GOOSE_MEMFREE_SHOW_APPS_MIN_MB`.
+    pub apps_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub short_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<MlxMemoryVerdictDto>,
+    pub alternatives: Vec<MlxMemoryAlternativeDto>,
+    pub quit_apps_allowed: bool,
+    /// `GOOSE_MEMFREE_ENABLED`; when false the groups are empty.
+    pub enabled: bool,
+}
+
+/// Free memory. `gooseOwned` = the soft clean (this goose's own idle engine + proven left-over
+/// goose servers, nothing anyone else uses). Everything else is named item by item and re-checked
+/// against a fresh census, the protected set and the never-touch list: `unloadServers` (group ids
+/// of model servers / other MLX engines), `quitApps` (bundle ids, asked to quit; one that does
+/// not quit is left running and reported), `forceStopApps` (bundle ids the person chose to force
+/// stop: one SIGTERM per pid, own uid, unprotected, never SIGKILL). Each item is re-checked right
+/// before it runs; a server that gained a user not in `seenUsedBy` is refused. Over the Link,
+/// everything but `gooseOwned` needs `GOOSE_LINK_ALLOW_REMOTE_APP_QUIT` on the answering Mac.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/memoryFree",
+    response = MlxEngineMemoryFreeResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineMemoryFreeRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    #[serde(default)]
+    pub goose_owned: bool,
+    #[serde(default)]
+    pub quit_apps: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit_model_id: Option<String>,
+    /// Group ids (`ai:…`, `mlx:<pid>`) the person ticked to unload/stop.
+    #[serde(default)]
+    pub unload_servers: Vec<String>,
+    /// "Free everything except protected". Apps are only asked to quit; nothing is forced.
+    #[serde(default)]
+    pub nuclear: bool,
+    /// The caller's never-touch list, unioned with the executing Mac's own.
+    #[serde(default)]
+    pub never_touch: Vec<String>,
+    /// Per ticked server group id: the `usedBy` lines the person saw. A server with a user
+    /// not in this list when it is about to be freed is refused.
+    #[serde(default)]
+    pub seen_used_by: HashMap<String, Vec<String>>,
+    /// Bundle ids the person explicitly chose to force stop (SIGTERM, never SIGKILL).
+    #[serde(default)]
+    pub force_stop_apps: Vec<String>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxMemoryFreeItemDto {
+    pub id: String,
+    pub label: String,
+    pub ok: bool,
+    /// Measured: footprint before minus after.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freed_bytes: Option<u64>,
+    pub message: String,
+    /// The app did not quit and may still be force stopped (own uid, unprotected).
+    #[serde(default)]
+    pub force_stoppable: bool,
+    /// Set when the item was refused because nothing may ever touch it: `neverTouch` (on the
+    /// never-touch list) or `protected` (another person, job, session, launchd/MCP, macOS).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal_code: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxMemoryBudgetDto {
+    pub budget_bytes: u64,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineMemoryFreeResponse {
+    pub items: Vec<MlxMemoryFreeItemDto>,
+    pub before: MlxMemoryBudgetDto,
+    pub after: MlxMemoryBudgetDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit: Option<MlxMountFitDto>,
 }
 
 /// The one fit rule (goose-sidecar `fit`) for one model on one Mac: `budget = min(available −
@@ -4698,7 +4910,12 @@ pub struct MlxServingIntentDto {
     response = MlxEngineServingIntentResponse
 )]
 #[serde(rename_all = "camelCase")]
-pub struct MlxEngineServingIntentRequest {}
+pub struct MlxEngineServingIntentRequest {
+    /// The launch restore's own read. Only it runs the gone-model check (with
+    /// `GOOSE_MLX_RESTORE_AT_LAUNCH` on); every other reader gets the record as it stands.
+    #[serde(default)]
+    pub at_launch: bool,
+}
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
 #[serde(rename_all = "camelCase")]
@@ -4709,6 +4926,10 @@ pub struct MlxEngineServingIntentResponse {
     /// The record exists and could not be read — named, never read as "nothing to restore".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// The owner's tunable `GOOSE_MLX_RESTORE_AT_LAUNCH` (default off): false = the launch
+    /// restores nothing and shows nothing, while starts keep being recorded for when it is on.
+    #[serde(default)]
+    pub restore_at_launch: bool,
 }
 
 // ============================================================================
@@ -5101,6 +5322,156 @@ pub struct LeanzeroLinkRemoteExecuteRequest {
 pub struct LeanzeroLinkRemoteExecuteResponse {
     /// The session id created on the target node — mirror it over the swarm stream.
     pub session_id: String,
+}
+
+/// Mesh jobs (`/v1/swarm/jobs` on a node). Every jobs method needs the manager `connected`
+/// (else `invalid_params` "not connected to the mesh"). A refusal from the target (switch
+/// off, no memory headroom, heavy slot held, benchmark running, user active, ...) is an
+/// `invalid_params` error whose `data` is the node's `{code, reason}` verbatim. Job views,
+/// logs and placements are carried as the node's own JSON (`leanzero_link::jobs` DTOs);
+/// a view never carries the command line.
+///
+/// Submit one job. `targetNodeId` absent = place it by the placement strategy (see
+/// `jobsPlace`): the first candidate that accepts runs it; when none can, or other jobs already
+/// wait, it joins THIS node's FIFO queue (`queued: true`, `queuePosition` 1 = next, `nodeId` =
+/// this node, `jobId` = the queue id) and is offered to the Macs again every 15 s. A queue id
+/// follows its job: `jobsGet`/`jobsLog`/`jobsCancel` on this node show it waiting (`state:
+/// "queued"`, `queue: {position, strategy, refusals}`), then the placed job with `placed_on`.
+/// A targeted job never queues (a refusal is the error). `job` is a `JobRequest`: `{kind:
+/// "shell"|"prompt", command, cwd?, needMemGb?, heavy, timeoutS?}` (snake_case keys inside
+/// `job`, as the node's route takes them).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/leanzeroLink/jobsSubmit",
+    response = LeanzeroLinkJobsSubmitResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkJobsSubmitRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_node_id: Option<String>,
+    pub job: serde_json::Value,
+    /// This job's placement strategy, `"local-first"` | `"selfish"` (the "Run a job" override).
+    /// Absent = the setting (`LEANZERO_LINK_JOBS_STRATEGY`, else node-limits.json `strategy`,
+    /// else local-first). Ignored with `targetNodeId`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkJobsSubmitResponse {
+    /// Where the job went (the placement's pick when no target was given; this node when queued).
+    pub node_id: String,
+    pub job_id: String,
+    /// No Mac had room: the job waits in this node's queue under `jobId`.
+    #[serde(default)]
+    pub queued: bool,
+    /// Its place in line when queued (1 = next).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_position: Option<u32>,
+}
+
+/// Every job a node knows (running and finished since it started), newest first as it lists them.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/leanzeroLink/jobsList",
+    response = LeanzeroLinkJobsListResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkJobsListRequest {
+    pub target_node_id: String,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkJobsListResponse {
+    pub jobs: Vec<serde_json::Value>,
+}
+
+/// One job's view (brief + outcome), as `GET /v1/swarm/jobs/{id}`.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/leanzeroLink/jobsGet",
+    response = LeanzeroLinkJobsJobResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkJobsGetRequest {
+    pub target_node_id: String,
+    pub job_id: String,
+}
+
+/// Cancel a shell job: its whole process group is TERMed, then KILLed after the grace. The
+/// group dies async: poll `jobsGet` for `cancelled`/143. A prompt job answers
+/// `cancel_unsupported`.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/leanzeroLink/jobsCancel",
+    response = LeanzeroLinkJobsJobResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkJobsCancelRequest {
+    pub target_node_id: String,
+    pub job_id: String,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkJobsJobResponse {
+    pub job: serde_json::Value,
+}
+
+/// Bytes `[from, next)` of a job's combined stdout+stderr (`{from, next, data, done}`).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/leanzeroLink/jobsLog",
+    response = LeanzeroLinkJobsLogResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkJobsLogRequest {
+    pub target_node_id: String,
+    pub job_id: String,
+    #[serde(default)]
+    pub from: u64,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkJobsLogResponse {
+    pub log: serde_json::Value,
+}
+
+/// Where a job could run now, in the order a submit tries them (node_fleet's rules:
+/// this node first under `local-first`, last under `selfish`; then the most room (`canTake`);
+/// USER-ACTIVE only breaks a tie between equal room, then score). Busy nodes and nodes that do not
+/// allow jobs are not placements: they are `refusals`, each `{nodeId, code, reason}`.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/leanzeroLink/jobsPlace",
+    response = LeanzeroLinkJobsPlaceResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkJobsPlaceRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub need_mem_gb: Option<f64>,
+    #[serde(default)]
+    pub heavy: bool,
+    /// As `jobsSubmit`'s `strategy`; absent = the setting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkJobsPlaceResponse {
+    /// `{nodeId, userActive, score}` per candidate, in the order a submit tries them.
+    pub placements: Vec<serde_json::Value>,
+    /// The strategy the order was made with (`"local-first"` | `"selfish"`).
+    #[serde(default)]
+    pub strategy: String,
+    /// `{nodeId, code, reason}` per Mac that is not a placement (the job would wait in the
+    /// queue when `placements` is empty).
+    #[serde(default)]
+    pub refusals: Vec<serde_json::Value>,
 }
 
 #[cfg(test)]

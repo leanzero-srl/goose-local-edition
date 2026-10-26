@@ -18,6 +18,9 @@ vi.mock('../openrouter/OpenRouterHostPicker', () => ({
     <div data-testid="host-picker" data-model={model} />
   ),
 }));
+vi.mock('../openrouter/OpenRouterMiddleOutSwitch', () => ({
+  OpenRouterMiddleOutSwitch: () => <div data-testid="middle-out-switch" />,
+}));
 
 function provider(name: string, display: string, defaultModel: string): ProviderDetails {
   return {
@@ -67,6 +70,7 @@ it('the OpenRouter default-model step carries the host picker for the model bein
   open(provider('openrouter', 'OpenRouter', 'qwen/qwen3.8-27b'));
   const picker = await screen.findByTestId('host-picker');
   expect(picker).toHaveAttribute('data-model', 'qwen/qwen3.8-27b');
+  expect(screen.getByTestId('middle-out-switch')).toBeInTheDocument();
 
   await userEvent.click(await screen.findByText('deepseek/deepseek-v4.1-flash'));
   await waitFor(() =>
@@ -82,4 +86,5 @@ it('no other provider gets an OpenRouter host picker', async () => {
   open(provider('openai', 'OpenAI', 'gpt-5'));
   await screen.findByText('gpt-5');
   expect(screen.queryByTestId('host-picker')).toBeNull();
+  expect(screen.queryByTestId('middle-out-switch')).toBeNull();
 });

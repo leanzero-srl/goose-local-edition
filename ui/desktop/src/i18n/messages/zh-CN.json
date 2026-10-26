@@ -848,6 +848,12 @@
   "cloudProviders.notOfficialText": {
     "defaultMessage": "请求发往 {where},而不是 api.openai.com。"
   },
+  "cloudProviders.notRunning": {
+    "defaultMessage": "未运行"
+  },
+  "cloudProviders.notRunningText": {
+    "defaultMessage": "{origin} 上还没有任何服务在运行。请启动本地服务器，然后重新检查连接。"
+  },
   "cloudProviders.notSetUp": {
     "defaultMessage": "未设置"
   },
@@ -2621,6 +2627,177 @@
   "formingPanel.textHeading": {
     "defaultMessage": "与调用一同写出的文本（{chars} 个字符）— 不属于回答"
   },
+  "freeMemory.after": {
+    "defaultMessage": "之前空闲 <b>{before} GB</b>,现在空闲 <b>{after} GB</b>(释放了 {freed} GB)。"
+  },
+  "freeMemory.afterFits": {
+    "defaultMessage": "模型现在放得下了。"
+  },
+  "freeMemory.afterShort": {
+    "defaultMessage": "仍差 <b>{gb} GB</b>。"
+  },
+  "freeMemory.altPeer": {
+    "defaultMessage": "改在 {mac} 上运行(那里空闲 <b>{gb} GB</b>)"
+  },
+  "freeMemory.altPeerNoFree": {
+    "defaultMessage": "改在 <b>{mac}</b> 上运行"
+  },
+  "freeMemory.altSmaller": {
+    "defaultMessage": "更小的变体放得下:{model}(需要 <b>{gb} GB</b>)"
+  },
+  "freeMemory.budget": {
+    "defaultMessage": "可用于模型的空闲 <b>{free} GB</b>,共 {total} GB"
+  },
+  "freeMemory.cannotFit": {
+    "defaultMessage": "即使释放这里列出的全部内容(<b>{gb} GB</b>),此模型仍差 <b>{short} GB</b>。"
+  },
+  "freeMemory.cat.aiServer": {
+    "defaultMessage": "模型服务器"
+  },
+  "freeMemory.cat.gooseEngine": {
+    "defaultMessage": "goose 的引擎"
+  },
+  "freeMemory.cat.gooseOrphan": {
+    "defaultMessage": "goose 遗留的"
+  },
+  "freeMemory.cat.job": {
+    "defaultMessage": "任务"
+  },
+  "freeMemory.cat.system": {
+    "defaultMessage": "macOS 及其他"
+  },
+  "freeMemory.cat.userApp": {
+    "defaultMessage": "应用"
+  },
+  "freeMemory.close": {
+    "defaultMessage": "关闭"
+  },
+  "freeMemory.fitsByGooseOwned": {
+    "defaultMessage": "释放 goose 自身的内存(<b>{gb} GB</b>)就足够运行此模型。"
+  },
+  "freeMemory.fitsWithApps": {
+    "defaultMessage": "释放 <b>{gb} GB</b> 后此模型放得下:goose 自身的内存并退出 {apps}。"
+  },
+  "freeMemory.fitsWithAppsOnly": {
+    "defaultMessage": "退出 {apps} 后此模型放得下,可释放 <b>{gb} GB</b>。"
+  },
+  "freeMemory.forceStop": {
+    "defaultMessage": "强制停止"
+  },
+  "freeMemory.forceStopBody": {
+    "defaultMessage": "{app} 在被要求退出时没有退出，可能是因为有未保存的工作。强制停止会在 {mac} 上不保存地结束它。{app} 中未保存的工作将丢失。"
+  },
+  "freeMemory.forceStopConfirm": {
+    "defaultMessage": "强制停止 {app}"
+  },
+  "freeMemory.forceStopTitle": {
+    "defaultMessage": "强制停止 {app}？"
+  },
+  "freeMemory.freeFailed": {
+    "defaultMessage": "无法释放内存:{reason}"
+  },
+  "freeMemory.freeOwn": {
+    "defaultMessage": "释放 goose 自身的({gb} GB)"
+  },
+  "freeMemory.itemFailed": {
+    "defaultMessage": "{label}:{message}"
+  },
+  "freeMemory.keep": {
+    "defaultMessage": "保持打开"
+  },
+  "freeMemory.keepRunning": {
+    "defaultMessage": "保持运行"
+  },
+  "freeMemory.leftAlone": {
+    "defaultMessage": "不处理"
+  },
+  "freeMemory.loading": {
+    "defaultMessage": "正在测量占用内存的内容…"
+  },
+  "freeMemory.neverTouchReason": {
+    "defaultMessage": "在不触碰列表中({entry})"
+  },
+  "freeMemory.nothingOwn": {
+    "defaultMessage": "goose 没有可释放的内存"
+  },
+  "freeMemory.nuclearBack": {
+    "defaultMessage": "返回"
+  },
+  "freeMemory.nuclearConfirmBody": {
+    "defaultMessage": "goose 会请每个勾选的应用退出，并卸载每个勾选的模型服务器。应用只会被请求退出。没有退出的应用会保持运行并被报告，不会被停止。受保护的项目永远不会被触碰。"
+  },
+  "freeMemory.nuclearConfirmKeep": {
+    "defaultMessage": "全部保留"
+  },
+  "freeMemory.nuclearConfirmTitle": {
+    "defaultMessage": "在 {mac} 上释放 {gb} GB?"
+  },
+  "freeMemory.nuclearFree": {
+    "defaultMessage": "释放 {gb} GB"
+  },
+  "freeMemory.nuclearGooseOwn": {
+    "defaultMessage": "goose 自身的内存"
+  },
+  "freeMemory.nuclearIntro": {
+    "defaultMessage": "所有没人使用的项都已勾选。取消勾选你想保留的项。受保护的项永远不会被触碰。"
+  },
+  "freeMemory.nuclearOpen": {
+    "defaultMessage": "释放除受保护项之外的全部"
+  },
+  "freeMemory.nuclearProtectedHead": {
+    "defaultMessage": "永不触碰"
+  },
+  "freeMemory.nuclearTotal": {
+    "defaultMessage": "已勾选:<b>{gb} GB</b>"
+  },
+  "freeMemory.protectedChip": {
+    "defaultMessage": "受保护"
+  },
+  "freeMemory.quit": {
+    "defaultMessage": "退出"
+  },
+  "freeMemory.quitBody": {
+    "defaultMessage": "goose 会请 {mac} 上的 {app} 以正常方式退出。请先在那里保存你的工作:未保存的内容可能会丢失。"
+  },
+  "freeMemory.quitConfirm": {
+    "defaultMessage": "退出 {app}"
+  },
+  "freeMemory.quitTitle": {
+    "defaultMessage": "退出 {app}?"
+  },
+  "freeMemory.readFailed": {
+    "defaultMessage": "无法测量内存:{reason}"
+  },
+  "freeMemory.remoteQuitOff": {
+    "defaultMessage": "{mac} 不允许其他 Mac 退出它的应用或卸载它的模型服务器，因此从这里只能释放 goose 自己的内存。要允许，请在 {mac} 上打开 goose，前往 设置 › 应用，开启“允许已连接的 Mac 退出这台 Mac 上的应用”。或者直接在 {mac} 上退出它们。"
+  },
+  "freeMemory.onlyThere": {
+    "defaultMessage": "仅在 {mac} 上"
+  },
+  "freeMemory.title": {
+    "defaultMessage": "释放 {mac} 上的内存"
+  },
+  "freeMemory.unload": {
+    "defaultMessage": "卸载"
+  },
+  "freeMemory.unloadBody": {
+    "defaultMessage": "goose 会卸载 {server} 在 {mac} 上占用的模型(会请求 MLX 引擎停止)。正在使用它的程序需要重新加载模型。"
+  },
+  "freeMemory.unloadConfirm": {
+    "defaultMessage": "卸载 {server}"
+  },
+  "freeMemory.unloadInUse": {
+    "defaultMessage": "正在使用中,这会中断它们的工作:"
+  },
+  "freeMemory.unloadTitle": {
+    "defaultMessage": "卸载 {server}?"
+  },
+  "freeMemory.usedBy": {
+    "defaultMessage": "使用者:{who}"
+  },
+  "freeMemoryEntry.open": {
+    "defaultMessage": "释放内存"
+  },
   "gooseImportSection.chooseSource": {
     "defaultMessage": "选择源文件夹"
   },
@@ -4022,6 +4199,144 @@
   "loops.tick.yielded": {
     "defaultMessage": "已让位于你在“{chat}”中的回合"
   },
+  "macLoad.allowJobs": {
+    "defaultMessage": "运行其他 Mac 发来的任务"
+  },
+  "macLoad.allowJobsHint": {
+    "defaultMessage": "Shell 命令和提示词，重任务的数量取决于这台 Mac 的槽位和内存，超过内存下限即被终止。立即生效。"
+  },
+  "macLoad.benchmark": {
+    "defaultMessage": "基准测试运行中：{why}"
+  },
+  "macLoad.cancelBody": {
+    "defaultMessage": "这会停止 {mac} 上的任务及其启动的所有进程。已写入的内容会保留在日志中。"
+  },
+  "macLoad.cancelJob": {
+    "defaultMessage": "取消任务"
+  },
+  "macLoad.cancelQueuedBody": {
+    "defaultMessage": "这会把任务从 {mac} 的队列中移除，它不会再启动。"
+  },
+  "macLoad.cancelTitle": {
+    "defaultMessage": "取消任务 {id}？"
+  },
+  "macLoad.close": {
+    "defaultMessage": "关闭"
+  },
+  "macLoad.dialogTitle": {
+    "defaultMessage": "任务 {id}"
+  },
+  "macLoad.ended": {
+    "defaultMessage": "已结束"
+  },
+  "macLoad.exit": {
+    "defaultMessage": "退出码"
+  },
+  "macLoad.idleS": {
+    "defaultMessage": "多少秒后视为空闲"
+  },
+  "macLoad.inference": {
+    "defaultMessage": "AI 推理"
+  },
+  "macLoad.inferenceLine": {
+    "defaultMessage": "{engine,plural,one{{slots,plural,one{{engine, number} 个引擎请求 · # 个路由槽位} other{{engine, number} 个引擎请求 · # 个路由槽位}}} other{{slots,plural,one{{engine, number} 个引擎请求 · # 个路由槽位} other{{engine, number} 个引擎请求 · # 个路由槽位}}}}"
+  },
+  "macLoad.jobFrom": {
+    "defaultMessage": "来自 {origin} 的 {kind}"
+  },
+  "macLoad.jobs": {
+    "defaultMessage": "任务"
+  },
+  "macLoad.jobsLine": {
+    "defaultMessage": "{live,plural,=0{没有运行中的任务} one{# 个任务运行中} other{# 个任务运行中}}"
+  },
+  "macLoad.jobsWaiting": {
+    "defaultMessage": "{waiting, plural, other {# 个任务在等待有空间的 Mac}}"
+  },
+  "macLoad.keepRunning": {
+    "defaultMessage": "继续运行"
+  },
+  "macLoad.keepWaiting": {
+    "defaultMessage": "继续等待"
+  },
+  "macLoad.kind": {
+    "defaultMessage": "类型"
+  },
+  "macLoad.log": {
+    "defaultMessage": "日志"
+  },
+  "macLoad.logEmpty": {
+    "defaultMessage": "尚无内容。"
+  },
+  "macLoad.minFree": {
+    "defaultMessage": "内存下限（保留空闲 %）"
+  },
+  "macLoad.noLoad": {
+    "defaultMessage": "它的 goose 尚未报告负载（旧版本）。"
+  },
+  "macLoad.origin": {
+    "defaultMessage": "发送自"
+  },
+  "macLoad.own": {
+    "defaultMessage": "自身使用"
+  },
+  "macLoad.ownLine": {
+    "defaultMessage": "{user} · cpu {cpu} · 内存已用 {mem} · gpu {gpu}"
+  },
+  "macLoad.placedOn": {
+    "defaultMessage": "已分配到"
+  },
+  "macLoad.placedOnValue": {
+    "defaultMessage": "{mac}，编号 {id}"
+  },
+  "macLoad.policy": {
+    "defaultMessage": "有人使用这台 Mac 时"
+  },
+  "macLoad.policyHint": {
+    "defaultMessage": "忙碌以实测为准：高于下限的内存、空闲的重任务槽位、每核负载。有人在用键盘只用于打破平局。"
+  },
+  "macLoad.policy.allow": {
+    "defaultMessage": "接受任务"
+  },
+  "macLoad.policy.refuse": {
+    "defaultMessage": "拒绝任务"
+  },
+  "macLoad.queueNoTry": {
+    "defaultMessage": "尚未分配给任何 Mac：前面有任务在等待。"
+  },
+  "macLoad.queueRefusals": {
+    "defaultMessage": "每台 Mac 拒绝的原因"
+  },
+  "macLoad.reason": {
+    "defaultMessage": "原因"
+  },
+  "macLoad.reconnectHint": {
+    "defaultMessage": "策略和内存下限在 Link 重新连接后生效。"
+  },
+  "macLoad.refusalLine": {
+    "defaultMessage": "{mac}：{reason}"
+  },
+  "macLoad.saveFailed": {
+    "defaultMessage": "未保存：{reason}"
+  },
+  "macLoad.settingsTitle": {
+    "defaultMessage": "来自其他 Mac 的任务"
+  },
+  "macLoad.started": {
+    "defaultMessage": "开始时间"
+  },
+  "macLoad.state": {
+    "defaultMessage": "状态"
+  },
+  "macLoad.title": {
+    "defaultMessage": "负载"
+  },
+  "macLoad.userActive": {
+    "defaultMessage": "有人正在使用"
+  },
+  "macLoad.userIdle": {
+    "defaultMessage": "空闲 {idle}"
+  },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "取消失败。"
   },
@@ -4213,6 +4528,66 @@
   },
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "正在以画中画播放"
+  },
+  "memfreeSettings.description": {
+    "defaultMessage": "当本地模型放不下时,goose 会显示占用内存的内容,并可以释放它自己的那一份。"
+  },
+  "memfreeSettings.enabled": {
+    "defaultMessage": "提供“释放内存”"
+  },
+  "memfreeSettings.enabledDesc": {
+    "defaultMessage": "在内存不足的模型上以及每台 Mac 的内存条上显示该按钮。默认开启。"
+  },
+  "memfreeSettings.minMb": {
+    "defaultMessage": "列出的最小应用 (MB)"
+  },
+  "memfreeSettings.minMbDesc": {
+    "defaultMessage": "内存占用低于此值的应用不会列出。默认 {mb} MB。"
+  },
+  "memfreeSettings.neverTouch": {
+    "defaultMessage": "永不触碰"
+  },
+  "memfreeSettings.neverTouchAdd": {
+    "defaultMessage": "添加"
+  },
+  "memfreeSettings.neverTouchAdded": {
+    "defaultMessage": "你添加的"
+  },
+  "memfreeSettings.neverTouchBuiltIn": {
+    "defaultMessage": "内置"
+  },
+  "memfreeSettings.neverTouchDesc": {
+    "defaultMessage": "任何清理都不会退出或停止的应用和进程,在这台 Mac 上以及这台 Mac 在另一台上释放内存时都生效。可填 bundle id、应用名或进程名,不区分大小写。内置项始终生效。"
+  },
+  "memfreeSettings.neverTouchMatches": {
+    "defaultMessage": "匹配 {app}"
+  },
+  "memfreeSettings.neverTouchMatchesNothing": {
+    "defaultMessage": "未匹配任何正在运行或已安装的应用，因此目前不保护任何内容"
+  },
+  "memfreeSettings.neverTouchNone": {
+    "defaultMessage": "还没有添加任何项"
+  },
+  "memfreeSettings.neverTouchPlaceholder": {
+    "defaultMessage": "com.example.App 或应用名"
+  },
+  "memfreeSettings.neverTouchRemove": {
+    "defaultMessage": "移除 {name}"
+  },
+  "memfreeSettings.readFailed": {
+    "defaultMessage": "无法读取这些设置:{reason}"
+  },
+  "memfreeSettings.remoteQuit": {
+    "defaultMessage": "允许已连接的 Mac 退出这台 Mac 上的应用"
+  },
+  "memfreeSettings.remoteQuitDesc": {
+    "defaultMessage": "LeanZero Link 上的另一台 Mac 可以请求这台 Mac 退出某个应用,且总是先在这里确认。默认关闭:它们仍可以在这里释放 goose 自身的内存。"
+  },
+  "memfreeSettings.saveFailed": {
+    "defaultMessage": "无法保存此设置:{reason}"
+  },
+  "memfreeSettings.title": {
+    "defaultMessage": "释放内存"
   },
   "memoryProposal.cut": {
     "defaultMessage": "提交时在 {max} 个字符处被截断，因此无法原样保存。请重新获取完整内容。"
@@ -5525,6 +5900,24 @@
   "mlxRestore.waitingPrevious": {
     "defaultMessage": "之前的拆分仍在 {node} 上关闭——完成后 goose 会恢复它"
   },
+  "mlxRestoreSettings.description": {
+    "defaultMessage": "打开 goose 时是否恢复之前运行的本地模型。默认关闭。"
+  },
+  "mlxRestoreSettings.readFailed": {
+    "defaultMessage": "无法读取此设置：{reason}"
+  },
+  "mlxRestoreSettings.restore": {
+    "defaultMessage": "启动时恢复本地模型"
+  },
+  "mlxRestoreSettings.restoreDesc": {
+    "defaultMessage": "goose 启动时，恢复您上次启动且未停止的模型：在这台 Mac 上、通过 LeanZero Link 在另一台 Mac 上，或分布在多台 Mac 上。关闭：goose 不会自行启动任何模型；需要时请在 Providers 中启动。"
+  },
+  "mlxRestoreSettings.saveFailed": {
+    "defaultMessage": "无法保存此设置：{reason}"
+  },
+  "mlxRestoreSettings.title": {
+    "defaultMessage": "启动时的本地模型"
+  },
   "mlxSetup.aria": {
     "defaultMessage": "设置 LeanZero MLX"
   },
@@ -6477,7 +6870,7 @@
     "defaultMessage": "允许我的其他 Mac 使用这台 Mac"
   },
   "myMacs.masterHint": {
-    "defaultMessage": "仅限登录你 LeanZero Link 账户的 Mac。每个开关只开放 goose 自身的操作 — 绝不是任意命令。"
+    "defaultMessage": "仅限登录到你的 LeanZero Link 账户的 Mac。这些开关涵盖 goose 自身的操作：模型、聊天，以及你的其他 Mac 在这里启动的提示会话。Shell 命令和提示任务由单独的开关“运行其他 Mac 发来的任务”控制，在你打开之前一直关闭。"
   },
   "myMacs.memory": {
     "defaultMessage": "内存"
@@ -6728,6 +7121,9 @@
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "没有已挂载的模型"
   },
+  "nodeCard.memfreeThisMac": {
+    "defaultMessage": "这台 Mac"
+  },
   "nodeModelCell.chatFollows": {
     "defaultMessage": "聊天跟随你的运行：{model}"
   },
@@ -6941,6 +7337,9 @@
   "nodes.loadsUnread": {
     "defaultMessage": "无法读取加载时间：{error}"
   },
+  "nodes.localServerNotRunning": {
+    "defaultMessage": "{origin} 上还没有任何服务在运行；请启动本地服务器"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "管理云端提供方"
   },
@@ -7090,6 +7489,9 @@
   },
   "nodes.newProviderModels": {
     "defaultMessage": "模型"
+  },
+  "nodes.newProviderNotRunning": {
+    "defaultMessage": "未运行"
   },
   "nodes.newProvidersFailed": {
     "defaultMessage": "无法读取你的提供方：{error}"
@@ -8500,6 +8902,12 @@
   },
   "providerCard.noMetadata": {
     "defaultMessage": "ProviderCard 错误：未提供元数据"
+  },
+  "providerCard.notRunning": {
+    "defaultMessage": "未运行"
+  },
+  "providerCard.notRunningText": {
+    "defaultMessage": "{origin} 上还没有任何服务在运行。请启动本地服务器，然后重新检查连接。"
   },
   "providerCard.unknownProvider": {
     "defaultMessage": "未知提供商"
@@ -11603,6 +12011,9 @@
   "forgeSeries.publish": {
     "defaultMessage": "发布 2 次构建"
   },
+  "forgeSeries.publishSeparately": {
+    "defaultMessage": "分别发布构建"
+  },
   "forgeSeries.publishTitle": {
     "defaultMessage": "发布标题"
   },
@@ -11644,5 +12055,98 @@
   },
   "modelCustomFields.noFields": {
     "defaultMessage": "自定义字段：{provider} 没有为“{model}”声明任何字段，因此它以提供商的默认值运行。"
+  },
+  "macLoad.stateCancelling": {
+    "defaultMessage": "正在取消…"
+  },
+  "macLoad.stateWaiting": {
+    "defaultMessage": "等待中，排第 {position} 位"
+  },
+  "macLoad.strategy": {
+    "defaultMessage": "我的任务在哪里运行"
+  },
+  "macLoad.strategy.localFirst": {
+    "defaultMessage": "先用我的 Mac"
+  },
+  "macLoad.strategy.selfish": {
+    "defaultMessage": "先用其他 Mac"
+  },
+  "macLoad.strategyHint.localFirst": {
+    "defaultMessage": "这台 Mac 有空间就在这里运行，否则在空间最多的其他 Mac 上运行，都没有就在队列中等待。"
+  },
+  "macLoad.strategyHint.selfish": {
+    "defaultMessage": "在空间最多的其他 Mac 上运行，否则在这台 Mac 上运行，都没有就在队列中等待。让这台 Mac 保持空闲。"
+  },
+  "myMacs.runJob": {
+    "defaultMessage": "运行任务…"
+  },
+  "runJob.title": {
+    "defaultMessage": "在…上运行任务"
+  },
+  "runJob.willQueue": {
+    "defaultMessage": "现在没有 Mac 有空间。运行后它会在这台 Mac 的队列中等待，并在第一台有空间的 Mac 上启动。"
+  },
+  "runJob.target": {
+    "defaultMessage": "运行位置"
+  },
+  "runJob.best": {
+    "defaultMessage": "最佳 Mac"
+  },
+  "runJob.ranking": {
+    "defaultMessage": "当前最佳：{macs}"
+  },
+  "runJob.refusal": {
+    "defaultMessage": "{mac}：{reason}"
+  },
+  "runJob.verdictLine": {
+    "defaultMessage": "{mac}：{verdict}"
+  },
+  "runJob.inUse": {
+    "defaultMessage": "{name}（使用中）"
+  },
+  "runJob.noPlace": {
+    "defaultMessage": "目前没有 Mac 能接受此任务。"
+  },
+  "runJob.none": {
+    "defaultMessage": "你的 Mac 目前都不接受任务。请在要运行任务的 Mac 上打开“运行其他 Mac 发来的任务”。"
+  },
+  "runJob.jobsOff": {
+    "defaultMessage": "此 Mac 已关闭作业"
+  },
+  "runJob.kind": {
+    "defaultMessage": "类型"
+  },
+  "runJob.kindShell": {
+    "defaultMessage": "Shell 命令"
+  },
+  "runJob.kindPrompt": {
+    "defaultMessage": "提示"
+  },
+  "runJob.command": {
+    "defaultMessage": "{kind, select, shell {命令} other {提示}}"
+  },
+  "runJob.heavy": {
+    "defaultMessage": "重型任务"
+  },
+  "runJob.heavyHint": {
+    "defaultMessage": "一台 Mac 能同时运行的重任务（构建、渲染、训练）数量取决于它的槽位和内存。"
+  },
+  "runJob.mem": {
+    "defaultMessage": "所需内存（GB，可选）"
+  },
+  "runJob.timeout": {
+    "defaultMessage": "时间限制（秒，可选）"
+  },
+  "runJob.submit": {
+    "defaultMessage": "运行任务"
+  },
+  "runJob.close": {
+    "defaultMessage": "关闭"
+  },
+  "runJob.refused": {
+    "defaultMessage": "未发送：{reason}"
+  },
+  "myMacs.updatedAgo": {
+    "defaultMessage": "{seconds} 秒前更新"
   }
 }

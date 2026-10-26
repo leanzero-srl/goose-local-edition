@@ -4,6 +4,8 @@ use thiserror::Error;
 
 use crate::redact::redact_relay_capability;
 use crate::request_log::LogError;
+use once_cell::sync::Lazy;
+use regex::Regex;
 
 /// The name of the error a stream parser raises when the body ends before its protocol's
 /// completion marker — see [`ProviderError::stream_truncated`].
@@ -385,6 +387,54 @@ pub fn body_read_error(error: reqwest::Error) -> std::io::Error {
     std::io::Error::other(said)
 }
 
+/// Added by `http_status` to a context-length refusal whose number is NOT the model's window:
+/// Rapid-MLX's D-METAL-CAP refusal (`lz_reason: "metal_cap_exceeds_device"`) names the largest
+/// prompt that fits beside THIS request's own max_tokens reservation — with an unset max_tokens
+/// that is the window minus the prompt, so a few thousand tokens (review 2026-10-19, I-17
+/// numbers: ~6k). Read as a window it would shrink the session's compaction to it.
+pub const NOT_A_CONTEXT_WINDOW: &str =
+    "[this number is the prompt that fits beside the request's output reservation, not the context window]";
+
+/// The context window a context-length refusal names, in tokens (I-9): Rapid-MLX's memory guard
+/// ("the maximum context here is 35328 tokens", plus `n_ctx` in its payload), the OpenAI shape
+/// ("maximum context length is 262144 tokens"), Anthropic ("210000 tokens > 200000 maximum"),
+/// llama.cpp ("available context size (4096 tokens)") and the `(n_ctx N)` that
+/// `http_status` adds when only the payload carried the number. `None` when the refusal names no
+/// usable window (a zero is "nothing fits", never a window to size to).
+pub fn refused_context_window(text: &str) -> Option<usize> {
+    if text.contains(NOT_A_CONTEXT_WINDOW) {
+        return None;
+    }
+    static PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
+        [
+            r"(?i)maximum context(?: length| size| window)?(?: here)?(?: is| of)?\s+(\d[\d,]*)",
+            r"(?i)\(n_ctx (\d+)\)",
+            r#"(?i)"n_ctx"\s*:\s*(\d+)"#,
+            r"(?i)tokens\s*>\s*(\d[\d,]*)\s*maximum",
+            r"(?i)context size \((\d[\d,]*) tokens\)",
+        ]
+        .iter()
+        .map(|pattern| Regex::new(pattern).expect("a valid pattern"))
+        .collect()
+    });
+    PATTERNS.iter().find_map(|pattern| {
+        let digits = pattern.captures(text)?.get(1)?.as_str().replace(',', "");
+        digits.parse::<usize>().ok().filter(|window| *window > 0)
+    })
+}
+
+/// The output tokens a context-length refusal says the request reserved beside its prompt, when
+/// it says so: OpenRouter's refusal counts them inside the window it names — "This endpoint's
+/// maximum context length is 131072 tokens. However, you requested about 272464 tokens (258978 of
+/// text input, 3486 of tool input, 10000 in the output)" (aider-desk#361) — so the prompt a later
+/// request may carry is the window minus this reservation, not the whole window.
+pub fn refused_output_reservation(text: &str) -> Option<usize> {
+    static PATTERN: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?i)(\d[\d,]*) in the output").expect("a valid pattern"));
+    let digits = PATTERN.captures(text)?.get(1)?.as_str().replace(',', "");
+    digits.parse::<usize>().ok()
+}
+
 impl From<LogError> for ProviderError {
     fn from(value: LogError) -> Self {
         ProviderError::ExecutionError(value.to_string())
@@ -541,5 +591,86 @@ mod tests {
         };
         assert_eq!(limited.engine_words(), "slow down");
         assert!(limited.is_transient());
+    }
+}
+
+#[cfg(test)]
+mod refused_window_tests {
+    use super::{refused_context_window, refused_output_reservation};
+
+    /// OpenRouter's refusal as it reached clients (aider-desk#361; the 2026 wording names the
+    /// context-compression plugin, multica#1796): the window and the output share inside it.
+    #[test]
+    fn an_openrouter_refusal_names_its_window_and_its_output_reservation() {
+        for (text, window, output) in [
+            (
+                "This endpoint's maximum context length is 131072 tokens. However, you requested \
+                 about 272464 tokens (258978 of text input, 3486 of tool input, 10000 in the \
+                 output). Please reduce the length of either one, or use the \"middle-out\" \
+                 transform to compress your prompt automatically.",
+                131_072,
+                10_000,
+            ),
+            (
+                "This endpoint's maximum context length is 204800 tokens. However, you requested \
+                 about 208281 tokens (158694 of text input, 17587 of tool input, 32000 in the \
+                 output). Please reduce the length of either one, or use the context-compression \
+                 plugin to compress your prompt automatically.",
+                204_800,
+                32_000,
+            ),
+        ] {
+            assert_eq!(refused_context_window(text), Some(window), "{text}");
+            assert_eq!(refused_output_reservation(text), Some(output), "{text}");
+        }
+        assert_eq!(
+            refused_output_reservation("maximum context length is 262144 tokens"),
+            None
+        );
+    }
+
+    #[test]
+    fn a_refusal_names_its_window() {
+        for (text, window) in [
+            (
+                "This prompt (82684 tokens) needs 131.8 GB but this Mac can hold 75.1 GB; the \
+                 maximum context here is 35328 tokens.",
+                Some(35_328),
+            ),
+            (
+                "This model's maximum context length is 262144 tokens. However, you requested \
+                 270000 tokens (269000 prompt + 1000 completion).",
+                Some(262_144),
+            ),
+            (
+                "prompt is too long: 210000 tokens > 200000 maximum",
+                Some(200_000),
+            ),
+            (
+                "the request exceeds the available context size (4,096 tokens)",
+                Some(4_096),
+            ),
+            (
+                "the request exceeds the available context size (n_ctx 8192)",
+                Some(8_192),
+            ),
+            (
+                r#"{"error":{"n_prompt_tokens":9000,"n_ctx":8192}}"#,
+                Some(8_192),
+            ),
+            ("the maximum context here is 0 tokens.", None),
+            ("Too many tool responses: 5 > 2", None),
+            ("context_length_exceeded", None),
+            (
+                &format!(
+                    "This prompt (40000 tokens) needs 42.6 GB but this Mac can hold 38.0 GB; the \
+                     maximum context here is 6123 tokens. {}",
+                    super::NOT_A_CONTEXT_WINDOW
+                ),
+                None,
+            ),
+        ] {
+            assert_eq!(refused_context_window(text), window, "{text}");
+        }
     }
 }

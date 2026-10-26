@@ -22,8 +22,8 @@ use leanzero_link::control::{
 };
 use leanzero_link::pubsub::REPLAY_BUFFER_CAPACITY;
 use leanzero_link::state::{
-    ExecuteAccepted, ExecuteError, ExecuteRequest, MlxControl, MlxControlError, MlxOp, PeerTarget,
-    RemoteExecutor, SwarmStateSource,
+    ExecuteAccepted, ExecuteError, ExecuteLog, ExecuteRequest, MlxControl, MlxControlError, MlxOp,
+    PeerTarget, RemoteExecutor, RunEnd, SwarmStateSource,
 };
 use leanzero_link::wire::{
     LeaveReason, LinkEvent, NodeState, NodeStatus, SessionDeltaKind, SessionSummary, StreamFrame,
@@ -121,6 +121,7 @@ impl SwarmStateSource for FakeStateSource {
             computer_name: None,
             allows: None,
             leaving: None,
+            load: None,
         }
     }
 
@@ -155,7 +156,51 @@ async fn spawn_node_full(
     executor: Option<Arc<dyn RemoteExecutor>>,
     allow_remote_execution: bool,
 ) -> ControlHandle {
+    spawn_node_measured(
+        source,
+        mesh_ip,
+        executor,
+        allow_remote_execution,
+        calm_own(),
+    )
+    .await
+}
+
+/// A calm, idle, plugged-in 128 GB machine: what every node presents unless a test says
+/// otherwise (`/v1/swarm/execute` refuses on MEASURED load, so a test must never read the
+/// real Mac's memory).
+fn calm_own() -> leanzero_link::load::OwnLoad {
+    leanzero_link::load::OwnLoad {
+        user_idle_s: Some(9999.0),
+        cpu_load_per_core: Some(0.1),
+        ncpu: 16,
+        mem_free_pct: Some(80.0),
+        mem_total_gb: Some(128.0),
+        on_ac: Some(true),
+        thermal_limit: Some(0),
+        ..Default::default()
+    }
+}
+
+async fn spawn_node_measured(
+    source: Arc<FakeStateSource>,
+    mesh_ip: Option<IpAddr>,
+    executor: Option<Arc<dyn RemoteExecutor>>,
+    allow_remote_execution: bool,
+    own: leanzero_link::load::OwnLoad,
+) -> ControlHandle {
+    // Its own ledger root: JobRegistry::shared is keyed by root, so nodes sharing the default
+    // root would share (and overwrite) one sampler.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let mut config = ControlConfig::new(TOKEN.to_string(), mesh_ip);
+    config.jobs.root = std::env::temp_dir().join(format!(
+        "lz-control-test-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::SeqCst)
+    ));
+    config.jobs.sampler = Arc::new(move || own.clone());
+    config.jobs.limits = Some(leanzero_link::load::NodeLimits::default());
+    config.jobs.min_free = Some(20.0);
     config.port = 0;
     config.poll_interval = Duration::from_millis(100);
     config.heartbeat_interval = Duration::from_secs(5);
@@ -758,6 +803,8 @@ async fn peer_keeps_its_mirror_while_the_peers_index_is_unreadable() {
 struct StubPeer {
     node: NodeState,
     unauthorized: Arc<AtomicBool>,
+    /// While set, `/nodes` answers only after this delay — a loaded peer, alive but slow.
+    slow: Arc<StdMutex<Option<Duration>>>,
 }
 
 async fn stub_nodes(
@@ -766,6 +813,10 @@ async fn stub_nodes(
     use axum::response::IntoResponse;
     if stub.unauthorized.load(Ordering::SeqCst) {
         return (axum::http::StatusCode::UNAUTHORIZED, "token mismatch").into_response();
+    }
+    let delay = *stub.slow.lock().unwrap();
+    if let Some(delay) = delay {
+        tokio::time::sleep(delay).await;
     }
     axum::Json(SwarmNodesResponse {
         self_node: stub.node.clone(),
@@ -804,6 +855,14 @@ impl StubPeerHandle {
 }
 
 async fn spawn_stub_peer(node_id: &str, unauthorized: Arc<AtomicBool>) -> (u16, StubPeerHandle) {
+    spawn_stub_peer_with(node_id, unauthorized, Arc::new(StdMutex::new(None))).await
+}
+
+async fn spawn_stub_peer_with(
+    node_id: &str,
+    unauthorized: Arc<AtomicBool>,
+    slow: Arc<StdMutex<Option<Duration>>>,
+) -> (u16, StubPeerHandle) {
     let stub = StubPeer {
         node: NodeState {
             node_id: node_id.to_string(),
@@ -816,8 +875,10 @@ async fn spawn_stub_peer(node_id: &str, unauthorized: Arc<AtomicBool>) -> (u16, 
             computer_name: None,
             allows: None,
             leaving: None,
+            load: None,
         },
         unauthorized,
+        slow,
     };
     let router = axum::Router::new()
         .route("/v1/swarm/nodes", axum::routing::get(stub_nodes))
@@ -923,6 +984,198 @@ async fn a_peer_answering_4xx_keeps_its_last_status_and_carries_the_error() {
     .await;
 
     handle.shutdown();
+}
+
+/// A node with the PRODUCTION poll cadence and poll timeout (`ControlConfig::new`'s 3 s / 5 s):
+/// the D2 latency is a sum of those defaults, so the test must not shrink them.
+async fn spawn_node_production_cadence(source: Arc<FakeStateSource>) -> ControlHandle {
+    let mut config = ControlConfig::new(TOKEN.to_string(), mesh_v6());
+    config.port = 0;
+    config.peer_proxy = Some(support::fake_tailnet().proxy());
+    ControlService::start(config, source, None, None, None, None)
+        .await
+        .expect("control service starts")
+}
+
+/// Wait (up to 15 s) for A's row of `node_id` to satisfy `pred`; the time it took.
+async fn time_until_row(
+    client: &reqwest::Client,
+    base: &str,
+    node_id: &str,
+    pred: impl Fn(&serde_json::Value) -> bool,
+) -> Duration {
+    let started = tokio::time::Instant::now();
+    loop {
+        let nodes = get_json(client, &format!("{base}/v1/swarm/nodes")).await;
+        if peer_row(&nodes, node_id).is_some_and(|p| pred(&p)) {
+            return started.elapsed();
+        }
+        assert!(
+            started.elapsed() < DEADLINE,
+            "timed out waiting on {node_id}'s row: {nodes}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+fn is_offline(p: &serde_json::Value) -> bool {
+    p["status"] == serde_json::json!({"type": "Offline"})
+}
+
+/// D2 (3.0.128 live): the workhorse's Link was dropped and the laptop showed it Offline only
+/// after ~6-7 s. The pooled poll connection to a peer whose Link died stays open and silent
+/// ([`support::FakeTailnet::kill`]), so the next poll waited out the whole 5 s request timeout on
+/// top of the 3 s poll sleep. At the production cadence the row must read Offline within 2.4 s (3.0.130: the engine's
+/// worst is 2.3 s so that with the desktop's 500 ms roster poll the screen shows it within 3.0 s).
+#[tokio::test]
+async fn a_peer_whose_link_drops_reads_offline_within_2_4_s_at_production_cadence() {
+    let source_b = FakeStateSource::new("node-b");
+    let b = spawn_node(source_b, mesh_v6()).await;
+    let a = spawn_node_production_cadence(FakeStateSource::new("node-a")).await;
+    let base_a = base_url(&a);
+    let client = reqwest::Client::new();
+    let b_mesh_ip = support::fake_tailnet().expose(b.local_addr().port());
+    a.set_peers(vec![PeerTarget {
+        hostname: "node-b-host".to_string(),
+        mesh_ip: Some(b_mesh_ip.clone()),
+        port: b.local_addr().port(),
+    }]);
+    time_until_row(&client, &base_a, "node-b", |p| !is_offline(p)).await;
+    // Land the drop mid-cycle, right after a poll used the pooled connection.
+    tokio::time::sleep(Duration::from_millis(3200)).await;
+
+    support::fake_tailnet().kill(&b_mesh_ip);
+    let took = time_until_row(&client, &base_a, "node-b", is_offline).await;
+    assert!(
+        took <= Duration::from_millis(2400),
+        "a dropped peer must read Offline within 2.4 s, took {took:?}"
+    );
+    a.shutdown();
+    b.shutdown();
+}
+
+/// D2, the port-closed shape: the peer's control service stops while its mesh daemon still
+/// answers (a CONNECT is refused at once). Offline within 2.4 s at the production cadence.
+#[tokio::test]
+async fn a_peer_whose_port_closes_reads_offline_within_2_4_s_at_production_cadence() {
+    let unauthorized = Arc::new(AtomicBool::new(false));
+    let (stub_port, stub) = spawn_stub_peer("node-stub", unauthorized).await;
+    let a = spawn_node_production_cadence(FakeStateSource::new("node-a")).await;
+    let base_a = base_url(&a);
+    let client = reqwest::Client::new();
+    a.set_peers(vec![PeerTarget {
+        hostname: "node-stub-host".to_string(),
+        mesh_ip: Some(support::fake_tailnet().expose(stub_port)),
+        port: stub_port,
+    }]);
+    time_until_row(&client, &base_a, "node-stub", |p| !is_offline(p)).await;
+    tokio::time::sleep(Duration::from_millis(3200)).await;
+
+    stub.vanish().await;
+    let took = time_until_row(&client, &base_a, "node-stub", is_offline).await;
+    assert!(
+        took <= Duration::from_millis(2400),
+        "a peer whose port closed must read Offline within 2.4 s, took {took:?}"
+    );
+    a.shutdown();
+}
+
+/// D2's other half: a peer that is ALIVE (it accepts the connection) but answers a poll slower
+/// than the poll timeout — a loaded Mac — keeps its status through one timed-out look, with the
+/// timeout on record. Only a peer that stays that slow for several looks reads Offline.
+#[tokio::test]
+async fn a_slow_but_alive_peer_is_not_marked_offline_on_one_timeout() {
+    let unauthorized = Arc::new(AtomicBool::new(false));
+    let slow = Arc::new(StdMutex::new(None));
+    let (stub_port, stub) = spawn_stub_peer_with("node-stub", unauthorized, slow.clone()).await;
+    let mut config = ControlConfig::new(TOKEN.to_string(), mesh_v6());
+    config.port = 0;
+    config.poll_interval = Duration::from_millis(300);
+    config.request_timeout = Duration::from_millis(400);
+    config.peer_proxy = Some(support::fake_tailnet().proxy());
+    let a = ControlService::start(
+        config,
+        FakeStateSource::new("node-a"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("control service starts");
+    let base_a = base_url(&a);
+    let client = reqwest::Client::new();
+    a.set_peers(vec![PeerTarget {
+        hostname: "node-stub-host".to_string(),
+        mesh_ip: Some(support::fake_tailnet().expose(stub_port)),
+        port: stub_port,
+    }]);
+    time_until_row(&client, &base_a, "node-stub", |p| {
+        p["status"] == serde_json::json!({"type": "Idle"})
+    })
+    .await;
+
+    *slow.lock().unwrap() = Some(Duration::from_millis(900));
+    time_until_row(&client, &base_a, "node-stub", |p| {
+        p["last_poll_error"].is_string() || is_offline(p)
+    })
+    .await;
+    let nodes = get_json(&client, &format!("{base_a}/v1/swarm/nodes")).await;
+    let row = peer_row(&nodes, "node-stub").unwrap();
+    assert_eq!(
+        row["status"],
+        serde_json::json!({"type": "Idle"}),
+        "one timed-out look at a live peer must keep its status: {row}"
+    );
+
+    // Negative control: a peer that STAYS too slow to answer is given up on.
+    time_until_row(&client, &base_a, "node-stub", is_offline).await;
+    *slow.lock().unwrap() = None;
+    time_until_row(&client, &base_a, "node-stub", |p| {
+        p["status"] == serde_json::json!({"type": "Idle"})
+    })
+    .await;
+    stub.vanish().await;
+    a.shutdown();
+}
+
+/// D2 hardening: ONE liveness dial that times out (a live peer on a slow relayed tailnet path)
+/// must not flap the row Offline. A connect TIMEOUT needs two in a row; a definite refusal
+/// (the port-closed test above) still marks Offline at once.
+#[tokio::test]
+async fn one_timed_out_liveness_dial_does_not_mark_a_live_peer_offline() {
+    let source_b = FakeStateSource::new("node-b");
+    let b = spawn_node(source_b, mesh_v6()).await;
+    let a = spawn_node_production_cadence(FakeStateSource::new("node-a")).await;
+    let base_a = base_url(&a);
+    let client = reqwest::Client::new();
+    let b_mesh_ip = support::fake_tailnet().expose(b.local_addr().port());
+    a.set_peers(vec![PeerTarget {
+        hostname: "node-b-host".to_string(),
+        mesh_ip: Some(b_mesh_ip.clone()),
+        port: b.local_addr().port(),
+    }]);
+    time_until_row(&client, &base_a, "node-b", |p| !is_offline(p)).await;
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+
+    support::fake_tailnet().stall_next_connects(&b_mesh_ip, 1);
+    let watch_until = tokio::time::Instant::now() + Duration::from_secs(5);
+    while tokio::time::Instant::now() < watch_until {
+        let nodes = get_json(&client, &format!("{base_a}/v1/swarm/nodes")).await;
+        let row = peer_row(&nodes, "node-b").expect("node-b row");
+        assert!(
+            !is_offline(&row),
+            "one slow dial must not mark a live peer Offline: {row}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(
+        support::fake_tailnet().stalled_connects(&b_mesh_ip),
+        1,
+        "the stalled CONNECT was actually hit"
+    );
+    a.shutdown();
+    b.shutdown();
 }
 
 // ── Unreachable-from-birth peer: Offline row, endpoint healthy ──────────
@@ -1150,12 +1403,33 @@ async fn execute_returns_202_when_idle_enabled_and_wired() {
     handle.shutdown();
 }
 
+/// Owner 2026-10-25: a live session of the node's own is NOT busy. A Mac with headroom takes
+/// the remote prompt.
+#[tokio::test]
+async fn execute_202_when_a_session_is_live_but_the_mac_has_headroom() {
+    let source = FakeStateSource::new("node-a");
+    source.set_sessions(vec![summary("s1", "node-a", true, 100)]); // live, flag says Busy
+    let executor = FakeExecutor::accepting("sess-new");
+    let handle = spawn_node_full(source.clone(), mesh_v6(), Some(executor.clone()), true).await;
+    let base = base_url(&handle);
+    let client = reqwest::Client::new();
+
+    let resp = post_execute(&client, &base, TOKEN, serde_json::json!({"prompt": "x"})).await;
+    assert_eq!(resp.status(), 202, "a live session is not measured load");
+    assert_eq!(executor.call_count(), 1);
+
+    handle.shutdown();
+}
+
 #[tokio::test]
 async fn execute_409_when_node_busy_and_never_calls_executor() {
     let source = FakeStateSource::new("node-a");
-    source.set_sessions(vec![summary("s1", "node-a", true, 100)]); // live → Busy
     let executor = FakeExecutor::accepting("unused");
-    let handle = spawn_node_full(source.clone(), mesh_v6(), Some(executor.clone()), true).await;
+    // MEASURED busy: 12% free, under the 20% floor.
+    let mut own = calm_own();
+    own.mem_free_pct = Some(12.0);
+    let handle =
+        spawn_node_measured(source.clone(), mesh_v6(), Some(executor.clone()), true, own).await;
     let base = base_url(&handle);
     let client = reqwest::Client::new();
 
@@ -1163,7 +1437,7 @@ async fn execute_409_when_node_busy_and_never_calls_executor() {
     assert_eq!(
         resp.status(),
         409,
-        "receive-side idle guard refuses a busy node"
+        "receive-side guard refuses a node under its memory floor"
     );
     assert_eq!(
         executor.call_count(),
@@ -1367,6 +1641,7 @@ fn destructive_mlx_ops_include_settings_update_and_unmount() {
         MlxOp::SettingsUpdate,
         MlxOp::Unmount,
         MlxOp::ReplicaCancel,
+        MlxOp::MemoryFree,
     ] {
         assert!(op.is_destructive(), "{op:?} reshapes the node; must warn");
     }
@@ -1378,6 +1653,7 @@ fn destructive_mlx_ops_include_settings_update_and_unmount() {
         MlxOp::LinkFacts,
         MlxOp::ReplicaTargets,
         MlxOp::ReplicaProgress,
+        MlxOp::MemoryHolders,
     ] {
         assert!(!op.is_destructive(), "{op:?} is a read");
     }
@@ -1780,4 +2056,1041 @@ async fn a_peer_leaving_on_purpose_is_marked_at_once_and_cleared_when_it_answers
 
     b2.shutdown();
     a.shutdown();
+}
+
+// ---------------------------------------------------------------------------------------------
+// /v1/swarm/jobs over HTTP (step 2): every refusal code, group cancel, ledger content, the
+// watchdog's timeout and memory kill, and the shared heavy-run lock in both directions.
+
+mod jobs_http {
+    use super::*;
+    use leanzero_link::jobs::{JobsConfig, JobsSwitch, UserActivePolicy};
+    use leanzero_link::load::{heavy_slot_path, heavy_slots_used, HeavySlot, NodeLimits, OwnLoad};
+    use std::path::{Path, PathBuf};
+
+    /// A calm, idle, plugged-in 128 GB machine.
+    fn calm() -> OwnLoad {
+        OwnLoad {
+            user_idle_s: Some(9999.0),
+            user_active: false,
+            cpu_load_per_core: Some(0.1),
+            ncpu: 16,
+            mem_free_pct: Some(80.0),
+            mem_total_gb: Some(128.0),
+            on_ac: Some(true),
+            thermal_limit: Some(0),
+            ..Default::default()
+        }
+    }
+
+    struct Node {
+        handle: ControlHandle,
+        base: String,
+        own: Arc<StdMutex<OwnLoad>>,
+        root: PathBuf,
+        lock: PathBuf,
+        source: Arc<FakeStateSource>,
+        _tmp: tempfile::TempDir,
+    }
+
+    async fn spawn_jobs_node(
+        on: bool,
+        limits: NodeLimits,
+        executor: Option<Arc<dyn RemoteExecutor>>,
+    ) -> Node {
+        let tmp = tempfile::tempdir().unwrap();
+        start_jobs_node_with(tmp, on, limits, executor, UserActivePolicy::Allow).await
+    }
+
+    /// A node over an existing temp dir (its `jobs/` ledger and lock): the same node after a
+    /// goose restart or a Link reconnect.
+    async fn start_jobs_node(
+        tmp: tempfile::TempDir,
+        on: bool,
+        limits: NodeLimits,
+        executor: Option<Arc<dyn RemoteExecutor>>,
+    ) -> Node {
+        start_jobs_node_with(tmp, on, limits, executor, UserActivePolicy::Allow).await
+    }
+
+    async fn start_jobs_node_with(
+        tmp: tempfile::TempDir,
+        on: bool,
+        limits: NodeLimits,
+        executor: Option<Arc<dyn RemoteExecutor>>,
+        policy: UserActivePolicy,
+    ) -> Node {
+        let root = tmp.path().join("jobs");
+        let lock = tmp.path().join("heavy-run.lock");
+        let own = Arc::new(StdMutex::new(calm()));
+        let sampler_own = own.clone();
+        let mut config = ControlConfig::new(TOKEN.to_string(), None);
+        config.port = 0;
+        config.poll_interval = Duration::from_millis(100);
+        config.jobs = JobsConfig {
+            switch: JobsSwitch::fixed(on),
+            root: root.clone(),
+            heavy_lock: lock.clone(),
+            limits: Some(limits),
+            min_free: Some(20.0),
+            user_active: policy,
+            sampler: Arc::new(move || sampler_own.lock().unwrap().clone()),
+            tick: Duration::from_millis(200),
+            kill_grace: Duration::from_secs(1),
+            ..JobsConfig::default()
+        };
+        let source = FakeStateSource::new("jobs-node");
+        let handle = ControlService::start(config, source.clone(), executor, None, None, None)
+            .await
+            .expect("control service starts");
+        let base = base_url(&handle);
+        Node {
+            handle,
+            base,
+            own,
+            root,
+            lock,
+            source,
+            _tmp: tmp,
+        }
+    }
+
+    /// Limits for tests: no system-free kill line (the real machine's free % is not ours) and
+    /// TWO heavy slots (the shared default on an 8-core Mac), so a test can fill them.
+    fn test_limits() -> NodeLimits {
+        NodeLimits {
+            kill_free: 0.0,
+            max_heavy: Some(2),
+            ..NodeLimits::default()
+        }
+    }
+
+    async fn submit(n: &Node, body: serde_json::Value) -> (u16, serde_json::Value) {
+        let r = reqwest::Client::new()
+            .post(format!("{}/v1/swarm/jobs", n.base))
+            .bearer_auth(TOKEN)
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        let s = r.status().as_u16();
+        (s, r.json().await.unwrap_or(serde_json::Value::Null))
+    }
+
+    fn shell(cmd: &str) -> serde_json::Value {
+        serde_json::json!({"kind": "shell", "command": cmd, "origin_node": "laptop"})
+    }
+
+    async fn expect_refusal(n: &Node, body: serde_json::Value, status: u16, code: &str) {
+        let (s, v) = submit(n, body).await;
+        assert_eq!((s, v["code"].as_str()), (status, Some(code)), "body {v}");
+        assert!(v["reason"].as_str().is_some_and(|r| !r.is_empty()), "{v}");
+    }
+
+    async fn job(n: &Node, id: &str) -> (u16, serde_json::Value) {
+        let r = reqwest::Client::new()
+            .get(format!("{}/v1/swarm/jobs/{id}", n.base))
+            .bearer_auth(TOKEN)
+            .send()
+            .await
+            .unwrap();
+        let s = r.status().as_u16();
+        (s, r.json().await.unwrap_or(serde_json::Value::Null))
+    }
+
+    async fn wait_terminal(n: &Node, id: &str, within: Duration) -> serde_json::Value {
+        let deadline = tokio::time::Instant::now() + within;
+        loop {
+            let (_, v) = job(n, id).await;
+            if !matches!(v["state"].as_str(), Some("running") | Some("queued") | None) {
+                return v;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "job {id} never ended: {v}"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    fn ledger(n: &Node, id: &str) -> serde_json::Value {
+        let raw = std::fs::read_to_string(n.root.join(id).join("job.json")).unwrap();
+        serde_json::from_str(&raw).unwrap()
+    }
+
+    fn group_alive(pgid: i32) -> bool {
+        // SAFETY: kill(-pgid, 0) only probes.
+        unsafe { libc::kill(-pgid, 0) == 0 }
+    }
+
+    #[tokio::test]
+    async fn every_refusal_code_answers_its_status_over_http() {
+        // jobs_disabled: the switch is OFF by default.
+        let off = spawn_jobs_node(false, test_limits(), None).await;
+        expect_refusal(&off, shell("true"), 403, "jobs_disabled").await;
+        off.handle.shutdown();
+
+        let n = spawn_jobs_node(true, test_limits(), None).await;
+        expect_refusal(&n, shell("   "), 400, "bad_request").await;
+        let mut bad_cwd = shell("true");
+        bad_cwd["cwd"] = "/definitely/not/here".into();
+        expect_refusal(&n, bad_cwd, 400, "bad_request").await;
+        // A body that is not a JobRequest at all is a 400 too, in the same {code, reason} shape.
+        expect_refusal(&n, serde_json::json!({"nope": 1}), 400, "bad_request").await;
+        // prompt without goose's executor wired here.
+        expect_refusal(
+            &n,
+            serde_json::json!({"kind": "prompt", "command": "hi"}),
+            501,
+            "executor_missing",
+        )
+        .await;
+
+        let set = |f: &dyn Fn(&mut OwnLoad)| {
+            let mut o = calm();
+            f(&mut o);
+            *n.own.lock().unwrap() = o;
+        };
+        set(&|o| o.benchmark = Some("gauntlet run".into()));
+        expect_refusal(&n, shell("true"), 503, "benchmark_running").await;
+        set(&|o| o.mem_free_pct = None);
+        expect_refusal(&n, shell("true"), 503, "memory_unreadable").await;
+        set(&|_| {});
+        let mut big = shell("true");
+        big["need_mem_gb"] = 500.0.into();
+        expect_refusal(&n, big, 409, "memory_headroom").await;
+        set(&|o| o.mem_free_pct = Some(10.0));
+        expect_refusal(&n, shell("true"), 409, "memory_headroom").await;
+        let mut heavy = shell("true");
+        heavy["heavy"] = true.into();
+        set(&|o| o.on_ac = Some(false));
+        expect_refusal(&n, heavy.clone(), 409, "on_battery").await;
+        set(&|o| o.thermal_limit = Some(4));
+        expect_refusal(&n, heavy.clone(), 409, "thermal").await;
+        set(&|o| o.lid_closed_sleeps = true);
+        expect_refusal(&n, shell("true"), 409, "lid_sleeps").await;
+        set(&|o| {
+            o.user_active = true;
+            o.user_idle_s = Some(3.0);
+        });
+        // Someone at the keyboard is NOT busy under the default policy (owner 2026-10-25).
+        let (s, v) = submit(&n, shell("true")).await;
+        assert_eq!(s, 202, "user active, default policy: {v}");
+        set(&|o| o.cpu_load_per_core = Some(2.5));
+        expect_refusal(&n, heavy.clone(), 409, "cpu_overloaded").await;
+        set(&|_| {});
+        // heavy_slot_held only when EVERY slot is held (the sampled flag is ignored: the slots
+        // themselves are the truth). Slot 0 held by someone else is one taken slot of two.
+        let other = HeavySlot::try_take_at(&n.lock, "test holder")
+            .unwrap()
+            .unwrap();
+        let other1 = HeavySlot::try_take_at(&heavy_slot_path(&n.lock, 1), "test holder 1")
+            .unwrap()
+            .unwrap();
+        let (s, v) = submit(&n, heavy.clone()).await;
+        assert_eq!(
+            (s, v["code"].as_str()),
+            (409, Some("heavy_slot_held")),
+            "{v}"
+        );
+        assert!(
+            v["reason"]
+                .as_str()
+                .unwrap()
+                .starts_with("busy: 2/2 heavy slots held: "),
+            "{v}"
+        );
+        drop(other1);
+        let (s, v) = submit(&n, heavy.clone()).await;
+        assert_eq!(s, 202, "slot 0 held, slot 1 free: {v}");
+        drop(other);
+        let (s, v) = submit(&n, heavy).await;
+        assert_eq!(s, 202, "slots free again: {v}");
+        // not_found on every per-job route.
+        let c = reqwest::Client::new();
+        for (m, path) in [
+            ("GET", "/v1/swarm/jobs/nope"),
+            ("GET", "/v1/swarm/jobs/nope/log"),
+            ("POST", "/v1/swarm/jobs/nope/cancel"),
+        ] {
+            let r = c
+                .request(m.parse().unwrap(), format!("{}{path}", n.base))
+                .bearer_auth(TOKEN)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status().as_u16(), 404, "{m} {path}");
+            let v: serde_json::Value = r.json().await.unwrap();
+            assert_eq!(v["code"], "not_found");
+        }
+        // already_finished: cancel a job that has ended.
+        let (_, v) = submit(&n, shell("true")).await;
+        let id = v["job_id"].as_str().unwrap().to_string();
+        wait_terminal(&n, &id, Duration::from_secs(20)).await;
+        let r = c
+            .post(format!("{}/v1/swarm/jobs/{id}/cancel", n.base))
+            .bearer_auth(TOKEN)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status().as_u16(), 409);
+        let v: serde_json::Value = r.json().await.unwrap();
+        assert_eq!(v["code"], "already_finished");
+        // No token = 401 like every other route.
+        let r = c
+            .post(format!("{}/v1/swarm/jobs", n.base))
+            .json(&shell("true"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status().as_u16(), 401);
+        n.handle.shutdown();
+    }
+
+    #[tokio::test]
+    async fn prompt_jobs_run_through_the_executor_and_cancel_is_an_honest_501() {
+        let exec = FakeExecutor::accepting("sess-job-1");
+        let n = spawn_jobs_node(true, test_limits(), Some(exec.clone())).await;
+        let (s, v) = submit(
+            &n,
+            serde_json::json!({"kind": "prompt", "command": "write hello", "origin_node": "laptop"}),
+        )
+        .await;
+        assert_eq!(s, 202, "{v}");
+        let id = v["job_id"].as_str().unwrap().to_string();
+        assert_eq!(exec.call_count(), 1);
+        let (_, view) = job(&n, &id).await;
+        assert_eq!(view["session_id"], "sess-job-1", "{view}");
+        assert_eq!(view["state"], "running", "{view}");
+        let r = reqwest::Client::new()
+            .post(format!("{}/v1/swarm/jobs/{id}/cancel", n.base))
+            .bearer_auth(TOKEN)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status().as_u16(), 501);
+        let v: serde_json::Value = r.json().await.unwrap();
+        assert_eq!(v["code"], "cancel_unsupported");
+        // The job follows its session: live, then not live = done.
+        n.source
+            .set_sessions(vec![summary("sess-job-1", "laptop", true, 1)]);
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        assert_eq!(job(&n, &id).await.1["state"], "running");
+        n.source
+            .set_sessions(vec![summary("sess-job-1", "laptop", false, 2)]);
+        // D13: this executor never reports how the run ended, so the job is `lost` once the
+        // grace for the report runs out, never a fabricated Done/exit 0.
+        let end = wait_terminal(&n, &id, Duration::from_secs(10)).await;
+        assert_eq!(end["state"], "lost", "{end}");
+        assert!(end["exit_code"].is_null(), "{end}");
+        n.handle.shutdown();
+    }
+
+    /// An executor that reports how its run ended, from its own task after a short run.
+    struct EndingExecutor(RunEnd);
+
+    #[async_trait::async_trait]
+    impl RemoteExecutor for EndingExecutor {
+        async fn execute(&self, _req: ExecuteRequest) -> Result<ExecuteAccepted, ExecuteError> {
+            Ok(ExecuteAccepted {
+                session_id: "sess-ending".to_string(),
+            })
+        }
+
+        async fn execute_logged(
+            &self,
+            req: ExecuteRequest,
+            log: Arc<dyn ExecuteLog>,
+        ) -> Result<ExecuteAccepted, ExecuteError> {
+            let end = self.0.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                log.append("\n[finished: stop]\n");
+                log.finish(end);
+            });
+            self.execute(req).await
+        }
+    }
+
+    async fn run_prompt_job_to_its_end(end: RunEnd) -> (serde_json::Value, String) {
+        let n = spawn_jobs_node(true, test_limits(), Some(Arc::new(EndingExecutor(end)))).await;
+        let (s, v) = submit(
+            &n,
+            serde_json::json!({"kind": "prompt", "command": "write hello", "origin_node": "laptop"}),
+        )
+        .await;
+        assert_eq!(s, 202, "{v}");
+        let id = v["job_id"].as_str().unwrap().to_string();
+        let end = wait_terminal(&n, &id, Duration::from_secs(5)).await;
+        let log = log_chunk(&n, &id, 0).await["data"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        n.handle.shutdown();
+        (end, log)
+    }
+
+    /// D13 (3.0.130 live): a prompt turn whose provider failed ("swarm chat: no node can serve
+    /// this turn") was reported Done / exit 0, because the job only watched session liveness.
+    #[tokio::test]
+    async fn a_prompt_job_whose_turn_failed_is_failed_with_exit_1_and_the_reason() {
+        let why = "swarm chat: no node can serve this turn — no enabled device";
+        let (end, log) = run_prompt_job_to_its_end(RunEnd::Failed(why.to_string())).await;
+        assert_eq!(end["state"], "failed", "{end}");
+        assert_eq!(end["exit_code"], 1, "{end}");
+        assert!(
+            end["reason"]
+                .as_str()
+                .is_some_and(|r| r.contains("no node can serve this turn")),
+            "{end}"
+        );
+        assert!(
+            log.contains("[goose-job] end Failed exit Some(1) swarm chat: no node can serve"),
+            "log: {log:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_prompt_job_whose_turn_completed_is_done_with_exit_0() {
+        let (end, log) = run_prompt_job_to_its_end(RunEnd::Completed).await;
+        assert_eq!(end["state"], "done", "{end}");
+        assert_eq!(end["exit_code"], 0, "{end}");
+        assert!(
+            log.contains("[goose-job] end Done exit Some(0)"),
+            "log: {log:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_prompt_job_whose_turn_was_cancelled_is_cancelled_with_143() {
+        let (end, _) = run_prompt_job_to_its_end(RunEnd::Cancelled).await;
+        assert_eq!(end["state"], "cancelled", "{end}");
+        assert_eq!(end["exit_code"], 143, "{end}");
+    }
+
+    /// D14 (3.0.130 live): a finished job whose ledger dir was deleted stayed listed (and
+    /// viewable) until goose restarted. It leaves the list and the view at once.
+    #[tokio::test]
+    async fn a_finished_job_whose_ledger_dir_is_deleted_leaves_the_list_at_once() {
+        let n = spawn_jobs_node(true, test_limits(), None).await;
+        let (s, v) = submit(&n, shell("true")).await;
+        assert_eq!(s, 202, "{v}");
+        let id = v["job_id"].as_str().unwrap().to_string();
+        let end = wait_terminal(&n, &id, Duration::from_secs(5)).await;
+        assert_eq!(end["state"], "done", "{end}");
+        let c = reqwest::Client::new();
+        let list = get_json(&c, &format!("{}/v1/swarm/jobs", n.base)).await;
+        assert!(
+            list.to_string().contains(&id),
+            "listed before the delete: {list}"
+        );
+
+        std::fs::remove_dir_all(n.root.join(&id)).unwrap();
+        let list = get_json(&c, &format!("{}/v1/swarm/jobs", n.base)).await;
+        assert!(!list.to_string().contains(&id), "still listed: {list}");
+        assert_eq!(job(&n, &id).await.0, 404);
+        n.handle.shutdown();
+    }
+
+    /// D14's guard: a RUNNING job whose dir vanished stays listed — its watchdog still owns
+    /// the process, and cancel must still reach it.
+    #[tokio::test]
+    async fn a_running_job_whose_ledger_dir_is_deleted_stays_listed() {
+        let n = spawn_jobs_node(true, test_limits(), None).await;
+        let (s, v) = submit(&n, shell("sleep 30")).await;
+        assert_eq!(s, 202, "{v}");
+        let id = v["job_id"].as_str().unwrap().to_string();
+        std::fs::remove_dir_all(n.root.join(&id)).unwrap();
+        let c = reqwest::Client::new();
+        let list = get_json(&c, &format!("{}/v1/swarm/jobs", n.base)).await;
+        assert!(
+            list.to_string().contains(&id),
+            "dropped while running: {list}"
+        );
+        let r = c
+            .post(format!("{}/v1/swarm/jobs/{id}/cancel", n.base))
+            .bearer_auth(TOKEN)
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            matches!(r.status().as_u16(), 200 | 202),
+            "cancel still reaches it: {}",
+            r.status()
+        );
+        n.handle.shutdown();
+    }
+
+    /// An executor that streams its run into the sink it is handed: one line at accept time,
+    /// two more later from its own task — the shape of a real goose run.
+    struct StreamingExecutor;
+
+    #[async_trait::async_trait]
+    impl RemoteExecutor for StreamingExecutor {
+        async fn execute(&self, _req: ExecuteRequest) -> Result<ExecuteAccepted, ExecuteError> {
+            Ok(ExecuteAccepted {
+                session_id: "sess-streamed".to_string(),
+            })
+        }
+
+        async fn execute_logged(
+            &self,
+            req: ExecuteRequest,
+            log: Arc<dyn ExecuteLog>,
+        ) -> Result<ExecuteAccepted, ExecuteError> {
+            log.append("alpha\n");
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                log.append("beta\n");
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                log.append("gamma\n");
+            });
+            self.execute(req).await
+        }
+    }
+
+    async fn log_chunk(n: &Node, id: &str, from: u64) -> serde_json::Value {
+        let r = reqwest::Client::new()
+            .get(format!("{}/v1/swarm/jobs/{id}/log?from={from}", n.base))
+            .bearer_auth(TOKEN)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status().as_u16(), 200);
+        r.json().await.unwrap()
+    }
+
+    /// D4: a prompt job's log carries the run as it happens (the answer used to live only in
+    /// the goose session; the log was empty), in order, and `from=next` tails it live.
+    #[tokio::test]
+    async fn a_prompt_jobs_log_streams_the_run_in_order_and_tails_with_from_next() {
+        let n = spawn_jobs_node(true, test_limits(), Some(Arc::new(StreamingExecutor))).await;
+        let (s, v) = submit(
+            &n,
+            serde_json::json!({"kind": "prompt", "command": "write hello", "origin_node": "laptop"}),
+        )
+        .await;
+        assert_eq!(s, 202, "{v}");
+        let id = v["job_id"].as_str().unwrap().to_string();
+
+        let first = log_chunk(&n, &id, 0).await;
+        assert_eq!(
+            first["data"], "alpha\n",
+            "the accept-time line is in the log: {first}"
+        );
+        let mut next = first["next"].as_u64().unwrap();
+        let mut tail = String::new();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while !tail.contains("gamma") {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "tail never reached gamma: {tail:?}"
+            );
+            let c = log_chunk(&n, &id, next).await;
+            tail.push_str(c["data"].as_str().unwrap());
+            next = c["next"].as_u64().unwrap();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert_eq!(
+            tail, "beta\ngamma\n",
+            "tailing from=next yields the rest, once, in order"
+        );
+        assert_eq!(log_chunk(&n, &id, 0).await["data"], "alpha\nbeta\ngamma\n");
+        n.handle.shutdown();
+    }
+
+    #[tokio::test]
+    async fn cancel_kills_the_whole_process_group_and_the_ledger_keeps_origin_and_command() {
+        let n = spawn_jobs_node(true, test_limits(), None).await;
+        let cmd = "sleep 300 & sleep 300 & echo started; wait";
+        let (s, v) = submit(&n, shell(cmd)).await;
+        assert_eq!(s, 202, "{v}");
+        let id = v["job_id"].as_str().unwrap().to_string();
+        // Wait for the children to exist (the log line is printed after both backgrounded).
+        let c = reqwest::Client::new();
+        wait_until("job log shows started", || {
+            let c = c.clone();
+            let url = format!("{}/v1/swarm/jobs/{id}/log?from=0", n.base);
+            async move {
+                let r = c.get(url).bearer_auth(TOKEN).send().await.unwrap();
+                let v: serde_json::Value = r.json().await.unwrap();
+                v["data"].as_str().is_some_and(|d| d.contains("started"))
+            }
+        })
+        .await;
+        let rec = ledger(&n, &id);
+        let pgid = rec["pgid"].as_i64().expect("ledger has pgid") as i32;
+        assert!(pgid > 1);
+        assert!(group_alive(pgid), "group should be running");
+        // Ledger: origin and the command are recorded locally.
+        assert_eq!(rec["origin_node"], "laptop");
+        assert_eq!(rec["command"], cmd);
+        // The wire never carries the command: not the job view, not the list, not /nodes.
+        let (_, view) = job(&n, &id).await;
+        let list = get_json(&c, &format!("{}/v1/swarm/jobs", n.base)).await;
+        let nodes = get_json(&c, &format!("{}/v1/swarm/nodes", n.base)).await;
+        for (what, body) in [("view", &view), ("list", &list), ("nodes", &nodes)] {
+            let s = body.to_string();
+            assert!(!s.contains("sleep 300"), "{what} leaked the command: {s}");
+            assert!(s.contains(&id), "{what} should carry the job id: {s}");
+            assert!(s.contains("laptop"), "{what} should carry the origin: {s}");
+        }
+        assert_eq!(view["origin_node"], "laptop");
+        assert_eq!(view["kind"], "shell");
+
+        let r = c
+            .post(format!("{}/v1/swarm/jobs/{id}/cancel", n.base))
+            .bearer_auth(TOKEN)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status().as_u16(), 202, "cancel is accepted");
+        // D3 (3.0.128 live test): the answer is the FINAL view, not the pre-cancel "running".
+        let body: serde_json::Value = r.json().await.unwrap();
+        assert_eq!(body["state"], "cancelled", "cancel answered {body}");
+        assert_eq!(body["exit_code"], 143, "cancel answered {body}");
+        let end = wait_terminal(&n, &id, Duration::from_secs(20)).await;
+        assert_eq!(end["state"], "cancelled", "{end}");
+        assert_eq!(end["exit_code"], 143, "{end}");
+        wait_until("every process of the group is gone", || async move {
+            !group_alive(pgid)
+        })
+        .await;
+        let rec = ledger(&n, &id);
+        assert_eq!(rec["state"], "cancelled");
+        assert_eq!(rec["exit_code"], 143);
+        n.handle.shutdown();
+    }
+
+    #[tokio::test]
+    async fn watchdog_times_out_and_kills_a_memory_hog_by_footprint() {
+        // ~100 MB cap on this machine's RAM: a 400 MB hog must die with 137.
+        let ram = {
+            let mut v: u64 = 0;
+            let mut len = std::mem::size_of::<u64>();
+            let name = std::ffi::CString::new("hw.memsize").unwrap();
+            // SAFETY: sysctlbyname writes at most len bytes into v.
+            unsafe {
+                libc::sysctlbyname(
+                    name.as_ptr(),
+                    &mut v as *mut u64 as *mut libc::c_void,
+                    &mut len,
+                    std::ptr::null_mut(),
+                    0,
+                )
+            };
+            v
+        };
+        assert!(ram > 0);
+        let limits = NodeLimits {
+            max_rss_pct: 100.0 * (100u64 << 20) as f64 / ram as f64,
+            ..test_limits()
+        };
+        let n = spawn_jobs_node(true, limits, None).await;
+        let (s, v) = submit(
+            &n,
+            shell("python3 -c \"a=b'x'*(400<<20); import time; time.sleep(60)\""),
+        )
+        .await;
+        assert_eq!(s, 202, "{v}");
+        let hog = v["job_id"].as_str().unwrap().to_string();
+        let mut t = shell("sleep 30");
+        t["timeout_s"] = 1.into();
+        let (s, v) = submit(&n, t).await;
+        assert_eq!(s, 202, "{v}");
+        let slow = v["job_id"].as_str().unwrap().to_string();
+
+        let end = wait_terminal(&n, &hog, Duration::from_secs(30)).await;
+        assert_eq!(end["state"], "killed", "{end}");
+        assert_eq!(end["exit_code"], 137, "{end}");
+        assert!(
+            end["reason"].as_str().unwrap_or("").contains("of RAM"),
+            "{end}"
+        );
+        let end = wait_terminal(&n, &slow, Duration::from_secs(20)).await;
+        assert_eq!(end["exit_code"], 124, "{end}");
+        n.handle.shutdown();
+    }
+
+    /// machine-sync's heavy-run, when it knows the measured-load slots (`--max-heavy`); an older
+    /// heavy-run (one slot) is skipped rather than tested against the new semantics.
+    fn heavy_run() -> Option<PathBuf> {
+        let p = dirs::home_dir()?.join("Projects/machine-sync/bin/heavy-run");
+        if !p.is_file() {
+            return None;
+        }
+        let help = std::process::Command::new(&p).arg("--help").output().ok()?;
+        String::from_utf8_lossy(&help.stdout)
+            .contains("--max-heavy")
+            .then_some(p)
+    }
+
+    fn heavy_run_cmd(bin: &Path, lock: &Path, ledger: &Path) -> std::process::Command {
+        let mut c = std::process::Command::new(bin);
+        // Same two slots as test_limits(); CPU backstop off (a test box mid-build is loaded).
+        c.env("HEAVY_RUN_LOCK", lock)
+            .env("NODE_LIMITS_FILE", ledger.join("absent-limits.json"))
+            .args([
+                "--lock-wait",
+                "0",
+                "--min-free",
+                "0",
+                "--wait",
+                "0",
+                "--max-heavy",
+                "2",
+                "--need-mem",
+                "0",
+                "--max-load-per-core",
+                "1000",
+                "--ledger",
+            ])
+            .arg(ledger);
+        c
+    }
+
+    #[tokio::test]
+    async fn goose_jobs_and_heavy_run_exclude_each_other_on_one_lock() {
+        let Some(bin) = heavy_run() else {
+            eprintln!("SKIP: ~/Projects/machine-sync/bin/heavy-run absent or without --max-heavy");
+            return;
+        };
+        let n = spawn_jobs_node(true, test_limits(), None).await;
+        // 1) A goose heavy job holds slot 0 -> heavy-run takes slot 1 and runs; with slot 1
+        //    held too, heavy-run --lock-wait 0 -- true exits 75.
+        let mut heavy = shell("sleep 30");
+        heavy["heavy"] = true.into();
+        let (s, v) = submit(&n, heavy.clone()).await;
+        assert_eq!(s, 202, "{v}");
+        let id = v["job_id"].as_str().unwrap().to_string();
+        assert!(matches!(HeavySlot::try_take_at(&n.lock, "probe"), Ok(None)));
+        let led1 = n.root.join("hr1");
+        std::fs::create_dir_all(&led1).unwrap();
+        let out = heavy_run_cmd(&bin, &n.lock, &led1)
+            .args(["--", "true"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "heavy-run takes the free slot next to a goose job: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let held1 = HeavySlot::try_take_at(&heavy_slot_path(&n.lock, 1), "test")
+            .unwrap()
+            .expect("slot 1 free after heavy-run");
+        let out = heavy_run_cmd(&bin, &n.lock, &led1)
+            .args(["--", "true"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(75),
+            "heavy-run must refuse while every slot is held: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        drop(held1);
+        reqwest::Client::new()
+            .post(format!("{}/v1/swarm/jobs/{id}/cancel", n.base))
+            .bearer_auth(TOKEN)
+            .send()
+            .await
+            .unwrap();
+        wait_terminal(&n, &id, Duration::from_secs(20)).await;
+
+        // 2) A real heavy-run holds a slot -> a heavy goose job takes the other one; a third
+        //    heavy job is refused heavy_slot_held.
+        let led2 = n.root.join("hr2");
+        std::fs::create_dir_all(&led2).unwrap();
+        let mut hr = heavy_run_cmd(&bin, &n.lock, &led2)
+            .args(["--", "sleep", "20"])
+            .spawn()
+            .unwrap();
+        let lock = n.lock.clone();
+        wait_until("heavy-run took a slot", || {
+            let lock = lock.clone();
+            async move { heavy_slots_used(&lock, 2) == 1 }
+        })
+        .await;
+        let (s, v) = submit(&n, heavy.clone()).await;
+        assert_eq!(s, 202, "one slot left next to heavy-run: {v}");
+        let id = v["job_id"].as_str().unwrap().to_string();
+        expect_refusal(&n, heavy.clone(), 409, "heavy_slot_held").await;
+        // A light job is not affected by the heavy slots.
+        let (s, v) = submit(&n, shell("true")).await;
+        assert_eq!(s, 202, "{v}");
+        cancel(&n, &id).await;
+        wait_terminal(&n, &id, Duration::from_secs(20)).await;
+        // SAFETY: TERM our own child; heavy-run then kills its job group itself.
+        unsafe { libc::kill(hr.id() as i32, libc::SIGTERM) };
+        let _ = hr.wait();
+        n.handle.shutdown();
+    }
+
+    /// The owner's laptop state of 2026-10-25: slot 0 held by an EXTERNAL flock (a release
+    /// build waiting on notarization), 94% free, load 0.28/core. Before 3.0.131 every heavy job
+    /// was refused; now it runs on slot 1, and with three slots a SECOND heavy goose job runs
+    /// next to it. Only when every slot is held is the next one refused, with the count.
+    #[tokio::test]
+    async fn two_heavy_goose_jobs_run_concurrently_next_to_an_external_slot0_flock() {
+        let limits = NodeLimits {
+            max_heavy: Some(3),
+            ..test_limits()
+        };
+        let n = spawn_jobs_node(true, limits, None).await;
+        *n.own.lock().unwrap() = OwnLoad {
+            cpu_load_per_core: Some(0.28),
+            mem_free_pct: Some(94.0),
+            ncpu: 14,
+            ..calm()
+        };
+        let external = HeavySlot::try_take_at(&n.lock, "pid 999 release build")
+            .unwrap()
+            .expect("slot 0");
+        let mut heavy = shell("sleep 30");
+        heavy["heavy"] = true.into();
+        heavy["need_mem_gb"] = 8.0.into();
+        let (s1, a) = submit(&n, heavy.clone()).await;
+        assert_eq!(s1, 202, "first heavy job next to the external flock: {a}");
+        let (s2, b) = submit(&n, heavy.clone()).await;
+        assert_eq!(s2, 202, "second heavy job, concurrently: {b}");
+        let (a, b) = (
+            a["job_id"].as_str().unwrap().to_string(),
+            b["job_id"].as_str().unwrap().to_string(),
+        );
+        for id in [&a, &b] {
+            assert_eq!(job(&n, id).await.1["state"], "running");
+        }
+        assert_eq!(heavy_slots_used(&n.lock, 3), 3);
+        let (s, v) = submit(&n, heavy.clone()).await;
+        assert_eq!(
+            (s, v["code"].as_str()),
+            (409, Some("heavy_slot_held")),
+            "{v}"
+        );
+        let reason = v["reason"].as_str().unwrap();
+        assert!(
+            reason.starts_with("busy: 3/3 heavy slots held: "),
+            "{reason}"
+        );
+        assert!(reason.contains("pid 999 release build"), "{reason}");
+        // The card says how much more this Mac can take.
+        let nodes = get_json(
+            &reqwest::Client::new(),
+            &format!("{}/v1/swarm/nodes", n.base),
+        )
+        .await;
+        let load = &nodes["self"]["load"];
+        let own = &load["own"];
+        assert_eq!(own["heavy_slots_max"], 3, "{load}");
+        // Memory has room for ~11 more, but every heavy slot is held: nothing more fits (D15).
+        assert_eq!(own["can_take"], 0, "{load}");
+        assert!(
+            own["verdict"]
+                .as_str()
+                .is_some_and(|l| l.starts_with("busy: 3/3 heavy slots held")),
+            "{load}"
+        );
+        drop(external);
+        for id in [&a, &b] {
+            cancel(&n, id).await;
+            wait_terminal(&n, id, Duration::from_secs(20)).await;
+        }
+        n.handle.shutdown();
+    }
+
+    /// Someone at the keyboard (79% free): admitted by default; refused only when the owner
+    /// set Refuse jobs, and the refusal carries the numbers.
+    #[tokio::test]
+    async fn user_active_is_admitted_by_default_and_refused_only_under_refuse() {
+        let typing = || OwnLoad {
+            user_active: true,
+            user_idle_s: Some(3.0),
+            mem_free_pct: Some(79.0),
+            ..calm()
+        };
+        let n = spawn_jobs_node(true, test_limits(), None).await;
+        *n.own.lock().unwrap() = typing();
+        let mut heavy = shell("true");
+        heavy["heavy"] = true.into();
+        for body in [shell("true"), heavy.clone()] {
+            let (s, v) = submit(&n, body).await;
+            assert_eq!(s, 202, "{v}");
+        }
+        n.handle.shutdown();
+
+        let tmp = tempfile::tempdir().unwrap();
+        let r =
+            start_jobs_node_with(tmp, true, test_limits(), None, UserActivePolicy::Refuse).await;
+        *r.own.lock().unwrap() = typing();
+        let mut flagged = shell("true");
+        flagged["allow_user_active"] = true.into();
+        for body in [shell("true"), flagged] {
+            let (s, v) = submit(&r, body).await;
+            assert_eq!((s, v["code"].as_str()), (409, Some("user_active")), "{v}");
+            let reason = v["reason"].as_str().unwrap();
+            assert!(reason.contains("3s since last input"), "{reason}");
+            assert!(reason.contains("can take ~9 more 8 GB jobs"), "{reason}");
+        }
+        r.handle.shutdown();
+    }
+
+    async fn cancel(n: &Node, id: &str) -> (u16, serde_json::Value) {
+        let r = reqwest::Client::new()
+            .post(format!("{}/v1/swarm/jobs/{id}/cancel", n.base))
+            .bearer_auth(TOKEN)
+            .send()
+            .await
+            .unwrap();
+        let s = r.status().as_u16();
+        (s, r.json().await.unwrap_or(serde_json::Value::Null))
+    }
+
+    async fn listed(n: &Node, id: &str) -> Option<serde_json::Value> {
+        let c = reqwest::Client::new();
+        let list = get_json(&c, &format!("{}/v1/swarm/jobs", n.base)).await;
+        list.as_array()?.iter().find(|j| j["job_id"] == id).cloned()
+    }
+
+    /// D1 (3.0.128 live test): a Link reconnect rebuilt the control service and with it an
+    /// EMPTY job registry: the running job vanished from the list, cancel said not_found, and
+    /// the process kept running (and holding the heavy slot). The registry must outlive it.
+    #[tokio::test]
+    async fn a_running_job_survives_a_control_service_restart_and_cancel_kills_its_group() {
+        let n = spawn_jobs_node(true, test_limits(), None).await;
+        let (s, v) = submit(&n, shell("sleep 300")).await;
+        assert_eq!(s, 202, "{v}");
+        let id = v["job_id"].as_str().unwrap().to_string();
+        let pgid = ledger(&n, &id)["pgid"].as_i64().unwrap() as i32;
+        assert!(group_alive(pgid));
+
+        let Node { handle, _tmp, .. } = n;
+        handle.shutdown();
+        let n = start_jobs_node(_tmp, true, test_limits(), None).await;
+
+        let row = listed(&n, &id)
+            .await
+            .unwrap_or_else(|| panic!("job {id} vanished after the restart"));
+        assert_eq!(row["state"], "running", "{row}");
+        let (s, v) = cancel(&n, &id).await;
+        assert_eq!(s, 202, "cancel must find the job: {v}");
+        assert_eq!(v["state"], "cancelled", "{v}");
+        assert_eq!(v["exit_code"], 143, "{v}");
+        assert!(!group_alive(pgid), "the group must be dead after cancel");
+        n.handle.shutdown();
+    }
+
+    fn running_record(id: &str, pgid: i32, heavy: bool) -> serde_json::Value {
+        serde_json::json!({
+            "job_id": id, "origin_node": "laptop", "kind": "shell", "command": "sleep 60",
+            "cwd": null, "heavy": heavy, "need_mem_gb": null, "timeout_s": 600,
+            "state": "running", "started_at": chrono::Utc::now().to_rfc3339(),
+            "ended_at": null, "exit_code": null, "reason": null, "session_id": null,
+            "pgid": pgid,
+        })
+    }
+
+    fn seed(root: &Path, rec: &serde_json::Value) {
+        let dir = root.join(rec["job_id"].as_str().unwrap());
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("job.json"), rec.to_string()).unwrap();
+    }
+
+    /// D1, the goose-restart half: a fresh registry over a ledger adopts a `running` job whose
+    /// group is alive (listed, holds the heavy slot it asked for, cancellable by group kill)
+    /// and marks one whose group is gone `lost`, never leaving it "running".
+    #[tokio::test]
+    async fn a_fresh_registry_adopts_a_live_ledger_job_and_marks_a_dead_one_lost() {
+        use std::os::unix::process::CommandExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("jobs");
+        let live_id = "j20261025000000-aaaaaa";
+        let dead_id = "j20261025000000-bbbbbb";
+        // The live record is written BEFORE its process starts, as submit does.
+        let mut live_rec = running_record(live_id, 0, true);
+        // The leader exits at once and its `sleep` lives on in the group, reparented to launchd
+        // (as a job's group is after the goose that started it died).
+        let mut leader = std::process::Command::new("/bin/sh")
+            .args(["-c", "/bin/sleep 60 >/dev/null 2>&1 & exit 0"])
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let live_pgid = leader.id() as i32;
+        leader.wait().unwrap();
+        assert!(group_alive(live_pgid), "the group outlives its leader");
+        live_rec["pgid"] = live_pgid.into();
+        seed(&root, &live_rec);
+        let mut dead = std::process::Command::new("/usr/bin/true")
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let dead_pgid = dead.id() as i32;
+        dead.wait().unwrap();
+        seed(&root, &running_record(dead_id, dead_pgid, false));
+
+        let n = start_jobs_node(tmp, true, test_limits(), None).await;
+        let row = listed(&n, live_id).await.expect("live ledger job adopted");
+        assert_eq!(row["state"], "running", "{row}");
+        let row = listed(&n, dead_id).await.expect("dead ledger job listed");
+        assert_eq!(row["state"], "lost", "{row}");
+        assert!(row["ended_at"].is_string(), "{row}");
+        assert_eq!(ledger(&n, dead_id)["state"], "lost");
+        // The adopted heavy job holds the slot again, and the lock names it.
+        assert!(
+            matches!(HeavySlot::try_take_at(&n.lock, "probe"), Ok(None)),
+            "an adopted heavy job must hold the heavy slot"
+        );
+        let holder = std::fs::read_to_string(&n.lock).unwrap();
+        assert!(holder.contains(live_id), "lock holder line: {holder}");
+
+        let (s, v) = cancel(&n, live_id).await;
+        assert_eq!(s, 202, "{v}");
+        assert_eq!(v["state"], "cancelled", "{v}");
+        assert_eq!(v["exit_code"], 143, "{v}");
+        assert!(
+            !group_alive(live_pgid),
+            "the adopted group is gone after cancel"
+        );
+        assert!(
+            matches!(HeavySlot::try_take_at(&n.lock, "probe"), Ok(Some(_))),
+            "the slot is free once the adopted job is gone"
+        );
+        n.handle.shutdown();
+    }
+
+    /// D10: a heavy refusal names the holder and for how long, from the lock's holder line.
+    #[tokio::test]
+    async fn heavy_slot_refusal_names_the_holder_and_how_long() {
+        let n = spawn_jobs_node(true, test_limits(), None).await;
+        let _held = HeavySlot::try_take_at(&n.lock, "test")
+            .unwrap()
+            .expect("slot");
+        let _held1 = HeavySlot::try_take_at(&heavy_slot_path(&n.lock, 1), "test")
+            .unwrap()
+            .expect("slot 1");
+        let since = (chrono::Local::now() - chrono::Duration::seconds(372))
+            .format("%F %T")
+            .to_string();
+        std::fs::write(
+            &n.lock,
+            format!("pid 4321 since {since}: /opt/homebrew/bin/cargo test -p goose\n"),
+        )
+        .unwrap();
+        let mut heavy = shell("true");
+        heavy["heavy"] = true.into();
+        let (s, v) = submit(&n, heavy).await;
+        assert_eq!(
+            (s, v["code"].as_str()),
+            (409, Some("heavy_slot_held")),
+            "{v}"
+        );
+        let reason = v["reason"].as_str().unwrap();
+        assert!(
+            reason.starts_with(
+                "busy: 2/2 heavy slots held: heavy slot held by pid 4321 (heavy-run: cargo test -p goose) for 6m 1"
+            ),
+            "{reason}"
+        );
+        n.handle.shutdown();
+    }
 }

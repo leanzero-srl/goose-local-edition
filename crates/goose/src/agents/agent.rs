@@ -79,10 +79,30 @@ const MAX_EMPTY_TURN_RETRIES: u32 = 3;
 /// Consecutive replies cut at the output-token limit before any tool call that are answered with
 /// LENGTH_CUT_CONTINUATION instead of ending (text) or re-asking blind (reasoning only).
 const MAX_LENGTH_CUT_NUDGES: u32 = 3;
-const LENGTH_CUT_CONTINUATION: &str = "Your last reply was cut off at the model's output-token limit, so it is \
+pub const LENGTH_CUT_CONTINUATION: &str = "Your last reply was cut off at the model's output-token limit, so it is \
      unfinished and nothing in it was carried out. Continue from where it stopped in smaller steps: if the task needs \
      actions, take the next one now with a tool call instead of planning everything in one reply, and keep each reply \
      well under the limit.";
+/// Answers a reply the engine's loop guard stopped (I-28) instead of LENGTH_CUT_CONTINUATION: the
+/// model was repeating itself, so "keep each reply under the limit" was the wrong cause and advice.
+pub const LOOP_STOP_CONTINUATION: &str = "Your last reply was stopped because it kept repeating the same \
+     text in a loop (goose kept one copy of the repeated text above), so it is unfinished and nothing in it \
+     was carried out. Do not write it again: take a different next step now with a tool call, or give your \
+     final answer if the task is done.";
+/// Answers a reply goose's runaway watch stopped. The person may have asked for the repeated text
+/// (a line written a thousand times), and goose cannot tell that from a loop, so the model is told
+/// where such output belongs instead of only being told to stop.
+pub const RUNAWAY_STOP_CONTINUATION: &str = "Your last reply was stopped because it kept repeating the \
+     same text (goose kept one copy of it above), so it is unfinished and nothing in it was carried out. \
+     If the person asked for this repeated output, write it to a file with a tool instead of into your \
+     reply. Otherwise do not write it again: take a different next step now with a tool call, or give \
+     your final answer if the task is done.";
+/// Sent (agent-visible only) with every empty-turn retry. Resending the identical conversation to a
+/// deterministic local model reproduces the same empty reply: Gemma 4 26B-A4B (2026-10-18) stopped after one
+/// token three times on the same 71,670-token prompt and the run was refused.
+pub const EMPTY_TURN_CONTINUATION: &str =
+    "Your last reply had no text and no tool call. Continue the task now: \
+     take the next step with a tool call, or give your final answer if the task is done.";
 const EMPTY_TURN_MESSAGE: &str =
     "The model returned an empty response. Please resend your message to continue.";
 const DEFAULT_FRONTEND_INSTRUCTIONS: &str = "The following tools are provided directly by the frontend and will be executed by the frontend when called.";
@@ -117,6 +137,16 @@ fn extract_string_arg(input: &Value, keys: &[&str]) -> Option<String> {
     None
 }
 
+/// A user row the agent loop adds to keep going: agent-visible only, and marked as the harness's
+/// own (`MessageMetadata::harness_nudge`) so a compaction never preserves it as the person's latest
+/// request (I-31: a preserved "continue" note ended a run at call 54 of 300).
+pub fn harness_nudge(text: impl Into<String>) -> Message {
+    Message::user()
+        .with_text(text.into())
+        .with_visibility(false, true)
+        .with_harness_nudge()
+}
+
 fn stop_hook_denial_context_message(plugin: &str, reason: &str) -> Message {
     let nudge = format!(
         "Stop hook `{plugin}` blocked ending this turn:
@@ -125,9 +155,7 @@ fn stop_hook_denial_context_message(plugin: &str, reason: &str) -> Message {
 
 Address this policy hook denial before trying to stop again."
     );
-    Message::user()
-        .with_text(nudge)
-        .with_visibility(false, true)
+    harness_nudge(nudge)
 }
 
 fn stop_hook_denial_notification(plugin: &str) -> Message {
@@ -2176,9 +2204,16 @@ impl Agent {
             let mut compaction_attempts = 0;
             let mut empty_turn_retries = 0u32;
             let mut length_cut_nudges = 0u32;
+            let mut loop_stop_nudges = 0u32;
             let mut retrying_after_empty_turn = false;
             let mut retrying_after_transient_error = false;
             let mut last_assistant_text = String::new();
+            // A cloud model has no engine loop guard; the swarm's workers have their own judge.
+            let mut runaway_watch = if self.is_swarm_worker() {
+                None
+            } else {
+                super::loop_collapse::RunawayWatch::from_config(Config::global())
+            };
             let mut goal_check_pending = false;
             let mut tool_pair_summarization_done = false;
             let mut stop_hook_handled_for_exit = false;
@@ -2374,6 +2409,9 @@ impl Agent {
                     !resend.enabled(),
                 ).await?;
                 last_assistant_text.clear();
+                if let Some(watch) = runaway_watch.as_mut() {
+                    watch.reset();
+                }
 
                 let current_turn_tool_count = conversation.messages().iter()
                     .flat_map(|m| m.content.iter())
@@ -2443,6 +2481,10 @@ impl Agent {
                     };
                     let Some(next) = next else {
                         resend.call_completed();
+                        // Only a call that ran to its end clears the refusal count: a provider
+                        // that streams part of a reply and then refuses it as too long would
+                        // otherwise reset the count on its first item and compact without end.
+                        compaction_attempts = 0;
                         break;
                     };
 
@@ -2455,7 +2497,6 @@ impl Agent {
                     match next {
                         Ok((response, usage)) => {
                             turn_failure = None;
-                            compaction_attempts = 0;
                             last_call_usage = if usage
                                 .as_ref()
                                 .is_some_and(|u| u.usage.total_tokens.is_some())
@@ -2525,10 +2566,36 @@ impl Agent {
                                     if !text.is_empty() {
                                         last_assistant_text.push_str(&text);
                                     }
+                                    let response_id = response.id.clone();
                                     if resend.enabled() {
                                         attempt_partial.push(filtered_response);
                                     }
                                     messages_to_add.push(response);
+                                    // A reply whose tail is one unit repeated over the watch's span is
+                                    // stopped here, stamped like the engine guard's stop, so the same
+                                    // collapse keeps one copy and the loop-stop nudge continues the turn.
+                                    if let Some(period) = runaway_watch
+                                        .as_mut()
+                                        .and_then(|watch| watch.runaway_period(&text, &last_assistant_text))
+                                    {
+                                        warn!(
+                                            session_id = %session_config.id,
+                                            period,
+                                            chars = last_assistant_text.chars().count(),
+                                            "runaway_text_stopped: the reply's last {} characters repeat one \
+                                             {period}-character unit; goose stopped the stream",
+                                            runaway_watch.as_ref().map_or(0, |watch| watch.span())
+                                        );
+                                        let stamp = super::loop_collapse::GOOSE_STOPPED_AS_LOOP;
+                                        let mut stop = Message::assistant().with_text(stamp);
+                                        if let Some(id) = response_id {
+                                            stop = stop.with_id(id);
+                                        }
+                                        last_assistant_text.push_str(stamp);
+                                        yield AgentEvent::Message(stop.clone());
+                                        messages_to_add.push(stop);
+                                        break;
+                                    }
                                     continue;
                                 }
 
@@ -2900,6 +2967,16 @@ impl Agent {
                         #[allow(unused_variables)]
                         Err(ref provider_err @ ProviderError::ContextLengthExceeded(_)) => {
                             provider_errored = true;
+                            if let Some(window) = crate::context_mgmt::note_refused_window(
+                                &session_config.id,
+                                &model_config.model_name,
+                                provider_err,
+                            ) {
+                                warn!(
+                                    "the provider refused the request as too long; its window is {window} tokens, \
+                                     compaction sizes to it from now on"
+                                );
+                            }
                             #[cfg(feature = "telemetry")]
                             crate::posthog::emit_error(provider_err.telemetry_type(), &provider_err.to_string());
                             compaction_attempts += 1;
@@ -3125,6 +3202,7 @@ impl Agent {
 
                 if !no_tools_called {
                     length_cut_nudges = 0;
+                    loop_stop_nudges = 0;
                 }
                 if empty_response {
                     messages_to_add = Conversation::default();
@@ -3137,6 +3215,36 @@ impl Agent {
 
                 let mut terminal_structured_provider_error = false;
                 if no_tools_called && !exit_chat && !resending {
+                    // I-28 review: a reply the engine stopped as a loop keeps one copy of the
+                    // repeated text in the history, whether or not a nudge follows it.
+                    let loop_stamp = [
+                        goose_providers::formats::openai::OUTPUT_STOPPED_AS_LOOP,
+                        super::loop_collapse::GOOSE_STOPPED_AS_LOOP,
+                    ]
+                    .into_iter()
+                    .find(|stamp| last_assistant_text.contains(stamp.trim()));
+                    if let Some(stamp) = loop_stamp {
+                        messages_to_add = Conversation::new_unvalidated(
+                            super::loop_collapse::collapse_looped_reply(
+                                messages_to_add.messages(),
+                                stamp,
+                            ),
+                        );
+                    } else if let Some(span) = runaway_watch.as_ref().map(|watch| watch.span()) {
+                        if last_assistant_text
+                            .contains(goose_providers::formats::openai::OUTPUT_TRUNCATED_BY_LENGTH.trim())
+                        {
+                            // A runaway the watch did not stop (not exact over its span) still
+                            // reaches the history as one copy once it ran to the output limit.
+                            messages_to_add = Conversation::new_unvalidated(
+                                super::loop_collapse::collapse_runaway_reply(
+                                    messages_to_add.messages(),
+                                    goose_providers::formats::openai::OUTPUT_TRUNCATED_BY_LENGTH,
+                                    span,
+                                ),
+                            );
+                        }
+                    }
                     // Lock, extract state, drop guard before branching — handle_retry_logic
                     // also locks final_output_tool and tokio::sync::Mutex is not reentrant.
                     let final_output = {
@@ -3186,6 +3294,30 @@ impl Agent {
                         // A reply the server cut at its output limit is unfinished, not a final
                         // answer (it would end the run) and not an empty turn (re-asked blind, the
                         // model repeats the same over-long plan: aion-labs/aion-3.5, 2026-10-07).
+                        None if loop_stop_nudges < MAX_LENGTH_CUT_NUDGES
+                            && last_assistant_text
+                                .contains(goose_providers::formats::openai::OUTPUT_STOPPED_AS_LOOP.trim()) =>
+                        {
+                            loop_stop_nudges += 1;
+                            warn!(
+                                "Reply stopped by the engine's repetition guard before any tool call; continuing ({}/{})",
+                                loop_stop_nudges, MAX_LENGTH_CUT_NUDGES
+                            );
+                            let message = harness_nudge(LOOP_STOP_CONTINUATION);
+                            messages_to_add.push(message);
+                        }
+                        None if loop_stop_nudges < MAX_LENGTH_CUT_NUDGES
+                            && last_assistant_text
+                                .contains(super::loop_collapse::GOOSE_STOPPED_AS_LOOP.trim()) =>
+                        {
+                            loop_stop_nudges += 1;
+                            warn!(
+                                "Reply stopped by goose's runaway watch before any tool call; continuing ({}/{})",
+                                loop_stop_nudges, MAX_LENGTH_CUT_NUDGES
+                            );
+                            let message = harness_nudge(RUNAWAY_STOP_CONTINUATION);
+                            messages_to_add.push(message);
+                        }
                         None if length_cut_nudges < MAX_LENGTH_CUT_NUDGES
                             && last_assistant_text
                                 .contains(goose_providers::formats::openai::OUTPUT_TRUNCATED_BY_LENGTH.trim()) =>
@@ -3195,9 +3327,7 @@ impl Agent {
                                 "Reply cut at the output-token limit before any tool call; continuing ({}/{})",
                                 length_cut_nudges, MAX_LENGTH_CUT_NUDGES
                             );
-                            let message = Message::user()
-                                .with_text(LENGTH_CUT_CONTINUATION)
-                                .with_visibility(false, true);
+                            let message = harness_nudge(LENGTH_CUT_CONTINUATION);
                             messages_to_add.push(message);
                         }
                         None if self.goal.lock().await.is_some() && !goal_check_pending => {
@@ -3208,8 +3338,7 @@ impl Agent {
                                  **Goal:** {goal}\n\n\
                                  If not, continue working toward it."
                             );
-                            let message = Message::user().with_text(&nudge)
-                                .with_visibility(false, true);
+                            let message = harness_nudge(nudge);
                             messages_to_add.push(message);
                             yield AgentEvent::Message(
                                 Message::assistant().with_system_notification(
@@ -3226,8 +3355,7 @@ impl Agent {
                                  **Goal:** {grind}\n\n\
                                  Continue until it is fully done."
                             );
-                            let message = Message::user().with_text(&nudge)
-                                .with_visibility(false, true);
+                            let message = harness_nudge(nudge);
                             messages_to_add.push(message);
                             yield AgentEvent::Message(
                                 Message::assistant().with_system_notification(
@@ -3261,6 +3389,7 @@ impl Agent {
                                     if empty_turn_retries < MAX_EMPTY_TURN_RETRIES {
                                         empty_turn_retries += 1;
                                         retrying_after_empty_turn = true;
+                                        messages_to_add.push(harness_nudge(EMPTY_TURN_CONTINUATION));
                                         warn!(
                                             "Provider returned an empty response; retrying ({}/{})",
                                             empty_turn_retries, MAX_EMPTY_TURN_RETRIES

@@ -15,6 +15,7 @@ use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
+use crate::engine_profile::{self, EngineMemoryProfile};
 use crate::fit::{self, FitVerdict, Need, NodeMemoryFacts, Verdict};
 use crate::hf::{self, LocalModel};
 use crate::kv_cache::{self, KvCacheMode};
@@ -156,6 +157,9 @@ pub const MAX_CONCURRENT_REQUESTS: u32 = 8; // measured: 9th concurrent request 
 /// Holding two measured turns needs ≥ 0.312; staying under that line with the cache full, one
 /// prefill peak and two more live 49k sequences needs ≤ 0.389 — see
 /// `the_prefix_cache_share_holds_two_turns_under_the_pressure_line`.
+/// Passed ONLY to an engine without a memory guard (`prefix_cache_flags`): the guard takes any
+/// `--cache-memory-percent` other than its default as an operator cap, and with none it derives the
+/// budget from the device itself.
 pub const PREFIX_CACHE_SHARE_OF_FREE: f64 = 0.35; // ratio: of the engine's post-load available memory; receipt above
 
 /// Recurrent-state (GatedDeltaNet) and sliding-window caches cannot be trimmed, so Rapid-MLX
@@ -173,6 +177,36 @@ pub fn hybrid_cache_entries() -> u32 {
     MAX_CONCURRENT_REQUESTS * PREFIX_ENTRIES_PER_REQUEST
 }
 
+/// v0.14.3-lz.14 (fork lz/release-lz14 = lz.13 c58790b11 + lz/kv-dtype-extend edd279eb6 + lz/flint
+/// ff88eb79c) = lz.13 + a cold request joining a batch mid-prefill no longer turns the session's KV
+/// float32 (mlx-lm `BatchKVCache.extend` padded the empty side with a float32 `mx.array([])`; the
+/// single engine's twin of the split's Q-447: dense 27B decode 4 -> 15 tok/s at 48k; float32 prefix
+/// entries are dropped at fetch; `/v1/status kv_dtype`), and Recursive Flint (`flint`) is served
+/// (vendored model, INT4 loader, flint tool + reasoning parsers, no auto tool-use suffix and no
+/// graded effort cap for it). Memory-guard line: no `--cache-memory-percent` (Guarded row).
+///
+/// v0.14.3-lz.13 (fork lz/backlog-1019 c58790b11) = lz.12 + a repetition-guard stop names itself on
+/// the wire (`rapid_mlx_stop_reason: "repetition"` beside `finish_reason: "length"`, also when it
+/// lands inside a tool call; I-28), the hard stop also catches long exact loops (periods up to 1024
+/// tokens, four copies, tool-bearing requests on every lane; `--repetition-guard-max-period`, I-24),
+/// a local folder whose template renders the qwen3-coder XML wire gets its parsers (Nex-N2.5, I-27),
+/// a prompt that already closed the think block streams the answer as content, and the D-METAL-CAP
+/// refusal names the prompt room beside max_tokens instead of a context window. Memory-guard line:
+/// no `--cache-memory-percent` (Guarded row).
+///
+/// v0.14.3-lz.12 (fork lz/release-3.0.119-engine cd53a8247 = lz/overnight-stack 429d0b40d + lz.11's
+/// LFM auto-config c56728690, which the overnight stack did not carry) = the memory-guard line (RC13
+/// e3a92b555: a per-step memory plan before every prefill chunk, decode growth and batch join, so a
+/// long session cannot OOM; the text-only image notice; history reasoning reaches the template; a
+/// split assistant turn renders as one) + local Nemotron-H and Nemotron 3.5 Bolt profiles (I-1,
+/// I-30), Xing4.0 (I-2), MLA latent KV priced from what the cache stores (I-7), Gemma 4 prefix reuse
+/// across agent turns (I-4, I-4b), Gemma 4 KV priced from its attention modules (I-17), Granite 4.2
+/// dense profile and a bare `--tool-call-parser` that binds (I-23), the guard's KV in the dtype it
+/// caches (I-29) and history think blocks kept once (I-32). It ran overnight 2026-10-18/19 on three
+/// Macs at its ancestors b20ec1b7, 1b5f497a and 7108304a. The guard sizes its own prefix cache from
+/// the device, so goose passes it no `--cache-memory-percent` (`prefix_cache_flags`,
+/// `engine_profile`).
+///
 /// v0.14.3-lz.11 = lz.10 + a local LFM2/LFM2.5 folder gets the `lfm` tool parser and the
 /// `deepseek_r1_distill` reasoning parser from its config.json + template (fork lz/lfm-metadata
 /// c56728690). Aliases name only hub repos, so the app's folder mount of Liquid's 24B served
@@ -240,7 +274,7 @@ pub fn hybrid_cache_entries() -> u32 {
 pub const ENGINE_LAUNCHER: [&str; 4] = [
     "uvx",
     "--from",
-    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.11",
+    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.14",
     "rapid-mlx",
 ];
 
@@ -325,6 +359,24 @@ pub const SUPERSEDED_ENGINE_LAUNCHERS: &[[&str; 4]] = &[
         "uvx",
         "--from",
         "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.10",
+        "rapid-mlx",
+    ],
+    [
+        "uvx",
+        "--from",
+        "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.11",
+        "rapid-mlx",
+    ],
+    [
+        "uvx",
+        "--from",
+        "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.12",
+        "rapid-mlx",
+    ],
+    [
+        "uvx",
+        "--from",
+        "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.13",
         "rapid-mlx",
     ],
 ];
@@ -653,6 +705,39 @@ fn validated_adapter_dir(raw: &str) -> Result<Option<PathBuf>> {
     Ok(Some(dir))
 }
 
+/// The prefix cache and admission flags for the engine `engine` describes. Prefix caching is
+/// always on and never a person's knob; who sizes it depends on the engine:
+/// - memory guard (`Guarded`): NO budget flag. The guard honours any `--cache-memory-percent`
+///   other than its default as an operator cap, and with none it derives the budget from the
+///   device's idle room. Measured on the guard (lz/memory-guard 64c1f288b, real allocator, one
+///   session to the window edge, 35 turns): with 0.35 the hits stopped at ~half the window (15
+///   full re-prefills); with no flag, 35/35 hits, peak under the ceiling. On Gabee the 0.35 capped
+///   the ledger at 9.9 GB, where the guard derives 17.3 GB. The overnight runs of 2026-10-18/19 ran
+///   the guard this way (their engine wrapper dropped the flag).
+/// - no guard (lz.11 and older), or an engine goose cannot place: `PREFIX_CACHE_SHARE_OF_FREE`,
+///   still that engine's only bound on its cache.
+///
+/// `--hybrid-cache-entries` and `--max-concurrent-requests` stay for both: neither overrides a
+/// value the guard derives from the device. The guard sizes BYTES; the hybrid count is a count
+/// (without the flag the engine falls to 8, tighter than goose's 24, so dropping it would cost
+/// hits), and the admission cap is a concurrency bound the guard's memory admission sits under.
+fn prefix_cache_flags(engine: &Result<EngineMemoryProfile, String>) -> Vec<String> {
+    let mut flags = vec!["--enable-prefix-cache".to_string()];
+    if !matches!(engine, Ok(EngineMemoryProfile::Guarded { .. })) {
+        flags.extend([
+            "--cache-memory-percent".to_string(),
+            PREFIX_CACHE_SHARE_OF_FREE.to_string(),
+        ]);
+    }
+    flags.extend([
+        "--hybrid-cache-entries".to_string(),
+        hybrid_cache_entries().to_string(),
+        "--max-concurrent-requests".to_string(),
+        MAX_CONCURRENT_REQUESTS.to_string(),
+    ]);
+    flags
+}
+
 /// The engine argv for `model_id` under `settings`, read together with the model
 /// directory (`inspect_model_dir`). Fails only when the profile names an adapter directory
 /// that is not one, when checkpoint parser metadata cannot be read, or when the profile asks for
@@ -678,15 +763,9 @@ pub fn build_serve_command(
     for alias in names.also {
         argv.extend(["--served-model-alias".to_string(), alias]);
     }
-    argv.extend([
-        "--enable-prefix-cache".to_string(),
-        "--cache-memory-percent".to_string(),
-        PREFIX_CACHE_SHARE_OF_FREE.to_string(),
-        "--hybrid-cache-entries".to_string(),
-        hybrid_cache_entries().to_string(),
-        "--max-concurrent-requests".to_string(),
-        MAX_CONCURRENT_REQUESTS.to_string(),
-    ]);
+    argv.extend(prefix_cache_flags(&engine_profile::profile_of_launcher(
+        &settings.spawn_command,
+    )));
     let default_profile = ModelProfile::default();
     let profile = settings
         .model_profiles
@@ -1355,6 +1434,19 @@ async fn reclaim_port(port: u16) -> Result<()> {
         .map(|_| ())
 }
 
+/// [`reclaim_port`] without the SIGKILL leg (Free up memory, review C5).
+#[cfg(unix)]
+async fn reclaim_port_graceful(port: u16) -> Result<()> {
+    port_holder::claim_port_with(port, &engine_marker(port), false)
+        .await
+        .map(|_| ())
+}
+
+#[cfg(not(unix))]
+async fn reclaim_port_graceful(port: u16) -> Result<()> {
+    reclaim_port(port).await
+}
+
 #[cfg(not(unix))]
 async fn reclaim_port(port: u16) -> Result<()> {
     anyhow::bail!(
@@ -1435,7 +1527,7 @@ impl MlxEngineManager {
     pub fn new() -> Self {
         Self {
             state: Arc::new(Mutex::new(ManagerState::Stopped)),
-            settings: StdMutex::new(EngineSettings::default()),
+            settings: StdMutex::new(Self::initial_settings()),
             nodes: StdMutex::new(Vec::new()),
             last_gate: StdMutex::new(None),
             making_room: StdMutex::new(None),
@@ -1528,8 +1620,31 @@ impl MlxEngineManager {
     /// consumer (the ACP layer persists the migration; the swarm engine registry does
     /// not) spawns from profile truth even when handed an un-migrated config.
     pub fn set_settings(&self, mut settings: EngineSettings) {
+        #[cfg(test)]
+        assert_ne!(
+            settings.port,
+            EngineSettings::default().port,
+            "a unit test configured the default engine port — the owner's real engine listens \
+             there (Q-258); give the test `free_port()`"
+        );
         settings.migrate_legacy();
         *self.settings.lock().unwrap() = settings;
+    }
+
+    /// The settings a manager starts from. A test manager starts on a port no other test was
+    /// handed, never the default: Mount's port check, the status's stray-listener read and
+    /// Unmount's reclaim all act on whatever listens on the configured port, and on the default one
+    /// that is the owner's real engine (Q-258: four SIGTERMs; CI runs 39021216708 and 39154855201:
+    /// three gate tests read the workhorse's engine as an unsupervised listener and got a port
+    /// refusal instead of the gate's).
+    fn initial_settings() -> EngineSettings {
+        #[cfg(test)]
+        return EngineSettings {
+            port: crate::unshared_loopback_port().expect("a loopback port for a test manager"),
+            ..EngineSettings::default()
+        };
+        #[cfg(not(test))]
+        EngineSettings::default()
     }
 
     pub fn settings(&self) -> EngineSettings {
@@ -2096,16 +2211,10 @@ impl MlxEngineManager {
         }
         drop(self.judging.write().await);
         if !supervised {
-            let port = self.settings().port;
             // Q-258: two unit tests reached this reclaim on the default port and SIGTERMed the
             // owner's live engine four times on 2026-09-28, mid-prefill, with no goosed log line.
-            #[cfg(test)]
-            assert_ne!(
-                port,
-                EngineSettings::default().port,
-                "a unit test reached Unmount's reclaim on the default engine port — the owner's \
-                 real engine listens there; configure a free port"
-            );
+            // A test manager can no longer hold that port (`initial_settings`, `set_settings`).
+            let port = self.settings().port;
             if port_has_listener(port) {
                 reclaim_port(port).await.map_err(|why| UnmountRefused {
                     port,
@@ -2115,6 +2224,46 @@ impl MlxEngineManager {
             }
         }
         Ok(())
+    }
+
+    /// Free up memory's stop of goose's own idle engine (review C5): SIGTERM only, never SIGKILL.
+    /// A running engine gets [`crate::Sidecar::shutdown_graceful`]; one that outlives the grace
+    /// stays running and supervised, and the error says goose does not force it. A start in
+    /// flight is not touched (only an idle engine is freed). An unsupervised port held by this
+    /// goose's proven leftover gets SIGTERM per pid ([`port_holder::claim_port_with`] unforced).
+    /// The normal [`Self::unmount`] (Unmount, switches) is unchanged.
+    pub async fn unmount_graceful(&self) -> std::result::Result<(), String> {
+        let supervised = {
+            let mut state = self.state.lock().await;
+            match &*state {
+                ManagerState::Running { sidecar, .. } => {
+                    sidecar.shutdown_graceful().await?;
+                    *state = ManagerState::Stopped;
+                    true
+                }
+                ManagerState::Mounting { .. } => {
+                    return Err(
+                        "goose's engine is loading a model; Free up memory leaves it".into(),
+                    )
+                }
+                _ => false,
+            }
+        };
+        if supervised {
+            *self.waiting_for_load.lock().unwrap() = None;
+            self.unmounts
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            return Ok(());
+        }
+        let port = self.settings().port;
+        if !port_has_listener(port) {
+            return Ok(());
+        }
+        reclaim_port_graceful(port).await.map_err(|why| {
+            format!(
+                "goose's engine on port {port} was not stopped: {why:#}; goose does not force it"
+            )
+        })
     }
 
     /// Where the running engine's logged errors stand now — taken as a chat request is sent to it
@@ -2752,7 +2901,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.11",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.14",
                 "rapid-mlx",
                 "serve",
                 "/opt/models/mlx-community/Qwen3.5-9B-MLX-4bit",
@@ -2761,8 +2910,6 @@ mod tests {
                 "--served-model-name",
                 "mlx-community/Qwen3.5-9B-MLX-4bit",
                 "--enable-prefix-cache",
-                "--cache-memory-percent",
-                "0.35",
                 "--hybrid-cache-entries",
                 "24",
                 "--max-concurrent-requests",
@@ -2782,6 +2929,47 @@ mod tests {
                 "--default-top-k",
                 "40",
             ]
+        );
+    }
+
+    /// A memory-guard engine sizes its own prefix cache from the device: goose passes it no
+    /// budget. An unguarded engine and one goose cannot place keep the share.
+    #[test]
+    fn a_guarded_engine_gets_no_prefix_cache_budget() {
+        let guarded = prefix_cache_flags(&Ok(EngineMemoryProfile::Guarded {
+            floor_chunk_tokens: engine_profile::GUARD_FLOOR_CHUNK_TOKENS,
+        }));
+        assert_eq!(
+            guarded,
+            vec![
+                "--enable-prefix-cache",
+                "--hybrid-cache-entries",
+                "24",
+                "--max-concurrent-requests",
+                "8",
+            ]
+        );
+        let with_share = [
+            "--enable-prefix-cache",
+            "--cache-memory-percent",
+            "0.35",
+            "--hybrid-cache-entries",
+            "24",
+            "--max-concurrent-requests",
+            "8",
+        ];
+        assert_eq!(
+            prefix_cache_flags(&Ok(engine_profile::UNDECLARED)),
+            with_share
+        );
+        assert_eq!(
+            prefix_cache_flags(&Err("an owner's own launcher".to_string())),
+            with_share
+        );
+        let own = vec!["python3".to_string(), "serve.py".to_string()];
+        assert_eq!(
+            prefix_cache_flags(&engine_profile::profile_of_launcher(&own)),
+            with_share
         );
     }
 
@@ -2934,7 +3122,7 @@ mod tests {
         .unwrap();
         assert_eq!(&argv[..base.len() - 1], &base[..base.len() - 1]);
         assert_eq!(
-            &argv[17..],
+            &argv[argv.len() - 3..],
             &[
                 "--speculative-config".to_string(),
                 expected_json,
@@ -3089,7 +3277,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.11",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.14",
                 "rapid-mlx",
                 "serve",
                 &model_path.to_string_lossy(),
@@ -3098,8 +3286,6 @@ mod tests {
                 "--served-model-name",
                 "pub/model",
                 "--enable-prefix-cache",
-                "--cache-memory-percent",
-                "0.35",
                 "--hybrid-cache-entries",
                 "24",
                 "--max-concurrent-requests",
@@ -4415,6 +4601,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
             5 * GIB,
         ));
         manager.set_settings(EngineSettings {
+            port: free_port(),
             models_dir: tmp.path().to_string_lossy().into_owned(),
             ..Default::default()
         });
@@ -4455,6 +4642,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
 
         let manager = test_manager();
         manager.set_settings(EngineSettings {
+            port: free_port(),
             models_dir: tmp.path().to_string_lossy().into_owned(),
             ..Default::default()
         });
@@ -4494,6 +4682,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         let tmp = tempfile::tempdir().unwrap();
         let manager = test_manager();
         manager.set_settings(EngineSettings {
+            port: free_port(),
             models_dir: tmp.path().to_string_lossy().into_owned(),
             ..Default::default()
         });
@@ -4812,6 +5001,7 @@ while True:
         complete_small_model(tmp.path(), "pub/small");
         let manager = test_manager();
         manager.set_settings(EngineSettings {
+            port: free_port(),
             models_dir: tmp.path().to_string_lossy().into_owned(),
             ..Default::default()
         });

@@ -68,6 +68,7 @@ const i18n = defineMessages({
   title: { id: 'nodes.newTitle', defaultMessage: 'New node' },
   editTitle: { id: 'nodes.newEditTitle', defaultMessage: 'Edit {name}' },
   close: { id: 'nodes.newClose', defaultMessage: 'Close' },
+  providerNotRunning: { id: 'nodes.newProviderNotRunning', defaultMessage: 'Not running' },
   stepKind: { id: 'nodes.newStepKind', defaultMessage: 'Kind' },
   stepModel: { id: 'nodes.newStepModel', defaultMessage: 'Model' },
   stepWay: { id: 'nodes.newStepWay', defaultMessage: 'Way' },
@@ -768,6 +769,11 @@ function NewNodeDialogBody({
             {p.connection_error && (
               <Chip tone="err" title={p.connection_error}>
                 {p.connection_error}
+              </Chip>
+            )}
+            {!p.connection_error && p.local_server_not_running && (
+              <Chip tone="stopped" title={p.local_server_not_running}>
+                {intl.formatMessage(i18n.providerNotRunning)}
               </Chip>
             )}
           </PickRow>

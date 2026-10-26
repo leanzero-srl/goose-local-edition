@@ -14,13 +14,30 @@ export interface MlxServingIntentRead {
   intent: MlxServingIntent | null;
   /** The record exists and could not be read — named, never "nothing to restore". */
   error: string | null;
+  /**
+   * The owner's switch `GOOSE_MLX_RESTORE_AT_LAUNCH` (Settings › App, default off): false = the
+   * launch brings nothing back and shows nothing; goose keeps recording starts either way.
+   */
+  restoreAtLaunch: boolean;
 }
 
-export async function mlxServingIntent(): Promise<MlxServingIntentRead> {
+/**
+ * `atLaunch`: the launch restore's own read — the only one that lets goose forget a record whose
+ * model folder is gone (with the switch on). Every other reader gets the record as it stands.
+ */
+export async function mlxServingIntent(
+  options: { atLaunch?: boolean } = {}
+): Promise<MlxServingIntentRead> {
   const client = await getAcpClient();
-  const response = (await client.extMethod('_goose/unstable/mlxEngine/servingIntent', {})) as {
+  const params = options.atLaunch ? { atLaunch: true } : {};
+  const response = (await client.extMethod('_goose/unstable/mlxEngine/servingIntent', params)) as {
     intent?: MlxServingIntent | null;
     error?: string | null;
+    restoreAtLaunch?: boolean;
   };
-  return { intent: response.intent ?? null, error: response.error ?? null };
+  return {
+    intent: response.intent ?? null,
+    error: response.error ?? null,
+    restoreAtLaunch: response.restoreAtLaunch === true,
+  };
 }

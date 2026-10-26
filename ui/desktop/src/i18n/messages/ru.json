@@ -848,6 +848,12 @@
   "cloudProviders.notOfficialText": {
     "defaultMessage": "Запросы идут на {where}, а не на api.openai.com."
   },
+  "cloudProviders.notRunning": {
+    "defaultMessage": "Не запущен"
+  },
+  "cloudProviders.notRunningText": {
+    "defaultMessage": "На {origin} пока ничего не запущено. Запустите локальный сервер, затем проверьте подключения снова."
+  },
   "cloudProviders.notSetUp": {
     "defaultMessage": "Не настроено"
   },
@@ -2621,6 +2627,177 @@
   "formingPanel.textHeading": {
     "defaultMessage": "Текст рядом с вызовами ({chars} симв.) — не входит в ответ"
   },
+  "freeMemory.after": {
+    "defaultMessage": "Было <b>{before} ГБ</b> свободно, сейчас <b>{after} ГБ</b> свободно (освобождено {freed} ГБ)."
+  },
+  "freeMemory.afterFits": {
+    "defaultMessage": "Теперь модель помещается."
+  },
+  "freeMemory.afterShort": {
+    "defaultMessage": "Всё ещё не хватает <b>{gb} ГБ</b>."
+  },
+  "freeMemory.altPeer": {
+    "defaultMessage": "Запустить на {mac} (там свободно <b>{gb} ГБ</b>)"
+  },
+  "freeMemory.altPeerNoFree": {
+    "defaultMessage": "Запустить на <b>{mac}</b>"
+  },
+  "freeMemory.altSmaller": {
+    "defaultMessage": "Помещается вариант поменьше: {model} (нужно <b>{gb} ГБ</b>)"
+  },
+  "freeMemory.budget": {
+    "defaultMessage": "<b>{free} ГБ</b> свободно для модели из {total} ГБ"
+  },
+  "freeMemory.cannotFit": {
+    "defaultMessage": "Даже если освободить всё, что здесь перечислено (<b>{gb} ГБ</b>), этой модели не хватит <b>{short} ГБ</b>."
+  },
+  "freeMemory.cat.aiServer": {
+    "defaultMessage": "Серверы моделей"
+  },
+  "freeMemory.cat.gooseEngine": {
+    "defaultMessage": "Движки goose"
+  },
+  "freeMemory.cat.gooseOrphan": {
+    "defaultMessage": "Остатки goose"
+  },
+  "freeMemory.cat.job": {
+    "defaultMessage": "Задания"
+  },
+  "freeMemory.cat.system": {
+    "defaultMessage": "macOS и прочее"
+  },
+  "freeMemory.cat.userApp": {
+    "defaultMessage": "Приложения"
+  },
+  "freeMemory.close": {
+    "defaultMessage": "Закрыть"
+  },
+  "freeMemory.fitsByGooseOwned": {
+    "defaultMessage": "Освобождения собственной памяти goose (<b>{gb} ГБ</b>) достаточно для этой модели."
+  },
+  "freeMemory.fitsWithApps": {
+    "defaultMessage": "Модель поместится после освобождения <b>{gb} ГБ</b>: собственной памяти goose и закрытия {apps}."
+  },
+  "freeMemory.fitsWithAppsOnly": {
+    "defaultMessage": "Модель поместится после закрытия {apps}, это освободит <b>{gb} ГБ</b>."
+  },
+  "freeMemory.forceStop": {
+    "defaultMessage": "Завершить принудительно"
+  },
+  "freeMemory.forceStopBody": {
+    "defaultMessage": "{app} не закрылось по запросу, возможно, из-за несохранённой работы. Принудительное завершение закрывает его на {mac} без сохранения. Несохранённая работа в {app} будет потеряна."
+  },
+  "freeMemory.forceStopConfirm": {
+    "defaultMessage": "Принудительно завершить {app}"
+  },
+  "freeMemory.forceStopTitle": {
+    "defaultMessage": "Принудительно завершить {app}?"
+  },
+  "freeMemory.freeFailed": {
+    "defaultMessage": "Не удалось освободить память: {reason}"
+  },
+  "freeMemory.freeOwn": {
+    "defaultMessage": "Освободить память goose ({gb} ГБ)"
+  },
+  "freeMemory.itemFailed": {
+    "defaultMessage": "{label}: {message}"
+  },
+  "freeMemory.keep": {
+    "defaultMessage": "Оставить открытым"
+  },
+  "freeMemory.keepRunning": {
+    "defaultMessage": "Оставить работать"
+  },
+  "freeMemory.leftAlone": {
+    "defaultMessage": "Не трогаем"
+  },
+  "freeMemory.loading": {
+    "defaultMessage": "Измеряем, что занимает память…"
+  },
+  "freeMemory.neverTouchReason": {
+    "defaultMessage": "в списке «не трогать» ({entry})"
+  },
+  "freeMemory.nothingOwn": {
+    "defaultMessage": "goose не занимает память, которую мог бы освободить"
+  },
+  "freeMemory.nuclearBack": {
+    "defaultMessage": "Назад"
+  },
+  "freeMemory.nuclearConfirmBody": {
+    "defaultMessage": "goose просит каждое отмеченное приложение закрыться и выгружает каждый отмеченный сервер моделей. Приложения только просят закрыться. Приложение, которое не закрылось, остаётся запущенным, и об этом сообщается; его не останавливают. Защищённое никогда не трогается."
+  },
+  "freeMemory.nuclearConfirmKeep": {
+    "defaultMessage": "Оставить всё"
+  },
+  "freeMemory.nuclearConfirmTitle": {
+    "defaultMessage": "Освободить {gb} ГБ на {mac}?"
+  },
+  "freeMemory.nuclearFree": {
+    "defaultMessage": "Освободить {gb} ГБ"
+  },
+  "freeMemory.nuclearGooseOwn": {
+    "defaultMessage": "Собственная память goose"
+  },
+  "freeMemory.nuclearIntro": {
+    "defaultMessage": "Всё, чем никто не пользуется, отмечено. Снимите отметку с того, что хотите оставить. Защищённое никогда не трогается."
+  },
+  "freeMemory.nuclearOpen": {
+    "defaultMessage": "Освободить всё, кроме защищённого"
+  },
+  "freeMemory.nuclearProtectedHead": {
+    "defaultMessage": "Никогда не трогается"
+  },
+  "freeMemory.nuclearTotal": {
+    "defaultMessage": "Отмечено: <b>{gb} ГБ</b>"
+  },
+  "freeMemory.protectedChip": {
+    "defaultMessage": "Защищено"
+  },
+  "freeMemory.quit": {
+    "defaultMessage": "Завершить"
+  },
+  "freeMemory.quitBody": {
+    "defaultMessage": "goose попросит {app} на {mac} завершиться обычным способом. Сначала сохраните там свою работу: несохранённое может пропасть."
+  },
+  "freeMemory.quitConfirm": {
+    "defaultMessage": "Завершить {app}"
+  },
+  "freeMemory.quitTitle": {
+    "defaultMessage": "Завершить {app}?"
+  },
+  "freeMemory.readFailed": {
+    "defaultMessage": "Не удалось измерить память: {reason}"
+  },
+  "freeMemory.remoteQuitOff": {
+    "defaultMessage": "{mac} не разрешает другим Mac завершать свои приложения и выгружать серверы моделей, поэтому отсюда можно освободить только память самого goose. Чтобы разрешить, откройте goose на {mac}, перейдите в Настройки › Приложение и включите «Разрешить связанным Mac завершать приложения на этом Mac». Или завершите их прямо на {mac}."
+  },
+  "freeMemory.onlyThere": {
+    "defaultMessage": "Только на {mac}"
+  },
+  "freeMemory.title": {
+    "defaultMessage": "Освободить память на {mac}"
+  },
+  "freeMemory.unload": {
+    "defaultMessage": "Выгрузить"
+  },
+  "freeMemory.unloadBody": {
+    "defaultMessage": "goose выгружает модели, которые {server} держит на {mac} (движок MLX просят остановиться). Тем, кто им пользуется, придётся загрузить их заново."
+  },
+  "freeMemory.unloadConfirm": {
+    "defaultMessage": "Выгрузить {server}"
+  },
+  "freeMemory.unloadInUse": {
+    "defaultMessage": "Сейчас используется, это остановит их работу:"
+  },
+  "freeMemory.unloadTitle": {
+    "defaultMessage": "Выгрузить {server}?"
+  },
+  "freeMemory.usedBy": {
+    "defaultMessage": "Используется: {who}"
+  },
+  "freeMemoryEntry.open": {
+    "defaultMessage": "Освободить память"
+  },
   "gooseImportSection.chooseSource": {
     "defaultMessage": "Выбрать исходную папку"
   },
@@ -4022,6 +4199,144 @@
   "loops.tick.yielded": {
     "defaultMessage": "Уступила ход вам в «{chat}»"
   },
+  "macLoad.allowJobs": {
+    "defaultMessage": "Выполнять задания от других Mac"
+  },
+  "macLoad.allowJobsHint": {
+    "defaultMessage": "Команды оболочки и промпты, столько тяжёлых заданий, сколько позволяют слоты и память этого Mac, останавливаются при выходе за порог памяти. Действует сразу."
+  },
+  "macLoad.benchmark": {
+    "defaultMessage": "Идёт бенчмарк: {why}"
+  },
+  "macLoad.cancelBody": {
+    "defaultMessage": "Это остановит задание на {mac} и все запущенные им процессы. То, что оно уже записало, останется в его журнале."
+  },
+  "macLoad.cancelJob": {
+    "defaultMessage": "Отменить задание"
+  },
+  "macLoad.cancelQueuedBody": {
+    "defaultMessage": "Задание будет убрано из очереди на {mac}. Оно не запустится."
+  },
+  "macLoad.cancelTitle": {
+    "defaultMessage": "Отменить задание {id}?"
+  },
+  "macLoad.close": {
+    "defaultMessage": "Закрыть"
+  },
+  "macLoad.dialogTitle": {
+    "defaultMessage": "Задание {id}"
+  },
+  "macLoad.ended": {
+    "defaultMessage": "Завершено"
+  },
+  "macLoad.exit": {
+    "defaultMessage": "Код выхода"
+  },
+  "macLoad.idleS": {
+    "defaultMessage": "Считать простоем через (секунд)"
+  },
+  "macLoad.inference": {
+    "defaultMessage": "ИИ-инференс"
+  },
+  "macLoad.inferenceLine": {
+    "defaultMessage": "{engine,plural,one{{slots,plural,one{{engine, number} запрос к движку · # слот роутера} few{{engine, number} запрос к движку · # слота роутера} many{{engine, number} запрос к движку · # слотов роутера} other{{engine, number} запрос к движку · # слота роутера}}} few{{slots,plural,one{{engine, number} запроса к движку · # слот роутера} few{{engine, number} запроса к движку · # слота роутера} many{{engine, number} запроса к движку · # слотов роутера} other{{engine, number} запроса к движку · # слота роутера}}} many{{slots,plural,one{{engine, number} запросов к движку · # слот роутера} few{{engine, number} запросов к движку · # слота роутера} many{{engine, number} запросов к движку · # слотов роутера} other{{engine, number} запросов к движку · # слота роутера}}} other{{slots,plural,one{{engine, number} запроса к движку · # слот роутера} few{{engine, number} запроса к движку · # слота роутера} many{{engine, number} запроса к движку · # слотов роутера} other{{engine, number} запроса к движку · # слота роутера}}}}"
+  },
+  "macLoad.jobFrom": {
+    "defaultMessage": "{kind} от {origin}"
+  },
+  "macLoad.jobs": {
+    "defaultMessage": "Задания"
+  },
+  "macLoad.jobsLine": {
+    "defaultMessage": "{live,plural,=0{Заданий не выполняется} one{# задание выполняется} few{# задания выполняются} many{# заданий выполняется} other{# задания выполняется}}"
+  },
+  "macLoad.jobsWaiting": {
+    "defaultMessage": "{waiting, plural, one {# задание ждёт Mac со свободным местом} few {# задания ждут Mac со свободным местом} many {# заданий ждут Mac со свободным местом} other {# задания ждут Mac со свободным местом}}"
+  },
+  "macLoad.keepRunning": {
+    "defaultMessage": "Оставить"
+  },
+  "macLoad.keepWaiting": {
+    "defaultMessage": "Ждать дальше"
+  },
+  "macLoad.kind": {
+    "defaultMessage": "Тип"
+  },
+  "macLoad.log": {
+    "defaultMessage": "Журнал"
+  },
+  "macLoad.logEmpty": {
+    "defaultMessage": "Пока ничего не записано."
+  },
+  "macLoad.minFree": {
+    "defaultMessage": "Порог памяти (% свободно)"
+  },
+  "macLoad.noLoad": {
+    "defaultMessage": "Его goose пока не сообщает нагрузку (старая сборка)."
+  },
+  "macLoad.origin": {
+    "defaultMessage": "Отправлено с"
+  },
+  "macLoad.own": {
+    "defaultMessage": "Собственная нагрузка"
+  },
+  "macLoad.ownLine": {
+    "defaultMessage": "{user} · cpu {cpu} · память {mem} занята · gpu {gpu}"
+  },
+  "macLoad.placedOn": {
+    "defaultMessage": "Запущено на"
+  },
+  "macLoad.placedOnValue": {
+    "defaultMessage": "{mac} как {id}"
+  },
+  "macLoad.policy": {
+    "defaultMessage": "Пока кто-то работает за этим Mac"
+  },
+  "macLoad.policyHint": {
+    "defaultMessage": "Занятость измеряется: память выше порога, свободные слоты для тяжёлых задач, нагрузка на ядро. Человек за клавиатурой учитывается только при равенстве."
+  },
+  "macLoad.policy.allow": {
+    "defaultMessage": "Принимать задания"
+  },
+  "macLoad.policy.refuse": {
+    "defaultMessage": "Отклонять задания"
+  },
+  "macLoad.queueNoTry": {
+    "defaultMessage": "Ещё не предлагалось ни одному Mac: впереди ждёт другое задание."
+  },
+  "macLoad.queueRefusals": {
+    "defaultMessage": "Почему каждый Mac отказал"
+  },
+  "macLoad.reason": {
+    "defaultMessage": "Причина"
+  },
+  "macLoad.reconnectHint": {
+    "defaultMessage": "Политика и порог памяти применятся после переподключения Link."
+  },
+  "macLoad.refusalLine": {
+    "defaultMessage": "{mac}: {reason}"
+  },
+  "macLoad.saveFailed": {
+    "defaultMessage": "Не сохранено: {reason}"
+  },
+  "macLoad.settingsTitle": {
+    "defaultMessage": "Задания от других Mac"
+  },
+  "macLoad.started": {
+    "defaultMessage": "Запущено"
+  },
+  "macLoad.state": {
+    "defaultMessage": "Состояние"
+  },
+  "macLoad.title": {
+    "defaultMessage": "Нагрузка"
+  },
+  "macLoad.userActive": {
+    "defaultMessage": "Кто-то за ним работает"
+  },
+  "macLoad.userIdle": {
+    "defaultMessage": "Простой {idle}"
+  },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "Не удалось отменить."
   },
@@ -4213,6 +4528,66 @@
   },
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Воспроизведение в режиме «картинка в картинке»"
+  },
+  "memfreeSettings.description": {
+    "defaultMessage": "Когда локальная модель не помещается, goose показывает, что занимает память, и может освободить свою долю."
+  },
+  "memfreeSettings.enabled": {
+    "defaultMessage": "Предлагать «Освободить память»"
+  },
+  "memfreeSettings.enabledDesc": {
+    "defaultMessage": "Показывает кнопку у модели, которой не хватает памяти, и у полос памяти каждого Mac. Включено по умолчанию."
+  },
+  "memfreeSettings.minMb": {
+    "defaultMessage": "Самое маленькое приложение в списке (МБ)"
+  },
+  "memfreeSettings.minMbDesc": {
+    "defaultMessage": "Приложения, использующие меньше памяти, не попадают в список. По умолчанию {mb} МБ."
+  },
+  "memfreeSettings.neverTouch": {
+    "defaultMessage": "Никогда не трогать"
+  },
+  "memfreeSettings.neverTouchAdd": {
+    "defaultMessage": "Добавить"
+  },
+  "memfreeSettings.neverTouchAdded": {
+    "defaultMessage": "Добавлено вами"
+  },
+  "memfreeSettings.neverTouchBuiltIn": {
+    "defaultMessage": "Встроенные"
+  },
+  "memfreeSettings.neverTouchDesc": {
+    "defaultMessage": "Приложения и процессы, которые никакая очистка не завершит и не остановит, на этом Mac и когда этот Mac освобождает память на другом. Bundle id, имя приложения или процесса; регистр не важен. Встроенные действуют всегда."
+  },
+  "memfreeSettings.neverTouchMatches": {
+    "defaultMessage": "совпадает с {app}"
+  },
+  "memfreeSettings.neverTouchMatchesNothing": {
+    "defaultMessage": "не совпадает ни с одним запущенным или установленным приложением, поэтому сейчас ничего не защищает"
+  },
+  "memfreeSettings.neverTouchNone": {
+    "defaultMessage": "Пока ничего не добавлено"
+  },
+  "memfreeSettings.neverTouchPlaceholder": {
+    "defaultMessage": "com.example.App или имя приложения"
+  },
+  "memfreeSettings.neverTouchRemove": {
+    "defaultMessage": "Удалить {name}"
+  },
+  "memfreeSettings.readFailed": {
+    "defaultMessage": "Не удалось прочитать эти настройки: {reason}"
+  },
+  "memfreeSettings.remoteQuit": {
+    "defaultMessage": "Разрешить связанным Mac завершать приложения на этом Mac"
+  },
+  "memfreeSettings.remoteQuitDesc": {
+    "defaultMessage": "Другой Mac в LeanZero Link может попросить этот Mac завершить приложение, всегда после подтверждения здесь. Выключено по умолчанию: собственную память goose здесь они всё равно могут освободить."
+  },
+  "memfreeSettings.saveFailed": {
+    "defaultMessage": "Не удалось сохранить эту настройку: {reason}"
+  },
+  "memfreeSettings.title": {
+    "defaultMessage": "Освободить память"
   },
   "memoryProposal.cut": {
     "defaultMessage": "Обрезано на {max} символах при сохранении предложения, поэтому сохранить его так нельзя. Запросите полный текст снова."
@@ -5525,6 +5900,24 @@
   "mlxRestore.waitingPrevious": {
     "defaultMessage": "Предыдущее разделение ещё завершается на {node} — goose восстановит его, когда это закончится"
   },
+  "mlxRestoreSettings.description": {
+    "defaultMessage": "Возвращать ли при открытии goose локальную модель, которая работала раньше. По умолчанию выключено."
+  },
+  "mlxRestoreSettings.readFailed": {
+    "defaultMessage": "Не удалось прочитать эту настройку: {reason}"
+  },
+  "mlxRestoreSettings.restore": {
+    "defaultMessage": "Восстанавливать локальную модель при запуске"
+  },
+  "mlxRestoreSettings.restoreDesc": {
+    "defaultMessage": "При запуске goose возвращает модель, которую вы запустили последней и не остановили: на этом Mac, на другом Mac через LeanZero Link или разделённую между несколькими Mac. Выключено: goose сам не запускает модели; запустите нужную в Providers, когда она понадобится."
+  },
+  "mlxRestoreSettings.saveFailed": {
+    "defaultMessage": "Не удалось сохранить эту настройку: {reason}"
+  },
+  "mlxRestoreSettings.title": {
+    "defaultMessage": "Локальная модель при запуске"
+  },
   "mlxSetup.aria": {
     "defaultMessage": "Настройка LeanZero MLX"
   },
@@ -6477,7 +6870,7 @@
     "defaultMessage": "Разрешить другим моим Mac использовать этот Mac"
   },
   "myMacs.masterHint": {
-    "defaultMessage": "Только Mac, вошедшие в ваш аккаунт LeanZero Link. Каждый переключатель разрешает лишь собственные операции goose — никогда произвольную команду."
+    "defaultMessage": "Только Mac, вошедшие в вашу учётную запись LeanZero Link. Эти переключатели касаются собственных операций goose: моделей, чата и сеансов с промптом, которые ваши другие Mac запускают здесь. Для shell-команд и заданий с промптом есть отдельный переключатель «Выполнять задания от других Mac», он выключен, пока вы его не включите."
   },
   "myMacs.memory": {
     "defaultMessage": "Память"
@@ -6728,6 +7121,9 @@
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "Модель не смонтирована"
   },
+  "nodeCard.memfreeThisMac": {
+    "defaultMessage": "этот Mac"
+  },
   "nodeModelCell.chatFollows": {
     "defaultMessage": "Чат следует за вашим запуском: {model}"
   },
@@ -6941,6 +7337,9 @@
   "nodes.loadsUnread": {
     "defaultMessage": "Не удалось прочитать время загрузки: {error}"
   },
+  "nodes.localServerNotRunning": {
+    "defaultMessage": "На {origin} пока ничего не запущено; запустите локальный сервер"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "Управлять облачными провайдерами"
   },
@@ -7090,6 +7489,9 @@
   },
   "nodes.newProviderModels": {
     "defaultMessage": "Модель"
+  },
+  "nodes.newProviderNotRunning": {
+    "defaultMessage": "Не запущен"
   },
   "nodes.newProvidersFailed": {
     "defaultMessage": "Не удалось прочитать ваших провайдеров: {error}"
@@ -8500,6 +8902,12 @@
   },
   "providerCard.noMetadata": {
     "defaultMessage": "Ошибка ProviderCard: метаданные не предоставлены"
+  },
+  "providerCard.notRunning": {
+    "defaultMessage": "Не запущен"
+  },
+  "providerCard.notRunningText": {
+    "defaultMessage": "На {origin} пока ничего не запущено. Запустите локальный сервер, затем проверьте подключения снова."
   },
   "providerCard.unknownProvider": {
     "defaultMessage": "Неизвестный провайдер"
@@ -11603,6 +12011,9 @@
   "forgeSeries.publish": {
     "defaultMessage": "Опубликовать 2 сборки"
   },
+  "forgeSeries.publishSeparately": {
+    "defaultMessage": "Опубликовать сборки по отдельности"
+  },
   "forgeSeries.publishTitle": {
     "defaultMessage": "Заголовок публикации"
   },
@@ -11644,5 +12055,98 @@
   },
   "modelCustomFields.noFields": {
     "defaultMessage": "Пользовательские поля: {provider} не объявляет полей для «{model}», поэтому модель работает со значениями провайдера по умолчанию."
+  },
+  "macLoad.stateCancelling": {
+    "defaultMessage": "Отмена…"
+  },
+  "macLoad.stateWaiting": {
+    "defaultMessage": "Ожидает, №{position} в очереди"
+  },
+  "macLoad.strategy": {
+    "defaultMessage": "Где запускать мои задания"
+  },
+  "macLoad.strategy.localFirst": {
+    "defaultMessage": "Сначала мой Mac"
+  },
+  "macLoad.strategy.selfish": {
+    "defaultMessage": "Сначала другие Mac"
+  },
+  "macLoad.strategyHint.localFirst": {
+    "defaultMessage": "Запускается на этом Mac, если есть место, иначе на другом Mac с наибольшим запасом, иначе ждёт в очереди."
+  },
+  "macLoad.strategyHint.selfish": {
+    "defaultMessage": "Запускается на другом Mac с наибольшим запасом, иначе на этом Mac, иначе ждёт в очереди. Этот Mac остаётся свободным."
+  },
+  "myMacs.runJob": {
+    "defaultMessage": "Запустить задание…"
+  },
+  "runJob.title": {
+    "defaultMessage": "Запустить задание на…"
+  },
+  "runJob.willQueue": {
+    "defaultMessage": "Сейчас ни на одном Mac нет места. Если запустить, задание подождёт в очереди на этом Mac и начнётся на первом Mac, где появится место."
+  },
+  "runJob.target": {
+    "defaultMessage": "Где запустить"
+  },
+  "runJob.best": {
+    "defaultMessage": "Лучший Mac"
+  },
+  "runJob.ranking": {
+    "defaultMessage": "Лучшие сейчас: {macs}"
+  },
+  "runJob.refusal": {
+    "defaultMessage": "{mac}: {reason}"
+  },
+  "runJob.verdictLine": {
+    "defaultMessage": "{mac}: {verdict}"
+  },
+  "runJob.inUse": {
+    "defaultMessage": "{name} (используется)"
+  },
+  "runJob.noPlace": {
+    "defaultMessage": "Сейчас ни один Mac не может принять это задание."
+  },
+  "runJob.none": {
+    "defaultMessage": "Сейчас ни один ваш Mac не принимает задания. Включите «Выполнять задания от других Mac» на том Mac, который должен их выполнять."
+  },
+  "runJob.jobsOff": {
+    "defaultMessage": "задания на этом Mac выключены"
+  },
+  "runJob.kind": {
+    "defaultMessage": "Тип"
+  },
+  "runJob.kindShell": {
+    "defaultMessage": "Shell-команда"
+  },
+  "runJob.kindPrompt": {
+    "defaultMessage": "Промпт"
+  },
+  "runJob.command": {
+    "defaultMessage": "{kind, select, shell {Команда} other {Промпт}}"
+  },
+  "runJob.heavy": {
+    "defaultMessage": "Тяжёлое задание"
+  },
+  "runJob.heavyHint": {
+    "defaultMessage": "Mac выполняет столько тяжёлых заданий (сборки, рендеры, обучение), сколько позволяют его слоты и память."
+  },
+  "runJob.mem": {
+    "defaultMessage": "Нужная память (ГБ, необязательно)"
+  },
+  "runJob.timeout": {
+    "defaultMessage": "Ограничение времени (секунды, необязательно)"
+  },
+  "runJob.submit": {
+    "defaultMessage": "Запустить задание"
+  },
+  "runJob.close": {
+    "defaultMessage": "Закрыть"
+  },
+  "runJob.refused": {
+    "defaultMessage": "Не отправлено: {reason}"
+  },
+  "myMacs.updatedAgo": {
+    "defaultMessage": "обновлено {seconds} с назад"
   }
 }

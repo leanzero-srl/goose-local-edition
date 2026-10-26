@@ -58,7 +58,7 @@ vi.mock('../../acp/config', () => ({
   acpReadConfig: async () => ({ devices }),
 }));
 vi.mock('../../acp/mlx-serving-intent', () => ({
-  mlxServingIntent: async () => ({ intent: null, error: null }),
+  mlxServingIntent: async () => ({ intent: null, error: null, restoreAtLaunch: false }),
 }));
 vi.mock('../ModelAndProviderContext', () => ({
   useModelAndProvider: () => ({

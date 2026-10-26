@@ -29,6 +29,7 @@ vi.mock('../../swarm/useFleet', () => ({
 }));
 vi.mock('./UpdateSection', () => ({ default: () => null }));
 vi.mock('./TelemetrySettings', () => ({ default: () => null }));
+vi.mock('./MlxRestoreSettings', () => ({ MlxRestoreSettings: () => null }));
 vi.mock('../../GooseSidebar/ThemeSelector', () => ({ default: () => null }));
 vi.mock('../../GooseSidebar/EditionSelector', () => ({
   default: () => <div data-testid="edition-selector" />,

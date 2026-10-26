@@ -285,6 +285,20 @@ pub fn get_tool_owner(tool: &Tool) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+/// The offered tool a model's call names when its emitted name is only a mangled spelling of one
+/// (`functions.shell`, `developer.shell` for `developer__shell`), or None when the name is offered
+/// as typed or names no single tool. Applied where a response's tool requests are categorized,
+/// BEFORE the permission inspection: the inspector keys on the request's name, so a mangled name
+/// resolved only at dispatch got its own cached verdict and skipped the rules set on the real tool.
+/// Never a match by the call's arguments (`tool_similarity::argument_shape_match` only names a
+/// candidate in the not-found message).
+pub(crate) fn canonical_tool_name(tools: &[Tool], emitted: &str) -> Option<String> {
+    if tools.iter().any(|t| t.name == emitted) {
+        return None;
+    }
+    recover_mangled_tool_name(emitted, tools.iter().map(|t| t.name.as_ref()))
+}
+
 fn recover_mangled_tool_name<'a>(
     emitted: &str,
     tool_names: impl Iterator<Item = &'a str>,
@@ -2449,6 +2463,162 @@ mod tests {
             .iter()
             .any(|name| name == "test_extension__hidden_tool"));
         assert!(tool_names.len() == 3);
+    }
+
+    struct ShapedClient {}
+
+    #[async_trait::async_trait]
+    impl McpClientTrait for ShapedClient {
+        fn get_info(&self) -> Option<&InitializeResult> {
+            None
+        }
+
+        async fn list_resources(
+            &self,
+            _session_id: &str,
+            _next_cursor: Option<String>,
+            _cancellation_token: CancellationToken,
+        ) -> Result<ListResourcesResult, Error> {
+            Err(Error::TransportClosed)
+        }
+
+        async fn read_resource(
+            &self,
+            _session_id: &str,
+            _uri: &str,
+            _cancellation_token: CancellationToken,
+        ) -> Result<ReadResourceResult, Error> {
+            Err(Error::TransportClosed)
+        }
+
+        async fn list_tools(
+            &self,
+            _session_id: &str,
+            _next_cursor: Option<String>,
+            _cancellation_token: CancellationToken,
+        ) -> Result<ListToolsResult, Error> {
+            use serde_json::json;
+            let tool = |name: &str, props: serde_json::Value, required: serde_json::Value| {
+                Tool::new(
+                    name.to_string(),
+                    format!("{name} tool"),
+                    Arc::new(
+                        json!({"type": "object", "properties": props, "required": required})
+                            .as_object()
+                            .unwrap()
+                            .clone(),
+                    ),
+                )
+            };
+            Ok(ListToolsResult {
+                tools: vec![
+                    tool(
+                        "shell",
+                        json!({"command": {"type": "string"}, "timeout_secs": {"type": "integer"}}),
+                        json!(["command"]),
+                    ),
+                    tool(
+                        "write",
+                        json!({"path": {"type": "string"}, "content": {"type": "string"}}),
+                        json!(["path", "content"]),
+                    ),
+                    tool("tree", json!({"path": {"type": "string"}}), json!(["path"])),
+                ],
+                next_cursor: None,
+                meta: None,
+            })
+        }
+
+        async fn call_tool(
+            &self,
+            _ctx: &ToolCallContext,
+            _name: &str,
+            _arguments: Option<JsonObject>,
+            _cancellation_token: CancellationToken,
+        ) -> Result<CallToolResult, Error> {
+            Ok(CallToolResult::success(vec![]))
+        }
+
+        async fn list_prompts(
+            &self,
+            _session_id: &str,
+            _next_cursor: Option<String>,
+            _cancellation_token: CancellationToken,
+        ) -> Result<ListPromptsResult, Error> {
+            Err(Error::TransportClosed)
+        }
+
+        async fn get_prompt(
+            &self,
+            _session_id: &str,
+            _name: &str,
+            _arguments: Value,
+            _cancellation_token: CancellationToken,
+        ) -> Result<GetPromptResult, Error> {
+            Err(Error::TransportClosed)
+        }
+
+        async fn subscribe(&self) -> mpsc::Receiver<ServerNotification> {
+            mpsc::channel(1).1
+        }
+    }
+
+    /// I-10 review: dispatch resolves AFTER the permission inspection, which keys on the name the
+    /// model typed, so a call to a missing name is never run as another tool by its arguments:
+    /// `bash` {command} would skip the rules set on `shell`, `append_file` {path, content} would
+    /// overwrite as `write`. Both are refused; the shell-shaped one names `shell`.
+    #[tokio::test]
+    async fn a_call_shaped_like_an_offered_tool_is_refused_naming_it_never_run_as_it() {
+        use super::super::tool_execution::ToolCallContext;
+        use rmcp::object;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let extension_manager =
+            ExtensionManager::new_without_provider(temp_dir.path().to_path_buf());
+        extension_manager
+            .add_mock_extension("dev".to_string(), Arc::new(ShapedClient {}))
+            .await;
+        let ctx = ToolCallContext::new("test-session-id".to_string(), None, None);
+        for (name, args, names_shell) in [
+            ("bash", object!({"command": "rm -rf build"}), true),
+            (
+                "append_file",
+                object!({"path": "notes.md", "content": "x"}),
+                false,
+            ),
+        ] {
+            let call = CallToolRequestParams::new(name).with_arguments(args);
+            let result = extension_manager
+                .dispatch_tool_call(&ctx, call, CancellationToken::default())
+                .await;
+            let err = match result {
+                Ok(_) => panic!("{name} was run as another tool"),
+                Err(err) => err.to_string(),
+            };
+            assert!(err.contains("not found"), "{name}: {err}");
+            assert_eq!(err.contains("- dev__shell"), names_shell, "{name}: {err}");
+        }
+    }
+
+    #[test]
+    fn a_mangled_name_is_canonical_and_an_offered_or_unknown_name_is_left_alone() {
+        use serde_json::json;
+        let schema = Arc::new(json!({"type": "object"}).as_object().unwrap().clone());
+        let tools = vec![
+            Tool::new("shell".to_string(), "shell".to_string(), schema.clone()),
+            Tool::new("dev__write".to_string(), "write".to_string(), schema),
+        ];
+        assert_eq!(
+            canonical_tool_name(&tools, "functions.shell").as_deref(),
+            Some("shell")
+        );
+        assert_eq!(
+            canonical_tool_name(&tools, "dev.write").as_deref(),
+            Some("dev__write")
+        );
+        assert_eq!(canonical_tool_name(&tools, "shell"), None);
+        assert_eq!(canonical_tool_name(&tools, "bash"), None);
+        assert_eq!(canonical_tool_name(&tools, "append_file"), None);
     }
 
     #[tokio::test]

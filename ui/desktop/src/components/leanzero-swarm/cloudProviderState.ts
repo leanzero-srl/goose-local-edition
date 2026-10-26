@@ -11,6 +11,9 @@ import {
  * failed (a stale key answering 401) sat under CONFIGURED while the header said "0 of 14 configured".
  *
  * - `failed`: the last connection check returned an error — shown verbatim on the row.
+ * - `not-running`: the endpoint is on this Mac's loopback and nothing listened there — a local
+ *   server that is not started (goose's MLX engine is up only while a model is loaded). Not a
+ *   failure and not proof: the row says where, and Recheck proves it once the server runs.
  * - `connected`: the check ran this session and passed (a model ran with the saved settings).
  * - `unchecked`: settings are saved but no check has run since the app started.
  * - `not-set-up`: nothing saved. Never an OpenAI-compatible endpoint: its row exists only because
@@ -18,7 +21,7 @@ import {
  *
  * Every state but `not-set-up` renders under CONFIGURED and counts as configured.
  */
-export type ProviderRowState = 'failed' | 'connected' | 'unchecked' | 'not-set-up';
+export type ProviderRowState = 'failed' | 'not-running' | 'connected' | 'unchecked' | 'not-set-up';
 
 type RowFacts = Pick<
   ProviderDetails,
@@ -28,10 +31,12 @@ type RowFacts = Pick<
   | 'credentials_saved'
   | 'connection_checked'
   | 'connection_error'
+  | 'local_server_not_running'
 >;
 
 export function providerRowState(provider: RowFacts): ProviderRowState {
   if (provider.connection_error) return 'failed';
+  if (provider.local_server_not_running) return 'not-running';
   if (provider.connection_checked) return 'connected';
   if (provider.is_configured || provider.credentials_saved || isUserEndpoint(provider)) {
     return 'unchecked';

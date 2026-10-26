@@ -2590,6 +2590,13 @@
             "null"
           ]
         },
+        "localServerNotRunning": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The origin (`http://127.0.0.1:8090`) of a loopback endpoint the last check found nothing\nlistening at: a local server that is not started. Not a failure — `connection_error` stays\nempty — and not proof of the settings either."
+        },
         "testModel": {
           "type": [
             "string",
@@ -8714,6 +8721,468 @@
       "x-side": "agent",
       "x-method": "_goose/unstable/mlxEngine/stopOtherEngine"
     },
+    "MlxEngineMemoryHoldersRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "nodeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Mesh target; absent/self → local."
+        },
+        "fitModelId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "neverTouch": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The caller's never-touch list; the answering Mac unions it with its own\n(`GOOSE_MEMFREE_NEVER_TOUCH` + the defaults) for `nuclearDefault`.",
+          "default": []
+        }
+      },
+      "description": "Who holds memory on this Mac, and — for `fitModelId` — what freeing it would buy.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/memoryHolders"
+    },
+    "MlxEngineMemoryHoldersResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "availableBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "budgetBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "totalBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxMountFitDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxMemoryGroupDto"
+          }
+        },
+        "gooseOwnedBytes": {
+          "type": "integer",
+          "description": "What the soft clean (`gooseOwned`) reclaims that the fit does NOT already credit: proven\nleft-over goose servers, plus this goose's own idle engine when there is no fit (the fit\nalready counts it as available). Never another engine, model server or app.",
+          "minimum": 0
+        },
+        "serversBytes": {
+          "type": "integer",
+          "default": 0,
+          "minimum": 0,
+          "description": "What unloading the unprotected model servers (loaded models) and stopping the other MLX\nengines would free: each needs the person's confirmation (`unloadServers`)."
+        },
+        "appsBytes": {
+          "type": "integer",
+          "description": "Quittable user apps at or above `GOOSE_MEMFREE_SHOW_APPS_MIN_MB`.",
+          "minimum": 0
+        },
+        "shortBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "verdict": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxMemoryVerdictDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "alternatives": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxMemoryAlternativeDto"
+          }
+        },
+        "quitAppsAllowed": {
+          "type": "boolean"
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "`GOOSE_MEMFREE_ENABLED`; when false the groups are empty."
+        }
+      },
+      "required": [
+        "availableBytes",
+        "budgetBytes",
+        "totalBytes",
+        "groups",
+        "gooseOwnedBytes",
+        "appsBytes",
+        "alternatives",
+        "quitAppsAllowed",
+        "enabled"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/memoryHolders"
+    },
+    "MlxMemoryGroupDto": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Stable id a `memoryFree` call names: `gooseEngine`, `mlx:<pid>`, `app:<bundleId>`, …."
+        },
+        "label": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string",
+          "description": "\"gooseEngine\" | \"gooseOrphan\" | \"aiServer\" | \"userApp\" | \"system\" | \"job\"."
+        },
+        "bytes": {
+          "type": "integer",
+          "description": "Physical footprint (`ri_phys_footprint`) summed over the group's processes.",
+          "minimum": 0
+        },
+        "pids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxMemoryPidDto"
+          }
+        },
+        "bundleId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "quittable": {
+          "type": "boolean",
+          "description": "A user app goose may ASK to quit (Apple Event, graceful; the app can refuse)."
+        },
+        "reclaimableByGoose": {
+          "type": "boolean",
+          "description": "goose can give these bytes back itself (its own idle engine, another MLX engine, …)."
+        },
+        "why": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Why it is protected or not reclaimable now (busy engine, system process, …)."
+        },
+        "protectedWhy": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Set when nothing may free it (a launchd job, an MCP server, a terminal session, a\nheavy-run job, …): never quittable, never unloaded, never ticked."
+        },
+        "usedBy": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Who uses it: TCP clients of a server's port, the process that started it, its launchd job.",
+          "default": []
+        },
+        "launchdLabel": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The launchd job that owns any of its processes."
+        },
+        "nuclearDefault": {
+          "type": "boolean",
+          "description": "Ticked by default in \"free everything except protected\" (never for protected or\nnever-touch groups).",
+          "default": false
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "category",
+        "bytes",
+        "pids",
+        "quittable",
+        "reclaimableByGoose"
+      ],
+      "description": "One memory holder on a Mac, grouped (an app's helpers fold into its outermost `.app`)."
+    },
+    "MlxMemoryPidDto": {
+      "type": "object",
+      "properties": {
+        "pid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "startedAt": {
+          "type": "integer",
+          "description": "Unix seconds.",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "pid",
+        "startedAt"
+      ],
+      "description": "One process (identity a free must name back): pid + start time, so a reused pid is never hit."
+    },
+    "MlxMemoryVerdictDto": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "\"fitsByGooseOwned\" | \"fitsWithApps\" | \"cannotFit\"."
+        },
+        "remainingBytes": {
+          "type": "integer",
+          "description": "cannotFit only: `shortBytes − gooseOwnedBytes − appsBytes`; 0 otherwise.",
+          "minimum": 0
+        },
+        "appsToQuit": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The confirmable holders that close the gap: app bundle ids and model-server / other-engine\ngroup ids (look each up by `bundleId` OR `id`). fitsWithApps: the fewest, largest first;\ncannotFit: every one. Soft (goose-owned) reclaim never needs these."
+        }
+      },
+      "required": [
+        "kind",
+        "remainingBytes",
+        "appsToQuit"
+      ],
+      "description": "The honest answer to a short fit, from live measurement."
+    },
+    "MlxMemoryAlternativeDto": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "\"smallerVariant\" | \"peerMac\"."
+        },
+        "modelId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "smallerVariant: the local model id."
+        },
+        "needBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "smallerVariant: its weights bytes.",
+          "minimum": 0
+        },
+        "nodeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "peerMac: the node id."
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "peerMac: display label."
+        },
+        "budgetBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "peerMac: its fit budget.",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "description": "Another way to run when freeing memory is not enough (or not wanted)."
+    },
+    "MlxEngineMemoryFreeRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "nodeId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "gooseOwned": {
+          "type": "boolean",
+          "default": false
+        },
+        "quitApps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "fitModelId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unloadServers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Group ids (`ai:…`, `mlx:<pid>`) the person ticked to unload/stop.",
+          "default": []
+        },
+        "nuclear": {
+          "type": "boolean",
+          "description": "\"Free everything except protected\". Apps are only asked to quit; nothing is forced.",
+          "default": false
+        },
+        "neverTouch": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The caller's never-touch list, unioned with the executing Mac's own.",
+          "default": []
+        },
+        "seenUsedBy": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "description": "Per ticked server group id: the `usedBy` lines the person saw. A server with a user\nnot in this list when it is about to be freed is refused.",
+          "default": {}
+        },
+        "forceStopApps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Bundle ids the person explicitly chose to force stop (SIGTERM, never SIGKILL).",
+          "default": []
+        }
+      },
+      "description": "Free memory. `gooseOwned` = the soft clean (this goose's own idle engine + proven left-over\ngoose servers, nothing anyone else uses). Everything else is named item by item and re-checked\nagainst a fresh census, the protected set and the never-touch list: `unloadServers` (group ids\nof model servers / other MLX engines), `quitApps` (bundle ids, asked to quit; one that does\nnot quit is left running and reported), `forceStopApps` (bundle ids the person chose to force\nstop: one SIGTERM per pid, own uid, unprotected, never SIGKILL). Each item is re-checked right\nbefore it runs; a server that gained a user not in `seenUsedBy` is refused. Over the Link,\neverything but `gooseOwned` needs `GOOSE_LINK_ALLOW_REMOTE_APP_QUIT` on the answering Mac.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/memoryFree"
+    },
+    "MlxEngineMemoryFreeResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxMemoryFreeItemDto"
+          }
+        },
+        "before": {
+          "$ref": "#/$defs/MlxMemoryBudgetDto"
+        },
+        "after": {
+          "$ref": "#/$defs/MlxMemoryBudgetDto"
+        },
+        "fit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxMountFitDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "items",
+        "before",
+        "after"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/memoryFree"
+    },
+    "MlxMemoryFreeItemDto": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "freedBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Measured: footprint before minus after.",
+          "minimum": 0
+        },
+        "message": {
+          "type": "string"
+        },
+        "forceStoppable": {
+          "type": "boolean",
+          "description": "The app did not quit and may still be force stopped (own uid, unprotected).",
+          "default": false
+        },
+        "refusalCode": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Set when the item was refused because nothing may ever touch it: `neverTouch` (on the\nnever-touch list) or `protected` (another person, job, session, launchd/MCP, macOS)."
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "ok",
+        "message"
+      ]
+    },
+    "MlxMemoryBudgetDto": {
+      "type": "object",
+      "properties": {
+        "budgetBytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "budgetBytes"
+      ]
+    },
     "MlxEngineUnmountRequest_unstable": {
       "type": "object",
       "properties": {
@@ -11534,6 +12003,13 @@
     },
     "MlxEngineServingIntentRequest_unstable": {
       "type": "object",
+      "properties": {
+        "atLaunch": {
+          "type": "boolean",
+          "description": "The launch restore's own read. Only it runs the gone-model check (with\n`GOOSE_MLX_RESTORE_AT_LAUNCH` on); every other reader gets the record as it stands.",
+          "default": false
+        }
+      },
       "description": "Read the serving intent. Written by the owner's own starts (Mount, remote single start, split\nstart), removed by the matching explicit stop; an app quit or a goosed exit never touches it.",
       "x-side": "agent",
       "x-method": "_goose/unstable/mlxEngine/servingIntent"
@@ -11558,6 +12034,11 @@
             "null"
           ],
           "description": "The record exists and could not be read — named, never read as \"nothing to restore\"."
+        },
+        "restoreAtLaunch": {
+          "type": "boolean",
+          "description": "The owner's tunable `GOOSE_MLX_RESTORE_AT_LAUNCH` (default off): false = the launch\nrestores nothing and shows nothing, while starts keep being recorded for when it is on.",
+          "default": false
         }
       },
       "x-side": "agent",
@@ -15085,6 +15566,222 @@
       ],
       "x-side": "agent",
       "x-method": "_goose/unstable/leanzeroLink/remoteExecute"
+    },
+    "LeanzeroLinkJobsSubmitRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "targetNodeId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "job": {},
+        "strategy": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "This job's placement strategy, `\"local-first\"` | `\"selfish\"` (the \"Run a job\" override).\nAbsent = the setting (`LEANZERO_LINK_JOBS_STRATEGY`, else node-limits.json `strategy`,\nelse local-first). Ignored with `targetNodeId`."
+        }
+      },
+      "required": [
+        "job"
+      ],
+      "description": "Mesh jobs (`/v1/swarm/jobs` on a node). Every jobs method needs the manager `connected`\n(else `invalid_params` \"not connected to the mesh\"). A refusal from the target (switch\noff, no memory headroom, heavy slot held, benchmark running, user active, ...) is an\n`invalid_params` error whose `data` is the node's `{code, reason}` verbatim. Job views,\nlogs and placements are carried as the node's own JSON (`leanzero_link::jobs` DTOs);\na view never carries the command line.\n\nSubmit one job. `targetNodeId` absent = place it by the placement strategy (see\n`jobsPlace`): the first candidate that accepts runs it; when none can, or other jobs already\nwait, it joins THIS node's FIFO queue (`queued: true`, `queuePosition` 1 = next, `nodeId` =\nthis node, `jobId` = the queue id) and is offered to the Macs again every 15 s. A queue id\nfollows its job: `jobsGet`/`jobsLog`/`jobsCancel` on this node show it waiting (`state:\n\"queued\"`, `queue: {position, strategy, refusals}`), then the placed job with `placed_on`.\nA targeted job never queues (a refusal is the error). `job` is a `JobRequest`: `{kind:\n\"shell\"|\"prompt\", command, cwd?, needMemGb?, heavy, timeoutS?}` (snake_case keys inside\n`job`, as the node's route takes them).",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/jobsSubmit"
+    },
+    "LeanzeroLinkJobsSubmitResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "nodeId": {
+          "type": "string",
+          "description": "Where the job went (the placement's pick when no target was given; this node when queued)."
+        },
+        "jobId": {
+          "type": "string"
+        },
+        "queued": {
+          "type": "boolean",
+          "description": "No Mac had room: the job waits in this node's queue under `jobId`.",
+          "default": false
+        },
+        "queuePosition": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Its place in line when queued (1 = next).",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "nodeId",
+        "jobId"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/jobsSubmit"
+    },
+    "LeanzeroLinkJobsListRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "targetNodeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "targetNodeId"
+      ],
+      "description": "Every job a node knows (running and finished since it started), newest first as it lists them.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/jobsList"
+    },
+    "LeanzeroLinkJobsListResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "jobs": {
+          "type": "array",
+          "items": {}
+        }
+      },
+      "required": [
+        "jobs"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/jobsList"
+    },
+    "LeanzeroLinkJobsGetRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "targetNodeId": {
+          "type": "string"
+        },
+        "jobId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "targetNodeId",
+        "jobId"
+      ],
+      "description": "One job's view (brief + outcome), as `GET /v1/swarm/jobs/{id}`.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/jobsGet"
+    },
+    "LeanzeroLinkJobsJobResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "job": {}
+      },
+      "required": [
+        "job"
+      ],
+      "x-side": "agent"
+    },
+    "LeanzeroLinkJobsCancelRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "targetNodeId": {
+          "type": "string"
+        },
+        "jobId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "targetNodeId",
+        "jobId"
+      ],
+      "description": "Cancel a shell job: its whole process group is TERMed, then KILLed after the grace. The\ngroup dies async: poll `jobsGet` for `cancelled`/143. A prompt job answers\n`cancel_unsupported`.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/jobsCancel"
+    },
+    "LeanzeroLinkJobsLogRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "targetNodeId": {
+          "type": "string"
+        },
+        "jobId": {
+          "type": "string"
+        },
+        "from": {
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        }
+      },
+      "required": [
+        "targetNodeId",
+        "jobId"
+      ],
+      "description": "Bytes `[from, next)` of a job's combined stdout+stderr (`{from, next, data, done}`).",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/jobsLog"
+    },
+    "LeanzeroLinkJobsLogResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "log": {}
+      },
+      "required": [
+        "log"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/jobsLog"
+    },
+    "LeanzeroLinkJobsPlaceRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "needMemGb": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "heavy": {
+          "type": "boolean",
+          "default": false
+        },
+        "strategy": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "As `jobsSubmit`'s `strategy`; absent = the setting."
+        }
+      },
+      "description": "Where a job could run now, in the order a submit tries them (node_fleet's rules:\nthis node first under `local-first`, last under `selfish`; then the most room (`canTake`);\nUSER-ACTIVE only breaks a tie between equal room, then score). Busy nodes and nodes that do not\nallow jobs are not placements: they are `refusals`, each `{nodeId, code, reason}`.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/jobsPlace"
+    },
+    "LeanzeroLinkJobsPlaceResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "placements": {
+          "type": "array",
+          "items": {},
+          "description": "`{nodeId, userActive, score}` per candidate, in the order a submit tries them."
+        },
+        "strategy": {
+          "type": "string",
+          "description": "The strategy the order was made with (`\"local-first\"` | `\"selfish\"`).",
+          "default": ""
+        },
+        "refusals": {
+          "type": "array",
+          "items": {},
+          "description": "`{nodeId, code, reason}` per Mac that is not a placement (the job would wait in the\nqueue when `placements` is empty).",
+          "default": []
+        }
+      },
+      "required": [
+        "placements"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/jobsPlace"
     },
     "NodesReadRequest_unstable": {
       "type": "object",
@@ -21153,6 +21850,24 @@
                 {
                   "allOf": [
                     {
+                      "$ref": "#/$defs/MlxEngineMemoryHoldersRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/memoryHolders",
+                  "title": "MlxEngineMemoryHoldersRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineMemoryFreeRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/memoryFree",
+                  "title": "MlxEngineMemoryFreeRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
                       "$ref": "#/$defs/MlxEngineUnmountRequest_unstable"
                     }
                   ],
@@ -21644,6 +22359,60 @@
                   ],
                   "description": "Params for _goose/unstable/leanzeroLink/remoteExecute",
                   "title": "LeanzeroLinkRemoteExecuteRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/LeanzeroLinkJobsSubmitRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/leanzeroLink/jobsSubmit",
+                  "title": "LeanzeroLinkJobsSubmitRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/LeanzeroLinkJobsListRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/leanzeroLink/jobsList",
+                  "title": "LeanzeroLinkJobsListRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/LeanzeroLinkJobsGetRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/leanzeroLink/jobsGet",
+                  "title": "LeanzeroLinkJobsGetRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/LeanzeroLinkJobsCancelRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/leanzeroLink/jobsCancel",
+                  "title": "LeanzeroLinkJobsCancelRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/LeanzeroLinkJobsLogRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/leanzeroLink/jobsLog",
+                  "title": "LeanzeroLinkJobsLogRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/LeanzeroLinkJobsPlaceRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/leanzeroLink/jobsPlace",
+                  "title": "LeanzeroLinkJobsPlaceRequest_unstable"
                 },
                 {
                   "allOf": [
@@ -22556,6 +23325,22 @@
                     {
                       "allOf": [
                         {
+                          "$ref": "#/$defs/MlxEngineMemoryHoldersResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineMemoryHoldersResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineMemoryFreeResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineMemoryFreeResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
                           "$ref": "#/$defs/MlxEngineSettingsResponse_unstable"
                         }
                       ],
@@ -22896,6 +23681,46 @@
                         }
                       ],
                       "title": "LeanzeroLinkRemoteExecuteResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/LeanzeroLinkJobsSubmitResponse_unstable"
+                        }
+                      ],
+                      "title": "LeanzeroLinkJobsSubmitResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/LeanzeroLinkJobsListResponse_unstable"
+                        }
+                      ],
+                      "title": "LeanzeroLinkJobsListResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/LeanzeroLinkJobsJobResponse_unstable"
+                        }
+                      ],
+                      "title": "LeanzeroLinkJobsJobResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/LeanzeroLinkJobsLogResponse_unstable"
+                        }
+                      ],
+                      "title": "LeanzeroLinkJobsLogResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/LeanzeroLinkJobsPlaceResponse_unstable"
+                        }
+                      ],
+                      "title": "LeanzeroLinkJobsPlaceResponse_unstable"
                     },
                     {
                       "allOf": [

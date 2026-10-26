@@ -102,6 +102,8 @@ export interface MacFacts {
   /** This Mac only, while it runs: what its requests are doing and the live decode rate. */
   activity: MlxActivity | null;
   decodeTps: number | null;
+  /** When `status` was last read successfully (ms since epoch); null until the first read. */
+  statusAt: number | null;
 }
 
 const NO_FACTS: MacFacts = {
@@ -112,6 +114,7 @@ const NO_FACTS: MacFacts = {
   disk: null,
   activity: null,
   decodeTps: null,
+  statusAt: null,
 };
 
 /** One copy of a model from one Mac to another; the RECEIVER owns its progress. */
@@ -143,6 +146,8 @@ export interface MacsValue {
   linkState: LinkState | null;
   linkError: string | null;
   refreshLink: () => Promise<void>;
+  /** When the roster (`macs`) was last read successfully (ms since epoch); null until then. */
+  rosterAt: number | null;
   macs: Mac[];
   self: Mac;
   macByKey: (key: string) => Mac | null;
@@ -186,13 +191,22 @@ export function useMacs(): MacsValue {
   return value;
 }
 
+/** The view's Macs when a MacsProvider is above, else null (cards that also render outside one). */
+export function useMacsMaybe(): MacsValue | null {
+  return useContext(MacsContext);
+}
+
 /** Renders `children` inside the view's MacsProvider, or inside its own when none is above. */
 export function WithMacs({ children }: { children: ReactNode }) {
   const outer = useContext(MacsContext);
   return outer ? <>{children}</> : <MacsProvider>{children}</MacsProvider>;
 }
 
-export const LINK_POLL_MS = 5000;
+/**
+ * D2: the roster read is in-memory on goosed. Budget: the engine marks a dropped peer Offline
+ * within 2.3 s (state.rs PEER_LIVENESS_*), so a poll of at most 500 ms keeps it on screen within 3.0 s.
+ */
+export const LINK_POLL_MS = 500;
 export const STATUS_POLL_MS = 5000;
 export const MODELS_POLL_MS = 20000;
 const DOWNLOAD_POLL_MS = 1000;
@@ -222,7 +236,42 @@ function rateKey(fromKey: string, toKey: string): string {
   return `mlx-copy-rate:${fromKey}>${toKey}`;
 }
 
-function useVisibleInterval(fn: () => void, ms: number, enabled: boolean): void {
+/**
+ * While the window is hidden the cards keep reading at this slower rate instead of stopping, so a
+ * window brought back never opens on minutes-old facts (3.0.130: My Macs froze while hidden and
+ * then showed old data with nothing saying so).
+ */
+export const HIDDEN_POLL_MS = 15000;
+/** A card whose facts are older than this says "updated Xs ago" until a fresh read lands. */
+export const STALE_AFTER_MS = 10000;
+
+/**
+ * When a Mac card's facts were read: the roster's read, or the older of the roster and the engine
+ * status when the card shows a status. null = never read (nothing to call old).
+ */
+export function cardReadAt(rosterAt: number | null | undefined, facts: MacFacts): number | null {
+  const at = [rosterAt, facts.status != null ? facts.statusAt : null].filter(
+    (t): t is number => typeof t === 'number'
+  );
+  return at.length ? Math.min(...at) : null;
+}
+
+/** Whole seconds since `at` when that is past STALE_AFTER_MS, else null (fresh or never read). */
+export function staleSeconds(at: number | null, now: number): number | null {
+  if (at == null || now - at <= STALE_AFTER_MS) return null;
+  return Math.floor((now - at) / 1000);
+}
+
+/**
+ * Runs `fn` every `ms` while the window is visible, and every `max(ms, HIDDEN_POLL_MS)` while it is
+ * hidden; becoming visible runs it AT ONCE and returns to `ms`. `fn` is told whether the window was
+ * hidden for that read.
+ */
+export function useVisibleInterval(
+  fn: (hidden: boolean) => void,
+  ms: number,
+  enabled: boolean
+): void {
   const ref = useRef(fn);
   useEffect(() => {
     ref.current = fn;
@@ -230,16 +279,20 @@ function useVisibleInterval(fn: () => void, ms: number, enabled: boolean): void 
   useEffect(() => {
     if (!enabled) return undefined;
     let timer: ReturnType<typeof setInterval> | null = null;
-    const start = () => {
-      if (timer != null) return;
-      ref.current();
-      timer = setInterval(() => ref.current(), ms);
-    };
+    let timerHidden: boolean | null = null;
     const stop = () => {
       if (timer != null) clearInterval(timer);
       timer = null;
+      timerHidden = null;
     };
-    const onVisibility = () => (document.visibilityState === 'visible' ? start() : stop());
+    const onVisibility = () => {
+      const hidden = document.visibilityState !== 'visible';
+      if (timer != null && timerHidden === hidden) return;
+      stop();
+      if (!hidden) ref.current(false);
+      timerHidden = hidden;
+      timer = setInterval(() => ref.current(hidden), hidden ? Math.max(ms, HIDDEN_POLL_MS) : ms);
+    };
     onVisibility();
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
@@ -255,6 +308,7 @@ export function MacsProvider({ children }: { children: ReactNode }) {
   const [linkState, setLinkState] = useState<LinkState | null>(null);
   const [linkError, setLinkError] = useState<string | null>(null);
   const [nodes, setNodes] = useState<NodesResponse | null>(null);
+  const [rosterAt, setRosterAt] = useState<number | null>(null);
   const [facts, setFacts] = useState<Record<string, MacFacts>>({});
   const [downloads, setDownloads] = useState<Record<string, Record<string, MlxDownloadProgress>>>(
     {}
@@ -314,7 +368,10 @@ export function MacsProvider({ children }: { children: ReactNode }) {
     }
     try {
       const next = await leanzeroLinkNodes();
-      if (!disposed.current) setNodes(next);
+      if (!disposed.current) {
+        setNodes(next);
+        setRosterAt(Date.now());
+      }
     } catch {
       // A failed roster read keeps the last roster: a blip must not make a Mac vanish.
     }
@@ -377,7 +434,7 @@ export function MacsProvider({ children }: { children: ReactNode }) {
         return;
       }
       if (disposed.current) return;
-      patchFacts(key, { status, statusError: null });
+      patchFacts(key, { status, statusError: null, statusAt: Date.now() });
     },
     [intl, macByKey, patchFacts]
   );
@@ -420,12 +477,13 @@ export function MacsProvider({ children }: { children: ReactNode }) {
     }
     const status = selfRead.value;
     if (!status) return;
-    patchFacts(SELF_KEY, { status, statusError: null });
+    patchFacts(SELF_KEY, { status, statusError: null, statusAt: Date.now() });
     void readSelfLive(status);
   }, [selfRead, intl, patchFacts, readSelfLive]);
   useVisibleInterval(
-    () => {
-      for (const key of macKeys.split(',')) if (key !== SELF_KEY) void refreshStatus(key);
+    (hidden) => {
+      // THIS Mac's shared status store pauses while hidden; the slow hidden read asks it directly.
+      for (const key of macKeys.split(',')) if (key !== SELF_KEY || hidden) void refreshStatus(key);
     },
     STATUS_POLL_MS,
     true
@@ -853,6 +911,7 @@ export function MacsProvider({ children }: { children: ReactNode }) {
       linkState,
       linkError,
       refreshLink,
+      rosterAt,
       macs,
       self,
       macByKey,
@@ -885,6 +944,7 @@ export function MacsProvider({ children }: { children: ReactNode }) {
       linkState,
       linkError,
       refreshLink,
+      rosterAt,
       macs,
       self,
       macByKey,

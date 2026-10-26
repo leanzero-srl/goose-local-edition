@@ -40,6 +40,9 @@ pub struct FakeTailnet {
 /// changes (a `watch` works across the proxy's runtime and each test's).
 struct Killed {
     ips: StdMutex<HashSet<IpAddr>>,
+    /// Per mesh IP: how many upcoming CONNECTs hang unanswered (a slow relayed path),
+    /// and how many have hung so far.
+    stalls: StdMutex<HashMap<IpAddr, (u32, u32)>>,
     changed: tokio::sync::watch::Sender<u64>,
 }
 
@@ -59,6 +62,7 @@ pub fn fake_tailnet() -> &'static FakeTailnet {
         let connects = Arc::new(StdMutex::new(Vec::new()));
         let killed = Arc::new(Killed {
             ips: StdMutex::new(HashSet::new()),
+            stalls: StdMutex::new(HashMap::new()),
             changed: tokio::sync::watch::channel(0).0,
         });
         let (thread_routes, thread_connects, thread_killed) =
@@ -115,6 +119,25 @@ impl FakeTailnet {
         let ip: IpAddr = ip.parse().expect("a mesh IP");
         self.killed.ips.lock().unwrap().insert(ip);
         self.killed.changed.send_modify(|n| *n += 1);
+    }
+
+    /// The next `n` CONNECTs toward `ip` hang unanswered (the caller's connect timeout
+    /// decides), then CONNECTs work again: a live peer on a slow relayed path whose dial
+    /// sometimes misses the deadline. Tunnels already open keep working.
+    pub fn stall_next_connects(&self, ip: &str, n: u32) {
+        let ip: IpAddr = ip.parse().expect("a mesh IP");
+        self.killed.stalls.lock().unwrap().entry(ip).or_default().0 = n;
+    }
+
+    /// How many CONNECTs toward `ip` were stalled by [`Self::stall_next_connects`].
+    pub fn stalled_connects(&self, ip: &str) -> u32 {
+        let ip: IpAddr = ip.parse().expect("a mesh IP");
+        self.killed
+            .stalls
+            .lock()
+            .unwrap()
+            .get(&ip)
+            .map_or(0, |s| s.1)
     }
 
     /// The peer's Link is back at the same mesh address, served now by the loopback server
@@ -190,6 +213,20 @@ async fn serve_one(
     let target = SocketAddr::new(ip, u16::from_be_bytes(port));
     connects.lock().unwrap().push(target);
 
+    let stall = {
+        let mut stalls = killed.stalls.lock().unwrap();
+        match stalls.get_mut(&ip) {
+            Some(s) if s.0 > 0 => {
+                s.0 -= 1;
+                s.1 += 1;
+                true
+            }
+            _ => false,
+        }
+    };
+    if stall {
+        return hold_silently(client).await;
+    }
     if killed.contains(ip) {
         // A dead peer never answers the CONNECT: the caller's connect timeout decides.
         return hold_silently(client).await;

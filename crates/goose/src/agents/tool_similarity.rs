@@ -211,6 +211,58 @@ pub fn closest_tools<'a>(
     close.into_iter().map(|(tool, _)| tool).collect()
 }
 
+fn parameter_names(tool: &Tool) -> HashSet<String> {
+    match tool.input_schema.get("properties") {
+        Some(serde_json::Value::Object(properties)) => properties.keys().cloned().collect(),
+        _ => HashSet::new(),
+    }
+}
+
+fn required_names(tool: &Tool) -> HashSet<String> {
+    match tool.input_schema.get("required") {
+        Some(serde_json::Value::Array(required)) => required
+            .iter()
+            .filter_map(|r| r.as_str().map(String::from))
+            .collect(),
+        _ => HashSet::new(),
+    }
+}
+
+/// The one offered tool a call to a name that does not exist could have meant, read from the
+/// call's ARGUMENTS alone (I-10, 2026-10-18), and NAMED in the not-found message so the model calls
+/// it by that name. It is never run in the call's place: dispatch resolves after the permission
+/// inspection, which keys on the name the model typed, so running `bash` as `shell` would skip a
+/// NeverAllow/AskBefore on `shell`, and `append_file` {path, content} would overwrite as `write`.
+/// The match: every argument it carries is one of the tool's parameters,
+/// it supplies every parameter the tool requires, and at least one of its arguments is a
+/// parameter NO other offered tool takes — so the shape of the call names the tool even when its
+/// name shares nothing with it. Measured need: Mistral Large 4 called `bash` {command} 48 times in
+/// one Forge 2.0 pair (Xing 4.0 six times) beside `shell` {command, timeout_secs}; every call was
+/// refused with "no available tool's name or summary is close to it" and spent the call budget.
+/// No name is mapped by hand: `cat` {path} gets no shape match because `write`, `edit` and `tree`
+/// all take `path`, and `grep` {pattern, path} none because no tool takes `pattern`.
+pub fn argument_shape_match<'a>(tools: &'a [Tool], argument_names: &[&str]) -> Option<&'a Tool> {
+    if argument_names.is_empty() {
+        return None;
+    }
+    let call: HashSet<&str> = argument_names.iter().copied().collect();
+    let params: Vec<HashSet<String>> = tools.iter().map(parameter_names).collect();
+    let mut matches = tools.iter().zip(&params).filter(|(tool, own)| {
+        call.iter().all(|a| own.contains(*a))
+            && required_names(tool)
+                .iter()
+                .all(|r| call.contains(r.as_str()))
+            && call
+                .iter()
+                .any(|a| params.iter().filter(|other| other.contains(*a)).count() == 1)
+    });
+    let first = matches.next().map(|(tool, _)| tool);
+    match matches.next() {
+        Some(_) => None,
+        None => first,
+    }
+}
+
 /// The lines naming `suggested`, each with the summary sentence the model can choose by.
 pub fn describe(suggested: &[&Tool]) -> String {
     suggested
@@ -233,7 +285,10 @@ pub fn not_found_message(tools: &[Tool], called: &str, arguments: Option<&JsonOb
     let argument_names: Vec<&str> = arguments
         .map(|args| args.keys().map(String::as_str).collect())
         .unwrap_or_default();
-    let suggested = closest_tools(tools, called, &argument_names);
+    let mut suggested = closest_tools(tools, called, &argument_names);
+    if suggested.is_empty() {
+        suggested.extend(argument_shape_match(tools, &argument_names));
+    }
     let mut ranked = closeness(tools, called, &argument_names);
     ranked.sort_by(|a, b| b.1.score().total_cmp(&a.1.score()));
     let all = ranked
@@ -403,6 +458,97 @@ mod tests {
         for tool in &tools {
             assert!(listed.contains(tool.name.as_ref()), "{} missing", tool.name);
         }
+    }
+
+    fn required_tool(
+        name: &str,
+        description: &str,
+        properties: &[&str],
+        required: &[&str],
+    ) -> Tool {
+        let props: serde_json::Map<String, serde_json::Value> = properties
+            .iter()
+            .map(|p| (p.to_string(), serde_json::json!({"type": "string"})))
+            .collect();
+        let schema =
+            serde_json::json!({"type": "object", "properties": props, "required": required});
+        Tool::new(
+            name.to_string(),
+            description.to_string(),
+            Arc::new(schema.as_object().unwrap().clone()),
+        )
+    }
+
+    /// The five tools a Forge 2.0 build declares (developer extension: ShellParams, FileWriteParams,
+    /// FileEditParams, TreeParams, ImageReadParams — schemars marks every non-Option, non-default
+    /// field required).
+    fn forge_tools() -> Vec<Tool> {
+        vec![
+            required_tool(
+                "shell",
+                "Execute a shell command in the current dir.",
+                &["command", "timeout_secs"],
+                &["command"],
+            ),
+            required_tool(
+                "write",
+                "Create a new file or overwrite an existing file.",
+                &["path", "content"],
+                &["path", "content"],
+            ),
+            required_tool(
+                "edit",
+                "Edit a file by finding and replacing text.",
+                &["path", "before", "after"],
+                &["path", "before", "after"],
+            ),
+            required_tool(
+                "tree",
+                "List a directory tree with line counts.",
+                &["path", "depth"],
+                &["path"],
+            ),
+            required_tool(
+                "read_image",
+                "Read an image from a local file path or http(s) URL.",
+                &["source", "crop"],
+                &["source"],
+            ),
+        ]
+    }
+
+    #[test]
+    fn bash_with_a_command_is_shaped_like_shell_as_mistral_called_it() {
+        // I-10: Mistral Large 4's Forge builds (2026-10-18) — 48 calls refused.
+        let tools = forge_tools();
+        assert_eq!(
+            argument_shape_match(&tools, &["command"]).map(|t| t.name.to_string()),
+            Some("shell".to_string())
+        );
+        assert_eq!(
+            argument_shape_match(&tools, &["command", "timeout_secs"]).map(|t| t.name.to_string()),
+            Some("shell".to_string())
+        );
+        let mut args = JsonObject::new();
+        args.insert("command".into(), serde_json::json!("ls -la"));
+        let msg = not_found_message(&tools, "bash", Some(&args));
+        assert!(
+            msg.contains("The closest tools by name and purpose:\n- shell"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn a_shared_or_unknown_argument_is_no_shape_match() {
+        let tools = forge_tools();
+        // `path` alone is taken by write, edit and tree: nothing decides between them.
+        assert!(argument_shape_match(&tools, &["path"]).is_none());
+        // An argument no tool takes rules every tool out.
+        assert!(argument_shape_match(&tools, &["command", "cwd"]).is_none());
+        assert!(argument_shape_match(&tools, &["pattern", "path"]).is_none());
+        // A required parameter missing: `content` is write's own, but write also requires `path`.
+        assert!(argument_shape_match(&tools, &["content"]).is_none());
+        assert!(argument_shape_match(&tools, &[]).is_none());
     }
 
     #[test]

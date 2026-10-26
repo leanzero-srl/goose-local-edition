@@ -310,6 +310,17 @@ The full record is in the T12 plan, section "MEMORY GUARD design" (`~/.claude/pl
   models dir = "model not found" on the laptop, by design (on the road is cloud). Load is bounded by the SSD
   (~950 MB/s); MLX keeps no fd/mmap of the safetensors after load, so inference speed is unaffected. Downloads to
   the laptop fail (read-only): download on the workhorse. list_local_models follows symlinks since a20f78b5b.
+  EMPTINESS IS NOT A MOUNT TEST (2026-10-20, review of lz/restore-off): the laptop's UNMOUNTED models dir is not
+  always empty — macOS leaves `.DS_Store` on the mount point (machine-sync/models-mount.sh), a download leaves
+  `.locks`, a publisher folder can outlive its last model. Before any code calls a model "gone" (and acts on it),
+  the same dir must list at least one real `publisher/name/config.json` with dot-entries ignored
+  (`hf::model_folder_gone`'s positive control); a dangling publisher/model link (SSD unmounted) proves nothing.
+- RESTORE AT LAUNCH is the owner's tunable `GOOSE_MLX_RESTORE_AT_LAUNCH` (config.yaml, default OFF; Settings › App ›
+  "Local model at launch"). The switch is read before anything else in `servingIntent`, so a broken `mlx_engine:`
+  block can never turn into a red "Restore failed"; only the launch restore's read (`atLaunch: true`) may forget a
+  single-engine record whose model is provably gone, and never one the engine is serving. Deleting a model clears a
+  record naming that copy (here: single + split; on a Link peer: that peer's remote single, and the split when it runs
+  a rank on `link:<peer>`; an ssh-alias split peer cannot be matched to a Link node id, so its record stays).
 - Engine changes in `swarm.rs` go through the `swarm-surgeon` agent (see `.claude/agents/`); the six
   swarm invariants and development gates apply unchanged. The knob-turning skill's "never touch
   crates/goose/**" rule does NOT block this branch's sanctioned feature work — but swarm gates do run.
@@ -1479,3 +1490,142 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
   /Volumes/AI-workhorse/models/goose/DELETED-2026-10-19.log. The LAPTOP column is the SAME files over a read-only rclone NFS share
   (192.168.0.2:/ = models/goose), so a laptop-side delete can never work and both columns vanish together; the laptop's listing lags a
   deletion by minutes (rclone dir cache).
+- **2026-10-19 — RELEASE 3.0.119: engine pin v0.14.3-lz.12, overnight wrappers RETIRED.** ENGINE_LAUNCHER =
+  `rapid-mlx[mtp] @ git+...Rapid-MLX@v0.14.3-lz.12` (tag object 5dfea7d5 -> cd53a8247 = lz/overnight-stack 429d0b40d +
+  lz.11's LFM auto-config c56728690, which the overnight stack lacked: pin 429d0b40d alone and a local LFM2.5 folder
+  serves tool calls as text again). engine_profile.rs (from t12 d44f8a81b, launcher table only): lz.12 = Guarded, so
+  build_serve_command passes NO --cache-memory-percent (prefix_cache_flags, from t12 fe1893dec) — the guard sizes
+  its own cache, as the overnight wrappers did. PIPELINE_SINGLE_LINE_REVIEWED_THROUGH = lz.12 (fork
+  lz/pipeline-review-lz12 56e0a4165: 117 n/a, 3 equivalent, 11 recorded `gap`s — the Flash split stays on
+  8c000705 without the tool-call hardening, split-turn join and reasoning_content sanitising). Installed 08:56 on
+  the laptop and 08:57 on Gabee: the `mlx_engine.spawn_command` wrappers (engine-wrap-laptop.sh,
+  ~/t12-bench/engine-wrap.sh) were removed with the app quit (backups config.yaml.before-3.0.119-*); the restored
+  engines run `Rapid-MLX@v0.14.3-lz.12` without the cache share, memory_guard.enabled true, toolsmoke 3/3 on both.
+  The Studio's engine-wrap-granite.sh goes in its install waiter (loop-state studio_waiter.sh). Gabee's t12-line
+  goose binary (thinking effort, compaction V2/V3, live window) is GONE with 3.0.119 by the coordinator's
+  decision: those features are not on main. A fresh-fetch proof for any new pin: `uvx --no-cache --from
+  "rapid-mlx[mtp] @ git+...@<tag>" rapid-mlx --help` with HOME/UV_CACHE_DIR in a scratch dir.
+- **2026-10-20 — ENGINE PIN v0.14.3-lz.13 on branch lz/backlog-1019 (not released).** Tag object 3bab1d05 -> c58790b11 (fork
+  lz/backlog-1019 = lz.12 + I-28 `rapid_mlx_stop_reason: "repetition"` beside `finish_reason: "length"` (also when the stop lands
+  inside a tool call: the cut call arrives with args `{}`, goose fails it with LOOP_STOPPED_TOOL_CALL), I-24 long exact-loop hard
+  stop (periods 129..1024, 4 copies, tool-bearing requests only on every lane, `--repetition-guard-max-period`, default 1024),
+  I-27 template-wire parsers for folders no family rule claims (Nex-N2.5-mini -> qwen3_coder_xml + deepseek_r1_distill), a prompt
+  that closed the think block streams as content (`prompt_thinking_closed`), and the D-METAL-CAP refusal worded as "the largest
+  prompt that fits beside that reservation is N tokens" (+ `max_tokens_reserved`; goose also keys on lz_reason
+  `metal_cap_exceeds_device` so an lz.12 engine's "maximum context here is N" from that path is never read as a window).
+  Pipeline review on the fork's branch lz/pipeline-review-lz13 (1a2a4118d): 5 n/a, 2 gaps (the split's own StreamRelay repeat
+  stop sends no stop reason; its priming never sets the closed-think signal). Pin bump recipe that worked: tag annotated at the
+  head, `git push origin <tag>`, add the json entries on the pipeline branch (json.dumps indent=2, ASCII, trailing newline — any
+  other serialisation rewrites the whole file), run `tests/test_pipeline_single_line_ports_audit.py` (it lists every gap as a
+  warning), then ENGINE_LAUNCHER + SUPERSEDED_ENGINE_LAUNCHERS + PINNED_PROFILES Guarded row + PIPELINE_SINGLE_LINE_REVIEWED_THROUGH
+  + the two argv goldens in engine.rs. LIGHT SMOKE without the Studio: the configured Flash-Next-4bit is 98 GB on the read-only
+  NFS share served FROM the Studio's SSD, so loading it is Studio I/O; instead fetch mlx-community/Qwen3.5-9B-MLX-4bit (5.6 GB)
+  to a scratch dir, print the app's argv with a throwaway `build_serve_command` test, run it on a spare port, stream one text +
+  one tool call. lz.13 measured 2026-10-20 on the laptop: parsers bind (explicit qwen3_coder_xml/deepseek_r1 over the family's
+  hermes/qwen3), memory guard enabled, no cache share, text clean, `write` call whole; direct_url commit c58790b11.
+- **2026-10-22 — RECURSIVE FLINT LOCAL (RecursiveSI/flint, `flint` / FlintForCausalLM, Apache-2.0, 39.8B total / 2.5B
+  active MoE; fork branch `lz/flint` ff88eb79cdbdb12c3b5c59f34951b79ebd251d40 on the lz.13 pin c58790b11; RELEASED in pin
+  v0.14.3-lz.14, 2026-10-23).** Stock mlx-lm (0.31.3 pinned, 0.32.2 latest) has no `flint`; mlx-lm PR #1998 is open; mlx-vlm
+  0.7.10 runs it but would put Flint on the multimodal lane and cannot read Recursive's uint8 INT4. So: vendored.
+  - Model (`rapid_mlx/models/flint.py`, PR #1998 + the reference's rules): sliding layers = window 513 INCLUDING the current
+    token, RoPE; full layers = `no_rope_layer_indices`, NO positional encoding; learned per-head sinks (`softmax_offset`);
+    fp32 sigmoid routing, top-6, renormalised (+1e-20), ungated shared expert; fp32 lm_head. Rapid-owned
+    (`_RAPID_OWNED_RUNTIME_MODEL_TYPES`): installed over any native mlx_lm.models.flint, checkpoint model_file ignored.
+  - TRAP: Recursive's INT4 export packs weights as uint8 (sanitize views them as uint32) and stores the embedding at 8 bits
+    without a per-layer config entry; `_flint_quantization_override` reads the shard headers and adds the widths.
+  - TRAP: the PR's ModelArgs dropped `max_position_embeddings`: /v1/models said context_window null and the guard advertised
+    768,512 on the 128 GB laptop for a 262,144-token model. Fixed (ff88eb79c); now 262,144 / 262,144.
+  - Parsers (auto-config by model_type flint): tool `flint` = Xing4.0's reading rules on GLM-4.7's `<arg_key>/<arg_value>`
+    tags (glm47 strips + json-decodes values: "42\n" came back as 42); reasoning `flint` = `<think>` only where the model writes
+    it (no switch, never primed: untagged output is content from the first char). The template mentions `<think>` (history
+    rows), so any source-scan priming guess is wrong for it.
+  - TRAP (live): the chat route's default tool-use suffix ("Do NOT think out loud ...") made Flint write `write` calls with NO
+    content (5/21 samples at the route's exact prompt, 0/16 without). Tool parsers can now set `AUTO_TOOL_USE_SUFFIX = False`.
+  - TRAP (live): `reasoning_effort=medium` = a 2,048-token post-hoc reasoning cap on tool requests; the rest of the thought
+    arrived as CONTENT. Flint has no effort control, so its parser sets `graded_effort_cap = False`.
+  - KV: 28,672 B/token growth (14 full layers) + 71,680 B per sliding slot (35 layers), window 513 (the checkpoint README's
+    28 KiB + 70 KiB); probe `_kv_footprint_terms()` on a lazy load prints (28672, 0, 71680, 513).
+  - Proof: parity vs an independent float64 numpy reference 8.7e-06 at scale 6 (top-1 40/40; cached decode across the window
+    3.9e-06) and vs mlx-vlm 0.7.10's flint 2.3e-06; route SSE + whole-response tests 34/34 fail with qwen3/deepseek_r1/glm47;
+    217-file related suite: same 12 failed + 17 errors as lz.13. Laptop smoke (spare port 8197, app argv, weights over NFS):
+    text 4/4, write tools 11/12 plain (the miss = a well-formed `shell` first) and 6/6 at medium, 10-turn agent loop with
+    history reasoning + tool results: prefix cache 97-99 % per turn, parallel writes parsed, files byte-correct; ~100 tok/s.
+  - WEIGHTS: RecursiveSI/flint-int4 @3b93f905 (22.6 GB, sha256 = its flint-int4.json manifest) at
+    /Volumes/AI-workhorse/models/goose/RecursiveSI/flint-int4 (laptop: ~/.goose/models/RecursiveSI/flint-int4, visible over
+    NFS without a remount). Chosen over pgmharikrishnan/Flint-MLX-Serve-mixed-4-8bit (also on the SSD): teacher-forced on
+    11,242 tokens written that day, int4 ppl 6.82 vs 7.34 (paired diff 0.073 nats/token, 95 % CI 0.039-0.109); Recursive
+    trained its quantized builds (blog: distillation recovery) and mlx-community measured INT4 ppl below a 6-bit PTQ of BF16.
+    mlx-community/flint-mixed-3-4bit = 3-bit experts (rejected, owner's 4-bit rule).
+  - TRAP: right after the download, the laptop's NFS view failed "[load_safetensors] Failed to open file" twice and once
+    gave a Metal GPU Timeout during load (while the workhorse was still writing/hashing the other download); a later boot
+    loaded in ~32 s. If a fresh model fails to open over NFS, wait for the workhorse's I/O to settle and retry.
+  - Launcher: ~/goose-builds/loop-state/engine-wrap-flint.sh (REV = the sha above, drops --cache-memory-percent, no extra
+    flags: boot log says tool_call_parser=flint, reasoning_parser=flint). Sampling: generation_config 1.0/0.95/20 is applied
+    by the engine; Flint reasons long on hard turns (card: max_tokens >= 32768; goose sends none = engine 32,768).
+- **2026-10-23 — DENSE 27B AT 4 tok/s ON THE LAPTOP = Q-447 ON THE SINGLE ENGINE (float32 promotion; fork
+  `lz/kv-dtype-extend` @ edd279eb6cb82267d86e5419dcd145b85f9e7089 on the lz.13 pin c58790b11; RELEASED in pin v0.14.3-lz.14).** Symptom (M4 Max 128 GB, app engine lz.13,
+  Forge 2.0, sabicap/sabi-noema-MLX-4bit = dense qwen3_5 27B 4-bit, no MTP): 4.0 tok/s at ~47k with prefix-cache HITs every
+  turn, ~15-17 at <1k; HireTheRobots Qwen3.8-27B 4-bit 2.9 tok/s at 170k. MoE on the same app/engine fast (Ornith 122B-A10B
+  38 -> 21 tok/s from 50k to 200k; Flint 46-62). It was NOT dense-vs-MoE, NOT the memory guard (0 actions, 0 clears; it
+  checks per prefill chunk, not per decode step), NOT head_dim-256 decode attention.
+  - EVIDENCE, readable from any engine log with no attach: `[cache_store_bytes] tokens=N ... kv=X MB` -> X x 2^20 / N =
+    65,536 B/token (bf16, 16 full layers x 2 x 4 KV heads x 256 x 2 B) for every entry until 03:47:10, then 131,072 (float32)
+    for EVERY later entry, and `recurrent=` 146.8 -> 149.4 MB (the conv state follows the activation dtype; the SSM state is
+    float32 by design). At 03:47:10 `[schedule] ... prompt_tokens=3208 ... running=2`: goose's second request joined while
+    the first (1,405) was mid-prefill. HireTheRobots flipped at the identical moment of its run. Ornith's two requests were
+    scheduled in the same millisecond (prefilled together, no extend of an empty side), so it stayed bf16 by luck. The
+    `[Metal memory] ... cache=0.0GB` on every decode line is the same float32 signature Q-447 recorded on the split.
+  - CAUSE: mlx-lm 0.31.3 `BatchKVCache.extend` / `BatchRotatingKVCache.extend` pad a side with no KV via `mx.array([])`
+    (FLOAT32); concatenate promotes the batch, the attention output and residual stream follow, `merge` keeps the first
+    row's dtype on every restore, and each stored prefix entry hands float32 to the next turn: the session never recovers.
+    Persisted entries (`[cache_persist] SAVED` at shutdown, autoloaded at boot) carry it into the NEXT engine too. goose fixed
+    exactly this on the tensor split (Q-447, rank_batch.py `extend_in_its_dtype`) but the single engine never got it.
+  - FIX: `_mlx_compat.install_batch_kv_dtype_guard` (installed by scheduler.py and mllm_scheduler.py): the cold side gets
+    zero-length KV in the filled side's dtype; two filled sides of different dtypes are counted + WARNED. The scheduler's
+    fetch drops any prefix entry holding float32 KV on a half-precision model (`[kv_dtype] dropped N prefix entr...`) and
+    re-reads the prompt once. `/v1/status kv_dtype {model_dtype, cold_rows_padded, mixed_dtype_extends,
+    promoted_entries_dropped}`. Test `tests/test_kv_dtype_cold_join.py` (real Scheduler + BatchGenerator, tiny BF16 qwen3_5
+    hybrid on CPU, second request at step 2 of an 8-token-chunk prefill): 7 red on c58790b11 (stored entry float32), green
+    on the fix; mutants "guard not installed" / "no fetch drop" killed. Related suite (35 files, CPU): 704 pass, 1 fails the same on base. A float32 tiny model cannot show it (nothing to
+    promote): BF16 fixtures only.
+  - EXPECTED after the fix: bandwidth model (checked on Granite 4.2 30B dense bf16 on this laptop: predicted 11.3, measured
+    10.3 at 30k) gives the 4-bit 27B ~17 GB weights + 3.1 GB KV per token at 47k -> ~20 tok/s ceiling at the measured
+    ~449 GB/s, ~15-18 real; ~20+ at short context. That also matches Gabee's 27B Q8 at 11.7 (2x the weight bytes, 0.73x BW).
+  - PROVE IT LIVE (between series, app quit; never mid-run): engine-wrap REV = the full sha above, remount sabi-noema, run the
+    first ~15 turns of a Forge series. PASS = every `cache_store_bytes` entry >= 1k tokens at 65,536 B/token, recurrent stays
+    146.8 MB, `/v1/status kv_dtype.cold_rows_padded >= 1` and `mixed_dtype_extends == 0`, and `[Metal memory]` step lines
+    256 steps per <= ~17 s at 40-50k (>= 15 tok/s). If entries stay bf16 and decode is still ~4 tok/s, the float32 theory is
+    refuted and the next suspect is the q=1 SDPA path at head_dim 256 / GQA 6 (compare Ornith's slope: 0.15 ms per 1k tokens
+    of 24 KB KV). On a pre-fix engine the first run after the fix may log `[kv_dtype] dropped` for autoloaded float32 entries.
+  - **LIVE-PROVEN 2026-10-23 (laptop, app, sabi-noema 4-bit, Forge 2.0 call 19 at 48k):** kv 2995.2 MB / 47,924 tok =
+    65,535 B/token, recurrent 146.8 MB, `cold_rows_padded` 16, `mixed_dtype_extends` 0, decode 123 tok in 8.05 s after the
+    first token = 15.3 tok/s (pre-fix ~4). Launcher: ~/goose-builds/loop-state/engine-wrap-kvdtype.sh. RELEASED 2026-10-23: pin v0.14.3-lz.14
+    (see the lz.14 release entry below). Retire engine-wrap-kvdtype.sh after the current laptop series: put
+    `mlx_engine.spawn_command` back to the default (app quit, config backed up) once the laptop runs 3.0.127+.
+  - CHECK ON ANY NEW MODEL: compute kv/token from the first two big `cache_store_bytes` lines; a doubling mid-run = this bug.
+- **2026-10-23 — RELEASE v0.14.3-lz.14 (fork lz/release-lz14 03fa3b38ff4bbf42642d1e3448b1fffce90c4b09 = lz.13 c58790b11 +
+  merge lz/kv-dtype-extend edd279eb6 + merge lz/flint ff88eb79c; goose 68c6b5398 pins it; app 3.0.127).** The KV-dtype fix
+  and Recursive Flint both ride it. Flint was taken because it sat on the same lz.13 base, merged clean and its suite was
+  green; it is model-gated (parser flags default to the old behaviour for every other parser).
+  - Pipeline review: lz/pipeline-review-lz14 eec8f6bd7 on 1a2a4118d, 7 n/a (the split never calls mlx-lm
+    BatchKVCache.extend: a row prefills alone and joins by merge; Qwen4ExpStateCache.extend = extract + merge).
+    goose PIPELINE_SINGLE_LINE_REVIEWED_THROUGH = lz.14; PIPELINE_FORK_COMMIT unchanged.
+  - HOW THE FORK SUITE WAS RUN (workhorse, ~25 min): worktrees for head AND base on the SSD
+    (/Volumes/AI-workhorse/scratch/release-lz14/), `~/Projects/Rapid-MLX/.venv/bin/python -m pytest -p m_cpu` (a plugin
+    doing `mx.set_default_device(mx.cpu)`), PYTHONPATH = plugin dir : worktree : a side `pyext` dir with hypothesis +
+    aiohttp only (`uv pip install --target`, then delete anything the venv already has: typing_extensions/idna/attrs),
+    `--continue-on-collection-errors --timeout 600`, 10 file shards per arm, skipping test_pipeline_qwen4{,_serve,_vision}.py
+    (launch ranks). Compare FAILED/ERROR node ids head vs base. TRAPS: (1) a shard's failures depend on its NEIGHBOUR files
+    (test pollution), and the head arm has extra files so its shards differ: every "new in head" id must be re-run in
+    isolation on both arms (here 43 = 43, identical). (2) tests/test_batching_deterministic.py hangs at 0% CPU on both
+    arms past pytest-timeout (kill it, drop the file from the shard). (3) the venv lacks hypothesis (test_memory_guard.py)
+    and aiohttp (test_event_loop.py): without them the WHOLE shard aborts at collection (exit 2).
+  - Tag proof (workhorse, tag via uvx, app argv, port 8197): direct_url commit 03fa3b38f; sabi-noema 4-bit, a 4.5k cold
+    request joined a 20.9k prefill (running=2) -> kv_dtype cold_rows_padded 16, mixed 0, kv 65,535 B/token, recurrent
+    146.8 MB, follow-up HIT 20,864; ~31 tok/s decode at 21k on the M3 Ultra. Flint: parsers flint/flint, smoke text PASS,
+    tools 2/3 (TOOL1 reasoned past smoke.py's token cap, the model's habit, not a parser fault).
+  - TRAP: BOTH repos (goose and Rapid-MLX) have a commit-msg hook that REJECTS any `Co-Authored-By: Claude` line
+    ("This is a PUBLIC repo"). Commit without it, whatever a brief says.
+  - Release build: on the workhorse in the worktree with `target` symlinked to ~/Projects/goose/target (copy-binary reads
+    ./target), `source bin/activate-hermit; (cd ui/desktop && pnpm install --frozen-lockfile); just release-notarized <v>`,
+    then commit notes + package.json, tag v<v>, push, `just publish-release <v> docs/releases/<notes>.md`.

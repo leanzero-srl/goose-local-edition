@@ -825,6 +825,9 @@ impl ReplicaTracker {
         preflight(&manifest)?;
 
         let dest_root = models_dir.join(model);
+        // A copy into a folder that was already there (an incomplete model) must never
+        // take the existing files with it on cancel: see `remove_partial`.
+        let created_dir = !dest_root.exists();
         tokio::fs::create_dir_all(&dest_root)
             .await
             .map_err(|e| format!("creating {}: {e}", dest_root.display()))?;
@@ -837,7 +840,7 @@ impl ReplicaTracker {
         let mut done_bytes = 0u64;
         for (index, file) in manifest.files.iter().enumerate() {
             if cancel.load(Ordering::SeqCst) {
-                remove_partial(models_dir, model)?;
+                remove_partial(models_dir, model, created_dir)?;
                 return Ok(JobEnd::Cancelled);
             }
             self.update(model, |p| {
@@ -848,7 +851,7 @@ impl ReplicaTracker {
                 .copy_file(client, spec, &dest_root, file, done_bytes, cancel)
                 .await?;
             if matches!(outcome, FileEnd::Cancelled) {
-                remove_partial(models_dir, model)?;
+                remove_partial(models_dir, model, created_dir)?;
                 return Ok(JobEnd::Cancelled);
             }
             done_bytes += file.size;
@@ -1318,12 +1321,20 @@ async fn release_offer(client: &reqwest::Client, spec: &PullSpec) -> Result<(), 
     }
 }
 
-/// Delete `models_dir/<model_id>` after a cancel, with the canonicalize guard the model
-/// delete uses. A directory never created counts as already gone.
-fn remove_partial(models_dir: &Path, model_id: &str) -> Result<(), String> {
+/// Clean up `models_dir/<model_id>` after a cancel. A directory never created counts as
+/// already gone. A folder this copy created is removed whole; one that was already there
+/// keeps everything but its `.part` files (its shards may be the only copy). The copy can
+/// land through a publisher linked to the AI-workhorse SSD (`pub -> /Volumes/...`), so a
+/// real folder under such a link is ours to remove; a per-model link, or anything that is
+/// the models dir or one of its ancestors, is refused. Same rules as goose-sidecar
+/// `hf::discard_partial`, except that a per-model link is always refused here.
+fn remove_partial(models_dir: &Path, model_id: &str, created_dir: bool) -> Result<(), String> {
     let target = models_dir.join(model_id);
     if !target.exists() {
         return Ok(());
+    }
+    if !created_dir {
+        return remove_part_files(&target);
     }
     let root = models_dir
         .canonicalize()
@@ -1331,7 +1342,17 @@ fn remove_partial(models_dir: &Path, model_id: &str) -> Result<(), String> {
     let canonical = target
         .canonicalize()
         .map_err(|e| format!("{}: {e}", target.display()))?;
-    if !canonical.starts_with(&root) || canonical == root {
+    let is_link = |p: &Path| {
+        std::fs::symlink_metadata(p)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+    };
+    let inside = canonical.starts_with(&root) && canonical != root;
+    let under_linked_publisher = !is_link(&target)
+        && target.parent().is_some_and(is_link)
+        && canonical.is_dir()
+        && !is_root_or_ancestor(&root, &canonical);
+    if !inside && !under_linked_publisher {
         return Err(format!(
             "refusing to delete {}: it resolves outside {}",
             canonical.display(),
@@ -1340,6 +1361,47 @@ fn remove_partial(models_dir: &Path, model_id: &str) -> Result<(), String> {
     }
     std::fs::remove_dir_all(&canonical)
         .map_err(|e| format!("deleting {}: {e}", canonical.display()))
+}
+
+/// Remove every regular `*.part` file under `dir`, never following a link inside it.
+fn remove_part_files(dir: &Path) -> Result<(), String> {
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&current) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            let path = entry.path();
+            if kind.is_dir() {
+                stack.push(path);
+            } else if kind.is_file() && path.to_string_lossy().ends_with(PART_SUFFIX) {
+                std::fs::remove_file(&path)
+                    .map_err(|e| format!("deleting {}: {e}", path.display()))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// True when `target` is `root` or one of its ancestors, by path or by device and inode
+/// (a macOS firmlink spelling such as /System/Volumes/Data/... survives `canonicalize`).
+fn is_root_or_ancestor(root: &Path, target: &Path) -> bool {
+    if root.starts_with(target) {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let Ok(t) = std::fs::metadata(target) {
+            return root.ancestors().any(|a| {
+                std::fs::metadata(a).is_ok_and(|m| m.dev() == t.dev() && m.ino() == t.ino())
+            });
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -1439,6 +1501,64 @@ mod tests {
                 "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad".to_string()
             )
         );
+    }
+
+    /// A cancelled copy into a publisher linked to the SSD is cleaned up there; a per-model
+    /// link and a link back to the models dir are refused.
+    #[cfg(unix)]
+    #[test]
+    fn remove_partial_follows_a_linked_publisher_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("models");
+        let ssd = dir.path().join("ssd");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(ssd.join("pub/half")).unwrap();
+        std::fs::write(ssd.join("pub/half/a.part"), b"xx").unwrap();
+        std::os::unix::fs::symlink(ssd.join("pub"), root.join("pub")).unwrap();
+        remove_partial(&root, "pub/half", true).unwrap();
+        assert!(!ssd.join("pub/half").exists());
+        assert!(root.join("pub").is_dir(), "the publisher link must stay");
+
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, ssd.join("pub/odd")).unwrap();
+        std::os::unix::fs::symlink(dir.path(), ssd.join("pub/up")).unwrap();
+        for bad in ["pub/odd", "pub/up"] {
+            assert!(
+                remove_partial(&root, bad, true).is_err(),
+                "{bad} was followed"
+            );
+        }
+        assert!(outside.exists() && root.exists());
+
+        // Review D3: a REAL folder under a linked publisher that is an ancestor of the
+        // models dir (pub -> tmp/.., id pub/<tmp name>) must be refused by the ancestor
+        // term alone.
+        let up = dir.path().join("models/up");
+        std::os::unix::fs::symlink(dir.path().parent().unwrap(), &up).unwrap();
+        let tmp_name = dir
+            .path()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert!(remove_partial(&root, &format!("up/{tmp_name}"), true).is_err());
+        assert!(root.exists(), "the models dir was deleted");
+    }
+
+    /// Review D1: cancelling a copy into a folder that was already there keeps its files.
+    #[test]
+    fn remove_partial_of_a_preexisting_folder_drops_only_parts() {
+        let dir = tempfile::tempdir().unwrap();
+        let model = dir.path().join("pub/m");
+        std::fs::create_dir_all(&model).unwrap();
+        std::fs::write(model.join("config.json"), b"{}").unwrap();
+        std::fs::write(model.join("model.safetensors"), b"weights").unwrap();
+        std::fs::write(model.join("model-2.safetensors.part"), b"xx").unwrap();
+        remove_partial(dir.path(), "pub/m", false).unwrap();
+        assert!(model.join("config.json").is_file());
+        assert!(model.join("model.safetensors").is_file());
+        assert!(!model.join("model-2.safetensors.part").exists());
     }
 
     #[test]

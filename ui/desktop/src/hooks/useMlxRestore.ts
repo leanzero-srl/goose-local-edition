@@ -14,7 +14,7 @@ export function restoreDeps(features: {
   leanzeroLink: boolean;
 }): RestoreDeps {
   return {
-    readIntent: mlxServingIntent,
+    readIntent: (atLaunch) => mlxServingIntent({ atLaunch }),
     singleStatus: () => mlxEngineStatus(),
     mount: (modelId) => mlxEngineMount(modelId),
     remoteStatus: mlxRemoteSingleStatus,

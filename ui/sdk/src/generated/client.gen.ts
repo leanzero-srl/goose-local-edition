@@ -109,6 +109,17 @@ import type {
   LeanzeroLinkDisconnectRequest_unstable,
   LeanzeroLinkHealthRequest_unstable,
   LeanzeroLinkHealthResponse_unstable,
+  LeanzeroLinkJobsCancelRequest_unstable,
+  LeanzeroLinkJobsGetRequest_unstable,
+  LeanzeroLinkJobsJobResponse_unstable,
+  LeanzeroLinkJobsListRequest_unstable,
+  LeanzeroLinkJobsListResponse_unstable,
+  LeanzeroLinkJobsLogRequest_unstable,
+  LeanzeroLinkJobsLogResponse_unstable,
+  LeanzeroLinkJobsPlaceRequest_unstable,
+  LeanzeroLinkJobsPlaceResponse_unstable,
+  LeanzeroLinkJobsSubmitRequest_unstable,
+  LeanzeroLinkJobsSubmitResponse_unstable,
   LeanzeroLinkLogoutRequest_unstable,
   LeanzeroLinkNodesRequest_unstable,
   LeanzeroLinkNodesResponse_unstable,
@@ -208,6 +219,10 @@ import type {
   MlxEngineLinkFactsResponse_unstable,
   MlxEngineMeasureSpeedRequest_unstable,
   MlxEngineMeasureSpeedResponse_unstable,
+  MlxEngineMemoryFreeRequest_unstable,
+  MlxEngineMemoryFreeResponse_unstable,
+  MlxEngineMemoryHoldersRequest_unstable,
+  MlxEngineMemoryHoldersResponse_unstable,
   MlxEngineModelCardRequest_unstable,
   MlxEngineModelCardResponse_unstable,
   MlxEngineModelDeleteRequest_unstable,
@@ -405,6 +420,11 @@ import {
   zInspectRunningJobResponse_unstable,
   zKillRunningJobResponse_unstable,
   zLeanzeroLinkHealthResponse_unstable,
+  zLeanzeroLinkJobsJobResponse_unstable,
+  zLeanzeroLinkJobsListResponse_unstable,
+  zLeanzeroLinkJobsLogResponse_unstable,
+  zLeanzeroLinkJobsPlaceResponse_unstable,
+  zLeanzeroLinkJobsSubmitResponse_unstable,
   zLeanzeroLinkNodesResponse_unstable,
   zLeanzeroLinkRemoteExecuteResponse_unstable,
   zLeanzeroLinkRequestCodeResponse_unstable,
@@ -451,6 +471,8 @@ import {
   zMlxEngineHfSearchResponse_unstable,
   zMlxEngineLinkFactsResponse_unstable,
   zMlxEngineMeasureSpeedResponse_unstable,
+  zMlxEngineMemoryFreeResponse_unstable,
+  zMlxEngineMemoryHoldersResponse_unstable,
   zMlxEngineModelCardResponse_unstable,
   zMlxEngineModelsListResponse_unstable,
   zMlxEngineMountResponse_unstable,
@@ -1835,6 +1857,30 @@ export class GooseExtClient {
     ) as MlxEngineStopOtherEngineResponse_unstable;
   }
 
+  async mlxEngineMemoryHolders_unstable(
+    params: MlxEngineMemoryHoldersRequest_unstable,
+  ): Promise<MlxEngineMemoryHoldersResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/memoryHolders",
+      params,
+    );
+    return zMlxEngineMemoryHoldersResponse_unstable.parse(
+      raw,
+    ) as MlxEngineMemoryHoldersResponse_unstable;
+  }
+
+  async mlxEngineMemoryFree_unstable(
+    params: MlxEngineMemoryFreeRequest_unstable,
+  ): Promise<MlxEngineMemoryFreeResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/memoryFree",
+      params,
+    );
+    return zMlxEngineMemoryFreeResponse_unstable.parse(
+      raw,
+    ) as MlxEngineMemoryFreeResponse_unstable;
+  }
+
   async mlxEngineUnmount_unstable(
     params: MlxEngineUnmountRequest_unstable,
   ): Promise<void> {
@@ -2447,6 +2493,78 @@ export class GooseExtClient {
     return zLeanzeroLinkRemoteExecuteResponse_unstable.parse(
       raw,
     ) as LeanzeroLinkRemoteExecuteResponse_unstable;
+  }
+
+  async leanzeroLinkJobsSubmit_unstable(
+    params: LeanzeroLinkJobsSubmitRequest_unstable,
+  ): Promise<LeanzeroLinkJobsSubmitResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/leanzeroLink/jobsSubmit",
+      params,
+    );
+    return zLeanzeroLinkJobsSubmitResponse_unstable.parse(
+      raw,
+    ) as LeanzeroLinkJobsSubmitResponse_unstable;
+  }
+
+  async leanzeroLinkJobsList_unstable(
+    params: LeanzeroLinkJobsListRequest_unstable,
+  ): Promise<LeanzeroLinkJobsListResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/leanzeroLink/jobsList",
+      params,
+    );
+    return zLeanzeroLinkJobsListResponse_unstable.parse(
+      raw,
+    ) as LeanzeroLinkJobsListResponse_unstable;
+  }
+
+  async leanzeroLinkJobsGet_unstable(
+    params: LeanzeroLinkJobsGetRequest_unstable,
+  ): Promise<LeanzeroLinkJobsJobResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/leanzeroLink/jobsGet",
+      params,
+    );
+    return zLeanzeroLinkJobsJobResponse_unstable.parse(
+      raw,
+    ) as LeanzeroLinkJobsJobResponse_unstable;
+  }
+
+  async leanzeroLinkJobsCancel_unstable(
+    params: LeanzeroLinkJobsCancelRequest_unstable,
+  ): Promise<LeanzeroLinkJobsJobResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/leanzeroLink/jobsCancel",
+      params,
+    );
+    return zLeanzeroLinkJobsJobResponse_unstable.parse(
+      raw,
+    ) as LeanzeroLinkJobsJobResponse_unstable;
+  }
+
+  async leanzeroLinkJobsLog_unstable(
+    params: LeanzeroLinkJobsLogRequest_unstable,
+  ): Promise<LeanzeroLinkJobsLogResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/leanzeroLink/jobsLog",
+      params,
+    );
+    return zLeanzeroLinkJobsLogResponse_unstable.parse(
+      raw,
+    ) as LeanzeroLinkJobsLogResponse_unstable;
+  }
+
+  async leanzeroLinkJobsPlace_unstable(
+    params: LeanzeroLinkJobsPlaceRequest_unstable,
+  ): Promise<LeanzeroLinkJobsPlaceResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/leanzeroLink/jobsPlace",
+      params,
+    );
+    return zLeanzeroLinkJobsPlaceResponse_unstable.parse(
+      raw,
+    ) as LeanzeroLinkJobsPlaceResponse_unstable;
   }
 
   async nodesRead_unstable(

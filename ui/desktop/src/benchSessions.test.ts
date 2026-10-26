@@ -69,6 +69,21 @@ describe('upsertArchivedRow — archiving a slot folds into the index without du
     expect(next[0].nodes).toBe(3);
   });
 
+  it('keeps the engine stamped at launch, which a Forge 2.0 cohort receipt names at publish', () => {
+    const rows = [provisional({ engineSha256: 'a'.repeat(64) })];
+    const next = upsertArchivedRow(rows, {
+      runId: 'run-abc',
+      slotDir: SLOT,
+      startedAt: '2026-08-31T10:00:01.000Z',
+      outcome: 'finished',
+      endedAt: '2026-08-31T12:00:00.000Z',
+      score: 0.61,
+      tiers: { A: 1, B: 0.5, C: 0.4, D: 0.6 },
+      scorerVersion: 'sb-7.0-rc',
+    });
+    expect(next[0].engineSha256).toBe('a'.repeat(64));
+  });
+
   it('matches by runId when the reconcile poll already stamped it', () => {
     const rows = [provisional({ runId: 'run-abc', outcome: 'finished', score: 0.7 })];
     const next = upsertArchivedRow(rows, {

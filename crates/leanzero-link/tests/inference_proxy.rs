@@ -307,6 +307,7 @@ impl SwarmStateSource for Source {
             computer_name: None,
             allows: None,
             leaving: None,
+            load: None,
         }
     }
     async fn local_sessions(&self) -> Result<Vec<leanzero_link::wire::SessionSummary>, String> {

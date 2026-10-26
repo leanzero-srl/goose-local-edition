@@ -383,6 +383,7 @@ async fn compact_core(
             msg.is_agent_visible()
                 && matches!(msg.role, rmcp::model::Role::User)
                 && has_text_only(msg)
+                && !is_harness_nudge(msg)
         });
 
         if let Some((idx, msg)) = found_msg {
@@ -535,6 +536,17 @@ async fn compact_core(
     })
 }
 
+/// A row the agent loop added to keep going (`crate::agents::harness_nudge`: the length-cut and
+/// empty-turn continuations, goal and stop-hook reminders) is not the person's request. Preserved
+/// after a compaction it became the chat's last word: Nex-N2.5-mini (laptop, 2026-10-19, run
+/// openai-cloud-21a3f68b) read "continue in smaller steps" under a summary and answered with prose,
+/// so the session ended at call 54 of 300. Decided by the row's marker, never by its words: a
+/// person who types the same sentence is still the person. The person's own message still reaches
+/// the model inside the kept block.
+fn is_harness_nudge(msg: &Message) -> bool {
+    msg.metadata.harness_nudge
+}
+
 /// Check if messages exceed the auto-compaction threshold
 /// The context window as the compaction guard compares it: the provider's limit for this model
 /// (a probed n_ctx where the provider has one, else the model config's) under the optional
@@ -587,12 +599,168 @@ pub async fn effective_context_limit(
             }
         },
     };
+    let context_limit = match session_id.and_then(|id| refused_window(id, &model_config.model_name))
+    {
+        Some(window) => context_limit.min(window),
+        None => context_limit,
+    };
+    let context_limit = match session_id
+        .and_then(compressed)
+        .and_then(|prompt| prompt.window)
+    {
+        Some(window) => context_limit.min(window),
+        None => context_limit,
+    };
     Some(
         match Config::global().get_param::<usize>("GOOSE_LOCAL_CONTEXT_CAP") {
             Ok(cap) if cap > 0 => context_limit.min(cap),
             _ => context_limit,
         },
     )
+}
+
+type RefusedWindows = std::collections::HashMap<(String, String), usize>;
+
+/// I-9: the window the provider's own last context-length refusal named, per session and model.
+/// The probe reads a served window once; a memory-guarded engine can serve less later (Xing on the
+/// Studio, 2026-10-18: probed 262,144, refused at "maximum context here is 35328 tokens"), and
+/// compaction kept sizing to the probe until the session ended.
+static REFUSED_WINDOWS: std::sync::LazyLock<std::sync::Mutex<RefusedWindows>> =
+    std::sync::LazyLock::new(Default::default);
+
+fn refused_window(session_id: &str, model: &str) -> Option<usize> {
+    REFUSED_WINDOWS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(&(session_id.to_string(), model.to_string()))
+        .copied()
+}
+
+/// Remembers the window a context-length refusal names, so `effective_context_limit` (and with it
+/// proactive compaction and the recovery summary) sizes to it from now on. The latest refusal wins:
+/// it says what the engine can hold now. A refusal that counts an output reservation inside the
+/// window (OpenRouter's "… 10000 in the output") leaves the prompt only the rest of it: sized to
+/// the whole window, the next request would be refused again at the same size.
+pub fn note_refused_window(session_id: &str, model: &str, error: &ProviderError) -> Option<usize> {
+    let ProviderError::ContextLengthExceeded(text) = error else {
+        return None;
+    };
+    let named = goose_providers::errors::refused_context_window(text)?;
+    let window = goose_providers::errors::refused_output_reservation(text)
+        .filter(|output| *output < named)
+        .map_or(named, |output| named - output);
+    remember_window(session_id, model, window);
+    Some(window)
+}
+
+fn remember_window(session_id: &str, model: &str, window: usize) {
+    REFUSED_WINDOWS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert((session_id.to_string(), model.to_string()), window);
+}
+
+/// A provider-reported prompt below this share of goose's own count of the request it sent means
+/// the provider dropped part of it (OpenRouter's middle-out). The share is far below any
+/// tokenizer disagreement — goose counts o200k, a provider its own vocabulary — measured on the
+/// Grok 4.7 Forge 2.0 build: billed 207,145 at call #181 against goose's count of what it sent,
+/// then 76,843 at #182 while goose kept sending the whole history (~273k).
+pub const COMPRESSED_PROMPT_SHARE: f64 = 0.5;
+
+/// Whether a call's reported prompt says the provider compressed what goose sent.
+pub fn prompt_was_compressed(sent_tokens: usize, reported_prompt_tokens: usize) -> bool {
+    sent_tokens > 0
+        && (reported_prompt_tokens as f64) < sent_tokens as f64 * COMPRESSED_PROMPT_SHARE
+}
+
+/// A call the provider compressed: what goose sent, and the window it showed it would hold.
+#[derive(Clone, Copy)]
+struct CompressedPrompt {
+    sent: usize,
+    window: Option<usize>,
+}
+
+/// Per session, until the next uncompressed call or a compaction ends it. Kept apart from the
+/// refused windows, which stand for the session: one compressed call (one OpenRouter routed to a
+/// small host) says what that call was served, not what the model can hold.
+static COMPRESSED_PROMPTS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, CompressedPrompt>>,
+> = std::sync::LazyLock::new(Default::default);
+
+fn compressed(session_id: &str) -> Option<CompressedPrompt> {
+    COMPRESSED_PROMPTS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(session_id)
+        .copied()
+}
+
+pub(crate) fn compressed_prompt(session_id: &str) -> Option<usize> {
+    compressed(session_id).map(|prompt| prompt.sent)
+}
+
+/// A provider compressed this call's prompt (`prompt_was_compressed`): the usage it reports is
+/// what it kept, not what the conversation holds, and reading it as the context hides the very
+/// truncation from the compaction guard. From now on the guard counts `sent_tokens`, and the
+/// window is at most `delivered_tokens` — what the provider showed it would hold — so the next
+/// check compacts the conversation instead of letting the provider cut its middle again.
+///
+/// `fixed_tokens` is the system prompt and tools, which compaction cannot shrink: a provider that
+/// held less than twice that has no room a compacted chat could fit in, and sizing to it would
+/// compact on every call, so only the count is kept and the warning says why.
+pub fn note_compressed_prompt(
+    session_id: &str,
+    model: &str,
+    sent_tokens: usize,
+    delivered_tokens: usize,
+    fixed_tokens: usize,
+) {
+    let sized = delivered_tokens >= fixed_tokens.saturating_mul(2);
+    COMPRESSED_PROMPTS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(
+            session_id.to_string(),
+            CompressedPrompt {
+                sent: sent_tokens,
+                window: sized.then_some(delivered_tokens),
+            },
+        );
+    tracing::warn!(
+        session_id,
+        model,
+        sent_tokens,
+        delivered_tokens,
+        fixed_tokens,
+        window_sized_to_delivered = sized,
+        "prompt_compressed_by_provider: the provider reported a prompt under {:.0}% of what goose \
+         sent, so it dropped part of the conversation; compaction now counts what goose sent{}",
+        COMPRESSED_PROMPT_SHARE * 100.0,
+        if sized {
+            " and sizes to what the provider held"
+        } else {
+            " (the provider held less than twice the system prompt and tools, so the window is not \
+             sized to it)"
+        }
+    );
+}
+
+/// A call the provider did not compress, or a compaction, ends the compressed reading.
+pub fn forget_compressed_prompt(session_id: &str) {
+    COMPRESSED_PROMPTS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(session_id);
+}
+
+/// The context the compaction guard reads: the provider's reported usage, or what goose sent when
+/// the provider is known to have compressed the last call.
+fn guarded_context_tokens(reported: Option<i32>, compressed_sent: Option<usize>) -> Option<usize> {
+    let reported = reported.map(|tokens| tokens.max(0) as usize);
+    match (reported, compressed_sent) {
+        (Some(reported), Some(sent)) => Some(reported.max(sent)),
+        (reported, sent) => reported.or(sent),
+    }
 }
 
 pub async fn check_if_compaction_needed(
@@ -623,22 +791,23 @@ pub async fn check_if_compaction_needed(
         return Ok(false);
     };
 
-    let (current_tokens, _token_source) = match session.usage.total_tokens {
-        Some(tokens) => (tokens as usize, "session metadata"),
-        None => {
-            let token_counter = create_token_counter()
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to create token counter: {}", e))?;
+    let (current_tokens, _token_source) =
+        match guarded_context_tokens(session.usage.total_tokens, compressed_prompt(&session.id)) {
+            Some(tokens) => (tokens, "session metadata"),
+            None => {
+                let token_counter = create_token_counter()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to create token counter: {}", e))?;
 
-            let token_counts: Vec<_> = messages
-                .iter()
-                .filter(|m| m.is_agent_visible())
-                .map(|msg| token_counter.count_chat_tokens("", std::slice::from_ref(msg), &[]))
-                .collect();
+                let token_counts: Vec<_> = messages
+                    .iter()
+                    .filter(|m| m.is_agent_visible())
+                    .map(|msg| token_counter.count_chat_tokens("", std::slice::from_ref(msg), &[]))
+                    .collect();
 
-            (token_counts.iter().sum(), "estimated")
-        }
-    };
+                (token_counts.iter().sum(), "estimated")
+            }
+        };
 
     let usage_ratio = current_tokens as f64 / context_limit as f64;
 
@@ -982,7 +1151,8 @@ async fn summarize_as_the_chat(
 }
 
 /// [`SummaryRequest::Transcript`], trying progressively more of the tool responses removed from
-/// the middle while the provider refuses the request as too long.
+/// the middle while the provider refuses the request as too long, and then (I-9) the middle of the
+/// transcript itself cut to a share of the window the refusal names.
 async fn summarize_a_transcript(
     provider: &dyn Provider,
     model_config: &ModelConfig,
@@ -997,72 +1167,139 @@ async fn summarize_a_transcript(
 
     // Try progressively removing more tool response messages from the middle to reduce context length
     let removal_percentages = [0, 10, 20, 50, 100];
+    let mut refusal = String::new();
+    let mut transcript = String::new();
 
-    for (attempt, &remove_percent) in removal_percentages.iter().enumerate() {
+    for &remove_percent in removal_percentages.iter() {
         let filtered_messages = filter_tool_responses(&agent_visible_messages, remove_percent);
-
-        let messages_text = filtered_messages
+        transcript = filtered_messages
             .iter()
             .map(|&msg| format_message_for_compacting(msg))
             .collect::<Vec<_>>()
             .join("\n");
-
-        let context = SummarizeContext {
-            messages: Some(messages_text),
-            chat: None,
-        };
-
-        let system_prompt = render_template("compaction.md", &context)?;
-
-        let user_message = Message::user()
-            .with_text("Please summarize the conversation history provided in the system prompt.");
-        let summarization_request = vec![user_message];
-
-        match crate::model_config::complete_fast(
-            crate::background_work::BackgroundWorkKind::Compaction,
-            provider,
-            model_config,
-            session_id,
-            &system_prompt,
-            &summarization_request,
-            &[],
-        )
-        .await
+        match summarize_transcript_text(provider, model_config, session_id, transcript.clone())
+            .await?
         {
-            Ok((mut response, mut provider_usage)) => {
-                response.role = Role::User;
-                strip_reasoning_content(&mut response);
-
-                crate::providers::usage_estimator::ensure_usage_tokens(
-                    &mut provider_usage,
-                    &system_prompt,
-                    &summarization_request,
-                    &response,
-                    &[],
-                )
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to ensure usage tokens: {}", e))?;
-
-                return Ok((response, provider_usage));
-            }
-            Err(e) => {
-                if matches!(e, ProviderError::ContextLengthExceeded(_)) {
-                    if attempt < removal_percentages.len() - 1 {
-                        continue;
-                    } else {
-                        return Err(anyhow::anyhow!(
-                            "Failed to compact: context limit exceeded even after removing all tool responses"
-                        ));
-                    }
-                }
-                return Err(e.into());
-            }
+            Ok(summary) => return Ok(summary),
+            Err(ProviderError::ContextLengthExceeded(why)) => refusal = why,
+            Err(e) => return Err(e.into()),
         }
     }
 
+    // Still too long with every tool response gone: the conversation's own text is over the
+    // window. Before I-9 the session ended here ("Unable to continue").
+    let named = goose_providers::errors::refused_context_window(&refusal)
+        .or_else(|| refused_window(session_id, &model_config.model_name));
+    let Some(mut window) = named.or(model_config.context_limit) else {
+        return Err(anyhow::anyhow!(
+            "Failed to compact: context limit exceeded even after removing all tool responses"
+        ));
+    };
+    for share in TRANSCRIPT_WINDOW_SHARES {
+        let budget = (window as f64 * share * TRANSCRIPT_CHARS_PER_TOKEN) as usize;
+        let cut = cut_transcript_middle(&transcript, budget);
+        warn!(
+            "compaction: the transcript is over the {window}-token window even without tool \
+             responses; summarizing it with its middle cut to {} of {} characters",
+            cut.len(),
+            transcript.len()
+        );
+        match summarize_transcript_text(provider, model_config, session_id, cut).await? {
+            Ok(summary) => return Ok(summary),
+            Err(ProviderError::ContextLengthExceeded(why)) => {
+                if let Some(named) = goose_providers::errors::refused_context_window(&why) {
+                    window = window.min(named);
+                }
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
     Err(anyhow::anyhow!(
-        "Unexpected: exhausted all attempts without returning"
+        "Failed to compact: context limit exceeded even after removing all tool responses and \
+         cutting the transcript to fit a {window}-token window"
     ))
+}
+
+/// Shares of the window a cut transcript may fill, tried in order: the rest is the summary
+/// prompt and the summary itself.
+const TRANSCRIPT_WINDOW_SHARES: [f64; 3] = [0.5, 0.25, 0.125];
+/// Characters per token assumed when cutting a transcript to a window: low on purpose (code and
+/// JSON tokenize near 3), so a cut errs short.
+const TRANSCRIPT_CHARS_PER_TOKEN: f64 = 3.0;
+
+/// The transcript with its middle replaced by a marker so it is at most `budget` characters: the
+/// first quarter keeps the task, the rest is the newest work.
+fn cut_transcript_middle(transcript: &str, budget: usize) -> String {
+    if transcript.len() <= budget {
+        return transcript.to_string();
+    }
+    let boundary = |at: usize| {
+        let mut at = at.min(transcript.len());
+        while !transcript.is_char_boundary(at) {
+            at -= 1;
+        }
+        at
+    };
+    let head = boundary(budget / 4);
+    let tail = boundary(transcript.len() - (budget - budget / 4));
+    let tail = if tail < head { head } else { tail };
+    format!(
+        "{}\n[... {} characters of the middle of the conversation omitted to fit the model's \
+         context window ...]\n{}",
+        transcript.get(..head).unwrap_or_default(),
+        tail - head,
+        transcript.get(tail..).unwrap_or_default()
+    )
+}
+
+/// One transcript summary request: the provider's refusal is the inner error, so the caller can
+/// shrink the transcript and ask again.
+async fn summarize_transcript_text(
+    provider: &dyn Provider,
+    model_config: &ModelConfig,
+    session_id: &str,
+    messages_text: String,
+) -> Result<std::result::Result<(Message, ProviderUsage), ProviderError>, anyhow::Error> {
+    let context = SummarizeContext {
+        messages: Some(messages_text),
+        chat: None,
+    };
+
+    let system_prompt = render_template("compaction.md", &context)?;
+
+    let user_message = Message::user()
+        .with_text("Please summarize the conversation history provided in the system prompt.");
+    let summarization_request = vec![user_message];
+
+    match crate::model_config::complete_fast(
+        crate::background_work::BackgroundWorkKind::Compaction,
+        provider,
+        model_config,
+        session_id,
+        &system_prompt,
+        &summarization_request,
+        &[],
+    )
+    .await
+    {
+        Ok((mut response, mut provider_usage)) => {
+            response.role = Role::User;
+            strip_reasoning_content(&mut response);
+
+            crate::providers::usage_estimator::ensure_usage_tokens(
+                &mut provider_usage,
+                &system_prompt,
+                &summarization_request,
+                &response,
+                &[],
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to ensure usage tokens: {}", e))?;
+
+            Ok(Ok((response, provider_usage)))
+        }
+        Err(e) => Ok(Err(e)),
+    }
 }
 
 /// One message as text for a summarizing model. Content marked for the user alone never enters it
@@ -1704,6 +1941,128 @@ mod tests {
 
         let _ = Conversation::new(agent_conversation)
             .expect("compaction should produce a valid conversation");
+    }
+
+    /// I-13 x I-31: every harness nudge (the empty-turn continuation too, which tells the model it
+    /// may "give your final answer") is skipped by the compaction's preserved request, through a
+    /// stored round trip; the same words typed by the person are still the person's request.
+    #[tokio::test]
+    async fn every_harness_nudge_stays_out_of_the_preserved_request_and_the_persons_words_stay_in()
+    {
+        for nudge_text in [
+            crate::agents::LENGTH_CUT_CONTINUATION,
+            crate::agents::EMPTY_TURN_CONTINUATION,
+        ] {
+            let stored: Message = serde_json::from_str(
+                &serde_json::to_string(&crate::agents::harness_nudge(nudge_text)).unwrap(),
+            )
+            .unwrap();
+            assert!(stored.metadata.harness_nudge, "the marker is persisted");
+            for (last, nudge_kept) in [
+                (stored.clone(), false),
+                (
+                    Message::user()
+                        .with_text(nudge_text)
+                        .with_visibility(false, true),
+                    true,
+                ),
+            ] {
+                let provider =
+                    MockProvider::new(Message::assistant().with_text("<mock summary>"), 1);
+                let conversation = Conversation::new_unvalidated(vec![
+                    Message::user().with_text("ship v2 of the app"),
+                    Message::assistant()
+                        .with_tool_request("tool_0", Ok(CallToolRequestParams::new("read_file"))),
+                    Message::user().with_tool_response(
+                        "tool_0",
+                        Ok(rmcp::model::CallToolResult::success(vec![
+                            RawContent::text("v1 source").no_annotation(),
+                        ])),
+                    ),
+                    last,
+                ]);
+                let model_config = provider.config.clone();
+                let (compacted, _usage) = compact_messages(
+                    &provider,
+                    &model_config,
+                    "test-session-id",
+                    &conversation,
+                    false,
+                    &SummaryRequest::Transcript,
+                )
+                .await
+                .unwrap();
+                let last_text = compacted
+                    .agent_visible_messages()
+                    .last()
+                    .expect("a compacted conversation")
+                    .as_concat_text();
+                assert_eq!(
+                    last_text.contains(nudge_text),
+                    nudge_kept,
+                    "{nudge_text:?} -> {last_text:?}"
+                );
+                if !nudge_kept {
+                    assert!(last_text.contains("ship v2 of the app"), "{last_text:?}");
+                }
+            }
+        }
+    }
+
+    /// I-31: goose's length-cut nudge is the newest agent-visible user text in a long tool loop,
+    /// and a compaction preserved IT as the chat's latest request. The person's message must be
+    /// the one carried after the summary. NEGATIVE CONTROL: without `is_harness_nudge` the last
+    /// message is the nudge.
+    #[tokio::test]
+    async fn a_compaction_never_preserves_goose_s_own_length_cut_nudge_as_the_request() {
+        let provider = MockProvider::new(Message::assistant().with_text("<mock summary>"), 1);
+        let conversation = Conversation::new_unvalidated(vec![
+            Message::user().with_text("ship v2 of the app"),
+            Message::assistant()
+                .with_tool_request("tool_0", Ok(CallToolRequestParams::new("read_file"))),
+            Message::user().with_tool_response(
+                "tool_0",
+                Ok(rmcp::model::CallToolResult::success(vec![
+                    RawContent::text("v1 source").no_annotation(),
+                ])),
+            ),
+            crate::agents::harness_nudge(crate::agents::LENGTH_CUT_CONTINUATION),
+        ]);
+        let model_config = provider.config.clone();
+        let (compacted, _usage) = compact_messages(
+            &provider,
+            &model_config,
+            "test-session-id",
+            &conversation,
+            false,
+            &SummaryRequest::Transcript,
+        )
+        .await
+        .unwrap();
+        let visible = compacted.agent_visible_messages();
+        let texts: Vec<String> = visible
+            .iter()
+            .flat_map(|m| {
+                m.content
+                    .iter()
+                    .filter_map(|c| c.as_text().map(str::to_string))
+            })
+            .collect();
+        assert!(
+            !texts
+                .iter()
+                .any(|t| t.contains("Your last reply was cut off")),
+            "the nudge survived the compaction: {texts:?}"
+        );
+        let last = visible.last().expect("a compacted conversation");
+        assert!(matches!(last.role, rmcp::model::Role::User));
+        assert_eq!(
+            last.content
+                .iter()
+                .filter_map(|c| c.as_text())
+                .collect::<String>(),
+            "ship v2 of the app"
+        );
     }
 
     fn chat_tools() -> Vec<Tool> {
@@ -2909,5 +3268,215 @@ mod tests {
             assert!(sent.contains("tool_response: seen"), "{sent}");
             assert!(!sent.contains(SECRET), "{sent}");
         }
+    }
+
+    /// Refuses every request whose system prompt is over `window` tokens (3 characters each), the
+    /// way Rapid-MLX's memory guard does, and records what it accepted.
+    struct WindowProvider {
+        window: usize,
+        accepted: std::sync::Mutex<Vec<usize>>,
+    }
+
+    #[async_trait]
+    impl Provider for WindowProvider {
+        fn get_name(&self) -> &str {
+            "window"
+        }
+
+        async fn stream(
+            &self,
+            _model_config: &ModelConfig,
+            system: &str,
+            _messages: &[Message],
+            _tools: &[Tool],
+        ) -> Result<MessageStream, ProviderError> {
+            let tokens = system.len() / 3;
+            if tokens > self.window {
+                return Err(ProviderError::ContextLengthExceeded(format!(
+                    "This prompt ({tokens} tokens) needs 131.8 GB but this Mac can hold 75.1 GB; \
+                     the maximum context here is {} tokens.",
+                    self.window
+                )));
+            }
+            self.accepted.lock().unwrap().push(tokens);
+            let usage = ProviderUsage::new("window".to_string(), Usage::default());
+            Ok(stream_from_single_message(
+                Message::assistant().with_text("<summary>"),
+                usage,
+            ))
+        }
+
+        async fn get_context_limit(
+            &self,
+            _model_config: &ModelConfig,
+        ) -> Result<usize, ProviderError> {
+            Ok(262_144)
+        }
+    }
+
+    /// I-9 (Xing on the Studio, 2026-10-18): the conversation's own text is over the engine's
+    /// window even with every tool response removed. Before, compaction failed ("even after
+    /// removing all tool responses") and the session ended; now the transcript's middle is cut to
+    /// the window the refusal names.
+    #[tokio::test]
+    async fn a_transcript_over_the_named_window_is_cut_to_fit() {
+        let provider = WindowProvider {
+            window: 20_000,
+            accepted: std::sync::Mutex::new(Vec::new()),
+        };
+        let conversation = Conversation::new_unvalidated(vec![
+            Message::user().with_text(format!("Build the app. {}", "spec ".repeat(30_000))),
+            Message::assistant().with_text("plan ".repeat(30_000)),
+            Message::user().with_text("continue"),
+        ]);
+        let model_config = ModelConfig::new("xing").with_context_limit(Some(262_144));
+        let compacted = compact_messages(
+            &provider,
+            &model_config,
+            "i9-window-session",
+            &conversation,
+            false,
+            &SummaryRequest::Transcript,
+        )
+        .await;
+        assert!(compacted.is_ok(), "{:?}", compacted.err());
+        let accepted = provider.accepted.lock().unwrap().clone();
+        assert_eq!(accepted.len(), 1, "{accepted:?}");
+        assert!(accepted[0] <= 20_000, "{accepted:?}");
+    }
+
+    /// I-9: once the provider has named a smaller window, the session's effective limit is that
+    /// window, so proactive compaction fires at 0.8 x it instead of at the probed window.
+    #[tokio::test]
+    async fn the_named_window_bounds_the_sessions_effective_limit() {
+        let provider = MockProvider::new(Message::assistant().with_text("x"), 262_144);
+        let model_config = provider.config.clone();
+        let session = "i9-effective-session";
+        assert_eq!(
+            effective_context_limit(&provider, &model_config, Some(session)).await,
+            Some(262_144)
+        );
+        let refusal = ProviderError::ContextLengthExceeded(
+            "This prompt (82684 tokens) needs 131.8 GB but this Mac can hold 75.1 GB; the \
+             maximum context here is 35328 tokens."
+                .to_string(),
+        );
+        assert_eq!(
+            note_refused_window(session, &model_config.model_name, &refusal),
+            Some(35_328)
+        );
+        assert_eq!(
+            effective_context_limit(&provider, &model_config, Some(session)).await,
+            Some(35_328)
+        );
+        assert_eq!(
+            effective_context_limit(&provider, &model_config, Some("another-session")).await,
+            Some(262_144)
+        );
+    }
+
+    /// OpenRouter's refusal counts the output it reserved inside the window it names: the prompt
+    /// a later request may carry is the window minus that share.
+    #[tokio::test]
+    async fn an_openrouter_refusal_sizes_the_prompt_to_the_window_minus_its_output_share() {
+        let provider = MockProvider::new(Message::assistant().with_text("x"), 500_000);
+        let model_config = provider.config.clone();
+        let session = "openrouter-refusal-session";
+        let refusal = ProviderError::ContextLengthExceeded(
+            "This endpoint's maximum context length is 131072 tokens. However, you requested \
+             about 272464 tokens (258978 of text input, 3486 of tool input, 10000 in the \
+             output). Please reduce the length of either one, or use the \"middle-out\" \
+             transform to compress your prompt automatically."
+                .to_string(),
+        );
+        assert_eq!(
+            note_refused_window(session, &model_config.model_name, &refusal),
+            Some(121_072)
+        );
+        assert_eq!(
+            effective_context_limit(&provider, &model_config, Some(session)).await,
+            Some(121_072)
+        );
+    }
+
+    #[test]
+    fn a_reported_prompt_under_half_of_what_goose_sent_was_compressed() {
+        // Grok 4.7's Forge 2.0 low build: billed 76,843 at call #182 while goose sent ~273k.
+        assert!(prompt_was_compressed(273_000, 76_843));
+        // The call before it was billed in full.
+        assert!(!prompt_was_compressed(207_000, 207_145));
+        // A provider tokenizer that counts a fifth fewer tokens than o200k is not compression.
+        assert!(!prompt_was_compressed(100_000, 80_000));
+        assert!(!prompt_was_compressed(0, 0));
+    }
+
+    #[test]
+    fn the_guard_counts_what_goose_sent_while_the_provider_compresses() {
+        assert_eq!(guarded_context_tokens(Some(80_000), None), Some(80_000));
+        assert_eq!(
+            guarded_context_tokens(Some(80_000), Some(273_000)),
+            Some(273_000)
+        );
+        assert_eq!(guarded_context_tokens(None, Some(273_000)), Some(273_000));
+        assert_eq!(guarded_context_tokens(None, None), None);
+    }
+
+    /// A compressed call sizes the window to what the provider held, so the guard (0.8 x window)
+    /// compacts on the next check; a provider that held less than twice the fixed prompt is not
+    /// sized to, or every compacted call would compact again.
+    #[tokio::test]
+    async fn a_compressed_call_sizes_the_window_to_what_the_provider_held() {
+        let provider = MockProvider::new(Message::assistant().with_text("x"), 500_000);
+        let model_config = provider.config.clone();
+        let model = model_config.model_name.clone();
+
+        let sized = "compressed-sized-session";
+        note_compressed_prompt(sized, &model, 273_000, 76_843, 9_000);
+        assert_eq!(compressed_prompt(sized), Some(273_000));
+        assert_eq!(
+            effective_context_limit(&provider, &model_config, Some(sized)).await,
+            Some(76_843)
+        );
+        forget_compressed_prompt(sized);
+        assert_eq!(compressed_prompt(sized), None);
+
+        let tiny = "compressed-tiny-session";
+        note_compressed_prompt(tiny, &model, 95_000, 7_000, 9_000);
+        assert_eq!(compressed_prompt(tiny), Some(95_000));
+        assert_eq!(
+            effective_context_limit(&provider, &model_config, Some(tiny)).await,
+            Some(500_000)
+        );
+    }
+
+    /// One compressed call — the compaction's own summary call, or one OpenRouter routed to a
+    /// small endpoint — does not shrink the session's window for good: the next uncompressed call
+    /// or a compaction gives the listed window back.
+    #[tokio::test]
+    async fn a_compressed_window_lasts_only_until_the_compression_ends() {
+        let provider = MockProvider::new(Message::assistant().with_text("x"), 500_000);
+        let model_config = provider.config.clone();
+        let session = "compressed-then-clear-session";
+        note_compressed_prompt(session, &model_config.model_name, 273_000, 76_843, 9_000);
+        assert_eq!(
+            effective_context_limit(&provider, &model_config, Some(session)).await,
+            Some(76_843)
+        );
+        forget_compressed_prompt(session);
+        assert_eq!(
+            effective_context_limit(&provider, &model_config, Some(session)).await,
+            Some(500_000)
+        );
+    }
+
+    #[test]
+    fn a_cut_transcript_keeps_its_ends() {
+        let transcript = format!("TASK {} NEWEST", "x".repeat(10_000));
+        let cut = cut_transcript_middle(&transcript, 1_000);
+        assert!(cut.starts_with("TASK") && cut.ends_with("NEWEST"), "{cut}");
+        assert!(cut.len() < 1_200, "{}", cut.len());
+        assert_eq!(cut_transcript_middle("short", 1_000), "short");
+        let wide = "é".repeat(5_000);
+        assert!(cut_transcript_middle(&wide, 999).len() < 1_200);
     }
 }

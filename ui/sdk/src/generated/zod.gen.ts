@@ -1104,6 +1104,10 @@ export const zProviderConfigStatusDto = z.object({
         z.string(),
         z.null()
     ]).optional(),
+    localServerNotRunning: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
     testModel: z.union([
         z.string(),
         z.null()
@@ -3569,6 +3573,179 @@ export const zMlxEngineStopOtherEngineResponse_unstable = z.object({
 });
 
 /**
+ * Who holds memory on this Mac, and — for `fitModelId` — what freeing it would buy.
+ */
+export const zMlxEngineMemoryHoldersRequest_unstable = z.object({
+    nodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    fitModelId: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    neverTouch: z.array(z.string()).optional().default([])
+});
+
+/**
+ * One process (identity a free must name back): pid + start time, so a reused pid is never hit.
+ */
+export const zMlxMemoryPidDto = z.object({
+    pid: z.number().int().gte(0),
+    startedAt: z.number().int().gte(0)
+});
+
+/**
+ * One memory holder on a Mac, grouped (an app's helpers fold into its outermost `.app`).
+ */
+export const zMlxMemoryGroupDto = z.object({
+    id: z.string(),
+    label: z.string(),
+    category: z.string(),
+    bytes: z.number().int().gte(0),
+    pids: z.array(zMlxMemoryPidDto),
+    bundleId: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    quittable: z.boolean(),
+    reclaimableByGoose: z.boolean(),
+    why: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    protectedWhy: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    usedBy: z.array(z.string()).optional().default([]),
+    launchdLabel: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    nuclearDefault: z.boolean().optional().default(false)
+});
+
+/**
+ * The honest answer to a short fit, from live measurement.
+ */
+export const zMlxMemoryVerdictDto = z.object({
+    kind: z.string(),
+    remainingBytes: z.number().int().gte(0),
+    appsToQuit: z.array(z.string())
+});
+
+/**
+ * Another way to run when freeing memory is not enough (or not wanted).
+ */
+export const zMlxMemoryAlternativeDto = z.object({
+    kind: z.string(),
+    modelId: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    needBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    nodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    label: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    budgetBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional()
+});
+
+export const zMlxEngineMemoryHoldersResponse_unstable = z.object({
+    availableBytes: z.number().int().gte(0),
+    budgetBytes: z.number().int().gte(0),
+    totalBytes: z.number().int().gte(0),
+    fit: z.union([
+        zMlxMountFitDto,
+        z.null()
+    ]).optional(),
+    groups: z.array(zMlxMemoryGroupDto),
+    gooseOwnedBytes: z.number().int().gte(0),
+    serversBytes: z.number().int().gte(0).optional().default(0),
+    appsBytes: z.number().int().gte(0),
+    shortBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    verdict: z.union([
+        zMlxMemoryVerdictDto,
+        z.null()
+    ]).optional(),
+    alternatives: z.array(zMlxMemoryAlternativeDto),
+    quitAppsAllowed: z.boolean(),
+    enabled: z.boolean()
+});
+
+/**
+ * Free memory. `gooseOwned` = the soft clean (this goose's own idle engine + proven left-over
+ * goose servers, nothing anyone else uses). Everything else is named item by item and re-checked
+ * against a fresh census, the protected set and the never-touch list: `unloadServers` (group ids
+ * of model servers / other MLX engines), `quitApps` (bundle ids, asked to quit; one that does
+ * not quit is left running and reported), `forceStopApps` (bundle ids the person chose to force
+ * stop: one SIGTERM per pid, own uid, unprotected, never SIGKILL). Each item is re-checked right
+ * before it runs; a server that gained a user not in `seenUsedBy` is refused. Over the Link,
+ * everything but `gooseOwned` needs `GOOSE_LINK_ALLOW_REMOTE_APP_QUIT` on the answering Mac.
+ */
+export const zMlxEngineMemoryFreeRequest_unstable = z.object({
+    nodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    gooseOwned: z.boolean().optional().default(false),
+    quitApps: z.array(z.string()).optional().default([]),
+    fitModelId: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    unloadServers: z.array(z.string()).optional().default([]),
+    nuclear: z.boolean().optional().default(false),
+    neverTouch: z.array(z.string()).optional().default([]),
+    seenUsedBy: z.record(z.array(z.string())).optional().default({}),
+    forceStopApps: z.array(z.string()).optional().default([])
+});
+
+export const zMlxMemoryFreeItemDto = z.object({
+    id: z.string(),
+    label: z.string(),
+    ok: z.boolean(),
+    freedBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    message: z.string(),
+    forceStoppable: z.boolean().optional().default(false),
+    refusalCode: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zMlxMemoryBudgetDto = z.object({
+    budgetBytes: z.number().int().gte(0)
+});
+
+export const zMlxEngineMemoryFreeResponse_unstable = z.object({
+    items: z.array(zMlxMemoryFreeItemDto),
+    before: zMlxMemoryBudgetDto,
+    after: zMlxMemoryBudgetDto,
+    fit: z.union([
+        zMlxMountFitDto,
+        z.null()
+    ]).optional()
+});
+
+/**
  * Stop the MLX engine and unmount its model.
  */
 export const zMlxEngineUnmountRequest_unstable = z.object({
@@ -4906,7 +5083,9 @@ export const zMlxEngineRemoteSingleStatusResponse_unstable = z.object({
  * Read the serving intent. Written by the owner's own starts (Mount, remote single start, split
  * start), removed by the matching explicit stop; an app quit or a goosed exit never touches it.
  */
-export const zMlxEngineServingIntentRequest_unstable = z.record(z.unknown());
+export const zMlxEngineServingIntentRequest_unstable = z.object({
+    atLaunch: z.boolean().optional().default(false)
+});
 
 export const zMlxEngineServingIntentResponse_unstable = z.object({
     intent: z.union([
@@ -4916,7 +5095,8 @@ export const zMlxEngineServingIntentResponse_unstable = z.object({
     error: z.union([
         z.string(),
         z.null()
-    ]).optional()
+    ]).optional(),
+    restoreAtLaunch: z.boolean().optional().default(false)
 });
 
 /**
@@ -6376,6 +6556,116 @@ export const zLeanzeroLinkRemoteExecuteRequest_unstable = z.object({
 
 export const zLeanzeroLinkRemoteExecuteResponse_unstable = z.object({
     sessionId: z.string()
+});
+
+/**
+ * Mesh jobs (`/v1/swarm/jobs` on a node). Every jobs method needs the manager `connected`
+ * (else `invalid_params` "not connected to the mesh"). A refusal from the target (switch
+ * off, no memory headroom, heavy slot held, benchmark running, user active, ...) is an
+ * `invalid_params` error whose `data` is the node's `{code, reason}` verbatim. Job views,
+ * logs and placements are carried as the node's own JSON (`leanzero_link::jobs` DTOs);
+ * a view never carries the command line.
+ *
+ * Submit one job. `targetNodeId` absent = place it by the placement strategy (see
+ * `jobsPlace`): the first candidate that accepts runs it; when none can, or other jobs already
+ * wait, it joins THIS node's FIFO queue (`queued: true`, `queuePosition` 1 = next, `nodeId` =
+ * this node, `jobId` = the queue id) and is offered to the Macs again every 15 s. A queue id
+ * follows its job: `jobsGet`/`jobsLog`/`jobsCancel` on this node show it waiting (`state:
+ * "queued"`, `queue: {position, strategy, refusals}`), then the placed job with `placed_on`.
+ * A targeted job never queues (a refusal is the error). `job` is a `JobRequest`: `{kind:
+ * "shell"|"prompt", command, cwd?, needMemGb?, heavy, timeoutS?}` (snake_case keys inside
+ * `job`, as the node's route takes them).
+ */
+export const zLeanzeroLinkJobsSubmitRequest_unstable = z.object({
+    targetNodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    job: z.unknown(),
+    strategy: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zLeanzeroLinkJobsSubmitResponse_unstable = z.object({
+    nodeId: z.string(),
+    jobId: z.string(),
+    queued: z.boolean().optional().default(false),
+    queuePosition: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * Every job a node knows (running and finished since it started), newest first as it lists them.
+ */
+export const zLeanzeroLinkJobsListRequest_unstable = z.object({
+    targetNodeId: z.string()
+});
+
+export const zLeanzeroLinkJobsListResponse_unstable = z.object({
+    jobs: z.array(z.unknown())
+});
+
+/**
+ * One job's view (brief + outcome), as `GET /v1/swarm/jobs/{id}`.
+ */
+export const zLeanzeroLinkJobsGetRequest_unstable = z.object({
+    targetNodeId: z.string(),
+    jobId: z.string()
+});
+
+export const zLeanzeroLinkJobsJobResponse_unstable = z.object({
+    job: z.unknown()
+});
+
+/**
+ * Cancel a shell job: its whole process group is TERMed, then KILLed after the grace. The
+ * group dies async: poll `jobsGet` for `cancelled`/143. A prompt job answers
+ * `cancel_unsupported`.
+ */
+export const zLeanzeroLinkJobsCancelRequest_unstable = z.object({
+    targetNodeId: z.string(),
+    jobId: z.string()
+});
+
+/**
+ * Bytes `[from, next)` of a job's combined stdout+stderr (`{from, next, data, done}`).
+ */
+export const zLeanzeroLinkJobsLogRequest_unstable = z.object({
+    targetNodeId: z.string(),
+    jobId: z.string(),
+    from: z.number().int().gte(0).optional().default(0)
+});
+
+export const zLeanzeroLinkJobsLogResponse_unstable = z.object({
+    log: z.unknown()
+});
+
+/**
+ * Where a job could run now, in the order a submit tries them (node_fleet's rules:
+ * this node first under `local-first`, last under `selfish`; then the most room (`canTake`);
+ * USER-ACTIVE only breaks a tie between equal room, then score). Busy nodes and nodes that do not
+ * allow jobs are not placements: they are `refusals`, each `{nodeId, code, reason}`.
+ */
+export const zLeanzeroLinkJobsPlaceRequest_unstable = z.object({
+    needMemGb: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    heavy: z.boolean().optional().default(false),
+    strategy: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zLeanzeroLinkJobsPlaceResponse_unstable = z.object({
+    placements: z.array(z.unknown()),
+    strategy: z.string().optional().default(''),
+    refusals: z.array(z.unknown()).optional().default([])
 });
 
 /**
@@ -8364,6 +8654,8 @@ export const zExtRequest = z.object({
             zMlxEngineMountRequest_unstable,
             zMlxEngineMountAfterLoadRequest_unstable,
             zMlxEngineStopOtherEngineRequest_unstable,
+            zMlxEngineMemoryHoldersRequest_unstable,
+            zMlxEngineMemoryFreeRequest_unstable,
             zMlxEngineUnmountRequest_unstable,
             zMlxEngineSettingsReadRequest_unstable,
             zMlxEngineSettingsUpdateRequest_unstable,
@@ -8419,6 +8711,12 @@ export const zExtRequest = z.object({
             zNotesInboxRequest_unstable,
             zNotesShowingRequest_unstable,
             zLeanzeroLinkRemoteExecuteRequest_unstable,
+            zLeanzeroLinkJobsSubmitRequest_unstable,
+            zLeanzeroLinkJobsListRequest_unstable,
+            zLeanzeroLinkJobsGetRequest_unstable,
+            zLeanzeroLinkJobsCancelRequest_unstable,
+            zLeanzeroLinkJobsLogRequest_unstable,
+            zLeanzeroLinkJobsPlaceRequest_unstable,
             zNodesReadRequest_unstable,
             zNodesWriteRequest_unstable,
             zNodesRemoveNodeRequest_unstable,
@@ -8539,6 +8837,8 @@ export const zExtResponse = z.union([
                 zMlxEngineStatusResponse_unstable,
                 zMlxEngineMountResponse_unstable,
                 zMlxEngineStopOtherEngineResponse_unstable,
+                zMlxEngineMemoryHoldersResponse_unstable,
+                zMlxEngineMemoryFreeResponse_unstable,
                 zMlxEngineSettingsResponse_unstable,
                 zMlxEngineModelsListResponse_unstable,
                 zMlxEngineHfSearchResponse_unstable,
@@ -8582,6 +8882,11 @@ export const zExtResponse = z.union([
                 zNotesInboxResponse_unstable,
                 zNotesShowingResponse_unstable,
                 zLeanzeroLinkRemoteExecuteResponse_unstable,
+                zLeanzeroLinkJobsSubmitResponse_unstable,
+                zLeanzeroLinkJobsListResponse_unstable,
+                zLeanzeroLinkJobsJobResponse_unstable,
+                zLeanzeroLinkJobsLogResponse_unstable,
+                zLeanzeroLinkJobsPlaceResponse_unstable,
                 zNodesReadResponse_unstable,
                 zNodesWriteResponse_unstable,
                 zNodesSetChatNodesResponse_unstable,

@@ -37,6 +37,9 @@ export interface BenchSessionRow extends Partial<BenchSeriesMembership> {
   /** A single-model run's custom fields, stamped at launch: what the entrant was sent and what
    *  the tier pinned. Every result row rebuilt for this run (a re-score included) reads it here. */
   modelFields?: BenchModelFieldsRecord;
+  /** sha256 of the goose binary that RAN this build, stamped at launch: the Forge 2.0 comparison receipt
+   *  names this engine, so an app update between a series' builds cannot silently split the pair. */
+  engineSha256?: string;
 }
 
 /** Where a session's files live: the live-run slot while it still holds them, else
@@ -107,6 +110,8 @@ export const upsertArchivedRow = (
     ...(prior?.completionReceipt ? { completionReceipt: prior.completionReceipt } : {}),
     ...(prior?.scoringError ? { scoringError: prior.scoringError } : {}),
     ...(prior?.modelFields ? { modelFields: prior.modelFields } : {}),
+    // The engine that RAN the build, stamped at launch: a Forge 2.0 cohort receipt names it at publish.
+    ...(prior?.engineSha256 ? { engineSha256: prior.engineSha256 } : {}),
     ...(prior?.seriesId && prior.buildIndex
       ? { seriesId: prior.seriesId, buildIndex: prior.buildIndex }
       : {}),
