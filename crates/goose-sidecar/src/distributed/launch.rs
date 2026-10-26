@@ -70,6 +70,7 @@ const TENSOR_PROGRAM: &str = concat!(
     include_str!("rank_stream_watch.py"),
     include_str!("rank_xml_guard.py"),
     include_str!("rank_admission.py"),
+    include_str!("rank_pipeline_split.py"),
     include_str!("rank_wrapper.py")
 );
 const PIPELINE_PROGRAM: &str = concat!(
@@ -190,8 +191,15 @@ pub enum RankProgram {
     /// that told them apart by tokens would keep an entry this Mac's cache evicts.
     /// `mlxLmServerEveryConversation` (a 3.0.80 requester) still reads, with `name_conversations`
     /// off: that requester's ranks tell conversations apart by tokens alike.
+    ///
+    /// Tagged `mlxLmServerPipelineSplit` since the mlx_lm pipeline runner (mimo_v2):
+    /// `pipeline_split` makes every rank load only its layer range (`rank_pipeline_split.py`, under
+    /// the fork's interpreter) and run `mlx_lm.server --pipeline`; a peer whose wrapper ignored it
+    /// would load the whole model as a tensor rank and the collectives would never pair up.
+    /// `mlxLmServerNamedConversation` (a requester before it) still reads, with no split: tensor.
     #[serde(
-        rename = "mlxLmServerNamedConversation",
+        rename = "mlxLmServerPipelineSplit",
+        alias = "mlxLmServerNamedConversation",
         alias = "mlxLmServerEveryConversation",
         alias = "mlxLmServerKvDtype",
         alias = "mlxLmServerStableHead",
@@ -310,6 +318,13 @@ pub enum RankProgram {
         /// tag: rank 0 is always the requester's own Mac, whose wrapper reads it.
         #[serde(default, skip_serializing_if = "SamplingDefaults::is_empty")]
         sampling_defaults: Box<SamplingDefaults>,
+        /// The mlx_lm pipeline's layers per rank, rank 0 first (rank 0 holds the LAST layers;
+        /// `layer_split::LayerSplit::layers`). `None` = a tensor rank.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pipeline_split: Option<Vec<u32>>,
+        /// With `pipeline_split`: this rank's prompt-cache byte weights (`PipelineCacheWeights`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pipeline_cache_weights: Option<PipelineCacheWeights>,
     },
     /// The fork's `pipeline_qwen4_serve.serve` under `pipeline_rank.py` (layer split): the exact
     /// `pipeline_qwen4 serve` arguments, parsed on the rank by the fork's own parser.
@@ -518,8 +533,19 @@ pub fn rank_specs(
             keep_every_conversation: true,
             name_conversations: true,
             sampling_defaults: Box::default(),
+            pipeline_split: None,
+            pipeline_cache_weights: None,
         }
     })
+}
+
+/// One mlx_lm pipeline rank's prompt-cache byte weights (`rank_pipeline_split.py`): each layer
+/// cache's `nbytes` times its kind's weight, `lcm(that kind's layers per rank) / this rank's`, so
+/// every rank's sum over its own layers is the same integer and the ranks evict alike.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PipelineCacheWeights {
+    pub full: u64,
+    pub swa: u64,
 }
 
 /// The `pipeline_qwen4 serve` arguments for one rank: this node's own model dir, the served id,
@@ -681,7 +707,20 @@ impl RankSpec {
     /// The interpreter this rank's program needs on `node`: the tensor env, or the fork's.
     pub fn interpreter<'a>(&self, node: &'a NodeConfig) -> Result<&'a str> {
         match self.program {
-            RankProgram::MlxLmServer { .. } => Ok(&node.python),
+            RankProgram::MlxLmServer {
+                pipeline_split: None,
+                ..
+            } => Ok(&node.python),
+            RankProgram::MlxLmServer {
+                pipeline_split: Some(_),
+                ..
+            } => node.pipeline_python.as_deref().with_context(|| {
+                format!(
+                    "node '{}' has no pipeline_python: the mlx_lm pipeline rank (mimo_v2) runs the \
+                     fork's interpreter, whose rapid_mlx.mlx_lm_models vendors the architecture",
+                    node.name
+                )
+            }),
             RankProgram::PipelineServe { .. } => {
                 node.pipeline_python.as_deref().with_context(|| {
                     format!(
@@ -729,12 +768,20 @@ pub fn python_args(spec: &RankSpec) -> Result<Vec<String>> {
     Ok(args)
 }
 
-/// The peer-side command: print the shell's pid (which `exec` hands to the interpreter unchanged)
+/// The open-file limit a peer's rank shell raises itself to before the interpreter starts: an ssh
+/// session on the mule starts at 256, and the first two-Mac mimo load died there opening shard 3
+/// of 36 (2026-10-26, jaccl-smoke serve_rank.sh). The floor is macOS's default hard limit, for a
+/// shell that may not raise past it.
+const RANK_OPEN_FILES: u32 = 65_536; // measured: jaccl-smoke serve_rank.sh, the mimo load that passed
+const RANK_OPEN_FILES_FLOOR: u32 = 10_240; // measured: macOS kern.maxfilesperproc default
+
+/// The peer-side command: raise the open-file limit, print the shell's pid (which `exec` hands to the interpreter unchanged)
 /// so the supervisor can signal and verify THAT pid over ssh, then become the rank.
 pub fn remote_script(python: &str, args: &[String]) -> String {
     let quoted: Vec<String> = args.iter().map(|a| sh_quote(a)).collect();
     format!(
-        "echo GOOSE_RANK_PID=$$; exec {} {}",
+        "ulimit -n {RANK_OPEN_FILES} 2>/dev/null || ulimit -n {RANK_OPEN_FILES_FLOOR}; \
+         echo GOOSE_RANK_PID=$$; exec {} {}",
         sh_quote(python),
         quoted.join(" ")
     )

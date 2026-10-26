@@ -2378,5 +2378,7 @@ sys.argv = [
     str(spec["port"]),
     *prompt_cache_flags,
     *(["--prefill-step-size", str(int(prefill["step"]))] if prefill is not None else []),
+    # rank_pipeline_split.py: a split spec's ranks each run their own layer range.
+    *(["--pipeline"] if spec.get("pipeline_split") is not None else []),
 ]
 server.main()

@@ -141,3 +141,61 @@ Same for test / clippy (`cargo clippy --config '...' -p ... --all-targets -- -D 
   Own target dir in the worktree is not needed: share ~/Projects/goose/target.
 - ctx-guard: this agent reached 180k by the end of B. Keep reads to grep -n + sed ranges.
 - Never touch ~/Projects/goose sources, the engine on :8090, or pkill by pattern.
+
+## Session 4 (launch), 2026-10-26: WIP, NOT COMPILED (ctx-guard stop at ~190k)
+Done (uncompiled, no cargo run yet):
+- NEW crates/goose-sidecar/src/distributed/rank_pipeline_split.py, in TENSOR_PROGRAM before rank_wrapper.py.
+  Runs only when spec["pipeline_split"] is set: `import rapid_mlx.mlx_lm_models` + `mlx_lm.models.mimo_v2`
+  (SystemExit naming sys.executable if it fails); refuses if MiMoV2Model.pipeline has no `split` param; patches
+  MiMoV2Model.pipeline (NOT PipelineMixin) to default the planned split, refusing sum(split) != len(layers);
+  wraps mlx_lm.server.sharded_load (server.py does `from .utils import sharded_load`, so patch the server
+  name) -> refuses if the split was never applied, emits GOOSE_RANK_PIPELINE_LOADED, CPU all_sum barrier,
+  GOOSE_RANK_PIPELINE_BARRIER; scales cache nbytes (see "why" below); emits GOOSE_RANK_PIPELINE_SPLIT.
+- rank_wrapper.py tail: `--pipeline` appended when spec.pipeline_split is set.
+- launch.rs: RankProgram::MlxLmServer tag -> `mlxLmServerPipelineSplit` (old `mlxLmServerNamedConversation`
+  added as alias, doc paragraph added); new fields `pipeline_split: Option<Vec<u32>>`,
+  `pipeline_cache_weights: Option<PipelineCacheWeights>` (struct {full, swa} added after rank_specs);
+  rank_specs sets both None; `interpreter()` -> node.pipeline_python when split is Some, named refusal;
+  remote_script prefixes `ulimit -n {RANK_OPEN_FILES} 2>/dev/null || ulimit -n {RANK_OPEN_FILES_FLOOR};`
+  (consts 65_536 / 10_240 with `// measured:` markers).
+
+WHY the cache weights (found this session, a real blocker for pipeline): mlx_lm's LRUPromptCache evicts on
+`sum(c.nbytes for c in prompt_cache)` (models/cache.py:1706, server.py fetch_nearest_cache per rank at :753/:965),
+and the wrapper trims on prompt_cache_nbytes vs prompt_cache_limit. Pipeline ranks hold different layers
+(rank0 4 full + 15 SWA, rank1 5 full + 24 SWA) so raw bytes differ -> ranks evict differently -> different
+cached prefix -> different prefill step counts -> hidden-state send/recv mismatch (hang). Fix: per-class
+integer weights w_f_r = lcm(full_r)/full_r, w_s_r = lcm(swa_r)/swa_r on KVCache/BatchKVCache and
+RotatingKVCache/BatchRotatingKVCache nbytes -> every rank's sum = lcm_f*x_f + lcm_s*x_s, same integer.
+(Real-unit n_max/n_r scaling needs division -> rounding drift; Fraction breaks json emits. Hence lcm units.)
+
+OPEN (next agent, in order):
+1. Make it compile: other `RankProgram::MlxLmServer {` struct literals (launch.rs tests ~1163+) need the two
+   new fields (`pipeline_split: None, pipeline_cache_weights: None`). grep -n "MlxLmServer {" crates/goose-sidecar.
+2. `TensorLaunch::for_pipeline_ranks(plans, layers: &[u32], full: &[u32]) -> Result<(Vec<TensorLaunch>,
+   Vec<PipelineCacheWeights>)>`: from_plan each; REFUSE if prefill step or pair_bytes differ (chunk must agree);
+   swa_r = layers_r - full_r; refuse if a kind is 0 on one rank but >0 on another (its cache cannot track the
+   others' tokens); M_f = lcm(full_r), M_s = lcm(swa_r); kv per layer = prefill.kv_bytes_per_token / max(full_r),
+   swa state per layer = prefill.sequence_state_bytes / max(swa_r) (planner layer_split.rs:458-470 builds them
+   as products, exact); canonical prefill kv = M_f*kvl, seq = M_s*swl, workspace = min; limit =
+   min_r(L_r * min(w_f_r, w_s_r)) (weights >= 1 so canonical >= real, safe), entries = min_r. Same on every rank.
+3. Data: add `full_layers: Vec<u32>` to layer_split::LayerSplit (from needs[i].full_layers) and
+   `pipeline_full_layers: Option<Vec<u32>>` to PreflightReport (literals at preflight.rs ~1240 and ~2744),
+   set in plan_mlx_pipeline (preflight.rs ~1719); `PreflightReport::mlx_pipeline_launches()` beside
+   tensor_launches (preflight.rs:253).
+4. launch.rs: `mlx_pipeline_rank_specs(config, served, launches, weights, split, context, secs)` = rank_specs
+   body with pipeline_split Some(split) and pipeline_cache_weights Some(weights[rank]) (refactor into one fn).
+5. supervisor.rs:2254 replace the bail with the arm (layer_split + pipeline_full_layers from preflight,
+   "the preflight approved no layer split" refusal). peers_follow_rank0 (:2318): make it an exhaustive match,
+   MlxLmPipeline => false (it runs the tensor wrapper; stop signals every rank like tensor).
+   server_load (:1393) and link_host.rs:190 (Warming -> Ready): MlxLmPipeline behaves as MlxLmTensor (same
+   wrapper, no slots) -> match both. Optionally preflight node checks: fail when pipeline_python is absent for
+   MlxLmPipeline (preflight.rs ~981 only checks PipelineQwen4).
+6. Tests (unit only): spec serde round-trip with split + old tag alias reads; python_args program contains
+   "rank_pipeline_split" text + "rapid_mlx.mlx_lm_models" + "--pipeline"; 2-rank mimo plan (layer_split tests'
+   mimo_facts/nodes) -> specs carry split [19,29], weights rank0 {full:5, swa:8}, rank1 {full:4, swa:5}, same
+   limit/entries/prefill on both, interpreter = pipeline_python; remote_script contains "ulimit -n 65536";
+   refusals: no pipeline_python, differing step, a rank with 0 full layers.
+7. Gate: cargo test -p goose-sidecar; clippy -p goose-sidecar -p goose --all-targets -D warnings;
+   cargo test -p goose-swarm --test development_gates. rustfmt only own files. Commit, push HEAD:mimo-distributed.
+Unverified by design (live two-Mac only): the vendored pipeline under the wrapper's hooks (rank_batch fast path
+with BatchRotatingKVCache, batch_kv_dtype on SWA caches), the barrier, the weights' eviction parity in practice.
