@@ -3249,6 +3249,10 @@ export const zMlxEngineStatusDto = z.object({
         z.string(),
         z.null()
     ]).optional(),
+    stoppedOutside: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
     servingIntent: z.union([
         zMlxServingIntentDto,
         z.null()
